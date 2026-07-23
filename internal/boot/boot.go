@@ -1580,13 +1580,18 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				return nil, fmt.Errorf("planner %q: %w", pm, err)
 			}
 			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(mem.Block()))
+			// Planner owns an independent ledger/audit and use_capability frontend
+			// so its MCP calls cannot satisfy or poison Executor Delivery gates.
+			plannerLedger := capability.NewLedger()
+			plannerAudit := &capability.Audit{}
 			plannerTools := agent.PlannerToolRegistry(reg)
-			// Balanced dual-model: attach a dedicated planner frontend so the
-			// executor keeps its full direct MCP surface and ledger stays isolated.
 			if capRuntime != nil {
-				if _, ok := plannerTools.Get("use_capability"); !ok {
-					plannerTools.Add(capRuntime.NewFrontend(capLedger, capAudit))
+				// Replace any cloned parent frontend with one bound to the
+				// planner ledger (PlannerToolRegistry clones with nil ledger).
+				if _, ok := plannerTools.Get("use_capability"); ok {
+					plannerTools.RemovePrefix("use_capability")
 				}
+				plannerTools.Add(capRuntime.NewFrontend(plannerLedger, plannerAudit))
 			}
 			plannerOpts := agent.Options{
 				MaxSteps:                 0,
@@ -1601,8 +1606,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				KeepPolicy:               keepPolicy,
 				ReasoningLanguage:        cfg.ReasoningLanguage(),
 				PlanModeReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
-				CapabilityLedger:         capLedger,
-				CapabilityAudit:          capAudit,
+				CapabilityLedger:         plannerLedger,
+				CapabilityAudit:          plannerAudit,
 			}
 			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, plannerOpts, executor, cfg.Agent.Temperature, sink, control.NewPlannerGate())
 			label = entry.Model + " + planner " + pe.Model

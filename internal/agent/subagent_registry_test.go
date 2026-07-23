@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/capability"
+	"reasonix/internal/plugin"
 	"reasonix/internal/tool"
 )
 
@@ -456,16 +458,119 @@ func TestMCPToolAvailabilityAcrossGeneralAndReadOnlySubagents(t *testing.T) {
 	if _, ok := ro.Get("use_capability"); !ok {
 		t.Fatalf("read-only subagent must expose use_capability: %v", ro.Names())
 	}
-	// Planner registry also excludes direct MCP (proxy-only).
+	// FilterReadOnlyRegistry (guardian and similar) still surfaces authorized
+	// read-only MCP tools; PlannerToolRegistry strips them for proxy-only.
 	if _, ok := FilterReadOnlyRegistry(parent).Get("mcp__srv__tool"); !ok {
-		// FilterReadOnlyRegistry still includes authorized RO MCP for non-planner uses
-		// (guardian). PlannerToolRegistry strips them.
+		t.Fatalf("FilterReadOnlyRegistry should keep authorized read-only MCP for non-planner surfaces; got %v", FilterReadOnlyRegistry(parent).Names())
 	}
 	if _, ok := PlannerToolRegistry(parent).Get("mcp__srv__tool"); ok {
 		t.Fatalf("PlannerToolRegistry must strip direct MCP: %v", PlannerToolRegistry(parent).Names())
 	}
 	if _, ok := PlannerToolRegistry(parent).Get("use_capability"); !ok {
 		t.Fatalf("PlannerToolRegistry must keep use_capability: %v", PlannerToolRegistry(parent).Names())
+	}
+}
+
+func TestRestrictedCapabilityProxyDescriptionIsStable(t *testing.T) {
+	parent := tool.NewRegistry()
+	// Real UseCapabilityTool so description bytes match production.
+	proxy := NewUseCapabilityTool(context.Background(), nil, []plugin.Spec{
+		{Name: "alpha", Authorized: true},
+		{Name: "beta", Authorized: true},
+	}, parent, nil, nil, nil)
+	parent.Add(proxy)
+	parent.Add(subagentMCPTool{
+		subagentRegistryTool: subagentRegistryTool{name: "mcp__alpha__search", readOnly: true},
+		server:               "alpha", raw: "search", serverAuthorized: true,
+	})
+
+	before := SubagentToolRegistry(parent, []string{"mcp__alpha__*"})
+	beforeProxy, ok := before.Get("use_capability")
+	if !ok {
+		t.Fatal("restricted proxy missing")
+	}
+	beforeDesc := beforeProxy.Description()
+	beforeSchema := string(beforeProxy.Schema())
+
+	// Install another MCP tool that expands the same wildcard — description and
+	// schema must not change (provider-visible prefix stability).
+	parent.Add(subagentMCPTool{
+		subagentRegistryTool: subagentRegistryTool{name: "mcp__alpha__list", readOnly: true},
+		server:               "alpha", raw: "list", serverAuthorized: true,
+	})
+	after := SubagentToolRegistry(parent, []string{"mcp__alpha__*"})
+	afterProxy, ok := after.Get("use_capability")
+	if !ok {
+		t.Fatal("restricted proxy missing after MCP install")
+	}
+	if afterProxy.Description() != beforeDesc {
+		t.Fatalf("description changed after MCP install\nbefore=%q\nafter=%q", beforeDesc, afterProxy.Description())
+	}
+	if string(afterProxy.Schema()) != beforeSchema {
+		t.Fatalf("schema changed after MCP install")
+	}
+	if afterProxy.Name() != "use_capability" || beforeProxy.Name() != "use_capability" {
+		t.Fatal("proxy name must stay use_capability")
+	}
+}
+
+func TestRestrictedCapabilityProxyListFiltersServers(t *testing.T) {
+	host := plugin.NewHost()
+	defer host.Close()
+	proxy := NewUseCapabilityTool(context.Background(), host, []plugin.Spec{
+		{Name: "alpha", Authorized: true},
+		{Name: "beta", Authorized: true},
+		{Name: "secret-db", Authorized: true},
+	}, tool.NewRegistry(), nil, nil, nil)
+	parent := tool.NewRegistry()
+	parent.Add(proxy)
+	parent.Add(subagentMCPTool{
+		subagentRegistryTool: subagentRegistryTool{name: "mcp__alpha__search", readOnly: true},
+		server:               "alpha", raw: "search", serverAuthorized: true,
+	})
+
+	sub := SubagentToolRegistry(parent, []string{"mcp__alpha__search"})
+	tl, ok := sub.Get("use_capability")
+	if !ok {
+		t.Fatal("missing restricted proxy")
+	}
+	resolver, ok := tl.(tool.CallResolver)
+	if !ok {
+		t.Fatalf("not CallResolver: %T", tl)
+	}
+	rc, err := resolver.ResolveCall(context.Background(), json.RawMessage(`{"action":"list"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rc.Result, `"name": "alpha"`) {
+		t.Fatalf("list should include allowlisted server alpha:\n%s", rc.Result)
+	}
+	if strings.Contains(rc.Result, "secret-db") || strings.Contains(rc.Result, `"name": "beta"`) {
+		t.Fatalf("list leaked servers outside allowlist:\n%s", rc.Result)
+	}
+}
+
+func TestPlannerToolRegistryClonesUseCapability(t *testing.T) {
+	parent := tool.NewRegistry()
+	ledger := capability.NewLedger()
+	proxy := NewUseCapabilityTool(context.Background(), nil, nil, parent, ledger, nil, nil)
+	parent.Add(proxy)
+	parent.Add(subagentRegistryTool{name: "read_file", readOnly: true})
+
+	planner := PlannerToolRegistry(parent)
+	got, ok := planner.Get("use_capability")
+	if !ok {
+		t.Fatal("planner missing use_capability")
+	}
+	uc, ok := got.(*UseCapabilityTool)
+	if !ok {
+		t.Fatalf("planner proxy type = %T, want *UseCapabilityTool", got)
+	}
+	if uc == proxy {
+		t.Fatal("planner must not share the executor UseCapabilityTool pointer")
+	}
+	if uc.ledger == ledger {
+		t.Fatal("planner frontend must not share the executor capability ledger")
 	}
 }
 

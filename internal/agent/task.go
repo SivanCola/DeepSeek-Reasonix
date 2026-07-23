@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1054,21 +1053,24 @@ func stripDirectMCPTools(reg *tool.Registry) {
 // restrictedCapabilityProxy preserves a subagent allowed-tools boundary when
 // MCP is available only through use_capability. The pseudo mcp-tool: and
 // mcp-server: entries never become provider tools; they select one proxy schema
-// whose resolver rejects every capability outside the exact allowlist. action=list
-// is always permitted so discovery still works under a restricted surface.
+// whose resolver rejects every capability outside the exact allowlist.
+//
+// Provider-visible name/description/schema stay identical to the unrestricted
+// proxy so allowlist expansion never changes the child cache prefix. Allowlist
+// enforcement is host-local (check + filtered list results).
 type restrictedCapabilityProxy struct {
 	tool.Tool
 	resolver tool.CallResolver
 	allowed  map[string]bool
-	ids      []string
+	// servers is the set of MCP server names implied by allowed IDs; list
+	// results are filtered to this set so profile isolation covers discovery.
+	servers map[string]bool
 }
 
+// Description is fixed: never embed dynamic capability IDs (they change with
+// MCP install/tool-list and would break the stable provider tool prefix).
 func (t *restrictedCapabilityProxy) Description() string {
-	base := strings.TrimSpace(t.Tool.Description())
-	if base != "" {
-		base += " "
-	}
-	return base + "This subagent is restricted to capability IDs: " + strings.Join(t.ids, ", ") + ". action=list is always allowed."
+	return t.Tool.Description()
 }
 
 func (t *restrictedCapabilityProxy) check(args json.RawMessage) error {
@@ -1096,27 +1098,104 @@ func (t *restrictedCapabilityProxy) ResolveCall(ctx context.Context, args json.R
 	if err := t.check(args); err != nil {
 		return tool.ResolvedCall{}, err
 	}
-	return t.resolver.ResolveCall(ctx, args)
+	rc, err := t.resolver.ResolveCall(ctx, args)
+	if err != nil {
+		return rc, err
+	}
+	var p struct {
+		Action string `json:"action"`
+	}
+	_ = json.Unmarshal(args, &p)
+	if strings.EqualFold(strings.TrimSpace(p.Action), "list") && rc.SkipExecute {
+		rc.Result = filterCapabilityListResult(rc.Result, t.servers)
+	}
+	return rc, nil
 }
 
 func (t *restrictedCapabilityProxy) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	if err := t.check(args); err != nil {
 		return "", err
 	}
-	return t.Tool.Execute(ctx, args)
+	out, err := t.Tool.Execute(ctx, args)
+	if err != nil {
+		return out, err
+	}
+	var p struct {
+		Action string `json:"action"`
+	}
+	_ = json.Unmarshal(args, &p)
+	if strings.EqualFold(strings.TrimSpace(p.Action), "list") {
+		return filterCapabilityListResult(out, t.servers), nil
+	}
+	return out, nil
+}
+
+// filterCapabilityListResult keeps only servers in the allowlist for restricted
+// proxies. Malformed list output is returned unchanged (fail-open for text).
+func filterCapabilityListResult(raw string, servers map[string]bool) string {
+	if len(servers) == 0 {
+		return raw
+	}
+	var payload struct {
+		Servers []listServerInfo `json:"servers"`
+		Note    string           `json:"note"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return raw
+	}
+	filtered := make([]listServerInfo, 0, len(payload.Servers))
+	for _, s := range payload.Servers {
+		if servers[strings.TrimSpace(s.Name)] {
+			filtered = append(filtered, s)
+		}
+	}
+	payload.Servers = filtered
+	if payload.Note == "" {
+		payload.Note = "list is filtered to this subagent's allowed MCP servers."
+	} else {
+		payload.Note = payload.Note + " Filtered to this subagent's allowed MCP servers."
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return raw
+	}
+	return string(b)
+}
+
+func serversFromCapabilityAllowlist(allowed map[string]bool) map[string]bool {
+	servers := map[string]bool{}
+	for id := range allowed {
+		id = strings.TrimSpace(id)
+		switch {
+		case strings.HasPrefix(id, "mcp-server:"):
+			if name := strings.TrimSpace(strings.TrimPrefix(id, "mcp-server:")); name != "" {
+				servers[name] = true
+			}
+		case strings.HasPrefix(id, "mcp-tool:"):
+			rest := strings.TrimPrefix(id, "mcp-tool:")
+			if server, _, ok := strings.Cut(rest, "/"); ok {
+				if server = strings.TrimSpace(server); server != "" {
+					servers[server] = true
+				}
+			}
+		}
+	}
+	return servers
 }
 
 // attachSubagentCapabilityProxy installs a per-agent use_capability frontend.
-// No allowlist → full proxy. Explicit allowlist with MCP names → restricted
-// proxy (mcp__* / mcp-tool: / mcp-server: converted to capability IDs). Explicit
-// "use_capability" in the allowlist → full proxy. Explicit allowlist without
-// any MCP entries → no proxy.
+// Any parent-copied proxy is replaced so children never share Executor ledger
+// state. No allowlist → full proxy. Explicit allowlist with MCP names →
+// restricted proxy. Explicit "use_capability" → full proxy. Explicit allowlist
+// without MCP entries → no proxy.
 func attachSubagentCapabilityProxy(parent, sub *tool.Registry, names []string, runtime *MCPCapabilityRuntime) {
 	if sub == nil {
 		return
 	}
+	// Drop any provider-copied use_capability so we always install an isolated
+	// frontend (shared Host/runtime, independent ledger/audit).
 	if _, ok := sub.Get("use_capability"); ok {
-		return
+		sub.RemovePrefix("use_capability")
 	}
 	frontend := newSubagentCapabilityFrontend(parent, runtime)
 	if frontend == nil {
@@ -1131,16 +1210,16 @@ func attachSubagentCapabilityProxy(parent, sub *tool.Registry, names []string, r
 		// Custom allowlist with no MCP entries: do not expose the proxy.
 		return
 	}
-	ids := make([]string, 0, len(allowed))
-	for id := range allowed {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
 	resolver, ok := frontend.(tool.CallResolver)
 	if !ok {
 		return
 	}
-	sub.Add(&restrictedCapabilityProxy{Tool: frontend, resolver: resolver, allowed: allowed, ids: ids})
+	sub.Add(&restrictedCapabilityProxy{
+		Tool:     frontend,
+		resolver: resolver,
+		allowed:  allowed,
+		servers:  serversFromCapabilityAllowlist(allowed),
+	})
 }
 
 func newSubagentCapabilityFrontend(parent *tool.Registry, runtime *MCPCapabilityRuntime) tool.Tool {
@@ -1240,7 +1319,9 @@ func PlannerToolRegistry(parent *tool.Registry) *tool.Registry {
 	sub := tool.NewRegistry()
 	if base != nil {
 		for _, name := range base.Names() {
-			if strings.HasPrefix(name, tool.MCPNamePrefix) {
+			// Never copy the parent proxy or direct MCP: Delivery would share
+			// Executor ledger/audit; MCP schemas are proxy-only for the planner.
+			if name == "use_capability" || strings.HasPrefix(name, tool.MCPNamePrefix) {
 				continue
 			}
 			if tl, ok := base.Get(name); ok {
@@ -1248,17 +1329,13 @@ func PlannerToolRegistry(parent *tool.Registry) *tool.Registry {
 			}
 		}
 	}
-	// Keep the fixed capability proxy even when Delivery put it on the parent
-	// registry, or when Balanced dual-model injects it only for the planner.
-	// Always clone UseCapabilityTool so the planner has an independent ledger.
+	// Always install an isolated frontend (independent ledger/audit; shared Host).
 	if parent != nil {
 		if tl, ok := parent.Get("use_capability"); ok {
-			if _, has := sub.Get("use_capability"); !has {
-				if uc, ok := tl.(*UseCapabilityTool); ok {
-					sub.Add(uc.CloneForAgent(nil, nil))
-				} else {
-					sub.Add(tl)
-				}
+			if uc, ok := tl.(*UseCapabilityTool); ok {
+				sub.Add(uc.CloneForAgent(nil, nil))
+			} else {
+				sub.Add(tl)
 			}
 		}
 	}
