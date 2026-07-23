@@ -34,6 +34,7 @@ func TestObserveClassifiesEvents(t *testing.T) {
 		{Kind: event.CompactionDone},
 		{Kind: event.Notice, Text: "No visible answer was produced; asking the assistant to respond again.", Detail: "empty final answer blocked: model returned no visible answer text; retrying"},
 		{Kind: event.TurnDone, Err: errors.New("deepseek-flash: status 429: rate limited")},
+		{Kind: event.TurnDone, Err: errors.New("automatic recovery paused"), Outcome: event.TurnOutcomeRecoveryPaused},
 		{Kind: event.TurnDone},
 	}
 	for _, e := range feed {
@@ -47,7 +48,7 @@ func TestObserveClassifiesEvents(t *testing.T) {
 		"compaction":     {"total": 1},
 		"empty_final":    {"total": 1},
 		"provider_error": {"http_429": 1},
-		"turns":          {"total": 2},
+		"turns":          {"total": 3},
 	}
 	for sig, buckets := range want {
 		for b, n := range buckets {
@@ -189,6 +190,11 @@ func TestErrorClass(t *testing.T) {
 		"read: connection reset by peer":      "stream_interrupted",
 		"stream interrupted mid-flight":       "stream_interrupted",
 		"context deadline exceeded (timeout)": "timeout",
+		"update: authorization cancelled":     "authorization_cancelled",
+		"update: authorization failed":        "authorization_failed",
+		"update: package manager busy":        "package_manager_busy",
+		"update: package install failed":      "package_install_failed",
+		"update: package verify failed":       "package_verify_failed",
 		"some unrecognized failure":           "other",
 	}
 	for msg, want := range cases {

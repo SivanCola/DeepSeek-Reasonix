@@ -134,6 +134,11 @@ from accidental or unauthorized invocation.
 - DeepSeek is an editorial drafting dependency, not a runtime or publishing dependency.
   The API key is available only to the manually dispatched preparation workflow; tag
   workflows publish the reviewed JSON already committed to `main-v2` and never call a model.
-- Windows and Linux apply downloaded, minisign-verified artifacts in place. macOS
-  applies in-app only for Developer ID signed and notarized builds; ad-hoc/local
-  builds fall back to the download page.
+- Windows applies the minisign-verified NSIS installer in place. Linux portable
+  (`.tar.gz`) installs replace binaries in the install directory; Linux `.deb`
+  installs download a signed package, authorize via Polkit, and upgrade with
+  apt. The first `.deb` that ships the update helper is a one-time bootstrap
+  (manual `sudo apt install ./Reasonix-linux-amd64.deb`). macOS applies in-app
+  only for Developer ID signed and notarized builds; ad-hoc/local builds fall
+  back to the download page. Desktop `latest.json` keeps `platforms` for
+  portable channels and adds optional `native_packages` for OS packages.

@@ -9,8 +9,8 @@
 #            Reasonix-darwin-universal.dmg               (drag-to-install; human download)
 #   Windows: Reasonix-windows-<arch>-installer.exe       (NSIS per-user installer; updater channel)
 #            Reasonix-windows-<arch>.zip                 (portable human download)
-#   Linux:   Reasonix-linux-<arch>.tar.gz                (desktop + guard + CLI; updater channel)
-#            Reasonix-linux-<arch>.deb                   (Debian/Ubuntu package; human download)
+#   Linux:   Reasonix-linux-<arch>.tar.gz                (desktop + guard + CLI; portable updater)
+#            Reasonix-linux-<arch>.deb                   (Debian/Ubuntu package; native updater)
 #
 # Usage: scripts/desktop-build.sh <os/arch> <version> [channel]
 #   e.g. scripts/desktop-build.sh darwin/arm64 v1.1.0
@@ -269,13 +269,34 @@ linux)
 		grep -F -x -q "$desktop_contract" build/linux/reasonix.desktop || { echo "Linux desktop entry missing: $desktop_contract" >&2; exit 1; }
 	done
 	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin "$BINNAME" "$GUARDNAME" "$CLINAME"
-	# Also build a .deb for Debian/Ubuntu users (goreleaser/nfpm; see
-	# desktop/build/linux/nfpm.yaml). Human-download only: the Linux updater channel
-	# stays the tarball and cmd/sign's manifest skips .deb files. nfpm reads
-	# $DEB_VERSION/$DEB_ARCH — dpkg wants a strict numeric version, so reuse numver.
-	DEB_VERSION="$numver" DEB_ARCH="$arch" \
+	# Build the privileged update helper shipped inside the .deb. Portable tarball
+	# installs do not need it; only the dpkg package installs helper + Polkit policy.
+	echo "==> go build reasonix-update-helper"
+	GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$VERSION" \
+		-o "build/bin/reasonix-update-helper" ./cmd/update-helper
+	# .deb for Debian/Ubuntu. Portable updater still uses the tarball under
+	# platforms[]; .deb is published under native_packages. Debian versions use
+	# "~" for prereleases so 1.18.0~rc.1 < 1.18.0 (policy version ordering).
+	# Extra "-" inside the prerelease label becomes "." (Debian policy).
+	ver_body="${VERSION#v}"
+	if [[ "$ver_body" == *-* ]]; then
+		deb_base="${ver_body%%-*}"
+		deb_pre="${ver_body#*-}"
+		deb_pre="${deb_pre//-/.}"
+		deb_version="${deb_base}~${deb_pre}"
+	else
+		deb_version="$ver_body"
+	fi
+	DEB_VERSION="$deb_version" DEB_ARCH="$arch" \
 		nfpm package --config build/linux/nfpm.yaml --packager deb \
 		--target "$ROOT/dist/${APPNAME}-linux-${arch}.deb"
+	# Contract smoke: helper, policy, package identity, and pkexec dependency.
+	deb_path="$ROOT/dist/${APPNAME}-linux-${arch}.deb"
+	dpkg-deb --field "$deb_path" Package | grep -x 'reasonix-desktop' >/dev/null
+	dpkg-deb --field "$deb_path" Version | grep -x "$deb_version" >/dev/null
+	dpkg-deb --field "$deb_path" Depends | grep -F 'pkexec' >/dev/null
+	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/reasonix/reasonix-update-helper' >/dev/null
+	dpkg-deb --contents "$deb_path" | grep -E 'usr/share/polkit-1/actions/io.reasonix.desktop.update.policy' >/dev/null
 	;;
 *)
 	echo "unsupported os: $os" >&2

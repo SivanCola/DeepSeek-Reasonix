@@ -296,7 +296,7 @@ func (m *metricsAggregator) observe(e event.Event) {
 		}
 	case event.TurnDone:
 		m.inc("turns", "total")
-		if e.Err != nil {
+		if e.Err != nil && e.Outcome != event.TurnOutcomeRecoveryPaused {
 			m.inc("provider_error", errorClass(e.Err.Error()))
 		}
 	case event.ToolResult:
@@ -345,6 +345,16 @@ func errorClass(msg string) string {
 	}
 	low := strings.ToLower(msg)
 	switch {
+	case strings.Contains(low, "authorization cancelled"):
+		return "authorization_cancelled"
+	case strings.Contains(low, "authorization failed"):
+		return "authorization_failed"
+	case strings.Contains(low, "package manager busy"):
+		return "package_manager_busy"
+	case strings.Contains(low, "package install failed"):
+		return "package_install_failed"
+	case strings.Contains(low, "package verify failed"), strings.Contains(low, "signature verification failed"):
+		return "package_verify_failed"
 	case strings.Contains(low, "reset"), strings.Contains(low, "interrupt"), strings.Contains(low, "eof"):
 		return "stream_interrupted"
 	case strings.Contains(low, "timeout"), strings.Contains(low, "deadline"):

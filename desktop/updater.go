@@ -92,18 +92,20 @@ func downloadPage() string {
 
 // UpdateInfo is the CheckUpdate result that drives the frontend's update banner.
 type UpdateInfo struct {
-	Available     bool   `json:"available"`
-	Current       string `json:"current"`
-	Latest        string `json:"latest"`
-	Notes         string `json:"notes"`
-	Channel       string `json:"channel"`
-	CanSelfUpdate bool   `json:"canSelfUpdate"` // win/linux true; macOS true only for signed/notarized builds
-	ManualOnly    bool   `json:"manualOnly,omitempty"`
-	ManualReason  string `json:"manualReason,omitempty"`
-	Downloaded    bool   `json:"downloaded"`
-	DownloadURL   string `json:"downloadUrl"`   // human-facing releases page (macOS path / fallback link)
-	AssetSize     int64  `json:"assetSize"`     // running platform's artifact size, for the progress bar
-	Err           string `json:"err,omitempty"` // set when the check itself failed (both endpoints down)
+	Available         bool   `json:"available"`
+	Current           string `json:"current"`
+	Latest            string `json:"latest"`
+	Notes             string `json:"notes"`
+	Channel           string `json:"channel"`
+	CanSelfUpdate     bool   `json:"canSelfUpdate"` // win/linux true; macOS true only for signed/notarized builds
+	ManualOnly        bool   `json:"manualOnly,omitempty"`
+	ManualReason      string `json:"manualReason,omitempty"`
+	InstallMode       string `json:"installMode"`                 // portable | deb | manual
+	RequiresElevation bool   `json:"requiresElevation,omitempty"` // deb/Polkit path
+	Downloaded        bool   `json:"downloaded"`
+	DownloadURL       string `json:"downloadUrl"`   // human-facing releases page (macOS path / fallback link)
+	AssetSize         int64  `json:"assetSize"`     // running platform's artifact size, for the progress bar
+	Err               string `json:"err,omitempty"` // set when the check itself failed (both endpoints down)
 }
 
 // UpdateDownloadResult is returned after an artifact has been downloaded,
@@ -119,7 +121,7 @@ type UpdateDownloadResult struct {
 // updateProgress is the payload of the "updater:progress" Wails event emitted
 // throughout DownloadUpdate / InstallUpdate.
 type updateProgress struct {
-	Phase    string `json:"phase"` // downloading | verifying | downloaded | installing | done | error
+	Phase    string `json:"phase"` // downloading | verifying | downloaded | authorizing | installing | done | error
 	Received int64  `json:"received"`
 	Total    int64  `json:"total"`
 	Err      string `json:"err,omitempty"`
@@ -215,21 +217,40 @@ func fetchManifestBytes(ctx context.Context, c, fallback *http.Client, url strin
 }
 
 // evaluate compares the running version against the manifest and builds the
-// frontend-facing result. Pure (no I/O) so the comparison is unit-tested.
+// frontend-facing result. I/O is limited to install-profile detection and cache
+// probes so unit tests can inject a fixed profile via evaluateWithProfile.
 func evaluate(current string, m *update.Manifest) UpdateInfo {
+	return evaluateWithProfile(current, m, profileForManifest(detectInstallProfile(), m))
+}
+
+// evaluateWithProfile is the pure comparison core once the install profile is known.
+func evaluateWithProfile(current string, m *update.Manifest, profile installProfile) UpdateInfo {
 	page := m.DownloadPage
 	if page == "" {
 		page = downloadPage()
 	}
 	info := UpdateInfo{
-		Current:       current,
-		Latest:        m.Version,
-		Notes:         m.Notes,
-		Channel:       channel,
-		CanSelfUpdate: canSelfUpdate(),
-		ManualOnly:    !canSelfUpdate(),
-		ManualReason:  manualUpdateReason(),
-		DownloadURL:   page,
+		Current:           current,
+		Latest:            m.Version,
+		Notes:             m.Notes,
+		Channel:           channel,
+		CanSelfUpdate:     profile.CanSelfUpdate,
+		ManualOnly:        !profile.CanSelfUpdate,
+		ManualReason:      profile.ManualReason,
+		InstallMode:       profile.Mode,
+		RequiresElevation: profile.RequiresElev,
+		DownloadURL:       page,
+	}
+	// Preserve the pre-existing macOS gate when profile detection would otherwise
+	// claim portable self-update on an unsigned build.
+	if runtime.GOOS == "darwin" && !canSelfUpdate() {
+		info.CanSelfUpdate = false
+		info.ManualOnly = true
+		info.RequiresElevation = false
+		info.InstallMode = installModeManual
+		if info.ManualReason == "" {
+			info.ManualReason = manualUpdateReason()
+		}
 	}
 	cur, okCur := normalizeVersion(current)
 	latest, okLatest := normalizeVersion(m.Version)
@@ -241,21 +262,27 @@ func evaluate(current string, m *update.Manifest) UpdateInfo {
 	if okCur && semver.Compare(latest, cur) > 0 {
 		info.Available = true
 	}
-	if a, ok := m.Asset(); ok {
+	if a, kind, ok := selectUpdateAsset(m, profile); ok {
 		info.AssetSize = a.Size
-		info.Downloaded = cachedUpdateMatches(m.Version, a)
+		info.Downloaded = cachedUpdateMatches(m.Version, a, kind)
+	} else if a, ok := m.Asset(); ok {
+		// Manual installs (or a missing native package) still surface the portable
+		// artifact size so the UI can show how large the download is on the page.
+		info.AssetSize = a.Size
 	}
 	return info
 }
 
 type cachedUpdate struct {
-	Version      string `json:"version"`
-	Channel      string `json:"channel"`
-	Platform     string `json:"platform"`
-	Path         string `json:"path"`
-	Size         int64  `json:"size"`
-	SHA256       string `json:"sha256"`
-	DownloadedAt string `json:"downloadedAt"`
+	Version       string `json:"version"`
+	Channel       string `json:"channel"`
+	Platform      string `json:"platform"`
+	Path          string `json:"path"`
+	Size          int64  `json:"size"`
+	SHA256        string `json:"sha256"`
+	DownloadedAt  string `json:"downloadedAt"`
+	ArtifactKind  string `json:"artifactKind,omitempty"`  // tarball | deb
+	SignaturePath string `json:"signaturePath,omitempty"` // required for deb
 }
 
 var updateCacheBaseDir = defaultUpdateCacheBaseDir
@@ -327,10 +354,11 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-func saveCachedUpdate(version string, asset update.Asset, data []byte) (*cachedUpdate, error) {
+func saveCachedUpdate(version string, asset update.Asset, data []byte, kind string, signature []byte) (*cachedUpdate, error) {
 	if err := checkSHA256(data, asset.SHA256); err != nil {
 		return nil, err
 	}
+	kind = artifactKindFromMeta(kind)
 	dir, err := updateCacheDir()
 	if err != nil {
 		return nil, err
@@ -347,6 +375,17 @@ func saveCachedUpdate(version string, asset update.Asset, data []byte) (*cachedU
 		Size:         int64(len(data)),
 		SHA256:       asset.SHA256,
 		DownloadedAt: time.Now().UTC().Format(time.RFC3339),
+		ArtifactKind: kind,
+	}
+	if kind == artifactKindDeb {
+		if len(signature) == 0 {
+			return nil, fmt.Errorf("update: deb cache requires a signature")
+		}
+		sigPath := path + ".minisig"
+		if err := writeAtomic(sigPath, signature, 0o600); err != nil {
+			return nil, err
+		}
+		meta.SignaturePath = sigPath
 	}
 	raw, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -381,9 +420,23 @@ func loadCachedUpdate() (*cachedUpdate, error) {
 	return &meta, nil
 }
 
-func cachedUpdateMatches(version string, asset update.Asset) bool {
+func cachedUpdateMatches(version string, asset update.Asset, kind string) bool {
 	meta, err := loadCachedUpdate()
 	if err != nil {
+		return false
+	}
+	kind = artifactKindFromMeta(kind)
+	metaKind := artifactKindFromMeta(meta.ArtifactKind)
+	// Legacy portable caches omit artifactKind and remain valid for tarball only.
+	// Deb installs never reuse a cache that lacks a matching signature file.
+	if kind == artifactKindDeb {
+		if metaKind != artifactKindDeb || meta.SignaturePath == "" {
+			return false
+		}
+		if _, err := os.Stat(meta.SignaturePath); err != nil {
+			return false
+		}
+	} else if metaKind != artifactKindTarball {
 		return false
 	}
 	return meta.Version == version &&
@@ -424,6 +477,15 @@ func readVerifiedCachedUpdate() (*cachedUpdate, []byte, error) {
 	}
 	if err := checkSHA256(data, meta.SHA256); err != nil {
 		return nil, nil, err
+	}
+	meta.ArtifactKind = artifactKindFromMeta(meta.ArtifactKind)
+	if meta.ArtifactKind == artifactKindDeb {
+		if meta.SignaturePath == "" {
+			return nil, nil, fmt.Errorf("update: cached deb is missing its signature")
+		}
+		if _, err := os.Stat(meta.SignaturePath); err != nil {
+			return nil, nil, fmt.Errorf("update: cached deb signature is missing")
+		}
 	}
 	return meta, data, nil
 }

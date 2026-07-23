@@ -904,6 +904,12 @@ function emitUpdater(p: UpdateProgress) {
   updaterListeners.forEach((l) => l(p));
 }
 
+// Test seam for the browser-dev updater state machine. Production Wails builds
+// receive the same payloads through runtime.EventsOn("updater:progress").
+export function __emitMockUpdater(p: UpdateProgress): void {
+  emitUpdater(p);
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -4167,6 +4173,7 @@ function makeMockApp(): AppBindings {
         channel: "stable",
         canSelfUpdate: false,
         manualOnly: true,
+        installMode: "manual",
         manualReason: "browser preview",
         downloaded: false,
         downloadUrl: "",
