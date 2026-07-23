@@ -176,6 +176,16 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 			t.Errorf("desktop-build.sh missing Linux deb helper contract %q", want)
 		}
 	}
+	for _, unsafe := range []string{
+		`dpkg-deb --field "$deb_path" Package | grep -qx`,
+		`dpkg-deb --field "$deb_path" Version | grep -qx`,
+		`dpkg-deb --field "$deb_path" Depends | grep -Fq`,
+		`dpkg-deb --contents "$deb_path" | grep -Eq`,
+	} {
+		if strings.Contains(build, unsafe) {
+			t.Errorf("desktop-build.sh uses early-exit grep under pipefail: %q", unsafe)
+		}
+	}
 
 	windowsData, err := os.ReadFile("build/windows/installer/project.nsi")
 	if err != nil {

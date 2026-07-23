@@ -292,11 +292,11 @@ linux)
 		--target "$ROOT/dist/${APPNAME}-linux-${arch}.deb"
 	# Contract smoke: helper, policy, package identity, and pkexec dependency.
 	deb_path="$ROOT/dist/${APPNAME}-linux-${arch}.deb"
-	dpkg-deb --field "$deb_path" Package | grep -qx 'reasonix-desktop'
-	dpkg-deb --field "$deb_path" Version | grep -qx "$deb_version"
-	dpkg-deb --field "$deb_path" Depends | grep -Fq 'pkexec'
-	dpkg-deb --contents "$deb_path" | grep -Eq 'usr/lib/reasonix/reasonix-update-helper'
-	dpkg-deb --contents "$deb_path" | grep -Eq 'usr/share/polkit-1/actions/io.reasonix.desktop.update.policy'
+	dpkg-deb --field "$deb_path" Package | grep -x 'reasonix-desktop' >/dev/null
+	dpkg-deb --field "$deb_path" Version | grep -x "$deb_version" >/dev/null
+	dpkg-deb --field "$deb_path" Depends | grep -F 'pkexec' >/dev/null
+	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/reasonix/reasonix-update-helper' >/dev/null
+	dpkg-deb --contents "$deb_path" | grep -E 'usr/share/polkit-1/actions/io.reasonix.desktop.update.policy' >/dev/null
 	;;
 *)
 	echo "unsupported os: $os" >&2
