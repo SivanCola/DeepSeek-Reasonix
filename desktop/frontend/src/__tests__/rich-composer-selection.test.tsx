@@ -278,6 +278,57 @@ console.log("\nrich composer selection mapping");
   );
   eq(recoveredDelete.start, 5, "Delete recovery keeps caret at deletion point");
 
+  // data=null repeated-character insert: maximal prefix/suffix would jump to end.
+  const recoveredRepeat = recoverSelectionAfterEdit(
+    {
+      text: "aaa",
+      selection: { start: 1, end: 1 },
+      inputType: "insertText",
+      data: null,
+    },
+    "aaaa",
+    { start: 3, end: 3 },
+  );
+  eq(recoveredRepeat.start, 2, "data=null repeated-char insert recovers at edit point (not end)");
+  eq(recoveredRepeat.end, 2, "data=null repeated-char insert collapses at edit point");
+
+  const recoveredRepeatEmptyType = recoverSelectionAfterEdit(
+    {
+      text: "aaa",
+      selection: { start: 1, end: 1 },
+      inputType: "",
+      data: null,
+    },
+    "aaaa",
+    { start: 4, end: 4 },
+  );
+  eq(recoveredRepeatEmptyType.start, 2, "empty inputType + data=null still anchors repeated insert");
+
+  const recoveredReplacementNull = recoverSelectionAfterEdit(
+    {
+      text: "aaa bbb",
+      selection: { start: 0, end: 3 },
+      inputType: "insertReplacementText",
+      data: null,
+    },
+    "aaaa bbb",
+    { start: 7, end: 7 },
+  );
+  eq(recoveredReplacementNull.start, 4, "data=null replacement recovers after the replaced span");
+
+  const recoveredCompositionCommit = recoverSelectionAfterEdit(
+    {
+      text: "hello world",
+      selection: { start: 5, end: 5 },
+      inputType: "insertCompositionText",
+      data: null,
+    },
+    "hello你好 world",
+    { start: 5, end: 5 },
+  );
+  eq(recoveredCompositionCommit.start, 7, "composition commit with data=null places caret after new text");
+  eq(recoveredCompositionCommit.end, 7, "composition commit recovery collapses after new text");
+
   // --- Multiline + BR ---
   const multi = document.createElement("div");
   multi.appendChild(document.createTextNode("line1"));
@@ -538,13 +589,21 @@ function Harness({
   // from our sync path. We assert that compositionstart suppresses input sync and
   // compositionend performs a single model update.
   const beforeImeCount = api?.getState().changeCount ?? 0;
+  const imeInsertAt = Math.min(10, afterTwo.text.length);
+  const textBeforeIme = afterTwo.text;
   await act(async () => {
     liveInput.focus();
-    setDomSelection(liveInput, { start: afterTwo.text.length, end: afterTwo.text.length });
+    setDomSelection(liveInput, { start: imeInsertAt, end: imeInsertAt });
     liveInput.dispatchEvent(new Event("compositionstart", { bubbles: true }));
     // Intermediate composition input with isComposing should not sync.
-    const composingNode = document.createTextNode("ni");
-    liveInput.appendChild(composingNode);
+    // Apply provisional text at the caret without syncing.
+    const liveSel = document.getSelection();
+    if (liveSel && liveSel.rangeCount > 0) {
+      const range = liveSel.getRangeAt(0);
+      range.insertNode(document.createTextNode("ni"));
+    } else {
+      liveInput.appendChild(document.createTextNode("ni"));
+    }
     liveInput.dispatchEvent(new window.InputEvent("input", {
       bubbles: true,
       data: "ni",
@@ -557,24 +616,46 @@ function Harness({
   eq(midImeCount, beforeImeCount, "IME composition intermediate input does not sync the model");
 
   await act(async () => {
-    // Commit composition.
-    const nodes = Array.from(liveInput.childNodes);
-    const last = nodes[nodes.length - 1];
-    if (last?.nodeType === Node.TEXT_NODE && last.textContent === "ni") {
-      last.textContent = "你";
+    // Commit composition: replace provisional "ni" with "你", then black out selection
+    // before compositionend (WebView2 may drop selection across the commit).
+    const current = document.querySelector(".composer__rich-input") as HTMLDivElement;
+    const textNodes: Text[] = [];
+    const collect = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) textNodes.push(node as Text);
+      node.childNodes.forEach((child) => collect(child));
+    };
+    collect(current);
+    const provisional = textNodes.find((node) => (node.textContent ?? "").includes("ni"));
+    if (provisional && provisional.textContent === "ni") {
+      provisional.textContent = "你";
+    } else if (provisional?.textContent?.includes("ni")) {
+      provisional.textContent = provisional.textContent.replace("ni", "你");
     } else {
-      liveInput.appendChild(document.createTextNode("你"));
+      const anchorEl = current.querySelector<HTMLElement>("[data-composer-caret-anchor]");
+      if (anchorEl) {
+        anchorEl.textContent = `\u00A0${textBeforeIme.slice(0, imeInsertAt)}你${textBeforeIme.slice(imeInsertAt)}`;
+      } else {
+        current.appendChild(document.createTextNode("你"));
+      }
     }
-    liveInput.dispatchEvent(new Event("compositionend", { bubbles: true }));
+    document.getSelection()?.removeAllRanges();
+    current.dispatchEvent(new Event("compositionend", { bubbles: true }));
     await flushTimers();
   });
   const afterImeCount = api?.getState().changeCount ?? 0;
   ok(afterImeCount === beforeImeCount + 1, "compositionend performs exactly one model sync");
-  const imeModel = modelFromDom(
-    document.querySelector(".composer__rich-input") as HTMLDivElement,
-    known,
-  );
-  ok(imeModel.text.endsWith("你") || imeModel.text.includes("你"), "committed IME text is present once");
+  const imeLive = document.querySelector(".composer__rich-input") as HTMLDivElement;
+  const imeModel = modelFromDom(imeLive, known);
+  ok(imeModel.text.includes("你"), "committed IME text is present once");
+  const imeSel = selectionFromDom(imeLive, known);
+  // After blackout recovery, caret must sit after the committed run — never the
+  // pre-composition offset when the commit actually grew the text.
+  if (imeModel.text.length > textBeforeIme.length && imeSel.ok) {
+    ok(
+      imeSel.selection.start > imeInsertAt || imeSel.selection.start === imeModel.text.length,
+      "compositionend selection blackout does not leave caret at pre-composition offset",
+    );
+  }
 
   // Cancel-style composition: start then end without net change should still only sync once.
   const cancelBase = api?.getState().changeCount ?? 0;
@@ -765,6 +846,88 @@ function Harness({
   if (rangeInput) {
     const model = modelFromDom(rangeInput, new Map([["r1", invocation("r1", 0, skillCommand)]]));
     eq(model.text, "abXYfghij", "mid-range replace rewrites only the selected span");
+  }
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+// Isolated IME blackout case: compositionstart snapshot + compositionend without a
+// live selection must place the caret after the committed run (not at text end).
+console.log("\nrich composer IME compositionend blackout");
+
+{
+  const dom = installDom();
+  const rootEl = document.getElementById("root");
+  if (!rootEl) throw new Error("missing root");
+  const root = createRoot(rootEl);
+  const imeKnown = new Map([["ime-1", invocation("ime-1", 0, skillCommand)]]);
+  let lastSelection: RichComposerSelection = { start: 0, end: 0 };
+
+  function ImeHarness() {
+    const [text, setText] = useState("hello world");
+    const [invocations, setInvocations] = useState([invocation("ime-1", 0, skillCommand)]);
+    return (
+      <LocaleProvider>
+        <RichComposerInput
+          text={text}
+          invocations={invocations}
+          placeholder="Message"
+          disabled={false}
+          onChange={(nextText, nextInvocations) => {
+            setText(nextText);
+            setInvocations(nextInvocations);
+          }}
+          onSelectionChange={(next) => {
+            lastSelection = next;
+          }}
+          onKeyDown={() => {}}
+          onPaste={() => {}}
+          onCompositionStart={() => {}}
+          onCompositionEnd={() => {}}
+        />
+      </LocaleProvider>
+    );
+  }
+
+  await act(async () => {
+    root.render(<ImeHarness />);
+    await flushTimers();
+  });
+
+  const imeRoot = document.querySelector(".composer__rich-input") as HTMLDivElement | null;
+  ok(imeRoot !== null, "IME blackout harness mounts");
+  if (imeRoot) {
+    await act(async () => {
+      imeRoot.focus();
+      setDomSelection(imeRoot, { start: 5, end: 5 });
+      imeRoot.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+      const sibling = Array.from(imeRoot.childNodes).find(
+        (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").length > 0,
+      ) as Text | undefined;
+      const anchorEl = imeRoot.querySelector<HTMLElement>("[data-composer-caret-anchor]");
+      if (sibling) sibling.textContent = "hello你 world";
+      else if (anchorEl) anchorEl.textContent = "\u00A0hello你 world";
+      document.getSelection()?.removeAllRanges();
+      ok(!selectionFromDom(imeRoot, imeKnown).ok, "selection is unavailable at compositionend");
+      imeRoot.dispatchEvent(new Event("compositionend", { bubbles: true }));
+      await flushTimers();
+    });
+
+    const afterImeRoot = document.querySelector(".composer__rich-input") as HTMLDivElement;
+    const afterImeModel = modelFromDom(afterImeRoot, imeKnown);
+    eq(afterImeModel.text, "hello你 world", "IME mid-text commit keeps text at the composition locus");
+    const afterImeSel = selectionFromDom(afterImeRoot, imeKnown);
+    // "hello" (5) + "你" (1) → caret index 6. Must not stay at pre-composition 5
+    // and must not jump to text.length (12).
+    eq(
+      afterImeSel.ok ? afterImeSel.selection.start : lastSelection.start,
+      6,
+      "IME compositionend blackout places caret after committed characters, not pre-composition offset",
+    );
+    eq(lastSelection.start, 6, "onSelectionChange reports caret after committed IME text");
   }
 
   await act(async () => {

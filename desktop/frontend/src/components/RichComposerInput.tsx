@@ -333,6 +333,32 @@ export function setDomSelection(root: HTMLElement, target: RichComposerSelection
   selection.addRange(range);
 }
 
+/**
+ * Recover a caret using the pre-edit selection as the edit locus.
+ * Prefer this over a maximal prefix/suffix diff: repeated characters make
+ * the longest common prefix claim the whole string and push the caret to the
+ * end (e.g. insert "a" at offset 1 in "aaa" → "aaaa").
+ */
+function selectionAnchoredCaret(
+  beforeText: string,
+  afterText: string,
+  from: number,
+  to: number,
+): number | null {
+  const head = beforeText.slice(0, from);
+  const tail = beforeText.slice(to);
+  if (!afterText.startsWith(head)) return null;
+  if (tail.length === 0) {
+    // Caret was at (or replaced through) the end: everything after `head` is new.
+    return afterText.length;
+  }
+  if (afterText.length < head.length + tail.length) return null;
+  if (afterText.slice(afterText.length - tail.length) !== tail) return null;
+  const middle = afterText.slice(head.length, afterText.length - tail.length);
+  if (head + middle + tail !== afterText) return null;
+  return head.length + middle.length;
+}
+
 export function recoverSelectionAfterEdit(
   before: EditSnapshot,
   afterText: string,
@@ -348,17 +374,22 @@ export function recoverSelectionAfterEdit(
   const from = Math.max(0, Math.min(start, end, before.text.length));
   const to = Math.max(from, Math.min(Math.max(start, end), before.text.length));
   const inputType = before.inputType;
-  const data = before.data ?? "";
+  const data = before.data;
+  const hasData = data !== null && data !== undefined && data.length > 0;
 
   const matches = (candidate: string) => candidate === afterText;
 
   if (
-    inputType === "insertText"
-    || inputType === "insertCompositionText"
-    || inputType === "insertFromPaste"
-    || inputType === "insertFromDrop"
-    || inputType === "insertReplacementText"
-    || inputType === "insertFromYank"
+    hasData
+    && (
+      inputType === "insertText"
+      || inputType === "insertCompositionText"
+      || inputType === "insertFromPaste"
+      || inputType === "insertFromDrop"
+      || inputType === "insertReplacementText"
+      || inputType === "insertFromYank"
+      || inputType === ""
+    )
   ) {
     const candidate = before.text.slice(0, from) + data + before.text.slice(to);
     if (matches(candidate)) return collapsedAt(from + data.length);
@@ -390,7 +421,27 @@ export function recoverSelectionAfterEdit(
     }
   }
 
-  // Prefix/suffix diff: place the caret at the end of the changed region.
+  // Selection-anchored reconstruction: works for data=null replacement /
+  // dictation / composition commits and for repeated-character inserts where a
+  // pure prefix/suffix diff would jump to the end.
+  const anchored = selectionAnchoredCaret(before.text, afterText, from, to);
+  if (anchored !== null) return collapsedAt(anchored);
+
+  // Collapsed delete without a reliable inputType (some WebView paths).
+  if (from === to && afterText.length < before.text.length) {
+    const delCount = before.text.length - afterText.length;
+    const delFrom = Math.max(0, from - delCount);
+    if (before.text.slice(0, delFrom) + before.text.slice(from) === afterText) {
+      return collapsedAt(delFrom);
+    }
+    if (before.text.slice(0, from) + before.text.slice(from + delCount) === afterText) {
+      return collapsedAt(from);
+    }
+  }
+
+  // Last-resort prefix/suffix diff. Prefer selectionAnchoredCaret above for
+  // repeated-character inserts; this path is for edits that cannot be explained
+  // as a single splice at the pre-edit selection.
   let prefix = 0;
   const minLen = Math.min(before.text.length, afterText.length);
   while (prefix < minLen && before.text.charCodeAt(prefix) === afterText.charCodeAt(prefix)) {
@@ -572,16 +623,40 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     if (!root) return;
     const next = modelFromDom(root, known);
     const live = selectionFromDom(root, known);
+    const snapshot = beforeInputRef.current;
     let selection: RichComposerSelection;
+
+    const recoverFromSnapshot = (): RichComposerSelection | null => {
+      if (!snapshot || snapshot.text === next.text) return null;
+      return recoverSelectionAfterEdit(snapshot, next.text, lastValidSelectionRef.current);
+    };
+
+    // WebView2 sometimes keeps a live selection but parks it at the end after an
+    // edit that started mid-text (or drops selection entirely). Prefer the
+    // beforeinput / compositionstart snapshot whenever the live caret is not a
+    // plausible post-edit position.
     if (live.ok) {
       selection = live.selection;
+      const recovered = recoverFromSnapshot();
+      if (recovered) {
+        const liveCollapsed = live.selection.start === live.selection.end;
+        const liveAtEnd = liveCollapsed && live.selection.start === next.text.length;
+        const preCollapsed = snapshot!.selection.start === snapshot!.selection.end;
+        const preAtEnd = preCollapsed && snapshot!.selection.start === snapshot!.text.length;
+        const recoveredDiffers = recovered.start !== live.selection.start
+          || recovered.end !== live.selection.end;
+        if (liveAtEnd && !preAtEnd && recoveredDiffers) {
+          selection = recovered;
+          setDomSelection(root, selection);
+        }
+      }
       lastValidSelectionRef.current = selection;
-    } else if (beforeInputRef.current) {
-      selection = recoverSelectionAfterEdit(
-        beforeInputRef.current,
-        next.text,
-        lastValidSelectionRef.current,
-      );
+    } else if (snapshot) {
+      selection = recoverFromSnapshot() ?? {
+        start: Math.min(snapshot.selection.start, next.text.length),
+        end: Math.min(snapshot.selection.end, next.text.length),
+        afterInvocationId: snapshot.selection.afterInvocationId,
+      };
       lastValidSelectionRef.current = selection;
       // Re-apply so the visible caret matches the recovered model offset.
       setDomSelection(root, selection);
@@ -616,6 +691,22 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
   const compositionHandlersRef = useRef({ start: () => {}, end: () => {} });
   compositionHandlersRef.current = {
     start: () => {
+      // Freeze the pre-composition model and caret. Intermediate beforeinput
+      // events are ignored while composing (provisional DOM text would poison
+      // the snapshot), so compositionend blackout recovery depends on this.
+      const root = rootRef.current;
+      if (root) {
+        const live = selectionFromDom(root, known);
+        const selection = live.ok ? live.selection : lastValidSelectionRef.current;
+        if (live.ok) lastValidSelectionRef.current = live.selection;
+        const model = modelFromDom(root, known);
+        beforeInputRef.current = {
+          text: model.text,
+          selection,
+          inputType: "insertCompositionText",
+          data: null,
+        };
+      }
       composingRef.current = true;
       onCompositionStart();
     },
@@ -631,6 +722,8 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     const start = () => compositionHandlersRef.current.start();
     const end = () => compositionHandlersRef.current.end();
     const onBeforeInput = (event: Event) => {
+      // Keep the compositionstart baseline intact. Provisional composition DOM
+      // must not replace the snapshot used when compositionend has no selection.
       if (composingRef.current) return;
       const inputEvent = event as InputEvent;
       const live = selectionFromDom(root, known);
