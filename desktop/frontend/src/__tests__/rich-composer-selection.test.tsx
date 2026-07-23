@@ -864,6 +864,7 @@ console.log("\nrich composer IME compositionend blackout");
   if (!rootEl) throw new Error("missing root");
   const root = createRoot(rootEl);
   const imeKnown = new Map([["ime-1", invocation("ime-1", 0, skillCommand)]]);
+  let changeCount = 0;
   let lastSelection: RichComposerSelection = { start: 0, end: 0 };
 
   function ImeHarness() {
@@ -877,6 +878,7 @@ console.log("\nrich composer IME compositionend blackout");
           placeholder="Message"
           disabled={false}
           onChange={(nextText, nextInvocations) => {
+            changeCount += 1;
             setText(nextText);
             setInvocations(nextInvocations);
           }}
@@ -913,6 +915,7 @@ console.log("\nrich composer IME compositionend blackout");
       document.getSelection()?.removeAllRanges();
       ok(!selectionFromDom(imeRoot, imeKnown).ok, "selection is unavailable at compositionend");
       imeRoot.dispatchEvent(new Event("compositionend", { bubbles: true }));
+      eq(changeCount, 1, "compositionend syncs immediately when the committed DOM is already visible");
       await flushTimers();
     });
 
@@ -928,6 +931,98 @@ console.log("\nrich composer IME compositionend blackout");
       "IME compositionend blackout places caret after committed characters, not pre-composition offset",
     );
     eq(lastSelection.start, 6, "onSelectionChange reports caret after committed IME text");
+  }
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+// Windows WebView2 may dispatch compositionend before the committed DOM and a
+// final non-composing input are visible. The composer must not publish the stale
+// pre-composition model during that gap, or the controlled echo erases the IME
+// candidate before the final input can be synchronized.
+console.log("\nrich composer IME late final input");
+
+{
+  const dom = installDom();
+  const rootEl = document.getElementById("root");
+  if (!rootEl) throw new Error("missing root");
+  const root = createRoot(rootEl);
+  const imeKnown = new Map([["ime-late", invocation("ime-late", 0, skillCommand)]]);
+  let changeCount = 0;
+  let latestText = "hello world";
+  let lastSelection: RichComposerSelection = { start: 0, end: 0 };
+
+  function LateImeHarness() {
+    const [text, setText] = useState("hello world");
+    const [invocations, setInvocations] = useState([invocation("ime-late", 0, skillCommand)]);
+    return (
+      <LocaleProvider>
+        <RichComposerInput
+          text={text}
+          invocations={invocations}
+          placeholder="Message"
+          disabled={false}
+          onChange={(nextText, nextInvocations) => {
+            changeCount += 1;
+            latestText = nextText;
+            setText(nextText);
+            setInvocations(nextInvocations);
+          }}
+          onSelectionChange={(next) => {
+            lastSelection = next;
+          }}
+          onKeyDown={() => {}}
+          onPaste={() => {}}
+          onCompositionStart={() => {}}
+          onCompositionEnd={() => {}}
+        />
+      </LocaleProvider>
+    );
+  }
+
+  await act(async () => {
+    root.render(<LateImeHarness />);
+    await flushTimers();
+  });
+
+  const imeRoot = document.querySelector(".composer__rich-input") as HTMLDivElement | null;
+  ok(imeRoot !== null, "late-input IME harness mounts");
+  if (imeRoot) {
+    await act(async () => {
+      imeRoot.focus();
+      setDomSelection(imeRoot, { start: 5, end: 5 });
+      imeRoot.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+      imeRoot.dispatchEvent(new Event("compositionend", { bubbles: true }));
+      eq(changeCount, 0, "compositionend waits when the committed DOM is not visible yet");
+
+      const sibling = Array.from(imeRoot.childNodes).find(
+        (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").includes("hello world"),
+      ) as Text | undefined;
+      const anchorEl = imeRoot.querySelector<HTMLElement>("[data-composer-caret-anchor]");
+      if (sibling) sibling.textContent = "hello你 world";
+      else if (anchorEl) anchorEl.textContent = "\u00A0hello你 world";
+      document.getSelection()?.removeAllRanges();
+      imeRoot.dispatchEvent(new window.InputEvent("input", {
+        bubbles: true,
+        data: "你",
+        inputType: "insertCompositionText",
+        isComposing: false,
+      }));
+      await flushTimers();
+    });
+
+    eq(changeCount, 1, "late final input performs one authoritative IME model sync");
+    eq(latestText, "hello你 world", "late final input preserves the committed IME candidate");
+    const afterImeRoot = document.querySelector(".composer__rich-input") as HTMLDivElement;
+    eq(
+      modelFromDom(afterImeRoot, imeKnown).text,
+      "hello你 world",
+      "controlled echo keeps the late committed IME text",
+    );
+    eq(lastSelection.start, 6, "late final input restores the caret after the committed IME text");
   }
 
   await act(async () => {

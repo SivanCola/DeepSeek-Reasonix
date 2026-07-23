@@ -530,6 +530,8 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
   const composingRef = useRef(false);
   const lastValidSelectionRef = useRef<RichComposerSelection>({ start: 0, end: 0 });
   const beforeInputRef = useRef<EditSnapshot | null>(null);
+  const compositionFinalizePendingRef = useRef(false);
+  const compositionFinalizeFrameRef = useRef<number | null>(null);
   const known = useMemo(() => new Map(invocations.map((invocation) => [invocation.id, invocation])), [invocations]);
   const ordered = useMemo(() => sortComposerInvocations(invocations), [invocations]);
 
@@ -675,10 +677,22 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     onChange(next.text, next.invocations);
   };
 
+  const cancelCompositionFinalize = () => {
+    compositionFinalizePendingRef.current = false;
+    if (compositionFinalizeFrameRef.current !== null) {
+      cancelAnimationFrame(compositionFinalizeFrameRef.current);
+      compositionFinalizeFrameRef.current = null;
+    }
+  };
+
   const onInput = (event: FormEvent<HTMLDivElement>) => {
-    // Chrome fires the commit's final input event before compositionend with
-    // isComposing still true; the compositionend handler owns that resync.
+    // Chromium variants disagree about final IME event order. Some fire the
+    // commit input before compositionend with isComposing=true; WebView2 may
+    // fire compositionend first and expose the committed DOM in a following
+    // non-composing input. In the latter case this input owns the resync and
+    // cancels the deferred compositionend fallback.
     if (composingRef.current || (event.nativeEvent as InputEvent).isComposing) return;
+    cancelCompositionFinalize();
     syncFromDom();
   };
 
@@ -691,6 +705,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
   const compositionHandlersRef = useRef({ start: () => {}, end: () => {} });
   compositionHandlersRef.current = {
     start: () => {
+      cancelCompositionFinalize();
       // Freeze the pre-composition model and caret. Intermediate beforeinput
       // events are ignored while composing (provisional DOM text would poison
       // the snapshot), so compositionend blackout recovery depends on this.
@@ -713,9 +728,32 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     end: () => {
       composingRef.current = false;
       onCompositionEnd();
-      syncFromDom();
+      const root = rootRef.current;
+      const snapshot = beforeInputRef.current;
+      // Most browsers expose the committed DOM by compositionend. Preserve the
+      // synchronous path in that case so submit/read-after-composition observes
+      // the final text immediately. Windows WebView2 can instead dispatch
+      // compositionend while the DOM still matches the pre-composition snapshot;
+      // only that blackout needs to wait for the following non-composing input
+      // (or the next-frame fallback).
+      if (!root || !snapshot || modelFromDom(root, known).text !== snapshot.text) {
+        cancelCompositionFinalize();
+        syncFromDom();
+        return;
+      }
+      cancelCompositionFinalize();
+      compositionFinalizePendingRef.current = true;
+      compositionFinalizeFrameRef.current = requestAnimationFrame(() => {
+        compositionFinalizeFrameRef.current = null;
+        if (!compositionFinalizePendingRef.current) return;
+        compositionFinalizePendingRef.current = false;
+        syncFromDom();
+      });
     },
   };
+  useLayoutEffect(() => () => {
+    cancelCompositionFinalize();
+  }, []);
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
