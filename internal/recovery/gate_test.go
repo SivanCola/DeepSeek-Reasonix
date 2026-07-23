@@ -1138,6 +1138,82 @@ func TestEpisodeTotalFailuresHardStopAcrossFingerprints(t *testing.T) {
 	}
 }
 
+func TestEpisodeBudgetIsSharedAcrossSubagentTaskIDs(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
+	}}})
+	// Split the Episode failure budget across root and two sub-agents.
+	for i := 0; i < 2; i++ {
+		g.ObserveResult(context.Background(), Observation{
+			TaskID: "root", Tool: "bash", Subject: fmt.Sprintf("root-%d", i), Verification: true,
+			Args: json.RawMessage(fmt.Sprintf(`{"command":"root %d"}`, i)), ErrSummary: "fail",
+		})
+	}
+	for i := 0; i < 2; i++ {
+		g.ObserveResult(context.Background(), Observation{
+			TaskID: "subagent:a", Tool: "bash", Subject: fmt.Sprintf("a-%d", i), Verification: true,
+			Args: json.RawMessage(fmt.Sprintf(`{"command":"a %d"}`, i)), ErrSummary: "fail",
+		})
+	}
+	for i := 0; i < 2; i++ {
+		g.ObserveResult(context.Background(), Observation{
+			TaskID: "subagent:b", Tool: "bash", Subject: fmt.Sprintf("b-%d", i), Verification: true,
+			Args: json.RawMessage(fmt.Sprintf(`{"command":"b %d"}`, i)), ErrSummary: "fail",
+		})
+	}
+	// Sixth failure exhausted the shared Episode budget. A brand-new sub-agent
+	// must not receive a fresh ceiling.
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		TaskID: "subagent:fresh", Tool: "write_file", Subject: "x.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"x.go","content":"x"}`),
+	})
+	if err != nil || dec.Allow || !dec.Blocked || !dec.StopTurn {
+		t.Fatalf("fresh subagent after shared budget = %+v, %v; want Episode stop", dec, err)
+	}
+	if !g.EpisodeStopped("subagent:fresh") || !g.EpisodeStopped("root") {
+		t.Fatal("EpisodeStopped must be true for every TaskID once exhausted")
+	}
+}
+
+func TestReviewerContinueDoesNotResetCumulativeRejects(t *testing.T) {
+	// reject → reject → continue → reject must still count as attempt 3/3 and stop.
+	var reviews atomic.Int32
+	g := NewGate(Options{
+		Reviewer: reviewerFunc(func(_ context.Context, _ *FailureEvent, _ []string, _ Proposal, _ string) (ReviewVerdict, error) {
+			n := reviews.Add(1)
+			if n == 3 {
+				return ReviewVerdict{Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy}, nil
+			}
+			return ReviewVerdict{Outcome: ReviewConfirm, ChangeKind: ChangeUncertain, Rationale: "not proven"}, nil
+		}),
+	})
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Subject: "go test", Verification: true,
+		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
+	})
+	prop := Proposal{Tool: "write_file", Subject: "a.go", Mutates: true, Args: json.RawMessage(`{"path":"a.go"}`)}
+	// Two rejects.
+	for i := 1; i <= 2; i++ {
+		dec, err := g.BeforeMutation(context.Background(), prop)
+		if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, fmt.Sprintf("attempt %d/3", i)) {
+			t.Fatalf("reject %d = %+v, %v", i, dec, err)
+		}
+	}
+	// Reviewer continue (allow once) must not wipe the cumulative count.
+	dec, err := g.BeforeMutation(context.Background(), prop)
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("continue = %+v, %v; want allow without clearing reject budget", dec, err)
+	}
+	// Next reject is attempt 3 and hard-stops the Episode.
+	dec, err = g.BeforeMutation(context.Background(), prop)
+	if err != nil || dec.Allow || !dec.Blocked || !dec.StopTurn {
+		t.Fatalf("third cumulative reject = %+v, %v; want Episode stop", dec, err)
+	}
+	if reviews.Load() < 4 {
+		t.Fatalf("reviews = %d, want at least 4 (2 reject + continue + reject)", reviews.Load())
+	}
+}
+
 func TestStoppedOperationRetriesEscalateToEpisodeStop(t *testing.T) {
 	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
 		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,

@@ -1302,10 +1302,19 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		})
 
 		if len(calls) == 0 {
-			// Recovery finalization succeeded: model summarized without tools.
+			// Recovery finalization produced a summary. Keep it in the session,
+			// but still pause so Goal auto-continue cannot open another Run with
+			// a fresh finalization round. turn_done reports recovery_paused.
 			if recoveryGraceRound {
 				a.maybeCompact(ctx, usage)
-				return nil
+				reason := ""
+				if ctrl := a.recoveryEpisodeControl(); ctrl != nil {
+					_, _ = ctrl.ConsumeFinalization(a.recoveryTaskID)
+				}
+				return &RecoveryPauseError{
+					Message:    "This automatic recovery turn paused to avoid repeated execution. Completed work is kept; send more requirements or reply continue.",
+					StopReason: reason,
+				}
 			}
 			finalizeTask := !a.deliveryScopeActive || deliveryDisposition(text) == deliveryGoalFinal
 			readiness := a.finalReadinessCheckFor(finalizeTask)

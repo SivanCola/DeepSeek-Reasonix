@@ -6,41 +6,40 @@ import (
 	"unicode/utf8"
 )
 
-// taskRuntime is the single source of truth for one task inside the current
-// Episode. Pending proposals, approval ids, and reply channels live only in the
-// waiter table so they cannot be restored as durable authorizations after restart.
-//
-// Failure/reviewer budgets are runtime-only and scoped to EpisodeID. Task grants
-// use TaskScope and intentionally survive Episode rotation.
+// episodeBudget is the host-owned hard-stop budget shared by every TaskID
+// (root and all sub-agents) inside one Recovery Episode. Exact-operation
+// counters remain on taskRuntime; totals and global stop live here so spawning
+// a new sub-agent cannot reset the Episode ceiling.
+type episodeBudget struct {
+	totalFailures        uint8
+	reviewRejects        uint8
+	stoppedOpRetries     uint8
+	stopped              bool
+	stopReason           StopReason
+	finalizationOffered  bool
+	finalizationConsumed bool
+}
+
+func (ep *episodeBudget) clear() {
+	if ep == nil {
+		return
+	}
+	*ep = episodeBudget{}
+}
+
+// taskRuntime holds task-local recovery evidence and exact-operation counters.
+// Episode-level totals, reviewer rejects, and hard stop live on Gate.episode.
 type taskRuntime struct {
 	episodeID string
 
 	// operationFailures counts qualifying failures per exact fingerprint.
 	operationFailures map[string]uint8
-	// totalFailures counts all qualifying execution failures since the last
-	// real progress inside this Episode. Fingerprint changes do not reset it.
-	totalFailures uint8
-	// reviewRejects is the cumulative reviewer rejection count for this Episode.
-	// Different candidate proposals share the budget.
-	reviewRejects uint8
 	// stoppedOps records fingerprints that already hit the per-operation limit.
 	stoppedOps map[string]struct{}
-	// stoppedOpRetries counts re-proposals of already-stopped operations.
-	stoppedOpRetries uint8
 
-	// lastFailure is reviewer/diagnostic evidence for the most recent failure.
-	// It does not itself act as a task-wide lock.
+	// lastFailure is reviewer/diagnostic evidence for the most recent failure
+	// on this task. It does not itself act as a task-wide lock.
 	lastFailure *activeFailure
-
-	// episodeStopped is true when the Episode hard limit for this task was hit.
-	episodeStopped bool
-	stopReason     StopReason
-	// finalizationOffered is true after the host injects the one-shot
-	// summarize-only nudge for this Episode stop.
-	finalizationOffered bool
-	// finalizationConsumed is true after the model used its finalization round
-	// but still attempted tools.
-	finalizationConsumed bool
 
 	guidanceSent bool
 	// taskGrants are runtime-only semantic authorizations. Snapshot/Restore never
@@ -50,7 +49,7 @@ type taskRuntime struct {
 }
 
 // activeFailure is the latest failure evidence used by the reviewer and UI.
-// Per-operation and Episode budgets live on taskRuntime, not here.
+// Per-operation counts live on taskRuntime; Episode budgets live on Gate.
 type activeFailure struct {
 	evidence      FailureEvent
 	safeRetryUsed bool
@@ -67,10 +66,7 @@ func (st *taskRuntime) empty() bool {
 	if st == nil {
 		return true
 	}
-	if st.lastFailure != nil || st.guidanceSent || st.reviewRejects > 0 {
-		return false
-	}
-	if st.totalFailures > 0 || st.stoppedOpRetries > 0 || st.episodeStopped {
+	if st.lastFailure != nil || st.guidanceSent {
 		return false
 	}
 	if len(st.operationFailures) > 0 || len(st.stoppedOps) > 0 {
@@ -111,29 +107,16 @@ func (st *taskRuntime) hasTaskGrants() bool {
 	return st != nil && len(st.taskGrants) > 0
 }
 
-// clearNoProgressBudgets drops failure, reviewer, and stop counters after real
-// progress or an Episode rotation. Task grants are intentionally preserved.
-func (st *taskRuntime) clearNoProgressBudgets() {
+// clearTaskRecoveryState drops task-local operation counters and evidence.
+// Episode-level totals are cleared separately on the Gate.
+func (st *taskRuntime) clearTaskRecoveryState() {
 	if st == nil {
 		return
 	}
 	st.operationFailures = nil
-	st.totalFailures = 0
-	st.reviewRejects = 0
 	st.stoppedOps = nil
-	st.stoppedOpRetries = 0
 	st.lastFailure = nil
-	st.episodeStopped = false
-	st.stopReason = StopReasonNone
-	st.finalizationOffered = false
-	st.finalizationConsumed = false
 	st.guidanceSent = false
-}
-
-// clearFailure is retained as the semantic "progress cleared recovery state"
-// helper used by success paths and revise.
-func (st *taskRuntime) clearFailure() {
-	st.clearNoProgressBudgets()
 }
 
 func (st *taskRuntime) ensureMaps() {
@@ -176,8 +159,6 @@ func (st *taskRuntime) markOperationStopped(fp string) {
 }
 
 func (st *taskRuntime) failureCount() uint8 {
-	// Compatibility view: expose the latest operation's count when present,
-	// otherwise the Episode total. Prefer the active failure fingerprint.
 	if st == nil {
 		return 0
 	}
@@ -189,7 +170,7 @@ func (st *taskRuntime) failureCount() uint8 {
 			}
 		}
 	}
-	return st.totalFailures
+	return 0
 }
 
 func (st *taskRuntime) safeRetryAvailable() bool {
@@ -225,8 +206,6 @@ func cloneFailureEvent(ev *FailureEvent, af *activeFailure, st *taskRuntime) *Fa
 		fp := strings.TrimSpace(ev.Fingerprint)
 		if st != nil && fp != "" {
 			cp.RepeatCount = int(st.operationFailureCount(fp))
-		} else if st != nil {
-			cp.RepeatCount = int(st.totalFailures)
 		}
 		if af.safeRetryUsed {
 			cp.SafeRetryLeft = 0
@@ -241,19 +220,15 @@ func cloneFailureEvent(ev *FailureEvent, af *activeFailure, st *taskRuntime) *Fa
 }
 
 // toTaskState projects live runtime truth for debugging / Snapshot().
+// Episode-level fields are filled by the gate after this returns.
 func (st *taskRuntime) toTaskState(phase Phase) *TaskState {
 	if st == nil || st.empty() {
 		return nil
 	}
 	out := &TaskState{
 		Phase:        phase,
-		ReviewBlocks: int(st.reviewRejects),
 		TailInjected: st.guidanceSent,
 		EpisodeID:    st.episodeID,
-		StopReason:   string(st.stopReason),
-	}
-	if st.episodeStopped {
-		out.EpisodeStopped = true
 	}
 	if st.lastFailure != nil {
 		out.Failure = cloneFailureEvent(&st.lastFailure.evidence, st.lastFailure, st)
@@ -269,7 +244,7 @@ func (st *taskRuntime) toTaskState(phase Phase) *TaskState {
 }
 
 // toPersistenceState projects only historical evidence. Active locks, Episode
-// counters, generation, waiters, and task grants never land on disk.
+// counters, generation, and waiters never land on disk.
 func (st *taskRuntime) toPersistenceState() *TaskState {
 	if st == nil || st.lastFailure == nil {
 		return nil
@@ -321,16 +296,6 @@ func taskRuntimeFromState(st *TaskState) *taskRuntime {
 	return &taskRuntime{
 		lastFailure: af,
 	}
-}
-
-func clampU8(v int) uint8 {
-	if v <= 0 {
-		return 0
-	}
-	if v > 255 {
-		return 255
-	}
-	return uint8(v)
 }
 
 func trimDiagnosis(af *activeFailure) {

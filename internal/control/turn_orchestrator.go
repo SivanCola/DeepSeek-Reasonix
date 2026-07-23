@@ -301,11 +301,8 @@ func (o *turnOrchestrator) runGoalLoopWithRawDisplay(ctx context.Context, input,
 	if err := o.runTurnWithRawDisplay(ctx, input, raw, display); err != nil {
 		if ctx.Err() != nil {
 			o.c.stopGoal(GoalStatusStopped)
-		} else {
-			var readiness *agent.FinalReadinessError
-			if errors.As(err, &readiness) {
-				o.c.stopGoal(GoalStatusBlocked)
-			}
+		} else if goalShouldBlockOnError(err) {
+			o.c.stopGoal(GoalStatusBlocked)
 		}
 		return err
 	}
@@ -316,15 +313,23 @@ func (o *turnOrchestrator) runEditedGoalLoopWithRawDisplay(ctx context.Context, 
 	if err := o.runEditedTurnWithRawDisplay(ctx, input, raw, display, original); err != nil {
 		if ctx.Err() != nil {
 			o.c.stopGoal(GoalStatusStopped)
-		} else {
-			var readiness *agent.FinalReadinessError
-			if errors.As(err, &readiness) {
-				o.c.stopGoal(GoalStatusBlocked)
-			}
+		} else if goalShouldBlockOnError(err) {
+			o.c.stopGoal(GoalStatusBlocked)
 		}
 		return err
 	}
 	return o.continueGoal(ctx)
+}
+
+// goalShouldBlockOnError reports host pauses that must stop Goal auto-continue
+// until the next real user turn (delivery readiness or Auto recovery pause).
+func goalShouldBlockOnError(err error) bool {
+	var readiness *agent.FinalReadinessError
+	if errors.As(err, &readiness) {
+		return true
+	}
+	var pause *agent.RecoveryPauseError
+	return errors.As(err, &pause)
 }
 
 func (o *turnOrchestrator) continueGoal(ctx context.Context) error {

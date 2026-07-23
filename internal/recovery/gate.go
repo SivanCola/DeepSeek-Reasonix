@@ -45,13 +45,13 @@ type Options struct {
 }
 
 // Gate is the Auto Guard coordinator for one controller session.
-// Root, foreground sub-agents, and background writer sub-agents share it;
-// state is isolated by TaskID. Pure routing lives in Decide; this type owns
-// state updates, reviewer calls, approval waiters, and persistence.
+// Root, foreground sub-agents, and background writer sub-agents share it.
+// Exact-operation failure counts are isolated by TaskID; Episode totals,
+// reviewer rejects, and hard stop are shared on episode so a new sub-agent
+// cannot reset the hard ceiling. Pure routing lives in Decide.
 //
-// EpisodeID is host-owned temporary execution-round state. It controls failure,
-// reviewer, and stop budgets. TaskScopeID continues to scope Goal and task
-// grants. Episode/generation/waiters never persist.
+// EpisodeID is host-owned temporary execution-round state. TaskScopeID continues
+// to scope Goal and task grants. Episode/generation/waiters never persist.
 type Gate struct {
 	mu      sync.Mutex
 	opts    Options
@@ -66,9 +66,11 @@ type Gate struct {
 
 	// episodeSeq / episodeID identify the current host-owned Recovery Episode.
 	// generation invalidates in-flight tool observations across mode switches.
+	// episode holds totals and hard-stop shared by every TaskID in the Episode.
 	episodeSeq uint64
 	episodeID  string
 	generation uint64
+	episode    episodeBudget
 	lastMode   string
 	haveMode   bool
 
@@ -220,7 +222,9 @@ func (g *Gate) beginEpisodeLockedCollect(lock bool) []dismissedWaiter {
 		g.generation = 1
 	}
 	g.metrics.EpisodeRotations++
-	// Clear no-progress budgets per task; preserve task grants.
+	// Episode-level hard-stop budgets reset for every TaskID together.
+	g.episode.clear()
+	// Clear task-local operation counters; preserve task grants.
 	for id, st := range g.tasks {
 		if st == nil {
 			delete(g.tasks, id)
@@ -228,7 +232,7 @@ func (g *Gate) beginEpisodeLockedCollect(lock bool) []dismissedWaiter {
 		}
 		grants := st.taskGrants
 		grantScope := st.taskGrantScope
-		st.clearNoProgressBudgets()
+		st.clearTaskRecoveryState()
 		st.episodeID = g.episodeID
 		st.taskGrants = grants
 		st.taskGrantScope = grantScope
@@ -385,6 +389,13 @@ func (g *Gate) snapshotLocked(persistence bool) Snapshot {
 				cp.ApprovalID = aid
 				cp.Phase = PhaseAwaitingDecision
 			}
+			// Project shared Episode budgets onto each task for live debug views.
+			cp.ReviewBlocks = int(g.episode.reviewRejects)
+			cp.EpisodeStopped = g.episode.stopped
+			cp.StopReason = string(g.episode.stopReason)
+			if cp.EpisodeID == "" {
+				cp.EpisodeID = g.episodeID
+			}
 		}
 		out.Tasks[id] = cp
 	}
@@ -417,6 +428,7 @@ func (g *Gate) Restore(snap Snapshot) {
 	if g.generation == 0 {
 		g.generation = 1
 	}
+	g.episode.clear()
 	g.metrics.EpisodeRotations++
 	for id, st := range snap.Tasks {
 		rt := taskRuntimeFromState(st)
@@ -490,11 +502,8 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 			st.addTaskGrant(pending.TaskGrantKey)
 			g.metrics.TaskGrantContinues++
 		}
-		if st != nil {
-			// Accepting a candidate clears reviewer rejects; execution success
-			// later clears the full no-progress budget.
-			st.reviewRejects = 0
-		}
+		// Human continue does not reset Episode reviewer rejects; only real
+		// mutation/verification progress, a new Episode, or revise does.
 		g.metrics.HumanContinues++
 	case ActionRevise:
 		// Revise rejects the pending action and starts a fresh Recovery Episode
@@ -555,23 +564,15 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 
 	st := g.ensureTaskLocked(taskID)
 
-	// Successful host-recognized verification clears no-progress budgets.
+	// Successful host-recognized verification clears Episode no-progress budgets.
 	if obs.Success && obs.Verification {
-		st.clearNoProgressBudgets()
-		st.episodeID = g.episodeID
-		if !st.hasTaskGrants() {
-			delete(g.tasks, taskID)
-		}
+		g.clearNoProgressLocked(taskID, st)
 		g.persistUnlocked()
 		return ""
 	}
 	// Any successful mutation ends the current no-progress budget.
 	if obs.Success && obs.Mutates {
-		st.clearNoProgressBudgets()
-		st.episodeID = g.episodeID
-		if !st.hasTaskGrants() {
-			delete(g.tasks, taskID)
-		}
+		g.clearNoProgressLocked(taskID, st)
 		g.persistUnlocked()
 		return ""
 	}
@@ -596,16 +597,17 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 	if st.operationFailures[fp] < 255 {
 		st.operationFailures[fp]++
 	}
-	if st.totalFailures < 255 {
-		st.totalFailures++
+	// Episode totals accumulate across every TaskID (root + sub-agents).
+	if g.episode.totalFailures < 255 {
+		g.episode.totalFailures++
 	}
 	if st.operationFailures[fp] >= MaxOperationFailures {
 		st.markOperationStopped(fp)
 		g.metrics.OperationStops++
 	}
-	if st.totalFailures >= MaxEpisodeFailures {
-		st.episodeStopped = true
-		st.stopReason = StopReasonEpisodeFailures
+	if g.episode.totalFailures >= MaxEpisodeFailures {
+		g.episode.stopped = true
+		g.episode.stopReason = StopReasonEpisodeFailures
 		g.metrics.EpisodeFailureStops++
 	}
 
@@ -692,16 +694,18 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 	}
 }
 
-func (g *Gate) noteStoppedOpRetry(taskID, fp string, gen uint64, proposal Proposal) (Decision, bool) {
+func (g *Gate) noteStoppedOpRetry(taskID, _ string, gen uint64, proposal Proposal) (Decision, bool) {
 	g.mu.Lock()
-	st := g.ensureTaskLocked(taskID)
-	if st.stoppedOpRetries < 255 {
-		st.stoppedOpRetries++
+	_ = g.ensureTaskLocked(taskID)
+	if g.episode.stoppedOpRetries < 255 {
+		g.episode.stoppedOpRetries++
 	}
-	retries := st.stoppedOpRetries
+	retries := g.episode.stoppedOpRetries
 	if retries >= MaxStoppedOperationRetries {
-		st.episodeStopped = true
-		st.stopReason = StopReasonStoppedOpRetries
+		g.episode.stopped = true
+		if g.episode.stopReason == StopReasonNone {
+			g.episode.stopReason = StopReasonStoppedOpRetries
+		}
 		g.metrics.StoppedOpRetryStops++
 		g.mu.Unlock()
 		g.persist()
@@ -714,24 +718,22 @@ func (g *Gate) noteStoppedOpRetry(taskID, fp string, gen uint64, proposal Propos
 
 func (g *Gate) stopTurnDecision(taskID string, gen uint64, reason StopReason, proposal Proposal) Decision {
 	g.mu.Lock()
-	st := g.ensureTaskLocked(taskID)
-	st.episodeStopped = true
-	if st.stopReason == StopReasonNone {
-		st.stopReason = reason
+	_ = g.ensureTaskLocked(taskID)
+	g.episode.stopped = true
+	if g.episode.stopReason == StopReasonNone {
+		g.episode.stopReason = reason
 	}
-	if reason == StopReasonEpisodeFailures {
-		// already counted in ObserveResult when total hits limit
-	}
+	stopReason := g.episode.stopReason
 	g.mu.Unlock()
 	g.persist()
-	msg := episodeStopMessage(reason, proposal)
+	msg := episodeStopMessage(stopReason, proposal)
 	return Decision{
 		Allow:      false,
 		Blocked:    true,
 		Message:    msg,
 		Generation: gen,
 		StopTurn:   true,
-		StopReason: string(reason),
+		StopReason: string(stopReason),
 	}
 }
 
@@ -742,44 +744,58 @@ func (g *Gate) MarkFinalizationOffered(taskID string) {
 	if g == nil {
 		return
 	}
-	taskID = normalizeTaskID(taskID)
+	_ = taskID
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	st := g.ensureTaskLocked(taskID)
-	st.finalizationOffered = true
+	if g.episode.stopped {
+		g.episode.finalizationOffered = true
+	}
 }
 
-// FinalizationConsumed reports whether the finalization round already ran and
+// ConsumeFinalization reports whether the finalization round already ran and
 // the model still attempted tools. Also marks it consumed on first true check
-// after offered.
+// after offered. Finalization is Episode-scoped (shared by all TaskIDs).
 func (g *Gate) ConsumeFinalization(taskID string) (offered, alreadyConsumed bool) {
 	if g == nil {
 		return false, false
 	}
-	taskID = normalizeTaskID(taskID)
+	_ = taskID
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	st := g.tasks[taskID]
-	if st == nil || !st.episodeStopped {
+	if !g.episode.stopped {
 		return false, false
 	}
-	offered = st.finalizationOffered
-	alreadyConsumed = st.finalizationConsumed
+	offered = g.episode.finalizationOffered
+	alreadyConsumed = g.episode.finalizationConsumed
 	if offered && !alreadyConsumed {
-		st.finalizationConsumed = true
+		g.episode.finalizationConsumed = true
 	}
 	return offered, alreadyConsumed
 }
 
-// EpisodeStopped reports whether the given task has exhausted its Episode.
+// EpisodeStopped reports whether the shared Recovery Episode is exhausted for
+// any TaskID (root or sub-agent).
 func (g *Gate) EpisodeStopped(taskID string) bool {
 	if g == nil {
 		return false
 	}
+	_ = taskID
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	st := g.tasks[normalizeTaskID(taskID)]
-	return st != nil && st.episodeStopped
+	return g.episode.stopped
+}
+
+// clearNoProgressLocked clears Episode totals and the observing task's local
+// counters after real mutation/verification success. Caller holds g.mu.
+func (g *Gate) clearNoProgressLocked(taskID string, st *taskRuntime) {
+	g.episode.clear()
+	if st != nil {
+		st.clearTaskRecoveryState()
+		st.episodeID = g.episodeID
+		if !st.hasTaskGrants() {
+			delete(g.tasks, taskID)
+		}
+	}
 }
 
 // classify builds pure Facts for Decide. It never calls the model or UI.
@@ -808,9 +824,20 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 	var failure *FailureEvent
 	var diagNotes []string
 	stateChanged := false
+	// Shared Episode budget applies even when this TaskID has no local state.
+	facts.EpisodeStopped = g.episode.stopped
+	facts.StopReason = g.episode.stopReason
+	facts.EpisodeFailureCount = g.episode.totalFailures
+	facts.ReviewRejects = g.episode.reviewRejects
+	// Any qualifying failure in this Episode arms recovery for every TaskID so
+	// a sub-agent cannot skip the reviewer after the root already failed.
+	if g.episode.totalFailures > 0 {
+		facts.HasActiveFailure = true
+	}
 	if st != nil && !facts.AutoMode {
-		if !st.empty() {
-			st.clearNoProgressBudgets()
+		if !st.empty() || g.episode.totalFailures > 0 || g.episode.reviewRejects > 0 || g.episode.stopped {
+			st.clearTaskRecoveryState()
+			g.episode.clear()
 			stateChanged = true
 		}
 		if !st.hasTaskGrants() && st.empty() {
@@ -823,7 +850,7 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 		if st.episodeID != "" && st.episodeID != g.episodeID {
 			grants := st.taskGrants
 			grantScope := st.taskGrantScope
-			st.clearNoProgressBudgets()
+			st.clearTaskRecoveryState()
 			st.taskGrants = grants
 			st.taskGrantScope = grantScope
 			st.episodeID = g.episodeID
@@ -831,10 +858,6 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 		} else if st.episodeID == "" {
 			st.episodeID = g.episodeID
 		}
-		facts.EpisodeStopped = st.episodeStopped
-		facts.StopReason = st.stopReason
-		facts.EpisodeFailureCount = st.totalFailures
-		facts.ReviewRejects = st.reviewRejects
 		facts.OperationAlreadyStopped = st.isOperationStopped(fp)
 		facts.FailureCount = st.operationFailureCount(fp)
 		if st.lastFailure != nil {
@@ -848,10 +871,6 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 			if facts.SameFailedOperation && facts.FailureCount == 0 {
 				// Evidence exists but count was cleared somehow — treat as 1.
 				facts.FailureCount = 1
-			}
-			if !facts.SameFailedOperation && facts.FailureCount == 0 {
-				// Different operation: do not inherit the prior op's count for
-				// RouteStop, but keep HasActiveFailure for reviewer.
 			}
 			if IsSafeVerificationRetry(failure, proposal) && st.safeRetryAvailable() {
 				facts.SafeRetryAvailable = true
@@ -903,12 +922,13 @@ func (g *Gate) ensureTaskLocked(taskID string) *taskRuntime {
 }
 
 func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, gen uint64, proposal Proposal, failure *FailureEvent, diagNotes []string) (Decision, error) {
-	// If reviewer budget already exhausted, stop the turn.
+	// If Episode reviewer budget already exhausted, stop the turn.
 	g.mu.Lock()
-	st := g.tasks[taskID]
-	if st != nil && st.reviewRejects >= uint8(g.opts.MaxReviewBlocks) {
-		st.episodeStopped = true
-		st.stopReason = StopReasonReviewRejects
+	if g.episode.reviewRejects >= uint8(g.opts.MaxReviewBlocks) {
+		g.episode.stopped = true
+		if g.episode.stopReason == StopReasonNone {
+			g.episode.stopReason = StopReasonReviewRejects
+		}
 		g.metrics.ReviewStops++
 		g.mu.Unlock()
 		return g.stopTurnDecision(taskID, gen, StopReasonReviewRejects, proposal), nil
@@ -943,15 +963,11 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, gen uint
 		}
 		verdict = normalizeVerdict(v, failure, proposal, diagNotes)
 		if verdict.Outcome == ReviewContinue && reviewerContinueKind(verdict.ChangeKind) {
+			// Reviewer Continue does NOT reset cumulative rejects. Only real
+			// mutation/verification success, a new Episode, or revise does.
 			g.mu.Lock()
 			g.metrics.ReviewContinues++
-			if current := g.tasks[taskID]; current != nil {
-				// Reviewer accept clears reviewer rejects; execution success
-				// later clears the full no-progress budget.
-				current.reviewRejects = 0
-			}
 			g.mu.Unlock()
-			g.persist()
 			return Decision{
 				Allow:                    true,
 				AuthorizePlanReplacement: proposal.PlanTransition,
@@ -971,9 +987,9 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, gen uint
 			}, nil
 		}
 		g.mu.Lock()
-		if current := g.tasks[taskID]; current != nil {
-			current.episodeStopped = true
-			current.stopReason = StopReasonReviewRejects
+		g.episode.stopped = true
+		if g.episode.stopReason == StopReasonNone {
+			g.episode.stopReason = StopReasonReviewRejects
 		}
 		g.metrics.ReviewStops++
 		g.mu.Unlock()
@@ -1288,11 +1304,11 @@ func headlessBlockerMessage(pending PendingProposal, failure *FailureEvent) stri
 func (g *Gate) recordReviewBlock(taskID string, verdict ReviewVerdict) int {
 	g.mu.Lock()
 	st := g.ensureTaskLocked(taskID)
-	// Cumulative across all candidates inside the Episode.
-	if st.reviewRejects < 255 {
-		st.reviewRejects++
+	// Cumulative across all candidates and TaskIDs inside the Episode.
+	if g.episode.reviewRejects < 255 {
+		g.episode.reviewRejects++
 	}
-	blocks := int(st.reviewRejects)
+	blocks := int(g.episode.reviewRejects)
 	if st.lastFailure != nil {
 		note := "Auto Guard reviewer blocked the proposal: " + firstNonEmpty(verdict.Rationale, string(verdict.ChangeKind))
 		appendDiagnosisNote(st.lastFailure, note)
@@ -1307,15 +1323,6 @@ func reviewerBlockerMessage(verdict ReviewVerdict, attempt, limit int) string {
 	return fmt.Sprintf(
 		"blocked: Auto plan reviewer could not accept this transition (attempt %d/%d): %s. Continue the current plan, propose a task-aligned plan, or ask the user about a genuine product choice.",
 		attempt, limit, reason,
-	)
-}
-
-func reviewerStopMessage(verdict ReviewVerdict, attempts int, proposal Proposal) string {
-	reason := firstNonEmpty(verdict.Rationale, "the proposed transition remains technically unresolved")
-	operation := clip(firstNonEmpty(proposal.Subject, proposal.Tool), 240)
-	return fmt.Sprintf(
-		"blocked: Auto stopped retrying this proposal after %d reviewer rejections: %s (%s). Do not retry this proposal in the current turn; diagnose it or use a different task-aligned approach. Other operations remain available. Only use the ask tool for a genuine user-owned choice.",
-		attempts, operation, reason,
 	)
 }
 
