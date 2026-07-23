@@ -74,8 +74,8 @@ read/diff 证据。
 `read_only_task`, `read_session`, `read_skill`, `remember`, `research`,
 `review`, `run_skill`, `security_review`, `slash_command`, `task`.
 
-`use_capability`（`action` = `list` | `inspect` | `call` | `decline`）：Delivery Executor +
-双模型 Planner（Balanced 仅 Planner；Economy 不启用）。
+`use_capability`（`action` = `list` | `inspect` | `call` | `decline`）：Delivery Executor，
+以及 Balanced 双模型会话中的 Planner 和 Executor；Economy 不启用。
 
 `internal/boot.TestBootToolContractMatchesProviderVisibleSurface` 会校验真实 boot registry 合约和 provider request 一致，包括 read-only 标记和 canonical schema。
 

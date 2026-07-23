@@ -9,11 +9,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"reasonix/internal/capability"
+	"reasonix/internal/config"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/mcplaunch"
@@ -1203,6 +1205,120 @@ func TestPlannerSchemaStableAcrossProxyPresence(t *testing.T) {
 			t.Fatalf("reg2 still exposes %s", name)
 		}
 	}
+}
+
+func TestMCPCapabilityRuntimeTracksHotLifecycleAndSharedHostRevocation(t *testing.T) {
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var oldCalls atomic.Int32
+	oldServer := explicitReaderMCPServer(t, nil, &oldCalls)
+	defer oldServer.Close()
+	var newCalls atomic.Int32
+	newServer := explicitReaderMCPServer(t, nil, &newCalls)
+	defer newServer.Close()
+
+	host := plugin.NewHost()
+	defer host.Close()
+	runtime := NewMCPCapabilityRuntime(ctx, host, nil, tool.NewRegistry(), nil)
+	frontend := runtime.NewFrontend(nil, nil)
+	entry := config.PluginEntry{Name: "hot", Type: "http", URL: oldServer.URL, Source: config.MCPSourceUserConfig}
+	oldSpec := plugin.Spec{Name: "hot", Type: "http", URL: oldServer.URL, Authorized: true}
+
+	// Hot add must appear without rebuilding the provider-visible frontend.
+	runtime.UpsertServer(entry, oldSpec, true)
+	listed, err := frontend.Execute(ctx, json.RawMessage(`{"action":"list"}`))
+	if err != nil || !strings.Contains(listed, `"name": "hot"`) {
+		t.Fatalf("hot-added list = %q, %v", listed, err)
+	}
+	call := json.RawMessage(`{"action":"call","capability_id":"mcp-tool:hot/search","arguments":{"q":"x"}}`)
+	if _, err := frontend.Execute(ctx, call); err != nil {
+		t.Fatalf("old endpoint call: %v", err)
+	}
+	if oldCalls.Load() != 1 {
+		t.Fatalf("old endpoint tool calls = %d, want 1", oldCalls.Load())
+	}
+
+	// Updating the same stable server identity clears old live metadata and the
+	// next disconnected call must use the replacement endpoint.
+	host.Remove("hot")
+	entry.URL = newServer.URL
+	newSpec := plugin.Spec{Name: "hot", Type: "http", URL: newServer.URL, Authorized: true}
+	runtime.UpsertServer(entry, newSpec, true)
+	if runtime.ConnectedProxyTools() != nil {
+		t.Fatal("endpoint update retained stale live tool snapshot")
+	}
+	if _, err := frontend.Execute(ctx, call); err != nil {
+		t.Fatalf("new endpoint call: %v", err)
+	}
+	if newCalls.Load() != 1 || oldCalls.Load() != 1 {
+		t.Fatalf("endpoint calls old=%d new=%d, want 1/1", oldCalls.Load(), newCalls.Load())
+	}
+
+	// Per-controller disable wins over a still-connected shared Host client.
+	// No reconnect or tools/call may occur, and live routing state is revoked.
+	if !host.HasClient("hot") {
+		t.Fatal("test requires shared Host client to remain connected")
+	}
+	if !runtime.SetServerEnabled("hot", false) {
+		t.Fatal("disable did not find hot server")
+	}
+	if runtime.ConnectedProxyTools() != nil {
+		t.Fatal("disable retained live proxy tools")
+	}
+	blocked, err := frontend.Execute(ctx, call)
+	if err != nil || !strings.Contains(blocked, "disabled") {
+		t.Fatalf("disabled shared-Host call = %q, %v, want fail-closed", blocked, err)
+	}
+	if newCalls.Load() != 1 {
+		t.Fatalf("disabled shared-Host server executed %d calls, want 1", newCalls.Load())
+	}
+	listed, err = frontend.Execute(ctx, json.RawMessage(`{"action":"list"}`))
+	if err != nil || !strings.Contains(listed, `"status": "disabled"`) || !strings.Contains(listed, `"connected": false`) {
+		t.Fatalf("disabled list = %q, %v", listed, err)
+	}
+
+	// Uninstall removes discovery and any possibility of a stale reconnect.
+	if !runtime.RemoveServer("hot") {
+		t.Fatal("remove did not find hot server")
+	}
+	listed, err = frontend.Execute(ctx, json.RawMessage(`{"action":"list"}`))
+	if err != nil || strings.Contains(listed, `"name": "hot"`) {
+		t.Fatalf("removed server leaked through list = %q, %v", listed, err)
+	}
+}
+
+func TestMCPCapabilityRuntimeConcurrentUpdatesAndSnapshots(t *testing.T) {
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	runtime := NewMCPCapabilityRuntime(context.Background(), plugin.NewHost(), nil, tool.NewRegistry(), nil)
+	defer runtime.host.Close()
+	frontend := runtime.NewFrontend(nil, nil)
+	entry := config.PluginEntry{Name: "race", Type: "http", Source: config.MCPSourceUserConfig}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			entry.URL = fmt.Sprintf("http://127.0.0.1:%d", 10000+i)
+			runtime.UpsertServer(entry, plugin.Spec{Name: "race", Type: "http", URL: entry.URL, Authorized: true}, true)
+			runtime.state.setLiveTools("race", []plugin.CachedTool{{Name: "query", ReadOnly: true}})
+			runtime.SetServerEnabled("race", i%2 == 0)
+			if i%10 == 0 {
+				runtime.RemoveServer("race")
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_, _ = frontend.Execute(context.Background(), json.RawMessage(`{"action":"list"}`))
+			_, _, _, _ = runtime.CatalogState()
+			_ = runtime.ConnectedProxyTools()
+		}
+	}()
+	wg.Wait()
 }
 
 func TestUnauthorizedNonProjectMCPZeroProcessStart(t *testing.T) {

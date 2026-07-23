@@ -6858,7 +6858,21 @@ func disconnectMCPServerControllers(name string, preferred control.SessionAPI, c
 	for _, target := range controllers {
 		target.ctrl.UnregisterMCPServerTools(name)
 	}
-	return preferred != nil && preferred.DisconnectMCPServer(name)
+	disconnected := false
+	if preferred != nil {
+		disconnected = preferred.DisconnectMCPServer(name)
+	}
+	// Every controller owns an independent capability runtime even when the Host
+	// process is shared. Reconcile each one after the preferred controller drops
+	// the client so remove/update/rollback cannot leave sibling tabs with stale
+	// specs or live-tool snapshots.
+	for _, target := range controllers {
+		if target.ctrl == preferred {
+			continue
+		}
+		disconnected = target.ctrl.DisconnectMCPServer(name) || disconnected
+	}
+	return disconnected
 }
 
 func (a *App) clearMCPServerTabState(name string, controllers []mcpControllerTarget) {
@@ -7956,6 +7970,10 @@ func (a *App) InstallMCPServer(in MCPServerInput) (plugin.MCPInstallResult, erro
 	if err := persistMCPInstallActivation(entry, root); err != nil {
 		disconnectMCPServerControllers(entry.Name, ctrl, controllers)
 		_, rollbackErr := a.removeDesktopMCPServer(root, entry.Name)
+		// The first disconnect happened while the just-saved config still
+		// existed, so controller runtimes retained it as disabled. Reconcile once
+		// more after rollback removes the config to prevent a phantom proxy entry.
+		disconnectMCPServerControllers(entry.Name, ctrl, controllers)
 		return plugin.MCPInstallResult{}, errors.Join(err, rollbackErr)
 	}
 	return plugin.ReadyInstallResult(entry.Name, toolCount), nil

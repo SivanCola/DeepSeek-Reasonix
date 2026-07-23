@@ -2544,6 +2544,48 @@ func TestRegisterMCPServerOnDemandDefersConnectionUntilFirstUse(t *testing.T) {
 	}
 }
 
+func TestControllerMCPHotLifecycleUpdatesCapabilityRuntime(t *testing.T) {
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	host := plugin.NewHost()
+	defer host.Close()
+	reg := tool.NewRegistry()
+	runtime := agent.NewMCPCapabilityRuntime(context.Background(), host, nil, reg, nil)
+	ctrl := New(Options{
+		Host: host, Registry: reg, PluginCtx: context.Background(), CapabilityRuntime: runtime,
+	})
+	frontend := runtime.NewFrontend(nil, nil)
+	entry := config.PluginEntry{
+		Name: "hot", Type: "http", URL: "http://127.0.0.1:1", Source: config.MCPSourceUserConfig,
+	}
+
+	if _, err := ctrl.RegisterMCPServerOnDemand(entry); err != nil {
+		t.Fatalf("RegisterMCPServerOnDemand: %v", err)
+	}
+	listed, err := frontend.Execute(context.Background(), json.RawMessage(`{"action":"list"}`))
+	if err != nil || !strings.Contains(listed, `"name": "hot"`) {
+		t.Fatalf("hot add list = %q, %v", listed, err)
+	}
+
+	if !ctrl.UnregisterMCPServerTools("hot") {
+		t.Fatal("UnregisterMCPServerTools returned false")
+	}
+	listed, err = frontend.Execute(context.Background(), json.RawMessage(`{"action":"list"}`))
+	if err != nil || !strings.Contains(listed, `"status": "disabled"`) {
+		t.Fatalf("disabled list = %q, %v", listed, err)
+	}
+
+	if _, err := ctrl.RegisterMCPServerOnDemand(entry); err != nil {
+		t.Fatalf("re-enable RegisterMCPServerOnDemand: %v", err)
+	}
+	if !ctrl.DisconnectMCPServer("hot") {
+		t.Fatal("DisconnectMCPServer returned false for runtime-only placeholder")
+	}
+	listed, err = frontend.Execute(context.Background(), json.RawMessage(`{"action":"list"}`))
+	if err != nil || strings.Contains(listed, `"name": "hot"`) {
+		t.Fatalf("runtime-only disconnect leaked list entry = %q, %v", listed, err)
+	}
+}
+
 func TestAddMCPServerAuthorizesExplicitUserAddBeforeConnecting(t *testing.T) {
 	var configured plugin.Spec
 	c := New(Options{
@@ -2697,7 +2739,12 @@ tier = "lazy"
 
 	reg := tool.NewRegistry()
 	reg.Add(fakeControlTool{name: "mcp__mock__connect"})
-	c := New(Options{Host: plugin.NewHost(), Registry: reg})
+	host := plugin.NewHost()
+	defer host.Close()
+	spec := plugin.Spec{Name: "mock", Command: "mock-mcp", Authorized: true}
+	runtime := agent.NewMCPCapabilityRuntime(context.Background(), host, []plugin.Spec{spec}, reg, nil)
+	runtime.ConfigureServers([]config.PluginEntry{{Name: "mock", Command: "mock-mcp"}}, []plugin.Spec{spec}, map[string]bool{"mock": true})
+	c := New(Options{Host: host, Registry: reg, CapabilityRuntime: runtime})
 
 	disconnected, err := c.RemoveMCPServer("mock")
 	if err != nil {
@@ -2711,6 +2758,11 @@ tier = "lazy"
 	}
 	if names := c.ConfiguredMCPNames(); len(names) != 0 {
 		t.Fatalf("ConfiguredMCPNames() = %v, want empty after remove", names)
+	}
+	proxy := runtime.NewFrontend(nil, nil)
+	listed, listErr := proxy.Execute(context.Background(), json.RawMessage(`{"action":"list"}`))
+	if listErr != nil || strings.Contains(listed, `"name": "mock"`) {
+		t.Fatalf("removed server leaked through capability list = %q, %v", listed, listErr)
 	}
 }
 

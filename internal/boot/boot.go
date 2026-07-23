@@ -496,6 +496,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		PackageOwners:      pluginPackageOwners(cfg),
 	}
 	autoStartEntries := cfg.EnabledPlugins(root, config.DefaultMCPActivationStore())
+	enabledMCPNames := make(map[string]bool, len(autoStartEntries))
+	for _, enabled := range autoStartEntries {
+		if name := strings.TrimSpace(enabled.Name); name != "" {
+			enabledMCPNames[name] = true
+		}
+	}
 	// Legacy eager/background tiers are still parsed for config compatibility
 	// but no longer change process start timing. Keep the partition only so
 	// demotion notices remain meaningful for chronically slow eager configs.
@@ -1449,12 +1455,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			dualModelPlanner = true
 		}
 	}
-	failed := map[string]string{}
-	if pluginHost != nil {
-		for _, f := range pluginHost.Failures() {
-			failed[f.Name] = f.Error
-		}
-	}
 	profile := capability.ProfileBalanced
 	if tokenDelivery {
 		profile = capability.ProfileDelivery
@@ -1465,9 +1465,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// Catalog closes over capRuntime so proxy-connected tools stay routable.
 	catalogFn := func() capability.Catalog {
 		conn := map[string]bool{}
+		failedNow := map[string]string{}
 		if pluginHost != nil {
 			for _, n := range pluginHost.ServerNames() {
 				conn[n] = true
+			}
+			for _, failure := range pluginHost.Failures() {
+				failedNow[failure.Name] = failure.Error
 			}
 		}
 		catOpts := capability.CatalogOptions{
@@ -1476,11 +1480,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			Plugins:     cfg.Plugins,
 			Profile:     profile,
 			Connected:   conn,
-			Failed:      failed,
+			Failed:      failedNow,
 			CachedTools: cachedTools,
 			CacheKeyOK:  cacheKeyOK,
 		}
 		if capRuntime != nil {
+			catOpts.Plugins, catOpts.CachedTools, catOpts.CacheKeyOK, catOpts.Disabled = capRuntime.CatalogState()
 			catOpts.ProxyTools = capRuntime.ConnectedProxyTools()
 		}
 		return capability.BuildCatalog(catOpts)
@@ -1489,6 +1494,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	// can use the stable proxy even in Balanced/Economy without Delivery.
 	if pluginHost != nil || len(capSpecs) > 0 || tokenDelivery || dualModelPlanner {
 		capRuntime = agent.NewMCPCapabilityRuntime(ctx, pluginHost, capSpecs, reg, catalogFn)
+		capRuntime.ConfigureServers(cfg.Plugins, capSpecs, enabledMCPNames)
 	}
 	if tokenDelivery || dualModelPlanner {
 		capLedger = capability.NewLedger()
@@ -1509,11 +1515,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				failedNow[failure.Name] = failure.Error
 			}
 		}
-		var proxyTools map[string][]plugin.CachedTool
-		if capRuntime != nil {
-			proxyTools = capRuntime.ConnectedProxyTools()
-		}
-		catalog := capability.BuildCatalog(capability.CatalogOptions{
+		catOpts := capability.CatalogOptions{
 			Tools:       reg.ContractEntries(),
 			Skills:      skillStore.List(),
 			Plugins:     cfg.Plugins,
@@ -1522,8 +1524,12 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			Failed:      failedNow,
 			CachedTools: cachedTools,
 			CacheKeyOK:  cacheKeyOK,
-			ProxyTools:  proxyTools,
-		})
+		}
+		if capRuntime != nil {
+			catOpts.Plugins, catOpts.CachedTools, catOpts.CacheKeyOK, catOpts.Disabled = capRuntime.CatalogState()
+			catOpts.ProxyTools = capRuntime.ConnectedProxyTools()
+		}
+		catalog := capability.BuildCatalog(catOpts)
 		_, missing := catalog.RequiresReady(requires)
 		return missing
 	})
@@ -1650,6 +1656,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 			applyMCPIsolation(spec, root, pluginSpecOptions)
 		},
+		CapabilityRuntime:      capRuntime,
 		WorkspaceRoot:          root,
 		ExternalFolderToolRefs: readPathResolver,
 		ResponseLanguage:       cfg.ResponseLanguage(),

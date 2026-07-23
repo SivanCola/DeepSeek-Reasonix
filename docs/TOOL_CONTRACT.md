@@ -92,7 +92,8 @@ Planner to use its non-destructive tools; third-party servers that omit
 `review`, `run_skill`, `security_review`, `slash_command`, `task`.
 
 `use_capability` (`action` = `list` | `inspect` | `call` | `decline`): Delivery
-executor + dual-model Planner (Balanced Planner-only; not Economy).
+Executor, plus both Planner and Executor in Balanced dual-model sessions; not
+enabled in Economy.
 
 `internal/boot.TestBootToolContractMatchesProviderVisibleSurface` verifies the
 actual boot registry contract against the provider request, including read-only

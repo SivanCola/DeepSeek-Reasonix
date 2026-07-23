@@ -69,14 +69,17 @@ func (c *Controller) routeCapabilities(routeInput string) capability.RouteDecisi
 		Skills:  c.Skills(),
 		Profile: profile,
 	}
-	if c.pluginCfg != nil {
+	if c.capabilityRuntime != nil {
+		opts.Plugins, opts.CachedTools, opts.CacheKeyOK, opts.Disabled = c.capabilityRuntime.CatalogState()
+		proxyTools = c.capabilityRuntime.ConnectedProxyTools()
+	} else if c.pluginCfg != nil {
 		opts.Plugins = c.pluginCfg
+		opts.CachedTools = c.capCachedTools
+		opts.CacheKeyOK = c.capCacheKeyOK
 	}
 	// Cached MCP tool schemas (loaded once in WireCapabilityRouting) let
 	// auto_start=false servers contribute concrete mcp-tool candidates to
 	// deterministic and semantic routing before any connection exists.
-	opts.CachedTools = c.capCachedTools
-	opts.CacheKeyOK = c.capCacheKeyOK
 	opts.ProxyTools = proxyTools
 	if h := c.Host(); h != nil {
 		opts.Connected = map[string]bool{}

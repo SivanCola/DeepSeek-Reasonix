@@ -146,6 +146,7 @@ type Controller struct {
 	mcp                   mcpManager
 	mcpDefaultCallTimeout time.Duration
 	mcpConfigureSpec      func(*plugin.Spec)
+	capabilityRuntime     *agent.MCPCapabilityRuntime
 
 	// Capability routing (Delivery hybrid route + dual-model Planner proxy).
 	// Not part of the provider-visible prefix; only seeds the turn-scoped ledger
@@ -409,6 +410,10 @@ type Options struct {
 	// MCPConfigureSpec injects host-local launch and isolation policy into every
 	// hot-connected server without persisting that state in project config.
 	MCPConfigureSpec func(*plugin.Spec)
+	// CapabilityRuntime is the controller-local authoritative MCP inventory used
+	// by stable use_capability frontends. It shares Host processes with sibling
+	// tabs but never shares their enabled/disabled state.
+	CapabilityRuntime *agent.MCPCapabilityRuntime
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
 	WorkspaceRoot          string
@@ -505,6 +510,7 @@ func New(opts Options) *Controller {
 		mcp:                               newMcpManager(opts.Host, opts.Registry, pluginCtx),
 		mcpDefaultCallTimeout:             opts.MCPDefaultCallTimeout,
 		mcpConfigureSpec:                  opts.MCPConfigureSpec,
+		capabilityRuntime:                 opts.CapabilityRuntime,
 		runtimeProfile:                    runtimeProfile,
 		workspaceRoot:                     opts.WorkspaceRoot,
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
@@ -4636,7 +4642,9 @@ func (c *Controller) AddMCPServer(e config.PluginEntry) (int, error) {
 		} else {
 			cfg.RemovePlugin(e.Name)
 		}
-		return 0, errors.Join(err, cfg.Save())
+		saveErr := cfg.Save()
+		c.syncCapabilityRuntimeFromConfig(e.Name, nil)
+		return 0, errors.Join(err, saveErr)
 	}
 	return n, nil
 }
@@ -4652,13 +4660,23 @@ func (c *Controller) ConnectMCPServer(e config.PluginEntry) (int, error) {
 // surface without forcing a handshake. It is the durable-enable counterpart to
 // ConnectMCPServer, which remains the explicit install/retry operation.
 func (c *Controller) RegisterMCPServerOnDemand(e config.PluginEntry) (int, error) {
-	return c.mcp.registerSpecOnDemand(c.mcpSpec(e))
+	spec := c.mcpSpec(e)
+	n, err := c.mcp.registerSpecOnDemand(spec)
+	if err == nil && c.capabilityRuntime != nil {
+		c.capabilityRuntime.UpsertServer(e, spec, true)
+	}
+	return n, err
 }
 
 // connectMCPServer expands an entry's ${VARS}, applies the known-server
 // overrides scoped to the workspace, and connects it live via the mcp manager.
 func (c *Controller) connectMCPServer(e config.PluginEntry) (int, error) {
-	return c.mcp.connectSpec(c.mcpSpec(e))
+	spec := c.mcpSpec(e)
+	n, err := c.mcp.connectSpec(spec)
+	if err == nil && c.capabilityRuntime != nil {
+		c.capabilityRuntime.UpsertServer(e, spec, true)
+	}
+	return n, err
 }
 
 func (c *Controller) mcpSpec(e config.PluginEntry) plugin.Spec {
@@ -4689,6 +4707,36 @@ func (c *Controller) mcpSpec(e config.PluginEntry) plugin.Spec {
 		}
 	}
 	return spec
+}
+
+// syncCapabilityRuntimeFromConfig restores one server's authoritative runtime
+// entry after a transactional disconnect/rollback. enabledOverride is used for
+// a session-only disconnect; nil re-resolves the durable activation state.
+func (c *Controller) syncCapabilityRuntimeFromConfig(name string, enabledOverride *bool) {
+	if c == nil || c.capabilityRuntime == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	cfg, err := config.LoadForRoot(c.workspaceRoot)
+	if err != nil {
+		// The caller revokes first. A config read failure must not re-enable a
+		// potentially stale spec or shared-Host client.
+		return
+	}
+	for _, entry := range cfg.Plugins {
+		if strings.TrimSpace(entry.Name) != name {
+			continue
+		}
+		enabled := entry.ShouldAutoStart()
+		if enabledOverride != nil {
+			enabled = *enabledOverride
+		} else if resolved, resolveErr := config.DefaultMCPActivationStore().IsEnabled(entry, c.workspaceRoot); resolveErr == nil {
+			enabled = resolved
+		}
+		c.capabilityRuntime.UpsertServer(entry, c.mcpSpec(entry), enabled)
+		return
+	}
+	c.capabilityRuntime.RemoveServer(name)
 }
 
 func controllerMCPTimeout(seconds int) time.Duration {
@@ -4742,6 +4790,13 @@ func (c *Controller) ImportMCPEntries(entries []config.PluginEntry) (total, adde
 	}
 	for _, e := range entries {
 		if c.mcp.hasServer(e.Name) {
+			if c.capabilityRuntime != nil {
+				// Import updates may intentionally keep an existing live client, but
+				// future proxy reconnects must use the newly persisted spec.
+				runtimeEntry := e
+				runtimeEntry.Source = config.MCPSourceUserConfig
+				c.capabilityRuntime.UpsertServer(runtimeEntry, c.mcpSpec(runtimeEntry), true)
+			}
 			skipped++
 			continue
 		}
@@ -4816,6 +4871,11 @@ func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error)
 	if !removed {
 		return false, fmt.Errorf("no removable MCP server named %q", name)
 	}
+	if c.capabilityRuntime != nil {
+		// Revoke before touching the shared Host so an overlapping resolver cannot
+		// reuse a sibling tab's still-connected client.
+		c.capabilityRuntime.RemoveServer(name)
+	}
 	disconnected = c.mcp.disconnect(name)
 	if !disconnected {
 		c.mcp.removeToolPrefix(name)
@@ -4828,11 +4888,18 @@ func (c *Controller) RemoveMCPServer(name string) (disconnected bool, err error)
 // on the next session start, or now via ConnectConfiguredMCPServer (the "on").
 // Reports whether a live server was actually disconnected.
 func (c *Controller) DisconnectMCPServer(name string) bool {
+	if c.capabilityRuntime != nil {
+		c.capabilityRuntime.SetServerEnabled(name, false)
+	}
 	disconnected := c.mcp.disconnect(name)
 	removedPlaceholder := 0
 	if !disconnected {
 		removedPlaceholder = c.mcp.removeToolPrefix(name)
 	}
+	// Keep configured servers discoverable as disabled, but forget runtime-only
+	// or rolled-back installs that no longer exist in configuration.
+	disabled := false
+	c.syncCapabilityRuntimeFromConfig(name, &disabled)
 	return disconnected || removedPlaceholder > 0
 }
 
@@ -4841,6 +4908,9 @@ func (c *Controller) DisconnectMCPServer(name string) bool {
 // shared client stays alive for sibling tabs, while this session's registry drops
 // the server's provider-visible tools before the next turn.
 func (c *Controller) UnregisterMCPServerTools(name string) bool {
+	if c.capabilityRuntime != nil {
+		c.capabilityRuntime.SetServerEnabled(name, false)
+	}
 	return c.mcp.suspendToolPrefix(name)
 }
 
