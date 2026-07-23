@@ -51,8 +51,9 @@ read/diff 证据。
 
 双模型 Planner 与全部 task/fleet 子 Agent 同样使用 `use_capability`（且从不暴露直接
 `mcp__*` schema）。Planner 与普通可写子 Agent 可调用已安装或项目已授权 MCP，不要求
-`readOnlyHint`；Planner 将 `destructiveHint` 留给 Executor，普通子 Agent 走既有 writer
-权限。严格只读子 Agent 共享同一代理 schema 与 Host 连接，但执行仍要求 `readOnlyHint` 且
+`readOnlyHint`；Planner 将 `destructiveHint` 留给 Executor，普通子 Agent 走可信 MCP 路径
+（实时授权复核 + 仅显式 deny）。writer/destructive 调用仍会串行并按 mutation 记录，继续受
+证据、工作区租约和 Delivery 门禁约束。严格只读子 Agent 共享同一代理 schema 与 Host 连接，但执行仍要求 `readOnlyHint` 且
 非 destructive。Balanced 双模型会给 Planner 与 Executor 分别挂载独立代理 frontend，确保规划阶段
 发现的 capability 在 handoff 后仍可直接调用；两者 ledger/audit 隔离，但共享 Host 连接。Economy
 仍为单模型，不启用独立 Planner。
@@ -66,7 +67,13 @@ read/diff 证据。
 `mcp_connect__<server>`；例如精确拒绝规则 `deny = ["mcp_connect__github"]`
 会在进程启动前拦截），放行后连接并返回实时工具目录。MCP 工具名规则仍为精确匹配，
 `mcp__github__*` 不是工具名通配规则。安装 MCP 即授权 Planner 使用其非 destructive 工具；
-第三方若错误省略 `destructiveHint`，远程副作用属于用户安装信任范围。
+第三方若错误省略 `destructiveHint`，远程副作用属于用户安装信任范围。每次 connect 或
+`tools/call` 前，frontend 都会再次复核当前 runtime 的 enable、授权与精确 Host 连接身份；另一个
+项目/tab 在共享 Host 上的同名 client 会在进程、网络或工具分发前被拒绝。
+
+固定代理的 provider 可见 name、description、schema 与顺序不会随 MCP inventory 变化；但 Balanced
+Executor 刻意保留直接 `mcp__*` 工具，因此安装、连接或刷新这些直接工具时，Executor 的整体 provider
+前缀仍可能变化。
 
 `ask`, `explore`, `fleet`, `forget`, `history`, `install_skill`, `install_source`,
 `list_sessions`, `lsp_definition`, `lsp_diagnostics`, `lsp_hover`,

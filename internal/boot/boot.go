@@ -1485,8 +1485,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			CacheKeyOK:  cacheKeyOK,
 		}
 		if capRuntime != nil {
-			catOpts.Plugins, catOpts.CachedTools, catOpts.CacheKeyOK, catOpts.Disabled = capRuntime.CatalogState()
-			catOpts.ProxyTools = capRuntime.ConnectedProxyTools()
+			catOpts.Plugins, catOpts.CachedTools, catOpts.CacheKeyOK, catOpts.Disabled, catOpts.ProxyTools = capRuntime.CapabilityCatalogState()
 		}
 		return capability.BuildCatalog(catOpts)
 	}
@@ -1526,8 +1525,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			CacheKeyOK:  cacheKeyOK,
 		}
 		if capRuntime != nil {
-			catOpts.Plugins, catOpts.CachedTools, catOpts.CacheKeyOK, catOpts.Disabled = capRuntime.CatalogState()
-			catOpts.ProxyTools = capRuntime.ConnectedProxyTools()
+			catOpts.Plugins, catOpts.CachedTools, catOpts.CacheKeyOK, catOpts.Disabled, catOpts.ProxyTools = capRuntime.CapabilityCatalogState()
 		}
 		catalog := capability.BuildCatalog(catOpts)
 		_, missing := catalog.RequiresReady(requires)

@@ -135,6 +135,68 @@ func assertDeadlineNear(t *testing.T, got, want time.Duration) {
 	}
 }
 
+func TestMCPRuntimeSpecMatchesExactHostIdentity(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	managerA := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), workspace)
+	managerB := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), workspace)
+	base := Spec{
+		Name: "database", Package: "trusted-package", Type: "http",
+		Command: "launcher", Args: []string{"--serve"}, Env: map[string]string{"TOKEN": "secret-a"},
+		URL: "https://example.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer secret-a"},
+		DefaultCallTimeout: 5 * time.Minute, CallTimeout: 30 * time.Second,
+		ToolTimeouts: map[string]time.Duration{"query": 45 * time.Second},
+		Dir:          "/work", WorkspaceRoot: workspace, LaunchManager: managerA,
+		ConfigSource: "project_config", Authorized: true, RequireLaunchApproval: true,
+		LaunchArgs: []string{"pkg@1.0.0", "--offline"}, LauncherIdentityArgs: []string{"pkg@1.0.0"},
+		LauncherLocator: "pkg@1.0.0", LauncherResolvedVersion: "1.0.0", LauncherDigest: "digest-a",
+		ProcessMode: MCPProcessConfined,
+		Sandbox: sandbox.Spec{
+			Mode: "enforce", WriteRoots: []string{"/write"}, ReadRoots: []string{"/read"},
+			AppContainerWriteRoots: []string{"/state"}, ForbidReadRoots: []string{"/secret"},
+			Network: true, MinimalWrites: true, Shell: sandbox.Shell{Kind: sandbox.ShellBash, Path: "/bin/bash"},
+		},
+		StateDir: "/state", StripRawPrefix: "db_", LowPriority: true,
+	}
+
+	equivalent := base
+	equivalent.Type = "streamable_http"
+	equivalent.LaunchManager = managerB
+	equivalent.Authorized = false // Authorization is checked separately from runtime identity.
+	equivalent.Stderr = &bytes.Buffer{}
+	if !MCPRuntimeSpecMatches(base, equivalent) {
+		t.Fatal("equivalent runtime specs with separate authorization/stderr handles did not match")
+	}
+
+	emptyA := Spec{Name: "empty", Type: "", Args: nil, Env: nil, Headers: nil, ToolTimeouts: nil}
+	emptyB := Spec{Name: "empty", Type: "stdio", Args: []string{}, Env: map[string]string{}, Headers: map[string]string{}, ToolTimeouts: map[string]time.Duration{}}
+	if !MCPRuntimeSpecMatches(emptyA, emptyB) {
+		t.Fatal("nil and empty runtime collections should be behaviorally equivalent")
+	}
+
+	mutations := []struct {
+		name   string
+		mutate func(*Spec)
+	}{
+		{name: "endpoint", mutate: func(s *Spec) { s.URL = "https://other.invalid/mcp" }},
+		{name: "header secret", mutate: func(s *Spec) { s.Headers = map[string]string{"Authorization": "Bearer secret-b"} }},
+		{name: "environment secret", mutate: func(s *Spec) { s.Env = map[string]string{"TOKEN": "secret-b"} }},
+		{name: "config source", mutate: func(s *Spec) { s.ConfigSource = "user_config" }},
+		{name: "workspace", mutate: func(s *Spec) { s.WorkspaceRoot = "/other-workspace" }},
+		{name: "launcher digest", mutate: func(s *Spec) { s.LauncherDigest = "digest-b" }},
+		{name: "sandbox", mutate: func(s *Spec) { s.Sandbox.Network = false }},
+		{name: "prefix", mutate: func(s *Spec) { s.StripRawPrefix = "other_" }},
+	}
+	for _, tc := range mutations {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := base
+			tc.mutate(&changed)
+			if MCPRuntimeSpecMatches(base, changed) {
+				t.Fatalf("runtime identity ignored %s change", tc.name)
+			}
+		})
+	}
+}
+
 func TestClientCallAppliesBuiltInDefaultTimeout(t *testing.T) {
 	for _, transportName := range []string{"stdio", "http"} {
 		t.Run(transportName, func(t *testing.T) {

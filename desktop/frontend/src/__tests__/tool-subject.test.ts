@@ -2,7 +2,7 @@
 
 import { subjectOf } from "../lib/tools";
 import { toolGroupKind } from "../components/ToolGroup";
-import { historyMessagesToItems } from "../lib/useController";
+import { historyMessagesToItems, isReadOnlyTool } from "../lib/useController";
 import type { HistoryMessage } from "../lib/types";
 
 let passed = 0;
@@ -72,6 +72,10 @@ eq(history[0]?.kind === "tool" ? history[0].readOnly : true, false, "old proxy h
 eq(history[1]?.kind === "tool" ? history[1].readOnly : false, true, "resolved reader history restores read-only classification");
 eq(history[2]?.kind === "tool" ? history[2].readOnly : true, false, "resolved writer history restores writer classification");
 eq(history[2]?.kind === "tool" ? history[2].resolvedName : "", "mcp__db__write", "history keeps resolved MCP target");
+eq(isReadOnlyTool("read_file"), true, "legacy built-in reader remains read-only");
+eq(isReadOnlyTool("grep"), true, "legacy search reader remains read-only");
+eq(isReadOnlyTool("use_capability"), false, "legacy unresolved proxy remains fail-closed");
+eq(isReadOnlyTool("unknown_tool"), false, "unknown history tool remains fail-closed");
 
 if (failed) {
   process.stdout.write(`\n${failed} failed, ${passed} passed\n`);

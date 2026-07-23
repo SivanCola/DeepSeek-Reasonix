@@ -59,7 +59,9 @@ The two-model Planner and all task/fleet sub-agents also use `use_capability`
 (and never direct `mcp__*` schemas). Planner and ordinary writer-capable
 sub-agents may call installed or project-authorized MCP without
 `readOnlyHint`; Planner leaves `destructiveHint` tools for the Executor, while
-ordinary sub-agents use normal writer permissions. Strict read-only sub-agents
+ordinary sub-agents use the trusted MCP path (live authorization plus explicit
+deny only). Writer/destructive calls are still serialized and recorded as
+mutations for evidence, workspace leases, and Delivery guards. Strict read-only sub-agents
 share the same proxy schema and Host connections but still require
 `readOnlyHint` and non-destructive at execution time. Balanced dual-model
 attaches independent proxy frontends to both Planner and Executor so a
@@ -83,7 +85,15 @@ resolves to a gated connect (permission name = the server's dedicated
 approval and returns the live tool directory. MCP tool rules remain exact;
 `mcp__github__*` is not a tool-name glob. Installing an MCP authorizes the
 Planner to use its non-destructive tools; third-party servers that omit
-`destructiveHint` are treated as user-install trust.
+`destructiveHint` are treated as user-install trust. Before every connect or
+`tools/call`, the frontend re-checks the current runtime enablement,
+authorization, and exact Host connection identity; another project/tab's
+same-name shared client is rejected without process, network, or tool dispatch.
+
+The fixed proxy's provider-visible name, description, schema, and ordering do
+not change when MCP inventory changes. Balanced Executor deliberately retains
+its direct `mcp__*` tools, so its overall provider prefix may still change when
+those direct tools are installed, connected, or refreshed.
 
 `ask`, `explore`, `fleet`, `forget`, `history`, `install_skill`, `install_source`,
 `list_sessions`, `lsp_definition`, `lsp_diagnostics`, `lsp_hover`,

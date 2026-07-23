@@ -391,6 +391,7 @@ export function isReadOnlyTool(name: string): boolean {
     case "waitJob":
     case "todo_write":
     case "read_skill":
+      return true;
     default:
       return false;
   }

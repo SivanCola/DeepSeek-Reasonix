@@ -70,8 +70,7 @@ func (c *Controller) routeCapabilities(routeInput string) capability.RouteDecisi
 		Profile: profile,
 	}
 	if c.capabilityRuntime != nil {
-		opts.Plugins, opts.CachedTools, opts.CacheKeyOK, opts.Disabled = c.capabilityRuntime.CatalogState()
-		proxyTools = c.capabilityRuntime.ConnectedProxyTools()
+		opts.Plugins, opts.CachedTools, opts.CacheKeyOK, opts.Disabled, proxyTools = c.capabilityRuntime.CapabilityCatalogState()
 	} else if c.pluginCfg != nil {
 		opts.Plugins = c.pluginCfg
 		opts.CachedTools = c.capCachedTools

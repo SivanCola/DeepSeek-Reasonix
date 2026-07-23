@@ -110,8 +110,9 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # 可选：raw MCP tool 名
 
 完整 schema 与每个字段的契约见 [`SPEC.md` §5](./SPEC.md#5-configuration-toml)。
 
-新安装或明确确认过的 MCP server 不需要逐工具 reader 名单，其非破坏性的
-`readOnlyHint` 工具会自动进入 planner 和只读 subagent。
+新安装或明确确认过的 MCP server 不需要逐工具信任名单。独立双模型 Planner 可使用所有
+非 destructive 工具，即使 server 没有声明 `readOnlyHint`；严格只读 subagent 仍要求
+`readOnlyHint: true` 且无 `destructiveHint`。
 
 `[agent].plan_mode_read_only_commands` 也继续参与配置 round-trip，但主 Plan 工作流不再维护独立的
 bash allowlist 或信任提示。Plan 与常规模式使用相同的 Permissions 规则做 bash 分类和审批；Sandbox
@@ -525,7 +526,8 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 普通配置流程现在只有一步：使用桌面端的“添加并连接”、`/mcp add`，或直接让 Reasonix
 安装一个 package、URL 或 `.mcp.json`。这次明确安装本身就是授权：server 会保存并在当前
 会话连接，现在和下次启动都不会再弹出第二套信任步骤。显式 deny 仍然优先；包括声明
-`destructiveHint` 的工具在内都直接执行。Plan 与只读 subagent 仍只暴露符合条件的工具身份。只有被动从仓库
+`destructiveHint` 的工具在内都可由普通 Executor 直接执行。独立 Planner 仍拒绝 destructive，
+严格只读 subagent 仍只暴露带只读 hint 的非破坏工具。只有被动从仓库
 `reasonix.toml` 或 `.mcp.json` 发现的 server 会在第一次启动前，请用户确认一次精确命令或
 地址；Reasonix 会先记录该决定而不启动临时检查进程，然后只启动一次正式连接。内容不变时
 以后自动连接，发生变化时才重新确认。
@@ -537,10 +539,11 @@ stdio server 从初始化到读写都复用同一个进程，因此浏览器等�
 
 工具以 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
 的工具会参与并行调度并命中普通权限层的只读默认放行。用户安装 server，或首次确认仓库提供的
-精确 server 身份后，其非破坏性 reader 元数据即获得授权，这些工具会自动进入独立 planner 和
-只读研究 subagent，不再需要逐工具设置。没有 `readOnlyHint` 的工具仍按写工具处理。计划期间，内置 writer 仍走
-Permissions/Sandbox；已安装 MCP 与代理解析后的 MCP writer、destructive 目标和未授权
-reader 在任何审批前硬阻断，退出 Plan 后即可直接使用。
+精确 server 身份后，独立 Planner 即可使用该 server 的全部非 destructive 工具，不再需要逐工具设置；
+严格只读研究 subagent 只获得带 `readOnlyHint` 的非破坏 reader。没有 `readOnlyHint` 的工具在调度和
+mutation 记账上仍按 writer 处理。计划期间，内置 writer 仍走 Permissions/Sandbox；独立 Planner
+允许已授权、非 destructive 的 MCP（包括缺少只读 hint 的 opaque writer），但在任何审批前硬阻断
+destructive 或未授权目标；没有独立 Planner 的单模型 Plan 仍维持原有 writer/destructive 阻断。
 
 安装 MCP server 本身就是授权决定。安装完成后，该 server 的所有工具都直接执行，不再存在
 server、raw tool、writer 或 destructive 的第二套审批设置；显式全局 deny 规则仍然优先。
@@ -769,8 +772,9 @@ writer，但可通过固定的 `use_capability` 代理调用已授权、非 dest
 带 `destructiveHint` 的工具零执行，应写入方案交给 Executor。
 
 普通 `task` / `fleet` 子 Agent 同样获得该固定代理（会话共享 Host/连接，每 Agent 独立
-frontend/ledger），可调用已安装或项目已授权 MCP，不要求 `readOnlyHint`；destructive 走
-普通 writer 权限路径，而非 Planner 的 Executor handoff。严格 `read_only_task` /
+frontend/ledger），可调用已安装或项目已授权 MCP，不要求 `readOnlyHint`。这些调用走可信 MCP
+权限路径（实时授权复核 + 仅显式 deny）；writer/destructive 仍会串行、按 mutation 记账，并受
+Delivery 证据/租约门禁约束，而不是 Planner 的 Executor handoff。严格 `read_only_task` /
 `read_only_skill` / review 子 Agent 共享稳定代理 schema 与连接复用，但执行仍要求
 `authorized && readOnlyHint && !destructiveHint`。Profile `allowed-tools` 中的 MCP 名称
 会转换为代理上的 capability ID 白名单；子 Agent 从不继承动态 `mcp__*` schema。
@@ -779,10 +783,10 @@ frontend/ledger），可调用已安装或项目已授权 MCP，不要求 `readO
 真实目标再次校验；未连接且符合条件的 MCP reader 可从当前 schema cache 按需启动，
 initialize/tools-list 后会在 `tools/call` 前核对缓存与 live 的 `readOnlyHint`/
 `destructiveHint`；reader 变 writer 或升级为 destructive 时零执行，普通重试会重新经过当前
-边界。仅 schema 变化会静默刷新下一会话的缓存，不再中断已授权调用。未授权 server 无法在这里提升权限。
-这一层比主 Plan 更严格：Plan 在整个规划阶段硬阻断 MCP writer/destructive 目标——
-审批也不能放行，退出 Plan 后才恢复——内置 writer 仍走 Permissions/Sandbox，
-而严格只读子会话根本不暴露 writer。
+边界。仅 schema 变化会静默刷新下一会话的缓存，不再中断已授权调用。分发前还会再次检查运行时
+enable、授权与完整连接身份，因此共享 Host 中另一个项目/tab 的同名 client 不能被误复用。未授权
+server 无法在这里提升权限。严格只读边界比独立 Planner 更窄：Planner 接受已授权的 opaque
+非 destructive MCP，而严格只读子会话必须有明确 reader hint，且根本不暴露 writer。
 
 启动会话时可以用 `--profile economy|balanced|delivery` 选择运行模式，例如
 `reasonix run --profile delivery "修复并验证这个 bug"`。Economy（轻量）初始只带 9 个工具：
@@ -791,7 +795,8 @@ workflow 工具、session history、memory 写入、slash command、Skills、MCP
 subagent 都在任务需要时才连接。
 Balanced（均衡）是提供完整工具面的默认档；配置独立 Planner 时，Planner 与 Executor 都会获得各自的
 `use_capability` frontend，规划阶段发现的 capability 可在 handoff 后按同一 ID 直接执行，同时保留
-Executor 的完整直接 MCP 工具面。Delivery（交付优先）
+Executor 的完整直接 MCP 工具面。固定代理自身的 schema 保持稳定，但由于 Balanced Executor 刻意保留
+直接 `mcp__*`，安装、连接或刷新这些直接工具时，Executor 的整体 provider 工具前缀仍可能变化。Delivery（交付优先）
 保留完整工具面，额外增加稳定能力代理 `use_capability`（list/inspect/call MCP，包括
 `auto_start=false`，且不改变主工具 Schema），并增加“明确验收标准、修复根因、运行验证、复审最终
 diff”的稳定交付合约。该合约由宿主运行时强制执行：没有具体 `todo_write` 验收清单时会阻止变更和验证

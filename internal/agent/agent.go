@@ -3299,7 +3299,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 			}
 		}
 	}
-	if a.planMode.Load() && isMCPExecutionTarget(execTool, permName) && (!readOnly || !mcpServerAuthorized(execTool) || mcpDestructiveHint(execTool)) {
+	plannerTrustedMCP := a.plannerMCPExecution && isMCPExecutionTarget(execTool, permName) && mcpServerAuthorized(execTool) && !mcpDestructiveHint(execTool)
+	if a.planMode.Load() && isMCPExecutionTarget(execTool, permName) && !plannerTrustedMCP && (!readOnly || !mcpServerAuthorized(execTool) || mcpDestructiveHint(execTool)) {
 		reason := "writer/destructive target"
 		if readOnly && !mcpServerAuthorized(execTool) {
 			reason = "reader from an unauthorized server"
@@ -3775,6 +3776,11 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 		return block("decline a capability decision")
 	case "call":
 		if resolved.Target == nil {
+			if a.plannerMCPExecution && resolved.HostCompleted && resolved.SkipExecute && resolved.ReadOnly && !resolved.Unavailable {
+				if _, ok := parseMCPServerCapabilityID(resolved.CapabilityID); ok {
+					return toolOutcome{}, false
+				}
+			}
 			return block("execute an unresolved dynamic capability")
 		}
 		if a.plannerMCPExecution && plannerAllowsMCPTarget(resolved.Target, resolved.TargetName) {
