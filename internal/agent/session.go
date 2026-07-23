@@ -99,6 +99,42 @@ func (s *Session) UpdateToolCallPreview(call provider.ToolCall) bool {
 	return false
 }
 
+// UpdateToolCallResolution persists the host-resolved target metadata for the
+// newest matching stable proxy call. The model-visible Name/Arguments remain
+// unchanged; this metadata exists only so live and reloaded frontends classify
+// MCP readers and writers accurately.
+func (s *Session) UpdateToolCallResolution(call provider.ToolCall) bool {
+	if call.ID == "" || call.ResolvedReadOnly == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		if s.Messages[i].Role != provider.RoleAssistant {
+			continue
+		}
+		calls := s.Messages[i].ToolCalls
+		for j := range calls {
+			if calls[j].ID != call.ID {
+				continue
+			}
+			cloned := append([]provider.ToolCall(nil), calls...)
+			readOnly := *call.ResolvedReadOnly
+			cloned[j].ResolvedName = call.ResolvedName
+			cloned[j].CapabilityID = call.CapabilityID
+			cloned[j].ResolvedReadOnly = &readOnly
+			s.Messages[i].ToolCalls = cloned
+			// A mid-turn snapshot may already contain the unresolved proxy call.
+			// Force the next save to rewrite that assistant message with its
+			// resolved local metadata.
+			s.rewriteVersion++
+			s.version++
+			return true
+		}
+	}
+	return false
+}
+
 // Replace swaps the whole message log — used by compaction, which rewrites the
 // middle of the history.
 func (s *Session) Replace(msgs []provider.Message) {

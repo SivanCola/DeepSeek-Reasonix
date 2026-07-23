@@ -124,6 +124,13 @@ type ToolCall struct {
 	Diff      string `json:"diff,omitempty"`
 	Added     int    `json:"added,omitempty"`
 	Removed   int    `json:"removed,omitempty"`
+	// Resolved* fields are Reasonix-local display metadata for stable proxy
+	// calls such as use_capability. Provider request builders deliberately
+	// serialize only ID/Name/Arguments, so these fields never alter the
+	// provider-visible conversation or prompt-cache prefix.
+	ResolvedName     string `json:"resolved_name,omitempty"`
+	CapabilityID     string `json:"capability_id,omitempty"`
+	ResolvedReadOnly *bool  `json:"resolved_read_only,omitempty"`
 }
 
 // ToolSchema is a tool definition exposed to the model. Parameters is JSON Schema.

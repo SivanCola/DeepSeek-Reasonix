@@ -335,6 +335,30 @@ func TestHistoryPageCapsAndPaginatesByVisibleUserTurns(t *testing.T) {
 	}
 }
 
+func TestHistoryPagePreservesResolvedCapabilityMetadata(t *testing.T) {
+	resolvedReadOnly := false
+	history := []provider.Message{
+		{Role: provider.RoleUser, Content: "update the database"},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID: "call-1", Name: "use_capability",
+			Arguments:        `{"action":"call","capability_id":"mcp-tool:db/write"}`,
+			ResolvedName:     "mcp__db__write",
+			CapabilityID:     "mcp-tool:db/write",
+			ResolvedReadOnly: &resolvedReadOnly,
+		}}},
+		{Role: provider.RoleTool, ToolCallID: "call-1", Name: "use_capability", Content: "done"},
+	}
+	page := historyPage(&session{ctrl: &fakeController{model: "model", history: history}}, "snapshot_test", 0, protocol.HistoryMaxTurns)
+	if len(page.Messages) != 3 || len(page.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("history page = %+v", page)
+	}
+	call := page.Messages[1].ToolCalls[0]
+	if call.ResolvedName != "mcp__db__write" || call.CapabilityID != "mcp-tool:db/write" ||
+		call.ResolvedReadOnly == nil || *call.ResolvedReadOnly {
+		t.Fatalf("resolved capability metadata = %+v", call)
+	}
+}
+
 func TestRuntimeOperationKeepsDetachedServerBusy(t *testing.T) {
 	server := New(Options{Workspace: t.TempDir(), Version: "test"})
 	server.sessions["session_operation"] = &session{

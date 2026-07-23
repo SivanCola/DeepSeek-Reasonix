@@ -17,18 +17,26 @@ import (
 func strptr(value string) *string { return &value }
 
 func TestWorkbenchHistoryProjectionPreservesReasoningToolsAndCitations(t *testing.T) {
+	resolvedReadOnly := false
 	page := workbenchHistoryPage(protocol.HistoryPage{
 		Messages: []protocol.HistoryMessage{{
 			Role: "assistant", Content: strptr("done"), Reasoning: strptr("thought"),
 			MemoryCitations: []eventwire.MemoryCitation{{ID: "m1", Source: "MEMORY.md", LineStart: 2, LineEnd: 3}},
-			ToolCalls:       []protocol.HistoryToolCall{{ID: "tc1", Name: "read_file", Arguments: strptr(`{"path":"a"}`), Summary: strptr("read a")}},
+			ToolCalls: []protocol.HistoryToolCall{{
+				ID: "tc1", Name: "use_capability", Arguments: strptr(`{"action":"call","capability_id":"mcp-tool:db/write"}`),
+				ResolvedName: "mcp__db__write", CapabilityID: "mcp-tool:db/write",
+				ResolvedReadOnly: &resolvedReadOnly, Summary: strptr("write a"),
+			}},
 		}},
 		StartTurn: 1, EndTurn: 1, TotalTurns: 1,
 	})
 	if len(page.Messages) != 1 || page.Messages[0].Content != "done" || page.Messages[0].Reasoning != "thought" {
 		t.Fatalf("history projection lost message fields: %+v", page)
 	}
-	if got := page.Messages[0].ToolCalls; len(got) != 1 || got[0].Arguments != `{"path":"a"}` {
+	if got := page.Messages[0].ToolCalls; len(got) != 1 ||
+		got[0].Arguments != `{"action":"call","capability_id":"mcp-tool:db/write"}` ||
+		got[0].ResolvedName != "mcp__db__write" || got[0].CapabilityID != "mcp-tool:db/write" ||
+		got[0].ResolvedReadOnly == nil || *got[0].ResolvedReadOnly {
 		t.Fatalf("history projection lost tool call: %+v", got)
 	}
 	if got := page.Messages[0].MemoryCitations; len(got) != 1 || got[0].ID != "m1" || got[0].LineEnd != 3 {

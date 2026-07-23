@@ -79,6 +79,8 @@ export type Item =
       name: string;
       args: string;
       readOnly: boolean;
+      resolvedName?: string;
+      capabilityId?: string;
       status: ToolStatus;
       output?: string;
       error?: string;
@@ -389,10 +391,6 @@ export function isReadOnlyTool(name: string): boolean {
     case "waitJob":
     case "todo_write":
     case "read_skill":
-    // Stable MCP proxy is ReadOnly at the tool surface; successful queries fold
-    // into quiet research batches. Failures stay visible via status/error.
-    case "use_capability":
-      return true;
     default:
       return false;
   }
@@ -560,7 +558,9 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           id: tc.id || `${idPrefix}tool${seq}`,
           name: tc.name,
           args: tc.arguments ?? "",
-          readOnly: isReadOnlyTool(tc.name),
+          readOnly: typeof tc.resolvedReadOnly === "boolean" ? tc.resolvedReadOnly : isReadOnlyTool(tc.name),
+          resolvedName: tc.resolvedName,
+          capabilityId: tc.capabilityId,
           status: result ? (error ? "error" : "done") : "stopped",
           output,
           error,
@@ -884,7 +884,7 @@ function applyEvent(s: State, e: WireEvent): State {
           ...s,
           turnArgChars,
           seq: s.seq + 1,
-          items: [...s.items, { kind: "tool", id, name: t.name, args: "", readOnly: t.readOnly, status: "running", argChars: t.argChars || undefined, parentId: t.parentId }],
+          items: [...s.items, { kind: "tool", id, name: t.name, args: "", readOnly: t.readOnly, resolvedName: t.resolvedName, capabilityId: t.capabilityId, status: "running", argChars: t.argChars || undefined, parentId: t.parentId }],
         };
       }
       const id = t.id || `tool${s.seq}`;
@@ -896,13 +896,13 @@ function applyEvent(s: State, e: WireEvent): State {
           const args = t.args ? t.args : it.args;
           const fileDiff = fileDiffFromWire(t);
           const summary = summarizeFileDiff(fileDiff) || summarize(t.name, args) || (t.name === it.name && args === it.args ? it.summary : undefined);
-          next[idx] = { ...it, name: t.name, args, readOnly: t.readOnly, profile: t.profile ?? it.profile, summary, fileDiff, argChars: undefined };
+          next[idx] = { ...it, name: t.name, args, readOnly: t.readOnly, resolvedName: t.resolvedName ?? it.resolvedName, capabilityId: t.capabilityId ?? it.capabilityId, profile: t.profile ?? it.profile, summary, fileDiff, argChars: undefined };
         }
         return { ...s, items: next };
       }
       const args = t.args ?? "";
       const fileDiff = fileDiffFromWire(t);
-      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "tool", id, name: t.name, args, readOnly: t.readOnly, status: "running", summary: summarizeFileDiff(fileDiff) || summarize(t.name, args), fileDiff, isShell: id.startsWith("shell-"), parentId: t.parentId, profile: t.profile }] };
+      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "tool", id, name: t.name, args, readOnly: t.readOnly, resolvedName: t.resolvedName, capabilityId: t.capabilityId, status: "running", summary: summarizeFileDiff(fileDiff) || summarize(t.name, args), fileDiff, isShell: id.startsWith("shell-"), parentId: t.parentId, profile: t.profile }] };
     }
     case "tool_result": {
       const t = e.tool;
@@ -925,6 +925,9 @@ function applyEvent(s: State, e: WireEvent): State {
           const summary = t.err ? undefined : existing.summary || summarize(existing.name, existing.args, t.output);
           next[idx] = {
             ...existing,
+            readOnly: t.readOnly,
+            resolvedName: t.resolvedName ?? existing.resolvedName,
+            capabilityId: t.capabilityId ?? existing.capabilityId,
             status: t.err ? "error" : "done",
             output: t.output,
             error: t.err,

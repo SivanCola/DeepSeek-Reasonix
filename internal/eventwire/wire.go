@@ -47,6 +47,7 @@ func ToWire(e event.Event) Event {
 	case event.ToolDispatch, event.ToolResult, event.ToolProgress:
 		wt := &Tool{
 			ID: e.Tool.ID, Name: e.Tool.Name, Args: e.Tool.Args,
+			ResolvedName: e.Tool.ResolvedName, CapabilityID: e.Tool.CapabilityID,
 			Output: e.Tool.Output, Err: e.Tool.Err,
 			ReadOnly: e.Tool.ReadOnly, Truncated: e.Tool.Truncated,
 			DurationMs: e.Tool.DurationMs, Partial: e.Tool.Partial,
@@ -195,22 +196,24 @@ type Profile struct {
 
 // Tool is the JSON form of an event.Tool.
 type Tool struct {
-	ID         string   `json:"id,omitempty"`
-	Name       string   `json:"name"`
-	Args       string   `json:"args,omitempty" externalizable:"true"`
-	Output     string   `json:"output,omitempty" externalizable:"true"`
-	Err        string   `json:"err,omitempty" externalizable:"true"`
-	ReadOnly   bool     `json:"readOnly"`
-	Truncated  bool     `json:"truncated,omitempty"`
-	DurationMs int64    `json:"durationMs,omitempty"`
-	Partial    bool     `json:"partial,omitempty"`
-	ArgChars   int      `json:"argChars,omitempty"`
-	Refreshed  bool     `json:"refreshed,omitempty"`
-	ParentID   string   `json:"parentId,omitempty"`
-	Diff       string   `json:"diff,omitempty" externalizable:"true"`
-	Added      int      `json:"added,omitempty"`
-	Removed    int      `json:"removed,omitempty"`
-	Profile    *Profile `json:"profile,omitempty"`
+	ID           string   `json:"id,omitempty"`
+	Name         string   `json:"name"`
+	Args         string   `json:"args,omitempty" externalizable:"true"`
+	ResolvedName string   `json:"resolvedName,omitempty"`
+	CapabilityID string   `json:"capabilityId,omitempty"`
+	Output       string   `json:"output,omitempty" externalizable:"true"`
+	Err          string   `json:"err,omitempty" externalizable:"true"`
+	ReadOnly     bool     `json:"readOnly"`
+	Truncated    bool     `json:"truncated,omitempty"`
+	DurationMs   int64    `json:"durationMs,omitempty"`
+	Partial      bool     `json:"partial,omitempty"`
+	ArgChars     int      `json:"argChars,omitempty"`
+	Refreshed    bool     `json:"refreshed,omitempty"`
+	ParentID     string   `json:"parentId,omitempty"`
+	Diff         string   `json:"diff,omitempty" externalizable:"true"`
+	Added        int      `json:"added,omitempty"`
+	Removed      int      `json:"removed,omitempty"`
+	Profile      *Profile `json:"profile,omitempty"`
 }
 
 // Usage is the JSON form of provider usage telemetry.

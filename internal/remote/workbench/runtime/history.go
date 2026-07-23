@@ -76,7 +76,9 @@ func historyPage(sess *session, snapshotID protocol.SnapshotID, beforeTurn, page
 			args := call.Arguments
 			item.ToolCalls = append(item.ToolCalls, protocol.HistoryToolCall{
 				ID: call.ID, Name: call.Name, Arguments: &args,
-				Diff: stringPtrOrNil(call.Diff), Added: call.Added, Removed: call.Removed,
+				ResolvedName: call.ResolvedName, CapabilityID: call.CapabilityID,
+				ResolvedReadOnly: call.ResolvedReadOnly,
+				Diff:             stringPtrOrNil(call.Diff), Added: call.Added, Removed: call.Removed,
 			})
 		}
 		messages = append(messages, item)

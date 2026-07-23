@@ -992,15 +992,19 @@ func recordHistoryDisplayEvent(buffer *displayTurnBuffer, e event.Event) {
 			return
 		}
 		hm := ensureDisplayAssistantForTool(buffer)
+		resolvedReadOnly := e.Tool.ReadOnly
 		call := HistoryToolCall{
-			ID:        e.Tool.ID,
-			Name:      e.Tool.Name,
-			Arguments: e.Tool.Args,
-			Subject:   historyToolSubject(e.Tool.Name, e.Tool.Args),
-			Summary:   historyToolSummary(e.Tool.Name, e.Tool.Args, ""),
-			Diff:      e.Tool.Diff,
-			Added:     e.Tool.Added,
-			Removed:   e.Tool.Removed,
+			ID:               e.Tool.ID,
+			Name:             e.Tool.Name,
+			Arguments:        e.Tool.Args,
+			ResolvedName:     e.Tool.ResolvedName,
+			CapabilityID:     e.Tool.CapabilityID,
+			ResolvedReadOnly: &resolvedReadOnly,
+			Subject:          historyToolSubject(e.Tool.Name, e.Tool.Args),
+			Summary:          historyToolSummary(e.Tool.Name, e.Tool.Args, ""),
+			Diff:             e.Tool.Diff,
+			Added:            e.Tool.Added,
+			Removed:          e.Tool.Removed,
 		}
 		replaced := false
 		if call.ID != "" {

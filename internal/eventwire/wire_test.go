@@ -81,6 +81,8 @@ func TestDesktopWireEventTypeCoversSharedPayloadFields(t *testing.T) {
 		"retryMax?: number;",
 		"memoryCitations?: MemoryCitation[];",
 		"export interface MemoryCitation",
+		"resolvedName?: string;",
+		"capabilityId?: string;",
 		"cacheDiagnostics?: WireCacheDiagnostics;",
 		"export interface WireCacheDiagnostics",
 		"prefixHash: string;",
@@ -106,6 +108,27 @@ func TestToWireNoticeDetail(t *testing.T) {
 	for _, want := range []string{`"kind":"notice"`, `"text":"short"`, `"detail":"diagnostics"`, `"level":"warn"`} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("notice JSON = %s, want it to contain %s", string(b), want)
+		}
+	}
+}
+
+func TestToWireToolCarriesResolvedCapabilityMetadata(t *testing.T) {
+	w := ToWire(event.Event{Kind: event.ToolDispatch, Tool: event.Tool{
+		ID: "c1", Name: "use_capability",
+		Args:         `{"action":"call","capability_id":"mcp-tool:db/write"}`,
+		ResolvedName: "mcp__db__write", CapabilityID: "mcp-tool:db/write",
+		ReadOnly: false, Refreshed: true,
+	}})
+	b, err := json.Marshal(w)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{
+		`"name":"use_capability"`, `"resolvedName":"mcp__db__write"`,
+		`"capabilityId":"mcp-tool:db/write"`, `"readOnly":false`, `"refreshed":true`,
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("tool JSON = %s, want %s", b, want)
 		}
 	}
 }

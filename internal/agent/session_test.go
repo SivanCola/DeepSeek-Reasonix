@@ -511,6 +511,45 @@ func TestUpdateToolCallPreviewPersistsAfterMidTurnSnapshot(t *testing.T) {
 	}
 }
 
+func TestUpdateToolCallResolutionPersistsAfterMidTurnSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("system")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "use MCP"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+		ID: "c1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:db/write"}`,
+	}}})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("mid-turn snapshot: %v", err)
+	}
+
+	readOnly := false
+	resolved := provider.ToolCall{
+		ID: "c1", ResolvedName: "mcp__db__write",
+		CapabilityID: "mcp-tool:db/write", ResolvedReadOnly: &readOnly,
+	}
+	if !s.UpdateToolCallResolution(resolved) {
+		t.Fatal("matching tool call resolution was not updated")
+	}
+	s.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "c1", Name: "use_capability", Content: "done"})
+	if !s.NeedsRewriteSave() {
+		t.Fatal("resolved metadata on a snapshotted assistant message must require rewrite save")
+	}
+	if err := s.SaveRewrite(path); err != nil {
+		t.Fatalf("rewrite resolved metadata: %v", err)
+	}
+
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got := loaded.Messages[2].ToolCalls[0]
+	if got.ResolvedReadOnly == nil || *got.ResolvedReadOnly ||
+		got.ResolvedName != resolved.ResolvedName || got.CapabilityID != resolved.CapabilityID {
+		t.Fatalf("persisted resolved metadata = %+v, want %+v", got, resolved)
+	}
+}
+
 // TestRewriteBaselineStaysWithClones: an unpersisted rewrite travels with the
 // clone, and the source persisting later does not mark the clone's copy as
 // saved — each session object owns its own baseline, so no swap can orphan or

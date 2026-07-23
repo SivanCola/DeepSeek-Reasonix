@@ -44,7 +44,9 @@ func workbenchHistoryPage(page protocol.HistoryPage) HistoryPage {
 		for _, call := range message.ToolCalls {
 			projected.ToolCalls = append(projected.ToolCalls, HistoryToolCall{
 				ID: call.ID, Name: call.Name, Arguments: workbenchString(call.Arguments),
-				Subject: call.Subject, Summary: workbenchString(call.Summary), Diff: workbenchString(call.Diff),
+				ResolvedName: call.ResolvedName, CapabilityID: call.CapabilityID,
+				ResolvedReadOnly: call.ResolvedReadOnly,
+				Subject:          call.Subject, Summary: workbenchString(call.Summary), Diff: workbenchString(call.Diff),
 				Added: call.Added, Removed: call.Removed, ArgumentsArchived: call.ArgumentsArchived,
 			})
 		}

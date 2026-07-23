@@ -57,6 +57,34 @@ function ev(s: typeof initialState, e: WireEvent) {
   eq(refreshed?.kind === "tool" ? refreshed.fileDiff?.diff : "", "@@ -1 +1 @@\n-old\n+new\n", "same-ID refresh replaces the live preview");
   eq(s.items.filter((it) => it.kind === "tool" && it.id === "c1").length, 1, "preview refresh never duplicates the card");
 
+  s = ev(s, { kind: "tool_dispatch", tool: {
+    id: "c1",
+    name: "write_file",
+    args: '{"path":"a"}',
+    readOnly: false,
+    refreshed: true,
+    resolvedName: "mcp__db__write",
+    capabilityId: "mcp-tool:db/write",
+  } } as WireEvent);
+  const resolved = s.items.find((it) => it.kind === "tool" && it.id === "c1");
+  eq(resolved?.kind === "tool" ? resolved.resolvedName : "", "mcp__db__write", "same-ID refresh stores resolved target");
+  eq(resolved?.kind === "tool" ? resolved.capabilityId : "", "mcp-tool:db/write", "same-ID refresh stores capability id");
+  eq(resolved?.kind === "tool" ? resolved.readOnly : true, false, "same-ID refresh replaces proxy read-only classification");
+
+  s = ev(s, { kind: "tool_result", tool: {
+    id: "c1",
+    name: "use_capability",
+    args: '{"action":"call","capability_id":"mcp-tool:db/write-v2"}',
+    readOnly: false,
+    resolvedName: "mcp__db__write_v2",
+    capabilityId: "mcp-tool:db/write-v2",
+    output: "done",
+  } } as WireEvent);
+  const completed = s.items.find((it) => it.kind === "tool" && it.id === "c1");
+  eq(completed?.kind === "tool" ? completed.resolvedName : "", "mcp__db__write_v2", "tool result also refreshes resolved target");
+  eq(completed?.kind === "tool" ? completed.capabilityId : "", "mcp-tool:db/write-v2", "tool result also refreshes capability id");
+  eq(completed?.kind === "tool" ? completed.readOnly : true, false, "tool result preserves resolved writer classification");
+
   s = ev(s, { kind: "usage", usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, cacheHitTokens: 0, cacheMissTokens: 0 } } as WireEvent);
   eq(s.turnArgChars, 0, "usage event resets the streaming estimate");
 }

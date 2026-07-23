@@ -614,6 +614,30 @@ func TestHistoryMessagesArchiveCompletedToolPayloads(t *testing.T) {
 	}
 }
 
+func TestHistoryMessagesPreserveResolvedCapabilityMetadata(t *testing.T) {
+	resolvedReadOnly := false
+	msgs := []provider.Message{
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+			ID: "call_capability", Name: "use_capability",
+			Arguments:        `{"action":"call","capability_id":"mcp-tool:db/write"}`,
+			ResolvedName:     "mcp__db__write",
+			CapabilityID:     "mcp-tool:db/write",
+			ResolvedReadOnly: &resolvedReadOnly,
+		}}},
+		{Role: provider.RoleTool, Name: "use_capability", ToolCallID: "call_capability", Content: "done"},
+	}
+
+	got := historyMessages(msgs, func(content string) string { return content })
+	if len(got) != 2 || len(got[0].ToolCalls) != 1 {
+		t.Fatalf("history = %+v", got)
+	}
+	call := got[0].ToolCalls[0]
+	if call.ResolvedName != "mcp__db__write" || call.CapabilityID != "mcp-tool:db/write" ||
+		call.ResolvedReadOnly == nil || *call.ResolvedReadOnly {
+		t.Fatalf("resolved capability metadata = %+v", call)
+	}
+}
+
 func TestHistoryMessagesKeepRunSkillSubjectWhenArchived(t *testing.T) {
 	args := `{"name":"code-reviewer","arguments":"review this branch"}`
 	msgs := []provider.Message{

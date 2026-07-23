@@ -4708,6 +4708,9 @@ type HistoryToolCall struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	Arguments         string `json:"arguments"`
+	ResolvedName      string `json:"resolvedName,omitempty"`
+	CapabilityID      string `json:"capabilityId,omitempty"`
+	ResolvedReadOnly  *bool  `json:"resolvedReadOnly,omitempty"`
 	Subject           string `json:"subject,omitempty"`
 	Summary           string `json:"summary,omitempty"`
 	Diff              string `json:"diff,omitempty"`
@@ -5211,13 +5214,16 @@ const historyToolPreviewLimit = 2_000
 
 func historyToolCall(tc provider.ToolCall, args string, result provider.Message) HistoryToolCall {
 	call := HistoryToolCall{
-		ID:      tc.ID,
-		Name:    tc.Name,
-		Subject: historyToolSubject(tc.Name, args),
-		Summary: historyToolSummary(tc.Name, args, result.Content),
-		Diff:    tc.Diff,
-		Added:   tc.Added,
-		Removed: tc.Removed,
+		ID:               tc.ID,
+		Name:             tc.Name,
+		ResolvedName:     tc.ResolvedName,
+		CapabilityID:     tc.CapabilityID,
+		ResolvedReadOnly: tc.ResolvedReadOnly,
+		Subject:          historyToolSubject(tc.Name, args),
+		Summary:          historyToolSummary(tc.Name, args, result.Content),
+		Diff:             tc.Diff,
+		Added:            tc.Added,
+		Removed:          tc.Removed,
 	}
 	if tc.Name == "todo_write" {
 		call.Arguments = args

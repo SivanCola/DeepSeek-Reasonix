@@ -965,6 +965,99 @@ func TestPlannerAllowsAuthorizedNonReadOnlyNonDestructiveMCP(t *testing.T) {
 	}
 }
 
+func TestResolvedCapabilityDispatchRefreshesWriterClassification(t *testing.T) {
+	calls := 0
+	target := readOnlyBoundaryTarget{name: "mcp__db__write", readOnly: false, calls: &calls}
+	reg := tool.NewRegistry()
+	reg.Add(readOnlyBoundaryProxy{resolved: tool.ResolvedCall{
+		ProxyAction:  "call",
+		CapabilityID: "mcp-tool:db/write",
+		TargetName:   target.Name(),
+		Target:       target,
+		ReadOnly:     false,
+		Args:         json.RawMessage(`{"value":"x"}`),
+	}})
+	session := NewSession("sys")
+	call := provider.ToolCall{
+		ID: "writer-1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:db/write","arguments":{"value":"x"}}`,
+	}
+	session.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}})
+	var events []event.Event
+	a := New(nil, reg, session, Options{}, event.FuncSink(func(e event.Event) {
+		events = append(events, e)
+	}))
+
+	results, _ := a.executeBatch(context.Background(), []provider.ToolCall{call})
+	if calls != 1 || len(results) != 1 || results[0] != "target executed" {
+		t.Fatalf("execution calls=%d results=%v", calls, results)
+	}
+
+	var dispatches []event.Tool
+	var result event.Tool
+	for _, e := range events {
+		switch e.Kind {
+		case event.ToolDispatch:
+			dispatches = append(dispatches, e.Tool)
+		case event.ToolResult:
+			result = e.Tool
+		}
+	}
+	if len(dispatches) != 2 {
+		t.Fatalf("dispatch count = %d, want initial + resolved refresh: %+v", len(dispatches), dispatches)
+	}
+	if dispatches[0].Refreshed || !dispatches[0].ReadOnly {
+		t.Fatalf("initial proxy dispatch = %+v, want surface ReadOnly=true", dispatches[0])
+	}
+	refreshed := dispatches[1]
+	if !refreshed.Refreshed || refreshed.ReadOnly || refreshed.ResolvedName != target.Name() || refreshed.CapabilityID != "mcp-tool:db/write" {
+		t.Fatalf("resolved dispatch = %+v", refreshed)
+	}
+	if result.ReadOnly || result.ResolvedName != target.Name() || result.CapabilityID != "mcp-tool:db/write" {
+		t.Fatalf("resolved result = %+v", result)
+	}
+
+	stored := session.Snapshot()[1].ToolCalls[0]
+	if stored.ResolvedReadOnly == nil || *stored.ResolvedReadOnly || stored.ResolvedName != target.Name() || stored.CapabilityID != "mcp-tool:db/write" {
+		t.Fatalf("stored resolved metadata = %+v", stored)
+	}
+}
+
+func TestResolvedCapabilityRefreshesParallelCallsInProviderOrder(t *testing.T) {
+	target := fakeTool{name: "mcp__db__query", readOnly: true, delay: 5 * time.Millisecond}
+	reg := tool.NewRegistry()
+	reg.Add(readOnlyBoundaryProxy{resolved: tool.ResolvedCall{
+		ProxyAction:  "call",
+		CapabilityID: "mcp-tool:db/query",
+		TargetName:   target.Name(),
+		Target:       target,
+		ReadOnly:     true,
+		Args:         json.RawMessage(`{}`),
+	}})
+	calls := []provider.ToolCall{
+		{ID: "c1", Name: "use_capability", Arguments: `{"action":"call","capability_id":"mcp-tool:db/query"}`},
+		{ID: "c2", Name: "use_capability", Arguments: `{"action":"call","capability_id":"mcp-tool:db/query"}`},
+	}
+	session := NewSession("sys")
+	session.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: calls})
+	var events []event.Event
+	a := New(nil, reg, session, Options{}, event.FuncSink(func(e event.Event) {
+		events = append(events, e)
+	}))
+
+	a.executeBatch(context.Background(), calls)
+
+	var refreshed []string
+	for _, e := range events {
+		if e.Kind == event.ToolDispatch && e.Tool.Refreshed {
+			refreshed = append(refreshed, e.Tool.ID)
+		}
+	}
+	if strings.Join(refreshed, ",") != "c1,c2" {
+		t.Fatalf("resolved refresh order = %v, want provider order", refreshed)
+	}
+}
+
 func TestPlannerBlocksDestructiveMCPWithExecutorHandoff(t *testing.T) {
 	calls := 0
 	target := layeredReadOnlyMCPBoundaryTarget{

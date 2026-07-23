@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:2dd0c22f90d9e7af26b63c93df8ec548f6b5aa927239b7435093195c2bd53808" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:d54a081817469abfad9b84c82d908a9480e083b6832727f0d35cc13f83c8cd12" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -240,6 +240,7 @@ export type RemoteEventRaw = {
     "added"?: number;
     "argChars"?: number;
     "args"?: string | null;
+    "capabilityId"?: string;
     "diff"?: string | null;
     "durationMs"?: number;
     "err"?: string | null;
@@ -255,6 +256,7 @@ export type RemoteEventRaw = {
     "readOnly": boolean;
     "refreshed"?: boolean;
     "removed"?: number;
+    "resolvedName"?: string;
     "truncated"?: boolean;
   };
   "usage"?: {
@@ -387,6 +389,7 @@ export type RemoteEventHydrated = {
     "added"?: number;
     "argChars"?: number;
     "args"?: string;
+    "capabilityId"?: string;
     "diff"?: string;
     "durationMs"?: number;
     "err"?: string;
@@ -402,6 +405,7 @@ export type RemoteEventHydrated = {
     "readOnly": boolean;
     "refreshed"?: boolean;
     "removed"?: number;
+    "resolvedName"?: string;
     "truncated"?: boolean;
   };
   "usage"?: {
@@ -905,10 +909,13 @@ export type BrokerStreamChunkParamsRaw = {
     "toolCall"?: {
       "added"?: number;
       "arguments": string;
+      "capability_id"?: string;
       "diff"?: string;
       "id": string;
       "name": string;
       "removed"?: number;
+      "resolved_name"?: string;
+      "resolved_read_only"?: boolean;
     };
     "type": "done" | "error" | "reasoning" | "text" | "tool_call" | "tool_call_args_delta" | "tool_call_start" | "usage";
     "usage"?: {
@@ -936,10 +943,13 @@ export type BrokerStreamChunkParamsHydrated = {
     "toolCall"?: {
       "added"?: number;
       "arguments": string;
+      "capability_id"?: string;
       "diff"?: string;
       "id": string;
       "name": string;
       "removed"?: number;
+      "resolved_name"?: string;
+      "resolved_read_only"?: boolean;
     };
     "type": "done" | "error" | "reasoning" | "text" | "tool_call" | "tool_call_args_delta" | "tool_call_start" | "usage";
     "usage"?: {
@@ -1010,10 +1020,13 @@ export type BrokerStreamOpenParamsRaw = {
       "tool_calls"?: Array<{
         "added"?: number;
         "arguments": string;
+        "capability_id"?: string;
         "diff"?: string;
         "id": string;
         "name": string;
         "removed"?: number;
+        "resolved_name"?: string;
+        "resolved_read_only"?: boolean;
       }>;
       "workDurationMs"?: number;
     }>;
@@ -1067,10 +1080,13 @@ export type BrokerStreamOpenParamsHydrated = {
       "tool_calls"?: Array<{
         "added"?: number;
         "arguments": string;
+        "capability_id"?: string;
         "diff"?: string;
         "id": string;
         "name": string;
         "removed"?: number;
+        "resolved_name"?: string;
+        "resolved_read_only"?: boolean;
       }>;
       "workDurationMs"?: number;
     }>;
@@ -1572,10 +1588,13 @@ export type HistoryPageRaw = {
       "added"?: number;
       "arguments": string | null;
       "argumentsArchived"?: boolean;
+      "capabilityId"?: string;
       "diff"?: string | null;
       "id": string;
       "name": string;
       "removed"?: number;
+      "resolvedName"?: string;
+      "resolvedReadOnly"?: boolean;
       "subject"?: string;
       "summary"?: string | null;
     }>;
@@ -1630,10 +1649,13 @@ export type HistoryPageHydrated = {
       "added"?: number;
       "arguments": string;
       "argumentsArchived"?: boolean;
+      "capabilityId"?: string;
       "diff"?: string;
       "id": string;
       "name": string;
       "removed"?: number;
+      "resolvedName"?: string;
+      "resolvedReadOnly"?: boolean;
       "subject"?: string;
       "summary"?: string;
     }>;
@@ -3121,6 +3143,7 @@ export type SessionEventRaw = {
       "added"?: number;
       "argChars"?: number;
       "args"?: string | null;
+      "capabilityId"?: string;
       "diff"?: string | null;
       "durationMs"?: number;
       "err"?: string | null;
@@ -3136,6 +3159,7 @@ export type SessionEventRaw = {
       "readOnly": boolean;
       "refreshed"?: boolean;
       "removed"?: number;
+      "resolvedName"?: string;
       "truncated"?: boolean;
     };
     "usage"?: {
@@ -3289,6 +3313,7 @@ export type SessionEventHydrated = {
       "added"?: number;
       "argChars"?: number;
       "args"?: string;
+      "capabilityId"?: string;
       "diff"?: string;
       "durationMs"?: number;
       "err"?: string;
@@ -3304,6 +3329,7 @@ export type SessionEventHydrated = {
       "readOnly": boolean;
       "refreshed"?: boolean;
       "removed"?: number;
+      "resolvedName"?: string;
       "truncated"?: boolean;
     };
     "usage"?: {
@@ -4104,10 +4130,13 @@ export type SessionSubscribeResultRaw = {
           "added"?: number;
           "arguments": string | null;
           "argumentsArchived"?: boolean;
+          "capabilityId"?: string;
           "diff"?: string | null;
           "id": string;
           "name": string;
           "removed"?: number;
+          "resolvedName"?: string;
+          "resolvedReadOnly"?: boolean;
           "subject"?: string;
           "summary"?: string | null;
         }>;
@@ -4358,6 +4387,7 @@ export type SessionSubscribeResultRaw = {
           "added"?: number;
           "argChars"?: number;
           "args"?: string | null;
+          "capabilityId"?: string;
           "diff"?: string | null;
           "durationMs"?: number;
           "err"?: string | null;
@@ -4373,6 +4403,7 @@ export type SessionSubscribeResultRaw = {
           "readOnly": boolean;
           "refreshed"?: boolean;
           "removed"?: number;
+          "resolvedName"?: string;
           "truncated"?: boolean;
         };
         "usage"?: {
@@ -4518,10 +4549,13 @@ export type SessionSubscribeResultHydrated = {
           "added"?: number;
           "arguments": string;
           "argumentsArchived"?: boolean;
+          "capabilityId"?: string;
           "diff"?: string;
           "id": string;
           "name": string;
           "removed"?: number;
+          "resolvedName"?: string;
+          "resolvedReadOnly"?: boolean;
           "subject"?: string;
           "summary"?: string;
         }>;
@@ -4772,6 +4806,7 @@ export type SessionSubscribeResultHydrated = {
           "added"?: number;
           "argChars"?: number;
           "args"?: string;
+          "capabilityId"?: string;
           "diff"?: string;
           "durationMs"?: number;
           "err"?: string;
@@ -4787,6 +4822,7 @@ export type SessionSubscribeResultHydrated = {
           "readOnly": boolean;
           "refreshed"?: boolean;
           "removed"?: number;
+          "resolvedName"?: string;
           "truncated"?: boolean;
         };
         "usage"?: {

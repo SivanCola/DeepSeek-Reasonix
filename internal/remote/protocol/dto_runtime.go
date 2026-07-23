@@ -16,6 +16,9 @@ type HistoryToolCall struct {
 	ID                string  `json:"id" validate:"nonempty"`
 	Name              string  `json:"name" validate:"nonempty"`
 	Arguments         *string `json:"arguments" externalizable:"true"`
+	ResolvedName      string  `json:"resolvedName,omitempty"`
+	CapabilityID      string  `json:"capabilityId,omitempty"`
+	ResolvedReadOnly  *bool   `json:"resolvedReadOnly,omitempty"`
 	Subject           string  `json:"subject,omitempty"`
 	Summary           *string `json:"summary,omitempty" externalizable:"true"`
 	Diff              *string `json:"diff,omitempty" externalizable:"true"`

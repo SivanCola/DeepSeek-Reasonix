@@ -117,14 +117,19 @@ type Profile struct {
 // Output/Err/Truncated are filled in. Args is the raw JSON arguments — a sink
 // compacts it for display.
 type Tool struct {
-	ID         string
-	Name       string
-	Args       string
-	Output     string // ToolResult: the result text fed to the model
-	Err        string // ToolResult: non-empty when the call failed or was blocked
-	ReadOnly   bool
-	Truncated  bool  // ToolResult: Output was head+tailed before display/model
-	DurationMs int64 // ToolResult: wall-clock execution time in milliseconds
+	ID   string
+	Name string
+	Args string
+	// ResolvedName/CapabilityID describe the real target behind a stable proxy
+	// while Name/Args remain the provider-visible call. They are optional local
+	// display metadata and never enter provider requests.
+	ResolvedName string
+	CapabilityID string
+	Output       string // ToolResult: the result text fed to the model
+	Err          string // ToolResult: non-empty when the call failed or was blocked
+	ReadOnly     bool
+	Truncated    bool  // ToolResult: Output was head+tailed before display/model
+	DurationMs   int64 // ToolResult: wall-clock execution time in milliseconds
 	// Partial marks an early ToolDispatch emitted when a call begins (ID/Name set,
 	// Args still streaming) so a frontend can show the card immediately; a second,
 	// full ToolDispatch (Partial false, Args set) follows when the call completes.
@@ -134,9 +139,9 @@ type Tool struct {
 	// on the initial start dispatch and on full dispatches.
 	ArgChars int
 	// Refreshed marks a repeated full ToolDispatch for the same ID whose file
-	// preview was recomputed after an earlier writer in the provider batch
-	// changed disk. Frontends that can upsert by ID should replace the existing
-	// preview; append-only sinks should ignore it to avoid duplicate tool cards.
+	// preview or resolved proxy metadata changed after the initial dispatch.
+	// Frontends that can upsert by ID should replace the existing card;
+	// append-only sinks should ignore it to avoid duplicate tool cards.
 	Refreshed bool
 	// ParentID, when set, is the ID of the tool call that spawned this one — a
 	// sub-agent's calls carry the parent `task` call's ID so a frontend can nest
