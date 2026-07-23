@@ -1829,10 +1829,11 @@ export default function App() {
   const switchModel = useCallback(
     async (name: string) => {
       const switched = await setModel(name);
-      if (!switched) return;
+      if (!switched) return false;
       await setControllerCollaborationMode(controllerComposerProfileCollaborationMode(composerProfile));
       await setControllerToolApprovalMode(toolApprovalMode);
       if (goal.trim()) await setControllerGoal(goal);
+      return true;
     },
     [composerProfile, goal, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, setModel, toolApprovalMode],
   );

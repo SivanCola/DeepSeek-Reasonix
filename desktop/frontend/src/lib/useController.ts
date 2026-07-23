@@ -57,6 +57,11 @@ type SyncActiveTabOptions = {
   preserveCachedHistory?: boolean;
 };
 
+type ModelSwitchQueueState = {
+  tail: Promise<void>;
+  fallbackBalance?: BalanceInfo;
+};
+
 const HISTORY_PAGE_TURNS = 60;
 
 export type Item =
@@ -1710,7 +1715,7 @@ export function useController() {
   const balanceRefreshSeqByTab = useRef(new Map<string, number>());
   const modelSwitchSeqByTab = useRef(new Map<string, number>());
   const modelSwitchSuccessVersionByTab = useRef(new Map<string, number>());
-  const modelSwitchQueueByTab = useRef(new Map<string, Promise<void>>());
+  const modelSwitchQueueByTab = useRef(new Map<string, ModelSwitchQueueState>());
   const lastTurnActivityAtByTab = useRef(new Map<string, number>());
   const cancelReconcileTimers = useRef(new Map<string, number>());
   const stalePromptReconcileTimers = useRef(new Map<string, number>());
@@ -2769,16 +2774,23 @@ export function useController() {
     const tabId = activeTabId;
     const switchSeq = (modelSwitchSeqByTab.current.get(tabId) ?? 0) + 1;
     const successVersion = modelSwitchSuccessVersionByTab.current.get(tabId) ?? 0;
-    const previousBalance = statesRef.current.get(tabId)?.balance;
+    const existingQueue = modelSwitchQueueByTab.current.get(tabId);
+    // Every attempt in one queued burst shares the balance that was visible
+    // before the first switch cleared it. Otherwise a later queued failure
+    // captures the placeholder and cannot restore the outgoing provider.
+    const fallbackBalance = existingQueue
+      ? existingQueue.fallbackBalance
+      : statesRef.current.get(tabId)?.balance;
     modelSwitchSeqByTab.current.set(tabId, switchSeq);
     // Hide the outgoing provider's wallet as soon as the user starts a hot
     // switch. If the rebuild fails, the catch path re-queries the still-active
     // provider and restores its balance.
     clearBalanceForTab(tabId);
-    const previousSwitch = modelSwitchQueueByTab.current.get(tabId) ?? Promise.resolve();
+    const previousSwitch = existingQueue?.tail ?? Promise.resolve();
     const backendSwitch = previousSwitch.then(() => app.SetModelForTab(tabId, name));
     const queueTail = backendSwitch.catch(() => {});
-    modelSwitchQueueByTab.current.set(tabId, queueTail);
+    const queueState: ModelSwitchQueueState = { tail: queueTail, fallbackBalance };
+    modelSwitchQueueByTab.current.set(tabId, queueState);
     try {
       await backendSwitch;
       modelSwitchSuccessVersionByTab.current.set(
@@ -2793,8 +2805,8 @@ export function useController() {
       // Restore the known balance only when no older overlapping switch
       // completed after this attempt began. Otherwise the backend now owns a
       // different provider and the refresh below must establish its balance.
-      if (previousBalance && !olderSwitchSucceeded) {
-        dispatchTo(tabId, { type: "balance", balance: previousBalance });
+      if (fallbackBalance && !olderSwitchSucceeded) {
+        dispatchTo(tabId, { type: "balance", balance: fallbackBalance });
       }
       void refreshBalanceForTab(tabId);
       // A superseded success deliberately skips its own UI reconciliation.
@@ -2803,7 +2815,7 @@ export function useController() {
       if (olderSwitchSucceeded) await refreshMetaForTab(tabId);
       return false;
     } finally {
-      if (modelSwitchQueueByTab.current.get(tabId) === queueTail) {
+      if (modelSwitchQueueByTab.current.get(tabId) === queueState) {
         modelSwitchQueueByTab.current.delete(tabId);
       }
     }

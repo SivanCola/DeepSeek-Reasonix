@@ -467,6 +467,49 @@ await act(async () => {
 });
 eq(failedSwitchResult, false, "failed model switch reports failure to its caller");
 eq(renderedBalance(), "A 40.00", "failed switch restores the known balance when its confirmation refresh fails");
+
+const firstFailedQueueGate = deferred<void>();
+const latestFailedQueueGate = deferred<void>();
+modelSwitchSteps.push(
+  { gate: firstFailedQueueGate, error: new Error("provider E failed") },
+  { gate: latestFailedQueueGate, error: new Error("provider F failed") },
+);
+const failedQueueStartCalls = modelSwitchCalls;
+let firstFailedQueueSwitch: Promise<boolean> | undefined;
+let latestFailedQueueSwitch: Promise<boolean> | undefined;
+await act(async () => {
+  firstFailedQueueSwitch = controller?.setModel("provider-e/model-e");
+  latestFailedQueueSwitch = controller?.setModel("provider-f/model-f");
+  await flushPromises();
+});
+eq(renderedBalance(), "-", "queued failing switches keep the outgoing balance hidden while pending");
+eq(modelSwitchCalls, failedQueueStartCalls + 1, "queued failing switches enter the backend in click order");
+
+firstFailedQueueGate.resolve();
+let firstFailedQueueResult: boolean | undefined;
+await act(async () => {
+  firstFailedQueueResult = await firstFailedQueueSwitch;
+  await flushPromises();
+});
+eq(firstFailedQueueResult, false, "superseded queued failure does not own balance reconciliation");
+ok(
+  await settleUntil(() => modelSwitchCalls === failedQueueStartCalls + 2),
+  "latest queued failing switch starts after the older failure",
+);
+eq(renderedBalance(), "-", "superseded queued failure cannot restore the outgoing balance");
+
+latestFailedQueueGate.resolve();
+let latestFailedQueueResult: boolean | undefined;
+await act(async () => {
+  latestFailedQueueResult = await latestFailedQueueSwitch;
+  await flushPromises();
+});
+eq(latestFailedQueueResult, false, "latest queued failure reports failure");
+eq(
+  renderedBalance(),
+  "A 40.00",
+  "consecutive queued failures restore the pre-queue balance when confirmation fails",
+);
 balanceLoader = undefined;
 
 const switchDuringFailedCloseGate = deferred<void>();

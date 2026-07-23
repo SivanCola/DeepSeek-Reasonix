@@ -51,7 +51,8 @@ const stale = deferred<ModelInfo[]>();
 const fresh = deferred<ModelInfo[]>();
 let calls = 0;
 const picked: string[] = [];
-let pickGate: ReturnType<typeof deferred<void>> | undefined;
+const pickGates: Array<ReturnType<typeof deferred<boolean>>> = [];
+let catalogLoader: (() => Promise<ModelInfo[]>) | undefined;
 let currentCatalog: ModelInfo[] = [
   { ref: "glm-cn/glm-5.2", provider: "glm-cn", model: "glm-5.2", current: true },
 ];
@@ -62,6 +63,7 @@ let currentCatalog: ModelInfo[] = [
         calls += 1;
         if (calls === 1) return stale.promise;
         if (calls === 2) return fresh.promise;
+        if (catalogLoader) return catalogLoader();
         return currentCatalog;
       },
     },
@@ -76,7 +78,7 @@ const renderSwitcher = (label: string, tabId: string) => (
       tabId={tabId}
       onPick={(ref) => {
         picked.push(ref);
-        return pickGate?.promise;
+        return pickGates.shift()?.promise ?? Promise.resolve(true);
       }}
     />
   </LocaleProvider>
@@ -118,7 +120,8 @@ currentCatalog = [
   { ref: "glm-cn/glm-5.2", provider: "glm-cn", model: "glm-5.2", current: true },
   { ref: "deepseek/deepseek-v4-flash", provider: "deepseek", model: "deepseek-v4-flash", current: false },
 ];
-pickGate = deferred<void>();
+const pendingPickGate = deferred<boolean>();
+pickGates.push(pendingPickGate, pendingPickGate);
 await act(async () => {
   (document.querySelector(".modelsw__trigger") as HTMLButtonElement).click();
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -183,8 +186,130 @@ if (picked.length !== 2) {
 }
 
 await act(async () => {
-  pickGate?.resolve();
-  await pickGate?.promise;
+  pendingPickGate.resolve(true);
+  await pendingPickGate.promise;
+});
+
+// A failed latest pick must immediately roll back its optimistic selection,
+// then reconcile from the authoritative backend catalog. Retrying the same
+// target before that catalog request completes must remain possible.
+currentCatalog = [
+  { ref: "provider-a/model-a", provider: "provider-a", model: "model-a", current: true },
+  { ref: "provider-b/model-b", provider: "provider-b", model: "model-b", current: false },
+];
+await act(async () => {
+  root.render(renderSwitcher("model-a", "tab-c"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+await act(async () => {
+  (document.querySelector(".modelsw__trigger") as HTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+const failedTarget = Array.from(document.querySelectorAll<HTMLButtonElement>("[role='option']"))
+  .find((option) => option.textContent?.includes("model-b"));
+if (!failedTarget) throw new Error("failed-switch target did not load");
+const failedPickGate = deferred<boolean>();
+pickGates.push(failedPickGate);
+const catalogReloadGate = deferred<ModelInfo[]>();
+catalogLoader = () => catalogReloadGate.promise;
+await act(async () => {
+  failedTarget.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+failedPickGate.resolve(false);
+await act(async () => {
+  await failedPickGate.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+await act(async () => {
+  (document.querySelector(".modelsw__trigger") as HTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+const rolledBackCurrent = document.querySelector<HTMLButtonElement>("[role='option'][aria-selected='true']");
+if (!rolledBackCurrent?.textContent?.includes("model-a")) {
+  throw new Error(`failed pick did not immediately roll back: ${rolledBackCurrent?.textContent ?? "missing"}`);
+}
+const retryTarget = Array.from(document.querySelectorAll<HTMLButtonElement>("[role='option']"))
+  .find((option) => option.textContent?.includes("model-b"));
+if (!retryTarget) throw new Error("failed-switch target was not available for immediate retry");
+const retryPickGate = deferred<boolean>();
+pickGates.push(retryPickGate);
+await act(async () => {
+  retryTarget.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+if (picked.filter((ref) => ref === "provider-b/model-b").length !== 2) {
+  throw new Error(`failed target could not be retried: ${JSON.stringify(picked)}`);
+}
+
+// The failed attempt's catalog request describes the pre-retry backend state.
+// Its late completion must not overwrite the newer optimistic retry.
+catalogReloadGate.resolve(currentCatalog);
+await act(async () => {
+  await catalogReloadGate.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+const retryTriggerLabel = (document.querySelector(".modelsw__trigger") as HTMLButtonElement)
+  .getAttribute("aria-label") ?? "";
+if (!retryTriggerLabel.includes("provider-b")) {
+  throw new Error(`stale failure reconciliation overwrote the retry: ${retryTriggerLabel}`);
+}
+retryPickGate.resolve(true);
+await act(async () => {
+  await retryPickGate.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+catalogLoader = undefined;
+
+// An older superseded failure also must not roll back a newer pending pick.
+currentCatalog = [
+  { ref: "provider-a/model-a", provider: "provider-a", model: "model-a", current: true },
+  { ref: "provider-b/model-b", provider: "provider-b", model: "model-b", current: false },
+  { ref: "provider-c/model-c", provider: "provider-c", model: "model-c", current: false },
+];
+await act(async () => {
+  root.render(renderSwitcher("model-a", "tab-d"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+await act(async () => {
+  (document.querySelector(".modelsw__trigger") as HTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+const olderTarget = Array.from(document.querySelectorAll<HTMLButtonElement>("[role='option']"))
+  .find((option) => option.textContent?.includes("model-b"));
+if (!olderTarget) throw new Error("older switch target did not load");
+const olderPickGate = deferred<boolean>();
+pickGates.push(olderPickGate);
+await act(async () => {
+  olderTarget.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+await act(async () => {
+  (document.querySelector(".modelsw__trigger") as HTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+const newerTarget = Array.from(document.querySelectorAll<HTMLButtonElement>("[role='option']"))
+  .find((option) => option.textContent?.includes("model-c"));
+if (!newerTarget) throw new Error("newer switch target did not load");
+const newerPickGate = deferred<boolean>();
+pickGates.push(newerPickGate);
+await act(async () => {
+  newerTarget.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+olderPickGate.resolve(false);
+await act(async () => {
+  await olderPickGate.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+const newerTriggerLabel = (document.querySelector(".modelsw__trigger") as HTMLButtonElement)
+  .getAttribute("aria-label") ?? "";
+if (!newerTriggerLabel.includes("provider-c")) {
+  throw new Error(`superseded failure rolled back the newer pick: ${newerTriggerLabel}`);
+}
+newerPickGate.resolve(true);
+await act(async () => {
+  await newerPickGate.promise;
 });
 
 await act(async () => root.unmount());

@@ -16,7 +16,7 @@ export function ModelSwitcher({
 }: {
   label: string;
   tabId?: string;
-  onPick: (name: string) => void | Promise<unknown>;
+  onPick: (name: string) => boolean | Promise<boolean>;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -26,7 +26,10 @@ export function ModelSwitcher({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const loadSeqRef = useRef(0);
+  const currentTabKeyRef = useRef(tabId ?? "");
   const pendingPickCountByTabRef = useRef(new Map<string, number>());
+  const pickSeqByTabRef = useRef(new Map<string, number>());
+  currentTabKeyRef.current = tabId ?? "";
 
   // Measure trigger width off the render path to avoid forced layout
   useEffect(() => {
@@ -39,14 +42,22 @@ export function ModelSwitcher({
     return () => observer.disconnect();
   }, []);
 
-  const loadModels = useCallback(() => {
+  const loadModelsForTab = useCallback((targetTabId?: string) => {
+    const targetKey = targetTabId ?? "";
     const seq = ++loadSeqRef.current;
-    return (tabId ? app.ModelsForTab(tabId) : app.Models())
+    return (targetTabId ? app.ModelsForTab(targetTabId) : app.Models())
       .then((next) => {
-        if (seq === loadSeqRef.current) setModels(asArray(next));
+        if (seq === loadSeqRef.current && currentTabKeyRef.current === targetKey) {
+          setModels(asArray(next));
+        }
       })
       .catch(() => {});
-  }, [tabId]);
+  }, []);
+
+  const loadModels = useCallback(
+    () => loadModelsForTab(tabId),
+    [loadModelsForTab, tabId],
+  );
 
   useEffect(() => {
     void loadModels();
@@ -111,20 +122,40 @@ export function ModelSwitcher({
     // an earlier switch is rebuilding. In that window, selecting it again is
     // an intentional last-click-wins rollback rather than a no-op.
     if (model.current && pendingPickCount === 0) return;
+    const previousModels = models;
+    const pickSeq = (pickSeqByTabRef.current.get(pendingKey) ?? 0) + 1;
+    pickSeqByTabRef.current.set(pendingKey, pickSeq);
+    // Catalog requests started before this click describe the outgoing model
+    // and must not overwrite the optimistic last-click choice.
+    loadSeqRef.current += 1;
     setModels((prev) => prev.map((m) => ({ ...m, current: m.ref === model.ref })));
     pendingPickCountByTabRef.current.set(pendingKey, pendingPickCount + 1);
-    const settlePick = () => {
+    const settlePick = (switched: boolean) => {
       const nextCount = Math.max(
         0,
         (pendingPickCountByTabRef.current.get(pendingKey) ?? 0) - 1,
       );
       if (nextCount === 0) pendingPickCountByTabRef.current.delete(pendingKey);
       else pendingPickCountByTabRef.current.set(pendingKey, nextCount);
+      // A superseded completion no longer owns the visible selection. Only the
+      // latest failed click may roll back and reconcile with the backend.
+      if (
+        switched ||
+        pickSeqByTabRef.current.get(pendingKey) !== pickSeq ||
+        currentTabKeyRef.current !== pendingKey
+      ) {
+        return;
+      }
+      setModels(previousModels);
+      void loadModelsForTab(tabId);
     };
     try {
-      void Promise.resolve(onPick(model.ref)).then(settlePick, settlePick);
+      void Promise.resolve(onPick(model.ref)).then(
+        (switched) => settlePick(switched),
+        () => settlePick(false),
+      );
     } catch (err) {
-      settlePick();
+      settlePick(false);
       throw err;
     }
   };
