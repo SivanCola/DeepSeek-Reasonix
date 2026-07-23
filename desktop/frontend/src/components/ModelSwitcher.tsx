@@ -17,6 +17,7 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
   const [triggerWidth, setTriggerWidth] = useState<number | undefined>(undefined);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const loadSeqRef = useRef(0);
 
   // Measure trigger width off the render path to avoid forced layout
   useEffect(() => {
@@ -30,11 +31,22 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
   }, []);
 
   const loadModels = useCallback(() => {
-    return (tabId ? app.ModelsForTab(tabId) : app.Models()).then((next) => setModels(asArray(next))).catch(() => {});
+    const seq = ++loadSeqRef.current;
+    return (tabId ? app.ModelsForTab(tabId) : app.Models())
+      .then((next) => {
+        if (seq === loadSeqRef.current) setModels(asArray(next));
+      })
+      .catch(() => {});
   }, [tabId]);
 
   useEffect(() => {
     void loadModels();
+  }, [loadModels]);
+
+  useEffect(() => {
+    const refresh = () => void loadModels();
+    window.addEventListener("reasonix:model-catalog-changed", refresh);
+    return () => window.removeEventListener("reasonix:model-catalog-changed", refresh);
   }, [loadModels]);
 
   useEffect(() => {

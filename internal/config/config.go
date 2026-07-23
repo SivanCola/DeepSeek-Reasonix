@@ -1280,6 +1280,20 @@ func (e *ProviderEntry) DefaultModel() string {
 	return ""
 }
 
+// ShowsWalletBalance reports whether this resolved provider/model is one of the
+// two official DeepSeek models whose wallet balance Reasonix supports.
+func (e *ProviderEntry) ShowsWalletBalance() bool {
+	if officialProviderKind(e) != "deepseek" {
+		return false
+	}
+	switch strings.TrimSpace(e.Model) {
+	case "deepseek-v4-flash", "deepseek-v4-pro":
+		return true
+	default:
+		return false
+	}
+}
+
 // HasModel reports whether m is one of the provider's models.
 func (e *ProviderEntry) HasModel(m string) bool {
 	for _, x := range e.ModelList() {

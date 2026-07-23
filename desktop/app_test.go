@@ -3114,6 +3114,9 @@ func TestSetModelForTabRefreshesCarriedSystemPrompt(t *testing.T) {
 	if history[1].Role != provider.RoleUser || history[1].Content != "hello" {
 		t.Fatalf("carried user message changed: %+v", history[1])
 	}
+	if got := config.LoadForEdit(config.UserConfigPath()).DefaultModel; got != "new/new-model" {
+		t.Fatalf("default model after session switch = %q, want new/new-model", got)
+	}
 }
 
 // TestSetModelForTabRestoresSessionAuthorizations pins the fix for a model

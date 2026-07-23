@@ -8961,6 +8961,14 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		newCtrl.Close()
 		return err
 	}
+	// The session switcher and Settings expose the same current/default model.
+	// Persist the canonical ref before adopting the rebuilt controller so a
+	// save failure cannot leave the live session and Settings pointing at
+	// different models.
+	if err := a.persistDefaultModelForRoot(snap.workspaceRoot, name); err != nil {
+		newCtrl.Close()
+		return fmt.Errorf("save default model: %w", err)
+	}
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		// The tab was closed/replaced while we built the new controller off-lock;

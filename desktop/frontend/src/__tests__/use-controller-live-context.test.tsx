@@ -7,7 +7,7 @@ import { ContextPanel } from "../components/ContextPanel";
 import { StatusBar } from "../components/StatusBar";
 import type { AppBindings } from "../lib/bridge";
 import { LocaleProvider } from "../lib/i18n";
-import type { ContextInfo, ContextPanelInfo, EffortInfo, Meta, TabMeta, WireEvent } from "../lib/types";
+import type { BalanceInfo, ContextInfo, ContextPanelInfo, EffortInfo, Meta, TabMeta, WireEvent } from "../lib/types";
 import { useController } from "../lib/useController";
 
 let passed = 0;
@@ -137,6 +137,10 @@ let backendContext: ContextInfo = {
 };
 let contextCalls = 0;
 let contextLoader: (() => Promise<ContextInfo>) | undefined;
+let backendBalance: BalanceInfo = { available: true, display: "¥88.00" };
+let balanceCalls = 0;
+let balanceLoader: (() => Promise<BalanceInfo>) | undefined;
+let modelSwitchGate: ReturnType<typeof deferred<void>> | undefined;
 const stalePanelInfo: ContextPanelInfo = {
   usedTokens: 100,
   windowTokens: 1_000,
@@ -175,7 +179,15 @@ window.go = {
       // must still keep the panel average aligned with StatusBar during bursts.
       ContextPanel: async () => stalePanelInfo,
       EffortForTab: async () => effort,
-      BalanceForTab: async () => ({ available: false, display: "" }),
+      BalanceForTab: async () => {
+        balanceCalls += 1;
+        return balanceLoader ? balanceLoader() : backendBalance;
+      },
+      SetModelForTab: async () => {
+        if (modelSwitchGate) await modelSwitchGate.promise;
+        backendBalance = { available: false, display: "" };
+        balanceLoader = undefined;
+      },
       JobsForTab: async () => [],
       CheckpointsForTab: async () => [],
       HistoryForTab: async () => [],
@@ -197,8 +209,9 @@ function Probe() {
         <StatusBar
           context={controller.state.context}
           usage={controller.state.usage}
+          balance={controller.state.balance}
           running={controller.state.running}
-          items={["cache_avg"]}
+          items={["cache_avg", "balance"]}
         />
         <ContextPanel
           tabId={controller.activeTabId}
@@ -225,6 +238,10 @@ function renderedPanelAverage(): string {
   return document.querySelector(".context-panel__summary-rows .context-panel__mini-stat strong")?.textContent ?? "";
 }
 
+function renderedBalance(): string {
+  return document.querySelector('[data-statusbar-item="balance"] b')?.textContent ?? "";
+}
+
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("missing root");
 const root = createRoot(rootEl);
@@ -238,6 +255,7 @@ ok(
   await settleUntil(() => controller?.activeTabId === "tab-live-context" && controller.state.context.cacheMissTokens === 100),
   "initial completed-turn context loads",
 );
+ok(await settleUntil(() => renderedBalance() === "¥88.00"), "initial DeepSeek balance loads");
 const initialContextCalls = contextCalls;
 
 backendContext = {
@@ -329,6 +347,39 @@ eq(controller?.state.context.cacheHitTokens, 990, "late stale snapshot cannot re
 eq(renderedAverage(), "99.00%", "late stale snapshot cannot regress the rendered average");
 eq(renderedPanelAverage(), "99.00%", "late stale snapshot cannot regress the panel average");
 contextLoader = undefined;
+
+const staleBalance = deferred<BalanceInfo>();
+balanceLoader = () => staleBalance.promise;
+const balanceRaceStartCalls = balanceCalls;
+await act(async () => {
+  for (const handler of eventHandlers) handler({ kind: "turn_done", tabId: "tab-live-context" });
+  await flushPromises();
+});
+ok(await settleUntil(() => balanceCalls === balanceRaceStartCalls + 1), "pre-switch balance refresh starts");
+
+modelSwitchGate = deferred<void>();
+let switchPromise: Promise<void> | undefined;
+await act(async () => {
+  switchPromise = controller?.setModel("mimo/mimo-v2");
+  await flushPromises();
+});
+eq(renderedBalance(), "-", "starting a hot model switch immediately hides the DeepSeek balance");
+
+modelSwitchGate.resolve();
+await act(async () => {
+  await switchPromise;
+  await flushPromises();
+});
+ok(
+  await settleUntil(() => controller?.state.balance.available === false && renderedBalance() === "-"),
+  "a switched provider without a balance endpoint keeps the placeholder",
+);
+
+staleBalance.resolve({ available: true, display: "¥88.00" });
+await act(async () => {
+  await flushPromises();
+});
+eq(renderedBalance(), "-", "late DeepSeek balance response cannot overwrite the switched provider");
 
 await act(async () => {
   root.unmount();
