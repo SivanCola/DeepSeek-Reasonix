@@ -1085,3 +1085,114 @@ func TestPlannerSchemaStableAcrossProxyPresence(t *testing.T) {
 		}
 	}
 }
+
+func TestUnauthorizedNonProjectMCPZeroProcessStart(t *testing.T) {
+	// Spec.Authorized is the single truth: a host/session server with
+	// RequireLaunchApproval=false but Authorized=false must not start.
+	host := plugin.NewHost()
+	defer host.Close()
+	var started atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started.Add(1)
+		http.Error(w, "should not connect", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	spec := plugin.Spec{
+		Name: "untrusted", Type: "http", URL: srv.URL,
+		// Explicitly unauthorized: boot/install must set Authorized=true for trust.
+		Authorized: false, RequireLaunchApproval: false,
+	}
+	proxy := NewUseCapabilityTool(context.Background(), host, []plugin.Spec{spec}, tool.NewRegistry(), capability.NewLedger(), nil, nil)
+	reg := tool.NewRegistry()
+	reg.Add(proxy)
+	a := New(nil, reg, NewSession("sys"), Options{}, event.Discard)
+
+	// Tool call path
+	out := a.executeOne(context.Background(), provider.ToolCall{
+		ID: "u1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:untrusted/search","arguments":{}}`,
+	})
+	if !out.blocked && out.errMsg == "" {
+		// May surface as error rather than blocked depending on resolve shape.
+		if !strings.Contains(out.output, "not authorized") && !strings.Contains(out.errMsg, "not authorized") {
+			t.Fatalf("unauthorized tool call outcome = %+v", out)
+		}
+	}
+	if host.HasClient("untrusted") || started.Load() != 0 {
+		t.Fatalf("unauthorized non-project MCP started process/network: connected=%v starts=%d", host.HasClient("untrusted"), started.Load())
+	}
+
+	// Lifecycle connect path
+	out2 := a.executeOne(context.Background(), provider.ToolCall{
+		ID: "u2", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-server:untrusted"}`,
+	})
+	if host.HasClient("untrusted") || started.Load() != 0 {
+		t.Fatalf("unauthorized connect started process/network: outcome=%+v connected=%v starts=%d", out2, host.HasClient("untrusted"), started.Load())
+	}
+	if !out2.blocked && !strings.Contains(out2.output, "not authorized") && !strings.Contains(out2.errMsg, "not authorized") {
+		t.Fatalf("unauthorized connect should refuse, got %+v", out2)
+	}
+}
+
+func TestAuthorizedMCPConnectUsesExplicitDenyOnlyGate(t *testing.T) {
+	// dontAsk/ask policy must not block first connect of an authorized server;
+	// only ExplicitlyDenies should stop it.
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	var toolCalls atomic.Int32
+	server := explicitReaderMCPServer(t, nil, &toolCalls)
+	defer server.Close()
+
+	manager := mcplaunch.NewManager(filepath.Join(t.TempDir(), mcplaunch.StateFilename), t.TempDir())
+	spec := plugin.Spec{
+		Name: "explicit-reader", Type: "http", URL: server.URL,
+		LaunchManager: manager, ConfigSource: "workspace_config",
+		Authorized: true,
+	}
+	cacheExplicitReaderSchema(t, spec)
+
+	host := plugin.NewHost()
+	defer host.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	proxy := NewUseCapabilityTool(ctx, host, []plugin.Spec{spec}, tool.NewRegistry(), capability.NewLedger(), nil, nil)
+	reg := tool.NewRegistry()
+	reg.Add(proxy)
+
+	// Gate that would deny all ordinary checks (simulates dontAsk / ask without answer).
+	denyOrdinary := denyAllGate{}
+	a := New(nil, reg, NewSession("sys"), Options{Gate: denyOrdinary}, event.Discard)
+	out := a.executeOne(ctx, provider.ToolCall{
+		ID: "c1", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-server:explicit-reader"}`,
+	})
+	// denyAllGate does not implement ExplicitDenyGate — trusted MCP path skips Gate.Check.
+	if out.blocked || out.errMsg != "" {
+		t.Fatalf("authorized lifecycle connect must not use ordinary Gate.Check: %+v", out)
+	}
+	if !host.HasClient("explicit-reader") {
+		t.Fatal("authorized connect should start the server under deny-all ordinary gate")
+	}
+
+	// Explicit deny on mcp_connect__ must still block a fresh unauthorized name.
+	// Use a second server name with deny of its connect identity.
+	spec2 := plugin.Spec{
+		Name: "other-reader", Type: "http", URL: server.URL,
+		LaunchManager: manager, ConfigSource: "workspace_config",
+		Authorized: true,
+	}
+	cacheExplicitReaderSchema(t, spec2)
+	proxy2 := NewUseCapabilityTool(ctx, host, []plugin.Spec{spec2}, tool.NewRegistry(), capability.NewLedger(), nil, nil)
+	reg2 := tool.NewRegistry()
+	reg2.Add(proxy2)
+	denyConnect := permission.NewGate(permission.New("ask", nil, nil, []string{plugin.MCPConnectPermissionName("other-reader")}), nil)
+	a2 := New(nil, reg2, NewSession("sys"), Options{Gate: denyConnect}, event.Discard)
+	out2 := a2.executeOne(ctx, provider.ToolCall{
+		ID: "c2", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-server:other-reader"}`,
+	})
+	if !out2.blocked || host.HasClient("other-reader") {
+		t.Fatalf("explicit connect deny must block: outcome=%+v connected=%v", out2, host.HasClient("other-reader"))
+	}
+}

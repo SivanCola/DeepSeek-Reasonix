@@ -350,13 +350,12 @@ func (t *UseCapabilityTool) listServers() (string, error) {
 				}
 			}
 		}
-		authorized := resolved.ServerAuthorized() || !resolved.RequireLaunchApproval
 		names = append(names, name)
 		byName[name] = listServerInfo{
 			Name:         name,
 			CapabilityID: "mcp-server:" + name,
 			Status:       status,
-			Authorized:   authorized,
+			Authorized:   resolved.ServerAuthorized(),
 			Connected:    connected,
 		}
 	}
@@ -619,12 +618,8 @@ func (o *onDemandMCPTool) ReadOnly() bool {
 func (o *onDemandMCPTool) ReadOnlyExecutionHostMutation() bool { return true }
 
 func (o *onDemandMCPTool) MCPServerAuthorized() bool {
-	// Project servers need an exact identity grant. User-installed and host-
-	// session servers never set RequireLaunchApproval; production boot also sets
-	// Authorized, but tests may omit the flag while still representing installs.
-	if !o.spec.RequireLaunchApproval {
-		return true
-	}
+	// Spec.Authorized is the single runtime authorization result. Boot/install
+	// and ResolveStoredAuthorization set it; this path never invents trust.
 	return o.spec.ServerAuthorized()
 }
 
@@ -698,17 +693,14 @@ func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string
 	if !ok {
 		return nil, fmt.Errorf("MCP server %q is not configured", server)
 	}
-	// Apply stored project grants, then refuse unauthorized project servers
-	// before any process or network start. User-installed servers
-	// (!RequireLaunchApproval) are trusted by install; mark them Authorized so
-	// live tools report MCPServerAuthorized consistently for dispatch checks.
+	// Apply stored project grants, then refuse any unauthorized server before
+	// process or network start. Spec.Authorized is the only trust bit — boot
+	// and install set it for user/host installs; this path never upgrades it.
 	// Explicit deny on mcp_connect__* is enforced by the permission gate before
 	// Execute reaches here.
 	spec = plugin.ResolveStoredAuthorization(ctx, spec)
-	if !spec.RequireLaunchApproval {
-		spec.Authorized = true
-	} else if !spec.ServerAuthorized() {
-		return nil, fmt.Errorf("MCP server %q is not authorized; complete project identity approval before connecting", server)
+	if !spec.ServerAuthorized() {
+		return nil, fmt.Errorf("MCP server %q is not authorized; install it or complete project identity approval before connecting", server)
 	}
 	// On-demand connect: the handshake gets a short budget, but the child
 	// process lifetime belongs to the session-scoped lifeCtx — canceling the
@@ -910,9 +902,6 @@ func (o *onDemandMCPConnect) ReadOnly() bool { return false }
 func (o *onDemandMCPConnect) MCPLifecycleConnect() bool { return true }
 
 func (o *onDemandMCPConnect) MCPServerAuthorized() bool {
-	if !o.spec.RequireLaunchApproval {
-		return true
-	}
 	return o.spec.ServerAuthorized()
 }
 
@@ -921,17 +910,17 @@ func (o *onDemandMCPConnect) MCPServerName() string { return o.server }
 func (o *onDemandMCPConnect) ReadOnlyExecutionHostMutation() bool { return true }
 
 func (o *onDemandMCPConnect) ReadOnlyExecutionBlockReason() string {
-	if o.spec.RequireLaunchApproval && !o.spec.ServerAuthorized() {
-		return "start an unauthorized MCP server (complete project identity approval first)"
+	if !o.spec.ServerAuthorized() {
+		return "start an unauthorized MCP server (install it or complete project identity approval first)"
 	}
 	return "connect this MCP server from a parent session first"
 }
 
 func (o *onDemandMCPConnect) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
-	// Zero process/network start when project authorization is missing or was
-	// revoked after resolve.
-	if o.spec.RequireLaunchApproval && !o.spec.ServerAuthorized() {
-		msg := fmt.Sprintf("MCP server %q is not authorized; complete project identity approval before connecting", o.server)
+	// Zero process/network start when authorization is missing or was revoked
+	// after resolve. Spec.Authorized is the only trust bit.
+	if !o.spec.ServerAuthorized() {
+		msg := fmt.Sprintf("MCP server %q is not authorized; install it or complete project identity approval before connecting", o.server)
 		if o.proxy.ledger != nil {
 			o.proxy.ledger.MarkUnavailable("mcp-server:"+o.server, msg)
 		}

@@ -3212,7 +3212,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 		planReplacementAuthorized = planTransition && dec.AuthorizePlanReplacement
 	}
-	if isInstalledMCPTool(execTool) {
+	// Trusted MCP fast path: installed tools and authorized lifecycle connects
+	// (mcp_connect__*) skip ordinary Ask/Auto/dontAsk gates. Only explicit deny
+	// and live authorization apply — first connect of an installed server must
+	// not re-prompt under headless or partial-auto policies.
+	if isInstalledMCPTool(execTool) || isMCPLifecycleConnectTarget(execTool) {
 		if !mcpServerAuthorized(execTool) {
 			return toolOutcome{
 				output:  "blocked: this project MCP server identity has not been authorized; approve the server from a parent session and retry",
