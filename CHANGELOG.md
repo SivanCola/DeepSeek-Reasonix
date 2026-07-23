@@ -69,6 +69,12 @@ branch.
 
 ### Fixed
 
+- Stabilized the desktop rich composer caret after skill and plugin invocation
+  tags. DOM→model and model→DOM selection mapping now treat invocation chips as
+  zero-length atoms while still counting user text that lands inside the NBSP
+  caret anchor (common on Windows WebView2), restore both selection ends, and
+  recover the insertion point from a `beforeinput` snapshot when the browser
+  temporarily loses selection — so mid-text edits no longer jump to the end.
 - Isolated the Windows desktop WebView2 shell from stale system proxies, so an
   exited proxy client cannot leave the embedded UI hidden during startup. If
   WebView2 still does not reach DOM-ready within 15 seconds, Reasonix now shows

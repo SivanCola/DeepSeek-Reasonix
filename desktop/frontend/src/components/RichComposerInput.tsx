@@ -39,6 +39,10 @@ export type RichComposerInputHandle = {
   scrollHeight: () => number;
 };
 
+export type DomSelectionRead =
+  | { ok: true; selection: RichComposerSelection }
+  | { ok: false };
+
 type PendingSelection = RichComposerSelection | null;
 
 type ComposerModel = {
@@ -48,6 +52,18 @@ type ComposerModel = {
 
 type RenderedComposerModel = ComposerModel & {
   version: number;
+};
+
+type DomPoint = {
+  node: Node;
+  offset: number;
+};
+
+type EditSnapshot = {
+  text: string;
+  selection: RichComposerSelection;
+  inputType: string;
+  data: string | null;
 };
 
 const CARET_SENTINEL = "\u00A0";
@@ -60,105 +76,339 @@ function sameComposerModel(left: ComposerModel, right: ComposerModel | null): bo
   });
 }
 
-function modelFromDom(root: HTMLElement, known: Map<string, ComposerInvocation>) {
-  let text = "";
-  const invocations: ComposerInvocation[] = [];
-  const visit = (node: Node) => {
-    if (node instanceof HTMLElement) {
+function isHTMLElement(node: Node): node is HTMLElement {
+  return node instanceof HTMLElement;
+}
+
+function isInvocationToken(node: Node): node is HTMLElement {
+  return isHTMLElement(node) && Boolean(node.dataset.invocationId);
+}
+
+function isCaretAnchor(node: Node): node is HTMLElement {
+  return isHTMLElement(node) && Boolean(node.dataset.composerCaretAnchor);
+}
+
+function isBreak(node: Node): node is HTMLElement {
+  return isHTMLElement(node) && node.tagName === "BR";
+}
+
+/**
+ * Shared DOM walk for model text, selection reads, and selection restores.
+ *
+ * Logical length rules:
+ * - invocation tokens are zero-length atoms (children ignored)
+ * - the first CARET_SENTINEL inside a caret anchor is zero-length
+ * - remaining user text in the anchor counts
+ * - <br> is one newline
+ * - ordinary / nested text uses JavaScript UTF-16 offsets
+ */
+function walkComposerDom(
+  root: Node,
+  visitor: {
+    onInvocation?: (id: string, element: HTMLElement) => boolean | void;
+    onText?: (node: Text, start: number, end: number) => boolean | void;
+    onBreak?: (element: HTMLElement) => boolean | void;
+  },
+): void {
+  const visit = (node: Node, inAnchor: boolean, anchorState: { skippedSentinel: boolean }): boolean => {
+    if (isInvocationToken(node)) {
       const id = node.dataset.invocationId;
-      if (id) {
-        const invocation = known.get(id);
-        if (invocation) invocations.push({ ...invocation, offset: text.length });
-        return;
+      if (id && visitor.onInvocation?.(id, node)) return true;
+      return false;
+    }
+    if (isCaretAnchor(node)) {
+      const state = { skippedSentinel: false };
+      for (const child of Array.from(node.childNodes)) {
+        if (visit(child, true, state)) return true;
       }
-      if (node.dataset.composerCaretAnchor) {
-        text += (node.textContent ?? "").replace(CARET_SENTINEL, "");
-        return;
-      }
-      if (node.tagName === "BR") {
-        text += "\n";
-        return;
-      }
+      return false;
+    }
+    if (isBreak(node)) {
+      return Boolean(visitor.onBreak?.(node));
     }
     if (node.nodeType === Node.TEXT_NODE) {
-      text += node.textContent ?? "";
-      return;
+      const textNode = node as Text;
+      const value = textNode.textContent ?? "";
+      if (!value) return false;
+      if (!inAnchor) {
+        return Boolean(visitor.onText?.(textNode, 0, value.length));
+      }
+      let start = 0;
+      if (!anchorState.skippedSentinel) {
+        const sentinelAt = value.indexOf(CARET_SENTINEL);
+        if (sentinelAt === 0) {
+          anchorState.skippedSentinel = true;
+          start = 1;
+        } else if (sentinelAt > 0) {
+          // Count text before the first sentinel, then skip the sentinel once.
+          if (visitor.onText?.(textNode, 0, sentinelAt)) return true;
+          anchorState.skippedSentinel = true;
+          start = sentinelAt + 1;
+        }
+      }
+      if (start < value.length) {
+        return Boolean(visitor.onText?.(textNode, start, value.length));
+      }
+      return false;
     }
-    node.childNodes.forEach(visit);
+    if (isHTMLElement(node) || node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+      for (const child of Array.from(node.childNodes)) {
+        if (visit(child, inAnchor, anchorState)) return true;
+      }
+    }
+    return false;
   };
-  root.childNodes.forEach(visit);
+  visit(root, false, { skippedSentinel: false });
+}
+
+function normalizeModelText(text: string): string {
+  return text.replace(/\u00a0/g, " ");
+}
+
+export function modelFromDom(root: HTMLElement, known: Map<string, ComposerInvocation>): ComposerModel {
+  let text = "";
+  const invocations: ComposerInvocation[] = [];
+  walkComposerDom(root, {
+    onInvocation: (id) => {
+      const invocation = known.get(id);
+      if (invocation) invocations.push({ ...invocation, offset: text.length });
+    },
+    onText: (node, start, end) => {
+      text += (node.textContent ?? "").slice(start, end);
+    },
+    onBreak: () => {
+      text += "\n";
+    },
+  });
   return {
-    text: text.replace(/\u00a0/g, " "),
+    text: normalizeModelText(text),
     invocations: sortComposerInvocations(invocations),
   };
 }
 
-function selectionFromDom(root: HTMLElement, known: Map<string, ComposerInvocation>): RichComposerSelection {
-  const selection = document.getSelection();
-  if (!selection || selection.rangeCount === 0 || !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) {
-    const model = modelFromDom(root, known);
-    return { start: model.text.length, end: model.text.length };
-  }
-  const point = (node: Node, offset: number) => {
-    const range = document.createRange();
-    range.setStart(root, 0);
+function logicalLength(root: HTMLElement): number {
+  return modelFromDom(root, new Map()).text.length;
+}
+
+function pointFromDom(
+  root: HTMLElement,
+  known: Map<string, ComposerInvocation>,
+  node: Node,
+  offset: number,
+): { offset: number; afterInvocationId?: string } {
+  // Build a range [root start, point) and measure with the same walk rules.
+  // Walking a cloned fragment preserves nested structure (including caret anchors).
+  const range = document.createRange();
+  range.setStart(root, 0);
+  try {
     range.setEnd(node, offset);
-    const fragment = range.cloneContents();
-    const shell = document.createElement("div");
-    shell.appendChild(fragment);
-    const model = modelFromDom(shell, known);
-    const lastInvocation = model.invocations[model.invocations.length - 1];
-    return {
-      offset: model.text.length,
-      afterInvocationId: lastInvocation?.offset === model.text.length ? lastInvocation.id : undefined,
-    };
-  };
-  const anchor = point(selection.anchorNode as Node, selection.anchorOffset);
-  const focus = point(selection.focusNode as Node, selection.focusOffset);
+  } catch {
+    return { offset: logicalLength(root) };
+  }
+  const fragment = range.cloneContents();
+  const shell = document.createElement("div");
+  shell.appendChild(fragment);
+  const model = modelFromDom(shell, known);
+  const lastInvocation = model.invocations[model.invocations.length - 1];
   return {
-    start: Math.min(anchor.offset, focus.offset),
-    end: Math.max(anchor.offset, focus.offset),
-    afterInvocationId: selection.isCollapsed ? focus.afterInvocationId : undefined,
+    offset: model.text.length,
+    afterInvocationId: lastInvocation?.offset === model.text.length ? lastInvocation.id : undefined,
   };
 }
 
-function setDomSelection(root: HTMLElement, target: RichComposerSelection) {
+export function selectionFromDom(root: HTMLElement, known: Map<string, ComposerInvocation>): DomSelectionRead {
   const selection = document.getSelection();
-  if (!selection) return;
-  const range = document.createRange();
-  if (target.afterInvocationId) {
+  if (
+    !selection
+    || selection.rangeCount === 0
+    || !selection.anchorNode
+    || !selection.focusNode
+    || !root.contains(selection.anchorNode)
+    || !root.contains(selection.focusNode)
+  ) {
+    return { ok: false };
+  }
+  const anchor = pointFromDom(root, known, selection.anchorNode, selection.anchorOffset);
+  const focus = pointFromDom(root, known, selection.focusNode, selection.focusOffset);
+  return {
+    ok: true,
+    selection: {
+      start: Math.min(anchor.offset, focus.offset),
+      end: Math.max(anchor.offset, focus.offset),
+      afterInvocationId: selection.isCollapsed ? focus.afterInvocationId : undefined,
+    },
+  };
+}
+
+function locateDomPoint(
+  root: HTMLElement,
+  targetOffset: number,
+  options: { afterInvocationId?: string } = {},
+): DomPoint {
+  if (options.afterInvocationId) {
     const token = Array.from(root.querySelectorAll<HTMLElement>("[data-invocation-id]"))
-      .find((candidate) => candidate.dataset.invocationId === target.afterInvocationId);
+      .find((candidate) => candidate.dataset.invocationId === options.afterInvocationId);
     if (token?.parentNode) {
       const index = Array.prototype.indexOf.call(token.parentNode.childNodes, token);
-      range.setStart(token.parentNode, index + 1);
-      range.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      return;
+      return { node: token.parentNode, offset: index + 1 };
     }
   }
 
-  let remaining = target.end;
-  let found: { node: Node; offset: number } | null = null;
-  const visit = (node: Node) => {
-    if (found) return;
-    if (node instanceof HTMLElement && node.dataset.invocationId) return;
-    if (node instanceof HTMLElement && node.dataset.composerCaretAnchor) return;
-    if (node.nodeType === Node.TEXT_NODE) {
-      const length = node.textContent?.length ?? 0;
-      if (remaining <= length) found = { node, offset: remaining };
-      else remaining -= length;
-      return;
-    }
-    for (const child of Array.from(node.childNodes)) visit(child);
-  };
-  visit(root);
-  const point = found ?? { node: root, offset: root.childNodes.length };
-  range.setStart(point.node, point.offset);
-  range.collapse(true);
+  const total = logicalLength(root);
+  let remaining = Math.max(0, Math.min(targetOffset, total));
+  let found: DomPoint | null = null;
+  let lastTextPoint: DomPoint | null = null;
+
+  walkComposerDom(root, {
+    onText: (node, start, end) => {
+      const length = end - start;
+      if (remaining <= length) {
+        found = { node, offset: start + remaining };
+        return true;
+      }
+      remaining -= length;
+      lastTextPoint = { node, offset: end };
+      return false;
+    },
+    onBreak: (element) => {
+      if (remaining === 0) {
+        // Caret sits on the break boundary: place before the BR when possible.
+        if (element.parentNode) {
+          const index = Array.prototype.indexOf.call(element.parentNode.childNodes, element);
+          found = { node: element.parentNode, offset: index };
+          return true;
+        }
+      }
+      if (remaining <= 1) {
+        if (element.parentNode) {
+          const index = Array.prototype.indexOf.call(element.parentNode.childNodes, element);
+          found = { node: element.parentNode, offset: index + 1 };
+          return true;
+        }
+      }
+      remaining -= 1;
+      if (element.parentNode) {
+        const index = Array.prototype.indexOf.call(element.parentNode.childNodes, element);
+        lastTextPoint = { node: element.parentNode, offset: index + 1 };
+      }
+      return false;
+    },
+  });
+
+  if (found) return found;
+  if (lastTextPoint) return lastTextPoint;
+  return { node: root, offset: root.childNodes.length };
+}
+
+export function setDomSelection(root: HTMLElement, target: RichComposerSelection) {
+  const selection = document.getSelection();
+  if (!selection) return;
+
+  const total = logicalLength(root);
+  const start = Math.max(0, Math.min(target.start, total));
+  const end = Math.max(0, Math.min(target.end, total));
+  const collapsed = start === end;
+
+  if (collapsed && target.afterInvocationId) {
+    const point = locateDomPoint(root, start, { afterInvocationId: target.afterInvocationId });
+    const range = document.createRange();
+    range.setStart(point.node, point.offset);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return;
+  }
+
+  const startPoint = locateDomPoint(root, start);
+  const endPoint = collapsed ? startPoint : locateDomPoint(root, end);
+  const range = document.createRange();
+  try {
+    range.setStart(startPoint.node, startPoint.offset);
+    range.setEnd(endPoint.node, endPoint.offset);
+  } catch {
+    range.selectNodeContents(root);
+    range.collapse(false);
+  }
   selection.removeAllRanges();
   selection.addRange(range);
+}
+
+export function recoverSelectionAfterEdit(
+  before: EditSnapshot,
+  afterText: string,
+  fallback: RichComposerSelection,
+): RichComposerSelection {
+  const clamp = (value: number) => Math.max(0, Math.min(value, afterText.length));
+  const collapsedAt = (offset: number): RichComposerSelection => {
+    const caret = clamp(offset);
+    return { start: caret, end: caret };
+  };
+
+  const { start, end } = before.selection;
+  const from = Math.max(0, Math.min(start, end, before.text.length));
+  const to = Math.max(from, Math.min(Math.max(start, end), before.text.length));
+  const inputType = before.inputType;
+  const data = before.data ?? "";
+
+  const matches = (candidate: string) => candidate === afterText;
+
+  if (
+    inputType === "insertText"
+    || inputType === "insertCompositionText"
+    || inputType === "insertFromPaste"
+    || inputType === "insertFromDrop"
+    || inputType === "insertReplacementText"
+    || inputType === "insertFromYank"
+  ) {
+    const candidate = before.text.slice(0, from) + data + before.text.slice(to);
+    if (matches(candidate)) return collapsedAt(from + data.length);
+  }
+
+  if (inputType === "insertLineBreak" || inputType === "insertParagraph") {
+    const candidate = before.text.slice(0, from) + "\n" + before.text.slice(to);
+    if (matches(candidate)) return collapsedAt(from + 1);
+  }
+
+  if (inputType === "deleteContentBackward" || inputType === "deleteByCut" || inputType === "deleteByDrag") {
+    if (from === to) {
+      const delFrom = Math.max(0, from - 1);
+      const candidate = before.text.slice(0, delFrom) + before.text.slice(from);
+      if (matches(candidate)) return collapsedAt(delFrom);
+    } else {
+      const candidate = before.text.slice(0, from) + before.text.slice(to);
+      if (matches(candidate)) return collapsedAt(from);
+    }
+  }
+
+  if (inputType === "deleteContentForward" || inputType === "deleteContent") {
+    if (from === to) {
+      const candidate = before.text.slice(0, from) + before.text.slice(Math.min(before.text.length, from + 1));
+      if (matches(candidate)) return collapsedAt(from);
+    } else {
+      const candidate = before.text.slice(0, from) + before.text.slice(to);
+      if (matches(candidate)) return collapsedAt(from);
+    }
+  }
+
+  // Prefix/suffix diff: place the caret at the end of the changed region.
+  let prefix = 0;
+  const minLen = Math.min(before.text.length, afterText.length);
+  while (prefix < minLen && before.text.charCodeAt(prefix) === afterText.charCodeAt(prefix)) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < before.text.length - prefix
+    && suffix < afterText.length - prefix
+    && before.text.charCodeAt(before.text.length - 1 - suffix) === afterText.charCodeAt(afterText.length - 1 - suffix)
+  ) {
+    suffix += 1;
+  }
+  if (prefix + suffix <= Math.max(before.text.length, afterText.length)) {
+    return collapsedAt(afterText.length - suffix);
+  }
+
+  return collapsedAt(fallback.end);
 }
 
 function slashQueryAt(text: string, selection: RichComposerSelection): RichSlashQuery | null {
@@ -227,14 +477,25 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
   // composition mid-word, so every model→DOM and DOM→model path below stays
   // silent until compositionend performs one authoritative resync.
   const composingRef = useRef(false);
+  const lastValidSelectionRef = useRef<RichComposerSelection>({ start: 0, end: 0 });
+  const beforeInputRef = useRef<EditSnapshot | null>(null);
   const known = useMemo(() => new Map(invocations.map((invocation) => [invocation.id, invocation])), [invocations]);
   const ordered = useMemo(() => sortComposerInvocations(invocations), [invocations]);
+
+  const readSelection = (root: HTMLElement): RichComposerSelection => {
+    const read = selectionFromDom(root, known);
+    if (read.ok) {
+      lastValidSelectionRef.current = read.selection;
+      return read.selection;
+    }
+    return lastValidSelectionRef.current;
+  };
 
   const reportSelection = () => {
     if (composingRef.current) return;
     const root = rootRef.current;
     if (!root) return;
-    const selection = selectionFromDom(root, known);
+    const selection = readSelection(root);
     onSelectionChange(selection, slashQueryAt(text, selection));
   };
 
@@ -246,7 +507,11 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
 
   useImperativeHandle(ref, () => ({
     focus: () => rootRef.current?.focus(),
-    getSelection: () => rootRef.current ? selectionFromDom(rootRef.current, known) : { start: text.length, end: text.length },
+    getSelection: () => {
+      const root = rootRef.current;
+      if (!root) return { start: text.length, end: text.length };
+      return readSelection(root);
+    },
     setSelectionRange: (start, end = start) => {
       pendingSelectionRef.current = { start, end };
       requestAnimationFrame(() => {
@@ -254,6 +519,7 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
         if (!root) return;
         root.focus();
         setDomSelection(root, { start, end });
+        lastValidSelectionRef.current = { start, end };
         reportSelection();
       });
     },
@@ -274,9 +540,27 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     const root = rootRef.current;
     if (!pending || !root) return;
     pendingSelectionRef.current = null;
-    root.focus();
-    setDomSelection(root, pending);
-    reportSelection();
+    // Only restore an explicit pending caret when this editor owns focus, or
+    // when nothing else is focused. External draft replacements must not steal
+    // focus from other controls.
+    const active = document.activeElement;
+    const ownsFocus = !active || active === document.body || root === active || root.contains(active);
+    if (ownsFocus) {
+      root.focus();
+      setDomSelection(root, pending);
+      lastValidSelectionRef.current = {
+        start: pending.start,
+        end: pending.end,
+        afterInvocationId: pending.afterInvocationId,
+      };
+      reportSelection();
+    } else {
+      lastValidSelectionRef.current = {
+        start: pending.start,
+        end: pending.end,
+        afterInvocationId: pending.afterInvocationId,
+      };
+    }
   }, [ordered, text]);
 
   // Selection is reported before onChange so the parent sees the fresh caret
@@ -286,8 +570,30 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
   const syncFromDom = () => {
     const root = rootRef.current;
     if (!root) return;
-    const selection = selectionFromDom(root, known);
     const next = modelFromDom(root, known);
+    const live = selectionFromDom(root, known);
+    let selection: RichComposerSelection;
+    if (live.ok) {
+      selection = live.selection;
+      lastValidSelectionRef.current = selection;
+    } else if (beforeInputRef.current) {
+      selection = recoverSelectionAfterEdit(
+        beforeInputRef.current,
+        next.text,
+        lastValidSelectionRef.current,
+      );
+      lastValidSelectionRef.current = selection;
+      // Re-apply so the visible caret matches the recovered model offset.
+      setDomSelection(root, selection);
+    } else {
+      selection = {
+        start: Math.min(lastValidSelectionRef.current.start, next.text.length),
+        end: Math.min(lastValidSelectionRef.current.end, next.text.length),
+        afterInvocationId: lastValidSelectionRef.current.afterInvocationId,
+      };
+      lastValidSelectionRef.current = selection;
+    }
+    beforeInputRef.current = null;
     domModelRef.current = next;
     pendingSelectionRef.current = selection;
     onSelectionChange(selection, slashQueryAt(next.text, selection));
@@ -324,19 +630,35 @@ export const RichComposerInput = forwardRef<RichComposerInputHandle, {
     if (!root) return;
     const start = () => compositionHandlersRef.current.start();
     const end = () => compositionHandlersRef.current.end();
+    const onBeforeInput = (event: Event) => {
+      if (composingRef.current) return;
+      const inputEvent = event as InputEvent;
+      const live = selectionFromDom(root, known);
+      const selection = live.ok ? live.selection : lastValidSelectionRef.current;
+      if (live.ok) lastValidSelectionRef.current = live.selection;
+      const model = modelFromDom(root, known);
+      beforeInputRef.current = {
+        text: model.text,
+        selection,
+        inputType: inputEvent.inputType || "",
+        data: inputEvent.data ?? null,
+      };
+    };
     root.addEventListener("compositionstart", start);
     root.addEventListener("compositionend", end);
+    root.addEventListener("beforeinput", onBeforeInput);
     return () => {
       root.removeEventListener("compositionstart", start);
       root.removeEventListener("compositionend", end);
+      root.removeEventListener("beforeinput", onBeforeInput);
     };
-  }, [renderedModel.version]);
+  }, [known, renderedModel.version]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Backspace" && !event.nativeEvent.isComposing) {
       const root = rootRef.current;
       if (root) {
-        const selection = selectionFromDom(root, known);
+        const selection = readSelection(root);
         if (selection.start === selection.end && selection.afterInvocationId) {
           const target = known.get(selection.afterInvocationId);
           if (target && target.offset === selection.start) {
