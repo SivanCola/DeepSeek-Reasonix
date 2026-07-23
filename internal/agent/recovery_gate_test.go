@@ -131,6 +131,7 @@ func TestObserveRecoveryResultMarksCancellation(t *testing.T) {
 		context.Canceled,
 		false,
 		false,
+		0,
 	)
 	if !gate.observation.Cancelled {
 		t.Fatalf("observation = %+v, want cancellation marked", gate.observation)

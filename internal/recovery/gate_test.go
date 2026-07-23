@@ -320,8 +320,12 @@ func TestQualifyingFailureReturnsGuidanceAndPersistsArmedState(t *testing.T) {
 	select {
 	case snap := <-persisted:
 		st := snap.Tasks["root"]
-		if st == nil || st.Phase != PhaseDiagnosing || st.Failure == nil {
-			t.Fatalf("persisted state = %+v, want armed diagnosing state", st)
+		// Persistence projection keeps historical evidence only — never re-armable locks.
+		if st == nil || st.LastFailure == nil || st.ConsecutiveFails != 0 || st.ReviewBlocks != 0 {
+			t.Fatalf("persisted state = %+v, want evidence-only last_failure", st)
+		}
+		if st.Failure != nil {
+			t.Fatalf("persisted state armed live failure lock: %+v", st)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("armed recovery state was not persisted")
@@ -508,6 +512,8 @@ func TestNewOrdinaryTurnRetiresTechnicalFailureLatch(t *testing.T) {
 			Verification: true, Args: args, ErrSummary: "fail",
 		})
 	}
+	// Host rotates Episode on each real user message.
+	g.BeginEpisode()
 	dec, err := g.BeforeMutation(context.Background(), Proposal{
 		TaskScopeID: "turn:2", Tool: "bash", Subject: "go test ./...",
 		Verification: true, Args: args,
@@ -586,7 +592,7 @@ func TestReviseClosesFailureEpisodeBeforeAlternative(t *testing.T) {
 	}
 }
 
-func TestReviewerRejectBudgetIsProposalScoped(t *testing.T) {
+func TestReviewerRejectBudgetIsEpisodeCumulative(t *testing.T) {
 	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
 		Outcome: ReviewConfirm, ChangeKind: ChangeUncertain, Rationale: "not proven",
 	}}})
@@ -601,15 +607,21 @@ func TestReviewerRejectBudgetIsProposalScoped(t *testing.T) {
 			t.Fatalf("proposal A attempt %d = %+v, %v", i+1, dec, err)
 		}
 	}
+	// Different candidates share the Episode reviewer budget — no fresh allowance.
 	proposalB := Proposal{TaskScopeID: "turn:1", Tool: "write_file", Subject: "b.go", Mutates: true, Args: json.RawMessage(`{"path":"b.go"}`)}
 	dec, err := g.BeforeMutation(context.Background(), proposalB)
-	if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, "attempt 1/3") {
-		t.Fatalf("proposal B = %+v, %v; want a fresh reviewer budget", dec, err)
+	if err != nil || dec.Allow || !dec.Blocked || !dec.StopTurn {
+		t.Fatalf("proposal B = %+v, %v; want Episode stop after cumulative rejects", dec, err)
 	}
-	proposalA.TaskScopeID = "turn:2"
+	// A new user turn (Episode) restores the budget.
+	g.BeginEpisode()
 	dec, err = g.BeforeMutation(context.Background(), proposalA)
 	if err != nil || !dec.Allow || dec.Blocked {
-		t.Fatalf("proposal A in a new turn = %+v, %v; want the old recovery episode retired", dec, err)
+		// After BeginEpisode and no active failure, mutation without failure allows.
+		// With no lastFailure after clear, HasActiveFailure is false → Allow.
+		if err != nil || !dec.Allow {
+			t.Fatalf("proposal A in a new episode = %+v, %v; want fresh Episode", dec, err)
+		}
 	}
 }
 
@@ -627,6 +639,8 @@ func TestReviewerRejectBudgetResetsAcrossPlanTurns(t *testing.T) {
 			t.Fatalf("turn 1 attempt %d = %+v, %v", attempt, dec, err)
 		}
 	}
+	// Plan start-execution rotates Episode before the approved run.
+	g.BeginEpisode()
 	proposal.TaskScopeID = "turn:2"
 	dec, err := g.BeforeMutation(context.Background(), proposal)
 	if err != nil || dec.Allow || !dec.Blocked || !strings.Contains(dec.Message, "attempt 1/3") {
@@ -808,7 +822,7 @@ func TestReviewerBlockReturnsReasonThenStops(t *testing.T) {
 		}
 	}
 	dec, err := g.BeforeMutation(context.Background(), proposal)
-	if err != nil || dec.Allow || !dec.Blocked || prompts != 0 || !strings.Contains(dec.Message, "Do not retry this proposal") {
+	if err != nil || dec.Allow || !dec.Blocked || !dec.StopTurn || prompts != 0 || !strings.Contains(dec.Message, "paused this turn") {
 		t.Fatalf("stopped decision = %+v, %v; prompts=%d", dec, err, prompts)
 	}
 }
@@ -1034,7 +1048,7 @@ func TestRestoreDropsStalePendingAuthorization(t *testing.T) {
 	}
 }
 
-func TestRestoreKeepsGoalScopeButRetiresOrdinaryTurnScope(t *testing.T) {
+func TestRestoreNeverRearmsActiveLocks(t *testing.T) {
 	args := json.RawMessage(`{"path":"a.go","content":"x"}`)
 	goal := NewGate(Options{})
 	for i := 0; i < 3; i++ {
@@ -1043,17 +1057,24 @@ func TestRestoreKeepsGoalScopeButRetiresOrdinaryTurnScope(t *testing.T) {
 			Mutates: true, Args: args, ErrSummary: "fail",
 		})
 	}
+	// Live Snapshot keeps goal scope on evidence for diagnostics.
 	goalSnap := goal.Snapshot()
 	if got := goalSnap.Tasks["root"].Failure.TaskScopeID; got != "goal:ship" {
-		t.Fatalf("persisted goal scope = %q", got)
+		t.Fatalf("live goal scope = %q", got)
+	}
+	// Disk projection is evidence-only.
+	persistSnap := goal.PersistenceSnapshot()
+	if st := persistSnap.Tasks["root"]; st == nil || st.LastFailure == nil || st.ConsecutiveFails != 0 {
+		t.Fatalf("persistence projection = %+v, want last_failure only", st)
 	}
 	restoredGoal := NewGate(Options{})
 	restoredGoal.Restore(goalSnap)
 	dec, err := restoredGoal.BeforeMutation(context.Background(), Proposal{
 		TaskScopeID: "goal:ship", Tool: "write_file", Subject: "a.go", Mutates: true, Args: args,
 	})
-	if err != nil || dec.Allow || !dec.Blocked {
-		t.Fatalf("restored goal decision = %+v, %v; want goal-local stop retained", dec, err)
+	// Restart must not re-arm the three-strike lock.
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("restored goal decision = %+v, %v; want no active lock after restore", dec, err)
 	}
 
 	turn := NewGate(Options{})
@@ -1063,8 +1084,8 @@ func TestRestoreKeepsGoalScopeButRetiresOrdinaryTurnScope(t *testing.T) {
 			Mutates: true, Args: args, ErrSummary: "fail",
 		})
 	}
-	turnSnap := turn.Snapshot()
-	if got := turnSnap.Tasks["root"].Failure.TaskScopeID; got != "" {
+	turnSnap := turn.PersistenceSnapshot()
+	if got := turnSnap.Tasks["root"].LastFailure.TaskScopeID; got != "" {
 		t.Fatalf("ordinary turn scope must not persist, got %q", got)
 	}
 	restoredTurn := NewGate(Options{})
@@ -1087,6 +1108,211 @@ func TestUserRejectAndBlockedDoNotArm(t *testing.T) {
 	})
 	if st := g.Snapshot().Tasks["root"]; st != nil && st.Failure != nil {
 		t.Fatalf("armed on non-qualifying: %+v", st)
+	}
+}
+
+func TestEpisodeTotalFailuresHardStopAcrossFingerprints(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
+	}}})
+	for i := 0; i < MaxEpisodeFailures; i++ {
+		cmd := fmt.Sprintf("go test ./pkg%d", i)
+		g.ObserveResult(context.Background(), Observation{
+			Tool: "bash", Subject: cmd, Verification: true,
+			Args: json.RawMessage(fmt.Sprintf(`{"command":%q}`, cmd)), ErrSummary: "fail",
+		})
+	}
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		Tool: "write_file", Subject: "fresh.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"fresh.go","content":"x"}`),
+	})
+	if err != nil || dec.Allow || !dec.Blocked || !dec.StopTurn {
+		t.Fatalf("episode hard stop = %+v, %v", dec, err)
+	}
+	// Read-only diagnosis is also blocked once the Episode is exhausted.
+	ro, err := g.BeforeMutation(context.Background(), Proposal{
+		Tool: "read_file", Subject: "fresh.go", ReadOnly: true,
+	})
+	if err != nil || ro.Allow || !ro.Blocked || !ro.StopTurn {
+		t.Fatalf("read-only after stop = %+v, %v", ro, err)
+	}
+}
+
+func TestStoppedOperationRetriesEscalateToEpisodeStop(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
+	}}})
+	args := json.RawMessage(`{"command":"mvn test"}`)
+	for i := 0; i < MaxOperationFailures; i++ {
+		g.ObserveResult(context.Background(), Observation{
+			Tool: "bash", Subject: "mvn test", Verification: true, Args: args, ErrSummary: "fail",
+		})
+	}
+	retry := Proposal{Tool: "bash", Subject: "mvn test", Verification: true, Args: args}
+	// Re-proposing an already-stopped op burns the stopped-op retry budget.
+	for i := 1; i < MaxStoppedOperationRetries; i++ {
+		dec, err := g.BeforeMutation(context.Background(), retry)
+		if err != nil || dec.Allow || !dec.Blocked || dec.StopTurn {
+			t.Fatalf("stopped retry %d = %+v, %v; want op-only block", i, dec, err)
+		}
+	}
+	dec, err := g.BeforeMutation(context.Background(), retry)
+	if err != nil || dec.Allow || !dec.Blocked || !dec.StopTurn {
+		t.Fatalf("escalated stop = %+v, %v; want Episode stop", dec, err)
+	}
+}
+
+func TestSuccessfulMutationResetsEpisodeBudgets(t *testing.T) {
+	g := NewGate(Options{Reviewer: staticReviewer{ReviewVerdict{
+		Outcome: ReviewContinue, ChangeKind: ChangeSameStrategy,
+	}}})
+	for i := 0; i < 4; i++ {
+		g.ObserveResult(context.Background(), Observation{
+			Tool: "bash", Subject: "go test", Verification: true,
+			Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
+		})
+	}
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "write_file", Subject: "a.go", Mutates: true, Success: true,
+		Args: json.RawMessage(`{"path":"a.go"}`),
+	})
+	if st := g.Snapshot().Tasks["root"]; st != nil && st.Failure != nil {
+		t.Fatalf("success retained failure budget: %+v", st)
+	}
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		Tool: "write_file", Subject: "b.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"b.go"}`),
+	})
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("after progress = %+v, %v", dec, err)
+	}
+}
+
+func TestDiagnosticReadDoesNotResetBudgets(t *testing.T) {
+	g := NewGate(Options{})
+	args := json.RawMessage(`{"command":"go test"}`)
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Subject: "go test", Verification: true, Args: args, ErrSummary: "fail",
+	})
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "read_file", Subject: "a.go", ReadOnly: true, Success: true,
+		Args: json.RawMessage(`{"path":"a.go"}`), Output: "package a",
+	})
+	st := g.Snapshot().Tasks["root"]
+	if st == nil || st.Failure == nil || st.ConsecutiveFails != 1 {
+		t.Fatalf("diagnostic read cleared failure: %+v", st)
+	}
+}
+
+func TestSameValueModeReplayDoesNotRotateEpisode(t *testing.T) {
+	g := NewGate(Options{Mode: func() string { return "auto" }})
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Subject: "go test", Verification: true,
+		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
+	})
+	before := g.EpisodeID()
+	gen := g.Generation()
+	if ids := g.OnModeChange("auto"); len(ids) != 0 {
+		t.Fatalf("same-value mode dismissed waiters: %v", ids)
+	}
+	if g.EpisodeID() != before || g.Generation() != gen {
+		t.Fatalf("same-value mode rotated episode/gen: %s/%d -> %s/%d", before, gen, g.EpisodeID(), g.Generation())
+	}
+	if st := g.Snapshot().Tasks["root"]; st == nil || st.Failure == nil {
+		t.Fatal("same-value mode cleared in-flight failure")
+	}
+}
+
+func TestModeChangeClearsBudgetsAndGeneration(t *testing.T) {
+	mode := "auto"
+	g := NewGate(Options{Mode: func() string { return mode }})
+	g.OnModeChange("auto") // pin baseline without rotating
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Subject: "go test", Verification: true,
+		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
+	})
+	beforeGen := g.Generation()
+	mode = "yolo"
+	g.OnModeChange("yolo")
+	if g.Generation() <= beforeGen {
+		t.Fatalf("mode change did not bump generation: %d -> %d", beforeGen, g.Generation())
+	}
+	mode = "auto"
+	g.OnModeChange("auto")
+	dec, err := g.BeforeMutation(context.Background(), Proposal{
+		Tool: "write_file", Subject: "a.go", Mutates: true,
+		Args: json.RawMessage(`{"path":"a.go"}`),
+	})
+	if err != nil || !dec.Allow || dec.Blocked {
+		t.Fatalf("Auto after Yolo = %+v, %v; want clean Episode", dec, err)
+	}
+}
+
+func TestStaleObservationGenerationIsIgnored(t *testing.T) {
+	g := NewGate(Options{})
+	gen := g.Generation()
+	g.BeginEpisode() // bump generation so gen is stale
+	g.ObserveResult(context.Background(), Observation{
+		Generation: gen, // stale
+		Tool:       "bash", Subject: "go test", Verification: true,
+		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
+	})
+	if st := g.Snapshot().Tasks["root"]; st != nil && st.Failure != nil {
+		t.Fatalf("stale observation armed failure: %+v", st)
+	}
+	if g.Metrics().StaleObservationsIgnored < 1 {
+		t.Fatalf("stale observation metric = %d", g.Metrics().StaleObservationsIgnored)
+	}
+}
+
+func TestModeChangeDismissesWaiterWithoutApproving(t *testing.T) {
+	g := NewGate(Options{
+		Reviewer: staticReviewer{ReviewVerdict{
+			Outcome: ReviewConfirm, ChangeKind: ChangeStrategy, Rationale: "choose direction",
+		}},
+	})
+	g.OnModeChange("auto") // pin baseline so yolo is a real change
+	g.ObserveResult(context.Background(), Observation{
+		Tool: "bash", Subject: "go test", Verification: true,
+		Args: json.RawMessage(`{"command":"go test"}`), ErrSummary: "fail",
+	})
+	done := make(chan Decision, 1)
+	g.opts.EmitPrompt = func(_ context.Context, taskID string, _ PendingProposal, _ *FailureEvent) (string, error) {
+		g.BindApprovalID(taskID, "wait-1")
+		return "wait-1", nil
+	}
+	go func() {
+		dec, err := g.BeforeMutation(context.Background(), Proposal{
+			Tool: "write_file", Subject: "a.go", Mutates: true,
+			Args: json.RawMessage(`{"path":"a.go"}`),
+		})
+		if err != nil {
+			t.Errorf("BeforeMutation err: %v", err)
+		}
+		done <- dec
+	}()
+	// Wait until the waiter is parked.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if g.HasApproval("wait-1") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !g.HasApproval("wait-1") {
+		t.Fatal("waiter never parked")
+	}
+	ids := g.OnModeChange("yolo")
+	if len(ids) != 1 || ids[0] != "wait-1" {
+		t.Fatalf("dismissed ids = %v", ids)
+	}
+	select {
+	case dec := <-done:
+		if dec.Allow {
+			t.Fatalf("mode switch auto-approved mutation: %+v", dec)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter was not released on mode change")
 	}
 }
 

@@ -40,6 +40,7 @@ type Options struct {
 	// a later session switch and land in the wrong sidecar.
 	PersistenceKey func() string
 	// Persist is invoked after meaningful state changes (optional).
+	// Receives the persistence projection (never active locks).
 	Persist func(key string, snapshot Snapshot)
 }
 
@@ -47,6 +48,10 @@ type Options struct {
 // Root, foreground sub-agents, and background writer sub-agents share it;
 // state is isolated by TaskID. Pure routing lives in Decide; this type owns
 // state updates, reviewer calls, approval waiters, and persistence.
+//
+// EpisodeID is host-owned temporary execution-round state. It controls failure,
+// reviewer, and stop budgets. TaskScopeID continues to scope Goal and task
+// grants. Episode/generation/waiters never persist.
 type Gate struct {
 	mu      sync.Mutex
 	opts    Options
@@ -58,6 +63,14 @@ type Gate struct {
 	// awaiting tracks in-flight human prompts so Phase can be derived without
 	// storing Pending on the task runtime.
 	awaiting map[string]struct{} // task ids with an open waiter
+
+	// episodeSeq / episodeID identify the current host-owned Recovery Episode.
+	// generation invalidates in-flight tool observations across mode switches.
+	episodeSeq  uint64
+	episodeID   string
+	generation  uint64
+	lastMode    string
+	haveMode    bool
 
 	// persistMu orders asynchronous snapshots. A newer state may be scheduled
 	// before an older goroutine reaches disk; sequence checks prevent that older
@@ -76,6 +89,14 @@ type resolvePayload struct {
 	feedback string
 }
 
+// dismissedWaiter is a recovery waiter cancelled by mode switch / episode rotate.
+type dismissedWaiter struct {
+	id      string
+	taskID  string
+	reply   chan resolvePayload
+	payload resolvePayload
+}
+
 // NewGate constructs Auto Guard. The gate is active whenever approval mode is
 // Auto; Ask and YOLO bypass it through the mode provider.
 func NewGate(opts Options) *Gate {
@@ -86,7 +107,7 @@ func NewGate(opts Options) *Gate {
 		opts.Now = time.Now
 	}
 	if opts.MaxReviewBlocks <= 0 {
-		opts.MaxReviewBlocks = 3
+		opts.MaxReviewBlocks = MaxReviewRejects
 	}
 	g := &Gate{
 		opts:           opts,
@@ -95,11 +116,159 @@ func NewGate(opts Options) *Gate {
 		taskOf:         map[string]string{},
 		pending:        map[string]PendingProposal{},
 		awaiting:       map[string]struct{}{},
+		episodeSeq:     1,
+		episodeID:      "ep:1",
+		generation:     1,
 		persistPending: map[string]int{},
 		persistDone:    map[string]uint64{},
 	}
 	g.persistCond = sync.NewCond(&g.persistMu)
 	return g
+}
+
+// EpisodeID returns the current host-owned Recovery Episode id.
+func (g *Gate) EpisodeID() string {
+	if g == nil {
+		return ""
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.episodeID
+}
+
+// Generation returns the current observation/proposal generation.
+func (g *Gate) Generation() uint64 {
+	if g == nil {
+		return 0
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.generation
+}
+
+// BeginEpisode rotates into a fresh Recovery Episode. Failure, reviewer, and
+// stop budgets clear. Explicit task grants and TaskScope authorizations are
+// preserved. Call on: real user messages, Plan "start execution", Recovery
+// "try another approach", real tool-approval mode changes, and new Session /
+// Controller restore. Same-value mode replays must not call this.
+func (g *Gate) BeginEpisode() {
+	if g == nil {
+		return
+	}
+	dismissed := g.beginEpisodeLockedCollect(true)
+	g.finishDismissed(dismissed)
+	g.persist()
+}
+
+// OnModeChange rotates Episode and generation when the tool-approval mode
+// actually changes. Same-value replays (desktop hydration/reconcile) are no-ops
+// so in-flight Auto state is not wiped. Returns dismissed recovery approval ids
+// so the controller can clear matching cards outside the gate lock.
+func (g *Gate) OnModeChange(mode string) []string {
+	if g == nil {
+		return nil
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return nil
+	}
+	g.mu.Lock()
+	if g.haveMode && g.lastMode == mode {
+		g.mu.Unlock()
+		return nil
+	}
+	// First observation only pins the baseline mode (desktop hydrate / initial
+	// ApplyToolApprovalMode). Same-value later replays are no-ops above; a real
+	// change rotates Episode and generation.
+	if !g.haveMode {
+		g.lastMode = mode
+		g.haveMode = true
+		g.mu.Unlock()
+		return nil
+	}
+	g.lastMode = mode
+	g.metrics.ModeResets++
+	dismissed := g.beginEpisodeLockedCollect(false)
+	// Bump generation even when episode collection already did — mode switch
+	// must invalidate in-flight observations.
+	if g.generation == 0 {
+		g.generation = 1
+	}
+	ids := make([]string, 0, len(dismissed))
+	for _, d := range dismissed {
+		ids = append(ids, d.id)
+	}
+	g.mu.Unlock()
+	g.finishDismissed(dismissed)
+	g.persist()
+	return ids
+}
+
+// beginEpisodeLockedCollect must be called with g.mu held when alreadyLocked is
+// false it acquires the lock. When alreadyHeld is true, caller holds g.mu.
+func (g *Gate) beginEpisodeLockedCollect(lock bool) []dismissedWaiter {
+	if lock {
+		g.mu.Lock()
+	}
+	g.episodeSeq++
+	if g.episodeSeq == 0 {
+		g.episodeSeq = 1
+	}
+	g.episodeID = fmt.Sprintf("ep:%d", g.episodeSeq)
+	g.generation++
+	if g.generation == 0 {
+		g.generation = 1
+	}
+	g.metrics.EpisodeRotations++
+	// Clear no-progress budgets per task; preserve task grants.
+	for id, st := range g.tasks {
+		if st == nil {
+			delete(g.tasks, id)
+			continue
+		}
+		grants := st.taskGrants
+		grantScope := st.taskGrantScope
+		st.clearNoProgressBudgets()
+		st.episodeID = g.episodeID
+		st.taskGrants = grants
+		st.taskGrantScope = grantScope
+		if !st.hasTaskGrants() && st.empty() {
+			delete(g.tasks, id)
+		}
+	}
+	dismissed := g.collectWaitersLocked(resolvePayload{
+		action:   ActionRevise,
+		feedback: "Tool approval mode or recovery episode changed. Re-evaluate under the new mode; the previous proposal was not approved.",
+	})
+	if lock {
+		g.mu.Unlock()
+	}
+	return dismissed
+}
+
+func (g *Gate) collectWaitersLocked(payload resolvePayload) []dismissedWaiter {
+	out := make([]dismissedWaiter, 0, len(g.waiters))
+	for id, ch := range g.waiters {
+		taskID := g.taskOf[id]
+		out = append(out, dismissedWaiter{id: id, taskID: taskID, reply: ch, payload: payload})
+		delete(g.waiters, id)
+		delete(g.taskOf, id)
+		delete(g.pending, id)
+		delete(g.awaiting, taskID)
+	}
+	return out
+}
+
+func (g *Gate) finishDismissed(dismissed []dismissedWaiter) {
+	for _, d := range dismissed {
+		if d.reply == nil {
+			continue
+		}
+		select {
+		case d.reply <- d.payload:
+		default:
+		}
+	}
 }
 
 // Metrics returns a copy of content-free counters accumulated since gate
@@ -162,50 +331,70 @@ func (g *Gate) HasApproval(id string) bool {
 	return ok
 }
 
-// Snapshot returns a copy of task state for persistence.
+// Snapshot returns a live debug copy of task state (may include budgets).
 func (g *Gate) Snapshot() Snapshot {
 	if g == nil {
 		return Snapshot{}
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.snapshotLocked()
+	return g.snapshotLocked(false)
 }
 
-func (g *Gate) snapshotLocked() Snapshot {
+// PersistenceSnapshot returns the disk projection: historical last_failure
+// evidence only. Active locks, Episode counters, generation, and waiters never
+// appear.
+func (g *Gate) PersistenceSnapshot() Snapshot {
+	if g == nil {
+		return Snapshot{}
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.snapshotLocked(true)
+}
+
+func (g *Gate) snapshotLocked(persistence bool) Snapshot {
 	// Map task id -> live approval id for observability. Restore always drops
 	// these fields so a restart never replays a transient authorization.
 	approvalByTask := map[string]string{}
-	for approvalID, taskID := range g.taskOf {
-		if strings.HasPrefix(approvalID, "pending:") {
-			continue
+	if !persistence {
+		for approvalID, taskID := range g.taskOf {
+			if strings.HasPrefix(approvalID, "pending:") {
+				continue
+			}
+			approvalByTask[taskID] = approvalID
 		}
-		approvalByTask[taskID] = approvalID
 	}
 	out := Snapshot{Tasks: map[string]*TaskState{}}
 	for id, st := range g.tasks {
-		phase := PhaseDiagnosing
-		if _, waiting := g.awaiting[id]; waiting {
-			phase = PhaseAwaitingDecision
+		var cp *TaskState
+		if persistence {
+			cp = st.toPersistenceState()
+		} else {
+			phase := PhaseDiagnosing
+			if _, waiting := g.awaiting[id]; waiting {
+				phase = PhaseAwaitingDecision
+			}
+			cp = st.toTaskState(phase)
 		}
-		cp := st.toTaskState(phase)
 		if cp == nil {
-			// Task may only be waiting without residual failure (rare); skip.
 			continue
 		}
-		if aid := approvalByTask[id]; aid != "" {
-			cp.ApprovalID = aid
-			cp.Phase = PhaseAwaitingDecision
+		if !persistence {
+			if aid := approvalByTask[id]; aid != "" {
+				cp.ApprovalID = aid
+				cp.Phase = PhaseAwaitingDecision
+			}
 		}
 		out.Tasks[id] = cp
 	}
 	return out
 }
 
-// Restore loads persisted failure context after restart/controller rebuild.
-// Live prompts and task-local grants are deliberately not replayed: the
-// interrupted call no longer exists, so the next proposed action must be
-// classified again.
+// Restore loads persisted failure evidence after restart/controller rebuild.
+// Live prompts, budgets, Episode counters, and task-local grants are never
+// replayed: old consecutive_fails / review_blocks become historical evidence
+// only and do not re-arm locks.
 func (g *Gate) Restore(snap Snapshot) {
 	if g == nil {
 		return
@@ -217,11 +406,24 @@ func (g *Gate) Restore(snap Snapshot) {
 	g.taskOf = map[string]string{}
 	g.pending = map[string]PendingProposal{}
 	g.awaiting = map[string]struct{}{}
+	// Fresh Episode after restore/session switch so prior runtime budgets
+	// cannot block the user.
+	g.episodeSeq++
+	if g.episodeSeq == 0 {
+		g.episodeSeq = 1
+	}
+	g.episodeID = fmt.Sprintf("ep:%d", g.episodeSeq)
+	g.generation++
+	if g.generation == 0 {
+		g.generation = 1
+	}
+	g.metrics.EpisodeRotations++
 	for id, st := range snap.Tasks {
 		rt := taskRuntimeFromState(st)
 		if rt == nil {
 			continue
 		}
+		rt.episodeID = g.episodeID
 		// Ignore old Pending and ApprovalID — never restore as authorization.
 		g.tasks[id] = rt
 	}
@@ -272,6 +474,7 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 		return fmt.Errorf("unknown recovery approval %q", id)
 	}
 	st := g.tasks[taskID]
+	rotateEpisode := false
 	switch action {
 	case ActionContinue, ActionContinueTask:
 		if action == ActionContinueTask {
@@ -280,7 +483,7 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 				return fmt.Errorf("recovery approval %q cannot grant similar actions", id)
 			}
 			if st == nil {
-				st = &taskRuntime{}
+				st = &taskRuntime{episodeID: g.episodeID}
 				g.tasks[taskID] = st
 			}
 			st.useTaskGrantScope(pending.TaskGrantTaskScope)
@@ -288,18 +491,15 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 			g.metrics.TaskGrantContinues++
 		}
 		if st != nil {
+			// Accepting a candidate clears reviewer rejects; execution success
+			// later clears the full no-progress budget.
 			st.reviewRejects = 0
-			st.reviewFingerprint = ""
-			st.reviewScope = ""
 		}
 		g.metrics.HumanContinues++
 	case ActionRevise:
-		if st != nil {
-			// Revise rejects the pending action and starts a fresh recovery
-			// episode. Keeping the old failure count here can make every
-			// alternative write inherit a task-wide three-strike lock.
-			st.clearFailure()
-		}
+		// Revise rejects the pending action and starts a fresh Recovery Episode
+		// so alternative approaches get a clean budget.
+		rotateEpisode = true
 		g.metrics.HumanRevises++
 		if strings.TrimSpace(feedback) == "" {
 			feedback = DefaultReviseFeedback
@@ -312,8 +512,10 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 	delete(g.taskOf, id)
 	delete(g.pending, id)
 	delete(g.awaiting, taskID)
-	if st == nil || (st.failure == nil && !st.hasTaskGrants()) {
-		delete(g.tasks, taskID)
+	if !rotateEpisode {
+		if st == nil || (st.empty() && !st.hasTaskGrants()) {
+			delete(g.tasks, taskID)
+		}
 	}
 	g.mu.Unlock()
 
@@ -323,7 +525,13 @@ func (g *Gate) Resolve(id string, action Action, feedback string) error {
 		default:
 		}
 	}
-	g.persist()
+	if rotateEpisode {
+		// Fresh Episode after "try another approach" so alternatives get a clean
+		// budget. BeginEpisode also dismisses any other waiters safely.
+		g.BeginEpisode()
+	} else {
+		g.persist()
+	}
 	return nil
 }
 
@@ -337,36 +545,42 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	st := g.tasks[taskID]
 
-	// Successful host-recognized verification clears the failure event.
-	if obs.Success && obs.Verification {
-		if st != nil {
-			st.clearFailure()
-			if !st.hasTaskGrants() {
-				delete(g.tasks, taskID)
-			}
-			g.persistUnlocked()
-		}
+	// Stale observations from a previous generation (mode switch / episode
+	// rotate mid-flight) are ignored so they cannot re-arm old locks.
+	if obs.Generation != 0 && obs.Generation != g.generation {
+		g.metrics.StaleObservationsIgnored++
 		return ""
 	}
-	// Any successful mutation ends the current failure event.
-	if obs.Success && obs.Mutates {
-		if st != nil {
-			st.clearFailure()
-			if !st.hasTaskGrants() {
-				delete(g.tasks, taskID)
-			}
-			g.persistUnlocked()
+
+	st := g.ensureTaskLocked(taskID)
+
+	// Successful host-recognized verification clears no-progress budgets.
+	if obs.Success && obs.Verification {
+		st.clearNoProgressBudgets()
+		st.episodeID = g.episodeID
+		if !st.hasTaskGrants() {
+			delete(g.tasks, taskID)
 		}
+		g.persistUnlocked()
+		return ""
+	}
+	// Any successful mutation ends the current no-progress budget.
+	if obs.Success && obs.Mutates {
+		st.clearNoProgressBudgets()
+		st.episodeID = g.episodeID
+		if !st.hasTaskGrants() {
+			delete(g.tasks, taskID)
+		}
+		g.persistUnlocked()
 		return ""
 	}
 	// Diagnostic read successes do not clear failure state. Preserve a bounded
 	// evidence excerpt for the isolated reviewer; otherwise it sees the failure
 	// and proposed diff but none of the investigation that connected them.
 	if obs.Success {
-		if st != nil && st.failure != nil && IsDiagnosticSuccess(obs) {
-			if appendDiagnosisNote(st.failure, diagnosticObservationNote(obs)) {
+		if st.lastFailure != nil && IsDiagnosticSuccess(obs) {
+			if appendDiagnosisNote(st.lastFailure, diagnosticObservationNote(obs)) {
 				g.persistUnlocked()
 			}
 		}
@@ -375,35 +589,27 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 	if !QualifyingFailure(obs) {
 		return ""
 	}
-	if st == nil {
-		st = &taskRuntime{}
-		g.tasks[taskID] = st
-	}
-
-	// Only exact repeats in the same execution scope share a failure budget.
-	// A different command/write or a new ordinary user turn starts a fresh
-	// recovery episode instead of inheriting a task-wide strike count.
-	if st.failure != nil {
-		fingerprint := observationFingerprint(obs)
-		if sameRecoveryScope(st.failure.taskScope, obs.TaskScopeID) && st.failure.evidence.Fingerprint == fingerprint {
-			if st.failure.failureCount < 255 {
-				st.failure.failureCount++
-			}
-			st.failure.evidence.ErrSummary = firstNonEmpty(obs.ErrSummary, st.failure.evidence.ErrSummary)
-			st.failure.evidence.OutputExcerpt = clip(obs.Output, 1500)
-			st.reviewRejects = 0
-			st.reviewFingerprint = ""
-			st.reviewScope = ""
-			g.metrics.FailureEvents++
-			guidance := g.recoveryGuidanceLocked(st)
-			g.persistUnlocked()
-			return guidance
-		}
-		st.clearFailure()
-	}
 
 	fp := observationFingerprint(obs)
-	st.failure = &activeFailure{
+	st.ensureMaps()
+	st.episodeID = g.episodeID
+	if st.operationFailures[fp] < 255 {
+		st.operationFailures[fp]++
+	}
+	if st.totalFailures < 255 {
+		st.totalFailures++
+	}
+	if st.operationFailures[fp] >= MaxOperationFailures {
+		st.markOperationStopped(fp)
+		g.metrics.OperationStops++
+	}
+	if st.totalFailures >= MaxEpisodeFailures {
+		st.episodeStopped = true
+		st.stopReason = StopReasonEpisodeFailures
+		g.metrics.EpisodeFailureStops++
+	}
+
+	st.lastFailure = &activeFailure{
 		evidence: FailureEvent{
 			Tool:          obs.Tool,
 			ArgsSummary:   ArgsSummary(obs.Args, 200),
@@ -420,12 +626,9 @@ func (g *Gate) ObserveResult(_ context.Context, obs Observation) string {
 			Args:          append(json.RawMessage(nil), obs.Args...),
 			Fingerprint:   fp,
 		},
-		failureCount:  1,
 		safeRetryUsed: false,
-		taskScope:     strings.TrimSpace(obs.TaskScopeID),
 	}
-	st.reviewRejects = 0
-	st.guidanceSent = false
+	// Keep diagnosis notes if same fingerprint; otherwise start fresh list.
 	g.metrics.FailureEvents++
 	guidance := g.recoveryGuidanceLocked(st)
 	g.persistUnlocked()
@@ -438,38 +641,149 @@ func (g *Gate) BeforeMutation(ctx context.Context, proposal Proposal) (Decision,
 		return Decision{Allow: true}, nil
 	}
 
-	// Host-proven read-only diagnostics always continue. Decide also encodes the
-	// non-Auto bypass so Ask and YOLO keep their existing semantics.
-	facts, failure, diagNotes, taskID, fp := g.classify(proposal)
+	// Host-proven read-only diagnostics always continue unless the Episode is
+	// already exhausted. Decide also encodes the non-Auto bypass so Ask and
+	// YOLO keep their existing semantics.
+	facts, failure, diagNotes, taskID, fp, gen := g.classify(proposal)
 	route := Decide(facts)
+
+	// Escalation: re-proposing an already-stopped operation burns the
+	// stopped-op retry budget and may stop the whole turn.
+	if facts.AutoMode && facts.OperationAlreadyStopped && facts.SameFailedOperation {
+		dec, escalated := g.noteStoppedOpRetry(taskID, fp, gen, proposal)
+		if escalated {
+			return dec, nil
+		}
+		// Still under retry budget: fall through to RouteStop for this op.
+		route = DecisionResult{Route: RouteStop, StopReason: StopReasonOperationFailures}
+	}
+
+	// Episode total failure hard stop before reviewer work.
+	if facts.AutoMode && facts.EpisodeFailureCount >= MaxEpisodeFailures && (facts.Mutates || facts.Verification || facts.EpisodeStopped) {
+		return g.stopTurnDecision(taskID, gen, StopReasonEpisodeFailures, proposal), nil
+	}
 
 	switch route.Route {
 	case RouteBypass, RouteAllow:
 		if route.ConsumeSafeRetry {
 			g.mu.Lock()
-			if st := g.tasks[taskID]; st != nil && st.failure != nil && !st.failure.safeRetryUsed {
-				st.failure.safeRetryUsed = true
+			if st := g.tasks[taskID]; st != nil && st.lastFailure != nil && !st.lastFailure.safeRetryUsed {
+				st.lastFailure.safeRetryUsed = true
 				g.metrics.RuleContinues++
 			}
 			g.mu.Unlock()
 			g.persist()
 		}
-		return Decision{Allow: true}, nil
+		return Decision{Allow: true, Generation: gen}, nil
 	case RouteReview:
-		return g.reviewOrEscalate(ctx, taskID, fp, proposal, failure, diagNotes)
+		return g.reviewOrEscalate(ctx, taskID, fp, gen, proposal, failure, diagNotes)
 	case RouteStop:
 		return Decision{
-			Allow:   false,
-			Blocked: true,
-			Message: repeatedFailureStopMessage(int(facts.FailureCount), proposal),
+			Allow:      false,
+			Blocked:    true,
+			Message:    repeatedFailureStopMessage(int(facts.FailureCount), proposal),
+			Generation: gen,
+			StopReason: string(StopReasonOperationFailures),
 		}, nil
+	case RouteStopTurn:
+		return g.stopTurnDecision(taskID, gen, route.StopReason, proposal), nil
 	default:
-		return Decision{Allow: true}, nil
+		return Decision{Allow: true, Generation: gen}, nil
 	}
 }
 
+func (g *Gate) noteStoppedOpRetry(taskID, fp string, gen uint64, proposal Proposal) (Decision, bool) {
+	g.mu.Lock()
+	st := g.ensureTaskLocked(taskID)
+	if st.stoppedOpRetries < 255 {
+		st.stoppedOpRetries++
+	}
+	retries := st.stoppedOpRetries
+	if retries >= MaxStoppedOperationRetries {
+		st.episodeStopped = true
+		st.stopReason = StopReasonStoppedOpRetries
+		g.metrics.StoppedOpRetryStops++
+		g.mu.Unlock()
+		g.persist()
+		return g.stopTurnDecision(taskID, gen, StopReasonStoppedOpRetries, proposal), true
+	}
+	g.mu.Unlock()
+	g.persist()
+	return Decision{}, false
+}
+
+func (g *Gate) stopTurnDecision(taskID string, gen uint64, reason StopReason, proposal Proposal) Decision {
+	g.mu.Lock()
+	st := g.ensureTaskLocked(taskID)
+	st.episodeStopped = true
+	if st.stopReason == StopReasonNone {
+		st.stopReason = reason
+	}
+	if reason == StopReasonEpisodeFailures {
+		// already counted in ObserveResult when total hits limit
+	}
+	g.mu.Unlock()
+	g.persist()
+	msg := episodeStopMessage(reason, proposal)
+	return Decision{
+		Allow:      false,
+		Blocked:    true,
+		Message:    msg,
+		Generation: gen,
+		StopTurn:   true,
+		StopReason: string(reason),
+	}
+}
+
+// MarkFinalizationOffered records that the agent was given its one summarize-only
+// round after an Episode stop. Subsequent tool proposals while still stopped
+// should surface RecoveryPauseError.
+func (g *Gate) MarkFinalizationOffered(taskID string) {
+	if g == nil {
+		return
+	}
+	taskID = normalizeTaskID(taskID)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.ensureTaskLocked(taskID)
+	st.finalizationOffered = true
+}
+
+// FinalizationConsumed reports whether the finalization round already ran and
+// the model still attempted tools. Also marks it consumed on first true check
+// after offered.
+func (g *Gate) ConsumeFinalization(taskID string) (offered, alreadyConsumed bool) {
+	if g == nil {
+		return false, false
+	}
+	taskID = normalizeTaskID(taskID)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.tasks[taskID]
+	if st == nil || !st.episodeStopped {
+		return false, false
+	}
+	offered = st.finalizationOffered
+	alreadyConsumed = st.finalizationConsumed
+	if offered && !alreadyConsumed {
+		st.finalizationConsumed = true
+	}
+	return offered, alreadyConsumed
+}
+
+// EpisodeStopped reports whether the given task has exhausted its Episode.
+func (g *Gate) EpisodeStopped(taskID string) bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.tasks[normalizeTaskID(taskID)]
+	return st != nil && st.episodeStopped
+}
+
 // classify builds pure Facts for Decide. It never calls the model or UI.
-func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, string, string) {
+func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, string, string, uint64) {
 	facts := Facts{
 		AutoMode:       g.activeMode(),
 		ReadOnly:       proposal.ReadOnly,
@@ -486,43 +800,74 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 	fp := CallFingerprint(proposal.Tool, proposal.Subject, proposal.Preview, proposal.Args)
 
 	g.mu.Lock()
+	gen := g.generation
+	// Leaving Auto does not wait for the next proposal: OnModeChange handles
+	// real mode switches. Here we still clear when mode is non-Auto so a
+	// bypass path cannot keep armed Auto locks if OnModeChange was skipped.
 	st := g.tasks[taskID]
 	var failure *FailureEvent
 	var diagNotes []string
 	stateChanged := false
-	if st != nil && st.failure != nil && (!facts.AutoMode || recoveryScopeChanged(st.failure.taskScope, proposal.TaskScopeID)) {
-		st.clearFailure()
-		stateChanged = true
-	}
-	if st != nil && st.reviewRejects > 0 && (!facts.AutoMode || recoveryScopeChanged(st.reviewScope, proposal.TaskScopeID)) {
-		st.reviewRejects = 0
-		st.reviewFingerprint = ""
-		st.reviewScope = ""
-		stateChanged = true
-	}
-	if st != nil && st.failure != nil {
-		failure = st.evidenceCopy()
-		diagNotes = st.diagnosisNotes()
-		facts.HasActiveFailure = true
-		facts.FailureCount = st.failureCount()
-		facts.SameFailedOperation = sameFailedOperation(failure, proposal)
-		// Safe verification retry availability is host-classified.
-		if IsSafeVerificationRetry(failure, proposal) && st.safeRetryAvailable() {
-			facts.SafeRetryAvailable = true
+	if st != nil && !facts.AutoMode {
+		if !st.empty() {
+			st.clearNoProgressBudgets()
+			stateChanged = true
+		}
+		if !st.hasTaskGrants() && st.empty() {
+			delete(g.tasks, taskID)
+			st = nil
 		}
 	}
-	taskScope := taskGrantScopeKey(proposal)
 	if st != nil {
+		// Align task runtime with current Episode without wiping mid-Episode.
+		if st.episodeID != "" && st.episodeID != g.episodeID {
+			grants := st.taskGrants
+			grantScope := st.taskGrantScope
+			st.clearNoProgressBudgets()
+			st.taskGrants = grants
+			st.taskGrantScope = grantScope
+			st.episodeID = g.episodeID
+			stateChanged = true
+		} else if st.episodeID == "" {
+			st.episodeID = g.episodeID
+		}
+		facts.EpisodeStopped = st.episodeStopped
+		facts.StopReason = st.stopReason
+		facts.EpisodeFailureCount = st.totalFailures
+		facts.ReviewRejects = st.reviewRejects
+		facts.OperationAlreadyStopped = st.isOperationStopped(fp)
+		facts.FailureCount = st.operationFailureCount(fp)
+		if st.lastFailure != nil {
+			failure = st.evidenceCopy()
+			diagNotes = st.diagnosisNotes()
+			facts.HasActiveFailure = true
+			facts.SameFailedOperation = sameFailedOperation(failure, proposal)
+			// When proposing the same op, FailureCount is the map value.
+			// When proposing a different op after failures, HasActiveFailure
+			// still true so reviewer path runs for recovery mutations.
+			if facts.SameFailedOperation && facts.FailureCount == 0 {
+				// Evidence exists but count was cleared somehow — treat as 1.
+				facts.FailureCount = 1
+			}
+			if !facts.SameFailedOperation && facts.FailureCount == 0 {
+				// Different operation: do not inherit the prior op's count for
+				// RouteStop, but keep HasActiveFailure for reviewer.
+			}
+			if IsSafeVerificationRetry(failure, proposal) && st.safeRetryAvailable() {
+				facts.SafeRetryAvailable = true
+			}
+		}
+		taskScope := taskGrantScopeKey(proposal)
 		st.useTaskGrantScope(taskScope)
 		if st.empty() && !st.hasTaskGrants() {
 			delete(g.tasks, taskID)
 			st = nil
 		}
-	}
-	runtimeGrantKey := taskGrantRuntimeKey(boundary.taskGrantKey, taskScope)
-	if facts.HighRisk && runtimeGrantKey != "" && st != nil && st.hasTaskGrant(runtimeGrantKey) {
-		facts.HighRisk = false
-		g.metrics.TaskGrantUses++
+		runtimeGrantKey := taskGrantRuntimeKey(boundary.taskGrantKey, taskScope)
+		if facts.HighRisk && runtimeGrantKey != "" && st != nil && st.hasTaskGrant(runtimeGrantKey) {
+			facts.HighRisk = false
+			g.metrics.TaskGrantUses++
+		}
 	}
 	g.mu.Unlock()
 	if stateChanged {
@@ -538,16 +883,38 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 		}
 		facts.ExpandedScope = proposal.ExpandedScope
 		facts.StrategyChanged = proposal.StrategyChanged
-		// Safe retry cannot combine with scope/strategy/high-risk; classifier
-		// already requires those flags clear in IsSafeVerificationRetry.
 		if facts.SafeRetryAvailable && (facts.ExpandedScope || facts.StrategyChanged || facts.HighRisk) {
 			facts.SafeRetryAvailable = false
 		}
 	}
-	return facts, failure, diagNotes, taskID, fp
+	return facts, failure, diagNotes, taskID, fp, gen
 }
 
-func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal Proposal, failure *FailureEvent, diagNotes []string) (Decision, error) {
+func (g *Gate) ensureTaskLocked(taskID string) *taskRuntime {
+	st := g.tasks[taskID]
+	if st == nil {
+		st = &taskRuntime{episodeID: g.episodeID}
+		g.tasks[taskID] = st
+	}
+	if st.episodeID == "" {
+		st.episodeID = g.episodeID
+	}
+	return st
+}
+
+func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, gen uint64, proposal Proposal, failure *FailureEvent, diagNotes []string) (Decision, error) {
+	// If reviewer budget already exhausted, stop the turn.
+	g.mu.Lock()
+	st := g.tasks[taskID]
+	if st != nil && st.reviewRejects >= uint8(g.opts.MaxReviewBlocks) {
+		st.episodeStopped = true
+		st.stopReason = StopReasonReviewRejects
+		g.metrics.ReviewStops++
+		g.mu.Unlock()
+		return g.stopTurnDecision(taskID, gen, StopReasonReviewRejects, proposal), nil
+	}
+	g.mu.Unlock()
+
 	var verdict ReviewVerdict
 	if g.opts.Reviewer != nil {
 		start := g.opts.Now()
@@ -565,71 +932,64 @@ func (g *Gate) reviewOrEscalate(ctx context.Context, taskID, fp string, proposal
 		}
 		g.mu.Unlock()
 		if err != nil {
-			// A structural plan transition cannot be silently approved when its
-			// independent reviewer is unavailable. Ask once about the plan itself;
-			// ordinary recovery work still continues through infrastructure errors.
 			if proposal.PlanTransition {
-				return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, ChangeScope,
+				return g.askHuman(ctx, taskID, fp, gen, proposal, failure, diagNotes, ChangeScope,
 					"The active execution plan changed, but the independent plan reviewer is unavailable.")
 			}
 			g.mu.Lock()
 			g.metrics.RuleContinues++
 			g.mu.Unlock()
-			return Decision{Allow: true}, nil
+			return Decision{Allow: true, Generation: gen}, nil
 		}
 		verdict = normalizeVerdict(v, failure, proposal, diagNotes)
 		if verdict.Outcome == ReviewContinue && reviewerContinueKind(verdict.ChangeKind) {
 			g.mu.Lock()
 			g.metrics.ReviewContinues++
 			if current := g.tasks[taskID]; current != nil {
+				// Reviewer accept clears reviewer rejects; execution success
+				// later clears the full no-progress budget.
 				current.reviewRejects = 0
-				current.reviewFingerprint = ""
-				current.reviewScope = ""
 			}
 			g.mu.Unlock()
 			g.persist()
 			return Decision{
 				Allow:                    true,
 				AuthorizePlanReplacement: proposal.PlanTransition,
+				Generation:               gen,
 			}, nil
 		}
-		// A reviewer-confirmed strategy or scope decision is a material plan
-		// boundary, not another unsafe tool attempt for the agent to reword. Ask
-		// once at the boundary so Auto supervises plan transitions while ordinary
-		// bounded implementation changes above remain interruption-free.
 		if reviewerPlanDecision(verdict) {
-			return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, verdict.ChangeKind, verdict.Rationale)
+			return g.askHuman(ctx, taskID, fp, gen, proposal, failure, diagNotes, verdict.ChangeKind, verdict.Rationale)
 		}
-		// Risk and uncertainty are technical blockers, not user-owned choices.
-		// Give the exact reason back to the agent; repeated blocks stop and report
-		// instead of escalating into an execution-safety prompt.
-		blocks := g.recordReviewBlock(taskID, fp, proposal.TaskScopeID, verdict)
+		blocks := g.recordReviewBlock(taskID, verdict)
 		if blocks < g.opts.MaxReviewBlocks {
 			return Decision{
-				Allow:   false,
-				Blocked: true,
-				Message: reviewerBlockerMessage(verdict, blocks, g.opts.MaxReviewBlocks),
+				Allow:      false,
+				Blocked:    true,
+				Message:    reviewerBlockerMessage(verdict, blocks, g.opts.MaxReviewBlocks),
+				Generation: gen,
 			}, nil
 		}
-		return Decision{
-			Allow:   false,
-			Blocked: true,
-			Message: reviewerStopMessage(verdict, blocks, proposal),
-		}, nil
+		g.mu.Lock()
+		if current := g.tasks[taskID]; current != nil {
+			current.episodeStopped = true
+			current.stopReason = StopReasonReviewRejects
+		}
+		g.metrics.ReviewStops++
+		g.mu.Unlock()
+		return g.stopTurnDecision(taskID, gen, StopReasonReviewRejects, proposal), nil
 	}
 	if proposal.PlanTransition {
-		return g.askHuman(ctx, taskID, fp, proposal, failure, diagNotes, ChangeScope,
+		return g.askHuman(ctx, taskID, fp, gen, proposal, failure, diagNotes, ChangeScope,
 			"The active execution plan changed and needs your choice because no independent plan reviewer is configured.")
 	}
-	// A missing optional reviewer must not make ordinary recovery work
-	// interactive. Execution permissions remain owned by their existing gates.
 	g.mu.Lock()
 	g.metrics.RuleContinues++
 	g.mu.Unlock()
-	return Decision{Allow: true}, nil
+	return Decision{Allow: true, Generation: gen}, nil
 }
 
-func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposal, failure *FailureEvent, diagNotes []string, kind ChangeKind, rationale string) (Decision, error) {
+func (g *Gate) askHuman(ctx context.Context, taskID, fp string, gen uint64, proposal Proposal, failure *FailureEvent, diagNotes []string, kind ChangeKind, rationale string) (Decision, error) {
 	failureSource := ""
 	failureSummary := ""
 	if failure != nil {
@@ -654,9 +1014,10 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 
 	if g.opts.Headless || g.opts.EmitPrompt == nil {
 		return Decision{
-			Allow:   false,
-			Blocked: true,
-			Message: headlessBlockerMessage(pending, failure),
+			Allow:      false,
+			Blocked:    true,
+			Message:    headlessBlockerMessage(pending, failure),
+			Generation: gen,
 		}, nil
 	}
 
@@ -684,7 +1045,7 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		delete(g.pending, provisional)
 		delete(g.awaiting, taskID)
 		g.mu.Unlock()
-		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard prompt failed: " + err.Error()}, err
+		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard prompt failed: " + err.Error(), Generation: gen}, err
 	}
 	approvalID = strings.TrimSpace(approvalID)
 	if approvalID == "" {
@@ -694,7 +1055,7 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		delete(g.pending, provisional)
 		delete(g.awaiting, taskID)
 		g.mu.Unlock()
-		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard prompt returned empty id"}, fmt.Errorf("empty Auto Guard approval id")
+		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard prompt returned empty id", Generation: gen}, fmt.Errorf("empty Auto Guard approval id")
 	}
 
 	g.mu.Lock()
@@ -729,6 +1090,7 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		if err == nil && decision.Allow && proposal.PlanTransition {
 			decision.AuthorizePlanReplacement = true
 		}
+		decision.Generation = gen
 		return decision, err
 	case <-ctx.Done():
 		g.mu.Lock()
@@ -738,7 +1100,7 @@ func (g *Gate) askHuman(ctx context.Context, taskID, fp string, proposal Proposa
 		delete(g.awaiting, taskID)
 		g.mu.Unlock()
 		g.persist()
-		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard confirmation cancelled"}, ctx.Err()
+		return Decision{Allow: false, Blocked: true, Message: "blocked: Auto Guard confirmation cancelled", Generation: gen}, ctx.Err()
 	}
 }
 
@@ -790,10 +1152,10 @@ func (g *Gate) RecordDiagnosis(taskID, note string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	st := g.tasks[normalizeTaskID(taskID)]
-	if st == nil || st.failure == nil {
+	if st == nil || st.lastFailure == nil {
 		return
 	}
-	if appendDiagnosisNote(st.failure, note) {
+	if appendDiagnosisNote(st.lastFailure, note) {
 		g.persistUnlocked()
 	}
 }
@@ -837,7 +1199,8 @@ func (g *Gate) persist() {
 	if g == nil || g.opts.Persist == nil {
 		return
 	}
-	g.schedulePersist(g.Snapshot(), false)
+	// Disk never receives active lock state.
+	g.schedulePersist(g.PersistenceSnapshot(), false)
 }
 
 func (g *Gate) persistUnlocked() {
@@ -845,7 +1208,7 @@ func (g *Gate) persistUnlocked() {
 	if g == nil || g.opts.Persist == nil {
 		return
 	}
-	g.schedulePersist(g.snapshotLocked(), true)
+	g.schedulePersist(g.snapshotLocked(true), true)
 }
 
 func (g *Gate) schedulePersist(snap Snapshot, async bool) {
@@ -922,26 +1285,17 @@ func headlessBlockerMessage(pending PendingProposal, failure *FailureEvent) stri
 	return b.String()
 }
 
-func (g *Gate) recordReviewBlock(taskID, fingerprint, taskScope string, verdict ReviewVerdict) int {
+func (g *Gate) recordReviewBlock(taskID string, verdict ReviewVerdict) int {
 	g.mu.Lock()
-	st := g.tasks[taskID]
-	if st == nil {
-		st = &taskRuntime{}
-		g.tasks[taskID] = st
-	}
-	taskScope = strings.TrimSpace(taskScope)
-	if st.reviewFingerprint != fingerprint || st.reviewScope != taskScope {
-		st.reviewRejects = 0
-		st.reviewFingerprint = fingerprint
-		st.reviewScope = taskScope
-	}
+	st := g.ensureTaskLocked(taskID)
+	// Cumulative across all candidates inside the Episode.
 	if st.reviewRejects < 255 {
 		st.reviewRejects++
 	}
 	blocks := int(st.reviewRejects)
-	if st.failure != nil {
+	if st.lastFailure != nil {
 		note := "Auto Guard reviewer blocked the proposal: " + firstNonEmpty(verdict.Rationale, string(verdict.ChangeKind))
-		appendDiagnosisNote(st.failure, note)
+		appendDiagnosisNote(st.lastFailure, note)
 	}
 	g.mu.Unlock()
 	g.persist()
@@ -973,22 +1327,29 @@ func repeatedFailureStopMessage(failures int, proposal Proposal) string {
 	)
 }
 
+func episodeStopMessage(reason StopReason, proposal Proposal) string {
+	operation := clip(firstNonEmpty(proposal.Subject, proposal.Tool), 240)
+	switch reason {
+	case StopReasonReviewRejects:
+		return fmt.Sprintf(
+			"blocked: Auto recovery paused this turn after %d reviewer rejections (last proposal: %s). Do not call more tools; summarize what was tried and what remains. The user can continue in the next message.",
+			MaxReviewRejects, operation,
+		)
+	case StopReasonStoppedOpRetries:
+		return fmt.Sprintf(
+			"blocked: Auto recovery paused this turn after repeated attempts of already-stopped operations (last: %s). Do not call more tools; summarize completed work and blockers. The user can continue in the next message.",
+			operation,
+		)
+	default:
+		return fmt.Sprintf(
+			"blocked: Auto recovery paused this turn after %d execution failures without progress (last: %s). Do not call more tools; summarize completed work and blockers. The user can continue in the next message.",
+			MaxEpisodeFailures, operation,
+		)
+	}
+}
+
 func observationFingerprint(obs Observation) string {
 	return CallFingerprint(obs.Tool, obs.Subject, "", obs.Args)
-}
-
-func sameRecoveryScope(current, next string) bool {
-	current = strings.TrimSpace(current)
-	next = strings.TrimSpace(next)
-	return current == next
-}
-
-func recoveryScopeChanged(current, next string) bool {
-	next = strings.TrimSpace(next)
-	if next == "" {
-		return false
-	}
-	return strings.TrimSpace(current) != next
 }
 
 func persistentRecoveryScope(scope string) string {

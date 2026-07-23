@@ -100,7 +100,7 @@ func TestDecisionMatrix(t *testing.T) {
 				AutoMode: true, Mutates: true,
 				HasActiveFailure: true, FailureCount: 3, SameFailedOperation: true,
 			},
-			want: DecisionResult{Route: RouteStop},
+			want: DecisionResult{Route: RouteStop, StopReason: StopReasonOperationFailures},
 		},
 		{
 			name: "different operation after three failures stays recoverable",
@@ -437,7 +437,7 @@ func TestBehaviorMatrixGolden(t *testing.T) {
 			}
 		}
 		dec, err := g.BeforeMutation(context.Background(), prop)
-		if err != nil || dec.Allow || !dec.Blocked || prompts != 0 || reviews.Load() != 3 || !strings.Contains(dec.Message, "Do not retry this proposal") {
+		if err != nil || dec.Allow || !dec.Blocked || !dec.StopTurn || prompts != 0 || reviews.Load() != 3 || !strings.Contains(dec.Message, "paused this turn") {
 			t.Fatalf("stop = %+v %v prompts=%d reviews=%d", dec, err, prompts, reviews.Load())
 		}
 	})

@@ -2546,6 +2546,8 @@ export const en = {
   "notice.finalReadiness": "Task status needs one more check; asking the assistant to finish or explain what is blocking it.",
   "notice.deliveryIncompleteTitle": "Delivery checks are not complete",
   "notice.deliveryIncompleteBody": "The response was generated, but verification and review still need to be completed.",
+  "notice.recoveryPausedTitle": "Automatic recovery paused",
+  "notice.recoveryPausedBody": "This automatic recovery turn paused to avoid repeated execution. Completed work is kept; send more requirements or reply continue.",
   "notice.deliveryIncompleteContinue": "Continue checks",
   "notice.deliveryIncompleteContinuePrompt": "Continue and complete the remaining delivery checks.",
   "notice.deliveryIncompleteMissing": "Still needed: {items}",

@@ -202,6 +202,12 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	if scopeID, task, ok := c.goals.deliveryScope(); ok {
 		ctx = agent.WithDeliveryExecutionScope(ctx, agent.DeliveryExecutionScope{ID: scopeID, TaskText: task})
 	}
+	// Real user turns open a fresh Recovery Episode. Goal auto-continues and
+	// other synthetic turns inherit the current Episode so budgets accumulate
+	// only within one host-owned execution round.
+	if !turn.synthetic {
+		c.beginRecoveryEpisode()
+	}
 	err = c.runner.Run(ctx, modelInput)
 	c.persistGoalDeliveryCheckpoint()
 	if err == nil {
@@ -266,6 +272,9 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	c.SetPlanMode(false)
 	todoArgs := c.seedPlanTodos(proposal)
 	execStart := c.sessionMessageCount()
+	// Starting plan execution is a real Recovery Episode boundary even though
+	// the follow-up turn is synthetic.
+	c.beginRecoveryEpisode()
 	// The plan is the go-ahead: don't re-prompt for each write of the approved
 	// work. Auto-approve writers for the duration of this execution turn only; a
 	// later turn (even "continue") falls back to the normal per-tool approval.

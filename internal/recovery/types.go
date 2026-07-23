@@ -52,9 +52,9 @@ type ReviewVerdict struct {
 	ProposedAction string `json:"proposed_action,omitempty"`
 }
 
-// FailureEvent records the active failure that armed Auto Guard.
+// FailureEvent records failure evidence for diagnosis and reviewer context.
 // SafeRetryLeft/RepeatCount/DiagnosisNotes remain on the wire for old
-// snapshots; runtime truth lives on activeFailure.
+// snapshots; runtime budgets live on taskRuntime.
 type FailureEvent struct {
 	Tool          string `json:"tool"`
 	ArgsSummary   string `json:"args_summary,omitempty"`
@@ -65,7 +65,7 @@ type FailureEvent struct {
 	TaskID        string `json:"task_id,omitempty"`
 	// TaskScopeID persists only stable goal scopes. Ordinary turn scopes are
 	// runtime-local and intentionally omitted so a restart cannot revive a stale
-	// technical latch for a new user turn.
+	// technical latch for a new user turn. It never acts as the Episode budget key.
 	TaskScopeID    string          `json:"task_scope_id,omitempty"`
 	ReadOnly       bool            `json:"read_only,omitempty"`
 	Verification   bool            `json:"verification,omitempty"`
@@ -101,24 +101,37 @@ type PendingProposal struct {
 	TaskGrantDisplay   string `json:"-"`
 }
 
-// TaskState is the persistable compatibility view of one task's recovery state.
+// TaskState is the persistable / debug view of one task's recovery state.
 // Runtime truth is taskRuntime; Snapshot/Restore project to and from this shape.
+//
+// Persistence projection writes only LastFailure as historical evidence.
+// Failure / ConsecutiveFails / ReviewBlocks may still appear in live Snapshot()
+// for debugging, and old on-disk values are migrated to evidence without re-arming.
 type TaskState struct {
 	Phase            Phase            `json:"phase"`
 	Failure          *FailureEvent    `json:"failure,omitempty"`
+	LastFailure      *FailureEvent    `json:"last_failure,omitempty"`
 	Pending          *PendingProposal `json:"pending,omitempty"`
 	ApprovalID       string           `json:"approval_id,omitempty"`
 	ConsecutiveFails int              `json:"consecutive_fails,omitempty"`
 	ReviewBlocks     int              `json:"review_blocks,omitempty"`
 	TailInjected     bool             `json:"tail_injected,omitempty"`
+	// EpisodeID is runtime/debug only and never written by persistence projection.
+	EpisodeID string `json:"episode_id,omitempty"`
+	// EpisodeStopped / StopReason are live debug views only.
+	EpisodeStopped bool   `json:"episode_stopped,omitempty"`
+	StopReason     string `json:"stop_reason,omitempty"`
 }
 
-// Snapshot is the persistable form of all task recovery state.
+// Snapshot is the form of all task recovery state.
+// Live Snapshot() includes debug fields; PersistenceSnapshot() strips temporary
+// lock/budget state so disk never re-arms Auto blocks after restart.
 type Snapshot struct {
 	Tasks map[string]*TaskState `json:"tasks,omitempty"`
 }
 
 // Metrics are content-free counters for release observation.
+// They never record parameters, paths, or error bodies.
 type Metrics struct {
 	FailureEvents      int64
 	RuleContinues      int64
@@ -132,6 +145,15 @@ type Metrics struct {
 	ReviewLatencyMsSum int64
 	ReviewLatencyCount int64
 	RepeatPrompts      int64
+
+	// Episode / generation counters (content-free).
+	OperationStops           int64
+	EpisodeFailureStops      int64
+	ReviewStops              int64
+	StoppedOpRetryStops      int64
+	ModeResets               int64
+	EpisodeRotations         int64
+	StaleObservationsIgnored int64
 }
 
 // ApprovalKindRecovery is the Approval.Kind value for recovery cards.
