@@ -321,15 +321,14 @@ func (o *turnOrchestrator) runEditedGoalLoopWithRawDisplay(ctx context.Context, 
 	return o.continueGoal(ctx)
 }
 
-// goalShouldBlockOnError reports host pauses that must stop Goal auto-continue
-// until the next real user turn (delivery readiness or Auto recovery pause).
+// goalShouldBlockOnError reports host pauses that permanently block a Goal
+// until an explicit resume. Final-answer readiness is terminal for auto-continue
+// and marks blocked. RecoveryPauseError only ends the current automatic loop;
+// the Goal stays running so the next ordinary user message keeps the same
+// Goal/delivery scope without a resume ritual.
 func goalShouldBlockOnError(err error) bool {
 	var readiness *agent.FinalReadinessError
-	if errors.As(err, &readiness) {
-		return true
-	}
-	var pause *agent.RecoveryPauseError
-	return errors.As(err, &pause)
+	return errors.As(err, &readiness)
 }
 
 func (o *turnOrchestrator) continueGoal(ctx context.Context) error {
