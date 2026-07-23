@@ -32,9 +32,14 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function looksLikeAuthFailure(message: string): boolean {
+function offersManualFallback(message: string): boolean {
   const low = message.toLowerCase();
-  return low.includes("authorization failed") || low.includes("pkexec") || low.includes("sudo apt install");
+  return (
+    low.includes("authorization failed") ||
+    low.includes("manual update required") ||
+    low.includes("pkexec") ||
+    low.includes("sudo apt install")
+  );
 }
 
 const UpdaterContext = createContext<Updater | null>(null);
@@ -69,7 +74,7 @@ function useUpdaterInternal(): Updater {
               kind: "error",
               message: p.err ?? "update failed",
               info,
-              manualHint: looksLikeAuthFailure(p.err ?? ""),
+              manualHint: offersManualFallback(p.err ?? ""),
             };
           default:
             return cur;
@@ -126,7 +131,7 @@ function useUpdaterInternal(): Updater {
       const message = errMsg(e);
       setStatus((cur) => {
         const info = "info" in cur ? cur.info : undefined;
-        return { kind: "error", message, info, manualHint: looksLikeAuthFailure(message) };
+        return { kind: "error", message, info, manualHint: offersManualFallback(message) };
       });
     });
   }, []);

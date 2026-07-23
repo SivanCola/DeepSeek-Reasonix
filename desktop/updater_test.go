@@ -152,6 +152,16 @@ func TestEvaluateDebSelectsNativePackage(t *testing.T) {
 	}
 }
 
+func TestManualUpdateRequiredErrorPreservesReason(t *testing.T) {
+	err := manualUpdateRequiredError(installProfile{ManualReason: "system update helper is unavailable"})
+	if !errors.Is(err, errUpdateManualRequired) {
+		t.Fatalf("error = %v, want manual-update sentinel", err)
+	}
+	if !strings.Contains(err.Error(), "system update helper is unavailable") {
+		t.Fatalf("error = %q, want profile reason", err)
+	}
+}
+
 func TestChannelSelectsDistinctPointers(t *testing.T) {
 	orig := channel
 	t.Cleanup(func() { channel = orig })

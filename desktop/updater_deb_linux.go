@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // Linux privileged-install error classes. errorClass maps these substrings into
@@ -215,16 +214,4 @@ func ensureDebCacheMatchesProfile(meta *cachedUpdate, profile installProfile) er
 		return fmt.Errorf("update: install mode %s cannot self-update", profile.Mode)
 	}
 	return nil
-}
-
-// pkexecExitCode is exposed for tests.
-func pkexecExitCode(err error) int {
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return -1
-	}
-	if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-		return status.ExitStatus()
-	}
-	return exitErr.ExitCode()
 }

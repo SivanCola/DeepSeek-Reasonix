@@ -19,6 +19,8 @@ import (
 // download progress as "updater:progress" events and routes macOS to the manual
 // download path unless the macOS build was Developer ID signed and notarized.
 
+var errUpdateManualRequired = errors.New("update: manual update required")
+
 // Version returns the build version injected via -ldflags (see main.go). The
 // frontend displays it; CheckUpdate compares against it.
 func (a *App) Version() string { return version }
@@ -88,8 +90,7 @@ func (a *App) OpenDownloadPage() {
 func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
 	profile := detectInstallProfile()
 	if !profile.CanSelfUpdate || !canSelfUpdate() {
-		a.OpenDownloadPage()
-		return nil, nil
+		return nil, a.requireManualUpdate(profile)
 	}
 	c, err := httpClient()
 	if err != nil {
@@ -104,8 +105,7 @@ func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
 	}
 	profile = profileForManifest(profile, m)
 	if !profile.CanSelfUpdate {
-		a.OpenDownloadPage()
-		return nil, nil
+		return nil, a.requireManualUpdate(profile)
 	}
 	asset, kind, ok := selectUpdateAsset(m, profile)
 	if !ok {
@@ -134,8 +134,7 @@ func (a *App) DownloadUpdate() (*UpdateDownloadResult, error) {
 func (a *App) InstallUpdate() error {
 	profile := detectInstallProfile()
 	if !profile.CanSelfUpdate || !canSelfUpdate() {
-		a.OpenDownloadPage()
-		return nil
+		return a.requireManualUpdate(profile)
 	}
 	meta, data, err := readVerifiedCachedUpdate()
 	if err != nil {
@@ -156,8 +155,7 @@ func (a *App) InstallUpdate() error {
 		profile = detectInstallProfile()
 	}
 	if !profile.CanSelfUpdate {
-		a.OpenDownloadPage()
-		return nil
+		return a.requireManualUpdate(profile)
 	}
 	if err := ensureDebCacheMatchesProfile(meta, profile); err != nil {
 		return a.failUpdate(err)
@@ -329,6 +327,21 @@ func (a *App) failUpdate(err error) error {
 	a.recordUpdateError(err)
 	a.emitProgress("error", 0, 0, err.Error())
 	return err
+}
+
+// requireManualUpdate moves the frontend out of its busy state before opening
+// the download page. Install mode and manifest availability are re-checked at
+// each updater boundary, so either can legitimately change after the frontend
+// started downloading or authorizing.
+func (a *App) requireManualUpdate(profile installProfile) error {
+	err := a.failUpdate(manualUpdateRequiredError(profile))
+	a.OpenDownloadPage()
+	return err
+}
+
+func manualUpdateRequiredError(profile installProfile) error {
+	reason := firstNonEmptyStr(profile.ManualReason, manualUpdateReason(), "automatic update is unavailable for this install")
+	return fmt.Errorf("%w: %s", errUpdateManualRequired, reason)
 }
 
 func (a *App) recordUpdateError(err error) {

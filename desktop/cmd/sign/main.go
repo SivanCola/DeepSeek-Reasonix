@@ -251,16 +251,6 @@ func matchArtifact(name string) (key, kind string) {
 	return "", ""
 }
 
-// matchPlatform returns the portable platform key embedded in a file name, or "".
-// Kept for tests and callers that only care about the platforms map.
-func matchPlatform(name string) string {
-	key, kind := matchArtifact(name)
-	if kind != artifactPortable {
-		return ""
-	}
-	return key
-}
-
 // hashFile returns the size and lowercase-hex SHA-256 of a file, streaming it so
 // large artifacts don't have to fit in memory.
 func hashFile(path string) (int64, string, error) {
