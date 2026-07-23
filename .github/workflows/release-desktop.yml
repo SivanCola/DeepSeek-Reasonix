@@ -457,10 +457,13 @@ jobs:
         run: |
           f=assets/latest.json
           jq --arg base "$R2_PUBLIC_BASE" --arg tag "$TAG" '
-            .platforms |= with_entries(
-              .value.url |= sub("https://github.com/[^/]+/[^/]+/releases/download/[^/]+/"; "\($base)/\($tag)/")
-              | .value.sig |= sub("https://github.com/[^/]+/[^/]+/releases/download/[^/]+/"; "\($base)/\($tag)/")
-            )
+            def rewrite_asset:
+              .url |= sub("https://github.com/[^/]+/[^/]+/releases/download/[^/]+/"; "\($base)/\($tag)/")
+              | .sig |= sub("https://github.com/[^/]+/[^/]+/releases/download/[^/]+/"; "\($base)/\($tag)/");
+            .platforms |= with_entries(.value |= rewrite_asset)
+            | if .native_packages then
+                .native_packages |= with_entries(.value |= rewrite_asset)
+              else . end
           ' "$f" > "$f.new"
           mv "$f.new" "$f"
           cat "$f"
@@ -512,7 +515,14 @@ jobs:
             .version == $version and
             .download_page == "https://reasonix.io/?download=desktop#start" and
             ([.platforms[] | (.url, .sig)] |
-              all(type == "string" and startswith($prefix) and (contains("/releases/latest/") | not)))
+              all(type == "string" and startswith($prefix) and (contains("/releases/latest/") | not))) and
+            (.platforms["linux-amd64"].url | type == "string" and endswith(".tar.gz")) and
+            (.native_packages | type == "object") and
+            (.native_packages["linux-amd64"] | type == "object") and
+            (.native_packages["linux-amd64"].url | type == "string" and startswith($prefix) and endswith(".deb") and (contains("/releases/latest/") | not)) and
+            (.native_packages["linux-amd64"].sig | type == "string" and startswith($prefix) and endswith(".deb.minisig") and (contains("/releases/latest/") | not)) and
+            (.native_packages["linux-amd64"].sha256 | type == "string" and length > 0) and
+            (.native_packages["linux-amd64"].size | type == "number" and . > 0)
           ' "$f" >/dev/null
 
           aws s3 cp "s3://${R2_BUCKET}/${TAG}/latest.json" /tmp/reasonix-desktop-tag-latest.json --endpoint-url "$ENDPOINT"
@@ -529,7 +539,8 @@ jobs:
             jq -e --arg version "$VERSION" '.version == $version' /tmp/reasonix-desktop-pointer-latest.json >/dev/null
           fi
 
-          jq -r '.platforms[] | .url, .sig' "$f" | while IFS= read -r asset; do
+          jq -r '(.platforms[] | .url, .sig), ((.native_packages // {})[] | .url, .sig)' "$f" | while IFS= read -r asset; do
+            [ -n "$asset" ] || continue
             key="${asset#https://dl.reasonix.io/}"
             aws s3api head-object --bucket "$R2_BUCKET" --key "$key" --endpoint-url "$ENDPOINT" >/dev/null
           done

@@ -137,9 +137,19 @@ The gateway resolves only the desktop `desktop-v*` release line and never uses
 GitHub's repository-wide `/releases/latest` shortcut, so updater behavior does
 not depend on homepage badge semantics. Self-update behavior by platform:
 
-- **Linux / Windows** — download, verify the minisign signature, then update in
-  place: Linux replaces the binary and relaunches; Windows runs the per-user NSIS
-  installer (no admin rights needed).
+- **Linux portable (`.tar.gz`)** — download, verify the minisign signature, replace
+  the binaries in the install directory, and relaunch through Guard. No elevation.
+- **Linux Debian/Ubuntu (`.deb`)** — download the signed `.deb`, request administrator
+  authorization via Polkit (`pkexec`), re-verify and install with `apt-get
+  --only-upgrade`, then relaunch through Guard. The first build that ships the
+  update helper and Polkit policy is a one-time bootstrap: existing `.deb` users
+  should overwrite-install once with
+  `sudo apt install ./Reasonix-linux-amd64.deb` (no uninstall required). After
+  that, in-app authorized updates work. If Polkit/`pkexec` is unavailable, use
+  the same manual command. Failed installs leave the running app intact so you
+  can retry; successful installs are managed by apt/dpkg and are not auto-downgraded.
+- **Windows** — download, verify the minisign signature, then run the per-user
+  NSIS installer (no admin rights needed).
 - **macOS** — *not* self-updating yet. The build is unsigned/un-notarized, so an
   in-place swap would be blocked by Gatekeeper; the banner links to the download
   page for a manual update instead.

@@ -57,14 +57,20 @@ Guard（macOS 上为桌面启动预检）会显示不依赖 WebView 的系统原
 
 ## 更新回滚
 
-自动更新前，Reasonix 会完整保留安装的发布单元——桌面可执行文件以及安装器同样会
-替换的 Guard/启动器二进制（Windows/Linux），或整个应用 Bundle（macOS）。只有新
-版本进入 `healthy` 或干净退出后才清理备份。新版本达到启动失败阈值时，Guard（macOS
-上为桌面启动预检）会先校验全部备份哈希，再恢复完整发布单元并重新启动，回滚不会
-留下新旧混装。
-Windows 安装器在桌面退出后执行失败时，更新 helper 会记录失败并重新拉起 Guard，
-Guard 启动时立即执行同样的完整回滚，而不是等待崩溃循环。更新元数据和哈希位于
-Reasonix 修复状态目录；任何任意目标路径、目录外备份或缺失哈希的备份都会被拒绝。
+自动 **便携版** 更新前（Windows 安装器路径、Linux `.tar.gz`、或 macOS 应用 Bundle
+替换），Reasonix 会完整保留安装的发布单元——桌面可执行文件以及安装器同样会替换的
+Guard/启动器二进制，或整个应用 Bundle（macOS）。只有新版本进入 `healthy` 或干净
+退出后才清理备份。新版本达到启动失败阈值时，Guard（macOS 上为桌面启动预检）会先
+校验全部备份哈希，再恢复完整发布单元并重新启动，回滚不会留下新旧混装。Windows
+安装器在桌面退出后执行失败时，更新 helper 会记录失败并重新拉起 Guard，Guard 启动时
+立即执行同样的完整回滚，而不是等待崩溃循环。更新元数据和哈希位于 Reasonix 修复状态
+目录；任何任意目标路径、目录外备份或缺失哈希的备份都会被拒绝。
+
+**Debian/Ubuntu `.deb` 安装** 的升级不走 Guard 文件级回滚。应用内更新通过 Polkit
+授权 root helper，并以 `apt-get --only-upgrade` 安装。失败时旧进程保持运行、已验证
+的下载缓存可重试，包状态交由 apt/dpkg 处理。安装成功后由系统包管理器管理，Reasonix
+不会自动降级。尚未包含 helper 的旧 `.deb` 用户需手动覆盖安装一次 bootstrap 包：
+`sudo apt install ./Reasonix-linux-amd64.deb`（无需卸载）。
 
 ## 可选 AI 辅助
 

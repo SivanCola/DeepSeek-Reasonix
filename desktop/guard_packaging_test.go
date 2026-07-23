@@ -151,12 +151,29 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 	}
 	for _, want := range []string{
 		"/usr/bin/reasonix",
+		"/usr/lib/reasonix/reasonix-update-helper",
+		"/usr/share/polkit-1/actions/io.reasonix.desktop.update.policy",
 		"/usr/share/applications/reasonix.desktop",
 		"/usr/share/pixmaps/reasonix-desktop.png",
 		"/usr/share/icons/hicolor/scalable/apps/reasonix-desktop.svg",
+		"pkexec",
 	} {
 		if !strings.Contains(nfpm, want) {
 			t.Errorf("Linux package missing desktop identity asset %q", want)
+		}
+	}
+	if _, err := os.Stat("build/linux/io.reasonix.desktop.update.policy"); err != nil {
+		t.Errorf("Polkit policy file missing: %v", err)
+	}
+	for _, want := range []string{
+		`./cmd/update-helper`,
+		`reasonix-update-helper`,
+		`deb_version=`,
+		`dpkg-deb --contents`,
+		`dpkg-deb --field`,
+	} {
+		if !strings.Contains(build, want) {
+			t.Errorf("desktop-build.sh missing Linux deb helper contract %q", want)
 		}
 	}
 

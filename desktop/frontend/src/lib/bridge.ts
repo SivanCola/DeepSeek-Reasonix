@@ -4167,6 +4167,7 @@ function makeMockApp(): AppBindings {
         channel: "stable",
         canSelfUpdate: false,
         manualOnly: true,
+        installMode: "manual",
         manualReason: "browser preview",
         downloaded: false,
         downloadUrl: "",

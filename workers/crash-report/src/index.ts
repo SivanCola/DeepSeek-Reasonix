@@ -90,6 +90,7 @@ const METRIC_SIGNALS = [
   "cache_hit",
   "tool_error",
   "updater_error",
+  "updater_event",
   "compaction",
   "turns",
   "desktop_hang",
