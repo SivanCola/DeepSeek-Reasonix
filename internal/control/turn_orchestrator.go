@@ -259,7 +259,9 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 		return err
 	}
 	if !allow {
-		return nil // keep planning; plan mode stays on
+		// The host decides whether denial means "revise and keep planning" or
+		// "exit without executing" by leaving plan mode on or switching it off.
+		return nil
 	}
 	c.SetPlanMode(false)
 	todoArgs := c.seedPlanTodos(proposal)

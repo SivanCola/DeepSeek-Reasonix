@@ -862,6 +862,8 @@ export const en = {
   "approval.startExecutionDesc": "Leave plan mode and begin executing the plan.",
   "approval.revisePlan": "Revise plan",
   "approval.revisePlanDesc": "Tell Reasonix what should change before execution.",
+  "approval.exitPlanWithoutExecution": "Exit without executing",
+  "approval.exitPlanWithoutExecutionDesc": "Leave plan mode without running the current plan or changing the workspace.",
   "approval.revisePlanPlaceholder": "Tell me what should be updated in the plan...",
   "approval.sendRevision": "Send update",
   "approval.toolPending": "Allow tool call",

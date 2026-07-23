@@ -863,6 +863,8 @@ export const zh: Record<DictKey, string> = {
   "approval.startExecutionDesc": "退出计划模式并开始执行计划。",
   "approval.revisePlan": "修改计划",
   "approval.revisePlanDesc": "告诉 Reasonix 执行前还需要调整什么。",
+  "approval.exitPlanWithoutExecution": "暂不执行，退出计划模式",
+  "approval.exitPlanWithoutExecutionDesc": "不执行当前计划，退出计划模式并保持工作区不变。",
   "approval.revisePlanPlaceholder": "告诉我这份计划还需要改哪里...",
   "approval.sendRevision": "发送修改意见",
   "approval.toolPending": "允许工具调用",

@@ -127,6 +127,11 @@ eq(
   "plan approval clears the remembered plan restore intent before execution",
 );
 eq(
+  /onExitPlan=\{async \(\) => \{\s*await applyCollaborationMode\("normal"\);\s*approve\(state\.approval!\.id, false, false, false\);\s*\}\}/.test(appSource),
+  true,
+  "exit-without-executing switches to Normal before rejecting the pending plan",
+);
+eq(
   !/exit_plan_mode[\s\S]{0,240}rememberUserIntent:\s*false/.test(appSource),
   true,
   "plan approval must not preserve stale plan restore intent",
