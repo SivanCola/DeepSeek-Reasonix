@@ -1078,6 +1078,19 @@ func (o *onDemandMCPTool) MCPDestructiveHint() bool {
 }
 
 func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	text, _, err := o.executeWithImages(ctx, args)
+	return text, err
+}
+
+// ExecuteWithImages preserves structured MCP image results on the first call,
+// when the deferred target must connect the server before dispatch. Keeping the
+// resolution and safety checks in executeWithImages ensures text-only and image
+// callers share the same authorization and runtime-identity boundary.
+func (o *onDemandMCPTool) ExecuteWithImages(ctx context.Context, args json.RawMessage) (string, []string, error) {
+	return o.executeWithImages(ctx, args)
+}
+
+func (o *onDemandMCPTool) executeWithImages(ctx context.Context, args json.RawMessage) (string, []string, error) {
 	// Final runtime-bound authorization and identity check before any
 	// process/network start. The read lock also linearizes this dispatch against
 	// disable, uninstall, and same-name hot replacement.
@@ -1087,11 +1100,11 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 		if o.proxy.ledger != nil {
 			o.proxy.ledger.MarkUnavailable("mcp-tool:"+o.server+"/"+o.raw, msg)
 		}
-		return "", err
+		return "", nil, err
 	}
 	defer unlock()
 	if !plugin.MCPRuntimeSpecMatches(spec, o.spec) {
-		return "", fmt.Errorf("MCP server %q runtime identity changed after resolution; retry so Reasonix can bind the current configuration", o.server)
+		return "", nil, fmt.Errorf("MCP server %q runtime identity changed after resolution; retry so Reasonix can bind the current configuration", o.server)
 	}
 	tools, err := o.proxy.ensureServerToolsForSpec(ctx, o.server, spec)
 	if err != nil {
@@ -1100,7 +1113,7 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 		if o.proxy.ledger != nil {
 			o.proxy.ledger.MarkUnavailable("mcp-tool:"+o.server+"/"+o.raw, err.Error())
 		}
-		return "", err
+		return "", nil, err
 	}
 	target := findMCPTool(tools, o.raw, o.modelName)
 	if target == nil {
@@ -1108,25 +1121,29 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 		if o.proxy.ledger != nil {
 			o.proxy.ledger.MarkUnavailable("mcp-tool:"+o.server+"/"+o.raw, msg)
 		}
-		return "", fmt.Errorf("%s", msg)
+		return "", nil, fmt.Errorf("%s", msg)
 	}
 	if !plugin.MCPToolMatchesSpec(target, spec) {
-		return "", fmt.Errorf("connected MCP server %q identity does not match the current runtime configuration; reconnect this server before retrying", o.server)
+		return "", nil, fmt.Errorf("connected MCP server %q identity does not match the current runtime configuration; reconnect this server before retrying", o.server)
 	}
 	if _, err := plugin.ReconcileCachedToolSafety(o.server, o.raw, plugin.CachedToolSafety{
 		ReadOnly:    o.readOnly,
 		Destructive: o.destructive,
 	}, target); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	// Planner non-destructive lane and reader lane: re-check live metadata
 	// before tools/call even when Reconcile did not see a cache promotion.
 	if tool.HasNonDestructiveMCPExecutionIntent(ctx) {
 		if !mcpServerAuthorized(target) || mcpDestructiveHint(target) {
-			return "", fmt.Errorf("MCP server %q changed the authorization or destructive classification for tool %q; the call was blocked before dispatch — retry so Reasonix can re-apply the current Planner MCP safety boundary", o.server, o.raw)
+			return "", nil, fmt.Errorf("MCP server %q changed the authorization or destructive classification for tool %q; the call was blocked before dispatch — retry so Reasonix can re-apply the current Planner MCP safety boundary", o.server, o.raw)
 		}
 	}
-	return target.Execute(ctx, args)
+	if imageTool, ok := target.(tool.ImageTool); ok {
+		return imageTool.ExecuteWithImages(ctx, args)
+	}
+	text, err := target.Execute(ctx, args)
+	return text, nil, err
 }
 
 func (t *UseCapabilityTool) ensureServerToolsForSpec(ctx context.Context, server string, spec plugin.Spec) ([]tool.Tool, error) {

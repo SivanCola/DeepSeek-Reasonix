@@ -237,8 +237,9 @@ func RenderTransientBlock(d RouteDecision) string {
 	b.WriteString("Relevant capabilities for this turn:\n")
 	for _, c := range d.Candidates {
 		e := c.Entry
+		proxyMCP := d.CapabilityProxy && (e.Kind == KindMCPTool || e.Kind == KindMCPServer)
 		target := e.ID
-		if !d.Delivery && e.Status != StatusReady && e.ConnectSource != "" {
+		if !d.Delivery && !proxyMCP && e.Status != StatusReady && e.ConnectSource != "" {
 			target = fmt.Sprintf("source:%s", e.ConnectSource)
 			if e.ConnectName != "" {
 				target += "/" + e.ConnectName
@@ -249,7 +250,7 @@ func RenderTransientBlock(d RouteDecision) string {
 			fmt.Fprintf(&b, " (status=%s)", e.Status)
 		}
 		switch {
-		case d.Delivery || d.CapabilityProxy:
+		case d.Delivery || proxyMCP:
 			// Delivery and dual-model Planner have no connect_tool_source for
 			// MCP; the stable proxy both connects and calls on demand, keeping
 			// the concrete capability id.
