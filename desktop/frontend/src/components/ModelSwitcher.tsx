@@ -9,7 +9,15 @@ import { Tooltip } from "./Tooltip";
 
 // ModelSwitcher opens an upward popover listing configured providers. Selecting
 // one switches the active model while the current conversation continues.
-export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?: string; onPick: (name: string) => void }) {
+export function ModelSwitcher({
+  label,
+  tabId,
+  onPick,
+}: {
+  label: string;
+  tabId?: string;
+  onPick: (name: string) => void | Promise<unknown>;
+}) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -18,6 +26,7 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const loadSeqRef = useRef(0);
+  const pendingPickCountRef = useRef(0);
 
   // Measure trigger width off the render path to avoid forced layout
   useEffect(() => {
@@ -94,10 +103,23 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
   }, [label, models, t]);
   const triggerLabel = currentProvider ? `${label} · ${currentProvider}` : label;
 
-  const pick = (name: string) => {
-    setModels((prev) => prev.map((m) => ({ ...m, current: m.ref === name })));
+  const pick = (model: ModelInfo) => {
     setOpen(false);
-    onPick(name);
+    // A catalog refresh can still report the outgoing model as current while
+    // an earlier switch is rebuilding. In that window, selecting it again is
+    // an intentional last-click-wins rollback rather than a no-op.
+    if (model.current && pendingPickCountRef.current === 0) return;
+    setModels((prev) => prev.map((m) => ({ ...m, current: m.ref === model.ref })));
+    pendingPickCountRef.current += 1;
+    const settlePick = () => {
+      pendingPickCountRef.current = Math.max(0, pendingPickCountRef.current - 1);
+    };
+    try {
+      void Promise.resolve(onPick(model.ref)).then(settlePick, settlePick);
+    } catch (err) {
+      settlePick();
+      throw err;
+    }
   };
 
   return (
@@ -135,7 +157,7 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setOpen(false);
-                if (e.key === "Enter" && filtered.length === 1) pick(filtered[0].ref);
+                if (e.key === "Enter" && filtered.length === 1) pick(filtered[0]);
               }}
             />
           </div>
@@ -151,7 +173,7 @@ export function ModelSwitcher({ label, tabId, onPick }: { label: string; tabId?:
                   role="option"
                   aria-selected={m.current}
                   className={`modelsw__item ${m.current ? "modelsw__item--current" : ""}`}
-                  onClick={() => pick(m.ref)}
+                  onClick={() => pick(m)}
                 >
                   <span className="modelsw__copy">
                     <span className="modelsw__model">{m.model}</span>

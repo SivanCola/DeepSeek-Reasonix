@@ -140,7 +140,13 @@ let contextLoader: (() => Promise<ContextInfo>) | undefined;
 let backendBalance: BalanceInfo = { available: true, display: "¥88.00" };
 let balanceCalls = 0;
 let balanceLoader: (() => Promise<BalanceInfo>) | undefined;
-let modelSwitchGate: ReturnType<typeof deferred<void>> | undefined;
+type ModelSwitchStep = {
+  gate: ReturnType<typeof deferred<void>>;
+  balance?: BalanceInfo;
+  error?: Error;
+};
+const modelSwitchSteps: ModelSwitchStep[] = [];
+let modelSwitchCalls = 0;
 const stalePanelInfo: ContextPanelInfo = {
   usedTokens: 100,
   windowTokens: 1_000,
@@ -184,8 +190,12 @@ window.go = {
         return balanceLoader ? balanceLoader() : backendBalance;
       },
       SetModelForTab: async () => {
-        if (modelSwitchGate) await modelSwitchGate.promise;
-        backendBalance = { available: false, display: "" };
+        modelSwitchCalls += 1;
+        const step = modelSwitchSteps.shift();
+        if (!step) throw new Error("missing model switch step");
+        await step.gate.promise;
+        if (step.error) throw step.error;
+        backendBalance = step.balance ?? { available: false, display: "" };
         balanceLoader = undefined;
       },
       JobsForTab: async () => [],
@@ -357,29 +367,97 @@ await act(async () => {
 });
 ok(await settleUntil(() => balanceCalls === balanceRaceStartCalls + 1), "pre-switch balance refresh starts");
 
-modelSwitchGate = deferred<void>();
-let switchPromise: Promise<void> | undefined;
+const firstSwitchGate = deferred<void>();
+const latestSwitchGate = deferred<void>();
+modelSwitchSteps.push(
+  { gate: firstSwitchGate, balance: { available: true, display: "A 40.00" } },
+  { gate: latestSwitchGate, balance: { available: true, display: "B 25.00" } },
+);
+const modelSwitchStartCalls = modelSwitchCalls;
+let firstSwitchPromise: Promise<boolean> | undefined;
+let latestSwitchPromise: Promise<boolean> | undefined;
 await act(async () => {
-  switchPromise = controller?.setModel("mimo/mimo-v2");
+  firstSwitchPromise = controller?.setModel("provider-a/model-a");
+  latestSwitchPromise = controller?.setModel("provider-b/model-b");
   await flushPromises();
 });
 eq(renderedBalance(), "-", "starting a hot model switch immediately hides the DeepSeek balance");
+eq(modelSwitchCalls, modelSwitchStartCalls + 1, "rapid model switches enter the backend in click order");
 
-modelSwitchGate.resolve();
+firstSwitchGate.resolve();
+let firstSwitchResult: boolean | undefined;
 await act(async () => {
-  await switchPromise;
+  firstSwitchResult = await firstSwitchPromise;
   await flushPromises();
 });
-ok(
-  await settleUntil(() => controller?.state.balance.available === false && renderedBalance() === "-"),
-  "a switched provider without a balance endpoint keeps the placeholder",
-);
+eq(firstSwitchResult, false, "superseded model switch reports that it no longer owns the UI");
+ok(await settleUntil(() => modelSwitchCalls === modelSwitchStartCalls + 2), "latest model switch starts after the older backend call");
+eq(renderedBalance(), "-", "superseded switch cannot restore its provider balance");
+
+latestSwitchGate.resolve();
+let latestSwitchResult: boolean | undefined;
+await act(async () => {
+  latestSwitchResult = await latestSwitchPromise;
+  await flushPromises();
+});
+eq(latestSwitchResult, true, "latest model switch owns the completed UI refresh");
+ok(await settleUntil(() => renderedBalance() === "B 25.00"), "latest model switch balance wins");
 
 staleBalance.resolve({ available: true, display: "¥88.00" });
 await act(async () => {
   await flushPromises();
 });
-eq(renderedBalance(), "-", "late DeepSeek balance response cannot overwrite the switched provider");
+eq(renderedBalance(), "B 25.00", "late DeepSeek balance response cannot overwrite the switched provider");
+
+const overlappingSuccessGate = deferred<void>();
+const overlappingFailureGate = deferred<void>();
+modelSwitchSteps.push(
+  { gate: overlappingSuccessGate, balance: { available: true, display: "A 40.00" } },
+  { gate: overlappingFailureGate, error: new Error("provider B failed") },
+);
+let overlappingSuccess: Promise<boolean> | undefined;
+let overlappingFailure: Promise<boolean> | undefined;
+await act(async () => {
+  overlappingSuccess = controller?.setModel("provider-a/model-a");
+  overlappingFailure = controller?.setModel("provider-b/model-b");
+  await flushPromises();
+});
+overlappingSuccessGate.resolve();
+await act(async () => {
+  await overlappingSuccess;
+  await flushPromises();
+});
+eq(renderedBalance(), "-", "older successful switch stays hidden while the latest switch is pending");
+overlappingFailureGate.resolve();
+let overlappingFailureResult: boolean | undefined;
+await act(async () => {
+  overlappingFailureResult = await overlappingFailure;
+  await flushPromises();
+});
+eq(overlappingFailureResult, false, "latest failed switch reports failure");
+ok(
+  await settleUntil(() => renderedBalance() === "A 40.00"),
+  "failed latest switch refreshes the provider established by the older queued success",
+);
+
+const failedSwitchGate = deferred<void>();
+modelSwitchSteps.push({ gate: failedSwitchGate, error: new Error("session is busy") });
+balanceLoader = async () => ({ available: false, display: "", err: "balance fetch failed" });
+let failedSwitch: Promise<boolean> | undefined;
+await act(async () => {
+  failedSwitch = controller?.setModel("provider-c/model-c");
+  await flushPromises();
+});
+eq(renderedBalance(), "-", "a failing switch hides the outgoing balance while pending");
+failedSwitchGate.resolve();
+let failedSwitchResult: boolean | undefined;
+await act(async () => {
+  failedSwitchResult = await failedSwitch;
+  await flushPromises();
+});
+eq(failedSwitchResult, false, "failed model switch reports failure to its caller");
+eq(renderedBalance(), "A 40.00", "failed switch restores the known balance when its confirmation refresh fails");
+balanceLoader = undefined;
 
 await act(async () => {
   root.unmount();
