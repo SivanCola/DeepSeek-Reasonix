@@ -1129,22 +1129,6 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 	return target.Execute(ctx, args)
 }
 
-func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string) ([]tool.Tool, error) {
-	server = strings.TrimSpace(server)
-	if server == "" {
-		return nil, fmt.Errorf("empty MCP server name")
-	}
-	if t.host == nil {
-		return nil, fmt.Errorf("MCP host unavailable")
-	}
-	spec, unlock, err := t.lockAuthorizedRuntimeServer(ctx, server)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	return t.ensureServerToolsForSpec(ctx, server, spec)
-}
-
 func (t *UseCapabilityTool) ensureServerToolsForSpec(ctx context.Context, server string, spec plugin.Spec) ([]tool.Tool, error) {
 	// Reuse shared host if already connected (including auto-started).
 	if t.host.HasClient(server) {
