@@ -26,7 +26,7 @@ export function ModelSwitcher({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const loadSeqRef = useRef(0);
-  const pendingPickCountRef = useRef(0);
+  const pendingPickCountByTabRef = useRef(new Map<string, number>());
 
   // Measure trigger width off the render path to avoid forced layout
   useEffect(() => {
@@ -105,14 +105,21 @@ export function ModelSwitcher({
 
   const pick = (model: ModelInfo) => {
     setOpen(false);
+    const pendingKey = tabId ?? "";
+    const pendingPickCount = pendingPickCountByTabRef.current.get(pendingKey) ?? 0;
     // A catalog refresh can still report the outgoing model as current while
     // an earlier switch is rebuilding. In that window, selecting it again is
     // an intentional last-click-wins rollback rather than a no-op.
-    if (model.current && pendingPickCountRef.current === 0) return;
+    if (model.current && pendingPickCount === 0) return;
     setModels((prev) => prev.map((m) => ({ ...m, current: m.ref === model.ref })));
-    pendingPickCountRef.current += 1;
+    pendingPickCountByTabRef.current.set(pendingKey, pendingPickCount + 1);
     const settlePick = () => {
-      pendingPickCountRef.current = Math.max(0, pendingPickCountRef.current - 1);
+      const nextCount = Math.max(
+        0,
+        (pendingPickCountByTabRef.current.get(pendingKey) ?? 0) - 1,
+      );
+      if (nextCount === 0) pendingPickCountByTabRef.current.delete(pendingKey);
+      else pendingPickCountByTabRef.current.set(pendingKey, nextCount);
     };
     try {
       void Promise.resolve(onPick(model.ref)).then(settlePick, settlePick);

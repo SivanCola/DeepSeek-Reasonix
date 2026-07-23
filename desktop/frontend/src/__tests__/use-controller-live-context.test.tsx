@@ -72,7 +72,7 @@ function tabMeta(): TabMeta {
 
 function meta(): Meta {
   return {
-    label: "model",
+    label: backendModel,
     ready: true,
     eventChannel: "agent:event",
     cwd: "/repo",
@@ -138,6 +138,7 @@ let backendContext: ContextInfo = {
 let contextCalls = 0;
 let contextLoader: (() => Promise<ContextInfo>) | undefined;
 let backendBalance: BalanceInfo = { available: true, display: "¥88.00" };
+let backendModel = "model";
 let balanceCalls = 0;
 let balanceLoader: (() => Promise<BalanceInfo>) | undefined;
 type ModelSwitchStep = {
@@ -189,14 +190,18 @@ window.go = {
         balanceCalls += 1;
         return balanceLoader ? balanceLoader() : backendBalance;
       },
-      SetModelForTab: async () => {
+      SetModelForTab: async (_tabId, name) => {
         modelSwitchCalls += 1;
         const step = modelSwitchSteps.shift();
         if (!step) throw new Error("missing model switch step");
         await step.gate.promise;
         if (step.error) throw step.error;
+        backendModel = name;
         backendBalance = step.balance ?? { available: false, display: "" };
         balanceLoader = undefined;
+      },
+      CloseTab: async () => {
+        throw new Error("cannot close tab");
       },
       JobsForTab: async () => [],
       CheckpointsForTab: async () => [],
@@ -439,6 +444,11 @@ ok(
   await settleUntil(() => renderedBalance() === "A 40.00"),
   "failed latest switch refreshes the provider established by the older queued success",
 );
+eq(
+  controller?.state.meta?.label,
+  "provider-a/model-a",
+  "failed latest switch reconciles metadata from the older queued success",
+);
 
 const failedSwitchGate = deferred<void>();
 modelSwitchSteps.push({ gate: failedSwitchGate, error: new Error("session is busy") });
@@ -458,6 +468,38 @@ await act(async () => {
 eq(failedSwitchResult, false, "failed model switch reports failure to its caller");
 eq(renderedBalance(), "A 40.00", "failed switch restores the known balance when its confirmation refresh fails");
 balanceLoader = undefined;
+
+const switchDuringFailedCloseGate = deferred<void>();
+modelSwitchSteps.push({
+  gate: switchDuringFailedCloseGate,
+  balance: { available: true, display: "D 10.00" },
+});
+let switchDuringFailedClose: Promise<boolean> | undefined;
+await act(async () => {
+  switchDuringFailedClose = controller?.setModel("provider-d/model-d");
+  await flushPromises();
+});
+await act(async () => {
+  await controller?.closeTab("tab-live-context");
+  await flushPromises();
+});
+switchDuringFailedCloseGate.resolve();
+let switchDuringFailedCloseResult: boolean | undefined;
+await act(async () => {
+  switchDuringFailedCloseResult = await switchDuringFailedClose;
+  await flushPromises();
+});
+eq(switchDuringFailedCloseResult, true, "failed close keeps the in-flight model switch current");
+eq(controller?.activeTabId, "tab-live-context", "failed close keeps the tab mounted");
+eq(
+  controller?.state.meta?.label,
+  "provider-d/model-d",
+  "failed close preserves model metadata reconciliation",
+);
+ok(
+  await settleUntil(() => renderedBalance() === "D 10.00"),
+  "failed close preserves model balance reconciliation",
+);
 
 await act(async () => {
   root.unmount();

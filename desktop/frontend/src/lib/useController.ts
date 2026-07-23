@@ -2788,16 +2788,19 @@ export function useController() {
     } catch (err) {
       if (modelSwitchSeqByTab.current.get(tabId) !== switchSeq) return false;
       dispatchTo(tabId, { type: "local_notice", level: "warn", text: modelSwitchNoticeText(err) });
+      const olderSwitchSucceeded =
+        (modelSwitchSuccessVersionByTab.current.get(tabId) ?? 0) !== successVersion;
       // Restore the known balance only when no older overlapping switch
       // completed after this attempt began. Otherwise the backend now owns a
       // different provider and the refresh below must establish its balance.
-      if (
-        previousBalance &&
-        (modelSwitchSuccessVersionByTab.current.get(tabId) ?? 0) === successVersion
-      ) {
+      if (previousBalance && !olderSwitchSucceeded) {
         dispatchTo(tabId, { type: "balance", balance: previousBalance });
       }
       void refreshBalanceForTab(tabId);
+      // A superseded success deliberately skips its own UI reconciliation.
+      // If this latest queued switch then fails, reconcile the model metadata
+      // to the provider that actually became active in the backend.
+      if (olderSwitchSucceeded) await refreshMetaForTab(tabId);
       return false;
     } finally {
       if (modelSwitchQueueByTab.current.get(tabId) === queueTail) {
@@ -3137,9 +3140,9 @@ export function useController() {
 
   const closeTab = useCallback(async (tabId: string) => {
     if (tabId === activeTabIdRef.current) beginActiveNavigation();
-    invalidateProviderStateForTab(tabId);
     try {
       await app.CloseTab(tabId);
+      invalidateProviderStateForTab(tabId);
       statesRef.current.delete(tabId);
       bump();
       if (tabId === activeTabId) await syncActiveTabFromBackend(false);

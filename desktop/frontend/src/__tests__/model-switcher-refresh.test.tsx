@@ -69,19 +69,20 @@ let currentCatalog: ModelInfo[] = [
 };
 
 const root = createRoot(document.getElementById("root")!);
+const renderSwitcher = (label: string, tabId: string) => (
+  <LocaleProvider>
+    <ModelSwitcher
+      label={label}
+      tabId={tabId}
+      onPick={(ref) => {
+        picked.push(ref);
+        return pickGate?.promise;
+      }}
+    />
+  </LocaleProvider>
+);
 await act(async () => {
-  root.render(
-    <LocaleProvider>
-      <ModelSwitcher
-        label="deepseek-v4-flash"
-        tabId="tab-a"
-        onPick={(ref) => {
-          picked.push(ref);
-          return pickGate?.promise;
-        }}
-      />
-    </LocaleProvider>,
-  );
+  root.render(renderSwitcher("deepseek-v4-flash", "tab-a"));
 });
 
 await act(async () => {
@@ -154,6 +155,33 @@ await act(async () => {
 if (picked[1] !== "glm-cn/glm-5.2") {
   throw new Error(`pending current-model rollback was swallowed: ${JSON.stringify(picked)}`);
 }
+
+// Pending work belongs to tab A. Reusing the mounted switcher for tab B must
+// not turn B's settled current model into another rollback request.
+currentCatalog = [
+  { ref: "provider-b/model-b", provider: "provider-b", model: "model-b", current: true },
+];
+await act(async () => {
+  root.render(renderSwitcher("model-b", "tab-b"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+await act(async () => {
+  (document.querySelector(".modelsw__trigger") as HTMLButtonElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+await act(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+const tabBCurrent = document.querySelector<HTMLButtonElement>("[role='option'][aria-selected='true']");
+if (!tabBCurrent) throw new Error("tab B current model did not load");
+await act(async () => {
+  tabBCurrent.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
+if (picked.length !== 2) {
+  throw new Error(`tab A pending picks leaked into tab B: ${JSON.stringify(picked)}`);
+}
+
 await act(async () => {
   pickGate?.resolve();
   await pickGate?.promise;
