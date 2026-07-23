@@ -1130,18 +1130,35 @@ func (t *restrictedCapabilityProxy) Execute(ctx context.Context, args json.RawMe
 	return out, nil
 }
 
+// emptyCapabilityListResult is the fail-closed list payload: no server metadata.
+func emptyCapabilityListResult(note string) string {
+	if strings.TrimSpace(note) == "" {
+		note = "list is filtered to this subagent's allowed MCP servers."
+	}
+	b, err := json.MarshalIndent(map[string]any{
+		"servers": []listServerInfo{},
+		"note":    note,
+	}, "", "  ")
+	if err != nil {
+		return `{"servers":[],"note":"list is filtered to this subagent's allowed MCP servers."}`
+	}
+	return string(b)
+}
+
 // filterCapabilityListResult keeps only servers in the allowlist for restricted
-// proxies. Malformed list output is returned unchanged (fail-open for text).
+// proxies. Empty allowlist or unreadable payloads fail closed (empty server
+// list) so discovery never leaks the full configured MCP inventory.
 func filterCapabilityListResult(raw string, servers map[string]bool) string {
+	const baseNote = "list is filtered to this subagent's allowed MCP servers."
 	if len(servers) == 0 {
-		return raw
+		return emptyCapabilityListResult(baseNote + " No allowed MCP servers were resolved from the profile allowlist.")
 	}
 	var payload struct {
 		Servers []listServerInfo `json:"servers"`
 		Note    string           `json:"note"`
 	}
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return raw
+		return emptyCapabilityListResult(baseNote + " List payload was unreadable; returning no servers (fail-closed).")
 	}
 	filtered := make([]listServerInfo, 0, len(payload.Servers))
 	for _, s := range payload.Servers {
@@ -1151,33 +1168,49 @@ func filterCapabilityListResult(raw string, servers map[string]bool) string {
 	}
 	payload.Servers = filtered
 	if payload.Note == "" {
-		payload.Note = "list is filtered to this subagent's allowed MCP servers."
-	} else {
+		payload.Note = baseNote
+	} else if !strings.Contains(payload.Note, "Filtered to this subagent") {
 		payload.Note = payload.Note + " Filtered to this subagent's allowed MCP servers."
 	}
 	b, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
-		return raw
+		return emptyCapabilityListResult(baseNote + " Failed to encode filtered list (fail-closed).")
 	}
 	return string(b)
+}
+
+// validMCPServerCapabilityID accepts mcp-server:<non-empty-name> only.
+func validMCPServerCapabilityID(id string) (server string, ok bool) {
+	if !strings.HasPrefix(id, "mcp-server:") {
+		return "", false
+	}
+	server = strings.TrimSpace(strings.TrimPrefix(id, "mcp-server:"))
+	// Reject empty and path-like fragments that are not bare server names.
+	return server, server != "" && !strings.Contains(server, "/")
+}
+
+// validMCPToolCapabilityID accepts mcp-tool:<server>/<tool> with both parts non-empty.
+func validMCPToolCapabilityID(id string) (server, raw string, ok bool) {
+	if !strings.HasPrefix(id, "mcp-tool:") {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(id, "mcp-tool:")
+	server, raw, cut := strings.Cut(rest, "/")
+	server = strings.TrimSpace(server)
+	raw = strings.TrimSpace(raw)
+	return server, raw, cut && server != "" && raw != ""
 }
 
 func serversFromCapabilityAllowlist(allowed map[string]bool) map[string]bool {
 	servers := map[string]bool{}
 	for id := range allowed {
 		id = strings.TrimSpace(id)
-		switch {
-		case strings.HasPrefix(id, "mcp-server:"):
-			if name := strings.TrimSpace(strings.TrimPrefix(id, "mcp-server:")); name != "" {
-				servers[name] = true
-			}
-		case strings.HasPrefix(id, "mcp-tool:"):
-			rest := strings.TrimPrefix(id, "mcp-tool:")
-			if server, _, ok := strings.Cut(rest, "/"); ok {
-				if server = strings.TrimSpace(server); server != "" {
-					servers[server] = true
-				}
-			}
+		if server, ok := validMCPServerCapabilityID(id); ok {
+			servers[server] = true
+			continue
+		}
+		if server, _, ok := validMCPToolCapabilityID(id); ok {
+			servers[server] = true
 		}
 	}
 	return servers
@@ -1207,7 +1240,13 @@ func attachSubagentCapabilityProxy(parent, sub *tool.Registry, names []string, r
 	}
 	allowed := mcpCapabilityAllowlist(parent, names)
 	if len(allowed) == 0 {
-		// Custom allowlist with no MCP entries: do not expose the proxy.
+		// Custom allowlist with no valid MCP entries: do not expose the proxy.
+		return
+	}
+	servers := serversFromCapabilityAllowlist(allowed)
+	if len(servers) == 0 {
+		// Incomplete capability IDs produced an empty server set: fail closed
+		// rather than installing a restricted proxy that would list everything.
 		return
 	}
 	resolver, ok := frontend.(tool.CallResolver)
@@ -1218,7 +1257,7 @@ func attachSubagentCapabilityProxy(parent, sub *tool.Registry, names []string, r
 		Tool:     frontend,
 		resolver: resolver,
 		allowed:  allowed,
-		servers:  serversFromCapabilityAllowlist(allowed),
+		servers:  servers,
 	})
 }
 
@@ -1240,8 +1279,10 @@ func newSubagentCapabilityFrontend(parent *tool.Registry, runtime *MCPCapability
 }
 
 // mcpCapabilityAllowlist converts profile/call tool names into capability IDs
-// for the restricted use_capability proxy. Accepts mcp-tool:, mcp-server:,
-// model-visible mcp__* names, and wildcards expanded against the parent.
+// for the restricted use_capability proxy. Accepts complete mcp-tool:<s>/<t>,
+// mcp-server:<s>, model-visible mcp__* names, and wildcards expanded against
+// the parent. Incomplete prefixes such as "mcp-server:" or "mcp-tool:foo" are
+// rejected so they cannot install a restricted proxy with an empty server set.
 func mcpCapabilityAllowlist(parent *tool.Registry, names []string) map[string]bool {
 	if len(names) == 0 {
 		return nil
@@ -1259,8 +1300,15 @@ func mcpCapabilityAllowlist(parent *tool.Registry, names []string) map[string]bo
 			// when this is the only MCP-related entry; leave empty here so a
 			// bare use_capability allowlist entry still installs unrestricted.
 			continue
-		case strings.HasPrefix(name, "mcp-tool:"), strings.HasPrefix(name, "mcp-server:"):
-			allowed[name] = true
+		case strings.HasPrefix(name, "mcp-server:"):
+			if server, ok := validMCPServerCapabilityID(name); ok {
+				allowed["mcp-server:"+server] = true
+			}
+		case strings.HasPrefix(name, "mcp-tool:"):
+			if server, raw, ok := validMCPToolCapabilityID(name); ok {
+				allowed["mcp-tool:"+server+"/"+raw] = true
+				allowed["mcp-server:"+server] = true
+			}
 		default:
 			if parent != nil {
 				if tl, ok := parent.Get(name); ok {
@@ -1281,11 +1329,6 @@ func mcpCapabilityAllowlist(parent *tool.Registry, names []string) map[string]bo
 			}
 		}
 	}
-	// Bare "use_capability" in the allowlist means unrestricted proxy: signal
-	// with a nil map when that was the only MCP-related entry and no concrete
-	// IDs were collected — callers treat empty allowed as "no proxy", so expand
-	// to a sentinel by returning a special case from attach when names contain
-	// use_capability alone.
 	return allowed
 }
 
