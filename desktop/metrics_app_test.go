@@ -190,6 +190,11 @@ func TestErrorClass(t *testing.T) {
 		"read: connection reset by peer":      "stream_interrupted",
 		"stream interrupted mid-flight":       "stream_interrupted",
 		"context deadline exceeded (timeout)": "timeout",
+		"update: authorization cancelled":     "authorization_cancelled",
+		"update: authorization failed":        "authorization_failed",
+		"update: package manager busy":        "package_manager_busy",
+		"update: package install failed":      "package_install_failed",
+		"update: package verify failed":       "package_verify_failed",
 		"some unrecognized failure":           "other",
 	}
 	for msg, want := range cases {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -70,32 +71,94 @@ func TestEvaluate(t *testing.T) {
 			Platforms: map[string]update.Asset{update.CurrentPlatform(): {Size: 999}},
 		}
 	}
+	portable := installProfile{
+		Mode:          installModePortable,
+		CanSelfUpdate: runtime.GOOS != "darwin",
+		ArtifactKind:  artifactKindTarball,
+	}
+	if runtime.GOOS == "darwin" {
+		portable.Mode = installModeManual
+		portable.ManualReason = manualUpdateReason()
+	}
 
-	if got := evaluate("v1.0.0", mk("v1.1.0")); !got.Available {
+	if got := evaluateWithProfile("v1.0.0", mk("v1.1.0"), portable); !got.Available {
 		t.Error("v1.0.0 -> v1.1.0 should be available")
 	}
-	if got := evaluate("v1.1.0", mk("v1.1.0")); got.Available {
+	if got := evaluateWithProfile("v1.1.0", mk("v1.1.0"), portable); got.Available {
 		t.Error("same version should not be available")
 	}
-	if got := evaluate("v1.2.0", mk("v1.1.0")); got.Available {
+	if got := evaluateWithProfile("v1.2.0", mk("v1.1.0"), portable); got.Available {
 		t.Error("newer-than-manifest should not be available")
 	}
 	// A dev build must never auto-prompt, even against a real release.
-	if got := evaluate("dev", mk("v1.1.0")); got.Available {
+	if got := evaluateWithProfile("dev", mk("v1.1.0"), portable); got.Available {
 		t.Error("dev build should not prompt to update")
 	}
 	// An invalid manifest version is a check error, not an update.
-	got := evaluate("v1.0.0", mk("not-a-version"))
+	got := evaluateWithProfile("v1.0.0", mk("not-a-version"), portable)
 	if got.Available || got.Err == "" {
 		t.Errorf("invalid manifest version: got %+v", got)
 	}
 	// Metadata carries through.
-	full := evaluate("v1.0.0", mk("v1.1.0"))
+	full := evaluateWithProfile("v1.0.0", mk("v1.1.0"), portable)
 	if full.Latest != "v1.1.0" || full.Notes != "notes" || full.AssetSize != 999 {
 		t.Errorf("metadata not carried: %+v", full)
 	}
 	if full.CanSelfUpdate != (runtime.GOOS != "darwin") {
 		t.Errorf("CanSelfUpdate = %v on %s", full.CanSelfUpdate, runtime.GOOS)
+	}
+	if full.InstallMode == "" {
+		t.Error("InstallMode should be set")
+	}
+}
+
+func TestEvaluateDebSelectsNativePackage(t *testing.T) {
+	if runtime.GOOS == "darwin" && !canSelfUpdate() {
+		// evaluateWithProfile applies the macOS signed-build gate; synthetic deb
+		// profiles are only meaningful on Linux (or a notarized macOS build).
+		t.Skip("deb install mode is a Linux packaging path")
+	}
+	m := &update.Manifest{
+		Version: "v2.0.0",
+		Platforms: map[string]update.Asset{
+			update.CurrentPlatform(): {URL: "https://example/tarball", Size: 100, SHA256: "aa"},
+		},
+		NativePackages: map[string]update.Asset{
+			update.CurrentPlatform(): {URL: "https://example/pkg.deb", Size: 200, SHA256: "bb"},
+		},
+	}
+	deb := installProfile{
+		Mode:          installModeDeb,
+		CanSelfUpdate: true,
+		RequiresElev:  true,
+		ArtifactKind:  artifactKindDeb,
+	}
+	got := evaluateWithProfile("v1.0.0", m, deb)
+	if !got.Available || got.AssetSize != 200 {
+		t.Fatalf("deb evaluate should use native package size: %+v", got)
+	}
+	if !got.RequiresElevation || got.InstallMode != installModeDeb {
+		t.Fatalf("deb flags missing: %+v", got)
+	}
+	// Without native_packages, deb profile becomes manual.
+	m2 := &update.Manifest{
+		Version:   "v2.0.0",
+		Platforms: map[string]update.Asset{update.CurrentPlatform(): {Size: 100}},
+	}
+	adjusted := profileForManifest(deb, m2)
+	got = evaluateWithProfile("v1.0.0", m2, adjusted)
+	if got.CanSelfUpdate || got.InstallMode != installModeManual {
+		t.Fatalf("missing native package should force manual: %+v (profile=%+v)", got, adjusted)
+	}
+}
+
+func TestManualUpdateRequiredErrorPreservesReason(t *testing.T) {
+	err := manualUpdateRequiredError(installProfile{ManualReason: "system update helper is unavailable"})
+	if !errors.Is(err, errUpdateManualRequired) {
+		t.Fatalf("error = %v, want manual-update sentinel", err)
+	}
+	if !strings.Contains(err.Error(), "system update helper is unavailable") {
+		t.Fatalf("error = %q, want profile reason", err)
 	}
 }
 
@@ -180,17 +243,18 @@ func TestSaveCachedUpdateMarksEvaluateDownloaded(t *testing.T) {
 		Version:   "v9.9.9",
 		Platforms: map[string]update.Asset{update.CurrentPlatform(): asset},
 	}
-	if got := evaluate("v1.0.0", manifest); got.Downloaded {
+	portable := installProfile{Mode: installModePortable, CanSelfUpdate: true, ArtifactKind: artifactKindTarball}
+	if got := evaluateWithProfile("v1.0.0", manifest, portable); got.Downloaded {
 		t.Fatal("fresh cache should not report a downloaded update")
 	}
-	meta, err := saveCachedUpdate("v9.9.9", asset, data)
+	meta, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindTarball, nil)
 	if err != nil {
 		t.Fatalf("saveCachedUpdate: %v", err)
 	}
 	if meta.Version != "v9.9.9" || meta.Channel != "stable" || meta.Platform != update.CurrentPlatform() {
 		t.Fatalf("cached metadata mismatch: %+v", meta)
 	}
-	if got := evaluate("v1.0.0", manifest); !got.Downloaded {
+	if got := evaluateWithProfile("v1.0.0", manifest, portable); !got.Downloaded {
 		t.Fatalf("evaluate did not detect cached update: %+v", got)
 	}
 }
@@ -207,14 +271,14 @@ func TestCachedUpdateRejectsTamperedArtifact(t *testing.T) {
 		Size:   int64(len(data)),
 		SHA256: sha256Hex(data),
 	}
-	meta, err := saveCachedUpdate("v9.9.9", asset, data)
+	meta, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindTarball, nil)
 	if err != nil {
 		t.Fatalf("saveCachedUpdate: %v", err)
 	}
 	if err := os.WriteFile(meta.Path, []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if cachedUpdateMatches("v9.9.9", asset) {
+	if cachedUpdateMatches("v9.9.9", asset, artifactKindTarball) {
 		t.Fatal("tampered cached artifact should not match")
 	}
 	if _, _, err := readVerifiedCachedUpdate(); err == nil {
@@ -234,12 +298,87 @@ func TestCachedUpdateRejectsDifferentChannel(t *testing.T) {
 		Size:   int64(len(data)),
 		SHA256: sha256Hex(data),
 	}
-	if _, err := saveCachedUpdate("v9.9.9", asset, data); err != nil {
+	if _, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindTarball, nil); err != nil {
 		t.Fatalf("saveCachedUpdate: %v", err)
 	}
 	channel = "canary"
 	if _, _, err := readVerifiedCachedUpdate(); err == nil {
 		t.Fatal("readVerifiedCachedUpdate should reject a cache from another channel")
+	}
+}
+
+func TestDebCacheRequiresSignatureAndRejectsTarballReuse(t *testing.T) {
+	withUpdateCacheDir(t)
+	oldChannel := channel
+	channel = "stable"
+	t.Cleanup(func() { channel = oldChannel })
+
+	data := []byte("deb-bytes")
+	asset := update.Asset{
+		URL:    "https://dl.reasonix.io/desktop-v9.9.9/Reasonix-linux-amd64.deb",
+		Size:   int64(len(data)),
+		SHA256: sha256Hex(data),
+	}
+	if _, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindDeb, nil); err == nil {
+		t.Fatal("deb cache without signature must fail")
+	}
+	sig := []byte("minisig-bytes")
+	meta, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindDeb, sig)
+	if err != nil {
+		t.Fatalf("saveCachedUpdate deb: %v", err)
+	}
+	if meta.SignaturePath == "" {
+		t.Fatal("deb cache must record signature path")
+	}
+	if !cachedUpdateMatches("v9.9.9", asset, artifactKindDeb) {
+		t.Fatal("deb cache with matching signature should match")
+	}
+	// A tarball install must not reuse a deb cache.
+	if cachedUpdateMatches("v9.9.9", asset, artifactKindTarball) {
+		t.Fatal("deb cache must not match tarball requests")
+	}
+	// Signature removal invalidates the download marker.
+	if err := os.Remove(meta.SignaturePath); err != nil {
+		t.Fatal(err)
+	}
+	if cachedUpdateMatches("v9.9.9", asset, artifactKindDeb) {
+		t.Fatal("deb cache without signature file must not match")
+	}
+
+	// Portable legacy cache (no artifactKind) remains valid for tarball.
+	tarball := []byte("tarball-bytes")
+	tAsset := update.Asset{
+		URL:    "https://dl.reasonix.io/desktop-v9.9.9/Reasonix-linux-amd64.tar.gz",
+		Size:   int64(len(tarball)),
+		SHA256: sha256Hex(tarball),
+	}
+	meta, err = saveCachedUpdate("v9.9.9", tAsset, tarball, artifactKindTarball, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate pre-artifactKind metadata.
+	meta.ArtifactKind = ""
+	raw, _ := json.MarshalIndent(meta, "", "  ")
+	path, _ := updateMetadataPath()
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !cachedUpdateMatches("v9.9.9", tAsset, artifactKindTarball) {
+		t.Fatal("legacy portable cache should still match tarball")
+	}
+	if cachedUpdateMatches("v9.9.9", tAsset, artifactKindDeb) {
+		t.Fatal("legacy portable cache must not match deb")
+	}
+}
+
+func TestProfileForManifestDebWithoutHelperBecomesManual(t *testing.T) {
+	// profileForManifest checks linuxDebHelperReady(); on non-linux it is always
+	// false, so a synthetic deb profile without native assets becomes manual.
+	base := installProfile{Mode: installModeDeb, CanSelfUpdate: true, RequiresElev: true, ArtifactKind: artifactKindDeb}
+	m := &update.Manifest{Version: "v1.0.0"}
+	got := profileForManifest(base, m)
+	if got.Mode != installModeManual || got.CanSelfUpdate {
+		t.Fatalf("expected manual without native package: %+v", got)
 	}
 }
 

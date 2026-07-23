@@ -70,18 +70,28 @@ external integrations for that run. It does not rewrite the user's configuration
 
 ## Update rollback
 
-Before an automatic update, Reasonix retains the complete installed release
+Before an automatic **portable** update (Windows installer path, Linux `.tar.gz`,
+or a macOS app-bundle replace), Reasonix retains the complete installed release
 unit — the desktop executable plus the Guard/launcher binaries the installer
-also replaces (Windows and Linux) — or the application bundle (macOS). The
-backups remain until the replacement build reaches `healthy` or exits cleanly.
-If the replacement enters the startup failure threshold, Guard (or the macOS
-desktop preflight) verifies every backup hash and restores the complete release
-unit before relaunching, so a rollback never produces a mixed-version install.
-When the Windows installer itself fails after the desktop has exited, the update
-helper records the failure and relaunches Guard, which performs the same full
-rollback immediately instead of waiting for a crash loop. Update metadata and
-hashes are stored under the Reasonix repair state; arbitrary backup or target
-paths are rejected, and unhashed backups are refused.
+also replaces — or the application bundle (macOS). The backups remain until the
+replacement build reaches `healthy` or exits cleanly. If the replacement enters
+the startup failure threshold, Guard (or the macOS desktop preflight) verifies
+every backup hash and restores the complete release unit before relaunching, so
+a rollback never produces a mixed-version install. When the Windows installer
+itself fails after the desktop has exited, the update helper records the failure
+and relaunches Guard, which performs the same full rollback immediately instead
+of waiting for a crash loop. Update metadata and hashes are stored under the
+Reasonix repair state; arbitrary backup or target paths are rejected, and
+unhashed backups are refused.
+
+**Debian/Ubuntu `.deb` installs** do not use Guard file-level rollback for
+upgrades. In-app updates authorize a root helper via Polkit and install with
+`apt-get --only-upgrade`. On failure the running process stays up, the verified
+download remains cached for retry, and package state is left to apt/dpkg.
+Successful installs are managed by the system package manager and are not
+auto-downgraded by Reasonix. Users on an older `.deb` without the helper should
+overwrite-install the bootstrap package once:
+`sudo apt install ./Reasonix-linux-amd64.deb` (no uninstall required).
 
 ## Optional AI assistance
 
