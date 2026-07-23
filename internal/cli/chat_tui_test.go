@@ -1365,6 +1365,25 @@ func TestUnsendDiscardsBufferedEvents(t *testing.T) {
 	}
 }
 
+func TestRecoveryPauseTurnDoneIsInformational(t *testing.T) {
+	m := newTestChatTUI()
+	message := "Automatic recovery paused. Completed work is kept; reply continue."
+
+	m.ingestEvent(event.Event{
+		Kind:    event.TurnDone,
+		Err:     &agent.RecoveryPauseError{Message: message},
+		Outcome: event.TurnOutcomeRecoveryPaused,
+	})
+
+	got := ansi.Strip(strings.Join(*m.pendingCommit, "\n"))
+	if !strings.Contains(got, message) {
+		t.Fatalf("recovery pause transcript = %q, want pause message", got)
+	}
+	if strings.Contains(got, i18n.M.ErrorPrefix) {
+		t.Fatalf("recovery pause transcript = %q, must not use error prefix %q", got, i18n.M.ErrorPrefix)
+	}
+}
+
 // TestAnswerTextStartingWithBracketStaysInAnswer locks in the win of the typed
 // event stream: model answer text starting with "[" — a markdown link, a slice
 // literal, even a quoted "[… · planning]" — is a Text event, so it can never be
