@@ -476,6 +476,38 @@ func TestUseCapabilityDeclineAndInspect(t *testing.T) {
 	}
 }
 
+func TestUseCapabilityInspectMCPToolDoesNotListSiblingSchemas(t *testing.T) {
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	spec := plugin.Spec{Name: "db", Authorized: true}
+	if err := plugin.SaveCachedSchema(spec.Name, plugin.CachedSchema{
+		CacheKey: plugin.SchemaCacheKey(spec),
+		Tools: []plugin.CachedTool{
+			{Name: "read", Description: "allowed reader", Schema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`), ReadOnly: true},
+			{Name: "drop", Description: "secret destructive sibling", Schema: json.RawMessage(`{"type":"object","properties":{"table":{"type":"string"}}}`), Destructive: true},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	target := capability.Entry{
+		ID: "mcp-tool:db/read", Kind: capability.KindMCPTool, Name: "read",
+		Description: "allowed reader", Source: "db", Status: capability.StatusConfigured,
+	}
+	tl := NewUseCapabilityTool(context.Background(), nil, []plugin.Spec{spec}, tool.NewRegistry(), nil, nil, func() capability.Catalog {
+		return capability.Catalog{Entries: []capability.Entry{target}}
+	})
+
+	out, err := tl.Execute(context.Background(), json.RawMessage(`{"action":"inspect","capability_id":"mcp-tool:db/read"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "mcp-tool:db/read") || !strings.Contains(out, "allowed reader") {
+		t.Fatalf("inspect omitted allowed tool metadata:\n%s", out)
+	}
+	if strings.Contains(out, "mcp-tool:db/drop") || strings.Contains(out, "secret destructive sibling") || strings.Contains(out, `"table"`) {
+		t.Fatalf("tool inspection leaked sibling metadata:\n%s", out)
+	}
+}
+
 func TestDedicatedSecurityReviewUsesCanonicalSkillCapabilityID(t *testing.T) {
 	got := capabilityIDFromToolCall("security_review", json.RawMessage(`{"task":"audit auth"}`))
 	if got != "skill:security-review" {
@@ -1084,7 +1116,7 @@ func TestPlannerBlocksDestructiveMCPWithExecutorHandoff(t *testing.T) {
 	}
 }
 
-func TestPlannerSerializesUseCapabilityCalls(t *testing.T) {
+func TestUseCapabilityCallsAreAlwaysSerialized(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "read_file", readOnly: true})
 	reg.Add(fakeTool{name: "use_capability", readOnly: true})
@@ -1093,22 +1125,16 @@ func TestPlannerSerializesUseCapabilityCalls(t *testing.T) {
 		{ID: "2", Name: "use_capability", Arguments: `{"action":"list"}`},
 		{ID: "3", Name: "read_file", Arguments: `{"path":"a.go"}`},
 	}
-	// Executor (serialCapabilityProxy=false): use_capability remains parallelisable.
-	gotExec := partitionToolCalls(reg, calls, false)
-	if len(gotExec) != 1 || !gotExec[0].parallel || gotExec[0].end-gotExec[0].start != 3 {
-		t.Fatalf("executor partition = %+v, want one parallel batch of 3", gotExec)
+	got := partitionToolCalls(reg, calls)
+	if len(got) != 3 {
+		t.Fatalf("partition = %+v, want 3 batches (uc, uc, read)", got)
 	}
-	// Planner: use_capability is always serial (never joins a parallel batch with peers).
-	gotPlan := partitionToolCalls(reg, calls, true)
-	if len(gotPlan) != 3 {
-		t.Fatalf("planner partition = %+v, want 3 batches (uc, uc, read)", gotPlan)
-	}
-	if gotPlan[0].parallel || gotPlan[1].parallel {
-		t.Fatalf("planner use_capability batches must be serial: %+v", gotPlan)
+	if got[0].parallel || got[1].parallel {
+		t.Fatalf("use_capability batches must be serial for every agent: %+v", got)
 	}
 	// A lone read_file may still be marked parallelisable; it is a single-call batch.
-	if gotPlan[2].start != 2 || gotPlan[2].end != 3 {
-		t.Fatalf("planner trailing read batch = %+v", gotPlan[2])
+	if got[2].start != 2 || got[2].end != 3 {
+		t.Fatalf("trailing read batch = %+v", got[2])
 	}
 }
 

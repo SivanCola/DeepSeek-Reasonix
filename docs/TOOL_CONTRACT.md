@@ -41,10 +41,11 @@ The test checks that every registered built-in tool has a documented name, read-
 In a default full-token boot, Reasonix sends the built-in tools above plus the
 session, memory, skill, subagent, LSP, install, and slash-command tools below:
 
-The Balanced runtime profile uses this exact tool surface for the executor.
-Delivery keeps every Balanced tool and adds one stable proxy, `use_capability`,
-so optional MCP servers (including `auto_start=false`) can be inspected and
-called without changing provider-visible schemas mid-session. Delivery also
+Single-model Balanced uses this exact executor tool surface. Balanced with a
+distinct Planner and every Delivery session additionally expose one stable
+proxy, `use_capability`, so optional MCP servers (including `auto_start=false`)
+can be inspected and called without changing provider-visible schemas
+mid-session. Delivery also
 adds a stable execution contract enforced by the host: state-changing and
 verification commands need acceptance criteria; changed work cannot finalize
 without post-change review, verification, and an evidence-backed
@@ -61,7 +62,9 @@ sub-agents may call installed or project-authorized MCP without
 ordinary sub-agents use normal writer permissions. Strict read-only sub-agents
 share the same proxy schema and Host connections but still require
 `readOnlyHint` and non-destructive at execution time. Balanced dual-model
-attaches the proxy only to the Planner registry (not the Executor); Economy
+attaches independent proxy frontends to both Planner and Executor so a
+capability discovered during planning remains directly callable after handoff;
+their ledgers/audits are isolated while Host connections are shared. Economy
 remains single-model without an independent Planner.
 
 `use_capability` resolution is side-effect free: `action=list` returns sorted

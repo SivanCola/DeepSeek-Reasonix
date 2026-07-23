@@ -138,7 +138,8 @@ func SubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDe
 
 // SubagentToolRegistryForDepthWithRuntime is SubagentToolRegistryForDepth with
 // an optional session MCP runtime used when the parent registry has no
-// use_capability (Balanced executor) but sub-agents still need the proxy.
+// use_capability (for example Economy or legacy callers) but sub-agents still
+// need the proxy.
 func SubagentToolRegistryForDepthWithRuntime(parent *tool.Registry, names []string, childDepth, maxDepth int, runtime *MCPCapabilityRuntime) *tool.Registry {
 	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
@@ -1307,7 +1308,6 @@ func mcpCapabilityAllowlist(parent *tool.Registry, names []string) map[string]bo
 		case strings.HasPrefix(name, "mcp-tool:"):
 			if server, raw, ok := validMCPToolCapabilityID(name); ok {
 				allowed["mcp-tool:"+server+"/"+raw] = true
-				allowed["mcp-server:"+server] = true
 			}
 		default:
 			if parent != nil {
@@ -1317,7 +1317,6 @@ func mcpCapabilityAllowlist(parent *tool.Registry, names []string) map[string]bo
 						raw := strings.TrimSpace(m.MCPRawToolName())
 						if server != "" && raw != "" {
 							allowed["mcp-tool:"+server+"/"+raw] = true
-							allowed["mcp-server:"+server] = true
 							continue
 						}
 					}
@@ -1325,7 +1324,6 @@ func mcpCapabilityAllowlist(parent *tool.Registry, names []string) map[string]bo
 			}
 			if server, raw, ok := tool.SplitMCPName(name); ok {
 				allowed["mcp-tool:"+server+"/"+raw] = true
-				allowed["mcp-server:"+server] = true
 			}
 		}
 	}

@@ -159,6 +159,9 @@ func TestSubagentToolRegistryRestrictsCapabilityProxyToAllowedMCPIDs(t *testing.
 		if _, err := resolver.ResolveCall(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:other/delete"}`)); err == nil || !strings.Contains(err.Error(), "outside this subagent's allowed-tools") {
 			t.Fatalf("disallowed capability was not rejected: %v", err)
 		}
+		if _, err := resolver.ResolveCall(context.Background(), json.RawMessage(`{"action":"inspect","capability_id":"mcp-server:figma"}`)); err == nil || !strings.Contains(err.Error(), "outside this subagent's allowed-tools") {
+			t.Fatalf("tool-only allowlist must not widen to server inspection: %v", err)
+		}
 		if _, err := proxy.Execute(context.Background(), json.RawMessage(`{"action":"call","capability_id":"mcp-tool:other/delete"}`)); err == nil {
 			t.Fatal("direct execution bypassed the restricted capability allowlist")
 		}

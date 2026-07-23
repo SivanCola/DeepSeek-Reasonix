@@ -1440,8 +1440,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	skillStore.ConfigureToolBindings(func(sk skill.Skill) []tool.MCPBinding {
 		return skillMCPBindings(sk, reg, capSpecs, cachedTools, cacheKeyOK)
 	})
-	// Detect dual-model planner early so Balanced can attach use_capability
-	// only to the planner registry (executor tool surface stays unchanged).
+	// Detect dual-model planner early so Balanced can attach the same stable
+	// use_capability surface to both Planner and Executor. Their frontends keep
+	// independent ledgers/audits while sharing the session MCP runtime.
 	dualModelPlanner := false
 	if pm := cfg.Agent.PlannerModel; pm != "" && !tokenEconomy {
 		if pe, ok := resolveOptionalEntry(opts, cfg, pm); ok && pe.Model != entry.Model {
@@ -1489,17 +1490,13 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	if pluginHost != nil || len(capSpecs) > 0 || tokenDelivery || dualModelPlanner {
 		capRuntime = agent.NewMCPCapabilityRuntime(ctx, pluginHost, capSpecs, reg, catalogFn)
 	}
-	if tokenDelivery {
+	if tokenDelivery || dualModelPlanner {
 		capLedger = capability.NewLedger()
 		capAudit = &capability.Audit{}
 		if capRuntime != nil {
 			capProxy = capRuntime.NewFrontend(capLedger, capAudit)
 			reg.Add(capProxy)
 		}
-	} else if dualModelPlanner && capRuntime != nil {
-		// Planner ledger is optional; create a lightweight frontend template via runtime.
-		capLedger = capability.NewLedger()
-		capAudit = &capability.Audit{}
 	}
 	skillStore.ConfigureInvocationPolicy(string(runtimeProfile), func(requires []string) []string {
 		connected := map[string]bool{}
@@ -1749,9 +1746,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, nil, nil)
 	} else if dualModelPlanner {
 		// Balanced dual-model: load plugin config + schema cache so not-yet-
-		// started MCP can route into the Planner's use_capability proxy.
-		// No semantic router — deterministic route only. Executor tool surface
-		// is unchanged.
+		// started MCP can route through the stable Planner/Executor proxy.
+		// No semantic router — deterministic route only.
 		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, nil, capAudit)
 		ctrl.SetCapabilityProxyRouting(true)
 	}

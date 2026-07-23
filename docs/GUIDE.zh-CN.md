@@ -789,8 +789,9 @@ initialize/tools-list 后会在 `tools/call` 前核对缓存与 live 的 `readOn
 直接读/bash/编辑/写入、后台 shell 生命周期控制、`ask` 和 `connect_tool_source`；专用搜索/文件/
 workflow 工具、session history、memory 写入、slash command、Skills、MCP、LSP、网络、安装与
 subagent 都在任务需要时才连接。
-Balanced（均衡）是提供完整工具面的默认档；双模型 Planner 额外通过 `use_capability`
-查询已授权非 destructive MCP（Executor 仍用完整直接 MCP 工具面）。Delivery（交付优先）
+Balanced（均衡）是提供完整工具面的默认档；配置独立 Planner 时，Planner 与 Executor 都会获得各自的
+`use_capability` frontend，规划阶段发现的 capability 可在 handoff 后按同一 ID 直接执行，同时保留
+Executor 的完整直接 MCP 工具面。Delivery（交付优先）
 保留完整工具面，额外增加稳定能力代理 `use_capability`（list/inspect/call MCP，包括
 `auto_start=false`，且不改变主工具 Schema），并增加“明确验收标准、修复根因、运行验证、复审最终
 diff”的稳定交付合约。该合约由宿主运行时强制执行：没有具体 `todo_write` 验收清单时会阻止变更和验证

@@ -2602,7 +2602,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) ([]
 		cancelled = true
 	}
 
-	for _, batch := range partitionToolCalls(a.tools, calls, a.plannerMCPExecution) {
+	for _, batch := range partitionToolCalls(a.tools, calls) {
 		if ctx.Err() != nil {
 			markCancelled(batch.start)
 			break
@@ -2784,16 +2784,16 @@ type toolCallBatch struct {
 // complete_step and todo_write read the turn's evidence ledger. wait and
 // bash_output can merge a background task's receipts into that ledger. These
 // evidence-sensitive tools never join a parallel run, so provider order stays
-// receipt order. When serialCapabilityProxy is true (two-model Planner),
-// use_capability is always serial so unknown-classification remote MCP calls
-// cannot race each other; Executor parallel strategy is unchanged.
-func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall, serialCapabilityProxy bool) []toolCallBatch {
+// receipt order. use_capability is always serial because its provider-visible
+// read-only surface can resolve to a real MCP writer only inside executeOne;
+// batching it as a reader would let multiple database/API mutations race.
+func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallBatch {
 	var batches []toolCallBatch
 	for i := 0; i < len(calls); {
-		if parallelisable(r, calls[i].Name, serialCapabilityProxy) {
+		if parallelisable(r, calls[i].Name) {
 			start := i
 			i++
-			for i < len(calls) && parallelisable(r, calls[i].Name, serialCapabilityProxy) {
+			for i < len(calls) && parallelisable(r, calls[i].Name) {
 				i++
 			}
 			batches = append(batches, toolCallBatch{start: start, end: i, parallel: true})
@@ -2805,14 +2805,10 @@ func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall, serialCapab
 	return batches
 }
 
-func parallelisable(r *tool.Registry, name string, serialCapabilityProxy bool) bool {
+func parallelisable(r *tool.Registry, name string) bool {
 	switch name {
-	case "complete_step", "todo_write", "wait", "bash_output":
+	case "complete_step", "todo_write", "wait", "bash_output", "use_capability":
 		return false
-	case "use_capability":
-		if serialCapabilityProxy {
-			return false
-		}
 	}
 	t, _, ambiguous := r.ResolveCall(name)
 	return t != nil && len(ambiguous) == 0 && t.ReadOnly()

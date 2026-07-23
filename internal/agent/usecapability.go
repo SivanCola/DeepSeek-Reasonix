@@ -398,6 +398,19 @@ func (t *UseCapabilityTool) inspect(ctx context.Context, id string) (string, err
 			if server == "" {
 				server = e.ConnectName
 			}
+			toolFilter := ""
+			if e.Kind == capability.KindMCPTool {
+				parsedServer, raw, err := parseMCPCapabilityID(e.ID)
+				if err != nil {
+					return string(b), nil
+				}
+				if server == "" {
+					server = parsedServer
+				} else if parsedServer != server {
+					return string(b), nil
+				}
+				toolFilter = raw
+			}
 			if server != "" {
 				if t.host != nil && t.host.HasClient(server) {
 					// serverTools refreshes the snapshot too: inspecting a
@@ -406,12 +419,15 @@ func (t *UseCapabilityTool) inspect(ctx context.Context, id string) (string, err
 					if err != nil {
 						return string(b) + "\n\nTool listing failed: " + err.Error(), nil
 					}
-					return string(b) + "\n\nTools:\n" + inspectToolListJSON(server, tools), nil
+					return string(b) + "\n\nTools:\n" + inspectToolListJSON(server, filterInspectTools(tools, toolFilter)), nil
 				}
 				if spec, ok := t.specFor(server); ok {
 					if cs, ok := plugin.LoadCachedSchemaForSpec(spec); ok && len(cs.Tools) > 0 {
 						var list []inspectToolInfo
 						for _, ct := range cs.Tools {
+							if toolFilter != "" && ct.Name != toolFilter {
+								continue
+							}
 							list = append(list, inspectToolInfo{
 								ID:          "mcp-tool:" + server + "/" + ct.Name,
 								Name:        plugin.ModelToolName(server, ct.Name),
@@ -430,6 +446,24 @@ func (t *UseCapabilityTool) inspect(ctx context.Context, id string) (string, err
 		return string(b), nil
 	}
 	return "", fmt.Errorf("unknown capability_id %q", id)
+}
+
+// filterInspectTools narrows concrete mcp-tool inspection to that exact tool.
+// Server inspection intentionally keeps the full directory. This prevents a
+// restricted sub-agent allowed one tool from discovering sibling tool schemas
+// through action=inspect on its allowed capability ID.
+func filterInspectTools(tools []tool.Tool, raw string) []tool.Tool {
+	if raw == "" {
+		return tools
+	}
+	filtered := make([]tool.Tool, 0, 1)
+	for _, tl := range tools {
+		if m, ok := tl.(tool.MCPMetadata); ok && m.MCPRawToolName() == raw {
+			filtered = append(filtered, tl)
+			break
+		}
+	}
+	return filtered
 }
 
 type inspectToolInfo struct {

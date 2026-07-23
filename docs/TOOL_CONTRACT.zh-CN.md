@@ -40,9 +40,10 @@ go test ./internal/tool -run TestBuiltinToolContractDocumentation
 
 默认 full-token boot 会发送上面的内置工具，并额外发送 session、memory、skill、subagent、LSP、install 和 slash-command 工具：
 
-均衡（Balanced）Executor 使用这套工具面。交付优先（Delivery）保留全部 Balanced 工具，并额外增加稳定代理工具
-`use_capability`（list/inspect/call/decline），用于在不改变 provider 可见 Schema 的前提下发现和调用
-按需 MCP（含 `auto_start=false`）。Delivery 还会增加稳定执行合约，并由宿主运行时强制执行：变更和
+单模型均衡（Balanced）Executor 使用这套工具面。配置独立 Planner 的 Balanced 与全部交付优先
+（Delivery）会在保留既有工具的同时增加一个稳定代理 `use_capability`（list/inspect/call/decline），
+用于在不改变 provider 可见 Schema 的前提下发现和调用按需 MCP（含 `auto_start=false`）。Delivery
+还会增加稳定执行合约，并由宿主运行时强制执行：变更和
 验证命令必须先建立验收标准；变更后的工作必须完成复查、验证并通过带证据的 `complete_step` 签收；
 Skill/MCP 的 require/prefer 路由受门禁约束（只读回答同样不能跳过 require 能力）；中/高风险改动
 强制结构化 review/security_review，且 `review_report` 的 `reviewed_paths` 必须有宿主观测到的
@@ -52,7 +53,8 @@ read/diff 证据。
 `mcp__*` schema）。Planner 与普通可写子 Agent 可调用已安装或项目已授权 MCP，不要求
 `readOnlyHint`；Planner 将 `destructiveHint` 留给 Executor，普通子 Agent 走既有 writer
 权限。严格只读子 Agent 共享同一代理 schema 与 Host 连接，但执行仍要求 `readOnlyHint` 且
-非 destructive。Balanced 双模型仅把代理挂到 Planner registry（Executor 不变）；Economy
+非 destructive。Balanced 双模型会给 Planner 与 Executor 分别挂载独立代理 frontend，确保规划阶段
+发现的 capability 在 handoff 后仍可直接调用；两者 ledger/audit 隔离，但共享 Host 连接。Economy
 仍为单模型，不启用独立 Planner。
 
 `use_capability` 的解析阶段无副作用：`action=list` 返回已配置 MCP 服务器的排序列表且不启动服务器；

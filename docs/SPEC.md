@@ -352,7 +352,9 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   authorized tools with `readOnlyHint: true` and no `destructiveHint`. The
   two-model Planner uses the fixed `use_capability` proxy (never direct
   `mcp__*` schemas) for authorized, non-destructive MCP without requiring
-  `readOnlyHint`; destructive tools are left for the Executor. Schema-only
+  `readOnlyHint`; destructive tools are left for the Executor. In Balanced
+  two-model sessions the Executor owns an isolated frontend for the same proxy,
+  so Planner-discovered capability IDs remain executable after handoff. Schema-only
   changes refresh the next-session cache without adding an execution approval
   or retry.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration

@@ -965,6 +965,10 @@ schemas never enter the Planner tool list, so MCP install/connect churn does
 not change the Planner cache prefix after the one-time schema upgrade. Missing
 `readOnlyHint` no longer blocks the Planner; tools with `destructiveHint` are
 zero-exec and should be written into the plan for the Executor.
+In Balanced two-model sessions the Executor has its own frontend for the same
+stable proxy, so an `auto_start=false` or destructive capability discovered by
+the Planner remains callable by capability ID after handoff. Planner and
+Executor ledgers/audits stay isolated and only the Host connection is shared.
 
 Ordinary `task` / `fleet` sub-agents also get the same fixed proxy (session-
 shared Host and connections, per-agent frontend/ledger) and may call installed
@@ -997,7 +1001,8 @@ read/bash/edit/write, background-shell lifecycle controls, `ask`, and
 `connect_tool_source`. Dedicated search/file/workflow tools, session history,
 memory mutation, slash commands, Skills, MCP, LSP, web access, installation, and
 subagents are connected only when the task needs them. Balanced is the default
-with the complete tool surface. Delivery keeps that complete surface,
+with the complete tool surface; when a distinct Planner is configured, both
+Planner and Executor add the fixed `use_capability` proxy. Delivery keeps that complete surface,
 adds one stable proxy tool (`use_capability`) for on-demand MCP inspect/call
 without schema churn, and adds a stable contract to establish acceptance
 criteria, fix root causes, verify the result, and review the final diff. The

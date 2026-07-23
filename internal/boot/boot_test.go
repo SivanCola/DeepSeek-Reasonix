@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1649,6 +1650,72 @@ model = "x"
 	}
 	if requestMessageContains(fullReq.Messages, provider.RoleUser, "<delivery-runtime>") {
 		t.Fatal("full profile unexpectedly received the delivery runtime contract")
+	}
+}
+
+func TestBuildBalancedDualModelAddsStableProxyToExecutor(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("balanced-dual-proxy")
+	setBootTokenProfileTestProvider(t, prov)
+
+	writeConfig := func(planner bool) {
+		plannerLine := ""
+		plannerProvider := ""
+		if planner {
+			plannerLine = `planner_model = "planner"`
+			plannerProvider = `
+
+[[providers]]
+name = "planner"
+kind = "boot-token-profile-test"
+model = "planner-model"`
+		}
+		writeFile(t, dir, "reasonix.toml", fmt.Sprintf(`
+default_model = "executor"
+
+[agent]
+system_prompt = "BASE"
+%s
+
+[[providers]]
+name = "executor"
+kind = "boot-token-profile-test"
+model = "executor-model"%s
+`, plannerLine, plannerProvider))
+	}
+
+	writeConfig(false)
+	single, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	singleEntries := single.ToolContractEntries()
+	single.Close()
+	if slices.Contains(contractEntryNames(singleEntries), "use_capability") {
+		t.Fatal("single-model Balanced must keep its existing executor prefix")
+	}
+
+	writeConfig(true)
+	dual, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dual.Close()
+	dualEntries := dual.ToolContractEntries()
+	dualNames := contractEntryNames(dualEntries)
+	if !slices.Contains(dualNames, "use_capability") {
+		t.Fatalf("dual-model Balanced executor missing stable capability proxy: %v", dualNames)
+	}
+	if len(dualEntries) != len(singleEntries)+1 {
+		t.Fatalf("dual-model executor contract = %d tools, want single-model(%d)+use_capability", len(dualEntries), len(singleEntries))
+	}
+	for _, entry := range singleEntries {
+		if !slices.Contains(dualNames, entry.Name) {
+			t.Fatalf("dual-model executor dropped existing tool %q", entry.Name)
+		}
 	}
 }
 

@@ -98,7 +98,7 @@ Balanced 是默认档，对应旧版本持久化值 `full`。它一次性提供�
 
 ### 交付优先 · 完整验证（Delivery）
 
-Delivery 使用与 Balanced 相同的完整工具面，额外增加稳定的能力代理工具 `use_capability`（list/inspect/call/decline，用于按需调用含 `auto_start=false` 的 MCP，且不把动态工具写入主 Registry），并增加稳定的交付合约：明确验收标准；条件允许时先复现；检查项目规则和相关代码；修复根因；运行聚焦验证；复审 diff 与相邻行为；没有证据时不宣称成功，并明确标注未验证项或假设。配置了独立 `planner_model` 时，双模型 Planner 同样通过该固定代理查询已授权、非 destructive 的 MCP（不再要求 `readOnlyHint`；Balanced 仅挂到 Planner，Executor 工具面不变）。
+Delivery 使用与 Balanced 相同的完整工具面，额外增加稳定的能力代理工具 `use_capability`（list/inspect/call/decline，用于按需调用含 `auto_start=false` 的 MCP，且不把动态工具写入主 Registry），并增加稳定的交付合约：明确验收标准；条件允许时先复现；检查项目规则和相关代码；修复根因；运行聚焦验证；复审 diff 与相邻行为；没有证据时不宣称成功，并明确标注未验证项或假设。配置了独立 `planner_model` 时，Balanced 会为 Planner 与 Executor 分别挂载固定代理 frontend（ledger/audit 隔离、Host 共享），使规划阶段发现的 MCP capability 能在 handoff 后按同一 ID 直接执行。
 
 - 适合编码、修 bug、跨文件实现和需要可靠交付证据的任务。
 - 通常会使用更多模型调用和 token，耗时也可能更长。
