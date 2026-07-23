@@ -24,8 +24,8 @@ Ask is the most conservative tool-permission mode. When Reasonix needs approval 
 - `←` / `→` cycle the highlighted action.
 - `Enter` confirms the highlighted ordinary tool-approval action, which defaults to “Allow once”.
 - `1` / `2` / `3` / `4` select the matching numbered ordinary tool-approval action.
-- Plan confirmation has three direct actions: **Start execution** / **Revise plan** / **Exit without executing**. They run with one click or the matching number key; there is no second Confirm click. Exiting rejects the pending plan and returns to Normal without starting an execution turn.
-- `Esc` stops the current task.
+- Plan confirmation has three direct actions: **Start execution** / **Revise plan** / **Exit without executing**. On Desktop, use one click or the matching number key. On CLI, use the matching number key or select a row and press `Enter`; `n` / `Esc` keeps planning for compatibility. Exiting rejects the pending plan and returns to Normal without starting an execution turn.
+- Outside a pending CLI Plan confirmation, `Esc` stops the current task.
 - If you `Tab` to a button and press `Enter`, that focused button runs (it is not overridden by the highlight).
 
 ## Auto mode
