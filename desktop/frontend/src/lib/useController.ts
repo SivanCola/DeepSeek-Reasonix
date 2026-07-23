@@ -389,6 +389,9 @@ export function isReadOnlyTool(name: string): boolean {
     case "waitJob":
     case "todo_write":
     case "read_skill":
+    // Stable MCP proxy is ReadOnly at the tool surface; successful queries fold
+    // into quiet research batches. Failures stay visible via status/error.
+    case "use_capability":
       return true;
     default:
       return false;

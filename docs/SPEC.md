@@ -348,10 +348,13 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   exact identity confirmation before startup and require confirmation again only
   if that identity changes. `readOnlyHint` and `destructiveHint` remain internal
   facts for scheduling, Plan/read-only restrictions, and cached-to-live safety
-  reclassification. Planner and strict read-only registries expose only
-  authorized tools with `readOnlyHint: true` and no `destructiveHint`.
-  Schema-only changes refresh the next-session cache without adding an execution
-  approval or retry.
+  reclassification. Strict read-only sub-agent registries expose only
+  authorized tools with `readOnlyHint: true` and no `destructiveHint`. The
+  two-model Planner uses the fixed `use_capability` proxy (never direct
+  `mcp__*` schemas) for authorized, non-destructive MCP without requiring
+  `readOnlyHint`; destructive tools are left for the Executor. Schema-only
+  changes refresh the next-session cache without adding an execution approval
+  or retry.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
   workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
   host enforces explicit phase opt-outs (`complete_step` is read-only but

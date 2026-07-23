@@ -903,3 +903,185 @@ func TestCapabilityGateAppliesToReadOnlyTasks(t *testing.T) {
 		t.Fatalf("read-only answer must not skip the require gate; reason = %q", check.reason)
 	}
 }
+
+func TestUseCapabilityListActionNoSideEffects(t *testing.T) {
+	host := plugin.NewHost()
+	defer host.Close()
+	proxy := NewUseCapabilityTool(context.Background(), host, []plugin.Spec{
+		{Name: "zeta", Authorized: true},
+		{Name: "alpha", Authorized: true},
+	}, tool.NewRegistry(), nil, nil, nil)
+	resolved, err := proxy.ResolveCall(context.Background(), json.RawMessage(`{"action":"list"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolved.SkipExecute || !resolved.ReadOnly || resolved.Target != nil {
+		t.Fatalf("list resolve = %+v", resolved)
+	}
+	if !strings.Contains(resolved.Result, `"name": "alpha"`) || !strings.Contains(resolved.Result, `"name": "zeta"`) {
+		t.Fatalf("list result missing sorted servers:\n%s", resolved.Result)
+	}
+	// alpha must appear before zeta in the JSON array for stable ordering.
+	if idxA, idxZ := strings.Index(resolved.Result, `"name": "alpha"`), strings.Index(resolved.Result, `"name": "zeta"`); idxA < 0 || idxZ < 0 || idxA > idxZ {
+		t.Fatalf("list servers not sorted: alpha@%d zeta@%d\n%s", idxA, idxZ, resolved.Result)
+	}
+	if host.HasClient("alpha") || host.HasClient("zeta") {
+		t.Fatal("list must not start servers")
+	}
+}
+
+func TestPlannerAllowsAuthorizedNonReadOnlyNonDestructiveMCP(t *testing.T) {
+	calls := 0
+	target := layeredReadOnlyMCPBoundaryTarget{
+		readOnlyBoundaryTarget: readOnlyBoundaryTarget{name: "mcp__db__query", readOnly: false, calls: &calls},
+		serverAuthorized:       true,
+	}
+	reg := tool.NewRegistry()
+	reg.Add(readOnlyBoundaryProxy{resolved: tool.ResolvedCall{
+		ProxyAction: "call", TargetName: target.Name(), Target: target, ReadOnly: false, Args: json.RawMessage(`{}`),
+	}})
+	// Ordinary strict read-only still blocks non-readOnly MCP.
+	strict := New(nil, reg, NewSession("sys"), Options{ReadOnlyExecution: true}, event.Discard)
+	strictOut := strict.executeOne(context.Background(), provider.ToolCall{
+		ID: "s1", Name: "use_capability", Arguments: `{"action":"call","capability_id":"mcp-tool:db/query","arguments":{}}`,
+	})
+	if !strictOut.blocked || calls != 0 {
+		t.Fatalf("strict read-only outcome = %+v calls=%d", strictOut, calls)
+	}
+
+	// Planner trusts authorized non-destructive MCP without readOnlyHint.
+	planner := NewPlannerAgent(nil, reg, NewSession("sys"), Options{}, event.Discard)
+	if !planner.plannerMCPExecution || !planner.readOnlyExecution {
+		t.Fatalf("planner flags = plannerMCP=%v readOnly=%v", planner.plannerMCPExecution, planner.readOnlyExecution)
+	}
+	out := planner.executeOne(context.Background(), provider.ToolCall{
+		ID: "p1", Name: "use_capability", Arguments: `{"action":"call","capability_id":"mcp-tool:db/query","arguments":{}}`,
+	})
+	if out.blocked || out.errMsg != "" || !strings.Contains(out.output, "target executed") {
+		t.Fatalf("planner non-readonly MCP outcome = %+v", out)
+	}
+	if calls != 1 {
+		t.Fatalf("planner target Execute calls = %d, want 1", calls)
+	}
+}
+
+func TestPlannerBlocksDestructiveMCPWithExecutorHandoff(t *testing.T) {
+	calls := 0
+	target := layeredReadOnlyMCPBoundaryTarget{
+		readOnlyBoundaryTarget: readOnlyBoundaryTarget{name: "mcp__db__drop", readOnly: false, calls: &calls},
+		destructive:            true,
+		serverAuthorized:       true,
+	}
+	reg := tool.NewRegistry()
+	reg.Add(readOnlyBoundaryProxy{resolved: tool.ResolvedCall{
+		ProxyAction: "call", TargetName: target.Name(), Target: target, ReadOnly: false, Args: json.RawMessage(`{}`),
+	}})
+	planner := NewPlannerAgent(nil, reg, NewSession("sys"), Options{}, event.Discard)
+	out := planner.executeOne(context.Background(), provider.ToolCall{
+		ID: "p1", Name: "use_capability", Arguments: `{"action":"call","capability_id":"mcp-tool:db/drop","arguments":{}}`,
+	})
+	if !out.blocked || calls != 0 {
+		t.Fatalf("destructive planner outcome = %+v calls=%d", out, calls)
+	}
+	if !strings.Contains(out.output, "Executor") || !strings.Contains(out.output, "handoff") {
+		t.Fatalf("destructive block should guide Executor handoff, got %q", out.output)
+	}
+	if !strings.Contains(out.output, "do not treat this as missing MCP configuration") {
+		t.Fatalf("destructive block should discourage config interpretation: %q", out.output)
+	}
+}
+
+func TestPlannerSerializesUseCapabilityCalls(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "read_file", readOnly: true})
+	reg.Add(fakeTool{name: "use_capability", readOnly: true})
+	calls := []provider.ToolCall{
+		{ID: "1", Name: "use_capability", Arguments: `{"action":"list"}`},
+		{ID: "2", Name: "use_capability", Arguments: `{"action":"list"}`},
+		{ID: "3", Name: "read_file", Arguments: `{"path":"a.go"}`},
+	}
+	// Executor (serialCapabilityProxy=false): use_capability remains parallelisable.
+	gotExec := partitionToolCalls(reg, calls, false)
+	if len(gotExec) != 1 || !gotExec[0].parallel || gotExec[0].end-gotExec[0].start != 3 {
+		t.Fatalf("executor partition = %+v, want one parallel batch of 3", gotExec)
+	}
+	// Planner: use_capability is always serial (never joins a parallel batch with peers).
+	gotPlan := partitionToolCalls(reg, calls, true)
+	if len(gotPlan) != 3 {
+		t.Fatalf("planner partition = %+v, want 3 batches (uc, uc, read)", gotPlan)
+	}
+	if gotPlan[0].parallel || gotPlan[1].parallel {
+		t.Fatalf("planner use_capability batches must be serial: %+v", gotPlan)
+	}
+	// A lone read_file may still be marked parallelisable; it is a single-call batch.
+	if gotPlan[2].start != 2 || gotPlan[2].end != 3 {
+		t.Fatalf("planner trailing read batch = %+v", gotPlan[2])
+	}
+}
+
+func TestPlannerToolRegistryExcludesDirectMCPKeepsProxy(t *testing.T) {
+	parent := tool.NewRegistry()
+	parent.Add(fakeTool{name: "read_file", readOnly: true})
+	parent.Add(fakeTool{name: "write_file", readOnly: false})
+	parent.Add(annotatedMCPTool{
+		fakeTool:         fakeTool{name: "mcp__gh__search", readOnly: true},
+		server:           "gh",
+		raw:              "search",
+		serverAuthorized: true,
+	})
+	parent.Add(fakeTool{name: "use_capability", readOnly: true})
+	planner := PlannerToolRegistry(parent)
+	names := strings.Join(planner.Names(), ",")
+	if strings.Contains(names, "mcp__") {
+		t.Fatalf("planner registry still has direct MCP: %s", names)
+	}
+	if _, ok := planner.Get("use_capability"); !ok {
+		t.Fatal("planner registry missing use_capability")
+	}
+	if _, ok := planner.Get("write_file"); ok {
+		t.Fatal("planner registry must not include writers")
+	}
+	if _, ok := planner.Get("read_file"); !ok {
+		t.Fatal("planner registry missing read_file")
+	}
+}
+
+func TestPlannerSchemaStableAcrossProxyPresence(t *testing.T) {
+	// Building planner registry with or without pre-registered mcp tools must
+	// not change the fixed use_capability schema bytes.
+	parent := tool.NewRegistry()
+	proxy := NewUseCapabilityTool(context.Background(), nil, nil, parent, nil, nil, nil)
+	parent.Add(proxy)
+	parent.Add(fakeTool{name: "read_file", readOnly: true})
+	parent.Add(annotatedMCPTool{
+		fakeTool: fakeTool{name: "mcp__s__t", readOnly: true},
+		server:   "s", raw: "t", serverAuthorized: true,
+	})
+	reg1 := PlannerToolRegistry(parent)
+	schema1, ok := reg1.Get("use_capability")
+	if !ok {
+		t.Fatal("missing use_capability")
+	}
+	bytes1 := string(schema1.Schema())
+
+	// Add more MCP tools and rebuild — schema bytes must match.
+	parent.Add(annotatedMCPTool{
+		fakeTool: fakeTool{name: "mcp__s__t2", readOnly: true},
+		server:   "s", raw: "t2", serverAuthorized: true,
+	})
+	reg2 := PlannerToolRegistry(parent)
+	schema2, ok := reg2.Get("use_capability")
+	if !ok {
+		t.Fatal("missing use_capability after MCP add")
+	}
+	if string(schema2.Schema()) != bytes1 {
+		t.Fatalf("use_capability schema changed after MCP add\nbefore=%s\nafter=%s", bytes1, schema2.Schema())
+	}
+	// Provider-visible tool order for planner must not include mcp__ and must
+	// keep use_capability present with identical schema.
+	for _, name := range reg2.Names() {
+		if strings.HasPrefix(name, "mcp__") {
+			t.Fatalf("reg2 still exposes %s", name)
+		}
+	}
+}

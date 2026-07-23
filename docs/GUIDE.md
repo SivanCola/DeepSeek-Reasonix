@@ -940,9 +940,8 @@ required; loading the full `skills` source in Plan is allowed, and subsequent
 writer calls still pass through Permissions/Sandbox.
 
 Every strict read-only child is built through one shared construction
-pairing — `RunReadOnlySubAgentWithSession` for batch children and
-`NewReadOnlyAgent` for the interactive two-model planner — which marks the
-child permanently read-only and applies a final registry filter. The filter
+pairing — `RunReadOnlySubAgentWithSession` / `NewReadOnlyAgent` — which marks
+the child permanently read-only and applies a final registry filter. The filter
 removes writers, destructive MCP targets, readers from unauthorized servers,
 and every host-mutating tool. A user-installed server is authorized immediately;
 a repository-declared server becomes eligible after its exact identity is
@@ -957,7 +956,25 @@ the strict read-only entrances:
 | `read_only_skill` | The same isolation driving an existing skill |
 | `reasonix review` (CLI) | Read-only review of a diff or branch |
 | Desktop preview/review subagents | Read-only desktop analysis surfaces |
-| Two-model planner | The dedicated planner's read-only registry |
+
+The interactive two-model Planner uses a dedicated construction path
+(`NewPlannerAgent`): it still blocks bash, file writers, and ordinary writers,
+but may call authorized, non-destructive MCP through the fixed
+`use_capability` proxy without requiring `readOnlyHint`. Direct `mcp__*`
+schemas never enter the Planner tool list, so MCP install/connect churn does
+not change the Planner cache prefix after the one-time schema upgrade. Missing
+`readOnlyHint` no longer blocks the Planner; tools with `destructiveHint` are
+zero-exec and should be written into the plan for the Executor.
+
+Ordinary `task` / `fleet` sub-agents also get the same fixed proxy (session-
+shared Host and connections, per-agent frontend/ledger) and may call installed
+or project-authorized MCP without `readOnlyHint`; destructive MCP follows their
+normal writer permission path rather than Planner handoff. Strict
+`read_only_task` / `read_only_skill` / review sub-agents share the stable proxy
+schema and connection reuse but keep the strict execution gate
+(`authorized && readOnlyHint && !destructiveHint`). Profile `allowed-tools`
+MCP names convert to capability-id allowlists on the proxy; children never
+inherit dynamic `mcp__*` schemas.
 
 Inside a strict child, `use_capability` re-checks the resolved target before
 commit/permission/hooks/execution. An unconnected eligible MCP reader may start

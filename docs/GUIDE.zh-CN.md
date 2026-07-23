@@ -747,12 +747,11 @@ ephemeral 只读 subagent，只暴露只读研究工具和安全前台 bash，�
 `connect_tool_source(source="read_only_skill")` 连接这条窄入口；完整的 `skills`
 source 也可在 Plan 中加载，后续 writer 调用仍通过 Permissions/Sandbox。
 
-所有严格只读子会话都经过同一对共享构造入口——批处理子会话用
-`RunReadOnlySubAgentWithSession`，交互式双模型 planner 用 `NewReadOnlyAgent`——
-两者都会把子会话标记为永久只读并做最终 registry 过滤：移除 writer、destructive MCP
-目标、来自未授权 server 的 reader，以及一切会改变 host capability 的工具。用户安装的
-server 会立即获得授权；仓库声明的 server 则在其精确身份确认一次后符合条件。符合条件的
-reader 仍可按需启动。严格只读入口一览：
+所有严格只读子会话都经过同一对共享构造入口——`RunReadOnlySubAgentWithSession` /
+`NewReadOnlyAgent`——两者都会把子会话标记为永久只读并做最终 registry 过滤：移除 writer、
+destructive MCP 目标、来自未授权 server 的 reader，以及一切会改变 host capability 的工具。
+用户安装的 server 会立即获得授权；仓库声明的 server 则在其精确身份确认一次后符合条件。
+符合条件的 reader 仍可按需启动。严格只读入口一览：
 
 | 入口 | 用途 |
 | --- | --- |
@@ -762,7 +761,19 @@ reader 仍可按需启动。严格只读入口一览：
 | `read_only_skill` | 以既有 skill 驱动的同等隔离 |
 | `reasonix review`（CLI） | 只读评审 diff 或分支 |
 | 桌面端 preview/review 子代理 | 桌面端只读分析面 |
-| 双模型 planner | 独立 planner 的只读 registry |
+
+交互式双模型 Planner 使用专用构造路径（`NewPlannerAgent`）：仍阻止 bash、文件写入与普通
+writer，但可通过固定的 `use_capability` 代理调用已授权、非 destructive 的 MCP，不再要求
+`readOnlyHint`。直接 `mcp__*` schema 永不进入 Planner 工具列表，因此 MCP 安装/连接变动
+不会在一次性 schema 升级后继续改变 Planner 缓存前缀。缺少 `readOnlyHint` 不再阻止 Planner；
+带 `destructiveHint` 的工具零执行，应写入方案交给 Executor。
+
+普通 `task` / `fleet` 子 Agent 同样获得该固定代理（会话共享 Host/连接，每 Agent 独立
+frontend/ledger），可调用已安装或项目已授权 MCP，不要求 `readOnlyHint`；destructive 走
+普通 writer 权限路径，而非 Planner 的 Executor handoff。严格 `read_only_task` /
+`read_only_skill` / review 子 Agent 共享稳定代理 schema 与连接复用，但执行仍要求
+`authorized && readOnlyHint && !destructiveHint`。Profile `allowed-tools` 中的 MCP 名称
+会转换为代理上的 capability ID 白名单；子 Agent 从不继承动态 `mcp__*` schema。
 
 在严格只读子会话内：`use_capability` 在 Commit/permission/hook/执行前会对解析出的
 真实目标再次校验；未连接且符合条件的 MCP reader 可从当前 schema cache 按需启动，
@@ -778,8 +789,9 @@ initialize/tools-list 后会在 `tools/call` 前核对缓存与 live 的 `readOn
 直接读/bash/编辑/写入、后台 shell 生命周期控制、`ask` 和 `connect_tool_source`；专用搜索/文件/
 workflow 工具、session history、memory 写入、slash command、Skills、MCP、LSP、网络、安装与
 subagent 都在任务需要时才连接。
-Balanced（均衡）是提供完整工具面的默认档；Delivery（交付优先）
-保留完整工具面，额外增加稳定能力代理 `use_capability`（按需 inspect/call MCP，包括
+Balanced（均衡）是提供完整工具面的默认档；双模型 Planner 额外通过 `use_capability`
+查询已授权非 destructive MCP（Executor 仍用完整直接 MCP 工具面）。Delivery（交付优先）
+保留完整工具面，额外增加稳定能力代理 `use_capability`（list/inspect/call MCP，包括
 `auto_start=false`，且不改变主工具 Schema），并增加“明确验收标准、修复根因、运行验证、复审最终
 diff”的稳定交付合约。该合约由宿主运行时强制执行：没有具体 `todo_write` 验收清单时会阻止变更和验证
 命令；发生变更后，必须复查结果、在最后一次变更之后运行验证，并用带证据的 `complete_step` 签收后才能

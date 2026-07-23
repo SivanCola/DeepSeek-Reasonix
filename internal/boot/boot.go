@@ -834,6 +834,9 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	taskToolAdded := false
 	readOnlyTaskToolAdded := false
 	var taskTool *agent.TaskTool
+	// capRuntime is assigned after MCP specs load; closures capture the variable
+	// so task tools created later still receive the session-shared substrate.
+	var capRuntime *agent.MCPCapabilityRuntime
 	newTaskTool := func() *agent.TaskTool {
 		return agent.NewTaskTool(execProv, entry.Price, reg, maxSteps,
 			entry.ContextWindow, cfg.Agent.RecentKeep, cfg.Agent.SoftCompactRatio, cfg.Agent.ToolResultSnipRatio, cfg.Agent.CompactRatio, cfg.Agent.CompactForceRatio,
@@ -848,7 +851,8 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			WithScheduler(subagentScheduler).
 			WithProfileLookup(profileLookup).
 			WithProfileConfigResolvers(profileConfigModel, profileConfigEffort).
-			WithBashSandboxEnforced(bashSandboxEnforced)
+			WithBashSandboxEnforced(bashSandboxEnforced).
+			WithCapabilityRuntime(capRuntime)
 	}
 	addTaskTool := func() string {
 		if taskToolAdded {
@@ -1424,9 +1428,11 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		})
 	}
 
-	// Delivery-only stable capability proxy. Registered before agent.New so the
-	// tool schema is part of the Delivery cache prefix and never changes when
-	// on-demand MCP servers connect through the proxy.
+	// Session-shared MCP runtime: Host, specs, and connection snapshots. Each
+	// agent gets its own use_capability frontend (ledger/audit isolation) while
+	// reusing processes. Delivery puts a frontend on the executor registry;
+	// dual-model Planner and all task/fleet sub-agents get their own frontends
+	// without inheriting dynamic mcp__* schemas.
 	var capLedger *capability.Ledger
 	var capAudit *capability.Audit
 	capSpecs := PluginSpecsForRootWithOptions(cfg.Plugins, root, pluginSpecOptions)
@@ -1434,63 +1440,81 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	skillStore.ConfigureToolBindings(func(sk skill.Skill) []tool.MCPBinding {
 		return skillMCPBindings(sk, reg, capSpecs, cachedTools, cacheKeyOK)
 	})
+	// Detect dual-model planner early so Balanced can attach use_capability
+	// only to the planner registry (executor tool surface stays unchanged).
+	dualModelPlanner := false
+	if pm := cfg.Agent.PlannerModel; pm != "" && !tokenEconomy {
+		if pe, ok := resolveOptionalEntry(opts, cfg, pm); ok && pe.Model != entry.Model {
+			dualModelPlanner = true
+		}
+	}
+	failed := map[string]string{}
+	if pluginHost != nil {
+		for _, f := range pluginHost.Failures() {
+			failed[f.Name] = f.Error
+		}
+	}
+	profile := capability.ProfileBalanced
+	if tokenDelivery {
+		profile = capability.ProfileDelivery
+	} else if tokenEconomy {
+		profile = capability.ProfileEconomy
+	}
 	var capProxy *agent.UseCapabilityTool
+	// Catalog closes over capRuntime so proxy-connected tools stay routable.
+	catalogFn := func() capability.Catalog {
+		conn := map[string]bool{}
+		if pluginHost != nil {
+			for _, n := range pluginHost.ServerNames() {
+				conn[n] = true
+			}
+		}
+		catOpts := capability.CatalogOptions{
+			Tools:       reg.ContractEntries(),
+			Skills:      skillStore.List(),
+			Plugins:     cfg.Plugins,
+			Profile:     profile,
+			Connected:   conn,
+			Failed:      failed,
+			CachedTools: cachedTools,
+			CacheKeyOK:  cacheKeyOK,
+		}
+		if capRuntime != nil {
+			catOpts.ProxyTools = capRuntime.ConnectedProxyTools()
+		}
+		return capability.BuildCatalog(catOpts)
+	}
+	// Always build the runtime when a plugin host exists so task/fleet children
+	// can use the stable proxy even in Balanced/Economy without Delivery.
+	if pluginHost != nil || len(capSpecs) > 0 || tokenDelivery || dualModelPlanner {
+		capRuntime = agent.NewMCPCapabilityRuntime(ctx, pluginHost, capSpecs, reg, catalogFn)
+	}
 	if tokenDelivery {
 		capLedger = capability.NewLedger()
 		capAudit = &capability.Audit{}
-		failed := map[string]string{}
-		if pluginHost != nil {
-			for _, f := range pluginHost.Failures() {
-				failed[f.Name] = f.Error
-			}
+		if capRuntime != nil {
+			capProxy = capRuntime.NewFrontend(capLedger, capAudit)
+			reg.Add(capProxy)
 		}
-		// The proxy and the catalog share the boot-converted specs (env
-		// expansion, workspace overrides, and timeouts) —
-		// every configured server, including auto_start=false, is proxy-callable.
-		catalogFn := func() capability.Catalog {
-			conn := map[string]bool{}
-			if pluginHost != nil {
-				for _, n := range pluginHost.ServerNames() {
-					conn[n] = true
-				}
-			}
-			catOpts := capability.CatalogOptions{
-				Tools:       reg.ContractEntries(),
-				Skills:      skillStore.List(),
-				Plugins:     cfg.Plugins,
-				Profile:     capability.ProfileDelivery,
-				Connected:   conn,
-				Failed:      failed,
-				CachedTools: cachedTools,
-				CacheKeyOK:  cacheKeyOK,
-			}
-			// Live proxy-observed tools keep mcp-tool entries routable after an
-			// on-demand connect (proxied tools never enter the registry).
-			if capProxy != nil {
-				catOpts.ProxyTools = capProxy.ConnectedProxyTools()
-			}
-			return capability.BuildCatalog(catOpts)
-		}
-		// ctx is the session-scoped boot context (the lifetime PluginCtx hands
-		// the controller): on-demand MCP children must survive the tool call
-		// that starts them and die with the session, not a resolve timeout.
-		capProxy = agent.NewUseCapabilityTool(ctx, pluginHost, capSpecs, reg, capLedger, capAudit, catalogFn)
-		reg.Add(capProxy)
+	} else if dualModelPlanner && capRuntime != nil {
+		// Planner ledger is optional; create a lightweight frontend template via runtime.
+		capLedger = capability.NewLedger()
+		capAudit = &capability.Audit{}
 	}
 	skillStore.ConfigureInvocationPolicy(string(runtimeProfile), func(requires []string) []string {
 		connected := map[string]bool{}
-		failed := map[string]string{}
+		failedNow := map[string]string{}
 		if pluginHost != nil {
 			for _, name := range pluginHost.ServerNames() {
 				connected[name] = true
 			}
 			for _, failure := range pluginHost.Failures() {
-				failed[failure.Name] = failure.Error
+				failedNow[failure.Name] = failure.Error
 			}
 		}
 		var proxyTools map[string][]plugin.CachedTool
-		if capProxy != nil {
-			proxyTools = capProxy.ConnectedProxyTools()
+		if capRuntime != nil {
+			proxyTools = capRuntime.ConnectedProxyTools()
 		}
 		catalog := capability.BuildCatalog(capability.CatalogOptions{
 			Tools:       reg.ContractEntries(),
@@ -1498,7 +1522,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			Plugins:     cfg.Plugins,
 			Profile:     runtimeProfile,
 			Connected:   connected,
-			Failed:      failed,
+			Failed:      failedNow,
 			CachedTools: cachedTools,
 			CacheKeyOK:  cacheKeyOK,
 			ProxyTools:  proxyTools,
@@ -1557,7 +1581,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			}
 			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(mem.Block()))
 			plannerTools := agent.PlannerToolRegistry(reg)
-			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, agent.Options{
+			// Balanced dual-model: attach a dedicated planner frontend so the
+			// executor keeps its full direct MCP surface and ledger stays isolated.
+			if capRuntime != nil {
+				if _, ok := plannerTools.Get("use_capability"); !ok {
+					plannerTools.Add(capRuntime.NewFrontend(capLedger, capAudit))
+				}
+			}
+			plannerOpts := agent.Options{
 				MaxSteps:                 0,
 				Gate:                     headlessGate,
 				ContextWindow:            pe.ContextWindow,
@@ -1570,7 +1601,10 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 				KeepPolicy:               keepPolicy,
 				ReasoningLanguage:        cfg.ReasoningLanguage(),
 				PlanModeReadOnlyCommands: cfg.Agent.PlanModeReadOnlyCommands,
-			}, executor, cfg.Agent.Temperature, sink, control.NewPlannerGate())
+				CapabilityLedger:         capLedger,
+				CapabilityAudit:          capAudit,
+			}
+			runner = agent.NewCoordinator(plannerProv, plannerSess, pe.Price, plannerTools, plannerOpts, executor, cfg.Agent.Temperature, sink, control.NewPlannerGate())
 			label = entry.Model + " + planner " + pe.Model
 		}
 	}
@@ -1683,6 +1717,14 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			taskTool.WithRecoveryGate(g.RecoveryGate())
 		}
 	}
+	if capRuntime != nil {
+		ctrl.SetCapabilityProxyTools(capRuntime.ConnectedProxyTools)
+	}
+	// Task tools created before capRuntime assignment still need the runtime if
+	// they were built early; re-bind when present.
+	if taskTool != nil && capRuntime != nil {
+		taskTool.WithCapabilityRuntime(capRuntime)
+	}
 	if tokenDelivery {
 		var router *capability.SemanticRouter
 		// Prefer agent.subagent_models["capability-router"] when configured.
@@ -1697,8 +1739,16 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 			router = &capability.SemanticRouter{Provider: execProv, Sink: sink, Pricing: entry.Price, Audit: capAudit}
 		}
 		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, router, capAudit)
+		ctrl.SetCapabilityProxyRouting(true)
 	} else if tokenEconomy {
 		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, nil, nil)
+	} else if dualModelPlanner {
+		// Balanced dual-model: load plugin config + schema cache so not-yet-
+		// started MCP can route into the Planner's use_capability proxy.
+		// No semantic router — deterministic route only. Executor tool surface
+		// is unchanged.
+		ctrl.WireCapabilityRouting(cfg.Plugins, capSpecs, nil, capAudit)
+		ctrl.SetCapabilityProxyRouting(true)
 	}
 	return ctrl, nil
 }

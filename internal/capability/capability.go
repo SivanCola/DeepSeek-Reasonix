@@ -73,6 +73,10 @@ type RouteDecision struct {
 	// the model to the stable use_capability proxy — connect_tool_source is not
 	// registered in Delivery, so instructing it would dead-end the route.
 	Delivery bool
+	// CapabilityProxy directs unready MCP candidates to use_capability rather
+	// than connect_tool_source. True for Delivery and for dual-model Planner
+	// boots that expose the stable proxy without Economy's connector.
+	CapabilityProxy bool
 }
 
 func SkillEntries(skills []skill.Skill, tools []tool.ContractEntry) []Entry {
@@ -199,7 +203,7 @@ func PromoteDelivery(decision RouteDecision) RouteDecision {
 		}
 		return decision.Candidates[i].Entry.ID < decision.Candidates[j].Entry.ID
 	})
-	return RouteDecision{Candidates: limitRouteCandidates(decision.Candidates), Delivery: true}
+	return RouteDecision{Candidates: limitRouteCandidates(decision.Candidates), Delivery: true, CapabilityProxy: true}
 }
 
 func limitRouteCandidates(candidates []RouteCandidate) []RouteCandidate {
@@ -245,9 +249,10 @@ func RenderTransientBlock(d RouteDecision) string {
 			fmt.Fprintf(&b, " (status=%s)", e.Status)
 		}
 		switch {
-		case d.Delivery:
-			// Delivery has no connect_tool_source; the stable proxy both
-			// connects and calls on demand, keeping the concrete capability id.
+		case d.Delivery || d.CapabilityProxy:
+			// Delivery and dual-model Planner have no connect_tool_source for
+			// MCP; the stable proxy both connects and calls on demand, keeping
+			// the concrete capability id.
 			if e.Status != StatusReady {
 				switch e.Kind {
 				case KindMCPTool:

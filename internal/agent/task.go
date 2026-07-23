@@ -27,16 +27,20 @@ import (
 // DefaultTaskSystemPrompt steers a sub-agent toward focused, terse delivery —
 // it doesn't see the parent's conversation so it must self-contain.
 const DefaultTaskSystemPrompt = `You are a sub-agent invoked by a parent coding agent to carry out one focused task.
-Use the provided tools to investigate or act. Return a single final answer that is concise
-and self-contained — the parent will see only that answer, not your tool calls or reasoning.
-If you need to ask for clarification, fail with a precise question instead of guessing.`
+Use the provided tools to investigate or act. For MCP, use the stable use_capability
+proxy (list → inspect → call); do not expect direct mcp__* tool schemas. Return a
+single final answer that is concise and self-contained — the parent will see only
+that answer, not your tool calls or reasoning. If you need to ask for clarification,
+fail with a precise question instead of guessing.`
 
 // DefaultReadOnlyTaskSystemPrompt steers read-only sub-agents toward isolated
 // research. They never receive writer tools, persisted transcript controls, or
 // background process controls, so their final answer is the only handoff.
 const DefaultReadOnlyTaskSystemPrompt = `You are a read-only research sub-agent invoked by a parent coding agent.
 Use only the provided read-only tools to inspect code, docs, history, and safe shell output.
-Do not attempt to write files, install capabilities, mutate memory, control long-lived
+For MCP, use use_capability only for authorized tools that declare readOnly and are
+not destructive; never treat missing readOnlyHint as permission to call. Do not
+attempt to write files, install capabilities, mutate memory, control long-lived
 processes, or delegate to writer-capable agents. If a read-only delegation tool is
 available and genuinely useful, you may use it within the configured depth limit.
 Return a concise, self-contained final answer with the evidence the parent needs.`
@@ -123,17 +127,28 @@ func SubagentToolRegistry(parent *tool.Registry, names []string) *tool.Registry 
 // subagent at childDepth. Recursive delegation tools are available only when the
 // child still has room to spawn one more subagent.
 //
-// With no explicit allowlist, installed MCP tools follow the parent registry so
-// ordinary and background subagents inherit the same zero-config MCP surface.
-// An explicit profile/call allowlist remains authoritative and may select MCP
-// tools by exact name or wildcard just like built-ins.
+// Direct mcp__* schemas are never exposed: MCP goes only through the fixed
+// use_capability proxy so connect/disconnect/tool-list churn cannot change the
+// child provider-visible tool prefix. With no explicit allowlist the child gets
+// the full proxy (installed/authorized MCP, including tools without
+// readOnlyHint). An explicit allowlist converts mcp__* / mcp-tool: names into a
+// capability-id allowlist on a restricted proxy.
 func SubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDepth, maxDepth int) *tool.Registry {
+	return SubagentToolRegistryForDepthWithRuntime(parent, names, childDepth, maxDepth, nil)
+}
+
+// SubagentToolRegistryForDepthWithRuntime is SubagentToolRegistryForDepth with
+// an optional session MCP runtime used when the parent registry has no
+// use_capability (Balanced executor) but sub-agents still need the proxy.
+func SubagentToolRegistryForDepthWithRuntime(parent *tool.Registry, names []string, childDepth, maxDepth int, runtime *MCPCapabilityRuntime) *tool.Registry {
 	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
 		exclude = append(exclude, subagentRecursiveTools...)
 	}
 	exclude = append(exclude, subagentJobTools...)
 	sub := FilterRegistry(parent, names, exclude...)
+	stripDirectMCPTools(sub)
+	attachSubagentCapabilityProxy(parent, sub, names, runtime)
 	if bash, ok := sub.Get("bash"); ok {
 		sub.Add(foregroundOnlyBash{inner: bash})
 	}
@@ -253,6 +268,10 @@ type TaskTool struct {
 	// recoveryGate is the shared Auto Guard boundary for
 	// this session (root + sub-agents). nil disables recovery in children.
 	recoveryGate RecoveryGate
+	// capabilityRuntime is the session-shared MCP Host/specs substrate. Each
+	// sub-agent gets its own use_capability frontend so ledger state stays
+	// isolated while connections reuse the parent Host.
+	capabilityRuntime *MCPCapabilityRuntime
 }
 
 // NewTaskTool wires a task tool to the parent agent's environment so its
@@ -361,6 +380,16 @@ func (t *TaskTool) WithProfileConfigResolvers(model, effort func(profile string)
 // the same write roots under the OS sandbox.
 func (t *TaskTool) WithBashSandboxEnforced(fn func() bool) *TaskTool {
 	t.bashSandboxEnforced = fn
+	return t
+}
+
+// WithCapabilityRuntime attaches the session-shared MCP runtime so ordinary and
+// read-only sub-agents receive a stable use_capability frontend without
+// inheriting dynamic mcp__* schemas.
+func (t *TaskTool) WithCapabilityRuntime(rt *MCPCapabilityRuntime) *TaskTool {
+	if t != nil {
+		t.capabilityRuntime = rt
+	}
 	return t
 }
 
@@ -514,7 +543,7 @@ func (r *ReadOnlyTaskTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if err != nil {
 		return "", err
 	}
-	subReg := ReadOnlySubagentToolRegistryForDepth(r.task.parentReg, p.Tools, childDepth, r.task.maxDepth())
+	subReg := ReadOnlySubagentToolRegistryForDepthWithRuntime(r.task.parentReg, p.Tools, childDepth, r.task.maxDepth(), r.task.capabilityRuntime)
 	if subReg.Len() == 0 {
 		return "", fmt.Errorf("read_only_task has no read-only tools available")
 	}
@@ -706,7 +735,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (st
 	}
 	var subReg *tool.Registry
 	if spec.ReadOnly {
-		subReg = ReadOnlySubagentToolRegistryForDepth(t.parentReg, toolNames, childDepth, t.maxDepth())
+		subReg = ReadOnlySubagentToolRegistryForDepthWithRuntime(t.parentReg, toolNames, childDepth, t.maxDepth(), t.capabilityRuntime)
 		if subReg.Len() == 0 {
 			return "", fmt.Errorf("no read-only tools available for this sub-agent")
 		}
@@ -946,7 +975,7 @@ func (t *TaskTool) effectiveEffortIdentity(effort string) string {
 // buildSubReg returns the sub-agent's tool set: the named whitelist (minus
 // unavailable sub-agent tools), or every parent tool except those tools.
 func (t *TaskTool) buildSubReg(names []string, childDepth int) *tool.Registry {
-	return SubagentToolRegistryForDepth(t.parentReg, names, childDepth, t.maxDepth())
+	return SubagentToolRegistryForDepthWithRuntime(t.parentReg, names, childDepth, t.maxDepth(), t.capabilityRuntime)
 }
 
 func (t *TaskTool) maxDepth() int {
@@ -973,6 +1002,8 @@ func (t *TaskTool) nextSubagentDepth(ctx context.Context) (int, error) {
 // every parent tool), minus any excluded names. Used to scope what a spawned
 // sub-agent — a `task` sub-agent or a subagent skill — may call, e.g. excluding
 // `task` to bar recursive nesting, or restricting to a skill's allowed-tools.
+// Direct MCP tools may be copied here; callers that need a stable MCP surface
+// should strip them and attach use_capability via attachSubagentCapabilityProxy.
 func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *tool.Registry {
 	sub := tool.NewRegistry()
 	if parent == nil {
@@ -993,21 +1024,38 @@ func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *t
 		if ex[name] {
 			continue
 		}
+		// MCP never enters through the generic filter when named as capability
+		// ids; model-visible mcp__* may still be listed for conversion later.
+		if strings.HasPrefix(name, "mcp-tool:") || strings.HasPrefix(name, "mcp-server:") {
+			continue
+		}
 		tl, ok := parent.Get(name)
 		if !ok {
 			continue
 		}
 		sub.Add(tl)
 	}
-	addRestrictedCapabilityProxy(parent, sub, names, ex, false)
 	return sub
 }
 
+// stripDirectMCPTools removes provider-visible mcp__* tools so sub-agents use
+// only the stable use_capability proxy for MCP.
+func stripDirectMCPTools(reg *tool.Registry) {
+	if reg == nil {
+		return
+	}
+	for _, name := range append([]string(nil), reg.Names()...) {
+		if strings.HasPrefix(name, tool.MCPNamePrefix) {
+			reg.RemovePrefix(name)
+		}
+	}
+}
+
 // restrictedCapabilityProxy preserves a subagent allowed-tools boundary when
-// an MCP tool is available only through use_capability. The pseudo
-// mcp-tool:<server>/<raw> entries never become provider tools themselves; they
-// select one proxy schema whose resolver rejects every capability outside the
-// exact allowlist.
+// MCP is available only through use_capability. The pseudo mcp-tool: and
+// mcp-server: entries never become provider tools; they select one proxy schema
+// whose resolver rejects every capability outside the exact allowlist. action=list
+// is always permitted so discovery still works under a restricted surface.
 type restrictedCapabilityProxy struct {
 	tool.Tool
 	resolver tool.CallResolver
@@ -1020,15 +1068,19 @@ func (t *restrictedCapabilityProxy) Description() string {
 	if base != "" {
 		base += " "
 	}
-	return base + "This subagent is restricted to capability IDs: " + strings.Join(t.ids, ", ") + "."
+	return base + "This subagent is restricted to capability IDs: " + strings.Join(t.ids, ", ") + ". action=list is always allowed."
 }
 
 func (t *restrictedCapabilityProxy) check(args json.RawMessage) error {
 	var p struct {
+		Action       string `json:"action"`
 		CapabilityID string `json:"capability_id"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return fmt.Errorf("invalid args: %w", err)
+	}
+	if strings.EqualFold(strings.TrimSpace(p.Action), "list") {
+		return nil
 	}
 	id := strings.TrimSpace(p.CapabilityID)
 	if id == "" {
@@ -1054,34 +1106,29 @@ func (t *restrictedCapabilityProxy) Execute(ctx context.Context, args json.RawMe
 	return t.Tool.Execute(ctx, args)
 }
 
-func addRestrictedCapabilityProxy(parent, sub *tool.Registry, names []string, excluded map[string]bool, requireReadOnly bool) {
-	if parent == nil || sub == nil || excluded["use_capability"] {
+// attachSubagentCapabilityProxy installs a per-agent use_capability frontend.
+// No allowlist → full proxy. Explicit allowlist with MCP names → restricted
+// proxy (mcp__* / mcp-tool: / mcp-server: converted to capability IDs). Explicit
+// "use_capability" in the allowlist → full proxy. Explicit allowlist without
+// any MCP entries → no proxy.
+func attachSubagentCapabilityProxy(parent, sub *tool.Registry, names []string, runtime *MCPCapabilityRuntime) {
+	if sub == nil {
 		return
 	}
 	if _, ok := sub.Get("use_capability"); ok {
-		// An explicit name or wildcard already granted the ordinary proxy.
 		return
 	}
-	direct := map[string]bool{}
-	for _, binding := range parent.MCPBindings() {
-		direct[binding.CapabilityID] = true
+	frontend := newSubagentCapabilityFrontend(parent, runtime)
+	if frontend == nil {
+		return
 	}
-	allowed := map[string]bool{}
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if strings.HasPrefix(name, "mcp-tool:") && !direct[name] {
-			allowed[name] = true
-		}
+	if len(names) == 0 || allowlistRequestsUnrestrictedProxy(names) {
+		sub.Add(frontend)
+		return
 	}
+	allowed := mcpCapabilityAllowlist(parent, names)
 	if len(allowed) == 0 {
-		return
-	}
-	inner, ok := parent.Get("use_capability")
-	if !ok || requireReadOnly && (!inner.ReadOnly() || mcpDestructiveHint(inner)) {
-		return
-	}
-	resolver, ok := inner.(tool.CallResolver)
-	if !ok {
+		// Custom allowlist with no MCP entries: do not expose the proxy.
 		return
 	}
 	ids := make([]string, 0, len(allowed))
@@ -1089,7 +1136,87 @@ func addRestrictedCapabilityProxy(parent, sub *tool.Registry, names []string, ex
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	sub.Add(&restrictedCapabilityProxy{Tool: inner, resolver: resolver, allowed: allowed, ids: ids})
+	resolver, ok := frontend.(tool.CallResolver)
+	if !ok {
+		return
+	}
+	sub.Add(&restrictedCapabilityProxy{Tool: frontend, resolver: resolver, allowed: allowed, ids: ids})
+}
+
+func newSubagentCapabilityFrontend(parent *tool.Registry, runtime *MCPCapabilityRuntime) tool.Tool {
+	if runtime != nil {
+		return runtime.NewFrontend(nil, nil)
+	}
+	if parent == nil {
+		return nil
+	}
+	inner, ok := parent.Get("use_capability")
+	if !ok {
+		return nil
+	}
+	if uc, ok := inner.(*UseCapabilityTool); ok {
+		return uc.CloneForAgent(nil, nil)
+	}
+	return inner
+}
+
+// mcpCapabilityAllowlist converts profile/call tool names into capability IDs
+// for the restricted use_capability proxy. Accepts mcp-tool:, mcp-server:,
+// model-visible mcp__* names, and wildcards expanded against the parent.
+func mcpCapabilityAllowlist(parent *tool.Registry, names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	expanded := names
+	if parent != nil {
+		expanded = expandToolPatterns(parent, names)
+	}
+	allowed := map[string]bool{}
+	for _, name := range expanded {
+		name = strings.TrimSpace(name)
+		switch {
+		case name == "use_capability":
+			// Explicit proxy grant is handled as a full frontend by the caller
+			// when this is the only MCP-related entry; leave empty here so a
+			// bare use_capability allowlist entry still installs unrestricted.
+			continue
+		case strings.HasPrefix(name, "mcp-tool:"), strings.HasPrefix(name, "mcp-server:"):
+			allowed[name] = true
+		default:
+			if parent != nil {
+				if tl, ok := parent.Get(name); ok {
+					if m, ok := tl.(tool.MCPMetadata); ok {
+						server := strings.TrimSpace(m.MCPServerName())
+						raw := strings.TrimSpace(m.MCPRawToolName())
+						if server != "" && raw != "" {
+							allowed["mcp-tool:"+server+"/"+raw] = true
+							allowed["mcp-server:"+server] = true
+							continue
+						}
+					}
+				}
+			}
+			if server, raw, ok := tool.SplitMCPName(name); ok {
+				allowed["mcp-tool:"+server+"/"+raw] = true
+				allowed["mcp-server:"+server] = true
+			}
+		}
+	}
+	// Bare "use_capability" in the allowlist means unrestricted proxy: signal
+	// with a nil map when that was the only MCP-related entry and no concrete
+	// IDs were collected — callers treat empty allowed as "no proxy", so expand
+	// to a sentinel by returning a special case from attach when names contain
+	// use_capability alone.
+	return allowed
+}
+
+func allowlistRequestsUnrestrictedProxy(names []string) bool {
+	for _, name := range names {
+		if strings.TrimSpace(name) == "use_capability" {
+			return true
+		}
+	}
+	return false
 }
 
 var plannerNonResearchTools = []string{
@@ -1102,12 +1229,40 @@ var plannerNonResearchTools = []string{
 }
 
 // PlannerToolRegistry returns the tool set exposed to the two-model planner:
-// read-only research tools only. It deliberately excludes workflow/meta tools
-// that are technically read-only but can prompt the user, update visible task
-// state, wait on jobs, or expand commands instead of inspecting context.
+// built-in read-only research tools plus the stable use_capability proxy. Direct
+// mcp__* schemas are excluded so MCP connect/disconnect/tool-list churn never
+// changes the Planner provider-visible tool prefix. Workflow/meta tools that are
+// technically read-only but can prompt the user, update visible task state, wait
+// on jobs, or expand commands are also excluded.
 func PlannerToolRegistry(parent *tool.Registry) *tool.Registry {
 	exclude := append(SubagentMetaTools(), plannerNonResearchTools...)
-	return FilterReadOnlyRegistry(parent, exclude...)
+	base := FilterReadOnlyRegistry(parent, exclude...)
+	sub := tool.NewRegistry()
+	if base != nil {
+		for _, name := range base.Names() {
+			if strings.HasPrefix(name, tool.MCPNamePrefix) {
+				continue
+			}
+			if tl, ok := base.Get(name); ok {
+				sub.Add(tl)
+			}
+		}
+	}
+	// Keep the fixed capability proxy even when Delivery put it on the parent
+	// registry, or when Balanced dual-model injects it only for the planner.
+	// Always clone UseCapabilityTool so the planner has an independent ledger.
+	if parent != nil {
+		if tl, ok := parent.Get("use_capability"); ok {
+			if _, has := sub.Get("use_capability"); !has {
+				if uc, ok := tl.(*UseCapabilityTool); ok {
+					sub.Add(uc.CloneForAgent(nil, nil))
+				} else {
+					sub.Add(tl)
+				}
+			}
+		}
+	}
+	return sub
 }
 
 // ReadOnlySubagentToolRegistry returns the tool set exposed to read-only
@@ -1120,15 +1275,21 @@ func ReadOnlySubagentToolRegistry(parent *tool.Registry, names []string) *tool.R
 
 // ReadOnlySubagentToolRegistryForDepth returns the tool set exposed to read-only
 // subagents. It permits only read-only delegation tools while another depth
-// layer is available. MCP tools must additionally come from an authorized
-// server, declare readOnly, and must not carry destructiveHint. Writer and
-// destructive MCP tools are omitted from the provider schema entirely.
+// layer is available. Direct mcp__* schemas are never exposed; MCP goes only
+// through use_capability. Dynamic execution still requires authorized server +
+// readOnlyHint + non-destructive (enforced by ReadOnlyExecution), so strict
+// agents share the stable proxy schema and connection reuse without permission
+// relaxation.
 //
-// With no explicit allowlist, strict agents inherit every authorized read-only,
-// non-destructive MCP tool from the parent. Custom profile/call allowlists remain
-// authoritative and may select the permitted MCP readers explicitly or by
-// wildcard.
+// Custom profile/call allowlists remain authoritative and convert MCP names
+// into a capability-id allowlist on a restricted proxy.
 func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDepth, maxDepth int) *tool.Registry {
+	return ReadOnlySubagentToolRegistryForDepthWithRuntime(parent, names, childDepth, maxDepth, nil)
+}
+
+// ReadOnlySubagentToolRegistryForDepthWithRuntime is the read-only registry
+// builder with an optional session MCP runtime for proxy injection.
+func ReadOnlySubagentToolRegistryForDepthWithRuntime(parent *tool.Registry, names []string, childDepth, maxDepth int, runtime *MCPCapabilityRuntime) *tool.Registry {
 	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
 		exclude = append(exclude, subagentRecursiveTools...)
@@ -1156,6 +1317,9 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 		if ex[name] {
 			continue
 		}
+		if strings.HasPrefix(name, "mcp-tool:") || strings.HasPrefix(name, "mcp-server:") {
+			continue
+		}
 		tl, ok := parent.Get(name)
 		if !ok {
 			continue
@@ -1164,11 +1328,8 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 			sub.Add(readOnlyBash{inner: tl})
 			continue
 		}
-		if isInstalledMCPTool(tl) {
-			if !mcpServerAuthorized(tl) || !tl.ReadOnly() || mcpDestructiveHint(tl) {
-				continue
-			}
-			sub.Add(tl)
+		// Direct MCP never enters the strict registry — use_capability only.
+		if isInstalledMCPTool(tl) || strings.HasPrefix(name, tool.MCPNamePrefix) {
 			continue
 		}
 		if !tl.ReadOnly() {
@@ -1176,7 +1337,7 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 		}
 		sub.Add(tl)
 	}
-	addRestrictedCapabilityProxy(parent, sub, names, ex, true)
+	attachSubagentCapabilityProxy(parent, sub, names, runtime)
 	return sub
 }
 
@@ -1470,25 +1631,76 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 
 // readOnlyAgentConstruction is the single pairing every strictly read-only
 // loop shares: the permanent ReadOnlyExecution flag plus the final registry
-// filter. Batch children (RunReadOnlySubAgentWithSession) and the interactive
-// two-model planner (NewReadOnlyAgent) both build through it, so a missed call
-// site cannot set only half the boundary.
+// filter. Batch children (RunReadOnlySubAgentWithSession) and legacy call sites
+// that still use NewReadOnlyAgent build through it, so a missed call site
+// cannot set only half the boundary. The interactive two-model planner uses
+// NewPlannerAgent instead (PlannerMCPExecution).
 func readOnlyAgentConstruction(reg *tool.Registry, opts Options) (*tool.Registry, Options) {
 	opts.ReadOnlyExecution = true
+	opts.PlannerMCPExecution = false
 	return strictReadOnlyExecutionRegistry(reg), opts
 }
 
-// NewReadOnlyAgent constructs a long-lived, strictly read-only agent (the
-// two-model planner) through the shared construction boundary.
+// NewReadOnlyAgent constructs a long-lived, strictly read-only agent through
+// the shared construction boundary. Prefer NewPlannerAgent for the two-model
+// planner so authorized non-destructive MCP can run via use_capability.
 func NewReadOnlyAgent(prov provider.Provider, reg *tool.Registry, sess *Session, opts Options, sink event.Sink) *Agent {
 	reg, opts = readOnlyAgentConstruction(reg, opts)
 	return New(prov, reg, sess, opts, sink)
 }
 
+// NewPlannerAgent constructs the interactive two-model planner: permanent
+// ReadOnlyExecution still blocks bash, file writers, and ordinary non-MCP
+// writers, while PlannerMCPExecution allows authorized, non-destructive MCP
+// through the stable use_capability proxy without requiring readOnlyHint.
+func NewPlannerAgent(prov provider.Provider, reg *tool.Registry, sess *Session, opts Options, sink event.Sink) *Agent {
+	opts.ReadOnlyExecution = true
+	opts.PlannerMCPExecution = true
+	// Keep construction-time filter for ordinary tools; use_capability stays
+	// because it is ReadOnly. Direct mcp__* tools are already excluded by
+	// PlannerToolRegistry. Dynamic MCP targets are re-checked after resolve.
+	reg = plannerExecutionRegistry(reg)
+	return New(prov, reg, sess, opts, sink)
+}
+
+// plannerExecutionRegistry is the construction-time filter for NewPlannerAgent.
+// It removes ordinary writers and destructive direct MCP tools while keeping
+// use_capability and built-in research tools. Host-starting deferred MCP
+// targets are allowed at execution time under PlannerMCPExecution.
+func plannerExecutionRegistry(reg *tool.Registry) *tool.Registry {
+	filtered := tool.NewRegistry()
+	if reg == nil {
+		return filtered
+	}
+	for _, name := range reg.Names() {
+		target, ok := reg.Get(name)
+		if !ok {
+			continue
+		}
+		if name == "use_capability" {
+			filtered.Add(target)
+			continue
+		}
+		if strings.HasPrefix(name, tool.MCPNamePrefix) {
+			// Defense in depth: planner never exposes direct MCP schemas.
+			continue
+		}
+		if !target.ReadOnly() || mcpDestructiveHint(target) {
+			continue
+		}
+		if h, ok := target.(tool.ReadOnlyExecutionHostMutation); ok && h.ReadOnlyExecutionHostMutation() {
+			// Ordinary host mutations stay out; MCP startup is only via proxy.
+			continue
+		}
+		filtered.Add(target)
+	}
+	return filtered
+}
+
 // RunReadOnlySubAgentWithSession is the construction boundary for every
 // strictly read-only child loop. Registry filtering limits the visible surface;
 // this permanent execution flag also re-checks targets resolved dynamically by
-// proxy tools such as use_capability.
+// proxy tools such as use_capability. It never enables PlannerMCPExecution.
 func RunReadOnlySubAgentWithSession(ctx context.Context, prov provider.Provider, reg *tool.Registry, sess *Session, prompt string, opts Options, sink event.Sink) (string, error) {
 	reg, opts = readOnlyAgentConstruction(reg, opts)
 	return RunSubAgentWithSession(ctx, prov, reg, sess, prompt, opts, sink)

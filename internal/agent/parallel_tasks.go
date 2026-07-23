@@ -182,7 +182,7 @@ func (p *ParallelTasksTool) Execute(ctx context.Context, args json.RawMessage) (
 				doneCh <- subResult{index: idx, err: depthErr}
 				return
 			}
-			subReg := ReadOnlySubagentToolRegistryForDepth(p.taskTool.parentReg, t.Tools, childDepth, p.taskTool.maxDepth())
+			subReg := ReadOnlySubagentToolRegistryForDepthWithRuntime(p.taskTool.parentReg, t.Tools, childDepth, p.taskTool.maxDepth(), p.taskTool.capabilityRuntime)
 
 			max := p.taskTool.childMaxSteps(t.MaxSteps)
 

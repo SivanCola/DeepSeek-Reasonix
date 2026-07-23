@@ -153,7 +153,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 - rule 可以是 `Tool` 或 `Tool(specifier)`，例如 `Bash(go test:*)`、`Edit(docs/**)`。
 - 优先级为 `deny > ask > allow > fallback`；只读工具 fallback 为 Allow，写工具 fallback 使用 `Mode`。
 - 交互模式中的 Ask 由用户选择单次允许、session scope 允许、持久允许或拒绝；显式 Deny 在所有模式下都不可绕过。
-- 安装 MCP server 即授权其全部工具，不再有 server、raw tool、writer 或 destructive 的第二套审批策略；显式全局 `deny` 仍然优先。仓库声明的 server 在启动前只确认一次精确身份，身份变化时才重新确认。`readOnlyHint` 与 `destructiveHint` 仅用于调度、Plan/严格只读边界及缓存到实时安全分类复核，不会新增逐调用审批。
+- 安装 MCP server 即授权其全部工具，不再有 server、raw tool、writer 或 destructive 的第二套审批策略；显式全局 `deny` 仍然优先。仓库声明的 server 在启动前只确认一次精确身份，身份变化时才重新确认。`readOnlyHint` 与 `destructiveHint` 仅用于调度、Plan/严格只读边界及缓存到实时安全分类复核，不会新增逐调用审批。严格只读子智能体 registry 仍仅暴露已授权且 `readOnlyHint: true`、无 `destructiveHint` 的 MCP；双模型 Planner 通过固定 `use_capability` 代理（从不暴露直接 `mcp__*` schema）调用已授权、非 destructive 的 MCP，不再要求 `readOnlyHint`，destructive 工具留给 Executor。
 - Plan 是协作流程，不等于全工具只读。普通 built-in 与 Bash 仍走 Ask/Auto/YOLO 和 Sandbox；MCP 写入/破坏性目标及不受信任读取工具在规划阶段保持阻止。
 - Plan 只能由用户显式选择进入，与当前工具审批姿态相互独立；普通聊天不会自动切换到 Plan。Auto/YOLO 不会回答 `ask`，也不会替用户批准 `exit_plan_mode`，获批计划的短期自动执行窗口也不会自动批准后续计划。
 - 桌面端协作模式分为 `normal`、`plan` 和 `goal`。Goal 会持续推进目标，直到完成、同一阻塞状态重复三次、用户停止或达到安全续跑边界。只有用户在输入框中选择 Goal 或运行 `/goal` 显式启动后，长周期研究、调试、优化或实现目标才可启用 AutoResearch；普通聊天不会隐式切换协作模式，也不会创建持久化 AutoResearch 状态。动态状态保存在 `.reasonix/autoresearch/.../`。

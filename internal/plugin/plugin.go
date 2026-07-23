@@ -1779,6 +1779,14 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 			return "", nil, fmt.Errorf("MCP server %q changed the authorization or security metadata for tool %q; the call was blocked before dispatch — refresh the server from a parent session before retrying", t.client.name, t.rawName)
 		}
 	}
+	if tool.HasNonDestructiveMCPExecutionIntent(ctx) {
+		// Planner lane: authorized + non-destructive only. Missing readOnlyHint
+		// is intentional and does not block; destructive promotion or lost
+		// authorization must produce zero tools/call.
+		if !t.MCPServerAuthorized() || destructive {
+			return "", nil, fmt.Errorf("MCP server %q changed the authorization or destructive classification for tool %q; the call was blocked before dispatch — retry so Reasonix can re-apply the current Planner MCP safety boundary", t.client.name, t.rawName)
+		}
+	}
 	res, err := t.client.call(ctx, "tools/call", map[string]any{
 		"name":      t.rawName,
 		"arguments": argMap,

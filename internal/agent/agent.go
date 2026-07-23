@@ -309,6 +309,13 @@ type Agent struct {
 	// for the agent's lifetime and validates proxy calls after resolution.
 	readOnlyExecution bool
 
+	// plannerMCPExecution relaxes the strict read-only MCP boundary for the
+	// two-model Planner only: authorized, non-destructive MCP targets may run
+	// through use_capability even without readOnlyHint. Ordinary writers, bash,
+	// and destructive MCP stay blocked. Strict read-only sub-agents leave this
+	// false and still require readOnlyHint.
+	plannerMCPExecution bool
+
 	// gate, when non-nil, is the per-call permission gate for both standard and
 	// Plan workflows. nil disables gating entirely.
 	gate Gate
@@ -870,6 +877,11 @@ type Options struct {
 	// so a stale collaboration flag cannot authorize a dynamic writer target.
 	ReadOnlyExecution bool
 
+	// PlannerMCPExecution enables Planner-trusted MCP through use_capability:
+	// authorized, non-destructive tools may run without readOnlyHint. Only
+	// NewPlannerAgent sets this; strict read-only sub-agents must not.
+	PlannerMCPExecution bool
+
 	// PlanModeReadOnlyTrustGate is retained for legacy controller compatibility.
 	// The main Plan execution path no longer invokes it.
 	PlanModeReadOnlyTrustGate PlanModeReadOnlyTrustGate
@@ -1041,6 +1053,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		recoveryAgentID:       strings.TrimSpace(opts.RecoveryAgentID),
 		recoveryTaskID:        strings.TrimSpace(opts.RecoveryTaskID),
 		readOnlyExecution:     opts.ReadOnlyExecution,
+		plannerMCPExecution:   opts.PlannerMCPExecution,
 		planModeReadOnlyTrust: planModeReadOnlyTrust,
 		sandboxEscapeApprover: sandboxEscapeApprover,
 		configWriteApprover:   configWriteApprover,
@@ -2575,7 +2588,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) ([]
 		cancelled = true
 	}
 
-	for _, batch := range partitionToolCalls(a.tools, calls) {
+	for _, batch := range partitionToolCalls(a.tools, calls, a.plannerMCPExecution) {
 		if ctx.Err() != nil {
 			markCancelled(batch.start)
 			break
@@ -2719,14 +2732,16 @@ type toolCallBatch struct {
 // complete_step and todo_write read the turn's evidence ledger. wait and
 // bash_output can merge a background task's receipts into that ledger. These
 // evidence-sensitive tools never join a parallel run, so provider order stays
-// receipt order.
-func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallBatch {
+// receipt order. When serialCapabilityProxy is true (two-model Planner),
+// use_capability is always serial so unknown-classification remote MCP calls
+// cannot race each other; Executor parallel strategy is unchanged.
+func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall, serialCapabilityProxy bool) []toolCallBatch {
 	var batches []toolCallBatch
 	for i := 0; i < len(calls); {
-		if parallelisable(r, calls[i].Name) {
+		if parallelisable(r, calls[i].Name, serialCapabilityProxy) {
 			start := i
 			i++
-			for i < len(calls) && parallelisable(r, calls[i].Name) {
+			for i < len(calls) && parallelisable(r, calls[i].Name, serialCapabilityProxy) {
 				i++
 			}
 			batches = append(batches, toolCallBatch{start: start, end: i, parallel: true})
@@ -2738,10 +2753,14 @@ func partitionToolCalls(r *tool.Registry, calls []provider.ToolCall) []toolCallB
 	return batches
 }
 
-func parallelisable(r *tool.Registry, name string) bool {
+func parallelisable(r *tool.Registry, name string, serialCapabilityProxy bool) bool {
 	switch name {
 	case "complete_step", "todo_write", "wait", "bash_output":
 		return false
+	case "use_capability":
+		if serialCapabilityProxy {
+			return false
+		}
 	}
 	t, _, ambiguous := r.ResolveCall(name)
 	return t != nil && len(ambiguous) == 0 && t.ReadOnly()
@@ -3343,6 +3362,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if readOnly && isInstalledMCPTool(runTool) && mcpServerAuthorized(runTool) && !mcpDestructiveHint(runTool) {
 		cctx = tool.WithReaderExecutionIntent(cctx)
 	}
+	// Planner-trusted MCP: authorized + non-destructive, even without
+	// readOnlyHint. Final dispatch re-checks live authorization/destructiveHint.
+	if a.plannerMCPExecution && isMCPExecutionTarget(runTool, permName) && mcpServerAuthorized(runTool) && !mcpDestructiveHint(runTool) {
+		cctx = tool.WithNonDestructiveMCPExecutionIntent(cctx)
+	}
 	if it, ok := runTool.(tool.ImageTool); ok {
 		result, images, err = it.ExecuteWithImages(cctx, runArgs)
 	} else {
@@ -3485,7 +3509,26 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 			errMsg:  "blocked by read-only execution boundary",
 		}, true
 	}
+	// Destructive MCP is left for the Executor; Planner must not misread this
+	// as missing configuration or an unavailable MCP server.
+	blockDestructiveForExecutor := func(name string) (toolOutcome, bool) {
+		msg := "blocked: MCP capability " + name + " is destructive and is reserved for the Executor. Write the required operation into the plan/handoff so the Coordinator can hand it to the Executor; do not treat this as missing MCP configuration or an unavailable capability."
+		return toolOutcome{
+			output:  msg,
+			blocked: true,
+			errMsg:  "blocked: destructive MCP reserved for executor",
+		}, true
+	}
 	if resolved == nil {
+		if a.plannerMCPExecution && isMCPExecutionTarget(visible, "") {
+			if !mcpServerAuthorized(visible) {
+				return block("execute an MCP capability from an unauthorized server")
+			}
+			if readOnlyExecutionMCPDestructive(visible) {
+				return blockDestructiveForExecutor(visible.Name())
+			}
+			return toolOutcome{}, false
+		}
 		if visible == nil || !visible.ReadOnly() {
 			if reasoner, ok := visible.(tool.ReadOnlyExecutionBlockReason); ok && strings.TrimSpace(reasoner.ReadOnlyExecutionBlockReason()) != "" {
 				return block(reasoner.ReadOnlyExecutionBlockReason())
@@ -3505,7 +3548,7 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 	}
 
 	switch resolved.ProxyAction {
-	case "inspect":
+	case "list", "inspect":
 		if !resolved.SkipExecute || resolved.Target != nil || !resolved.ReadOnly {
 			return block("execute a malformed dynamic inspection")
 		}
@@ -3515,6 +3558,23 @@ func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.Resolve
 	case "call":
 		if resolved.Target == nil {
 			return block("execute an unresolved dynamic capability")
+		}
+		if a.plannerMCPExecution && plannerAllowsMCPTarget(resolved.Target, resolved.TargetName) {
+			if isMCPLifecycleConnectTarget(resolved.Target) {
+				if !plannerMCPConnectAllowed(resolved.Target) {
+					return block("start an unauthorized MCP server")
+				}
+			} else if !mcpServerAuthorized(resolved.Target) {
+				return block("execute an MCP capability from an unauthorized server")
+			}
+			if readOnlyExecutionMCPDestructive(resolved.Target) {
+				name := resolved.TargetName
+				if name == "" {
+					name = resolved.CapabilityID
+				}
+				return blockDestructiveForExecutor(name)
+			}
+			return toolOutcome{}, false
 		}
 		if !resolved.ReadOnly {
 			if reasoner, ok := resolved.Target.(tool.ReadOnlyExecutionBlockReason); ok && strings.TrimSpace(reasoner.ReadOnlyExecutionBlockReason()) != "" {
@@ -3553,6 +3613,46 @@ func readOnlyExecutionAllowsMCPStartup(t tool.Tool) bool {
 		return false
 	}
 	return true
+}
+
+// plannerAllowsMCPTarget reports whether a resolved use_capability target is an
+// MCP tool or lifecycle connect that Planner may consider under
+// PlannerMCPExecution (authorization and destructive checks run separately).
+func plannerAllowsMCPTarget(t tool.Tool, targetName string) bool {
+	if t == nil {
+		return false
+	}
+	if isInstalledMCPTool(t) || isMCPLifecycleConnectTarget(t) {
+		return true
+	}
+	return isMCPExecutionTarget(t, targetName)
+}
+
+// isMCPLifecycleConnectTarget identifies on-demand MCP connect-and-list targets
+// (mcp_connect__<server>) used by use_capability action=call on mcp-server ids.
+func isMCPLifecycleConnectTarget(t tool.Tool) bool {
+	if t == nil {
+		return false
+	}
+	if _, ok := t.(mcpLifecycleConnect); ok {
+		return true
+	}
+	name := strings.TrimSpace(t.Name())
+	return strings.HasPrefix(name, "mcp_connect__")
+}
+
+// mcpLifecycleConnect is implemented by deferred connect targets so Planner
+// can authorize lifecycle actions without relying on name prefixes alone.
+type mcpLifecycleConnect interface {
+	MCPLifecycleConnect() bool
+	MCPServerAuthorized() bool
+}
+
+func plannerMCPConnectAllowed(t tool.Tool) bool {
+	if life, ok := t.(mcpLifecycleConnect); ok {
+		return life.MCPServerAuthorized()
+	}
+	return mcpServerAuthorized(t)
 }
 
 func isInstalledMCPTool(t tool.Tool) bool {

@@ -10,7 +10,7 @@ type ToolItem = Extract<Item, { kind: "tool" }>;
 export type ToolGroupKind = "explore" | "modify" | "delegate" | "shell";
 
 const SHELL_TOOLS = new Set(["bash", "bash_output", "wait", "waitJob", "kill_shell"]);
-const EXPLORE_TOOLS = new Set(["read_file", "ls", "grep", "glob", "web_fetch", "code_index", "read_skill", "connect_tool_source"]);
+const EXPLORE_TOOLS = new Set(["read_file", "ls", "grep", "glob", "web_fetch", "code_index", "read_skill", "connect_tool_source", "use_capability"]);
 const MODIFY_TOOLS = new Set(["write_file", "edit_file", "multi_edit", "move_file", "delete_range", "delete_symbol", "notebook_edit"]);
 const DELEGATE_TOOLS = new Set(["task", "run_skill", "explore", "research", "review", "security_review"]);
 
@@ -102,6 +102,7 @@ function toolDisplayName(name: string): string {
     case "kill_shell": return "Kill Shell";
     case "wait":
     case "waitJob": return "Wait";
+    case "use_capability": return "MCP";
     default: return titleCaseName(name);
   }
 }

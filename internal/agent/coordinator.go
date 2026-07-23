@@ -53,10 +53,17 @@ option: recommended safe/default choice
 option: alternative choice
 </planner-ask>
 
-Crucial: You only have read-only tools. You do NOT have bash, execute, or
-side-effect tools — those belong to the executor. Never question or dwell
-on the lack of execution tools; it is by design. Just plan what the executor
+Crucial: You only have research tools plus the stable use_capability proxy for
+authorized MCP. You do NOT have bash, execute, file writers, or other
+side-effect tools — those belong to the executor. Never question or dwell on
+the lack of execution tools; it is by design. Just plan what the executor
 should do with its tools.
+
+When you need external real data and the capability route does not name a
+specific tool, call use_capability(action="list") first to see configured MCP
+servers, then inspect or call a non-destructive capability. If a capability is
+destructive, do not treat that as missing configuration or an unavailable MCP:
+write the operation into the plan for the executor instead.
 
 If your research shows the task needs no changes and no actions at all (already
 implemented, already resolved), explain that briefly and end your reply with a
@@ -128,7 +135,7 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 		plannerOptions.Temperature = temperature
 		plannerOptions.Pricing = plannerPricing
 		plannerOptions.UsageSource = event.UsageSourcePlanner
-		plannerAgent = NewReadOnlyAgent(planner, plannerTools, plannerSession, plannerOptions, plannerSink(sink))
+		plannerAgent = NewPlannerAgent(planner, plannerTools, plannerSession, plannerOptions, plannerSink(sink))
 	}
 	if executor != nil {
 		executor.executorHandoffGuard = true
@@ -175,6 +182,16 @@ func (c *Coordinator) ResetPlannerSession() {
 	if c.plannerAgent != nil {
 		c.plannerAgent.SetSession(next)
 	}
+}
+
+// PlannerAgent returns the tool-enabled planner agent, if any. Controllers use
+// it to seed turn-scoped capability routes without coupling to Coordinator
+// internals beyond this accessor.
+func (c *Coordinator) PlannerAgent() *Agent {
+	if c == nil {
+		return nil
+	}
+	return c.plannerAgent
 }
 
 // SetReasoningLanguage updates both agents in two-model mode. The raw planner

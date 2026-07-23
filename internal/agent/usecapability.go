@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -14,12 +15,74 @@ import (
 	"reasonix/internal/tool"
 )
 
-// UseCapabilityTool is the Delivery-only stable proxy for inspecting, calling,
-// or declining catalog capabilities. Call never adds dynamic MCP tools to the
-// main registry — subsequent calls keep using this stable schema.
-type UseCapabilityTool struct {
-	mu sync.Mutex
+// MCPCapabilityRuntime is the session-shared MCP substrate: Host, boot specs,
+// provider-visible registry for already-registered tools, schema cache catalog,
+// and live connection snapshots. Each agent (executor, planner, task/fleet
+// child) gets its own UseCapabilityTool frontend so ledger/audit never cross
+// agent boundaries, while process connections remain on the shared Host.
+type MCPCapabilityRuntime struct {
+	lifeCtx  context.Context
+	host     *plugin.Host
+	specs    []plugin.Spec
+	registry *tool.Registry
+	catalog  func() capability.Catalog
+	// shared connection observation across all frontends on this session.
+	state *mcpProxySharedState
+}
 
+type mcpProxySharedState struct {
+	mu        sync.Mutex
+	connected map[string]bool
+	liveTools map[string][]plugin.CachedTool
+}
+
+// NewMCPCapabilityRuntime builds the session-shared MCP substrate. lifeCtx owns
+// on-demand MCP child process lifetimes; specs must be the boot-converted specs.
+func NewMCPCapabilityRuntime(lifeCtx context.Context, host *plugin.Host, specs []plugin.Spec, reg *tool.Registry, catalog func() capability.Catalog) *MCPCapabilityRuntime {
+	return &MCPCapabilityRuntime{
+		lifeCtx:  lifeCtx,
+		host:     host,
+		specs:    append([]plugin.Spec(nil), specs...),
+		registry: reg,
+		catalog:  catalog,
+		state:    &mcpProxySharedState{connected: map[string]bool{}},
+	}
+}
+
+// NewFrontend returns a per-agent use_capability instance. ledger/audit may be
+// nil for ordinary sub-agents that do not run Delivery capability gates.
+func (r *MCPCapabilityRuntime) NewFrontend(ledger *capability.Ledger, audit *capability.Audit) *UseCapabilityTool {
+	if r == nil {
+		return NewUseCapabilityTool(context.Background(), nil, nil, nil, ledger, audit, nil)
+	}
+	return &UseCapabilityTool{
+		host:     r.host,
+		lifeCtx:  r.lifeCtx,
+		specs:    r.specs,
+		registry: r.registry,
+		ledger:   ledger,
+		audit:    audit,
+		catalog:  r.catalog,
+		state:    r.state,
+	}
+}
+
+// ConnectedProxyTools returns live tool metadata for servers connected through
+// any frontend on this runtime, keyed by server name.
+func (r *MCPCapabilityRuntime) ConnectedProxyTools() map[string][]plugin.CachedTool {
+	if r == nil || r.state == nil {
+		return nil
+	}
+	return r.state.snapshotLiveTools()
+}
+
+// UseCapabilityTool is the stable MCP capability proxy for Delivery, the
+// two-model Planner, and task/fleet sub-agents. It lists, inspects, calls, or
+// declines catalog capabilities without adding dynamic MCP tools to the
+// provider-visible registry — subsequent calls keep using this stable schema.
+// Multiple frontends may share one MCPCapabilityRuntime (Host + connection
+// state) while keeping independent ledger/audit.
+type UseCapabilityTool struct {
 	host *plugin.Host
 	// lifeCtx is the session-scoped context that owns on-demand MCP child
 	// processes (mirrors lazySpawn.ctx): a proxied server must outlive the tool
@@ -34,50 +97,71 @@ type UseCapabilityTool struct {
 	ledger   *capability.Ledger
 	audit    *capability.Audit
 	catalog  func() capability.Catalog
-	// proxyClients holds on-demand connected clients that must not pollute the
-	// provider-visible registry. Tools are looked up via host.ToolsFor.
-	connected map[string]bool
-	// liveTools snapshots raw tool metadata of proxy-connected servers so the
-	// capability catalog keeps concrete mcp-tool entries after a server turns
-	// ready — the tools deliberately never enter the provider-visible registry.
-	liveTools map[string][]plugin.CachedTool
+	// state is session-shared connection observation when built via
+	// MCPCapabilityRuntime; nil falls back to a private map for tests.
+	state *mcpProxySharedState
 }
 
-// NewUseCapabilityTool builds the Delivery-only capability proxy. lifeCtx is
-// the session-scoped context that owns on-demand MCP subprocess lifetimes;
-// specs must be the same boot-converted specs used for auto-started servers.
+// NewUseCapabilityTool builds a standalone capability proxy (tests and simple
+// boots). Prefer MCPCapabilityRuntime.NewFrontend when multiple agents share
+// one session Host.
 func NewUseCapabilityTool(lifeCtx context.Context, host *plugin.Host, specs []plugin.Spec, reg *tool.Registry, ledger *capability.Ledger, audit *capability.Audit, catalog func() capability.Catalog) *UseCapabilityTool {
 	return &UseCapabilityTool{
-		host:      host,
-		lifeCtx:   lifeCtx,
-		specs:     append([]plugin.Spec(nil), specs...),
-		registry:  reg,
-		ledger:    ledger,
-		audit:     audit,
-		catalog:   catalog,
-		connected: map[string]bool{},
+		host:     host,
+		lifeCtx:  lifeCtx,
+		specs:    append([]plugin.Spec(nil), specs...),
+		registry: reg,
+		ledger:   ledger,
+		audit:    audit,
+		catalog:  catalog,
+		state:    &mcpProxySharedState{connected: map[string]bool{}},
+	}
+}
+
+// CloneForAgent returns a new frontend sharing Host/specs/connection state but
+// with independent ledger and audit (nil unless provided).
+func (t *UseCapabilityTool) CloneForAgent(ledger *capability.Ledger, audit *capability.Audit) *UseCapabilityTool {
+	if t == nil {
+		return nil
+	}
+	state := t.state
+	if state == nil {
+		state = &mcpProxySharedState{connected: map[string]bool{}}
+	}
+	return &UseCapabilityTool{
+		host:     t.host,
+		lifeCtx:  t.lifeCtx,
+		specs:    t.specs,
+		registry: t.registry,
+		ledger:   ledger,
+		audit:    audit,
+		catalog:  t.catalog,
+		state:    state,
 	}
 }
 
 func (*UseCapabilityTool) Name() string { return "use_capability" }
 
 func (*UseCapabilityTool) Description() string {
-	return "Delivery profile capability proxy: inspect Skill/MCP metadata, call MCP tools (including auto_start=false servers) without changing the provider tool schema, or decline a prefer capability with a non-empty reason. Skills still use run_skill; this tool only proxies MCP calls."
+	return "Stable capability proxy: list configured MCP servers without starting them, inspect Skill/MCP metadata, call MCP tools (including auto_start=false servers) without changing the provider tool schema, or decline a prefer capability with a non-empty reason. Skills still use run_skill; this tool only proxies MCP. The Planner leaves destructive MCP for the Executor; ordinary writer-capable agents use normal permission rules for destructive tools."
 }
 
 func (*UseCapabilityTool) ReadOnly() bool { return true }
 
 func (*UseCapabilityTool) Schema() json.RawMessage {
 	// Stable schema — must not change across turns or when MCP connects.
+	// capability_id is optional only for action=list; inspect/call/decline still
+	// require it at resolve time. One intentional prefix upgrade; thereafter
+	// install/connect churn does not change this schema.
 	return json.RawMessage(`{
 		"type":"object",
 		"properties":{
-			"action":{"type":"string","description":"inspect | call | decline"},
-			"capability_id":{"type":"string","description":"Capability id such as skill:review, mcp-server:github, or mcp-tool:github/search_issues"},
+			"action":{"type":"string","description":"list | inspect | call | decline"},
+			"capability_id":{"type":"string","description":"Capability id such as skill:review, mcp-server:github, or mcp-tool:github/search_issues. Not required for action=list."},
 			"arguments":{"type":"object","description":"Raw MCP tool arguments for action=call"},
 			"reason":{"type":"string","description":"Required non-empty reason when action=decline"}
 		},
-		"required":["action","capability_id"]
+		"required":["action"]
 	}`)
 }
 
@@ -95,9 +179,6 @@ func (t *UseCapabilityTool) ResolveCall(ctx context.Context, args json.RawMessag
 	}
 	action := strings.ToLower(strings.TrimSpace(p.Action))
 	id := strings.TrimSpace(p.CapabilityID)
-	if id == "" {
-		return tool.ResolvedCall{}, fmt.Errorf("capability_id is required")
-	}
 	base := tool.ResolvedCall{
 		DisplayName:  "use_capability",
 		ProxyAction:  action,
@@ -105,7 +186,25 @@ func (t *UseCapabilityTool) ResolveCall(ctx context.Context, args json.RawMessag
 		Args:         p.Arguments,
 	}
 	switch action {
+	case "list":
+		out, err := t.listServers()
+		if err != nil {
+			if t.audit != nil {
+				t.audit.RecordMCPProxy(true, false, true)
+			}
+			return tool.ResolvedCall{}, err
+		}
+		if t.audit != nil {
+			t.audit.RecordMCPProxy(true, false, false)
+		}
+		base.SkipExecute = true
+		base.Result = out
+		base.ReadOnly = true
+		return base, nil
 	case "inspect":
+		if id == "" {
+			return tool.ResolvedCall{}, fmt.Errorf("capability_id is required for action=inspect")
+		}
 		out, err := t.inspect(ctx, id)
 		if err != nil {
 			if t.audit != nil {
@@ -121,6 +220,9 @@ func (t *UseCapabilityTool) ResolveCall(ctx context.Context, args json.RawMessag
 		base.ReadOnly = true
 		return base, nil
 	case "decline":
+		if id == "" {
+			return tool.ResolvedCall{}, fmt.Errorf("capability_id is required for action=decline")
+		}
 		reason := strings.TrimSpace(p.Reason)
 		if reason == "" {
 			return tool.ResolvedCall{}, fmt.Errorf("reason is required for action=decline")
@@ -148,9 +250,12 @@ func (t *UseCapabilityTool) ResolveCall(ctx context.Context, args json.RawMessag
 		}
 		return base, nil
 	case "call":
+		if id == "" {
+			return tool.ResolvedCall{}, fmt.Errorf("capability_id is required for action=call")
+		}
 		return t.resolveCall(ctx, id, p.Arguments, base)
 	default:
-		return tool.ResolvedCall{}, fmt.Errorf("unknown action %q; use inspect, call, or decline", p.Action)
+		return tool.ResolvedCall{}, fmt.Errorf("unknown action %q; use list, inspect, call, or decline", p.Action)
 	}
 }
 
@@ -204,6 +309,69 @@ func (t *UseCapabilityTool) Execute(ctx context.Context, args json.RawMessage) (
 		t.ledger.MarkSucceeded(resolved.CapabilityID)
 	}
 	return out, nil
+}
+
+// listServerInfo is one configured MCP server entry returned by action=list.
+// It never starts a server or opens a network connection.
+type listServerInfo struct {
+	Name         string `json:"name"`
+	CapabilityID string `json:"capability_id"`
+	Status       string `json:"status"`
+	Authorized   bool   `json:"authorized"`
+	Connected    bool   `json:"connected"`
+}
+
+// listServers returns sorted configured MCP server names, status, and
+// capability IDs without starting servers. Used by Planner discovery when no
+// specific capability route was provided.
+func (t *UseCapabilityTool) listServers() (string, error) {
+	list := make([]listServerInfo, 0, len(t.specs))
+	seen := map[string]bool{}
+	names := make([]string, 0, len(t.specs))
+	byName := map[string]listServerInfo{}
+	for _, spec := range t.specs {
+		name := strings.TrimSpace(spec.Name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		// Apply stored project grants without process/network side effects so
+		// list status matches resolve/execute authorization.
+		resolved := plugin.ResolveStoredAuthorization(context.Background(), spec)
+		connected := t.host != nil && t.host.HasClient(name)
+		status := "configured"
+		if connected {
+			status = "ready"
+		} else if t.host != nil {
+			for _, f := range t.host.Failures() {
+				if f.Name == name && strings.TrimSpace(f.Error) != "" {
+					status = "failed"
+					break
+				}
+			}
+		}
+		authorized := resolved.ServerAuthorized() || !resolved.RequireLaunchApproval
+		names = append(names, name)
+		byName[name] = listServerInfo{
+			Name:         name,
+			CapabilityID: "mcp-server:" + name,
+			Status:       status,
+			Authorized:   authorized,
+			Connected:    connected,
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		list = append(list, byName[name])
+	}
+	b, err := json.MarshalIndent(map[string]any{
+		"servers": list,
+		"note":    "list does not start MCP servers. Call action=call on mcp-server:<name> to connect after authorization, or mcp-tool:<server>/<tool> for a concrete tool.",
+	}, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func (t *UseCapabilityTool) inspect(ctx context.Context, id string) (string, error) {
@@ -450,7 +618,15 @@ func (o *onDemandMCPTool) ReadOnly() bool {
 
 func (o *onDemandMCPTool) ReadOnlyExecutionHostMutation() bool { return true }
 
-func (o *onDemandMCPTool) MCPServerAuthorized() bool { return o.spec.ServerAuthorized() }
+func (o *onDemandMCPTool) MCPServerAuthorized() bool {
+	// Project servers need an exact identity grant. User-installed and host-
+	// session servers never set RequireLaunchApproval; production boot also sets
+	// Authorized, but tests may omit the flag while still representing installs.
+	if !o.spec.RequireLaunchApproval {
+		return true
+	}
+	return o.spec.ServerAuthorized()
+}
 
 func (o *onDemandMCPTool) ReadOnlyExecutionBlockReason() string {
 	return "connect this MCP capability from a parent session first"
@@ -465,6 +641,14 @@ func (o *onDemandMCPTool) MCPDestructiveHint() bool {
 }
 
 func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	// Final authorization check before any process/network start.
+	if !o.MCPServerAuthorized() {
+		msg := fmt.Sprintf("MCP server %q is not authorized; complete project identity approval before connecting", o.server)
+		if o.proxy.ledger != nil {
+			o.proxy.ledger.MarkUnavailable("mcp-tool:"+o.server+"/"+o.raw, msg)
+		}
+		return "", fmt.Errorf("%s", msg)
+	}
 	tools, err := o.proxy.ensureServerTools(ctx, o.server)
 	if err != nil {
 		// Audit for the call path is recorded once by the agent loop
@@ -488,6 +672,13 @@ func (o *onDemandMCPTool) Execute(ctx context.Context, args json.RawMessage) (st
 	}, target); err != nil {
 		return "", err
 	}
+	// Planner non-destructive lane and reader lane: re-check live metadata
+	// before tools/call even when Reconcile did not see a cache promotion.
+	if tool.HasNonDestructiveMCPExecutionIntent(ctx) {
+		if !mcpServerAuthorized(target) || mcpDestructiveHint(target) {
+			return "", fmt.Errorf("MCP server %q changed the authorization or destructive classification for tool %q; the call was blocked before dispatch — retry so Reasonix can re-apply the current Planner MCP safety boundary", o.server, o.raw)
+		}
+	}
 	return target.Execute(ctx, args)
 }
 
@@ -507,6 +698,18 @@ func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string
 	if !ok {
 		return nil, fmt.Errorf("MCP server %q is not configured", server)
 	}
+	// Apply stored project grants, then refuse unauthorized project servers
+	// before any process or network start. User-installed servers
+	// (!RequireLaunchApproval) are trusted by install; mark them Authorized so
+	// live tools report MCPServerAuthorized consistently for dispatch checks.
+	// Explicit deny on mcp_connect__* is enforced by the permission gate before
+	// Execute reaches here.
+	spec = plugin.ResolveStoredAuthorization(ctx, spec)
+	if !spec.RequireLaunchApproval {
+		spec.Authorized = true
+	} else if !spec.ServerAuthorized() {
+		return nil, fmt.Errorf("MCP server %q is not authorized; complete project identity approval before connecting", server)
+	}
 	// On-demand connect: the handshake gets a short budget, but the child
 	// process lifetime belongs to the session-scoped lifeCtx — canceling the
 	// handshake context after connect must not kill a stdio server the tool
@@ -525,16 +728,14 @@ func (t *UseCapabilityTool) ensureServerTools(ctx context.Context, server string
 		t.host.RecordFailure(spec, err)
 		return nil, fmt.Errorf("connect %q: %w", server, err)
 	}
-	t.mu.Lock()
-	t.connected[server] = true
-	t.mu.Unlock()
-	// Intentionally do NOT add tools to t.registry — Delivery schema stays stable.
+	t.ensureState().markConnected(server)
+	// Intentionally do NOT add tools to t.registry — provider schema stays stable.
 	_ = tools
 	return t.serverTools(ctx, server)
 }
 
 // serverTools fetches the live tools for a connected server and refreshes the
-// proxy's catalog snapshot so mcp-tool entries stay routable once the server
+// shared catalog snapshot so mcp-tool entries stay routable once the server
 // is StatusReady (its tools are absent from the provider-visible registry).
 func (t *UseCapabilityTool) serverTools(ctx context.Context, server string) ([]tool.Tool, error) {
 	tools, err := t.host.ToolsFor(ctx, server)
@@ -555,27 +756,67 @@ func (t *UseCapabilityTool) serverTools(ctx context.Context, server string) ([]t
 			Destructive: mcpDestructiveHint(tl),
 		})
 	}
-	t.mu.Lock()
-	if t.liveTools == nil {
-		t.liveTools = map[string][]plugin.CachedTool{}
-	}
-	t.liveTools[server] = snap
-	t.mu.Unlock()
+	t.ensureState().setLiveTools(server, snap)
 	return tools, nil
 }
 
 // ConnectedProxyTools returns raw tool metadata for servers connected through
-// the proxy, keyed by server name. Catalog builders consume it so concrete
-// mcp-tool capabilities survive an on-demand connect without ever touching
-// the provider-visible registry.
+// any frontend sharing this proxy state, keyed by server name. Catalog builders
+// consume it so concrete mcp-tool capabilities survive an on-demand connect
+// without ever touching the provider-visible registry.
 func (t *UseCapabilityTool) ConnectedProxyTools() map[string][]plugin.CachedTool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if len(t.liveTools) == 0 {
+	if t == nil {
 		return nil
 	}
-	out := make(map[string][]plugin.CachedTool, len(t.liveTools))
-	for k, v := range t.liveTools {
+	return t.ensureState().snapshotLiveTools()
+}
+
+func (t *UseCapabilityTool) ensureState() *mcpProxySharedState {
+	if t.state == nil {
+		t.state = &mcpProxySharedState{connected: map[string]bool{}}
+	}
+	return t.state
+}
+
+func (s *mcpProxySharedState) markConnected(server string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.connected == nil {
+		s.connected = map[string]bool{}
+	}
+	s.connected[server] = true
+}
+
+func (s *mcpProxySharedState) setLiveTools(server string, snap []plugin.CachedTool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.liveTools == nil {
+		s.liveTools = map[string][]plugin.CachedTool{}
+	}
+	s.liveTools[server] = snap
+	if s.connected == nil {
+		s.connected = map[string]bool{}
+	}
+	s.connected[server] = true
+}
+
+func (s *mcpProxySharedState) snapshotLiveTools() map[string][]plugin.CachedTool {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.liveTools) == 0 {
+		return nil
+	}
+	out := make(map[string][]plugin.CachedTool, len(s.liveTools))
+	for k, v := range s.liveTools {
 		out[k] = append([]plugin.CachedTool(nil), v...)
 	}
 	return out
@@ -613,7 +854,8 @@ func parseMCPServerCapabilityID(id string) (string, bool) {
 // resolveServerConnect resolves action=call on an mcp-server id. A connected
 // server lists its tools immediately (side-effect free); an unconnected one
 // resolves to a deferred connect target that runs only after the permission
-// gate and PreToolUse hooks approve it.
+// gate and PreToolUse hooks approve it. Stored project authorization is applied
+// at resolve time so unauthorized project MCP never reaches process startup.
 func (t *UseCapabilityTool) resolveServerConnect(ctx context.Context, server string, base tool.ResolvedCall) (tool.ResolvedCall, error) {
 	id := "mcp-server:" + server
 	if t.host != nil && t.host.HasClient(server) {
@@ -630,15 +872,16 @@ func (t *UseCapabilityTool) resolveServerConnect(ctx context.Context, server str
 	if !ok {
 		return t.resolveUnavailable(base, id, plugin.ToolPrefix(server), fmt.Sprintf("MCP server %q is not configured", server)), nil
 	}
+	spec = plugin.ResolveStoredAuthorization(ctx, spec)
 	connect := &onDemandMCPConnect{proxy: t, spec: spec, server: server}
 	base.Target = connect
 	// A dedicated exact identity names the connect for permission and hook
 	// rules. It cannot collide with a real mcp__ tool, and rules do not need to
 	// rely on unsupported tool-name glob matching.
 	base.TargetName = connect.Name()
-	// Connecting spawns a subprocess, so it is never a read-only fast path.
-	// The active Permissions gate decides before any process starts, including
-	// while the parent is in Plan.
+	// Connecting spawns a subprocess, so it is never a read-only fast path for
+	// ordinary Plan/strict agents. PlannerMCPExecution may allow authorized
+	// connects; unauthorized specs are blocked before process/network start.
 	base.ReadOnly = false
 	base.Args = json.RawMessage(`{}`)
 	return base, nil
@@ -662,7 +905,38 @@ func (o *onDemandMCPConnect) Schema() json.RawMessage { return json.RawMessage(`
 
 func (o *onDemandMCPConnect) ReadOnly() bool { return false }
 
+// MCPLifecycleConnect marks this target as an MCP connect-and-list lifecycle
+// action for Planner authorization (not a remote tools/call).
+func (o *onDemandMCPConnect) MCPLifecycleConnect() bool { return true }
+
+func (o *onDemandMCPConnect) MCPServerAuthorized() bool {
+	if !o.spec.RequireLaunchApproval {
+		return true
+	}
+	return o.spec.ServerAuthorized()
+}
+
+func (o *onDemandMCPConnect) MCPServerName() string { return o.server }
+
+func (o *onDemandMCPConnect) ReadOnlyExecutionHostMutation() bool { return true }
+
+func (o *onDemandMCPConnect) ReadOnlyExecutionBlockReason() string {
+	if o.spec.RequireLaunchApproval && !o.spec.ServerAuthorized() {
+		return "start an unauthorized MCP server (complete project identity approval first)"
+	}
+	return "connect this MCP server from a parent session first"
+}
+
 func (o *onDemandMCPConnect) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
+	// Zero process/network start when project authorization is missing or was
+	// revoked after resolve.
+	if o.spec.RequireLaunchApproval && !o.spec.ServerAuthorized() {
+		msg := fmt.Sprintf("MCP server %q is not authorized; complete project identity approval before connecting", o.server)
+		if o.proxy.ledger != nil {
+			o.proxy.ledger.MarkUnavailable("mcp-server:"+o.server, msg)
+		}
+		return "", fmt.Errorf("%s", msg)
+	}
 	if _, err := o.proxy.ensureServerTools(ctx, o.server); err != nil {
 		if o.proxy.ledger != nil {
 			o.proxy.ledger.MarkUnavailable("mcp-server:"+o.server, err.Error())

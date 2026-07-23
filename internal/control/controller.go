@@ -147,14 +147,21 @@ type Controller struct {
 	mcpDefaultCallTimeout time.Duration
 	mcpConfigureSpec      func(*plugin.Spec)
 
-	// Capability routing (Delivery hybrid route). Not part of the provider-visible
-	// prefix; only seeds the turn-scoped ledger and optional semantic router.
+	// Capability routing (Delivery hybrid route + dual-model Planner proxy).
+	// Not part of the provider-visible prefix; only seeds the turn-scoped ledger
+	// and optional semantic router.
 	pluginCfg       []config.PluginEntry
 	capCachedTools  map[string][]plugin.CachedTool
 	capCacheKeyOK   map[string]bool
 	semanticRouter  *capability.SemanticRouter
 	capabilityAudit *capability.Audit
-	runtimeProfile  capability.Profile
+	// capabilityProxy directs unready MCP candidates to use_capability in the
+	// transient route block (Delivery and dual-model Planner).
+	capabilityProxy bool
+	// proxyToolsFn returns live tools observed through use_capability without
+	// entering the provider-visible registry (Balanced dual-model Planner).
+	proxyToolsFn   func() map[string][]plugin.CachedTool
+	runtimeProfile capability.Profile
 
 	// goals owns the active goal's FSM (status, intercepts, idle/turn counters)
 	// and its persistence, behind its own mutex so a per-turn goal save never

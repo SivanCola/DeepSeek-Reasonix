@@ -140,7 +140,7 @@ func TestPartitionToolCallsAllReadOnly(t *testing.T) {
 	reg.Add(fakeTool{name: "ro1", readOnly: true})
 	reg.Add(fakeTool{name: "ro2", readOnly: true})
 	calls := []provider.ToolCall{{Name: "ro1"}, {Name: "ro2"}}
-	got := partitionToolCalls(reg, calls)
+	got := partitionToolCalls(reg, calls, false)
 	want := []toolCallBatch{{start: 0, end: 2, parallel: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("partitionToolCalls = %+v, want %+v", got, want)
@@ -154,7 +154,7 @@ func TestPartitionToolCallsSegmentsAroundWriters(t *testing.T) {
 	reg.Add(fakeTool{name: "ro", readOnly: true})
 	reg.Add(fakeTool{name: "rw", readOnly: false})
 	calls := []provider.ToolCall{{Name: "ro"}, {Name: "rw"}, {Name: "ro"}}
-	got := partitionToolCalls(reg, calls)
+	got := partitionToolCalls(reg, calls, false)
 	want := []toolCallBatch{
 		{start: 0, end: 1, parallel: true},
 		{start: 1, end: 2},
@@ -171,7 +171,7 @@ func TestPartitionToolCallsUnknownToolSerial(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "ro", readOnly: true})
 	calls := []provider.ToolCall{{Name: "ro"}, {Name: "vanished"}, {Name: "ro"}}
-	got := partitionToolCalls(reg, calls)
+	got := partitionToolCalls(reg, calls, false)
 	want := []toolCallBatch{
 		{start: 0, end: 1, parallel: true},
 		{start: 1, end: 2},
@@ -191,7 +191,7 @@ func TestPartitionToolCallsCompleteStepSerial(t *testing.T) {
 	reg.Add(fakeTool{name: "complete_step", readOnly: true})
 
 	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "complete_step"}}
-	got := partitionToolCalls(reg, calls)
+	got := partitionToolCalls(reg, calls, false)
 	want := []toolCallBatch{
 		{start: 0, end: 1, parallel: true},
 		{start: 1, end: 2},
@@ -207,7 +207,7 @@ func TestPartitionToolCallsTodoWriteSerial(t *testing.T) {
 	reg.Add(fakeTool{name: "todo_write", readOnly: true})
 
 	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "todo_write"}, {Name: "read_file"}}
-	got := partitionToolCalls(reg, calls)
+	got := partitionToolCalls(reg, calls, false)
 	want := []toolCallBatch{
 		{start: 0, end: 1, parallel: true},
 		{start: 1, end: 2},
@@ -225,7 +225,7 @@ func TestPartitionToolCallsBackgroundCollectorsSerial(t *testing.T) {
 	reg.Add(fakeTool{name: "bash_output", readOnly: true})
 
 	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "wait"}, {Name: "bash_output"}, {Name: "read_file"}}
-	got := partitionToolCalls(reg, calls)
+	got := partitionToolCalls(reg, calls, false)
 	want := []toolCallBatch{
 		{start: 0, end: 1, parallel: true},
 		{start: 1, end: 2},

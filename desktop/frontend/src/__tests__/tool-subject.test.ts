@@ -19,6 +19,12 @@ console.log("\ntool subject contract");
 
 eq(subjectOf("task", JSON.stringify({ description: "audit docs" })), "audit docs", "task subject uses description");
 eq(subjectOf("run_skill", JSON.stringify({ name: "code-reviewer", arguments: "review this branch" })), "code-reviewer", "run_skill subject uses skill name");
+eq(
+  subjectOf("use_capability", JSON.stringify({ action: "call", capability_id: "mcp-tool:github/search_issues" })),
+  "mcp-tool:github/search_issues",
+  "use_capability subject uses capability_id",
+);
+eq(subjectOf("use_capability", JSON.stringify({ action: "list" })), "list", "use_capability list falls back to action");
 
 if (failed) {
   process.stdout.write(`\n${failed} failed, ${passed} passed\n`);
