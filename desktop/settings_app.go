@@ -1163,24 +1163,6 @@ func (a *App) applyConfigOnly(mutate func(*config.Config) error) error {
 	return cfg.SaveTo(path)
 }
 
-func (a *App) persistDefaultModelForRoot(root, ref string) error {
-	unlock := config.LockUserConfigEdits()
-	defer unlock()
-	cfg, path, err := a.loadDesktopUserConfigForEditForRoot(root)
-	if err != nil {
-		return err
-	}
-	resolved, err := selectableDesktopModelRef(cfg, ref)
-	if err != nil {
-		return err
-	}
-	if cfg.DefaultModel == resolved {
-		return nil
-	}
-	cfg.DefaultModel = resolved
-	return cfg.SaveTo(path)
-}
-
 func (a *App) ensureActiveTabRebuildAllowed(setting string) error {
 	tab := a.activeTab()
 	if tab == nil {

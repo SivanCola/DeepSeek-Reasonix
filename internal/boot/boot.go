@@ -1575,10 +1575,6 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 
-	balanceURL := ""
-	if entry.ShowsWalletBalance() {
-		balanceURL = entry.BalanceURL
-	}
 	ctrlOpts := control.Options{
 		Runner:                runner,
 		Executor:              executor,
@@ -1601,7 +1597,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Hooks:                 hookRunner,
 		Memory:                mem,
 		Cleanup:               cleanup,
-		BalanceURL:            balanceURL,
+		BalanceURL:            entry.BalanceURL,
 		BalanceKey:            entry.APIKey(),
 		BalanceClient:         balanceClient,
 		Jobs:                  jm,

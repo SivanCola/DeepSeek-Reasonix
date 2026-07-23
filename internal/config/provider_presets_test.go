@@ -179,7 +179,7 @@ func TestCuratedProviderPresetCapabilities(t *testing.T) {
 	if !ok {
 		t.Fatal("kimi-cn provider missing")
 	}
-	if kimiCN.DefaultModel() != "kimi-k2.7-code" || !kimiCN.HasVisionModel("kimi-k2.7-code-highspeed") || kimiCN.BalanceURL != "" {
+	if kimiCN.DefaultModel() != "kimi-k2.7-code" || !kimiCN.HasVisionModel("kimi-k2.7-code-highspeed") || kimiCN.BalanceURL == "" {
 		t.Fatalf("kimi-cn capability mismatch: %+v", kimiCN)
 	}
 	kimiGlobal, ok := cfg.Provider("kimi-global")
@@ -479,45 +479,6 @@ func TestCuratedProviderPresetDeepSeekReasoningProtocolScope(t *testing.T) {
 			}
 			if got := ReasoningProtocolForEntry(entry); got != tc.want {
 				t.Fatalf("ReasoningProtocolForEntry(%q) = %q, want %q", tc.ref, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestProviderEntryShowsWalletBalanceOnlyForOfficialDeepSeekFlashAndPro(t *testing.T) {
-	tests := []struct {
-		name  string
-		entry ProviderEntry
-		want  bool
-	}{
-		{
-			name:  "official flash",
-			entry: ProviderEntry{BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", BalanceURL: "https://api.deepseek.com/user/balance"},
-			want:  true,
-		},
-		{
-			name:  "official pro",
-			entry: ProviderEntry{BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro", BalanceURL: "https://api.deepseek.com/user/balance"},
-			want:  true,
-		},
-		{
-			name:  "other DeepSeek model",
-			entry: ProviderEntry{BaseURL: "https://api.deepseek.com", Model: "deepseek-chat", BalanceURL: "https://api.deepseek.com/user/balance"},
-		},
-		{
-			name:  "custom proxy with DeepSeek model name",
-			entry: ProviderEntry{BaseURL: "https://proxy.example.com/v1", Model: "deepseek-v4-pro", BalanceURL: "https://proxy.example.com/balance"},
-		},
-		{
-			name:  "other provider with balance URL",
-			entry: ProviderEntry{BaseURL: "https://api.moonshot.cn/v1", Model: "kimi-k2.7-code", BalanceURL: "https://api.moonshot.cn/v1/users/me/balance"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.entry.ShowsWalletBalance(); got != tt.want {
-				t.Fatalf("ShowsWalletBalance() = %v, want %v", got, tt.want)
 			}
 		})
 	}
