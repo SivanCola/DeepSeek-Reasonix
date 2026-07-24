@@ -2312,23 +2312,25 @@ func pluginSpecFromEntryWithOptions(e config.PluginEntry, workspaceRoot string, 
 		configSource = opts.ConfigSource
 	}
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:                  e.Name,
-		Package:               strings.TrimSpace(opts.PackageOwners[e.Name]),
-		Type:                  e.Type,
-		Command:               e.Command,
-		Args:                  e.Args,
-		Env:                   e.Env,
-		URL:                   e.URL,
-		Headers:               e.Headers,
-		DefaultCallTimeout:    opts.DefaultCallTimeout,
-		CallTimeout:           secondsDuration(e.CallTimeoutSeconds),
-		ToolTimeouts:          toolTimeoutDurations(e.ToolTimeoutSeconds),
-		WorkspaceRoot:         strings.TrimSpace(workspaceRoot),
-		LaunchManager:         opts.LaunchManager,
-		ConfigSource:          configSource,
-		Authorized:            e.Source.UserAuthorized(),
-		RequireLaunchApproval: e.Source.RequiresLaunchApproval(),
+		Name:               e.Name,
+		Package:            strings.TrimSpace(opts.PackageOwners[e.Name]),
+		Type:               e.Type,
+		Command:            e.Command,
+		Args:               e.Args,
+		Env:                e.Env,
+		URL:                e.URL,
+		Headers:            e.Headers,
+		DefaultCallTimeout: opts.DefaultCallTimeout,
+		CallTimeout:        secondsDuration(e.CallTimeoutSeconds),
+		ToolTimeouts:       toolTimeoutDurations(e.ToolTimeoutSeconds),
+		WorkspaceRoot:      strings.TrimSpace(workspaceRoot),
+		LaunchManager:      opts.LaunchManager,
+		ConfigSource:       configSource,
+		Authorized:         e.Source.UserAuthorized(),
 	}, workspaceRoot)
+	if e.Source.ProjectScoped() && strings.TrimSpace(spec.Dir) == "" {
+		spec.Dir = workspaceRoot
+	}
 	applyMCPIsolation(&spec, workspaceRoot, opts)
 	return spec
 }

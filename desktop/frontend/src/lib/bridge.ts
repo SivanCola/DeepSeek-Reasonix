@@ -1171,6 +1171,25 @@ function makeMockApp(): AppBindings {
   // Mutable so MCP add/remove/retry are observable in browser dev.
   let capServers: ServerView[] = [
     {
+      name: "project-knowledge",
+      transport: "http",
+      status: "connected",
+      configured: true,
+      autoStart: true,
+      tier: "background",
+      source: "project",
+      configSource: "reasonix.toml",
+      url: "https://mcp.example.test/project",
+      tools: 3,
+      prompts: 0,
+      resources: 1,
+      toolList: [
+        { name: "search_knowledge", description: "Search the project knowledge base.", readOnlyHint: true },
+        { name: "get_document", description: "Read a knowledge-base document.", readOnlyHint: true },
+        { name: "list_topics", description: "List available knowledge topics.", readOnlyHint: true },
+      ],
+    },
+    {
       name: "github",
       transport: "stdio",
       status: "connected",

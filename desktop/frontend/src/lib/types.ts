@@ -720,6 +720,8 @@ export interface ServerView {
   enabled?: boolean;
   installed?: boolean;
   action?: "none" | "authenticate" | "authorize" | "retry" | string;
+  source?: "project" | "user" | "plugin" | "builtin" | string;
+  configSource?: string;
   builtIn?: boolean;
   configured?: boolean;
   /** @deprecated same as enabled */

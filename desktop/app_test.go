@@ -7199,7 +7199,7 @@ func TestCapabilitiesIncludesInstalledPlugins(t *testing.T) {
 	}
 }
 
-func TestDesktopSharedHostProjectMCPWaitsForLaunchApproval(t *testing.T) {
+func TestDesktopSharedHostProjectMCPConnectsWithoutLaunchApproval(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping background MCP boot integration test in short mode")
 	}
@@ -7235,15 +7235,16 @@ url = %q
 	defer ctrl.Close()
 
 	deadline := time.Now().Add(3 * time.Second)
-	for len(sharedHost.Failures()) == 0 && time.Now().Before(deadline) {
+	for !sharedHost.HasClient("h") && time.Now().Before(deadline) {
 		time.Sleep(25 * time.Millisecond)
 	}
-	if sharedHost.HasClient("h") {
-		t.Fatal("project MCP connected before launch approval")
+	if !sharedHost.HasClient("h") {
+		t.Fatalf("project MCP did not connect automatically; failures=%+v", sharedHost.Failures())
 	}
-	failures := sharedHost.Failures()
-	if len(failures) != 1 || !failures[0].RequiresLaunchApproval || !strings.Contains(failures[0].Error, "until the user authorizes") {
-		t.Fatalf("project MCP failure = %+v", failures)
+	for _, failure := range sharedHost.Failures() {
+		if failure.Name == "h" && failure.RequiresLaunchApproval {
+			t.Fatalf("project MCP unexpectedly requested launch approval: %+v", failure)
+		}
 	}
 
 	app := NewApp()
@@ -7261,12 +7262,12 @@ url = %q
 	app.activeTabID = "test"
 
 	view := app.MCPServers()
-	if len(view) != 1 || view[0].Name != "h" || view[0].Status != "failed" || view[0].RuntimeState != "issue" || !view[0].RequiresLaunchApproval {
-		t.Fatalf("MCPServers() = %+v, want project h awaiting launch approval", view)
+	if len(view) != 1 || view[0].Name != "h" || view[0].Status != "connected" || view[0].RuntimeState != "ready" || view[0].RequiresLaunchApproval {
+		t.Fatalf("MCPServers() = %+v, want trusted connected project h", view)
 	}
 }
 
-func TestProjectMCPLaunchApprovalViewOnlyShowsWhileBlocked(t *testing.T) {
+func TestProjectMCPViewIsTrustedAndKeepsProjectSource(t *testing.T) {
 	entry := config.PluginEntry{Name: "project", Source: config.MCPSourceProjectConfig}
 	connected := withPluginConfig(ServerView{Name: entry.Name, Status: "connected"}, entry)
 	if connected.RequiresLaunchApproval {
@@ -7275,14 +7276,20 @@ func TestProjectMCPLaunchApprovalViewOnlyShowsWhileBlocked(t *testing.T) {
 	blocked := withPluginConfig(ServerView{
 		Name: entry.Name, Status: "failed", RequiresLaunchApproval: true,
 	}, entry)
-	if !blocked.RequiresLaunchApproval {
-		t.Fatalf("blocked project MCP lost launch approval action: %+v", blocked)
+	if blocked.RequiresLaunchApproval {
+		t.Fatalf("project MCP exposed obsolete launch approval action: %+v", blocked)
+	}
+	if blocked.Source != "project" || blocked.ConfigSource != "reasonix.toml" {
+		t.Fatalf("blocked project MCP source = %q/%q, want project/reasonix.toml", blocked.Source, blocked.ConfigSource)
 	}
 
 	user := withPluginConfig(ServerView{Name: "user", Status: "connected"},
 		config.PluginEntry{Name: "user", Source: config.MCPSourceUserConfig})
 	if user.RequiresLaunchApproval {
 		t.Fatalf("user-config MCP must not be launch-gate governed: %+v", user)
+	}
+	if user.Source != "user" || user.ConfigSource != "config.toml" {
+		t.Fatalf("user MCP source = %q/%q, want user/config.toml", user.Source, user.ConfigSource)
 	}
 }
 

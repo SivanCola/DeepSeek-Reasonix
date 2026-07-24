@@ -65,6 +65,7 @@ type mcpServerView struct {
 	ToolList   []plugin.ToolInfo
 	AuthStatus string
 	AuthURL    string
+	Source     config.MCPConfigSource
 
 	authConfigured bool
 }
@@ -363,6 +364,9 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 		snap.servers = append(snap.servers, v)
 		seen[p.Name] = true
 	}
+	sort.SliceStable(snap.servers, func(i, j int) bool {
+		return mcpServerGroupRank(snap.servers[i]) < mcpServerGroupRank(snap.servers[j])
+	})
 	return snap
 }
 
@@ -378,6 +382,7 @@ func withMCPPluginConfig(v mcpServerView, p config.PluginEntry) mcpServerView {
 	v.Command = p.Command
 	v.Args = append([]string(nil), p.Args...)
 	v.URL = p.URL
+	v.Source = p.Source
 	v.authConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	if len(p.Env) > 0 {
 		v.EnvKeys = make([]string, 0, len(p.Env))
@@ -390,6 +395,17 @@ func withMCPPluginConfig(v mcpServerView, p config.PluginEntry) mcpServerView {
 	v.AuthStatus = auth.Status
 	v.AuthURL = auth.URL
 	return v
+}
+
+func mcpServerGroupRank(v mcpServerView) int {
+	switch {
+	case v.BuiltIn || v.Source == config.MCPSourcePluginPackage:
+		return 0
+	case v.Source.ProjectScoped():
+		return 1
+	default:
+		return 2
+	}
 }
 
 func visibleRange(total, sel, limit int) (int, int) {

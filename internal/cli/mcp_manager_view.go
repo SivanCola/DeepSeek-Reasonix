@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"reasonix/internal/config"
 	"reasonix/internal/mcpdiag"
 )
 
@@ -68,16 +69,13 @@ func (p *mcpManager) renderList(width int) string {
 	lastGroup := ""
 	for i := start; i < end; i++ {
 		s := p.snapshot.servers[i]
-		group := "User MCPs"
-		if s.BuiltIn {
-			group = "Managed MCPs"
-		}
+		group := mcpServerGroupLabel(s)
 		if group != lastGroup {
 			if lastGroup != "" {
 				b.WriteByte('\n')
 			}
 			header := group
-			if group == "User MCPs" && p.snapshot.configPath != "" {
+			if group == "Global MCPs" && p.snapshot.configPath != "" {
 				header += " (" + p.snapshot.configPath + ")"
 			}
 			fmt.Fprintf(&b, "  %s\n", bold(header))
@@ -136,6 +134,10 @@ func (p *mcpManager) renderDetail(width int) string {
 	writeMCPDetailField(&b, "Transport", fallbackText(v.Transport, "unknown"))
 	if v.BuiltIn {
 		writeMCPDetailField(&b, "Config location", "built-in")
+	} else if v.Source == config.MCPSourceProjectMCPJSON {
+		writeMCPDetailField(&b, "Config location", "current project .mcp.json")
+	} else if v.Source == config.MCPSourceProjectConfig {
+		writeMCPDetailField(&b, "Config location", "current project reasonix.toml")
 	} else {
 		loc := fallbackText(p.snapshot.configPath, "not saved")
 		if loc != "not saved" {
@@ -320,6 +322,17 @@ func mcpStatusLabel(v mcpServerView) string {
 		return "○ disabled"
 	default:
 		return viewMeta("unknown")
+	}
+}
+
+func mcpServerGroupLabel(v mcpServerView) string {
+	switch mcpServerGroupRank(v) {
+	case 0:
+		return "Managed MCPs"
+	case 1:
+		return "Project MCPs"
+	default:
+		return "Global MCPs"
 	}
 }
 

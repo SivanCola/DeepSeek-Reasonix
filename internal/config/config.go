@@ -1461,10 +1461,19 @@ const (
 )
 
 func (s MCPConfigSource) UserAuthorized() bool {
-	return s == MCPSourceUserConfig || s == MCPSourceLegacyUser || s == MCPSourcePluginPackage
+	switch s {
+	case MCPSourceUserConfig, MCPSourceLegacyUser, MCPSourcePluginPackage,
+		MCPSourceProjectConfig, MCPSourceProjectMCPJSON:
+		return true
+	default:
+		return false
+	}
 }
 
-func (s MCPConfigSource) RequiresLaunchApproval() bool {
+// ProjectScoped reports whether an MCP entry belongs to one workspace. Project
+// scope remains useful for provenance, activation, and relative-path handling;
+// it no longer implies a separate launch-approval workflow.
+func (s MCPConfigSource) ProjectScoped() bool {
 	return s == MCPSourceProjectConfig || s == MCPSourceProjectMCPJSON
 }
 

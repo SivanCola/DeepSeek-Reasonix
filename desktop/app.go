@@ -6558,6 +6558,8 @@ type ServerView struct {
 	Enabled                bool           `json:"enabled"`
 	Installed              bool           `json:"installed"`
 	Action                 string         `json:"action,omitempty"`
+	Source                 string         `json:"source,omitempty"`
+	ConfigSource           string         `json:"configSource,omitempty"`
 	BuiltIn                bool           `json:"builtIn,omitempty"`
 	Configured             bool           `json:"configured,omitempty"`
 	AutoStart              bool           `json:"autoStart"` // deprecated: same as Enabled
@@ -6772,10 +6774,10 @@ func (a *App) lockMCPMutation(operation string) func() {
 	return a.lockRuntimeMutation(operation)
 }
 
-// AuthorizeAndConnectMCPServer is the normal repository-config flow: record
-// durable consent for the exact command or endpoint, then establish one live
-// connection. Unlike the removed multi-step API it never starts a temporary MCP
-// process to inspect tools before connecting the real runtime.
+// AuthorizeAndConnectMCPServer is retained for older generated Wails clients.
+// Project configuration is trusted by default now, so the normal path simply
+// reconnects the effective entry. Explicitly gated host specs still record
+// their exact launch grant before reconnecting.
 func (a *App) AuthorizeAndConnectMCPServer(name string) error {
 	defer a.lockMCPMutation("authorize-connect")()
 
@@ -6799,13 +6801,12 @@ func (a *App) AuthorizeAndConnectMCPServer(name string) error {
 	if err != nil {
 		return err
 	}
-	if !spec.RequireLaunchApproval {
-		return fmt.Errorf("MCP server %q was explicitly installed and does not need project authorization", name)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := plugin.AuthorizeProjectSpecLaunch(ctx, spec); err != nil {
-		return err
+	if spec.RequireLaunchApproval {
+		if err := plugin.AuthorizeProjectSpecLaunch(ctx, spec); err != nil {
+			return err
+		}
 	}
 
 	controllers := a.mcpControllersSharingHost(host, name, ctrl)
@@ -6814,8 +6815,7 @@ func (a *App) AuthorizeAndConnectMCPServer(name string) error {
 			controllers[i].enabled = true
 		}
 	}
-	// A connected process can only represent the previous approved identity.
-	// Drop it after the new grant is durable, then start the configured server
+	// Drop any previous identity, then start the effective configured server
 	// once and refresh every enabled registry sharing this Host.
 	disconnectMCPServerControllers(name, ctrl, controllers)
 	if host != nil {
@@ -7391,6 +7391,16 @@ func finalizeServerView(v ServerView) ServerView {
 		v.Tools = v.ToolCount
 	}
 	v.Installed = v.Configured || v.BuiltIn || v.Status != ""
+	if v.Source == "" {
+		switch {
+		case v.BuiltIn:
+			v.Source = "builtin"
+		case v.ManagedByPlugin != "":
+			v.Source = "plugin"
+		case v.Configured:
+			v.Source = "user"
+		}
+	}
 	if v.RuntimeState == "" {
 		v.RuntimeState = mcpRuntimeState(v.Status)
 	}
@@ -7420,6 +7430,7 @@ func withPluginConfigInWorkspace(v ServerView, p config.PluginEntry, workspace s
 	v.Transport = tt
 	v.Configured = true
 	v.Installed = true
+	v.Source, v.ConfigSource = mcpServerSource(p.Source)
 	v.Enabled = mcpEntryEnabled(p, workspace)
 	v.AutoStart = v.Enabled
 	v.Tier = p.ResolvedTier()
@@ -7443,8 +7454,8 @@ func withPluginConfigInWorkspace(v ServerView, p config.PluginEntry, workspace s
 	v.URL = p.URL
 	v.CallTimeoutSeconds = p.CallTimeoutSeconds
 	v.ToolTimeoutSeconds = cloneStringIntMap(p.ToolTimeoutSeconds)
-	// Only a current project launch-gate failure exposes the authorization action.
-	v.RequiresLaunchApproval = p.Source.RequiresLaunchApproval() && v.RequiresLaunchApproval
+	// Configured MCP entries are explicit installs, including project sources.
+	v.RequiresLaunchApproval = false
 	v.AuthConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	v.EnvKeys = nil
 	v.HeaderKeys = nil
@@ -7466,6 +7477,23 @@ func withPluginConfigInWorkspace(v ServerView, p config.PluginEntry, workspace s
 	v.AuthStatus = auth.Status
 	v.AuthURL = auth.URL
 	return v
+}
+
+func mcpServerSource(source config.MCPConfigSource) (kind, configSource string) {
+	switch source {
+	case config.MCPSourceProjectConfig:
+		return "project", "reasonix.toml"
+	case config.MCPSourceProjectMCPJSON:
+		return "project", ".mcp.json"
+	case config.MCPSourcePluginPackage:
+		return "plugin", "plugin"
+	case config.MCPSourceLegacyUser:
+		return "user", "legacy config"
+	case config.MCPSourceUserConfig:
+		return "user", "config.toml"
+	default:
+		return "", ""
+	}
 }
 
 const skillRootsCacheTTL = 10 * time.Second

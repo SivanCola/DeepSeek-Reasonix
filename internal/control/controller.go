@@ -4683,23 +4683,25 @@ func (c *Controller) mcpSpec(e config.PluginEntry) plugin.Spec {
 	exp := e.ExpandedPlugin()
 	configSource := strings.TrimSpace(string(exp.Source))
 	spec := plugin.ApplyKnownOverrides(plugin.Spec{
-		Name:                  exp.Name,
-		Type:                  exp.Type,
-		Command:               exp.Command,
-		Args:                  exp.Args,
-		Env:                   exp.Env,
-		URL:                   exp.URL,
-		Headers:               exp.Headers,
-		DefaultCallTimeout:    c.mcpDefaultCallTimeout,
-		CallTimeout:           controllerMCPTimeout(exp.CallTimeoutSeconds),
-		ToolTimeouts:          controllerMCPToolTimeouts(exp.ToolTimeoutSeconds),
-		WorkspaceRoot:         c.WorkspaceRoot(),
-		ConfigSource:          configSource,
-		Authorized:            exp.Source.UserAuthorized(),
-		RequireLaunchApproval: exp.Source.RequiresLaunchApproval(),
+		Name:               exp.Name,
+		Type:               exp.Type,
+		Command:            exp.Command,
+		Args:               exp.Args,
+		Env:                exp.Env,
+		URL:                exp.URL,
+		Headers:            exp.Headers,
+		DefaultCallTimeout: c.mcpDefaultCallTimeout,
+		CallTimeout:        controllerMCPTimeout(exp.CallTimeoutSeconds),
+		ToolTimeouts:       controllerMCPToolTimeouts(exp.ToolTimeoutSeconds),
+		WorkspaceRoot:      c.WorkspaceRoot(),
+		ConfigSource:       configSource,
+		Authorized:         exp.Source.UserAuthorized(),
 		// Explicit user installs and reconnects run as trusted host processes.
 		ProcessMode: plugin.MCPProcessHost,
 	}, c.WorkspaceRoot())
+	if exp.Source.ProjectScoped() && strings.TrimSpace(spec.Dir) == "" {
+		spec.Dir = c.WorkspaceRoot()
+	}
 	if c.mcpConfigureSpec != nil {
 		c.mcpConfigureSpec(&spec)
 		if spec.ProcessMode == "" {
@@ -4840,16 +4842,24 @@ func (c *Controller) DisconnectedMCPNames() []string {
 }
 
 func (c *Controller) ConnectConfiguredMCPServer(name string) (int, error) {
-	cfg, err := config.Load()
+	p, err := c.configuredMCPServer(name)
 	if err != nil {
 		return 0, err
 	}
+	return c.connectMCPServer(p)
+}
+
+func (c *Controller) configuredMCPServer(name string) (config.PluginEntry, error) {
+	cfg, err := config.LoadForRoot(c.workspaceRoot)
+	if err != nil {
+		return config.PluginEntry{}, err
+	}
 	for _, p := range cfg.Plugins {
 		if p.Name == name {
-			return c.connectMCPServer(p)
+			return p, nil
 		}
 	}
-	return 0, fmt.Errorf("no configured MCP server named %q", name)
+	return config.PluginEntry{}, fmt.Errorf("no configured MCP server named %q", name)
 }
 
 // RemoveMCPServer removes a writable MCP configuration before disconnecting the

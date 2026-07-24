@@ -4140,8 +4140,8 @@ func TestPluginSpecsMapMCPSourceDefaults(t *testing.T) {
 		{name: "user config", source: config.MCPSourceUserConfig, wantAuthorized: true},
 		{name: "legacy user config", source: config.MCPSourceLegacyUser, wantAuthorized: true},
 		{name: "plugin package", source: config.MCPSourcePluginPackage, wantAuthorized: true},
-		{name: "project config", source: config.MCPSourceProjectConfig, wantApproval: true},
-		{name: "project mcp json", source: config.MCPSourceProjectMCPJSON, wantApproval: true},
+		{name: "project config", source: config.MCPSourceProjectConfig, wantAuthorized: true},
+		{name: "project mcp json", source: config.MCPSourceProjectMCPJSON, wantAuthorized: true},
 		{name: "unknown"},
 	}
 

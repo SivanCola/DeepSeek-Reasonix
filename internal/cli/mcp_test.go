@@ -416,6 +416,7 @@ func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 		configPath: "reasonix.toml",
 		servers: []mcpServerView{
 			{Name: "managed-search", Transport: "stdio", Status: "connected", BuiltIn: true, Tools: 4},
+			{Name: "project-docs", Transport: "http", Status: "deferred", Configured: true, Source: config.MCPSourceProjectConfig},
 			{Name: "github", Transport: "stdio", Status: "deferred", Configured: true, Tier: "background", Tools: 12},
 			{Name: "figma", Transport: "http", Status: "failed", Configured: true, Tier: "background", URL: "https://mcp.figma.com", Error: "connect: 401 unauthorized"},
 		},
@@ -423,11 +424,14 @@ func TestRenderMCPManagerListGroupsRuntimeAndConfiguredServers(t *testing.T) {
 	got := p.renderList(120)
 	for _, want := range []string{
 		"Manage MCP servers",
-		"3 servers",
+		"4 servers",
 		"Managed MCPs",
-		"User MCPs (reasonix.toml)",
+		"Project MCPs",
+		"Global MCPs (reasonix.toml)",
 		"managed-search",
 		"connected",
+		"project-docs",
+		"preparing in background",
 		"github",
 		"preparing in background",
 		"figma",
@@ -483,6 +487,35 @@ func TestRenderMCPManagerAuthFailureActions(t *testing.T) {
 	}
 	if strings.Contains(got, "Retry") {
 		t.Fatalf("auth failures should prefer Authenticate over Retry:\n%s", got)
+	}
+}
+
+func TestRenderMCPManagerProjectServerIsReadyWithoutInstallAction(t *testing.T) {
+	p := &mcpManager{
+		stage: mcpStageDetail,
+		name:  "project-docs",
+		snapshot: mcpSnapshot{
+			configPath: "reasonix.toml",
+			servers: []mcpServerView{{
+				Name: "project-docs", Transport: "http", Status: "connected", Configured: true,
+				Source: config.MCPSourceProjectConfig, URL: "https://example.test/mcp",
+				Tools: 2, HasTools: true,
+			}},
+		},
+	}
+	got := p.renderDetail(120)
+	for _, want := range []string{
+		"connected",
+		"current project reasonix.toml",
+		"View tools",
+		"Disable for this session",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered project MCP details missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Install and use") || strings.Contains(got, "Authorize") {
+		t.Fatalf("trusted project MCP must not expose an installation or authorization action:\n%s", got)
 	}
 }
 
