@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -56,6 +58,30 @@ func (m *chatTUI) followSessionLease() {
 	}
 	if err := m.leases.Rebind(m.ctrl.SessionPath()); err != nil {
 		m.notice(sessionLeaseHeldNotice(err))
+	}
+}
+
+// cliSessionRecoveredHandler moves the single-session CLI lease during the
+// controller's recovery commit. The callback runs before Controller changes its
+// session path, closing the unguarded interval that event-driven follow-up
+// calls left after ordinary turn-end and mid-turn autosaves.
+func cliSessionRecoveredHandler(leases *control.SessionLeaseKeeper) func(control.SessionRecoveryInfo) error {
+	return func(info control.SessionRecoveryInfo) error {
+		recoveryPath := strings.TrimSpace(info.RecoveryPath)
+		if leases == nil || recoveryPath == "" {
+			return nil
+		}
+		if err := leases.Rebind(recoveryPath); err != nil {
+			if errors.Is(err, agent.ErrSessionLeaseHeld) {
+				return fmt.Errorf("bind recovery session: %s; %s",
+					control.SessionInUseMessage(err), control.SessionLeaseCloseHint)
+			}
+			// The detailed error can contain a machine-local path. Keep it in
+			// the private TUI diagnostic log and return path-free UI text.
+			slog.Error("cli: bind recovery session lease", "err", err)
+			return fmt.Errorf("bind recovery session: unable to secure recovered transcript")
+		}
+		return nil
 	}
 }
 
