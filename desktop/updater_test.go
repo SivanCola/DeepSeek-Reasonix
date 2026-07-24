@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,24 @@ func TestNormalizeVersion(t *testing.T) {
 	}
 }
 
+func TestUpdateSiblingNamesCoverEveryReplacedEntryPoint(t *testing.T) {
+	windows := strings.Join(updateSiblingNames("windows"), "\x00")
+	for _, want := range []string{"reasonix-guard.exe", "reasonix-launcher.exe", "reasonix-update-helper.exe", "reasonix-cli.exe", "Reasonix.exe"} {
+		if !strings.Contains(windows, want) {
+			t.Errorf("Windows release unit omits %q: %q", want, windows)
+		}
+	}
+	if strings.Contains(windows, "reasonix.exe") {
+		t.Fatalf("Windows release unit reintroduces the case-only CLI/launcher collision: %q", windows)
+	}
+	if got := updateSiblingNames("linux"); len(got) != 2 || got[0] != "reasonix-guard" || got[1] != "reasonix" {
+		t.Fatalf("Linux release unit = %q", got)
+	}
+	if got := updateSiblingNames("darwin"); got != nil {
+		t.Fatalf("macOS app-bundle update must not list file siblings: %q", got)
+	}
+}
+
 func TestEvaluate(t *testing.T) {
 	mk := func(version string) *update.Manifest {
 		return &update.Manifest{
@@ -52,59 +71,103 @@ func TestEvaluate(t *testing.T) {
 			Platforms: map[string]update.Asset{update.CurrentPlatform(): {Size: 999}},
 		}
 	}
+	portable := installProfile{
+		Mode:          installModePortable,
+		CanSelfUpdate: runtime.GOOS != "darwin",
+		ArtifactKind:  artifactKindTarball,
+	}
+	if runtime.GOOS == "darwin" {
+		portable.Mode = installModeManual
+		portable.ManualReason = manualUpdateReason()
+	}
 
-	if got := evaluate("v1.0.0", "stable", mk("v1.1.0")); !got.Available {
+	if got := evaluateWithProfile("v1.0.0", mk("v1.1.0"), portable); !got.Available {
 		t.Error("v1.0.0 -> v1.1.0 should be available")
 	}
-	if got := evaluate("v1.1.0", "stable", mk("v1.1.0")); got.Available {
+	if got := evaluateWithProfile("v1.1.0", mk("v1.1.0"), portable); got.Available {
 		t.Error("same version should not be available")
 	}
-	if got := evaluate("v1.2.0", "stable", mk("v1.1.0")); got.Available {
+	if got := evaluateWithProfile("v1.2.0", mk("v1.1.0"), portable); got.Available {
 		t.Error("newer-than-manifest should not be available")
 	}
 	// A dev build must never auto-prompt, even against a real release.
-	if got := evaluate("dev", "stable", mk("v1.1.0")); got.Available {
+	if got := evaluateWithProfile("dev", mk("v1.1.0"), portable); got.Available {
 		t.Error("dev build should not prompt to update")
 	}
 	// An invalid manifest version is a check error, not an update.
-	got := evaluate("v1.0.0", "stable", mk("not-a-version"))
+	got := evaluateWithProfile("v1.0.0", mk("not-a-version"), portable)
 	if got.Available || got.Err == "" {
 		t.Errorf("invalid manifest version: got %+v", got)
 	}
 	// Metadata carries through.
-	full := evaluate("v1.0.0", "stable", mk("v1.1.0"))
-	if full.Latest != "v1.1.0" || full.Notes != "notes" || full.Channel != "stable" || full.AssetSize != 999 {
+	full := evaluateWithProfile("v1.0.0", mk("v1.1.0"), portable)
+	if full.Latest != "v1.1.0" || full.Notes != "notes" || full.AssetSize != 999 {
 		t.Errorf("metadata not carried: %+v", full)
 	}
 	if full.CanSelfUpdate != (runtime.GOOS != "darwin") {
 		t.Errorf("CanSelfUpdate = %v on %s", full.CanSelfUpdate, runtime.GOOS)
 	}
+	if full.InstallMode == "" {
+		t.Error("InstallMode should be set")
+	}
 }
 
-func TestEvaluateAllowsExplicitChannelSwitchToOlderStable(t *testing.T) {
-	oldChannel := channel
-	channel = "preview"
-	t.Cleanup(func() { channel = oldChannel })
-
-	m := &update.Manifest{
-		Version:   "v1.6.0",
-		Platforms: map[string]update.Asset{update.CurrentPlatform(): {Size: 999}},
+func TestEvaluateDebSelectsNativePackage(t *testing.T) {
+	if runtime.GOOS == "darwin" && !canSelfUpdate() {
+		// evaluateWithProfile applies the macOS signed-build gate; synthetic deb
+		// profiles are only meaningful on Linux (or a notarized macOS build).
+		t.Skip("deb install mode is a Linux packaging path")
 	}
-	got := evaluate("v1.7.0-preview.12", "stable", m)
-	if !got.Available {
-		t.Fatalf("stable channel switch should be available even when semver is lower: %+v", got)
+	m := &update.Manifest{
+		Version: "v2.0.0",
+		Platforms: map[string]update.Asset{
+			update.CurrentPlatform(): {URL: "https://example/tarball", Size: 100, SHA256: "aa"},
+		},
+		NativePackages: map[string]update.Asset{
+			update.CurrentPlatform(): {URL: "https://example/pkg.deb", Size: 200, SHA256: "bb"},
+		},
+	}
+	deb := installProfile{
+		Mode:          installModeDeb,
+		CanSelfUpdate: true,
+		RequiresElev:  true,
+		ArtifactKind:  artifactKindDeb,
+	}
+	got := evaluateWithProfile("v1.0.0", m, deb)
+	if !got.Available || got.AssetSize != 200 {
+		t.Fatalf("deb evaluate should use native package size: %+v", got)
+	}
+	if !got.RequiresElevation || got.InstallMode != installModeDeb {
+		t.Fatalf("deb flags missing: %+v", got)
+	}
+	// Without native_packages, deb profile becomes manual.
+	m2 := &update.Manifest{
+		Version:   "v2.0.0",
+		Platforms: map[string]update.Asset{update.CurrentPlatform(): {Size: 100}},
+	}
+	adjusted := profileForManifest(deb, m2)
+	got = evaluateWithProfile("v1.0.0", m2, adjusted)
+	if got.CanSelfUpdate || got.InstallMode != installModeManual {
+		t.Fatalf("missing native package should force manual: %+v (profile=%+v)", got, adjusted)
+	}
+}
+
+func TestManualUpdateRequiredErrorPreservesReason(t *testing.T) {
+	err := manualUpdateRequiredError(installProfile{ManualReason: "system update helper is unavailable"})
+	if !errors.Is(err, errUpdateManualRequired) {
+		t.Fatalf("error = %v, want manual-update sentinel", err)
+	}
+	if !strings.Contains(err.Error(), "system update helper is unavailable") {
+		t.Fatalf("error = %q, want profile reason", err)
 	}
 }
 
 func TestChannelSelectsDistinctPointers(t *testing.T) {
-	orig := channel
-	t.Cleanup(func() { channel = orig })
-
 	stable := manifestEndpoints("stable")
 	preview := manifestEndpoints("preview")
 
 	for _, u := range stable {
-		if strings.Contains(u, "canary") {
+		if strings.Contains(u, "preview") || strings.Contains(u, "canary") {
 			t.Errorf("stable endpoint leaks into preview: %q", u)
 		}
 	}
@@ -131,20 +194,23 @@ func TestChannelSelectsDistinctPointers(t *testing.T) {
 			t.Errorf("preview endpoint hits the stable latest/ pointer: %q", u)
 		}
 	}
-	if !strings.Contains(preview[0], "/preview/latest.json") {
+	if preview[0] != r2Base+"/preview/latest.json" {
 		t.Errorf("preview primary = %q, want the preview/ pointer", preview[0])
 	}
-	if !strings.Contains(preview[1], "/canary/latest.json") {
-		t.Errorf("preview compatibility fallback = %q, want the legacy canary pointer", preview[1])
+	if preview[1] != r2Base+"/canary/latest.json" {
+		t.Errorf("preview compatibility fallback = %q, want the legacy canary/ pointer", preview[1])
 	}
 	if preview[2] != releaseGatewayBase+"/preview/latest.json" {
 		t.Errorf("preview gateway = %q, want the preview release gateway", preview[2])
 	}
 	if preview[3] != releaseGatewayBase+"/canary/latest.json" {
-		t.Errorf("preview gateway compatibility fallback = %q, want the canary release gateway", preview[3])
+		t.Errorf("preview gateway compatibility fallback = %q, want the legacy canary gateway", preview[3])
 	}
 	if strings.Contains(downloadPage(), "/releases/latest") {
 		t.Errorf("download page should not use GitHub's repository-wide latest release: %q", downloadPage())
+	}
+	if downloadPage() != "https://reasonix.io/?download=desktop#start" {
+		t.Errorf("download page = %q, want the desktop install deep link", downloadPage())
 	}
 }
 
@@ -178,17 +244,18 @@ func TestSaveCachedUpdateMarksEvaluateDownloaded(t *testing.T) {
 		Version:   "v9.9.9",
 		Platforms: map[string]update.Asset{update.CurrentPlatform(): asset},
 	}
-	if got := evaluate("v1.0.0", "stable", manifest); got.Downloaded {
+	portable := installProfile{Mode: installModePortable, CanSelfUpdate: true, ArtifactKind: artifactKindTarball}
+	if got := evaluateWithProfile("v1.0.0", manifest, portable); got.Downloaded {
 		t.Fatal("fresh cache should not report a downloaded update")
 	}
-	meta, err := saveCachedUpdate("stable", "v9.9.9", asset, data)
+	meta, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindTarball, nil)
 	if err != nil {
 		t.Fatalf("saveCachedUpdate: %v", err)
 	}
 	if meta.Version != "v9.9.9" || meta.Channel != "stable" || meta.Platform != update.CurrentPlatform() {
 		t.Fatalf("cached metadata mismatch: %+v", meta)
 	}
-	if got := evaluate("v1.0.0", "stable", manifest); !got.Downloaded {
+	if got := evaluateWithProfile("v1.0.0", manifest, portable); !got.Downloaded {
 		t.Fatalf("evaluate did not detect cached update: %+v", got)
 	}
 }
@@ -205,26 +272,23 @@ func TestCachedUpdateRejectsTamperedArtifact(t *testing.T) {
 		Size:   int64(len(data)),
 		SHA256: sha256Hex(data),
 	}
-	meta, err := saveCachedUpdate("stable", "v9.9.9", asset, data)
+	meta, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindTarball, nil)
 	if err != nil {
 		t.Fatalf("saveCachedUpdate: %v", err)
 	}
 	if err := os.WriteFile(meta.Path, []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if cachedUpdateMatches("stable", "v9.9.9", asset) {
+	if cachedUpdateMatches("v9.9.9", asset, artifactKindTarball) {
 		t.Fatal("tampered cached artifact should not match")
 	}
-	if _, _, err := readVerifiedCachedUpdate("stable"); err == nil {
+	if _, _, err := readVerifiedCachedUpdate(); err == nil {
 		t.Fatal("readVerifiedCachedUpdate should reject a tampered artifact")
 	}
 }
 
 func TestCachedUpdateRejectsDifferentChannel(t *testing.T) {
 	withUpdateCacheDir(t)
-	oldChannel := channel
-	channel = "stable"
-	t.Cleanup(func() { channel = oldChannel })
 
 	data := []byte("verified artifact")
 	asset := update.Asset{
@@ -232,11 +296,111 @@ func TestCachedUpdateRejectsDifferentChannel(t *testing.T) {
 		Size:   int64(len(data)),
 		SHA256: sha256Hex(data),
 	}
-	if _, err := saveCachedUpdate("stable", "v9.9.9", asset, data); err != nil {
-		t.Fatalf("saveCachedUpdate: %v", err)
+	if _, err := saveCachedUpdateForChannel("stable", "v9.9.9", asset, data, artifactKindTarball, nil); err != nil {
+		t.Fatalf("saveCachedUpdateForChannel: %v", err)
 	}
-	if _, _, err := readVerifiedCachedUpdate("preview"); err == nil {
+	if _, _, err := readVerifiedCachedUpdateForChannel("preview"); err == nil {
 		t.Fatal("readVerifiedCachedUpdate should reject a cache from another channel")
+	}
+}
+
+func TestExplicitChannelSwitchAllowsOlderStable(t *testing.T) {
+	oldChannel := channel
+	channel = "preview"
+	t.Cleanup(func() { channel = oldChannel })
+
+	m := &update.Manifest{
+		Version: "v1.6.0",
+		Platforms: map[string]update.Asset{
+			update.CurrentPlatform(): {Size: 100},
+		},
+	}
+	got := evaluateWithProfileForChannel(
+		"v1.7.0-preview.12",
+		"stable",
+		m,
+		installProfile{Mode: installModePortable, CanSelfUpdate: true},
+	)
+	if !got.Available {
+		t.Fatalf("explicit preview-to-stable switch should be available: %+v", got)
+	}
+	if got.Channel != "stable" {
+		t.Fatalf("channel = %q, want stable", got.Channel)
+	}
+}
+
+func TestDebCacheRequiresSignatureAndRejectsTarballReuse(t *testing.T) {
+	withUpdateCacheDir(t)
+	oldChannel := channel
+	channel = "stable"
+	t.Cleanup(func() { channel = oldChannel })
+
+	data := []byte("deb-bytes")
+	asset := update.Asset{
+		URL:    "https://dl.reasonix.io/desktop-v9.9.9/Reasonix-linux-amd64.deb",
+		Size:   int64(len(data)),
+		SHA256: sha256Hex(data),
+	}
+	if _, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindDeb, nil); err == nil {
+		t.Fatal("deb cache without signature must fail")
+	}
+	sig := []byte("minisig-bytes")
+	meta, err := saveCachedUpdate("v9.9.9", asset, data, artifactKindDeb, sig)
+	if err != nil {
+		t.Fatalf("saveCachedUpdate deb: %v", err)
+	}
+	if meta.SignaturePath == "" {
+		t.Fatal("deb cache must record signature path")
+	}
+	if !cachedUpdateMatches("v9.9.9", asset, artifactKindDeb) {
+		t.Fatal("deb cache with matching signature should match")
+	}
+	// A tarball install must not reuse a deb cache.
+	if cachedUpdateMatches("v9.9.9", asset, artifactKindTarball) {
+		t.Fatal("deb cache must not match tarball requests")
+	}
+	// Signature removal invalidates the download marker.
+	if err := os.Remove(meta.SignaturePath); err != nil {
+		t.Fatal(err)
+	}
+	if cachedUpdateMatches("v9.9.9", asset, artifactKindDeb) {
+		t.Fatal("deb cache without signature file must not match")
+	}
+
+	// Portable legacy cache (no artifactKind) remains valid for tarball.
+	tarball := []byte("tarball-bytes")
+	tAsset := update.Asset{
+		URL:    "https://dl.reasonix.io/desktop-v9.9.9/Reasonix-linux-amd64.tar.gz",
+		Size:   int64(len(tarball)),
+		SHA256: sha256Hex(tarball),
+	}
+	meta, err = saveCachedUpdate("v9.9.9", tAsset, tarball, artifactKindTarball, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate pre-artifactKind metadata.
+	meta.ArtifactKind = ""
+	raw, _ := json.MarshalIndent(meta, "", "  ")
+	path, _ := updateMetadataPath()
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !cachedUpdateMatches("v9.9.9", tAsset, artifactKindTarball) {
+		t.Fatal("legacy portable cache should still match tarball")
+	}
+	if cachedUpdateMatches("v9.9.9", tAsset, artifactKindDeb) {
+		t.Fatal("legacy portable cache must not match deb")
+	}
+}
+
+func TestProfileForManifestDebWithoutHelperBecomesManual(t *testing.T) {
+	// profileForManifest checks linuxDebHelperReady(); on non-linux it is always
+	// false, so a synthetic deb profile without native assets becomes manual.
+	base := installProfile{Mode: installModeDeb, CanSelfUpdate: true, RequiresElev: true, ArtifactKind: artifactKindDeb}
+	m := &update.Manifest{Version: "v1.0.0"}
+	got := profileForManifest(base, m)
+	if got.Mode != installModeManual || got.CanSelfUpdate {
+		t.Fatalf("expected manual without native package: %+v", got)
 	}
 }
 
@@ -315,7 +479,7 @@ func TestDownloadRecoversFromMidStreamReset(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	data, err := download(context.Background(), srv.Client(), nil, "stable", srv.URL, 0, nil)
+	data, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil)
 	if err != nil {
 		t.Fatalf("download should recover after %d resets: %v", downloadAttempts-1, err)
 	}
@@ -341,7 +505,7 @@ func TestDownloadGivesUpAfterCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := download(context.Background(), srv.Client(), nil, "stable", srv.URL, 0, nil); err == nil {
+	if _, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil); err == nil {
 		t.Fatal("download should fail after exhausting retries")
 	}
 	if n := atomic.LoadInt32(&calls); n != int32(downloadAttempts) {
@@ -395,7 +559,7 @@ func TestDownloadResumesWithRange(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	data, err := download(context.Background(), srv.Client(), nil, "stable", srv.URL, 0, nil)
+	data, err := download(context.Background(), srv.Client(), nil, srv.URL, 0, nil)
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}
@@ -429,7 +593,7 @@ func TestDownloadFallsBackToSecondClient(t *testing.T) {
 		}, nil
 	})}
 
-	data, err := download(context.Background(), primary, fallback, "stable", "http://example.invalid/x", 0, nil)
+	data, err := download(context.Background(), primary, fallback, "http://example.invalid/x", 0, nil)
 	if err != nil {
 		t.Fatalf("download: %v", err)
 	}
@@ -438,6 +602,77 @@ func TestDownloadFallsBackToSecondClient(t *testing.T) {
 	}
 	if atomic.LoadInt32(&fbCalls) == 0 {
 		t.Fatal("fallback client was never used after the primary failed")
+	}
+}
+
+func TestFetchBytesFallsBackToSecondClient(t *testing.T) {
+	fastRetry(t)
+	primary := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("read tcp [ipv6]: connection reset")
+	})}
+	fallback := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader("manifest")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	data, err := fetchBytesFallback(context.Background(), primary, fallback, "https://example.invalid/latest.json")
+	if err != nil {
+		t.Fatalf("fetchBytesFallback: %v", err)
+	}
+	if string(data) != "manifest" {
+		t.Fatalf("got %q, want manifest", data)
+	}
+}
+
+func TestFetchBytesFallbackEscapesStalledPrimary(t *testing.T) {
+	fastRetry(t)
+	originalTimeout := fetchAttemptTimeout
+	fetchAttemptTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { fetchAttemptTimeout = originalTimeout })
+	primary := &http.Client{Transport: rtFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+	fallback := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader("ipv4")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	data, err := fetchBytesFallback(context.Background(), primary, fallback, "https://example.invalid/latest.json")
+	if err != nil {
+		t.Fatalf("fetchBytesFallback: %v", err)
+	}
+	if string(data) != "ipv4" {
+		t.Fatalf("got %q, want ipv4", data)
+	}
+}
+
+func TestFetchBytesDoesNotRetryPermanentHTTPStatus(t *testing.T) {
+	fastRetry(t)
+	var calls int32
+	client := &http.Client{Transport: rtFunc(func(*http.Request) (*http.Response, error) {
+		atomic.AddInt32(&calls, 1)
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Status:     "403 Forbidden",
+			Body:       io.NopCloser(strings.NewReader("forbidden")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	if _, err := fetchBytes(context.Background(), client, "https://example.invalid/latest.json"); err == nil {
+		t.Fatal("fetchBytes should return a permanent HTTP error")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("permanent HTTP error made %d requests, want 1", got)
 	}
 }
 

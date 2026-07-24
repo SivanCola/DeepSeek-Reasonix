@@ -2,9 +2,9 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"reasonix/internal/event"
 	"reasonix/internal/nilutil"
@@ -53,10 +53,17 @@ option: recommended safe/default choice
 option: alternative choice
 </planner-ask>
 
-Crucial: You only have read-only tools. You do NOT have bash, execute, or
-side-effect tools — those belong to the executor. Never question or dwell
-on the lack of execution tools; it is by design. Just plan what the executor
+Crucial: You only have research tools plus the stable use_capability proxy for
+authorized MCP. You do NOT have bash, execute, file writers, or other
+side-effect tools — those belong to the executor. Never question or dwell on
+the lack of execution tools; it is by design. Just plan what the executor
 should do with its tools.
+
+When you need external real data and the capability route does not name a
+specific tool, call use_capability(action="list") first to see configured MCP
+servers, then inspect or call a non-destructive capability. If a capability is
+destructive, do not treat that as missing configuration or an unavailable MCP:
+write the operation into the plan for the executor instead.
 
 If your research shows the task needs no changes and no actions at all (already
 implemented, already resolved), explain that briefly and end your reply with a
@@ -128,7 +135,7 @@ func NewCoordinator(planner provider.Provider, plannerSession *Session, plannerP
 		plannerOptions.Temperature = temperature
 		plannerOptions.Pricing = plannerPricing
 		plannerOptions.UsageSource = event.UsageSourcePlanner
-		plannerAgent = New(planner, plannerTools, plannerSession, plannerOptions, plannerSink(sink))
+		plannerAgent = NewPlannerAgent(planner, plannerTools, plannerSession, plannerOptions, plannerSink(sink))
 	}
 	if executor != nil {
 		executor.executorHandoffGuard = true
@@ -177,6 +184,16 @@ func (c *Coordinator) ResetPlannerSession() {
 	}
 }
 
+// PlannerAgent returns the tool-enabled planner agent, if any. Controllers use
+// it to seed turn-scoped capability routes without coupling to Coordinator
+// internals beyond this accessor.
+func (c *Coordinator) PlannerAgent() *Agent {
+	if c == nil {
+		return nil
+	}
+	return c.plannerAgent
+}
+
 // SetReasoningLanguage updates both agents in two-model mode. The raw planner
 // path receives controller-composed input directly, but a tool-enabled planner
 // owns its own Agent and must clear stale zh/en preferences on live changes.
@@ -205,7 +222,7 @@ func (c *Coordinator) SetResponseLanguage(lang string) {
 	}
 }
 
-// SetPlanMode propagates the read-only gate to both planner and executor agents
+// SetPlanMode propagates the plan-first workflow flag to both planner and executor agents
 // in two-model mode. Callers that only set the controller's executor would miss
 // the planner agent inside the Coordinator, causing stale plan-mode state after
 // approvals or manual mode switches.
@@ -221,8 +238,8 @@ func (c *Coordinator) SetPlanMode(v bool) {
 	}
 }
 
-// SetPlanModeReadOnlyTrustGate propagates MCP read-only trust approvals to both
-// tool-using agents in two-model mode.
+// SetPlanModeReadOnlyTrustGate propagates plan-mode bash read-only command
+// approvals to both tool-using agents in two-model mode.
 func (c *Coordinator) SetPlanModeReadOnlyTrustGate(g PlanModeReadOnlyTrustGate) {
 	if c == nil {
 		return
@@ -297,14 +314,12 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 		// failures: the first is the user aborting the turn, the second has
 		// saved work in the planner session and asks the user to continue.
 		// Neither may silently restart on the executor.
-		var pause *maxStepsPause
-		if ctx.Err() != nil || errors.As(err, &pause) {
+		if ctx.Err() != nil || isToolLoopPause(err) {
 			return fmt.Errorf("planner: %w", err)
 		}
 		// A planner failure must not take down the turn: the executor is
 		// healthy and owns the full tool set, so degrade to single-model for
-		// this turn (mirroring the auto-plan classifier's fallback to the
-		// heuristic when it errors).
+		// this turn.
 		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: plannerFallbackNotice, Detail: "planner failed; running the executor without a plan: " + err.Error(), Source: event.UsageSourcePlanner})
 		c.sink.Emit(event.Event{Kind: event.Phase, Text: c.executor.prov.Name() + " · executing", Source: event.UsageSourceExecutor})
 		return c.executor.Run(ctx, input)
@@ -677,7 +692,7 @@ func (c *Coordinator) persistExecutorNoOp(ctx context.Context, input, plan strin
 	if c == nil || c.executor == nil || c.executor.session == nil {
 		return
 	}
-	c.executor.session.Add(provider.Message{Role: provider.RoleUser, Content: c.executor.withTurnPreferences(input), Images: userImages(ctx)})
+	c.executor.session.Add(provider.Message{Role: provider.RoleUser, Content: c.executor.withTurnPreferences(input), Images: userImages(ctx), CreatedAt: time.Now().UnixMilli()})
 	c.executor.session.Add(provider.Message{Role: provider.RoleAssistant, Content: plan})
 }
 
@@ -737,10 +752,9 @@ func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, 
 		// (and possibly partial assistant/tool rounds) to the planner
 		// session, and Coordinator.Run degrades to the executor on planner
 		// failure, so a dangling user message would produce consecutive
-		// user roles on the next plan. A max-steps pause is exempt: its
-		// saved work is what the user is asked to continue from.
-		var pause *maxStepsPause
-		if !errors.As(err, &pause) {
+		// user roles on the next plan. A deliberate tool-loop pause is exempt:
+		// its saved work is what the user is asked to continue from.
+		if !isToolLoopPause(err) {
 			c.rollbackPlannerTurn(before, rewriteBefore)
 		}
 		return "", err

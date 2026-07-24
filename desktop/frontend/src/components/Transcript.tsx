@@ -1,4 +1,4 @@
-import { createContext, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Item, LiveStream } from "../lib/useController";
 import type { CheckpointMeta } from "../lib/types";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
@@ -12,13 +12,14 @@ import { ReadOnlyBatch } from "./ReadOnlyBatch";
 import { ToolGroup, isCreationGroupableTool, toolGroupKind, type ToolGroupKind } from "./ToolGroup";
 import { getDisplayMode, onDisplayModeChange, type DisplayMode } from "../lib/displayMode";
 import { getProcessFoldPreference, onProcessFoldPreferenceChange, type ProcessFoldPreference } from "../lib/processFoldPreference";
-import { STEER_NOTICE_PREFIX, isReadOnlyTool, isSteerNoticeText } from "../lib/useController";
+import { STEER_NOTICE_PREFIX, isSteerNoticeText } from "../lib/useController";
 import { useGSAPCollapse } from "../lib/useGSAPCollapse";
 import { useEntranceAnimation } from "../lib/useEntranceAnimation";
 import { useScrollManager } from "../lib/useScrollManager";
 import { buildTurnGroups, compactQuestionText, createWarmLayerState, lastQuestionTurn, questionAnchorId, questionTurnsById, scrollVersion, warmColdPageForTurn, warmLayerWithColdPageAtLeast, warmLayerWithExpandedTurn, warmLayerWithNextColdPage, warmPagination, warmUserPreview, type QuestionAnchor, type TurnGroup, type WarmLayerState } from "../lib/transcriptGrouping";
 import { appendTurnActionCopyText } from "../lib/turnActionCopy";
 import { displayReasoningText } from "../lib/reasoningDisplay";
+import { observeScrollContentSize } from "../lib/scrollContentObserver";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
@@ -265,6 +266,7 @@ export function Transcript({
   tabId,
   footerHeight = 0,
   onPrompt,
+  onDeliveryContinue,
   onEditPrompt,
   onRewind,
   checkpoints = [],
@@ -290,6 +292,7 @@ export function Transcript({
   tabId?: string;
   footerHeight?: number;
   onPrompt: (text: string) => void;
+  onDeliveryContinue?: () => void;
   onEditPrompt?: (turn: number, displayText: string, submitText?: string) => boolean | void | Promise<boolean | void>;
   onRewind?: (turn: number, scope: string) => void;
   checkpoints?: CheckpointMeta[];
@@ -330,6 +333,176 @@ export function Transcript({
   } = useScrollManager();
   const autoScrollFrame = useRef<number | null>(null);
   const pendingRevealBottomScroll = useRef(false);
+  // Creation uses a custom scrollbar (native WebView2 thumb size is unreliable).
+  // Thin by default; only thickens when pointer is near the right rail / dragging.
+  const [creationScrollbar, setCreationScrollbar] = useState({
+    visible: false,
+    hot: false,
+    thumbTop: 0,
+    thumbHeight: 0,
+  });
+  const creationScrollbarHotRef = useRef(false);
+  const creationScrollbarDragRef = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
+  const SCROLLBAR_HOT_ZONE_PX = 18;
+  const SCROLLBAR_MIN_THUMB_PX = 28;
+
+  const syncCreationScrollbarMetrics = useCallback(() => {
+    if (!creationMode) return;
+    const el = scrollRef.current;
+    if (!el) {
+      setCreationScrollbar((prev) => (prev.visible || prev.hot ? { visible: false, hot: false, thumbTop: 0, thumbHeight: 0 } : prev));
+      return;
+    }
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    const overflow = scrollHeight - clientHeight;
+    if (overflow <= 1 || clientHeight <= 0) {
+      setCreationScrollbar((prev) => (prev.visible || prev.hot ? { visible: false, hot: false, thumbTop: 0, thumbHeight: 0 } : prev));
+      return;
+    }
+    const thumbHeight = Math.max(SCROLLBAR_MIN_THUMB_PX, Math.round((clientHeight / scrollHeight) * clientHeight));
+    const maxThumbTop = Math.max(0, clientHeight - thumbHeight);
+    const thumbTop = Math.round((scrollTop / overflow) * maxThumbTop);
+    setCreationScrollbar((prev) => {
+      if (
+        prev.visible &&
+        prev.thumbTop === thumbTop &&
+        prev.thumbHeight === thumbHeight &&
+        prev.hot === creationScrollbarHotRef.current
+      ) {
+        return prev;
+      }
+      return {
+        visible: true,
+        hot: creationScrollbarHotRef.current,
+        thumbTop,
+        thumbHeight,
+      };
+    });
+  }, [SCROLLBAR_MIN_THUMB_PX, creationMode, scrollRef]);
+
+  const setCreationScrollbarHot = useCallback((next: boolean) => {
+    if (creationScrollbarHotRef.current === next) return;
+    creationScrollbarHotRef.current = next;
+    setCreationScrollbar((prev) => (prev.hot === next ? prev : { ...prev, hot: next }));
+  }, []);
+
+  useEffect(() => {
+    if (!creationMode) {
+      creationScrollbarHotRef.current = false;
+      creationScrollbarDragRef.current = null;
+      setCreationScrollbar({ visible: false, hot: false, thumbTop: 0, thumbHeight: 0 });
+      return;
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      const drag = creationScrollbarDragRef.current;
+      const el = scrollRef.current;
+      if (drag && el) {
+        const overflow = el.scrollHeight - el.clientHeight;
+        if (overflow > 0) {
+          const thumbHeight = Math.max(SCROLLBAR_MIN_THUMB_PX, Math.round((el.clientHeight / el.scrollHeight) * el.clientHeight));
+          const maxThumbTop = Math.max(0, el.clientHeight - thumbHeight);
+          const startThumbTop = (drag.startScrollTop / overflow) * maxThumbTop;
+          const nextThumbTop = Math.min(maxThumbTop, Math.max(0, startThumbTop + (event.clientY - drag.startY)));
+          el.scrollTop = maxThumbTop > 0 ? (nextThumbTop / maxThumbTop) * overflow : 0;
+          syncCreationScrollbarMetrics();
+        }
+        setCreationScrollbarHot(true);
+        return;
+      }
+
+      if (!el || el.scrollHeight <= el.clientHeight + 1) {
+        setCreationScrollbarHot(false);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      const inY = event.clientY >= rect.top && event.clientY <= rect.bottom;
+      const fromRight = rect.right - event.clientX;
+      setCreationScrollbarHot(inY && fromRight >= -2 && fromRight <= SCROLLBAR_HOT_ZONE_PX);
+    };
+
+    const endDrag = (event?: PointerEvent) => {
+      if (!creationScrollbarDragRef.current) return;
+      creationScrollbarDragRef.current = null;
+      const el = scrollRef.current;
+      if (!el || !event) {
+        setCreationScrollbarHot(false);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      const inY = event.clientY >= rect.top && event.clientY <= rect.bottom;
+      const fromRight = rect.right - event.clientX;
+      setCreationScrollbarHot(inY && fromRight >= -2 && fromRight <= SCROLLBAR_HOT_ZONE_PX);
+    };
+
+    const onPointerUp = (event: PointerEvent) => endDrag(event);
+    const onBlur = () => endDrag();
+
+    syncCreationScrollbarMetrics();
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    window.addEventListener("pointerup", onPointerUp, { passive: true });
+    window.addEventListener("pointercancel", onPointerUp, { passive: true });
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("resize", syncCreationScrollbarMetrics);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("resize", syncCreationScrollbarMetrics);
+      creationScrollbarHotRef.current = false;
+      creationScrollbarDragRef.current = null;
+      setCreationScrollbar({ visible: false, hot: false, thumbTop: 0, thumbHeight: 0 });
+    };
+  }, [SCROLLBAR_HOT_ZONE_PX, SCROLLBAR_MIN_THUMB_PX, creationMode, scrollRef, setCreationScrollbarHot, syncCreationScrollbarMetrics]);
+
+  const handleCreationScroll = useCallback(() => {
+    onScroll();
+    if (creationMode) syncCreationScrollbarMetrics();
+  }, [creationMode, onScroll, syncCreationScrollbarMetrics]);
+
+  useLayoutEffect(() => {
+    if (!creationMode) return;
+    syncCreationScrollbarMetrics();
+  }, [creationMode, items.length, syncCreationScrollbarMetrics]);
+
+  useEffect(() => {
+    if (!creationMode || !scrollRef.current) return;
+    return observeScrollContentSize(scrollRef.current, syncCreationScrollbarMetrics);
+  }, [creationMode, scrollRef, syncCreationScrollbarMetrics]);
+
+  const handleCreationScrollbarThumbPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!creationMode) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    event.preventDefault();
+    event.stopPropagation();
+    creationScrollbarDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startScrollTop: el.scrollTop,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setCreationScrollbarHot(true);
+  }, [creationMode, scrollRef, setCreationScrollbarHot]);
+
+  const handleCreationScrollbarRailPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!creationMode) return;
+    if ((event.target as HTMLElement | null)?.closest?.(".transcript__scrollbar-thumb")) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const overflow = el.scrollHeight - el.clientHeight;
+    if (overflow <= 1) return;
+    const thumbHeight = Math.max(SCROLLBAR_MIN_THUMB_PX, Math.round((el.clientHeight / el.scrollHeight) * el.clientHeight));
+    const maxThumbTop = Math.max(0, el.clientHeight - thumbHeight);
+    const y = event.clientY - rect.top - thumbHeight / 2;
+    const nextThumbTop = Math.min(maxThumbTop, Math.max(0, y));
+    el.scrollTop = maxThumbTop > 0 ? (nextThumbTop / maxThumbTop) * overflow : 0;
+    syncCreationScrollbarMetrics();
+    setCreationScrollbarHot(true);
+  }, [SCROLLBAR_MIN_THUMB_PX, creationMode, scrollRef, setCreationScrollbarHot, syncCreationScrollbarMetrics]);
+
   const pendingQuestionJump = useRef<QuestionAnchor | null>(null);
   const sessionKey = useMemo(() => `${items[0]?.id ?? ""}|${items[items.length - 1]?.id ?? ""}`, [items]);
   const warmLayerSessionKey = useMemo(() => `${tabId ?? ""}|${revealSignal}|${items[0]?.id ?? ""}`, [items, revealSignal, tabId]);
@@ -646,7 +819,7 @@ export function Transcript({
                 key={item.id}
                 item={item}
                 actionDisabled={running}
-                onAction={item.action === "continue_delivery" ? () => onPrompt(t("notice.deliveryIncompleteContinuePrompt")) : undefined}
+                onAction={item.action === "continue_delivery" ? (onDeliveryContinue ?? (() => onPrompt(t("notice.deliveryIncompleteContinuePrompt")))) : undefined}
               />,
             );
           } else {
@@ -708,9 +881,9 @@ export function Transcript({
     <InvocationMetadataContext.Provider value={invocationMetadata}>
     <div className="transcript-shell">
       <div
-        className={`transcript${empty ? " transcript--empty" : ""}`}
+        className={`transcript${empty ? " transcript--empty" : ""}${creationMode ? " transcript--creation-scrollbar" : ""}${creationMode && creationScrollbar.hot ? " transcript--scrollbar-hot" : ""}`}
         ref={scrollRef}
-        onScroll={onScroll}
+        onScroll={creationMode ? handleCreationScroll : onScroll}
         onWheelCapture={handleWheelIntent}
         onTouchStartCapture={onTouchStartIntent}
         onTouchMoveCapture={handleTouchMoveIntent}
@@ -751,6 +924,7 @@ export function Transcript({
               warmSetOpenAction={setOpenAction}
               warmOnEdit={onEditPrompt}
               warmOnPrompt={onPrompt}
+              warmOnDeliveryContinue={onDeliveryContinue}
               warmRunning={running}
               tabId={tabId}
               creationMode={creationMode}
@@ -765,6 +939,20 @@ export function Transcript({
           </div>
         </LiveStreamContext.Provider>
       </div>
+
+      {creationMode && creationScrollbar.visible && (
+        <div
+          className={`transcript__scrollbar${creationScrollbar.hot ? " transcript__scrollbar--hot" : ""}`}
+          onPointerDown={handleCreationScrollbarRailPointerDown}
+          aria-hidden="true"
+        >
+          <div
+            className="transcript__scrollbar-thumb"
+            style={{ top: creationScrollbar.thumbTop, height: creationScrollbar.thumbHeight } as CSSProperties}
+            onPointerDown={handleCreationScrollbarThumbPointerDown}
+          />
+        </div>
+      )}
 
       {!empty && showQuestionNav && (
         <QuestionJumpBar questions={questions} onJump={handleJumpToQuestion} />
@@ -811,6 +999,7 @@ const WarmZone = memo(function WarmZone({
   warmSetOpenAction,
   warmOnEdit,
   warmOnPrompt,
+  warmOnDeliveryContinue,
   warmRunning,
   tabId,
   creationMode,
@@ -837,6 +1026,7 @@ const WarmZone = memo(function WarmZone({
   warmSetOpenAction: (action: OpenTurnAction | null) => void;
   warmOnEdit?: (turn: number, displayText: string, submitText?: string) => boolean | void | Promise<boolean | void>;
   warmOnPrompt: (text: string) => void;
+  warmOnDeliveryContinue?: () => void;
   warmRunning: boolean;
   tabId?: string;
   creationMode?: boolean;
@@ -895,6 +1085,7 @@ const WarmZone = memo(function WarmZone({
               setOpenAction={warmSetOpenAction}
               onEdit={warmOnEdit}
               onPrompt={warmOnPrompt}
+              onDeliveryContinue={warmOnDeliveryContinue}
               running={warmRunning}
               tabId={tabId}
               creationMode={creationMode}
@@ -946,6 +1137,7 @@ function WarmTurnItems({
   setOpenAction,
   onEdit,
   onPrompt,
+  onDeliveryContinue,
   running,
   tabId,
   creationMode = false,
@@ -966,6 +1158,7 @@ function WarmTurnItems({
   setOpenAction: (action: OpenTurnAction | null) => void;
   onEdit?: (turn: number, displayText: string, submitText?: string) => boolean | void | Promise<boolean | void>;
   onPrompt: (text: string) => void;
+  onDeliveryContinue?: () => void;
   running: boolean;
   tabId?: string;
   creationMode?: boolean;
@@ -1025,7 +1218,7 @@ function WarmTurnItems({
             key={item.id}
             item={item}
             actionDisabled={running}
-            onAction={item.action === "continue_delivery" ? () => onPrompt(t("notice.deliveryIncompleteContinuePrompt")) : undefined}
+            onAction={item.action === "continue_delivery" ? (onDeliveryContinue ?? (() => onPrompt(t("notice.deliveryIncompleteContinuePrompt")))) : undefined}
           />,
         );
       } else {
@@ -1284,7 +1477,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId, creationMode =
       flushToolBatch();
       flushRO();
     }
-    if (!creationMode && it.kind === "tool" && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && it.status !== "running" && isReadOnlyTool(it.name)) {
+    if (!creationMode && it.kind === "tool" && !it.parentId && it.name !== "todo_write" && it.name !== "exit_plan_mode" && it.status !== "running" && it.readOnly) {
       roBatch.push(it as ToolItem);
       continue;
     }

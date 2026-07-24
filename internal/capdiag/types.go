@@ -113,6 +113,8 @@ type AssetEntry struct {
 
 // HookReport covers hook configuration.
 type HookReport struct {
+	// TrustedProject is retained in schema v1 for compatibility. Project hooks
+	// are enabled by default, so this is true whenever a project root is present.
 	TrustedProject bool         `json:"trusted_project"`
 	ProjectDefines bool         `json:"project_defines_hooks"`
 	Sources        []HookSource `json:"sources"`
@@ -186,6 +188,7 @@ type MCPServerInfo struct {
 
 // MCPToolInfo is one tool discovered during live/runtime probe.
 type MCPToolInfo struct {
-	Name         string `json:"name"`
-	ReadOnlyHint bool   `json:"read_only_hint,omitempty"`
+	Name            string `json:"name"`
+	ReadOnlyHint    bool   `json:"read_only_hint,omitempty"`
+	DestructiveHint bool   `json:"destructive_hint,omitempty"`
 }

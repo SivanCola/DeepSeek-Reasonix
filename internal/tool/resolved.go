@@ -29,12 +29,21 @@ type ResolvedCall struct {
 	// running a target tool (inspect, decline, unavailable, or an already-
 	// connected server directory call).
 	SkipExecute bool
+	// HostCompleted marks a call action whose final read-only result was produced
+	// and safety-checked by the host during resolution. Strict read-only agents
+	// use it to distinguish a validated connected-server directory from an
+	// unresolved dynamic call with a missing target.
+	HostCompleted bool
 	// Result is a precomputed result when SkipExecute is true.
 	Result string
 	// Unavailable marks a host-proven unavailable capability.
 	Unavailable bool
 	// UnavailableReason is the host-proven failure detail.
 	UnavailableReason string
+	// Commit applies a resolve-only state transition after the host has checked
+	// the resolved call. Proxy resolvers must not mutate host state before this
+	// callback runs: read-only agents may reject the action after resolution.
+	Commit func() error
 }
 
 // CallResolver is implemented by proxy tools that map a model-visible call onto

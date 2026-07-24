@@ -120,39 +120,13 @@ func StripReferencedContextPrefix(content string) string {
 // approval, stream recovery, readiness retry, etc.). These should not be shown
 // in the chat UI.
 func IsSyntheticUserMessage(content string) bool {
-	trimmed := strings.TrimSpace(agent.StripTransientUserBlocks(content))
-	if trimmed == planApprovedMessage {
+	if trimmed := strings.TrimSpace(agent.StripTransientUserBlocks(content)); trimmed == planApprovedMessage {
 		return true
 	}
-	for _, prefix := range syntheticPrefixes {
-		if strings.HasPrefix(trimmed, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// syntheticPrefixes must be kept in sync with the synthetic user messages
-// injected by the controller (planApprovedMessage, goal loop turns), agent loop
-// (streamRecoveryMessage, finalReadinessRetryMessage, emptyFinalRetryMessage,
-// executorHandoffRetryMessage in internal/agent/agent.go), and compaction
-// folds (internal/agent/compact.go), which store summaries as user-role
-// messages the chat UI must never render as user bubbles (#3653).
-var syntheticPrefixes = []string{
-	"Plan approved — plan mode is off",
-	"Host final-answer readiness check failed",
-	"You are already in the executor phase",
-	"The previous assistant response was interrupted while a tool call",
-	"The previous assistant response was interrupted during streaming",
-	"The previous assistant response was interrupted before visible",
-	"The previous assistant response finished without any visible answer",
-	"<compaction-summary>",
-	"Summary of the later conversation (compacted from here on):",
-	"Summary of earlier conversation (compacted up to here):",
-	"Continue pursuing the active goal",
-	"The agent signaled goal completion and all tasks are marked done.",
-	"Goal signaled complete but issues remain:",
-	"No tool calls in recent turns.",
+	// The prefix list lives in internal/agent (agent.SyntheticUserPrefixes) so
+	// preview/title/turn-count derivations there share the exact same filter
+	// (#3653).
+	return agent.IsSyntheticUserText(content)
 }
 
 // Compose applies the plan-mode marker to a turn's text when plan mode is on,
@@ -387,36 +361,6 @@ func shouldUseAutoResearch(goal string, mode GoalResearchMode) bool {
 	return isAutoResearchGoal(goal)
 }
 
-func shouldAutoStartResearchGoal(input string) bool {
-	trimmed := strings.TrimSpace(input)
-	if trimmed == "" || strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "!") {
-		return false
-	}
-	lower := strings.ToLower(trimmed)
-	if strings.Contains(lower, ".reasonix/autoresearch/") {
-		return true
-	}
-	for _, phrase := range autoResearchAutoStartPhrases {
-		if strings.Contains(lower, phrase) {
-			return true
-		}
-	}
-	categories := autoResearchPhaseCount(lower)
-	switch {
-	case strings.Contains(lower, "彻底") && categories >= 3:
-		return true
-	case strings.Contains(lower, "完整") && categories >= 3:
-		return true
-	case strings.Contains(lower, "长期") && categories >= 2 && containsAnyGoalKeyword(lower, []string{"实验", "验证", "修复", "排查", "优化"}):
-		return true
-	case strings.Contains(lower, "thoroughly") && categories >= 3:
-		return true
-	case strings.Contains(lower, "complete") && categories >= 3:
-		return true
-	}
-	return false
-}
-
 func isAutoResearchGoal(goal string) bool {
 	trimmed := strings.TrimSpace(goal)
 	if trimmed == "" {
@@ -442,32 +386,6 @@ func autoResearchPhaseCount(lower string) int {
 		}
 	}
 	return categories
-}
-
-var autoResearchAutoStartPhrases = []string{
-	"直到根因",
-	"根因明确",
-	"多轮排查",
-	"不要原地打转",
-	"别原地打转",
-	"完整做成方案",
-	"完整方案并验证",
-	"跑实验",
-	"反复验证",
-	"系统性研究",
-	"持续研究",
-	"持续排查",
-	"持续推进",
-	"长期跑",
-	"until the root cause",
-	"root cause is clear",
-	"debug until",
-	"do not spin",
-	"don't spin",
-	"keep researching",
-	"long-horizon",
-	"long horizon",
-	"long-running",
 }
 
 var autoResearchStrongKeywords = []string{
@@ -656,7 +574,7 @@ func (c *Controller) RunSkill(input string) (sent string, found bool) {
 	if !ok {
 		return "", false
 	}
-	return skill.Render(sk, task), true
+	return c.skills.render(sk, task), true
 }
 
 // MCPPrompt resolves a "/mcp__server__prompt args…" line: it maps the positional

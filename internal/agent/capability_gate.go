@@ -194,6 +194,16 @@ func (a *Agent) deliveryReviewGateFailure() string {
 	if a == nil || !a.deliveryProfile || a.evidence == nil {
 		return ""
 	}
+	if a.subagentDepth > 0 {
+		// Structured review is the parent's contract. A child's mutation
+		// receipts merge into the parent ledger (mergeChildEvidence), so the
+		// parent cannot final-answer without review coverage of those writes.
+		// Demanding review_report inside a depth-capped sub-agent — which may
+		// not even have the review tools — wedges the child against a gate it
+		// cannot satisfy. The light post-mutation review (read the touched
+		// file or run git diff/status) still applies via finalReadinessCheck.
+		return ""
+	}
 	mutation, ok := a.evidence.LatestSuccessfulMutationIndex()
 	if !ok {
 		return ""
@@ -219,7 +229,7 @@ func (a *Agent) deliveryReviewGateFailure() string {
 			return "structured review reported blocking findings; fix them and re-run review"
 		}
 		if !ok {
-			return "medium-risk changes require a successful review (run the review skill and submit review_report) after the latest mutation" + reviewCoverageHint(paths)
+			return "medium-risk changes require a successful review after the latest mutation (run the review skill; its subagent submits review_report)" + reviewCoverageHint(paths)
 		}
 		if report != nil {
 			a.pendingReviewWarnings = append(a.pendingReviewWarnings, report.WarningSummaries()...)

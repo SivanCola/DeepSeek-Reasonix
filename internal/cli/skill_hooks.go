@@ -10,7 +10,6 @@ import (
 
 	"reasonix/internal/config"
 	"reasonix/internal/control"
-	"reasonix/internal/hook"
 	"reasonix/internal/skill"
 )
 
@@ -125,8 +124,8 @@ func (m *chatTUI) skillSaveEnabledChanges(changes map[string]bool) {
 		m.notice("skill toggle unavailable in this session")
 		return
 	}
-	if m.ctrl.Running() {
-		m.notice("cannot change skills while a turn is running")
+	if m.runtimeSwitchBusy() {
+		m.notice("finish or cancel active work and stop background jobs before changing skills")
 		return
 	}
 	if m.modelSwitchPending {
@@ -193,8 +192,8 @@ func (m *chatTUI) scheduleSkillSessionRefresh(reason, notice string) bool {
 	if m.ctrl == nil {
 		return false
 	}
-	if m.ctrl.Running() {
-		m.notice("cannot refresh skills while a turn is running")
+	if m.runtimeSwitchBusy() {
+		m.notice("finish or cancel active work and stop background jobs before refreshing skills")
 		return false
 	}
 	if m.modelSwitchPending {
@@ -230,7 +229,7 @@ func (m *chatTUI) scheduleSkillSessionRefresh(reason, notice string) bool {
 			RuntimeProfile:   m.runtimeProfile,
 			ToolApprovalMode: oldCtrl.ToolApprovalMode(),
 			PlanMode:         oldCtrl.PlanMode(),
-		}, carried, prevPath)
+		}, carried, prevPath, oldCtrl)
 		if err != nil {
 			return modelSwitchMsg{ref: ref, err: err}
 		}
@@ -278,14 +277,16 @@ func (m *chatTUI) skillStore() *skill.Store {
 	var custom []string
 	var excluded []string
 	var pluginPaths map[string][]string
+	var pluginAgentPaths map[string][]string
 	maxDepth := 3
 	if cfg, err := config.Load(); err == nil {
 		custom = cfg.SkillCustomPaths()
 		excluded = cfg.SkillExcludedPaths()
 		pluginPaths = cfg.PluginPackageSkillOwners()
+		pluginAgentPaths = cfg.PluginPackageAgentOwners()
 		maxDepth = cfg.SkillMaxDepth()
 	}
-	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, PluginPaths: pluginPaths, ExcludedPaths: excluded, MaxDepth: maxDepth})
+	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, PluginPaths: pluginPaths, PluginAgentPaths: pluginAgentPaths, ExcludedPaths: excluded, MaxDepth: maxDepth})
 }
 
 func (m *chatTUI) runHooksSubcommand(input string) {
@@ -299,20 +300,16 @@ func (m *chatTUI) runHooksSubcommand(input string) {
 	case "", "list", "ls":
 		m.hooksList(cwd)
 	case "trust":
-		if err := hook.Trust(cwd, ""); err != nil {
-			m.notice("hooks trust: " + err.Error())
-			return
-		}
-		m.notice("trusted this project's hooks — restart Reasonix to load them")
+		// Backward-compatible response for old clients and saved commands.
+		m.notice("project hooks are enabled automatically; no trust action is required")
 	default:
-		m.notice("unknown /hooks subcommand " + args[1] + " — try: /hooks, /hooks trust")
+		m.notice("unknown /hooks subcommand " + args[1] + " — try: /hooks or /hooks list")
 	}
 }
 
 func (m *chatTUI) hooksList(cwd string) {
 	active := m.ctrl.HookRunner().Hooks()
-	trusted := hook.IsTrusted(cwd, "")
-	m.commitLine(renderHooks(m.width, active, trusted, hook.ProjectDefinesHooks(cwd)))
+	m.commitLine(renderHooks(m.width, active))
 }
 
 func containsArg(args []string, flag string) bool {

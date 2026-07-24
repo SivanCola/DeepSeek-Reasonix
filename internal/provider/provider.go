@@ -26,6 +26,15 @@ const (
 	RoleTool      Role = "tool"
 )
 
+// LocalOnlyToolName/ID make display-only records safe when a newer transcript
+// is opened by an older Reasonix binary that does not know Message.LocalOnly.
+// Old wire normalization treats this unmatched tool result as an orphan and
+// drops it instead of replaying partial content to the model.
+const (
+	LocalOnlyToolName = "__reasonix_local_only__"
+	LocalOnlyToolID   = "__reasonix_local_only__"
+)
+
 // Message is a single conversation message.
 type Message struct {
 	Role             Role     `json:"role"`
@@ -43,8 +52,38 @@ type Message struct {
 	Name               string           `json:"name,omitempty"`            // tool message: tool name
 	MemoryCitations    []MemoryCitation `json:"memoryCitations,omitempty"` // local UI metadata; provider requests ignore it
 	WorkDurationMs     int64            `json:"workDurationMs,omitempty"`  // local UI metadata; provider requests ignore it
+	CreatedAt          int64            `json:"createdAt,omitempty"`       // local UI metadata; unix milliseconds; stripped before provider requests
 	Edited             bool             `json:"edited,omitempty"`          // local UI metadata; provider requests ignore it
 	Original           string           `json:"original,omitempty"`        // user prompt before inline edit
+	// LocalOnly marks durable transcript content that must never be sent to a
+	// model provider. Interrupted streaming output uses it so every frontend can
+	// replay what the user saw without feeding partial reasoning or tool-call
+	// arguments back into the next request.
+	LocalOnly       bool                     `json:"local_only,omitempty"`
+	InterruptedTurn *InterruptedTurnRecovery `json:"interrupted_turn,omitempty"`
+}
+
+// InterruptedTurnRecovery is the durable, provider-excluded handoff for a turn
+// that stopped before producing a clean final answer. It contains only bounded
+// structural facts; raw partial reasoning remains on the LocalOnly Message for
+// display and is never copied into the recovery prompt.
+type InterruptedTurnRecovery struct {
+	Pending                 bool                     `json:"pending,omitempty"`
+	CompletedTools          []InterruptedToolSummary `json:"completed_tools,omitempty"`
+	InterruptedTools        []string                 `json:"interrupted_tools,omitempty"`
+	DroppedPartialText      bool                     `json:"dropped_partial_text,omitempty"`
+	DroppedPartialReasoning bool                     `json:"dropped_partial_reasoning,omitempty"`
+}
+
+// InterruptedToolSummary records a completed, fully paired tool call without
+// duplicating its arguments or result. The canonical assistant/tool messages
+// immediately before the recovery record remain the source of truth.
+type InterruptedToolSummary struct {
+	ID      string   `json:"id,omitempty"`
+	Name    string   `json:"name"`
+	Files   []string `json:"files,omitempty"`
+	Added   int      `json:"added,omitempty"`
+	Removed int      `json:"removed,omitempty"`
 }
 
 // MemoryCitation is local display metadata for memories that influenced an
@@ -85,6 +124,13 @@ type ToolCall struct {
 	Diff      string `json:"diff,omitempty"`
 	Added     int    `json:"added,omitempty"`
 	Removed   int    `json:"removed,omitempty"`
+	// Resolved* fields are Reasonix-local display metadata for stable proxy
+	// calls such as use_capability. Provider request builders deliberately
+	// serialize only ID/Name/Arguments, so these fields never alter the
+	// provider-visible conversation or prompt-cache prefix.
+	ResolvedName     string `json:"resolved_name,omitempty"`
+	CapabilityID     string `json:"capability_id,omitempty"`
+	ResolvedReadOnly *bool  `json:"resolved_read_only,omitempty"`
 }
 
 // ToolSchema is a tool definition exposed to the model. Parameters is JSON Schema.
@@ -131,6 +177,24 @@ const interruptedToolResult = "[no result: the previous turn was interrupted bef
 // "defensive wire prep" rather than "session mutation".
 func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(msgs) }
 
+// ModelMessages removes durable display-only records before a request is
+// handed to any provider. Healthy sessions without such records keep their
+// original backing slice, preserving the allocation and prompt-cache fast path.
+func ModelMessages(msgs []Message) []Message {
+	for _, m := range msgs {
+		if m.LocalOnly {
+			out := make([]Message, 0, len(msgs)-1)
+			for _, candidate := range msgs {
+				if !candidate.LocalOnly {
+					out = append(out, candidate)
+				}
+			}
+			return out
+		}
+	}
+	return msgs
+}
+
 // NormalizeMessages repairs a conversation history so it satisfies the tool-call
 // contract the OpenAI-compatible and Anthropic APIs enforce: every assistant
 // tool_calls entry must be answered by a following tool message for its id, and a
@@ -169,9 +233,16 @@ func normalizeMessages(msgs []Message, dropOrphanTools bool) []Message {
 	out := make([]Message, 0, len(msgs))
 	for i := 0; i < len(msgs); {
 		m := msgs[i]
+		if m.LocalOnly {
+			if !dropOrphanTools {
+				out = append(out, m)
+			}
+			i++
+			continue
+		}
 		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
 			j := i + 1
-			for j < len(msgs) && msgs[j].Role == RoleTool {
+			for j < len(msgs) && msgs[j].Role == RoleTool && !msgs[j].LocalOnly {
 				j++
 			}
 			// Backfill empty tool-call names from the corresponding tool
@@ -210,9 +281,16 @@ func normalizeMessages(msgs []Message, dropOrphanTools bool) []Message {
 func tryNormalizeFastPath(msgs []Message, dropOrphanTools bool) ([]Message, bool) {
 	for i := 0; i < len(msgs); {
 		m := msgs[i]
+		if m.LocalOnly {
+			if dropOrphanTools {
+				return nil, false
+			}
+			i++
+			continue
+		}
 		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
 			j := i + 1
-			for j < len(msgs) && msgs[j].Role == RoleTool {
+			for j < len(msgs) && msgs[j].Role == RoleTool && !msgs[j].LocalOnly {
 				j++
 			}
 			if !toolTurnWellFormed(m.ToolCalls, msgs[i+1:j]) || needsToolCallArgRepair(m.ToolCalls) {
@@ -464,13 +542,14 @@ func idDistinct(calls []ToolCall) bool {
 type ChunkType int
 
 const (
-	ChunkText          ChunkType = iota // text delta
-	ChunkReasoning                      // thinking-mode reasoning delta (before the visible answer)
-	ChunkToolCallStart                  // a tool call has begun (ToolCall: ID+Name; args still streaming)
-	ChunkToolCall                       // one complete tool call
-	ChunkUsage                          // token usage for the completion
-	ChunkDone                           // completion finished normally
-	ChunkError                          // an error occurred
+	ChunkText              ChunkType = iota // text delta
+	ChunkReasoning                          // thinking-mode reasoning delta (before the visible answer)
+	ChunkToolCallStart                      // a tool call has begun (ToolCall: ID+Name; args still streaming)
+	ChunkToolCallArgsDelta                  // progress while a call's arguments stream (ToolCall: ID+Name; ArgChars: cumulative)
+	ChunkToolCall                           // one complete tool call
+	ChunkUsage                              // token usage for the completion
+	ChunkDone                               // completion finished normally
+	ChunkError                              // an error occurred
 )
 
 // Usage reports token accounting for a completion. Cache hit/miss come from
@@ -576,7 +655,8 @@ type Chunk struct {
 	Type      ChunkType
 	Text      string    // ChunkText, ChunkReasoning
 	Signature string    // ChunkReasoning: opaque proof for the reasoning (Anthropic thinking signature), when issued
-	ToolCall  *ToolCall // ChunkToolCallStart (ID+Name only), ChunkToolCall (complete)
+	ToolCall  *ToolCall // ChunkToolCallStart (ID+Name only), ChunkToolCallArgsDelta (ID+Name), ChunkToolCall (complete)
+	ArgChars  int       // ChunkToolCallArgsDelta: cumulative argument characters received for this call
 	Usage     *Usage    // ChunkUsage
 	Err       error     // ChunkError
 }

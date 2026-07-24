@@ -19,8 +19,8 @@ import (
 	"reasonix/internal/skill"
 )
 
-var setupSubagentCommand = func(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink) (*control.Controller, error) {
-	return setupProfile(ctx, modelName, maxStepsOverride, requireKey, sink, "")
+var setupSubagentCommand = func(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, workspaceRoot string) (*control.Controller, error) {
+	return setupProfile(ctx, modelName, maxStepsOverride, requireKey, sink, "", workspaceRoot)
 }
 
 const subagentUsageText = `usage:
@@ -74,7 +74,7 @@ func subagentListCommand(args []string) int {
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
-	profiles := subagentProfiles(newCLISubagentStore().List())
+	profiles := subagentProfiles(newCLISubagentStore().SlashList())
 	cfg, _ := config.Load()
 	if len(profiles) == 0 {
 		fmt.Println("no subagent profiles found")
@@ -104,7 +104,7 @@ func subagentListCommand(args []string) int {
 		if effort != "" {
 			attributes = append(attributes, "effort="+effort)
 		}
-		fmt.Printf("%-24s %-28s %s\n", sk.Name, "["+strings.Join(attributes, ", ")+"]", sk.Description)
+		fmt.Printf("%-40s %-28s %s\n", sk.SlashName(), "["+strings.Join(attributes, ", ")+"]", sk.Description)
 	}
 	return 0
 }
@@ -186,7 +186,7 @@ func subagentCreateCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "subagent create:", err)
 		return 1
 	}
-	content := renderCLIProfile(name, values.description.value, prompt, values.model.value, values.effort.value, parseToolList(values.tools.value), values.color.value)
+	content := renderCLIProfile(name, values.description.value, prompt, values.model.value, values.effort.value, parseToolList(values.tools.value), values.color.value, false)
 	path, err := store.CreateWithContent(name, scope, content)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "subagent create:", err)
@@ -263,7 +263,7 @@ func subagentEditCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, "subagent edit: description and prompt cannot be empty")
 		return 2
 	}
-	content := renderCLIProfile(sk.Name, description, body, model, effort, tools, color)
+	content := renderCLIProfile(sk.Name, description, body, model, effort, tools, color, sk.ReadOnly)
 	if err := store.UpdateContent(sk.Name, sk.Scope, content); err != nil {
 		fmt.Fprintln(os.Stderr, "subagent edit:", err)
 		return 1
@@ -329,6 +329,11 @@ func subagentRunCommand(args []string, readOnly bool) int {
 	if rc := chdirTo(*dir); rc != 0 {
 		return rc
 	}
+	workspaceRoot, err := workspaceRootForDir(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "subagent %s: %v\n", verb, err)
+		return 1
+	}
 	task := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if task == "" {
 		task = readStdin()
@@ -339,7 +344,7 @@ func subagentRunCommand(args []string, readOnly bool) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	ctrl, err := setupSubagentCommand(ctx, *model, *maxSteps, true, event.Discard)
+	ctrl, err := setupSubagentCommand(ctx, *model, *maxSteps, true, event.Discard, workspaceRoot)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "subagent %s: %v\n", verb, err)
 		return 1
@@ -365,13 +370,19 @@ func namedSubagentArgs(args []string) (string, []string, bool) {
 func newCLISubagentStore() *skill.Store {
 	cwd, _ := os.Getwd()
 	var custom, excluded []string
+	var pluginPaths, pluginAgentPaths map[string][]string
 	maxDepth := 3
 	if cfg, err := config.Load(); err == nil {
 		custom = cfg.SkillCustomPaths()
 		excluded = cfg.SkillExcludedPaths()
+		pluginPaths = cfg.PluginPackageSkillOwners()
+		pluginAgentPaths = cfg.PluginPackageAgentOwners()
 		maxDepth = cfg.SkillMaxDepth()
 	}
-	return skill.New(skill.Options{ProjectRoot: cwd, CustomPaths: custom, ExcludedPaths: excluded, MaxDepth: maxDepth})
+	return skill.New(skill.Options{
+		ProjectRoot: cwd, CustomPaths: custom, PluginPaths: pluginPaths,
+		PluginAgentPaths: pluginAgentPaths, ExcludedPaths: excluded, MaxDepth: maxDepth,
+	})
 }
 
 func subagentProfiles(skills []skill.Skill) []skill.Skill {
@@ -525,7 +536,7 @@ func parseToolList(raw string) []string {
 	return tools
 }
 
-func renderCLIProfile(name, description, prompt, model, effort string, tools []string, color string) string {
+func renderCLIProfile(name, description, prompt, model, effort string, tools []string, color string, readOnly bool) string {
 	return skill.RenderSkillFile(skill.SkillFileOptions{
 		Name:         strings.TrimSpace(name),
 		Description:  strings.TrimSpace(description),
@@ -534,6 +545,7 @@ func renderCLIProfile(name, description, prompt, model, effort string, tools []s
 		Model:        strings.TrimSpace(model),
 		Effort:       strings.TrimSpace(effort),
 		AllowedTools: tools,
+		ReadOnly:     readOnly,
 		Color:        strings.TrimSpace(color),
 		Invocation:   "manual",
 	})

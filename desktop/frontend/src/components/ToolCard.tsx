@@ -7,7 +7,6 @@ import { diffsFor, languageForToolArgs, subjectOf, summarize, summarizeFileDiff 
 import { useShellExpand } from "../lib/shellExpand";
 import { useGSAPCollapse } from "../lib/useGSAPCollapse";
 import type { Item } from "../lib/useController";
-import { isReadOnlyTool } from "../lib/useController";
 import { ReadOnlyBatch } from "./ReadOnlyBatch";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
@@ -30,6 +29,11 @@ function pretty(json: string): string {
 function formatToolDuration(ms?: number): string {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
   return `${Math.round(ms)} ms`;
+}
+
+function formatArgChars(chars: number): string {
+  if (chars >= 1000) return `${(chars / 1000).toFixed(1)}k`;
+  return String(chars);
 }
 
 function normalizeErrorText(text: string): string {
@@ -153,7 +157,13 @@ export const ToolCard = memo(function ToolCard({ item, subcalls, tabId, displayN
     item.readOnly && !hasNested && item.status !== "error" && item.status !== "stopped";
 
   const duration = item.status === "running" ? "" : formatToolDuration(item.durationMs);
-  const summary = item.status === "running" ? "" : item.summary || summarizeFileDiff(item.fileDiff) || (item.error ? errorSummary : archivedWithoutFullData ? "" : summarize(item.name, effectiveArgs, displayOutput, item.error));
+  // While the model is still streaming this call's arguments (partial
+  // dispatch), show the received volume as the live subject so a long
+  // write_file body reads as progress instead of a silent stall.
+  const streamingArgs = item.status === "running" && !item.args && (item.argChars ?? 0) > 0
+    ? t("tool.receivingArgs", { chars: formatArgChars(item.argChars ?? 0) })
+    : "";
+  const summary = item.status === "running" ? streamingArgs : item.summary || summarizeFileDiff(item.fileDiff) || (item.error ? errorSummary : archivedWithoutFullData ? "" : summarize(item.name, effectiveArgs, displayOutput, item.error));
 
   // GSAP-driven collapse/expand for tool body
   const toolBodyRef = useRef<HTMLDivElement>(null);
@@ -221,7 +231,7 @@ export const ToolCard = memo(function ToolCard({ item, subcalls, tabId, displayN
                 roBatch.length = 0;
               };
               for (const c of nested) {
-                if (isReadOnlyTool(c.name) && c.name !== "todo_write") {
+                if (c.readOnly && c.name !== "todo_write") {
                   roBatch.push(c);
                   continue;
                 }

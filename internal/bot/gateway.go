@@ -50,7 +50,16 @@ type GatewayConfig struct {
 	Allowlist          AllowlistConfig
 	Enabled            map[Platform]bool
 	Debounce           time.Duration
-	OnInbound          func(InboundMessage)
+	// OnInbound observes every allowlisted inbound message before dispatch.
+	//
+	// Reentrancy contract for all GatewayConfig callbacks (OnInbound,
+	// OnSessionReady, OnToolApprovalModeChange): they run synchronously on
+	// gateway-owned dispatch/turn goroutines that Stop drains before returning.
+	// A callback must therefore never call Stop, nor block until a goroutine
+	// that does so completes — Stop would wait on the very goroutine running
+	// the callback, a guaranteed deadlock. Hosts that want to shut the gateway
+	// down in reaction to a callback must trigger the shutdown asynchronously.
+	OnInbound func(InboundMessage)
 	// OnSessionReady notifies the host after the bot has created or reused the
 	// controller for an inbound remote. Hosts may persist the concrete session ID
 	// or keep the remote as a read-only channel.
@@ -157,6 +166,15 @@ type BotGateway struct {
 	sessions *SessionManager
 	startErr []error
 
+	lifecycleMu sync.Mutex
+	started     bool
+	stopped     bool
+	runCancel   context.CancelFunc
+	startDone   chan struct{}
+	stopDone    chan struct{}
+	gatewayWG   sync.WaitGroup
+	turnWG      sync.WaitGroup
+
 	mu                      sync.Mutex
 	controllers             map[string]*sessionState // session key -> active state
 	pendingReactionCleanups map[string][]func()
@@ -184,6 +202,7 @@ type botController interface {
 type sessionState struct {
 	ctrl             botController
 	sink             *sessionEventSink
+	leases           *control.SessionLeaseKeeper
 	platform         Platform
 	connectionID     string
 	model            string
@@ -340,7 +359,34 @@ func (gw *BotGateway) buildSelfUserIDs() {
 }
 
 // Start 启动所有已启用的平台适配器并开始处理消息。
-func (gw *BotGateway) Start(ctx context.Context) error {
+func (gw *BotGateway) Start(ctx context.Context) (err error) {
+	gw.lifecycleMu.Lock()
+	if gw.stopped {
+		gw.lifecycleMu.Unlock()
+		return errors.New("bot gateway already stopped")
+	}
+	if gw.started {
+		gw.lifecycleMu.Unlock()
+		return errors.New("bot gateway already started")
+	}
+	gw.started = true
+	runCtx, cancel := context.WithCancel(ctx)
+	gw.runCancel = cancel
+	startDone := make(chan struct{})
+	gw.startDone = startDone
+	gw.lifecycleMu.Unlock()
+	defer func() {
+		if err != nil {
+			cancel()
+		}
+		gw.lifecycleMu.Lock()
+		if err != nil {
+			gw.runCancel = nil
+		}
+		close(startDone)
+		gw.lifecycleMu.Unlock()
+	}()
+
 	started := make([]AdapterBinding, 0, len(gw.adapters))
 	var startErr []error
 	for _, binding := range gw.adapters {
@@ -350,7 +396,7 @@ func (gw *BotGateway) Start(ctx context.Context) error {
 			continue
 		}
 		gw.logger.Info("starting adapter", "platform", binding.Platform, "connection", binding.ID, "domain", binding.Domain)
-		if err := binding.Adapter.Start(ctx); err != nil {
+		if err := binding.Adapter.Start(runCtx); err != nil {
 			wrapped := fmt.Errorf("start adapter %s: %w", binding.ID, err)
 			startErr = append(startErr, wrapped)
 			gw.markAdapterStartFailed(binding, err)
@@ -369,7 +415,7 @@ func (gw *BotGateway) Start(ctx context.Context) error {
 	if len(started) == 0 && len(startErr) > 0 {
 		return errors.Join(startErr...)
 	}
-	if err := gw.startControlServer(ctx); err != nil {
+	if err := gw.startControlServer(runCtx); err != nil {
 		for _, binding := range started {
 			_ = binding.Adapter.Stop()
 		}
@@ -378,17 +424,25 @@ func (gw *BotGateway) Start(ctx context.Context) error {
 
 	// 合并所有适配器的消息通道
 	for _, binding := range gw.adapters {
-		go gw.dispatchLoop(ctx, binding)
+		gw.gatewayWG.Add(1)
+		go func() {
+			defer gw.gatewayWG.Done()
+			gw.dispatchLoop(runCtx, binding)
+		}()
 	}
 
 	return nil
 }
 
 func (gw *BotGateway) AdapterCount() int {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
 	return len(gw.adapters)
 }
 
 func (gw *BotGateway) StartErrors() []error {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
 	out := make([]error, len(gw.startErr))
 	copy(out, gw.startErr)
 	return out
@@ -512,8 +566,53 @@ func (gw *BotGateway) ensureAdapterHealthLocked(binding AdapterBinding) *Adapter
 	return health
 }
 
-// Stop 停止所有适配器并关闭所有 session。
+// Stop 停止所有适配器并关闭所有 session。它会等待 dispatch 与 turn goroutine
+// 全部退出，所以绝不能在 GatewayConfig 回调里同步调用（见 OnInbound 的
+// reentrancy contract），否则 Stop 会等待正在运行该回调的 goroutine 自己。
 func (gw *BotGateway) Stop() {
+	gw.lifecycleMu.Lock()
+	if gw.stopped {
+		stopDone := gw.stopDone
+		gw.lifecycleMu.Unlock()
+		if stopDone != nil {
+			<-stopDone
+		}
+		return
+	}
+	gw.stopped = true
+	stopDone := make(chan struct{})
+	gw.stopDone = stopDone
+	cancel := gw.runCancel
+	gw.runCancel = nil
+	startDone := gw.startDone
+	gw.lifecycleMu.Unlock()
+	defer close(stopDone)
+
+	if cancel != nil {
+		cancel()
+	}
+	if startDone != nil {
+		<-startDone
+	}
+
+	// Cancel sessions that already exist before waiting for dispatch to drain.
+	// A dispatch already inside handleMessage may still publish a late session,
+	// so closeSessions is repeated after gatewayWG and turnWG reach zero.
+	gw.closeSessions()
+	for _, binding := range gw.adapters {
+		if err := binding.Adapter.Stop(); err != nil {
+			gw.logger.Warn("error stopping adapter", "platform", binding.Platform, "connection", binding.ID, "err", err)
+		}
+		gw.markAdapterClosed(binding)
+	}
+	gw.stopControlServer()
+	gw.gatewayWG.Wait()
+	gw.closeSessions()
+	gw.turnWG.Wait()
+	gw.closeSessions()
+}
+
+func (gw *BotGateway) closeSessions() {
 	var states []*sessionState
 	gw.mu.Lock()
 	for key, state := range gw.controllers {
@@ -522,16 +621,48 @@ func (gw *BotGateway) Stop() {
 	}
 	gw.mu.Unlock()
 	for _, state := range states {
-		closeBotSessionState(state)
+		gw.closeSessionState(state)
 	}
+}
 
-	for _, binding := range gw.adapters {
-		if err := binding.Adapter.Stop(); err != nil {
-			gw.logger.Warn("error stopping adapter", "platform", binding.Platform, "connection", binding.ID, "err", err)
-		}
-		gw.markAdapterClosed(binding)
+// closeSessionState tears down a session state that has been unlinked from
+// gw.controllers. runTurn publishes state.cancel under gw.mu on every turn —
+// possibly after the state was already unlinked — so snapshot and clear the
+// field inside the lock and invoke it outside (the same discipline as
+// cancelActiveSession).
+func (gw *BotGateway) closeSessionState(state *sessionState) {
+	if state == nil {
+		return
 	}
-	gw.stopControlServer()
+	gw.mu.Lock()
+	cancel := state.cancel
+	state.cancel = nil
+	gw.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if state.ctrl != nil {
+		state.ctrl.Close()
+	}
+	if state.leases != nil {
+		state.leases.Release()
+	}
+}
+
+// unlinkAndCloseSessionState removes state from the live gateway before closing
+// it. It is used when a controller has already rotated its transcript but the
+// replacement lease could not be acquired: retaining that state would let the
+// next message reuse a controller that no longer owns its active session path.
+func (gw *BotGateway) unlinkAndCloseSessionState(key string, state *sessionState) {
+	if state == nil {
+		return
+	}
+	gw.mu.Lock()
+	if gw.controllers[key] == state {
+		delete(gw.controllers, key)
+	}
+	gw.mu.Unlock()
+	gw.closeSessionState(state)
 }
 
 func (gw *BotGateway) dispatchLoop(ctx context.Context, binding AdapterBinding) {
@@ -674,7 +805,11 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 	// would unblock it: the session wedges until restart (#4701, #4863, #4402).
 	// Per-session serialization is still held by the session lock (active[key]),
 	// which the deferred Release inside runTurn clears.
-	go gw.runTurn(ctx, binding.Adapter, key, msg, cleanup)
+	gw.turnWG.Add(1)
+	go func() {
+		defer gw.turnWG.Done()
+		gw.runTurn(ctx, binding.Adapter, key, msg, cleanup)
+	}()
 }
 
 func (gw *BotGateway) queueMode(key string, msg InboundMessage) string {
@@ -997,12 +1132,18 @@ func chatUsesGroupAllowlist(chatType ChatType) bool {
 }
 
 func (gw *BotGateway) normalizeApprovalShortcut(key, text string) (string, bool) {
-	command, ok := approvalShortcutCommand(text)
-	if !ok {
-		return "", false
-	}
 	approvalID := gw.currentPendingApprovalID(key)
 	if approvalID == "" {
+		return "", false
+	}
+	if gw.pendingApprovalIsRecovery(key, approvalID) {
+		if command, ok := recoveryShortcutCommand(text, gw.pendingRecoveryCanGrantTask(key, approvalID)); ok {
+			return command + " " + approvalID, true
+		}
+		return "", false
+	}
+	command, ok := approvalShortcutCommand(text)
+	if !ok {
 		return "", false
 	}
 	return command + " " + approvalID, true
@@ -1017,6 +1158,52 @@ func approvalShortcutCommand(text string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func recoveryShortcutCommand(text string, canGrantTask bool) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "1", "y", "yes", "ok", "继续", "继续此变更", "continue":
+		return "/recovery-continue", true
+	case "2", "a", "同类", "本任务允许", "allow similar":
+		if canGrantTask {
+			return "/recovery-continue-task", true
+		}
+		return "/recovery-revise", true
+	case "3":
+		if canGrantTask {
+			return "/recovery-revise", true
+		}
+		return "", false
+	case "修改", "修改方案", "换个办法", "revise":
+		return "/recovery-revise", true
+	default:
+		return "", false
+	}
+}
+
+func (gw *BotGateway) pendingRecoveryCanGrantTask(key, id string) bool {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	state, ok := gw.controllers[key]
+	if !ok || state.pendingApprovals == nil {
+		return false
+	}
+	a, ok := state.pendingApprovals[id]
+	return ok && a.Recovery != nil && a.Recovery.CanGrantTask
+}
+
+func (gw *BotGateway) pendingApprovalIsRecovery(key, id string) bool {
+	gw.mu.Lock()
+	defer gw.mu.Unlock()
+	state, ok := gw.controllers[key]
+	if !ok || state.pendingApprovals == nil {
+		return false
+	}
+	a, ok := state.pendingApprovals[id]
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(a.Kind), "recovery") || a.Recovery != nil
 }
 
 func decisionShortcutCommand(text string) (string, bool) {
@@ -1151,6 +1338,28 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 				_ = gw.sendText(ctx, adapter, msg, "新会话创建失败，请稍后重试。")
 				return
 			}
+			if state.leases != nil {
+				if err := state.leases.Rebind(state.ctrl.SessionPath()); err != nil {
+					gw.logger.Warn("new session lease failed", "err", control.SessionInUseMessage(err))
+					gw.unlinkAndCloseSessionState(key, state)
+					gw.sessions.ForceRelease(key)
+					_ = gw.sendText(ctx, adapter, msg, "新会话创建失败：无法取得写入权限。请关闭其他 Reasonix 窗口或进程后重试。")
+					return
+				}
+			}
+			// /new leaves an attached transcript and continues in the freshly
+			// rotated path. Clear only the path pin while preserving any project
+			// override, otherwise the next message would rebuild the old attached
+			// transcript and silently undo the rotation.
+			gw.mu.Lock()
+			if gw.controllers[key] == state {
+				state.sessionPath = ""
+				if override, exists := gw.sessionOverrides[key]; exists && override.sessionPath != "" {
+					override.sessionPath = ""
+					gw.sessionOverrides[key] = override
+				}
+			}
+			gw.mu.Unlock()
 			gw.rememberSessionReady(msg, state.ctrl)
 		}
 		gw.sessions.ForceRelease(key)
@@ -1170,7 +1379,12 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		state, ok := gw.controllers[key]
 		gw.mu.Unlock()
 		if ok && state.ctrl != nil {
-			state.ctrl.Approve(parts[1], true, false, false)
+			// Recovery cards map allow → continue for older clients that only know Approve.
+			if gw.pendingApprovalIsRecovery(key, parts[1]) {
+				_ = state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionContinue, "")
+			} else {
+				state.ctrl.Approve(parts[1], true, false, false)
+			}
 			gw.forgetPendingApproval(key, parts[1])
 			_ = gw.sendText(ctx, adapter, msg, "已批准。")
 		} else {
@@ -1190,11 +1404,110 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		state, ok := gw.controllers[key]
 		gw.mu.Unlock()
 		if ok && state.ctrl != nil {
-			state.ctrl.Approve(parts[1], false, false, false)
+			if gw.pendingApprovalIsRecovery(key, parts[1]) {
+				_ = state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionRevise, "")
+			} else {
+				state.ctrl.Approve(parts[1], false, false, false)
+			}
 			gw.forgetPendingApproval(key, parts[1])
 			_ = gw.sendText(ctx, adapter, msg, "已拒绝。")
 		} else {
 			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的待审批操作，请重新触发一次操作。")
+		}
+
+	case strings.HasPrefix(msg.Text, "/recovery-continue-task"):
+		if !gw.requireCommandRole(ctx, adapter, msg, "approver") {
+			return
+		}
+		parts := strings.Fields(msg.Text)
+		if len(parts) < 2 {
+			_ = gw.sendText(ctx, adapter, msg, "用法: /recovery-continue-task <id>")
+			return
+		}
+		gw.mu.Lock()
+		state, ok := gw.controllers[key]
+		gw.mu.Unlock()
+		if ok && state.ctrl != nil {
+			if err := state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionContinueTask, ""); err != nil {
+				_ = gw.sendText(ctx, adapter, msg, "确认失败: "+err.Error())
+				return
+			}
+			gw.forgetPendingApproval(key, parts[1])
+			_ = gw.sendText(ctx, adapter, msg, "已继续；本任务内同类操作将自动执行，范围扩大或风险升级仍会确认。")
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的待确认操作。")
+		}
+
+	case strings.HasPrefix(msg.Text, "/recovery-continue"):
+		if !gw.requireCommandRole(ctx, adapter, msg, "approver") {
+			return
+		}
+		parts := strings.Fields(msg.Text)
+		if len(parts) < 2 {
+			_ = gw.sendText(ctx, adapter, msg, "用法: /recovery-continue <id>")
+			return
+		}
+		gw.mu.Lock()
+		state, ok := gw.controllers[key]
+		gw.mu.Unlock()
+		if ok && state.ctrl != nil {
+			if err := state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionContinue, ""); err != nil {
+				_ = gw.sendText(ctx, adapter, msg, "确认失败: "+err.Error())
+				return
+			}
+			gw.forgetPendingApproval(key, parts[1])
+			_ = gw.sendText(ctx, adapter, msg, "已继续。")
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的待确认操作。")
+		}
+
+	case strings.HasPrefix(msg.Text, "/recovery-revise"):
+		if !gw.requireCommandRole(ctx, adapter, msg, "approver") {
+			return
+		}
+		parts := strings.Fields(msg.Text)
+		if len(parts) < 2 {
+			_ = gw.sendText(ctx, adapter, msg, "用法: /recovery-revise <id> [补充要求]")
+			return
+		}
+		feedback := strings.TrimSpace(strings.Join(parts[2:], " "))
+		gw.mu.Lock()
+		state, ok := gw.controllers[key]
+		gw.mu.Unlock()
+		if ok && state.ctrl != nil {
+			if err := state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionRevise, feedback); err != nil {
+				_ = gw.sendText(ctx, adapter, msg, "修改方案失败: "+err.Error())
+				return
+			}
+			gw.forgetPendingApproval(key, parts[1])
+			_ = gw.sendText(ctx, adapter, msg, "已拒绝当前变更并注入修改要求。")
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的恢复检查点。")
+		}
+
+	case strings.HasPrefix(msg.Text, "/recovery-stop"):
+		// Backward compatibility for cards rendered by an older client: reject
+		// the proposed mutation but leave task cancellation to ordinary /stop.
+		if !gw.requireCommandRole(ctx, adapter, msg, "approver") {
+			return
+		}
+		parts := strings.Fields(msg.Text)
+		if len(parts) < 2 {
+			_ = gw.sendText(ctx, adapter, msg, "用法: /recovery-stop <id>")
+			return
+		}
+		gw.mu.Lock()
+		state, ok := gw.controllers[key]
+		gw.mu.Unlock()
+		if ok && state.ctrl != nil {
+			if err := state.ctrl.ResolveRecovery(parts[1], agent.RecoveryActionRevise, "cancel this proposed action"); err != nil {
+				_ = gw.sendText(ctx, adapter, msg, "取消变更失败: "+err.Error())
+				return
+			}
+			gw.forgetPendingApproval(key, parts[1])
+			_ = gw.sendText(ctx, adapter, msg, "已取消当前变更；如需停止整个任务，请使用 /stop。")
+		} else {
+			_ = gw.sendText(ctx, adapter, msg, "没有找到当前会话中的恢复检查点。")
 		}
 
 	case strings.HasPrefix(msg.Text, "/answer"):
@@ -1352,7 +1665,9 @@ func (gw *BotGateway) handleUseProjectCommand(key, text string) string {
 		return "用法: /use project <项目 id|名称|路径>，或 /use project default 恢复默认路由。"
 	}
 	if isDefaultBotSelector(selector) {
-		gw.setSessionRuntimeOverride(key, sessionRuntimeOverride{}, false)
+		if !gw.setSessionRuntimeOverride(key, sessionRuntimeOverride{}, false) {
+			return botRuntimeSwitchBusyText()
+		}
 		return "已恢复当前远端会话的默认项目路由。下一条消息会按 bot 配置重新选择 workspace。"
 	}
 	projects := gw.buildProjectIndex()
@@ -1363,10 +1678,12 @@ func (gw *BotGateway) handleUseProjectCommand(key, text string) string {
 		}
 		return "没有匹配的项目。可先用 /projects 查看当前索引。"
 	}
-	gw.setSessionRuntimeOverride(key, sessionRuntimeOverride{
+	if !gw.setSessionRuntimeOverride(key, sessionRuntimeOverride{
 		channel: ChannelConfig{WorkspaceRoot: project.Root},
 		label:   "project:" + project.ID,
-	}, true)
+	}, true) {
+		return botRuntimeSwitchBusyText()
+	}
 	return fmt.Sprintf("已将当前远端会话切到项目 %s %s。\n下一条消息将在 %s 中运行。", project.ID, project.Name, displayBotPath(project.Root))
 }
 
@@ -1424,11 +1741,13 @@ func (gw *BotGateway) handleAttachSessionCommand(key, text string) string {
 		project := botProjectForPath(projects, session.SessionPath)
 		workspaceRoot = project.Root
 	}
-	gw.setSessionRuntimeOverride(key, sessionRuntimeOverride{
+	if !gw.setSessionRuntimeOverride(key, sessionRuntimeOverride{
 		channel:     ChannelConfig{WorkspaceRoot: workspaceRoot},
 		sessionPath: session.SessionPath,
 		label:       "session:" + session.ID,
-	}, true)
+	}, true) {
+		return botRuntimeSwitchBusyText()
+	}
 	projectName := firstNonEmptyString(session.ProjectName, botProjectName(workspaceRoot), "global")
 	return fmt.Sprintf("已 attach 到会话 %s（%s）。\n下一条消息会从 %s 继续。", session.ID, projectName, displayBotPath(session.SessionPath))
 }
@@ -1456,23 +1775,57 @@ func (gw *BotGateway) handleProjectSearchCommand(ctx context.Context, text strin
 	return formatBotProjectSearchResults(results, botSearchListLimit)
 }
 
-func (gw *BotGateway) setSessionRuntimeOverride(key string, override sessionRuntimeOverride, enabled bool) {
-	var old *sessionState
-	gw.mu.Lock()
-	if state, ok := gw.controllers[key]; ok {
-		old = state
-		delete(gw.controllers, key)
+func botRuntimeSwitchBusyText() string {
+	return "当前会话仍有正在运行、等待确认或后台执行的任务。请先完成或停止这些任务，再切换项目或 attach 会话。"
+}
+
+func (gw *BotGateway) setSessionRuntimeOverride(key string, override sessionRuntimeOverride, enabled bool) bool {
+	return gw.sessions.runIfIdle(key, func() bool {
+		var old *sessionState
+		gw.mu.Lock()
+		if state, ok := gw.controllers[key]; ok {
+			if botSessionHasActiveWork(state) {
+				gw.mu.Unlock()
+				return false
+			}
+			old = state
+			delete(gw.controllers, key)
+		}
+		if enabled {
+			override.sessionPath = canonicalBotPath(override.sessionPath)
+			override.channel.WorkspaceRoot = canonicalBotPath(override.channel.WorkspaceRoot)
+			gw.sessionOverrides[key] = override
+		} else {
+			delete(gw.sessionOverrides, key)
+		}
+		gw.mu.Unlock()
+		gw.closeSessionState(old)
+		return true
+	})
+}
+
+func botSessionHasActiveWork(state *sessionState) bool {
+	if state == nil || state.ctrl == nil {
+		return false
 	}
-	if enabled {
-		override.sessionPath = canonicalBotPath(override.sessionPath)
-		override.channel.WorkspaceRoot = canonicalBotPath(override.channel.WorkspaceRoot)
-		gw.sessionOverrides[key] = override
-	} else {
-		delete(gw.sessionOverrides, key)
+	status, ok := safeBotControllerRuntimeStatus(state.ctrl)
+	if !ok {
+		return true
 	}
-	gw.mu.Unlock()
-	closeBotSessionState(old)
-	gw.sessions.ForceRelease(key)
+	return status.Running || status.PendingPrompt || status.BackgroundJobs > 0
+}
+
+func safeBotControllerRuntimeStatus(ctrl botController) (status control.RuntimeStatus, ok bool) {
+	if ctrl == nil {
+		return control.RuntimeStatus{}, false
+	}
+	defer func() {
+		if recover() != nil {
+			status = control.RuntimeStatus{}
+			ok = false
+		}
+	}()
+	return ctrl.RuntimeStatus(), true
 }
 
 func (gw *BotGateway) sessionRuntimeOverrideForMessage(msg InboundMessage) (sessionRuntimeOverride, bool) {
@@ -1767,9 +2120,18 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	defer cancel()
 
 	gw.mu.Lock()
-	state.cancel = cancel
+	live := gw.controllers[key] == state
+	if live {
+		state.cancel = cancel
+	}
 	state.lastActive = time.Now()
 	gw.mu.Unlock()
+	if !live {
+		// The session was closed (gateway stop or runtime rebuild) after this
+		// turn picked it up; a cancel published now would never be consumed, so
+		// abort the turn instead of running it uncancellable.
+		cancel()
+	}
 
 	// 运行一轮对话
 	err := state.ctrl.RunTurn(turnCtx, input)
@@ -1810,10 +2172,16 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	gw.mu.Lock()
 	if state, ok := gw.controllers[key]; ok {
 		if !sessionStateMatchesRuntime(state, profile) {
+			if botSessionHasActiveWork(state) {
+				gw.mu.Unlock()
+				safeBotSetToolApprovalMode(state.ctrl, profile.toolApprovalMode)
+				gw.logger.Warn("bot session runtime change deferred while work is active", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
+				return state
+			}
 			delete(gw.controllers, key)
 			stale = state
 			gw.mu.Unlock()
-			closeBotSessionState(stale)
+			gw.closeSessionState(stale)
 			gw.logger.Warn("bot session runtime changed; rebuilding", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8], "old_workspace_set", strings.TrimSpace(stale.workspaceRoot) != "", "new_workspace_set", profile.workspaceRoot != "", "old_model", stale.model, "new_model", profile.model)
 		} else {
 			updateSessionStateRuntime(state, msg, profile)
@@ -1832,6 +2200,7 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	ctrl, err := boot.Build(ctx, boot.Options{
 		Model:           profile.model,
 		MaxSteps:        gw.cfg.MaxSteps,
+		MaxStepsKey:     "bot.max_steps",
 		RequireKey:      true,
 		Sink:            sessionSink,
 		WorkspaceRoot:   profile.workspaceRoot,
@@ -1842,10 +2211,18 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 		gw.logger.Error("build controller failed", "err", err)
 		return nil
 	}
+	leases := control.NewSessionLeaseKeeper()
 	if profile.sessionPath != "" {
+		if err := leases.Rebind(profile.sessionPath); err != nil {
+			ctrl.Close()
+			leases.Release()
+			gw.logger.Error("attached bot session is in use", "err", control.SessionInUseMessage(err))
+			return nil
+		}
 		loaded, err := agent.LoadSession(profile.sessionPath)
 		if err != nil {
 			ctrl.Close()
+			leases.Release()
 			if os.IsNotExist(err) {
 				gw.logger.Error("attached bot session missing", "session_path", profile.sessionPath)
 			} else {
@@ -1858,6 +2235,12 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	ctrl.EnableInteractiveApproval()
 	ctrl.SetToolApprovalMode(profile.toolApprovalMode)
 	ctrl.EnsureSessionPath()
+	if err := leases.Rebind(ctrl.SessionPath()); err != nil {
+		ctrl.Close()
+		leases.Release()
+		gw.logger.Error("bot session lease failed", "err", control.SessionInUseMessage(err))
+		return nil
+	}
 
 	var replace *sessionState
 	gw.mu.Lock()
@@ -1869,6 +2252,7 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 			updateSessionStateRuntime(existing, msg, profile)
 			gw.mu.Unlock()
 			ctrl.Close()
+			leases.Release()
 			safeBotSetToolApprovalMode(existing.ctrl, profile.toolApprovalMode)
 			gw.logger.Info("bot session built concurrently; discarding duplicate", "platform", msg.Platform, "chat", hashID(msg.ChatID), "session", key[:8])
 			return existing
@@ -1879,6 +2263,7 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	state := &sessionState{
 		ctrl:             ctrl,
 		sink:             sessionSink,
+		leases:           leases,
 		platform:         msg.Platform,
 		connectionID:     strings.TrimSpace(msg.ConnectionID),
 		model:            profile.model,
@@ -1891,7 +2276,7 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 	}
 	gw.controllers[key] = state
 	gw.mu.Unlock()
-	closeBotSessionState(replace)
+	gw.closeSessionState(replace)
 
 	gw.logger.Info("bot session created", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
 	return state
@@ -1912,18 +2297,6 @@ func updateSessionStateRuntime(state *sessionState, msg InboundMessage, profile 
 	state.toolApprovalMode = profile.toolApprovalMode
 	state.sessionPath = profile.sessionPath
 	state.lastActive = time.Now()
-}
-
-func closeBotSessionState(state *sessionState) {
-	if state == nil {
-		return
-	}
-	if state.cancel != nil {
-		state.cancel()
-	}
-	if state.ctrl != nil {
-		state.ctrl.Close()
-	}
 }
 
 func (gw *BotGateway) sessionProfileForMessage(msg InboundMessage) sessionRuntimeProfile {

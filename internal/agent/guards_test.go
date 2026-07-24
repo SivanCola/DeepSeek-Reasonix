@@ -218,6 +218,25 @@ func TestPartitionToolCallsTodoWriteSerial(t *testing.T) {
 	}
 }
 
+func TestPartitionToolCallsBackgroundCollectorsSerial(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "read_file", readOnly: true})
+	reg.Add(fakeTool{name: "wait", readOnly: true})
+	reg.Add(fakeTool{name: "bash_output", readOnly: true})
+
+	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "wait"}, {Name: "bash_output"}, {Name: "read_file"}}
+	got := partitionToolCalls(reg, calls)
+	want := []toolCallBatch{
+		{start: 0, end: 1, parallel: true},
+		{start: 1, end: 2},
+		{start: 2, end: 3},
+		{start: 3, end: 4, parallel: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("partitionToolCalls = %+v, want %+v", got, want)
+	}
+}
+
 // TestExecuteBatchParallelReadOnly checks that three 80ms read-only calls
 // complete in well under 3×80ms — the wall-clock proof of true parallelism.
 func TestExecuteBatchParallelReadOnly(t *testing.T) {
@@ -231,7 +250,8 @@ func TestExecuteBatchParallelReadOnly(t *testing.T) {
 	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
 
 	start := time.Now()
-	results, _ := a.executeBatch(context.Background(), []provider.ToolCall{{Name: "a"}, {Name: "b"}, {Name: "c"}})
+	batch := a.executeBatch(context.Background(), []provider.ToolCall{{Name: "a"}, {Name: "b"}, {Name: "c"}})
+	results := batch.results
 	elapsed := time.Since(start)
 
 	if calls != 3 {
@@ -264,13 +284,14 @@ func TestExecuteBatchSegmentsAroundWrites(t *testing.T) {
 	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
 
 	start := time.Now()
-	results, _ := a.executeBatch(context.Background(), []provider.ToolCall{
+	batch := a.executeBatch(context.Background(), []provider.ToolCall{
 		{Name: "ro1"},
 		{Name: "ro2"},
 		{Name: "rw"},
 		{Name: "ro3"},
 		{Name: "ro4"},
 	})
+	results := batch.results
 	elapsed := time.Since(start)
 
 	want := []string{"ro1 done", "ro2 done", "rw done", "ro3 done", "ro4 done"}
@@ -302,7 +323,7 @@ func TestExecuteBatchFeedsReceiptsToCompleteStep(t *testing.T) {
 	reg.Add(completeStep)
 	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
 
-	results, _ := a.executeBatch(context.Background(), []provider.ToolCall{
+	batch := a.executeBatch(context.Background(), []provider.ToolCall{
 		{Name: "bash", Arguments: `{"command":"go test ./internal/..."}`},
 		{Name: "complete_step", Arguments: `{
 			"step":"Run checks",
@@ -310,6 +331,7 @@ func TestExecuteBatchFeedsReceiptsToCompleteStep(t *testing.T) {
 			"evidence":[{"kind":"verification","summary":"tests passed","command":"go test ./internal/..."}]
 		}`},
 	})
+	results := batch.results
 
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))

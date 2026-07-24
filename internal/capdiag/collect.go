@@ -274,19 +274,19 @@ func collectCommands(root string, disp func(string) string) (AssetReport, []Issu
 
 func collectHooks(root, home, reasonixHome string, disp func(string) string) (HookReport, []Issue) {
 	var issues []Issue
-	// Prefer explicit home for trust/settings when tests isolate HOME.
+	// Prefer explicit home for settings when tests isolate HOME.
 	homeDir := home
 	if reasonixHome != "" && home == "" {
 		homeDir = filepath.Dir(reasonixHome)
 	}
-	trusted := hook.IsTrusted(root, homeDir)
 	insp := hook.Inspect(hook.LoadOptions{
 		ProjectRoot: root,
 		HomeDir:     homeDir,
-		Trusted:     trusted,
 	})
 	rep := HookReport{
-		TrustedProject: insp.TrustedProject || trusted,
+		// Retained in schema v1 for compatibility; project hooks are enabled by
+		// default whenever a project root is present.
+		TrustedProject: insp.TrustedProject,
 		ProjectDefines: insp.ProjectDefines,
 		Sources:        []HookSource{},
 		Entries:        []HookEntry{},
@@ -302,15 +302,6 @@ func collectHooks(root, home, reasonixHome string, disp func(string) string) (Ho
 				Source:      disp(s.Path),
 				Message:     "hooks settings JSON is malformed",
 				Remediation: "Fix JSON syntax in the settings file",
-				SettingsTab: "hooks",
-			})
-		}
-		if s.Status == "untrusted_skipped" && insp.ProjectDefines {
-			issues = append(issues, Issue{
-				Severity: "warning", Code: "hook.untrusted_project", Subsystem: "hooks",
-				Source:      disp(s.Path),
-				Message:     "project defines hooks but the workspace is not trusted",
-				Remediation: "Trust this project in Settings → Hooks (or CLI trust flow) before project hooks run",
 				SettingsTab: "hooks",
 			})
 		}
@@ -331,17 +322,17 @@ func collectHooks(root, home, reasonixHome string, disp func(string) string) (Ho
 			})
 		}
 		if e.ContextFile != "" {
-			if _, err := os.Stat(e.ContextFile); err != nil {
+			if !hook.ContextFileUsable(e.ContextFile) {
 				issues = append(issues, Issue{
 					Severity: "error", Code: "hook.missing_context_file", Subsystem: "hooks",
 					Name: string(e.Event), Source: disp(e.ContextFile),
-					Message:     "hook contextFile does not exist",
-					Remediation: "Create the context file or fix the path in the hook entry",
+					Message:     "hook contextFile is missing or unreadable",
+					Remediation: "Create a readable regular context file or fix the path in the hook entry",
 					SettingsTab: "hooks",
 				})
 			}
 		}
-		if msg := hook.ValidateMatcher(e.Match); msg != "" {
+		if msg := hook.ValidateMatcher(e.Match); hook.UsesToolMatcher(e.Event) && msg != "" {
 			issues = append(issues, Issue{
 				Severity: "error", Code: "hook.invalid_matcher", Subsystem: "hooks",
 				Name: string(e.Event), Source: disp(e.Source),
@@ -559,7 +550,7 @@ func mergeRuntimeHost(rep *MCPReport, host *plugin.Host, root, home string, issu
 	for _, s := range host.Servers() {
 		tools := make([]MCPToolInfo, 0, len(s.ToolList))
 		for _, t := range s.ToolList {
-			tools = append(tools, MCPToolInfo{Name: t.Name, ReadOnlyHint: t.ReadOnlyHint})
+			tools = append(tools, MCPToolInfo{Name: t.Name, ReadOnlyHint: t.ReadOnlyHint, DestructiveHint: t.DestructiveHint})
 		}
 		if i, ok := byName[s.Name]; ok {
 			rep.Servers[i].RuntimeStatus = "connected"

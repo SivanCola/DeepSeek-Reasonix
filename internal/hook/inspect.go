@@ -17,7 +17,7 @@ import (
 type SourceStatus struct {
 	Scope      Scope
 	Path       string
-	Status     string // ok | missing | malformed | untrusted_skipped | empty
+	Status     string // ok | missing | malformed | empty
 	HookCount  int
 	ParseError string
 }
@@ -36,43 +36,32 @@ type Entry struct {
 }
 
 // Inspection is a read-only hook configuration snapshot. It does not execute
-// hooks and does not mutate trust state.
+// hooks.
 type Inspection struct {
+	// TrustedProject is retained in diagnostics for backward compatibility.
+	// A non-empty project root is always trusted now.
 	TrustedProject bool
 	Sources        []SourceStatus
 	Entries        []Entry
-	// ProjectDefines is true when project settings declare hooks regardless of trust.
+	// ProjectDefines is true when project settings declare hooks.
 	ProjectDefines bool
 }
 
 // Inspect loads hook configuration for diagnostics. Unlike Load, it reports
-// malformed files, untrusted project files, and empty/missing command entries
-// that Load would silently skip.
+// malformed files and empty/missing command entries that Load would silently
+// skip.
 func Inspect(opts LoadOptions) Inspection {
 	out := Inspection{
-		TrustedProject: opts.ProjectRoot != "" && IsTrusted(opts.ProjectRoot, opts.HomeDir),
+		TrustedProject: opts.ProjectRoot != "",
 		ProjectDefines: opts.ProjectRoot != "" && ProjectDefinesHooks(opts.ProjectRoot),
 	}
 
 	if opts.ProjectRoot != "" {
 		p := ProjectSettingsPath(opts.ProjectRoot)
-		if !opts.Trusted && !out.TrustedProject {
-			// Report project file even when untrusted so UIs can surface trust.
-			st := inspectSettingsFile(p, ScopeProject)
-			if st.Status == "ok" || st.Status == "malformed" || st.Status == "empty" {
-				st.Status = "untrusted_skipped"
-			}
-			out.Sources = append(out.Sources, st)
-			// Still parse entries for display, tagged as untrusted source.
-			if s := readSettingsRaw(p); s != nil {
-				appendInspectEntries(&out, s, ScopeProject, p)
-			}
-		} else {
-			st := inspectSettingsFile(p, ScopeProject)
-			out.Sources = append(out.Sources, st)
-			if s := readSettingsRaw(p); s != nil {
-				appendInspectEntries(&out, s, ScopeProject, p)
-			}
+		st := inspectSettingsFile(p, ScopeProject)
+		out.Sources = append(out.Sources, st)
+		if s := readSettingsRaw(p); s != nil {
+			appendInspectEntries(&out, s, ScopeProject, p)
 		}
 	}
 
@@ -203,13 +192,18 @@ func appendPluginInspect(out *Inspection, reasonixHomeDir, projectRoot string) {
 			// Keep unknown event names so diagnostics can report them.
 			for _, h := range pkg.Manifest.Hooks[eventName] {
 				count++
-				command := h.Command
+				command := expandPluginRoot(h.Command, pkg.Root)
 				if command != "" && !h.ShellCommand && !filepath.IsAbs(command) {
 					command = filepath.Join(pkg.Root, filepath.FromSlash(command))
 				}
-				contextFile := h.ContextFile
-				if contextFile != "" && !filepath.IsAbs(contextFile) {
-					contextFile = filepath.Join(pkg.Root, filepath.FromSlash(contextFile))
+				contextFile := expandPluginRoot(h.ContextFile, pkg.Root)
+				if contextFile != "" {
+					contextFile = filepath.FromSlash(contextFile)
+					if !filepath.IsAbs(contextFile) {
+						contextFile = filepath.Join(pkg.Root, contextFile)
+					} else {
+						contextFile = filepath.Clean(contextFile)
+					}
 				}
 				out.Entries = append(out.Entries, Entry{
 					Event:       event,
@@ -248,6 +242,12 @@ func ValidateMatcher(match string) string {
 		return fmt.Sprintf("invalid matcher regex: %v", err)
 	}
 	return ""
+}
+
+// UsesToolMatcher reports whether an event evaluates HookConfig.Match.
+// Non-tool events ignore matchers entirely, including malformed ones.
+func UsesToolMatcher(event Event) bool {
+	return event == PreToolUse || event == PostToolUse || event == PostToolUseFailure || event == PermissionRequest
 }
 
 // IsKnownEvent reports whether event is one of the 11 supported hook events.
