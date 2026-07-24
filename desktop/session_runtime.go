@@ -145,14 +145,6 @@ func (a *App) runtimeForTabLocked(tab *WorkspaceTab) *desktopSessionRuntime {
 	return rt
 }
 
-func (a *App) runtimeForSessionLocked(path string) *desktopSessionRuntime {
-	key := sessionRuntimeKey(path)
-	if key == "" {
-		return nil
-	}
-	return a.runtimeBySessionKey[key]
-}
-
 func (a *App) runtimeOwnerLiveLocked(rt *desktopSessionRuntime) bool {
 	if rt == nil || rt.Owner == nil {
 		return false
