@@ -2637,12 +2637,13 @@ command = "project-only"
 			return
 		}
 		result := any(map[string]any{})
-		if req.Method == "initialize" {
+		switch req.Method {
+		case "initialize":
 			result = map[string]any{
 				"protocolVersion": "2025-03-26",
 				"serverInfo":      map[string]any{"name": "global-docs", "version": "1"},
 			}
-		} else if req.Method == "tools/list" {
+		case "tools/list":
 			result = map[string]any{"tools": []map[string]any{{
 				"name":        "search",
 				"description": "Search documentation.",
