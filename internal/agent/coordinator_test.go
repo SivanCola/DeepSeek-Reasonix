@@ -593,6 +593,61 @@ func TestCoordinatorPlanOnlyDoesNotRunExecutor(t *testing.T) {
 	}
 }
 
+func TestCoordinatorPlanOnlyContinuesWithExecutorOnNextTurn(t *testing.T) {
+	planner := &mockProvider{name: "planner", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "1. inspect auth\n2. migrate tokens"},
+		{Type: provider.ChunkDone},
+	}}
+	exec := &mockProvider{name: "executor", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "Migration complete."},
+		{Type: provider.ChunkDone},
+	}}
+	policy := func(_ context.Context, input string) PlannerDecision {
+		if strings.Contains(input, "只规划") {
+			return PlannerDecision{Route: PlannerRoutePlanOnly, Depth: PlannerDepthFull, Reason: "user_plan_only"}
+		}
+		return PlannerDecision{Route: PlannerRouteExecutorOnly, Depth: PlannerDepthNone, Reason: "short_reply"}
+	}
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+	coord := NewCoordinatorWithPlannerPolicy(
+		planner, NewSession("planner-sys"), nil, nil, Options{},
+		executor, 0, event.Discard, policy,
+	)
+
+	if err := coord.Run(context.Background(), "只规划认证迁移，不要执行"); err != nil {
+		t.Fatalf("plan-only Run: %v", err)
+	}
+	if got := len(exec.requests); got != 0 {
+		t.Fatalf("executor requests after plan-only turn = %d, want none", got)
+	}
+
+	if err := coord.Run(context.Background(), "执行"); err != nil {
+		t.Fatalf("continuation Run: %v", err)
+	}
+	if got := len(exec.requests); got != 1 {
+		t.Fatalf("executor requests after continuation = %d, want one", got)
+	}
+	req := exec.requests[0]
+	if got := lastUser(req); !strings.Contains(got, "执行") {
+		t.Fatalf("executor continuation input = %q, want the user's execution request", got)
+	}
+	foundSavedPlan := false
+	for _, msg := range req.Messages {
+		if msg.Role == provider.RoleAssistant &&
+			strings.Contains(msg.Content, "migrate tokens") &&
+			strings.Contains(msg.Content, plannerPlanOnlyNote) {
+			foundSavedPlan = true
+			break
+		}
+	}
+	if !foundSavedPlan {
+		t.Fatalf("executor continuation did not receive the saved plan-only turn: %+v", req.Messages)
+	}
+	if got := len(planner.requests); got != 1 {
+		t.Fatalf("planner requests = %d, want only the original plan-only turn", got)
+	}
+}
+
 func TestCoordinatorPlannerFailurePreservesExecutionBoundary(t *testing.T) {
 	cases := []struct {
 		name   string
