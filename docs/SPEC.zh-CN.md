@@ -121,8 +121,8 @@ type Tool interface {
 当 `agent.planner_model` 与 executor 不同时，planner 与 executor 使用独立 session：
 
 - 宿主使用原始用户文本和可信回合元数据做确定性路由，不调用 classifier 模型，也不从
-  controller 注入的 prompt block 猜测宿主状态；路由结果为 executor-only、Light、Full
-  或 plan-for-approval，并用不含用户原文的 route/depth/reason 写入阶段详情；
+  controller 注入的 prompt block 猜测宿主状态；路由结果为 executor-only、Light、Full、
+  plan-for-approval 或显式 plan-only，并用不含用户原文的 route/depth/reason 写入阶段详情；
 - 显式 Plan Mode、synthetic turn、上下文短回复和明确单点小改不再调用第二个 Planner；
   跨面、结构化、模糊或高风险变更使用 Full；活跃 Goal 与 Delivery 中的非原子工作同样
   升级为 Full；
@@ -130,8 +130,10 @@ type Tool interface {
   Full 使用较大的有界预算，区分已验证与候选触点，并补充风险、验收标准、命令级验证及
   必要回滚；深度合约保持在同一个稳定 system prompt 中，单轮只追加很小的
   `<planner-turn>`；
-- plan-for-approval 由宿主强制执行，即使 Planner 漏写 marker，也不会直接进入执行；
-  headless 场景会保存计划并停止；
+- 普通“先规划”在计划完成后直接交接 Executor；plan-for-approval 只用于明确要求等待
+  确认的请求，由宿主强制审批边界，批准后交接 Executor；headless 场景会保存计划供后续
+  回合继续；明确 plan-only 会保存计划并结束当前回合；上述两种执行边界下 Planner 失败
+  都不能降级执行；
 - executor 在另一 session 中验证候选假设，并使用完整工具执行计划；
 - 两条会话互不混合，prompt prefix 都只追加增长，避免切换模型破坏 prefix cache。
 

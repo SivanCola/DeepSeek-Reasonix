@@ -14,6 +14,7 @@ const (
 	PlannerRouteExecutorOnly    PlannerRoute = "executor_only"
 	PlannerRoutePlanAndExecute  PlannerRoute = "plan_and_execute"
 	PlannerRoutePlanForApproval PlannerRoute = "plan_for_approval"
+	PlannerRoutePlanOnly        PlannerRoute = "plan_only"
 )
 
 // PlannerDepth controls the planning contract and research budget. None is only
@@ -45,7 +46,7 @@ func normalizePlannerDecision(d PlannerDecision) PlannerDecision {
 	case PlannerRouteExecutorOnly:
 		d.Depth = PlannerDepthNone
 		d.MaxResearchRounds = 0
-	case PlannerRoutePlanAndExecute, PlannerRoutePlanForApproval:
+	case PlannerRoutePlanAndExecute, PlannerRoutePlanForApproval, PlannerRoutePlanOnly:
 		if d.Depth != PlannerDepthLight && d.Depth != PlannerDepthFull {
 			d.Depth = PlannerDepthFull
 		}

@@ -24,6 +24,7 @@ const (
 	plannerReasonConversation        = "conversation"
 	plannerReasonUserDirect          = "user_direct"
 	plannerReasonUserPlanOnly        = "user_plan_only"
+	plannerReasonUserPlanApproval    = "user_plan_for_approval"
 	plannerReasonUserPlanAndExecute  = "user_plan_and_execute"
 	plannerReasonContextContinuation = "context_continuation"
 	plannerReasonLowRiskQuestion     = "low_risk_question"
@@ -112,11 +113,14 @@ func DecidePlannerRoute(ctx context.Context, input string) agent.PlannerDecision
 	}
 
 	lower := normalizePlannerText(text)
-	if hasLeadingDirective(lower, planAndExecuteDirectives) {
-		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthFull, plannerReasonUserPlanAndExecute)
+	if requestsPlanOnly(lower) {
+		return plannerPlanDecision(agent.PlannerRoutePlanOnly, agent.PlannerDepthFull, plannerReasonUserPlanOnly)
 	}
-	if hasLeadingDirective(lower, planOnlyDirectives) {
-		return plannerPlanDecision(agent.PlannerRoutePlanForApproval, agent.PlannerDepthFull, plannerReasonUserPlanOnly)
+	if requestsPlanApproval(lower) {
+		return plannerPlanDecision(agent.PlannerRoutePlanForApproval, agent.PlannerDepthFull, plannerReasonUserPlanApproval)
+	}
+	if hasLeadingDirective(lower, planAndExecuteDirectives) || hasLeadingDirective(lower, planFirstDirectives) {
+		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthFull, plannerReasonUserPlanAndExecute)
 	}
 	if hasLeadingDirective(lower, directExecutionDirectives) {
 		return plannerExecutorDecision(plannerReasonUserDirect)
@@ -253,14 +257,51 @@ var planAndExecuteDirectives = []string{
 	"plan first, then", "plan first then", "plan then implement", "plan and implement",
 }
 
+var planFirstDirectives = []string{
+	"先规划", "先给方案", "先出方案",
+	"plan first", "draft a plan", "give me a plan", "make a plan",
+}
+
 var planOnlyDirectives = []string{
-	"只规划", "只做规划", "只给方案", "只出方案", "先规划", "先给方案", "先出方案",
-	"plan only", "plan first", "draft a plan", "give me a plan",
+	"只规划", "只做规划", "只给方案", "只出方案",
+	"plan only", "only plan", "just plan", "give me only a plan",
+}
+
+var plannerNoExecutionTerms = []string{
+	"不要执行", "先别执行", "暂不执行", "不要实现", "先别实现", "暂不实现",
+	"不要修改", "先别修改", "不要改代码", "先别改代码", "不要动代码",
+	"do not execute", "don't execute", "do not implement", "don't implement",
+	"do not make changes", "don't make changes", "without executing",
+	"without implementation", "no execution", "no implementation",
+}
+
+var plannerApprovalTerms = []string{
+	"等我确认", "等待我确认", "我确认后", "确认后再",
+	"等我批准", "等待我批准", "我批准后", "批准后再",
+	"wait for my approval", "wait for approval", "after i approve", "after my approval",
+	"let me approve", "let me confirm", "after i confirm", "after my confirmation",
 }
 
 var directExecutionDirectives = []string{
 	"直接改", "直接修改", "直接做", "直接执行", "别规划", "不要规划", "无需规划",
 	"just do it", "skip the plan", "don't plan", "do not plan",
+}
+
+func requestsPlanOnly(lower string) bool {
+	if hasLeadingDirective(lower, planOnlyDirectives) {
+		return true
+	}
+	return hasLeadingPlanningDirective(lower) && containsAnyLexical(lower, plannerNoExecutionTerms)
+}
+
+func requestsPlanApproval(lower string) bool {
+	return hasLeadingPlanningDirective(lower) && containsAnyLexical(lower, plannerApprovalTerms)
+}
+
+func hasLeadingPlanningDirective(lower string) bool {
+	return hasLeadingDirective(lower, planAndExecuteDirectives) ||
+		hasLeadingDirective(lower, planFirstDirectives) ||
+		hasLeadingDirective(lower, planOnlyDirectives)
 }
 
 func isContextDependentAction(text string) bool {

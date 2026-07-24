@@ -358,6 +358,13 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 		if ctx.Err() != nil || isToolLoopPause(err) {
 			return fmt.Errorf("planner: %w", err)
 		}
+		// Plan-only explicitly excludes execution, while plan-for-approval
+		// excludes it until the host records approval. Falling back directly
+		// to the executor would turn a planner outage into an unauthorized
+		// state change, so preserve either boundary and surface the failure.
+		if decision.Route == PlannerRoutePlanOnly || decision.Route == PlannerRoutePlanForApproval {
+			return fmt.Errorf("planner: %w", err)
+		}
 		// A planner failure must not take down the turn: the executor is
 		// healthy and owns the full tool set, so degrade to single-model for
 		// this turn.
@@ -396,6 +403,11 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 		}
 		return err
 	}
+	if decision.Route == PlannerRoutePlanOnly {
+		c.persistExecutorNoOp(ctx, input, plan+"\n\n"+plannerPlanOnlyNote)
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: plannerPlanOnlyNotice, Source: event.UsageSourcePlanner})
+		return nil
+	}
 	if decision.Route == PlannerRoutePlanForApproval {
 		return runWithPlanApproval()
 	}
@@ -430,6 +442,8 @@ const (
 	plannerPlanNotApprovedNotice      = "Plan not approved; nothing was executed. Reply to continue."
 	plannerPlanAwaitingApprovalNote   = "(The user requested planning before execution; no action was started without host approval.)"
 	plannerPlanAwaitingApprovalNotice = "Plan ready; execution was not started without approval."
+	plannerPlanOnlyNote               = "(The user explicitly requested a plan without execution; no action was started.)"
+	plannerPlanOnlyNotice             = "Plan ready; the request explicitly excluded execution."
 	plannerDecisionUnansweredNote     = "(The user did not provide the requested decision; execution was not started.)"
 	plannerDecisionUnansweredNotice   = "Waiting for your decision; nothing was executed. Reply to continue."
 )

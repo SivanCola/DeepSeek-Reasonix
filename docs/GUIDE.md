@@ -913,10 +913,13 @@ cross-surface, structured, high-risk, active-Goal, or Delivery work receives a
 full plan unless the requested edit is clearly atomic. Explicit Plan Mode
 remains a separate host workflow and is never planned twice. A leading
 `plan first` / `先规划` request forces planning, while `just do it` / `直接改`
-goes directly to the executor. A plan-only request stops at the host approval
-boundary and never starts execution automatically. The phase detail records a
-privacy-safe route, depth, and reason code for diagnosis without logging the
-user prompt.
+goes directly to the executor. Bare plan-first requests continue from the
+planner to the executor automatically. Requests that explicitly say to wait for
+confirmation pause at the host approval boundary and continue to the executor
+after approval. Only an explicit `plan only` / `不要执行` request ends the
+current turn with the plan persisted and no execution; a later user instruction
+can continue in the same session. The phase detail records a privacy-safe route,
+depth, and reason code for diagnosis without logging the user prompt.
 
 Light plans contain a compact objective, at most four ordered steps, likely
 touchpoints, and the main verification. Full plans distinguish verified from

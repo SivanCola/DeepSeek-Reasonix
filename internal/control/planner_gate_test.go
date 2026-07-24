@@ -123,9 +123,30 @@ func TestDecidePlannerRouteMatrix(t *testing.T) {
 		{
 			name:   "user asks for plan only",
 			input:  "先规划这个认证迁移，不要执行",
-			route:  agent.PlannerRoutePlanForApproval,
+			route:  agent.PlannerRoutePlanOnly,
 			depth:  agent.PlannerDepthFull,
 			reason: plannerReasonUserPlanOnly,
+		},
+		{
+			name:   "bare plan first continues to executor",
+			input:  "先规划这个认证迁移",
+			route:  agent.PlannerRoutePlanAndExecute,
+			depth:  agent.PlannerDepthFull,
+			reason: plannerReasonUserPlanAndExecute,
+		},
+		{
+			name:   "english plan first continues to executor",
+			input:  "plan first, then handle the authentication migration",
+			route:  agent.PlannerRoutePlanAndExecute,
+			depth:  agent.PlannerDepthFull,
+			reason: plannerReasonUserPlanAndExecute,
+		},
+		{
+			name:   "user asks to approve plan before execution",
+			input:  "先规划这个认证迁移，等我确认后再执行",
+			route:  agent.PlannerRoutePlanForApproval,
+			depth:  agent.PlannerDepthFull,
+			reason: plannerReasonUserPlanApproval,
 		},
 		{
 			name:   "user asks to plan then execute",
