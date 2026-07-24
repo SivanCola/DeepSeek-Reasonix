@@ -217,14 +217,19 @@ prefix cache-stable:
   Full plans use a larger bounded budget and distinguish verified from candidate
   touchpoints, with risks, acceptance criteria, command-level verification, and
   rollback when relevant. The depth contract stays in one stable system prompt;
-  only a small host-authored `<planner-turn>` block changes per user turn.
+  only a small host-authored `<planner-turn>` block changes per user turn. If
+  the planner still does not finalize after the bounded research and grace
+  round, plan-and-execute falls back to the executor with the pristine task;
+  plan-only and plan-for-approval remain fail-closed. The incomplete planner
+  turn is rolled back rather than exposed as a broken manual continuation.
 - A bare plan-first route hands the completed plan directly to the executor.
   Plan-for-approval is reserved for an explicit request to wait for
   confirmation; the host enforces that boundary even if the planner omits its
   marker, then hands the approved plan to the executor. A headless host persists
   the plan so a later turn can continue. Explicit plan-only requests persist the
   plan and end the current turn without execution. A planner failure on either
-  execution boundary cannot fall back to the executor.
+  execution boundary cannot fall back to the executor. These directives may
+  appear after the task clause; quoted examples do not change the route.
 - The plan is handed off as structured text to the **executor** — a full
   tool-using `Agent` in its own session — which validates candidate assumptions
   and carries it out.

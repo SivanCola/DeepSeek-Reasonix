@@ -745,28 +745,37 @@ func TestCoordinatorPlannerMaxStepsUsesExplicitRuntimeKey(t *testing.T) {
 
 	parentReg := tool.NewRegistry()
 	parentReg.Add(coordinatorTestTool{name: "read_file", readOnly: true, output: "keep reading"})
-	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
-	coord := NewCoordinator(planner, NewSession("planner-sys"), nil, PlannerToolRegistry(parentReg), Options{
+	sink := &recordSink{}
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, sink)
+	plannerSess := NewSession("planner-sys")
+	coord := NewCoordinator(planner, plannerSess, nil, PlannerToolRegistry(parentReg), Options{
 		MaxSteps:    2,
 		MaxStepsKey: "planner max_steps",
-	}, executor, 0, event.Discard, nil)
+	}, executor, 0, sink, nil)
 
 	err := coord.Run(context.Background(), "plan a change")
-	if err == nil {
-		t.Fatal("Run should pause when the planner reaches its configured step limit")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "planner: paused after 2 tool-call rounds (planner max_steps)") {
-		t.Fatalf("pause error = %q, want explicit planner max_steps message", msg)
-	}
-	if strings.Contains(msg, "[agent]") {
-		t.Fatalf("planner pause should not point at retired agent config: %q", msg)
+	if err != nil {
+		t.Fatalf("Run should fall back to the executor when the planner cannot finalize: %v", err)
 	}
 	if got := len(planner.requests); got != 3 {
-		t.Fatalf("planner requests = %d, want exactly the configured 2 rounds", got)
+		t.Fatalf("planner requests = %d, want 2 research rounds plus finalization", got)
 	}
-	if len(exec.requests) != 0 {
-		t.Fatal("executor should not run when planner pauses before producing a plan")
+	if got := len(exec.requests); got != 1 {
+		t.Fatalf("executor requests = %d, want one fallback run", got)
+	}
+	if got := lastUser(exec.requests[0]); !strings.Contains(got, "plan a change") || strings.Contains(got, executorHandoffMarker) {
+		t.Fatalf("executor fallback input = %q, want the original task without a fabricated handoff", got)
+	}
+	if got := len(plannerSess.Messages); got != 1 {
+		t.Fatalf("planner session messages = %d, want the incomplete turn rolled back", got)
+	}
+	notices := sink.kinds(event.Notice)
+	if len(notices) == 0 || notices[len(notices)-1].Text != plannerResearchFallbackNotice {
+		t.Fatalf("notices = %+v, want planner research fallback notice", notices)
+	}
+	if detail := notices[len(notices)-1].Detail; !strings.Contains(detail, "planner max_steps") ||
+		strings.Contains(detail, "set planner max_steps") {
+		t.Fatalf("fallback detail = %q, want the bounded diagnostic without configuration advice", detail)
 	}
 }
 
@@ -1533,32 +1542,76 @@ func TestCoordinatorRollsBackPlannerSessionOnToolPlannerFailure(t *testing.T) {
 	}
 }
 
-// TestCoordinatorKeepsPlannerSessionOnMaxStepsPause pins the rollback
-// exemption: a max-steps pause is control flow whose saved work the user is
-// asked to continue from, so planWithTools must not roll the planner session
-// back to the pre-turn snapshot.
-func TestCoordinatorKeepsPlannerSessionOnMaxStepsPause(t *testing.T) {
-	planner := &mockProvider{name: "planner", chunks: []provider.Chunk{
-		{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "call-1", Name: "read_file", Arguments: `{"path":"main.go"}`}},
-		{Type: provider.ChunkDone},
-	}}
-	exec := &mockProvider{name: "executor"}
-	plannerReg := tool.NewRegistry()
-	plannerReg.Add(coordinatorTestTool{name: "read_file", readOnly: true, output: "package main"})
+func TestCoordinatorPlannerResearchPausePreservesExecutionBoundaries(t *testing.T) {
+	for _, route := range []PlannerRoute{PlannerRoutePlanOnly, PlannerRoutePlanForApproval} {
+		t.Run(string(route), func(t *testing.T) {
+			planner := &mockProvider{name: "planner", chunks: []provider.Chunk{
+				{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "call-1", Name: "read_file", Arguments: `{"path":"main.go"}`}},
+				{Type: provider.ChunkDone},
+			}}
+			exec := &mockProvider{name: "executor"}
+			plannerReg := tool.NewRegistry()
+			plannerReg.Add(coordinatorTestTool{name: "read_file", readOnly: true, output: "package main"})
+			policy := func(context.Context, string) PlannerDecision {
+				return PlannerDecision{Route: route, Depth: PlannerDepthFull, Reason: "explicit_boundary", MaxResearchRounds: 1}
+			}
 
-	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+			executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+			plannerSess := NewSession("planner-sys")
+			coord := NewCoordinatorWithPlannerPolicy(
+				planner, plannerSess, nil, plannerReg, Options{MaxSteps: 0},
+				executor, 0, event.Discard, policy,
+			)
+
+			err := coord.Run(context.Background(), "plan the migration")
+			if err == nil || err.Error() != plannerResearchBoundaryError {
+				t.Fatalf("Run = %v, want the safe planner boundary error", err)
+			}
+			if strings.Contains(err.Error(), "set planner research rounds") {
+				t.Fatalf("pause exposed a non-configurable setting: %q", err)
+			}
+			if got := len(exec.requests); got != 0 {
+				t.Fatalf("executor requests = %d, want none across %s", got, route)
+			}
+			if got := len(plannerSess.Messages); got != 1 {
+				t.Fatalf("planner session messages = %d, want the incomplete turn rolled back", got)
+			}
+		})
+	}
+}
+
+func TestCoordinatorRollbackAfterRewriteDropsPausedPlannerToolCall(t *testing.T) {
 	plannerSess := NewSession("planner-sys")
-	coord := NewCoordinator(planner, plannerSess, nil, plannerReg, Options{MaxSteps: 1}, executor, 0, event.Discard, nil)
+	before := plannerSess.Snapshot()
+	rewriteBefore := plannerSess.RewriteVersion()
 
-	err := coord.Run(context.Background(), "fix the bug")
-	if err == nil || !strings.Contains(err.Error(), "planner:") {
-		t.Fatalf("Run = %v, want the propagated max-steps pause", err)
+	plannerSess.Replace([]provider.Message{
+		{Role: provider.RoleSystem, Content: "planner-sys"},
+		{Role: provider.RoleUser, Content: summaryTagOpen + "\ncompacted research\n</summary>"},
+		{Role: provider.RoleAssistant, Content: "Completed evidence from the bounded research rounds."},
+	})
+	plannerSess.IncrementRewrite()
+	plannerSess.Add(provider.Message{Role: provider.RoleUser, Content: "Do not call any more tools; finalize."})
+	plannerSess.Add(provider.Message{
+		Role: provider.RoleAssistant,
+		ToolCalls: []provider.ToolCall{{
+			ID: "ignored-finalization-call", Name: "read_file", Arguments: `{"path":"more.go"}`,
+		}},
+	})
+
+	coord := &Coordinator{plannerSess: plannerSess}
+	coord.rollbackPlannerTurn(before, rewriteBefore)
+
+	msgs := plannerSess.Snapshot()
+	if len(msgs) != 3 {
+		t.Fatalf("planner session messages = %d, want compacted prefix plus completed evidence", len(msgs))
 	}
-	if got := len(exec.requests); got != 0 {
-		t.Fatalf("executor requests = %d, want none on a paused planner turn", got)
+	if last := msgs[len(msgs)-1]; last.Role != provider.RoleAssistant ||
+		len(last.ToolCalls) != 0 || last.Content == "" {
+		t.Fatalf("planner session has an unusable pause tail: %+v", last)
 	}
-	if n := len(plannerSess.Messages); n <= 1 {
-		t.Fatalf("planner session messages = %d, want the saved work preserved for continue", n)
+	if normalized := provider.NormalizeMessages(msgs); len(normalized) != len(msgs) {
+		t.Fatalf("planner session still needs tool-pair repair after rollback: %+v", normalized)
 	}
 }
 

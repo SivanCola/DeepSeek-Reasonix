@@ -113,16 +113,16 @@ func DecidePlannerRoute(ctx context.Context, input string) agent.PlannerDecision
 	}
 
 	lower := normalizePlannerText(text)
-	if requestsPlanOnly(lower) {
-		return plannerPlanDecision(agent.PlannerRoutePlanOnly, agent.PlannerDepthFull, plannerReasonUserPlanOnly)
-	}
 	if requestsPlanApproval(lower) {
 		return plannerPlanDecision(agent.PlannerRoutePlanForApproval, agent.PlannerDepthFull, plannerReasonUserPlanApproval)
+	}
+	if requestsPlanOnly(lower) {
+		return plannerPlanDecision(agent.PlannerRoutePlanOnly, agent.PlannerDepthFull, plannerReasonUserPlanOnly)
 	}
 	if hasLeadingDirective(lower, planAndExecuteDirectives) || hasLeadingDirective(lower, planFirstDirectives) {
 		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthFull, plannerReasonUserPlanAndExecute)
 	}
-	if hasLeadingDirective(lower, directExecutionDirectives) {
+	if requestsDirectExecution(lower) {
 		return plannerExecutorDecision(plannerReasonUserDirect)
 	}
 	if meta.HasConversationContext && isContextDependentAction(text) {
@@ -263,8 +263,13 @@ var planFirstDirectives = []string{
 }
 
 var planOnlyDirectives = []string{
-	"只规划", "只做规划", "只给方案", "只出方案",
-	"plan only", "only plan", "just plan", "give me only a plan",
+	"只规划", "只做规划", "只给方案", "只出方案", "给我方案即可",
+	"plan only", "only plan", "just plan", "give me only a plan", "give me a plan only",
+}
+
+var planOnlyBoundaryTerms = []string{
+	"give me only a plan", "give me a plan only", "only give me the plan",
+	"给我方案即可", "只要方案",
 }
 
 var plannerNoExecutionTerms = []string{
@@ -279,29 +284,164 @@ var plannerApprovalTerms = []string{
 	"等我确认", "等待我确认", "我确认后", "确认后再",
 	"等我批准", "等待我批准", "我批准后", "批准后再",
 	"wait for my approval", "wait for approval", "after i approve", "after my approval",
-	"let me approve", "let me confirm", "after i confirm", "after my confirmation",
+	"until i approve", "until my approval", "let me approve", "let me confirm",
+	"after i confirm", "after my confirmation",
 }
 
 var directExecutionDirectives = []string{
 	"直接改", "直接修改", "直接做", "直接执行", "别规划", "不要规划", "无需规划",
-	"just do it", "skip the plan", "don't plan", "do not plan",
+	"just do it", "skip the plan",
 }
 
 func requestsPlanOnly(lower string) bool {
-	if hasLeadingDirective(lower, planOnlyDirectives) {
+	directiveText := plannerDirectiveText(lower)
+	if hasLeadingDirective(directiveText, planOnlyDirectives) {
 		return true
 	}
-	return hasLeadingPlanningDirective(lower) && containsAnyLexical(lower, plannerNoExecutionTerms)
+	if containsAnyLexical(directiveText, planOnlyBoundaryTerms) {
+		return true
+	}
+	if (strings.Contains(directiveText, "只给") || strings.Contains(directiveText, "只要")) &&
+		containsAnyLexical(directiveText, plannerIntentTerms) {
+		return true
+	}
+	return containsAnyLexical(directiveText, plannerNoExecutionTerms) &&
+		(containsAnyLexical(directiveText, plannerIntentTerms) ||
+			containsAnyLexical(directiveText, plannerWorkTerms))
 }
 
 func requestsPlanApproval(lower string) bool {
-	return hasLeadingPlanningDirective(lower) && containsAnyLexical(lower, plannerApprovalTerms)
+	directiveText := plannerDirectiveText(lower)
+	return (containsAnyLexical(directiveText, plannerIntentTerms) ||
+		containsAnyLexical(directiveText, plannerWorkTerms)) &&
+		containsUnnegatedPlannerApproval(directiveText)
 }
 
-func hasLeadingPlanningDirective(lower string) bool {
-	return hasLeadingDirective(lower, planAndExecuteDirectives) ||
-		hasLeadingDirective(lower, planFirstDirectives) ||
-		hasLeadingDirective(lower, planOnlyDirectives)
+func requestsDirectExecution(lower string) bool {
+	directiveText := plannerDirectiveText(lower)
+	if containsAnyLexical(directiveText, directExecutionDirectives) {
+		return true
+	}
+	for _, term := range []string{"don't plan", "do not plan"} {
+		offset := 0
+		for offset < len(directiveText) {
+			idx := strings.Index(directiveText[offset:], term)
+			if idx < 0 {
+				break
+			}
+			idx += offset
+			after := strings.TrimSpace(directiveText[idx+len(term):])
+			if !strings.HasPrefix(after, "to ") {
+				return true
+			}
+			offset = idx + len(term)
+		}
+	}
+	return false
+}
+
+var plannerIntentTerms = []string{
+	"plan", "planning", "方案", "规划", "计划",
+}
+
+func containsUnnegatedPlannerApproval(text string) bool {
+	for _, term := range plannerApprovalTerms {
+		offset := 0
+		for offset < len(text) {
+			idx := strings.Index(text[offset:], term)
+			if idx < 0 {
+				break
+			}
+			idx += offset
+			if !plannerApprovalNegated(text[:idx]) {
+				return true
+			}
+			offset = idx + len(term)
+		}
+	}
+	return false
+}
+
+func plannerApprovalNegated(prefix string) bool {
+	prefix = strings.TrimSpace(prefix)
+	for _, negation := range []string{
+		"不要", "不需要", "无需", "无须", "不用", "不必", "别",
+		"do not", "don't", "not", "no need to", "do not need to", "don't need to",
+		"not necessary to", "without",
+	} {
+		if strings.HasSuffix(prefix, negation) {
+			return true
+		}
+	}
+	return false
+}
+
+// plannerDirectiveText removes quoted examples before applying execution
+// boundaries. A user explaining "do not execute" or “别规划” is not issuing
+// that directive. ASCII apostrophes inside words remain literal, so
+// contractions such as don't keep matching the directive tables.
+func plannerDirectiveText(text string) string {
+	var b strings.Builder
+	var closing rune
+	escaped := false
+	runes := []rune(text)
+	for i, r := range runes {
+		if closing != 0 {
+			if escaped {
+				escaped = false
+				b.WriteRune(' ')
+				continue
+			}
+			if (closing == '"' || closing == '`') && r == '\\' {
+				escaped = true
+				b.WriteRune(' ')
+				continue
+			}
+			if r == closing && (closing != '\'' || !plannerInlineApostrophe(runes, i)) {
+				closing = 0
+			}
+			b.WriteRune(' ')
+			continue
+		}
+		switch r {
+		case '"':
+			closing = '"'
+			b.WriteRune(' ')
+		case '“':
+			closing = '”'
+			b.WriteRune(' ')
+		case '‘':
+			// normalizePlannerText converts the closing ’ to ASCII '.
+			closing = '\''
+			b.WriteRune(' ')
+		case '\'':
+			if plannerSingleQuoteStart(runes, i) {
+				closing = '\''
+				b.WriteRune(' ')
+				continue
+			}
+			b.WriteRune(r)
+		case '`':
+			closing = '`'
+			b.WriteRune(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func plannerSingleQuoteStart(runes []rune, i int) bool {
+	if i+1 >= len(runes) || !unicode.IsLetter(runes[i+1]) {
+		return false
+	}
+	return i == 0 || !unicode.IsLetter(runes[i-1]) && !unicode.IsDigit(runes[i-1])
+}
+
+func plannerInlineApostrophe(runes []rune, i int) bool {
+	return i > 0 && i+1 < len(runes) &&
+		(unicode.IsLetter(runes[i-1]) || unicode.IsDigit(runes[i-1])) &&
+		(unicode.IsLetter(runes[i+1]) || unicode.IsDigit(runes[i+1]))
 }
 
 func isContextDependentAction(text string) bool {

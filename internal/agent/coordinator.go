@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -84,6 +85,15 @@ const executorHandoffMarker = "Reasonix executor handoff"
 // plannerFallbackNotice is shown when the planner fails and the turn degrades
 // to executor-only instead of failing outright.
 const plannerFallbackNotice = "Planner failed; continuing this turn with the executor only."
+
+// A host-owned research budget must cap planner cost without stranding an
+// ordinary task. If the planner ignores its finalization nudge, the executor
+// still owns the task and can inspect the workspace directly. Explicit
+// no-execution and approval boundaries remain fail-closed.
+const (
+	plannerResearchFallbackNotice = "Planner reached its research limit without a final plan; continuing this turn with the executor."
+	plannerResearchBoundaryError  = "planner could not finalize within its research budget; no execution was started"
+)
 
 // noChangesMarker is the explicit no-op conclusion the planner is asked to emit
 // on its final line (see DefaultPlannerPrompt). isNoOpPlan trusts it over the
@@ -351,12 +361,27 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 	plannerInput := plannerTurnInput(input, decision)
 	plan, err := c.plan(plannerCtx, plannerInput)
 	if err != nil {
-		// Cancellation and max-steps pauses are control flow, not planner
-		// failures: the first is the user aborting the turn, the second has
-		// saved work in the planner session and asks the user to continue.
-		// Neither may silently restart on the executor.
-		if ctx.Err() != nil || isToolLoopPause(err) {
+		if ctx.Err() != nil {
 			return fmt.Errorf("planner: %w", err)
+		}
+		if isToolLoopPause(err) {
+			// Per-turn research depth is host policy, not a user-facing
+			// configuration or a reason to strand the conversation. Ordinary
+			// plan-and-execute work degrades to the executor with the pristine
+			// task. Explicit execution boundaries fail closed because no
+			// complete plan exists to approve or return.
+			if decision.Route != PlannerRoutePlanAndExecute {
+				return fmt.Errorf("%s", plannerResearchBoundaryError)
+			}
+			c.sink.Emit(event.Event{
+				Kind:   event.Notice,
+				Level:  event.LevelWarn,
+				Text:   plannerResearchFallbackNotice,
+				Detail: plannerResearchPauseDetail(err),
+				Source: event.UsageSourcePlanner,
+			})
+			c.sink.Emit(event.Event{Kind: event.Phase, Text: c.executor.prov.Name() + " · executing", Source: event.UsageSourceExecutor})
+			return c.executor.Run(ctx, input)
 		}
 		// Plan-only explicitly excludes execution, while plan-for-approval
 		// excludes it until the host records approval. Falling back directly
@@ -819,12 +844,12 @@ func (c *Coordinator) planWithTools(ctx context.Context, input string) (string, 
 		// Mirror plan()'s rollback: Run already appended the user message
 		// (and possibly partial assistant/tool rounds) to the planner
 		// session, and Coordinator.Run degrades to the executor on planner
-		// failure, so a dangling user message would produce consecutive
-		// user roles on the next plan. A deliberate tool-loop pause is exempt:
-		// its saved work is what the user is asked to continue from.
-		if !isToolLoopPause(err) {
-			c.rollbackPlannerTurn(before, rewriteBefore)
-		}
+		// failure. Research-budget pauses are also rolled back: ordinary work
+		// falls back to the executor immediately, while explicit execution
+		// boundaries surface a safe error. Retaining an unfinished planner
+		// turn would leave a tool-call tail that the next provider request
+		// cannot safely resume.
+		c.rollbackPlannerTurn(before, rewriteBefore)
 		return "", err
 	}
 	// The plan is this turn's final answer: the last non-empty assistant
@@ -866,12 +891,35 @@ func (c *Coordinator) rollbackPlannerTurn(before []provider.Message, rewriteBefo
 	msgs := c.plannerSess.Snapshot()
 	for len(msgs) > 0 {
 		last := msgs[len(msgs)-1]
+		if last.Role == provider.RoleAssistant && len(last.ToolCalls) > 0 {
+			msgs = msgs[:len(msgs)-1]
+			continue
+		}
 		if last.Role != provider.RoleUser || isCompactionSummary(last) {
 			break
 		}
 		msgs = msgs[:len(msgs)-1]
 	}
 	c.plannerSess.Replace(msgs)
+}
+
+func plannerResearchPauseDetail(err error) string {
+	var maxPause *maxStepsPause
+	if errors.As(err, &maxPause) {
+		return fmt.Sprintf(
+			"planner did not finalize after %d bounded tool-call rounds (%s) and one finalization round",
+			maxPause.steps,
+			maxPause.key,
+		)
+	}
+	var stallPause *todoStallPause
+	if errors.As(err, &stallPause) {
+		return fmt.Sprintf(
+			"planner did not finalize after %d tool-call rounds without progress",
+			stallPause.rounds,
+		)
+	}
+	return "planner did not finalize after its bounded research and finalization rounds"
 }
 
 func plannerSink(sink event.Sink) event.Sink {

@@ -911,12 +911,14 @@ questions, short follow-ups, and clear atomic edits go straight to the executor;
 bounded implementation work may receive a short light plan; ambiguous,
 cross-surface, structured, high-risk, active-Goal, or Delivery work receives a
 full plan unless the requested edit is clearly atomic. Explicit Plan Mode
-remains a separate host workflow and is never planned twice. A leading
+remains a separate host workflow and is never planned twice. An explicit
 `plan first` / `先规划` request forces planning, while `just do it` / `直接改`
-goes directly to the executor. Bare plan-first requests continue from the
-planner to the executor automatically. Requests that explicitly say to wait for
-confirmation pause at the host approval boundary and continue to the executor
-after approval. Only an explicit `plan only` / `不要执行` request ends the
+goes directly to the executor. Execution boundaries are recognized across the
+request, not only at its beginning, while quoted examples are ignored. Bare
+plan-first requests continue from the planner to the executor automatically.
+Requests that explicitly say to wait for confirmation pause at the host
+approval boundary and continue to the executor after approval. Only an
+explicit `plan only` / `不要执行` request ends the
 current turn with the plan persisted and no execution; a later user instruction
 can continue in the same session. The phase detail records a privacy-safe route,
 depth, and reason code for diagnosis without logging the user prompt.
@@ -928,7 +930,11 @@ command-level verification, and rollback guidance when the operation is hard to
 reverse. These contracts are part of one stable planner system prompt; only the
 small per-turn depth instruction is appended to the user turn, preserving the
 planner's prefix cache after the one-time prompt upgrade. The host also gives
-light and full research different per-turn round budgets.
+light and full research different per-turn round budgets. If a planner still
+does not finalize after its bounded research and finalization round, ordinary
+plan-and-execute work continues with the executor using the original task.
+Plan-only and approval-gated requests remain fail-closed, and the incomplete
+planner turn is rolled back instead of leaving an unusable continuation tail.
 
 Reasonix manages normal execution automatically: if an active todo produces no
 new completion, unique read, command, or mutation for 8 tool-call rounds, the

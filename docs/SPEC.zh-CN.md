@@ -129,11 +129,13 @@ type Tool interface {
 - Light 使用较小的单轮调研预算，输出紧凑目标、1–4 个有序步骤、候选触点和主要验证；
   Full 使用较大的有界预算，区分已验证与候选触点，并补充风险、验收标准、命令级验证及
   必要回滚；深度合约保持在同一个稳定 system prompt 中，单轮只追加很小的
-  `<planner-turn>`；
+  `<planner-turn>`；若 Planner 在有界调研和最终总结轮后仍未收敛，普通
+  plan-and-execute 用原始任务降级到 Executor，plan-only 与 plan-for-approval 仍保持
+  fail-closed；不完整的 Planner 回合会被回滚，不暴露成无法继续的手动续跑；
 - 普通“先规划”在计划完成后直接交接 Executor；plan-for-approval 只用于明确要求等待
   确认的请求，由宿主强制审批边界，批准后交接 Executor；headless 场景会保存计划供后续
   回合继续；明确 plan-only 会保存计划并结束当前回合；上述两种执行边界下 Planner 失败
-  都不能降级执行；
+  都不能降级执行；这些边界可位于任务子句之后，引号内的示例不改变路由；
 - executor 在另一 session 中验证候选假设，并使用完整工具执行计划；
 - 两条会话互不混合，prompt prefix 都只追加增长，避免切换模型破坏 prefix cache。
 

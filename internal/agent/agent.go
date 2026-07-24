@@ -1565,9 +1565,9 @@ func (a *Agent) warnMissingToolCallReasoning(calls []provider.ToolCall, reasonin
 
 // maxStepsPause is the deliberate stop when a positive tool-call budget runs
 // out: the session already holds the completed work and the user is asked to
-// continue. It is a control-flow signal, not a provider failure — Coordinator
-// matches on it to surface the pause instead of degrading the turn to
-// executor-only.
+// continue. It is a control-flow signal, not a provider failure. Coordinator
+// treats planner research budgets specially: ordinary plan-and-execute work
+// falls back to the executor, while explicit execution boundaries fail closed.
 type maxStepsPause struct {
 	steps int
 	key   string
