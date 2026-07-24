@@ -49,9 +49,11 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 	orderedSteps := []string{
 		"name: Upload unsigned Windows payload for SignPath",
 		"name: Submit Windows payload for Authenticode signing",
+		"name: Approve and download signed Windows payload",
 		"name: Rebuild Windows packages from signed payload",
 		"name: Upload unsigned installer for SignPath",
 		"name: Submit installer for Authenticode signing",
+		"name: Approve and download signed Windows installer",
 		"name: Replace installer with signed build",
 		"name: Verify Windows Authenticode release contract",
 		"name: Sign artifacts (minisign)",
@@ -74,6 +76,11 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 		`path: desktop/build/windows/installer-signing-bundle/*.exe`,
 		`github.repository == 'esengine/DeepSeek-Reasonix'`,
 		`SIGNPATH_API_TOKEN is required for official Windows releases`,
+		`signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing-ci-approval' || 'release-signing' }}`,
+		`wait-for-completion: false`,
+		`steps.submit-windows-payload.outputs.signing-request-id`,
+		`steps.submit-windows-installer.outputs.signing-request-id`,
+		`scripts/complete-signpath-request.ps1`,
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Errorf("desktop release workflow is missing signing contract %q", want)
@@ -116,6 +123,22 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 	} {
 		if !strings.Contains(verifier, want) {
 			t.Errorf("Windows Authenticode verifier is missing %q", want)
+		}
+	}
+
+	completer := readTestFile(t, "../scripts/complete-signpath-request.ps1")
+	for _, want := range []string{
+		`$request.signingPolicySlug -ne $ExpectedSigningPolicySlug`,
+		`$status.status -eq "WaitingForApproval"`,
+		`"$requestBaseUrl/Approve"`,
+		`"$requestBaseUrl/Status"`,
+		`"$requestBaseUrl/SignedArtifact"`,
+		`$status.status -ne "Completed"`,
+		`OutputArtifactDirectory must resolve inside GITHUB_WORKSPACE`,
+		`Expand-Archive`,
+	} {
+		if !strings.Contains(completer, want) {
+			t.Errorf("SignPath request completer is missing %q", want)
 		}
 	}
 }

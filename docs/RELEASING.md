@@ -166,9 +166,16 @@ from accidental or unauthorized invocation.
   signatures on all payload files and verifies exact portable-package hashes.
   Stable and RC releases use `windows-installer-v2`, which verifies the trusted
   payload signatures before signing the outer installer. The release
-  certificate requires SignPath approval, so an authorized approver must
-  approve the payload and installer requests for both Windows architectures
-  while the workflow is waiting.
+  certificate requires SignPath approval for every request. The stable release
+  reaches Windows signing only after the single GitHub `release` environment
+  approval; a dedicated SignPath CI identity then approves each payload and
+  installer request through the SignPath API. Canary uses the
+  approval-enabled `test-signing-ci-approval` policy with the test certificate,
+  so the same automation is exercised without consuming the release
+  certificate. SignPath must restrict both policies to the trusted
+  `.github/workflows/release-desktop.yml` build definition. Human SignPath
+  approvers remain available for emergency recovery, but normal releases do
+  not require additional SignPath clicks.
 - Desktop in-app updates use R2 first, then the `crash.reasonix.io` desktop release
   gateway. The gateway resolves the `desktop-v*` release line directly and never uses
   GitHub's repository-wide `/releases/latest`, because plain `v*` tags are the CLI

@@ -281,18 +281,36 @@ jobs:
 
       - name: Submit Windows payload for Authenticode signing
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        id: submit-windows-payload
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: DeepSeek-Reasonix
-          signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing' || 'release-signing' }}
+          signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing-ci-approval' || 'release-signing' }}
           artifact-configuration-slug: windows-payload
           github-artifact-id: ${{ steps.unsigned-windows-payload.outputs.artifact-id }}
           github-token: ${{ github.token }}
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 1800
-          output-artifact-directory: signed-payload
+          wait-for-completion: false
+
+      # The release certificate requires an approval for every request. Stable
+      # builds reach this step only after the repository's release environment
+      # has been approved; the dedicated SignPath CI identity records the
+      # corresponding request approval without adding another human gate.
+      # Canary uses the same path with an approval-enabled test policy.
+      - name: Approve and download signed Windows payload
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          ./scripts/complete-signpath-request.ps1 `
+            -OrganizationId "${{ secrets.SIGNPATH_ORGANIZATION_ID }}" `
+            -SigningRequestId "${{ steps.submit-windows-payload.outputs.signing-request-id }}" `
+            -ExpectedSigningPolicySlug "${{ steps.ver.outputs.channel == 'canary' && 'test-signing-ci-approval' || 'release-signing' }}" `
+            -OutputArtifactDirectory "signed-payload" `
+            -ApiUrl "${{ steps.submit-windows-payload.outputs.signpath-api-url }}" `
+            -TimeoutSeconds 1800
 
       - name: Rebuild Windows packages from signed payload
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
@@ -315,19 +333,31 @@ jobs:
 
       - name: Submit installer for Authenticode signing
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        id: submit-windows-installer
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: DeepSeek-Reasonix
-          signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing' || 'release-signing' }}
+          signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing-ci-approval' || 'release-signing' }}
           artifact-configuration-slug: ${{ steps.ver.outputs.channel == 'canary' && 'windows-installer-test-v2' || 'windows-installer-v2' }}
           github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
           github-token: ${{ github.token }}
-          wait-for-completion: true
-          # Leave headroom for origin verification, malware scanning, and signing.
-          wait-for-completion-timeout-in-seconds: 1800
-          output-artifact-directory: signed-installer
+          wait-for-completion: false
+
+      - name: Approve and download signed Windows installer
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        run: |
+          ./scripts/complete-signpath-request.ps1 `
+            -OrganizationId "${{ secrets.SIGNPATH_ORGANIZATION_ID }}" `
+            -SigningRequestId "${{ steps.submit-windows-installer.outputs.signing-request-id }}" `
+            -ExpectedSigningPolicySlug "${{ steps.ver.outputs.channel == 'canary' && 'test-signing-ci-approval' || 'release-signing' }}" `
+            -OutputArtifactDirectory "signed-installer" `
+            -ApiUrl "${{ steps.submit-windows-installer.outputs.signpath-api-url }}" `
+            -TimeoutSeconds 1800
 
       - name: Replace installer with signed build
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')

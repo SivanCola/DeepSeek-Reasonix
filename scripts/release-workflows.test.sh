@@ -24,6 +24,14 @@ for workflow in release.yml release-npm.yml release-desktop.yml; do
 done
 grep -Eq "needs\.build\.result == 'success'" "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq "needs\.publish\.result == 'success'" "$repo_root/.github/workflows/release-desktop.yml"
+grep -Eq "signing-policy-slug:.*test-signing-ci-approval.*release-signing" \
+	"$repo_root/.github/workflows/release-desktop.yml"
+[ "$(grep -Ec 'wait-for-completion: false' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
+[ "$(grep -Ec 'complete-signpath-request\.ps1' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
+grep -Eq 'steps\.submit-windows-payload\.outputs\.signing-request-id' \
+	"$repo_root/.github/workflows/release-desktop.yml"
+grep -Eq 'steps\.submit-windows-installer\.outputs\.signing-request-id' \
+	"$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq '^  postflight:$' "$repo_root/.github/workflows/release-stable.yml"
 grep -Eq 'verify-stable-release-artifacts\.sh' "$repo_root/.github/workflows/release-stable.yml"
 grep -Eq 'name: Upload reviewed release notes' "$repo_root/.github/workflows/release-stable.yml"
