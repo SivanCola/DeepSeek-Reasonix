@@ -203,11 +203,27 @@ prefix cache-stable:
 
 - The **planner** (low-frequency) runs in its own session with the same standing
   memory context plus a filtered read-only research tool set, then produces a
-  concise plan. It can inspect files/docs before planning, but writer and
-  workflow tools are not exposed to it. It has no user-configured total-round
-  cap; caller cancellation and context safeguards remain available.
+  concise plan. A deterministic host policy chooses executor-only, light
+  planning, full planning, or plan-for-approval from pristine user text plus
+  trusted turn metadata. It does not call a classifier model and does not infer
+  host state from controller-authored prompt blocks. Explicit Plan Mode,
+  synthetic turns, short contextual replies, and atomic edits avoid a second
+  planner; cross-surface, structured, ambiguous, and high-risk changes use the
+  full contract. Active Goal and Delivery turns also upgrade non-atomic work to
+  the full contract. The privacy-safe route/depth/reason decision is emitted in
+  phase detail.
+- Light plans use a small per-turn research-round budget and return a compact
+  objective, 1-4 ordered steps, likely touchpoints, and primary verification.
+  Full plans use a larger bounded budget and distinguish verified from candidate
+  touchpoints, with risks, acceptance criteria, command-level verification, and
+  rollback when relevant. The depth contract stays in one stable system prompt;
+  only a small host-authored `<planner-turn>` block changes per user turn.
+- A plan-for-approval route is enforced by the host even if the planner omits
+  its marker. In a headless host it persists the plan and stops; it never
+  silently falls through to execution.
 - The plan is handed off as structured text to the **executor** — a full
-  tool-using `Agent` in its own session — which carries it out.
+  tool-using `Agent` in its own session — which validates candidate assumptions
+  and carries it out.
 - The sessions never mix, so neither model's prefix is disturbed by the other's
   turns; both grow prepend-only and stay cache-friendly. This reconciles
   "cache-first" with "two-model collaboration": switching models *inside one

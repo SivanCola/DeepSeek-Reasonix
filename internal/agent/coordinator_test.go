@@ -396,6 +396,133 @@ func TestCoordinatorSkipsPlannerForTrivialTurn(t *testing.T) {
 	}
 }
 
+func TestCoordinatorStructuredPolicyUsesStableDepthMetadata(t *testing.T) {
+	planner := &mockProvider{name: "planner", streams: [][]provider.Chunk{
+		{{Type: provider.ChunkText, Text: "Light plan."}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "Full plan."}, {Type: provider.ChunkDone}},
+	}}
+	exec := &mockProvider{name: "executor", streams: [][]provider.Chunk{
+		{{Type: provider.ChunkText, Text: "Light done."}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "Full done."}, {Type: provider.ChunkDone}},
+	}}
+	policy := func(_ context.Context, input string) PlannerDecision {
+		if strings.Contains(input, "light") {
+			return PlannerDecision{
+				Route: PlannerRoutePlanAndExecute, Depth: PlannerDepthLight,
+				Reason: "test_light", MaxResearchRounds: 2,
+			}
+		}
+		return PlannerDecision{
+			Route: PlannerRoutePlanAndExecute, Depth: PlannerDepthFull,
+			Reason: "test_full", MaxResearchRounds: 6,
+		}
+	}
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+	coord := NewCoordinatorWithPlannerPolicy(
+		planner, NewSession("stable planner system"), nil, nil, Options{},
+		executor, 0, event.Discard, policy,
+	)
+
+	if err := coord.Run(context.Background(), "light task"); err != nil {
+		t.Fatalf("light Run: %v", err)
+	}
+	if err := coord.Run(context.Background(), "full task"); err != nil {
+		t.Fatalf("full Run: %v", err)
+	}
+
+	if got := lastUser(planner.requests[0]); !strings.Contains(got, "depth: light") || !strings.Contains(got, "route: plan_and_execute") {
+		t.Fatalf("light planner input missing route metadata: %q", got)
+	}
+	if got := lastUser(planner.requests[1]); !strings.Contains(got, "depth: full") || !strings.Contains(got, "route: plan_and_execute") {
+		t.Fatalf("full planner input missing route metadata: %q", got)
+	}
+	for i, req := range planner.requests {
+		if len(req.Messages) == 0 || req.Messages[0].Role != provider.RoleSystem || req.Messages[0].Content != "stable planner system" {
+			t.Fatalf("planner request %d changed stable system prefix: %+v", i, req.Messages)
+		}
+	}
+	var handoffs []string
+	for _, req := range exec.requests {
+		if got := lastUser(req); strings.Contains(got, executorHandoffMarker) {
+			handoffs = append(handoffs, got)
+		}
+	}
+	if len(handoffs) != 2 {
+		t.Fatalf("executor handoffs = %d, want one light and one full handoff", len(handoffs))
+	}
+	if !strings.Contains(handoffs[0], "Planning depth: light") {
+		t.Fatalf("light handoff missing depth: %q", handoffs[0])
+	}
+	if !strings.Contains(handoffs[1], "Planning depth: full") {
+		t.Fatalf("full handoff missing depth: %q", handoffs[1])
+	}
+}
+
+func TestCoordinatorPlanForApprovalDoesNotDependOnPlannerMarker(t *testing.T) {
+	planner := &mockProvider{name: "planner", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "1. inspect auth\n2. migrate tokens"},
+		{Type: provider.ChunkDone},
+	}}
+	exec := &mockProvider{name: "executor", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "must not run"},
+		{Type: provider.ChunkDone},
+	}}
+	policy := func(context.Context, string) PlannerDecision {
+		return PlannerDecision{
+			Route: PlannerRoutePlanForApproval, Depth: PlannerDepthFull,
+			Reason: "user_plan_only", MaxResearchRounds: 6,
+		}
+	}
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+	coord := NewCoordinatorWithPlannerPolicy(
+		planner, NewSession("planner-sys"), nil, nil, Options{},
+		executor, 0, event.Discard, policy,
+	)
+	approval := &coordinatorApprovalGate{allow: false}
+	coord.SetPlannerPlanApprover(approval)
+
+	if err := coord.Run(context.Background(), "plan auth migration first"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if approval.calls != 1 {
+		t.Fatalf("approval calls = %d, want 1 without planner marker", approval.calls)
+	}
+	if len(exec.requests) != 0 {
+		t.Fatal("executor ran before structured plan approval")
+	}
+}
+
+func TestCoordinatorHeadlessPlanForApprovalNeverAutoExecutes(t *testing.T) {
+	planner := &mockProvider{name: "planner", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "1. inspect auth\n2. migrate tokens"},
+		{Type: provider.ChunkDone},
+	}}
+	exec := &mockProvider{name: "executor", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "must not run"},
+		{Type: provider.ChunkDone},
+	}}
+	policy := func(context.Context, string) PlannerDecision {
+		return PlannerDecision{Route: PlannerRoutePlanForApproval, Depth: PlannerDepthFull, Reason: "user_plan_only"}
+	}
+	sink := &recordSink{}
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, sink)
+	coord := NewCoordinatorWithPlannerPolicy(
+		planner, NewSession("planner-sys"), nil, nil, Options{},
+		executor, 0, sink, policy,
+	)
+
+	if err := coord.Run(context.Background(), "plan auth migration first"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(exec.requests) != 0 {
+		t.Fatal("headless executor ran without a plan approval channel")
+	}
+	msgs := executor.Session().Messages
+	if len(msgs) < 2 || !strings.Contains(msgs[len(msgs)-1].Content, plannerPlanAwaitingApprovalNote) {
+		t.Fatalf("headless plan-only turn was not persisted safely: %+v", msgs)
+	}
+}
+
 type coordinatorTestTool struct {
 	name     string
 	readOnly bool
@@ -560,6 +687,53 @@ func TestCoordinatorPlannerMaxStepsZeroIsUnlimited(t *testing.T) {
 	}
 	if got := lastUser(exec.requests[0]); !strings.Contains(got, "use both files") {
 		t.Fatalf("executor did not receive planner output: %q", got)
+	}
+}
+
+func TestCoordinatorPlannerDepthAppliesPerTurnResearchBudget(t *testing.T) {
+	planner := &mockProvider{name: "planner", streams: [][]provider.Chunk{
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "call-1", Name: "read_file", Arguments: `{"path":"a"}`}}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "call-2", Name: "read_file", Arguments: `{"path":"b"}`}}, {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "1. apply the narrow change\n2. run the focused test"}, {Type: provider.ChunkDone}},
+	}}
+	exec := &mockProvider{name: "executor", chunks: []provider.Chunk{
+		{Type: provider.ChunkText, Text: "Done."},
+		{Type: provider.ChunkDone},
+	}}
+	parentReg := tool.NewRegistry()
+	parentReg.Add(coordinatorTestTool{name: "read_file", readOnly: true, output: "ok"})
+	policy := func(context.Context, string) PlannerDecision {
+		return PlannerDecision{
+			Route: PlannerRoutePlanAndExecute, Depth: PlannerDepthLight,
+			Reason: "bounded_work", MaxResearchRounds: 2,
+		}
+	}
+	executor := New(exec, tool.NewRegistry(), NewSession("exec-sys"), Options{}, event.Discard)
+	coord := NewCoordinatorWithPlannerPolicy(
+		planner, NewSession("planner-sys"), nil, PlannerToolRegistry(parentReg), Options{MaxSteps: 0},
+		executor, 0, event.Discard, policy,
+	)
+
+	if err := coord.Run(context.Background(), "make the bounded change"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := len(planner.requests); got != 3 {
+		t.Fatalf("planner requests = %d, want two research rounds plus one finalization round", got)
+	}
+	if got := lastUser(planner.requests[2]); !strings.Contains(got, "planner research rounds") ||
+		!strings.Contains(got, "Do not call any more tools") ||
+		!strings.Contains(got, "label remaining uncertainty") ||
+		strings.Contains(got, "increase planner research rounds") {
+		t.Fatalf("planner did not receive the depth budget finalization nudge: %q", got)
+	}
+	var sawHandoff bool
+	for _, req := range exec.requests {
+		if strings.Contains(lastUser(req), executorHandoffMarker) {
+			sawHandoff = true
+		}
+	}
+	if !sawHandoff {
+		t.Fatalf("executor requests = %d, none received the bounded plan handoff", len(exec.requests))
 	}
 }
 
@@ -1041,6 +1215,21 @@ func TestIsNoOpPlan(t *testing.T) {
 func TestDefaultPlannerPromptRequestsNoChangesMarker(t *testing.T) {
 	if !strings.Contains(DefaultPlannerPrompt, noChangesMarker) {
 		t.Fatalf("DefaultPlannerPrompt does not request the %s marker isNoOpPlan parses", noChangesMarker)
+	}
+}
+
+func TestDefaultPlannerPromptDefinesLightAndFullEvidenceContracts(t *testing.T) {
+	for _, want := range []string{
+		"depth=light",
+		"depth=full",
+		"verified touchpoints",
+		"candidate touchpoints",
+		"command-level verification",
+		"Label assumptions",
+	} {
+		if !strings.Contains(DefaultPlannerPrompt, want) {
+			t.Fatalf("DefaultPlannerPrompt missing %q planning contract", want)
+		}
 	}
 }
 
