@@ -207,10 +207,11 @@ prefix cache-stable:
   planning, full planning, plan-for-approval, or explicit plan-only from
   pristine user text plus trusted turn metadata. It does not call a classifier
   model and does not infer host state from controller-authored prompt blocks.
-  Explicit Plan Mode, synthetic turns, short contextual replies, and atomic
-  edits avoid a second planner; cross-surface, structured, ambiguous, and
-  high-risk changes use the full contract. Active Goal and Delivery turns also
-  upgrade non-atomic work to the full contract. The privacy-safe
+  Explicit Plan Mode, synthetic turns, short contextual replies, atomic edits,
+  and bounded read-only actions avoid a second planner; cross-surface,
+  structured, ambiguous, and high-risk work uses the full contract. Active Goal
+  and Delivery turns upgrade non-atomic mutation work, while bounded read-only
+  actions remain executor-only. The privacy-safe
   route/depth/reason decision is emitted in phase detail.
 - Light plans use a small per-turn research-round budget and return a compact
   objective, 1-4 ordered steps, likely touchpoints, and primary verification.

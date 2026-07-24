@@ -907,10 +907,11 @@ research tool set, so it can inspect relevant files before handing a plan to the
 executor. Writer and workflow tools remain executor-only.
 
 Reasonix routes each turn deterministically without another classifier model:
-questions, short follow-ups, and clear atomic edits go straight to the executor;
-bounded implementation work may receive a short light plan; ambiguous,
-cross-surface, structured, high-risk, active-Goal, or Delivery work receives a
-full plan unless the requested edit is clearly atomic. Explicit Plan Mode
+questions, short follow-ups, clear atomic edits, and bounded read-only actions
+go straight to the executor; bounded implementation work may receive a short
+light plan. Ambiguous, cross-surface, structured, high-risk, active-Goal, or
+Delivery work receives a full plan unless the request is clearly atomic or
+read-only. Explicit Plan Mode
 remains a separate host workflow and is never planned twice. An explicit
 `plan first` / `先规划` request forces planning, while `just do it` / `直接改`
 goes directly to the executor. Execution boundaries are recognized across the

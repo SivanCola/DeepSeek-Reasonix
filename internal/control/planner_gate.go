@@ -33,6 +33,7 @@ const (
 	plannerReasonStructuredRequest   = "structured_request"
 	plannerReasonComplexIntent       = "complex_intent"
 	plannerReasonAtomicEdit          = "atomic_edit"
+	plannerReasonReadOnlyAction      = "read_only_action"
 	plannerReasonGuidance            = "complex_guidance"
 	plannerReasonGoalActive          = "goal_active"
 	plannerReasonAnchoredWork        = "anchored_work"
@@ -151,17 +152,20 @@ func DecidePlannerRoute(ctx context.Context, input string) agent.PlannerDecision
 	if features.guidance {
 		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthLight, plannerReasonGuidance)
 	}
+	if features.readOnly && !features.ambiguous {
+		return plannerExecutorDecision(plannerReasonReadOnlyAction)
+	}
 	if meta.GoalActive && features.work {
 		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthFull, plannerReasonGoalActive)
 	}
 	if meta.DeliveryProfile && features.work {
 		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthFull, plannerReasonWorkRequest)
 	}
-	if features.work && features.anchored {
-		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthLight, plannerReasonAnchoredWork)
-	}
 	if features.work && features.ambiguous {
 		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthFull, plannerReasonAmbiguousWork)
+	}
+	if features.work && features.anchored {
+		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthLight, plannerReasonAnchoredWork)
 	}
 	if features.work {
 		return plannerPlanDecision(agent.PlannerRoutePlanAndExecute, agent.PlannerDepthLight, plannerReasonWorkRequest)
@@ -198,6 +202,7 @@ type plannerFeatures struct {
 	structured   bool
 	complex      bool
 	atomic       bool
+	readOnly     bool
 	guidance     bool
 	anchored     bool
 	ambiguous    bool
@@ -214,6 +219,8 @@ func plannerFeaturesFor(text, lower string) plannerFeatures {
 	complex := containsAnyLexical(lower, complexIntentTerms)
 	guidance := isComplexGuidanceQuestion(lower)
 	ambiguous := work && containsAnyLexical(lower, plannerAmbiguousScopeTerms)
+	readOnly := work && containsAnyLexical(lower, plannerReadOnlyWorkTerms) &&
+		!containsAnyLexical(lower, plannerMutationWorkTerms)
 	atomic := work && anchored && !highRisk && !multiFile && !crossSurface && !structured && !complex &&
 		utf8.RuneCountInString(text) <= 140 && containsAnyLexical(lower, plannerAtomicTerms)
 	return plannerFeatures{
@@ -224,6 +231,7 @@ func plannerFeaturesFor(text, lower string) plannerFeatures {
 		structured:   structured,
 		complex:      complex,
 		atomic:       atomic,
+		readOnly:     readOnly,
 		guidance:     guidance,
 		anchored:     anchored,
 		ambiguous:    ambiguous,
@@ -607,6 +615,20 @@ var plannerWorkTerms = []string{
 	"inspect", "debug", "test", "tests", "testing", "修改", "修复", "更新", "删除", "移除",
 	"编辑", "写入", "创建", "新增", "添加", "运行", "构建", "实现", "重构", "迁移",
 	"改造", "评审", "审查", "排查", "调试", "测试", "加个", "加一", "补一个", "补个",
+}
+
+var plannerMutationWorkTerms = []string{
+	"fix", "fixing", "update", "updating", "remove", "removing", "delete", "deleting",
+	"edit", "editing", "write", "writing", "create", "creating", "add", "adding", "repair",
+	"patch", "build", "building", "implement", "implementing", "refactor", "refactoring",
+	"migrate", "migrating", "redesign", "修改", "修复", "更新", "删除", "移除", "编辑",
+	"写入", "创建", "新增", "添加", "构建", "实现", "重构", "迁移", "改造", "加个",
+	"加一", "补一个", "补个",
+}
+
+var plannerReadOnlyWorkTerms = []string{
+	"run", "running", "review", "reviewing", "audit", "inspect", "debug",
+	"test", "tests", "testing", "运行", "评审", "审查", "排查", "调试", "测试",
 }
 
 var plannerQuestionWorkTerms = []string{

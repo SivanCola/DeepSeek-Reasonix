@@ -726,9 +726,10 @@ planner_model = "deepseek-pro"   # 作为低频规划器
 Planner 会看到已加载的 `REASONIX.md` / `AGENTS.md` 记忆，并拿到一小组只读研究工具，
 因此可以先检查相关文件再把计划交给执行器。写入类和流程类工具仍只给执行器使用。
 
-Reasonix 会用确定性规则路由每一轮，不再调用额外的 classifier 模型：问答、短回复和
-明确的单点小改直达 Executor；边界清楚的实现任务可生成简短的 Light 计划；模糊、跨面、
-结构化、高风险、活跃 Goal 或 Delivery 的任务生成 Full 计划，明确的原子小改除外。
+Reasonix 会用确定性规则路由每一轮，不再调用额外的 classifier 模型：问答、短回复、
+明确的单点小改和边界清楚的纯只读动作直达 Executor；边界清楚的实现任务可生成简短的
+Light 计划；模糊、跨面、结构化、高风险、活跃 Goal 或 Delivery 的任务生成 Full 计划，
+明确的原子小改或纯只读动作除外。
 显式 Plan Mode 仍是独立的宿主流程，不会发生双重规划。
 明确的 `先规划` / `plan first` 会强制规划，`直接改` / `just do it` 则直达 Executor；
 执行边界可出现在请求中的任意子句，不要求位于句首，同时会忽略引号内的示例；

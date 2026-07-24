@@ -123,9 +123,9 @@ type Tool interface {
 - 宿主使用原始用户文本和可信回合元数据做确定性路由，不调用 classifier 模型，也不从
   controller 注入的 prompt block 猜测宿主状态；路由结果为 executor-only、Light、Full、
   plan-for-approval 或显式 plan-only，并用不含用户原文的 route/depth/reason 写入阶段详情；
-- 显式 Plan Mode、synthetic turn、上下文短回复和明确单点小改不再调用第二个 Planner；
-  跨面、结构化、模糊或高风险变更使用 Full；活跃 Goal 与 Delivery 中的非原子工作同样
-  升级为 Full；
+- 显式 Plan Mode、synthetic turn、上下文短回复、明确单点小改和边界清楚的纯只读动作
+  不再调用第二个 Planner；跨面、结构化、模糊或高风险工作使用 Full；活跃 Goal 与
+  Delivery 中的非原子修改工作同样升级为 Full，纯只读动作仍直达 Executor；
 - Light 使用较小的单轮调研预算，输出紧凑目标、1–4 个有序步骤、候选触点和主要验证；
   Full 使用较大的有界预算，区分已验证与候选触点，并补充风险、验收标准、命令级验证及
   必要回滚；深度合约保持在同一个稳定 system prompt 中，单轮只追加很小的
