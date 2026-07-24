@@ -777,7 +777,20 @@ function applyEvent(s: State, e: WireEvent): State {
     s = flushPendingUser(s);
   }
   if (e.kind === "retrying") {
-    return { ...s, retry: { attempt: e.retryAttempt ?? 0, max: e.retryMax ?? 0 } };
+    // Retrying is emitted synchronously from inside the foreground provider
+    // request, immediately before its cancellation-aware backoff. Treat it as
+    // authoritative proof that the turn is still active. An older idle
+    // ListTabs snapshot can otherwise arrive after turn_started, clear
+    // `running`, and leave the composer showing "retrying (n/m)" without its
+    // Stop button (or Escape cancellation) until all retries are exhausted.
+    return {
+      ...s,
+      retry: { attempt: e.retryAttempt ?? 0, max: e.retryMax ?? 0 },
+      running: true,
+      turnActive: true,
+      cancellable: true,
+      turnStartAt: s.turnStartAt || Date.now(),
+    };
   }
   if (s.retry) s = { ...s, retry: undefined };
   switch (e.kind) {
