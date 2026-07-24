@@ -1413,7 +1413,10 @@ func powerShellCommand(ctx context.Context, path, command string) *exec.Cmd {
 	// PowerShell's native command-line parser does not follow
 	// CommandLineToArgvW consistently for a complex -Command argument.
 	// -EncodedCommand transports the exact script as UTF-16LE and avoids a
-	// second layer of quote/backslash interpretation.
+	// second layer of quote/backslash interpretation. Force captured output to
+	// UTF-8 before encoding so Windows PowerShell does not emit the host console
+	// code page into Reasonix's stdout/stderr text contract.
+	command = sandbox.PowerShellUTF8Script(command)
 	codeUnits := utf16.Encode([]rune(command))
 	raw := make([]byte, len(codeUnits)*2)
 	for i, unit := range codeUnits {

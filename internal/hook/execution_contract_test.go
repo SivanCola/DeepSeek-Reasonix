@@ -161,8 +161,8 @@ func TestRawShellCommandPreservesScriptForResolvedShells(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded != powerShellScript {
-		t.Fatalf("raw PowerShell script changed: got %q, want %q", decoded, powerShellScript)
+	if want := sandbox.PowerShellUTF8Script(powerShellScript); decoded != want {
+		t.Fatalf("PowerShell script = %q, want %q", decoded, want)
 	}
 }
 
@@ -308,8 +308,9 @@ func FuzzPowerShellCommandEncodingRoundTrip(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != script {
-			t.Fatalf("PowerShell script changed:\n got %q\nwant %q", got, script)
+		want := sandbox.PowerShellUTF8Script(script)
+		if got != want {
+			t.Fatalf("PowerShell script changed:\n got %q\nwant %q", got, want)
 		}
 	})
 }

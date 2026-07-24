@@ -14,6 +14,7 @@ import (
 
 	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/pluginpkg"
+	"reasonix/internal/sandbox"
 )
 
 func writeSettings(t *testing.T, dir, json string) {
@@ -1649,10 +1650,12 @@ func TestPowerShellCommandEncodesScriptWithoutQuoteReparsing(t *testing.T) {
 	if got, want := cmd.Args[:4], []string{"powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("PowerShell argv prefix = %#v, want %#v", got, want)
 	}
-	// "dir" encoded as UTF-16LE is the canonical compact PowerShell example.
-	known := powerShellCommand(context.Background(), "powershell", "dir")
-	if got, want := known.Args[4], "ZABpAHIA"; got != want {
-		t.Fatalf("encoded command = %q, want %q", got, want)
+	decoded, err := decodePowerShellCommandForTest(cmd.Args[4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := decoded, sandbox.PowerShellUTF8Script(command); got != want {
+		t.Fatalf("decoded command = %q, want %q", got, want)
 	}
 	if strings.Contains(cmd.Args[4], command) {
 		t.Fatalf("raw script leaked into Windows command-line quoting: %#v", cmd.Args)

@@ -100,14 +100,16 @@ func TestDefaultSpawnerRunsCompoundCmdShellHook(t *testing.T) {
 		t.Fatalf("compound cmd hook failed: %+v", result)
 	}
 	got := strings.ReplaceAll(result.Stdout, "\r\n", "\n")
-	if got != "script:argument with spaces\nchained" {
+	// %1 preserves the quoting required to keep the spaced argument together.
+	// A batch script that wants the dequoted value uses %~1 instead.
+	if got != "script:\"argument with spaces\"\nchained" {
 		t.Fatalf("compound cmd stdout = %q", got)
 	}
 }
 
 func TestDefaultSpawnerRunsPowerShellHookWithNestedQuotes(t *testing.T) {
 	result := DefaultSpawner(context.Background(), SpawnInput{
-		Command: `$items = @("a b", "c'd", 'e"f'); Write-Output ($items -join "|")`,
+		Command: `$items = @("a b", "c'd", 'e"f', "中文", "🧪"); Write-Output ($items -join "|")`,
 		Mode:    ExecutionShell,
 		Shell:   "powershell",
 		Timeout: realSpawnTimeout,
@@ -115,7 +117,7 @@ func TestDefaultSpawnerRunsPowerShellHookWithNestedQuotes(t *testing.T) {
 	if result.ExitCode != 0 || result.SpawnErr != nil {
 		t.Fatalf("PowerShell hook failed: %+v", result)
 	}
-	if got, want := result.Stdout, `a b|c'd|e"f`; got != want {
+	if got, want := result.Stdout, `a b|c'd|e"f|中文|🧪`; got != want {
 		t.Fatalf("PowerShell stdout = %q, want %q", got, want)
 	}
 }
