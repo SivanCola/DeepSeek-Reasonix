@@ -35,8 +35,9 @@ ending in `-canary.N` publish under the `canary` dist-tag.)
 So a maintainer can dispatch a canary anytime. A stable release pauses once in
 the **Release stable** run until a configured reviewer approves the GitHub
 `release` environment; the CLI, npm, and Desktop jobs then continue without
-another GitHub environment prompt. Windows signing intentionally retains
-separate SignPath confirmations for the AMD64 and ARM64 requests.
+another human approval. SignPath still verifies the trusted GitHub origin,
+scans the Windows artifacts, signs every installed executable, rebuilds the
+packages, and signs the outer installers.
 
 > Repo settings backing this: Environments → `release` has the release owners as
 > required reviewers, and the release-tag ruleset restricts
@@ -109,8 +110,10 @@ from accidental or unauthorized invocation.
    reviewer to approve the GitHub `release` environment** before invoking all
    three publishers. The approval records the immutable release commit; every
    publisher checks out that SHA and fails if its remote tag moves afterward.
-   The two Windows signing requests then retain their manual SignPath
-   confirmations as a separate control.
+   Windows signing then runs automatically under SignPath trusted-build and
+   origin verification: each architecture signs its installed executable
+   payload first, rebuilds the portable archive and NSIS package, and finally
+   signs the outer installer.
    A stable `npm-v*` publish moves the `latest` dist-tag automatically (build.mjs)
    and release-npm.yml verifies it landed. **Do not skip the npm tag**: the stable
    preflight fails when the matching `npm-v*` or `desktop-v*` tag is missing or
@@ -150,10 +153,17 @@ from accidental or unauthorized invocation.
   npm, and Desktop tags to remain aligned on an ancestor of current `main-v2`,
   then uses the same single approval and postflight. Never move or recreate the
   published tags to pick up a workflow fix.
-- Windows release signing uses SignPath trusted-build and origin verification.
-  Keep **Use approval process** enabled on `release-signing`: the AMD64 and ARM64
-  requests can each require a manual confirmation after the single GitHub
-  release-environment approval.
+- Windows release signing uses SignPath trusted-build, origin verification, and
+  malware scanning. Keep the checked-in `windows-payload` and
+  `windows-installer-v2` artifact configurations synchronized with the matching
+  SignPath project slugs before merging a workflow that references them. Keep
+  the legacy `windows-installer` configuration available for older release
+  refs. `windows-payload` signs the desktop, Guard, launcher, update helper,
+  CLI, and generated NSIS uninstaller; `windows-installer-v2` verifies those
+  payload signatures before signing the rebuilt NSIS container. Keep **Use approval process**
+  disabled on `release-signing`; the protected GitHub release approval is the
+  human gate. If a SignPath request waits for confirmation, treat it as policy
+  drift instead of a normal release step.
 - Desktop in-app updates use R2 first, then the `crash.reasonix.io` desktop release
   gateway. The gateway resolves the `desktop-v*` release line directly and never uses
   GitHub's repository-wide `/releases/latest`, because plain `v*` tags are the CLI

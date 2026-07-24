@@ -6,9 +6,10 @@ run-name: Release stable ${{ inputs.tag || github.ref_name }}
 # preflight verifies that all three tags point to the current main-v2 commit,
 # and one GitHub approval releases every channel. A manual recovery runs the
 # fixed control plane from protected main-v2 while preserving an older tagged
-# candidate on main-v2 history. SignPath intentionally keeps its separate
-# manual confirmations. Prerelease and canary workflows remain independently
-# callable.
+# candidate on main-v2 history. SignPath verifies the trusted GitHub build,
+# scans it, signs the Windows payload and outer installer, and should complete
+# without another human gate. Prerelease and canary workflows remain
+# independently callable.
 on:
   push:
     tags:

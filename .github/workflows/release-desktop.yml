@@ -237,6 +237,23 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           RUN_NUMBER: ${{ github.run_number }}
 
+      # Official Windows releases must fail closed. Forks can still exercise
+      # unsigned packaging without repository secrets, but esengine releases
+      # may never publish an unsigned payload or installer.
+      - name: Require Windows Authenticode signing
+        if: runner.os == 'Windows' && github.repository == 'esengine/DeepSeek-Reasonix'
+        env:
+          RELEASE_SIGNING_READY: ${{ vars.SIGNPATH_RELEASE_SIGNING_READY }}
+        run: |
+          if [ "$HAS_SIGNPATH" != "true" ]; then
+            echo "SIGNPATH_API_TOKEN is required for official Windows releases" >&2
+            exit 1
+          fi
+          if [ "${{ steps.ver.outputs.channel }}" != "canary" ] && [ "$RELEASE_SIGNING_READY" != "true" ]; then
+            echo "SIGNPATH_RELEASE_SIGNING_READY must be true for stable/rc Windows releases" >&2
+            exit 1
+          fi
+
       - name: Build and package
         env:
           # macOS Developer ID + notarization path turns on only when all five
@@ -248,21 +265,49 @@ jobs:
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: scripts/desktop-build.sh "${{ matrix.platform }}" "${{ steps.ver.outputs.version }}" "${{ steps.ver.outputs.channel }}"
 
-      # Authenticode-sign the Windows installer through SignPath. Runs BEFORE minisign:
-      # the signature rewrites the installer's bytes, so the updater's minisign sig and
-      # the manifest SHA must be computed over the signed build. SignPath pulls the file
-      # from the Actions artifact API, so it must be uploaded first. Canary signs with the
-      # test certificate; stable/rc sign with the Foundation release certificate, but only
-      # once SIGNPATH_RELEASE_SIGNING_READY is set. The release-signing policy verifies the
-      # trusted GitHub origin and intentionally retains its manual approval process as a
-      # second-party control. Each Windows architecture can require its own confirmation.
+      # Sign every executable that users actually run before rebuilding the
+      # portable archive and NSIS installer. Signing only the finished NSIS
+      # container leaves reasonix-desktop.exe and its sidecars unsigned after
+      # installation, which can trigger Defender reputation/ML quarantine.
+      - name: Upload unsigned Windows payload for SignPath
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        id: unsigned-windows-payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-payload-${{ matrix.name }}
+          path: desktop/build/windows/signing-payload/*.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Submit Windows payload for Authenticode signing
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: DeepSeek-Reasonix
+          signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing' || 'release-signing' }}
+          artifact-configuration-slug: windows-payload
+          github-artifact-id: ${{ steps.unsigned-windows-payload.outputs.artifact-id }}
+          github-token: ${{ github.token }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed-payload
+
+      - name: Rebuild Windows packages from signed payload
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        run: scripts/package-windows-desktop.sh "${{ matrix.platform == 'windows/arm64' && 'arm64' || 'amd64' }}" signed-payload
+
+      # The second request verifies every signed payload file alongside the
+      # rebuilt installer, then signs the outer NSIS container. Minisign and the
+      # update manifest are generated only after both Authenticode stages.
       - name: Upload unsigned installer for SignPath
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         id: unsigned-installer
         uses: actions/upload-artifact@v7
         with:
           name: unsigned-${{ matrix.name }}
-          path: dist/*installer*.exe
+          path: desktop/build/windows/installer-signing-bundle/*.exe
           if-no-files-found: error
           retention-days: 1
 
@@ -274,18 +319,29 @@ jobs:
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: DeepSeek-Reasonix
           signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing' || 'release-signing' }}
-          artifact-configuration-slug: windows-installer
+          artifact-configuration-slug: windows-installer-v2
           github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
           github-token: ${{ github.token }}
           wait-for-completion: true
-          # Leave headroom for the manual SignPath confirmation, origin verification,
-          # malware scanning, and signing.
+          # Leave headroom for origin verification, malware scanning, and signing.
           wait-for-completion-timeout-in-seconds: 1800
-          output-artifact-directory: signed
+          output-artifact-directory: signed-installer
 
       - name: Replace installer with signed build
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
-        run: cp signed/*installer*.exe dist/
+        run: cp signed-installer/*installer*.exe dist/
+
+      - name: Verify Windows Authenticode release contract
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
+        shell: pwsh
+        run: |
+          $arch = if ("${{ matrix.platform }}" -eq "windows/arm64") { "arm64" } else { "amd64" }
+          $trusted = "${{ steps.ver.outputs.channel }}" -ne "canary"
+          ./scripts/verify-windows-authenticode.ps1 `
+            -PayloadDirectory signed-payload `
+            -InstallerPath "dist/Reasonix-windows-$arch-installer.exe" `
+            -PortableArchivePath "dist/Reasonix-windows-$arch.zip" `
+            -RequireTrusted:$trusted
 
       - name: Sign artifacts (minisign)
         working-directory: desktop
