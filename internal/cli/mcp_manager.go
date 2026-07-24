@@ -66,6 +66,7 @@ type mcpServerView struct {
 	AuthStatus string
 	AuthURL    string
 	Source     config.MCPConfigSource
+	ConfigPath string
 
 	authConfigured bool
 }
@@ -298,8 +299,12 @@ func (p *mcpManager) selectedServer() (mcpServerView, bool) {
 }
 
 func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
-	snap := mcpSnapshot{configPath: mcpConfigLocation()}
-	cfg, err := config.Load()
+	workspace := mcpCLIWorkspaceRoot()
+	if m.ctrl != nil && strings.TrimSpace(m.ctrl.WorkspaceRoot()) != "" {
+		workspace = m.ctrl.WorkspaceRoot()
+	}
+	snap := mcpSnapshot{configPath: config.UserConfigPath()}
+	cfg, err := config.LoadForRoot(workspace)
 	if err != nil {
 		snap.err = err.Error()
 	}
@@ -321,7 +326,7 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 				ToolList: append([]plugin.ToolInfo(nil), s.ToolList...),
 			}
 			if p, ok := configured[s.Name]; ok {
-				v = withMCPPluginConfig(v, p)
+				v = withMCPPluginConfig(v, p, workspace)
 			}
 			snap.servers = append(snap.servers, v)
 			seen[s.Name] = true
@@ -332,7 +337,7 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 				Error: f.Error,
 			}
 			if p, ok := configured[f.Name]; ok {
-				v = withMCPPluginConfig(v, p)
+				v = withMCPPluginConfig(v, p, workspace)
 			}
 			snap.servers = append(snap.servers, v)
 			seen[f.Name] = true
@@ -343,7 +348,7 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 			}
 			v := mcpServerView{Name: name, Status: "initializing"}
 			if p, ok := configured[name]; ok {
-				v = withMCPPluginConfig(v, p)
+				v = withMCPPluginConfig(v, p, workspace)
 			}
 			snap.servers = append(snap.servers, v)
 			seen[name] = true
@@ -360,7 +365,7 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 		default:
 			v.Status = "deferred"
 		}
-		v = withMCPPluginConfig(v, p)
+		v = withMCPPluginConfig(v, p, workspace)
 		snap.servers = append(snap.servers, v)
 		seen[p.Name] = true
 	}
@@ -370,7 +375,7 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 	return snap
 }
 
-func withMCPPluginConfig(v mcpServerView, p config.PluginEntry) mcpServerView {
+func withMCPPluginConfig(v mcpServerView, p config.PluginEntry, workspace string) mcpServerView {
 	transport := strings.ToLower(strings.TrimSpace(p.Type))
 	if transport == "" {
 		transport = "stdio"
@@ -383,6 +388,7 @@ func withMCPPluginConfig(v mcpServerView, p config.PluginEntry) mcpServerView {
 	v.Args = append([]string(nil), p.Args...)
 	v.URL = p.URL
 	v.Source = p.Source
+	v.ConfigPath = config.MCPConfigPathForEntry(workspace, p)
 	v.authConfigured = mcpdiag.HasAuthConfig(p.Headers, p.Env, p.URL)
 	if len(p.Env) > 0 {
 		v.EnvKeys = make([]string, 0, len(p.Env))

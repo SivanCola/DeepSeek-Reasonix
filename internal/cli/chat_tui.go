@@ -4433,7 +4433,7 @@ func (m *chatTUI) runMCPSubcommand(input string) {
 			m.notice("mcp add: " + err.Error())
 			return
 		}
-		m.notice(fmt.Sprintf("connected %s — %d tools, saved to config (available next message)", entry.Name, n))
+		m.notice(fmt.Sprintf("connected %s — %d tools, saved to global config (available next message)", entry.Name, n))
 	case "connect":
 		if len(args) < 3 {
 			m.notice("usage: /mcp connect <name>")

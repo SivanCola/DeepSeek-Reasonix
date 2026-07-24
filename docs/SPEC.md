@@ -160,19 +160,13 @@ interface (`call` / `notify` / `close`) abstracts that, so the MCP-level logic
   process uses the server's process sandbox because process confinement cannot
   change per RPC; read-only eligibility and destructive filtering remain local
   workflow gates rather than separate process sandboxes.
-- Configuration provenance is runtime metadata. Explicit installation from the
-  user config, Desktop, `/mcp add`, or `install_source` is authorization: the
-  host connects the server immediately when installation happens in a live
-  session, records a durable exact command/endpoint launch grant for
-  project-scoped installs, and runs authorized calls directly.
-  Project `reasonix.toml` and `.mcp.json` servers that are only
-  discovered from the repository require one durable launch confirmation before
-  any process or network transport is created. Confirmation records the exact
-  identity without a temporary initialize/tools-list preflight, so the normal
-  runtime starts the server only once; matching grants reconnect automatically
-  and identity changes require confirmation again. During the compatibility
-  window, an exact old workspace receipt may migrate only into this launch
-  grant; its former tool-level authority is ignored.
+- Configuration provenance is runtime metadata and determines persistence scope.
+  Desktop and CLI installs write the user-global `config.toml`; project
+  `reasonix.toml` and `.mcp.json` entries remain in their owning project file.
+  Every configured source is trusted without a separate launch-confirmation
+  step. Project entries override same-name global entries, and project
+  `reasonix.toml` overrides `.mcp.json`. Editing writes to the effective entry's
+  source; removing it reveals the next lower-priority declaration.
 - Each remote tool is adapted to the `Tool` interface and injected into the run
   registry, namespaced `mcp__<server>__<tool>` (spaces normalised to `_`) to
   match Claude Code and avoid clashes.
@@ -344,9 +338,9 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   "blocked" result it can adapt to (the same shape as a plan-mode refusal).
 - **MCP authorization.** Installing an MCP server authorizes all of its tools;
   there is no second server, raw-tool, writer, or destructive approval policy.
-  Explicit global deny rules still win. Repository-declared servers require one
-  exact identity confirmation before startup and require confirmation again only
-  if that identity changes. `readOnlyHint` and `destructiveHint` remain internal
+  Project configuration is trusted the same way and requires no separate launch
+  confirmation. Explicit global deny rules still win. `readOnlyHint` and
+  `destructiveHint` remain internal
   facts for scheduling, Plan/read-only restrictions, and cached-to-live safety
   reclassification. Strict read-only sub-agent registries expose only
   authorized tools with `readOnlyHint: true` and no `destructiveHint`. The
@@ -372,7 +366,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   `ask`/`deny`, and Sandbox path as Standard mode. A third-party MCP
   `readOnlyHint` affects dispatch classification and strict-child eligibility,
   but not the dedicated Planner's non-destructive trust path. Once the server is
-  installed or its exact project identity is confirmed, all non-destructive
+  installed or declared in project configuration, all non-destructive
   capabilities enter the dedicated Planner proxy; only hinted readers enter
   strict read-only sub-agent execution. `plan_mode_read_only_commands` is
   retained for config/session round trips and does not grant or revoke calls in

@@ -110,7 +110,7 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # 可选：raw MCP tool 名
 
 完整 schema 与每个字段的契约见 [`SPEC.md` §5](./SPEC.md#5-configuration-toml)。
 
-新安装或明确确认过的 MCP server 不需要逐工具信任名单。独立双模型 Planner 可使用所有
+已安装或由项目配置声明的 MCP server 不需要逐工具信任名单。独立双模型 Planner 可使用所有
 非 destructive 工具，即使 server 没有声明 `readOnlyHint`；严格只读 subagent 仍要求
 `readOnlyHint: true` 且无 `destructiveHint`。
 
@@ -524,13 +524,16 @@ Reasonix 是一个 MCP 客户端。`[[plugins]]` 的 `type` 选择传输：`stdi
 不会写入不完整配置；Registry 故障时可回退到同一查询的缓存结果。
 
 普通配置流程现在只有一步：使用桌面端的“添加并连接”、`/mcp add`，或直接让 Reasonix
-安装一个 package、URL 或 `.mcp.json`。这次明确安装本身就是授权：server 会保存并在当前
-会话连接，现在和下次启动都不会再弹出第二套信任步骤。显式 deny 仍然优先；包括声明
+安装一个 package 或 URL。此类主动安装统一写入用户全局 `config.toml`，安装本身就是授权：
+server 会在当前会话连接，现在和下次启动都不会再弹出第二套信任步骤。当前项目
+`reasonix.toml` 或 `.mcp.json` 中声明的 server 保留在项目配置中，同样默认可信，不需要额外
+启动确认。显式 deny 仍然优先；包括声明
 `destructiveHint` 的工具在内都可由普通 Executor 直接执行。独立 Planner 仍拒绝 destructive，
-严格只读 subagent 仍只暴露带只读 hint 的非破坏工具。只有被动从仓库
-`reasonix.toml` 或 `.mcp.json` 发现的 server 会在第一次启动前，请用户确认一次精确命令或
-地址；Reasonix 会先记录该决定而不启动临时检查进程，然后只启动一次正式连接。内容不变时
-以后自动连接，发生变化时才重新确认。
+严格只读 subagent 仍只暴露带只读 hint 的非破坏工具。
+
+MCP 名称按 workspace 解析：项目声明覆盖同名全局安装；项目内部以 `reasonix.toml` 高于
+`.mcp.json`。编辑会写回当前生效声明的原文件；删除高优先级声明后，会显示并启用下一层同名
+声明，而不会顺带删除其他作用域。
 
 stdio server 从初始化到读写都复用同一个进程，因此浏览器等有状态 MCP 能保留会话和
 已打开页面。由于进程启动后无法按调用切换 OS 沙箱，这个共享进程始终使用该 server 的普通
@@ -538,8 +541,8 @@ stdio server 从初始化到读写都复用同一个进程，因此浏览器等�
 的进程沙箱。
 
 工具以 `mcp__<server>__<tool>` 暴露给模型，与 Claude Code 一致；声明 MCP `readOnlyHint: true`
-的工具会参与并行调度并命中普通权限层的只读默认放行。用户安装 server，或首次确认仓库提供的
-精确 server 身份后，独立 Planner 即可使用该 server 的全部非 destructive 工具，不再需要逐工具设置；
+的工具会参与并行调度并命中普通权限层的只读默认放行。用户安装或项目配置声明 server 后，
+独立 Planner 即可使用该 server 的全部非 destructive 工具，不再需要逐工具设置；
 严格只读研究 subagent 只获得带 `readOnlyHint` 的非破坏 reader。没有 `readOnlyHint` 的工具在调度和
 mutation 记账上仍按 writer 处理。计划期间，内置 writer 仍走 Permissions/Sandbox；独立 Planner
 允许已授权、非 destructive 的 MCP（包括缺少只读 hint 的 opaque writer），但在任何审批前硬阻断
@@ -753,8 +756,7 @@ source 也可在 Plan 中加载，后续 writer 调用仍通过 Permissions/Sand
 所有严格只读子会话都经过同一对共享构造入口——`RunReadOnlySubAgentWithSession` /
 `NewReadOnlyAgent`——两者都会把子会话标记为永久只读并做最终 registry 过滤：移除 writer、
 destructive MCP 目标、来自未授权 server 的 reader，以及一切会改变 host capability 的工具。
-用户安装的 server 会立即获得授权；仓库声明的 server 则在其精确身份确认一次后符合条件。
-符合条件的 reader 仍可按需启动。严格只读入口一览：
+用户安装和项目配置声明的 server 都会立即获得授权。符合条件的 reader 仍可按需启动。严格只读入口一览：
 
 | 入口 | 用途 |
 | --- | --- |
@@ -772,7 +774,7 @@ writer，但可通过固定的 `use_capability` 代理调用已授权、非 dest
 带 `destructiveHint` 的工具零执行，应写入方案交给 Executor。
 
 普通 `task` / `fleet` 子 Agent 同样获得该固定代理（会话共享 Host/连接，每 Agent 独立
-frontend/ledger），可调用已安装或项目已授权 MCP，不要求 `readOnlyHint`。这些调用走可信 MCP
+frontend/ledger），可调用已安装或项目配置 MCP，不要求 `readOnlyHint`。这些调用走可信 MCP
 权限路径（实时授权复核 + 仅显式 deny）；writer/destructive 仍会串行、按 mutation 记账，并受
 Delivery 证据/租约门禁约束，而不是 Planner 的 Executor handoff。严格 `read_only_task` /
 `read_only_skill` / review 子 Agent 共享稳定代理 schema 与连接复用，但执行仍要求

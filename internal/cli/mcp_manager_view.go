@@ -240,6 +240,7 @@ func (p *mcpManager) renderConfirmClearAuth(width int) string {
 
 func mcpActionsFor(v mcpServerView, configPath string) []mcpActionItem {
 	var out []mcpActionItem
+	managed := v.BuiltIn || v.Source == config.MCPSourcePluginPackage
 	if v.Tools > 0 || len(v.ToolList) > 0 {
 		out = append(out, mcpActionItem{mcpActionViewTools, "View tools"})
 	}
@@ -270,13 +271,14 @@ func mcpActionsFor(v mcpServerView, configPath string) []mcpActionItem {
 	if v.Status != "disabled" {
 		out = append(out, mcpActionItem{mcpActionDisable, "Disable for this session"})
 	}
-	if !v.BuiltIn {
+	if !managed {
 		out = append(out, mcpActionItem{mcpActionRemove, "Remove server"})
 	}
 	return out
 }
 
 func appendMCPFailureSecondaryActions(out []mcpActionItem, v mcpServerView, configPath string) []mcpActionItem {
+	managed := v.BuiltIn || v.Source == config.MCPSourcePluginPackage
 	if strings.TrimSpace(v.Error) != "" {
 		out = append(out, mcpActionItem{mcpActionLogs, "View logs"})
 	}
@@ -284,7 +286,7 @@ func appendMCPFailureSecondaryActions(out []mcpActionItem, v mcpServerView, conf
 	if v.Status != "disabled" {
 		out = append(out, mcpActionItem{mcpActionDisable, "Disable for this session"})
 	}
-	if !v.BuiltIn {
+	if !managed {
 		out = append(out, mcpActionItem{mcpActionRemove, "Remove server"})
 	}
 	return out
@@ -292,11 +294,19 @@ func appendMCPFailureSecondaryActions(out []mcpActionItem, v mcpServerView, conf
 
 func appendMCPConfigActions(out []mcpActionItem, v mcpServerView, configPath string) []mcpActionItem {
 	if v.Configured {
-		if !v.BuiltIn && configPath != "" {
+		path := mcpConfigPathForView(v, configPath)
+		if !v.BuiltIn && v.Source != config.MCPSourcePluginPackage && path != "" {
 			out = append(out, mcpActionItem{mcpActionEdit, "Edit config"})
 		}
 	}
 	return out
+}
+
+func mcpConfigPathForView(v mcpServerView, fallback string) string {
+	if path := strings.TrimSpace(v.ConfigPath); path != "" {
+		return path
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func writeMCPDetailField(b *strings.Builder, label, value string) {

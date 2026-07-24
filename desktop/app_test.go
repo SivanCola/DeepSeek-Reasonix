@@ -8581,6 +8581,71 @@ args = ["serve"]
 	}
 }
 
+func TestRemoveProjectMCPRevealsAndRegistersGlobalFallback(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userCfg.Plugins = []config.PluginEntry{{Name: "docs", Command: "global-docs"}}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(dir, "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte(`
+[[plugins]]
+name = "docs"
+command = "project-docs"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := tool.NewRegistry()
+	var configured []plugin.Spec
+	ctrl := control.New(control.Options{
+		Host:          plugin.NewHost(),
+		Registry:      reg,
+		WorkspaceRoot: dir,
+		MCPConfigureSpec: func(spec *plugin.Spec) {
+			configured = append(configured, *spec)
+		},
+	})
+	defer ctrl.Close()
+	projectEntry, found, err := desktopEffectiveMCPServer(dir, "docs")
+	if err != nil || !found {
+		t.Fatalf("load project docs: entry=%+v found=%v err=%v", projectEntry, found, err)
+	}
+	if _, err := ctrl.RegisterMCPServerOnDemand(projectEntry); err != nil {
+		t.Fatalf("register project docs: %v", err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(ctrl, "")
+	app.activeTab().WorkspaceRoot = dir
+	if err := app.RemoveMCPServer("docs"); err != nil {
+		t.Fatalf("RemoveMCPServer(docs): %v", err)
+	}
+
+	projectCfg := config.LoadForEdit(projectPath)
+	if _, found := findPluginEntry(projectCfg.Plugins, "docs"); found {
+		t.Fatalf("project docs still configured after removal: %+v", projectCfg.Plugins)
+	}
+	globalCfg := config.LoadForEdit(config.UserConfigPath())
+	globalEntry, found := findPluginEntry(globalCfg.Plugins, "docs")
+	if !found || globalEntry.Command != "global-docs" {
+		t.Fatalf("global docs fallback = %+v, found=%v", globalEntry, found)
+	}
+	effective, found, err := desktopEffectiveMCPServer(dir, "docs")
+	if err != nil || !found || effective.Source != config.MCPSourceUserConfig || effective.Command != "global-docs" {
+		t.Fatalf("effective docs fallback = %+v, found=%v err=%v", effective, found, err)
+	}
+	if len(configured) < 2 || configured[len(configured)-1].Command != "global-docs" {
+		t.Fatalf("registered specs = %+v, want global fallback registered last", configured)
+	}
+	if _, found := reg.Get("mcp__docs__connect"); !found {
+		t.Fatalf("global fallback connect surface missing; names=%v", reg.Names())
+	}
+}
+
 func TestRemoveMCPServerClearsRecordedStartupFailure(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
@@ -8803,6 +8868,59 @@ func TestUpdateMCPServerEditsProjectMCPJSONEntry(t *testing.T) {
 	}
 	if _, ok := findPluginEntry(config.LoadForEdit(config.UserConfigPath()).Plugins, "codegraph"); ok {
 		t.Fatalf(".mcp.json update should not create a user config shadow entry")
+	}
+}
+
+func TestUpdateMCPServerPreservesProjectTOMLSourceAndGlobalShadow(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userCfg.Plugins = []config.PluginEntry{{Name: "docs", Command: "global-docs"}}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	projectPath := filepath.Join(dir, "reasonix.toml")
+	if err := os.WriteFile(projectPath, []byte(`
+[[plugins]]
+name = "docs"
+command = "project-docs"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Host: plugin.NewHost(), WorkspaceRoot: dir}), "")
+	defer app.activeCtrl().Close()
+	app.activeTab().WorkspaceRoot = dir
+	entry, ok, err := desktopEffectiveMCPServer(dir, "docs")
+	if err != nil || !ok || entry.Source != config.MCPSourceProjectConfig {
+		t.Fatalf("load project docs entry: entry=%+v found=%v err=%v", entry, ok, err)
+	}
+	if err := config.DefaultMCPActivationStore().SetServerEnabled(entry, dir, false); err != nil {
+		t.Fatal(err)
+	}
+	app.activeTab().disabledMCP["docs"] = ServerView{}
+
+	if err := app.UpdateMCPServer("docs", MCPServerInput{
+		Name: "docs", Transport: "stdio", Command: "project-docs-updated",
+	}); err != nil {
+		t.Fatalf("UpdateMCPServer(project reasonix.toml docs): %v", err)
+	}
+
+	projectCfg := config.LoadForEdit(projectPath)
+	projectEntry, found := findPluginEntry(projectCfg.Plugins, "docs")
+	if !found || projectEntry.Command != "project-docs-updated" {
+		t.Fatalf("project docs entry = %+v, found=%v", projectEntry, found)
+	}
+	globalCfg := config.LoadForEdit(config.UserConfigPath())
+	globalEntry, found := findPluginEntry(globalCfg.Plugins, "docs")
+	if !found || globalEntry.Command != "global-docs" {
+		t.Fatalf("global shadow changed while editing project entry: %+v, found=%v", globalEntry, found)
+	}
+	effective, found, err := desktopEffectiveMCPServer(dir, "docs")
+	if err != nil || !found || effective.Source != config.MCPSourceProjectConfig || effective.Command != "project-docs-updated" {
+		t.Fatalf("effective docs after edit = %+v, found=%v err=%v", effective, found, err)
 	}
 }
 
@@ -9206,7 +9324,7 @@ tier = "lazy"
 	t.Fatalf("figma MCP missing from Capabilities: %+v", view.Servers)
 }
 
-func TestUpdateMCPServerMigratesLegacyTierToBackground(t *testing.T) {
+func TestUpdateMCPServerMigratesLegacyTierInProjectSource(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -9256,19 +9374,19 @@ tier = "lazy"
 		t.Fatalf("env TOKEN = %q, want preserved env", got)
 	}
 	userCfg := config.LoadForEdit(config.UserConfigPath())
-	userPlugin, ok := findPluginEntry(userCfg.Plugins, "playwright")
-	if !ok {
-		t.Fatalf("playwright should be migrated to user config: %+v", userCfg.Plugins)
-	}
-	if userPlugin.Command != "node" || userPlugin.Env["TOKEN"] != "${PLAYWRIGHT_TOKEN}" {
-		t.Fatalf("user plugin after migration = %+v", userPlugin)
-	}
-	if userPlugin.Tier != "" {
-		t.Fatalf("user plugin tier = %q, want migrated empty", userPlugin.Tier)
+	if _, ok := findPluginEntry(userCfg.Plugins, "playwright"); ok {
+		t.Fatalf("project plugin should not be copied to user config: %+v", userCfg.Plugins)
 	}
 	projectCfg := config.LoadForEdit(filepath.Join(dir, "reasonix.toml"))
-	if _, ok := findPluginEntry(projectCfg.Plugins, "playwright"); ok {
-		t.Fatalf("project plugin should be removed after desktop migration: %+v", projectCfg.Plugins)
+	projectPlugin, ok := findPluginEntry(projectCfg.Plugins, "playwright")
+	if !ok {
+		t.Fatalf("playwright should remain in project config: %+v", projectCfg.Plugins)
+	}
+	if projectPlugin.Command != "node" || projectPlugin.Env["TOKEN"] != "${PLAYWRIGHT_TOKEN}" {
+		t.Fatalf("project plugin after update = %+v", projectPlugin)
+	}
+	if projectPlugin.Tier != "" {
+		t.Fatalf("project plugin tier = %q, want migrated empty", projectPlugin.Tier)
 	}
 	view := app.Capabilities()
 	for _, s := range view.Servers {
@@ -9431,7 +9549,7 @@ name = "codegraph"
 	t.Fatalf("codegraph missing after reconnect: %+v", view.Servers)
 }
 
-func TestSetMCPServerTierRecordsConnectFailure(t *testing.T) {
+func TestSetMCPServerTierPreservesProjectSourceAndRecordsConnectFailure(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := robustTempDir(t)
 	t.Chdir(dir)
@@ -9463,16 +9581,16 @@ tier = "lazy"
 		t.Fatalf("saved tier = %q, want migrated empty", got)
 	}
 	userCfg := config.LoadForEdit(config.UserConfigPath())
-	userPlugin, ok := findPluginEntry(userCfg.Plugins, "broken")
-	if !ok {
-		t.Fatalf("broken should be migrated to user config: %+v", userCfg.Plugins)
-	}
-	if userPlugin.Tier != "" {
-		t.Fatalf("user plugin tier = %q, want migrated empty", userPlugin.Tier)
+	if _, ok := findPluginEntry(userCfg.Plugins, "broken"); ok {
+		t.Fatalf("project plugin should not be copied to user config: %+v", userCfg.Plugins)
 	}
 	projectCfg := config.LoadForEdit(filepath.Join(dir, "reasonix.toml"))
-	if _, ok := findPluginEntry(projectCfg.Plugins, "broken"); ok {
-		t.Fatalf("project plugin should be removed after desktop migration: %+v", projectCfg.Plugins)
+	projectPlugin, ok := findPluginEntry(projectCfg.Plugins, "broken")
+	if !ok {
+		t.Fatalf("broken should remain in project config: %+v", projectCfg.Plugins)
+	}
+	if projectPlugin.Tier != "" {
+		t.Fatalf("project plugin tier = %q, want migrated empty", projectPlugin.Tier)
 	}
 	if !mcpFailed(app.activeCtrl(), "broken") {
 		t.Fatalf("Host.Failures() = %+v, want broken failure recorded", app.activeCtrl().Host().Failures())

@@ -8147,8 +8147,30 @@ func (a *App) RemoveMCPServer(name string) error {
 	if host != nil {
 		host.ClearFailure(name)
 	}
+	restoreMCPServerFallbacks(name, controllers)
 	a.clearMCPServerTabState(name, controllers)
 	return nil
+}
+
+// restoreMCPServerFallbacks makes a lower-priority declaration immediately
+// available after its project override is removed. Registration is cache-first:
+// it restores cached tools or a connect placeholder without starting a process.
+func restoreMCPServerFallbacks(name string, controllers []mcpControllerTarget) {
+	for _, target := range controllers {
+		root := target.ctrl.WorkspaceRoot()
+		cfg, err := config.LoadForRoot(root)
+		if err != nil {
+			slog.Warn("desktop: reload MCP fallback after remove", "name", name, "workspace", root, "err", err)
+			continue
+		}
+		entry, found := findPluginEntry(cfg.Plugins, name)
+		if !found || !mcpEntryEnabled(entry, root) {
+			continue
+		}
+		if _, err := target.ctrl.RegisterMCPServerOnDemand(entry); err != nil {
+			slog.Warn("desktop: restore MCP fallback after remove", "name", name, "workspace", root, "err", err)
+		}
+	}
 }
 
 // ReconnectMCPServer disconnects the server if it is already connected (to force
@@ -8365,30 +8387,15 @@ func (a *App) SetMCPServerTier(name, tier string) error {
 }
 
 func (a *App) desktopMCPServerForEdit(root, name string) (config.PluginEntry, bool, error) {
-	// Read-only lookup of the entry to edit; loads credentials because callers
-	// hand the entry to ConnectMCPServer, which resolves env-based secrets.
-	// The actual config write goes through saveDesktopMCPServer under the
-	// config edit lock.
-	cfg, _, err := a.loadDesktopUserConfigForViewWithCredentialsForRoot(root)
-	if err != nil {
-		return config.PluginEntry{}, false, err
-	}
-	if p, ok := findPluginEntry(cfg.Plugins, name); ok {
-		return p, true, nil
-	}
-	if merged, err := config.LoadForRoot(root); err == nil {
-		if p, ok := findPluginEntry(merged.Plugins, name); ok {
-			return p, true, nil
-		}
-	}
-	return config.PluginEntry{}, false, nil
+	// Edit the same effective declaration the runtime selected. The entry's
+	// provenance is retained so saveDesktopMCPServer writes it back to the
+	// owning project/global file instead of promoting it across scopes.
+	return desktopEffectiveMCPServer(root, name)
 }
 
 // desktopEffectiveMCPServer returns the same merged entry the runtime starts.
-// Connection lifecycle paths must not use desktopMCPServerForEdit: a project
-// entry intentionally shadows a same-name user entry, while edit paths may
-// promote project configuration into the user config before removing the
-// project override.
+// Its provenance identifies the exact project or global declaration that edit
+// and remove operations must mutate.
 func desktopEffectiveMCPServer(root, name string) (config.PluginEntry, bool, error) {
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
@@ -8402,27 +8409,7 @@ func (a *App) saveDesktopMCPServer(root string, entry config.PluginEntry) error 
 	if err := ensureMCPServerDirectlyWritable(root, entry.Name); err != nil {
 		return err
 	}
-	if a.desktopMCPServerOwnedByProjectMCPJSON(root, entry.Name) {
-		_, err := config.UpsertMCPJSONPlugin(projectMCPJSONPathForRoot(root), entry)
-		return err
-	}
-	// Lock only the user-config load-modify-save; the project-override cleanup
-	// below writes the project config, which this lock does not cover.
-	if err := func() error {
-		unlock := config.LockUserConfigEdits()
-		defer unlock()
-		cfg, path, err := a.loadDesktopUserConfigForEditForRoot(root)
-		if err != nil {
-			return err
-		}
-		if err := cfg.UpsertPlugin(entry); err != nil {
-			return err
-		}
-		return cfg.SaveTo(path)
-	}(); err != nil {
-		return err
-	}
-	_, err := a.removeProjectMCPOverride(root, entry.Name)
+	_, err := config.UpsertPluginInSourceForRoot(root, entry)
 	return err
 }
 
@@ -8438,56 +8425,8 @@ func ensureMCPServerDirectlyWritable(root, name string) error {
 }
 
 func (a *App) removeDesktopMCPServer(root, name string) (bool, error) {
-	return config.RemovePluginFromSourcesForRoot(root, name)
-}
-
-func (a *App) removeProjectMCPOverride(root, name string) (bool, error) {
-	path := projectConfigPathForRoot(root)
-	userPath := config.UserConfigPath()
-	if path == "" || sameConfigPath(path, userPath) {
-		return false, nil
-	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	cfg := config.LoadForEdit(path)
-	if !cfg.RemovePlugin(name) {
-		return false, nil
-	}
-	if err := cfg.SaveTo(path); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (a *App) desktopMCPServerOwnedByProjectMCPJSON(root, name string) bool {
-	if strings.TrimSpace(name) == "" {
-		return false
-	}
-	// Read-only ownership check: only looks for the name in the user config's
-	// plugin list, so no credentials and no config edit lock are needed.
-	cfg, _, err := a.loadDesktopUserConfigForViewForRoot(root)
-	if err == nil {
-		if _, ok := findPluginEntry(cfg.Plugins, name); ok {
-			return false
-		}
-	}
-	projectCfg := config.LoadForEdit(projectConfigPathForRoot(root))
-	if _, ok := findPluginEntry(projectCfg.Plugins, name); ok {
-		return false
-	}
-	_, ok, err := config.LoadMCPJSONPlugin(projectMCPJSONPathForRoot(root), name)
-	return err == nil && ok
-}
-
-func projectMCPJSONPathForRoot(root string) string {
-	if strings.TrimSpace(root) == "" || root == "." {
-		return ".mcp.json"
-	}
-	return filepath.Join(root, ".mcp.json")
+	_, removed, _, err := config.RemovePluginFromEffectiveSourceForRoot(root, name)
+	return removed, err
 }
 
 func findPluginEntry(entries []config.PluginEntry, name string) (config.PluginEntry, bool) {

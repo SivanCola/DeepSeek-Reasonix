@@ -111,7 +111,8 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 
 	// Claude Code's .mcp.json (project root) is read last and merged into
 	// [[plugins]], so a server configured for Claude works here unchanged.
-	// reasonix.toml wins on a name collision (see mergeMCPJSON).
+	// Project reasonix.toml wins on a name collision; project .mcp.json wins
+	// over a same-name user-global entry (see mergeMCPJSON).
 	mcpFile := mcpJSONFile
 	if root != "." {
 		mcpFile = filepath.Join(root, mcpJSONFile)
