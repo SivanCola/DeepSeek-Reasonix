@@ -56,8 +56,8 @@ var fetchAttemptTimeout = 5 * time.Second
 // at once (#6005); GitHub is separate infrastructure. Stable desktop releases
 // own the repo-wide latest badge and publish latest.json directly, while
 // release.yml also keeps a desktop-manifest mirror attached to stable CLI
-// releases for older publishing windows. Canary has no GitHub release, so its
-// chain stays two-deep.
+// releases for older publishing windows. Preview has no GitHub release, so its
+// chain remains first-party only.
 const githubManifestFallback = "https://github.com/esengine/DeepSeek-Reasonix/releases/latest/download/latest.json"
 
 func normalizeUpdateChannel(ch string) string {
@@ -199,10 +199,33 @@ func normalizeVersion(v string) (string, bool) {
 	return semver.Canonical(v), true
 }
 
+// validateManifestChannel prevents compatibility fallbacks from crossing the
+// public channel boundary. In particular, the legacy canary/ pointer may still
+// contain an old test-signed vX.Y.Z-canary.N build until the first Preview
+// release mirrors over it; new Preview clients must skip that manifest.
+func validateManifestChannel(selected string, m *update.Manifest) error {
+	version, ok := normalizeVersion(m.Version)
+	if !ok {
+		return fmt.Errorf("%s manifest has invalid version %q", normalizeUpdateChannel(selected), m.Version)
+	}
+	prerelease := semver.Prerelease(version)
+	switch normalizeUpdateChannel(selected) {
+	case "preview":
+		if !strings.HasPrefix(prerelease, "-preview.") {
+			return fmt.Errorf("preview manifest has non-Preview version %q", m.Version)
+		}
+	default:
+		if prerelease != "" {
+			return fmt.Errorf("stable manifest has prerelease version %q", m.Version)
+		}
+	}
+	return nil
+}
+
 // fetchManifest pulls latest.json from each endpoint in order until one both
-// responds and decodes. Every endpoint's failure is kept — a user staring at a
-// gateway 403 (#6005) needs to see that the R2 pointer failed too, not just
-// whichever endpoint happened to die last.
+// responds, decodes, and matches the selected public channel. Every endpoint's
+// failure is kept — a user staring at a gateway 403 (#6005) needs to see that
+// the R2 pointer failed too, not just whichever endpoint happened to die last.
 func fetchManifest(ctx context.Context, c, fallback *http.Client, selected string) (*update.Manifest, error) {
 	var errs []error
 	selected = normalizeUpdateChannel(selected)
@@ -216,6 +239,10 @@ func fetchManifest(ctx context.Context, c, fallback *http.Client, selected strin
 		}
 		var m update.Manifest
 		if err := json.Unmarshal(b, &m); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", url, err))
+			continue
+		}
+		if err := validateManifestChannel(selected, &m); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", url, err))
 			continue
 		}

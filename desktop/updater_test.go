@@ -214,6 +214,60 @@ func TestChannelSelectsDistinctPointers(t *testing.T) {
 	}
 }
 
+func TestManifestChannelValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		channel   string
+		version   string
+		wantError bool
+	}{
+		{name: "stable release", channel: "stable", version: "v1.17.21"},
+		{name: "preview release", channel: "preview", version: "v1.18.0-preview.7"},
+		{name: "legacy alias selects Preview", channel: "canary", version: "v1.18.0-preview.7"},
+		{name: "Preview rejects legacy Canary", channel: "preview", version: "v1.17.21-canary.56", wantError: true},
+		{name: "Preview rejects Stable", channel: "preview", version: "v1.17.21", wantError: true},
+		{name: "Stable rejects Preview", channel: "stable", version: "v1.18.0-preview.7", wantError: true},
+		{name: "invalid version", channel: "preview", version: "dev", wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateManifestChannel(tt.channel, &update.Manifest{Version: tt.version})
+			if (err != nil) != tt.wantError {
+				t.Fatalf("validateManifestChannel(%q, %q) error = %v, wantError=%v", tt.channel, tt.version, err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestFetchManifestSkipsLegacyCanaryBuildForPreview(t *testing.T) {
+	var calls []string
+	client := &http.Client{Transport: rtFunc(func(req *http.Request) (*http.Response, error) {
+		calls = append(calls, req.URL.String())
+		version := "v1.17.21-canary.56"
+		if strings.Contains(req.URL.Path, "/canary/") {
+			version = "v1.18.0-preview.7"
+		}
+		body := fmt.Sprintf(`{"version":%q}`, version)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	manifest, err := fetchManifest(context.Background(), client, nil, "preview")
+	if err != nil {
+		t.Fatalf("fetchManifest: %v", err)
+	}
+	if manifest.Version != "v1.18.0-preview.7" {
+		t.Fatalf("version = %q, want Preview compatibility manifest", manifest.Version)
+	}
+	if len(calls) != 2 || !strings.Contains(calls[0], "/preview/") || !strings.Contains(calls[1], "/canary/") {
+		t.Fatalf("endpoint calls = %q, want Preview first and legacy Canary fallback second", calls)
+	}
+}
+
 func withUpdateCacheDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
