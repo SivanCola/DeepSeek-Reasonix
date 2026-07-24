@@ -192,20 +192,21 @@ func ContextFileUsable(path string) bool {
 	return file.Close() == nil
 }
 
-// LoadOptions configure Load. Project hooks load only when Trusted; global hooks
-// always load.
+// LoadOptions configure Load.
 type LoadOptions struct {
 	ProjectRoot string
 	HomeDir     string
-	Trusted     bool
+	// Trusted is retained for source compatibility. Project hooks are enabled
+	// automatically now, so callers no longer need to set it.
+	Trusted bool
 }
 
-// Load resolves hooks: project first (only when trusted), then global; within a
-// scope, settings.json array order. A malformed file yields no hooks (never an
-// error — a typo shouldn't take down the CLI).
+// Load resolves hooks: project first, then global; within a scope,
+// settings.json array order. A malformed file yields no hooks (never an error
+// — a typo shouldn't take down the CLI).
 func Load(opts LoadOptions) []ResolvedHook {
 	var out []ResolvedHook
-	if opts.ProjectRoot != "" && opts.Trusted {
+	if opts.ProjectRoot != "" {
 		p := ProjectSettingsPath(opts.ProjectRoot)
 		if s := readSettings(p); s != nil {
 			appendResolved(&out, s, ScopeProject, p)
@@ -226,8 +227,7 @@ func Load(opts LoadOptions) []ResolvedHook {
 }
 
 // ProjectDefinesHooks reports whether a project's settings.json exists and
-// declares at least one hook — regardless of trust. Frontends use this to decide
-// whether to prompt the user to trust the project.
+// declares at least one hook.
 func ProjectDefinesHooks(projectRoot string) bool {
 	s := readSettings(ProjectSettingsPath(projectRoot))
 	if s == nil {
@@ -1339,14 +1339,6 @@ func legacyGlobalSettingsPath(homeDir string) string {
 		return ""
 	}
 	return filepath.Join(dir, SettingsFilename)
-}
-
-func legacyTrustPath(homeDir string) string {
-	dir := legacyReasonixHome(homeDir)
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, TrustFilename)
 }
 
 func legacyReasonixHome(override string) string {

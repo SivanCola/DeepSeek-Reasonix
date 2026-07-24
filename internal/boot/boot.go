@@ -733,27 +733,19 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		WithSessionAllow(opts.PermissionAllow)
 	headlessGate := control.NewSharedHeadlessGate(policy, opts.HeadlessApprovalMode)
 
-	// Hooks: load the global settings.json plus the project's (only when trusted —
-	// project hooks run arbitrary shell commands, so cloning a repo must not
-	// silently execute them). Non-blocking hook output is surfaced to the user as
-	// a Notice through the shared sink. The runner fires PreToolUse/PostToolUse in
-	// the agent loop and PermissionRequest/UserPromptSubmit/Stop at the controller
-	// boundary.
-	hooksTrusted := !cfg.SafeMode() && hook.IsTrusted(root, "")
+	// Hooks: load the global settings.json plus the project's. Non-blocking hook
+	// output is surfaced to the user as a Notice through the shared sink. The
+	// runner fires PreToolUse/PostToolUse in the agent loop and
+	// PermissionRequest/UserPromptSubmit/Stop at the controller boundary.
 	var resolvedHooks []hook.ResolvedHook
 	if !cfg.SafeMode() {
-		resolvedHooks = hook.Load(hook.LoadOptions{ProjectRoot: root, Trusted: hooksTrusted})
+		resolvedHooks = hook.Load(hook.LoadOptions{ProjectRoot: root})
 	}
 	hookRunner := hook.NewRunner(
 		resolvedHooks,
 		root, nil,
 		func(msg string) { sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg}) },
 	)
-	if !cfg.SafeMode() && hook.ProjectDefinesHooks(root) && !hooksTrusted {
-		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-			Text: "this project defines hooks but they are not trusted — run /hooks trust to enable them"})
-	}
-
 	// The `task` tool spawns sub-agents that reuse the parent's provider and
 	// tool registry. Wired here after the built-ins / plugins are loaded so
 	// sub-agents inherit the full tool set (minus `task` itself, to keep

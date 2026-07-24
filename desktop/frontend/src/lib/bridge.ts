@@ -3350,7 +3350,6 @@ function makeMockApp(): AppBindings {
         ],
         "/hooks": [
           { label: "list", insert: "list", hint: "list active hooks" },
-          { label: "trust", insert: "trust", hint: "trust this project's hooks" },
         ],
         "/model": [
           { label: "deepseek/deepseek-v4-flash", insert: "deepseek/deepseek-v4-flash", hint: "current" },
@@ -3730,12 +3729,10 @@ function makeMockApp(): AppBindings {
       hookSettings[key].hooks = JSON.parse(JSON.stringify(hooks)) as HookConfigView[];
     },
     async TrustProjectHooks() {
-      hookSettings.project.trusted = true;
+      // Compatibility no-op: project hooks are enabled automatically.
     },
-    async TrustProjectHooksForRoot(projectRoot: string) {
-      if (projectRoot && projectRoot === hookSettings.project.projectRoot) {
-        hookSettings.project.trusted = true;
-      }
+    async TrustProjectHooksForRoot(_projectRoot: string) {
+      // Compatibility no-op: project hooks are enabled automatically.
     },
     async SetDefaultModel(ref: string) {
       settings.defaultModel = ref;

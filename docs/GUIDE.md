@@ -393,7 +393,7 @@ events.
 The injected hook context is dynamic current-turn context. It does not change
 the stable system prompt, memory prefix, or tool schema, though dynamic content
 can still reduce cache reuse for that turn. The detailed desktop hook schema and
-trust model are documented in [the Chinese desktop hooks guide](./DESKTOP_HOOKS.zh-CN.md).
+loading model are documented in [the Chinese desktop hooks guide](./DESKTOP_HOOKS.zh-CN.md).
 
 ## Keyboard shortcuts
 
@@ -595,7 +595,7 @@ channel.
 ## Capability diagnostics
 
 Use this when a skill, slash command, hook, plugin package, MCP server, or
-`AGENTS.md` is missing, shadowed, untrusted, or fails to start. Full flag
+`AGENTS.md` is missing, shadowed, disabled, or fails to start. Full flag
 reference, JSON schema, and issue codes:
 **[Capability diagnostics](./CAPABILITY_DIAGNOSTICS.md)**.
 

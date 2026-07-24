@@ -486,7 +486,7 @@ compaction 摘要数，以及可用时的桌面端 token/cache telemetry。结�
 
 ## 能力诊断
 
-当 skill、斜杠命令、Hook、插件包、MCP 或 `AGENTS.md` 缺失、被覆盖、未信任或启动失败时，用统一只读诊断。完整参数、JSON schema 与 issue code 见
+当 skill、斜杠命令、Hook、插件包、MCP 或 `AGENTS.md` 缺失、被覆盖或启动失败时，用统一只读诊断。完整参数、JSON schema 与 issue code 见
 **[能力诊断](./CAPABILITY_DIAGNOSTICS.zh-CN.md)**。
 
 ```bash

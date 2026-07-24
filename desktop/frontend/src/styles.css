@@ -15077,8 +15077,7 @@ body > .mermaid-diagram--fullscreen {
     align-items: stretch;
   }
 
-  .settings-page--hooks .settings-field__control,
-  .settings-page--hooks .hooks-trust-row {
+  .settings-page--hooks .settings-field__control {
     justify-content: flex-start;
   }
 
@@ -15091,8 +15090,7 @@ body > .mermaid-diagram--fullscreen {
   }
 
   .settings-page--hooks .settings-section__head,
-  .settings-page--hooks .hooks-json-panel__head,
-  .settings-page--hooks .hooks-trust-row {
+  .settings-page--hooks .hooks-json-panel__head {
     flex-wrap: wrap;
   }
 }
@@ -16214,39 +16212,6 @@ body > .mermaid-diagram--fullscreen {
 }
 .set-rules-grid .set-rules__add .btn {
   align-self: flex-end;
-}
-.hooks-trust-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.hooks-trust-stack {
-  display: grid;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
-}
-.hooks-trust-root {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg);
-  color: var(--fg-dim);
-  font-family: var(--mono);
-  font-size: var(--font-control-small);
-  line-height: 1.35;
-}
-.hooks-trust-root--empty {
-  color: var(--warn);
-  border-color: color-mix(in srgb, var(--warn) 35%, var(--border));
 }
 .hooks-path-stack {
   display: grid;

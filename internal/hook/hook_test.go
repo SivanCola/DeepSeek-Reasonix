@@ -84,21 +84,15 @@ func hookSettingsWithCommand(t *testing.T, event Event, command string) string {
 	return string(body)
 }
 
-func TestLoadTrustGating(t *testing.T) {
+func TestLoadProjectHooksByDefault(t *testing.T) {
 	home := t.TempDir()
 	proj := t.TempDir()
 	writeSettings(t, proj, sampleSettings)
 	writeSettings(t, home, `{"hooks":{"PostToolUse":[{"command":"echo g"}]}}`)
 
-	// Untrusted: only the global hook loads.
-	got := Load(LoadOptions{ProjectRoot: proj, HomeDir: home, Trusted: false})
-	if len(got) != 1 || got[0].Scope != ScopeGlobal {
-		t.Fatalf("untrusted load should be global-only, got %d %+v", len(got), got)
-	}
-	// Trusted: project hooks (before global) load too.
-	got = Load(LoadOptions{ProjectRoot: proj, HomeDir: home, Trusted: true})
+	got := Load(LoadOptions{ProjectRoot: proj, HomeDir: home})
 	if len(got) != 3 {
-		t.Fatalf("trusted load should include project + global, got %d", len(got))
+		t.Fatalf("default load should include project + global, got %d", len(got))
 	}
 	if got[0].Scope != ScopeProject {
 		t.Errorf("project hooks should sort first, got %s", got[0].Scope)
@@ -753,9 +747,6 @@ func TestReasonixHomeOverridesGlobalHookPaths(t *testing.T) {
 	if got := GlobalSettingsPath(""); got != filepath.Join(reasonixHome, SettingsFilename) {
 		t.Fatalf("GlobalSettingsPath = %q, want Reasonix home", got)
 	}
-	if got := TrustPath(""); got != filepath.Join(reasonixHome, TrustFilename) {
-		t.Fatalf("TrustPath = %q, want Reasonix home", got)
-	}
 	hooks := Load(LoadOptions{})
 	if len(hooks) != 1 || hooks[0].Command != "echo rx" {
 		t.Fatalf("Load hooks = %+v, want Reasonix home hook only", hooks)
@@ -765,7 +756,6 @@ func TestReasonixHomeOverridesGlobalHookPaths(t *testing.T) {
 func TestReasonixHomeDoesNotFallBackToLegacyWhenIsolated(t *testing.T) {
 	home := t.TempDir()
 	reasonixHome := filepath.Join(t.TempDir(), "rx-home")
-	proj := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("REASONIX_HOME", reasonixHome)
@@ -776,27 +766,6 @@ func TestReasonixHomeDoesNotFallBackToLegacyWhenIsolated(t *testing.T) {
 		t.Fatalf("Load hooks = %+v, want empty (isolated REASONIX_HOME must not load legacy hooks)", hooks)
 	}
 
-	absProj, err := filepath.Abs(proj)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := json.Marshal(trustFile{Projects: map[string]bool{absProj: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyTrust := filepath.Join(home, SettingsDirname, TrustFilename)
-	if err := os.WriteFile(legacyTrust, body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if IsTrusted(proj, "") {
-		t.Fatal("legacy trust must not be honored when REASONIX_HOME is set and trust.json is absent")
-	}
-	if err := Trust(proj, ""); err != nil {
-		t.Fatalf("Trust: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(reasonixHome, TrustFilename)); err != nil {
-		t.Fatalf("Trust should write current Reasonix home trust file: %v", err)
-	}
 }
 
 func TestProjectDefinesHooks(t *testing.T) {
@@ -1506,20 +1475,6 @@ func TestRunFiltersPermissionRequestByTool(t *testing.T) {
 	Run(context.Background(), Payload{Event: PermissionRequest, ToolName: "bash"}, hooks, spawner)
 	if len(ran) != 1 || ran[0] != "a" {
 		t.Errorf("only the matching PermissionRequest hook should run, got %v", ran)
-	}
-}
-
-func TestTrustStore(t *testing.T) {
-	home := t.TempDir()
-	proj := t.TempDir()
-	if IsTrusted(proj, home) {
-		t.Error("project should start untrusted")
-	}
-	if err := Trust(proj, home); err != nil {
-		t.Fatalf("trust: %v", err)
-	}
-	if !IsTrusted(proj, home) {
-		t.Error("project should be trusted after Trust")
 	}
 }
 
