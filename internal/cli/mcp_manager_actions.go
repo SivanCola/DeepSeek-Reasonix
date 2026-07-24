@@ -135,10 +135,7 @@ func (m chatTUI) applyMCPMode(tier string) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	workspace := mcpCLIWorkspaceRoot()
-	if m.ctrl != nil && strings.TrimSpace(m.ctrl.WorkspaceRoot()) != "" {
-		workspace = m.ctrl.WorkspaceRoot()
-	}
+	workspace := m.mcpWorkspaceRoot()
 	cfg, err := config.LoadForRoot(workspace)
 	if err != nil {
 		m.notice("mcp mode: " + err.Error())
@@ -254,7 +251,7 @@ func (m chatTUI) clearMCPAuthentication(v mcpServerView) (tea.Model, tea.Cmd) {
 		m.notice("managed MCP servers do not store authentication")
 		return m, nil
 	}
-	_, changed, _, err := config.ClearPluginAuthenticationInSource(v.Name)
+	_, changed, _, err := config.ClearPluginAuthenticationInSourceForRoot(m.mcpWorkspaceRoot(), v.Name)
 	if err != nil {
 		m.notice("clear authentication: " + err.Error())
 		return m, nil

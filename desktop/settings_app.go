@@ -1510,13 +1510,6 @@ func providerCredentialSourceNotice(apiKeyEnv, value string) string {
 	return ""
 }
 
-func projectConfigPathForRoot(root string) string {
-	if strings.TrimSpace(root) == "" || root == "." {
-		return "reasonix.toml"
-	}
-	return filepath.Join(root, "reasonix.toml")
-}
-
 func sameConfigPath(a, b string) bool {
 	a = strings.TrimSpace(a)
 	b = strings.TrimSpace(b)

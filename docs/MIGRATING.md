@@ -110,6 +110,11 @@ and DeepSeek prefix-cache–oriented design.
   `reasonix.toml` / `.mcp.json` servers stay project-scoped and are trusted
   without a separate launch confirmation. Project entries override same-name
   global entries; `reasonix.toml` overrides `.mcp.json` inside the project.
+  Treat opening an unfamiliar repository as opting into executable project
+  configuration: review `.reasonix/settings.json`, `reasonix.toml`, and
+  `.mcp.json` before starting Reasonix. If a repository causes unexpected MCP
+  or Hook behavior, restart in Safe Mode to disable those external integrations
+  while recovering.
 - **stdio MCP connections are persistent.** This fixes stateful servers that
   lost browser/session state when writer calls received a fresh process.
 - **Plan mode and permission policy are now independent**: Plan directs the

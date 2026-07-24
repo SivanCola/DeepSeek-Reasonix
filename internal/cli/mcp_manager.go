@@ -299,10 +299,7 @@ func (p *mcpManager) selectedServer() (mcpServerView, bool) {
 }
 
 func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
-	workspace := mcpCLIWorkspaceRoot()
-	if m.ctrl != nil && strings.TrimSpace(m.ctrl.WorkspaceRoot()) != "" {
-		workspace = m.ctrl.WorkspaceRoot()
-	}
+	workspace := m.mcpWorkspaceRoot()
 	snap := mcpSnapshot{configPath: config.UserConfigPath()}
 	cfg, err := config.LoadForRoot(workspace)
 	if err != nil {
@@ -373,6 +370,13 @@ func (m chatTUI) buildMCPSnapshot() mcpSnapshot {
 		return mcpServerGroupRank(snap.servers[i]) < mcpServerGroupRank(snap.servers[j])
 	})
 	return snap
+}
+
+func (m chatTUI) mcpWorkspaceRoot() string {
+	if m.ctrl != nil && strings.TrimSpace(m.ctrl.WorkspaceRoot()) != "" {
+		return m.ctrl.WorkspaceRoot()
+	}
+	return mcpCLIWorkspaceRoot()
 }
 
 func withMCPPluginConfig(v mcpServerView, p config.PluginEntry, workspace string) mcpServerView {
