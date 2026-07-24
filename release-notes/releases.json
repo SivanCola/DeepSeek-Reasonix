@@ -175,6 +175,19 @@
             "refs": [
               6843
             ]
+          },
+          {
+            "title": {
+              "en": "Fewer release-only pull requests",
+              "zh": "减少仅用于发版的 Pull Request"
+            },
+            "body": {
+              "en": "Release notes can now be generated into an existing same-repository release-bound pull request, keeping the dedicated release-notes PR as a fallback while preserving protected-main review and every publication gate.",
+              "zh": "发布说明现在可直接生成到同仓库已有的发版边界 Pull Request 中，专用发布说明 PR 仅作为兜底，同时继续保留受保护 main-v2 审核和全部发布门禁。"
+            },
+            "refs": [
+              6893
+            ]
           }
         ],
         "fixed": [
