@@ -51,6 +51,7 @@ grep -Eq "needs\.build\.result == 'success'.*!inputs\.production_signing_smoke" 
 	"$repo_root/.github/workflows/release-desktop.yml"
 [ "$(grep -Ec 'wait-for-completion: false' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
 [ "$(grep -Ec 'complete-signpath-request\.ps1' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
+[ "$(grep -Ec -- '-WaitForExternalApproval:\$waitForExternalApproval' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
 [ "$(grep -Ec 'signpath-api-url' "$repo_root/.github/workflows/release-desktop.yml")" = "0" ]
 grep -Eq 'steps\.submit-windows-payload\.outputs\.signing-request-id' \
 	"$repo_root/.github/workflows/release-desktop.yml"

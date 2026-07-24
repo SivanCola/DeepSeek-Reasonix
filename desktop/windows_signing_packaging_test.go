@@ -82,6 +82,7 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 		`steps.submit-windows-payload.outputs.signing-request-id`,
 		`steps.submit-windows-installer.outputs.signing-request-id`,
 		`scripts/complete-signpath-request.ps1`,
+		`-WaitForExternalApproval:$waitForExternalApproval`,
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Errorf("desktop release workflow is missing signing contract %q", want)
@@ -135,6 +136,9 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 		`"$requestBaseUrl/Status"`,
 		`"$requestBaseUrl/SignedArtifact"`,
 		`$status.status -ne "Completed"`,
+		`[switch]$WaitForExternalApproval`,
+		`if ($WaitForExternalApproval)`,
+		`Waiting for an authorized SignPath user to approve request`,
 		`OutputArtifactDirectory must resolve inside GITHUB_WORKSPACE`,
 		`[string]$ApiUrl = "https://app.signpath.io/api"`,
 		`Expand-Archive`,

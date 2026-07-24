@@ -23,7 +23,9 @@ param(
     [int]$TimeoutSeconds = 1800,
 
     [ValidateRange(1, 60)]
-    [int]$PollIntervalSeconds = 5
+    [int]$PollIntervalSeconds = 5,
+
+    [switch]$WaitForExternalApproval
 )
 
 Set-StrictMode -Version Latest
@@ -82,6 +84,7 @@ if ($request.signingPolicySlug -ne $ExpectedSigningPolicySlug) {
 
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 $approvalSubmitted = $false
+$externalApprovalNoticeWritten = $false
 while ($true) {
     $status = Invoke-RestMethod `
         -Method Get `
@@ -103,12 +106,22 @@ while ($true) {
     }
 
     if ($status.status -eq "WaitingForApproval" -and -not $approvalSubmitted) {
-        Invoke-RestMethod `
-            -Method Post `
-            -Uri "$requestBaseUrl/Approve" `
-            -Headers $headers | Out-Null
-        $approvalSubmitted = $true
-        Write-Host "Approved SignPath request $SigningRequestId through the release CI identity."
+        if ($WaitForExternalApproval) {
+            if (-not $externalApprovalNoticeWritten) {
+                Write-Host (
+                    "Waiting for an authorized SignPath user to approve request " +
+                    "$SigningRequestId."
+                )
+                $externalApprovalNoticeWritten = $true
+            }
+        } else {
+            Invoke-RestMethod `
+                -Method Post `
+                -Uri "$requestBaseUrl/Approve" `
+                -Headers $headers | Out-Null
+            $approvalSubmitted = $true
+            Write-Host "Approved SignPath request $SigningRequestId through the release CI identity."
+        }
     }
 
     if ([DateTimeOffset]::UtcNow -ge $deadline) {

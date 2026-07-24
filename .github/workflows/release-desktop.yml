@@ -308,12 +308,14 @@ jobs:
         env:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
+          $waitForExternalApproval = "${{ inputs.production_signing_smoke }}" -eq "true"
           ./scripts/complete-signpath-request.ps1 `
             -OrganizationId "${{ secrets.SIGNPATH_ORGANIZATION_ID }}" `
             -SigningRequestId "${{ steps.submit-windows-payload.outputs.signing-request-id }}" `
             -ExpectedSigningPolicySlug "${{ (inputs.production_signing_smoke || steps.ver.outputs.channel != 'canary') && 'release-signing' || 'test-signing-ci-approval' }}" `
             -OutputArtifactDirectory "signed-payload" `
-            -TimeoutSeconds 1800
+            -TimeoutSeconds 1800 `
+            -WaitForExternalApproval:$waitForExternalApproval
 
       - name: Rebuild Windows packages from signed payload
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || inputs.production_signing_smoke || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
@@ -354,12 +356,14 @@ jobs:
         env:
           SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
         run: |
+          $waitForExternalApproval = "${{ inputs.production_signing_smoke }}" -eq "true"
           ./scripts/complete-signpath-request.ps1 `
             -OrganizationId "${{ secrets.SIGNPATH_ORGANIZATION_ID }}" `
             -SigningRequestId "${{ steps.submit-windows-installer.outputs.signing-request-id }}" `
             -ExpectedSigningPolicySlug "${{ (inputs.production_signing_smoke || steps.ver.outputs.channel != 'canary') && 'release-signing' || 'test-signing-ci-approval' }}" `
             -OutputArtifactDirectory "signed-installer" `
-            -TimeoutSeconds 1800
+            -TimeoutSeconds 1800 `
+            -WaitForExternalApproval:$waitForExternalApproval
 
       - name: Replace installer with signed build
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || inputs.production_signing_smoke || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')

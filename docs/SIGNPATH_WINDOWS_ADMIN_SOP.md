@@ -386,7 +386,8 @@ gh workflow run release-desktop.yml \
 1. SignPath `release-signing` 暂时允许
    `main-v2` 和 `test/windows-signpath-v2`。
 2. 暂时从 Approvers 移除 `CI builds`，只保留正式人工审批人。
-3. GitHub `release` environment 获批后，人工核对并批准 4 个 SignPath 请求。
+3. GitHub `release` environment 获批后，工作流只轮询请求状态，不调用
+   SignPath Approve API；人工核对并批准 4 个 SignPath 请求。
 4. 确认两种架构的验证结果均为 `Status = Valid`。
 5. 立即把 Allowed branches 恢复为仅 `main-v2`，再恢复 `CI builds`
    Approver。
