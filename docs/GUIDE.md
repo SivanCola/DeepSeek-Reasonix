@@ -284,9 +284,12 @@ usually needs only the provider API key: the key value is stored in Reasonix hom
 environment-variable name, context window, vision model metadata, proxy bypass
 for China-only endpoints, MiniMax `reasoning_split`, GLM/MiniMax thinking
 heuristics, Anthropic-compatible Bearer auth where needed, Ollama Cloud
-max-effort support, and OpenCode Go per-model reasoning overrides. After adding
-a preset, open its provider card if you need to change models, headers,
-endpoint, or compatibility settings.
+max-effort support, and OpenCode Go per-model reasoning overrides. The OpenCode
+Go preset includes its native `kimi-k3` subscription route with image input,
+`max` reasoning effort, and a 1,048,576-token context window. Existing untouched
+OpenCode Go preset installs are upgraded automatically; edited model catalogs
+are preserved. After adding a preset, open its provider card if you need to
+change models, headers, endpoint, or compatibility settings.
 
 Fill **API address** with the provider endpoint that should receive the standard
 chat path. In this mode Reasonix previews and sends chat requests to:

@@ -362,6 +362,19 @@ func TestCuratedProviderPresetCapabilities(t *testing.T) {
 	if cap := EffortCapabilityForEntry(kimi); !cap.Supported || cap.Default != "high" || !containsString(cap.Levels, "medium") {
 		t.Fatalf("opencode kimi effort capability = %+v, want low/medium/high", cap)
 	}
+	kimiK3, ok := cfg.ResolveModel("opencode-go/kimi-k3")
+	if !ok {
+		t.Fatal("opencode-go/kimi-k3 did not resolve")
+	}
+	if protocol := ReasoningProtocolForEntry(kimiK3); protocol != ReasoningProtocolOpenAI {
+		t.Fatalf("opencode Kimi K3 protocol = %q, want openai", protocol)
+	}
+	if cap := EffortCapabilityForEntry(kimiK3); !cap.Supported || cap.Default != "max" || !containsString(cap.Levels, "max") || containsString(cap.Levels, "high") {
+		t.Fatalf("opencode Kimi K3 effort capability = %+v, want max only", cap)
+	}
+	if kimiK3.ContextWindow != 1_048_576 || !EffectiveVision(kimiK3) {
+		t.Fatalf("opencode Kimi K3 context/vision capability mismatch: %+v", kimiK3)
+	}
 
 	plain, ok := cfg.ResolveModel("opencode-go/glm-5.2")
 	if !ok {

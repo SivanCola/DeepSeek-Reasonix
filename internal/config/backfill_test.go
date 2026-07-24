@@ -309,6 +309,109 @@ func TestLoadForEditAppliesLegacyLongCatContextWindowMigration(t *testing.T) {
 	}
 }
 
+func TestNormalizeLegacyOpenCodeGoKimiK3CatalogMigratesOnlyUntouchedPreset(t *testing.T) {
+	legacyEntry := ProviderEntry{
+		Name:          "opencode-go",
+		Kind:          "openai",
+		BaseURL:       "https://opencode.ai/zen/go/v1/",
+		Models:        append([]string(nil), legacyOpenCodeGoModels...),
+		Default:       "glm-5.2",
+		APIKeyEnv:     "CUSTOM_OPENCODE_GO_KEY",
+		ContextWindow: 256_000,
+		PresetID:      "opencode-go",
+		ModelOverrides: map[string]ProviderModelOverride{
+			"deepseek-v4-pro": {
+				ReasoningProtocol: ReasoningProtocolDeepSeek,
+				SupportedEfforts:  []string{"high", "max"},
+				DefaultEffort:     "high",
+			},
+		},
+	}
+	customModels := legacyEntry
+	customModels.Name = "opencode-go-custom-models"
+	customModels.Models = append(append([]string(nil), customModels.Models...), "private-model")
+	customModels.ModelOverrides = cloneModelOverrideMap(legacyEntry.ModelOverrides)
+	customEndpoint := legacyEntry
+	customEndpoint.Name = "opencode-go-custom-endpoint"
+	customEndpoint.BaseURL = "https://gateway.example.com/v1"
+	customEndpoint.ModelOverrides = cloneModelOverrideMap(legacyEntry.ModelOverrides)
+	noPresetIdentity := legacyEntry
+	noPresetIdentity.Name = "opencode-go-copy"
+	noPresetIdentity.PresetID = ""
+	noPresetIdentity.ModelOverrides = cloneModelOverrideMap(legacyEntry.ModelOverrides)
+	c := &Config{Providers: []ProviderEntry{legacyEntry, customModels, customEndpoint, noPresetIdentity}}
+
+	if !normalizeLegacyOpenCodeGoKimiK3Catalog(c) {
+		t.Fatal("legacy OpenCode Go catalog migration did not report a change")
+	}
+	got := &c.Providers[0]
+	if !got.HasModel("kimi-k3") || !got.HasVisionModel("kimi-k3") {
+		t.Fatalf("migrated OpenCode Go catalog = %+v, want Kimi K3 with vision", got)
+	}
+	k3 := got.ModelOverrides["kimi-k3"]
+	if k3.ReasoningProtocol != ReasoningProtocolOpenAI ||
+		!stringSlicesEqual(k3.SupportedEfforts, []string{"max"}) ||
+		k3.DefaultEffort != "max" ||
+		k3.ContextWindow != 1_048_576 {
+		t.Fatalf("migrated Kimi K3 override = %+v", k3)
+	}
+	if got.APIKeyEnv != "CUSTOM_OPENCODE_GO_KEY" || got.ContextWindow != 256_000 {
+		t.Fatalf("unrelated provider edits were not preserved: %+v", got)
+	}
+	if _, ok := got.ModelOverrides["deepseek-v4-pro"]; !ok {
+		t.Fatal("existing model override was dropped")
+	}
+	for i := 1; i < len(c.Providers); i++ {
+		if c.Providers[i].HasModel("kimi-k3") {
+			t.Fatalf("customized provider %q was unexpectedly migrated", c.Providers[i].Name)
+		}
+	}
+
+	preIdentity := legacyEntry
+	preIdentity.PresetID = ""
+	preIdentity.ModelOverrides = cloneModelOverrideMap(legacyEntry.ModelOverrides)
+	preIdentityConfig := &Config{Providers: []ProviderEntry{preIdentity}}
+	if !normalizeLegacyOpenCodeGoKimiK3Catalog(preIdentityConfig) || !preIdentityConfig.Providers[0].HasModel("kimi-k3") {
+		t.Fatal("pre-preset-identity OpenCode Go install was not migrated")
+	}
+}
+
+func TestLoadForEditPersistsLegacyOpenCodeGoKimiK3CatalogMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := Default()
+	preset, ok := CuratedProviderPreset("opencode-go")
+	if !ok || len(preset.Entries) != 1 {
+		t.Fatal("missing opencode-go preset")
+	}
+	entry := preset.Entries[0]
+	entry.Models = append([]string(nil), legacyOpenCodeGoModels...)
+	entry.VisionModels = nil
+	delete(entry.ModelOverrides, "kimi-k3")
+	cfg.Providers = append(cfg.Providers, entry)
+	cfg.Desktop.ProviderAccess = []string{"opencode-go"}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	loaded := LoadForEdit(path)
+	got, ok := loaded.Provider("opencode-go")
+	if !ok || !got.HasModel("kimi-k3") || !got.HasVisionModel("kimi-k3") {
+		t.Fatalf("loaded opencode-go = %+v, want persisted Kimi K3 catalog", got)
+	}
+	if ov := got.ModelOverrides["kimi-k3"]; ov.DefaultEffort != "max" || ov.ContextWindow != 1_048_576 {
+		t.Fatalf("loaded Kimi K3 override = %+v", ov)
+	}
+
+	var disk Config
+	if _, err := toml.DecodeFile(path, &disk); err != nil {
+		t.Fatalf("decode persisted config: %v", err)
+	}
+	persisted, ok := disk.Provider("opencode-go")
+	if !ok || !persisted.HasModel("kimi-k3") || !persisted.HasVisionModel("kimi-k3") {
+		t.Fatalf("persisted opencode-go = %+v, want Kimi K3 catalog", persisted)
+	}
+}
+
 func TestNormalizeDesktopOfficialProviderAccessCanonicalizesOnlyDeepSeekIDs(t *testing.T) {
 	c := Default()
 	c.DefaultModel = "deepseek-flash/deepseek-v4-pro"

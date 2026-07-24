@@ -68,6 +68,8 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	if effort == "auto" {
 		effort = ""
 	}
+	supportedEfforts, _ := cfg.Extra["supported_efforts"].([]string)
+	explicitMaxEffort := supportsEffort(supportedEfforts, "max")
 	protocol, _ := cfg.Extra["reasoning_protocol"].(string)
 	protocol = normalizeReasoningProtocol(protocol)
 	chatURL, _ := cfg.Extra["chat_url"].(string)
@@ -162,11 +164,14 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		}
 	case effort != "":
 		// Non-DeepSeek backends use OpenAI's reasoning_effort scale (low/medium/
-		// high); "max" is a DeepSeek-ism MiMo et al. reject with 400, so clamp it
-		// to the OpenAI ceiling and reject other values at boot, not at request time.
+		// high) by default. Preserve max only when the resolved model explicitly
+		// advertises it (for example OpenCode Go's Kimi K3); otherwise max remains
+		// clamped to the OpenAI ceiling because MiMo and similar backends reject it.
 		switch effort {
 		case "max":
-			effort = "high"
+			if !explicitMaxEffort {
+				effort = "high"
+			}
 		case "low", "medium", "high":
 		default:
 			return nil, fmt.Errorf("openai: provider %q: effort must be low, medium, or high", name)
@@ -198,6 +203,16 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		http:         httpClient,
 		idleTimeout:  defaultStreamIdleTimeout,
 	}, nil
+}
+
+func supportsEffort(levels []string, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	for _, level := range levels {
+		if strings.ToLower(strings.TrimSpace(level)) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func newHTTPClient(cfg provider.Config) (*http.Client, error) {

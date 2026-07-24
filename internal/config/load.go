@@ -138,6 +138,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	normalizeLegacyMCPTiers(cfg)
 	normalizeLegacyStepFunBaseURLs(cfg)
 	normalizeLegacyLongCatContextWindows(cfg)
+	normalizeLegacyOpenCodeGoKimiK3Catalog(cfg)
 	normalizeLegacyMimoCustomProviders(cfg)
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
@@ -616,6 +617,7 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	normalizeLegacyMCPTiers(cfg)
 	changed = normalizeLegacyStepFunBaseURLs(cfg) || changed
 	changed = normalizeLegacyLongCatContextWindows(cfg) || changed
+	changed = normalizeLegacyOpenCodeGoKimiK3Catalog(cfg) || changed
 	changed = normalizeLegacyMimoCustomProviders(cfg) || changed
 	normalizeLegacyProviderModels(cfg)
 	normalizeDesktopOfficialProviderAccess(cfg)
@@ -1140,6 +1142,40 @@ func normalizeLegacyLongCatContextWindows(c *Config) bool {
 		changed = true
 	}
 	return changed
+}
+
+// normalizeLegacyOpenCodeGoKimiK3Catalog upgrades only the untouched model
+// catalog from the original editable OpenCode Go preset. A user-curated model
+// list or custom endpoint is left alone, while other provider edits (headers,
+// key env, provider-wide context) survive the additive K3 capability update.
+func normalizeLegacyOpenCodeGoKimiK3Catalog(c *Config) bool {
+	if c == nil {
+		return false
+	}
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		presetID := strings.TrimSpace(p.PresetID)
+		if (presetID != "opencode-go" && (presetID != "" || strings.TrimSpace(p.Name) != "opencode-go")) ||
+			!strings.EqualFold(strings.TrimSpace(p.Kind), "openai") ||
+			normalizedBaseURLForMigration(p.BaseURL) != "https://opencode.ai/zen/go/v1" ||
+			!stringSlicesEqual(p.Models, legacyOpenCodeGoModels) ||
+			strings.TrimSpace(p.Model) != "" {
+			continue
+		}
+		p.Models = append([]string(nil), opencodeGoModels...)
+		p.VisionModels = mergeModelLists(opencodeGoVisionModels, p.VisionModels)
+		if p.ModelOverrides == nil {
+			p.ModelOverrides = map[string]ProviderModelOverride{}
+		}
+		p.ModelOverrides["kimi-k3"] = ProviderModelOverride{
+			ReasoningProtocol: ReasoningProtocolOpenAI,
+			SupportedEfforts:  []string{"max"},
+			DefaultEffort:     "max",
+			ContextWindow:     1_048_576,
+		}
+		return true
+	}
+	return false
 }
 
 func normalizeLegacyMimoProviderCatalogs(c *Config) bool {

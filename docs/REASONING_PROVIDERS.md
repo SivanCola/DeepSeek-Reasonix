@@ -20,8 +20,14 @@ get a tailored request shape automatically — no extra config needed.
 ## Everything else (standard `reasoning_effort`)
 
 Any other OpenAI-compatible backend falls through to the standard
-`reasoning_effort` scale (`low`\|`medium`\|`high`). Surveyed popular providers
-that need **no special handling** because they already follow this convention:
+`reasoning_effort` scale (`low`\|`medium`\|`high`). A resolved provider/model
+entry may explicitly advertise a different supported scale; in that case
+Reasonix preserves those declared values instead of applying the generic
+ceiling. The curated OpenCode Go `kimi-k3` entry uses this path to send its only
+supported value, `reasoning_effort=max`.
+
+Surveyed popular providers that need **no special handling** because they
+already follow the standard convention:
 
 Qwen (`dashscope.aliyuncs.com`), Moonshot/Kimi (`api.moonshot.cn`), Yi
 (`api.01.ai`), SiliconFlow (`api.siliconflow.cn`), Stepfun (`api.stepfun.com`),
