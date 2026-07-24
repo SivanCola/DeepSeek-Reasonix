@@ -244,13 +244,9 @@ func fetchManifestBytes(ctx context.Context, c, fallback *http.Client, selected,
 	return nil, errors.Join(err, fallbackErr)
 }
 
-// evaluate compares the running version against the manifest and builds the
-// frontend-facing result. I/O is limited to install-profile detection and cache
-// probes so unit tests can inject a fixed profile via evaluateWithProfile.
-func evaluate(current string, m *update.Manifest) UpdateInfo {
-	return evaluateForChannel(current, runningUpdateChannel(), m)
-}
-
+// evaluateForChannel compares the running version against the selected channel's
+// manifest and builds the frontend-facing result. I/O is limited to install-profile
+// detection and cache probes so tests can inject a fixed profile below.
 func evaluateForChannel(current, selected string, m *update.Manifest) UpdateInfo {
 	return evaluateWithProfileForChannel(current, selected, m, profileForManifest(detectInstallProfile(), m))
 }
