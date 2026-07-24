@@ -291,6 +291,7 @@ export function metaFromTab(tab: TabMeta, existing?: Meta): Meta {
   return {
     label: tab.label || existing?.label || "",
     ready: tab.ready,
+    runtime: tab.runtime,
     startupErr: tab.startupErr,
     eventChannel: existing?.eventChannel ?? "agent:event",
     cwd,
@@ -321,6 +322,14 @@ export function sameMeta(a?: Meta, b?: Meta): boolean {
   return (
     a.label === b.label &&
     a.ready === b.ready &&
+    a.runtime?.phase === b.runtime?.phase &&
+    a.runtime?.epoch === b.runtime?.epoch &&
+    a.runtime?.issue?.code === b.runtime?.issue?.code &&
+    a.runtime?.issue?.message === b.runtime?.issue?.message &&
+    a.runtime?.issue?.retryable === b.runtime?.issue?.retryable &&
+    a.runtime?.issue?.holderPid === b.runtime?.issue?.holderPid &&
+    a.runtime?.issue?.holderHost === b.runtime?.issue?.holderHost &&
+    a.runtime?.issue?.acquiredAt === b.runtime?.issue?.acquiredAt &&
     a.startupErr === b.startupErr &&
     a.eventChannel === b.eventChannel &&
     a.cwd === b.cwd &&
@@ -340,6 +349,15 @@ export function sameMeta(a?: Meta, b?: Meta): boolean {
     a.goalStatus === b.goalStatus &&
     sameTodoList(a.canonicalTodos, b.canonicalTodos)
   );
+}
+
+export function runtimeReadyForSubmit(meta?: Meta): boolean {
+  if (!meta || meta.ready !== true || meta.startupErr) return false;
+  return !meta.runtime || meta.runtime.phase === "ready";
+}
+
+export function acceptsRuntimeEventEpoch(acceptedEpoch: string | undefined, eventEpoch: string | undefined): boolean {
+  return !eventEpoch || !acceptedEpoch || acceptedEpoch === eventEpoch;
 }
 
 function metaWithoutCanonicalTodos(meta?: Meta): Meta | undefined {
@@ -1723,6 +1741,7 @@ export function useController() {
   const modelSwitchSuccessVersionByTab = useRef(new Map<string, number>());
   const modelSwitchQueueByTab = useRef(new Map<string, ModelSwitchQueueState>());
   const lastTurnActivityAtByTab = useRef(new Map<string, number>());
+  const runtimeEpochByTabRef = useRef(new Map<string, string>());
   const cancelReconcileTimers = useRef(new Map<string, number>());
   const stalePromptReconcileTimers = useRef(new Map<string, number>());
   // Indirection so dispatchRuntimeStatusForTab (defined above reconcileTabRuntime)
@@ -1850,6 +1869,7 @@ export function useController() {
     const seq = bumpMetaRefreshSeq(tabId);
     const meta = await app.MetaForTab(tabId).catch(() => undefined);
     if (!metaRefreshCurrent(tabId, seq)) return undefined;
+    if (meta?.runtime?.epoch) runtimeEpochByTabRef.current.set(tabId, meta.runtime.epoch);
     return meta;
   }, [bumpMetaRefreshSeq, metaRefreshCurrent]);
   const refreshMetaOnlyForTab = useCallback(async (tabId: string): Promise<Meta | undefined> => {
@@ -2114,6 +2134,7 @@ export function useController() {
     setActiveTabId(active.id);
     activeTabIdRef.current = active.id;
     confirmBackendActiveTab(active.id);
+    if (active.runtime?.epoch) runtimeEpochByTabRef.current.set(active.id, active.runtime.epoch);
     dispatchTo(active.id, { type: "optimistic_meta", meta: metaFromTab(active, statesRef.current.get(active.id)?.meta) });
     const preserveCachedHistory = options.preserveCachedHistory ?? !reset;
     if (!reset) dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
@@ -2134,6 +2155,7 @@ export function useController() {
     const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
     const tab = tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return undefined;
+    if (tab.runtime?.epoch) runtimeEpochByTabRef.current.set(tabId, tab.runtime.epoch);
     const local = statesRef.current.get(tabId);
     const needsInitialLoad = !local?.meta;
     const foregroundRunning = dispatchRuntimeStatusForTab(tabId, tab, snapshotAt);
@@ -2203,6 +2225,11 @@ export function useController() {
       // leaks the previous session's approval/ask gate into the new composer.
       const targetTabId = e.tabId || backendActiveTabIdRef.current || activeTabIdRef.current;
       if (!targetTabId) return;
+      const acceptedEpoch = runtimeEpochByTabRef.current.get(targetTabId);
+      if (e.runtimeEpoch) {
+        if (!acceptsRuntimeEventEpoch(acceptedEpoch, e.runtimeEpoch)) return;
+        if (!acceptedEpoch) runtimeEpochByTabRef.current.set(targetTabId, e.runtimeEpoch);
+      }
       if (
         e.kind === "turn_started" ||
         e.kind === "text" ||
@@ -2256,10 +2283,14 @@ export function useController() {
     // prompt from the new controller is never misread as a stale replay of
     // one the old controller already resolved (#6432 round 3). A tab-less
     // rebuild (settings-wide) affects every known tab.
-    const offRebuilt = onRuntimeRebuilt((rebuiltTabId) => {
+    const offRebuilt = onRuntimeRebuilt((rebuiltTabId, runtimeEpoch) => {
       if (rebuiltTabId) {
+        if (runtimeEpoch) runtimeEpochByTabRef.current.set(rebuiltTabId, runtimeEpoch);
         dispatchTo(rebuiltTabId, { type: "controller_rebuilt" });
       } else {
+        if (runtimeEpoch) {
+          for (const id of Array.from(statesRef.current.keys())) runtimeEpochByTabRef.current.set(id, runtimeEpoch);
+        }
         for (const id of Array.from(statesRef.current.keys())) dispatchTo(id, { type: "controller_rebuilt" });
       }
     });
@@ -2389,7 +2420,12 @@ export function useController() {
 
   const sendToTab = useCallback(async (tabId: string, displayText: string, submitText = displayText, originalText?: string, structured?: import("./invocationDisplay").StructuredInvocationSubmit) => {
     if (!tabId) throw new Error(t("composer.workspaceStarting"));
-    const seq = getOrCreateState(statesRef.current, tabId).seq;
+    const currentState = getOrCreateState(statesRef.current, tabId);
+    const runtime = currentState.meta?.runtime;
+    if (currentState.meta && !runtimeReadyForSubmit(currentState.meta)) {
+      throw new Error(runtime?.issue?.message || currentState.meta.startupErr || t("composer.workspaceStarting"));
+    }
+    const seq = currentState.seq;
     const display = displayText.trim();
     const submit = submitText.trim();
     const original = originalText?.trim() ?? "";
@@ -2412,7 +2448,12 @@ export function useController() {
 
   const recoverDeliveryToTab = useCallback(async (tabId: string, displayText: string, submitText = displayText) => {
     if (!tabId) throw new Error(t("composer.workspaceStarting"));
-    const seq = getOrCreateState(statesRef.current, tabId).seq;
+    const currentState = getOrCreateState(statesRef.current, tabId);
+    const runtime = currentState.meta?.runtime;
+    if (currentState.meta && !runtimeReadyForSubmit(currentState.meta)) {
+      throw new Error(runtime?.issue?.message || currentState.meta.startupErr || t("composer.workspaceStarting"));
+    }
+    const seq = currentState.seq;
     const display = displayText.trim();
     const submit = submitText.trim();
     dispatchTo(tabId, { type: "user", text: displayText, submitText: display !== submit ? submit : undefined, seq, deliveryRecovery: true });
