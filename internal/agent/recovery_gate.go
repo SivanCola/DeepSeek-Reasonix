@@ -188,7 +188,12 @@ func (a *Agent) observeRecoveryResult(ctx context.Context, toolName string, args
 	} else if blocked {
 		errSummary = firstLine(result)
 	}
-	cancelled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	// A tool may own a shorter internal deadline while the parent turn remains
+	// active (for example an MCP call timeout). That is a qualifying transient
+	// execution failure, not a user cancellation. Parent context state remains
+	// the source of truth for turn cancellation/deadline; a direct Canceled
+	// result is still treated as cancellation for adapters that return it first.
+	cancelled := errors.Is(err, context.Canceled)
 	if ctx != nil && ctx.Err() != nil {
 		cancelled = true
 	}

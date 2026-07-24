@@ -460,7 +460,9 @@ func TestRepeatedFailureStopsOnlyTheSameOperation(t *testing.T) {
 	}
 	retry := Proposal{
 		TaskScopeID: "turn:1", Tool: "bash", Subject: "mvn test",
-		Verification: true, Args: failedArgs,
+		// Agent.executeOne always supplies a display/approval preview. Recovery
+		// operation accounting must still match the observation, which has none.
+		Preview: "mvn test", Verification: true, Args: failedArgs,
 	}
 	g.ObserveResult(context.Background(), failed)
 	for attempt := 0; attempt < 2; attempt++ {

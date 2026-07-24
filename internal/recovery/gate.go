@@ -814,7 +814,13 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 	facts.HighRisk = boundary.highRisk
 
 	taskID := normalizeTaskID(proposal.TaskID)
-	fp := CallFingerprint(proposal.Tool, proposal.Subject, proposal.Preview, proposal.Args)
+	// Operation failure accounting intentionally excludes Preview. Agent calls
+	// always carry a display/approval preview, while completed observations do
+	// not; mixing the two shapes would make an exact retry look like an unseen
+	// operation and bypass its three-failure stop. Keep the preview-bound
+	// fingerprint for one-shot human approval below.
+	operationFP := CallFingerprint(proposal.Tool, proposal.Subject, "", proposal.Args)
+	approvalFP := CallFingerprint(proposal.Tool, proposal.Subject, proposal.Preview, proposal.Args)
 
 	g.mu.Lock()
 	gen := g.generation
@@ -854,8 +860,8 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 		} else if st.episodeID == "" {
 			st.episodeID = g.episodeID
 		}
-		facts.OperationAlreadyStopped = st.isOperationStopped(fp)
-		facts.FailureCount = st.operationFailureCount(fp)
+		facts.OperationAlreadyStopped = st.isOperationStopped(operationFP)
+		facts.FailureCount = st.operationFailureCount(operationFP)
 		if st.lastFailure != nil {
 			failure = st.evidenceCopy()
 			diagNotes = st.diagnosisNotes()
@@ -903,7 +909,7 @@ func (g *Gate) classify(proposal Proposal) (Facts, *FailureEvent, []string, stri
 			facts.SafeRetryAvailable = false
 		}
 	}
-	return facts, failure, diagNotes, taskID, fp, gen
+	return facts, failure, diagNotes, taskID, approvalFP, gen
 }
 
 func (g *Gate) ensureTaskLocked(taskID string) *taskRuntime {
