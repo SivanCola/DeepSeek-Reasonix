@@ -71,12 +71,13 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 	}
 	for _, want := range []string{
 		`artifact-configuration-slug: windows-payload`,
-		`steps.ver.outputs.channel == 'canary' && 'windows-installer-test-v2' || 'windows-installer-v2'`,
+		`(inputs.production_signing_smoke || steps.ver.outputs.channel != 'canary') && 'windows-installer-v2' || 'windows-installer-test-v2'`,
 		`path: desktop/build/windows/signing-payload/*.exe`,
 		`path: desktop/build/windows/installer-signing-bundle/*.exe`,
 		`github.repository == 'esengine/DeepSeek-Reasonix'`,
 		`SIGNPATH_API_TOKEN is required for official Windows releases`,
-		`signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing-ci-approval' || 'release-signing' }}`,
+		`signing-policy-slug: ${{ (inputs.production_signing_smoke || steps.ver.outputs.channel != 'canary') && 'release-signing' || 'test-signing-ci-approval' }}`,
+		`needs.build.result == 'success' && !inputs.production_signing_smoke`,
 		`wait-for-completion: false`,
 		`steps.submit-windows-payload.outputs.signing-request-id`,
 		`steps.submit-windows-installer.outputs.signing-request-id`,
@@ -140,6 +141,40 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 	} {
 		if !strings.Contains(completer, want) {
 			t.Errorf("SignPath request completer is missing %q", want)
+		}
+	}
+}
+
+func TestProductionSigningRunsOnlyFromProtectedControlPlane(t *testing.T) {
+	stable := readTestFile(t, "../.github/workflows/release-stable.yml")
+	desktop := readTestFile(t, "../.github/workflows/release-desktop.yml")
+	if strings.Contains(stable, "\n  push:\n") || strings.Contains(desktop, "\n  push:\n") {
+		t.Fatal("production workflows must not run directly with a tag-shaped SignPath origin")
+	}
+	for _, want := range []string{
+		`ALLOW_STABLE_RECOVERY: ${{ inputs.allow_recovery }}`,
+		`allow_recovery: 'false'`,
+	} {
+		if !strings.Contains(stable+"\n"+readTestFile(t, "../.github/workflows/release-stable-trigger.yml"), want) {
+			t.Errorf("stable relay is missing normal-release recovery guard %q", want)
+		}
+	}
+
+	for _, path := range []string{
+		"../.github/workflows/release-stable-trigger.yml",
+		"../.github/workflows/release-desktop-trigger.yml",
+	} {
+		relay := readTestFile(t, path)
+		for _, want := range []string{
+			`actions: write`,
+			`CONTROL_PLANE_REF: ${{ github.event.repository.default_branch }}`,
+			`process.env.CONTROL_PLANE_REF !== 'main-v2'`,
+			`createWorkflowDispatch`,
+			`ref: process.env.CONTROL_PLANE_REF`,
+		} {
+			if !strings.Contains(relay, want) {
+				t.Errorf("%s is missing protected control-plane contract %q", path, want)
+			}
 		}
 	}
 }

@@ -6,8 +6,7 @@ Reasonix Windows Authenticode 两阶段签名链路。
 关联变更：
 
 - PR：[esengine/DeepSeek-Reasonix#6904](https://github.com/esengine/DeepSeek-Reasonix/pull/6904)
-- 本 SOP 核对时的签名基线：
-  `264910a7c07915b01d59644fd3384fcbd7d8737e`
+- 本 SOP 的验收对象：每次执行前通过 PR API 读回的当前 PR Head
 - 签名工作流：`.github/workflows/release-desktop.yml`
 - Authenticode 验证脚本：`scripts/verify-windows-authenticode.ps1`
 
@@ -70,6 +69,8 @@ SignPath 权限说明：
 - `release-signing` 开启 `Use approval process`，Required approvals 为 `1`。
 - `release-signing` 的 Allowed build definitions 仅允许
   `.github/workflows/release-desktop.yml`。
+- `release-signing` 的 Allowed branches 必须精确为 `main-v2`；稳定版和 RC
+  标签由最小 relay workflow 转发到该受保护控制面。
 - `test-signing-ci-approval` 使用测试证书，只允许 `CI builds` 提交和审批，
   Required approvals 为 `1`，并启用相同的 Trusted Build、Origin 和 Build
   Definition 限制。
@@ -243,7 +244,7 @@ GitHub `upload-artifact` 提交给 SignPath 的产物是 ZIP，因此配置根�
   https://github.com/esengine/DeepSeek-Reasonix.git
   ```
 
-- Allowed branches：当前可保留 `**`
+- Allowed branches：**只能填写 `main-v2`**
 - `Use approval process`：**保持开启**
 - Required approvals：`1`
 - Approvers：必须至少包含能够处理正式发布的 SignPath 人工审批人
@@ -253,6 +254,14 @@ GitHub `upload-artifact` 提交给 SignPath 的产物是 ZIP，因此配置根�
 - 策略状态为 `VALID`。
 - `Use approval process` 已开启。
 - Trusted Build System 和 Origin Verification 仍然开启。
+- Allowed branches 精确显示 `main-v2`，没有 `**`、`v*`、
+  `desktop-v*` 或临时测试分支。
+
+正式版和 RC 的标签事件由 `release-stable-trigger.yml` /
+`release-desktop-trigger.yml` 转发：relay 只携带候选 tag，实际
+`release-desktop.yml` 固定运行在受保护的 `main-v2`，再签署该 tag 指向的
+不可变候选 SHA。不能把 Allowed branches 改成标签通配符，因为普通分支也可以
+取形如 `v-malicious` 的名字。
 
 `Release certificate 2026` 的 Restrictions 明确要求所有使用该证书的策略启用
 审批流程。尝试关闭时，SignPath 会拒绝保存并提示：
@@ -287,6 +296,7 @@ You can either enable the approval process or use another certificate.
 - 不得把个人 Interactive User 的 Token 用作 `SIGNPATH_API_TOKEN`。
 - `SIGNPATH_ORGANIZATION_ID` 必须指向正确的 OSS 组织。
 - GitHub `release` environment 的审批人仍然有效。
+- `release-signing` 的 Allowed branches 精确为 `main-v2`。
 
 正式验收前，应保持 release readiness 关闭：
 
@@ -309,7 +319,8 @@ PR #6904 来自 fork。Fork 工作流拿不到官方仓库的 SignPath Secrets�
 
 1. 合并后从 `main-v2` 运行 canary。
 2. 如果必须合并前验证，由官方仓库管理员创建一个临时验证分支，并将它精确
-   指向已经完成安全审查的 PR SHA。
+   指向已经完成安全审查的 PR SHA；生产证书烟测期间临时把该分支加入 SignPath
+   白名单，并关闭 `CI builds` 自动审批，烟测完成后立即恢复。
 
 ### 10.2 合并前临时验证分支
 
@@ -320,11 +331,6 @@ PR_SHA="$(gh pr view 6904 \
   --repo esengine/DeepSeek-Reasonix \
   --json headRefOid \
   --jq .headRefOid)"
-
-test "$PR_SHA" = "fe354e59a9a076930403b7d8aefb0bcd0b4e182a" || {
-  echo "PR head changed; review the new commit before exposing repository secrets"
-  exit 1
-}
 
 git fetch \
   https://github.com/SivanCola/DeepSeek-Reasonix.git \
@@ -337,9 +343,10 @@ git push origin \
 ```
 
 临时分支上的 workflow 会接触官方 Secrets。推送前必须重新检查该 SHA 的完整
-workflow diff、恶意代码风险和 CI 状态。
+workflow diff、恶意代码风险和 CI 状态，并把复核后的 `$PR_SHA` 记录到变更单；
+不要在 SOP 中硬编码一个会过期的 SHA。
 
-### 10.3 触发 Canary
+### 10.3 触发测试证书 Canary
 
 ```bash
 gh workflow run release-desktop.yml \
@@ -359,7 +366,34 @@ gh workflow run release-desktop.yml \
 
 运行前应确认更新 canary 产物已经得到允许。
 
-### 10.4 监控运行
+### 10.4 触发正式证书、零发布烟测
+
+PR 中的 `production_signing_smoke` 模式会经过 GitHub `release` environment
+审批，使用 `release-signing` 与正式证书验证 AMD64/ARM64，但跳过 publish
+job，不创建 Release，也不更新 R2 指针：
+
+```bash
+gh workflow run release-desktop.yml \
+  --repo esengine/DeepSeek-Reasonix \
+  --ref test/windows-signpath-v2 \
+  -f channel=canary \
+  -f base_version=X.Y.Z \
+  -f production_signing_smoke=true
+```
+
+合并前执行时必须遵守以下临时窗口：
+
+1. SignPath `release-signing` 暂时允许
+   `main-v2` 和 `test/windows-signpath-v2`。
+2. 暂时从 Approvers 移除 `CI builds`，只保留正式人工审批人。
+3. GitHub `release` environment 获批后，人工核对并批准 4 个 SignPath 请求。
+4. 确认两种架构的验证结果均为 `Status = Valid`。
+5. 立即把 Allowed branches 恢复为仅 `main-v2`，再恢复 `CI builds`
+   Approver。
+
+不得让“临时分支可使用正式证书”和“CI 自动审批”同时生效。
+
+### 10.5 监控运行
 
 ```bash
 RUN_ID="$(gh run list \
@@ -426,6 +460,7 @@ Canary 使用测试证书，因此本地 Windows 可能显示证书链不受信�
 - `release-signing` 的证书级审批保持开启，正式审批人可用。
 - `release-signing` 和 `test-signing-ci-approval` 的 Build Definition 仅允许
   `.github/workflows/release-desktop.yml`。
+- `release-signing` 的 Allowed branches 精确为 `main-v2`。
 - `CI builds` 是两个策略的 Submitter 和 Approver，GitHub Secret 使用其专用
   Token。
 - AMD64 和 ARM64 canary 全部成功。
@@ -448,8 +483,10 @@ gh variable get SIGNPATH_RELEASE_SIGNING_READY \
 
 ## 13. 合并后运行正式证书 RC
 
-Canary 只证明签名链路可以工作。PR 合并到 `main-v2` 后，还需要使用正式发布
-证书运行一次 RC。
+测试证书 Canary 只证明签名链路可以工作。合并前已完成
+`production_signing_smoke=true` 的双架构正式证书验证时，RC 用于验证真实
+公开 prerelease 发布；未完成烟测时，PR 合并到 `main-v2` 后必须先运行一次
+正式证书 RC。
 
 首先核对目标 commit：
 
@@ -546,6 +583,7 @@ gh variable set SIGNPATH_RELEASE_SIGNING_READY \
 - [ ] `release-signing` 已开启 Trusted Build System
 - [ ] `release-signing` 已开启 Origin Verification
 - [ ] 两个自动审批策略的 Allowed build definitions 均为 `.github/workflows/release-desktop.yml`
+- [ ] `release-signing` 的 Allowed branches 精确为 `main-v2`
 - [ ] `release-signing` 的 SignPath 审批已开启，Required approvals 为 `1`
 - [ ] GitHub `release` environment 的正式发布审批人和响应流程已经明确
 - [ ] AMD64 canary 两阶段签名成功
