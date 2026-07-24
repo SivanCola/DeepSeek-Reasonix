@@ -69,7 +69,7 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 	}
 	for _, want := range []string{
 		`artifact-configuration-slug: windows-payload`,
-		`artifact-configuration-slug: windows-installer-v2`,
+		`steps.ver.outputs.channel == 'canary' && 'windows-installer-test-v2' || 'windows-installer-v2'`,
 		`path: desktop/build/windows/signing-payload/*.exe`,
 		`path: desktop/build/windows/installer-signing-bundle/*.exe`,
 		`github.repository == 'esengine/DeepSeek-Reasonix'`,
@@ -167,5 +167,14 @@ func TestSignPathConfigurationsCoverExactWindowsPayload(t *testing.T) {
 	}
 	if signedInstaller != 1 || verified != len(expected) {
 		t.Fatalf("windows-installer.xml signed installers=%d verified payload=%d", signedInstaller, verified)
+	}
+
+	testInstaller := parseSignPathConfiguration(t, "windows-installer-test-v2.xml")
+	if len(testInstaller.Zip.Files) != 1 {
+		t.Fatalf("windows-installer-test-v2.xml files = %d, want 1", len(testInstaller.Zip.Files))
+	}
+	file := testInstaller.Zip.Files[0]
+	if file.Path != "*installer*.exe" || file.Sign == nil || file.Verify != nil {
+		t.Fatal("windows-installer-test-v2.xml must only sign the outer installer")
 	}
 }

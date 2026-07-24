@@ -154,16 +154,21 @@ from accidental or unauthorized invocation.
   then uses the same single approval and postflight. Never move or recreate the
   published tags to pick up a workflow fix.
 - Windows release signing uses SignPath trusted-build, origin verification, and
-  malware scanning. Keep the checked-in `windows-payload` and
-  `windows-installer-v2` artifact configurations synchronized with the matching
-  SignPath project slugs before merging a workflow that references them. Keep
-  the legacy `windows-installer` configuration available for older release
-  refs. `windows-payload` signs the desktop, Guard, launcher, update helper,
-  CLI, and generated NSIS uninstaller; `windows-installer-v2` verifies those
-  payload signatures before signing the rebuilt NSIS container. Keep **Use approval process**
-  disabled on `release-signing`; the protected GitHub release approval is the
-  human gate. If a SignPath request waits for confirmation, treat it as policy
-  drift instead of a normal release step.
+  malware scanning. Keep the checked-in `windows-payload`,
+  `windows-installer-test-v2`, and `windows-installer-v2` artifact
+  configurations synchronized with the matching SignPath project slugs before
+  merging a workflow that references them. Keep the legacy
+  `windows-installer` configuration available for older release refs.
+  `windows-payload` signs the desktop, Guard, launcher, update helper, CLI, and
+  generated NSIS uninstaller. Canary uses `windows-installer-test-v2` to sign
+  the rebuilt NSIS container because SignPath test certificates intentionally
+  do not chain to a Windows trusted root; the Windows runner still requires
+  signatures on all payload files and verifies exact portable-package hashes.
+  Stable and RC releases use `windows-installer-v2`, which verifies the trusted
+  payload signatures before signing the outer installer. The release
+  certificate requires SignPath approval, so an authorized approver must
+  approve the payload and installer requests for both Windows architectures
+  while the workflow is waiting.
 - Desktop in-app updates use R2 first, then the `crash.reasonix.io` desktop release
   gateway. The gateway resolves the `desktop-v*` release line directly and never uses
   GitHub's repository-wide `/releases/latest`, because plain `v*` tags are the CLI

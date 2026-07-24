@@ -298,9 +298,11 @@ jobs:
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         run: scripts/package-windows-desktop.sh "${{ matrix.platform == 'windows/arm64' && 'arm64' || 'amd64' }}" signed-payload
 
-      # The second request verifies every signed payload file alongside the
-      # rebuilt installer, then signs the outer NSIS container. Minisign and the
-      # update manifest are generated only after both Authenticode stages.
+      # The second request signs the rebuilt NSIS container. Release signing
+      # also verifies every payload signature against a Windows trusted root.
+      # Canary uses a separate installer configuration because SignPath test
+      # certificates are intentionally untrusted; the runner still verifies
+      # signature presence and exact payload/portable hashes below.
       - name: Upload unsigned installer for SignPath
         if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true' && (steps.ver.outputs.channel == 'canary' || vars.SIGNPATH_RELEASE_SIGNING_READY == 'true')
         id: unsigned-installer
@@ -319,7 +321,7 @@ jobs:
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
           project-slug: DeepSeek-Reasonix
           signing-policy-slug: ${{ steps.ver.outputs.channel == 'canary' && 'test-signing' || 'release-signing' }}
-          artifact-configuration-slug: windows-installer-v2
+          artifact-configuration-slug: ${{ steps.ver.outputs.channel == 'canary' && 'windows-installer-test-v2' || 'windows-installer-v2' }}
           github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
           github-token: ${{ github.token }}
           wait-for-completion: true
