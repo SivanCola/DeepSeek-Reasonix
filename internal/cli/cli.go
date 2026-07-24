@@ -605,7 +605,14 @@ func runAgent(args []string) int {
 	// executor, not just the top-level one. Default/ask and acceptEdits already
 	// keep the default headless gate (ask decisions resolve to allow); only
 	// auto/dontAsk/yolo need the explicit contract.
-	overrides := cliBuildOverrides{Effort: effortOverride, PermissionAllow: allowedTools, AdditionalDirs: additionalDirs, WorkspaceRoot: workspaceRoot, HeadlessApprovalMode: permissions.approval}
+	overrides := cliBuildOverrides{
+		Effort:               effortOverride,
+		PermissionAllow:      allowedTools,
+		AdditionalDirs:       additionalDirs,
+		WorkspaceRoot:        workspaceRoot,
+		HeadlessApprovalMode: permissions.approval,
+		OnSessionRecovered:   cliSessionRecoveredHandler(leases),
+	}
 	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, true, sink, profile, overrides)
 	if err != nil {
 		if resultOutput != nil && format != runOutputText {
@@ -810,7 +817,9 @@ func runServe(args []string) int {
 			}
 		}
 	}
-	ctrl, err := setupProfile(ctx, *model, *maxSteps, true, bc, profile, "")
+	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, true, bc, profile, cliBuildOverrides{
+		OnSessionRecovered: cliSessionRecoveredHandler(leases),
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
