@@ -14,7 +14,7 @@ trap cleanup EXIT
 # Stable tags have one entrypoint and one protected environment. Reusable
 # publishers must verify that only that entrypoint can claim prior approval.
 [ "$(grep -Ec '^    environment: release$' "$repo_root/.github/workflows/release-stable.yml")" = "1" ]
-for relay in release-stable-trigger.yml release-desktop-trigger.yml; do
+for relay in release-stable-trigger.yml release-cli-trigger.yml release-desktop-trigger.yml; do
 	grep -Eq 'actions: write' "$repo_root/.github/workflows/$relay"
 	grep -Eq "CONTROL_PLANE_REF.*default_branch" "$repo_root/.github/workflows/$relay"
 	grep -Eq "CONTROL_PLANE_REF !== 'main-v2'" "$repo_root/.github/workflows/$relay"
@@ -29,7 +29,12 @@ grep -Eq 'ALLOW_STABLE_RECOVERY:.*inputs\.allow_recovery' \
 	"$repo_root/.github/workflows/release-stable.yml"
 grep -Eq "workflow_id: 'release-desktop\.yml'" \
 	"$repo_root/.github/workflows/release-desktop-trigger.yml"
+grep -Eq "workflow_id: 'release\.yml'" \
+	"$repo_root/.github/workflows/release-cli-trigger.yml"
+grep -Eq "preview\\\\\." "$repo_root/.github/workflows/release-cli-trigger.yml"
+grep -Eq 'release-cli-trigger\.yml' "$repo_root/.github/workflows/ci.yml"
 if grep -Eq '^  push:$' "$repo_root/.github/workflows/release-stable.yml" ||
+	grep -Eq '^  push:$' "$repo_root/.github/workflows/release.yml" ||
 	grep -Eq '^  push:$' "$repo_root/.github/workflows/release-desktop.yml"; then
 	echo "production workflow must be dispatched on protected main-v2, not run on a tag origin" >&2
 	exit 1
@@ -42,6 +47,17 @@ for workflow in release.yml release-npm.yml release-desktop.yml; do
 	grep -Eq 'release-stable\.yml' "$repo_root/.github/workflows/$workflow"
 	grep -Eq "needs\.cache-guard\.result == 'success'" "$repo_root/.github/workflows/$workflow"
 done
+grep -Eq 'options: \[stable, preview\]' "$repo_root/.github/workflows/release.yml"
+grep -A6 -E '^      channel:' "$repo_root/.github/workflows/release.yml" |
+	grep -Eq 'default: stable'
+grep -Eq "needs\.resolve\.outputs\.channel == 'preview'.*'canary'.*'release'" \
+	"$repo_root/.github/workflows/release.yml"
+grep -Eq 'GORELEASER_CURRENT_TAG:.*needs\.resolve\.outputs\.tag' \
+	"$repo_root/.github/workflows/release.yml"
+grep -Eq 'bash scripts/resolve-cli-release\.sh' "$repo_root/.github/workflows/release.yml"
+grep -Eq 'git merge-base --is-ancestor.*origin/main-v2' "$repo_root/.github/workflows/release.yml"
+grep -Eq 'CLI Preview must tag current main-v2' "$repo_root/.github/workflows/release.yml"
+grep -Eq "channel == 'stable'.*HOMEBREW_TAP_TOKEN" "$repo_root/.github/workflows/release.yml"
 grep -Eq "needs\.build\.result == 'success'" "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq "needs\.publish\.result == 'success'" "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq 'options: \[stable, preview\]' "$repo_root/.github/workflows/release-desktop.yml"
@@ -247,6 +263,52 @@ if EVENT_NAME=workflow_dispatch IN_CHANNEL=stable IN_TAG='' REF_NAME=main-v2 RUN
 	exit 1
 fi
 grep -Eq 'stable dispatch requires tag' "$test_root/desktop-missing-tag.log"
+
+EVENT_NAME=push IN_CHANNEL='' IN_TAG='' REF_NAME=v1.3.0-preview.42 \
+	GITHUB_OUTPUT="$test_root/cli-preview-push.out" bash "$repo_root/scripts/resolve-cli-release.sh"
+grep -Eq '^tag=v1\.3\.0-preview\.42$' "$test_root/cli-preview-push.out"
+grep -Eq '^version=1\.3\.0-preview\.42$' "$test_root/cli-preview-push.out"
+grep -Eq '^base_version=1\.3\.0$' "$test_root/cli-preview-push.out"
+grep -Eq '^notes_version=v1\.3\.0$' "$test_root/cli-preview-push.out"
+grep -Eq '^channel=preview$' "$test_root/cli-preview-push.out"
+grep -Eq '^prerelease=true$' "$test_root/cli-preview-push.out"
+
+EVENT_NAME=workflow_dispatch IN_ORCHESTRATED=false IN_CHANNEL=preview \
+	IN_TAG=v1.3.0-preview.42 REF_NAME=main-v2 CALLER_REF=refs/heads/main-v2 \
+	CALLER_REF_PROTECTED=true GITHUB_OUTPUT="$test_root/cli-preview-dispatch.out" \
+	bash "$repo_root/scripts/resolve-cli-release.sh"
+grep -Eq '^channel=preview$' "$test_root/cli-preview-dispatch.out"
+
+EVENT_NAME=push IN_CHANNEL='' IN_TAG='' REF_NAME=v1.3.0-rc.1 \
+	GITHUB_OUTPUT="$test_root/cli-rc.out" bash "$repo_root/scripts/resolve-cli-release.sh"
+grep -Eq '^channel=stable$' "$test_root/cli-rc.out"
+grep -Eq '^prerelease=true$' "$test_root/cli-rc.out"
+
+if EVENT_NAME=workflow_dispatch IN_ORCHESTRATED=false IN_CHANNEL=stable \
+	IN_TAG=v1.3.0-preview.42 REF_NAME=main-v2 CALLER_REF=refs/heads/main-v2 \
+	CALLER_REF_PROTECTED=true GITHUB_OUTPUT="$test_root/cli-channel-mismatch.out" \
+	bash "$repo_root/scripts/resolve-cli-release.sh" >"$test_root/cli-channel-mismatch.log" 2>&1; then
+	echo "CLI Preview tag unexpectedly passed as Stable" >&2
+	exit 1
+fi
+grep -Eq 'belongs to preview, not requested channel stable' "$test_root/cli-channel-mismatch.log"
+
+if EVENT_NAME=push IN_CHANNEL='' IN_TAG='' REF_NAME=v1.3.0-preview.latest \
+	GITHUB_OUTPUT="$test_root/cli-invalid-preview.out" bash "$repo_root/scripts/resolve-cli-release.sh" \
+	>"$test_root/cli-invalid-preview.log" 2>&1; then
+	echo "malformed CLI Preview tag unexpectedly passed" >&2
+	exit 1
+fi
+grep -Eq 'CLI Preview tag must be vMAJOR.MINOR.PATCH-preview.N' "$test_root/cli-invalid-preview.log"
+
+if EVENT_NAME=workflow_dispatch IN_ORCHESTRATED=false IN_CHANNEL=preview \
+	IN_TAG=v1.3.0-preview.42 REF_NAME=topic CALLER_REF=refs/heads/topic \
+	CALLER_REF_PROTECTED=false GITHUB_OUTPUT="$test_root/cli-unprotected.out" \
+	bash "$repo_root/scripts/resolve-cli-release.sh" >"$test_root/cli-unprotected.log" 2>&1; then
+	echo "unprotected CLI Preview dispatch unexpectedly passed" >&2
+	exit 1
+fi
+grep -Eq 'manual CLI releases must run from protected main-v2' "$test_root/cli-unprotected.log"
 
 EVENT_NAME=push IN_ORCHESTRATED=false IN_CHANNEL='' IN_BASE_VERSION='' IN_TAG='' \
 	REF_NAME=npm-v1.4.0-rc.1 RUN_NUMBER=50 GITHUB_OUTPUT="$test_root/npm-rc.out" \

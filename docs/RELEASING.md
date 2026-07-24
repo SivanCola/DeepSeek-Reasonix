@@ -17,25 +17,30 @@ Preview provides the fast pre-release buffer instead of a long-lived branch.
 
 | Surface | Stable | Pre-release buffer |
 |---|---|---|
+| Native CLI | GitHub Release `vX.Y.Z` + Homebrew | GitHub prerelease `vX.Y.Z-preview.N` (never Homebrew or GitHub Latest) |
 | npm | `latest` (current 1.x stable) | `next` (rc), `canary` (`npm i reasonix@canary`) |
 | Desktop | R2 `latest/` pointer + release gateway | R2 `preview/` pointer + release gateway proxy (never on the GitHub releases page) |
 
-Desktop has exactly two user-facing channels:
+Native CLI and Desktop have exactly two user-facing channels:
 
-- **Preview** is the opt-in, fast channel, normally cut every 1–2 days. Builds
-  carry `-X main.channel=preview`, use `vX.Y.Z-preview.N`, and move only the
-  desktop `preview/` pointer.
-- **Stable** is the weekly channel and moves only desktop `latest/`.
+- **Preview** is the opt-in, fast channel, normally cut every 1–2 days. Native
+  CLI uses an immutable protected `vX.Y.Z-preview.N` tag and a GitHub
+  prerelease; Desktop builds carry `-X main.channel=preview`, use the same
+  version shape, and move only the desktop `preview/` pointer.
+- **Stable** is the weekly channel. It publishes the native CLI GitHub Release
+  and Homebrew cask and moves only the desktop `latest/` pointer.
 
-Both channels are public product builds. On Windows they use the same verified
-publisher identity and the SignPath `release-signing` policy. Certificate trust
-must not be used to communicate release quality. `test-signing` is reserved for
-internal CI/signing validation and must never publish the public Preview pointer.
+Both channels are public product builds. Homebrew remains Stable-only because
+it has no separate prerelease channel. On Windows, Desktop Preview and Stable
+use the same verified publisher identity and the SignPath `release-signing`
+policy. Certificate trust must not be used to communicate release quality.
+`test-signing` is reserved for internal CI/signing validation and must never
+publish the public Preview pointer.
 
-An RC is not a third desktop update channel. If a weekly candidate needs a
-freeze, use a surface-specific `desktop-vX.Y.Z-rc.N` tag as an internal
-candidate checkpoint; it does not move either rolling pointer. npm retains its
-separate `next` and `canary` dist-tags.
+An RC is not a third user-facing channel. If a weekly candidate needs a freeze,
+use a surface-specific `vX.Y.Z-rc.N` or `desktop-vX.Y.Z-rc.N` tag as an
+internal candidate checkpoint. Neither moves a rolling pointer or Homebrew.
+npm retains its separate `next` and `canary` dist-tags.
 
 ### Desktop channel compatibility
 
@@ -53,18 +58,19 @@ separate `next` and `canary` dist-tags.
 
 | Action | Who | Mechanism |
 |---|---|---|
+| **Cut Native CLI Preview** | release-tag creator + configured reviewer | create and push a protected `vX.Y.Z-preview.N` tag; a minimal relay dispatches **Release** on protected `main-v2`, which classifies it as Preview, pauses on the `canary` environment, and publishes a GitHub prerelease without touching Homebrew or Latest |
 | **Cut Desktop Preview** | maintainer + configured reviewer | dispatch **Release desktop** on protected `main-v2`; the `canary` GitHub environment is retained as a compatibility name and must have the same required reviewers as `release` |
 | **Ship stable** | release-tag creators + one configured reviewer | atomically push the three stable tags; a minimal tag relay dispatches **Release stable** on protected `main-v2`, which requests one GitHub `release`-environment approval before every channel publishes |
 | **Ship a standalone RC** | release-tag creators + one configured reviewer | push the surface-specific prerelease tag; a minimal relay dispatches the standalone workflow on protected `main-v2`, which requests one `release` approval |
 
 Preview remains operationally fast, but its public artifacts are not an
-unreviewed or test-certificate path. A Preview dispatch pauses at the legacy
-`canary` environment approval and then uses the production SignPath policy. A
-stable release pauses once in **Release stable** until a configured reviewer
-approves the `release` environment. The jobs then continue without another
-human approval: SignPath verifies the trusted GitHub origin, scans and signs
-every installed executable, rebuilds the packages, and signs the outer
-installers.
+unreviewed or test-certificate path. Native CLI Preview tag runs and Desktop
+Preview dispatches pause at the legacy `canary` environment approval. Desktop
+then uses the production SignPath policy. A stable release pauses once in
+**Release stable** until a configured reviewer approves the `release`
+environment. The jobs then continue without another human approval: SignPath
+verifies the trusted GitHub origin, scans and signs every installed executable,
+rebuilds the packages, and signs the outer installers.
 
 > Repo settings backing this: Environments → `release` and `canary` have the
 > same release owners as required reviewers, and the release-tag ruleset restricts
@@ -114,13 +120,19 @@ strict separation from repository writers is required.
    `/changelog/` and both CLI and Desktop GitHub Releases; the desktop app links
    to that web history from Settings → Updates. A missing catalog entry still
    blocks stable publication.
-3. **Cut Desktop Preview** during the intended release cycle (e.g. heading for `1.4.0`):
+3. **Cut Preview** during the intended release cycle (e.g. heading for `1.4.0`):
+   - Native CLI: create and push the next protected Preview tag:
+     ```sh
+     git tag v1.4.0-preview.1
+     git push origin v1.4.0-preview.1
+     ```
    - Desktop: Actions → **Release desktop** → `channel: preview`, `base_version: 1.4.0`
    - CLI: Actions → **Release npm** → `base_version: 1.4.0`
-   - Publishes `1.4.0-preview.N` to desktop R2 `preview/` (no GitHub release)
-     and mirrors `canary/` only for older desktop clients. npm still publishes
-     its independent `@canary` channel.
-4. **Test** — desktop users opt into Preview in Settings → Updates; CLI testers
+   - Publishes the native CLI as a GitHub prerelease and Desktop to R2
+     `preview/` (no Desktop GitHub release), mirroring Desktop `canary/` only
+     for older clients. npm still publishes its independent `@canary` channel.
+4. **Test** — native CLI testers download the immutable GitHub prerelease;
+   desktop users opt into Preview in Settings → Updates; npm CLI testers
    install `reasonix@canary`.
 5. **Fix** on `main-v2` via PRs; re-cut Preview as needed (`preview.N` bumps).
    Re-run **Prepare release notes** after material fixes. Reuse the still-open
@@ -176,8 +188,9 @@ strict separation from repository writers is required.
 
 ## Notes
 
-- Desktop Preview and npm Canary version numbers use their workflow
-  `run_number`, so their suffixes can differ. Only monotonicity per channel matters.
+- Native CLI Preview uses the protected tag's explicit `N`; Desktop Preview and
+  npm Canary use their workflow `run_number`, so suffixes can differ. Only
+  monotonicity per surface matters.
 - A stable `-rc` tag (e.g. `npm-v1.4.0-rc.1`) still ships under `next`, not `canary`.
 - Recover an interrupted stable release by dispatching **Release stable** from
   protected `main-v2` with the existing `vX.Y.Z` tag. Recovery requires the CLI,
