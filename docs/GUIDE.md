@@ -116,7 +116,7 @@ tool_timeout_seconds = { "generate_video" = 1800 }   # optional raw MCP tool nam
 
 For the full schema and every field's contract, see [`SPEC.md` §5](./SPEC.md#5-configuration-toml).
 
-Newly installed or explicitly authorized MCP servers need no per-tool trust
+Installed and project-configured MCP servers need no per-tool trust
 list. The dedicated two-model Planner may use every non-destructive MCP tool,
 even when the server omits `readOnlyHint`; strict read-only sub-agents still
 require `readOnlyHint: true` and no `destructiveHint`.
@@ -393,7 +393,7 @@ events.
 The injected hook context is dynamic current-turn context. It does not change
 the stable system prompt, memory prefix, or tool schema, though dynamic content
 can still reduce cache reuse for that turn. The detailed desktop hook schema and
-trust model are documented in [the Chinese desktop hooks guide](./DESKTOP_HOOKS.zh-CN.md).
+loading model are documented in [the Chinese desktop hooks guide](./DESKTOP_HOOKS.zh-CN.md).
 
 ## Keyboard shortcuts
 
@@ -595,7 +595,7 @@ channel.
 ## Capability diagnostics
 
 Use this when a skill, slash command, hook, plugin package, MCP server, or
-`AGENTS.md` is missing, shadowed, untrusted, or fails to start. Full flag
+`AGENTS.md` is missing, shadowed, disabled, or fails to start. Full flag
 reference, JSON schema, and issue codes:
 **[Capability diagnostics](./CAPABILITY_DIAGNOSTICS.md)**.
 
@@ -640,17 +640,22 @@ as manual setup instead of being installed with an incomplete configuration;
 query-specific cached results remain available during a registry outage.
 
 The normal setup path is intentionally one step. Use Desktop's **Add and
-connect**, `/mcp add`, or ask Reasonix to install a package, URL, or `.mcp.json`.
-That explicit install is also authorization: the server is saved and connected
-in the current session, and no second trust step appears now or on the next
-startup. Explicit deny rules still win. The installed server's calls run
+connect**, `/mcp add`, or ask Reasonix to install a package or URL. These
+explicit installs are saved to the user-global `config.toml` and are also
+authorization: the server connects in the current session, and no second trust
+step appears now or on the next startup. Servers declared by the current
+project's `reasonix.toml` or `.mcp.json` remain in that project and are trusted
+without a separate launch confirmation. Explicit deny rules still win. The
+server's calls run
 directly, including tools that declare `destructiveHint`. The dedicated Planner
 still refuses destructive tools, and strict read-only sub-agents still expose
-only hinted non-destructive readers. A server merely discovered in repository-controlled
-`reasonix.toml` or `.mcp.json` is different: Reasonix asks once to confirm the
-exact command or endpoint, records that decision without launching a temporary
-inspection process, then starts the server once. It reconnects automatically
-while that value is unchanged and asks again only after a change.
+only hinted non-destructive readers.
+
+MCP names are resolved once per workspace. Project declarations override
+same-name global installs; inside a project, `reasonix.toml` overrides
+`.mcp.json`. Editing updates the effective declaration in its original file,
+and removing a higher-priority declaration reveals the next one instead of
+deleting every same-name entry.
 
 stdio servers keep one process for initialize, reads, and writes, so stateful
 servers such as browsers retain sessions and open pages. Because an OS sandbox
@@ -660,8 +665,8 @@ are dispatch policy, not a second per-call process sandbox.
 
 Tools surface to the model as `mcp__<server>__<tool>`. A tool declaring MCP's
 `readOnlyHint: true` joins parallel dispatch and the strict read-only tool
-surfaces. Installing a server, or confirming an exact repository-provided
-server once, authorizes the dedicated Planner to use all of its non-destructive
+surfaces. Installing a server or declaring it in project configuration
+authorizes the dedicated Planner to use all of its non-destructive
 tools without another per-tool setting; strict read-only research sub-agents
 receive only hinted non-destructive readers. Tools without the hint remain
 write-capable for scheduling and mutation accounting. While planning, built-in
@@ -945,9 +950,8 @@ Every strict read-only child is built through one shared construction
 pairing — `RunReadOnlySubAgentWithSession` / `NewReadOnlyAgent` — which marks
 the child permanently read-only and applies a final registry filter. The filter
 removes writers, destructive MCP targets, readers from unauthorized servers,
-and every host-mutating tool. A user-installed server is authorized immediately;
-a repository-declared server becomes eligible after its exact identity is
-confirmed once. Eligible readers may still start on demand. These are
+and every host-mutating tool. User-installed and project-configured servers are
+authorized immediately. Eligible readers may still start on demand. These are
 the strict read-only entrances:
 
 | Entrance | Purpose |
@@ -974,7 +978,7 @@ Executor ledgers/audits stay isolated and only the Host connection is shared.
 
 Ordinary `task` / `fleet` sub-agents also get the same fixed proxy (session-
 shared Host and connections, per-agent frontend/ledger) and may call installed
-or project-authorized MCP without `readOnlyHint`. Those calls use the trusted
+or project-configured MCP without `readOnlyHint`. Those calls use the trusted
 MCP permission path (live authorization plus explicit deny only); writer and
 destructive calls are still serialized, recorded as mutations, and subject to
 Delivery evidence/lease guards rather than Planner handoff. Strict

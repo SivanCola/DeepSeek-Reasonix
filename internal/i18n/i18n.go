@@ -268,7 +268,6 @@ type Messages struct {
 	ArgMcpList          string // /mcp list
 	ArgMcpConnected     string // /mcp remove <server> tag
 	ArgHooksList        string // /hooks list
-	ArgHooksTrust       string // /hooks trust
 	ArgModelCurrent     string // /model <ref> active tag
 	ArgEffortAuto       string // /effort auto
 	ArgEffortLow        string // /effort low

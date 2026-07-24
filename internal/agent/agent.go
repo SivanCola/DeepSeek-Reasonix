@@ -3145,6 +3145,25 @@ type toolOutcome struct {
 	recoveryStopReason string
 }
 
+// completedMCPConnect recognizes a synthetic cache-miss connect call whose
+// background discovery finished after the provider request was serialized. The
+// connect placeholder is intentionally absent once real tools replace it, but
+// the already-advertised call still completed its only job and must not surface
+// as an unknown tool.
+func completedMCPConnect(reg *tool.Registry, name string) (string, bool) {
+	server, rawName, ok := tool.SplitMCPName(name)
+	if !ok || rawName != "connect" {
+		return "", false
+	}
+	prefix := tool.MCPNamePrefix + server + "__"
+	for _, current := range reg.Names() {
+		if current != name && strings.HasPrefix(current, prefix) {
+			return server, true
+		}
+	}
+	return "", false
+}
+
 // executeOne runs a single tool call. It is pure with respect to the event sink
 // — the caller emits ToolDispatch/ToolResult — so it is safe to invoke from
 // parallel goroutines.
@@ -3168,6 +3187,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) (out too
 		}
 	}
 	if t == nil {
+		if server, ok := completedMCPConnect(a.tools, call.Name); ok {
+			return toolOutcome{
+				output: fmt.Sprintf("MCP server %q is connected; its real tools are now available", server),
+			}
+		}
 		return toolOutcome{
 			output: fmt.Sprintf("error: unknown tool %q", call.Name),
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),

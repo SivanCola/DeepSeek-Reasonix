@@ -280,7 +280,6 @@ var Chinese = Messages{
 	ArgMcpList:          "显示已配置的服务器",
 	ArgMcpConnected:     "已连接",
 	ArgHooksList:        "列出生效的 hooks",
-	ArgHooksTrust:       "信任本项目的 hooks",
 	ArgModelCurrent:     "当前",
 	ArgEffortAuto:       "使用模型默认值",
 	ArgEffortLow:        "较轻推理",
@@ -302,7 +301,7 @@ var Chinese = Messages{
 	ListSkillsHeaderFmt: "skills（%d 个）",
 	ListSkillsNone:      "暂无 skill — 调用内置的（如 /init），或用 install_skill 创建一个",
 	ListHooksHeaderFmt:  "hooks（生效 %d 个）",
-	ListHooksNone:       "无生效 hooks — 在 .reasonix/settings.json（项目，需信任后）或 <Reasonix home>/settings.json（全局）配置",
+	ListHooksNone:       "无生效 hooks — 在 .reasonix/settings.json（项目）或 <Reasonix home>/settings.json（全局）配置",
 	ListMcpHeader:       "MCP 服务器",
 	ListMcpNone:         "未连接 MCP 服务器 — 在 reasonix.toml（[[plugins]]）或项目 .mcp.json 中添加",
 

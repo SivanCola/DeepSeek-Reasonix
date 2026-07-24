@@ -1510,13 +1510,6 @@ func providerCredentialSourceNotice(apiKeyEnv, value string) string {
 	return ""
 }
 
-func projectConfigPathForRoot(root string) string {
-	if strings.TrimSpace(root) == "" || root == "." {
-		return "reasonix.toml"
-	}
-	return filepath.Join(root, "reasonix.toml")
-}
-
 func sameConfigPath(a, b string) bool {
 	a = strings.TrimSpace(a)
 	b = strings.TrimSpace(b)
@@ -1646,7 +1639,12 @@ func (a *App) rebuildSettingTurnLocked(setting string, tab *WorkspaceTab, admiss
 			leaseHeld := false
 			a.mu.Lock()
 			leaseHeld = setTabStartupError(tab, err)
-			tab.Ready = true
+			tab.Ready = false
+			if leaseHeld {
+				a.setSessionRuntimePhaseLocked(tab, sessionRuntimeLeaseBlocked, err)
+			} else {
+				a.setSessionRuntimePhaseLocked(tab, sessionRuntimeFailed, err)
+			}
 			a.mu.Unlock()
 			if leaseHeld {
 				a.scheduleDeferredStartupBuild(tab.ID)
@@ -1690,6 +1688,7 @@ func (a *App) rebuildSettingTurnLocked(setting string, tab *WorkspaceTab, admiss
 	}
 	a.persistTabSessionPath(tab, path)
 	a.clearDeferredRebuild(tab.ID)
+	a.notifyTabRuntimeRebuilt(tab)
 	a.emitReady(a.ctx)
 	return nil
 }
@@ -2485,6 +2484,11 @@ func (a *App) removeBuiltInProviderAccessAndRetargetTabs(name string) error {
 		clearTabStartupError(tab)
 		tab.Ready = a.ctx == nil
 		if a.ctx != nil {
+			a.setSessionRuntimePhaseLocked(tab, sessionRuntimeStarting, nil)
+		} else {
+			a.setSessionRuntimePhaseLocked(tab, sessionRuntimeFailed, fmt.Errorf("desktop runtime is not started"))
+		}
+		if a.ctx != nil {
 			rebuildTabs = append(rebuildTabs, tab)
 		}
 	}
@@ -2617,6 +2621,11 @@ func (a *App) deleteProviderAndRetargetTabs(name string) error {
 		tab.Label = fallbackRef
 		clearTabStartupError(tab)
 		tab.Ready = a.ctx == nil
+		if a.ctx != nil {
+			a.setSessionRuntimePhaseLocked(tab, sessionRuntimeStarting, nil)
+		} else {
+			a.setSessionRuntimePhaseLocked(tab, sessionRuntimeFailed, fmt.Errorf("desktop runtime is not started"))
+		}
 		if a.ctx != nil {
 			rebuildTabs = append(rebuildTabs, tab)
 		}

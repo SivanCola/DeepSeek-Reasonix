@@ -6392,31 +6392,12 @@ function HooksSection({ onChanged }: { onChanged: (settings?: SettingsView | nul
       setBusy(false);
     }
   };
-  const trustProject = async () => {
-    const projectRoot = view?.projectRoot?.trim() ?? "";
-    if (!projectRoot) {
-      setErr(t("settings.hooksProjectRootUnavailable"));
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    try {
-      await app.TrustProjectHooksForRoot(projectRoot);
-      await load("project");
-      onChanged();
-    } catch (e) {
-      setErr(String((e as Error)?.message ?? e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <>
       {err && <div className="banner banner--error">{err}</div>}
       <SettingsSection title={t("settings.hooksScopeSection")} description={t("settings.hooksScopeHint")}>
         <SettingsField label={t("settings.hooksScopeField")}>
-          <select className="mem-select set-grow" value={scope} disabled={busy} onChange={(e) => setScope(e.target.value === "project" ? "project" : "global")}>
+          <select name="hooks-scope" className="mem-select set-grow" value={scope} disabled={busy} onChange={(e) => setScope(e.target.value === "project" ? "project" : "global")}>
             <option value="global">{t("settings.hooksGlobal")}</option>
             <option value="project">{t("settings.hooksProject")}</option>
           </select>
@@ -6432,19 +6413,6 @@ function HooksSection({ onChanged }: { onChanged: (settings?: SettingsView | nul
             {pathMessage && <div className="hooks-path-display__message">{pathMessage}</div>}
           </div>
         </SettingsField>
-        {scope === "project" && (
-          <SettingsField label={t("settings.hooksTrust")} hint={t("settings.hooksTrustHint")}>
-            <div className="hooks-trust-stack">
-              <div className="hooks-trust-row">
-                <span className={`set-rule${view?.trusted ? "" : " set-rule--warn"}`}>{view?.trusted ? t("settings.hooksTrusted") : t("settings.hooksUntrusted")}</span>
-                <button className="btn btn--small" disabled={busy || view?.trusted || !view?.projectRoot} onClick={() => void trustProject()}>{t("settings.hooksTrustProject")}</button>
-              </div>
-              <code className={`hooks-trust-root${view?.projectRoot ? "" : " hooks-trust-root--empty"}`} title={view?.projectRoot || t("settings.hooksProjectRootUnavailable")}>
-                {view?.projectRoot || t("settings.hooksProjectRootUnavailable")}
-              </code>
-            </div>
-          </SettingsField>
-        )}
       </SettingsSection>
 
       <SettingsSection
@@ -6468,6 +6436,7 @@ function HooksSection({ onChanged }: { onChanged: (settings?: SettingsView | nul
               </div>
             </div>
             <textarea
+              name="hooks-json"
               className="mem-textarea hooks-json-panel__textarea"
               value={jsonText}
               disabled={busy}

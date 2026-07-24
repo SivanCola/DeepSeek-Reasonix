@@ -698,9 +698,14 @@ export function onFilesDropped(cb: (paths: string[]) => void): () => void {
 // onRuntimeRebuilt fires when a tab's controller is replaced in place
 // (model/effort/token-mode switch, clear-while-running). The rebuilt
 // controller restarts prompt ids, so per-tab id-keyed state must reset.
-export function onRuntimeRebuilt(cb: (tabId?: string) => void): () => void {
+export function onRuntimeRebuilt(cb: (tabId?: string, runtimeEpoch?: string) => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
-    return window.runtime.EventsOn("runtime:rebuilt", (tabId?: unknown) => cb(typeof tabId === "string" ? tabId : undefined));
+    return window.runtime.EventsOn("runtime:rebuilt", (tabId?: unknown, runtimeEpoch?: unknown) =>
+      cb(
+        typeof tabId === "string" ? tabId : undefined,
+        typeof runtimeEpoch === "string" ? runtimeEpoch : undefined,
+      )
+    );
   }
   return () => {};
 }
@@ -1170,6 +1175,25 @@ function makeMockApp(): AppBindings {
   const t0 = Date.now();
   // Mutable so MCP add/remove/retry are observable in browser dev.
   let capServers: ServerView[] = [
+    {
+      name: "project-knowledge",
+      transport: "http",
+      status: "connected",
+      configured: true,
+      autoStart: true,
+      tier: "background",
+      source: "project",
+      configSource: "reasonix.toml",
+      url: "https://mcp.example.test/project",
+      tools: 3,
+      prompts: 0,
+      resources: 1,
+      toolList: [
+        { name: "search_knowledge", description: "Search the project knowledge base.", readOnlyHint: true },
+        { name: "get_document", description: "Read a knowledge-base document.", readOnlyHint: true },
+        { name: "list_topics", description: "List available knowledge topics.", readOnlyHint: true },
+      ],
+    },
     {
       name: "github",
       transport: "stdio",
@@ -3331,7 +3355,6 @@ function makeMockApp(): AppBindings {
         ],
         "/hooks": [
           { label: "list", insert: "list", hint: "list active hooks" },
-          { label: "trust", insert: "trust", hint: "trust this project's hooks" },
         ],
         "/model": [
           { label: "deepseek/deepseek-v4-flash", insert: "deepseek/deepseek-v4-flash", hint: "current" },
@@ -3711,12 +3734,10 @@ function makeMockApp(): AppBindings {
       hookSettings[key].hooks = JSON.parse(JSON.stringify(hooks)) as HookConfigView[];
     },
     async TrustProjectHooks() {
-      hookSettings.project.trusted = true;
+      // Compatibility no-op: project hooks are enabled automatically.
     },
-    async TrustProjectHooksForRoot(projectRoot: string) {
-      if (projectRoot && projectRoot === hookSettings.project.projectRoot) {
-        hookSettings.project.trusted = true;
-      }
+    async TrustProjectHooksForRoot(_projectRoot: string) {
+      // Compatibility no-op: project hooks are enabled automatically.
     },
     async SetDefaultModel(ref: string) {
       settings.defaultModel = ref;

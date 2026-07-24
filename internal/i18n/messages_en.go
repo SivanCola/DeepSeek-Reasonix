@@ -279,7 +279,6 @@ var English = Messages{
 	ArgMcpList:          "show configured servers",
 	ArgMcpConnected:     "connected",
 	ArgHooksList:        "list active hooks",
-	ArgHooksTrust:       "trust this project's hooks",
 	ArgModelCurrent:     "current",
 	ArgEffortAuto:       "use the model default",
 	ArgEffortLow:        "lighter reasoning",
@@ -301,7 +300,7 @@ var English = Messages{
 	ListSkillsHeaderFmt: "skills (%d)",
 	ListSkillsNone:      "skills: none defined — invoke a built-in like /init, or author one with install_skill",
 	ListHooksHeaderFmt:  "hooks (%d active)",
-	ListHooksNone:       "hooks: none active — configure in .reasonix/settings.json (project, after trust) or <Reasonix home>/settings.json (global)",
+	ListHooksNone:       "hooks: none active — configure in .reasonix/settings.json (project) or <Reasonix home>/settings.json (global)",
 	ListMcpHeader:       "mcp servers",
 	ListMcpNone:         "mcp: no servers connected — add one in reasonix.toml ([[plugins]]) or a project .mcp.json",
 
