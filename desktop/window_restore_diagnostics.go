@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"reasonix/internal/config"
-	"reasonix/internal/fileutil"
 )
 
 const (
@@ -37,7 +36,14 @@ func writeWindowRestoreState(state windowRestoreState) bool {
 	if err != nil {
 		return false
 	}
-	return fileutil.AtomicWriteFile(windowRestoreStatePath(), body, 0o600) == nil
+	path := windowRestoreStatePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false
+	}
+	// This journal is best-effort diagnostics, not user data. Avoid the
+	// fsync-and-retry path here because it runs immediately before WindowShow
+	// and Windows antivirus locks can otherwise delay restoration noticeably.
+	return os.WriteFile(path, body, 0o600) == nil
 }
 
 func readWindowRestoreState() (windowRestoreState, error) {

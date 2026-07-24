@@ -26,6 +26,10 @@ var (
 	sendMessageTimeoutProc     = user32DLL.NewProc("SendMessageTimeoutW")
 	windowsHeartbeatMu         sync.Mutex
 	windowsHeartbeatStop       chan struct{}
+	enumWindowsMu              sync.Mutex
+	enumWindowsPID             uint32
+	enumWindowsFound           uintptr
+	enumWindowsCallback        = syscall.NewCallback(enumCurrentProcessTopLevelWindow)
 )
 
 func mainThreadWatchdogSupported() bool { return true }
@@ -74,19 +78,25 @@ func stopNativeMainThreadHeartbeat() {
 }
 
 func currentProcessTopLevelWindow() uintptr {
-	var found uintptr
-	pid := uint32(os.Getpid())
-	callback := syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
-		var windowPID uint32
-		getWindowThreadProcessProc.Call(hwnd, uintptr(unsafe.Pointer(&windowPID)))
-		if windowPID == pid && windowClassName(hwnd) == "wailsWindow" {
-			found = hwnd
-			return 0
-		}
-		return 1
-	})
-	enumWindowsProc.Call(callback, 0)
-	return found
+	// Go's Windows callback table is process-lifetime state with a finite
+	// capacity. Reuse one callback instead of consuming an entry on every
+	// one-second heartbeat.
+	enumWindowsMu.Lock()
+	defer enumWindowsMu.Unlock()
+	enumWindowsPID = uint32(os.Getpid())
+	enumWindowsFound = 0
+	enumWindowsProc.Call(enumWindowsCallback, 0)
+	return enumWindowsFound
+}
+
+func enumCurrentProcessTopLevelWindow(hwnd uintptr, _ uintptr) uintptr {
+	var windowPID uint32
+	getWindowThreadProcessProc.Call(hwnd, uintptr(unsafe.Pointer(&windowPID)))
+	if windowPID == enumWindowsPID && windowClassName(hwnd) == "wailsWindow" {
+		enumWindowsFound = hwnd
+		return 0
+	}
+	return 1
 }
 
 func windowClassName(hwnd uintptr) string {

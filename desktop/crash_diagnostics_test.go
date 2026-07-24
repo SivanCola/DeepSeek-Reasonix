@@ -104,3 +104,26 @@ func TestWindowRestoreFailureReportSeparatesTimeoutAndSource(t *testing.T) {
 		t.Fatalf("report = %+v", report)
 	}
 }
+
+func TestWriteWindowRestoreStateCreatesReadableJournal(t *testing.T) {
+	path := windowRestoreStatePath()
+	_ = os.Remove(path)
+	t.Cleanup(func() { _ = os.Remove(path) })
+
+	want := windowRestoreState{
+		SchemaVersion: windowRestoreStateVersion,
+		PID:           os.Getpid(),
+		Source:        "tray",
+		StartedAt:     "2026-07-24T08:00:00Z",
+	}
+	if !writeWindowRestoreState(want) {
+		t.Fatal("writeWindowRestoreState returned false")
+	}
+	got, err := readWindowRestoreState()
+	if err != nil {
+		t.Fatalf("readWindowRestoreState: %v", err)
+	}
+	if got != want {
+		t.Fatalf("journal = %+v, want %+v", got, want)
+	}
+}
