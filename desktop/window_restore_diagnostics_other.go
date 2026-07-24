@@ -1,0 +1,6 @@
+//go:build !windows
+
+package main
+
+func windowRestoreDiagnosticsSupported() bool { return false }
+func windowRestoreOwnerAlive(int) bool        { return false }

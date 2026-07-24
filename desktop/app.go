@@ -226,6 +226,7 @@ type App struct {
 	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
 
 	startupTracker *repair.StartupTracker
+	previousRun    repair.PreviousRunObservation
 	// startupReady records that the window reached domReady. The shutdown path
 	// treats an exit before this point as an incomplete start: it must neither
 	// reset the crash-loop counter nor bless a probationary update, or a build
@@ -456,6 +457,8 @@ func (a *App) startup(ctx context.Context) {
 		a.metrics.Store(newMetricsAggregator(config.MemoryUserDir()))
 		a.recordSettingsMetricsSnapshot(cfg)
 	}
+	a.recordPreviousRunDiagnostics()
+	a.observeIncompleteWindowRestore()
 	a.startMainThreadWatchdog()
 
 	if !config.SafeModeRequested() {
@@ -584,14 +587,11 @@ func (a *App) tabsRestoredSignal() <-chan struct{} {
 }
 
 func (a *App) showMainWindow() {
-	if a.ctx != nil {
-		showFromBackground(a.ctx, a.backgroundMaximised.Swap(false))
-		a.kickDeferredRebuildRetry()
-	}
+	a.showMainWindowFrom("menu")
 }
 
 func (a *App) secondInstanceLaunch() {
-	a.showMainWindow()
+	a.showMainWindowFrom("second_instance")
 }
 
 func (a *App) quitApp() {
@@ -906,6 +906,20 @@ func (a *App) domReady(_ context.Context) {
 		_ = a.startupTracker.MarkReady()
 		tracker := a.startupTracker
 		ctx := a.ctx
+		a.goSafe("startupHeartbeat", func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := tracker.Heartbeat(); err != nil {
+						slog.Debug("desktop: update startup heartbeat", "err", err)
+					}
+				}
+			}
+		})
 		a.goSafe("confirmStartupHealth", func() {
 			timer := time.NewTimer(repair.StartupHealthDelay)
 			defer timer.Stop()

@@ -73,7 +73,7 @@ func TestMainThreadHeartbeatAgeIgnoresWallClockJump(t *testing.T) {
 
 func TestRecordMainThreadHangWritesPendingReportAndMetrics(t *testing.T) {
 	t.Cleanup(func() {
-		os.Remove(pendingCrashPath())
+		removeAllPendingCrashes()
 		os.Remove(filepath.Join(config.MemoryUserDir(), metricsPendingFile))
 	})
 	app := NewApp()
