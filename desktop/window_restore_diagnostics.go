@@ -15,17 +15,22 @@ import (
 const (
 	windowRestoreStateVersion = 1
 	windowRestoreTimeout      = 12 * time.Second
+	windowRestorePollInterval = 100 * time.Millisecond
 )
 
 type windowRestoreState struct {
 	SchemaVersion   int    `json:"schemaVersion"`
 	PID             int    `json:"pid"`
+	AttemptID       uint64 `json:"attemptId,omitempty"`
 	Source          string `json:"source"`
 	StartedAt       string `json:"startedAt"`
 	TimeoutReported bool   `json:"timeoutReported,omitempty"`
 }
 
-var windowRestoreMu sync.Mutex
+var (
+	windowRestoreMu       sync.Mutex
+	windowRestoreSequence atomic.Uint64
+)
 
 func windowRestoreStatePath() string {
 	return filepath.Join(config.MemoryUserDir(), "repair", "window-restore-state.json")
@@ -62,14 +67,18 @@ func (a *App) observeIncompleteWindowRestore() {
 	if !windowRestoreDiagnosticsSupported() {
 		return
 	}
+	windowRestoreMu.Lock()
 	state, err := readWindowRestoreState()
 	if err != nil {
+		windowRestoreMu.Unlock()
 		return
 	}
 	if state.PID > 0 && windowRestoreOwnerAlive(state.PID) {
+		windowRestoreMu.Unlock()
 		return
 	}
 	_ = os.Remove(windowRestoreStatePath())
+	windowRestoreMu.Unlock()
 	if state.TimeoutReported {
 		return
 	}
@@ -88,42 +97,67 @@ func (a *App) showMainWindowFrom(source string) {
 	}
 
 	windowRestoreMu.Lock()
-	defer windowRestoreMu.Unlock()
+	attemptID := windowRestoreSequence.Add(1)
 	state := windowRestoreState{
 		SchemaVersion: windowRestoreStateVersion,
 		PID:           os.Getpid(),
+		AttemptID:     attemptID,
 		Source:        metricBucket(source),
 		StartedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	_ = writeWindowRestoreState(state)
-	done := make(chan struct{})
-	watcherDone := make(chan struct{})
-	var timedOut atomic.Bool
-	go func() {
-		defer close(watcherDone)
-		timer := time.NewTimer(windowRestoreTimeout)
-		defer timer.Stop()
-		select {
-		case <-done:
-			return
-		case <-timer.C:
-			timedOut.Store(true)
-			if writePendingReport(windowRestoreFailureReport("timeout", state.Source, state.StartedAt), true) {
-				state.TimeoutReported = true
-				_ = writeWindowRestoreState(state)
-			}
-			a.recordDiagnosticMetric("desktop_restore", "timeout")
-		}
-	}()
+	windowRestoreMu.Unlock()
 
 	showFromBackground(a.ctx, a.backgroundMaximised.Swap(false))
-	close(done)
-	<-watcherDone
-	_ = os.Remove(windowRestoreStatePath())
-	if !timedOut.Load() {
-		a.recordDiagnosticMetric("desktop_restore", "success")
-	}
+	a.goSafe("windowRestoreMonitor", func() {
+		restored := waitForWindowRestoreConfirmation()
+		a.completeWindowRestoreAttempt(attemptID, state, restored)
+	})
 	a.kickDeferredRebuildRetry()
+}
+
+func waitForWindowRestoreConfirmation() bool {
+	ticker := time.NewTicker(windowRestorePollInterval)
+	defer ticker.Stop()
+	timer := time.NewTimer(windowRestoreTimeout)
+	defer timer.Stop()
+	return awaitWindowRestoreConfirmation(windowRestoreConfirmed, ticker.C, timer.C)
+}
+
+func awaitWindowRestoreConfirmation(confirmed func() bool, ticks, deadline <-chan time.Time) bool {
+	if confirmed() {
+		return true
+	}
+	for {
+		select {
+		case <-ticks:
+			if confirmed() {
+				return true
+			}
+		case <-deadline:
+			return confirmed()
+		}
+	}
+}
+
+func (a *App) completeWindowRestoreAttempt(attemptID uint64, state windowRestoreState, restored bool) {
+	metric := "success"
+	windowRestoreMu.Lock()
+	if windowRestoreSequence.Load() != attemptID {
+		windowRestoreMu.Unlock()
+		return
+	}
+	if restored {
+		_ = os.Remove(windowRestoreStatePath())
+	} else {
+		metric = "timeout"
+		if writePendingReport(windowRestoreFailureReport("timeout", state.Source, state.StartedAt), true) {
+			state.TimeoutReported = true
+			_ = writeWindowRestoreState(state)
+		}
+	}
+	windowRestoreMu.Unlock()
+	a.recordDiagnosticMetric("desktop_restore", metric)
 }
 
 func windowRestoreFailureReport(kind, source, startedAt string) crashReport {

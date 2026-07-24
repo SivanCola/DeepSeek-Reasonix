@@ -2,18 +2,23 @@
 
 package main
 
-import "golang.org/x/sys/windows"
+var (
+	isWindowVisibleProc = user32DLL.NewProc("IsWindowVisible")
+	isIconicProc        = user32DLL.NewProc("IsIconic")
+)
 
 func windowRestoreDiagnosticsSupported() bool { return true }
 
 func windowRestoreOwnerAlive(pid int) bool {
-	if pid <= 0 {
+	return desktopProcessAlive(pid)
+}
+
+func windowRestoreConfirmed() bool {
+	hwnd := currentProcessTopLevelWindow()
+	if hwnd == 0 {
 		return false
 	}
-	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if err != nil {
-		return false
-	}
-	_ = windows.CloseHandle(handle)
-	return true
+	visible, _, _ := isWindowVisibleProc.Call(hwnd)
+	iconic, _, _ := isIconicProc.Call(hwnd)
+	return visible != 0 && iconic == 0
 }

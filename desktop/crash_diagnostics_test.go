@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"reasonix/internal/repair"
 )
@@ -48,18 +50,18 @@ func TestPreviousRunReportUsesOnlyBoundedLifecycleContext(t *testing.T) {
 }
 
 func TestCapturePreviousFatalCrashQueuesAndRemovesRawDump(t *testing.T) {
-	removeAllPendingCrashes()
-	t.Cleanup(removeAllPendingCrashes)
-	t.Cleanup(func() { _ = os.Remove(fatalCrashPath()) })
+	resetFatalCrashArtifacts(t)
+	const crashedPID = 424242
 	raw := "fatal error: concurrent map writes\n\ngoroutine 1 [running]:\nmain.run()\n\t/home/alice/project/main.go:12\n"
-	if err := os.MkdirAll(filepath.Dir(fatalCrashPath()), 0o700); err != nil {
+	path := fatalCrashPathForPID(crashedPID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fatalCrashPath(), []byte(raw), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	capturePreviousFatalCrash()
-	if _, err := os.Stat(fatalCrashPath()); !os.IsNotExist(err) {
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("raw fatal dump was not removed: %v", err)
 	}
 	report, ok := readPending(t)
@@ -82,20 +84,159 @@ func TestSanitizeFatalRuntimeDumpRemovesPanicValue(t *testing.T) {
 }
 
 func TestCapturePreviousFatalCrashSkipsRuntimeDuplicateOfStructuredPanic(t *testing.T) {
-	removeAllPendingCrashes()
-	t.Cleanup(removeAllPendingCrashes)
-	t.Cleanup(func() { _ = os.Remove(fatalCrashPath()) })
-	if err := os.MkdirAll(filepath.Dir(fatalCrashPath()), 0o700); err != nil {
+	resetFatalCrashArtifacts(t)
+	const crashedPID = 424243
+	path := fatalCrashPathForPID(crashedPID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(fatalCrashPath(), []byte("panic: duplicate\n\ngoroutine 1 [running]:\nmain.run()\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("panic: duplicate\n\ngoroutine 1 [running]:\nmain.run()\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	markFatalCrashCovered()
+	markFatalCrashCoveredForPID(crashedPID)
 	capturePreviousFatalCrash()
 	if _, ok := readPending(t); ok {
 		t.Fatal("runtime duplicate was queued despite structured panic marker")
 	}
+}
+
+func TestCapturePreviousFatalCrashDoesNotTouchLiveOwner(t *testing.T) {
+	resetFatalCrashArtifacts(t)
+	const livePID = 424244
+	path := fatalCrashPathForPID(livePID)
+	raw := []byte("fatal error: still being written\n\ngoroutine 1 [running]:\n")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldProcessAlive := fatalCrashProcessAlive
+	fatalCrashProcessAlive = func(pid int) bool { return pid == livePID }
+	t.Cleanup(func() { fatalCrashProcessAlive = oldProcessAlive })
+
+	capturePreviousFatalCrash()
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("live owner's fatal file was removed: %v", err)
+	}
+	if string(got) != string(raw) {
+		t.Fatalf("live owner's fatal file changed: got %q want %q", got, raw)
+	}
+	if _, ok := readPending(t); ok {
+		t.Fatal("live owner's partial fatal output was queued")
+	}
+}
+
+func TestCapturePreviousFatalCrashKeepsEmptyLegacyFile(t *testing.T) {
+	resetFatalCrashArtifacts(t)
+	if err := os.MkdirAll(filepath.Dir(legacyFatalCrashPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyFatalCrashPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	capturePreviousFatalCrash()
+
+	if _, err := os.Stat(legacyFatalCrashPath()); err != nil {
+		t.Fatalf("empty legacy fatal file may belong to a live older process: %v", err)
+	}
+}
+
+func TestCapturePreviousFatalCrashMigratesLegacyDump(t *testing.T) {
+	resetFatalCrashArtifacts(t)
+	raw := "fatal error: legacy crash\n\ngoroutine 1 [running]:\nmain.run()\n\t/home/alice/project/main.go:12\n"
+	if err := os.MkdirAll(filepath.Dir(legacyFatalCrashPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyFatalCrashPath(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	capturePreviousFatalCrash()
+
+	if _, err := os.Stat(legacyFatalCrashPath()); !os.IsNotExist(err) {
+		t.Fatalf("captured legacy fatal dump was not removed: %v", err)
+	}
+	report, ok := readPending(t)
+	if !ok || report.Label != "go.fatal" || report.Source != "go.runtime" {
+		t.Fatalf("legacy fatal dump was not migrated: report=%+v ok=%v", report, ok)
+	}
+}
+
+func TestAwaitWindowRestoreRequiresNativeConfirmation(t *testing.T) {
+	ticks := make(chan time.Time)
+	deadline := make(chan time.Time, 1)
+	deadline <- time.Now()
+
+	if awaitWindowRestoreConfirmation(func() bool { return false }, ticks, deadline) {
+		t.Fatal("an enqueued show request without native confirmation was treated as restored")
+	}
+}
+
+func TestAwaitWindowRestoreAcceptsConfirmationAfterTick(t *testing.T) {
+	ticks := make(chan time.Time, 1)
+	deadline := make(chan time.Time)
+	var confirmed atomic.Bool
+	result := make(chan bool, 1)
+	go func() {
+		result <- awaitWindowRestoreConfirmation(confirmed.Load, ticks, deadline)
+	}()
+
+	confirmed.Store(true)
+	ticks <- time.Now()
+	if !<-result {
+		t.Fatal("native window confirmation was not accepted")
+	}
+}
+
+func TestSupersededWindowRestoreDoesNotRemoveLatestJournal(t *testing.T) {
+	path := windowRestoreStatePath()
+	_ = os.Remove(path)
+	t.Cleanup(func() { _ = os.Remove(path) })
+	oldSequence := windowRestoreSequence.Load()
+	t.Cleanup(func() { windowRestoreSequence.Store(oldSequence) })
+
+	latest := windowRestoreState{
+		SchemaVersion: windowRestoreStateVersion,
+		PID:           os.Getpid(),
+		AttemptID:     2,
+		Source:        "tray",
+		StartedAt:     "2026-07-24T08:01:00Z",
+	}
+	if !writeWindowRestoreState(latest) {
+		t.Fatal("write latest window restore state")
+	}
+	windowRestoreSequence.Store(latest.AttemptID)
+
+	NewApp().completeWindowRestoreAttempt(1, windowRestoreState{AttemptID: 1}, true)
+
+	got, err := readWindowRestoreState()
+	if err != nil {
+		t.Fatalf("latest journal was removed by superseded attempt: %v", err)
+	}
+	if got != latest {
+		t.Fatalf("latest journal changed: got %+v want %+v", got, latest)
+	}
+}
+
+func resetFatalCrashArtifacts(t *testing.T) {
+	t.Helper()
+	oldProcessAlive := fatalCrashProcessAlive
+	fatalCrashProcessAlive = func(int) bool { return false }
+	removeAllPendingCrashes()
+	_ = os.Remove(legacyFatalCrashPath())
+	_ = os.Remove(legacyFatalCrashCoveredPath())
+	_ = os.RemoveAll(fatalCrashDir())
+	t.Cleanup(func() {
+		removeAllPendingCrashes()
+		_ = os.Remove(legacyFatalCrashPath())
+		_ = os.Remove(legacyFatalCrashCoveredPath())
+		_ = os.RemoveAll(fatalCrashDir())
+		fatalCrashProcessAlive = oldProcessAlive
+	})
 }
 
 func TestWindowRestoreFailureReportSeparatesTimeoutAndSource(t *testing.T) {

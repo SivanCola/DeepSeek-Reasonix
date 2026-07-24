@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,31 +13,108 @@ import (
 )
 
 const (
-	fatalCrashFile        = "crash-fatal.log"
-	fatalCrashCoveredFile = "crash-fatal-covered"
+	fatalCrashDirName           = "crash-fatal"
+	fatalCrashLogSuffix         = ".log"
+	fatalCrashCoveredSuffix     = ".covered"
+	legacyFatalCrashFile        = "crash-fatal.log"
+	legacyFatalCrashCoveredFile = "crash-fatal-covered"
 )
 
+var fatalCrashProcessAlive = desktopProcessAlive
+
+func fatalCrashDir() string {
+	return filepath.Join(config.MemoryUserDir(), fatalCrashDirName)
+}
+
 func fatalCrashPath() string {
-	return filepath.Join(config.MemoryUserDir(), fatalCrashFile)
+	return fatalCrashPathForPID(os.Getpid())
 }
 
 func fatalCrashCoveredPath() string {
-	return filepath.Join(config.MemoryUserDir(), fatalCrashCoveredFile)
+	return fatalCrashCoveredPathForPID(os.Getpid())
+}
+
+func fatalCrashPathForPID(pid int) string {
+	return filepath.Join(fatalCrashDir(), strconv.Itoa(pid)+fatalCrashLogSuffix)
+}
+
+func fatalCrashCoveredPathForPID(pid int) string {
+	return filepath.Join(fatalCrashDir(), strconv.Itoa(pid)+fatalCrashCoveredSuffix)
+}
+
+func legacyFatalCrashPath() string {
+	return filepath.Join(config.MemoryUserDir(), legacyFatalCrashFile)
+}
+
+func legacyFatalCrashCoveredPath() string {
+	return filepath.Join(config.MemoryUserDir(), legacyFatalCrashCoveredFile)
 }
 
 func markFatalCrashCovered() {
-	_ = os.WriteFile(fatalCrashCoveredPath(), []byte("structured\n"), 0o600)
+	markFatalCrashCoveredForPID(os.Getpid())
 }
 
-// capturePreviousFatalCrash converts runtime.SetCrashOutput's previous-process
-// dump into the normal scrubbed queue before a new dump file is installed.
+func markFatalCrashCoveredForPID(pid int) {
+	path := fatalCrashCoveredPathForPID(pid)
+	if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
+		_ = os.WriteFile(path, []byte("structured\n"), 0o600)
+	}
+}
+
+// capturePreviousFatalCrash converts runtime.SetCrashOutput dumps from dead
+// processes into the normal scrubbed queue. Per-PID files keep a routine second
+// launch from truncating or unlinking the running primary process's dump.
 func capturePreviousFatalCrash() {
-	path := fatalCrashPath()
-	if _, err := os.Stat(fatalCrashCoveredPath()); err == nil {
-		_ = os.Remove(fatalCrashCoveredPath())
-		_ = os.Remove(path)
+	// Preserve compatibility with the single-file format used by older builds.
+	// An empty legacy file may still be owned by a running older process, so it
+	// must be left untouched until it contains a completed crash dump.
+	captureFatalCrashFile(legacyFatalCrashPath(), legacyFatalCrashCoveredPath(), false)
+
+	entries, err := os.ReadDir(fatalCrashDir())
+	if err != nil {
 		return
 	}
+	for _, entry := range entries {
+		pid, ok := fatalCrashPID(entry.Name())
+		if !ok || pid == os.Getpid() || fatalCrashProcessAlive(pid) {
+			continue
+		}
+		captureFatalCrashFile(
+			filepath.Join(fatalCrashDir(), entry.Name()),
+			fatalCrashCoveredPathForPID(pid),
+			true,
+		)
+	}
+	for _, entry := range entries {
+		pid, ok := fatalCrashCoveredPID(entry.Name())
+		if !ok || pid == os.Getpid() || fatalCrashProcessAlive(pid) {
+			continue
+		}
+		if _, err := os.Stat(fatalCrashPathForPID(pid)); os.IsNotExist(err) {
+			_ = os.Remove(filepath.Join(fatalCrashDir(), entry.Name()))
+		}
+	}
+	// Best effort: succeeds only when no live/current process artifacts remain.
+	_ = os.Remove(fatalCrashDir())
+}
+
+func fatalCrashPID(name string) (int, bool) {
+	return fatalCrashPIDWithSuffix(name, fatalCrashLogSuffix)
+}
+
+func fatalCrashCoveredPID(name string) (int, bool) {
+	return fatalCrashPIDWithSuffix(name, fatalCrashCoveredSuffix)
+}
+
+func fatalCrashPIDWithSuffix(name, suffix string) (int, bool) {
+	if !strings.HasSuffix(name, suffix) {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSuffix(name, suffix))
+	return pid, err == nil && pid > 0
+}
+
+func captureFatalCrashFile(path, coveredPath string, removeEmpty bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -48,6 +126,14 @@ func capturePreviousFatalCrash() {
 	raw, readErr := io.ReadAll(io.LimitReader(f, maxCrashStackBytes+1))
 	_ = f.Close()
 	if readErr != nil || len(strings.TrimSpace(string(raw))) == 0 {
+		if removeEmpty {
+			_ = os.Remove(coveredPath)
+			_ = os.Remove(path)
+		}
+		return
+	}
+	if _, err := os.Stat(coveredPath); err == nil {
+		_ = os.Remove(coveredPath)
 		_ = os.Remove(path)
 		return
 	}
@@ -64,6 +150,7 @@ func capturePreviousFatalCrash() {
 	report.OccurredAt = occurredAt.Format(time.RFC3339)
 	report.Message = sanitizeCrashText("[go.runtime.fatal]\n\n"+stack, maxCrashDetailBytes)
 	if writePendingReport(report, true) {
+		_ = os.Remove(coveredPath)
 		_ = os.Remove(path)
 	}
 }
