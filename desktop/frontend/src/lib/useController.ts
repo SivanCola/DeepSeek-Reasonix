@@ -187,7 +187,7 @@ interface State {
   sessionTokens: number;
   sessionCost: number;
   sessionCurrency: string;
-  retry?: { attempt: number; max: number };
+  retry?: { attempt: number; max: number; observedAt: number };
   seq: number;
   sessionGen: number;
   // Monotonic count of usage events from ANY source (executor, subagent,
@@ -272,6 +272,14 @@ export function runtimeSnapshotPredatesPrompt(
   if (!state || (!state.approval && !state.ask)) return false;
   if (snapshotAt === undefined || state.promptArrivedAt === undefined) return false;
   return snapshotAt <= state.promptArrivedAt;
+}
+
+function runtimeSnapshotPredatesRetry(
+  state: Pick<State, "retry"> | undefined,
+  snapshotAt: number | undefined,
+): boolean {
+  if (snapshotAt === undefined || state?.retry?.observedAt === undefined) return false;
+  return snapshotAt <= state.retry.observedAt;
 }
 
 function updatesContextGauge(usage?: WireUsage): boolean {
@@ -779,13 +787,18 @@ function applyEvent(s: State, e: WireEvent): State {
   if (e.kind === "retrying") {
     // Retrying is emitted synchronously from inside the foreground provider
     // request, immediately before its cancellation-aware backoff. Treat it as
-    // authoritative proof that the turn is still active. An older idle
-    // ListTabs snapshot can otherwise arrive after turn_started, clear
-    // `running`, and leave the composer showing "retrying (n/m)" without its
-    // Stop button (or Escape cancellation) until all retries are exhausted.
+    // authoritative proof that the turn is still active. An idle ListTabs
+    // snapshot fetched before this event can otherwise clear `running`,
+    // regardless of which one reaches the reducer first, and leave the
+    // composer showing "retrying (n/m)" without its Stop button (or Escape
+    // cancellation) until all retries are exhausted.
     return {
       ...s,
-      retry: { attempt: e.retryAttempt ?? 0, max: e.retryMax ?? 0 },
+      retry: {
+        attempt: e.retryAttempt ?? 0,
+        max: e.retryMax ?? 0,
+        observedAt: promptEventClock(),
+      },
       running: true,
       turnActive: true,
       cancellable: true,
@@ -1212,13 +1225,19 @@ export function reducer(s: State, a: Action): State {
       const backgroundJobs = Math.max(0, a.backgroundJobs ?? s.backgroundJobs ?? 0);
       const cancelRequested = Boolean(a.cancelRequested);
       const foregroundRunning = foregroundRunningFromRuntimeMeta({ running: a.running, pendingPrompt, backgroundJobs, cancellable: a.cancellable });
+      // A retry event is newer evidence of foreground activity than an idle
+      // snapshot whose fetch started earlier. Keep the turn cancellable until
+      // a snapshot started after the retry confirms that it is actually idle.
+      if (!foregroundRunning && runtimeSnapshotPredatesRetry(s, a.snapshotAt)) return s;
       const cancellable = foregroundRunning;
+      const clearsRetry = !foregroundRunning && s.retry !== undefined;
       if (
         foregroundRunning === s.running &&
         pendingPrompt === s.pendingPrompt &&
         backgroundJobs === s.backgroundJobs &&
         cancelRequested === s.cancelRequested &&
-        cancellable === s.cancellable
+        cancellable === s.cancellable &&
+        !clearsRetry
       ) return s;
       if (foregroundRunning) {
         return {
@@ -1251,6 +1270,7 @@ export function reducer(s: State, a: Action): State {
         currentAssistant: undefined,
         approval: undefined,
         ask: undefined,
+        retry: undefined,
       });
     }
     case "meta": {

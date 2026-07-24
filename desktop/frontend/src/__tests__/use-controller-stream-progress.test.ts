@@ -7,9 +7,10 @@
 //    panel keeps refreshing during sub-agent runs.
 // 3. A mid-turn context snapshot reporting used=0 does not collapse a gauge
 //    that already shows real usage.
-// 4. A retry event repairs a stale idle snapshot so the turn remains stoppable.
+// 4. A retry event repairs stale idle snapshots in either delivery order so
+//    the turn remains stoppable.
 
-import { initialState, reducer } from "../lib/useController";
+import { initialState, promptEventClock, reducer } from "../lib/useController";
 import type { WireEvent } from "../lib/types";
 
 let passed = 0;
@@ -147,9 +148,38 @@ function ev(s: typeof initialState, e: WireEvent) {
   eq(s.cancellable, true, "retry event keeps Stop and Escape cancellation available");
   eq(s.turnStartAt > 0, true, "retry event restores timing for a reattached turn");
 
-  s = ev(s, { kind: "turn_done" } as WireEvent);
-  eq(s.running, false, "turn_done still ends the repaired turn");
-  eq(s.retry, undefined, "turn_done clears the retry indicator");
+  const repaired = s;
+  const completed = ev(repaired, { kind: "turn_done" } as WireEvent);
+  eq(completed.running, false, "turn_done still ends the repaired turn");
+  eq(completed.retry, undefined, "turn_done clears the retry indicator");
+
+  const staleSnapshotAt = promptEventClock();
+  s = ev(repaired, { kind: "retrying", retryAttempt: 4, retryMax: 10 } as WireEvent);
+  s = reducer(s, {
+    type: "backend_status",
+    running: false,
+    pendingPrompt: false,
+    backgroundJobs: 0,
+    cancelRequested: false,
+    cancellable: false,
+    snapshotAt: staleSnapshotAt,
+  });
+  eq(s.running, true, "idle snapshot fetched before retry cannot hide Stop when it returns later");
+  eq(s.turnActive, true, "idle snapshot fetched before retry cannot end the active turn");
+  eq(s.cancellable, true, "idle snapshot fetched before retry preserves cancellation");
+  eq(s.retry?.attempt, 4, "stale idle snapshot preserves the newer retry status");
+
+  s = reducer(s, {
+    type: "backend_status",
+    running: false,
+    pendingPrompt: false,
+    backgroundJobs: 0,
+    cancelRequested: false,
+    cancellable: false,
+    snapshotAt: Number.MAX_SAFE_INTEGER,
+  });
+  eq(s.running, false, "fresh idle snapshot can reconcile a missed turn_done");
+  eq(s.retry, undefined, "fresh idle snapshot clears the retry indicator");
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
