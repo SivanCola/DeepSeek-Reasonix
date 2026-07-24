@@ -135,6 +135,7 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 		`"$requestBaseUrl/SignedArtifact"`,
 		`$status.status -ne "Completed"`,
 		`OutputArtifactDirectory must resolve inside GITHUB_WORKSPACE`,
+		`[string]$ApiUrl = "https://app.signpath.io/api"`,
 		`Expand-Archive`,
 	} {
 		if !strings.Contains(completer, want) {

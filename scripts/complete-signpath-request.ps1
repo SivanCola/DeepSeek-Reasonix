@@ -16,9 +16,8 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$OutputArtifactDirectory,
 
-    [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
-    [string]$ApiUrl,
+    [string]$ApiUrl = "https://app.signpath.io/api",
 
     [ValidateRange(30, 7200)]
     [int]$TimeoutSeconds = 1800,

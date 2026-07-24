@@ -309,7 +309,6 @@ jobs:
             -SigningRequestId "${{ steps.submit-windows-payload.outputs.signing-request-id }}" `
             -ExpectedSigningPolicySlug "${{ steps.ver.outputs.channel == 'canary' && 'test-signing-ci-approval' || 'release-signing' }}" `
             -OutputArtifactDirectory "signed-payload" `
-            -ApiUrl "${{ steps.submit-windows-payload.outputs.signpath-api-url }}" `
             -TimeoutSeconds 1800
 
       - name: Rebuild Windows packages from signed payload
@@ -356,7 +355,6 @@ jobs:
             -SigningRequestId "${{ steps.submit-windows-installer.outputs.signing-request-id }}" `
             -ExpectedSigningPolicySlug "${{ steps.ver.outputs.channel == 'canary' && 'test-signing-ci-approval' || 'release-signing' }}" `
             -OutputArtifactDirectory "signed-installer" `
-            -ApiUrl "${{ steps.submit-windows-installer.outputs.signpath-api-url }}" `
             -TimeoutSeconds 1800
 
       - name: Replace installer with signed build

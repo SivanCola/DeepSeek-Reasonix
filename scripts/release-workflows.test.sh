@@ -28,6 +28,7 @@ grep -Eq "signing-policy-slug:.*test-signing-ci-approval.*release-signing" \
 	"$repo_root/.github/workflows/release-desktop.yml"
 [ "$(grep -Ec 'wait-for-completion: false' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
 [ "$(grep -Ec 'complete-signpath-request\.ps1' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
+[ "$(grep -Ec 'signpath-api-url' "$repo_root/.github/workflows/release-desktop.yml")" = "0" ]
 grep -Eq 'steps\.submit-windows-payload\.outputs\.signing-request-id' \
 	"$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq 'steps\.submit-windows-installer\.outputs\.signing-request-id' \
