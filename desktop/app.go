@@ -66,19 +66,22 @@ const eventChannel = "agent:event"
 const singleInstanceIDPrefix = "com.reasonix.desktop"
 
 // singleInstanceID is used by Wails to route a second desktop launch back to the
-// running instance. It is stable for a given binary path, while allowing a dev
-// build and an installed release at different paths to run side by side.
+// process that owns the same Reasonix data home. Basing the identity on the
+// executable path let installed, portable, stable, and canary binaries write the
+// same sessions concurrently. Explicit REASONIX_HOME isolation still produces
+// an independent instance; REASONIX_DEV continues to bypass the lock entirely.
 func singleInstanceID() string {
-	abs, err := os.Executable()
-	if err != nil {
+	root := strings.TrimSpace(config.ReasonixHomeDir())
+	if root == "" {
 		return singleInstanceIDPrefix
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	} else if fallback, err := filepath.Abs(abs); err == nil {
-		abs = fallback
+	// Reuse the lease path canonicalizer so a missing home below a symlink or
+	// junction still hashes to the same physical data directory.
+	if marker := agent.CanonicalSessionPath(filepath.Join(root, ".reasonix-home.identity")); marker != "" {
+		root = filepath.Dir(marker)
 	}
-	sum := sha256.Sum256([]byte(abs))
+	root = filepath.Clean(root)
+	sum := sha256.Sum256([]byte(root))
 	return singleInstanceIDPrefix + "." + hex.EncodeToString(sum[:8])
 }
 
