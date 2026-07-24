@@ -90,10 +90,19 @@ func TestDeferredStartupReusesSameProcessTabLease(t *testing.T) {
 }
 
 func TestStartingRuntimePlaceholderIsNotOverwrittenByDuplicateTab(t *testing.T) {
+	isolateDesktopUserDirs(t)
 	app := NewApp()
 	path := filepath.Join(t.TempDir(), "same-session.jsonl")
-	first := &WorkspaceTab{ID: "first", SessionPath: path}
-	second := &WorkspaceTab{ID: "second", SessionPath: path}
+	first := &WorkspaceTab{
+		ID:          "first",
+		SessionPath: path,
+		sink:        &tabEventSink{tabID: "first", app: app},
+	}
+	second := &WorkspaceTab{
+		ID:          "second",
+		SessionPath: path,
+		sink:        &tabEventSink{tabID: "second", app: app},
+	}
 	app.tabs[first.ID] = first
 	app.tabs[second.ID] = second
 
@@ -114,6 +123,51 @@ func TestStartingRuntimePlaceholderIsNotOverwrittenByDuplicateTab(t *testing.T) 
 	}
 	if secondRuntimeID != "" {
 		t.Fatalf("duplicate tab created private runtime %q before claim", secondRuntimeID)
+	}
+
+	// A starting placeholder is not an attachable runtime: its controller and
+	// lease are still private to the owner build. Attaching it would remove the
+	// owner tab and cause both candidate builds to retire.
+	if app.attachExistingSessionRuntime(second, path, context.Background()) {
+		t.Fatal("starting runtime attached before its controller was published")
+	}
+	if app.tabs[first.ID] != first || app.tabs[second.ID] != second {
+		t.Fatal("starting runtime attach removed one of the restoring tabs")
+	}
+	if first.Ctrl != nil || second.Ctrl != nil {
+		t.Fatal("starting runtime attach published a controller")
+	}
+
+	// Once the owner publishes its controller and ready phase, the same claim
+	// attaches that runtime and retires only the duplicate visible tab.
+	ctrl := control.New(control.Options{
+		SessionDir:  filepath.Dir(path),
+		SessionPath: path,
+		Label:       "ready",
+	})
+	t.Cleanup(ctrl.Close)
+	app.mu.Lock()
+	first.Ctrl = ctrl
+	first.Ready = true
+	app.advanceSessionRuntimeEpochLocked(first)
+	app.mu.Unlock()
+	if !app.claimSessionRuntime(second, path, context.Background()) {
+		t.Fatal("ready runtime was not attached by the duplicate claim")
+	}
+	app.mu.RLock()
+	readyOwner := app.runtimeBySessionKey[key]
+	firstStillVisible := app.tabs[first.ID]
+	secondStillVisible := app.tabs[second.ID]
+	view := app.sessionRuntimeViewLocked(second)
+	app.mu.RUnlock()
+	if readyOwner == nil || readyOwner.Owner != second || second.Ctrl != ctrl {
+		t.Fatalf("ready runtime owner/controller = %#v/%p, want second/%p", readyOwner, second.Ctrl, ctrl)
+	}
+	if firstStillVisible != nil || secondStillVisible != second {
+		t.Fatalf("visible tabs after attach = first %#v second %#v", firstStillVisible, secondStillVisible)
+	}
+	if view.Phase != sessionRuntimeReady {
+		t.Fatalf("attached runtime phase = %q, want ready", view.Phase)
 	}
 }
 

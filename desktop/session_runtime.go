@@ -394,12 +394,24 @@ func (a *App) claimSessionRuntime(tab *WorkspaceTab, path string, ctx context.Co
 		}
 		switch {
 		case rt == nil:
+			// Detached runtimes created before the admission registry was
+			// populated are a compatibility edge. Attach them before claiming
+			// the key so applyRuntimeTab can publish one authoritative runtime
+			// instead of leaving behind an unused placeholder.
+			if detached := a.detachedSessions[key]; detached != nil && detached.Ctrl != nil {
+				a.mu.Unlock()
+				return a.attachExistingSessionRuntime(tab, path, a.ctx)
+			}
 			a.bindSessionRuntimeKeyLocked(tab, path)
 			a.mu.Unlock()
 			return false
 		case rt.Owner == tab:
 			a.mu.Unlock()
-			return false
+			// The target may own the starting placeholder while a legacy
+			// visible/detached runtime for the same session predates the
+			// registry. Let attachExistingSessionRuntime adopt that usable
+			// controller; otherwise this remains the owner build.
+			return a.attachExistingSessionRuntime(tab, path, a.ctx)
 		case rt.Phase == sessionRuntimeStarting && rt.readyCh != nil:
 			wait := rt.readyCh
 			a.mu.Unlock()

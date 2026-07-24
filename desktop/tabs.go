@@ -752,12 +752,20 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context
 	if app != nil {
 		key := sessionRuntimeKey(path)
 		rt := app.runtimeForTabLocked(source)
+		targetRuntime := app.runtimeForTabLocked(target)
+		if rt == nil {
+			rt = targetRuntime
+		}
 		if rt == nil {
 			rt = app.newSessionRuntimeLocked(source, key)
-			if source.Ctrl != nil && source.Ready {
-				rt.Phase = sessionRuntimeReady
-				closeRuntimeReadyChannelLocked(rt)
-			}
+		} else if targetRuntime != nil && targetRuntime != rt {
+			app.removeSessionRuntimeMappingsLocked(targetRuntime)
+			target.runtimeID = ""
+		}
+		if source.Ctrl != nil && source.Ready {
+			rt.Phase = sessionRuntimeReady
+			rt.Issue = nil
+			closeRuntimeReadyChannelLocked(rt)
 		}
 		rt.Owner = target
 		if rt.Key != "" && rt.Key != key && app.runtimeBySessionKey[rt.Key] == rt {
@@ -787,6 +795,29 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 	if rt := a.runtimeBySessionKey[key]; rt != nil && !a.runtimeOwnerLiveLocked(rt) {
 		a.removeSessionRuntimeMappingsLocked(rt)
 	}
+	registered := a.runtimeBySessionKey[key]
+	if registered != nil && registered.Phase == sessionRuntimeStarting && registered.Owner != tab {
+		// A starting runtime owns only an admission placeholder; its controller,
+		// lease, and sink have not been published yet. Moving that tab would
+		// supersede the owner build while the attaching build closes its own
+		// candidate, leaving the session permanently starting with no controller.
+		// claimSessionRuntime waits on readyCh and retries the attach after the
+		// owner publishes a terminal phase. The owner itself may still adopt a
+		// usable legacy runtime that predates the registry.
+		a.mu.Unlock()
+		return false
+	}
+	attachable := func(source *WorkspaceTab) bool {
+		if source == nil || source.Ctrl == nil {
+			return false
+		}
+		if rt := a.runtimeForTabLocked(source); rt != nil {
+			return rt.Phase == sessionRuntimeReady
+		}
+		// Compatibility for visible/detached runtimes constructed before the
+		// process-local registry existed.
+		return source.Ready
+	}
 	detached := a.detachedSessions[key]
 	if detached == nil {
 		if rt := a.runtimeBySessionKey[key]; rt != nil && rt.Owner != nil && rt.Owner != tab {
@@ -799,6 +830,10 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 		}
 	}
 	if detached != nil {
+		if !attachable(detached) {
+			a.mu.Unlock()
+			return false
+		}
 		delete(a.detachedSessions, key)
 		applyRuntimeTab(tab, detached, path, wailsCtx, a)
 		if current := a.tabs[tab.ID]; current == tab {
@@ -829,6 +864,10 @@ func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wails
 		}
 	}
 	if source == nil {
+		a.mu.Unlock()
+		return false
+	}
+	if !attachable(source) {
 		a.mu.Unlock()
 		return false
 	}
@@ -3540,12 +3579,6 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 		}
 		// Write/update scope/session meta.
 		if path != "" {
-			if a.attachExistingSessionRuntime(tab, path, wailsCtx) {
-				ctrl.Close()
-				a.releaseSharedHost(rootKey)
-				a.emitReady(wailsCtx, tab.ID)
-				return
-			}
 			if a.claimSessionRuntime(tab, path, buildCtx) {
 				ctrl.Close()
 				a.releaseSharedHost(rootKey)
