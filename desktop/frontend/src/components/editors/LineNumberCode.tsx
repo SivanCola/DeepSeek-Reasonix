@@ -430,6 +430,8 @@ export default function LineNumberCode({
         return t("workspace.searchRegexSourceTooLarge");
       case "zero_length_unsupported":
         return t("workspace.searchRegexZeroLength");
+      case "multiline_unsupported":
+        return t("workspace.searchRegexMultiline");
       case "timeout":
         return t("workspace.searchRegexTimeout");
       case "unavailable":

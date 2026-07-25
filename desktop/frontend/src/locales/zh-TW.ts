@@ -127,6 +127,7 @@ export const zhTW: Record<DictKey, string> = {
   "workspace.searchRegexTooLong": "正規表示式過長",
   "workspace.searchRegexSourceTooLarge": "檔案過大，無法使用正規表示式搜尋",
   "workspace.searchRegexZeroLength": "暫不支援零長度符合",
+  "workspace.searchRegexMultiline": "暫不支援跨行符合",
   "workspace.searchRegexTimeout": "正規表示式執行逾時",
   "workspace.searchRegexUnavailable": "正規表示式搜尋暫不可用",
   "workspace.searchClose": "關閉尋找",

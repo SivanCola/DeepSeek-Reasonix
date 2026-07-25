@@ -93,6 +93,21 @@ ok(
   regexMatches.ok && regexMatches.result.matches.map((match) => match.start).join(",") === "0,5",
   "regex mode returns JavaScript-compatible UTF-16 offsets",
 );
+const lineAnchoredRegex = findRegexCodeMatches(regexRequest({
+  source: "foo\nfoo",
+  pattern: "^foo",
+}));
+ok(
+  lineAnchoredRegex.ok
+    && lineAnchoredRegex.result.matches.length === 2
+    && lineAnchoredRegex.result.matches.map((match) => match.lineIndex).join(",") === "0,1",
+  "regex anchors continue to address individual source lines",
+);
+const multilineRegex = findRegexCodeMatches(regexRequest({
+  source: "foo\nbar",
+  pattern: String.raw`foo\nbar`,
+}));
+ok(!multilineRegex.ok && multilineRegex.error === "multiline_unsupported", "reports unsupported multiline regex matches");
 const regexLiteralDifference = findRegexCodeMatches(regexRequest({
   source: "a+b aab aaab",
   pattern: "a+b",
@@ -178,6 +193,28 @@ ok(timedOutWorker.terminated, "hard timeout terminates a stuck regex worker");
 ok(
   timeoutResponse != null && !timeoutResponse.ok && timeoutResponse.error === "timeout",
   "hard timeout reports a bounded search failure",
+);
+
+let creationTimeoutCallback: (() => void) | null = null;
+let creationTimeoutResponse: RegexSearchResponse | null = null;
+startRegexSearch(
+  regexRequest({ requestId: 5 }),
+  { onResponse: (response) => { creationTimeoutResponse = response; } },
+  {
+    createWorker: () => new Promise<RegexSearchWorker>(() => {}),
+    setTimer: (callback) => {
+      creationTimeoutCallback = callback;
+      return 5;
+    },
+    clearTimer: () => {},
+  },
+);
+creationTimeoutCallback?.();
+ok(
+  creationTimeoutResponse != null
+    && !creationTimeoutResponse.ok
+    && creationTimeoutResponse.error === "timeout",
+  "hard timeout covers a worker that never finishes initializing",
 );
 
 const staleWorker = new FakeRegexWorker();

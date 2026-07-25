@@ -203,6 +203,7 @@ export const en = {
   "workspace.searchRegexTooLong": "Expression too long",
   "workspace.searchRegexSourceTooLarge": "File too large for regex",
   "workspace.searchRegexZeroLength": "Zero-length matches unsupported",
+  "workspace.searchRegexMultiline": "Multiline matches unsupported",
   "workspace.searchRegexTimeout": "Expression timed out",
   "workspace.searchRegexUnavailable": "Regex search unavailable",
   "workspace.searchClose": "Close search",

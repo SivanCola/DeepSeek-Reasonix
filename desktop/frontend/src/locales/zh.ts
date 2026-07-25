@@ -204,6 +204,7 @@ export const zh: Record<DictKey, string> = {
   "workspace.searchRegexTooLong": "正则表达式过长",
   "workspace.searchRegexSourceTooLarge": "文件过大，无法使用正则搜索",
   "workspace.searchRegexZeroLength": "暂不支持零长度匹配",
+  "workspace.searchRegexMultiline": "暂不支持跨行匹配",
   "workspace.searchRegexTimeout": "正则表达式执行超时",
   "workspace.searchRegexUnavailable": "正则搜索暂不可用",
   "workspace.searchClose": "关闭查找",

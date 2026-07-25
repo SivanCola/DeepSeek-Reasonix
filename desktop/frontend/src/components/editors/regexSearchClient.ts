@@ -51,6 +51,14 @@ export function startRegexSearch(
     callbacks.onResponse(response);
   };
 
+  // Start the deadline before the async module/Worker creation. A stalled
+  // worker chunk must not leave the editor in a permanent pending state.
+  timer = setTimer(() => finish({
+    requestId: request.requestId,
+    ok: false,
+    error: "timeout",
+  }), timeoutMs);
+
   void createWorker()
     .then((createdWorker) => {
       if (stopped) {
@@ -64,11 +72,6 @@ export function startRegexSearch(
         ok: false,
         error: "unavailable",
       });
-      timer = setTimer(() => finish({
-        requestId: request.requestId,
-        ok: false,
-        error: "timeout",
-      }), timeoutMs);
       worker.postMessage(request);
     })
     .catch(() => finish({

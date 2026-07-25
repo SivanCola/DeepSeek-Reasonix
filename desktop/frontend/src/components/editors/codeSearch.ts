@@ -23,6 +23,7 @@ export type RegexSearchErrorCode =
   | "pattern_too_long"
   | "source_too_large"
   | "zero_length_unsupported"
+  | "multiline_unsupported"
   | "timeout"
   | "unavailable";
 
@@ -90,7 +91,10 @@ export function findRegexCodeMatches(request: RegexSearchRequest): RegexSearchRe
 
   let pattern: RegExp;
   try {
-    pattern = new RegExp(request.pattern, request.caseSensitive ? "gu" : "giu");
+    // Search anchors should continue to address individual source lines, while
+    // the full source is still scanned so newline-spanning matches can be
+    // rejected explicitly instead of disappearing silently.
+    pattern = new RegExp(request.pattern, request.caseSensitive ? "gmu" : "gimu");
   } catch (error) {
     return {
       requestId: request.requestId,
@@ -100,12 +104,11 @@ export function findRegexCodeMatches(request: RegexSearchRequest): RegexSearchRe
     };
   }
 
-  const result = collectMatches(
+  const result = collectRegexMatches(
     request.source,
     pattern,
     request.wholeWord,
     Math.max(0, Math.min(request.maxMatches, MAX_SEARCH_MATCHES)),
-    true,
   );
   if ("error" in result) {
     return {
@@ -185,6 +188,72 @@ function collectMatches(
     return { error: "zero_length_unsupported" };
   }
   return { matches, truncated: false };
+}
+
+function collectRegexMatches(
+  source: string,
+  pattern: RegExp,
+  wholeWord: boolean,
+  maxMatches: number,
+): CodeSearchResult | { error: "zero_length_unsupported" | "multiline_unsupported" } {
+  const matches: CodeSearchMatch[] = [];
+  const lineStarts = [0];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === "\n") lineStarts.push(index + 1);
+  }
+
+  pattern.lastIndex = 0;
+  let sawZeroLengthMatch = false;
+  let sawNonEmptyMatch = false;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    if (match[0].length === 0) {
+      sawZeroLengthMatch = true;
+      const nextCodePoint = source.codePointAt(pattern.lastIndex);
+      pattern.lastIndex += nextCodePoint != null && nextCodePoint > 0xffff ? 2 : 1;
+      continue;
+    }
+    sawNonEmptyMatch = true;
+
+    const start = match.index;
+    const end = start + match[0].length;
+    if (source.slice(start, end).includes("\n")) {
+      return { error: "multiline_unsupported" };
+    }
+
+    const lineIndex = findLineIndex(lineStarts, start);
+    const lineStart = lineStarts[lineIndex] ?? 0;
+    const startsInsideWord = start > 0 && isWordCharacter(codePointBefore(source, start));
+    const endsInsideWord = end < source.length && isWordCharacter(codePointAt(source, end));
+    if (!wholeWord || (!startsInsideWord && !endsInsideWord)) {
+      if (matches.length >= maxMatches) {
+        return { matches, truncated: true };
+      }
+      matches.push({
+        lineIndex,
+        start: start - lineStart,
+        end: end - lineStart,
+        absoluteStart: start,
+        absoluteEnd: end,
+      });
+    }
+  }
+
+  if (sawZeroLengthMatch && !sawNonEmptyMatch) {
+    return { error: "zero_length_unsupported" };
+  }
+  return { matches, truncated: false };
+}
+
+function findLineIndex(lineStarts: readonly number[], offset: number): number {
+  let low = 0;
+  let high = lineStarts.length - 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    if ((lineStarts[middle] ?? 0) <= offset) low = middle + 1;
+    else high = middle - 1;
+  }
+  return Math.max(0, high);
 }
 
 function emptySearchResult(): CodeSearchResult {
