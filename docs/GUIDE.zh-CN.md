@@ -317,8 +317,9 @@ Thinking 覆盖选项：
 
 这里按使用端来写，因为用户通常是先知道“我现在在桌面端/CLI”，再找对应按键。
 桌面端仍用 `Shift+Tab` 切换 Plan；CLI 则用它在 Ask、Auto、Plan 之间循环。
-`Ctrl/Cmd+Y` 只管 YOLO。桌面端粘贴继续走系统快捷键；CLI 则把终端原生文本粘贴
-和应用接管的图片粘贴拆成不同快捷键。
+桌面端默认用 macOS 的 `Cmd+Y` 或 Windows/Linux 的 `Ctrl+Y` 切换 YOLO；
+如果在 Windows/Linux 上改绑了 YOLO，`Ctrl+Y` 会成为输入框的标准重做兼容键。
+桌面端粘贴继续走系统快捷键；CLI 则把终端原生文本粘贴和应用接管的图片粘贴拆成不同快捷键。
 
 `[ui].shortcut_layout` 仍被接受以兼容旧配置，但下面的快捷键行为已经跨布局统一。
 
@@ -329,7 +330,8 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 
 ### 桌面端 GUI
 
-桌面端快捷键在 **设置 → 快捷键** 中管理。选择一行后按下新的组合键，Reasonix 会为桌面端保存该绑定。
+桌面端快捷键在 **设置 → 快捷键** 中管理。选择可配置的行后按下新的组合键，Reasonix 会为桌面端保存该绑定。
+撤销、重做等标准编辑快捷键会以锁定行展示，因为 WebView 的原生文本历史依赖这些平台组合键。
 如果新组合键和已有动作冲突，会拒绝保存，避免一个快捷键触发两个动作。按 `?` 或点击 topic bar
 里的帮助按钮可打开快捷键帮助表；帮助表由同一份快捷键 registry 生成，因此会同步显示自定义后的绑定。
 
@@ -353,7 +355,9 @@ CLI/TUI 文本输入可通过 `[ui].cursor_shape` 设置光标形状，支持 `u
 | `Enter` | 发送当前消息 | IME 组合输入确认不会被截获。 |
 | `Shift+Enter` | 插入换行 | 输入框保持焦点。 |
 | `Shift+Tab` | 切换 Plan 开/关 | Plan 只改变“先规划”的工作流；内置 writer 仍走当前 Ask/Auto/YOLO 与 Sandbox，MCP writer/destructive 目标在整个规划阶段保持硬阻断。 |
-| `Cmd+Y` / `Ctrl+Y` | 切换 YOLO 开/关 | 关闭 YOLO 时会尽量恢复之前的 Ask/Auto 基底。 |
+| macOS `Cmd+Z`，Windows/Linux `Ctrl+Z` | 撤销输入框中的最近一次编辑 | 普通键入继续由 WebView 原生历史管理；Reasonix 接管的粘贴、剪切、折叠块和结构化 token 会作为完整事务恢复。 |
+| macOS `Cmd+Shift+Z`，Windows/Linux `Ctrl+Shift+Z` | 重做输入框中的最近一次编辑 | Windows/Linux 改绑 YOLO 后也可使用 `Ctrl+Y`。 |
+| `Cmd+Y` / `Ctrl+Y`（默认） | 切换 YOLO 开/关 | 关闭 YOLO 时会尽量恢复之前的 Ask/Auto 基底；当前绑定可在 **设置 → 快捷键** 查看。 |
 | macOS `Cmd+V`，Windows/Linux `Ctrl+V` | 粘贴剪贴板内容 | 剪贴板图片会作为附件加入；图片也可以拖进输入框。 |
 | 输入边界处的普通 `Up` / `Down` | 回放更旧或更新的已提交提示词 | 带修饰键的方向键和原生文本导航仍交给 textarea。 |
 | 运行中按 `Esc` | 取消当前 turn | 如果后端尚未开始回复，会恢复草稿。 |
@@ -725,6 +729,27 @@ planner_model = "deepseek-pro"   # 作为低频规划器
 
 Planner 会看到已加载的 `REASONIX.md` / `AGENTS.md` 记忆，并拿到一小组只读研究工具，
 因此可以先检查相关文件再把计划交给执行器。写入类和流程类工具仍只给执行器使用。
+
+Reasonix 会用确定性规则路由每一轮，不再调用额外的 classifier 模型：问答、短回复、
+明确的单点小改和边界清楚的纯只读动作直达 Executor；边界清楚的实现任务可生成简短的
+Light 计划；模糊、跨面、结构化、高风险、活跃 Goal 或 Delivery 的任务生成 Full 计划，
+明确的原子小改或纯只读动作除外。
+显式 Plan Mode 仍是独立的宿主流程，不会发生双重规划。
+明确的 `先规划` / `plan first` 会强制规划，`直接改` / `just do it` 则直达 Executor；
+执行边界可出现在请求中的任意子句，不要求位于句首，同时会忽略引号内的示例；
+普通的“先规划”会在规划完成后自动交接 Executor；明确要求“等我确认”的请求停在宿主
+审批边界，批准后继续交接 Executor。只有明确的 `只规划` / `不要执行` 才以计划结束当前
+回合而不执行，计划会写入同一会话，用户之后仍可继续要求 Executor 落地。阶段详情会记录
+不含用户原文的 route、depth 与 reason code，便于诊断。
+
+Light 计划包含紧凑目标、最多四个有序步骤、可能触点和主要验证；Full 计划会区分已验证
+与候选触点，并按需补充非目标、风险、验收标准、命令级验证，以及难回滚操作的回滚方案。
+这些合约位于同一个稳定的 Planner system prompt，单轮只在 user turn 追加很小的深度指令，
+因此除本次 prompt 升级的一次缓存未命中外，不会持续破坏 Planner prefix cache。宿主也会
+为 Light 与 Full 调研设置不同的单轮轮次预算。若 Planner 在有界调研和最终总结轮后仍未
+给出最终计划，普通 plan-and-execute 会用原始任务直接交给 Executor 继续；plan-only 与
+等待批准请求仍保持 fail-closed，并回滚不完整的 Planner 回合，避免留下无法继续的会话尾部。
+
 Reasonix 会自动管理正常执行：活跃 Todo 连续 8 个工具调用轮次没有新的完成项、唯一读取、
 命令或修改时，宿主会要求执行器重新评估；连续 16 个无进展轮次后暂停并保存工作，可在
 下一轮用户消息中继续。完全重复的操作不算进展，新的宿主可观测工作会自动续期。两级任务
