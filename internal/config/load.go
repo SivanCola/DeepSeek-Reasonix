@@ -1167,12 +1167,27 @@ func normalizeLegacyOpenCodeGoKimiK3Catalog(c *Config) bool {
 		if p.ModelOverrides == nil {
 			p.ModelOverrides = map[string]ProviderModelOverride{}
 		}
-		p.ModelOverrides["kimi-k3"] = ProviderModelOverride{
-			ReasoningProtocol: ReasoningProtocolOpenAI,
-			SupportedEfforts:  []string{"max"},
-			DefaultEffort:     "max",
-			ContextWindow:     1_048_576,
+		overrideKey := "kimi-k3"
+		for key := range p.ModelOverrides {
+			if strings.EqualFold(strings.TrimSpace(key), overrideKey) {
+				overrideKey = key
+				break
+			}
 		}
+		kimiK3 := p.ModelOverrides[overrideKey]
+		if strings.TrimSpace(kimiK3.ReasoningProtocol) == "" {
+			kimiK3.ReasoningProtocol = ReasoningProtocolOpenAI
+		}
+		if kimiK3.SupportedEfforts == nil {
+			kimiK3.SupportedEfforts = []string{"max"}
+		}
+		if strings.TrimSpace(kimiK3.DefaultEffort) == "" && containsString(normalizedEffortLevels(kimiK3.SupportedEfforts), "max") {
+			kimiK3.DefaultEffort = "max"
+		}
+		if kimiK3.ContextWindow <= 0 {
+			kimiK3.ContextWindow = 1_048_576
+		}
+		p.ModelOverrides[overrideKey] = kimiK3
 		return true
 	}
 	return false

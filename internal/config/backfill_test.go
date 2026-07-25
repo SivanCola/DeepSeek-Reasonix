@@ -374,6 +374,30 @@ func TestNormalizeLegacyOpenCodeGoKimiK3CatalogMigratesOnlyUntouchedPreset(t *te
 	if !normalizeLegacyOpenCodeGoKimiK3Catalog(preIdentityConfig) || !preIdentityConfig.Providers[0].HasModel("kimi-k3") {
 		t.Fatal("pre-preset-identity OpenCode Go install was not migrated")
 	}
+
+	vision := false
+	customK3 := legacyEntry
+	customK3.ModelOverrides = cloneModelOverrideMap(legacyEntry.ModelOverrides)
+	delete(customK3.ModelOverrides, "kimi-k3")
+	wantK3 := ProviderModelOverride{
+		ReasoningProtocol: ReasoningProtocolNone,
+		SupportedEfforts:  []string{"low"},
+		DefaultEffort:     "low",
+		Vision:            &vision,
+		ContextWindow:     262_144,
+	}
+	customK3.ModelOverrides["KIMI-K3"] = wantK3
+	customK3Config := &Config{Providers: []ProviderEntry{customK3}}
+	if !normalizeLegacyOpenCodeGoKimiK3Catalog(customK3Config) {
+		t.Fatal("legacy OpenCode Go catalog with custom Kimi K3 override was not migrated")
+	}
+	gotK3, ok := customK3Config.Providers[0].ModelOverrides["KIMI-K3"]
+	if !ok || !reflect.DeepEqual(gotK3, wantK3) {
+		t.Fatalf("custom Kimi K3 override = %+v, want preserved %+v", gotK3, wantK3)
+	}
+	if _, duplicate := customK3Config.Providers[0].ModelOverrides["kimi-k3"]; duplicate {
+		t.Fatal("migration added a duplicate case-insensitive Kimi K3 override")
+	}
 }
 
 func TestLoadForEditPersistsLegacyOpenCodeGoKimiK3CatalogMigration(t *testing.T) {
