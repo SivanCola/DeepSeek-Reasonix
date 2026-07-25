@@ -12,6 +12,8 @@
 //     reasoning_effort, matching LongCat's OpenAI-compatible API.
 //   - ollama.com → accepts hosted Ollama Cloud's reasoning_effort scale,
 //     including max, and omits the field for none/disabled.
+//   - official Kimi API + kimi-k3 preserves complete assistant messages and
+//     uses K3's fixed-sampling/max_completion_tokens request shape.
 //   - everything else (MiMo and other OpenAI-compatible gateways) uses the
 //     vanilla reasoning_effort scale (low/medium/high).
 //
@@ -87,6 +89,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	zhipu := protocol == "" && IsZhipu(cfg.BaseURL)
 	longcat := protocol == "" && IsLongCat(cfg.BaseURL)
 	ollamaCloud := protocol == "" && IsOllamaCloud(cfg.BaseURL)
+	kimiK3 := IsKimiAPI(cfg.BaseURL) && strings.EqualFold(strings.TrimSpace(cfg.Model), "kimi-k3")
 	// Optional explicit `thinking` config field — a vendor-agnostic escape hatch
 	// (credit @eghrhegpe, #5063) for OpenAI-compatible providers we don't
 	// auto-detect (e.g. opencode.ai). "enabled"/"disabled" drive thinking.type;
@@ -195,6 +198,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		minimax:      minimax,
 		zhipu:        zhipu,
 		longcat:      longcat,
+		kimiK3:       kimiK3,
 		mimo:         IsMiMo(cfg.BaseURL),
 		thinkingType: thinkingType,
 		vision:       vision,
@@ -240,6 +244,7 @@ type client struct {
 	minimax      bool          // true for api.minimaxi.com — emits MiniMax-M3's thinking knob instead of reasoning_effort
 	zhipu        bool          // true for Zhipu GLM (bigmodel.cn / z.ai) — gates thinking via thinking.type, ignores reasoning_effort
 	longcat      bool          // true for LongCat — gates thinking via thinking.type, ignores reasoning_effort
+	kimiK3       bool          // true only for kimi-k3 on Moonshot's official direct API hosts
 	mimo         bool          // true for MiMo — upgrades legacy tuple schemas to Draft 2020-12
 	thinkingType string        // explicit `thinking` config override (enabled|disabled); "" = no override
 	vision       bool          // model accepts image input — embed attached images as image_url parts
@@ -253,6 +258,10 @@ func (c *client) Name() string { return c.name }
 
 func (c *client) RequiresToolCallReasoning() bool {
 	return c != nil && c.deepseek && c.thinkingType != "disabled"
+}
+
+func (c *client) RequiresReasoningRoundTrip() bool {
+	return c != nil && c.kimiK3
 }
 
 func (c *client) WarnOnMissingToolCallReasoning() bool {
@@ -506,9 +515,16 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		// the key only when a thinking-mode round left reasoning in the history
 		// (dropping it would invalidate the prompt-cache prefix of mixed
 		// thinking-on→off sessions for no gain).
-		if c.deepseek && m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
-			if c.RequiresToolCallReasoning() || m.ReasoningContent != "" {
+		if m.Role == provider.RoleAssistant {
+			switch {
+			case c.kimiK3 && (m.ReasoningContent != "" || len(m.ToolCalls) > 0):
+				// Kimi K3 requires the complete assistant message on multi-turn
+				// and tool-call requests, including provider-issued reasoning.
 				cm.ReasoningContent = &m.ReasoningContent
+			case c.deepseek && len(m.ToolCalls) > 0:
+				if c.RequiresToolCallReasoning() || m.ReasoningContent != "" {
+					cm.ReasoningContent = &m.ReasoningContent
+				}
 			}
 		}
 		for _, tc := range m.ToolCalls {
@@ -557,6 +573,14 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		ExtraBody:       c.extraBody,
 	}
 	switch {
+	case c.kimiK3:
+		// K3 fixes its sampling values and recommends omitting them. It also
+		// names the output budget max_completion_tokens rather than max_tokens.
+		out.Temperature = nil
+		out.MaxTokens = 0
+		out.MaxCompletionTokens = req.MaxTokens
+		out.ExtraBody = omitExtraBodyFields(out.ExtraBody,
+			"temperature", "top_p", "n", "presence_penalty", "frequency_penalty", "max_completion_tokens")
 	case c.deepseek:
 		// DeepSeek's CoT is controlled by `thinking` plus `reasoning_effort` for
 		// depth. Thinking is on by default but can be turned off via
@@ -851,16 +875,37 @@ func normaliseUsage(u *wireUsage) *provider.Usage {
 // --- OpenAI-compatible wire protocol ---
 
 type chatRequest struct {
-	Model           string         `json:"model"`
-	Messages        []chatMessage  `json:"messages"`
-	Tools           []chatTool     `json:"tools,omitempty"`
-	Stream          bool           `json:"stream"`
-	StreamOptions   *streamOptions `json:"stream_options,omitempty"`
-	Temperature     *float64       `json:"temperature,omitempty"`
-	MaxTokens       int            `json:"max_tokens,omitempty"`
-	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
-	Thinking        *thinkingMode  `json:"thinking,omitempty"`
-	ExtraBody       map[string]any `json:"-"`
+	Model               string         `json:"model"`
+	Messages            []chatMessage  `json:"messages"`
+	Tools               []chatTool     `json:"tools,omitempty"`
+	Stream              bool           `json:"stream"`
+	StreamOptions       *streamOptions `json:"stream_options,omitempty"`
+	Temperature         *float64       `json:"temperature,omitempty"`
+	MaxTokens           int            `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
+	ReasoningEffort     string         `json:"reasoning_effort,omitempty"`
+	Thinking            *thinkingMode  `json:"thinking,omitempty"`
+	ExtraBody           map[string]any `json:"-"`
+}
+
+func omitExtraBodyFields(in map[string]any, names ...string) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	omit := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		omit[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+	out := make(map[string]any, len(in))
+	for name, value := range in {
+		if _, blocked := omit[strings.ToLower(strings.TrimSpace(name))]; !blocked {
+			out[name] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (r chatRequest) MarshalJSON() ([]byte, error) {

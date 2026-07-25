@@ -182,12 +182,30 @@ func TestCuratedProviderPresetCapabilities(t *testing.T) {
 	if kimiCN.DefaultModel() != "kimi-k2.7-code" || !kimiCN.HasVisionModel("kimi-k2.7-code-highspeed") || kimiCN.BalanceURL == "" {
 		t.Fatalf("kimi-cn capability mismatch: %+v", kimiCN)
 	}
+	kimiCNK3, ok := cfg.ResolveModel("kimi-cn/kimi-k3")
+	if !ok {
+		t.Fatal("kimi-cn/kimi-k3 did not resolve")
+	}
+	if !EffectiveVision(kimiCNK3) || kimiCNK3.ContextWindow != 1_048_576 ||
+		ReasoningProtocolForEntry(kimiCNK3) != ReasoningProtocolOpenAI ||
+		!stringSlicesEqual(kimiCNK3.SupportedEfforts, []string{"low", "high", "max"}) ||
+		EffectiveEffort(kimiCNK3) != "max" {
+		t.Fatalf("kimi-cn/kimi-k3 capability mismatch: %+v", kimiCNK3)
+	}
+	kimiCNK27, ok := cfg.ResolveModel("kimi-cn/kimi-k2.7-code")
+	if !ok || ReasoningProtocolForEntry(kimiCNK27) != ReasoningProtocolNone {
+		t.Fatalf("kimi-cn K2.7 reasoning protocol changed: %+v", kimiCNK27)
+	}
 	kimiGlobal, ok := cfg.Provider("kimi-global")
 	if !ok {
 		t.Fatal("kimi-global provider missing")
 	}
 	if kimiGlobal.BaseURL != "https://api.moonshot.ai/v1" || kimiGlobal.APIKeyEnv != "MOONSHOT_API_KEY" {
 		t.Fatalf("kimi-global endpoint/key mismatch: %+v", kimiGlobal)
+	}
+	kimiGlobalK3, ok := cfg.ResolveModel("kimi-global/kimi-k3")
+	if !ok || !EffectiveVision(kimiGlobalK3) || kimiGlobalK3.ContextWindow != 1_048_576 || EffectiveEffort(kimiGlobalK3) != "max" {
+		t.Fatalf("kimi-global/kimi-k3 capability mismatch: %+v", kimiGlobalK3)
 	}
 	kimiPlan, ok := cfg.Provider("kimi-coding-plan")
 	if !ok {

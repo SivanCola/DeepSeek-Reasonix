@@ -400,6 +400,111 @@ func TestNormalizeLegacyOpenCodeGoKimiK3CatalogMigratesOnlyUntouchedPreset(t *te
 	}
 }
 
+func TestNormalizeLegacyKimiK3CatalogMigratesOnlyOfficialUntouchedPresets(t *testing.T) {
+	legacyEntry := func(id, baseURL string) ProviderEntry {
+		return ProviderEntry{
+			Name:              id,
+			Kind:              "openai",
+			BaseURL:           baseURL + "/",
+			Models:            append([]string(nil), legacyKimiAPIModels...),
+			VisionModels:      append([]string(nil), legacyKimiAPIModels...),
+			Default:           "kimi-k2.7-code",
+			APIKeyEnv:         "CUSTOM_KIMI_KEY",
+			ContextWindow:     300_000,
+			ReasoningProtocol: ReasoningProtocolNone,
+			PresetID:          id,
+		}
+	}
+	cn := legacyEntry("kimi-cn", "https://api.moonshot.cn/v1")
+	cn.Name = "my-kimi-cn"
+	global := legacyEntry("kimi-global", "https://api.moonshot.ai/v1")
+	global.PresetID = ""
+	customModels := legacyEntry("kimi-cn", "https://api.moonshot.cn/v1")
+	customModels.Models = append(customModels.Models, "private-model")
+	customEndpoint := legacyEntry("kimi-global", "https://api.moonshot.ai/v1")
+	customEndpoint.BaseURL = "https://gateway.example.com/v1"
+	selectedModel := legacyEntry("kimi-cn", "https://api.moonshot.cn/v1")
+	selectedModel.Model = "kimi-k2.7-code"
+	c := &Config{Providers: []ProviderEntry{cn, global, customModels, customEndpoint, selectedModel}}
+
+	if !normalizeLegacyKimiK3Catalog(c) {
+		t.Fatal("legacy Kimi direct catalogs did not report a change")
+	}
+	for i := 0; i < 2; i++ {
+		got := &c.Providers[i]
+		if !got.HasModel("kimi-k3") || !got.HasVisionModel("kimi-k3") {
+			t.Fatalf("migrated Kimi provider %d = %+v, want K3 with vision", i, got)
+		}
+		k3 := got.ModelOverrides["kimi-k3"]
+		if k3.ReasoningProtocol != ReasoningProtocolOpenAI ||
+			!stringSlicesEqual(k3.SupportedEfforts, []string{"low", "high", "max"}) ||
+			k3.DefaultEffort != "max" || k3.ContextWindow != 1_048_576 {
+			t.Fatalf("migrated Kimi K3 override %d = %+v", i, k3)
+		}
+		if got.APIKeyEnv != "CUSTOM_KIMI_KEY" || got.ContextWindow != 300_000 || got.Default != "kimi-k2.7-code" {
+			t.Fatalf("unrelated Kimi provider edits were not preserved: %+v", got)
+		}
+	}
+	for i := 2; i < len(c.Providers); i++ {
+		if c.Providers[i].HasModel("kimi-k3") {
+			t.Fatalf("customized Kimi provider %q was unexpectedly migrated", c.Providers[i].Name)
+		}
+	}
+
+	vision := false
+	customK3 := legacyEntry("kimi-cn", "https://api.moonshot.cn/v1")
+	wantK3 := ProviderModelOverride{
+		ReasoningProtocol: ReasoningProtocolNone,
+		SupportedEfforts:  []string{"low"},
+		DefaultEffort:     "low",
+		Vision:            &vision,
+		ContextWindow:     262_144,
+	}
+	customK3.ModelOverrides = map[string]ProviderModelOverride{"KIMI-K3": wantK3}
+	customConfig := &Config{Providers: []ProviderEntry{customK3}}
+	if !normalizeLegacyKimiK3Catalog(customConfig) {
+		t.Fatal("legacy Kimi catalog with custom K3 override was not migrated")
+	}
+	gotK3, ok := customConfig.Providers[0].ModelOverrides["KIMI-K3"]
+	if !ok || !reflect.DeepEqual(gotK3, wantK3) {
+		t.Fatalf("custom direct Kimi K3 override = %+v, want preserved %+v", gotK3, wantK3)
+	}
+	if _, duplicate := customConfig.Providers[0].ModelOverrides["kimi-k3"]; duplicate {
+		t.Fatal("migration added a duplicate case-insensitive direct Kimi K3 override")
+	}
+}
+
+func TestLoadForEditPersistsLegacyKimiK3CatalogMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := Default()
+	preset, ok := CuratedProviderPreset("kimi-cn")
+	if !ok || len(preset.Entries) != 1 {
+		t.Fatal("missing kimi-cn preset")
+	}
+	entry := preset.Entries[0]
+	entry.Models = append([]string(nil), legacyKimiAPIModels...)
+	entry.VisionModels = append([]string(nil), legacyKimiAPIModels...)
+	delete(entry.ModelOverrides, "kimi-k3")
+	cfg.Providers = append(cfg.Providers, entry)
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo: %v", err)
+	}
+
+	loaded := LoadForEdit(path)
+	got, ok := loaded.Provider("kimi-cn")
+	if !ok || !got.HasModel("kimi-k3") || !got.HasVisionModel("kimi-k3") {
+		t.Fatalf("loaded kimi-cn = %+v, want persisted K3 catalog", got)
+	}
+	var disk Config
+	if _, err := toml.DecodeFile(path, &disk); err != nil {
+		t.Fatalf("decode persisted config: %v", err)
+	}
+	persisted, ok := disk.Provider("kimi-cn")
+	if !ok || !persisted.HasModel("kimi-k3") || persisted.ModelOverrides["kimi-k3"].DefaultEffort != "max" {
+		t.Fatalf("persisted kimi-cn = %+v, want K3 defaults", persisted)
+	}
+}
+
 func TestLoadForEditPersistsLegacyOpenCodeGoKimiK3CatalogMigration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	cfg := Default()

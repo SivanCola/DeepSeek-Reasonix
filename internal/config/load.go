@@ -138,6 +138,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	normalizeLegacyMCPTiers(cfg)
 	normalizeLegacyStepFunBaseURLs(cfg)
 	normalizeLegacyLongCatContextWindows(cfg)
+	normalizeLegacyKimiK3Catalog(cfg)
 	normalizeLegacyOpenCodeGoKimiK3Catalog(cfg)
 	normalizeLegacyMimoCustomProviders(cfg)
 	normalizeLegacyProviderModels(cfg)
@@ -617,6 +618,7 @@ func normalizeConfigForEdit(cfg *Config) bool {
 	normalizeLegacyMCPTiers(cfg)
 	changed = normalizeLegacyStepFunBaseURLs(cfg) || changed
 	changed = normalizeLegacyLongCatContextWindows(cfg) || changed
+	changed = normalizeLegacyKimiK3Catalog(cfg) || changed
 	changed = normalizeLegacyOpenCodeGoKimiK3Catalog(cfg) || changed
 	changed = normalizeLegacyMimoCustomProviders(cfg) || changed
 	normalizeLegacyProviderModels(cfg)
@@ -1144,6 +1146,68 @@ func normalizeLegacyLongCatContextWindows(c *Config) bool {
 	return changed
 }
 
+// normalizeLegacyKimiK3Catalog upgrades only untouched Kimi direct-API model
+// catalogs on the official regional endpoints. Custom model lists, endpoints,
+// defaults, credentials, and provider-wide settings remain user-owned.
+func normalizeLegacyKimiK3Catalog(c *Config) bool {
+	if c == nil {
+		return false
+	}
+	changed := false
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		presetID := strings.TrimSpace(p.PresetID)
+		name := strings.TrimSpace(p.Name)
+		var baseURL string
+		switch {
+		case presetID == "kimi-cn" || (presetID == "" && name == "kimi-cn"):
+			baseURL = "https://api.moonshot.cn/v1"
+		case presetID == "kimi-global" || (presetID == "" && name == "kimi-global"):
+			baseURL = "https://api.moonshot.ai/v1"
+		default:
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(p.Kind), "openai") ||
+			normalizedBaseURLForMigration(p.BaseURL) != baseURL ||
+			!stringSlicesEqual(p.Models, legacyKimiAPIModels) ||
+			strings.TrimSpace(p.Model) != "" {
+			continue
+		}
+		p.Models = append([]string(nil), kimiAPIModels...)
+		p.VisionModels = mergeModelLists([]string{"kimi-k3"}, p.VisionModels)
+		mergeMissingKimiK3Override(p, kimiK3DirectOverride())
+		changed = true
+	}
+	return changed
+}
+
+func mergeMissingKimiK3Override(p *ProviderEntry, defaults ProviderModelOverride) {
+	if p.ModelOverrides == nil {
+		p.ModelOverrides = map[string]ProviderModelOverride{}
+	}
+	overrideKey := "kimi-k3"
+	for key := range p.ModelOverrides {
+		if strings.EqualFold(strings.TrimSpace(key), overrideKey) {
+			overrideKey = key
+			break
+		}
+	}
+	kimiK3 := p.ModelOverrides[overrideKey]
+	if strings.TrimSpace(kimiK3.ReasoningProtocol) == "" {
+		kimiK3.ReasoningProtocol = defaults.ReasoningProtocol
+	}
+	if kimiK3.SupportedEfforts == nil {
+		kimiK3.SupportedEfforts = append([]string(nil), defaults.SupportedEfforts...)
+	}
+	if strings.TrimSpace(kimiK3.DefaultEffort) == "" && containsString(normalizedEffortLevels(kimiK3.SupportedEfforts), defaults.DefaultEffort) {
+		kimiK3.DefaultEffort = defaults.DefaultEffort
+	}
+	if kimiK3.ContextWindow <= 0 {
+		kimiK3.ContextWindow = defaults.ContextWindow
+	}
+	p.ModelOverrides[overrideKey] = kimiK3
+}
+
 // normalizeLegacyOpenCodeGoKimiK3Catalog upgrades only the untouched model
 // catalog from the original editable OpenCode Go preset. A user-curated model
 // list or custom endpoint is left alone, while other provider edits (headers,
@@ -1164,30 +1228,12 @@ func normalizeLegacyOpenCodeGoKimiK3Catalog(c *Config) bool {
 		}
 		p.Models = append([]string(nil), opencodeGoModels...)
 		p.VisionModels = mergeModelLists(opencodeGoVisionModels, p.VisionModels)
-		if p.ModelOverrides == nil {
-			p.ModelOverrides = map[string]ProviderModelOverride{}
-		}
-		overrideKey := "kimi-k3"
-		for key := range p.ModelOverrides {
-			if strings.EqualFold(strings.TrimSpace(key), overrideKey) {
-				overrideKey = key
-				break
-			}
-		}
-		kimiK3 := p.ModelOverrides[overrideKey]
-		if strings.TrimSpace(kimiK3.ReasoningProtocol) == "" {
-			kimiK3.ReasoningProtocol = ReasoningProtocolOpenAI
-		}
-		if kimiK3.SupportedEfforts == nil {
-			kimiK3.SupportedEfforts = []string{"high", "max"}
-		}
-		if strings.TrimSpace(kimiK3.DefaultEffort) == "" && containsString(normalizedEffortLevels(kimiK3.SupportedEfforts), "max") {
-			kimiK3.DefaultEffort = "max"
-		}
-		if kimiK3.ContextWindow <= 0 {
-			kimiK3.ContextWindow = 1_048_576
-		}
-		p.ModelOverrides[overrideKey] = kimiK3
+		mergeMissingKimiK3Override(p, ProviderModelOverride{
+			ReasoningProtocol: ReasoningProtocolOpenAI,
+			SupportedEfforts:  []string{"high", "max"},
+			DefaultEffort:     "max",
+			ContextWindow:     1_048_576,
+		})
 		return true
 	}
 	return false
