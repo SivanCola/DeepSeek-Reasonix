@@ -129,9 +129,9 @@ func TestRedactMasksNonBearerAuthorizationSchemes(t *testing.T) {
 }
 
 func TestRedactMasksURLUserInfo(t *testing.T) {
-	in := "proxy request failed: https://proxy-user:proxy-password@proxy.example.com:8443/connect"
+	in := "proxy request failed: https://proxy-user:pa@ss@proxy.example.com:8443/connect"
 	got := Redact(in)
-	for _, leaked := range []string{"proxy-user", "proxy-password"} {
+	for _, leaked := range []string{"proxy-user", "pa", "ss"} {
 		if strings.Contains(got, leaked) {
 			t.Fatalf("URL credential leaked %q in:\n%s", leaked, got)
 		}
@@ -173,9 +173,15 @@ func TestRedactCredentialsForExternalErrors(t *testing.T) {
 		},
 		{
 			name:   "proxy URL user info",
-			err:    errors.New("dial https://proxy-user:proxy-password@proxy.example.com:8443: refused"),
-			leaked: []string{"proxy-user", "proxy-password"},
+			err:    errors.New("dial https://proxy-user:pa@ss@proxy.example.com:8443: refused"),
+			leaked: []string{"proxy-user", "pa", "ss"},
 			want:   "proxy.example.com:8443",
+		},
+		{
+			name:   "key value is idempotent",
+			err:    errors.New("provider rejected DEEPSEEK_API_KEY=sk-real-secret-value-123456"),
+			leaked: []string{"sk-real-secret-value-123456"},
+			want:   "provider rejected DEEPSEEK_API_KEY=",
 		},
 		{
 			name:   "opaque mixed case token",

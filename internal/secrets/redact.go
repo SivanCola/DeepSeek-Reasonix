@@ -27,7 +27,9 @@ var (
 	slackTokenPattern   = regexp.MustCompile(`\b(xox[baprs]-[A-Za-z0-9-]{16,})\b`)
 	awsAccessKeyPattern = regexp.MustCompile(`\b(AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16})\b`)
 	jwtPattern          = regexp.MustCompile(`\b(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b`)
-	urlUserInfoPattern  = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)([^/\s@]+)@`)
+	// Match through the final @ before a path/whitespace so raw @ characters
+	// inside userinfo cannot leave a password suffix visible.
+	urlUserInfoPattern = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)([^/\s]+)@`)
 
 	// maskedCredentialPattern collapses partially masked credentials and any
 	// visible prefix/suffix around the stars ("****ae54", "sk-ab****").
@@ -263,10 +265,13 @@ func redactKeyValues(s string) string {
 			out.Grow(len(s))
 		}
 		out.WriteString(s[last:valueStart])
+		value := s[valueStart:valueEnd]
 		if authorizationKey(key) {
 			out.WriteString(redactedValue)
+		} else if value == "****" || value == redactedValue {
+			out.WriteString(value)
 		} else {
-			out.WriteString(mask(s[valueStart:valueEnd]))
+			out.WriteString(mask(value))
 		}
 		last = valueEnd
 		sep = valueEnd - 1
