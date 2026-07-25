@@ -1179,7 +1179,7 @@ func normalizeLegacyOpenCodeGoKimiK3Catalog(c *Config) bool {
 			kimiK3.ReasoningProtocol = ReasoningProtocolOpenAI
 		}
 		if kimiK3.SupportedEfforts == nil {
-			kimiK3.SupportedEfforts = []string{"max"}
+			kimiK3.SupportedEfforts = []string{"high", "max"}
 		}
 		if strings.TrimSpace(kimiK3.DefaultEffort) == "" && containsString(normalizedEffortLevels(kimiK3.SupportedEfforts), "max") {
 			kimiK3.DefaultEffort = "max"

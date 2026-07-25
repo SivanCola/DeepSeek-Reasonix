@@ -250,7 +250,7 @@ Gateway、HuggingFace Router、NVIDIA NIM、KiloCode 和 Ollama Cloud。Plan 表
 中国区端点直连、MiniMax `reasoning_split`、GLM/MiniMax thinking heuristic、
 Anthropic-compatible 网关需要的 Bearer 认证、Ollama Cloud max-effort 支持，
 以及 OpenCode Go 的每模型 reasoning 覆盖。OpenCode Go 预设原生包含订阅线路的
-`kimi-k3`，并配置图像输入、`max` 推理强度和 1,048,576 token 上下文窗口。未修改过
+`kimi-k3`，并配置图像输入、`high`/`max` 推理强度和 1,048,576 token 上下文窗口。未修改过
 模型目录的既有 OpenCode Go 预设会自动升级；用户编辑过的模型目录保持不变。添加后
 仍然可以打开 provider 卡片，继续修改模型、请求头、端点或兼容设置。
 

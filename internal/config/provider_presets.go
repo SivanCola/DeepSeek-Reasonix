@@ -546,7 +546,7 @@ var curatedProviderPresets = []ProviderPreset{
 				},
 				"kimi-k3": {
 					ReasoningProtocol: ReasoningProtocolOpenAI,
-					SupportedEfforts:  []string{"max"},
+					SupportedEfforts:  []string{"high", "max"},
 					DefaultEffort:     "max",
 					ContextWindow:     1_048_576,
 				},

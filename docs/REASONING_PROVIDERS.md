@@ -23,8 +23,8 @@ Any other OpenAI-compatible backend falls through to the standard
 `reasoning_effort` scale (`low`\|`medium`\|`high`). A resolved provider/model
 entry may explicitly advertise a different supported scale; in that case
 Reasonix preserves those declared values instead of applying the generic
-ceiling. The curated OpenCode Go `kimi-k3` entry uses this path to send its only
-supported value, `reasoning_effort=max`.
+ceiling. The curated OpenCode Go `kimi-k3` entry uses this path to send
+`reasoning_effort=high` or `reasoning_effort=max`.
 
 Surveyed popular providers that need **no special handling** because they
 already follow the standard convention:

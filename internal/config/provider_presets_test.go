@@ -369,8 +369,13 @@ func TestCuratedProviderPresetCapabilities(t *testing.T) {
 	if protocol := ReasoningProtocolForEntry(kimiK3); protocol != ReasoningProtocolOpenAI {
 		t.Fatalf("opencode Kimi K3 protocol = %q, want openai", protocol)
 	}
-	if cap := EffortCapabilityForEntry(kimiK3); !cap.Supported || cap.Default != "max" || !containsString(cap.Levels, "max") || containsString(cap.Levels, "high") {
-		t.Fatalf("opencode Kimi K3 effort capability = %+v, want max only", cap)
+	if cap := EffortCapabilityForEntry(kimiK3); !cap.Supported || cap.Default != "max" || !containsString(cap.Levels, "high") || !containsString(cap.Levels, "max") {
+		t.Fatalf("opencode Kimi K3 effort capability = %+v, want high/max", cap)
+	}
+	for _, level := range []string{"high", "max"} {
+		if got, err := NormalizeEffort(kimiK3, level); err != nil || got != level {
+			t.Fatalf("opencode Kimi K3 /effort %s = %q, %v; want %s", level, got, err, level)
+		}
 	}
 	if kimiK3.ContextWindow != 1_048_576 || !EffectiveVision(kimiK3) {
 		t.Fatalf("opencode Kimi K3 context/vision capability mismatch: %+v", kimiK3)

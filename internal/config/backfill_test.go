@@ -350,7 +350,7 @@ func TestNormalizeLegacyOpenCodeGoKimiK3CatalogMigratesOnlyUntouchedPreset(t *te
 	}
 	k3 := got.ModelOverrides["kimi-k3"]
 	if k3.ReasoningProtocol != ReasoningProtocolOpenAI ||
-		!stringSlicesEqual(k3.SupportedEfforts, []string{"max"}) ||
+		!stringSlicesEqual(k3.SupportedEfforts, []string{"high", "max"}) ||
 		k3.DefaultEffort != "max" ||
 		k3.ContextWindow != 1_048_576 {
 		t.Fatalf("migrated Kimi K3 override = %+v", k3)

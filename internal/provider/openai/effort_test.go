@@ -47,7 +47,7 @@ func TestEffortNormalization(t *testing.T) {
 	}
 }
 
-func TestExplicitSupportedEffortsPreservesMax(t *testing.T) {
+func TestExplicitSupportedEffortsPreservesKimiK3Max(t *testing.T) {
 	p, err := New(provider.Config{
 		Name:    "opencode-go",
 		BaseURL: "https://opencode.ai/zen/go/v1",
@@ -55,7 +55,7 @@ func TestExplicitSupportedEffortsPreservesMax(t *testing.T) {
 		APIKey:  "k",
 		Extra: map[string]any{
 			"effort":            "max",
-			"supported_efforts": []string{"max"},
+			"supported_efforts": []string{"high", "max"},
 		},
 	})
 	if err != nil {

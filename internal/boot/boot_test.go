@@ -1287,7 +1287,7 @@ func TestNewProviderAppliesConfiguredDefaultEffort(t *testing.T) {
 	}
 }
 
-func TestNewProviderPreservesExplicitlySupportedMaxEffort(t *testing.T) {
+func TestNewProviderPreservesExplicitlySupportedKimiK3Efforts(t *testing.T) {
 	var gotReq map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
@@ -1304,7 +1304,7 @@ func TestNewProviderPreservesExplicitlySupportedMaxEffort(t *testing.T) {
 		BaseURL:           srv.URL,
 		Model:             "kimi-k3",
 		ReasoningProtocol: config.ReasoningProtocolOpenAI,
-		SupportedEfforts:  []string{"max"},
+		SupportedEfforts:  []string{"high", "max"},
 		DefaultEffort:     "max",
 	})
 	if err != nil {

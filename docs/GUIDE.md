@@ -286,7 +286,7 @@ for China-only endpoints, MiniMax `reasoning_split`, GLM/MiniMax thinking
 heuristics, Anthropic-compatible Bearer auth where needed, Ollama Cloud
 max-effort support, and OpenCode Go per-model reasoning overrides. The OpenCode
 Go preset includes its native `kimi-k3` subscription route with image input,
-`max` reasoning effort, and a 1,048,576-token context window. Existing untouched
+`high`/`max` reasoning effort, and a 1,048,576-token context window. Existing untouched
 OpenCode Go preset installs are upgraded automatically; edited model catalogs
 are preserved. After adding a preset, open its provider card if you need to
 change models, headers, endpoint, or compatibility settings.
