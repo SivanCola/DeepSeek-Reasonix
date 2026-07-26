@@ -169,6 +169,33 @@ func TestDesktopPreferencesAreSeparateFromCLI(t *testing.T) {
 	}
 }
 
+func TestDesktopCurrencyNormalizesAndRefreshesOfficialPricing(t *testing.T) {
+	c := Default()
+	c.Desktop.Language = "zh"
+	if err := c.SetDesktopCurrency("usd"); err != nil {
+		t.Fatalf("SetDesktopCurrency USD: %v", err)
+	}
+	if got := c.DesktopCurrency(); got != "USD" {
+		t.Fatalf("desktop currency = %q, want USD", got)
+	}
+	flash, _ := c.Provider("deepseek-flash")
+	if flash.Price == nil || flash.Price.Output != 0.28 || flash.Price.Currency != "$" {
+		t.Fatalf("USD flash price = %+v", flash.Price)
+	}
+	if err := c.SetDesktopCurrency("auto"); err != nil {
+		t.Fatalf("SetDesktopCurrency auto: %v", err)
+	}
+	if got := c.DesktopCurrency(); got != "" {
+		t.Fatalf("auto desktop currency = %q, want empty", got)
+	}
+	if flash.Price == nil || flash.Price.Output != 2 || flash.Price.Currency != "¥" {
+		t.Fatalf("auto Chinese flash price = %+v", flash.Price)
+	}
+	if err := c.SetDesktopCurrency("EUR"); err == nil {
+		t.Fatal("SetDesktopCurrency accepted unsupported EUR")
+	}
+}
+
 func TestDesktopLayoutStyleNormalizes(t *testing.T) {
 	if got := Default().DesktopLayoutStyle(); got != "workbench" {
 		t.Fatalf("default desktop layout style = %q, want workbench", got)

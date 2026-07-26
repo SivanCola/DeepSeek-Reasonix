@@ -200,6 +200,7 @@ type App struct {
 
 	forceQuit           atomic.Bool
 	backgroundMaximised atomic.Bool
+	desktopLocale       atomic.Int32
 	trayReady           bool
 	tray                *desktopTray
 	hangWatchdogMu      sync.Mutex
@@ -697,7 +698,7 @@ func (a *App) restoreOrBuildTabs() {
 		if lang == "" {
 			lang = cfg.Language
 		}
-		i18n.DetectLanguage(lang)
+		a.setDesktopLocale(i18n.DetectLanguage(lang))
 	}
 	if cfgErr != nil || singleSurfaceLayoutStyle(startupCfg.DesktopLayoutStyle()) {
 		f = singleSurfaceTabsFile(f)
@@ -2202,6 +2203,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    snap.model,
 		RequireKey:               false,
+		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		Sink:                     newSink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -2558,7 +2560,7 @@ func (a *App) ForkForTab(tabID string, turn int) (TabMeta, error) {
 		return TabMeta{}, err
 	}
 	topicID := newTopicID()
-	topicTitle := forkTopicTitle(sourceTitle)
+	topicTitle := a.forkTopicTitle(sourceTitle)
 	titleRoot := workspaceRoot
 	if scope == "global" {
 		titleRoot = ""
@@ -4053,6 +4055,7 @@ func (a *App) buildSessionRebindCandidate(
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    model,
 		RequireKey:               false,
+		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		Sink:                     a.desktopControllerSink(sink, cfg.Notifications),
 		WorkspaceRoot:            root,
 		SessionDir:               sessionDir,
@@ -9215,6 +9218,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    name,
 		RequireKey:               false,
+		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -9390,6 +9394,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
+		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -9529,6 +9534,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
+		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),

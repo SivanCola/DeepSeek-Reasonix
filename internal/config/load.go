@@ -298,7 +298,7 @@ func backfillDeepSeekPro(c *Config) {
 	for _, bp := range Default().Providers {
 		if bp.Name == "deepseek-pro" {
 			bp.APIKeyEnv = flash.APIKeyEnv
-			bp.Price = deepSeekV4PriceForModel(c.DeepSeekOfficialPricingLanguage(), proModel)
+			bp.Price = deepSeekV4PriceForModel(c.DeepSeekOfficialPricingCurrency(), proModel)
 			c.Providers = append(c.Providers, bp)
 			return
 		}

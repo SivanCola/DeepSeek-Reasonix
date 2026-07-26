@@ -221,6 +221,23 @@ func (c *Config) SetDesktopLanguage(lang string) error {
 	return nil
 }
 
+// SetDesktopCurrency pins the official pricing region independently from the
+// desktop language. Empty/auto follows the language preference.
+func (c *Config) SetDesktopCurrency(currency string) error {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "", "AUTO":
+		c.Desktop.Currency = ""
+	case "CNY", "RMB", "CNH":
+		c.Desktop.Currency = "CNY"
+	case "USD":
+		c.Desktop.Currency = "USD"
+	default:
+		return fmt.Errorf("desktop currency %q: must be auto|CNY|USD", currency)
+	}
+	c.ApplyDeepSeekOfficialDefaultPricing()
+	return nil
+}
+
 // SetDesktopAppearance sets desktop-only theme preferences. It must not affect
 // CLI theme settings or provider-visible request data.
 func (c *Config) SetDesktopAppearance(theme, style string) error {
