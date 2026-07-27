@@ -32,12 +32,36 @@ type memoryManager struct {
 	// next outgoing turn — never into the cache-stable system prefix — so a fresh
 	// memory takes effect this session without busting the prompt cache; it joins
 	// the prefix naturally on the next session.
-	pending []string
+	pending    []string
+	lastRecall memory.RecallResult
 
 	// writeMu serializes memory writes so each write+reload+swap is atomic with
 	// respect to the others. Taken OFF mu, so a read (current/drainPending) never
 	// blocks behind a write's disk I/O.
 	writeMu sync.Mutex
+}
+
+func (m *memoryManager) recall(query string) memory.RecallResult {
+	mem := m.current()
+	store := memory.Store{}
+	if mem != nil {
+		store = mem.Store
+	}
+	result := memory.AutoRecall(store, query, memory.RecallOptions{})
+	m.recordRecall(result)
+	return result
+}
+
+func (m *memoryManager) recordRecall(result memory.RecallResult) {
+	m.mu.Lock()
+	m.lastRecall = result
+	m.mu.Unlock()
+}
+
+func (m *memoryManager) lastRecallResult() memory.RecallResult {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lastRecall
 }
 
 func newMemoryManager(set *memory.Set) memoryManager {

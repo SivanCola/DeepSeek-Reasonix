@@ -565,6 +565,48 @@ func (s Store) List() []Memory {
 	return out
 }
 
+// ListAll returns every active fact from both scopes without the legacy
+// name-based deduplication performed by List. Callers that understand scope can
+// use it to resolve project-over-global overrides without hiding either source.
+func (s Store) ListAll() []Memory {
+	if s.Dir == "" && s.GlobalDir == "" {
+		return nil
+	}
+	var out []Memory
+	for _, dir := range s.dirs() {
+		if dir == "" {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || entry.Name() == indexFile || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			memory, ok := loadMemory(filepath.Join(dir, entry.Name()))
+			if !ok {
+				continue
+			}
+			if memory.Scope == "" {
+				memory.Scope = s.scopeForDir(dir)
+			}
+			out = append(out, memory)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		if out[i].Scope != out[j].Scope {
+			return out[i].Scope < out[j].Scope
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
 // globalGuidance snapshots global user preferences and working feedback for the
 // stable session prefix. These categories were globally routed before explicit
 // scopes existed, so loading their bodies preserves the established first-turn

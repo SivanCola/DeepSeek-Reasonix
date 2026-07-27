@@ -66,7 +66,21 @@ func StripTransientUserBlocks(content string) string {
 		s = next
 	}
 	s = stripTrailingDeliveryRuntime(s)
+	s = stripTrailingMemoryRecall(s)
 	return strings.TrimLeft(s, " \t\r\n")
+}
+
+func stripTrailingMemoryRecall(s string) string {
+	trimmed := strings.TrimRight(s, " \t\r\n")
+	const open = "<memory-recall>"
+	const close = "</memory-recall>"
+	if !strings.HasSuffix(trimmed, close) {
+		return s
+	}
+	if index := strings.LastIndex(trimmed, open); index >= 0 {
+		return strings.TrimRight(trimmed[:index], " \t\r\n")
+	}
+	return s
 }
 
 // unwrapMemoryCompilerExecution replaces a <memory-compiler-execution> contract
