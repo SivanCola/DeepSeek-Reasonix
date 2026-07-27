@@ -139,6 +139,8 @@ type MemoryControl interface {
 	SaveMemory(m memory.Memory) (string, error)
 	ForgetMemory(name string) error
 	QueueMemory(note string)
+	MemoryRevisions(ref string) []memory.Memory
+	RestoreMemory(ref string, revision int) (memory.Memory, error)
 }
 
 // Capabilities covers the session's pluggable surface — MCP servers, skills,

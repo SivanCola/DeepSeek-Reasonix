@@ -15,6 +15,17 @@ import (
 // self-registering as a stateless built-in.
 type rememberTool struct{ store Store }
 
+type rememberRequest struct {
+	ID               string `json:"id"`
+	ExpectedRevision int    `json:"expected_revision"`
+	Name             string `json:"name"`
+	Title            string `json:"title"`
+	Description      string `json:"description"`
+	Type             string `json:"type"`
+	Scope            string `json:"scope"`
+	Body             string `json:"body"`
+}
+
 // NewRememberTool returns the `remember` tool bound to store. A zero/disabled
 // store yields a tool that reports the store is unavailable rather than silently
 // dropping saves.
@@ -55,18 +66,9 @@ func (rememberTool) Schema() json.RawMessage {
 }
 
 func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var in struct {
-		ID               string `json:"id"`
-		ExpectedRevision int    `json:"expected_revision"`
-		Name             string `json:"name"`
-		Title            string `json:"title"`
-		Description      string `json:"description"`
-		Type             string `json:"type"`
-		Scope            string `json:"scope"`
-		Body             string `json:"body"`
-	}
-	if err := json.Unmarshal(args, &in); err != nil {
-		return "", fmt.Errorf("invalid arguments: %w", err)
+	in, err := parseRememberRequest(args)
+	if err != nil {
+		return "", err
 	}
 	if in.Description == "" || in.Body == "" {
 		return "", fmt.Errorf("description and body are required")
@@ -76,13 +78,8 @@ func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string
 		return "", fmt.Errorf("scope must be one of project, global")
 	}
 	factScope := FactScope(scope)
-	name := in.Name
-	if name == "" && in.ID == "" {
-		name = in.Title // Save slugifies; the title (or, below, the description) makes a serviceable slug
-	}
-	if name == "" && in.ID == "" {
-		name = in.Description
-	}
+	name := rememberRequestName(in)
+	autoCreate := ClaimAutoMemoryWriteFromContext(ctx, args)
 	result, err := t.store.SaveWithOptions(Memory{
 		ID:          in.ID,
 		Name:        name,
@@ -91,7 +88,11 @@ func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string
 		Type:        NormalizeType(in.Type),
 		Scope:       factScope,
 		Body:        in.Body,
-	}, SaveOptions{ExpectedRevision: in.ExpectedRevision, RequireExpectedRevision: in.ExpectedRevision > 0})
+	}, SaveOptions{
+		ExpectedRevision:        in.ExpectedRevision,
+		RequireExpectedRevision: in.ExpectedRevision > 0,
+		RequireCreate:           autoCreate,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -108,3 +109,22 @@ func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string
 }
 
 func (rememberTool) ReadOnly() bool { return false }
+
+func parseRememberRequest(args json.RawMessage) (rememberRequest, error) {
+	var in rememberRequest
+	if err := json.Unmarshal(args, &in); err != nil {
+		return rememberRequest{}, fmt.Errorf("invalid arguments: %w", err)
+	}
+	return in, nil
+}
+
+func rememberRequestName(in rememberRequest) string {
+	name := in.Name
+	if name == "" && in.ID == "" {
+		name = in.Title
+	}
+	if name == "" && in.ID == "" {
+		name = in.Description
+	}
+	return slug(name)
+}

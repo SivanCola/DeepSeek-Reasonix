@@ -169,3 +169,32 @@ func TestMemoryWritesConcurrencySafe(t *testing.T) {
 		}
 	}
 }
+
+func TestRestoreMemoryQueuesAuditedRevisionForNextTurn(t *testing.T) {
+	dir := t.TempDir()
+	c := New(Options{Memory: memory.Load(memory.Options{CWD: dir, UserDir: t.TempDir()})})
+	store := c.Memory().Store
+	first, err := store.SaveWithOptions(memory.Memory{Name: "release-target", Description: "v1", Body: "main-v2"}, memory.SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveWithOptions(memory.Memory{ID: first.Memory.ID, Name: "release-target", Description: "v2", Body: "release-v2"}, memory.SaveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c.memory.applyWrite(c.Memory(), "")
+
+	restored, err := c.RestoreMemory(first.Memory.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Revision != 3 || restored.Body != "main-v2" {
+		t.Fatalf("restored = %+v", restored)
+	}
+	if revisions := c.MemoryRevisions(first.Memory.ID); len(revisions) < 2 {
+		t.Fatalf("revision history = %+v", revisions)
+	}
+	composed := c.Compose("continue")
+	if !strings.Contains(composed, "Restored memory") || !strings.Contains(composed, "revision 3") {
+		t.Fatalf("restore note did not ride next turn: %q", composed)
+	}
+}

@@ -779,6 +779,7 @@ func (c *Controller) spawnGuardedTurn(ctx context.Context, cancel context.Cancel
 // beginRotation refuses while running or finishing, and the drain flips
 // finishing directly into running.
 func (c *Controller) finishGuardedTurn(err error) {
+	c.memory.clearAutoRemember()
 	c.mu.Lock()
 	cancelRequested := c.canceling
 	c.running = false
@@ -5273,6 +5274,22 @@ func (c *Controller) QueueMemory(note string) {
 	c.memory.queue(note)
 }
 
+// ClaimAutoMemoryWrite consumes the one-shot create-only authorization issued
+// by gateApprover for a low-risk project fact.
+func (c *Controller) ClaimAutoMemoryWrite(args json.RawMessage) bool {
+	return c.memory.claimAutoRemember(args)
+}
+
+func (c *Controller) MemoryRevisions(ref string) []memory.Memory {
+	return c.memory.revisions(ref)
+}
+
+// RestoreMemory restores an older active-memory revision as a new audited
+// revision and applies it to the next user turn.
+func (c *Controller) RestoreMemory(ref string, revision int) (memory.Memory, error) {
+	return c.memory.restore(ref, revision)
+}
+
 // Memory returns the loaded memory snapshot (nil when memory is disabled), for
 // frontends that surface a memory panel or the /memory command. The returned
 // *Set is immutable — mutations go through QuickAdd / SaveDoc.
@@ -5292,6 +5309,16 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 }
 
 func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, string, error) {
+	if tool == memoryRememberTool {
+		mem := g.c.Memory()
+		if mem != nil {
+			if assessment := memory.AssessRememberWrite(mem.Store, args); assessment.AutoAllow {
+				g.c.memory.authorizeAutoRemember(args)
+				return true, false, "", nil
+			}
+		}
+		g.c.memory.revokeAutoRemember(args)
+	}
 	subject = approvalDisplaySubject(tool, subject, args)
 	requireHuman := strings.EqualFold(tool, "bash") && permission.BashSubjectRequiresExplicitApproval(subject)
 	// Check pre-approval first, before any prompt or Guardian review. Dynamic

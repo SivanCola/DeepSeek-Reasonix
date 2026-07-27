@@ -17,6 +17,7 @@ import (
 type SaveOptions struct {
 	ExpectedRevision        int
 	RequireExpectedRevision bool
+	RequireCreate           bool
 }
 
 type SaveResult struct {
@@ -102,6 +103,9 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 		if actual != opts.ExpectedRevision {
 			return SaveResult{}, fmt.Errorf("memory revision conflict: expected %d, found %d", opts.ExpectedRevision, actual)
 		}
+	}
+	if opts.RequireCreate && exists {
+		return SaveResult{}, fmt.Errorf("memory %q already exists; automatic writes are create-only", existing.Name)
 	}
 
 	if strings.TrimSpace(m.Name) == "" {

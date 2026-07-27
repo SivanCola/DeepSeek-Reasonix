@@ -1,6 +1,8 @@
 package control
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -34,11 +36,50 @@ type memoryManager struct {
 	// the prefix naturally on the next session.
 	pending    []string
 	lastRecall memory.RecallResult
+	autoWrites map[[32]byte]int
 
 	// writeMu serializes memory writes so each write+reload+swap is atomic with
 	// respect to the others. Taken OFF mu, so a read (current/drainPending) never
 	// blocks behind a write's disk I/O.
 	writeMu sync.Mutex
+}
+
+func (m *memoryManager) authorizeAutoRemember(args json.RawMessage) {
+	key := sha256.Sum256(args)
+	m.mu.Lock()
+	if m.autoWrites == nil {
+		m.autoWrites = map[[32]byte]int{}
+	}
+	m.autoWrites[key]++
+	m.mu.Unlock()
+}
+
+func (m *memoryManager) revokeAutoRemember(args json.RawMessage) {
+	key := sha256.Sum256(args)
+	m.mu.Lock()
+	delete(m.autoWrites, key)
+	m.mu.Unlock()
+}
+
+func (m *memoryManager) clearAutoRemember() {
+	m.mu.Lock()
+	m.autoWrites = nil
+	m.mu.Unlock()
+}
+
+func (m *memoryManager) claimAutoRemember(args json.RawMessage) bool {
+	key := sha256.Sum256(args)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.autoWrites[key] <= 0 {
+		return false
+	}
+	if m.autoWrites[key] == 1 {
+		delete(m.autoWrites, key)
+	} else {
+		m.autoWrites[key]--
+	}
+	return true
 }
 
 func (m *memoryManager) recall(query string) memory.RecallResult {
@@ -180,6 +221,30 @@ func (m *memoryManager) forget(name string) error {
 	m.applyWrite(mem,
 		"Forgot memory \""+name+"\" — disregard its loaded guidance and background-index entry for the rest of this session.")
 	return nil
+}
+
+func (m *memoryManager) revisions(ref string) []memory.Memory {
+	mem := m.current()
+	if mem == nil {
+		return nil
+	}
+	return mem.Store.Revisions(ref)
+}
+
+func (m *memoryManager) restore(ref string, revision int) (memory.Memory, error) {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	mem := m.current()
+	if mem == nil {
+		return memory.Memory{}, fmt.Errorf("memory unavailable")
+	}
+	result, err := mem.Store.Restore(ref, revision)
+	if err != nil {
+		return memory.Memory{}, err
+	}
+	m.applyWrite(mem, fmt.Sprintf("Restored memory %q as revision %d: %s\n%s",
+		result.Memory.Name, result.Memory.Revision, strings.Join(strings.Fields(result.Memory.Description), " "), strings.TrimSpace(result.Memory.Body)))
+	return result.Memory, nil
 }
 
 // queue rides a note on the next turn — the model's remember/forget tool path

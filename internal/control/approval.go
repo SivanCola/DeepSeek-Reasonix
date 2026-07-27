@@ -523,9 +523,11 @@ func normalizeToolApprovalMode(mode string) string {
 	}
 }
 
-// RequiresFreshHumanApprovalTool reports whether a tool must be answered by a
-// human decision, not by YOLO/auto approval, Guardian, or a non-interactive nil
-// approver. A small subset may still opt into explicit session grants.
+// RequiresFreshHumanApprovalTool reports whether a tool's unsafe variants must
+// be answered by a human decision, not by YOLO/auto approval, Guardian, or a
+// non-interactive nil approver. The interactive controller may still classify a
+// bounded new project memory as create-only and allow that narrow operation;
+// headless gates fail closed because they do not own the scoped memory store.
 func RequiresFreshHumanApprovalTool(tool string) bool {
 	switch tool {
 	case planApprovalTool, memoryRememberTool, memoryForgetTool, SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool:
