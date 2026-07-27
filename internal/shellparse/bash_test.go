@@ -99,6 +99,28 @@ func TestContainsUnquotedGlob(t *testing.T) {
 	}
 }
 
+func TestAnalyzeApprovalFeaturesMarksNonStaticArgumentsAsExpansion(t *testing.T) {
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{command: "printf '%s\\n' {a,b}", want: true},
+		{command: "printf '%s\\n' @(a|b)", want: true},
+		{command: `printf '%s\\n' "{a,b}"`},
+		{command: `printf '%s\\n' \{a,b\}`},
+	}
+	for _, tt := range tests {
+		command := tt.command
+		features, ok := AnalyzeApprovalFeatures(command)
+		if !ok {
+			t.Fatalf("AnalyzeApprovalFeatures(%q) failed", command)
+		}
+		if features.Expansion != tt.want {
+			t.Errorf("AnalyzeApprovalFeatures(%q) expansion = %v, want %v", command, features.Expansion, tt.want)
+		}
+	}
+}
+
 func TestParseStaticCommandPolicy(t *testing.T) {
 	got, err := ParseStaticCommand(`FOO=bar MESSAGE='hello world' go test ./...`, StaticCommandPolicy{AllowEnvAssignments: true})
 	if err != nil {

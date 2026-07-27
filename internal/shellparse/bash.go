@@ -221,21 +221,11 @@ func AnalyzeApprovalFeatures(command string) (features ApprovalFeatures, ok bool
 	if !ok {
 		return features, false
 	}
-	for i, arg := range call.Args {
-		field, static := StaticWord(arg)
-		if !static {
-			if i == 0 {
-				features.DynamicCommandName = true
-			}
-			break
-		}
-		features.CommandPrefix = append(features.CommandPrefix, field)
-	}
 	syntax.Walk(file, func(node syntax.Node) bool {
 		switch node.(type) {
 		case *syntax.CmdSubst, *syntax.ProcSubst:
 			features.NestedExecution = true
-		case *syntax.ParamExp, *syntax.ArithmExp:
+		case *syntax.ParamExp, *syntax.ArithmExp, *syntax.ExtGlob:
 			features.Expansion = true
 		case *syntax.Assign:
 			features.Assignment = true
@@ -244,6 +234,22 @@ func AnalyzeApprovalFeatures(command string) (features ApprovalFeatures, ok bool
 		}
 		return true
 	})
+	for _, arg := range call.Args {
+		if wordHasUnescapedBrace(arg) {
+			syntax.SplitBraces(arg)
+		}
+	}
+	for i, arg := range call.Args {
+		field, static := StaticWord(arg)
+		if !static {
+			features.Expansion = true
+			if i == 0 {
+				features.DynamicCommandName = true
+			}
+			break
+		}
+		features.CommandPrefix = append(features.CommandPrefix, field)
+	}
 	return features, true
 }
 
@@ -274,6 +280,22 @@ func ContainsUnquotedGlob(command string) bool {
 }
 
 func hasUnescapedGlobMeta(value string) bool {
+	return hasUnescapedMeta(value, "*?[")
+}
+
+func wordHasUnescapedBrace(word *syntax.Word) bool {
+	if word == nil {
+		return false
+	}
+	for _, part := range word.Parts {
+		if lit, ok := part.(*syntax.Lit); ok && hasUnescapedMeta(lit.Value, "{") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasUnescapedMeta(value, meta string) bool {
 	escaped := false
 	for i := 0; i < len(value); i++ {
 		if escaped {
@@ -284,7 +306,7 @@ func hasUnescapedGlobMeta(value string) bool {
 			escaped = true
 			continue
 		}
-		if value[i] == '*' || value[i] == '?' || value[i] == '[' {
+		if strings.ContainsRune(meta, rune(value[i])) {
 			return true
 		}
 	}

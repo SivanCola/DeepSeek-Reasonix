@@ -19,6 +19,8 @@ func TestBashSubjectRequiresExplicitApproval(t *testing.T) {
 		{name: "process substitution output", subject: "tee >(touch /tmp/x)", wantHuman: true, wantExact: true},
 		{name: "parameter expansion", subject: "git diff $REV", wantExact: true},
 		{name: "arithmetic expansion", subject: "echo $((1 + 1))", wantExact: true},
+		{name: "brace expansion", subject: "printf '%s\\n' {a,b}", wantExact: true},
+		{name: "extended glob", subject: "printf '%s\\n' @(a|b)", wantExact: true},
 		{name: "environment assignment", subject: "REV=HEAD git diff", wantExact: true},
 		{name: "env wrapper assignment", subject: "env REV=HEAD git diff", wantExact: true},
 		{name: "file redirect", subject: "git status > status.txt", wantExact: true},
@@ -66,6 +68,8 @@ func TestPolicyDynamicBashRequiresExplicitApproval(t *testing.T) {
 		{name: "session glob cannot bypass", p: New("ask", nil, nil, nil).WithSessionAllow([]string{"Bash(git*)"}), want: Ask},
 		{name: "explicit ask remains ask", p: New("allow", []string{"Bash"}, []string{"Bash(git*)"}, nil), want: Ask},
 		{name: "raw deny wins", p: New("allow", []string{"Bash"}, nil, []string{"Bash(git*)"}), want: Deny},
+		{name: "scoped raw deny wins", p: New("allow", []string{"Bash"}, nil, []string{"Bash(git status:*)"}), want: Deny},
+		{name: "scoped raw ask remains ask", p: New("allow", []string{"Bash"}, []string{"Bash(git status:*)"}, nil), want: Ask},
 		{name: "literal allow matches exactly", p: New("ask", []string{"Bash=" + command}, nil, nil), want: Allow},
 		{name: "legacy exact allow matches exactly", p: New("ask", []string{"Bash(" + command + ")"}, nil, nil), want: Allow},
 		{name: "literal session grant matches exactly", p: New("ask", nil, []string{"Bash(git*)"}, nil).WithSessionAllow([]string{"Bash=" + command}), want: Allow},
@@ -76,6 +80,13 @@ func TestPolicyDynamicBashRequiresExplicitApproval(t *testing.T) {
 				t.Fatalf("DecideSubject(%q) = %v, want %v", command, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPolicyRawBashPrefixMatchesDynamicSpacing(t *testing.T) {
+	command := "git  status $(touch /tmp/x)"
+	if got := New("allow", nil, nil, []string{"Bash(git status:*)"}).DecideSubject("bash", false, command); got != Deny {
+		t.Fatalf("scoped deny with dynamic spacing = %v, want Deny", got)
 	}
 }
 

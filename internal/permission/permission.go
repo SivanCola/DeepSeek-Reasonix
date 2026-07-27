@@ -183,6 +183,11 @@ func (p Policy) DecideSubject(toolName string, readOnly bool, subject string) De
 			return Ask
 		case matchAnyExact(p.Allow, toolName, subject):
 			return Allow
+		}
+		if parts != nil {
+			return p.decideBashSegments(readOnly, parts)
+		}
+		switch {
 		case requiresHuman && p.Mode == Deny:
 			return Deny
 		case requiresHuman:
@@ -191,9 +196,6 @@ func (p Policy) DecideSubject(toolName string, readOnly bool, subject string) De
 			return Allow
 		case requiresExact:
 			return p.Mode
-		}
-		if parts != nil {
-			return p.decideBashSegments(readOnly, parts)
 		}
 		switch {
 		case matchAnyAllow(p.Allow, toolName, subject):
@@ -238,32 +240,13 @@ func (p Policy) decideBashSegments(readOnly bool, parts []string) Decision {
 	for _, sub := range parts {
 		segReadOnly := readOnly
 		if !segReadOnly {
-			if isReadOnlyBashSubject(sub) {
-				segReadOnly = true
-			}
+			segReadOnly = isReadOnlyBashSubject(sub)
 		}
-		switch {
-		case matchAnyRaw(p.Deny, "bash", sub):
+		switch p.DecideSubject("bash", segReadOnly, sub) {
+		case Deny:
 			return Deny
-		case matchAnyAllow(p.SessionAllow, "bash", sub):
-			// covered by the explicit session allowlist
-		case matchAnyRaw(p.Ask, "bash", sub):
+		case Ask:
 			out = Ask
-		case matchAnyAllow(p.Allow, "bash", sub):
-			// covered
-		case segReadOnly:
-			// covered
-		default:
-			// Segment not covered by a rule or read-only classification: apply
-			// the same writer fallback used for atomic bash commands.
-			switch p.Mode {
-			case Deny:
-				return Deny
-			case Ask:
-				out = Ask
-			default:
-				// covered by fallback allow
-			}
 		}
 	}
 	return out
@@ -320,17 +303,55 @@ func matchAnyRaw(rules []Rule, toolName, subject string) bool {
 		if subject == "" {
 			continue
 		}
-		if r.Literal {
-			if r.Subject == subject {
-				return true
-			}
-			continue
-		}
-		if matchGlob(r.Subject, subject) {
+		if rawRuleSubjectMatches(r, subject) {
 			return true
 		}
 	}
 	return false
+}
+
+func rawRuleSubjectMatches(rule Rule, subject string) bool {
+	if rule.Literal {
+		return rule.Subject == subject
+	}
+	if canonicalRuleTool(rule.Tool) == "bash" {
+		if base, ok := bashPrefixBase(rule.Subject); ok {
+			return rawBashPrefixMatches(base, subject)
+		}
+	}
+	return matchGlob(rule.Subject, subject)
+}
+
+func rawBashPrefixMatches(base, subject string) bool {
+	baseFields, malformed := shellparse.StaticFields(base)
+	if malformed == "" && len(baseFields) > 0 {
+		if features, ok := shellparse.AnalyzeApprovalFeatures(subject); ok && len(features.CommandPrefix) >= len(baseFields) {
+			matched := true
+			for i, want := range baseFields {
+				if features.CommandPrefix[i] != want {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return true
+			}
+		}
+	}
+	base = strings.TrimSpace(base)
+	subject = strings.TrimSpace(subject)
+	if subject == base {
+		return true
+	}
+	if len(subject) <= len(base) || !strings.HasPrefix(subject, base) {
+		return false
+	}
+	switch subject[len(base)] {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
 }
 
 func matchAnyExact(rules []Rule, toolName, subject string) bool {
@@ -481,13 +502,13 @@ func matchGlob(pattern, name string) bool {
 	starPx = -1
 	for nx < len(name) {
 		switch {
-		case px < len(pattern) && (pattern[px] == '?' || pattern[px] == name[nx]):
-			px++
-			nx++
 		case px < len(pattern) && pattern[px] == '*':
 			starPx = px
 			starNx = nx
 			px++
+		case px < len(pattern) && (pattern[px] == '?' || pattern[px] == name[nx]):
+			px++
+			nx++
 		case starPx != -1:
 			px = starPx + 1
 			starNx++
