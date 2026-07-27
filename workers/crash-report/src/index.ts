@@ -73,17 +73,21 @@ const Report = z.object({
 });
 type ReportPayload = z.infer<typeof Report>;
 
-const Ping = z.object({
+const ClientSurface = z.enum(["desktop", "cli"]);
+
+export const Ping = z.object({
   installId: z.string().regex(/^[0-9a-f]{32}$/),
   version: z.string().min(1).max(64),
   os: z.string().min(1).max(32),
   arch: z.string().min(1).max(32),
   osVersion: z.string().max(128).optional(),
+  surface: ClientSurface.default("desktop"),
 });
 
-// Opt-in aggregate desktop metrics: a per-launch snapshot of (signal, bucket)
-// counters. No install id, no content — unknown signals are discarded before
-// storage so older workers can accept batches from newer clients safely.
+// Opt-in aggregate client metrics: a per-launch snapshot of (signal, bucket)
+// counters. The optional surface-specific random install id deduplicates DAU;
+// there is no user content. Unknown signals are discarded before storage so
+// older workers can accept batches from newer clients safely.
 const METRIC_SIGNALS = [
   "finish_reason",
   "empty_final",
@@ -103,6 +107,12 @@ const METRIC_SIGNALS = [
   "desktop_update_transition",
   "desktop_restore",
   "desktop_webview2_failure",
+  "cli_mode",
+  "cli_profile",
+  "cli_permission_mode",
+  "cli_session_mode",
+  "cli_turn_latency",
+  "cli_exit",
   "recovery_failure",
   "recovery_rule_continue",
   "recovery_review_continue",
@@ -179,6 +189,7 @@ export const Metrics = z.object({
     .optional(),
   version: z.string().min(1).max(64),
   os: z.string().min(1).max(32),
+  surface: ClientSurface.default("desktop"),
   counters: z
     .array(z.union([KnownMetricCounter, UnknownMetricCounter]))
     .min(1)
@@ -527,12 +538,12 @@ async function handlePing(request: Request, env: Env): Promise<Response> {
 
   try {
     await env.DB.prepare(
-      `INSERT INTO pings (date, install_id, version, os, arch, os_version, opens)
-       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, 1)
-       ON CONFLICT (date, install_id) DO UPDATE SET
-         opens = opens + 1, version = ?2, os_version = ?5`,
+      `INSERT INTO pings (date, surface, install_id, version, os, arch, os_version, opens)
+       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, 1)
+       ON CONFLICT (date, surface, install_id) DO UPDATE SET
+         opens = opens + 1, version = ?3, os_version = ?6`,
     )
-      .bind(p.installId, p.version, p.os, p.arch, p.osVersion ?? "")
+      .bind(p.surface, p.installId, p.version, p.os, p.arch, p.osVersion ?? "")
       .run();
   } catch (err) {
     return storageUnavailable("ping", err);
@@ -554,25 +565,25 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
   if (m.counters.length === 0) return new Response("ok", { status: 202 });
 
   const upsert = env.DB.prepare(
-    `INSERT INTO metrics (date, version, os, signal, bucket, count)
-     VALUES (date('now'), ?1, ?2, ?3, ?4, ?5)
-     ON CONFLICT (date, version, os, signal, bucket) DO UPDATE SET
-       count = count + ?5`,
+    `INSERT INTO metrics (date, surface, version, os, signal, bucket, count)
+     VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT (date, surface, version, os, signal, bucket) DO UPDATE SET
+       count = count + ?6`,
   );
   try {
-    await env.DB.batch(m.counters.map((c) => upsert.bind(m.version, m.os, c.signal, c.bucket, c.count)));
+    await env.DB.batch(m.counters.map((c) => upsert.bind(m.surface, m.version, m.os, c.signal, c.bucket, c.count)));
   } catch (err) {
     return storageUnavailable("metrics", err);
   }
   if (m.installId) {
     const userUpsert = env.DB.prepare(
-      `INSERT INTO metric_users (date, version, os, signal, bucket, install_id)
-       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5)
-       ON CONFLICT (date, signal, bucket, install_id) DO UPDATE SET
-         version = ?1, os = ?2`,
+      `INSERT INTO metric_users (date, surface, version, os, signal, bucket, install_id)
+       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT (date, surface, signal, bucket, install_id) DO UPDATE SET
+         version = ?2, os = ?3`,
     );
     try {
-      await env.DB.batch(m.counters.map((c) => userUpsert.bind(m.version, m.os, c.signal, c.bucket, m.installId)));
+      await env.DB.batch(m.counters.map((c) => userUpsert.bind(m.surface, m.version, m.os, c.signal, c.bucket, m.installId)));
     } catch (err) {
       console.warn("metric_users write failed", err);
     }
@@ -603,6 +614,7 @@ async function formObject(request: Request): Promise<Record<string, string>> {
 }
 
 type StatsFilters = {
+  surface: "desktop" | "cli";
   status: string;
   source: string;
   version: string;
@@ -616,8 +628,10 @@ type StatsFilters = {
 
 function statsFilters(url: URL): StatsFilters {
   const status = url.searchParams.get("status") ?? "";
+  const surface = url.searchParams.get("surface") ?? "desktop";
   const windowParam = url.searchParams.get("window") ?? "";
   return {
+    surface: surface === "cli" ? "cli" : "desktop",
     status: ["open", "resolved", "ignored"].includes(status) ? status : "",
     source: (url.searchParams.get("source") ?? "").slice(0, 32),
     version: (url.searchParams.get("version") ?? "").slice(0, 64),
@@ -781,14 +795,15 @@ function newestReleaseVersion(versions: string[]): string {
   return parsed[0]?.version ?? "";
 }
 
-async function latestObservedVersion(env: Env): Promise<string> {
-  const rows = await env.DB.prepare(
-    `SELECT version FROM (
-       SELECT version FROM pings WHERE date >= date('now', '-29 day')
-       UNION
-       SELECT last_version AS version FROM groups
-     ) AS versions WHERE version <> ''`,
-  ).all<{ version: string }>();
+async function latestObservedVersion(env: Env, surface: "desktop" | "cli"): Promise<string> {
+  const sql = surface === "desktop"
+    ? `SELECT version FROM (
+         SELECT version FROM pings WHERE surface = 'desktop' AND date >= date('now', '-29 day')
+         UNION
+         SELECT last_version AS version FROM groups
+       ) AS versions WHERE version <> ''`
+    : `SELECT version FROM pings WHERE surface = 'cli' AND date >= date('now', '-29 day') AND version <> ''`;
+  const rows = await env.DB.prepare(sql).all<{ version: string }>();
   return newestReleaseVersion(rows.results.map((r) => r.version));
 }
 
@@ -800,22 +815,31 @@ type OverviewCounts = {
   criticalOpenReports: number;
 };
 
-async function latestAdoptionPct(env: Env, latestVersion: string, days: 7 | 30): Promise<number | null> {
+async function latestAdoptionPct(env: Env, latestVersion: string, days: 7 | 30, surface: "desktop" | "cli"): Promise<number | null> {
   if (!latestVersion) return null;
   const row = await env.DB.prepare(
     `SELECT
       COUNT(DISTINCT install_id) AS total_installs,
       COUNT(DISTINCT CASE WHEN version = ?1 THEN install_id END) AS latest_installs
-    FROM pings WHERE date >= date('now', '${currentWindowSince(days)}')`,
+    FROM pings WHERE surface = ?2 AND date >= date('now', '${currentWindowSince(days)}')`,
   )
-    .bind(latestVersion)
+    .bind(latestVersion, surface)
     .first<{ total_installs: number; latest_installs: number }>();
   const total = Number(row?.total_installs ?? 0);
   if (!total) return null;
   return (Number(row?.latest_installs ?? 0) / total) * 100;
 }
 
-async function diagnosticOverview(env: Env, latestVersion: string, days: 7 | 30): Promise<OverviewCounts> {
+async function diagnosticOverview(env: Env, latestVersion: string, days: 7 | 30, surface: "desktop" | "cli"): Promise<OverviewCounts> {
+  if (surface === "cli") {
+    return {
+      latestAdoptionPct: await latestAdoptionPct(env, latestVersion, days, surface),
+      openReports: 0,
+      newLatestReports: 0,
+      regressedReports: 0,
+      criticalOpenReports: 0,
+    };
+  }
   // Keep the overview's red state aligned with the effective severity used by
   // the diagnostics list. Historical rows retain their stored severity, so
   // known browser notices and development builds must be discounted here too.
@@ -849,7 +873,7 @@ async function diagnosticOverview(env: Env, latestVersion: string, days: 7 | 30)
       ).first<{ open_reports: number; new_latest_reports: number; regressed_reports: number; critical_open_reports: number }>();
   const [row, adoptionPct] = await Promise.all([
     diagnosticCounts,
-    latestAdoptionPct(env, latestVersion, days),
+    latestAdoptionPct(env, latestVersion, days, surface),
   ]);
   return {
     latestAdoptionPct: adoptionPct,
@@ -872,21 +896,21 @@ function previousWindowUntil(days: 7 | 30): string {
   return currentWindowSince(days);
 }
 
-async function metricRows(env: Env, days: 7 | 30, previous = false): Promise<{ signal: string; bucket: string; total: number }[]> {
+async function metricRows(env: Env, days: 7 | 30, surface: "desktop" | "cli", previous = false): Promise<{ signal: string; bucket: string; total: number }[]> {
   const where = previous
     ? `date >= date('now', '${previousWindowSince(days)}') AND date < date('now', '${previousWindowUntil(days)}')`
     : `date >= date('now', '${currentWindowSince(days)}')`;
   const rows = await env.DB.prepare(
-    `SELECT signal, bucket, SUM(count) AS total FROM metrics WHERE ${where} GROUP BY signal, bucket ORDER BY signal, total DESC`,
-  ).all<{ signal: string; bucket: string; total: number }>();
+    `SELECT signal, bucket, SUM(count) AS total FROM metrics WHERE surface = ?1 AND ${where} GROUP BY signal, bucket ORDER BY signal, total DESC`,
+  ).bind(surface).all<{ signal: string; bucket: string; total: number }>();
   return rows.results;
 }
 
-async function metricUserRows(env: Env, days: 7 | 30): Promise<{ signal: string; bucket: string; total: number }[]> {
+async function metricUserRows(env: Env, days: 7 | 30, surface: "desktop" | "cli"): Promise<{ signal: string; bucket: string; total: number }[]> {
   try {
     const rows = await env.DB.prepare(
-      `SELECT signal, bucket, COUNT(DISTINCT install_id) AS total FROM metric_users WHERE date >= date('now', '${currentWindowSince(days)}') GROUP BY signal, bucket ORDER BY signal, total DESC`,
-    ).all<{ signal: string; bucket: string; total: number }>();
+      `SELECT signal, bucket, COUNT(DISTINCT install_id) AS total FROM metric_users WHERE surface = ?1 AND date >= date('now', '${currentWindowSince(days)}') GROUP BY signal, bucket ORDER BY signal, total DESC`,
+    ).bind(surface).all<{ signal: string; bucket: string; total: number }>();
     return rows.results;
   } catch (err) {
     console.warn("metric_users query failed", err);
@@ -905,11 +929,13 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
   const filters = statsFilters(url);
   const days = filters.windowDays;
   const since = currentWindowSince(days);
+  const surface = activeModule === "diagnostics" ? "desktop" : filters.surface;
+  if (activeModule === "diagnostics") filters.surface = "desktop";
   const bars = (sql: string) => env.DB.prepare(sql).all<Bar>().then((r) => r.results);
   const pingVersions = () =>
-    bars(`SELECT version AS label, COUNT(DISTINCT install_id) AS users FROM pings WHERE date >= date('now', '${since}') GROUP BY label ORDER BY users DESC LIMIT 15`);
+    bars(`SELECT version AS label, COUNT(DISTINCT install_id) AS users FROM pings WHERE surface = '${surface}' AND date >= date('now', '${since}') GROUP BY label ORDER BY users DESC LIMIT 15`);
   const pingPlatforms = () =>
-    bars(`SELECT os || ' ' || arch AS label, COUNT(DISTINCT install_id) AS users FROM pings WHERE date >= date('now', '${since}') GROUP BY label ORDER BY users DESC`);
+    bars(`SELECT os || ' ' || arch AS label, COUNT(DISTINCT install_id) AS users FROM pings WHERE surface = '${surface}' AND date >= date('now', '${since}') GROUP BY label ORDER BY users DESC`);
 
   let daily: { date: string; users: number; opens: number }[] = [];
   let versions: Bar[] = [];
@@ -929,15 +955,15 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
   let latestVersion = "";
 
   if (activeModule === "usage") {
-    latestVersion = await latestObservedVersion(env);
+    latestVersion = await latestObservedVersion(env, surface);
     const [dailyR, versionsR, platformsR, metricsR, overviewR] = await Promise.all([
       env.DB.prepare(
-        `SELECT date, COUNT(*) AS users, SUM(opens) AS opens FROM pings WHERE date >= date('now', '${since}') GROUP BY date`,
+        `SELECT date, COUNT(*) AS users, SUM(opens) AS opens FROM pings WHERE surface = '${surface}' AND date >= date('now', '${since}') GROUP BY date`,
       ).all<{ date: string; users: number; opens: number }>(),
       pingVersions(),
       pingPlatforms(),
-      metricRows(env, days),
-      diagnosticOverview(env, latestVersion, days),
+      metricRows(env, days, surface),
+      diagnosticOverview(env, latestVersion, days, surface),
     ]);
     daily = dailyR.results;
     versions = versionsR;
@@ -945,7 +971,7 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
     metrics = metricsR;
     overview = overviewR;
   } else if (activeModule === "diagnostics") {
-    latestVersion = await latestObservedVersion(env);
+    latestVersion = await latestObservedVersion(env, "desktop");
     const [crashesR, sourcesR, versionsR, platformsR] = await Promise.all([
       crashGroups(env, filters, latestVersion),
       bars("SELECT source AS label, COUNT(*) AS users FROM groups GROUP BY source ORDER BY users DESC"),
@@ -957,9 +983,9 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
     versions = versionsR;
     platforms = platformsR;
   } else if (activeModule === "preferences") {
-    [metrics, metricUsers] = await Promise.all([metricRows(env, days), metricUserRows(env, days)]);
+    [metrics, metricUsers] = await Promise.all([metricRows(env, days, surface), metricUserRows(env, days, surface)]);
   } else {
-    [metrics, previousMetrics] = await Promise.all([metricRows(env, days), metricRows(env, days, true)]);
+    [metrics, previousMetrics] = await Promise.all([metricRows(env, days, surface), metricRows(env, days, surface, true)]);
   }
 
   return html(
@@ -1241,9 +1267,9 @@ async function runIngestSentinel(env: Env): Promise<void> {
   const problems: string[] = [];
   try {
     await env.DB.prepare(
-      `INSERT INTO pings (date, install_id, version, os, arch, opens)
-       VALUES (date('now'), ?1, 'canary', 'canary', 'canary', 0)
-       ON CONFLICT (date, install_id) DO NOTHING`,
+      `INSERT INTO pings (date, surface, install_id, version, os, arch, opens)
+       VALUES (date('now'), 'desktop', ?1, 'canary', 'canary', 'canary', 0)
+       ON CONFLICT (date, surface, install_id) DO NOTHING`,
     )
       .bind(CANARY_INSTALL_ID)
       .run();
@@ -1269,7 +1295,7 @@ async function runIngestSentinel(env: Env): Promise<void> {
               COUNT(*) AS ping_count,
               COALESCE(SUM(opens), 0) AS open_count
        FROM pings
-       WHERE date = date('now') AND install_id <> ?1`,
+       WHERE date = date('now') AND surface = 'desktop' AND install_id <> ?1`,
     )
       .bind(CANARY_INSTALL_ID)
       .first<{ day: string; ping_count: number; open_count: number }>();

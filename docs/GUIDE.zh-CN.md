@@ -51,6 +51,9 @@ default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可�
 # shortcut_layout = "desktop"      # classic|desktop；兼容旧配置
 # cursor_shape = "bar"             # block|underline|bar；CLI/TUI 输入光标
 
+[telemetry]
+cli_metrics = "auto"               # 仅用户全局：auto|on|off
+
 [agent]
 reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # plan_mode_read_only_commands = ["gh issue view"]   # 仅兼容旧配置；Plan bash 现由 Permissions 决定
@@ -123,6 +126,54 @@ bash allowlist 或信任提示。Plan 与常规模式使用相同的 Permissions
 
 多数日常设置应写在 `config.toml` 或前文提到的 Reasonix 全局 `.env` 中。下面这些变量是进程级高级开关；
 需要在启动 Reasonix 之前设置。项目 `.env` 不是 Reasonix 控制变量的运行时来源。
+
+### CLI 上报统计
+
+CLI 可以向 `https://crash.reasonix.io` 发送每日最多一次的匿名活跃安装 ping，
+以及有界、完全不含内容的事件计数。使用以下用户全局命令配置：
+
+```bash
+reasonix config telemetry          # 查看当前生效模式
+reasonix config telemetry auto     # 默认：仅本机交互式 TTY
+reasonix config telemetry on       # 也允许本机 headless `reasonix run`
+reasonix config telemetry off      # 关闭并删除待发送计数文件
+```
+
+在 CI、Safe Mode、开发构建中始终关闭；设置 `DO_NOT_TRACK` 或
+`REASONIX_TELEMETRY=0` 也会关闭。`auto` 模式下，重定向、pipe 或其他非交互会话
+不会上报。网络失败完全静默，不会改变 stdout、stderr 或进程退出码；未发送计数只会
+保存在有数量和时效上限的本地队列中，等待后续启动重试。
+
+ping 包含一个 CLI 专用的随机 128-bit 安装 ID、CLI 版本、OS、架构和 `cli` surface
+标记。计数批次使用同一个 ID 做每日活跃安装去重，只包含固定 bucket，例如 CLI 模式、
+运行配置档、权限/会话模式、turn 延迟、finish reason、cache hit 区间、通用
+Provider/工具错误分类、compaction、恢复计数和归一化界面语言。这个 ID 与桌面端安装
+ID 分离，不是账号、硬件、仓库或 session 标识。
+
+Reasonix 绝不会上传 prompt、回答、reasoning、工具名/参数/输出、路径、仓库/分支、
+session ID、精确 token/费用、Provider/model 名称、base URL 或环境变量。
+
+### CLI 崩溃报告
+
+当未处理的 Go panic 到达 CLI 入口调用栈时，Reasonix 会把脱敏报告保存在
+`<Reasonix home>/cli-crash-reports`。最多保留 10 份，文件权限仅限当前用户读取。
+panic 原文绝不会被序列化；绝对源码路径会变成 `<path>/<file>.go:<line>`，函数参数会被
+移除，并且在本地保存和实际发送前都会再次清理密钥、token、邮箱及长标识符。
+
+崩溃报告绝不会自动上传。使用以下命令审阅和管理：
+
+```bash
+reasonix report                 # 预览最新报告；TTY 中询问后才发送
+reasonix report list            # 列出本地报告
+reasonix report show [ID]       # 仅预览，不发送
+reasonix report send [ID]       # 明确发送；成功后才删除本地副本
+reasonix report delete [ID]     # 不发送，直接删除
+```
+
+通过 pipe 或重定向运行 `reasonix report` 时只会预览，不会询问或发送。Safe Mode 也会
+禁止发送，但仍允许审阅或删除本地报告。CLI telemetry 设置不会自动发送或自动删除这些
+需要单独审阅的报告。Go 无法恢复 runtime fatal throw、操作系统强制终止，以及未包装
+后台 goroutine 中的 panic，因此这些情况不会生成本地报告。
 
 ## Serve Web 前端
 

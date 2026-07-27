@@ -7,6 +7,7 @@ import {
   isKnownNonCrashDiagnostic,
   namespaceReportFingerprint,
   normalizeForFingerprint,
+  Ping,
   Metrics,
   severityForReport,
 } from "./index";
@@ -22,6 +23,49 @@ const base = {
 };
 
 describe("metrics compatibility", () => {
+  it("defaults old ping and metrics payloads to desktop", () => {
+    const ping = Ping.parse({
+      installId: "a".repeat(32),
+      version: "v1.20.0",
+      os: "darwin",
+      arch: "arm64",
+    });
+    const metrics = Metrics.parse({
+      version: "v1.20.0",
+      os: "darwin",
+      counters: [{ signal: "turns", bucket: "count", count: 1 }],
+    });
+    expect(ping.surface).toBe("desktop");
+    expect(metrics.surface).toBe("desktop");
+  });
+
+  it("accepts CLI surface and fixed CLI signals", () => {
+    const parsed = Metrics.safeParse({
+      surface: "cli",
+      version: "v1.20.0",
+      os: "linux",
+      counters: [
+        { signal: "cli_mode", bucket: "run", count: 1 },
+        { signal: "cli_profile", bucket: "delivery", count: 1 },
+        { signal: "cli_turn_latency", bucket: "s_5_15", count: 1 },
+        { signal: "cli_exit", bucket: "success", count: 1 },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.surface).toBe("cli");
+  });
+
+  it("rejects invalid client surfaces", () => {
+    expect(
+      Metrics.safeParse({
+        surface: "server",
+        version: "v1.20.0",
+        os: "linux",
+        counters: [{ signal: "turns", bucket: "count", count: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("drops unknown signals without rejecting known counters in the batch", () => {
     const payload = {
       version: "v1.17.16",
@@ -246,6 +290,7 @@ describe("diagnostics dashboard lanes", () => {
       overview: { latestAdoptionPct: null, openReports: 4, newLatestReports: 0, regressedReports: 0, criticalOpenReports: 1 },
       latestVersion: "v1.40.0",
       filters: {
+        surface: "desktop",
         status: "",
         source: "",
         version: "",
@@ -274,5 +319,41 @@ describe("diagnostics dashboard lanes", () => {
     expect(performanceLane).toContain("performance-only");
     expect(performanceLane).not.toContain("development-only");
     expect(developmentLane).toContain("development-only");
+  });
+
+  it("preserves the CLI surface in dashboard navigation and filters", () => {
+    type StatsData = Parameters<typeof renderStats>[0];
+    const data: StatsData = {
+      daily: [],
+      versions: [],
+      platforms: [],
+      crashes: [],
+      metrics: [],
+      previousMetrics: [],
+      metricUsers: [],
+      sources: [],
+      overview: { latestAdoptionPct: null, openReports: 0, newLatestReports: 0, regressedReports: 0, criticalOpenReports: 0 },
+      latestVersion: "",
+      filters: {
+        surface: "cli",
+        status: "",
+        source: "",
+        version: "",
+        os: "",
+        platform: "",
+        newLatest: false,
+        regressed: false,
+        windowDays: 30,
+        preferenceMode: "users",
+      },
+    };
+    const html = renderStats(
+      data,
+      { id: 1, email: "viewer@example.com", role: "viewer", created_at: "", approved_at: "" },
+      "usage",
+    );
+    expect(html).toContain("surface=cli");
+    expect(html).toContain('aria-label="Client surface"');
+    expect(html).toContain('href="/stats"');
   });
 });

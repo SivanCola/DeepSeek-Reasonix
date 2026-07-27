@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -112,7 +113,7 @@ func TestRunResumeRejectsCleanupPending(t *testing.T) {
 	}
 
 	errOut := captureStderr(t, func() {
-		if rc := runAgent([]string{"--resume", path, "continue task"}); rc != 1 {
+		if rc := runAgent([]string{"--resume", path, "continue task"}, "dev"); rc != 1 {
 			t.Fatalf("run --resume cleanup-pending rc = %d, want 1", rc)
 		}
 	})
@@ -318,7 +319,7 @@ func TestRunDefaultsToInteractiveSession(t *testing.T) {
 	cliIsInteractive = func() bool { return true }
 
 	var gotArgs []string
-	runInteractiveSession = func(args []string) int {
+	runInteractiveSession = func(args []string, _ string) int {
 		gotArgs = append([]string(nil), args...)
 		return 17
 	}
@@ -341,7 +342,7 @@ func TestRunNoArgsNonInteractivePrintsUsage(t *testing.T) {
 		cliIsInteractive = prevInteractive
 	})
 	cliIsInteractive = func() bool { return false }
-	runInteractiveSession = func(args []string) int {
+	runInteractiveSession = func(args []string, _ string) int {
 		t.Fatalf("non-interactive no-arg Run should not start session with %#v", args)
 		return 99
 	}
@@ -374,7 +375,7 @@ func TestRunRoutesBareInteractiveFlagsToSession(t *testing.T) {
 		{"--effort=max"},
 	} {
 		var gotArgs []string
-		runInteractiveSession = func(args []string) int {
+		runInteractiveSession = func(args []string, _ string) int {
 			gotArgs = append([]string(nil), args...)
 			return 23
 		}
@@ -407,7 +408,7 @@ func TestRunPrintFlagAfterLeadingFlagsDispatchesRun(t *testing.T) {
 	isolateCLIConfigHome(t)
 	prev := runInteractiveSession
 	t.Cleanup(func() { runInteractiveSession = prev })
-	runInteractiveSession = func([]string) int {
+	runInteractiveSession = func([]string, string) int {
 		t.Fatal("print flag after leading flags must not route to the interactive session")
 		return 0
 	}
@@ -445,7 +446,7 @@ func TestRunKeepsChatAndCodeCompatibilityAliases(t *testing.T) {
 	t.Cleanup(func() { runInteractiveSession = prev })
 
 	var calls [][]string
-	runInteractiveSession = func(args []string) int {
+	runInteractiveSession = func(args []string, _ string) int {
 		calls = append(calls, append([]string(nil), args...))
 		return 0
 	}
@@ -777,6 +778,58 @@ func TestWithNotificationsWrapsCLISinkWithConfiguredSender(t *testing.T) {
 	}
 	if sender.messages[0].Body != "Turn finished" {
 		t.Fatalf("notification body = %q, want Turn finished", sender.messages[0].Body)
+	}
+}
+
+func TestConfigTelemetryCommandRoundTripAndOptOutCleanup(t *testing.T) {
+	isolateCLIConfigHome(t)
+	out := captureStdout(t, func() {
+		if rc := configTelemetryCommand(nil); rc != 0 {
+			t.Fatalf("config telemetry query rc = %d", rc)
+		}
+	})
+	if !strings.Contains(out, `cli_metrics = "auto"`) {
+		t.Fatalf("default telemetry query = %q", out)
+	}
+	if rc := configTelemetryCommand([]string{"on"}); rc != 0 {
+		t.Fatalf("config telemetry on rc = %d", rc)
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg.CLITelemetryMode() != "on" {
+		t.Fatalf("saved telemetry mode = %q, err = %v", cfg.CLITelemetryMode(), err)
+	}
+	pending := filepath.Join(config.ReasonixHomeDir(), "cli-telemetry-pending")
+	if err := os.MkdirAll(pending, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pending, "pending.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rc := configTelemetryCommand([]string{"off"}); rc != 0 {
+		t.Fatalf("config telemetry off rc = %d", rc)
+	}
+	if _, err := os.Stat(pending); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("opt-out did not remove pending queue: %v", err)
+	}
+}
+
+func TestConfigTelemetryCommandReportsOptOutCleanupFailure(t *testing.T) {
+	isolateCLIConfigHome(t)
+	previous := cleanupCLITelemetry
+	t.Cleanup(func() { cleanupCLITelemetry = previous })
+	cleanupCLITelemetry = func(string) error { return errors.New("cleanup denied") }
+
+	errOut := captureStderr(t, func() {
+		if rc := configTelemetryCommand([]string{"off"}); rc != 1 {
+			t.Fatalf("config telemetry off rc = %d, want 1", rc)
+		}
+	})
+	if !strings.Contains(errOut, "telemetry disabled") || !strings.Contains(errOut, "cleanup denied") {
+		t.Fatalf("cleanup failure stderr = %q", errOut)
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg.CLITelemetryMode() != "off" {
+		t.Fatalf("saved telemetry mode = %q, err = %v", cfg.CLITelemetryMode(), err)
 	}
 }
 

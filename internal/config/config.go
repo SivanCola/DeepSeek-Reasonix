@@ -45,6 +45,7 @@ type Config struct {
 	CredentialsStore string              `toml:"credentials_store"`
 	UI               UIConfig            `toml:"ui"`
 	Desktop          DesktopConfig       `toml:"desktop"`
+	Telemetry        TelemetryConfig     `toml:"telemetry"`
 	Notifications    NotificationsConfig `toml:"notifications"`
 	Agent            AgentConfig         `toml:"agent"`
 	Providers        []ProviderEntry     `toml:"providers"`
@@ -71,6 +72,28 @@ type Config struct {
 	pluginPackageSkillOwners   map[string][]string
 	pluginPackageAgentOwners   map[string][]string
 	safeMode                   bool
+}
+
+// TelemetryConfig controls content-free CLI usage metrics. It is user-global:
+// project reasonix.toml values are ignored so a cloned repository cannot opt a
+// user into reporting.
+type TelemetryConfig struct {
+	CLIMetrics string `toml:"cli_metrics"` // auto|on|off; empty resolves to auto
+}
+
+// CLITelemetryMode returns the normalized CLI telemetry policy.
+func (c *Config) CLITelemetryMode() string {
+	if c == nil {
+		return "auto"
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Telemetry.CLIMetrics)) {
+	case "on":
+		return "on"
+	case "off":
+		return "off"
+	default:
+		return "auto"
+	}
 }
 
 // SafeMode reports whether this configuration was built for recovery startup.
