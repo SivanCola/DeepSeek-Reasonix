@@ -626,6 +626,128 @@ func TestApplyDeepSeekOfficialDefaultPricingKeepsCustomPrice(t *testing.T) {
 	}
 }
 
+func TestLoadForEditAutoCurrencyKeepsPersistedOfficialUSDPrice(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	body := `language = "zh"
+
+[[providers]]
+name = "deepseek-flash"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-flash"
+price = { cache_hit = 0.0028, input = 0.14, output = 0.28, currency = "$" }
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := LoadForEdit(path)
+	flash, ok := c.Provider("deepseek-flash")
+	if !ok {
+		t.Fatal("deepseek-flash provider missing")
+	}
+	if flash.Price == nil || flash.Price.Output != 0.28 || flash.Price.Currency != "$" {
+		t.Fatalf("flash price = %+v, want persisted USD preset", flash.Price)
+	}
+
+	if err := c.SetDesktopCurrency("CNY"); err != nil {
+		t.Fatalf("SetDesktopCurrency CNY: %v", err)
+	}
+	if flash.Price == nil || flash.Price.Output != 2 || flash.Price.Currency != "¥" {
+		t.Fatalf("flash price = %+v, want explicit CNY preset", flash.Price)
+	}
+}
+
+func TestLoadForRootAutoCurrencyKeepsPersistedOfficialUSDPrice(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+	body := `language = "zh"
+
+[[providers]]
+name = "deepseek-flash"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-flash"
+price = { cache_hit = 0.0028, input = 0.14, output = 0.28, currency = "$" }
+`
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := LoadForRoot(t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadForRoot: %v", err)
+	}
+	flash, ok := c.Provider("deepseek-flash")
+	if !ok {
+		t.Fatal("deepseek-flash provider missing")
+	}
+	if flash.Price == nil || flash.Price.Output != 0.28 || flash.Price.Currency != "$" {
+		t.Fatalf("flash price = %+v, want persisted USD preset", flash.Price)
+	}
+}
+
+func TestRuntimeAutoCurrencyKeepsPersistedOfficialUSDPrice(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	body := `[[providers]]
+name = "deepseek-flash"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-flash"
+price = { cache_hit = 0.0028, input = 0.14, output = 0.28, currency = "$" }
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := LoadForEdit(path)
+	c.ApplyRuntimeAutoPricingCurrency("CNY")
+	flash, ok := c.Provider("deepseek-flash")
+	if !ok {
+		t.Fatal("deepseek-flash provider missing")
+	}
+	if flash.Price == nil || flash.Price.Output != 0.28 || flash.Price.Currency != "$" {
+		t.Fatalf("flash price = %+v, want persisted USD preset", flash.Price)
+	}
+}
+
+func TestLoadForRootAutoCurrencyDoesNotMixPartialOfficialPrices(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+	body := `language = "zh"
+
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+models = ["deepseek-v4-flash", "deepseek-v4-pro"]
+default = "deepseek-v4-flash"
+
+[providers.prices]
+deepseek-v4-flash = { cache_hit = 0.0028, input = 0.14, output = 0.28, currency = "$" }
+`
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := LoadForRoot(t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadForRoot: %v", err)
+	}
+	p, ok := c.Provider("deepseek")
+	if !ok {
+		t.Fatal("deepseek provider missing")
+	}
+	for _, model := range p.Models {
+		price := p.Prices[model]
+		if price == nil || price.Currency != "¥" {
+			t.Fatalf("price for %q = %+v, want consistent CNY table", model, price)
+		}
+	}
+}
+
 func TestDeepSeekOfficialPricingCurrencyResolution(t *testing.T) {
 	for _, tt := range []struct {
 		name     string

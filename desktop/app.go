@@ -788,6 +788,7 @@ func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *Wo
 		WorkspaceRoot:    workspaceRoot,
 		TopicID:          topicID,
 		TopicTitle:       topicTitleForTab(scope, workspaceRoot, topicID),
+		topicTitleSource: loadTopicTitleSource(topicTitleRoot(scope, workspaceRoot), topicID),
 		model:            model,
 		tokenMode:        boot.TokenModeFull,
 		mode:             tabModeFromAxes(false, toolApprovalMode == control.ToolApprovalYolo),
@@ -2033,6 +2034,7 @@ func (a *App) assignFreshSessionTopic(tab *WorkspaceTab) {
 	workspaceRoot := tab.WorkspaceRoot
 	tab.TopicID = topicID
 	tab.TopicTitle = defaultTopicTitle
+	tab.topicTitleSource = topicTitleSourceAuto
 	if current := a.tabs[tab.ID]; current == tab {
 		a.saveTabsLocked()
 	}
@@ -2064,6 +2066,7 @@ func (a *App) ensureTabTopicIndexedForUserTurn(tab *WorkspaceTab) {
 	workspaceRoot := tab.WorkspaceRoot
 	tab.TopicID = topicID
 	tab.TopicTitle = defaultTopicTitle
+	tab.topicTitleSource = topicTitleSourceAuto
 	if current := a.tabs[tab.ID]; current == tab {
 		a.saveTabsLocked()
 	}
@@ -2586,6 +2589,7 @@ func (a *App) ForkForTab(tabID string, turn int) (TabMeta, error) {
 		WorkspaceRoot:    workspaceRoot,
 		TopicID:          topicID,
 		TopicTitle:       topicTitle,
+		topicTitleSource: topicTitleSourceManual,
 		SessionPath:      newPath,
 		model:            model,
 		effort:           effort,
@@ -3414,6 +3418,7 @@ func (a *App) openTransientBlankRuntime(scope, workspaceRoot string) error {
 		Scope:            scope,
 		WorkspaceRoot:    actualRoot,
 		TopicTitle:       defaultTopicTitle,
+		topicTitleSource: topicTitleSourceAuto,
 		SessionPath:      sessionPath,
 		model:            model,
 		tokenMode:        boot.TokenModeFull,

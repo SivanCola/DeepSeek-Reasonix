@@ -18,9 +18,66 @@ func TestDefaultTopicTitleLocalizesAtAPIBoundary(t *testing.T) {
 		{locale: "zh-TW", want: defaultTopicTitleZhTW},
 	} {
 		app.setDesktopLocale(tt.locale)
-		if got := app.localizedTopicTitle(defaultTopicTitle); got != tt.want {
+		if got := app.localizedTopicTitle(defaultTopicTitle, topicTitleSourceAuto); got != tt.want {
 			t.Fatalf("locale %q title = %q, want %q", tt.locale, got, tt.want)
 		}
+	}
+}
+
+func TestManualDefaultTopicTitleIsNotLocalized(t *testing.T) {
+	app := &App{}
+	for _, tt := range []struct {
+		locale string
+		title  string
+	}{
+		{locale: "zh-CN", title: defaultTopicTitleEn},
+		{locale: "en-US", title: defaultTopicTitle},
+		{locale: "zh-CN", title: defaultTopicTitleZhTW},
+	} {
+		app.setDesktopLocale(tt.locale)
+		if got := app.localizedTopicTitle(tt.title, topicTitleSourceManual); got != tt.title {
+			t.Fatalf("locale %q manual title = %q, want %q", tt.locale, got, tt.title)
+		}
+	}
+}
+
+func TestCreateTopicPreservesManualDefaultTitle(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := &App{}
+	app.projectTreeChangedHook = func() {}
+	app.setDesktopLocale("zh-CN")
+
+	manual, err := app.CreateTopic("global", "", defaultTopicTitleEn)
+	if err != nil {
+		t.Fatalf("CreateTopic manual: %v", err)
+	}
+	if manual.Title != defaultTopicTitleEn {
+		t.Fatalf("manual title = %q, want %q", manual.Title, defaultTopicTitleEn)
+	}
+	if got := loadTopicTitleSource("", manual.ID); got != topicTitleSourceManual {
+		t.Fatalf("manual title source = %q, want %q", got, topicTitleSourceManual)
+	}
+	tree := app.ListProjectTree()
+	if len(tree) == 0 || len(tree[0].Children) == 0 || tree[0].Children[0].Label != defaultTopicTitleEn {
+		t.Fatalf("manual project-tree title was localized: %+v", tree)
+	}
+
+	automatic, err := app.CreateTopic("global", "", "")
+	if err != nil {
+		t.Fatalf("CreateTopic automatic: %v", err)
+	}
+	if automatic.Title != defaultTopicTitle {
+		t.Fatalf("automatic title = %q, want localized %q", automatic.Title, defaultTopicTitle)
+	}
+	if err := app.RenameTopic(automatic.ID, defaultTopicTitleEn); err != nil {
+		t.Fatalf("RenameTopic manual default: %v", err)
+	}
+	if got := loadTopicTitleSource("", automatic.ID); got != topicTitleSourceManual {
+		t.Fatalf("renamed title source = %q, want %q", got, topicTitleSourceManual)
+	}
+	tree = app.ListProjectTree()
+	if len(tree) == 0 || len(tree[0].Children) == 0 || tree[0].Children[0].Label != defaultTopicTitleEn {
+		t.Fatalf("renamed project-tree title was localized: %+v", tree)
 	}
 }
 

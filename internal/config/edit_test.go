@@ -2009,23 +2009,24 @@ legacy_preference = "keep"
 	}
 }
 
-func TestProviderEntriesConfigEqualIgnoresResolvedCredentialState(t *testing.T) {
+func TestProviderEntriesConfigEqualIgnoresRuntimeState(t *testing.T) {
 	a := ProviderEntry{Name: "relay", Kind: "openai", BaseURL: "https://relay.example/v1", Model: "m", APIKeyEnv: "RELAY_API_KEY"}
 	b := a
 	a.resolvedAPIKey = "old-secret"
 	a.resolvedSource = CredentialSource{Kind: CredentialSourceCredentials, Label: "old"}
+	a.persistedOfficialCurrency = "USD"
 	b.resolvedAPIKey = "new-secret"
 	b.resolvedSource = CredentialSource{Kind: CredentialSourceEnvironment, Label: "new"}
 	if !ProviderEntriesConfigEqual(a, b) {
-		t.Fatal("runtime-only credential state caused a persisted provider conflict")
+		t.Fatal("runtime-only provider state caused a persisted provider conflict")
 	}
 	b.Headers = map[string]string{"X-External": "changed"}
 	if ProviderEntriesConfigEqual(a, b) {
 		t.Fatal("persisted provider field change was ignored")
 	}
 	snapshot := ProviderEntryConfigSnapshot(a)
-	if snapshot.resolvedAPIKey != "" || snapshot.resolvedSource != (CredentialSource{}) {
-		t.Fatal("provider config snapshot retained runtime credential state")
+	if snapshot.resolvedAPIKey != "" || snapshot.resolvedSource != (CredentialSource{}) || snapshot.persistedOfficialCurrency != "" {
+		t.Fatal("provider config snapshot retained runtime state")
 	}
 	cfg := &Config{Providers: []ProviderEntry{a}}
 	updated := a
@@ -2036,7 +2037,7 @@ func TestProviderEntriesConfigEqualIgnoresResolvedCredentialState(t *testing.T) 
 		t.Fatal(err)
 	}
 	got, _ := cfg.Provider("relay")
-	if got.APIKey() != "old-secret" || got.Headers["X-Replayed"] != "yes" {
+	if got.APIKey() != "old-secret" || got.Headers["X-Replayed"] != "yes" || got.persistedOfficialCurrency != "USD" {
 		t.Fatalf("runtime-preserving upsert = %+v", got)
 	}
 	updated.APIKeyEnv = "NEW_RELAY_API_KEY"
@@ -2046,6 +2047,9 @@ func TestProviderEntriesConfigEqualIgnoresResolvedCredentialState(t *testing.T) 
 	got, _ = cfg.Provider("relay")
 	if got.resolvedAPIKey != "" || got.resolvedSource != (CredentialSource{}) {
 		t.Fatal("runtime credential survived an api_key_env change")
+	}
+	if got.persistedOfficialCurrency != "USD" {
+		t.Fatal("pricing provenance was lost after an api_key_env change")
 	}
 }
 

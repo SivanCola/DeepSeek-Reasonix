@@ -105,7 +105,7 @@ func (c *Config) ApplyRuntimeAutoPricingCurrency(currency string) {
 		return
 	}
 	c.Desktop.Currency = normalized
-	c.ApplyDeepSeekOfficialDefaultPricing()
+	applyDeepSeekOfficialDefaultPricingWithOverride(c, false)
 }
 
 // DeepSeekOfficialPricingLanguage is retained for older settings/template call
@@ -147,6 +147,10 @@ func (c *Config) ApplyDeepSeekOfficialDefaultPricing() {
 }
 
 func applyDeepSeekOfficialDefaultPricing(c *Config) {
+	applyDeepSeekOfficialDefaultPricingWithOverride(c, c != nil && c.DesktopCurrency() != "")
+}
+
+func applyDeepSeekOfficialDefaultPricingWithOverride(c *Config, overridePersisted bool) {
 	if c == nil {
 		return
 	}
@@ -156,15 +160,73 @@ func applyDeepSeekOfficialDefaultPricing(c *Config) {
 		if officialProviderKind(p) != "deepseek" {
 			continue
 		}
-		if isKnownDeepSeekOfficialPricing(p.Model, p.Price) {
+		if isKnownDeepSeekOfficialPricing(p.Model, p.Price) && (overridePersisted || p.persistedOfficialCurrency == "") {
 			p.Price = deepSeekV4PriceForModel(currency, p.Model)
 		}
 		for model, price := range p.Prices {
-			if isKnownDeepSeekOfficialPricing(model, price) {
+			if isKnownDeepSeekOfficialPricing(model, price) && (overridePersisted || p.persistedOfficialCurrency == "") {
 				p.Prices[model] = deepSeekV4PriceForModel(currency, model)
 			}
 		}
 	}
+}
+
+// markPersistedDeepSeekOfficialPricing records which recognized regional
+// prices came from TOML. Auto locale refreshes preserve those values, while an
+// explicit currency choice can still replace them with the selected table.
+func markPersistedDeepSeekOfficialPricing(c *Config) {
+	if c == nil {
+		return
+	}
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if officialProviderKind(p) != "deepseek" {
+			continue
+		}
+		p.persistedOfficialCurrency = completeDeepSeekOfficialPricingCurrency(p)
+		if c.ConfigVersion >= Default().ConfigVersion && isStandardDeepSeekProviderTemplate(p) {
+			p.persistedOfficialCurrency = ""
+		}
+	}
+}
+
+func isStandardDeepSeekProviderTemplate(p *ProviderEntry) bool {
+	if p == nil || officialProviderKind(p) != "deepseek" {
+		return false
+	}
+	return strings.TrimSpace(p.APIKeyEnv) == "DEEPSEEK_API_KEY" &&
+		strings.TrimSpace(p.BalanceURL) == "https://api.deepseek.com/user/balance" &&
+		p.ContextWindow == 1_000_000
+}
+
+func completeDeepSeekOfficialPricingCurrency(p *ProviderEntry) string {
+	if p == nil {
+		return ""
+	}
+	models := p.ModelList()
+	if len(models) == 1 && isKnownDeepSeekOfficialPricing(models[0], p.Price) {
+		return normalizeDeepSeekPricingCurrency(p.Price.Currency)
+	}
+	if len(models) == 0 || p.Price != nil {
+		return ""
+	}
+	currency := ""
+	for _, model := range models {
+		price := p.Prices[strings.TrimSpace(model)]
+		if !isKnownDeepSeekOfficialPricing(model, price) {
+			return ""
+		}
+		nextCurrency := normalizeDeepSeekPricingCurrency(price.Currency)
+		if nextCurrency == "" {
+			return ""
+		}
+		if currency == "" {
+			currency = nextCurrency
+		} else if currency != nextCurrency {
+			return ""
+		}
+	}
+	return currency
 }
 
 func mimoV25ProPrice() *provider.Pricing {
