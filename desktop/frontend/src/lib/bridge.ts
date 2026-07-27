@@ -3021,7 +3021,7 @@ function makeMockApp(): AppBindings {
           plugins: capPlugins.length,
           mcp_servers: capServers.length,
         },
-        instructions: { docs: [{ path: "<workspace>/AGENTS.md", scope: "project", order: 1 }] },
+        instructions: { docs: [{ path: "<workspace>/AGENTS.md", scope: "project", directory: "<workspace>", depth: 0, order: 1 }] },
         skills: {
           roots: [{ path: "<workspace>/.reasonix/skills", scope: "project", status: "ok" }],
           entries: capSkills.map((s) => ({
@@ -3604,14 +3604,22 @@ function makeMockApp(): AppBindings {
           {
             path: "REASONIX.md",
             scope: "project",
+            directory: ".",
             body: "# Reasonix project memory\n\nMock doc shown in the browser dev seam.\n\n## Notes\n\n- prefers concise replies",
+            imports: [],
+            depth: 0,
+            order: 0,
           },
           {
             path: "~/.reasonix/REASONIX.md",
             scope: "user",
             body: t("mock.memoryBody"),
+            imports: [],
+            depth: -1,
+            order: 1,
           },
         ],
+        instructionDiagnostics: [],
         facts: [
           {
             name: "prefers-tabs",

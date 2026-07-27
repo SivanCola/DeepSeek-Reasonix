@@ -28,6 +28,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
+	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/mcplaunch"
 	"reasonix/internal/memory"
@@ -596,14 +597,14 @@ func TestMemoryViewReturnsNonNilArraysBeforeStartup(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	view := NewApp().Memory()
-	if view.Docs == nil || view.Facts == nil || view.Archives == nil || view.Scopes == nil {
+	if view.Docs == nil || view.Facts == nil || view.Archives == nil || view.Scopes == nil || view.InstructionDiagnostics == nil {
 		t.Fatalf("Memory() arrays must be non-nil before startup: %+v", view)
 	}
 	raw, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("marshal Memory(): %v", err)
 	}
-	for _, bad := range []string{`"docs":null`, `"facts":null`, `"archives":null`, `"scopes":null`} {
+	for _, bad := range []string{`"docs":null`, `"facts":null`, `"archives":null`, `"scopes":null`, `"instructionDiagnostics":null`} {
 		if strings.Contains(string(raw), bad) {
 			t.Fatalf("Memory() JSON contains %s; frontend expects []: %s", bad, raw)
 		}
@@ -638,10 +639,12 @@ func TestMemoryViewIncludesActiveAndArchivedFacts(t *testing.T) {
 
 	app := NewApp()
 	app.setTestCtrl(control.New(control.Options{Memory: &memory.Set{
-		Docs:    []memory.Source{{Path: filepath.Join(cwd, "AGENTS.md"), Scope: memory.ScopeProject, Body: "Project instructions"}},
-		Store:   store,
-		CWD:     cwd,
-		UserDir: userDir,
+		Docs: []memory.Source{{
+			Path: filepath.Join(cwd, "AGENTS.md"), Scope: memory.ScopeProject, Directory: cwd,
+			Body: "Project instructions", Imports: []instruction.Import{{Path: filepath.Join(cwd, "shared.md"), SourcePath: filepath.Join(cwd, "AGENTS.md")}},
+		}},
+		InstructionDiagnostics: []instruction.Diagnostic{{Code: "import_cycle", Path: "shared.md", SourcePath: filepath.Join(cwd, "AGENTS.md"), Line: 3, Message: "cycle"}},
+		Store:                  store, CWD: cwd, UserDir: userDir,
 	}}), "test-model")
 
 	view := app.Memory()
@@ -650,6 +653,9 @@ func TestMemoryViewIncludesActiveAndArchivedFacts(t *testing.T) {
 	}
 	if len(view.Docs) != 1 || view.Docs[0].Scope != "project" || !strings.Contains(view.Docs[0].Body, "Project instructions") {
 		t.Fatalf("Memory() docs = %+v", view.Docs)
+	}
+	if view.Docs[0].Directory != cwd || len(view.Docs[0].Imports) != 1 || len(view.InstructionDiagnostics) != 1 || view.InstructionDiagnostics[0].Code != "import_cycle" {
+		t.Fatalf("Memory() instruction provenance = docs %+v diagnostics %+v", view.Docs, view.InstructionDiagnostics)
 	}
 	if len(view.Facts) != 1 || view.Facts[0].Name != "active-fact" || view.Facts[0].Type != "project" || view.Facts[0].Scope != "project" {
 		t.Fatalf("Memory() active facts = %+v", view.Facts)

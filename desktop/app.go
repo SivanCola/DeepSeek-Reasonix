@@ -10714,11 +10714,28 @@ func workspaceRelativeIn(path, workspaceRoot string) (string, bool) {
 
 // --- memory panel (frontend ⇄ controller) ---
 
-// MemoryDoc is one loaded doc-memory file for the panel: path, scope, and body.
+type MemoryImport struct {
+	Path       string `json:"path"`
+	SourcePath string `json:"sourcePath"`
+}
+
+// MemoryDoc is one resolved instruction file with applicability metadata.
 type MemoryDoc struct {
-	Path  string `json:"path"`
-	Scope string `json:"scope"`
-	Body  string `json:"body"`
+	Path      string         `json:"path"`
+	Scope     string         `json:"scope"`
+	Directory string         `json:"directory,omitempty"`
+	Body      string         `json:"body"`
+	Imports   []MemoryImport `json:"imports"`
+	Depth     int            `json:"depth"`
+	Order     int            `json:"order"`
+}
+
+type InstructionDiagnostic struct {
+	Code       string `json:"code"`
+	Path       string `json:"path"`
+	SourcePath string `json:"sourcePath,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	Message    string `json:"message"`
 }
 
 // MemoryFact is one saved auto-memory, surfaced read-only in the panel.
@@ -10752,13 +10769,14 @@ type MemoryScope struct {
 // MemoryView is the whole memory panel payload: hierarchical docs, active saved
 // facts, archived facts, and the writable scopes for the quick-add selector.
 type MemoryView struct {
-	Docs           []MemoryDoc     `json:"docs"`
-	Facts          []MemoryFact    `json:"facts"`
-	Archives       []MemoryArchive `json:"archives"`
-	Scopes         []MemoryScope   `json:"scopes"`
-	StoreDir       string          `json:"storeDir"`
-	StoreGlobalDir string          `json:"storeGlobalDir,omitempty"`
-	Available      bool            `json:"available"`
+	Docs                   []MemoryDoc             `json:"docs"`
+	Facts                  []MemoryFact            `json:"facts"`
+	Archives               []MemoryArchive         `json:"archives"`
+	Scopes                 []MemoryScope           `json:"scopes"`
+	InstructionDiagnostics []InstructionDiagnostic `json:"instructionDiagnostics"`
+	StoreDir               string                  `json:"storeDir"`
+	StoreGlobalDir         string                  `json:"storeGlobalDir,omitempty"`
+	Available              bool                    `json:"available"`
 }
 
 // writableScopes are the quick-add targets the panel offers, broad → specific.
@@ -10811,7 +10829,20 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 	view.StoreGlobalDir = set.Store.GlobalDir
 	view.Available = true
 	for _, d := range set.Docs {
-		view.Docs = append(view.Docs, MemoryDoc{Path: d.Path, Scope: string(d.Scope), Body: d.Body})
+		imports := make([]MemoryImport, 0, len(d.Imports))
+		for _, imported := range d.Imports {
+			imports = append(imports, MemoryImport{Path: imported.Path, SourcePath: imported.SourcePath})
+		}
+		view.Docs = append(view.Docs, MemoryDoc{
+			Path: d.Path, Scope: string(d.Scope), Directory: d.Directory, Body: d.Body,
+			Imports: imports, Depth: d.Depth, Order: d.Order,
+		})
+	}
+	for _, diagnostic := range set.InstructionDiagnostics {
+		view.InstructionDiagnostics = append(view.InstructionDiagnostics, InstructionDiagnostic{
+			Code: diagnostic.Code, Path: diagnostic.Path, SourcePath: diagnostic.SourcePath,
+			Line: diagnostic.Line, Message: diagnostic.Message,
+		})
 	}
 	for _, f := range set.Store.List() {
 		view.Facts = append(view.Facts, MemoryFact{
@@ -10837,7 +10868,10 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 }
 
 func emptyMemoryView() MemoryView {
-	return MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{}}
+	return MemoryView{
+		Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{},
+		InstructionDiagnostics: []InstructionDiagnostic{},
+	}
 }
 
 // Remember quick-adds a one-line note to the doc-memory file for scope — the

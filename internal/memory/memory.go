@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"reasonix/internal/instruction"
 )
 
 // Set is everything memory loaded for one session: the hierarchical docs and a
@@ -13,12 +15,13 @@ import (
 // UserDir are retained so the controller can resolve quick-add targets without
 // re-deriving discovery context.
 type Set struct {
-	Docs           []Source // REASONIX.md / AGENTS.md, ascending precedence
-	GlobalGuidance []Memory // stable snapshot of global user/feedback bodies
-	Store          Store    // auto-memory store (may be a zero/disabled Store)
-	Index          string   // MEMORY.md contents at load time
-	CWD            string   // project working dir used for discovery
-	UserDir        string   // user config root (may be "")
+	Docs                   []Source // REASONIX.md / AGENTS.md, ascending precedence
+	GlobalGuidance         []Memory // stable snapshot of global user/feedback bodies
+	Store                  Store    // auto-memory store (may be a zero/disabled Store)
+	Index                  string   // MEMORY.md contents at load time
+	CWD                    string   // project working dir used for discovery
+	UserDir                string   // user config root (may be "")
+	InstructionDiagnostics []instruction.Diagnostic
 }
 
 // Options configures discovery. CWD defaults to "." and UserDir is the user
@@ -38,13 +41,15 @@ func Load(opts Options) *Set {
 		cwd = "."
 	}
 	store := StoreFor(opts.UserDir, cwd)
+	resolved := instruction.Resolve(instruction.ResolveOptions{TargetDir: cwd, UserDir: opts.UserDir})
 	return &Set{
-		Docs:           discoverDocs(cwd, opts.UserDir),
-		GlobalGuidance: store.globalGuidance(),
-		Store:          store,
-		Index:          store.Index(),
-		CWD:            cwd,
-		UserDir:        opts.UserDir,
+		Docs:                   resolved.Documents,
+		GlobalGuidance:         store.globalGuidance(),
+		Store:                  store,
+		Index:                  store.Index(),
+		CWD:                    cwd,
+		UserDir:                opts.UserDir,
+		InstructionDiagnostics: resolved.Diagnostics,
 	}
 }
 
@@ -123,11 +128,11 @@ func (s *Set) WriteDoc(path, body string) (string, error) {
 	return path, writeDocFile(path, body)
 }
 
-// Block renders the memory as a single Markdown section, or "" when empty. It is
-// deterministic given the same files, which is what keeps it a stable cache
-// prefix across sessions that don't change their memory.
-func (s *Set) Block() string {
-	if s.Empty() {
+// BackgroundBlock renders durable preferences and the fact index without
+// standing instruction files. Keeping these sections separate prevents stale
+// facts from acquiring instruction authority.
+func (s *Set) BackgroundBlock() string {
+	if s == nil || (len(s.GlobalGuidance) == 0 && strings.TrimSpace(s.Index) == "") {
 		return ""
 	}
 	var b strings.Builder
@@ -140,14 +145,6 @@ func (s *Set) Block() string {
 			fmt.Fprintf(&b, "\n### %s (global/%s)\n\n%s\n", displayTitle(m.Title, m.Name), NormalizeType(string(m.Type)), strings.TrimSpace(m.Body))
 		}
 	}
-	if len(s.Docs) > 0 {
-		b.WriteString("\n## Standing instructions\n\n")
-		b.WriteString("Always-on guidance loaded from instruction files. Follow it according to the displayed scope and precedence.\n")
-		for _, d := range s.Docs {
-			fmt.Fprintf(&b, "\n### %s (%s)\n\n%s\n", d.Path, d.Scope, strings.TrimSpace(d.Body))
-		}
-	}
-
 	if idx := strings.TrimSpace(s.Index); idx != "" {
 		b.WriteString("\n## Background memory index\n\n")
 		b.WriteString("Facts you saved in earlier sessions. They reflect what was true when written and may now be stale — treat them as background, not standing instructions. " +
@@ -162,7 +159,24 @@ func (s *Set) Block() string {
 		}
 		fmt.Fprintf(&b, "\n\n(stored under %s)\n", strings.Join(dirs, " and "))
 	}
-	return b.String()
+	return strings.TrimSpace(b.String())
+}
+
+// Block combines background memory with separately resolved standing
+// instructions. Background comes first so the higher-authority, more specific
+// instruction sources remain closest to the conversation tail.
+func (s *Set) Block() string {
+	if s == nil {
+		return ""
+	}
+	parts := []string{}
+	if background := s.BackgroundBlock(); background != "" {
+		parts = append(parts, background)
+	}
+	if instructions := instruction.Block(s.Docs); instructions != "" {
+		parts = append(parts, instructions)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // Compose folds the memory block onto the base system prompt and returns the

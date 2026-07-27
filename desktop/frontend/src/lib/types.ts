@@ -985,7 +985,19 @@ export interface SlashArgsResult {
 export interface MemoryDoc {
   path: string;
   scope: string; // "user" | "ancestor" | "project" | "local"
+  directory?: string;
   body: string;
+  imports: Array<{ path: string; sourcePath: string }>;
+  depth: number;
+  order: number;
+}
+
+export interface InstructionDiagnostic {
+  code: string;
+  path: string;
+  sourcePath?: string;
+  line?: number;
+  message: string;
 }
 
 export interface MemoryFact {
@@ -1042,6 +1054,7 @@ export interface MemoryView {
   facts: MemoryFact[];
   archives: MemoryArchive[];
   scopes: MemoryScope[];
+  instructionDiagnostics: InstructionDiagnostic[];
   storeDir: string;
   storeGlobalDir?: string;
   available: boolean;
@@ -1214,7 +1227,7 @@ export interface CapabilityDiagnosticsReport {
     plugins: number;
     mcp_servers: number;
   };
-  instructions: { docs: Array<{ path: string; scope: string; order: number }> };
+  instructions: { docs: Array<{ path: string; scope: string; directory?: string; depth: number; order: number }> };
   skills: CapabilityAssetReport;
   commands: CapabilityAssetReport;
   hooks: {

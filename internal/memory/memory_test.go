@@ -45,7 +45,7 @@ func TestBlockSeparatesStandingInstructionsFromBackgroundMemory(t *testing.T) {
 		Store: Store{Dir: "/memory/project"},
 	}
 	block := set.Block()
-	for _, want := range []string{"## Standing instructions", "### /p/AGENTS.md (project)", "## Background memory index", "background, not standing instructions"} {
+	for _, want := range []string{"# Instructions", "## /p/AGENTS.md (project", "## Background memory index", "background, not standing instructions"} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("Block() missing %q:\n%s", want, block)
 		}
@@ -92,7 +92,7 @@ func TestLoadIncludesStableGlobalPreferencesAndFeedback(t *testing.T) {
 	if strings.Index(block, "GLOBAL USER BODY") > strings.Index(block, "GLOBAL FEEDBACK BODY") {
 		t.Fatalf("global guidance is not deterministically sorted by name:\n%s", block)
 	}
-	if strings.Index(block, "## Global preferences and feedback") > strings.Index(block, "## Standing instructions") && strings.Contains(block, "## Standing instructions") {
+	if strings.Index(block, "## Global preferences and feedback") > strings.Index(block, "# Instructions") && strings.Contains(block, "# Instructions") {
 		t.Fatalf("lower-priority global guidance must precede standing instructions:\n%s", block)
 	}
 	if again := set.Block(); again != block {
@@ -224,27 +224,6 @@ func TestImportCycleDoesNotHang(t *testing.T) {
 	}
 }
 
-// TestImportTargetClassification guards the "@mention vs @import" heuristic.
-func TestImportTargetClassification(t *testing.T) {
-	cases := []struct {
-		line string
-		want bool
-	}{
-		{"@docs/setup.md", true},
-		{"@./notes.txt", true},
-		{"@/abs/path.md", true},
-		{"@mention", false},      // prose-y, no separator/dot
-		{"@", false},             // bare
-		{"@a/b and more", false}, // not the only token
-		{"plain text", false},
-	}
-	for _, c := range cases {
-		if _, got := importTarget(c.line); got != c.want {
-			t.Errorf("importTarget(%q) = %v, want %v", c.line, got, c.want)
-		}
-	}
-}
-
 func mustMkdir(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -275,8 +254,8 @@ func TestImportDiamondAndCycle(t *testing.T) {
 	body := set.Docs[0].Body
 
 	count := strings.Count(body, "SHARED CONTENT")
-	if count != 2 {
-		t.Errorf("expected 'SHARED CONTENT' to appear twice, got %d times. Body:\n%s", count, body)
+	if count != 1 {
+		t.Errorf("expected exact imported content to appear once, got %d times. Body:\n%s", count, body)
 	}
 	if strings.Contains(body, "skipped: import cycle") {
 		t.Errorf("body contains incorrect import cycle message:\n%s", body)
