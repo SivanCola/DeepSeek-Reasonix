@@ -10721,13 +10721,14 @@ type MemoryImport struct {
 
 // MemoryDoc is one resolved instruction file with applicability metadata.
 type MemoryDoc struct {
-	Path      string         `json:"path"`
-	Scope     string         `json:"scope"`
-	Directory string         `json:"directory,omitempty"`
-	Body      string         `json:"body"`
-	Imports   []MemoryImport `json:"imports"`
-	Depth     int            `json:"depth"`
-	Order     int            `json:"order"`
+	Path       string         `json:"path"`
+	Scope      string         `json:"scope"`
+	Directory  string         `json:"directory,omitempty"`
+	Body       string         `json:"body"`
+	Imports    []MemoryImport `json:"imports"`
+	Depth      int            `json:"depth"`
+	Order      int            `json:"order"`
+	Precedence int            `json:"precedence"`
 }
 
 type InstructionDiagnostic struct {
@@ -10750,6 +10751,38 @@ type MemoryFact struct {
 	Type        string `json:"type"`
 	Scope       string `json:"scope"`
 	Body        string `json:"body"`
+	Freshness   string `json:"freshness"`
+}
+
+type MemoryConflict struct {
+	Key         string `json:"key"`
+	ProjectID   string `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	GlobalID    string `json:"globalId"`
+	GlobalName  string `json:"globalName"`
+	Resolution  string `json:"resolution"`
+}
+
+type MemoryRecallHit struct {
+	ID        string  `json:"id"`
+	Revision  int     `json:"revision"`
+	Name      string  `json:"name"`
+	Title     string  `json:"title,omitempty"`
+	Type      string  `json:"type"`
+	Scope     string  `json:"scope"`
+	Score     float64 `json:"score"`
+	Freshness string  `json:"freshness"`
+	Reason    string  `json:"reason"`
+	Snippet   string  `json:"snippet"`
+}
+
+type MemoryRecallTrace struct {
+	Query      string            `json:"query"`
+	Hits       []MemoryRecallHit `json:"hits"`
+	Omitted    int               `json:"omitted"`
+	CharBudget int               `json:"charBudget"`
+	UsedChars  int               `json:"usedChars"`
+	Suppressed string            `json:"suppressed,omitempty"`
 }
 
 // MemoryArchive is one archived auto-memory kept only for inspection.
@@ -10764,6 +10797,7 @@ type MemoryArchive struct {
 	Type        string `json:"type"`
 	Scope       string `json:"scope"`
 	Body        string `json:"body"`
+	Freshness   string `json:"freshness"`
 	Path        string `json:"path"`
 	ArchivedAt  string `json:"archivedAt,omitempty"`
 }
@@ -10782,6 +10816,8 @@ type MemoryView struct {
 	Archives               []MemoryArchive         `json:"archives"`
 	Scopes                 []MemoryScope           `json:"scopes"`
 	InstructionDiagnostics []InstructionDiagnostic `json:"instructionDiagnostics"`
+	Conflicts              []MemoryConflict        `json:"conflicts"`
+	LastRecall             MemoryRecallTrace       `json:"lastRecall"`
 	StoreDir               string                  `json:"storeDir"`
 	StoreGlobalDir         string                  `json:"storeGlobalDir,omitempty"`
 	Available              bool                    `json:"available"`
@@ -10843,7 +10879,7 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 		}
 		view.Docs = append(view.Docs, MemoryDoc{
 			Path: d.Path, Scope: string(d.Scope), Directory: d.Directory, Body: d.Body,
-			Imports: imports, Depth: d.Depth, Order: d.Order,
+			Imports: imports, Depth: d.Depth, Order: d.Order, Precedence: d.Order,
 		})
 	}
 	for _, diagnostic := range set.InstructionDiagnostics {
@@ -10852,12 +10888,17 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 			Line: diagnostic.Line, Message: diagnostic.Message,
 		})
 	}
-	for _, f := range set.Store.List() {
-		view.Facts = append(view.Facts, MemoryFact{
-			ID: f.ID, Revision: f.Revision, CreatedAt: formatMemoryTime(f.CreatedAt), UpdatedAt: formatMemoryTime(f.UpdatedAt),
-			Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Scope: string(f.Scope), Body: f.Body,
+	allFacts := set.Store.ListAll()
+	for _, f := range allFacts {
+		view.Facts = append(view.Facts, memoryFactView(f))
+	}
+	for _, conflict := range memory.FindOverrides(allFacts) {
+		view.Conflicts = append(view.Conflicts, MemoryConflict{
+			Key: conflict.Key, ProjectID: conflict.Project.ID, ProjectName: conflict.Project.Name,
+			GlobalID: conflict.Global.ID, GlobalName: conflict.Global.Name, Resolution: "project_over_global",
 		})
 	}
+	view.LastRecall = memoryRecallTraceView(ctrl.LastMemoryRecall())
 	for _, f := range set.Store.ListArchived() {
 		archivedAt := ""
 		if !f.ArchivedAt.IsZero() {
@@ -10866,7 +10907,7 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 		view.Archives = append(view.Archives, MemoryArchive{
 			ID: f.ID, Revision: f.Revision, CreatedAt: formatMemoryTime(f.CreatedAt), UpdatedAt: formatMemoryTime(f.UpdatedAt),
 			Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Scope: string(f.Scope), Body: f.Body,
-			Path: f.Path, ArchivedAt: archivedAt,
+			Freshness: memory.FreshnessFor(f.Memory, time.Now().UTC()), Path: f.Path, ArchivedAt: archivedAt,
 		})
 	}
 	for _, sc := range writableScopes {
@@ -10887,7 +10928,8 @@ func formatMemoryTime(value time.Time) string {
 func emptyMemoryView() MemoryView {
 	return MemoryView{
 		Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{},
-		InstructionDiagnostics: []InstructionDiagnostic{},
+		InstructionDiagnostics: []InstructionDiagnostic{}, Conflicts: []MemoryConflict{},
+		LastRecall: MemoryRecallTrace{Hits: []MemoryRecallHit{}},
 	}
 }
 
@@ -11002,7 +11044,92 @@ func memoryFactView(f memory.Memory) MemoryFact {
 	return MemoryFact{
 		ID: f.ID, Revision: f.Revision, CreatedAt: formatMemoryTime(f.CreatedAt), UpdatedAt: formatMemoryTime(f.UpdatedAt),
 		Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Scope: string(f.Scope), Body: f.Body,
+		Freshness: memory.FreshnessFor(f, time.Now().UTC()),
 	}
+}
+
+func memoryRecallTraceView(trace memory.RecallResult) MemoryRecallTrace {
+	view := MemoryRecallTrace{
+		Query: trace.Query, Hits: []MemoryRecallHit{}, Omitted: trace.Omitted,
+		CharBudget: trace.CharBudget, UsedChars: trace.UsedChars, Suppressed: trace.Suppressed,
+	}
+	for _, hit := range trace.Hits {
+		view.Hits = append(view.Hits, MemoryRecallHit{
+			ID: hit.Memory.ID, Revision: hit.Memory.Revision, Name: hit.Memory.Name, Title: hit.Memory.Title,
+			Type: string(hit.Memory.Type), Scope: string(hit.Memory.Scope), Score: hit.Score,
+			Freshness: hit.Freshness, Reason: hit.Reason, Snippet: hit.Snippet,
+		})
+	}
+	return view
+}
+
+func (a *App) MemoryRevisions(ref string) []MemoryFact {
+	return a.memoryRevisionsForCtrl(nil, ref, true)
+}
+
+func (a *App) MemoryRevisionsForTab(tabID, ref string) []MemoryFact {
+	if tabID == "" {
+		return a.memoryRevisionsForCtrl(nil, ref, true)
+	}
+	return a.memoryRevisionsForCtrl(a.ctrlByTabID(tabID), ref, false)
+}
+
+func (a *App) memoryRevisionsForCtrl(ctrl control.SessionAPI, ref string, fallback bool) []MemoryFact {
+	out := []MemoryFact{}
+	if a.activeWorkbenchTargetIsRemote() {
+		return out
+	}
+	if ctrl == nil {
+		if !fallback {
+			return out
+		}
+		a.mu.RLock()
+		ctrl = a.activeCtrlLocked()
+		a.mu.RUnlock()
+		if ctrl == nil {
+			return out
+		}
+	}
+	for _, revision := range ctrl.MemoryRevisions(ref) {
+		out = append(out, memoryFactView(revision))
+	}
+	return out
+}
+
+func (a *App) RestoreMemoryRevision(ref string, revision int) (MemoryFact, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return MemoryFact{}, remoteMemoryUnavailableErr()
+	}
+	return a.restoreMemoryRevisionForCtrl(nil, ref, revision, true)
+}
+
+func (a *App) RestoreMemoryRevisionForTab(tabID, ref string, revision int) (MemoryFact, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return MemoryFact{}, remoteMemoryUnavailableErr()
+	}
+	if tabID == "" {
+		return a.restoreMemoryRevisionForCtrl(nil, ref, revision, true)
+	}
+	return a.restoreMemoryRevisionForCtrl(a.ctrlByTabID(tabID), ref, revision, false)
+}
+
+func (a *App) restoreMemoryRevisionForCtrl(ctrl control.SessionAPI, ref string, revision int, fallback bool) (MemoryFact, error) {
+	if ctrl == nil {
+		if !fallback {
+			return MemoryFact{}, nil
+		}
+		a.mu.RLock()
+		ctrl = a.activeCtrlLocked()
+		a.mu.RUnlock()
+		if ctrl == nil {
+			return MemoryFact{}, nil
+		}
+	}
+	restored, err := ctrl.RestoreMemory(ref, revision)
+	if err != nil {
+		return MemoryFact{}, err
+	}
+	return memoryFactView(restored), nil
 }
 
 // SaveDoc overwrites a memory doc with the panel editor's contents. The controller

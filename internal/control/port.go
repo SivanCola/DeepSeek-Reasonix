@@ -142,6 +142,7 @@ type MemoryControl interface {
 	MemoryRevisions(ref string) []memory.Memory
 	RestoreMemory(ref string, revision int) (memory.Memory, error)
 	RestoreArchivedMemory(archivePath string) (memory.Memory, error)
+	LastMemoryRecall() memory.RecallResult
 }
 
 // Capabilities covers the session's pluggable surface — MCP servers, skills,

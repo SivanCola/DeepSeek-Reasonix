@@ -597,17 +597,77 @@ func TestMemoryViewReturnsNonNilArraysBeforeStartup(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	view := NewApp().Memory()
-	if view.Docs == nil || view.Facts == nil || view.Archives == nil || view.Scopes == nil || view.InstructionDiagnostics == nil {
+	if view.Docs == nil || view.Facts == nil || view.Archives == nil || view.Scopes == nil || view.InstructionDiagnostics == nil || view.Conflicts == nil || view.LastRecall.Hits == nil {
 		t.Fatalf("Memory() arrays must be non-nil before startup: %+v", view)
 	}
 	raw, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("marshal Memory(): %v", err)
 	}
-	for _, bad := range []string{`"docs":null`, `"facts":null`, `"archives":null`, `"scopes":null`, `"instructionDiagnostics":null`} {
+	for _, bad := range []string{`"docs":null`, `"facts":null`, `"archives":null`, `"scopes":null`, `"instructionDiagnostics":null`, `"conflicts":null`, `"hits":null`} {
 		if strings.Contains(string(raw), bad) {
 			t.Fatalf("Memory() JSON contains %s; frontend expects []: %s", bad, raw)
 		}
+	}
+	if revisions := NewApp().MemoryRevisions("missing"); revisions == nil {
+		t.Fatal("MemoryRevisions must return [] before startup, not nil")
+	}
+}
+
+func TestMemoryViewIncludesRecallFreshnessAndOverrides(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := t.TempDir()
+	store := memory.Store{Dir: filepath.Join(root, "project"), GlobalDir: filepath.Join(root, "global")}
+	if _, err := (memory.Store{Dir: store.GlobalDir}).Save(memory.Memory{
+		Name: "deploy-target", Title: "Deploy target", Description: "legacy deployment target", Scope: memory.FactScopeGlobal, Type: memory.TypeProject, Body: "Deploy payments to the legacy cluster.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (memory.Store{Dir: store.Dir}).Save(memory.Memory{
+		Name: "deploy-target", Title: "Deploy target", Description: "current deployment target", Scope: memory.FactScopeProject, Type: memory.TypeProject, Body: "Deploy payments to the green cluster.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := control.New(control.Options{Memory: &memory.Set{Store: store}})
+	ctrl.Compose("deploy payments target cluster")
+	app := NewApp()
+	app.setTestCtrl(ctrl, "test-model")
+
+	view := app.Memory()
+	if len(view.Facts) != 2 || view.Facts[0].Freshness == "" || view.Facts[1].Freshness == "" {
+		t.Fatalf("facts with freshness = %+v", view.Facts)
+	}
+	if len(view.Conflicts) != 1 || view.Conflicts[0].Resolution != "project_over_global" {
+		t.Fatalf("conflicts = %+v", view.Conflicts)
+	}
+	if view.LastRecall.Query != "deploy payments target cluster" || len(view.LastRecall.Hits) != 1 || view.LastRecall.Hits[0].Scope != "project" {
+		t.Fatalf("last recall = %+v", view.LastRecall)
+	}
+}
+
+func TestMemoryRevisionAPIRestoresSelectedRevision(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	store := memory.Store{Dir: t.TempDir()}
+	first, err := store.SaveWithOptions(memory.Memory{Name: "fact", Description: "one", Body: "v1"}, memory.SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveWithOptions(memory.Memory{ID: first.Memory.ID, Name: "fact", Description: "two", Body: "v2"}, memory.SaveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Memory: &memory.Set{Store: store}}), "test-model")
+
+	revisions := app.MemoryRevisions(first.Memory.ID)
+	if len(revisions) != 1 || revisions[0].Revision != 1 {
+		t.Fatalf("revisions = %+v", revisions)
+	}
+	restored, err := app.RestoreMemoryRevision(first.Memory.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Revision != 3 || restored.Body != "v1" {
+		t.Fatalf("restored = %+v", restored)
 	}
 }
 

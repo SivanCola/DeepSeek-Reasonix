@@ -990,6 +990,7 @@ export interface MemoryDoc {
   imports: Array<{ path: string; sourcePath: string }>;
   depth: number;
   order: number;
+  precedence: number;
 }
 
 export interface InstructionDiagnostic {
@@ -1011,6 +1012,38 @@ export interface MemoryFact {
   type: string; // "user" | "feedback" | "project" | "reference"
   scope: string; // "project" | "global"
   body: string;
+  freshness: string; // "fresh" | "current" | "stale"
+}
+
+export interface MemoryConflict {
+  key: string;
+  projectId: string;
+  projectName: string;
+  globalId: string;
+  globalName: string;
+  resolution: "project_over_global";
+}
+
+export interface MemoryRecallHit {
+  id: string;
+  revision: number;
+  name: string;
+  title?: string;
+  type: string;
+  scope: string;
+  score: number;
+  freshness: string;
+  reason: string;
+  snippet: string;
+}
+
+export interface MemoryRecallTrace {
+  query: string;
+  hits: MemoryRecallHit[];
+  omitted: number;
+  charBudget: number;
+  usedChars: number;
+  suppressed?: string;
 }
 
 export interface MemoryArchive extends MemoryFact {
@@ -1059,6 +1092,8 @@ export interface MemoryView {
   archives: MemoryArchive[];
   scopes: MemoryScope[];
   instructionDiagnostics: InstructionDiagnostic[];
+  conflicts: MemoryConflict[];
+  lastRecall: MemoryRecallTrace;
   storeDir: string;
   storeGlobalDir?: string;
   available: boolean;

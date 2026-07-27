@@ -337,6 +337,10 @@ export interface AppBindings {
   AcceptMemorySuggestion(suggestion: MemorySuggestion): Promise<string>;
   AcceptSkillSuggestion(suggestion: SkillSuggestion): Promise<string>;
   MemoryForTab(tabID: string): Promise<MemoryView>;
+  MemoryRevisions(ref: string): Promise<MemoryFact[]>;
+  MemoryRevisionsForTab(tabID: string, ref: string): Promise<MemoryFact[]>;
+  RestoreMemoryRevision(ref: string, revision: number): Promise<MemoryFact>;
+  RestoreMemoryRevisionForTab(tabID: string, ref: string, revision: number): Promise<MemoryFact>;
   MemorySuggestionsForTab(tabID: string): Promise<MemorySuggestionsView>;
   AcceptMemorySuggestionForTab(tabID: string, suggestion: MemorySuggestion): Promise<string>;
   AcceptSkillSuggestionForTab(tabID: string, suggestion: SkillSuggestion): Promise<string>;
@@ -3612,6 +3616,7 @@ function makeMockApp(): AppBindings {
             imports: [],
             depth: 0,
             order: 0,
+            precedence: 0,
           },
           {
             path: "~/.reasonix/REASONIX.md",
@@ -3620,6 +3625,7 @@ function makeMockApp(): AppBindings {
             imports: [],
             depth: -1,
             order: 1,
+            precedence: 1,
           },
         ],
         instructionDiagnostics: [],
@@ -3630,6 +3636,7 @@ function makeMockApp(): AppBindings {
             type: "user",
             scope: "project",
             body: "Indent with tabs.",
+            freshness: "fresh",
           },
         ],
         archives: [
@@ -3641,6 +3648,7 @@ function makeMockApp(): AppBindings {
             body: "This plan was archived after the implementation changed.",
             path: "~/.reasonix/projects/-mock/memory/.archive/20260612-021500.000-old-plan.md",
             archivedAt: "2026-06-12T02:15:00Z",
+            freshness: "current",
           },
         ],
         scopes: [
@@ -3648,6 +3656,15 @@ function makeMockApp(): AppBindings {
           { scope: "project", path: "REASONIX.md" },
           { scope: "local", path: "REASONIX.local.md" },
         ],
+        conflicts: [],
+        lastRecall: {
+          query: "",
+          hits: [],
+          omitted: 0,
+          charBudget: 2400,
+          usedChars: 0,
+          suppressed: "no user turn yet",
+        },
       };
     },
     async MemorySuggestions() {
@@ -3701,6 +3718,28 @@ function makeMockApp(): AppBindings {
     async MemoryForTab(_tabID: string) {
       return this.Memory();
     },
+    async MemoryRevisions(_ref: string) {
+      return [];
+    },
+    async MemoryRevisionsForTab(_tabID: string, ref: string) {
+      return this.MemoryRevisions(ref);
+    },
+    async RestoreMemoryRevision(ref: string, revision: number) {
+      emit({ kind: "notice", level: "info", text: `restored revision → ${ref}@${revision}` });
+      return {
+        id: ref,
+        revision: revision + 1,
+        name: ref,
+        description: "Restored memory revision",
+        type: "project",
+        scope: "project",
+        body: "Restored guidance.",
+        freshness: "fresh",
+      };
+    },
+    async RestoreMemoryRevisionForTab(_tabID: string, ref: string, revision: number) {
+      return this.RestoreMemoryRevision(ref, revision);
+    },
     async Remember(_scope: string, _note: string) {
       emit({ kind: "notice", level: "info", text: `remembered → ${_scope}` });
       return `${_scope} REASONIX.md (mock): ${_note}`;
@@ -3724,6 +3763,7 @@ function makeMockApp(): AppBindings {
         type: "project",
         scope: "project",
         body: "Recovered guidance.",
+        freshness: "fresh",
       };
     },
     async RestoreArchivedMemoryForTab(_tabID: string, archivePath: string) {
