@@ -27,11 +27,12 @@ import (
 )
 
 const (
-	dirName         = "cli-crash-reports"
-	maxReports      = 10
-	maxMessageBytes = 16 << 10
-	maxStackBytes   = 8 << 10
-	maxFieldBytes   = 4 << 10
+	dirName              = "cli-crash-reports"
+	currentSchemaVersion = 2
+	maxReports           = 10
+	maxMessageBytes      = 16 << 10
+	maxStackBytes        = 8 << 10
+	maxFieldBytes        = 4 << 10
 )
 
 var reportEndpoint = "https://crash.reasonix.io/v1/report"
@@ -50,6 +51,7 @@ var (
 	longBase64Pattern     = regexp.MustCompile(`[A-Za-z0-9+/]{40,}={0,2}`)
 	longBase64URLPattern  = regexp.MustCompile(`\b[A-Za-z0-9_-]{48,}\b`)
 	goLocationPattern     = regexp.MustCompile(`[^\s]+\.go:\d+`)
+	reportFilenamePattern = regexp.MustCompile(`^[0-9]{20}-[0-9]+-[0-9a-f]{16}\.json$`)
 )
 
 // Report is the subset of the shared crash ingest protocol emitted by the CLI.
@@ -91,7 +93,7 @@ func CapturePanic(home, version string, recovered any, stack []byte) error {
 		OS:            runtime.GOOS,
 		Arch:          runtime.GOARCH,
 		Message:       "[cli panic]\n\nUnhandled CLI panic.",
-		SchemaVersion: 2,
+		SchemaVersion: currentSchemaVersion,
 		Source:        "cli.go",
 		Label:         "panic",
 		ErrorType:     sanitizeField(fmt.Sprintf("%T", recovered), 128),
@@ -246,9 +248,23 @@ func prune(dir string) {
 	}
 	paths := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
-			paths = append(paths, filepath.Join(dir, entry.Name()))
+		if entry.IsDir() || !reportFilenamePattern.MatchString(entry.Name()) {
+			continue
 		}
+		path := filepath.Join(dir, entry.Name())
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var report Report
+		if json.Unmarshal(body, &report) != nil || !valid(report) {
+			continue
+		}
+		paths = append(paths, path)
 	}
 	sort.Strings(paths)
 	for len(paths) > maxReports {
@@ -258,7 +274,8 @@ func prune(dir string) {
 }
 
 func valid(report Report) bool {
-	return report.Kind == "crash" && strings.TrimSpace(report.Version) != "" &&
+	return report.SchemaVersion >= 0 && report.SchemaVersion <= currentSchemaVersion &&
+		report.Kind == "crash" && strings.TrimSpace(report.Version) != "" &&
 		strings.TrimSpace(report.OS) != "" && strings.TrimSpace(report.Arch) != "" &&
 		strings.TrimSpace(report.Message) != ""
 }
@@ -269,7 +286,7 @@ func sanitizeReport(report Report) Report {
 	report.OS = sanitizeField(report.OS, 32)
 	report.Arch = sanitizeField(report.Arch, 32)
 	report.Message = sanitizeText(report.Message, maxMessageBytes)
-	report.SchemaVersion = 2
+	report.SchemaVersion = currentSchemaVersion
 	report.Source = "cli.go"
 	report.Label = "panic"
 	report.ErrorType = sanitizeField(report.ErrorType, 128)
@@ -302,13 +319,35 @@ func sanitizeStack(stack string) string {
 }
 
 func topFrame(stack string) string {
+	fallback := ""
+	functionName := ""
 	for _, line := range strings.Split(stack, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "<path>/") && strings.Contains(line, ".go:") {
-			return clip(line, 300)
+			frame := line
+			if functionName != "" {
+				frame = functionName + " " + line
+			}
+			if fallback == "" {
+				fallback = frame
+			}
+			if !isCrashCaptureFrame(functionName) {
+				return clip(frame, 300)
+			}
+			functionName = ""
+			continue
+		}
+		if strings.HasSuffix(line, "(...)") {
+			functionName = strings.TrimSpace(strings.TrimSuffix(line, "(...)"))
 		}
 	}
-	return ""
+	return clip(fallback, 300)
+}
+
+func isCrashCaptureFrame(functionName string) bool {
+	return functionName == "runtime/debug.Stack" || functionName == "panic" ||
+		strings.HasPrefix(functionName, "runtime.") ||
+		strings.Contains(functionName, ".runWithCrashCapture.func")
 }
 
 func sanitizeField(value string, max int) string {

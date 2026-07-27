@@ -43,6 +43,9 @@ func TestCapturePanicWritesBoundedSanitizedReport(t *testing.T) {
 	if !strings.Contains(report.Stack, "reasonix/internal/agent.run(...)") || !strings.Contains(report.Stack, "<path>/run.go:42") {
 		t.Fatalf("sanitized stack = %q", report.Stack)
 	}
+	if report.TopFrame != "reasonix/internal/agent.run <path>/run.go:42" {
+		t.Fatalf("top frame = %q", report.TopFrame)
+	}
 	preview, err := Preview(report)
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +154,35 @@ func TestConcurrentCaptureKeepsQueueBounded(t *testing.T) {
 	reports, err := List(home)
 	if err != nil || len(reports) != maxReports {
 		t.Fatalf("reports=%d err=%v", len(reports), err)
+	}
+}
+
+func TestCapturePanicPrunesOnlyCurrentReportFormat(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, dirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	futurePath := filepath.Join(dir, "00000000000000000000-1-0000000000000000.json")
+	futureReport := `{"kind":"crash","version":"v2.0.0","os":"linux","arch":"amd64","message":"future","schemaVersion":3,"futureField":"preserve me"}`
+	if err := os.WriteFile(futurePath, []byte(futureReport), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < maxReports+1; i++ {
+		if err := CapturePanic(home, "v1.20.0", i, []byte("reasonix.run()\n\t/home/alice/main.go:12")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(futurePath); err != nil {
+		t.Fatalf("future report was removed: %v", err)
+	}
+	reports, err := List(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != maxReports {
+		t.Fatalf("current reports=%d, want %d", len(reports), maxReports)
 	}
 }
 

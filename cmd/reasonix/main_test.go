@@ -29,6 +29,9 @@ func TestRunWithCrashCaptureRecordsAndReraises(t *testing.T) {
 	if err != nil || len(reports) != 1 {
 		t.Fatalf("captured reports=%d err=%v", len(reports), err)
 	}
+	if got := reports[0].Report.TopFrame; !strings.Contains(got, "main_test.go:") {
+		t.Fatalf("top frame = %q, want panic call site in main_test.go", got)
+	}
 	preview, err := crashreport.Preview(reports[0].Report)
 	if err != nil {
 		t.Fatal(err)
