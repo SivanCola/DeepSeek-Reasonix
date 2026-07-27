@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +65,9 @@ func TestCapturePanicWritesBoundedSanitizedReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	// Windows reports synthesized POSIX permission bits and enforces access
+	// through inherited ACLs, so only Unix-like systems can assert mode 0600.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("report mode=%v", info.Mode().Perm())
 	}
 
