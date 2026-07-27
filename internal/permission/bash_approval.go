@@ -85,7 +85,7 @@ func isIndirectExecution(fields []string) bool {
 			return true
 		}
 		return isIndirectExecution(args)
-	case "command", "exec", "nohup", "sudo":
+	case "builtin", "command", "exec", "nohup", "sudo":
 		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 			return true
 		}
