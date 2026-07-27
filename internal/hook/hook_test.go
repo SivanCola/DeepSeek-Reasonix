@@ -470,7 +470,7 @@ func TestLoadSuperpowersV620PreservesExplicitBashRequirement(t *testing.T) {
 	if !requiresWindowsBash(h.HookConfig) {
 		t.Fatal("superpowers 6.2.0 hook should declare a Windows Bash runtime dependency")
 	}
-	if want := `"` + root + `/hooks/run-hook.cmd" session-start`; h.Command != want {
+	if want := `"` + filepath.ToSlash(root) + `/hooks/run-hook.cmd" session-start`; h.Command != want {
 		t.Fatalf("command = %q, want %q", h.Command, want)
 	}
 }
