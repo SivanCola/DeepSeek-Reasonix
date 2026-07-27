@@ -57,9 +57,6 @@ default_model = "deepseek-flash"   # executor; set [agent].planner_model to add 
 # shortcut_layout = "desktop"      # classic|desktop; compatibility setting
 # cursor_shape = "bar"             # block|underline|bar; CLI/TUI text cursor
 
-[telemetry]
-cli_metrics = "auto"               # user-global only: auto|on|off
-
 [agent]
 reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # plan_mode_read_only_commands = ["gh issue view"]   # legacy compatibility only; Plan bash now uses Permissions
@@ -151,11 +148,19 @@ reasonix config telemetry on       # also allow local headless `reasonix run`
 reasonix config telemetry off      # disable and delete pending counter files
 ```
 
+On the first eligible release-build interactive session, Reasonix explains the
+exact data boundary and asks once before any telemetry request. The prompt is
+`[Y/n]`: pressing Enter, `y`, or `yes` stores `auto`; `n` or `no` stores `off`
+and deletes pending counters. After the choice is saved, enabled reporting is
+silent and the prompt is not shown again. If the preference cannot be saved,
+nothing is uploaded.
+
 Reporting is always disabled in CI, Safe Mode, development builds, and when
 `DO_NOT_TRACK` is set or `REASONIX_TELEMETRY=0`. Under `auto`, redirected/piped
-or otherwise non-interactive sessions do not report. Network failures are
-silent and never change stdout, stderr, or the process exit code; unsent
-counters stay in a bounded local queue for a later invocation.
+or otherwise non-interactive sessions do not report. When no choice has been
+saved yet, these ineligible sessions neither prompt nor report. Network failures
+after consent are silent and never change stdout, stderr, or the process exit
+code; unsent counters stay in a bounded local queue for a later invocation.
 
 The ping contains a dedicated random 128-bit CLI install ID, CLI version, OS,
 architecture, and the `cli` surface marker. Counter batches use that same ID for

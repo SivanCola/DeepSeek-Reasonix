@@ -2228,7 +2228,26 @@ func configCommand(args []string) int {
 	}
 }
 
-var cleanupCLITelemetry = telemetry.Cleanup
+var (
+	cleanupCLITelemetry        = telemetry.Cleanup
+	startCLITelemetryReporter  = telemetry.Start
+	persistCLITelemetryConsent = func(mode string) error {
+		path := config.UserConfigPath()
+		if strings.TrimSpace(path) == "" {
+			return errors.New("cannot resolve config path")
+		}
+		unlock := config.LockUserConfigEdits()
+		defer unlock()
+		cfg, err := config.LoadForEditReadOnlyStrict(path)
+		if err != nil {
+			return err
+		}
+		if err := cfg.SetCLITelemetryMode(mode); err != nil {
+			return err
+		}
+		return cfg.SaveTo(path)
+	}
+)
 
 func configTelemetryCommand(args []string) int {
 	fs := flag.NewFlagSet("config telemetry", flag.ContinueOnError)
@@ -2387,6 +2406,10 @@ func configTelemetryUsage() {
 }
 
 func startCLITelemetry(cfg *config.Config, opts telemetry.Options) *telemetry.Reporter {
+	return startCLITelemetryWithIO(cfg, opts, os.Stdin, os.Stdout, os.Stderr)
+}
+
+func startCLITelemetryWithIO(cfg *config.Config, opts telemetry.Options, in io.Reader, out, errOut io.Writer) *telemetry.Reporter {
 	if cfg == nil {
 		cfg = config.Default()
 	}
@@ -2395,7 +2418,39 @@ func startCLITelemetry(cfg *config.Config, opts telemetry.Options) *telemetry.Re
 	opts.SafeMode = cfg.SafeMode()
 	opts.Proxy = cfg.NetworkProxySpec()
 	opts.Language = cfg.Language
-	return telemetry.Start(opts)
+
+	if cfg.CLITelemetryConfigured() || !telemetry.Enabled(opts.Mode, opts.Version, opts.Interactive, opts.SafeMode) {
+		return startCLITelemetryReporter(opts)
+	}
+
+	fmt.Fprintln(out, i18n.M.CLITelemetryConsentNotice)
+	scanner := bufio.NewScanner(in)
+	mode := ""
+	for mode == "" {
+		answer := strings.ToLower(strings.TrimSpace(ask(scanner, out, i18n.M.CLITelemetryConsentPrompt, "Y/n")))
+		switch answer {
+		case "y", "yes", "y/n":
+			mode = "auto"
+		case "n", "no":
+			mode = "off"
+		default:
+			fmt.Fprintln(out, i18n.M.CLITelemetryConsentInvalid)
+		}
+	}
+
+	if err := persistCLITelemetryConsent(mode); err != nil {
+		fmt.Fprintf(errOut, i18n.M.CLITelemetryConsentSaveFailedFmt+"\n", err)
+		return nil
+	}
+	cfg.Telemetry.CLIMetrics = mode
+	opts.Mode = mode
+	if mode == "off" {
+		if err := cleanupCLITelemetry(opts.HomeDir); err != nil {
+			fmt.Fprintf(errOut, i18n.M.CLITelemetryConsentCleanupFailedFmt+"\n", err)
+		}
+		return nil
+	}
+	return startCLITelemetryReporter(opts)
 }
 
 func cliTelemetrySessionMode(cont, resume, copySession bool) string {

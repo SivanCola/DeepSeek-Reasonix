@@ -12,9 +12,15 @@ func TestCLITelemetryConfigDefaultsAndValidation(t *testing.T) {
 	if got := cfg.CLITelemetryMode(); got != "auto" {
 		t.Fatalf("default mode = %q", got)
 	}
+	if cfg.CLITelemetryConfigured() {
+		t.Fatal("default config should preserve the undecided telemetry state")
+	}
 	for _, mode := range []string{"auto", "on", "off"} {
 		if err := cfg.SetCLITelemetryMode(mode); err != nil || cfg.CLITelemetryMode() != mode {
 			t.Fatalf("SetCLITelemetryMode(%q) = %q, %v", mode, cfg.CLITelemetryMode(), err)
+		}
+		if !cfg.CLITelemetryConfigured() {
+			t.Fatalf("SetCLITelemetryMode(%q) did not record an explicit decision", mode)
 		}
 	}
 	if err := cfg.SetCLITelemetryMode("sometimes"); err == nil {
@@ -59,5 +65,26 @@ func TestTelemetryRenderingIsOmittedFromProjectConfig(t *testing.T) {
 	}
 	if strings.Contains(project, "[telemetry]") || strings.Contains(project, "cli_metrics") {
 		t.Fatalf("project render contains user-global telemetry:\n%s", project)
+	}
+}
+
+func TestTelemetryRenderingPreservesUndecidedState(t *testing.T) {
+	cfg := Default()
+	user := RenderTOMLForScope(cfg, RenderScopeUser)
+	if strings.Contains(user, "[telemetry]") || strings.Contains(user, "cli_metrics") {
+		t.Fatalf("undecided telemetry was materialized during render:\n%s", user)
+	}
+
+	for _, mode := range []string{"auto", "on", "off"} {
+		t.Run(mode, func(t *testing.T) {
+			explicit := Default()
+			if err := explicit.SetCLITelemetryMode(mode); err != nil {
+				t.Fatal(err)
+			}
+			rendered := RenderTOMLForScope(explicit, RenderScopeUser)
+			if !strings.Contains(rendered, "[telemetry]") || !strings.Contains(rendered, `cli_metrics = "`+mode+`"`) {
+				t.Fatalf("explicit telemetry mode did not render:\n%s", rendered)
+			}
+		})
 	}
 }

@@ -562,6 +562,13 @@ type Messages struct {
 	ReportSentDeleteFailedFmt string
 	ReportUsageBody           string
 
+	// First eligible interactive CLI telemetry consent.
+	CLITelemetryConsentNotice           string
+	CLITelemetryConsentPrompt           string
+	CLITelemetryConsentInvalid          string
+	CLITelemetryConsentSaveFailedFmt    string
+	CLITelemetryConsentCleanupFailedFmt string
+
 	// usage / help
 	UsageBody string // full multi-line help text
 }

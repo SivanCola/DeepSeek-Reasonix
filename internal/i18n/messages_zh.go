@@ -525,6 +525,12 @@ var Chinese = Messages{
   reasonix report send [ID]       发送已审阅报告，成功后删除本地副本
   reasonix report delete [ID]     不发送，直接删除本地报告`,
 
+	CLITelemetryConsentNotice:           "Reasonix 可以向 crash.reasonix.io 发送匿名、完全不含内容的 CLI 使用统计：随机安装 ID、版本、操作系统和固定质量分桶。绝不会发送 prompt、回答、代码、路径、模型或工具内容、环境变量。之后可运行 `reasonix config telemetry off` 关闭。",
+	CLITelemetryConsentPrompt:           "允许发送匿名 CLI 使用统计吗？",
+	CLITelemetryConsentInvalid:          "请输入 y 或 n。",
+	CLITelemetryConsentSaveFailedFmt:    "由于无法保存偏好设置，CLI 使用统计仍保持关闭：%v",
+	CLITelemetryConsentCleanupFailedFmt: "CLI 使用统计已关闭，但无法删除待发送统计：%v",
+
 	UsageBody: `reasonix — 由配置和插件驱动的 coding agent（多模型）
 
 用法：

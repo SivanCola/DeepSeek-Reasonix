@@ -78,7 +78,22 @@ type Config struct {
 // project reasonix.toml values are ignored so a cloned repository cannot opt a
 // user into reporting.
 type TelemetryConfig struct {
-	CLIMetrics string `toml:"cli_metrics"` // auto|on|off; empty resolves to auto
+	CLIMetrics string `toml:"cli_metrics"` // auto|on|off; empty means consent has not been requested
+}
+
+// CLITelemetryConfigured reports whether the user has made an explicit CLI
+// telemetry choice. The runtime policy still treats an absent value as auto,
+// but persistence must preserve absence until the first eligible consent prompt.
+func (c *Config) CLITelemetryConfigured() bool {
+	if c == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Telemetry.CLIMetrics)) {
+	case "auto", "on", "off":
+		return true
+	default:
+		return false
+	}
 }
 
 // CLITelemetryMode returns the normalized CLI telemetry policy.

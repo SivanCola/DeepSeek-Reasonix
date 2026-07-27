@@ -23,6 +23,7 @@ import (
 	"reasonix/internal/i18n"
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
+	"reasonix/internal/telemetry"
 )
 
 func TestChdirTo(t *testing.T) {
@@ -830,6 +831,259 @@ func TestConfigTelemetryCommandReportsOptOutCleanupFailure(t *testing.T) {
 	cfg, err := config.Load()
 	if err != nil || cfg.CLITelemetryMode() != "off" {
 		t.Fatalf("saved telemetry mode = %q, err = %v", cfg.CLITelemetryMode(), err)
+	}
+}
+
+func TestCLITelemetryConsentDefaultsYesAndPromptsOnlyOnce(t *testing.T) {
+	isolateCLIConfigHome(t)
+	clearCLITelemetryPolicyEnv(t)
+	t.Cleanup(func() { i18n.DetectLanguage("en") })
+	i18n.DetectLanguage("en")
+
+	previousStart := startCLITelemetryReporter
+	t.Cleanup(func() { startCLITelemetryReporter = previousStart })
+	want := &telemetry.Reporter{}
+	starts := 0
+	startCLITelemetryReporter = func(opts telemetry.Options) *telemetry.Reporter {
+		starts++
+		saved, err := config.LoadForEditReadOnlyStrict(config.UserConfigPath())
+		if err != nil || !saved.CLITelemetryConfigured() || saved.CLITelemetryMode() != "auto" {
+			t.Fatalf("telemetry started before consent was saved: mode=%q configured=%v err=%v", saved.CLITelemetryMode(), saved.CLITelemetryConfigured(), err)
+		}
+		return want
+	}
+
+	cfg := config.Default()
+	var out, errOut bytes.Buffer
+	got := startCLITelemetryWithIO(cfg, telemetry.Options{
+		Version: "v1.20.0", Interactive: true, CLIMode: "tui",
+	}, strings.NewReader("\n"), &out, &errOut)
+	if got != want || starts != 1 {
+		t.Fatalf("first start = %p, calls=%d; want %p, 1", got, starts, want)
+	}
+	if !strings.Contains(out.String(), "crash.reasonix.io") || !strings.Contains(out.String(), "[Y/n]:") || !strings.Contains(out.String(), "reasonix config telemetry off") {
+		t.Fatalf("consent prompt is incomplete: %q", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("unexpected consent stderr: %q", errOut.String())
+	}
+	if !cfg.CLITelemetryConfigured() || cfg.CLITelemetryMode() != "auto" {
+		t.Fatalf("runtime config was not synchronized: mode=%q configured=%v", cfg.CLITelemetryMode(), cfg.CLITelemetryConfigured())
+	}
+
+	var secondOut bytes.Buffer
+	if got := startCLITelemetryWithIO(cfg, telemetry.Options{
+		Version: "v1.20.0", Interactive: true, CLIMode: "tui",
+	}, strings.NewReader("n\n"), &secondOut, &errOut); got != want {
+		t.Fatalf("second start = %p, want %p", got, want)
+	}
+	if secondOut.Len() != 0 || starts != 2 {
+		t.Fatalf("saved decision prompted again: output=%q calls=%d", secondOut.String(), starts)
+	}
+}
+
+func TestCLITelemetryConsentNoDisablesAndCleansPending(t *testing.T) {
+	isolateCLIConfigHome(t)
+	clearCLITelemetryPolicyEnv(t)
+
+	previousStart := startCLITelemetryReporter
+	t.Cleanup(func() { startCLITelemetryReporter = previousStart })
+	starts := 0
+	startCLITelemetryReporter = func(telemetry.Options) *telemetry.Reporter {
+		starts++
+		return &telemetry.Reporter{}
+	}
+	home := config.ReasonixHomeDir()
+	pending := filepath.Join(home, "cli-telemetry-pending")
+	if err := os.MkdirAll(pending, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pending, "pending.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	var out, errOut bytes.Buffer
+	if got := startCLITelemetryWithIO(cfg, telemetry.Options{
+		Version: "v1.20.0", Interactive: true, CLIMode: "tui",
+	}, strings.NewReader("n\n"), &out, &errOut); got != nil {
+		t.Fatalf("declined telemetry returned reporter %p", got)
+	}
+	if starts != 0 {
+		t.Fatalf("declined telemetry started upload %d times", starts)
+	}
+	if cfg.CLITelemetryMode() != "off" || !cfg.CLITelemetryConfigured() {
+		t.Fatalf("decline was not saved in runtime config: mode=%q configured=%v", cfg.CLITelemetryMode(), cfg.CLITelemetryConfigured())
+	}
+	if _, err := os.Stat(pending); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("decline did not clear pending queue: %v", err)
+	}
+	saved, err := config.LoadForEditReadOnlyStrict(config.UserConfigPath())
+	if err != nil || saved.CLITelemetryMode() != "off" || !saved.CLITelemetryConfigured() {
+		t.Fatalf("saved decline = mode %q configured=%v err=%v", saved.CLITelemetryMode(), saved.CLITelemetryConfigured(), err)
+	}
+}
+
+func TestCLITelemetryConsentSaveFailureDoesNotUpload(t *testing.T) {
+	isolateCLIConfigHome(t)
+	clearCLITelemetryPolicyEnv(t)
+
+	previousSave := persistCLITelemetryConsent
+	previousStart := startCLITelemetryReporter
+	t.Cleanup(func() {
+		persistCLITelemetryConsent = previousSave
+		startCLITelemetryReporter = previousStart
+	})
+	persistCLITelemetryConsent = func(string) error { return errors.New("read-only config") }
+	starts := 0
+	startCLITelemetryReporter = func(telemetry.Options) *telemetry.Reporter {
+		starts++
+		return &telemetry.Reporter{}
+	}
+
+	cfg := config.Default()
+	var out, errOut bytes.Buffer
+	if got := startCLITelemetryWithIO(cfg, telemetry.Options{
+		Version: "v1.20.0", Interactive: true, CLIMode: "tui",
+	}, strings.NewReader("\n"), &out, &errOut); got != nil {
+		t.Fatalf("save failure returned reporter %p", got)
+	}
+	if starts != 0 || cfg.CLITelemetryConfigured() {
+		t.Fatalf("save failure started=%d configured=%v", starts, cfg.CLITelemetryConfigured())
+	}
+	if !strings.Contains(errOut.String(), "read-only config") {
+		t.Fatalf("save failure was not explained: %q", errOut.String())
+	}
+}
+
+func TestConfiguredCLITelemetryDoesNotPromptAgain(t *testing.T) {
+	isolateCLIConfigHome(t)
+	clearCLITelemetryPolicyEnv(t)
+	previousSave := persistCLITelemetryConsent
+	previousStart := startCLITelemetryReporter
+	t.Cleanup(func() {
+		persistCLITelemetryConsent = previousSave
+		startCLITelemetryReporter = previousStart
+	})
+	persistCalls := 0
+	persistCLITelemetryConsent = func(string) error {
+		persistCalls++
+		return nil
+	}
+	want := &telemetry.Reporter{}
+	startCalls := 0
+	startCLITelemetryReporter = func(opts telemetry.Options) *telemetry.Reporter {
+		startCalls++
+		if telemetry.Enabled(opts.Mode, opts.Version, opts.Interactive, opts.SafeMode) {
+			return want
+		}
+		return nil
+	}
+
+	for _, mode := range []string{"auto", "on", "off"} {
+		cfg := config.Default()
+		if err := cfg.SetCLITelemetryMode(mode); err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		got := startCLITelemetryWithIO(cfg, telemetry.Options{
+			Version: "v1.20.0", Interactive: true, CLIMode: "tui",
+		}, strings.NewReader("n\n"), &out, io.Discard)
+		if out.Len() != 0 {
+			t.Fatalf("configured mode %q prompted again: %q", mode, out.String())
+		}
+		if mode == "off" && got != nil {
+			t.Fatalf("configured off returned reporter %p", got)
+		}
+		if mode != "off" && got != want {
+			t.Fatalf("configured %s returned %p, want %p", mode, got, want)
+		}
+	}
+	if persistCalls != 0 || startCalls != 3 {
+		t.Fatalf("configured modes persisted=%d started=%d, want 0 and 3", persistCalls, startCalls)
+	}
+}
+
+func TestUndecidedCLITelemetryDoesNotPromptOrUploadWhenIneligible(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		version     string
+		interactive bool
+		envKey      string
+		envValue    string
+		safeMode    bool
+	}{
+		{name: "noninteractive", version: "v1.20.0"},
+		{name: "development", version: "dev", interactive: true},
+		{name: "CI", version: "v1.20.0", interactive: true, envKey: "CI", envValue: "1"},
+		{name: "do not track", version: "v1.20.0", interactive: true, envKey: "DO_NOT_TRACK", envValue: "1"},
+		{name: "environment opt out", version: "v1.20.0", interactive: true, envKey: "REASONIX_TELEMETRY", envValue: "0"},
+		{name: "Safe Mode", version: "v1.20.0", interactive: true, safeMode: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateCLIConfigHome(t)
+			clearCLITelemetryPolicyEnv(t)
+			if tc.envKey != "" {
+				t.Setenv(tc.envKey, tc.envValue)
+			}
+			if tc.safeMode {
+				t.Setenv("REASONIX_SAFE_MODE", "1")
+			}
+			cfg, err := config.LoadForRootReadOnly(".")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			if got := startCLITelemetryWithIO(cfg, telemetry.Options{
+				Version: tc.version, Interactive: tc.interactive, CLIMode: "tui",
+			}, strings.NewReader("\n"), &out, &errOut); got != nil {
+				t.Fatalf("ineligible telemetry returned reporter %p", got)
+			}
+			if out.Len() != 0 || errOut.Len() != 0 {
+				t.Fatalf("ineligible telemetry wrote output: stdout=%q stderr=%q", out.String(), errOut.String())
+			}
+			if _, err := os.Stat(config.UserConfigPath()); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("ineligible invocation wrote config: %v", err)
+			}
+		})
+	}
+}
+
+func TestCLITelemetryConsentPromptIsLocalized(t *testing.T) {
+	isolateCLIConfigHome(t)
+	clearCLITelemetryPolicyEnv(t)
+	previousSave := persistCLITelemetryConsent
+	previousStart := startCLITelemetryReporter
+	t.Cleanup(func() {
+		persistCLITelemetryConsent = previousSave
+		startCLITelemetryReporter = previousStart
+		i18n.DetectLanguage("en")
+	})
+	persistCLITelemetryConsent = func(string) error { return nil }
+	startCLITelemetryReporter = func(telemetry.Options) *telemetry.Reporter { return nil }
+
+	for _, lang := range []string{"en", "zh", "zh-TW"} {
+		i18n.DetectLanguage(lang)
+		var out bytes.Buffer
+		startCLITelemetryWithIO(config.Default(), telemetry.Options{
+			Version: "v1.20.0", Interactive: true, CLIMode: "tui",
+		}, strings.NewReader("\n"), &out, io.Discard)
+		for _, required := range []string{"crash.reasonix.io", "reasonix config telemetry off", "[Y/n]:"} {
+			if !strings.Contains(out.String(), required) {
+				t.Fatalf("%s consent prompt missing %q: %q", lang, required, out.String())
+			}
+		}
+	}
+}
+
+func clearCLITelemetryPolicyEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"DO_NOT_TRACK", "REASONIX_TELEMETRY", "REASONIX_SAFE_MODE", "CI", "CONTINUOUS_INTEGRATION",
+		"GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "JENKINS_URL",
+		"TEAMCITY_VERSION", "TF_BUILD",
+	} {
+		t.Setenv(key, "")
 	}
 }
 

@@ -51,9 +51,6 @@ default_model = "deepseek-flash"   # 执行器；设 [agent].planner_model 可�
 # shortcut_layout = "desktop"      # classic|desktop；兼容旧配置
 # cursor_shape = "bar"             # block|underline|bar；CLI/TUI 输入光标
 
-[telemetry]
-cli_metrics = "auto"               # 仅用户全局：auto|on|off
-
 [agent]
 reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # plan_mode_read_only_commands = ["gh issue view"]   # 仅兼容旧配置；Plan bash 现由 Permissions 决定
@@ -139,10 +136,16 @@ reasonix config telemetry on       # 也允许本机 headless `reasonix run`
 reasonix config telemetry off      # 关闭并删除待发送计数文件
 ```
 
+正式版 CLI 第一次在符合条件的交互式终端启动时，会先明确说明数据边界，并在任何
+telemetry 请求之前只询问一次。提示为 `[Y/n]`：直接回车、输入 `y` 或 `yes` 会保存为
+`auto`；输入 `n` 或 `no` 会保存为 `off` 并删除待发送计数。选择保存后不再提示，允许的
+后续上报保持静默。如果偏好设置保存失败，则不会上传任何内容。
+
 在 CI、Safe Mode、开发构建中始终关闭；设置 `DO_NOT_TRACK` 或
 `REASONIX_TELEMETRY=0` 也会关闭。`auto` 模式下，重定向、pipe 或其他非交互会话
-不会上报。网络失败完全静默，不会改变 stdout、stderr 或进程退出码；未发送计数只会
-保存在有数量和时效上限的本地队列中，等待后续启动重试。
+不会上报。尚未保存选择时，这些不符合条件的会话既不会提示，也不会上报。授权后的
+网络失败完全静默，不会改变 stdout、stderr 或进程退出码；未发送计数只会保存在有
+数量和时效上限的本地队列中，等待后续启动重试。
 
 ping 包含一个 CLI 专用的随机 128-bit 安装 ID、CLI 版本、OS、架构和 `cli` surface
 标记。计数批次使用同一个 ID 做每日活跃安装去重，只包含固定 bucket，例如 CLI 模式、
