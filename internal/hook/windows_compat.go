@@ -26,18 +26,8 @@ var windowsDefaultHookShell struct {
 	err   error
 }
 
-// windowsPOSIXShellInvocation preserves explicit `sh -c` / `bash -c` hook
-// contracts on Windows. Git for Windows normally ships a real Bash outside the
-// cmd.exe PATH, so reuse the same hardened discovery path as the shell tool
-// instead of asking cmd.exe to find an executable it cannot see.
-func windowsPOSIXShellInvocation(command string) (string, []string, bool, error) {
-	return windowsPOSIXShellInvocationWith(command, cachedWindowsHookBash)
-}
-
-func windowsPOSIXShellArgvInvocation(command string, args []string) (string, []string, bool, error) {
-	return windowsPOSIXShellArgvInvocationWith(command, args, cachedWindowsHookBash)
-}
-
+// These helpers preserve explicit `sh -c` / `bash -c` hook contracts on
+// Windows while allowing the caller to supply the effective configured Bash.
 func windowsPOSIXShellArgvInvocationWith(command string, args []string, resolve func() (string, error)) (string, []string, bool, error) {
 	if !isBarePOSIXShellWord(command) || !hasCommandStringFlag(args) {
 		return "", nil, false, nil
