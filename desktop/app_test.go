@@ -660,9 +660,15 @@ func TestMemoryViewIncludesActiveAndArchivedFacts(t *testing.T) {
 	if len(view.Facts) != 1 || view.Facts[0].Name != "active-fact" || view.Facts[0].Type != "project" || view.Facts[0].Scope != "project" {
 		t.Fatalf("Memory() active facts = %+v", view.Facts)
 	}
+	if view.Facts[0].ID == "" || view.Facts[0].Revision != 1 || view.Facts[0].CreatedAt == "" || view.Facts[0].UpdatedAt == "" {
+		t.Fatalf("Memory() active fact metadata = %+v", view.Facts[0])
+	}
 	if len(view.Archives) != 1 || view.Archives[0].Name != "archived-fact" || view.Archives[0].Type != "feedback" || view.Archives[0].Scope != "project" ||
 		view.Archives[0].Path == "" || view.Archives[0].ArchivedAt == "" {
 		t.Fatalf("Memory() archived facts = %+v", view.Archives)
+	}
+	if view.Archives[0].ID == "" || view.Archives[0].Revision != 1 || view.Archives[0].CreatedAt == "" || view.Archives[0].UpdatedAt == "" {
+		t.Fatalf("Memory() archived fact metadata = %+v", view.Archives[0])
 	}
 	if len(view.Scopes) != 3 {
 		t.Fatalf("Memory() scopes = %+v, want user/project/local", view.Scopes)

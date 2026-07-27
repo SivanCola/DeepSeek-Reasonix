@@ -41,6 +41,8 @@ func (rememberTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"id": {"type": "string", "description": "Stable memory id for an update. Prefer this over name when supplied by memory search/read."},
+			"expected_revision": {"type": "integer", "minimum": 1, "description": "Revision returned by memory search/read. When set with id, the update fails instead of overwriting a newer change."},
 			"name": {"type": "string", "description": "Short kebab-case slug identifying the fact, e.g. \"prefers-tabs\". Reusing a name overwrites that memory — do that to update an existing fact. Omit to derive one from the description."},
 			"title": {"type": "string", "description": "Short human-readable label shown in the memory index, e.g. \"Prefers tabs\". Omit to derive one from the name."},
 			"description": {"type": "string", "description": "One-line hook shown in the index — the phrase a future session reads to decide whether to open this memory. Make it specific."},
@@ -54,12 +56,14 @@ func (rememberTool) Schema() json.RawMessage {
 
 func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var in struct {
-		Name        string `json:"name"`
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Type        string `json:"type"`
-		Scope       string `json:"scope"`
-		Body        string `json:"body"`
+		ID               string `json:"id"`
+		ExpectedRevision int    `json:"expected_revision"`
+		Name             string `json:"name"`
+		Title            string `json:"title"`
+		Description      string `json:"description"`
+		Type             string `json:"type"`
+		Scope            string `json:"scope"`
+		Body             string `json:"body"`
 	}
 	if err := json.Unmarshal(args, &in); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -73,32 +77,34 @@ func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 	factScope := FactScope(scope)
 	name := in.Name
-	if name == "" {
+	if name == "" && in.ID == "" {
 		name = in.Title // Save slugifies; the title (or, below, the description) makes a serviceable slug
 	}
-	if name == "" {
+	if name == "" && in.ID == "" {
 		name = in.Description
 	}
-	path, err := t.store.Save(Memory{
+	result, err := t.store.SaveWithOptions(Memory{
+		ID:          in.ID,
 		Name:        name,
 		Title:       in.Title,
 		Description: in.Description,
 		Type:        NormalizeType(in.Type),
 		Scope:       factScope,
 		Body:        in.Body,
-	})
+	}, SaveOptions{ExpectedRevision: in.ExpectedRevision, RequireExpectedRevision: in.ExpectedRevision > 0})
 	if err != nil {
 		return "", err
 	}
+	path := result.Path
 	if saved, ok := loadMemory(path); ok && saved.Scope != "" {
 		factScope = NormalizeFactScope(string(saved.Scope))
 	} else {
 		factScope = t.store.scopeForPath(path)
 	}
 	if q, ok := QueueFromContext(ctx); ok {
-		q.QueueMemory("Saved memory \"" + slug(name) + "\" (" + string(factScope) + "): " + oneLine(in.Description) + "\n" + strings.TrimSpace(in.Body))
+		q.QueueMemory("Saved memory \"" + result.Memory.Name + "\" (" + string(factScope) + "): " + oneLine(result.Memory.Description) + "\n" + strings.TrimSpace(result.Memory.Body))
 	}
-	return fmt.Sprintf("Saved memory (%s background) to %s (it applies now and its index loads automatically in future sessions).", factScope, path), nil
+	return fmt.Sprintf("Saved memory id=%s revision=%d (%s background) to %s (it applies now and its derived index loads automatically in future sessions).", result.Memory.ID, result.Memory.Revision, factScope, path), nil
 }
 
 func (rememberTool) ReadOnly() bool { return false }

@@ -1001,6 +1001,10 @@ export interface InstructionDiagnostic {
 }
 
 export interface MemoryFact {
+  id?: string;
+  revision?: number;
+  createdAt?: string;
+  updatedAt?: string;
   name: string;
   title?: string;
   description: string;

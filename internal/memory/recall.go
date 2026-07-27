@@ -35,9 +35,9 @@ func (recallTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"operation": {"type": "string", "enum": ["search", "read", "list"], "description": "search ranks saved memories; read returns one full memory by name; list returns the saved-memory index."},
+			"operation": {"type": "string", "enum": ["search", "read", "list"], "description": "search ranks saved memories; read returns one full memory by stable id or legacy name; list returns the saved-memory index."},
 			"query": {"type": "string", "description": "Search query for operation=search."},
-			"name": {"type": "string", "description": "Memory slug for operation=read, e.g. the name in [Label](name.md)."},
+			"name": {"type": "string", "description": "Stable memory id or legacy slug for operation=read."},
 			"type": {"type": "string", "enum": ["user", "feedback", "project", "reference"], "description": "Optional memory type filter for search or list."},
 			"scope": {"type": "string", "enum": ["project", "global"], "description": "Optional scope filter for search or list."},
 			"limit": {"type": "integer", "description": "Maximum search/list results to return, default 8, max 20."}
@@ -214,19 +214,7 @@ func filterMemories(memories []Memory, typ Type, scope FactScope) []Memory {
 }
 
 func readMemoryByName(store Store, name string) (Memory, bool) {
-	name = slug(name)
-	if name == "" {
-		return Memory{}, false
-	}
-	m, ok := loadMemory(store.Path(name))
-	if !ok || slug(m.Name) != name {
-		return Memory{}, false
-	}
-	m.Name = name
-	if m.Scope == "" {
-		m.Scope = store.scopeForPath(store.Path(name))
-	}
-	return m, true
+	return store.Read(name)
 }
 
 func memorySearchText(m Memory) string {
@@ -255,16 +243,18 @@ func formatMemoryHits(query string, hits []memoryHit) string {
 	fmt.Fprintf(&b, "Memory search results for %s:\n", strconvQuote(query))
 	for i, hit := range hits {
 		m := hit.Memory
-		fmt.Fprintf(&b, "\n%d. score=%.3f name=%s scope=%s type=%s title=%s\n   description: %s\n   path: %s\n   snippet: %s\n",
-			i+1, hit.Score, m.Name, NormalizeFactScope(string(m.Scope)), NormalizeType(string(m.Type)), displayTitle(m.Title, m.Name), oneLine(m.Description), hit.Path, hit.Snippet)
+		fmt.Fprintf(&b, "\n%d. score=%.3f id=%s revision=%d name=%s scope=%s type=%s title=%s\n   description: %s\n   path: %s\n   snippet: %s\n",
+			i+1, hit.Score, m.ID, m.Revision, m.Name, NormalizeFactScope(string(m.Scope)), NormalizeType(string(m.Type)), displayTitle(m.Title, m.Name), oneLine(m.Description), hit.Path, hit.Snippet)
 	}
-	b.WriteString("\nUse operation=\"read\" with a memory name to inspect the full saved fact.")
+	b.WriteString("\nUse operation=\"read\" with a stable memory id to inspect the full saved fact.")
 	return strings.TrimSpace(b.String())
 }
 
 func formatMemory(store Store, m Memory) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Memory %s\n", m.Name)
+	fmt.Fprintf(&b, "id: %s\n", m.ID)
+	fmt.Fprintf(&b, "revision: %d\n", m.Revision)
 	fmt.Fprintf(&b, "title: %s\n", displayTitle(m.Title, m.Name))
 	fmt.Fprintf(&b, "scope: %s\n", NormalizeFactScope(string(m.Scope)))
 	fmt.Fprintf(&b, "type: %s\n", NormalizeType(string(m.Type)))
@@ -285,8 +275,8 @@ func formatMemoryList(store Store, memories []Memory, limit int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Saved memories in %s:\n", store.Dir)
 	for _, m := range memories {
-		fmt.Fprintf(&b, "- [%s](%s.md) scope=%s type=%s - %s\n",
-			displayTitle(m.Title, m.Name), m.Name, NormalizeFactScope(string(m.Scope)), NormalizeType(string(m.Type)), oneLine(m.Description))
+		fmt.Fprintf(&b, "- [%s](%s.md) id=%s revision=%d scope=%s type=%s - %s\n",
+			displayTitle(m.Title, m.Name), m.Name, m.ID, m.Revision, NormalizeFactScope(string(m.Scope)), NormalizeType(string(m.Type)), oneLine(m.Description))
 	}
 	return strings.TrimSpace(b.String())
 }

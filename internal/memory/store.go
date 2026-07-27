@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,10 @@ func NormalizeFactScope(s string) FactScope {
 
 // Memory is one stored fact.
 type Memory struct {
+	ID          string // immutable identity; Name may change without changing ID
+	Revision    int    // monotonic content revision, starting at 1
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 	Name        string // kebab-case slug; also the file stem (<name>.md)
 	Title       string // human-readable index label; falls back to a de-kebabed Name
 	Description string // one-line summary used for the index and recall
@@ -132,41 +137,13 @@ func (s Store) dirs() []string {
 // When both GlobalDir and Dir have indexes, they are merged with deduplication
 // (global first).
 func (s Store) Index() string {
-	managed := map[string]string{}
-	for _, dir := range s.dirs() {
-		if dir == "" {
-			continue
-		}
-		b, err := fileencoding.ReadFileUTF8(filepath.Join(dir, indexFile))
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(b), "\n") {
-			if mt := indexLineRe.FindStringSubmatch(line); mt != nil {
-				if _, exists := managed[mt[1]]; !exists {
-					managedLine := strings.TrimRight(line, "\r")
-					if m, ok := loadMemory(filepath.Join(dir, mt[1]+".md")); ok {
-						if m.Scope == "" {
-							m.Scope = s.scopeForDir(dir)
-						}
-						managedLine = renderIndexLine(mt[1], m)
-					}
-					managed[mt[1]] = managedLine
-				}
-			}
-		}
-	}
-	if len(managed) == 0 {
+	memories := s.List()
+	if len(memories) == 0 {
 		return ""
 	}
-	names := make([]string, 0, len(managed))
-	for n := range managed {
-		names = append(names, n)
-	}
-	sort.Strings(names)
 	var b strings.Builder
-	for _, n := range names {
-		b.WriteString(managed[n])
+	for _, memory := range memories {
+		b.WriteString(renderIndexLine(memory.Name, memory))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -176,6 +153,9 @@ func (s Store) Index() string {
 // It checks GlobalDir first, then Dir, returning the first match. If no file
 // exists yet, it returns the path in Dir (the default project scope).
 func (s Store) Path(name string) string {
+	if _, path, ok := s.findActive(name); ok {
+		return path
+	}
 	stem := slug(name) + ".md"
 	for _, dir := range s.dirs() {
 		if dir == "" {
@@ -201,73 +181,8 @@ func (s Store) Path(name string) string {
 // editor, and any future importer all go through here so the index never drifts
 // from the files. Returns the path written.
 func (s Store) Save(m Memory) (string, error) {
-	if strings.TrimSpace(m.Name) == "" {
-		return "", fmt.Errorf("memory needs a name")
-	}
-	name := slug(m.Name)
-	if name == "" {
-		return "", fmt.Errorf("memory name needs at least one letter or digit")
-	}
-	m.Type = NormalizeType(string(m.Type))
-	if strings.TrimSpace(string(m.Scope)) == "" {
-		if existing, ok := s.existingScope(name); ok {
-			m.Scope = existing
-		} else {
-			m.Scope = FactScopeProject
-		}
-	} else {
-		m.Scope = NormalizeFactScope(string(m.Scope))
-	}
-	dir := s.DirFor(m.Scope)
-	if dir == "" {
-		return "", fmt.Errorf("memory store unavailable (no user config dir)")
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	path, err := safeJoin(dir, name+".md")
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, []byte(render(m, name)), 0o644); err != nil {
-		return "", err
-	}
-	if err := reindexIn(dir, name, m); err != nil {
-		return path, err
-	}
-	for _, otherDir := range s.dirs() {
-		if sameDir(otherDir, dir) {
-			continue
-		}
-		if err := removeActiveMemoryInDir(otherDir, name); err != nil {
-			return path, err
-		}
-	}
-	return path, nil
-}
-
-// existingScope returns the effective scope of an active same-name memory. A
-// missing metadata.scope is inferred from its directory, preserving legacy
-// global memories when callers omit scope during an update.
-func (s Store) existingScope(name string) (FactScope, bool) {
-	for _, dir := range s.dirs() {
-		if dir == "" {
-			continue
-		}
-		path, err := safeJoin(dir, name+".md")
-		if err != nil {
-			continue
-		}
-		m, ok := loadMemory(path)
-		if !ok {
-			continue
-		}
-		if m.Scope == "" {
-			return s.scopeForDir(dir), true
-		}
-		return NormalizeFactScope(string(m.Scope)), true
-	}
-	return "", false
+	result, err := s.SaveWithOptions(m, SaveOptions{})
+	return result.Path, err
 }
 
 // Archive removes a memory from the active store and moves its file under
@@ -280,7 +195,14 @@ func (s Store) Archive(name string) (string, error) {
 	if s.Dir == "" && s.GlobalDir == "" {
 		return "", fmt.Errorf("memory store unavailable (no user config dir)")
 	}
-	name = slug(name)
+	ref := strings.TrimSpace(name)
+	if active, path, ok := s.findActive(ref); ok && ref == active.ID {
+		return archiveMemoryInDir(filepath.Dir(path), active.Name)
+	} else if ok {
+		name = active.Name
+	} else {
+		name = slug(name)
+	}
 	if name == "" {
 		return "", fmt.Errorf("memory needs a name")
 	}
@@ -305,18 +227,17 @@ func (s Store) Archive(name string) (string, error) {
 	return lastPath, nil
 }
 
-func removeActiveMemoryInDir(dir, name string) error {
-	if strings.TrimSpace(dir) == "" {
-		return nil
-	}
-	p, err := archiveInDir(dir, name)
+func archiveMemoryInDir(dir, name string) (string, error) {
+	path, err := archiveInDir(dir, name)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if p != "" || indexContainsIn(dir, name) {
-		return flushIndexIn(dir, indexLinesExceptIn(dir, name))
+	if path != "" || indexContainsIn(dir, name) {
+		if err := flushIndexIn(dir, indexLinesExceptIn(dir, name)); err != nil {
+			return "", err
+		}
 	}
-	return nil
+	return path, nil
 }
 
 // Delete removes a memory from the active store and its MEMORY.md line — the
@@ -446,10 +367,14 @@ func repairOwnerWrite(root *os.Root, path string, dir bool) {
 // the next load. Plain values render byte-identically to the previous
 // hand-built format.
 type memoryFrontmatter struct {
-	Name     string `yaml:"name"`
-	Title    string `yaml:"title,omitempty"`
-	Desc     string `yaml:"description"`
-	Metadata struct {
+	ID        string `yaml:"id,omitempty"`
+	Revision  int    `yaml:"revision,omitempty"`
+	CreatedAt string `yaml:"created_at,omitempty"`
+	UpdatedAt string `yaml:"updated_at,omitempty"`
+	Name      string `yaml:"name"`
+	Title     string `yaml:"title,omitempty"`
+	Desc      string `yaml:"description"`
+	Metadata  struct {
 		Type     string `yaml:"type"`
 		FactType string `yaml:"fact_type,omitempty"`
 		Scope    string `yaml:"scope"`
@@ -458,7 +383,15 @@ type memoryFrontmatter struct {
 
 // render serializes a memory to frontmatter + body.
 func render(m Memory, name string) string {
-	fm := memoryFrontmatter{Name: name, Title: oneLine(m.Title), Desc: oneLine(m.Description)}
+	fm := memoryFrontmatter{
+		ID: m.ID, Revision: m.Revision, Name: name, Title: oneLine(m.Title), Desc: oneLine(m.Description),
+	}
+	if !m.CreatedAt.IsZero() {
+		fm.CreatedAt = m.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !m.UpdatedAt.IsZero() {
+		fm.UpdatedAt = m.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
 	actualType := NormalizeType(string(m.Type))
 	scope := NormalizeFactScope(string(m.Scope))
 	compatType := previousReleaseRoutingType(actualType, scope)
@@ -739,6 +672,10 @@ func loadMemory(path string) (Memory, bool) {
 	}
 	fm, body := splitFrontmatter(string(b))
 	m := Memory{
+		ID:          fm["id"],
+		Revision:    parsePositiveInt(fm["revision"]),
+		CreatedAt:   parseMemoryTime(fm["created_at"]),
+		UpdatedAt:   parseMemoryTime(fm["updated_at"]),
 		Name:        fm["name"],
 		Title:       fm["title"],
 		Description: fm["description"],
@@ -749,7 +686,44 @@ func loadMemory(path string) (Memory, bool) {
 	if m.Name == "" {
 		m.Name = strings.TrimSuffix(filepath.Base(path), ".md")
 	}
+	if m.ID == "" {
+		m.ID = legacyMemoryID(m.Name, legacyIdentityScope(m))
+	}
+	if m.Revision <= 0 {
+		m.Revision = 1
+	}
+	if info, err := os.Stat(path); err == nil {
+		if m.CreatedAt.IsZero() {
+			m.CreatedAt = info.ModTime().UTC()
+		}
+		if m.UpdatedAt.IsZero() {
+			m.UpdatedAt = info.ModTime().UTC()
+		}
+	}
 	return m, true
+}
+
+func legacyIdentityScope(m Memory) FactScope {
+	if m.Scope != "" {
+		return NormalizeFactScope(string(m.Scope))
+	}
+	if m.Type == TypeUser || m.Type == TypeFeedback {
+		return FactScopeGlobal
+	}
+	return FactScopeProject
+}
+
+func parsePositiveInt(value string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
+}
+
+func parseMemoryTime(value string) time.Time {
+	when, _ := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+	return when
 }
 
 func persistedFactType(fm map[string]string) Type {

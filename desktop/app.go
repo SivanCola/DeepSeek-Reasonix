@@ -10740,6 +10740,10 @@ type InstructionDiagnostic struct {
 
 // MemoryFact is one saved auto-memory, surfaced read-only in the panel.
 type MemoryFact struct {
+	ID          string `json:"id,omitempty"`
+	Revision    int    `json:"revision,omitempty"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
 	Name        string `json:"name"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description"`
@@ -10750,6 +10754,10 @@ type MemoryFact struct {
 
 // MemoryArchive is one archived auto-memory kept only for inspection.
 type MemoryArchive struct {
+	ID          string `json:"id,omitempty"`
+	Revision    int    `json:"revision,omitempty"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
 	Name        string `json:"name"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description"`
@@ -10846,6 +10854,7 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 	}
 	for _, f := range set.Store.List() {
 		view.Facts = append(view.Facts, MemoryFact{
+			ID: f.ID, Revision: f.Revision, CreatedAt: formatMemoryTime(f.CreatedAt), UpdatedAt: formatMemoryTime(f.UpdatedAt),
 			Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Scope: string(f.Scope), Body: f.Body,
 		})
 	}
@@ -10855,6 +10864,7 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 			archivedAt = f.ArchivedAt.Format(time.RFC3339)
 		}
 		view.Archives = append(view.Archives, MemoryArchive{
+			ID: f.ID, Revision: f.Revision, CreatedAt: formatMemoryTime(f.CreatedAt), UpdatedAt: formatMemoryTime(f.UpdatedAt),
 			Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Scope: string(f.Scope), Body: f.Body,
 			Path: f.Path, ArchivedAt: archivedAt,
 		})
@@ -10865,6 +10875,13 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 		}
 	}
 	return view
+}
+
+func formatMemoryTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func emptyMemoryView() MemoryView {

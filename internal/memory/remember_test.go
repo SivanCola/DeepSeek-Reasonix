@@ -115,3 +115,20 @@ func TestRememberToolQueuesNote(t *testing.T) {
 		t.Fatalf("expected one queued note with the saved memory name and body, got %v", q.notes)
 	}
 }
+
+func TestRememberToolQueuesResolvedNameWhenUpdatingByID(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	first, err := store.SaveWithOptions(Memory{Name: "stable-name", Description: "before", Body: "before"}, SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := &fakeQueue{}
+	ctx := WithQueue(context.Background(), q)
+	args := []byte(`{"id":"` + first.Memory.ID + `","expected_revision":1,"description":"after","body":"after"}`)
+	if _, err := NewRememberTool(store).Execute(ctx, args); err != nil {
+		t.Fatal(err)
+	}
+	if len(q.notes) != 1 || !strings.Contains(q.notes[0], "stable-name") {
+		t.Fatalf("queued note did not use the resolved memory name: %v", q.notes)
+	}
+}

@@ -28,7 +28,7 @@ func (forgetTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"name": {"type": "string", "description": "Slug of the memory to delete, as shown in the index (the \"<name>\" in \"[label](<name>.md)\")."}
+			"name": {"type": "string", "description": "Stable memory id or legacy slug of the memory to archive."}
 		},
 		"required": ["name"]
 	}`)
