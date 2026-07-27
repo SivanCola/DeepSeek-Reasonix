@@ -2318,6 +2318,8 @@ export const zhTW: Record<DictKey, string> = {
   "memory.createdSkillSuggestion": "已建立",
   "memory.archivedMemories": "歸檔的記憶",
   "memory.archivedHint": "僅用於追溯來源。歸檔記憶不會作為 active memory 被載入或檢索。",
+  "memory.restoreArchived": "還原",
+  "memory.restoreArchivedHint": "以新修訂還原，不會覆蓋作用中的記憶。",
   "memory.archivedAt": "歸檔於 {time}",
   "memory.noArchivedMatches": "沒有符合當前篩選的歸檔記憶。",
   "memory.emptyArchivedTitle": "還沒有歸檔記憶",

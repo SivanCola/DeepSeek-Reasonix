@@ -237,6 +237,8 @@ func TestRemoteUnsupportedCapabilitiesNeverFallBackToLocal(t *testing.T) {
 		{"remember for tab", func() error { _, err := app.RememberForTab("local-tab", "project", "local-only"); return err }},
 		{"forget", func() error { return app.Forget("local-only") }},
 		{"forget for tab", func() error { return app.ForgetForTab("local-tab", "local-only") }},
+		{"restore archived memory", func() error { _, err := app.RestoreArchivedMemory("local-only"); return err }},
+		{"restore archived memory for tab", func() error { _, err := app.RestoreArchivedMemoryForTab("local-tab", "local-only"); return err }},
 		{"save doc", func() error { _, err := app.SaveDoc("REASONIX.md", "local-only"); return err }},
 		{"save doc for tab", func() error { _, err := app.SaveDocForTab("local-tab", "REASONIX.md", "local-only"); return err }},
 		{"accept memory suggestion", func() error { _, err := app.AcceptMemorySuggestion(MemorySuggestion{}); return err }},

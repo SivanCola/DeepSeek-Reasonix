@@ -675,6 +675,36 @@ func TestMemoryViewIncludesActiveAndArchivedFacts(t *testing.T) {
 	}
 }
 
+func TestRestoreArchivedMemoryRecoversFactForCurrentSession(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	userDir := t.TempDir()
+	cwd := t.TempDir()
+	store := memory.StoreFor(userDir, cwd)
+	first, err := store.SaveWithOptions(memory.Memory{
+		Name: "restorable-fact", Description: "recover me", Body: "Recovered guidance.",
+	}, memory.SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath, err := store.Archive(first.Memory.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.setTestCtrl(control.New(control.Options{Memory: &memory.Set{Store: store, CWD: cwd, UserDir: userDir}}), "test-model")
+	if _, err := app.RestoreArchivedMemory(archivePath); err != nil {
+		t.Fatal(err)
+	}
+	view := app.Memory()
+	if len(view.Facts) != 1 || view.Facts[0].ID != first.Memory.ID || view.Facts[0].Revision != 2 {
+		t.Fatalf("restored memory view = %+v", view)
+	}
+	if len(view.Archives) != 0 {
+		t.Fatalf("restored archive remained visible: %+v", view.Archives)
+	}
+}
+
 func TestBeforeCloseAllowsSystemQuitWhenBackgroundCloseEnabled(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	consumeSystemQuitRequested()

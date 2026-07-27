@@ -247,6 +247,22 @@ func (m *memoryManager) restore(ref string, revision int) (memory.Memory, error)
 	return result.Memory, nil
 }
 
+func (m *memoryManager) restoreArchived(archivePath string) (memory.Memory, error) {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	mem := m.current()
+	if mem == nil {
+		return memory.Memory{}, fmt.Errorf("memory unavailable")
+	}
+	result, err := mem.Store.RestoreArchived(archivePath)
+	if err != nil {
+		return memory.Memory{}, err
+	}
+	m.applyWrite(mem, fmt.Sprintf("Recovered archived memory %q as revision %d: %s\n%s",
+		result.Memory.Name, result.Memory.Revision, strings.Join(strings.Fields(result.Memory.Description), " "), strings.TrimSpace(result.Memory.Body)))
+	return result.Memory, nil
+}
+
 // queue rides a note on the next turn — the model's remember/forget tool path
 // (memory.Queue). It refreshes the snapshot a memory panel reads when memory is
 // enabled, and still queues the turn-tail note when it isn't (there's no snapshot

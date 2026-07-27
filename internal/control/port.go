@@ -141,6 +141,7 @@ type MemoryControl interface {
 	QueueMemory(note string)
 	MemoryRevisions(ref string) []memory.Memory
 	RestoreMemory(ref string, revision int) (memory.Memory, error)
+	RestoreArchivedMemory(archivePath string) (memory.Memory, error)
 }
 
 // Capabilities covers the session's pluggable surface — MCP servers, skills,

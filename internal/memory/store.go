@@ -192,6 +192,12 @@ func (s Store) Save(m Memory) (string, error) {
 // When both GlobalDir and Dir exist, it archives from every directory the
 // memory appears in (handles migration duplicates).
 func (s Store) Archive(name string) (string, error) {
+	memoryStoreMutationMu.Lock()
+	defer memoryStoreMutationMu.Unlock()
+	return s.archiveLocked(name)
+}
+
+func (s Store) archiveLocked(name string) (string, error) {
 	if s.Dir == "" && s.GlobalDir == "" {
 		return "", fmt.Errorf("memory store unavailable (no user config dir)")
 	}

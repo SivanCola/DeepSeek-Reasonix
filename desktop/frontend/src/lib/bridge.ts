@@ -62,6 +62,7 @@ import type {
   MCPInstallResult,
   MCPMarketplaceView,
   MCPToolView,
+  MemoryFact,
   MemorySuggestion,
   MemorySuggestionsView,
   MemoryView,
@@ -343,6 +344,8 @@ export interface AppBindings {
   RememberForTab(tabID: string, scope: string, note: string): Promise<string>;
   Forget(name: string): Promise<void>;
   ForgetForTab(tabID: string, name: string): Promise<void>;
+  RestoreArchivedMemory(archivePath: string): Promise<MemoryFact>;
+  RestoreArchivedMemoryForTab(tabID: string, archivePath: string): Promise<MemoryFact>;
   SaveDoc(path: string, body: string): Promise<string>;
   SaveDocForTab(tabID: string, path: string, body: string): Promise<string>;
   DesktopStartupSettings(): Promise<DesktopStartupSettingsView>;
@@ -3710,6 +3713,21 @@ function makeMockApp(): AppBindings {
     },
     async ForgetForTab(_tabID: string, name: string) {
       return this.Forget(name);
+    },
+    async RestoreArchivedMemory(archivePath: string) {
+      emit({ kind: "notice", level: "info", text: `restored → ${archivePath}` });
+      return {
+        id: "mock-restored-memory",
+        revision: 2,
+        name: "restored-memory",
+        description: "Recovered archived memory",
+        type: "project",
+        scope: "project",
+        body: "Recovered guidance.",
+      };
+    },
+    async RestoreArchivedMemoryForTab(_tabID: string, archivePath: string) {
+      return this.RestoreArchivedMemory(archivePath);
     },
     async SaveDoc(_path: string, _body: string) {
       emit({ kind: "notice", level: "info", text: `saved → ${_path}` });

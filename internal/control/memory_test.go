@@ -111,6 +111,41 @@ func TestForgetMemoryRevokesLoadedGlobalGuidanceForCurrentSession(t *testing.T) 
 	}
 }
 
+func TestRestoreArchivedMemoryQueuesFullBodyForCurrentSession(t *testing.T) {
+	root := t.TempDir()
+	userDir := filepath.Join(root, "user")
+	cwd := filepath.Join(root, "project")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := memory.StoreFor(userDir, cwd)
+	first, err := store.SaveWithOptions(memory.Memory{
+		Name: "build-contract", Description: "project build contract", Body: "Run the focused package tests before the full suite.",
+	}, memory.SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath, err := store.Archive(first.Memory.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New(Options{Memory: memory.Load(memory.Options{CWD: cwd, UserDir: userDir})})
+
+	restored, err := c.RestoreArchivedMemory(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ID != first.Memory.ID || restored.Revision != 2 {
+		t.Fatalf("restored memory = %+v", restored)
+	}
+	composed := c.Compose("continue")
+	for _, want := range []string{"Recovered archived memory", "build-contract", "Run the focused package tests"} {
+		if !strings.Contains(composed, want) {
+			t.Fatalf("recovery update missing %q:\n%s", want, composed)
+		}
+	}
+}
+
 // TestMemoryWritesConcurrencySafe hammers memory writes from many goroutines
 // while c.mu-guarded reads run concurrently. Under -race this proves the
 // memoryManager's writeMu/mu split has no data race and no deadlock — and that

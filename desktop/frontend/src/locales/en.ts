@@ -1253,6 +1253,8 @@ export const en = {
   "memory.createdSkillSuggestion": "Created",
   "memory.archivedMemories": "Archived memories",
   "memory.archivedHint": "Kept for traceability. Archived memories are not loaded or retrieved as active memory.",
+  "memory.restoreArchived": "Restore",
+  "memory.restoreArchivedHint": "Restores this fact as a new revision without replacing active memory.",
   "memory.archivedAt": "archived {time}",
   "memory.noArchivedMatches": "No archived memories match the current filters.",
   "memory.emptyArchivedTitle": "No archived memories",

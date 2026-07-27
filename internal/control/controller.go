@@ -5290,6 +5290,12 @@ func (c *Controller) RestoreMemory(ref string, revision int) (memory.Memory, err
 	return c.memory.restore(ref, revision)
 }
 
+// RestoreArchivedMemory recovers an archived fact as a new audited revision and
+// applies it to the next user turn.
+func (c *Controller) RestoreArchivedMemory(archivePath string) (memory.Memory, error) {
+	return c.memory.restoreArchived(archivePath)
+}
+
 // Memory returns the loaded memory snapshot (nil when memory is disabled), for
 // frontends that surface a memory panel or the /memory command. The returned
 // *Set is immutable — mutations go through QuickAdd / SaveDoc.

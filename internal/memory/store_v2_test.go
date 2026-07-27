@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -193,5 +194,108 @@ func TestStoreV2ArchiveByIDOnlyArchivesMatchingIdentity(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(store.GlobalDir, "shared-name.md")); err != nil {
 		t.Fatalf("global memory with a different ID was archived: %v", err)
+	}
+}
+
+func TestStoreV2RestoreArchivedPreservesIdentityAndCreatesRevision(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	first, err := store.SaveWithOptions(Memory{Name: "fact", Description: "first", Body: "v1"}, SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath, err := store.Archive(first.Memory.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := store.RestoreArchived(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Memory.ID != first.Memory.ID || restored.Memory.Revision != 2 || restored.Memory.Body != "v1" {
+		t.Fatalf("restored memory = %+v, first = %+v", restored.Memory, first.Memory)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("restored archive should leave the archive list: %v", err)
+	}
+	revisions := store.Revisions(first.Memory.ID)
+	if len(revisions) != 1 || revisions[0].Revision != 1 || revisions[0].Body != "v1" {
+		t.Fatalf("revision history = %+v, want archived revision 1", revisions)
+	}
+}
+
+func TestStoreV2RestoreArchivedRejectsActiveCollisions(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	first, err := store.SaveWithOptions(Memory{Name: "fact", Description: "first", Body: "archived"}, SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath, err := store.Archive(first.Memory.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveWithOptions(Memory{Name: "fact", Description: "replacement", Body: "active"}, SaveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.RestoreArchived(archivePath); err == nil || !strings.Contains(err.Error(), "already active") {
+		t.Fatalf("restore collision error = %v, want already active", err)
+	}
+	active, ok := store.Read("fact")
+	if !ok || active.Body != "active" {
+		t.Fatalf("restore collision overwrote active fact: %+v, ok=%v", active, ok)
+	}
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("failed restore should preserve archive: %v", err)
+	}
+}
+
+func TestStoreV2RestoreArchivedIsConcurrencySafe(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	first, err := store.SaveWithOptions(Memory{Name: "fact", Description: "first", Body: "v1"}, SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath, err := store.Archive(first.Memory.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, restoreErr := store.RestoreArchived(archivePath)
+			errs <- restoreErr
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	var successes int
+	for restoreErr := range errs {
+		if restoreErr == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successful restores = %d, want exactly one", successes)
+	}
+	active, ok := store.Read(first.Memory.ID)
+	if !ok || active.Revision != 2 {
+		t.Fatalf("active memory = %+v, ok=%v", active, ok)
+	}
+}
+
+func TestStoreV2RestoreArchivedRejectsPathsOutsideStore(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	outside := filepath.Join(t.TempDir(), "fact.md")
+	if err := os.WriteFile(outside, []byte("not an archive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RestoreArchived(outside); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("outside restore error = %v, want archive not found", err)
 	}
 }

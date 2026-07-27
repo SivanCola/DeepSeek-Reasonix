@@ -10960,6 +10960,51 @@ func (a *App) forgetForCtrl(ctrl control.SessionAPI, name string, fallback bool)
 	return ctrl.ForgetMemory(name)
 }
 
+// RestoreArchivedMemory recovers one archived fact without replacing active
+// memory. The store preserves its identity and creates a new audited revision.
+func (a *App) RestoreArchivedMemory(archivePath string) (MemoryFact, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return MemoryFact{}, remoteMemoryUnavailableErr()
+	}
+	return a.restoreArchivedMemoryForCtrl(nil, archivePath, true)
+}
+
+func (a *App) RestoreArchivedMemoryForTab(tabID, archivePath string) (MemoryFact, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return MemoryFact{}, remoteMemoryUnavailableErr()
+	}
+	if tabID == "" {
+		return a.restoreArchivedMemoryForCtrl(nil, archivePath, true)
+	}
+	return a.restoreArchivedMemoryForCtrl(a.ctrlByTabID(tabID), archivePath, false)
+}
+
+func (a *App) restoreArchivedMemoryForCtrl(ctrl control.SessionAPI, archivePath string, fallback bool) (MemoryFact, error) {
+	if ctrl == nil {
+		if !fallback {
+			return MemoryFact{}, nil
+		}
+		a.mu.RLock()
+		ctrl = a.activeCtrlLocked()
+		a.mu.RUnlock()
+		if ctrl == nil {
+			return MemoryFact{}, nil
+		}
+	}
+	restored, err := ctrl.RestoreArchivedMemory(archivePath)
+	if err != nil {
+		return MemoryFact{}, err
+	}
+	return memoryFactView(restored), nil
+}
+
+func memoryFactView(f memory.Memory) MemoryFact {
+	return MemoryFact{
+		ID: f.ID, Revision: f.Revision, CreatedAt: formatMemoryTime(f.CreatedAt), UpdatedAt: formatMemoryTime(f.UpdatedAt),
+		Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Scope: string(f.Scope), Body: f.Body,
+	}
+}
+
 // SaveDoc overwrites a memory doc with the panel editor's contents. The controller
 // validates path against the recognized memory files. Returns the file written.
 func (a *App) SaveDoc(path, body string) (string, error) {

@@ -1254,6 +1254,8 @@ export const zh: Record<DictKey, string> = {
   "memory.createdSkillSuggestion": "已创建",
   "memory.archivedMemories": "归档的记忆",
   "memory.archivedHint": "仅用于追溯来源。归档记忆不会作为 active memory 被加载或检索。",
+  "memory.restoreArchived": "恢复",
+  "memory.restoreArchivedHint": "以新修订恢复，不会覆盖活动记忆。",
   "memory.archivedAt": "归档于 {time}",
   "memory.noArchivedMatches": "没有符合当前筛选的归档记忆。",
   "memory.emptyArchivedTitle": "还没有归档记忆",

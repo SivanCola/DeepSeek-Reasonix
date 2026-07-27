@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react";
+import { ArchiveRestore, Check, ChevronDown, ChevronRight, FileText, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { app } from "../lib/bridge";
 import { useT } from "../lib/i18n";
@@ -45,6 +45,8 @@ function ArchivedMemoryList({
   renderWithLinks,
   t,
   hideHeader = false,
+  busy = false,
+  onRestore,
 }: {
   archives: MemoryArchive[];
   totalArchives: number;
@@ -53,6 +55,8 @@ function ArchivedMemoryList({
   renderWithLinks: (text: string) => ReactNode[];
   t: ReturnType<typeof useT>;
   hideHeader?: boolean;
+  busy?: boolean;
+  onRestore?: (archive: MemoryArchive) => Promise<void> | void;
 }) {
   if (totalArchives === 0) return null;
   return (
@@ -102,6 +106,20 @@ function ArchivedMemoryList({
                       <div className="mem-empty">{t("memory.noBody")}</div>
                     )}
                     <div className="mem-archive__path">{f.path}</div>
+                    {onRestore && (
+                      <div className="mem-fact__actions">
+                        <span className="mem-hint mem-hint--inline">{t("memory.restoreArchivedHint")}</span>
+                        <button
+                          className="btn btn--small"
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void onRestore(f)}
+                        >
+                          <ArchiveRestore size={13} />
+                          {t("memory.restoreArchived")}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </article>
@@ -1004,6 +1022,26 @@ export function MemorySettingsPage() {
 		}
 	}, [busy, expanded, reload, effectiveTabId]);
 
+	const restoreArchive = useCallback(async (archive: MemoryArchive) => {
+		if (busy) return;
+		setBusy(true);
+		setError(null);
+		try {
+			const restored = effectiveTabId
+				? await app.RestoreArchivedMemoryForTab(effectiveTabId, archive.path)
+				: await app.RestoreArchivedMemory(archive.path);
+			await reload();
+			setExpandedArchive(null);
+			setExpanded(restored.name || archive.name);
+			setHighlight(restored.name || archive.name);
+			setTab("saved");
+		} catch (err) {
+			setError(errorMessage(err));
+		} finally {
+			setBusy(false);
+		}
+	}, [busy, effectiveTabId, reload]);
+
 	const scopes = view?.scopes ?? [];
 	const activeScope =
 		scope || scopes.find((s) => s.scope === "project")?.scope || scopes[0]?.scope || "project";
@@ -1553,14 +1591,16 @@ export function MemorySettingsPage() {
 					</div>
 				) : (
 					<ArchivedMemoryList
-					archives={filteredArchives}
-					totalArchives={archives.length}
-					expanded={expandedArchive}
-					setExpanded={setExpandedArchive}
-					renderWithLinks={renderWithLinks}
-					t={t}
-					hideHeader
-				/>
+						archives={filteredArchives}
+						totalArchives={archives.length}
+						expanded={expandedArchive}
+						setExpanded={setExpandedArchive}
+						renderWithLinks={renderWithLinks}
+						t={t}
+						hideHeader
+						busy={busy}
+						onRestore={restoreArchive}
+					/>
 				)}
 			</section>}
 

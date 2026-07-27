@@ -301,7 +301,130 @@ func (s Store) Restore(ref string, revision int) (SaveResult, error) {
 	return s.SaveWithOptions(target, SaveOptions{ExpectedRevision: active.Revision, RequireExpectedRevision: true})
 }
 
+// RestoreArchived recovers one archive entry as a new active revision. The
+// archive path must be an entry currently owned by this Store. Recovery never
+// overwrites an active identity or slug, and the archived state becomes an
+// immutable revision snapshot before the new active file is created.
+func (s Store) RestoreArchived(archivePath string) (SaveResult, error) {
+	memoryStoreMutationMu.Lock()
+	defer memoryStoreMutationMu.Unlock()
+
+	archivePath = cleanMemoryPath(strings.TrimSpace(archivePath))
+	archived, base, ok := s.findArchivedByPath(archivePath)
+	if !ok {
+		return SaveResult{}, fmt.Errorf("archived memory not found")
+	}
+	if active, _, exists := s.findActive(archived.ID); exists {
+		return SaveResult{}, fmt.Errorf("memory id %q is already active as %q", archived.ID, active.Name)
+	}
+	if active, _, exists := s.findActive(archived.Name); exists {
+		return SaveResult{}, fmt.Errorf("memory name %q is already active as id %q", archived.Name, active.ID)
+	}
+
+	if err := snapshotMemoryRevisionInDir(base, archivePath, archived); err != nil {
+		return SaveResult{}, err
+	}
+	now := time.Now().UTC()
+	restored := archived
+	restored.Scope = s.scopeForDir(base)
+	restored.Revision = s.maxKnownRevision(archived.ID) + 1
+	if restored.Revision <= archived.Revision {
+		restored.Revision = archived.Revision + 1
+	}
+	if restored.CreatedAt.IsZero() {
+		restored.CreatedAt = now
+	}
+	restored.UpdatedAt = now
+	path, err := safeJoin(base, restored.Name+".md")
+	if err != nil {
+		return SaveResult{}, err
+	}
+	if err := writeMemoryCreate(path, []byte(render(restored, restored.Name)), 0o644); err != nil {
+		if os.IsExist(err) {
+			return SaveResult{}, fmt.Errorf("memory name %q is already active", restored.Name)
+		}
+		return SaveResult{}, err
+	}
+	if err := reindexIn(base, restored.Name, restored); err != nil {
+		return SaveResult{Path: path, Memory: restored}, err
+	}
+	if err := os.Remove(archivePath); err != nil && !os.IsNotExist(err) {
+		return SaveResult{Path: path, Memory: restored}, err
+	}
+	return SaveResult{Path: path, Memory: restored}, nil
+}
+
+func (s Store) findArchivedByPath(want string) (Memory, string, bool) {
+	for _, base := range s.dirs() {
+		if strings.TrimSpace(base) == "" {
+			continue
+		}
+		dir := filepath.Join(base, ".archive")
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			path, err := safeJoin(dir, entry.Name())
+			if err != nil || cleanMemoryPath(path) != want {
+				continue
+			}
+			info, err := os.Lstat(path)
+			if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				return Memory{}, "", false
+			}
+			archived, ok := loadMemory(path)
+			if !ok {
+				return Memory{}, "", false
+			}
+			if archived.Scope == "" {
+				archived.Scope = s.scopeForDir(base)
+			}
+			archived.Name = slug(archived.Name)
+			return archived, base, true
+		}
+	}
+	return Memory{}, "", false
+}
+
+func (s Store) maxKnownRevision(id string) int {
+	maxRevision := 0
+	for _, base := range s.dirs() {
+		if strings.TrimSpace(base) == "" {
+			continue
+		}
+		for _, dir := range []string{filepath.Join(base, ".archive"), filepath.Join(base, ".revisions", id)} {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+					continue
+				}
+				path := filepath.Join(dir, entry.Name())
+				info, err := os.Lstat(path)
+				if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+					continue
+				}
+				candidate, ok := loadMemory(path)
+				if ok && candidate.ID == id && candidate.Revision > maxRevision {
+					maxRevision = candidate.Revision
+				}
+			}
+		}
+	}
+	return maxRevision
+}
+
 func snapshotMemoryRevision(path string, memory Memory) error {
+	return snapshotMemoryRevisionInDir(filepath.Dir(path), path, memory)
+}
+
+func snapshotMemoryRevisionInDir(base, path string, memory Memory) error {
 	if memory.ID == "" || memory.Revision < 1 {
 		return nil
 	}
@@ -309,7 +432,7 @@ func snapshotMemoryRevision(path string, memory Memory) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(filepath.Dir(path), ".revisions", memory.ID)
+	dir := filepath.Join(base, ".revisions", memory.ID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -343,6 +466,35 @@ func writeMemoryAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+func writeMemoryCreate(path string, data []byte, mode os.FileMode) (err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.Remove(path)
+		}
+	}()
+	if _, err = file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	complete = true
+	return nil
 }
 
 func newMemoryID(name string, now time.Time) string {
