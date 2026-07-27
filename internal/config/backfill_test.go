@@ -474,6 +474,32 @@ func TestNormalizeLegacyKimiK3CatalogMigratesOnlyOfficialUntouchedPresets(t *tes
 	}
 }
 
+func TestNormalizeLegacyKimiK3CatalogPreservesVisionChoices(t *testing.T) {
+	base := ProviderEntry{
+		Name:         "kimi-cn",
+		Kind:         "openai",
+		BaseURL:      "https://api.moonshot.cn/v1",
+		Models:       append([]string(nil), legacyKimiAPIModels...),
+		Default:      "kimi-k2.7-code",
+		PresetID:     "kimi-cn",
+		VisionModels: []string{},
+	}
+
+	custom := base
+	custom.VisionModels = []string{"kimi-k2.5"}
+	c := &Config{Providers: []ProviderEntry{base, custom}}
+
+	if !normalizeLegacyKimiK3Catalog(c) {
+		t.Fatal("legacy Kimi catalog migration did not report a change")
+	}
+	if got := c.Providers[0].VisionModels; got == nil || len(got) != 0 {
+		t.Fatalf("explicitly disabled vision models = %#v, want explicit empty list", got)
+	}
+	if got := c.Providers[1].VisionModels; !reflect.DeepEqual(got, []string{"kimi-k2.5"}) {
+		t.Fatalf("custom vision models = %v, want [kimi-k2.5]", got)
+	}
+}
+
 func TestLoadForEditPersistsLegacyKimiK3CatalogMigration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	cfg := Default()
@@ -538,6 +564,39 @@ func TestLoadForEditPersistsLegacyOpenCodeGoKimiK3CatalogMigration(t *testing.T)
 	persisted, ok := disk.Provider("opencode-go")
 	if !ok || !persisted.HasModel("kimi-k3") || !persisted.HasVisionModel("kimi-k3") {
 		t.Fatalf("persisted opencode-go = %+v, want Kimi K3 catalog", persisted)
+	}
+}
+
+func TestNormalizeLegacyOpenCodeGoKimiK3CatalogPreservesVisionChoices(t *testing.T) {
+	base := ProviderEntry{
+		Name:     "opencode-go",
+		Kind:     "openai",
+		BaseURL:  "https://opencode.ai/zen/go/v1",
+		Models:   append([]string(nil), legacyOpenCodeGoModels...),
+		Default:  "glm-5.2",
+		PresetID: "opencode-go",
+	}
+
+	tests := []struct {
+		name   string
+		vision []string
+		want   []string
+	}{
+		{name: "explicitly disabled", vision: []string{}, want: []string{}},
+		{name: "custom list", vision: []string{"mimo-v2.5"}, want: []string{"mimo-v2.5"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := base
+			entry.VisionModels = tt.vision
+			c := &Config{Providers: []ProviderEntry{entry}}
+			if !normalizeLegacyOpenCodeGoKimiK3Catalog(c) {
+				t.Fatal("legacy OpenCode Go catalog migration did not report a change")
+			}
+			if got := c.Providers[0].VisionModels; !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("vision models = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
 

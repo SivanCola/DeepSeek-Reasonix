@@ -1174,11 +1174,21 @@ func normalizeLegacyKimiK3Catalog(c *Config) bool {
 			continue
 		}
 		p.Models = append([]string(nil), kimiAPIModels...)
-		p.VisionModels = mergeModelLists([]string{"kimi-k3"}, p.VisionModels)
+		p.VisionModels = migrateKimiK3VisionModels(p.VisionModels, legacyKimiAPIModels)
 		mergeMissingKimiK3Override(p, kimiK3DirectOverride())
 		changed = true
 	}
 	return changed
+}
+
+// migrateKimiK3VisionModels preserves explicit provider-level vision choices.
+// A nil list or an exact copy of the old preset list indicates that the user
+// has not customized vision support and should receive Kimi K3's capability.
+func migrateKimiK3VisionModels(current, legacy []string) []string {
+	if current != nil && (legacy == nil || !stringSlicesEqual(current, legacy)) {
+		return current
+	}
+	return mergeModelLists([]string{"kimi-k3"}, current)
 }
 
 func mergeMissingKimiK3Override(p *ProviderEntry, defaults ProviderModelOverride) {
@@ -1227,7 +1237,7 @@ func normalizeLegacyOpenCodeGoKimiK3Catalog(c *Config) bool {
 			continue
 		}
 		p.Models = append([]string(nil), opencodeGoModels...)
-		p.VisionModels = mergeModelLists(opencodeGoVisionModels, p.VisionModels)
+		p.VisionModels = migrateKimiK3VisionModels(p.VisionModels, nil)
 		mergeMissingKimiK3Override(p, ProviderModelOverride{
 			ReasoningProtocol: ReasoningProtocolOpenAI,
 			SupportedEfforts:  []string{"high", "max"},
