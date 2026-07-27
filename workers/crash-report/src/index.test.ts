@@ -9,9 +9,13 @@ import {
   normalizeForFingerprint,
   Ping,
   Metrics,
+  CLI_TELEMETRY_SCHEMA_SQL,
+  ensureCLITelemetrySchema,
   severityForReport,
+  telemetryTableNames,
 } from "./index";
 import { renderStats } from "./stats";
+import clientSurfaceMigrationSQL from "../migrate-client-surface.sql?raw";
 
 const base = {
   kind: "crash",
@@ -119,6 +123,84 @@ describe("metrics compatibility", () => {
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.counters).toHaveLength(4);
+  });
+});
+
+describe("telemetry deployment order compatibility", () => {
+  it("keeps the released Desktop tables unchanged and isolates CLI rows", () => {
+    expect(telemetryTableNames("desktop")).toEqual({
+      pings: "pings",
+      metrics: "metrics",
+      metricUsers: "metric_users",
+    });
+    expect(telemetryTableNames("cli")).toEqual({
+      pings: "cli_pings",
+      metrics: "cli_metrics",
+      metricUsers: "cli_metric_users",
+    });
+  });
+
+  it("keeps the migration additive when it runs before the released Worker", () => {
+    expect(clientSurfaceMigrationSQL).not.toMatch(/\b(?:DROP|ALTER)\b/);
+    expect(clientSurfaceMigrationSQL).not.toMatch(
+      /CREATE TABLE(?: IF NOT EXISTS)?\s+(?:pings|metrics|metric_users)\b/,
+    );
+    for (const table of ["cli_pings", "cli_metrics", "cli_metric_users"]) {
+      expect(clientSurfaceMigrationSQL).toMatch(
+        new RegExp(`CREATE TABLE IF NOT EXISTS\\s+${table}\\b`),
+      );
+    }
+  });
+
+  it("keeps the migration and Worker bootstrap schema identical", () => {
+    const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim().replace(/;$/, "");
+    const migration = normalize(clientSurfaceMigrationSQL);
+    for (const statement of CLI_TELEMETRY_SCHEMA_SQL) {
+      expect(migration).toContain(normalize(statement));
+    }
+  });
+
+  it("uses additive idempotent DDL when the Worker deploys before the migration", async () => {
+    const prepared: string[] = [];
+    let batches = 0;
+    const db = {
+      prepare(sql: string) {
+        prepared.push(sql);
+        return { sql };
+      },
+      async batch() {
+        batches++;
+        return [];
+      },
+    } as unknown as D1Database;
+
+    await Promise.all([
+      ensureCLITelemetrySchema({ DB: db }),
+      ensureCLITelemetrySchema({ DB: db }),
+    ]);
+
+    expect(batches).toBe(1);
+    expect(prepared).toEqual([...CLI_TELEMETRY_SCHEMA_SQL]);
+    expect(prepared.every((sql) => /CREATE (?:TABLE|INDEX) IF NOT EXISTS/.test(sql))).toBe(true);
+    expect(prepared.join("\n")).not.toMatch(/\b(?:DROP|ALTER)\b/);
+  });
+
+  it("retries schema initialization after a transient D1 failure", async () => {
+    let batches = 0;
+    const db = {
+      prepare(sql: string) {
+        return { sql };
+      },
+      async batch() {
+        batches++;
+        if (batches === 1) throw new Error("temporary D1 failure");
+        return [];
+      },
+    } as unknown as D1Database;
+
+    await expect(ensureCLITelemetrySchema({ DB: db })).rejects.toThrow("temporary D1 failure");
+    await expect(ensureCLITelemetrySchema({ DB: db })).resolves.toBeUndefined();
+    expect(batches).toBe(2);
   });
 });
 

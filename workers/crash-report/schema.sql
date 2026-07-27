@@ -54,14 +54,26 @@ CREATE INDEX IF NOT EXISTS reports_fingerprint ON reports (fingerprint);
 
 CREATE TABLE IF NOT EXISTS pings (
   date TEXT NOT NULL,
-  surface TEXT NOT NULL DEFAULT 'desktop',
   install_id TEXT NOT NULL,
   version TEXT NOT NULL,
   os TEXT NOT NULL,
   arch TEXT NOT NULL,
   os_version TEXT NOT NULL DEFAULT '',
   opens INTEGER NOT NULL DEFAULT 1,
-  PRIMARY KEY (date, surface, install_id)
+  PRIMARY KEY (date, install_id)
+);
+
+-- CLI telemetry stays in additive tables so either the schema migration or the
+-- Worker deployment can happen first without changing the Desktop contract.
+CREATE TABLE IF NOT EXISTS cli_pings (
+  date TEXT NOT NULL,
+  install_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  os TEXT NOT NULL,
+  arch TEXT NOT NULL,
+  os_version TEXT NOT NULL DEFAULT '',
+  opens INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (date, install_id)
 );
 
 -- Single-row checkpoint used by the scheduled ingest sentinel to detect when
@@ -75,30 +87,48 @@ CREATE TABLE IF NOT EXISTS ingest_sentinel_state (
   checked_at TEXT NOT NULL
 );
 
--- Opt-in aggregate client metrics: anonymous per-day (signal, bucket) counters,
--- no content. Generic shape so a new signal is just new rows.
+-- Opt-in aggregate Desktop metrics: anonymous per-day (signal, bucket)
+-- counters, no content. Generic shape so a new signal is just new rows.
 CREATE TABLE IF NOT EXISTS metrics (
   date TEXT NOT NULL,
-  surface TEXT NOT NULL DEFAULT 'desktop',
   version TEXT NOT NULL,
   os TEXT NOT NULL,
   signal TEXT NOT NULL,
   bucket TEXT NOT NULL,
   count INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (date, surface, version, os, signal, bucket)
+  PRIMARY KEY (date, version, os, signal, bucket)
 );
 
--- Deduplicated DAU for opt-in metric buckets. install_id is the same random
--- anonymous surface-specific install id used by launch pings; it is not an account id.
+CREATE TABLE IF NOT EXISTS cli_metrics (
+  date TEXT NOT NULL,
+  version TEXT NOT NULL,
+  os TEXT NOT NULL,
+  signal TEXT NOT NULL,
+  bucket TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (date, version, os, signal, bucket)
+);
+
+-- Deduplicated Desktop DAU for opt-in metric buckets. install_id is the same
+-- random anonymous install id used by launch pings; it is not an account id.
 CREATE TABLE IF NOT EXISTS metric_users (
   date TEXT NOT NULL,
-  surface TEXT NOT NULL DEFAULT 'desktop',
   signal TEXT NOT NULL,
   bucket TEXT NOT NULL,
   install_id TEXT NOT NULL,
   version TEXT NOT NULL,
   os TEXT NOT NULL,
-  PRIMARY KEY (date, surface, signal, bucket, install_id)
+  PRIMARY KEY (date, signal, bucket, install_id)
+);
+
+CREATE TABLE IF NOT EXISTS cli_metric_users (
+  date TEXT NOT NULL,
+  signal TEXT NOT NULL,
+  bucket TEXT NOT NULL,
+  install_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  os TEXT NOT NULL,
+  PRIMARY KEY (date, signal, bucket, install_id)
 );
 
 -- Legacy local auth — superseded by id.reasonix.io identity + the `access`
