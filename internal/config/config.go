@@ -137,7 +137,7 @@ type UIConfig struct {
 // language, terminal colours, or provider-visible prompt/request data.
 type DesktopConfig struct {
 	Language                string   `toml:"language"`                   // auto|en|zh; empty/auto = browser/OS auto-detect
-	Currency                string   `toml:"currency"`                   // auto|CNY|USD; empty/auto follows the desktop/CLI language
+	Currency                string   `toml:"currency"`                   // user-global auto|CNY|USD pricing preference shared by desktop and CLI
 	LayoutStyle             string   `toml:"layout_style"`               // classic|workbench|creation; desktop layout style
 	Theme                   string   `toml:"theme"`                      // auto|dark|light; empty resolves to auto
 	ThemeStyle              string   `toml:"theme_style"`                // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
@@ -277,8 +277,9 @@ func (c *Config) DesktopLanguage() string {
 	}
 }
 
-// DesktopCurrency returns the explicit desktop pricing currency. Empty means
-// the pricing region follows the desktop language, then the CLI language.
+// DesktopCurrency returns the explicit user-global pricing currency. The
+// persisted field keeps its original desktop namespace for compatibility;
+// empty means the pricing region follows the desktop/CLI language.
 func (c *Config) DesktopCurrency() string {
 	if c == nil {
 		return ""

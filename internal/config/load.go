@@ -74,6 +74,8 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	userDefaultModel := cfg.DefaultModel
 	globalSecrets := cfg.Secrets
 	globalRemote := cfg.Remote.Clone()
+	globalDesktopLanguage := cfg.Desktop.Language
+	globalPricingCurrency := cfg.Desktop.Currency
 
 	tomlSources = append(tomlSources, projectTOML)
 	if err := mergeTOML(cfg, projectTOML); err != nil {
@@ -87,6 +89,10 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	// must not be able to inject hosts, jump chains, or port forwards that
 	// steer where Reasonix opens connections.
 	cfg.Remote = globalRemote
+	// Desktop language and pricing currency are user-level regional preferences.
+	// A repository must not be able to alter how the user's spend is shown.
+	cfg.Desktop.Language = globalDesktopLanguage
+	cfg.Desktop.Currency = globalPricingCurrency
 	// TOML decoding replaces [[plugins]] wholesale, so cfg.Plugins now holds
 	// only the last file's. Re-merge by name across all sources (later wins) so a
 	// project reasonix.toml doesn't drop the global config's MCP servers.

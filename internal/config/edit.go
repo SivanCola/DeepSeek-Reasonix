@@ -225,8 +225,9 @@ func (c *Config) SetDesktopLanguage(lang string) error {
 	return nil
 }
 
-// SetDesktopCurrency pins the official pricing region independently from the
-// desktop language. Empty/auto follows the language preference.
+// SetDesktopCurrency pins the user-global official pricing region independently
+// from language. The name is retained for persisted-schema compatibility.
+// Empty/auto follows the language preference.
 func (c *Config) SetDesktopCurrency(currency string) error {
 	overridePersisted := false
 	switch strings.ToUpper(strings.TrimSpace(currency)) {

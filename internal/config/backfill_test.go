@@ -771,6 +771,30 @@ func TestDeepSeekOfficialPricingCurrencyResolution(t *testing.T) {
 	}
 }
 
+func TestLoadForRootKeepsPricingRegionUserGlobal(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	t.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+	if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte("[desktop]\nlanguage = \"en\"\ncurrency = \"USD\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte("[desktop]\nlanguage = \"zh\"\ncurrency = \"CNY\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForRoot(project)
+	if err != nil {
+		t.Fatalf("LoadForRoot: %v", err)
+	}
+	if got := cfg.DesktopCurrency(); got != "USD" {
+		t.Fatalf("project config overrode user pricing currency: got %q, want USD", got)
+	}
+	if got := cfg.DesktopLanguage(); got != "en" {
+		t.Fatalf("project config overrode user desktop language: got %q, want en", got)
+	}
+}
+
 func TestApplyDeepSeekOfficialDefaultPricingExplicitCurrencyWins(t *testing.T) {
 	c := Default()
 	c.Desktop.Language = "zh"
