@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+
+	"reasonix/internal/provider"
 )
 
 var reTransientUserBlock = regexp.MustCompile(`(?s)^\s*<(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route|interrupted-turn-recovery)(?:\s+[^>]*)?>.*?</(?:response-language|reasoning-language|memory-update|background-jobs|active-goal|hook-context|capability-route|interrupted-turn-recovery)>\s*\n?`)
@@ -131,6 +133,39 @@ func UserPreviewText(content string) string {
 	s = HandoffTask(s)
 	s = StripTransientUserBlocks(s)
 	return strings.TrimSpace(s)
+}
+
+// migrateLegacyProviderContent upgrades user turns written before sessions
+// stored user-authored and provider-rendered content separately. It only
+// rewrites turns with a recognized host wrapper; ordinary user text keeps the
+// same backing slice and bytes.
+func migrateLegacyProviderContent(msgs []provider.Message) []provider.Message {
+	var upgraded []provider.Message
+	for i, msg := range msgs {
+		if msg.Role != provider.RoleUser || msg.ProviderContent != "" || !hasLegacyProviderWrapper(msg.Content) {
+			continue
+		}
+		if upgraded == nil {
+			upgraded = append([]provider.Message(nil), msgs...)
+		}
+		upgraded[i].Content = UserPreviewText(msg.Content)
+		upgraded[i].ProviderContent = msg.Content
+	}
+	if upgraded != nil {
+		return upgraded
+	}
+	return msgs
+}
+
+func hasLegacyProviderWrapper(content string) bool {
+	if ContainsMemoryCompilerExecution(content) || reTransientUserBlock.MatchString(content) {
+		return true
+	}
+	if stripTrailingDeliveryRuntime(content) != content {
+		return true
+	}
+	stripped := StripTransientUserBlocks(content)
+	return HandoffTask(stripped) != stripped
 }
 
 // SyntheticUserPrefixes lists the openings of host-injected user-role messages

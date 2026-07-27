@@ -1628,6 +1628,7 @@ func (c *Controller) Run(ctx context.Context, input string) (err error) {
 	ctx = jobs.WithSession(ctx, parentSession)
 	ctx = agent.WithUserImages(ctx, c.inputImages(input))
 	rawInput := input
+	ctx = agent.WithRawUserInput(ctx, rawInput)
 	input = c.Compose(input)
 	startMessages := c.messageCount()
 	defer c.snapshotActivityIfChanged(startMessages)

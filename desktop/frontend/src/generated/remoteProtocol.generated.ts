@@ -2,7 +2,7 @@
 
 export const REMOTE_SCHEMA_FORMAT = "reasonix.remote.schema.v1" as const;
 export const REMOTE_PROTOCOL_VERSION = "1" as const;
-export const REMOTE_SCHEMA_HASH = "sha256:0c91e772a17a5acdc8e874c5ddeb15b707e649bb24a40723399ab8d3d6f52e06" as const;
+export const REMOTE_SCHEMA_HASH = "sha256:124aa41ef3ce8a8eb63752e2786e8bb2c50be429f2c2856e72f00f4aac33dee8" as const;
 
 export const REMOTE_FIXED_RESOURCES = {
   "protocol": {
@@ -1015,6 +1015,7 @@ export type BrokerStreamOpenParamsRaw = {
       }>;
       "name"?: string;
       "original"?: string;
+      "provider_content"?: string;
       "reasoning_content"?: string;
       "reasoning_signature"?: string;
       "role": "assistant" | "system" | "tool" | "user";
@@ -1075,6 +1076,7 @@ export type BrokerStreamOpenParamsHydrated = {
       }>;
       "name"?: string;
       "original"?: string;
+      "provider_content"?: string;
       "reasoning_content"?: string;
       "reasoning_signature"?: string;
       "role": "assistant" | "system" | "tool" | "user";

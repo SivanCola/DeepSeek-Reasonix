@@ -37,8 +37,13 @@ const (
 
 // Message is a single conversation message.
 type Message struct {
-	Role             Role     `json:"role"`
-	Content          string   `json:"content,omitempty"`
+	Role    Role   `json:"role"`
+	Content string `json:"content,omitempty"`
+	// ProviderContent is the fully rendered, provider-visible form of a user
+	// turn. Content remains the user-authored text for display, retrieval, and
+	// synthesis. ModelMessages applies this field to a transport copy and clears
+	// it before any provider sees the request shape.
+	ProviderContent  string   `json:"provider_content,omitempty"`
 	Images           []string `json:"images,omitempty"`            // data URLs (data:<mime>;base64,…) on user (attachments) and tool (MCP image results) messages; embedded only for vision-capable models
 	ReasoningContent string   `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
 	// ReasoningSignature is an opaque, provider-issued proof that ReasoningContent
@@ -181,18 +186,28 @@ func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(ms
 // handed to any provider. Healthy sessions without such records keep their
 // original backing slice, preserving the allocation and prompt-cache fast path.
 func ModelMessages(msgs []Message) []Message {
+	needsCopy := false
 	for _, m := range msgs {
-		if m.LocalOnly {
-			out := make([]Message, 0, len(msgs)-1)
-			for _, candidate := range msgs {
-				if !candidate.LocalOnly {
-					out = append(out, candidate)
-				}
-			}
-			return out
+		if m.LocalOnly || m.ProviderContent != "" {
+			needsCopy = true
+			break
 		}
 	}
-	return msgs
+	if !needsCopy {
+		return msgs
+	}
+	out := make([]Message, 0, len(msgs))
+	for _, candidate := range msgs {
+		if candidate.LocalOnly {
+			continue
+		}
+		if candidate.ProviderContent != "" {
+			candidate.Content = candidate.ProviderContent
+			candidate.ProviderContent = ""
+		}
+		out = append(out, candidate)
+	}
+	return out
 }
 
 // NormalizeMessages repairs a conversation history so it satisfies the tool-call

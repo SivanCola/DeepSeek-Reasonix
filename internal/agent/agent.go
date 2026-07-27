@@ -1133,7 +1133,8 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		a.workspaceLease.BeginRun()
 		defer a.workspaceLease.EndRun()
 	}
-	rawInput := input
+	rawInput := RawUserInput(ctx, input)
+	providerInput := input
 	turnStartedAt := time.Now()
 	workDurationMs := func() int64 {
 		if elapsed := time.Since(turnStartedAt).Milliseconds(); elapsed > 0 {
@@ -1234,17 +1235,24 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	// A cancelled/error turn leaves a provider-excluded recovery record at the
 	// transcript tail. Fold its bounded facts into this new user turn exactly
 	// once; the user's raw text remains the classifier source above.
-	rawInput = withInterruptedRecovery(rawInput, a.pendingInterruptedRecovery())
+	providerInput = withInterruptedRecovery(providerInput, a.pendingInterruptedRecovery())
 	a.repeatSuccessCounts = nil
 	a.blockedTurnStreak = 0
 	a.loopGuardArmed = false
 	a.loopGuardReceiptMark = 0
 	a.sink.Emit(event.Event{Kind: event.TurnStarted})
-	input = a.withTurnPreferences(rawInput)
+	input = a.withTurnPreferences(providerInput)
 	userCreatedAt := time.Now().UnixMilli()
 	a.activeTurnCreatedAt.Store(userCreatedAt)
 	defer a.activeTurnCreatedAt.Store(0)
-	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input, Images: userImages(ctx), CreatedAt: userCreatedAt})
+	providerContent := ""
+	if input != rawInput {
+		providerContent = input
+	}
+	a.session.Add(provider.Message{
+		Role: provider.RoleUser, Content: rawInput, ProviderContent: providerContent,
+		Images: userImages(ctx), CreatedAt: userCreatedAt,
+	})
 
 	finalReadinessBlocks := 0
 	seenReadinessStates := make(map[string]struct{})
