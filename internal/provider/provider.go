@@ -37,12 +37,16 @@ const (
 
 // Message is a single conversation message.
 type Message struct {
-	Role    Role   `json:"role"`
+	Role Role `json:"role"`
+	// Content is the provider-visible conversation content. Keeping this legacy
+	// field provider-visible preserves replay for older CLI/Desktop releases.
 	Content string `json:"content,omitempty"`
-	// ProviderContent is the fully rendered, provider-visible form of a user
-	// turn. Content remains the user-authored text for display, retrieval, and
-	// synthesis. ModelMessages applies this field to a transport copy and clears
-	// it before any provider sees the request shape.
+	// RawContent is the user-authored form of a user turn, when it differs from
+	// Content because the host added transient context. Older releases ignore
+	// this field and still replay the provider-visible Content safely.
+	RawContent string `json:"raw_content,omitempty"`
+	// ProviderContent is a transitional field written by early Context Engine v2
+	// builds. Loaders migrate it into Content/RawContent before normal use.
 	ProviderContent  string   `json:"provider_content,omitempty"`
 	Images           []string `json:"images,omitempty"`            // data URLs (data:<mime>;base64,…) on user (attachments) and tool (MCP image results) messages; embedded only for vision-capable models
 	ReasoningContent string   `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
@@ -188,7 +192,7 @@ func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(ms
 func ModelMessages(msgs []Message) []Message {
 	needsCopy := false
 	for _, m := range msgs {
-		if m.LocalOnly || m.ProviderContent != "" {
+		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" {
 			needsCopy = true
 			break
 		}
@@ -205,6 +209,7 @@ func ModelMessages(msgs []Message) []Message {
 			candidate.Content = candidate.ProviderContent
 			candidate.ProviderContent = ""
 		}
+		candidate.RawContent = ""
 		out = append(out, candidate)
 	}
 	return out

@@ -105,6 +105,44 @@ func TestLoadIncludesStableGlobalPreferencesAndFeedback(t *testing.T) {
 	}
 }
 
+func TestLoadProjectFactSuppressesEquivalentGlobalGuidance(t *testing.T) {
+	root := t.TempDir()
+	user := filepath.Join(root, "user")
+	proj := filepath.Join(root, "project")
+	mustMkdir(t, filepath.Join(proj, ".git"))
+	store := StoreFor(user, proj)
+	if _, err := store.Save(Memory{
+		Name: "response-style", Type: TypeFeedback, Scope: FactScopeGlobal,
+		Description: "global style", Body: "Always be verbose.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(Memory{
+		Name: "response-style", Type: TypeFeedback, Scope: FactScopeProject,
+		Description: "project style", Body: "Be concise in this project.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(Memory{
+		Name: "language", Type: TypeUser, Scope: FactScopeGlobal,
+		Description: "global language", Body: "Answer in Chinese.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	set := Load(Options{CWD: proj, UserDir: user})
+	if len(set.GlobalGuidance) != 1 || set.GlobalGuidance[0].Name != "language" {
+		t.Fatalf("global guidance = %+v, want only unshadowed language preference", set.GlobalGuidance)
+	}
+	block := set.Block()
+	if strings.Contains(block, "Always be verbose.") {
+		t.Fatalf("shadowed global guidance leaked into stable prefix:\n%s", block)
+	}
+	if !strings.Contains(block, "Answer in Chinese.") {
+		t.Fatalf("unshadowed global guidance missing from stable prefix:\n%s", block)
+	}
+}
+
 // TestDiscoverPrecedenceOrder checks user → ancestor → project → local ordering,
 // which puts the most specific guidance last.
 func TestDiscoverPrecedenceOrder(t *testing.T) {

@@ -103,7 +103,10 @@ override explained instead of deleting or hiding either source.
 
 For compatibility and first-turn usability, globally scoped `user` and
 `feedback` bodies are snapshotted into a lower-priority stable-guidance section
-at session start. Other fact bodies remain retrieval-only until relevant.
+at session start. When an equivalent project fact exists, it suppresses that
+global guidance before the stable prefix is built, so project-over-global
+precedence does not depend on a later recall match. Other fact bodies remain
+retrieval-only until relevant.
 
 ## Automatic recall
 

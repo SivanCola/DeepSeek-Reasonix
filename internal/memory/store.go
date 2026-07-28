@@ -663,6 +663,46 @@ func (s Store) globalGuidance() []Memory {
 	return out
 }
 
+// globalGuidanceForProject removes global guidance shadowed by an equivalent
+// project fact before the stable session prefix is built. This makes the
+// documented project-over-global rule deterministic on the first turn instead
+// of depending on whether automatic recall happens to match the request.
+func (s Store) globalGuidanceForProject() []Memory {
+	guidance := s.globalGuidance()
+	if len(guidance) == 0 || s.Dir == "" {
+		return guidance
+	}
+	projectKeys := map[string]bool{}
+	for _, fact := range s.ListAll() {
+		if NormalizeFactScope(string(fact.Scope)) != FactScopeProject {
+			continue
+		}
+		for _, key := range recallIdentityKeys(fact) {
+			if strings.HasSuffix(key, ":") {
+				continue
+			}
+			projectKeys[key] = true
+		}
+	}
+	if len(projectKeys) == 0 {
+		return guidance
+	}
+	out := guidance[:0]
+	for _, fact := range guidance {
+		shadowed := false
+		for _, key := range recallIdentityKeys(fact) {
+			if projectKeys[key] {
+				shadowed = true
+				break
+			}
+		}
+		if !shadowed {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
 // ListArchived returns archived memories parsed from .archive/, newest first.
 // Archived files stay out of List() and the prompt index, so stale facts remain
 // inspectable without being reused as active truth. Reads from both GlobalDir

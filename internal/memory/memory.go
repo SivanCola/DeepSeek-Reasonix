@@ -44,7 +44,7 @@ func Load(opts Options) *Set {
 	resolved := instruction.Resolve(instruction.ResolveOptions{TargetDir: cwd, UserDir: opts.UserDir})
 	return &Set{
 		Docs:                   resolved.Documents,
-		GlobalGuidance:         store.globalGuidance(),
+		GlobalGuidance:         store.globalGuidanceForProject(),
 		Store:                  store,
 		Index:                  store.Index(),
 		CWD:                    cwd,

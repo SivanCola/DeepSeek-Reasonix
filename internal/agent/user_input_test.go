@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"reasonix/internal/event"
@@ -39,16 +40,33 @@ func TestRunPersistsRawUserInputSeparatelyFromProviderContext(t *testing.T) {
 	if len(stored) < 2 {
 		t.Fatalf("stored messages = %d, want system and user", len(stored))
 	}
-	if got := stored[1].Content; got != raw {
-		t.Fatalf("stored user content = %q, want raw %q", got, raw)
-	}
-	if got := stored[1].ProviderContent; got != composed {
+	if got := stored[1].Content; got != composed {
 		t.Fatalf("stored provider content = %q, want composed %q", got, composed)
+	}
+	if got := stored[1].RawContent; got != raw {
+		t.Fatalf("stored raw content = %q, want raw %q", got, raw)
+	}
+	if stored[1].ProviderContent != "" {
+		t.Fatalf("stored transitional provider content was not cleared: %+v", stored[1])
 	}
 	if len(prov.request.Messages) < 2 || prov.request.Messages[1].Content != composed {
 		t.Fatalf("provider request did not receive composed context: %+v", prov.request.Messages)
 	}
-	if prov.request.Messages[1].ProviderContent != "" {
-		t.Fatalf("provider request leaked ProviderContent metadata: %+v", prov.request.Messages[1])
+	if prov.request.Messages[1].RawContent != "" || prov.request.Messages[1].ProviderContent != "" {
+		t.Fatalf("provider request leaked display metadata: %+v", prov.request.Messages[1])
+	}
+
+	encoded, err := json.Marshal(stored[1])
+	if err != nil {
+		t.Fatalf("marshal stored user turn: %v", err)
+	}
+	var legacy struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(encoded, &legacy); err != nil {
+		t.Fatalf("decode with previous-release shape: %v", err)
+	}
+	if legacy.Content != composed {
+		t.Fatalf("previous-release reader sees %q, want provider-visible %q", legacy.Content, composed)
 	}
 }

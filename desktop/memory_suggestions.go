@@ -240,7 +240,7 @@ func suggestMemories(set *memory.Set, sessions []suggestionSession) []MemorySugg
 			if msg.Role != provider.RoleUser {
 				continue
 			}
-			statement, reason := extractMemoryStatement(msg.Content)
+			statement, reason := extractMemoryStatement(agent.UserMessageText(msg))
 			if statement == "" {
 				continue
 			}
@@ -455,7 +455,7 @@ func workflowEvidence(cat workflowCategory, sessions []suggestionSession) []stri
 			if msg.Role != provider.RoleUser {
 				continue
 			}
-			text := oneLine(msg.Content)
+			text := oneLine(agent.UserMessageText(msg))
 			if text == "" || !hasAny(strings.ToLower(text), cat.Keywords...) {
 				continue
 			}

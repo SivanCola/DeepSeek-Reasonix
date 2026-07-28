@@ -149,21 +149,43 @@ func UserPreviewText(content string) string {
 	return strings.TrimSpace(s)
 }
 
-// migrateLegacyProviderContent upgrades user turns written before sessions
-// stored user-authored and provider-rendered content separately. It only
-// rewrites turns with a recognized host wrapper; ordinary user text keeps the
-// same backing slice and bytes.
+// UserMessageText returns the best user-authored view of a persisted user turn.
+// New sessions carry the exact raw text explicitly; older sessions fall back to
+// deterministic wrapper stripping.
+func UserMessageText(msg provider.Message) string {
+	if msg.RawContent != "" {
+		return strings.TrimSpace(msg.RawContent)
+	}
+	return UserPreviewText(msg.Content)
+}
+
+// migrateLegacyProviderContent canonicalizes both historical user-turn shapes:
+// legacy turns kept provider-visible text only in Content, while early Context
+// Engine v2 builds inverted Content and ProviderContent. Canonical sessions
+// keep provider-visible bytes in Content so previous releases replay them
+// safely, with user-authored text in RawContent for current display/search.
 func migrateLegacyProviderContent(msgs []provider.Message) []provider.Message {
 	var upgraded []provider.Message
 	for i, msg := range msgs {
-		if msg.Role != provider.RoleUser || msg.ProviderContent != "" || !hasLegacyProviderWrapper(msg.Content) {
+		if msg.Role != provider.RoleUser {
 			continue
 		}
-		if upgraded == nil {
-			upgraded = append([]provider.Message(nil), msgs...)
+		switch {
+		case msg.ProviderContent != "":
+			if upgraded == nil {
+				upgraded = append([]provider.Message(nil), msgs...)
+			}
+			if upgraded[i].RawContent == "" {
+				upgraded[i].RawContent = msg.Content
+			}
+			upgraded[i].Content = msg.ProviderContent
+			upgraded[i].ProviderContent = ""
+		case msg.RawContent == "" && hasLegacyProviderWrapper(msg.Content):
+			if upgraded == nil {
+				upgraded = append([]provider.Message(nil), msgs...)
+			}
+			upgraded[i].RawContent = UserPreviewText(msg.Content)
 		}
-		upgraded[i].Content = UserPreviewText(msg.Content)
-		upgraded[i].ProviderContent = msg.Content
 	}
 	if upgraded != nil {
 		return upgraded

@@ -21,12 +21,12 @@ func touch(path string, t time.Time) error {
 	return os.Chtimes(path, t, t)
 }
 
-func TestSaveLoadPreservesRawAndProviderUserContent(t *testing.T) {
+func TestSaveLoadPreservesLegacyContentAndRawUserContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	const raw = "fix the bug"
 	const rendered = "<reasoning-language>zh</reasoning-language>\n\nfix the bug"
 	s := NewSession("system")
-	s.Add(provider.Message{Role: provider.RoleUser, Content: raw, ProviderContent: rendered})
+	s.Add(provider.Message{Role: provider.RoleUser, Content: rendered, RawContent: raw})
 	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "done"})
 
 	before, err := json.Marshal(provider.ModelMessages(s.Snapshot()))
@@ -41,11 +41,14 @@ func TestSaveLoadPreservesRawAndProviderUserContent(t *testing.T) {
 		t.Fatalf("LoadSession: %v", err)
 	}
 	stored := loaded.Snapshot()
-	if got := stored[1].Content; got != raw {
+	if got := stored[1].Content; got != rendered {
+		t.Fatalf("reloaded provider content = %q, want %q", got, rendered)
+	}
+	if got := stored[1].RawContent; got != raw {
 		t.Fatalf("reloaded raw content = %q, want %q", got, raw)
 	}
-	if got := stored[1].ProviderContent; got != rendered {
-		t.Fatalf("reloaded provider content = %q, want %q", got, rendered)
+	if stored[1].ProviderContent != "" {
+		t.Fatalf("reloaded transitional provider content = %q, want empty", stored[1].ProviderContent)
 	}
 	after, err := json.Marshal(provider.ModelMessages(stored))
 	if err != nil {
@@ -72,11 +75,14 @@ func TestLoadSessionMigratesLegacyInjectedUserContentWithoutChangingProviderByte
 		t.Fatalf("LoadSession: %v", err)
 	}
 	stored := loaded.Snapshot()
-	if got := stored[1].Content; got != raw {
+	if got := stored[1].Content; got != legacy {
+		t.Fatalf("migrated provider content = %q, want legacy bytes", got)
+	}
+	if got := stored[1].RawContent; got != raw {
 		t.Fatalf("migrated raw content = %q, want %q", got, raw)
 	}
-	if got := stored[1].ProviderContent; got != legacy {
-		t.Fatalf("migrated provider content = %q, want legacy bytes", got)
+	if stored[1].ProviderContent != "" {
+		t.Fatalf("migrated transitional provider content = %q, want empty", stored[1].ProviderContent)
 	}
 	model := provider.ModelMessages(stored)
 	if got := model[1].Content; got != legacy {
@@ -84,6 +90,34 @@ func TestLoadSessionMigratesLegacyInjectedUserContentWithoutChangingProviderByte
 	}
 	if !loaded.normalizedDirty {
 		t.Fatal("legacy migration must schedule a rewrite on the next save")
+	}
+}
+
+func TestLoadSessionMigratesTransitionalProviderContentToLegacySafeShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	const raw = "fix the bug"
+	const rendered = "<reasoning-language>zh</reasoning-language>\n\nfix the bug"
+	s := NewSession("system")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: raw, ProviderContent: rendered})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "done"})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot transitional fixture: %v", err)
+	}
+
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	stored := loaded.Snapshot()
+	if stored[1].Content != rendered || stored[1].RawContent != raw || stored[1].ProviderContent != "" {
+		t.Fatalf("transitional user turn not canonicalized: %+v", stored[1])
+	}
+	model := provider.ModelMessages(stored)
+	if model[1].Content != rendered || model[1].RawContent != "" || model[1].ProviderContent != "" {
+		t.Fatalf("provider model turn not canonical: %+v", model[1])
+	}
+	if !loaded.normalizedDirty {
+		t.Fatal("transitional migration must schedule a rewrite on the next save")
 	}
 }
 

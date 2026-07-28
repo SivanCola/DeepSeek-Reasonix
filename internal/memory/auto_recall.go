@@ -90,10 +90,6 @@ func FindOverrides(all []Memory) []Override {
 		if NormalizeFactScope(string(fact.Scope)) != FactScopeGlobal {
 			continue
 		}
-		factType := NormalizeType(string(fact.Type))
-		if factType == TypeUser || factType == TypeFeedback {
-			continue
-		}
 		for _, key := range recallIdentityKeys(fact) {
 			project, ok := projects[key]
 			if !ok {

@@ -787,11 +787,12 @@ func (c *Coordinator) persistExecutorNoOp(ctx context.Context, input, plan strin
 	}
 	rawInput := RawUserInput(ctx, input)
 	providerContent := c.executor.withTurnPreferences(input)
-	if providerContent == rawInput {
-		providerContent = ""
+	rawContent := ""
+	if providerContent != rawInput {
+		rawContent = rawInput
 	}
 	c.executor.session.Add(provider.Message{
-		Role: provider.RoleUser, Content: rawInput, ProviderContent: providerContent,
+		Role: provider.RoleUser, Content: providerContent, RawContent: rawContent,
 		Images: userImages(ctx), CreatedAt: time.Now().UnixMilli(),
 	})
 	c.executor.session.Add(provider.Message{Role: provider.RoleAssistant, Content: plan})
@@ -809,11 +810,11 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 	// after this error, so the planner session must stay coherent.
 	before := c.plannerSess.Snapshot()
 	rawInput := RawUserInput(ctx, input)
-	providerContent := ""
+	rawContent := ""
 	if input != rawInput {
-		providerContent = input
+		rawContent = rawInput
 	}
-	c.plannerSess.Add(provider.Message{Role: provider.RoleUser, Content: rawInput, ProviderContent: providerContent})
+	c.plannerSess.Add(provider.Message{Role: provider.RoleUser, Content: input, RawContent: rawContent})
 
 	ch, err := c.planner.Stream(ctx, provider.Request{
 		Messages:    provider.ModelMessages(c.plannerSess.Messages),

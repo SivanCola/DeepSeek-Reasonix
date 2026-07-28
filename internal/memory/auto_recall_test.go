@@ -92,13 +92,13 @@ func TestFindOverridesExplainsProjectOverGlobalResolution(t *testing.T) {
 	}
 }
 
-func TestFindOverridesExcludesGlobalGuidanceAlreadyInStablePrefix(t *testing.T) {
+func TestFindOverridesExplainsProjectOverrideOfGlobalGuidance(t *testing.T) {
 	overrides := FindOverrides([]Memory{
 		{ID: "global", Name: "response-style", Scope: FactScopeGlobal, Type: TypeFeedback},
 		{ID: "project", Name: "response-style", Scope: FactScopeProject, Type: TypeProject},
 	})
-	if len(overrides) != 0 {
-		t.Fatalf("stable-prefix guidance reported as recall override: %+v", overrides)
+	if len(overrides) != 1 || overrides[0].Project.ID != "project" || overrides[0].Global.ID != "global" {
+		t.Fatalf("global guidance override = %+v, want project over global", overrides)
 	}
 }
 
