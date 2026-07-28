@@ -884,52 +884,58 @@ the desktop settings page.
 See [Subagent profiles](./SUBAGENT_PROFILES.md) for the complete CLI reference,
 Skill file format, model precedence, safety behavior, and troubleshooting.
 
-`/memory` lists two intentionally different layers:
+Context Engine v2 separates two intentionally different layers:
 
 - **Standing instructions** come from hierarchical `REASONIX.md`, `AGENTS.md`,
-  and `CLAUDE.md` files (including local and user-global variants). They remain
-  in context and are the right place for rules the agent must always follow.
-- **Background memory** is a set of one-fact Markdown files maintained through
-  `remember` and `forget`. Facts may be stale, so the agent retrieves and checks
-  them when relevant rather than treating them as commands. For upgrade
-  compatibility, globally scoped `user` preferences and `feedback` bodies are
-  also captured in the stable session prefix as lower-priority guidance. The
-  current request and instruction files still take precedence.
+  and `CLAUDE.md` files. Put rules here when they must be present on every
+  relevant turn. User-global files load first, then workspace and deeper target
+  directories; within one directory, `.local.md` variants win.
+- **Background memory** stores one durable fact per Markdown file. Each fact has
+  an immutable ID, monotonic revision, timestamps, independent `type`
+  (`user`, `feedback`, `project`, `reference`) and `scope` (`project`,
+  `global`), plus freshness metadata. Facts may be stale, so they never outrank
+  the current request or standing instructions.
 
-Each background fact has an independent `type` (`user`, `feedback`, `project`,
-or `reference`) and `scope` (`project` or `global`). New facts default to
-`project`; `global` must be chosen explicitly. This means, for example, that
-project-specific feedback remains local even though its type is `feedback`.
-Legacy facts without `metadata.scope` remain compatible: Reasonix infers their
-scope from the project or global directory that contains them. Reusing a memory
-name without passing `scope` preserves that inferred scope; only new facts use
-the project default. The compatibility routing metadata also keeps mixed-version
-CLI/Desktop clients from moving a fact into the wrong scope directory.
+Reasonix automatically recalls a small set of relevant facts before each real
+user turn. It searches the raw user message, suppresses generic requests such as
+"continue", prefers project facts over equivalent global fallbacks, down-ranks
+stale facts, and appends at most four facts / 2,400 characters to the user turn.
+This dynamic suffix does not rewrite the cache-stable system prompt or tool
+schemas. Use `/memory recall` to see the selected IDs, scores, reasons,
+freshness, budget, and suppression decision.
 
-During agent turns, the read-only `history` and `memory`
-tools let the model retrieve prior session decisions, compacted-history
-archives, and saved facts on demand. Apart from the stable global preference and
-feedback compatibility snapshot described above, fact bodies stay out of the
-system prompt until retrieved. `/forget <name>` archives a saved fact rather than
-deleting it permanently; the CLI/TUI and desktop memory panel can show those
-archived files for traceability, but they are not searched as active memory.
-Agent-initiated `remember` and `forget` calls always ask for fresh human approval
-and show a compact preview of the saved or archived memory before they run.
-Guardian review cannot answer for the user; non-interactive runs refuse these
-tools instead of auto-approving them.
-The memory index records both dimensions as `[scope/type]`, and the `memory`
-tool can filter by either one. Retrieval keeps the top BM25 result while
-trimming weak common-word matches, and 0-result responses suggest narrower,
-more distinctive follow-up searches.
-The Memory v5 execution compiler has been removed. Earlier releases (up to
-v1.17.x) could compile a user turn into a `<memory-compiler-execution>` contract
-and store local compiler state; current releases never do either, the
-`[agent].memory_compiler` config key is retired (a one-time migration removes it
-from existing configs), and transcripts recorded by those older releases still
-display normally — the original prompt is recovered from the legacy contract
-block for previews and history.
-For implementation details of session memory retrieval, see
-[`SESSION_MEMORY_RETRIEVAL.md`](SESSION_MEMORY_RETRIEVAL.md).
+New, bounded, non-sensitive project/reference facts can be created
+automatically with no setup or approval click. Global facts, user preferences,
+feedback, updates, duplicates, sensitive/oversized content, and every `forget`
+still require explicit confirmation. The storage layer makes the automatic
+grant create-only, so it cannot overwrite a fact that appears concurrently.
+Headless and sub-agent paths fail closed.
+
+`forget` archives rather than permanently deletes. Every update snapshots the
+previous revision; restore and archive recovery always create a higher revision
+instead of overwriting history:
+
+```text
+/memory instructions
+/memory recall
+/memory revisions <id-or-name>
+/memory restore <id-or-name> <revision>
+/memory archived
+/memory recover <archive-path>
+```
+
+The desktop Context Center shows the same provenance, conflicts, revision
+history, recall trace, and recovery actions. Opening its Suggestions tab scans
+recent local user turns automatically; candidates are deduplicated against both
+memory scopes and instruction bodies, but nothing is saved until the user
+accepts it. Remote workspaces never fall back to local desktop memory or
+sessions.
+
+Legacy facts are upgraded in place with deterministic IDs and revision 1;
+missing scope is inferred from the containing directory. Migration is
+idempotent, old clients retain safe routing, and legacy Memory v5 transcripts
+remain readable. For the complete behavior and privacy/cache contract, see
+[`Context Engine v2`](SESSION_MEMORY_RETRIEVAL.md).
 
 ```markdown
 ---
