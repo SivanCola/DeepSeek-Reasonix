@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acceptsRuntimeEventEpoch, initialState, reducer, replayPendingPromptsForActiveTab, runtimeReadyForSubmit } from "../lib/useController";
 import { continueDelivery } from "../lib/deliveryContinue";
+import { activateGoalAndSubmit } from "../lib/goalSubmit";
 import type { WireEvent } from "../lib/types";
 
 let passed = 0;
@@ -21,6 +22,26 @@ function eq(a: unknown, b: unknown, label: string) {
 }
 
 console.log("\nsend failure feedback");
+
+{
+  const calls: string[] = [];
+  await activateGoalAndSubmit({
+    displayText: "List the existing notes",
+    submitText: "/ui-ux-pro-max List the existing notes",
+    structured: {
+      display: "/ui-ux-pro-max List the existing notes",
+      input: "List the existing notes",
+      invocations: [{ name: "ui-ux-pro-max", kind: "skill", offset: 0 }],
+    },
+    applyGoal: async (goal) => {
+      calls.push(`goal:${goal}`);
+    },
+    send: async (display, submit, structured) => {
+      calls.push(`send:${display}:${submit}:${structured?.invocations[0]?.name ?? ""}`);
+    },
+  });
+  eq(calls.join("|"), "goal:List the existing notes|send:List the existing notes:/ui-ux-pro-max List the existing notes:ui-ux-pro-max", "initial Goal activates before structured Skill submission");
+}
 
 eq(runtimeReadyForSubmit({ label: "", ready: false, eventChannel: "", cwd: "", runtime: { phase: "starting", epoch: "e1" } }), false, "starting runtime cannot submit");
 eq(runtimeReadyForSubmit({ label: "", ready: false, eventChannel: "", cwd: "", runtime: { phase: "lease_blocked", epoch: "e1" } }), false, "lease-blocked runtime cannot submit");
@@ -196,9 +217,9 @@ eq(
   "delivery recovery routes through continueDelivery with the backend Goal state",
 );
 eq(
-  /await applyGoal\(trimmed\);[\s\S]{0,120}await commitThenSendRef\.current\(sourceTabId/.test(appSource),
+  appSource.includes("activateGoalAndSubmit({") && appSource.includes("routedStructured"),
   true,
-  "the first Goal turn waits for the controller Goal before submitting",
+  "the first Goal turn uses the executable goal submission contract",
 );
 
 const unsent = reducer(sent, { type: "unsend" });

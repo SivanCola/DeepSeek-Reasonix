@@ -304,6 +304,42 @@ func TestSubmitInvocationDisplayRunsInlineSkillWithoutArguments(t *testing.T) {
 	}
 }
 
+func TestSubmitInvocationDisplayRunsInlineSkillInsideActiveGoal(t *testing.T) {
+	prov := &scriptedTurns{turns: [][]provider.Chunk{
+		textTurn("Notes listed.\n\n[goal:complete]"),
+	}}
+	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+	events := make(chan event.Event, 8)
+	c := New(Options{
+		Runner:   ag,
+		Executor: ag,
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.TurnDone || e.Kind == event.Notice {
+				events <- e
+			}
+		}),
+		Skills: []skill.Skill{{Name: "notes", Body: "INSPECT_NOTES", RunAs: skill.RunInline, Scope: skill.ScopeGlobal}},
+	})
+	defer c.Close()
+	c.SetGoalWithResearchMode("list the existing notes", GoalResearchOff)
+	c.SubmitInvocationDisplay(
+		"list the existing notes",
+		"list the existing notes",
+		[]InvocationRequest{{Name: "notes", Kind: "skill", Offset: 0}},
+	)
+	waitForTurnDone(t, events)
+
+	if prov.call != 1 {
+		t.Fatalf("active Goal structured turns = %d, want 1", prov.call)
+	}
+	input := firstUserMessage(ag.Session().Messages)
+	for _, want := range []string{"<active-goal>\nlist the existing notes", "INSPECT_NOTES", "list the existing notes"} {
+		if !strings.Contains(input, want) {
+			t.Fatalf("active Goal structured input missing %q: %q", want, input)
+		}
+	}
+}
+
 func TestSubmitSlashSubagentUsesPermissionedRunnerInPlanMode(t *testing.T) {
 	sess := agent.NewSession("parent system")
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)

@@ -189,6 +189,7 @@ import { useGlobalShortcut } from "./lib/keyboardShortcuts";
 import { topicShortcutIndexFromEvent, useTopicShortcuts, type TopicShortcutEntry } from "./lib/topicShortcuts";
 import { composerDraftKeyForTab } from "./lib/composerDraftKey";
 import { continueDelivery } from "./lib/deliveryContinue";
+import { activateGoalAndSubmit } from "./lib/goalSubmit";
 import logoWordmark from "./assets/logo-wordmark.svg";
 
 function noticePreviewMockEnabled(): boolean {
@@ -2089,8 +2090,14 @@ export default function App() {
       }
       if (collaborationMode === "goal" && !goal.trim()) {
         if (!controllerReady) return;
-        await applyGoal(trimmed);
-        await commitThenSendRef.current(sourceTabId, trimmed, `/goal ${submitText.trim()}`);
+        await activateGoalAndSubmit({
+          displayText: trimmed,
+          submitText,
+          structured,
+          applyGoal,
+          send: (display, routedSubmit, routedStructured) =>
+            commitThenSendRef.current(sourceTabId, display, routedSubmit, routedStructured),
+        });
         return;
       }
       const theme = /^\/theme(?:\s+(\S+))?$/.exec(trimmed);

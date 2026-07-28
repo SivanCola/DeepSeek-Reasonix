@@ -339,6 +339,64 @@ console.log("\ncomposer goal toggle");
   const dom = installDom();
   mockApp({
     Commands: async () => [
+      { name: "ui-ux-pro-max", description: "Review the interface", kind: "skill" },
+    ],
+    ListDirForTab: async () => [],
+    SearchFileRefsForTab: async () => [],
+  });
+  const { root, calls, rerender } = await renderComposer({ collaborationMode: "goal", goal: "" });
+  await replaceComposerDraft(rerender, 4199, "/ui-ux-pro-max");
+  await waitFor("skill menu for the initial goal", () => Boolean(document.querySelector(".slashmenu")));
+  let textarea = document.querySelector("textarea") as HTMLTextAreaElement | null;
+  if (!textarea) throw new Error("composer textarea did not render for the initial goal skill");
+  await act(async () => {
+    textarea.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await flushTimers();
+  });
+
+  let sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
+  if (!sendButton) throw new Error("composer send button did not render for the initial goal skill");
+  await act(async () => {
+    sendButton.click();
+    await flushTimers();
+  });
+  eq(calls.send.length, 0, "a skill alone cannot become the initial goal");
+  ok(document.body.textContent?.includes("Enter a goal") === true, "a skill-only initial goal asks for task text");
+
+  await replaceComposerDraft(rerender, 4200, "List the existing notes");
+  sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
+  if (!sendButton) throw new Error("composer send button disappeared after entering the goal");
+  await act(async () => {
+    sendButton.click();
+    await flushTimers();
+  });
+  eq(calls.send[0], "List the existing notes", "the initial goal keeps its visible task text");
+  eq(calls.submit[0], "/ui-ux-pro-max List the existing notes", "the initial goal preserves the selected skill");
+  eq(calls.structured[0]?.input, "List the existing notes", "the initial goal sends structured skill input");
+  eq(calls.structured[0]?.invocations[0]?.name, "ui-ux-pro-max", "the initial goal submits the selected skill entity");
+
+  await replaceComposerDraft(rerender, 4201, "/ui-ux-pro-max List the notes again");
+  sendButton = document.querySelector(".composer__btn--send") as HTMLButtonElement | null;
+  if (!sendButton) throw new Error("composer send button did not render for a pasted skill invocation");
+  await act(async () => {
+    sendButton.click();
+    await flushTimers();
+  });
+  eq(calls.send[1], "List the notes again", "a pasted skill invocation keeps its task as the visible goal");
+  eq(calls.submit[1], "/ui-ux-pro-max List the notes again", "a pasted skill invocation keeps its slash display");
+  eq(calls.structured[1]?.input, "List the notes again", "a pasted skill invocation uses structured input");
+  eq(calls.structured[1]?.invocations[0]?.name, "ui-ux-pro-max", "a pasted skill invocation resolves the selected command");
+
+  await act(async () => {
+    root.unmount();
+  });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  mockApp({
+    Commands: async () => [
       { name: "writing-plans", description: "Write a plan", kind: "skill" },
       { name: "review", description: "Review the result", kind: "skill" },
     ],

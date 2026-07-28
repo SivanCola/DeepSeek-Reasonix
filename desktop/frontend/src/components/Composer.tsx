@@ -15,6 +15,7 @@ import {
   invocationRequests,
   replaceInvocationTextRange,
   serializeInvocationSubmit,
+  typedStructuredInvocationDraft,
   trimInvocationDraft,
   type ComposerInvocation,
   type StructuredInvocationSubmit,
@@ -1898,7 +1899,11 @@ export function Composer({
     const submitTabId = tabId;
     if (draftIsSubmitting(submitDraftKey)) return;
     const currentText = textRef.current;
-    const trimmedDraft = trimInvocationDraft(currentText, invocationsRef.current);
+    const rawDraft = trimInvocationDraft(currentText, invocationsRef.current);
+    const typedGoalDraft = goalModeOn && !activeGoal && rawDraft.invocations.length === 0
+      ? typedStructuredInvocationDraft(rawDraft.text, commands)
+      : null;
+    const trimmedDraft = typedGoalDraft ?? rawDraft;
     const trimmedText = trimmedDraft.text;
     if (draftHasPendingPaste(submitDraftKey)) return;
     if (!imageInputEnabled && hasImageAttachments(attachmentsRef.current)) {
@@ -1908,11 +1913,10 @@ export function Composer({
     const currentWorkspaceRefs = workspaceRefsRef.current;
     const inlineInvocationCount = trimmedDraft.invocations.filter((invocation) => invocation.command.kind === "skill").length;
     const subagentInvocationCount = trimmedDraft.invocations.filter((invocation) => invocation.command.kind === "subagent").length;
-    if (goalModeOn && !activeGoal && trimmedDraft.invocations.length > 0) {
-      // The first goal-mode message becomes the goal itself (App wraps it in
-      // /goal ...), which would swallow entity invocations as goal prose and
-      // never run them. Ask for a plain-text goal first.
-      setComposerPrompt(t("composer.goalEntityBlocked"));
+    if (goalModeOn && !activeGoal && !trimmedText) {
+      // Goal setup still needs an explicit task. Structured invocations are
+      // allowed alongside that task and App submits them after activating it.
+      setComposerPrompt(t("composer.goalInputRequired"));
       requestAnimationFrame(focusComposerInput);
       return;
     }
