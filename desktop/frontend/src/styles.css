@@ -33346,6 +33346,90 @@ body > .mermaid-diagram--fullscreen {
   background: transparent !important;
 }
 
+/*
+  WebView2 can retain stale raster pixels when children are removed from a
+  transparent scrolling layer (#6359, #7011). Keep the transcript itself
+  opaque on Windows in every layout. Canvas is the guaranteed opaque fallback;
+  theme colors are composited above it so alpha-bearing custom tokens remain
+  supported without making the compositor backing transparent.
+*/
+:root[data-platform="windows"] .app .transcript {
+  background-color: Canvas !important;
+  background-image:
+    linear-gradient(var(--chat-bg, var(--bg)), var(--chat-bg, var(--bg))),
+    linear-gradient(var(--bg), var(--bg)) !important;
+  background-repeat: no-repeat !important;
+  background-size: 100% 100% !important;
+}
+
+/*
+  Background packs normally show a fixed image through translucent panes.
+  On Windows, reproduce that stack on the transcript's own backing instead of
+  making the WebView2 scroll layer transparent.
+*/
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"] .app:not(.app--creation) .transcript {
+  --windows-transcript-scene-image: var(--theme-bg-home-image, var(--theme-bg-image, none));
+  --windows-transcript-scene-focus-x: var(--theme-bg-home-focus-x, var(--theme-bg-focus-x, 50%));
+  --windows-transcript-scene-focus-y: var(--theme-bg-home-focus-y, var(--theme-bg-focus-y, 50%));
+  --windows-transcript-image-opacity: var(--theme-bg-home-opacity, 1);
+  --windows-transcript-pane-alpha: var(--theme-pane-alpha, 0.72);
+  --windows-transcript-scene-overlay: linear-gradient(transparent, transparent);
+  background-color: Canvas !important;
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--chat-bg, var(--bg)) calc(var(--windows-transcript-pane-alpha) * 100%), transparent),
+      color-mix(in srgb, var(--chat-bg, var(--bg)) calc(var(--windows-transcript-pane-alpha) * 100%), transparent)
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--bg) calc(100% - (var(--windows-transcript-image-opacity) * 100%)), transparent),
+      color-mix(in srgb, var(--bg) calc(100% - (var(--windows-transcript-image-opacity) * 100%)), transparent)
+    ),
+    var(--windows-transcript-scene-overlay),
+    var(--windows-transcript-scene-image),
+    linear-gradient(var(--bg), var(--bg)) !important;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat !important;
+  background-position:
+    center,
+    center,
+    center,
+    var(--windows-transcript-scene-focus-x) var(--windows-transcript-scene-focus-y),
+    center !important;
+  background-size: 100% 100%, 100% 100%, 100% 100%, cover, 100% 100% !important;
+  background-attachment: local, local, fixed, fixed, local !important;
+}
+
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"] .app:not(.app--creation) .transcript {
+  --windows-transcript-scene-image: var(--theme-bg-task-image, var(--theme-bg-home-image, var(--theme-bg-image, none)));
+  --windows-transcript-scene-focus-x: var(--theme-bg-task-focus-x, var(--theme-bg-focus-x, 50%));
+  --windows-transcript-scene-focus-y: var(--theme-bg-task-focus-y, var(--theme-bg-focus-y, 50%));
+  --windows-transcript-image-opacity: var(--theme-bg-task-opacity, 0.28);
+  --windows-transcript-pane-alpha: var(--theme-pane-task-alpha, 0.80);
+  --windows-transcript-scene-overlay: radial-gradient(
+    ellipse 70% 70% at 50% 45%,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-task-overlay, var(--theme-bg-overlay, 0.62)) * 70%), transparent) 0%,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-task-overlay, var(--theme-bg-overlay, 0.62)) * 40%), transparent) 55%,
+    transparent 100%
+  );
+}
+
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"][data-theme-safe-area="left"] .app:not(.app--creation) .transcript {
+  --windows-transcript-scene-overlay: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-task-overlay, var(--theme-bg-overlay, 0.62)) * 100%), transparent) 0%,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-task-overlay, var(--theme-bg-overlay, 0.62)) * 55%), transparent) 42%,
+    transparent 78%
+  );
+}
+
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"][data-theme-safe-area="right"] .app:not(.app--creation) .transcript {
+  --windows-transcript-scene-overlay: linear-gradient(
+    270deg,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-task-overlay, var(--theme-bg-overlay, 0.62)) * 100%), transparent) 0%,
+    color-mix(in srgb, var(--bg) calc(var(--theme-bg-task-overlay, var(--theme-bg-overlay, 0.62)) * 55%), transparent) 42%,
+    transparent 78%
+  );
+}
+
 /* Density recipe consumers — pack overlay sets --theme-density-* / --theme-row-h */
 :root {
   --theme-density-pad: 10px;
