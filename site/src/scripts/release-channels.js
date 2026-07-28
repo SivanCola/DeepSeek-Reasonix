@@ -1,6 +1,17 @@
 const STABLE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const PREVIEW_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.(0|[1-9]\d*)$/;
 
+// Keep in lockstep with workers/crash-report CLI asset gate.
+export const CLI_RELEASE_ASSETS = [
+  "reasonix-darwin-amd64.tar.gz",
+  "reasonix-darwin-arm64.tar.gz",
+  "reasonix-linux-amd64.tar.gz",
+  "reasonix-linux-arm64.tar.gz",
+  "reasonix-windows-amd64.zip",
+  "reasonix-windows-arm64.zip",
+  "SHA256SUMS",
+];
+
 export const publicReleaseChannels = new Set(["stable", "preview"]);
 
 export function normalizePublicReleaseChannel(value) {
@@ -28,22 +39,6 @@ function compareOrder(left, right) {
   return 0;
 }
 
-export function selectCLIRelease(releases, requestedChannel) {
-  const channel = normalizePublicReleaseChannel(requestedChannel);
-  let selected = null;
-  let selectedTag = null;
-  for (const release of Array.isArray(releases) ? releases : []) {
-    const parsed = parsePublicTag(release?.tag_name);
-    if (!parsed || parsed.channel !== channel) continue;
-    if (Boolean(release?.prerelease) !== (channel === "preview")) continue;
-    if (!selectedTag || compareOrder(parsed.order, selectedTag.order) > 0) {
-      selected = release;
-      selectedTag = parsed;
-    }
-  }
-  return selected;
-}
-
 function safeHTTPSURL(value) {
   try {
     const url = new URL(String(value || ""));
@@ -53,26 +48,39 @@ function safeHTTPSURL(value) {
   }
 }
 
-function releaseAssetMap(release, tag) {
-  const assets = {};
+// Returns the 7 required CLI asset URLs, or null when any required asset is
+// missing. Never synthesizes download URLs — incomplete releases must be
+// rejected so the site never advertises 404 links.
+export function releaseAssetMap(release) {
+  const found = {};
   for (const asset of Array.isArray(release?.assets) ? release.assets : []) {
     const name = String(asset?.name || "");
     const url = safeHTTPSURL(asset?.browser_download_url);
-    if (name && url) assets[name] = url.href;
+    if (name && url) found[name] = url.href;
   }
-  const base = `https://github.com/esengine/DeepSeek-Reasonix/releases/download/${tag}/`;
-  for (const name of [
-    "reasonix-darwin-amd64.tar.gz",
-    "reasonix-darwin-arm64.tar.gz",
-    "reasonix-linux-amd64.tar.gz",
-    "reasonix-linux-arm64.tar.gz",
-    "reasonix-windows-amd64.zip",
-    "reasonix-windows-arm64.zip",
-    "SHA256SUMS",
-  ]) {
-    if (!assets[name]) assets[name] = base + name;
+  const assets = {};
+  for (const name of CLI_RELEASE_ASSETS) {
+    if (!found[name]) return null;
+    assets[name] = found[name];
   }
   return assets;
+}
+
+export function selectCLIRelease(releases, requestedChannel) {
+  const channel = normalizePublicReleaseChannel(requestedChannel);
+  let selected = null;
+  let selectedTag = null;
+  for (const release of Array.isArray(releases) ? releases : []) {
+    const parsed = parsePublicTag(release?.tag_name);
+    if (!parsed || parsed.channel !== channel) continue;
+    if (Boolean(release?.prerelease) !== (channel === "preview")) continue;
+    if (!releaseAssetMap(release)) continue;
+    if (!selectedTag || compareOrder(parsed.order, selectedTag.order) > 0) {
+      selected = release;
+      selectedTag = parsed;
+    }
+  }
+  return selected;
 }
 
 export function cliReleaseModel(releases, requestedChannel) {
@@ -81,11 +89,13 @@ export function cliReleaseModel(releases, requestedChannel) {
   if (!release) return null;
   const parsed = parsePublicTag(release.tag_name);
   if (!parsed) return null;
+  const assets = releaseAssetMap(release);
+  if (!assets) return null;
   return {
     channel,
     version: parsed.tag,
     displayVersion: parsed.tag.slice(1),
-    assets: releaseAssetMap(release, parsed.tag),
+    assets,
     releaseURL: String(release.html_url || `https://github.com/esengine/DeepSeek-Reasonix/releases/tag/${parsed.tag}`),
   };
 }

@@ -215,7 +215,10 @@ import { initTheme } from "./theme.js";
     if (nextURL) window.history.replaceState(null, "", nextURL);
   };
 
-  const updateStableVersion = (model) => {
+  // npm / Homebrew / generic product chips track the CLI stable line only.
+  // Desktop and CLI download panes render their own versions via
+  // [data-release-version="<surface>"]; never let Desktop and CLI race on .rxv.
+  const updateCLIPackageVersion = (model) => {
     if (!model) return;
     document.querySelectorAll(".rxv").forEach((element) => { element.textContent = model.displayVersion; });
     document.querySelectorAll("a.rxnotes").forEach((link) => {
@@ -228,9 +231,8 @@ import { initTheme } from "./theme.js";
     if (surface === "desktop") {
       return "https://github.com/esengine/DeepSeek-Reasonix/releases/latest/download/" + asset;
     }
-    if (channel === "stable") {
-      return "https://github.com/esengine/DeepSeek-Reasonix/releases/latest/download/" + asset;
-    }
+    // CLI releases set make_latest:false; GitHub "latest" is Desktop stable.
+    // Never construct CLI asset URLs against /releases/latest.
     return releasesPage;
   };
 
@@ -301,7 +303,6 @@ import { initTheme } from "./theme.js";
         const model = desktopReleaseModel(manifest, channel);
         if (!model) return;
         releaseModels.desktop[channel] = model;
-        if (channel === "stable") updateStableVersion(model);
         if (selectedChannels.desktop === channel) renderReleaseSurface("desktop");
       })
       .catch(() => {});
@@ -322,7 +323,7 @@ import { initTheme } from "./theme.js";
         const model = cliReleaseModel(releases, channel);
         if (!model) return;
         releaseModels.cli[channel] = model;
-        if (channel === "stable") updateStableVersion(model);
+        if (channel === "stable") updateCLIPackageVersion(model);
         if (selectedChannels.cli === channel) renderReleaseSurface("cli");
       })
       .catch(() => {});
