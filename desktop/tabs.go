@@ -3013,6 +3013,11 @@ func (a *App) CloseTab(tabID string) error {
 		slog.Warn("desktop: session metadata before closing tab failed", "tab", tabID, "err", err)
 		return fmt.Errorf("save current session metadata before closing tab: %w", err)
 	}
+	// A terminal belongs to the visible chat tab, even when another tab points
+	// at the same project. Reap its PTY before removing the tab binding.
+	if a.terminals != nil {
+		a.terminals.closeForTab(tabID)
+	}
 
 	a.mu.Lock()
 	if current := a.tabs[tabID]; current != tab {

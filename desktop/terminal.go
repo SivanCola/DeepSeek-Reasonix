@@ -28,6 +28,7 @@ const (
 	defaultTerminalRows      = 24
 	maxTerminalColumns       = 1000
 	maxTerminalRows          = 500
+	maxTerminalSnapshotBytes = 128 * 1024
 )
 
 var (
@@ -94,9 +95,11 @@ type terminalProcess interface {
 
 type terminalSession struct {
 	view         TerminalSessionView
+	tabID        string
 	workspaceKey string
 	process      terminalProcess
 	done         chan struct{}
+	output       []byte
 }
 
 type terminalManager struct {
@@ -151,6 +154,20 @@ func (a *App) TerminalWorkspaceForTab(tabID string) (TerminalWorkspaceView, erro
 	return view, nil
 }
 
+// TerminalOutputForTab returns a bounded snapshot of the selected session's
+// output. It is an explicit user action for adding terminal context to chat;
+// terminal output is never injected into provider prompts automatically.
+func (a *App) TerminalOutputForTab(tabID, sessionID string) (string, error) {
+	target, err := a.terminalTargetForTab(tabID, false)
+	if err != nil {
+		return "", err
+	}
+	if a.terminals == nil {
+		return "", errTerminalManagerOff
+	}
+	return a.terminals.snapshot(target.workspaceKey, sessionID), nil
+}
+
 // CreateTerminalForTab starts an interactive shell at a workspace-relative
 // file or directory. Files resolve to their parent directory after an os.Stat;
 // symlinked directories are checked against the canonical workspace root.
@@ -177,7 +194,7 @@ func (a *App) CreateTerminalForTab(tabID, rel, shellID string) (TerminalSessionV
 	if a.terminals == nil {
 		return TerminalSessionView{}, errTerminalManagerOff
 	}
-	return a.terminals.create(target.workspaceKey, dir, command)
+	return a.terminals.create(target.tabID, target.workspaceKey, dir, command)
 }
 
 func (a *App) WriteTerminalForTab(tabID, sessionID, data string) error {
@@ -258,7 +275,12 @@ func (a *App) terminalTargetForTab(tabID string, requireWritable bool) (terminal
 	if err != nil {
 		return terminalTarget{}, fmt.Errorf("resolve terminal workspace: %w", err)
 	}
-	return terminalTarget{tabID: tabID, workspaceRoot: base, workspaceKey: filepath.Clean(base), readOnly: readOnly}, nil
+	return terminalTarget{
+		tabID:         tabID,
+		workspaceRoot: base,
+		workspaceKey:  tabID + "\x00" + filepath.Clean(base),
+		readOnly:      readOnly,
+	}, nil
 }
 
 func (a *App) revalidateTerminalTarget(target terminalTarget, requireWritable bool) error {
@@ -282,7 +304,7 @@ func (a *App) revalidateTerminalTarget(target terminalTarget, requireWritable bo
 		return err
 	}
 	base, err = canonicalDirectory(base)
-	if err != nil || filepath.Clean(base) != target.workspaceKey {
+	if err != nil || filepath.Clean(base) != target.workspaceRoot {
 		return errTerminalStaleTab
 	}
 	return nil
@@ -468,7 +490,7 @@ func commandForShellPath(path, label string) terminalCommand {
 	return terminalCommand{path: path, args: args, label: label}
 }
 
-func (m *terminalManager) create(workspaceKey, dir string, command terminalCommand) (TerminalSessionView, error) {
+func (m *terminalManager) create(tabID, workspaceKey, dir string, command terminalCommand) (TerminalSessionView, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -517,6 +539,7 @@ func (m *terminalManager) create(workspaceKey, dir string, command terminalComma
 			CreatedAt: time.Now().UnixMilli(),
 			Running:   true,
 		},
+		tabID:        tabID,
 		workspaceKey: workspaceKey,
 		process:      proc,
 		done:         make(chan struct{}),
@@ -536,6 +559,30 @@ func (m *terminalManager) create(workspaceKey, dir string, command terminalComma
 	go m.readLoop(session)
 	go m.waitLoop(session)
 	return view, nil
+}
+
+func (m *terminalManager) snapshot(workspaceKey, sessionID string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session := m.sessions[strings.TrimSpace(sessionID)]
+	if session == nil || session.workspaceKey != workspaceKey {
+		return ""
+	}
+	return string(session.output)
+}
+
+func appendTerminalSnapshot(current, data []byte) []byte {
+	if len(data) >= maxTerminalSnapshotBytes {
+		return append([]byte(nil), data[len(data)-maxTerminalSnapshotBytes:]...)
+	}
+	if over := len(current) + len(data) - maxTerminalSnapshotBytes; over > 0 {
+		if over >= len(current) {
+			current = current[:0]
+		} else {
+			current = append([]byte(nil), current[over:]...)
+		}
+	}
+	return append(current, data...)
 }
 
 func (m *terminalManager) list(workspaceKey string) []TerminalSessionView {
@@ -636,6 +683,38 @@ func (m *terminalManager) closeTerminal(workspaceKey, sessionID string) error {
 	return nil
 }
 
+func (m *terminalManager) closeForTab(tabID string) {
+	if m == nil {
+		return
+	}
+	tabID = strings.TrimSpace(tabID)
+	if tabID == "" {
+		return
+	}
+	m.mu.Lock()
+	sessions := make([]*terminalSession, 0)
+	for _, session := range m.sessions {
+		if session.tabID != tabID {
+			continue
+		}
+		m.removeSessionLocked(session)
+		sessions = append(sessions, session)
+	}
+	m.mu.Unlock()
+	for _, session := range sessions {
+		_ = session.process.Close()
+	}
+	deadline := time.NewTimer(terminalCloseWait)
+	defer deadline.Stop()
+	for _, session := range sessions {
+		select {
+		case <-session.done:
+		case <-deadline.C:
+			return
+		}
+	}
+}
+
 func (m *terminalManager) removeSessionLocked(session *terminalSession) {
 	delete(m.sessions, session.view.ID)
 	ids := m.byWorkspace[session.workspaceKey]
@@ -685,6 +764,11 @@ func (m *terminalManager) readLoop(session *terminalSession) {
 	for {
 		n, err := session.process.Read(buf)
 		if n > 0 {
+			m.mu.Lock()
+			if current := m.sessions[session.view.ID]; current == session {
+				session.output = appendTerminalSnapshot(session.output, buf[:n])
+			}
+			m.mu.Unlock()
 			m.emitOutput(session.view.ID, buf[:n])
 		}
 		if err != nil {

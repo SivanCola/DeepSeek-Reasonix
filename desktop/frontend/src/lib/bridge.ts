@@ -458,6 +458,7 @@ export interface AppBindings {
   ReorderTabs(tabIDs: string[]): Promise<void>;
   CloseTab(tabID: string): Promise<void>;
   TerminalWorkspaceForTab(tabID: string): Promise<TerminalWorkspaceView>;
+  TerminalOutputForTab(tabID: string, sessionID: string): Promise<string>;
   CreateTerminalForTab(tabID: string, relativePath: string, shellID: string): Promise<TerminalSessionView>;
   WriteTerminalForTab(tabID: string, sessionID: string, data: string): Promise<void>;
   ResizeTerminalForTab(tabID: string, sessionID: string, cols: number, rows: number): Promise<void>;
@@ -2089,6 +2090,8 @@ function makeMockApp(): AppBindings {
   const mockModelLabel = (ref: string): string => mockModelCatalog.find((model) => model.ref === mockModelRef(ref))?.model ?? ref.split("/").pop() ?? ref;
   const mockTabModelRef = (tab?: TabMeta): string => mockModelRef(tab?.label ?? "");
   let mockTerminalSessions: TerminalSessionView[] = [];
+  const mockTerminalOutput = new Map<string, string>();
+  const mockTerminalTabIDs = new Map<string, string>();
   const mockTerminalBytes = (text: string): string => {
     if (typeof btoa === "function") return btoa(unescape(encodeURIComponent(text)));
     return "";
@@ -4479,6 +4482,14 @@ function makeMockApp(): AppBindings {
     },
     async CloseTab(_tabID: string) {
       if (mockTabs.length <= 1) return;
+      const terminalIDs = mockTerminalSessions
+        .filter((session) => mockTerminalTabIDs.get(session.id) === _tabID)
+        .map((session) => session.id);
+      mockTerminalSessions = mockTerminalSessions.filter((session) => !terminalIDs.includes(session.id));
+      terminalIDs.forEach((id) => {
+        mockTerminalOutput.delete(id);
+        mockTerminalTabIDs.delete(id);
+      });
       const wasActive = mockTabs.some((tab) => tab.id === _tabID && tab.active);
       mockTabs = mockTabs.filter((tab) => tab.id !== _tabID);
       if (wasActive && mockTabs.length > 0 && !mockTabs.some((tab) => tab.active)) {
@@ -4487,7 +4498,7 @@ function makeMockApp(): AppBindings {
     },
     async TerminalWorkspaceForTab(tabID: string) {
       const tab = mockTabs.find((candidate) => candidate.id === tabID) ?? mockTabs.find((candidate) => candidate.active);
-      const sessions = tab ? mockTerminalSessions.filter((session) => session.cwd.startsWith(tab.cwd || "")) : [];
+      const sessions = tab ? mockTerminalSessions.filter((session) => mockTerminalTabIDs.get(session.id) === tab.id) : [];
       return {
         available: true,
         readOnly: Boolean(tab?.readOnly),
@@ -4498,6 +4509,10 @@ function makeMockApp(): AppBindings {
           { id: "zsh", label: "zsh" },
         ],
       };
+    },
+    async TerminalOutputForTab(tabID: string, sessionID: string) {
+      if (mockTerminalTabIDs.get(sessionID) !== tabID) return "";
+      return mockTerminalOutput.get(sessionID) ?? "";
     },
     async CreateTerminalForTab(tabID: string, relativePath: string, shellID: string) {
       const tab = mockTabs.find((candidate) => candidate.id === tabID) ?? mockTabs.find((candidate) => candidate.active);
@@ -4512,17 +4527,22 @@ function makeMockApp(): AppBindings {
         running: true,
       };
       mockTerminalSessions = [...mockTerminalSessions, session];
+      mockTerminalOutput.set(id, "Reasonix terminal ready\r\n");
+      mockTerminalTabIDs.set(id, tabID);
       window.setTimeout(() => __emitMockTerminalOutput({ id, data: mockTerminalBytes("Reasonix terminal ready\r\n") }), 0);
       return { ...session };
     },
     async WriteTerminalForTab(_tabID: string, sessionID: string, data: string) {
       const session = mockTerminalSessions.find((candidate) => candidate.id === sessionID);
       if (!session?.running) throw new Error("terminal session has exited");
+      mockTerminalOutput.set(sessionID, `${mockTerminalOutput.get(sessionID) ?? ""}${data}`);
       window.setTimeout(() => __emitMockTerminalOutput({ id: sessionID, data: mockTerminalBytes(data) }), 0);
     },
     async ResizeTerminalForTab() {},
     async CloseTerminalForTab(_tabID: string, sessionID: string) {
       mockTerminalSessions = mockTerminalSessions.filter((session) => session.id !== sessionID);
+      mockTerminalOutput.delete(sessionID);
+      mockTerminalTabIDs.delete(sessionID);
       __emitMockTerminalExit({ id: sessionID, exitCode: 0 });
     },
     async RenameTerminalForTab(_tabID: string, sessionID: string, title: string) {

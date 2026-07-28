@@ -14,6 +14,7 @@ let passed = 0;
 let failed = 0;
 const testDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(testDir, "../App.tsx"), "utf8");
+const stylesSource = readFileSync(resolve(testDir, "../styles.css"), "utf8");
 
 function eq(a: unknown, b: unknown, label: string) {
   if (a === b) {
@@ -155,6 +156,21 @@ eq(
   /setWorkspacePanelOpen\(true\);[\s\S]*?saveWorkspacePanelOpen\(true\);/.test(appSource),
   true,
   "opening the dock persists the expanded preference for the next launch",
+);
+eq(
+  /rightDockMode === "terminal"[\s\S]*?workspacePanelRenderWidth >= rightDockMinRenderWidth/.test(appSource),
+  true,
+  "terminal remains renderable when a narrow viewport cannot fit the side dock",
+);
+eq(
+  /const addTerminalOutputToComposer = useCallback\(async \(sessionId: string\) => \{[\s\S]*?app\.TerminalOutputForTab\(activeTabId, sessionId\)[\s\S]*?addWorkspaceTextToComposer\(/.test(appSource),
+  true,
+  "terminal output reaches chat only through the explicit add-output action",
+);
+eq(
+  /@media \(max-width: 820px\) \{[\s\S]*?\.layout--terminal-open \.workbench-dock[\s\S]*?display: flex !important/.test(stylesSource),
+  true,
+  "terminal drawer stays visible on narrow viewports",
 );
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);

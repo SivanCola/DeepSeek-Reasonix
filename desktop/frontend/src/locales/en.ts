@@ -248,6 +248,8 @@ export const en = {
   "terminal.loading": "Loading terminal…",
   "terminal.empty": "Start a shell in this workspace.",
   "terminal.readOnly": "This channel is read-only.",
+  "terminal.addOutput": "Add terminal output to chat",
+  "terminal.noOutput": "This terminal has no output yet.",
 
   // mcp & skills drawer
   "caps.title": "MCP & Skills",

@@ -1526,8 +1526,14 @@ export default function App() {
 
   const storedWorkspacePanelRenderWidth = workspacePanelMaximized ? preferredWorkspacePanelWidth : resolvedWorkspacePanelWidth;
   const workspacePanelRenderWidth = liveWorkspacePanelRenderWidth ?? storedWorkspacePanelRenderWidth;
+  // The terminal is a bottom drawer, so it must remain available even when a
+  // narrow window cannot satisfy the right-side workspace panel's width.
   const workspacePanelRenderable =
-    workspacePanelOpen && (workspacePanelMaximized || workspacePanelRenderWidth >= rightDockMinRenderWidth);
+    workspacePanelOpen && (
+      workspacePanelMaximized ||
+      rightDockMode === "terminal" ||
+      workspacePanelRenderWidth >= rightDockMinRenderWidth
+    );
   const workspacePanelGridOpen = workspacePanelRenderable && !workspacePanelMaximized;
   const resolveLiveWorkspacePanelRenderWidth = useCallback(
     (preferredWidth: number, nextSidebarWidth = sidebarWidth) =>
@@ -2796,6 +2802,21 @@ export default function App() {
     }
   }, [activeTabId, state.approval, workspaceInsertTarget]);
 
+  const addTerminalOutputToComposer = useCallback(async (sessionId: string) => {
+    if (!activeTabId) return;
+    try {
+      const output = await app.TerminalOutputForTab(activeTabId, sessionId);
+      if (!output.trim()) {
+        showToast(t("terminal.noOutput"), "info");
+        return;
+      }
+      const clipped = output.length > 120_000 ? output.slice(-120_000) : output;
+      addWorkspaceTextToComposer(`\`\`\`console\n${clipped.replace(/\u0000/g, "")}\n\`\`\``);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), "error");
+    }
+  }, [activeTabId, addWorkspaceTextToComposer, showToast, t]);
+
   const addSelectedTextToComposer = useCallback((text: string) => {
     const selected = text.trim();
     if (!activeTabId || !selected) return;
@@ -3724,6 +3745,7 @@ export default function App() {
           sidebarCollapsed ? "layout--sidebar-collapsed" : "",
           sidebarResizing ? "layout--resizing layout--sidebar-resizing" : "",
           workspacePanelGridOpen ? "layout--workspace-open" : "",
+          workspacePanelGridOpen && rightDockMode === "terminal" ? "layout--terminal-open" : "",
           workspacePanelOpen && workspacePanelMaximized ? "layout--workspace-maximized" : "",
           workspacePanelResizing ? "layout--resizing layout--workspace-resizing" : "",
         ]
@@ -4568,7 +4590,12 @@ export default function App() {
                   <RemotePanel onClose={() => setWorkspacePanel(false)} />
                 </Suspense>
               ) : rightDockMode === "terminal" ? (
-                <TerminalPanel tabId={activeTabId ?? ""} cwd={state.meta?.cwd} onClose={() => setWorkspacePanel(false)} />
+                <TerminalPanel
+                  tabId={activeTabId ?? ""}
+                  cwd={state.meta?.cwd}
+                  onClose={() => setWorkspacePanel(false)}
+                  onAddOutput={(sessionId) => void addTerminalOutputToComposer(sessionId)}
+                />
               ) : rightDockMode === "context" && desktopLayoutStyle !== "creation" ? (
                 <ContextPanel
                   tabId={activeTabId}

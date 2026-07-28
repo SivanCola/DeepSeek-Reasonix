@@ -128,6 +128,31 @@ func TestTerminalTargetRejectsStaleAndReadOnlyTabs(t *testing.T) {
 	}
 }
 
+func TestTerminalTargetScopesSessionsToTheChatTab(t *testing.T) {
+	app := NewApp()
+	root := t.TempDir()
+	app.tabs["one"] = &WorkspaceTab{ID: "one", Scope: "project", WorkspaceRoot: root}
+	app.tabs["two"] = &WorkspaceTab{ID: "two", Scope: "project", WorkspaceRoot: root}
+	app.tabOrder = []string{"one", "two"}
+	app.activeTabID = "one"
+
+	first, err := app.terminalTargetForTab("one", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.activeTabID = "two"
+	second, err := app.terminalTargetForTab("two", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.workspaceRoot != second.workspaceRoot {
+		t.Fatalf("same project root changed: %q != %q", first.workspaceRoot, second.workspaceRoot)
+	}
+	if first.workspaceKey == second.workspaceKey {
+		t.Fatalf("terminal scope key shared across chat tabs: %q", first.workspaceKey)
+	}
+}
+
 func TestEmptyTerminalWorkspaceViewSerializesArrays(t *testing.T) {
 	view := emptyTerminalWorkspaceView()
 	raw, err := json.Marshal(view)
@@ -209,7 +234,7 @@ func TestTerminalManagerCountsConcurrentStartsTowardLimit(t *testing.T) {
 	results := make(chan result, maxTerminalsPerWorkspace+1)
 	for i := 0; i < maxTerminalsPerWorkspace+1; i++ {
 		go func() {
-			_, err := manager.create("workspace", ".", terminalCommand{path: "shell", label: "shell"})
+			_, err := manager.create("tab", "workspace", ".", terminalCommand{path: "shell", label: "shell"})
 			results <- result{err: err}
 		}()
 	}
@@ -245,7 +270,7 @@ func TestTerminalManagerCloseAndNaturalExit(t *testing.T) {
 		manager := newTerminalManager(nil)
 		proc := newFakeTerminalProcess()
 		manager.start = func(terminalStartSpec) (terminalProcess, error) { return proc, nil }
-		view, err := manager.create("workspace", ".", terminalCommand{path: "shell", label: "shell"})
+		view, err := manager.create("tab", "workspace", ".", terminalCommand{path: "shell", label: "shell"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -266,7 +291,7 @@ func TestTerminalManagerCloseAndNaturalExit(t *testing.T) {
 		manager := newTerminalManager(nil)
 		proc := newFakeTerminalProcess()
 		manager.start = func(terminalStartSpec) (terminalProcess, error) { return proc, nil }
-		view, err := manager.create("workspace", ".", terminalCommand{path: "shell", label: "shell"})
+		view, err := manager.create("tab", "workspace", ".", terminalCommand{path: "shell", label: "shell"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -285,4 +310,57 @@ func TestTerminalManagerCloseAndNaturalExit(t *testing.T) {
 		}
 		manager.closeAll()
 	})
+}
+
+func TestTerminalManagerClosesOnlyTheClosingTabAndBoundsOutput(t *testing.T) {
+	manager := newTerminalManager(nil)
+	procs := make([]*fakeTerminalProcess, 0, 2)
+	manager.start = func(terminalStartSpec) (terminalProcess, error) {
+		proc := newFakeTerminalProcess()
+		procs = append(procs, proc)
+		return proc, nil
+	}
+	first, err := manager.create("tab-one", "tab-one\x00workspace", ".", terminalCommand{path: "shell", label: "shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.create("tab-two", "tab-two\x00workspace", ".", terminalCommand{path: "shell", label: "shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager.mu.Lock()
+	manager.sessions[first.ID].output = appendTerminalSnapshot(
+		[]byte(strings.Repeat("x", maxTerminalSnapshotBytes)),
+		[]byte("y"),
+	)
+	manager.mu.Unlock()
+	if got := manager.snapshot("tab-one\x00workspace", first.ID); len(got) != maxTerminalSnapshotBytes || !strings.HasSuffix(got, "y") {
+		t.Fatalf("bounded snapshot = len %d suffix %q", len(got), got[len(got)-1:])
+	}
+	manager.mu.Lock()
+	manager.sessions[first.ID].output = appendTerminalSnapshot(nil, []byte(strings.Repeat("z", maxTerminalSnapshotBytes+1)))
+	manager.mu.Unlock()
+	if got := manager.snapshot("tab-one\x00workspace", first.ID); len(got) != maxTerminalSnapshotBytes || !strings.HasPrefix(got, "z") {
+		t.Fatalf("large bounded snapshot = len %d prefix %q", len(got), got[:1])
+	}
+
+	manager.closeForTab("tab-one")
+	select {
+	case <-procs[0].closed:
+	case <-time.After(time.Second):
+		t.Fatal("closing tab did not close its terminal")
+	}
+	select {
+	case <-procs[1].closed:
+		t.Fatal("closing tab closed another tab's terminal")
+	default:
+	}
+	if got := manager.list("tab-one\x00workspace"); len(got) != 0 {
+		t.Fatalf("closed tab sessions = %+v", got)
+	}
+	if got := manager.list("tab-two\x00workspace"); len(got) != 1 || got[0].ID != second.ID {
+		t.Fatalf("surviving tab sessions = %+v", got)
+	}
+	manager.closeAll()
 }

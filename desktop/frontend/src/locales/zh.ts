@@ -249,6 +249,8 @@ export const zh: Record<DictKey, string> = {
   "terminal.loading": "正在加载终端…",
   "terminal.empty": "在当前工作区启动一个 shell。",
   "terminal.readOnly": "此频道为只读。",
+  "terminal.addOutput": "将终端输出加入聊天",
+  "terminal.noOutput": "此终端暂时没有输出。",
 
   // MCP 与技能抽屉
   "caps.title": "MCP 与技能",

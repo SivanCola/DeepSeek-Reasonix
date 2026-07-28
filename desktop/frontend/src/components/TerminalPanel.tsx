@@ -1,4 +1,4 @@
-import { AlertTriangle, PanelRightClose, Plus, TerminalSquare } from "lucide-react";
+import { AlertTriangle, MessageSquarePlus, PanelRightClose, Plus, TerminalSquare } from "lucide-react";
 import { useCallback, useEffect } from "react";
 
 import { useT } from "../lib/i18n";
@@ -7,7 +7,17 @@ import { useTerminalStore } from "../store/terminal";
 import { TerminalSessionRail } from "./TerminalSessionRail";
 import { TerminalView } from "./TerminalView";
 
-export function TerminalPanel({ tabId, cwd, onClose }: { tabId: string; cwd?: string; onClose: () => void }) {
+export function TerminalPanel({
+  tabId,
+  cwd,
+  onClose,
+  onAddOutput,
+}: {
+  tabId: string;
+  cwd?: string;
+  onClose: () => void;
+  onAddOutput: (sessionId: string) => void;
+}) {
   const t = useT();
   const workspace = useTerminalStore((state) => state.workspace);
   const activeSessionId = useTerminalStore((state) => state.activeSessionId);
@@ -33,6 +43,7 @@ export function TerminalPanel({ tabId, cwd, onClose }: { tabId: string; cwd?: st
         <div className="terminal-panel__identity"><TerminalSquare size={15} /><strong>{t("terminal.title")}</strong>{cwd && <span title={cwd}>{cwd}</span>}</div>
         <div className="terminal-panel__actions">
           <button type="button" className="terminal-icon-button" onClick={newSession} disabled={!workspace?.available || workspace.readOnly} aria-label={t("terminal.newSession")} title={t("terminal.newSession")}><Plus size={15} /></button>
+          <button type="button" className="terminal-icon-button" onClick={() => active && onAddOutput(active.id)} disabled={!active} aria-label={t("terminal.addOutput")} title={t("terminal.addOutput")}><MessageSquarePlus size={15} /></button>
           <button type="button" className="terminal-icon-button" onClick={onClose} aria-label={t("rightDock.collapse")} title={t("rightDock.collapse")}><PanelRightClose size={15} /></button>
         </div>
       </header>

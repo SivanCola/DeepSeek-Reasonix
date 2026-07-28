@@ -2123,6 +2123,8 @@ export const zhTW: Record<DictKey, string> = {
   "terminal.loading": "正在載入終端機…",
   "terminal.empty": "在目前工作區啟動 shell。",
   "terminal.readOnly": "此頻道為唯讀。",
+  "terminal.addOutput": "將終端機輸出加入聊天",
+  "terminal.noOutput": "此終端機目前沒有輸出。",
   "caps.mcpSummary": "{connected} 個伺服器已連線 · {failed} 個伺服器異常 · {tools} 個工具 · {unavailable} 個不可用",
   "caps.availableServers": "可用 MCP",
   "caps.failureGroups": "異常型別",
