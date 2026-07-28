@@ -1799,12 +1799,15 @@ export default function App() {
       if (!tabId) return;
       userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, tabId, false);
       const trimmed = nextGoal.trim();
+      // Activate the backend Goal first. Only then patch the local profile so a
+      // failed SetGoalForTab cannot leave the Composer thinking a Goal is active
+      // while a structured Skill submit would still proceed without one.
+      await (trimmed ? setControllerGoalForTab(tabId, trimmed) : clearControllerGoalForTab(tabId));
       patchComposerProfileForTab(tabId, {
         collaborationMode: trimmed ? "goal" : "normal",
         goalDraftMode: false,
         goal: trimmed,
       }, ["collaborationMode", "goal"]);
-      await (trimmed ? setControllerGoalForTab(tabId, trimmed) : clearControllerGoalForTab(tabId));
     },
     [clearControllerGoalForTab, patchComposerProfileForTab, setControllerGoalForTab],
   );

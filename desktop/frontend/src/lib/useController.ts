@@ -2665,8 +2665,13 @@ export function useController() {
 
   const setGoalForTab = useCallback(async (tabId: string, goal: string): Promise<void> => {
     if (!tabId) return;
-    await app.SetGoalForTab(tabId, goal).catch(() => {});
-    await refreshMetaForTab(tabId);
+    // Propagate activation failures so the first Goal turn (especially structured
+    // Skill submit) can abort instead of executing without an active Goal.
+    try {
+      await app.SetGoalForTab(tabId, goal);
+    } finally {
+      await refreshMetaForTab(tabId);
+    }
   }, [refreshMetaForTab]);
 
   const setGoal = useCallback(async (goal: string): Promise<void> => {

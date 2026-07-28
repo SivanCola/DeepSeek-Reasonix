@@ -43,6 +43,68 @@ console.log("\nsend failure feedback");
   eq(calls.join("|"), "goal:List the existing notes|send:List the existing notes:/ui-ux-pro-max List the existing notes:ui-ux-pro-max", "initial Goal activates before structured Skill submission");
 }
 
+{
+  // Bridge failure must abort structured Skill submit: there is no `/goal` fallback.
+  const calls: string[] = [];
+  let threw = false;
+  try {
+    await activateGoalAndSubmit({
+      displayText: "Ship the feature",
+      submitText: "/ui-ux-pro-max Ship the feature",
+      structured: {
+        display: "/ui-ux-pro-max Ship the feature",
+        input: "Ship the feature",
+        invocations: [{ name: "ui-ux-pro-max", kind: "skill", offset: 0 }],
+      },
+      applyGoal: async (goal) => {
+        calls.push(`goal:${goal}`);
+        throw new Error("SetGoalForTab: tab closed");
+      },
+      send: async (display, submit, structured) => {
+        calls.push(`send:${display}:${submit}:${structured?.invocations[0]?.name ?? ""}`);
+      },
+    });
+  } catch (error) {
+    threw = error instanceof Error && error.message === "SetGoalForTab: tab closed";
+  }
+  eq(threw, true, "Goal activation bridge failure propagates");
+  eq(calls.join("|"), "goal:Ship the feature", "failed Goal activation does not submit the structured Skill");
+}
+
+{
+  // Deferred source-tab activation: while SetGoalForTab is in flight the UI may
+  // switch active tab, but both Goal and SubmitInvocations stay on tab A.
+  const calls: string[] = [];
+  let releaseGoal!: () => void;
+  const goalGate = new Promise<void>((resolve) => {
+    releaseGoal = resolve;
+  });
+  const pending = activateGoalAndSubmit({
+    displayText: "Cross-tab safe goal",
+    submitText: "/ui-ux-pro-max Cross-tab safe goal",
+    structured: {
+      display: "/ui-ux-pro-max Cross-tab safe goal",
+      input: "Cross-tab safe goal",
+      invocations: [{ name: "ui-ux-pro-max", kind: "skill", offset: 0 }],
+    },
+    applyGoal: async (goal) => {
+      await goalGate;
+      calls.push(`goal:tab-a:${goal}`);
+    },
+    send: async (display, submit, structured) => {
+      calls.push(`send:tab-a:${display}:${submit}:${structured?.invocations[0]?.name ?? ""}`);
+    },
+  });
+  calls.push("switched-to-tab-b");
+  releaseGoal();
+  await pending;
+  eq(
+    calls.join("|"),
+    "switched-to-tab-b|goal:tab-a:Cross-tab safe goal|send:tab-a:Cross-tab safe goal:/ui-ux-pro-max Cross-tab safe goal:ui-ux-pro-max",
+    "deferred Goal activation and structured submit both stay on the source tab",
+  );
+}
+
 eq(runtimeReadyForSubmit({ label: "", ready: false, eventChannel: "", cwd: "", runtime: { phase: "starting", epoch: "e1" } }), false, "starting runtime cannot submit");
 eq(runtimeReadyForSubmit({ label: "", ready: false, eventChannel: "", cwd: "", runtime: { phase: "lease_blocked", epoch: "e1" } }), false, "lease-blocked runtime cannot submit");
 eq(runtimeReadyForSubmit({ label: "", ready: false, eventChannel: "", cwd: "", runtime: { phase: "failed", epoch: "e1" } }), false, "failed runtime cannot submit");
@@ -220,6 +282,16 @@ eq(
   appSource.includes("setControllerGoalForTab(tabId, trimmed)") && appSource.includes("clearControllerGoalForTab(tabId)"),
   true,
   "tab-scoped Goal activation updates the matching controller",
+);
+eq(
+  /await \(trimmed \? setControllerGoalForTab\(tabId, trimmed\) : clearControllerGoalForTab\(tabId\)\);\s*patchComposerProfileForTab\(tabId/.test(appSource),
+  true,
+  "local Goal profile is patched only after backend activation succeeds",
+);
+eq(
+  controllerSource.includes("await app.SetGoalForTab(tabId, goal)") && !/SetGoalForTab\(tabId, goal\)\.catch\(\(\) => \{\}\)/.test(controllerSource),
+  true,
+  "SetGoalForTab activation failures propagate to callers",
 );
 eq(
   /await continueDelivery\(\{[\s\S]{0,240}goal: state\.meta\?\.goal,[\s\S]{0,240}resumeGoal: resumeControllerGoalForTab,/.test(appSource),
