@@ -909,7 +909,8 @@ automatically with no setup or approval click. Global facts, user preferences,
 feedback, updates, duplicates, sensitive/oversized content, and every `forget`
 still require explicit confirmation. The storage layer makes the automatic
 grant create-only, so it cannot overwrite a fact that appears concurrently.
-Headless and sub-agent paths fail closed.
+A top-level headless controller may use the same one-shot low-risk create path;
+sub-agents and headless surfaces without the owning scoped controller fail closed.
 
 `forget` archives rather than permanently deletes. Every update snapshots the
 previous revision; restore and archive recovery always create a higher revision

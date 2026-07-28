@@ -40,14 +40,19 @@ func TestComposeAppendsAfterBase(t *testing.T) {
 
 func TestBlockSeparatesStandingInstructionsFromBackgroundMemory(t *testing.T) {
 	set := &Set{
-		Docs:  []Source{{Path: "/p/AGENTS.md", Scope: ScopeProject, Body: "Always run tests."}},
+		Docs:  []Source{{Path: "/p/AGENTS.md", Scope: ScopeProject, Directory: "/p", Body: "Always run tests.", Depth: 0}},
 		Index: "- [API decision](api-decision.md) — [project/project] Chosen in an earlier session",
 		Store: Store{Dir: "/memory/project"},
 	}
 	block := set.Block()
-	for _, want := range []string{"# Instructions", "## /p/AGENTS.md (project", "## Background memory index", "background, not standing instructions"} {
+	for _, want := range []string{"# Instructions", "## workspace/AGENTS.md (project", "## Background memory index", "background, not standing instructions"} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("Block() missing %q:\n%s", want, block)
+		}
+	}
+	for _, privatePath := range []string{"/p/AGENTS.md", "/memory/project"} {
+		if strings.Contains(block, privatePath) {
+			t.Fatalf("Block() exposed machine-local path %q:\n%s", privatePath, block)
 		}
 	}
 }

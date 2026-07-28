@@ -31,6 +31,9 @@ func TestRememberToolSaves(t *testing.T) {
 	if !strings.Contains(out, "Saved memory") {
 		t.Fatalf("unexpected tool output: %q", out)
 	}
+	if strings.Contains(out, store.Dir) || !strings.Contains(out, "global/likes-go.md") {
+		t.Fatalf("tool output must use a stable reference, got %q", out)
+	}
 
 	list := store.List()
 	if len(list) != 1 || list[0].Name != "likes-go" || list[0].Type != TypeUser || list[0].Scope != FactScopeGlobal {
@@ -84,6 +87,33 @@ func TestRememberToolUpdateWithoutScopePreservesLegacyGlobalScope(t *testing.T) 
 	list := store.List()
 	if len(list) != 1 || list[0].Scope != FactScopeGlobal || !strings.Contains(list[0].Body, "every project") {
 		t.Fatalf("updated memory = %+v, want one global active copy", list)
+	}
+}
+
+func TestRememberToolUpdatesScopeQualifiedReference(t *testing.T) {
+	root := t.TempDir()
+	store := Store{Dir: filepath.Join(root, "project"), GlobalDir: filepath.Join(root, "global")}
+	if _, err := store.SaveWithOptions(Memory{Name: "project/shared.md", Description: "project", Body: "project body"}, SaveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveWithOptions(Memory{Name: "global/shared.md", Description: "global", Body: "global body"}, SaveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := NewRememberTool(store).Execute(context.Background(), []byte(`{"name":"global/shared.md","expected_revision":1,"description":"updated global","body":"global v2"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "global/shared.md") || strings.Contains(out, root) {
+		t.Fatalf("qualified update output = %q", out)
+	}
+	global, ok := store.Read("global/shared.md")
+	if !ok || global.Name != "shared" || global.Scope != FactScopeGlobal || global.Revision != 2 || global.Body != "global v2" {
+		t.Fatalf("updated global = %+v, ok=%v", global, ok)
+	}
+	project, ok := store.Read("project/shared.md")
+	if !ok || project.Revision != 1 || project.Body != "project body" {
+		t.Fatalf("project fact changed = %+v, ok=%v", project, ok)
 	}
 }
 

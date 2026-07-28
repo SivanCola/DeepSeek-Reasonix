@@ -93,10 +93,17 @@ func Resolve(opts ResolveOptions) Resolution {
 	}
 
 	var candidates []candidate
-	appendDir := func(dir string, names []string, scope Scope, depth, priority int) {
+	appendDir := func(dir, boundary string, names []string, scope Scope, depth, priority int) {
 		for _, name := range names {
 			path := filepath.Join(dir, name)
-			body, info, ok := readDocument(path)
+			body, info, ok, code := readConfinedDocument(path, boundary, "document_symlink_escape")
+			if code != "" {
+				result.Diagnostics = append(result.Diagnostics, Diagnostic{
+					Code: code, Path: path,
+					Message: fmt.Sprintf("rejected instruction document %q outside boundary %q", path, boundary),
+				})
+				continue
+			}
 			if !ok {
 				continue
 			}
@@ -112,7 +119,7 @@ func Resolve(opts ResolveOptions) Resolution {
 	}
 
 	if userDir := absolutePath(opts.UserDir); userDir != "" {
-		appendDir(userDir, DocumentNames, ScopeUser, -1, 0)
+		appendDir(userDir, userDir, DocumentNames, ScopeUser, -1, 0)
 	}
 	chain := directoryChain(root, target)
 	for depth, dir := range chain {
@@ -120,8 +127,8 @@ func Resolve(opts ResolveOptions) Resolution {
 		if depth == 0 {
 			scope = ScopeProject
 		}
-		appendDir(dir, DocumentNames, scope, depth, 10+depth*2)
-		appendDir(dir, LocalDocumentNames, ScopeLocal, depth, 11+depth*2)
+		appendDir(dir, root, DocumentNames, scope, depth, 10+depth*2)
+		appendDir(dir, root, LocalDocumentNames, ScopeLocal, depth, 11+depth*2)
 	}
 
 	// Content hashes are exact after decoding, trimming, and deterministic
@@ -145,11 +152,7 @@ func Resolve(opts ResolveOptions) Resolution {
 	return result
 }
 
-func readDocument(path string) (string, os.FileInfo, bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", nil, false
-	}
+func readOpenedDocument(f *os.File) (string, os.FileInfo, bool) {
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
@@ -161,6 +164,45 @@ func readDocument(path string) (string, os.FileInfo, bool) {
 	}
 	body := strings.TrimSpace(string(fileencoding.DecodeToUTF8(b)))
 	return body, info, body != ""
+}
+
+func readConfinedDocument(path, boundary, escapeCode string) (string, os.FileInfo, bool, string) {
+	boundary = realDirectory(boundary)
+	root, err := os.OpenRoot(boundary)
+	if err != nil {
+		return "", nil, false, ""
+	}
+	defer root.Close()
+
+	rel, err := filepath.Rel(boundary, absolutePath(path))
+	if err == nil && filepath.IsLocal(rel) {
+		if f, openErr := root.Open(rel); openErr == nil {
+			body, info, ok := readOpenedDocument(f)
+			return body, info, ok, ""
+		}
+	}
+
+	// Root.Open deliberately rejects absolute symlinks, including ones whose
+	// target remains inside the root. Resolve those for compatibility, then open
+	// the resolved relative path through the same root handle. The second open
+	// remains confined if any component changes after EvalSymlinks.
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", nil, false, ""
+	}
+	if !pathWithin(realPath, boundary) {
+		return "", nil, false, escapeCode
+	}
+	rel, err = filepath.Rel(boundary, realPath)
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", nil, false, escapeCode
+	}
+	f, err := root.Open(rel)
+	if err != nil {
+		return "", nil, false, ""
+	}
+	body, info, ok := readOpenedDocument(f)
+	return body, info, ok, ""
 }
 
 func resolveDocumentImports(body, sourcePath, boundary string, depth int, state importState, imports *[]Import, diagnostics *[]Diagnostic) string {
@@ -182,7 +224,15 @@ func resolveDocumentImports(body, sourcePath, boundary string, depth int, state 
 			lines[i] = line + "  <!-- rejected: " + code + " -->"
 			continue
 		}
-		b, info, ok := readDocument(resolved)
+		b, info, ok, readCode := readConfinedDocument(resolved, boundary, "import_symlink_escape")
+		if readCode != "" {
+			*diagnostics = append(*diagnostics, Diagnostic{
+				Code: readCode, Path: resolved, SourcePath: sourcePath, Line: i + 1,
+				Message: fmt.Sprintf("rejected instruction import %q from %q", resolved, sourcePath),
+			})
+			lines[i] = line + "  <!-- rejected: " + readCode + " -->"
+			continue
+		}
 		if !ok {
 			*diagnostics = append(*diagnostics, Diagnostic{
 				Code: "import_unreadable", Path: resolved, SourcePath: sourcePath, Line: i + 1,

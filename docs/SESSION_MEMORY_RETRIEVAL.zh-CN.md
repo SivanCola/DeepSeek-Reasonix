@@ -137,7 +137,7 @@ omitted 数量和 suppressed 原因。
 
 普通路径零配置。只有同时满足以下条件时，Reasonix 才可以自动创建一条新记忆：
 
-- 当前是交互式宿主，并拥有本项目 memory store；
+- 当前父 controller 拥有本项目 memory store（可以是交互式，也可以是顶层 headless，但不能是子智能体）；
 - type 被显式标为 `project` 或 `reference`；
 - scope 为 project 或省略；
 - 操作是纯创建，不是更新；
@@ -156,8 +156,9 @@ omitted 数量和 suppressed 原因。
 - 敏感或超长内容；
 - 所有 `forget` 操作。
 
-Auto 和 Yolo 不会绕过这些确认。Guardian 和 permission hook 不能替用户批准。Headless
-运行和子智能体会 fail closed，因为它们没有交互式确认界面，也不拥有有作用域的 store。
+Auto 和 Yolo 不会绕过这些确认。Guardian 和 permission hook 不能替用户批准。顶层
+headless controller 只能使用上述同一个一次性低风险创建路径；子智能体以及不拥有该作用域
+controller 的 headless surface 会 fail closed，其他记忆变更仍必须有交互式确认界面。
 
 用户直接在 Context Center、`/remember`、restore 或 recover 命令中发起的操作，本身就是
 显式用户动作，不会再增加一次审批。
@@ -232,6 +233,11 @@ Context Engine v2 会自动升级旧 store，不需要设置：
 ## Cache 与隐私契约
 
 - 常驻指令和派生 memory index 在会话开始时进入稳定 prefix。
+- Provider 可见的指令 provenance 只使用稳定的 `workspace/...` 与 `user/...` 标签；绝对来源路径
+  和 store 路径仅保留在本地诊断中。
+- Provider 可见的 memory tool result 只使用稳定的 `project/<name>.md` 与
+  `global/<name>.md` 引用。这些引用可直接用于 read、update、revision 和 archive；即使两个
+  scope 中存在同名事实，也会精确定位；Context Center 和本地恢复诊断仍保留真实存储路径。
 - 动态召回和会话中途改动只追加到当前 user turn。
 - diagnostics 不进入 provider request。
 - 自动召回不暴露 fact storage path，并替换 snippet 中的 home directory 前缀。

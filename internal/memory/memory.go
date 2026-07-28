@@ -151,13 +151,6 @@ func (s *Set) BackgroundBlock() string {
 			"Read a relevant linked fact with the `memory` tool, and before acting on one that names a file, function, or flag, verify it still exists. " +
 			"Save new durable facts with the `remember` tool; archive ones that turn out wrong with `forget`.\n\n")
 		b.WriteString(idx)
-		var dirs []string
-		for _, d := range s.Store.dirs() {
-			if d != "" {
-				dirs = append(dirs, d)
-			}
-		}
-		fmt.Fprintf(&b, "\n\n(stored under %s)\n", strings.Join(dirs, " and "))
 	}
 	return strings.TrimSpace(b.String())
 }

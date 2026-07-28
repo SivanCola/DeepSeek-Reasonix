@@ -728,7 +728,8 @@ Context Engine v2 把上下文分成两个用途不同的层：
 
 新的、有界、非敏感 project/reference 事实可以零配置自动创建，不弹审批。全局事实、用户偏好、
 feedback、更新、重复项、敏感/超长内容，以及所有 `forget` 仍需显式确认。存储层会把自动授权
-强制为 create-only，因此并发出现的新事实也不会被覆盖。Headless 与子智能体路径会 fail closed。
+强制为 create-only，因此并发出现的新事实也不会被覆盖。顶层 headless controller 可使用同一条
+一次性低风险创建路径；子智能体和不拥有该作用域 controller 的 headless surface 会 fail closed。
 
 `forget` 只归档，不永久删除。每次更新都会快照上一 revision；恢复旧版本或 archive 时总会创建
 更高的新 revision，不会覆盖历史：

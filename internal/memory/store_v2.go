@@ -91,15 +91,21 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 	memoryStoreMutationMu.Lock()
 	defer memoryStoreMutationMu.Unlock()
 
+	inputID := strings.TrimSpace(m.ID)
+	inputRef := parseMemoryReference(m.Name)
+	if inputID == "" && inputRef.qualified && strings.TrimSpace(string(m.Scope)) != "" &&
+		NormalizeFactScope(string(m.Scope)) != inputRef.scope {
+		return SaveResult{}, fmt.Errorf("memory reference scope %q conflicts with explicit scope %q", inputRef.scope, m.Scope)
+	}
 	var existing Memory
 	var existingPath string
 	var exists bool
-	if strings.TrimSpace(m.ID) != "" {
-		existing, existingPath, exists = s.findActive(m.ID)
+	if inputID != "" {
+		existing, existingPath, exists = s.findActive(inputID)
 		if !exists {
 			return SaveResult{}, fmt.Errorf("memory id %q not found", m.ID)
 		}
-	} else if strings.TrimSpace(m.Name) != "" {
+	} else if inputRef.raw != "" {
 		existing, existingPath, exists = s.findActive(m.Name)
 	}
 	if opts.RequireExpectedRevision {
@@ -115,20 +121,23 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 		return SaveResult{}, fmt.Errorf("memory %q already exists; automatic writes are create-only", existing.Name)
 	}
 
-	if strings.TrimSpace(m.Name) == "" {
+	if inputRef.raw == "" {
 		if !exists {
 			return SaveResult{}, fmt.Errorf("memory needs a name")
 		}
 		m.Name = existing.Name
+	} else if exists && inputID == "" {
+		// Name-based references identify an existing fact; renames require its
+		// stable ID. This also prevents display references such as foo.md or
+		// project/foo.md from becoming new slugs during an update.
+		m.Name = existing.Name
+	} else {
+		m.Name = inputRef.name
 	}
 	m.Name = slug(m.Name)
 	if m.Name == "" {
 		return SaveResult{}, fmt.Errorf("memory name needs at least one letter or digit")
 	}
-	if collision, _, ok := s.findActive(m.Name); ok && (!exists || collision.ID != existing.ID) {
-		return SaveResult{}, fmt.Errorf("memory name %q is already used by id %q", m.Name, collision.ID)
-	}
-
 	now := time.Now().UTC()
 	if exists {
 		m.ID = existing.ID
@@ -148,7 +157,11 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 	m.UpdatedAt = now
 	m.Type = NormalizeType(string(m.Type))
 	if strings.TrimSpace(string(m.Scope)) == "" {
-		m.Scope = FactScopeProject
+		if inputRef.qualified {
+			m.Scope = inputRef.scope
+		} else {
+			m.Scope = FactScopeProject
+		}
 	} else {
 		m.Scope = NormalizeFactScope(string(m.Scope))
 	}
@@ -159,6 +172,9 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return SaveResult{}, err
+	}
+	if collision, _, ok := s.findActiveInDir(dir, m.Name); ok && (!exists || collision.ID != existing.ID) {
+		return SaveResult{}, fmt.Errorf("memory name %q is already used by id %q", m.Name, collision.ID)
 	}
 	path, err := safeJoin(dir, m.Name+".md")
 	if err != nil {
@@ -184,18 +200,22 @@ func (s Store) SaveWithOptions(m Memory, opts SaveOptions) (SaveResult, error) {
 	if err := reindexIn(dir, m.Name, m); err != nil {
 		return SaveResult{Path: path, Memory: m}, err
 	}
-	for _, otherDir := range s.dirs() {
-		if sameDir(otherDir, dir) {
-			continue
-		}
-		if duplicate, duplicatePath, ok := s.findActiveInDir(otherDir, m.Name); ok && duplicate.ID != m.ID {
-			if _, err := archiveInDir(otherDir, duplicate.Name); err != nil {
-				return SaveResult{}, err
+	// Legacy unqualified name updates keep the previous single-active-copy
+	// behavior. Stable IDs and scope-qualified references select one identity
+	// exactly, so they must not remove a same-named fact in the other scope.
+	if inputID == "" && !inputRef.qualified {
+		for _, otherDir := range s.dirs() {
+			if sameDir(otherDir, dir) {
+				continue
 			}
-			if err := flushIndexIn(otherDir, indexLinesExceptIn(otherDir, duplicate.Name)); err != nil {
-				return SaveResult{}, err
+			if duplicate, _, ok := s.findActiveInDir(otherDir, m.Name); ok && duplicate.ID != m.ID {
+				if _, err := archiveInDir(otherDir, duplicate.Name); err != nil {
+					return SaveResult{}, err
+				}
+				if err := flushIndexIn(otherDir, indexLinesExceptIn(otherDir, duplicate.Name)); err != nil {
+					return SaveResult{}, err
+				}
 			}
-			_ = duplicatePath
 		}
 	}
 
@@ -213,13 +233,16 @@ func (s Store) Read(ref string) (Memory, bool) {
 }
 
 func (s Store) findActive(ref string) (Memory, string, bool) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
+	parsed := parseMemoryReference(ref)
+	if parsed.raw == "" {
 		return Memory{}, "", false
+	}
+	if parsed.qualified {
+		return s.findActiveInDir(s.DirFor(parsed.scope), parsed.raw)
 	}
 	for i := len(s.dirs()) - 1; i >= 0; i-- {
 		dir := s.dirs()[i]
-		if memory, path, ok := s.findActiveInDir(dir, ref); ok {
+		if memory, path, ok := s.findActiveInDir(dir, parsed.raw); ok {
 			return memory, path, true
 		}
 	}
@@ -234,7 +257,8 @@ func (s Store) findActiveInDir(dir, ref string) (Memory, string, bool) {
 	if err != nil {
 		return Memory{}, "", false
 	}
-	wantName := slug(ref)
+	parsed := parseMemoryReference(ref)
+	wantName := parsed.name
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Name() == indexFile || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
@@ -247,12 +271,42 @@ func (s Store) findActiveInDir(dir, ref string) (Memory, string, bool) {
 		if memory.Scope == "" {
 			memory.Scope = s.scopeForDir(dir)
 		}
-		if memory.ID == ref || slug(memory.Name) == wantName {
+		if memory.ID == parsed.raw || slug(memory.Name) == wantName {
 			memory.Name = slug(memory.Name)
 			return memory, path, true
 		}
 	}
 	return Memory{}, "", false
+}
+
+type memoryReference struct {
+	raw       string
+	name      string
+	scope     FactScope
+	qualified bool
+}
+
+// parseMemoryReference understands provider-visible references without ever
+// treating them as filesystem paths. Memory facts are flat files, so only one
+// fixed scope component plus one filename is accepted as a qualified form.
+func parseMemoryReference(ref string) memoryReference {
+	raw := strings.TrimSpace(ref)
+	parsed := memoryReference{raw: raw, name: slug(strings.TrimSuffix(raw, ".md"))}
+	for _, candidate := range []FactScope{FactScopeProject, FactScopeGlobal} {
+		prefix := string(candidate) + "/"
+		if !strings.HasPrefix(raw, prefix) {
+			continue
+		}
+		name := strings.TrimPrefix(raw, prefix)
+		if name == "" || strings.ContainsAny(name, `/\\`) {
+			return parsed
+		}
+		parsed.name = slug(strings.TrimSuffix(name, ".md"))
+		parsed.scope = candidate
+		parsed.qualified = true
+		return parsed
+	}
+	return parsed
 }
 
 func (s Store) Revisions(ref string) []Memory {

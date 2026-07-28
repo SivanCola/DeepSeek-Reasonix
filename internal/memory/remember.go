@@ -54,7 +54,7 @@ func (rememberTool) Schema() json.RawMessage {
 		"properties": {
 			"id": {"type": "string", "description": "Stable memory id for an update. Prefer this over name when supplied by memory search/read."},
 			"expected_revision": {"type": "integer", "minimum": 1, "description": "Revision returned by memory search/read. When set with id, the update fails instead of overwriting a newer change."},
-			"name": {"type": "string", "description": "Short kebab-case slug identifying the fact, e.g. \"prefers-tabs\". Reusing a name overwrites that memory — do that to update an existing fact. Omit to derive one from the description."},
+			"name": {"type": "string", "description": "Stable project/<name>.md or global/<name>.md reference returned by memory search/read/list, or a short kebab-case slug for a new fact. Reusing a reference updates that exact memory. Omit to derive a new slug from the description."},
 			"title": {"type": "string", "description": "Short human-readable label shown in the memory index, e.g. \"Prefers tabs\". Omit to derive one from the name."},
 			"description": {"type": "string", "description": "One-line hook shown in the index — the phrase a future session reads to decide whether to open this memory. Make it specific."},
 			"type": {"type": "string", "enum": ["user", "feedback", "project", "reference"], "description": "Category of the fact."},
@@ -105,7 +105,7 @@ func (t rememberTool) Execute(ctx context.Context, args json.RawMessage) (string
 	if q, ok := QueueFromContext(ctx); ok {
 		q.QueueMemory("Saved memory \"" + result.Memory.Name + "\" (" + string(factScope) + "): " + oneLine(result.Memory.Description) + "\n" + strings.TrimSpace(result.Memory.Body))
 	}
-	return fmt.Sprintf("Saved memory id=%s revision=%d (%s background) to %s (it applies now and its derived index loads automatically in future sessions).", result.Memory.ID, result.Memory.Revision, factScope, path), nil
+	return fmt.Sprintf("Saved memory id=%s revision=%d (%s background) as %s (it applies now and its derived index loads automatically in future sessions).", result.Memory.ID, result.Memory.Revision, factScope, providerMemoryReference(result.Memory)), nil
 }
 
 func (rememberTool) ReadOnly() bool { return false }
@@ -119,8 +119,11 @@ func parseRememberRequest(args json.RawMessage) (rememberRequest, error) {
 }
 
 func rememberRequestName(in rememberRequest) string {
-	name := in.Name
-	if name == "" && in.ID == "" {
+	if name := strings.TrimSpace(in.Name); name != "" {
+		return name
+	}
+	name := ""
+	if in.ID == "" {
 		name = in.Title
 	}
 	if name == "" && in.ID == "" {

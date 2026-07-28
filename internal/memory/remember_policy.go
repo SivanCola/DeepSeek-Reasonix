@@ -31,10 +31,18 @@ func AssessRememberWrite(store Store, args json.RawMessage) RememberAssessment {
 	if err != nil {
 		return RememberAssessment{Reason: "invalid remember request"}
 	}
+	ref := parseMemoryReference(rememberRequestName(in))
 	assessment := RememberAssessment{
-		Name:  rememberRequestName(in),
+		Name:  ref.name,
 		Type:  NormalizeType(in.Type),
 		Scope: NormalizeFactScope(in.Scope),
+	}
+	if ref.qualified {
+		if strings.TrimSpace(in.Scope) != "" && assessment.Scope != ref.scope {
+			assessment.Reason = "memory reference scope conflicts with explicit scope"
+			return assessment
+		}
+		assessment.Scope = ref.scope
 	}
 	if strings.TrimSpace(in.Description) == "" || strings.TrimSpace(in.Body) == "" {
 		assessment.Reason = "description and body are required"
@@ -49,7 +57,7 @@ func AssessRememberWrite(store Store, args json.RawMessage) RememberAssessment {
 		assessment.Reason = "only explicitly classified project/reference facts are low-risk"
 		return assessment
 	}
-	if scope := strings.ToLower(strings.TrimSpace(in.Scope)); scope != "" && scope != string(FactScopeProject) {
+	if assessment.Scope != FactScopeProject {
 		assessment.Reason = "global memory requires confirmation"
 		return assessment
 	}

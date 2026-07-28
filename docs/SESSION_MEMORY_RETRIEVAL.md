@@ -155,7 +155,8 @@ output matters.
 The ordinary path is zero-configuration. Reasonix may automatically create a
 new memory only when all of these conditions hold:
 
-- the host is interactive and owns the current project store;
+- the owning controller has the current project store (interactive or top-level
+  headless, never a sub-agent);
 - the type is explicitly `project` or `reference`;
 - the scope is project or omitted;
 - the operation is create-only, not an update;
@@ -176,8 +177,10 @@ Everything else still requires explicit confirmation:
 - every `forget` operation.
 
 Auto and Yolo do not bypass those confirmations. Guardian and permission hooks
-cannot approve them for the user. Headless runs and sub-agents fail closed
-because they do not own an interactive confirmation surface or scoped store.
+cannot approve them for the user. A top-level headless controller may use only
+the same one-shot low-risk create path above. Sub-agents and headless surfaces
+without the owning scoped controller fail closed; all other memory mutations
+still require an interactive confirmation surface.
 
 Direct edits made by the user in Context Center, `/remember`, restore, and
 recovery commands are already explicit user actions and do not add another
@@ -265,6 +268,13 @@ required.
 
 - Standing instructions and the derived memory index join the stable prefix at
   session start.
+- Provider-visible instruction provenance uses stable `workspace/...` and
+  `user/...` labels; absolute source and store paths stay in local diagnostics.
+- Provider-visible memory tool results use stable `project/<name>.md` and
+  `global/<name>.md` references. Those references round-trip directly through
+  read, update, revision, and archive operations, including when both scopes
+  contain the same name; Context Center and local recovery diagnostics retain
+  the real storage paths.
 - Dynamic recall and mid-session changes are appended only to the current user
   turn.
 - Diagnostics never enter provider requests.

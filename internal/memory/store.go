@@ -156,7 +156,15 @@ func (s Store) Path(name string) string {
 	if _, path, ok := s.findActive(name); ok {
 		return path
 	}
-	stem := slug(name) + ".md"
+	ref := parseMemoryReference(name)
+	stem := ref.name + ".md"
+	if ref.qualified {
+		p, err := safeJoin(s.DirFor(ref.scope), stem)
+		if err != nil {
+			return ""
+		}
+		return p
+	}
 	for _, dir := range s.dirs() {
 		if dir == "" {
 			continue
@@ -202,10 +210,18 @@ func (s Store) archiveLocked(name string) (string, error) {
 		return "", fmt.Errorf("memory store unavailable (no user config dir)")
 	}
 	ref := strings.TrimSpace(name)
+	parsed := parseMemoryReference(ref)
 	if active, path, ok := s.findActive(ref); ok && ref == active.ID {
+		return archiveMemoryInDir(filepath.Dir(path), active.Name)
+	} else if ok && parsed.qualified {
 		return archiveMemoryInDir(filepath.Dir(path), active.Name)
 	} else if ok {
 		name = active.Name
+	} else if parsed.qualified {
+		if parsed.name == "" {
+			return "", fmt.Errorf("memory needs a name")
+		}
+		return archiveMemoryInDir(s.DirFor(parsed.scope), parsed.name)
 	} else {
 		name = slug(name)
 	}

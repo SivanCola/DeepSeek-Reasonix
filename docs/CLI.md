@@ -266,7 +266,9 @@ autonomy and let ordinary approval decisions proceed; `auto` still auto-approves
 the normal fallback but denies a command that matches an explicit ask rule rather
 than running it unattended; `dontAsk` denies; and `bypassPermissions` runs
 everything except tools that always require fresh human approval (memory, plan,
-sandbox escape, managed config write).
+sandbox escape, managed config write). In every mode, the owning top-level
+controller may still create a bounded, non-sensitive, create-only project or
+reference memory; all other memory mutations remain denied without a human.
 
 ## Additional directories
 

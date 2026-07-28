@@ -53,7 +53,7 @@ func TestRecallToolSchemaIsCacheStable(t *testing.T) {
 		"properties": {
 			"operation": {"type": "string", "enum": ["search", "read", "list"], "description": "search ranks saved memories; read returns one full memory by stable id or legacy name; list returns the saved-memory index."},
 			"query": {"type": "string", "description": "Search query for operation=search."},
-			"name": {"type": "string", "description": "Stable memory id or legacy slug for operation=read."},
+			"name": {"type": "string", "description": "Stable memory id, project/<name>.md or global/<name>.md reference, or legacy slug for operation=read."},
 			"type": {"type": "string", "enum": ["user", "feedback", "project", "reference"], "description": "Optional memory type filter for search or list."},
 			"scope": {"type": "string", "enum": ["project", "global"], "description": "Optional scope filter for search or list."},
 			"limit": {"type": "integer", "description": "Maximum search/list results to return, default 8, max 20."}
@@ -154,6 +154,103 @@ func TestRecallToolReadsMemoryByName(t *testing.T) {
 	for _, want := range []string{"Memory user-prefers-tabs", "id: mem-", "revision: 1", "type: user", "Use tabs"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("read output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRecallToolReadsMemoryByListedMarkdownName(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	saveMemory(t, store, Memory{
+		Name:        "listed-memory",
+		Description: "Listed memory reference",
+		Type:        TypeProject,
+		Body:        "The listed Markdown target is a valid read reference.",
+	})
+
+	out, err := NewRecallTool(store).Execute(context.Background(), []byte(`{"operation":"read","name":"listed-memory.md"}`))
+	if err != nil {
+		t.Fatalf("Execute read with listed Markdown name: %v", err)
+	}
+	if !strings.Contains(out, "Memory listed-memory") || !strings.Contains(out, "valid read reference") {
+		t.Fatalf("read by listed Markdown name = %s", out)
+	}
+}
+
+func TestRecallToolOutputsUseStableReferences(t *testing.T) {
+	root := t.TempDir()
+	store := Store{Dir: root + "/project", GlobalDir: root + "/global"}
+	saveMemory(t, store, Memory{
+		Name:        "private-store-path",
+		Description: "Distinctive privacy sentinel",
+		Type:        TypeProject,
+		Scope:       FactScopeProject,
+		Body:        "Provider-visible results use stable memory references.",
+	})
+
+	tool := NewRecallTool(store)
+	for _, args := range []string{
+		`{"operation":"search","query":"distinctive privacy sentinel"}`,
+		`{"operation":"read","name":"project/private-store-path.md"}`,
+		`{"operation":"list"}`,
+	} {
+		out, err := tool.Execute(context.Background(), []byte(args))
+		if err != nil {
+			t.Fatalf("Execute(%s): %v", args, err)
+		}
+		if strings.Contains(out, root) || strings.Contains(out, store.Dir) {
+			t.Fatalf("provider-visible memory output exposed store path for %s:\n%s", args, out)
+		}
+		if !strings.Contains(out, "project/private-store-path.md") {
+			t.Fatalf("provider-visible memory output missing stable reference for %s:\n%s", args, out)
+		}
+	}
+}
+
+func TestRecallToolStableReferencesDisambiguateSameNameAcrossScopes(t *testing.T) {
+	root := t.TempDir()
+	store := Store{Dir: root + "/project", GlobalDir: root + "/global"}
+	for _, fixture := range []struct {
+		ref  string
+		desc string
+		body string
+	}{
+		{ref: "project/shared.md", desc: "shared round trip project", body: "project body"},
+		{ref: "global/shared.md", desc: "shared round trip global", body: "global body"},
+	} {
+		if _, err := store.SaveWithOptions(Memory{Name: fixture.ref, Description: fixture.desc, Body: fixture.body}, SaveOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tool := NewRecallTool(store)
+	list, err := tool.Execute(context.Background(), []byte(`{"operation":"list"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"project/shared.md", "global/shared.md"} {
+		if !strings.Contains(list, "reference="+ref) {
+			t.Fatalf("list output missing %q:\n%s", ref, list)
+		}
+	}
+	search, err := tool.Execute(context.Background(), []byte(`{"operation":"search","query":"shared round trip","limit":5}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"project/shared.md", "global/shared.md"} {
+		if !strings.Contains(search, "reference: "+ref) {
+			t.Fatalf("search output missing %q:\n%s", ref, search)
+		}
+	}
+	for _, fixture := range []struct {
+		ref  string
+		body string
+	}{
+		{ref: "project/shared.md", body: "project body"},
+		{ref: "global/shared.md", body: "global body"},
+	} {
+		out, err := tool.Execute(context.Background(), []byte(`{"operation":"read","name":"`+fixture.ref+`"}`))
+		if err != nil || !strings.Contains(out, fixture.body) || !strings.Contains(out, "reference: "+fixture.ref) {
+			t.Fatalf("read %s = %q, err=%v", fixture.ref, out, err)
 		}
 	}
 }

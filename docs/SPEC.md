@@ -289,12 +289,13 @@ Long tasks eventually fill the model's context window. Reasonix manages this wit
   Generic turns are suppressed, project facts override equivalent global
   fallbacks, stale facts are down-ranked, and recall is bounded by result/character
   budgets. This never mutates the stable system prompt or tool schemas.
-- An interactive controller may auto-allow only a bounded, non-sensitive,
-  create-only project/reference `remember`. Global facts, preferences, feedback,
+- The owning controller may auto-allow only a bounded, non-sensitive,
+  create-only project/reference `remember`, including in a top-level headless
+  run. Global facts, preferences, feedback,
   updates, duplicates, sensitive/oversized content, and every `forget` require a
   fresh human approval even under Auto or YOLO. Guardian/safety review cannot
-  answer these prompts on the user's behalf. Non-interactive headless runs and
-  sub-agents fail closed. The approval request includes a compact preview, while
+  answer these prompts on the user's behalf. Sub-agents and headless surfaces
+  without the owning scoped controller fail closed. The approval request includes a compact preview, while
   external notification hooks only receive the tool name.
 - Facts carry immutable IDs, monotonic revisions, timestamps, type, and scope.
   Updates snapshot the previous revision; restore and archive recovery create a

@@ -197,6 +197,81 @@ func TestStoreV2ArchiveByIDOnlyArchivesMatchingIdentity(t *testing.T) {
 	}
 }
 
+func TestStoreV2ScopeQualifiedReferencesRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	store := Store{Dir: filepath.Join(root, "project"), GlobalDir: filepath.Join(root, "global")}
+	global, err := store.SaveWithOptions(Memory{
+		Name: "global/shared.md", Description: "global", Body: "global body",
+	}, SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.SaveWithOptions(Memory{
+		Name: "project/shared.md", Description: "project", Body: "project body",
+	}, SaveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if global.Memory.Name != "shared" || global.Memory.Scope != FactScopeGlobal {
+		t.Fatalf("global memory = %+v", global.Memory)
+	}
+	if project.Memory.Name != "shared" || project.Memory.Scope != FactScopeProject {
+		t.Fatalf("project memory = %+v", project.Memory)
+	}
+	if got, ok := store.Read("global/shared.md"); !ok || got.ID != global.Memory.ID || got.Body != "global body" {
+		t.Fatalf("global qualified read = %+v, ok=%v", got, ok)
+	}
+	if got, ok := store.Read("project/shared.md"); !ok || got.ID != project.Memory.ID || got.Body != "project body" {
+		t.Fatalf("project qualified read = %+v, ok=%v", got, ok)
+	}
+	if got, ok := store.Read("shared.md"); !ok || got.ID != project.Memory.ID {
+		t.Fatalf("legacy unqualified read = %+v, ok=%v; want project-preferred", got, ok)
+	}
+
+	updated, err := store.SaveWithOptions(Memory{
+		Name: "global/shared.md", Description: "updated global", Body: "global v2",
+	}, SaveOptions{ExpectedRevision: 1, RequireExpectedRevision: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Memory.Name != "shared" || updated.Memory.Scope != FactScopeGlobal || updated.Memory.Revision != 2 {
+		t.Fatalf("qualified update = %+v", updated.Memory)
+	}
+	if _, err := os.Stat(filepath.Join(store.GlobalDir, "shared.md")); err != nil {
+		t.Fatalf("qualified update renamed or moved global fact: %v", err)
+	}
+	if got, ok := store.Read("project/shared.md"); !ok || got.ID != project.Memory.ID {
+		t.Fatalf("qualified update disturbed project fact: %+v, ok=%v", got, ok)
+	}
+	if revisions := store.Revisions("global/shared.md"); len(revisions) != 1 || revisions[0].Revision != 1 {
+		t.Fatalf("qualified revisions = %+v", revisions)
+	}
+
+	if _, err := store.Archive("project/shared.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.Read("project/shared.md"); ok {
+		t.Fatal("qualified archive left project fact active")
+	}
+	if got, ok := store.Read("global/shared.md"); !ok || got.ID != global.Memory.ID || got.Revision != 2 {
+		t.Fatalf("qualified archive disturbed global fact: %+v, ok=%v", got, ok)
+	}
+}
+
+func TestStoreV2RejectsConflictingQualifiedReferenceScope(t *testing.T) {
+	root := t.TempDir()
+	store := Store{Dir: filepath.Join(root, "project"), GlobalDir: filepath.Join(root, "global")}
+	_, err := store.SaveWithOptions(Memory{
+		Name: "global/fact.md", Scope: FactScopeProject, Description: "conflict", Body: "body",
+	}, SaveOptions{})
+	if err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("conflicting qualified reference error = %v", err)
+	}
+	if len(store.ListAll()) != 0 {
+		t.Fatalf("conflicting reference wrote a fact: %+v", store.ListAll())
+	}
+}
+
 func TestStoreV2RestoreArchivedPreservesIdentityAndCreatesRevision(t *testing.T) {
 	store := Store{Dir: t.TempDir()}
 	first, err := store.SaveWithOptions(Memory{Name: "fact", Description: "first", Body: "v1"}, SaveOptions{})

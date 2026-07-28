@@ -244,7 +244,8 @@ reasonix --allowed-tools "Bash(go test ./...)" --allowed-tools read_file
 `ask`、`manual`、`acceptEdits` 保留 run 自主性，放行普通审批决策；`auto` 仍自动批准
 普通 fallback，但对命中显式 ask 规则的命令改为拒绝，而不是无人值守地执行；`dontAsk`
 拒绝；`bypassPermissions` 执行一切，仅始终需要人工新鲜批准的工具（记忆、plan、沙箱
-逃逸、受管配置写入）除外。
+逃逸、受管配置写入）除外。在所有模式下，拥有当前项目 store 的顶层 controller 仍可创建
+有界、非敏感、create-only 的 project/reference 记忆；其他记忆变更在无人确认时仍会被拒绝。
 
 ## 附加目录
 

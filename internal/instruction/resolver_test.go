@@ -127,6 +127,89 @@ func TestResolveImportsAreProvenancedDeduplicatedAndConfined(t *testing.T) {
 	}
 }
 
+func TestResolveRejectsDirectInstructionSymlinkOutsideBoundary(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	mustWriteInstruction(t, filepath.Join(outside, "private.md"), "MACHINE-LOCAL SECRET")
+	if err := os.Symlink(filepath.Join(outside, "private.md"), filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	got := Resolve(ResolveOptions{WorkspaceRoot: root, TargetDir: root})
+	if len(got.Documents) != 0 {
+		t.Fatalf("documents = %+v, want external symlink excluded", got.Documents)
+	}
+	if len(got.Diagnostics) != 1 || got.Diagnostics[0].Code != "document_symlink_escape" {
+		t.Fatalf("diagnostics = %+v, want document_symlink_escape", got.Diagnostics)
+	}
+	if strings.Contains(documentBodies(got.Documents), "MACHINE-LOCAL SECRET") {
+		t.Fatal("external symlink content entered provider-visible instructions")
+	}
+}
+
+func TestResolveAllowsDirectInstructionSymlinkWithinBoundary(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "docs", "agent-rules.md")
+	mustWriteInstruction(t, target, "Run the focused tests.")
+	if err := os.Symlink(target, filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	got := Resolve(ResolveOptions{WorkspaceRoot: root, TargetDir: root})
+	if len(got.Documents) != 1 || got.Documents[0].Body != "Run the focused tests." {
+		t.Fatalf("documents = %+v, want in-boundary symlink loaded", got.Documents)
+	}
+	if len(got.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %+v, want none", got.Diagnostics)
+	}
+}
+
+func TestInstructionBlockIsStableAcrossWorkspaceRoots(t *testing.T) {
+	resolve := func(base string) string {
+		root := filepath.Join(base, "repo")
+		target := filepath.Join(root, "services", "api")
+		user := filepath.Join(base, "reasonix-home")
+		mustWriteInstruction(t, filepath.Join(user, "AGENTS.md"), "Use concise replies.")
+		mustWriteInstruction(t, filepath.Join(root, "AGENTS.md"), "Run all tests.")
+		mustWriteInstruction(t, filepath.Join(target, "AGENTS.local.md"), "Run API tests first.")
+		return Block(Resolve(ResolveOptions{WorkspaceRoot: root, TargetDir: target, UserDir: user}).Documents)
+	}
+
+	firstRoot := t.TempDir()
+	secondRoot := t.TempDir()
+	first := resolve(firstRoot)
+	second := resolve(secondRoot)
+	if first != second {
+		t.Fatalf("provider instruction bytes changed across roots:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+	for _, privateRoot := range []string{firstRoot, secondRoot} {
+		if strings.Contains(first, privateRoot) || strings.Contains(second, privateRoot) {
+			t.Fatalf("provider instructions exposed machine-local root %q", privateRoot)
+		}
+	}
+	for _, want := range []string{"user/AGENTS.md", "workspace/AGENTS.md", "workspace/services/api/AGENTS.local.md", "applies to workspace/services/api"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("provider instructions missing stable label %q:\n%s", want, first)
+		}
+	}
+}
+
+func TestInstructionBlockDerivesWorkspaceRootFromNestedDocument(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "services", "api")
+	mustWriteInstruction(t, filepath.Join(target, "AGENTS.md"), "Run API tests first.")
+
+	block := Block(Resolve(ResolveOptions{WorkspaceRoot: root, TargetDir: target}).Documents)
+	for _, want := range []string{"workspace/services/api/AGENTS.md", "applies to workspace/services/api"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("provider instructions missing nested label %q:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, root) {
+		t.Fatalf("provider instructions exposed machine-local root %q:\n%s", root, block)
+	}
+}
+
 func TestImportTargetClassification(t *testing.T) {
 	for _, tc := range []struct {
 		line string
