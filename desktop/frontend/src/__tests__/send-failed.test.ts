@@ -292,10 +292,13 @@ eq(
   "runtime profile transitions keep submit behind the controller-ready gate",
 );
 eq(
-  appSource.includes("activateGoalAndSubmitOnTab({") &&
+    appSource.includes("activateGoalAndSubmitOnTab({") &&
     appSource.includes("tabId: sourceTabId") &&
     appSource.includes("target: sourceTarget") &&
-    appSource.includes("target ? { goal: nextGoal, target } : undefined"),
+    appSource.includes("target ? {") &&
+    appSource.includes("goal: nextGoal") &&
+    appSource.includes("collaborationMode: controllerComposerProfileCollaborationMode(composerProfile)") &&
+    appSource.includes("toolApprovalMode,"),
   true,
   "initial Goal activation captures the submission tab and workbench target",
 );

@@ -87,7 +87,7 @@ ok(
   "mode shortcut routes through the rejection handler",
 );
 ok(
-  /if \(goal\.trim\(\)\) runGoalAction\(\(\) => setControllerGoal\(goal\)\)/.test(appSource),
+  /runGoalAction\(async \(\) => \{[\s\S]{0,260}setControllerComposerProfileForTab\([\s\S]{0,260}propagateError: true/.test(appSource),
   "background Goal resync routes through the rejection handler",
 );
 ok(appSource.includes("onClearGoal={clearGoalFromUi}"), "Composer Stop Goal routes through the rejection handler");

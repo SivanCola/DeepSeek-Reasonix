@@ -168,10 +168,12 @@ export interface AppBindings {
     display: string,
     input: string,
     invocations: InvocationRequest[],
+    collaborationMode: string,
+    toolApprovalMode: string,
     targetKind: string,
     targetIdentityGen: number,
     targetRequestSeq: number,
-  ): Promise<void>;
+  ): Promise<string[]>;
   SubmitEditedDisplayToTab(tabID: string, display: string, input: string, original: string): Promise<void>;
   RunShell(command: string): Promise<void>;
   RunShellForTab(tabID: string, command: string): Promise<void>;
@@ -202,6 +204,9 @@ export interface AppBindings {
   SetToolApprovalMode(mode: string): Promise<void>;
   // Same drained-prompt-id contract as SetModeForTab.
   SetToolApprovalModeForTab(tabID: string, mode: string): Promise<string[] | void>;
+  // Atomically applies the controller-facing composer profile and reports any
+  // approval prompts drained by the resulting tool-approval posture.
+  SetComposerProfileForTab(tabID: string, collaborationMode: string, toolApprovalMode: string, goal: string): Promise<string[] | void>;
   SetGoal(goal: string): Promise<void>;
   SetGoalForTab(tabID: string, goal: string): Promise<void>;
   ResumeGoalForTab(tabID: string): Promise<boolean>;
@@ -2434,17 +2439,20 @@ function makeMockApp(): AppBindings {
           display,
           input,
           invocations,
+          _collaborationMode,
+          _toolApprovalMode,
           _targetKind,
           _targetIdentityGen,
           _targetRequestSeq,
         ) {
-          await withMockTabScope(_tabID, async () => {
+          return await withMockTabScope(_tabID, async () => {
             await this.SetGoalForTab(_tabID, goal);
             if (invocations.length > 0) {
               await this.SubmitInvocationsToTab(_tabID, display, input, invocations);
-              return;
+              return [];
             }
             await this.SubmitDisplayToTab(_tabID, display, input);
+            return [];
           });
         },
         async SubmitEditedDisplayToTab(_tabID, display, input, _original) {
@@ -2594,6 +2602,26 @@ function makeMockApp(): AppBindings {
               : tab,
           );
           return drainMockApprovalPreviews(next);
+        },
+        async SetComposerProfileForTab(tabID, collaborationMode, toolApprovalMode, goal) {
+          const nextCollaboration = normalizeCollaborationMode(collaborationMode);
+          const nextToolApproval = normalizeToolApprovalMode(toolApprovalMode);
+          const nextGoal = goal.trim();
+          settings.autoApproveTools = nextToolApproval === "yolo";
+          settings.bypass = nextToolApproval === "yolo";
+          mockTabs = mockTabs.map((tab) => {
+            if (tab.id !== tabID) return tab;
+            const plan = !nextGoal && nextCollaboration === "plan";
+            return {
+              ...tab,
+              collaborationMode: nextGoal ? "goal" : plan ? "plan" : "normal",
+              toolApprovalMode: nextToolApproval,
+              goal: nextGoal,
+              goalStatus: nextGoal ? "running" : "stopped",
+              mode: modeWithAutoApproveTools(modeWithPlan(normalizeMode(tab.mode), plan), nextToolApproval === "yolo"),
+            };
+          });
+          return drainMockApprovalPreviews(nextToolApproval);
         },
         async SetGoal(goal) {
           const active = mockTabs.find((tab) => tab.active);

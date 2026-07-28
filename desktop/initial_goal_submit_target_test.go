@@ -16,6 +16,11 @@ type initialGoalSubmitRecorder struct {
 	invocations []control.InvocationRequest
 }
 
+func (r *initialGoalSubmitRecorder) SubmitDisplay(display, input string) {
+	r.display = display
+	r.input = input
+}
+
 func (r *initialGoalSubmitRecorder) SubmitInvocationDisplay(
 	display, input string,
 	invocations []control.InvocationRequest,
@@ -53,12 +58,14 @@ func TestSubmitInitialGoalRejectsStaleRemoteTargetWithoutTouchingLocalTab(t *tes
 	beforeControllerGoal := ctrl.Goal()
 	beforeGoalStatus := ctrl.GoalStatus()
 	beforeHistoryLen := len(ctrl.History())
-	err = app.SubmitInitialGoalToTab(
+	_, err = app.SubmitInitialGoalToTab(
 		tab.ID,
 		"replacement goal",
 		"/ui-ux-pro-max replacement goal",
 		"replacement goal",
 		[]InvocationRequest{{Name: "ui-ux-pro-max", Kind: "skill"}},
+		"normal",
+		"ask",
 		string(active.Kind),
 		identityGen,
 		requestSeq,
@@ -89,12 +96,14 @@ func TestSubmitInitialGoalAcceptsCurrentLocalTarget(t *testing.T) {
 	tab.Ctrl = recorder
 
 	active, identityGen, requestSeq := app.workbench().targets.Active()
-	err := app.SubmitInitialGoalToTab(
+	_, err := app.SubmitInitialGoalToTab(
 		tab.ID,
 		"ship the fix",
 		"/ui-ux-pro-max ship the fix",
 		"ship the fix",
 		[]InvocationRequest{{Name: "ui-ux-pro-max", Kind: "skill", Offset: 4}},
+		"normal",
+		"ask",
 		string(active.Kind),
 		identityGen,
 		requestSeq,
@@ -116,6 +125,41 @@ func TestSubmitInitialGoalAcceptsCurrentLocalTarget(t *testing.T) {
 	}
 	if got := recorder.invocations[0]; got.Name != "ui-ux-pro-max" || got.Kind != "skill" || got.Offset != 4 {
 		t.Fatalf("recorded invocation = %+v", got)
+	}
+}
+
+func TestSubmitInitialGoalAppliesToolApprovalProfileBeforeSubmit(t *testing.T) {
+	app := testAppWithOrderedTabs(t, "a", "a")
+	ctrl := control.New(control.Options{Label: "test"})
+	defer ctrl.Close()
+	recorder := &initialGoalSubmitRecorder{SessionAPI: ctrl}
+	tab := app.tabs["a"]
+	tab.Ctrl = recorder
+
+	active, identityGen, requestSeq := app.workbench().targets.Active()
+	_, err := app.SubmitInitialGoalToTab(
+		tab.ID,
+		"ship with YOLO",
+		"ship with YOLO",
+		"ship with YOLO",
+		nil,
+		"normal",
+		string(control.ToolApprovalYolo),
+		string(active.Kind),
+		identityGen,
+		requestSeq,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tab.toolApprovalMode != string(control.ToolApprovalYolo) {
+		t.Fatalf("tab approval mode = %q, want %q", tab.toolApprovalMode, control.ToolApprovalYolo)
+	}
+	if got := recorder.ToolApprovalMode(); got != string(control.ToolApprovalYolo) {
+		t.Fatalf("controller approval mode = %q, want %q", got, control.ToolApprovalYolo)
+	}
+	if recorder.input != "ship with YOLO" {
+		t.Fatalf("recorded input = %q, want first Goal input", recorder.input)
 	}
 }
 

@@ -168,6 +168,9 @@ type App struct {
 	// runtimeMutationBeforeLockHook is test-only. Set it before starting concurrent
 	// calls and never mutate it afterward.
 	runtimeMutationBeforeLockHook func(string)
+	// modelSwitchTimingHook is test-only. Production diagnostics use the same
+	// sanitized timing record through debug logging.
+	modelSwitchTimingHook func(modelSwitchTiming)
 	// rebindCandidateHook is test-only. It exposes deterministic transaction
 	// boundaries without weakening the production lock order. Set it before
 	// starting a rebind and never mutate it until that rebind returns.
@@ -1249,32 +1252,34 @@ func workbenchTargetChangedErr() error {
 }
 
 func (a *App) submitInitialGoalToLocalTab(
-	tabID, goal, display, input string,
+	tabID, toolApprovalMode, goal, display, input string,
 	invocations []InvocationRequest,
-) error {
+) ([]string, error) {
 	admission, ctrl, err := a.beginTabTurn(tabID, true)
 	if err != nil {
-		return err
+		return []string{}, err
 	}
 	defer admission.abort()
 
 	tab := admission.tab
+	toolApprovalMode = normalizeToolApprovalMode(toolApprovalMode)
 	goal = strings.TrimSpace(goal)
 	if goal == "" {
-		return fmt.Errorf("goal is required")
+		return []string{}, fmt.Errorf("goal is required")
 	}
-	approvalMode := a.tabRuntimeSnapshot(tab).currentToolApprovalMode()
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
-		return a.workspaceNotReadyErr(nil)
+		return []string{}, a.workspaceNotReadyErr(nil)
 	}
+	tab.toolApprovalMode = toolApprovalMode
 	tab.goal = goal
-	tab.mode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
+	tab.mode = tabModeFromAxes(false, toolApprovalMode == control.ToolApprovalYolo)
 	a.saveTabsLocked()
 	a.mu.Unlock()
 
 	ctrl.SetPlanMode(false)
+	drained := applyTabToolApprovalModeToController(ctrl, toolApprovalMode)
 	syncTabGoalToController(ctrl, goal)
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	if len(invocations) > 0 {
@@ -1283,7 +1288,7 @@ func (a *App) submitInitialGoalToLocalTab(
 		ctrl.SubmitDisplay(display, input)
 	}
 	admission.finish(ctrl)
-	return nil
+	return drained, nil
 }
 
 // SubmitInitialGoalToTab keeps Goal activation and the first turn on the
@@ -1293,9 +1298,10 @@ func (a *App) submitInitialGoalToLocalTab(
 func (a *App) SubmitInitialGoalToTab(
 	tabID, goal, display, input string,
 	invocations []InvocationRequest,
+	collaborationMode, toolApprovalMode string,
 	targetKind string,
 	targetIdentityGen, targetRequestSeq uint64,
-) error {
+) ([]string, error) {
 	k := a.workbench()
 	k.transitionMu.Lock()
 	active, identityGen, requestSeq := k.targets.Active()
@@ -1305,29 +1311,40 @@ func (a *App) SubmitInitialGoalToTab(
 		identityGen != targetIdentityGen ||
 		requestSeq != targetRequestSeq {
 		k.transitionMu.Unlock()
-		return workbenchTargetChangedErr()
+		return []string{}, workbenchTargetChangedErr()
 	}
 
 	if active.Kind == target.KindLocal {
-		err := a.submitInitialGoalToLocalTab(tabID, goal, display, input, invocations)
+		drained, err := a.submitInitialGoalToLocalTab(
+			tabID, toolApprovalMode, goal, display, input, invocations,
+		)
 		k.transitionMu.Unlock()
-		return err
+		return drained, err
 	}
 
 	cli, _, _, remoteTabID, ok := a.activeRemoteWorkbench()
 	if !ok || remoteTabID != tabID {
 		k.transitionMu.Unlock()
-		return workbenchTargetChangedErr()
+		return []string{}, workbenchTargetChangedErr()
 	}
 	goal = strings.TrimSpace(goal)
 	input = strings.TrimSpace(input)
 	if goal == "" || input == "" {
 		k.transitionMu.Unlock()
-		return fmt.Errorf("goal and input are required")
+		return []string{}, fmt.Errorf("goal and input are required")
 	}
 	ctx, cancel := context.WithTimeout(a.bootContext(), 30*time.Second)
 	defer cancel()
-	_, err := cli.Request(ctx, string(protocol.MethodSessionGoalSet), protocol.SessionGoalSetParams{Goal: goal})
+	remoteCollaboration := protocol.CollaborationMode(normalizeCollaborationMode(collaborationMode))
+	remoteApproval := protocol.ToolApprovalMode(normalizeToolApprovalMode(toolApprovalMode))
+	remoteGoal := goal
+	_, err := cli.Request(ctx, string(protocol.MethodSessionProfileSet), protocol.SessionProfileSetParams{
+		Patch: protocol.ProfilePatch{
+			CollaborationMode: &remoteCollaboration,
+			ToolApprovalMode:  &remoteApproval,
+			Goal:              &remoteGoal,
+		},
+	})
 	if err == nil {
 		_, err = cli.Request(ctx, string(protocol.MethodSessionSubmit), protocol.SessionSubmitParams{
 			Input: input, DisplayText: display, Invocations: protocolInvocationRequests(invocations),
@@ -1337,10 +1354,11 @@ func (a *App) SubmitInitialGoalToTab(
 	k.transitionMu.Unlock()
 	if err != nil {
 		a.warnForTab(remoteTabID, err.Error())
-		return err
+		go a.workbenchRefreshSnapshot(generation, remoteTabID)
+		return []string{}, err
 	}
 	go a.workbenchRefreshSnapshot(generation, remoteTabID)
-	return nil
+	return []string{}, nil
 }
 
 func (a *App) SubmitEditedDisplayToTab(tabID, display, input, original string) error {
@@ -1941,6 +1959,73 @@ func (a *App) SetCollaborationMode(mode string) {
 	a.SetCollaborationModeForTab("", mode)
 }
 
+// SetComposerProfileForTab applies the controller-facing profile axes under one
+// turn gate. Frontends use this before submit and after controller rebuilds so a
+// turn cannot observe collaboration, approval, and goal from different UI
+// generations.
+func (a *App) SetComposerProfileForTab(tabID, collaborationMode, toolApprovalMode, goal string) ([]string, error) {
+	collaborationMode = normalizeCollaborationMode(collaborationMode)
+	toolApprovalMode = normalizeToolApprovalMode(toolApprovalMode)
+	goal = strings.TrimSpace(goal)
+
+	remoteCollaboration := protocol.CollaborationMode(collaborationMode)
+	remoteApproval := protocol.ToolApprovalMode(toolApprovalMode)
+	remoteGoal := goal
+	if handled, err := a.workbenchSetProfile(protocol.ProfilePatch{
+		CollaborationMode: &remoteCollaboration,
+		ToolApprovalMode:  &remoteApproval,
+		Goal:              &remoteGoal,
+	}); handled {
+		if err != nil {
+			a.warnForTab(tabID, err.Error())
+			return []string{}, err
+		}
+		return []string{}, nil
+	}
+
+	tab := a.tabByID(tabID)
+	if tab == nil {
+		return []string{}, fmt.Errorf("tab is no longer available")
+	}
+	tab.turnStartMu.Lock()
+	defer tab.turnStartMu.Unlock()
+
+	a.mu.Lock()
+	if a.tabs[tab.ID] != tab {
+		a.mu.Unlock()
+		return []string{}, fmt.Errorf("tab is no longer available")
+	}
+	tab.toolApprovalMode = toolApprovalMode
+	if goal != "" {
+		tab.goal = goal
+		tab.mode = tabModeFromAxes(false, toolApprovalMode == control.ToolApprovalYolo)
+	} else {
+		tab.goal = ""
+		tab.mode = tabModeFromAxes(collaborationMode == "plan", toolApprovalMode == control.ToolApprovalYolo)
+	}
+	ctrl := tab.Ctrl
+	mode := tab.mode
+	goal = tab.goal
+	tabIDForSave := tab.ID
+	a.mu.Unlock()
+
+	if ctrl != nil {
+		ctrl.SetPlanMode(tabModeHasPlan(mode))
+	}
+	drained := applyTabToolApprovalModeToController(ctrl, toolApprovalMode)
+	syncTabGoalToController(ctrl, goal)
+
+	a.mu.Lock()
+	if a.tabs[tabIDForSave] == tab {
+		a.saveTabsLocked()
+	}
+	a.mu.Unlock()
+	if drained == nil {
+		return []string{}, nil
+	}
+	return drained, nil
+}
+
 func (a *App) SetCollaborationModeForTab(tabID, mode string) {
 	remoteMode := protocol.CollaborationMode(normalizeCollaborationMode(mode))
 	if handled, _ := a.workbenchSetProfile(protocol.ProfilePatch{CollaborationMode: &remoteMode}); handled {
@@ -2155,7 +2240,7 @@ func (a *App) NewSessionForTab(tabID string) error {
 	a.assignFreshSessionTopic(tab)
 	a.persistTabSessionPath(tab, ctrl.SessionPath())
 	a.invalidatePromptHistoryCache()
-	a.emitProjectTreeChanged()
+	a.emitProjectTreeChangedForSessionDirs(ctrl.SessionDir())
 	return nil
 }
 
@@ -2216,8 +2301,9 @@ func (a *App) ensureTabTopicIndexedForUserTurn(tab *WorkspaceTab) {
 
 	_ = ensureTopicIndexed(scope, workspaceRoot, topicID, defaultTopicTitle, topicTitleSourceAuto)
 	_ = setTopicCreatedAt(topicTitleRoot(scope, workspaceRoot), topicID, time.Now().UnixMilli())
-	a.persistTabSessionPath(tab, a.currentSessionPathFor(tab))
-	a.emitProjectTreeChanged()
+	path := a.currentSessionPathFor(tab)
+	a.persistTabSessionPath(tab, path)
+	a.emitProjectTreeChangedForSessionDirs(sessionListCacheDirForPath(path))
 }
 
 func messagesHaveConversationContent(messages []provider.Message) bool {
@@ -2403,7 +2489,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		newCtrl.Close()
 		tab.releaseSessionLease()
 		oldCtrl.CloseAfterDestroy()
-		a.emitProjectTreeChanged()
+		a.emitProjectTreeChangedForSessionDirs(newCtrl.SessionDir())
 		return fmt.Errorf("tab %q changed while clearing the session", tab.ID)
 	}
 	tab.Ctrl = newCtrl
@@ -2424,7 +2510,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	tab.resetTelemetry(path)
 	a.persistTabSessionPath(tab, path)
 	oldCtrl.CloseAfterDestroy()
-	a.emitProjectTreeChanged()
+	a.emitProjectTreeChangedForSessionDirs(newCtrl.SessionDir())
 	a.notifyTabRuntimeRebuilt(tab)
 	return nil
 }
@@ -2744,7 +2830,7 @@ func (a *App) ForkForTab(tabID string, turn int) (TabMeta, error) {
 	meta := a.tabMeta(tab, activateFork)
 	a.mu.Unlock()
 
-	a.emitProjectTreeChanged()
+	a.emitProjectTreeChangedForSessionDirs(sessionListCacheDirForPath(newPath))
 	a.startTabControllerBuild(tab)
 	return meta, nil
 }
@@ -3185,7 +3271,7 @@ func (a *App) deleteSession(path string, requireRedundantRecovery bool) error {
 			return err
 		}
 	}
-	a.emitProjectTreeChanged()
+	a.emitProjectTreeChangedForSessionDirs(dir)
 	a.invalidatePromptHistoryCache()
 	return nil
 }
@@ -3655,7 +3741,7 @@ func (a *App) restoreSession(path string) error {
 	if err := restoreSessionTopicIndex(dir, target); err != nil {
 		return err
 	}
-	a.emitProjectTreeChanged()
+	a.emitProjectTreeChangedForSessionDirs(dir)
 	a.invalidatePromptHistoryCache()
 	return nil
 }
@@ -3752,7 +3838,7 @@ func (a *App) RenameSession(path, title string) error {
 		return err
 	}
 	a.invalidatePromptHistoryCache()
-	a.emitProjectTreeChanged()
+	a.emitProjectTreeChangedForSessionDirs(dir)
 	return nil
 }
 
@@ -5009,7 +5095,8 @@ func (a *App) RemoveWorkspace(dir string) error {
 			clearWorkspace()
 		}
 	}
-	a.emitProjectTreeChanged()
+	projectSessionCache.forgetDirs(desktopSessionDir(dir))
+	a.emitProjectTreeMetadataChanged()
 	return nil
 }
 
@@ -9267,7 +9354,19 @@ func (a *App) SetModel(name string) error {
 	return a.SetModelForTab("", name)
 }
 
-func (a *App) SetModelForTab(tabID, name string) error {
+type modelSwitchTiming struct {
+	Total          time.Duration
+	LockWait       time.Duration
+	Prepare        time.Duration
+	Config         time.Duration
+	Snapshot       time.Duration
+	Build          time.Duration
+	LeaseAndResume time.Duration
+	SwapAndPersist time.Duration
+	Outcome        string
+}
+
+func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	if strings.TrimSpace(name) != "" {
 		if handled, err := a.workbenchSetProfile(protocol.ProfilePatch{Model: &name}); handled {
 			return err
@@ -9286,11 +9385,40 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if name == currentModel {
 		return nil
 	}
+	timing := modelSwitchTiming{}
+	totalStarted := time.Now()
+	defer func() {
+		timing.Total = time.Since(totalStarted)
+		if retErr != nil {
+			timing.Outcome = "failed"
+		} else {
+			timing.Outcome = "ok"
+		}
+		slog.Debug(
+			"desktop: model switch timing",
+			"tab", tab.ID,
+			"outcome", timing.Outcome,
+			"total_ms", timing.Total.Milliseconds(),
+			"lock_wait_ms", timing.LockWait.Milliseconds(),
+			"prepare_ms", timing.Prepare.Milliseconds(),
+			"config_ms", timing.Config.Milliseconds(),
+			"snapshot_ms", timing.Snapshot.Milliseconds(),
+			"build_ms", timing.Build.Milliseconds(),
+			"lease_resume_ms", timing.LeaseAndResume.Milliseconds(),
+			"swap_persist_ms", timing.SwapAndPersist.Milliseconds(),
+		)
+		if a.modelSwitchTimingHook != nil {
+			a.modelSwitchTimingHook(timing)
+		}
+	}()
 	// Same build+swap shape as rebuildSetting; hold the same lock so a settings
 	// rebuild (manual or from the deferred-rebuild retry loop) and a model
 	// switch cannot interleave on one tab.
+	stageStarted := time.Now()
 	a.runtimeRebuildMu.Lock()
+	timing.LockWait = time.Since(stageStarted)
 	defer a.runtimeRebuildMu.Unlock()
+	stageStarted = time.Now()
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
 	prevPath := a.reconciledSessionPathForTab(tab)
@@ -9319,9 +9447,11 @@ func (a *App) SetModelForTab(tabID, name string) error {
 			return rebuildControllerActiveWorkError("model")
 		}
 	}
+	timing.Prepare = time.Since(stageStarted)
 	// Snapshot the tab profile under a.mu: SetModeForTab/SetGoalForTab and the
 	// event sink write these fields under the lock while this rebuild runs
 	// off-lock.
+	stageStarted = time.Now()
 	snap := a.tabRuntimeSnapshot(tab)
 	runtime := snap.normalizedRuntime()
 	cfg, err := config.LoadForRoot(snap.workspaceRoot)
@@ -9345,7 +9475,9 @@ func (a *App) SetModelForTab(tabID, name string) error {
 			effortOverride = &normalized
 		}
 	}
+	timing.Config = time.Since(stageStarted)
 
+	stageStarted = time.Now()
 	var carried []provider.Message
 	oldCtrl := a.controllerForTab(tab)
 	if oldCtrl != nil {
@@ -9361,11 +9493,13 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		prevPath = sessionPathAfterSnapshot(oldCtrl, prevPath)
 		carried = oldCtrl.History()
 	}
+	timing.Snapshot = time.Since(stageStarted)
 
 	// Preserve the shared plugin host across controller rebuilds — the tab
 	// stays in the same workspace root, so MCP processes must not be restarted.
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 
+	stageStarted = time.Now()
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    name,
 		RequireKey:               false,
@@ -9383,9 +9517,11 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	if err != nil {
 		return err
 	}
+	timing.Build = time.Since(stageStarted)
 	a.bindControllerDisplayRecorder(newCtrl)
 	configureControllerRuntime(newCtrl, oldCtrl, runtime)
 
+	stageStarted = time.Now()
 	path := agent.ContinueSessionPath(prevPath, newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, "model"); err != nil {
 		newCtrl.Close()
@@ -9396,6 +9532,8 @@ func (a *App) SetModelForTab(tabID, name string) error {
 		newCtrl.Close()
 		return err
 	}
+	timing.LeaseAndResume = time.Since(stageStarted)
+	stageStarted = time.Now()
 	a.mu.Lock()
 	if current := a.tabs[tab.ID]; current != tab {
 		// The tab was closed/replaced while we built the new controller off-lock;
@@ -9423,6 +9561,7 @@ func (a *App) SetModelForTab(tabID, name string) error {
 	a.clearDeferredRebuild(tab.ID)
 	a.persistTabSessionPath(tab, path)
 	a.notifyTabRuntimeRebuilt(tab)
+	timing.SwapAndPersist = time.Since(stageStarted)
 	return nil
 }
 

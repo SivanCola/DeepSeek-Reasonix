@@ -149,19 +149,22 @@ window.go = {
         display: string,
         _input: string,
         invocations: { name: string }[],
+        collaborationMode: string,
+        toolApprovalMode: string,
         targetKind: string,
         targetIdentityGen: number,
         targetRequestSeq: number,
-      ) => {
+      ): Promise<string[]> => {
         await goalGate;
         initialGoalCalls.push(
-          `${tabID}:${goal}:${display}:${invocations[0]?.name ?? ""}:${targetKind}:${targetIdentityGen}:${targetRequestSeq}`,
+          `${tabID}:${goal}:${display}:${invocations[0]?.name ?? ""}:${collaborationMode}:${toolApprovalMode}:${targetKind}:${targetIdentityGen}:${targetRequestSeq}`,
         );
         tabs = tabs.map((tab) =>
           tab.id === tabID
             ? { ...tab, goal, collaborationMode: goal ? "goal" : "normal" }
             : tab,
         );
+        return [];
       },
       SubmitInvocationsToTab: async () => {
         throw new Error("split SubmitInvocationsToTab must not be used for initial Goals");
@@ -207,7 +210,12 @@ const pending = activateGoalAndSubmitOnTab({
   sendToTab: (tabId, goal, display, submit, structured, target) => {
     if (!controller) throw new Error("controller missing");
     if (!target) throw new Error("target missing");
-    return controller.sendToTab(tabId, display, submit, undefined, structured, { goal, target });
+    return controller.sendToTab(tabId, display, submit, undefined, structured, {
+      goal,
+      target,
+      collaborationMode: "normal",
+      toolApprovalMode: "ask",
+    });
   },
 });
 
@@ -227,7 +235,7 @@ await act(async () => {
 
 eq(
   initialGoalCalls.join("|"),
-  "tab-a:Cross-tab safe goal:/ui-ux-pro-max Cross-tab safe goal:ui-ux-pro-max:ssh:7:11",
+  "tab-a:Cross-tab safe goal:/ui-ux-pro-max Cross-tab safe goal:ui-ux-pro-max:normal:ask:ssh:7:11",
   "atomic Goal submit kept source tab A and its Remote target token",
 );
 eq(initialGoalCalls.length, 1, "atomic Goal submit ran once");
@@ -258,7 +266,12 @@ await act(async () => {
         invocations: [{ name: "ui-ux-pro-max", kind: "skill", offset: 0 }],
       },
       sendToTab: (tabId, goal, display, submit, structured, target) =>
-        controller!.sendToTab(tabId, display, submit, undefined, structured, { goal, target: target! }),
+        controller!.sendToTab(tabId, display, submit, undefined, structured, {
+          goal,
+          target: target!,
+          collaborationMode: "normal",
+          toolApprovalMode: "ask",
+        }),
     });
   } catch (error) {
     activationFailed = error instanceof Error && error.message.includes("workbench target changed");
