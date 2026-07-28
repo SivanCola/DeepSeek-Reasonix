@@ -143,7 +143,7 @@ func TestDesktopNewSessionDefaultsHonorExplicitAsk(t *testing.T) {
 		t.Fatalf("save user config: %v", err)
 	}
 
-	_, approvalMode := desktopNewSessionDefaults()
+	_, approvalMode := desktopNewSessionDefaults("global", "")
 	if approvalMode != control.ToolApprovalAsk {
 		t.Fatalf("explicit desktop approval default = %q, want ask", approvalMode)
 	}
@@ -181,7 +181,7 @@ func TestDesktopNewSessionDefaultsSkipsKeylessDefaultModel(t *testing.T) {
 		t.Fatalf("save user config: %v", err)
 	}
 
-	model, _ := desktopNewSessionDefaults()
+	model, _ := desktopNewSessionDefaults("global", "")
 	if model != "test-prov/test-model" {
 		t.Fatalf("new session model = %q, want fallback to configured provider test-prov/test-model", model)
 	}
@@ -199,7 +199,7 @@ func TestDesktopNewSessionDefaultsKeepsConfiguredDefaultModel(t *testing.T) {
 		t.Fatalf("save user config: %v", err)
 	}
 
-	model, _ := desktopNewSessionDefaults()
+	model, _ := desktopNewSessionDefaults("global", "")
 	if model != "deepseek-pro/deepseek-v4-pro" {
 		t.Fatalf("new session model = %q, want configured default verbatim", model)
 	}
@@ -219,8 +219,50 @@ func TestDesktopNewSessionDefaultsKeepsKeylessDefaultWhenNothingConfigured(t *te
 
 	// With no configured provider at all, the raw default must survive so the
 	// boot-time missing-key notice still tells the user what to fix.
-	model, _ := desktopNewSessionDefaults()
+	model, _ := desktopNewSessionDefaults("global", "")
 	if model != "deepseek-pro/deepseek-v4-pro" {
 		t.Fatalf("new session model = %q, want raw keyless default preserved", model)
+	}
+}
+
+func TestDesktopNewSessionDefaultsUsesProjectDefaultAndSkipsItsKeylessProvider(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	seedUserCredentials(t, "REASONIX_TEST_SESSION_KEY=test-key\n")
+
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	userCfg.Providers = append(userCfg.Providers, config.ProviderEntry{
+		Name:      "test-prov",
+		Kind:      "openai",
+		BaseURL:   "https://example.com",
+		Model:     "test-model",
+		APIKeyEnv: "REASONIX_TEST_SESSION_KEY",
+	})
+	if err := userCfg.SetDefaultModel("test-prov/test-model"); err != nil {
+		t.Fatalf("SetDefaultModel: %v", err)
+	}
+	if err := userCfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save user config: %v", err)
+	}
+
+	workspace := robustTempDir(t)
+	if err := os.WriteFile(filepath.Join(workspace, "reasonix.toml"), []byte(`default_model = "deepseek-pro/deepseek-v4-pro"
+`), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	app := NewApp()
+	meta, err := app.EnsureBlankTab("project", workspace)
+	if err != nil {
+		t.Fatalf("EnsureBlankTab: %v", err)
+	}
+	created := app.tabs[meta.ID]
+	if created == nil {
+		t.Fatalf("new tab %q missing from app.tabs", meta.ID)
+	}
+	if created.model != "test-prov/test-model" {
+		t.Fatalf("new project session model = %q, want configured fallback test-prov/test-model", created.model)
+	}
+	if !strings.Contains(filepath.Base(created.SessionPath), "test-model") {
+		t.Fatalf("new project session path = %q, want filename seeded by fallback model", created.SessionPath)
 	}
 }

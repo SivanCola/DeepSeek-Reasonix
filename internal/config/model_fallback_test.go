@@ -107,6 +107,34 @@ func TestResolveModelWithFallbackHonorsDefaultModel(t *testing.T) {
 	}
 }
 
+func TestResolveDesktopNewSessionModelFiltersUnavailableAndNonChatProviders(t *testing.T) {
+	c := &Config{
+		DefaultModel: "hidden/chat",
+		Desktop:      DesktopConfig{ProviderAccess: []string{"audio", "visible"}},
+		Providers: []ProviderEntry{
+			{Name: "hidden", BaseURL: "https://hidden.example.com", Model: "chat", APIKeyEnv: "KEY", resolvedAPIKey: "sk-test"},
+			{Name: "audio", BaseURL: "https://audio.example.com", Model: "tts-1", APIKeyEnv: "KEY", resolvedAPIKey: "sk-test"},
+			{Name: "visible", BaseURL: "https://visible.example.com", Models: []string{"text-embedding-3-small", "chat-model"}, Default: "text-embedding-3-small", APIKeyEnv: "KEY", resolvedAPIKey: "sk-test"},
+		},
+	}
+
+	got, fallback, ok := c.ResolveDesktopNewSessionModel()
+	if !ok || !fallback || got != "visible/chat-model" {
+		t.Fatalf("ResolveDesktopNewSessionModel() = (%q, %v, %v), want (visible/chat-model, true, true)", got, fallback, ok)
+	}
+}
+
+func TestResolveDesktopNewSessionModelKeepsUsableDefaultVerbatim(t *testing.T) {
+	c := testModelFallbackConfig(t)
+	c.DefaultModel = "prov-b"
+	c.Desktop.ProviderAccess = []string{"prov-b"}
+
+	got, fallback, ok := c.ResolveDesktopNewSessionModel()
+	if !ok || fallback || got != "prov-b" {
+		t.Fatalf("ResolveDesktopNewSessionModel() = (%q, %v, %v), want (prov-b, false, true)", got, fallback, ok)
+	}
+}
+
 func TestModelRefsProvider(t *testing.T) {
 	if !ModelRefsProvider("deepseek-flash", "deepseek-flash") {
 		t.Fatal("bare provider ref should match provider")

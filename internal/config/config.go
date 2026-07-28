@@ -1836,6 +1836,49 @@ func (c *Config) ResolveModelWithFallback(ref string) (resolvedRef string, fallb
 	return "", false, false
 }
 
+// ResolveDesktopNewSessionModel selects the model for a newly-created desktop
+// session. Unlike ResolveModelWithFallback, the configured default must be
+// immediately usable: its provider must be available in the desktop catalog,
+// configured, and expose the selected model as a chat model. Fallbacks apply
+// the same constraints and preserve provider order.
+func (c *Config) ResolveDesktopNewSessionModel() (resolvedRef string, fallback bool, ok bool) {
+	if c == nil {
+		return "", false, false
+	}
+	access := desktopProviderAccessMap(c.Desktop.ProviderAccess)
+	providerAllowed := func(name string) bool {
+		return len(access) == 0 || access[strings.TrimSpace(name)]
+	}
+
+	def := strings.TrimSpace(c.DefaultModel)
+	if def != "" {
+		if entry, found := c.ResolveModel(def); found &&
+			providerAllowed(entry.Name) && entry.Configured() && IsLikelyChatModel(entry.Model) {
+			return def, false, true
+		}
+	}
+
+	for i := range c.Providers {
+		p := &c.Providers[i]
+		if !providerAllowed(p.Name) || !p.Configured() {
+			continue
+		}
+		chatModels := p.ChatModelList()
+		if len(chatModels) == 0 {
+			continue
+		}
+		model := chatModels[0]
+		for _, candidate := range chatModels {
+			if candidate == p.DefaultModel() {
+				model = candidate
+				break
+			}
+		}
+		return p.Name + "/" + model, true, true
+	}
+	return "", false, false
+}
+
 // APIKey resolves the entry's API key from its api_key_env.
 func (e *ProviderEntry) APIKey() string {
 	if e == nil {

@@ -775,9 +775,15 @@ func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab
 	return a.createTabEntryWithID(scope, workspaceRoot, topicID, newTabID())
 }
 
-func desktopNewSessionDefaults() (string, string) {
-	cfg := config.LoadForEdit(config.UserConfigPath())
-	return resolveNewSessionModel(cfg), normalizeToolApprovalMode(cfg.DesktopDefaultToolApprovalMode())
+func desktopNewSessionDefaults(scope, workspaceRoot string) (string, string) {
+	userCfg := config.LoadForEdit(config.UserConfigPath())
+	modelCfg := userCfg
+	if strings.TrimSpace(scope) == "project" && strings.TrimSpace(workspaceRoot) != "" {
+		if cfg, err := config.LoadForRootReadOnly(workspaceRoot); err == nil {
+			modelCfg = cfg
+		}
+	}
+	return resolveNewSessionModel(modelCfg), normalizeToolApprovalMode(userCfg.DesktopDefaultToolApprovalMode())
 }
 
 // resolveNewSessionModel picks the model a fresh session starts on. A
@@ -790,23 +796,14 @@ func desktopNewSessionDefaults() (string, string) {
 func resolveNewSessionModel(cfg *config.Config) string {
 	def := strings.TrimSpace(cfg.DefaultModel)
 	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, def)
-	if def != "" {
-		if entry, ok := cfg.ResolveModel(def); ok && entry.Configured() {
-			return def
-		}
-	}
-	for i := range cfg.Providers {
-		p := &cfg.Providers[i]
-		if len(p.ModelList()) == 0 || !p.Configured() {
-			continue
-		}
-		return p.Name + "/" + p.DefaultModel()
+	if resolved, _, ok := cfg.ResolveDesktopNewSessionModel(); ok {
+		return resolved
 	}
 	return def
 }
 
 func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *WorkspaceTab {
-	model, toolApprovalMode := desktopNewSessionDefaults()
+	model, toolApprovalMode := desktopNewSessionDefaults(scope, workspaceRoot)
 	return &WorkspaceTab{
 		ID:               id,
 		Scope:            scope,
@@ -3434,7 +3431,7 @@ func (a *App) openTransientBlankRuntime(scope, workspaceRoot string) error {
 		}
 	}
 
-	model, toolApprovalMode := desktopNewSessionDefaults()
+	model, toolApprovalMode := desktopNewSessionDefaults(scope, actualRoot)
 	sessionPath, err := createEmptySessionFile(desktopSessionDir(actualRoot), model)
 	if err != nil {
 		return err
