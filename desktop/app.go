@@ -777,7 +777,32 @@ func (a *App) createTabEntry(scope, workspaceRoot, topicID string) *WorkspaceTab
 
 func desktopNewSessionDefaults() (string, string) {
 	cfg := config.LoadForEdit(config.UserConfigPath())
-	return strings.TrimSpace(cfg.DefaultModel), normalizeToolApprovalMode(cfg.DesktopDefaultToolApprovalMode())
+	return resolveNewSessionModel(cfg), normalizeToolApprovalMode(cfg.DesktopDefaultToolApprovalMode())
+}
+
+// resolveNewSessionModel picks the model a fresh session starts on. A
+// default_model that resolves but has no API key in the current environment
+// would boot every new tab straight into the missing-key notice, so fall
+// through to the first provider that is actually configured, mirroring the
+// Configured() gate in Config.ResolveModelWithFallback's fallback chain. When
+// nothing is configured, the raw default is returned unchanged so the
+// existing missing-key notice still tells the user what to fix.
+func resolveNewSessionModel(cfg *config.Config) string {
+	def := strings.TrimSpace(cfg.DefaultModel)
+	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, def)
+	if def != "" {
+		if entry, ok := cfg.ResolveModel(def); ok && entry.Configured() {
+			return def
+		}
+	}
+	for i := range cfg.Providers {
+		p := &cfg.Providers[i]
+		if len(p.ModelList()) == 0 || !p.Configured() {
+			continue
+		}
+		return p.Name + "/" + p.DefaultModel()
+	}
+	return def
 }
 
 func (a *App) createTabEntryWithID(scope, workspaceRoot, topicID, id string) *WorkspaceTab {
