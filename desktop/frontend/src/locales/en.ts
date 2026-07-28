@@ -2711,6 +2711,7 @@ export const en = {
   "updater.autoCheckHint": "When off, Reasonix won't check automatically when it opens. You can still check manually here.",
   "updater.channelSettingLabel": "Update channel",
   "updater.channelSettingHint": "Stable gets the weekly release. Preview gets official builds every 1–2 days and can switch back to Stable at any time. Both channels use the same verified publisher certificate on Windows; Preview may be less stable.",
+  "updater.channelAutoCheckHint": "Changing the channel checks it immediately.",
   "updater.channelStable": "Stable",
   "updater.channelPreview": "Preview",
   "settings.telemetryLabel": "Anonymous usage ping",

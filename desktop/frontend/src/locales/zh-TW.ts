@@ -2847,6 +2847,7 @@ export const zhTW: Record<DictKey, string> = {
   "updater.autoCheckHint": "關閉後，Reasonix 開啟時不會自動檢查更新；你仍可在此頁手動檢查。",
   "updater.channelSettingLabel": "更新渠道",
   "updater.channelSettingHint": "正式版按週發布；預覽版每 1–2 天提供一次正式建置，並且可隨時切回正式版。兩個渠道在 Windows 上使用同一個已驗證發布者憑證；預覽版可能不夠穩定。",
+  "updater.channelAutoCheckHint": "切換渠道後會立即檢查該渠道的新版本。",
   "updater.channelStable": "正式版",
   "updater.channelPreview": "預覽版",
   "settings.telemetryLabel": "匿名啟動統計",

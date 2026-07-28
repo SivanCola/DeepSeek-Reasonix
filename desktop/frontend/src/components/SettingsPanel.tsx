@@ -6723,35 +6723,109 @@ function UpdatesSection({
     status.kind === "verifying" ||
     status.kind === "authorizing" ||
     status.kind === "installing";
+  const updateStatus =
+    status.kind === "checking" ? t("updater.checking") :
+    status.kind === "upToDate" ? t("updater.upToDate") :
+    status.kind === "available" ? t("updater.available", { v: status.info.latest }) :
+    status.kind === "downloading" ? t("updater.downloading", {
+      done: mb(status.received),
+      total: mb(status.total),
+      pct: status.total > 0 ? Math.round((status.received / status.total) * 100) : 0,
+    }) :
+    status.kind === "verifying" ? t("updater.verifying") :
+    status.kind === "downloaded" ? t("updater.downloaded", { v: status.info.latest }) :
+    status.kind === "authorizing" ? t("updater.authorizing") :
+    status.kind === "installing" ? (
+      status.info?.requiresElevation || status.info?.installMode === "deb"
+        ? t("updater.installingPackage")
+        : t("updater.installing")
+    ) :
+    status.kind === "done" ? t("updater.done") :
+    status.kind === "error" ? t("updater.failed", { msg: status.message }) :
+    "";
+  const updateStatusTone =
+    status.kind === "error" ? "error" :
+    status.kind === "available" ? "available" :
+    status.kind === "checking" || updaterBusy ? "busy" :
+    status.kind === "upToDate" || status.kind === "done" ? "success" :
+    "neutral";
 
   return (
     <SettingsSection title={t("updater.title")}>
       <SettingsField
-        className="settings-field--wide-copy"
-        label={t("updater.channelSettingLabel")}
-        hint={t("updater.channelSettingHint")}
+        className="settings-field--wide-copy updates-control"
+        label={
+          <div className="updates-control__summary">
+            <div className="updates-control__version">
+              {t("updater.currentVersion", { v: version || "…" })}
+            </div>
+            <div className={`updates-control__status updates-control__status--${updateStatusTone}`} role="status" aria-live="polite">
+              {updateStatus && (
+                <>
+                  {updateStatusTone === "success" && <CheckCircle2 size={14} aria-hidden="true" />}
+                  {updateStatusTone === "busy" && <Loader2 className="updates-control__spinner" size={14} aria-hidden="true" />}
+                  <span>{updateStatus}</span>
+                </>
+              )}
+            </div>
+          </div>
+        }
       >
-        <div className="provider-add-segmented" role="group" aria-label={t("updater.channelSettingLabel")}>
-          {(["stable", "preview"] as const).map((nextChannel) => (
+        <div className="updates-control__controls">
+          <div className="provider-add-segmented" role="group" aria-label={t("updater.channelSettingLabel")}>
+            {(["stable", "preview"] as const).map((nextChannel) => (
+              <button
+                key={nextChannel}
+                type="button"
+                disabled={settingsBusy || updaterBusy}
+                className={selectedChannel === nextChannel ? "provider-add-segmented__item provider-add-segmented__item--active" : "provider-add-segmented__item"}
+                onClick={() => {
+                  if (nextChannel === selectedChannel) return;
+                  void switchUpdaterChannel(
+                    nextChannel,
+                    () => applySettings(() => app.SetDesktopUpdateChannel(nextChannel)),
+                    check,
+                  );
+                }}
+              >
+                {nextChannel === "stable" ? t("updater.channelStable") : t("updater.channelPreview")}
+              </button>
+            ))}
+          </div>
+          <Tooltip label={t("updater.checkButton")}>
             <button
-              key={nextChannel}
+              className="chip chip--icon"
               type="button"
               disabled={settingsBusy || updaterBusy}
-              className={selectedChannel === nextChannel ? "provider-add-segmented__item provider-add-segmented__item--active" : "provider-add-segmented__item"}
-              onClick={() => {
-                if (nextChannel === selectedChannel) return;
-                void switchUpdaterChannel(
-                  nextChannel,
-                  () => applySettings(() => app.SetDesktopUpdateChannel(nextChannel)),
-                  check,
-                );
-              }}
+              aria-label={t("updater.checkButton")}
+              onClick={() => void check(selectedChannel)}
             >
-              {nextChannel === "stable" ? t("updater.channelStable") : t("updater.channelPreview")}
+              <RefreshCw className={status.kind === "checking" ? "updates-control__spinner" : undefined} size={14} aria-hidden="true" />
             </button>
-          ))}
+          </Tooltip>
         </div>
       </SettingsField>
+      <div className="updates-control__hint">{t("updater.channelAutoCheckHint")}</div>
+      {(status.kind === "available" || status.kind === "downloaded") && (
+        <div className="updates-control__action">
+          <div className="updates-control__action-copy">
+            {status.kind === "available" && <div>{t("updater.channelLabel", { channel: status.info.channel || "stable" })}</div>}
+            {status.kind === "available" && !status.info.canSelfUpdate && <div>{status.info.manualReason || t("updater.macHint")}</div>}
+          </div>
+          {status.kind === "available" && (
+            <button className="btn btn--primary btn--small" onClick={() => downloadUpdate(status.info)}>
+              {status.info.canSelfUpdate ? t("updater.downloadUpdate") : t("updater.goToDownload")}
+            </button>
+          )}
+          {status.kind === "downloaded" && (
+            <button className="btn btn--primary btn--small" onClick={installUpdate}>
+              {status.info.requiresElevation || status.info.installMode === "deb"
+                ? t("updater.authorizeInstall")
+                : t("updater.restartInstall")}
+            </button>
+          )}
+        </div>
+      )}
       <SettingsField
         className="settings-field--wide-copy"
         label={t("updater.autoCheckLabel")}
@@ -6785,56 +6859,9 @@ function UpdatesSection({
           onChange={(enabled) => void applySettings(() => app.SetDesktopMetrics(enabled))}
         />
       </SettingsField>
-      <SettingsField label={t("updater.currentVersion", { v: version || "…" })}>
-        <button className="btn btn--small" disabled={updaterBusy} onClick={() => void check(selectedChannel)}>
-          {status.kind === "checking" ? t("updater.checking") : t("updater.checkButton")}
-        </button>
-      </SettingsField>
-      {status.kind === "available" && (
-        <div className="mem-hint">{t("updater.channelLabel", { channel: status.info.channel || "stable" })}</div>
-      )}
-      {status.kind === "upToDate" && <div className="mem-hint">{t("updater.upToDate")}</div>}
-      {status.kind === "available" && (
-        <>
-          <SettingsField label={t("updater.available", { v: status.info.latest })}>
-            <button className="btn btn--primary btn--small" onClick={() => downloadUpdate(status.info)}>
-              {status.info.canSelfUpdate ? t("updater.downloadUpdate") : t("updater.goToDownload")}
-            </button>
-          </SettingsField>
-          {!status.info.canSelfUpdate && <div className="mem-hint">{status.info.manualReason || t("updater.macHint")}</div>}
-        </>
-      )}
-      {status.kind === "downloading" && (
-        <div className="mem-hint">
-          {t("updater.downloading", {
-            done: mb(status.received),
-            total: mb(status.total),
-            pct: status.total > 0 ? Math.round((status.received / status.total) * 100) : 0,
-          })}
-        </div>
-      )}
-      {status.kind === "verifying" && <div className="mem-hint">{t("updater.verifying")}</div>}
-      {status.kind === "downloaded" && (
-        <SettingsField label={t("updater.downloaded", { v: status.info.latest })}>
-          <button className="btn btn--primary btn--small" onClick={installUpdate}>
-            {status.info.requiresElevation || status.info.installMode === "deb"
-              ? t("updater.authorizeInstall")
-              : t("updater.restartInstall")}
-          </button>
-        </SettingsField>
-      )}
-      {status.kind === "authorizing" && <div className="mem-hint">{t("updater.authorizing")}</div>}
-      {status.kind === "installing" && (
-        <div className="mem-hint">
-          {status.info?.requiresElevation || status.info?.installMode === "deb"
-            ? t("updater.installingPackage")
-            : t("updater.installing")}
-        </div>
-      )}
-      {status.kind === "done" && <div className="mem-hint">{t("updater.done")}</div>}
       {status.kind === "error" && (
         <div className="banner banner--error">
-          {t("updater.failed", { msg: status.message })}
+          {updateStatus}
           {status.manualHint && (
             <div className="mem-hint">
               <button className="btn btn--small" onClick={openDownload}>
