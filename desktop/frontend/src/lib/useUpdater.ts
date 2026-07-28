@@ -28,6 +28,14 @@ export interface Updater {
   reset: () => void;
 }
 
+export async function switchUpdaterChannel(
+  channel: "stable" | "preview",
+  save: (channel: "stable" | "preview") => Promise<boolean>,
+  check: (channel: string) => Promise<void>,
+): Promise<void> {
+  if (await save(channel)) await check(channel);
+}
+
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }

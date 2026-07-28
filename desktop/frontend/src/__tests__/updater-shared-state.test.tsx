@@ -5,7 +5,7 @@ import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { __emitMockUpdater, type AppBindings } from "../lib/bridge";
-import { UpdaterProvider, useUpdater } from "../lib/useUpdater";
+import { switchUpdaterChannel, UpdaterProvider, useUpdater } from "../lib/useUpdater";
 
 let passed = 0;
 let failed = 0;
@@ -152,6 +152,31 @@ ok(document.getElementById("banner-manual")?.textContent === "manual", "manual r
 ok(document.getElementById("settings-status")?.textContent === "error", "manual fallback error is shared");
 
 delete window.go;
+
+const channelTransitions: string[] = [];
+await switchUpdaterChannel(
+  "preview",
+  async (channel) => {
+    channelTransitions.push(`save:${channel}`);
+    return true;
+  },
+  async (channel) => {
+    channelTransitions.push(`check:${channel}`);
+  },
+);
+ok(channelTransitions.join(",") === "save:preview,check:preview", "saved channel immediately checks its target pointer");
+
+await switchUpdaterChannel(
+  "stable",
+  async (channel) => {
+    channelTransitions.push(`failed:${channel}`);
+    return false;
+  },
+  async (channel) => {
+    channelTransitions.push(`unexpected:${channel}`);
+  },
+);
+ok(!channelTransitions.includes("unexpected:stable"), "failed channel persistence does not check an unselected channel");
 
 await act(async () => root.unmount());
 

@@ -3,21 +3,9 @@ import Base from '../layouts/Base.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
-const R2_LATEST = 'https://dl.reasonix.io/latest';
 const repo = 'https://github.com/esengine/DeepSeek-Reasonix';
-
-let desktopVersion = 'v1.1.0';
-let goVer = '1.1.0';
-try {
-  const r = await fetch(`${R2_LATEST}/latest.json`);
-  if (r.ok) {
-    const d = await r.json();
-    const version = String(d.version || desktopVersion).replace(/^v?/, 'v');
-    desktopVersion = version;
-    goVer = desktopVersion.replace(/^v/, '') || goVer;
-  }
-} catch {}
-const R2_DESKTOP = `https://dl.reasonix.io/desktop-${desktopVersion}`;
+const desktopStableFallback = `${repo}/releases/latest/download`;
+const goVer = 'latest';
 ---
 <Base
   title="Docs — Reasonix"
@@ -124,29 +112,29 @@ brew install esengine/reasonix/reasonix</div>
           <p><span class="l-en">The desktop app runs the same local Reasonix engine as the CLI, with visual sessions, settings, MCP status, memory, checkpoints, tool approvals, and IM bot connections in one place.</span><span class="l-zh">桌面端运行与 CLI 相同的本地 Reasonix 引擎,并把可视化会话、设置、MCP 状态、记忆、检查点、工具审批和 IM Bot 连接集中到一个工作区。</span></p>
         </div>
         <div class="desktop-downloads" aria-label="Desktop downloads">
-          <a class="desktop-download" href={`${R2_DESKTOP}/Reasonix-darwin-universal.dmg`} data-desktop-asset="Reasonix-darwin-universal.dmg" download>
+          <a class="desktop-download" href={`${desktopStableFallback}/Reasonix-darwin-universal.dmg`} data-desktop-asset="Reasonix-darwin-universal.dmg" download>
             <strong>macOS</strong>
             <span><span class="l-en">Universal DMG · Apple Silicon + Intel</span><span class="l-zh">通用 DMG · Apple Silicon + Intel</span></span>
           </a>
-          <a class="desktop-download" href={`${R2_DESKTOP}/Reasonix-windows-amd64-installer.exe`} data-desktop-asset="Reasonix-windows-amd64-installer.exe" download>
+          <a class="desktop-download" href={`${desktopStableFallback}/Reasonix-windows-amd64-installer.exe`} data-desktop-asset="Reasonix-windows-amd64-installer.exe" download>
             <strong>Windows</strong>
             <span><span class="l-en">x64 installer</span><span class="l-zh">x64 安装器</span></span>
           </a>
-          <a class="desktop-download" href={`${R2_DESKTOP}/Reasonix-linux-amd64.deb`} data-desktop-asset="Reasonix-linux-amd64.deb" download>
+          <a class="desktop-download" href={`${desktopStableFallback}/Reasonix-linux-amd64.deb`} data-desktop-asset="Reasonix-linux-amd64.deb" download>
             <strong>Linux</strong>
             <span><span class="l-en">Debian / Ubuntu .deb</span><span class="l-zh">Debian / Ubuntu .deb</span></span>
           </a>
         </div>
         <div class="desktop-downloads desktop-downloads--secondary" aria-label="Alternate desktop downloads">
-          <a class="desktop-download" href={`${R2_DESKTOP}/Reasonix-darwin-arm64.zip`} data-desktop-asset="Reasonix-darwin-arm64.zip" download>
+          <a class="desktop-download" href={`${desktopStableFallback}/Reasonix-darwin-arm64.zip`} data-desktop-asset="Reasonix-darwin-arm64.zip" download>
             <strong>macOS</strong>
             <span>Apple Silicon zip</span>
           </a>
-          <a class="desktop-download" href={`${R2_DESKTOP}/Reasonix-windows-arm64-installer.exe`} data-desktop-asset="Reasonix-windows-arm64-installer.exe" download>
+          <a class="desktop-download" href={`${desktopStableFallback}/Reasonix-windows-arm64-installer.exe`} data-desktop-asset="Reasonix-windows-arm64-installer.exe" download>
             <strong>Windows</strong>
             <span>ARM64 installer</span>
           </a>
-          <a class="desktop-download" href={`${R2_DESKTOP}/Reasonix-linux-amd64.tar.gz`} data-desktop-asset="Reasonix-linux-amd64.tar.gz" download>
+          <a class="desktop-download" href={`${desktopStableFallback}/Reasonix-linux-amd64.tar.gz`} data-desktop-asset="Reasonix-linux-amd64.tar.gz" download>
             <strong>Linux</strong>
             <span><span class="l-en">Generic amd64 tarball</span><span class="l-zh">通用 amd64 压缩包</span></span>
           </a>

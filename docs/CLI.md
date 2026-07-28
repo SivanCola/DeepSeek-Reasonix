@@ -39,6 +39,23 @@ Running `reasonix` without a subcommand starts the interactive terminal UI. Use
 
 Flags may appear before or after the prompt where applicable.
 
+## Update the native CLI
+
+```sh
+reasonix upgrade                         # latest Stable (default)
+reasonix upgrade --channel preview       # enter or continue on Preview
+reasonix upgrade --channel stable        # return from Preview to Stable
+reasonix upgrade --channel preview --check
+```
+
+`reasonix upgrade` and its `reasonix update` alias default to the Stable
+channel and never select a prerelease. Preview is an explicit opt-in and accepts
+only protected `vX.Y.Z-preview.N` releases; internal RCs are excluded from both
+public channels. An explicit channel change may install a numerically older
+target, which is required when returning from a newer Preview to the current
+Stable release. `--check` reports the target without installing it, while
+`--force` reinstalls the selected channel's current release.
+
 ## Configure providers
 
 ```sh

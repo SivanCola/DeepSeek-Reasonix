@@ -43,7 +43,7 @@ import (
 const (
 	r2Base                  = "https://dl.reasonix.io"
 	releaseGatewayBase      = "https://crash.reasonix.io/v1/desktop/releases"
-	downloadPageURL         = "https://reasonix.io/?download=desktop#start"
+	downloadPageURL         = "https://reasonix.io/#start"
 	httpTimeout             = 15 * time.Second
 	manifestEndpointTimeout = 5 * time.Second
 )
@@ -113,8 +113,30 @@ func updaterUserAgent(selected string) string {
 
 // downloadPage is the human-facing releases page shown when self-update is
 // unavailable (macOS) or the manifest omits its own link.
-func downloadPage() string {
-	return downloadPageURL
+func downloadPage(selected string) string {
+	u, _ := url.Parse(downloadPageURL)
+	query := u.Query()
+	query.Set("download", "desktop")
+	query.Set("channel", normalizeUpdateChannel(selected))
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
+func manifestDownloadPage(selected, manifestPage string) string {
+	manifestPage = strings.TrimSpace(manifestPage)
+	if manifestPage == "" {
+		return downloadPage(selected)
+	}
+	u, err := url.Parse(manifestPage)
+	if err != nil || (u.Hostname() != "reasonix.io" && !strings.HasSuffix(u.Hostname(), ".reasonix.io")) {
+		return manifestPage
+	}
+	query := u.Query()
+	query.Set("download", "desktop")
+	query.Set("channel", normalizeUpdateChannel(selected))
+	u.RawQuery = query.Encode()
+	u.Fragment = "start"
+	return u.String()
 }
 
 // UpdateInfo is the CheckUpdate result that drives the frontend's update banner.
@@ -286,10 +308,7 @@ func evaluateWithProfile(current string, m *update.Manifest, profile installProf
 // profile and selected update channel are known.
 func evaluateWithProfileForChannel(current, selected string, m *update.Manifest, profile installProfile) UpdateInfo {
 	selected = normalizeUpdateChannel(selected)
-	page := m.DownloadPage
-	if page == "" {
-		page = downloadPage()
-	}
+	page := manifestDownloadPage(selected, m.DownloadPage)
 	info := UpdateInfo{
 		Current:           current,
 		Latest:            m.Version,

@@ -5,7 +5,7 @@ import { useDeferredClose } from "../lib/useMountTransition";
 import { app, openExternal } from "../lib/bridge";
 import { normalizeLangPref, useI18n, useT, type DictKey, type LangPref } from "../lib/i18n";
 import { apiKeyEnvFromProviderName, inferredVisionModels, mergedFetchedProviderModels, mergeProviderModelContextWindows, providerApiKeyEnvForSave, providerDefaultModel, providerIsConfigured, providerModelCandidates, providerModelContextWindowDrafts, providerModelContextWindowIsSmall, providerRequiresKey } from "../lib/providerModels";
-import { useUpdater } from "../lib/useUpdater";
+import { switchUpdaterChannel, useUpdater } from "../lib/useUpdater";
 import {
   applyTheme,
   getTheme,
@@ -186,8 +186,10 @@ export function SettingsPanel({
       if (typeof result === "string" && result.trim()) {
         setWarning(result.trim());
       }
+      return true;
     } catch (e) {
       setErr(formatSettingsError(e, t));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -366,7 +368,7 @@ export function SettingsPanel({
   );
 }
 
-function SettingsPageShell({ s: _s, tab, children }: { s: SettingsView | null; tab: SettingsTab; busy: boolean; apply: (fn: () => Promise<unknown>) => Promise<void>; children: ReactNode }) {
+function SettingsPageShell({ s: _s, tab, children }: { s: SettingsView | null; tab: SettingsTab; busy: boolean; apply: (fn: () => Promise<unknown>) => Promise<boolean>; children: ReactNode }) {
   const t = useT();
   const descKey = `settings.pageDesc.${tab}` as keyof typeof import("../locales/en").en;
   const desc = t(descKey as any);
@@ -486,7 +488,7 @@ function settingsTabPageTitle(id: SettingsTab, t: ReturnType<typeof useT>): stri
 type SectionProps = {
   s: SettingsView;
   busy: boolean;
-  apply: (fn: () => Promise<unknown>) => Promise<void>;
+  apply: (fn: () => Promise<unknown>) => Promise<boolean>;
 };
 
 type ModelsSectionProps = SectionProps & {
@@ -6214,8 +6216,8 @@ function PermissionsSection({ s, busy, apply }: SectionProps) {
             list={list}
             rules={s.permissions[list]}
             busy={busy}
-            onAdd={(rule) => apply(() => app.AddPermissionRule(list, rule))}
-            onRemove={(rule) => apply(() => app.RemovePermissionRule(list, rule))}
+            onAdd={async (rule) => { await apply(() => app.AddPermissionRule(list, rule)); }}
+            onRemove={async (rule) => { await apply(() => app.RemovePermissionRule(list, rule)); }}
           />
         ))}
       </div>
@@ -6676,8 +6678,8 @@ function SandboxSection({ s, busy, apply, windows }: SectionProps & { windows: b
         list="allow_write"
         rules={sb.allowWrite}
         busy={busy}
-        onAdd={(d) => set({ allowWrite: [...sb.allowWrite, d] })}
-        onRemove={(d) => set({ allowWrite: sb.allowWrite.filter((x) => x !== d) })}
+        onAdd={async (d) => { await set({ allowWrite: [...sb.allowWrite, d] }); }}
+        onRemove={async (d) => { await set({ allowWrite: sb.allowWrite.filter((x) => x !== d) }); }}
       />
     </SettingsSection>
   );
@@ -6705,10 +6707,10 @@ function UpdatesSection({
   telemetry: boolean;
   metrics: boolean;
   settingsBusy: boolean;
-  applySettings: (fn: () => Promise<void>) => Promise<void>;
+  applySettings: (fn: () => Promise<void>) => Promise<boolean>;
 }) {
   const t = useT();
-  const { status, check, download: downloadUpdate, install: installUpdate, openDownload, reset } = useUpdater();
+  const { status, check, download: downloadUpdate, install: installUpdate, openDownload } = useUpdater();
   const selectedChannel = updateChannel === "preview" ? "preview" : "stable";
   const [version, setVersion] = useState("");
   useEffect(() => {
@@ -6738,7 +6740,11 @@ function UpdatesSection({
               className={selectedChannel === nextChannel ? "provider-add-segmented__item provider-add-segmented__item--active" : "provider-add-segmented__item"}
               onClick={() => {
                 if (nextChannel === selectedChannel) return;
-                void applySettings(() => app.SetDesktopUpdateChannel(nextChannel)).then(reset);
+                void switchUpdaterChannel(
+                  nextChannel,
+                  () => applySettings(() => app.SetDesktopUpdateChannel(nextChannel)),
+                  check,
+                );
               }}
             >
               {nextChannel === "stable" ? t("updater.channelStable") : t("updater.channelPreview")}

@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -204,34 +206,99 @@ func TestHumanSize(t *testing.T) {
 }
 
 func TestPickCLIRelease(t *testing.T) {
-	pick := func(rels []ghRelease) string {
-		if r := pickCLIRelease(rels); r != nil {
+	pick := func(rels []ghRelease, channel cliReleaseChannel) string {
+		if r := pickCLIRelease(rels, channel); r != nil {
 			return r.TagName
 		}
 		return ""
 	}
 
-	// Skips foreign namespaces (GitHub's "latest" can be a desktop-v release).
+	// Stable skips foreign namespaces and every prerelease, even when a Preview
+	// was published more recently than the latest Stable release.
 	mixed := []ghRelease{
-		{TagName: "desktop-v1.6.0"},
-		{TagName: "npm-v1.4.0"},
+		{TagName: "v1.18.0-preview.1", Prerelease: true},
+		{TagName: "desktop-v1.18.0"},
+		{TagName: "npm-v1.18.0"},
 		{TagName: "v1.6.0"},
 	}
-	if got := pick(mixed); got != "v1.6.0" {
-		t.Errorf("foreign namespaces: got %q, want v1.6.0", got)
+	if got := pick(mixed, cliReleaseStable); got != "v1.6.0" {
+		t.Errorf("stable channel: got %q, want v1.6.0", got)
 	}
 
-	// The 1.x line ships as rc on npm @next, so a newer prerelease must be
-	// selected, not skipped — `reasonix upgrade` always moves to the newest 1.x.
-	withRC := []ghRelease{
-		{TagName: "v1.7.0-rc.1"},
-		{TagName: "v1.6.0"},
+	preview := []ghRelease{
+		{TagName: "v1.18.0-preview.2", Prerelease: true},
+		{TagName: "v1.19.0-rc.1", Prerelease: true},
+		{TagName: "v1.18.0-preview.12", Prerelease: true},
+		{TagName: "v1.18.0-preview.13"}, // GitHub prerelease metadata must agree.
+		{TagName: "v1.17.21"},
 	}
-	if got := pick(withRC); got != "v1.7.0-rc.1" {
-		t.Errorf("newest 1.x (incl. rc) must win: got %q, want v1.7.0-rc.1", got)
+	if got := pick(preview, cliReleasePreview); got != "v1.18.0-preview.12" {
+		t.Errorf("preview channel: got %q, want v1.18.0-preview.12", got)
 	}
 
-	if got := pick([]ghRelease{{TagName: "desktop-v1.0.0"}}); got != "" {
+	if got := pick([]ghRelease{{TagName: "desktop-v1.0.0"}}, cliReleaseStable); got != "" {
 		t.Errorf("no CLI release should return nil, got %q", got)
+	}
+}
+
+func TestCLIReleaseChannelContract(t *testing.T) {
+	if !strings.HasSuffix(ghAPIReleases, "?per_page=100") {
+		t.Fatalf("CLI release query must retain enough history for Stable after frequent Preview releases: %q", ghAPIReleases)
+	}
+
+	for _, tc := range []struct {
+		value string
+		want  cliReleaseChannel
+		ok    bool
+	}{
+		{"", cliReleaseStable, true},
+		{"stable", cliReleaseStable, true},
+		{"PREVIEW", cliReleasePreview, true},
+		{"canary", "", false},
+		{"rc", "", false},
+	} {
+		got, err := parseCLIReleaseChannel(tc.value)
+		if (err == nil) != tc.ok || got != tc.want {
+			t.Errorf("parseCLIReleaseChannel(%q) = (%q, %v), want (%q, ok=%v)", tc.value, got, err, tc.want, tc.ok)
+		}
+	}
+
+	for _, tc := range []struct {
+		version string
+		channel cliReleaseChannel
+		want    bool
+	}{
+		{"v1.17.21", cliReleaseStable, true},
+		{"v1.18.0-preview.1", cliReleaseStable, false},
+		{"v1.18.0-preview.1", cliReleasePreview, true},
+		{"v1.18.0-preview.01", cliReleasePreview, false},
+		{"v1.18.0-rc.1", cliReleasePreview, false},
+		{"v1.18.0", cliReleasePreview, false},
+	} {
+		if got := versionBelongsToCLIChannel(tc.version, tc.channel); got != tc.want {
+			t.Errorf("versionBelongsToCLIChannel(%q, %q) = %v, want %v", tc.version, tc.channel, got, tc.want)
+		}
+	}
+}
+
+func TestFetchCLIReleasePointer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") != "application/json" || r.Header.Get("User-Agent") != "reasonix-cli" {
+			t.Errorf("unexpected pointer request headers: Accept=%q User-Agent=%q", r.Header.Get("Accept"), r.Header.Get("User-Agent"))
+		}
+		if r.URL.Path == "/valid" {
+			fmt.Fprint(w, `{"tag_name":"v1.18.0-preview.1","prerelease":true,"assets":[]}`)
+			return
+		}
+		fmt.Fprint(w, `{"tag_name":"v1.18.0-preview.1","prerelease":false,"assets":[]}`)
+	}))
+	defer server.Close()
+
+	release, err := fetchCLIReleasePointer(server.Client(), server.URL+"/valid", cliReleasePreview)
+	if err != nil || release.TagName != "v1.18.0-preview.1" {
+		t.Fatalf("valid Preview pointer = (%+v, %v)", release, err)
+	}
+	if _, err := fetchCLIReleasePointer(server.Client(), server.URL+"/invalid", cliReleasePreview); err == nil {
+		t.Fatal("pointer with mismatched GitHub prerelease metadata should fail closed")
 	}
 }

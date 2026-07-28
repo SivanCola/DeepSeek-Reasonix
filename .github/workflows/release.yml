@@ -217,6 +217,105 @@ jobs:
           TAG: ${{ needs.resolve.outputs.tag }}
         run: gh release edit "$TAG" --notes-file /tmp/release-notes.md
 
+      - name: Publish CLI release metadata to R2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          HAS_R2: ${{ secrets.R2_ACCESS_KEY_ID != '' && secrets.R2_SECRET_ACCESS_KEY != '' && secrets.R2_ACCOUNT_ID != '' && secrets.R2_BUCKET != '' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_R2" != "true" ]; then
+            echo "R2 secrets not configured; skipping CLI release metadata"
+            exit 0
+          fi
+
+          channel=""
+          expected_prerelease=""
+          if [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            channel="stable"
+            expected_prerelease="false"
+          elif [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-preview\.(0|[1-9][0-9]*)$ ]]; then
+            channel="preview"
+            expected_prerelease="true"
+          else
+            echo "internal CLI release $TAG; publishing only immutable metadata"
+          fi
+
+          required_assets='[
+            "reasonix-darwin-amd64.tar.gz",
+            "reasonix-darwin-arm64.tar.gz",
+            "reasonix-linux-amd64.tar.gz",
+            "reasonix-linux-arm64.tar.gz",
+            "reasonix-windows-amd64.zip",
+            "reasonix-windows-arm64.zip",
+            "SHA256SUMS"
+          ]'
+          gh api "repos/${{ github.repository }}/releases/tags/$TAG" > /tmp/cli-release.raw.json
+          jq --arg tag "$TAG" --argjson required "$required_assets" '
+            if .tag_name != $tag then error("release tag mismatch") else . end |
+            if .draft then error("draft release cannot be published") else . end |
+            . as $release |
+            ($release.assets | map({key: .name, value: .}) | from_entries) as $assets |
+            if ($required | all(. as $name | $assets[$name] != null))
+            then {
+              tag_name: $release.tag_name,
+              prerelease: $release.prerelease,
+              html_url: $release.html_url,
+              assets: [
+                $required[] as $name |
+                $assets[$name] |
+                {
+                  name: .name,
+                  browser_download_url: .browser_download_url,
+                  size: .size
+                }
+              ]
+            }
+            else error("release is missing one or more required CLI assets")
+            end
+          ' /tmp/cli-release.raw.json > /tmp/cli-release.json
+          jq -e --arg tag "$TAG" '
+            .tag_name == $tag and
+            (.prerelease | type == "boolean") and
+            (.html_url | type == "string" and startswith("https://github.com/")) and
+            (.assets | length == 7) and
+            (.assets | all(
+              (.name | type == "string") and
+              (.browser_download_url | type == "string" and startswith("https://github.com/")) and
+              (.size | type == "number" and . >= 0)
+            ))
+          ' /tmp/cli-release.json >/dev/null
+
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          aws s3 cp /tmp/cli-release.json "s3://${R2_BUCKET}/cli/releases/${TAG}/latest.json" \
+            --endpoint-url "$endpoint" \
+            --content-type "application/json; charset=utf-8" \
+            --cache-control "public, max-age=31536000, immutable"
+
+          if [ -z "$channel" ]; then
+            echo "internal CLI release $TAG; Stable and Preview pointers remain unchanged"
+            exit 0
+          fi
+          jq -e --arg tag "$TAG" --argjson prerelease "$expected_prerelease" '
+            .tag_name == $tag and .prerelease == $prerelease
+          ' /tmp/cli-release.json >/dev/null
+          aws s3 cp /tmp/cli-release.json "s3://${R2_BUCKET}/cli/${channel}/latest.json" \
+            --endpoint-url "$endpoint" \
+            --content-type "application/json; charset=utf-8" \
+            --cache-control "public, max-age=300, stale-if-error=86400"
+
+          aws s3 cp "s3://${R2_BUCKET}/cli/${channel}/latest.json" /tmp/cli-release.pointer.json \
+            --endpoint-url "$endpoint"
+          jq -e --arg tag "$TAG" --argjson prerelease "$expected_prerelease" '
+            .tag_name == $tag and .prerelease == $prerelease and (.assets | length == 7)
+          ' /tmp/cli-release.pointer.json >/dev/null
+          echo "CLI $channel pointer -> $TAG"
+
       - name: Attach desktop manifest compatibility asset
         env:
           GH_TOKEN: ${{ github.token }}

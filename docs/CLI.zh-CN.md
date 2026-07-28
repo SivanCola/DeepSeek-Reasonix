@@ -38,6 +38,21 @@ reasonix --dir /path/to/project
 
 适用时，参数可以放在 prompt 前面或后面。
 
+## 更新原生 CLI
+
+```sh
+reasonix upgrade                         # 最新正式版（默认）
+reasonix upgrade --channel preview       # 进入或继续使用预览版
+reasonix upgrade --channel stable        # 从预览版返回正式版
+reasonix upgrade --channel preview --check
+```
+
+`reasonix upgrade` 及其别名 `reasonix update` 默认只跟随 Stable，绝不会选择
+预发布版本。Preview 必须由用户明确选择，并且只接受受保护的
+`vX.Y.Z-preview.N` 发布；内部 RC 不属于任何公开渠道。明确切换渠道时允许安装
+版本号更低的目标，这样较新的 Preview 才能返回当前 Stable。`--check` 只报告目标而
+不安装，`--force` 则重新安装所选渠道的当前版本。
+
 ## 配置供应商
 
 ```sh

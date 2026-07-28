@@ -114,6 +114,26 @@ for workflow in release.yml release-desktop.yml; do
 	grep -Eq 'if: \$\{\{ !inputs\.orchestrated' "$repo_root/.github/workflows/$workflow"
 done
 
+# CLI clients and the website consume separate Stable and Preview pointers. The
+# publisher must validate every public archive before moving a pointer, retain an
+# immutable per-tag record, and leave both public pointers untouched for RCs.
+cli_release_workflow="$repo_root/.github/workflows/release.yml"
+grep -Eq 'name: Publish CLI release metadata to R2' "$cli_release_workflow"
+grep -Fq 'cli/releases/${TAG}/latest.json' "$cli_release_workflow"
+grep -Fq 'cli/${channel}/latest.json' "$cli_release_workflow"
+grep -Eq 'internal CLI release .*Stable and Preview pointers remain unchanged' "$cli_release_workflow"
+grep -Eq '\.assets \| length == 7' "$cli_release_workflow"
+for asset in \
+	reasonix-darwin-amd64.tar.gz \
+	reasonix-darwin-arm64.tar.gz \
+	reasonix-linux-amd64.tar.gz \
+	reasonix-linux-arm64.tar.gz \
+	reasonix-windows-amd64.zip \
+	reasonix-windows-arm64.zip \
+	SHA256SUMS; do
+	grep -Fq "\"$asset\"" "$cli_release_workflow"
+done
+
 # Release notes should normally reuse an existing release-bound PR instead of
 # opening one PR per version. Fork PRs and stale branches must fail closed, and
 # the dedicated release-notes PR remains the explicit fallback.

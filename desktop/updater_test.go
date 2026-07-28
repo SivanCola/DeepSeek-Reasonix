@@ -206,11 +206,20 @@ func TestChannelSelectsDistinctPointers(t *testing.T) {
 	if preview[3] != releaseGatewayBase+"/canary/latest.json" {
 		t.Errorf("preview gateway compatibility fallback = %q, want the legacy canary gateway", preview[3])
 	}
-	if strings.Contains(downloadPage(), "/releases/latest") {
-		t.Errorf("download page should not use GitHub's repository-wide latest release: %q", downloadPage())
+	if strings.Contains(downloadPage("stable"), "/releases/latest") {
+		t.Errorf("download page should not use GitHub's repository-wide latest release: %q", downloadPage("stable"))
 	}
-	if downloadPage() != "https://reasonix.io/?download=desktop#start" {
-		t.Errorf("download page = %q, want the desktop install deep link", downloadPage())
+	if downloadPage("stable") != "https://reasonix.io/?channel=stable&download=desktop#start" {
+		t.Errorf("stable download page = %q, want the Stable desktop install deep link", downloadPage("stable"))
+	}
+	if downloadPage("preview") != "https://reasonix.io/?channel=preview&download=desktop#start" {
+		t.Errorf("preview download page = %q, want the Preview desktop install deep link", downloadPage("preview"))
+	}
+	if got := manifestDownloadPage("preview", "https://reasonix.io/?download=desktop#start"); got != "https://reasonix.io/?channel=preview&download=desktop#start" {
+		t.Errorf("manifest Preview page = %q", got)
+	}
+	if got := manifestDownloadPage("preview", "https://example.com/releases"); got != "https://example.com/releases" {
+		t.Errorf("external manifest download page = %q, want unchanged", got)
 	}
 }
 

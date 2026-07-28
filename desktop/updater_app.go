@@ -42,7 +42,7 @@ func (a *App) CheckUpdate(selectedChannel string) (*UpdateInfo, error) {
 			ManualReason:      firstNonEmptyStr(profile.ManualReason, manualUpdateReason()),
 			InstallMode:       profile.Mode,
 			RequiresElevation: profile.RequiresElev,
-			DownloadURL:       downloadPage(),
+			DownloadURL:       downloadPage(selectedChannel),
 			Err:               err.Error(),
 		}, nil
 	}
@@ -60,7 +60,7 @@ func (a *App) CheckUpdate(selectedChannel string) (*UpdateInfo, error) {
 			ManualReason:      firstNonEmptyStr(profile.ManualReason, manualUpdateReason()),
 			InstallMode:       profile.Mode,
 			RequiresElevation: profile.RequiresElev,
-			DownloadURL:       downloadPage(),
+			DownloadURL:       downloadPage(selectedChannel),
 			Err:               err.Error(),
 		}, nil
 	}
@@ -71,13 +71,14 @@ func (a *App) CheckUpdate(selectedChannel string) (*UpdateInfo, error) {
 // OpenDownloadPage opens the install page in the browser — the macOS manual-update
 // path and a fallback link elsewhere.
 func (a *App) OpenDownloadPage() {
-	page := downloadPage()
+	selectedChannel := targetUpdateChannel("")
+	page := downloadPage(selectedChannel)
 	if c, err := httpClient(); err == nil {
 		ctx, cancel := context.WithTimeout(a.reqCtx(), httpTimeout)
 		defer cancel()
 		v4, _ := httpClientIPv4()
-		if m, err := fetchManifest(ctx, c, v4, targetUpdateChannel("")); err == nil && m.DownloadPage != "" {
-			page = m.DownloadPage
+		if m, err := fetchManifest(ctx, c, v4, selectedChannel); err == nil {
+			page = manifestDownloadPage(selectedChannel, m.DownloadPage)
 		}
 	}
 	if a.ctx != nil {

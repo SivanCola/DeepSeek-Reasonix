@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -28,15 +29,17 @@ import (
 const (
 	ghOwner        = "esengine"
 	ghRepo         = "DeepSeek-Reasonix"
-	ghAPIReleases  = "https://api.github.com/repos/" + ghOwner + "/" + ghRepo + "/releases"
+	ghAPIReleases  = "https://api.github.com/repos/" + ghOwner + "/" + ghRepo + "/releases?per_page=100"
 	ghDownloadBase = "https://github.com/" + ghOwner + "/" + ghRepo + "/releases/download"
+	cliGatewayBase = "https://crash.reasonix.io/v1/cli/releases"
 	upgradeTimeout = 60 * time.Second
 )
 
 // ghRelease is the subset of the GitHub release API response we need.
 type ghRelease struct {
-	TagName string `json:"tag_name"`
-	Assets  []ghAsset
+	TagName    string `json:"tag_name"`
+	Prerelease bool   `json:"prerelease"`
+	Assets     []ghAsset
 }
 
 // ghAsset is a single release asset.
@@ -46,12 +49,41 @@ type ghAsset struct {
 	Size               int64  `json:"size"`
 }
 
+type cliReleaseChannel string
+
+const (
+	cliReleaseStable  cliReleaseChannel = "stable"
+	cliReleasePreview cliReleaseChannel = "preview"
+)
+
+var (
+	stableCLITagPattern  = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$`)
+	previewCLITagPattern = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)-preview\.(?:0|[1-9][0-9]*)$`)
+)
+
+func parseCLIReleaseChannel(value string) (cliReleaseChannel, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", string(cliReleaseStable):
+		return cliReleaseStable, nil
+	case string(cliReleasePreview):
+		return cliReleasePreview, nil
+	default:
+		return "", fmt.Errorf("release channel %q: must be stable or preview", value)
+	}
+}
+
 // upgradeCommand handles `reasonix upgrade` (and `reasonix update`).
 func upgradeCommand(args []string, version string) int {
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
 	checkOnly := fs.Bool("check", false, "check for updates without installing")
 	force := fs.Bool("force", false, "reinstall even if already on the latest version")
+	channelValue := fs.String("channel", string(cliReleaseStable), "release channel: stable or preview")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	selectedChannel, err := parseCLIReleaseChannel(*channelValue)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
 
@@ -74,8 +106,8 @@ func upgradeCommand(args []string, version string) int {
 	}
 
 	// 3. Fetch latest release from GitHub API.
-	fmt.Println(i18n.M.UpgradeChecking)
-	rel, err := fetchLatestRelease(c)
+	fmt.Printf("%s [%s]\n", i18n.M.UpgradeChecking, selectedChannel)
+	rel, err := fetchLatestRelease(c, selectedChannel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s "+i18n.M.UpgradeFetchFailed+"\n", i18n.M.ErrorPrefix, err)
 		return 1
@@ -90,15 +122,21 @@ func upgradeCommand(args []string, version string) int {
 		fmt.Fprintf(os.Stderr, "%s "+i18n.M.UpgradeInvalidVersion+"\n", i18n.M.ErrorPrefix, latest)
 		return 1
 	}
-	if semver.Compare(latest, cur) <= 0 {
+	sameChannel := versionBelongsToCLIChannel(cur, selectedChannel)
+	if latest == cur {
 		if *force {
 			fmt.Println(i18n.M.UpgradeForcing)
 		} else {
 			fmt.Println(i18n.M.UpgradeAlreadyLatest)
 			return 0
 		}
-	} else {
+	} else if !sameChannel || semver.Compare(latest, cur) > 0 {
 		fmt.Printf(i18n.M.UpgradeAvailableFmt+"\n", cur, latest)
+	} else if *force {
+		fmt.Println(i18n.M.UpgradeForcing)
+	} else {
+		fmt.Println(i18n.M.UpgradeAlreadyLatest)
+		return 0
 	}
 
 	if *checkOnly {
@@ -190,23 +228,50 @@ func isCLITag(tag string) bool {
 	return len(tag) >= 2 && tag[0] == 'v' && tag[1] >= '0' && tag[1] <= '9'
 }
 
-// pickCLIRelease returns the newest CLI-namespace (v*) release from a
-// reverse-chronological list, skipping foreign namespaces ("desktop-v",
-// "npm-v"). Prereleases are kept: only 1.x carries `reasonix upgrade`, and the
-// 1.x line ships as rc on npm @next, so there is no stable user to hold back —
-// the command should always move to the newest 1.x.
-func pickCLIRelease(rels []ghRelease) *ghRelease {
+func versionBelongsToCLIChannel(version string, channel cliReleaseChannel) bool {
+	switch channel {
+	case cliReleasePreview:
+		return previewCLITagPattern.MatchString(version)
+	default:
+		return stableCLITagPattern.MatchString(version)
+	}
+}
+
+func releaseBelongsToCLIChannel(rel ghRelease, channel cliReleaseChannel) bool {
+	if !isCLITag(rel.TagName) || !versionBelongsToCLIChannel(rel.TagName, channel) {
+		return false
+	}
+	return rel.Prerelease == (channel == cliReleasePreview)
+}
+
+// pickCLIRelease selects the highest strict tag in the requested public channel.
+// Generic prereleases such as RCs remain internal and can never leak into Stable
+// or masquerade as Preview.
+func pickCLIRelease(rels []ghRelease, channel cliReleaseChannel) *ghRelease {
+	best := -1
 	for i := range rels {
-		if isCLITag(rels[i].TagName) {
-			return &rels[i]
+		if !releaseBelongsToCLIChannel(rels[i], channel) {
+			continue
+		}
+		if best == -1 || semver.Compare(rels[i].TagName, rels[best].TagName) > 0 {
+			best = i
 		}
 	}
-	return nil
+	if best == -1 {
+		return nil
+	}
+	return &rels[best]
 }
 
 // fetchLatestRelease queries the GitHub Releases API and returns the newest
-// CLI-namespace (v*) release.
-func fetchLatestRelease(c *http.Client) (*ghRelease, error) {
+// strict CLI release in the selected public channel.
+func fetchLatestRelease(c *http.Client, channel cliReleaseChannel) (*ghRelease, error) {
+	pointerURL := fmt.Sprintf("%s/%s/latest.json", cliGatewayBase, channel)
+	pointerRelease, pointerErr := fetchCLIReleasePointer(c, pointerURL, channel)
+	if pointerErr == nil {
+		return pointerRelease, nil
+	}
+
 	req, err := http.NewRequest("GET", ghAPIReleases, nil)
 	if err != nil {
 		return nil, err
@@ -220,7 +285,7 @@ func fetchLatestRelease(c *http.Client) (*ghRelease, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API: %s", resp.Status)
+		return nil, fmt.Errorf("release gateway: %v; GitHub API: %s", pointerErr, resp.Status)
 	}
 
 	var rels []ghRelease
@@ -228,10 +293,37 @@ func fetchLatestRelease(c *http.Client) (*ghRelease, error) {
 		return nil, err
 	}
 
-	if rel := pickCLIRelease(rels); rel != nil {
+	if rel := pickCLIRelease(rels, channel); rel != nil {
 		return rel, nil
 	}
-	return nil, fmt.Errorf("no CLI release (v*) found in recent releases")
+	return nil, fmt.Errorf("release gateway: %v; no %s CLI release found in recent GitHub releases", pointerErr, channel)
+}
+
+func fetchCLIReleasePointer(c *http.Client, pointerURL string, channel cliReleaseChannel) (*ghRelease, error) {
+	req, err := http.NewRequest("GET", pointerURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "reasonix-cli")
+
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s", resp.Status)
+	}
+
+	var rel ghRelease
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, err
+	}
+	if !releaseBelongsToCLIChannel(rel, channel) {
+		return nil, fmt.Errorf("pointer tag %q does not belong to %s", rel.TagName, channel)
+	}
+	return &rel, nil
 }
 
 // fetchBytes GETs a URL fully into memory.
