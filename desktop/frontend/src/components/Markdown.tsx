@@ -6,13 +6,15 @@ const FINALIZE_SETTLE_MS = 50;
 const FINALIZE_IDLE_TIMEOUT_MS = 1_000;
 const MARKDOWN_SECTION_TARGET_CHARS = 12_000;
 const CROSS_SECTION_REFERENCE_RE = /(?:^ {0,3}\[[^\]\n]+\]:|\[\^[^\]\n]+\])/m;
+const CROSS_SECTION_CONTAINER_RE = /^ {0,3}(?:>|(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)|<)/;
 
-function markdownSectionBoundaries(text: string): number[] {
+function scanMarkdownSections(text: string): { boundaries: number[]; hasCrossSectionContainer: boolean } {
   const boundaries = [0];
   let lineStart = 0;
   let fence: { marker: string; length: number } | null = null;
   let displayMath = false;
   let boundaryAfterFence = false;
+  let hasCrossSectionContainer = false;
 
   const addBoundary = (offset: number) => {
     if (offset > 0 && boundaries[boundaries.length - 1] !== offset) boundaries.push(offset);
@@ -48,6 +50,9 @@ function markdownSectionBoundaries(text: string): number[] {
       boundaryAfterFence = false;
     }
 
+    if (CROSS_SECTION_CONTAINER_RE.test(line)) {
+      hasCrossSectionContainer = true;
+    }
     const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (fenceMatch) {
       addBoundary(lineStart);
@@ -61,7 +66,7 @@ function markdownSectionBoundaries(text: string): number[] {
     lineStart = lineEnd;
   }
 
-  return boundaries;
+  return { boundaries, hasCrossSectionContainer };
 }
 
 // Stable top-level sections let React.memo retain completed Markdown while the
@@ -69,7 +74,8 @@ function markdownSectionBoundaries(text: string): number[] {
 // renderer because their definitions can affect nodes anywhere in the document.
 export function splitStableMarkdownSections(text: string): string[] {
   if (text.length < MARKDOWN_SECTION_TARGET_CHARS || CROSS_SECTION_REFERENCE_RE.test(text)) return [text];
-  const boundaries = markdownSectionBoundaries(text);
+  const { boundaries, hasCrossSectionContainer } = scanMarkdownSections(text);
+  if (hasCrossSectionContainer) return [text];
   if (boundaries.length === 1) return [text];
 
   const sections = boundaries.map((start, index) => text.slice(start, boundaries[index + 1] ?? text.length));

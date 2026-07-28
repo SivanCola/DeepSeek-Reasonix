@@ -497,6 +497,45 @@ func TestSetGoalDurableRestoresInMemoryStateWhenSidecarWriteFails(t *testing.T) 
 	}
 }
 
+func TestSetGoalDurableRollsBackAutoResearchTaskAndNotice(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	sink := &noticeSink{}
+	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
+	c := New(Options{
+		Executor:      exec,
+		SessionDir:    root,
+		SessionPath:   path,
+		WorkspaceRoot: root,
+		Sink:          sink,
+		Label:         "test",
+	})
+
+	c.SetGoal("keep the old goal")
+	notDirectory := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(notDirectory, []byte("block nested writes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.goals.setStatePath(filepath.Join(notDirectory, "goal.json"))
+
+	goal := "investigate the root cause and fix the performance regression, then verify with tests"
+	if err := c.SetGoalDurable(goal); err == nil {
+		t.Fatal("SetGoalDurable succeeded despite an invalid sidecar parent")
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".reasonix", "autoresearch"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read autoresearch dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("autoresearch task count after rollback = %d, want 0", len(entries))
+	}
+	for _, notice := range sink.notices() {
+		if strings.Contains(notice, "autoresearch task created") || strings.Contains(notice, "autoresearch task resumed") {
+			t.Fatalf("durable failure emitted success notice %q", notice)
+		}
+	}
+}
+
 func TestResumeRestoresTerminalGoalTodosFromSidecar(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

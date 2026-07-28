@@ -7,6 +7,8 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
+import ReactMarkdown from "react-markdown";
 import { splitStableMarkdownSections, streamingMarkdownCommitInterval, useRenderedMarkdownText } from "../components/Markdown";
 import MermaidDiagram from "../components/MermaidDiagram";
 import {
@@ -176,6 +178,16 @@ console.log("\nmermaid rendering");
 
   const referenced = `${document}\n[shared]: https://example.com\n\nUse [shared].\n`;
   eq(splitStableMarkdownSections(referenced).length, 1, "cross-section references use one semantic Markdown renderer");
+
+  const nestedFence = `1. item\n\n   ${"long paragraph ".repeat(1_000)}\n\n   \`\`\`text\n   code\n   \`\`\`\n\n2. next\n`;
+  const nestedChunks = splitStableMarkdownSections(nestedFence);
+  eq(nestedChunks.length, 1, "list containers stay in one semantic Markdown renderer");
+  const renderMarkdown = (source: string) => renderToStaticMarkup(<ReactMarkdown>{source}</ReactMarkdown>);
+  eq(
+    nestedChunks.map(renderMarkdown).join(""),
+    renderMarkdown(nestedFence),
+    "stable Markdown optimization preserves nested list and fence DOM semantics",
+  );
 }
 
 {

@@ -115,6 +115,32 @@ func (s *Store) CreateTask(goal string, opts CreateOptions) (*Task, error) {
 	return &Task{ID: id, Root: s.taskRoot(id), Spec: spec}, nil
 }
 
+// RemoveTask deletes a task directory within the store. It is intended for
+// rolling back a task that was created as part of a larger transaction.
+func (s *Store) RemoveTask(taskID string) error {
+	if err := validateTaskID(taskID); err != nil {
+		return err
+	}
+	unlock := s.lockTask(taskID)
+	defer unlock()
+	storeRoot, err := os.OpenRoot(s.root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("autoresearch: open root dir: %w", err)
+	}
+	defer storeRoot.Close()
+	taskRel, err := s.taskRel(taskID)
+	if err != nil {
+		return err
+	}
+	if err := storeRoot.RemoveAll(taskRel); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("autoresearch: remove task %s: %w", taskID, err)
+	}
+	return nil
+}
+
 func (s *Store) ListSummaries() ([]Summary, error) {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {

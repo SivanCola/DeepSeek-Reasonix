@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sameTabMetaLists, shouldRefreshTabMetaForEvent, tabMetaFallbackDelay } from "../lib/tabMetaRefresh";
+import { createBoundedRefreshCoordinator, sameTabMetaLists, shouldRefreshTabMetaForEvent, tabMetaFallbackDelay } from "../lib/tabMetaRefresh";
 import type { TabMeta } from "../lib/types";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -30,6 +30,16 @@ function ok(value: unknown, label: string) {
     process.stdout.write(`  FAIL  ${label}\n`);
     failed += 1;
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function matchingBlocks(selector: string): string[] {
@@ -81,10 +91,44 @@ ok(tabMetaFallbackDelay("hidden") === 60_000, "hidden tab metadata fallback back
 ok(shouldRefreshTabMetaForEvent("turn_started"), "turn start refreshes tab runtime metadata immediately");
 ok(shouldRefreshTabMetaForEvent("approval_request"), "approval prompts refresh tab runtime metadata immediately");
 ok(!shouldRefreshTabMetaForEvent("text_delta"), "stream deltas do not trigger tab-list requests");
+
+{
+  const coordinator = createBoundedRefreshCoordinator<TabMeta[]>(2);
+  const first = deferred<TabMeta[]>();
+  const second = deferred<TabMeta[]>();
+  let loads = 0;
+  const firstRefresh = coordinator.run(() => {
+    loads += 1;
+    return first.promise;
+  });
+  const secondRefresh = coordinator.run(() => {
+    loads += 1;
+    return second.promise;
+  });
+  const saturatedRefresh = coordinator.run(() => {
+    loads += 1;
+    return Promise.resolve([]);
+  });
+  await Promise.resolve();
+  ok(loads === 2, "tab metadata refresh caps outstanding backend calls");
+
+  const latestTabs = [tabMeta({ id: "tab-latest" })];
+  second.resolve(latestTabs);
+  const saturatedResult = await saturatedRefresh;
+  ok(saturatedResult.coalesced, "saturated tab metadata refresh joins the newest request");
+  ok(saturatedResult.value === latestTabs, "saturated tab metadata refresh returns authoritative tabs instead of an empty sentinel");
+  ok(saturatedResult.latest, "coalesced newest tab metadata remains eligible to update state");
+
+  first.resolve([tabMeta({ id: "tab-stale" })]);
+  const firstResult = await firstRefresh;
+  await secondRefresh;
+  ok(!firstResult.latest, "an older tab metadata response cannot replace a newer snapshot");
+}
+
 ok(
   !appSource.includes("setInterval(() => void refreshTabMetas(), 2000)") &&
     appSource.includes('document.addEventListener("visibilitychange", onVisibilityChange)') &&
-    appSource.includes("tabMetaRefreshInFlightRef.current >= TAB_META_MAX_IN_FLIGHT") &&
+    appSource.includes("createBoundedRefreshCoordinator<TabMeta[]>(TAB_META_MAX_IN_FLIGHT)") &&
     appSource.includes("void refreshTabMetas();\n        schedule();"),
   "tab metadata refresh is event-driven with a visibility-aware fallback",
 );
@@ -352,11 +396,11 @@ ok(
   /const navigationRunningRef = useRef\(false\);/.test(appSource) &&
     /const navigationPendingRef = useRef<PendingDesktopNavigationRequest \| null>\(null\);/.test(appSource) &&
     /const runNavigationRequest = useCallback\(async \(request: PendingDesktopNavigationRequest\)/.test(appSource) &&
-    /const latest = \(\) => request\.seq === navigationSeqRef\.current;/.test(appSource) &&
-    /return activateTopic\(scope, workspaceRoot, topicId/.test(appSource) &&
-    /return openTopicSession\(scope, workspaceRoot, topicId/.test(appSource) &&
-    /return openGlobalTab\(topicId\)/.test(appSource) &&
-    /return openProjectTab\(workspaceRoot, topicId\)/.test(appSource) &&
+    /const latest = \(\) => request\.seq === navigationSeqRef\.current && isNavigationIntentCurrent\(request\.navigationIntentSeq\);/.test(appSource) &&
+    /return activateTopic\(scope, workspaceRoot, topicId, sessionPath \|\| "", request\.navigationIntentSeq\)/.test(appSource) &&
+    /return openTopicSession\(scope, workspaceRoot, topicId, sessionPath, request\.navigationIntentSeq\)/.test(appSource) &&
+    /return openGlobalTab\(topicId, request\.navigationIntentSeq\)/.test(appSource) &&
+    /return openProjectTab\(workspaceRoot, topicId, request\.navigationIntentSeq\)/.test(appSource) &&
     /enqueueNavigationRequest\([\s\S]*runningRef: navigationRunningRef, pendingRef: navigationPendingRef/.test(appSource) &&
     !/openTopicQueueRef\.current\.catch\(\(\) => \{\}\)\.then/.test(appSource) &&
     /const refreshLatestTabMetas = async \(\): Promise<TabMeta\[]> => \{[\s\S]*if \(latest\(\)\) setTabMetas\(tabs\);/.test(navigationBlock) &&
