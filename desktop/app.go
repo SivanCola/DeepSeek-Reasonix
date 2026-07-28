@@ -3847,12 +3847,35 @@ func (a *App) OpenChannelSessionPageForTab(tabID, path string, limit int) (Histo
 }
 
 func (a *App) setTabReadOnly(tabID string, readOnly bool) {
+	var terminalSessions []*terminalSession
 	a.mu.Lock()
-	if tab := a.tabs[tabID]; tab != nil && tab.ReadOnly != readOnly {
-		tab.ReadOnly = readOnly
-		a.saveTabsLocked()
+	tab := a.tabs[tabID]
+	if tab == nil || tab.ReadOnly == readOnly {
+		a.mu.Unlock()
+		return
 	}
+	if a.terminals != nil {
+		if readOnly {
+			// Close the creation gate and detach existing sessions before
+			// exposing the tab as read-only. The process I/O cleanup happens
+			// after App.mu is released.
+			terminalSessions = a.terminals.detachForTab(tabID)
+		} else {
+			// Reopen the terminal gate before exposing the tab as writable. A
+			// concurrent create must never observe writable App state while
+			// the terminal manager still treats this tab as closed.
+			a.terminals.reopenForTab(tabID)
+		}
+	}
+	tab.ReadOnly = readOnly
+	a.saveTabsLocked()
 	a.mu.Unlock()
+	if len(terminalSessions) > 0 {
+		// Existing shells can keep modifying the workspace without renderer
+		// input, so entering a read-only channel must terminate them as part of
+		// the same capability transition.
+		a.terminals.closeSessions(terminalSessions)
+	}
 }
 
 func (a *App) rebindTabToSessionPath(tab *WorkspaceTab, sessionPath string) error {

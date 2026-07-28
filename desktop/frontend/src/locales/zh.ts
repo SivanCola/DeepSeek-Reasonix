@@ -249,6 +249,8 @@ export const zh: Record<DictKey, string> = {
   "terminal.newSession": "新建终端会话",
   "terminal.closeSession": "关闭终端会话",
   "terminal.loading": "正在加载终端…",
+  "terminal.retry": "重试",
+  "terminal.dismissError": "关闭终端错误提示",
   "terminal.empty": "在当前工作区启动一个 shell。",
   "terminal.readOnly": "此频道为只读。",
   "terminal.addOutput": "将终端输出加入聊天",

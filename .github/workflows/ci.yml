@@ -193,6 +193,25 @@ jobs:
       - name: test
         run: go test ./...
 
+  # desktop/ is a separate module, so the root macOS matrix above does not
+  # compile or exercise the native PTY implementation.
+  desktop-macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+
+      - name: Test integrated terminal and PTY lifecycle
+        run: go test -race -run 'Test(ResolveTerminal|Terminal|EmptyTerminal|UnixTerminalProcess)' .
+
   # Desktop project-root matching is case-insensitive only on Windows
   # (sameDesktopPath folds case when os.PathSeparator is '\'), so the
   # regression tests for that contract are named *OnWindows and can never

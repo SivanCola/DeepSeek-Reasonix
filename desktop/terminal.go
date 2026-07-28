@@ -98,6 +98,7 @@ type terminalSession struct {
 	tabID        string
 	workspaceKey string
 	process      terminalProcess
+	readDone     chan struct{}
 	done         chan struct{}
 	output       []byte
 }
@@ -105,23 +106,25 @@ type terminalSession struct {
 type terminalManager struct {
 	app *App
 
-	mu           sync.Mutex
-	sessions     map[string]*terminalSession
-	byWorkspace  map[string][]string
-	starting     map[string]int
-	closedTabIDs map[string]struct{}
-	closed       bool
-	start        func(terminalStartSpec) (terminalProcess, error)
+	mu            sync.Mutex
+	sessions      map[string]*terminalSession
+	byWorkspace   map[string][]string
+	starting      map[string]int
+	tabGeneration map[string]uint64
+	closedTabIDs  map[string]struct{}
+	closed        bool
+	start         func(terminalStartSpec) (terminalProcess, error)
 }
 
 func newTerminalManager(app *App) *terminalManager {
 	return &terminalManager{
-		app:          app,
-		sessions:     make(map[string]*terminalSession),
-		byWorkspace:  make(map[string][]string),
-		starting:     make(map[string]int),
-		closedTabIDs: make(map[string]struct{}),
-		start:        startTerminalProcess,
+		app:           app,
+		sessions:      make(map[string]*terminalSession),
+		byWorkspace:   make(map[string][]string),
+		starting:      make(map[string]int),
+		tabGeneration: make(map[string]uint64),
+		closedTabIDs:  make(map[string]struct{}),
+		start:         startTerminalProcess,
 	}
 }
 
@@ -492,6 +495,18 @@ func commandForShellPath(path, label string) terminalCommand {
 	return terminalCommand{path: path, args: args, label: label}
 }
 
+func terminalEnvironment(base []string) []string {
+	env := make([]string, 0, len(base)+2)
+	for _, item := range base {
+		key, _, ok := strings.Cut(item, "=")
+		if ok && (strings.EqualFold(key, "TERM") || strings.EqualFold(key, "COLORTERM")) {
+			continue
+		}
+		env = append(env, item)
+	}
+	return append(env, "TERM=xterm-256color", "COLORTERM=truecolor")
+}
+
 func (m *terminalManager) create(tabID, workspaceKey, dir string, command terminalCommand) (TerminalSessionView, error) {
 	tabID = strings.TrimSpace(tabID)
 	m.mu.Lock()
@@ -507,6 +522,7 @@ func (m *terminalManager) create(tabID, workspaceKey, dir string, command termin
 		m.mu.Unlock()
 		return TerminalSessionView{}, errTerminalStaleTab
 	}
+	generation := m.tabGeneration[tabID]
 	if len(m.byWorkspace[workspaceKey])+m.starting[workspaceKey] >= maxTerminalsPerWorkspace {
 		m.mu.Unlock()
 		return TerminalSessionView{}, fmt.Errorf("terminal session limit reached (%d)", maxTerminalsPerWorkspace)
@@ -530,12 +546,9 @@ func (m *terminalManager) create(tabID, workspaceKey, dir string, command termin
 	proc, err := m.start(terminalStartSpec{
 		command: command,
 		dir:     dir,
-		env: append(secrets.ProcessEnv(),
-			"TERM=xterm-256color",
-			"COLORTERM=truecolor",
-		),
-		cols: defaultTerminalColumns,
-		rows: defaultTerminalRows,
+		env:     terminalEnvironment(secrets.ProcessEnv()),
+		cols:    defaultTerminalColumns,
+		rows:    defaultTerminalRows,
 	})
 	if err != nil {
 		return TerminalSessionView{}, fmt.Errorf("start terminal: %w", err)
@@ -553,6 +566,7 @@ func (m *terminalManager) create(tabID, workspaceKey, dir string, command termin
 		tabID:        tabID,
 		workspaceKey: workspaceKey,
 		process:      proc,
+		readDone:     make(chan struct{}),
 		done:         make(chan struct{}),
 	}
 
@@ -563,6 +577,11 @@ func (m *terminalManager) create(tabID, workspaceKey, dir string, command termin
 		return TerminalSessionView{}, errTerminalManagerOff
 	}
 	if _, closed := m.closedTabIDs[tabID]; closed {
+		m.mu.Unlock()
+		_ = proc.Close()
+		return TerminalSessionView{}, errTerminalStaleTab
+	}
+	if m.tabGeneration[tabID] != generation {
 		m.mu.Unlock()
 		_ = proc.Close()
 		return TerminalSessionView{}, errTerminalStaleTab
@@ -700,15 +719,24 @@ func (m *terminalManager) closeTerminal(workspaceKey, sessionID string) error {
 }
 
 func (m *terminalManager) closeForTab(tabID string) {
+	m.closeSessions(m.detachForTab(tabID))
+}
+
+// detachForTab closes the creation gate and removes every registered session
+// without waiting on process I/O. Callers can use it while serializing an App
+// capability transition, then close the returned processes after releasing
+// App.mu.
+func (m *terminalManager) detachForTab(tabID string) []*terminalSession {
 	if m == nil {
-		return
+		return nil
 	}
 	tabID = strings.TrimSpace(tabID)
 	if tabID == "" {
-		return
+		return nil
 	}
 	m.mu.Lock()
 	m.closedTabIDs[tabID] = struct{}{}
+	m.tabGeneration[tabID]++
 	sessions := make([]*terminalSession, 0)
 	for _, session := range m.sessions {
 		if session.tabID != tabID {
@@ -718,6 +746,13 @@ func (m *terminalManager) closeForTab(tabID string) {
 		sessions = append(sessions, session)
 	}
 	m.mu.Unlock()
+	return sessions
+}
+
+func (m *terminalManager) closeSessions(sessions []*terminalSession) {
+	if m == nil || len(sessions) == 0 {
+		return
+	}
 	for _, session := range sessions {
 		_ = session.process.Close()
 	}
@@ -730,6 +765,21 @@ func (m *terminalManager) closeForTab(tabID string) {
 			return
 		}
 	}
+}
+
+func (m *terminalManager) reopenForTab(tabID string) {
+	if m == nil {
+		return
+	}
+	tabID = strings.TrimSpace(tabID)
+	if tabID == "" {
+		return
+	}
+	m.mu.Lock()
+	if !m.closed {
+		delete(m.closedTabIDs, tabID)
+	}
+	m.mu.Unlock()
 }
 
 func (m *terminalManager) removeSessionLocked(session *terminalSession) {
@@ -777,6 +827,7 @@ func (m *terminalManager) closeAll() {
 }
 
 func (m *terminalManager) readLoop(session *terminalSession) {
+	defer close(session.readDone)
 	buf := make([]byte, 8*1024)
 	for {
 		n, err := session.process.Read(buf)
@@ -800,6 +851,10 @@ func (m *terminalManager) readLoop(session *terminalSession) {
 
 func (m *terminalManager) waitLoop(session *terminalSession) {
 	exitCode, waitErr := session.process.Wait()
+	select {
+	case <-session.readDone:
+	case <-time.After(terminalCloseWait):
+	}
 	_ = session.process.Close()
 	if waitErr != nil && exitCode == 0 {
 		exitCode = -1

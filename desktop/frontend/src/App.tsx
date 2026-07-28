@@ -80,6 +80,7 @@ import "./custom/features/heartbeat/heartbeat.css";
 import { CopyButton } from "./components/CopyButton";
 import { ExternalOpener } from "./components/ExternalOpener";
 import { startTerminalEventBridge } from "./lib/terminalEvents";
+import { formatTerminalOutputForComposer } from "./lib/terminalOutput";
 import { useTerminalStore } from "./store/terminal";
 import { parseTodos } from "./lib/tools";
 import {
@@ -2806,12 +2807,12 @@ export default function App() {
     if (!activeTabId) return;
     try {
       const output = await app.TerminalOutputForTab(activeTabId, sessionId);
-      if (!output.trim()) {
+      const formatted = formatTerminalOutputForComposer(output);
+      if (!formatted) {
         showToast(t("terminal.noOutput"), "info");
         return;
       }
-      const clipped = output.length > 120_000 ? output.slice(-120_000) : output;
-      addWorkspaceTextToComposer(`\`\`\`console\n${clipped.replace(/\u0000/g, "")}\n\`\`\``);
+      addWorkspaceTextToComposer(formatted);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), "error");
     }
@@ -4594,6 +4595,7 @@ export default function App() {
                   <TerminalPanel
                     tabId={activeTabId ?? ""}
                     cwd={state.meta?.cwd}
+                    readOnly={Boolean(activeTab?.readOnly)}
                     onClose={() => setWorkspacePanel(false)}
                     onAddOutput={(sessionId) => void addTerminalOutputToComposer(sessionId)}
                   />

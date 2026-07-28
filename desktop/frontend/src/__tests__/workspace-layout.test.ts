@@ -185,9 +185,26 @@ eq(
   "terminal drawer hides the redundant workspace tab strip",
 );
 eq(
-  /sessions\.length > 1 && \([\s\S]*?<TerminalSessionRail/.test(terminalPanelSource),
+  /\.app--creation \.layout--creation-chrome-hidden\.layout--terminal-open \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\) minmax\(220px, min\(42vh, 440px\)\)/.test(stylesSource)
+    && /\.app--creation \.layout--creation-chrome-hidden\.layout--terminal-open \.workbench-dock \{[\s\S]*?grid-row: 2/.test(stylesSource),
   true,
-  "terminal session tabs only appear when multiple sessions exist",
+  "creation style keeps the terminal drawer below the chat pane",
+);
+eq(
+  /sessions\.length > 0 && \([\s\S]*?<TerminalSessionRail/.test(terminalPanelSource),
+  true,
+  "the single terminal session keeps a visible close control",
+);
+eq(
+  /const syncWorkspace = useTerminalStore[\s\S]*?const capabilityChanged = previous\.tabId === tabId && previous\.readOnly !== readOnly[\s\S]*?void syncWorkspace\(tabId, capabilityChanged\)/.test(terminalPanelSource),
+  true,
+  "terminal panel refreshes changed capability while reusing an in-flight first-open request",
+);
+eq(
+  /readOnly=\{Boolean\(activeTab\?\.readOnly\)\}/.test(appSource)
+    && /const terminalReadOnly = readOnly \|\| Boolean\(workspace\?\.readOnly\)/.test(terminalPanelSource),
+  true,
+  "terminal controls follow the active tab read-only boundary",
 );
 eq(
   /terminal-session-rail__new|onNew/.test(terminalRailSource),

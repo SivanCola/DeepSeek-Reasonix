@@ -97,6 +97,25 @@ func TestResolveTerminalCommandTrustsOnlyUserConfigPath(t *testing.T) {
 	}
 }
 
+func TestTerminalEnvironmentOverridesInheritedTerminalCapabilities(t *testing.T) {
+	env := terminalEnvironment([]string{
+		"PATH=/bin",
+		"TERM=dumb",
+		"colorterm=legacy",
+		"REASONIX_TEST=value",
+	})
+	joined := strings.Join(env, "\n")
+	if strings.Count(strings.ToUpper(joined), "TERM=") != 2 {
+		t.Fatalf("terminal environment contains duplicate TERM variables: %q", env)
+	}
+	if !strings.Contains(joined, "TERM=xterm-256color") || !strings.Contains(joined, "COLORTERM=truecolor") {
+		t.Fatalf("terminal capability overrides missing: %q", env)
+	}
+	if !strings.Contains(joined, "PATH=/bin") || !strings.Contains(joined, "REASONIX_TEST=value") {
+		t.Fatalf("terminal environment dropped unrelated variables: %q", env)
+	}
+}
+
 func testExecutable(t *testing.T, dir, name string) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -213,6 +232,7 @@ func (p *fakeTerminalProcess) Resize(cols, rows int) error {
 func (p *fakeTerminalProcess) Wait() (int, error) {
 	select {
 	case result := <-p.waitResult:
+		p.closeOnce.Do(func() { close(p.closed) })
 		return result.code, result.err
 	case <-p.closed:
 		return -1, errors.New("closed")
@@ -220,6 +240,41 @@ func (p *fakeTerminalProcess) Wait() (int, error) {
 }
 
 func (p *fakeTerminalProcess) Close() error {
+	p.closeOnce.Do(func() { close(p.closed) })
+	return nil
+}
+
+type drainingTerminalProcess struct {
+	waitRelease chan struct{}
+	readRelease chan struct{}
+	closed      chan struct{}
+	closeOnce   sync.Once
+}
+
+func newDrainingTerminalProcess() *drainingTerminalProcess {
+	return &drainingTerminalProcess{
+		waitRelease: make(chan struct{}),
+		readRelease: make(chan struct{}),
+		closed:      make(chan struct{}),
+	}
+}
+
+func (p *drainingTerminalProcess) Read(data []byte) (int, error) {
+	select {
+	case <-p.readRelease:
+		return copy(data, []byte("final output")), io.EOF
+	case <-p.closed:
+		return 0, io.EOF
+	}
+}
+
+func (p *drainingTerminalProcess) Write(data []byte) (int, error) { return len(data), nil }
+func (p *drainingTerminalProcess) Resize(int, int) error          { return nil }
+func (p *drainingTerminalProcess) Wait() (int, error) {
+	<-p.waitRelease
+	return 0, nil
+}
+func (p *drainingTerminalProcess) Close() error {
 	p.closeOnce.Do(func() { close(p.closed) })
 	return nil
 }
@@ -312,6 +367,185 @@ func TestTerminalManagerRejectsStartThatFinishesAfterTabClose(t *testing.T) {
 	}
 	if _, err := manager.create("closing-tab", "workspace", ".", terminalCommand{path: "shell", label: "shell"}); !errors.Is(err, errTerminalStaleTab) {
 		t.Fatalf("create after tab close error = %v, want errTerminalStaleTab", err)
+	}
+	manager.closeAll()
+}
+
+func TestTerminalManagerRejectsStaleStartAfterTabGateReopens(t *testing.T) {
+	manager := newTerminalManager(nil)
+	proc := newFakeTerminalProcess()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	manager.start = func(terminalStartSpec) (terminalProcess, error) {
+		close(entered)
+		<-release
+		return proc, nil
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := manager.create("rebinding-tab", "old-workspace", ".", terminalCommand{path: "shell", label: "shell"})
+		result <- err
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("terminal start did not reach the concurrency barrier")
+	}
+	manager.closeForTab("rebinding-tab")
+	manager.reopenForTab("rebinding-tab")
+	close(release)
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, errTerminalStaleTab) {
+			t.Fatalf("create error = %v, want errTerminalStaleTab", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal create did not finish after the tab gate reopened")
+	}
+	select {
+	case <-proc.closed:
+	case <-time.After(time.Second):
+		t.Fatal("stale terminal process was not closed after the tab gate reopened")
+	}
+	if got := manager.list("old-workspace"); len(got) != 0 {
+		t.Fatalf("stale tab registered terminal sessions: %+v", got)
+	}
+	manager.closeAll()
+}
+
+func TestTerminalManagerDrainsFinalOutputBeforePublishingExit(t *testing.T) {
+	manager := newTerminalManager(nil)
+	proc := newDrainingTerminalProcess()
+	manager.start = func(terminalStartSpec) (terminalProcess, error) { return proc, nil }
+	view, err := manager.create("tab", "workspace", ".", terminalCommand{path: "shell", label: "shell"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	done := manager.sessions[view.ID].done
+	manager.mu.Unlock()
+
+	close(proc.waitRelease)
+	select {
+	case <-done:
+		t.Fatal("terminal exit completed before the reader drained final output")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(proc.readRelease)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("terminal exit did not finish after output drained")
+	}
+	if got := manager.snapshot("workspace", view.ID); got != "final output" {
+		t.Fatalf("final terminal snapshot = %q, want final output", got)
+	}
+	manager.closeAll()
+}
+
+func TestTerminalReadOnlyTransitionClosesAndReopensTheTabGate(t *testing.T) {
+	app := NewApp()
+	root := t.TempDir()
+	app.tabs["tab"] = &WorkspaceTab{ID: "tab", Scope: "project", WorkspaceRoot: root}
+	app.tabOrder = []string{"tab"}
+	app.activeTabID = "tab"
+
+	manager := newTerminalManager(nil)
+	app.terminals = manager
+	started := make([]*fakeTerminalProcess, 0, 2)
+	manager.start = func(terminalStartSpec) (terminalProcess, error) {
+		proc := newFakeTerminalProcess()
+		started = append(started, proc)
+		return proc, nil
+	}
+
+	if _, err := manager.create("tab", "workspace", root, terminalCommand{path: "shell", label: "shell"}); err != nil {
+		t.Fatal(err)
+	}
+	app.setTabReadOnly("tab", true)
+	if !app.tabs["tab"].ReadOnly {
+		t.Fatal("tab did not enter read-only mode")
+	}
+	select {
+	case <-started[0].closed:
+	default:
+		t.Fatal("entering read-only mode did not close the terminal process")
+	}
+	if got := manager.list("workspace"); len(got) != 0 {
+		t.Fatalf("read-only tab retained terminal sessions: %+v", got)
+	}
+	if _, err := manager.create("tab", "workspace", root, terminalCommand{path: "shell", label: "shell"}); !errors.Is(err, errTerminalStaleTab) {
+		t.Fatalf("create while read-only gate is closed = %v, want errTerminalStaleTab", err)
+	}
+
+	app.setTabReadOnly("tab", false)
+	if app.tabs["tab"].ReadOnly {
+		t.Fatal("tab did not return to writable mode")
+	}
+	if _, err := manager.create("tab", "workspace", root, terminalCommand{path: "shell", label: "shell"}); err != nil {
+		t.Fatalf("create after writable transition: %v", err)
+	}
+	manager.closeAll()
+}
+
+func TestTerminalWorkspaceRebindClosesOldSessionsAndReopensTheTabGate(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	app := NewApp()
+	oldRoot := t.TempDir()
+	newRoot := t.TempDir()
+	tab := &WorkspaceTab{
+		ID:            "tab",
+		Scope:         "project",
+		WorkspaceRoot: oldRoot,
+		SessionPath:   filepath.Join(oldRoot, "old-session.jsonl"),
+	}
+	app.tabs["tab"] = tab
+	app.tabOrder = []string{"tab"}
+	app.activeTabID = "tab"
+
+	manager := newTerminalManager(nil)
+	app.terminals = manager
+	started := make([]*fakeTerminalProcess, 0, 2)
+	manager.start = func(terminalStartSpec) (terminalProcess, error) {
+		proc := newFakeTerminalProcess()
+		started = append(started, proc)
+		return proc, nil
+	}
+
+	oldTarget, err := app.terminalTargetForTab("tab", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.create("tab", oldTarget.workspaceKey, oldTarget.workspaceRoot, terminalCommand{path: "shell", label: "shell"}); err != nil {
+		t.Fatal(err)
+	}
+
+	app.applySessionBindingToTab(tab, sessionBinding{
+		path:          filepath.Join(newRoot, "new-session.jsonl"),
+		scope:         "project",
+		workspaceRoot: newRoot,
+	})
+
+	select {
+	case <-started[0].closed:
+	default:
+		t.Fatal("workspace rebind did not close the old terminal process")
+	}
+	if got := manager.list(oldTarget.workspaceKey); len(got) != 0 {
+		t.Fatalf("workspace rebind retained old terminal sessions: %+v", got)
+	}
+	newTarget, err := app.terminalTargetForTab("tab", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newTarget.workspaceKey == oldTarget.workspaceKey {
+		t.Fatalf("workspace rebind retained terminal scope %q", newTarget.workspaceKey)
+	}
+	if _, err := manager.create("tab", newTarget.workspaceKey, newTarget.workspaceRoot, terminalCommand{path: "shell", label: "shell"}); err != nil {
+		t.Fatalf("create after workspace rebind: %v", err)
 	}
 	manager.closeAll()
 }
