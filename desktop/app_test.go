@@ -474,7 +474,9 @@ func TestMetaForTabIncludesWorkspaceContext(t *testing.T) {
 	if strings.Contains(string(raw), "sandboxPath") || strings.Contains(string(raw), configuredSandboxRoot) {
 		t.Fatalf("meta should not expose configured sandbox root as sandboxPath: %s", raw)
 	}
-	deadline := time.Now().Add(time.Second)
+	// The first git process launch can be noticeably slower on Windows runners
+	// while MetaForTab intentionally keeps the caller path non-blocking.
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if got = app.MetaForTab("tab-1"); got.GitBranch == "feature/meta" {
 			break
