@@ -1,4 +1,27 @@
 import type { StructuredInvocationSubmit } from "./invocationDisplay";
+import type { WorkbenchActiveTarget, WorkbenchTargetKind } from "./workbenchTarget";
+
+export type WorkbenchTargetToken = {
+  kind: WorkbenchTargetKind;
+  identityGen: number;
+  requestSeq: number;
+};
+
+export function workbenchTargetToken(target: WorkbenchActiveTarget): WorkbenchTargetToken | null {
+  if (
+    !Number.isSafeInteger(target.identityGen) ||
+    !Number.isSafeInteger(target.requestSeq) ||
+    (target.identityGen ?? 0) <= 0 ||
+    (target.requestSeq ?? -1) < 0
+  ) {
+    return null;
+  }
+  return {
+    kind: target.kind,
+    identityGen: target.identityGen!,
+    requestSeq: target.requestSeq!,
+  };
+}
 
 /**
  * Activate a Goal, then submit the first turn.
@@ -32,36 +55,41 @@ export async function activateGoalAndSubmit({
 }
 
 /**
- * Tab-scoped first Goal turn. Captures `tabId` once so a later active-tab switch
- * cannot retarget SetGoalForTab or the structured Skill submit.
+ * Tab- and target-scoped first Goal turn. The backend receives both the source
+ * tab and the workbench projection token in one call, so a later target switch
+ * cannot split Goal activation from the structured Skill submit.
  */
 export async function activateGoalAndSubmitOnTab({
   tabId,
+  target,
   displayText,
   submitText,
   structured,
-  setGoalForTab,
   sendToTab,
 }: {
   tabId: string;
+  target: WorkbenchTargetToken;
   displayText: string;
   submitText: string;
   structured?: StructuredInvocationSubmit;
-  setGoalForTab: (tabId: string, goal: string) => void | Promise<void>;
   sendToTab: (
     tabId: string,
+    goal: string,
     displayText: string,
     submitText: string,
     structured?: StructuredInvocationSubmit,
+    target?: WorkbenchTargetToken,
   ) => void | Promise<void>;
 }): Promise<void> {
   const sourceTabId = tabId;
-  await activateGoalAndSubmit({
-    displayText,
-    submitText,
+  const sourceTarget = { ...target };
+  const goal = displayText.trim();
+  await sendToTab(
+    sourceTabId,
+    goal,
+    goal,
+    structured ? submitText.trim() : `/goal ${submitText.trim()}`,
     structured,
-    applyGoal: (goal) => setGoalForTab(sourceTabId, goal),
-    send: (display, routedSubmit, routedStructured) =>
-      sendToTab(sourceTabId, display, routedSubmit, routedStructured),
-  });
+    sourceTarget,
+  );
 }

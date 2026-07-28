@@ -5,7 +5,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { acceptsRuntimeEventEpoch, initialState, reducer, replayPendingPromptsForActiveTab, runtimeReadyForSubmit } from "../lib/useController";
 import { continueDelivery } from "../lib/deliveryContinue";
-import { activateGoalAndSubmit, activateGoalAndSubmitOnTab } from "../lib/goalSubmit";
+import {
+  activateGoalAndSubmit,
+  activateGoalAndSubmitOnTab,
+  workbenchTargetToken,
+} from "../lib/goalSubmit";
 import type { WireEvent } from "../lib/types";
 
 let passed = 0;
@@ -22,6 +26,17 @@ function eq(a: unknown, b: unknown, label: string) {
 }
 
 console.log("\nsend failure feedback");
+
+eq(
+  workbenchTargetToken({ kind: "local", identityGen: 1, requestSeq: 0 })?.requestSeq,
+  0,
+  "initial Local workbench target keeps its zero request sequence",
+);
+eq(
+  workbenchTargetToken({ kind: "local", identityGen: 1 }),
+  null,
+  "workbench target without a request sequence fails closed",
+);
 
 {
   const calls: string[] = [];
@@ -72,17 +87,17 @@ console.log("\nsend failure feedback");
 }
 
 {
-  // Tab-scoped helper captures source tab once; callbacks receive that id even
-  // if a surrounding "active tab" concept changes mid-flight. Full App/bridge
-  // routing is covered by goal-activation-tab-routing.test.tsx.
+  // Tab-scoped helper captures source tab and workbench target once; callbacks
+  // receive both even if a surrounding "active tab" concept changes mid-flight.
   const calls: string[] = [];
-  let releaseGoal!: () => void;
-  const goalGate = new Promise<void>((resolve) => {
-    releaseGoal = resolve;
+  let releaseSubmit!: () => void;
+  const submitGate = new Promise<void>((resolve) => {
+    releaseSubmit = resolve;
   });
   let activeTab = "tab-a";
   const pending = activateGoalAndSubmitOnTab({
     tabId: "tab-a",
+    target: { kind: "ssh", identityGen: 7, requestSeq: 11 },
     displayText: "Cross-tab safe goal",
     submitText: "/ui-ux-pro-max Cross-tab safe goal",
     structured: {
@@ -90,22 +105,21 @@ console.log("\nsend failure feedback");
       input: "Cross-tab safe goal",
       invocations: [{ name: "ui-ux-pro-max", kind: "skill", offset: 0 }],
     },
-    setGoalForTab: async (tabId, goal) => {
-      await goalGate;
-      calls.push(`goal:${tabId}:${goal}:active=${activeTab}`);
-    },
-    sendToTab: async (tabId, display, submit, structured) => {
-      calls.push(`send:${tabId}:${display}:${submit}:${structured?.invocations[0]?.name ?? ""}:active=${activeTab}`);
+    sendToTab: async (tabId, goal, display, submit, structured, target) => {
+      await submitGate;
+      calls.push(
+        `send:${tabId}:${goal}:${display}:${submit}:${structured?.invocations[0]?.name ?? ""}:${target?.kind}:${target?.identityGen}:${target?.requestSeq}:active=${activeTab}`,
+      );
     },
   });
   activeTab = "tab-b";
   calls.push("switched-to-tab-b");
-  releaseGoal();
+  releaseSubmit();
   await pending;
   eq(
     calls.join("|"),
-    "switched-to-tab-b|goal:tab-a:Cross-tab safe goal:active=tab-b|send:tab-a:Cross-tab safe goal:/ui-ux-pro-max Cross-tab safe goal:ui-ux-pro-max:active=tab-b",
-    "activateGoalAndSubmitOnTab keeps Goal and Skill on the captured source tab",
+    "switched-to-tab-b|send:tab-a:Cross-tab safe goal:Cross-tab safe goal:/ui-ux-pro-max Cross-tab safe goal:ui-ux-pro-max:ssh:7:11:active=tab-b",
+    "activateGoalAndSubmitOnTab keeps Goal and Skill on the captured source tab and target",
   );
 }
 
@@ -280,10 +294,10 @@ eq(
 eq(
   appSource.includes("activateGoalAndSubmitOnTab({") &&
     appSource.includes("tabId: sourceTabId") &&
-    appSource.includes("setGoalForTab: (tabId, nextGoal) => applyGoalForTab(tabId, nextGoal)") &&
-    appSource.includes("commitThenSendRef.current(tabId, display, routedSubmit, routedStructured)"),
+    appSource.includes("target: sourceTarget") &&
+    appSource.includes("target ? { goal: nextGoal, target } : undefined"),
   true,
-  "initial Goal activation stays scoped to the submission tab via OnTab helper",
+  "initial Goal activation captures the submission tab and workbench target",
 );
 eq(
   appSource.includes("setControllerGoalForTab(tabId, trimmed)") && appSource.includes("clearControllerGoalForTab(tabId)"),
@@ -291,7 +305,7 @@ eq(
   "tab-scoped Goal activation updates the matching controller",
 );
 eq(
-  /await \(trimmed \? setControllerGoalForTab\(tabId, trimmed\) : clearControllerGoalForTab\(tabId\)\);\s*patchComposerProfileForTab\(tabId/.test(appSource),
+  /await \(trimmed \? setControllerGoalForTab\(tabId, trimmed\) : clearControllerGoalForTab\(tabId\)\);\s*patchActivatedGoalForTab\(tabId, trimmed\)/.test(appSource),
   true,
   "local Goal profile is patched only after backend activation succeeds",
 );
@@ -311,9 +325,10 @@ eq(
   "delivery recovery routes through continueDelivery with the backend Goal state",
 );
 eq(
-  appSource.includes("activateGoalAndSubmitOnTab({") && appSource.includes("routedStructured"),
+  controllerSource.includes("app.SubmitInitialGoalToTab(") &&
+    appSource.includes("patchActivatedGoalForTab(sourceTabId, trimmed)"),
   true,
-  "the first Goal turn uses the tab-scoped executable goal submission contract",
+  "the first Goal turn uses the atomic target-scoped backend contract",
 );
 
 const unsent = reducer(sent, { type: "unsend" });

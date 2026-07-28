@@ -1,8 +1,8 @@
 // Run: tsx src/__tests__/goal-activation-tab-routing.test.tsx
 //
-// App/bridge harness for the first Goal + structured Skill path: hang
-// SetGoalForTab(A), switch active to B, then assert Goal and
-// SubmitInvocationsToTab both still target A.
+// App/bridge harness for the first Goal + structured Skill path: hang the
+// combined backend call for A, switch active to B, then assert the source tab
+// and workbench target token stayed fixed.
 
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
@@ -100,8 +100,7 @@ const tabA = tabMeta({ id: "tab-a", topicId: "topic-a", topicTitle: "A", active:
 const tabB = tabMeta({ id: "tab-b", topicId: "topic-b", topicTitle: "B", active: false, cwd: "/repo-b", workspaceRoot: "/repo-b", workspacePath: "/repo-b" });
 let tabs: TabMeta[] = [tabA, tabB];
 
-const goalCalls: string[] = [];
-const invokeCalls: string[] = [];
+const initialGoalCalls: string[] = [];
 let releaseGoal!: () => void;
 const goalGate = new Promise<void>((resolve) => {
   releaseGoal = resolve;
@@ -138,16 +137,34 @@ window.go = {
       HistoryCheckpointTurnsForTab: async () => [],
       ReplayPendingPrompts: async () => {},
       SetGoalForTab: async (tabID: string, goal: string) => {
-        await goalGate;
-        goalCalls.push(`${tabID}:${goal}`);
         tabs = tabs.map((tab) =>
           tab.id === tabID
             ? { ...tab, goal, collaborationMode: goal ? "goal" : "normal" }
             : tab,
         );
       },
-      SubmitInvocationsToTab: async (tabID: string, display: string, _input: string, invocations: { name: string }[]) => {
-        invokeCalls.push(`${tabID}:${display}:${invocations[0]?.name ?? ""}`);
+      SubmitInitialGoalToTab: async (
+        tabID: string,
+        goal: string,
+        display: string,
+        _input: string,
+        invocations: { name: string }[],
+        targetKind: string,
+        targetIdentityGen: number,
+        targetRequestSeq: number,
+      ) => {
+        await goalGate;
+        initialGoalCalls.push(
+          `${tabID}:${goal}:${display}:${invocations[0]?.name ?? ""}:${targetKind}:${targetIdentityGen}:${targetRequestSeq}`,
+        );
+        tabs = tabs.map((tab) =>
+          tab.id === tabID
+            ? { ...tab, goal, collaborationMode: goal ? "goal" : "normal" }
+            : tab,
+        );
+      },
+      SubmitInvocationsToTab: async () => {
+        throw new Error("split SubmitInvocationsToTab must not be used for initial Goals");
       },
       SubmitToTab: async () => {
         throw new Error("plain SubmitToTab must not be used for structured first Goal turns");
@@ -179,6 +196,7 @@ eq(controller?.activeTabId, "tab-a", "harness starts on tab A");
 const sourceTabId = "tab-a";
 const pending = activateGoalAndSubmitOnTab({
   tabId: sourceTabId,
+  target: { kind: "ssh", identityGen: 7, requestSeq: 11 },
   displayText: "Cross-tab safe goal",
   submitText: "/ui-ux-pro-max Cross-tab safe goal",
   structured: {
@@ -186,18 +204,15 @@ const pending = activateGoalAndSubmitOnTab({
     input: "Cross-tab safe goal",
     invocations: [{ name: "ui-ux-pro-max", kind: "skill", offset: 0 }],
   },
-  setGoalForTab: (tabId, goal) => {
+  sendToTab: (tabId, goal, display, submit, structured, target) => {
     if (!controller) throw new Error("controller missing");
-    return controller.setGoalForTab(tabId, goal);
-  },
-  sendToTab: (tabId, display, submit, structured) => {
-    if (!controller) throw new Error("controller missing");
-    return controller.sendToTab(tabId, display, submit, undefined, structured);
+    if (!target) throw new Error("target missing");
+    return controller.sendToTab(tabId, display, submit, undefined, structured, { goal, target });
   },
 });
 
-// While SetGoalForTab(A) is suspended, the UI switches to tab B. A regression
-// that re-reads activeTabId for Goal or Skill submit would retarget to B.
+// While the atomic bridge call for A is suspended, the UI switches to tab B.
+// The in-flight call must keep both its tab and target token.
 await act(async () => {
   await controller?.switchTab("tab-b", tabB);
   await flushPromises();
@@ -210,21 +225,20 @@ await act(async () => {
   await flushPromises();
 });
 
-eq(goalCalls.join("|"), "tab-a:Cross-tab safe goal", "SetGoalForTab stayed on source tab A after active switch");
 eq(
-  invokeCalls.join("|"),
-  "tab-a:/ui-ux-pro-max Cross-tab safe goal:ui-ux-pro-max",
-  "SubmitInvocationsToTab stayed on source tab A after active switch",
+  initialGoalCalls.join("|"),
+  "tab-a:Cross-tab safe goal:/ui-ux-pro-max Cross-tab safe goal:ui-ux-pro-max:ssh:7:11",
+  "atomic Goal submit kept source tab A and its Remote target token",
 );
-eq(goalCalls.length, 1, "SetGoalForTab ran once");
-eq(invokeCalls.length, 1, "structured Skill submit ran once");
+eq(initialGoalCalls.length, 1, "atomic Goal submit ran once");
 
-// Bridge failure path: controller must reject so structured send is skipped.
-const failGoalCalls: string[] = [];
+// Bridge failure path: controller must reject without falling back to the split
+// structured submit.
+const failedInitialGoalCalls: string[] = [];
 const failInvokeCalls: string[] = [];
-(window.go.main.App as AppBindings).SetGoalForTab = async (tabID: string) => {
-  failGoalCalls.push(tabID);
-  throw new Error("remote goal set failed");
+(window.go.main.App as AppBindings).SubmitInitialGoalToTab = async (tabID: string) => {
+  failedInitialGoalCalls.push(tabID);
+  throw new Error("workbench target changed");
 };
 (window.go.main.App as AppBindings).SubmitInvocationsToTab = async (tabID: string) => {
   failInvokeCalls.push(tabID);
@@ -235,6 +249,7 @@ await act(async () => {
   try {
     await activateGoalAndSubmitOnTab({
       tabId: "tab-a",
+      target: { kind: "ssh", identityGen: 7, requestSeq: 11 },
       displayText: "Must not run skill",
       submitText: "/ui-ux-pro-max Must not run skill",
       structured: {
@@ -242,18 +257,17 @@ await act(async () => {
         input: "Must not run skill",
         invocations: [{ name: "ui-ux-pro-max", kind: "skill", offset: 0 }],
       },
-      setGoalForTab: (tabId, goal) => controller!.setGoalForTab(tabId, goal),
-      sendToTab: (tabId, display, submit, structured) =>
-        controller!.sendToTab(tabId, display, submit, undefined, structured),
+      sendToTab: (tabId, goal, display, submit, structured, target) =>
+        controller!.sendToTab(tabId, display, submit, undefined, structured, { goal, target: target! }),
     });
   } catch (error) {
-    activationFailed = error instanceof Error && error.message.includes("remote goal set failed");
+    activationFailed = error instanceof Error && error.message.includes("workbench target changed");
   }
   await flushPromises();
 });
-eq(activationFailed, true, "controller propagates SetGoalForTab bridge rejection");
-eq(failGoalCalls.join("|"), "tab-a", "failed activation still targeted source tab A");
-eq(failInvokeCalls.length, 0, "failed Goal activation does not call SubmitInvocationsToTab");
+eq(activationFailed, true, "controller propagates atomic Goal bridge rejection");
+eq(failedInitialGoalCalls.join("|"), "tab-a", "failed atomic submit still targeted source tab A");
+eq(failInvokeCalls.length, 0, "failed atomic Goal submit does not call split SubmitInvocationsToTab");
 
 await act(async () => {
   root.unmount();

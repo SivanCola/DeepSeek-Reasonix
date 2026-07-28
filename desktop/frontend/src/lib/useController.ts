@@ -9,6 +9,7 @@ import { addBreadcrumb } from "./breadcrumbs";
 import { app, onEvent, onReady, onRuntimeRebuilt } from "./bridge";
 import { invalidateCache } from "./composerHistory";
 import { formatGuardianAssessmentNotice } from "./guardianEvents";
+import type { WorkbenchTargetToken } from "./goalSubmit";
 import { createRafBatch } from "./rafBatch";
 import { t, type DictKey } from "./i18n";
 import { sameTodoList } from "./todoVisibility";
@@ -2485,7 +2486,14 @@ export function useController() {
     replayPendingPromptsForActiveTab(activeTabId);
   }, [activeTabId]);
 
-  const sendToTab = useCallback(async (tabId: string, displayText: string, submitText = displayText, originalText?: string, structured?: import("./invocationDisplay").StructuredInvocationSubmit) => {
+  const sendToTab = useCallback(async (
+    tabId: string,
+    displayText: string,
+    submitText = displayText,
+    originalText?: string,
+    structured?: import("./invocationDisplay").StructuredInvocationSubmit,
+    initialGoal?: { goal: string; target: WorkbenchTargetToken },
+  ) => {
     if (!tabId) throw new Error(t("composer.workspaceStarting"));
     const currentState = getOrCreateState(statesRef.current, tabId);
     const runtime = currentState.meta?.runtime;
@@ -2499,11 +2507,26 @@ export function useController() {
     dispatchTo(tabId, { type: "user", text: displayText, submitText: display !== submit ? submit : undefined, seq });
     invalidateCache();
     try {
-      const submitPromise = structured
+      const submitPromise = initialGoal
+        ? app.SubmitInitialGoalToTab(
+            tabId,
+            initialGoal.goal,
+            structured?.display.trim() || display,
+            structured?.input.trim() || submit,
+            structured?.invocations ?? [],
+            initialGoal.target.kind,
+            initialGoal.target.identityGen,
+            initialGoal.target.requestSeq,
+          )
+        : structured
         ? app.SubmitInvocationsToTab(tabId, structured.display.trim(), structured.input.trim(), structured.invocations)
         : original
         ? app.SubmitEditedDisplayToTab(tabId, display, submit, original)
         : display !== submit ? app.SubmitDisplayToTab(tabId, display, submit) : app.SubmitToTab(tabId, submit);
+      if (initialGoal) {
+        await submitPromise;
+        return;
+      }
       void submitPromise.catch((error) => {
         dispatchTo(tabId, { type: "send_failed", error: `Send failed: ${error instanceof Error ? error.message : String(error)}` });
       });

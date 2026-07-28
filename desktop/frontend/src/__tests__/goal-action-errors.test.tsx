@@ -94,7 +94,7 @@ ok(appSource.includes("onClearGoal={clearGoalFromUi}"), "Composer Stop Goal rout
 ok(appSource.includes("onSetCollaborationMode={setCollaborationModeFromUi}"), "Composer mode changes route through the rejection handler");
 ok(/if \(model\) \{\s*await switchModel\(model\[1\]\);/.test(appSource), "/model awaits Goal restoration failures");
 ok(
-  /await \(trimmed \? setControllerGoalForTab\(tabId, trimmed\) : clearControllerGoalForTab\(tabId\)\);\s*patchComposerProfileForTab[\s\S]{0,300}userPlanModeByTabRef\.current/.test(appSource),
+  /await \(trimmed \? setControllerGoalForTab\(tabId, trimmed\) : clearControllerGoalForTab\(tabId\)\);\s*patchActivatedGoalForTab\(tabId, trimmed\)/.test(appSource),
   "failed Goal bridge calls cannot patch local Goal state or user intent",
 );
 

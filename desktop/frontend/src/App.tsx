@@ -190,7 +190,11 @@ import { useGlobalShortcut } from "./lib/keyboardShortcuts";
 import { topicShortcutIndexFromEvent, useTopicShortcuts, type TopicShortcutEntry } from "./lib/topicShortcuts";
 import { composerDraftKeyForTab } from "./lib/composerDraftKey";
 import { continueDelivery } from "./lib/deliveryContinue";
-import { activateGoalAndSubmitOnTab } from "./lib/goalSubmit";
+import {
+  activateGoalAndSubmitOnTab,
+  workbenchTargetToken,
+  type WorkbenchTargetToken,
+} from "./lib/goalSubmit";
 import logoWordmark from "./assets/logo-wordmark.svg";
 
 function noticePreviewMockEnabled(): boolean {
@@ -1485,7 +1489,13 @@ export default function App() {
   const footerHeightRef = useRef(0);
   const footerRef = useRef<HTMLElement>(null);
   const activeTabIdRef = useRef(activeTabId);
-  const commitThenSendRef = useRef<(tabId: string, displayText: string, submitText?: string, structured?: StructuredInvocationSubmit) => Promise<void>>(async () => {});
+  const commitThenSendRef = useRef<(
+    tabId: string,
+    displayText: string,
+    submitText?: string,
+    structured?: StructuredInvocationSubmit,
+    initialGoal?: { goal: string; target: WorkbenchTargetToken },
+  ) => Promise<void>>(async () => {});
   const handleInvocationMetadataChange = useCallback((metadata: InvocationMetadataMap) => {
     const sourceTabId = activeTabIdRef.current;
     if (!sourceTabId) return;
@@ -1799,14 +1809,9 @@ export default function App() {
     }
     applyToolApprovalMode(next.mode);
   }, [activeTabId, applyToolApprovalMode, toolApprovalMode]);
-  const applyGoalForTab = useCallback(
-    async (tabId: string, nextGoal: string): Promise<void> => {
-      if (!tabId) return;
+  const patchActivatedGoalForTab = useCallback(
+    (tabId: string, nextGoal: string): void => {
       const trimmed = nextGoal.trim();
-      // Activate the backend Goal first. Only then patch the local profile so a
-      // failed SetGoalForTab cannot leave the Composer thinking a Goal is active
-      // while a structured Skill submit would still proceed without one.
-      await (trimmed ? setControllerGoalForTab(tabId, trimmed) : clearControllerGoalForTab(tabId));
       patchComposerProfileForTab(tabId, {
         collaborationMode: trimmed ? "goal" : "normal",
         goalDraftMode: false,
@@ -1814,7 +1819,18 @@ export default function App() {
       }, ["collaborationMode", "goal"]);
       userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, tabId, false);
     },
-    [clearControllerGoalForTab, patchComposerProfileForTab, setControllerGoalForTab],
+    [patchComposerProfileForTab],
+  );
+  const applyGoalForTab = useCallback(
+    async (tabId: string, nextGoal: string): Promise<void> => {
+      if (!tabId) return;
+      const trimmed = nextGoal.trim();
+      // Activate the backend Goal first. Only then patch the local profile so a
+      // failed SetGoalForTab cannot leave the Composer thinking a Goal is active.
+      await (trimmed ? setControllerGoalForTab(tabId, trimmed) : clearControllerGoalForTab(tabId));
+      patchActivatedGoalForTab(tabId, trimmed);
+    },
+    [clearControllerGoalForTab, patchActivatedGoalForTab, setControllerGoalForTab],
   );
   const applyGoal = useCallback(
     async (nextGoal: string): Promise<void> => {
@@ -2117,15 +2133,24 @@ export default function App() {
       }
       if (collaborationMode === "goal" && !goal.trim()) {
         if (!controllerReady) return;
+        const sourceTarget = workbenchTargetToken(workbenchTarget);
+        if (!sourceTarget) throw new Error(t("composer.workspaceStarting"));
         await activateGoalAndSubmitOnTab({
           tabId: sourceTabId,
+          target: sourceTarget,
           displayText: trimmed,
           submitText,
           structured,
-          setGoalForTab: (tabId, nextGoal) => applyGoalForTab(tabId, nextGoal),
-          sendToTab: (tabId, display, routedSubmit, routedStructured) =>
-            commitThenSendRef.current(tabId, display, routedSubmit, routedStructured),
+          sendToTab: (tabId, nextGoal, display, routedSubmit, routedStructured, target) =>
+            commitThenSendRef.current(
+              tabId,
+              display,
+              routedSubmit,
+              routedStructured,
+              target ? { goal: nextGoal, target } : undefined,
+            ),
         });
+        patchActivatedGoalForTab(sourceTabId, trimmed);
         return;
       }
       const theme = /^\/theme(?:\s+(\S+))?$/.exec(trimmed);
@@ -2178,8 +2203,9 @@ export default function App() {
       if (goal.trim()) await setControllerGoalForTab(sourceTabId, goal);
       await commitThenSendRef.current(sourceTabId, trimmed, submitText.trim(), structured);
     },
-    [activeTabId, applyGoal, applyGoalForTab, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, notice, runShellForTab,
-      setControllerCollaborationModeForTab, setControllerGoalForTab, setControllerToolApprovalModeForTab, switchModel, t, toolApprovalMode, showToast],
+    [activeTabId, applyGoal, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, notice, patchActivatedGoalForTab,
+      runShellForTab, setControllerCollaborationModeForTab, setControllerGoalForTab, setControllerToolApprovalModeForTab, showToast, switchModel, t,
+      toolApprovalMode, workbenchTarget],
   );
 
   const handleSteer = useCallback(async (text: string, requestedTabId = activeTabId) => {
@@ -2951,7 +2977,13 @@ export default function App() {
   }, [state.items]);
 
   // send wrapper: commits any pending optimistic rewind before sending.
-  const commitThenSend = useCallback(async (sourceTabId: string, displayText: string, submitText?: string, structured?: StructuredInvocationSubmit) => {
+  const commitThenSend = useCallback(async (
+    sourceTabId: string,
+    displayText: string,
+    submitText?: string,
+    structured?: StructuredInvocationSubmit,
+    initialGoal?: { goal: string; target: WorkbenchTargetToken },
+  ) => {
     const sourceTab = tabMetas.find((tab) => tab.id === sourceTabId);
     if (!sourceTab) throw new Error(t("composer.workspaceStarting"));
     if (sourceTab.readOnly) throw new Error(t("composer.readOnlyChannel"));
@@ -2985,7 +3017,7 @@ export default function App() {
         setProjectRevision((v) => v + 1);
       }
     }
-    await sendToTab(sourceTabId, displayText, submitText, undefined, structured);
+    await sendToTab(sourceTabId, displayText, submitText, undefined, structured, initialGoal);
   }, [rewindForTab, sendToTab, setRewindCommittingForTab, setRewindStateForTab, t, tabMetas]);
 
   const handleTranscriptPrompt = useCallback((text: string) => {
