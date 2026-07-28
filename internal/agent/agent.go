@@ -1258,6 +1258,15 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	a.repeatSuccessCounts = nil
 	if !scoped || a.repeatFailureScope != scope.ID {
 		a.repeatFailureCounts = nil
+	} else {
+		// Only stale-anchor failures have a side-effect-free state recheck.
+		// Ordinary write failures may recover between Runs after user action or
+		// an external state change, so do not carry their retry budget forward.
+		for sig, failure := range a.repeatFailureCounts {
+			if !failure.stateRecheck {
+				delete(a.repeatFailureCounts, sig)
+			}
+		}
 	}
 	if scoped {
 		a.repeatFailureScope = scope.ID

@@ -316,6 +316,35 @@ func TestRepeatGuardRetainsStaleEditFailuresAcrossGoalScope(t *testing.T) {
 	}
 }
 
+func TestRepeatGuardClearsOrdinaryWriteFailureAcrossGoalRuns(t *testing.T) {
+	var editCalls int32
+	reg := tool.NewRegistry()
+	reg.Add(previewSuccessFailWriterTool{name: "edit_file", calls: &editCalls})
+	editArgs := `{"path":"prompt.txt","old_string":"current","new_string":"ready"}`
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{toolCallChunk("e1", "edit_file", editArgs), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "[goal:continue]"}, {Type: provider.ChunkDone}},
+		{toolCallChunk("e2", "edit_file", editArgs), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "[goal:continue]"}, {Type: provider.ChunkDone}},
+		{toolCallChunk("e3", "edit_file", editArgs), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "[goal:blocked:permission denied]"}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{}, event.Discard)
+	ctx := WithDeliveryExecutionScope(context.Background(), DeliveryExecutionScope{
+		ID:       "goal-scope-1",
+		TaskText: "fix prompt.txt",
+	})
+
+	for i := 0; i < 3; i++ {
+		if err := a.Run(ctx, "continue goal"); err != nil {
+			t.Fatalf("Run %d: %v", i+1, err)
+		}
+	}
+	if got := atomic.LoadInt32(&editCalls); got != 3 {
+		t.Fatalf("edit_file executed %d times across Goal Runs, want ordinary write failure retried each Run", got)
+	}
+}
+
 func TestRepeatGuardDoesNotUsePreviewToClearWriteFailure(t *testing.T) {
 	var editCalls int32
 	reg := tool.NewRegistry()
