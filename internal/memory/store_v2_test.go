@@ -299,3 +299,45 @@ func TestStoreV2RestoreArchivedRejectsPathsOutsideStore(t *testing.T) {
 		t.Fatalf("outside restore error = %v, want archive not found", err)
 	}
 }
+
+func TestStoreV2RestoreArchivedRejectsSymlinkEntry(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	archiveDir := filepath.Join(store.Dir, ".archive")
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "fact.md")
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(archiveDir, "fact.md")
+	if err := os.Symlink(outside, archivePath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := store.RestoreArchived(archivePath); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("symlink restore error = %v, want archive not found", err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("outside target changed: %v", err)
+	}
+}
+
+func TestStoreV2RestoreArchivedRejectsSymlinkDirectory(t *testing.T) {
+	store := Store{Dir: t.TempDir()}
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "fact.md")
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archiveDir := filepath.Join(store.Dir, ".archive")
+	if err := os.Symlink(outsideDir, archiveDir); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	archivePath := filepath.Join(archiveDir, "fact.md")
+	if _, err := store.RestoreArchived(archivePath); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("symlinked directory restore error = %v, want archive not found", err)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("outside target changed: %v", err)
+	}
+}

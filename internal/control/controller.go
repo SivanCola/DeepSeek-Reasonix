@@ -1952,6 +1952,26 @@ func (c *Controller) newInteractiveGate() *permission.Gate {
 	return gate
 }
 
+func (c *Controller) allowLowRiskRemember(args json.RawMessage) bool {
+	mem := c.Memory()
+	if mem != nil {
+		if assessment := memory.AssessRememberWrite(mem.Store, args); assessment.AutoAllow {
+			c.memory.authorizeAutoRemember(args)
+			return true
+		}
+	}
+	c.memory.revokeAutoRemember(args)
+	return false
+}
+
+func (c *Controller) newHeadlessGate(mode string) *freshHumanHeadlessGate {
+	gate := BuildHeadlessApprovalGate(c.policy, mode)
+	gate.allowLowRiskFreshAction = func(toolName string, args json.RawMessage) bool {
+		return toolName == memoryRememberTool && c.allowLowRiskRemember(args)
+	}
+	return gate
+}
+
 type denyPermissionApprover struct{}
 
 func (denyPermissionApprover) Approve(context.Context, string, string, json.RawMessage) (bool, bool, error) {
@@ -1992,22 +2012,17 @@ func rulesWithoutFreshHumanApproval(rules []permission.Rule) []permission.Rule {
 //     approver); deny rules and fresh decisions still fail closed.
 //   - dontAsk: deny anything that would ask, and deny the writer fallback too.
 //
-// deny rules and fresh-human tools (memory, plan, sandbox, config) stay enforced
-// by the gate for every mode. ask/manual/acceptEdits are not routed here — the
-// caller leaves them at ToolApprovalAsk, keeping boot's default headless gate,
-// which resolves ordinary ask decisions to allow for `reasonix run` autonomy.
+// Deny rules and fresh-human tools (memory, plan, sandbox, config) stay enforced
+// by the gate for every mode. The only exception is a controller-assessed,
+// create-only project/reference memory; every other memory write remains denied.
 func (c *Controller) ApplyHeadlessApprovalMode(mode string) {
 	mode = normalizeToolApprovalMode(mode)
 	c.approval.setMode(mode)
 	if c.subagentGate != nil {
 		c.subagentGate.Update(mode)
 	}
-	if c.executor == nil {
-		return
-	}
-	switch mode {
-	case ToolApprovalYolo, ToolApprovalAuto, ToolApprovalDontAsk:
-		c.executor.SetGate(BuildHeadlessApprovalGate(c.policy, mode))
+	if c.executor != nil {
+		c.executor.SetGate(c.newHeadlessGate(mode))
 	}
 }
 
@@ -5315,15 +5330,8 @@ func (g gateApprover) Approve(ctx context.Context, tool, subject string, args js
 }
 
 func (g gateApprover) ApproveWithReason(ctx context.Context, tool, subject string, args json.RawMessage) (bool, bool, string, error) {
-	if tool == memoryRememberTool {
-		mem := g.c.Memory()
-		if mem != nil {
-			if assessment := memory.AssessRememberWrite(mem.Store, args); assessment.AutoAllow {
-				g.c.memory.authorizeAutoRemember(args)
-				return true, false, "", nil
-			}
-		}
-		g.c.memory.revokeAutoRemember(args)
+	if tool == memoryRememberTool && g.c.allowLowRiskRemember(args) {
+		return true, false, "", nil
 	}
 	subject = approvalDisplaySubject(tool, subject, args)
 	requireHuman := strings.EqualFold(tool, "bash") && permission.BashSubjectRequiresExplicitApproval(subject)

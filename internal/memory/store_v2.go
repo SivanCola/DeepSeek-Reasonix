@@ -360,6 +360,10 @@ func (s Store) findArchivedByPath(want string) (Memory, string, bool) {
 			continue
 		}
 		dir := filepath.Join(base, ".archive")
+		info, err := os.Lstat(dir)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			continue
+		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
