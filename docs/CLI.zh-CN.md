@@ -41,17 +41,28 @@ reasonix --dir /path/to/project
 ## 更新原生 CLI
 
 ```sh
-reasonix upgrade                         # 最新正式版（默认）
-reasonix upgrade --channel preview       # 进入或继续使用预览版
-reasonix upgrade --channel stable        # 从预览版返回正式版
-reasonix upgrade --channel preview --check
+reasonix upgrade                  # 按已保存渠道更新（初始为正式版）
+reasonix upgrade preview          # 切换到预览版、记住选择并更新
+reasonix upgrade stable           # 切回正式版、记住选择并更新
 ```
 
-`reasonix upgrade` 及其别名 `reasonix update` 默认只跟随 Stable，绝不会选择
-预发布版本。Preview 必须由用户明确选择，并且只接受受保护的
-`vX.Y.Z-preview.N` 发布；内部 RC 不属于任何公开渠道。明确切换渠道时允许安装
-版本号更低的目标，这样较新的 Preview 才能返回当前 Stable。`--check` 只报告目标而
-不安装，`--force` 则重新安装所选渠道的当前版本。
+所选渠道是用户全局设置，保存在 Reasonix 用户配置的 `[cli].update_channel` 中。全新
+或旧版配置默认使用 Stable，项目内的 `reasonix.toml` 不能覆盖这个选择。Stable 与
+Preview 会替换同一个原生 CLI 二进制文件，不会并行安装。
+
+Preview 只接受受保护的 `vX.Y.Z-preview.N` 发布；内部 RC 不属于任何公开渠道。
+切换渠道时允许安装版本号更低的目标，这样较新的 Preview 才能返回当前 Stable。
+
+自动化脚本仍可使用 `--channel stable|preview` 做一次性覆盖，不改变已保存渠道：
+
+```sh
+reasonix upgrade preview --check          # 保存 Preview，只检查目标版本
+reasonix upgrade --channel preview        # 脚本单次升级到 Preview
+reasonix upgrade --channel stable --force # 单次重装 Stable
+```
+
+`--check` 只报告目标而不安装，`--force` 重新安装目标渠道的当前版本。别名
+`reasonix update` 的行为完全相同。
 
 ## 配置供应商
 

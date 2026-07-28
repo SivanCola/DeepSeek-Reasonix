@@ -1,5 +1,5 @@
 import { downloadPaneFromURL, downloadURLForPane, releaseChannelFromURL } from "./download-link.js";
-import { cliReleaseModel, desktopReleaseModel, fetchFirstJSON, normalizePublicReleaseChannel } from "./release-channels.js";
+import { cliReleaseModel, cliUpgradeCommand, desktopReleaseModel, fetchFirstJSON, normalizePublicReleaseChannel } from "./release-channels.js";
 import { initTheme } from "./theme.js";
 
 // Reasonix site — vanilla interactions
@@ -261,7 +261,7 @@ import { initTheme } from "./theme.js";
     });
 
     if (surface === "cli") {
-      const command = "reasonix upgrade --channel " + channel;
+      const command = cliUpgradeCommand(channel);
       document.querySelectorAll('[data-release-command="cli"]').forEach((element) => { element.textContent = command; });
       document.querySelectorAll('.release-upgrade-command [data-copy]').forEach((button) => { button.dataset.copy = command; });
     }

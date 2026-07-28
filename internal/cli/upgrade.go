@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +22,7 @@ import (
 	"reasonix/internal/i18n"
 	"reasonix/internal/netclient"
 
+	"github.com/spf13/pflag"
 	"golang.org/x/mod/semver"
 )
 
@@ -72,16 +72,94 @@ func parseCLIReleaseChannel(value string) (cliReleaseChannel, error) {
 	}
 }
 
-// upgradeCommand handles `reasonix upgrade` (and `reasonix update`).
-func upgradeCommand(args []string, version string) int {
-	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
+type cliUpgradeSyntax struct {
+	checkOnly   bool
+	force       bool
+	positional  *cliReleaseChannel
+	flagChannel *cliReleaseChannel
+}
+
+// parseCLIUpgradeSyntax accepts the ergonomic positional channel while keeping
+// --channel available for scripts. pflag's interspersed parsing allows both
+// `upgrade preview --check` and `upgrade --check preview`.
+func parseCLIUpgradeSyntax(args []string) (cliUpgradeSyntax, error) {
+	fs := pflag.NewFlagSet("upgrade", pflag.ContinueOnError)
+	fs.SetInterspersed(true)
+	fs.SetOutput(io.Discard)
 	checkOnly := fs.Bool("check", false, "check for updates without installing")
 	force := fs.Bool("force", false, "reinstall even if already on the latest version")
-	channelValue := fs.String("channel", string(cliReleaseStable), "release channel: stable or preview")
+	channelValue := fs.String("channel", "", "release channel: stable or preview")
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return cliUpgradeSyntax{}, err
 	}
-	selectedChannel, err := parseCLIReleaseChannel(*channelValue)
+
+	var positional *cliReleaseChannel
+	if rest := fs.Args(); len(rest) > 1 {
+		return cliUpgradeSyntax{}, fmt.Errorf("upgrade accepts at most one positional channel (stable or preview)")
+	} else if len(rest) == 1 {
+		channel, err := parseCLIReleaseChannel(rest[0])
+		if err != nil || strings.TrimSpace(rest[0]) == "" {
+			if err == nil {
+				err = fmt.Errorf("channel is required")
+			}
+			return cliUpgradeSyntax{}, err
+		}
+		positional = &channel
+	}
+
+	var flagChannel *cliReleaseChannel
+	if fs.Changed("channel") {
+		channel, err := parseCLIReleaseChannel(*channelValue)
+		if err != nil {
+			return cliUpgradeSyntax{}, err
+		}
+		flagChannel = &channel
+	}
+	if positional != nil && flagChannel != nil && *positional != *flagChannel {
+		return cliUpgradeSyntax{}, fmt.Errorf("conflicting release channels: positional %q and --channel %q", *positional, *flagChannel)
+	}
+	return cliUpgradeSyntax{
+		checkOnly:   *checkOnly,
+		force:       *force,
+		positional:  positional,
+		flagChannel: flagChannel,
+	}, nil
+}
+
+func resolveCLIUpgradeChannel(syntax cliUpgradeSyntax, configured string) (cliReleaseChannel, bool, error) {
+	configuredChannel, err := parseCLIReleaseChannel(config.NormalizeCLIUpdateChannel(configured))
+	if err != nil {
+		return "", false, err
+	}
+	if syntax.positional != nil {
+		return *syntax.positional, *syntax.positional != configuredChannel, nil
+	}
+	if syntax.flagChannel != nil {
+		return *syntax.flagChannel, false, nil
+	}
+	return configuredChannel, false, nil
+}
+
+var persistCLIReleaseChannel = func(channel cliReleaseChannel) error {
+	path := config.UserConfigPath()
+	unlock, err := config.LockConfigFileEdits(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	cfg, err := config.LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		return err
+	}
+	if err := cfg.SetCLIUpdateChannel(string(channel)); err != nil {
+		return err
+	}
+	return cfg.SaveTo(path)
+}
+
+// upgradeCommand handles `reasonix upgrade` (and `reasonix update`).
+func upgradeCommand(args []string, version string) int {
+	syntax, err := parseCLIUpgradeSyntax(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
@@ -96,6 +174,17 @@ func upgradeCommand(args []string, version string) int {
 
 	// 2. Build HTTP client using configured proxy.
 	cfg, _ := config.Load()
+	selectedChannel, persistChannel, err := resolveCLIUpgradeChannel(syntax, cfg.CLIUpdateChannel())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
+	if persistChannel {
+		if err := persistCLIReleaseChannel(selectedChannel); err != nil {
+			fmt.Fprintf(os.Stderr, "%s cannot save CLI update channel: %v\n", i18n.M.ErrorPrefix, err)
+			return 1
+		}
+	}
 	spec := cfg.NetworkProxySpec()
 	c, err := netclient.NewHTTPClient(spec, netclient.TransportOptions{
 		ResponseHeaderTimeout: upgradeTimeout,
@@ -124,7 +213,7 @@ func upgradeCommand(args []string, version string) int {
 	}
 	sameChannel := versionBelongsToCLIChannel(cur, selectedChannel)
 	if latest == cur {
-		if *force {
+		if syntax.force {
 			fmt.Println(i18n.M.UpgradeForcing)
 		} else {
 			fmt.Println(i18n.M.UpgradeAlreadyLatest)
@@ -132,14 +221,14 @@ func upgradeCommand(args []string, version string) int {
 		}
 	} else if !sameChannel || semver.Compare(latest, cur) > 0 {
 		fmt.Printf(i18n.M.UpgradeAvailableFmt+"\n", cur, latest)
-	} else if *force {
+	} else if syntax.force {
 		fmt.Println(i18n.M.UpgradeForcing)
 	} else {
 		fmt.Println(i18n.M.UpgradeAlreadyLatest)
 		return 0
 	}
 
-	if *checkOnly {
+	if syntax.checkOnly {
 		return 0
 	}
 

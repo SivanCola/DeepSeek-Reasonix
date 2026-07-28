@@ -18,6 +18,10 @@ export function normalizePublicReleaseChannel(value) {
   return value === "preview" ? "preview" : "stable";
 }
 
+export function cliUpgradeCommand(value) {
+  return `reasonix upgrade ${normalizePublicReleaseChannel(value)}`;
+}
+
 function parsePublicTag(tag) {
   const value = String(tag || "").trim();
   let match = value.match(STABLE_TAG);

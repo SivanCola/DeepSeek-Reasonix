@@ -382,6 +382,19 @@ func (c *Config) SetDesktopUpdateChannel(channel string) error {
 	return nil
 }
 
+// SetCLIUpdateChannel selects the user-global native CLI updater channel.
+func (c *Config) SetCLIUpdateChannel(channel string) error {
+	switch strings.ToLower(strings.TrimSpace(channel)) {
+	case "stable":
+		c.CLI.UpdateChannel = "stable"
+	case "preview":
+		c.CLI.UpdateChannel = "preview"
+	default:
+		return fmt.Errorf("CLI update channel %q: must be stable|preview", channel)
+	}
+	return nil
+}
+
 // SetColdResumePrune toggles auto-elision of stale tool results on cold resume.
 func (c *Config) SetColdResumePrune(enabled bool) error {
 	c.Agent.ColdResumePrune = &enabled

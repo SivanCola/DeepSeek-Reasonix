@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"reasonix/internal/config"
 )
 
 func TestNormalizeVersion(t *testing.T) {
@@ -278,6 +281,77 @@ func TestCLIReleaseChannelContract(t *testing.T) {
 		if got := versionBelongsToCLIChannel(tc.version, tc.channel); got != tc.want {
 			t.Errorf("versionBelongsToCLIChannel(%q, %q) = %v, want %v", tc.version, tc.channel, got, tc.want)
 		}
+	}
+}
+
+func TestParseAndResolveCLIUpgradeChannel(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		configured string
+		want       cliReleaseChannel
+		wantSave   bool
+		wantCheck  bool
+		wantForce  bool
+	}{
+		{name: "fresh default", configured: "", want: cliReleaseStable},
+		{name: "follow saved preview", configured: "preview", want: cliReleasePreview},
+		{name: "switch to preview", args: []string{"preview"}, configured: "stable", want: cliReleasePreview, wantSave: true},
+		{name: "switch back after flags", args: []string{"--check", "stable"}, configured: "preview", want: cliReleaseStable, wantSave: true, wantCheck: true},
+		{name: "flags after positional", args: []string{"preview", "--force"}, configured: "stable", want: cliReleasePreview, wantSave: true, wantForce: true},
+		{name: "one off override", args: []string{"--channel", "preview"}, configured: "stable", want: cliReleasePreview},
+		{name: "matching compatibility flag", args: []string{"preview", "--channel=preview"}, configured: "stable", want: cliReleasePreview, wantSave: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			syntax, err := parseCLIUpgradeSyntax(tc.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, save, err := resolveCLIUpgradeChannel(syntax, tc.configured)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want || save != tc.wantSave || syntax.checkOnly != tc.wantCheck || syntax.force != tc.wantForce {
+				t.Fatalf("resolved = (%q, save=%v, check=%v, force=%v), want (%q, save=%v, check=%v, force=%v)",
+					got, save, syntax.checkOnly, syntax.force, tc.want, tc.wantSave, tc.wantCheck, tc.wantForce)
+			}
+		})
+	}
+}
+
+func TestParseCLIUpgradeChannelRejectsAmbiguousArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"canary"},
+		{"stable", "preview"},
+		{"stable", "--channel", "preview"},
+		{"--channel", "rc"},
+		{"--channel"},
+	} {
+		if _, err := parseCLIUpgradeSyntax(args); err == nil {
+			t.Errorf("parseCLIUpgradeSyntax(%q) unexpectedly succeeded", args)
+		}
+	}
+}
+
+func TestPersistCLIReleaseChannelWritesUserConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	if err := persistCLIReleaseChannel(cliReleasePreview); err != nil {
+		t.Fatalf("persist preview channel: %v", err)
+	}
+	cfg, err := config.LoadForEditReadOnlyStrict(config.UserConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.CLIUpdateChannel(); got != "preview" {
+		t.Fatalf("saved CLI channel = %q, want preview", got)
+	}
+	raw, err := os.ReadFile(config.UserConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "[cli]") || !strings.Contains(string(raw), `update_channel = "preview"`) {
+		t.Fatalf("saved config missing CLI channel:\n%s", raw)
 	}
 }
 

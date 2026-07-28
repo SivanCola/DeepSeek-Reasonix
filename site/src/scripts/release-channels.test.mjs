@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CLI_RELEASE_ASSETS,
+  cliUpgradeCommand,
   cliReleaseModel,
   desktopReleaseModel,
   fetchFirstJSON,
@@ -16,6 +17,12 @@ function cliAssets(tag, missing = []) {
     browser_download_url: `https://github.com/esengine/DeepSeek-Reasonix/releases/download/${tag}/${name}`,
   }));
 }
+
+test("CLI channel selector emits the saved-channel upgrade syntax", () => {
+  assert.equal(cliUpgradeCommand("stable"), "reasonix upgrade stable");
+  assert.equal(cliUpgradeCommand("preview"), "reasonix upgrade preview");
+  assert.equal(cliUpgradeCommand("canary"), "reasonix upgrade stable");
+});
 
 test("CLI channels strictly exclude foreign and internal prereleases", () => {
   const releases = [

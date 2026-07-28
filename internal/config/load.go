@@ -72,6 +72,7 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 		userDefaultModelExplicit = tomlFileDefinesKey(uc, "default_model")
 	}
 	userDefaultModel := cfg.DefaultModel
+	globalCLI := cfg.CLI
 	globalSecrets := cfg.Secrets
 	globalRemote := cfg.Remote.Clone()
 	globalDesktopLanguage := cfg.Desktop.Language
@@ -82,6 +83,9 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	if err := mergeTOML(cfg, projectTOML); err != nil {
 		return nil, err
 	}
+	// The native CLI update channel controls the one user-installed binary.
+	// A repository-local reasonix.toml must never switch that global choice.
+	cfg.CLI = globalCLI
 	// Secret protection is a user-global security control: a cloned repo's
 	// reasonix.toml must not be able to flip on the workflow-breaking env/path
 	// protections.

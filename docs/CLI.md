@@ -42,19 +42,34 @@ Flags may appear before or after the prompt where applicable.
 ## Update the native CLI
 
 ```sh
-reasonix upgrade                         # latest Stable (default)
-reasonix upgrade --channel preview       # enter or continue on Preview
-reasonix upgrade --channel stable        # return from Preview to Stable
-reasonix upgrade --channel preview --check
+reasonix upgrade                  # update on the saved channel (Stable initially)
+reasonix upgrade preview          # switch to Preview, remember it, and update
+reasonix upgrade stable           # switch back to Stable, remember it, and update
 ```
 
-`reasonix upgrade` and its `reasonix update` alias default to the Stable
-channel and never select a prerelease. Preview is an explicit opt-in and accepts
-only protected `vX.Y.Z-preview.N` releases; internal RCs are excluded from both
-public channels. An explicit channel change may install a numerically older
-target, which is required when returning from a newer Preview to the current
-Stable release. `--check` reports the target without installing it, while
-`--force` reinstalls the selected channel's current release.
+The selected channel is user-global and is stored as
+`[cli].update_channel` in the Reasonix user config. A fresh or older config
+defaults to Stable, and a project's `reasonix.toml` cannot override this choice.
+Stable and Preview replace the same native CLI binary; they are not installed
+side by side.
+
+Preview accepts only protected `vX.Y.Z-preview.N` releases; internal RCs are
+excluded from both public channels. Switching channels may install a
+numerically older target, which is required when returning from a newer Preview
+to the current Stable release.
+
+For automation, `--channel stable|preview` remains a one-off override and does
+not change the saved channel:
+
+```sh
+reasonix upgrade preview --check          # save Preview, only check its target
+reasonix upgrade --channel preview        # one-off Preview update for a script
+reasonix upgrade --channel stable --force # one-off Stable reinstall
+```
+
+`--check` reports the target without installing it, while `--force` reinstalls
+the target channel's current release. The `reasonix update` alias behaves the
+same way.
 
 ## Configure providers
 
