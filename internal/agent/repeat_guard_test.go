@@ -360,6 +360,11 @@ func TestRepeatGuardDoesNotUsePreviewToClearWriteFailure(t *testing.T) {
 	if !strings.Contains(last, "[loop guard]") {
 		t.Fatalf("successful preview must not clear a repeated write failure, got %q", last)
 	}
+	for _, staleHint := range []string{"stale anchor", "Re-reading alone", "new old_string"} {
+		if strings.Contains(last, staleHint) {
+			t.Fatalf("ordinary write failure should not use stale-anchor guidance %q, got %q", staleHint, last)
+		}
+	}
 	if got := atomic.LoadInt32(&editCalls); got != 2 {
 		t.Fatalf("edit_file executed %d times, want write failure blocked before third execution", got)
 	}

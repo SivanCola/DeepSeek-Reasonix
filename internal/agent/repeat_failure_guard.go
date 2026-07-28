@@ -34,8 +34,13 @@ func (a *Agent) repeatedFailureBlock(call provider.ToolCall, t tool.Tool) (strin
 			}
 		}
 	}
+	if record.stateRecheck {
+		return fmt.Sprintf(
+			"blocked: [loop guard] %q has already failed %d times while the same write intent remained invalid with the same failure class. Re-reading alone cannot make the same stale anchor succeed. Rebuild the edit from the current file contents with a new old_string, use multi_edit for related changes, or explain the blocker in your final answer.",
+			call.Name, record.count), true
+	}
 	return fmt.Sprintf(
-		"blocked: [loop guard] %q has already failed %d times while the same write intent remained invalid with the same failure class. Re-reading alone cannot make the same stale anchor succeed. Rebuild the edit from the current file contents with a new old_string, use multi_edit for related changes, or explain the blocker in your final answer.",
+		"blocked: [loop guard] %q has already failed %d times with the same write intent and failure class. Change the write conditions or use a different approach instead of retrying the same call, or explain the blocker in your final answer.",
 		call.Name, record.count), true
 }
 
