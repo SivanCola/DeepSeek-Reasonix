@@ -471,6 +471,32 @@ func TestGoalStatePersistsNextToSessionPath(t *testing.T) {
 	}
 }
 
+func TestSetGoalDurableRestoresInMemoryStateWhenSidecarWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	sess := agent.NewSession("sys")
+	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+
+	c.SetGoal("keep the old goal")
+	oldStatus := c.GoalStatus()
+	notDirectory := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(notDirectory, []byte("block nested writes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.goals.setStatePath(filepath.Join(notDirectory, "goal.json"))
+
+	if err := c.SetGoalDurable("replace the goal"); err == nil {
+		t.Fatal("SetGoalDurable succeeded despite an invalid sidecar parent")
+	}
+	if got := c.Goal(); got != "keep the old goal" {
+		t.Fatalf("Goal() after failed durable write = %q, want old Goal", got)
+	}
+	if got := c.GoalStatus(); got != oldStatus {
+		t.Fatalf("GoalStatus() after failed durable write = %q, want %q", got, oldStatus)
+	}
+}
+
 func TestResumeRestoresTerminalGoalTodosFromSidecar(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
@@ -1659,6 +1685,30 @@ func TestAdoptHistoryPreservesRewriteBaseline(t *testing.T) {
 	}
 	if matches, err := filepath.Glob(filepath.Join(dir, "*-recovery-*.jsonl")); err != nil || len(matches) != 0 {
 		t.Fatalf("recovery branches after adopted rewrite = %v err=%v, want none", matches, err)
+	}
+}
+
+func TestAdoptEmptyHistoryRestoresPersistedGoalState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty-session.jsonl")
+	if err := agent.NewSession("").Save(path); err != nil {
+		t.Fatalf("Save empty session: %v", err)
+	}
+
+	oldExec := agent.New(nil, nil, agent.NewSession(""), agent.Options{}, event.Discard)
+	old := New(Options{Executor: oldExec, SessionDir: dir, SessionPath: path, Label: "old"})
+	old.SetGoal("preserve the zero-turn goal")
+	old.stopGoal(GoalStatusBlocked)
+
+	newExec := agent.New(nil, nil, agent.NewSession(""), agent.Options{}, event.Discard)
+	replacement := New(Options{Executor: newExec, SessionDir: dir, Label: "replacement", DisableColdResumePrune: true})
+	replacement.AdoptHistory(nil, path)
+
+	if got := replacement.Goal(); got != "preserve the zero-turn goal" {
+		t.Fatalf("Goal after empty-history adoption = %q", got)
+	}
+	if got := replacement.GoalStatus(); got != GoalStatusBlocked {
+		t.Fatalf("GoalStatus after empty-history adoption = %q, want blocked", got)
 	}
 }
 

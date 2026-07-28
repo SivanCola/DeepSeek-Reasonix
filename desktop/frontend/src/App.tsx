@@ -37,6 +37,7 @@ import {
 import { useToast } from "./lib/toast";
 import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
+import { sameTabMetaLists, shouldRefreshTabMetaForEvent, TAB_META_MAX_IN_FLIGHT, tabMetaFallbackDelay } from "./lib/tabMetaRefresh";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, onWorkbenchTarget, openExternal } from "./lib/bridge";
@@ -1034,6 +1035,7 @@ function TextSizeHotkeys() {
 export default function App() {
   const {
     state,
+    liveStore,
     activeTabId,
     sendToTab,
     recoverDeliveryToTab,
@@ -1046,11 +1048,9 @@ export default function App() {
     answerQuestion,
     setControllerMode,
     setCollaborationMode: setControllerCollaborationMode,
-    setCollaborationModeForTab: setControllerCollaborationModeForTab,
     setToolApprovalMode: setControllerToolApprovalMode,
-    setToolApprovalModeForTab: setControllerToolApprovalModeForTab,
+    setComposerProfileForTab: setControllerComposerProfileForTab,
     setGoal: setControllerGoal,
-    setGoalForTab: setControllerGoalForTab,
     resumeGoalForTab: resumeControllerGoalForTab,
     clearGoal: clearControllerGoal,
     clearSession,
@@ -1835,12 +1835,16 @@ export default function App() {
     async (name: string) => {
       const switched = await setModel(name);
       if (!switched) return false;
-      await setControllerCollaborationMode(controllerComposerProfileCollaborationMode(composerProfile));
-      await setControllerToolApprovalMode(toolApprovalMode);
-      if (goal.trim()) await setControllerGoal(goal);
-      return true;
+      if (!activeTabId) return false;
+      const profileApplied = await setControllerComposerProfileForTab(
+        activeTabId,
+        controllerComposerProfileCollaborationMode(composerProfile),
+        toolApprovalMode,
+        goal,
+      );
+      return profileApplied;
     },
-    [composerProfile, goal, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, setModel, toolApprovalMode],
+    [activeTabId, composerProfile, goal, setControllerComposerProfileForTab, setModel, toolApprovalMode],
   );
 
   // Startup and workspace/model rebuilds create a fresh controller in normal
@@ -1848,11 +1852,14 @@ export default function App() {
   // where the user picked YOLO while boot was still loading and the legacy
   // SetBypass binding was a harmless no-op.
   useEffect(() => {
-    if (!controllerReady) return;
-    void setControllerCollaborationMode(controllerComposerProfileCollaborationMode(composerProfile));
-    void setControllerToolApprovalMode(toolApprovalMode);
-    if (goal.trim()) void setControllerGoal(goal);
-  }, [composerProfile, controllerReady, goal, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, toolApprovalMode]);
+    if (!controllerReady || !activeTabId) return;
+    void setControllerComposerProfileForTab(
+      activeTabId,
+      controllerComposerProfileCollaborationMode(composerProfile),
+      toolApprovalMode,
+      goal,
+    );
+  }, [activeTabId, composerProfile, controllerReady, goal, setControllerComposerProfileForTab, toolApprovalMode]);
 
   // The live task list pinned above the composer comes from the most recent
   // successful top-level todo_write result; failed or still-running attempts do
@@ -1914,12 +1921,12 @@ export default function App() {
     applyThemeScene(sessionHasContent ? "task" : "home");
   }, [sessionHasContent]);
   const getSessionMarkdown = useCallback(
-    () => sessionItemsToMarkdown(sessionTitle, state.items, state.live),
-    [sessionTitle, state.items, state.live],
+    () => sessionItemsToMarkdown(sessionTitle, state.items, liveStore.getSnapshot(activeTabId) ?? state.live),
+    [activeTabId, liveStore, sessionTitle, state.items, state.live],
   );
   const getSessionJson = useCallback(
-    () => sessionItemsToJson(sessionTitle, state.items, state.live),
-    [sessionTitle, state.items, state.live],
+    () => sessionItemsToJson(sessionTitle, state.items, liveStore.getSnapshot(activeTabId) ?? state.live),
+    [activeTabId, liveStore, sessionTitle, state.items, state.live],
   );
 
   useEffect(() => {
@@ -2138,13 +2145,17 @@ export default function App() {
         return;
       }
       if (!controllerReady) return;
-      await setControllerCollaborationModeForTab(sourceTabId, controllerComposerProfileCollaborationMode(composerProfile));
-      await setControllerToolApprovalModeForTab(sourceTabId, toolApprovalMode);
-      if (goal.trim()) await setControllerGoalForTab(sourceTabId, goal);
+      const profileApplied = await setControllerComposerProfileForTab(
+        sourceTabId,
+        controllerComposerProfileCollaborationMode(composerProfile),
+        toolApprovalMode,
+        goal,
+      );
+      if (!profileApplied) return;
       await commitThenSendRef.current(sourceTabId, trimmed, submitText.trim(), structured);
     },
     [activeTabId, applyGoal, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, notice, runShellForTab,
-      setControllerCollaborationModeForTab, setControllerGoalForTab, setControllerToolApprovalModeForTab, switchModel, t, toolApprovalMode, showToast],
+      setControllerComposerProfileForTab, switchModel, t, toolApprovalMode, showToast],
   );
 
   const handleSteer = useCallback(async (text: string, requestedTabId = activeTabId) => {
@@ -2153,10 +2164,21 @@ export default function App() {
     await steerForTab(sourceTabId, text.trim());
   }, [activeTabId, steerForTab, t]);
 
+  const tabMetaRefreshSeqRef = useRef(0);
+  const tabMetaRefreshInFlightRef = useRef(0);
   const refreshTabMetas = useCallback(async (): Promise<TabMeta[]> => {
-    const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
-    setTabMetas(tabs);
-    return tabs;
+    if (tabMetaRefreshInFlightRef.current >= TAB_META_MAX_IN_FLIGHT) return [];
+    tabMetaRefreshInFlightRef.current += 1;
+    const seq = ++tabMetaRefreshSeqRef.current;
+    try {
+      const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
+      if (seq === tabMetaRefreshSeqRef.current) {
+        setTabMetas((current) => sameTabMetaLists(current, tabs) ? current : tabs);
+      }
+      return tabs;
+    } finally {
+      tabMetaRefreshInFlightRef.current -= 1;
+    }
   }, []);
   const seedActiveTabMeta = useCallback((tab: TabMeta): void => {
     setTabMetas((current) => {
@@ -2176,6 +2198,7 @@ export default function App() {
 
   useEffect(() => {
     const unsub = onEvent((e) => {
+      if (shouldRefreshTabMetaForEvent(e.kind)) void refreshTabMetas();
       if (e.kind !== "turn_done") return;
       const turnTabId = resolvePlanRestoreTabId(e.tabId, activeTabIdRef.current);
       window.setTimeout(() => {
@@ -2213,9 +2236,35 @@ export default function App() {
   }, [activeTab?.scope, activeTab?.workspaceRoot]);
 
   useEffect(() => {
-    void refreshTabMetas();
-    const id = window.setInterval(() => void refreshTabMetas(), 2000);
-    return () => window.clearInterval(id);
+    let cancelled = false;
+    let timer: number | undefined;
+    const schedule = () => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => {
+        void refreshTabMetas();
+        schedule();
+      }, tabMetaFallbackDelay(document.visibilityState));
+    };
+    const refreshAndSchedule = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = undefined;
+      void refreshTabMetas();
+      schedule();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshAndSchedule();
+      else {
+        if (timer !== undefined) window.clearTimeout(timer);
+        schedule();
+      }
+    };
+    refreshAndSchedule();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [refreshTabMetas]);
 
   useEffect(() => {
@@ -4165,6 +4214,7 @@ export default function App() {
               <Transcript
                 items={displayItems}
                 live={state.live}
+                liveStore={liveStore}
                 tabId={activeTabId}
                 footerHeight={footerHeight}
                 onPrompt={handleTranscriptPrompt}

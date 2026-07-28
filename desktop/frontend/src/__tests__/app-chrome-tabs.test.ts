@@ -3,6 +3,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sameTabMetaLists, shouldRefreshTabMetaForEvent, tabMetaFallbackDelay } from "../lib/tabMetaRefresh";
+import type { TabMeta } from "../lib/types";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(testDir, "../App.tsx"), "utf8");
@@ -54,6 +56,38 @@ function finalDeclaration(selector: string, property: string): string | undefine
 }
 
 console.log("\napp chrome tabs");
+
+const tabMeta = (overrides: Partial<TabMeta> = {}): TabMeta => ({
+  id: "tab-1",
+  scope: "project",
+  workspaceRoot: "/repo",
+  workspaceName: "repo",
+  topicId: "topic-1",
+  topicTitle: "Topic",
+  label: "model",
+  ready: true,
+  running: false,
+  cancellable: false,
+  mode: "normal",
+  active: true,
+  cwd: "/repo",
+  ...overrides,
+});
+
+ok(sameTabMetaLists([tabMeta()], [tabMeta()]), "identical tab metadata suppresses redundant state writes");
+ok(!sameTabMetaLists([tabMeta()], [tabMeta({ running: true })]), "runtime tab changes still invalidate metadata state");
+ok(tabMetaFallbackDelay("visible") === 15_000, "visible tab metadata fallback runs at low frequency");
+ok(tabMetaFallbackDelay("hidden") === 60_000, "hidden tab metadata fallback backs off further");
+ok(shouldRefreshTabMetaForEvent("turn_started"), "turn start refreshes tab runtime metadata immediately");
+ok(shouldRefreshTabMetaForEvent("approval_request"), "approval prompts refresh tab runtime metadata immediately");
+ok(!shouldRefreshTabMetaForEvent("text_delta"), "stream deltas do not trigger tab-list requests");
+ok(
+  !appSource.includes("setInterval(() => void refreshTabMetas(), 2000)") &&
+    appSource.includes('document.addEventListener("visibilitychange", onVisibilityChange)') &&
+    appSource.includes("tabMetaRefreshInFlightRef.current >= TAB_META_MAX_IN_FLIGHT") &&
+    appSource.includes("void refreshTabMetas();\n        schedule();"),
+  "tab metadata refresh is event-driven with a visibility-aware fallback",
+);
 
 ok(
   /import \{ TabBar \} from "\.\/TabBar";/.test(appChromeSource),

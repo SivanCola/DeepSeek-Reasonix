@@ -2183,6 +2183,28 @@ func (c *Controller) SetGoal(goal string) {
 	c.SetGoalWithResearchMode(goal, GoalResearchAuto)
 }
 
+// SetGoalDurable updates the Goal only when its sidecar can be replaced
+// atomically. Remote Profile transactions use this to avoid reporting success
+// with an in-memory Goal that disappears after restart.
+func (c *Controller) SetGoalDurable(goal string) error {
+	snapshot := c.goals.capture()
+	taskID, blockReason := c.ensureAutoResearchTask(goal, GoalResearchAuto)
+	path, data, persist := c.goals.set(goal, GoalResearchAuto, taskID, c.goalTodos())
+	if blockReason != "" {
+		path, data, persist = c.goals.stop(GoalStatusBlocked, c.goalTodos())
+	}
+	if persist {
+		if err := c.goals.writeStateErr(path, data); err != nil {
+			c.goals.restore(snapshot)
+			return err
+		}
+	}
+	if blockReason != "" {
+		c.notice("autoresearch resume failed: " + blockReason)
+	}
+	return nil
+}
+
 func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {
 	taskID, blockReason := c.ensureAutoResearchTask(goal, researchMode)
 	path, data, ok := c.goals.set(goal, researchMode, taskID, c.goalTodos())
