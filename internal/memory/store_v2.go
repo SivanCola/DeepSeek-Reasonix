@@ -40,10 +40,17 @@ func (s Store) MigrateV2() (MigrationReport, error) {
 		if strings.TrimSpace(dir) == "" {
 			continue
 		}
-		entries, err := os.ReadDir(dir)
+		info, err := os.Stat(dir)
 		if os.IsNotExist(err) {
 			continue
 		}
+		if err != nil {
+			return report, err
+		}
+		if !info.IsDir() {
+			return report, fmt.Errorf("memory store path %q is not a directory", dir)
+		}
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return report, err
 		}
