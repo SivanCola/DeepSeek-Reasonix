@@ -2,14 +2,82 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"reasonix/internal/diff"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
+
+type failingWriterTool struct {
+	name  string
+	calls *int32
+}
+
+func (f failingWriterTool) Name() string            { return f.name }
+func (f failingWriterTool) Description() string     { return "always fails to write" }
+func (f failingWriterTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (f failingWriterTool) ReadOnly() bool          { return false }
+func (f failingWriterTool) Execute(context.Context, json.RawMessage) (string, error) {
+	if f.calls != nil {
+		atomic.AddInt32(f.calls, 1)
+	}
+	return "", errors.New("old_string not found in prompt.txt")
+}
+
+type stateAwareWriterTool struct {
+	name  string
+	calls *int32
+	valid *atomic.Bool
+}
+
+type previewSuccessFailWriterTool struct {
+	name  string
+	calls *int32
+}
+
+func (f previewSuccessFailWriterTool) Name() string { return f.name }
+func (f previewSuccessFailWriterTool) Description() string {
+	return "previews successfully but cannot write"
+}
+func (f previewSuccessFailWriterTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (f previewSuccessFailWriterTool) ReadOnly() bool { return false }
+func (f previewSuccessFailWriterTool) Execute(context.Context, json.RawMessage) (string, error) {
+	if f.calls != nil {
+		atomic.AddInt32(f.calls, 1)
+	}
+	return "", errors.New("write prompt.txt: permission denied")
+}
+func (f previewSuccessFailWriterTool) Preview(json.RawMessage) (diff.Change, error) {
+	return diff.Change{Path: "prompt.txt"}, nil
+}
+
+func (f stateAwareWriterTool) Name() string            { return f.name }
+func (f stateAwareWriterTool) Description() string     { return "fails until target state changes" }
+func (f stateAwareWriterTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (f stateAwareWriterTool) ReadOnly() bool          { return false }
+func (f stateAwareWriterTool) Execute(context.Context, json.RawMessage) (string, error) {
+	if f.calls != nil {
+		atomic.AddInt32(f.calls, 1)
+	}
+	if f.valid != nil && f.valid.Load() {
+		return "edited prompt.txt", nil
+	}
+	return "", errors.New("old_string not found in prompt.txt")
+}
+func (f stateAwareWriterTool) Preview(json.RawMessage) (diff.Change, error) {
+	if f.valid != nil && f.valid.Load() {
+		return diff.Change{Path: "prompt.txt"}, nil
+	}
+	return diff.Change{}, errors.New("old_string not found in prompt.txt")
+}
 
 func TestRepeatGuardBlocksRepeatedSuccessfulBashFileWrite(t *testing.T) {
 	var calls int32
@@ -169,5 +237,169 @@ func TestRepeatGuardAllowsTwoRepeatedWriterSuccesses(t *testing.T) {
 	}
 	if last := lastToolResult(a.session, "write_file"); strings.Contains(last, "[loop guard]") {
 		t.Fatalf("second repeated writer call should still be allowed, got %q", last)
+	}
+}
+
+func TestRepeatGuardBlocksStaleEditLoopAcrossSuccessfulReads(t *testing.T) {
+	var editCalls int32
+	var readCalls int32
+	reg := tool.NewRegistry()
+	reg.Add(failingWriterTool{name: "edit_file", calls: &editCalls})
+	reg.Add(fakeTool{name: "read_file", readOnly: true, calls: &readCalls})
+	editArgs1 := `{"path":"prompt.txt","old_string":"stale","new_string":"ready-v1"}`
+	editArgs2 := `{"path":"prompt.txt","old_string":"stale","new_string":"ready-v2"}`
+	editArgs3 := `{"path":"prompt.txt","old_string":"stale","new_string":"ready-v3"}`
+	readArgs := `{"path":"prompt.txt"}`
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{toolCallChunk("e1", "edit_file", editArgs1), {Type: provider.ChunkDone}},
+		{toolCallChunk("r1", "read_file", readArgs), {Type: provider.ChunkDone}},
+		{toolCallChunk("e2", "edit_file", editArgs2), {Type: provider.ChunkDone}},
+		{toolCallChunk("r2", "read_file", readArgs), {Type: provider.ChunkDone}},
+		{toolCallChunk("e3", "edit_file", editArgs3), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "blocked"}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{}, event.Discard)
+
+	if err := a.Run(context.Background(), "fix prompt.txt"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := atomic.LoadInt32(&editCalls); got != 2 {
+		t.Fatalf("edit_file executed %d times, want 2 before the repeat guard blocks", got)
+	}
+	if got := atomic.LoadInt32(&readCalls); got != 2 {
+		t.Fatalf("read_file executed %d times, want 2", got)
+	}
+	last := lastToolResult(a.session, "edit_file")
+	for _, want := range []string{"[loop guard]", "already failed 2 times", "Re-reading alone"} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("blocked stale edit result should mention %q, got %q", want, last)
+		}
+	}
+}
+
+func TestRepeatGuardRetainsStaleEditFailuresAcrossGoalScope(t *testing.T) {
+	var editCalls int32
+	reg := tool.NewRegistry()
+	reg.Add(failingWriterTool{name: "edit_file", calls: &editCalls})
+	editArgs := `{"path":"prompt.txt","old_string":"stale","new_string":"ready"}`
+	readArgs := `{"path":"prompt.txt"}`
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{toolCallChunk("e1", "edit_file", editArgs), {Type: provider.ChunkDone}},
+		{toolCallChunk("r1", "read_file", readArgs), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "[goal:continue]"}, {Type: provider.ChunkDone}},
+		{toolCallChunk("e2", "edit_file", editArgs), {Type: provider.ChunkDone}},
+		{toolCallChunk("r2", "read_file", readArgs), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "[goal:continue]"}, {Type: provider.ChunkDone}},
+		{toolCallChunk("e3", "edit_file", editArgs), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "[goal:blocked:stale edit]"}, {Type: provider.ChunkDone}},
+	}}
+	reg.Add(fakeTool{name: "read_file", readOnly: true})
+	a := New(prov, reg, NewSession(""), Options{}, event.Discard)
+	ctx := WithDeliveryExecutionScope(context.Background(), DeliveryExecutionScope{
+		ID:       "goal-scope-1",
+		TaskText: "fix prompt.txt",
+	})
+
+	for i := 0; i < 3; i++ {
+		if err := a.Run(ctx, "continue goal"); err != nil {
+			t.Fatalf("Run %d: %v", i+1, err)
+		}
+	}
+	if got := atomic.LoadInt32(&editCalls); got != 2 {
+		t.Fatalf("edit_file executed %d times across one goal scope, want 2", got)
+	}
+	if last := lastToolResult(a.session, "edit_file"); !strings.Contains(last, "[loop guard]") {
+		t.Fatalf("third goal-scope edit should be blocked, got %q", last)
+	}
+}
+
+func TestRepeatGuardDoesNotUsePreviewToClearWriteFailure(t *testing.T) {
+	var editCalls int32
+	reg := tool.NewRegistry()
+	reg.Add(previewSuccessFailWriterTool{name: "edit_file", calls: &editCalls})
+	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
+	ctx := context.Background()
+	edit := provider.ToolCall{Name: "edit_file", Arguments: `{"path":"prompt.txt","old_string":"current","new_string":"ready"}`}
+
+	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
+	last := executeBatchOutputs(a, ctx, []provider.ToolCall{edit})[0]
+
+	if !strings.Contains(last, "[loop guard]") {
+		t.Fatalf("successful preview must not clear a repeated write failure, got %q", last)
+	}
+	if got := atomic.LoadInt32(&editCalls); got != 2 {
+		t.Fatalf("edit_file executed %d times, want write failure blocked before third execution", got)
+	}
+}
+
+func TestRepeatGuardKeepsStaleFailureAfterUnrelatedMutation(t *testing.T) {
+	var editCalls int32
+	reg := tool.NewRegistry()
+	reg.Add(failingWriterTool{name: "edit_file", calls: &editCalls})
+	reg.Add(fakeTool{name: "write_file", readOnly: false})
+	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
+	ctx := context.Background()
+	edit := provider.ToolCall{Name: "edit_file", Arguments: `{"path":"prompt.txt","old_string":"stale","new_string":"ready"}`}
+
+	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{{
+		Name: "write_file", Arguments: `{"path":"other.txt","content":"unrelated"}`,
+	}})
+	last := executeBatchOutputs(a, ctx, []provider.ToolCall{edit})[0]
+
+	if !strings.Contains(last, "[loop guard]") {
+		t.Fatalf("unrelated mutation should not clear stale failure history, got %q", last)
+	}
+	if got := atomic.LoadInt32(&editCalls); got != 2 {
+		t.Fatalf("edit_file executed %d times, want unrelated mutation to preserve the guard", got)
+	}
+}
+
+func TestRepeatGuardClearsStaleFailuresAfterSuccessfulMutation(t *testing.T) {
+	var editCalls int32
+	reg := tool.NewRegistry()
+	failing := failingWriterTool{name: "edit_file", calls: &editCalls}
+	reg.Add(failing)
+	reg.Add(fakeTool{name: "write_file", readOnly: false})
+	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
+	ctx := context.Background()
+	edit := provider.ToolCall{Name: "edit_file", Arguments: `{"path":"prompt.txt","old_string":"stale","new_string":"ready"}`}
+
+	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{{
+		Name: "write_file", Arguments: `{"path":"prompt.txt","content":"stale"}`,
+	}})
+	last := executeBatchOutputs(a, ctx, []provider.ToolCall{edit})[0]
+
+	if strings.Contains(last, "[loop guard]") {
+		t.Fatalf("successful mutation should clear stale failure history, got %q", last)
+	}
+	if got := atomic.LoadInt32(&editCalls); got != 3 {
+		t.Fatalf("edit_file executed %d times, want retry after workspace mutation", got)
+	}
+}
+
+func TestRepeatGuardAllowsRetryAfterExternalTargetChange(t *testing.T) {
+	var editCalls int32
+	var valid atomic.Bool
+	reg := tool.NewRegistry()
+	reg.Add(stateAwareWriterTool{name: "edit_file", calls: &editCalls, valid: &valid})
+	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
+	ctx := context.Background()
+	edit := provider.ToolCall{Name: "edit_file", Arguments: `{"path":"prompt.txt","old_string":"stale","new_string":"ready"}`}
+
+	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
+	valid.Store(true)
+	last := executeBatchOutputs(a, ctx, []provider.ToolCall{edit})[0]
+
+	if strings.Contains(last, "[loop guard]") {
+		t.Fatalf("changed target state should allow the retry, got %q", last)
+	}
+	if got := atomic.LoadInt32(&editCalls); got != 3 {
+		t.Fatalf("edit_file executed %d times, want retry after external target change", got)
 	}
 }
