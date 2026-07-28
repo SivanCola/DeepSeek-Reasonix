@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
+	"reasonix/internal/tool/builtin"
 )
 
 type failingWriterTool struct {
@@ -357,28 +360,65 @@ func TestRepeatGuardKeepsStaleFailureAfterUnrelatedMutation(t *testing.T) {
 	}
 }
 
-func TestRepeatGuardClearsStaleFailuresAfterSuccessfulMutation(t *testing.T) {
-	var editCalls int32
-	reg := tool.NewRegistry()
-	failing := failingWriterTool{name: "edit_file", calls: &editCalls}
-	reg.Add(failing)
-	reg.Add(fakeTool{name: "write_file", readOnly: false})
-	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
-	ctx := context.Background()
-	edit := provider.ToolCall{Name: "edit_file", Arguments: `{"path":"prompt.txt","old_string":"stale","new_string":"ready"}`}
-
-	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
-	executeBatchOutputs(a, ctx, []provider.ToolCall{edit})
-	executeBatchOutputs(a, ctx, []provider.ToolCall{{
-		Name: "write_file", Arguments: `{"path":"prompt.txt","content":"stale"}`,
-	}})
-	last := executeBatchOutputs(a, ctx, []provider.ToolCall{edit})[0]
-
-	if strings.Contains(last, "[loop guard]") {
-		t.Fatalf("successful mutation should clear stale failure history, got %q", last)
+func TestRepeatGuardKeepsStaleFailureAfterSameFileMutation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "prompt.txt")
+	if err := os.WriteFile(path, []byte("status=ready\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if got := atomic.LoadInt32(&editCalls); got != 3 {
-		t.Fatalf("edit_file executed %d times, want retry after workspace mutation", got)
+	reg := tool.NewRegistry()
+	for _, tl := range (builtin.Workspace{Dir: dir}).Tools("edit_file") {
+		reg.Add(tl)
+	}
+	a := New(nil, reg, NewSession(""), Options{WriteWorkspaceRoot: dir}, event.Discard)
+	ctx := context.Background()
+	stale := provider.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"prompt.txt","old_string":"status=stale","new_string":"status=fixed"}`,
+	}
+
+	executeBatchOutputs(a, ctx, []provider.ToolCall{stale})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{stale})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{{
+		Name:      "edit_file",
+		Arguments: `{"path":"prompt.txt","old_string":"status=ready","new_string":"status=done"}`,
+	}})
+	last := executeBatchOutputs(a, ctx, []provider.ToolCall{stale})[0]
+
+	if !strings.Contains(last, "[loop guard]") {
+		t.Fatalf("same-file mutation must not renew a still-stale anchor budget, got %q", last)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); got != "status=done\n" {
+		t.Fatalf("file content = %q, want successful unrelated edit preserved", got)
+	}
+}
+
+func TestRepeatGuardNormalizesFailureTargetPaths(t *testing.T) {
+	var editCalls int32
+	dir := t.TempDir()
+	reg := tool.NewRegistry()
+	reg.Add(failingWriterTool{name: "edit_file", calls: &editCalls})
+	a := New(nil, reg, NewSession(""), Options{WriteWorkspaceRoot: dir}, event.Discard)
+	ctx := context.Background()
+	args := []string{
+		`{"path":"prompt.txt","old_string":"stale","new_string":"ready-v1"}`,
+		`{"path":"./prompt.txt","old_string":"stale","new_string":"ready-v2"}`,
+		`{"path":` + string(mustJSON(t, filepath.Join(dir, "prompt.txt"))) + `,"old_string":"stale","new_string":"ready-v3"}`,
+	}
+
+	executeBatchOutputs(a, ctx, []provider.ToolCall{{Name: "edit_file", Arguments: args[0]}})
+	executeBatchOutputs(a, ctx, []provider.ToolCall{{Name: "edit_file", Arguments: args[1]}})
+	last := executeBatchOutputs(a, ctx, []provider.ToolCall{{Name: "edit_file", Arguments: args[2]}})[0]
+
+	if !strings.Contains(last, "[loop guard]") {
+		t.Fatalf("path aliases should share one repeated-failure signature, got %q", last)
+	}
+	if got := atomic.LoadInt32(&editCalls); got != 2 {
+		t.Fatalf("edit_file executed %d times, want absolute-path retry blocked", got)
 	}
 }
 

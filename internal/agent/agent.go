@@ -538,19 +538,21 @@ type Agent struct {
 	repeatSuccessCounts map[string]int
 
 	// repeatFailureCounts tracks semantically identical write-like calls that
-	// failed while their target state stayed unchanged. Unlike stormSig,
-	// successful reads do not blindly clear this state: re-reading a file and
-	// then resending the same stale anchor is still zero progress. Ordinary
-	// turns reset it at Run start; Goal continuations retain it while their
-	// stable delivery scope is unchanged.
+	// keep failing with the same failure class. Unlike stormSig, successful
+	// reads do not blindly clear this state: re-reading a file and then
+	// resending the same stale anchor is still zero progress. Stale-anchor
+	// records also survive target mutations until Preview proves the anchor is
+	// applicable again. Ordinary turns reset the map at Run start; Goal
+	// continuations retain it while their stable delivery scope is unchanged.
 	repeatFailureCounts map[string]repeatFailureRecord
 	repeatFailureScope  string
 }
 
 type repeatFailureRecord struct {
-	count    int
-	errClass string
-	paths    []string
+	count        int
+	errClass     string
+	paths        []string
+	stateRecheck bool
 }
 
 // KeepPolicy is a bitmask controlling which messages are preserved beyond the
@@ -4039,14 +4041,14 @@ func (a *Agent) repeatedFailureBlock(call provider.ToolCall, t tool.Tool) (strin
 	if repeatFailurePreviewRechecksState(call.Name, record.errClass) {
 		if previewer, ok := t.(tool.Previewer); ok {
 			_, err := previewer.Preview(json.RawMessage(call.Arguments))
-			if err == nil || firstLine(err.Error()) != record.errClass {
+			if err == nil || repeatFailureErrorClass(call.Name, err) != record.errClass {
 				delete(a.repeatFailureCounts, sig)
 				return "", false
 			}
 		}
 	}
 	return fmt.Sprintf(
-		"blocked: [loop guard] %q has already failed %d times with the same write intent while its target state and host failure stayed unchanged. Re-reading alone cannot make the same stale anchor succeed. Rebuild the edit from the current file contents with a new old_string, use multi_edit for related changes, or explain the blocker in your final answer.",
+		"blocked: [loop guard] %q has already failed %d times while the same write intent remained invalid with the same failure class. Re-reading alone cannot make the same stale anchor succeed. Rebuild the edit from the current file contents with a new old_string, use multi_edit for related changes, or explain the blocker in your final answer.",
 		call.Name, record.count), true
 }
 
@@ -4069,10 +4071,14 @@ func (a *Agent) recordRepeatFailure(call provider.ToolCall, t tool.Tool, execErr
 	if a.repeatFailureCounts == nil {
 		a.repeatFailureCounts = make(map[string]repeatFailureRecord)
 	}
-	errClass := firstLine(execErr.Error())
+	errClass := repeatFailureErrorClass(call.Name, execErr)
 	record := a.repeatFailureCounts[sig]
 	if record.errClass != errClass {
-		record = repeatFailureRecord{errClass: errClass, paths: paths}
+		record = repeatFailureRecord{
+			errClass:     errClass,
+			paths:        paths,
+			stateRecheck: repeatFailurePreviewRechecksState(call.Name, errClass),
+		}
 	}
 	record.count++
 	a.repeatFailureCounts[sig] = record
@@ -4093,6 +4099,10 @@ func (a *Agent) repeatFailureSignature(call provider.ToolCall, t tool.Tool) (str
 		if err := json.Unmarshal([]byte(call.Arguments), &p); err != nil {
 			return "", nil, false
 		}
+		paths := a.normalizeRepeatFailurePaths([]string{p.Path})
+		if len(paths) > 0 {
+			p.Path = paths[0]
+		}
 		semantic = p
 	case "multi_edit":
 		var p struct {
@@ -4104,6 +4114,10 @@ func (a *Agent) repeatFailureSignature(call provider.ToolCall, t tool.Tool) (str
 		}
 		if err := json.Unmarshal([]byte(call.Arguments), &p); err != nil {
 			return "", nil, false
+		}
+		paths := a.normalizeRepeatFailurePaths([]string{p.Path})
+		if len(paths) > 0 {
+			p.Path = paths[0]
 		}
 		semantic = p
 	default:
@@ -4123,11 +4137,28 @@ func (a *Agent) repeatFailureSignature(call provider.ToolCall, t tool.Tool) (str
 	return call.Name + "\x00" + string(encoded), a.normalizeRepeatFailurePaths(rec.Paths), true
 }
 
+func repeatFailureErrorClass(name string, execErr error) string {
+	if execErr == nil {
+		return ""
+	}
+	msg := firstLine(execErr.Error())
+	switch name {
+	case "edit_file", "multi_edit":
+		switch {
+		case strings.Contains(msg, "old_string not found"):
+			return "old_string_not_found"
+		case strings.Contains(msg, "old_string is not unique"):
+			return "old_string_not_unique"
+		}
+	}
+	return msg
+}
+
 func repeatFailurePreviewRechecksState(name, errClass string) bool {
 	switch name {
 	case "edit_file", "multi_edit":
-		return strings.Contains(errClass, "old_string not found") ||
-			strings.Contains(errClass, "old_string is not unique")
+		return errClass == "old_string_not_found" ||
+			errClass == "old_string_not_unique"
 	default:
 		return false
 	}
@@ -4140,11 +4171,19 @@ func (a *Agent) clearRepeatFailuresAfterMutation(toolName string, args json.RawM
 	rec := evidence.ReceiptFromToolCall(toolName, args, true, readOnly)
 	mutatedPaths := a.normalizeRepeatFailurePaths(rec.Paths)
 	if len(mutatedPaths) == 0 {
-		a.repeatFailureCounts = nil
+		for sig, failure := range a.repeatFailureCounts {
+			// Anchor errors have an exact, side-effect-free state check. Keep
+			// their history until Preview shows that the old anchor works again.
+			if !failure.stateRecheck {
+				delete(a.repeatFailureCounts, sig)
+			}
+		}
 		return
 	}
 	for sig, failure := range a.repeatFailureCounts {
-		if repeatFailurePathsOverlap(failure.paths, mutatedPaths) {
+		// A different edit to the same file does not make this old anchor valid.
+		// repeatedFailureBlock rechecks the actual call through Preview.
+		if !failure.stateRecheck && repeatFailurePathsOverlap(failure.paths, mutatedPaths) {
 			delete(a.repeatFailureCounts, sig)
 		}
 	}
@@ -4163,6 +4202,10 @@ func (a *Agent) normalizeRepeatFailurePaths(paths []string) []string {
 		}
 		if !filepath.IsAbs(path) && a.writeWorkspaceRoot != "" {
 			path = filepath.Join(a.writeWorkspaceRoot, path)
+		} else if !filepath.IsAbs(path) {
+			if absolute, err := filepath.Abs(path); err == nil {
+				path = absolute
+			}
 		}
 		path = foldPathKey(filepath.Clean(path))
 		if seen[path] {
