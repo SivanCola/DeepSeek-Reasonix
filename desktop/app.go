@@ -224,6 +224,11 @@ type App struct {
 
 	runtimeEvents asyncRuntimeEmitter
 
+	// terminals owns local PTY/ConPTY sessions. It is intentionally separate
+	// from chat runtimes: terminal lifecycle must never acquire App.mu or the
+	// controller rebuild locks while process I/O is blocked.
+	terminals *terminalManager
+
 	// Remote SSH module: the manager is created lazily on the first remote
 	// binding call and closed on shutdown.
 	remoteMu        sync.Mutex
@@ -444,6 +449,7 @@ func NewApp() *App {
 		botInstalls:         map[string]*botInstallSession{},
 		botRuntime:          newDesktopBotRuntime(),
 	}
+	a.terminals = newTerminalManager(a)
 	a.botBridge = a.newBotBridge()
 	return a
 }
@@ -845,6 +851,12 @@ func (a *App) shutdown(context.Context) {
 	a.stopBotRuntime()
 	a.stopRemoteRuntime()
 	a.stopTray()
+	// Terminal process shutdown is independent from controller teardown. Do it
+	// before acquiring runtime lifecycle locks so a slow PTY cannot delay while
+	// holding locks used by Wails-bound chat calls.
+	if a.terminals != nil {
+		a.terminals.closeAll()
+	}
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()

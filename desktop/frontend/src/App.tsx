@@ -33,6 +33,7 @@ import {
   Cpu,
   Palette,
   X,
+  TerminalSquare,
 } from "lucide-react";
 import { useToast } from "./lib/toast";
 import { useWailsResizeFix } from "./lib/useWailsResizeFix";
@@ -78,6 +79,9 @@ import { HeartbeatPanel } from "./custom/features/heartbeat/HeartbeatPanel";
 import "./custom/features/heartbeat/heartbeat.css";
 import { CopyButton } from "./components/CopyButton";
 import { ExternalOpener } from "./components/ExternalOpener";
+import { TerminalPanel } from "./components/TerminalPanel";
+import { startTerminalEventBridge } from "./lib/terminalEvents";
+import { useTerminalStore } from "./store/terminal";
 import { parseTodos } from "./lib/tools";
 import {
   dismissedTodoKeyForScope,
@@ -1190,6 +1194,7 @@ export default function App() {
   // Bump dockRefreshKey after each turn so WorkspacePanel/ContextPanel re-fetch
   // workspace changes, git history, and session metadata after AI tool writes.
   useEffect(() => {
+    startTerminalEventBridge();
     const unsub = onEvent((e) => {
       if (e.kind === "turn_done") {
         setDockRefreshKey((v) => v + 1);
@@ -2643,6 +2648,25 @@ export default function App() {
     [openWorkspacePanel],
   );
 
+  const openTerminalForPath = useCallback(
+    (path = ".") => {
+      openRightDockMode("terminal");
+      if (!activeTabId) return;
+      void useTerminalStore.getState().createSession(activeTabId, path || ".", "default").catch(() => {});
+    },
+    [activeTabId, openRightDockMode],
+  );
+
+  useGlobalShortcut("terminal.toggle", () => {
+    if (workspacePanelRenderable && rightDockMode === "terminal") closeWorkspacePanel();
+    else openRightDockMode("terminal");
+  }, [closeWorkspacePanel, openRightDockMode, rightDockMode, workspacePanelRenderable]);
+  useGlobalShortcut("terminal.newSession", () => {
+    if (!activeTabId) return;
+    openRightDockMode("terminal");
+    void useTerminalStore.getState().createSession(activeTabId, ".", "default").catch(() => {});
+  }, [activeTabId, openRightDockMode]);
+
   useEffect(() => {
     if (!remoteExplorerOpen) return;
     openRightDockMode("remote");
@@ -3424,6 +3448,7 @@ export default function App() {
       },
       { id: "cmd-memory", group: t("palette.group.commands"), title: t("palette.cmd.memory"), icon: <Brain size={15} />, compact: true, keywords: ["memory", "记忆"], run: () => setSettingsTarget("memory") },
       { id: "cmd-models", group: t("palette.group.commands"), title: t("palette.cmd.models"), icon: <Cpu size={15} />, compact: true, keywords: ["model", "模型"], run: () => setSettingsTarget("models") },
+      { id: "cmd-terminal", group: t("palette.group.commands"), title: t("rightDock.terminal"), icon: <TerminalSquare size={15} />, compact: true, keywords: ["terminal", "shell", "终端"], run: () => openRightDockMode("terminal") },
     ];
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const dayLabel = (ms: number) => {
@@ -3462,7 +3487,7 @@ export default function App() {
       };
     });
     return [...cmds, ...remoteItems, ...sessionItems];
-  }, [t, paletteSessions, remoteHosts, remoteStatuses, handleNewTab, openTrash, onResumeSession, openRemoteWorkspaceFromStatus, connectAndOpenRemoteWorkspace]);
+  }, [t, paletteSessions, remoteHosts, remoteStatuses, handleNewTab, openTrash, onResumeSession, openRemoteWorkspaceFromStatus, connectAndOpenRemoteWorkspace, openRightDockMode]);
   // Delete / rename act on disk, then re-fetch so the panel reflects the change.
   const onDeleteSession = useCallback(
     async (path: string) => {
@@ -4138,6 +4163,19 @@ export default function App() {
                   </button>
                 </Tooltip>
               )}
+              {!sidebarImDetailConnection && (
+                <Tooltip label={t("rightDock.terminal")}>
+                  <button
+                    className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
+                    type="button"
+                    aria-label={t("rightDock.terminal")}
+                    aria-pressed={workspacePanelRenderable && rightDockMode === "terminal"}
+                    onClick={() => openRightDockMode("terminal")}
+                  >
+                    <TerminalSquare size={14} />
+                  </button>
+                </Tooltip>
+              )}
               {!sidebarImDetailConnection && activeTab?.scope === "project" && (
                 <ExternalOpener tabId={activeTab.id} dismissSignal={transientOverlayDismissSignal} />
               )}
@@ -4512,6 +4550,16 @@ export default function App() {
                     <span className="workbench-dock__tab-label">{t("rightDock.remote")}</span>
                   </button>
                 )}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={rightDockMode === "terminal"}
+                  className={`workbench-dock__tab${rightDockMode === "terminal" ? " workbench-dock__tab--active" : ""}`}
+                  onClick={() => openRightDockMode("terminal")}
+                >
+                  <TerminalSquare size={13} />
+                  <span className="workbench-dock__tab-label">{t("rightDock.terminal")}</span>
+                </button>
               </div>
             </div>
             <div className="workbench-dock__body">
@@ -4519,6 +4567,8 @@ export default function App() {
                 <Suspense fallback={null}>
                   <RemotePanel onClose={() => setWorkspacePanel(false)} />
                 </Suspense>
+              ) : rightDockMode === "terminal" ? (
+                <TerminalPanel tabId={activeTabId ?? ""} cwd={state.meta?.cwd} onClose={() => setWorkspacePanel(false)} />
               ) : rightDockMode === "context" && desktopLayoutStyle !== "creation" ? (
                 <ContextPanel
                   tabId={activeTabId}
@@ -4555,6 +4605,7 @@ export default function App() {
                   onAddCodeToChat={addWorkspaceCodeToComposer}
                   onRequestPanelWidth={ensureWorkspacePanelWidth}
                   onFileTreeRefresh={refreshComposerFileRefs}
+                  onOpenInTerminal={openTerminalForPath}
                   refreshKey={dockRefreshKey}
                   initialViewMode={rightDockMode === "changed" ? "changed" : "files"}
                   showViewTabs={false}
