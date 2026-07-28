@@ -311,7 +311,7 @@ func existingMemoryText(set *memory.Set) []string {
 	for _, d := range set.Docs {
 		out = append(out, normalizeSuggestionKey(d.Body))
 	}
-	for _, f := range set.Store.List() {
+	for _, f := range set.Store.ListAll() {
 		out = append(out, normalizeSuggestionKey(strings.Join([]string{f.Name, f.Title, f.Description, f.Body}, " ")))
 	}
 	return out
