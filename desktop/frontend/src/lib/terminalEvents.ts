@@ -1,13 +1,13 @@
 import { onTerminalExit, onTerminalOutput, type TerminalExitEvent, type TerminalOutputEvent } from "./bridge";
 
-const MAX_PENDING_BYTES = 1024 * 1024;
+const MAX_HISTORY_BYTES = 1024 * 1024;
 
 type TerminalSink = (data: Uint8Array) => void;
 
 const sinks = new Map<string, TerminalSink>();
 const exitListeners = new Set<(event: TerminalExitEvent) => void>();
-const pending = new Map<string, Uint8Array[]>();
-const pendingBytes = new Map<string, number>();
+const history = new Map<string, Uint8Array[]>();
+const historyBytes = new Map<string, number>();
 let started = false;
 let stopBridge: (() => void) | null = null;
 
@@ -22,23 +22,20 @@ function decodeBase64(value: string): Uint8Array {
 function deliverOutput(event: TerminalOutputEvent): void {
   const bytes = decodeBase64(event.data);
   if (bytes.byteLength === 0) return;
-  const sink = sinks.get(event.id);
-  if (sink) {
-    sink(bytes);
-    return;
-  }
-  const queue = pending.get(event.id) ?? [];
+  const queue = history.get(event.id) ?? [];
   queue.push(bytes);
-  let total = (pendingBytes.get(event.id) ?? 0) + bytes.byteLength;
-  while (total > MAX_PENDING_BYTES && queue.length > 0) {
+  let total = (historyBytes.get(event.id) ?? 0) + bytes.byteLength;
+  while (total > MAX_HISTORY_BYTES && queue.length > 0) {
     total -= queue.shift()?.byteLength ?? 0;
   }
-  pending.set(event.id, queue);
-  pendingBytes.set(event.id, total);
+  history.set(event.id, queue);
+  historyBytes.set(event.id, total);
+  sinks.get(event.id)?.(bytes);
 }
 
-function deliverExit(_event: TerminalExitEvent): void {
-  exitListeners.forEach((listener) => listener(_event));
+function deliverExit(event: TerminalExitEvent): void {
+  if (event.removed) forgetTerminalSession(event.id);
+  exitListeners.forEach((listener) => listener(event));
 }
 
 export function startTerminalEventBridge(): () => void {
@@ -58,13 +55,15 @@ export function startTerminalEventBridge(): () => void {
 
 export function registerTerminalSink(id: string, sink: TerminalSink): () => void {
   sinks.set(id, sink);
-  const queued = pending.get(id) ?? [];
-  pending.delete(id);
-  pendingBytes.delete(id);
-  queued.forEach((bytes) => sink(bytes));
+  (history.get(id) ?? []).forEach((bytes) => sink(bytes));
   return () => {
     if (sinks.get(id) === sink) sinks.delete(id);
   };
+}
+
+export function forgetTerminalSession(id: string): void {
+  history.delete(id);
+  historyBytes.delete(id);
 }
 
 export function registerTerminalExitListener(listener: (event: TerminalExitEvent) => void): () => void {
@@ -74,9 +73,9 @@ export function registerTerminalExitListener(listener: (event: TerminalExitEvent
 
 export function __resetTerminalEventBus(): void {
   sinks.clear();
-  pending.clear();
-  pendingBytes.clear();
+  history.clear();
+  historyBytes.clear();
   stopBridge?.();
 }
 
-export const terminalEventBufferLimit = MAX_PENDING_BYTES;
+export const terminalEventBufferLimit = MAX_HISTORY_BYTES;

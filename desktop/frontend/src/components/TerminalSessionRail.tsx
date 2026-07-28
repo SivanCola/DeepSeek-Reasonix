@@ -1,4 +1,4 @@
-import { Plus, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { useT } from "../lib/i18n";
 import type { TerminalSessionView } from "../lib/types";
@@ -8,13 +8,11 @@ export function TerminalSessionRail({
   activeSessionId,
   onSelect,
   onClose,
-  onNew,
 }: {
   sessions: TerminalSessionView[];
   activeSessionId: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
-  onNew: () => void;
 }) {
   const t = useT();
   return (
@@ -32,9 +30,6 @@ export function TerminalSessionRail({
           </div>
         ))}
       </div>
-      <button type="button" className="terminal-session-rail__new" onClick={onNew} aria-label={t("terminal.newSession")} title={t("terminal.newSession")}>
-        <Plus size={15} />
-      </button>
     </nav>
   );
 }

@@ -597,6 +597,7 @@ export interface TerminalOutputEvent {
 export interface TerminalExitEvent {
   id: string;
   exitCode: number;
+  removed?: boolean;
 }
 
 function terminalEventPayload<T>(payload: unknown): T | null {
@@ -4489,6 +4490,7 @@ function makeMockApp(): AppBindings {
       terminalIDs.forEach((id) => {
         mockTerminalOutput.delete(id);
         mockTerminalTabIDs.delete(id);
+        __emitMockTerminalExit({ id, exitCode: 0, removed: true });
       });
       const wasActive = mockTabs.some((tab) => tab.id === _tabID && tab.active);
       mockTabs = mockTabs.filter((tab) => tab.id !== _tabID);
@@ -4543,7 +4545,7 @@ function makeMockApp(): AppBindings {
       mockTerminalSessions = mockTerminalSessions.filter((session) => session.id !== sessionID);
       mockTerminalOutput.delete(sessionID);
       mockTerminalTabIDs.delete(sessionID);
-      __emitMockTerminalExit({ id: sessionID, exitCode: 0 });
+      __emitMockTerminalExit({ id: sessionID, exitCode: 0, removed: true });
     },
     async RenameTerminalForTab(_tabID: string, sessionID: string, title: string) {
       mockTerminalSessions = mockTerminalSessions.map((session) => session.id === sessionID ? { ...session, title } : session);

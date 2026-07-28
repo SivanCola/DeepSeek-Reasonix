@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 import { app } from "../lib/bridge";
 import type { TerminalSessionView, TerminalWorkspaceView } from "../lib/types";
-import { registerTerminalExitListener } from "../lib/terminalEvents";
+import { forgetTerminalSession, registerTerminalExitListener } from "../lib/terminalEvents";
 
 type TerminalState = {
   tabId: string;
@@ -75,13 +75,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return get().syncWorkspace(normalizedTabId);
   },
   async createSession(tabId, relativePath = ".", shellId = "default") {
-    const workspace = await get().ensureReady(tabId);
+    const normalizedTabId = tabId.trim();
+    const workspace = await get().ensureReady(normalizedTabId);
     if (!workspace?.available || workspace.readOnly) return null;
-    const session = await app.CreateTerminalForTab(tabId, relativePath, shellId);
-    const current = get();
-    if (current.tabId !== tabId) return session;
-    const next = { ...workspace, sessions: [...workspace.sessions, session] };
-    set({ workspace: next, activeSessionId: session.id });
+    const session = await app.CreateTerminalForTab(normalizedTabId, relativePath, shellId);
+    set((state) => {
+      if (state.tabId !== normalizedTabId || !state.workspace) return {};
+      const sessions = state.workspace.sessions.some((item) => item.id === session.id)
+        ? state.workspace.sessions.map((item) => item.id === session.id ? session : item)
+        : [...state.workspace.sessions, session];
+      return { workspace: { ...state.workspace, sessions }, activeSessionId: session.id };
+    });
     return session;
   },
   async write(tabId, sessionId, data) {
@@ -92,10 +96,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
   async closeSession(tabId, sessionId) {
     await app.CloseTerminalForTab(tabId, sessionId);
-    const current = get();
-    if (current.tabId !== tabId || !current.workspace) return;
-    const sessions = current.workspace.sessions.filter((session) => session.id !== sessionId);
-    set({ workspace: { ...current.workspace, sessions }, activeSessionId: sessions[0]?.id ?? null });
+    forgetTerminalSession(sessionId);
+    set((state) => {
+      if (state.tabId !== tabId || !state.workspace) return {};
+      const sessions = state.workspace.sessions.filter((session) => session.id !== sessionId);
+      const activeSessionId = state.activeSessionId === sessionId
+        ? sessions.find((session) => session.running)?.id ?? sessions[0]?.id ?? null
+        : state.activeSessionId;
+      return { workspace: { ...state.workspace, sessions }, activeSessionId };
+    });
   },
   async renameSession(tabId, sessionId, title) {
     await app.RenameTerminalForTab(tabId, sessionId, title);
@@ -108,12 +117,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 }));
 
 registerTerminalExitListener((event) => {
-  const current = useTerminalStore.getState();
-  if (!current.workspace) return;
-  const sessions = current.workspace.sessions.map((session) => session.id === event.id
-    ? { ...session, running: false, exitCode: event.exitCode }
-    : session);
-  useTerminalStore.setState({ workspace: { ...current.workspace, sessions } });
+  useTerminalStore.setState((state) => {
+    if (!state.workspace) return {};
+    if (event.removed) {
+      const sessions = state.workspace.sessions.filter((session) => session.id !== event.id);
+      const activeSessionId = state.activeSessionId === event.id
+        ? sessions.find((session) => session.running)?.id ?? sessions[0]?.id ?? null
+        : state.activeSessionId;
+      return { workspace: { ...state.workspace, sessions }, activeSessionId };
+    }
+    const sessions = state.workspace.sessions.map((session) => session.id === event.id
+      ? { ...session, running: false, exitCode: event.exitCode }
+      : session);
+    return { workspace: { ...state.workspace, sessions } };
+  });
 });
 
 export function resetTerminalStoreForTests(): void {

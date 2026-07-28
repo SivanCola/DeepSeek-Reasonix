@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -98,6 +99,9 @@ func TestResolveTerminalCommandTrustsOnlyUserConfigPath(t *testing.T) {
 
 func testExecutable(t *testing.T, dir, name string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -261,6 +265,53 @@ func TestTerminalManagerCountsConcurrentStartsTowardLimit(t *testing.T) {
 	}
 	if succeeded != maxTerminalsPerWorkspace || limited != 1 {
 		t.Fatalf("create results: succeeded=%d limited=%d", succeeded, limited)
+	}
+	manager.closeAll()
+}
+
+func TestTerminalManagerRejectsStartThatFinishesAfterTabClose(t *testing.T) {
+	manager := newTerminalManager(nil)
+	proc := newFakeTerminalProcess()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	manager.start = func(terminalStartSpec) (terminalProcess, error) {
+		close(entered)
+		<-release
+		return proc, nil
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := manager.create("closing-tab", "workspace", ".", terminalCommand{path: "shell", label: "shell"})
+		result <- err
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("terminal start did not reach the concurrency barrier")
+	}
+	manager.closeForTab("closing-tab")
+	close(release)
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, errTerminalStaleTab) {
+			t.Fatalf("create error = %v, want errTerminalStaleTab", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal create did not finish after tab close")
+	}
+	select {
+	case <-proc.closed:
+	case <-time.After(time.Second):
+		t.Fatal("terminal process started for a closed tab was not closed")
+	}
+	if got := manager.list("workspace"); len(got) != 0 {
+		t.Fatalf("closed tab registered terminal sessions: %+v", got)
+	}
+	if _, err := manager.create("closing-tab", "workspace", ".", terminalCommand{path: "shell", label: "shell"}); !errors.Is(err, errTerminalStaleTab) {
+		t.Fatalf("create after tab close error = %v, want errTerminalStaleTab", err)
 	}
 	manager.closeAll()
 }

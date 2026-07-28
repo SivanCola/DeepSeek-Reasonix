@@ -243,6 +243,8 @@ export const en = {
   "workspace.openInTerminal": "Open in integrated terminal",
   "terminal.title": "Terminal",
   "terminal.sessions": "Terminal sessions",
+  "terminal.shell": "Shell",
+  "terminal.defaultShell": "Default shell",
   "terminal.newSession": "New terminal session",
   "terminal.closeSession": "Close terminal session",
   "terminal.loading": "Loading terminal…",

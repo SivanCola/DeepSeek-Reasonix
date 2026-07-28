@@ -79,7 +79,6 @@ import { HeartbeatPanel } from "./custom/features/heartbeat/HeartbeatPanel";
 import "./custom/features/heartbeat/heartbeat.css";
 import { CopyButton } from "./components/CopyButton";
 import { ExternalOpener } from "./components/ExternalOpener";
-import { TerminalPanel } from "./components/TerminalPanel";
 import { startTerminalEventBridge } from "./lib/terminalEvents";
 import { useTerminalStore } from "./store/terminal";
 import { parseTodos } from "./lib/tools";
@@ -269,6 +268,7 @@ function NoticePreviewPanel() {
 const HistoryPanel = lazy(() => import("./components/HistoryPanel").then((module) => ({ default: module.HistoryPanel })));
 const SettingsPanel = lazy(() => import("./components/SettingsPanel").then((module) => ({ default: module.SettingsPanel })));
 const RemotePanel = lazy(() => import("./components/RemotePanel").then((module) => ({ default: module.RemotePanel })));
+const TerminalPanel = lazy(() => import("./components/TerminalPanel").then((module) => ({ default: module.TerminalPanel })));
 
 const CHAT_MIN_WIDTH = 400;
 const CHAT_COMFORT_MIN_WIDTH = 560;
@@ -4590,12 +4590,14 @@ export default function App() {
                   <RemotePanel onClose={() => setWorkspacePanel(false)} />
                 </Suspense>
               ) : rightDockMode === "terminal" ? (
-                <TerminalPanel
-                  tabId={activeTabId ?? ""}
-                  cwd={state.meta?.cwd}
-                  onClose={() => setWorkspacePanel(false)}
-                  onAddOutput={(sessionId) => void addTerminalOutputToComposer(sessionId)}
-                />
+                <Suspense fallback={<div className="terminal-empty"><span className="terminal-empty__spinner" />{t("terminal.loading")}</div>}>
+                  <TerminalPanel
+                    tabId={activeTabId ?? ""}
+                    cwd={state.meta?.cwd}
+                    onClose={() => setWorkspacePanel(false)}
+                    onAddOutput={(sessionId) => void addTerminalOutputToComposer(sessionId)}
+                  />
+                </Suspense>
               ) : rightDockMode === "context" && desktopLayoutStyle !== "creation" ? (
                 <ContextPanel
                   tabId={activeTabId}

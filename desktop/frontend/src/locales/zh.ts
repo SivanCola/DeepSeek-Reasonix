@@ -244,6 +244,8 @@ export const zh: Record<DictKey, string> = {
   "workspace.openInTerminal": "在内置终端打开",
   "terminal.title": "终端",
   "terminal.sessions": "终端会话",
+  "terminal.shell": "Shell",
+  "terminal.defaultShell": "默认 Shell",
   "terminal.newSession": "新建终端会话",
   "terminal.closeSession": "关闭终端会话",
   "terminal.loading": "正在加载终端…",

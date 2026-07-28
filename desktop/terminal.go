@@ -105,21 +105,23 @@ type terminalSession struct {
 type terminalManager struct {
 	app *App
 
-	mu          sync.Mutex
-	sessions    map[string]*terminalSession
-	byWorkspace map[string][]string
-	starting    map[string]int
-	closed      bool
-	start       func(terminalStartSpec) (terminalProcess, error)
+	mu           sync.Mutex
+	sessions     map[string]*terminalSession
+	byWorkspace  map[string][]string
+	starting     map[string]int
+	closedTabIDs map[string]struct{}
+	closed       bool
+	start        func(terminalStartSpec) (terminalProcess, error)
 }
 
 func newTerminalManager(app *App) *terminalManager {
 	return &terminalManager{
-		app:         app,
-		sessions:    make(map[string]*terminalSession),
-		byWorkspace: make(map[string][]string),
-		starting:    make(map[string]int),
-		start:       startTerminalProcess,
+		app:          app,
+		sessions:     make(map[string]*terminalSession),
+		byWorkspace:  make(map[string][]string),
+		starting:     make(map[string]int),
+		closedTabIDs: make(map[string]struct{}),
+		start:        startTerminalProcess,
 	}
 }
 
@@ -491,10 +493,19 @@ func commandForShellPath(path, label string) terminalCommand {
 }
 
 func (m *terminalManager) create(tabID, workspaceKey, dir string, command terminalCommand) (TerminalSessionView, error) {
+	tabID = strings.TrimSpace(tabID)
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return TerminalSessionView{}, errTerminalManagerOff
+	}
+	if tabID == "" {
+		m.mu.Unlock()
+		return TerminalSessionView{}, errTerminalStaleTab
+	}
+	if _, closed := m.closedTabIDs[tabID]; closed {
+		m.mu.Unlock()
+		return TerminalSessionView{}, errTerminalStaleTab
 	}
 	if len(m.byWorkspace[workspaceKey])+m.starting[workspaceKey] >= maxTerminalsPerWorkspace {
 		m.mu.Unlock()
@@ -550,6 +561,11 @@ func (m *terminalManager) create(tabID, workspaceKey, dir string, command termin
 		m.mu.Unlock()
 		_ = proc.Close()
 		return TerminalSessionView{}, errTerminalManagerOff
+	}
+	if _, closed := m.closedTabIDs[tabID]; closed {
+		m.mu.Unlock()
+		_ = proc.Close()
+		return TerminalSessionView{}, errTerminalStaleTab
 	}
 	m.sessions[id] = session
 	m.byWorkspace[workspaceKey] = append(m.byWorkspace[workspaceKey], id)
@@ -692,6 +708,7 @@ func (m *terminalManager) closeForTab(tabID string) {
 		return
 	}
 	m.mu.Lock()
+	m.closedTabIDs[tabID] = struct{}{}
 	sessions := make([]*terminalSession, 0)
 	for _, session := range m.sessions {
 		if session.tabID != tabID {
@@ -764,12 +781,16 @@ func (m *terminalManager) readLoop(session *terminalSession) {
 	for {
 		n, err := session.process.Read(buf)
 		if n > 0 {
+			active := false
 			m.mu.Lock()
 			if current := m.sessions[session.view.ID]; current == session {
 				session.output = appendTerminalSnapshot(session.output, buf[:n])
+				active = true
 			}
 			m.mu.Unlock()
-			m.emitOutput(session.view.ID, buf[:n])
+			if active {
+				m.emitOutput(session.view.ID, buf[:n])
+			}
 		}
 		if err != nil {
 			return
@@ -784,13 +805,15 @@ func (m *terminalManager) waitLoop(session *terminalSession) {
 		exitCode = -1
 	}
 	m.mu.Lock()
+	removed := true
 	if current := m.sessions[session.view.ID]; current == session {
 		current.view.Running = false
 		current.view.ExitCode = &exitCode
+		removed = false
 	}
 	m.mu.Unlock()
 	close(session.done)
-	m.emitExit(session.view.ID, exitCode)
+	m.emitExit(session.view.ID, exitCode, removed)
 }
 
 func (m *terminalManager) emitOutput(id string, data []byte) {
@@ -803,13 +826,14 @@ func (m *terminalManager) emitOutput(id string, data []byte) {
 	})
 }
 
-func (m *terminalManager) emitExit(id string, exitCode int) {
+func (m *terminalManager) emitExit(id string, exitCode int, removed bool) {
 	if m.app == nil {
 		return
 	}
 	m.app.emitRuntimeEvent(terminalExitChannel, map[string]any{
 		"id":       id,
 		"exitCode": exitCode,
+		"removed":  removed,
 	})
 }
 

@@ -15,6 +15,8 @@ let failed = 0;
 const testDir = dirname(fileURLToPath(import.meta.url));
 const appSource = readFileSync(resolve(testDir, "../App.tsx"), "utf8");
 const stylesSource = readFileSync(resolve(testDir, "../styles.css"), "utf8");
+const terminalPanelSource = readFileSync(resolve(testDir, "../components/TerminalPanel.tsx"), "utf8");
+const terminalRailSource = readFileSync(resolve(testDir, "../components/TerminalSessionRail.tsx"), "utf8");
 
 function eq(a: unknown, b: unknown, label: string) {
   if (a === b) {
@@ -171,6 +173,46 @@ eq(
   /@media \(max-width: 820px\) \{[\s\S]*?\.layout--terminal-open \.workbench-dock[\s\S]*?display: flex !important/.test(stylesSource),
   true,
   "terminal drawer stays visible on narrow viewports",
+);
+eq(
+  /\.layout--terminal-open \.workbench-dock \{[\s\S]*?padding-bottom: var\(--statusbar-height\)/.test(stylesSource),
+  true,
+  "terminal drawer reserves the fixed status bar safe area",
+);
+eq(
+  /\.layout--terminal-open \.workbench-dock__tools \{\s*display: none;\s*\}/.test(stylesSource),
+  true,
+  "terminal drawer hides the redundant workspace tab strip",
+);
+eq(
+  /sessions\.length > 1 && \([\s\S]*?<TerminalSessionRail/.test(terminalPanelSource),
+  true,
+  "terminal session tabs only appear when multiple sessions exist",
+);
+eq(
+  /terminal-session-rail__new|onNew/.test(terminalRailSource),
+  false,
+  "terminal tab strip does not duplicate the header's new-session action",
+);
+eq(
+  /className="terminal-shell-select"[\s\S]*?shellOptions\.map/.test(terminalPanelSource),
+  true,
+  "terminal header renders the backend-approved shell options",
+);
+eq(
+  /createSession\(tabId, "\.", selectedShellId\)/.test(terminalPanelSource),
+  true,
+  "new terminal sessions use the selected shell",
+);
+eq(
+  /createSession\(tabId, "\.", "default"\)/.test(terminalPanelSource),
+  false,
+  "new terminal sessions are not hard-coded to the default shell",
+);
+eq(
+  /const TerminalPanel = lazy\(\(\) => import\("\.\/components\/TerminalPanel"\)/.test(appSource),
+  true,
+  "terminal and xterm load only when the terminal drawer opens",
 );
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);

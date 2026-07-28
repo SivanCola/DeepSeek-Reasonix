@@ -2118,6 +2118,8 @@ export const zhTW: Record<DictKey, string> = {
   "workspace.openInTerminal": "在內建終端機開啟",
   "terminal.title": "終端機",
   "terminal.sessions": "終端機工作階段",
+  "terminal.shell": "Shell",
+  "terminal.defaultShell": "預設 Shell",
   "terminal.newSession": "新增終端機工作階段",
   "terminal.closeSession": "關閉終端機工作階段",
   "terminal.loading": "正在載入終端機…",
