@@ -184,6 +184,56 @@ func TestRemoveTaskRequiresMatchingCreateToken(t *testing.T) {
 	}
 }
 
+func TestRemoveTaskByCallerSuppliedCreateToken(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	const createToken = "0123456789abcdef0123456789abcdef"
+	task, err := store.CreateTask("Crash recoverable ownership", CreateOptions{CreateToken: createToken})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if task.CreateToken != createToken {
+		t.Fatalf("CreateTask token = %q, want %q", task.CreateToken, createToken)
+	}
+	if !strings.Contains(task.ID, createTokenTaskIDMarker(createToken)) {
+		t.Fatalf("transaction-owned task id %q has no create-token marker", task.ID)
+	}
+	if err := store.RemoveTaskByCreateToken(createToken); err != nil {
+		t.Fatalf("RemoveTaskByCreateToken: %v", err)
+	}
+	if _, err := os.Stat(task.Root); !os.IsNotExist(err) {
+		t.Fatalf("task directory still present after token recovery: %v", err)
+	}
+	if err := store.RemoveTaskByCreateToken(createToken); err != nil {
+		t.Fatalf("repeated RemoveTaskByCreateToken: %v", err)
+	}
+}
+
+func TestRemoveTaskByCreateTokenRemovesIncompleteReservation(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+	const createToken = "fedcba9876543210fedcba9876543210"
+	taskID := "20260728-120000-incomplete" + createTokenTaskIDMarker(createToken)
+	taskRoot := filepath.Join(root, ".reasonix", "autoresearch", taskID)
+	if err := os.MkdirAll(taskRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.RemoveTaskByCreateToken(createToken); err != nil {
+		t.Fatalf("RemoveTaskByCreateToken: %v", err)
+	}
+	if _, err := os.Stat(taskRoot); !os.IsNotExist(err) {
+		t.Fatalf("incomplete reservation still present after recovery: %v", err)
+	}
+}
+
+func TestCreateTaskRejectsInvalidCallerSuppliedCreateToken(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if _, err := store.CreateTask("Invalid ownership", CreateOptions{CreateToken: "not-a-token"}); err == nil {
+		t.Fatal("CreateTask accepted an invalid caller-supplied create token")
+	}
+}
+
 func TestLoadTaskRejectsUnsafeOrMissingID(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(root)

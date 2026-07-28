@@ -486,7 +486,7 @@ func TestSetGoalDurableRestoresInMemoryStateWhenSidecarWriteFails(t *testing.T) 
 	}
 	c.goals.setStatePath(filepath.Join(notDirectory, "goal.json"))
 
-	if err := c.SetGoalDurable("replace the goal"); err == nil {
+	if err := c.SetGoalDurable("replace the goal", ""); err == nil {
 		t.Fatal("SetGoalDurable succeeded despite an invalid sidecar parent")
 	}
 	if got := c.Goal(); got != "keep the old goal" {
@@ -519,7 +519,7 @@ func TestSetGoalDurableRollsBackAutoResearchTaskAndNotice(t *testing.T) {
 	c.goals.setStatePath(filepath.Join(notDirectory, "goal.json"))
 
 	goal := "investigate the root cause and fix the performance regression, then verify with tests"
-	if err := c.SetGoalDurable(goal); err == nil {
+	if err := c.SetGoalDurable(goal, ""); err == nil {
 		t.Fatal("SetGoalDurable succeeded despite an invalid sidecar parent")
 	}
 	entries, err := os.ReadDir(filepath.Join(root, ".reasonix", "autoresearch"))

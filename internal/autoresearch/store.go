@@ -3,11 +3,13 @@ package autoresearch
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,6 +24,7 @@ import (
 
 var safeTaskID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var explicitTaskPath = regexp.MustCompile(`\.reasonix/autoresearch/([A-Za-z0-9][A-Za-z0-9._-]*)/?`)
+var safeCreateToken = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 // createTokenFile is written immediately after an atomic task-directory
 // reservation so rollback can prove ownership before RemoveAll.
@@ -66,7 +69,7 @@ func (s *Store) CreateTask(goal string, opts CreateOptions) (*Task, error) {
 	if opts.Now != nil {
 		now = opts.Now().UTC()
 	}
-	id, createToken, err := s.reserveTaskID(now, goal)
+	id, createToken, err := s.reserveTaskID(now, goal, opts.CreateToken)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +171,57 @@ func (s *Store) RemoveTask(taskID, createToken string) error {
 	}
 	if err := storeRoot.RemoveAll(taskRel); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("autoresearch: remove task %s: %w", taskID, err)
+	}
+	return nil
+}
+
+// RemoveTaskByCreateToken removes the unique task owned by createToken. Parent
+// transactions use it after a crash, when the token was durable before task
+// creation but the task ID may not have been returned to the caller.
+func (s *Store) RemoveTaskByCreateToken(createToken string) error {
+	createToken = strings.TrimSpace(createToken)
+	if err := validateCreateToken(createToken); err != nil {
+		return err
+	}
+	storeRoot, err := os.OpenRoot(s.root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("autoresearch: open root dir: %w", err)
+	}
+	defer storeRoot.Close()
+	entries, err := fs.ReadDir(storeRoot.FS(), ".")
+	if err != nil {
+		return fmt.Errorf("autoresearch: list tasks for create token: %w", err)
+	}
+	matches := make([]string, 0, 1)
+	marker := createTokenTaskIDMarker(createToken)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		taskID := entry.Name()
+		if validateTaskID(taskID) != nil {
+			continue
+		}
+		if strings.Contains(taskID, marker) {
+			// Transaction-owned task IDs carry a hash of the token so recovery
+			// still owns a directory if the process died between Mkdir and the
+			// create-token file write.
+			matches = append(matches, taskID)
+		}
+	}
+	if len(matches) > 1 {
+		return fmt.Errorf("autoresearch: create token unexpectedly owns %d tasks", len(matches))
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	unlock := s.lockTask(matches[0])
+	defer unlock()
+	if err := storeRoot.RemoveAll(matches[0]); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("autoresearch: remove transaction-owned task %s: %w", matches[0], err)
 	}
 	return nil
 }
@@ -597,7 +651,7 @@ func (s *Store) openTaskRoot(taskID string) (*os.Root, string, error) {
 // and writes a create-token ownership marker. Concurrent creators sharing the
 // same workspace therefore never adopt the same ID: EEXIST advances the
 // candidate, and only the Mkdir winner may later roll the directory back.
-func (s *Store) reserveTaskID(now time.Time, goal string) (id, createToken string, err error) {
+func (s *Store) reserveTaskID(now time.Time, goal, requestedCreateToken string) (id, createToken string, err error) {
 	if err := os.MkdirAll(s.root, 0o755); err != nil {
 		return "", "", fmt.Errorf("autoresearch: create root dir: %w", err)
 	}
@@ -606,13 +660,22 @@ func (s *Store) reserveTaskID(now time.Time, goal string) (id, createToken strin
 		return "", "", fmt.Errorf("autoresearch: open root dir: %w", err)
 	}
 	defer storeRoot.Close()
+	token := strings.TrimSpace(requestedCreateToken)
+	callerSuppliedToken := token != ""
+	if token == "" {
+		token, err = newCreateToken()
+		if err != nil {
+			return "", "", err
+		}
+	} else if err := validateCreateToken(token); err != nil {
+		return "", "", err
+	}
 	base := now.Format("20060102-150405") + "-" + slugify(goal)
 	if base == now.Format("20060102-150405")+"-" {
 		base += "task"
 	}
-	token, err := newCreateToken()
-	if err != nil {
-		return "", "", err
+	if callerSuppliedToken {
+		base += createTokenTaskIDMarker(token)
 	}
 	id = base
 	for i := 2; ; i++ {
@@ -642,6 +705,18 @@ func newCreateToken() (string, error) {
 		return "", fmt.Errorf("autoresearch: generate create token: %w", err)
 	}
 	return hex.EncodeToString(buf[:]), nil
+}
+
+func validateCreateToken(token string) error {
+	if !safeCreateToken.MatchString(token) {
+		return errors.New("autoresearch: create token must be 32 lowercase hexadecimal characters")
+	}
+	return nil
+}
+
+func createTokenTaskIDMarker(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "-txn-" + hex.EncodeToString(sum[:16])
 }
 
 func validateTaskID(id string) error {

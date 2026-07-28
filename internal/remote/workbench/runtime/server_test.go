@@ -139,7 +139,7 @@ func (c *profileFakeController) SetGoal(goal string) {
 		c.goalStatus = string(protocol.GoalRunning)
 	}
 }
-func (c *profileFakeController) SetGoalDurable(goal string) error {
+func (c *profileFakeController) SetGoalDurable(goal, _ string) error {
 	if c.goalWriteErr != nil {
 		return c.goalWriteErr
 	}
@@ -1166,6 +1166,85 @@ func TestProfileTransactionRecoveryFencesPartialDurableUpdates(t *testing.T) {
 			}
 			if registry.Sessions[0].Model != tc.wantModel {
 				t.Fatalf("recovered model = %q, want %q", registry.Sessions[0].Model, tc.wantModel)
+			}
+		})
+	}
+}
+
+func TestProfileTransactionRecoveryOwnsAutoResearchSideEffects(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		commit        bool
+		wantTaskCount int
+		wantGoal      bool
+	}{
+		{name: "prepared removes created task"},
+		{name: "committed preserves created task", commit: true, wantTaskCount: 1, wantGoal: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			sessionDir := t.TempDir()
+			registryPath := filepath.Join(t.TempDir(), "sessions.json")
+			sessionPath := filepath.Join(sessionDir, "session.jsonl")
+			srv := New(Options{Workspace: workspace, SessionDir: sessionDir, RegistryPath: registryPath})
+			txn, err := srv.beginProfileGoalTransaction(sessionPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if txn.journal.AutoResearchCreateToken == "" {
+				t.Fatal("prepared profile transaction has no AutoResearch create token")
+			}
+			ctrl := control.New(control.Options{
+				SessionDir: sessionDir, SessionPath: sessionPath,
+				WorkspaceRoot: workspace, Label: "profile-recovery",
+			})
+			t.Cleanup(ctrl.Close)
+			goal := "investigate the root cause, implement the fix, and verify the performance regression"
+			if err := ctrl.SetGoalDurable(goal, txn.journal.AutoResearchCreateToken); err != nil {
+				t.Fatal(err)
+			}
+			taskRoot := filepath.Join(workspace, ".reasonix", "autoresearch")
+			entries, err := os.ReadDir(taskRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 {
+				t.Fatalf("AutoResearch task count before recovery = %d, want 1", len(entries))
+			}
+			tokenPath := filepath.Join(taskRoot, entries[0].Name(), ".create_token")
+			token, err := os.ReadFile(tokenPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(string(token)) != txn.journal.AutoResearchCreateToken {
+				t.Fatalf("AutoResearch create token = %q, want transaction token", token)
+			}
+			if tc.commit {
+				if err := srv.commitProfileGoalTransaction(txn); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			restarted := New(Options{Workspace: workspace, SessionDir: sessionDir, RegistryPath: registryPath})
+			if err := restarted.recoverProfileTransaction(); err != nil {
+				t.Fatal(err)
+			}
+			entries, err = os.ReadDir(taskRoot)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if len(entries) != tc.wantTaskCount {
+				t.Fatalf("AutoResearch task count after recovery = %d, want %d", len(entries), tc.wantTaskCount)
+			}
+			_, goalErr := os.Stat(store.SessionGoalState(sessionPath))
+			if tc.wantGoal && goalErr != nil {
+				t.Fatalf("committed Goal sidecar missing after recovery: %v", goalErr)
+			}
+			if !tc.wantGoal && !os.IsNotExist(goalErr) {
+				t.Fatalf("prepared Goal sidecar remains after recovery: %v", goalErr)
+			}
+			if _, err := os.Stat(restarted.profileTransactionPath()); !os.IsNotExist(err) {
+				t.Fatalf("profile transaction journal remains after recovery: %v", err)
 			}
 		})
 	}

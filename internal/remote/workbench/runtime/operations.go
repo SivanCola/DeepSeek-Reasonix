@@ -280,7 +280,7 @@ type goalController interface {
 
 type durableGoalController interface {
 	goalController
-	SetGoalDurable(string) error
+	SetGoalDurable(string, string) error
 }
 
 func protocolGoal(ctrl goalController) (string, protocol.GoalStatus) {

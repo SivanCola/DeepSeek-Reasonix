@@ -1,10 +1,13 @@
 package runtime
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 
+	"reasonix/internal/autoresearch"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/store"
 )
@@ -15,23 +18,32 @@ const (
 	profileTransactionCommitted = "committed"
 )
 
-// profileTransactionJournal is a rollback record for the two durable files
-// touched by a Profile+Goal update. A prepared journal restores the old files;
-// a committed journal proves both replacements completed and can be removed.
+// profileTransactionJournal is a rollback record for the durable side effects
+// of a Profile+Goal update. A prepared journal restores the old files and
+// removes a task carrying AutoResearchCreateToken; a committed journal proves
+// every replacement completed and can be removed.
 type profileTransactionJournal struct {
-	Version          int    `json:"version"`
-	Workspace        string `json:"workspace"`
-	Phase            string `json:"phase"`
-	SessionPath      string `json:"sessionPath"`
-	RegistryExisted  bool   `json:"registryExisted"`
-	RegistryContents []byte `json:"registryContents,omitempty"`
-	GoalExisted      bool   `json:"goalExisted"`
-	GoalContents     []byte `json:"goalContents,omitempty"`
+	Version                 int    `json:"version"`
+	Workspace               string `json:"workspace"`
+	Phase                   string `json:"phase"`
+	SessionPath             string `json:"sessionPath"`
+	RegistryExisted         bool   `json:"registryExisted"`
+	RegistryContents        []byte `json:"registryContents,omitempty"`
+	GoalExisted             bool   `json:"goalExisted"`
+	GoalContents            []byte `json:"goalContents,omitempty"`
+	AutoResearchCreateToken string `json:"autoResearchCreateToken,omitempty"`
 }
 
 type profileGoalTransaction struct {
 	path    string
 	journal profileTransactionJournal
+}
+
+func profileTransactionCreateToken(txn *profileGoalTransaction) string {
+	if txn == nil {
+		return ""
+	}
+	return txn.journal.AutoResearchCreateToken
 }
 
 func (s *Server) profileTransactionPath() string {
@@ -61,6 +73,14 @@ func writeProfileTransactionJournal(path string, journal profileTransactionJourn
 	return fileutil.AtomicWriteFile(path, append(body, '\n'), 0o600)
 }
 
+func newProfileTransactionCreateToken() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate profile transaction create token: %w", err)
+	}
+	return hex.EncodeToString(raw[:]), nil
+}
+
 func (s *Server) beginProfileGoalTransaction(sessionPath string) (*profileGoalTransaction, error) {
 	journalPath := s.profileTransactionPath()
 	if journalPath == "" {
@@ -82,11 +102,16 @@ func (s *Server) beginProfileGoalTransaction(sessionPath string) (*profileGoalTr
 	if err != nil {
 		return nil, fmt.Errorf("read profile transaction Goal preimage: %w", err)
 	}
+	createToken, err := newProfileTransactionCreateToken()
+	if err != nil {
+		return nil, err
+	}
 	journal := profileTransactionJournal{
 		Version: profileTransactionVersion, Workspace: canonicalRegistryWorkspace(s.opts.Workspace),
 		Phase: profileTransactionPrepared, SessionPath: sessionPath,
 		RegistryExisted: registryExisted, RegistryContents: registry,
 		GoalExisted: goalExisted, GoalContents: goal,
+		AutoResearchCreateToken: createToken,
 	}
 	if err := writeProfileTransactionJournal(journalPath, journal); err != nil {
 		return nil, fmt.Errorf("prepare profile transaction: %w", err)
@@ -139,6 +164,12 @@ func (s *Server) rollbackProfileGoalTransaction(txn *profileGoalTransaction) err
 	}
 	if err := restoreTransactionPreimage(s.sessionRegistryPath(), txn.journal.RegistryExisted, txn.journal.RegistryContents, 0o600); err != nil {
 		return fmt.Errorf("restore profile transaction registry: %w", err)
+	}
+	if txn.journal.AutoResearchCreateToken != "" {
+		autoResearch := autoresearch.NewStore(s.opts.Workspace)
+		if err := autoResearch.RemoveTaskByCreateToken(txn.journal.AutoResearchCreateToken); err != nil {
+			return fmt.Errorf("restore profile transaction AutoResearch task: %w", err)
+		}
 	}
 	return finishProfileGoalTransaction(txn)
 }

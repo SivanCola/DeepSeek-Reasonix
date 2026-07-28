@@ -2184,11 +2184,11 @@ func (c *Controller) SetGoal(goal string) {
 }
 
 // SetGoalDurable updates the Goal only when its sidecar can be replaced
-// atomically. Remote Profile transactions use this to avoid reporting success
-// with an in-memory Goal that disappears after restart.
-func (c *Controller) SetGoalDurable(goal string) error {
+// atomically. Remote Profile transactions persist autoResearchCreateToken
+// before calling this method so crash recovery owns any newly-created task.
+func (c *Controller) SetGoalDurable(goal, autoResearchCreateToken string) error {
 	snapshot := c.goals.capture()
-	setup := c.prepareAutoResearchTask(goal, GoalResearchAuto)
+	setup := c.prepareAutoResearchTask(goal, GoalResearchAuto, autoResearchCreateToken)
 	path, data, persist := c.goals.set(goal, GoalResearchAuto, setup.taskID, c.goalTodos())
 	if setup.blockReason != "" {
 		path, data, persist = c.goals.stop(GoalStatusBlocked, c.goalTodos())
@@ -2214,7 +2214,7 @@ func (c *Controller) SetGoalDurable(goal string) error {
 }
 
 func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {
-	setup := c.prepareAutoResearchTask(goal, researchMode)
+	setup := c.prepareAutoResearchTask(goal, researchMode, "")
 	if setup.notice != "" {
 		c.notice(setup.notice)
 	}
@@ -2258,7 +2258,7 @@ type autoResearchSetup struct {
 	created     bool
 }
 
-func (c *Controller) prepareAutoResearchTask(goal string, researchMode GoalResearchMode) autoResearchSetup {
+func (c *Controller) prepareAutoResearchTask(goal string, researchMode GoalResearchMode, createToken string) autoResearchSetup {
 	goal = strings.TrimSpace(goal)
 	if goal == "" || c.autoResearch == nil || !shouldUseAutoResearch(goal, researchMode) {
 		return autoResearchSetup{}
@@ -2276,6 +2276,7 @@ func (c *Controller) prepareAutoResearchTask(goal string, researchMode GoalResea
 		return autoResearchSetup{taskID: task.ID, notice: "autoresearch task resumed: " + task.ID}
 	}
 	task, err := c.autoResearch.CreateTask(goal, autoresearch.CreateOptions{
+		CreateToken: createToken,
 		AllowedOperations: autoresearch.AllowedOperations{
 			Write:   true,
 			Network: false,

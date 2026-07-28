@@ -1282,7 +1282,7 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 		}
 		applyControllerProfile(ctrl, collaboration, toolApproval)
 		if goal != nil {
-			if err := ctrl.(durableGoalController).SetGoalDurable(*goal); err != nil {
+			if err := ctrl.(durableGoalController).SetGoalDurable(*goal, profileTransactionCreateToken(txn)); err != nil {
 				s.mu.Lock()
 				if s.sessions[sess.id] == sess && sess.collaboration == collaboration && sess.toolApproval == toolApproval {
 					sess.collaboration, sess.toolApproval = previousCollaboration, previousToolApproval
@@ -1374,7 +1374,7 @@ func (s *Server) setProfile(ctx context.Context, p protocol.SessionProfileSetPar
 		return protocol.SessionProfileSetResult{}, protocol.MustRemoteError(protocol.ErrSessionPersistFailed, protocol.ErrorOptions{Target: &p.Target})
 	}
 	if goal != nil {
-		if err := newController.(durableGoalController).SetGoalDurable(*goal); err != nil {
+		if err := newController.(durableGoalController).SetGoalDurable(*goal, profileTransactionCreateToken(txn)); err != nil {
 			s.mu.Lock()
 			restored := s.sessions[sess.id] == sess && sess.ctrl == newController
 			if restored {
