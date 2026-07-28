@@ -1493,7 +1493,35 @@ func writeConfigFile(path, body string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("save: empty config path")
 	}
-	return fileutil.AtomicWriteFile(path, []byte(body), configFilePerm(path))
+	return atomicWriteToConfigFile(path, body, configFilePerm(path))
+}
+
+// resolveConfigPath follows a config file's complete symlink chain. Atomic
+// replacement must target the final file; replacing the link itself would
+// silently disconnect tools that manage a shared config through that link.
+func resolveConfigPath(path string) string {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return path
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	return resolved
+}
+
+// atomicWriteToConfigFile preserves a valid symlink while retaining the
+// existing fallback for broken links or targets that cannot be written.
+func atomicWriteToConfigFile(path, body string, perm os.FileMode) error {
+	resolved := resolveConfigPath(path)
+	if resolved == path {
+		return fileutil.AtomicWriteFile(path, []byte(body), perm)
+	}
+	if err := fileutil.AtomicWriteFile(resolved, []byte(body), perm); err != nil {
+		return fileutil.AtomicWriteFile(path, []byte(body), perm)
+	}
+	return nil
 }
 
 func configFilePerm(path string) os.FileMode {

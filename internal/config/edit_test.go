@@ -2516,3 +2516,81 @@ func TestEffortCapabilityEmptySupportedEffortsNotConfigurable(t *testing.T) {
 		t.Fatalf("empty supported_efforts should also fall through to the heuristic, got %+v", cap)
 	}
 }
+
+func TestWriteFilePreservesSymlinkToWritableTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.toml")
+	link := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(target, []byte("default_model = \"old\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+
+	cfg := Default()
+	cfg.DefaultModel = "deepseek-pro"
+	if err := cfg.WriteFile(link); err != nil {
+		t.Fatalf("WriteFile through symlink: %v", err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("WriteFile replaced the config symlink")
+	}
+	var persisted Config
+	if _, err := toml.DecodeFile(target, &persisted); err != nil {
+		t.Fatalf("decode target: %v", err)
+	}
+	if persisted.DefaultModel != "deepseek-pro" {
+		t.Fatalf("target default_model = %q, want deepseek-pro", persisted.DefaultModel)
+	}
+}
+
+func TestSaveToPreservesMultiLevelSymlinkChain(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.toml")
+	first := filepath.Join(dir, "first.toml")
+	second := filepath.Join(dir, "second.toml")
+	if err := os.WriteFile(target, []byte("default_model = \"old\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, first); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	if err := os.Symlink(first, second); err != nil {
+		t.Skipf("symlink chains are unavailable: %v", err)
+	}
+
+	resolvedTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveConfigPath(second); got != resolvedTarget {
+		t.Fatalf("resolveConfigPath(second) = %q, want %q", got, resolvedTarget)
+	}
+
+	cfg := Default()
+	cfg.DefaultModel = "deepseek-pro"
+	if err := cfg.SaveTo(second); err != nil {
+		t.Fatalf("SaveTo through symlink chain: %v", err)
+	}
+	for name, path := range map[string]string{"first": first, "second": second} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			t.Fatalf("Lstat(%s): %v", name, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("SaveTo replaced the %s symlink", name)
+		}
+	}
+	var persisted Config
+	if _, err := toml.DecodeFile(target, &persisted); err != nil {
+		t.Fatalf("decode target: %v", err)
+	}
+	if persisted.DefaultModel != "deepseek-pro" {
+		t.Fatalf("target default_model = %q, want deepseek-pro", persisted.DefaultModel)
+	}
+}
