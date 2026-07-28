@@ -212,6 +212,16 @@ eq(
   "runtime profile transitions keep submit behind the controller-ready gate",
 );
 eq(
+  appSource.includes("applyGoal: (goal) => applyGoalForTab(sourceTabId, goal)"),
+  true,
+  "initial Goal activation stays scoped to the submission tab",
+);
+eq(
+  appSource.includes("setControllerGoalForTab(tabId, trimmed)") && appSource.includes("clearControllerGoalForTab(tabId)"),
+  true,
+  "tab-scoped Goal activation updates the matching controller",
+);
+eq(
   /await continueDelivery\(\{[\s\S]{0,240}goal: state\.meta\?\.goal,[\s\S]{0,240}resumeGoal: resumeControllerGoalForTab,/.test(appSource),
   true,
   "delivery recovery routes through continueDelivery with the backend Goal state",

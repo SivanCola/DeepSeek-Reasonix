@@ -1914,9 +1914,9 @@ export function Composer({
     const currentWorkspaceRefs = workspaceRefsRef.current;
     const inlineInvocationCount = trimmedDraft.invocations.filter((invocation) => invocation.command.kind === "skill").length;
     const subagentInvocationCount = trimmedDraft.invocations.filter((invocation) => invocation.command.kind === "subagent").length;
-    if (goalModeOn && !activeGoal && !trimmedText) {
-      // Goal setup still needs an explicit task. Structured invocations are
-      // allowed alongside that task and App submits them after activating it.
+    if (goalModeOn && !activeGoal && trimmedDraft.invocations.length > 0 && !trimmedText) {
+      // Goal setup still needs task text when a structured invocation is
+      // present. Attachments and workspace refs remain valid task-only input.
       setComposerPrompt(t("composer.goalInputRequired"));
       requestAnimationFrame(focusComposerInput);
       return;

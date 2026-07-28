@@ -1054,6 +1054,7 @@ export default function App() {
     setGoalForTab: setControllerGoalForTab,
     resumeGoalForTab: resumeControllerGoalForTab,
     clearGoal: clearControllerGoal,
+    clearGoalForTab: clearControllerGoalForTab,
     clearSession,
     listSessions,
     listTrashedSessions,
@@ -1672,6 +1673,16 @@ export default function App() {
     },
     [activeTabId, composerProfile],
   );
+  const patchComposerProfileForTab = useCallback(
+    (tabId: string, patch: Partial<Omit<ComposerProfile, "pending">>, pendingFields: ComposerProfileField[]) => {
+      if (!tabId) return;
+      setComposerProfilesByTab((current) => {
+        const base = current[tabId] ?? composerProfileFromTab(tabMetas.find((tab) => tab.id === tabId));
+        return patchComposerProfile(current, tabId, base, patch, pendingFields);
+      });
+    },
+    [tabMetas],
+  );
   const topicbarEditing = Boolean(activeTab?.topicId && activeTab.topicId === renamingTopicId);
   const visibleTabId = activeTabId;
   const visibleTabs = useMemo(() => {
@@ -1783,18 +1794,26 @@ export default function App() {
     }
     applyToolApprovalMode(next.mode);
   }, [activeTabId, applyToolApprovalMode, toolApprovalMode]);
-  const applyGoal = useCallback(
-    async (nextGoal: string): Promise<void> => {
-      userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, activeTabId, false);
+  const applyGoalForTab = useCallback(
+    async (tabId: string, nextGoal: string): Promise<void> => {
+      if (!tabId) return;
+      userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, tabId, false);
       const trimmed = nextGoal.trim();
-      patchActiveComposerProfile({
+      patchComposerProfileForTab(tabId, {
         collaborationMode: trimmed ? "goal" : "normal",
         goalDraftMode: false,
         goal: trimmed,
       }, ["collaborationMode", "goal"]);
-      await (trimmed ? setControllerGoal(trimmed) : clearControllerGoal());
+      await (trimmed ? setControllerGoalForTab(tabId, trimmed) : clearControllerGoalForTab(tabId));
     },
-    [activeTabId, clearControllerGoal, patchActiveComposerProfile, setControllerGoal],
+    [clearControllerGoalForTab, patchComposerProfileForTab, setControllerGoalForTab],
+  );
+  const applyGoal = useCallback(
+    async (nextGoal: string): Promise<void> => {
+      if (!activeTabId) return;
+      await applyGoalForTab(activeTabId, nextGoal);
+    },
+    [activeTabId, applyGoalForTab],
   );
   const applyTokenMode = useCallback(
     async (m: TokenMode): Promise<void> => {
@@ -2094,7 +2113,7 @@ export default function App() {
           displayText: trimmed,
           submitText,
           structured,
-          applyGoal,
+          applyGoal: (goal) => applyGoalForTab(sourceTabId, goal),
           send: (display, routedSubmit, routedStructured) =>
             commitThenSendRef.current(sourceTabId, display, routedSubmit, routedStructured),
         });
@@ -2150,7 +2169,7 @@ export default function App() {
       if (goal.trim()) await setControllerGoalForTab(sourceTabId, goal);
       await commitThenSendRef.current(sourceTabId, trimmed, submitText.trim(), structured);
     },
-    [activeTabId, applyGoal, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, notice, runShellForTab,
+    [activeTabId, applyGoal, applyGoalForTab, closeTransientOverlays, collaborationMode, composerProfile, controllerReady, goal, notice, runShellForTab,
       setControllerCollaborationModeForTab, setControllerGoalForTab, setControllerToolApprovalModeForTab, switchModel, t, toolApprovalMode, showToast],
   );
 
