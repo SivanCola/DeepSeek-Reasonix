@@ -2,6 +2,8 @@ package autoresearch
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,10 @@ import (
 
 var safeTaskID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var explicitTaskPath = regexp.MustCompile(`\.reasonix/autoresearch/([A-Za-z0-9][A-Za-z0-9._-]*)/?`)
+
+// createTokenFile is written immediately after an atomic task-directory
+// reservation so rollback can prove ownership before RemoveAll.
+const createTokenFile = ".create_token"
 
 type Store struct {
 	workspaceRoot string
@@ -60,26 +66,32 @@ func (s *Store) CreateTask(goal string, opts CreateOptions) (*Task, error) {
 	if opts.Now != nil {
 		now = opts.Now().UTC()
 	}
-	id, err := s.nextTaskID(now, goal)
+	id, createToken, err := s.reserveTaskID(now, goal)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(s.root, 0o755); err != nil {
-		return nil, fmt.Errorf("autoresearch: create root dir: %w", err)
-	}
 	storeRoot, err := os.OpenRoot(s.root)
 	if err != nil {
+		_ = s.RemoveTask(id, createToken)
 		return nil, fmt.Errorf("autoresearch: open root dir: %w", err)
 	}
 	defer storeRoot.Close()
 	taskRel, err := s.taskRel(id)
 	if err != nil {
+		_ = s.RemoveTask(id, createToken)
 		return nil, err
 	}
+
+	cleanup := func() {
+		_ = s.RemoveTask(id, createToken)
+	}
+
 	if err := storeRoot.MkdirAll(filepath.Join(taskRel, "state"), 0o755); err != nil {
+		cleanup()
 		return nil, fmt.Errorf("autoresearch: create state dir: %w", err)
 	}
 	if err := storeRoot.MkdirAll(filepath.Join(taskRel, "logs"), 0o755); err != nil {
+		cleanup()
 		return nil, fmt.Errorf("autoresearch: create logs dir: %w", err)
 	}
 
@@ -97,9 +109,11 @@ func (s *Store) CreateTask(goal string, opts CreateOptions) (*Task, error) {
 	}
 
 	if err := writeJSONFile(storeRoot, filepath.Join(taskRel, "state", "task_spec.json"), spec); err != nil {
+		cleanup()
 		return nil, err
 	}
 	if err := writeJSONFile(storeRoot, filepath.Join(taskRel, "state", "progress.json"), progress); err != nil {
+		cleanup()
 		return nil, err
 	}
 	for _, path := range []string{
@@ -109,17 +123,23 @@ func (s *Store) CreateTask(goal string, opts CreateOptions) (*Task, error) {
 		filepath.Join(taskRel, "logs", "heartbeat.jsonl"),
 	} {
 		if err := storeRoot.WriteFile(path, nil, 0o644); err != nil {
+			cleanup()
 			return nil, fmt.Errorf("autoresearch: initialize %s: %w", path, err)
 		}
 	}
-	return &Task{ID: id, Root: s.taskRoot(id), Spec: spec}, nil
+	return &Task{ID: id, Root: s.taskRoot(id), Spec: spec, CreateToken: createToken}, nil
 }
 
-// RemoveTask deletes a task directory within the store. It is intended for
-// rolling back a task that was created as part of a larger transaction.
-func (s *Store) RemoveTask(taskID string) error {
+// RemoveTask deletes a task directory within the store only when createToken
+// matches the ownership token written during reservation. It is intended for
+// rolling back a task this process created as part of a larger transaction.
+func (s *Store) RemoveTask(taskID, createToken string) error {
 	if err := validateTaskID(taskID); err != nil {
 		return err
+	}
+	createToken = strings.TrimSpace(createToken)
+	if createToken == "" {
+		return errors.New("autoresearch: create token is required to remove a task")
 	}
 	unlock := s.lockTask(taskID)
 	defer unlock()
@@ -134,6 +154,17 @@ func (s *Store) RemoveTask(taskID string) error {
 	taskRel, err := s.taskRel(taskID)
 	if err != nil {
 		return err
+	}
+	tokenPath := filepath.Join(taskRel, createTokenFile)
+	stored, err := storeRoot.ReadFile(tokenPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("autoresearch: refuse to remove task %s without matching create token", taskID)
+		}
+		return fmt.Errorf("autoresearch: read create token for %s: %w", taskID, err)
+	}
+	if strings.TrimSpace(string(stored)) != createToken {
+		return fmt.Errorf("autoresearch: refuse to remove task %s: create token mismatch", taskID)
 	}
 	if err := storeRoot.RemoveAll(taskRel); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("autoresearch: remove task %s: %w", taskID, err)
@@ -562,33 +593,55 @@ func (s *Store) openTaskRoot(taskID string) (*os.Root, string, error) {
 	return storeRoot, taskRel, nil
 }
 
-func (s *Store) nextTaskID(now time.Time, goal string) (string, error) {
+// reserveTaskID atomically claims a task directory with non-recursive Mkdir
+// and writes a create-token ownership marker. Concurrent creators sharing the
+// same workspace therefore never adopt the same ID: EEXIST advances the
+// candidate, and only the Mkdir winner may later roll the directory back.
+func (s *Store) reserveTaskID(now time.Time, goal string) (id, createToken string, err error) {
 	if err := os.MkdirAll(s.root, 0o755); err != nil {
-		return "", fmt.Errorf("autoresearch: create root dir: %w", err)
+		return "", "", fmt.Errorf("autoresearch: create root dir: %w", err)
 	}
 	storeRoot, err := os.OpenRoot(s.root)
 	if err != nil {
-		return "", fmt.Errorf("autoresearch: open root dir: %w", err)
+		return "", "", fmt.Errorf("autoresearch: open root dir: %w", err)
 	}
 	defer storeRoot.Close()
 	base := now.Format("20060102-150405") + "-" + slugify(goal)
 	if base == now.Format("20060102-150405")+"-" {
 		base += "task"
 	}
-	id := base
+	token, err := newCreateToken()
+	if err != nil {
+		return "", "", err
+	}
+	id = base
 	for i := 2; ; i++ {
 		taskRel, err := s.taskRel(id)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		if _, err := storeRoot.Lstat(taskRel); err != nil {
-			if os.IsNotExist(err) {
-				return id, nil
+		if err := storeRoot.Mkdir(taskRel, 0o755); err != nil {
+			if os.IsExist(err) {
+				id = fmt.Sprintf("%s-%d", base, i)
+				continue
 			}
-			return "", fmt.Errorf("autoresearch: stat task id %s: %w", id, err)
+			return "", "", fmt.Errorf("autoresearch: reserve task id %s: %w", id, err)
 		}
-		id = fmt.Sprintf("%s-%d", base, i)
+		tokenPath := filepath.Join(taskRel, createTokenFile)
+		if err := storeRoot.WriteFile(tokenPath, []byte(token+"\n"), 0o600); err != nil {
+			_ = storeRoot.RemoveAll(taskRel)
+			return "", "", fmt.Errorf("autoresearch: write create token for %s: %w", id, err)
+		}
+		return id, token, nil
 	}
+}
+
+func newCreateToken() (string, error) {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("autoresearch: generate create token: %w", err)
+	}
+	return hex.EncodeToString(buf[:]), nil
 }
 
 func validateTaskID(id string) error {

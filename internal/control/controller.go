@@ -2197,7 +2197,7 @@ func (c *Controller) SetGoalDurable(goal string) error {
 		if err := c.goals.writeStateErr(path, data); err != nil {
 			c.goals.restore(snapshot)
 			if setup.created && c.autoResearch != nil {
-				if removeErr := c.autoResearch.RemoveTask(setup.taskID); removeErr != nil {
+				if removeErr := c.autoResearch.RemoveTask(setup.taskID, setup.createToken); removeErr != nil {
 					slog.Warn("controller: rollback autoresearch task", "task_id", setup.taskID, "err", removeErr)
 				}
 			}
@@ -2252,6 +2252,7 @@ func (c *Controller) persistGoalDeliveryCheckpoint() {
 
 type autoResearchSetup struct {
 	taskID      string
+	createToken string
 	blockReason string
 	notice      string
 	created     bool
@@ -2286,7 +2287,12 @@ func (c *Controller) prepareAutoResearchTask(goal string, researchMode GoalResea
 		slog.Warn("controller: create autoresearch task", "err", err)
 		return autoResearchSetup{}
 	}
-	return autoResearchSetup{taskID: task.ID, notice: "autoresearch task created: " + task.ID, created: true}
+	return autoResearchSetup{
+		taskID:      task.ID,
+		createToken: task.CreateToken,
+		notice:      "autoresearch task created: " + task.ID,
+		created:     true,
+	}
 }
 
 func defaultAutoResearchSuccessCriteria() []autoresearch.SuccessCriterion {

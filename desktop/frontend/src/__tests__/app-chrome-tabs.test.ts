@@ -125,12 +125,119 @@ ok(!shouldRefreshTabMetaForEvent("text_delta"), "stream deltas do not trigger ta
   ok(!firstResult.latest, "an older tab metadata response cannot replace a newer snapshot");
 }
 
+{
+  const coordinator = createBoundedRefreshCoordinator<TabMeta[]>(2);
+  const preMutationA = deferred<TabMeta[]>();
+  const preMutationB = deferred<TabMeta[]>();
+  const postMutation = deferred<TabMeta[]>();
+  let loads = 0;
+  const loadValues: TabMeta[][] = [
+    [tabMeta({ id: "pre-a" })],
+    [tabMeta({ id: "pre-b" })],
+    [tabMeta({ id: "post-mutation" })],
+  ];
+  const loadPromises = [preMutationA.promise, preMutationB.promise, postMutation.promise];
+
+  const firstRefresh = coordinator.run(() => {
+    const index = loads;
+    loads += 1;
+    return loadPromises[index] ?? Promise.resolve(loadValues[index] ?? []);
+  });
+  const secondRefresh = coordinator.run(() => {
+    const index = loads;
+    loads += 1;
+    return loadPromises[index] ?? Promise.resolve(loadValues[index] ?? []);
+  });
+  await Promise.resolve();
+  ok(loads === 2, "pre-mutation tab metadata fills both in-flight slots");
+
+  const mutationRefresh = coordinator.run(
+    () => {
+      const index = loads;
+      loads += 1;
+      return loadPromises[index] ?? Promise.resolve(loadValues[index] ?? []);
+    },
+    { invalidate: true },
+  );
+  await Promise.resolve();
+  ok(loads === 2, "post-mutation refresh does not start until an in-flight slot frees");
+
+  preMutationA.resolve(loadValues[0]);
+  const firstResult = await firstRefresh;
+  await Promise.resolve();
+  await Promise.resolve();
+  ok(loads === 3, "post-mutation refresh starts as a trailing load after a slot frees");
+  ok(!firstResult.latest, "pre-mutation snapshot is not authoritative after invalidate");
+
+  const postTabs = loadValues[2];
+  postMutation.resolve(postTabs);
+  const mutationResult = await mutationRefresh;
+  ok(!mutationResult.coalesced, "post-mutation refresh does not join a pre-mutation request");
+  ok(mutationResult.value === postTabs, "post-mutation refresh returns the mutation-after snapshot");
+  ok(mutationResult.latest, "post-mutation trailing refresh remains eligible to update state");
+
+  preMutationB.resolve(loadValues[1]);
+  const secondResult = await secondRefresh;
+  ok(!secondResult.latest, "pre-mutation coalesced request cannot overwrite post-mutation state");
+}
+
+{
+  const coordinator = createBoundedRefreshCoordinator<TabMeta[]>(1);
+  const preMutation = deferred<TabMeta[]>();
+  const latestPostMutation = deferred<TabMeta[]>();
+  const started: string[] = [];
+
+  const preMutationRefresh = coordinator.run(() => {
+    started.push("pre");
+    return preMutation.promise;
+  });
+  await Promise.resolve();
+
+  const firstMutationRefresh = coordinator.run(
+    () => {
+      started.push("first-mutation");
+      return Promise.resolve([tabMeta({ id: "first-mutation" })]);
+    },
+    { invalidate: true },
+  );
+  const latestMutationRefresh = coordinator.run(
+    () => {
+      started.push("latest-mutation");
+      return latestPostMutation.promise;
+    },
+    { invalidate: true },
+  );
+
+  preMutation.resolve([tabMeta({ id: "pre" })]);
+  const preMutationResult = await preMutationRefresh;
+  await Promise.resolve();
+  await Promise.resolve();
+  ok(started.join(",") === "pre,latest-mutation", "queued invalidations retain only the latest trailing load");
+  ok(!preMutationResult.latest, "queued invalidations fence the pre-mutation load");
+
+  const latestTabs = [tabMeta({ id: "latest-mutation" })];
+  latestPostMutation.resolve(latestTabs);
+  const [firstMutationResult, latestMutationResult] = await Promise.all([firstMutationRefresh, latestMutationRefresh]);
+  ok(firstMutationResult.value === latestTabs, "an older queued mutation waits for the latest post-mutation snapshot");
+  ok(latestMutationResult.value === latestTabs, "the latest queued mutation receives its post-mutation snapshot");
+  ok(firstMutationResult.latest && latestMutationResult.latest, "the shared trailing snapshot remains authoritative");
+}
+
 ok(
   !appSource.includes("setInterval(() => void refreshTabMetas(), 2000)") &&
     appSource.includes('document.addEventListener("visibilitychange", onVisibilityChange)') &&
     appSource.includes("createBoundedRefreshCoordinator<TabMeta[]>(TAB_META_MAX_IN_FLIGHT)") &&
     appSource.includes("void refreshTabMetas();\n        schedule();"),
   "tab metadata refresh is event-driven with a visibility-aware fallback",
+);
+
+ok(
+  appSource.includes("refreshTabMetas(undefined, { afterMutation: true })") &&
+    appSource.includes("{ afterMutation: true }") &&
+    appSource.includes("if (shouldRefreshTabMetaForEvent(e.kind)) {") &&
+    appSource.includes("void refreshTabMetas(undefined, { afterMutation: true });") &&
+    /await refreshTabMetas\(\s*\(\) => isNavigationIntentCurrent\(request\.navigationIntentSeq\),\s*\{\s*afterMutation:\s*true\s*\},?\s*\)/.test(appSource),
+  "tab lifecycle events and explicit mutations force a post-mutation trailing metadata refresh",
 );
 
 ok(

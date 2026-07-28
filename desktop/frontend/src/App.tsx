@@ -2170,9 +2170,13 @@ export default function App() {
   if (!tabMetaRefreshCoordinatorRef.current) {
     tabMetaRefreshCoordinatorRef.current = createBoundedRefreshCoordinator<TabMeta[]>(TAB_META_MAX_IN_FLIGHT);
   }
-  const refreshTabMetas = useCallback(async (apply?: () => boolean): Promise<TabMeta[]> => {
+  const refreshTabMetas = useCallback(async (
+    apply?: () => boolean,
+    options?: { afterMutation?: boolean },
+  ): Promise<TabMeta[]> => {
     const result = await tabMetaRefreshCoordinatorRef.current!.run(
       async () => asArray(await app.ListTabs().catch(() => [] as TabMeta[])),
+      options?.afterMutation ? { invalidate: true } : undefined,
     );
     const tabs = result.value;
     if (result.latest && (!apply || apply())) {
@@ -2198,12 +2202,14 @@ export default function App() {
 
   useEffect(() => {
     const unsub = onEvent((e) => {
-      if (shouldRefreshTabMetaForEvent(e.kind)) void refreshTabMetas();
+      if (shouldRefreshTabMetaForEvent(e.kind)) {
+        void refreshTabMetas(undefined, { afterMutation: true });
+      }
       if (e.kind !== "turn_done") return;
       const turnTabId = resolvePlanRestoreTabId(e.tabId, activeTabIdRef.current);
       window.setTimeout(() => {
         setProjectRevision((value) => value + 1);
-        refreshTabMetas().then((tabs) => {
+        refreshTabMetas(undefined, { afterMutation: true }).then((tabs) => {
           if (!turnTabId) return;
           const tab = tabs.find((item) => item.id === turnTabId);
           const baseProfile = tab ? composerProfileFromTab(tab) : defaultComposerProfile;
@@ -2270,7 +2276,7 @@ export default function App() {
   useEffect(() => {
     return onProjectTreeChanged(() => {
       setProjectRevision((value) => value + 1);
-      void refreshTabMetas();
+      void refreshTabMetas(undefined, { afterMutation: true });
     });
   }, [refreshTabMetas]);
 
@@ -2818,7 +2824,10 @@ export default function App() {
           if (!isNavigationIntentCurrent(request.navigationIntentSeq)) return;
           await switchTab(request.tabId, request.optimisticTab, request.navigationIntentSeq);
           if (!isNavigationIntentCurrent(request.navigationIntentSeq)) return;
-          await refreshTabMetas(() => isNavigationIntentCurrent(request.navigationIntentSeq));
+          await refreshTabMetas(
+            () => isNavigationIntentCurrent(request.navigationIntentSeq),
+            { afterMutation: true },
+          );
         },
       );
     },
@@ -2853,7 +2862,7 @@ export default function App() {
       return remaining.map((tab) => ({ ...tab, active: tab.id === nextActiveId }));
     });
     await closeTab(id);
-    await refreshTabMetas();
+    await refreshTabMetas(undefined, { afterMutation: true });
     setTabRevealSignal((signal) => signal + 1);
   }, [activeTabId, closeTab, closeTransientOverlays, refreshTabMetas]);
 
@@ -2870,7 +2879,7 @@ export default function App() {
       setTabMetas((current) => current.map((tab) => ({ ...tab, active: tab.id === nextActiveTabId })));
       void enqueueTabSwitch(nextActiveTabId, selected);
     }
-    await refreshTabMetas();
+    await refreshTabMetas(undefined, { afterMutation: true });
     setTabRevealSignal((signal) => signal + 1);
   }, [closeTab, closeTransientOverlays, enqueueTabSwitch, refreshTabMetas, tabMetas]);
 
@@ -2882,7 +2891,7 @@ export default function App() {
       return ordered.length === current.length ? ordered : current;
     });
     await reorderTabs(ids);
-    await refreshTabMetas();
+    await refreshTabMetas(undefined, { afterMutation: true });
     setTabRevealSignal((signal) => signal + 1);
   }, [refreshTabMetas, reorderTabs]);
 
@@ -3014,7 +3023,7 @@ export default function App() {
       // Fork still goes through the controller (not optimistic).
       rewindForTab(sourceTabId, turn, scope).then((ok) => {
         if (!ok) return;
-        refreshTabMetas();
+        void refreshTabMetas(undefined, { afterMutation: true });
         setProjectRevision((v) => v + 1);
       });
       return;
@@ -3314,7 +3323,7 @@ export default function App() {
 
   useEffect(() => onSessionRecovered(() => {
     setProjectRevision((value) => value + 1);
-    void refreshTabMetas();
+    void refreshTabMetas(undefined, { afterMutation: true });
   }), [refreshTabMetas]);
 
   const handleNewTab = useCallback(async () => {
@@ -3550,14 +3559,14 @@ export default function App() {
     const picked = path === undefined ? await pickWorkspace() : await switchWorkspace(path);
     if (picked) {
       setProjectRevision((value) => value + 1);
-      await refreshTabMetas();
+      await refreshTabMetas(undefined, { afterMutation: true });
     }
     return picked;
   }, [pickWorkspace, switchWorkspace, refreshTabMetas]);
 
   const refreshProjectsAndTabs = useCallback(async () => {
     setProjectRevision((value) => value + 1);
-    const tabs = await refreshTabMetas();
+    const tabs = await refreshTabMetas(undefined, { afterMutation: true });
     if (activeTabId && !tabs.some((tab) => tab.id === activeTabId)) {
       await syncActiveTab(false);
     }
