@@ -189,7 +189,7 @@ import { useGlobalShortcut } from "./lib/keyboardShortcuts";
 import { topicShortcutIndexFromEvent, useTopicShortcuts, type TopicShortcutEntry } from "./lib/topicShortcuts";
 import { composerDraftKeyForTab } from "./lib/composerDraftKey";
 import { continueDelivery } from "./lib/deliveryContinue";
-import { activateGoalAndSubmit } from "./lib/goalSubmit";
+import { activateGoalAndSubmitOnTab } from "./lib/goalSubmit";
 import logoWordmark from "./assets/logo-wordmark.svg";
 
 function noticePreviewMockEnabled(): boolean {
@@ -2112,13 +2112,14 @@ export default function App() {
       }
       if (collaborationMode === "goal" && !goal.trim()) {
         if (!controllerReady) return;
-        await activateGoalAndSubmit({
+        await activateGoalAndSubmitOnTab({
+          tabId: sourceTabId,
           displayText: trimmed,
           submitText,
           structured,
-          applyGoal: (goal) => applyGoalForTab(sourceTabId, goal),
-          send: (display, routedSubmit, routedStructured) =>
-            commitThenSendRef.current(sourceTabId, display, routedSubmit, routedStructured),
+          setGoalForTab: (tabId, nextGoal) => applyGoalForTab(tabId, nextGoal),
+          sendToTab: (tabId, display, routedSubmit, routedStructured) =>
+            commitThenSendRef.current(tabId, display, routedSubmit, routedStructured),
         });
         return;
       }

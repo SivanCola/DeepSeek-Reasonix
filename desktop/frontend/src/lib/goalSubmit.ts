@@ -30,3 +30,38 @@ export async function activateGoalAndSubmit({
     structured,
   );
 }
+
+/**
+ * Tab-scoped first Goal turn. Captures `tabId` once so a later active-tab switch
+ * cannot retarget SetGoalForTab or the structured Skill submit.
+ */
+export async function activateGoalAndSubmitOnTab({
+  tabId,
+  displayText,
+  submitText,
+  structured,
+  setGoalForTab,
+  sendToTab,
+}: {
+  tabId: string;
+  displayText: string;
+  submitText: string;
+  structured?: StructuredInvocationSubmit;
+  setGoalForTab: (tabId: string, goal: string) => void | Promise<void>;
+  sendToTab: (
+    tabId: string,
+    displayText: string,
+    submitText: string,
+    structured?: StructuredInvocationSubmit,
+  ) => void | Promise<void>;
+}): Promise<void> {
+  const sourceTabId = tabId;
+  await activateGoalAndSubmit({
+    displayText,
+    submitText,
+    structured,
+    applyGoal: (goal) => setGoalForTab(sourceTabId, goal),
+    send: (display, routedSubmit, routedStructured) =>
+      sendToTab(sourceTabId, display, routedSubmit, routedStructured),
+  });
+}

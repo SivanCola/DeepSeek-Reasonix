@@ -6487,11 +6487,16 @@ func (a *App) AutoResearchRecordEvidence(tabID, criterionID string, input AutoRe
 	})
 }
 
-func (a *App) SetGoal(goal string) {
-	a.SetGoalForTab("", goal)
+func (a *App) SetGoal(goal string) error {
+	return a.SetGoalForTab("", goal)
 }
 
-func (a *App) SetGoalForTab(tabID, goal string) {
+// SetGoalForTab activates or clears a Goal on the given tab.
+//
+// Failures must return error so the Wails Promise rejects: the first Goal turn
+// can submit a structured Skill without a /goal prose fallback, and the
+// frontend aborts that submit when activation fails.
+func (a *App) SetGoalForTab(tabID, goal string) error {
 	if cli, _, _, remoteTabID, ok := a.activeRemoteWorkbench(); ok {
 		var err error
 		if strings.TrimSpace(goal) == "" {
@@ -6501,14 +6506,14 @@ func (a *App) SetGoalForTab(tabID, goal string) {
 		}
 		if err != nil {
 			a.warnForTab(remoteTabID, err.Error())
-		} else {
-			a.workbenchRefreshSnapshot(cli.Generation(), remoteTabID)
+			return err
 		}
-		return
+		a.workbenchRefreshSnapshot(cli.Generation(), remoteTabID)
+		return nil
 	}
 	tab := a.tabByID(tabID)
 	if tab == nil {
-		return
+		return a.workspaceNotReadyErr(nil)
 	}
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
@@ -6517,7 +6522,7 @@ func (a *App) SetGoalForTab(tabID, goal string) {
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
-		return
+		return a.workspaceNotReadyErr(nil)
 	}
 	tab.goal = goal
 	if goal != "" {
@@ -6536,6 +6541,7 @@ func (a *App) SetGoalForTab(tabID, goal string) {
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+	return nil
 }
 
 // The composer re-syncs collaboration mode and Goal immediately before every
@@ -6553,12 +6559,12 @@ func syncTabGoalToController(ctrl control.SessionAPI, goal string) {
 	ctrl.SetGoal(goal)
 }
 
-func (a *App) ClearGoal() {
-	a.SetGoal("")
+func (a *App) ClearGoal() error {
+	return a.SetGoal("")
 }
 
-func (a *App) ClearGoalForTab(tabID string) {
-	a.SetGoalForTab(tabID, "")
+func (a *App) ClearGoalForTab(tabID string) error {
+	return a.SetGoalForTab(tabID, "")
 }
 
 // ResumeGoalForTab re-enters a blocked or stopped Goal while preserving its

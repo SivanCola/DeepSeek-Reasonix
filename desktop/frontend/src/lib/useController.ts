@@ -2681,8 +2681,11 @@ export function useController() {
 
   const clearGoalForTab = useCallback(async (tabId: string): Promise<void> => {
     if (!tabId) return;
-    await app.ClearGoalForTab(tabId).catch(() => {});
-    await refreshMetaForTab(tabId);
+    try {
+      await app.ClearGoalForTab(tabId);
+    } finally {
+      await refreshMetaForTab(tabId);
+    }
   }, [refreshMetaForTab]);
 
   const clearGoal = useCallback(async (): Promise<void> => {
