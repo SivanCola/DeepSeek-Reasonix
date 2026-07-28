@@ -1837,30 +1837,36 @@ func (c *Config) ResolveModelWithFallback(ref string) (resolvedRef string, fallb
 }
 
 // ResolveDesktopNewSessionModel selects the model for a newly-created desktop
-// session. Unlike ResolveModelWithFallback, the configured default must be
-// immediately usable: its provider must be available in the desktop catalog,
-// configured, and expose the selected model as a chat model. Fallbacks apply
-// the same constraints and preserve provider order.
+// session. Its provider must be available in the desktop catalog and expose a
+// chat model. Configured candidates win; if every eligible candidate is
+// keyless, the allowed default (or first allowed chat model) is preserved so
+// desktop can show the existing missing-key recovery UI. Provider order is
+// otherwise stable.
 func (c *Config) ResolveDesktopNewSessionModel() (resolvedRef string, fallback bool, ok bool) {
 	if c == nil {
 		return "", false, false
 	}
 	access := desktopProviderAccessMap(c.Desktop.ProviderAccess)
 	providerAllowed := func(name string) bool {
-		return len(access) == 0 || access[strings.TrimSpace(name)]
+		return c.Desktop.ProviderAccess == nil || access[strings.TrimSpace(name)]
 	}
 
 	def := strings.TrimSpace(c.DefaultModel)
+	keylessDefault := ""
 	if def != "" {
 		if entry, found := c.ResolveModel(def); found &&
-			providerAllowed(entry.Name) && entry.Configured() && IsLikelyChatModel(entry.Model) {
-			return def, false, true
+			providerAllowed(entry.Name) && IsLikelyChatModel(entry.Model) {
+			if entry.Configured() {
+				return def, false, true
+			}
+			keylessDefault = def
 		}
 	}
 
+	keylessFallback := ""
 	for i := range c.Providers {
 		p := &c.Providers[i]
-		if !providerAllowed(p.Name) || !p.Configured() {
+		if !providerAllowed(p.Name) {
 			continue
 		}
 		chatModels := p.ChatModelList()
@@ -1874,7 +1880,19 @@ func (c *Config) ResolveDesktopNewSessionModel() (resolvedRef string, fallback b
 				break
 			}
 		}
-		return p.Name + "/" + model, true, true
+		resolved := p.Name + "/" + model
+		if p.Configured() {
+			return resolved, true, true
+		}
+		if keylessFallback == "" {
+			keylessFallback = resolved
+		}
+	}
+	if keylessDefault != "" {
+		return keylessDefault, false, true
+	}
+	if keylessFallback != "" {
+		return keylessFallback, true, true
 	}
 	return "", false, false
 }

@@ -225,6 +225,83 @@ func TestDesktopNewSessionDefaultsKeepsKeylessDefaultWhenNothingConfigured(t *te
 	}
 }
 
+func TestDesktopNewSessionDefaultsRejectsNonChatDefaultWithoutFallback(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	seedUserCredentials(t, "REASONIX_TEST_AUDIO_KEY=test-key\n")
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Providers = []config.ProviderEntry{{
+		Name:      "audio",
+		Kind:      "openai",
+		BaseURL:   "https://audio.example.com",
+		Model:     "tts-1",
+		APIKeyEnv: "REASONIX_TEST_AUDIO_KEY",
+	}}
+	cfg.Desktop.ProviderAccess = []string{"audio"}
+	if err := cfg.SetDefaultModel("audio/tts-1"); err != nil {
+		t.Fatalf("SetDefaultModel: %v", err)
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save user config: %v", err)
+	}
+
+	app := NewApp()
+	meta, err := app.EnsureBlankTab("global", "")
+	if err != nil {
+		t.Fatalf("EnsureBlankTab: %v", err)
+	}
+	created := app.tabs[meta.ID]
+	if created == nil {
+		t.Fatalf("new tab %q missing from app.tabs", meta.ID)
+	}
+	if created.model != "" {
+		t.Fatalf("new session model = %q, want no ineligible model selected", created.model)
+	}
+	if created.Ctrl != nil || !strings.Contains(created.StartupErr, "chat-capable provider") {
+		t.Fatalf("new session runtime = (%v, %q), want an actionable no-chat-model startup error", created.Ctrl, created.StartupErr)
+	}
+}
+
+func TestDesktopNewSessionDefaultsHonorExplicitEmptyProviderAccess(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	seedUserCredentials(t, "REASONIX_TEST_SESSION_KEY=test-key\n")
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	cfg.Providers = []config.ProviderEntry{{
+		Name:      "test-prov",
+		Kind:      "openai",
+		BaseURL:   "https://example.com",
+		Model:     "test-model",
+		APIKeyEnv: "REASONIX_TEST_SESSION_KEY",
+	}}
+	cfg.Desktop.ProviderAccess = []string{}
+	if err := cfg.SetDefaultModel("test-prov/test-model"); err != nil {
+		t.Fatalf("SetDefaultModel: %v", err)
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save user config: %v", err)
+	}
+
+	app := NewApp()
+	meta, err := app.EnsureBlankTab("global", "")
+	if err != nil {
+		t.Fatalf("EnsureBlankTab: %v", err)
+	}
+	created := app.tabs[meta.ID]
+	if created == nil {
+		t.Fatalf("new tab %q missing from app.tabs", meta.ID)
+	}
+	if created.model != "" {
+		t.Fatalf("new session model = %q, want no provider selected", created.model)
+	}
+	if created.Ctrl != nil || !strings.Contains(created.StartupErr, "chat-capable provider") {
+		t.Fatalf("new session runtime = (%v, %q), want an actionable no-provider startup error", created.Ctrl, created.StartupErr)
+	}
+	if !app.NeedsOnboarding() {
+		t.Fatal("NeedsOnboarding should be true when provider access is explicitly empty")
+	}
+}
+
 func TestDesktopNewSessionDefaultsUsesProjectDefaultAndSkipsItsKeylessProvider(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	seedUserCredentials(t, "REASONIX_TEST_SESSION_KEY=test-key\n")
