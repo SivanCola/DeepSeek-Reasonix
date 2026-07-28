@@ -49,6 +49,13 @@ on:
 permissions:
   contents: write # create the release and upload archives
 
+concurrency:
+  # A channel pointer is a monotonic public state machine. Serialize all
+  # publishers for the same channel so an older recovery run cannot pass its
+  # read-before-write window after a newer release has published.
+  group: release-cli-${{ inputs.channel || 'stable' }}
+  cancel-in-progress: false
+
 jobs:
   resolve:
     name: resolve CLI release
@@ -304,6 +311,30 @@ jobs:
           jq -e --arg tag "$TAG" --argjson prerelease "$expected_prerelease" '
             .tag_name == $tag and .prerelease == $prerelease
           ' /tmp/cli-release.json >/dev/null
+
+          current_tag=""
+          pointer_error="$(mktemp)"
+          if aws s3 cp "s3://${R2_BUCKET}/cli/${channel}/latest.json" /tmp/cli-release.pointer.json \
+            --endpoint-url "$endpoint" 2>"$pointer_error"; then
+            current_tag="$(jq -er '.tag_name | strings' /tmp/cli-release.pointer.json)"
+            jq -e --arg current_channel "$channel" --arg current_tag "$current_tag" '
+              .tag_name == $current_tag and
+              (.prerelease == ($current_channel == "preview")) and
+              (.assets | length == 7)
+            ' /tmp/cli-release.pointer.json >/dev/null
+          elif grep -Eiq '404|NoSuchKey|Not Found' "$pointer_error"; then
+            echo "CLI $channel pointer does not exist yet"
+          else
+            cat "$pointer_error" >&2
+            exit 1
+          fi
+          rm -f "$pointer_error"
+
+          pointer_decision="$(bash scripts/compare-cli-release-tags.sh "$channel" "$TAG" "$current_tag")"
+          if [ "$pointer_decision" = "skip" ]; then
+            echo "CLI $channel pointer remains ${current_tag:-unset}; candidate $TAG is not newer"
+            exit 0
+          fi
           aws s3 cp /tmp/cli-release.json "s3://${R2_BUCKET}/cli/${channel}/latest.json" \
             --endpoint-url "$endpoint" \
             --content-type "application/json; charset=utf-8" \

@@ -121,8 +121,32 @@ cli_release_workflow="$repo_root/.github/workflows/release.yml"
 grep -Eq 'name: Publish CLI release metadata to R2' "$cli_release_workflow"
 grep -Fq 'cli/releases/${TAG}/latest.json' "$cli_release_workflow"
 grep -Fq 'cli/${channel}/latest.json' "$cli_release_workflow"
+grep -Fq "group: release-cli-\${{ inputs.channel || 'stable' }}" "$cli_release_workflow"
+grep -Fq 'scripts/compare-cli-release-tags.sh "$channel" "$TAG" "$current_tag"' "$cli_release_workflow"
 grep -Eq 'internal CLI release .*Stable and Preview pointers remain unchanged' "$cli_release_workflow"
 grep -Eq '\.assets \| length == 7' "$cli_release_workflow"
+pointer_compare="$repo_root/scripts/compare-cli-release-tags.sh"
+test -x "$pointer_compare"
+[ "$(bash "$pointer_compare" stable v1.2.4 v1.2.3)" = "update" ]
+[ "$(bash "$pointer_compare" stable v1.2.3 v1.2.3)" = "skip" ]
+[ "$(bash "$pointer_compare" stable v1.2.2 v1.2.3)" = "skip" ]
+[ "$(bash "$pointer_compare" stable v100000000000000000000.0.0 v99999999999999999999.999.999)" = "update" ]
+[ "$(bash "$pointer_compare" preview v1.2.3-preview.11 v1.2.3-preview.9)" = "update" ]
+[ "$(bash "$pointer_compare" preview v1.2.3-preview.9 v1.2.3-preview.9)" = "skip" ]
+[ "$(bash "$pointer_compare" preview v1.2.3-preview.8 v1.2.3-preview.9)" = "skip" ]
+[ "$(bash "$pointer_compare" stable v1.2.3 "")" = "update" ]
+if bash "$pointer_compare" stable v1.2.3 v1.2.3-preview.1 >/dev/null 2>&1; then
+	echo "stable comparator accepted a preview pointer" >&2
+	exit 1
+fi
+if bash "$pointer_compare" preview v1.2.3-preview.1 v1.2.3 >/dev/null 2>&1; then
+	echo "preview comparator accepted a stable pointer" >&2
+	exit 1
+fi
+if bash "$pointer_compare" stable v01.2.3 v1.2.2 >/dev/null 2>&1; then
+	echo "stable comparator accepted a non-canonical tag" >&2
+	exit 1
+fi
 for asset in \
 	reasonix-darwin-amd64.tar.gz \
 	reasonix-darwin-arm64.tar.gz \
