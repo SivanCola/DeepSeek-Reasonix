@@ -6804,6 +6804,7 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 	if h := ctrl.Host(); h != nil {
 		data.ServerNames = h.ServerNames()
 	}
+	data.MemoryRefs, data.MemoryArchives = control.MemoryCompletionData(ctrl.Memory())
 	items, from := control.SlashArgItems(input, data)
 	// Non-nil so it serializes as a JSON array, never null — the frontend filters
 	// over it directly.

@@ -1207,9 +1207,9 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 			runRefTurn(input, display)
 			return
 		}
-		// Read-only management verbs (/model /memory /skills /hooks /mcp) emit a
-		// listing Notice, so Submit-based frontends (desktop, HTTP) get them with
-		// no extra wiring. (The chat TUI handles these itself with richer output.)
+		// Management verbs (/model /memory /skills /hooks /mcp) emit a Notice, so
+		// Submit-based frontends (desktop, HTTP) get them with no extra wiring.
+		// The chat TUI handles these itself with richer output.
 		fields := strings.Fields(trimmed)
 		switch fields[0] {
 		case "/tree":
