@@ -35,6 +35,7 @@ import {
   X,
 } from "lucide-react";
 import { useToast } from "./lib/toast";
+import { useGoalActionHandler } from "./lib/goalAction";
 import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
@@ -1120,6 +1121,7 @@ export default function App() {
   const remoteStatuses = useRemoteStore((s) => s.statuses);
   const [workbenchTarget, setWorkbenchTarget] = useState<WorkbenchActiveTarget>({ kind: "local" });
 	const { showToast } = useToast();
+  const { runGoalAction, handleGoalActionError } = useGoalActionHandler();
   const setRemoteHosts = useRemoteStore((s) => s.setHosts);
   const hydrateRemoteStatuses = useRemoteStore((s) => s.hydrateStatuses);
   const requestRemoteExplorer = useRemoteStore((s) => s.openExplorer);
@@ -1757,14 +1759,15 @@ export default function App() {
   );
   const applyCollaborationMode = useCallback(
     async (m: CollaborationMode): Promise<void> => {
-      userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, activeTabId, m === "plan");
       if (m === "goal") {
+        userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, activeTabId, false);
         patchActiveComposerProfile({ collaborationMode: "normal", goalDraftMode: true, goal: "" }, ["collaborationMode", "goal"]);
         return setControllerCollaborationMode("normal");
       }
-      patchActiveComposerProfile({ collaborationMode: m, goalDraftMode: false, goal: "" }, ["collaborationMode", "goal"]);
       if (goal.trim()) await clearControllerGoal();
       await setControllerCollaborationMode(m);
+      userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, activeTabId, m === "plan");
+      patchActiveComposerProfile({ collaborationMode: m, goalDraftMode: false, goal: "" }, ["collaborationMode", "goal"]);
     },
     [activeTabId, clearControllerGoal, goal, patchActiveComposerProfile, setControllerCollaborationMode],
   );
@@ -1797,7 +1800,6 @@ export default function App() {
   const applyGoalForTab = useCallback(
     async (tabId: string, nextGoal: string): Promise<void> => {
       if (!tabId) return;
-      userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, tabId, false);
       const trimmed = nextGoal.trim();
       // Activate the backend Goal first. Only then patch the local profile so a
       // failed SetGoalForTab cannot leave the Composer thinking a Goal is active
@@ -1808,6 +1810,7 @@ export default function App() {
         goalDraftMode: false,
         goal: trimmed,
       }, ["collaborationMode", "goal"]);
+      userPlanModeByTabRef.current = updateUserPlanModeIntent(userPlanModeByTabRef.current, tabId, false);
     },
     [clearControllerGoalForTab, patchComposerProfileForTab, setControllerGoalForTab],
   );
@@ -1848,8 +1851,8 @@ export default function App() {
   // Shift+Tab toggles only the collaboration axis; Ctrl/Cmd+Y toggles YOLO on the
   // tool-permission axis while preserving the Ask/Auto base mode.
   const cycleMode = useCallback(() => {
-    applyCollaborationMode(collaborationMode === "plan" ? "normal" : "plan");
-  }, [applyCollaborationMode, collaborationMode]);
+    runGoalAction(() => applyCollaborationMode(collaborationMode === "plan" ? "normal" : "plan"));
+  }, [applyCollaborationMode, collaborationMode, runGoalAction]);
 
   // Switching models rebuilds the controller, which starts in normal mode — so
   // re-apply the current mode, or the pill would say plan/YOLO while the fresh
@@ -1874,8 +1877,8 @@ export default function App() {
     if (!controllerReady) return;
     void setControllerCollaborationMode(controllerComposerProfileCollaborationMode(composerProfile));
     void setControllerToolApprovalMode(toolApprovalMode);
-    if (goal.trim()) void setControllerGoal(goal);
-  }, [composerProfile, controllerReady, goal, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, toolApprovalMode]);
+    if (goal.trim()) runGoalAction(() => setControllerGoal(goal));
+  }, [composerProfile, controllerReady, goal, runGoalAction, setControllerCollaborationMode, setControllerGoal, setControllerToolApprovalMode, toolApprovalMode]);
 
   // The live task list pinned above the composer comes from the most recent
   // successful top-level todo_write result; failed or still-running attempts do
@@ -2074,7 +2077,7 @@ export default function App() {
       }
       const model = /^\/model\s+(\S+)$/.exec(trimmed);
       if (model) {
-        void switchModel(model[1]);
+        await switchModel(model[1]);
         return;
       }
       if (trimmed === "/memory") {
@@ -2182,6 +2185,21 @@ export default function App() {
     if (!sourceTabId) throw new Error(t("composer.workspaceStarting"));
     await steerForTab(sourceTabId, text.trim());
   }, [activeTabId, steerForTab, t]);
+
+  const setCollaborationModeFromUi = useCallback((mode: CollaborationMode) => {
+    runGoalAction(() => applyCollaborationMode(mode));
+  }, [applyCollaborationMode, runGoalAction]);
+  const clearGoalFromUi = useCallback(() => {
+    runGoalAction(() => applyGoal(""));
+  }, [applyGoal, runGoalAction]);
+  const switchModelFromUi = useCallback(async (name: string): Promise<boolean> => {
+    try {
+      return await switchModel(name);
+    } catch (error) {
+      handleGoalActionError(error);
+      return false;
+    }
+  }, [handleGoalActionError, switchModel]);
 
   const refreshTabMetas = useCallback(async (): Promise<TabMeta[]> => {
     const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
@@ -4330,11 +4348,11 @@ export default function App() {
               onCancel={cancel}
               onCycleMode={cycleMode}
               onSetMode={applyMode}
-              onSetCollaborationMode={applyCollaborationMode}
+              onSetCollaborationMode={setCollaborationModeFromUi}
               onSetToolApprovalMode={applyToolApprovalMode}
               onToggleYoloApprovalMode={toggleYoloApprovalMode}
-              onClearGoal={() => applyGoal("")}
-              onSwitchModel={switchModel}
+              onClearGoal={clearGoalFromUi}
+              onSwitchModel={switchModelFromUi}
               onSetEffort={setEffort}
               onSetTokenMode={applyTokenMode}
               insertRequest={composerInsertRequest}
