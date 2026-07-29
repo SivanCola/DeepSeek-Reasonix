@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -73,6 +74,36 @@ func TestValidateUpdaterRequestBindsChannelVersionAndID(t *testing.T) {
 				t.Fatalf("validateUpdaterRequest() = (%q, %q, %q)", request, selected, version)
 			}
 		})
+	}
+}
+
+func TestUpdaterWailsMethodContracts(t *testing.T) {
+	appType := reflect.TypeOf((*App)(nil))
+	tests := []struct {
+		name   string
+		numIn  int
+		numOut int
+	}{
+		{name: "DownloadUpdate", numIn: 2, numOut: 2},
+		{name: "InstallUpdate", numIn: 2, numOut: 1},
+		{name: "DownloadUpdateRequest", numIn: 4, numOut: 2},
+		{name: "InstallUpdateRequest", numIn: 4, numOut: 1},
+	}
+	for _, tt := range tests {
+		method, ok := appType.MethodByName(tt.name)
+		if !ok {
+			t.Fatalf("App.%s is missing", tt.name)
+		}
+		if method.Type.NumIn() != tt.numIn || method.Type.NumOut() != tt.numOut {
+			t.Fatalf(
+				"App.%s signature = %v inputs/%v outputs, want %v/%v",
+				tt.name,
+				method.Type.NumIn(),
+				method.Type.NumOut(),
+				tt.numIn,
+				tt.numOut,
+			)
+		}
 	}
 }
 

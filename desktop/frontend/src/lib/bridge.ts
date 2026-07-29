@@ -455,8 +455,10 @@ export interface AppBindings {
   SetBypass(on: boolean): Promise<void>;
   Version(): Promise<string>;
   CheckUpdate(channel: string): Promise<UpdateInfo | null>;
-  DownloadUpdate(channel: string, expectedVersion: string, requestId: string): Promise<UpdateDownloadResult | null>;
-  InstallUpdate(channel: string, expectedVersion: string, requestId: string): Promise<void>;
+  DownloadUpdate(channel: string): Promise<UpdateDownloadResult | null>;
+  DownloadUpdateRequest(channel: string, expectedVersion: string, requestId: string): Promise<UpdateDownloadResult | null>;
+  InstallUpdate(channel: string): Promise<void>;
+  InstallUpdateRequest(channel: string, expectedVersion: string, requestId: string): Promise<void>;
   ApplyUpdate(): Promise<void>;
   OpenDownloadPage(): Promise<void>;
   NeedsOnboarding(): Promise<boolean>;
@@ -889,7 +891,7 @@ function bridgeBreadcrumb(method: string): string {
     return `settings ${method}`;
   if (/^(SaveProvider|AddOfficialProviderAccess|AddProviderPresetAccess|ResetProviderPresetAccess|RemoveProviderAccess|DeleteProvider|SaveProviderKey|SetProviderKey|ClearProviderKey|FetchProviderModels|ConnectKey)/.test(method))
     return `provider ${method}`;
-  if (/^(CheckUpdate|DownloadUpdate|InstallUpdate|ApplyUpdate|OpenDownloadPage)/.test(method)) return `update ${method}`;
+  if (/^(CheckUpdate|DownloadUpdate|DownloadUpdateRequest|InstallUpdate|InstallUpdateRequest|ApplyUpdate|OpenDownloadPage)/.test(method)) return `update ${method}`;
   if (/^(AddMCPServer|InstallMCPServer|UpdateMCPServer|RemoveMCPServer|AuthorizeAndConnectMCPServer|ReconnectMCPServer|ClearMCPServerAuthentication|SetMCPServer)/.test(method))
     return `mcp ${method}`;
   if (/^(AddSkillPath|RemoveSkillPath|RefreshSkills|SetSkillEnabled|AcceptSkillSuggestion|AvailableSubagentTools|CreateSubagentProfile|UpdateSubagentProfile|DeleteSubagentProfile|SetSubagentProfileModel|SetSubagentProfileEffort|TrySubagentProfile|CancelTrySubagentProfile)/.test(method))
@@ -4386,7 +4388,7 @@ function makeMockApp(): AppBindings {
     },
     async CheckUpdate(channel: string) {
       // Keep the default browser preview focused on the primary product surface.
-      // DownloadUpdate/InstallUpdate remain mocked for explicit updater-flow tests.
+      // Updater methods remain mocked for explicit updater-flow tests.
       return {
         available: false,
         current: "v1.0.0",
@@ -4402,7 +4404,11 @@ function makeMockApp(): AppBindings {
         assetSize: 0,
       };
     },
-    async DownloadUpdate(channel: string, expectedVersion: string, requestId: string) {
+    async DownloadUpdate(channel: string) {
+      const expectedVersion = channel === "preview" ? "v1.1.0-preview.1" : "v1.1.0";
+      return this.DownloadUpdateRequest(channel, expectedVersion, "mock-legacy-download");
+    },
+    async DownloadUpdateRequest(channel: string, expectedVersion: string, requestId: string) {
       const selectedChannel = channel === "preview" ? "preview" : "stable";
       const total = 12_345_678;
       for (let r = 0; r <= total; r += 1_800_000) {
@@ -4414,7 +4420,11 @@ function makeMockApp(): AppBindings {
       emitUpdater({ requestId, version: expectedVersion, channel: selectedChannel, phase: "downloaded", received: total, total });
       return { requestId, version: expectedVersion, channel: selectedChannel, path: "/tmp/reasonix-update", size: total, sha256: "mock" };
     },
-    async InstallUpdate(channel: string, expectedVersion: string, requestId: string) {
+    async InstallUpdate(channel: string) {
+      const expectedVersion = channel === "preview" ? "v1.1.0-preview.1" : "v1.1.0";
+      await this.InstallUpdateRequest(channel, expectedVersion, "mock-legacy-install");
+    },
+    async InstallUpdateRequest(channel: string, expectedVersion: string, requestId: string) {
       const selectedChannel = channel === "preview" ? "preview" : "stable";
       const total = 12_345_678;
       emitUpdater({ requestId, version: expectedVersion, channel: selectedChannel, phase: "installing", received: total, total });
@@ -4423,8 +4433,8 @@ function makeMockApp(): AppBindings {
       // The real shell relaunches here; the mock just stops.
     },
     async ApplyUpdate() {
-      await this.DownloadUpdate("stable", "v1.1.0", "mock-apply-download");
-      await this.InstallUpdate("stable", "v1.1.0", "mock-apply-install");
+      await this.DownloadUpdateRequest("stable", "v1.1.0", "mock-apply-download");
+      await this.InstallUpdateRequest("stable", "v1.1.0", "mock-apply-install");
     },
     async OpenDownloadPage() {
       if (typeof window !== "undefined") {

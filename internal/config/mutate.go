@@ -75,8 +75,8 @@ func LockUserConfigEdits() func() {
 
 // LockConfigFileEdits serializes a configuration read-modify-write transaction
 // with both other goroutines and other Reasonix processes. The cross-process
-// lock lives in the cache rather than beside path, so project repositories do
-// not accumulate lock files.
+// lock lives in an OS-user registry rather than beside path, so project
+// repositories do not accumulate lock files.
 func LockConfigFileEdits(path string) (func(), error) {
 	return lockConfigFilesEdits(path)
 }
@@ -209,8 +209,19 @@ func acquireConfigEditLockPathWithTimeout(lockPath string, timeout time.Duration
 }
 
 func acquireConfigEditLockPath(ctx context.Context, lockPath string) (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
+	lockDir := filepath.Dir(lockPath)
+	if err := os.MkdirAll(lockDir, 0o700); err != nil {
 		return nil, fmt.Errorf("lock config edits: create lock directory: %w", err)
+	}
+	info, err := os.Lstat(lockDir)
+	if err != nil {
+		return nil, fmt.Errorf("lock config edits: inspect lock directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("lock config edits: unsafe lock directory")
+	}
+	if err := os.Chmod(lockDir, 0o700); err != nil {
+		return nil, fmt.Errorf("lock config edits: secure lock directory: %w", err)
 	}
 	unlockFile, err := filelock.Acquire(ctx, lockPath)
 	if err != nil {
@@ -254,7 +265,7 @@ func configFileEditLockPathResolved(resolved string) (string, error) {
 		return "", err
 	}
 	lockKey := filepath.Clean(resolved)
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		lockKey = strings.ToLower(filepath.ToSlash(lockKey))
 	}
 	digest := sha256.Sum256([]byte(lockKey))
@@ -276,12 +287,18 @@ func configEditLockRegistryDir() (string, error) {
 	if identity == "" {
 		return "", fmt.Errorf("lock config edits: OS user identity unavailable")
 	}
-	tmp := strings.TrimSpace(os.TempDir())
-	if tmp == "" {
-		return "", fmt.Errorf("lock config edits: temporary directory unavailable")
-	}
 	digest := sha256.Sum256([]byte(identity))
-	return filepath.Join(tmp, fmt.Sprintf("reasonix-config-locks-%x", digest[:8])), nil
+	if runtime.GOOS != "windows" {
+		// The OS-wide temporary root is invariant across process-specific TMPDIR
+		// overrides. The per-user directory is verified and forced to mode 0700
+		// before the advisory lock file is opened.
+		return filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("reasonix-config-locks-%x", digest[:8])), nil
+	}
+	home := strings.TrimSpace(current.HomeDir)
+	if home == "" {
+		return "", fmt.Errorf("lock config edits: OS user home unavailable")
+	}
+	return filepath.Join(filepath.Clean(home), ".reasonix", "locks", fmt.Sprintf("config-edits-%x", digest[:8])), nil
 }
 
 func configEditPathKey(path string) (string, error) {

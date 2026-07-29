@@ -107,7 +107,7 @@ window.go = {
         checkedChannels.push(channel);
         return { ...debInfo, channel: channel === "preview" ? "preview" : "stable" };
       },
-      async DownloadUpdate(channel: string, expectedVersion: string, requestId: string) {
+      async DownloadUpdateRequest(channel: string, expectedVersion: string, requestId: string) {
         return {
           requestId,
           version: expectedVersion,
@@ -117,7 +117,7 @@ window.go = {
           sha256: "abc",
         };
       },
-      InstallUpdate(channel: string, expectedVersion: string, requestId: string) {
+      InstallUpdateRequest(channel: string, expectedVersion: string, requestId: string) {
         return new Promise<void>((resolve, reject) => installAttempts.push({
           requestId,
           version: expectedVersion,
@@ -215,7 +215,7 @@ ok(document.getElementById("banner-status")?.textContent === "available", "stale
 let oldDownloadRequestId = "";
 let oldDownloadVersion = "";
 let resolveOldDownload!: (value: { requestId: string; version: string; channel: string; path: string; size: number; sha256: string }) => void;
-window.go.main.App.DownloadUpdate = (_channel: string, expectedVersion: string, requestId: string) =>
+window.go.main.App.DownloadUpdateRequest = (_channel: string, expectedVersion: string, requestId: string) =>
   new Promise((resolve) => {
     oldDownloadRequestId = requestId;
     oldDownloadVersion = expectedVersion;
@@ -277,7 +277,7 @@ window.go.main.App.CheckUpdate = async (selected: string) => ({
   channel: selected === "preview" ? "preview" : "stable",
   latest: selected === "preview" ? "v1.2.0" : "v1.1.0",
 });
-window.go.main.App.DownloadUpdate = async (selected: string, _expectedVersion: string, requestId: string) => ({
+window.go.main.App.DownloadUpdateRequest = async (selected: string, _expectedVersion: string, requestId: string) => ({
   requestId,
   version: "v1.2.0-preview.99",
   channel: selected === "preview" ? "preview" : "stable",
@@ -295,7 +295,7 @@ await act(async () => {
 });
 ok(document.getElementById("banner-status")?.textContent === "available", "download result for a different version is rejected");
 
-window.go.main.App.DownloadUpdate = async (selected: string, expectedVersion: string, requestId: string) => ({
+window.go.main.App.DownloadUpdateRequest = async (selected: string, expectedVersion: string, requestId: string) => ({
   requestId,
   version: expectedVersion,
   channel: selected === "preview" ? "preview" : "stable",

@@ -225,7 +225,7 @@ function useUpdaterInternal(): Updater {
     }
     const operation = beginOperation(selectedChannel, "downloading", info.latest);
     setStatus({ kind: "downloading", received: 0, total: info.assetSize, info });
-    void app.DownloadUpdate(selectedChannel, info.latest, operation.requestId)
+    void app.DownloadUpdateRequest(selectedChannel, info.latest, operation.requestId)
       .then((result) => {
         if (!isCurrentOperation(operation)) return;
         if (
@@ -259,7 +259,7 @@ function useUpdaterInternal(): Updater {
     setStatus(info.requiresElevation || info.installMode === "deb"
       ? { kind: "authorizing", info }
       : { kind: "installing", info });
-    void app.InstallUpdate(selectedChannel, info.latest, operation.requestId).catch((e) => {
+    void app.InstallUpdateRequest(selectedChannel, info.latest, operation.requestId).catch((e) => {
       if (!isCurrentOperation(operation)) return;
       const message = errMsg(e);
       completeOperation(operation);

@@ -143,10 +143,25 @@ func (a *App) openDownloadPage(selectedChannel string) {
 	}
 }
 
-// DownloadUpdate downloads, verifies, and caches the latest build. Installation is
-// deliberately a separate user action so the UI can show "downloaded" before the
-// app quits to finish the update.
-func (a *App) DownloadUpdate(selectedChannel, expectedVersion, requestID string) (*UpdateDownloadResult, error) {
+// DownloadUpdate preserves the original one-argument Wails contract. It derives
+// the version and request identity from the selected channel before entering the
+// request-bound implementation used by the current frontend.
+func (a *App) DownloadUpdate(selectedChannel string) (*UpdateDownloadResult, error) {
+	selectedChannel = targetUpdateChannel(selectedChannel)
+	info, err := a.CheckUpdate(selectedChannel)
+	if err != nil {
+		return nil, err
+	}
+	if info == nil || info.Err != "" || !info.Available {
+		return nil, fmt.Errorf("update: no checked %s update is available", selectedChannel)
+	}
+	requestID := fmt.Sprintf("legacy-download-%d", time.Now().UnixNano())
+	return a.DownloadUpdateRequest(selectedChannel, info.Latest, requestID)
+}
+
+// DownloadUpdateRequest downloads, verifies, and caches the exact version bound
+// to a frontend request. Installation remains a separate explicit user action.
+func (a *App) DownloadUpdateRequest(selectedChannel, expectedVersion, requestID string) (*UpdateDownloadResult, error) {
 	requestID, selectedChannel, expectedVersion, err := validateUpdaterRequest(requestID, selectedChannel, expectedVersion)
 	if err != nil {
 		return nil, err
@@ -203,8 +218,21 @@ func (a *App) DownloadUpdate(selectedChannel, expectedVersion, requestID string)
 	}, nil
 }
 
-// InstallUpdate applies the cached, verified update and then exits/relaunches.
-func (a *App) InstallUpdate(selectedChannel, expectedVersion, requestID string) error {
+// InstallUpdate preserves the original one-argument Wails contract. The cached
+// artifact supplies the trusted expected version for the strict implementation.
+func (a *App) InstallUpdate(selectedChannel string) error {
+	selectedChannel = targetUpdateChannel(selectedChannel)
+	meta, _, err := readVerifiedCachedUpdateForChannel(selectedChannel)
+	if err != nil {
+		return err
+	}
+	requestID := fmt.Sprintf("legacy-install-%d", time.Now().UnixNano())
+	return a.InstallUpdateRequest(selectedChannel, meta.Version, requestID)
+}
+
+// InstallUpdateRequest applies the exact cached, verified update bound to a
+// frontend request and then exits/relaunches.
+func (a *App) InstallUpdateRequest(selectedChannel, expectedVersion, requestID string) error {
 	requestID, selectedChannel, expectedVersion, err := validateUpdaterRequest(requestID, selectedChannel, expectedVersion)
 	if err != nil {
 		return err
@@ -368,10 +396,10 @@ func (a *App) ApplyUpdate() error {
 		return fmt.Errorf("update: no checked update is available")
 	}
 	requestID := fmt.Sprintf("legacy-%d", time.Now().UnixNano())
-	if _, err := a.DownloadUpdate(selectedChannel, info.Latest, requestID+"-download"); err != nil {
+	if _, err := a.DownloadUpdateRequest(selectedChannel, info.Latest, requestID+"-download"); err != nil {
 		return err
 	}
-	return a.InstallUpdate(selectedChannel, info.Latest, requestID+"-install")
+	return a.InstallUpdateRequest(selectedChannel, info.Latest, requestID+"-install")
 }
 
 // downloadVerify downloads the asset (streaming progress), verifies its minisign

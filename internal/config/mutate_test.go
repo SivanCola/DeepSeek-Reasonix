@@ -2,10 +2,12 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -144,31 +146,69 @@ func TestConcurrentBotAndSettingsWritersKeepBothFields(t *testing.T) {
 	}
 }
 
-func TestLockUserConfigEditsSerializesAcrossProcesses(t *testing.T) {
+func TestLockUserConfigEditsSerializesAcrossProcessesWithDifferentTempDirs(t *testing.T) {
 	home := t.TempDir()
+	assertUserConfigLockSerializesAcrossProcesses(
+		t,
+		home,
+		home,
+		filepath.Join(t.TempDir(), "tmp-a"),
+		filepath.Join(t.TempDir(), "tmp-b"),
+	)
+}
+
+func TestLockUserConfigEditsSerializesDarwinCaseAliasesAcrossProcesses(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Darwin path aliases only")
+	}
+	parent := t.TempDir()
+	home := filepath.Join(parent, "MiXeDHome")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := strings.ToUpper(home)
+	homeInfo, homeErr := os.Stat(home)
+	aliasInfo, aliasErr := os.Stat(alias)
+	if homeErr != nil || aliasErr != nil || !os.SameFile(homeInfo, aliasInfo) {
+		t.Skip("test volume is case-sensitive")
+	}
+	assertUserConfigLockSerializesAcrossProcesses(t, home, alias, t.TempDir(), t.TempDir())
+}
+
+func assertUserConfigLockSerializesAcrossProcesses(t *testing.T, firstHome, secondHome, firstTmp, secondTmp string) {
+	t.Helper()
+	if err := os.MkdirAll(firstTmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(secondTmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home := firstHome
 	t.Setenv("REASONIX_HOME", home)
 	path := UserConfigPath()
 	if err := Default().SaveTo(path); err != nil {
 		t.Fatal(err)
 	}
 
-	aStarted := filepath.Join(home, "a-started")
-	aAcquired := filepath.Join(home, "a-acquired")
-	aRelease := filepath.Join(home, "a-release")
-	bStarted := filepath.Join(home, "b-started")
-	bAcquired := filepath.Join(home, "b-acquired")
+	signals := t.TempDir()
+	aStarted := filepath.Join(signals, "a-started")
+	aAcquired := filepath.Join(signals, "a-acquired")
+	aRelease := filepath.Join(signals, "a-release")
+	bStarted := filepath.Join(signals, "b-started")
+	bAcquired := filepath.Join(signals, "b-acquired")
 
-	startHelper := func(mode, started, acquired, release string) (*exec.Cmd, *bytes.Buffer) {
+	startHelper := func(mode, processHome, processTmp, started, acquired, release string) (*exec.Cmd, *bytes.Buffer) {
 		t.Helper()
 		cmd := exec.Command(os.Args[0], "-test.run=^TestLockUserConfigEditsHelperProcess$")
-		cmd.Env = append(os.Environ(),
-			"REASONIX_CONFIG_LOCK_HELPER=1",
-			"REASONIX_CONFIG_LOCK_MODE="+mode,
-			"REASONIX_CONFIG_LOCK_STARTED="+started,
-			"REASONIX_CONFIG_LOCK_ACQUIRED="+acquired,
-			"REASONIX_CONFIG_LOCK_RELEASE="+release,
-			"REASONIX_HOME="+home,
-		)
+		cmd.Env = testEnvWithOverrides(map[string]string{
+			"TMPDIR":                        processTmp,
+			"REASONIX_HOME":                 processHome,
+			"REASONIX_CONFIG_LOCK_HELPER":   "1",
+			"REASONIX_CONFIG_LOCK_MODE":     mode,
+			"REASONIX_CONFIG_LOCK_STARTED":  started,
+			"REASONIX_CONFIG_LOCK_ACQUIRED": acquired,
+			"REASONIX_CONFIG_LOCK_RELEASE":  release,
+		})
 		var output bytes.Buffer
 		cmd.Stdout = &output
 		cmd.Stderr = &output
@@ -189,9 +229,9 @@ func TestLockUserConfigEditsSerializesAcrossProcesses(t *testing.T) {
 		t.Fatalf("timed out waiting for %s", path)
 	}
 
-	first, firstOutput := startHelper("bot", aStarted, aAcquired, aRelease)
+	first, firstOutput := startHelper("bot", firstHome, firstTmp, aStarted, aAcquired, aRelease)
 	waitForFile(aAcquired)
-	second, secondOutput := startHelper("cli", bStarted, bAcquired, "")
+	second, secondOutput := startHelper("cli", secondHome, secondTmp, bStarted, bAcquired, "")
 	waitForFile(bStarted)
 	time.Sleep(150 * time.Millisecond)
 	if _, err := os.Stat(bAcquired); err == nil {
@@ -223,6 +263,23 @@ func TestLockUserConfigEditsSerializesAcrossProcesses(t *testing.T) {
 	if got := final.CLIUpdateChannel(); got != "preview" {
 		t.Fatalf("CLI channel update was lost: %q", got)
 	}
+}
+
+func testEnvWithOverrides(overrides map[string]string) []string {
+	env := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if _, overridden := overrides[key]; overridden {
+				continue
+			}
+		}
+		env = append(env, entry)
+	}
+	for key, value := range overrides {
+		env = append(env, key+"="+value)
+	}
+	return env
 }
 
 func TestLockUserConfigEditsFailsClosedWhenFileLockTimesOut(t *testing.T) {
@@ -357,12 +414,13 @@ func TestConfigEditLockCanonicalizesAliasesAndIgnoresCacheOverrides(t *testing.T
 	}
 	t.Setenv("HOME", filepath.Join(dir, "isolated-home"))
 	t.Setenv("REASONIX_HOME", filepath.Join(dir, "reasonix-home"))
+	t.Setenv("TMPDIR", filepath.Join(dir, "tmp-a"))
 	third, err := configFileEditLockPath(link)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first != third {
-		t.Fatalf("HOME/profile override split config lock: %q != %q", first, third)
+		t.Fatalf("HOME/profile/TMPDIR override split config lock: %q != %q", first, third)
 	}
 	wantDir, err := configEditLockRegistryDir()
 	if err != nil {
@@ -370,6 +428,45 @@ func TestConfigEditLockCanonicalizesAliasesAndIgnoresCacheOverrides(t *testing.T
 	}
 	if filepath.Dir(first) != wantDir {
 		t.Fatalf("lock dir = %q, want OS-user registry %q", filepath.Dir(first), wantDir)
+	}
+}
+
+func TestAcquireConfigEditLockRejectsSymlinkRegistry(t *testing.T) {
+	dir := t.TempDir()
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := filepath.Join(dir, "locks")
+	if err := os.Symlink(realDir, linkDir); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if unlock, err := acquireConfigEditLockPath(ctx, filepath.Join(linkDir, "config.lock")); err == nil {
+		unlock()
+		t.Fatal("symlinked lock registry was accepted")
+	}
+}
+
+func TestAcquireConfigEditLockSecuresRegistryPermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "locks")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	unlock, err := acquireConfigEditLockPath(ctx, filepath.Join(dir, "config.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("lock registry mode = %04o, want 0700", got)
 	}
 }
 
