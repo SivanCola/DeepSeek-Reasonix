@@ -1542,19 +1542,6 @@ func (c *Config) SaveToScope(path string, scope RenderScope) error {
 	return writeConfigFileResolved(resolved, RenderTOMLForScope(c, scope), configFilePerm(path))
 }
 
-// saveProjectIncremental merges only the delta (non-default sections/fields)
-// into the existing project config file, preserving all other content verbatim.
-func (c *Config) saveProjectIncremental(path string) error {
-	if strings.TrimSpace(path) == "" {
-		return fmt.Errorf("save: empty config path")
-	}
-	resolved, err := resolveConfigAccessPath(path, false)
-	if err != nil {
-		return err
-	}
-	return c.saveProjectIncrementalResolved(path, resolved)
-}
-
 func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string) error {
 	raw, err := fileencoding.ReadFileUTF8(resolvedPath)
 	if err != nil {

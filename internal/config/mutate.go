@@ -202,14 +202,6 @@ func acquireConfigFileEditLockWithTimeout(path string, timeout time.Duration) (f
 	return acquireConfigEditLockPathWithTimeout(target.lockPath, timeout)
 }
 
-func acquireConfigFileEditLock(ctx context.Context, path string) (func(), error) {
-	target, err := resolveConfigEditTarget(path)
-	if err != nil {
-		return nil, err
-	}
-	return acquireConfigEditLockPath(ctx, target.lockPath)
-}
-
 func acquireConfigEditLockPathWithTimeout(lockPath string, timeout time.Duration) (func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
