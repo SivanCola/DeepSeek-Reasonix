@@ -242,13 +242,10 @@ jobs:
           fi
 
           channel=""
-          expected_prerelease=""
           if [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             channel="stable"
-            expected_prerelease="false"
           elif [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-preview\.(0|[1-9][0-9]*)$ ]]; then
             channel="preview"
-            expected_prerelease="true"
           else
             echo "internal CLI release $TAG; publishing only immutable metadata"
           fi
