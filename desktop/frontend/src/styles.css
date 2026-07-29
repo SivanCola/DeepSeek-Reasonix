@@ -99,6 +99,8 @@
   --shadow-2: 0 14px 40px rgba(0, 0, 0, 0.28);
 
   /* z-index scale */
+  --z-transcript-scene-image: -2;
+  --z-transcript-scene-overlay: -1;
   --z-theme-bg: 0;
   --z-app-content: 1;
   --z-local-raised: 2;
@@ -33525,26 +33527,30 @@ body > .mermaid-diagram--fullscreen {
 
 /*
   WebView2 can retain stale raster pixels when children are removed from a
-  transparent scrolling layer (#6359, #7011). Keep the transcript itself
-  opaque on Windows in every layout. Canvas is the guaranteed opaque fallback;
-  theme colors are composited above it so alpha-bearing custom tokens remain
-  supported without making the compositor backing transparent.
+  transparent scrolling layer (#6359, #7011). Scope the opaque backing to the
+  primary chat transcript: history previews already own an opaque card surface,
+  while Creation has its own repaint rule above.
 */
-:root[data-platform="windows"] .app .transcript {
+:root[data-platform="windows"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript {
+  position: relative;
+  isolation: isolate;
+  clip-path: inset(0);
   background-color: Canvas !important;
   background-image:
     linear-gradient(var(--chat-bg, var(--bg)), var(--chat-bg, var(--bg))),
     linear-gradient(var(--bg), var(--bg)) !important;
-  background-repeat: no-repeat !important;
-  background-size: 100% 100% !important;
+  background-repeat: no-repeat, no-repeat !important;
+  background-size: 100% 100%, 100% 100% !important;
 }
 
 /*
-  Background packs normally show a fixed image through translucent panes.
-  On Windows, reproduce that stack on the transcript's own backing instead of
-  making the WebView2 scroll layer transparent.
+  Background packs normally show a fixed image through translucent panes. The
+  two fixed pseudo-layers preserve the existing .theme-bg geometry exactly:
+  the image keeps its viewport-relative -4% overscan and the wash stays
+  viewport-sized. clip-path confines those fixed layers to the transcript while
+  the real background remains opaque for WebView2's scrolling compositor.
 */
-:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"] .app:not(.app--creation) .transcript {
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript {
   --windows-transcript-scene-image: var(--theme-bg-home-image, var(--theme-bg-image, none));
   --windows-transcript-scene-focus-x: var(--theme-bg-home-focus-x, var(--theme-bg-focus-x, 50%));
   --windows-transcript-scene-focus-y: var(--theme-bg-home-focus-y, var(--theme-bg-focus-y, 50%));
@@ -33552,30 +33558,42 @@ body > .mermaid-diagram--fullscreen {
   --windows-transcript-pane-alpha: var(--theme-pane-alpha, 0.72);
   --windows-transcript-scene-overlay: linear-gradient(transparent, transparent);
   background-color: Canvas !important;
+  background-image: linear-gradient(var(--bg), var(--bg)) !important;
+  background-repeat: no-repeat !important;
+  background-size: 100% 100% !important;
+}
+
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript::before {
+  content: "";
+  position: fixed;
+  inset: -4%;
+  z-index: var(--z-transcript-scene-image);
+  pointer-events: none;
+  background-image: var(--windows-transcript-scene-image);
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: var(--windows-transcript-scene-focus-x) var(--windows-transcript-scene-focus-y);
+  opacity: var(--windows-transcript-image-opacity);
+}
+
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-transcript-scene-overlay);
+  pointer-events: none;
   background-image:
     linear-gradient(
       color-mix(in srgb, var(--chat-bg, var(--bg)) calc(var(--windows-transcript-pane-alpha) * 100%), transparent),
       color-mix(in srgb, var(--chat-bg, var(--bg)) calc(var(--windows-transcript-pane-alpha) * 100%), transparent)
     ),
-    linear-gradient(
-      color-mix(in srgb, var(--bg) calc(100% - (var(--windows-transcript-image-opacity) * 100%)), transparent),
-      color-mix(in srgb, var(--bg) calc(100% - (var(--windows-transcript-image-opacity) * 100%)), transparent)
-    ),
-    var(--windows-transcript-scene-overlay),
-    var(--windows-transcript-scene-image),
-    linear-gradient(var(--bg), var(--bg)) !important;
-  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat !important;
-  background-position:
-    center,
-    center,
-    center,
-    var(--windows-transcript-scene-focus-x) var(--windows-transcript-scene-focus-y),
-    center !important;
-  background-size: 100% 100%, 100% 100%, 100% 100%, cover, 100% 100% !important;
-  background-attachment: local, local, fixed, fixed, local !important;
+    var(--windows-transcript-scene-overlay);
+  background-repeat: no-repeat, no-repeat;
+  background-position: center, center;
+  background-size: 100% 100%, 100% 100%;
 }
 
-:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"] .app:not(.app--creation) .transcript {
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript {
   --windows-transcript-scene-image: var(--theme-bg-task-image, var(--theme-bg-home-image, var(--theme-bg-image, none)));
   --windows-transcript-scene-focus-x: var(--theme-bg-task-focus-x, var(--theme-bg-focus-x, 50%));
   --windows-transcript-scene-focus-y: var(--theme-bg-task-focus-y, var(--theme-bg-focus-y, 50%));
@@ -33589,7 +33607,7 @@ body > .mermaid-diagram--fullscreen {
   );
 }
 
-:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"][data-theme-safe-area="left"] .app:not(.app--creation) .transcript {
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"][data-theme-safe-area="left"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript {
   --windows-transcript-scene-overlay: linear-gradient(
     90deg,
     color-mix(in srgb, var(--bg) calc(var(--theme-bg-task-overlay, var(--theme-bg-overlay, 0.62)) * 100%), transparent) 0%,
@@ -33598,7 +33616,7 @@ body > .mermaid-diagram--fullscreen {
   );
 }
 
-:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"][data-theme-safe-area="right"] .app:not(.app--creation) .transcript {
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"][data-theme-safe-area="right"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript {
   --windows-transcript-scene-overlay: linear-gradient(
     270deg,
     color-mix(in srgb, var(--bg) calc(var(--theme-bg-task-overlay, var(--theme-bg-overlay, 0.62)) * 100%), transparent) 0%,
