@@ -225,6 +225,11 @@ type App struct {
 
 	runtimeEvents asyncRuntimeEmitter
 
+	// terminals owns local PTY/ConPTY sessions. It is intentionally separate
+	// from chat runtimes: terminal lifecycle must never acquire App.mu or the
+	// controller rebuild locks while process I/O is blocked.
+	terminals *terminalManager
+
 	// Remote SSH module: the manager is created lazily on the first remote
 	// binding call and closed on shutdown.
 	remoteMu        sync.Mutex
@@ -445,6 +450,7 @@ func NewApp() *App {
 		botInstalls:         map[string]*botInstallSession{},
 		botRuntime:          newDesktopBotRuntime(),
 	}
+	a.terminals = newTerminalManager(a)
 	a.botBridge = a.newBotBridge()
 	return a
 }
@@ -846,6 +852,12 @@ func (a *App) shutdown(context.Context) {
 	a.stopBotRuntime()
 	a.stopRemoteRuntime()
 	a.stopTray()
+	// Terminal process shutdown is independent from controller teardown. Do it
+	// before acquiring runtime lifecycle locks so a slow PTY cannot delay while
+	// holding locks used by Wails-bound chat calls.
+	if a.terminals != nil {
+		a.terminals.closeAll()
+	}
 	// Save window geometry synchronously from Go so it's persisted even if the
 	// frontend's beforeunload promise hasn't resolved yet.
 	a.saveWindowStateSync()
@@ -3961,12 +3973,35 @@ func (a *App) OpenChannelSessionPageForTab(tabID, path string, limit int) (Histo
 }
 
 func (a *App) setTabReadOnly(tabID string, readOnly bool) {
+	var terminalSessions []*terminalSession
 	a.mu.Lock()
-	if tab := a.tabs[tabID]; tab != nil && tab.ReadOnly != readOnly {
-		tab.ReadOnly = readOnly
-		a.saveTabsLocked()
+	tab := a.tabs[tabID]
+	if tab == nil || tab.ReadOnly == readOnly {
+		a.mu.Unlock()
+		return
 	}
+	if a.terminals != nil {
+		if readOnly {
+			// Close the creation gate and detach existing sessions before
+			// exposing the tab as read-only. The process I/O cleanup happens
+			// after App.mu is released.
+			terminalSessions = a.terminals.detachForTab(tabID)
+		} else {
+			// Reopen the terminal gate before exposing the tab as writable. A
+			// concurrent create must never observe writable App state while
+			// the terminal manager still treats this tab as closed.
+			a.terminals.reopenForTab(tabID)
+		}
+	}
+	tab.ReadOnly = readOnly
+	a.saveTabsLocked()
 	a.mu.Unlock()
+	if len(terminalSessions) > 0 {
+		// Existing shells can keep modifying the workspace without renderer
+		// input, so entering a read-only channel must terminate them as part of
+		// the same capability transition.
+		a.terminals.closeSessions(terminalSessions)
+	}
 }
 
 func (a *App) rebindTabToSessionPath(tab *WorkspaceTab, sessionPath string) error {
@@ -5251,7 +5286,7 @@ func historyProviderMessagesWithPersistedTimes(msgs []provider.Message, sessionP
 	}
 	needsPersistedTime := false
 	for _, msg := range msgs {
-		if msg.Role == provider.RoleUser && msg.CreatedAt <= 0 && agent.IsUserAuthoredTurn(msg.Content) {
+		if msg.Role == provider.RoleUser && msg.CreatedAt <= 0 && agent.IsUserAuthoredTurn(agent.UserMessageText(msg)) {
 			needsPersistedTime = true
 			break
 		}
@@ -5461,10 +5496,14 @@ func historyCheckpointTurns(msgs []provider.Message, resolveUserContent func(str
 		if msg.Role != provider.RoleUser {
 			continue
 		}
-		if _, isSteer := agent.SteerText(msg.Content); isSteer {
+		content := agent.UserMessageText(msg)
+		if _, isSteer := agent.SteerText(content); isSteer {
 			continue
 		}
-		if control.IsSyntheticUserMessage(resolveUserContent(msg.Content)) {
+		if msg.RawContent == "" {
+			content = resolveUserContent(msg.Content)
+		}
+		if control.IsSyntheticUserMessage(content) {
 			continue
 		}
 		turn, ok := checkpointTurns[index]
@@ -5499,7 +5538,7 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 	suppressCanonicalTurn := false
 	for index, m := range msgs {
 		if suppressCanonicalTurn {
-			if m.Role != provider.RoleUser || !agent.IsUserAuthoredTurn(m.Content) {
+			if m.Role != provider.RoleUser || !agent.IsUserAuthoredTurn(agent.UserMessageText(m)) {
 				continue
 			}
 			suppressCanonicalTurn = false
@@ -5513,11 +5552,15 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 			// regular user bubble or being filtered as synthetic (#4044).
 			// Check against the raw m.Content: resolveUserContent applies
 			// StripComposePrefixes which trims trailing whitespace.
-			if steerText, isSteer := agent.SteerText(m.Content); isSteer {
+			if steerText, isSteer := agent.SteerText(agent.UserMessageText(m)); isSteer {
 				out = append(out, HistoryMessage{Role: "notice", Content: "↪ " + steerText})
 				continue
 			}
-			content = resolveUserContent(m.Content)
+			if m.RawContent != "" {
+				content = agent.UserMessageText(m)
+			} else {
+				content = resolveUserContent(m.Content)
+			}
 			if control.IsSyntheticUserMessage(content) {
 				continue
 			}
@@ -5546,6 +5589,8 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 				if replay := control.StripComposePrefixes(m.Content); strings.HasPrefix(strings.TrimSpace(replay), "/") && replay != content {
 					hm.SubmitText = replay
 				}
+			} else if m.RawContent != "" {
+				hm.SubmitText = content
 			} else {
 				hm.SubmitText = m.Content
 			}
@@ -5578,10 +5623,11 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 			})
 		}
 		if m.Role == provider.RoleUser {
-			if turns := plannerByUserHash[messageDisplayKey(m.Content)]; len(turns) > 0 {
+			key := messageDisplayKey(agent.UserMessageText(m))
+			if turns := plannerByUserHash[key]; len(turns) > 0 {
 				out = append(out, cloneHistoryMessages(turns[0].Messages)...)
 				suppressCanonicalTurn = plannerDisplaySuppressesCanonical(turns[0])
-				plannerByUserHash[messageDisplayKey(m.Content)] = turns[1:]
+				plannerByUserHash[key] = turns[1:]
 			}
 		}
 	}
@@ -5649,10 +5695,14 @@ func isVisibleHistoryUser(msg provider.Message, resolveUserContent func(string) 
 	if msg.Role != provider.RoleUser {
 		return false
 	}
-	if _, isSteer := agent.SteerText(msg.Content); isSteer {
+	content := agent.UserMessageText(msg)
+	if _, isSteer := agent.SteerText(content); isSteer {
 		return false
 	}
-	return !control.IsSyntheticUserMessage(resolveUserContent(msg.Content))
+	if msg.RawContent == "" {
+		content = resolveUserContent(msg.Content)
+	}
+	return !control.IsSyntheticUserMessage(content)
 }
 
 func providerMessagesForVisibleTurnRange(msgs []provider.Message, resolveUserContent func(string) string, startTurn, endTurn int) ([]provider.Message, []int) {
@@ -7032,6 +7082,7 @@ func (a *App) SlashArgs(input string) SlashArgsResult {
 	if h := ctrl.Host(); h != nil {
 		data.ServerNames = h.ServerNames()
 	}
+	data.MemoryRefs, data.MemoryArchives = control.MemoryCompletionData(ctrl.Memory())
 	items, from := control.SlashArgItems(input, data)
 	// Non-nil so it serializes as a JSON array, never null — the frontend filters
 	// over it directly.
@@ -10999,29 +11050,90 @@ func workspaceRelativeIn(path, workspaceRoot string) (string, bool) {
 
 // --- memory panel (frontend ⇄ controller) ---
 
-// MemoryDoc is one loaded doc-memory file for the panel: path, scope, and body.
+type MemoryImport struct {
+	Path       string `json:"path"`
+	SourcePath string `json:"sourcePath"`
+}
+
+// MemoryDoc is one resolved instruction file with applicability metadata.
 type MemoryDoc struct {
-	Path  string `json:"path"`
-	Scope string `json:"scope"`
-	Body  string `json:"body"`
+	Path       string         `json:"path"`
+	Scope      string         `json:"scope"`
+	Directory  string         `json:"directory,omitempty"`
+	Body       string         `json:"body"`
+	Imports    []MemoryImport `json:"imports"`
+	Depth      int            `json:"depth"`
+	Order      int            `json:"order"`
+	Precedence int            `json:"precedence"`
+}
+
+type InstructionDiagnostic struct {
+	Code       string `json:"code"`
+	Path       string `json:"path"`
+	SourcePath string `json:"sourcePath,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	Message    string `json:"message"`
 }
 
 // MemoryFact is one saved auto-memory, surfaced read-only in the panel.
 type MemoryFact struct {
+	ID          string `json:"id,omitempty"`
+	Revision    int    `json:"revision,omitempty"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
 	Name        string `json:"name"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description"`
 	Type        string `json:"type"`
+	Scope       string `json:"scope"`
 	Body        string `json:"body"`
+	Freshness   string `json:"freshness"`
+}
+
+type MemoryConflict struct {
+	Key         string `json:"key"`
+	ProjectID   string `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	GlobalID    string `json:"globalId"`
+	GlobalName  string `json:"globalName"`
+	Resolution  string `json:"resolution"`
+}
+
+type MemoryRecallHit struct {
+	ID        string  `json:"id"`
+	Revision  int     `json:"revision"`
+	Name      string  `json:"name"`
+	Title     string  `json:"title,omitempty"`
+	Type      string  `json:"type"`
+	Scope     string  `json:"scope"`
+	Score     float64 `json:"score"`
+	Freshness string  `json:"freshness"`
+	Reason    string  `json:"reason"`
+	Snippet   string  `json:"snippet"`
+}
+
+type MemoryRecallTrace struct {
+	Query      string            `json:"query"`
+	Hits       []MemoryRecallHit `json:"hits"`
+	Omitted    int               `json:"omitted"`
+	CharBudget int               `json:"charBudget"`
+	UsedChars  int               `json:"usedChars"`
+	Suppressed string            `json:"suppressed,omitempty"`
 }
 
 // MemoryArchive is one archived auto-memory kept only for inspection.
 type MemoryArchive struct {
+	ID          string `json:"id,omitempty"`
+	Revision    int    `json:"revision,omitempty"`
+	CreatedAt   string `json:"createdAt,omitempty"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
 	Name        string `json:"name"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description"`
 	Type        string `json:"type"`
+	Scope       string `json:"scope"`
 	Body        string `json:"body"`
+	Freshness   string `json:"freshness"`
 	Path        string `json:"path"`
 	ArchivedAt  string `json:"archivedAt,omitempty"`
 }
@@ -11035,13 +11147,16 @@ type MemoryScope struct {
 // MemoryView is the whole memory panel payload: hierarchical docs, active saved
 // facts, archived facts, and the writable scopes for the quick-add selector.
 type MemoryView struct {
-	Docs           []MemoryDoc     `json:"docs"`
-	Facts          []MemoryFact    `json:"facts"`
-	Archives       []MemoryArchive `json:"archives"`
-	Scopes         []MemoryScope   `json:"scopes"`
-	StoreDir       string          `json:"storeDir"`
-	StoreGlobalDir string          `json:"storeGlobalDir,omitempty"`
-	Available      bool            `json:"available"`
+	Docs                   []MemoryDoc             `json:"docs"`
+	Facts                  []MemoryFact            `json:"facts"`
+	Archives               []MemoryArchive         `json:"archives"`
+	Scopes                 []MemoryScope           `json:"scopes"`
+	InstructionDiagnostics []InstructionDiagnostic `json:"instructionDiagnostics"`
+	Conflicts              []MemoryConflict        `json:"conflicts"`
+	LastRecall             MemoryRecallTrace       `json:"lastRecall"`
+	StoreDir               string                  `json:"storeDir"`
+	StoreGlobalDir         string                  `json:"storeGlobalDir,omitempty"`
+	Available              bool                    `json:"available"`
 }
 
 // writableScopes are the quick-add targets the panel offers, broad → specific.
@@ -11094,21 +11209,41 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 	view.StoreGlobalDir = set.Store.GlobalDir
 	view.Available = true
 	for _, d := range set.Docs {
-		view.Docs = append(view.Docs, MemoryDoc{Path: d.Path, Scope: string(d.Scope), Body: d.Body})
-	}
-	for _, f := range set.Store.List() {
-		view.Facts = append(view.Facts, MemoryFact{
-			Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Body: f.Body,
+		imports := make([]MemoryImport, 0, len(d.Imports))
+		for _, imported := range d.Imports {
+			imports = append(imports, MemoryImport{Path: imported.Path, SourcePath: imported.SourcePath})
+		}
+		view.Docs = append(view.Docs, MemoryDoc{
+			Path: d.Path, Scope: string(d.Scope), Directory: d.Directory, Body: d.Body,
+			Imports: imports, Depth: d.Depth, Order: d.Order, Precedence: d.Order,
 		})
 	}
+	for _, diagnostic := range set.InstructionDiagnostics {
+		view.InstructionDiagnostics = append(view.InstructionDiagnostics, InstructionDiagnostic{
+			Code: diagnostic.Code, Path: diagnostic.Path, SourcePath: diagnostic.SourcePath,
+			Line: diagnostic.Line, Message: diagnostic.Message,
+		})
+	}
+	allFacts := set.Store.ListAll()
+	for _, f := range allFacts {
+		view.Facts = append(view.Facts, memoryFactView(f))
+	}
+	for _, conflict := range memory.FindOverrides(allFacts) {
+		view.Conflicts = append(view.Conflicts, MemoryConflict{
+			Key: conflict.Key, ProjectID: conflict.Project.ID, ProjectName: conflict.Project.Name,
+			GlobalID: conflict.Global.ID, GlobalName: conflict.Global.Name, Resolution: "project_over_global",
+		})
+	}
+	view.LastRecall = memoryRecallTraceView(ctrl.LastMemoryRecall())
 	for _, f := range set.Store.ListArchived() {
 		archivedAt := ""
 		if !f.ArchivedAt.IsZero() {
 			archivedAt = f.ArchivedAt.Format(time.RFC3339)
 		}
 		view.Archives = append(view.Archives, MemoryArchive{
-			Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Body: f.Body,
-			Path: f.Path, ArchivedAt: archivedAt,
+			ID: f.ID, Revision: f.Revision, CreatedAt: formatMemoryTime(f.CreatedAt), UpdatedAt: formatMemoryTime(f.UpdatedAt),
+			Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Scope: string(f.Scope), Body: f.Body,
+			Freshness: memory.FreshnessFor(f.Memory, time.Now().UTC()), Path: f.Path, ArchivedAt: archivedAt,
 		})
 	}
 	for _, sc := range writableScopes {
@@ -11119,8 +11254,19 @@ func (a *App) memoryForCtrl(ctrl control.SessionAPI, fallback bool) MemoryView {
 	return view
 }
 
+func formatMemoryTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
+}
+
 func emptyMemoryView() MemoryView {
-	return MemoryView{Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{}}
+	return MemoryView{
+		Docs: []MemoryDoc{}, Facts: []MemoryFact{}, Archives: []MemoryArchive{}, Scopes: []MemoryScope{},
+		InstructionDiagnostics: []InstructionDiagnostic{}, Conflicts: []MemoryConflict{},
+		LastRecall: MemoryRecallTrace{Hits: []MemoryRecallHit{}},
+	}
 }
 
 // Remember quick-adds a one-line note to the doc-memory file for scope — the
@@ -11190,6 +11336,136 @@ func (a *App) forgetForCtrl(ctrl control.SessionAPI, name string, fallback bool)
 		}
 	}
 	return ctrl.ForgetMemory(name)
+}
+
+// RestoreArchivedMemory recovers one archived fact without replacing active
+// memory. The store preserves its identity and creates a new audited revision.
+func (a *App) RestoreArchivedMemory(archivePath string) (MemoryFact, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return MemoryFact{}, remoteMemoryUnavailableErr()
+	}
+	return a.restoreArchivedMemoryForCtrl(nil, archivePath, true)
+}
+
+func (a *App) RestoreArchivedMemoryForTab(tabID, archivePath string) (MemoryFact, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return MemoryFact{}, remoteMemoryUnavailableErr()
+	}
+	if tabID == "" {
+		return a.restoreArchivedMemoryForCtrl(nil, archivePath, true)
+	}
+	return a.restoreArchivedMemoryForCtrl(a.ctrlByTabID(tabID), archivePath, false)
+}
+
+func (a *App) restoreArchivedMemoryForCtrl(ctrl control.SessionAPI, archivePath string, fallback bool) (MemoryFact, error) {
+	if ctrl == nil {
+		if !fallback {
+			return MemoryFact{}, nil
+		}
+		a.mu.RLock()
+		ctrl = a.activeCtrlLocked()
+		a.mu.RUnlock()
+		if ctrl == nil {
+			return MemoryFact{}, nil
+		}
+	}
+	restored, err := ctrl.RestoreArchivedMemory(archivePath)
+	if err != nil {
+		return MemoryFact{}, err
+	}
+	return memoryFactView(restored), nil
+}
+
+func memoryFactView(f memory.Memory) MemoryFact {
+	return MemoryFact{
+		ID: f.ID, Revision: f.Revision, CreatedAt: formatMemoryTime(f.CreatedAt), UpdatedAt: formatMemoryTime(f.UpdatedAt),
+		Name: f.Name, Title: f.Title, Description: f.Description, Type: string(f.Type), Scope: string(f.Scope), Body: f.Body,
+		Freshness: memory.FreshnessFor(f, time.Now().UTC()),
+	}
+}
+
+func memoryRecallTraceView(trace memory.RecallResult) MemoryRecallTrace {
+	view := MemoryRecallTrace{
+		Query: trace.Query, Hits: []MemoryRecallHit{}, Omitted: trace.Omitted,
+		CharBudget: trace.CharBudget, UsedChars: trace.UsedChars, Suppressed: trace.Suppressed,
+	}
+	for _, hit := range trace.Hits {
+		view.Hits = append(view.Hits, MemoryRecallHit{
+			ID: hit.Memory.ID, Revision: hit.Memory.Revision, Name: hit.Memory.Name, Title: hit.Memory.Title,
+			Type: string(hit.Memory.Type), Scope: string(hit.Memory.Scope), Score: hit.Score,
+			Freshness: hit.Freshness, Reason: hit.Reason, Snippet: hit.Snippet,
+		})
+	}
+	return view
+}
+
+func (a *App) MemoryRevisions(ref string) []MemoryFact {
+	return a.memoryRevisionsForCtrl(nil, ref, true)
+}
+
+func (a *App) MemoryRevisionsForTab(tabID, ref string) []MemoryFact {
+	if tabID == "" {
+		return a.memoryRevisionsForCtrl(nil, ref, true)
+	}
+	return a.memoryRevisionsForCtrl(a.ctrlByTabID(tabID), ref, false)
+}
+
+func (a *App) memoryRevisionsForCtrl(ctrl control.SessionAPI, ref string, fallback bool) []MemoryFact {
+	out := []MemoryFact{}
+	if a.activeWorkbenchTargetIsRemote() {
+		return out
+	}
+	if ctrl == nil {
+		if !fallback {
+			return out
+		}
+		a.mu.RLock()
+		ctrl = a.activeCtrlLocked()
+		a.mu.RUnlock()
+		if ctrl == nil {
+			return out
+		}
+	}
+	for _, revision := range ctrl.MemoryRevisions(ref) {
+		out = append(out, memoryFactView(revision))
+	}
+	return out
+}
+
+func (a *App) RestoreMemoryRevision(ref string, revision int) (MemoryFact, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return MemoryFact{}, remoteMemoryUnavailableErr()
+	}
+	return a.restoreMemoryRevisionForCtrl(nil, ref, revision, true)
+}
+
+func (a *App) RestoreMemoryRevisionForTab(tabID, ref string, revision int) (MemoryFact, error) {
+	if a.activeWorkbenchTargetIsRemote() {
+		return MemoryFact{}, remoteMemoryUnavailableErr()
+	}
+	if tabID == "" {
+		return a.restoreMemoryRevisionForCtrl(nil, ref, revision, true)
+	}
+	return a.restoreMemoryRevisionForCtrl(a.ctrlByTabID(tabID), ref, revision, false)
+}
+
+func (a *App) restoreMemoryRevisionForCtrl(ctrl control.SessionAPI, ref string, revision int, fallback bool) (MemoryFact, error) {
+	if ctrl == nil {
+		if !fallback {
+			return MemoryFact{}, nil
+		}
+		a.mu.RLock()
+		ctrl = a.activeCtrlLocked()
+		a.mu.RUnlock()
+		if ctrl == nil {
+			return MemoryFact{}, nil
+		}
+	}
+	restored, err := ctrl.RestoreMemory(ref, revision)
+	if err != nil {
+		return MemoryFact{}, err
+	}
+	return memoryFactView(restored), nil
 }
 
 // SaveDoc overwrites a memory doc with the panel editor's contents. The controller
