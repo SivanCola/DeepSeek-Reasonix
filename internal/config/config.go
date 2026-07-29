@@ -72,6 +72,7 @@ type Config struct {
 	pluginPackageSkillOwners   map[string][]string
 	pluginPackageAgentOwners   map[string][]string
 	safeMode                   bool
+	editLoadErr                error
 }
 
 // TelemetryConfig controls content-free CLI usage metrics. It is user-global:

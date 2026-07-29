@@ -434,8 +434,8 @@ export interface AppBindings {
   SetBypass(on: boolean): Promise<void>;
   Version(): Promise<string>;
   CheckUpdate(channel: string): Promise<UpdateInfo | null>;
-  DownloadUpdate(channel: string): Promise<UpdateDownloadResult | null>;
-  InstallUpdate(channel: string): Promise<void>;
+  DownloadUpdate(channel: string, expectedVersion: string, requestId: string): Promise<UpdateDownloadResult | null>;
+  InstallUpdate(channel: string, expectedVersion: string, requestId: string): Promise<void>;
   ApplyUpdate(): Promise<void>;
   OpenDownloadPage(): Promise<void>;
   NeedsOnboarding(): Promise<boolean>;
@@ -4234,27 +4234,29 @@ function makeMockApp(): AppBindings {
         assetSize: 0,
       };
     },
-    async DownloadUpdate(channel: string) {
+    async DownloadUpdate(channel: string, expectedVersion: string, requestId: string) {
+      const selectedChannel = channel === "preview" ? "preview" : "stable";
       const total = 12_345_678;
       for (let r = 0; r <= total; r += 1_800_000) {
-        emitUpdater({ phase: "downloading", received: Math.min(r, total), total });
+        emitUpdater({ requestId, version: expectedVersion, channel: selectedChannel, phase: "downloading", received: Math.min(r, total), total });
         await delay(120);
       }
-      emitUpdater({ phase: "verifying", received: total, total });
+      emitUpdater({ requestId, version: expectedVersion, channel: selectedChannel, phase: "verifying", received: total, total });
       await delay(500);
-      emitUpdater({ phase: "downloaded", received: total, total });
-      return { version: "v1.1.0", channel: channel === "preview" ? "preview" : "stable", path: "/tmp/reasonix-update", size: total, sha256: "mock" };
+      emitUpdater({ requestId, version: expectedVersion, channel: selectedChannel, phase: "downloaded", received: total, total });
+      return { requestId, version: expectedVersion, channel: selectedChannel, path: "/tmp/reasonix-update", size: total, sha256: "mock" };
     },
-    async InstallUpdate(_channel: string) {
+    async InstallUpdate(channel: string, expectedVersion: string, requestId: string) {
+      const selectedChannel = channel === "preview" ? "preview" : "stable";
       const total = 12_345_678;
-      emitUpdater({ phase: "installing", received: total, total });
+      emitUpdater({ requestId, version: expectedVersion, channel: selectedChannel, phase: "installing", received: total, total });
       await delay(500);
-      emitUpdater({ phase: "done", received: total, total });
+      emitUpdater({ requestId, version: expectedVersion, channel: selectedChannel, phase: "done", received: total, total });
       // The real shell relaunches here; the mock just stops.
     },
     async ApplyUpdate() {
-      await this.DownloadUpdate("");
-      await this.InstallUpdate("");
+      await this.DownloadUpdate("stable", "v1.1.0", "mock-apply-download");
+      await this.InstallUpdate("stable", "v1.1.0", "mock-apply-install");
     },
     async OpenDownloadPage() {
       if (typeof window !== "undefined") {

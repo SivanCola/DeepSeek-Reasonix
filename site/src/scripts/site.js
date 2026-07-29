@@ -1,5 +1,13 @@
 import { downloadPaneFromURL, downloadURLForPane, releaseChannelFromURL } from "./download-link.js";
-import { cliReleaseModel, cliUpgradeCommand, desktopReleaseModel, fetchFirstJSON, normalizePublicReleaseChannel } from "./release-channels.js";
+import {
+  cliReleaseModel,
+  cliUpgradeCommand,
+  desktopGitHubReleaseModel,
+  desktopReleaseModel,
+  fetchFirstJSON,
+  normalizePublicReleaseChannel,
+  releaseVersionLabel,
+} from "./release-channels.js";
 import { initTheme } from "./theme.js";
 
 // Reasonix site — vanilla interactions
@@ -65,13 +73,36 @@ import { initTheme } from "./theme.js";
   const tabs = Array.from(document.querySelectorAll(".dl-tab"));
   const panes = Array.from(document.querySelectorAll(".dl-pane"));
   const activatePane = (name) => {
-    tabs.forEach((b) => b.classList.toggle("active", b.dataset.pane === name));
-    panes.forEach((p) => p.classList.toggle("active", p.dataset.pane === name));
+    tabs.forEach((b) => {
+      const active = b.dataset.pane === name;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-selected", active ? "true" : "false");
+      b.tabIndex = active ? 0 : -1;
+    });
+    panes.forEach((p) => {
+      const active = p.dataset.pane === name;
+      p.classList.toggle("active", active);
+      p.hidden = !active;
+    });
   };
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
       activatePane(tab.dataset.pane);
       reflectPaneURL(tab.dataset.pane);
+    });
+    tab.addEventListener("keydown", (event) => {
+      const current = tabs.indexOf(tab);
+      let next = -1;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") next = (current + 1) % tabs.length;
+      else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = (current - 1 + tabs.length) % tabs.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = tabs.length - 1;
+      if (next < 0) return;
+      event.preventDefault();
+      const nextTab = tabs[next];
+      activatePane(nextTab.dataset.pane);
+      reflectPaneURL(nextTab.dataset.pane);
+      nextTab.focus();
     });
   });
 
@@ -208,7 +239,6 @@ import { initTheme } from "./theme.js";
     cli: { stable: null, preview: null },
   };
   const selectedChannels = { desktop: "stable", cli: "stable" };
-  const desktopPreviewBase = "https://dl.reasonix.io/desktop-preview/";
   const releasesPage = "https://github.com/esengine/DeepSeek-Reasonix/releases";
   const reflectPaneURL = (surface) => {
     const nextURL = downloadURLForPane(window.location.href, surface, selectedChannels[surface]);
@@ -220,27 +250,22 @@ import { initTheme } from "./theme.js";
   // [data-release-version="<surface>"]; never let Desktop and CLI race on .rxv.
   const updateCLIPackageVersion = (model) => {
     if (!model) return;
-    document.querySelectorAll(".rxv").forEach((element) => { element.textContent = model.displayVersion; });
+    document.querySelectorAll(".rxv").forEach((element) => { element.textContent = releaseVersionLabel(model); });
     document.querySelectorAll("a.rxnotes").forEach((link) => {
       link.href = new URL("changelog/v" + model.displayVersion + "/", window.location.origin + "/").href;
     });
   };
 
-  const fallbackReleaseURL = (surface, channel, asset) => {
-    if (surface === "desktop" && channel === "preview") return desktopPreviewBase + asset;
-    if (surface === "desktop") {
-      return "https://github.com/esengine/DeepSeek-Reasonix/releases/latest/download/" + asset;
-    }
-    // CLI releases set make_latest:false; GitHub "latest" is Desktop stable.
-    // Never construct CLI asset URLs against /releases/latest.
-    return releasesPage;
-  };
+  // Never synthesize public artifact URLs. If every required asset is not
+  // attested by live release data, fall back to the release list instead of a
+  // plausible-looking URL that may 404.
+  const fallbackReleaseURL = () => releasesPage;
 
   const renderReleaseSurface = (surface) => {
     const channel = selectedChannels[surface];
     const model = releaseModels[surface][channel];
     document.querySelectorAll('[data-release-version="' + surface + '"]').forEach((element) => {
-      element.textContent = model?.displayVersion || "latest";
+      element.textContent = releaseVersionLabel(model);
     });
     document.querySelectorAll('[data-release-summary="' + surface + '"] [data-channel-copy]').forEach((copy) => {
       copy.hidden = copy.dataset.channelCopy !== channel;
@@ -298,9 +323,21 @@ import { initTheme } from "./theme.js";
     ],
   };
   ["stable", "preview"].forEach((channel) => {
-    fetchFirstJSON(desktopEndpoints[channel])
-      .then((manifest) => {
-        const model = desktopReleaseModel(manifest, channel);
+    const manifestModel = fetchFirstJSON(
+      desktopEndpoints[channel],
+      fetch,
+      (manifest) => Boolean(desktopReleaseModel(manifest, channel)),
+    )
+      .then((manifest) => desktopReleaseModel(manifest, channel));
+    const modelRequest = channel === "stable"
+      ? manifestModel.catch(() => fetchFirstJSON(
+        ["https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/latest"],
+        fetch,
+        (release) => Boolean(desktopGitHubReleaseModel(release)),
+      ).then(desktopGitHubReleaseModel))
+      : manifestModel;
+    modelRequest
+      .then((model) => {
         if (!model) return;
         releaseModels.desktop[channel] = model;
         if (selectedChannels.desktop === channel) renderReleaseSurface("desktop");
@@ -316,7 +353,11 @@ import { initTheme } from "./theme.js";
     return githubCLIReleases;
   };
   ["stable", "preview"].forEach((channel) => {
-    fetchFirstJSON([`https://crash.reasonix.io/v1/cli/releases/${channel}/latest.json`])
+    fetchFirstJSON(
+      [`https://crash.reasonix.io/v1/cli/releases/${channel}/latest.json`],
+      fetch,
+      (payload) => Boolean(cliReleaseModel(Array.isArray(payload) ? payload : [payload], channel)),
+    )
       .catch(() => fallbackCLIReleases())
       .then((payload) => {
         const releases = Array.isArray(payload) ? payload : payload ? [payload] : [];

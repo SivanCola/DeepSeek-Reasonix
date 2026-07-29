@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"reasonix/internal/fileutil"
 	fileencoding "reasonix/internal/fileutil/encoding"
@@ -55,6 +54,14 @@ func loadForRoot(root string, migrateOnDisk bool) (*Config, error) {
 	projectTOML := "reasonix.toml"
 	if root != "." {
 		projectTOML = filepath.Join(root, "reasonix.toml")
+	}
+	if primary := userConfigPath(); primary != "" {
+		if _, err := resolveConfigAccessPath(primary, true); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := resolveConfigAccessPath(projectTOML, false); err != nil {
+		return nil, err
 	}
 
 	mergeTOML := mergeFile
@@ -393,7 +400,11 @@ func mergeTOMLPlugins(paths []string) ([]PluginEntry, error) {
 	var merged []PluginEntry
 	index := map[string]int{}
 	for _, path := range paths {
-		if _, err := os.Stat(path); err != nil {
+		_, exists, err := statConfigPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("config %s: %w", path, err)
+		}
+		if !exists {
 			continue
 		}
 		var f Config
@@ -430,7 +441,11 @@ func mergeTOMLProviders(paths []string) ([]ProviderEntry, map[string]providerSou
 	sources := map[string]providerSourceScope{}
 	saw := false
 	for _, path := range paths {
-		if _, err := os.Stat(path); err != nil {
+		_, exists, err := statConfigPath(path)
+		if err != nil {
+			return nil, nil, nil, false, fmt.Errorf("config %s: %w", path, err)
+		}
+		if !exists {
 			continue
 		}
 		var f Config
@@ -484,7 +499,11 @@ func mergeTOMLProviderAccess(paths []string) ([]string, bool, error) {
 	seen := map[string]bool{}
 	saw := false
 	for _, path := range paths {
-		if _, err := os.Stat(path); err != nil {
+		_, exists, err := statConfigPath(path)
+		if err != nil {
+			return nil, false, fmt.Errorf("config %s: %w", path, err)
+		}
+		if !exists {
 			continue
 		}
 		var f Config
@@ -530,11 +549,12 @@ func InspectConfigFileDeclarations(path string) (ConfigFileDeclarations, error) 
 	if path == "" {
 		return declarations, nil
 	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return declarations, nil
-		}
+	_, exists, err := statConfigPath(path)
+	if err != nil {
 		return declarations, err
+	}
+	if !exists {
+		return declarations, nil
 	}
 	var f Config
 	meta, err := decodeTOMLFile(path, &f)
@@ -567,7 +587,7 @@ func DesktopProviderAccessDeclared(path string) (bool, error) {
 // of resetting to defaults. Reasonix's global .env is loaded so api_key_env
 // resolution works while the wizard decides which keys are still missing.
 func LoadForEdit(path string) *Config {
-	return loadForEdit(path, true, true)
+	return loadForEdit(path, true, false)
 }
 
 // LoadForEditReadOnlyStrict is the error-returning commit-time variant. It must
@@ -577,6 +597,13 @@ func LoadForEditReadOnlyStrict(path string) (*Config, error) {
 	return loadForEditStrict(path, true, false)
 }
 
+// LoadForEditWithoutCredentialsReadOnlyStrict is the credential-free strict
+// edit loader. It never writes migrations and never substitutes defaults for a
+// malformed file.
+func LoadForEditWithoutCredentialsReadOnlyStrict(path string) (*Config, error) {
+	return loadForEditStrict(path, false, false)
+}
+
 // ValidateFile parses one TOML config in isolation without loading credentials,
 // applying migrations, or writing the file. A missing file is valid.
 func ValidateFile(path string) error {
@@ -584,11 +611,12 @@ func ValidateFile(path string) error {
 	if path == "" {
 		return nil
 	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
+	_, exists, err := statConfigPath(path)
+	if err != nil {
 		return err
+	}
+	if !exists {
+		return nil
 	}
 	cfg := Default()
 	if _, err := decodeTOMLFile(path, cfg); err != nil {
@@ -608,11 +636,12 @@ func loadForEdit(path string, loadCredentials, persistMigrations bool) *Config {
 	}
 	cfg = Default()
 	normalizeConfigForEdit(cfg)
+	cfg.editLoadErr = err
 	return cfg
 }
 
 func LoadForEditWithoutCredentials(path string) *Config {
-	return loadForEdit(path, false, true)
+	return loadForEdit(path, false, false)
 }
 
 func loadForEditStrict(path string, loadCredentials, persistMigrations bool) (*Config, error) {
@@ -620,13 +649,6 @@ func loadForEditStrict(path string, loadCredentials, persistMigrations bool) (*C
 		loadDotEnvForEditPath(path)
 	}
 	cfg := Default()
-	if persistMigrations {
-		if _, err := os.Stat(path); err == nil {
-			if err := migrateLegacyMCPTiersFile(path); err != nil {
-				return nil, fmt.Errorf("config %s: %w", path, err)
-			}
-		}
-	}
 	if err := mergeFile(cfg, path); err != nil {
 		return nil, err
 	}
@@ -685,16 +707,20 @@ func loadDotEnvForEditPath(path string) {
 
 // mergeFile decodes a TOML file onto cfg if it exists. An absent file is not an error.
 func mergeFile(cfg *Config, path string) error {
-	if _, err := os.Stat(path); err != nil {
+	resolved, exists, err := statConfigPath(path)
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return nil
 	}
-	meta, err := decodeTOMLFile(path, cfg)
+	meta, err := decodeTOMLFileResolved(resolved, cfg)
 	if err != nil {
 		return fmt.Errorf("config %s: %w", path, err)
 	}
 	if meta.IsDefined("providers") {
 		var persisted Config
-		if _, err := decodeTOMLFile(path, &persisted); err != nil {
+		if _, err := decodeTOMLFileResolved(resolved, &persisted); err != nil {
 			return fmt.Errorf("config %s: %w", path, err)
 		}
 		markPersistedDeepSeekOfficialPricing(&persisted)
@@ -743,12 +769,6 @@ func normalizeLegacyAgentStepLimits(c *Config) bool {
 	return found
 }
 
-// retiredConfigKeyMigrationMu serializes the independent one-time removals
-// below. They may target the same user/project TOML files from concurrent
-// desktop builds, so separate locks could race and restore a key another
-// migration had just removed.
-var retiredConfigKeyMigrationMu sync.Mutex
-
 // MigrateLegacyAgentStepLimitsForRoot removes retired [agent] step-limit keys
 // from the user and project config selected for root. Boot calls it immediately
 // before LoadForRoot, so config-only/read-only commands never rewrite files and
@@ -786,28 +806,7 @@ func MigrateLegacyAgentStepLimitsForRoot(root string) (bool, error) {
 // before runtime decoding. A process-wide lock makes concurrent desktop tab
 // builds observe a single migration; the atomic rewrite protects other readers.
 func migrateLegacyAgentStepLimitsFile(path string) (bool, error) {
-	retiredConfigKeyMigrationMu.Lock()
-	defer retiredConfigKeyMigrationMu.Unlock()
-
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	raw, err := fileencoding.ReadFileUTF8(path)
-	if err != nil {
-		return false, err
-	}
-	next, changed := stripLegacyAgentStepLimitLines(string(raw))
-	if !changed {
-		return false, nil
-	}
-	if err := fileutil.AtomicWriteFile(path, []byte(next), info.Mode().Perm()); err != nil {
-		return false, err
-	}
-	return true, nil
+	return migrateRetiredConfigKeysFile(path, stripLegacyAgentStepLimitLines)
 }
 
 func stripLegacyAgentStepLimitLines(raw string) (string, bool) {
@@ -849,28 +848,7 @@ func MigrateLegacyRedactToolOutputForRoot(root string) (bool, error) {
 }
 
 func migrateLegacyRedactToolOutputFile(path string) (bool, error) {
-	retiredConfigKeyMigrationMu.Lock()
-	defer retiredConfigKeyMigrationMu.Unlock()
-
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	raw, err := fileencoding.ReadFileUTF8(path)
-	if err != nil {
-		return false, err
-	}
-	next, changed := stripLegacyRedactToolOutputLines(string(raw))
-	if !changed {
-		return false, nil
-	}
-	if err := fileutil.AtomicWriteFile(path, []byte(next), info.Mode().Perm()); err != nil {
-		return false, err
-	}
-	return true, nil
+	return migrateRetiredConfigKeysFile(path, stripLegacyRedactToolOutputLines)
 }
 
 func stripLegacyRedactToolOutputLines(raw string) (string, bool) {
@@ -912,25 +890,35 @@ func MigrateLegacyMemoryCompilerForRoot(root string) (bool, error) {
 }
 
 func migrateLegacyMemoryCompilerFile(path string) (bool, error) {
-	retiredConfigKeyMigrationMu.Lock()
-	defer retiredConfigKeyMigrationMu.Unlock()
+	return migrateRetiredConfigKeysFile(path, stripLegacyMemoryCompilerLines)
+}
 
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	raw, err := fileencoding.ReadFileUTF8(path)
+func migrateRetiredConfigKeysFile(path string, strip func(string) (string, bool)) (bool, error) {
+	unlock, err := LockConfigFileEdits(path)
 	if err != nil {
 		return false, err
 	}
-	next, changed := stripLegacyMemoryCompilerLines(string(raw))
+	defer unlock()
+	resolved, exists, err := statConfigPath(path)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return false, err
+	}
+	raw, err := fileencoding.ReadFileUTF8(resolved)
+	if err != nil {
+		return false, err
+	}
+	next, changed := strip(string(raw))
 	if !changed {
 		return false, nil
 	}
-	if err := fileutil.AtomicWriteFile(path, []byte(next), info.Mode().Perm()); err != nil {
+	if err := fileutil.AtomicWriteFile(resolved, []byte(next), info.Mode().Perm()); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -941,19 +929,8 @@ func stripLegacyMemoryCompilerLines(raw string) (string, bool) {
 }
 
 func migrateLegacyMCPTiersFile(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	raw, err := fileencoding.ReadFileUTF8(path)
-	if err != nil {
-		return err
-	}
-	next, changed := stripLegacyMCPTierLines(string(raw))
-	if !changed {
-		return nil
-	}
-	return os.WriteFile(path, []byte(next), info.Mode().Perm())
+	_, err := migrateRetiredConfigKeysFile(path, stripLegacyMCPTierLines)
+	return err
 }
 
 func stripLegacyMCPTierLines(raw string) (string, bool) {

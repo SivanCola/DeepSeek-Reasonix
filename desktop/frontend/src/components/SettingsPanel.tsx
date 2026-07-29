@@ -6710,7 +6710,7 @@ function UpdatesSection({
   applySettings: (fn: () => Promise<void>) => Promise<boolean>;
 }) {
   const t = useT();
-  const { status, check, download: downloadUpdate, install: installUpdate, openDownload } = useUpdater();
+  const { status, check, download: downloadUpdate, install: installUpdate, openDownload, reset: resetUpdater } = useUpdater();
   const selectedChannel = updateChannel === "preview" ? "preview" : "stable";
   const [version, setVersion] = useState("");
   useEffect(() => {
@@ -6779,10 +6779,12 @@ function UpdatesSection({
                 type="button"
                 disabled={settingsBusy || updaterBusy}
                 className={selectedChannel === nextChannel ? "provider-add-segmented__item provider-add-segmented__item--active" : "provider-add-segmented__item"}
+                aria-pressed={selectedChannel === nextChannel}
                 onClick={() => {
                   if (nextChannel === selectedChannel) return;
                   void switchUpdaterChannel(
                     nextChannel,
+                    resetUpdater,
                     () => applySettings(() => app.SetDesktopUpdateChannel(nextChannel)),
                     check,
                   );
@@ -6805,20 +6807,37 @@ function UpdatesSection({
           </Tooltip>
         </div>
       </SettingsField>
-      <div className="updates-control__hint">{t("updater.channelAutoCheckHint")}</div>
+      <div className="updates-control__hint">
+        <div>{t("updater.channelSettingHint")}</div>
+        <div>{t("updater.channelAutoCheckHint")}</div>
+      </div>
       {(status.kind === "available" || status.kind === "downloaded") && (
         <div className="updates-control__action">
           <div className="updates-control__action-copy">
-            {status.kind === "available" && <div>{t("updater.channelLabel", { channel: status.info.channel || "stable" })}</div>}
+            {status.kind === "available" && (
+              <div>
+                {t("updater.channelLabel", {
+                  channel: status.info.channel === "preview" ? t("updater.channelPreview") : t("updater.channelStable"),
+                })}
+              </div>
+            )}
             {status.kind === "available" && !status.info.canSelfUpdate && <div>{status.info.manualReason || t("updater.macHint")}</div>}
           </div>
           {status.kind === "available" && (
-            <button className="btn btn--primary btn--small" onClick={() => downloadUpdate(status.info)}>
+            <button
+              className="btn btn--primary btn--small"
+              disabled={settingsBusy || updaterBusy}
+              onClick={() => downloadUpdate(status.info)}
+            >
               {status.info.canSelfUpdate ? t("updater.downloadUpdate") : t("updater.goToDownload")}
             </button>
           )}
           {status.kind === "downloaded" && (
-            <button className="btn btn--primary btn--small" onClick={installUpdate}>
+            <button
+              className="btn btn--primary btn--small"
+              disabled={settingsBusy || updaterBusy}
+              onClick={installUpdate}
+            >
               {status.info.requiresElevation || status.info.installMode === "deb"
                 ? t("updater.authorizeInstall")
                 : t("updater.restartInstall")}
