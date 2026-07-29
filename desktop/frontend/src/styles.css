@@ -99,8 +99,9 @@
   --shadow-2: 0 14px 40px rgba(0, 0, 0, 0.28);
 
   /* z-index scale */
-  --z-transcript-scene-image: -2;
-  --z-transcript-scene-overlay: -1;
+  --z-transcript-scene-image: 0;
+  --z-transcript-scene-overlay: 1;
+  --z-transcript-content: 2;
   --z-theme-bg: 0;
   --z-app-content: 1;
   --z-local-raised: 2;
@@ -33671,6 +33672,11 @@ body > .mermaid-diagram--fullscreen {
   background-repeat: no-repeat, no-repeat;
   background-position: center, center;
   background-size: 100% 100%, 100% 100%;
+}
+
+:root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript > * {
+  position: relative;
+  z-index: var(--z-transcript-content);
 }
 
 :root[data-platform="windows"][data-theme-pack][data-theme-has-bg="true"][data-theme-scene="task"] .app:not(.app--creation) .chat-pane > .main > .transcript-shell > .transcript {

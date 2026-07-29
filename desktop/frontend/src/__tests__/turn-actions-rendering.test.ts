@@ -58,6 +58,7 @@ const windowsTranscriptRule = ruleBody(windowsPrimaryTranscriptSelector);
 const windowsThemeTranscriptRule = ruleBody(windowsThemeTranscriptSelector);
 const windowsThemeImageRule = ruleBody(`${windowsThemeTranscriptSelector}::before`);
 const windowsThemeOverlayRule = ruleBody(`${windowsThemeTranscriptSelector}::after`);
+const windowsThemeContentRule = ruleBody(`${windowsThemeTranscriptSelector} > *`);
 const windowsTaskTranscriptRule = ruleBody(windowsTaskTranscriptSelector);
 const windowsTaskLeftTranscriptRule = ruleBody(windowsTaskLeftTranscriptSelector);
 const windowsTaskRightTranscriptRule = ruleBody(windowsTaskRightTranscriptSelector);
@@ -110,6 +111,19 @@ ok(
     /var\(--windows-transcript-scene-overlay\)/.test(windowsThemeOverlayRule) &&
     /background-size:\s*100%\s+100%,\s*100%\s+100%;/.test(windowsThemeOverlayRule),
   "Windows theme pane and safe-area wash preserve the viewport-sized overlay geometry",
+);
+
+const transcriptImageZ = Number(styles.match(/--z-transcript-scene-image:\s*(-?\d+);/)?.[1]);
+const transcriptOverlayZ = Number(styles.match(/--z-transcript-scene-overlay:\s*(-?\d+);/)?.[1]);
+const transcriptContentZ = Number(styles.match(/--z-transcript-content:\s*(-?\d+);/)?.[1]);
+
+ok(
+  transcriptImageZ >= 0 &&
+    transcriptOverlayZ > transcriptImageZ &&
+    transcriptContentZ > transcriptOverlayZ &&
+    /position:\s*relative;/.test(windowsThemeContentRule) &&
+    /z-index:\s*var\(--z-transcript-content\);/.test(windowsThemeContentRule),
+  "Windows theme layers paint above the opaque backing and below transcript content",
 );
 
 ok(
