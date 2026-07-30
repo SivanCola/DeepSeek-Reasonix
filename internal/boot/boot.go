@@ -10,6 +10,8 @@ package boot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -327,9 +329,17 @@ func Build(ctx context.Context, opts Options) (ctrl *control.Controller, err err
 	// background jobs, Delivery leases, and LSP survive the rebuild. When the
 	// caller supplies a bag, retain it for this controller; release on any
 	// later assembly failure so the old controller's bag is untouched.
+	workspaceKey := ""
+	if canonical, canErr := workspacelease.CanonicalWorkspace(root); canErr == nil {
+		workspaceKey = canonical
+	}
+	resourceConfigKey := SessionResourceConfigKey(cfg)
 	sessionResources := opts.SessionResources
 	reusedSessionResources := sessionResources != nil
 	if sessionResources != nil {
+		if !sessionResources.CompatibleWith(workspaceKey, tokenMode, resourceConfigKey) {
+			return nil, errors.New("session resources are incompatible with the current runtime configuration")
+		}
 		if !sessionResources.Retain() {
 			return nil, errors.New("session resources are closed")
 		}
@@ -357,6 +367,15 @@ func Build(ctx context.Context, opts Options) (ctrl *control.Controller, err err
 			// would split ownership. Fail closed so the old controller keeps
 			// its exclusive bag.
 			return nil, errors.New("session resources missing job manager")
+		}
+		if subagentScheduler == nil {
+			return nil, errors.New("session resources missing subagent scheduler")
+		}
+		if cfg.LSP.Enabled && lspMgr == nil {
+			return nil, errors.New("session resources missing enabled LSP manager")
+		}
+		if tokenDelivery && workspaceLease == nil {
+			return nil, errors.New("session resources missing Delivery workspace lease")
 		}
 	} else {
 		jobOptions := []jobs.Option{
@@ -1746,17 +1765,14 @@ func Build(ctx context.Context, opts Options) (ctrl *control.Controller, err err
 		OnSessionRecovered:  opts.OnSessionRecovered,
 	}
 	if sessionResources == nil {
-		workspaceKey := ""
-		if canonical, canErr := workspacelease.CanonicalWorkspace(root); canErr == nil {
-			workspaceKey = canonical
-		}
 		sessionResources = sessionruntime.New(sessionruntime.Config{
 			Jobs:           jm,
 			Scheduler:      subagentScheduler,
 			WorkspaceLease: workspaceLease,
 			LSP:            lspMgr,
 			WorkspaceKey:   workspaceKey,
-			RuntimeKey:     strings.TrimSpace(opts.TokenMode),
+			RuntimeKey:     tokenMode,
+			ConfigKey:      resourceConfigKey,
 		})
 	}
 	ctrlOpts.SessionResources = sessionResources
@@ -2638,6 +2654,47 @@ func LSPSpecs(cfg config.LSPConfig) map[string]lsp.ServerSpec {
 		specs[lang] = spec
 	}
 	return specs
+}
+
+// SessionResourceConfigKey fingerprints only configuration owned by resources
+// that survive a controller rebuild. Model/provider/prompt settings are
+// deliberately excluded: the replacement controller owns those independently.
+// JSON sorts map keys, so equivalent LSP maps produce the same digest regardless
+// of TOML insertion order. The digest avoids retaining LSP environment values in
+// an exported diagnostic field.
+func SessionResourceConfigKey(cfg *config.Config) string {
+	if cfg == nil {
+		return "invalid:nil-config"
+	}
+	maxSubagents, maxWriters := agent.NormalizeConcurrencyLimits(
+		cfg.Agent.MaxSubagentConcurrency,
+		cfg.Agent.MaxParallelWriters,
+	)
+	fingerprint := struct {
+		Version                        int                       `json:"version"`
+		BackgroundJobStalledWarningSec int                       `json:"background_job_stalled_warning_sec"`
+		MaxSubagents                   int                       `json:"max_subagents"`
+		MaxWriters                     int                       `json:"max_writers"`
+		LSPEnabled                     bool                      `json:"lsp_enabled"`
+		LSPSpecs                       map[string]lsp.ServerSpec `json:"lsp_specs,omitempty"`
+	}{
+		Version:                        1,
+		BackgroundJobStalledWarningSec: cfg.BackgroundJobStalledWarningSeconds(),
+		MaxSubagents:                   maxSubagents,
+		MaxWriters:                     maxWriters,
+		LSPEnabled:                     cfg.LSP.Enabled,
+	}
+	if cfg.LSP.Enabled {
+		fingerprint.LSPSpecs = LSPSpecs(cfg.LSP)
+	}
+	encoded, err := json.Marshal(fingerprint)
+	if err != nil {
+		// The payload contains only JSON-safe scalar, slice, and string-map
+		// fields. Preserve fail-closed compatibility if that invariant changes.
+		return "invalid:resource-config"
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("%x", digest)
 }
 
 func providerNames(cfg *config.Config) string {

@@ -36,6 +36,7 @@ import (
 	"reasonix/internal/pluginpkg"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/sessionruntime"
 	"reasonix/internal/skill"
 	"reasonix/internal/store"
 	"reasonix/internal/tool"
@@ -3574,6 +3575,7 @@ func TestSetModelForTabKeepsBackgroundJobsAlive(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.DefaultModel = "old/old-model"
+	cfg.LSP.Enabled = false
 	cfg.Desktop.ProviderAccess = []string{"old", "new"}
 	cfg.Providers = []config.ProviderEntry{
 		{Name: "old", Kind: "openai", BaseURL: "https://example.invalid/v1", Model: "old-model", APIKeyEnv: "OLD_MODEL_KEY"},
@@ -3592,8 +3594,19 @@ func TestSetModelForTabKeepsBackgroundJobsAlive(t *testing.T) {
 	oldSession := agent.NewSession("sys")
 	oldSession.Add(provider.Message{Role: provider.RoleUser, Content: "run server"})
 	oldExec := agent.New(nil, nil, oldSession, agent.Options{Jobs: jm}, event.Discard)
+	maxSubagents, maxWriters := agent.NormalizeConcurrencyLimits(
+		cfg.Agent.MaxSubagentConcurrency,
+		cfg.Agent.MaxParallelWriters,
+	)
+	resources := sessionruntime.New(sessionruntime.Config{
+		Jobs:       jm,
+		Scheduler:  agent.NewSubagentScheduler(maxSubagents, maxWriters),
+		RuntimeKey: boot.TokenModeFull,
+		ConfigKey:  boot.SessionResourceConfigKey(cfg),
+	})
 	oldCtrl := control.New(control.Options{
-		Executor: oldExec, SessionDir: dir, SessionPath: oldPath, Label: "old", Sink: event.Discard, Jobs: jm,
+		Executor: oldExec, SessionDir: dir, SessionPath: oldPath, Label: "old", Sink: event.Discard,
+		Jobs: jm, SessionResources: resources,
 	})
 	// Cooperative job: exits on cancel so Close/Done do not hang in cleanup.
 	started := make(chan struct{})
@@ -3650,6 +3663,28 @@ func TestSetModelForTabKeepsBackgroundJobsAlive(t *testing.T) {
 	newJobs := tab.Ctrl.Jobs()
 	if len(newJobs) != 1 || newJobs[0].ID != jobID {
 		t.Fatalf("new controller jobs = %+v, want id %q preserved", newJobs, jobID)
+	}
+	// A later resource-owned config change must not silently reuse the old scheduler/LSP
+	// bag. While the migrated job is still live, fail atomically and keep the
+	// current controller/job untouched.
+	cfg.LSP.Enabled = true
+	cfg.LSP.Servers = map[string]config.LSPServer{
+		"go": {Command: "custom-gopls"},
+	}
+	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
+		t.Fatalf("save changed resource config: %v", err)
+	}
+	currentCtrl := tab.Ctrl
+	err := app.SetModelForTab(tab.ID, "old/old-model")
+	var busy *rebuildBusyError
+	if !errors.As(err, &busy) {
+		t.Fatalf("SetModelForTab with incompatible live resources error = %v, want rebuildBusyError", err)
+	}
+	if tab.Ctrl != currentCtrl || tab.model != "new/new-model" {
+		t.Fatal("failed incompatible-resource switch replaced the current controller")
+	}
+	if got := tab.Ctrl.Jobs(); len(got) != 1 || got[0].ID != jobID {
+		t.Fatalf("jobs after rejected incompatible-resource switch = %+v, want id %q", got, jobID)
 	}
 	// New controller can cancel the migrated job.
 	if !app.CancelJobForTab(tab.ID, jobID) {

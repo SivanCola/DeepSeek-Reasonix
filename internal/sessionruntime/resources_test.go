@@ -124,22 +124,31 @@ func TestResourcesReleaseKeepsTeardownGraceBounded(t *testing.T) {
 
 func TestResourcesCompatibleWith(t *testing.T) {
 	t.Parallel()
-	res := New(Config{WorkspaceKey: "/ws", RuntimeKey: "delivery"})
-	if !res.CompatibleWith("/ws", "delivery") {
+	res := New(Config{WorkspaceKey: "/ws", RuntimeKey: "delivery", ConfigKey: "cfg-a"})
+	if !res.CompatibleWith("/ws", "delivery", "cfg-a") {
 		t.Fatal("same keys should be compatible")
 	}
-	if res.CompatibleWith("/other", "delivery") {
+	if res.CompatibleWith("/other", "delivery", "cfg-a") {
 		t.Fatal("workspace mismatch should fail")
 	}
-	if res.CompatibleWith("/ws", "economy") {
+	if res.CompatibleWith("/ws", "economy", "cfg-a") {
 		t.Fatal("runtime mismatch should fail")
 	}
-	if !res.CompatibleWith("", "") {
+	if res.CompatibleWith("/ws", "delivery", "cfg-b") {
+		t.Fatal("resource configuration mismatch should fail")
+	}
+	if unkeyed := New(Config{WorkspaceKey: "/ws", RuntimeKey: "delivery"}); unkeyed.CompatibleWith("/ws", "delivery", "cfg-a") {
+		t.Fatal("unkeyed resources must not satisfy an explicit configuration key")
+	} else {
+		unkeyed.Release()
+		<-unkeyed.Done()
+	}
+	if !res.CompatibleWith("", "", "") {
 		t.Fatal("empty expected keys should not block")
 	}
 	res.Release()
 	<-res.Done()
-	if res.CompatibleWith("/ws", "delivery") {
+	if res.CompatibleWith("/ws", "delivery", "cfg-a") {
 		t.Fatal("closed resources must not be compatible")
 	}
 }

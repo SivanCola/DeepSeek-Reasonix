@@ -34,6 +34,10 @@ type Resources struct {
 	// was built for. Model switches keep the same key; token-mode rebuilds do
 	// not reuse a bag with a different key.
 	RuntimeKey string
+	// ConfigKey fingerprints configuration owned by the shared components
+	// (background jobs, scheduler, and LSP). A controller rebuild must not reuse
+	// the bag when that effective configuration changed.
+	ConfigKey string
 
 	mu      sync.Mutex
 	refs    int
@@ -50,6 +54,7 @@ type Config struct {
 	LSP            *lsp.Manager
 	WorkspaceKey   string
 	RuntimeKey     string
+	ConfigKey      string
 }
 
 // New returns a Resources bag with one reference held for the first consumer
@@ -62,6 +67,7 @@ func New(cfg Config) *Resources {
 		LSP:            cfg.LSP,
 		WorkspaceKey:   strings.TrimSpace(cfg.WorkspaceKey),
 		RuntimeKey:     strings.TrimSpace(cfg.RuntimeKey),
+		ConfigKey:      strings.TrimSpace(cfg.ConfigKey),
 		refs:           1,
 		done:           make(chan struct{}),
 	}
@@ -146,9 +152,10 @@ func (r *Resources) Done() <-chan struct{} {
 }
 
 // CompatibleWith reports whether r can be reused for a controller rebuild that
-// targets the same workspace and runtime profile. Empty expected keys are
-// treated as "unspecified" and do not block reuse.
-func (r *Resources) CompatibleWith(workspaceKey, runtimeKey string) bool {
+// targets the same workspace, runtime profile, and resource-owned
+// configuration. Empty expected keys are treated as "unspecified"; an explicit
+// config key still requires an exact match.
+func (r *Resources) CompatibleWith(workspaceKey, runtimeKey, configKey string) bool {
 	if r == nil {
 		return false
 	}
@@ -159,10 +166,17 @@ func (r *Resources) CompatibleWith(workspaceKey, runtimeKey string) bool {
 	}
 	workspaceKey = strings.TrimSpace(workspaceKey)
 	runtimeKey = strings.TrimSpace(runtimeKey)
+	configKey = strings.TrimSpace(configKey)
 	if workspaceKey != "" && r.WorkspaceKey != "" && workspaceKey != r.WorkspaceKey {
 		return false
 	}
 	if runtimeKey != "" && r.RuntimeKey != "" && runtimeKey != r.RuntimeKey {
+		return false
+	}
+	// ConfigKey is intentionally strict when the rebuild supplies an expected
+	// key. Unlike legacy workspace/runtime wildcards, an unkeyed bag cannot
+	// prove that its LSP/scheduler/job settings match the current configuration.
+	if configKey != "" && configKey != r.ConfigKey {
 		return false
 	}
 	return true

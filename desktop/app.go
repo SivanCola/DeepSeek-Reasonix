@@ -9660,7 +9660,11 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		if canonical, canErr := workspacelease.CanonicalWorkspace(snap.workspaceRoot); canErr == nil {
 			workspaceKey = canonical
 		}
-		if !sessionResources.CompatibleWith(workspaceKey, runtime.tokenMode) {
+		if !sessionResources.CompatibleWith(
+			workspaceKey,
+			boot.NormalizeTokenMode(runtime.tokenMode),
+			boot.SessionResourceConfigKey(cfg),
+		) {
 			sessionResources = nil
 		}
 	}

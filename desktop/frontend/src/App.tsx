@@ -44,6 +44,11 @@ import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n,
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, onWorkbenchTarget, openExternal } from "./lib/bridge";
 import { preferredRemoteWorkspace, workbenchTargetTransitioning, type WorkbenchActiveTarget } from "./lib/workbenchTarget";
+import {
+  consumeQuotaRecoveryIntent,
+  quotaRecoverySessionPath,
+  type QuotaRecoveryIntent,
+} from "./lib/quotaRecovery";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { NoticeCard, Transcript } from "./components/Transcript";
@@ -1892,8 +1897,8 @@ export default function App() {
 
   // Quota recovery intent: only auto-continue after a model switch that was
   // started from the quota-exhausted recovery card on the same tab+session.
-  const quotaRecoveryIntentRef = useRef<{ tabId: string; sessionPath: string } | null>(null);
-  const quotaRecoveryPickInFlightRef = useRef(false);
+  const quotaRecoveryIntentRef = useRef<QuotaRecoveryIntent | null>(null);
+  const quotaRecoveryPicksInFlightRef = useRef(0);
   const [modelSwitcherOpenSignal, setModelSwitcherOpenSignal] = useState(0);
 
   // Switching models rebuilds the controller, which starts in normal mode — so
@@ -1902,13 +1907,13 @@ export default function App() {
   const switchModel = useCallback(
     async (name: string) => {
       const intentAtStart = quotaRecoveryIntentRef.current;
-      const sessionPathAtStart = (activeTab?.sessionPath ?? state.meta?.sessionPath ?? "").trim();
+      const sessionPathAtStart = quotaRecoverySessionPath(activeTab?.sessionPath, state.meta?.sessionPath);
       const fromQuotaRecovery =
         Boolean(intentAtStart) &&
         intentAtStart?.tabId === activeTabId &&
         intentAtStart?.sessionPath === sessionPathAtStart;
       if (fromQuotaRecovery) {
-        quotaRecoveryPickInFlightRef.current = true;
+        quotaRecoveryPicksInFlightRef.current += 1;
       }
       try {
         const switched = await setModel(name);
@@ -1922,9 +1927,10 @@ export default function App() {
           { propagateError: true },
         );
         if (!profileApplied) return false;
-        if (fromQuotaRecovery) {
-          // Consume once so a later ordinary model switch does not re-fire recovery.
-          quotaRecoveryIntentRef.current = null;
+        if (fromQuotaRecovery && consumeQuotaRecoveryIntent(quotaRecoveryIntentRef, intentAtStart)) {
+          // Consume only the attempt that is still current. Navigation clears the
+          // ref, and a newer card action replaces it, before this async rebuild
+          // finishes.
           notice(t("notice.quotaRecoveryContinuing", { model: name }), "info");
           void app.SubmitQuotaRecoveryForTab(activeTabId).catch((err) => {
             notice(err instanceof Error ? err.message : String(err), "warn");
@@ -1932,7 +1938,9 @@ export default function App() {
         }
         return true;
       } finally {
-        quotaRecoveryPickInFlightRef.current = false;
+        if (fromQuotaRecovery) {
+          quotaRecoveryPicksInFlightRef.current = Math.max(0, quotaRecoveryPicksInFlightRef.current - 1);
+        }
       }
     },
     [activeTabId, activeTab?.sessionPath, composerProfile, goal, notice, setControllerComposerProfileForTab, setModel, state.meta?.sessionPath, t, toolApprovalMode],
@@ -1940,7 +1948,7 @@ export default function App() {
 
   const openModelSwitcherForQuotaRecovery = useCallback(() => {
     if (!activeTabId) return;
-    const sessionPath = (activeTab?.sessionPath ?? state.meta?.sessionPath ?? "").trim();
+    const sessionPath = quotaRecoverySessionPath(activeTab?.sessionPath, state.meta?.sessionPath);
     quotaRecoveryIntentRef.current = { tabId: activeTabId, sessionPath };
     setModelSwitcherOpenSignal((n) => n + 1);
   }, [activeTabId, activeTab?.sessionPath, state.meta?.sessionPath]);
@@ -1950,7 +1958,7 @@ export default function App() {
   useEffect(() => {
     const intent = quotaRecoveryIntentRef.current;
     if (!intent) return;
-    const sessionPath = (activeTab?.sessionPath ?? state.meta?.sessionPath ?? "").trim();
+    const sessionPath = quotaRecoverySessionPath(activeTab?.sessionPath, state.meta?.sessionPath);
     if (!activeTabId || intent.tabId !== activeTabId || intent.sessionPath !== sessionPath) {
       quotaRecoveryIntentRef.current = null;
     }
@@ -4585,7 +4593,7 @@ export default function App() {
               onModelOpenChange={(open) => {
                 if (
                   !open &&
-                  !quotaRecoveryPickInFlightRef.current &&
+                  quotaRecoveryPicksInFlightRef.current === 0 &&
                   quotaRecoveryIntentRef.current?.tabId === activeTabId
                 ) {
                   // Dismissing the picker without starting a recovery pick
