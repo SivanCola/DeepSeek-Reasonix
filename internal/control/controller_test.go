@@ -340,6 +340,16 @@ func TestTurnOutcomeClassifiesFinalReadiness(t *testing.T) {
 	}
 }
 
+func TestQuotaRecoveryMessageUsesLegacySyntheticPrefix(t *testing.T) {
+	const legacyPrefix = "The previous assistant response was interrupted before visible"
+	if !strings.HasPrefix(quotaRecoveryMessage, legacyPrefix) {
+		t.Fatalf("quota recovery message must keep legacy synthetic prefix %q", legacyPrefix)
+	}
+	if !agent.IsSyntheticUserText(quotaRecoveryMessage) {
+		t.Fatal("quota recovery message must stay hidden from previews, titles, and turn counts")
+	}
+}
+
 func TestRunTurnSnapshotsActivityWhenTranscriptChanges(t *testing.T) {
 	dir := t.TempDir()
 	sess := agent.NewSession("sys")

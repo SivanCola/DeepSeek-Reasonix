@@ -885,9 +885,10 @@ const SandboxEscapeApprovalTool = "sandbox_escape"
 const ManagedConfigWriteApprovalTool = "config_write"
 
 // quotaRecoveryMessage is the fixed synthetic follow-up after a desktop model
-// switch recovers from periodic usage quota exhaustion. Keep the opening in
-// agent.SyntheticUserPrefixes so UI/title/turn-count skip it.
-const quotaRecoveryMessage = "The previous model stopped because its usage quota was exhausted. Continue the unfinished task from the current session. First reconcile completed work, pending todos, and running background jobs; do not repeat completed actions."
+// switch recovers from periodic usage quota exhaustion. Its opening reuses a
+// legacy agent.SyntheticUserPrefixes entry so older clients also skip it in the
+// UI, title derivation, and turn counts when reopening the same session.
+const quotaRecoveryMessage = "The previous assistant response was interrupted before visible output because the model's usage quota was exhausted. Continue the unfinished task from the current session. First reconcile completed work, pending todos, and running background jobs; do not repeat completed actions."
 
 // SubmitQuotaRecovery starts one synthetic recovery turn after the user switched
 // models because of quota exhaustion. It does not rewrite system prompt, memory

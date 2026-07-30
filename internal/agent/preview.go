@@ -219,7 +219,6 @@ var SyntheticUserPrefixes = []string{
 	"The previous assistant response was interrupted during streaming",
 	"The previous assistant response was interrupted before visible",
 	"The previous assistant response finished without any visible answer",
-	"The previous model stopped because its usage quota was exhausted",
 	"<compaction-summary>",
 	"Summary of the later conversation (compacted from here on):",
 	"Summary of earlier conversation (compacted up to here):",
