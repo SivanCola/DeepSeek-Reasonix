@@ -11,6 +11,11 @@ gateway_base="${GATEWAY_BASE:-https://crash.reasonix.io/v1/desktop/releases}"
 # PREVIEW_FULL_DOWNLOAD_CHECK=true for the first production cutover.
 full_download_check="${PREVIEW_FULL_DOWNLOAD_CHECK:-false}"
 
+if [ "$full_download_check" != "true" ] && [ "$full_download_check" != "false" ]; then
+	echo "::error::PREVIEW_FULL_DOWNLOAD_CHECK must be true or false" >&2
+	exit 1
+fi
+
 if [[ ! "$preview_tag" =~ ^v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))-preview\.([1-9][0-9]*)$ ]]; then
 	echo "::error::PREVIEW_TAG must be vMAJOR.MINOR.PATCH-preview.N" >&2
 	exit 1
@@ -148,20 +153,25 @@ done
 	exit 1
 }
 sort -u "$urls_file" -o "$urls_file"
-while IFS= read -r url; do
-	[ -n "$url" ] || {
-		echo "::error::Preview manifest contains an empty asset URL" >&2
-		exit 1
-	}
-	if [ "$full_download_check" = "true" ]; then
-		status="$(curl -sSLo /dev/null -w '%{http_code}' "$url")"
-	else
+if [ "$full_download_check" = "true" ]; then
+	desktop_assets="$tmp_dir/desktop-assets"
+	signature_verifier="$tmp_dir/reasonix-desktop-sign"
+	mkdir -p "$desktop_assets"
+	go -C desktop build -o "$signature_verifier" ./cmd/sign
+	bash scripts/verify-preview-desktop-downloads.sh \
+		"$first_manifest" "$desktop_assets" "$signature_verifier"
+else
+	while IFS= read -r url; do
+		[ -n "$url" ] || {
+			echo "::error::Preview manifest contains an empty asset URL" >&2
+			exit 1
+		}
 		status="$(curl -sSIL -o /dev/null -w '%{http_code}' "$url")"
-	fi
-	[ "$status" = "200" ] || {
-		echo "::error::Preview asset returned HTTP $status: $url" >&2
-		exit 1
-	}
-done <"$urls_file"
+		[ "$status" = "200" ] || {
+			echo "::error::Preview asset returned HTTP $status: $url" >&2
+			exit 1
+		}
+	done <"$urls_file"
+fi
 
 echo "Preview public proof verified: $preview_tag at $expected_sha"

@@ -84,10 +84,23 @@ for draft in release-preview.yml release-stable.yml release-preview-recovery.yml
 		echo "missing Stage-3 draft workflow: $draft" >&2
 		exit 1
 	}
+	grep -Fq "docs/releasing/stage3-workflows/$draft" \
+		"$repo_root/.github/workflows/ci.yml" || {
+		echo "Stage-3 draft workflow is missing offline actionlint coverage: $draft" >&2
+		exit 1
+	}
 done
 grep -Eq '^      base_version:$' "$stage3_dir/release-preview.yml"
 grep -Eq 'create-github-app-token' "$stage3_dir/release-preview.yml"
 grep -Eq 'create-github-app-token' "$stage3_dir/release-stable.yml"
+[ "$(grep -hE '^  group: release-promotion$' \
+	"$stage3_dir/release-preview.yml" "$stage3_dir/release-stable.yml" | wc -l | tr -d '[:space:]')" = "2" ]
+grep -Fq "PREVIEW_FULL_DOWNLOAD_CHECK: \${{ vars.RELEASE_PREVIEW_FULL_DOWNLOAD_CHECK || 'false' }}" \
+	"$stage3_dir/release-stable.yml"
+grep -Fq "PREVIEW_FULL_DOWNLOAD_CHECK: \${{ vars.RELEASE_PREVIEW_FULL_DOWNLOAD_CHECK || 'false' }}" \
+	"$repo_root/.github/workflows/release-stable-shadow.yml"
+grep -Fq "vars.RELEASE_PREVIEW_FULL_DOWNLOAD_CHECK == 'true'" \
+	"$repo_root/.github/workflows/release-stable-shadow.yml"
 grep -Eq '^name: Request preview recovery$' "$stage3_dir/release-preview-recovery.yml"
 grep -Eq '^name: Request stable recovery$' "$stage3_dir/release-stable-recovery.yml"
 grep -Eq '^name: Emergency stable promotion$' "$stage3_dir/release-stable-emergency.yml"
@@ -102,12 +115,10 @@ if grep -Eq 'create-release-tags\.sh|create-github-app-token' \
 	echo "shadow validation must not create tags or mint a release-tagger token" >&2
 	exit 1
 fi
-if grep -Fq '.github/workflows/release-preview-recovery.yml' "$repo_root/.github/workflows/ci.yml" ||
-	grep -Fq '.github/workflows/release-stable-recovery.yml' "$repo_root/.github/workflows/ci.yml" ||
-	grep -Fq '.github/workflows/release-stable-emergency.yml' "$repo_root/.github/workflows/ci.yml"; then
-	echo "Stage 1 CI must not actionlint inactive Stage-3 request workflows" >&2
-	exit 1
-fi
+grep -Fq 'release_workflows: ${{ steps.filter.outputs.release_workflows }}' \
+	"$repo_root/.github/workflows/ci.yml"
+grep -Fq "needs.changes.outputs.release_workflows == 'true'" \
+	"$repo_root/.github/workflows/ci.yml"
 grep -Fq 'ref: ${{ github.sha }}' "$repo_root/.github/workflows/release-preview.yml"
 grep -Fq 'ref: ${{ github.sha }}' "$repo_root/.github/workflows/release-stable.yml"
 if grep -Eq '^  push:$' "$repo_root/.github/workflows/release-stable.yml" ||
@@ -842,6 +853,76 @@ if bash "$desktop_manifest_asset_verifier" \
 	exit 1
 fi
 
+# The opt-in Preview cutover check must download manifest-bound payloads and
+# signatures, then enforce size, digest, and minisign verification.
+preview_download_verifier="$repo_root/scripts/verify-preview-desktop-downloads.sh"
+test -x "$preview_download_verifier"
+preview_download_source="$test_root/preview-download-source"
+preview_download_output="$test_root/preview-download-output"
+preview_fake_bin="$test_root/preview-fake-bin"
+mkdir -p "$preview_download_source" "$preview_download_output" "$preview_fake_bin"
+printf 'preview-download-payload\n' >"$preview_download_source/payload.zip"
+printf 'preview-download-signature\n' >"$preview_download_source/payload.zip.minisig"
+preview_download_sha="$(shasum -a 256 "$preview_download_source/payload.zip" | awk '{print $1}')"
+preview_download_size="$(wc -c <"$preview_download_source/payload.zip" | tr -d '[:space:]')"
+jq -n \
+	--arg url 'https://downloads.example.invalid/payload.zip' \
+	--arg sig 'https://downloads.example.invalid/payload.zip.minisig' \
+	--arg sha "$preview_download_sha" \
+	--argjson size "$preview_download_size" \
+	'{
+		platforms: {test: {url: $url, sig: $sig, sha256: $sha, size: $size}},
+		native_packages: {},
+		downloads: {}
+	}' >"$test_root/preview-download-manifest.json"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'set -euo pipefail' \
+	'output=""' \
+	'url=""' \
+	'while [ "$#" -gt 0 ]; do' \
+	'  case "$1" in' \
+	'    --output) output="$2"; shift 2 ;;' \
+	'    --write-out) shift 2 ;;' \
+	'    --fail|--location|--silent|--show-error) shift ;;' \
+	'    *) url="$1"; shift ;;' \
+	'  esac' \
+	'done' \
+	'[ -n "$output" ] && [ -n "$url" ]' \
+	'cp "$FAKE_PREVIEW_ASSET_SOURCE/${url##*/}" "$output"' \
+	'printf 200' >"$preview_fake_bin/curl"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'set -euo pipefail' \
+	'[ "$1" = verify ]' \
+	'[ -s "$2.minisig" ]' \
+	'printf "%s\\n" "$2" >> "$FAKE_PREVIEW_SIGNATURE_LOG"' \
+	>"$preview_fake_bin/sign-verifier"
+chmod +x "$preview_fake_bin/curl" "$preview_fake_bin/sign-verifier"
+FAKE_PREVIEW_ASSET_SOURCE="$preview_download_source" \
+	FAKE_PREVIEW_SIGNATURE_LOG="$test_root/preview-signatures.log" \
+	PATH="$preview_fake_bin:$PATH" \
+	bash "$preview_download_verifier" \
+		"$test_root/preview-download-manifest.json" \
+		"$preview_download_output" "$preview_fake_bin/sign-verifier"
+grep -Eq '/payload\.zip$' "$test_root/preview-signatures.log"
+printf 'preview-download-payloae\n' >"$preview_download_source/payload.zip"
+rm -rf -- "$preview_download_output"
+mkdir -p "$preview_download_output"
+if FAKE_PREVIEW_ASSET_SOURCE="$preview_download_source" \
+	FAKE_PREVIEW_SIGNATURE_LOG="$test_root/preview-signatures-corrupt.log" \
+	PATH="$preview_fake_bin:$PATH" \
+	bash "$preview_download_verifier" \
+		"$test_root/preview-download-manifest.json" \
+		"$preview_download_output" "$preview_fake_bin/sign-verifier" \
+		>"$test_root/preview-download-corrupt.log" 2>&1; then
+	echo "Preview full download verification accepted a digest mismatch" >&2
+	exit 1
+fi
+grep -Eq 'digest does not match payload\.zip' "$test_root/preview-download-corrupt.log"
+grep -Fq 'verify-preview-desktop-downloads.sh' \
+	"$repo_root/scripts/verify-preview-release-artifacts.sh"
+
 # GitHub release recovery uses the same immutable-subset rule: an interrupted
 # release may fill missing assets, while conflicting or extra assets fail closed.
 desktop_github_publisher="$repo_root/scripts/publish-desktop-github-release.sh"
@@ -1520,18 +1601,59 @@ git clone -q "$test_root/automation-remote.git" "$test_root/automation-repo"
 	fi
 	grep -Eq 'predates the promotion activation cutoff' "$test_root/activation-cutoff.log"
 
-	MODE=stable VERSION=2.0.0 RELEASE_SHA="$preview_sha" \
+	if MODE=stable VERSION=2.0.0 RELEASE_SHA="$preview_sha" \
 		RELEASE_TAGS='v2.0.0 npm-v2.0.0 desktop-v2.0.0' \
 		PREVIEW_VERSION=2.0.0-preview.1 PREVIEW_TAG=v2.0.0-preview.1 \
 		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
+		"$repo_root/scripts/revalidate-release-candidate.sh" \
+		>"$test_root/revalidate-missing-event.log" 2>&1; then
+		echo "Stable revalidation ignored an unreadable newer Preview event" >&2
+		exit 1
+	fi
+	grep -Eq 'cannot revalidate release-event\.json for v2\.0\.0-preview\.2' \
+		"$test_root/revalidate-missing-event.log"
+
+	mkdir -p "$test_root/preview-events/v2.0.0-preview.2"
+	printf '%s\n' "{\"schemaVersion\":1,\"releaseId\":\"2.0.0-preview.2\",\"channel\":\"preview\",\"candidateSha\":\"$incomplete_sha\",\"publishedAt\":\"2026-08-01T01:00:00.000Z\",\"releaseNotesUrl\":\"https://reasonix.io/changelog/v2.0.0-preview.2/\",\"builds\":{\"cli\":\"v2.0.0-preview.2\",\"desktop\":\"v2.0.0-preview.2\",\"npm\":\"2.0.0-canary.2\"}}" \
+		>"$test_root/preview-events/v2.0.0-preview.2/release-event.json"
+	if MODE=stable VERSION=2.0.0 RELEASE_SHA="$preview_sha" \
+		RELEASE_TAGS='v2.0.0 npm-v2.0.0 desktop-v2.0.0' \
+		PREVIEW_VERSION=2.0.0-preview.1 PREVIEW_TAG=v2.0.0-preview.1 \
+		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
+		"$repo_root/scripts/revalidate-release-candidate.sh" \
+		>"$test_root/revalidate-newer-preview.log" 2>&1; then
+		echo "Stable revalidation accepted an older complete Preview" >&2
+		exit 1
+	fi
+	grep -Eq 'latest complete is preview\.2' "$test_root/revalidate-newer-preview.log"
+
+	printf '%s\n' "{\"releases\":[{\"version\":\"2.0.0\",\"baseVersion\":\"2.0.0\",\"channel\":\"stable\",\"status\":\"reviewed\",\"promotedFrom\":\"2.0.0-preview.2\",\"candidateSha\":\"$incomplete_sha\"}]}" \
+		>release-notes/releases.json
+	git add release-notes/releases.json
+	git commit -q -m "promote newest complete preview"
+	git push -q origin main-v2
+	GITHUB_OUTPUT="$test_root/automated-stable-newest.out" \
+		RELEASE_MIN_PROMOTION_CANDIDATE_SHA="$preview_sha" \
+		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
+		"$repo_root/scripts/resolve-stable-promotion.sh"
+	grep -Eq '^preview_tag=v2\.0\.0-preview\.2$' "$test_root/automated-stable-newest.out"
+	grep -Eq '^sha='"$incomplete_sha"'$' "$test_root/automated-stable-newest.out"
+	# Historical older Preview events are irrelevant once a newer approved
+	# ordinal is selected; only the approved and newer tags must revalidate.
+	mv "$test_root/preview-events/v2.0.0-preview.1/release-event.json" \
+		"$test_root/preview-events/v2.0.0-preview.1/release-event.legacy"
+	MODE=stable VERSION=2.0.0 RELEASE_SHA="$incomplete_sha" \
+		RELEASE_TAGS='v2.0.0 npm-v2.0.0 desktop-v2.0.0' \
+		PREVIEW_VERSION=2.0.0-preview.2 PREVIEW_TAG=v2.0.0-preview.2 \
+		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
 		"$repo_root/scripts/revalidate-release-candidate.sh"
-	RELEASE_SHA="$preview_sha" \
+	RELEASE_SHA="$incomplete_sha" \
 		RELEASE_TAGS='v2.0.0 npm-v2.0.0 desktop-v2.0.0' \
 		"$repo_root/scripts/create-release-tags.sh"
 	for tag in v2.0.0 npm-v2.0.0 desktop-v2.0.0; do
-		[ "$(git ls-remote --tags --refs origin "refs/tags/$tag" | awk '{ print $1 }')" = "$preview_sha" ]
+		[ "$(git ls-remote --tags --refs origin "refs/tags/$tag" | awk '{ print $1 }')" = "$incomplete_sha" ]
 	done
-	if RELEASE_SHA="$preview_sha" \
+	if RELEASE_SHA="$incomplete_sha" \
 		RELEASE_TAGS='v2.0.0 npm-v2.0.0 desktop-v2.0.0' \
 		"$repo_root/scripts/create-release-tags.sh" >"$test_root/atomic-exists.log" 2>&1; then
 		echo "duplicate Stable tags unexpectedly passed" >&2
@@ -1541,9 +1663,55 @@ git clone -q "$test_root/automation-remote.git" "$test_root/automation-repo"
 )
 
 # Request artifact trust boundary fails closed on malformed payloads.
+grep -Fq 'reasonix-release-request.XXXXXX' "$repo_root/scripts/consume-release-request.sh"
+if grep -Fq 'REQUEST_DOWNLOAD_DIR' "$repo_root/scripts/consume-release-request.sh" ||
+	grep -Fq 'rm -rf "$download_dir"' "$repo_root/scripts/consume-release-request.sh"; then
+	echo "request consumer still permits unsafe recursive cleanup overrides" >&2
+	exit 1
+fi
 mkdir -p "$test_root/request-good" "$test_root/request-bad"
 printf '%s\n' '{"tag":"v2.0.0-preview.1"}' >"$test_root/request-good/request.json"
 printf '%s\n' '{"tag":"v2.0.0","extra":true}' >"$test_root/request-bad/request.json"
+request_fake_bin="$test_root/request-fake-bin"
+mkdir -p "$request_fake_bin"
+printf '%s\n' \
+	'#!/usr/bin/env bash' \
+	'set -euo pipefail' \
+	'if [ "$1" = api ]; then printf "1\\n"; exit 0; fi' \
+	'if [ "$1" = run ] && [ "$2" = download ]; then' \
+	'  shift 2' \
+	'  download_dir=""' \
+	'  while [ "$#" -gt 0 ]; do' \
+	'    case "$1" in --dir) download_dir="$2"; shift 2 ;; *) shift ;; esac' \
+	'  done' \
+	'  printf "%s\\n" "$download_dir" > "$FAKE_REQUEST_DOWNLOAD_LOG"' \
+	'  cp "$FAKE_REQUEST_SOURCE/request.json" "$download_dir/request.json"' \
+	'  exit 0' \
+	'fi' \
+	'exit 1' >"$request_fake_bin/gh"
+chmod +x "$request_fake_bin/gh"
+FAKE_REQUEST_SOURCE="$test_root/request-good" \
+	FAKE_REQUEST_DOWNLOAD_LOG="$test_root/request-download.log" \
+	PATH="$request_fake_bin:$PATH" \
+	REQUEST_KIND=preview-recovery \
+	EXPECTED_WORKFLOW_NAME="Request preview recovery" \
+	EXPECTED_ARTIFACT_NAME=preview-recovery-request \
+	REQUEST_OUTPUT="$test_root/request-output.json" \
+	REPOSITORY=example/reasonix \
+	SOURCE_RUN_ID=1 SOURCE_RUN_CONCLUSION=success SOURCE_RUN_BRANCH=main-v2 \
+	SOURCE_RUN_EVENT=workflow_dispatch SOURCE_RUN_NAME="Request preview recovery" \
+	SOURCE_RUN_REPOSITORY=example/reasonix \
+	bash "$repo_root/scripts/consume-release-request.sh"
+cmp -s "$test_root/request-good/request.json" "$test_root/request-output.json"
+request_download_dir="$(cat "$test_root/request-download.log")"
+case "$request_download_dir" in
+*/reasonix-release-request.*) ;;
+*) echo "request consumer did not use its scoped temporary directory" >&2; exit 1 ;;
+esac
+[ ! -e "$request_download_dir" ] || {
+	echo "request consumer did not clean its scoped temporary directory" >&2
+	exit 1
+}
 if REQUEST_KIND=preview-recovery \
 	EXPECTED_WORKFLOW_NAME="Request preview recovery" \
 	EXPECTED_ARTIFACT_NAME=preview-recovery-request \

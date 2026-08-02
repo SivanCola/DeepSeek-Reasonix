@@ -11,7 +11,8 @@ on:
     types: [completed]
 
 concurrency:
-  group: stable-release
+  # Share the Preview lock through approval, revalidation, and atomic tag push.
+  group: release-promotion
   cancel-in-progress: false
 
 permissions:
@@ -181,6 +182,7 @@ jobs:
           RELEASE_REPOSITORY: ${{ github.repository }}
           PREVIEW_TAG: ${{ steps.identity.outputs.preview_tag }}
           EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
+          PREVIEW_FULL_DOWNLOAD_CHECK: ${{ vars.RELEASE_PREVIEW_FULL_DOWNLOAD_CHECK || 'false' }}
         run: bash scripts/verify-preview-release-artifacts.sh
       - name: Summarize release approval identity
         env:
@@ -257,6 +259,7 @@ jobs:
           RELEASE_TAGS: ${{ format('{0} {1} {2}', needs.preflight.outputs.cli_tag, needs.preflight.outputs.npm_tag, needs.preflight.outputs.desktop_tag) }}
           PREVIEW_VERSION: ${{ needs.preflight.outputs.preview_version }}
           PREVIEW_TAG: ${{ needs.preflight.outputs.preview_tag }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
         run: bash scripts/revalidate-release-candidate.sh
       - name: Mint release-tagger token
         id: app-token

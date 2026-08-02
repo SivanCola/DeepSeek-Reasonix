@@ -279,9 +279,15 @@ entrypoints remain the legacy tag + relay path** until Stage 3 activates.
 | --- | --- | --- |
 | **1 – Infrastructure** | Release-notes `promote_from` / event `promotion` schema, promotion/CI/soak/artifact helper scripts, bare-remote contract tests, App-aware but human-compatible tag relays, read-only **Shadow validate stable promotion** | None. Operators still prepare exact Preview notes, push Preview tags, and push atomic Stable tags as before. |
 | **1b – Cutoff config** | Fill `DEFAULT_MIN_PROMOTION_CANDIDATE_SHA` in `scripts/release-activation.sh` with the Stage-1 merge SHA | Still no entrypoint change. Shadow now only accepts Previews at or after that commit. |
-| **2 – Dry run** | Create `reasonix-release-tagger` App + environment secrets; keep dual create rules; publish a new Preview from post-cutoff `main-v2`; prepare Stable notes with `promote_from`; after ≥24h run shadow validation | Still ship with legacy tags if needed. |
+| **2 – Dry run** | Create `reasonix-release-tagger` App + environment secrets; keep dual create rules; set repository variable `RELEASE_PREVIEW_FULL_DOWNLOAD_CHECK=true` for the first cutover proof; publish a new Preview from post-cutoff `main-v2`; prepare Stable notes with `promote_from`; after ≥24h run shadow validation | Still ship with legacy tags if needed. Shadow downloads every Desktop payload and signature, verifies manifest size/SHA-256 and the embedded minisign public key, and remains read-only. |
 | **3 – Activation** | Copy drafts from `docs/releasing/stage3-workflows/`, switch App-only Preview/Stable create rules in the same window, enable one-input Preview / zero-input Stable and isolated recovery/emergency entrypoints | Operators stop hand-tagging normal Preview/Stable. |
 
 Do not merge Stage-3 workflow activation until shadow validation has succeeded
 against a real post-cutoff Preview. Stage-3 drafts under
-`docs/releasing/stage3-workflows/` are not active GitHub Actions workflows.
+`docs/releasing/stage3-workflows/` are not active GitHub Actions workflows, but
+CI actionlints them offline. The activated Preview and Stable workflows must
+retain their shared `release-promotion` concurrency group so a Preview cannot
+be created between Stable's final revalidation and atomic tag push. After the
+first full-download cutover proof, the repository variable may be set to
+`false` for metadata-only daily shadow runs and re-enabled for any publication
+where fresh public-byte verification is required.

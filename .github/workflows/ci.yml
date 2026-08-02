@@ -29,13 +29,14 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
       desktop: ${{ steps.filter.outputs.desktop }}
       site: ${{ steps.filter.outputs.site }}
+      release_workflows: ${{ steps.filter.outputs.release_workflows }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
         run: |
-          code=true; desktop=true; site=true
+          code=true; desktop=true; site=true; release_workflows=true
           base=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
@@ -45,7 +46,7 @@ jobs:
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
             files=$(git diff --name-only "$base" HEAD)
             if [ -n "$files" ]; then
-              code=false; desktop=false; site=false
+              code=false; desktop=false; site=false; release_workflows=false
               # Root-module CI: desktop/ is a separate module, so only the
               # clearly unrelated paths below can skip it.
               if echo "$files" | grep -qvE '^(docs/|site/|release-notes/|desktop/|workers/|[^/]+\.md$)'; then code=true; fi
@@ -53,9 +54,10 @@ jobs:
               # so only this clearly-unrelated set is safe to skip.
               if echo "$files" | grep -qvE '^(docs/|site/|release-notes/|workers/|benchmarks/|npm/|[^/]+\.md$)'; then desktop=true; fi
               if echo "$files" | grep -q '^site/'; then site=true; fi
+              if echo "$files" | grep -qE '^docs/releasing/stage3-workflows/[^/]+\.ya?ml$'; then release_workflows=true; fi
             fi
           fi
-          { echo "code=$code"; echo "desktop=$desktop"; echo "site=$site"; } >> "$GITHUB_OUTPUT"
+          { echo "code=$code"; echo "desktop=$desktop"; echo "site=$site"; echo "release_workflows=$release_workflows"; } >> "$GITHUB_OUTPUT"
 
   # The ruleset requires the per-OS check names (test (ubuntu-latest) etc.).
   # A matrix job skipped at job level reports no per-leg checks at all, so
@@ -359,7 +361,10 @@ jobs:
 
   lint:
     needs: changes
-    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false')
+    if: >-
+      always() && (github.event_name != 'pull_request' ||
+      needs.changes.outputs.code != 'false' ||
+      needs.changes.outputs.release_workflows == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -405,7 +410,12 @@ jobs:
             .github/workflows/prepare-release-notes.yml \
             .github/workflows/release.yml \
             .github/workflows/release-npm.yml \
-            .github/workflows/release-desktop.yml
+            .github/workflows/release-desktop.yml \
+            docs/releasing/stage3-workflows/release-preview.yml \
+            docs/releasing/stage3-workflows/release-stable.yml \
+            docs/releasing/stage3-workflows/release-preview-recovery.yml \
+            docs/releasing/stage3-workflows/release-stable-recovery.yml \
+            docs/releasing/stage3-workflows/release-stable-emergency.yml
           bash scripts/release-workflows.test.sh
 
   # The site/ auth client has security-sensitive redirect-validation logic

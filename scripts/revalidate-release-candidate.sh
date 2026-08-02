@@ -102,27 +102,67 @@ NODE
 		echo "::error::$preview_tag resolves to ${tag_sha:-<missing>}, expected approved $candidate_sha" >&2
 		exit 1
 	fi
+	# Freeze and validate the approved and every newer same-base Preview. A missing or
+	# unreadable release event is indistinguishable from a transient control-plane
+	# failure here, so normal promotion must fail closed and be retried/recovered.
+	event_root="$(mktemp -d "${TMPDIR:-/tmp}/reasonix-revalidate-preview.XXXXXX")"
+	cleanup_revalidation_events() {
+		case "$event_root" in
+		*/reasonix-revalidate-preview.*) rm -r -- "$event_root" ;;
+		*) echo "refusing to clean unexpected revalidation directory: $event_root" >&2 ;;
+		esac
+	}
+	trap cleanup_revalidation_events EXIT
+	preview_refs="$event_root/preview-refs.txt"
+	if ! git ls-remote --tags --refs "$release_remote" \
+		"refs/tags/v$version-preview.*" >"$preview_refs"; then
+		echo "::error::cannot enumerate Preview tags for $version from $release_remote" >&2
+		exit 1
+	fi
+
+	approved_number="${preview_version##*-preview.}"
 	# Reject when a newer complete Preview for the same base version appeared.
 	highest_complete=0
 	while IFS= read -r ref; do
 		tag="${ref#refs/tags/}"
 		if [[ "$tag" =~ ^v${version//./\.}-preview\.([1-9][0-9]*)$ ]]; then
 			number="${BASH_REMATCH[1]}"
-			event_dir="$(mktemp -d "${TMPDIR:-/tmp}/reasonix-revalidate-preview.XXXXXX")"
-			event_ok=false
-			if [ -n "${RELEASE_PREVIEW_EVENT_STORE:-}" ] &&
-				[ -f "$RELEASE_PREVIEW_EVENT_STORE/$tag/release-event.json" ]; then
-				cp "$RELEASE_PREVIEW_EVENT_STORE/$tag/release-event.json" "$event_dir/release-event.json"
-				event_ok=true
-			elif gh release download "$tag" --pattern release-event.json --dir "$event_dir" 2>/dev/null; then
-				event_ok=true
+			if [ "$number" -lt "$approved_number" ]; then
+				continue
+			fi
+			event_dir="$event_root/$tag"
+			mkdir -p "$event_dir"
+			if [ -n "${RELEASE_PREVIEW_EVENT_STORE:-}" ]; then
+				if ! cp "$RELEASE_PREVIEW_EVENT_STORE/$tag/release-event.json" \
+					"$event_dir/release-event.json" 2>/dev/null; then
+					echo "::error::cannot revalidate release-event.json for $tag" >&2
+					exit 1
+				fi
+			else
+				gh_repo_args=()
+				if [ -n "${RELEASE_REPOSITORY:-}" ]; then
+					gh_repo_args=(--repo "$RELEASE_REPOSITORY")
+				fi
+				if ! gh release download "$tag" "${gh_repo_args[@]}" \
+					--pattern release-event.json --dir "$event_dir"; then
+					echo "::error::cannot revalidate release-event.json for $tag" >&2
+					exit 1
+				fi
+			fi
+			if ! tag_refs="$(git ls-remote --tags "$release_remote" \
+				"refs/tags/$tag" "refs/tags/$tag^{}")"; then
+				echo "::error::cannot resolve Preview tag $tag during revalidation" >&2
+				exit 1
 			fi
 			tag_sha="$(
-				git ls-remote --tags "$release_remote" "refs/tags/$tag" "refs/tags/$tag^{}" |
+				printf '%s\n' "$tag_refs" |
 					awk '/\^\{\}$/ { print $1; found = 1; exit } NR == 1 { first = $1 } END { if (!found) print first }'
 			)"
-			if [ "$event_ok" = true ] &&
-				jq -e --arg sha "$tag_sha" --arg id "${tag#v}" '
+			if [ -z "$tag_sha" ]; then
+				echo "::error::cannot resolve Preview tag $tag during revalidation" >&2
+				exit 1
+			fi
+			if ! jq -e --arg sha "$tag_sha" --arg id "${tag#v}" '
           .schemaVersion == 1 and
           .releaseId == $id and
           .channel == "preview" and
@@ -131,17 +171,21 @@ NODE
           (.builds.cli | type == "string" and length > 0) and
           (.builds.desktop | type == "string" and length > 0) and
           (.builds.npm | type == "string" and length > 0)
-        ' "$event_dir/release-event.json" >/dev/null 2>&1; then
-				if [ "$number" -gt "$highest_complete" ]; then
-					highest_complete="$number"
-				fi
+			' "$event_dir/release-event.json" >/dev/null; then
+				echo "::error::release-event.json for $tag is incomplete or does not match its immutable tag" >&2
+				exit 1
 			fi
-			rm -rf -- "$event_dir"
+			if [ "$number" -gt "$highest_complete" ]; then
+				highest_complete="$number"
+			fi
 		fi
-	done < <(git ls-remote --tags --refs "$release_remote" "refs/tags/v$version-preview.*" | awk '{ print $2 }')
-	approved_number="${preview_version##*-preview.}"
-	if [ "$highest_complete" -gt 0 ] && [ "$approved_number" -ne "$highest_complete" ]; then
-		echo "::error::$preview_tag is no longer the newest complete Preview for $version (latest complete is preview.$highest_complete); use Request preview recovery for incomplete tags" >&2
+	done < <(awk '{ print $2 }' "$preview_refs")
+	if [ "$highest_complete" -eq 0 ]; then
+		echo "::error::no complete Preview could be revalidated for $version" >&2
+		exit 1
+	fi
+	if [ "$approved_number" -ne "$highest_complete" ]; then
+		echo "::error::$preview_tag is no longer the newest complete Preview for $version (latest complete is preview.$highest_complete)" >&2
 		exit 1
 	fi
 	;;

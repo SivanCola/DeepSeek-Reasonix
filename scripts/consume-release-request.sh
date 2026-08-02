@@ -23,7 +23,6 @@ expected_workflow_name="${EXPECTED_WORKFLOW_NAME:?EXPECTED_WORKFLOW_NAME is requ
 expected_artifact_name="${EXPECTED_ARTIFACT_NAME:?EXPECTED_ARTIFACT_NAME is required}"
 request_kind="${REQUEST_KIND:?REQUEST_KIND is required}"
 request_output="${REQUEST_OUTPUT:-/tmp/request.json}"
-download_dir="${REQUEST_DOWNLOAD_DIR:-/tmp/release-request}"
 
 if [ "$source_run_repository" != "$repository" ]; then
 	echo "::error::request run repository is $source_run_repository, expected $repository" >&2
@@ -46,7 +45,6 @@ if [ "$source_run_name" != "$expected_workflow_name" ]; then
 	exit 1
 fi
 
-mkdir -p "$download_dir"
 # Confirm exactly one artifact with the expected name exists for this run.
 artifact_count="$(
 	gh api "repos/$repository/actions/runs/$source_run_id/artifacts" --paginate \
@@ -58,8 +56,14 @@ if [ "$artifact_count" != "1" ]; then
 	exit 1
 fi
 
-rm -rf "$download_dir"
-mkdir -p "$download_dir"
+download_dir="$(mktemp -d "${TMPDIR:-/tmp}/reasonix-release-request.XXXXXX")"
+cleanup_request_download() {
+	case "$download_dir" in
+	*/reasonix-release-request.*) rm -r -- "$download_dir" ;;
+	*) echo "refusing to clean unexpected request download directory: $download_dir" >&2 ;;
+	esac
+}
+trap cleanup_request_download EXIT
 gh run download "$source_run_id" --repo "$repository" \
 	--name "$expected_artifact_name" --dir "$download_dir"
 

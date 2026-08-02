@@ -16,7 +16,9 @@ on:
     types: [completed]
 
 concurrency:
-  group: preview-release
+  # Preview tag creation and Stable promotion share one lock so no newer
+  # Preview can appear between Stable revalidation and its atomic tag push.
+  group: release-promotion
   cancel-in-progress: false
 
 permissions:
