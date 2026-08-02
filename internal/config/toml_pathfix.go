@@ -431,12 +431,11 @@ func (s *tomlPathScanner) scanKeySegments() []string {
 		if s.atEnd() {
 			break
 		}
-		c := s.cur()
 		var seg string
-		switch {
-		case c == '"':
+		switch c := s.cur(); c {
+		case '"':
 			seg, _ = s.scanBasicStringToken()
-		case c == '\'':
+		case '\'':
 			seg = s.scanLiteralStringToken()
 		default:
 			start := s.pos
@@ -546,9 +545,8 @@ func (s *tomlPathScanner) scanValue(keyPath string, emit func(TOMLEscapeFix)) {
 	if s.atEnd() {
 		return
 	}
-	c := s.cur()
-	switch {
-	case c == '"':
+	switch c := s.cur(); c {
+	case '"':
 		if s.pos+2 < len(s.body) && s.body[s.pos+1] == '"' && s.body[s.pos+2] == '"' {
 			s.skipMultiLineString()
 			return
@@ -568,15 +566,15 @@ func (s *tomlPathScanner) scanValue(keyPath string, emit func(TOMLEscapeFix)) {
 				FixedToken: `"` + doubleSingleBackslashes(content) + `"`,
 			})
 		}
-	case c == '\'':
+	case '\'':
 		if s.pos+2 < len(s.body) && s.body[s.pos+1] == '\'' && s.body[s.pos+2] == '\'' {
 			s.skipMultiLineString()
 			return
 		}
 		s.scanLiteralStringToken()
-	case c == '{':
+	case '{':
 		s.scanInlineTable(keyPath, emit)
-	case c == '[':
+	case '[':
 		s.scanInlineArray(keyPath, emit)
 	default:
 		// scalar: skip to whitespace / comment / newline / inline delimiter

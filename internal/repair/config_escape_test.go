@@ -189,7 +189,6 @@ func TestApplyConfigEscapesSkipsValidConfigs(t *testing.T) {
 	}
 }
 
-
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

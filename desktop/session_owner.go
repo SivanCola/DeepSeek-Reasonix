@@ -14,12 +14,12 @@ import (
 // longer collapses "another window", a background task, an external process
 // and a stale lock into one opaque error.
 const (
-	sessionOwnerCurrentTab      = "current_tab"        // another visible tab in this window
-	sessionOwnerCurrentDetached = "current_detached"   // a background task detached from its tab in this process
+	sessionOwnerCurrentTab      = "current_tab"          // another visible tab in this window
+	sessionOwnerCurrentDetached = "current_detached"     // a background task detached from its tab in this process
 	sessionOwnerSameHidden      = "same_instance_hidden" // this instance, window hidden to the tray
-	sessionOwnerExternal        = "external_process"   // another process holds the OS lease
-	sessionOwnerStale           = "stale_reclaimed"    // metadata stale, OS lock released
-	sessionOwnerUnknown         = "unknown"            // cannot be determined safely
+	sessionOwnerExternal        = "external_process"     // another process holds the OS lease
+	sessionOwnerStale           = "stale_reclaimed"      // metadata stale, OS lock released
+	sessionOwnerUnknown         = "unknown"              // cannot be determined safely
 )
 
 // sessionOwnerActions maps each owner kind to the allowed resolution actions.

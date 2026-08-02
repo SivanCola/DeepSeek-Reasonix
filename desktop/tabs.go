@@ -154,22 +154,22 @@ func (b *displayTurnBuffer) materialize() []HistoryMessage {
 // memory, permissions) scoped to a workspace root, so multiple projects and
 // topics can be active concurrently without interfering.
 type WorkspaceTab struct {
-	ID                  string             // stable random id
-	Scope               string             // "project" | "global"
-	WorkspaceRoot       string             // project root dir (empty for global)
-	SharedHostKey       string             // opaque key for the shared plugin host (set by buildTabController)
-	TopicID             string             // topic within the project
-	TopicTitle          string             // display title
-	topicTitleSource    string             // auto or manual; controls localization at API boundaries
-	SessionPath         string             // exact .jsonl file this tab continues
-	ReadOnly            bool               // true for external channel transcripts opened for browsing
-	Ctrl                control.SessionAPI // nil while booting / on error
-	Label               string             // model label (for the tab badge)
-	Ready               bool               // true once boot.Build completes
-	StartupErr          string             // build error, surfaced to the frontend
-	StartupErrLeaseHeld bool               // true when StartupErr can be retried after a session lease releases
+	ID                  string              // stable random id
+	Scope               string              // "project" | "global"
+	WorkspaceRoot       string              // project root dir (empty for global)
+	SharedHostKey       string              // opaque key for the shared plugin host (set by buildTabController)
+	TopicID             string              // topic within the project
+	TopicTitle          string              // display title
+	topicTitleSource    string              // auto or manual; controls localization at API boundaries
+	SessionPath         string              // exact .jsonl file this tab continues
+	ReadOnly            bool                // true for external channel transcripts opened for browsing
+	Ctrl                control.SessionAPI  // nil while booting / on error
+	Label               string              // model label (for the tab badge)
+	Ready               bool                // true once boot.Build completes
+	StartupErr          string              // build error, surfaced to the frontend
+	StartupErrLeaseHeld bool                // true when StartupErr can be retried after a session lease releases
 	ConfigError         *TabConfigErrorView // broken project reasonix.toml details + repair preview (config isolation)
-	runtimeID           string             // process-local SessionRuntime registry identity
+	runtimeID           string              // process-local SessionRuntime registry identity
 	sessionLease        *agent.SessionLease
 	sessionLeaseMu      sync.Mutex
 	sessionLeaseKey     atomic.Pointer[string] // lock-free mirror; updated with sessionLease under sessionLeaseMu

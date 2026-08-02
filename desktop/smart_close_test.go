@@ -17,9 +17,9 @@ import (
 // backgrounds, active work without a restore path stays visible.
 func TestSmartCloseDecision(t *testing.T) {
 	cases := []struct {
-		activeWork      int
+		activeWork       int
 		restoreAvailable bool
-		want            smartCloseAction
+		want             smartCloseAction
 	}{
 		{0, false, smartCloseQuit},
 		{0, true, smartCloseQuit},

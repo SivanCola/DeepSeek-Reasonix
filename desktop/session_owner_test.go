@@ -12,8 +12,8 @@ import (
 
 func TestSessionOwnerActionsPerKind(t *testing.T) {
 	cases := []struct {
-		kind  string
-		want  []string
+		kind string
+		want []string
 	}{
 		{sessionOwnerCurrentTab, []string{"focus"}},
 		{sessionOwnerCurrentDetached, []string{"focus"}},
