@@ -1,0 +1,43 @@
+name: Emergency stable promotion
+run-name: Emergency stable promotion (${{ inputs.reason }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "P0 reason code"
+        required: true
+        type: choice
+        options:
+          - security
+          - data-loss
+          - update-blocker
+          - service-unavailable
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    name: approve emergency observation-period override
+    runs-on: ubuntu-latest
+    environment: emergency-release
+    steps:
+      - name: Require protected control branch
+        env:
+          CONTROL_BRANCH: ${{ github.ref_name }}
+        run: |
+          [ "$CONTROL_BRANCH" = "main-v2" ] || {
+            echo "::error::Emergency Stable promotion must run from main-v2"
+            exit 1
+          }
+      - name: Write audited request
+        env:
+          REASON: ${{ inputs.reason }}
+        run: jq -n --arg reason "$REASON" '{reason:$reason}' > /tmp/request.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stable-emergency-request
+          path: /tmp/request.json
+          if-no-files-found: error
+          retention-days: 1

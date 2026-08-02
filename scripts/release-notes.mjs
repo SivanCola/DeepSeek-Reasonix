@@ -92,6 +92,14 @@ export function validateCatalog(catalog) {
     if (release.candidateSha !== undefined) {
       invariant(/^[0-9a-f]{40}$/.test(release.candidateSha), `${path}.candidateSha must be a full commit SHA`);
     }
+    if (release.promotedFrom !== undefined) {
+      invariant(release.channel === "stable", `${path}.promotedFrom is only valid for Stable releases`);
+      invariant(
+        new RegExp(`^${release.version.replaceAll(".", "\\.")}-preview\\.[1-9][0-9]*$`).test(release.promotedFrom),
+        `${path}.promotedFrom must be a Preview of the same base version`,
+      );
+      invariant(release.candidateSha !== undefined, `${path}.candidateSha is required with promotedFrom`);
+    }
     if (release.previousRelease !== undefined) {
       semverParts(release.previousRelease);
       invariant(release.previousRelease !== release.version, `${path}.previousRelease must differ from version`);

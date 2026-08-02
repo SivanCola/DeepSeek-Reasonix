@@ -1,0 +1,68 @@
+name: Request stable recovery
+run-name: Request stable recovery ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing Stable CLI tag, for example v1.20.0"
+        required: true
+        type: string
+      publish_cli:
+        description: "Recover CLI and Homebrew"
+        required: false
+        default: false
+        type: boolean
+      publish_npm:
+        description: "Recover npm"
+        required: false
+        default: false
+        type: boolean
+      publish_desktop:
+        description: "Recover Desktop and R2"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    name: record Stable recovery request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require protected control branch and one surface
+        env:
+          CONTROL_BRANCH: ${{ github.ref_name }}
+          PUBLISH_CLI: ${{ inputs.publish_cli }}
+          PUBLISH_NPM: ${{ inputs.publish_npm }}
+          PUBLISH_DESKTOP: ${{ inputs.publish_desktop }}
+        run: |
+          [ "$CONTROL_BRANCH" = "main-v2" ] || {
+            echo "::error::Stable recovery requests must run from main-v2"
+            exit 1
+          }
+          [ "$PUBLISH_CLI" = true ] || [ "$PUBLISH_NPM" = true ] || [ "$PUBLISH_DESKTOP" = true ] || {
+            echo "::error::Select at least one surface to recover"
+            exit 1
+          }
+      - name: Write request
+        env:
+          TAG: ${{ inputs.tag }}
+          PUBLISH_CLI: ${{ inputs.publish_cli }}
+          PUBLISH_NPM: ${{ inputs.publish_npm }}
+          PUBLISH_DESKTOP: ${{ inputs.publish_desktop }}
+        run: |
+          jq -n --arg tag "$TAG" \
+            --argjson publish_cli "$PUBLISH_CLI" \
+            --argjson publish_npm "$PUBLISH_NPM" \
+            --argjson publish_desktop "$PUBLISH_DESKTOP" \
+            '{tag:$tag,publish_cli:$publish_cli,publish_npm:$publish_npm,publish_desktop:$publish_desktop}' \
+            > /tmp/request.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stable-recovery-request
+          path: /tmp/request.json
+          if-no-files-found: error
+          retention-days: 1

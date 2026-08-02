@@ -269,3 +269,19 @@ strict separation from repository writers is required.
   only for Developer ID signed and notarized builds; ad-hoc/local builds fall
   back to the download page. Desktop `latest.json` keeps `platforms` for
   portable channels and adds optional `native_packages` for OS packages.
+
+## Phased Preview → Stable promotion rollout
+
+Reasonix is landing automated same-SHA promotion in stages. **Current production
+entrypoints remain the legacy tag + relay path** until Stage 3 activates.
+
+| Stage | What lands | Production release impact |
+| --- | --- | --- |
+| **1 – Infrastructure** | Release-notes `promote_from` / event `promotion` schema, promotion/CI/soak/artifact helper scripts, bare-remote contract tests, App-aware but human-compatible tag relays, read-only **Shadow validate stable promotion** | None. Operators still prepare exact Preview notes, push Preview tags, and push atomic Stable tags as before. |
+| **1b – Cutoff config** | Fill `DEFAULT_MIN_PROMOTION_CANDIDATE_SHA` in `scripts/release-activation.sh` with the Stage-1 merge SHA | Still no entrypoint change. Shadow now only accepts Previews at or after that commit. |
+| **2 – Dry run** | Create `reasonix-release-tagger` App + environment secrets; keep dual create rules; publish a new Preview from post-cutoff `main-v2`; prepare Stable notes with `promote_from`; after ≥24h run shadow validation | Still ship with legacy tags if needed. |
+| **3 – Activation** | Copy drafts from `docs/releasing/stage3-workflows/`, switch App-only Preview/Stable create rules in the same window, enable one-input Preview / zero-input Stable and isolated recovery/emergency entrypoints | Operators stop hand-tagging normal Preview/Stable. |
+
+Do not merge Stage-3 workflow activation until shadow validation has succeeded
+against a real post-cutoff Preview. Stage-3 drafts under
+`docs/releasing/stage3-workflows/` are not active GitHub Actions workflows.

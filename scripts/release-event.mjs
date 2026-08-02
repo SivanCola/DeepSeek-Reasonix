@@ -41,6 +41,22 @@ export function validateReleaseEvent(event, release) {
       invariant(event.builds[surface] === release.builds[surface], `release event builds.${surface} does not match reviewed notes`);
     }
   }
+  if (release.promotedFrom) {
+    invariant(event.promotion && typeof event.promotion === "object", "Stable promotion metadata is required");
+    invariant(event.promotion.sourceReleaseId === release.promotedFrom, "promotion sourceReleaseId does not match reviewed notes");
+    invariant(event.promotion.sourceTag === `v${release.promotedFrom}`, "promotion sourceTag does not match reviewed notes");
+    invariant(/^\d{4}-\d{2}-\d{2}T/.test(event.promotion.sourcePublishedAt), "promotion sourcePublishedAt must be an ISO timestamp");
+    invariant(typeof event.promotion.emergency === "boolean", "promotion emergency must be boolean");
+    const reasonCodes = new Set(["security", "data-loss", "update-blocker", "service-unavailable"]);
+    if (event.promotion.emergency) {
+      invariant(reasonCodes.has(event.promotion.emergencyReasonCode), "promotion emergencyReasonCode is invalid");
+    } else {
+      invariant(event.promotion.emergencyReasonCode === null, "normal promotion must not have an emergencyReasonCode");
+    }
+    invariant(/^https:\/\/github\.com\//.test(event.promotion.workflowRun), "promotion workflowRun must be a GitHub URL");
+  } else {
+    invariant(event.promotion === undefined, "legacy release event must not contain promotion metadata");
+  }
   return event;
 }
 
@@ -53,6 +69,14 @@ async function main() {
   if (args.command === "generate") {
     invariant(args.sha, "generate requires --sha");
     invariant(args.output, "generate requires --output");
+    const promotion = release.promotedFrom ? {
+      sourceReleaseId: release.promotedFrom,
+      sourceTag: `v${release.promotedFrom}`,
+      sourcePublishedAt: args["source-published-at"],
+      emergency: args.emergency === "true",
+      emergencyReasonCode: args.emergency === "true" ? args["emergency-reason"] : null,
+      workflowRun: args["workflow-run"],
+    } : undefined;
     const event = validateReleaseEvent({
       schemaVersion: 1,
       releaseId: release.version,
@@ -61,6 +85,7 @@ async function main() {
       publishedAt: args["published-at"] || new Date().toISOString(),
       releaseNotesUrl: `https://reasonix.io/changelog/v${release.version}/`,
       builds: release.builds,
+      ...(promotion ? { promotion } : {}),
     }, release);
     await writeFile(resolve(args.output), `${JSON.stringify(event, null, 2)}\n`);
     return;

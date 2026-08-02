@@ -4,6 +4,9 @@ run-name: Relay stable release ${{ github.ref_name }}
 # The tag event itself has a tag-shaped origin. Relay the immutable tag name to
 # release-stable.yml on protected main-v2 so the production SignPath policy can
 # allow exactly one branch name without trusting wildcard tag-like branches.
+#
+# Stage 1: human Stable tags still relay. When the Stage-3 release-tagger App
+# creates the atomic Stable set, skip relay to avoid a duplicate orchestrator.
 on:
   push:
     tags:
@@ -23,11 +26,16 @@ jobs:
         uses: actions/github-script@v9
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_ACTOR: ${{ github.actor }}
           CONTROL_PLANE_REF: ${{ github.event.repository.default_branch }}
         with:
           script: |
             if (process.env.CONTROL_PLANE_REF !== 'main-v2') {
               core.setFailed(`Unexpected default branch: ${process.env.CONTROL_PLANE_REF}`);
+              return;
+            }
+            if (process.env.RELEASE_ACTOR === 'reasonix-release-tagger[bot]') {
+              core.info('Release stable already owns publication for this automated tag set.');
               return;
             }
             await github.rest.actions.createWorkflowDispatch({

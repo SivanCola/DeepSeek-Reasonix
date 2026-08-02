@@ -4,10 +4,6 @@ run-name: Relay CLI prerelease ${{ github.ref_name }}
 # Keep native CLI publication on protected main-v2. The tag-triggered workflow
 # carries only the immutable candidate tag and its classified channel into the
 # protected release control plane.
-#
-# Stage 1: human Preview tags still relay into Release preview. When the
-# Stage-3 release-tagger App creates a Preview tag, skip relay so the
-# orchestrator that already owns publication is not duplicated.
 on:
   push:
     tags: ["v*-*"]
@@ -34,14 +30,18 @@ jobs:
             }
             const tag = process.env.RELEASE_TAG;
             const preview = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-preview\.(?:0|[1-9]\d*)$/.test(tag);
-            if (preview && context.actor === 'reasonix-release-tagger[bot]') {
-              core.info('Release preview already owns publication for this automated tag.');
+            if (preview) {
+              if (context.actor === 'reasonix-release-tagger[bot]') {
+                core.info('Release preview already owns publication for this automated tag.');
+                return;
+              }
+              core.setFailed('Preview tags must be created by Actions → Release preview; use Request preview recovery for an existing tag.');
               return;
             }
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: preview ? 'release-preview.yml' : 'release.yml',
+              workflow_id: 'release.yml',
               ref: process.env.CONTROL_PLANE_REF,
-              inputs: preview ? { tag } : { channel: 'stable', tag },
+              inputs: { channel: 'stable', tag },
             });

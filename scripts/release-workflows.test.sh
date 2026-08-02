@@ -11,28 +11,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Stable tags have one entrypoint and one protected environment. Reusable
-# publishers must verify that only that entrypoint can claim prior approval.
+# Stage 1 keeps legacy tag+relay production entrypoints while landing promotion
+# helpers, shadow validation, and App-aware (but human-compatible) relays.
+# Stage-3 activated workflows live only under docs/releasing/stage3-workflows/.
 [ "$(grep -Ec '^    environment: release$' "$repo_root/.github/workflows/release-stable.yml")" = "1" ]
-for relay in release-stable-trigger.yml release-cli-trigger.yml release-desktop-trigger.yml; do
+for relay in release-cli-trigger.yml release-desktop-trigger.yml release-stable-trigger.yml; do
 	grep -Eq 'actions: write' "$repo_root/.github/workflows/$relay"
 	grep -Eq "CONTROL_PLANE_REF.*default_branch" "$repo_root/.github/workflows/$relay"
 	grep -Eq "CONTROL_PLANE_REF !== 'main-v2'" "$repo_root/.github/workflows/$relay"
 	grep -Eq 'createWorkflowDispatch' "$repo_root/.github/workflows/$relay"
 	grep -Eq 'ref: process\.env\.CONTROL_PLANE_REF' "$repo_root/.github/workflows/$relay"
 done
-grep -Eq "workflow_id: 'release-stable\.yml'" \
-	"$repo_root/.github/workflows/release-stable-trigger.yml"
-grep -Eq "allow_recovery: 'false'" \
-	"$repo_root/.github/workflows/release-stable-trigger.yml"
-grep -Eq 'ALLOW_STABLE_RECOVERY:.*inputs\.allow_recovery' \
-	"$repo_root/.github/workflows/release-stable.yml"
+grep -Fq 'reasonix-release-tagger[bot]' "$repo_root/.github/workflows/release-stable-trigger.yml"
+grep -Fq 'reasonix-release-tagger[bot]' "$repo_root/.github/workflows/release-cli-trigger.yml"
+grep -Fq "workflow_id: 'release-stable.yml'" "$repo_root/.github/workflows/release-stable-trigger.yml"
+grep -Fq "'release-preview.yml'" "$repo_root/.github/workflows/release-cli-trigger.yml"
+if grep -Fq 'Stable tags must be created by Actions' "$repo_root/.github/workflows/release-stable-trigger.yml" ||
+	grep -Fq 'Preview tags must be created by Actions' "$repo_root/.github/workflows/release-cli-trigger.yml"; then
+	echo "Stage 1 must keep human tag relays working; blocking messages belong in Stage 3 drafts" >&2
+	exit 1
+fi
 grep -Eq "workflow_id: 'release-desktop\.yml'" \
 	"$repo_root/.github/workflows/release-desktop-trigger.yml"
 grep -Fq 'Desktop Preview must be dispatched without a Git tag' \
 	"$repo_root/.github/workflows/release-desktop-trigger.yml"
-grep -Fq "workflow_id: preview ? 'release-preview.yml' : 'release.yml'" \
-	"$repo_root/.github/workflows/release-cli-trigger.yml"
+grep -Fq "'release.yml'" "$repo_root/.github/workflows/release-cli-trigger.yml"
 grep -Eq "preview\\\\\." "$repo_root/.github/workflows/release-cli-trigger.yml"
 grep -Eq '^name: Release preview$' "$repo_root/.github/workflows/release-preview.yml"
 grep -Eq '^  group: preview-release$' "$repo_root/.github/workflows/release-preview.yml"
@@ -41,16 +44,72 @@ if grep -Fq 'group: preview-release-${{ inputs.tag }}' "$repo_root/.github/workf
 	exit 1
 fi
 grep -Eq '^    environment: canary$' "$repo_root/.github/workflows/release-preview.yml"
+# Stage 1 production Preview still accepts an existing tag (+ recovery flag).
+grep -Eq '^      tag:$' "$repo_root/.github/workflows/release-preview.yml"
 grep -Eq '^      recovery:$' "$repo_root/.github/workflows/release-preview.yml"
-grep -Fq 'ALLOW_PREVIEW_RECOVERY: ${{ inputs.recovery }}' "$repo_root/.github/workflows/release-preview.yml"
-grep -Fq 'allow_preview_recovery: ${{ inputs.recovery }}' "$repo_root/.github/workflows/release-preview.yml"
+if grep -Eq '^      base_version:$' "$repo_root/.github/workflows/release-preview.yml"; then
+	echo "Stage 1 must not activate one-input Preview (base_version) on the production workflow" >&2
+	exit 1
+fi
+if grep -Eq 'create-github-app-token|create-release-tags\.sh' \
+	"$repo_root/.github/workflows/release-preview.yml" \
+	"$repo_root/.github/workflows/release-stable.yml"; then
+	echo "Stage 1 production orchestrators must not mint App tokens or create tags" >&2
+	exit 1
+fi
 grep -Eq '^  signpath-preflight:$' "$repo_root/.github/workflows/release-preview.yml"
 grep -Eq 'signing_preflight: true' "$repo_root/.github/workflows/release-preview.yml"
 grep -Eq 'signing_preflight_verified: true' "$repo_root/.github/workflows/release-preview.yml"
 [ "$(grep -Ec 'needs: \[authorize, signpath-preflight\]' "$repo_root/.github/workflows/release-preview.yml")" = "3" ]
 grep -Eq 'release-event\.mjs generate' "$repo_root/.github/workflows/release-preview.yml"
 grep -Eq 'gh workflow run pages\.yml' "$repo_root/.github/workflows/release-preview.yml"
+# Stage 1 Stable remains tag/recovery dispatch, not zero-input promote.
+grep -Eq '^      tag:$' "$repo_root/.github/workflows/release-stable.yml"
+grep -Eq '^      allow_recovery:$' "$repo_root/.github/workflows/release-stable.yml"
+if grep -Eq 'workflow_run:|Request stable recovery|Emergency stable promotion' \
+	"$repo_root/.github/workflows/release-stable.yml"; then
+	echo "Stage 1 must not activate workflow_run Stable consumers" >&2
+	exit 1
+fi
+if [ -e "$repo_root/.github/workflows/release-preview-recovery.yml" ] ||
+	[ -e "$repo_root/.github/workflows/release-stable-recovery.yml" ] ||
+	[ -e "$repo_root/.github/workflows/release-stable-emergency.yml" ]; then
+	echo "Stage-3 request workflows must stay under docs/releasing/stage3-workflows/ until activation" >&2
+	exit 1
+fi
+stage3_dir="$repo_root/docs/releasing/stage3-workflows"
+for draft in release-preview.yml release-stable.yml release-preview-recovery.yml \
+	release-stable-recovery.yml release-stable-emergency.yml; do
+	[ -f "$stage3_dir/$draft" ] || {
+		echo "missing Stage-3 draft workflow: $draft" >&2
+		exit 1
+	}
+done
+grep -Eq '^      base_version:$' "$stage3_dir/release-preview.yml"
+grep -Eq 'create-github-app-token' "$stage3_dir/release-preview.yml"
+grep -Eq 'create-github-app-token' "$stage3_dir/release-stable.yml"
+grep -Eq '^name: Request preview recovery$' "$stage3_dir/release-preview-recovery.yml"
+grep -Eq '^name: Request stable recovery$' "$stage3_dir/release-stable-recovery.yml"
+grep -Eq '^name: Emergency stable promotion$' "$stage3_dir/release-stable-emergency.yml"
+grep -Eq '^    environment: emergency-release$' "$stage3_dir/release-stable-emergency.yml"
 grep -Eq 'release-cli-trigger\.yml' "$repo_root/.github/workflows/ci.yml"
+grep -Fq '.github/workflows/prepare-release-notes.yml' "$repo_root/.github/workflows/ci.yml"
+grep -Fq '.github/workflows/release-stable-shadow.yml' "$repo_root/.github/workflows/ci.yml"
+grep -Eq '^name: Shadow validate stable promotion$' \
+	"$repo_root/.github/workflows/release-stable-shadow.yml"
+if grep -Eq 'create-release-tags\.sh|create-github-app-token' \
+	"$repo_root/.github/workflows/release-stable-shadow.yml"; then
+	echo "shadow validation must not create tags or mint a release-tagger token" >&2
+	exit 1
+fi
+if grep -Fq '.github/workflows/release-preview-recovery.yml' "$repo_root/.github/workflows/ci.yml" ||
+	grep -Fq '.github/workflows/release-stable-recovery.yml' "$repo_root/.github/workflows/ci.yml" ||
+	grep -Fq '.github/workflows/release-stable-emergency.yml' "$repo_root/.github/workflows/ci.yml"; then
+	echo "Stage 1 CI must not actionlint inactive Stage-3 request workflows" >&2
+	exit 1
+fi
+grep -Fq 'ref: ${{ github.sha }}' "$repo_root/.github/workflows/release-preview.yml"
+grep -Fq 'ref: ${{ github.sha }}' "$repo_root/.github/workflows/release-stable.yml"
 if grep -Eq '^  push:$' "$repo_root/.github/workflows/release-stable.yml" ||
 	grep -Eq '^  push:$' "$repo_root/.github/workflows/release.yml" ||
 	grep -Eq '^  push:$' "$repo_root/.github/workflows/release-desktop.yml"; then
@@ -264,6 +323,12 @@ for channel in cli npm desktop; do
 	grep -Eq '^      publish_'"$channel"':' "$repo_root/.github/workflows/release-stable.yml"
 	grep -Eq "inputs\.publish_$channel" "$repo_root/.github/workflows/release-stable.yml"
 done
+# Stage-3 recovery draft defaults all surfaces off and requires at least one.
+for channel in cli npm desktop; do
+	grep -Eq '^      publish_'"$channel"':' "$stage3_dir/release-stable-recovery.yml"
+	grep -Eq 'default: false' <<<"$(grep -A4 -E "^      publish_${channel}:" "$stage3_dir/release-stable-recovery.yml")"
+done
+grep -Fq 'Select at least one surface to recover' "$stage3_dir/release-stable-recovery.yml"
 
 # The checked-in SignPath policy contract is the single source of truth for the
 # provider allowlist and every top-level workflow that can reach signing.
@@ -1236,6 +1301,12 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 		CALLER_WORKFLOW_SHA="$approved_sha" CALLER_SHA="$approved_sha" \
 		APPROVED_CHANNEL=preview APPROVED_CLI_TAG=v1.3.0-preview.42 APPROVED_SHA="$approved_sha" \
 		"$repo_root/scripts/verify-release-authorization.sh"
+	ACTUAL_CALLER_WORKFLOW_REF='example/reasonix/.github/workflows/release-preview.yml@refs/heads/main-v2' \
+		EXPECTED_CALLER_WORKFLOW_REF='example/reasonix/.github/workflows/release-preview.yml@refs/heads/main-v2' \
+		CALLER_EVENT_NAME=workflow_run CALLER_REF=refs/heads/main-v2 CALLER_REF_PROTECTED=true \
+		CALLER_WORKFLOW_SHA="$approved_sha" CALLER_SHA="$approved_sha" \
+		APPROVED_CHANNEL=preview APPROVED_CLI_TAG=v1.3.0-preview.42 APPROVED_SHA="$approved_sha" \
+		"$repo_root/scripts/verify-release-authorization.sh"
 	RELEASE_TAG=desktop-v1.2.3 APPROVED_SHA="$approved_sha" \
 		"$repo_root/scripts/verify-release-tag.sh"
 
@@ -1372,6 +1443,120 @@ git clone -q "$test_root/remote.git" "$test_root/repo"
 	fi
 	grep -Eq 'stable release tag must be vMAJOR.MINOR.PATCH' "$test_root/prerelease.log"
 )
+
+# The low-friction entrypoints must derive one Preview tag, promote its exact
+# SHA, and create the Stable tag set atomically without moving main-v2.
+git init --bare -q "$test_root/automation-remote.git"
+git clone -q "$test_root/automation-remote.git" "$test_root/automation-repo"
+(
+	cd "$test_root/automation-repo"
+	git config user.name "Release Automation Test"
+	git config user.email "release-automation-test@example.invalid"
+	mkdir -p .github/workflows release-notes
+	printf '%s\n' '{"schemaVersion":1,"releases":[{"version":"2.0.0-preview.1","baseVersion":"2.0.0","channel":"prerelease","status":"reviewed"}]}' \
+		> release-notes/releases.json
+	git add .github release-notes
+	git commit -q -m "preview candidate"
+	git branch -M main-v2
+	git push -q -u origin main-v2
+	preview_sha="$(git rev-parse HEAD)"
+	GITHUB_OUTPUT="$test_root/automated-preview.out" BASE_VERSION=2.0.0 \
+		"$repo_root/scripts/resolve-preview-candidate.sh"
+	grep -Eq '^cli_tag=v2\.0\.0-preview\.1$' "$test_root/automated-preview.out"
+	RELEASE_SHA="$preview_sha" RELEASE_TAGS='v2.0.0-preview.1' \
+		"$repo_root/scripts/create-release-tags.sh"
+	[ "$(git ls-remote --tags --refs origin refs/tags/v2.0.0-preview.1 | awk '{ print $1 }')" = "$preview_sha" ]
+	if RELEASE_SHA="$preview_sha" RELEASE_TAGS='v2.0.0-preview.1' \
+		"$repo_root/scripts/create-release-tags.sh" >"$test_root/duplicate-automated-preview.log" 2>&1; then
+		echo "duplicate automated Preview tag unexpectedly passed" >&2
+		exit 1
+	fi
+	grep -Eq 'release tag already exists' "$test_root/duplicate-automated-preview.log"
+
+	# Incomplete Preview tags must not look like the newest complete release.
+	mkdir -p "$test_root/preview-events/v2.0.0-preview.1"
+	printf '%s\n' "{\"schemaVersion\":1,\"releaseId\":\"2.0.0-preview.1\",\"channel\":\"preview\",\"candidateSha\":\"$preview_sha\",\"publishedAt\":\"2026-08-01T00:00:00.000Z\",\"releaseNotesUrl\":\"https://reasonix.io/changelog/v2.0.0-preview.1/\",\"builds\":{\"cli\":\"v2.0.0-preview.1\",\"desktop\":\"v2.0.0-preview.1\",\"npm\":\"2.0.0-canary.1\"}}" \
+		>"$test_root/preview-events/v2.0.0-preview.1/release-event.json"
+	git commit --allow-empty -q -m "incomplete newer preview"
+	git push -q origin main-v2
+	incomplete_sha="$(git rev-parse HEAD)"
+	RELEASE_SHA="$incomplete_sha" RELEASE_TAGS='v2.0.0-preview.2' \
+		"$repo_root/scripts/create-release-tags.sh"
+
+	printf '%s\n' "{\"releases\":[{\"version\":\"2.0.0\",\"baseVersion\":\"2.0.0\",\"channel\":\"stable\",\"status\":\"reviewed\",\"promotedFrom\":\"2.0.0-preview.1\",\"candidateSha\":\"$preview_sha\"}]}" \
+		> release-notes/releases.json
+	git add release-notes/releases.json
+	git commit -q -m "stable promotion record"
+	git push -q origin main-v2
+	GITHUB_OUTPUT="$test_root/automated-stable.out" \
+		RELEASE_MIN_PROMOTION_CANDIDATE_SHA="$preview_sha" \
+		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
+		"$repo_root/scripts/resolve-stable-promotion.sh"
+
+	# Stage-1 empty cutoff remains allowed for shadow/infrastructure proofs.
+	GITHUB_OUTPUT="$test_root/automated-stable-empty-cutoff.out" \
+		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
+		"$repo_root/scripts/resolve-stable-promotion.sh"
+	grep -Eq '^preview_tag=v2\.0\.0-preview\.1$' "$test_root/automated-stable-empty-cutoff.out"
+	if RELEASE_REQUIRE_PROMOTION_CUTOFF=true \
+		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
+		"$repo_root/scripts/resolve-stable-promotion.sh" \
+		>"$test_root/require-cutoff.log" 2>&1; then
+		echo "empty cutoff with REQUIRE unexpectedly passed" >&2
+		exit 1
+	fi
+	grep -Eq 'promotion activation cutoff is not configured' "$test_root/require-cutoff.log"
+
+	grep -Eq '^preview_tag=v2\.0\.0-preview\.1$' "$test_root/automated-stable.out"
+	grep -Eq '^sha='"$preview_sha"'$' "$test_root/automated-stable.out"
+
+	# Activation cutoff blocks pre-infrastructure candidates.
+	if RELEASE_MIN_PROMOTION_CANDIDATE_SHA="$(git rev-parse HEAD)" \
+		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
+		"$repo_root/scripts/resolve-stable-promotion.sh" \
+		>"$test_root/activation-cutoff.log" 2>&1; then
+		echo "pre-cutoff Preview unexpectedly promoted" >&2
+		exit 1
+	fi
+	grep -Eq 'predates the promotion activation cutoff' "$test_root/activation-cutoff.log"
+
+	MODE=stable VERSION=2.0.0 RELEASE_SHA="$preview_sha" \
+		RELEASE_TAGS='v2.0.0 npm-v2.0.0 desktop-v2.0.0' \
+		PREVIEW_VERSION=2.0.0-preview.1 PREVIEW_TAG=v2.0.0-preview.1 \
+		RELEASE_PREVIEW_EVENT_STORE="$test_root/preview-events" \
+		"$repo_root/scripts/revalidate-release-candidate.sh"
+	RELEASE_SHA="$preview_sha" \
+		RELEASE_TAGS='v2.0.0 npm-v2.0.0 desktop-v2.0.0' \
+		"$repo_root/scripts/create-release-tags.sh"
+	for tag in v2.0.0 npm-v2.0.0 desktop-v2.0.0; do
+		[ "$(git ls-remote --tags --refs origin "refs/tags/$tag" | awk '{ print $1 }')" = "$preview_sha" ]
+	done
+	if RELEASE_SHA="$preview_sha" \
+		RELEASE_TAGS='v2.0.0 npm-v2.0.0 desktop-v2.0.0' \
+		"$repo_root/scripts/create-release-tags.sh" >"$test_root/atomic-exists.log" 2>&1; then
+		echo "duplicate Stable tags unexpectedly passed" >&2
+		exit 1
+	fi
+	grep -Eq 'release tag already exists' "$test_root/atomic-exists.log"
+)
+
+# Request artifact trust boundary fails closed on malformed payloads.
+mkdir -p "$test_root/request-good" "$test_root/request-bad"
+printf '%s\n' '{"tag":"v2.0.0-preview.1"}' >"$test_root/request-good/request.json"
+printf '%s\n' '{"tag":"v2.0.0","extra":true}' >"$test_root/request-bad/request.json"
+if REQUEST_KIND=preview-recovery \
+	EXPECTED_WORKFLOW_NAME="Request preview recovery" \
+	EXPECTED_ARTIFACT_NAME=preview-recovery-request \
+	REPOSITORY=example/reasonix \
+	SOURCE_RUN_ID=1 SOURCE_RUN_CONCLUSION=success SOURCE_RUN_BRANCH=main-v2 \
+	SOURCE_RUN_EVENT=push SOURCE_RUN_NAME="Request preview recovery" \
+	SOURCE_RUN_REPOSITORY=example/reasonix \
+	bash "$repo_root/scripts/consume-release-request.sh" \
+	>"$test_root/request-event.log" 2>&1; then
+	echo "non-dispatch request event unexpectedly passed" >&2
+	exit 1
+fi
+grep -Eq 'expected workflow_dispatch' "$test_root/request-event.log"
 
 EVENT_NAME=push IN_CHANNEL=stable IN_TAG=desktop-v1.2.3 REF_NAME=v1.2.3 RUN_NUMBER=10 \
 	GITHUB_OUTPUT="$test_root/desktop-stable.out" bash "$repo_root/scripts/resolve-desktop-release.sh"

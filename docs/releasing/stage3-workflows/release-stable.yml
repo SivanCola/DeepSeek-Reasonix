@@ -1,0 +1,460 @@
+name: Release stable
+run-name: >-
+  Release stable ${{ github.event.workflow_run.display_title || 'latest eligible Preview' }}
+
+# Normal promotion has no inputs. Recovery and emergency approval are isolated
+# request workflows whose completed artifacts are consumed on protected main-v2.
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Request stable recovery", "Emergency stable promotion"]
+    types: [completed]
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  preflight:
+    name: resolve and validate Stable release
+    runs-on: ubuntu-latest
+    outputs:
+      control_plane_sha: ${{ steps.freeze.outputs.control_plane_sha }}
+      mode: ${{ steps.identity.outputs.mode }}
+      version: ${{ steps.identity.outputs.version }}
+      cli_tag: ${{ steps.identity.outputs.cli_tag }}
+      npm_tag: ${{ steps.identity.outputs.npm_tag }}
+      desktop_tag: ${{ steps.identity.outputs.desktop_tag }}
+      preview_version: ${{ steps.identity.outputs.preview_version }}
+      preview_tag: ${{ steps.identity.outputs.preview_tag }}
+      sha: ${{ steps.identity.outputs.sha }}
+      publish_cli: ${{ steps.identity.outputs.publish_cli }}
+      publish_npm: ${{ steps.identity.outputs.publish_npm }}
+      publish_desktop: ${{ steps.identity.outputs.publish_desktop }}
+      emergency_reason: ${{ steps.identity.outputs.emergency_reason }}
+      source_published_at: ${{ steps.soak.outputs.source_published_at }}
+      preview_age_hours: ${{ steps.soak.outputs.preview_age_hours }}
+      ci_run_url: ${{ steps.ci.outputs.ci_run_url }}
+    steps:
+      - name: Freeze protected control plane
+        id: freeze
+        run: |
+          set -euo pipefail
+          echo "control_plane_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Stable control plane"
+            echo ""
+            echo "- Frozen control plane SHA: \`${{ github.sha }}\`"
+            echo "- Event: \`${{ github.event_name }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Resolve promotion, recovery, or emergency request
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_RUN_NAME: ${{ github.event.workflow_run.name }}
+          SOURCE_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          SOURCE_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_RUN_EVENT: ${{ github.event.workflow_run.event }}
+          SOURCE_RUN_REPOSITORY: ${{ github.event.workflow_run.repository.full_name }}
+        run: |
+          set -euo pipefail
+          output=/tmp/stable-identity
+          mode=promote
+          publish_cli=true
+          publish_npm=true
+          publish_desktop=true
+          emergency_reason=""
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            if [ "$SOURCE_RUN_NAME" = "Request stable recovery" ]; then
+              mode=recover
+              REQUEST_KIND=stable-recovery \
+                EXPECTED_WORKFLOW_NAME="Request stable recovery" \
+                EXPECTED_ARTIFACT_NAME=stable-recovery-request \
+                REQUEST_OUTPUT=/tmp/stable-request.json \
+                bash scripts/consume-release-request.sh
+              tag="$(jq -er '.tag' /tmp/stable-request.json)"
+              publish_cli="$(jq -er '.publish_cli' /tmp/stable-request.json)"
+              publish_npm="$(jq -er '.publish_npm' /tmp/stable-request.json)"
+              publish_desktop="$(jq -er '.publish_desktop' /tmp/stable-request.json)"
+              GITHUB_OUTPUT="$output" RELEASE_TAG="$tag" ALLOW_STABLE_RECOVERY=true \
+                bash scripts/resolve-stable-release.sh
+            elif [ "$SOURCE_RUN_NAME" = "Emergency stable promotion" ]; then
+              mode=emergency
+              REQUEST_KIND=stable-emergency \
+                EXPECTED_WORKFLOW_NAME="Emergency stable promotion" \
+                EXPECTED_ARTIFACT_NAME=stable-emergency-request \
+                REQUEST_OUTPUT=/tmp/stable-request.json \
+                bash scripts/consume-release-request.sh
+              emergency_reason="$(jq -er '.reason' /tmp/stable-request.json)"
+              GITHUB_OUTPUT="$output" RELEASE_REQUIRE_PROMOTION_CUTOFF=true bash scripts/resolve-stable-promotion.sh || {
+                echo "::error::No eligible emergency promotion found. Prepare Stable notes with promote_from via Actions → Prepare release notes."
+                exit 1
+              }
+            else
+              echo "::error::Unexpected Stable request workflow: $SOURCE_RUN_NAME"
+              exit 1
+            fi
+          else
+            GITHUB_OUTPUT="$output" RELEASE_REQUIRE_PROMOTION_CUTOFF=true bash scripts/resolve-stable-promotion.sh || {
+              echo "::error::No pending reviewed Stable promotion. Prepare notes with promote_from via Actions → Prepare release notes, then re-run Release stable."
+              exit 1
+            }
+          fi
+          {
+            echo "mode=$mode"
+            echo "publish_cli=$publish_cli"
+            echo "publish_npm=$publish_npm"
+            echo "publish_desktop=$publish_desktop"
+            echo "emergency_reason=$emergency_reason"
+          } >> "$output"
+          cat "$output" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Stable candidate"
+            echo ""
+            echo "- Mode: \`$mode\`"
+            echo "- Version: \`$(grep -E '^version=' "$output" | cut -d= -f2-)\`"
+            echo "- Preview: \`$(grep -E '^preview_tag=' "$output" | cut -d= -f2- || true)\`"
+            echo "- Candidate SHA: \`$(grep -E '^sha=' "$output" | cut -d= -f2-)\`"
+            echo "- Surfaces: cli=$publish_cli npm=$publish_npm desktop=$publish_desktop"
+            if [ -n "$emergency_reason" ]; then
+              echo "- Emergency reason: \`$emergency_reason\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate reviewed Stable notes
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: node scripts/release-notes.mjs render --version "$VERSION" --output /tmp/release-notes.md
+      - name: Download and validate source Preview event
+        if: ${{ steps.identity.outputs.mode != 'recover' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_TAG: ${{ steps.identity.outputs.preview_tag }}
+          PREVIEW_VERSION: ${{ steps.identity.outputs.preview_version }}
+          RELEASE_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          mkdir -p /tmp/source-preview
+          gh release download "$PREVIEW_TAG" --pattern release-event.json --dir /tmp/source-preview
+          node scripts/release-event.mjs validate \
+            --version "$PREVIEW_VERSION" --input /tmp/source-preview/release-event.json
+          jq -e --arg sha "$RELEASE_SHA" '.candidateSha == $sha and .channel == "preview"' \
+            /tmp/source-preview/release-event.json >/dev/null
+      - name: Enforce Preview observation period
+        id: soak
+        if: ${{ steps.identity.outputs.mode != 'recover' }}
+        env:
+          MODE: ${{ steps.identity.outputs.mode }}
+        run: |
+          args=(--input /tmp/source-preview/release-event.json --minimum-hours 24)
+          if [ "$MODE" = "emergency" ]; then args+=(--allow-early); fi
+          node scripts/verify-preview-soak.mjs "${args[@]}"
+      - name: Require successful CI for the exact candidate
+        id: ci
+        if: ${{ steps.identity.outputs.mode != 'recover' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          gh run list --workflow ci.yml --commit "$RELEASE_SHA" --event push --limit 20 \
+            --json databaseId,url,headSha,headBranch,event,createdAt,status,conclusion > /tmp/ci-runs.json
+          node scripts/verify-release-ci.mjs --input /tmp/ci-runs.json --sha "$RELEASE_SHA"
+      - name: Verify immutable Preview public surfaces
+        if: ${{ steps.identity.outputs.mode != 'recover' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          PREVIEW_TAG: ${{ steps.identity.outputs.preview_tag }}
+          EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
+        run: bash scripts/verify-preview-release-artifacts.sh
+      - name: Summarize release approval identity
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+          PREVIEW_TAG: ${{ steps.identity.outputs.preview_tag }}
+          RELEASE_SHA: ${{ steps.identity.outputs.sha }}
+          SOURCE_PUBLISHED_AT: ${{ steps.soak.outputs.source_published_at }}
+          PREVIEW_AGE: ${{ steps.soak.outputs.preview_age_hours }}
+          CI_RUN_URL: ${{ steps.ci.outputs.ci_run_url }}
+          MODE: ${{ steps.identity.outputs.mode }}
+          EMERGENCY_REASON: ${{ steps.identity.outputs.emergency_reason }}
+        run: |
+          {
+            echo "## Stable approval summary"
+            echo ""
+            if [ -n "$PREVIEW_TAG" ]; then
+              echo "- \`$PREVIEW_TAG\` → \`v$VERSION\`"
+            else
+              echo "- Recovery of \`v$VERSION\`"
+            fi
+            echo "- Candidate SHA: \`$RELEASE_SHA\`"
+            echo "- Preview published: \`${SOURCE_PUBLISHED_AT:-n/a}\` (age ${PREVIEW_AGE:-n/a}h)"
+            echo "- Exact CI: $CI_RUN_URL"
+            echo "- CLI / Desktop / npm verification: required before approval"
+            echo "- Emergency status: \`$MODE\`${EMERGENCY_REASON:+ ($EMERGENCY_REASON)}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload reviewed release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: orchestrator-reviewed-release-notes
+          path: /tmp/release-notes.md
+          if-no-files-found: error
+          retention-days: 1
+      - name: Cache hit guard
+        run: ./scripts/cache-guard.sh
+
+  authorize:
+    name: >-
+      approve Stable ${{ needs.preflight.outputs.cli_tag }}
+      from ${{ needs.preflight.outputs.preview_tag || 'recovery' }}
+      @ ${{ needs.preflight.outputs.sha }}
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    outputs:
+      control_plane_sha: ${{ steps.approved.outputs.control_plane_sha }}
+      mode: ${{ steps.approved.outputs.mode }}
+      version: ${{ steps.approved.outputs.version }}
+      cli_tag: ${{ steps.approved.outputs.cli_tag }}
+      npm_tag: ${{ steps.approved.outputs.npm_tag }}
+      desktop_tag: ${{ steps.approved.outputs.desktop_tag }}
+      preview_version: ${{ steps.approved.outputs.preview_version }}
+      sha: ${{ steps.approved.outputs.sha }}
+      publish_cli: ${{ steps.approved.outputs.publish_cli }}
+      publish_npm: ${{ steps.approved.outputs.publish_npm }}
+      publish_desktop: ${{ steps.approved.outputs.publish_desktop }}
+      emergency_reason: ${{ steps.approved.outputs.emergency_reason }}
+      source_published_at: ${{ steps.approved.outputs.source_published_at }}
+      ci_run_url: ${{ steps.approved.outputs.ci_run_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.preflight.outputs.control_plane_sha }}
+      - name: Revalidate before atomic tag creation
+        if: ${{ needs.preflight.outputs.mode != 'recover' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: stable
+          VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          RELEASE_TAGS: ${{ format('{0} {1} {2}', needs.preflight.outputs.cli_tag, needs.preflight.outputs.npm_tag, needs.preflight.outputs.desktop_tag) }}
+          PREVIEW_VERSION: ${{ needs.preflight.outputs.preview_version }}
+          PREVIEW_TAG: ${{ needs.preflight.outputs.preview_tag }}
+        run: bash scripts/revalidate-release-candidate.sh
+      - name: Mint release-tagger token
+        id: app-token
+        if: ${{ needs.preflight.outputs.mode != 'recover' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ secrets.RELEASE_TAGGER_APP_ID }}
+          private-key: ${{ secrets.RELEASE_TAGGER_PRIVATE_KEY }}
+      - name: Create atomic Stable tag set
+        if: ${{ needs.preflight.outputs.mode != 'recover' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          RELEASE_TAGS: ${{ format('{0} {1} {2}', needs.preflight.outputs.cli_tag, needs.preflight.outputs.npm_tag, needs.preflight.outputs.desktop_tag) }}
+        run: |
+          gh auth setup-git
+          bash scripts/create-release-tags.sh
+      - name: Record approved Stable release
+        id: approved
+        env:
+          CONTROL_PLANE_SHA: ${{ needs.preflight.outputs.control_plane_sha }}
+          MODE: ${{ needs.preflight.outputs.mode }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          CLI_TAG: ${{ needs.preflight.outputs.cli_tag }}
+          NPM_TAG: ${{ needs.preflight.outputs.npm_tag }}
+          DESKTOP_TAG: ${{ needs.preflight.outputs.desktop_tag }}
+          PREVIEW_VERSION: ${{ needs.preflight.outputs.preview_version }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          PUBLISH_CLI: ${{ needs.preflight.outputs.publish_cli }}
+          PUBLISH_NPM: ${{ needs.preflight.outputs.publish_npm }}
+          PUBLISH_DESKTOP: ${{ needs.preflight.outputs.publish_desktop }}
+          EMERGENCY_REASON: ${{ needs.preflight.outputs.emergency_reason }}
+          SOURCE_PUBLISHED_AT: ${{ needs.preflight.outputs.source_published_at }}
+          CI_RUN_URL: ${{ needs.preflight.outputs.ci_run_url }}
+        run: |
+          {
+            echo "control_plane_sha=$CONTROL_PLANE_SHA"
+            echo "mode=$MODE"
+            echo "version=$VERSION"
+            echo "cli_tag=$CLI_TAG"
+            echo "npm_tag=$NPM_TAG"
+            echo "desktop_tag=$DESKTOP_TAG"
+            echo "preview_version=$PREVIEW_VERSION"
+            echo "sha=$RELEASE_SHA"
+            echo "publish_cli=$PUBLISH_CLI"
+            echo "publish_npm=$PUBLISH_NPM"
+            echo "publish_desktop=$PUBLISH_DESKTOP"
+            echo "emergency_reason=$EMERGENCY_REASON"
+            echo "source_published_at=$SOURCE_PUBLISHED_AT"
+            echo "ci_run_url=$CI_RUN_URL"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Approved Stable identity"
+            echo ""
+            echo "- \`${PREVIEW_VERSION:+v$PREVIEW_VERSION → }$CLI_TAG\` @ \`$RELEASE_SHA\`"
+            echo "- Tags: \`$CLI_TAG\` \`$NPM_TAG\` \`$DESKTOP_TAG\`"
+            echo "- Mode: \`$MODE\`${EMERGENCY_REASON:+ / $EMERGENCY_REASON}"
+            echo "- Exact CI: $CI_RUN_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Approved Stable $VERSION at $RELEASE_SHA from ${PREVIEW_VERSION:-legacy recovery}"
+
+  signpath-preflight:
+    name: verify Stable SignPath control plane
+    needs: authorize
+    if: ${{ needs.authorize.outputs.publish_desktop == 'true' }}
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      channel: stable
+      tag: ${{ needs.authorize.outputs.desktop_tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_sha: ${{ needs.authorize.outputs.sha }}
+      orchestrated: true
+      signing_preflight: true
+    secrets: inherit
+
+  cli:
+    name: publish CLI and Homebrew
+    needs: [authorize, signpath-preflight]
+    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (needs.signpath-preflight.result == 'success' || needs.signpath-preflight.result == 'skipped') && needs.authorize.outputs.publish_cli == 'true' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_sha: ${{ needs.authorize.outputs.sha }}
+      orchestrated: true
+    secrets: inherit
+
+  npm:
+    name: publish npm
+    needs: [authorize, signpath-preflight]
+    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (needs.signpath-preflight.result == 'success' || needs.signpath-preflight.result == 'skipped') && needs.authorize.outputs.publish_npm == 'true' }}
+    uses: ./.github/workflows/release-npm.yml
+    with:
+      channel: stable
+      base_version: ${{ needs.authorize.outputs.version }}
+      tag: ${{ needs.authorize.outputs.npm_tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_sha: ${{ needs.authorize.outputs.sha }}
+      orchestrated: true
+    secrets: inherit
+
+  desktop:
+    name: publish Desktop
+    needs: [authorize, signpath-preflight]
+    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && needs.signpath-preflight.result == 'success' && needs.authorize.outputs.publish_desktop == 'true' }}
+    uses: ./.github/workflows/release-desktop.yml
+    with:
+      channel: stable
+      tag: ${{ needs.authorize.outputs.desktop_tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      approved_sha: ${{ needs.authorize.outputs.sha }}
+      orchestrated: true
+      signing_preflight_verified: true
+    secrets: inherit
+
+  postflight:
+    name: verify Stable release artifacts
+    needs: [authorize, cli, npm, desktop]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - name: Require selected publishers to succeed
+        env:
+          PUBLISH_CLI: ${{ needs.authorize.outputs.publish_cli }}
+          PUBLISH_NPM: ${{ needs.authorize.outputs.publish_npm }}
+          PUBLISH_DESKTOP: ${{ needs.authorize.outputs.publish_desktop }}
+          CLI_RESULT: ${{ needs.cli.result }}
+          NPM_RESULT: ${{ needs.npm.result }}
+          DESKTOP_RESULT: ${{ needs.desktop.result }}
+          CLI_TAG: ${{ needs.authorize.outputs.cli_tag }}
+        run: |
+          set -euo pipefail
+          failed=false
+          for channel in cli npm desktop; do
+            selected_var="PUBLISH_${channel^^}"
+            result_var="${channel^^}_RESULT"
+            if [ "${!selected_var}" != "true" ]; then
+              echo "$channel recovery skipped; public postflight will still verify it"
+              continue
+            fi
+            if [ "${!result_var}" != "success" ]; then
+              echo "::error::$channel Stable publisher result is ${!result_var}, expected success"
+              failed=true
+            fi
+          done
+          if [ "$failed" = true ]; then
+            echo "::error::Recover missing Stable surfaces via Actions → Request stable recovery with tag $CLI_TAG (select only missing channels; do not move tags)."
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.authorize.outputs.control_plane_sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Verify public artifacts and npm latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+          CLI_TAG: ${{ needs.authorize.outputs.cli_tag }}
+          DESKTOP_TAG: ${{ needs.authorize.outputs.desktop_tag }}
+        run: bash scripts/verify-stable-release-artifacts.sh
+      - name: Publish exact Stable release record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+          CLI_TAG: ${{ needs.authorize.outputs.cli_tag }}
+          RELEASE_SHA: ${{ needs.authorize.outputs.sha }}
+          PREVIEW_VERSION: ${{ needs.authorize.outputs.preview_version }}
+          SOURCE_PUBLISHED_AT: ${{ needs.authorize.outputs.source_published_at }}
+          MODE: ${{ needs.authorize.outputs.mode }}
+          EMERGENCY_REASON: ${{ needs.authorize.outputs.emergency_reason }}
+        run: |
+          set -euo pipefail
+          args=(generate --version "$VERSION" --sha "$RELEASE_SHA"
+            --published-at "$(gh api "repos/${{ github.repository }}/releases/tags/$CLI_TAG" --jq .published_at)"
+            --output /tmp/release-event.json)
+          if [ -n "$PREVIEW_VERSION" ]; then
+            args+=(--source-published-at "$SOURCE_PUBLISHED_AT"
+              --emergency "$([ "$MODE" = emergency ] && echo true || echo false)"
+              --emergency-reason "$EMERGENCY_REASON"
+              --workflow-run "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+          fi
+          node scripts/release-event.mjs "${args[@]}"
+          existing="$(mktemp -d)"
+          if gh release download "$CLI_TAG" --pattern release-event.json --dir "$existing" 2>/dev/null; then
+            cmp -s /tmp/release-event.json "$existing/release-event.json" || {
+              echo "::error::published release-event.json differs from the approved Stable event"
+              exit 1
+            }
+          else
+            gh release upload "$CLI_TAG" /tmp/release-event.json
+          fi
+      - name: Refresh public changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main-v2

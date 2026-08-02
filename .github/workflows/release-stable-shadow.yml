@@ -1,0 +1,95 @@
+name: Shadow validate stable promotion
+run-name: Shadow validate stable promotion
+
+# Read-only promotion proof for Stage-1 infrastructure and Stage-2 drills.
+# Resolves the newest pending Stable promotion and verifies CI, soak, notes,
+# and public Preview surfaces without creating tags or publishing anything.
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  shadow:
+    name: shadow validate pending Stable promotion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Resolve pending promotion
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          GITHUB_OUTPUT=/tmp/stable-identity bash scripts/resolve-stable-promotion.sh
+          cat /tmp/stable-identity >> "$GITHUB_OUTPUT"
+          {
+            echo "## Shadow Stable promotion"
+            echo ""
+            echo "- Preview: \`$(grep -E '^preview_tag=' /tmp/stable-identity | cut -d= -f2-)\`"
+            echo "- Stable: \`$(grep -E '^cli_tag=' /tmp/stable-identity | cut -d= -f2-)\`"
+            echo "- Candidate SHA: \`$(grep -E '^sha=' /tmp/stable-identity | cut -d= -f2-)\`"
+            echo "- No tags will be created and no surfaces will be published."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Validate reviewed Stable notes
+        env:
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: node scripts/release-notes.mjs render --version "$VERSION" --output /tmp/release-notes.md
+      - name: Validate source Preview event
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_TAG: ${{ steps.identity.outputs.preview_tag }}
+          PREVIEW_VERSION: ${{ steps.identity.outputs.preview_version }}
+          RELEASE_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          mkdir -p /tmp/source-preview
+          gh release download "$PREVIEW_TAG" --pattern release-event.json --dir /tmp/source-preview
+          node scripts/release-event.mjs validate \
+            --version "$PREVIEW_VERSION" --input /tmp/source-preview/release-event.json
+          jq -e --arg sha "$RELEASE_SHA" '.candidateSha == $sha and .channel == "preview"' \
+            /tmp/source-preview/release-event.json >/dev/null
+      - name: Enforce Preview observation period
+        run: node scripts/verify-preview-soak.mjs --input /tmp/source-preview/release-event.json --minimum-hours 24
+      - name: Require successful CI for the exact candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          gh run list --workflow ci.yml --commit "$RELEASE_SHA" --event push --limit 20 \
+            --json databaseId,url,headSha,headBranch,event,createdAt,status,conclusion > /tmp/ci-runs.json
+          node scripts/verify-release-ci.mjs --input /tmp/ci-runs.json --sha "$RELEASE_SHA"
+      - name: Verify immutable Preview public surfaces
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          PREVIEW_TAG: ${{ steps.identity.outputs.preview_tag }}
+          EXPECTED_SHA: ${{ steps.identity.outputs.sha }}
+        run: bash scripts/verify-preview-release-artifacts.sh
+      - name: Revalidate as if tags were about to be created
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: stable
+          VERSION: ${{ steps.identity.outputs.version }}
+          RELEASE_SHA: ${{ steps.identity.outputs.sha }}
+          RELEASE_TAGS: ${{ format('{0} {1} {2}', steps.identity.outputs.cli_tag, steps.identity.outputs.npm_tag, steps.identity.outputs.desktop_tag) }}
+          PREVIEW_VERSION: ${{ steps.identity.outputs.preview_version }}
+          PREVIEW_TAG: ${{ steps.identity.outputs.preview_tag }}
+        run: bash scripts/revalidate-release-candidate.sh
+      - name: Record shadow success
+        env:
+          PREVIEW_TAG: ${{ steps.identity.outputs.preview_tag }}
+          CLI_TAG: ${{ steps.identity.outputs.cli_tag }}
+          RELEASE_SHA: ${{ steps.identity.outputs.sha }}
+        run: |
+          {
+            echo ""
+            echo "Shadow validation passed for \`$PREVIEW_TAG\` → \`$CLI_TAG\` at \`$RELEASE_SHA\`."
+          } >> "$GITHUB_STEP_SUMMARY"

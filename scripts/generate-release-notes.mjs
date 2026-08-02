@@ -159,6 +159,19 @@ async function main() {
   const catalog = await loadCatalog();
   const channel = version.includes("-") ? "prerelease" : "stable";
   const baseVersion = version.split("-")[0];
+  const promoteFromTag = args["promote-from"];
+  let promotedFrom;
+  let promotedCandidateSha;
+  if (promoteFromTag) {
+    if (channel !== "stable") throw new Error("--promote-from is only valid for Stable release notes");
+    const match = normalizeVersion(promoteFromTag).match(/^(.+)-preview\.([1-9][0-9]*)$/);
+    if (!match || match[1] !== baseVersion) {
+      throw new Error("--promote-from must be a Preview tag of the same Stable base version");
+    }
+    promotedFrom = normalizeVersion(promoteFromTag);
+    promotedCandidateSha = runGit(["rev-list", "-n1", `v${promotedFrom}`]);
+    if (!promotedCandidateSha) throw new Error(`cannot resolve v${promotedFrom}`);
+  }
   const previousRecord = channel === "stable"
     ? catalog.releases.find((release) => release.version !== version && release.channel === "stable")
     : catalog.releases.find(
@@ -176,7 +189,7 @@ async function main() {
     : previousIsPreview
       ? `v${previousVersion}`
       : `desktop-v${previousVersion}`;
-  const to = args.to || "HEAD";
+  const to = args.to || (promotedFrom ? `v${promotedFrom}` : "HEAD");
   const repository = repositoryName();
   const commits = commitRange(from, to);
   if (!commits.length) throw new Error(`no commits found in ${from}..${to}`);
@@ -201,6 +214,10 @@ async function main() {
   release.channel = source.channel;
   release.status = "reviewed";
   release.previousRelease = previousVersion;
+  if (promotedFrom) {
+    release.promotedFrom = promotedFrom;
+    release.candidateSha = promotedCandidateSha;
+  }
   const previewOrdinal = version.match(/-preview\.([1-9][0-9]*)$/)?.[1];
   if (channel === "prerelease") {
     if (!previewOrdinal) throw new Error("Preview release version must use MAJOR.MINOR.PATCH-preview.N");

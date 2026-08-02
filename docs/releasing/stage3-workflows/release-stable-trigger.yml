@@ -1,0 +1,32 @@
+name: Relay stable release
+run-name: Relay stable release ${{ github.ref_name }}
+
+# Normal Stable tags are created by Release stable after its approval. This
+# tag-side guard prevents that App push from starting a duplicate orchestrator
+# and rejects legacy manual tag creation with an actionable message.
+on:
+  push:
+    tags:
+      - 'v*'
+      - '!v*-*'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  relay:
+    name: guard automated Stable tags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Accept only release-tagger automation
+        uses: actions/github-script@v9
+        env:
+          RELEASE_ACTOR: ${{ github.actor }}
+        with:
+          script: |
+            if (process.env.RELEASE_ACTOR === 'reasonix-release-tagger[bot]') {
+              core.info('Release stable already owns publication for this automated tag set.');
+              return;
+            }
+            core.setFailed('Stable tags must be created by Actions → Release stable; use Request stable recovery for an existing tag set.');

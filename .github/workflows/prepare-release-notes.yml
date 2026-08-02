@@ -11,6 +11,10 @@ on:
         description: "Previous release tag (defaults to the newest catalog entry)"
         required: false
         type: string
+      promote_from:
+        description: "Preview tag promoted by Stable notes, for example v1.20.0-preview.3"
+        required: false
+        type: string
       target_pr:
         description: "Optional open same-repository PR into main-v2 to reuse instead of opening a release-only PR"
         required: false
@@ -91,10 +95,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           FROM_TAG: ${{ inputs.from_tag }}
+          PROMOTE_FROM: ${{ inputs.promote_from }}
         run: |
           set -euo pipefail
           args=(--version "$VERSION")
           if [ -n "$FROM_TAG" ]; then args+=(--from "$FROM_TAG"); fi
+          if [ -n "$PROMOTE_FROM" ]; then args+=(--promote-from "$PROMOTE_FROM"); fi
           node scripts/generate-release-notes.mjs "${args[@]}"
           node scripts/release-notes.mjs validate
           node --test scripts/release-notes.test.mjs

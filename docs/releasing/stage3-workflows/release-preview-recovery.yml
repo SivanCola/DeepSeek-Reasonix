@@ -1,0 +1,37 @@
+name: Request preview recovery
+run-name: Request preview recovery ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing Preview tag, for example v1.20.0-preview.3"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    name: record Preview recovery request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require protected control branch
+        env:
+          CONTROL_BRANCH: ${{ github.ref_name }}
+        run: |
+          [ "$CONTROL_BRANCH" = "main-v2" ] || {
+            echo "::error::Preview recovery requests must run from main-v2"
+            exit 1
+          }
+      - name: Write request
+        env:
+          TAG: ${{ inputs.tag }}
+        run: jq -n --arg tag "$TAG" '{tag:$tag}' > /tmp/request.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: preview-recovery-request
+          path: /tmp/request.json
+          if-no-files-found: error
+          retention-days: 1
