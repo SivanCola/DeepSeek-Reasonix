@@ -26,6 +26,7 @@ if (!tag) {
 const version = tag.replace(/^(npm-)?v/, "");
 const binaryVersion = `v${version}`;
 const publish = process.argv.includes("--publish");
+const stageOnly = process.argv.includes("--stage-only");
 const candidateSha = execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: ROOT,
   encoding: "utf8",
@@ -114,4 +115,5 @@ publishPackages({
   packages: [...subPackages, { name: "reasonix", dir: mainDir }],
   version,
   candidateSha,
+  stageOnly,
 });

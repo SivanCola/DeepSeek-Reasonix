@@ -1,48 +1,9 @@
-name: Release desktop
+name: Publish Desktop assets
 
-# Desktop (Wails) release line. Stable releases are called by
-# release-stable.yml after its single GitHub environment approval. Desktop
-# prerelease tags are relayed by release-desktop-trigger.yml to this workflow on
-# protected main-v2. Production SignPath requests therefore always have the
-# exact main-v2 origin; both public channels use the production policy.
-#
-# Wails cannot cross-compile a CGO/WebKit binary, so build/ fans out to one native
-# runner per platform. Artifacts are minisign-signed (MINISIGN_* secrets), a
-# latest.json manifest is generated, and everything is published to a GitHub
-# release and mirrored to R2 (the updater reads R2 first, then the crash worker
-# release gateway; stable desktop releases own GitHub's repository-wide "latest").
-#
-# The same build/sign/manifest pipeline serves two channels. Approved
-# orchestrators publish Stable or Preview, while manual dispatch supports
-# Stable/RC recovery and non-publishing Preview signing checks. Preview advances
-# only R2's preview/ pointer and never appears on the GitHub releases page. The
-# legacy canary/ pointer is mirrored for clients released before the rename.
+# Reusable Wails publisher. Native runners build and SignPath-sign one official
+# candidate, upload it to the unified draft Release and immutable R2 directory,
+# and defer the public pointer to the parent postflight.
 on:
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: "Release channel"
-        type: choice
-        options: [stable, preview]
-        default: stable
-      tag:
-        description: "stable: tag to publish (e.g. desktop-v1.1.0)"
-        required: false
-        type: string
-      base_version:
-        description: "Preview signing checks: intended next stable version, e.g. 1.5.0"
-        required: false
-        type: string
-      production_signing_smoke:
-        description: "Wait for external SignPath approval, verify trust, and do not publish"
-        required: false
-        default: false
-        type: boolean
-      signing_preflight:
-        description: "Auto-approve through CI, verify the full signing path, attest it, and do not publish"
-        required: false
-        default: false
-        type: boolean
   workflow_call:
     inputs:
       channel:
@@ -82,6 +43,11 @@ on:
         required: false
         default: ""
         type: string
+      production_signing_smoke:
+        description: "Non-publishing production signing diagnostic"
+        required: false
+        default: false
+        type: boolean
       signing_preflight:
         description: "Verify both Windows signing stages without publishing"
         required: false
@@ -89,6 +55,11 @@ on:
         type: boolean
       signing_preflight_verified:
         description: "The approved stable caller completed signing_preflight in this run"
+        required: false
+        default: false
+        type: boolean
+      defer_pointer:
+        description: "Upload immutable assets but let the official orchestrator advance latest"
         required: false
         default: false
         type: boolean
@@ -114,6 +85,7 @@ jobs:
       channel: ${{ steps.release.outputs.channel }}
       prerelease: ${{ steps.release.outputs.prerelease }}
       notes_version: ${{ steps.release.outputs.notes_version }}
+      storage_tag: ${{ steps.release.outputs.storage_tag }}
       sha: ${{ steps.candidate.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
@@ -154,7 +126,6 @@ jobs:
   orchestration-guard:
     name: verify approved orchestrator
     needs: resolve
-    if: ${{ inputs.orchestrated }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -178,29 +149,14 @@ jobs:
           RELEASE_TAG: ${{ inputs.approved_cli_tag }}
           VERIFY_RELEASE_CHECKOUT: false
         run: |
+          test "${{ inputs.orchestrated }}" = "true"
           bash scripts/verify-release-authorization.sh
           bash scripts/verify-release-tag.sh
 
-  release-gate:
-    name: approve standalone desktop release
-    needs: resolve
-    if: ${{ !inputs.orchestrated }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    # Standalone Preview is limited to non-publishing signing checks, but still
-    # exercises the production policy behind the protected `canary` environment.
-    environment: ${{ needs.resolve.outputs.channel == 'preview' && 'canary' || 'release' }}
-    steps:
-      - env:
-          RELEASE_CHANNEL: ${{ needs.resolve.outputs.channel }}
-          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
-        run: echo "Approved standalone desktop $RELEASE_CHANNEL release $RELEASE_TAG"
-
   signing-contract:
     name: validate SignPath release contract
-    needs: [resolve, orchestration-guard, release-gate]
-    if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && ((inputs.orchestrated && needs.orchestration-guard.result == 'success') || (!inputs.orchestrated && needs.release-gate.result == 'success')) }}
+    needs: [resolve, orchestration-guard]
+    if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && needs.orchestration-guard.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -534,9 +490,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Approved orchestrators have already passed the matching GitHub environment.
-    # Direct prereleases and manual Stable recovery pass release-gate above. The
-    # SignPath CI identity records each payload and installer approval after it.
+    # The parent orchestrator already passed the only release environment gate.
+    # The SignPath CI identity records each payload and installer approval.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -762,7 +717,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p assets
-          gh release download "${{ needs.resolve.outputs.tag }}" -R "${{ github.repository }}" -D assets
+          gh release download "${{ needs.resolve.outputs.tag }}" -R "${{ github.repository }}" -D assets \
+            --pattern 'Reasonix-*' --pattern latest.json
 
       # Rewrite both url and sig inside latest.json from github.com to the R2 CDN,
       # so the updater pulls the manifest AND the heavy artifacts from R2.
@@ -770,7 +726,7 @@ jobs:
         if: env.HAS_R2 == 'true'
         env:
           R2_PUBLIC_BASE: https://dl.reasonix.io
-          TAG: ${{ needs.resolve.outputs.tag }}
+          TAG: ${{ needs.resolve.outputs.storage_tag }}
         run: |
           f=assets/latest.json
           jq --arg base "$R2_PUBLIC_BASE" --arg tag "$TAG" '
@@ -793,7 +749,7 @@ jobs:
         env:
           CHANNEL: ${{ needs.resolve.outputs.channel }}
           PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
-          TAG: ${{ needs.resolve.outputs.tag }}
+          TAG: ${{ needs.resolve.outputs.storage_tag }}
           VERSION: ${{ needs.resolve.outputs.version }}
           NOTES_VERSION: ${{ needs.resolve.outputs.notes_version }}
         run: |
@@ -822,9 +778,10 @@ jobs:
           PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
-          TAG: ${{ needs.resolve.outputs.tag }}
+          TAG: ${{ needs.resolve.outputs.storage_tag }}
           VERSION: ${{ needs.resolve.outputs.version }}
           NOTES_VERSION: ${{ needs.resolve.outputs.notes_version }}
+          DEFER_POINTER: ${{ inputs.defer_pointer }}
         run: |
           set -euo pipefail
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
@@ -952,6 +909,13 @@ jobs:
             /tmp/reasonix-desktop-tag-latest.json "$NOTES_VERSION"
           bash release-control/scripts/compare-desktop-release-manifests.sh \
             assets/latest.json /tmp/reasonix-desktop-tag-latest.json
+
+          if [ "$DEFER_POINTER" = "true" ]; then
+            echo "pointer_moved=false" >> "$GITHUB_OUTPUT"
+            echo "pointer_version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "immutable Desktop assets verified; public pointer deferred to official postflight"
+            exit 0
+          fi
 
           # Internal RCs retain their immutable record but never move a public
           # channel pointer.
@@ -1098,7 +1062,7 @@ jobs:
       - name: Smoke desktop release pointers
         if: env.HAS_R2 == 'true'
         env:
-          TAG: ${{ needs.resolve.outputs.tag }}
+          TAG: ${{ needs.resolve.outputs.storage_tag }}
           VERSION: ${{ needs.resolve.outputs.version }}
           CHANNEL: ${{ needs.resolve.outputs.channel }}
           PRERELEASE: ${{ needs.resolve.outputs.prerelease }}
@@ -1202,7 +1166,7 @@ jobs:
           esac
 
       - name: Attach desktop manifest to matching CLI release
-        if: env.HAS_R2 == 'true' && needs.resolve.outputs.channel != 'preview' && needs.resolve.outputs.prerelease != 'true'
+        if: env.HAS_R2 == 'true' && !inputs.orchestrated && needs.resolve.outputs.channel != 'preview' && needs.resolve.outputs.prerelease != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.resolve.outputs.version }}

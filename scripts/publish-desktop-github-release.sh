@@ -16,7 +16,7 @@ asset_dir="${5%/}"
 repository="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 directory_verifier="$script_dir/verify-desktop-release-directory.sh"
-title="Reasonix Desktop $version"
+title="Reasonix $version"
 
 case "$prerelease" in
 true | false) ;;
@@ -78,7 +78,7 @@ jq -e \
 	(.tag_name == $tag) and
 	(.name == $title) and
 	(.body == $body) and
-	(.draft == false) and
+	(.draft | type == "boolean") and
 	(.prerelease == $prerelease) and
 	(.assets | type == "array") and
 	((.assets | map(.name) | length) == (.assets | map(.name) | unique | length))
@@ -86,13 +86,12 @@ jq -e \
 
 existing_dir="$work_dir/existing"
 mkdir -p "$existing_dir"
-while IFS= read -r name; do
-	if [ -z "$name" ] || [ ! -f "$asset_dir/$name" ]; then
-		echo "Desktop GitHub release has unexpected asset: ${name:-<empty>}" >&2
-		exit 1
+while IFS= read -r -d '' expected; do
+	name="$(basename "$expected")"
+	if jq -e --arg name "$name" '.assets | any(.name == $name)' "$release_json" >/dev/null; then
+		gh release download "$tag" -R "$repository" --pattern "$name" --dir "$existing_dir"
 	fi
-	gh release download "$tag" -R "$repository" --pattern "$name" --dir "$existing_dir"
-done < <(jq -r '.assets[].name' "$release_json")
+done < <(find "$asset_dir" -mindepth 1 -maxdepth 1 -type f -print0)
 
 bash "$directory_verifier" --allow-missing "$asset_dir" "$existing_dir"
 
@@ -105,6 +104,9 @@ done < <(find "$asset_dir" -mindepth 1 -maxdepth 1 -type f -print0)
 
 published_dir="$work_dir/published"
 mkdir -p "$published_dir"
-gh release download "$tag" -R "$repository" --dir "$published_dir"
+while IFS= read -r -d '' expected; do
+	name="$(basename "$expected")"
+	gh release download "$tag" -R "$repository" --pattern "$name" --dir "$published_dir"
+done < <(find "$asset_dir" -mindepth 1 -maxdepth 1 -type f -print0)
 bash "$directory_verifier" "$asset_dir" "$published_dir"
 echo "Desktop GitHub release verified: tag=$tag assets=$(find "$asset_dir" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')"

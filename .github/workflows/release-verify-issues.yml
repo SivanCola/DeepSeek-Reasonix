@@ -5,17 +5,6 @@ name: Request verification on released issues
 # follow-up nobody remembers to send after the release. This sends it.
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Release tag to announce (e.g. desktop-v1.18.0)
-        required: true
-        type: string
-      dry_run:
-        description: Print the targets without commenting
-        required: false
-        default: true
-        type: boolean
   release:
     types: [published]
   push:
@@ -31,7 +20,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: release-verify-issues-${{ github.event.inputs.tag || github.event.release.tag_name || github.ref }}
+  group: release-verify-issues-${{ github.event.release.tag_name || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -53,8 +42,8 @@ jobs:
         if: github.event_name != 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.event.inputs.tag || github.event.release.tag_name }}
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          TAG: ${{ github.event.release.tag_name }}
+          DRY_RUN: 'false'
         run: |
           set -euo pipefail
           args=(--tag "$TAG")

@@ -1,40 +1,8 @@
-name: Release npm
+name: Stage npm packages
 
-# npm line. Stable releases are called by release-stable.yml after its single
-# GitHub environment approval. Direct tag pushes are retained only for
-# prereleases so npm `next` can still ship independently without touching the
-# stable Homebrew cask. Bump a prerelease with:
-#   git tag npm-vX.Y.Z-rc.N     # prerelease -> publishes under `next`
-#   git push origin <tag>
-#
-# Manual workflow_dispatch recovers only an approved Stable version from an
-# existing tag. Public canary publication is owned by release-preview.yml so its
-# version remains aligned with CLI, Desktop, and the immutable release marker.
-# build.mjs decides the dist-tag: a `-canary.` build is `canary`, any other
-# prerelease is `next`, and a stable version is `latest` (#5822 — the old
-# "promote latest by hand" rule left it pinned at 0.53.2 and downgraded
-# `npm update -g` users). The publisher verifies every immutable package and
-# advances each public dist-tag only when the candidate is newer.
+# Reusable npm staging publisher. It publishes immutable packages under
+# official-staging; the parent postflight advances latest/canary/next together.
 on:
-  push:
-    tags: ['npm-v*-*']
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: "Standalone npm recovery channel"
-        required: true
-        default: stable
-        type: choice
-        options:
-          - stable
-      base_version:
-        description: "Stable version to recover exactly"
-        required: true
-        type: string
-      tag:
-        description: "stable: existing npm tag to publish (for example npm-v1.18.0)"
-        required: false
-        type: string
   workflow_call:
     inputs:
       channel:
@@ -86,7 +54,6 @@ concurrency:
 jobs:
   orchestration-guard:
     name: verify approved orchestrator
-    if: ${{ inputs.orchestrated }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -110,23 +77,14 @@ jobs:
           RELEASE_TAG: ${{ inputs.approved_cli_tag }}
           VERIFY_RELEASE_CHECKOUT: false
         run: |
+          test "${{ inputs.orchestrated }}" = "true"
           bash scripts/verify-release-authorization.sh
           bash scripts/verify-release-tag.sh
 
-  release-gate:
-    name: approve standalone npm release
-    if: ${{ !inputs.orchestrated }}
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: echo "Approved standalone npm release $RELEASE_TAG"
-
   cache-guard:
     name: cache hit guard
-    needs: [orchestration-guard, release-gate]
-    if: ${{ always() && !cancelled() && ((inputs.orchestrated && needs.orchestration-guard.result == 'success') || (!inputs.orchestrated && needs.release-gate.result == 'success')) }}
+    needs: orchestration-guard
+    if: ${{ needs.orchestration-guard.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -143,8 +101,7 @@ jobs:
     needs: cache-guard
     if: ${{ always() && !cancelled() && needs.cache-guard.result == 'success' }}
     runs-on: ubuntu-latest
-    # Orchestrated releases have already passed their GitHub environment
-    # approval. Direct prereleases and manual Stable recovery pass release-gate.
+    # The parent orchestrator already passed the only release environment gate.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -157,9 +114,7 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      # Tag push uses the npm-v* tag. The Preview orchestrator synthesizes a
-      # <base>-canary.<preview_number> version; a manual Stable dispatch publishes
-      # the requested semver exactly. build.mjs strips the leading `npm-`/`v`.
+      # The official vX.Y.Z tag and base version resolve to the same npm version.
       - name: Resolve version
         id: ver
         env:
@@ -182,4 +137,4 @@ jobs:
         env:
           VERSION_ARG: ${{ steps.ver.outputs.arg }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: node npm/build.mjs "$VERSION_ARG" --publish
+        run: node npm/build.mjs "$VERSION_ARG" --publish --stage-only

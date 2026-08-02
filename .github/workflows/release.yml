@@ -1,24 +1,8 @@
-name: Release
+name: Publish CLI assets
 
-# Native CLI binary line. Stable and Preview releases are called by their
-# approved all-surface orchestrators. Manual dispatch remains available only for
-# Stable/RC recovery; standalone prereleases remain internal stable-channel
-# checkpoints behind the `release` gate.
+# Reusable native CLI publisher. Only the approved official orchestrator calls
+# this workflow; it has no tag or manual trigger of its own.
 on:
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: "Standalone CLI recovery channel"
-        required: true
-        # Public Preview recovery reruns release-preview.yml so every surface and
-        # its immutable release-event marker stay aligned.
-        default: stable
-        type: choice
-        options: [stable]
-      tag:
-        description: "Existing protected Stable/RC CLI tag (for example v1.18.0 or v1.18.0-rc.1)"
-        required: true
-        type: string
   workflow_call:
     inputs:
       channel:
@@ -128,7 +112,6 @@ jobs:
   orchestration-guard:
     name: verify approved orchestrator
     needs: resolve
-    if: ${{ inputs.orchestrated }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -152,25 +135,14 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
           VERIFY_RELEASE_CHECKOUT: false
         run: |
+          test "${{ inputs.orchestrated }}" = "true"
           bash scripts/verify-release-authorization.sh
           bash scripts/verify-release-tag.sh
 
-  release-gate:
-    name: approve standalone CLI release
-    needs: resolve
-    if: ${{ !inputs.orchestrated }}
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - env:
-          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
-          RELEASE_CHANNEL: ${{ needs.resolve.outputs.channel }}
-        run: echo "Approved standalone CLI $RELEASE_CHANNEL release $RELEASE_TAG"
-
   cache-guard:
     name: cache hit guard
-    needs: [resolve, orchestration-guard, release-gate]
-    if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && ((inputs.orchestrated && needs.orchestration-guard.result == 'success') || (!inputs.orchestrated && needs.release-gate.result == 'success')) }}
+    needs: [resolve, orchestration-guard]
+    if: ${{ always() && !cancelled() && needs.resolve.result == 'success' && needs.orchestration-guard.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -183,13 +155,11 @@ jobs:
       - run: ./scripts/cache-guard.sh
 
   goreleaser:
-    name: archives + checksums + homebrew tap
+    name: stage archives, checksums, and Homebrew cask
     needs: [resolve, cache-guard]
     if: ${{ always() && !cancelled() && needs.cache-guard.result == 'success' }}
     runs-on: ubuntu-latest
-    # The stable caller has already passed the single GitHub release approval.
-    # Standalone prereleases pass release-gate above. This job therefore must not
-    # add a second GitHub environment approval.
+    # The parent orchestrator already passed the only release environment gate.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -290,11 +260,29 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ needs.resolve.outputs.channel == 'stable' && secrets.HOMEBREW_TAP_TOKEN || '' }}
           # workflow_dispatch recovery runs have a branch-shaped GITHUB_REF even
           # though checkout is on the release tag. Pin GoReleaser explicitly, and
           # avoid ambiguity from the three release tags sharing one commit.
           GORELEASER_CURRENT_TAG: ${{ needs.resolve.outputs.tag }}
+
+      - name: Render staged Homebrew cask from verified checksums
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          DECISION: ${{ steps.publication.outputs.decision }}
+        run: |
+          set -euo pipefail
+          if [ "$DECISION" = publish ]; then
+            checksums=dist/SHA256SUMS
+          else
+            checksums=/tmp/existing-cli-release-SHA256SUMS
+          fi
+          node scripts/render-homebrew-cask.mjs "$VERSION" "$checksums" /tmp/reasonix.rb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: official-homebrew-cask-${{ needs.resolve.outputs.version }}
+          path: /tmp/reasonix.rb
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Publish product release notes
         env:
@@ -303,6 +291,7 @@ jobs:
         run: gh release edit "$TAG" --notes-file /tmp/release-notes.md
 
       - name: Publish CLI release metadata to R2
+        if: ${{ !inputs.orchestrated }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.resolve.outputs.tag }}
@@ -452,6 +441,7 @@ jobs:
           echo "CLI $channel pointer -> $TAG"
 
       - name: Attach desktop manifest compatibility asset
+        if: ${{ !inputs.orchestrated }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.resolve.outputs.tag }}
@@ -495,6 +485,7 @@ jobs:
       # for weeks precisely because nothing exercised the public path. Retries
       # cover the release CDN propagating the freshly uploaded asset.
       - name: Smoke public compatibility manifest
+        if: ${{ !inputs.orchestrated }}
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
           HAS_R2: ${{ secrets.R2_ACCESS_KEY_ID != '' && secrets.R2_SECRET_ACCESS_KEY != '' && secrets.R2_ACCOUNT_ID != '' && secrets.R2_BUCKET != '' }}
@@ -542,6 +533,7 @@ jobs:
       #     The npm job may still be publishing; release-npm.yml's verify step
       #     owns asserting the dist-tag lands.
       - name: Check npm latest dist-tag freshness
+        if: ${{ false }} # The official orchestrator advances latest/canary/next in postflight.
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
         run: |

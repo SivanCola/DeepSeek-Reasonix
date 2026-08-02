@@ -1,0 +1,22 @@
+name: Recover release
+run-name: Recover ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing official tag (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  recover:
+    uses: ./.github/workflows/release-stable.yml
+    with:
+      tag: ${{ inputs.tag }}
+      recovery: true
+    secrets: inherit

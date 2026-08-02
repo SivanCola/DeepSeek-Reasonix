@@ -94,6 +94,19 @@ function fixture(t, version = "1.5.0-canary.42") {
     });
   }
 
+  function stage() {
+    return publishPackages({
+      packages,
+      version,
+      candidateSha,
+      runner,
+      sleep: () => {},
+      attempts: 2,
+      log: () => {},
+      stageOnly: true,
+    });
+  }
+
   function addVersion(name, publishedVersion = version, sha = candidateSha) {
     packageState(name).versions.set(publishedVersion, {
       name,
@@ -103,8 +116,19 @@ function fixture(t, version = "1.5.0-canary.42") {
     });
   }
 
-  return { packages, registry, calls, publish, addVersion };
+  return { packages, registry, calls, publish, stage, addVersion };
 }
+
+test("official staging publishes immutable packages without advancing a public tag", (t) => {
+  const fx = fixture(t, "1.5.0");
+  fx.stage();
+  for (const { name } of fx.packages) {
+    assert.equal(fx.registry.get(name).tags.get("official-staging"), "1.5.0");
+    assert.equal(fx.registry.get(name).tags.has("latest"), false);
+    assert.equal(fx.registry.get(name).tags.has("canary"), false);
+    assert.equal(fx.registry.get(name).tags.has("next"), false);
+  }
+});
 
 test("reuses a fully published npm candidate without republishing", (t) => {
   const fx = fixture(t);

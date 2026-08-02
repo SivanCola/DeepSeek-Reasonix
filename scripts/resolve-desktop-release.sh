@@ -52,11 +52,11 @@ else
 	else
 		tag="${REF_NAME:?stable release requires a tag input or ref name}"
 	fi
-	if [[ ! "$tag" =~ ^desktop-v(.+)$ ]] || [[ ! "${BASH_REMATCH[1]}" =~ $release_semver_re ]]; then
-		echo "::error::desktop release tag must be desktop-vMAJOR.MINOR.PATCH[-PRERELEASE], got: $tag" >&2
+	if [[ ! "$tag" =~ ^v(.+)$ ]] || [[ ! "${BASH_REMATCH[1]}" =~ $stable_semver_re ]]; then
+		echo "::error::desktop release tag must be vMAJOR.MINOR.PATCH, got: $tag" >&2
 		exit 1
 	fi
-	version="${tag#desktop-}"
+	version="$tag"
 	if [[ "${version#v}" =~ $preview_semver_re ]]; then
 		echo "::error::Desktop Preview versions must use channel=preview without a Git tag, got: $tag" >&2
 		exit 1
@@ -80,6 +80,7 @@ fi
 	echo "channel=$channel"
 	echo "prerelease=$prerelease"
 	echo "notes_version=$notes_version"
+	echo "storage_tag=desktop-$version"
 } >>"$GITHUB_OUTPUT"
 
 echo "resolved: tag=$tag version=$version channel=$channel prerelease=$prerelease"

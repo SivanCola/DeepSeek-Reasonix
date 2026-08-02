@@ -27,8 +27,7 @@ func TestTopLevelSignPathWorkflowCallGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		".github/workflows/release-desktop.yml",
-		".github/workflows/release-preview.yml",
+		".github/workflows/recover-release.yml",
 		".github/workflows/release-stable.yml",
 	}
 	if !reflect.DeepEqual(got, want) {
