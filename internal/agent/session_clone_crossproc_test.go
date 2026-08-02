@@ -38,11 +38,19 @@ func TestCloneSessionWaitsForCrossProcessWriter(t *testing.T) {
 
 	dst := filepath.Join(dir, "copy.jsonl")
 	cloneErr := make(chan error, 1)
+	locked := make(chan struct{})
+	cloneLockWaitHook = func() { close(locked) }
+	t.Cleanup(func() { cloneLockWaitHook = nil })
 	go func() {
 		cloneErr <- CloneSessionToPath(src, dst)
 	}()
-	// Release the child only after the clone started waiting on the lock.
-	time.Sleep(200 * time.Millisecond)
+	// Release the child only after the clone is known to be waiting on the
+	// file lock — deterministic, no sleeps.
+	select {
+	case <-locked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("clone never reached the file-lock wait")
+	}
 	if err := os.WriteFile(src+".go", []byte("1"), 0o644); err != nil {
 		t.Fatal(err)
 	}

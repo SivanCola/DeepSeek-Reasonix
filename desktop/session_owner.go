@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/store"
 )
 
 // Session ownership classification. The lease metadata plus the OS lock and
@@ -169,12 +170,8 @@ func (a *App) resolveSessionIssueActions(tabID, issueID, action string) error {
 	}
 	switch action {
 	case "focus":
-		return a.resolveSessionIssueFocus(tab, issue.OwnerKind)
-	case "retry":
-		return a.commitSessionIssueAction(tab, action, path, runtimeView.Epoch)
-	case "read_only":
-		return a.commitSessionIssueAction(tab, action, path, runtimeView.Epoch)
-	case "copy":
+		return a.resolveSessionIssueFocus(tab, issue.OwnerKind, path, runtimeView.Epoch)
+	case "retry", "read_only", "copy":
 		return a.commitSessionIssueAction(tab, action, path, runtimeView.Epoch)
 	default:
 		return fmt.Errorf("session issue action %q is not allowed", action)
@@ -209,42 +206,53 @@ func (a *App) commitSessionIssueAction(tab *WorkspaceTab, action, boundPath, bou
 	return nil
 }
 
-func (a *App) resolveSessionIssueFocus(tab *WorkspaceTab, ownerKind string) error {
+func (a *App) resolveSessionIssueFocus(tab *WorkspaceTab, ownerKind, boundPath, boundEpoch string) error {
 	// The window may be hidden (tray): restore it first.
 	if backgroundWindowHidden.Load() {
 		a.showMainWindowFrom("session_issue_focus")
 	}
-	if ownerKind == sessionOwnerCurrentTab {
+	// Revalidate the binding under the lock — SessionPath is App.mu-guarded
+	// mutable state and must never be read unlocked; a rebind that happened
+	// since the issue was raised must not focus an obsolete session.
+	a.mu.RLock()
+	currentPath := tab.SessionPath
+	currentEpoch := a.sessionRuntimeViewLocked(tab).Epoch
+	bound := currentPath == boundPath && currentEpoch == boundEpoch
+	var root, path string
+	if ownerKind == sessionOwnerCurrentDetached {
+		root = tab.WorkspaceRoot
+		path = currentPath
+	}
+	var ownerID string
+	if ownerKind == sessionOwnerCurrentTab && bound {
 		// Focus the tab that actually holds the session: find the owner tab
 		// through the runtime registry and activate it. The lease runtime key
 		// mirror is lock-free (sessionLease itself is protected by
 		// sessionLeaseMu and must not be read under App.mu).
-		targetKey := sessionRuntimeKey(tab.SessionPath)
-		a.mu.RLock()
+		targetKey := sessionRuntimeKey(currentPath)
 		for _, candidate := range a.tabs {
 			if candidate == nil || candidate == tab {
 				continue
 			}
 			if candidate.Ctrl != nil && candidate.sessionLeaseRuntimeKey() == targetKey {
-				ownerID := candidate.ID
-				a.mu.RUnlock()
-				return a.SetActiveTab(ownerID)
+				ownerID = candidate.ID
+				break
 			}
 		}
-		a.mu.RUnlock()
 	}
-	if ownerKind == sessionOwnerCurrentDetached {
+	a.mu.RUnlock()
+	if !bound {
+		return fmt.Errorf("session state advanced since the issue was raised")
+	}
+	if ownerID != "" {
+		return a.SetActiveTab(ownerID)
+	}
+	if ownerKind == sessionOwnerCurrentDetached && root != "" && path != "" {
 		// Re-attach the detached runtime to this tab so its work becomes
 		// visible again instead of staying hidden in the background.
-		a.mu.RLock()
-		root := tab.WorkspaceRoot
-		path := tab.SessionPath
-		a.mu.RUnlock()
-		if root != "" && path != "" {
-			a.goSafe("focusDetachedSession", func() {
-				a.attachExistingSessionRuntime(tab, path, a.bootContext())
-			})
-		}
+		a.goSafe("focusDetachedSession", func() {
+			a.attachExistingSessionRuntime(tab, path, a.bootContext())
+		})
 	}
 	return nil
 }
@@ -282,13 +290,14 @@ func (a *App) reopenSessionCopy(tab *WorkspaceTab, boundPath, boundEpoch string)
 		return fmt.Errorf("create session copy: exhausted filename retries")
 	}
 	// Compare-and-apply: switch the tab to the copy only while the binding is
-	// unchanged; otherwise the clone is stale and must be discarded.
+	// unchanged; otherwise the clone is stale and must be discarded. The clone
+	// created every sidecar, so the ownership-safe rollback removes them all.
 	a.mu.Lock()
 	currentPath := tab.SessionPath
 	currentEpoch := a.sessionRuntimeViewLocked(tab).Epoch
 	if currentPath != boundPath || currentEpoch != boundEpoch {
 		a.mu.Unlock()
-		_ = os.Remove(copyPath)
+		agent.RemoveSessionCloneFiles(copyPath, store.SessionEventLog(copyPath), store.SessionEventIndex(copyPath), store.SessionMeta(copyPath))
 		return fmt.Errorf("session state advanced; copy discarded")
 	}
 	tab.SessionPath = copyPath

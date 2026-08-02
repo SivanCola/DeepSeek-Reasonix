@@ -30,6 +30,11 @@ func CloneSessionToPath(srcPath, dstPath string) error {
 	// saving the same session right now, and its newest event-log append must
 	// not be missed. The lock order matches session.save.
 	unlock := lockSessionSavePath(srcPath)
+	if cloneLockWaitHook != nil {
+		// Signal before blocking on the cross-process lock: tests use this as
+		// a deterministic barrier to know the clone is about to wait.
+		cloneLockWaitHook()
+	}
 	unlockFile, err := lockSessionFile(srcPath)
 	if err != nil {
 		unlock()
@@ -46,16 +51,23 @@ func CloneSessionToPath(srcPath, dstPath string) error {
 	// The event log is reserved empty: force saves are checkpoint-only, so the
 	// clone needs the native log anchor in place for its own transcript to
 	// evolve authoritatively.
+	//
+	// Only files THIS transaction actually created are ever removed: a
+	// pre-existing sidecar (an authoritative event log whose checkpoint never
+	// landed, or user metadata) is refused with its bytes untouched.
+	var owned []string
 	if err := reserveSessionClonePath(dstPath); err != nil {
 		return err
 	}
+	owned = append(owned, dstPath)
 	cleanup := func() {
-		removeSessionCloneFiles(dstPath)
+		RemoveSessionCloneFiles(owned...)
 	}
 	if err := reserveSessionClonePath(store.SessionEventLog(dstPath)); err != nil {
 		cleanup()
 		return err
 	}
+	owned = append(owned, store.SessionEventLog(dstPath))
 	// 3. Save the complete session; the empty reserved checkpoint receives the
 	// full transcript.
 	if err := session.Save(dstPath); err != nil {
@@ -71,15 +83,12 @@ func CloneSessionToPath(srcPath, dstPath string) error {
 	return nil
 }
 
-// removeSessionCloneFiles removes every file a clone can create at dstPath:
-// the checkpoint, the event log, the event index and the branch metadata.
-func removeSessionCloneFiles(dstPath string) {
-	for _, path := range []string{
-		dstPath,
-		store.SessionEventLog(dstPath),
-		store.SessionEventIndex(dstPath),
-		store.SessionMeta(dstPath),
-	} {
+// RemoveSessionCloneFiles removes exactly the listed clone files (the
+// checkpoint, the event log, the event index and the branch metadata). It is
+// the ownership-safe rollback for a clone: callers pass only the paths that
+// this clone created, never pre-existing sidecars.
+func RemoveSessionCloneFiles(paths ...string) {
+	for _, path := range paths {
 		if path != "" {
 			_ = os.Remove(path)
 		}
@@ -99,3 +108,9 @@ func reserveSessionClonePath(dstPath string) error {
 	}
 	return nil
 }
+
+// cloneLockWaitHook, when set, is invoked after the clone acquired the source
+// file lock. Tests use it as a deterministic barrier: the child writer is
+// released only once the clone is known to be waiting on the lock, removing
+// timing-based false positives.
+var cloneLockWaitHook func()
