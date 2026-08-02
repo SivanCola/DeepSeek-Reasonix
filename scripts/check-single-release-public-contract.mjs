@@ -11,8 +11,6 @@ const migrationReferences = new Set([
   "docs/SIGNPATH_WINDOWS_ADMIN_SOP.md",
   "docs/CLI.md",
   "docs/CLI.zh-CN.md",
-  "docs/MIGRATING.md",
-  "docs/MIGRATING.zh-CN.md",
 ]);
 const rules = [
   [/release-channel-switch/, "public release channel selector"],
