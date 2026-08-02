@@ -25,8 +25,8 @@ func TestLoadUpdateNetworkConfigReadsUserConfigOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DesktopUpdateChannel() != "preview" {
-		t.Errorf("update channel = %q, want preview", cfg.DesktopUpdateChannel())
+	if cfg.DesktopUpdateChannel() != "stable" {
+		t.Errorf("update channel = %q, want official stable channel", cfg.DesktopUpdateChannel())
 	}
 	if cfg.NetworkProxyMode() != "custom" {
 		t.Errorf("proxy mode = %q, want custom", cfg.NetworkProxyMode())
@@ -58,8 +58,8 @@ func TestLoadUpdateNetworkConfigFallsBackToLastKnownGood(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CLIUpdateChannel() != "preview" {
-		t.Errorf("update channel = %q, want preview from snapshot", cfg.CLIUpdateChannel())
+	if cfg.CLIUpdateChannel() != "stable" {
+		t.Errorf("update channel = %q, want legacy snapshot normalized to stable", cfg.CLIUpdateChannel())
 	}
 	if cfg.Network.ProxyURL != "http://proxy.example:8080" {
 		t.Errorf("proxy url = %q, want snapshot value", cfg.Network.ProxyURL)
