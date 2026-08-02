@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -68,6 +70,77 @@ func TestClassifySessionOwnerStaleWhenLockFree(t *testing.T) {
 	}
 	if host != "old-host" {
 		t.Errorf("host = %q", host)
+	}
+}
+
+func TestResolveSessionIssueConsumesConcurrentActionOnce(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	app := NewApp()
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte("[]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tab := &WorkspaceTab{ID: "tab-test", SessionPath: path}
+	app.mu.Lock()
+	app.tabs[tab.ID] = tab
+	rt := app.newSessionRuntimeLocked(tab, sessionRuntimeKey(path))
+	rt.Phase = sessionRuntimeLeaseBlocked
+	rt.Issue = &SessionRuntimeIssue{
+		Code:      "session_lease_held",
+		IssueID:   "issue-1",
+		Message:   "retry",
+		Retryable: true,
+		OwnerKind: sessionOwnerStale,
+		Actions:   []string{"retry"},
+		epoch:     rt.Epoch,
+	}
+	app.mu.Unlock()
+
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	app.sessionIssueBeforeCommitHook = func() {
+		entered <- struct{}{}
+		<-release
+	}
+	var builds atomic.Int32
+	app.sessionIssueBuildStarter = func(*WorkspaceTab) {
+		builds.Add(1)
+	}
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			errs <- app.ResolveSessionRuntimeIssue(tab.ID, "issue-1", "retry")
+		}()
+	}
+	// Both calls have validated the same outer snapshot. Releasing them
+	// together deterministically exercises the commit-time compare-and-consume.
+	<-entered
+	<-entered
+	close(release)
+
+	var successes, rejected int
+	for i := 0; i < 2; i++ {
+		err := <-errs
+		switch {
+		case err == nil:
+			successes++
+		case strings.Contains(err.Error(), "no longer current"):
+			rejected++
+		default:
+			t.Fatalf("unexpected concurrent resolution error: %v", err)
+		}
+	}
+	if successes != 1 || rejected != 1 {
+		t.Fatalf("concurrent results: successes=%d rejected=%d, want 1/1", successes, rejected)
+	}
+	if got := builds.Load(); got != 1 {
+		t.Fatalf("controller builds scheduled = %d, want 1", got)
+	}
+	app.mu.RLock()
+	view := app.sessionRuntimeViewLocked(tab)
+	app.mu.RUnlock()
+	if view.Phase != sessionRuntimeStarting || view.Issue != nil {
+		t.Fatalf("runtime after consume = %+v, want starting with no issue", view)
 	}
 }
 

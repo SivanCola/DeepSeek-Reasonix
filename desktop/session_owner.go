@@ -167,11 +167,14 @@ func (a *App) resolveSessionIssueActions(tabID, issueID, action string) error {
 	if issue.OwnerKind == sessionOwnerExternal && kind != sessionOwnerExternal && kind != sessionOwnerStale && kind != sessionOwnerUnknown {
 		return fmt.Errorf("external session holder released the lease; retry instead")
 	}
+	if a.sessionIssueBeforeCommitHook != nil {
+		a.sessionIssueBeforeCommitHook()
+	}
 	switch action {
 	case "focus":
 		return a.resolveSessionIssueFocus(tab, issue.OwnerKind, path, runtimeView.Epoch)
 	case "retry", "read_only", "copy":
-		return a.commitSessionIssueAction(tab, action, path, runtimeView.Epoch)
+		return a.commitSessionIssueAction(tab, issueID, action, path, runtimeView.Epoch)
 	default:
 		return fmt.Errorf("session issue action %q is not allowed", action)
 	}
@@ -183,26 +186,63 @@ func (a *App) resolveSessionIssueActions(tabID, issueID, action string) error {
 // and then receive a stale action; the rebuild is scheduled after the lock is
 // released. The copy path additionally discards the new clone when the
 // binding changed before commit.
-func (a *App) commitSessionIssueAction(tab *WorkspaceTab, action, boundPath, boundEpoch string) error {
+func (a *App) commitSessionIssueAction(tab *WorkspaceTab, issueID, action, boundPath, boundEpoch string) error {
 	switch action {
 	case "copy":
-		return a.reopenSessionCopy(tab, boundPath, boundEpoch)
+		return a.reopenSessionCopyForIssue(tab, boundPath, boundEpoch, issueID)
 	}
-	// retry / read_only: compare and mutate atomically under the write lock.
+	// retry / read_only: compare, consume the exact issue, and mutate atomically
+	// under the write lock. Consuming the issue before scheduling makes the
+	// action one-shot even when two Wails goroutines passed the earlier snapshot.
 	a.mu.Lock()
-	if tab.SessionPath != boundPath || a.sessionRuntimeViewLocked(tab).Epoch != boundEpoch {
+	if err := a.consumeSessionIssueActionLocked(tab, issueID, action, boundPath, boundEpoch); err != nil {
 		a.mu.Unlock()
+		return err
+	}
+	a.mu.Unlock()
+	a.startSessionIssueControllerBuild(tab)
+	return nil
+}
+
+func (a *App) consumeSessionIssueActionLocked(tab *WorkspaceTab, issueID, action, boundPath, boundEpoch string) error {
+	if tab == nil || tab.SessionPath != boundPath {
 		return fmt.Errorf("session state advanced since the action was requested")
+	}
+	rt := a.runtimeForTabLocked(tab)
+	if rt == nil || rt.Epoch != boundEpoch {
+		return fmt.Errorf("session state advanced since the action was requested")
+	}
+	issue := rt.Issue
+	if issue == nil || strings.TrimSpace(issue.IssueID) == "" || issue.IssueID != issueID {
+		return fmt.Errorf("session issue %q is no longer current", issueID)
+	}
+	if strings.TrimSpace(issue.epoch) != "" && issue.epoch != rt.Epoch {
+		return fmt.Errorf("session runtime advanced since the issue was raised")
+	}
+	allowed := false
+	for _, candidate := range issue.Actions {
+		if candidate == action {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("session issue action %q is no longer allowed", action)
 	}
 	if action == "read_only" {
 		tab.ReadOnly = true
 	}
 	clearTabStartupError(tab)
-	a.mu.Unlock()
-	a.goSafe("sessionIssueAction:"+action, func() {
-		a.buildTabControllerWithContext(tab, loadedTabSession{}, a.bootContext(), 0, nil)
-	})
+	a.setSessionRuntimePhaseLocked(tab, sessionRuntimeStarting, nil)
 	return nil
+}
+
+func (a *App) startSessionIssueControllerBuild(tab *WorkspaceTab) {
+	if a.sessionIssueBuildStarter != nil {
+		a.sessionIssueBuildStarter(tab)
+		return
+	}
+	a.startTabControllerBuild(tab)
 }
 
 func (a *App) resolveSessionIssueFocus(tab *WorkspaceTab, ownerKind, boundPath, boundEpoch string) error {
@@ -263,6 +303,10 @@ func (a *App) resolveSessionIssueFocus(tab *WorkspaceTab, ownerKind, boundPath, 
 // re-verified atomically before the tab switches to the copy; a runtime that
 // advanced meanwhile discards the new clone.
 func (a *App) reopenSessionCopy(tab *WorkspaceTab, boundPath, boundEpoch string) error {
+	return a.reopenSessionCopyForIssue(tab, boundPath, boundEpoch, "")
+}
+
+func (a *App) reopenSessionCopyForIssue(tab *WorkspaceTab, boundPath, boundEpoch, issueID string) error {
 	if strings.TrimSpace(boundPath) == "" {
 		return fmt.Errorf("no session path to copy")
 	}
@@ -298,14 +342,24 @@ func (a *App) reopenSessionCopy(tab *WorkspaceTab, boundPath, boundEpoch string)
 	currentEpoch := a.sessionRuntimeViewLocked(tab).Epoch
 	if currentPath != boundPath || currentEpoch != boundEpoch {
 		a.mu.Unlock()
-		clone.Discard()
+		if err := clone.Discard(); err != nil {
+			return fmt.Errorf("session state advanced; unused copy changed after creation and was retained")
+		}
 		return fmt.Errorf("session state advanced; copy discarded")
+	}
+	if issueID != "" {
+		if err := a.consumeSessionIssueActionLocked(tab, issueID, "copy", boundPath, boundEpoch); err != nil {
+			a.mu.Unlock()
+			if discardErr := clone.Discard(); discardErr != nil {
+				return fmt.Errorf("%w; unused copy changed after creation and was retained", err)
+			}
+			return err
+		}
 	}
 	tab.SessionPath = copyPath
 	clearTabStartupError(tab)
 	a.mu.Unlock()
-	a.goSafe("reopenSessionCopy", func() {
-		a.buildTabControllerWithContext(tab, loadedTabSession{}, a.bootContext(), 0, nil)
-	})
+	tab.adoptSessionLease(clone.Commit())
+	a.startSessionIssueControllerBuild(tab)
 	return nil
 }

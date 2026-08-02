@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"reasonix/internal/store"
@@ -21,18 +24,88 @@ import (
 // failure removes every partial destination sidecar so a stale or truncated
 // copy can never be adopted.
 type SessionClone struct {
-	Path       string
+	Path string
+
+	mu         sync.Mutex
+	lease      *SessionLease
+	artifacts  []sessionCloneArtifactState
 	ownedPaths []string
+	finalized  bool
 }
 
-// Discard removes only the files atomically claimed by this clone. Callers
-// keep the handle until the new session binding is committed; they never have
-// to reconstruct sidecar names and risk deleting somebody else's files.
-func (c *SessionClone) Discard() {
+var ErrSessionCloneChanged = errors.New("session clone changed after creation")
+
+type sessionCloneArtifactState struct {
+	path        string
+	digest      [sha256.Size]byte
+	mode        os.FileMode
+	modTimeNano int64
+}
+
+// Commit transfers the destination lease to the caller and revokes this
+// handle's cleanup authority. The caller must adopt or release the lease.
+func (c *SessionClone) Commit() *SessionLease {
 	if c == nil {
-		return
+		return nil
 	}
-	removeSessionCloneFiles(c.ownedPaths...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finalized {
+		return nil
+	}
+	c.finalized = true
+	lease := c.lease
+	c.lease = nil
+	c.artifacts = nil
+	c.ownedPaths = nil
+	return lease
+}
+
+// Discard removes the clone only while this handle still owns the destination
+// lease and every artifact matches the state captured after Save. A writer
+// that changed, replaced, or removed any artifact revokes cleanup authority;
+// fail closed and leave the entire copy intact instead of letting an old
+// generation delete a newer owner's session.
+func (c *SessionClone) Discard() error {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	if c.finalized {
+		c.mu.Unlock()
+		return nil
+	}
+	c.finalized = true
+	lease := c.lease
+	c.lease = nil
+	path := c.Path
+	artifacts := append([]sessionCloneArtifactState(nil), c.artifacts...)
+	c.artifacts = nil
+	c.ownedPaths = nil
+	c.mu.Unlock()
+	if lease != nil {
+		defer lease.Release()
+	}
+
+	unlockSave := lockSessionSavePath(path)
+	defer unlockSave()
+	unlockFile, err := lockSessionFile(path)
+	if err != nil {
+		return fmt.Errorf("%w: destination is being written", ErrSessionCloneChanged)
+	}
+	defer unlockFile()
+	for _, expected := range artifacts {
+		current, err := captureSessionCloneArtifactState(expected.path)
+		if err != nil || current != expected {
+			return ErrSessionCloneChanged
+		}
+	}
+	for _, artifact := range artifacts {
+		if err := os.Remove(artifact.path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("discard session clone: %w", err)
+		}
+	}
+	return nil
 }
 
 func CloneSessionToPath(srcPath, dstPath string) (*SessionClone, error) {
@@ -67,7 +140,16 @@ func CloneSessionToPath(srcPath, dstPath string) (*SessionClone, error) {
 	if metaErr != nil {
 		return nil, fmt.Errorf("clone session: load source metadata: %w", metaErr)
 	}
-	// 2. Reserve every destination path (create-only) before Save can replace
+	// 2. Hold the destination runtime lease through the caller's commit/discard
+	// decision. O_EXCL proves initial file creation, while the lease prevents a
+	// second normal runtime from adopting the unpublished copy in that window.
+	lease, err := TryAcquireSessionLease(dstPath)
+	if err != nil {
+		return nil, fmt.Errorf("clone session: lease destination: %w", err)
+	}
+	clone := &SessionClone{Path: dstPath, lease: lease}
+
+	// 3. Reserve every destination path (create-only) before Save can replace
 	// any of them. Reserving only the checkpoint/log is insufficient because
 	// Save atomically replaces the derived event index and branch metadata.
 	// A pre-existing sidecar must make the entire clone fail closed.
@@ -78,7 +160,6 @@ func CloneSessionToPath(srcPath, dstPath string) (*SessionClone, error) {
 	// Only files THIS transaction actually created are ever removed: a
 	// pre-existing sidecar (an authoritative event log whose checkpoint never
 	// landed, or user metadata) is refused with its bytes untouched.
-	clone := &SessionClone{Path: dstPath}
 	reserve := func(path string) error {
 		if err := reserveSessionClonePath(path); err != nil {
 			return err
@@ -92,7 +173,7 @@ func CloneSessionToPath(srcPath, dstPath string) (*SessionClone, error) {
 		store.SessionEventIndex(dstPath),
 	} {
 		if err := reserve(path); err != nil {
-			clone.Discard()
+			clone.discardPartial()
 			return nil, err
 		}
 	}
@@ -100,17 +181,65 @@ func CloneSessionToPath(srcPath, dstPath string) (*SessionClone, error) {
 	// revision, so the create-only metadata reservation must already contain a
 	// valid fresh record rather than an empty placeholder.
 	if err := reserveSessionCloneMeta(dstPath, sourceMeta, sourceMetaOK); err != nil {
-		clone.Discard()
+		clone.discardPartial()
 		return nil, err
 	}
 	clone.ownedPaths = append(clone.ownedPaths, store.SessionMeta(dstPath))
-	// 3. Save the complete session; the empty reserved checkpoint receives the
+	// 4. Save the complete session; the empty reserved checkpoint receives the
 	// full transcript.
 	if err := session.Save(dstPath); err != nil {
-		clone.Discard()
+		clone.discardPartial()
 		return nil, fmt.Errorf("clone session: save destination: %w", err)
 	}
+	states, err := captureSessionCloneArtifactStates(clone.ownedPaths)
+	if err != nil {
+		clone.discardPartial()
+		return nil, fmt.Errorf("clone session: capture destination state: %w", err)
+	}
+	clone.artifacts = states
 	return clone, nil
+}
+
+func (c *SessionClone) discardPartial() {
+	if c == nil {
+		return
+	}
+	removeSessionCloneFiles(c.ownedPaths...)
+	c.ownedPaths = nil
+	if c.lease != nil {
+		c.lease.Release()
+		c.lease = nil
+	}
+	c.finalized = true
+}
+
+func captureSessionCloneArtifactStates(paths []string) ([]sessionCloneArtifactState, error) {
+	states := make([]sessionCloneArtifactState, 0, len(paths))
+	for _, path := range paths {
+		state, err := captureSessionCloneArtifactState(path)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, state)
+	}
+	return states, nil
+}
+
+func captureSessionCloneArtifactState(path string) (sessionCloneArtifactState, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return sessionCloneArtifactState{}, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return sessionCloneArtifactState{}, err
+	}
+	return sessionCloneArtifactState{
+		path:        path,
+		digest:      sha256.Sum256(b),
+		mode:        info.Mode(),
+		modTimeNano: info.ModTime().UnixNano(),
+	}, nil
 }
 
 func removeSessionCloneFiles(paths ...string) {

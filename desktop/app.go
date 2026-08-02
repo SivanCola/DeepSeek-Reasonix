@@ -142,6 +142,11 @@ type App struct {
 	// signal without constructing a full controller. nil keeps the default
 	// scan of visible and detached tabs.
 	runtimeWorkCounter func() int
+	// sessionIssueBeforeCommitHook and sessionIssueBuildStarter are test-only
+	// deterministic interleaving hooks. Set them before concurrent calls and
+	// never mutate them while a session-issue action is running.
+	sessionIssueBeforeCommitHook func()
+	sessionIssueBuildStarter     func(*WorkspaceTab)
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
 	// a.tabs from desktop-tabs.json (or built the first-launch tab). Startup

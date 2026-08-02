@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,7 +43,15 @@ func TestCloneSessionWaitsForCrossProcessWriter(t *testing.T) {
 	cloneLockWaitHook = func() { close(locked) }
 	t.Cleanup(func() { cloneLockWaitHook = nil })
 	go func() {
-		_, err := CloneSessionToPath(src, dst)
+		clone, err := CloneSessionToPath(src, dst)
+		if err == nil {
+			lease := clone.Commit()
+			if lease == nil {
+				err = errors.New("clone commit did not transfer the destination lease")
+			} else {
+				lease.Release()
+			}
+		}
 		cloneErr <- err
 	}()
 	// Release the child only after the clone is known to be waiting on the

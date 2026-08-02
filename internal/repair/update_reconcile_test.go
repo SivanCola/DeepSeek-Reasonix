@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -228,8 +229,69 @@ func TestEndRestoredTransactionRefusesUnitChangedAfterInspect(t *testing.T) {
 	if !HasPendingUpdate() {
 		t.Fatal("changed restored unit caused pending transaction deletion")
 	}
-	if _, err := os.Stat(inspectedTx.Files[0].BackupPath); err != nil {
+	if _, err := os.Stat(tx.Files[0].BackupPath); err != nil {
 		t.Fatalf("changed restored unit caused backup deletion: %v", err)
+	}
+}
+
+func TestEndRestoredTransactionRefusesUnknownFieldAddedAfterInspect(t *testing.T) {
+	tx, target := reconcileFileUpdateFixture(t, "v1", "v2")
+	publishFileUpdateForTest(t, tx, "new")
+	if err := os.WriteFile(target, []byte("old"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	view, inspectedTx, err := InspectPendingUpdateTransaction("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.State != UpdateRecoveryRestored || inspectedTx == nil {
+		t.Fatalf("inspection = %+v tx=%v, want restored with identity", view, inspectedTx)
+	}
+
+	path := PendingUpdatePath()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["future_recovery_policy"] = map[string]any{"keep_backup": true}
+	mutated, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated = append(mutated, '\n')
+	if err := os.WriteFile(path, mutated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// An older binary still derives restored from the known fields. The raw
+	// transaction snapshot must nevertheless prevent it from discarding a
+	// newer binary's unknown recovery metadata.
+	current, err := InspectPendingUpdate("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.State != UpdateRecoveryRestored {
+		t.Fatalf("state after adding unknown field = %s, want restored", current.State)
+	}
+
+	if err := EndRestoredPendingUpdateTransaction(inspectedTx, "v1"); err == nil {
+		t.Fatal("unknown transaction field added after inspection must fail closed")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("changed pending transaction was deleted: %v", err)
+	}
+	if string(got) != string(mutated) {
+		t.Fatalf("changed pending transaction was rewritten: got %q want %q", got, mutated)
+	}
+	if _, err := os.Stat(tx.Files[0].BackupPath); err != nil {
+		t.Fatalf("changed transaction caused backup deletion: %v", err)
+	}
+	if _, err := os.Stat(installedFileUpdateStatePath(tx)); err != nil {
+		t.Fatalf("changed transaction caused installed-state deletion: %v", err)
 	}
 }
 

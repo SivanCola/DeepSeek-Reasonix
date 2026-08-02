@@ -52,9 +52,15 @@ func TestCloneSessionIncludesAuthoritativeEventLog(t *testing.T) {
 	}
 
 	dst := filepath.Join(dir, "copy.jsonl")
-	if _, err := CloneSessionToPath(src, dst); err != nil {
+	clone, err := CloneSessionToPath(src, dst)
+	if err != nil {
 		t.Fatal(err)
 	}
+	lease := clone.Commit()
+	if lease == nil {
+		t.Fatal("clone commit did not transfer the destination lease")
+	}
+	defer lease.Release()
 	cloned, err := LoadSession(dst)
 	if err != nil {
 		t.Fatal(err)
