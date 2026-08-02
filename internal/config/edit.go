@@ -1503,25 +1503,31 @@ func (c *Config) bindEditOriginState(logicalPath, resolved, stateID string) {
 	c.editOriginState = stateID
 }
 
-// BindEditTarget rebinds this in-memory config's edit origin to targetPath
-// without reloading content. Content may have been seeded from a different
-// source (for example a legacy project reasonix.toml); SaveTo(targetPath) then
-// publishes against the target's StateID (typically "absent" with create-only
-// semantics). Ordinary SaveTo still refuses accidental cross-path writes.
-func (c *Config) BindEditTarget(targetPath string) error {
+// BindAbsentEditTarget rebinds this in-memory config's edit origin to
+// targetPath without reloading content, but only when the target is still
+// absent. Content may have been seeded from a different source (for example a
+// legacy project reasonix.toml); SaveTo(targetPath) then create-only publishes
+// against "absent". If another process created the target between the caller's
+// existence check and this bind, the call fails closed instead of authorizing
+// an overwrite. Ordinary SaveTo still refuses accidental cross-path writes.
+func (c *Config) BindAbsentEditTarget(targetPath string) error {
 	if c == nil {
-		return fmt.Errorf("bind edit target: nil config")
+		return fmt.Errorf("bind absent edit target: nil config")
 	}
 	targetPath = strings.TrimSpace(targetPath)
 	if targetPath == "" {
-		return fmt.Errorf("bind edit target: empty config path")
+		return fmt.Errorf("bind absent edit target: empty config path")
 	}
 	resolved, data, mode, exists, err := readConfigFileForEdit(targetPath)
 	if err != nil {
 		return err
 	}
-	_ = data // target content is intentionally ignored; only its identity binds
-	c.bindEditOriginState(targetPath, resolved, configStateID(resolved, mode, data, exists))
+	if exists {
+		return fmt.Errorf("bind absent edit target: %s already exists; refusing to authorize overwrite of unexpected content", resolved)
+	}
+	_ = data
+	_ = mode
+	c.bindEditOriginState(targetPath, resolved, "absent")
 	return nil
 }
 
@@ -1542,7 +1548,7 @@ func (c *Config) editOriginStateForSave(resolved string) (string, error) {
 // rebindEditOriginPublished advances a pre-existing edit origin to the exact
 // StateID of the body this SaveTo just published. It never re-reads the path,
 // so a concurrent writer between publish and rebind cannot be authorized.
-// Constructed-in-memory configs that were never Load/BindEditTarget stay
+// Constructed-in-memory configs that were never Load/BindAbsentEditTarget stay
 // unbound so one Config can seed multiple paths without cross-path refusal.
 func (c *Config) rebindEditOriginPublished(resolved, publishedState string) {
 	if c == nil || publishedState == "" || !c.editOriginBound {

@@ -1410,13 +1410,21 @@ func (a *App) loadDesktopUserConfigForEditForRoot(root string) (*config.Config, 
 	}
 	normalizeLegacyDesktopProviderAccessInMemory(legacyCfg, legacyPath)
 	legacyCfg.ConfigVersion = config.Default().ConfigVersion
-	if err := migrateLegacyBotConfigToUser(cfg, legacyCfg, userPath); err != nil {
-		return nil, "", err
-	}
-	// Content came from the legacy project file; bind the edit origin to the
-	// missing user config so SaveTo is create-only against userPath.
-	if err := legacyCfg.BindEditTarget(userPath); err != nil {
-		return nil, "", err
+	// Seed the missing user config from the full legacy project snapshot on the
+	// first SaveTo (create-only). Do not pre-write a partial user file first —
+	// that would force an overwrite of unexpected content if another process
+	// created the target between Stat and bind.
+	if err := legacyCfg.BindAbsentEditTarget(userPath); err != nil {
+		// Target appeared concurrently: adopt it and merge legacy bot in-place
+		// instead of overwriting with the legacy snapshot.
+		adopted, loadErr := config.LoadForEditReadOnlyStrict(userPath)
+		if loadErr != nil {
+			return nil, "", err
+		}
+		if migErr := migrateLegacyBotConfigToUser(adopted, legacyCfg, userPath); migErr != nil {
+			return nil, "", migErr
+		}
+		return adopted, userPath, nil
 	}
 	return legacyCfg, userPath, nil
 }

@@ -235,7 +235,7 @@ func TestExtraChecksRunWithoutDelta(t *testing.T) {
 	}
 }
 
-func TestBindEditTargetAllowsLegacySeedToAbsentUserConfig(t *testing.T) {
+func TestBindAbsentEditTargetAllowsLegacySeedToAbsentUserConfig(t *testing.T) {
 	t.Setenv("REASONIX_HOME", t.TempDir())
 	project := filepath.Join(t.TempDir(), "reasonix.toml")
 	user := filepath.Join(t.TempDir(), "config.toml")
@@ -246,8 +246,8 @@ func TestBindEditTargetAllowsLegacySeedToAbsentUserConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cfg.BindEditTarget(user); err != nil {
-		t.Fatalf("BindEditTarget: %v", err)
+	if err := cfg.BindAbsentEditTarget(user); err != nil {
+		t.Fatalf("BindAbsentEditTarget: %v", err)
 	}
 	if cfg.editOriginState != "absent" {
 		t.Fatalf("target state = %q, want absent", cfg.editOriginState)
@@ -259,13 +259,13 @@ func TestBindEditTargetAllowsLegacySeedToAbsentUserConfig(t *testing.T) {
 	if !strings.Contains(string(body), "legacy-model") {
 		t.Fatalf("seeded user config missing model: %s", body)
 	}
-	// Ordinary cross-path without BindEditTarget still fails.
+	// Ordinary cross-path without BindAbsentEditTarget still fails.
 	cfg2, err := LoadForEditReadOnlyStrict(project)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := cfg2.SaveTo(user); err == nil {
-		t.Fatal("SaveTo cross-path without BindEditTarget should fail")
+		t.Fatal("SaveTo cross-path without BindAbsentEditTarget should fail")
 	}
 }
 
@@ -275,7 +275,7 @@ func TestRebindUsesPublishedBytesNotReread(t *testing.T) {
 	cfg := Default()
 	cfg.DefaultModel = "first"
 	// Bind as if loaded from absent target, then save.
-	if err := cfg.BindEditTarget(path); err != nil {
+	if err := cfg.BindAbsentEditTarget(path); err != nil {
 		t.Fatal(err)
 	}
 	if err := cfg.SaveTo(path); err != nil {
@@ -376,5 +376,90 @@ func TestExtraBodyMapKeyDoesNotCollideWithNestedTable(t *testing.T) {
 	nested, _ := p.ExtraBody["a"].(map[string]any)
 	if nested == nil || nested["b"] != "nested" {
 		t.Fatalf("nested a.b = %#v", p.ExtraBody["a"])
+	}
+}
+
+func TestBindAbsentEditTargetRefusesExistingTarget(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	project := filepath.Join(t.TempDir(), "reasonix.toml")
+	user := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(project, []byte("default_model = \"legacy-model\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(user, []byte("default_model = \"user-owned\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadForEditReadOnlyStrict(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.BindAbsentEditTarget(user); err == nil {
+		t.Fatal("BindAbsentEditTarget authorized an existing target")
+	}
+	// Existing user content must remain untouched.
+	body, _ := os.ReadFile(user)
+	if !strings.Contains(string(body), "user-owned") {
+		t.Fatalf("existing target was modified: %s", body)
+	}
+}
+
+func TestBoundConfigConsecutiveSaveSucceeds(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+	first := Default()
+	first.DefaultModel = "deepseek-flash"
+	if err := first.WriteFile(path); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetDefaultModel("deepseek-pro"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("first SaveTo: %v", err)
+	}
+	// Second save on the same bound Config must not mis-detect Windows mode drift.
+	if err := cfg.SetDefaultModel("deepseek-flash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("second SaveTo on bound config: %v", err)
+	}
+}
+
+func TestProjectDeltaValidationDetectsDroppedModelOverrides(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(path, []byte("default_model = \"deepseek-flash\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	delta := `
+[[providers]]
+name = "custom"
+kind = "openai"
+base_url = "https://example.com/v1"
+model = "m"
+model_overrides = { "m" = { context_window = 12345 } }
+`
+	// Body keeps the provider but drops model_overrides entirely.
+	body := `
+default_model = "deepseek-flash"
+
+[[providers]]
+name = "custom"
+kind = "openai"
+base_url = "https://example.com/v1"
+model = "m"
+`
+	opts := writeConfigOptions{scope: RenderScopeProject, delta: delta}
+	_, err := validateAndWriteConfigResolved(path, body, 0o644, opts, "")
+	if err == nil {
+		t.Fatal("dropped model_overrides was accepted")
+	}
+	if !strings.Contains(err.Error(), "model_overrides") && !strings.Contains(err.Error(), "custom") {
+		t.Fatalf("error should mention model_overrides, got %v", err)
 	}
 }

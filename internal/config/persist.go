@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -77,10 +78,6 @@ func persistenceFieldsOf(value any, path string) map[string]any {
 	}
 	collectPersistenceFields(reflect.ValueOf(value), path, out)
 	return out
-}
-
-func persistenceJoin(base, part string) string {
-	return persistenceStructJoin(base, part)
 }
 
 func persistenceStructJoin(base, field string) string {
@@ -331,62 +328,284 @@ func walkRawArrayOfTables(path string, tables []map[string]any, out map[string]b
 	}
 }
 
-// rawMapOrStructChild chooses struct-field vs map-key encoding. Free-form map
-// containers (extra_body, headers, env, prices, tool timeouts, ...) must quote
-// keys; ordinary config sections use struct-field dots.
+// rawMapOrStructChild chooses struct-field vs map-key encoding by walking the
+// Config schema to the type at path. Map containers (including model_overrides,
+// lsp.servers, shortcuts.tools, extra_body, ...) quote keys; struct fields use
+// dotted names. Dynamic interface{} values are treated as free-form maps.
 func rawMapOrStructChild(path, key string) string {
-	if isFreeFormMapPath(path) {
+	if configPathHoldsMap(path) {
 		return persistenceMapJoin(path, key)
 	}
 	return persistenceStructJoin(path, key)
 }
 
-func isFreeFormMapPath(path string) bool {
-	if path == "" {
+func isNamedArrayOfTablesPath(path string) bool {
+	t := configTypeAtPath(path)
+	if t == nil {
 		return false
 	}
-	leaf := persistencePathLeaf(path)
-	switch leaf {
-	case "extra_body", "headers", "env", "prices", "tool_timeout_seconds",
-		"models", "subagent_models", "subagent_efforts", "args":
-		// "models" as string array is not a map; free-form maps that use models
-		// as map are rare. prices/extra_body/headers/env are the critical ones.
-		return leaf == "extra_body" || leaf == "headers" || leaf == "env" ||
-			leaf == "prices" || leaf == "tool_timeout_seconds" ||
-			leaf == "subagent_models" || leaf == "subagent_efforts"
+	t = derefReflectType(t)
+	if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
+		return false
 	}
-	// Nested inside a free-form map: path already contains {"..."}
-	return strings.Contains(path, "{")
+	elem := derefReflectType(t.Elem())
+	return elem.Kind() == reflect.Struct && structTypeHasTOMLName(elem)
 }
 
-func isNamedArrayOfTablesPath(path string) bool {
-	leaf := persistencePathLeaf(path)
-	return leaf == "providers" || leaf == "plugins"
+// configPathHoldsMap reports whether the value at path is a map (or dynamic
+// any) according to the Config TOML schema, so raw mask keys are quoted.
+func configPathHoldsMap(path string) bool {
+	t := configTypeAtPath(path)
+	if t == nil {
+		// Unknown path: if we are already under a map key segment, keep map
+		// encoding for nested dynamic objects (extra_body nests).
+		return strings.Contains(path, "{")
+	}
+	t = derefReflectType(t)
+	switch t.Kind() {
+	case reflect.Map, reflect.Interface:
+		return true
+	default:
+		return false
+	}
+}
+
+func derefReflectType(t reflect.Type) reflect.Type {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
+}
+
+func structTypeHasTOMLName(t reflect.Type) bool {
+	t = derefReflectType(t)
+	if t == nil || t.Kind() != reflect.Struct {
+		return false
+	}
+	for i := 0; i < t.NumField(); i++ {
+		sf := t.Field(i)
+		if sf.PkgPath != "" {
+			continue
+		}
+		tag := sf.Tag.Get("toml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		if idx := strings.IndexByte(tag, ','); idx >= 0 {
+			tag = tag[:idx]
+		}
+		if tag == "name" && sf.Type.Kind() == reflect.String {
+			return true
+		}
+	}
+	return false
+}
+
+// configTypeAtPath walks typed persistence path segments from Config and
+// returns the Go type of the value at that path (the container for the next
+// key). Unknown or non-schema paths return nil.
+func configTypeAtPath(path string) reflect.Type {
+	t := reflect.TypeOf(Config{})
+	for _, seg := range parsePersistencePath(path) {
+		t = derefReflectType(t)
+		if t == nil {
+			return nil
+		}
+		switch seg.kind {
+		case persistenceSegStruct:
+			ft, ok := tomlFieldType(t, seg.name)
+			if !ok {
+				return nil
+			}
+			t = ft
+		case persistenceSegMapKey:
+			if t.Kind() != reflect.Map && t.Kind() != reflect.Interface {
+				return nil
+			}
+			if t.Kind() == reflect.Interface {
+				// Dynamic JSON-like trees: further keys stay dynamic.
+				return reflect.TypeOf((*any)(nil)).Elem()
+			}
+			t = t.Elem()
+		case persistenceSegIndex, persistenceSegNamed:
+			if t.Kind() != reflect.Slice && t.Kind() != reflect.Array {
+				return nil
+			}
+			t = t.Elem()
+		default:
+			return nil
+		}
+	}
+	return t
+}
+
+func tomlFieldType(structType reflect.Type, name string) (reflect.Type, bool) {
+	structType = derefReflectType(structType)
+	if structType == nil || structType.Kind() != reflect.Struct {
+		return nil, false
+	}
+	for i := 0; i < structType.NumField(); i++ {
+		sf := structType.Field(i)
+		if sf.PkgPath != "" {
+			continue
+		}
+		tag := sf.Tag.Get("toml")
+		if tag == "-" {
+			continue
+		}
+		fieldName := sf.Name
+		if tag != "" {
+			if idx := strings.IndexByte(tag, ','); idx >= 0 {
+				tag = tag[:idx]
+			}
+			if tag != "" {
+				fieldName = tag
+			}
+		}
+		if fieldName == name {
+			return sf.Type, true
+		}
+	}
+	return nil, false
+}
+
+type persistenceSegKind int
+
+const (
+	persistenceSegStruct persistenceSegKind = iota
+	persistenceSegMapKey
+	persistenceSegIndex
+	persistenceSegNamed
+)
+
+type persistenceSeg struct {
+	kind       persistenceSegKind
+	name       string
+	index      int
+	occurrence int
+}
+
+// parsePersistencePath splits a typed path into struct / map / index / named
+// segments. It is the inverse of persistenceStructJoin/MapJoin/IndexJoin/NamedJoin.
+func parsePersistencePath(path string) []persistenceSeg {
+	if path == "" {
+		return nil
+	}
+	var segs []persistenceSeg
+	i := 0
+	for i < len(path) {
+		switch path[i] {
+		case '.':
+			i++
+			if i >= len(path) {
+				return segs
+			}
+			// struct field until . [ {
+			j := i
+			for j < len(path) && path[j] != '.' && path[j] != '[' && path[j] != '{' {
+				j++
+			}
+			segs = append(segs, persistenceSeg{kind: persistenceSegStruct, name: path[i:j]})
+			i = j
+		case '{':
+			// {"key"}
+			if i+1 >= len(path) || path[i+1] != '"' {
+				return segs
+			}
+			key, next, ok := parseQuotedPathToken(path, i+1)
+			if !ok || next >= len(path) || path[next] != '}' {
+				return segs
+			}
+			segs = append(segs, persistenceSeg{kind: persistenceSegMapKey, name: key})
+			i = next + 1
+		case '[':
+			// [n] or ["name"][occ]
+			if i+1 < len(path) && path[i+1] == '"' {
+				name, next, ok := parseQuotedPathToken(path, i+1)
+				if !ok || next >= len(path) || path[next] != ']' {
+					return segs
+				}
+				i = next + 1
+				// expect [occ]
+				if i >= len(path) || path[i] != '[' {
+					// name-only (should not happen with our encoder); treat as named occ 0
+					segs = append(segs, persistenceSeg{kind: persistenceSegNamed, name: name, occurrence: 0})
+					continue
+				}
+				occ, next2, ok := parseIndexPathToken(path, i)
+				if !ok {
+					return segs
+				}
+				segs = append(segs, persistenceSeg{kind: persistenceSegNamed, name: name, occurrence: occ})
+				i = next2
+				continue
+			}
+			idx, next, ok := parseIndexPathToken(path, i)
+			if !ok {
+				return segs
+			}
+			segs = append(segs, persistenceSeg{kind: persistenceSegIndex, index: idx})
+			i = next
+		default:
+			// leading struct field (no prefix dot)
+			j := i
+			for j < len(path) && path[j] != '.' && path[j] != '[' && path[j] != '{' {
+				j++
+			}
+			segs = append(segs, persistenceSeg{kind: persistenceSegStruct, name: path[i:j]})
+			i = j
+		}
+	}
+	return segs
+}
+
+func parseQuotedPathToken(path string, quoteAt int) (string, int, bool) {
+	// quoteAt points at opening "
+	if quoteAt >= len(path) || path[quoteAt] != '"' {
+		return "", quoteAt, false
+	}
+	// strconv.QuotedPrefix / Unquote
+	s, err := strconv.QuotedPrefix(path[quoteAt:])
+	if err != nil {
+		return "", quoteAt, false
+	}
+	unquoted, err := strconv.Unquote(s)
+	if err != nil {
+		return "", quoteAt, false
+	}
+	return unquoted, quoteAt + len(s), true
+}
+
+func parseIndexPathToken(path string, bracketAt int) (int, int, bool) {
+	// bracketAt points at '['
+	if bracketAt >= len(path) || path[bracketAt] != '[' {
+		return 0, bracketAt, false
+	}
+	j := bracketAt + 1
+	for j < len(path) && path[j] >= '0' && path[j] <= '9' {
+		j++
+	}
+	if j == bracketAt+1 || j >= len(path) || path[j] != ']' {
+		return 0, bracketAt, false
+	}
+	n, err := strconv.Atoi(path[bracketAt+1 : j])
+	if err != nil {
+		return 0, bracketAt, false
+	}
+	return n, j + 1, true
 }
 
 // persistencePathLeaf returns the last structural name in a typed path
-// (struct field, map key, or named table), ignoring indexes.
+// (struct field or map key name), ignoring indexes. Used only for diagnostics.
 func persistencePathLeaf(path string) string {
-	if path == "" {
-		return ""
-	}
-	// Strip trailing [n] / ["name"][n] index tails for leaf classification.
-	for {
-		if i := strings.LastIndexByte(path, '['); i >= 0 && strings.HasSuffix(path, "]") {
-			// If this is {"key"} map segment ending... map uses {} not []
-			path = path[:i]
-			continue
+	segs := parsePersistencePath(path)
+	for i := len(segs) - 1; i >= 0; i-- {
+		switch segs[i].kind {
+		case persistenceSegStruct, persistenceSegMapKey, persistenceSegNamed:
+			return segs[i].name
 		}
-		break
 	}
-	if i := strings.LastIndex(path, "{"); i >= 0 && strings.HasSuffix(path, "}") {
-		// map key segment: extract quoted key's relevance - parent leaf is before {
-		path = path[:i]
-	}
-	if i := strings.LastIndexByte(path, '.'); i >= 0 {
-		return path[i+1:]
-	}
-	return path
+	return ""
 }
 
 // sliceElementNameKeys reports whether every non-zero element of the slice has
@@ -478,21 +697,39 @@ func readConfigFileForEdit(logicalPath string) (resolved string, data []byte, mo
 
 // configStateID hashes path + mode + raw bytes into the edit-origin token.
 // exists=false yields the create-only sentinel "absent".
+//
+// The digest is only a change-detection token for optimistic concurrency on
+// config files. It is not a password, credential, or authentication secret.
 func configStateID(path string, mode os.FileMode, data []byte, exists bool) string {
 	if !exists {
 		return "absent"
 	}
+	// codeql[go/weak-sensitive-data-hashing] StateID is a file change-detection token (path+mode+bytes), not a password or auth hash.
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%o\x00", path, mode)
+	fmt.Fprintf(h, "%s\x00%o\x00", path, effectivePersistedFileMode(mode))
 	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // publishedConfigStateID is the StateID of a body this process just published
-// at path with perm. It is derived from the written bytes, never by re-reading
-// the path (which could observe another writer).
+// at path with perm. It is derived from the written bytes and the effective
+// platform file mode, never by re-reading the path (which could observe
+// another writer).
 func publishedConfigStateID(path string, perm os.FileMode, body []byte) string {
-	return configStateID(path, perm.Perm(), body, true)
+	return configStateID(path, perm, body, true)
+}
+
+// effectivePersistedFileMode normalizes the permission bits that appear in
+// StateID so the token computed at publish matches a later Stat.
+//
+// On Windows, Go reports writable regular files as 0666 regardless of the
+// chmod argument passed to AtomicWriteFile, so hashing the requested 0600/0644
+// would make a second SaveTo of an unchanged bound Config fail as concurrent.
+func effectivePersistedFileMode(perm os.FileMode) os.FileMode {
+	if runtime.GOOS == "windows" {
+		return 0o666
+	}
+	return perm.Perm()
 }
 
 // verifyConfigFileState re-checks that the file still matches the state
