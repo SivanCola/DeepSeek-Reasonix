@@ -9,7 +9,7 @@ prepare="$root/.github/workflows/prepare-release-notes.yml"
 grep -Fxq 'name: Prepare release' "$prepare"
 grep -Fxq 'name: Publish release' "$publish"
 grep -Fxq 'name: Recover release' "$recover"
-[ "$(rg -l 'workflow_dispatch:' "$root/.github/workflows"/release*.yml "$prepare" "$recover" | wc -l | tr -d ' ')" = 2 ]
+[ "$(grep -l 'workflow_dispatch:' "$root/.github/workflows"/release*.yml "$prepare" "$recover" | wc -l | tr -d ' ')" = 2 ]
 
 # Developer flow: one version input, one notes PR, one environment gate.
 [ "$(sed -n '/workflow_dispatch:/,/permissions:/p' "$prepare" | grep -Ec '^      [a-z_]+:$')" = 1 ]
