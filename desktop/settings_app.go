@@ -924,7 +924,7 @@ func (a *App) Settings() SettingsView {
 			DesktopLayoutStyle:      "workbench",
 			DesktopTheme:            "auto",
 			DesktopThemeStyle:       "graphite",
-			CloseBehavior:           "background",
+			CloseBehavior:           "smart",
 			DisplayMode:             "standard",
 			StatusBarStyle:          "text",
 			StatusBarItems:          config.DefaultDesktopStatusBarItems(),

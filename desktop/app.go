@@ -65,6 +65,11 @@ import (
 // `data:` frames.
 const eventChannel = "agent:event"
 
+// backgroundWindowHidden records that the window was hidden to the tray
+// (smart/background close). Session ownership classification uses it to
+// distinguish "same instance, hidden" from "same instance, visible".
+var backgroundWindowHidden atomic.Bool
+
 const singleInstanceIDPrefix = "com.reasonix.desktop"
 
 // singleInstanceID is used by Wails to route a second desktop launch back to the
@@ -126,6 +131,17 @@ type App struct {
 	// App.mu guards both maps and every desktopSessionRuntime field.
 	runtimeByID         map[string]*desktopSessionRuntime
 	runtimeBySessionKey map[string]*desktopSessionRuntime
+
+	// globalConfigDamaged is set when the user-global config failed to load
+	// and the app booted with the recovery configuration; the persistent
+	// recovery banner stays visible until the config is repaired.
+	globalConfigDamaged bool
+
+	// runtimeWorkCounter overrides activeRuntimeWorkCount in tests so the
+	// smart-close integration path can be exercised with a real active-work
+	// signal without constructing a full controller. nil keeps the default
+	// scan of visible and detached tabs.
+	runtimeWorkCounter func() int
 
 	// tabsRestored is closed when restoreOrBuildTabs has finished populating
 	// a.tabs from desktop-tabs.json (or built the first-launch tab). Startup
@@ -533,7 +549,8 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	if err != nil {
 		cfg = config.LoadForEdit(config.UserConfigPath())
 	}
-	if cfg.DesktopCloseBehavior() == "background" {
+	switch cfg.DesktopCloseBehavior() {
+	case "background":
 		if !a.backgroundCloseHasRestorePath() {
 			return false
 		}
@@ -542,6 +559,11 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		a.snapshotAllTabs()
 		hideForBackground(ctx)
 		return true
+	case "smart":
+		// Smart close: quit for real when idle; hide to the tray with a
+		// notification when tasks are still running; stay visible when no
+		// restore path exists.
+		return a.smartClose(ctx)
 	}
 	return false
 }
@@ -644,6 +666,7 @@ func (a *App) quitApp() {
 }
 
 func hideForBackground(ctx context.Context) {
+	backgroundWindowHidden.Store(true)
 	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
 		runtime.Hide(ctx)
 		return
@@ -652,6 +675,7 @@ func hideForBackground(ctx context.Context) {
 }
 
 func showFromBackground(ctx context.Context, wasMaximised bool) {
+	backgroundWindowHidden.Store(false)
 	if backgroundCloseUsesApplicationHide(goruntime.GOOS) {
 		runtime.Show(ctx)
 	}

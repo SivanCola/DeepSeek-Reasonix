@@ -36,6 +36,8 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { useToast } from "./lib/toast";
+import { ConfigRepairBanner } from "./components/ConfigRepairBanner";
+import { SessionIssueCard } from "./components/SessionIssueCard";
 import { useGoalActionHandler } from "./lib/goalAction";
 import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
@@ -3943,6 +3945,7 @@ export default function App() {
       ].filter(Boolean).join(" ")}
     >
       <ThemeBackground />
+      <ConfigRepairBanner />
       <div
         ref={layoutRef}
         className={[
@@ -4465,6 +4468,42 @@ export default function App() {
 
           {state.meta?.startupErr && (
             <div className="banner banner--error">{t("topbar.startupError", { msg: state.meta.startupErr })}</div>
+          )}
+          {state.meta?.runtime?.phase === "lease_blocked" && state.meta.runtime.issue && (
+            <SessionIssueCard issue={state.meta.runtime.issue} tabID={activeTabId ?? ""} t={t as Translator} />
+          )}
+          {state.meta?.configError && (
+            <div className="banner banner--error banner--actionable">
+              <span className="banner__msg">
+                {t("topbar.configError", {
+                  file: state.meta.configError.fileName,
+                  line: state.meta.configError.line || 1,
+                  msg: state.meta.configError.message,
+                })}
+              </span>
+              {state.meta.configError.hasPreview && (
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  onClick={() => {
+                    (window as any).go?.main?.App?.ApplyProjectConfigFix?.(activeTabId)
+                      .then(() => (window as any).location.reload?.())
+                      .catch(() => {});
+                  }}
+                >
+                  {t("topbar.configFixApply", { n: state.meta.configError.fixCount ?? 0 })}
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={() => {
+                  (window as any).go?.main?.App?.OpenProjectConfigFile?.(activeTabId).catch(() => {});
+                }}
+              >
+                {t("topbar.configOpenFile")}
+              </button>
+            </div>
           )}
           {safeMode && (
             <div className="banner banner--warning">{t("guard.safeMode")}</div>

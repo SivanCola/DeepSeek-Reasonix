@@ -168,6 +168,7 @@ type WorkspaceTab struct {
 	Ready               bool               // true once boot.Build completes
 	StartupErr          string             // build error, surfaced to the frontend
 	StartupErrLeaseHeld bool               // true when StartupErr can be retried after a session lease releases
+	ConfigError         *TabConfigErrorView // broken project reasonix.toml details + repair preview (config isolation)
 	runtimeID           string             // process-local SessionRuntime registry identity
 	sessionLease        *agent.SessionLease
 	sessionLeaseMu      sync.Mutex
@@ -2154,6 +2155,7 @@ type TabMeta struct {
 	RecoveryDigest    string                   `json:"recoveryDigest,omitempty"`
 	RecoveryParentID  string                   `json:"recoveryParentId,omitempty"`
 	StartupErr        string                   `json:"startupErr,omitempty"`
+	ConfigError       *TabConfigErrorView      `json:"configError,omitempty"`
 	Active            bool                     `json:"active"`
 	Cwd               string                   `json:"cwd"`
 }
@@ -2197,6 +2199,7 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 		GoalStatus:        currentTabGoalStatus(tab),
 		AutoResearch:      compactAutoResearch(tab),
 		StartupErr:        tab.StartupErr,
+		ConfigError:       tab.ConfigError,
 		Active:            active,
 		Cwd:               tab.WorkspaceRoot,
 		IsolatedWorktree:  worktree.IsManagedPath(tab.WorkspaceRoot, config.DeliveryWorktreeDir()),
@@ -3544,6 +3547,7 @@ func clearTabStartupError(tab *WorkspaceTab) {
 	}
 	tab.StartupErr = ""
 	tab.StartupErrLeaseHeld = false
+	tab.ConfigError = nil
 }
 
 func (a *App) recordTabStartupFailure(tab *WorkspaceTab, buildGeneration uint64, wailsCtx context.Context, err error) {
@@ -3617,12 +3621,27 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 		}
 	}
 
-	// Load config for this tab's workspace root.
+	// Load config for this tab's workspace root. A damaged project
+	// reasonix.toml only fails this workspace (with file/line/fix-preview
+	// surfaced to the tab); a damaged global config falls back to the
+	// recovery configuration so the core UI still starts with external
+	// integrations disabled and a persistent recovery banner.
 	_ = config.MigrateLegacyCredentialsForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
-		a.recordTabStartupFailure(tab, buildGeneration, wailsCtx, err)
-		return
+		cle, isConfigErr := config.ConfigLoadErrorOf(err)
+		if isConfigErr && isGlobalConfigFile(cle.Path) {
+			cfg = config.LoadRecoveryDefaultsForRoot(root)
+			a.mu.Lock()
+			a.globalConfigDamaged = true
+			a.mu.Unlock()
+		} else {
+			a.recordTabStartupFailure(tab, buildGeneration, wailsCtx, err)
+			if isConfigErr {
+				a.setTabConfigError(tab, cle, root)
+			}
+			return
+		}
 	}
 
 	if a.tabBuildSuperseded(tab, buildGeneration) {
