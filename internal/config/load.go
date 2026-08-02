@@ -684,6 +684,13 @@ func loadForEditStrict(path string, loadCredentials, persistMigrations bool) (*C
 		return nil, err
 	}
 	changed := normalizeConfigForEdit(cfg)
+	// Bind the resolved path and StateID at load time so SaveTo can refuse a
+	// stale edit snapshot instead of re-authorizing the current file.
+	if strings.TrimSpace(path) != "" {
+		if err := cfg.bindEditOrigin(path); err != nil {
+			return nil, err
+		}
+	}
 	if persistMigrations && changed && strings.TrimSpace(path) != "" {
 		if _, err := os.Stat(path); err == nil {
 			if err := cfg.SaveTo(path); err != nil {

@@ -12,17 +12,14 @@ import (
 	"reasonix/internal/fileutil"
 )
 
-// ConfigPersistenceSnapshot is a comparable capture of the persisted semantic
+// configPersistenceSnapshot is a comparable capture of the persisted semantic
 // content of a configuration: strings, arrays, maps, paths and permission
-// fields. It is used by the validated config write pipeline to confirm that a
-// rendered TOML body decodes back to exactly the values it is intended to
-// persist, so a render regression (for example a Windows path written with an
-// unescaped backslash, or a control character encoded with a Go-only escape)
-// can never silently reach disk.
+// fields. Private to internal/config so the write pipeline does not expand the
+// long-term package API.
 //
 // The snapshot deliberately captures only values (never raw file content);
 // diffs report field paths and value categories only.
-type ConfigPersistenceSnapshot struct {
+type configPersistenceSnapshot struct {
 	Fields map[string]any
 }
 
@@ -30,16 +27,16 @@ type ConfigPersistenceSnapshot struct {
 // slice and an empty slice do not register as semantic drift.
 type persistenceEmpty struct{ kind string }
 
-// PersistenceFieldKind classifies a drifted field for error reporting.
-type PersistenceFieldKind string
+// persistenceFieldKind classifies a drifted field for error reporting.
+type persistenceFieldKind string
 
 const (
-	PersistenceFieldString     PersistenceFieldKind = "string"
-	PersistenceFieldArray      PersistenceFieldKind = "array"
-	PersistenceFieldMap        PersistenceFieldKind = "map"
-	PersistenceFieldPath       PersistenceFieldKind = "path"
-	PersistenceFieldPermission PersistenceFieldKind = "permission"
-	PersistenceFieldOther      PersistenceFieldKind = "other"
+	persistenceFieldString     persistenceFieldKind = "string"
+	persistenceFieldArray      persistenceFieldKind = "array"
+	persistenceFieldMap        persistenceFieldKind = "map"
+	persistenceFieldPath       persistenceFieldKind = "path"
+	persistenceFieldPermission persistenceFieldKind = "permission"
+	persistenceFieldOther      persistenceFieldKind = "other"
 )
 
 // tomlPathFieldNames are leaf key names that carry filesystem paths. They are
@@ -55,15 +52,15 @@ var tomlPathFieldNames = map[string]bool{
 	"output_style_file":  true,
 }
 
-// IsTOMLPathField reports whether a TOML leaf key is a known filesystem path
-// field. Exported so the Guard repair path can share the classification.
-func IsTOMLPathField(leaf string) bool { return tomlPathFieldNames[leaf] }
+// isTOMLPathField reports whether a TOML leaf key is a known filesystem path
+// field. Shared with the path-escape scanner in this package.
+func isTOMLPathField(leaf string) bool { return tomlPathFieldNames[leaf] }
 
-// PersistenceSnapshot captures the exported, toml-tagged fields of cfg as a
+// persistenceSnapshot captures the exported, toml-tagged fields of cfg as a
 // path-indexed map. Both sides of a comparison must be captured with the same
 // function so field normalization applies identically.
-func PersistenceSnapshot(c *Config) ConfigPersistenceSnapshot {
-	snap := ConfigPersistenceSnapshot{Fields: map[string]any{}}
+func persistenceSnapshot(c *Config) configPersistenceSnapshot {
+	snap := configPersistenceSnapshot{Fields: map[string]any{}}
 	if c == nil {
 		return snap
 	}
@@ -128,6 +125,16 @@ func collectPersistenceFields(v reflect.Value, path string, out map[string]any) 
 			out[path] = persistenceEmpty{kind: "slice"}
 			return
 		}
+		// Named array-of-tables (providers, plugins) are keyed by stable name so
+		// validation survives built-in provider injection shifting indexes.
+		if keyByName := sliceElementNameKeys(v); keyByName {
+			for i := 0; i < v.Len(); i++ {
+				elem := v.Index(i)
+				name := structNameField(elem)
+				collectPersistenceFields(elem, path+"["+strconv.Quote(name)+"]", out)
+			}
+			return
+		}
 		for i := 0; i < v.Len(); i++ {
 			collectPersistenceFields(v.Index(i), path+"["+strconv.Itoa(i)+"]", out)
 		}
@@ -157,10 +164,10 @@ func collectPersistenceFields(v reflect.Value, path string, out map[string]any) 
 	}
 }
 
-// PersistenceDiff describes one drifted field between two snapshots.
-type PersistenceDiff struct {
+// persistenceDiff describes one drifted field between two snapshots.
+type persistenceDiff struct {
 	Field string
-	Kind  PersistenceFieldKind
+	Kind  persistenceFieldKind
 }
 
 func persistenceValuesEqual(a, b any) bool {
@@ -172,7 +179,7 @@ func persistenceValuesEqual(a, b any) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-func persistenceFieldKind(path string, value any) PersistenceFieldKind {
+func classifyPersistenceField(path string, value any) persistenceFieldKind {
 	leaf := path
 	if idx := strings.LastIndexByte(path, '.'); idx >= 0 {
 		leaf = path[idx+1:]
@@ -183,48 +190,48 @@ func persistenceFieldKind(path string, value any) PersistenceFieldKind {
 	}
 	switch {
 	case strings.Contains(path, "permission") || leaf == "deny" || leaf == "allow" || leaf == "ask":
-		return PersistenceFieldPermission
+		return persistenceFieldPermission
 	case tomlPathFieldNames[leaf]:
-		return PersistenceFieldPath
+		return persistenceFieldPath
 	}
 	if _, ok := value.(persistenceEmpty); ok {
-		return PersistenceFieldArray
+		return persistenceFieldArray
 	}
 	if value == nil {
-		return PersistenceFieldOther
+		return persistenceFieldOther
 	}
 	switch reflect.TypeOf(value).Kind() {
 	case reflect.Slice:
-		return PersistenceFieldArray
+		return persistenceFieldArray
 	case reflect.Map:
-		return PersistenceFieldMap
+		return persistenceFieldMap
 	case reflect.String:
-		return PersistenceFieldString
+		return persistenceFieldString
 	default:
-		return PersistenceFieldOther
+		return persistenceFieldOther
 	}
 }
 
 // Diff reports every field whose persisted value differs between the two
 // snapshots. The comparison treats nil and empty collections as equal
 // (rendering omits empty values).
-func (s ConfigPersistenceSnapshot) Diff(t ConfigPersistenceSnapshot) []PersistenceDiff {
-	var diffs []PersistenceDiff
+func (s configPersistenceSnapshot) Diff(t configPersistenceSnapshot) []persistenceDiff {
+	var diffs []persistenceDiff
 	for path, want := range s.Fields {
 		got, ok := t.Fields[path]
 		if !ok || !persistenceValuesEqual(want, got) {
-			diffs = append(diffs, PersistenceDiff{Field: path, Kind: persistenceFieldKind(path, want)})
+			diffs = append(diffs, persistenceDiff{Field: path, Kind: classifyPersistenceField(path, want)})
 		}
 	}
 	for path, got := range t.Fields {
 		if _, ok := s.Fields[path]; !ok {
-			diffs = append(diffs, PersistenceDiff{Field: path, Kind: persistenceFieldKind(path, got)})
+			diffs = append(diffs, persistenceDiff{Field: path, Kind: classifyPersistenceField(path, got)})
 		}
 	}
 	return diffs
 }
 
-func (d PersistenceDiff) String() string {
+func (d persistenceDiff) String() string {
 	return fmt.Sprintf("%s (%s)", d.Field, d.Kind)
 }
 
@@ -252,7 +259,7 @@ func walkRawTOMLFields(v any, path string, out map[string]bool) {
 		}
 	case []map[string]any:
 		for i, elem := range x {
-			walkRawTOMLFields(elem, path+"["+strconv.Itoa(i)+"]", out)
+			walkRawTOMLFields(elem, rawArrayElementPath(path, i, elem), out)
 		}
 	case []any:
 		if len(x) == 0 {
@@ -260,11 +267,79 @@ func walkRawTOMLFields(v any, path string, out map[string]bool) {
 			return
 		}
 		for i, elem := range x {
-			child := path + "[" + strconv.Itoa(i) + "]"
+			child := rawArrayElementPath(path, i, elem)
 			out[child] = true
 			walkRawTOMLFields(elem, child, out)
 		}
 	}
+}
+
+// rawArrayElementPath keys providers/plugins tables by name when present so the
+// delta mask matches persistenceSnapshot after built-in injection.
+func rawArrayElementPath(path string, index int, elem any) string {
+	if path == "providers" || path == "plugins" || strings.HasSuffix(path, ".providers") || strings.HasSuffix(path, ".plugins") {
+		if m, ok := elem.(map[string]any); ok {
+			if name, ok := m["name"].(string); ok && strings.TrimSpace(name) != "" {
+				return path + "[" + strconv.Quote(name) + "]"
+			}
+		}
+	}
+	return path + "[" + strconv.Itoa(index) + "]"
+}
+
+// sliceElementNameKeys reports whether every non-zero element of the slice has
+// a non-empty toml "name" string field (providers/plugins array-of-tables).
+func sliceElementNameKeys(v reflect.Value) bool {
+	if v.Len() == 0 {
+		return false
+	}
+	for i := 0; i < v.Len(); i++ {
+		elem := v.Index(i)
+		for elem.Kind() == reflect.Pointer {
+			if elem.IsNil() {
+				return false
+			}
+			elem = elem.Elem()
+		}
+		if elem.Kind() != reflect.Struct {
+			return false
+		}
+		if strings.TrimSpace(structNameField(elem)) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func structNameField(v reflect.Value) string {
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return ""
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return ""
+	}
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		sf := t.Field(i)
+		tag := sf.Tag.Get("toml")
+		if tag == "" {
+			continue
+		}
+		if idx := strings.IndexByte(tag, ','); idx >= 0 {
+			tag = tag[:idx]
+		}
+		if tag != "name" {
+			continue
+		}
+		f := v.Field(i)
+		if f.Kind() == reflect.String {
+			return f.String()
+		}
+	}
+	return ""
 }
 
 // configFileStateID returns a stable identifier binding a config file path to
@@ -333,7 +408,7 @@ type writeConfigOptions struct {
 //
 //  1. the candidate TOML is parsed with the production parser;
 //  2. for user/full files, the parsed config is rendered again and the two
-//     parse results are compared semantically with ConfigPersistenceSnapshot,
+//     parse results are compared semantically with configPersistenceSnapshot,
 //     so a rendering that does not round-trip (escapes, control characters,
 //     Windows paths) aborts the write;
 //  3. for incremental project merges, every field the delta writes is checked
@@ -370,62 +445,118 @@ func validateAndWriteConfigResolved(path, body string, perm os.FileMode, opts wr
 	if opts.scope == "" {
 		opts.scope = RenderScopeFull
 	}
-	if opts.scope != RenderScopeProject && !opts.skipRoundTrip {
-		rerendered, err := renderTOMLForScopeErr(decoded, opts.scope)
-		if err != nil {
-			return fmt.Errorf("save config %s: generated TOML cannot be rendered back: %w", path, err)
-		}
-		if err := validateRenderedRoundTrip(path, body, rerendered); err != nil {
-			return err
-		}
-		// Compare the intended config against the decoded candidate: both
-		// sides normalized the same way, so a renderer that silently omits or
-		// mangles a persisted field is caught before the write.
-		if opts.want != nil {
-			wantSnap := PersistenceSnapshot(normalizePersistedConfig(opts.want))
-			readSnap := PersistenceSnapshot(normalizePersistedConfig(decoded))
-			if diffs := wantSnap.Diff(readSnap); len(diffs) > 0 {
-				return persistenceDriftError(path, "persisted semantics", diffs)
+	// User/full files must round-trip through the renderer. Project incremental
+	// merges (with a delta) may retain fields the project renderer would not
+	// emit, so they skip re-render round-trip and rely on step 3. Brand-new
+	// project files (no delta) still project-scope round-trip.
+	if !opts.skipRoundTrip {
+		switch {
+		case opts.scope != RenderScopeProject:
+			rerendered, err := renderTOMLForScopeErr(decoded, opts.scope)
+			if err != nil {
+				return fmt.Errorf("save config %s: generated TOML cannot be rendered back: %w", path, err)
+			}
+			if err := validateRenderedRoundTrip(path, body, rerendered); err != nil {
+				return err
+			}
+			// Full-render intent: decoded candidate must match the intended config.
+			if opts.want != nil && opts.delta == "" {
+				wantSnap := persistenceSnapshot(normalizePersistedConfig(opts.want))
+				readSnap := persistenceSnapshot(normalizePersistedConfig(decoded))
+				if diffs := wantSnap.Diff(readSnap); len(diffs) > 0 {
+					return persistenceDriftError(path, "persisted semantics", diffs)
+				}
+			}
+		case opts.delta == "" && opts.want != nil:
+			// New project file (full project render with intent): re-render at
+			// project scope and require semantic equality so a dropped custom
+			// provider field cannot pass as "parsed". Incremental project merges
+			// with an empty delta (surgical removals / extraChecks only) skip this.
+			rerendered, err := renderTOMLForScopeErr(decoded, RenderScopeProject)
+			if err != nil {
+				return fmt.Errorf("save config %s: generated TOML cannot be rendered back: %w", path, err)
+			}
+			if err := validateRenderedRoundTrip(path, body, rerendered); err != nil {
+				return err
+			}
+			if opts.want != nil {
+				intended, err := renderTOMLForScopeErr(opts.want, RenderScopeProject)
+				if err != nil {
+					return fmt.Errorf("save config %s: intended project render failed: %w", path, err)
+				}
+				intendedCfg, err := decodeConfigBodyForValidation(intended)
+				if err != nil {
+					return fmt.Errorf("save config %s: intended project render does not parse: %w", path, err)
+				}
+				// Compare fields the intended project render writes (name-keyed) so a
+				// dropped custom provider field cannot hide outside the body mask.
+				mask, err := tomlDeltaFieldMask(intended)
+				if err != nil {
+					return fmt.Errorf("save config %s: intended project body does not parse: %w", path, err)
+				}
+				wantSnap := persistenceSnapshot(intendedCfg)
+				readSnap := persistenceSnapshot(decoded)
+				var missed []persistenceDiff
+				for fp, want := range wantSnap.Fields {
+					if !mask[fp] {
+						continue
+					}
+					got, ok := readSnap.Fields[fp]
+					if !ok || !persistenceValuesEqual(want, got) {
+						missed = append(missed, persistenceDiff{Field: fp, Kind: classifyPersistenceField(fp, want)})
+					}
+				}
+				if len(missed) > 0 {
+					return persistenceDriftError(path, "project semantics", missed)
+				}
 			}
 		}
 	}
 
 	// 3. Incremental delta verification: every field the delta writes must
-	// decode to the intended value from the merged body. The set of "written"
-	// fields comes from the delta document's own key structure (not from a
-	// fresh Config's defaults), so fields absent from the delta are not
-	// compared against values the merge may legitimately retain.
+	// decode to the intended value from the merged body. Provider/plugin tables
+	// are compared by stable name so built-in injection cannot shift indexes.
+	mergedSnap := persistenceSnapshot(decoded)
 	if opts.delta != "" {
 		mask, err := tomlDeltaFieldMask(opts.delta)
 		if err != nil {
 			return fmt.Errorf("save config %s: generated delta does not parse: %w", path, err)
 		}
-		deltaCfg, err := decodeConfigBodyForValidation(opts.delta)
+		// Decode the delta without injecting built-in providers so the snapshot
+		// describes only the explicit tables the delta wrote.
+		deltaCfg, err := decodeConfigBodyExplicit(opts.delta)
 		if err != nil {
 			return fmt.Errorf("save config %s: generated delta does not parse: %w", path, err)
 		}
-		deltaSnap := PersistenceSnapshot(deltaCfg)
-		mergedSnap := PersistenceSnapshot(decoded)
-		var missed []PersistenceDiff
+		deltaSnap := persistenceSnapshot(deltaCfg)
+		var missed []persistenceDiff
 		for fp, want := range deltaSnap.Fields {
 			if !mask[fp] {
 				continue // the delta document does not write this field
 			}
 			got, ok := mergedSnap.Fields[fp]
 			if !ok || !persistenceValuesEqual(want, got) {
-				missed = append(missed, PersistenceDiff{Field: fp, Kind: persistenceFieldKind(fp, want)})
-			}
-		}
-		for fp, want := range opts.extraChecks {
-			for leaf, wantLeaf := range persistenceFieldsOf(want, fp) {
-				got, ok := mergedSnap.Fields[leaf]
-				if !ok || !persistenceValuesEqual(wantLeaf, got) {
-					missed = append(missed, PersistenceDiff{Field: leaf, Kind: persistenceFieldKind(leaf, wantLeaf)})
-				}
+				missed = append(missed, persistenceDiff{Field: fp, Kind: classifyPersistenceField(fp, want)})
 			}
 		}
 		if len(missed) > 0 {
 			return persistenceDriftError(path, "incremental merge", missed)
+		}
+	}
+	// extraChecks always run (including when delta is empty), so surgical
+	// fields like desktop.provider_access are never skipped.
+	if len(opts.extraChecks) > 0 {
+		var missed []persistenceDiff
+		for fp, want := range opts.extraChecks {
+			for leaf, wantLeaf := range persistenceFieldsOf(want, fp) {
+				got, ok := mergedSnap.Fields[leaf]
+				if !ok || !persistenceValuesEqual(wantLeaf, got) {
+					missed = append(missed, persistenceDiff{Field: leaf, Kind: classifyPersistenceField(leaf, wantLeaf)})
+				}
+			}
+		}
+		if len(missed) > 0 {
+			return persistenceDriftError(path, "extra checks", missed)
 		}
 	}
 
@@ -436,7 +567,14 @@ func validateAndWriteConfigResolved(path, body string, perm os.FileMode, opts wr
 		}
 	}
 
-	// 5. Atomic replace.
+	// 5. Publish: create-only when the origin was absent so a concurrent create
+	// cannot be overwritten; otherwise atomic replace.
+	if expectedState == "absent" {
+		if err := fileutil.AtomicCreateFile(path, []byte(body), perm); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+		return nil
+	}
 	if err := fileutil.AtomicWriteFile(path, []byte(body), perm); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
@@ -454,14 +592,14 @@ func validateRenderedRoundTrip(path, body, rerendered string) error {
 	if err != nil {
 		return fmt.Errorf("save config %s: re-rendered TOML does not parse: %w", path, err)
 	}
-	diffs := PersistenceSnapshot(decoded).Diff(PersistenceSnapshot(rerenderedCfg))
+	diffs := persistenceSnapshot(decoded).Diff(persistenceSnapshot(rerenderedCfg))
 	if len(diffs) > 0 {
 		return persistenceDriftError(path, "round-trip", diffs)
 	}
 	return nil
 }
 
-func persistenceDriftError(path, stage string, diffs []PersistenceDiff) error {
+func persistenceDriftError(path, stage string, diffs []persistenceDiff) error {
 	names := make([]string, 0, len(diffs))
 	for _, d := range diffs {
 		names = append(names, d.String())
@@ -481,5 +619,17 @@ func decodeConfigBodyForValidation(body string) (*Config, error) {
 		return nil, err
 	}
 	decoded.Providers = mergeProvidersWithDefaults(decoded.Providers)
+	return decoded, nil
+}
+
+// decodeConfigBodyExplicit parses a candidate body without injecting built-in
+// providers. Used for delta snapshots so explicit [[providers]] tables keep
+// their authored identity before name-keyed comparison against the merged body.
+func decodeConfigBodyExplicit(body string) (*Config, error) {
+	decoded := Default()
+	decoded.Providers = nil
+	if _, err := decodeTOMLBytes([]byte(body), decoded); err != nil {
+		return nil, err
+	}
 	return decoded, nil
 }

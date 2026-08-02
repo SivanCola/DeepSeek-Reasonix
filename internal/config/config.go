@@ -72,10 +72,20 @@ type Config struct {
 	pluginPackageSkillOwners   map[string][]string
 	pluginPackageAgentOwners   map[string][]string
 	editLoadErr                error
+<<<<<<< HEAD
 	// loadWarnings are non-fatal issues observed while loading config (corrupt
 	// user/project files recovered via last-known-good or defaults). They never
 	// rewrite the original file; the UI may surface them for doctor repair.
 	loadWarnings []string
+=======
+	// editOrigin* bind a config loaded for edit to the exact file state it
+	// was read from. SaveTo must use this binding and must not re-authorize
+	// the current file after a concurrent change.
+	editOriginBound   bool
+	editOriginLogical string
+	editOriginPath    string
+	editOriginState   string
+>>>>>>> 72c6bcbac (fix(config): bind edit StateID and name-key provider checks)
 }
 
 // TelemetryConfig controls content-free CLI usage metrics. It is user-global:

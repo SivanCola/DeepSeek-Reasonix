@@ -109,3 +109,128 @@ func TestValidateAndWriteDetectsSilentlyDroppedField(t *testing.T) {
 		t.Fatal("dropped-field body was written")
 	}
 }
+
+func TestLoadForEditSaveToRefusesStaleSnapshot(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+	original := Default()
+	original.DefaultModel = "deepseek-flash"
+	if err := original.WriteFile(path); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := cfg.SetDefaultModel("deepseek-pro"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another process replaces the file after load.
+	if err := os.WriteFile(path, []byte("default_model = \"hijacked\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = cfg.SaveTo(path)
+	if err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("expected concurrent-change error on public Load→Save path, got %v", err)
+	}
+	body, _ := os.ReadFile(path)
+	if !strings.Contains(string(body), "hijacked") {
+		t.Fatalf("stale SaveTo overwrote concurrent content: %s", body)
+	}
+	if strings.Contains(string(body), "deepseek-pro") {
+		t.Fatalf("stale edit was persisted: %s", body)
+	}
+}
+
+func TestLoadForEditSaveToRefusesConcurrentCreateOfAbsentFile(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "missing.toml")
+
+	cfg, err := LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		t.Fatalf("load absent: %v", err)
+	}
+	if !cfg.editOriginBound || cfg.editOriginState != "absent" {
+		t.Fatalf("edit origin = bound:%v state:%q, want absent", cfg.editOriginBound, cfg.editOriginState)
+	}
+	if err := cfg.SetDefaultModel("deepseek-pro"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another process creates the file before our create-only publish.
+	if err := os.WriteFile(path, []byte("default_model = \"already-there\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = cfg.SaveTo(path)
+	if err == nil {
+		t.Fatal("expected concurrent-create error, save succeeded")
+	}
+	body, _ := os.ReadFile(path)
+	if !strings.Contains(string(body), "already-there") {
+		t.Fatalf("create-only path overwrote concurrent create: %s", body)
+	}
+	if strings.Contains(string(body), "deepseek-pro") {
+		t.Fatalf("stale absent-origin save was persisted: %s", body)
+	}
+}
+
+func TestProjectDeltaValidationDetectsDroppedCustomProviderField(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(path, []byte("default_model = \"deepseek-flash\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delta claims a custom provider with base_url, but the merged body drops it.
+	// Built-in providers would occupy providers[0] under index comparison.
+	delta := `
+[[providers]]
+name     = "custom-relay"
+kind     = "openai"
+base_url = "https://relay.example/v1"
+model    = "relay-model"
+`
+	// Body retains only the default_model line — custom provider missing entirely.
+	body := "default_model = \"deepseek-flash\"\n"
+	opts := writeConfigOptions{
+		scope: RenderScopeProject,
+		delta: delta,
+	}
+	err := validateAndWriteConfigResolved(path, body, 0o644, opts, "")
+	if err == nil {
+		t.Fatal("dropped custom provider field was accepted")
+	}
+	if !strings.Contains(err.Error(), "custom-relay") && !strings.Contains(err.Error(), "base_url") && !strings.Contains(err.Error(), "providers") {
+		t.Fatalf("error should mention the custom provider field, got %v", err)
+	}
+	// Original file preserved.
+	got, _ := os.ReadFile(path)
+	if string(got) != "default_model = \"deepseek-flash\"\n" {
+		t.Fatalf("original project file changed: %q", got)
+	}
+}
+
+func TestExtraChecksRunWithoutDelta(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(path, []byte("[desktop]\nlegacy = \"keep\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Body claims provider_access but value differs from extraChecks.
+	body := "[desktop]\nlegacy = \"keep\"\nprovider_access = [\"other\"]\n"
+	opts := writeConfigOptions{
+		scope:       RenderScopeProject,
+		extraChecks: map[string]any{"desktop.provider_access": []string{"expected"}},
+	}
+	err := validateAndWriteConfigResolved(path, body, 0o644, opts, "")
+	if err == nil {
+		t.Fatal("extraChecks with empty delta were skipped")
+	}
+	if !strings.Contains(err.Error(), "provider_access") {
+		t.Fatalf("expected provider_access drift, got %v", err)
+	}
+}

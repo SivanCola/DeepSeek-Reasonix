@@ -325,7 +325,7 @@ func isTOMLPathCandidate(keyPath, content string) bool {
 	if idx := strings.IndexByte(leaf, '['); idx >= 0 {
 		leaf = leaf[:idx]
 	}
-	if IsTOMLPathField(leaf) {
+	if isTOMLPathField(leaf) {
 		return true
 	}
 	return windowsDriveTokenPattern.MatchString(content) || windowsUNCTokenPattern.MatchString(content)

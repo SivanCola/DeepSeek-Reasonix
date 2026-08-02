@@ -1489,6 +1489,61 @@ func validatePlugin(e PluginEntry) error {
 	return nil
 }
 
+// bindEditOrigin records the resolved path and StateID of the file that seeded
+// this config for edit. SaveTo must use this binding for the full Load→Save
+// transaction; it must not re-read the file's current StateID.
+func (c *Config) bindEditOrigin(logicalPath string) error {
+	if c == nil {
+		return fmt.Errorf("bind edit origin: nil config")
+	}
+	logicalPath = strings.TrimSpace(logicalPath)
+	if logicalPath == "" {
+		return fmt.Errorf("bind edit origin: empty config path")
+	}
+	resolved, err := resolveConfigReadPath(logicalPath)
+	if err != nil {
+		return err
+	}
+	stateID, err := configFileStateID(resolved)
+	if err != nil {
+		return err
+	}
+	c.editOriginBound = true
+	c.editOriginLogical = logicalPath
+	c.editOriginPath = resolved
+	c.editOriginState = stateID
+	return nil
+}
+
+// editOriginStateForSave returns the StateID that must authorize a write to
+// resolved. When the config was loaded for edit, the load-time binding is used
+// and a path mismatch is rejected. Unbound configs (constructed in memory)
+// capture the current StateID once at save time.
+func (c *Config) editOriginStateForSave(resolved string) (string, error) {
+	if c != nil && c.editOriginBound {
+		if filepath.Clean(resolved) != filepath.Clean(c.editOriginPath) {
+			return "", fmt.Errorf("save config: edit origin was %q, refusing to write %q", c.editOriginPath, resolved)
+		}
+		return c.editOriginState, nil
+	}
+	return configFileStateID(resolved)
+}
+
+// rebindEditOriginAfterSave advances the load-time binding to the file state
+// just published, so a second SaveTo on the same in-memory config is not
+// rejected as a concurrent modification of its own write.
+func (c *Config) rebindEditOriginAfterSave(resolved string) {
+	if c == nil || !c.editOriginBound {
+		return
+	}
+	stateID, err := configFileStateID(resolved)
+	if err != nil {
+		return
+	}
+	c.editOriginPath = resolved
+	c.editOriginState = stateID
+}
+
 // SaveTo writes the configuration to path as annotated TOML, atomically: it
 // writes a sibling temp file then renames, so a crash mid-write can't leave a
 // half-written reasonix.toml that fails to parse on next load. Parent directories
@@ -1516,9 +1571,17 @@ func (c *Config) SaveTo(path string) error {
 		return err
 	}
 	if scope == RenderScopeProject {
-		return c.saveProjectIncrementalResolved(path, resolved)
+		err := c.saveProjectIncrementalResolved(path, resolved)
+		if err == nil {
+			c.rebindEditOriginAfterSave(resolved)
+		}
+		return err
 	}
-	return c.writeConfigFileResolvedValidated(resolved, scope, configFilePerm(path))
+	err = c.writeConfigFileResolvedValidated(resolved, scope, configFilePerm(path))
+	if err == nil {
+		c.rebindEditOriginAfterSave(resolved)
+	}
+	return err
 }
 
 func (c *Config) SaveToScope(path string, scope RenderScope) error {
@@ -1541,11 +1604,17 @@ func (c *Config) SaveToScope(path string, scope RenderScope) error {
 	if err != nil {
 		return err
 	}
-	return c.writeConfigFileResolvedValidated(resolved, scope, configFilePerm(path))
+	err = c.writeConfigFileResolvedValidated(resolved, scope, configFilePerm(path))
+	if err == nil {
+		c.rebindEditOriginAfterSave(resolved)
+	}
+	return err
 }
 
 func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string) error {
-	stateID, err := configFileStateID(resolvedPath)
+	// Use the load-time binding (or a single unbound capture). Never re-authorize
+	// after reading the body — a concurrent create/replace must fail closed.
+	stateID, err := c.editOriginStateForSave(resolvedPath)
 	if err != nil {
 		return err
 	}
@@ -1561,7 +1630,9 @@ func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string
 	isNew := body == ""
 
 	if isNew {
-		return c.writeConfigFileResolvedValidated(resolvedPath, RenderScopeProject, configFilePerm(logicalPath))
+		// Full project render for a file that was absent (or empty) at origin
+		// capture. create-only publish is enforced by expectedState == "absent".
+		return c.writeConfigFileResolvedValidatedWithState(resolvedPath, RenderScopeProject, configFilePerm(logicalPath), stateID)
 	}
 
 	delta, err := renderTOMLProjectDeltaErr(c)
@@ -1717,12 +1788,17 @@ func writeConfigFile(path, body string) error {
 // writeConfigFileResolvedValidated renders c for the given scope through the
 // validated write pipeline: the rendered TOML must parse, decode back to the
 // same persisted semantics, and match the intended config c; the file must
-// not have been modified by another process since this save began.
+// not have been modified since the edit origin was bound (or since this
+// unbound save began).
 func (c *Config) writeConfigFileResolvedValidated(resolved string, scope RenderScope, perm os.FileMode) error {
-	stateID, err := configFileStateID(resolved)
+	stateID, err := c.editOriginStateForSave(resolved)
 	if err != nil {
 		return err
 	}
+	return c.writeConfigFileResolvedValidatedWithState(resolved, scope, perm, stateID)
+}
+
+func (c *Config) writeConfigFileResolvedValidatedWithState(resolved string, scope RenderScope, perm os.FileMode, stateID string) error {
 	body, err := renderTOMLForScopeErr(c, scope)
 	if err != nil {
 		return fmt.Errorf("save config %s: %w", resolved, err)
@@ -1734,6 +1810,7 @@ func (c *Config) writeConfigFileResolvedValidated(resolved string, scope RenderS
 // writeConfigFileResolved writes a pre-rendered body through the validated
 // pipeline. The body must parse; callers that need semantic verification use
 // the delta/extraChecks options through saveProjectIncrementalResolved.
+// Unbound surgical writers capture StateID once at entry.
 func writeConfigFileResolved(path, body string, perm os.FileMode) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("save: empty config path")
@@ -1777,6 +1854,12 @@ func WritePermissionsAllow(path string, allow []string) error {
 	if err != nil {
 		return err
 	}
+	// Capture StateID before reading/modifying so a concurrent change cannot
+	// be silently adopted as the surgical write baseline.
+	stateID, err := configFileStateID(resolved)
+	if err != nil {
+		return err
+	}
 	var raw []byte
 	if exists {
 		raw, err = fileencoding.ReadFileUTF8(resolved)
@@ -1785,10 +1868,6 @@ func WritePermissionsAllow(path string, allow []string) error {
 		}
 	} else {
 		raw = nil
-	}
-	stateID, err := configFileStateID(resolved)
-	if err != nil {
-		return err
 	}
 
 	body := string(raw)
