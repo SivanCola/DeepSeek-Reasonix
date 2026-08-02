@@ -1509,6 +1509,19 @@ func (c *Config) bindEditOriginState(logicalPath, resolved, stateID string) {
 // before adopting the existing target.
 var ErrEditTargetExists = errors.New("edit target already exists")
 
+// bindAbsentEditTargetBeforeRead is an optional test seam invoked after path
+// validation and before the target existence check. Production leaves it nil.
+var bindAbsentEditTargetBeforeRead func(targetPath string)
+
+// SetBindAbsentEditTargetBeforeReadForTest installs a hook that runs just before
+// BindAbsentEditTarget checks whether the target exists. Used by Desktop tests
+// to deterministically create the target between the caller's Stat and bind.
+func SetBindAbsentEditTargetBeforeReadForTest(fn func(string)) (restore func()) {
+	prev := bindAbsentEditTargetBeforeRead
+	bindAbsentEditTargetBeforeRead = fn
+	return func() { bindAbsentEditTargetBeforeRead = prev }
+}
+
 // BindAbsentEditTarget rebinds this in-memory config's edit origin to
 // targetPath without reloading content, but only when the target is still
 // absent. Content may have been seeded from a different source (for example a
@@ -1524,6 +1537,9 @@ func (c *Config) BindAbsentEditTarget(targetPath string) error {
 	targetPath = strings.TrimSpace(targetPath)
 	if targetPath == "" {
 		return fmt.Errorf("bind absent edit target: empty config path")
+	}
+	if bindAbsentEditTargetBeforeRead != nil {
+		bindAbsentEditTargetBeforeRead(targetPath)
 	}
 	resolved, data, mode, exists, err := readConfigFileForEdit(targetPath)
 	if err != nil {

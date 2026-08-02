@@ -720,7 +720,8 @@ func configStateID(path string, mode os.FileMode, data []byte, exists bool) stri
 	}
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%o\x00", path, effectivePersistedFileMode(mode))
-	h.Write(data) // codeql[go/weak-sensitive-data-hashing] StateID is a file change-detection token (path+mode+bytes), not a password or auth hash.
+	// codeql[go/weak-sensitive-data-hashing] StateID is a file change-detection token (path+mode+bytes), not a password or auth hash.
+	h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -743,10 +744,13 @@ func effectivePersistedFileMode(perm os.FileMode) os.FileMode {
 	if runtime.GOOS != "windows" {
 		return bits
 	}
-	// Go maps Windows ACLs to Unix-like bits: writable files report 0666 and
-	// read-only files report 0444. Preserve that distinction so a chmod to
-	// read-only changes StateID instead of being flattened to always-writable.
-	if bits&0o222 == 0 {
+	return windowsEffectivePersistedFileMode(bits)
+}
+
+// windowsEffectivePersistedFileMode maps Go's Windows permission projection
+// into the bits we store in StateID: writable → 0666, read-only → 0444.
+func windowsEffectivePersistedFileMode(bits os.FileMode) os.FileMode {
+	if bits.Perm()&0o222 == 0 {
 		return 0o444
 	}
 	return 0o666

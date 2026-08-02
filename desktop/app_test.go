@@ -1293,19 +1293,31 @@ status = "connected"
 `), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)
 	}
-	// Concurrent create: user config exists without bot before edit load.
+	// User config must be absent at the initial Stat so load takes the legacy
+	// seed path. Create it only inside the bind seam (between Stat and bind).
 	userPath := config.UserConfigPath()
-	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(userPath); err == nil {
+		t.Fatalf("user config must start absent for concurrent-create path, found %s", userPath)
 	}
-	if err := os.WriteFile(userPath, []byte(`
+	restore := config.SetBindAbsentEditTargetBeforeReadForTest(func(target string) {
+		if target != userPath {
+			t.Fatalf("bind seam target = %q, want %q", target, userPath)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("mkdir user config dir: %v", err)
+		}
+		// Concurrent create: existing user content without bot.
+		if err := os.WriteFile(target, []byte(`
 default_model = "user-owned"
 
 [desktop]
 theme = "dark"
 `), 0o600); err != nil {
-		t.Fatal(err)
-	}
+			t.Fatalf("concurrent create user config: %v", err)
+		}
+	})
+	defer restore()
+
 	orig, _ := os.Getwd()
 	defer func() { _ = os.Chdir(orig) }()
 	if err := os.Chdir(project); err != nil {
@@ -1348,13 +1360,20 @@ theme = "light"
 		t.Fatal(err)
 	}
 	userPath := config.UserConfigPath()
-	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(userPath); err == nil {
+		t.Fatalf("user config must start absent for concurrent-create path, found %s", userPath)
 	}
 	malformed := "not = [ valid toml\n"
-	if err := os.WriteFile(userPath, []byte(malformed), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	restore := config.SetBindAbsentEditTargetBeforeReadForTest(func(target string) {
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("mkdir user config dir: %v", err)
+		}
+		if err := os.WriteFile(target, []byte(malformed), 0o600); err != nil {
+			t.Fatalf("concurrent create malformed user config: %v", err)
+		}
+	})
+	defer restore()
+
 	orig, _ := os.Getwd()
 	defer func() { _ = os.Chdir(orig) }()
 	if err := os.Chdir(project); err != nil {
@@ -1369,13 +1388,17 @@ theme = "light"
 		t.Fatal("expected malformed user config load error")
 	}
 	// Bytes must be unchanged.
-	got, _ := os.ReadFile(userPath)
+	got, readErr := os.ReadFile(userPath)
+	if readErr != nil {
+		t.Fatalf("read user config: %v", readErr)
+	}
 	if string(got) != malformed {
 		t.Fatalf("malformed user config was rewritten: %q", got)
 	}
-	// Error must be the load/parse failure, not only ErrEditTargetExists.
+	// Error must be the load/parse failure returned from adopt, not a silent
+	// overwrite or a bare ErrEditTargetExists without load context.
 	if errors.Is(err, config.ErrEditTargetExists) && err.Error() == config.ErrEditTargetExists.Error() {
-		t.Fatalf("expected load/parse error wrapping adopt path, got bare exists: %v", err)
+		t.Fatalf("expected load/parse error, got bare exists: %v", err)
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "toml") && !strings.Contains(err.Error(), "config") {
 		t.Fatalf("expected parse/load error, got %v", err)

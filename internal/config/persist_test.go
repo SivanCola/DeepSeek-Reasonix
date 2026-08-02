@@ -543,32 +543,37 @@ func TestBindAbsentEditTargetErrorIsErrEditTargetExists(t *testing.T) {
 	}
 }
 
-func TestEffectivePersistedFileModeWindowsReadOnly(t *testing.T) {
+func TestEffectivePersistedFileModePassThroughAndWindowsMapping(t *testing.T) {
+	// Non-Windows path: bits pass through unchanged.
 	if runtime.GOOS != "windows" {
-		// Exercise the mapping function directly so Unix CI still guards the
-		// Windows-only branches via unit logic.
-		if got := effectivePersistedFileMode(0o444); got != 0o444 {
-			// On non-Windows the function returns bits unchanged.
-			if got != 0o444 {
-				// actually on non-windows returns bits as-is
-			}
-		}
 		if got := effectivePersistedFileMode(0o600); got != 0o600 {
-			t.Fatalf("unix mode 0600 = %o", got)
+			t.Fatalf("unix mode 0600 = %o, want 0600", got)
 		}
-		// Simulate Windows branch by checking the mapping rules inline.
-		writable := os.FileMode(0o600)
-		readonly := os.FileMode(0o444)
-		if writable.Perm()&0o222 == 0 || readonly.Perm()&0o222 != 0 {
-			t.Fatal("test fixture permissions unexpected")
+		if got := effectivePersistedFileMode(0o444); got != 0o444 {
+			t.Fatalf("unix mode 0444 = %o, want 0444", got)
 		}
-		t.Skip("windows mode mapping exercised on windows builders; unix verifies pass-through")
 	}
+	// Windows mapping rules (callable on every OS).
+	if got := windowsEffectivePersistedFileMode(0o600); got != 0o666 {
+		t.Fatalf("windows writable 0600 maps to %o, want 0666", got)
+	}
+	if got := windowsEffectivePersistedFileMode(0o666); got != 0o666 {
+		t.Fatalf("windows writable 0666 maps to %o, want 0666", got)
+	}
+	if got := windowsEffectivePersistedFileMode(0o444); got != 0o444 {
+		t.Fatalf("windows read-only 0444 maps to %o, want 0444", got)
+	}
+	if got := windowsEffectivePersistedFileMode(0o400); got != 0o444 {
+		t.Fatalf("windows read-only 0400 maps to %o, want 0444", got)
+	}
+	if runtime.GOOS != "windows" {
+		return
+	}
+	// Real Windows Stat/chmod identity change.
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte("a = 1\n"), 0o666); err != nil {
 		t.Fatal(err)
 	}
-	// Make read-only and ensure StateID changes vs writable.
 	writableID, err := configFileStateID(path)
 	if err != nil {
 		t.Fatal(err)
@@ -583,6 +588,5 @@ func TestEffectivePersistedFileModeWindowsReadOnly(t *testing.T) {
 	if writableID == readonlyID {
 		t.Fatal("windows read-only mode should change StateID")
 	}
-	// Restore writable for cleanup.
 	_ = os.Chmod(path, 0o666)
 }
