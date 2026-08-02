@@ -1822,9 +1822,27 @@ func Default() *Config {
 // WriteFile writes the configuration to path as annotated TOML. The write is
 // atomic + fsynced so an interrupted write or power loss can never truncate the
 // main config into an unparseable state that leaves the app with no usable
-// models (#4615, #4708).
+// models (#4615, #4708), and it runs through the validated write pipeline so
+// the persisted document is guaranteed to parse and round-trip semantically.
 func (c *Config) WriteFile(path string) error {
-	return atomicWriteToConfigFile(path, RenderTOMLForScope(c, renderScopeForPath(path)), configFilePerm(path))
+	scope := renderScopeForPath(path)
+	// Resolve the path once and write only the validated final target. This
+	// preserves valid symlinks and fails closed for broken user links or
+	// project links that escape their project root.
+	resolved, err := resolveConfigReadPath(path)
+	if err != nil {
+		return err
+	}
+	stateID, err := configFileStateID(resolved)
+	if err != nil {
+		return err
+	}
+	body, err := renderTOMLForScopeErr(c, scope)
+	if err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
+	}
+	opts := writeConfigOptions{scope: scope, want: c}
+	return validateAndWriteConfigResolved(resolved, body, configFilePerm(path), opts, stateID)
 }
 
 // Provider returns the named provider entry.
