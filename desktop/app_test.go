@@ -1272,6 +1272,116 @@ status_bar_items = ["model", "cache", "balance"]
 	}
 }
 
+func TestLoadDesktopUserConfigForEditAdoptsConcurrentUserConfig(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	project := robustTempDir(t)
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
+[desktop]
+theme = "light"
+
+[bot]
+enabled = true
+
+[[bot.connections]]
+id = "feishu-lark"
+provider = "feishu"
+domain = "lark"
+label = "Lark"
+enabled = true
+status = "connected"
+`), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+	// Concurrent create: user config exists without bot before edit load.
+	userPath := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte(`
+default_model = "user-owned"
+
+[desktop]
+theme = "dark"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.Getwd()
+	defer func() { _ = os.Chdir(orig) }()
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
+	cfg, path, err := app.loadDesktopUserConfigForEdit()
+	if err != nil {
+		t.Fatalf("loadDesktopUserConfigForEdit: %v", err)
+	}
+	if path != userPath {
+		t.Fatalf("path = %q, want %q", path, userPath)
+	}
+	if cfg.DefaultModel != "user-owned" || cfg.DesktopTheme() != "dark" {
+		t.Fatalf("adopted config lost user content: model=%q theme=%q", cfg.DefaultModel, cfg.DesktopTheme())
+	}
+	if !cfg.Bot.Enabled || len(cfg.Bot.Connections) != 1 || cfg.Bot.Connections[0].ID != "feishu-lark" {
+		t.Fatalf("adopted config missing merged legacy bot: %+v", cfg.Bot)
+	}
+	// Subsequent SaveTo must still respect the adopted StateID binding.
+	if err := cfg.SetDesktopLanguage("en"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SaveTo(userPath); err != nil {
+		t.Fatalf("SaveTo after adopt: %v", err)
+	}
+}
+
+func TestLoadDesktopUserConfigForEditSurfacesMalformedConcurrentUserConfig(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	project := robustTempDir(t)
+	if err := os.WriteFile(filepath.Join(project, "reasonix.toml"), []byte(`
+[desktop]
+theme = "light"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	userPath := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	malformed := "not = [ valid toml\n"
+	if err := os.WriteFile(userPath, []byte(malformed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.Getwd()
+	defer func() { _ = os.Chdir(orig) }()
+	if err := os.Chdir(project); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	unlock := config.LockUserConfigEdits()
+	defer unlock()
+	_, _, err := app.loadDesktopUserConfigForEdit()
+	if err == nil {
+		t.Fatal("expected malformed user config load error")
+	}
+	// Bytes must be unchanged.
+	got, _ := os.ReadFile(userPath)
+	if string(got) != malformed {
+		t.Fatalf("malformed user config was rewritten: %q", got)
+	}
+	// Error must be the load/parse failure, not only ErrEditTargetExists.
+	if errors.Is(err, config.ErrEditTargetExists) && err.Error() == config.ErrEditTargetExists.Error() {
+		t.Fatalf("expected load/parse error wrapping adopt path, got bare exists: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "toml") && !strings.Contains(err.Error(), "config") {
+		t.Fatalf("expected parse/load error, got %v", err)
+	}
+}
+
 func TestSettingsSubagentDefaultsRoundTrip(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "DEEPSEEK_API_KEY", "sk-test")

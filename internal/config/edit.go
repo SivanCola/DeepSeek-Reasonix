@@ -1503,13 +1503,20 @@ func (c *Config) bindEditOriginState(logicalPath, resolved, stateID string) {
 	c.editOriginState = stateID
 }
 
+// ErrEditTargetExists reports that BindAbsentEditTarget refused to authorize a
+// path that already has a file. Callers that intentionally handle a concurrent
+// create (Desktop legacy seed) should check errors.Is(err, ErrEditTargetExists)
+// before adopting the existing target.
+var ErrEditTargetExists = errors.New("edit target already exists")
+
 // BindAbsentEditTarget rebinds this in-memory config's edit origin to
 // targetPath without reloading content, but only when the target is still
 // absent. Content may have been seeded from a different source (for example a
 // legacy project reasonix.toml); SaveTo(targetPath) then create-only publishes
 // against "absent". If another process created the target between the caller's
-// existence check and this bind, the call fails closed instead of authorizing
-// an overwrite. Ordinary SaveTo still refuses accidental cross-path writes.
+// existence check and this bind, the call fails closed with ErrEditTargetExists
+// instead of authorizing an overwrite. Ordinary SaveTo still refuses accidental
+// cross-path writes.
 func (c *Config) BindAbsentEditTarget(targetPath string) error {
 	if c == nil {
 		return fmt.Errorf("bind absent edit target: nil config")
@@ -1523,7 +1530,7 @@ func (c *Config) BindAbsentEditTarget(targetPath string) error {
 		return err
 	}
 	if exists {
-		return fmt.Errorf("bind absent edit target: %s already exists; refusing to authorize overwrite of unexpected content", resolved)
+		return fmt.Errorf("%w: %s", ErrEditTargetExists, resolved)
 	}
 	_ = data
 	_ = mode

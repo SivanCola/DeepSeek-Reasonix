@@ -1415,11 +1415,16 @@ func (a *App) loadDesktopUserConfigForEditForRoot(root string) (*config.Config, 
 	// that would force an overwrite of unexpected content if another process
 	// created the target between Stat and bind.
 	if err := legacyCfg.BindAbsentEditTarget(userPath); err != nil {
+		// Only a concurrent create is safe to adopt. Other bind failures
+		// (empty path, resolve errors) must surface unchanged.
+		if !errors.Is(err, config.ErrEditTargetExists) {
+			return nil, "", err
+		}
 		// Target appeared concurrently: adopt it and merge legacy bot in-place
 		// instead of overwriting with the legacy snapshot.
 		adopted, loadErr := config.LoadForEditReadOnlyStrict(userPath)
 		if loadErr != nil {
-			return nil, "", err
+			return nil, "", loadErr
 		}
 		if migErr := migrateLegacyBotConfigToUser(adopted, legacyCfg, userPath); migErr != nil {
 			return nil, "", migErr

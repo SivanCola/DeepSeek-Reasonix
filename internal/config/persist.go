@@ -99,8 +99,17 @@ func persistenceIndexJoin(base string, index int) string {
 
 // persistenceNamedJoin identifies one occurrence of a named array-of-tables
 // entry (providers/plugins). occurrence is 0-based in document order.
+// name must already be passed through namedEntryIdentity.
 func persistenceNamedJoin(base, name string, occurrence int) string {
 	return base + "[" + strconv.Quote(name) + "][" + strconv.Itoa(occurrence) + "]"
+}
+
+// namedEntryIdentity is the single normalization used for provider/plugin
+// table identity in both persistence snapshots and raw TOML masks. Without
+// shared normalization (e.g. TrimSpace), a name like " custom " produces
+// disjoint paths and skips incremental field validation entirely.
+func namedEntryIdentity(rawName string) string {
+	return strings.TrimSpace(rawName)
 }
 
 // collectPersistenceFields walks v into out using typed path segments:
@@ -147,11 +156,16 @@ func collectPersistenceFields(v reflect.Value, path string, out map[string]any) 
 			return
 		}
 		// Named array-of-tables: name + occurrence so same-name entries stay distinct.
+		// Identity uses namedEntryIdentity so snapshot paths match raw TOML masks.
 		if keyByName := sliceElementNameKeys(v); keyByName {
 			occ := map[string]int{}
 			for i := 0; i < v.Len(); i++ {
 				elem := v.Index(i)
-				name := structNameField(elem)
+				name := namedEntryIdentity(structNameField(elem))
+				if name == "" {
+					collectPersistenceFields(elem, persistenceIndexJoin(path, i), out)
+					continue
+				}
 				n := occ[name]
 				occ[name] = n + 1
 				collectPersistenceFields(elem, persistenceNamedJoin(path, name, n), out)
@@ -307,7 +321,7 @@ func walkRawArrayOfTables(path string, tables []map[string]any, out map[string]b
 		occ := map[string]int{}
 		for i, elem := range tables {
 			name, _ := elem["name"].(string)
-			name = strings.TrimSpace(name)
+			name = namedEntryIdentity(name)
 			var child string
 			if name != "" {
 				n := occ[name]
@@ -704,10 +718,9 @@ func configStateID(path string, mode os.FileMode, data []byte, exists bool) stri
 	if !exists {
 		return "absent"
 	}
-	// codeql[go/weak-sensitive-data-hashing] StateID is a file change-detection token (path+mode+bytes), not a password or auth hash.
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%o\x00", path, effectivePersistedFileMode(mode))
-	h.Write(data)
+	h.Write(data) // codeql[go/weak-sensitive-data-hashing] StateID is a file change-detection token (path+mode+bytes), not a password or auth hash.
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -726,10 +739,17 @@ func publishedConfigStateID(path string, perm os.FileMode, body []byte) string {
 // chmod argument passed to AtomicWriteFile, so hashing the requested 0600/0644
 // would make a second SaveTo of an unchanged bound Config fail as concurrent.
 func effectivePersistedFileMode(perm os.FileMode) os.FileMode {
-	if runtime.GOOS == "windows" {
-		return 0o666
+	bits := perm.Perm()
+	if runtime.GOOS != "windows" {
+		return bits
 	}
-	return perm.Perm()
+	// Go maps Windows ACLs to Unix-like bits: writable files report 0666 and
+	// read-only files report 0444. Preserve that distinction so a chmod to
+	// read-only changes StateID instead of being flattened to always-writable.
+	if bits&0o222 == 0 {
+		return 0o444
+	}
+	return 0o666
 }
 
 // verifyConfigFileState re-checks that the file still matches the state
