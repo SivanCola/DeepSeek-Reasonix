@@ -74,12 +74,6 @@ func (a *App) smartClose(ctx context.Context) bool {
 	}
 }
 
-// hasActiveRuntimeWork reports whether any visible or detached runtime is
-// running a turn, waiting for input, or has background jobs.
-func (a *App) hasActiveRuntimeWork() bool {
-	return a.activeRuntimeWorkCount() > 0
-}
-
 // activeRuntimeWorkCount counts the runtimes with active work across visible
 // tabs and detached sessions.
 func (a *App) activeRuntimeWorkCount() int {

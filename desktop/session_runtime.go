@@ -129,12 +129,13 @@ func (a *App) classifySessionRuntimeIssue(tab *WorkspaceTab, err error) *Session
 	if rt := a.runtimeForTabLocked(tab); rt != nil {
 		issue.epoch = rt.Epoch
 	}
-	if kind == sessionOwnerExternal {
+	switch kind {
+	case sessionOwnerExternal:
 		issue.HolderPID = holderPID
 		issue.HolderHost = holderHost
 		issue.AcquiredAt = acquiredAt
 		issue.HolderSince = holderSince
-	} else if kind == sessionOwnerStale {
+	case sessionOwnerStale:
 		issue.HolderPID = holderPID
 	}
 	return issue
