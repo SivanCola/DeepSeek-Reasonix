@@ -87,7 +87,7 @@ func TestValidateAndWriteRejectsDroppedCustomProvider(t *testing.T) {
 		kept = append(kept, line)
 	}
 	opts := writeConfigOptions{scope: RenderScopeUser, want: want}
-	err = validateAndWriteConfigResolved(path, strings.Join(kept, "\n"), 0o600, opts, "")
+	_, err = validateAndWriteConfigResolved(path, strings.Join(kept, "\n"), 0o600, opts, "")
 	if err == nil || !strings.Contains(err.Error(), "providers") || !strings.Contains(err.Error(), "base_url") {
 		t.Fatalf("dropped custom provider field accepted: %v", err)
 	}

@@ -1413,6 +1413,11 @@ func (a *App) loadDesktopUserConfigForEditForRoot(root string) (*config.Config, 
 	if err := migrateLegacyBotConfigToUser(cfg, legacyCfg, userPath); err != nil {
 		return nil, "", err
 	}
+	// Content came from the legacy project file; bind the edit origin to the
+	// missing user config so SaveTo is create-only against userPath.
+	if err := legacyCfg.BindEditTarget(userPath); err != nil {
+		return nil, "", err
+	}
 	return legacyCfg, userPath, nil
 }
 

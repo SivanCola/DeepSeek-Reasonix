@@ -26,7 +26,7 @@ func TestValidateAndWriteRefusesConcurrentModification(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := writeConfigOptions{scope: RenderScopeUser}
-	err = validateAndWriteConfigResolved(path, body, 0o600, opts, stateID)
+	_, err = validateAndWriteConfigResolved(path, body, 0o600, opts, stateID)
 	if err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("expected concurrent-change error, got %v", err)
 	}
@@ -41,7 +41,7 @@ func TestValidateAndWriteRequiresParseableOutput(t *testing.T) {
 	t.Setenv("REASONIX_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.toml")
 	// A body with an invalid TOML escape must never be written.
-	err := validateAndWriteConfigResolved(path, "command = \"D:\\开发\\x.exe\"\n", 0o600, writeConfigOptions{scope: RenderScopeUser}, "")
+	_, err := validateAndWriteConfigResolved(path, "command = \"D:\\开发\\x.exe\"\n", 0o600, writeConfigOptions{scope: RenderScopeUser}, "")
 	if err == nil {
 		t.Fatal("write of unparseable config succeeded")
 	}
@@ -101,7 +101,7 @@ func TestValidateAndWriteDetectsSilentlyDroppedField(t *testing.T) {
 		kept = append(kept, line)
 	}
 	opts := writeConfigOptions{scope: RenderScopeUser, want: want}
-	err = validateAndWriteConfigResolved(path, strings.Join(kept, "\n"), 0o600, opts, "")
+	_, err = validateAndWriteConfigResolved(path, strings.Join(kept, "\n"), 0o600, opts, "")
 	if err == nil || !strings.Contains(err.Error(), "default_model") {
 		t.Fatalf("dropped-field body accepted: %v", err)
 	}
@@ -200,7 +200,7 @@ model    = "relay-model"
 		scope: RenderScopeProject,
 		delta: delta,
 	}
-	err := validateAndWriteConfigResolved(path, body, 0o644, opts, "")
+	_, err := validateAndWriteConfigResolved(path, body, 0o644, opts, "")
 	if err == nil {
 		t.Fatal("dropped custom provider field was accepted")
 	}
@@ -226,11 +226,155 @@ func TestExtraChecksRunWithoutDelta(t *testing.T) {
 		scope:       RenderScopeProject,
 		extraChecks: map[string]any{"desktop.provider_access": []string{"expected"}},
 	}
-	err := validateAndWriteConfigResolved(path, body, 0o644, opts, "")
+	_, err := validateAndWriteConfigResolved(path, body, 0o644, opts, "")
 	if err == nil {
 		t.Fatal("extraChecks with empty delta were skipped")
 	}
 	if !strings.Contains(err.Error(), "provider_access") {
 		t.Fatalf("expected provider_access drift, got %v", err)
+	}
+}
+
+func TestBindEditTargetAllowsLegacySeedToAbsentUserConfig(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	project := filepath.Join(t.TempDir(), "reasonix.toml")
+	user := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(project, []byte("default_model = \"legacy-model\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadForEditReadOnlyStrict(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.BindEditTarget(user); err != nil {
+		t.Fatalf("BindEditTarget: %v", err)
+	}
+	if cfg.editOriginState != "absent" {
+		t.Fatalf("target state = %q, want absent", cfg.editOriginState)
+	}
+	if err := cfg.SaveTo(user); err != nil {
+		t.Fatalf("SaveTo user after seed: %v", err)
+	}
+	body, _ := os.ReadFile(user)
+	if !strings.Contains(string(body), "legacy-model") {
+		t.Fatalf("seeded user config missing model: %s", body)
+	}
+	// Ordinary cross-path without BindEditTarget still fails.
+	cfg2, err := LoadForEditReadOnlyStrict(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg2.SaveTo(user); err == nil {
+		t.Fatal("SaveTo cross-path without BindEditTarget should fail")
+	}
+}
+
+func TestRebindUsesPublishedBytesNotReread(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := Default()
+	cfg.DefaultModel = "first"
+	// Bind as if loaded from absent target, then save.
+	if err := cfg.BindEditTarget(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("first SaveTo: %v", err)
+	}
+	published := cfg.editOriginState
+	// Concurrent writer changes the file between publish and a would-be reread.
+	if err := os.WriteFile(path, []byte("default_model = \"attacker\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Origin must still be the published body, not the attacker content.
+	if cfg.editOriginState != published {
+		t.Fatalf("origin mutated without rebind helper: %q vs %q", cfg.editOriginState, published)
+	}
+	// Second SaveTo must refuse because on-disk state no longer matches published origin.
+	cfg.DefaultModel = "second"
+	err := cfg.SaveTo(path)
+	if err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("expected concurrent-change error, got %v", err)
+	}
+	body, _ := os.ReadFile(path)
+	if !strings.Contains(string(body), "attacker") {
+		t.Fatalf("attacker content was overwritten: %s", body)
+	}
+}
+
+func TestDuplicateProviderNamesKeepOccurrenceIdentity(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "reasonix.toml")
+	if err := os.WriteFile(path, []byte("default_model = \"deepseek-flash\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	delta := `
+[[providers]]
+name     = "dup"
+kind     = "openai"
+base_url = "https://first.example/v1"
+model    = "m1"
+
+[[providers]]
+name     = "dup"
+kind     = "openai"
+base_url = "https://second.example/v1"
+model    = "m2"
+`
+	// Body keeps only the second same-name provider — first was dropped.
+	body := `
+default_model = "deepseek-flash"
+
+[[providers]]
+name     = "dup"
+kind     = "openai"
+base_url = "https://second.example/v1"
+model    = "m2"
+`
+	opts := writeConfigOptions{scope: RenderScopeProject, delta: delta}
+	_, err := validateAndWriteConfigResolved(path, body, 0o644, opts, "")
+	if err == nil {
+		t.Fatal("dropping first same-name provider should fail validation")
+	}
+	if !strings.Contains(err.Error(), "dup") && !strings.Contains(err.Error(), "providers") {
+		t.Fatalf("error should mention providers/dup, got %v", err)
+	}
+}
+
+func TestExtraBodyMapKeyDoesNotCollideWithNestedTable(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+	cfg := Default()
+	// One provider with both a dotted map key and a nested table under extra_body.
+	cfg.Providers = append(cfg.Providers, ProviderEntry{
+		Name:    "custom",
+		Kind:    "openai",
+		BaseURL: "https://example.com/v1",
+		Model:   "m",
+		ExtraBody: map[string]any{
+			"a.b": "flat",
+			"a": map[string]any{
+				"b": "nested",
+			},
+		},
+	})
+	if err := cfg.WriteFile(path); err != nil {
+		t.Fatalf("WriteFile with nested extra_body: %v", err)
+	}
+	// Round-trip load should keep both values.
+	loaded, err := LoadForEditReadOnlyStrict(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := loaded.Provider("custom")
+	if !ok {
+		t.Fatal("custom provider missing")
+	}
+	if p.ExtraBody["a.b"] != "flat" {
+		t.Fatalf("flat key a.b = %#v", p.ExtraBody["a.b"])
+	}
+	nested, _ := p.ExtraBody["a"].(map[string]any)
+	if nested == nil || nested["b"] != "nested" {
+		t.Fatalf("nested a.b = %#v", p.ExtraBody["a"])
 	}
 }
