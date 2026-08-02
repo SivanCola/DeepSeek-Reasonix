@@ -103,6 +103,57 @@ func TestApplyConfigEscapesUndoRestoresOriginal(t *testing.T) {
 	}
 }
 
+func TestUndoRepairExactRejectsStaleTransactionID(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	writeUserConfig(t, "command = \"D:\\开发\\tool.exe\"\n")
+	if _, err := ApplyConfigEscapes(ConfigEscapesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ReadLastRepair()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	project := filepath.Join(root, "reasonix.toml")
+	projectOriginal := "[[plugins]]\ncommand = \"C:\\dev\\bridge.exe\"\n"
+	if err := os.WriteFile(project, []byte(projectOriginal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := InspectConfigEscapes(ConfigEscapesOptions{Root: root, IncludeProject: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyConfigEscapes(ConfigEscapesOptions{
+		Root:           root,
+		IncludeProject: true,
+		ExpectedStates: map[string]string{project: preview.Project.StateID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := ReadLastRepair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID {
+		t.Fatal("test did not create a newer repair transaction")
+	}
+	repairedProject := string(mustRead(t, project))
+	if _, err := UndoRepairExact(first.ID); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("stale exact undo err = %v, want expired action", err)
+	}
+	if got := string(mustRead(t, project)); got != repairedProject {
+		t.Fatalf("stale exact undo modified the newer repair: %q", got)
+	}
+	current, err := ReadLastRepair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ID != second.ID || current.Undone {
+		t.Fatalf("newer repair changed by stale undo: %+v", current)
+	}
+}
+
 func TestApplyConfigEscapesProjectRequiresConfirmation(t *testing.T) {
 	t.Setenv("REASONIX_HOME", t.TempDir())
 	root := t.TempDir()

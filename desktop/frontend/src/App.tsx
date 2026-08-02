@@ -3946,7 +3946,7 @@ export default function App() {
       ].filter(Boolean).join(" ")}
     >
       <ThemeBackground />
-      <ConfigRepairBanner />
+      <ConfigRepairBanner api={app} />
       <div
         ref={layoutRef}
         className={[
@@ -4471,7 +4471,7 @@ export default function App() {
             <div className="banner banner--error">{t("topbar.startupError", { msg: state.meta.startupErr })}</div>
           )}
           {state.meta?.runtime?.phase === "lease_blocked" && state.meta.runtime.issue && (
-            <SessionIssueCard issue={state.meta.runtime.issue} tabID={activeTabId ?? ""} t={t as Translator} />
+            <SessionIssueCard issue={state.meta.runtime.issue} tabID={activeTabId ?? ""} t={t as Translator} api={app} />
           )}
           {state.meta?.configError && (
             <div className="banner banner--error banner--actionable">
@@ -4487,8 +4487,8 @@ export default function App() {
                   type="button"
                   className="btn btn--small"
                   onClick={() => {
-                    (window as any).go?.main?.App?.ApplyProjectConfigFix?.(activeTabId)
-                      .then(() => (window as any).location.reload?.())
+                    app.ApplyProjectConfigFix(activeTabId ?? "")
+                      .then(() => window.location.reload())
                       .catch(() => {});
                   }}
                 >
@@ -4499,7 +4499,7 @@ export default function App() {
                 type="button"
                 className="btn btn--small"
                 onClick={() => {
-                  (window as any).go?.main?.App?.OpenProjectConfigFile?.(activeTabId).catch(() => {});
+                  app.OpenProjectConfigFile(activeTabId ?? "").catch(() => {});
                 }}
               >
                 {t("topbar.configOpenFile")}

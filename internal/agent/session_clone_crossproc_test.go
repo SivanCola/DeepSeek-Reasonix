@@ -42,7 +42,8 @@ func TestCloneSessionWaitsForCrossProcessWriter(t *testing.T) {
 	cloneLockWaitHook = func() { close(locked) }
 	t.Cleanup(func() { cloneLockWaitHook = nil })
 	go func() {
-		cloneErr <- CloneSessionToPath(src, dst)
+		_, err := CloneSessionToPath(src, dst)
+		cloneErr <- err
 	}()
 	// Release the child only after the clone is known to be waiting on the
 	// file lock — deterministic, no sleeps.

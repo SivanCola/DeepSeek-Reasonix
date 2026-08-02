@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"reasonix/internal/store"
 )
@@ -18,12 +20,27 @@ import (
 // O_EXCL, saves the complete session, and creates fresh branch metadata. Any
 // failure removes every partial destination sidecar so a stale or truncated
 // copy can never be adopted.
-func CloneSessionToPath(srcPath, dstPath string) error {
+type SessionClone struct {
+	Path       string
+	ownedPaths []string
+}
+
+// Discard removes only the files atomically claimed by this clone. Callers
+// keep the handle until the new session binding is committed; they never have
+// to reconstruct sidecar names and risk deleting somebody else's files.
+func (c *SessionClone) Discard() {
+	if c == nil {
+		return
+	}
+	removeSessionCloneFiles(c.ownedPaths...)
+}
+
+func CloneSessionToPath(srcPath, dstPath string) (*SessionClone, error) {
 	if srcPath == "" || dstPath == "" {
-		return fmt.Errorf("clone session: source and destination paths are required")
+		return nil, fmt.Errorf("clone session: source and destination paths are required")
 	}
 	if canonicalSessionSavePath(srcPath) == canonicalSessionSavePath(dstPath) {
-		return fmt.Errorf("clone session: destination must differ from the source")
+		return nil, fmt.Errorf("clone session: destination must differ from the source")
 	}
 	// 1. Load the authoritative transcript under the source save-path mutex
 	// AND the cross-process file lock — another Reasonix process may be
@@ -38,16 +55,18 @@ func CloneSessionToPath(srcPath, dstPath string) error {
 	unlockFile, err := lockSessionFile(srcPath)
 	if err != nil {
 		unlock()
-		return fmt.Errorf("clone session: lock source file: %w", err)
+		return nil, fmt.Errorf("clone session: lock source file: %w", err)
 	}
 	session, loadErr := loadSessionUnlocked(srcPath)
 	unlockFile()
 	unlock()
 	if loadErr != nil {
-		return fmt.Errorf("clone session: load source: %w", loadErr)
+		return nil, fmt.Errorf("clone session: load source: %w", loadErr)
 	}
-	// 2. Reserve the destination paths (create-only) so a concurrent writer
-	// cannot claim them, and so a failed save never leaves a partial clone.
+	// 2. Reserve every destination path (create-only) before Save can replace
+	// any of them. Reserving only the checkpoint/log is insufficient because
+	// Save atomically replaces the derived event index and branch metadata.
+	// A pre-existing sidecar must make the entire clone fail closed.
 	// The event log is reserved empty: force saves are checkpoint-only, so the
 	// clone needs the native log anchor in place for its own transcript to
 	// evolve authoritatively.
@@ -55,44 +74,76 @@ func CloneSessionToPath(srcPath, dstPath string) error {
 	// Only files THIS transaction actually created are ever removed: a
 	// pre-existing sidecar (an authoritative event log whose checkpoint never
 	// landed, or user metadata) is refused with its bytes untouched.
-	var owned []string
-	if err := reserveSessionClonePath(dstPath); err != nil {
-		return err
+	clone := &SessionClone{Path: dstPath}
+	reserve := func(path string) error {
+		if err := reserveSessionClonePath(path); err != nil {
+			return err
+		}
+		clone.ownedPaths = append(clone.ownedPaths, path)
+		return nil
 	}
-	owned = append(owned, dstPath)
-	cleanup := func() {
-		RemoveSessionCloneFiles(owned...)
+	for _, path := range []string{
+		dstPath,
+		store.SessionEventLog(dstPath),
+		store.SessionEventIndex(dstPath),
+	} {
+		if err := reserve(path); err != nil {
+			clone.Discard()
+			return nil, err
+		}
 	}
-	if err := reserveSessionClonePath(store.SessionEventLog(dstPath)); err != nil {
-		cleanup()
-		return err
+	// Session.Save reads the branch-meta CAS ledger before recording a content
+	// revision, so the create-only metadata reservation must already contain a
+	// valid fresh record rather than an empty placeholder.
+	if err := reserveSessionCloneMeta(dstPath); err != nil {
+		clone.Discard()
+		return nil, err
 	}
-	owned = append(owned, store.SessionEventLog(dstPath))
+	clone.ownedPaths = append(clone.ownedPaths, store.SessionMeta(dstPath))
 	// 3. Save the complete session; the empty reserved checkpoint receives the
 	// full transcript.
 	if err := session.Save(dstPath); err != nil {
-		cleanup()
-		return fmt.Errorf("clone session: save destination: %w", err)
+		clone.Discard()
+		return nil, fmt.Errorf("clone session: save destination: %w", err)
 	}
-	// 4. Fresh branch metadata; a failure must not leave an adoptable clone
-	// without topic ownership.
-	if _, err := EnsureBranchMeta(dstPath); err != nil {
-		cleanup()
-		return fmt.Errorf("clone session: branch metadata: %w", err)
-	}
-	return nil
+	return clone, nil
 }
 
-// RemoveSessionCloneFiles removes exactly the listed clone files (the
-// checkpoint, the event log, the event index and the branch metadata). It is
-// the ownership-safe rollback for a clone: callers pass only the paths that
-// this clone created, never pre-existing sidecars.
-func RemoveSessionCloneFiles(paths ...string) {
+func removeSessionCloneFiles(paths ...string) {
 	for _, path := range paths {
 		if path != "" {
 			_ = os.Remove(path)
 		}
 	}
+}
+
+func reserveSessionCloneMeta(sessionPath string) error {
+	path := store.SessionMeta(sessionPath)
+	when := time.Now().UTC()
+	meta := BranchMeta{
+		ID:        BranchID(sessionPath),
+		CreatedAt: when,
+		UpdatedAt: when,
+	}
+	b, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("clone session: encode branch metadata: %w", err)
+	}
+	b = append(b, '\n')
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("clone session: reserve destination: %w", err)
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return fmt.Errorf("clone session: write branch metadata reservation: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("clone session: close branch metadata reservation: %w", err)
+	}
+	return nil
 }
 
 // reserveSessionClonePath creates dstPath with O_EXCL semantics so the clone
@@ -109,8 +160,7 @@ func reserveSessionClonePath(dstPath string) error {
 	return nil
 }
 
-// cloneLockWaitHook, when set, is invoked after the clone acquired the source
-// file lock. Tests use it as a deterministic barrier: the child writer is
-// released only once the clone is known to be waiting on the lock, removing
-// timing-based false positives.
+// cloneLockWaitHook, when set, is invoked immediately before the clone waits
+// for the source's cross-process file lock. Tests use it as a deterministic
+// barrier, removing timing-based false positives.
 var cloneLockWaitHook func()

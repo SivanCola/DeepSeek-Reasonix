@@ -40,7 +40,7 @@ func TestCloneSessionIncludesAuthoritativeEventLog(t *testing.T) {
 	}
 
 	dst := filepath.Join(dir, "copy.jsonl")
-	if err := CloneSessionToPath(src, dst); err != nil {
+	if _, err := CloneSessionToPath(src, dst); err != nil {
 		t.Fatal(err)
 	}
 	cloned, err := LoadSession(dst)
@@ -82,7 +82,7 @@ func TestCloneSessionFailureCleansUpPartialCopy(t *testing.T) {
 	if err := os.WriteFile(dst, []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := CloneSessionToPath(src, dst); err == nil {
+	if _, err := CloneSessionToPath(src, dst); err == nil {
 		t.Fatal("clone over an existing file must fail")
 	}
 	b, _ := os.ReadFile(dst)

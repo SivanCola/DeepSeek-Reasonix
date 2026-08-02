@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"reasonix/internal/config"
@@ -21,6 +22,10 @@ type TabConfigErrorView struct {
 	Message    string `json:"message"`
 	FixCount   int    `json:"fixCount,omitempty"`
 	HasPreview bool   `json:"hasPreview,omitempty"`
+
+	previewPath    string
+	previewStateID string
+	previewFixes   []config.TOMLEscapeFix
 }
 
 // isGlobalConfigFile reports whether a failing config path belongs to the
@@ -49,9 +54,14 @@ func (a *App) setTabConfigError(tab *WorkspaceTab, cle *config.ConfigLoadError, 
 		Message:  cle.Err.Error(),
 	}
 	// A high-confidence Windows-path escape repair is offered as a preview.
-	if fixes, err := scanProjectConfigEscapes(cle.Path); err == nil && len(fixes) > 0 {
-		view.FixCount = len(fixes)
+	if preview, err := inspectProjectConfigPreview(root); err == nil &&
+		preview.Path != "" && preview.StateID != "" && len(preview.Fixes) > 0 &&
+		sameConfigPath(preview.Path, cle.Path) {
+		view.FixCount = len(preview.Fixes)
 		view.HasPreview = true
+		view.previewPath = preview.Path
+		view.previewStateID = preview.StateID
+		view.previewFixes = slices.Clone(preview.Fixes)
 	}
 	a.mu.Lock()
 	tab.ConfigError = view
@@ -64,14 +74,9 @@ func (a *App) clearTabConfigError(tab *WorkspaceTab) {
 	a.mu.Unlock()
 }
 
-// scanProjectConfigEscapes reads the project config and produces the repair
-// preview (never writes).
-func scanProjectConfigEscapes(path string) ([]config.TOMLEscapeFix, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return config.ScanTOMLPathEscapes(string(b))
+func inspectProjectConfigPreview(root string) (repair.ConfigEscapeCheck, error) {
+	report, err := repair.InspectConfigEscapes(repair.ConfigEscapesOptions{Root: root, IncludeProject: true})
+	return report.Project, err
 }
 
 // ApplyProjectConfigFix applies the confirmed Windows-path escape repair to
@@ -85,19 +90,30 @@ func (a *App) ApplyProjectConfigFix(tabID string) error {
 	a.mu.RLock()
 	view := tab.ConfigError
 	root := tab.WorkspaceRoot
+	previewPath := ""
+	previewStateID := ""
+	var previewFixes []config.TOMLEscapeFix
+	if view != nil {
+		previewPath = view.previewPath
+		previewStateID = view.previewStateID
+		previewFixes = slices.Clone(view.previewFixes)
+	}
 	a.mu.RUnlock()
-	if view == nil || !view.HasPreview {
+	if view == nil || !view.HasPreview || previewPath == "" || previewStateID == "" || len(previewFixes) == 0 {
 		return fmt.Errorf("no config repair preview for this workspace")
 	}
 	project := projectConfigPath(root)
-	fixes, err := scanProjectConfigEscapes(project)
+	if !sameConfigPath(project, previewPath) || !sameConfigPath(view.Path, previewPath) {
+		return fmt.Errorf("config repair preview is no longer bound to this workspace; preview again")
+	}
+	current, err := inspectProjectConfigPreview(root)
 	if err != nil {
 		return err
 	}
-	if len(fixes) == 0 {
-		return fmt.Errorf("config already repaired")
+	if current.StateID != previewStateID || !slices.Equal(current.Fixes, previewFixes) || !sameConfigPath(current.Path, previewPath) {
+		return fmt.Errorf("config repair preview expired because the file changed; preview again")
 	}
-	expected := map[string]string{project: repairStateIDFor(project)}
+	expected := map[string]string{previewPath: previewStateID}
 	report, err := repair.ApplyConfigEscapes(repair.ConfigEscapesOptions{Root: root, IncludeProject: true, ExpectedStates: expected})
 	if err != nil {
 		return err
@@ -157,10 +173,4 @@ func projectConfigPath(root string) string {
 		return "reasonix.toml"
 	}
 	return filepath.Join(root, "reasonix.toml")
-}
-
-func repairStateIDFor(path string) string {
-	// The repair package derives state IDs from the file; reuse the same
-	// binding so ApplyConfigEscapes verifies the preview state exactly.
-	return repair.FileStateID(path)
 }

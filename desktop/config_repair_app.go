@@ -12,13 +12,14 @@ import (
 // ConfigRepairView is the recovery banner payload: what was repaired, when,
 // and what the user can do about it.
 type ConfigRepairView struct {
-	Outcome     string `json:"outcome"` // "auto_fixed" | "restored_snapshot" | "safe_mode" | ""
-	Scope       string `json:"scope"`   // "global" | "project"
-	Path        string `json:"path"`
-	Detail      string `json:"detail"`
-	RepairedAt  string `json:"repairedAt"`
-	Undoable    bool   `json:"undoable"`
-	CanOpenFile bool   `json:"canOpenFile"`
+	Outcome       string `json:"outcome"` // "auto_fixed" | "restored_snapshot" | "safe_mode" | ""
+	Scope         string `json:"scope"`   // "global" | "project"
+	Path          string `json:"path"`
+	Detail        string `json:"detail"`
+	RepairedAt    string `json:"repairedAt"`
+	Undoable      bool   `json:"undoable"`
+	CanOpenFile   bool   `json:"canOpenFile"`
+	TransactionID string `json:"transactionId,omitempty"`
 }
 
 // ConfigRepairStatus returns the recovery banner payload:
@@ -28,19 +29,13 @@ type ConfigRepairView struct {
 //   - a consume-once "auto_fixed" view when the Guard or startup recovery
 //     repaired the global config at this launch.
 func (a *App) ConfigRepairStatus() ConfigRepairView {
-	a.mu.RLock()
-	damaged := a.globalConfigDamaged
-	a.mu.RUnlock()
-	if !damaged {
-		// Live check: the banner must appear even before the first tab build
-		// records the failure, and must disappear once the config is fixed.
-		if _, err := config.LoadUserConfigReadOnly(); err != nil {
-			damaged = true
-			a.mu.Lock()
-			a.globalConfigDamaged = true
-			a.mu.Unlock()
-		}
-	}
+	// Always re-read the user config. globalConfigDamaged is a runtime cache,
+	// not a one-way latch: manual edits must clear the persistent banner.
+	_, loadErr := config.LoadUserConfigReadOnly()
+	damaged := loadErr != nil
+	a.mu.Lock()
+	a.globalConfigDamaged = damaged
+	a.mu.Unlock()
 	if damaged {
 		return ConfigRepairView{
 			Outcome:     "config_damaged",
@@ -58,13 +53,14 @@ func (a *App) ConfigRepairStatus() ConfigRepairView {
 			var marker repair.ConfigEscapeRepairMarker
 			if json.Unmarshal(b, &marker) == nil && marker.SchemaVersion == 1 && marker.Path != "" {
 				view = ConfigRepairView{
-					Outcome:     "auto_fixed",
-					Scope:       marker.Scope,
-					Path:        marker.Path,
-					Detail:      fmt.Sprintf("%d Windows path(s) repaired", marker.FixedCount),
-					RepairedAt:  marker.RepairedAt,
-					Undoable:    marker.TransactionID != "",
-					CanOpenFile: true,
+					Outcome:       "auto_fixed",
+					Scope:         marker.Scope,
+					Path:          marker.Path,
+					Detail:        fmt.Sprintf("%d Windows path(s) repaired", marker.FixedCount),
+					RepairedAt:    marker.RepairedAt,
+					Undoable:      marker.TransactionID != "",
+					CanOpenFile:   true,
+					TransactionID: marker.TransactionID,
 				}
 			}
 			_ = os.Remove(markerPath)
@@ -73,10 +69,9 @@ func (a *App) ConfigRepairStatus() ConfigRepairView {
 	return view
 }
 
-// UndoConfigRepair reverts the most recent repair transaction (restoring the
-// original config bytes), so the user can review a repaired value and undo it.
-func (a *App) UndoConfigRepair() error {
-	tx, err := repair.UndoLastRepair()
+// UndoConfigRepair reverts only the transaction displayed by the banner.
+func (a *App) UndoConfigRepair(transactionID string) error {
+	tx, err := repair.UndoRepairExact(transactionID)
 	if err != nil {
 		return err
 	}

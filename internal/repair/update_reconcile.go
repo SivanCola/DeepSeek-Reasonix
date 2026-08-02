@@ -44,11 +44,17 @@ func updateRecoveryView(state UpdateRecoveryState, tx *UpdateTransaction, messag
 	return view
 }
 
-// InspectPendingUpdate derives the current pending-update state read-only. It
-// never mutates files and never takes the pending-update lock; callers that
-// act on the state must use ReconcilePendingUpdate so the exact transaction
-// observed here is re-verified under the OS lock.
+// InspectPendingUpdate derives the current pending-update state read-only.
 func InspectPendingUpdate(runningVersion string) (UpdateRecoveryView, error) {
+	view, _, err := InspectPendingUpdateTransaction(runningVersion)
+	return view, err
+}
+
+// InspectPendingUpdateTransaction returns the state together with the exact
+// transaction bytes used to derive it. It never mutates files or takes the
+// pending-update lock; callers must pass this snapshot to a lock-protected
+// action so a later read cannot silently authorize a different transaction.
+func InspectPendingUpdateTransaction(runningVersion string) (UpdateRecoveryView, *UpdateTransaction, error) {
 	path := PendingUpdatePath()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -58,27 +64,27 @@ func InspectPendingUpdate(runningVersion string) (UpdateRecoveryView, error) {
 			// still surface the installer failure.
 			if failure, ok := ReadUpdateApplyFailure(); ok && strings.TrimSpace(failure.UpdateTransactionID) != "" {
 				return updateRecoveryView(UpdateRecoveryFailedInstall, nil,
-					"the update installer failed; the previous release will be restored on the next launch", "rollback", true), nil
+					"the update installer failed; the previous release will be restored on the next launch", "rollback", true), nil, nil
 			}
-			return updateRecoveryView(UpdateRecoveryNone, nil, "", "", false), nil
+			return updateRecoveryView(UpdateRecoveryNone, nil, "", "", false), nil, nil
 		}
-		return UpdateRecoveryView{}, err
+		return UpdateRecoveryView{}, nil, err
 	}
 	var tx UpdateTransaction
 	if json.Unmarshal(b, &tx) != nil {
 		return updateRecoveryView(UpdateRecoveryBlocked, nil,
-			"the pending update transaction is corrupt; run reasonix-guard diagnose or reinstall", "none", false), nil
+			"the pending update transaction is corrupt; run reasonix-guard diagnose or reinstall", "none", false), nil, nil
 	}
 	if err := validateUpdateTransaction(&tx); err != nil {
 		return updateRecoveryView(UpdateRecoveryBlocked, &tx,
-			"the pending update transaction is invalid: "+err.Error(), "none", false), nil
+			"the pending update transaction is invalid: "+err.Error(), "none", false), &tx, nil
 	}
 
 	// A failure marker bound to this transaction takes precedence: the
 	// installer reported failure and the previous release must be restored.
 	if failure, ok := ReadUpdateApplyFailure(); ok && updateFailureMatchesTransaction(failure, &tx) {
 		return updateRecoveryView(UpdateRecoveryFailedInstall, &tx,
-			"the update installer failed; the previous release will be restored", "rollback", true), nil
+			"the update installer failed; the previous release will be restored", "rollback", true), &tx, nil
 	}
 
 	// An installed release-unit state means the new release was published.
@@ -86,7 +92,7 @@ func InspectPendingUpdate(runningVersion string) (UpdateRecoveryView, error) {
 		switch strings.TrimSpace(runningVersion) {
 		case strings.TrimSpace(tx.ToVersion):
 			return updateRecoveryView(UpdateRecoveryProbationary, &tx,
-				"the new version is running and will commit after a healthy start", "wait", false), nil
+				"the new version is running and will commit after a healthy start", "wait", false), &tx, nil
 		case strings.TrimSpace(tx.FromVersion):
 			// The old release is in place again with the install record still
 			// present: the update was reverted (or the swap never launched)
@@ -94,28 +100,28 @@ func InspectPendingUpdate(runningVersion string) (UpdateRecoveryView, error) {
 			// backup.
 			if err := verifyUpdateRestoredUnit(&tx); err != nil {
 				return updateRecoveryView(UpdateRecoveryBlocked, &tx,
-					"the restored release unit does not match its backup: "+err.Error(), "none", false), nil
+					"the restored release unit does not match its backup: "+err.Error(), "none", false), &tx, nil
 			}
 			return updateRecoveryView(UpdateRecoveryRestored, &tx,
-				"the previous version is running; the pending transaction can end", "commit", false), nil
+				"the previous version is running; the pending transaction can end", "commit", false), &tx, nil
 		default:
 			return updateRecoveryView(UpdateRecoveryBlocked, &tx,
-				"the running version cannot be attributed to this transaction", "none", false), nil
+				"the running version cannot be attributed to this transaction", "none", false), &tx, nil
 		}
 	}
 
 	// No install record: the release was not published yet.
 	if tx.TargetKind == "app-bundle" && tx.HandoffOwnerPID > 0 && processAlive(tx.HandoffOwnerPID) {
 		return updateRecoveryView(UpdateRecoveryActiveHandoff, &tx,
-			"an update handoff process is running; wait for it to finish", "wait", false), nil
+			"an update handoff process is running; wait for it to finish", "wait", false), &tx, nil
 	}
 	// The transaction must still be exactly reversible.
 	if err := verifyUpdatePreparedState(&tx); err != nil {
 		return updateRecoveryView(UpdateRecoveryBlocked, &tx,
-			"the prepared update is no longer intact: "+err.Error(), "none", false), nil
+			"the prepared update is no longer intact: "+err.Error(), "none", false), &tx, nil
 	}
 	return updateRecoveryView(UpdateRecoveryPrepared, &tx,
-		"an update is prepared but not installed", "cancel", true), nil
+		"an update is prepared but not installed", "cancel", true), &tx, nil
 }
 
 func updateFailureMatchesTransaction(failure *UpdateApplyFailure, tx *UpdateTransaction) bool {
@@ -161,6 +167,38 @@ func verifyUpdateRestoredUnit(tx *UpdateTransaction) error {
 // release unit matches the transaction's backup, and the exact transaction
 // identity still matches under the pending and target locks.
 func EndPendingUpdateTransactionVerified(expected *UpdateTransaction, verify func() error) error {
+	return endPendingUpdateTransactionVerified(expected, nil, verify, verify)
+}
+
+// EndRestoredPendingUpdateTransaction ends only the exact transaction whose
+// initial inspection reported restored. The state, transaction identity,
+// installed record and restored release unit are all re-verified under the
+// pending/target locks; any drift leaves every recovery artifact intact.
+func EndRestoredPendingUpdateTransaction(expected *UpdateTransaction, runningVersion string) error {
+	if expected == nil {
+		return fmt.Errorf("end restored update transaction: transaction identity is incomplete")
+	}
+	verifyUnit := func() error {
+		return verifyUpdateRestoredUnit(expected)
+	}
+	verifyState := func() error {
+		view, current, err := InspectPendingUpdateTransaction(runningVersion)
+		if err != nil {
+			return fmt.Errorf("end restored update transaction: inspect current state: %w", err)
+		}
+		if current == nil || !reflect.DeepEqual(expected, current) {
+			return fmt.Errorf("end restored update transaction: pending transaction changed")
+		}
+		if view.State != UpdateRecoveryRestored {
+			return fmt.Errorf("end restored update transaction: state changed to %s", view.State)
+		}
+		return verifyUnit()
+	}
+	extraLocks := []string{installedFileUpdateStatePath(expected)}
+	return endPendingUpdateTransactionVerified(expected, extraLocks, verifyState, verifyUnit)
+}
+
+func endPendingUpdateTransactionVerified(expected *UpdateTransaction, extraLockPaths []string, verifyBefore, verifyAfter func() error) error {
 	if expected == nil {
 		return fmt.Errorf("end update transaction: transaction identity is incomplete")
 	}
@@ -183,7 +221,8 @@ func EndPendingUpdateTransactionVerified(expected *UpdateTransaction, verify fun
 	if !reflect.DeepEqual(expected, tx) {
 		return fmt.Errorf("end update transaction: pending transaction changed while waiting")
 	}
-	unlockTargets, lockErr := lockRepairMutations(pendingUpdateTargetPaths(tx)...)
+	lockPaths := append(pendingUpdateTargetPaths(tx), extraLockPaths...)
+	unlockTargets, lockErr := lockRepairMutations(lockPaths...)
 	if lockErr != nil {
 		return fmt.Errorf("end update transaction: lock targets: %w", lockErr)
 	}
@@ -196,10 +235,12 @@ func EndPendingUpdateTransactionVerified(expected *UpdateTransaction, verify fun
 		return fmt.Errorf("end update transaction: pending transaction changed while waiting")
 	}
 	tx = current
-	if err := verify(); err != nil {
-		return err
+	if verifyBefore != nil {
+		if err := verifyBefore(); err != nil {
+			return err
+		}
 	}
-	if err := removePendingUpdateExactVerified(tx, verify); err != nil {
+	if err := removePendingUpdateExactVerified(tx, verifyAfter); err != nil {
 		return err
 	}
 	removeUpdateBackups(tx)

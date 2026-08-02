@@ -32,7 +32,7 @@ type updateRecoveryView struct {
 func (a *App) reconcileUpdatesBeforeAction(requestID, phase string) (*updateRecoveryView, error) {
 	// Inspect first so the recovery phases are emitted while the action is
 	// actually happening (rolling_back is sent before the rollback runs).
-	inspect, err := repair.InspectPendingUpdate(version)
+	inspect, inspectedTx, err := repair.InspectPendingUpdateTransaction(version)
 	if err != nil {
 		a.recordUpdateError(fmt.Errorf("update recovery: %w", err))
 		return nil, err
@@ -54,18 +54,23 @@ func (a *App) reconcileUpdatesBeforeAction(requestID, phase string) (*updateReco
 	// A settled restored transaction (previous release running with the
 	// install record still present) ends through the verified end path.
 	if inspect.State == repair.UpdateRecoveryRestored {
-		tx, readErr := repair.ReadPendingUpdate()
-		if readErr == nil {
-			if endErr := repair.EndPendingUpdateTransactionVerified(tx, func() error {
-				_, err := repair.InspectPendingUpdate(version)
-				return err
-			}); endErr == nil {
-				a.emitUpdateProgress(requestID, inspect.ToVersion, "reconciling", 0, 0)
-				a.emitUpdateProgress(requestID, inspect.FromVersion, "recovered", 0, 0)
-				view := updateRecoveryView{State: "none", FromVersion: inspect.FromVersion, ToVersion: inspect.ToVersion, Action: "commit", Retryable: true}
-				return &view, nil
-			}
+		endErr := repair.EndRestoredPendingUpdateTransaction(inspectedTx, version)
+		if endErr == nil {
+			a.emitUpdateProgress(requestID, inspect.ToVersion, "reconciling", 0, 0)
+			a.emitUpdateProgress(requestID, inspect.FromVersion, "recovered", 0, 0)
+			view := updateRecoveryView{State: "none", FromVersion: inspect.FromVersion, ToVersion: inspect.ToVersion, Action: "commit", Retryable: true}
+			return &view, nil
 		}
+		a.recordUpdateError(fmt.Errorf("update recovery: restored transaction changed before commit: %w", endErr))
+		view := updateRecoveryView{
+			State:       "blocked",
+			FromVersion: inspect.FromVersion,
+			ToVersion:   inspect.ToVersion,
+			Message:     "the restored update changed before recovery could finish; no recovery files were removed",
+			Action:      "none",
+			Retryable:   true,
+		}
+		return &view, nil
 	}
 	if inspect.State == repair.UpdateRecoveryFailedInstall {
 		a.emitUpdateProgress(requestID, inspect.ToVersion, "rolling_back", 0, 0)

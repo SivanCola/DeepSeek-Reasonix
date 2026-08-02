@@ -42,6 +42,7 @@ import type {
   CapabilityDiagnosticsReport,
   CheckpointMeta,
   CommandInfo,
+  ConfigRepairView,
   ContextInfo,
   ContextPanelInfo,
   DirEntry,
@@ -419,13 +420,13 @@ export interface AppBindings {
   DiagnoseBotConnection(id: string): Promise<BotConnectionDiagnostic>;
   TestBotConnection(id: string, target?: string): Promise<BotConnectionDiagnostic>;
   SetCloseBehavior(mode: string): Promise<void>;
-  ConfigRepairStatus(): Promise<unknown>;
-  UndoConfigRepair(): Promise<unknown>;
-  OpenConfigFile(): Promise<unknown>;
-  RestoreGlobalConfigSnapshot(): Promise<unknown>;
-  ApplyProjectConfigFix(tabID: string): Promise<unknown>;
-  OpenProjectConfigFile(tabID: string): Promise<unknown>;
-  ResolveSessionRuntimeIssue(tabID: string, issueID: string, action: string): Promise<unknown>;
+  ConfigRepairStatus(): Promise<ConfigRepairView>;
+  UndoConfigRepair(transactionID: string): Promise<void>;
+  OpenConfigFile(): Promise<void>;
+  RestoreGlobalConfigSnapshot(): Promise<boolean>;
+  ApplyProjectConfigFix(tabID: string): Promise<void>;
+  OpenProjectConfigFile(tabID: string): Promise<void>;
+  ResolveSessionRuntimeIssue(tabID: string, issueID: string, action: string): Promise<void>;
   SetDisplayMode(mode: string): Promise<void>;
   SetStatusBarStyle(style: string): Promise<void>;
   SetStatusBarItems(items: string[]): Promise<void>;
@@ -4238,9 +4239,9 @@ function makeMockApp(): AppBindings {
           settings.closeBehavior = mode === "quit" ? "quit" : "background";
         },
         async ConfigRepairStatus() {
-          return { outcome: "" };
+          return { outcome: "", scope: "", path: "", detail: "", repairedAt: "", undoable: false, canOpenFile: false };
         },
-        async UndoConfigRepair() {
+        async UndoConfigRepair(_transactionID: string) {
           throw new Error("mock UndoConfigRepair");
         },
         async OpenConfigFile() {},

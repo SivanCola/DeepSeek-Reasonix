@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
-	"reasonix/internal/store"
 )
 
 // Session ownership classification. The lease metadata plus the OS lock and
@@ -274,21 +273,23 @@ func (a *App) reopenSessionCopy(tab *WorkspaceTab, boundPath, boundEpoch string)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	copyPath := ""
+	var clone *agent.SessionClone
 	for i := 0; i < 3; i++ {
 		candidate := agent.NewSessionPath(dir, "")
-		if err := agent.CloneSessionToPath(boundPath, candidate); err != nil {
+		created, err := agent.CloneSessionToPath(boundPath, candidate)
+		if err != nil {
 			if os.IsExist(err) {
 				continue
 			}
 			return err
 		}
-		copyPath = candidate
+		clone = created
 		break
 	}
-	if copyPath == "" {
+	if clone == nil {
 		return fmt.Errorf("create session copy: exhausted filename retries")
 	}
+	copyPath := clone.Path
 	// Compare-and-apply: switch the tab to the copy only while the binding is
 	// unchanged; otherwise the clone is stale and must be discarded. The clone
 	// created every sidecar, so the ownership-safe rollback removes them all.
@@ -297,7 +298,7 @@ func (a *App) reopenSessionCopy(tab *WorkspaceTab, boundPath, boundEpoch string)
 	currentEpoch := a.sessionRuntimeViewLocked(tab).Epoch
 	if currentPath != boundPath || currentEpoch != boundEpoch {
 		a.mu.Unlock()
-		agent.RemoveSessionCloneFiles(copyPath, store.SessionEventLog(copyPath), store.SessionEventIndex(copyPath), store.SessionMeta(copyPath))
+		clone.Discard()
 		return fmt.Errorf("session state advanced; copy discarded")
 	}
 	tab.SessionPath = copyPath

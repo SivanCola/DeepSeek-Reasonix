@@ -206,6 +206,17 @@ export interface SessionRuntimeIssue {
   holderSince?: string;
 }
 
+export interface ConfigRepairView {
+  outcome: string;
+  scope: string;
+  path: string;
+  detail: string;
+  repairedAt: string;
+  undoable: boolean;
+  canOpenFile: boolean;
+  transactionId?: string;
+}
+
 export interface SessionRuntimeView {
   phase: SessionRuntimePhase;
   epoch: string;

@@ -1,12 +1,13 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"reasonix/internal/config"
-	"reasonix/internal/repair"
 )
 
 func TestConfigLoadErrorCarriesPathAndLine(t *testing.T) {
@@ -54,25 +55,47 @@ func TestApplyProjectConfigFixRequiresPreview(t *testing.T) {
 	if err := os.WriteFile(project, []byte("[[plugins]]\ncommand = \"D:\\开发\\x.exe\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Preview scan finds the escape fix.
-	fixes, err := scanProjectConfigEscapes(project)
-	if err != nil {
+	tab := &WorkspaceTab{ID: "tab", WorkspaceRoot: root}
+	app := &App{tabs: map[string]*WorkspaceTab{tab.ID: tab}}
+	app.setTabConfigError(tab, &config.ConfigLoadError{Path: project, Line: 2, Err: errors.New("invalid escape")}, root)
+	if tab.ConfigError == nil || !tab.ConfigError.HasPreview || tab.ConfigError.FixCount != 1 {
+		t.Fatalf("preview = %+v, want one state-bound fix", tab.ConfigError)
+	}
+	if err := app.ApplyProjectConfigFix(tab.ID); err != nil {
 		t.Fatal(err)
-	}
-	if len(fixes) != 1 {
-		t.Fatalf("fixes = %d, want 1", len(fixes))
-	}
-	// Confirmed apply through the repair pipeline (state-bound).
-	expected := map[string]string{project: repair.FileStateID(project)}
-	report, err := repair.ApplyConfigEscapes(repair.ConfigEscapesOptions{Root: root, IncludeProject: true, ExpectedStates: expected})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !report.Project.Applied {
-		t.Fatalf("confirmed project apply failed: %+v", report.Project)
 	}
 	b, _ := os.ReadFile(project)
 	if err := config.ValidateBytes(b); err != nil {
 		t.Fatalf("repaired project config does not parse: %v", err)
+	}
+}
+
+func TestApplyProjectConfigFixRejectsChangedPreview(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	root := t.TempDir()
+	project := filepath.Join(root, "reasonix.toml")
+	before := []byte("[[plugins]]\ncommand = \"D:\\开发\\x.exe\"\n")
+	if err := os.WriteFile(project, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tab := &WorkspaceTab{ID: "tab", WorkspaceRoot: root}
+	app := &App{tabs: map[string]*WorkspaceTab{tab.ID: tab}}
+	app.setTabConfigError(tab, &config.ConfigLoadError{Path: project, Line: 2, Err: errors.New("invalid escape")}, root)
+	if tab.ConfigError == nil || !tab.ConfigError.HasPreview {
+		t.Fatalf("preview = %+v, want repair preview", tab.ConfigError)
+	}
+	changed := []byte("[[plugins]]\ncommand = \"D:\\开发\\different.exe\"\n")
+	if err := os.WriteFile(project, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.ApplyProjectConfigFix(tab.ID); err == nil || !strings.Contains(err.Error(), "preview expired") {
+		t.Fatalf("apply after edit err = %v, want expired preview", err)
+	}
+	got, err := os.ReadFile(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(changed) {
+		t.Fatalf("changed config was modified without confirmation: %q", got)
 	}
 }

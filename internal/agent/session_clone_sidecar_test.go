@@ -21,49 +21,60 @@ func TestCloneRefusesPreExistingSidecars(t *testing.T) {
 	if err := (&Session{Messages: []provider.Message{{Role: "user", Content: "hi"}}}).Save(src); err != nil {
 		t.Fatal(err)
 	}
-	dst := filepath.Join(dir, "copy.jsonl")
-	if err := os.WriteFile(dst, []byte("[]\n"), 0o644); err != nil {
+	for _, tc := range []struct {
+		name string
+		path func(string) string
+	}{
+		{name: "checkpoint", path: func(path string) string { return path }},
+		{name: "event log", path: store.SessionEventLog},
+		{name: "event index", path: store.SessionEventIndex},
+		{name: "branch metadata", path: store.SessionMeta},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := filepath.Join(dir, tc.name+"-copy.jsonl")
+			preExisting := tc.path(dst)
+			want := "pre-existing " + tc.name + "\n"
+			if err := os.WriteFile(preExisting, []byte(want), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := CloneSessionToPath(src, dst); err == nil {
+				t.Fatal("clone over a pre-existing destination artifact must fail")
+			}
+			b, err := os.ReadFile(preExisting)
+			if err != nil {
+				t.Fatalf("pre-existing file removed: %s: %v", preExisting, err)
+			}
+			if string(b) != want {
+				t.Fatalf("pre-existing file modified: %q, want %q", b, want)
+			}
+			for _, path := range []string{dst, store.SessionEventLog(dst), store.SessionEventIndex(dst), store.SessionMeta(dst)} {
+				if path == preExisting {
+					continue
+				}
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("partial clone artifact survived at %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSessionCloneDiscardUsesOwnedPaths(t *testing.T) {
+	t.Setenv("REASONIX_HOME", t.TempDir())
+	dir := t.TempDir()
+	src := filepath.Join(dir, "source.jsonl")
+	if err := (&Session{Messages: []provider.Message{{Role: "user", Content: "hi"}}}).Save(src); err != nil {
 		t.Fatal(err)
 	}
-
-	sentinels := []struct {
-		path string
-		want string
-	}{
-		{store.SessionEventLog(dst), "pre-existing authoritative log\n"},
-		{store.SessionEventIndex(dst), "pre-existing index\n"},
-		{store.SessionMeta(dst), "pre-existing meta\n"},
+	dst := filepath.Join(dir, "copy.jsonl")
+	clone, err := CloneSessionToPath(src, dst)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, sentinel := range sentinels {
-		if err := os.MkdirAll(filepath.Dir(sentinel.path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(sentinel.path, []byte(sentinel.want), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// The event-log reservation fails (file exists) before any save happens.
-	if err := CloneSessionToPath(src, dst); err == nil {
-		t.Fatal("clone over pre-existing sidecars must fail")
-	}
-	// The pre-existing checkpoint and every sidecar stay byte-identical.
-	checks := []struct {
-		path string
-		want string
-	}{
-		{dst, "[]\n"},
-		{store.SessionEventLog(dst), "pre-existing authoritative log\n"},
-		{store.SessionEventIndex(dst), "pre-existing index\n"},
-		{store.SessionMeta(dst), "pre-existing meta\n"},
-	}
-	for _, check := range checks {
-		b, err := os.ReadFile(check.path)
-		if err != nil {
-			t.Fatalf("pre-existing file removed: %s: %v", check.path, err)
-		}
-		if string(b) != check.want {
-			t.Errorf("%s modified by failed clone: %q, want %q", check.path, b, check.want)
+	clone.Discard()
+	for _, path := range []string{dst, store.SessionEventLog(dst), store.SessionEventIndex(dst), store.SessionMeta(dst)} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("discard left clone-owned artifact %s: %v", path, err)
 		}
 	}
 }

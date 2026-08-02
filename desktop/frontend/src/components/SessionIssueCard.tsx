@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { KeyRound } from "lucide-react";
+import type { AppBindings } from "../lib/bridge";
 import type { Translator } from "../lib/i18n";
 import type { SessionRuntimeIssue } from "../lib/types";
 
@@ -12,6 +13,7 @@ interface Props {
   issue: SessionRuntimeIssue;
   tabID: string;
   t: Translator;
+  api: Pick<AppBindings, "ResolveSessionRuntimeIssue">;
 }
 
 const ownerKindKey: Record<string, string> = {
@@ -35,7 +37,7 @@ const actionKey: Record<string, string> = {
  * error with the classified owner (another tab, a background task, a hidden
  * window, an external process, or a stale lock) and the allowed actions.
  */
-export function SessionIssueCard({ issue, tabID, t }: Props) {
+export function SessionIssueCard({ issue, tabID, t, api }: Props) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   if (done || !issue.actions?.length) {
@@ -45,7 +47,7 @@ export function SessionIssueCard({ issue, tabID, t }: Props) {
 
   const run = (action: string) => {
     setBusy(true);
-    (window as any).go?.main?.App?.ResolveSessionRuntimeIssue?.(tabID, issue.issueId ?? "", action)
+    api.ResolveSessionRuntimeIssue(tabID, issue.issueId ?? "", action)
       .then(() => setDone(true))
       .catch(() => setBusy(false));
   };

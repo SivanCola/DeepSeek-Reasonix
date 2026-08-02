@@ -1,15 +1,11 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, X } from "lucide-react";
+import type { AppBindings } from "../lib/bridge";
+import type { ConfigRepairView } from "../lib/types";
 
-interface ConfigRepairView {
-  outcome: string; // "auto_fixed" | "restored_snapshot" | "safe_mode" | "config_damaged" | ""
-  scope: string;
-  path: string;
-  detail: string;
-  repairedAt: string;
-  undoable: boolean;
-  canOpenFile: boolean;
-}
+type ConfigRepairAPI = Pick<AppBindings,
+  "ConfigRepairStatus" | "UndoConfigRepair" | "RestoreGlobalConfigSnapshot" | "OpenConfigFile"
+>;
 
 const emptyView: ConfigRepairView = {
   outcome: "",
@@ -27,23 +23,47 @@ const emptyView: ConfigRepairView = {
  * - "config_damaged": the global config failed to load and the app runs on
  *   the recovery configuration; stays visible until the config is repaired.
  */
-export function ConfigRepairBanner() {
+export function ConfigRepairBanner({ api }: { api: ConfigRepairAPI }) {
   const [view, setView] = useState<ConfigRepairView>(emptyView);
   const [dismissed, setDismissed] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    (window as any).go?.main?.App?.ConfigRepairStatus?.()
+    api.ConfigRepairStatus()
       .then((v: ConfigRepairView | null | undefined) => {
-        if (!cancelled && v && v.outcome) {
-          setView(v);
+        if (!cancelled) {
+          setView(v?.outcome ? v : emptyView);
         }
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [api]);
+
+  useEffect(() => {
+    if (view.outcome !== "config_damaged") {
+      return;
+    }
+    let cancelled = false;
+    const refresh = () => {
+      api.ConfigRepairStatus()
+        .then((v) => {
+          if (!cancelled) {
+            setView(v?.outcome ? v : emptyView);
+          }
+        })
+        .catch(() => {});
+    };
+    const timer = window.setInterval(refresh, 2000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [api, view.outcome]);
 
   if (!view.outcome || dismissed) {
     return null;
@@ -51,12 +71,18 @@ export function ConfigRepairBanner() {
   const damaged = view.outcome === "config_damaged";
 
   const onUndo = () => {
-    (window as any).go?.main?.App?.UndoConfigRepair?.()
+    const transactionID = view.transactionId?.trim();
+    if (!transactionID) {
+      setActionError("撤销操作已过期，请重新检查配置");
+      return;
+    }
+    setActionError("");
+    api.UndoConfigRepair(transactionID)
       .then(() => setDismissed(true))
-      .catch(() => setDismissed(true));
+      .catch(() => setActionError("撤销操作已过期，请重新检查配置"));
   };
   const onRestore = () => {
-    (window as any).go?.main?.App?.RestoreGlobalConfigSnapshot?.()
+    api.RestoreGlobalConfigSnapshot()
       .then((ok: boolean) => {
         if (ok) {
           setView(emptyView);
@@ -65,7 +91,7 @@ export function ConfigRepairBanner() {
       .catch(() => {});
   };
   const onOpenFile = () => {
-    (window as any).go?.main?.App?.OpenConfigFile?.().catch(() => {});
+    api.OpenConfigFile().catch(() => {});
   };
 
   return (
@@ -81,6 +107,7 @@ export function ConfigRepairBanner() {
       <span className="config-repair-banner__text">
         {view.detail}
         {view.undoable && <span className="config-repair-banner__sub">备份已保留，可撤销</span>}
+        {actionError && <span className="config-repair-banner__sub">{actionError}</span>}
       </span>
       {view.undoable && (
         <button type="button" className="config-repair-banner__action" onClick={onUndo}>

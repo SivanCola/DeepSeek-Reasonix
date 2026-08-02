@@ -206,6 +206,33 @@ func TestReconcileRestoredRefusesTamperedUnit(t *testing.T) {
 	}
 }
 
+func TestEndRestoredTransactionRefusesUnitChangedAfterInspect(t *testing.T) {
+	tx, target := reconcileFileUpdateFixture(t, "v1", "v2")
+	publishFileUpdateForTest(t, tx, "new")
+	if err := os.WriteFile(target, []byte("old"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	view, inspectedTx, err := InspectPendingUpdateTransaction("v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.State != UpdateRecoveryRestored || inspectedTx == nil {
+		t.Fatalf("inspection = %+v tx=%v, want restored with identity", view, inspectedTx)
+	}
+	if err := os.WriteFile(target, []byte("tampered-after-inspect"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := EndRestoredPendingUpdateTransaction(inspectedTx, "v1"); err == nil {
+		t.Fatal("changed restored unit must fail closed")
+	}
+	if !HasPendingUpdate() {
+		t.Fatal("changed restored unit caused pending transaction deletion")
+	}
+	if _, err := os.Stat(inspectedTx.Files[0].BackupPath); err != nil {
+		t.Fatalf("changed restored unit caused backup deletion: %v", err)
+	}
+}
+
 func TestReconcileBlockedCorruptTransaction(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
