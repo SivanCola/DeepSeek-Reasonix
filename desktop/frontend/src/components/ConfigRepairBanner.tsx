@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Loader2, X } from "lucide-react";
 import type { AppBindings } from "../lib/bridge";
+import type { Translator } from "../lib/i18n";
 import type { ConfigRepairView } from "../lib/types";
 
 type ConfigRepairAPI = Pick<AppBindings,
@@ -18,41 +19,32 @@ const emptyView: ConfigRepairView = {
 };
 
 /**
- * Recovery banner for global-config outcomes:
- * - "auto_fixed": the Guard repaired Windows paths at startup; offers undo.
- * - "config_damaged": the global config failed to load and the app runs on
- *   the recovery configuration; stays visible until the config is repaired.
+ * Recovery stays one-click on the common path. File editing, raw diagnostics,
+ * and undo remain available under Details for exceptional cases.
  */
-export function ConfigRepairBanner({ api }: { api: ConfigRepairAPI }) {
+export function ConfigRepairBanner({ api, t }: { api: ConfigRepairAPI; t: Translator }) {
   const [view, setView] = useState<ConfigRepairView>(emptyView);
   const [dismissed, setDismissed] = useState(false);
-  const [actionError, setActionError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     api.ConfigRepairStatus()
-      .then((v: ConfigRepairView | null | undefined) => {
-        if (!cancelled) {
-          setView(v?.outcome ? v : emptyView);
-        }
+      .then((value) => {
+        if (!cancelled) setView(value?.outcome ? value : emptyView);
       })
       .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [api]);
 
   useEffect(() => {
-    if (view.outcome !== "config_damaged") {
-      return;
-    }
+    if (view.outcome !== "config_damaged") return;
     let cancelled = false;
     const refresh = () => {
       api.ConfigRepairStatus()
-        .then((v) => {
-          if (!cancelled) {
-            setView(v?.outcome ? v : emptyView);
-          }
+        .then((value) => {
+          if (!cancelled) setView(value?.outcome ? value : emptyView);
         })
         .catch(() => {});
     };
@@ -65,72 +57,72 @@ export function ConfigRepairBanner({ api }: { api: ConfigRepairAPI }) {
     };
   }, [api, view.outcome]);
 
-  if (!view.outcome || dismissed) {
-    return null;
-  }
+  if (!view.outcome || dismissed) return null;
   const damaged = view.outcome === "config_damaged";
 
-  const onUndo = () => {
+  const onUndo = async () => {
     const transactionID = view.transactionId?.trim();
     if (!transactionID) {
-      setActionError("撤销操作已过期，请重新检查配置");
+      setFailed(true);
       return;
     }
-    setActionError("");
-    api.UndoConfigRepair(transactionID)
-      .then(() => setDismissed(true))
-      .catch(() => setActionError("撤销操作已过期，请重新检查配置"));
+    setBusy(true);
+    setFailed(false);
+    try {
+      await api.UndoConfigRepair(transactionID);
+      setDismissed(true);
+    } catch {
+      setBusy(false);
+      setFailed(true);
+    }
   };
-  const onRestore = () => {
-    api.RestoreGlobalConfigSnapshot()
-      .then((ok: boolean) => {
-        if (ok) {
-          setView(emptyView);
-        }
-      })
-      .catch(() => {});
-  };
-  const onOpenFile = () => {
-    api.OpenConfigFile().catch(() => {});
+  const onRestore = async () => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      if (await api.RestoreGlobalConfigSnapshot()) setView(emptyView);
+      else throw new Error("restore unavailable");
+    } catch {
+      setBusy(false);
+      setFailed(true);
+    }
   };
 
   return (
-    <div
-      className={damaged ? "config-repair-banner config-repair-banner--damaged" : "config-repair-banner"}
-      role={damaged ? "alert" : "status"}
-    >
-      {damaged ? (
-        <AlertTriangle className="config-repair-banner__icon" size={16} aria-hidden />
-      ) : (
-        <CheckCircle2 className="config-repair-banner__icon" size={16} aria-hidden />
-      )}
-      <span className="config-repair-banner__text">
-        {view.detail}
-        {view.undoable && <span className="config-repair-banner__sub">备份已保留，可撤销</span>}
-        {actionError && <span className="config-repair-banner__sub">{actionError}</span>}
+    <div className={`banner banner--actionable config-repair-banner ${damaged ? "banner--warning" : "banner--success"}`} role={damaged ? "alert" : "status"}>
+      {damaged ? <AlertTriangle size={16} aria-hidden /> : <CheckCircle2 size={16} aria-hidden />}
+      <span className="banner__msg">
+        {damaged ? t("configRepair.damaged") : t("configRepair.completed")}
+        {failed && <span className="banner__sub">{t("configRepair.actionFailed")}</span>}
       </span>
-      {view.undoable && (
-        <button type="button" className="config-repair-banner__action" onClick={onUndo}>
-          撤销修复
-        </button>
-      )}
+      <span className="banner__spacer" />
       {damaged && (
-        <button type="button" className="config-repair-banner__action" onClick={onRestore}>
-          从备份恢复
+        <button type="button" className="btn btn--small btn--primary" disabled={busy} onClick={() => void onRestore()}>
+          {busy && <Loader2 className="spin" size={12} aria-hidden />}
+          {busy ? t("configRepair.restoring") : t("configRepair.restore")}
         </button>
       )}
-      {view.canOpenFile && (
-        <button type="button" className="config-repair-banner__action" onClick={onOpenFile}>
-          打开配置文件
-        </button>
-      )}
+      <details className="banner__more">
+        <summary>
+          {t("configRepair.details")}
+          <ChevronDown size={12} aria-hidden />
+        </summary>
+        <div className="banner__more-actions">
+          <small>{view.detail}</small>
+          {view.canOpenFile && (
+            <button type="button" className="btn btn--small" disabled={busy} onClick={() => void api.OpenConfigFile().catch(() => setFailed(true))}>
+              {t("configRepair.openFile")}
+            </button>
+          )}
+          {view.undoable && (
+            <button type="button" className="btn btn--small" disabled={busy} onClick={() => void onUndo()}>
+              {t("configRepair.undo")}
+            </button>
+          )}
+        </div>
+      </details>
       {!damaged && (
-        <button
-          type="button"
-          className="config-repair-banner__close"
-          onClick={() => setDismissed(true)}
-          aria-label="关闭"
-        >
+        <button type="button" className="modal-close-button" onClick={() => setDismissed(true)} aria-label={t("common.close")}>
           <X size={14} aria-hidden />
         </button>
       )}

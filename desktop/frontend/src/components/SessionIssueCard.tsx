@@ -1,11 +1,9 @@
-import { useState } from "react";
-import { KeyRound } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, KeyRound, Loader2 } from "lucide-react";
 import type { AppBindings } from "../lib/bridge";
 import type { Translator } from "../lib/i18n";
 import type { SessionRuntimeIssue } from "../lib/types";
 
-// The locale dictionary is a closed key union; the owner/action kind strings
-// come from the backend, so translate them through a dynamic-key helper.
 const translateDynamic = (t: Translator, key: string): string =>
   t(key as Parameters<Translator>[0]);
 
@@ -16,15 +14,6 @@ interface Props {
   api: Pick<AppBindings, "ResolveSessionRuntimeIssue">;
 }
 
-const ownerKindKey: Record<string, string> = {
-  current_tab: "session.ownerCurrentTab",
-  current_detached: "session.ownerCurrentDetached",
-  same_instance_hidden: "session.ownerSameHidden",
-  external_process: "session.ownerExternal",
-  stale_reclaimed: "session.ownerStale",
-  unknown: "session.ownerUnknown",
-};
-
 const actionKey: Record<string, string> = {
   focus: "session.actionFocus",
   retry: "session.actionRetry",
@@ -32,45 +21,98 @@ const actionKey: Record<string, string> = {
   copy: "session.actionCopy",
 };
 
+const messageKey: Record<string, string> = {
+  current_tab: "session.messageCurrentTab",
+  current_detached: "session.messageCurrentDetached",
+  same_instance_hidden: "session.messageSameHidden",
+  external_process: "session.messageExternal",
+  stale_reclaimed: "session.messageStale",
+  unknown: "session.messageUnknown",
+};
+
+const automaticOwnerKinds = new Set(["current_tab", "current_detached", "same_instance_hidden", "stale_reclaimed"]);
+
+function preferredAction(ownerKind: string | undefined, actions: string[]): string | undefined {
+  if (ownerKind === "current_tab" || ownerKind === "current_detached" || ownerKind === "same_instance_hidden") {
+    return actions.includes("focus") ? "focus" : actions[0];
+  }
+  if (ownerKind === "stale_reclaimed") return actions.includes("retry") ? "retry" : actions[0];
+  if (actions.includes("copy")) return "copy";
+  if (actions.includes("read_only")) return "read_only";
+  return actions[0];
+}
+
 /**
- * Session ownership issue card: replaces the opaque "session already open"
- * error with the classified owner (another tab, a background task, a hidden
- * window, an external process, or a stale lock) and the allowed actions.
+ * Resolves safe same-app/stale ownership automatically. Only a verified
+ * external or unknown owner asks the user, with one recommended action and
+ * lower-frequency alternatives behind progressive disclosure.
  */
 export function SessionIssueCard({ issue, tabID, t, api }: Props) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
-  if (done || !issue.actions?.length) {
-    return null;
-  }
-  const ownerLabel = translateDynamic(t, ownerKindKey[issue.ownerKind ?? "unknown"] ?? "session.ownerUnknown");
+  const [failed, setFailed] = useState(false);
+  const autoStarted = useRef(false);
+  const actions = issue.actions ?? [];
+  const primary = useMemo(() => preferredAction(issue.ownerKind, actions), [actions, issue.ownerKind]);
+  const automatic = Boolean(primary && automaticOwnerKinds.has(issue.ownerKind ?? ""));
 
-  const run = (action: string) => {
+  const run = useCallback(async (action: string) => {
     setBusy(true);
-    api.ResolveSessionRuntimeIssue(tabID, issue.issueId ?? "", action)
-      .then(() => setDone(true))
-      .catch(() => setBusy(false));
-  };
+    setFailed(false);
+    try {
+      await api.ResolveSessionRuntimeIssue(tabID, issue.issueId ?? "", action);
+      setDone(true);
+    } catch {
+      setBusy(false);
+      setFailed(true);
+    }
+  }, [api, issue.issueId, tabID]);
+
+  useEffect(() => {
+    if (automatic && primary && !autoStarted.current) {
+      autoStarted.current = true;
+      void run(primary);
+    }
+  }, [automatic, primary, run]);
+
+  if (done || actions.length === 0) return null;
+  const alternatives = actions.filter((action) => action !== primary);
+  const message = translateDynamic(t, messageKey[issue.ownerKind ?? "unknown"] ?? "session.messageUnknown");
 
   return (
-    <div className="banner banner--warning banner--actionable" role="status">
-      <KeyRound size={14} aria-hidden />
+    <div className="banner banner--warning banner--actionable session-issue-card" role="status" aria-live="polite">
+      {busy ? <Loader2 className="spin" size={14} aria-hidden /> : <KeyRound size={14} aria-hidden />}
       <span className="banner__msg">
-        {translateDynamic(t, "session.issueCard") !== "session.issueCard" ? translateDynamic(t, "session.issueCard").replace("{owner}", ownerLabel) : ownerLabel}
-        <span className="banner__sub">{issue.message}</span>
+        {automatic && busy ? translateDynamic(t, "session.resolvingAutomatically") : message}
+        {failed && <span className="banner__sub">{translateDynamic(t, "session.actionFailed")}</span>}
       </span>
       <span className="banner__spacer" />
-      {issue.actions.map((action) => (
-        <button
-          key={action}
-          type="button"
-          className="btn btn--small"
-          disabled={busy}
-          onClick={() => run(action)}
-        >
-          {translateDynamic(t, actionKey[action] ?? "session.actionRetry")}
+      {!automatic && primary && (
+        <button type="button" className="btn btn--small btn--primary" disabled={busy} onClick={() => void run(primary)}>
+          {translateDynamic(t, actionKey[primary] ?? "session.actionRetry")}
         </button>
-      ))}
+      )}
+      {automatic && failed && primary && (
+        <button type="button" className="btn btn--small" disabled={busy} onClick={() => void run(primary)}>
+          {translateDynamic(t, "session.actionRetry")}
+        </button>
+      )}
+      {!automatic && alternatives.length > 0 && (
+        <details className="banner__more">
+          <summary>
+            {translateDynamic(t, "session.moreActions")}
+            <ChevronDown size={12} aria-hidden />
+          </summary>
+          <div className="banner__more-actions">
+            {alternatives.map((action) => (
+              <button key={action} type="button" className="btn btn--small" disabled={busy} onClick={() => void run(action)}>
+                {translateDynamic(t, actionKey[action] ?? "session.actionRetry")}
+              </button>
+            ))}
+            {issue.message && <small>{issue.message}</small>}
+          </div>
+        </details>
+      )}
     </div>
   );
 }

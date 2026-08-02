@@ -5,6 +5,7 @@ import React from "react";
 import { act } from "react";
 
 import type { AppBindings } from "../lib/bridge";
+import { t } from "../lib/i18n";
 import type { ConfigRepairView } from "../lib/types";
 
 let passed = 0;
@@ -63,7 +64,7 @@ const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("missing root");
 const root = createRoot(rootElement);
 await act(async () => {
-  root.render(<ConfigRepairBanner api={bindings} />);
+  root.render(<ConfigRepairBanner api={bindings} t={t} />);
   await Promise.resolve();
 });
 ok(document.body.textContent?.includes("damaged config") === true, "damaged config is surfaced");
@@ -86,11 +87,11 @@ status = {
   transactionId: "repair-visible-token",
 };
 await act(async () => {
-  secondRoot.render(<ConfigRepairBanner api={bindings} />);
+  secondRoot.render(<ConfigRepairBanner api={bindings} t={t} />);
   await Promise.resolve();
 });
 const undo = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
-  .find((button) => button.textContent?.includes("撤销"));
+  .find((button) => button.textContent?.includes("Undo"));
 await act(async () => {
   undo?.click();
   await Promise.resolve();

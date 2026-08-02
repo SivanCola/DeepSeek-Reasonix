@@ -1756,7 +1756,7 @@ export interface SettingsView {
   desktopLayoutStyle: string; // "classic" | "workbench" | "creation"
   desktopTheme: string; // "auto" | "dark" | "light"
   desktopThemeStyle: string;
-  closeBehavior: string; // "background" | "quit"
+  closeBehavior: string; // "smart" | "background" | "quit"; retained for config compatibility
   displayMode: string;   // "standard" | "compact"
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids

@@ -4236,7 +4236,7 @@ function makeMockApp(): AppBindings {
           return diag;
         },
         async SetCloseBehavior(mode: string) {
-          settings.closeBehavior = mode === "quit" ? "quit" : "background";
+          settings.closeBehavior = mode === "smart" || mode === "quit" ? mode : "background";
         },
         async ConfigRepairStatus() {
           return { outcome: "", scope: "", path: "", detail: "", repairedAt: "", undoable: false, canOpenFile: false };
