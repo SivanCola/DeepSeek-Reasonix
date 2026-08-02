@@ -175,7 +175,9 @@ console.log("\nlow-friction recovery surfaces");
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const source = readFileSync(resolve(here, "../components/SettingsPanel.tsx"), "utf8");
-  ok(!source.includes('<SettingsField label={t("settings.closeBehavior")}>'), "General settings no longer asks users to choose close behavior");
+  ok(source.includes('<SettingsField label={t("settings.closeBehavior")}>'), "General settings keeps the user-owned close behavior choice visible");
+  ok(source.includes('(["smart", "background", "quit"] as const)'), "close behavior exposes all three compatible choices");
+  ok(source.includes("app.SetCloseBehavior(mode)"), "close behavior choices persist through the existing settings API");
   ok(source.includes("closeBehavior: normalizeCloseBehavior(view.closeBehavior)"), "existing close-behavior config remains readable for upgrades");
 }
 

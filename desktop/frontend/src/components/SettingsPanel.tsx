@@ -1442,6 +1442,11 @@ function statusBarItemLabel(id: StatusBarItemId, t: ReturnType<typeof useT>): st
   }
 }
 
+function closeBehaviorLabel(mode: CloseBehavior, t: ReturnType<typeof useT>): string {
+  if (mode === "smart") return t("settings.closeBehavior.smart");
+  return mode === "quit" ? t("settings.closeBehavior.quit") : t("settings.closeBehavior.background");
+}
+
 function permissionModeLabel(mode: string, t: ReturnType<typeof useT>): string {
   switch (mode) {
     case "allow":
@@ -1500,6 +1505,7 @@ function thinkingModeLabel(mode: string, t: ReturnType<typeof useT>): string {
 
 function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agentRunning: boolean }) {
   const { t, setPref } = useI18n();
+  const closeBehavior = normalizeCloseBehavior(s.closeBehavior);
   const [displayMode, setDisplayMode] = useState<DisplayMode>(() => normalizeDisplayMode(getDisplayMode()));
   const [processFold, setProcessFold] = useState<ProcessFoldPreference>(getProcessFoldPreference);
   const [statusBarItemsExpanded, setStatusBarItemsExpanded] = useState(false);
@@ -1711,6 +1717,20 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
               onClick={() => void apply(() => app.SetDesktopLayoutStyle(style))}
             >
               {desktopLayoutStyleLabel(style, t)}
+            </button>
+          ))}
+        </div>
+      </SettingsField>
+      <SettingsField label={t("settings.closeBehavior")}>
+        <div className="set-seg">
+          {(["smart", "background", "quit"] as const).map((mode) => (
+            <button
+              key={mode}
+              className={`set-seg__btn${closeBehavior === mode ? " set-seg__btn--on" : ""}`}
+              disabled={busy}
+              onClick={() => void apply(() => app.SetCloseBehavior(mode))}
+            >
+              {closeBehaviorLabel(mode, t)}
             </button>
           ))}
         </div>
