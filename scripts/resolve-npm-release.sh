@@ -31,8 +31,8 @@ if [ "${EVENT_NAME:-}" = "workflow_dispatch" ] || [ "${IN_ORCHESTRATED:-false}" 
 			echo "::error::stable publication requires an existing npm tag" >&2
 			exit 1
 		fi
-		if [ "$tag" != "npm-v${base}" ]; then
-			echo "::error::tag $tag does not match requested version npm-v${base}" >&2
+		if [ "$tag" != "v${base}" ]; then
+			echo "::error::tag $tag does not match requested version v${base}" >&2
 			exit 1
 		fi
 		arg="v${base}"

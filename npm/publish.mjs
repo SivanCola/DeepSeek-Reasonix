@@ -287,6 +287,7 @@ export function publishPackages({
   sleep = defaultSleep,
   attempts = 6,
   log = console.log,
+  stageOnly = false,
 }) {
   if (!Array.isArray(packages) || packages.length === 0) {
     throw new Error("npm publication requires at least one package");
@@ -295,7 +296,7 @@ export function publishPackages({
     throw new Error(`invalid release candidate SHA: ${candidateSha}`);
   }
   const distTag = distTagForVersion(version);
-  const stagingTag = `${distTag}-staging`;
+  const stagingTag = stageOnly ? "official-staging" : `${distTag}-staging`;
   let failure;
 
   try {
@@ -312,22 +313,26 @@ export function publishPackages({
       );
     }
     for (const entry of packages) {
-      advanceDistTag(
-        runner,
-        entry.name,
-        version,
-        distTag,
-        attempts,
-        sleep,
-        log,
-      );
+      if (stageOnly) {
+        runner(["dist-tag", "add", `${entry.name}@${version}`, stagingTag], { inherit: true });
+      } else {
+        advanceDistTag(
+          runner,
+          entry.name,
+          version,
+          distTag,
+          attempts,
+          sleep,
+          log,
+        );
+      }
     }
   } catch (error) {
     failure = error;
   }
 
   try {
-    for (const entry of packages) {
+    if (!stageOnly) for (const entry of packages) {
       cleanupStagingTag(runner, entry.name, version, stagingTag, log);
     }
   } catch (error) {

@@ -216,36 +216,42 @@ func TestWindowsPackagerRejectsMissingOrPartialRequiredPayloadManifest(t *testin
 }
 
 func TestProductionSigningRunsOnlyFromProtectedControlPlane(t *testing.T) {
-	stable := readTestFile(t, "../.github/workflows/release-stable.yml")
-	desktop := readTestFile(t, "../.github/workflows/release-desktop.yml")
-	if strings.Contains(stable, "\n  push:\n") || strings.Contains(desktop, "\n  push:\n") {
-		t.Fatal("production workflows must not run directly with a tag-shaped SignPath origin")
+	orchestrator := readTestFile(t, "../.github/workflows/release-stable.yml")
+	recovery := readTestFile(t, "../.github/workflows/recover-release.yml")
+	if !strings.Contains(orchestrator, "\n  push:\n") || strings.Contains(orchestrator, "workflow_dispatch:") {
+		t.Fatal("official publication must be automatic after reviewed notes merge")
 	}
 	for _, want := range []string{
-		`ALLOW_STABLE_RECOVERY: ${{ inputs.allow_recovery }}`,
-		`allow_recovery: 'false'`,
-		`signing_preflight: true`,
-		`signing_preflight_verified: true`,
-		`needs: [authorize, signpath-preflight]`,
+		"environment: release",
+		"RELEASE_TAGGER_APP_ID",
+		"Revalidate after approval",
+		"signing_preflight: true",
+		"signing_preflight_verified: true",
+		"needs: [authorize, cli, signpath-preflight]",
 	} {
-		if !strings.Contains(stable+"\n"+readTestFile(t, "../.github/workflows/release-stable-trigger.yml"), want) {
-			t.Errorf("stable relay is missing normal-release recovery guard %q", want)
+		if !strings.Contains(orchestrator, want) {
+			t.Errorf("official orchestrator is missing protected signing contract %q", want)
 		}
 	}
-
+	if !strings.Contains(recovery, "workflow_dispatch:") || !strings.Contains(recovery, "recovery: true") {
+		t.Fatal("recovery must be the only manual publication entry and reuse the official orchestrator")
+	}
 	for _, path := range []string{
-		"../.github/workflows/release-stable-trigger.yml",
-		"../.github/workflows/release-desktop-trigger.yml",
+		"../.github/workflows/release.yml",
+		"../.github/workflows/release-npm.yml",
+		"../.github/workflows/release-desktop.yml",
 	} {
-		relay := readTestFile(t, path)
+		publisher := readTestFile(t, path)
+		if strings.Contains(publisher, "workflow_dispatch:") || strings.Contains(publisher, "\n  push:\n") || strings.Contains(publisher, "environment:") {
+			t.Errorf("%s must be reusable-only and must not add another approval", path)
+		}
 		for _, want := range []string{
-			`actions: write`,
-			`CONTROL_PLANE_REF: ${{ github.event.repository.default_branch }}`,
-			`process.env.CONTROL_PLANE_REF !== 'main-v2'`,
-			`createWorkflowDispatch`,
-			`ref: process.env.CONTROL_PLANE_REF`,
+			"workflow_call:",
+			`test "${{ inputs.orchestrated }}" = "true"`,
+			"bash scripts/verify-release-authorization.sh",
+			"bash scripts/verify-release-tag.sh",
 		} {
-			if !strings.Contains(relay, want) {
+			if !strings.Contains(publisher, want) {
 				t.Errorf("%s is missing protected control-plane contract %q", path, want)
 			}
 		}

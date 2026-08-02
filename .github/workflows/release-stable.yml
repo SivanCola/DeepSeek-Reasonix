@@ -1,73 +1,86 @@
-name: Release stable
-run-name: Release stable ${{ inputs.tag || github.ref_name }}
+name: Publish release
+run-name: Publish official release
 
-# Stable publication has exactly one GitHub environment gate. Push the CLI,
-# npm, and desktop tags atomically; release-stable-trigger.yml relays the vX.Y.Z
-# tag to this workflow on protected main-v2. Preflight verifies that all three
-# tags point to the current main-v2 commit, and one GitHub approval releases
-# every channel. After approval, a zero-publication Windows preflight verifies
-# both architectures and signing stages before any public channel starts.
-# Keeping the control-plane ref on main-v2 lets SignPath restrict
-# production signing to that one protected origin instead of trusting wildcard
-# tag-like branch names. Manual recovery uses the same fixed control plane while
-# preserving an older tagged candidate on main-v2 history.
 on:
-  workflow_dispatch:
+  push:
+    branches: [main-v2]
+    paths: [release-notes/releases.json]
+  workflow_call:
     inputs:
       tag:
-        description: "Existing stable CLI tag to recover (for example v1.18.0)"
-        required: true
+        description: Existing vMAJOR.MINOR.PATCH tag to recover
+        required: false
+        default: ""
         type: string
-      publish_cli:
-        description: "Recover the CLI/Homebrew channel"
+      recovery:
+        description: Recover only missing public surfaces
         required: false
-        default: true
-        type: boolean
-      publish_npm:
-        description: "Recover the npm channel"
-        required: false
-        default: true
-        type: boolean
-      publish_desktop:
-        description: "Recover the Desktop/R2 channel"
-        required: false
-        default: true
-        type: boolean
-      allow_recovery:
-        description: "Allow an existing stable tag on main-v2 history (manual recovery only)"
-        required: false
-        default: true
+        default: false
         type: boolean
 
 concurrency:
-  group: stable-release-${{ inputs.tag || github.ref_name }}
+  group: official-release
   cancel-in-progress: false
 
-# Reusable release workflows can only reduce caller permissions, so the
-# orchestrator grants the union needed by CLI/Desktop publication.
 permissions:
   actions: write
   contents: write
 
 jobs:
   preflight:
-    name: validate stable release set
+    name: resolve exact official candidate
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     outputs:
+      publish: ${{ steps.release.outputs.publish }}
       version: ${{ steps.release.outputs.version }}
-      cli_tag: ${{ steps.release.outputs.cli_tag }}
-      npm_tag: ${{ steps.release.outputs.npm_tag }}
-      desktop_tag: ${{ steps.release.outputs.desktop_tag }}
+      tag: ${{ steps.release.outputs.tag }}
       sha: ${{ steps.release.outputs.sha }}
+      recovery: ${{ steps.release.outputs.recovery }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          # A recovery dispatch uses the fixed workflow/scripts from protected
-          # main-v2. Publishers still check out the immutable approved tag SHA.
-          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Resolve one reviewed official release
+        id: release
+        env:
+          RELEASE_BEFORE: ${{ github.event.before }}
+          RELEASE_SHA: ${{ github.sha }}
+          RECOVERY_TAG: ${{ inputs.tag }}
+        run: node scripts/resolve-official-release.mjs
+      - name: Wait for exact main-v2 CI and validate the candidate
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          ALLOW_EXISTING_TAG: ${{ steps.release.outputs.recovery }}
+        run: bash scripts/verify-official-release-candidate.sh
+      - name: Render immutable reviewed notes
+        if: steps.release.outputs.publish == 'true'
+        run: node scripts/release-notes.mjs render --version "${{ steps.release.outputs.version }}" --output /tmp/release-notes.md
+      - name: Preserve reviewed notes for every publisher
+        if: steps.release.outputs.publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: orchestrator-reviewed-release-notes
+          path: /tmp/release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  candidate:
+    name: build private release candidate
+    needs: preflight
+    if: needs.preflight.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -75,192 +88,251 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - name: Resolve stable release
-        id: release
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-          ALLOW_STABLE_RECOVERY: ${{ inputs.allow_recovery }}
-        run: bash scripts/resolve-stable-release.sh
-      - name: Validate reviewed release notes
-        run: node scripts/release-notes.mjs render --version "${{ steps.release.outputs.cli_tag }}" --output /tmp/release-notes.md
-      # Recovery builds deliberately check out the immutable tagged candidate,
-      # which can predate its reviewed release-note entry. Carry the exact file
-      # validated by this protected control-plane job into both publishers.
-      - name: Upload reviewed release notes
-        uses: actions/upload-artifact@v7
-        with:
-          name: orchestrator-reviewed-release-notes
-          path: /tmp/release-notes.md
-          if-no-files-found: error
-          retention-days: 1
-      - name: Cache hit guard
-        run: ./scripts/cache-guard.sh
-
-  authorize:
-    name: approve stable release
-    needs: preflight
-    runs-on: ubuntu-latest
-    environment: release
-    permissions:
-      contents: read
-    outputs:
-      version: ${{ steps.approved.outputs.version }}
-      cli_tag: ${{ steps.approved.outputs.cli_tag }}
-      npm_tag: ${{ steps.approved.outputs.npm_tag }}
-      desktop_tag: ${{ steps.approved.outputs.desktop_tag }}
-      sha: ${{ steps.approved.outputs.sha }}
-    steps:
-      - name: Record approved release
-        id: approved
+      - name: Validate and build internal candidates
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
-          CLI_TAG: ${{ needs.preflight.outputs.cli_tag }}
-          NPM_TAG: ${{ needs.preflight.outputs.npm_tag }}
-          DESKTOP_TAG: ${{ needs.preflight.outputs.desktop_tag }}
-          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
         run: |
-          {
-            echo "version=$VERSION"
-            echo "cli_tag=$CLI_TAG"
-            echo "npm_tag=$NPM_TAG"
-            echo "desktop_tag=$DESKTOP_TAG"
-            echo "sha=$RELEASE_SHA"
-          } >> "$GITHUB_OUTPUT"
-          echo "Approved stable release $VERSION at $RELEASE_SHA"
+          set -euo pipefail
+          ./scripts/cache-guard.sh
+          node --test scripts/release-notes.test.mjs scripts/render-homebrew-cask.test.mjs npm/publish.test.mjs
+          node npm/build.mjs "v$VERSION"
+          tar -czf /tmp/reasonix-npm-candidate.tgz -C npm .stage
+          go test ./internal/config ./internal/cli
+      - uses: actions/upload-artifact@v7
+        with:
+          name: official-candidate-${{ needs.preflight.outputs.version }}
+          path: /tmp/reasonix-npm-candidate.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  authorize:
+    name: approve and create official tag
+    needs: [preflight, candidate]
+    if: needs.preflight.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      version: ${{ needs.preflight.outputs.version }}
+      tag: ${{ needs.preflight.outputs.tag }}
+      sha: ${{ needs.preflight.outputs.sha }}
+      recovery: ${{ needs.preflight.outputs.recovery }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/create-github-app-token@v2
+        id: app
+        with:
+          app-id: ${{ secrets.RELEASE_TAGGER_APP_ID }}
+          private-key: ${{ secrets.RELEASE_TAGGER_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+      - name: Revalidate after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
+          ALLOW_EXISTING_TAG: ${{ needs.preflight.outputs.recovery }}
+          WAIT_FOR_CI: false
+        run: bash scripts/verify-official-release-candidate.sh
+      - name: Create the only public tag with the release App
+        if: needs.preflight.outputs.recovery != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          SHA: ${{ needs.preflight.outputs.sha }}
+        run: gh api --method POST "repos/${{ github.repository }}/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA"
+      - name: Verify immutable tag
+        env:
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          APPROVED_SHA: ${{ needs.preflight.outputs.sha }}
+        run: bash scripts/verify-release-tag.sh
 
   cli:
-    name: publish CLI and Homebrew
-    needs: [authorize, signpath-preflight]
-    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (needs.signpath-preflight.result == 'success' || needs.signpath-preflight.result == 'skipped') && (github.event_name != 'workflow_dispatch' || inputs.publish_cli) }}
+    name: stage CLI, checksums, and Homebrew
+    needs: authorize
     uses: ./.github/workflows/release.yml
     with:
-      tag: ${{ needs.authorize.outputs.cli_tag }}
-      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      channel: stable
+      tag: ${{ needs.authorize.outputs.tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.tag }}
       approved_sha: ${{ needs.authorize.outputs.sha }}
       orchestrated: true
+      orchestrator: stable
     secrets: inherit
 
   npm:
-    name: publish npm
-    needs: [authorize, signpath-preflight]
-    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && (needs.signpath-preflight.result == 'success' || needs.signpath-preflight.result == 'skipped') && (github.event_name != 'workflow_dispatch' || inputs.publish_npm) }}
+    name: stage npm packages
+    needs: authorize
     uses: ./.github/workflows/release-npm.yml
     with:
       channel: stable
       base_version: ${{ needs.authorize.outputs.version }}
-      tag: ${{ needs.authorize.outputs.npm_tag }}
-      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      tag: ${{ needs.authorize.outputs.tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.tag }}
       approved_sha: ${{ needs.authorize.outputs.sha }}
       orchestrated: true
+      orchestrator: stable
     secrets: inherit
 
   signpath-preflight:
-    name: verify stable SignPath control plane
+    name: verify production signing path
     needs: authorize
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_desktop }}
     uses: ./.github/workflows/release-desktop.yml
     with:
       channel: stable
-      tag: ${{ needs.authorize.outputs.desktop_tag }}
-      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      tag: ${{ needs.authorize.outputs.tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.tag }}
       approved_sha: ${{ needs.authorize.outputs.sha }}
       orchestrated: true
+      orchestrator: stable
       signing_preflight: true
     secrets: inherit
 
   desktop:
-    name: publish desktop
-    needs: [authorize, signpath-preflight]
-    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' && needs.signpath-preflight.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.publish_desktop) }}
+    name: stage signed Desktop assets
+    needs: [authorize, cli, signpath-preflight]
     uses: ./.github/workflows/release-desktop.yml
     with:
       channel: stable
-      tag: ${{ needs.authorize.outputs.desktop_tag }}
-      approved_cli_tag: ${{ needs.authorize.outputs.cli_tag }}
+      tag: ${{ needs.authorize.outputs.tag }}
+      approved_cli_tag: ${{ needs.authorize.outputs.tag }}
       approved_sha: ${{ needs.authorize.outputs.sha }}
       orchestrated: true
+      orchestrator: stable
       signing_preflight_verified: true
+      defer_pointer: true
     secrets: inherit
 
   postflight:
-    name: verify stable release artifacts
+    name: publish and verify every public surface
     needs: [authorize, cli, npm, desktop]
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && needs.authorize.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
       contents: write
     steps:
-      - name: Require every publisher to succeed
+      - name: Require every staged publisher
         env:
-          PUBLISH_CLI: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_cli }}
-          PUBLISH_NPM: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_npm }}
-          PUBLISH_DESKTOP: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_desktop }}
           CLI_RESULT: ${{ needs.cli.result }}
           NPM_RESULT: ${{ needs.npm.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
         run: |
           set -euo pipefail
-          for channel in cli npm desktop; do
-            selected_var="PUBLISH_${channel^^}"
-            result_var="${channel^^}_RESULT"
-            selected="${!selected_var}"
-            result="${!result_var}"
-            if [ "$selected" != "true" ]; then
-              echo "$channel recovery skipped; public postflight will still verify it"
-              continue
-            fi
-            if [ "$result" != "success" ]; then
-              echo "::error::$channel stable publisher result is $result, expected success"
-              exit 1
-            fi
-          done
+          for result in "$CLI_RESULT" "$NPM_RESULT" "$DESKTOP_RESULT"; do test "$result" = success; done
       - uses: actions/checkout@v7
-        with:
-          # Postflight belongs to the trusted control plane, not the old build
-          # candidate, which may predate this verifier.
-          ref: ${{ github.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
-      - name: Verify public artifacts and npm latest
+          registry-url: https://registry.npmjs.org
+      - name: Download staged Homebrew cask
+        uses: actions/download-artifact@v8
+        with:
+          name: official-homebrew-cask-${{ needs.authorize.outputs.version }}
+          path: /tmp/homebrew
+      - name: Revalidate tag and staged artifacts
+        env:
+          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+          APPROVED_SHA: ${{ needs.authorize.outputs.sha }}
+        run: bash scripts/verify-release-tag.sh
+      - name: Advance npm compatibility tags together
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: node scripts/finalize-npm-official-release.mjs "${{ needs.authorize.outputs.version }}"
+      - name: Advance R2 official pointer
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          VERSION: ${{ needs.authorize.outputs.version }}
+        run: |
+          set -euo pipefail
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          candidate=/tmp/candidate.json
+          current=/tmp/current.json
+          aws s3 cp "s3://${R2_BUCKET}/desktop-v${VERSION}/latest.json" "$candidate" --endpoint-url "$endpoint"
+          if aws s3 cp "s3://${R2_BUCKET}/latest/latest.json" "$current" --endpoint-url "$endpoint" 2>/dev/null; then
+            decision="$(bash scripts/decide-desktop-pointer-update.sh stable "$candidate" "$current")"
+          else
+            decision="update\t$candidate"
+          fi
+          IFS=$'\t' read -r action source <<< "$decision"
+          if [ "$action" = update ]; then
+            aws s3 cp "$source" "s3://${R2_BUCKET}/latest/latest.json" --endpoint-url "$endpoint" --content-type "application/json; charset=utf-8" --cache-control "public, max-age=300, stale-if-error=86400"
+          elif [ "$action" != skip ]; then
+            echo "::error::invalid R2 pointer decision: $decision"; exit 1
+          fi
+      - name: Publish the unified GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.authorize.outputs.tag }}
+        run: gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false --prerelease=false --latest --title "Reasonix $TAG"
+      - name: Advance Homebrew after the unified Release is public
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+          CASK_PATH: /tmp/homebrew/reasonix.rb
+        run: bash scripts/publish-homebrew-cask.sh
+      - name: Publish official CLI gateway metadata
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
-          CLI_TAG: ${{ needs.authorize.outputs.cli_tag }}
-          DESKTOP_TAG: ${{ needs.authorize.outputs.desktop_tag }}
-        run: bash scripts/verify-stable-release-artifacts.sh
-      - name: Publish exact Stable release record
+          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: bash scripts/publish-cli-official-metadata.sh
+      - name: Attach immutable release event
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.authorize.outputs.version }}
-          CLI_TAG: ${{ needs.authorize.outputs.cli_tag }}
-          RELEASE_SHA: ${{ needs.authorize.outputs.sha }}
+          TAG: ${{ needs.authorize.outputs.tag }}
+          SHA: ${{ needs.authorize.outputs.sha }}
         run: |
           set -euo pipefail
-          if ! node -e '
-            const catalog = require("./release-notes/releases.json");
-            const release = catalog.releases.find((item) => item.version === process.env.VERSION);
-            process.exit(release?.status === "reviewed" ? 0 : 1);
-          '; then
-            echo "Legacy Stable notes do not require a publication marker"
-            exit 0
-          fi
-          node scripts/release-event.mjs generate \
-            --version "$VERSION" --sha "$RELEASE_SHA" \
-            --published-at "$(gh api "repos/${{ github.repository }}/releases/tags/$CLI_TAG" --jq .published_at)" \
-            --output /tmp/release-event.json
+          published_at="$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq .published_at)"
+          node scripts/release-event.mjs generate --version "$VERSION" --sha "$SHA" --published-at "$published_at" --output /tmp/release-event.json
           existing="$(mktemp -d)"
-          if gh release download "$CLI_TAG" --pattern release-event.json --dir "$existing" 2>/dev/null; then
-            cmp -s /tmp/release-event.json "$existing/release-event.json" || {
-              echo "::error::published release-event.json differs from the approved Stable event"
-              exit 1
-            }
+          if gh release download "$TAG" --pattern release-event.json --dir "$existing" 2>/dev/null; then
+            cmp -s /tmp/release-event.json "$existing/release-event.json"
           else
-            gh release upload "$CLI_TAG" /tmp/release-event.json
+            gh release upload "$TAG" /tmp/release-event.json
           fi
-      - name: Refresh public changelog
+      - name: Deploy and verify the exact website publication
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pages.yml --ref main-v2
+          TAG: ${{ needs.authorize.outputs.tag }}
+          SHA: ${{ needs.authorize.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh workflow run pages.yml --ref "$TAG"
+          run_id=""
+          for _ in $(seq 1 30); do
+            run_id="$(gh run list --workflow pages.yml --event workflow_dispatch --commit "$SHA" --limit 10 --json databaseId --jq '.[0].databaseId // empty')"
+            [ -n "$run_id" ] && break
+            sleep 2
+          done
+          test -n "$run_id"
+          gh run watch "$run_id" --exit-status
+      - name: Verify the public release ledger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.authorize.outputs.version }}
+          RELEASE_TAG: ${{ needs.authorize.outputs.tag }}
+          RELEASE_SHA: ${{ needs.authorize.outputs.sha }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          HOMEBREW_CASK_PATH: /tmp/homebrew/reasonix.rb
+        run: bash scripts/verify-official-release-artifacts.sh

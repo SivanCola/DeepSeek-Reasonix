@@ -54,13 +54,13 @@ true | false) ;;
 	;;
 esac
 
-stable_tag_pattern='^desktop-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+)(\.[0-9A-Za-z-]+)*)?)?$'
+stable_tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 preview_tag_pattern='^desktop-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-preview\.(0|[1-9][0-9]*)$'
 
 case "$channel" in
 stable)
 	if [[ ! "$tag" =~ $stable_tag_pattern ]] || [[ "$tag" =~ $preview_tag_pattern ]]; then
-		echo "::error::Stable Desktop candidate requires desktop-vMAJOR.MINOR.PATCH[-PRERELEASE], excluding -preview.N: $tag" >&2
+		echo "::error::Desktop candidate requires vMAJOR.MINOR.PATCH: $tag" >&2
 		exit 1
 	fi
 	;;

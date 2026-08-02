@@ -6,18 +6,15 @@ allowed_branch_names:
   - main-v2
 allowed_build_definitions:
   - .github/workflows/release-stable.yml
-  - .github/workflows/release-preview.yml
-  - .github/workflows/release-desktop.yml
+  - .github/workflows/recover-release.yml
 fingerprint_files:
   - .github/workflows/release-stable.yml
-  - .github/workflows/release-stable-trigger.yml
-  - .github/workflows/release-preview.yml
-  - .github/workflows/release-cli-trigger.yml
+  - .github/workflows/recover-release.yml
   - .github/workflows/release-desktop.yml
-  - .github/workflows/release-desktop-trigger.yml
   - .signpath/artifact-configurations/windows-payload.xml
   - .signpath/artifact-configurations/windows-installer-v2.xml
   - scripts/complete-signpath-request.ps1
   - scripts/package-windows-desktop.sh
+  - scripts/verify-official-release-candidate.sh
   - scripts/verify-windows-authenticode.ps1
   - cmd/signpath-contract/main.go
