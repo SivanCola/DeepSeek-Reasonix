@@ -61,6 +61,7 @@ grep -Fq 'release-ledger.json' "$root/scripts/verify-official-release-artifacts.
 grep -Fq 'skip_upload: true' "$root/.goreleaser.yaml"
 grep -Fq 'publish-homebrew-cask.sh' "$publish"
 node --test "$root/scripts/render-homebrew-cask.test.mjs"
+node --test "$root/scripts/finalize-npm-official-release.test.mjs"
 
 # Removed public channel orchestrators and tag relays cannot reactivate.
 for retired in release-preview.yml release-stable-trigger.yml release-cli-trigger.yml release-desktop-trigger.yml; do
