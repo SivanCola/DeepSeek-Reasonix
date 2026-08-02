@@ -1092,6 +1092,7 @@ export default function App() {
     setModel,
     setEffort,
     setTokenMode,
+    cancelJob,
     switchTab,
     openProjectTab,
     createDeliveryWorktree,
@@ -4901,6 +4902,8 @@ export default function App() {
             usage={state.usage}
             balance={state.balance}
             running={state.running || rewindCommitting}
+            jobs={state.jobs}
+            onCancelJob={cancelJob}
             sessionTurns={sessionTurns}
             sessionTokens={state.sessionTokens}
             turnTokens={state.turnTotalTokens}
