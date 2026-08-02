@@ -58,10 +58,14 @@ func CloneSessionToPath(srcPath, dstPath string) (*SessionClone, error) {
 		return nil, fmt.Errorf("clone session: lock source file: %w", err)
 	}
 	session, loadErr := loadSessionUnlocked(srcPath)
+	sourceMeta, sourceMetaOK, metaErr := LoadBranchMeta(srcPath)
 	unlockFile()
 	unlock()
 	if loadErr != nil {
 		return nil, fmt.Errorf("clone session: load source: %w", loadErr)
+	}
+	if metaErr != nil {
+		return nil, fmt.Errorf("clone session: load source metadata: %w", metaErr)
 	}
 	// 2. Reserve every destination path (create-only) before Save can replace
 	// any of them. Reserving only the checkpoint/log is insufficient because
@@ -95,7 +99,7 @@ func CloneSessionToPath(srcPath, dstPath string) (*SessionClone, error) {
 	// Session.Save reads the branch-meta CAS ledger before recording a content
 	// revision, so the create-only metadata reservation must already contain a
 	// valid fresh record rather than an empty placeholder.
-	if err := reserveSessionCloneMeta(dstPath); err != nil {
+	if err := reserveSessionCloneMeta(dstPath, sourceMeta, sourceMetaOK); err != nil {
 		clone.Discard()
 		return nil, err
 	}
@@ -117,13 +121,33 @@ func removeSessionCloneFiles(paths ...string) {
 	}
 }
 
-func reserveSessionCloneMeta(sessionPath string) error {
+func reserveSessionCloneMeta(sessionPath string, source BranchMeta, sourceOK bool) error {
 	path := store.SessionMeta(sessionPath)
 	when := time.Now().UTC()
 	meta := BranchMeta{
 		ID:        BranchID(sessionPath),
 		CreatedAt: when,
 		UpdatedAt: when,
+	}
+	if sourceOK {
+		// Keep the desktop binding and user-selected runtime profile so opening a
+		// copy stays in the same workspace/topic. Lineage, recovery, in-flight,
+		// and persistence-ledger fields intentionally start fresh: the copy is an
+		// independent session whose first Save owns its own revision history.
+		meta.Name = source.Name
+		meta.Scope = source.Scope
+		meta.WorkspaceRoot = source.WorkspaceRoot
+		meta.TopicID = source.TopicID
+		meta.TopicTitle = source.TopicTitle
+		meta.CustomTitle = source.CustomTitle
+		meta.Model = source.Model
+		meta.TokenMode = source.TokenMode
+		meta.Mode = source.Mode
+		meta.ToolApprovalMode = source.ToolApprovalMode
+		meta.Goal = source.Goal
+		meta.SchemaVersion = source.SchemaVersion
+		meta.Turns = source.Turns
+		meta.Preview = source.Preview
 	}
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {

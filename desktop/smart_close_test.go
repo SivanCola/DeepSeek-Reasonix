@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/provider"
@@ -81,11 +82,17 @@ func TestReopenSessionCopyCreatesRealCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := filepath.Join(dir, "20260101-000000.000000000-session.jsonl")
-	session := &agent.Session{Messages: []provider.Message{{Role: "user", Content: "hello"}}}
+	session := &agent.Session{Messages: []provider.Message{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: "hello"},
+	}}
 	if err := session.Save(original); err != nil {
 		t.Fatal(err)
 	}
-	tab := &WorkspaceTab{ID: "tab-test", WorkspaceRoot: root, SessionPath: original}
+	if err := pinSessionBranchMeta(original, "project", root, "topic-test", "Copy test"); err != nil {
+		t.Fatal(err)
+	}
+	tab := &WorkspaceTab{ID: "tab-test", Scope: "project", WorkspaceRoot: root, TopicID: "topic-test", SessionPath: original}
 	app.mu.Lock()
 	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
 	app.mu.Unlock()
@@ -93,6 +100,34 @@ func TestReopenSessionCopyCreatesRealCopy(t *testing.T) {
 	if err := app.reopenSessionCopy(tab, original, ""); err != nil {
 		t.Fatal(err)
 	}
+	// reopenSessionCopy rebuilds the controller asynchronously. Wait for that
+	// build to publish either a controller or a startup error, then close the
+	// runtime and release its lease before TempDir cleanup. Without this
+	// synchronization Windows can race RemoveAll against the build's sidecar
+	// writes and report "The directory is not empty" after all assertions pass.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		app.mu.RLock()
+		ctrl := tab.Ctrl
+		startupErr := tab.StartupErr
+		app.mu.RUnlock()
+		if ctrl != nil || startupErr != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("copied session controller rebuild did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Cleanup(func() {
+		app.mu.RLock()
+		ctrl := tab.Ctrl
+		app.mu.RUnlock()
+		if ctrl != nil {
+			ctrl.Close()
+		}
+		tab.releaseSessionLease()
+	})
 	app.mu.RLock()
 	copied := tab.SessionPath
 	app.mu.RUnlock()
@@ -106,12 +141,12 @@ func TestReopenSessionCopyCreatesRealCopy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cloned session does not load: %v", err)
 	}
-	if len(cloned.Messages) != 1 || cloned.Messages[0].Content != "hello" {
+	if len(cloned.Messages) != 2 || cloned.Messages[1].Content != "hello" {
 		t.Errorf("cloned content = %+v, want the original messages", cloned.Messages)
 	}
 	// The original stays untouched.
 	orig, err := agent.LoadSession(original)
-	if err != nil || len(orig.Messages) != 1 || orig.Messages[0].Content != "hello" {
+	if err != nil || len(orig.Messages) != 2 || orig.Messages[1].Content != "hello" {
 		t.Errorf("original modified by copy: %v (%v)", orig.Messages, err)
 	}
 }

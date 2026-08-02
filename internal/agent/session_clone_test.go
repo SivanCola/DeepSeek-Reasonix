@@ -28,6 +28,18 @@ func TestCloneSessionIncludesAuthoritativeEventLog(t *testing.T) {
 	if err := s.Save(src); err != nil {
 		t.Fatal(err)
 	}
+	sourceMeta, ok, err := LoadBranchMeta(src)
+	if err != nil || !ok {
+		t.Fatalf("load source metadata: ok=%v err=%v", ok, err)
+	}
+	sourceMeta.Scope = "project"
+	sourceMeta.WorkspaceRoot = dir
+	sourceMeta.TopicID = "topic-copy"
+	sourceMeta.TopicTitle = "Copy topic"
+	sourceMeta.Model = "deepseek/model"
+	if err := SaveBranchMetaPreserveUpdated(src, sourceMeta); err != nil {
+		t.Fatal(err)
+	}
 	// A newer turn lands only in the event log: the checkpoint (jsonl) stays
 	// behind because the log is authoritative once present.
 	withThird := append(append([]provider.Message(nil), msgs...), provider.Message{Role: "assistant", Content: "third"})
@@ -62,6 +74,20 @@ func TestCloneSessionIncludesAuthoritativeEventLog(t *testing.T) {
 	}
 	if _, err := os.Stat(BranchMetaPath(dst)); err != nil {
 		t.Errorf("clone has no branch metadata: %v", err)
+	}
+	clonedMeta, ok, err := LoadBranchMeta(dst)
+	if err != nil || !ok {
+		t.Fatalf("load cloned metadata: ok=%v err=%v", ok, err)
+	}
+	if clonedMeta.ID != BranchID(dst) || clonedMeta.ID == sourceMeta.ID {
+		t.Errorf("clone metadata ID = %q, want fresh ID for %q", clonedMeta.ID, dst)
+	}
+	if clonedMeta.Scope != sourceMeta.Scope || clonedMeta.WorkspaceRoot != sourceMeta.WorkspaceRoot ||
+		clonedMeta.TopicID != sourceMeta.TopicID || clonedMeta.TopicTitle != sourceMeta.TopicTitle || clonedMeta.Model != sourceMeta.Model {
+		t.Errorf("clone metadata binding/profile drifted: got %+v source %+v", clonedMeta, sourceMeta)
+	}
+	if clonedMeta.Revision <= 0 || clonedMeta.ContentDigest == "" {
+		t.Errorf("clone metadata did not start its own persistence ledger: %+v", clonedMeta)
 	}
 }
 
