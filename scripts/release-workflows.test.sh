@@ -15,9 +15,10 @@ grep -Fxq 'name: Recover release' "$recover"
 [ "$(sed -n '/workflow_dispatch:/,/permissions:/p' "$prepare" | grep -Ec '^      [a-z_]+:$')" = 1 ]
 grep -Eq '^    environment: release$' "$publish"
 [ "$(grep -Ec '^    environment: release$' "$publish")" = 1 ]
-grep -Fq 'RELEASE_TAGGER_APP_ID' "$publish"
-grep -Fq 'RELEASE_TAGGER_PRIVATE_KEY' "$publish"
-grep -Fq 'actions/create-github-app-token@' "$publish"
+! grep -Fq 'RELEASE_TAGGER_APP_ID' "$publish"
+! grep -Fq 'RELEASE_TAGGER_PRIVATE_KEY' "$publish"
+! grep -Fq 'actions/create-github-app-token@' "$publish"
+grep -Fq 'GH_TOKEN: ${{ github.token }}' "$publish"
 
 # Exact candidate validation runs before and after approval; private candidates
 # are retained for seven days and no tag exists before authorize.
@@ -29,7 +30,8 @@ tag_line="$(grep -n -m1 'git/refs' "$publish" | cut -d: -f1)"
 [ "$candidate_line" -lt "$authorize_line" ]
 [ "$authorize_line" -lt "$tag_line" ]
 
-# One tag feeds every publisher. Child workflows are reusable only and cannot
+# The repository token creates one tag after the sole approval. That tag feeds
+# every publisher. Child workflows are reusable only and cannot
 # expose extra approval or manual publication entrypoints.
 grep -Fq 'tag: ${{ needs.authorize.outputs.tag }}' "$publish"
 for child in release.yml release-desktop.yml release-npm.yml; do

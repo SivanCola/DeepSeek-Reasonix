@@ -27,8 +27,10 @@ variables:
   fingerprint;
 - the signing-contract attestation used by the Desktop workflow;
 - minisign keys required for cross-platform update assets;
-- `RELEASE_TAGGER_APP_ID` and `RELEASE_TAGGER_PRIVATE_KEY`;
 - R2 and npm publication credentials.
+
+The approved parent workflow creates `vX.Y.Z` with its short-lived repository
+`GITHUB_TOKEN`; no custom GitHub App or long-lived tag credential is required.
 
 SignPath must allow only the protected official control-plane workflow. There
 must be no environment protection on child signing jobs: the parent `release`

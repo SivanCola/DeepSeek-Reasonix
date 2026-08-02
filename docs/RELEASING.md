@@ -19,9 +19,9 @@ merge, and one environment approval:
 6. Monitor **Publish release** through postflight.
 
 The workflow freezes the notes merge SHA as the product candidate, revalidates
-it after approval, and uses the repository-scoped `reasonix-release-tagger` App
-to create the only public tag. No child publisher or SignPath request may ask
-for another human approval.
+it after approval, and uses its repository-scoped `GITHUB_TOKEN` to create the
+only public tag. No custom GitHub App, long-lived tag credential, child
+publisher approval, or separate SignPath approval is required.
 
 ## Automated publication
 
@@ -29,7 +29,7 @@ Before approval, Actions builds private CLI and npm candidates and retains them
 for seven days. It does not create a public tag, Release, R2 pointer, or npm
 prerelease. After approval it:
 
-1. creates `vX.Y.Z` with the App;
+1. creates `vX.Y.Z` with the approved workflow token;
 2. stages CLI and signed Desktop assets in one draft GitHub Release;
 3. uploads Desktop assets to immutable R2 `desktop-vX.Y.Z/`;
 4. publishes npm packages under the temporary `official-staging` dist-tag;
@@ -54,11 +54,12 @@ deleted; product regressions ship as a higher patch version.
 
 ## Repository controls
 
-- The `reasonix-release-tagger` App is installed only on this repository with
-  `contents: write`. Its App ID and private key live only in `release`.
 - Rulesets deny update and deletion of `v*`, historical `desktop-v*`, and
-  `npm-v*`. Only the App may create new `v*` tags.
-- Humans and normal workflow tokens cannot create normal release tags.
+  `npm-v*`. Creation stays available to the approved workflow token; normal
+  releases never require a maintainer to create a tag.
+- A manually created `v*` tag cannot start publication because the old tag
+  relays are removed. If it occupies an intended version, candidate validation
+  fails closed and the release must use a higher unused version.
 - `release` has one reviewer group. The retired `canary` environment and its
   secrets are removed only after the bridge release is verified.
 
@@ -71,9 +72,9 @@ channel settings, while accepting historical and unified GitHub asset bases.
 Historical prerelease tags, Releases, and exact changelog pages are retained as
 archives; they are never reused or deleted.
 
-Activation must be atomic: enable **Publish release**, switch the tag ruleset to
-App-only creation, remove old relays and recovery entrypoints, and publish the
-website/documentation changes in the same window.
+Activation must be atomic: enable **Publish release**, keep release tags
+immutable after creation, remove old relays and recovery entrypoints, and
+publish the website/documentation changes in the same window.
 
 ## Rollout sequence
 
@@ -86,11 +87,13 @@ Do not merge the final activation as one unphased change:
 2. **Bridge official release:** publish `v1.19.2` with the old system and prove
    old CLI/Desktop installations can traverse bridge → official. Freeze the
    old rolling endpoints at the bridge and align npm compatibility tags.
-3. **Engine and settings:** merge the hidden single-release engine, configure
-   the App, `release` secrets, SignPath definitions, and compatibility tag
-   rules. Run private candidates without moving public state.
-4. **Atomic activation:** enable the new workflows, switch `v*` creation to the
-   App, remove old relays, and deploy the website/docs in one window.
+3. **Engine and settings:** merge the hidden single-release engine, keep one
+   `release` reviewer group, configure SignPath and publication credentials,
+   and retain immutable-tag rules. Run private candidates without moving
+   public state.
+4. **Atomic activation:** enable the new workflows, allow the approved workflow
+   token to create the one `v*` tag, remove old relays, and deploy the
+   website/docs in one window.
    Run `bash scripts/archive-preview-releases.sh` once with an authenticated
    maintainer CLI to add the archive banner without deleting historical assets.
 5. **First native release:** publish the next patch (normally `v1.19.3`) and

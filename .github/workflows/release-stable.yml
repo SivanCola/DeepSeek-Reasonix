@@ -120,13 +120,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/create-github-app-token@v2
-        id: app
-        with:
-          app-id: ${{ secrets.RELEASE_TAGGER_APP_ID }}
-          private-key: ${{ secrets.RELEASE_TAGGER_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
       - name: Revalidate after approval
         env:
           GH_TOKEN: ${{ github.token }}
@@ -136,10 +129,10 @@ jobs:
           RELEASE_SHA: ${{ needs.preflight.outputs.sha }}
           ALLOW_EXISTING_TAG: ${{ needs.preflight.outputs.recovery }}
         run: bash scripts/verify-official-release-candidate.sh
-      - name: Create the only public tag with the release App
+      - name: Create the only public tag with the approved workflow token
         if: needs.preflight.outputs.recovery != 'true'
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.preflight.outputs.tag }}
           SHA: ${{ needs.preflight.outputs.sha }}
         run: gh api --method POST "repos/${{ github.repository }}/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA"
