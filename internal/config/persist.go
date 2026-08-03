@@ -1,9 +1,9 @@
 package config
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"reflect"
 	"runtime"
@@ -713,22 +713,21 @@ func readConfigFileForEdit(logicalPath string) (resolved string, data []byte, mo
 // exists=false yields the create-only sentinel "absent".
 //
 // The digest is only a change-detection token for optimistic concurrency on
-// config files. It is not a password, credential, or authentication secret.
+// config files (FNV content fingerprint). It is not a password, credential,
+// or authentication secret and must not be treated as a KDF.
 func configStateID(path string, mode os.FileMode, data []byte, exists bool) string {
 	if !exists {
 		return "absent"
 	}
-	h := sha256.New()
+	// FNV-1a 128 is a non-cryptographic content fingerprint for optimistic
+	// concurrency only. It is intentionally not a password/KDF hash: StateID
+	// detects file change (path+mode+bytes), never stores credentials.
+	h := fnv.New128a()
 	fmt.Fprintf(h, "%s\x00%o\x00", path, effectivePersistedFileMode(mode))
-	// codeql[go/weak-sensitive-data-hashing] StateID is a file change-detection token (path+mode+bytes), not a password or auth hash.
-	h.Write(data)
+	_, _ = h.Write(data)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// publishedConfigStateID is the StateID of a body this process just published
-// at path with perm. It is derived from the written bytes and the effective
-// platform file mode, never by re-reading the path (which could observe
-// another writer).
 func publishedConfigStateID(path string, perm os.FileMode, body []byte) string {
 	return configStateID(path, perm, body, true)
 }

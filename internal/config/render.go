@@ -389,11 +389,7 @@ func renderTOMLInto(r *tomlRenderer, c *Config, scope RenderScope) string {
 				fmt.Fprintf(&b, "vision_detail = %s   # openai image detail hint: low|high; empty = auto\n", r.q(p.VisionDetail))
 			}
 			if p.ReasoningProtocol != "" {
-<<<<<<< HEAD
-				fmt.Fprintf(&b, "reasoning_protocol = %q   # auto|deepseek|glm|openai|none; overrides model/endpoint reasoning detection\n", p.ReasoningProtocol)
-=======
-				fmt.Fprintf(&b, "reasoning_protocol = %s   # auto|deepseek|openai|none; overrides model/endpoint reasoning detection\n", r.q(p.ReasoningProtocol))
->>>>>>> f866f4975 (fix(config): make TOML persistence safe)
+				fmt.Fprintf(&b, "reasoning_protocol = %s   # auto|deepseek|glm|openai|none; overrides model/endpoint reasoning detection\n", r.q(p.ReasoningProtocol))
 			}
 			if len(p.SupportedEfforts) > 0 {
 				fmt.Fprintf(&b, "supported_efforts = %s   # custom /effort levels exposed by this provider; overrides the built-in Kind/BaseURL default\n", r.stringArray(p.SupportedEfforts))
@@ -402,11 +398,7 @@ func renderTOMLInto(r *tomlRenderer, c *Config, scope RenderScope) string {
 				fmt.Fprintf(&b, "default_effort    = %s   # used when /effort is auto or unset; must be one of supported_efforts\n", r.q(p.DefaultEffort))
 			}
 			if len(p.ModelOverrides) > 0 {
-<<<<<<< HEAD
-				fmt.Fprintf(&b, "model_overrides   = %s   # per-model context/output/reasoning/vision overrides for mixed gateways\n", renderModelOverrides(p.ModelOverrides))
-=======
-				fmt.Fprintf(&b, "model_overrides   = %s   # per-model context/reasoning/vision overrides for mixed gateways\n", r.modelOverrides(p.ModelOverrides))
->>>>>>> f866f4975 (fix(config): make TOML persistence safe)
+				fmt.Fprintf(&b, "model_overrides   = %s   # per-model context/output/reasoning/vision overrides for mixed gateways\n", r.modelOverrides(p.ModelOverrides))
 			}
 			if p.NoProxy {
 				b.WriteString("no_proxy    = true   # reach this base_url directly, never via the proxy\n")
