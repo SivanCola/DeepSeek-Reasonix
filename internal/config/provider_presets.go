@@ -186,7 +186,7 @@ var curatedProviderPresets = []ProviderPreset{
 	{
 		ID:          "deepseek-anthropic",
 		Label:       "DeepSeek Anthropic",
-		Description: "Optional official DeepSeek Anthropic-compatible endpoint; Chat Completions remains the default.",
+		Description: "Official DeepSeek Anthropic-compatible endpoint for Flash and Pro with server-side web search; search may add charges.",
 		KeyEnv:      "DEEPSEEK_API_KEY",
 		Entries: []ProviderEntry{{
 			Name:          "deepseek-anthropic",
@@ -197,6 +197,7 @@ var curatedProviderPresets = []ProviderPreset{
 			APIKeyEnv:     "DEEPSEEK_API_KEY",
 			BalanceURL:    "https://api.deepseek.com/user/balance",
 			Thinking:      "enabled",
+			WebSearch:     true,
 			ContextWindow: 1_000_000,
 			Prices:        deepSeekV4PricesUSD(),
 			ModelOverrides: map[string]ProviderModelOverride{
@@ -539,7 +540,7 @@ var curatedProviderPresets = []ProviderPreset{
 	{
 		ID:          "deepseek-responses",
 		Label:       "DeepSeek Responses API",
-		Description: "DeepSeek official stateless Responses API for deepseek-v4-flash.",
+		Description: "DeepSeek official stateless Responses API for deepseek-v4-flash with server-side web search; search may add charges.",
 		KeyEnv:      "DEEPSEEK_API_KEY",
 		Entries: []ProviderEntry{{
 			Name:             "deepseek-responses",
@@ -552,6 +553,7 @@ var curatedProviderPresets = []ProviderPreset{
 			ContextWindow:    1_000_000,
 			Price:            deepSeekV4FlashPriceUSD(),
 			ResponsesMode:    "stateless",
+			WebSearch:        true,
 			SupportedEfforts: []string{"low", "high", "max"},
 			DefaultEffort:    "high",
 		}},

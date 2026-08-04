@@ -34,6 +34,7 @@ func init() {
 func newFromConfig(cfg provider.Config) (provider.Provider, error) {
 	effort, _ := cfg.Extra["effort"].(string)
 	mode, _ := cfg.Extra["mode"].(string)
+	webSearch, _ := cfg.Extra["web_search"].(bool)
 	var stateful *bool
 	switch value := cfg.Extra["stateful"].(type) {
 	case bool:
@@ -47,7 +48,7 @@ func newFromConfig(cfg provider.Config) (provider.Provider, error) {
 	maxOutputTokens, _ := cfg.Extra["max_output_tokens"].(int)
 	return New(Config{
 		Name: cfg.Name, APIKey: cfg.APIKey, BaseURL: cfg.BaseURL, Model: cfg.Model,
-		Effort: effort, Mode: mode, Stateful: stateful, Proxy: proxy,
+		Effort: effort, Mode: mode, Stateful: stateful, WebSearch: webSearch, Proxy: proxy,
 		KeyEnv: keyEnv, KeySource: keySource, MaxOutputTokens: maxOutputTokens,
 	}), nil
 }
@@ -61,6 +62,7 @@ type Config struct {
 	Effort    string
 	Mode      string // stateful | stateless; empty uses vendor detection.
 	Stateful  *bool  // legacy form of Mode; nil preserves vendor detection.
+	WebSearch bool   // expose the provider-executed web_search tool.
 	Proxy     netclient.ProxySpec
 	KeyEnv    string
 	KeySource string
@@ -112,6 +114,7 @@ type client struct {
 	baseURL, model, effort          string
 	vendor, mode                    string
 	sessionCache                    bool
+	webSearch                       bool
 	maxOutputTokens                 int
 	http                            *http.Client
 	idleTimeout                     time.Duration
@@ -143,7 +146,7 @@ func New(cfg Config) provider.Provider {
 	return &client{
 		name: cfg.Name, apiKey: cfg.APIKey, keyEnv: cfg.KeyEnv, keySource: cfg.KeySource,
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"), model: cfg.Model, effort: cfg.Effort,
-		vendor: vendor, mode: cfg.mode(), sessionCache: sessionCache, maxOutputTokens: maxOutputTokens,
+		vendor: vendor, mode: cfg.mode(), sessionCache: sessionCache, webSearch: cfg.WebSearch, maxOutputTokens: maxOutputTokens,
 		http: httpClient, idleTimeout: defaultStreamIdleTimeout,
 	}
 }
@@ -261,8 +264,13 @@ func (c *client) buildRequestBody(req provider.Request) (map[string]any, bool, [
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
 	}
-	if len(req.Tools) > 0 {
-		tools := make([]map[string]any, 0, len(req.Tools))
+	if c.webSearch || len(req.Tools) > 0 {
+		tools := make([]map[string]any, 0, len(req.Tools)+1)
+		// Keep the server tool first and stable across turns. DeepSeek executes
+		// this tool itself; ordinary Reasonix tools remain function entries.
+		if c.webSearch {
+			tools = append(tools, map[string]any{"type": "web_search"})
+		}
 		for _, tool := range req.Tools {
 			parameters := tool.Parameters
 			if len(parameters) == 0 {

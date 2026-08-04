@@ -145,6 +145,39 @@ func TestFactoryPreservesUnsetLegacyStatefulForVendorDetection(t *testing.T) {
 	}
 }
 
+func TestFactoryPropagatesWebSearch(t *testing.T) {
+	p, err := newFromConfig(provider.Config{
+		Name: "deepseek", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash",
+		Extra: map[string]any{"web_search": true},
+	})
+	if err != nil {
+		t.Fatalf("newFromConfig: %v", err)
+	}
+	if !p.(*client).webSearch {
+		t.Fatal("web_search was not propagated to the Responses client")
+	}
+}
+
+func TestWebSearchToolPrecedesFunctionTools(t *testing.T) {
+	client := New(Config{
+		Name: "deepseek", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", WebSearch: true,
+	}).(*client)
+	body, _, _ := client.buildRequestBody(provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "latest release"}},
+		Tools:    []provider.ToolSchema{{Name: "read_file", Description: "Read a file", Parameters: json.RawMessage(`{"type":"object"}`)}},
+	})
+	tools, ok := body["tools"].([]map[string]any)
+	if !ok || len(tools) != 2 {
+		t.Fatalf("tools = %#v, want web_search plus one function", body["tools"])
+	}
+	if got := tools[0]["type"]; got != "web_search" {
+		t.Fatalf("tools[0] = %#v, want stable web_search first", tools[0])
+	}
+	if got := tools[1]["type"]; got != "function" {
+		t.Fatalf("tools[1] = %#v, want function tool", tools[1])
+	}
+}
+
 func TestStatelessRequestReplaysReasoningContentAndToolPair(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -232,6 +265,35 @@ func TestStreamDoesNotDuplicateDoneText(t *testing.T) {
 	}
 	if chunks[len(chunks)-1].Type != provider.ChunkDone {
 		t.Fatalf("last chunk = %v", chunks[len(chunks)-1].Type)
+	}
+}
+
+func TestStreamToleratesWebSearchLifecycleEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeEvents(w,
+			`{"type":"response.web_search_call.in_progress","item_id":"ws_1"}`,
+			`{"type":"response.web_search_call.searching","item_id":"ws_1"}`,
+			`{"type":"response.web_search_call.completed","item_id":"ws_1"}`,
+			`{"type":"response.output_text.delta","item_id":"msg_1","content_index":0,"delta":"found it"}`,
+			`{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}}`,
+		)
+	}))
+	defer server.Close()
+
+	chunks := collect(t, New(Config{Name: "deepseek", APIKey: "key", BaseURL: server.URL, Model: "deepseek-v4-flash", Mode: "stateless", WebSearch: true}), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "search"}},
+	})
+	var text string
+	for _, chunk := range chunks {
+		if chunk.Type == provider.ChunkText {
+			text += chunk.Text
+		}
+		if chunk.Type == provider.ChunkError {
+			t.Fatalf("unexpected stream error: %v", chunk.Err)
+		}
+	}
+	if text != "found it" || chunks[len(chunks)-1].Type != provider.ChunkDone {
+		t.Fatalf("chunks = %#v, want searched answer followed by done", chunks)
 	}
 }
 

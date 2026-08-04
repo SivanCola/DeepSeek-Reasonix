@@ -122,6 +122,21 @@ func TestProviderViewFromEntryIncludesThinking(t *testing.T) {
 	}
 }
 
+func TestProviderViewFromEntryIncludesWebSearch(t *testing.T) {
+	view := providerViewFromEntry(config.ProviderEntry{
+		Name:      "deepseek-responses",
+		Kind:      "responses",
+		WebSearch: true,
+	}, false, true)
+	if !view.WebSearch {
+		t.Fatal("ProviderView.WebSearch = false, want persisted provider capability")
+	}
+	legacy := providerViewFromEntry(config.ProviderEntry{Name: "legacy"}, false, true)
+	if legacy.WebSearch {
+		t.Fatal("legacy provider unexpectedly enabled web search")
+	}
+}
+
 func TestProviderViewFromEntryShowsKeySource(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	t.Setenv("TEST_PROVIDER_KEY_SOURCE", "")
@@ -955,6 +970,34 @@ func TestSaveProviderPreservesExplicitEmptyVisionModels(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `vision_models = []`) {
 		t.Fatalf("saved config did not persist explicit empty vision_models:\n%s", raw)
+	}
+}
+
+func TestSaveProviderPersistsWebSearchWithoutChangingLegacyDefault(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	if err := NewApp().SaveProvider(ProviderView{
+		Name:      "deepseek-responses",
+		Kind:      "responses",
+		BaseURL:   "https://api.deepseek.com",
+		Models:    []string{"deepseek-v4-flash"},
+		Default:   "deepseek-v4-flash",
+		WebSearch: true,
+	}); err != nil {
+		t.Fatalf("SaveProvider: %v", err)
+	}
+
+	cfg := config.LoadForEdit(config.UserConfigPath())
+	got, ok := cfg.Provider("deepseek-responses")
+	if !ok || !got.WebSearch {
+		t.Fatalf("saved provider = %+v, found=%v; want web_search=true", got, ok)
+	}
+	raw, err := os.ReadFile(config.UserConfigPath())
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if !strings.Contains(string(raw), "web_search  = true") {
+		t.Fatalf("saved config did not persist web_search:\n%s", raw)
 	}
 }
 
