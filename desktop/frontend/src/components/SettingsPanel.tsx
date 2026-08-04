@@ -1743,6 +1743,20 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   };
   return (
     <SettingsSection>
+      <SettingsField label={t("settings.desktopLayoutStyle")}>
+        <div className="set-seg">
+          {(["classic", "workbench", "creation"] as const).map((style) => (
+            <button
+              key={style}
+              className={`set-seg__btn${desktopLayoutStyle === style ? " set-seg__btn--on" : ""}`}
+              disabled={busy}
+              onClick={() => void apply(() => app.SetDesktopLayoutStyle(style))}
+            >
+              {desktopLayoutStyleLabel(style, t)}
+            </button>
+          ))}
+        </div>
+      </SettingsField>
       <SettingsField label={t("settings.language")}>
         <div className="set-seg">
           {LANGUAGE_PREFS.map((pref) => (
@@ -1767,20 +1781,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
               onClick={() => void apply(() => app.SetDesktopCurrency(currency))}
             >
               {currency === "" ? t("settings.currencyAuto") : currency}
-            </button>
-          ))}
-        </div>
-      </SettingsField>
-      <SettingsField label={t("settings.desktopLayoutStyle")}>
-        <div className="set-seg">
-          {(["classic", "workbench", "creation"] as const).map((style) => (
-            <button
-              key={style}
-              className={`set-seg__btn${desktopLayoutStyle === style ? " set-seg__btn--on" : ""}`}
-              disabled={busy}
-              onClick={() => void apply(() => app.SetDesktopLayoutStyle(style))}
-            >
-              {desktopLayoutStyleLabel(style, t)}
             </button>
           ))}
         </div>
