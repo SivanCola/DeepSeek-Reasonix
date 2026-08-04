@@ -1735,7 +1735,7 @@ export const zh: Record<DictKey, string> = {
   "settings.providerCompatibility": "接口兼容性",
   "settings.serverWebSearch": "服务端网页搜索",
   "settings.serverWebSearchHint": "允许模型在需要时通过 DeepSeek 搜索互联网；开启不代表每次请求都会搜索。",
-  "settings.serverWebSearchCostHint": "搜索查询会发送给 DeepSeek，并可能产生额外搜索请求和输入 Token 费用。",
+  "settings.serverWebSearchCostHint": "搜索查询会发送给 DeepSeek，并可能增加 Token 用量；实际计费以 DeepSeek 当前规则为准。",
   "settings.serverWebSearchApplies": "适用模型：{models}",
   "settings.responsesStateless": "Responses · 无状态",
   "settings.anthropicCompatible": "Anthropic · Claude 兼容",

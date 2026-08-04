@@ -1349,12 +1349,12 @@ type ProviderEntry struct {
 	// (the field is omitted). "low" caps an image to a fixed ~85 tokens for cheap
 	// coarse reads; ignored by providers without the knob (e.g. anthropic).
 	VisionDetail string `toml:"vision_detail"`
-	// WebSearch enables the provider-executed web_search tool for compatible
-	// Anthropic and Responses endpoints. DeepSeek returns web_search_tool_result
-	// blocks on the Anthropic wire and response.web_search_call events on the
-	// Responses wire. Off by default for backward compatibility; curated
-	// DeepSeek presets may opt in for newly installed entries.
-	WebSearch bool `toml:"web_search"`
+	// WebSearch controls the provider-executed web_search tool for compatible
+	// Anthropic and Responses endpoints. Nil lets official DeepSeek endpoints use
+	// their product default; non-nil preserves an explicit user choice across
+	// config rewrites. DeepSeek returns web_search_tool_result blocks on the
+	// Anthropic wire and response.web_search_call events on the Responses wire.
+	WebSearch *bool `toml:"web_search"`
 	// ReasoningProtocol selects the request shape for OpenAI-compatible reasoning
 	// models. Empty/auto uses the model capability registry plus endpoint
 	// heuristics; glm selects GLM's thinking.type toggle; none disables automatic

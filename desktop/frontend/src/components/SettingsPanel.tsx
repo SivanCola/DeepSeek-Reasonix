@@ -5851,14 +5851,33 @@ function providerBaseHost(baseUrl: string): string {
 type ProviderVisionCapability = "configurable" | "unsupported";
 
 function isDeepSeekOfficialEndpoint(baseUrl: string): boolean {
-  const host = providerBaseHost(baseUrl);
-  return host === "api.deepseek.com" || host.endsWith(".deepseek.com");
+  return providerBaseHost(baseUrl) === "api.deepseek.com";
 }
 
 export function providerSupportsServerWebSearch(kind: string, baseUrl: string): boolean {
-  if (!isDeepSeekOfficialEndpoint(baseUrl)) return false;
-  const normalizedKind = kind.trim().toLowerCase();
-  return normalizedKind === "responses" || normalizedKind === "anthropic";
+  try {
+    const endpoint = new URL(baseUrl.trim());
+    if (
+      endpoint.protocol !== "https:" ||
+      endpoint.hostname.toLowerCase() !== "api.deepseek.com" ||
+      endpoint.port ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash
+    ) return false;
+    const path = endpoint.pathname.replace(/\/+$/, "");
+    switch (kind.trim().toLowerCase()) {
+      case "responses":
+        return path === "";
+      case "anthropic":
+        return path === "/anthropic";
+      default:
+        return false;
+    }
+  } catch {
+    return false;
+  }
 }
 
 function providerVisionCapability(kind: string, baseUrl: string): ProviderVisionCapability {

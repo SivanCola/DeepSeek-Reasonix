@@ -98,6 +98,10 @@ ok(rootEl.querySelectorAll('input[type="checkbox"]').length === 1, "text-only mo
 ok(providerSupportsServerWebSearch("responses", "https://api.deepseek.com"), "DeepSeek Responses exposes server-side web search");
 ok(providerSupportsServerWebSearch("anthropic", "https://api.deepseek.com/anthropic"), "DeepSeek Anthropic exposes server-side web search");
 ok(!providerSupportsServerWebSearch("openai", "https://api.deepseek.com"), "DeepSeek Chat Completions does not expose server-side web search");
+ok(!providerSupportsServerWebSearch("responses", "https://relay.deepseek.com"), "DeepSeek-like subdomains do not inherit official defaults");
+ok(!providerSupportsServerWebSearch("responses", "https://api.deepseek.com/anthropic"), "Responses rejects the Anthropic base path");
+ok(!providerSupportsServerWebSearch("anthropic", "https://api.deepseek.com"), "Anthropic requires its documented base path");
+ok(!providerSupportsServerWebSearch("responses", "http://api.deepseek.com"), "insecure DeepSeek URLs do not inherit official defaults");
 
 const builtInProvider: ProviderView = {
   name: "deepseek",

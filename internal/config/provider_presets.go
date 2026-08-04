@@ -186,7 +186,7 @@ var curatedProviderPresets = []ProviderPreset{
 	{
 		ID:          "deepseek-anthropic",
 		Label:       "DeepSeek Anthropic",
-		Description: "Official DeepSeek Anthropic-compatible endpoint for Flash and Pro with server-side web search; search may add charges.",
+		Description: "Official DeepSeek Anthropic-compatible endpoint for Flash and Pro with server-side web search; search may increase token usage.",
 		KeyEnv:      "DEEPSEEK_API_KEY",
 		Entries: []ProviderEntry{{
 			Name:          "deepseek-anthropic",
@@ -197,7 +197,7 @@ var curatedProviderPresets = []ProviderPreset{
 			APIKeyEnv:     "DEEPSEEK_API_KEY",
 			BalanceURL:    "https://api.deepseek.com/user/balance",
 			Thinking:      "enabled",
-			WebSearch:     true,
+			WebSearch:     boolPointer(true),
 			ContextWindow: 1_000_000,
 			Prices:        deepSeekV4PricesUSD(),
 			ModelOverrides: map[string]ProviderModelOverride{
@@ -540,7 +540,7 @@ var curatedProviderPresets = []ProviderPreset{
 	{
 		ID:          "deepseek-responses",
 		Label:       "DeepSeek Responses API",
-		Description: "DeepSeek official stateless Responses API for deepseek-v4-flash with server-side web search; search may add charges.",
+		Description: "DeepSeek official stateless Responses API for deepseek-v4-flash with server-side web search; search may increase token usage.",
 		KeyEnv:      "DEEPSEEK_API_KEY",
 		Entries: []ProviderEntry{{
 			Name:             "deepseek-responses",
@@ -553,7 +553,7 @@ var curatedProviderPresets = []ProviderPreset{
 			ContextWindow:    1_000_000,
 			Price:            deepSeekV4FlashPriceUSD(),
 			ResponsesMode:    "stateless",
-			WebSearch:        true,
+			WebSearch:        boolPointer(true),
 			SupportedEfforts: []string{"low", "high", "max"},
 			DefaultEffort:    "high",
 		}},
@@ -977,6 +977,10 @@ var curatedProviderPresets = []ProviderPreset{
 	},
 }
 
+func boolPointer(value bool) *bool {
+	return &value
+}
+
 func cloneProviderPresets(in []ProviderPreset) []ProviderPreset {
 	out := make([]ProviderPreset, 0, len(in))
 	for _, p := range in {
@@ -1003,6 +1007,10 @@ func cloneProviderEntries(in []ProviderEntry) []ProviderEntry {
 }
 
 func cloneProviderEntry(e ProviderEntry) ProviderEntry {
+	if e.WebSearch != nil {
+		value := *e.WebSearch
+		e.WebSearch = &value
+	}
 	e.Models = append([]string(nil), e.Models...)
 	e.VisionModels = append([]string(nil), e.VisionModels...)
 	e.SupportedEfforts = append([]string(nil), e.SupportedEfforts...)

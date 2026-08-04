@@ -2535,7 +2535,7 @@ export const zhTW: Record<DictKey, string> = {
   "settings.providerCompatibility": "介面相容性",
   "settings.serverWebSearch": "服務端網頁搜尋",
   "settings.serverWebSearchHint": "允許模型在需要時透過 DeepSeek 搜尋網際網路；開啟不代表每次請求都會搜尋。",
-  "settings.serverWebSearchCostHint": "搜尋查詢會傳送給 DeepSeek，並可能產生額外搜尋請求和輸入 Token 費用。",
+  "settings.serverWebSearchCostHint": "搜尋查詢會傳送給 DeepSeek，並可能增加 Token 用量；實際計費以 DeepSeek 目前規則為準。",
   "settings.serverWebSearchApplies": "適用模型：{models}",
   "settings.responsesStateless": "Responses · 無狀態",
   "settings.anthropicCompatible": "Anthropic · Claude 相容",

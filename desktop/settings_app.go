@@ -652,7 +652,7 @@ func providerViewFromEntryForRootWithResolverAndCredentials(p config.ProviderEnt
 		ContextWindow:           p.ContextWindow,
 		ReasoningProtocol:       p.ReasoningProtocol,
 		Thinking:                providerThinkingForSettings(p.Thinking),
-		WebSearch:               p.WebSearch,
+		WebSearch:               config.EffectiveWebSearch(&p),
 		SupportedEfforts:        nonNil(p.SupportedEfforts),
 		DefaultEffort:           p.DefaultEffort,
 		ModelOverrides:          providerModelOverridesForView(p.ModelOverrides, models),
@@ -2250,7 +2250,12 @@ func saveProviderConfig(c *config.Config, p ProviderView) error {
 	e.ContextWindow = p.ContextWindow
 	e.ReasoningProtocol = p.ReasoningProtocol
 	e.Thinking = providerThinkingForSettings(p.Thinking)
-	e.WebSearch = p.WebSearch
+	if config.SupportsServerWebSearch(&e) {
+		enabled := p.WebSearch
+		e.WebSearch = &enabled
+	} else {
+		e.WebSearch = nil
+	}
 	e.SupportedEfforts = p.SupportedEfforts
 	e.DefaultEffort = p.DefaultEffort
 	e.Model = ""

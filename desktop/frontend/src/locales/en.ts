@@ -1733,7 +1733,7 @@ export const en = {
   "settings.providerCompatibility": "Endpoint compatibility",
   "settings.serverWebSearch": "Server-side web search",
   "settings.serverWebSearchHint": "Allow the model to search the web through DeepSeek when needed. Enabling this does not search on every request.",
-  "settings.serverWebSearchCostHint": "Search queries are sent to DeepSeek and may add search requests and input-token charges.",
+  "settings.serverWebSearchCostHint": "Search queries are sent to DeepSeek and may increase token usage; current billing follows DeepSeek's pricing rules.",
   "settings.serverWebSearchApplies": "Models: {models}",
   "settings.responsesStateless": "Responses · stateless",
   "settings.anthropicCompatible": "Anthropic · Claude-compatible",
