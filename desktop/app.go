@@ -236,6 +236,18 @@ type App struct {
 	// read-only afterwards, so tabEventSink.Emit reads it without a lock.
 	botBridge *botBridgeHub
 
+	// browser is the Browser Companion lifecycle coordinator. It starts lazily
+	// on first use and is never spawned during app startup. browserState
+	// persists the per-chat tab mirror to browser-state-v1.json. Both are set
+	// in NewApp before any tab exists; App methods that use them run on Wails
+	// goroutines, so no extra lock is needed around the pointers themselves.
+	browser      *browserCoordinator
+	browserState *browserStateStore
+	// browserToolsEnabled reports whether local desktop controllers carry the
+	// browser_read/browser_act tools. Set by the tool wiring when a local tab
+	// controller is built; surfaced through GetBrowserStatus.
+	browserToolsEnabled atomic.Bool
+
 	metrics atomic.Pointer[metricsAggregator] // non-nil only when desktop.metrics is opted in; swapped live by SetDesktopMetrics
 
 	notificationSenderOnce sync.Once
@@ -501,6 +513,16 @@ func NewApp() *App {
 	}
 	a.terminals = newTerminalManager(a)
 	a.botBridge = a.newBotBridge()
+	// The Browser Companion coordinator is lazy: nothing spawns until the
+	// first link open or agent browser call.
+	a.browser = newBrowserCoordinator(browserCoordinatorOptions{
+		events: a.handleBrowserEvent,
+		onCrash: func() {
+			a.handleBrowserCompanionCrash()
+		},
+	})
+	a.browserState = newBrowserStateStore()
+	a.browser.tabsChanged = func() { a.browserState.syncFromCoordinator(a.browser) }
 	return a
 }
 
@@ -913,6 +935,13 @@ func (a *App) shutdown(context.Context) {
 	// The remote Serve itself stays resident by design. Background (tray)
 	// close never reaches shutdown and keeps the windows alive.
 	a.closeAllRemoteWindows()
+	// The Browser Companion gets its graceful shutdown first so the tab state
+	// save it performs on window close lands before the app exits. Close is
+	// bounded by the protocol shutdown grace (3s), never blocking app quit
+	// longer.
+	if a.browser != nil {
+		a.browser.Close()
+	}
 	// Run after controller teardown (and after its deferred lifecycle unlocks)
 	// so every accepted usage record reaches disk before a normal app exit.
 	defer func() {
@@ -2386,6 +2415,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                snap.currentTokenMode(),
+		HostTools:                a.browserHostToolsForTab(tab.ID),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
@@ -3422,6 +3452,9 @@ func (a *App) deleteSession(path string, requireRedundantRecovery bool) error {
 	if err := botruntime.ForgetAutoSessionMappingsForPath(sessionPath); err != nil {
 		slog.Warn("desktop: failed to clear auto bot session mapping", "err", err)
 	}
+	// A permanently deleted chat also loses its browser tab state. Cookies and
+	// login state in the shared Chromium profile stay.
+	a.removeBrowserOwnerForSession(sessionPath)
 	if fallback.needs {
 		fallback = a.sessionDeleteFallbackTarget(fallback)
 		if err := a.openFallbackRuntime(fallback); err != nil {
@@ -4599,6 +4632,7 @@ func (a *App) buildSessionRebindCandidate(
 		SessionDir:               sessionDir,
 		EffortOverride:           cloneStringPtr(source.effort),
 		TokenMode:                runtimeProfile.tokenMode,
+		HostTools:                a.browserHostToolsForTab(tab.ID),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
@@ -10086,6 +10120,7 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(effortOverride),
 		TokenMode:                runtime.tokenMode,
+		HostTools:                a.browserHostToolsForTab(tabID),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
@@ -10255,6 +10290,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           &effort,
 		TokenMode:                runtime.tokenMode,
+		HostTools:                a.browserHostToolsForTab(tab.ID),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
@@ -10392,6 +10428,7 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 		SessionDir:               sessionDirForSnapshot(snap),
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                mode,
+		HostTools:                a.browserHostToolsForTab(tabID),
 		SharedHost:               sharedHost,
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),

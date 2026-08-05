@@ -1,6 +1,13 @@
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { ExternalLink, Mail } from "lucide-react";
 import { app, openExternal } from "../lib/bridge";
+import {
+  chatLinkDisposition,
+  hrefProtocol,
+  isSafeExternalProtocol,
+  openChatLink,
+  type BrowserLinkDisposition,
+} from "../lib/browserLinks";
 
 export interface GitHubLinkInfo {
   kind: "issue" | "pull" | "commit";
@@ -101,7 +108,7 @@ function LinkMark({ kind }: { kind: LinkIconKind }) {
   return <ExternalLink aria-hidden="true" size={13} strokeWidth={2} />;
 }
 
-function openLink(href: string | undefined) {
+function openLink(href: string | undefined, disposition?: BrowserLinkDisposition) {
   const local = localPathFromHref(href);
   if (local !== null) {
     // Local paths (linkified plain text or explicit file:/// links) open in
@@ -109,7 +116,21 @@ function openLink(href: string | undefined) {
     void app.OpenLocalPath(local).catch(() => {});
     return;
   }
-  if (href) openExternal(href);
+  if (!href) return;
+  const protocol = hrefProtocol(href);
+  if (protocol === "http:" || protocol === "https:") {
+    // http(s) chat links open in the built-in browser; openChatLink falls
+    // back to the system browser when the companion is unavailable.
+    void openChatLink(href, disposition ?? "foreground").catch(() => {});
+    return;
+  }
+  if (isSafeExternalProtocol(protocol)) {
+    // mailto, tel, sms, ... hand off to the OS opener.
+    openExternal(href);
+    return;
+  }
+  // Unknown or dangerous protocols (javascript:, data:, ...) are never
+  // opened anywhere.
 }
 
 // localPathFromHref returns the decoded local filesystem path when href is a
@@ -137,11 +158,12 @@ export function RichMarkdownLink({
   const handlers = {
     onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       event.preventDefault();
-      openLink(href);
+      // Cmd/Ctrl/Alt+click opens a background tab in the built-in browser.
+      openLink(href, chatLinkDisposition(event));
     },
     onAuxClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       event.preventDefault();
-      openLink(href);
+      openLink(href, chatLinkDisposition(event));
     },
     onMouseDown: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (event.button === 1) event.preventDefault();

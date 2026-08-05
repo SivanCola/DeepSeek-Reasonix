@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -118,6 +119,11 @@ type Options struct {
 	// so each tab loads its own config/skills/hooks without changing the process
 	// cwd — enabling concurrent multi-project sessions.
 	WorkspaceRoot string
+	// HostTools are frontend-provided tools (desktop built-in browser) with
+	// fixed schemas. They are installed in stable order for Full/Delivery
+	// sessions; Economy installs them only after connect_tool_source requests
+	// their Source. CLI, serve, and Remote Workbench never set this field.
+	HostTools []tool.HostTool
 	// AutoPricingCurrency supplies a frontend-resolved pricing region when the
 	// persisted desktop currency and language settings are all automatic. It is
 	// applied to the in-memory config only and never turns Auto into a persisted
@@ -1138,6 +1144,32 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		addMemoryTools()
 	}
 
+	// Host tools (frontend-provided, e.g. the desktop built-in browser) keep
+	// fixed schemas for the whole session. Full/Delivery installs them up
+	// front; Economy exposes them per source through connect_tool_source. The
+	// tool set must not depend on whether the underlying service is currently
+	// available — availability is an execution-time result.
+	hostToolsInstalled := map[string]bool{}
+	addHostTools := func(filterSource string) []string {
+		installed := []string{}
+		for _, ht := range opts.HostTools {
+			if filterSource != "" && ht.Source != filterSource {
+				continue
+			}
+			if hostToolsInstalled[ht.Name] {
+				continue
+			}
+			reg.Add(tool.NewHostTool(ht))
+			hostToolsInstalled[ht.Name] = true
+			installed = append(installed, ht.Name)
+		}
+		sort.Strings(installed)
+		return installed
+	}
+	if !tokenEconomy {
+		addHostTools("")
+	}
+
 	// The `ask` tool puts structured multiple-choice questions to the user. It
 	// reaches them through the Asker on the call context, which interactive
 	// frontends wire to the controller (EnableInteractiveApproval); a headless run
@@ -1541,6 +1573,13 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			return "enabled " + strings.Join(installed, ", ") + "."
 		}
 		reg.Add(&toolSourceConnector{
+			browser: func(context.Context) (string, error) {
+				names := addHostTools("browser")
+				if len(names) == 0 {
+					return "browser tools are not available in this session.", nil
+				}
+				return "enabled " + strings.Join(names, ", ") + ".", nil
+			},
 			docs: func(context.Context) (string, error) {
 				return addDocsTool(), nil
 			},
