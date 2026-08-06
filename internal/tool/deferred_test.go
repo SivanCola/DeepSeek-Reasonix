@@ -86,6 +86,60 @@ func TestActivateAppendsToTailPreservingCorePrefix(t *testing.T) {
 	}
 }
 
+// Defer is the session-assembly counterpart to AddDeferred: it demotes core
+// tools on purpose, which is safe only before the first provider request.
+func TestDeferDemotesRegisteredCoreTools(t *testing.T) {
+	r := NewRegistry()
+	r.Add(stubTool{name: "bash"})
+	r.Add(stubTool{name: "mcp__figma__get_screenshot"})
+	r.Add(stubTool{name: "mcp__sheets__read_range"})
+
+	moved := r.Defer("mcp__figma__get_screenshot", "mcp__sheets__read_range", "never_registered")
+	if len(moved) != 2 {
+		t.Fatalf("Defer moved %v, want the two registered MCP tools", moved)
+	}
+
+	if got, want := schemaNames(t, r), []string{"bash"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Schemas() = %v, want only the core tool", got)
+	}
+	// Deferred, not unregistered: the host can still resolve and activate them.
+	if _, ok := r.Get("mcp__figma__get_screenshot"); !ok {
+		t.Fatal("Defer unregistered a tool instead of withholding it")
+	}
+	if len(r.DeferredRoster()) != 2 {
+		t.Fatalf("roster = %v, want both deferred tools", r.DeferredRoster())
+	}
+}
+
+func TestDeferIsIdempotent(t *testing.T) {
+	r := NewRegistry()
+	r.Add(stubTool{name: "mcp__figma__get_screenshot"})
+
+	if moved := r.Defer("mcp__figma__get_screenshot"); len(moved) != 1 {
+		t.Fatalf("first Defer moved %v, want one name", moved)
+	}
+	if moved := r.Defer("mcp__figma__get_screenshot"); len(moved) != 0 {
+		t.Fatalf("second Defer moved %v, want nothing", moved)
+	}
+}
+
+// Deferring an activated tool must not leave it in the exported tail.
+func TestDeferAfterActivationDoesNotDuplicateInSchemas(t *testing.T) {
+	r := NewRegistry()
+	r.Add(stubTool{name: "bash"})
+	r.AddDeferred(stubTool{name: "mcp__figma__get_screenshot"})
+	r.Activate("mcp__figma__get_screenshot")
+
+	// Already deferred, so this is a no-op rather than a second demotion.
+	if moved := r.Defer("mcp__figma__get_screenshot"); len(moved) != 0 {
+		t.Fatalf("Defer moved %v, want nothing for an already-deferred tool", moved)
+	}
+	want := []string{"bash", "mcp__figma__get_screenshot"}
+	if got := schemaNames(t, r); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Schemas() = %v, want %v", got, want)
+	}
+}
+
 func TestActivateIsIdempotentAndIgnoresUnknownNames(t *testing.T) {
 	r := NewRegistry()
 	r.Add(stubTool{name: "bash"})

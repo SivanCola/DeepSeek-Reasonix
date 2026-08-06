@@ -2111,6 +2111,18 @@ func (c *Controller) Turn() int {
 	return c.turn
 }
 
+// ToolRegistry returns the executor's live tool set, or nil when the build
+// wired none.
+//
+// It exists for hosts that shape the provider-visible tool list after boot —
+// deferring optional capabilities and adding a search tool to reach them, for
+// instance. Callers must treat the registry as shared: the executor reads it on
+// every turn and MCP connects mutate it from background goroutines, so use the
+// Registry's own methods rather than caching what it returned.
+func (c *Controller) ToolRegistry() *tool.Registry {
+	return c.mcp.registry()
+}
+
 // Approve answers a pending ApprovalRequest by ID: allow runs the call, session
 // also remembers a grant for the rest of the session so the same approval scope
 // is not re-prompted. Unknown/expired IDs are ignored.

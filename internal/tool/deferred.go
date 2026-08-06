@@ -60,6 +60,36 @@ func (r *Registry) AddDeferred(t Tool) {
 	r.deferred[name] = true
 }
 
+// Defer moves already-registered tools into the deferred tier, returning the
+// names that moved.
+//
+// This is a session-assembly operation, and the distinction from AddDeferred
+// matters. AddDeferred refuses to demote a core tool because doing so
+// mid-session shrinks the exported list and invalidates the cached prefix.
+// Defer is the deliberate exception: a host calls it between building a session
+// and its first turn, when boot has registered everything into the core tier
+// but nothing has been sent to the provider yet, so there is no cached prefix
+// to lose. Calling it after a turn has run throws that turn's cache away.
+func (r *Registry) Defer(names ...string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	moved := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := r.tools[name]; !ok {
+			continue
+		}
+		if r.deferred[name] {
+			continue
+		}
+		// A core tool is never in r.activated, so the activated tail needs no
+		// cleanup here.
+		r.deferred[name] = true
+		moved = append(moved, name)
+	}
+	return moved
+}
+
 // Activate releases deferred tools into Schemas(), appending them in the order
 // given. Unknown, core-tier, and already-activated names are skipped. It
 // returns the names that actually moved so a caller can report precisely what
