@@ -522,7 +522,7 @@ func NewApp() *App {
 		},
 	})
 	a.browserState = newBrowserStateStore()
-	a.browser.tabsChanged = func() { a.browserState.syncFromCoordinator(a.browser) }
+	a.browser.tabsChanged = func() { a.browserState.scheduleFromCoordinator(a.browser) }
 	return a
 }
 
@@ -939,6 +939,9 @@ func (a *App) shutdown(context.Context) {
 	// save it performs on window close lands before the app exits. Close is
 	// bounded by the protocol shutdown grace (3s), never blocking app quit
 	// longer.
+	if a.browserState != nil {
+		a.browserState.flush()
+	}
 	if a.browser != nil {
 		a.browser.Close()
 	}

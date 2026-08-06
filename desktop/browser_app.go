@@ -165,12 +165,12 @@ func (a *App) RevokeBrowserSiteGrant(origin string) error {
 	return a.browser.Call(ctx, "", "permissions.revoke", browseripc.PermissionsRevokeParams{Origin: origin}, &res)
 }
 
-// InstallOrRepairBrowserComponent is the settings recovery entry for a
-// missing or broken companion. Phase 5 ships the signed component download;
-// until then the method reports a clear typed error so the UI can show the
-// recovery state without breaking the settings surface.
+// InstallOrRepairBrowserComponent downloads the current platform companion,
+// verifies its minisign signature and SHA-256, then atomically activates it.
 func (a *App) InstallOrRepairBrowserComponent() error {
-	return fmt.Errorf("browser component download is not available in this build yet; a signed component will ship with the next release")
+	ctx, cancel := context.WithTimeout(a.reqCtx(), 10*time.Minute)
+	defer cancel()
+	return a.installOrRepairBrowserComponent(ctx)
 }
 
 // browserOwnerForTab resolves the ownerId for a chat link open. An explicit
@@ -269,4 +269,7 @@ func (a *App) removeBrowserOwnerForSession(sessionPath string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = a.browser.RemoveOwner(ctx, ownerID)
+	if a.browserState != nil {
+		a.browserState.flush()
+	}
 }

@@ -87,15 +87,14 @@ app.whenReady().then(() => {
       );
       continue;
     }
-    let resp: BrowserResponse;
-    try {
-      resp = companion.handle(req);
-    } catch (err) {
+    // Requests are intentionally dispatched concurrently so request.cancel
+    // can interrupt a pending tab.wait. Each response is still written as one
+    // complete length-prefixed buffer, so frames cannot interleave.
+    void companion.handle(req).then(send, (err: unknown) => {
       const code: BrowserErrorCode =
         err instanceof ProtocolError ? err.code : "internal";
-      resp = responseError(req.requestId, code, (err as Error).message);
-    }
-    send(resp);
+      send(responseError(req.requestId, code, (err as Error).message));
+    });
   }
   });
 });

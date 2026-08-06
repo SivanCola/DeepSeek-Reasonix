@@ -1,8 +1,8 @@
-// Tab manager: one WebContentsView per remote page, sharing the isolated
-// persist:reasonix-browser-v1 Session. Hidden tabs only toggle visibility;
-// webContents are never reused between tabs. Remote pages get the hardened
-// webPreferences (no Node, no preload, sandbox on) and every navigation is
-// re-validated as http(s) before it can proceed.
+// Tab manager: each logical tab owns at most one WebContentsView and all
+// remote pages share the isolated persist:reasonix-browser-v1 Session. Hidden
+// renderers are throttled and may be discarded under the live-view/idle
+// budgets; activating the logical tab materializes a fresh hardened view and
+// reloads its recorded URL. WebContents are never reused between tabs.
 
 import { BaseWindow, WebContentsView, session, type Session } from "electron";
 import { assertHttpUrl, ProtocolError } from "./protocol";
@@ -21,12 +21,18 @@ export interface TabRecord {
 export type WireEventSink = (name: string, ownerId: string, data: unknown) => void;
 
 export const CHROME_HEIGHT = 40;
+export const MAX_TABS_PER_OWNER = 12;
+export const MAX_TABS_TOTAL = 32;
+export const MAX_LIVE_TABS = 8;
+export const IDLE_DISCARD_MS = 5 * 60 * 1000;
 
 const PROFILE_PARTITION = "persist:reasonix-browser-v1";
 
 interface TabEntry {
   record: TabRecord;
-  view: WebContentsView;
+  view: WebContentsView | null;
+  lastUsedAt: number;
+  discardTimer: NodeJS.Timeout | null;
 }
 
 export class TabManager {
@@ -77,7 +83,7 @@ export class TabManager {
       // Attribute the download to the tab whose webContents initiated it.
       let tabId = "";
       for (const [id, entry] of this.entries) {
-        if (entry.view.webContents === wc) {
+        if (entry.view?.webContents === wc) {
           tabId = id;
           break;
         }
@@ -106,16 +112,8 @@ export class TabManager {
   /** Chrome-initiated new tab: blank page (no network, no origin). The
    * address bar still enforces http(s) before any real navigation. */
   createChromeTab(ownerId: string): TabRecord {
+    this.assertTabBudget(ownerId);
     const id = `t-${++this.seq}`;
-    const view = new WebContentsView({
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        webSecurity: true,
-        session: this.session,
-      },
-    });
     const record: TabRecord = {
       id,
       ownerId,
@@ -125,8 +123,10 @@ export class TabManager {
       active: true,
       fromAgent: false,
     };
-    this.entries.set(id, { record, view });
-    this.window.contentView.addChildView(view);
+    const entry: TabEntry = { record, view: null, lastUsedAt: Date.now(), discardTimer: null };
+    const previousActiveId = this.activeByOwner.get(ownerId) ?? "";
+    const previousVisibleOwner = this.activeOwner;
+    this.entries.set(id, entry);
     const order = this.owners.get(ownerId) ?? [];
     order.push(id);
     this.owners.set(ownerId, order);
@@ -135,7 +135,12 @@ export class TabManager {
     if (this.activeOwner === "") {
       this.activeOwner = ownerId;
     }
-    this.wireTab(ownerId, id, view);
+    try {
+      this.materialize(entry);
+    } catch (err) {
+      this.rollbackCreatedTab(entry, previousActiveId, previousVisibleOwner);
+      throw err;
+    }
     this.layout();
     this.focus(ownerId, id);
     return { ...record };
@@ -143,22 +148,14 @@ export class TabManager {
 
   /** The WebContentsView behind a tab (chrome toolbar navigation). */
   webContentsFor(tabId: string): Electron.WebContentsView | null {
-    return this.entries.get(tabId)?.view ?? null;
+    const entry = this.entries.get(tabId);
+    return entry ? this.materialize(entry) : null;
   }
 
   createTab(ownerId: string, url: string, disposition: string, fromAgent: boolean): TabRecord {
+    this.assertTabBudget(ownerId);
     const checkedUrl = assertHttpUrl(url);
     const id = `t-${++this.seq}`;
-    const view = new WebContentsView({
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        webSecurity: true,
-        // No preload: remote pages are untrusted and get no bridge at all.
-        session: this.session,
-      },
-    });
     const record: TabRecord = {
       id,
       ownerId,
@@ -168,8 +165,10 @@ export class TabManager {
       active: disposition === "foreground",
       fromAgent,
     };
-    this.entries.set(id, { record, view });
-    this.window.contentView.addChildView(view);
+    const entry: TabEntry = { record, view: null, lastUsedAt: Date.now(), discardTimer: null };
+    const previousActiveId = this.activeByOwner.get(ownerId) ?? "";
+    const previousVisibleOwner = this.activeOwner;
+    this.entries.set(id, entry);
     const order = this.owners.get(ownerId) ?? [];
     order.push(id);
     this.owners.set(ownerId, order);
@@ -182,12 +181,13 @@ export class TabManager {
     if (this.activeOwner === "") {
       this.activeOwner = ownerId;
     }
-    this.wireTab(ownerId, id, view);
+    try {
+      this.materialize(entry);
+    } catch (err) {
+      this.rollbackCreatedTab(entry, previousActiveId, previousVisibleOwner);
+      throw err;
+    }
     this.layout();
-    void view.webContents.loadURL(checkedUrl).catch(() => {
-      // Failed loads surface via did-fail-load / navigation events; the host
-      // sees the page state through tab.changed, not a crash here.
-    });
     if (record.active) {
       this.focus(ownerId, id);
     }
@@ -222,7 +222,11 @@ export class TabManager {
     // routed into a new managed tab of the same chat.
     wc.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\//i.test(url)) {
-        const rec = this.createTab(ownerId, url, "background", false);
+        try {
+          this.createTab(ownerId, url, "background", false);
+        } catch (err) {
+          if (!(err instanceof ProtocolError) || err.code !== "tab_busy") throw err;
+        }
         return { action: "deny" };
       }
       // Non-http popups are dropped; the system opener path is host-side.
@@ -314,7 +318,14 @@ export class TabManager {
     if (!entry || entry.record.ownerId !== ownerId) {
       throw new ProtocolError("tab_not_found", `tab ${tabId} not found for owner`);
     }
-    if (entry.record.active) return;
+    entry.lastUsedAt = Date.now();
+    this.cancelDiscard(entry);
+    this.materialize(entry);
+    if (entry.record.active) {
+      this.layout();
+      this.focus(ownerId, tabId);
+      return;
+    }
     // Deactivate the previous active tab of this owner.
     const prevId = this.activeByOwner.get(ownerId);
     if (prevId && prevId !== tabId) {
@@ -361,7 +372,9 @@ export class TabManager {
     }
     const checkedUrl = assertHttpUrl(url);
     entry.record.url = checkedUrl;
-    void entry.view.webContents.loadURL(checkedUrl).catch(() => {});
+    entry.lastUsedAt = Date.now();
+    const view = this.materialize(entry);
+    void view.webContents.loadURL(checkedUrl).catch(() => {});
     return { ...entry.record };
   }
 
@@ -389,7 +402,24 @@ export class TabManager {
     return this.entries.get(tabId)?.record.ownerId ?? "";
   }
 
-  // ---- agent lease (dormant until the CDP controller lands) ----
+  /** Returns a live, hardened target for an agent command. */
+  targetForAgent(ownerId: string, tabId: string): { record: TabRecord; view: WebContentsView } {
+    const entry = this.entries.get(tabId);
+    if (!entry || entry.record.ownerId !== ownerId) {
+      throw new ProtocolError("tab_not_found", `tab ${tabId} not found for owner`);
+    }
+    entry.lastUsedAt = Date.now();
+    this.cancelDiscard(entry);
+    const view = this.materialize(entry);
+    return { record: entry.record, view };
+  }
+
+  /** Agent controller events share the same host event path as tab events. */
+  emitAgentEvent(name: string, ownerId: string, data: unknown): void {
+    this.emit(name, ownerId, data);
+  }
+
+  // ---- agent lease ----
 
   private leaseByTab = new Map<string, string>(); // tabId -> ownerId
 
@@ -420,8 +450,11 @@ export class TabManager {
       // never overlap the window (cross-owner isolation), and within one
       // owner only the single active tab is visible.
       if (entry.record.ownerId === this.activeOwner && entry.record.active) {
-        entry.view.setBounds({ x: 0, y: CHROME_HEIGHT, width: bounds.width, height: contentHeight });
-        entry.view.setVisible(true);
+        const view = this.materialize(entry);
+        entry.lastUsedAt = Date.now();
+        this.cancelDiscard(entry);
+        view.setBounds({ x: 0, y: CHROME_HEIGHT, width: bounds.width, height: contentHeight });
+        view.setVisible(true);
       } else {
         this.applyVisibility(id, entry, false);
       }
@@ -430,18 +463,27 @@ export class TabManager {
 
   private applyVisibility(id: string, entry: TabEntry, visible: boolean): void {
     void id;
+    if (!entry.view) return;
     entry.view.setVisible(visible);
     if (!visible) {
-      // Zero bounds keep hidden views off screen; visibility toggling never
-      // reuses a webContents between tabs.
-      entry.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      // Keep a real viewport while invisible so background screenshots and
+      // CDP geometry remain meaningful. setVisible(false) provides the UI
+      // isolation; the renderer is still throttled and eligible for discard.
+      const bounds = this.window.getContentBounds();
+      entry.view.setBounds({
+        x: 0,
+        y: CHROME_HEIGHT,
+        width: bounds.width,
+        height: Math.max(0, bounds.height - CHROME_HEIGHT),
+      });
+      this.scheduleDiscard(id, entry);
     }
   }
 
   private focus(ownerId: string, tabId: string): void {
     const entry = this.entries.get(tabId);
     if (!entry) return;
-    entry.view.webContents.focus();
+    this.materialize(entry).webContents.focus();
     void ownerId;
   }
 
@@ -450,7 +492,8 @@ export class TabManager {
     this.leaseByTab.delete(tabId);
     // Remove the page from the window so the WebContentsView is fully
     // detached (and destroyed below), not just hidden.
-    if (this.window.contentView.children.includes(entry.view)) {
+    this.cancelDiscard(entry);
+    if (entry.view && this.window.contentView.children.includes(entry.view)) {
       this.window.contentView.removeChildView(entry.view);
     }
     const order = this.owners.get(entry.record.ownerId) ?? [];
@@ -463,9 +506,10 @@ export class TabManager {
       this.activeByOwner.set(entry.record.ownerId, order[order.length - 1]!);
     }
     // Destroy the webContents so no renderer outlives its tab.
-    if (!entry.view.webContents.isDestroyed()) {
+    if (entry.view && !entry.view.webContents.isDestroyed()) {
       entry.view.webContents.close();
     }
+    entry.view = null;
   }
 
   /** Destroys every tab (window close): save happens host-side first. */
@@ -477,6 +521,128 @@ export class TabManager {
 
   get count(): number {
     return this.entries.size;
+  }
+
+  get liveCount(): number {
+    let count = 0;
+    for (const entry of this.entries.values()) if (entry.view) count += 1;
+    return count;
+  }
+
+  /** Deterministic maintenance hook used by the idle timer and tests. */
+  discardIdle(now = Date.now()): number {
+    let discarded = 0;
+    for (const [id, entry] of this.entries) {
+      if (entry.view && !this.isVisible(entry) && !this.leaseByTab.has(id) && now - entry.lastUsedAt >= IDLE_DISCARD_MS) {
+        this.discardView(entry);
+        discarded += 1;
+      }
+    }
+    return discarded;
+  }
+
+  private assertTabBudget(ownerId: string): void {
+    if ((this.owners.get(ownerId)?.length ?? 0) >= MAX_TABS_PER_OWNER) {
+      throw new ProtocolError("tab_busy", `owner tab limit (${MAX_TABS_PER_OWNER}) reached`);
+    }
+    if (this.entries.size >= MAX_TABS_TOTAL) {
+      throw new ProtocolError("tab_busy", `global tab limit (${MAX_TABS_TOTAL}) reached`);
+    }
+  }
+
+  private rollbackCreatedTab(entry: TabEntry, previousActiveId: string, previousVisibleOwner: string): void {
+    const { id, ownerId } = entry.record;
+    this.entries.delete(id);
+    const order = this.owners.get(ownerId) ?? [];
+    const index = order.indexOf(id);
+    if (index >= 0) order.splice(index, 1);
+    if (order.length === 0) this.owners.delete(ownerId);
+    if (previousActiveId) {
+      this.activeByOwner.set(ownerId, previousActiveId);
+      const previous = this.entries.get(previousActiveId);
+      if (previous) previous.record.active = true;
+    } else {
+      this.activeByOwner.delete(ownerId);
+    }
+    this.activeOwner = previousVisibleOwner;
+    if (entry.view && this.window.contentView.children.includes(entry.view)) {
+      this.window.contentView.removeChildView(entry.view);
+    }
+    if (entry.view && !entry.view.webContents.isDestroyed()) {
+      entry.view.webContents.close();
+    }
+    entry.view = null;
+  }
+
+  private materialize(entry: TabEntry): WebContentsView {
+    if (entry.view && !entry.view.webContents.isDestroyed()) return entry.view;
+    this.makeRoomForLiveView(entry.record.id);
+    const view = new WebContentsView({
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+        // No preload: remote pages are untrusted and get no bridge at all.
+        session: this.session,
+      },
+    });
+    view.webContents.setBackgroundThrottling(true);
+    entry.view = view;
+    entry.lastUsedAt = Date.now();
+    this.window.contentView.addChildView(view);
+    this.wireTab(entry.record.ownerId, entry.record.id, view);
+    if (entry.record.url !== "about:blank") {
+      void view.webContents.loadURL(assertHttpUrl(entry.record.url)).catch(() => {});
+    }
+    return view;
+  }
+
+  private makeRoomForLiveView(excludeId: string): void {
+    while (this.liveCount >= MAX_LIVE_TABS) {
+      let victim: TabEntry | null = null;
+      for (const [id, entry] of this.entries) {
+        if (id === excludeId || !entry.view || this.isVisible(entry) || this.leaseByTab.has(id)) continue;
+        if (!victim || entry.lastUsedAt < victim.lastUsedAt) {
+          victim = entry;
+        }
+      }
+      if (!victim) {
+        throw new ProtocolError("tab_busy", `live tab limit (${MAX_LIVE_TABS}) reached`);
+      }
+      this.cancelDiscard(victim);
+      this.discardView(victim);
+    }
+  }
+
+  private isVisible(entry: TabEntry): boolean {
+    return entry.record.ownerId === this.activeOwner && entry.record.active;
+  }
+
+  private scheduleDiscard(id: string, entry: TabEntry): void {
+    if (entry.discardTimer || !entry.view || this.leaseByTab.has(id)) return;
+    const remaining = Math.max(1, IDLE_DISCARD_MS - (Date.now() - entry.lastUsedAt));
+    entry.discardTimer = setTimeout(() => {
+      entry.discardTimer = null;
+      this.discardIdle();
+    }, remaining);
+    entry.discardTimer.unref();
+  }
+
+  private cancelDiscard(entry: TabEntry): void {
+    if (!entry.discardTimer) return;
+    clearTimeout(entry.discardTimer);
+    entry.discardTimer = null;
+  }
+
+  private discardView(entry: TabEntry): void {
+    const view = entry.view;
+    if (!view) return;
+    if (this.window.contentView.children.includes(view)) {
+      this.window.contentView.removeChildView(view);
+    }
+    if (!view.webContents.isDestroyed()) view.webContents.close();
+    entry.view = null;
   }
 }
 

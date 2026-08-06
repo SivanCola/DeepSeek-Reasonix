@@ -20,6 +20,7 @@ import {
 } from "./protocol";
 import { TabManager, type TabRecord } from "./tabs";
 import { Chrome } from "./chrome";
+import { AgentController } from "./agent";
 import {
   BROWSER_EVENTS,
   BROWSER_METHODS,
@@ -41,6 +42,7 @@ export class CompanionApp {
   window: BaseWindow | null = null;
   tabs: TabManager | null = null;
   chrome: Chrome | null = null;
+  agent: AgentController | null = null;
   private readyToOpen = false;
   private helloSeen = false;
 
@@ -148,6 +150,7 @@ export class CompanionApp {
       // reflected in the chrome UI immediately.
       this.chrome?.pushState();
     });
+    this.agent = new AgentController(this.tabs);
     this.chrome = new Chrome(win, this.tabs, {
       activateTab: (tabId) => this.chromeActivateTab(tabId),
       closeTab: (tabId) => this.chromeCloseTab(tabId),
@@ -170,6 +173,7 @@ export class CompanionApp {
       this.window = null;
       this.tabs = null;
       this.chrome = null;
+      this.agent = null;
       this.deps.exit(0);
     });
   }
@@ -189,7 +193,7 @@ export class CompanionApp {
 
   // ---- method dispatch (the exact path the host drives) ----
 
-  handle(req: BrowserRequest): BrowserResponse {
+  async handle(req: BrowserRequest): Promise<BrowserResponse> {
     // The window opens on hello; any tab operation before that is refused
     // with the protocol's not_ready code (this gate lives in the dispatch
     // path so hosts and tests exercise the same behavior).
@@ -215,7 +219,7 @@ export class CompanionApp {
         });
       }
       case "request.cancel":
-        // All handlers are synchronous; nothing is in flight to cancel.
+        this.agent?.cancel(requireParam(params, "requestId"));
         return responseOk(req.requestId, {});
       case "window.open":
         this.openWindow();
@@ -299,16 +303,13 @@ export class CompanionApp {
         return responseOk(req.requestId, record ? toTabInfo(record) : {});
       }
       case "tab.snapshot":
+        return responseOk(req.requestId, await this.agent!.snapshot(params));
       case "tab.screenshot":
+        return responseOk(req.requestId, await this.agent!.screenshot(params));
       case "tab.wait":
+        return responseOk(req.requestId, await this.agent!.wait(req.requestId, params));
       case "tab.act":
-        // Agent control lands with the CDP controller phase. The schemas stay
-        // fixed on the host side; the companion answers with a typed error.
-        return responseError(
-          req.requestId,
-          "unsupported",
-          "agent browser control is not implemented in this build yet",
-        );
+        return responseOk(req.requestId, await this.agent!.act(params));
       case "data.clear": {
         const scopes = Array.isArray(params.scopes) ? (params.scopes as string[]) : [];
         const cleared: string[] = [];
@@ -317,20 +318,20 @@ export class CompanionApp {
           for (const scope of scopes) {
             switch (scope) {
               case "cookies":
-                void ses.clearStorageData({ storages: ["cookies", "localstorage", "indexdb"] });
+                await ses.clearStorageData({ storages: ["cookies", "localstorage", "indexdb"] });
                 cleared.push("cookies");
                 break;
               case "cache":
-                void ses.clearCache();
+                await ses.clearCache();
                 cleared.push("cache");
                 break;
               case "history":
-                void ses.clearCache();
+                await ses.clearCache();
                 cleared.push("history");
                 break;
               case "all":
-                void ses.clearStorageData();
-                void ses.clearCache();
+                await ses.clearStorageData();
+                await ses.clearCache();
                 cleared.push("all");
                 break;
               case "downloads":

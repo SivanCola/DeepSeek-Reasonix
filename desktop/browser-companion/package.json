@@ -9,7 +9,9 @@
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"dist-test/__tests__/*.test.js\"",
-    "test:integration": "pnpm build && node scripts/run-integration.cjs"
+    "test:integration": "pnpm build && node scripts/run-integration.cjs",
+    "test:performance": "pnpm build && node scripts/run-performance.cjs",
+    "package:component": "pnpm build && node scripts/package-component.mjs"
   },
   "engines": {
     "node": ">=24"

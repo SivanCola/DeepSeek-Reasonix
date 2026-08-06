@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"reasonix/internal/fileutil"
 )
@@ -19,6 +20,7 @@ const (
 	browserStateFormatV1   = "reasonix.browser.state.v1"
 	browserStateVersionV1  = 1
 	browserStateTempSuffix = ".tmp"
+	browserStateDebounce   = 250 * time.Millisecond
 )
 
 // browserStateFile is the on-disk format. v1 is frozen: new fields must use a
@@ -60,16 +62,94 @@ type browserStateStore struct {
 	// generation of the newest write that landed.
 	generation  uint64
 	lastWritten uint64
+	// App event callbacks debounce disk writes while still collecting every
+	// mirror generation. Explicit sync/delete/shutdown paths flush immediately.
+	debounce        time.Duration
+	pending         *browserStateFile
+	timer           browserStateTimer
+	scheduleVersion uint64
+}
+
+type browserStateTimer interface {
+	Stop() bool
 }
 
 func newBrowserStateStore() *browserStateStore {
-	return &browserStateStore{path: filepath.Join(desktopConfigDir(), browserStateFileName)}
+	return &browserStateStore{
+		path:     filepath.Join(desktopConfigDir(), browserStateFileName),
+		debounce: browserStateDebounce,
+	}
 }
 
 // syncFromCoordinator snapshots the coordinator's owner mirror and persists it
 // atomically.
 func (s *browserStateStore) syncFromCoordinator(b *browserCoordinator) {
-	s.write(s.snapshotFromCoordinator(b))
+	state := s.snapshotFromCoordinator(b)
+	s.cancelScheduled()
+	s.write(state)
+}
+
+// scheduleFromCoordinator coalesces navigation/title bursts into one atomic
+// disk write. The in-memory coordinator mirror is already current when this
+// is called; only persistence is delayed.
+func (s *browserStateStore) scheduleFromCoordinator(b *browserCoordinator) {
+	state := s.snapshotFromCoordinator(b)
+	s.mu.Lock()
+	s.pending = &state
+	s.scheduleVersion++
+	version := s.scheduleVersion
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+	delay := s.debounce
+	if delay <= 0 {
+		delay = browserStateDebounce
+	}
+	s.timer = time.AfterFunc(delay, func() { s.flushVersion(version) })
+	s.mu.Unlock()
+}
+
+// flush persists the latest scheduled snapshot synchronously. App shutdown
+// and permanent chat deletion call this before returning.
+func (s *browserStateStore) flush() {
+	s.mu.Lock()
+	s.scheduleVersion++
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+	state := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	if state != nil {
+		s.write(*state)
+	}
+}
+
+func (s *browserStateStore) flushVersion(version uint64) {
+	s.mu.Lock()
+	if version != s.scheduleVersion {
+		s.mu.Unlock()
+		return
+	}
+	state := s.pending
+	s.pending = nil
+	s.timer = nil
+	s.mu.Unlock()
+	if state != nil {
+		s.write(*state)
+	}
+}
+
+func (s *browserStateStore) cancelScheduled() {
+	s.mu.Lock()
+	s.scheduleVersion++
+	if s.timer != nil {
+		s.timer.Stop()
+		s.timer = nil
+	}
+	s.pending = nil
+	s.mu.Unlock()
 }
 
 // snapshotFromCoordinator collects the mirror under the coordinator lock and
@@ -91,12 +171,14 @@ func (s *browserStateStore) snapshotFromCoordinator(b *browserCoordinator) brows
 		}
 		state.Owners[ownerID] = so
 	}
-	b.mu.Unlock()
-
+	// Keep b.mu held while assigning the store generation. That makes mirror
+	// collection order and generation order identical: an older callback can
+	// never resume late and receive a generation newer than a later mirror.
 	s.mu.Lock()
 	s.generation++
 	state.Generation = s.generation
 	s.mu.Unlock()
+	b.mu.Unlock()
 	return state
 }
 

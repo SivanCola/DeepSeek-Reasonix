@@ -108,6 +108,86 @@ func TestBrowserStateGenerationGuard(t *testing.T) {
 	}
 }
 
+// TestBrowserStateDebounceCoalescesLatestSnapshot proves the app callback can
+// absorb a navigation/title burst without touching disk until an explicit
+// flush, and that the flushed state is the newest mirror generation.
+func TestBrowserStateDebounceCoalescesLatestSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, browserStateFileName)
+	store := &browserStateStore{path: path, debounce: time.Hour}
+	b := newStateTestCoordinator()
+
+	b.updateTabMirror("chat-1", "t1", "https://old.example", "Old", true, 1)
+	store.scheduleFromCoordinator(b)
+	b.updateTabMirror("chat-1", "t1", "https://new.example", "New", true, 2)
+	store.scheduleFromCoordinator(b)
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("debounced save touched disk before flush: %v", err)
+	}
+	store.flush()
+	state := loadBrowserStateFileFrom(path)
+	owner := state.Owners["chat-1"]
+	if len(owner.Tabs) != 1 || owner.Tabs[0].URL != "https://new.example" || owner.Tabs[0].Title != "New" {
+		t.Fatalf("flushed state = %+v, want newest snapshot", owner)
+	}
+	if state.Generation != 2 || store.lastWritten != 2 {
+		t.Fatalf("generations disk=%d written=%d, want 2", state.Generation, store.lastWritten)
+	}
+}
+
+// TestBrowserStateSnapshotGenerationLinearizesMirrorAge proves an older
+// mirror cannot release the coordinator lock and later receive a generation
+// newer than a concurrently collected snapshot.
+func TestBrowserStateSnapshotGenerationLinearizesMirrorAge(t *testing.T) {
+	b := newStateTestCoordinator()
+	store := newBrowserStateStore()
+	store.mu.Lock() // Hold generation assignment so snapshot must wait there.
+
+	snapshotDone := make(chan struct{})
+	go func() {
+		_ = store.snapshotFromCoordinator(b)
+		close(snapshotDone)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for b.mu.TryLock() {
+		b.mu.Unlock()
+		if time.Now().After(deadline) {
+			store.mu.Unlock()
+			t.Fatal("snapshot never acquired the coordinator lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	mutationDone := make(chan struct{})
+	go func() {
+		b.mu.Lock()
+		b.owners["newer"] = &browserOwnerState{ownerID: "newer"}
+		b.mu.Unlock()
+		close(mutationDone)
+	}()
+	select {
+	case <-mutationDone:
+		store.mu.Unlock()
+		t.Fatal("coordinator mutation overtook snapshot generation assignment")
+	case <-time.After(25 * time.Millisecond):
+		// Expected: the snapshot holds b.mu until it receives its generation.
+	}
+
+	store.mu.Unlock()
+	select {
+	case <-snapshotDone:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot did not finish after generation lock was released")
+	}
+	select {
+	case <-mutationDone:
+	case <-time.After(time.Second):
+		t.Fatal("coordinator mutation did not resume after snapshot")
+	}
+}
+
 // TestBrowserStateCorruptFileTolerated: a corrupt file loads as empty without
 // crashing and the next write repairs it (only well-formed documents from a
 // newer format version are protected from overwrite).

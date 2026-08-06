@@ -1,6 +1,10 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -185,14 +190,111 @@ func TestBrowserSettingsFutureFormatNotOverwritten(t *testing.T) {
 	}
 }
 
-// TestInstallOrRepairBrowserComponentTypedError: the recovery entry exists and
-// fails with a clear, actionable error until Phase 5 ships distribution.
-func TestInstallOrRepairBrowserComponentTypedError(t *testing.T) {
-	a := testBrowserApp()
-	err := a.InstallOrRepairBrowserComponent()
-	if err == nil || !strings.Contains(err.Error(), "not available") {
-		t.Fatalf("err = %v", err)
+// TestInstallBrowserComponentArchive covers the verified-download handoff:
+// extraction stays inside the component root and current.json is activated
+// only after a complete compatible version directory exists.
+func TestInstallBrowserComponentArchive(t *testing.T) {
+	home := t.TempDir()
+	version := "43.3.0-r1"
+	data := browserComponentZIPFixture(t, map[string]string{
+		"current.json":                                  `{"version":"` + version + `"}`,
+		version + "/component.json":                     `{"format":"reasonix.browser.component.v1","version":"` + version + `","electronVersion":"43.3.0","protocolVersion":1}`,
+		version + "/browser/reasonix-browser-companion": "binary",
+	})
+	if err := installBrowserComponentArchive(data, "component.zip", home, "linux"); err != nil {
+		t.Fatalf("installBrowserComponentArchive: %v", err)
 	}
+	bin := filepath.Join(home, browserComponentDirName, version, "browser", "reasonix-browser-companion")
+	if got, err := os.ReadFile(bin); err != nil || string(got) != "binary" {
+		t.Fatalf("installed binary = %q, %v", got, err)
+	}
+	current, err := os.ReadFile(filepath.Join(home, browserComponentDirName, browserCurrentManifest))
+	if err != nil || !strings.Contains(string(current), version) {
+		t.Fatalf("current manifest = %q, %v", current, err)
+	}
+}
+
+func TestInstallBrowserComponentArchiveRejectsTraversal(t *testing.T) {
+	data := browserComponentZIPFixture(t, map[string]string{"../escape": "owned"})
+	if err := installBrowserComponentArchive(data, "component.zip", t.TempDir(), "linux"); err == nil || !strings.Contains(err.Error(), "unsafe archive path") {
+		t.Fatalf("traversal error = %v", err)
+	}
+}
+
+func TestInstallBrowserComponentTarGZ(t *testing.T) {
+	home := t.TempDir()
+	version := "43.3.0-r1"
+	data := browserComponentTarGZFixture(t, map[string]string{
+		"current.json":                                  `{"version":"` + version + `"}`,
+		version + "/component.json":                     `{"format":"reasonix.browser.component.v1","version":"` + version + `","electronVersion":"43.3.0","protocolVersion":1}`,
+		version + "/browser/reasonix-browser-companion": "linux-binary",
+	}, nil)
+	if err := installBrowserComponentArchive(data, "component.tar.gz", home, "linux"); err != nil {
+		t.Fatalf("installBrowserComponentArchive tar.gz: %v", err)
+	}
+	bin := filepath.Join(home, browserComponentDirName, version, "browser", "reasonix-browser-companion")
+	if got, err := os.ReadFile(bin); err != nil || string(got) != "linux-binary" {
+		t.Fatalf("installed binary = %q, %v", got, err)
+	}
+}
+
+func TestInstallBrowserComponentTarGZRejectsEscapingSymlink(t *testing.T) {
+	data := browserComponentTarGZFixture(t, nil, map[string]string{"browser-link": "../../escape"})
+	if err := installBrowserComponentArchive(data, "component.tar.gz", t.TempDir(), "linux"); err == nil || !strings.Contains(err.Error(), "symlink escapes destination") {
+		t.Fatalf("symlink error = %v", err)
+	}
+}
+
+func browserComponentZIPFixture(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, body := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func browserComponentTarGZFixture(t *testing.T, files, symlinks map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, body := range files {
+		mode := int64(0o644)
+		if filepath.Base(name) == "reasonix-browser-companion" {
+			mode = 0o755
+		}
+		h := &tar.Header{Name: name, Mode: mode, Size: int64(len(body)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, target := range symlinks {
+		h := &tar.Header{Name: name, Mode: 0o777, Typeflag: tar.TypeSymlink, Linkname: target}
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 // TestBrowserIPCRequestBudget: a coordinator with a full pending map rejects

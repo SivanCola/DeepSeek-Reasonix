@@ -211,10 +211,9 @@ type browserCoordinator struct {
 // browserOwnerState mirrors one chat's tabs: stable tab order, active tab, and
 // per-tab generation for stale-ref protection.
 type browserOwnerState struct {
-	ownerID    string
-	tabs       []browserTabState
-	activeTab  string
-	generation int64
+	ownerID   string
+	tabs      []browserTabState
+	activeTab string
 	// restoredGen is the companionGen this mirror was restored into. A mirror
 	// whose restoredGen is older than the current companionGen belongs to a
 	// dead companion process and must be remapped on the next restore pass.
@@ -676,44 +675,6 @@ func (b *browserCoordinator) setActiveTabMirror(ownerID, tabID string) {
 	b.mu.Unlock()
 }
 
-func (b *browserCoordinator) removeTabMirror(ownerID, tabID string) {
-	b.mu.Lock()
-	if owner := b.owners[ownerID]; owner != nil {
-		for i, t := range owner.tabs {
-			if t.tabID == tabID {
-				owner.tabs = append(owner.tabs[:i], owner.tabs[i+1:]...)
-				break
-			}
-		}
-	}
-	changed := b.tabsChanged
-	b.mu.Unlock()
-	if changed != nil {
-		changed()
-	}
-}
-
-func (b *browserCoordinator) replaceOwnerMirror(ownerID string, tabs []browseripc.TabInfo) {
-	b.mu.Lock()
-	owner := b.owners[ownerID]
-	if owner == nil {
-		owner = &browserOwnerState{ownerID: ownerID}
-		b.owners[ownerID] = owner
-	}
-	owner.tabs = make([]browserTabState, 0, len(tabs))
-	for _, t := range tabs {
-		owner.tabs = append(owner.tabs, browserTabState{tabID: t.TabID, url: t.URL, title: t.Title, generation: t.Generation})
-		if t.Active {
-			owner.activeTab = t.TabID
-		}
-	}
-	changed := b.tabsChanged
-	b.mu.Unlock()
-	if changed != nil {
-		changed()
-	}
-}
-
 // restoreBrowserState rehydrates the host mirror from browser-state-v1.json
 // after a successful handshake and asks the companion to recreate the tabs.
 // Restoration is best-effort: a failure leaves the chat without browser tabs
@@ -1023,11 +984,12 @@ func (b *browserCoordinator) recordFailureLocked(err error) {
 	}
 }
 
-// ResetRecovery re-arms a disabled coordinator (the settings recovery entry).
+// ResetRecovery re-arms a crashed/disabled coordinator after an explicit
+// install-or-repair action. Ready/starting processes are left untouched.
 func (b *browserCoordinator) ResetRecovery() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.state != browserDisabled {
+	if b.state != browserDisabled && b.state != browserCrashed {
 		return
 	}
 	b.failures = 0
@@ -1516,7 +1478,7 @@ func allowlistedBrowserCompanionEnv() []string {
 //	<home>/browser-components/current.json -> <version dir>/browser/<binary>
 //
 // The REASONIX_BROWSER_COMPANION_BIN env var overrides resolution for local
-// development. Component distribution (download, verify, install) is Phase 5;
+// development. Production installs arrive through the signed update manifest;
 // until a component is present this returns ErrBrowserComponentMissing.
 func resolveBrowserComponentBinary() (string, error) {
 	if override := os.Getenv("REASONIX_BROWSER_COMPANION_BIN"); override != "" {
@@ -1545,11 +1507,15 @@ func resolveBrowserComponentBinary() (string, error) {
 }
 
 func browserComponentBinaryName() string {
-	switch runtime.GOOS {
+	return browserComponentBinaryNameFor(runtime.GOOS)
+}
+
+func browserComponentBinaryNameFor(goos string) string {
+	switch goos {
 	case "windows":
 		return "reasonix-browser-companion.exe"
 	case "darwin":
-		return filepath.Join("Reasonix Browser.app", "Contents", "MacOS", "Reasonix Browser")
+		return filepath.Join("Reasonix Browser.app", "Contents", "MacOS", "Electron")
 	default:
 		return "reasonix-browser-companion"
 	}
