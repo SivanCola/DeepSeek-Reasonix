@@ -843,6 +843,23 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			}
 		}
 	}
+	// Capability mode still performs the existing cache-miss catalog discovery,
+	// but keeps its placeholders in a private registry. This preserves startup
+	// failure diagnostics and warms the schema cache without allowing a live
+	// handshake to add dynamic mcp__* tools to the provider-visible registry.
+	discoverMCPInBackground := func(specs []plugin.Spec) {
+		for _, s := range specs {
+			if pluginHost.HasClient(s.Name) {
+				continue
+			}
+			cs, cacheOK := plugin.LoadCachedSchemaForSpec(s)
+			if cacheOK && cs != nil && len(cs.Tools) > 0 {
+				continue
+			}
+			privateReg := tool.NewRegistry()
+			_ = plugin.LazyToolset(s, cs, pluginHost, privateReg, ctx, true)
+		}
+	}
 	// eagerSpecs already includes extraSpecs when !tokenEconomy; avoid double
 	// registration of host-session servers that connected above.
 	configSpecs := append(append([]plugin.Spec{}, eagerSpecs...), bgSpecs...)
@@ -860,7 +877,18 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		}
 		configSpecs = filtered
 	}
-	registerEnabledMCP(configSpecs)
+	// Select the configured MCP exposure once for this session. Small surfaces
+	// keep their concrete per-tool schemas; large or insufficiently-known
+	// surfaces stay behind the stable use_capability proxy. This is automatic —
+	// users do not need another config toggle — and freezing it here prevents a
+	// later background handshake from changing the provider-cache prefix.
+	exposureCachedTools, exposureCacheKeyOK := capability.LoadCachedToolsForSpecs(configSpecs)
+	mcpExposure := chooseMCPExposure(configSpecs, exposureCachedTools, exposureCacheKeyOK, entry.ContextWindow)
+	if mcpExposure.useCapability() {
+		discoverMCPInBackground(configSpecs)
+	} else {
+		registerEnabledMCP(configSpecs)
+	}
 
 	for _, msg := range demoteMessages {
 		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: msg})
@@ -1722,17 +1750,25 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	}
 	// Always build the runtime when a plugin host exists so task/fleet children
 	// can use the stable proxy even in Balanced/Economy without Delivery.
-	if pluginHost != nil || len(capSpecs) > 0 || tokenDelivery || dualModelPlanner {
+	if pluginHost != nil || len(capSpecs) > 0 || tokenDelivery || dualModelPlanner || mcpExposure.useCapability() {
 		capRuntime = agent.NewMCPCapabilityRuntime(ctx, pluginHost, capSpecs, reg, catalogFn)
 		capRuntime.ConfigureServers(cfg.Plugins, capSpecs, enabledMCPNames)
 	}
-	if tokenDelivery || dualModelPlanner {
+	if tokenDelivery || dualModelPlanner || mcpExposure.useCapability() {
 		capLedger = capability.NewLedger()
 		capAudit = &capability.Audit{}
 		if capRuntime != nil {
 			capProxy = capRuntime.NewFrontend(capLedger, capAudit)
 			reg.Add(capProxy)
 		}
+	}
+	if notice := mcpExposure.notice(); notice != "" {
+		sink.Emit(event.Event{
+			Kind:   event.Notice,
+			Level:  event.LevelInfo,
+			Text:   notice,
+			Detail: mcpExposure.Reason + "; the provider-visible MCP surface is fixed for this session to preserve prompt-cache stability",
+		})
 	}
 	skillStore.ConfigureInvocationPolicy(string(runtimeProfile), func(requires []string) []string {
 		connected := map[string]bool{}
