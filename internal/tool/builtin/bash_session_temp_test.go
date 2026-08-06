@@ -15,45 +15,69 @@ import (
 )
 
 func TestBashSharesSessionTempAcrossCalls(t *testing.T) {
-	m := sessiontemp.NewWithRoot(t.TempDir())
-	m.Retain()
-	defer m.Release()
-
-	work := t.TempDir()
-	b := bash{
-		sb:          sandbox.Spec{Mode: "off"},
-		workDir:     work,
-		sessionTemp: m,
+	type shellCase struct {
+		name  string
+		shell sandbox.Shell
 	}
-
-	marker := "reasonix-session-temp-share"
-	writeCmd := `test "$TMPDIR" = "$TMP" && test "$TMPDIR" = "$TEMP" && printf '%s' shared > "${TMPDIR:?}/` + marker + `"`
+	shells := []shellCase{
+		{name: "default"},
+	}
 	if runtime.GOOS == "windows" {
-		writeCmd = `if (($env:TMPDIR -ne $env:TMP) -or ($env:TMPDIR -ne $env:TEMP)) { throw 'temporary environment variables differ' }; Set-Content -Path (Join-Path $env:TEMP '` + marker + `') -Value 'shared' -NoNewline`
-	}
-	if _, err := b.Execute(context.Background(), argsJSON(t, map[string]any{"command": writeCmd})); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	readCmd := `cat "${TMPDIR:?}/` + marker + `"`
-	if runtime.GOOS == "windows" {
-		readCmd = `Get-Content -Raw (Join-Path $env:TEMP '` + marker + `')`
-	}
-	out, err := b.Execute(context.Background(), argsJSON(t, map[string]any{"command": readCmd}))
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if !strings.Contains(out, "shared") {
-		t.Fatalf("second bash call did not see first temp file: %q", out)
+		// The default on Windows prefers Git Bash when installed. Exercise native
+		// PowerShell explicitly as well so both supported shell modes prove the
+		// same session-temp contract.
+		powerShell := sandbox.ResolveShell("powershell", "", nil)
+		if powerShell.Kind != sandbox.ShellPowerShell {
+			t.Fatal("PowerShell is required for the Windows session-temp regression")
+		}
+		shells = append(shells, shellCase{name: "powershell", shell: powerShell})
 	}
 
-	dir := m.Dir()
-	if dir == "" {
-		t.Fatal("manager has no generation after use")
-	}
-	body, err := os.ReadFile(filepath.Join(dir, marker))
-	if err != nil || string(body) != "shared" {
-		t.Fatalf("host private dir content = %q err=%v", body, err)
+	for _, tc := range shells {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sessiontemp.NewWithRoot(t.TempDir())
+			m.Retain()
+			defer m.Release()
+
+			b := bash{
+				sb:          sandbox.Spec{Mode: "off"},
+				shell:       tc.shell,
+				workDir:     t.TempDir(),
+				sessionTemp: m,
+			}
+			// Pin the lazily resolved default so command syntax follows the shell
+			// actually selected, rather than assuming every Windows host uses
+			// PowerShell (Git Bash is preferred when present).
+			b.shell = b.resolved()
+
+			marker := "reasonix-session-temp-share"
+			writeCmd := `test "$TMPDIR" = "$TMP" && test "$TMPDIR" = "$TEMP" && printf '%s' shared > "${TMPDIR:?}/` + marker + `"`
+			readCmd := `cat "${TMPDIR:?}/` + marker + `"`
+			if b.shell.Kind == sandbox.ShellPowerShell {
+				writeCmd = `if (($env:TMPDIR -ne $env:TMP) -or ($env:TMPDIR -ne $env:TEMP)) { throw 'temporary environment variables differ' }; Set-Content -Path (Join-Path $env:TEMP '` + marker + `') -Value 'shared' -NoNewline`
+				readCmd = `Get-Content -Raw (Join-Path $env:TEMP '` + marker + `')`
+			}
+			if _, err := b.Execute(context.Background(), argsJSON(t, map[string]any{"command": writeCmd})); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+
+			out, err := b.Execute(context.Background(), argsJSON(t, map[string]any{"command": readCmd}))
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if !strings.Contains(out, "shared") {
+				t.Fatalf("second bash call did not see first temp file: %q", out)
+			}
+
+			dir := m.Dir()
+			if dir == "" {
+				t.Fatal("manager has no generation after use")
+			}
+			body, err := os.ReadFile(filepath.Join(dir, marker))
+			if err != nil || string(body) != "shared" {
+				t.Fatalf("host private dir content = %q err=%v", body, err)
+			}
+		})
 	}
 }
 
