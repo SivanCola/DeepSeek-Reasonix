@@ -330,6 +330,9 @@ app.whenReady().then(async () => {
   }
 
   // 14. Logical tabs are bounded independently from live renderer views.
+  //     Background opens remain sleeping until selected/agent-targeted, so a
+  //     burst cannot churn Chromium renderers on a constrained CI machine.
+  const liveBeforeBudget = companion.tabs.liveCount;
   for (let i = 0; i < 12; i += 1) {
     await companion.handle(req(`r-budget-${i}`, "tab.open", "ownerBudget", {
       ownerId: "ownerBudget",
@@ -338,6 +341,7 @@ app.whenReady().then(async () => {
     }));
   }
   check("per-owner logical tab budget permits twelve tabs", companion.tabs.list("ownerBudget").length === 12);
+  check("background tabs stay sleeping until selected", companion.tabs.liveCount === liveBeforeBudget, `before=${liveBeforeBudget} after=${companion.tabs.liveCount}`);
   check("live renderer LRU stays within eight", companion.tabs.liveCount <= 8, `live=${companion.tabs.liveCount}`);
   let ownerLimitRejected = false;
   try {
@@ -350,6 +354,12 @@ app.whenReady().then(async () => {
     ownerLimitRejected = err && err.code === "tab_busy";
   }
   check("thirteenth owner tab is rejected", ownerLimitRejected);
+  const sleepingTab = companion.tabs.list("ownerBudget")[0];
+  companion.tabs.setActiveOwner("ownerBudget");
+  companion.tabs.activate("ownerBudget", sleepingTab.id);
+  check("selecting a sleeping background tab materializes it on demand",
+    !!companion.tabs.webContentsFor(sleepingTab.id) && companion.tabs.liveCount <= 8,
+    `live=${companion.tabs.liveCount}`);
   const discarded = companion.tabs.discardIdle(Date.now() + 5 * 60 * 1000 + 1);
   check("idle maintenance discards hidden renderers", discarded > 0 && companion.tabs.list("ownerBudget").length === 12, `discarded=${discarded}`);
 
@@ -364,7 +374,7 @@ app.whenReady().then(async () => {
     const opened = await companion.handle(req(`r-locked-${i}`, "tab.open", "ownerLocked", {
       ownerId: "ownerLocked",
       url: `${url}?locked=${i}`,
-      disposition: "background",
+      disposition: "foreground",
     }));
     companion.tabs.acquireLease("ownerLocked", opened.result.tabId);
   }
@@ -374,7 +384,7 @@ app.whenReady().then(async () => {
     await companion.handle(req("r-locked-over", "tab.open", "ownerLocked", {
       ownerId: "ownerLocked",
       url,
-      disposition: "background",
+      disposition: "foreground",
     }));
   } catch (err) {
     rendererLimitRejected = err && err.code === "tab_busy";

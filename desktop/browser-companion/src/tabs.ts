@@ -105,10 +105,6 @@ export class TabManager {
 
   // ---- tab lifecycle ----
 
-  /**
-   * Creates a tab for ownerId. Disposition only decides activation; the
-   * WebContentsView is always created (hidden tabs are never recycled).
-   */
   /** Chrome-initiated new tab: blank page (no network, no origin). The
    * address bar still enforces http(s) before any real navigation. */
   createChromeTab(ownerId: string): TabRecord {
@@ -152,6 +148,12 @@ export class TabManager {
     return entry ? this.materialize(entry) : null;
   }
 
+  /**
+   * Creates a tab for ownerId. Foreground tabs are materialized immediately;
+   * background tabs stay as logical records until selected or targeted by an
+   * agent. This avoids renderer churn when a burst of links is opened in the
+   * background while preserving the same URL/tab state for the host.
+   */
   createTab(ownerId: string, url: string, disposition: string, fromAgent: boolean): TabRecord {
     this.assertTabBudget(ownerId);
     const checkedUrl = assertHttpUrl(url);
@@ -181,11 +183,13 @@ export class TabManager {
     if (this.activeOwner === "") {
       this.activeOwner = ownerId;
     }
-    try {
-      this.materialize(entry);
-    } catch (err) {
-      this.rollbackCreatedTab(entry, previousActiveId, previousVisibleOwner);
-      throw err;
+    if (record.active) {
+      try {
+        this.materialize(entry);
+      } catch (err) {
+        this.rollbackCreatedTab(entry, previousActiveId, previousVisibleOwner);
+        throw err;
+      }
     }
     this.layout();
     if (record.active) {
@@ -506,9 +510,7 @@ export class TabManager {
       this.activeByOwner.set(entry.record.ownerId, order[order.length - 1]!);
     }
     // Destroy the webContents so no renderer outlives its tab.
-    if (entry.view && !entry.view.webContents.isDestroyed()) {
-      entry.view.webContents.close();
-    }
+    if (entry.view) this.closeView(entry.view);
     entry.view = null;
   }
 
@@ -568,9 +570,7 @@ export class TabManager {
     if (entry.view && this.window.contentView.children.includes(entry.view)) {
       this.window.contentView.removeChildView(entry.view);
     }
-    if (entry.view && !entry.view.webContents.isDestroyed()) {
-      entry.view.webContents.close();
-    }
+    if (entry.view) this.closeView(entry.view);
     entry.view = null;
   }
 
@@ -641,8 +641,19 @@ export class TabManager {
     if (this.window.contentView.children.includes(view)) {
       this.window.contentView.removeChildView(view);
     }
-    if (!view.webContents.isDestroyed()) view.webContents.close();
+    this.closeView(view);
     entry.view = null;
+  }
+
+  private closeView(view: WebContentsView): void {
+    const wc = view.webContents;
+    if (wc.isDestroyed()) return;
+    // A discarded page may still be loading or have a CDP session attached.
+    // Stop network work and detach first, then explicitly bypass beforeunload
+    // so hidden-page cleanup cannot stall the companion's request loop.
+    wc.stop();
+    if (wc.debugger.isAttached()) wc.debugger.detach();
+    wc.close({ waitForBeforeUnload: false });
   }
 }
 
