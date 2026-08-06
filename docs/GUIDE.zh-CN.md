@@ -553,14 +553,27 @@ Reasonix 始终会从工具子进程环境中移除已保存的 provider 与 bot
 
 **会话私有标准临时目录。**同一逻辑会话内的多条 Bash 命令共享一个私有临时目录，
 因此连续调用可以通过 `$TMPDIR` 交换文件（在 Linux bubblewrap 下还可以通过字面
-`/tmp`）。目录按需创建，不会回退到宿主公共临时目录；在 `/new`、`/clear`、恢复
-另一会话、切换分支时旋转。模型或设置热重建会保留同一目录。临时文件不是持久存储：
-跨进程 resume 不会恢复其中内容；需要长期保留的数据应写入工作区或用户指定路径。
+`/tmp`）。用户不需要设置：Reasonix 会自动为 Bash 和客户端托管的 ACP 终端注入
+`TMPDIR`、`TMP`、`TEMP`。目录按需创建，不会回退到宿主公共临时目录；在 `/new`、
+`/clear`、恢复另一会话、切换分支时旋转。模型或设置热重建会保留同一目录。临时文件
+不是持久存储：跨进程 resume 不会恢复其中内容；需要长期保留的数据应写入工作区或
+用户指定路径。
+
+Reasonix 生成的脚本和项目脚本应使用标准临时目录变量，不要硬编码 `/tmp`；用户无需
+自行设置这些变量。例如：
+
+```sh
+tmp_file="${TMPDIR:?}/result.json"
+```
+
+```powershell
+$tmpFile = Join-Path $env:TEMP "result.json"
+```
 
 | 平台 | `$TMPDIR` / `$TMP` / `$TEMP` | 字面 `/tmp` |
 | --- | --- | --- |
 | Linux + bubblewrap | 虚拟 `/tmp`（绑定到私有目录） | 会话内共享（不再是每次新建的空 tmpfs） |
-| macOS Seatbelt | 私有宿主目录路径（Seatbelt 允许写入） | 仍是 macOS 宿主临时目录；脚本应优先用 `$TMPDIR` |
+| macOS Seatbelt | 私有宿主目录路径（Seatbelt 允许写入） | 仍是 macOS 宿主临时目录；脚本应使用 `$TMPDIR` |
 | Windows（无 OS 级 Bash 沙箱） | 私有宿主目录路径 | 不保证与该目录等价（例如 Git Bash 的 `/tmp`） |
 
 MCP 等独立沙盒继续使用自己的隔离规范，不继承父会话临时目录。获得批准后绕过沙盒的

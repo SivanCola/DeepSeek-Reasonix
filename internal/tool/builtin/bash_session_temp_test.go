@@ -27,17 +27,17 @@ func TestBashSharesSessionTempAcrossCalls(t *testing.T) {
 	}
 
 	marker := "reasonix-session-temp-share"
-	writeCmd := `printf '%s' shared > "$TMPDIR/` + marker + `"`
+	writeCmd := `test "$TMPDIR" = "$TMP" && test "$TMPDIR" = "$TEMP" && printf '%s' shared > "${TMPDIR:?}/` + marker + `"`
 	if runtime.GOOS == "windows" {
-		writeCmd = `Set-Content -Path (Join-Path $env:TMPDIR '` + marker + `') -Value 'shared' -NoNewline`
+		writeCmd = `if (($env:TMPDIR -ne $env:TMP) -or ($env:TMPDIR -ne $env:TEMP)) { throw 'temporary environment variables differ' }; Set-Content -Path (Join-Path $env:TEMP '` + marker + `') -Value 'shared' -NoNewline`
 	}
 	if _, err := b.Execute(context.Background(), argsJSON(t, map[string]any{"command": writeCmd})); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	readCmd := `cat "$TMPDIR/` + marker + `"`
+	readCmd := `cat "${TMPDIR:?}/` + marker + `"`
 	if runtime.GOOS == "windows" {
-		readCmd = `Get-Content -Raw (Join-Path $env:TMPDIR '` + marker + `')`
+		readCmd = `Get-Content -Raw (Join-Path $env:TEMP '` + marker + `')`
 	}
 	out, err := b.Execute(context.Background(), argsJSON(t, map[string]any{"command": readCmd}))
 	if err != nil {

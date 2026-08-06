@@ -271,6 +271,17 @@ type cliBuildOverrides struct {
 	SessionTemp *sessiontemp.Manager
 }
 
+// sessionTempFromCLIController returns the logical-session private temporary
+// directory manager for a same-session CLI controller rebuild. Nil keeps fresh
+// builds on control.New's normal new-manager path.
+func sessionTempFromCLIController(ctrl control.SessionAPI) *sessiontemp.Manager {
+	prev, ok := ctrl.(*control.Controller)
+	if !ok || prev == nil {
+		return nil
+	}
+	return prev.SessionTemp()
+}
+
 func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) (*control.Controller, error) {
 	migrateMCPConfigForCLIWorkspace()
 	return boot.Build(ctx, cliProfileBuildOptions(modelName, maxStepsOverride, requireKey, sink, profile, overrides))
@@ -1257,9 +1268,7 @@ func chatREPL(args []string, version string) int {
 		}
 		// Keep the logical-session private temporary directory across model /
 		// profile switches (Issue #7575).
-		if prev, ok := oldCtrl.(*control.Controller); ok && prev != nil {
-			effectiveOverrides.SessionTemp = prev.SessionTemp()
-		}
+		effectiveOverrides.SessionTemp = sessionTempFromCLIController(oldCtrl)
 		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, spec.RuntimeProfile, effectiveOverrides)
 		if err != nil {
 			return nil, err
