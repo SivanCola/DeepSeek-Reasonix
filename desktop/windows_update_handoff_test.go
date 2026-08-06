@@ -81,6 +81,7 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 	}
 	script := string(data)
 	for _, want := range []string{
+		`!define REASONIX_LEGACY_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Reasonix"`,
 		`!define REASONIX_UPDATE_HELPER "reasonix-update-helper.exe"`,
 		`!define REASONIX_GUARD "reasonix-guard.exe"`,
 		`!define REASONIX_LAUNCHER "reasonix-launcher.exe"`,
@@ -125,6 +126,7 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 		`File "/oname=${REASONIX_PAYLOAD_SIGNATURE}" "${REASONIX_PAYLOAD_SIGNATURE}"`,
 		`Delete "$INSTDIR\${REASONIX_UPDATE_HELPER}"`,
 		`Delete "$INSTDIR\${REASONIX_CLI}"`,
+		`!insertmacro reasonix.deleteLegacyUninstallerIfOwned`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("project.nsi missing %q", want)
@@ -149,6 +151,11 @@ func TestWindowsInstallerScriptWaitsBeforeCopyingExecutable(t *testing.T) {
 	}
 	if strings.Contains(script, `FileOpen $0 "$INSTDIR\current.json" w`) {
 		t.Fatal("normal installer must delegate the current.json commit to the atomic Go activator")
+	}
+	writeCurrent := strings.Index(script, `!insertmacro reasonix.writeUninstaller`)
+	deleteLegacy := strings.Index(script, `!insertmacro reasonix.deleteLegacyUninstallerIfOwned`)
+	if writeCurrent < 0 || deleteLegacy < 0 || writeCurrent > deleteLegacy {
+		t.Fatalf("installer must write the current uninstall entry before deleting the owned legacy alias (write=%d delete=%d)", writeCurrent, deleteLegacy)
 	}
 	metadataBranch := strings.Index(script, `reasonix_stage_payload:`)
 	metadataFile := strings.Index(script, `File "/oname=${REASONIX_PAYLOAD_MANIFEST}"`)
@@ -214,6 +221,9 @@ func TestWindowsUpdateRequiresObservedHelperHandoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	helperSource := string(helperData)
+	if !strings.Contains(helperSource, "reconcileWindowsUninstallRegistrationFn(installDir, toVersion)") {
+		t.Fatal("versioned Windows activation must refresh its managed uninstall registration")
+	}
 	if strings.Contains(helperSource, "installerCommandLine(installer, installDir), HideWindow: true") {
 		t.Fatal("update helper still hides the NSIS progress window")
 	}
