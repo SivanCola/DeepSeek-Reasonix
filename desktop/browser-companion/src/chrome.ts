@@ -104,10 +104,14 @@ export class Chrome {
   }
 
   destroy(): void {
-    if (this.view && !this.view.webContents.isDestroyed()) {
-      this.view.webContents.close();
+    if (!this.view) return;
+    if (this.window.contentView.children.includes(this.view)) {
+      this.window.contentView.removeChildView(this.view);
+    }
+    if (!this.view.webContents.isDestroyed()) {
+      this.view.webContents.stop();
+      this.view.webContents.close({ waitForBeforeUnload: false });
     }
     this.view = null;
   }
-
 }

@@ -170,6 +170,7 @@ export class CompanionApp {
     win.on("closed", () => {
       // The host persists tab state; this process just destroys its views.
       this.tabs?.destroyAll();
+      this.chrome?.destroy();
       this.window = null;
       this.tabs = null;
       this.chrome = null;
@@ -238,6 +239,7 @@ export class CompanionApp {
         return responseOk(req.requestId, {});
       case "window.close":
         this.tabs?.destroyAll();
+        this.chrome?.destroy();
         if (this.window) {
           this.window.destroy();
           this.window = null;

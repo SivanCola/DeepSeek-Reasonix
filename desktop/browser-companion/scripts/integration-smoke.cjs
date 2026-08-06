@@ -191,10 +191,24 @@ app.whenReady().then(async () => {
     sensitiveRejected = err && err.code === "user_takeover_required";
   }
   check("sensitive fields require human takeover", sensitiveRejected && events.some((event) => event.name === "agent.takeover"));
-  const shot = await companion.handle(req("r-shot", "tab.screenshot", "ownerA", {
-    ownerId: "ownerA",
-    tabId: activeAgentTab.id,
-  }));
+  const screenshotWc = companion.tabs.webContentsFor(activeAgentTab.id).webContents;
+  const capturePage = screenshotWc.capturePage.bind(screenshotWc);
+  let captureAttempts = 0;
+  screenshotWc.capturePage = (...args) => {
+    captureAttempts += 1;
+    if (captureAttempts === 1) return Promise.reject(new Error("UnknownVizError"));
+    return capturePage(...args);
+  };
+  let shot;
+  try {
+    shot = await companion.handle(req("r-shot", "tab.screenshot", "ownerA", {
+      ownerId: "ownerA",
+      tabId: activeAgentTab.id,
+    }));
+  } finally {
+    screenshotWc.capturePage = capturePage;
+  }
+  check("tab.screenshot retries a transient Viz surface failure", captureAttempts >= 2, `attempts=${captureAttempts}`);
   check("tab.screenshot returns a PNG data URL", shot.result && shot.result.imageDataUrl.startsWith("data:image/png;base64,"), JSON.stringify(shot).slice(0, 300));
   let originRejected = false;
   try {
@@ -326,6 +340,11 @@ app.whenReady().then(async () => {
     check("markReady after hello opens the window", !!early.chrome, "chrome is null");
     const t1 = await early.handle(req("r-t1", "tab.open", "ownerX", { ownerId: "ownerX", url, disposition: "foreground" }));
     check("tab.open after ready succeeds", !!t1.result && !!t1.result.tabId, JSON.stringify(t1));
+    // BaseWindow does not own WebContentsView lifetimes. Close both remote
+    // and trusted chrome contents before destroying this secondary window so
+    // it cannot leave compositor work behind for the resource-budget checks.
+    early.tabs.destroyAll();
+    early.chrome.destroy();
     early.window.destroy();
   }
 

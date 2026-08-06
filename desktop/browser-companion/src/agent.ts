@@ -4,7 +4,7 @@
 // refs. Human input and sensitive fields revoke the lease immediately.
 
 import { randomBytes } from "node:crypto";
-import type { WebContents } from "electron";
+import type { NativeImage, WebContents } from "electron";
 import { ProtocolError } from "./protocol";
 import { BROWSER_LIMITS } from "./generated/browserProtocol.generated";
 import { TabManager, type TabRecord } from "./tabs";
@@ -133,7 +133,19 @@ export class AgentController {
   async screenshot(params: Params): Promise<unknown> {
     const { ownerId, tabId, record, wc } = this.target(params);
     this.tabs.acquireLease(ownerId, tabId);
-    let image = await wc.capturePage(undefined, { stayHidden: true, stayAwake: false });
+    const wasThrottled = wc.getBackgroundThrottling();
+    let image: NativeImage;
+    try {
+      // Chromium can reject a hidden surface with UnknownVizError until its
+      // compositor has produced a frame (especially under Linux/Xvfb). Wake
+      // the renderer only for the bounded capture window, then restore the
+      // normal hidden-tab throttling policy.
+      if (wasThrottled) wc.setBackgroundThrottling(false);
+      await delay(16);
+      image = await capturePageWithRetry(wc);
+    } finally {
+      if (!wc.isDestroyed() && wasThrottled) wc.setBackgroundThrottling(true);
+    }
     let png = image.toPNG();
     // PNG bytes are capped separately from the 16 MiB wire-frame budget.
     while (png.length > BROWSER_LIMITS.maxScreenshotBytes && image.getSize().width > 320) {
@@ -309,6 +321,30 @@ export class AgentController {
     this.tabs.revokeLease(ownerId, tabId, "sensitive_field", "sensitive field requires human input");
     throw new ProtocolError("user_takeover_required", "sensitive field requires human input");
   }
+}
+
+const CAPTURE_RETRY_DELAYS_MS = [50, 100, 200, 400] as const;
+
+async function capturePageWithRetry(wc: WebContents): Promise<NativeImage> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await wc.capturePage(undefined, { stayHidden: true, stayAwake: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/UnknownVizError/i.test(message)) {
+        throw new ProtocolError("internal", `screenshot failed: ${message}`);
+      }
+      const waitMs = CAPTURE_RETRY_DELAYS_MS[attempt];
+      if (waitMs === undefined) {
+        throw new ProtocolError("internal", "screenshot compositor did not become ready");
+      }
+      await delay(waitMs);
+    }
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function tabResult(record: TabRecord): { tabId: string; url: string; title: string; generation: number } {
