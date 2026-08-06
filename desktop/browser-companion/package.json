@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test dist-test/__tests__/protocol.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/__tests__/protocol.test.js",
     "test:integration": "pnpm build && node scripts/run-integration.cjs",
     "test:performance": "pnpm build && node scripts/run-performance.cjs",
     "package:component": "pnpm build && node scripts/package-component.mjs"
