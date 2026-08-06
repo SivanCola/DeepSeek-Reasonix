@@ -12,7 +12,10 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const uninstallRegistryBase = `Software\Microsoft\Windows\CurrentVersion\Uninstall\`
+const (
+	uninstallRegistryBase     = `Software\Microsoft\Windows\CurrentVersion\Uninstall\`
+	legacyProductRegistryPath = `Software\reasonix\Reasonix`
+)
 
 // Reconcile refreshes the current Wails per-user registration after a
 // successful version activation. It intentionally refuses legacy-only and
@@ -57,12 +60,45 @@ func Reconcile(installRoot, version string) (bool, error) {
 	if !sameRegistration(written, &plan.Desired) {
 		return false, fmt.Errorf("reconcile Windows uninstall registration: registry verification failed")
 	}
+	// Tauri 0.53 stored its install root separately from the Add/Remove
+	// Programs entry and restores it before every later install. Remove only a
+	// same-root default value so an old installer cannot overwrite the current
+	// uninstaller; named values and separate legacy installations remain intact.
+	if err := deleteInstallLocationIfOwned(legacyProductRegistryPath, installRoot); err != nil {
+		return false, err
+	}
 	if plan.DeleteLegacy {
 		if err := registry.DeleteKey(registry.CURRENT_USER, uninstallRegistryBase+LegacyKeyName); err != nil && !errors.Is(err, registry.ErrNotExist) {
 			return false, err
 		}
 	}
 	return true, nil
+}
+
+func deleteInstallLocationIfOwned(keyPath, installRoot string) error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, keyPath, registry.QUERY_VALUE|registry.SET_VALUE)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+
+	location, _, err := key.GetStringValue("")
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !sameWindowsPath(location, installRoot) {
+		return nil
+	}
+	if err := key.DeleteValue(""); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func readRegistration(name string) (*Registration, error) {

@@ -104,6 +104,7 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the inst
 !define REASONIX_PAYLOAD_MANIFEST "reasonix-payload.json"
 !define REASONIX_PAYLOAD_SIGNATURE "reasonix-payload.json.minisig"
 !define REASONIX_LEGACY_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Reasonix"
+!define REASONIX_LEGACY_PRODUCT_KEY "Software\reasonix\Reasonix"
 !define REASONIX_UNLOCK_RETRIES 60
 Var ReasonixUpdateMode
 Var ReasonixStageMode
@@ -145,24 +146,46 @@ ShowInstDetails show # This will always show the installation details.
     WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
 !macroend
 
-; Remove the Tauri 0.53 alias only when it demonstrably owns this same install
-; root. Never delete a separate legacy installation merely because its display
-; name is Reasonix. The current Wails key is written and verified by NSIS before
-; this macro is called, so an interrupted install leaves at least one entry.
-!macro reasonix.deleteLegacyUninstallerIfOwned
+; Tauri 0.53 separately persisted $INSTDIR under its manufacturer/product key
+; and restores that value before every later install. Clear only a same-root
+; value so re-running 0.53 cannot overwrite the current uninstaller; preserve a
+; genuinely separate legacy installation. If this cleanup fails, retain the old
+; uninstall alias so a later update can retry the migration.
+!macro reasonix.deleteLegacyInstallerStateIfOwned
+    StrCpy $1 "1"
     ClearErrors
-    ReadRegStr $0 HKCU "${REASONIX_LEGACY_UNINST_KEY}" "InstallLocation"
-    StrCmp $0 "$INSTDIR" 0 +2
-    DeleteRegKey HKCU "${REASONIX_LEGACY_UNINST_KEY}"
-    StrCmp $0 "$\"$INSTDIR$\"" 0 +2
-    DeleteRegKey HKCU "${REASONIX_LEGACY_UNINST_KEY}"
+    ReadRegStr $0 HKCU "${REASONIX_LEGACY_PRODUCT_KEY}" ""
+    ${If} $0 == "$INSTDIR"
+        ClearErrors
+        DeleteRegValue HKCU "${REASONIX_LEGACY_PRODUCT_KEY}" ""
+        ${If} ${Errors}
+            StrCpy $1 "0"
+        ${EndIf}
+    ${ElseIf} $0 == "$\"$INSTDIR$\""
+        ClearErrors
+        DeleteRegValue HKCU "${REASONIX_LEGACY_PRODUCT_KEY}" ""
+        ${If} ${Errors}
+            StrCpy $1 "0"
+        ${EndIf}
+    ${EndIf}
 
-    ClearErrors
-    ReadRegStr $0 HKCU "${REASONIX_LEGACY_UNINST_KEY}" "UninstallString"
-    StrCmp $0 "$INSTDIR\uninstall.exe" 0 +2
-    DeleteRegKey HKCU "${REASONIX_LEGACY_UNINST_KEY}"
-    StrCmp $0 "$\"$INSTDIR\uninstall.exe$\"" 0 +2
-    DeleteRegKey HKCU "${REASONIX_LEGACY_UNINST_KEY}"
+    ${If} $1 == "1"
+        ClearErrors
+        ReadRegStr $0 HKCU "${REASONIX_LEGACY_UNINST_KEY}" "InstallLocation"
+        ${If} $0 == "$INSTDIR"
+            DeleteRegKey HKCU "${REASONIX_LEGACY_UNINST_KEY}"
+        ${ElseIf} $0 == "$\"$INSTDIR$\""
+            DeleteRegKey HKCU "${REASONIX_LEGACY_UNINST_KEY}"
+        ${Else}
+            ClearErrors
+            ReadRegStr $0 HKCU "${REASONIX_LEGACY_UNINST_KEY}" "UninstallString"
+            ${If} $0 == "$INSTDIR\uninstall.exe"
+                DeleteRegKey HKCU "${REASONIX_LEGACY_UNINST_KEY}"
+            ${ElseIf} $0 == "$\"$INSTDIR\uninstall.exe$\""
+                DeleteRegKey HKCU "${REASONIX_LEGACY_UNINST_KEY}"
+            ${EndIf}
+        ${EndIf}
+    ${EndIf}
 !macroend
 
 !macro reasonix.deleteUninstaller
@@ -443,7 +466,7 @@ reasonix_layout_activated:
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
     !insertmacro reasonix.writeUninstaller
-    !insertmacro reasonix.deleteLegacyUninstallerIfOwned
+    !insertmacro reasonix.deleteLegacyInstallerStateIfOwned
 
 reasonix_section_done:
 SectionEnd
@@ -470,7 +493,7 @@ Section "uninstall"
     !insertmacro wails.unassociateCustomProtocols
 
     !insertmacro reasonix.deleteUninstaller
-    !insertmacro reasonix.deleteLegacyUninstallerIfOwned
+    !insertmacro reasonix.deleteLegacyInstallerStateIfOwned
 
     ; Only remove the installation directory if it is empty to prevent data loss
     RMDir $INSTDIR
