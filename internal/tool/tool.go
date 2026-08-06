@@ -269,17 +269,36 @@ func LookupBuiltin(name string) (Tool, bool) {
 // --- per-run registry instance ---
 
 // Registry is a per-run set of tools: enabled built-ins plus plugin tools.
+//
+// Tools live in one of two tiers. Core tools are exported to the provider on
+// every turn. Deferred tools are registered and callable by the host, but stay
+// out of Schemas() until something activates them — see deferred.go. A registry
+// with no deferred tools behaves exactly as it did before the tier existed.
 type Registry struct {
 	mu        sync.RWMutex
 	tools     map[string]Tool
 	order     []string
 	canon     map[string]json.RawMessage
 	suspended map[string]bool
+
+	// deferred marks names withheld from Schemas(); activated lists the ones
+	// released so far, in release order. unavailable carries a host-local
+	// reason for entries whose backing capability went away without being
+	// unregistered (see PinPrefix).
+	deferred    map[string]bool
+	activated   []string
+	unavailable map[string]string
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
-	return &Registry{tools: map[string]Tool{}, canon: map[string]json.RawMessage{}, suspended: map[string]bool{}}
+	return &Registry{
+		tools:       map[string]Tool{},
+		canon:       map[string]json.RawMessage{},
+		suspended:   map[string]bool{},
+		deferred:    map[string]bool{},
+		unavailable: map[string]string{},
+	}
 }
 
 // Add inserts (or replaces) a tool, preserving first-seen order. The schema is
@@ -289,10 +308,16 @@ func (r *Registry) Add(t Tool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	r.addLocked(t)
+}
+
+// addLocked performs the registration shared by Add and AddDeferred. It reports
+// whether the tool was stored; false means a suspended prefix rejected it.
+func (r *Registry) addLocked(t Tool) bool {
 	name := t.Name()
 	for prefix := range r.suspended {
 		if strings.HasPrefix(name, prefix) {
-			return
+			return false
 		}
 	}
 	if _, ok := r.tools[name]; !ok {
@@ -300,6 +325,10 @@ func (r *Registry) Add(t Tool) {
 	}
 	r.tools[name] = t
 	r.canon[name] = provider.CanonicalizeSchema(t.Schema())
+	// A fresh registration means the backing capability is live again; clear
+	// any unavailability pinned while it was gone (see PinPrefix).
+	delete(r.unavailable, name)
+	return true
 }
 
 // MCPNamePrefix is the namespace every MCP tool name carries: the
@@ -519,14 +548,27 @@ func (r *Registry) Names() []string {
 	return out
 }
 
-// Schemas exports tool definitions in stable name order for the provider.
+// Schemas exports tool definitions for the provider: core tools in stable name
+// order, followed by any activated deferred tools in activation order.
+//
+// The activated tail is deliberately not sorted into the core block. Tool
+// schemas sit at the front of the provider-visible prefix, so splicing a newly
+// activated tool into sorted position would shift every schema after it and
+// invalidate the cached prefix from that point onward. Appending keeps growth
+// strictly additive, so everything cached before the activation still hits.
 func (r *Registry) Schemas() []provider.ToolSchema {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	names := make([]string, len(r.order))
-	copy(names, r.order)
+	names := make([]string, 0, len(r.order))
+	for _, name := range r.order {
+		if r.deferred[name] {
+			continue
+		}
+		names = append(names, name)
+	}
 	sort.Strings(names)
+	names = append(names, r.activated...)
 
 	out := make([]provider.ToolSchema, 0, len(names))
 	for _, name := range names {
