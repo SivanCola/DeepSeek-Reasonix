@@ -39,6 +39,7 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/provider/openai"
 	"reasonix/internal/serve"
+	"reasonix/internal/sessiontemp"
 	"reasonix/internal/stats"
 	"reasonix/internal/telemetry"
 
@@ -265,6 +266,9 @@ type cliBuildOverrides struct {
 	Stderr               io.Writer
 	OnSessionRecovered   func(control.SessionRecoveryInfo) error
 	Ablation             ablation.Set
+	// SessionTemp carries the previous Controller's private temporary directory
+	// manager across model/profile rebuilds so temporary files survive.
+	SessionTemp *sessiontemp.Manager
 }
 
 func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) (*control.Controller, error) {
@@ -291,6 +295,7 @@ func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey b
 		Stderr:               overrides.Stderr,
 		OnSessionRecovered:   overrides.OnSessionRecovered,
 		Ablation:             overrides.Ablation,
+		SessionTemp:          overrides.SessionTemp,
 	}
 }
 
@@ -1249,6 +1254,11 @@ func chatREPL(args []string, version string) int {
 		effectiveOverrides := overrides
 		if spec.EffortOverride != nil {
 			effectiveOverrides.Effort = spec.EffortOverride
+		}
+		// Keep the logical-session private temporary directory across model /
+		// profile switches (Issue #7575).
+		if prev, ok := oldCtrl.(*control.Controller); ok && prev != nil {
+			effectiveOverrides.SessionTemp = prev.SessionTemp()
 		}
 		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, spec.RuntimeProfile, effectiveOverrides)
 		if err != nil {

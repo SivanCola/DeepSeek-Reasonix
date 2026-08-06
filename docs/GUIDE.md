@@ -690,6 +690,28 @@ Reasonix always removes saved provider and bot credential variables from tool
 subprocess environments and automatically adds its global credential `.env` to
 the runtime read-deny boundary. Project `.env` files keep their existing
 workspace-scoped behavior.
+
+**Session-private temporary directory.** Within one logical chat session, Bash
+commands share a private temporary directory so consecutive calls can exchange
+files through `$TMPDIR` (and, on Linux under bubblewrap, through literal
+`/tmp`). The directory is created lazily, is never the host public temporary
+root, and is rotated on `/new`, `/clear`, resume of another session, and branch
+switches. Model/settings hot rebuilds keep the same directory. Temporary files
+are not durable storage: resume across process restarts does not restore them,
+and scripts that need long-lived data should write into the workspace or a
+user-specified path.
+
+| Platform | `$TMPDIR` / `$TMP` / `$TEMP` | Literal `/tmp` |
+| --- | --- | --- |
+| Linux + bubblewrap | Virtual `/tmp` (bound to the private dir) | Shared for the session (not a fresh empty tmpfs each call) |
+| macOS Seatbelt | Host path of the private dir (allowed by policy) | Host macOS temporary directory; prefer `$TMPDIR` |
+| Windows (no OS Bash sandbox) | Host path of the private dir | Not promised to match (e.g. Git Bash `/tmp`) |
+
+Independent sandboxes such as MCP servers keep their own isolation and do not
+inherit the chat session's temporary directory. An approved sandbox-escape
+command still receives the private temp environment variables, but on Linux its
+literal `/tmp` is no longer mapped by bubblewrap.
+
 **Windows note:** Reasonix does not ship an OS-level Bash sandbox on Windows.
 The effective mode is fixed to `off`; even an older config containing
 `bash = "enforce"` resolves to `off`, `reasonix doctor` flags the ignored value,
