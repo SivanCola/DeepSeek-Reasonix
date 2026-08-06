@@ -23,6 +23,7 @@ import (
 
 	"reasonix/internal/boot"
 	"reasonix/internal/event"
+	"reasonix/internal/tool"
 )
 
 var (
@@ -56,6 +57,9 @@ type Options struct {
 	Model string
 	// Sink receives runtime events for the UI. Nil discards them.
 	Sink event.Sink
+	// Deferred selects which tools are held back from the provider until the
+	// model searches for them. The zero value defers MCP tools.
+	Deferred DeferredPolicy
 }
 
 // Builder constructs the kernel conversation for a set of options. Production
@@ -90,6 +94,10 @@ type Host struct {
 	generation uint64
 	running    bool
 	closed     bool
+	// announced records which deferred tools the model has already been told
+	// about. A server that finishes connecting mid-session adds a short
+	// follow-up on the next turn rather than repeating the whole roster.
+	announced map[string]bool
 }
 
 // NewHost returns a host that builds conversations with b. A nil b uses
@@ -98,7 +106,7 @@ func NewHost(b Builder) *Host {
 	if b == nil {
 		b = KernelBuilder
 	}
-	return &Host{build: b}
+	return &Host{build: b, announced: map[string]bool{}}
 }
 
 // Open builds a conversation and makes it the live one, closing whatever it
@@ -124,6 +132,11 @@ func (h *Host) Open(ctx context.Context, opts Options) error {
 		return fmt.Errorf("open conversation: %w", err)
 	}
 
+	// Reshape the tool set before the conversation becomes reachable. Deferring
+	// is only free before the first request, and doing it here means no caller
+	// can slip a turn in against a half-wired tool list.
+	wireDeferredTools(conv, opts.Deferred)
+
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
@@ -137,6 +150,9 @@ func (h *Host) Open(ctx context.Context, opts Options) error {
 	// generation bump is what stops its completion from clearing this flag for
 	// the new one.
 	h.running = false
+	// A new conversation carries a new tool registry, so nothing has been
+	// announced to it yet.
+	h.announced = map[string]bool{}
 	h.mu.Unlock()
 
 	if previous != nil {
@@ -164,6 +180,14 @@ func (h *Host) Send(ctx context.Context, input string) error {
 	h.running = true
 	h.mu.Unlock()
 
+	// Deferred tools are announced in the turn itself rather than the system
+	// prompt: the roster grows as MCP servers finish connecting, and dynamic
+	// state in the prefix would rewrite it on every late handshake. Prepending
+	// to the user turn keeps the conversation append-only.
+	if notice := h.rosterNotice(conv); notice != "" {
+		input = notice + "\n\n" + input
+	}
+
 	// Run is not held under the lock: a turn lasts as long as the model takes,
 	// and status reads must stay responsive throughout.
 	err := conv.Run(ctx, input)
@@ -174,6 +198,35 @@ func (h *Host) Send(ctx context.Context, input string) error {
 	}
 	h.mu.Unlock()
 	return err
+}
+
+// rosterNotice returns the announcement for deferred tools the model has not
+// been told about yet, marking them announced. It returns "" when there is
+// nothing new, which is the steady state after the first turn.
+func (h *Host) rosterNotice(conv Conversation) string {
+	reg := registryOf(conv)
+	if reg == nil {
+		return ""
+	}
+	// DeferredRoster reaches into tool callbacks, and a lazy MCP placeholder
+	// takes its spawn mutex there; the host lock stays out of that path.
+	roster := reg.DeferredRoster()
+	if len(roster) == 0 {
+		return ""
+	}
+
+	h.mu.Lock()
+	fresh := make([]tool.DeferredEntry, 0, len(roster))
+	for _, entry := range roster {
+		if entry.Activated || h.announced[entry.Name] {
+			continue
+		}
+		h.announced[entry.Name] = true
+		fresh = append(fresh, entry)
+	}
+	h.mu.Unlock()
+
+	return tool.RenderDeferredRoster(fresh)
 }
 
 // Running reports whether a turn is in flight.

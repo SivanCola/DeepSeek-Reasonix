@@ -32,27 +32,33 @@ cd desktop && go build -tags webkit2_41 ./...
 **已完成**
 
 - `internal/tool` deferred 分层（在**根模块**，非本模块）
-  - `deferred.go`：`AddDeferred` / `Activate` / `DeferredRoster` / `PinPrefix` /
-    `RenderDeferredRoster` / `Availability`
+  - `deferred.go`：`AddDeferred` / `Defer` / `Activate` / `DeferredRoster` /
+    `PinPrefix` / `RenderDeferredRoster` / `Availability`
   - `search.go`：`tool_search` 工具，支持 `select:名字`、关键字、`+必需词`
   - `tool.go`：Registry 分层字段、`Schemas()` 追加式尾部、抽出 `addLocked`
-  - 21 个测试，锁死三条缓存不变量（见下）
-- `desktop-lite/internal/session`：单会话运行时 `Host`，11 个测试（含 `-race`）
-  - generation 守卫防 stale completion；已验证拆掉守卫测试即红
+- `internal/control`：`Controller.ToolRegistry()` 导出访问器
+- `desktop-lite/internal/session`：单会话运行时 `Host` + deferred 接线
+  - `session.go`：`Host` 生命周期，generation 守卫防 stale completion
+    （已验证拆掉守卫测试即红）
+  - `tools.go`：`wireDeferredTools` 按策略降级 + 装 `tool_search`；roster 走
+    首轮消息注入，新连上的 server 下一轮补充公告，不重复已公告的
+- **43 个测试**（tool 24 + session 19），含 `-race`
 - 服务器构建工具链：gcc / pkg-config / gtk+-3.0 / webkit2gtk-4.1 已装
 
 **进行中**：无
 
 **待办**（按建议顺序）
 
-1. **把 deferred 接进真实会话** — 需要给 `control.Controller` 加 `*tool.Registry`
-   访问器（目前只有内部字段 `controller.go:458`，无导出方法）。接上后：MCP/skill
-   工具走 `AddDeferred`，core 加 `tool_search`，roster 用 `RenderDeferredRoster`
-   注入首轮消息。
-2. **Wails 外壳** — `main.go` + 薄绑定层，只做窗口和 IPC，业务留在 `internal/`。
-3. **前端** — transcript + composer + ⌘K 命令面板三块。目标 ~4000 行 TSX。
-4. **配置推导** — 继续读同一份 `config.toml`（兼容），UI 只暴露 provider + 凭据，
+1. **Wails 外壳** — `main.go` + 薄绑定层，只做窗口和 IPC，业务留在 `internal/`。
+2. **前端** — transcript + composer + ⌘K 命令面板三块。目标 ~4000 行 TSX。
+3. **配置推导** — 继续读同一份 `config.toml`（兼容），UI 只暴露 provider + 凭据，
    其余全部计算默认值。现有配置有 246 个 TOML 字段，目标暴露面 5–8 项。
+4. **真实 provider 验证** — 目前 deferred 链路只有单测覆盖，尚未对真实 MCP server
+   跑过端到端；接上外壳后需要实测缓存命中率变化。
+
+**降级时机（重要）**：`Defer` 只能在 boot 之后、首轮之前调用。此时还没有任何 provider
+请求，没有已缓存的前缀可丢；晚一轮调用就会白扔那一轮的缓存。`wireDeferredTools` 在
+`Open` 里、会话对外可见之前执行，正是为此。
 
 ## 三条必须守住的缓存不变量
 

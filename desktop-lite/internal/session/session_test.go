@@ -20,6 +20,7 @@ type fakeConv struct {
 	closes int
 	runs   int
 	runErr error
+	inputs []string
 }
 
 // newInstantConv returns a conversation whose turns finish immediately.
@@ -34,9 +35,10 @@ func newBlockingConv() *fakeConv {
 	return &fakeConv{started: make(chan struct{}, 1), release: make(chan struct{})}
 }
 
-func (f *fakeConv) Run(_ context.Context, _ string) error {
+func (f *fakeConv) Run(_ context.Context, input string) error {
 	f.mu.Lock()
 	f.runs++
+	f.inputs = append(f.inputs, input)
 	err := f.runErr
 	f.mu.Unlock()
 
