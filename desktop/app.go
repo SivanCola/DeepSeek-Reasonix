@@ -881,6 +881,13 @@ func resolveNewSessionModel(cfg *config.Config) string {
 	def := strings.TrimSpace(cfg.DefaultModel)
 	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, def)
 	if resolved, _, ok := cfg.ResolveDesktopNewSessionModel(); ok {
+		// Keep provider identity explicit at the new-session boundary. A bare
+		// model id is ambiguous when two configured gateways expose the same
+		// model, and a provider-only ref otherwise compares unequal to the
+		// canonical ref stored on a running tab.
+		if entry, found := cfg.ResolveModel(resolved); found {
+			return entry.Name + "/" + entry.Model
+		}
 		return resolved
 	}
 	return ""
