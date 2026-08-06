@@ -2786,14 +2786,8 @@ func (a *App) alignReusableBlankTabModel(tab *WorkspaceTab, model string) error 
 			if err := a.SetModelForTab(tab.ID, model); err != nil {
 				return err
 			}
-		}
-		// SetModelForTab carries an empty transcript without taking a turn, so
-		// persist the new model identity explicitly instead of waiting for the
-		// first autosave to refresh the branch metadata.
-		if currentPath := a.currentSessionPathFor(tab); currentPath != "" {
-			if err := agent.SetBranchModelPreserveUpdated(currentPath, model); err != nil {
-				return fmt.Errorf("persist default model for blank session: %w", err)
-			}
+		} else if storedModelChanged {
+			return a.persistTabModelIfCurrent(tab, model)
 		}
 		return nil
 	}

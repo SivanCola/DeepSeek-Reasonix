@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
@@ -192,6 +194,133 @@ func TestEnsureBlankTabRetargetsReusedSameNameModelToDefaultProvider(t *testing.
 	}
 	if current != defaultRef {
 		t.Fatalf("model switcher current ref = %q, want %q", current, defaultRef)
+	}
+}
+
+func TestEnsureBlankTabRepairsStaleStoredProviderWhenRuntimeAlreadyDefault(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	model, oldRef, defaultRef := configureSameNameModelProviders(t)
+
+	globalRoot := globalWorkspaceRoot()
+	path, err := createEmptySessionFile(desktopSessionDir(globalRoot), model)
+	if err != nil {
+		t.Fatalf("create empty session: %v", err)
+	}
+
+	app := NewApp()
+	app.ctx = context.Background()
+	tab := testTab("stale-meta", globalRoot)
+	tab.Scope = "global"
+	tab.WorkspaceRoot = globalRoot
+	tab.SessionPath = path
+	tab.model = oldRef
+	tab.Ctrl.SetSessionPath(path)
+	tab.sink = &tabEventSink{tabID: tab.ID, app: app}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	t.Cleanup(func() {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+		tab.releaseSessionLease()
+	})
+
+	if err := app.SetModelForTab(tab.ID, defaultRef); err != nil {
+		t.Fatalf("seed default runtime: %v", err)
+	}
+	if err := agent.SetBranchModelPreserveUpdated(path, oldRef); err != nil {
+		t.Fatalf("seed stale stored model: %v", err)
+	}
+
+	if _, err := app.EnsureBlankTab("global", ""); err != nil {
+		t.Fatalf("EnsureBlankTab: %v", err)
+	}
+	if tab.model != defaultRef || tab.Ctrl.ModelRef() != defaultRef {
+		t.Fatalf("runtime model = tab:%q controller:%q, want %q", tab.model, tab.Ctrl.ModelRef(), defaultRef)
+	}
+	if stored, ok := agent.LoadSessionModel(tab.currentSessionPath()); !ok || stored != defaultRef {
+		t.Fatalf("stored session model = %q, %v, want repaired %q", stored, ok, defaultRef)
+	}
+}
+
+func TestEnsureBlankTabConcurrentModelSwitchKeepsLastSelection(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	model, oldRef, defaultRef := configureSameNameModelProviders(t)
+
+	globalRoot := globalWorkspaceRoot()
+	path, err := createEmptySessionFile(desktopSessionDir(globalRoot), model)
+	if err != nil {
+		t.Fatalf("create empty session: %v", err)
+	}
+	if err := agent.SetBranchModelPreserveUpdated(path, oldRef); err != nil {
+		t.Fatalf("seed old session model: %v", err)
+	}
+
+	app := NewApp()
+	app.ctx = context.Background()
+	tab := testTab("last-click", globalRoot)
+	tab.Scope = "global"
+	tab.WorkspaceRoot = globalRoot
+	tab.SessionPath = path
+	tab.model = oldRef
+	tab.Ctrl.SetSessionPath(path)
+	tab.sink = &tabEventSink{tabID: tab.ID, app: app}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	t.Cleanup(func() {
+		if tab.Ctrl != nil {
+			tab.Ctrl.Close()
+		}
+		tab.releaseSessionLease()
+	})
+
+	firstSwitchReturned := make(chan struct{})
+	releaseFirstSwitch := make(chan struct{})
+	var switchCount atomic.Int32
+	app.modelSwitchTimingHook = func(modelSwitchTiming) {
+		if switchCount.Add(1) == 1 {
+			close(firstSwitchReturned)
+			<-releaseFirstSwitch
+		}
+	}
+
+	ensureDone := make(chan error, 1)
+	go func() {
+		_, err := app.EnsureBlankTab("global", "")
+		ensureDone <- err
+	}()
+
+	select {
+	case <-firstSwitchReturned:
+	case <-time.After(5 * time.Second):
+		close(releaseFirstSwitch)
+		t.Fatal("timed out waiting for default model switch")
+	}
+
+	// Model selection remains available while EnsureBlankTab is completing.
+	// The explicit second switch is the user's last click and must own both the
+	// live runtime and the persisted provider identity.
+	lastSwitchErr := app.SetModelForTab(tab.ID, oldRef)
+	close(releaseFirstSwitch)
+	if lastSwitchErr != nil {
+		t.Fatalf("last model switch: %v", lastSwitchErr)
+	}
+	select {
+	case err := <-ensureDone:
+		if err != nil {
+			t.Fatalf("EnsureBlankTab: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for EnsureBlankTab")
+	}
+
+	if tab.model != oldRef || tab.Ctrl.ModelRef() != oldRef {
+		t.Fatalf("last selected runtime = tab:%q controller:%q, want %q (default was %q)", tab.model, tab.Ctrl.ModelRef(), oldRef, defaultRef)
+	}
+	if stored, ok := agent.LoadSessionModel(tab.currentSessionPath()); !ok || stored != oldRef {
+		t.Fatalf("stored session model = %q, %v, want last selection %q", stored, ok, oldRef)
 	}
 }
 
