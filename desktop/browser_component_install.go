@@ -336,7 +336,7 @@ func scanBrowserComponentTarGZ(data []byte) ([]componentArchiveEntry, error) {
 		}
 		entry := componentArchiveEntry{name: name, mode: os.FileMode(h.Mode) & 0o777, size: uint64(h.Size)}
 		switch h.Typeflag {
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			entry.kind = componentArchiveFile
 		case tar.TypeDir:
 			entry.kind = componentArchiveDirectory
