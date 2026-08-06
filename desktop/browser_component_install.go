@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -103,13 +104,16 @@ func installBrowserComponentArchive(data []byte, archiveName, home, goos string)
 	var current struct {
 		Version string `json:"version"`
 	}
-	currentRaw, err := os.ReadFile(filepath.Join(stage, browserCurrentManifest))
+	currentRaw, err := readRegularComponentFile(filepath.Join(stage, browserCurrentManifest), 64<<10)
 	if err != nil || json.Unmarshal(currentRaw, &current) != nil || !validComponentVersion(current.Version) {
 		return fmt.Errorf("browser component has an invalid current manifest")
 	}
 	versionDir := filepath.Join(stage, current.Version)
+	if err := validateComponentVersionTree(versionDir); err != nil {
+		return fmt.Errorf("browser component version tree is invalid: %w", err)
+	}
 	var metadata browserComponentMetadata
-	metaRaw, err := os.ReadFile(filepath.Join(versionDir, "component.json"))
+	metaRaw, err := readRegularComponentFile(filepath.Join(versionDir, "component.json"), 64<<10)
 	if err != nil || json.Unmarshal(metaRaw, &metadata) != nil ||
 		metadata.Format != "reasonix.browser.component.v1" || metadata.Version != current.Version ||
 		!validComponentVersion(metadata.ElectronVersion) || metadata.ProtocolVersion != browseripc.ProtocolVersion {
@@ -165,101 +169,233 @@ func extractBrowserComponentZIP(data []byte, dest string) error {
 	if err != nil {
 		return err
 	}
-	if len(zr.File) > maxBrowserComponentFiles {
-		return fmt.Errorf("archive contains too many files")
-	}
-	var extracted int64
+	entries := make([]componentArchiveEntry, 0, len(zr.File))
 	for _, f := range zr.File {
-		if err := extractComponentEntry(dest, f.Name, f.Mode(), f.UncompressedSize64, func() (io.ReadCloser, error) { return f.Open() }, f.FileInfo().IsDir(), &extracted); err != nil {
+		entry, err := componentZIPEntry(f)
+		if err != nil {
 			return err
 		}
+		entries = append(entries, entry)
 	}
-	return nil
+	if err := validateComponentArchivePlan(entries); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	for i, f := range zr.File {
+		entry := entries[i]
+		switch entry.kind {
+		case componentArchiveDirectory:
+			if err := root.MkdirAll(entry.name, 0o755); err != nil {
+				return err
+			}
+		case componentArchiveFile:
+			r, err := f.Open()
+			if err != nil {
+				return err
+			}
+			err = extractComponentFile(root, entry, r)
+			r.Close()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return createComponentArchiveSymlinks(root, entries)
 }
 
 func extractBrowserComponentTarGZ(data []byte, dest string) error {
+	entries, err := scanBrowserComponentTarGZ(data)
+	if err != nil {
+		return err
+	}
+	if err := validateComponentArchivePlan(entries); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
-	count := 0
-	var extracted int64
+	index := 0
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
-			return nil
+			break
 		}
 		if err != nil {
 			return err
 		}
-		count++
-		if count > maxBrowserComponentFiles {
-			return fmt.Errorf("archive contains too many files")
+		if index >= len(entries) {
+			return fmt.Errorf("archive changed while extracting")
 		}
-		if h.Size < 0 {
-			return fmt.Errorf("archive entry %q has a negative size", h.Name)
-		}
-		if h.Typeflag == tar.TypeSymlink {
-			if err := createComponentSymlink(dest, h.Name, h.Linkname); err != nil {
+		entry := entries[index]
+		index++
+		switch entry.kind {
+		case componentArchiveDirectory:
+			if err := root.MkdirAll(entry.name, 0o755); err != nil {
 				return err
 			}
-			continue
+		case componentArchiveFile:
+			if err := extractComponentFile(root, entry, io.LimitReader(tr, h.Size)); err != nil {
+				return err
+			}
 		}
-		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir {
-			return fmt.Errorf("unsupported tar entry %q", h.Name)
+	}
+	if index != len(entries) {
+		return fmt.Errorf("archive changed while extracting")
+	}
+	return createComponentArchiveSymlinks(root, entries)
+}
+
+type componentArchiveEntryKind uint8
+
+const (
+	componentArchiveFile componentArchiveEntryKind = iota
+	componentArchiveDirectory
+	componentArchiveSymlink
+)
+
+type componentArchiveEntry struct {
+	name string
+	kind componentArchiveEntryKind
+	mode os.FileMode
+	size uint64
+	link string
+}
+
+func componentZIPEntry(f *zip.File) (componentArchiveEntry, error) {
+	name, err := normalizeComponentArchivePath(f.Name)
+	if err != nil {
+		return componentArchiveEntry{}, err
+	}
+	mode := f.Mode()
+	entry := componentArchiveEntry{name: name, mode: mode, size: f.UncompressedSize64}
+	switch {
+	case f.FileInfo().IsDir():
+		entry.kind = componentArchiveDirectory
+		entry.size = 0
+	case mode&os.ModeSymlink != 0:
+		if f.UncompressedSize64 > 4096 {
+			return componentArchiveEntry{}, fmt.Errorf("invalid symlink %q", f.Name)
 		}
-		isDir := h.Typeflag == tar.TypeDir
-		mode := os.FileMode(h.Mode) & 0o777
-		opener := func() (io.ReadCloser, error) { return io.NopCloser(io.LimitReader(tr, h.Size)), nil }
-		if err := extractComponentEntry(dest, h.Name, mode, uint64(h.Size), opener, isDir, &extracted); err != nil {
-			return err
+		r, err := f.Open()
+		if err != nil {
+			return componentArchiveEntry{}, err
 		}
+		link, readErr := io.ReadAll(io.LimitReader(r, 4097))
+		closeErr := r.Close()
+		if readErr != nil || closeErr != nil || len(link) > 4096 {
+			return componentArchiveEntry{}, fmt.Errorf("invalid symlink %q", f.Name)
+		}
+		entry.kind = componentArchiveSymlink
+		entry.size = 0
+		entry.link, err = normalizeComponentSymlink(name, string(link))
+		if err != nil {
+			return componentArchiveEntry{}, err
+		}
+	case mode.Type() == 0:
+		entry.kind = componentArchiveFile
+	default:
+		return componentArchiveEntry{}, fmt.Errorf("unsupported zip entry %q", f.Name)
+	}
+	return entry, nil
+}
+
+func scanBrowserComponentTarGZ(data []byte) ([]componentArchiveEntry, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	var entries []componentArchiveEntry
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return entries, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if h.Size < 0 {
+			return nil, fmt.Errorf("archive entry %q has a negative size", h.Name)
+		}
+		name, err := normalizeComponentArchivePath(h.Name)
+		if err != nil {
+			return nil, err
+		}
+		entry := componentArchiveEntry{name: name, mode: os.FileMode(h.Mode) & 0o777, size: uint64(h.Size)}
+		switch h.Typeflag {
+		case tar.TypeReg, tar.TypeRegA:
+			entry.kind = componentArchiveFile
+		case tar.TypeDir:
+			entry.kind = componentArchiveDirectory
+			entry.size = 0
+		case tar.TypeSymlink:
+			entry.kind = componentArchiveSymlink
+			entry.size = 0
+			entry.link, err = normalizeComponentSymlink(name, h.Linkname)
+			if err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("unsupported tar entry %q", h.Name)
+		}
+		entries = append(entries, entry)
 	}
 }
 
-func extractComponentEntry(dest, name string, mode os.FileMode, size uint64, open func() (io.ReadCloser, error), isDir bool, extracted *int64) error {
-	target, err := safeComponentArchivePath(dest, name)
-	if err != nil {
-		return err
+func validateComponentArchivePlan(entries []componentArchiveEntry) error {
+	if len(entries) > maxBrowserComponentFiles {
+		return fmt.Errorf("archive contains too many files")
 	}
-	if isDir {
-		return os.MkdirAll(target, 0o755)
-	}
-	if mode&os.ModeSymlink != 0 {
-		r, err := open()
-		if err != nil {
-			return err
+	kinds := make(map[string]componentArchiveEntryKind, len(entries))
+	var extracted int64
+	for _, entry := range entries {
+		if _, exists := kinds[entry.name]; exists {
+			return fmt.Errorf("duplicate archive path %q", entry.name)
 		}
-		link, err := io.ReadAll(io.LimitReader(r, 4097))
-		r.Close()
-		if err != nil || len(link) > 4096 {
-			return fmt.Errorf("invalid symlink %q", name)
+		kinds[entry.name] = entry.kind
+		if entry.kind == componentArchiveFile {
+			if entry.size > uint64(maxBrowserComponentExtractBytes) || extracted > maxBrowserComponentExtractBytes-int64(entry.size) {
+				return fmt.Errorf("archive exceeds extracted byte budget")
+			}
+			extracted += int64(entry.size)
 		}
-		return createComponentSymlink(dest, name, string(link))
 	}
-	if size > uint64(maxBrowserComponentExtractBytes) || *extracted > maxBrowserComponentExtractBytes-int64(size) {
-		return fmt.Errorf("archive exceeds extracted byte budget")
+	for _, entry := range entries {
+		for parent := path.Dir(entry.name); parent != "."; parent = path.Dir(parent) {
+			if kind, exists := kinds[parent]; exists && kind != componentArchiveDirectory {
+				return fmt.Errorf("archive path %q has a non-directory parent", entry.name)
+			}
+		}
 	}
-	*extracted += int64(size)
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	return nil
+}
+
+func extractComponentFile(root *os.Root, entry componentArchiveEntry, r io.Reader) error {
+	if err := root.MkdirAll(path.Dir(entry.name), 0o755); err != nil {
 		return err
 	}
-	r, err := open()
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-	perm := mode.Perm()
+	perm := entry.mode.Perm()
 	if perm == 0 {
 		perm = 0o644
 	}
-	f, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	f, err := root.OpenFile(entry.name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
 	if err != nil {
 		return err
 	}
-	n, copyErr := io.Copy(f, io.LimitReader(r, int64(size)+1))
+	n, copyErr := io.Copy(f, io.LimitReader(r, int64(entry.size)+1))
 	closeErr := f.Close()
 	if copyErr != nil {
 		return copyErr
@@ -267,43 +403,89 @@ func extractComponentEntry(dest, name string, mode os.FileMode, size uint64, ope
 	if closeErr != nil {
 		return closeErr
 	}
-	if n != int64(size) {
-		return fmt.Errorf("archive entry %q size mismatch", name)
+	if n != int64(entry.size) {
+		return fmt.Errorf("archive entry %q size mismatch", entry.name)
 	}
 	return nil
 }
 
-func safeComponentArchivePath(dest, name string) (string, error) {
+func normalizeComponentArchivePath(name string) (string, error) {
 	name = strings.ReplaceAll(name, "\\", "/")
-	clean := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(name)), "./")
-	if clean == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
+	clean := strings.TrimPrefix(path.Clean(name), "./")
+	if clean == "" || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(name) || filepath.IsAbs(name) || filepath.VolumeName(name) != "" || strings.ContainsRune(clean, 0) {
 		return "", fmt.Errorf("unsafe archive path %q", name)
 	}
-	target := filepath.Join(dest, filepath.FromSlash(clean))
-	rel, err := filepath.Rel(dest, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("archive path escapes destination: %q", name)
-	}
-	return target, nil
+	return clean, nil
 }
 
-func createComponentSymlink(dest, name, link string) error {
-	target, err := safeComponentArchivePath(dest, name)
+func normalizeComponentSymlink(name, link string) (string, error) {
+	link = strings.ReplaceAll(link, "\\", "/")
+	if link == "" || path.IsAbs(link) || filepath.IsAbs(link) || filepath.VolumeName(link) != "" || strings.ContainsRune(link, 0) {
+		return "", fmt.Errorf("absolute symlink %q", name)
+	}
+	clean := path.Clean(link)
+	resolved := path.Clean(path.Join(path.Dir(name), clean))
+	if resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return "", fmt.Errorf("symlink escapes destination: %q", name)
+	}
+	return filepath.FromSlash(clean), nil
+}
+
+func createComponentArchiveSymlinks(root *os.Root, entries []componentArchiveEntry) error {
+	// Links are created only after every regular file and directory. An archive
+	// can therefore never make a later file write follow an archive-controlled
+	// link, while macOS Electron Framework links remain intact.
+	for _, entry := range entries {
+		if entry.kind != componentArchiveSymlink {
+			continue
+		}
+		if err := root.MkdirAll(path.Dir(entry.name), 0o755); err != nil {
+			return err
+		}
+		if err := root.Symlink(entry.link, entry.name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readRegularComponentFile(name string, maxBytes int64) ([]byte, error) {
+	st, err := os.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() || st.Size() < 0 || st.Size() > maxBytes {
+		return nil, fmt.Errorf("%s is not a bounded regular file", filepath.Base(name))
+	}
+	return os.ReadFile(name)
+}
+
+func validateComponentVersionTree(versionDir string) error {
+	root, err := filepath.EvalSymlinks(versionDir)
 	if err != nil {
 		return err
 	}
-	if filepath.IsAbs(link) {
-		return fmt.Errorf("absolute symlink %q", name)
+	st, err := os.Stat(root)
+	if err != nil || !st.IsDir() {
+		return fmt.Errorf("version root is not a directory")
 	}
-	resolved := filepath.Clean(filepath.Join(filepath.Dir(target), filepath.FromSlash(link)))
-	rel, err := filepath.Rel(dest, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("symlink escapes destination: %q", name)
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	return os.Symlink(link, target)
+	return filepath.WalkDir(versionDir, func(name string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink == 0 {
+			return nil
+		}
+		resolved, err := filepath.EvalSymlinks(name)
+		if err != nil {
+			return fmt.Errorf("resolve %s: %w", filepath.Base(name), err)
+		}
+		rel, err := filepath.Rel(root, resolved)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("symlink %s leaves the version directory", filepath.Base(name))
+		}
+		return nil
+	})
 }
 
 func validComponentVersion(v string) bool {

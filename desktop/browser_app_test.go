@@ -245,7 +245,93 @@ func TestInstallBrowserComponentTarGZRejectsEscapingSymlink(t *testing.T) {
 	}
 }
 
+func TestInstallBrowserComponentRejectsVersionSymlinkLeavingVersion(t *testing.T) {
+	version := "43.3.0-r1"
+	data := browserComponentTarGZFixture(t, map[string]string{
+		"current.json":              `{"version":"` + version + `"}`,
+		version + "/component.json": `{"format":"reasonix.browser.component.v1","version":"` + version + `","electronVersion":"43.3.0","protocolVersion":1}`,
+		"outside-binary":            "not-self-contained",
+	}, map[string]string{
+		version + "/browser/reasonix-browser-companion": "../../outside-binary",
+	})
+	err := installBrowserComponentArchive(data, "component.tar.gz", t.TempDir(), "linux")
+	if err == nil || !strings.Contains(err.Error(), "leaves the version directory") {
+		t.Fatalf("version symlink error = %v", err)
+	}
+}
+
+func TestExtractBrowserComponentRejectsSymlinkParent(t *testing.T) {
+	tests := []struct {
+		name    string
+		archive func(*testing.T) []byte
+		extract func([]byte, string) error
+	}{
+		{
+			name: "zip",
+			archive: func(t *testing.T) []byte {
+				return browserComponentZIPFixtureWithSymlinks(t,
+					map[string]string{"real/payload": "original", "alias/overwrite": "malicious"},
+					map[string]string{"alias": "real"},
+				)
+			},
+			extract: extractBrowserComponentZIP,
+		},
+		{
+			name: "tar.gz",
+			archive: func(t *testing.T) []byte {
+				return browserComponentTarGZFixture(t,
+					map[string]string{"real/payload": "original", "alias/overwrite": "malicious"},
+					map[string]string{"alias": "real"},
+				)
+			},
+			extract: extractBrowserComponentTarGZ,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.extract(tt.archive(t), t.TempDir())
+			if err == nil || !strings.Contains(err.Error(), "non-directory parent") {
+				t.Fatalf("symlink parent error = %v", err)
+			}
+		})
+	}
+}
+
+func TestExtractBrowserComponentRootRejectsPreexistingSymlinkEscape(t *testing.T) {
+	dest := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dest, "pivot")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	data := browserComponentZIPFixture(t, map[string]string{"pivot/escaped": "owned"})
+	if err := extractBrowserComponentZIP(data, dest); err == nil {
+		t.Fatal("root-scoped extraction unexpectedly followed a symlink outside the destination")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "escaped")); !os.IsNotExist(err) {
+		t.Fatalf("outside file exists after rejected extraction: %v", err)
+	}
+}
+
+func TestExtractBrowserComponentPreservesInternalSymlink(t *testing.T) {
+	dest := t.TempDir()
+	data := browserComponentTarGZFixture(t,
+		map[string]string{"framework/Versions/A/binary": "electron"},
+		map[string]string{"framework/Versions/Current": "A"},
+	)
+	if err := extractBrowserComponentTarGZ(data, dest); err != nil {
+		t.Fatalf("extract internal symlink: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "framework", "Versions", "Current", "binary"))
+	if err != nil || string(got) != "electron" {
+		t.Fatalf("internal symlink target = %q, %v", got, err)
+	}
+}
+
 func browserComponentZIPFixture(t *testing.T, files map[string]string) []byte {
+	return browserComponentZIPFixtureWithSymlinks(t, files, nil)
+}
+
+func browserComponentZIPFixtureWithSymlinks(t *testing.T, files, symlinks map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -255,6 +341,17 @@ func browserComponentZIPFixture(t *testing.T, files map[string]string) []byte {
 			t.Fatal(err)
 		}
 		if _, err := w.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, target := range symlinks {
+		h := &zip.FileHeader{Name: name, Method: zip.Store}
+		h.SetMode(os.ModeSymlink | 0o777)
+		w, err := zw.CreateHeader(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(target)); err != nil {
 			t.Fatal(err)
 		}
 	}
