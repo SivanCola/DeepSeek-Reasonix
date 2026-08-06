@@ -9,10 +9,10 @@ import (
 func TestHostToolAdapterSurface(t *testing.T) {
 	var executed bool
 	ht := HostTool{
-		Name:        "browser_read",
-		Description: "read-only browser",
-		Schema:      json.RawMessage(`{"type":"object"}`),
-		ReadOnly:    true,
+		Name:         "browser_read",
+		Description:  "read-only browser",
+		Schema:       json.RawMessage(`{"type":"object"}`),
+		ReadOnly:     true,
 		PlanModeSafe: true,
 		HostMutation: true,
 		Execute: func(ctx context.Context, args json.RawMessage) (string, error) {
@@ -42,8 +42,8 @@ func TestHostToolAdapterSurface(t *testing.T) {
 
 func TestHostToolAdapterImageChannel(t *testing.T) {
 	ht := HostTool{
-		Name:   "browser_read",
-		Schema: json.RawMessage(`{"type":"object"}`),
+		Name:     "browser_read",
+		Schema:   json.RawMessage(`{"type":"object"}`),
 		ReadOnly: true,
 		ExecuteWithImages: func(ctx context.Context, args json.RawMessage) (string, []string, error) {
 			return "screenshot", []string{"data:image/png;base64,abc"}, nil
