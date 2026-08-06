@@ -1,0 +1,18 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "reasonix-lite",
+  "outputfilename": "reasonix-lite",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm build",
+  "frontend:dev:watcher": "pnpm dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "esengine"
+  },
+  "info": {
+    "companyName": "Reasonix",
+    "productName": "Reasonix Lite",
+    "productVersion": "0.0.0",
+    "comments": "A single-conversation Wails shell around the Reasonix kernel."
+  }
+}

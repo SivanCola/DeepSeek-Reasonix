@@ -19,13 +19,24 @@ React/Vite（前端，尚未搭）。
 **怎么跑**
 
 ```bash
-# 内核层（免 cgo，无头可测）
+# 内核层（免 cgo，无头可测）——日常开发跑这个就够
 cd desktop-lite && go test ./...
 cd desktop-lite && CGO_ENABLED=1 go test -race ./...
 
-# 现有 desktop 模块（仅有 webkit2gtk-4.1 的环境需带 tag，见 TROUBLESHOOTING）
-cd desktop && go build -tags webkit2_41 ./...
+# 前端
+cd desktop-lite/frontend && pnpm install && pnpm build
+
+# 外壳（必须带 Wails 的 desktop,production；webkit2gtk-4.1 环境再加 webkit2_41）
+cd desktop-lite && go build -tags "desktop,production,webkit2_41" -o reasonix-lite .
+
+# 无显示器的服务器上验证能否启动
+Xvfb :99 -screen 0 1280x800x24 &
+DISPLAY=:99 ./reasonix-lite
+DISPLAY=:99 xwininfo -root -tree | grep Reasonix   # 确认窗口存在
 ```
+
+⚠️ 顺序有依赖：`main.go` 用 `//go:embed all:frontend/dist` 嵌入前端，**改了前端必须
+先 `pnpm build` 再编译 Go**，否则嵌进去的是旧产物。
 
 ## 进度
 
@@ -42,19 +53,27 @@ cd desktop && go build -tags webkit2_41 ./...
     （已验证拆掉守卫测试即红）
   - `tools.go`：`wireDeferredTools` 按策略降级 + 装 `tool_search`；roster 走
     首轮消息注入，新连上的 server 下一轮补充公告，不重复已公告的
-- **43 个测试**（tool 24 + session 19），含 `-race`
-- 服务器构建工具链：gcc / pkg-config / gtk+-3.0 / webkit2gtk-4.1 已装
+  - `stream.go`：`TranslateEvent` 把内核事件翻译成 UI 帧，含会话累计缓存命中率；
+    operator 通知按内核契约不进用户对话流
+- **Wails 外壳**：`main.go` / `app.go` / `wails.json`，只做窗口、绑定和事件转发
+- **最小前端**：React + Vite，7 个依赖（现有 desktop 是 30+）。构建产物
+  193KB JS / 1.77KB CSS
+- **49 个测试**（tool 24 + session 25），含 `-race`
+- 服务器构建工具链：gcc / pkg-config / gtk+-3.0 / webkit2gtk-4.1 / xvfb 已装
+- **已实测启动**：Xvfb 下窗口正常打开（980x720），前端渲染，`ready` 帧送达并解锁
+  输入框——Go→JS 通路与内核装配均已验证
 
 **进行中**：无
 
 **待办**（按建议顺序）
 
-1. **Wails 外壳** — `main.go` + 薄绑定层，只做窗口和 IPC，业务留在 `internal/`。
-2. **前端** — transcript + composer + ⌘K 命令面板三块。目标 ~4000 行 TSX。
+1. **真实模型turn 验证** — 目前验证到"会话装配成功 + UI 就绪"，**尚未跑过一次真实
+   模型对话**（需要 provider 凭据）。deferred 链路也只有单测，没对真实 MCP server
+   实测过缓存命中率变化。这是下一步最该做的。
+2. **⌘K 命令面板** — 用它取代设置面板，是 7448 行 → ~200 行的关键手法。
 3. **配置推导** — 继续读同一份 `config.toml`（兼容），UI 只暴露 provider + 凭据，
    其余全部计算默认值。现有配置有 246 个 TOML 字段，目标暴露面 5–8 项。
-4. **真实 provider 验证** — 目前 deferred 链路只有单测覆盖，尚未对真实 MCP server
-   跑过端到端；接上外壳后需要实测缓存命中率变化。
+4. **会话持久化 / 恢复** — 目前关掉就没了，内核有 checkpoint 能力可复用。
 
 **降级时机（重要）**：`Defer` 只能在 boot 之后、首轮之前调用。此时还没有任何 provider
 请求，没有已缓存的前缀可丢；晚一轮调用就会白扔那一轮的缓存。`wireDeferredTools` 在

@@ -89,7 +89,41 @@ git worktree add -b feature/xxx ../DeepSeek-Reasonix-wtN origin/main-v2
 `DeferredRoster` 按此写法实现，回归测试见
 `internal/tool/deferred_test.go: TestDeferredRosterDoesNotHoldRegistryLockAcrossToolCallbacks`。
 
-## 7. 会话被替换后，旧轮次的完成会污染新会话状态
+## 7. Wails 应用启动即退/报 "will not build without the correct build tags"
+
+**症状**：编译成功，运行后日志只有一行
+`Wails applications will not build without the correct build tags.`，窗口不出现。
+
+**根因**：Wails v2 在运行期检查构建 tag，普通 `go build` 缺 `desktop` 和 `production`。
+
+**修法**：
+
+```bash
+go build -tags "desktop,production,webkit2_41" -o reasonix-lite .
+```
+
+（`webkit2_41` 是本项目在 webkit2gtk-4.1 环境下的额外要求，见第 1 条。）
+
+## 8. `vite build` 删掉 `dist/.gitkeep`，新克隆编译不过
+
+**症状**：构建前端后 `git status` 多出 ` D frontend/dist/.gitkeep`；在没跑过前端构建
+的新克隆上编译 Go 报 `pattern all:frontend/dist: no matching files found`。
+
+**根因**：`main.go` 用 `//go:embed all:frontend/dist` 嵌入前端，要求该目录存在，所以
+仓库里放了 `dist/.gitkeep` 占位；而 vite 的 `emptyOutDir: true` 每次构建都会清空整个
+目录，把占位文件一并删掉。
+
+**修法**：保留 `emptyOutDir: true`（否则旧 hash 产物会堆积），在 build 脚本末尾把占位
+文件写回：
+
+```json
+"build": "tsc --noEmit && vite build && node -e \"require('fs').writeFileSync('dist/.gitkeep','')\""
+```
+
+**顺带**：改了前端**必须先 `pnpm build` 再编译 Go**，否则嵌进二进制的是旧产物——
+这类问题表现为"改了界面没生效"，很容易误判成缓存或前端 bug。
+
+## 9. 会话被替换后，旧轮次的完成会污染新会话状态
 
 **症状**：用户在一轮对话进行中切换项目，新会话看似"卡住"或反过来允许并发两轮。
 

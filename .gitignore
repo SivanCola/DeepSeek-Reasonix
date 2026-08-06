@@ -29,6 +29,10 @@ mem.prof
 /desktop/frontend/sourcemaps/
 /desktop/frontend/wailsjs/
 /desktop/frontend/package.json.md5
+/desktop-lite/reasonix-lite
+/desktop-lite/frontend/dist/*
+!/desktop-lite/frontend/dist/.gitkeep
+/desktop-lite/frontend/wailsjs/
 
 # Environment / local config (reasonix.example.toml is the shared template)
 .env
