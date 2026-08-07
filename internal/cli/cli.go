@@ -791,6 +791,7 @@ func runAgent(args []string, version string) int {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		}
 	}
+	reportDeliveryIntentShadow()
 	if resultOutput != nil {
 		sessionID := runOutputSessionID(format, agent.BranchID(ctrl.SessionPath()), machineIdentityKey)
 		if err := resultOutput.Finalize(sessionID, started, runErr); err != nil {

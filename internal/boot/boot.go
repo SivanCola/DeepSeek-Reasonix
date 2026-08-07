@@ -42,6 +42,7 @@ import (
 	"reasonix/internal/hook"
 	"reasonix/internal/installsource"
 	"reasonix/internal/instruction"
+	"reasonix/internal/intent"
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
 	"reasonix/internal/mcplaunch"
@@ -1672,6 +1673,30 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// without inheriting dynamic mcp__* schemas.
 	var capLedger *capability.Ledger
 	var capAudit *capability.Audit
+
+	// Tier 3 of the delivery intent resolver. Opt-in only: it costs one small
+	// model call per turn, so it stays nil unless the user names a model for it
+	// via agent.subagent_models["intent-classifier"]. Tiers 1 and 2 (host state
+	// and the model's own declarations) are free and answer first regardless.
+	//
+	// Bounded owns the timeout, cache, and degradation so a stalled or missing
+	// provider can never hold a turn or be mistaken for a reading of it.
+	var intentClassifier intent.Classifier
+	if modelRef := strings.TrimSpace(cfg.Agent.SubagentModels["intent-classifier"]); modelRef != "" {
+		effortRef := strings.TrimSpace(cfg.Agent.SubagentEfforts["intent-classifier"])
+		if p, price, _, err := resolveSubagentProvider(modelRef, effortRef); err == nil && p != nil {
+			usageModelRef, _ := subagentIdentity(modelRef, effortRef)
+			intentClassifier = &intent.Bounded{
+				Inner: &intent.ModelClassifier{
+					Provider: p,
+					Sink:     sink,
+					Model:    usageModelRef,
+					Pricing:  price,
+				},
+			}
+		}
+	}
+
 	capSpecs := PluginSpecsForRootWithOptions(cfg.Plugins, root, pluginSpecOptions)
 	cachedTools, cacheKeyOK := capability.LoadCachedToolsForSpecs(capSpecs)
 	skillStore.ConfigureToolBindings(func(sk skill.Skill) []tool.MCPBinding {
@@ -1783,6 +1808,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		WorkspaceLease:               workspaceLease,
 		CapabilityLedger:             capLedger,
 		CapabilityAudit:              capAudit,
+		IntentClassifier:             intentClassifier,
 		ContextWindow:                entry.ContextWindow,
 		SoftCompactRatio:             cfg.Agent.SoftCompactRatio,
 		ToolResultSnipRatio:          cfg.Agent.ToolResultSnipRatio,
