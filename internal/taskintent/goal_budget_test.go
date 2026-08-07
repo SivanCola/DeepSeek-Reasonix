@@ -1,77 +1,50 @@
 package taskintent
 
-import "testing"
+import (
+	"testing"
 
+	"reasonix/internal/intent/corpus"
+)
+
+// TestGoalNeedsWriteBudgetMatrix pins which objectives start a Goal on the
+// extended write turn budget. The case table lives in internal/intent/corpus so
+// this gate test and the classifier evaluation harness judge one corpus.
 func TestGoalNeedsWriteBudgetMatrix(t *testing.T) {
-	// User-reported Chinese bare fault statement must land on the write budget.
-	const userReported = "数据模型管理器又出现历史 BUG 了……"
-	if !GoalNeedsWriteBudget(userReported) {
-		t.Fatalf("GoalNeedsWriteBudget(%q) = false, want write", userReported)
-	}
-	// Ordinary Delivery must still treat the same bare fault as non-mutation
-	// (observable read / evidence, not write-required).
-	if NeedsMutation(userReported) {
-		t.Fatalf("NeedsMutation(%q) changed; ordinary Delivery must stay non-mutation", userReported)
-	}
-
-	writeCases := []string{
-		userReported,
-		"应用打开设置时崩溃",
-		"the auth service crashes on login",
-		"parser throws an exception on empty input",
-		"fix the crash in a.go",
-		"帮我修复wps的崩溃问题",
-		"why does it fail and fix it",
-		"为什么失败然后修复它",
-		"解释失败原因并修复",
-	}
-	for _, input := range writeCases {
-		if !GoalNeedsWriteBudget(input) {
-			t.Errorf("Goal write budget missing for %q", input)
+	for _, tt := range corpus.GoalBudget {
+		if tt.NeedsWriteBudget == nil {
+			continue
 		}
-	}
-
-	simpleCases := []string{
-		"为什么会出现这个 BUG？",
-		"只分析原因，不要修改代码。",
-		"诊断数据库连接失败原因。",
-		"复现并定位问题，但不要修复。",
-		"why does this bug happen?",
-		"explain the crash without changing code",
-		"reproduce the crash and identify the root cause",
-		"review only and do not fix anything",
-		"hello",
-	}
-	for _, input := range simpleCases {
-		if GoalNeedsWriteBudget(input) {
-			t.Errorf("Goal simple budget expected for %q", input)
-		}
+		t.Run(tt.Name, func(t *testing.T) {
+			if got := GoalNeedsWriteBudget(tt.Text); got != *tt.NeedsWriteBudget {
+				t.Errorf("GoalNeedsWriteBudget(%q) = %v, want %v", tt.Text, got, *tt.NeedsWriteBudget)
+			}
+		})
 	}
 }
 
+// TestGoalBareFaultDoesNotChangeDeliveryClassification pins ordinary Delivery
+// consultation/diagnosis so Goal write inference cannot drift the shared
+// delivery gates.
+//
+// This is the contract that shapes the whole intent design: a bare fault report
+// must start a Goal on the write budget while ordinary Delivery still treats it
+// as non-mutation, so one sentence has to produce opposite answers for two
+// consumers. See internal/intent.TestCrossConsumerDisagreement.
 func TestGoalBareFaultDoesNotChangeDeliveryClassification(t *testing.T) {
-	// Pin ordinary Delivery consultation/diagnosis so Goal write inference
-	// cannot drift the shared delivery gates.
-	readonly := []string{
-		"为什么会出现这个 BUG？",
-		"诊断数据库连接失败原因。",
-		"reproduce the crash and identify the root cause",
-		"应用打开设置时崩溃",
-		"数据模型管理器又出现历史 BUG 了……",
-	}
-	for _, input := range readonly {
-		if NeedsMutation(input) {
-			t.Errorf("delivery mutation incorrectly true for %q", input)
+	saw := 0
+	for _, tt := range corpus.GoalBudget {
+		if tt.NeedsMutation == nil {
+			continue
 		}
+		saw++
+		t.Run(tt.Name, func(t *testing.T) {
+			if got := NeedsMutation(tt.Text); got != *tt.NeedsMutation {
+				t.Errorf("NeedsMutation(%q) = %v, want %v", tt.Text, got, *tt.NeedsMutation)
+			}
+		})
 	}
-	mutation := []string{
-		"fix the crash in a.go",
-		"为什么失败然后修复它",
-	}
-	for _, input := range mutation {
-		if !NeedsMutation(input) {
-			t.Errorf("delivery mutation incorrectly false for %q", input)
-		}
+	if saw == 0 {
+		t.Fatal("no mutation-labeled Goal cases in the corpus; the cross-consumer contract is unguarded")
 	}
 }
 
