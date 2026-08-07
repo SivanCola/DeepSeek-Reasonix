@@ -77,6 +77,26 @@ func (a *App) Send(input string) error {
 // restore its composer state instead of assuming idle.
 func (a *App) Running() bool { return a.host.Running() }
 
+// Ready reports whether a conversation is open. The webview polls it rather
+// than relying on the ready frame alone, which it can miss by mounting after
+// assembly finished.
+func (a *App) Ready() bool { return a.host.Ready() }
+
+// Commands returns the palette catalog for the current state. The webview
+// re-reads it each time the palette opens rather than caching it, because
+// availability depends on whether a turn is running.
+func (a *App) Commands() []session.Command { return a.host.Commands() }
+
+// RunCommand executes a palette command and returns the message to show, if
+// any.
+func (a *App) RunCommand(id string) (string, error) {
+	ctx := a.context()
+	if ctx == nil {
+		return "", session.ErrNoConversation
+	}
+	return a.host.RunCommand(ctx, id)
+}
+
 // emit translates a kernel event and forwards anything the UI renders.
 func (a *App) emit(e event.Event) {
 	frame, ok := session.TranslateEvent(e)

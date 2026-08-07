@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { onFrame, running, send, type Frame } from "./bridge";
+import Palette from "./Palette";
+import { onFrame, ready as queryReady, runCommand, running, send, type Frame } from "./bridge";
 
 type Entry =
   | { id: number; role: "user"; text: string }
@@ -18,6 +19,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [cache, setCache] = useState<Cache>({ rate: 0, known: false });
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const streamRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -33,6 +35,25 @@ export default function App() {
       streamRef.current = entry.id;
       return [...prev, entry];
     });
+  }, []);
+
+  // Poll for readiness as well as listening for the frame. Assembly can finish
+  // before this webview mounted, and the ready frame is a one-shot event — a
+  // listener alone would leave the composer disabled forever.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      if (await queryReady()) {
+        setReady(true);
+        return;
+      }
+      window.setTimeout(() => void poll(), 400);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -76,6 +97,36 @@ export default function App() {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [entries]);
 
+  // ⌘K / Ctrl+K anywhere, including from inside the composer.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const runPaletteCommand = useCallback(async (commandID: string) => {
+    // A new conversation resets the kernel's context, so the transcript has to
+    // go with it — leaving it on screen would show history the model can no
+    // longer see.
+    if (commandID === "new") {
+      setEntries([]);
+      streamRef.current = null;
+    }
+    try {
+      const message = await runCommand(commandID);
+      if (message) {
+        setEntries((prev) => [...prev, { id: id(), role: "notice", text: message, level: "info" }]);
+      }
+    } catch (err) {
+      setEntries((prev) => [...prev, { id: id(), role: "notice", text: String(err), level: "warn" }]);
+    }
+  }, []);
+
   const submit = useCallback(async () => {
     const text = draft.trim();
     if (!text || busy || !ready) return;
@@ -105,8 +156,13 @@ export default function App() {
         <span className="cache" title="Session prompt-cache hit rate">
           cache {cache.known ? `${Math.round(cache.rate * 100)}%` : "—"}
         </span>
+        <button className="palette-hint" onClick={() => setPaletteOpen(true)} title="Commands">
+          ⌘K
+        </button>
         <span className={`status ${busy ? "busy" : ""}`}>{status}</span>
       </header>
+
+      <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} onRun={(id) => void runPaletteCommand(id)} />
 
       <main className="transcript">
         {entries.length === 0 && <p className="empty">Ask for something to get started.</p>}

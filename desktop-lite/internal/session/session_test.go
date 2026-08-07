@@ -247,6 +247,25 @@ func TestCloseIsIdempotentAndClosesTheConversationOnce(t *testing.T) {
 	}
 }
 
+// The ready frame is a one-shot event a webview can mount too late to catch, so
+// readiness must also be queryable.
+func TestReadyTracksTheConversationLifecycle(t *testing.T) {
+	conv := newInstantConv()
+	h := NewHost(builderFor(conv))
+
+	if h.Ready() {
+		t.Fatal("Ready() is true before anything is open")
+	}
+	mustOpen(t, h)
+	if !h.Ready() {
+		t.Fatal("Ready() is false with a conversation open")
+	}
+	h.Close()
+	if h.Ready() {
+		t.Fatal("Ready() is true after Close")
+	}
+}
+
 func TestTurnReportsZeroWithNothingOpen(t *testing.T) {
 	h := NewHost(builderFor(newInstantConv()))
 

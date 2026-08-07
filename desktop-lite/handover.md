@@ -55,10 +55,14 @@ DISPLAY=:99 xwininfo -root -tree | grep Reasonix   # 确认窗口存在
     首轮消息注入，新连上的 server 下一轮补充公告，不重复已公告的
   - `stream.go`：`TranslateEvent` 把内核事件翻译成 UI 帧，含会话累计缓存命中率；
     operator 通知按内核契约不进用户对话流
+  - `commands.go`：⌘K 命令目录（new / cancel / compact / tools）。**目录定义在 Go
+    里**，前端只渲染——加一条命令不用碰 TypeScript
 - **Wails 外壳**：`main.go` / `app.go` / `wails.json`，只做窗口、绑定和事件转发
 - **最小前端**：React + Vite，7 个依赖（现有 desktop 是 30+）。构建产物
-  193KB JS / 1.77KB CSS
-- **49 个测试**（tool 24 + session 25），含 `-race`
+  195KB JS / 2.9KB CSS
+- **⌘K 命令面板**：取代设置面板的关键手法。`Palette.tsx` 约 100 行，对比现有
+  `SettingsPanel.tsx` 的 7448 行
+- **64 个测试**（tool 24 + session 40），含 `-race`
 - 服务器构建工具链：gcc / pkg-config / gtk+-3.0 / webkit2gtk-4.1 / xvfb 已装
 - **已实测启动**：Xvfb 下窗口正常打开（980x720），前端渲染，`ready` 帧送达并解锁
   输入框——Go→JS 通路与内核装配均已验证
@@ -83,10 +87,15 @@ DISPLAY=:99 xwininfo -root -tree | grep Reasonix   # 确认窗口存在
 
 **待办**（按建议顺序）
 
-1. **⌘K 命令面板** — 用它取代设置面板，是 7448 行 → ~200 行的关键手法。
-3. **配置推导** — 继续读同一份 `config.toml`（兼容），UI 只暴露 provider + 凭据，
+1. **配置推导** — 继续读同一份 `config.toml`（兼容），UI 只暴露 provider + 凭据，
    其余全部计算默认值。现有配置有 246 个 TOML 字段，目标暴露面 5–8 项。
-4. **会话持久化 / 恢复** — 目前关掉就没了，内核有 checkpoint 能力可复用。
+   首次启动没有 provider 时需要引导流程：目前会话能开起来（显示 ready），但发送必然
+   失败——这是当前最明显的体验缺口。
+2. **会话持久化 / 恢复** — 目前关掉就没了，内核有 checkpoint 能力可复用。另：当前未
+   设 `SessionDir`，日志会警告 "session has content but no session path"。
+3. **命令面板扩展** — 切换 workspace（需 Wails 目录对话框）、切换模型
+   （`Controller.ModelRef()` 已有，缺列表与切换接口）。
+4. **多 MCP server / 大 schema 场景实测** — 见上，当前只测过单个小 server。
 
 **降级时机（重要）**：`Defer` 只能在 boot 之后、首轮之前调用。此时还没有任何 provider
 请求，没有已缓存的前缀可丢；晚一轮调用就会白扔那一轮的缓存。`wireDeferredTools` 在

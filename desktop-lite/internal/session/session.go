@@ -229,6 +229,19 @@ func (h *Host) rosterNotice(conv Conversation) string {
 	return tool.RenderDeferredRoster(fresh)
 }
 
+// Ready reports whether a conversation is open and usable.
+//
+// Assembly finishes on its own schedule, and the frame announcing it is a
+// one-shot event: a webview that had not finished mounting when it fired would
+// wait forever. A frontend polls this instead of trusting that it was listening
+// at the right moment.
+func (h *Host) Ready() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.current != nil && !h.closed
+}
+
 // Running reports whether a turn is in flight.
 func (h *Host) Running() bool {
 	h.mu.Lock()

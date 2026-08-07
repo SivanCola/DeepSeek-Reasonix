@@ -19,8 +19,26 @@ export type Frame = {
 /** Wails event name carrying frames. Mirrors FrameEvent in app.go. */
 const FRAME_EVENT = "reasonix:frame";
 
+/** One command-palette entry. Mirrors session.Command in Go. */
+export type Command = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  enabled: boolean;
+};
+
 type WailsWindow = {
-  go?: { main?: { App?: { Send(input: string): Promise<void>; Running(): Promise<boolean> } } };
+  go?: {
+    main?: {
+      App?: {
+        Send(input: string): Promise<void>;
+        Running(): Promise<boolean>;
+        Ready(): Promise<boolean>;
+        Commands(): Promise<Command[]>;
+        RunCommand(id: string): Promise<string>;
+      };
+    };
+  };
   runtime?: { EventsOn(name: string, cb: (...data: unknown[]) => void): () => void };
 };
 
@@ -54,4 +72,34 @@ export async function running(): Promise<boolean> {
   const app = bridge().go?.main?.App;
   if (!app) return false;
   return app.Running();
+}
+
+/**
+ * Reports whether a conversation is open.
+ *
+ * The ready frame is a one-shot event the webview can miss by mounting after
+ * assembly finished, so the UI polls this rather than trusting it was
+ * listening at the right moment.
+ */
+export async function ready(): Promise<boolean> {
+  const app = bridge().go?.main?.App;
+  if (!app) return false;
+  return app.Ready();
+}
+
+/**
+ * Reads the palette catalog. Availability depends on whether a turn is running,
+ * so this is re-read each time the palette opens rather than cached.
+ */
+export async function commands(): Promise<Command[]> {
+  const app = bridge().go?.main?.App;
+  if (!app) return [];
+  return app.Commands();
+}
+
+/** Runs a palette command, returning the message to show (may be empty). */
+export async function runCommand(id: string): Promise<string> {
+  const app = bridge().go?.main?.App;
+  if (!app) throw new Error("shell is not attached");
+  return app.RunCommand(id);
 }

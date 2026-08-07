@@ -69,6 +69,103 @@ body {
   color: var(--accent);
 }
 
+.palette-hint {
+  align-self: center;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.palette-hint:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+
+/* --- command palette --- */
+
+.palette-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 55%);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  z-index: 10;
+}
+
+.palette {
+  width: min(34rem, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgb(0 0 0 / 45%);
+  overflow: hidden;
+}
+
+.palette-input {
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 15px;
+}
+
+.palette-input:focus {
+  outline: none;
+}
+
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.palette-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.palette-item.active {
+  background: #232838;
+}
+
+/* Disabled commands stay listed so the palette's contents do not depend on
+   timing; they simply cannot be chosen. */
+.palette-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.palette-title {
+  font-size: 14px;
+}
+
+.palette-subtitle,
+.palette-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.palette-empty {
+  padding: 10px;
+  list-style: none;
+}
+
 /* --- transcript --- */
 
 .transcript {
