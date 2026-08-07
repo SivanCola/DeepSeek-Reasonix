@@ -3827,7 +3827,7 @@ export function Composer({
           </button>
         </div>
       </AnchoredPopover>
-      {!heroMode && <AnchoredPopover
+      <AnchoredPopover
         open={intentMenuOpen}
         closing={intentMenuClosing}
         anchorRef={intentMenuAnchorRef}
@@ -3946,8 +3946,8 @@ export function Composer({
             </div>
           )}
         </div>
-      </AnchoredPopover>}
-      {!heroMode && <AnchoredPopover
+      </AnchoredPopover>
+      <AnchoredPopover
         open={profileMenuOpen}
         closing={profileMenuClosing}
         anchorRef={profileMenuAnchorRef}
@@ -3987,7 +3987,7 @@ export function Composer({
             </button>
           ))}
         </div>
-      </AnchoredPopover>}
+      </AnchoredPopover>
       <AnchoredPopover
         open={moreMenuOpen && !disabled && !running}
         closing={moreMenuClosing}
@@ -4549,8 +4549,10 @@ export function Composer({
                 </Tooltip>
               </div>
             )}
-            {!heroMode && (
-              <div className="composer-meta__control composer-meta__control--intent">
+            {/* Task / profile / approval stay available in the empty-session hero
+                so users can pick Plan, Goal, Standard, or delivery profile before
+                the first message (#7731). Content + remains non-hero only. */}
+            <div className="composer-meta__control composer-meta__control--intent">
                 <Tooltip label={taskModeTooltipLabel} disabled={intentMenuOpen || intentMenuClosing || creationChrome}>
                   <button
                     ref={intentMenuAnchorRef}
@@ -4571,9 +4573,7 @@ export function Composer({
                   </button>
                 </Tooltip>
               </div>
-            )}
-            {!heroMode && (
-              <div className="composer-meta__control composer-meta__control--profile">
+            <div className="composer-meta__control composer-meta__control--profile">
                 <Tooltip label={runtimeProfileTooltipLabel} disabled={profileMenuOpen || profileMenuClosing || creationChrome}>
                   <button
                     ref={profileMenuAnchorRef}
@@ -4597,9 +4597,7 @@ export function Composer({
                   </button>
                 </Tooltip>
               </div>
-            )}
-            {!heroMode && (
-              <div className="composer-meta__control composer-meta__control--approval">
+            <div className="composer-meta__control composer-meta__control--approval">
                 {/* A pending tool approval disables the composer, but the approval
                     bar stays usable so mode changes remain possible mid-prompt;
                     the approval card explains that the pending request still needs
