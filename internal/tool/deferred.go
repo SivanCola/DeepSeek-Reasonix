@@ -90,6 +90,32 @@ func (r *Registry) Defer(names ...string) []string {
 	return moved
 }
 
+// DeferPrefix marks a namespace deferred and returns how many already-registered
+// tools it moved. Tools registered under the prefix later join the deferred tier
+// automatically.
+//
+// Covering later arrivals is the point. An MCP server lands in the registry
+// twice: a placeholder at boot, then its real tools when a cold-cache handshake
+// finishes. Deferring only what exists at assembly time would let that second
+// wave into the exported list mid-session, which defeats the tier and churns the
+// cached prefix at the same time.
+func (r *Registry) DeferPrefix(prefix string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.deferredPrefixes = append(r.deferredPrefixes, prefix)
+
+	moved := 0
+	for _, name := range r.order {
+		if !strings.HasPrefix(name, prefix) || r.deferred[name] {
+			continue
+		}
+		r.deferred[name] = true
+		moved++
+	}
+	return moved
+}
+
 // Activate releases deferred tools into Schemas(), appending them in the order
 // given. Unknown, core-tier, and already-activated names are skipped. It
 // returns the names that actually moved so a caller can report precisely what

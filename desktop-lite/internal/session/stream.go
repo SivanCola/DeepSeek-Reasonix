@@ -73,6 +73,21 @@ func TranslateEvent(e event.Event) (Frame, bool) {
 	return Frame{}, false
 }
 
+// TurnDoneFrame returns the frame that closes a turn.
+//
+// The kernel deliberately does not emit event.TurnDone into the UI stream for
+// synchronous controller runs — Run returning *is* the completion signal, and
+// only asynchronous frontends like the bot gateway publish the event. A shell
+// that waited for the event instead would leave its composer locked forever
+// after the first turn, so it synthesises the frame from Send's return.
+func TurnDoneFrame(err error) Frame {
+	f := Frame{Kind: "turn_done"}
+	if err != nil {
+		f.Err = err.Error()
+	}
+	return f
+}
+
 func levelName(l event.Level) string {
 	if l == event.LevelWarn {
 		return "warn"

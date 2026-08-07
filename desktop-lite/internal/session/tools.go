@@ -56,23 +56,38 @@ func wireDeferredTools(conv Conversation, policy DeferredPolicy) int {
 		return 0
 	}
 
-	var targets []string
-	for _, name := range reg.Names() {
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(name, prefix) {
-				targets = append(targets, name)
-				break
-			}
+	// Claim whole namespaces rather than the names present right now. On a cold
+	// schema cache an MCP server registers one connect placeholder at boot and
+	// its real tools only when the background handshake lands, so a name-based
+	// sweep would hold back the stub and let a dozen real schemas into the
+	// prefix seconds later — defeating the tier and churning the cache at once.
+	//
+	// A namespace with nothing in it is skipped: boot has already registered at
+	// least a placeholder for every configured server, so an empty one means
+	// none is configured and the search tool would be a schema with nothing to
+	// find.
+	names := reg.Names()
+	deferred := 0
+	for _, prefix := range prefixes {
+		if !anyHasPrefix(names, prefix) {
+			continue
 		}
+		deferred += reg.DeferPrefix(prefix)
 	}
-	deferred := reg.Defer(targets...)
-	if len(deferred) == 0 {
-		// Nothing was held back, so the search tool would be a schema in the
-		// prefix with nothing to find.
+	if deferred == 0 {
 		return 0
 	}
 	reg.Add(tool.NewSearchTool(reg))
-	return len(deferred)
+	return deferred
+}
+
+func anyHasPrefix(names []string, prefix string) bool {
+	for _, name := range names {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func registryOf(conv Conversation) *tool.Registry {

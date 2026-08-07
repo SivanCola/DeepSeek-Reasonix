@@ -92,6 +92,19 @@ func TestTranslateEventCarriesTurnFailure(t *testing.T) {
 	}
 }
 
+// The shell closes turns itself because the kernel does not publish TurnDone
+// for synchronous runs; a UI that waited for the event would lock its composer
+// after the first turn.
+func TestTurnDoneFrameCarriesTheOutcome(t *testing.T) {
+	if got := TurnDoneFrame(nil); got.Kind != "turn_done" || got.Err != "" {
+		t.Fatalf("TurnDoneFrame(nil) = %+v, want a clean turn_done", got)
+	}
+	got := TurnDoneFrame(errors.New("provider timeout"))
+	if got.Kind != "turn_done" || got.Err != "provider timeout" {
+		t.Fatalf("TurnDoneFrame(err) = %+v, want the failure text", got)
+	}
+}
+
 func TestTranslateEventDropsUnrenderedKinds(t *testing.T) {
 	if got, ok := TranslateEvent(event.Event{Kind: event.TurnStarted}); ok {
 		t.Fatalf("TurnStarted should not render a frame, got %+v", got)

@@ -66,7 +66,11 @@ func (a *App) Send(input string) error {
 	if ctx == nil {
 		return session.ErrNoConversation
 	}
-	return a.host.Send(ctx, input)
+	err := a.host.Send(ctx, input)
+	// The kernel does not publish TurnDone for synchronous runs, so the shell
+	// closes the turn itself; see session.TurnDoneFrame.
+	a.emitFrame(session.TurnDoneFrame(err))
+	return err
 }
 
 // Running reports whether a turn is in flight, so a reloaded webview can

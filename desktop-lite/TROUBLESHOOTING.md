@@ -123,7 +123,40 @@ go build -tags "desktop,production,webkit2_41" -o reasonix-lite .
 **顺带**：改了前端**必须先 `pnpm build` 再编译 Go**，否则嵌进二进制的是旧产物——
 这类问题表现为"改了界面没生效"，很容易误判成缓存或前端 bug。
 
-## 9. 会话被替换后，旧轮次的完成会污染新会话状态
+## 9. 等 `TurnDone` 事件解锁 UI，输入框会永久卡死
+
+**症状**：发出第一条消息、模型正常回复，但输入框再也不解锁。
+
+**根因**：`Controller.Run()` 是**同步**的，它返回本身就是 turn 结束的信号；内核
+**刻意不把 `TurnDone` 发进 UI 事件流**（见 `internal/stats/recorder.go` 中
+`RecordTurnCompletion` 的注释："synchronous controller runs that deliberately do
+not emit TurnDone into the UI event stream"）。只有 bot gateway 那条异步路径会发。
+
+**修法**：外壳在 `Send` 返回时自己合成这一帧，见 `session.TurnDoneFrame`。
+
+**教训**：这个 bug **所有单测都抓不到**（fake 会话不会告诉你真实内核不发某个事件），
+是接真实 provider 跑第一轮时才暴露的。
+
+## 10. 冷 schema 缓存下，MCP 工具会绕过 deferred 层
+
+**症状**：首次接入某个 MCP server 时，deferred 只拦下 1 个 `mcp__<server>__connect`，
+握手完成后十几个真实工具全进了导出列表。
+
+**根因**：MCP 工具分**两批**注册——boot 时先放一个 connect 占位桩，真实工具等后台握手
+完成后由 `lazy.go` 的 `trySwap` 经 `reg.Add` 补进来。按"当前工具名"扫描降级只能拦住第
+一批。
+
+**修法**：按**命名空间**认领而不是按名字，`Registry.DeferPrefix(prefix)` 会让后续注册
+到该前缀下的工具自动归入 deferred 层。回归测试见
+`internal/tool/deferred_test.go: TestDeferPrefixCoversToolsRegisteredLater`。
+
+**测冷路径的两个前提**（否则测的其实是热路径）：
+
+- MCP schema 缓存在 `<Reasonix home>/cache/mcp/<server>.json`，要真冷必须删它
+- MCP 运行状态按 **workspace 路径**做 key，所以每次用新的临时目录跑，缓存永远是冷的；
+  想测热路径必须固定 workspace
+
+## 11. 会话被替换后，旧轮次的完成会污染新会话状态
 
 **症状**：用户在一轮对话进行中切换项目，新会话看似"卡住"或反过来允许并发两轮。
 

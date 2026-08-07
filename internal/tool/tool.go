@@ -288,6 +288,10 @@ type Registry struct {
 	deferred    map[string]bool
 	activated   []string
 	unavailable map[string]string
+	// deferredPrefixes are namespaces whose tools join the deferred tier on
+	// registration, so a capability that registers in waves cannot leak its
+	// later arrivals into the exported list (see DeferPrefix).
+	deferredPrefixes []string
 }
 
 // NewRegistry returns an empty registry.
@@ -322,6 +326,12 @@ func (r *Registry) addLocked(t Tool) bool {
 	}
 	if _, ok := r.tools[name]; !ok {
 		r.order = append(r.order, name)
+	}
+	for _, prefix := range r.deferredPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			r.deferred[name] = true
+			break
+		}
 	}
 	r.tools[name] = t
 	r.canon[name] = provider.CanonicalizeSchema(t.Schema())

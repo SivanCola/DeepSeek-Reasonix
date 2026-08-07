@@ -140,6 +140,46 @@ func TestDeferAfterActivationDoesNotDuplicateInSchemas(t *testing.T) {
 	}
 }
 
+// The cold-cache path: an MCP server registers a connect placeholder at boot and
+// its real tools only when the handshake lands. A claimed namespace must cover
+// that second wave, or a dozen schemas walk into the exported list mid-session.
+func TestDeferPrefixCoversToolsRegisteredLater(t *testing.T) {
+	r := NewRegistry()
+	r.Add(stubTool{name: "bash"})
+	r.Add(stubTool{name: "mcp__everything__connect"})
+
+	if moved := r.DeferPrefix("mcp__everything__"); moved != 1 {
+		t.Fatalf("DeferPrefix moved %d tools, want the placeholder", moved)
+	}
+
+	// The handshake completes: the placeholder is dropped and the real tools
+	// register, exactly as the lazy MCP swap does it.
+	r.RemovePrefix("mcp__everything__")
+	r.Add(stubTool{name: "mcp__everything__echo"})
+	r.Add(stubTool{name: "mcp__everything__get_sum"})
+
+	if got, want := schemaNames(t, r), []string{"bash"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Schemas() = %v, want the late MCP tools withheld", got)
+	}
+	if len(r.DeferredRoster()) != 2 {
+		t.Fatalf("roster = %v, want both late tools", r.DeferredRoster())
+	}
+}
+
+func TestDeferPrefixLeavesOtherNamespacesAlone(t *testing.T) {
+	r := NewRegistry()
+	r.Add(stubTool{name: "bash"})
+	r.DeferPrefix("mcp__figma__")
+	r.Add(stubTool{name: "mcp__sheets__read_range"})
+
+	if r.IsDeferred("mcp__sheets__read_range") {
+		t.Fatal("an unclaimed namespace was deferred")
+	}
+	if r.IsDeferred("bash") {
+		t.Fatal("a core tool was deferred")
+	}
+}
+
 func TestActivateIsIdempotentAndIgnoresUnknownNames(t *testing.T) {
 	r := NewRegistry()
 	r.Add(stubTool{name: "bash"})

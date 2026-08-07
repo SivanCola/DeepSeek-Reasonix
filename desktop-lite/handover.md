@@ -65,12 +65,25 @@ DISPLAY=:99 xwininfo -root -tree | grep Reasonix   # 确认窗口存在
 
 **进行中**：无
 
+**已实盘验证**（`live_test.go`，默认跳过，需 `REASONIX_LIVE=1` + 一次性 `REASONIX_HOME`）
+
+- 真实 provider 跑通一轮对话，答案正确，usage/缓存命中率帧正常到达
+- 接真实 MCP server（`@modelcontextprotocol/server-everything`，14 个工具）实测
+  **冷 schema 缓存 + 生产接线顺序**下：
+
+  | 指标 | 值 |
+  |---|---|
+  | 注册工具（无此机制时发送） | 62 个 / 56,514 schema 字节 |
+  | 实际导出 | 48 个 / 50,092 字节 |
+  | 每请求节省 | **6,422 字节（11.4%）≈ 1,605 tokens** |
+
+  ⚠️ 11.4% 是**这个场景**的数字：参考 server 的 14 个工具都很小（均 ~270 字节），而
+  47 个内置工具占了约 49KB 且不该 defer。收益随 MCP 数量和 schema 肥瘦增长，真实
+  server（figma / playwright 之类）远不止于此。**尚未测过多 server、大 schema 的场景。**
+
 **待办**（按建议顺序）
 
-1. **真实模型turn 验证** — 目前验证到"会话装配成功 + UI 就绪"，**尚未跑过一次真实
-   模型对话**（需要 provider 凭据）。deferred 链路也只有单测，没对真实 MCP server
-   实测过缓存命中率变化。这是下一步最该做的。
-2. **⌘K 命令面板** — 用它取代设置面板，是 7448 行 → ~200 行的关键手法。
+1. **⌘K 命令面板** — 用它取代设置面板，是 7448 行 → ~200 行的关键手法。
 3. **配置推导** — 继续读同一份 `config.toml`（兼容），UI 只暴露 provider + 凭据，
    其余全部计算默认值。现有配置有 246 个 TOML 字段，目标暴露面 5–8 项。
 4. **会话持久化 / 恢复** — 目前关掉就没了，内核有 checkpoint 能力可复用。
