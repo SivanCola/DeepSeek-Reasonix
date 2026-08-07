@@ -22,6 +22,7 @@ import (
 	"reasonix/internal/evidence"
 	"reasonix/internal/extension/dispatch"
 	"reasonix/internal/instruction"
+	"reasonix/internal/intent"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
 	"reasonix/internal/nilutil"
@@ -484,6 +485,10 @@ type Agent struct {
 	// framing. Empty means classify the raw input verbatim.
 	classifierTaskText string
 
+	// intentClassifier is the optional tier-3 reader consulted only when host
+	// state and the model's own declarations stay silent. Nil disables tier 3
+	// entirely, which is the default and keeps the path model-free.
+	intentClassifier intent.Classifier
 	// preserveEvidenceOnce makes the next Run keep the turn evidence ledger
 	// instead of resetting it. RunSubAgentWithSession sets it before a
 	// review_report completion nudge so the retry can cite the read receipts
@@ -1087,6 +1092,14 @@ type Options struct {
 	// CapabilityAudit is the optional non-persisted metrics sink for routing.
 	CapabilityAudit *capability.Audit
 
+	// IntentClassifier is the optional tier-3 reader for the delivery intent
+	// resolver, consulted only when host state and the model's own declarations
+	// stay silent. Nil (the default) keeps the resolver model-free.
+	//
+	// It must bound itself; wrap the provider-backed implementation in
+	// intent.Bounded so a stalled provider cannot outlive the turn.
+	IntentClassifier intent.Classifier
+
 	// RequireReviewReportKind, when non-empty, makes RunSubAgentWithSession fail
 	// unless the subagent recorded a successful review_report of this kind —
 	// review/security subagents must return typed, host-verifiable reports.
@@ -1231,6 +1244,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		classifierTaskText:        opts.ClassifierTaskText,
 		capabilityLedger:          opts.CapabilityLedger,
 		capabilityAudit:           opts.CapabilityAudit,
+		intentClassifier:          opts.IntentClassifier,
 		contextWindow:             opts.ContextWindow,
 		softCompactRatio:          opts.SoftCompactRatio,
 		toolResultSnipRatio:       opts.ToolResultSnipRatio,
@@ -1634,6 +1648,17 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 		} else if checkpointApplies && checkpoint.MutationObserved {
 			deliveryMutation = true
 		}
+		// Shadow phase: compare the tiered resolver against the keyword values
+		// that actually drive this gate. Recording only - the legacy fields below
+		// are untouched, so behavior is byte-identical until the counters justify
+		// the switch. The resolver runs here rather than at turn start because the
+		// model's declarations only exist once the turn has produced receipts.
+		shadowNext, shadowSource := a.resolveDeliveryExpectations()
+		deliveryIntentShadow.record(deliveryExpectations{
+			Task:       a.deliveryTaskExpected,
+			Mutation:   a.deliveryMutationExpected,
+			Persistent: a.deliveryPersistentExpected,
+		}, shadowNext, shadowSource)
 		workObserved := a.evidence.HasSuccessfulWorkReceipt() || (checkpointApplies && checkpoint.WorkObserved)
 		if a.deliveryTaskExpected && !a.deliveryPersistentExpected && !workObserved {
 			out.missingActionEvidence++

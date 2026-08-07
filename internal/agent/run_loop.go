@@ -12,7 +12,6 @@ import (
 	"reasonix/internal/evidence"
 	"reasonix/internal/jobs"
 	"reasonix/internal/provider"
-	"reasonix/internal/taskintent"
 	"reasonix/internal/tool"
 )
 
@@ -59,6 +58,12 @@ type perTurnState struct {
 	deliveryMutationExpected    bool
 	deliveryPersistentExpected  bool
 	deliveryScopeActive         bool
+
+	// turnIntentPending holds the tier-3 classification launched at the start of
+	// this turn. Per-turn by construction: zeroing perTurnState drops the
+	// previous turn's future, so a slow classification completes into an object
+	// nobody reads instead of landing on a later turn.
+	turnIntentPending *turnIntentFuture
 
 	// readinessRecovered marks a run that started with evidence preserved from
 	// (or a pending recovery of) a prior readiness failure, so the final
@@ -266,10 +271,17 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	} else if strings.TrimSpace(classifierInput) == "" {
 		classifierInput = rawInput
 	}
-	intent := taskintent.Classify(classifierInput)
-	a.deliveryTaskExpected = intent.NeedsEvidence()
-	a.deliveryMutationExpected = intent == taskintent.Mutation && registryHasWriterTools(a.tools)
-	a.deliveryPersistentExpected = taskintent.NeedsPersistentAction(classifierInput)
+	// Routed through legacyDeliveryExpectations so the keyword classifier has one
+	// call site: finalReadinessCheckFor shadows a tiered resolver against these
+	// same three values, and the switch-over deletes exactly this call.
+	legacy := legacyDeliveryExpectations(classifierInput, registryHasWriterTools(a.tools))
+	a.deliveryTaskExpected = legacy.Task
+	a.deliveryMutationExpected = legacy.Mutation
+	a.deliveryPersistentExpected = legacy.Persistent
+	// Launch the tier-3 reader concurrently with the turn so the gate never pays
+	// its latency inline. Assigning unconditionally also clears the previous
+	// turn's future, so a slow classification cannot be consumed by a later turn.
+	a.turnIntentPending = a.startTurnIntentClassification(ctx, classifierInput)
 	a.recoveryTaskSummary = boundedRecoveryTaskSummary(classifierInput)
 	// A cancelled/error turn leaves a provider-excluded recovery record at the
 	// transcript tail. Fold its bounded facts into this new user turn exactly
