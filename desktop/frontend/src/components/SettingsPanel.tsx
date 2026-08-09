@@ -5293,6 +5293,10 @@ function providerPresetDescription(preset: ProviderPresetView, t: ReturnType<typ
       return t("settings.addProvider.preset.opencodeGoDesc");
     case "opencode-go-anthropic":
       return t("settings.addProvider.preset.opencodeGoAnthropicDesc");
+    case "opencode-go-deepseek-anthropic":
+      return t("settings.addProvider.preset.opencodeGoDeepSeekAnthropicDesc");
+    case "opencode-go-deepseek-responses":
+      return t("settings.addProvider.preset.opencodeGoDeepSeekResponsesDesc");
     case "opencode-zen-anthropic":
       return t("settings.addProvider.preset.opencodeZenAnthropicDesc");
     case "qwen-cn":

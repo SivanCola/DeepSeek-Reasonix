@@ -115,6 +115,7 @@ var (
 	opencodeGoModels                 = []string{"glm-5.2", "glm-5.1", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "deepseek-v4-pro", "deepseek-v4-flash", "mimo-v2.5-pro", "mimo-v2.5"}
 	opencodeGoVisionModels           = []string{"kimi-k3"}
 	opencodeGoAnthropicModels        = []string{"qwen3.7-plus", "qwen3.7-max", "qwen3.6-plus", "minimax-m3", "minimax-m2.7", "minimax-m2.5"}
+	opencodeGoDeepSeekModels         = []string{"deepseek-v4-flash"}
 	opencodeZenAnthropicModels       = []string{"claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5", "qwen3.6-plus", "qwen3.5-plus", "qwen3.6-plus-free"}
 	opencodeZenAnthropicVisionModels = []string{"claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5"}
 
@@ -721,6 +722,44 @@ var curatedProviderPresets = []ProviderPreset{
 			APIKeyEnv:     "OPENCODE_GO_API_KEY",
 			Thinking:      "adaptive",
 			ContextWindow: 262144,
+		}},
+	},
+	{
+		ID:          "opencode-go-deepseek-anthropic",
+		Label:       "OpenCode Go DeepSeek Anthropic",
+		Description: "OpenCode Go Anthropic Messages route for DeepSeek Flash with server-side web search.",
+		KeyEnv:      "OPENCODE_GO_API_KEY",
+		Entries: []ProviderEntry{{
+			Name:             "opencode-go-deepseek-anthropic",
+			Kind:             "anthropic",
+			BaseURL:          "https://opencode.ai/zen/go",
+			Models:           opencodeGoDeepSeekModels,
+			Default:          "deepseek-v4-flash",
+			APIKeyEnv:        "OPENCODE_GO_API_KEY",
+			Thinking:         "adaptive",
+			WebSearch:        boolPointer(true),
+			ContextWindow:    262144,
+			SupportedEfforts: []string{"disabled", "high", "max"},
+			DefaultEffort:    "high",
+		}},
+	},
+	{
+		ID:          "opencode-go-deepseek-responses",
+		Label:       "OpenCode Go DeepSeek Responses",
+		Description: "OpenCode Go stateless Responses API route for DeepSeek Flash with server-side web search.",
+		KeyEnv:      "OPENCODE_GO_API_KEY",
+		Entries: []ProviderEntry{{
+			Name:             "opencode-go-deepseek-responses",
+			Kind:             "responses",
+			BaseURL:          "https://opencode.ai/zen/go/v1",
+			Models:           opencodeGoDeepSeekModels,
+			Default:          "deepseek-v4-flash",
+			APIKeyEnv:        "OPENCODE_GO_API_KEY",
+			ResponsesMode:    "stateless",
+			WebSearch:        boolPointer(true),
+			ContextWindow:    128000,
+			SupportedEfforts: []string{"disabled", "high", "max"},
+			DefaultEffort:    "high",
 		}},
 	},
 	{

@@ -302,7 +302,7 @@ func TestStreamToleratesWebSearchLifecycleEvents(t *testing.T) {
 	}
 }
 
-func TestDeepSeekStatelessReplayPreservesCompletedWebSearchCall(t *testing.T) {
+func TestEnabledStatelessWebSearchPreservesCompletedCallForCompatibleGateway(t *testing.T) {
 	var bodies []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -323,10 +323,7 @@ func TestDeepSeekStatelessReplayPreservesCompletedWebSearchCall(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := New(Config{Name: "deepseek", APIKey: "key", BaseURL: server.URL, Model: "deepseek-v4-flash", Mode: "stateless", WebSearch: true}).(*client)
-	// The test server is local, so pin the vendor classification to the official
-	// DeepSeek behavior under test without weakening production URL detection.
-	client.vendor = "deepseek"
+	client := New(Config{Name: "compatible", APIKey: "key", BaseURL: server.URL, Model: "deepseek-v4-flash", Mode: "stateless", WebSearch: true}).(*client)
 	first := collect(t, client, provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "search"}}})
 	var replayItems []json.RawMessage
 	for _, chunk := range first {
@@ -360,7 +357,7 @@ func TestDeepSeekStatelessReplayPreservesCompletedWebSearchCall(t *testing.T) {
 	}
 }
 
-func TestResponsesItemsAreIgnoredOutsideOfficialDeepSeekWire(t *testing.T) {
+func TestResponsesItemsAreIgnoredWhenServerWebSearchIsDisabled(t *testing.T) {
 	raw := json.RawMessage(`{"id":"ws_1","type":"web_search_call","status":"completed"}`)
 	client := New(Config{Name: "compatible", BaseURL: "https://gateway.example", Model: "m", Mode: "stateless"}).(*client)
 	body, _, _ := client.buildRequestBody(provider.Request{Messages: []provider.Message{
@@ -383,7 +380,7 @@ func TestDeepSeekReplayDropsMalformedOrIncompleteSearchItems(t *testing.T) {
 		json.RawMessage(`{"id":"fc_1","type":"function_call","status":"completed"}`),
 		json.RawMessage(`{"id":`),
 	}
-	client := New(Config{Name: "deepseek", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", Mode: "stateless"}).(*client)
+	client := New(Config{Name: "deepseek", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash", Mode: "stateless", WebSearch: true}).(*client)
 	body, _, _ := client.buildRequestBody(provider.Request{Messages: []provider.Message{
 		{Role: provider.RoleUser, Content: "search"},
 		{Role: provider.RoleAssistant, Content: "answer", ResponsesItems: items},
@@ -1055,6 +1052,21 @@ func TestConversationDigestMirrorsWireKnobs(t *testing.T) {
 	ds.caps = capabilitiesFor("dashscope")
 	if ds.caps.summaryRequired && ds.conversationDigest(messages) == plain.conversationDigest(messages) {
 		t.Fatal("dashscope summary must change the digest (wire sends summary)")
+	}
+
+	// Server web search on: completed search items are part of the replayed
+	// wire input, so the continuation digest must include them for compatible
+	// gateways just as buildRequestBody does.
+	searchMessages := []provider.Message{
+		{Role: provider.RoleUser, Content: "search"},
+		{Role: provider.RoleAssistant, Content: "found", ResponsesItems: []json.RawMessage{
+			json.RawMessage(`{"id":"ws_1","type":"web_search_call","status":"completed"}`),
+		}},
+	}
+	searchOff := New(Config{Name: "compatible", BaseURL: "https://gateway.example", Model: "m", Mode: "stateful"}).(*client)
+	searchOn := New(Config{Name: "compatible", BaseURL: "https://gateway.example", Model: "m", Mode: "stateful", WebSearch: true}).(*client)
+	if searchOff.conversationDigest(searchMessages) == searchOn.conversationDigest(searchMessages) {
+		t.Fatal("web search replay items must change the digest (wire sends completed search calls)")
 	}
 }
 

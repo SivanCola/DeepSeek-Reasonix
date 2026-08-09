@@ -13,6 +13,40 @@ import (
 	"reasonix/internal/provider"
 )
 
+// TestRealOpenCodeGoDeepSeekAnthropicWebSearch exercises Reasonix's complete
+// Messages serialization and server-side web search parser against the OpenCode
+// Go DeepSeek Flash route. The key stays process-local; ordinary CI never runs it.
+func TestRealOpenCodeGoDeepSeekAnthropicWebSearch(t *testing.T) {
+	key := os.Getenv("OPENCODE_GO_API_KEY")
+	if key == "" {
+		t.Skip("OPENCODE_GO_API_KEY not set — skipping live probe")
+	}
+
+	p, err := New(provider.Config{
+		Name:    "opencode-go-deepseek-anthropic",
+		BaseURL: "https://opencode.ai/zen/go",
+		Model:   "deepseek-v4-flash",
+		APIKey:  key,
+		Extra: map[string]any{
+			"api_key_env": "OPENCODE_GO_API_KEY",
+			"thinking":    "adaptive",
+			"effort":      "high",
+			"web_search":  true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	turn := collectLiveDeepSeekTurn(t, p, provider.Request{Messages: []provider.Message{{
+		Role: provider.RoleUser, Content: "Search the web for the OpenCode Go documentation and reply with one source URL.",
+	}}, MaxTokens: 768})
+	if strings.TrimSpace(turn.text) == "" {
+		t.Fatalf("OpenCode Go Anthropic web_search returned no assistant text; reasoning_len=%d", len(turn.reasoning))
+	}
+	t.Logf("opencode-go-deepseek-anthropic web_search: text=%d reasoning=%d prompt=%d", len(turn.text), len(turn.reasoning), turn.promptTokens)
+}
+
 // TestRealDeepSeekAnthropicToolLoop exercises the official Messages endpoint's
 // unsigned thinking replay contract. It is build-tagged and credential-gated so
 // ordinary CI remains deterministic and free of live API cost.
