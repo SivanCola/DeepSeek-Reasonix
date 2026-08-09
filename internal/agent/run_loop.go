@@ -247,8 +247,9 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	}
 	a.session.Add(provider.Message{
 		Role: provider.RoleUser, Content: input, RawContent: rawContent,
-		Images: userImages(ctx), CreatedAt: userCreatedAt,
+		Images: userImages(ctx), CreatedAt: userCreatedAt, HostTurnID: HostTurnID(ctx),
 	})
+	markHostTurnAccepted(ctx)
 
 	state = &runLoopState{
 		emptyFinalBlocks:   0,

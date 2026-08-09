@@ -234,6 +234,17 @@ func TestModelMessagesStripsRawContentWithoutChangingLegacyContent(t *testing.T)
 	}
 }
 
+func TestModelMessagesStripsHostTurnIDWithoutChangingWireContent(t *testing.T) {
+	stored := []Message{{Role: RoleUser, Content: "hello", HostTurnID: "connection:event-1"}}
+	model := ModelMessages(stored)
+	if len(model) != 1 || model[0].Content != "hello" || model[0].HostTurnID != "" {
+		t.Fatalf("host turn metadata leaked or content changed: %+v", model)
+	}
+	if stored[0].HostTurnID != "connection:event-1" {
+		t.Fatalf("stored host turn id mutated: %+v", stored[0])
+	}
+}
+
 func TestLocalOnlySentinelIsSafeWhenNewFieldsAreIgnoredByLegacyReader(t *testing.T) {
 	legacyView := []Message{
 		{Role: RoleUser, Content: "task"},

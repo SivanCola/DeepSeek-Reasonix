@@ -40,7 +40,7 @@ import { asArray } from "./lib/array";
 import { createBoundedRefreshCoordinator, sameTabMetaLists, shouldRefreshTabMetaForEvent, TAB_META_MAX_IN_FLIGHT, tabMetaFallbackDelay } from "./lib/tabMetaRefresh";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
-import { app, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, openExternal } from "./lib/bridge";
+import { app, onBotTurnAccepted, onEvent, onProjectTreeChanged, onReady, onRuntimeRebuilt, onSessionRecovered, openExternal } from "./lib/bridge";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { NoticeCard, Transcript } from "./components/Transcript";
@@ -581,8 +581,15 @@ function sidebarImQQStatus(bot: BotSettingsView, runtimeStatus: BotRuntimeStatus
   if (!bot.enabled || !bot.qq.enabled) return "disabled";
   if (!appId || !bot.qq.secretSet) return "disconnected";
   if (typeof window !== "undefined" && !window.runtime) return "pending";
-  if (!runtimeStatus) return "pending";
-  const status = runtimeStatus.status.trim().toLowerCase();
+	if (!runtimeStatus) return "pending";
+	const qqAdapter = (runtimeStatus.adapters ?? []).find((adapter) => adapter.platform === "qq");
+	if (qqAdapter) {
+		if (qqAdapter.ready) return "connected";
+		if (qqAdapter.phase === "fatal" || qqAdapter.status === "fatal") return "error";
+		if (qqAdapter.phase === "stopped" || qqAdapter.status === "closed") return "disconnected";
+		return "pending";
+	}
+	const status = runtimeStatus.status.trim().toLowerCase();
   if (runtimeStatus.running && runtimeStatus.connections > 0 && status === "running") {
     return "connected";
   }
@@ -2623,6 +2630,13 @@ export default function App() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [refreshTabMetas]);
+
+  // A QQ/OneBot message may create or advance a detached shared session while
+  // no tab is focused. Refresh metadata immediately so the sidebar can expose
+  // the same runtime; opening it later must attach, not rebuild, the session.
+  useEffect(() => onBotTurnAccepted(() => {
+    void refreshTabMetas(undefined, { afterMutation: true });
+  }), [refreshTabMetas]);
 
   useEffect(() => {
     return onProjectTreeChanged(() => {

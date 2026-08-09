@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1818,6 +1819,9 @@ func TestGatewayDefaultQueueSteersMediaOnlyActiveTurn(t *testing.T) {
 		_, _ = w.Write([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})
 	}))
 	defer imageServer.Close()
+	oldValidator := botMediaURLValidator
+	botMediaURLValidator = func(*url.URL) error { return nil }
+	defer func() { botMediaURLValidator = oldValidator }()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{
@@ -2489,6 +2493,19 @@ func TestDegradedMappingStateStaysStable(t *testing.T) {
 	hard := sessionRuntimeProfile{sessionPath: "/some/mapped.jsonl"}
 	if sessionStateMatchesRuntime(s, hard) {
 		t.Fatal("an explicit attach must still force a rebuild")
+	}
+}
+
+func TestQQGroupPermissionBoundaryDisablesWorkspaceAndSideEffects(t *testing.T) {
+	rules := groupPermissionDenyRules(InboundMessage{ChatType: ChatGroup})
+	joined := strings.Join(rules, "\n")
+	for _, want := range []string{"read_file(*)", "ls(*)", "grep(*)", "glob(*)", "bash(*)", "git(*)", "apply_patch(*)", "task(*)"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("group deny rules missing %q: %v", want, rules)
+		}
+	}
+	if got := groupPermissionDenyRules(InboundMessage{ChatType: ChatDM}); got != nil {
+		t.Fatalf("DM deny rules = %v, want nil", got)
 	}
 }
 

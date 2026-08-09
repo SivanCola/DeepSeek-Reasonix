@@ -88,7 +88,12 @@ type Message struct {
 	// model provider. Interrupted streaming output uses it so every frontend can
 	// replay what the user saw without feeding partial reasoning or tool-call
 	// arguments back into the next request.
-	LocalOnly       bool             `json:"local_only,omitempty"`
+	LocalOnly bool `json:"local_only,omitempty"`
+	// HostTurnID is a local idempotency fence for remote transports. It lets a
+	// crash-replayed provider event find the already accepted user message. It
+	// is stripped by ModelMessages and therefore cannot change provider wire
+	// bytes or prompt-cache prefixes.
+	HostTurnID      string           `json:"host_turn_id,omitempty"`
 	DecisionReceipt *DecisionReceipt `json:"decision_receipt,omitempty"`
 	// DecisionReceipts are local-only metadata attached to a provider-visible
 	// message. Keeping them on the existing assistant record preserves the
@@ -279,7 +284,7 @@ func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(ms
 func ModelMessages(msgs []Message) []Message {
 	needsCopy := false
 	for _, m := range msgs {
-		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
+		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || m.HostTurnID != "" || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
 			needsCopy = true
 			break
 		}
@@ -297,6 +302,7 @@ func ModelMessages(msgs []Message) []Message {
 			candidate.ProviderContent = ""
 		}
 		candidate.RawContent = ""
+		candidate.HostTurnID = ""
 		candidate.DecisionReceipt = nil
 		candidate.DecisionReceipts = nil
 		// Local shell metadata must never enter provider request bytes.

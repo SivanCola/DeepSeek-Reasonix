@@ -1917,7 +1917,10 @@ export interface QQBotView {
   appId: string;
   appSecretEnv: string;
   secretSet: boolean;
-  sandbox: boolean;
+	sandbox: boolean;
+	intentProfile?: string;
+	nativeStreaming?: boolean;
+	requireMention?: boolean;
   model: string;
   toolApprovalMode: ToolApprovalMode | "" | string;
   workspaceRoot: string;
@@ -1966,7 +1969,10 @@ export interface BotConnectionSessionMappingView {
 
 export interface BotConnectionView {
   id: string;
-  provider: "qq" | "feishu" | "weixin" | string;
+	provider: "qq" | "feishu" | "weixin" | string;
+	protocol?: "official" | "onebot-v11" | string;
+	qq?: QQConnectionOptionsView;
+	onebot?: OneBotConnectionOptionsView;
   domain: "qq" | "feishu" | "lark" | "weixin" | string;
   label: string;
   enabled: boolean;
@@ -1980,6 +1986,20 @@ export interface BotConnectionView {
   lastError: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface QQConnectionOptionsView {
+	sandbox: boolean;
+	intentProfile: string;
+	nativeStreaming: boolean;
+	requireMention: boolean;
+	historyLimit: number;
+}
+
+export interface OneBotConnectionOptionsView {
+	websocketUrl: string;
+	tokenEnv: string;
+	selfId: string;
 }
 
 export interface BotSettingsView {
@@ -2007,8 +2027,33 @@ export interface BotRuntimeStatusView {
   running: boolean;
   status: string;
   message: string;
-  connections: number;
-  startedAt: string;
+	connections: number;
+	startedAt: string;
+	adapters: BotRuntimeAdapterView[];
+}
+
+export interface BotRuntimeAdapterView {
+	id: string;
+	platform: string;
+	protocol?: string;
+	domain?: string;
+	name?: string;
+	status: string;
+	phase?: string;
+	ready: boolean;
+	lastError?: string;
+	lastErrorCode?: number;
+	retryAt?: string;
+	lastReadyAt?: string;
+	lastMessageAt?: string;
+	capabilities?: {
+		typing: boolean;
+		native_streaming: boolean;
+		media: boolean;
+		keyboard: boolean;
+		message_edit: boolean;
+		proactive_send: boolean;
+	};
 }
 
 export interface BotInstallStartResult {
@@ -2016,7 +2061,7 @@ export interface BotInstallStartResult {
   provider: string;
   domain: string;
   installId: string;
-  url: string;
+  url?: string;
   deviceCode: string;
   userCode: string;
   interval: number;
@@ -2028,6 +2073,7 @@ export interface BotInstallPollResult {
   done: boolean;
   connection: BotConnectionView;
   status: string;
+  url?: string;
   message: string;
   error: string;
 }
