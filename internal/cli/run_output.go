@@ -134,7 +134,7 @@ type runOutputSink struct {
 	costComplete        bool
 	sawQuote            bool
 	originalCosts       map[string]float64
-	quotes              []billing.CostQuote
+	quoteLedger         *billing.Ledger
 	turns               int
 	sequence            uint64
 	machineToolIDs      map[string]string
@@ -174,11 +174,9 @@ func (s *runOutputSink) Emit(e event.Event) {
 			s.sawQuote = true
 			if !q.Complete {
 				s.costComplete = false
-			} else if !s.sawQuote {
-				s.costComplete = true
 			}
 			// First complete quote establishes complete=true.
-			if q.Complete && len(s.quotes) == 0 {
+			if q.Complete && s.quoteLedger == nil {
 				s.costComplete = true
 			}
 			if s.originalCosts == nil {
@@ -191,9 +189,18 @@ func (s *runOutputSink) Emit(e event.Event) {
 				s.cost += q.Selected.Float64()
 				s.currency = q.LegacyCurrencyCode()
 			}
-			if len(s.quotes) < 64 {
-				s.quotes = append(s.quotes, *q)
+			if s.quoteLedger == nil {
+				s.quoteLedger = billing.NewLedger()
 			}
+			s.quoteLedger.Add(*q, billing.UsageTokens{
+				PromptTokens:           e.Usage.PromptTokens,
+				CompletionTokens:       e.Usage.CompletionTokens,
+				CacheHitTokens:         e.Usage.CacheHitTokens,
+				CacheMissTokens:        e.Usage.CacheMissTokens,
+				CacheWriteTokens:       e.Usage.CacheWriteTokens,
+				CacheWriteBilledTokens: e.Usage.CacheWriteBilledTokens,
+				Estimated:              e.Usage.Estimated,
+			}, time.Now().UTC())
 		} else if e.Pricing != nil {
 			s.cost += e.Pricing.Cost(e.Usage)
 			s.currency = pricingCurrencyCode(e.Pricing.Currency)
@@ -254,8 +261,8 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 		turns = 1
 	}
 	var aggQuote *billing.CostQuote
-	if len(s.quotes) > 0 {
-		agg := billing.AggregateQuotes(s.quotes, s.currency)
+	if s.quoteLedger != nil && len(s.quoteLedger.Entries) > 0 {
+		agg := s.quoteLedger.Total(s.currency)
 		aggQuote = &agg
 		if agg.Selected != nil {
 			s.cost = agg.Selected.Float64()

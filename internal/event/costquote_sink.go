@@ -14,8 +14,11 @@ type QuoteContext struct {
 	mu sync.RWMutex
 	// DisplayCurrency is the resolved ISO code (CNY|USD), not "auto".
 	DisplayCurrency string
-	// Rates is a non-blocking snapshot; nil keeps original-only quotes.
+	// Rates is a static non-blocking snapshot used by tests and explicit hosts.
 	Rates *billing.RateTable
+	// RateCache is read for every quote so background refreshes become visible
+	// without rebuilding the controller. Rates takes precedence when non-nil.
+	RateCache *billing.FXCache
 	// Now overrides the clock in tests.
 	Now func() time.Time
 	// BillingModeForModel resolves provider-owned billing semantics from the
@@ -51,9 +54,13 @@ func (c *QuoteContext) snapshot() (display string, rates *billing.RateTable, now
 	c.mu.RLock()
 	display = c.DisplayCurrency
 	rates = c.Rates
+	rateCache := c.RateCache
 	nowFn := c.Now
 	c.mu.RUnlock()
-	if rates == nil {
+	if rates == nil && rateCache != nil {
+		rates = rateCache.Read()
+	}
+	if rates == nil && rateCache == nil {
 		rates = billing.GlobalRateTable()
 	}
 	if nowFn != nil {

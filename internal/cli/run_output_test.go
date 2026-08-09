@@ -85,6 +85,31 @@ func TestRunOutputJSONIncludesCurrencyAwareCostFields(t *testing.T) {
 	}
 }
 
+func TestRunOutputJSONTotalsMoreThanAuditLimit(t *testing.T) {
+	var out bytes.Buffer
+	sink := newRunOutputSink(&out, runOutputJSON)
+	for range 65 {
+		sink.Emit(event.Event{
+			Kind:    event.Usage,
+			Usage:   &provider.Usage{PromptTokens: 1_000_000},
+			Pricing: &provider.Pricing{Input: 1, Currency: "USD"},
+		})
+	}
+	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
+		t.Fatal(err)
+	}
+	var result runResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.CostComplete || result.TotalCost != 65 || result.Currency != "USD" {
+		t.Fatalf("65-event total was truncated: %+v", result)
+	}
+	if result.CostQuote == nil || result.CostQuote.Selected == nil || result.CostQuote.Selected.Amount != "65" {
+		t.Fatalf("65-event aggregate quote = %+v", result.CostQuote)
+	}
+}
+
 func TestRunOutputJSONRejectsMixedPricingCurrencies(t *testing.T) {
 	// Mixed originals no longer error: they emit original_costs + cost_complete=false
 	// when a shared display valuation is unavailable (no FX table in unit test).

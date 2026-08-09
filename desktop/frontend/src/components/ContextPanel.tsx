@@ -132,6 +132,15 @@ export function contextCostDisplay({
 } {
   // Prefer structured session quote, then per-usage quote.
   const quote = info?.sessionCostQuote || usage?.costQuote;
+  if (info?.sessionCostComplete === false || (quote && quote.complete === false)) {
+    return {
+      amount: 0,
+      currency: info?.sessionCurrency || sessionCurrency || usage?.currencyCode || usage?.currency,
+      estimated: true,
+      complete: false,
+      labelKind: "unavailable",
+    };
+  }
   const selected = quote?.selected;
   if (selected?.amount) {
     const n = Number(selected.amount);
@@ -141,20 +150,11 @@ export function contextCostDisplay({
         amount: n,
         currency: selected.currency || usage?.currencyCode || usage?.currency || info?.sessionCurrency,
         estimated: quote?.estimated !== false,
-        complete: quote?.complete !== false && info?.sessionCostComplete !== false,
+        complete: true,
         billingMode: mode,
         labelKind: mode === "subscription_equivalent" ? "payg_equivalent" : "estimated",
       };
     }
-  }
-  if (info?.sessionCostComplete === false || (quote && quote.complete === false)) {
-    return {
-      amount: 0,
-      currency: info?.sessionCurrency || sessionCurrency || usage?.currencyCode || usage?.currency,
-      estimated: true,
-      complete: false,
-      labelKind: "unavailable",
-    };
   }
   // Session-scoped scalar fallbacks (legacy telemetry).
   if (info?.sessionCost && info.sessionCost > 0) {

@@ -80,10 +80,6 @@ func MigrateLegacyUsage(rec LegacyUsageRecord, table *RateTable) CostQuote {
 			}
 			conv, snap, ok := table.Convert(amount, cur, target, ended, DefaultFXMaxAgeDays)
 			if !ok {
-				q.Complete = false
-				if q.IncompleteReason == "" {
-					q.IncompleteReason = "legacy_fx_unavailable"
-				}
 				continue
 			}
 			q.Valuations[target] = Valuation{
@@ -96,9 +92,6 @@ func MigrateLegacyUsage(rec LegacyUsageRecord, table *RateTable) CostQuote {
 			}
 			q.RateDate = snap.AsOf
 		}
-	} else {
-		q.Complete = false
-		q.IncompleteReason = "no_fx_table"
 	}
 	m := q.Original
 	q.Selected = &m

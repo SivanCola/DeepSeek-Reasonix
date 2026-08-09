@@ -166,7 +166,7 @@ func (l *Ledger) Total(display string) CostQuote {
 
 // SelectDisplay rebinds Selected on every entry and the total without recomputing FX.
 func (l *Ledger) SelectDisplay(display string) CostQuote {
-	return l.Total(display).WithSelected(display)
+	return l.Total(display)
 }
 
 // EntriesBySource groups ledger entries by usage source for status panels.

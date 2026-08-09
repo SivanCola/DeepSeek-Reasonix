@@ -179,6 +179,39 @@ func TestBuildQuoteNoFXKeepsOriginal(t *testing.T) {
 	}
 }
 
+func TestBuildQuoteOriginalDisplayDoesNotRequireUnusedFX(t *testing.T) {
+	q := BuildQuote(QuoteInput{
+		Usage:           UsageTokens{PromptTokens: 1_000_000},
+		Rates:           RateCard{Input: 7, Currency: "CNY"},
+		DisplayCurrency: "CNY",
+		// No RatesTable: USD is unavailable, but the requested CNY total is exact.
+	})
+	if !q.Complete || q.Selected == nil || q.Selected.Amount != "7" || q.Selected.Currency != "CNY" {
+		t.Fatalf("exact original display was marked incomplete: %+v", q)
+	}
+	if q.IncompleteReason != "" {
+		t.Fatalf("unused USD valuation leaked incomplete reason %q", q.IncompleteReason)
+	}
+	if _, ok := q.Valuations["USD"]; ok {
+		t.Fatalf("unexpected USD valuation without FX: %+v", q.Valuations["USD"])
+	}
+}
+
+func TestAggregateQuotesCanRebindIncompleteDisplayToExactOriginal(t *testing.T) {
+	q := BuildQuote(QuoteInput{
+		Usage:           UsageTokens{PromptTokens: 1_000_000},
+		Rates:           RateCard{Input: 7, Currency: "CNY"},
+		DisplayCurrency: "USD",
+	})
+	if q.Complete {
+		t.Fatal("USD display should be incomplete without FX")
+	}
+	agg := AggregateQuotes([]CostQuote{q}, "CNY")
+	if !agg.Complete || agg.Selected == nil || agg.Selected.Amount != "7" || agg.Selected.Currency != "CNY" {
+		t.Fatalf("aggregate did not recover exact original display: %+v", agg)
+	}
+}
+
 func TestAggregateMixedCurrenciesWithSharedDisplay(t *testing.T) {
 	table, _ := ParseECBHistCSV(strings.NewReader(sampleECB))
 	occurred, _ := time.Parse(time.RFC3339, "2026-03-07T12:00:00Z")

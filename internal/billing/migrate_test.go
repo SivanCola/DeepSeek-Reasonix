@@ -37,3 +37,14 @@ func TestMigrateLegacyPositiveBackfillsFX(t *testing.T) {
 		t.Fatalf("expected USD backfill: %+v", q)
 	}
 }
+
+func TestMigrateLegacyPositiveWithoutFXKeepsExactOriginalComplete(t *testing.T) {
+	q := MigrateLegacyUsage(LegacyUsageRecord{
+		SessionCost:     7.85,
+		SessionCurrency: "CNY",
+		EndedAt:         time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC),
+	}, nil)
+	if !q.Complete || q.Selected == nil || q.Selected.Amount != "7.85" || q.Selected.Currency != "CNY" {
+		t.Fatalf("known legacy original should not require an unused FX view: %+v", q)
+	}
+}

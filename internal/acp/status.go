@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/billing"
@@ -161,7 +162,8 @@ type usageAccumulator struct {
 	currency         string
 	source           string
 	costComplete     bool
-	quotes           []billing.CostQuote
+	quoteEvents      int
+	quoteLedger      *billing.Ledger
 }
 
 func (a *usageAccumulator) addQuoted(u *provider.Usage, pricing *provider.Pricing, quote *billing.CostQuote, source string) {
@@ -189,10 +191,20 @@ func (a *usageAccumulator) addQuoted(u *provider.Usage, pricing *provider.Pricin
 	}
 	if quote != nil {
 		a.pricedEvents++
+		a.quoteEvents++
 		a.estimated = true
-		if len(a.quotes) < 64 {
-			a.quotes = append(a.quotes, *quote)
+		if a.quoteLedger == nil {
+			a.quoteLedger = billing.NewLedger()
 		}
+		a.quoteLedger.Add(*quote, billing.UsageTokens{
+			PromptTokens:           u.PromptTokens,
+			CompletionTokens:       u.CompletionTokens,
+			CacheHitTokens:         u.CacheHitTokens,
+			CacheMissTokens:        u.CacheMissTokens,
+			CacheWriteTokens:       u.CacheWriteTokens,
+			CacheWriteBilledTokens: u.CacheWriteBilledTokens,
+			Estimated:              u.Estimated,
+		}, time.Time{})
 		if quote.Selected != nil {
 			cur := quote.LegacyCurrencyCode()
 			if a.pricedEvents == 1 {
@@ -250,8 +262,8 @@ func (a usageAccumulator) wire() ReasonixUsage {
 		ratio := float64(a.cacheHitTokens) / float64(total)
 		usage.CacheHitRatio = &ratio
 	}
-	if len(a.quotes) > 0 {
-		agg := billing.AggregateQuotes(a.quotes, a.currency)
+	if a.quoteLedger != nil && a.quoteEvents == a.pricedEvents && len(a.quoteLedger.Entries) > 0 {
+		agg := a.quoteLedger.Total(a.currency)
 		usage.CostQuote = &agg
 		complete := agg.Complete
 		usage.CostComplete = &complete
@@ -422,6 +434,7 @@ type persistedUsageAccumulator struct {
 	EstimatedCost    float64 `json:"estimatedCost"`
 	Currency         string  `json:"currency,omitempty"`
 	Source           string  `json:"source,omitempty"`
+	CostComplete     *bool   `json:"costComplete,omitempty"`
 }
 
 type persistedStatusTelemetry struct {
@@ -436,22 +449,31 @@ type persistedStatusTelemetry struct {
 }
 
 func persistUsage(a usageAccumulator) persistedUsageAccumulator {
+	var costComplete *bool
+	if a.pricedEvents > 0 {
+		complete := a.costComplete
+		costComplete = &complete
+	}
 	return persistedUsageAccumulator{
 		PromptTokens: a.promptTokens, CompletionTokens: a.completionTokens,
 		ReasoningTokens: a.reasoningTokens, CacheHitTokens: a.cacheHitTokens,
 		CacheMissTokens: a.cacheMissTokens, Estimated: a.estimated, Events: a.events,
 		PricedEvents: a.pricedEvents, EstimatedCost: a.estimatedCost,
-		Currency: a.currency, Source: a.source,
+		Currency: a.currency, Source: a.source, CostComplete: costComplete,
 	}
 }
 
 func restoreUsage(a persistedUsageAccumulator) usageAccumulator {
+	costComplete := a.PricedEvents > 0 && a.Currency != ""
+	if a.CostComplete != nil {
+		costComplete = *a.CostComplete
+	}
 	return usageAccumulator{
 		promptTokens: a.PromptTokens, completionTokens: a.CompletionTokens,
 		reasoningTokens: a.ReasoningTokens, cacheHitTokens: a.CacheHitTokens,
 		cacheMissTokens: a.CacheMissTokens, estimated: a.Estimated, events: a.Events,
 		pricedEvents: a.PricedEvents, estimatedCost: a.EstimatedCost,
-		currency: a.Currency, source: a.Source,
+		currency: a.Currency, source: a.Source, costComplete: costComplete,
 	}
 }
 

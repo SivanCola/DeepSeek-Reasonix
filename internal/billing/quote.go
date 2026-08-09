@@ -152,14 +152,15 @@ func BuildQuote(in QuoteInput) CostQuote {
 }
 
 type quoteBuildState struct {
-	input      QuoteInput
-	currency   string
-	amount     Amount
-	occurred   time.Time
-	staleDays  int
-	official   CatalogEntry
-	isOfficial bool
-	quote      CostQuote
+	input             QuoteInput
+	currency          string
+	amount            Amount
+	occurred          time.Time
+	staleDays         int
+	official          CatalogEntry
+	isOfficial        bool
+	valuationFailures map[string]string
+	quote             CostQuote
 }
 
 func newQuoteBuildState(in QuoteInput) *quoteBuildState {
@@ -198,7 +199,7 @@ func newQuoteBuildState(in QuoteInput) *quoteBuildState {
 	}
 	state := &quoteBuildState{
 		input: in, currency: currency, amount: amount, occurred: occurred,
-		staleDays: in.AcceptStaleDays, quote: q,
+		staleDays: in.AcceptStaleDays, valuationFailures: map[string]string{}, quote: q,
 	}
 	if state.staleDays <= 0 {
 		state.staleDays = DefaultFXMaxAgeDays
@@ -228,7 +229,7 @@ func (s *quoteBuildState) addTargetValuation(target string) {
 		return
 	}
 	if s.input.RatesTable == nil {
-		s.markIncomplete("no_fx_table")
+		s.valuationFailures[target] = "no_fx_table"
 		return
 	}
 	converted, snapshot, ok := s.input.RatesTable.Convert(
@@ -239,7 +240,7 @@ func (s *quoteBuildState) addTargetValuation(target string) {
 		if snapshot != nil && snapshot.Stale {
 			reason = "fx_stale"
 		}
-		s.markIncomplete(reason)
+		s.valuationFailures[target] = reason
 		return
 	}
 	s.quote.Valuations[target] = Valuation{
@@ -282,7 +283,7 @@ func (s *quoteBuildState) selectDisplay() {
 		s.quote.Selected = &selected
 		return
 	}
-	s.markIncomplete("display_unavailable")
+	s.markIncomplete(firstNonEmpty(s.valuationFailures[display], "display_unavailable"))
 }
 
 func (s *quoteBuildState) markIncomplete(reason string) {
@@ -313,6 +314,10 @@ func (q CostQuote) WithSelected(display string) CostQuote {
 	out := q
 	if m, ok := q.SelectForDisplay(display); ok {
 		out.Selected = &m
+		if quoteHasCompleteCostFact(q) {
+			out.Complete = true
+			out.IncompleteReason = ""
+		}
 	} else {
 		out.Selected = nil
 		out.Complete = false
@@ -368,7 +373,7 @@ type quoteAccumulator struct {
 	originalCurrency  string
 	originalTotal     Amount
 	originalComplete  bool
-	allQuotesComplete bool
+	costFactsComplete bool
 	displayComplete   bool
 	modes             map[string]struct{}
 }
@@ -386,14 +391,14 @@ func newQuoteAccumulator(display string) *quoteAccumulator {
 	return &quoteAccumulator{
 		out:     CostQuote{Valuations: map[string]Valuation{}, Estimated: true},
 		display: NormalizeCurrency(display), totals: map[string]Amount{},
-		originalComplete: true, allQuotesComplete: true, displayComplete: true,
+		originalComplete: true, costFactsComplete: true, displayComplete: true,
 		modes: map[string]struct{}{},
 	}
 }
 
 func (a *quoteAccumulator) add(quote CostQuote) {
-	if !quote.Complete {
-		a.allQuotesComplete = false
+	if !quoteHasCompleteCostFact(quote) {
+		a.costFactsComplete = false
 		if a.out.IncompleteReason == "" {
 			a.out.IncompleteReason = quote.IncompleteReason
 		}
@@ -455,7 +460,7 @@ func (a *quoteAccumulator) addValuation(code string, valuation Valuation) {
 }
 
 func (a *quoteAccumulator) finish() CostQuote {
-	a.out.Complete = a.allQuotesComplete && a.displayComplete
+	a.out.Complete = a.costFactsComplete && a.displayComplete
 	if a.originalComplete && a.originalCurrency != "" {
 		a.out.Original = MoneyOf(a.originalTotal, a.originalCurrency)
 		a.syncOriginalValuation()
@@ -467,24 +472,48 @@ func (a *quoteAccumulator) finish() CostQuote {
 			a.out.BillingMode = mode
 		}
 	}
-	if a.display == "" && a.originalComplete {
+	if a.display == "" && a.originalComplete && a.costFactsComplete {
 		selected := a.out.Original
 		a.out.Selected = &selected
 		return a.out
 	}
 	valuation, found := a.out.Valuations[a.display]
-	if found && a.displayComplete {
+	if found && a.displayComplete && a.costFactsComplete {
 		selected := valuation.Money
 		a.out.Selected = &selected
 		return a.out
 	}
 	a.out.Complete = false
-	if a.displayComplete {
-		a.out.IncompleteReason = firstNonEmpty(a.out.IncompleteReason, "display_unavailable")
-	} else {
+	if !a.costFactsComplete {
+		a.out.IncompleteReason = firstNonEmpty(a.out.IncompleteReason, "incomplete_cost_fact")
+	} else if !a.displayComplete {
 		a.out.IncompleteReason = "incomplete_valuations"
+	} else {
+		a.out.IncompleteReason = firstNonEmpty(a.out.IncompleteReason, "display_unavailable")
 	}
 	return a.out
+}
+
+// quoteHasCompleteCostFact separates a known original-currency charge from a
+// display-only valuation failure. A missing FX view must not poison an exact
+// original total, while unpriced and unrecoverable legacy records stay
+// incomplete in every display currency.
+func quoteHasCompleteCostFact(q CostQuote) bool {
+	switch q.IncompleteReason {
+	case "no_price", "missing_price_or_usage", "legacy_unrecoverable",
+		"legacy_wiped_or_zero", "legacy_invalid_amount", "mixed_original_currencies",
+		"incomplete_cost_fact":
+		return false
+	}
+	if q.Complete {
+		return true
+	}
+	currency := NormalizeCurrency(q.Original.Currency)
+	if currency == "" {
+		return false
+	}
+	valuation, ok := q.Valuations[currency]
+	return ok && SameCurrency(valuation.Money.Currency, currency)
 }
 
 func (a *quoteAccumulator) syncOriginalValuation() {

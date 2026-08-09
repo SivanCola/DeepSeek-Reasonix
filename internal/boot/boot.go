@@ -252,14 +252,14 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// metrics via opts.Sink, ACP/eventwire bridges, Desktop) so all see the
 	// same occurrence-time quote. Order from the agent:
 	//   Coalesce → GoalUsageTee → Sync → CostQuote → [Recorder] → frontend
-	// Display currency is resolved here in Go (language → host region → USD);
-	// browser locale does not rewrite quotes. FX is a non-blocking cache read.
+	// Display currency resolves in Go; browser locale never rewrites quotes, and FX reads are non-blocking.
+	var rateCache *billing.FXCache
 	if home := config.ReasonixHomeDir(); home != "" {
-		billing.InitGlobalFX(home)
+		rateCache = billing.InitGlobalFX(home)
 	}
 	quoteCtx := &event.QuoteContext{
 		DisplayCurrency: cfg.ResolveDisplayCurrency(),
-		Rates:           billing.GlobalRateTable(),
+		RateCache:       rateCache,
 		BillingModeForModel: func(modelRef string) string {
 			entry, ok := cfg.ResolveModel(modelRef)
 			if !ok {
