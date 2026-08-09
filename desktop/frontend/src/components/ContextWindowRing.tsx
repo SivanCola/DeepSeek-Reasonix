@@ -118,9 +118,21 @@ export function ContextWindowRing({ enabled = true, context, tabId, turnCost, cu
   const tokensToCompact = compactTokens > used ? compactTokens - used : 0;
   const ringOffset = RING_C * (1 - usagePct / 100);
   const elapsed = info?.elapsedMs && info.elapsedMs > 0 ? fmtDuration(info.elapsedMs, t) : undefined;
-  const sessionCost = info?.sessionCost && info.sessionCost > 0
-    ? formatMoneyLocalized(info.sessionCost, info.sessionCurrency, { locale, empty: "dash" })
-    : undefined;
+  const sessionCostComplete = info?.sessionCostComplete !== false;
+  const sessionCostRaw = info?.sessionCostQuote?.selected
+    ? Number(info.sessionCostQuote.selected.amount)
+    : info?.sessionCost;
+  const sessionCostCurrency = info?.sessionCostQuote?.selected?.currency || info?.sessionCurrency;
+  const sessionCost =
+    sessionCostComplete && typeof sessionCostRaw === "number" && sessionCostRaw > 0
+      ? `≈${formatMoneyLocalized(sessionCostRaw, sessionCostCurrency, { locale, empty: "dash" }).replace(/^≈/, "")}`
+      : undefined;
+  const sessionCostHint =
+    info?.sessionBillingMode === "subscription_equivalent"
+      ? "payg_equivalent"
+      : sessionCost
+        ? "estimated"
+        : undefined;
   const turnCostLabel = formatMoneyLocalized(turnCost, info?.sessionCurrency || currency, { locale, empty: "dash" });
 
   return (
@@ -202,8 +214,18 @@ export function ContextWindowRing({ enabled = true, context, tabId, turnCost, cu
             )}
             {sessionCost && (
               <div className="context-ring-popover__row">
-                <span className="context-ring-popover__label">{t("context.sessionCost")}</span>
+                <span className="context-ring-popover__label">
+                  {sessionCostHint === "payg_equivalent"
+                    ? t("context.sessionCostPaygEquivalent")
+                    : t("context.sessionCostEstimated")}
+                </span>
                 <span className="context-ring-popover__value">{sessionCost}</span>
+              </div>
+            )}
+            {!sessionCost && info?.sessionCostComplete === false && (
+              <div className="context-ring-popover__row">
+                <span className="context-ring-popover__label">{t("context.sessionCostEstimated")}</span>
+                <span className="context-ring-popover__value">—</span>
               </div>
             )}
             {balance?.available && balance.display && (

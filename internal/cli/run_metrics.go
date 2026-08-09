@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/billing"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/fileutil"
@@ -22,6 +23,8 @@ type SourceUsage struct {
 	PromptTokens     int     `json:"prompt_tokens"`
 	CompletionTokens int     `json:"completion_tokens"`
 	Cost             float64 `json:"cost"`
+	// Original currency facts for mixed-currency runs (never summed across codes).
+	OriginalCosts map[string]float64 `json:"original_costs,omitempty"`
 }
 
 // RunMetrics is the machine-readable token/cache/cost summary `run --metrics`
@@ -35,32 +38,38 @@ type RunMetrics struct {
 	// cache-prefix-change reason (e.g. "compact_auto", "snip", "tools") across
 	// the run, so a regression in cache-reset frequency shows which operation
 	// is responsible instead of just a dropped hit-rate percentage.
-	PrefixChangeReasonCounts       map[string]int `json:"prefix_change_reason_counts,omitempty"`
-	Steps                          int            `json:"steps"` // model calls (one per stream, incl. tool rounds)
-	Cost                           float64        `json:"cost"`
-	Currency                       string         `json:"currency"`
-	Estimated                      bool           `json:"estimated,omitempty"`
-	Compactions                    int            `json:"compactions"`
-	ReadinessChecks                int            `json:"readiness_checks"`
-	ReadinessAllowed               int            `json:"readiness_allowed"`
-	ReadinessBlocks                int            `json:"readiness_blocks"`
-	ReadinessRecoveries            int            `json:"readiness_recoveries"`
-	ReadinessErrors                int            `json:"readiness_errors"`
-	ReadinessMissingProjectChecks  int            `json:"readiness_missing_project_checks"`
-	ReadinessIncompleteTodos       int            `json:"readiness_incomplete_todos"`
-	ReadinessCommandMismatches     int            `json:"readiness_command_mismatches"`
-	ReadinessMissingAcceptance     int            `json:"readiness_missing_acceptance_criteria"`
-	ReadinessMissingVerification   int            `json:"readiness_missing_verification"`
-	ReadinessMissingReview         int            `json:"readiness_missing_review"`
-	ReadinessMissingSignoff        int            `json:"readiness_missing_signoff"`
-	ReadinessMissingActionEvidence int            `json:"readiness_missing_action_evidence"`
-	ReadinessMissingMutation       int            `json:"readiness_missing_mutation"`
-	MissingReasoningDetected       int            `json:"missing_reasoning_detected,omitempty"`
-	MissingReasoningRetries        int            `json:"missing_reasoning_retries,omitempty"`
-	MissingReasoningRecovered      int            `json:"missing_reasoning_recovered,omitempty"`
-	MissingReasoningReplaced       int            `json:"missing_reasoning_retry_replaced_response,omitempty"`
-	MissingReasoningSuppressed     int            `json:"missing_reasoning_retry_suppressed,omitempty"`
-	MissingReasoningFallbacks      int            `json:"missing_reasoning_fallbacks,omitempty"`
+	PrefixChangeReasonCounts map[string]int `json:"prefix_change_reason_counts,omitempty"`
+	Steps                    int            `json:"steps"` // model calls (one per stream, incl. tool rounds)
+	Cost                     float64        `json:"cost"`
+	Currency                 string         `json:"currency"`
+	// CostComplete is false when any quote lacked a shared display valuation.
+	CostComplete bool `json:"cost_complete"`
+	// OriginalCosts is per-ISO original currency totals (never cross-added).
+	OriginalCosts map[string]float64 `json:"original_costs,omitempty"`
+	// CostQuotes retains occurrence-time quotes for audit (capped).
+	CostQuotes                     []billing.CostQuote `json:"cost_quotes,omitempty"`
+	Estimated                      bool                `json:"estimated,omitempty"`
+	Compactions                    int                 `json:"compactions"`
+	ReadinessChecks                int                 `json:"readiness_checks"`
+	ReadinessAllowed               int                 `json:"readiness_allowed"`
+	ReadinessBlocks                int                 `json:"readiness_blocks"`
+	ReadinessRecoveries            int                 `json:"readiness_recoveries"`
+	ReadinessErrors                int                 `json:"readiness_errors"`
+	ReadinessMissingProjectChecks  int                 `json:"readiness_missing_project_checks"`
+	ReadinessIncompleteTodos       int                 `json:"readiness_incomplete_todos"`
+	ReadinessCommandMismatches     int                 `json:"readiness_command_mismatches"`
+	ReadinessMissingAcceptance     int                 `json:"readiness_missing_acceptance_criteria"`
+	ReadinessMissingVerification   int                 `json:"readiness_missing_verification"`
+	ReadinessMissingReview         int                 `json:"readiness_missing_review"`
+	ReadinessMissingSignoff        int                 `json:"readiness_missing_signoff"`
+	ReadinessMissingActionEvidence int                 `json:"readiness_missing_action_evidence"`
+	ReadinessMissingMutation       int                 `json:"readiness_missing_mutation"`
+	MissingReasoningDetected       int                 `json:"missing_reasoning_detected,omitempty"`
+	MissingReasoningRetries        int                 `json:"missing_reasoning_retries,omitempty"`
+	MissingReasoningRecovered      int                 `json:"missing_reasoning_recovered,omitempty"`
+	MissingReasoningReplaced       int                 `json:"missing_reasoning_retry_replaced_response,omitempty"`
+	MissingReasoningSuppressed     int                 `json:"missing_reasoning_retry_suppressed,omitempty"`
+	MissingReasoningFallbacks      int                 `json:"missing_reasoning_fallbacks,omitempty"`
 	// Capability / Delivery routing counters (optional; zero for older readers).
 	CapabilityRoutes               int     `json:"capability_routes,omitempty"`
 	CapabilityRoutedCandidates     int     `json:"capability_routed_candidates,omitempty"`
@@ -147,6 +156,41 @@ func (m RunMetrics) clone() RunMetrics {
 	out.UsageBySource = cloneSourceUsage(m.UsageBySource)
 	out.ToolCallsByName = cloneCounts(m.ToolCallsByName)
 	out.ToolFailuresByName = cloneCounts(m.ToolFailuresByName)
+	out.OriginalCosts = cloneFloatMap(m.OriginalCosts)
+	if len(m.CostQuotes) > 0 {
+		out.CostQuotes = append([]billing.CostQuote(nil), m.CostQuotes...)
+		for i := range out.CostQuotes {
+			out.CostQuotes[i].Valuations = cloneQuoteValuations(m.CostQuotes[i].Valuations)
+			if m.CostQuotes[i].Selected != nil {
+				sel := *m.CostQuotes[i].Selected
+				out.CostQuotes[i].Selected = &sel
+			}
+		}
+	}
+	return out
+}
+
+func cloneFloatMap(in map[string]float64) map[string]float64 {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]float64, len(in))
+	maps.Copy(out, in)
+	return out
+}
+
+func cloneQuoteValuations(in map[string]billing.Valuation) map[string]billing.Valuation {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]billing.Valuation, len(in))
+	for k, v := range in {
+		if v.Rate != nil {
+			snap := *v.Rate
+			v.Rate = &snap
+		}
+		out[k] = v
+	}
 	return out
 }
 
@@ -164,7 +208,10 @@ func cloneSourceUsage(in map[string]SourceUsage) map[string]SourceUsage {
 		return nil
 	}
 	out := make(map[string]SourceUsage, len(in))
-	maps.Copy(out, in)
+	for k, v := range in {
+		v.OriginalCosts = cloneFloatMap(v.OriginalCosts)
+		out[k] = v
+	}
 	return out
 }
 
@@ -205,12 +252,43 @@ func (s *metricsSink) record(e event.Event) {
 		s.m.Steps++
 		s.m.Estimated = s.m.Estimated || u.Estimated
 		var stepCost float64
-		if p := e.Pricing; p != nil {
+		q := e.CostQuote
+		if q == nil && e.Pricing != nil {
+			q = event.EnsureCostQuote(e, nil)
+		}
+		if q != nil {
+			s.m.Estimated = true
+			if !q.Complete {
+				s.m.CostComplete = false
+			} else if s.m.Steps == 1 {
+				s.m.CostComplete = true
+			}
+			origCur := billing.NormalizeCurrency(q.Original.Currency)
+			if origCur != "" {
+				if s.m.OriginalCosts == nil {
+					s.m.OriginalCosts = map[string]float64{}
+				}
+				s.m.OriginalCosts[origCur] += q.Original.Float64()
+			}
+			if q.Selected != nil {
+				stepCost = q.Selected.Float64()
+				s.m.Cost += stepCost
+				s.m.Currency = q.LegacyCurrencyCode()
+			} else if e.Pricing != nil {
+				// Fall back to original float only for single-currency legacy tests.
+				stepCost = e.Pricing.Cost(u)
+				s.m.Cost += stepCost
+				s.m.Currency = billing.NormalizeCurrency(e.Pricing.Currency)
+			}
+			if len(s.m.CostQuotes) < 64 {
+				s.m.CostQuotes = append(s.m.CostQuotes, *q)
+			}
+		} else if p := e.Pricing; p != nil {
 			stepCost = p.Cost(u)
 			s.m.Cost += stepCost
-			s.m.Currency = p.Currency
+			s.m.Currency = billing.NormalizeCurrency(p.Currency)
 		}
-		s.recordSource(e.UsageSource, u.PromptTokens, u.CompletionTokens, stepCost)
+		s.recordSource(e.UsageSource, u.PromptTokens, u.CompletionTokens, stepCost, q)
 		if e.UsageSource == event.UsageSourceCapabilityRouter {
 			s.m.CapabilityRouterPromptTokens += u.PromptTokens
 			s.m.CapabilityRouterCompletionTok += u.CompletionTokens
@@ -240,7 +318,7 @@ func (s *metricsSink) record(e event.Event) {
 // executor, per the Usage event contract. An unrecognised source is kept under
 // its own key rather than dropped, so a future origin cannot silently vanish
 // from a total that is meant to reconcile.
-func (s *metricsSink) recordSource(source string, prompt, completion int, cost float64) {
+func (s *metricsSink) recordSource(source string, prompt, completion int, cost float64, q *billing.CostQuote) {
 	if strings.TrimSpace(source) == "" {
 		source = event.UsageSourceExecutor
 	}
@@ -252,6 +330,15 @@ func (s *metricsSink) recordSource(source string, prompt, completion int, cost f
 	agg.PromptTokens += prompt
 	agg.CompletionTokens += completion
 	agg.Cost += cost
+	if q != nil {
+		cur := billing.NormalizeCurrency(q.Original.Currency)
+		if cur != "" {
+			if agg.OriginalCosts == nil {
+				agg.OriginalCosts = map[string]float64{}
+			}
+			agg.OriginalCosts[cur] += q.Original.Float64()
+		}
+	}
 	s.m.UsageBySource[source] = agg
 }
 

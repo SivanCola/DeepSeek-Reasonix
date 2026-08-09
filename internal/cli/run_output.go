@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/billing"
 	"reasonix/internal/event"
 	"reasonix/internal/eventwire"
 )
@@ -63,8 +64,13 @@ type runResult struct {
 	Currency   string  `json:"currency,omitempty"`
 	// TotalCostUSD is the released compatibility alias. It mirrors TotalCost;
 	// new consumers must pair TotalCost with Currency instead of assuming USD.
-	TotalCostUSD float64        `json:"total_cost_usd"`
-	Usage        runResultUsage `json:"usage"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	// CostComplete is false when mixed originals lack a shared display valuation.
+	CostComplete bool `json:"cost_complete"`
+	// OriginalCosts lists per-ISO original totals (never cross-added).
+	OriginalCosts map[string]float64 `json:"original_costs,omitempty"`
+	CostQuote     *billing.CostQuote `json:"cost_quote,omitempty"`
+	Usage         runResultUsage     `json:"usage"`
 }
 
 type machineEventUsage struct {
@@ -125,7 +131,10 @@ type runOutputSink struct {
 	usage               runResultUsage
 	cost                float64
 	currency            string
-	mixedCurrencies     bool
+	costComplete        bool
+	sawQuote            bool
+	originalCosts       map[string]float64
+	quotes              []billing.CostQuote
 	turns               int
 	sequence            uint64
 	machineToolIDs      map[string]string
@@ -157,14 +166,38 @@ func (s *runOutputSink) Emit(e event.Event) {
 		s.usage.CacheReadInputTokens += e.Usage.CacheHitTokens
 		s.usage.CacheCreationInputTokens += e.Usage.CacheMissTokens
 		s.usage.Estimated = s.usage.Estimated || e.Usage.Estimated
-		if e.Pricing != nil {
-			s.cost += e.Pricing.Cost(e.Usage)
-			currency := pricingCurrencyCode(e.Pricing.Currency)
-			if s.currency == "" {
-				s.currency = currency
-			} else if currency != s.currency {
-				s.mixedCurrencies = true
+		q := e.CostQuote
+		if q == nil && e.Pricing != nil {
+			q = event.EnsureCostQuote(e, nil)
+		}
+		if q != nil {
+			s.sawQuote = true
+			if !q.Complete {
+				s.costComplete = false
+			} else if !s.sawQuote {
+				s.costComplete = true
 			}
+			// First complete quote establishes complete=true.
+			if q.Complete && len(s.quotes) == 0 {
+				s.costComplete = true
+			}
+			if s.originalCosts == nil {
+				s.originalCosts = map[string]float64{}
+			}
+			if cur := billing.NormalizeCurrency(q.Original.Currency); cur != "" {
+				s.originalCosts[cur] += q.Original.Float64()
+			}
+			if q.Selected != nil {
+				s.cost += q.Selected.Float64()
+				s.currency = q.LegacyCurrencyCode()
+			}
+			if len(s.quotes) < 64 {
+				s.quotes = append(s.quotes, *q)
+			}
+		} else if e.Pricing != nil {
+			s.cost += e.Pricing.Cost(e.Usage)
+			s.currency = pricingCurrencyCode(e.Pricing.Currency)
+			s.costComplete = true
 		}
 	}
 	if e.Kind == event.TurnDone {
@@ -184,9 +217,8 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 	if s.err != nil {
 		return s.err
 	}
-	if s.mixedCurrencies && s.format != runOutputText && s.format != runOutputEventsJSONL {
-		return fmt.Errorf("cannot total costs across mixed pricing currencies")
-	}
+	// Mixed original currencies no longer error: totals use shared display
+	// valuations when complete, otherwise cost_complete=false with original_costs.
 	if s.format == runOutputText {
 		if s.final != "" {
 			_, s.err = fmt.Fprintln(s.out, s.final)
@@ -221,18 +253,31 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 	if turns == 0 && !completion.isError {
 		turns = 1
 	}
+	var aggQuote *billing.CostQuote
+	if len(s.quotes) > 0 {
+		agg := billing.AggregateQuotes(s.quotes, s.currency)
+		aggQuote = &agg
+		if agg.Selected != nil {
+			s.cost = agg.Selected.Float64()
+			s.currency = agg.LegacyCurrencyCode()
+		}
+		s.costComplete = agg.Complete
+	}
 	return s.encoder.Encode(runResult{
-		Type:         "result",
-		Subtype:      completion.subtype,
-		IsError:      completion.isError,
-		DurationMS:   time.Since(started).Milliseconds(),
-		NumTurns:     turns,
-		Result:       resultText,
-		SessionID:    sessionID,
-		TotalCost:    s.cost,
-		Currency:     s.currency,
-		TotalCostUSD: s.cost,
-		Usage:        s.usage,
+		Type:          "result",
+		Subtype:       completion.subtype,
+		IsError:       completion.isError,
+		DurationMS:    time.Since(started).Milliseconds(),
+		NumTurns:      turns,
+		Result:        resultText,
+		SessionID:     sessionID,
+		TotalCost:     s.cost,
+		Currency:      s.currency,
+		TotalCostUSD:  s.cost,
+		CostComplete:  s.costComplete || (!s.sawQuote && s.currency != ""),
+		OriginalCosts: s.originalCosts,
+		CostQuote:     aggQuote,
+		Usage:         s.usage,
 	})
 }
 

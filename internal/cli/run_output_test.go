@@ -86,6 +86,8 @@ func TestRunOutputJSONIncludesCurrencyAwareCostFields(t *testing.T) {
 }
 
 func TestRunOutputJSONRejectsMixedPricingCurrencies(t *testing.T) {
+	// Mixed originals no longer error: they emit original_costs + cost_complete=false
+	// when a shared display valuation is unavailable (no FX table in unit test).
 	var out bytes.Buffer
 	sink := newRunOutputSink(&out, runOutputJSON)
 	for _, currency := range []string{"$", "¥"} {
@@ -95,12 +97,18 @@ func TestRunOutputJSONRejectsMixedPricingCurrencies(t *testing.T) {
 			Pricing: &provider.Pricing{Input: 1, Currency: currency},
 		})
 	}
-	err := sink.Finalize("abc", time.Now(), nil)
-	if err == nil || !strings.Contains(err.Error(), "mixed pricing currencies") {
-		t.Fatalf("Finalize mixed currencies error = %v", err)
+	if err := sink.Finalize("abc", time.Now(), nil); err != nil {
+		t.Fatalf("Finalize mixed currencies: %v", err)
 	}
-	if out.Len() != 0 {
-		t.Fatalf("mixed-currency JSON should not emit a misleading total: %s", out.String())
+	var result runResult
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.CostComplete {
+		t.Fatalf("expected cost_complete=false without shared FX, got %+v", result)
+	}
+	if len(result.OriginalCosts) < 2 {
+		t.Fatalf("expected per-currency original_costs, got %+v", result.OriginalCosts)
 	}
 }
 

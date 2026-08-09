@@ -571,6 +571,10 @@ func (a *App) startup(ctx context.Context) {
 		a.watchRemoteWindowOwner(ctx)
 		return
 	}
+	// Non-blocking FX cache load + background refresh for wallet/cost valuations.
+	if home := config.ReasonixHomeDir(); home != "" {
+		billing.InitGlobalFX(home)
+	}
 	installSystemQuitHook()
 	a.startTray()
 	a.enableDeferredRebuildRetry()
@@ -6799,12 +6803,17 @@ func (a *App) ContextUsageForTab(tabID string) ContextInfo {
 }
 
 // BalanceInfo is the wallet-balance readout for the status bar. Available is true
-// only when a balance was fetched; Display is the formatted amount (e.g. "¥110.00")
+// only when a balance was fetched; Display is the formatted amount (e.g. "≈¥110.00")
 // and is "" when the active provider declares no balance_url — the frontend then
 // omits the readout. Err carries a fetch failure for an optional tooltip.
+// Wallet conversion uses FX only (never model regional price tables).
 type BalanceInfo struct {
 	Available bool   `json:"available"`
 	Display   string `json:"display"`
+	Detail    string `json:"detail,omitempty"` // per-wallet originals + converted values
+	Complete  bool   `json:"complete"`
+	RateDate  string `json:"rateDate,omitempty"`
+	Approx    bool   `json:"approx,omitempty"`
 	Err       string `json:"err,omitempty"`
 }
 
@@ -6829,18 +6838,36 @@ func (a *App) BalanceForTab(tabID string) BalanceInfo {
 	if b == nil {
 		return BalanceInfo{} // provider declares no balance endpoint
 	}
-	return BalanceInfo{Available: true, Display: b.DisplayForCurrency(currency)}
+	if home := config.ReasonixHomeDir(); home != "" {
+		billing.InitGlobalFX(home)
+	}
+	view := billing.ConvertBalance(b, currency, billing.GlobalRateTable(), time.Now().UTC())
+	display := view.DisplayApproxText()
+	if display == "" {
+		// Fallback to legacy single-currency pick without inventing FX totals.
+		display = b.DisplayForCurrency(currency)
+	}
+	return BalanceInfo{
+		Available: true,
+		Display:   display,
+		Detail:    view.DetailText(),
+		Complete:  view.Complete,
+		RateDate:  view.RateDate,
+		Approx:    view.DisplayApprox,
+	}
 }
 
-// balanceDisplayCurrency mirrors the effective pricing currency selected in
-// Settings. Auto resolves through the current desktop locale, matching the
-// controller rebuild path used by cost telemetry.
+// balanceDisplayCurrency resolves the global display currency preference
+// (Settings → display currency). Wallet conversion never uses model price tables.
 func (a *App) balanceDisplayCurrency() string {
 	cfg, _, err := a.loadDesktopUserConfigForView()
 	if err != nil {
 		return ""
 	}
-	return a.desktopEffectivePricingCurrency(cfg)
+	if pref := cfg.DisplayCurrencyPref(); pref != "" {
+		return pref
+	}
+	return cfg.ResolveDisplayCurrency()
 }
 
 // JobView is one running background job (bash/task started with

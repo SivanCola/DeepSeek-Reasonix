@@ -25,6 +25,7 @@ import (
 
 	"reasonix/internal/ablation"
 	"reasonix/internal/agent"
+	"reasonix/internal/billing"
 	"reasonix/internal/capability"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
@@ -246,18 +247,44 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// sidecar warnings and host/ui/* publishes land on the same channel as every
 	// later notice. The job manager is session-scoped — its jobs outlive a turn
 	// and are cancelled by Controller.Close.
-	sink := event.Sync(opts.Sink)
+	//
+	// CostQuote must run before every host consumer (stats recorder, CLI
+	// metrics via opts.Sink, ACP/eventwire bridges, Desktop) so all see the
+	// same occurrence-time quote. Order from the agent:
+	//   Coalesce → GoalUsageTee → Sync → CostQuote → [Recorder] → frontend
+	// Display currency is resolved here in Go (language → host region → USD);
+	// browser locale does not rewrite quotes. FX is a non-blocking cache read.
+	if home := config.ReasonixHomeDir(); home != "" {
+		billing.InitGlobalFX(home)
+	}
+	quoteCtx := &event.QuoteContext{
+		DisplayCurrency: cfg.ResolveDisplayCurrency(),
+		Rates:           billing.GlobalRateTable(),
+		BillingModeForModel: func(modelRef string) string {
+			entry, ok := cfg.ResolveModel(modelRef)
+			if !ok {
+				return ""
+			}
+			return entry.ProviderBillingMode()
+		},
+	}
+	if hint := strings.TrimSpace(opts.AutoPricingCurrency); hint != "" && cfg.DisplayCurrencyPref() == "" {
+		// In-memory display hint only — never freezes list prices.
+		cfg.ApplyRuntimeAutoPricingCurrency(hint)
+		quoteCtx.DisplayCurrency = cfg.ResolveDisplayCurrency()
+	}
+	// Innermost: frontend sink (CLI metrics/ACP/Desktop bridge live here).
+	quoted := opts.Sink
+	// Record billable usage after quoting so history JSONL can store CostQuote.
+	if source := strings.TrimSpace(opts.StatsSource); source != "" {
+		quoted = stats.NewRecorder(quoted, config.StatsDir(), source)
+	}
+	quoted = event.NewCostQuoteSink(quoted, quoteCtx)
+	sink := event.Sync(quoted)
 
 	// Both sink wraps must complete BEFORE the extension UI hub closes over the
 	// sink variable: a sidecar publish during preflight lands on this closure
 	// from a wire-handler goroutine, and any later reassignment races it.
-	// Record billable usage for the "usage statistics" panel. Wrapping here —
-	// outside the per-agent sinks — covers every agent (executor, planner,
-	// sub-agents, guardian) with one recorder, and each record is labelled with
-	// this frontend's StatsSource so the panel can split totals by entry point.
-	if source := strings.TrimSpace(opts.StatsSource); source != "" {
-		sink = stats.NewRecorder(sink, config.StatsDir(), source)
-	}
 	// Goal token-budget accounting: the controller detects this tee and
 	// attributes billable usage to the active goal turn's recorder. Both the
 	// tee and the delta coalescer must ride the shared sink agents emit into

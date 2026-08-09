@@ -2391,21 +2391,25 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 func (a *App) SetDefaultAutoRecoveryCheckpoint(_ bool) error { return nil }
 
 func officialProviderTemplate(kind, pricingLanguage string) ([]config.ProviderEntry, string, error) {
+	_ = pricingLanguage // display language no longer selects list-price tables
 	webSearchEnabled := true
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "deepseek", "deepseek-official":
+		// Freeze the official USD regional table; display currency is independent.
 		return []config.ProviderEntry{{
-			Name:          "deepseek",
-			Kind:          "anthropic",
-			BaseURL:       "https://api.deepseek.com/anthropic",
-			Models:        []string{"deepseek-v4-flash", "deepseek-v4-pro"},
-			Default:       "deepseek-v4-flash",
-			APIKeyEnv:     "DEEPSEEK_API_KEY",
-			BalanceURL:    "https://api.deepseek.com/user/balance",
-			Thinking:      "enabled",
-			WebSearch:     &webSearchEnabled,
-			ContextWindow: 1_000_000,
-			Prices:        config.DeepSeekV4PricesForLanguage(pricingLanguage),
+			Name:            "deepseek",
+			Kind:            "anthropic",
+			BaseURL:         "https://api.deepseek.com/anthropic",
+			Models:          []string{"deepseek-v4-flash", "deepseek-v4-pro"},
+			Default:         "deepseek-v4-flash",
+			APIKeyEnv:       "DEEPSEEK_API_KEY",
+			BalanceURL:      "https://api.deepseek.com/user/balance",
+			Thinking:        "enabled",
+			WebSearch:       &webSearchEnabled,
+			ContextWindow:   1_000_000,
+			BillingCurrency: "USD",
+			BillingMode:     "payg",
+			Prices:          config.DeepSeekV4PricesForCurrency("USD"),
 			ModelOverrides: map[string]config.ProviderModelOverride{
 				"deepseek-v4-flash": {SupportedEfforts: []string{"disabled", "low", "high", "max"}, DefaultEffort: "high"},
 				"deepseek-v4-pro":   {SupportedEfforts: []string{"disabled", "high", "max"}, DefaultEffort: "high"},
@@ -3427,16 +3431,23 @@ func (a *App) desktopPricingFollowsDetectedLocale() bool {
 }
 
 func (a *App) desktopEffectivePricingCurrency(cfg *config.Config) string {
+	// Display currency only — never the provider list-price region.
 	if cfg == nil {
 		return a.desktopAutoPricingCurrency()
 	}
-	if cfg.DesktopPricingFollowsDetectedLocale() {
-		return a.desktopAutoPricingCurrency()
+	if pref := cfg.DisplayCurrencyPref(); pref != "" {
+		return pref
 	}
-	return cfg.DeepSeekOfficialPricingCurrency()
+	if cfg.DesktopPricingFollowsDetectedLocale() {
+		if hint := a.desktopAutoPricingCurrency(); hint != "" {
+			return hint
+		}
+	}
+	return cfg.ResolveDisplayCurrency()
 }
 
 func (a *App) desktopOfficialPricingLanguage(cfg *config.Config) string {
+	// Used only for display-language adjacent UI; list prices use billing_currency.
 	if a.desktopEffectivePricingCurrency(cfg) == "CNY" {
 		return "zh"
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime/debug"
 
+	"reasonix/internal/billing"
 	"reasonix/internal/cli"
 	"reasonix/internal/config"
 	"reasonix/internal/crashreport"
@@ -46,5 +47,9 @@ func runWithCrashCapture(args []string, buildVersion string) (exitCode int) {
 			panic(recovered)
 		}
 	}()
+	// Non-blocking ECB FX cache for cost quotes and multi-wallet balances.
+	if home := config.ReasonixHomeDir(); home != "" {
+		billing.InitGlobalFX(home)
+	}
 	return runCLI(args, buildVersion)
 }

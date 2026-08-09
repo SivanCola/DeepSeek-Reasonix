@@ -12,6 +12,7 @@
 ## 目录
 
 - [配置](#配置)
+- [计费与展示币种](./BILLING.zh-CN.md)
 - [CLI 命令参考](./CLI.zh-CN.md)
 - [环境变量](#环境变量)
 - [Serve Web 前端](#serve-web-前端)

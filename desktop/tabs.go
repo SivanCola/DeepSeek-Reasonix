@@ -23,6 +23,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/billing"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
@@ -282,18 +283,24 @@ type sessionUsageStats struct {
 	// Per-turn token breakdown from the most recent turn. Persisted separately
 	// from the cumulative totals above so the context-panel donut chart and
 	// type breakdown survive a session rebind (which resets executor.LastUsage).
-	LastPromptTokens     int                         `json:"lastPromptTokens,omitempty"`
-	LastCompletionTokens int                         `json:"lastCompletionTokens,omitempty"`
-	LastReasoningTokens  int                         `json:"lastReasoningTokens,omitempty"`
-	LastCacheHitTokens   int                         `json:"lastCacheHitTokens,omitempty"`
-	LastCacheMissTokens  int                         `json:"lastCacheMissTokens,omitempty"`
-	LastEstimated        bool                        `json:"lastEstimated,omitempty"`
-	RequestCount         int                         `json:"requestCount"`
-	ElapsedMs            int64                       `json:"elapsedMs"`
-	SessionCost          float64                     `json:"sessionCost,omitempty"`
-	SessionCurrency      string                      `json:"sessionCurrency,omitempty"`
-	SessionCostUsd       float64                     `json:"sessionCostUsd,omitempty"`
-	Sources              map[string]usageSourceStats `json:"sources,omitempty"`
+	LastPromptTokens     int     `json:"lastPromptTokens,omitempty"`
+	LastCompletionTokens int     `json:"lastCompletionTokens,omitempty"`
+	LastReasoningTokens  int     `json:"lastReasoningTokens,omitempty"`
+	LastCacheHitTokens   int     `json:"lastCacheHitTokens,omitempty"`
+	LastCacheMissTokens  int     `json:"lastCacheMissTokens,omitempty"`
+	LastEstimated        bool    `json:"lastEstimated,omitempty"`
+	RequestCount         int     `json:"requestCount"`
+	ElapsedMs            int64   `json:"elapsedMs"`
+	SessionCost          float64 `json:"sessionCost,omitempty"`
+	SessionCurrency      string  `json:"sessionCurrency,omitempty"`
+	SessionCostUsd       float64 `json:"sessionCostUsd,omitempty"`
+	// SessionCostComplete is false when any entry lacks a shared display valuation.
+	SessionCostComplete bool `json:"sessionCostComplete,omitempty"`
+	// CostLedger stores occurrence-time quotes keyed by model+source+fingerprint+rateDate.
+	CostLedger *billing.Ledger `json:"costLedger,omitempty"`
+	// SessionCostQuote is the aggregate quote for the current display currency.
+	SessionCostQuote *billing.CostQuote          `json:"sessionCostQuote,omitempty"`
+	Sources          map[string]usageSourceStats `json:"sources,omitempty"`
 
 	activeTurnStartedAt int64
 	sourceSessionCache  map[string]sourceSessionCacheCounters
@@ -1020,158 +1027,52 @@ func (t *WorkspaceTab) recordUsage(e event.Event) {
 	src.CacheWriteBilledTokens += u.CacheWriteBilledTokens
 	src.Estimated = src.Estimated || u.Estimated
 	src.RequestCount += requestCount
-	if e.Pricing != nil {
-		currency := e.Pricing.Symbol()
-		if existing := strings.TrimSpace(t.usageTelemetry.SessionCurrency); existing != "" && existing != currency {
-			// A scalar total cannot represent mixed currencies. Regional DeepSeek
-			// changes normally reprice prior usage; this fallback prevents custom
-			// or otherwise unmappable currencies from being summed together.
-			t.usageTelemetry.SessionCost = 0
-			t.usageTelemetry.SessionCostUsd = 0
-			for sourceName, sourceStats := range t.usageTelemetry.Sources {
-				sourceStats.SessionCost = 0
-				sourceStats.SessionCostUsd = 0
-				sourceStats.SessionCurrency = currency
-				t.usageTelemetry.Sources[sourceName] = sourceStats
-			}
-			src.SessionCost = 0
-			src.SessionCostUsd = 0
+	// Prefer the middleware CostQuote; fall back only when older emitters omit it.
+	q := e.CostQuote
+	if q == nil && e.Pricing != nil {
+		q = event.EnsureCostQuote(e, nil)
+	}
+	if q != nil {
+		if t.usageTelemetry.CostLedger == nil {
+			t.usageTelemetry.CostLedger = billing.NewLedger()
 		}
-		cost := e.Pricing.Cost(u)
-		t.usageTelemetry.SessionCost += cost
-		t.usageTelemetry.SessionCostUsd = t.usageTelemetry.SessionCost
-		t.usageTelemetry.SessionCurrency = currency
-		src.SessionCost += cost
-		src.SessionCostUsd = src.SessionCost
-		src.SessionCurrency = currency
+		tokens := billing.UsageTokens{
+			PromptTokens:           u.PromptTokens,
+			CompletionTokens:       u.CompletionTokens,
+			CacheHitTokens:         cacheHitTokens,
+			CacheMissTokens:        cacheMissTokens,
+			CacheWriteTokens:       u.CacheWriteTokens,
+			CacheWriteBilledTokens: u.CacheWriteBilledTokens,
+			Estimated:              u.Estimated,
+		}
+		t.usageTelemetry.CostLedger.Add(*q, tokens, time.Now().UTC())
+		display := billing.NormalizeCurrency(t.usageTelemetry.SessionCurrency)
+		if display == "" && q.Selected != nil {
+			display = billing.NormalizeCurrency(q.Selected.Currency)
+		}
+		if display == "" {
+			display = billing.NormalizeCurrency(q.Original.Currency)
+		}
+		total := t.usageTelemetry.CostLedger.Total(display)
+		t.usageTelemetry.SessionCostQuote = &total
+		t.usageTelemetry.SessionCostComplete = total.Complete
+		if total.Selected != nil {
+			t.usageTelemetry.SessionCost = total.Selected.Float64()
+			t.usageTelemetry.SessionCurrency = total.LegacyCurrencyCode()
+			t.usageTelemetry.SessionCostUsd = t.usageTelemetry.SessionCost
+			src.SessionCost += q.LegacyCostFloat()
+			src.SessionCostUsd = src.SessionCost
+			src.SessionCurrency = total.LegacyCurrencySymbol()
+		} else {
+			// Incomplete: never invent a zero total by wiping prior costs.
+			t.usageTelemetry.SessionCostComplete = false
+			if q.Selected == nil {
+				src.SessionCurrency = billing.CurrencySymbol(q.Original.Currency)
+			}
+		}
 	}
 	t.usageTelemetry.Sources[source] = src
 	t.telemMu.Unlock()
-}
-
-func usageStatsAsProviderUsage(stats usageSourceStats) *provider.Usage {
-	return &provider.Usage{
-		PromptTokens:           stats.PromptTokens,
-		CompletionTokens:       stats.CompletionTokens,
-		TotalTokens:            stats.TotalTokens,
-		ReasoningTokens:        stats.ReasoningTokens,
-		CacheHitTokens:         stats.CacheHitTokens,
-		CacheMissTokens:        stats.CacheMissTokens,
-		CacheWriteTokens:       stats.CacheWriteTokens,
-		CacheWriteBilledTokens: stats.CacheWriteBilledTokens,
-		Estimated:              stats.Estimated,
-	}
-}
-
-func sessionStatsAsProviderUsage(stats sessionUsageStats) *provider.Usage {
-	return &provider.Usage{
-		PromptTokens:           stats.PromptTokens,
-		CompletionTokens:       stats.CompletionTokens,
-		TotalTokens:            stats.TotalTokens,
-		ReasoningTokens:        stats.ReasoningTokens,
-		CacheHitTokens:         stats.CacheHitTokens,
-		CacheMissTokens:        stats.CacheMissTokens,
-		CacheWriteTokens:       stats.CacheWriteTokens,
-		CacheWriteBilledTokens: stats.CacheWriteBilledTokens,
-		Estimated:              stats.Estimated,
-	}
-}
-
-// repriceUsage replaces the scalar cost total using per-source pricing. It
-// leaves telemetry untouched when any costed source cannot be mapped to one
-// currency.
-func (t *WorkspaceTab) repriceUsage(pricingBySource map[string]*provider.Pricing) bool {
-	if t == nil {
-		return false
-	}
-	t.telemMu.Lock()
-	defer t.telemMu.Unlock()
-	if t.usageTelemetry.SessionCost <= 0 {
-		return true
-	}
-	if len(t.usageTelemetry.Sources) == 0 {
-		pricing := pricingBySource[event.UsageSourceExecutor]
-		if pricing == nil {
-			return false
-		}
-		t.usageTelemetry.SessionCost = pricing.Cost(sessionStatsAsProviderUsage(t.usageTelemetry))
-		t.usageTelemetry.SessionCostUsd = t.usageTelemetry.SessionCost
-		t.usageTelemetry.SessionCurrency = pricing.Symbol()
-		return true
-	}
-
-	currency := ""
-	total := 0.0
-	repriced := make(map[string]usageSourceStats, len(t.usageTelemetry.Sources))
-	for source, stats := range t.usageTelemetry.Sources {
-		if stats.SessionCost <= 0 {
-			repriced[source] = stats
-			continue
-		}
-		pricing := pricingBySource[source]
-		if pricing == nil {
-			return false
-		}
-		symbol := pricing.Symbol()
-		if currency != "" && currency != symbol {
-			return false
-		}
-		currency = symbol
-		stats.SessionCost = pricing.Cost(usageStatsAsProviderUsage(stats))
-		stats.SessionCostUsd = stats.SessionCost
-		stats.SessionCurrency = symbol
-		total += stats.SessionCost
-		repriced[source] = stats
-	}
-	if currency == "" {
-		return true
-	}
-	t.usageTelemetry.Sources = repriced
-	t.usageTelemetry.SessionCost = total
-	t.usageTelemetry.SessionCostUsd = total
-	t.usageTelemetry.SessionCurrency = currency
-	return true
-}
-
-func resolveOfficialDeepSeekPricing(cfg *config.Config, ref string) *provider.Pricing {
-	if cfg == nil || strings.TrimSpace(ref) == "" {
-		return nil
-	}
-	entry, ok := cfg.ResolveModel(ref)
-	if !ok || !config.IsOfficialDeepSeekProvider(entry) || !config.IsKnownDeepSeekOfficialPricing(entry.Model, entry.Price) {
-		return nil
-	}
-	return entry.Price
-}
-
-func firstConfiguredModelRef(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func usagePricingBySource(cfg *config.Config, executorRef string) map[string]*provider.Pricing {
-	if cfg == nil {
-		return nil
-	}
-	executorPricing := resolveOfficialDeepSeekPricing(cfg, executorRef)
-	plannerRef := firstConfiguredModelRef(cfg.Agent.PlannerModel, executorRef)
-	subagentRef := firstConfiguredModelRef(cfg.Agent.SubagentModel, executorRef)
-	routerRef := firstConfiguredModelRef(cfg.Agent.SubagentModels[event.UsageSourceCapabilityRouter], subagentRef, executorRef)
-	recoveryRef := firstConfiguredModelRef(cfg.Agent.RecoveryModel, cfg.Agent.GuardianModel, executorRef)
-	return map[string]*provider.Pricing{
-		event.UsageSourceExecutor:         executorPricing,
-		event.UsageSourcePlanner:          resolveOfficialDeepSeekPricing(cfg, plannerRef),
-		event.UsageSourceSubagent:         resolveOfficialDeepSeekPricing(cfg, subagentRef),
-		event.UsageSourceCompaction:       executorPricing,
-		event.UsageSourceClassifier:       executorPricing,
-		event.UsageSourceTitle:            executorPricing,
-		event.UsageSourceCapabilityRouter: resolveOfficialDeepSeekPricing(cfg, routerRef),
-		event.UsageSourceRecoveryReviewer: resolveOfficialDeepSeekPricing(cfg, recoveryRef),
-	}
 }
 
 func (a *App) repriceTabUsageForCurrentCurrency(tab *WorkspaceTab) {
@@ -1180,14 +1081,17 @@ func (a *App) repriceTabUsageForCurrentCurrency(tab *WorkspaceTab) {
 	}
 	a.mu.RLock()
 	root := tab.WorkspaceRoot
-	model := tab.model
 	a.mu.RUnlock()
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return
 	}
-	cfg.ApplyRuntimeAutoPricingCurrency(a.desktopAutoPricingCurrency())
-	if !tab.repriceUsage(usagePricingBySource(cfg, model)) {
+	// Display preference only — never rewrite provider list prices.
+	if cfg.DisplayCurrencyPref() == "" {
+		cfg.ApplyRuntimeAutoPricingCurrency(a.desktopAutoPricingCurrency())
+	}
+	display := cfg.ResolveDisplayCurrency()
+	if !tab.selectDisplayCurrency(display) {
 		return
 	}
 	if path := tab.currentSessionPath(); path != "" {
@@ -1213,7 +1117,7 @@ func (t *WorkspaceTab) telemetrySnapshot() tabTelemetrySnapshot {
 	}
 	usage.activeTurnStartedAt = 0
 	usage.sourceSessionCache = nil
-	return tabTelemetrySnapshot{Version: 2, ReadFiles: records, Usage: usage}
+	return tabTelemetrySnapshot{Version: 3, ReadFiles: records, Usage: usage}
 }
 
 func (t *WorkspaceTab) resetTelemetry(sessionPath string) {
@@ -1558,6 +1462,9 @@ type closeableEventSink interface {
 
 // binding snapshots the sink's current tab routing under the sink lock.
 func (s *tabEventSink) binding() (string, *App) {
+	if s == nil {
+		return "", nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.tabID, s.app
@@ -1573,6 +1480,11 @@ func (s *tabEventSink) runtimeEpochSnapshot() string {
 }
 
 func (s *tabEventSink) Emit(e event.Event) {
+	// Typed-nil sinks can appear as non-nil event.Sink interfaces when a tab
+	// controller is built before the tab sink binding is installed.
+	if s == nil {
+		return
+	}
 	if e.Kind == event.TurnStarted {
 		s.mu.Lock()
 		s.turn.inFlight = true
@@ -6440,7 +6352,7 @@ func ensureTopicIndexed(scope, workspaceRoot, topicID, title, source string) err
 
 func saveTelemetry(path string, snapshot tabTelemetrySnapshot) error {
 	if snapshot.Version == 0 {
-		snapshot.Version = 2
+		snapshot.Version = 3
 	}
 	if snapshot.ReadFiles == nil {
 		snapshot.ReadFiles = []readFileRecord{}
@@ -6459,7 +6371,7 @@ func saveTelemetry(path string, snapshot tabTelemetrySnapshot) error {
 func loadTelemetry(path string) tabTelemetrySnapshot {
 	b, err := readFileUTF8(path)
 	if err != nil {
-		return tabTelemetrySnapshot{Version: 2, ReadFiles: []readFileRecord{}}
+		return tabTelemetrySnapshot{Version: 3, ReadFiles: []readFileRecord{}}
 	}
 	var snapshot tabTelemetrySnapshot
 	if err := json.Unmarshal(b, &snapshot); err == nil && (snapshot.Version > 0 || snapshot.ReadFiles != nil) {
@@ -6468,6 +6380,39 @@ func loadTelemetry(path string) tabTelemetrySnapshot {
 		}
 		if snapshot.Usage.SessionCost == 0 && snapshot.Usage.SessionCostUsd > 0 {
 			snapshot.Usage.SessionCost = snapshot.Usage.SessionCostUsd
+		}
+		// Lazy-migrate pre-CostQuote telemetry: keep original amount, mark legacy.
+		// Never reconstruct wiped mixed-currency zeros from current price tables.
+		if snapshot.Version < 3 && snapshot.Usage.CostLedger == nil && snapshot.Usage.SessionCost > 0 {
+			if home := config.ReasonixHomeDir(); home != "" {
+				billing.InitGlobalFX(home)
+			}
+			q := billing.MigrateLegacyUsage(billing.LegacyUsageRecord{
+				SessionCost:     snapshot.Usage.SessionCost,
+				SessionCurrency: snapshot.Usage.SessionCurrency,
+				EndedAt:         time.Now().UTC(),
+			}, billing.GlobalRateTable())
+			ledger := billing.NewLedger()
+			ledger.Add(q, billing.UsageTokens{
+				PromptTokens:     snapshot.Usage.PromptTokens,
+				CompletionTokens: snapshot.Usage.CompletionTokens,
+			}, time.Now().UTC())
+			snapshot.Usage.CostLedger = ledger
+			total := ledger.Total(billing.NormalizeCurrency(snapshot.Usage.SessionCurrency))
+			snapshot.Usage.SessionCostQuote = &total
+			snapshot.Usage.SessionCostComplete = total.Complete
+			snapshot.Version = 3
+		} else if snapshot.Version < 3 && snapshot.Usage.SessionCost <= 0 && strings.TrimSpace(snapshot.Usage.SessionCurrency) != "" {
+			// Explicit zero with currency: prior mixed-currency wipe — mark incomplete.
+			q := billing.MigrateLegacyUsage(billing.LegacyUsageRecord{
+				SessionCost:     0,
+				SessionCurrency: snapshot.Usage.SessionCurrency,
+			}, nil)
+			snapshot.Usage.SessionCostQuote = &q
+			snapshot.Usage.SessionCostComplete = false
+			snapshot.Version = 3
+		} else if snapshot.Version < 3 {
+			snapshot.Version = 3
 		}
 		return snapshot
 	}
@@ -8269,6 +8214,10 @@ type ContextPanelInfo struct {
 	SessionCost             float64                     `json:"sessionCost"`
 	SessionCurrency         string                      `json:"sessionCurrency,omitempty"`
 	SessionCostUsd          float64                     `json:"sessionCostUsd,omitempty"`
+	SessionCostComplete     bool                        `json:"sessionCostComplete,omitempty"`
+	SessionCostEstimated    bool                        `json:"sessionCostEstimated,omitempty"`
+	SessionBillingMode      string                      `json:"sessionBillingMode,omitempty"`
+	SessionCostQuote        *billing.CostQuote          `json:"sessionCostQuote,omitempty"`
 	Sources                 map[string]usageSourceStats `json:"sources,omitempty"`
 	Mock                    bool                        `json:"mock,omitempty"`
 	ReadFiles               []readFileRecord            `json:"readFiles"`
@@ -8350,6 +8299,16 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 	info.SessionCost = usage.SessionCost
 	info.SessionCurrency = usage.SessionCurrency
 	info.SessionCostUsd = usage.SessionCostUsd
+	info.SessionCostComplete = usage.SessionCostComplete
+	info.SessionCostEstimated = true
+	info.SessionCostQuote = usage.SessionCostQuote
+	if usage.SessionCostQuote != nil {
+		info.SessionBillingMode = usage.SessionCostQuote.BillingMode
+		info.SessionCostEstimated = usage.SessionCostQuote.Estimated
+		if !usage.SessionCostQuote.Complete {
+			info.SessionCostComplete = false
+		}
+	}
 	info.Sources = usage.Sources
 	info.SessionCacheHitTokens = usage.CacheHitTokens
 	info.SessionCacheMissTokens = usage.CacheMissTokens

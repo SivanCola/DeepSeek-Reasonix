@@ -192,11 +192,19 @@ reasonix run "运行测试" --output-format stream-json
 }
 ```
 
-`total_cost` 使用 `currency` 给出的 ISO 货币代码计价；DeepSeek 官方价格目前会输出
-`CNY` 或 `USD`。`total_cost_usd` 作为数字兼容别名继续保留，并与 `total_cost` 数值
-相同；即使 `currency` 为 `CNY`，它也不会按旧字段名自动换算为美元。新接入必须同时读取
-`total_cost` 和 `currency`。如果一次结构化运行包含多种货币，Reasonix 会直接报错，
-不会输出容易误解的合计金额。
+`total_cost` 是**当前展示币种**下的估值（ISO 代码见 `currency`，目前为 `CNY` 或
+`USD`）。有 `cost_quote` 时优先读它：含原币费用、发生时的 CNY/USD 估值（双区域官方
+价表为 `official_table`，否则 ECB 汇率 `fx`）、`complete`，以及
+`billing_mode`（`payg` 或 `subscription_equivalent`，后者表示如 MiMo Token Plan
+的「按量等效估算」）。
+
+`total_cost_usd` 仅为兼容别名，数值镜像 `total_cost`，**不表示一定是美元**。混用
+多种原币时不会再报错：`cost_complete=false`，并用 `original_costs` 给出各原币明细，
+绝不伪造跨币种合计。
+
+全局展示偏好为 `[billing].display_currency`（`auto|CNY|USD`）；旧
+`[desktop].currency` 仍会迁移。供应商原币价表由各条目冻结的 `billing_currency`
+决定，切换展示币种不会改写价表。可用 `reasonix doctor billing` 排查。
 
 执行失败时使用 `subtype: "error_during_execution"` 和 `is_error: true`。
 结构化模式会把运行时错误保留在 JSON 中，不再额外重复输出一份人类可读错误。

@@ -1808,7 +1808,7 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
           ))}
         </div>
       </SettingsField>
-      <SettingsField label={t("settings.currency")}>
+      <SettingsField label={t("settings.currency")} hint={t("settings.currencyHint")}>
         <div className="set-seg">
           {(["", "CNY", "USD"] as DesktopCurrency[]).map((currency) => (
             <button

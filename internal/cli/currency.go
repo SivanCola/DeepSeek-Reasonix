@@ -19,7 +19,7 @@ func (m *chatTUI) runCurrencySubcommand(input string) tea.Cmd {
 			return nil
 		}
 		cfg.ApplyRuntimeAutoPricingCurrency(cliAutoPricingCurrency())
-		m.notice(i18n.M.CurrencyHeader + "\n" + describePricingCurrencies(pricingCurrencyDisplay(cfg.DesktopCurrency()), cfg.DeepSeekOfficialPricingCurrency()) + "\n" + i18n.M.CurrencyHint)
+		m.notice(i18n.M.CurrencyHeader + "\n" + describePricingCurrencies(pricingCurrencyDisplay(cfg.DisplayCurrencyPref()), cfg.ResolveDisplayCurrency()) + "\n" + i18n.M.CurrencyHint)
 		return nil
 	}
 	if len(args) > 2 {
@@ -45,12 +45,14 @@ func (m *chatTUI) runCurrencySubcommand(input string) tea.Cmd {
 		unlock := config.LockUserConfigEdits()
 		defer unlock()
 		edit := config.LoadForEdit(path)
-		if err := edit.SetDesktopCurrency(mode); err != nil {
+		if err := edit.SetDisplayCurrency(mode); err != nil {
 			return err
 		}
-		resolved = edit.DeepSeekOfficialPricingCurrency()
-		if mode == "" && edit.DesktopLanguage() == "" {
-			resolved = cliAutoPricingCurrency()
+		resolved = edit.ResolveDisplayCurrency()
+		if mode == "" {
+			if hint := cliAutoPricingCurrency(); hint != "" && edit.DisplayCurrencyPref() == "" {
+				resolved = hint
+			}
 		}
 		return edit.SaveTo(path)
 	}(); err != nil {

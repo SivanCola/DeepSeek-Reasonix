@@ -210,12 +210,22 @@ The final structured object has this shape:
 }
 ```
 
-`total_cost` is denominated in the ISO currency code from `currency`, currently
-`CNY` or `USD` for official DeepSeek pricing. `total_cost_usd` remains as a
-numeric compatibility alias and mirrors `total_cost`; despite its legacy name,
-it is not converted to USD when `currency` is `CNY`. New consumers must use
-`total_cost` together with `currency`. A structured run fails instead of
-reporting a misleading total if usage contains mixed currencies.
+`total_cost` is the **selected display valuation** (ISO code in `currency`,
+currently `CNY` or `USD`). Prefer the structured `cost_quote` field when present:
+it carries the original billable currency, occurrence-time CNY/USD valuations
+(`official_table` for dual-region public prices, otherwise ECB FX),
+`complete`, and `billing_mode` (`payg` or `subscription_equivalent` for
+pay-as-you-go equivalent estimates such as MiMo Token Plan).
+
+`total_cost_usd` remains a numeric compatibility alias that mirrors
+`total_cost` and does **not** imply USD. Mixed original currencies no longer
+fail the run: `cost_complete` is `false` and `original_costs` lists per-ISO
+totals so clients never invent a cross-currency sum.
+
+Global display preference is `[billing].display_currency` (`auto|CNY|USD`);
+legacy `[desktop].currency` still migrates. Provider list prices use each
+entry's frozen `billing_currency` and are never rewritten by display switches.
+Diagnose with `reasonix doctor billing`.
 
 Execution failures use `subtype: "error_during_execution"` and
 `is_error: true`. Structured modes keep runtime errors in JSON instead of also

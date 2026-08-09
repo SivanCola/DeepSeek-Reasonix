@@ -255,6 +255,11 @@ export function StatusBar({
   const tokenLabel = markEstimated(formatTokenCount(sessionTokens), sessionEstimated);
   const turnTokenLabel = markEstimated(formatTokenCount(turnTokens), turnEstimated);
   const balanceLabel = balance?.available && balance.display ? balance.display : "-";
+  const balanceTitle = balance?.available
+    ? (balance.detail
+      ? `${t("status.balanceTitle")}: ${balance.detail}${balance.rateDate ? ` · FX ${balance.rateDate}` : ""}`
+      : t("status.balanceTitle"))
+    : t("status.balanceTitle");
   const tpsLabel = formatTps(lastTurnOutputTokens, lastTurnModelMs, lastTurnOutputEstimated);
   const formatUsageToken = (value: number) => `${usage?.estimated ? "≈" : ""}${value.toLocaleString()}`;
   const outputTokensLabel = usage && typeof usage.completionTokens === "number"
@@ -404,7 +409,7 @@ export function StatusBar({
       </Tooltip>
     ),
     balance: (
-      <Tooltip label={t("status.balanceTitle")} className="statusbar__metric statusbar__metric--balance">
+      <Tooltip label={balanceTitle} className="statusbar__metric statusbar__metric--balance">
         <span className="stat stat--balance statusbar__balance">
           <MetricLabel style={metricLabelStyle} icon={<Wallet size={12} />} label={t("status.balanceLabel")} />
           <b className={balanceLabel === "-" ? "stat__value--empty" : undefined}>{balanceLabel}</b>

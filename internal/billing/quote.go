@@ -1,0 +1,546 @@
+package billing
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Billing modes.
+const (
+	BillingModePAYG                   = "payg"
+	BillingModeSubscriptionEquivalent = "subscription_equivalent"
+)
+
+// Valuation basis values.
+const (
+	BasisIdentity      = "identity"
+	BasisOfficialTable = "official_table"
+	BasisFX            = "fx"
+)
+
+// CostQuote is the host-side quoted cost for one model call (or an aggregate).
+// Original is the billable currency fact; valuations hold CNY/USD views computed
+// at occurrence time. Selected is the display pick for the current preference.
+type CostQuote struct {
+	Original    Money                `json:"original"`
+	Valuations  map[string]Valuation `json:"valuations,omitempty"`
+	Selected    *Money               `json:"selected,omitempty"`
+	BillingMode string               `json:"billingMode,omitempty"`
+	Estimated   bool                 `json:"estimated"`
+	Complete    bool                 `json:"complete"`
+	// ModelRef / UsageSource / PricingFingerprint identify the ledger key.
+	ModelRef           string `json:"modelRef,omitempty"`
+	UsageSource        string `json:"usageSource,omitempty"`
+	PricingFingerprint string `json:"pricingFingerprint,omitempty"`
+	RateDate           string `json:"rateDate,omitempty"` // YYYY-MM-DD of FX used, if any
+	IncompleteReason   string `json:"incompleteReason,omitempty"`
+	LegacyEstimate     bool   `json:"legacyEstimate,omitempty"`
+	CatalogSource      string `json:"catalogSource,omitempty"`
+}
+
+// Valuation is one currency view of a cost fact.
+type Valuation struct {
+	Money  Money         `json:"money"`
+	Basis  string        `json:"basis"`
+	Source string        `json:"source"`
+	AsOf   string        `json:"asOf"` // YYYY-MM-DD
+	Rate   *RateSnapshot `json:"rateSnapshot,omitempty"`
+	Stale  bool          `json:"stale,omitempty"`
+}
+
+// RateSnapshot records the FX observation used for a valuation.
+type RateSnapshot struct {
+	Base   string  `json:"base"`
+	Quote  string  `json:"quote"`
+	Rate   float64 `json:"rate"`
+	Source string  `json:"source"`
+	AsOf   string  `json:"asOf"`
+	Stale  bool    `json:"stale,omitempty"`
+}
+
+// RateCard is the per-1M-token price used to compute original cost. It mirrors
+// provider.Pricing without importing that package (billing is a leaf).
+type RateCard struct {
+	CacheHit float64 // per 1M cached prompt tokens
+	Input    float64 // per 1M uncached prompt tokens
+	Output   float64 // per 1M completion tokens
+	Currency string  // ISO or symbol; normalized on quote
+}
+
+// UsageTokens is the token breakdown needed for cost. Mirrors provider.Usage
+// fields without importing provider.
+type UsageTokens struct {
+	PromptTokens           int
+	CompletionTokens       int
+	CacheHitTokens         int
+	CacheMissTokens        int
+	CacheWriteTokens       int
+	CacheWriteBilledTokens float64
+	Estimated              bool
+}
+
+// QuoteInput drives a single CostQuote computation.
+type QuoteInput struct {
+	Usage              UsageTokens
+	Rates              RateCard
+	OccurredAt         time.Time
+	DisplayCurrency    string // resolved ISO: CNY or USD (empty = original only)
+	BillingMode        string
+	ModelRef           string
+	UsageSource        string
+	CatalogSource      string
+	PricingFingerprint string
+	// ProviderKind is deepseek|longcat|mimo|… for official dual-table lookup.
+	// When empty, ModelRef and Rates are used to infer a catalog match.
+	ProviderKind string
+	// ModelID is the bare model id (e.g. deepseek-v4-flash). Empty → parse ModelRef.
+	ModelID string
+	// RatesTable is the ECB (or fixture) table; nil keeps original only when
+	// no official dual-region table applies.
+	RatesTable *RateTable
+	// AcceptStaleDays is max age for FX cache (default 7).
+	AcceptStaleDays int
+}
+
+// OriginalCostAmount computes the fixed-point original cost from rates + tokens.
+// Mirrors the historic provider.Pricing.Cost semantics.
+func OriginalCostAmount(rates RateCard, u UsageTokens) Amount {
+	hit := u.CacheHitTokens
+	miss := u.CacheMissTokens
+	if hit+miss == 0 && u.PromptTokens > 0 {
+		miss = u.PromptTokens
+	} else if miss == 0 && hit > 0 && u.PromptTokens > hit {
+		miss = u.PromptTokens - hit
+	}
+	write := u.CacheWriteTokens
+	write = max(write, 0)
+	write = min(write, miss)
+	billedWrite := 0.0
+	if write > 0 {
+		billedWrite = u.CacheWriteBilledTokens
+		if billedWrite <= 0 {
+			billedWrite = float64(write)
+		}
+	}
+	inputTokenUnits := float64(miss-write) + billedWrite
+	// Combine cached input, uncached input, and output charges per million tokens.
+	total := (float64(hit)*rates.CacheHit +
+		inputTokenUnits*rates.Input +
+		float64(u.CompletionTokens)*rates.Output) / 1e6
+	return NewAmountFromFloat(total)
+}
+
+// PricingFingerprint hashes a rate card for ledger keys.
+func PricingFingerprint(rates RateCard) string {
+	cur := NormalizeCurrency(rates.Currency)
+	raw := fmt.Sprintf("%s|%.12g|%.12g|%.12g", cur, rates.CacheHit, rates.Input, rates.Output)
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:8])
+}
+
+// BuildQuote computes original cost and CNY/USD valuations.
+func BuildQuote(in QuoteInput) CostQuote {
+	state := newQuoteBuildState(in)
+	for _, target := range []string{"CNY", "USD"} {
+		state.addTargetValuation(target)
+	}
+	state.selectDisplay()
+	return state.quote
+}
+
+type quoteBuildState struct {
+	input      QuoteInput
+	currency   string
+	amount     Amount
+	occurred   time.Time
+	staleDays  int
+	official   CatalogEntry
+	isOfficial bool
+	quote      CostQuote
+}
+
+func newQuoteBuildState(in QuoteInput) *quoteBuildState {
+	currency := NormalizeCurrency(in.Rates.Currency)
+	if currency == "" {
+		currency = "CNY"
+	}
+	mode := strings.TrimSpace(in.BillingMode)
+	if mode == "" {
+		mode = BillingModePAYG
+	}
+	occurred := in.OccurredAt
+	if occurred.IsZero() {
+		occurred = time.Now().UTC()
+	}
+	fingerprint := strings.TrimSpace(in.PricingFingerprint)
+	if fingerprint == "" {
+		fingerprint = PricingFingerprint(in.Rates)
+	}
+	amount := OriginalCostAmount(in.Rates, in.Usage)
+	q := CostQuote{
+		Original:           MoneyOf(amount, currency),
+		Valuations:         map[string]Valuation{},
+		BillingMode:        mode,
+		Estimated:          true,
+		Complete:           true,
+		ModelRef:           strings.TrimSpace(in.ModelRef),
+		UsageSource:        strings.TrimSpace(in.UsageSource),
+		PricingFingerprint: fingerprint,
+		CatalogSource:      strings.TrimSpace(in.CatalogSource),
+	}
+	q.Valuations[currency] = Valuation{
+		Money: q.Original, Basis: BasisIdentity,
+		Source: firstNonEmpty(in.CatalogSource, "rate_card"),
+		AsOf:   occurred.UTC().Format("2006-01-02"),
+	}
+	state := &quoteBuildState{
+		input: in, currency: currency, amount: amount, occurred: occurred,
+		staleDays: in.AcceptStaleDays, quote: q,
+	}
+	if state.staleDays <= 0 {
+		state.staleDays = DefaultFXMaxAgeDays
+	}
+	state.matchOfficialCatalog()
+	return state
+}
+
+func (s *quoteBuildState) matchOfficialCatalog() {
+	providerKind, modelID := resolveCatalogIdentity(s.input)
+	s.official, s.isOfficial = MatchesCatalog(providerKind, modelID, s.input.Rates)
+	if !s.isOfficial && providerKind != "" && modelID != "" {
+		rates := s.input.Rates
+		rates.Currency = s.currency
+		s.official, s.isOfficial = MatchesCatalog(providerKind, modelID, rates)
+	}
+	if s.isOfficial && s.quote.CatalogSource == "" {
+		s.quote.CatalogSource = s.official.DocURL
+	}
+}
+
+func (s *quoteBuildState) addTargetValuation(target string) {
+	if target == s.currency {
+		return
+	}
+	if s.addOfficialValuation(target) {
+		return
+	}
+	if s.input.RatesTable == nil {
+		s.markIncomplete("no_fx_table")
+		return
+	}
+	converted, snapshot, ok := s.input.RatesTable.Convert(
+		s.amount, s.currency, target, s.occurred, s.staleDays,
+	)
+	if !ok {
+		reason := "fx_unavailable"
+		if snapshot != nil && snapshot.Stale {
+			reason = "fx_stale"
+		}
+		s.markIncomplete(reason)
+		return
+	}
+	s.quote.Valuations[target] = Valuation{
+		Money: MoneyOf(converted, target), Basis: BasisFX,
+		Source: snapshot.Source, AsOf: snapshot.AsOf,
+		Rate: snapshot, Stale: snapshot.Stale,
+	}
+	if s.quote.RateDate == "" {
+		s.quote.RateDate = snapshot.AsOf
+	}
+}
+
+func (s *quoteBuildState) addOfficialValuation(target string) bool {
+	if !s.isOfficial {
+		return false
+	}
+	peer, ok := LookupCatalog(
+		s.official.Provider, s.official.Model, target, s.official.BillingMode,
+	)
+	if !ok {
+		return false
+	}
+	s.quote.Valuations[target] = Valuation{
+		Money: MoneyOf(OriginalCostAmount(RateCardFromCatalog(peer), s.input.Usage), target),
+		Basis: BasisOfficialTable, Source: peer.DocURL,
+		AsOf: s.occurred.UTC().Format("2006-01-02"),
+	}
+	return true
+}
+
+func (s *quoteBuildState) selectDisplay() {
+	display := NormalizeCurrency(s.input.DisplayCurrency)
+	if display == "" {
+		selected := s.quote.Original
+		s.quote.Selected = &selected
+		return
+	}
+	if valuation, ok := s.quote.Valuations[display]; ok {
+		selected := valuation.Money
+		s.quote.Selected = &selected
+		return
+	}
+	s.markIncomplete("display_unavailable")
+}
+
+func (s *quoteBuildState) markIncomplete(reason string) {
+	s.quote.Complete = false
+	if s.quote.IncompleteReason == "" {
+		s.quote.IncompleteReason = reason
+	}
+}
+
+// SelectForDisplay returns the money for a display currency preference without
+// recomputing rates. Empty display returns original.
+func (q CostQuote) SelectForDisplay(display string) (Money, bool) {
+	display = NormalizeCurrency(display)
+	if display == "" {
+		return q.Original, true
+	}
+	if v, ok := q.Valuations[display]; ok {
+		return v.Money, true
+	}
+	if NormalizeCurrency(q.Original.Currency) == display {
+		return q.Original, true
+	}
+	return Money{}, false
+}
+
+// WithSelected returns a copy with Selected set for display.
+func (q CostQuote) WithSelected(display string) CostQuote {
+	out := q
+	if m, ok := q.SelectForDisplay(display); ok {
+		out.Selected = &m
+	} else {
+		out.Selected = nil
+		out.Complete = false
+		if out.IncompleteReason == "" {
+			out.IncompleteReason = "display_unavailable"
+		}
+	}
+	return out
+}
+
+// LegacyCostFloat returns the selected (or original) amount as float64 for
+// compatibility aliases cost / costUsd / total_cost.
+func (q CostQuote) LegacyCostFloat() float64 {
+	if q.Selected != nil {
+		return q.Selected.Float64()
+	}
+	return q.Original.Float64()
+}
+
+// LegacyCurrencySymbol returns a display symbol for the selected/original currency.
+func (q CostQuote) LegacyCurrencySymbol() string {
+	if q.Selected != nil && q.Selected.Currency != "" {
+		return CurrencySymbol(q.Selected.Currency)
+	}
+	return CurrencySymbol(q.Original.Currency)
+}
+
+// LegacyCurrencyCode returns the ISO code for selected/original.
+func (q CostQuote) LegacyCurrencyCode() string {
+	if q.Selected != nil && q.Selected.Currency != "" {
+		return NormalizeCurrency(q.Selected.Currency)
+	}
+	return NormalizeCurrency(q.Original.Currency)
+}
+
+// AggregateQuotes combines occurrence-time quotes into a session/run total.
+// Every entry must have the requested valuation; partial totals stay unavailable.
+func AggregateQuotes(quotes []CostQuote, display string) CostQuote {
+	if len(quotes) == 0 {
+		return emptyAggregate(NormalizeCurrency(display))
+	}
+	accumulator := newQuoteAccumulator(display)
+	for _, quote := range quotes {
+		accumulator.add(quote)
+	}
+	return accumulator.finish()
+}
+
+type quoteAccumulator struct {
+	out               CostQuote
+	display           string
+	totals            map[string]Amount
+	originalCurrency  string
+	originalTotal     Amount
+	originalComplete  bool
+	allQuotesComplete bool
+	displayComplete   bool
+	modes             map[string]struct{}
+}
+
+func emptyAggregate(display string) CostQuote {
+	out := CostQuote{Original: MoneyOf(Zero, display), Valuations: map[string]Valuation{}, Estimated: true, Complete: true}
+	if display != "" {
+		selected := out.Original
+		out.Selected = &selected
+	}
+	return out
+}
+
+func newQuoteAccumulator(display string) *quoteAccumulator {
+	return &quoteAccumulator{
+		out:     CostQuote{Valuations: map[string]Valuation{}, Estimated: true},
+		display: NormalizeCurrency(display), totals: map[string]Amount{},
+		originalComplete: true, allQuotesComplete: true, displayComplete: true,
+		modes: map[string]struct{}{},
+	}
+}
+
+func (a *quoteAccumulator) add(quote CostQuote) {
+	if !quote.Complete {
+		a.allQuotesComplete = false
+		if a.out.IncompleteReason == "" {
+			a.out.IncompleteReason = quote.IncompleteReason
+		}
+	}
+	a.out.LegacyEstimate = a.out.LegacyEstimate || quote.LegacyEstimate
+	if quote.BillingMode != "" {
+		a.modes[quote.BillingMode] = struct{}{}
+	}
+	if quote.RateDate > a.out.RateDate {
+		a.out.RateDate = quote.RateDate
+	}
+	originalCurrency := NormalizeCurrency(quote.Original.Currency)
+	a.addOriginal(quote.Original, originalCurrency)
+	if a.display != "" {
+		_, found := quote.Valuations[a.display]
+		a.displayComplete = a.displayComplete && (found || originalCurrency == a.display)
+	}
+	originalIncluded := false
+	for code, valuation := range quote.Valuations {
+		code = NormalizeCurrency(code)
+		if code == originalCurrency {
+			originalIncluded = true
+		}
+		a.addValuation(code, valuation)
+	}
+	if originalCurrency != "" && !originalIncluded {
+		a.addValuation(originalCurrency, Valuation{
+			Money: quote.Original, Basis: BasisIdentity, Source: "aggregate",
+			AsOf: time.Now().UTC().Format("2006-01-02"),
+		})
+	}
+}
+
+func (a *quoteAccumulator) addOriginal(original Money, currency string) {
+	if a.originalCurrency == "" {
+		a.originalCurrency = currency
+		a.originalTotal = original.AmountValue()
+		return
+	}
+	if currency != a.originalCurrency {
+		a.originalComplete = false
+		return
+	}
+	a.originalTotal = a.originalTotal.Add(original.AmountValue())
+}
+
+func (a *quoteAccumulator) addValuation(code string, valuation Valuation) {
+	if code == "" {
+		return
+	}
+	a.totals[code] = a.totals[code].Add(valuation.Money.AmountValue())
+	current, found := a.out.Valuations[code]
+	if !found {
+		current = valuation
+	}
+	current.Money = MoneyOf(a.totals[code], code)
+	current.Stale = current.Stale || valuation.Stale
+	a.out.Valuations[code] = current
+}
+
+func (a *quoteAccumulator) finish() CostQuote {
+	a.out.Complete = a.allQuotesComplete && a.displayComplete
+	if a.originalComplete && a.originalCurrency != "" {
+		a.out.Original = MoneyOf(a.originalTotal, a.originalCurrency)
+		a.syncOriginalValuation()
+	} else {
+		a.out.Original = Money{Amount: "0"}
+	}
+	if len(a.modes) == 1 {
+		for mode := range a.modes {
+			a.out.BillingMode = mode
+		}
+	}
+	if a.display == "" && a.originalComplete {
+		selected := a.out.Original
+		a.out.Selected = &selected
+		return a.out
+	}
+	valuation, found := a.out.Valuations[a.display]
+	if found && a.displayComplete {
+		selected := valuation.Money
+		a.out.Selected = &selected
+		return a.out
+	}
+	a.out.Complete = false
+	if a.displayComplete {
+		a.out.IncompleteReason = firstNonEmpty(a.out.IncompleteReason, "display_unavailable")
+	} else {
+		a.out.IncompleteReason = "incomplete_valuations"
+	}
+	return a.out
+}
+
+func (a *quoteAccumulator) syncOriginalValuation() {
+	valuation, found := a.out.Valuations[a.originalCurrency]
+	if !found {
+		valuation = Valuation{
+			Basis: BasisIdentity, Source: "aggregate",
+			AsOf: time.Now().UTC().Format("2006-01-02"),
+		}
+	}
+	valuation.Money = a.out.Original
+	a.out.Valuations[a.originalCurrency] = valuation
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func resolveCatalogIdentity(in QuoteInput) (provider, model string) {
+	provider = strings.ToLower(strings.TrimSpace(in.ProviderKind))
+	model = strings.TrimSpace(in.ModelID)
+	if model == "" {
+		ref := strings.TrimSpace(in.ModelRef)
+		if i := strings.LastIndex(ref, "/"); i >= 0 && i+1 < len(ref) {
+			model = ref[i+1:]
+			if provider == "" {
+				provider = strings.ToLower(ref[:i])
+			}
+		} else {
+			model = ref
+		}
+	}
+	// Normalize common provider name prefixes.
+	switch {
+	case strings.Contains(provider, "deepseek"):
+		provider = "deepseek"
+	case strings.Contains(provider, "longcat"):
+		provider = "longcat"
+	case strings.Contains(provider, "mimo"):
+		provider = "mimo"
+	}
+	if provider == "" {
+		// Infer from model id family.
+		switch {
+		case strings.HasPrefix(model, "deepseek"):
+			provider = "deepseek"
+		case strings.HasPrefix(model, "LongCat") || strings.HasPrefix(model, "longcat"):
+			provider = "longcat"
+		case strings.HasPrefix(model, "mimo"):
+			provider = "mimo"
+		}
+	}
+	return provider, model
+}

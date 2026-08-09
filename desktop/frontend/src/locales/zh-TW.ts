@@ -1868,8 +1868,12 @@ export const zhTW: Record<DictKey, string> = {
   "settings.defaultWorkspace": "預設工作區",
   "settings.defaultWorkspaceHint": "啟動時自動開啟（目錄存在時）。",
   "settings.langAuto": "自動（跟隨系統）",
-  "settings.currency": "計價幣別",
+  "settings.currency": "顯示幣別",
   "settings.currencyAuto": "自動（跟隨語言）",
+  "settings.currencyHint": "僅影響顯示，不會改寫供應商原幣價表（billing_currency）。估值優先官方雙區域價表，否則用 ECB 匯率（均為估算）。",
+  "context.sessionCostEstimated": "估算會話費用",
+  "context.sessionCostPaygEquivalent": "按量等效估算",
+  "context.sessionCostUnavailable": "費用不可估算",
   "settings.config": "設定檔：{path}",
   "settings.configShadowed": "被工作區設定覆蓋：{path}（這裡的修改可能不會生效）",
 

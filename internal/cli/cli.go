@@ -2380,7 +2380,7 @@ func configCurrencyCommand(args []string) int {
 			return 1
 		}
 		cfg.ApplyRuntimeAutoPricingCurrency(cliAutoPricingCurrency())
-		fmt.Printf("currency = %q (resolved: %s)\n", pricingCurrencyDisplay(cfg.DesktopCurrency()), cfg.DeepSeekOfficialPricingCurrency())
+		fmt.Printf("currency = %q (display: %s)\n", pricingCurrencyDisplay(cfg.DisplayCurrencyPref()), cfg.ResolveDisplayCurrency())
 		return 0
 	}
 	mode, err := parseCLIPricingCurrency(rest[0])
@@ -2396,19 +2396,22 @@ func configCurrencyCommand(args []string) int {
 	unlock := config.LockUserConfigEdits()
 	defer unlock()
 	cfg := config.LoadForEdit(path)
-	if err := cfg.SetDesktopCurrency(mode); err != nil {
+	if err := cfg.SetDisplayCurrency(mode); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
-	resolved := cfg.DeepSeekOfficialPricingCurrency()
-	if mode == "" && cfg.DesktopLanguage() == "" {
-		resolved = cliAutoPricingCurrency()
+	resolved := cfg.ResolveDisplayCurrency()
+	if mode == "" {
+		// Auto: show the resolved display preference (language → host → USD).
+		if hint := cliAutoPricingCurrency(); hint != "" && cfg.DisplayCurrencyPref() == "" {
+			resolved = hint
+		}
 	}
 	if err := cfg.SaveTo(path); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
-	fmt.Printf("currency = %q (resolved: %s, %s)\n", pricingCurrencyDisplay(mode), resolved, displayPath(path))
+	fmt.Printf("currency = %q (display: %s, %s)\n", pricingCurrencyDisplay(mode), resolved, displayPath(path))
 	return 0
 }
 
