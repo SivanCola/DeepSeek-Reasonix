@@ -30,6 +30,7 @@ function propertyName(node) {
 }
 
 function validateSource(text, filename) {
+  const portableFilename = filename.replaceAll("\\", "/");
   const source = ts.createSourceFile(
     filename,
     text,
@@ -39,7 +40,7 @@ function validateSource(text, filename) {
   );
   const issues = [];
   const motionEasingImports = new Set();
-  const isSharedMotionModule = /(?:^|\/)src\/lib\/motion\.ts$/.test(filename);
+  const isSharedMotionModule = /(?:^|\/)src\/lib\/motion\.ts$/.test(portableFilename);
 
   for (const statement of source.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
@@ -121,6 +122,7 @@ function validateSource(text, filename) {
 function selfTest() {
   const cases = [
     ["valid shared token", 'import { CSS_EASE_OUT } from "./motion"; el.animate([], { duration: 1, easing: CSS_EASE_OUT });', 0],
+    ["valid Windows shared declaration", 'export const CSS_EASE_IN = "ease-in"; el.animate([], { easing: CSS_EASE_IN });', 0, "src\\lib\\motion.ts"],
     ["valid CSS literal", 'el.animate([], { easing: "cubic-bezier(0.2, 0.72, 0.2, 1)" });', 0],
     ["legacy token", 'el.animate([], { easing: "power2.in" });', 2],
     ["opaque options", "el.animate([], options);", 1],
@@ -128,8 +130,8 @@ function selfTest() {
     ["shorthand easing", "el.animate([], { easing });", 1],
     ["unowned identifier", "el.animate([], { easing: externalEase });", 1],
   ];
-  for (const [name, source, expected] of cases) {
-    const actual = validateSource(source, `${name}.ts`).length;
+  for (const [name, source, expected, filename = `${name}.ts`] of cases) {
+    const actual = validateSource(source, filename).length;
     if (actual !== expected) throw new Error(`${name}: expected ${expected} contract findings, got ${actual}`);
   }
   console.log(`waapi-contract: ${cases.length} self-tests passed`);

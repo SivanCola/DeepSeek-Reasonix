@@ -24,6 +24,17 @@ for (const [job, body, command] of [
   }
 }
 
+const windowsJob = jobBody("desktop-windows", "lint");
+for (const required of [
+  "wails build -clean -s -skipbindings -nopackage -platform windows/amd64 -webview2 embed",
+  "Smoke-test Wails approval in WebView2",
+  "../scripts/test-webview2-approval-smoke.ps1",
+]) {
+  if (!windowsJob.includes(required)) {
+    throw new Error(`motion-ci-contract: desktop-windows must include ${required}`);
+  }
+}
+
 const motionScript = packageJSON.scripts?.["test:motion"] ?? "";
 for (const required of [
   "check-waapi-contract.mjs --self-test",
@@ -36,4 +47,4 @@ for (const required of [
   }
 }
 
-console.log("motion-ci-contract: required lint plus Linux and Windows jobs run the complete native motion gate");
+console.log("motion-ci-contract: required lint plus Linux and Windows jobs run native motion gates, and Windows runs the real WebView2 smoke");

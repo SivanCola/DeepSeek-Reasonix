@@ -463,6 +463,22 @@ jobs:
       - name: Test native motion contracts
         run: pnpm --dir frontend test:motion
 
+      # Build the real Wails executable on every desktop PR and exercise the
+      # approval interaction in Microsoft's installed WebView2 runtime. The
+      # frontend and bindings were already built above, so this skips only
+      # duplicate build work, not the native shell.
+      - name: Build Wails executable for WebView2 smoke
+        timeout-minutes: 10
+        run: wails build -clean -s -skipbindings -nopackage -platform windows/amd64 -webview2 embed
+
+      - name: Smoke-test Wails approval in WebView2
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          ../scripts/test-webview2-approval-smoke.ps1 `
+            -ExecutablePath "build/bin/reasonix-desktop.exe" `
+            -TimeoutSeconds 60
+
       - name: test (Windows desktop and update helper)
         timeout-minutes: 15
         run: go test ./...
@@ -535,9 +551,9 @@ jobs:
           set -euo pipefail
           command -v golangci-lint
           for target in "darwin ." "windows ." "windows desktop"; do
-            set -- $target
-            echo "::group::golangci-lint GOOS=$1 ($2)"
-            (cd "$2" && GOOS="$1" golangci-lint run --timeout=5m ./...)
+            read -r target_os target_dir <<< "$target"
+            echo "::group::golangci-lint GOOS=$target_os ($target_dir)"
+            (cd "$target_dir" && GOOS="$target_os" golangci-lint run --timeout=5m ./...)
             echo "::endgroup::"
           done
 
@@ -554,8 +570,10 @@ jobs:
             .github/workflows/release-verify-issues.yml \
             .github/workflows/docs-impact.yml \
             .github/workflows/ci.yml \
-            .github/workflows/cross-boundary-review.yml
+            .github/workflows/cross-boundary-review.yml \
+            .github/workflows/cross-boundary-review-signal.yml
           bash scripts/release-workflows.test.sh
+          node --test .github/scripts/cross-boundary-review.test.cjs
           node scripts/check-single-release-public-contract.mjs
 
   # The site/ auth client has security-sensitive redirect-validation logic
