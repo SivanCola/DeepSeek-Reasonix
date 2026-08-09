@@ -1,50 +1,20 @@
 package billing
 
-import (
-	"strings"
-	"testing"
-	"time"
-)
+import "testing"
 
-func TestMigrateLegacyWipedCostIsIncomplete(t *testing.T) {
-	q := MigrateLegacyUsage(LegacyUsageRecord{
-		SessionCost:     0,
-		SessionCurrency: "¥",
-		EndedAt:         time.Date(2026, 3, 7, 0, 0, 0, 0, time.UTC),
-	}, nil)
-	if !q.LegacyEstimate || q.Complete {
-		t.Fatalf("wiped legacy must be incomplete legacy_estimate: %+v", q)
+func TestMigrateLegacyUsageIdentityOnly(t *testing.T) {
+	q := MigrateLegacyUsage(LegacyUsageRecord{SessionCost: 1.25, SessionCurrency: "USD"})
+	if !q.CostComplete || !q.DisplayComplete || !q.Complete || q.Selected == nil {
+		t.Fatalf("migrated quote = %+v", q)
 	}
-	if q.IncompleteReason != "legacy_wiped_or_zero" {
-		t.Fatalf("reason = %q", q.IncompleteReason)
+	if len(q.Valuations) != 1 || q.Valuations["USD"].Basis != BasisIdentity {
+		t.Fatalf("migrated valuations = %+v", q.Valuations)
 	}
 }
 
-func TestMigrateLegacyPositiveBackfillsFX(t *testing.T) {
-	table, err := ParseECBHistCSV(strings.NewReader(sampleECB))
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := MigrateLegacyUsage(LegacyUsageRecord{
-		SessionCost:     7.85,
-		SessionCurrency: "CNY",
-		EndedAt:         time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC),
-	}, table)
-	if !q.LegacyEstimate {
-		t.Fatal("expected legacy_estimate")
-	}
-	if _, ok := q.Valuations["USD"]; !ok {
-		t.Fatalf("expected USD backfill: %+v", q)
-	}
-}
-
-func TestMigrateLegacyPositiveWithoutFXKeepsExactOriginalComplete(t *testing.T) {
-	q := MigrateLegacyUsage(LegacyUsageRecord{
-		SessionCost:     7.85,
-		SessionCurrency: "CNY",
-		EndedAt:         time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC),
-	}, nil)
-	if !q.Complete || q.Selected == nil || q.Selected.Amount != "7.85" || q.Selected.Currency != "CNY" {
-		t.Fatalf("known legacy original should not require an unused FX view: %+v", q)
+func TestMigrateLegacyWipedZeroDoesNotGuess(t *testing.T) {
+	q := MigrateLegacyUsage(LegacyUsageRecord{SessionCurrency: "CNY"})
+	if q.CostComplete || q.Complete || q.DisplayStatus != DisplayStatusUnavailable || q.IncompleteReason != "legacy_wiped_or_zero" {
+		t.Fatalf("wiped quote = %+v", q)
 	}
 }

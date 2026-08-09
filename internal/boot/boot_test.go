@@ -57,50 +57,6 @@ func TestAgentKeepPolicyFromConfig(t *testing.T) {
 	}
 }
 
-func TestApplyRuntimeAutoPricingCurrency(t *testing.T) {
-	// Runtime locale may influence display currency only; list prices stay frozen.
-	tests := []struct {
-		name            string
-		runtimeCurrency string
-		desktopCurrency string
-		desktopLanguage string
-		language        string
-		wantPriceCur    string
-		wantOutput      float64
-		wantDisplay     string
-	}{
-		{name: "auto Chinese locale", runtimeCurrency: "CNY", wantPriceCur: "$", wantOutput: 0.28, wantDisplay: "CNY"},
-		{name: "auto English locale", runtimeCurrency: "USD", wantPriceCur: "$", wantOutput: 0.28, wantDisplay: "USD"},
-		{name: "explicit USD wins", runtimeCurrency: "CNY", desktopCurrency: "USD", wantPriceCur: "$", wantOutput: 0.28, wantDisplay: "USD"},
-		{name: "explicit CNY wins", runtimeCurrency: "USD", desktopCurrency: "CNY", wantPriceCur: "$", wantOutput: 0.28, wantDisplay: "CNY"},
-		{name: "desktop language wins", runtimeCurrency: "USD", desktopLanguage: "zh", wantPriceCur: "$", wantOutput: 0.28, wantDisplay: "CNY"},
-		{name: "CLI language wins", runtimeCurrency: "USD", language: "zh", wantPriceCur: "$", wantOutput: 0.28, wantDisplay: "CNY"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := config.Default()
-			cfg.Desktop.Currency = tt.desktopCurrency
-			cfg.Desktop.Language = tt.desktopLanguage
-			cfg.Language = tt.language
-			cfg.ApplyDeepSeekOfficialDefaultPricing()
-
-			applyRuntimeAutoPricingCurrency(cfg, tt.runtimeCurrency)
-
-			deepseek, ok := cfg.Provider("deepseek-flash")
-			if !ok {
-				t.Fatal("default DeepSeek provider is missing")
-			}
-			price := deepseek.PriceForModel("deepseek-v4-flash")
-			if price == nil || price.Currency != tt.wantPriceCur || price.Output != tt.wantOutput {
-				t.Fatalf("flash price = %#v, want currency %q output %v", price, tt.wantPriceCur, tt.wantOutput)
-			}
-			if got := cfg.ResolveDisplayCurrency(); got != tt.wantDisplay {
-				t.Fatalf("display currency = %q, want %q", got, tt.wantDisplay)
-			}
-		})
-	}
-}
-
 // TestBuildFoldsProjectMemoryIntoSystemPrompt is the end-to-end proof of the
 // cache-first wiring: a project REASONIX.md is discovered at boot and folded
 // into the session's system message (the cached prefix), and the `remember`

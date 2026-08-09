@@ -2,8 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"runtime"
 	"strings"
 
 	"reasonix/internal/billing"
@@ -29,49 +27,17 @@ func (c *Config) DisplayCurrencyPref() string {
 	return c.DesktopCurrency()
 }
 
-// ResolveDisplayCurrency resolves auto using language → host region → USD.
-// Browser locale is intentionally not consulted for Serve/Desktop parity.
-func (c *Config) ResolveDisplayCurrency() string {
-	if pref := c.DisplayCurrencyPref(); pref != "" {
-		return pref
-	}
-	// Config language (desktop then CLI).
-	if c != nil {
-		if normalizeDeepSeekPricingLanguage(c.Desktop.Language) == "zh" {
-			return "CNY"
-		}
-		if normalizeDeepSeekPricingLanguage(c.Desktop.Language) == "en" {
-			return "USD"
-		}
-		if normalizeDeepSeekPricingLanguage(c.Language) == "zh" {
-			return "CNY"
-		}
-		if normalizeDeepSeekPricingLanguage(c.Language) == "en" {
-			return "USD"
-		}
-	}
-	// Host region heuristics (LANG / timezone-ish locale tags).
-	if hostRegionSuggestsCNY() {
-		return "CNY"
-	}
-	return "USD"
+// ExplicitDisplayCurrency returns only a user-pinned display currency. Empty
+// is intentional: auto is resolved by a quote/wallet presentation surface.
+func (c *Config) ExplicitDisplayCurrency() string {
+	return c.DisplayCurrencyPref()
 }
 
-func hostRegionSuggestsCNY() bool {
-	for _, key := range []string{"LANG", "LC_ALL", "LC_MESSAGES"} {
-		v := strings.ToLower(os.Getenv(key))
-		if strings.Contains(v, "zh_cn") || strings.Contains(v, "zh-cn") ||
-			strings.HasPrefix(v, "zh_cn") || strings.Contains(v, ".zh_cn") {
-			return true
-		}
-		if strings.Contains(v, "zh_hans") || strings.Contains(v, "zh-hans") {
-			return true
-		}
-	}
-	// Windows system language is handled by desktop frontends via explicit
-	// preference; Go backend stays language-env based for CLI/serve parity.
-	_ = runtime.GOOS
-	return false
+// ResolveDisplayCurrency is retained for callers that need a compatibility
+// name. Auto is no longer resolved from language, host region, or browser
+// locale; it remains empty until a surface supplies a wallet hint.
+func (c *Config) ResolveDisplayCurrency() string {
+	return c.ExplicitDisplayCurrency()
 }
 
 func normalizeDisplayCurrency(currency string) string {
@@ -223,46 +189,11 @@ func migrateBillingDisplayCurrency(c *Config) {
 	}
 }
 
-// ApplyRuntimeAutoPricingCurrency is retained for older frontends. Under the
-// three-way split it only affects the in-memory display preference when the
-// user left display currency on auto *and* no config language already resolves
-// display — it never rewrites provider price tables and must not be persisted.
-// Browser/host locale must not override an explicit config language.
-func (c *Config) ApplyRuntimeAutoPricingCurrency(currency string) {
-	if c == nil {
-		return
-	}
-	// Explicit display preference wins.
-	if c.DisplayCurrencyPref() != "" {
-		return
-	}
-	// Config language already resolves display (desktop then CLI).
-	if c != nil {
-		if normalizeDeepSeekPricingLanguage(c.Desktop.Language) != "" {
-			return
-		}
-		if normalizeDeepSeekPricingLanguage(c.Language) != "" {
-			return
-		}
-	}
-	normalized := normalizeDisplayCurrency(currency)
-	if normalized == "" {
-		normalized = normalizeDeepSeekPricingCurrency(currency)
-	}
-	if normalized == "" {
-		return
-	}
-	// In-memory only: set resolved display without marking preference explicit
-	// in a way that freezes prices. We stash on Desktop.Currency historically
-	// used for resolution; freeze logic no longer reads it for price tables.
-	c.Desktop.Currency = normalized
-}
-
 // DesktopPricingFollowsDetectedLocale reports whether Auto may supply a host
 // display-currency hint. Explicit preferences always win. Browser locale no
 // longer changes official provider price tables.
 func (c *Config) DesktopPricingFollowsDetectedLocale() bool {
-	return c != nil && c.DisplayCurrencyPref() == "" && c.DesktopLanguage() == "" && c.ResponseLanguage() == "auto"
+	return false
 }
 
 // DeepSeekOfficialPricingCurrency resolves which official DeepSeek table to
@@ -285,9 +216,9 @@ func (c *Config) DeepSeekOfficialPricingCurrency() string {
 }
 
 // QuoteForUsage builds a CostQuote from a provider price and usage tokens.
-func QuoteForUsage(price *provider.Pricing, usage *provider.Usage, display string, modelRef, usageSource, billingMode, catalogSource string, rates *billing.RateTable) billing.CostQuote {
+func QuoteForUsage(price *provider.Pricing, usage *provider.Usage, display string, modelRef, usageSource, billingMode, catalogSource string) billing.CostQuote {
 	if price == nil || usage == nil {
-		return billing.CostQuote{Estimated: true, Complete: false, IncompleteReason: "missing_price_or_usage"}
+		return billing.CostQuote{Estimated: true, CostComplete: false, DisplayComplete: false, Complete: false, DisplayStatus: billing.DisplayStatusUnavailable, IncompleteReason: "missing_price_or_usage"}
 	}
 	card := billing.RateCard{
 		CacheHit: price.CacheHit,
@@ -314,6 +245,5 @@ func QuoteForUsage(price *provider.Pricing, usage *provider.Usage, display strin
 		ModelRef:        modelRef,
 		UsageSource:     usageSource,
 		CatalogSource:   catalogSource,
-		RatesTable:      rates,
 	})
 }

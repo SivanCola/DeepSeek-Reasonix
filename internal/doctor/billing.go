@@ -18,8 +18,10 @@ type BillingReport struct {
 	CatalogNotes        []string              `json:"catalog_notes,omitempty"`
 }
 
-// FXReport summarizes the ECB cache state.
+// FXReport is retained for JSON compatibility. Runtime FX is intentionally
+// disabled; old readers may continue to expect the object.
 type FXReport struct {
+	Enabled     bool      `json:"enabled"`
 	Source      string    `json:"source"`
 	CachePath   string    `json:"cache_path,omitempty"`
 	FetchedAt   time.Time `json:"fetched_at,omitempty"`
@@ -49,26 +51,13 @@ func CollectBilling(cfg *config.Config) BillingReport {
 	if cfg == nil {
 		cfg = config.Default()
 	}
-	if home := config.ReasonixHomeDir(); home != "" {
-		billing.InitGlobalFX(home)
-	}
-	table := billing.GlobalRateTable()
-	fxCache := billing.GlobalFX()
 	rep := BillingReport{
 		DisplayCurrencyPref: prefLabel(cfg.DisplayCurrencyPref()),
-		DisplayCurrency:     cfg.ResolveDisplayCurrency(),
+		DisplayCurrency:     cfg.ExplicitDisplayCurrency(),
 		FX: FXReport{
-			Source:    billing.ECBSourceName,
-			CachePath: billing.DefaultFXCachePath(config.ReasonixHomeDir()),
-			HasTable:  table != nil && !table.IsEmpty(),
+			Enabled: false,
+			Source:  "disabled",
 		},
-	}
-	if table != nil {
-		rep.FX.FetchedAt = table.FetchedAt()
-		rep.FX.Stale = table.IsStale()
-	}
-	if fxCache != nil && fxCache.Read() != nil {
-		rep.FX.HasTable = true
 	}
 
 	for i := range cfg.Providers {
@@ -103,7 +92,7 @@ func CollectBilling(cfg *config.Config) BillingReport {
 	rep.CatalogNotes = []string{
 		"User-custom prices always win over the official catalog.",
 		"MiMo Token Plan costs are pay-as-you-go equivalents, not plan invoices.",
-		"ECB reference rates are for information only; all FX conversions are estimates.",
+		"Runtime FX is disabled; only identity and official regional rate-card estimates are used.",
 		"Switching display_currency never rewrites provider billing_currency or list prices.",
 	}
 	return rep
@@ -141,17 +130,8 @@ func RenderBillingText(r BillingReport) string {
 	fmt.Fprintf(&b, "  display preference: %s\n", r.DisplayCurrencyPref)
 	fmt.Fprintf(&b, "  display resolved:   %s\n", r.DisplayCurrency)
 	fmt.Fprintf(&b, "  fx source:          %s\n", r.FX.Source)
-	if r.FX.CachePath != "" {
-		fmt.Fprintf(&b, "  fx cache:           %s\n", r.FX.CachePath)
-	}
-	fmt.Fprintf(&b, "  fx table loaded:    %v\n", r.FX.HasTable)
-	if !r.FX.FetchedAt.IsZero() {
-		fmt.Fprintf(&b, "  fx fetched at:      %s\n", r.FX.FetchedAt.UTC().Format(time.RFC3339))
-	}
-	fmt.Fprintf(&b, "  fx stale:           %v\n", r.FX.Stale)
-	if !r.FX.HasTable {
-		fmt.Fprintf(&b, "  note: no FX cache — original currencies only; complete=false for cross-currency totals\n")
-	}
+	fmt.Fprintf(&b, "  fx enabled:         %v\n", r.FX.Enabled)
+	fmt.Fprintf(&b, "  auto strategy:      wallet currency, then pricing basis\n")
 	b.WriteString("\n  providers:\n")
 	for _, p := range r.Providers {
 		fmt.Fprintf(&b, "    - %s model=%s billing=%s mode=%s", p.Name, p.Model, p.BillingCurrency, p.BillingMode)

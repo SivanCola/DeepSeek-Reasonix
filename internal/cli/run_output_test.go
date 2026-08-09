@@ -129,8 +129,8 @@ func TestRunOutputJSONRejectsMixedPricingCurrencies(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.CostComplete {
-		t.Fatalf("expected cost_complete=false without shared FX, got %+v", result)
+	if !result.CostComplete || result.DisplayComplete || result.DisplayStatus != "bucketed" {
+		t.Fatalf("expected complete cost facts but bucketed display, got %+v", result)
 	}
 	if len(result.OriginalCosts) < 2 {
 		t.Fatalf("expected per-currency original_costs, got %+v", result.OriginalCosts)

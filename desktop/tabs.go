@@ -212,6 +212,11 @@ type WorkspaceTab struct {
 	// readTelemetry tracks files read during this tab's session.
 	readTelemetry  []readFileRecord
 	usageTelemetry sessionUsageStats
+	// runtimeCostQuote is an automatic wallet-currency hint for the live tab.
+	// It is deliberately outside usageTelemetry so it cannot be persisted into
+	// telemetry/history or become configuration. Guarded by telemMu.
+	runtimeCostDisplayCurrency string
+	runtimeCostQuote           *billing.CostQuote
 	// telemetrySessionKey is the sessionRuntimeKey the telemetry above belongs
 	// to. Controller-side session rotations (typed /new, bot /reset) bypass the
 	// App bindings, so telemetry writers and readers re-key through
@@ -793,6 +798,8 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context
 	target.mcpOrder = append([]string(nil), source.mcpOrder...)
 	target.readTelemetry = readTelemetry
 	target.usageTelemetry = usageTelemetry
+	target.runtimeCostDisplayCurrency = ""
+	target.runtimeCostQuote = nil
 	target.telemetrySessionKey = telemetrySessionKey
 	if app != nil {
 		key := sessionRuntimeKey(path)
@@ -1046,7 +1053,10 @@ func (t *WorkspaceTab) recordUsage(e event.Event) {
 			Estimated:              u.Estimated,
 		}
 		t.usageTelemetry.CostLedger.Add(*q, tokens, time.Now().UTC())
-		display := billing.NormalizeCurrency(t.usageTelemetry.SessionCurrency)
+		display := billing.NormalizeCurrency(t.runtimeCostDisplayCurrency)
+		if display == "" {
+			display = billing.NormalizeCurrency(t.usageTelemetry.SessionCurrency)
+		}
 		if display == "" && q.Selected != nil {
 			display = billing.NormalizeCurrency(q.Selected.Currency)
 		}
@@ -1054,18 +1064,29 @@ func (t *WorkspaceTab) recordUsage(e event.Event) {
 			display = billing.NormalizeCurrency(q.Original.Currency)
 		}
 		total := t.usageTelemetry.CostLedger.Total(display)
-		t.usageTelemetry.SessionCostQuote = &total
-		t.usageTelemetry.SessionCostComplete = total.Complete
+		if t.runtimeCostDisplayCurrency != "" {
+			t.runtimeCostQuote = &total
+		} else {
+			t.usageTelemetry.SessionCostQuote = &total
+			t.usageTelemetry.SessionCostComplete = total.Complete
+		}
 		if total.Selected != nil {
-			t.usageTelemetry.SessionCost = total.Selected.Float64()
-			t.usageTelemetry.SessionCurrency = total.LegacyCurrencyCode()
-			t.usageTelemetry.SessionCostUsd = t.usageTelemetry.SessionCost
+			if t.runtimeCostDisplayCurrency == "" {
+				t.usageTelemetry.SessionCost = total.Selected.Float64()
+				t.usageTelemetry.SessionCurrency = total.LegacyCurrencyCode()
+				t.usageTelemetry.SessionCostUsd = t.usageTelemetry.SessionCost
+			}
 			src.SessionCost += q.LegacyCostFloat()
 			src.SessionCostUsd = src.SessionCost
 			src.SessionCurrency = total.LegacyCurrencySymbol()
 		} else {
 			// Incomplete: never invent a zero total by wiping prior costs.
-			t.usageTelemetry.SessionCostComplete = false
+			if t.runtimeCostDisplayCurrency == "" {
+				t.usageTelemetry.SessionCostComplete = false
+				t.usageTelemetry.SessionCost = 0
+				t.usageTelemetry.SessionCurrency = ""
+				t.usageTelemetry.SessionCostUsd = 0
+			}
 			if q.Selected == nil {
 				src.SessionCurrency = billing.CurrencySymbol(q.Original.Currency)
 			}
@@ -1086,11 +1107,9 @@ func (a *App) repriceTabUsageForCurrentCurrency(tab *WorkspaceTab) {
 	if err != nil {
 		return
 	}
-	// Display preference only — never rewrite provider list prices.
-	if cfg.DisplayCurrencyPref() == "" {
-		cfg.ApplyRuntimeAutoPricingCurrency(a.desktopAutoPricingCurrency())
-	}
-	display := cfg.ResolveDisplayCurrency()
+	// Display preference only — automatic mode remains unresolved until a
+	// wallet-aware surface supplies a session hint.
+	display := cfg.ExplicitDisplayCurrency()
 	if !tab.selectDisplayCurrency(display) {
 		return
 	}
@@ -1120,10 +1139,37 @@ func (t *WorkspaceTab) telemetrySnapshot() tabTelemetrySnapshot {
 	return tabTelemetrySnapshot{Version: 3, ReadFiles: records, Usage: usage}
 }
 
+// displayTelemetrySnapshot overlays the live wallet hint onto a copy used by
+// UI reads. The persisted snapshot remains the occurrence-time/original view.
+func (t *WorkspaceTab) displayTelemetrySnapshot() tabTelemetrySnapshot {
+	snapshot := t.telemetrySnapshot()
+	t.telemMu.Lock()
+	quote := t.runtimeCostQuote
+	t.telemMu.Unlock()
+	if quote == nil {
+		return snapshot
+	}
+	snapshot.Usage.SessionCostQuote = quote
+	snapshot.Usage.SessionCostComplete = quote.Complete
+	if quote.Selected != nil {
+		snapshot.Usage.SessionCost = quote.Selected.Float64()
+		snapshot.Usage.SessionCurrency = quote.LegacyCurrencyCode()
+		snapshot.Usage.SessionCostUsd = snapshot.Usage.SessionCost
+	} else {
+		snapshot.Usage.SessionCostComplete = false
+		snapshot.Usage.SessionCost = 0
+		snapshot.Usage.SessionCurrency = ""
+		snapshot.Usage.SessionCostUsd = 0
+	}
+	return snapshot
+}
+
 func (t *WorkspaceTab) resetTelemetry(sessionPath string) {
 	t.telemMu.Lock()
 	t.readTelemetry = nil
 	t.usageTelemetry = sessionUsageStats{}
+	t.runtimeCostDisplayCurrency = ""
+	t.runtimeCostQuote = nil
 	t.telemetrySessionKey = sessionRuntimeKey(sessionPath)
 	t.telemMu.Unlock()
 }
@@ -1153,6 +1199,8 @@ func (t *WorkspaceTab) syncTelemetryToSession(sessionPath string) {
 	if t.telemetrySessionKey != key {
 		t.readTelemetry = snapshot.ReadFiles
 		t.usageTelemetry = snapshot.Usage
+		t.runtimeCostDisplayCurrency = ""
+		t.runtimeCostQuote = nil
 		t.telemetrySessionKey = key
 	}
 	t.telemMu.Unlock()
@@ -3041,6 +3089,7 @@ func (a *App) SetActiveTab(tabID string) error {
 		return nil
 	}
 	a.activeTabID = tabID
+	next := a.tabs[tabID]
 	// A direct tab click supersedes a pending ticketed activation's
 	// publication (prune + ready event), but does not cancel its build: the
 	// tab stays open in this layout, so the build may legitimately complete.
@@ -3052,6 +3101,12 @@ func (a *App) SetActiveTab(tabID string) error {
 	// I/O outside the lock — disk writes can block for hundreds of ms on
 	// Windows when antivirus or the search indexer briefly locks the file.
 	a.saveTabsWrite(dir, entries, activeID, version)
+	if active != nil {
+		active.clearRuntimeDisplayCurrency()
+	}
+	if next != nil {
+		next.clearRuntimeDisplayCurrency()
+	}
 	if supersededReq != "" {
 		a.emitTopicActivation(TopicActivationEvent{RequestID: supersededReq, TabID: supersededTab, Phase: topicActivationPhaseCancelled})
 	}
@@ -3821,7 +3876,6 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 	ctrl, err := boot.Build(buildCtx, boot.Options{
 		Model:                    model,
 		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		StatsSource:              "desktop",
 		Sink:                     sink,
 		WorkspaceRoot:            root,
@@ -4062,6 +4116,8 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 			tab.telemMu.Lock()
 			tab.readTelemetry = snapshot.ReadFiles
 			tab.usageTelemetry = snapshot.Usage
+			tab.runtimeCostDisplayCurrency = ""
+			tab.runtimeCostQuote = nil
 			tab.telemetrySessionKey = sessionRuntimeKey(path)
 			tab.telemMu.Unlock()
 		}
@@ -5703,16 +5759,6 @@ func (a *App) setDesktopLocale(locale string) {
 	}
 }
 
-func (a *App) desktopAutoPricingCurrency() string {
-	if a != nil {
-		switch a.desktopLocale.Load() {
-		case desktopLocaleZh, desktopLocaleZhTW:
-			return "CNY"
-		}
-	}
-	return "USD"
-}
-
 func (a *App) localizedDefaultTopicTitle() string {
 	switch a.desktopLocale.Load() {
 	case desktopLocaleZh:
@@ -6384,14 +6430,11 @@ func loadTelemetry(path string) tabTelemetrySnapshot {
 		// Lazy-migrate pre-CostQuote telemetry: keep original amount, mark legacy.
 		// Never reconstruct wiped mixed-currency zeros from current price tables.
 		if snapshot.Version < 3 && snapshot.Usage.CostLedger == nil && snapshot.Usage.SessionCost > 0 {
-			if home := config.ReasonixHomeDir(); home != "" {
-				billing.InitGlobalFX(home)
-			}
 			q := billing.MigrateLegacyUsage(billing.LegacyUsageRecord{
 				SessionCost:     snapshot.Usage.SessionCost,
 				SessionCurrency: snapshot.Usage.SessionCurrency,
 				EndedAt:         time.Now().UTC(),
-			}, billing.GlobalRateTable())
+			})
 			ledger := billing.NewLedger()
 			ledger.Add(q, billing.UsageTokens{
 				PromptTokens:     snapshot.Usage.PromptTokens,
@@ -6407,7 +6450,7 @@ func loadTelemetry(path string) tabTelemetrySnapshot {
 			q := billing.MigrateLegacyUsage(billing.LegacyUsageRecord{
 				SessionCost:     0,
 				SessionCurrency: snapshot.Usage.SessionCurrency,
-			}, nil)
+			})
 			snapshot.Usage.SessionCostQuote = &q
 			snapshot.Usage.SessionCostComplete = false
 			snapshot.Version = 3
@@ -8260,7 +8303,7 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 		// per-turn usage yet, so ContextSnapshot reports used=0. Fall back to
 		// the telemetry-persisted last-used value from the most recent turn.
 		if used == 0 {
-			if snap := tab.telemetrySnapshot(); snap.Usage.LastUsedTokens > 0 {
+			if snap := tab.displayTelemetrySnapshot(); snap.Usage.LastUsedTokens > 0 {
 				info.UsedTokens = snap.Usage.LastUsedTokens
 			}
 		}
@@ -8278,7 +8321,7 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 			// Executor rebuilt (session rebind): fall back to the telemetry-
 			// persisted per-turn breakdown so the donut chart and type
 			// breakdown show the last turn's composition instead of "other".
-			snap := tab.telemetrySnapshot()
+			snap := tab.displayTelemetrySnapshot()
 			info.PromptTokens = snap.Usage.LastPromptTokens
 			info.CompletionTokens = snap.Usage.LastCompletionTokens
 			info.ReasoningTokens = snap.Usage.LastReasoningTokens
@@ -8288,7 +8331,7 @@ func (a *App) ContextPanel(tabID string) ContextPanelInfo {
 		}
 	}
 
-	telemetry := tab.telemetrySnapshot()
+	telemetry := tab.displayTelemetrySnapshot()
 	if records := telemetry.ReadFiles; records != nil {
 		info.ReadFiles = records
 	}

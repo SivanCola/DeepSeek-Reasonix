@@ -2022,7 +2022,6 @@ func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRunti
 	opts := boot.Options{
 		Model: model, RequireKey: false,
 		RuntimeReload:            boot.RuntimeReload{ForceFullRebuild: reload},
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		StatsSource:              "desktop",
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
@@ -3336,17 +3335,6 @@ func (a *App) SetStatusBarItems(items []string) error {
 // language preference used by model-facing desktop sessions.
 func (a *App) SetDesktopLanguage(lang string) error {
 	responseLanguage := ""
-	pricingChanged := false
-	if cfg, _, err := a.loadDesktopUserConfigForView(); err == nil && cfg.DesktopCurrency() == "" {
-		targetCurrency := a.desktopAutoPricingCurrency()
-		switch strings.ToLower(strings.TrimSpace(lang)) {
-		case "zh":
-			targetCurrency = "CNY"
-		case "en":
-			targetCurrency = "USD"
-		}
-		pricingChanged = a.desktopEffectivePricingCurrency(cfg) != targetCurrency
-	}
 	mutate := func(c *config.Config) error {
 		if err := c.SetDesktopLanguage(lang); err != nil {
 			return err
@@ -3357,17 +3345,9 @@ func (a *App) SetDesktopLanguage(lang string) error {
 		responseLanguage = c.ResponseLanguage()
 		return nil
 	}
-	var err error
-	if pricingChanged {
-		_, err = a.applyConfigChangeWithWarning("currency", mutate)
-	} else {
-		err = a.applyConfigOnly(mutate)
-	}
+	err := a.applyConfigOnly(mutate)
 	if err != nil {
 		return err
-	}
-	if pricingChanged {
-		a.scheduleCurrencyRefreshForOtherTabs()
 	}
 	if strings.TrimSpace(lang) != "" && !strings.EqualFold(strings.TrimSpace(lang), "auto") {
 		a.setDesktopLocale(lang)
@@ -3433,17 +3413,12 @@ func (a *App) desktopPricingFollowsDetectedLocale() bool {
 func (a *App) desktopEffectivePricingCurrency(cfg *config.Config) string {
 	// Display currency only — never the provider list-price region.
 	if cfg == nil {
-		return a.desktopAutoPricingCurrency()
+		return ""
 	}
 	if pref := cfg.DisplayCurrencyPref(); pref != "" {
 		return pref
 	}
-	if cfg.DesktopPricingFollowsDetectedLocale() {
-		if hint := a.desktopAutoPricingCurrency(); hint != "" {
-			return hint
-		}
-	}
-	return cfg.ResolveDisplayCurrency()
+	return cfg.ExplicitDisplayCurrency()
 }
 
 func (a *App) desktopOfficialPricingLanguage(cfg *config.Config) string {
@@ -3457,18 +3432,12 @@ func (a *App) desktopOfficialPricingLanguage(cfg *config.Config) string {
 // SetTrayLocale mirrors the resolved desktop UI language into the native tray
 // menu. It is runtime-only; the persisted preference remains [desktop].language.
 func (a *App) SetTrayLocale(locale string) error {
-	previousCurrency := a.desktopAutoPricingCurrency()
 	a.setDesktopLocale(locale)
-	pricingCurrencyChanged := previousCurrency != a.desktopAutoPricingCurrency()
 	trayLocale := "en"
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(locale)), "zh") {
 		trayLocale = "zh"
 	}
 	a.updateTrayLocale(trayLocale)
-	if pricingCurrencyChanged && a.desktopPricingFollowsDetectedLocale() {
-		a.scheduleCurrencyRefreshForAllTabs()
-		a.kickDeferredRebuildRetry()
-	}
 	a.emitProjectTreeChanged()
 	return nil
 }

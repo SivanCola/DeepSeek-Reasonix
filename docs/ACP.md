@@ -14,7 +14,8 @@ process, open one or more workspace-scoped sessions, and receive streamed
 messages, tool activity, plans, permission requests, and configuration updates.
 
 Session status usage objects may include structured `costQuote` (original
-currency, CNY/USD valuations, `complete`, `billingMode`) alongside legacy
+currency, `originalTotals`, identity/official-table valuations,
+`costComplete`, `displayComplete`, `displayStatus`, and `billingMode`) alongside legacy
 `estimatedCost` / `currency` aliases that mirror the selected display valuation.
 See [Billing](./BILLING.md).
 

@@ -128,11 +128,21 @@ export function contextCostDisplay({
   estimated?: boolean;
   complete?: boolean;
   billingMode?: string;
-  labelKind?: "estimated" | "payg_equivalent" | "unavailable";
+  labelKind?: "estimated" | "payg_equivalent" | "fallback" | "bucketed" | "unavailable";
 } {
   // Prefer structured session quote, then per-usage quote.
   const quote = info?.sessionCostQuote || usage?.costQuote;
-  if (info?.sessionCostComplete === false || (quote && quote.complete === false)) {
+  if (quote?.displayStatus === "bucketed" || quote?.aggregateMode === "currency_buckets") {
+    return {
+      amount: 0,
+      currency: undefined,
+      estimated: true,
+      complete: false,
+      labelKind: "bucketed",
+    };
+  }
+  const fallbackOriginal = quote?.displayStatus === "fallback_original";
+  if (!fallbackOriginal && (info?.sessionCostComplete === false || quote?.displayStatus === "unavailable" || quote?.costComplete === false)) {
     return {
       amount: 0,
       currency: info?.sessionCurrency || sessionCurrency || usage?.currencyCode || usage?.currency,
@@ -150,9 +160,9 @@ export function contextCostDisplay({
         amount: n,
         currency: selected.currency || usage?.currencyCode || usage?.currency || info?.sessionCurrency,
         estimated: quote?.estimated !== false,
-        complete: true,
+        complete: quote?.displayComplete !== false,
         billingMode: mode,
-        labelKind: mode === "subscription_equivalent" ? "payg_equivalent" : "estimated",
+        labelKind: fallbackOriginal ? "fallback" : mode === "subscription_equivalent" ? "payg_equivalent" : "estimated",
       };
     }
   }
@@ -496,7 +506,13 @@ export function ContextPanel({
   const sessionEstimated = info?.sessionEstimated === true || context?.estimated === true;
   const markEstimated = (value: string, estimated: boolean) => estimated && value !== "-" ? `≈${value}` : value;
   const turnCostLabel = markEstimated(formatMoneyLocalized(turnCost, sessionCurrency, { locale, empty: "dash" }), turnEstimated);
-  const sessionCostLabel = markEstimated(formatMoneyLocalized(cost.amount, cost.currency, { locale, empty: "dash" }), sessionEstimated);
+  const sessionCostLabel = cost.labelKind === "bucketed"
+    ? t("context.sessionCostBucketed")
+    : cost.labelKind === "unavailable"
+      ? t("context.sessionCostUnavailable")
+      : cost.labelKind === "fallback"
+        ? `${markEstimated(formatMoneyLocalized(cost.amount, cost.currency, { locale, empty: "dash" }), sessionEstimated)} (${t("context.sessionCostFallback")})`
+        : markEstimated(formatMoneyLocalized(cost.amount, cost.currency, { locale, empty: "dash" }), sessionEstimated);
   const totalTokensTitle = totalTokensMetric.exact === "-" ? "-" : t("context.tokensValue", { value: totalTokensMetric.exact });
   const usedLabel = formatTokens(usedTokens);
   const windowLabel = formatTokens(windowTokens);

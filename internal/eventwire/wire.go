@@ -175,10 +175,17 @@ func toWireUsage(e event.Event) *Usage {
 	}
 	if quote != nil {
 		wire.CostQuote = quote
-		wire.Cost = quote.LegacyCostFloat()
-		wire.Currency = quote.LegacyCurrencySymbol()
-		wire.CostUSD = wire.Cost
-		wire.CurrencyCode = quote.LegacyCurrencyCode()
+		wire.CostComplete = quote.CostComplete
+		wire.DisplayComplete = quote.DisplayComplete
+		wire.DisplayStatus = quote.DisplayStatus
+		wire.AggregateMode = quote.AggregateMode
+		wire.OriginalTotals = append([]billing.Money(nil), quote.OriginalTotals...)
+		if quote.Selected != nil {
+			wire.Cost = quote.Selected.Float64()
+			wire.Currency = quote.LegacyCurrencySymbol()
+			wire.CostUSD = wire.Cost
+			wire.CurrencyCode = quote.LegacyCurrencyCode()
+		}
 	}
 	return wire
 }
@@ -358,7 +365,12 @@ type Usage struct {
 	CostUSD float64 `json:"costUsd,omitempty"`
 	// CostQuote is the structured host-side quote. New consumers must prefer it
 	// over cost/currency aliases. Never sent to model providers.
-	CostQuote *billing.CostQuote `json:"costQuote,omitempty"`
+	CostQuote       *billing.CostQuote `json:"costQuote,omitempty"`
+	CostComplete    bool               `json:"costComplete,omitempty"`
+	DisplayComplete bool               `json:"displayComplete,omitempty"`
+	DisplayStatus   string             `json:"displayStatus,omitempty"`
+	AggregateMode   string             `json:"aggregateMode,omitempty"`
+	OriginalTotals  []billing.Money    `json:"originalTotals,omitempty"`
 }
 
 // CacheDiagnostics is the JSON form of cache prefix diagnostics.

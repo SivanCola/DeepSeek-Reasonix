@@ -571,10 +571,6 @@ func (a *App) startup(ctx context.Context) {
 		a.watchRemoteWindowOwner(ctx)
 		return
 	}
-	// Non-blocking FX cache load + background refresh for wallet/cost valuations.
-	if home := config.ReasonixHomeDir(); home != "" {
-		billing.InitGlobalFX(home)
-	}
 	installSystemQuitHook()
 	a.startTray()
 	a.enableDeferredRebuildRetry()
@@ -2386,7 +2382,6 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    snap.model,
 		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		StatsSource:              "desktop",
 		Sink:                     newSink,
 		WorkspaceRoot:            snap.workspaceRoot,
@@ -4393,6 +4388,8 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	tab.telemMu.Lock()
 	tab.readTelemetry = append([]readFileRecord(nil), candidate.telemetry.ReadFiles...)
 	tab.usageTelemetry = cloneSessionUsageStats(candidate.telemetry.Usage)
+	tab.runtimeCostDisplayCurrency = ""
+	tab.runtimeCostQuote = nil
 	tab.telemetrySessionKey = sessionRuntimeKey(sessionPath)
 	tab.telemMu.Unlock()
 	if tab.sink != nil {
@@ -4599,7 +4596,6 @@ func (a *App) buildSessionRebindCandidate(
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    model,
 		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		StatsSource:              "desktop",
 		Sink:                     a.desktopControllerSink(sink, cfg.Notifications),
 		WorkspaceRoot:            root,
@@ -6738,16 +6734,18 @@ func firstNonEmpty(values ...string) string {
 // ContextInfo is the prompt-vs-window gauge payload plus session totals. Used
 // and Window both zero means no context-window data yet.
 type ContextInfo struct {
-	Used            int                         `json:"used"`
-	Window          int                         `json:"window"`
-	SessionTokens   int                         `json:"sessionTokens"`
-	CompactRatio    float64                     `json:"compactRatio,omitempty"`
-	SessionCost     float64                     `json:"sessionCost,omitempty"`
-	SessionCurrency string                      `json:"sessionCurrency,omitempty"`
-	CacheHitTokens  int                         `json:"cacheHitTokens,omitempty"`
-	CacheMissTokens int                         `json:"cacheMissTokens,omitempty"`
-	Estimated       bool                        `json:"estimated,omitempty"`
-	Sources         map[string]usageSourceStats `json:"sources,omitempty"`
+	Used                int                         `json:"used"`
+	Window              int                         `json:"window"`
+	SessionTokens       int                         `json:"sessionTokens"`
+	CompactRatio        float64                     `json:"compactRatio,omitempty"`
+	SessionCost         float64                     `json:"sessionCost,omitempty"`
+	SessionCurrency     string                      `json:"sessionCurrency,omitempty"`
+	CacheHitTokens      int                         `json:"cacheHitTokens,omitempty"`
+	CacheMissTokens     int                         `json:"cacheMissTokens,omitempty"`
+	Estimated           bool                        `json:"estimated,omitempty"`
+	SessionCostComplete bool                        `json:"sessionCostComplete,omitempty"`
+	SessionCostQuote    *billing.CostQuote          `json:"sessionCostQuote,omitempty"`
+	Sources             map[string]usageSourceStats `json:"sources,omitempty"`
 }
 
 // ContextUsage returns the latest context-window gauge numbers.
@@ -6776,13 +6774,15 @@ func (a *App) ContextUsageForTab(tabID string) ContextInfo {
 				tab.syncTelemetryToSession(sp)
 			}
 		}
-		snap = tab.telemetrySnapshot()
+		snap = tab.displayTelemetrySnapshot()
 		info.SessionTokens = snap.Usage.TotalTokens
 		info.SessionCost = snap.Usage.SessionCost
 		info.SessionCurrency = snap.Usage.SessionCurrency
 		info.CacheHitTokens = snap.Usage.CacheHitTokens
 		info.CacheMissTokens = snap.Usage.CacheMissTokens
 		info.Estimated = snap.Usage.Estimated
+		info.SessionCostComplete = snap.Usage.SessionCostComplete
+		info.SessionCostQuote = snap.Usage.SessionCostQuote
 		info.Sources = snap.Usage.Sources
 	}
 	if ctrl == nil {
@@ -6803,18 +6803,24 @@ func (a *App) ContextUsageForTab(tabID string) ContextInfo {
 }
 
 // BalanceInfo is the wallet-balance readout for the status bar. Available is true
-// only when a balance was fetched; Display is the formatted amount (e.g. "≈¥110.00")
+// only when a balance was fetched; Display is the exact formatted amount (e.g.
+// "¥110.00")
 // and is "" when the active provider declares no balance_url — the frontend then
 // omits the readout. Err carries a fetch failure for an optional tooltip.
-// Wallet conversion uses FX only (never model regional price tables).
+// Wallet balances are displayed in their original currencies; no conversion
+// or cross-currency sum is performed.
 type BalanceInfo struct {
-	Available bool   `json:"available"`
-	Display   string `json:"display"`
-	Detail    string `json:"detail,omitempty"` // per-wallet originals + converted values
-	Complete  bool   `json:"complete"`
-	RateDate  string `json:"rateDate,omitempty"`
-	Approx    bool   `json:"approx,omitempty"`
-	Err       string `json:"err,omitempty"`
+	Available           bool     `json:"available"`
+	Display             string   `json:"display"`
+	Detail              string   `json:"detail,omitempty"` // per-wallet original balances
+	Complete            bool     `json:"complete"`
+	RateDate            string   `json:"rateDate,omitempty"`
+	Approx              bool     `json:"approx,omitempty"`
+	Currencies          []string `json:"currencies,omitempty"`
+	PrimaryCurrency     string   `json:"primaryCurrency,omitempty"`
+	CostDisplayCurrency string   `json:"costDisplayCurrency,omitempty"`
+	MultiCurrency       bool     `json:"multiCurrency,omitempty"`
+	Err                 string   `json:"err,omitempty"`
 }
 
 // Balance queries the active provider's wallet balance (a network call). It
@@ -6838,27 +6844,55 @@ func (a *App) BalanceForTab(tabID string) BalanceInfo {
 	if b == nil {
 		return BalanceInfo{} // provider declares no balance endpoint
 	}
-	if home := config.ReasonixHomeDir(); home != "" {
-		billing.InitGlobalFX(home)
+	display := b.DisplayForCurrency(currency)
+	currencies := b.Currencies()
+	primary := b.PrimaryCurrency()
+	if currency == "" && primary != "" {
+		// Re-check the tab/controller identity after the network call. A late
+		// response from an old tab/model may never rebind the current session.
+		if tab := a.tabByID(tabID); tab != nil && tab.Ctrl == ctrl {
+			tab.selectRuntimeDisplayCurrency(primary)
+		}
 	}
-	view := billing.ConvertBalance(b, currency, billing.GlobalRateTable(), time.Now().UTC())
-	display := view.DisplayApproxText()
-	if display == "" {
-		// Fallback to legacy single-currency pick without inventing FX totals.
-		display = b.DisplayForCurrency(currency)
-	}
+	detail := balanceDetail(b)
 	return BalanceInfo{
-		Available: true,
-		Display:   display,
-		Detail:    view.DetailText(),
-		Complete:  view.Complete,
-		RateDate:  view.RateDate,
-		Approx:    view.DisplayApprox,
+		Available:           true,
+		Display:             display,
+		Detail:              detail,
+		Complete:            true,
+		Currencies:          currencies,
+		PrimaryCurrency:     primary,
+		CostDisplayCurrency: firstNonEmptyString(currency, primary),
+		MultiCurrency:       len(currencies) > 1,
 	}
 }
 
-// balanceDisplayCurrency resolves the global display currency preference
-// (Settings → display currency). Wallet conversion never uses model price tables.
+func balanceDetail(b *billing.Balance) string {
+	if b == nil || len(b.Infos) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(b.Infos))
+	for _, info := range b.Infos {
+		cur := strings.ToUpper(strings.TrimSpace(info.Currency))
+		if cur == "" {
+			cur = "UNKNOWN"
+		}
+		parts = append(parts, cur+" "+strings.TrimSpace(info.TotalBalance))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// balanceDisplayCurrency resolves only an explicit global display currency.
+// Automatic mode leaves the wallet in its original currency.
 func (a *App) balanceDisplayCurrency() string {
 	cfg, _, err := a.loadDesktopUserConfigForView()
 	if err != nil {
@@ -6867,7 +6901,7 @@ func (a *App) balanceDisplayCurrency() string {
 	if pref := cfg.DisplayCurrencyPref(); pref != "" {
 		return pref
 	}
-	return cfg.ResolveDisplayCurrency()
+	return cfg.ExplicitDisplayCurrency()
 }
 
 // JobView is one running background job (bash/task started with
@@ -10207,7 +10241,6 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    name,
 		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		StatsSource:              "desktop",
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
@@ -10280,6 +10313,9 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 			return fmt.Errorf("persist selected model: %w", err)
 		}
 	}
+	// A model switch changes the pricing context; discard the session-local
+	// automatic wallet hint and let the next balance response rebind it.
+	tab.clearRuntimeDisplayCurrency()
 	a.notifyTabRuntimeRebuilt(tab)
 	timing.SwapAndPersist = time.Since(stageStarted)
 	return nil
@@ -10390,7 +10426,6 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		StatsSource:              "desktop",
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
@@ -10530,7 +10565,6 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
 		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
 		StatsSource:              "desktop",
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,

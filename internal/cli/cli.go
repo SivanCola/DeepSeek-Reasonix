@@ -316,21 +316,11 @@ func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey b
 		PermissionAllow:      overrides.PermissionAllow,
 		AdditionalDirs:       overrides.AdditionalDirs,
 		HeadlessApprovalMode: overrides.HeadlessApprovalMode,
-		AutoPricingCurrency:  cliAutoPricingCurrency(),
 		StatsSource:          "cli",
 		Stderr:               overrides.Stderr,
 		OnSessionRecovered:   overrides.OnSessionRecovered,
 		Ablation:             overrides.Ablation,
 		SessionTemp:          overrides.SessionTemp,
-	}
-}
-
-func cliAutoPricingCurrency() string {
-	switch i18n.CurrentLanguage() {
-	case "zh", "zh-TW":
-		return "CNY"
-	default:
-		return "USD"
 	}
 }
 
@@ -2379,7 +2369,6 @@ func configCurrencyCommand(args []string) int {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
-		cfg.ApplyRuntimeAutoPricingCurrency(cliAutoPricingCurrency())
 		fmt.Printf("currency = %q (display: %s)\n", pricingCurrencyDisplay(cfg.DisplayCurrencyPref()), cfg.ResolveDisplayCurrency())
 		return 0
 	}
@@ -2401,12 +2390,6 @@ func configCurrencyCommand(args []string) int {
 		return 2
 	}
 	resolved := cfg.ResolveDisplayCurrency()
-	if mode == "" {
-		// Auto: show the resolved display preference (language → host → USD).
-		if hint := cliAutoPricingCurrency(); hint != "" && cfg.DisplayCurrencyPref() == "" {
-			resolved = hint
-		}
-	}
 	if err := cfg.SaveTo(path); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1

@@ -1321,7 +1321,6 @@ price = { cache_hit = 0.0028, input = 0.14, output = 0.28, currency = "$" }
 	}
 
 	c := LoadForEdit(path)
-	c.ApplyRuntimeAutoPricingCurrency("CNY")
 	flash, ok := c.Provider("deepseek-flash")
 	if !ok {
 		t.Fatal("deepseek-flash provider missing")
@@ -1393,8 +1392,8 @@ func TestDeepSeekOfficialPricingCurrencyResolution(t *testing.T) {
 		t.Fatalf("display = %q, want USD", got)
 	}
 	c2 := &Config{Language: "zh"}
-	if got := c2.ResolveDisplayCurrency(); got != "CNY" {
-		t.Fatalf("display auto zh = %q, want CNY", got)
+	if got := c2.ResolveDisplayCurrency(); got != "" {
+		t.Fatalf("display auto zh = %q, want unresolved auto", got)
 	}
 }
 

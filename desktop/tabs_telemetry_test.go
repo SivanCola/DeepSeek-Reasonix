@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/billing"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
@@ -139,6 +140,32 @@ func TestWorkspaceTabRepricesUsageWithoutMixingCurrencies(t *testing.T) {
 	}
 }
 
+func TestRuntimeWalletHintDoesNotPersistTelemetry(t *testing.T) {
+	tab := &WorkspaceTab{}
+	tab.recordUsage(event.Event{
+		ModelRef: "deepseek/deepseek-v4-flash",
+		Usage:    &provider.Usage{PromptTokens: 1_000_000, TotalTokens: 1_000_000},
+		Pricing:  &provider.Pricing{CacheHit: 0.0028, Input: 0.14, Output: 0.28, Currency: "USD"},
+	})
+	persisted := tab.telemetrySnapshot().Usage
+	if persisted.SessionCurrency != "USD" || persisted.SessionCost <= 0 {
+		t.Fatalf("persisted original = %+v", persisted)
+	}
+	if !tab.selectRuntimeDisplayCurrency("CNY") {
+		t.Fatal("runtime wallet hint rejected")
+	}
+	displayed := tab.displayTelemetrySnapshot().Usage
+	if displayed.SessionCurrency != "CNY" || displayed.SessionCostQuote == nil || displayed.SessionCostQuote.DisplayStatus != billing.DisplayStatusMatched {
+		t.Fatalf("runtime display = %+v", displayed)
+	}
+	// Persistence and a later session reload must remain on the occurrence-time
+	// original currency; the automatic wallet hint is process-local only.
+	persisted = tab.telemetrySnapshot().Usage
+	if persisted.SessionCurrency != "USD" || persisted.SessionCostQuote == displayed.SessionCostQuote {
+		t.Fatalf("runtime hint leaked into persisted telemetry = %+v", persisted)
+	}
+}
+
 func TestWorkspaceTabRepricesCacheWritesWithoutLosingBillingTier(t *testing.T) {
 	tab := &WorkspaceTab{}
 	tab.recordUsage(event.Event{
@@ -173,7 +200,7 @@ func TestWorkspaceTabRepricesCacheWritesWithoutLosingBillingTier(t *testing.T) {
 	}
 }
 
-func TestRepriceTabUsageUsesDetectedLocaleForAutoCurrency(t *testing.T) {
+func TestRepriceTabUsageLeavesAutoCurrencyUnresolved(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	cfg := config.Default()
 	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
@@ -192,12 +219,11 @@ func TestRepriceTabUsageUsesDetectedLocaleForAutoCurrency(t *testing.T) {
 	app.repriceTabUsageForCurrentCurrency(tab)
 
 	got := tab.telemetrySnapshot().Usage
-	// Locale may rebind display selection; it must not recompute list prices or
-	// invent a different original amount from the current rate card.
+	// Locale must not rebind or recompute pricing in automatic mode.
 	if got.SessionCost <= 0 {
 		t.Fatalf("auto-locale lost cost: %f", got.SessionCost)
 	}
-	// Without FX valuations for CNY, original USD amount remains the selected fact.
+	// Without a wallet hint, original USD remains the selected fact.
 	if got.SessionCost != before && got.CostLedger == nil {
 		t.Fatalf("auto-locale cleared ledger/cost: before=%f after=%f", before, got.SessionCost)
 	}
@@ -219,7 +245,7 @@ func TestWorkspaceTabDoesNotAddDifferentCurrencies(t *testing.T) {
 		t.Fatalf("expected separate ledger entries for mixed currencies, got %+v", got.CostLedger)
 	}
 	if got.SessionCostComplete {
-		t.Fatalf("mixed currencies without shared FX should be incomplete")
+		t.Fatalf("mixed currencies without a common display should be incomplete")
 	}
 }
 

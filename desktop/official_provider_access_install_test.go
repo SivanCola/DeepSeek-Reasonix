@@ -39,8 +39,8 @@ language = "zh"
 	if pro == nil || pro.Output != 0.87 || pro.Currency != "$" {
 		t.Fatalf("pro price = %+v, want frozen USD official table", pro)
 	}
-	if got := cfg.ResolveDisplayCurrency(); got != "CNY" {
-		t.Fatalf("display currency = %q, want CNY from zh language", got)
+	if got := cfg.ResolveDisplayCurrency(); got != "" {
+		t.Fatalf("display currency = %q, want unresolved auto", got)
 	}
 }
 

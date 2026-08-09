@@ -126,6 +126,11 @@ export interface WireUsage {
   currencyCode?: string;
   // Deprecated compatibility alias. Prefer cost + currencyCode / costQuote.
   costUsd?: number;
+  costComplete?: boolean;
+  displayComplete?: boolean;
+  displayStatus?: string;
+  aggregateMode?: string;
+  originalTotals?: Money[];
   /** Host-side structured quote; prefer over cost/currency aliases. */
   costQuote?: CostQuote;
 }
@@ -137,6 +142,7 @@ export interface Money {
 
 export interface CostQuote {
   original: Money;
+  originalTotals?: Money[];
   valuations?: Record<string, {
     money: Money;
     basis: string;
@@ -148,7 +154,11 @@ export interface CostQuote {
   selected?: Money;
   billingMode?: string;
   estimated: boolean;
+  costComplete?: boolean;
+  displayComplete?: boolean;
   complete: boolean;
+  displayStatus?: "matched" | "fallback_original" | "bucketed" | "unavailable" | string;
+  aggregateMode?: "single_currency" | "common_valuation" | "currency_buckets" | string;
   modelRef?: string;
   usageSource?: string;
   pricingFingerprint?: string;
@@ -823,6 +833,8 @@ export interface ContextInfo {
   cacheHitTokens?: number;
   cacheMissTokens?: number;
   estimated?: boolean;
+  sessionCostComplete?: boolean;
+  sessionCostQuote?: CostQuote;
   sources?: Record<string, UsageSourceStats>;
 }
 
@@ -1737,7 +1749,7 @@ export interface ProviderModelOverrideView {
 
 // BalanceInfo is the wallet-balance readout (desktop/app.go Balance). available
 // is false when the provider declares no balanceUrl or a fetch failed; display is
-// the formatted amount (e.g. "≈¥110.00"). Multi-wallet conversion uses FX only.
+// the formatted amount in an original wallet currency; no implicit FX conversion.
 export interface BalanceInfo {
   available: boolean;
   display: string;
@@ -1745,6 +1757,10 @@ export interface BalanceInfo {
   complete?: boolean;
   rateDate?: string;
   approx?: boolean;
+  currencies?: string[];
+  primaryCurrency?: string;
+  costDisplayCurrency?: string;
+  multiCurrency?: boolean;
   err?: string;
 }
 

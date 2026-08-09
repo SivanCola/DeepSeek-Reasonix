@@ -18,7 +18,7 @@ func TestCollectBillingIncludesProvidersAndDisplay(t *testing.T) {
 		t.Fatal("expected providers")
 	}
 	text := RenderBillingText(rep)
-	for _, want := range []string{"display preference", "display resolved", "providers:", "ECB"} {
+	for _, want := range []string{"display preference", "display resolved", "providers:", "fx enabled:         false", "Runtime FX is disabled"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("render missing %q:\n%s", want, text)
 		}

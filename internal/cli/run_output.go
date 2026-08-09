@@ -60,17 +60,21 @@ type runResult struct {
 	NumTurns   int     `json:"num_turns"`
 	Result     string  `json:"result"`
 	SessionID  string  `json:"session_id,omitempty"`
-	TotalCost  float64 `json:"total_cost"`
+	TotalCost  float64 `json:"total_cost,omitempty"`
 	Currency   string  `json:"currency,omitempty"`
 	// TotalCostUSD is the released compatibility alias. It mirrors TotalCost;
 	// new consumers must pair TotalCost with Currency instead of assuming USD.
-	TotalCostUSD float64 `json:"total_cost_usd"`
+	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
 	// CostComplete is false when mixed originals lack a shared display valuation.
-	CostComplete bool `json:"cost_complete"`
+	CostComplete    bool   `json:"cost_complete"`
+	DisplayComplete bool   `json:"display_complete"`
+	DisplayStatus   string `json:"display_status,omitempty"`
+	AggregateMode   string `json:"aggregate_mode,omitempty"`
 	// OriginalCosts lists per-ISO original totals (never cross-added).
-	OriginalCosts map[string]float64 `json:"original_costs,omitempty"`
-	CostQuote     *billing.CostQuote `json:"cost_quote,omitempty"`
-	Usage         runResultUsage     `json:"usage"`
+	OriginalCosts  map[string]float64 `json:"original_costs,omitempty"`
+	OriginalTotals []billing.Money    `json:"original_totals,omitempty"`
+	CostQuote      *billing.CostQuote `json:"cost_quote,omitempty"`
+	Usage          runResultUsage     `json:"usage"`
 }
 
 type machineEventUsage struct {
@@ -132,6 +136,10 @@ type runOutputSink struct {
 	cost                float64
 	currency            string
 	costComplete        bool
+	displayComplete     bool
+	displayStatus       string
+	aggregateMode       string
+	originalTotals      []billing.Money
 	sawQuote            bool
 	originalCosts       map[string]float64
 	quoteLedger         *billing.Ledger
@@ -172,7 +180,7 @@ func (s *runOutputSink) Emit(e event.Event) {
 		}
 		if q != nil {
 			s.sawQuote = true
-			if !q.Complete {
+			if !q.CostComplete {
 				s.costComplete = false
 			}
 			// First complete quote establishes complete=true.
@@ -185,9 +193,12 @@ func (s *runOutputSink) Emit(e event.Event) {
 			if cur := billing.NormalizeCurrency(q.Original.Currency); cur != "" {
 				s.originalCosts[cur] += q.Original.Float64()
 			}
-			if q.Selected != nil {
+			if q.Selected != nil && (s.currency == "" || s.currency == q.LegacyCurrencyCode()) {
 				s.cost += q.Selected.Float64()
 				s.currency = q.LegacyCurrencyCode()
+			} else if q.Selected != nil {
+				s.currency = ""
+				s.cost = 0
 			}
 			if s.quoteLedger == nil {
 				s.quoteLedger = billing.NewLedger()
@@ -262,29 +273,43 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 	}
 	var aggQuote *billing.CostQuote
 	if s.quoteLedger != nil && len(s.quoteLedger.Entries) > 0 {
-		agg := s.quoteLedger.Total(s.currency)
+		agg := s.quoteLedger.Total("")
 		aggQuote = &agg
 		if agg.Selected != nil {
 			s.cost = agg.Selected.Float64()
 			s.currency = agg.LegacyCurrencyCode()
 		}
-		s.costComplete = agg.Complete
+		if agg.Selected == nil {
+			s.cost = 0
+			s.currency = ""
+		}
+		s.costComplete = agg.CostComplete
+		s.displayComplete = agg.DisplayComplete
+		s.displayStatus = agg.DisplayStatus
+		s.aggregateMode = agg.AggregateMode
+		if agg.OriginalTotals != nil {
+			s.originalTotals = append([]billing.Money(nil), agg.OriginalTotals...)
+		}
 	}
 	return s.encoder.Encode(runResult{
-		Type:          "result",
-		Subtype:       completion.subtype,
-		IsError:       completion.isError,
-		DurationMS:    time.Since(started).Milliseconds(),
-		NumTurns:      turns,
-		Result:        resultText,
-		SessionID:     sessionID,
-		TotalCost:     s.cost,
-		Currency:      s.currency,
-		TotalCostUSD:  s.cost,
-		CostComplete:  s.costComplete || (!s.sawQuote && s.currency != ""),
-		OriginalCosts: s.originalCosts,
-		CostQuote:     aggQuote,
-		Usage:         s.usage,
+		Type:            "result",
+		Subtype:         completion.subtype,
+		IsError:         completion.isError,
+		DurationMS:      time.Since(started).Milliseconds(),
+		NumTurns:        turns,
+		Result:          resultText,
+		SessionID:       sessionID,
+		TotalCost:       s.cost,
+		Currency:        s.currency,
+		TotalCostUSD:    s.cost,
+		CostComplete:    s.costComplete || (!s.sawQuote && s.currency != ""),
+		DisplayComplete: s.displayComplete,
+		DisplayStatus:   s.displayStatus,
+		AggregateMode:   s.aggregateMode,
+		OriginalCosts:   s.originalCosts,
+		OriginalTotals:  s.originalTotals,
+		CostQuote:       aggQuote,
+		Usage:           s.usage,
 	})
 }
 

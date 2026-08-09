@@ -1870,10 +1870,12 @@ export const zhTW: Record<DictKey, string> = {
   "settings.langAuto": "自動（跟隨系統）",
   "settings.currency": "顯示幣別",
   "settings.currencyAuto": "自動（跟隨語言）",
-  "settings.currencyHint": "僅影響顯示，不會改寫供應商原幣價表（billing_currency）。估值優先官方雙區域價表，否則用 ECB 匯率（均為估算）。",
+  "settings.currencyHint": "僅影響顯示，不會改寫供應商價表（billing_currency）。自動模式優先單一錢包幣種，否則使用價表幣種；不進行匯率換算。",
   "context.sessionCostEstimated": "估算會話費用",
   "context.sessionCostPaygEquivalent": "按量等效估算",
+  "context.sessionCostBucketed": "多幣種",
   "context.sessionCostUnavailable": "費用不可估算",
+  "context.sessionCostFallback": "目標幣種不可用",
   "settings.config": "設定檔：{path}",
   "settings.configShadowed": "被工作區設定覆蓋：{path}（這裡的修改可能不會生效）",
 

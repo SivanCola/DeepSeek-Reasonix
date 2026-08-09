@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,19 +19,68 @@ const (
 const (
 	BasisIdentity      = "identity"
 	BasisOfficialTable = "official_table"
-	BasisFX            = "fx"
+	// BasisFX is retained for decoding pre-v6 persisted quotes only. New
+	// quotes never create FX valuations.
+	BasisFX = "fx"
 )
 
+// DisplayStatus describes whether a quote can satisfy its requested display.
+// It is deliberately separate from CostComplete: a known price-book amount
+// can exist even when no requested regional valuation is available.
+const (
+	DisplayStatusMatched          = "matched"
+	DisplayStatusFallbackOriginal = "fallback_original"
+	DisplayStatusBucketed         = "bucketed"
+	DisplayStatusUnavailable      = "unavailable"
+)
+
+// Aggregate modes describe how a session/run total was formed.
+const (
+	AggregateModeSingleCurrency  = "single_currency"
+	AggregateModeCommonValuation = "common_valuation"
+	AggregateModeCurrencyBuckets = "currency_buckets"
+)
+
+// DisplayRequest identifies how a caller selected the requested presentation
+// currency. The source is runtime context only; it is never persisted as a
+// provider price or wallet fact.
+type DisplayRequest struct {
+	Currency string `json:"currency,omitempty"`
+	Source   string `json:"source,omitempty"`
+}
+
+const (
+	DisplaySourceExplicit = "explicit"
+	DisplaySourceWallet   = "wallet"
+	DisplaySourceAuto     = "auto"
+)
+
+func (r DisplayRequest) NormalizedCurrency() string {
+	return NormalizeCurrency(r.Currency)
+}
+
 // CostQuote is the host-side quoted cost for one model call (or an aggregate).
-// Original is the billable currency fact; valuations hold CNY/USD views computed
-// at occurrence time. Selected is the display pick for the current preference.
+// Original is the pricing-table currency fact; valuations hold identity or
+// official regional rate-card estimates. Selected is the display pick for the
+// current preference.
 type CostQuote struct {
-	Original    Money                `json:"original"`
-	Valuations  map[string]Valuation `json:"valuations,omitempty"`
-	Selected    *Money               `json:"selected,omitempty"`
-	BillingMode string               `json:"billingMode,omitempty"`
-	Estimated   bool                 `json:"estimated"`
-	Complete    bool                 `json:"complete"`
+	Original Money `json:"original"`
+	// OriginalTotals is populated for mixed-currency aggregates. Individual
+	// quotes and single-currency totals may omit it.
+	OriginalTotals []Money              `json:"originalTotals,omitempty"`
+	Valuations     map[string]Valuation `json:"valuations,omitempty"`
+	Selected       *Money               `json:"selected,omitempty"`
+	BillingMode    string               `json:"billingMode,omitempty"`
+	Estimated      bool                 `json:"estimated"`
+	// CostComplete means usage and the price-book amount are known. It does not
+	// imply that a requested display currency is available.
+	CostComplete bool `json:"costComplete"`
+	// DisplayComplete means a single selected amount satisfies the display
+	// request. Complete is retained as the old wire alias.
+	DisplayComplete bool   `json:"displayComplete"`
+	Complete        bool   `json:"complete"`
+	DisplayStatus   string `json:"displayStatus,omitempty"`
+	AggregateMode   string `json:"aggregateMode,omitempty"`
 	// ModelRef / UsageSource / PricingFingerprint identify the ledger key.
 	ModelRef           string `json:"modelRef,omitempty"`
 	UsageSource        string `json:"usageSource,omitempty"`
@@ -87,7 +137,8 @@ type QuoteInput struct {
 	Usage              UsageTokens
 	Rates              RateCard
 	OccurredAt         time.Time
-	DisplayCurrency    string // resolved ISO: CNY or USD (empty = original only)
+	DisplayCurrency    string         // compatibility alias for Display.Currency
+	Display            DisplayRequest // runtime display request; empty means auto
 	BillingMode        string
 	ModelRef           string
 	UsageSource        string
@@ -98,11 +149,6 @@ type QuoteInput struct {
 	ProviderKind string
 	// ModelID is the bare model id (e.g. deepseek-v4-flash). Empty → parse ModelRef.
 	ModelID string
-	// RatesTable is the ECB (or fixture) table; nil keeps original only when
-	// no official dual-region table applies.
-	RatesTable *RateTable
-	// AcceptStaleDays is max age for FX cache (default 7).
-	AcceptStaleDays int
 }
 
 // OriginalCostAmount computes the fixed-point original cost from rates + tokens.
@@ -156,7 +202,6 @@ type quoteBuildState struct {
 	currency          string
 	amount            Amount
 	occurred          time.Time
-	staleDays         int
 	official          CatalogEntry
 	isOfficial        bool
 	valuationFailures map[string]string
@@ -186,7 +231,11 @@ func newQuoteBuildState(in QuoteInput) *quoteBuildState {
 		Valuations:         map[string]Valuation{},
 		BillingMode:        mode,
 		Estimated:          true,
+		CostComplete:       true,
+		DisplayComplete:    true,
 		Complete:           true,
+		DisplayStatus:      DisplayStatusMatched,
+		AggregateMode:      AggregateModeSingleCurrency,
 		ModelRef:           strings.TrimSpace(in.ModelRef),
 		UsageSource:        strings.TrimSpace(in.UsageSource),
 		PricingFingerprint: fingerprint,
@@ -199,13 +248,32 @@ func newQuoteBuildState(in QuoteInput) *quoteBuildState {
 	}
 	state := &quoteBuildState{
 		input: in, currency: currency, amount: amount, occurred: occurred,
-		staleDays: in.AcceptStaleDays, valuationFailures: map[string]string{}, quote: q,
+		valuationFailures: map[string]string{}, quote: q,
 	}
-	if state.staleDays <= 0 {
-		state.staleDays = DefaultFXMaxAgeDays
+	if !usageHasFacts(in.Usage) {
+		state.markIncomplete("missing_price_or_usage")
 	}
 	state.matchOfficialCatalog()
 	return state
+}
+
+func quoteDisplayRequest(in QuoteInput) DisplayRequest {
+	request := in.Display
+	if request.Currency == "" && in.DisplayCurrency != "" {
+		request.Currency = in.DisplayCurrency
+		if request.Source == "" {
+			request.Source = DisplaySourceExplicit
+		}
+	}
+	if request.Source == "" {
+		request.Source = DisplaySourceAuto
+	}
+	return request
+}
+
+func usageHasFacts(u UsageTokens) bool {
+	return u.PromptTokens > 0 || u.CompletionTokens > 0 || u.CacheHitTokens > 0 ||
+		u.CacheMissTokens > 0 || u.CacheWriteTokens > 0 || u.CacheWriteBilledTokens > 0
 }
 
 func (s *quoteBuildState) matchOfficialCatalog() {
@@ -228,29 +296,9 @@ func (s *quoteBuildState) addTargetValuation(target string) {
 	if s.addOfficialValuation(target) {
 		return
 	}
-	if s.input.RatesTable == nil {
-		s.valuationFailures[target] = "no_fx_table"
-		return
-	}
-	converted, snapshot, ok := s.input.RatesTable.Convert(
-		s.amount, s.currency, target, s.occurred, s.staleDays,
-	)
-	if !ok {
-		reason := "fx_unavailable"
-		if snapshot != nil && snapshot.Stale {
-			reason = "fx_stale"
-		}
-		s.valuationFailures[target] = reason
-		return
-	}
-	s.quote.Valuations[target] = Valuation{
-		Money: MoneyOf(converted, target), Basis: BasisFX,
-		Source: snapshot.Source, AsOf: snapshot.AsOf,
-		Rate: snapshot, Stale: snapshot.Stale,
-	}
-	if s.quote.RateDate == "" {
-		s.quote.RateDate = snapshot.AsOf
-	}
+	// Runtime FX has intentionally been removed. A custom price that does not
+	// match the official catalog remains in its original currency.
+	s.valuationFailures[target] = "display_unavailable"
 }
 
 func (s *quoteBuildState) addOfficialValuation(target string) bool {
@@ -272,7 +320,14 @@ func (s *quoteBuildState) addOfficialValuation(target string) bool {
 }
 
 func (s *quoteBuildState) selectDisplay() {
-	display := NormalizeCurrency(s.input.DisplayCurrency)
+	if !s.quote.CostComplete {
+		s.quote.Selected = nil
+		s.quote.DisplayComplete = false
+		s.quote.Complete = false
+		s.quote.DisplayStatus = DisplayStatusUnavailable
+		return
+	}
+	display := quoteDisplayRequest(s.input).NormalizedCurrency()
 	if display == "" {
 		selected := s.quote.Original
 		s.quote.Selected = &selected
@@ -283,11 +338,21 @@ func (s *quoteBuildState) selectDisplay() {
 		s.quote.Selected = &selected
 		return
 	}
-	s.markIncomplete(firstNonEmpty(s.valuationFailures[display], "display_unavailable"))
+	// The original price-book amount is still a valid cost fact. Keep it as a
+	// visible fallback and distinguish the display mismatch from no pricing.
+	selected := s.quote.Original
+	s.quote.Selected = &selected
+	s.quote.DisplayComplete = false
+	s.quote.Complete = false
+	s.quote.DisplayStatus = DisplayStatusFallbackOriginal
+	s.quote.IncompleteReason = firstNonEmpty(s.valuationFailures[display], "display_unavailable")
 }
 
 func (s *quoteBuildState) markIncomplete(reason string) {
+	s.quote.CostComplete = false
+	s.quote.DisplayComplete = false
 	s.quote.Complete = false
+	s.quote.DisplayStatus = DisplayStatusUnavailable
 	if s.quote.IncompleteReason == "" {
 		s.quote.IncompleteReason = reason
 	}
@@ -372,6 +437,7 @@ type quoteAccumulator struct {
 	totals            map[string]Amount
 	originalCurrency  string
 	originalTotal     Amount
+	originalTotals    map[string]Amount
 	originalComplete  bool
 	costFactsComplete bool
 	displayComplete   bool
@@ -379,10 +445,11 @@ type quoteAccumulator struct {
 }
 
 func emptyAggregate(display string) CostQuote {
-	out := CostQuote{Original: MoneyOf(Zero, display), Valuations: map[string]Valuation{}, Estimated: true, Complete: true}
-	if display != "" {
-		selected := out.Original
-		out.Selected = &selected
+	out := CostQuote{
+		Original: MoneyOf(Zero, display), Valuations: map[string]Valuation{}, Estimated: true,
+		CostComplete: false, DisplayComplete: false, Complete: false,
+		DisplayStatus: DisplayStatusUnavailable, AggregateMode: AggregateModeSingleCurrency,
+		IncompleteReason: "no_usage",
 	}
 	return out
 }
@@ -390,13 +457,14 @@ func emptyAggregate(display string) CostQuote {
 func newQuoteAccumulator(display string) *quoteAccumulator {
 	return &quoteAccumulator{
 		out:     CostQuote{Valuations: map[string]Valuation{}, Estimated: true},
-		display: NormalizeCurrency(display), totals: map[string]Amount{},
+		display: NormalizeCurrency(display), totals: map[string]Amount{}, originalTotals: map[string]Amount{},
 		originalComplete: true, costFactsComplete: true, displayComplete: true,
 		modes: map[string]struct{}{},
 	}
 }
 
 func (a *quoteAccumulator) add(quote CostQuote) {
+	quote = NormalizeQuote(quote)
 	if !quoteHasCompleteCostFact(quote) {
 		a.costFactsComplete = false
 		if a.out.IncompleteReason == "" {
@@ -411,7 +479,13 @@ func (a *quoteAccumulator) add(quote CostQuote) {
 		a.out.RateDate = quote.RateDate
 	}
 	originalCurrency := NormalizeCurrency(quote.Original.Currency)
-	a.addOriginal(quote.Original, originalCurrency)
+	if len(quote.OriginalTotals) > 0 {
+		for _, original := range quote.OriginalTotals {
+			a.addOriginal(original, NormalizeCurrency(original.Currency))
+		}
+	} else {
+		a.addOriginal(quote.Original, originalCurrency)
+	}
 	if a.display != "" {
 		_, found := quote.Valuations[a.display]
 		a.displayComplete = a.displayComplete && (found || originalCurrency == a.display)
@@ -433,6 +507,9 @@ func (a *quoteAccumulator) add(quote CostQuote) {
 }
 
 func (a *quoteAccumulator) addOriginal(original Money, currency string) {
+	if currency != "" {
+		a.originalTotals[currency] = a.originalTotals[currency].Add(original.AmountValue())
+	}
 	if a.originalCurrency == "" {
 		a.originalCurrency = currency
 		a.originalTotal = original.AmountValue()
@@ -460,12 +537,22 @@ func (a *quoteAccumulator) addValuation(code string, valuation Valuation) {
 }
 
 func (a *quoteAccumulator) finish() CostQuote {
-	a.out.Complete = a.costFactsComplete && a.displayComplete
+	a.out.CostComplete = a.costFactsComplete
 	if a.originalComplete && a.originalCurrency != "" {
 		a.out.Original = MoneyOf(a.originalTotal, a.originalCurrency)
 		a.syncOriginalValuation()
 	} else {
 		a.out.Original = Money{Amount: "0"}
+	}
+	if len(a.originalTotals) > 1 {
+		codes := make([]string, 0, len(a.originalTotals))
+		for code := range a.originalTotals {
+			codes = append(codes, code)
+		}
+		sort.Strings(codes)
+		for _, code := range codes {
+			a.out.OriginalTotals = append(a.out.OriginalTotals, MoneyOf(a.originalTotals[code], code))
+		}
 	}
 	if len(a.modes) == 1 {
 		for mode := range a.modes {
@@ -475,30 +562,88 @@ func (a *quoteAccumulator) finish() CostQuote {
 	if a.display == "" && a.originalComplete && a.costFactsComplete {
 		selected := a.out.Original
 		a.out.Selected = &selected
+		a.out.DisplayComplete = true
+		a.out.Complete = true
+		a.out.DisplayStatus = DisplayStatusMatched
+		a.out.AggregateMode = AggregateModeSingleCurrency
 		return a.out
 	}
 	valuation, found := a.out.Valuations[a.display]
 	if found && a.displayComplete && a.costFactsComplete {
 		selected := valuation.Money
 		a.out.Selected = &selected
+		a.out.DisplayComplete = true
+		a.out.Complete = true
+		a.out.DisplayStatus = DisplayStatusMatched
+		if len(a.originalTotals) > 1 {
+			a.out.AggregateMode = AggregateModeCommonValuation
+		} else {
+			a.out.AggregateMode = AggregateModeSingleCurrency
+		}
 		return a.out
 	}
+	a.out.DisplayComplete = false
 	a.out.Complete = false
 	if !a.costFactsComplete {
+		a.out.DisplayStatus = DisplayStatusUnavailable
 		a.out.IncompleteReason = firstNonEmpty(a.out.IncompleteReason, "incomplete_cost_fact")
-	} else if !a.displayComplete {
-		a.out.IncompleteReason = "incomplete_valuations"
-	} else {
+	} else if a.originalComplete && a.originalCurrency != "" {
+		selected := a.out.Original
+		a.out.Selected = &selected
+		a.out.DisplayStatus = DisplayStatusFallbackOriginal
+		a.out.AggregateMode = AggregateModeSingleCurrency
 		a.out.IncompleteReason = firstNonEmpty(a.out.IncompleteReason, "display_unavailable")
+	} else {
+		a.out.DisplayStatus = DisplayStatusBucketed
+		a.out.AggregateMode = AggregateModeCurrencyBuckets
+		a.out.IncompleteReason = firstNonEmpty(a.out.IncompleteReason, "currency_buckets")
 	}
 	return a.out
 }
 
+// NormalizeQuote fills fields introduced after the first CostQuote wire shape.
+// It is used at every persistence and transport boundary so old telemetry and
+// old eventwire payloads remain safe without inventing a new amount.
+func NormalizeQuote(q CostQuote) CostQuote {
+	if !q.CostComplete && !q.DisplayComplete && q.Complete {
+		q.CostComplete = true
+		q.DisplayComplete = true
+	}
+	if q.DisplayStatus != "" && q.DisplayStatus != DisplayStatusMatched && q.DisplayStatus != DisplayStatusFallbackOriginal && q.DisplayStatus != DisplayStatusBucketed && q.DisplayStatus != DisplayStatusUnavailable {
+		q.DisplayStatus = ""
+	}
+	if q.AggregateMode != "" && q.AggregateMode != AggregateModeSingleCurrency && q.AggregateMode != AggregateModeCommonValuation && q.AggregateMode != AggregateModeCurrencyBuckets {
+		q.AggregateMode = ""
+	}
+	if q.DisplayStatus == "" {
+		switch {
+		case q.Complete:
+			q.DisplayStatus = DisplayStatusMatched
+		case q.Original.Currency != "" && q.Original.Amount != "" && q.IncompleteReason != "no_price":
+			q.DisplayStatus = DisplayStatusFallbackOriginal
+		default:
+			q.DisplayStatus = DisplayStatusUnavailable
+		}
+	}
+	if q.AggregateMode == "" {
+		if len(q.OriginalTotals) > 1 {
+			q.AggregateMode = AggregateModeCurrencyBuckets
+		} else if q.Selected != nil {
+			q.AggregateMode = AggregateModeSingleCurrency
+		}
+	}
+	q.Complete = q.DisplayComplete
+	return q
+}
+
 // quoteHasCompleteCostFact separates a known original-currency charge from a
-// display-only valuation failure. A missing FX view must not poison an exact
-// original total, while unpriced and unrecoverable legacy records stay
-// incomplete in every display currency.
+// display-only valuation failure must not poison an exact original total,
+// while unpriced and unrecoverable legacy records stay incomplete in every
+// display currency.
 func quoteHasCompleteCostFact(q CostQuote) bool {
+	if q.CostComplete {
+		return true
+	}
 	switch q.IncompleteReason {
 	case "no_price", "missing_price_or_usage", "legacy_unrecoverable",
 		"legacy_wiped_or_zero", "legacy_invalid_amount", "mixed_original_currencies",

@@ -8,7 +8,7 @@ import (
 )
 
 // LedgerEntry is one occurrence-time cost fact. Ledger keys include model,
-// usage source, pricing fingerprint, and FX rate date so model switches and
+// usage source, pricing fingerprint, and legacy rate date so model switches and
 // sub-agents never collapse into a single scalar.
 type LedgerEntry struct {
 	Key                string    `json:"key"`
@@ -66,6 +66,7 @@ func (l *Ledger) Add(q CostQuote, tokens UsageTokens, occurred time.Time) {
 	if occurred.IsZero() {
 		occurred = time.Now().UTC()
 	}
+	q = NormalizeQuote(q)
 	source := q.UsageSource
 	if source == "" {
 		source = "executor"
@@ -85,13 +86,30 @@ func (l *Ledger) Add(q CostQuote, tokens UsageTokens, occurred time.Time) {
 		// Fresh quote valuations are kept; we re-aggregate Original via sums.
 		ent.Quote.Valuations = cloneValuations(q.Valuations)
 	} else {
-		// Sum original when same currency; otherwise mark incomplete.
-		sum, err := AddMoney(ent.Quote.Original, q.Original)
-		if err != nil {
+		// Sum original when same currency; otherwise retain deterministic
+		// per-currency buckets. Once a bucketed entry exists, keep adding into
+		// those buckets so later same-currency calls are not lost.
+		if len(ent.Quote.OriginalTotals) > 0 {
+			ent.Quote.OriginalTotals = mergeOriginalTotals(ent.Quote.OriginalTotals, q)
+			ent.Quote.CostComplete = true
+			ent.Quote.DisplayComplete = false
 			ent.Quote.Complete = false
+			ent.Quote.DisplayStatus = DisplayStatusBucketed
+			ent.Quote.AggregateMode = AggregateModeCurrencyBuckets
 			ent.Quote.IncompleteReason = "mixed_original_currencies"
 		} else {
-			ent.Quote.Original = sum
+			sum, err := AddMoney(ent.Quote.Original, q.Original)
+			if err != nil {
+				ent.Quote.OriginalTotals = mergeOriginalTotals([]Money{ent.Quote.Original}, q)
+				ent.Quote.CostComplete = true
+				ent.Quote.DisplayComplete = false
+				ent.Quote.Complete = false
+				ent.Quote.DisplayStatus = DisplayStatusBucketed
+				ent.Quote.AggregateMode = AggregateModeCurrencyBuckets
+				ent.Quote.IncompleteReason = "mixed_original_currencies"
+			} else {
+				ent.Quote.Original = sum
+			}
 		}
 		for code, v := range q.Valuations {
 			code = NormalizeCurrency(code)
@@ -115,10 +133,15 @@ func (l *Ledger) Add(q CostQuote, tokens UsageTokens, occurred time.Time) {
 			ent.Quote.Estimated = true
 		}
 		if !q.Complete {
+			ent.Quote.DisplayComplete = false
 			ent.Quote.Complete = false
 			if ent.Quote.IncompleteReason == "" {
 				ent.Quote.IncompleteReason = q.IncompleteReason
 			}
+		}
+		ent.Quote.CostComplete = ent.Quote.CostComplete && q.CostComplete
+		if ent.Quote.DisplayStatus != DisplayStatusBucketed {
+			ent.Quote.DisplayStatus = q.DisplayStatus
 		}
 	}
 	ent.PromptTokens += tokens.PromptTokens
@@ -135,6 +158,37 @@ func (l *Ledger) Add(q CostQuote, tokens UsageTokens, occurred time.Time) {
 		ent.OccurredAt = occurred
 	}
 	l.Entries[key] = ent
+}
+
+func mergeOriginalTotals(existing []Money, q CostQuote) []Money {
+	amounts := map[string]Amount{}
+	add := func(m Money) {
+		currency := NormalizeCurrency(m.Currency)
+		if currency == "" {
+			return
+		}
+		amounts[currency] = amounts[currency].Add(m.AmountValue())
+	}
+	for _, m := range existing {
+		add(m)
+	}
+	if len(q.OriginalTotals) > 0 {
+		for _, m := range q.OriginalTotals {
+			add(m)
+		}
+	} else {
+		add(q.Original)
+	}
+	codes := make([]string, 0, len(amounts))
+	for code := range amounts {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	out := make([]Money, 0, len(codes))
+	for _, code := range codes {
+		out = append(out, MoneyOf(amounts[code], code))
+	}
+	return out
 }
 
 func cloneValuations(in map[string]Valuation) map[string]Valuation {
@@ -164,7 +218,8 @@ func (l *Ledger) Total(display string) CostQuote {
 	return AggregateQuotes(quotes, display)
 }
 
-// SelectDisplay rebinds Selected on every entry and the total without recomputing FX.
+// SelectDisplay rebinds Selected on every entry and the total without
+// recomputing occurrence-time pricing facts.
 func (l *Ledger) SelectDisplay(display string) CostQuote {
 	return l.Total(display)
 }

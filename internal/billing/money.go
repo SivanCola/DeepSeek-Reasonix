@@ -1,5 +1,5 @@
-// Package billing models wallet balances, fixed-point money, cost quotes, and
-// exchange rates. It is a utility-layer package (stdlib only).
+// Package billing models wallet balances, fixed-point money, and cost quotes.
+// It is a utility-layer package (stdlib only).
 package billing
 
 import (
@@ -118,7 +118,7 @@ func (a Amount) Add(b Amount) Amount {
 	return Amount(sum)
 }
 
-// MulRate multiplies by a float rate (e.g. FX rate or per-1M token rate).
+// MulRate multiplies by a float rate for a pricing calculation.
 func (a Amount) MulRate(rate float64) Amount {
 	if a == 0 || rate == 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 		return Zero

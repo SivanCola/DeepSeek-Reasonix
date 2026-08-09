@@ -254,10 +254,21 @@ export function StatusBar({
   const turnLabel = formatTurnCount(sessionTurns, t);
   const tokenLabel = markEstimated(formatTokenCount(sessionTokens), sessionEstimated);
   const turnTokenLabel = markEstimated(formatTokenCount(turnTokens), turnEstimated);
+  const statusQuote = context.sessionCostQuote;
+  const statusBucketed = statusQuote?.displayStatus === "bucketed" || statusQuote?.aggregateMode === "currency_buckets";
+  const statusUnavailable = context.sessionCostComplete === false || statusQuote?.displayStatus === "unavailable" || statusQuote?.costComplete === false;
+  const statusSelectedAmount = statusQuote?.selected?.amount ? Number(statusQuote.selected.amount) : NaN;
+  const statusCostLabel = statusBucketed
+    ? t("context.sessionCostBucketed")
+    : statusUnavailable
+      ? "-"
+      : Number.isFinite(statusSelectedAmount) && statusSelectedAmount > 0
+        ? markEstimated(formatMoneyLocalized(statusSelectedAmount, statusQuote?.selected?.currency || context.sessionCurrency || currency, { locale }), statusQuote?.estimated !== false)
+        : costLabel;
   const balanceLabel = balance?.available && balance.display ? balance.display : "-";
   const balanceTitle = balance?.available
     ? (balance.detail
-      ? `${t("status.balanceTitle")}: ${balance.detail}${balance.rateDate ? ` · FX ${balance.rateDate}` : ""}`
+      ? `${t("status.balanceTitle")}: ${balance.detail}`
       : t("status.balanceTitle"))
     : t("status.balanceTitle");
   const tpsLabel = formatTps(lastTurnOutputTokens, lastTurnModelMs, lastTurnOutputEstimated);
@@ -404,7 +415,7 @@ export function StatusBar({
       <Tooltip label={t("status.spendTitle")} className="statusbar__metric statusbar__metric--cost">
         <span className="stat statusbar__cost">
           <MetricLabel style={metricLabelStyle} icon={<CircleDollarSign size={12} />} label={t("status.costLabel")} />
-          <b>{costLabel}</b>
+          <b>{statusCostLabel}</b>
         </span>
       </Tooltip>
     ),

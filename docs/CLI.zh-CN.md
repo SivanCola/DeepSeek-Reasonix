@@ -78,20 +78,20 @@ setup 会询问是否共享该凭据；两个 provider 使用不同 Key 时，�
 setup 添加或删除 provider 时，也会同步维护桌面端 provider access，因此相同模型可以
 直接在桌面端使用。
 
-### 配置区域定价货币
+### 配置费用展示币种
 
-使用用户全局货币命令查看或选择 DeepSeek 官方区域价格表：
+使用用户全局货币命令查看或选择费用展示币种：
 
 ```sh
 reasonix config currency             # 显示已保存值和最终解析结果
-reasonix config currency auto        # 跟随解析后的 locale
+reasonix config currency auto        # 钱包币种优先，否则原币价表币种
 reasonix config currency CNY
 reasonix config currency USD
 ```
 
-`auto` 会把简体或繁体中文 locale 解析为 CNY，把英文及其他 locale 解析为 USD。显式
-选择 `CNY` 或 `USD` 后，货币不再跟随界面语言。该偏好只保存在用户全局配置中，项目
-`reasonix.toml` 无法覆盖，因此不支持 `--local`。自定义 provider 价格不会被修改。
+`auto` 在配置中保持未解析。只有一个有效钱包币种时，它才会成为当前运行时提示；否则
+CLI 使用原币或按 ISO 排序的币种桶。语言和主机 locale 不再选择价表。该偏好只保存在
+用户全局配置中，项目 `reasonix.toml` 无法覆盖，因此不支持 `--local`。自定义价格不会被修改。
 
 在交互式会话中，`/currency` 显示已保存值和最终解析结果；
 `/currency auto|CNY|USD` 会修改偏好并刷新当前运行时，同时保留当前对话。
@@ -192,14 +192,15 @@ reasonix run "运行测试" --output-format stream-json
 }
 ```
 
-`total_cost` 是**当前展示币种**下的估值（ISO 代码见 `currency`，目前为 `CNY` 或
-`USD`）。有 `cost_quote` 时优先读它：含原币费用、发生时的 CNY/USD 估值（双区域官方
-价表为 `official_table`，否则 ECB 汇率 `fx`）、`complete`，以及
+`total_cost` 仅在形成单一 `selected` 展示金额时存在（ISO 代码见 `currency`）。有
+`cost_quote` 时优先读它：含原币费用、`original_totals`、发生时的官方双区域
+`official_table` 估值、`cost_complete`、`display_complete`、`display_status`，以及
 `billing_mode`（`payg` 或 `subscription_equivalent`，后者表示如 MiMo Token Plan
 的「按量等效估算」）。
 
 `total_cost_usd` 仅为兼容别名，数值镜像 `total_cost`，**不表示一定是美元**。混用
-多种原币时不会再报错：`cost_complete=false`，并用 `original_costs` 给出各原币明细，
+多种原币时不会再报错：若 usage/价表事实完整则 `cost_complete=true`、
+`display_complete=false`，并用 `original_costs`/`original_totals` 给出各原币明细，
 绝不伪造跨币种合计。
 
 全局展示偏好为 `[billing].display_currency`（`auto|CNY|USD`）；旧
@@ -380,7 +381,7 @@ SSH 下远端进程无法读取本机剪贴板，请使用终端粘贴快捷键�
 | `/status` | 显示模型、effort、cache、Git、后台任务，以及工作模式或余额信息。 |
 | `/work-mode [economy\|balanced\|delivery]` | 查看或切换运行时工作模式；`/profile` 是别名。 |
 | `/theme [auto\|light\|dark\|style]` | 查看或切换 CLI 背景模式和强调色。 |
-| `/currency [auto\|CNY\|USD]` | 查看或切换用户全局官方定价货币，并刷新当前运行时。 |
+| `/currency [auto\|CNY\|USD]` | 查看或切换用户全局费用展示币种，并刷新当前运行时。 |
 | `/paste-image` | 读取剪贴板图片并插入可编辑的附件标记。 |
 | `/mouse` | 切换应用内鼠标选区、滚动条和滚轮处理。 |
 | `/effort` | 查看或切换 reasoning effort。 |

@@ -232,8 +232,15 @@ func (r *Recorder) recordProviderUsage(modelRef string, usage *provider.Usage, q
 		rec.BillingMode = quote.BillingMode
 		rec.CostEstimated = quote.Estimated
 		rec.LegacyEstimate = quote.LegacyEstimate
-		complete := quote.Complete
-		rec.CostComplete = &complete
+		costComplete := quote.CostComplete
+		displayComplete := quote.DisplayComplete
+		rec.CostComplete = &costComplete
+		rec.DisplayComplete = &displayComplete
+		rec.DisplayStatus = quote.DisplayStatus
+		rec.AggregateMode = quote.AggregateMode
+		for _, total := range quote.OriginalTotals {
+			rec.OriginalTotals = append(rec.OriginalTotals, total.Currency+":"+total.Amount)
+		}
 		if quote.Selected != nil {
 			rec.SelectedAmount = quote.Selected.Amount
 			rec.SelectedCurrency = quote.Selected.Currency

@@ -118,20 +118,25 @@ export function ContextWindowRing({ enabled = true, context, tabId, turnCost, cu
   const tokensToCompact = compactTokens > used ? compactTokens - used : 0;
   const ringOffset = RING_C * (1 - usagePct / 100);
   const elapsed = info?.elapsedMs && info.elapsedMs > 0 ? fmtDuration(info.elapsedMs, t) : undefined;
-  const sessionCostComplete = info?.sessionCostComplete !== false;
+  const quoteStatus = info?.sessionCostQuote?.displayStatus;
+  const sessionCostBucketed = quoteStatus === "bucketed" || info?.sessionCostQuote?.aggregateMode === "currency_buckets";
+  const sessionCostFallback = quoteStatus === "fallback_original";
+  const sessionCostComplete = (sessionCostFallback || info?.sessionCostComplete !== false) && quoteStatus !== "unavailable";
   const sessionCostRaw = info?.sessionCostQuote?.selected
     ? Number(info.sessionCostQuote.selected.amount)
     : info?.sessionCost;
   const sessionCostCurrency = info?.sessionCostQuote?.selected?.currency || info?.sessionCurrency;
   const sessionCost =
-    sessionCostComplete && typeof sessionCostRaw === "number" && sessionCostRaw > 0
+    !sessionCostBucketed && sessionCostComplete && typeof sessionCostRaw === "number" && sessionCostRaw > 0
       ? `≈${formatMoneyLocalized(sessionCostRaw, sessionCostCurrency, { locale, empty: "dash" }).replace(/^≈/, "")}`
       : undefined;
   const sessionCostHint =
     info?.sessionBillingMode === "subscription_equivalent"
-      ? "payg_equivalent"
-      : sessionCost
-        ? "estimated"
+        ? "payg_equivalent"
+        : sessionCostFallback
+          ? "fallback_original"
+        : sessionCost
+          ? "estimated"
         : undefined;
   const turnCostLabel = formatMoneyLocalized(turnCost, info?.sessionCurrency || currency, { locale, empty: "dash" });
 
@@ -217,12 +222,20 @@ export function ContextWindowRing({ enabled = true, context, tabId, turnCost, cu
                 <span className="context-ring-popover__label">
                   {sessionCostHint === "payg_equivalent"
                     ? t("context.sessionCostPaygEquivalent")
+                    : sessionCostHint === "fallback_original"
+                      ? t("context.sessionCostFallback")
                     : t("context.sessionCostEstimated")}
                 </span>
                 <span className="context-ring-popover__value">{sessionCost}</span>
               </div>
             )}
-            {!sessionCost && info?.sessionCostComplete === false && (
+            {!sessionCost && sessionCostBucketed && (
+              <div className="context-ring-popover__row">
+                <span className="context-ring-popover__label">{t("context.sessionCost")}</span>
+                <span className="context-ring-popover__value">{t("context.sessionCostBucketed")}</span>
+              </div>
+            )}
+            {!sessionCost && !sessionCostBucketed && info?.sessionCostComplete === false && (
               <div className="context-ring-popover__row">
                 <span className="context-ring-popover__label">{t("context.sessionCostEstimated")}</span>
                 <span className="context-ring-popover__value">—</span>

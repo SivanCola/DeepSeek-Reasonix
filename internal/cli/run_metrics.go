@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +44,11 @@ type RunMetrics struct {
 	Cost                     float64        `json:"cost"`
 	Currency                 string         `json:"currency"`
 	// CostComplete is false when any quote lacked a shared display valuation.
-	CostComplete bool `json:"cost_complete"`
+	CostComplete    bool            `json:"cost_complete"`
+	DisplayComplete bool            `json:"display_complete"`
+	DisplayStatus   string          `json:"display_status,omitempty"`
+	AggregateMode   string          `json:"aggregate_mode,omitempty"`
+	OriginalTotals  []billing.Money `json:"original_totals,omitempty"`
 	// OriginalCosts is per-ISO original currency totals (never cross-added).
 	OriginalCosts map[string]float64 `json:"original_costs,omitempty"`
 	// CostQuotes retains occurrence-time quotes for audit (capped).
@@ -157,6 +162,7 @@ func (m RunMetrics) clone() RunMetrics {
 	out.ToolCallsByName = cloneCounts(m.ToolCallsByName)
 	out.ToolFailuresByName = cloneCounts(m.ToolFailuresByName)
 	out.OriginalCosts = cloneFloatMap(m.OriginalCosts)
+	out.OriginalTotals = append([]billing.Money(nil), m.OriginalTotals...)
 	if len(m.CostQuotes) > 0 {
 		out.CostQuotes = append([]billing.CostQuote(nil), m.CostQuotes...)
 		for i := range out.CostQuotes {
@@ -258,27 +264,32 @@ func (s *metricsSink) record(e event.Event) {
 		}
 		if q != nil {
 			s.m.Estimated = true
-			if !q.Complete {
+			if !q.CostComplete {
 				s.m.CostComplete = false
 			} else if s.m.Steps == 1 {
 				s.m.CostComplete = true
 			}
+			s.m.DisplayComplete = q.DisplayComplete
+			s.m.DisplayStatus = q.DisplayStatus
+			s.m.AggregateMode = q.AggregateMode
 			origCur := billing.NormalizeCurrency(q.Original.Currency)
 			if origCur != "" {
 				if s.m.OriginalCosts == nil {
 					s.m.OriginalCosts = map[string]float64{}
 				}
 				s.m.OriginalCosts[origCur] += q.Original.Float64()
+				s.m.OriginalTotals = originalTotalsFromFloatMap(s.m.OriginalCosts)
 			}
 			if q.Selected != nil {
-				stepCost = q.Selected.Float64()
-				s.m.Cost += stepCost
-				s.m.Currency = q.LegacyCurrencyCode()
-			} else if e.Pricing != nil {
-				// Fall back to original float only for single-currency legacy tests.
-				stepCost = e.Pricing.Cost(u)
-				s.m.Cost += stepCost
-				s.m.Currency = billing.NormalizeCurrency(e.Pricing.Currency)
+				cur := q.LegacyCurrencyCode()
+				if s.m.Currency != "" && s.m.Currency != cur {
+					s.m.Cost = 0
+					s.m.Currency = ""
+				} else {
+					stepCost = q.Selected.Float64()
+					s.m.Cost += stepCost
+					s.m.Currency = cur
+				}
 			}
 			if len(s.m.CostQuotes) < 64 {
 				s.m.CostQuotes = append(s.m.CostQuotes, *q)
@@ -312,6 +323,22 @@ func (s *metricsSink) record(e event.Event) {
 	if e.Kind == event.Retrying {
 		s.m.Retries++
 	}
+}
+
+func originalTotalsFromFloatMap(totals map[string]float64) []billing.Money {
+	if len(totals) == 0 {
+		return nil
+	}
+	codes := make([]string, 0, len(totals))
+	for code := range totals {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	out := make([]billing.Money, 0, len(codes))
+	for _, code := range codes {
+		out = append(out, billing.MoneyOf(billing.NewAmountFromFloat(totals[code]), code))
+	}
+	return out
 }
 
 // recordSource buckets one model call by its origin. An empty source means the

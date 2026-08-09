@@ -112,6 +112,10 @@ type ReasonixUsage struct {
 	EstimatedCost    *float64           `json:"estimatedCost"`
 	Currency         *string            `json:"currency"`
 	CostComplete     *bool              `json:"costComplete,omitempty"`
+	DisplayComplete  *bool              `json:"displayComplete,omitempty"`
+	DisplayStatus    string             `json:"displayStatus,omitempty"`
+	AggregateMode    string             `json:"aggregateMode,omitempty"`
+	OriginalTotals   []billing.Money    `json:"originalTotals,omitempty"`
 	CostQuote        *billing.CostQuote `json:"costQuote,omitempty"`
 	UsageSource      string             `json:"usageSource"`
 }
@@ -263,10 +267,15 @@ func (a usageAccumulator) wire() ReasonixUsage {
 		usage.CacheHitRatio = &ratio
 	}
 	if a.quoteLedger != nil && a.quoteEvents == a.pricedEvents && len(a.quoteLedger.Entries) > 0 {
-		agg := a.quoteLedger.Total(a.currency)
+		agg := a.quoteLedger.Total("")
 		usage.CostQuote = &agg
-		complete := agg.Complete
-		usage.CostComplete = &complete
+		costComplete := agg.CostComplete
+		displayComplete := agg.DisplayComplete
+		usage.CostComplete = &costComplete
+		usage.DisplayComplete = &displayComplete
+		usage.DisplayStatus = agg.DisplayStatus
+		usage.AggregateMode = agg.AggregateMode
+		usage.OriginalTotals = append([]billing.Money(nil), agg.OriginalTotals...)
 		if agg.Selected != nil && !math.IsNaN(agg.Selected.Float64()) && !math.IsInf(agg.Selected.Float64(), 0) {
 			cost := agg.Selected.Float64()
 			currency := agg.LegacyCurrencyCode()

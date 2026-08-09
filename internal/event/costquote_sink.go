@@ -9,16 +9,12 @@ import (
 	"reasonix/internal/provider"
 )
 
-// QuoteContext supplies display currency and FX for the CostQuote middleware.
+// QuoteContext supplies an explicit display request for the CostQuote
+// middleware. Empty means auto and keeps the price-book currency.
 type QuoteContext struct {
-	mu sync.RWMutex
-	// DisplayCurrency is the resolved ISO code (CNY|USD), not "auto".
+	mu              sync.RWMutex
 	DisplayCurrency string
-	// Rates is a static non-blocking snapshot used by tests and explicit hosts.
-	Rates *billing.RateTable
-	// RateCache is read for every quote so background refreshes become visible
-	// without rebuilding the controller. Rates takes precedence when non-nil.
-	RateCache *billing.FXCache
+	DisplayRequest  billing.DisplayRequest
 	// Now overrides the clock in tests.
 	Now func() time.Time
 	// BillingModeForModel resolves provider-owned billing semantics from the
@@ -34,41 +30,48 @@ func (c *QuoteContext) SetDisplay(currency string) {
 	}
 	c.mu.Lock()
 	c.DisplayCurrency = billing.NormalizeCurrency(currency)
+	c.DisplayRequest = billing.DisplayRequest{Currency: c.DisplayCurrency, Source: billing.DisplaySourceExplicit}
 	c.mu.Unlock()
 }
 
-// SetRates installs an FX table snapshot.
-func (c *QuoteContext) SetRates(rates *billing.RateTable) {
+func (c *QuoteContext) SetDisplayRequest(request billing.DisplayRequest) {
 	if c == nil {
 		return
 	}
+	request.Currency = billing.NormalizeCurrency(request.Currency)
+	if request.Source == "" {
+		request.Source = billing.DisplaySourceAuto
+	}
 	c.mu.Lock()
-	c.Rates = rates
+	c.DisplayRequest = request
+	c.DisplayCurrency = request.Currency
 	c.mu.Unlock()
 }
 
-func (c *QuoteContext) snapshot() (display string, rates *billing.RateTable, now time.Time) {
+func (c *QuoteContext) snapshot() (request billing.DisplayRequest, now time.Time) {
 	if c == nil {
-		return "", billing.GlobalRateTable(), time.Now().UTC()
+		return billing.DisplayRequest{Source: billing.DisplaySourceAuto}, time.Now().UTC()
 	}
 	c.mu.RLock()
-	display = c.DisplayCurrency
-	rates = c.Rates
-	rateCache := c.RateCache
+	request = c.DisplayRequest
+	if request.Currency == "" && c.DisplayCurrency != "" {
+		request.Currency = c.DisplayCurrency
+	}
+	if request.Source == "" {
+		if request.Currency != "" {
+			request.Source = billing.DisplaySourceExplicit
+		} else {
+			request.Source = billing.DisplaySourceAuto
+		}
+	}
 	nowFn := c.Now
 	c.mu.RUnlock()
-	if rates == nil && rateCache != nil {
-		rates = rateCache.Read()
-	}
-	if rates == nil && rateCache == nil {
-		rates = billing.GlobalRateTable()
-	}
 	if nowFn != nil {
 		now = nowFn()
 	} else {
 		now = time.Now().UTC()
 	}
-	return display, rates, now
+	return request, now
 }
 
 func (c *QuoteContext) billingMode(modelRef string) string {
@@ -91,8 +94,8 @@ type CostQuoteSink struct {
 	Ctx   *QuoteContext
 }
 
-// NewCostQuoteSink wraps inner with quoting. A nil ctx still quotes original
-// currency using GlobalRateTable when available.
+// NewCostQuoteSink wraps inner with quoting. A nil ctx still quotes the
+// original price-book currency.
 func NewCostQuoteSink(inner Sink, ctx *QuoteContext) *CostQuoteSink {
 	if ctx == nil {
 		ctx = &QuoteContext{}
@@ -117,10 +120,11 @@ func EnsureCostQuote(e Event, ctx *QuoteContext) *billing.CostQuote {
 	if e.Usage == nil {
 		return nil
 	}
-	display, rates, now := ctx.snapshot()
+	display, now := ctx.snapshot()
 	if e.Pricing == nil {
 		q := billing.CostQuote{
-			Estimated: true, Complete: false, IncompleteReason: "no_price",
+			Estimated: true, CostComplete: false, DisplayComplete: false, Complete: false,
+			DisplayStatus: billing.DisplayStatusUnavailable, IncompleteReason: "no_price",
 			ModelRef: e.ModelRef, UsageSource: e.UsageSource,
 		}
 		return &q
@@ -134,14 +138,13 @@ func EnsureCostQuote(e Event, ctx *QuoteContext) *billing.CostQuote {
 	}
 	card := rateCardFromPricing(e.Pricing)
 	q := billing.BuildQuote(billing.QuoteInput{
-		Usage:           usageTokens(e.Usage),
-		Rates:           card,
-		OccurredAt:      now,
-		DisplayCurrency: display,
-		BillingMode:     mode,
-		ModelRef:        e.ModelRef,
-		UsageSource:     firstUsageSource(e),
-		RatesTable:      rates,
+		Usage:       usageTokens(e.Usage),
+		Rates:       card,
+		OccurredAt:  now,
+		Display:     display,
+		BillingMode: mode,
+		ModelRef:    e.ModelRef,
+		UsageSource: firstUsageSource(e),
 	})
 	return &q
 }

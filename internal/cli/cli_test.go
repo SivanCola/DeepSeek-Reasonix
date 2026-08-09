@@ -945,7 +945,7 @@ func TestConfigCurrencyCommandWritesUserConfig(t *testing.T) {
 	}
 }
 
-func TestConfigCurrencyAutoUsesResolvedCLILocale(t *testing.T) {
+func TestConfigCurrencyAutoRemainsUnresolved(t *testing.T) {
 	isolateCLIConfigHome(t)
 	i18n.DetectLanguage("zh-TW")
 	t.Cleanup(func() { i18n.DetectLanguage("en") })
@@ -955,7 +955,7 @@ func TestConfigCurrencyAutoUsesResolvedCLILocale(t *testing.T) {
 			t.Fatalf("config currency auto rc = %d, want 0", rc)
 		}
 	})
-	if !strings.Contains(out, `currency = "auto"`) || !strings.Contains(out, "display: CNY") {
+	if !strings.Contains(out, `currency = "auto"`) || !strings.Contains(out, "display: ,") {
 		t.Fatalf("config currency auto output = %q", out)
 	}
 	cfg := config.LoadForEdit(config.UserConfigPath())

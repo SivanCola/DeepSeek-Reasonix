@@ -17,7 +17,7 @@ func TestDisplayCurrencyIndependentOfListPrices(t *testing.T) {
 	if flash.Price.Output != before {
 		t.Fatalf("list price mutated: %v -> %v", before, flash.Price.Output)
 	}
-	if got := c.ResolveDisplayCurrency(); got != "CNY" {
+	if got := c.ExplicitDisplayCurrency(); got != "CNY" {
 		t.Fatalf("display = %q", got)
 	}
 	if got := flash.ProviderBillingCurrency(); got != "USD" {
@@ -34,12 +34,12 @@ func TestCustomPriceProtectedFromCatalog(t *testing.T) {
 
 func TestQuoteForUsageUsesSelectedDisplay(t *testing.T) {
 	price := deepSeekV4FlashPriceUSD()
-	q := QuoteForUsage(price, nil, "USD", "m", "executor", billing.BillingModePAYG, "", nil)
+	q := QuoteForUsage(price, nil, "USD", "m", "executor", billing.BillingModePAYG, "")
 	if q.Complete {
 		t.Fatal("nil usage should be incomplete")
 	}
 	u := &provider.Usage{PromptTokens: 1_000_000, CompletionTokens: 0}
-	q = QuoteForUsage(price, u, "USD", "m", "executor", billing.BillingModePAYG, "", nil)
+	q = QuoteForUsage(price, u, "USD", "m", "executor", billing.BillingModePAYG, "")
 	if q.Original.Currency != "USD" || q.Selected == nil {
 		t.Fatalf("quote = %+v", q)
 	}

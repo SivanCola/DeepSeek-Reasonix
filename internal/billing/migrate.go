@@ -9,7 +9,7 @@ import (
 type LegacyUsageRecord struct {
 	SessionCost     float64
 	SessionCurrency string
-	// EndedAt is the session/turn end time used to pick historical ECB rates.
+	// EndedAt is retained for historical ordering and identity valuation dates.
 	EndedAt time.Time
 	// Tokens optional for ledger completeness.
 	PromptTokens     int
@@ -21,7 +21,7 @@ type LegacyUsageRecord struct {
 // MigrateLegacyUsage builds a CostQuote from pre-CostQuote telemetry.
 // Records that cannot be valued are marked legacy_estimate; wiped mixed-currency
 // zeros are not reconstructed from current price tables.
-func MigrateLegacyUsage(rec LegacyUsageRecord, table *RateTable) CostQuote {
+func MigrateLegacyUsage(rec LegacyUsageRecord) CostQuote {
 	cur := NormalizeCurrency(rec.SessionCurrency)
 	if cur == "" {
 		// Historic defaults often used ¥ symbol without code.
@@ -44,7 +44,10 @@ func MigrateLegacyUsage(rec LegacyUsageRecord, table *RateTable) CostQuote {
 		return CostQuote{
 			Original:         MoneyOf(Zero, cur),
 			Estimated:        true,
+			CostComplete:     false,
+			DisplayComplete:  false,
 			Complete:         false,
+			DisplayStatus:    DisplayStatusUnavailable,
 			LegacyEstimate:   true,
 			IncompleteReason: reason,
 			ModelRef:         rec.ModelRef,
@@ -53,14 +56,18 @@ func MigrateLegacyUsage(rec LegacyUsageRecord, table *RateTable) CostQuote {
 	}
 	amount := NewAmountFromFloat(rec.SessionCost)
 	q := CostQuote{
-		Original:       MoneyOf(amount, cur),
-		Valuations:     map[string]Valuation{},
-		Estimated:      true,
-		Complete:       true,
-		LegacyEstimate: true,
-		ModelRef:       rec.ModelRef,
-		UsageSource:    rec.UsageSource,
-		BillingMode:    BillingModePAYG,
+		Original:        MoneyOf(amount, cur),
+		Valuations:      map[string]Valuation{},
+		Estimated:       true,
+		CostComplete:    true,
+		DisplayComplete: true,
+		Complete:        true,
+		DisplayStatus:   DisplayStatusMatched,
+		AggregateMode:   AggregateModeSingleCurrency,
+		LegacyEstimate:  true,
+		ModelRef:        rec.ModelRef,
+		UsageSource:     rec.UsageSource,
+		BillingMode:     BillingModePAYG,
 	}
 	ended := rec.EndedAt
 	if ended.IsZero() {
@@ -72,26 +79,6 @@ func MigrateLegacyUsage(rec LegacyUsageRecord, table *RateTable) CostQuote {
 		Basis:  BasisIdentity,
 		Source: "legacy_telemetry",
 		AsOf:   asOf,
-	}
-	if table != nil {
-		for _, target := range []string{"CNY", "USD"} {
-			if target == cur {
-				continue
-			}
-			conv, snap, ok := table.Convert(amount, cur, target, ended, DefaultFXMaxAgeDays)
-			if !ok {
-				continue
-			}
-			q.Valuations[target] = Valuation{
-				Money:  MoneyOf(conv, target),
-				Basis:  BasisFX,
-				Source: "legacy_ecb_backfill",
-				AsOf:   snap.AsOf,
-				Rate:   snap,
-				Stale:  snap.Stale,
-			}
-			q.RateDate = snap.AsOf
-		}
 	}
 	m := q.Original
 	q.Selected = &m

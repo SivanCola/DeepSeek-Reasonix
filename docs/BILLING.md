@@ -1,78 +1,66 @@
 # Billing, display currency, and cost quotes
 
-<a href="../README.md">README</a>
-&nbsp;·&nbsp;
-<a href="./BILLING.zh-CN.md">简体中文</a>
-&nbsp;·&nbsp;
-<a href="./CLI.md">CLI</a>
+Reasonix keeps three facts separate:
 
-Reasonix separates three concepts that must never be mixed:
+1. `original`: an estimate from the selected public/custom rate card in its
+   pricing-table currency. It is not an invoice or a provider debit.
+2. `valuations`: occurrence-time `identity` and, when available, an
+   `official_table` estimate for the same model in the other official region.
+3. Wallet balances: the exact original-currency values returned by a provider.
 
-1. **Provider list prices** (`billing_currency` + rate card) — the original billable currency.
-2. **Occurrence-time valuations** (`CostQuote.valuations`) — CNY/USD views computed when the call finished.
-3. **Wallet balances** — multi-currency credit from the provider API, converted with FX only.
-
-## Configuration
+Reasonix has no runtime FX download, cache, refresh goroutine, or wallet
+conversion. Old `fx`/`rateSnapshot` fields remain readable for history only;
+new quotes never generate them.
 
 ```toml
 [billing]
-display_currency = "auto"   # auto | CNY | USD — display only
+display_currency = "auto"   # auto | CNY | USD
 
 [[providers]]
-name = "deepseek-flash"
-billing_currency = "USD"    # frozen list-price currency
+billing_currency = "USD"    # pricing-table basis, not settlement currency
 billing_mode = "payg"       # payg | subscription_equivalent
-# price / prices: custom rows always win over the official catalog
 ```
 
-- Legacy `[desktop].currency` still loads and migrates into `[billing].display_currency`.
-- Switching display currency **never** rewrites official or custom list prices.
-- `auto` resolves in Go: config language → host region → USD. Browser locale does not change Serve/CLI/Desktop list prices.
+Legacy `[desktop].currency` remains readable and migrates to
+`[billing].display_currency`. `auto` is intentionally unresolved in config:
+one valid wallet currency may become a tab/session hint; otherwise a single
+original currency is selected or mixed currencies are shown as buckets. A
+language, browser locale, or host region never changes a rate card.
 
-## CostQuote wire field
+## CostQuote
 
-Host surfaces (Desktop, Serve SSE, CLI JSON, ACP status, Remote) carry
-`usage.costQuote` on usage events. Shape:
+`usage.costQuote` is the canonical host-side usage payload:
 
 | Field | Meaning |
 | --- | --- |
-| `original` | Money in the provider billing currency |
-| `valuations.CNY` / `valuations.USD` | Occurrence-time views |
-| `valuations.*.basis` | `identity` \| `official_table` \| `fx` |
-| `selected` | View for the current display preference |
-| `estimated` | Always true for public rates / ECB (information-only FX) |
-| `complete` | False when a shared display total cannot be formed |
-| `billingMode` | `payg` or `subscription_equivalent` (PAYG-equivalent estimate) |
+| `original` | Original-currency rate-card estimate |
+| `originalTotals[]` | ISO-sorted original buckets for mixed aggregates |
+| `valuations.*.basis` | `identity` or `official_table` for new quotes |
+| `selected` | A single amount only when a display total exists |
+| `costComplete` | Usage and pricing facts are complete |
+| `displayComplete` | A requested single-currency total exists |
+| `complete` | Compatibility alias mirroring `displayComplete` |
+| `displayStatus` | `matched`, `fallback_original`, `bucketed`, or `unavailable` |
+| `aggregateMode` | `single_currency`, `common_valuation`, or `currency_buckets` |
 
-Legacy aliases `cost` / `costUsd` / `total_cost` / `sessionCostUsd` mirror
-`selected` only and must not be treated as USD unless `currency`/`currencyCode`
-says so.
+If a requested currency is unavailable but every original is the same, the
+original amount is shown with `fallback_original`. Mixed originals produce
+`originalTotals` and no scalar zero. `—` is reserved for missing usage or
+pricing (`unavailable`). Legacy scalar aliases (`cost`, `costUsd`,
+`total_cost`) are written only when `selected` exists.
 
-Valuation priority for the non-original display currency:
+## Wallets and diagnostics
 
-1. **official_table** — same model, peer-region public list price (DeepSeek, LongCat)
-2. **fx** — ECB euro reference cross rates (daily cache; never blocks model calls)
-3. incomplete — keep original; never invent a unified total
-
-## Diagnostics
+Wallets are never converted or cross-added. An explicit target uses the exact
+matching wallet; if it is absent, the real currency is shown with an ISO
+prefix. Automatic mode uses a single valid wallet currency only as a runtime
+hint. Multiple/unknown/error responses do not affect the cost facts.
 
 ```sh
 reasonix doctor billing
 reasonix doctor billing --json
 ```
 
-Prints display preference, resolved display currency, FX cache path/freshness,
-per-provider `billing_currency` / fingerprint / official catalog match, and
-whether custom prices are protected.
-
-## Wallets
-
-DeepSeek-style balance APIs return multiple `balance_infos` without a “billing
-region”. Reasonix never infers region from balance magnitude. Status lines show
-`≈` converted totals when FX is available, with tooltips listing each original
-wallet, conversion, rate date, and stale state.
-
-## Related issues
-
-This model supersedes partial Desktop-only currency patches such as PR #7790
-and addresses mixed-currency ledger correctness for #4565, #3527, and #4546.
+The compatible `fx` report is always `enabled=false` and has no cache. The
+report also lists the automatic selection policy, pricing-table currencies,
+and official-catalog matches.

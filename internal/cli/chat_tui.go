@@ -23,7 +23,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"reasonix/internal/agent"
-	"reasonix/internal/billing"
 	"reasonix/internal/boot"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
@@ -563,7 +562,8 @@ type modelSwitchMsg struct {
 // fetchBalance queries the provider's wallet balance off the event loop. It's a
 // no-op readout ("") when the provider declares no balance_url or the fetch
 // fails, so the status line stays quiet rather than surfacing an error.
-// Multi-wallet totals use FX only (never model regional price tables).
+// Wallets are displayed in their original currencies; no conversion or sum is
+// attempted when more than one currency is returned.
 func fetchBalance(ctrl control.Status) tea.Cmd {
 	return func() tea.Msg {
 		b, err := ctrl.Balance(context.Background())
@@ -572,17 +572,9 @@ func fetchBalance(ctrl control.Status) tea.Cmd {
 		}
 		displayCurrency := ""
 		if cfg, err := config.LoadForRootReadOnly("."); err == nil && cfg != nil {
-			displayCurrency = cfg.ResolveDisplayCurrency()
-			if home := config.ReasonixHomeDir(); home != "" {
-				billing.InitGlobalFX(home)
-			}
+			displayCurrency = cfg.ExplicitDisplayCurrency()
 		}
-		view := billing.ConvertBalance(b, displayCurrency, billing.GlobalRateTable(), time.Now().UTC())
-		text := view.DisplayApproxText()
-		if text == "" {
-			text = b.DisplayForCurrency(displayCurrency)
-		}
-		return balanceMsg{text: text}
+		return balanceMsg{text: b.DisplayForCurrency(displayCurrency)}
 	}
 }
 
