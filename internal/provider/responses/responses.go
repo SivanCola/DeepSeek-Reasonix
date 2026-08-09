@@ -618,10 +618,6 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 				}
 			}
 		case "response.output_item.done":
-			// Preserve completed server-tool calls whenever this provider was
-			// explicitly configured to execute web search. The replay contract is
-			// carried by the Responses item shape, not by a first-party hostname;
-			// verified compatible gateways such as OpenCode Go emit the same item.
 			if event.Item != nil && event.Item.Type == "web_search_call" && c.webSearch {
 				if _, ok := decodeReplayableWebSearchItem(event.Item.Raw); ok {
 					key := event.Item.ID

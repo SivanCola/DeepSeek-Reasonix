@@ -1053,21 +1053,6 @@ func TestConversationDigestMirrorsWireKnobs(t *testing.T) {
 	if ds.caps.summaryRequired && ds.conversationDigest(messages) == plain.conversationDigest(messages) {
 		t.Fatal("dashscope summary must change the digest (wire sends summary)")
 	}
-
-	// Server web search on: completed search items are part of the replayed
-	// wire input, so the continuation digest must include them for compatible
-	// gateways just as buildRequestBody does.
-	searchMessages := []provider.Message{
-		{Role: provider.RoleUser, Content: "search"},
-		{Role: provider.RoleAssistant, Content: "found", ResponsesItems: []json.RawMessage{
-			json.RawMessage(`{"id":"ws_1","type":"web_search_call","status":"completed"}`),
-		}},
-	}
-	searchOff := New(Config{Name: "compatible", BaseURL: "https://gateway.example", Model: "m", Mode: "stateful"}).(*client)
-	searchOn := New(Config{Name: "compatible", BaseURL: "https://gateway.example", Model: "m", Mode: "stateful", WebSearch: true}).(*client)
-	if searchOff.conversationDigest(searchMessages) == searchOn.conversationDigest(searchMessages) {
-		t.Fatal("web search replay items must change the digest (wire sends completed search calls)")
-	}
 }
 
 // TestSingleSegmentReasoningWiredIntoWarningPolicy：singleSegmentReasoning

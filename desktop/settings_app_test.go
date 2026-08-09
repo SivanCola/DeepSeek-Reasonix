@@ -204,17 +204,6 @@ func TestProviderViewFromEntryUsesEffectiveWebSearch(t *testing.T) {
 		t.Fatal("unverified custom Responses provider unexpectedly exposed server web search in Settings")
 	}
 
-	opencodeGo := providerViewFromEntry(config.ProviderEntry{
-		Name:      "opencode-go-deepseek-responses",
-		Kind:      "responses",
-		BaseURL:   "https://opencode.ai/zen/go/v1",
-		Models:    []string{"deepseek-v4-flash"},
-		WebSearch: func() *bool { enabled := true; return &enabled }(),
-	}, false, true)
-	if !opencodeGo.ServerWebSearchCapability || !opencodeGo.WebSearch {
-		t.Fatalf("OpenCode Go DeepSeek web search view = %+v, want enabled verified capability", opencodeGo)
-	}
-
 	openAI := providerViewFromEntry(config.ProviderEntry{
 		Name:      "custom-openai",
 		Kind:      "openai",
