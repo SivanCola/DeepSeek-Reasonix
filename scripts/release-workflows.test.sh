@@ -108,11 +108,21 @@ fi
 grep -Eq '^  resolve:$' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq 'sha:.*steps\.candidate\.outputs\.sha' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'bash scripts/resolve-desktop-candidate.sh' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq 'name: Smoke-test Wails approval in WebView2' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq "if: matrix.platform == 'windows/amd64'" "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq './release-control/scripts/test-webview2-approval-smoke.ps1' "$repo_root/.github/workflows/release-desktop.yml"
+test -f "$repo_root/scripts/test-webview2-approval-smoke.ps1"
+desktop_build_line="$(grep -n -m1 'name: Build and package' "$repo_root/.github/workflows/release-desktop.yml" | cut -d: -f1)"
+webview2_smoke_line="$(grep -n -m1 'name: Smoke-test Wails approval in WebView2' "$repo_root/.github/workflows/release-desktop.yml" | cut -d: -f1)"
+signpath_upload_line="$(grep -n -m1 'name: Upload unsigned Windows payload for SignPath' "$repo_root/.github/workflows/release-desktop.yml" | cut -d: -f1)"
+[ "$desktop_build_line" -lt "$webview2_smoke_line" ]
+[ "$webview2_smoke_line" -lt "$signpath_upload_line" ]
 [ "$(grep -Fc 'IN_ORCHESTRATOR: ${{ inputs.orchestrator }}' "$repo_root/.github/workflows/release-desktop.yml")" = "3" ]
 [ "$(grep -Fc 'name: Revalidate immutable Desktop candidate' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]
 [ "$(grep -Fc 'ref: ${{ needs.resolve.outputs.sha }}' "$repo_root/.github/workflows/release-desktop.yml")" -ge 4 ]
 [ "$(grep -Ec '^          path: release-control$' "$repo_root/.github/workflows/release-desktop.yml")" = "3" ]
 grep -Fq 'name: Checkout protected release verifier' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq 'scripts/test-webview2-approval-smoke.ps1' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq './release-control/scripts/verify-windows-authenticode.ps1' "$repo_root/.github/workflows/release-desktop.yml"
 [ "$(grep -Fc 'ref: ${{ github.workflow_sha }}' "$repo_root/.github/workflows/release-desktop.yml")" -ge 2 ]
 [ "$(grep -Fc 'bash release-control/scripts/resolve-desktop-candidate.sh' "$repo_root/.github/workflows/release-desktop.yml")" = "2" ]

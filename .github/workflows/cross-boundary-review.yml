@@ -1,0 +1,83 @@
+name: Cross-boundary review gate
+
+# Large changes or changes spanning multiple architectural owners are easy to
+# validate by aggregate CI while missing a small contract migration. Keep this
+# API-only so fork code is never executed with review permissions.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  independent-review:
+    name: independent cross-boundary review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const pull = context.payload.pull_request;
+            if (!pull || pull.draft) {
+              core.info("Draft or non-PR event; independent review is not required yet.");
+              return;
+            }
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pull.number,
+              per_page: 100,
+            });
+            const groups = new Set();
+            for (const { filename } of files) {
+              if (filename.startsWith("desktop/frontend/")) groups.add("frontend");
+              else if (filename.startsWith("desktop/")) groups.add("desktop-native");
+              else if (/^(?:internal|cmd)\//.test(filename)) groups.add("kernel");
+              else if (/^(?:\.github|scripts|tools)\//.test(filename)) groups.add("control-plane");
+              else if (/^(?:sdk|npm|site|docs|workers)\//.test(filename)) groups.add("distribution");
+            }
+            const changedLines = files.reduce((sum, file) => sum + file.changes, 0);
+            const requiresIndependentReview = files.length >= 25 || changedLines >= 1000 || groups.size >= 3;
+            if (!requiresIndependentReview) {
+              core.info(`PR has ${files.length} changed files, ${changedLines} changed lines, and ${groups.size} owner group(s); independent review gate is not required.`);
+              return;
+            }
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pull.number,
+              per_page: 100,
+            });
+            const latestByReviewer = new Map();
+            for (const review of reviews) {
+              const login = review.user?.login;
+              if (!login || login === pull.user.login || review.user?.type === "Bot") continue;
+              // A later inline comment does not revoke an existing approval;
+              // only review decisions participate in the latest-state fold.
+              if (review.state === "COMMENTED" || review.state === "PENDING") continue;
+              latestByReviewer.set(login, review.state);
+            }
+            const approvers = [];
+            for (const [login, state] of latestByReviewer) {
+              if (state !== "APPROVED") continue;
+              try {
+                const permission = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: login,
+                });
+                if (["admin", "maintain", "write"].includes(permission.data.permission)) approvers.push(login);
+              } catch (error) {
+                core.info(`Ignoring approval from ${login}: repository permission could not be verified (${error.status ?? "unknown"}).`);
+              }
+            }
+            if (approvers.length === 0) {
+              core.setFailed(`PR changes ${files.length} files and ${changedLines} lines across ${[...groups].join(", ") || "one uncategorized area"}; split it or obtain approval from a non-author maintainer.`);
+              return;
+            }
+            core.info(`Independent cross-boundary review approved by ${approvers.join(", ")}.`);
