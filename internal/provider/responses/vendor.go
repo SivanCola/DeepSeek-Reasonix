@@ -95,10 +95,12 @@ var vendorTable = map[string]vendorCapabilities{
 		toolCallReasoning:      true,
 		singleSegmentReasoning: false,
 		ignoresTemperature:     false,
-		defaultMaxOutputTokens: provider.DefaultHighOutputTokens,
-		// Compaction summaries are short briefings; keep the budget separate
-		// from ordinary answer output so a summary call cannot inherit 32K.
-		compactionOutputTokens: 4096,
+		// Auto ceiling for ordinary reasoning; high/max is applied via
+		// AutoOutputBudget at construction/request time (64K). Never 128K.
+		defaultMaxOutputTokens: provider.DefaultReasoningOutputTokens,
+		// Compaction summaries use a dedicated 16K-class budget, independent of
+		// ordinary answer output.
+		compactionOutputTokens: provider.DefaultOrdinaryOutputTokens,
 	},
 	"mimo": {
 		stateless:              true,
@@ -106,8 +108,9 @@ var vendorTable = map[string]vendorCapabilities{
 		toolCallReasoning:      true,
 		singleSegmentReasoning: true,
 		ignoresTemperature:     true,
-		defaultMaxOutputTokens: 128000,
-		compactionOutputTokens: 4096,
+		// Coding-agent default 32K; users may raise explicitly. Not 128K auto.
+		defaultMaxOutputTokens: provider.DefaultReasoningOutputTokens,
+		compactionOutputTokens: provider.DefaultOrdinaryOutputTokens,
 	},
 	// "" (unknown OpenAI-compatible endpoint) → zero value = default behavior.
 	// Unknown gateways deliberately do NOT inherit a large max-output default.

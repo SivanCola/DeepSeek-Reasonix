@@ -52,8 +52,7 @@ func (a *Agent) currentPromptCacheKey() string {
 }
 
 func (a *Agent) currentPromptCacheKeyLocked() string {
-	key := promptCacheKey(a.workspaceID, BranchID(a.sessionPath), a.modelRef)
-	return key + a.contextEditingLineageSuffixLocked()
+	return promptCacheKey(a.workspaceID, BranchID(a.sessionPath), a.modelRef)
 }
 
 // InvalidateProjection drops the in-memory and on-disk projection after
@@ -84,15 +83,11 @@ func (a *Agent) LoadProjectionSidecar(sessionPath string) {
 	if a == nil {
 		return
 	}
-	_, effective, policyVersion := resolveContextEditing(a.requestedContextEditing, a.prov)
 	a.compactionMu.Lock()
 	a.sessionPath = sessionPath
-	a.contextEditing = effective
-	a.contextEditingPolicyVersion = policyVersion
 	a.compactionState = CompactionState{}
+	a.checkpointState = "none"
 	a.compactionMu.Unlock()
-	a.nativeContextEditingAccepted.Store(false)
-	a.contextEditingRuntimeFallback.Store(false)
 	if sessionPath == "" {
 		a.resetCompactionState()
 		return
@@ -109,31 +104,27 @@ func (a *Agent) LoadProjectionSidecar(sessionPath string) {
 		return
 	}
 	a.compactionMu.Lock()
-	if st.ContextEditingFallbackLocal && !st.NativeContextEditingAccepted && a.contextEditing == "native" {
-		a.contextEditing = "local"
-		a.contextEditingRuntimeFallback.Store(true)
-	}
 	// Fail closed: known lineage requires an exact stored key (including
 	// rejecting blank keys on early sidecars written before this field).
 	key := a.currentPromptCacheKeyLocked()
 	if (key != "" && st.PromptCacheKey != key) ||
-		(st.Projection.CoveredPrefixHash == "" && st.BlockedInputHash == "" &&
-			!st.ContextEditingFallbackLocal && !st.NativeContextEditingAccepted) {
-		a.contextEditing = effective
-		a.contextEditingPolicyVersion = policyVersion
+		(st.Projection.CoveredPrefixHash == "" && st.BlockedInputHash == "") {
 		a.compactionState = CompactionState{}
-		a.contextEditingRuntimeFallback.Store(false)
+		a.checkpointState = "none"
 		a.compactionMu.Unlock()
 		return
 	}
 	a.compactionState = st
+	if len(st.Projection.Messages) > 0 {
+		a.checkpointState = "restored"
+	}
 	a.compactionMu.Unlock()
-	a.nativeContextEditingAccepted.Store(st.NativeContextEditingAccepted)
 }
 
 func (a *Agent) resetCompactionState() {
 	a.compactionMu.Lock()
 	a.compactionState = CompactionState{}
+	a.checkpointState = "none"
 	a.compactionMu.Unlock()
 }
 
@@ -148,16 +139,12 @@ func (a *Agent) BindSessionPath(path string, loadSidecar bool) {
 		a.LoadProjectionSidecar(path)
 		return
 	}
-	_, effective, policyVersion := resolveContextEditing(a.requestedContextEditing, a.prov)
 	a.compactionMu.Lock()
 	a.sessionPath = path
-	a.contextEditing = effective
-	a.contextEditingPolicyVersion = policyVersion
 	a.compactionState = CompactionState{}
+	a.checkpointState = "none"
 	a.cacheState = CacheStateUnknown
 	a.compactionMu.Unlock()
-	a.nativeContextEditingAccepted.Store(false)
-	a.contextEditingRuntimeFallback.Store(false)
 	a.compactStuck = false
 	a.consecutiveCompacts = 0
 	a.lastCompactionTurn.Store(0)
@@ -248,7 +235,7 @@ func (a *Agent) applyToolResultMaintenanceView(msgs []provider.Message, mode too
 		return msgs, st
 	}
 	st.InputHash = providerVisibleFingerprint(provider.ModelMessages(msgs))
-	head, start, ok := a.planCompaction(msgs, 1)
+	head, start, ok := a.planCompaction(msgs, 1, false)
 	if !ok {
 		if mode != toolResultPrune {
 			return msgs, st
@@ -299,6 +286,7 @@ func (a *Agent) installProjectionIfCurrent(st CompactionState, projectionVersion
 		a.compactionState = prev
 		return err
 	}
+	a.checkpointState = "applied"
 	return nil
 }
 

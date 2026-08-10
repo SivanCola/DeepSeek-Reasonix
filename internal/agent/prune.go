@@ -35,44 +35,20 @@ type PruneStats struct {
 	Force      bool
 }
 
-// SnipStaleToolResults shortens stale tool-result content older than the
-// protected recent tail, archiving the originals first. Idempotent; a no-op
-// when compaction is disabled (no context window).
+// SnipStaleToolResults is a no-op: automatic prune/snip projections are gone.
+// First-visible tool bounding happens at tool-result creation time instead.
 func (a *Agent) SnipStaleToolResults() (PruneStats, error) {
-	return a.maintainStaleToolResults(toolResultSnip)
+	return PruneStats{Mode: toolResultSnip}, nil
 }
 
-// PruneStaleToolResults elides stale tool-result content older than the
-// protected recent tail, archiving the originals first. It can upgrade already
-// snipped results to a shorter placeholder.
+// PruneStaleToolResults is a no-op: automatic prune/snip projections are gone.
 func (a *Agent) PruneStaleToolResults() (PruneStats, error) {
-	return a.maintainStaleToolResults(toolResultPrune)
+	return PruneStats{Mode: toolResultPrune}, nil
 }
 
 func (a *Agent) maintainStaleToolResults(mode toolResultMaintenanceMode) (PruneStats, error) {
-	st := PruneStats{Mode: mode}
-	if a.contextWindow <= 0 {
-		return st, nil
-	}
-	visible := a.modelVisibleMessages()
-	next, st := a.applyToolResultMaintenanceView(visible, mode)
-	st.Force = true
-	if st.Results == 0 {
-		return st, nil
-	}
-	before := a.currentProjectionVersion()
-	if err := a.installPruneProjection(next, st); err != nil {
-		return PruneStats{Mode: mode}, err
-	}
-	if a.currentProjectionVersion() == before {
-		return PruneStats{Mode: mode}, nil
-	}
-	a.compactionMu.Lock()
-	if a.compactionState.LastReceipt != nil {
-		st.Archive = a.compactionState.LastReceipt.Archive
-	}
-	a.compactionMu.Unlock()
-	return st, nil
+	// Retained for call-site compatibility; never installs a projection.
+	return PruneStats{Mode: mode}, nil
 }
 
 func shouldMaintainToolResult(m provider.Message, mode toolResultMaintenanceMode) bool {
@@ -110,13 +86,13 @@ func pruneToolResult(m provider.Message, archive string) string {
 
 func snipToolResult(m provider.Message, archive string, strategy snipStrategy) string {
 	if archive == "" {
-		archive = "not archived"
+		archive = "the canonical transcript"
 	}
 	lines := strings.Split(m.Content, "\n")
 	if len(lines) <= strategy.head+strategy.tail {
 		headChars := minInt(strategy.headChars, len(m.Content)/2)
 		tailChars := minInt(strategy.tailChars, len(m.Content)/4)
-		return fmt.Sprintf("%s%s, %d bytes archived to %s; single large line truncated]\n%s\n[... %d bytes omitted ...]\n%s",
+		return fmt.Sprintf("%s%s, %d bytes; full original retained in %s; single large line truncated]\n%s\n[... %d bytes omitted ...]\n%s",
 			snippedMarker, m.Name, len(m.Content), archive,
 			firstRunes(m.Content, headChars),
 			omittedBytes(m.Content, headChars, tailChars),
@@ -124,7 +100,7 @@ func snipToolResult(m provider.Message, archive string, strategy snipStrategy) s
 	}
 	head := strings.Join(lines[:strategy.head], "\n")
 	tail := strings.Join(lines[len(lines)-strategy.tail:], "\n")
-	return fmt.Sprintf("%s%s, %d bytes archived to %s; showing first %d lines and last %d lines]\n%s\n[... %d lines omitted ...]\n%s",
+	return fmt.Sprintf("%s%s, %d bytes; full original retained in %s; showing first %d lines and last %d lines]\n%s\n[... %d lines omitted ...]\n%s",
 		snippedMarker, m.Name, len(m.Content), archive, strategy.head, strategy.tail,
 		head, len(lines)-strategy.head-strategy.tail, tail)
 }

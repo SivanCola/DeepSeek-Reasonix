@@ -17,8 +17,9 @@ type summaryProjectionCommit struct {
 	sourceTokens, projectionTokens                   int
 }
 
-// commitSummaryProjection performs the final CAS, content-addressed archive,
-// and sidecar switch after all network and interceptor work has completed.
+// commitSummaryProjection performs the final CAS and durable sidecar switch
+// after all network and interceptor work has completed. Canonical history is
+// already the lossless archive, so checkpoint installation creates no copy.
 func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (CompactionState, error) {
 	current, currentVersion := a.session.snapshotMessagesVersion()
 	a.compactionMu.Lock()
@@ -31,15 +32,7 @@ func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (Compact
 		return CompactionState{}, errCompressStaleContext
 	}
 
-	archive := ""
-	if a.archiveDir != "" {
-		path, err := archiveMessages(a.archiveDir, commit.fold)
-		if err != nil {
-			return CompactionState{}, fmt.Errorf("archive: %w", err)
-		}
-		archive = path
-	}
-	state := a.summaryProjectionState(commit, archive)
+	state := a.summaryProjectionState(commit)
 	if err := a.installProjectionIfCurrent(state, commit.projectionVersion, commit.generation); err != nil {
 		if errors.Is(err, errCompressStaleContext) {
 			return CompactionState{}, err
@@ -49,12 +42,11 @@ func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (Compact
 	if commit.activeTurn != 0 && commit.trigger != CompactionTriggerManual {
 		a.lastCompactionTurn.Store(commit.activeTurn)
 	}
-	a.session.NoteContentRewrite("compact_" + commit.trigger)
 	a.emitContextMaintenance(state.LastReceipt)
 	return state, nil
 }
 
-func (a *Agent) summaryProjectionState(commit summaryProjectionCommit, archive string) CompactionState {
+func (a *Agent) summaryProjectionState(commit summaryProjectionCommit) CompactionState {
 	projectionVersion := commit.projectionVersion + 1
 	now := time.Now().UTC()
 	summaryHash := summaryContentHash(commit.summary)
@@ -65,25 +57,21 @@ func (a *Agent) summaryProjectionState(commit summaryProjectionCommit, archive s
 		ProjectionVersion: projectionVersion, CoveredCount: len(commit.canonical), CoveredPrefixHash: coveredHash,
 		InputHash: commit.inputHash, OutputHash: commit.outputHash, InputTokens: commit.sourceTokens,
 		ResultTokens: commit.projectionTokens, SavedTokens: max(0, commit.sourceTokens-commit.projectionTokens),
-		SummaryHash: summaryHash, Archive: archive, CacheBreak: true, CreatedAt: now,
+		SummaryHash: summaryHash, CacheBreak: true, CreatedAt: now,
 	}
-	state := CompactionState{
+	// Schema v3 keeps projection + receipt primary. last_trigger / last_mode /
+	// last_*_tokens remain for status/report surfaces that still read them.
+	return CompactionState{
 		SchemaVersion: compactionStateSchemaCurrent, TranscriptVersion: commit.transcriptVersion,
 		Generation: commit.generation + 1, PromptCacheKey: a.currentPromptCacheKey(),
-		NativeContextEditingAccepted: a.nativeContextEditingAccepted.Load(),
-		ContextEditingFallbackLocal:  a.contextEditingRuntimeFallback.Load(),
 		Projection: ContextProjection{
 			Messages: commit.projected, TranscriptVersion: commit.transcriptVersion,
 			ProjectionVersion: projectionVersion, CoveredCount: len(commit.canonical), CoveredPrefixHash: coveredHash,
 			SummaryHash: summaryHash, SourceTokens: commit.sourceTokens, ProjectionTokens: commit.projectionTokens,
 			ViewInputHash: commit.inputHash, ViewOutputHash: commit.outputHash, CreatedAt: now,
 		},
-		LastCacheState: a.CacheState(), LastTrigger: commit.trigger, LastMode: commit.result.Mode,
+		LastTrigger: commit.trigger, LastMode: CompactionModeSummarized,
 		LastSourceTokens: commit.sourceTokens, LastResultTokens: commit.projectionTokens,
 		LastReceipt: receipt, UpdatedAt: now,
 	}
-	if a.pricing != nil && commit.result.Usage != nil {
-		state.LastCompactionCost = a.pricing.Cost(commit.result.Usage)
-	}
-	return state
 }

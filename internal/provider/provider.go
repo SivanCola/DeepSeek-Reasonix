@@ -47,9 +47,11 @@ type Message struct {
 	// Content is the provider-visible conversation content. Keeping this legacy
 	// field provider-visible preserves replay for older CLI/Desktop releases.
 	Content string `json:"content,omitempty"`
-	// RawContent is the user-authored form of a user turn, when it differs from
-	// Content because the host added transient context. Older releases ignore
-	// this field and still replay the provider-visible Content safely.
+	// RawContent holds the full original when it differs from Content:
+	// for user turns, the user-authored text before host-injected context;
+	// for tool turns, the complete tool result when first-visible Content was
+	// bounded. ModelMessages always clears it so provider serialization, prompt
+	// cache hashes, and projection hashes never include it.
 	RawContent string `json:"raw_content,omitempty"`
 	// ProviderContent is a transitional field written by early Context Engine v2
 	// builds. Loaders migrate it into Content/RawContent before normal use.
@@ -220,11 +222,7 @@ type Request struct {
 	// output (Responses: text.format.type=json_object). Nil omits the field
 	// entirely — the common path must stay byte-stable for prompt caching.
 	ResponseFormat *ResponseFormat `json:"ResponseFormat,omitempty"`
-	EffortOverride string          `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
-	// ContextEditing is an explicit provider capability request. Providers that
-	// do not support native editing ignore it; local compaction remains the
-	// default when it is nil.
-	ContextEditing *ContextEditingPolicy `json:"ContextEditing,omitempty"`
+	EffortOverride string `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
 }
 
 // ResponseFormat asks a provider to constrain its output shape.
@@ -234,19 +232,40 @@ type ResponseFormat struct {
 	Type string `json:"type"`
 }
 
-// DefaultReasoningOutputTokens is the conservative provider-side budget used
-// for official reasoning APIs whose documented contract safely accepts 32K.
-// Unknown compatible gateways must opt in through configuration instead of
-// inheriting this value merely because they implement an OpenAI-shaped wire.
-const DefaultReasoningOutputTokens = 32 * 1024
+// Automatic output budgets when max_output_tokens = 0 ("automatic", not
+// unlimited). These only bound this turn's completion; they never feed
+// compact_ratio or maintenance triggers.
+const (
+	// DefaultOrdinaryOutputTokens is the auto budget for non-reasoning turns
+	// (ordinary Q&A / thinking disabled).
+	DefaultOrdinaryOutputTokens = 16 * 1024
+	// DefaultReasoningOutputTokens is the auto budget for ordinary reasoning
+	// / coding-agent turns (32K).
+	DefaultReasoningOutputTokens = 32 * 1024
+	// DefaultHighReasoningOutputTokens is the auto budget for high/max effort
+	// and complex multi-tool coding turns (64K). Prefer this over 128K.
+	DefaultHighReasoningOutputTokens = 64 * 1024
+	// DefaultHighOutputTokens is the explicit 128K ceiling. It is never chosen
+	// automatically; set max_output_tokens = 131072 only after repeated
+	// finish_reason=length truncations. Context summary still uses its own 16K.
+	DefaultHighOutputTokens = 128 * 1024
+)
 
-// DefaultHighOutputTokens is the raised output budget for reasoning APIs whose
-// documented contract safely accepts 128K-class ceilings (DeepSeek Responses
-// API allows up to 384K; MiMo allows up to 131072). Long reasoning turns
-// truncate under 32K, forcing many small write→test→fix iterations; a 128K
-// budget lets the model finish in one pass. Kept in one place so the three
-// protocols (Responses / Chat Completions / Anthropic) cannot drift apart.
-const DefaultHighOutputTokens = 128 * 1024
+// AutoOutputBudget resolves max_output_tokens=0 into a model-appropriate
+// total-output ceiling. Effort is the configured or per-request reasoning depth
+// (high/max raise the budget to 64K). Unknown compatible gateways should still
+// opt in by name rather than inheriting this merely from a wire shape.
+func AutoOutputBudget(reasoningEnabled bool, effort string) int {
+	if !reasoningEnabled {
+		return DefaultOrdinaryOutputTokens
+	}
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "high", "max":
+		return DefaultHighReasoningOutputTokens
+	default:
+		return DefaultReasoningOutputTokens
+	}
+}
 
 // TemperaturePtr wraps v in a pointer so callers that explicitly want a
 // specific temperature, including 0 for deterministic output, can distinguish
@@ -747,10 +766,6 @@ type Usage struct {
 	ContextReasoningTokens  int
 	ContextCacheHitTokens   int
 	ContextCacheMissTokens  int
-	// Native context-editing observations from the latest committed request.
-	ContextEditingType            string
-	ContextEditingClearedToolUses int
-	ContextEditingClearedTokens   int
 }
 
 // ContextFillTokens returns the latest-attempt context fill (prompt+completion)

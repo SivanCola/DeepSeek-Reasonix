@@ -232,6 +232,17 @@ func SaveCompactionState(sessionPath string, st CompactionState) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
+	dirHandle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	if err := dirHandle.Sync(); err != nil {
+		_ = dirHandle.Close()
+		return err
+	}
+	if err := dirHandle.Close(); err != nil {
+		return err
+	}
 	cleanup = false
 	return nil
 }

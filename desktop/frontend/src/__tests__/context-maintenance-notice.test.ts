@@ -7,12 +7,12 @@ function ok(value: unknown, message: string) {
 }
 
 const messages: Partial<Record<DictKey, string>> = {
-  "context.maintenanceTitle": "上下文维护",
-  "context.maintenanceActionPrune": "工具结果裁剪",
+  "context.maintenanceTitle": "上下文短视图",
+  "context.maintenanceAppliedSummary": "已生成上下文短视图 · 历史已摘要",
+  "context.maintenanceBlockedSummary": "上下文摘要未能形成安全短视图 · 已停止自动重试",
+  "context.maintenanceFailedSummary": "上下文摘要失败 · 已停止自动重试",
   "context.tokensValue": "{value} tokens",
-  "projectTree.status.paused": "已暂停",
-  "settings.typography.applied": "已应用",
-  "task.state.failed": "失败",
+  "summary.detail": "摘要",
 };
 
 const translate: Translator = (key, vars) => {
@@ -22,25 +22,35 @@ const translate: Translator = (key, vars) => {
 
 const applied = formatContextMaintenanceNotice({
   status: "applied",
-  action: "prune",
+  action: "summary",
   inputTokens: 120,
   resultTokens: 80,
   savedTokens: 40,
 }, translate);
-ok(applied === "上下文维护 · 工具结果裁剪 · 已应用 · 120 → 80 tokens · −40 tokens", `unexpected applied notice: ${applied}`);
-ok(!applied.includes("Context") && !applied.includes("applied"), "maintenance notice leaked hardcoded English");
+ok(applied === "已生成上下文短视图 · 历史已摘要", `unexpected applied notice: ${applied}`);
 
 const blocked = formatContextMaintenanceNotice({ status: "blocked" }, translate);
-ok(blocked === "上下文维护 · 已暂停", `unexpected blocked notice: ${blocked}`);
+ok(blocked === "上下文摘要未能形成安全短视图 · 已停止自动重试", `unexpected blocked notice: ${blocked}`);
+
+const failed = formatContextMaintenanceNotice({ status: "failed" }, translate);
+ok(failed === "上下文摘要失败 · 已停止自动重试", `unexpected failed notice: ${failed}`);
 
 const contextPanelSource = readFileSync(new URL("../components/ContextPanel.tsx", import.meta.url), "utf8");
 ok(
-  !contextPanelSource.includes('t("context.maintenanceProjected")'),
-  "ContextPanel must not render the internal context-maintenance composition block",
+  contextPanelSource.includes("context.maintenanceCanonical"),
+  "ContextPanel must show canonical vs model-visible tokens",
 );
 ok(
-  !contextPanelSource.includes("const maintenance = context?.maintenance"),
-  "ContextPanel must not derive hidden maintenance UI state",
+  contextPanelSource.includes("triggerTokens") || contextPanelSource.includes("maintenance?.triggerTokens"),
+  "ContextPanel must surface triggerTokens",
+);
+ok(
+  contextPanelSource.includes("checkpointState"),
+  "ContextPanel must surface checkpointState",
+);
+ok(
+  !contextPanelSource.includes("snipTrigger") && !contextPanelSource.includes("forceTrigger"),
+  "ContextPanel must not present retired multi-threshold triggers as user settings",
 );
 
 console.log("context-maintenance-notice: ok");

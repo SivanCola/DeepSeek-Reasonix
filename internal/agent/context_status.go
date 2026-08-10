@@ -12,6 +12,8 @@ type ContextMaintenanceSnapshot struct {
 	SnipTrigger       int
 	FoldTrigger       int
 	ForceTrigger      int
+	TriggerTokens     int
+	CheckpointState   string
 	HardInputCeiling  int
 	Headroom          int
 	ProjectionVersion uint64
@@ -26,6 +28,7 @@ func (a *Agent) ContextMaintenanceSnapshot() ContextMaintenanceSnapshot {
 	canonical, version := a.session.snapshotMessagesVersion()
 	a.compactionMu.Lock()
 	state := a.compactionState
+	checkpointState := a.checkpointState
 	a.compactionMu.Unlock()
 	visible := canonical
 	if projectionValid(state, canonical, version, a.currentPromptCacheKey()) {
@@ -33,13 +36,13 @@ func (a *Agent) ContextMaintenanceSnapshot() ContextMaintenanceSnapshot {
 			visible = projected
 		}
 	}
-	_, snip, fold := a.compactThresholds()
+	trigger := a.compactTrigger()
 	snapshot := ContextMaintenanceSnapshot{
 		CanonicalTokens:   a.estimatedPromptTokens(provider.ModelMessages(canonical)),
 		ProjectedTokens:   a.estimatedPromptTokens(provider.ModelMessages(visible)),
-		SnipTrigger:       snip,
-		FoldTrigger:       fold,
-		ForceTrigger:      a.forceCompactThreshold(fold),
+		FoldTrigger:       trigger,
+		TriggerTokens:     trigger,
+		CheckpointState:   stateCheckpointState(checkpointState, state),
 		HardInputCeiling:  a.hardInputCeiling(),
 		ProjectionVersion: state.Projection.ProjectionVersion,
 	}
@@ -54,9 +57,19 @@ func (a *Agent) ContextMaintenanceSnapshot() ContextMaintenanceSnapshot {
 	if state.LastReceipt != nil {
 		receipt := *state.LastReceipt
 		snapshot.LastReceipt = &receipt
-		if receipt.Status == "applied" && (receipt.Action == "snip" || receipt.Action == "prune" || receipt.Action == "native_tool_clear") {
+		if receipt.Status == "applied" && (receipt.Action == "prune" || receipt.Action == "summary") {
 			snapshot.LastSavedTokens = receipt.SavedTokens
 		}
 	}
 	return snapshot
+}
+
+func stateCheckpointState(runtimeState string, state CompactionState) string {
+	if len(state.Projection.Messages) == 0 {
+		return "none"
+	}
+	if runtimeState == "applied" {
+		return "applied"
+	}
+	return "restored"
 }

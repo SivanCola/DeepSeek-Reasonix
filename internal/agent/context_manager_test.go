@@ -25,9 +25,13 @@ func (p *failingSummaryProvider) Stream(context.Context, provider.Request) (<-ch
 }
 
 func TestContextManagerPersistsAndRestoresBlockedFailureFingerprint(t *testing.T) {
+	// Above compact_ratio but below the physical hard ceiling: a failed summary
+	// records a generation-scoped blocked receipt and does not reject the request.
+	// Below hard, Prepare returns the uncompacted view rather than ErrCompactionRequired.
+	const window = 10_000
 	messages := []provider.Message{
 		{Role: provider.RoleSystem, Content: "system"},
-		{Role: provider.RoleUser, Content: strings.Repeat("old task ", 500)},
+		{Role: provider.RoleUser, Content: "task"},
 		{Role: provider.RoleAssistant, Content: strings.Repeat("old work ", 500)},
 		{Role: provider.RoleUser, Content: "current"},
 		{Role: provider.RoleAssistant, Content: "tail"},
@@ -35,7 +39,8 @@ func TestContextManagerPersistsAndRestoresBlockedFailureFingerprint(t *testing.T
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	newAgent := func(p *failingSummaryProvider) *Agent {
 		a := New(p, tool.NewRegistry(), &Session{Messages: append([]provider.Message(nil), messages...)}, Options{
-			ContextWindow: 100, RecentKeep: 2, WorkspaceID: "workspace", ModelRef: "model",
+			ContextWindow: window, CompactRatio: 0.85, RecentKeep: 2,
+			WorkspaceID: "workspace", ModelRef: "model",
 		}, event.Discard)
 		a.BindSessionPath(path, true)
 		return a
@@ -43,12 +48,13 @@ func TestContextManagerPersistsAndRestoresBlockedFailureFingerprint(t *testing.T
 
 	firstProvider := &failingSummaryProvider{}
 	first := newAgent(firstProvider)
-	policy := ContextPreparePolicy{Trigger: CompactionTriggerPressure, ObservedInputTokens: 80}
+	// fold = 8500; hard = 9744. Observe between them so failure is non-fatal.
+	policy := ContextPreparePolicy{Trigger: CompactionTriggerPressure, ObservedInputTokens: 8600}
 	if _, err := first.contextManager().Prepare(context.Background(), policy); err != nil {
-		t.Fatalf("soft-threshold failure should persist blocked state without rejecting this request: %v", err)
+		t.Fatalf("above-ratio failure should persist blocked state without rejecting this request: %v", err)
 	}
-	if firstProvider.calls != 2 { // summarizeWithRetry makes two bounded attempts
-		t.Fatalf("summary calls = %d, want 2", firstProvider.calls)
+	if firstProvider.calls != 1 { // single summary attempt; no summarizeOnce second pass
+		t.Fatalf("summary calls = %d, want 1", firstProvider.calls)
 	}
 	if first.compactionState.BlockedInputHash == "" {
 		t.Fatal("failed summary did not persist a blocked input hash")
@@ -56,7 +62,7 @@ func TestContextManagerPersistsAndRestoresBlockedFailureFingerprint(t *testing.T
 	if _, err := first.contextManager().Prepare(context.Background(), policy); err != nil {
 		t.Fatal(err)
 	}
-	if firstProvider.calls != 2 {
+	if firstProvider.calls != 1 {
 		t.Fatalf("same in-memory fingerprint retried summary: calls=%d", firstProvider.calls)
 	}
 

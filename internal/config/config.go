@@ -1353,9 +1353,13 @@ type ProviderEntry struct {
 	resolvedSource    CredentialSource
 	BalanceURL        string `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
 	ContextWindow     int    `toml:"context_window"`
-	// MaxOutputTokens is a protocol-neutral total output budget. Zero lets the
-	// provider choose a safe default, a positive value is explicit, and a
-	// negative value omits optional wire limits. Anthropic still requires one.
+	// MaxOutputTokens is a protocol-neutral total output budget for one turn.
+	// Zero means automatic (not unlimited): ordinary 16K, reasoning 32K, high/max
+	// 64K — DeepSeek's default effort is high, so auto is typically ~64K.
+	// User guidance: 0 recommended; 32768 ordinary coding/cost control;
+	// 65536 heavy reasoning/long tools; 131072 only after finish_reason=length.
+	// A negative value omits optional wire limits when the protocol allows;
+	// Anthropic still requires max_tokens. Never feeds compact_ratio.
 	MaxOutputTokens int                          `toml:"max_output_tokens"`
 	Price           *provider.Pricing            `toml:"price"`  // legacy/provider-wide fallback
 	Prices          map[string]*provider.Pricing `toml:"prices"` // optional per-model prices; keys are model ids
@@ -1827,14 +1831,18 @@ func Default() *Config {
 			SystemPrompt: DefaultSystemPrompt,
 			// Normal interactive execution has no configurable total round cap. It
 			// is bounded by adaptive progress guards and context compaction instead.
-			MaxSteps:               0,
-			PlannerMaxSteps:        0,
-			AutoPlan:               "off",
-			SoftCompactRatio:       0.5,
-			ToolResultSnipRatio:    0.6,
-			CompactRatio:           0.8,
-			CompactForceRatio:      0.9,
-			ContextEditing:         "local",
+			MaxSteps:        0,
+			PlannerMaxSteps: 0,
+			AutoPlan:        "off",
+			// Soft/snip/force ratios are deprecated compatibility fields: loading
+			// clears them, rendering omits them, and only CompactRatio drives
+			// automatic maintenance. Default 0.85 for new configs; explicit 0.8
+			// remains valid for users who set it.
+			SoftCompactRatio:       0,
+			ToolResultSnipRatio:    0,
+			CompactRatio:           0.85,
+			CompactForceRatio:      0,
+			ContextEditing:         "",
 			MaxSubagentDepth:       2,
 			MaxSubagentConcurrency: 6,
 			MaxParallelWriters:     3,

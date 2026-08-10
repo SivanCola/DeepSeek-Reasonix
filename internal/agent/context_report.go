@@ -54,9 +54,7 @@ func (a *Agent) ContextReport() ContextReport {
 	rep.Projected = rep.ProjectionTokens != rep.CanonicalTokens
 
 	if a.contextWindow > 0 {
-		soft, snip, fold := a.compactThresholds()
-		rep.SoftThreshold, rep.SnipThreshold, rep.FoldThreshold = soft, snip, fold
-		rep.ForceThreshold = a.forceCompactThreshold(fold)
+		rep.FoldThreshold = a.compactTrigger()
 		if _, reason := a.contextMaintenanceBlocked(a.contextMaintenanceInputHash(visible)); reason != "" {
 			rep.BlockedReason = reason
 		}

@@ -248,13 +248,10 @@ type TaskTool struct {
 	parentReg                     *tool.Registry
 	maxSteps                      int
 	contextWindow                 int
-	softCompactRatio              float64
-	toolResultSnipRatio           float64
 	compactRatio                  float64
-	compactForceRatio             float64
 	recentKeep                    int
 	temperature                   float64
-	contextEditing, archiveDir    string
+	archiveDir                    string
 	keepPolicy                    KeepPolicy
 	sysPrompt                     string
 	gate                          Gate
@@ -332,11 +329,7 @@ func NewTaskToolWithOptions(opts TaskToolOptions) *TaskTool {
 		maxSteps:            opts.MaxSteps,
 		contextWindow:       opts.ContextWindow,
 		recentKeep:          opts.RecentKeep,
-		softCompactRatio:    opts.SoftCompactRatio,
-		toolResultSnipRatio: opts.ToolResultSnipRatio,
 		compactRatio:        opts.CompactRatio,
-		compactForceRatio:   opts.CompactForceRatio,
-		contextEditing:      normalizeContextEditing(opts.ContextEditing),
 		temperature:         opts.Temperature,
 		archiveDir:          opts.ArchiveDir,
 		keepPolicy:          opts.KeepPolicy,
@@ -1626,11 +1619,7 @@ func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *p
 		Gate:                t.gate,
 		ContextWindow:       ctxWin,
 		RecentKeep:          t.recentKeep,
-		SoftCompactRatio:    t.softCompactRatio,
-		ToolResultSnipRatio: t.toolResultSnipRatio,
 		CompactRatio:        t.compactRatio,
-		CompactForceRatio:   t.compactForceRatio,
-		ContextEditing:      t.contextEditing,
 		ArchiveDir:          t.archiveDir,
 		KeepPolicy:          t.keepPolicy,
 		ResponseLanguage:    ResponseLanguageFromContext(ctx),
