@@ -145,7 +145,12 @@ try {
     await page.waitForTimeout(60);
   }
   await page.mouse.move(points.edge.x, points.edge.y);
-  await page.waitForTimeout(6_000);
+  await page.waitForFunction(() => {
+    const transcript = document.querySelector(".transcript");
+    if (!transcript) return false;
+    const max = transcript.scrollHeight - transcript.clientHeight;
+    return max > 0 && transcript.scrollTop <= max * 0.3;
+  }, undefined, { timeout: 30_000 });
 
   const during = await page.evaluate(({ x, y }) => {
     const selection = document.getSelection();
