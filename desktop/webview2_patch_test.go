@@ -102,6 +102,7 @@ func TestWebView2PatchWiring(t *testing.T) {
 
 	recoveryPolicyDefined := false
 	recoveryPolicyApplied := false
+	recoveryCompletionApplied := false
 	nativeReloadApplied := false
 	diagnosticCollected := false
 	diagnosticObserved := false
@@ -110,10 +111,10 @@ func TestWebView2PatchWiring(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if fn.Name.Name == "shouldReloadFailedRenderer" {
+		if fn.Name.Name == "beginFailedRendererRecovery" {
 			recoveryPolicyDefined = true
 		}
-		if fn.Name.Name != "ProcessFailed" || fn.Body == nil {
+		if fn.Body == nil {
 			continue
 		}
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -135,15 +136,23 @@ func TestWebView2PatchWiring(t *testing.T) {
 				return true
 			}
 			switch selector.Sel.Name {
-			case "shouldReloadFailedRenderer":
-				recoveryPolicyApplied = true
+			case "beginFailedRendererRecovery":
+				if fn.Name.Name == "ProcessFailed" {
+					recoveryPolicyApplied = true
+				}
+			case "completeFailedRendererRecovery":
+				if fn.Name.Name == "NavigationCompleted" {
+					recoveryCompletionApplied = true
+				}
 			case "Reload":
-				nativeReloadApplied = true
+				if fn.Name.Name == "ProcessFailed" {
+					nativeReloadApplied = true
+				}
 			}
 			return true
 		})
 	}
-	if !recoveryPolicyDefined || !recoveryPolicyApplied || !nativeReloadApplied {
+	if !recoveryPolicyDefined || !recoveryPolicyApplied || !recoveryCompletionApplied || !nativeReloadApplied {
 		t.Fatal("patched WebView2 must throttle and natively reload failed main renderers")
 	}
 	if !diagnosticCollected || !diagnosticObserved {
@@ -173,6 +182,13 @@ func TestWebView2PatchWiring(t *testing.T) {
 		if _, err := os.Stat(filepath.Join("third_party", "go-webview2", "pkg", "edge", requiredFile)); err != nil {
 			t.Fatalf("required native diagnostics patch %s is missing: %v", requiredFile, err)
 		}
+	}
+	navigationArgsData, err := os.ReadFile(filepath.Join("third_party", "go-webview2", "pkg", "edge", "ICoreWebView2NavigationCompletedEventArgs.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(navigationArgsData), "GetIsSuccess") {
+		t.Fatal("renderer recovery must read NavigationCompleted.IsSuccess before reporting success")
 	}
 
 	installerData, err := os.ReadFile("webview2_diagnostics_windows.go")

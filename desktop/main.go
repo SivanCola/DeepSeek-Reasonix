@@ -133,9 +133,10 @@ func main() {
 		dragAndDrop = &options.DragAndDrop{DisableWebViewDrop: true}
 		bindings = nil
 	} else if !webView2ApprovalSmoke {
-		// Observe previous run for crash diagnostics only. Startup tracking must
-		// never force Safe Mode, disable plugins, or select a previous binary.
-		initializeLifecycleDiagnostics(app)
+		// Install the native observer before Wails creates the WebView. Lifecycle
+		// records themselves start from OnStartup, after Wails has rejected any
+		// second-instance handoff process.
+		prepareWebView2ProcessDiagnostics(app)
 		capturePendingUpdateHealthIdentity(app)
 	}
 

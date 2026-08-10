@@ -45,6 +45,33 @@ func TestParseDesktopLaunchArgsRemoteWindow(t *testing.T) {
 	}
 }
 
+func TestLifecycleDiagnosticsStartAfterWailsSingleInstanceGate(t *testing.T) {
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRun, _, ok := strings.Cut(string(mainSource), "err := wails.Run")
+	if !ok {
+		t.Fatal("main.go no longer contains the Wails run boundary")
+	}
+	if strings.Contains(beforeRun, "initializeLifecycleDiagnostics(") {
+		t.Fatal("lifecycle records must not be consumed or created before Wails rejects second instances")
+	}
+
+	appSource, err := os.ReadFile("app.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, afterStartup, ok := strings.Cut(string(appSource), "func (a *App) startup(ctx context.Context) {")
+	if !ok {
+		t.Fatal("app.go no longer contains App.startup")
+	}
+	startupBody, _, ok := strings.Cut(afterStartup, "\n}")
+	if !ok || !strings.Contains(startupBody, "initializeLifecycleDiagnostics(a)") {
+		t.Fatal("primary lifecycle initialization must remain owned by Wails OnStartup")
+	}
+}
+
 // TestMain isolates user config/state/cache dirs for the whole package. Without
 // this, tests that persist desktop state, sessions, cache, or CLI-style config
 // can leak into the developer's real Reasonix directories.

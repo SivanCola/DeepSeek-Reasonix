@@ -11,8 +11,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"time"
 
 	"reasonix/internal/config"
+	"reasonix/internal/filelock"
+	"reasonix/internal/fileutil"
 )
 
 // telemetry_app.go is the anonymous launch ping: one POST per app start carrying a
@@ -22,6 +25,8 @@ import (
 var pingEndpoint = "https://crash.reasonix.io/v1/ping"
 
 var installIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+var installIDRandRead = rand.Read
 
 type startupPing struct {
 	InstallID  string `json:"installId"`
@@ -35,20 +40,28 @@ type startupPing struct {
 
 func installID() (string, error) {
 	path := filepath.Join(config.MemoryUserDir(), "install-id")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	release, err := filelock.Acquire(ctx, path+".lock")
+	if err != nil {
+		return "", err
+	}
+	defer release()
+
 	if b, err := readFileUTF8(path); err == nil {
 		if id := string(bytes.TrimSpace(b)); installIDPattern.MatchString(id) {
 			return id, nil
 		}
 	}
 	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
+	if _, err := installIDRandRead(raw); err != nil {
 		return "", err
 	}
 	id := hex.EncodeToString(raw)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(path, []byte(id+"\n"), 0o644); err != nil {
+	if err := fileutil.AtomicWriteFile(path, []byte(id+"\n"), 0o644); err != nil {
 		return "", err
 	}
 	return id, nil

@@ -39,7 +39,7 @@ import {
   diagnosticWindowWhere,
   effectiveGroupSeverity,
   isDevelopmentGroup,
-  recordReportAggregates,
+  reportAggregateStatements,
 } from "./diagnostics_v2";
 export { diagnosticWindowWhere, effectiveGroupSeverity, isDevelopmentGroup } from "./diagnostics_v2";
 const MAX_BODY_BYTES = 96 * 1024;
@@ -130,6 +130,8 @@ export const CLI_TELEMETRY_SCHEMA_SQL = [
      os TEXT NOT NULL,
      arch TEXT NOT NULL,
      os_version TEXT NOT NULL DEFAULT '',
+     os_build INTEGER NOT NULL DEFAULT 0,
+     os_revision INTEGER NOT NULL DEFAULT 0,
      opens INTEGER NOT NULL DEFAULT 1,
      PRIMARY KEY (date, install_id)
    )`,
@@ -149,6 +151,10 @@ export const CLI_TELEMETRY_SCHEMA_SQL = [
      install_id TEXT NOT NULL,
      version TEXT NOT NULL,
      os TEXT NOT NULL,
+     arch TEXT NOT NULL DEFAULT '',
+     os_build INTEGER NOT NULL DEFAULT 0,
+     os_revision INTEGER NOT NULL DEFAULT 0,
+     event_count INTEGER NOT NULL DEFAULT 0,
      PRIMARY KEY (date, signal, bucket, install_id)
    )`,
   // No secondary indexes: each primary key already leads with `date`, which is
@@ -563,7 +569,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
       .first<{ status: string }>();
     const regressedAt = prior?.status === "resolved" ? now : "";
 
-    await env.DB.prepare(
+    const groupWrite = env.DB.prepare(
       `INSERT INTO groups (
          fingerprint, kind, count, first_seen, last_seen, first_version, last_version,
          status, title, source, label, error_type, top_frame, severity,
@@ -588,10 +594,9 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
          status = CASE WHEN status = 'resolved' THEN 'open' ELSE status END,
          regressed_at = CASE WHEN status = 'resolved' THEN ?3 ELSE regressed_at END`,
     )
-      .bind(fingerprint, r.kind, now, r.version, title, source, label, errorType, topFrame, severity, r.os, r.arch, buildCommit, channel, regressedAt)
-      .run();
+      .bind(fingerprint, r.kind, now, r.version, title, source, label, errorType, topFrame, severity, r.os, r.arch, buildCommit, channel, regressedAt);
 
-    await env.DB.prepare(
+    const sampleWrite = env.DB.prepare(
       `INSERT INTO reports (
          fingerprint, kind, version, os, arch, message, device, created_at,
          source, label, error_type, error_message, top_frame, build_commit, channel,
@@ -622,12 +627,9 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
         stack,
         r.occurredAt ?? "",
         webview2 ? JSON.stringify(webview2) : "",
-      )
-      .run();
+      );
 
-    await recordReportAggregates(env.DB, r, fingerprint, channel, webview2);
-
-    await env.DB.prepare(
+    const pruneSamples = env.DB.prepare(
       `DELETE FROM reports
        WHERE fingerprint = ?1
          AND id NOT IN (
@@ -635,9 +637,14 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
            UNION
            SELECT id FROM (SELECT id FROM reports WHERE fingerprint = ?1 ORDER BY id DESC LIMIT ?2)
          )`,
-    )
-      .bind(fingerprint, LATEST_SAMPLES_PER_GROUP)
-      .run();
+    ).bind(fingerprint, LATEST_SAMPLES_PER_GROUP);
+
+    await env.DB.batch([
+      groupWrite,
+      sampleWrite,
+      ...reportAggregateStatements(env.DB, r, fingerprint, channel, webview2),
+      pruneSamples,
+    ]);
   } catch (err) {
     return storageUnavailable("report", err);
   }

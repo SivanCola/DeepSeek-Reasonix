@@ -79,7 +79,24 @@ func newDesktopLifecycleTracker(root, appVersion, appChannel string) *desktopLif
 	}
 }
 
+// prepareWebView2ProcessDiagnostics runs before Wails creates the native WebView
+// so browser-process failures during early startup can still be persisted. It
+// deliberately does not consume or create lifecycle records: Wails has not run
+// its single-instance gate yet, and a handoff process exits from that gate.
+func prepareWebView2ProcessDiagnostics(app *App) {
+	if app == nil || app.remoteWindowTicket != "" || version == "dev" {
+		return
+	}
+	cfg, err := config.Load()
+	if err == nil && cfg.DesktopTelemetry() {
+		installWebView2ProcessObserver(app)
+	}
+}
+
 func initializeLifecycleDiagnostics(app *App) {
+	if app == nil || app.remoteWindowTicket != "" || app.lifecycle.tracker != nil {
+		return
+	}
 	app.lifecycle.previousRun = repair.NewStartupTracker("").ObservePreviousRun()
 	cfg, err := config.Load()
 	if err != nil || version == "dev" {
@@ -90,7 +107,6 @@ func initializeLifecycleDiagnostics(app *App) {
 	app.lifecycle.previousRuns = tracker.consumePrevious(enabled)
 	if enabled && tracker.start() == nil {
 		app.lifecycle.tracker = tracker
-		installWebView2ProcessObserver(app)
 	}
 }
 

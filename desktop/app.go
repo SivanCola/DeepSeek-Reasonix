@@ -563,6 +563,10 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Wails has completed its single-instance gate before invoking OnStartup.
+	// Claim prior records and create this process's journal only for the primary
+	// Desktop, never for a short-lived handoff process.
+	initializeLifecycleDiagnostics(a)
 	a.startWindowsWebView2StartupFallback(ctx)
 	if a.lifecycle.tracker.mark("ready"); a.remoteWindowTicket != "" {
 		// Remote web window child: no local tabs, tray, heartbeat, providers,

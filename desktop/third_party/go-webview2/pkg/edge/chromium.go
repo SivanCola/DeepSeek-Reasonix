@@ -31,6 +31,7 @@ const (
 	shouldDetectMonitorScaleChanges = true
 	reasonixNoProxyServerBrowserArg = "--no-proxy-server"
 	reasonixProcessRecoveryCooldown = 30 * time.Second
+	reasonixProcessRecoveryTimeout  = 30 * time.Second
 )
 
 func globalErrorHandler(err error) {
@@ -79,6 +80,8 @@ type Chromium struct {
 	processFailed                    *ICoreWebView2ProcessFailedEventHandler
 	processRecoveryMu                sync.Mutex
 	lastProcessRecovery              time.Time
+	pendingProcessRecovery           *ProcessFailedDiagnostic
+	processRecoveryTimer             *time.Timer
 
 	environment            *ICoreWebView2Environment
 	webview2RuntimeVersion string
@@ -564,6 +567,9 @@ func boolToInt(input bool) int {
 }
 
 func (e *Chromium) NavigationCompleted(sender *ICoreWebView2, args *ICoreWebView2NavigationCompletedEventArgs) uintptr {
+	if diagnostic, ok := e.completeFailedRendererRecovery(args); ok {
+		notifyProcessFailedObserver(diagnostic)
+	}
 	if e.NavigationCompletedCallback != nil {
 		e.NavigationCompletedCallback(sender, args)
 	}
@@ -584,38 +590,69 @@ func (e *Chromium) ProcessFailed(sender *ICoreWebView2, args *ICoreWebView2Proce
 	// WebView2 creates a replacement renderer after a main-frame renderer exit,
 	// but leaves it on an error page. A renderer reported as unresponsive also
 	// needs a native COM reload because JavaScript in that process may no longer
-	// run. Keep recovery below the public callback so Wails/Reasonix records the
-	// original failure first, and throttle it to avoid a crash/reload loop.
+	// run. Reload returning S_OK only means the navigation was accepted, so wait
+	// for NavigationCompleted before publishing the recovery outcome. Repeated
+	// renderer events are suppressed during the recovery cooldown.
 	kind := diagnostic.Kind
-	if kind != COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
-		if e.shouldReloadFailedRenderer(kind, time.Now()) {
+	if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
+		kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE {
+		if e.beginFailedRendererRecovery(diagnostic, time.Now()) {
 			if err := sender.Reload(); err != nil {
-				diagnostic.Recovery = "reload_failed"
+				if failed, ok := e.finishFailedRendererRecovery("reload_failed"); ok {
+					notifyProcessFailedObserver(failed)
+				}
 				e.errorCallback(fmt.Errorf("reload failed WebView2 renderer: %w", err))
-			} else {
-				diagnostic.Recovery = "reload_succeeded"
 			}
-		} else if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
-			kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE {
-			diagnostic.Recovery = "reload_failed"
 		}
+	} else if kind != COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
 		notifyProcessFailedObserver(diagnostic)
 	}
 	return 0
 }
 
-func (e *Chromium) shouldReloadFailedRenderer(kind COREWEBVIEW2_PROCESS_FAILED_KIND, now time.Time) bool {
-	if kind != COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED &&
-		kind != COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE {
-		return false
-	}
+func (e *Chromium) beginFailedRendererRecovery(diagnostic ProcessFailedDiagnostic, now time.Time) bool {
 	e.processRecoveryMu.Lock()
 	defer e.processRecoveryMu.Unlock()
-	if !e.lastProcessRecovery.IsZero() && now.Sub(e.lastProcessRecovery) < reasonixProcessRecoveryCooldown {
+	if e.pendingProcessRecovery != nil ||
+		(!e.lastProcessRecovery.IsZero() && now.Sub(e.lastProcessRecovery) < reasonixProcessRecoveryCooldown) {
 		return false
 	}
 	e.lastProcessRecovery = now
+	e.pendingProcessRecovery = &diagnostic
+	e.processRecoveryTimer = time.AfterFunc(reasonixProcessRecoveryTimeout, func() {
+		if failed, ok := e.finishFailedRendererRecovery("reload_failed"); ok {
+			notifyProcessFailedObserver(failed)
+		}
+	})
 	return true
+}
+
+func (e *Chromium) completeFailedRendererRecovery(args *ICoreWebView2NavigationCompletedEventArgs) (ProcessFailedDiagnostic, bool) {
+	recovery := "reload_failed"
+	if succeeded, err := args.GetIsSuccess(); err == nil && succeeded {
+		recovery = "reload_succeeded"
+	} else if err != nil {
+		e.errorCallback(fmt.Errorf("read WebView2 renderer reload outcome: %w", err))
+	}
+	return e.finishFailedRendererRecovery(recovery)
+}
+
+func (e *Chromium) finishFailedRendererRecovery(recovery string) (ProcessFailedDiagnostic, bool) {
+	e.processRecoveryMu.Lock()
+	if e.pendingProcessRecovery == nil {
+		e.processRecoveryMu.Unlock()
+		return ProcessFailedDiagnostic{}, false
+	}
+	diagnostic := *e.pendingProcessRecovery
+	e.pendingProcessRecovery = nil
+	timer := e.processRecoveryTimer
+	e.processRecoveryTimer = nil
+	e.processRecoveryMu.Unlock()
+	if timer != nil {
+		timer.Stop()
+	}
+	diagnostic.Recovery = recovery
+	return diagnostic, true
 }
 
 func (e *Chromium) NotifyParentWindowPositionChanged() error {

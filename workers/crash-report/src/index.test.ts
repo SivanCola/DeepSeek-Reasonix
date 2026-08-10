@@ -1,5 +1,7 @@
 ﻿import { describe, expect, it } from "vitest";
-import {
+// @ts-expect-error Node 22+ provides node:sqlite; Worker production code does not import it.
+import { DatabaseSync } from "node:sqlite";
+import worker, {
   groupFingerprintFromPath,
   isDevelopmentReport,
   effectiveGroupSeverity,
@@ -18,6 +20,8 @@ import {
   severityForReport,
   telemetryTableNames,
 } from "./index";
+import { crashGroups } from "./diagnostics_v2";
+import type { Env } from "./env";
 import { renderStats } from "./stats";
 import clientSurfaceMigrationSQL from "../migrate-client-surface.sql?raw";
 import diagnosticsMigrationSQL from "../migrate-diagnostics-v2.sql?raw";
@@ -177,14 +181,73 @@ describe("diagnostics v2 compatibility and privacy", () => {
     expect(isDevelopmentReport({ ...base, version: "v1.23.0", channel: "test" })).toBe(true);
   });
 
-  it("keeps migration and fresh schema aligned for all diagnostics-v2 storage", () => {
-    for (const table of ["report_daily", "report_installations"]) {
-      expect(diagnosticsMigrationSQL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS\\s+${table}\\b`));
-      expect(freshSchemaSQL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS\\s+${table}\\b`));
-    }
-    for (const column of ["webview2", "os_build", "os_revision", "event_count"]) {
-      expect(diagnosticsMigrationSQL).toContain(column);
-      expect(freshSchemaSQL).toContain(column);
+  it("keeps fresh, migrated, and runtime-bootstrap schemas aligned", () => {
+    const legacy = `
+      CREATE TABLE reports (id INTEGER PRIMARY KEY);
+      CREATE TABLE pings (
+        date TEXT NOT NULL, install_id TEXT NOT NULL, version TEXT NOT NULL, os TEXT NOT NULL,
+        arch TEXT NOT NULL, os_version TEXT NOT NULL DEFAULT '', opens INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (date, install_id)
+      );
+      CREATE TABLE cli_pings (
+        date TEXT NOT NULL, install_id TEXT NOT NULL, version TEXT NOT NULL, os TEXT NOT NULL,
+        arch TEXT NOT NULL, os_version TEXT NOT NULL DEFAULT '', opens INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (date, install_id)
+      );
+      CREATE TABLE metric_users (
+        date TEXT NOT NULL, signal TEXT NOT NULL, bucket TEXT NOT NULL, install_id TEXT NOT NULL,
+        version TEXT NOT NULL, os TEXT NOT NULL, PRIMARY KEY (date, signal, bucket, install_id)
+      );
+      CREATE TABLE cli_metric_users (
+        date TEXT NOT NULL, signal TEXT NOT NULL, bucket TEXT NOT NULL, install_id TEXT NOT NULL,
+        version TEXT NOT NULL, os TEXT NOT NULL, PRIMARY KEY (date, signal, bucket, install_id)
+      );
+    `;
+    const columns = (db: DatabaseSync, table: string) =>
+      db.prepare(`PRAGMA table_info(${table})`).all().map((row: Record<string, unknown>) => String(row.name));
+
+    const fresh = new DatabaseSync(":memory:");
+    const migrated = new DatabaseSync(":memory:");
+    const runtimeBootstrap = new DatabaseSync(":memory:");
+    try {
+      fresh.exec(freshSchemaSQL);
+      migrated.exec(legacy);
+      migrated.exec(diagnosticsMigrationSQL);
+      runtimeBootstrap.exec(CLI_TELEMETRY_SCHEMA_SQL.join(";\n"));
+
+      const additiveColumns: Record<string, string[]> = {
+        reports: ["webview2"],
+        pings: ["os_build", "os_revision"],
+        cli_pings: ["os_build", "os_revision"],
+        metric_users: ["arch", "os_build", "os_revision", "event_count"],
+        cli_metric_users: ["arch", "os_build", "os_revision", "event_count"],
+      };
+      for (const [table, expected] of Object.entries(additiveColumns)) {
+        expect(columns(migrated, table)).toEqual(expect.arrayContaining(expected));
+        expect(columns(fresh, table)).toEqual(expect.arrayContaining(expected));
+      }
+      for (const table of ["report_daily", "report_installations"]) {
+        expect(columns(migrated, table)).toEqual(columns(fresh, table));
+      }
+      for (const table of ["cli_pings", "cli_metric_users"]) {
+        expect(columns(runtimeBootstrap, table)).toEqual(columns(fresh, table));
+      }
+
+      runtimeBootstrap.exec(`
+        INSERT INTO cli_pings
+          (date, install_id, version, os, arch, os_version, os_build, os_revision, opens)
+        VALUES
+          (date('now'), '0123456789abcdef0123456789abcdef', 'v1', 'windows', 'amd64', '10', 17763, 1, 1);
+        INSERT INTO cli_metric_users
+          (date, version, os, arch, os_build, os_revision, signal, bucket, install_id, event_count)
+        VALUES
+          (date('now'), 'v1', 'windows', 'amd64', 17763, 1, 'turns', 'count',
+           '0123456789abcdef0123456789abcdef', 1);
+      `);
+    } finally {
+      fresh.close();
+      migrated.close();
+      runtimeBootstrap.close();
     }
     expect(diagnosticsMigrationSQL).not.toMatch(/\bDROP\b/);
   });
@@ -198,6 +261,139 @@ describe("stats window and release baseline", () => {
 
   it("does not promote prerelease or synthetic non-semver labels", () => {
     expect(newestReleaseVersion(["v1.19.4", "v1.20.0-beta.1", "dev", "v9.9.9-test"])).toBe("v1.19.4");
+  });
+});
+
+describe("diagnostics v2 storage consistency", () => {
+  it("commits every report write through one D1 batch", async () => {
+    let batchCalls = 0;
+    let directRuns = 0;
+    let committed: Array<{ sql: string }> = [];
+    const db = {
+      prepare(sql: string) {
+        const statement = {
+          sql,
+          bind() {
+            return statement;
+          },
+          async first() {
+            return null;
+          },
+          async run() {
+            directRuns++;
+            return {};
+          },
+        };
+        return statement;
+      },
+      async batch(statements: Array<{ sql: string }>) {
+        batchCalls++;
+        committed = statements;
+        return [];
+      },
+    } as unknown as D1Database;
+    const env = {
+      DB: db,
+      RATE_LIMITER: { async limit() { return { success: true }; } },
+    } as unknown as Env;
+
+    const body = JSON.stringify({
+      installId: "a".repeat(32),
+      kind: "crash",
+      version: "v1.23.0",
+      os: "windows",
+      arch: "amd64",
+      message: "browser process exited",
+    });
+    const response = await worker.fetch(
+      new Request("https://crash.reasonix.io/v1/report", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(new TextEncoder().encode(body).byteLength),
+          "cf-connecting-ip": "127.0.0.1",
+        },
+        body,
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(202);
+    expect(batchCalls).toBe(1);
+    expect(directRuns).toBe(0);
+    expect(committed).toHaveLength(5);
+    expect(committed.map((statement) => statement.sql)).toEqual([
+      expect.stringContaining("INSERT INTO groups"),
+      expect.stringContaining("INSERT INTO reports"),
+      expect.stringContaining("INSERT INTO report_daily"),
+      expect.stringContaining("INSERT INTO report_installations"),
+      expect.stringContaining("DELETE FROM reports"),
+    ]);
+  });
+
+  it("orders the SQL limit and returned groups by affected installations first", async () => {
+    let querySQL = "";
+    const row = (fingerprint: string, severity: string, affectedInstalls: number) => ({
+      fingerprint,
+      status: "open",
+      severity,
+      regressed_at: "",
+      first_version: "v1.23.0",
+      count: 100,
+      seen: "2026-08-10",
+      title: "browser process exited",
+      last_version: "v1.23.0",
+      last_channel: "stable",
+      affected_installs: affectedInstalls,
+      window_events: 100,
+      identified_events: 100,
+      active_build_installs: 0,
+      kind: "crash",
+      source: "desktop.webview2",
+      label: "browser_process_exited",
+      error_type: "",
+      top_frame: "",
+      last_os: "windows",
+      last_arch: "amd64",
+    });
+    const db = {
+      prepare(sql: string) {
+        querySQL = sql;
+        return {
+          async all() {
+            return { results: [row("b".repeat(64), "critical", 1), row("a".repeat(64), "low", 20)] };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const env = { DB: db } as unknown as Env;
+
+    const result = await crashGroups(env, {
+      status: "",
+      source: "",
+      version: "",
+      os: "",
+      platform: "",
+      osBuild: "",
+      arch: "",
+      channel: "",
+      runtimeVersion: "",
+      failureKind: "",
+      failureReason: "",
+      recovery: "",
+      gpu: "",
+      newLatest: false,
+      regressed: false,
+      windowDays: 7,
+    }, "");
+
+    expect(querySQL.indexOf("affected_installs DESC")).toBeLessThan(
+      querySQL.indexOf("CASE WHEN status = 'open'"),
+    );
+    expect(result.results.map((group) => group.fingerprint)).toEqual([
+      "a".repeat(64),
+      "b".repeat(64),
+    ]);
   });
 });
 
@@ -227,12 +423,12 @@ describe("telemetry deployment order compatibility", () => {
     }
   });
 
-  it("keeps the migration and Worker bootstrap schema identical", () => {
-    const normalize = (sql: string) => sql.replace(/\s+/g, " ").trim().replace(/;$/, "");
-    const migration = normalize(clientSurfaceMigrationSQL);
-    for (const statement of CLI_TELEMETRY_SCHEMA_SQL) {
-      expect(migration).toContain(normalize(statement));
-    }
+  it("extends the legacy CLI migration with the diagnostics bootstrap columns", () => {
+    const runtimeSchema = CLI_TELEMETRY_SCHEMA_SQL.join("\n");
+    expect(runtimeSchema).toContain("os_build INTEGER NOT NULL DEFAULT 0");
+    expect(runtimeSchema).toContain("os_revision INTEGER NOT NULL DEFAULT 0");
+    expect(runtimeSchema).toContain("arch TEXT NOT NULL DEFAULT ''");
+    expect(runtimeSchema).toContain("event_count INTEGER NOT NULL DEFAULT 0");
   });
 
   it("uses additive idempotent DDL when the Worker deploys before the migration", async () => {

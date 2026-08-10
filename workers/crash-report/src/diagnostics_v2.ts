@@ -41,8 +41,8 @@ function compareDiagnosticPriority(a: GroupPriorityRow, b: GroupPriorityRow, lat
   const statusRank = (value: string) => (value === "open" ? 0 : 1);
   const severityRank = (value: string) => ({ critical: 0, high: 1, medium: 2, low: 3 })[value] ?? 4;
   return (
-    statusRank(a.status) - statusRank(b.status) ||
     Number(b.affected_installs ?? 0) - Number(a.affected_installs ?? 0) ||
+    statusRank(a.status) - statusRank(b.status) ||
     severityRank(a.severity) - severityRank(b.severity) ||
     Number(b.first_version === latestVersion) - Number(a.first_version === latestVersion) ||
     Number(Boolean(b.regressed_at)) - Number(Boolean(a.regressed_at)) ||
@@ -134,6 +134,8 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
     ) daily ON daily.fingerprint = groups.fingerprint
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY
+      affected_installs DESC,
+      window_events DESC,
       CASE WHEN status = 'open' THEN 0 ELSE 1 END,
       CASE
         WHEN severity = 'critical' THEN 0
@@ -149,8 +151,6 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
       END,
       ${latestOrder}
       CASE WHEN regressed_at <> '' THEN 0 ELSE 1 END,
-      affected_installs DESC,
-      window_events DESC,
       count DESC,
       last_seen DESC
     LIMIT 50`;
@@ -198,34 +198,39 @@ type WebView2AggregateInput = {
   gpuDisabled: boolean;
 };
 
-export async function recordReportAggregates(
+export function reportAggregateStatements(
   db: Env["DB"],
   report: ReportAggregateInput,
   fingerprint: string,
   channel: string,
   webview2?: WebView2AggregateInput,
-): Promise<void> {
-  await db.prepare(
-    `INSERT INTO report_daily (date, fingerprint, events, identified_events)
-     VALUES (date('now'), ?1, 1, ?2)
-     ON CONFLICT (date, fingerprint) DO UPDATE SET
-       events = events + 1, identified_events = identified_events + ?2`,
-  ).bind(fingerprint, report.installId ? 1 : 0).run();
-  if (!report.installId) return;
-  await db.prepare(
-    `INSERT INTO report_installations (
-       date, fingerprint, install_id, version, os, arch, os_build, os_revision, channel,
-       runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled, events
-     ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
-     ON CONFLICT (date, fingerprint, install_id) DO UPDATE SET
-       version = ?3, os = ?4, arch = ?5, os_build = ?6, os_revision = ?7, channel = ?8,
-       runtime_version = ?9, failure_kind = ?10, failure_reason = ?11, exit_code = ?12,
-       recovery = ?13, gpu_disabled = ?14, events = events + 1`,
-  ).bind(
-    fingerprint, report.installId, report.version, report.os, report.arch,
-    report.device?.osBuild ?? 0, report.device?.osRevision ?? 0, channel,
-    webview2?.runtimeVersion ?? "", webview2?.kind ?? "", webview2?.reason ?? "",
-    webview2?.exitCode ?? null, webview2?.recovery ?? "",
-    webview2 ? (webview2.gpuDisabled ? 1 : 0) : null,
-  ).run();
+): D1PreparedStatement[] {
+  const statements = [
+    db.prepare(
+      `INSERT INTO report_daily (date, fingerprint, events, identified_events)
+       VALUES (date('now'), ?1, 1, ?2)
+       ON CONFLICT (date, fingerprint) DO UPDATE SET
+         events = events + 1, identified_events = identified_events + ?2`,
+    ).bind(fingerprint, report.installId ? 1 : 0),
+  ];
+  if (!report.installId) return statements;
+  statements.push(
+    db.prepare(
+      `INSERT INTO report_installations (
+         date, fingerprint, install_id, version, os, arch, os_build, os_revision, channel,
+         runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled, events
+       ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
+       ON CONFLICT (date, fingerprint, install_id) DO UPDATE SET
+         version = ?3, os = ?4, arch = ?5, os_build = ?6, os_revision = ?7, channel = ?8,
+         runtime_version = ?9, failure_kind = ?10, failure_reason = ?11, exit_code = ?12,
+         recovery = ?13, gpu_disabled = ?14, events = events + 1`,
+    ).bind(
+      fingerprint, report.installId, report.version, report.os, report.arch,
+      report.device?.osBuild ?? 0, report.device?.osRevision ?? 0, channel,
+      webview2?.runtimeVersion ?? "", webview2?.kind ?? "", webview2?.reason ?? "",
+      webview2?.exitCode ?? null, webview2?.recovery ?? "",
+      webview2 ? (webview2.gpuDisabled ? 1 : 0) : null,
+    ),
+  );
+  return statements;
 }
