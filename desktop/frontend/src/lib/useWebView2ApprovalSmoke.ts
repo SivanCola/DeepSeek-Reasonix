@@ -5,6 +5,17 @@ import { webView2ApprovalSmokeEnabled } from "./webView2ApprovalSmoke";
 
 type NativeAnimate = typeof Element.prototype.animate;
 
+export function WebView2ApprovalSmoke({
+  activeTabId,
+  approval,
+}: {
+  activeTabId: string | undefined;
+  approval: WireApproval | undefined;
+}) {
+  useWebView2ApprovalSmoke(activeTabId, approval);
+  return null;
+}
+
 export function useWebView2ApprovalSmoke(activeTabId: string | undefined, approval: WireApproval | undefined) {
   const started = useRef(false);
   const sawApproval = useRef(false);

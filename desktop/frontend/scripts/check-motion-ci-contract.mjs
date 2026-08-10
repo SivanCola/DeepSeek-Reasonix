@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const workflow = readFileSync(resolve(repoRoot, ".github/workflows/ci.yml"), "utf8");
 const packageJSON = JSON.parse(readFileSync(resolve(repoRoot, "desktop/frontend/package.json"), "utf8"));
+const appSource = readFileSync(resolve(repoRoot, "desktop/frontend/src/App.tsx"), "utf8");
 
 function jobBody(name, nextName) {
   const match = workflow.match(new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)\\n  ${nextName}:`));
@@ -33,6 +34,13 @@ for (const required of [
   if (!windowsJob.includes(required)) {
     throw new Error(`motion-ci-contract: desktop-windows must include ${required}`);
   }
+}
+
+if (!appSource.includes('lazy(() => import("./lib/useWebView2ApprovalSmoke")')) {
+  throw new Error("motion-ci-contract: WebView2 smoke instrumentation must stay out of the normal startup bundle");
+}
+if (appSource.includes('from "./lib/useWebView2ApprovalSmoke"')) {
+  throw new Error("motion-ci-contract: WebView2 smoke instrumentation must not use a static App import");
 }
 
 const motionScript = packageJSON.scripts?.["test:motion"] ?? "";
