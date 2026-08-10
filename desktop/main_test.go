@@ -45,7 +45,7 @@ func TestParseDesktopLaunchArgsRemoteWindow(t *testing.T) {
 	}
 }
 
-func TestLifecycleDiagnosticsStartAfterWailsSingleInstanceGate(t *testing.T) {
+func TestLifecycleDiagnosticsUsePreWailsOwnershipGate(t *testing.T) {
 	mainSource, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatal(err)
@@ -54,8 +54,8 @@ func TestLifecycleDiagnosticsStartAfterWailsSingleInstanceGate(t *testing.T) {
 	if !ok {
 		t.Fatal("main.go no longer contains the Wails run boundary")
 	}
-	if strings.Contains(beforeRun, "initializeLifecycleDiagnostics(") {
-		t.Fatal("lifecycle records must not be consumed or created before Wails rejects second instances")
+	if !strings.Contains(beforeRun, "prepareDesktopDiagnostics(app)") {
+		t.Fatal("main process must claim diagnostics ownership before Wails starts")
 	}
 
 	appSource, err := os.ReadFile("app.go")
@@ -68,7 +68,7 @@ func TestLifecycleDiagnosticsStartAfterWailsSingleInstanceGate(t *testing.T) {
 	}
 	startupBody, _, ok := strings.Cut(afterStartup, "\n}")
 	if !ok || !strings.Contains(startupBody, "initializeLifecycleDiagnostics(a)") {
-		t.Fatal("primary lifecycle initialization must remain owned by Wails OnStartup")
+		t.Fatal("previous lifecycle consumption must remain owned by Wails OnStartup")
 	}
 }
 

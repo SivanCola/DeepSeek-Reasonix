@@ -105,7 +105,14 @@ func (t *StartupTracker) ObservePreviousRun() PreviousRunObservation {
 	// Re-read the claimed bytes so a legacy writer that completed between the
 	// initial read and rename cannot be misclassified from a stale snapshot.
 	state, err = readStartupState(claimed)
-	if err != nil || state.Phase == "" || state.Phase == "clean-exit" {
+	if err != nil || state.Phase == "" {
+		// A legacy owner may still have been replacing the file while this old
+		// format was claimed. Preserve ambiguous bytes instead of turning a
+		// partial write into evidence loss.
+		_ = os.Rename(claimed, t.path)
+		return PreviousRunObservation{}
+	}
+	if state.Phase == "clean-exit" {
 		return PreviousRunObservation{}
 	}
 	if runningStartupPhase(state.Phase) && state.PID > 0 && t.processAlive(state.PID) {

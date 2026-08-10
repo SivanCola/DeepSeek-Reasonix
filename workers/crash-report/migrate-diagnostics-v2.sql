@@ -1,20 +1,53 @@
--- Diagnostics v2: additive Windows attribution and 30-day installation counts.
+-- Diagnostics v2: additive cross-platform attribution and 30-day installation counts.
 -- Apply after a D1 backup and before deploying the matching Worker.
 
 ALTER TABLE reports ADD COLUMN webview2 TEXT NOT NULL DEFAULT '';
+ALTER TABLE reports ADD COLUMN web_runtime TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE pings ADD COLUMN os_build INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE pings ADD COLUMN os_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pings ADD COLUMN channel TEXT NOT NULL DEFAULT '';
+ALTER TABLE pings ADD COLUMN distro_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE pings ADD COLUMN distro_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE pings ADD COLUMN kernel_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE pings ADD COLUMN session_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE pings ADD COLUMN runtime_engine TEXT NOT NULL DEFAULT '';
+ALTER TABLE pings ADD COLUMN runtime_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE pings ADD COLUMN gpu_mode TEXT NOT NULL DEFAULT '';
 ALTER TABLE cli_pings ADD COLUMN os_build INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE cli_pings ADD COLUMN os_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE cli_pings ADD COLUMN channel TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_pings ADD COLUMN distro_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_pings ADD COLUMN distro_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_pings ADD COLUMN kernel_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_pings ADD COLUMN session_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_pings ADD COLUMN runtime_engine TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_pings ADD COLUMN runtime_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_pings ADD COLUMN gpu_mode TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE metric_users ADD COLUMN arch TEXT NOT NULL DEFAULT '';
 ALTER TABLE metric_users ADD COLUMN os_build INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE metric_users ADD COLUMN os_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE metric_users ADD COLUMN channel TEXT NOT NULL DEFAULT '';
+ALTER TABLE metric_users ADD COLUMN distro_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE metric_users ADD COLUMN distro_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE metric_users ADD COLUMN kernel_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE metric_users ADD COLUMN session_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE metric_users ADD COLUMN runtime_engine TEXT NOT NULL DEFAULT '';
+ALTER TABLE metric_users ADD COLUMN runtime_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE metric_users ADD COLUMN gpu_mode TEXT NOT NULL DEFAULT '';
 ALTER TABLE metric_users ADD COLUMN event_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE cli_metric_users ADD COLUMN arch TEXT NOT NULL DEFAULT '';
 ALTER TABLE cli_metric_users ADD COLUMN os_build INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE cli_metric_users ADD COLUMN os_revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE cli_metric_users ADD COLUMN channel TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_metric_users ADD COLUMN distro_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_metric_users ADD COLUMN distro_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_metric_users ADD COLUMN kernel_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_metric_users ADD COLUMN session_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_metric_users ADD COLUMN runtime_engine TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_metric_users ADD COLUMN runtime_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE cli_metric_users ADD COLUMN gpu_mode TEXT NOT NULL DEFAULT '';
 ALTER TABLE cli_metric_users ADD COLUMN event_count INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS report_daily (
@@ -34,13 +67,18 @@ CREATE TABLE IF NOT EXISTS report_installations (
   arch TEXT NOT NULL,
   os_build INTEGER NOT NULL DEFAULT 0,
   os_revision INTEGER NOT NULL DEFAULT 0,
+  distro_id TEXT NOT NULL DEFAULT '',
+  distro_version TEXT NOT NULL DEFAULT '',
+  kernel_version TEXT NOT NULL DEFAULT '',
+  session_type TEXT NOT NULL DEFAULT '',
   channel TEXT NOT NULL DEFAULT '',
+  runtime_engine TEXT NOT NULL DEFAULT '',
   runtime_version TEXT NOT NULL DEFAULT '',
   failure_kind TEXT NOT NULL DEFAULT '',
   failure_reason TEXT NOT NULL DEFAULT '',
   exit_code INTEGER,
   recovery TEXT NOT NULL DEFAULT '',
-  gpu_disabled INTEGER,
+  gpu_mode TEXT NOT NULL DEFAULT 'unknown',
   events INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (date, fingerprint, install_id)
 );
@@ -57,19 +95,36 @@ CREATE TABLE IF NOT EXISTS report_event_dimensions (
   arch TEXT NOT NULL,
   os_build INTEGER NOT NULL DEFAULT 0,
   os_revision INTEGER NOT NULL DEFAULT 0,
+  distro_id TEXT NOT NULL DEFAULT '',
+  distro_version TEXT NOT NULL DEFAULT '',
+  kernel_version TEXT NOT NULL DEFAULT '',
+  session_type TEXT NOT NULL DEFAULT '',
   channel TEXT NOT NULL DEFAULT '',
+  runtime_engine TEXT NOT NULL DEFAULT '',
   runtime_version TEXT NOT NULL DEFAULT '',
   failure_kind TEXT NOT NULL DEFAULT '',
   failure_reason TEXT NOT NULL DEFAULT '',
   exit_code TEXT NOT NULL DEFAULT 'unknown',
   recovery TEXT NOT NULL DEFAULT '',
-  gpu_disabled INTEGER NOT NULL DEFAULT -1,
+  gpu_mode TEXT NOT NULL DEFAULT 'unknown',
   events INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (
     date, fingerprint, install_id, version, os, arch, os_build, os_revision,
-    channel, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled
+    distro_id, distro_version, kernel_version, session_type, channel,
+    runtime_engine, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_mode
   )
 );
 
 CREATE INDEX IF NOT EXISTS report_event_dimensions_fingerprint_date
   ON report_event_dimensions (fingerprint, date);
+
+CREATE INDEX IF NOT EXISTS pings_diagnostics_window
+  ON pings (date, os, os_build, distro_id, session_type, channel);
+
+CREATE TABLE IF NOT EXISTS diagnostics_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO diagnostics_meta (key, value)
+VALUES ('installation_linked_since', date('now'));

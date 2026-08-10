@@ -284,14 +284,16 @@ desktop/
 
 The desktop app sends one anonymous ping per launch to `crash.reasonix.io`:
 a random anonymous install id (generated locally and not an account id), app
-version, OS, architecture, OS build, and revision. When the previous process ended abnormally, the next
-normal launch may also send a bounded native diagnostic (lifecycle phase,
-symbolized stack, WebView2 Runtime/process reason/exit code/GPU/recovery fields,
-window failure kind, and coarse device facts).
+version, OS, architecture, Windows build/revision or bounded Linux
+distribution/kernel/session facts, and Web Runtime/GPU mode. When the previous
+process ended abnormally, the next normal launch may also send a bounded native
+diagnostic (lifecycle phase, symbolized stack, WebView2 or WebKitGTK Runtime,
+process reason/exit code/recovery fields, window failure kind, and coarse device
+facts).
 Panic values are removed and paths/secrets are scrubbed before the report is
 queued. The install id is attached only while sending and is not stored in a
 pending crash file. It never includes conversations, account data, API keys,
-file contents, or full local paths.
+file contents, usernames, hostnames, GPU driver details, or full local paths.
 
 Opt out any time: Settings > Updates > "Anonymous usage ping", or set
 `telemetry = false` under `[desktop]` in the global config. Dev builds

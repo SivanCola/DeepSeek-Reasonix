@@ -62,29 +62,32 @@ type crashBreadcrumb struct {
 }
 
 type crashReport struct {
-	InstallID       string              `json:"installId,omitempty"`
-	Kind            string              `json:"kind"`
-	Version         string              `json:"version"`
-	OS              string              `json:"os"`
-	Arch            string              `json:"arch"`
-	Message         string              `json:"message"`
-	Device          deviceInfo          `json:"device"`
-	SchemaVersion   int                 `json:"schemaVersion,omitempty"`
-	Source          string              `json:"source,omitempty"`
-	Label           string              `json:"label,omitempty"`
-	ErrorType       string              `json:"errorType,omitempty"`
-	ErrorMessage    string              `json:"errorMessage,omitempty"`
-	Stack           string              `json:"stack,omitempty"`
-	ComponentStack  string              `json:"componentStack,omitempty"`
-	TopFrame        string              `json:"topFrame,omitempty"`
-	FingerprintHint string              `json:"fingerprintHint,omitempty"`
-	BuildCommit     string              `json:"buildCommit,omitempty"`
-	Channel         string              `json:"channel,omitempty"`
-	Language        string              `json:"language,omitempty"`
-	View            string              `json:"view,omitempty"`
-	Breadcrumbs     []crashBreadcrumb   `json:"breadcrumbs,omitempty"`
-	OccurredAt      string              `json:"occurredAt,omitempty"`
-	WebView2        *webView2Diagnostic `json:"webview2,omitempty"`
+	InstallID       string                `json:"installId,omitempty"`
+	Kind            string                `json:"kind"`
+	Version         string                `json:"version"`
+	OS              string                `json:"os"`
+	Arch            string                `json:"arch"`
+	Message         string                `json:"message"`
+	Device          deviceInfo            `json:"device"`
+	SchemaVersion   int                   `json:"schemaVersion,omitempty"`
+	Source          string                `json:"source,omitempty"`
+	Label           string                `json:"label,omitempty"`
+	ErrorType       string                `json:"errorType,omitempty"`
+	ErrorMessage    string                `json:"errorMessage,omitempty"`
+	Stack           string                `json:"stack,omitempty"`
+	ComponentStack  string                `json:"componentStack,omitempty"`
+	TopFrame        string                `json:"topFrame,omitempty"`
+	FingerprintHint string                `json:"fingerprintHint,omitempty"`
+	BuildCommit     string                `json:"buildCommit,omitempty"`
+	Channel         string                `json:"channel,omitempty"`
+	Language        string                `json:"language,omitempty"`
+	View            string                `json:"view,omitempty"`
+	Breadcrumbs     []crashBreadcrumb     `json:"breadcrumbs,omitempty"`
+	OccurredAt      string                `json:"occurredAt,omitempty"`
+	WebRuntime      *webRuntimeDiagnostic `json:"webRuntime,omitempty"`
+	// WebView2 is retained only so pending reports written by preview builds can
+	// still be decoded and forwarded after upgrade. New reports use WebRuntime.
+	WebView2 *webView2Diagnostic `json:"webview2,omitempty"`
 }
 
 type frontendCrashPayload struct {

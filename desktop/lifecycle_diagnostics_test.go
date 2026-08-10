@@ -3,6 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -24,6 +27,7 @@ func TestDesktopLifecycleDeadRecordIsConsumedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	dead.mark("healthy")
+	dead.stopWriter()
 
 	reader := lifecycleTrackerForTest(t, root, os.Getpid(), "reader")
 	got := reader.consumePrevious(true)
@@ -35,12 +39,110 @@ func TestDesktopLifecycleDeadRecordIsConsumedOnce(t *testing.T) {
 	}
 }
 
+func TestDesktopLifecycleConcurrentConsumersClaimOnce(t *testing.T) {
+	root := t.TempDir()
+	dead := lifecycleTrackerForTest(t, root, 4242, "dead-concurrent")
+	if err := dead.start(); err != nil {
+		t.Fatal(err)
+	}
+	dead.stopWriter()
+
+	const observers = 16
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	var group sync.WaitGroup
+	var reports atomic.Int32
+	for observer := range observers {
+		ready.Add(1)
+		group.Go(func() {
+			reader := lifecycleTrackerForTest(t, root, os.Getpid(), "reader-"+strconv.Itoa(observer))
+			ready.Done()
+			<-start
+			if len(reader.consumePrevious(true)) == 1 {
+				reports.Add(1)
+			}
+		})
+	}
+	ready.Wait()
+	close(start)
+	group.Wait()
+	if got := reports.Load(); got != 1 {
+		t.Fatalf("concurrent reports = %d, want 1", got)
+	}
+}
+
+func TestDesktopDiagnosticsOwnershipIsNonBlockingAndExclusive(t *testing.T) {
+	oldVersion := version
+	version = "v1.23.0"
+	t.Cleanup(func() { version = oldVersion })
+
+	first := NewApp()
+	prepareDesktopDiagnostics(first)
+	t.Cleanup(func() {
+		first.lifecycle.tracker.clean()
+		first.releaseDesktopDiagnosticsOwnership()
+	})
+	if !first.diagnosticsOwner {
+		t.Fatal("first process did not claim diagnostics ownership")
+	}
+
+	second := NewApp()
+	prepareDesktopDiagnostics(second)
+	if second.diagnosticsOwner {
+		second.releaseDesktopDiagnosticsOwnership()
+		t.Fatal("second process unexpectedly claimed diagnostics ownership")
+	}
+
+	first.lifecycle.tracker.clean()
+	first.releaseDesktopDiagnosticsOwnership()
+	prepareDesktopDiagnostics(second)
+	t.Cleanup(func() {
+		second.lifecycle.tracker.clean()
+		second.releaseDesktopDiagnosticsOwnership()
+	})
+	if !second.diagnosticsOwner {
+		t.Fatal("ownership was not released for the next process")
+	}
+}
+
+func TestDesktopDiagnosticsSkipsNonPrimaryLaunchModes(t *testing.T) {
+	oldVersion := version
+	oldSmoke := activeWebView2ApprovalSmoke.enabled
+	t.Cleanup(func() {
+		version = oldVersion
+		activeWebView2ApprovalSmoke.enabled = oldSmoke
+	})
+
+	remote := NewApp()
+	remote.remoteWindowTicket = "remote"
+	prepareDesktopDiagnostics(remote)
+	if remote.diagnosticsOwner {
+		t.Fatal("remote window claimed diagnostics ownership")
+	}
+
+	version = "dev"
+	dev := NewApp()
+	prepareDesktopDiagnostics(dev)
+	if dev.diagnosticsOwner {
+		t.Fatal("dev build claimed diagnostics ownership")
+	}
+
+	version = "v1.23.0"
+	activeWebView2ApprovalSmoke.enabled = true
+	smoke := NewApp()
+	prepareDesktopDiagnostics(smoke)
+	if smoke.diagnosticsOwner {
+		t.Fatal("approval smoke claimed diagnostics ownership")
+	}
+}
+
 func TestDesktopLifecycleLiveRecordIsPreserved(t *testing.T) {
 	root := t.TempDir()
 	live := lifecycleTrackerForTest(t, root, 4242, "live")
 	if err := live.start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(live.stopWriter)
 
 	reader := lifecycleTrackerForTest(t, root, os.Getpid(), "reader")
 	reader.processAlive = func(pid int) bool { return pid == 4242 }
@@ -58,6 +160,7 @@ func TestDesktopLifecycleOptOutConsumesWithoutReporting(t *testing.T) {
 	if err := dead.start(); err != nil {
 		t.Fatal(err)
 	}
+	dead.stopWriter()
 
 	reader := lifecycleTrackerForTest(t, root, os.Getpid(), "reader")
 	if got := reader.consumePrevious(false); len(got) != 0 {
@@ -65,6 +168,25 @@ func TestDesktopLifecycleOptOutConsumesWithoutReporting(t *testing.T) {
 	}
 	if _, err := os.Stat(dead.path); !os.IsNotExist(err) {
 		t.Fatalf("opt-out did not consume dead record: %v", err)
+	}
+}
+
+func TestDesktopLifecycleUnknownSchemaIsPreserved(t *testing.T) {
+	root := t.TempDir()
+	future := lifecycleTrackerForTest(t, root, 4242, "future")
+	future.state.SchemaVersion = desktopLifecycleSchemaVersion + 1
+	if err := future.start(); err != nil {
+		t.Fatal(err)
+	}
+	future.stopWriter()
+
+	reader := lifecycleTrackerForTest(t, root, os.Getpid(), "reader")
+	if got := reader.consumePrevious(true); len(got) != 0 {
+		t.Fatalf("future lifecycle record observed: %+v", got)
+	}
+	state, err := readDesktopLifecycleState(future.path)
+	if err != nil || state.SchemaVersion != desktopLifecycleSchemaVersion+1 {
+		t.Fatalf("future lifecycle record was not preserved: state=%+v err=%v", state, err)
 	}
 }
 
@@ -83,5 +205,36 @@ func TestDesktopLifecycleCleanRemovesCurrentRecord(t *testing.T) {
 	tracker.clean()
 	if _, err := os.Stat(tracker.path); !os.IsNotExist(err) {
 		t.Fatalf("clean lifecycle record remains: %v", err)
+	}
+}
+
+func TestDesktopLifecycleAsyncWriterKeepsLatestPhase(t *testing.T) {
+	tracker := lifecycleTrackerForTest(t, t.TempDir(), os.Getpid(), "async")
+	if err := tracker.start(); err != nil {
+		t.Fatal(err)
+	}
+	tracker.markAsync("ready")
+	tracker.markAsync("healthy")
+	tracker.stopWriter()
+
+	state, err := readDesktopLifecycleState(tracker.path)
+	if err != nil || state.Phase != "healthy" {
+		t.Fatalf("async lifecycle state = %+v err=%v", state, err)
+	}
+}
+
+func TestDesktopShutdownPanicPreservesLifecycleRecord(t *testing.T) {
+	tracker := lifecycleTrackerForTest(t, t.TempDir(), os.Getpid(), "shutdown-panic")
+	if err := tracker.start(); err != nil {
+		t.Fatal(err)
+	}
+
+	func() {
+		defer func() { _ = recover() }()
+		completeDesktopShutdown(tracker, func() { panic("teardown failed") })
+	}()
+	state, err := readDesktopLifecycleState(tracker.path)
+	if err != nil || state.Phase != "shutting_down" {
+		t.Fatalf("panic lifecycle state = %+v err=%v", state, err)
 	}
 }

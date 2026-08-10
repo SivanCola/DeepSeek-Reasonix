@@ -13,6 +13,8 @@ import {
   ensureCLITelemetrySchema,
   refreshMetricUserRollup,
   severityForReport,
+  maxSeverity,
+  nativeWebRuntimeFingerprintBasis,
   telemetryTableNames,
 } from "./index";
 import type { Env } from "./env";
@@ -286,6 +288,31 @@ describe("metric_user rollup", () => {
 });
 
 describe("diagnostic classification", () => {
+
+  it("keeps native runtime fingerprints independent from recovery outcomes", () => {
+    const failure = { engine: "webview2", kind: "render_process_exited", reason: "crashed", exitCode: 1 };
+    expect(nativeWebRuntimeFingerprintBasis(failure)).toBe(
+      nativeWebRuntimeFingerprintBasis({ ...failure }),
+    );
+    expect(nativeWebRuntimeFingerprintBasis({ ...failure, reason: "out_of_memory" })).not.toBe(
+      nativeWebRuntimeFingerprintBasis(failure),
+    );
+  });
+
+  it("bounds unknown runtime buckets and WebView2 unresponsive exit code", () => {
+    expect(nativeWebRuntimeFingerprintBasis({
+      engine: "webkitgtk", kind: "random_kind_123", reason: "random_reason_456",
+    })).toBe("webkitgtk\nunknown\nunknown\nunknown");
+    expect(nativeWebRuntimeFingerprintBasis({
+      engine: "webview2", kind: "render_process_unresponsive", reason: "unresponsive", exitCode: 259,
+    })).toBe("webview2\nrender_process_unresponsive\nunresponsive\nunknown");
+  });
+
+  it("only upgrades aggregate severity", () => {
+    expect(maxSeverity("high", "low")).toBe("high");
+    expect(maxSeverity("low", "high")).toBe("high");
+    expect(maxSeverity("critical", "high")).toBe("critical");
+  });
   it("keeps development reports out of release crash priority", () => {
     expect(isDevelopmentReport({ ...base, version: "dev-32bit" })).toBe(true);
     expect(isDevelopmentReport({ ...base, version: "v1.40.0", channel: "dev" })).toBe(true);

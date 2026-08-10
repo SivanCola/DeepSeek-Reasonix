@@ -514,13 +514,21 @@ type metricCounter struct {
 }
 
 type metricsPayload struct {
-	InstallID  string          `json:"installId,omitempty"`
-	Version    string          `json:"version"`
-	OS         string          `json:"os"`
-	Arch       string          `json:"arch,omitempty"`
-	OSBuild    int             `json:"osBuild,omitempty"`
-	OSRevision int             `json:"osRevision,omitempty"`
-	Counters   []metricCounter `json:"counters"`
+	InstallID      string          `json:"installId,omitempty"`
+	Version        string          `json:"version"`
+	OS             string          `json:"os"`
+	Arch           string          `json:"arch,omitempty"`
+	Channel        string          `json:"channel,omitempty"`
+	OSBuild        int             `json:"osBuild,omitempty"`
+	OSRevision     int             `json:"osRevision,omitempty"`
+	DistroID       string          `json:"distroId,omitempty"`
+	DistroVersion  string          `json:"distroVersion,omitempty"`
+	KernelVersion  string          `json:"kernelVersion,omitempty"`
+	SessionType    string          `json:"sessionType,omitempty"`
+	RuntimeEngine  string          `json:"runtimeEngine,omitempty"`
+	RuntimeVersion string          `json:"runtimeVersion,omitempty"`
+	GPUMode        string          `json:"gpuMode,omitempty"`
+	Counters       []metricCounter `json:"counters"`
 }
 
 func flatten(c counters) []metricCounter {
@@ -555,10 +563,15 @@ func (a *App) flushMetrics() {
 	}
 	metricsPendingMu.Unlock()
 	flat := flatten(readCounters(temp))
-	osBuild, osRevision := platformOSBuild()
+	device := collectDeviceInfo()
+	runtimeContext := webRuntimeContextForTelemetry(500 * time.Millisecond)
 	payload := metricsPayload{
-		Version: version, OS: runtime.GOOS, Arch: runtime.GOARCH,
-		OSBuild: osBuild, OSRevision: osRevision, Counters: flat,
+		Version: version, OS: runtime.GOOS, Arch: runtime.GOARCH, Channel: channel,
+		OSBuild: device.OSBuild, OSRevision: device.OSRevision,
+		DistroID: device.DistroID, DistroVersion: device.DistroVersion,
+		KernelVersion: device.KernelVersion, SessionType: device.SessionType,
+		RuntimeEngine: runtimeContext.Engine, RuntimeVersion: runtimeContext.RuntimeVersion,
+		GPUMode: runtimeContext.GPUMode, Counters: flat,
 	}
 	if id, err := installID(); err == nil {
 		payload.InstallID = id

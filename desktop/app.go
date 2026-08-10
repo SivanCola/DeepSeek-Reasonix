@@ -55,7 +55,6 @@ import (
 	"reasonix/internal/repair"
 	"reasonix/internal/sessiontemp"
 	"reasonix/internal/skill"
-	"reasonix/internal/stats"
 	"reasonix/internal/store"
 	"reasonix/internal/taskmonitor"
 	"reasonix/internal/tool"
@@ -333,6 +332,11 @@ type App struct {
 
 	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
 	lifecycle desktopLifecycleRuntime
+	// diagnosticsOwner is acquired before Wails starts so Linux's OnStartup
+	// ordering cannot let a second-instance handoff create lifecycle evidence.
+	diagnosticsOwner        bool
+	diagnosticsOwnerRelease func()
+	diagnosticsTelemetry    bool
 	// Healthy-update identity is captured before Wails starts. A process may
 	// commit only the complete probationary transaction it actually booted from,
 	// never a rewritten or later same-version retry.
@@ -563,10 +567,13 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// The single-instance gate ran; only the primary Desktop journals lifecycle.
+	// Only the process that claimed the pre-Wails diagnostics lock consumes
+	// lifecycle evidence. This remains correct on Linux where Wails invokes
+	// OnStartup before its DBus single-instance handoff.
 	initializeLifecycleDiagnostics(a)
 	a.startWindowsWebView2StartupFallback(ctx)
-	if a.lifecycle.tracker.mark("ready"); a.remoteWindowTicket != "" {
+	a.lifecycle.tracker.markAsync("ready")
+	if a.remoteWindowTicket != "" {
 		// Remote web window child: no local tabs, tray, heartbeat, providers,
 		// or remote manager. domReady consumes the ticket and navigates; the
 		// owner watcher closes the window if the primary Desktop disappears.
@@ -962,91 +969,7 @@ func (a *App) shutdown(context.Context) {
 		// Remote web window child has no local state to stop.
 		return
 	}
-	defer a.lifecycle.tracker.clean()
-	if a.lifecycle.tracker.mark("shutting_down"); a.workspaceHub != nil {
-		a.workspaceHub.close()
-	}
-	// A real quit also terminates surviving web windows: their tunnels die with
-	// this process, so a leftover window would only show a dead Serve page.
-	// The remote Serve itself stays resident by design. Background (tray)
-	// close never reaches shutdown and keeps the windows alive.
-	a.closeAllRemoteWindows()
-	// Run after controller teardown (and after its deferred lifecycle unlocks)
-	// so every accepted usage record reaches disk before a normal app exit.
-	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = stats.Flush(flushCtx, config.StatsDir())
-	}()
-	a.stopDeferredRebuildRetry()
-	a.stopHistoryIndexMigration()
-	a.stopMainThreadWatchdog()
-	if a.heartbeat != nil {
-		a.heartbeat.Stop()
-	}
-	a.stopBotRuntime()
-	a.stopRemoteRuntime()
-	a.stopTray()
-	// Terminal process shutdown is independent from controller teardown. Do it
-	// before acquiring runtime lifecycle locks so a slow PTY cannot delay while
-	// holding locks used by Wails-bound chat calls.
-	if a.terminals != nil {
-		a.terminals.closeAll()
-	}
-	// Save window geometry synchronously from Go so it's persisted even if the
-	// frontend's beforeunload promise hasn't resolved yet.
-	a.saveWindowStateSync()
-	// Serialize shutdown with controller rebuilds and live MCP mutations. This
-	// uses the same lifecycle lock order as lockMCPMutation so launch authorization
-	// or reconnect cannot have its captured Host closed underneath it.
-	a.runtimeRebuildMu.Lock()
-	defer a.runtimeRebuildMu.Unlock()
-	a.runtimeAdmissionMu.Lock()
-	defer a.runtimeAdmissionMu.Unlock()
-	// Close every shared plugin host before releasing the lifecycle barrier,
-	// even if a tab cleanup panics.
-	defer a.closeAllSharedHosts()
-
-	a.mu.RLock()
-	tabs := a.runtimeTabsLocked()
-	type shutdownItem struct {
-		tab      *WorkspaceTab
-		ctrl     control.SessionAPI
-		readOnly bool
-	}
-	items := make([]shutdownItem, 0, len(tabs))
-	for _, t := range tabs {
-		if t.Ctrl != nil {
-			items = append(items, shutdownItem{tab: t, ctrl: t.Ctrl, readOnly: t.ReadOnly})
-		}
-	}
-	a.mu.RUnlock()
-	for _, it := range items {
-		if !it.readOnly {
-			if err := it.ctrl.SnapshotForShutdown(); err != nil {
-				slog.Warn("desktop: shutdown snapshot failed", "tab", it.tab.ID, "err", err)
-			}
-		}
-		it.ctrl.Close()
-		it.tab.releaseSessionLease()
-		a.mu.Lock()
-		a.releaseSessionRuntimeLocked(it.tab)
-		a.mu.Unlock()
-	}
-	if a.startupReady.Load() {
-		// A visible UI is sufficient health evidence even if the user closes the
-		// window before the delayed post-DOM task runs.
-		if err := a.commitPendingUpdateHealth(); err != nil {
-			slog.Warn("desktop: commit healthy update during shutdown", "err", err)
-		}
-		if archived, err := archiveSupersededPendingUpdateAfterReady(); err != nil {
-			slog.Warn("desktop: retire superseded update during shutdown", "err", err)
-		} else if archived {
-			slog.Info("desktop: archived superseded update transaction during shutdown")
-		}
-		// Independent last-known-good config snapshot after a successful UI session.
-		_ = repair.RecordHealthyConfig(version)
-	}
+	completeDesktopShutdown(a.lifecycle.tracker, a.shutdownBody)
 }
 
 // domReady is called (via OnDomReady) after the webview finishes loading its DOM

@@ -24,6 +24,8 @@ func platformOSVersion() string {
 
 func platformOSBuild() (int, int) { return 0, 0 }
 
+func platformEnvironmentInfo() platformEnvironment { return platformEnvironment{} }
+
 func platformCPU() string {
 	return sysctlString("machdep.cpu.brand_string")
 }

@@ -26,6 +26,8 @@ func platformOSBuild() (int, int) {
 	return int(v.BuildNumber), revision
 }
 
+func platformEnvironmentInfo() platformEnvironment { return platformEnvironment{} }
+
 func platformCPU() string {
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `HARDWARE\DESCRIPTION\System\CentralProcessor\0`, registry.QUERY_VALUE)
 	if err != nil {

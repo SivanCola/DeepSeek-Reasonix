@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"reasonix/internal/repair"
@@ -59,7 +60,7 @@ update transition: %s`,
 	report.ErrorType = "LegacyAbnormalDesktopExit"
 	report.ErrorMessage = "A legacy startup record was consumed once after its owner stopped."
 	report.TopFrame = "desktop.lifecycle.legacy." + phase
-	report.FingerprintHint = "desktop.legacy_abnormal_exit.once." + phase
+	report.FingerprintHint = "desktop.legacy_abnormal_exit." + runtime.GOOS + "." + phase
 	report.OccurredAt = time.Now().UTC().Format(time.RFC3339)
 	report.Message = sanitizeCrashText(message, maxCrashDetailBytes)
 	return report
@@ -90,7 +91,7 @@ last phase update: %s`,
 	report.ErrorType = "AbnormalDesktopExit"
 	report.ErrorMessage = "A per-process lifecycle record remained after its desktop process stopped."
 	report.TopFrame = "desktop.lifecycle.v2." + phase
-	report.FingerprintHint = "desktop.abnormal_exit.v2." + phase
+	report.FingerprintHint = "desktop.abnormal_exit.v2." + runtime.GOOS + "." + phase
 	report.OccurredAt = sanitizeCrashField(previous.UpdatedAt, 64)
 	report.Message = sanitizeCrashText(message, maxCrashDetailBytes)
 	return report

@@ -25,7 +25,7 @@ const oldReport = {
 } as const;
 
 describe("diagnostics v2 compatibility and privacy", () => {
-  it("accepts old reports and additive Windows diagnostics", () => {
+  it("accepts old reports plus Windows and Linux runtime diagnostics", () => {
     expect(Report.safeParse(oldReport).success).toBe(true);
     expect(Report.safeParse({
       ...oldReport,
@@ -41,6 +41,18 @@ describe("diagnostics v2 compatibility and privacy", () => {
         runtimeVersion: "132.0.2957.140",
         gpuDisabled: false,
         recovery: "not_applicable",
+      },
+    }).success).toBe(true);
+    expect(Report.safeParse({
+      ...oldReport,
+      os: "linux",
+      device: {
+        distroId: "ubuntu", distroVersion: "24.04", kernelVersion: "6.8.0",
+        sessionType: "wayland",
+      },
+      webRuntime: {
+        engine: "webkitgtk", kind: "web_process_terminated", reason: "crashed",
+        runtimeVersion: "2.44.2", gpuMode: "always", recovery: "reload_succeeded",
       },
     }).success).toBe(true);
   });
@@ -102,17 +114,18 @@ describe("diagnostics v2 compatibility and privacy", () => {
       migrated.exec(diagnosticsMigrationSQL);
       runtimeBootstrap.exec(CLI_TELEMETRY_SCHEMA_SQL.join(";\n"));
       const additiveColumns: Record<string, string[]> = {
-        reports: ["webview2"],
-        pings: ["os_build", "os_revision"],
-        cli_pings: ["os_build", "os_revision"],
-        metric_users: ["arch", "os_build", "os_revision", "event_count"],
-        cli_metric_users: ["arch", "os_build", "os_revision", "event_count"],
+        reports: ["webview2", "web_runtime"],
+        pings: ["os_build", "os_revision", "distro_id", "session_type", "runtime_engine", "gpu_mode"],
+        cli_pings: ["os_build", "os_revision", "distro_id", "session_type", "runtime_engine", "gpu_mode"],
+        metric_users: ["arch", "os_build", "os_revision", "distro_id", "session_type", "runtime_engine", "gpu_mode", "event_count"],
+        cli_metric_users: ["arch", "os_build", "os_revision", "distro_id", "session_type", "runtime_engine", "gpu_mode", "event_count"],
       };
       for (const [table, expected] of Object.entries(additiveColumns)) {
         expect(columns(migrated, table)).toEqual(expect.arrayContaining(expected));
         expect(columns(fresh, table)).toEqual(expect.arrayContaining(expected));
       }
-      for (const table of ["report_daily", "report_installations", "report_event_dimensions"]) {
+      expect(columns(fresh, "reports")).not.toContain("install_id");
+      for (const table of ["report_daily", "report_installations", "report_event_dimensions", "diagnostics_meta"]) {
         expect(columns(migrated, table)).toEqual(columns(fresh, table));
       }
       for (const table of ["cli_pings", "cli_metric_users"]) {
@@ -124,6 +137,20 @@ describe("diagnostics v2 compatibility and privacy", () => {
       runtimeBootstrap.close();
     }
     expect(diagnosticsMigrationSQL).not.toMatch(/\bDROP\b/);
+  });
+
+  it("uses a date-leading index for platform impact denominators", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(freshSchemaSQL);
+      const plan = db.prepare(
+        "EXPLAIN QUERY PLAN SELECT COUNT(DISTINCT install_id) FROM pings WHERE date >= date('now', '-29 day') AND os = 'linux' AND distro_id = 'ubuntu'",
+      ).all().map((row: Record<string, unknown>) => String(row.detail)).join("\n");
+      expect(plan).toMatch(/SEARCH pings USING INDEX/);
+      expect(plan).not.toMatch(/SCAN pings/);
+    } finally {
+      db.close();
+    }
   });
 });
 
@@ -207,12 +234,13 @@ describe("diagnostics v2 storage consistency", () => {
       device: { osBuild: 17763, osRevision: 6293 },
     };
     const webview = {
+      engine: "webview2",
       runtimeVersion: "132", kind: "gpu_process_exited", reason: "unexpected",
-      exitCode: 1, recovery: "not_applicable", gpuDisabled: false,
+      exitCode: 1, recovery: "not_applicable", gpuMode: "enabled",
     };
     reportAggregateStatements(d1, report, "f".repeat(64), "stable", webview);
     reportAggregateStatements(d1, report, "f".repeat(64), "stable", {
-      ...webview, runtimeVersion: "133", gpuDisabled: true,
+      ...webview, runtimeVersion: "133", gpuMode: "disabled",
     });
     const facts = statements.filter((statement) => statement.sql.includes("INSERT INTO report_event_dimensions"));
     const db = new DatabaseSync(":memory:");
@@ -220,10 +248,10 @@ describe("diagnostics v2 storage consistency", () => {
       db.exec(freshSchemaSQL);
       for (const fact of facts) db.prepare(fact.sql).run(...fact.binds as []);
       expect(db.prepare(
-        "SELECT runtime_version, gpu_disabled, events FROM report_event_dimensions ORDER BY runtime_version",
+        "SELECT runtime_version, gpu_mode, events FROM report_event_dimensions ORDER BY runtime_version",
       ).all()).toEqual([
-        { runtime_version: "132", gpu_disabled: 0, events: 1 },
-        { runtime_version: "133", gpu_disabled: 1, events: 1 },
+        { runtime_version: "132", gpu_mode: "enabled", events: 1 },
+        { runtime_version: "133", gpu_mode: "disabled", events: 1 },
       ]);
     } finally {
       db.close();

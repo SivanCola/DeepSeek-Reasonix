@@ -29,13 +29,21 @@ var installIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var installIDRandRead = rand.Read
 
 type startupPing struct {
-	InstallID  string `json:"installId"`
-	Version    string `json:"version"`
-	OS         string `json:"os"`
-	Arch       string `json:"arch"`
-	OSVersion  string `json:"osVersion,omitempty"`
-	OSBuild    int    `json:"osBuild,omitempty"`
-	OSRevision int    `json:"osRevision,omitempty"`
+	InstallID      string `json:"installId"`
+	Version        string `json:"version"`
+	OS             string `json:"os"`
+	Arch           string `json:"arch"`
+	Channel        string `json:"channel,omitempty"`
+	OSVersion      string `json:"osVersion,omitempty"`
+	OSBuild        int    `json:"osBuild,omitempty"`
+	OSRevision     int    `json:"osRevision,omitempty"`
+	DistroID       string `json:"distroId,omitempty"`
+	DistroVersion  string `json:"distroVersion,omitempty"`
+	KernelVersion  string `json:"kernelVersion,omitempty"`
+	SessionType    string `json:"sessionType,omitempty"`
+	RuntimeEngine  string `json:"runtimeEngine,omitempty"`
+	RuntimeVersion string `json:"runtimeVersion,omitempty"`
+	GPUMode        string `json:"gpuMode,omitempty"`
 }
 
 func installID() (string, error) {
@@ -83,15 +91,15 @@ func (a *App) sendStartupPing() {
 	if err != nil {
 		return
 	}
-	osBuild, osRevision := platformOSBuild()
+	device := collectDeviceInfo()
+	runtimeContext := webRuntimeContextForTelemetry(500 * time.Millisecond)
 	_ = postStartupPing(a.bootContext(), c, pingEndpoint, startupPing{
-		InstallID:  id,
-		Version:    version,
-		OS:         runtime.GOOS,
-		Arch:       runtime.GOARCH,
-		OSVersion:  platformOSVersion(),
-		OSBuild:    osBuild,
-		OSRevision: osRevision,
+		InstallID: id, Version: version, OS: runtime.GOOS, Arch: runtime.GOARCH, Channel: channel,
+		OSVersion: device.OSVersion, OSBuild: device.OSBuild, OSRevision: device.OSRevision,
+		DistroID: device.DistroID, DistroVersion: device.DistroVersion,
+		KernelVersion: device.KernelVersion, SessionType: device.SessionType,
+		RuntimeEngine: runtimeContext.Engine, RuntimeVersion: runtimeContext.RuntimeVersion,
+		GPUMode: runtimeContext.GPUMode,
 	})
 }
 

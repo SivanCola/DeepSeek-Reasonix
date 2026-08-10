@@ -59,6 +59,7 @@ type ReportSample = {
   stack: string;
   occurred_at: string;
   webview2: string;
+  web_runtime: string;
 };
 
 type GroupDiagnosticSummary = {
@@ -110,15 +111,15 @@ function sampleReport(r: ReportSample, i: number): string {
     .map(([label, value]) => `<span><b>${label}</b>${esc(value)}</span>`)
     .join("");
   const stack = r.stack || r.component_stack;
-  let webview2 = "";
+  let webRuntime = "";
   try {
-    const diagnostic = JSON.parse(r.webview2 || "") as Record<string, unknown>;
-    webview2 = Object.entries(diagnostic)
+    const diagnostic = JSON.parse(r.web_runtime || r.webview2 || "") as Record<string, unknown>;
+    webRuntime = Object.entries(diagnostic)
       .filter(([, value]) => value !== "" && value !== undefined && value !== null)
       .map(([key, value]) => `${key}: ${String(value)}`)
       .join("\n");
   } catch {
-    webview2 = "";
+    webRuntime = "";
   }
   return `<details class="sample" ${i === 0 ? "open" : ""}><summary>
 <span class="sample-id"><b>${esc(r.version)}</b><small>${esc(platform || "unknown platform")}</small></span>
@@ -135,7 +136,7 @@ function sampleReport(r: ReportSample, i: number): string {
 <pre>${esc(r.message)}</pre>
 ${stack ? `<details class="sample-nested"><summary>${i18n("stack", "堆栈")}</summary><pre>${esc(stack)}</pre></details>` : ""}
 ${breadcrumbsList(r.breadcrumbs)}
-${webview2 ? `<details class="sample-nested"><summary>WebView2</summary><pre>${esc(webview2)}</pre></details>` : ""}
+${webRuntime ? `<details class="sample-nested"><summary>Web Runtime</summary><pre>${esc(webRuntime)}</pre></details>` : ""}
 </div></details>`;
 }
 

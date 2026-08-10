@@ -133,9 +133,9 @@ func main() {
 		dragAndDrop = &options.DragAndDrop{DisableWebViewDrop: true}
 		bindings = nil
 	} else if !webView2ApprovalSmoke {
-		// Install native diagnostics before Wails creates the WebView; lifecycle
-		// journaling starts after the single-instance gate in OnStartup.
-		prepareWebView2ProcessDiagnostics(app)
+		// Claim diagnostics before Wails so second processes cannot create evidence.
+		prepareDesktopDiagnostics(app)
+		defer app.releaseDesktopDiagnosticsOwnership()
 		capturePendingUpdateHealthIdentity(app)
 	}
 

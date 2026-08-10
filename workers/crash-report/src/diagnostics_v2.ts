@@ -65,11 +65,18 @@ export type DiagnosticFacets = {
   versions: DiagnosticBar[];
   platforms: DiagnosticBar[];
   osBuilds: DiagnosticBar[];
+  osRevisions: DiagnosticBar[];
+  distros: DiagnosticBar[];
+  distroVersions: DiagnosticBar[];
+  kernels: DiagnosticBar[];
+  sessions: DiagnosticBar[];
   architectures: DiagnosticBar[];
   channels: DiagnosticBar[];
   runtimes: DiagnosticBar[];
+  runtimeEngines: DiagnosticBar[];
   failureKinds: DiagnosticBar[];
   failureReasons: DiagnosticBar[];
+  exitCodes: DiagnosticBar[];
   recoveries: DiagnosticBar[];
   gpuStates: DiagnosticBar[];
 };
@@ -81,19 +88,26 @@ export async function diagnosticFacets(env: Env, days: 7 | 30): Promise<Diagnost
      FROM report_event_dimensions WHERE date >= date('now', '${since}') ${extra}
      GROUP BY label ORDER BY users DESC LIMIT 20`,
   ).all<DiagnosticBar>().then((result) => result.results);
-  const [versions, platforms, osBuilds, architectures, channels, runtimes, failureKinds, failureReasons, recoveries, gpuStates] = await Promise.all([
+  const [versions, platforms, osBuilds, osRevisions, distros, distroVersions, kernels, sessions, architectures, channels, runtimes, runtimeEngines, failureKinds, failureReasons, exitCodes, recoveries, gpuStates] = await Promise.all([
     facet("version", "AND version <> ''"),
-    facet("os || ' ' || arch", "AND os <> '' AND arch <> ''"),
+    facet("os", "AND os <> ''"),
     facet("CAST(os_build AS TEXT)", "AND os_build > 0"),
+    facet("CAST(os_revision AS TEXT)", "AND os_revision > 0"),
+    facet("distro_id", "AND distro_id <> ''"),
+    facet("distro_version", "AND distro_version <> ''"),
+    facet("kernel_version", "AND kernel_version <> ''"),
+    facet("session_type", "AND session_type <> ''"),
     facet("arch", "AND arch <> ''"),
     facet("channel", "AND channel <> ''"),
     facet("runtime_version", "AND runtime_version <> ''"),
+    facet("runtime_engine", "AND runtime_engine <> ''"),
     facet("failure_kind", "AND failure_kind <> ''"),
     facet("failure_reason", "AND failure_reason <> ''"),
+    facet("exit_code", "AND exit_code <> ''"),
     facet("recovery", "AND recovery <> ''"),
-    facet("CASE WHEN gpu_disabled = 1 THEN 'disabled' WHEN gpu_disabled = 0 THEN 'enabled' ELSE 'unknown' END"),
+    facet("gpu_mode", "AND gpu_mode <> ''"),
   ]);
-  return { versions, platforms, osBuilds, architectures, channels, runtimes, failureKinds, failureReasons, recoveries, gpuStates };
+  return { versions, platforms, osBuilds, osRevisions, distros, distroVersions, kernels, sessions, architectures, channels, runtimes, runtimeEngines, failureKinds, failureReasons, exitCodes, recoveries, gpuStates };
 }
 
 type DiagnosticsGroupFilters = {
@@ -103,11 +117,18 @@ type DiagnosticsGroupFilters = {
   os: string;
   platform: string;
   osBuild: string;
+  osRevision?: string;
+  distroId?: string;
+  distroVersion?: string;
+  kernelVersion?: string;
+  sessionType?: string;
   arch: string;
   channel: string;
   runtimeVersion: string;
+  runtimeEngine?: string;
   failureKind: string;
   failureReason: string;
+  exitCode?: string;
   recovery: string;
   gpu: string;
   newLatest: boolean;
@@ -133,15 +154,22 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
   };
   if (filters.version) addInstall("version", filters.version);
   if (filters.os) addInstall("os", filters.os);
-  if (filters.platform) addInstall("os || ' ' || arch", filters.platform);
+  if (filters.platform) addInstall("os", filters.platform);
   if (filters.osBuild) addInstall("os_build", Number(filters.osBuild));
+  if (filters.osRevision) addInstall("os_revision", Number(filters.osRevision));
+  if (filters.distroId) addInstall("distro_id", filters.distroId);
+  if (filters.distroVersion) addInstall("distro_version", filters.distroVersion);
+  if (filters.kernelVersion) addInstall("kernel_version", filters.kernelVersion);
+  if (filters.sessionType) addInstall("session_type", filters.sessionType);
   if (filters.arch) addInstall("arch", filters.arch);
   if (filters.channel) addInstall("channel", filters.channel);
   if (filters.runtimeVersion) addInstall("runtime_version", filters.runtimeVersion);
+  if (filters.runtimeEngine) addInstall("runtime_engine", filters.runtimeEngine);
   if (filters.failureKind) addInstall("failure_kind", filters.failureKind);
   if (filters.failureReason) addInstall("failure_reason", filters.failureReason);
+  if (filters.exitCode) addInstall("exit_code", filters.exitCode);
   if (filters.recovery) addInstall("recovery", filters.recovery);
-  if (filters.gpu) addInstall("gpu_disabled", filters.gpu === "unknown" ? -1 : filters.gpu === "disabled" ? 1 : 0);
+  if (filters.gpu) addInstall("gpu_mode", filters.gpu);
   if (installWhere.length > 1) where.push("COALESCE(installations.affected_installs, 0) > 0");
   if (filters.newLatest && latestVersion) add("first_version = ?", latestVersion);
   if (filters.regressed) where.push("regressed_at <> ''");
@@ -151,15 +179,47 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
     binds.push(latestVersion);
   }
   const reportWindow = currentWindowSince(filters.windowDays);
-  const buildActiveInstalls = filters.osBuild
-    ? `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE date >= date('now', '${reportWindow}') AND os_build = ${Number(filters.osBuild)})`
-    : "0";
+  const pingWhere = [`date >= date('now', '${reportWindow}')`];
+  const pingBinds: unknown[] = [];
+  const pingBaseWhere = [`date >= date('now', '${reportWindow}')`];
+  const pingBaseBinds: unknown[] = [];
+  const dimensionKnown: string[] = [];
+  const addPing = (column: string, value: unknown) => {
+    pingWhere.push(`${column} = ?`);
+    pingBinds.push(value);
+  };
+  const addPingBase = (column: string, value: unknown) => {
+    pingBaseWhere.push(`${column} = ?`);
+    pingBaseBinds.push(value);
+    addPing(column, value);
+  };
+  if (filters.version) addPingBase("version", filters.version);
+  if (filters.os) addPingBase("os", filters.os);
+  if (filters.platform) addPingBase("os", filters.platform);
+  if (!filters.os && !filters.platform && (filters.osBuild || filters.osRevision)) addPingBase("os", "windows");
+  if (!filters.os && !filters.platform && (filters.distroId || filters.distroVersion || filters.kernelVersion || filters.sessionType)) addPingBase("os", "linux");
+  if (filters.osBuild) { addPing("os_build", Number(filters.osBuild)); dimensionKnown.push("os_build > 0"); }
+  if (filters.osRevision) { addPing("os_revision", Number(filters.osRevision)); dimensionKnown.push("os_revision > 0"); }
+  if (filters.distroId) { addPing("distro_id", filters.distroId); dimensionKnown.push("distro_id <> ''"); }
+  if (filters.distroVersion) { addPing("distro_version", filters.distroVersion); dimensionKnown.push("distro_version <> ''"); }
+  if (filters.kernelVersion) { addPing("kernel_version", filters.kernelVersion); dimensionKnown.push("kernel_version <> ''"); }
+  if (filters.sessionType) { addPing("session_type", filters.sessionType); dimensionKnown.push("session_type <> ''"); }
+  if (filters.arch) addPingBase("arch", filters.arch);
+  if (filters.channel) { addPing("channel", filters.channel); dimensionKnown.push("channel <> ''"); }
+  if (filters.runtimeVersion) { addPing("runtime_version", filters.runtimeVersion); dimensionKnown.push("runtime_version <> ''"); }
+  if (filters.runtimeEngine) { addPing("runtime_engine", filters.runtimeEngine); dimensionKnown.push("runtime_engine <> ''"); }
+  if (filters.gpu) { addPing("gpu_mode", filters.gpu); dimensionKnown.push("gpu_mode <> ''"); }
+  const activeInstalls = `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE ${pingWhere.join(" AND ")})`;
+  const baseInstalls = `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE ${pingBaseWhere.join(" AND ")})`;
+  const coveredInstalls = `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE ${[...pingBaseWhere, ...dimensionKnown].join(" AND ")})`;
   const sql = `SELECT groups.fingerprint, kind, count, first_version, last_version, substr(last_seen, 1, 10) AS seen,
       status, title, source, label, error_type, top_frame, severity, last_os, last_arch, last_channel, regressed_at,
       COALESCE(installations.affected_installs, 0) AS affected_installs,
       COALESCE(daily.window_events, 0) AS window_events,
       COALESCE(daily.identified_events, 0) AS identified_events,
-      ${buildActiveInstalls} AS active_build_installs
+      ${activeInstalls} AS active_build_installs,
+      ${baseInstalls} AS dimension_base_installs,
+      ${coveredInstalls} AS dimension_covered_installs
     FROM groups
     LEFT JOIN (
       SELECT fingerprint, COUNT(DISTINCT install_id) AS affected_installs
@@ -191,7 +251,7 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
       count DESC,
       last_seen DESC
     LIMIT 50`;
-  const allBinds = [...installBinds, ...binds];
+  const allBinds = [...pingBinds, ...pingBaseBinds, ...pingBaseBinds, ...installBinds, ...binds];
   const stmt = env.DB.prepare(sql);
   const query = allBinds.length ? stmt.bind(...allBinds) : stmt;
   const result = await query.all<GroupPriorityRow & {
@@ -205,6 +265,8 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
     window_events: number;
     identified_events: number;
     active_build_installs: number;
+    dimension_base_installs: number;
+    dimension_covered_installs: number;
   }>();
   result.results = result.results
     .map((row) => ({
@@ -212,6 +274,9 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
       severity: effectiveGroupSeverity(row),
       development: isDevelopmentGroup(row),
       identity_coverage: row.window_events ? row.identified_events / row.window_events : 0,
+      dimension_coverage: row.dimension_base_installs
+        ? row.dimension_covered_installs / row.dimension_base_installs
+        : dimensionKnown.length ? 0 : 1,
       impact_rate: row.active_build_installs ? Number(row.affected_installs ?? 0) / row.active_build_installs : null,
     }))
     .sort((a, b) => compareDiagnosticPriority(a, b, latestVersion));
@@ -223,16 +288,24 @@ type ReportAggregateInput = {
   version: string;
   os: string;
   arch: string;
-  device?: { osBuild?: number; osRevision?: number };
+  device?: {
+    osBuild?: number;
+    osRevision?: number;
+    distroId?: string;
+    distroVersion?: string;
+    kernelVersion?: string;
+    sessionType?: string;
+  };
 };
 
-type WebView2AggregateInput = {
+type WebRuntimeAggregateInput = {
+  engine: string;
   runtimeVersion: string;
   kind: string;
   reason: string;
   exitCode?: number;
   recovery: string;
-  gpuDisabled: boolean;
+  gpuMode: string;
 };
 
 export function reportAggregateStatements(
@@ -240,7 +313,7 @@ export function reportAggregateStatements(
   report: ReportAggregateInput,
   fingerprint: string,
   channel: string,
-  webview2?: WebView2AggregateInput,
+  webRuntime?: WebRuntimeAggregateInput,
 ): D1PreparedStatement[] {
   const statements = [
     db.prepare(
@@ -254,37 +327,44 @@ export function reportAggregateStatements(
   statements.push(
     db.prepare(
       `INSERT INTO report_installations (
-         date, fingerprint, install_id, version, os, arch, os_build, os_revision, channel,
-         runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled, events
-       ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
+         date, fingerprint, install_id, version, os, arch, os_build, os_revision,
+         distro_id, distro_version, kernel_version, session_type, channel,
+         runtime_engine, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_mode, events
+       ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, 1)
        ON CONFLICT (date, fingerprint, install_id) DO UPDATE SET
-         version = ?3, os = ?4, arch = ?5, os_build = ?6, os_revision = ?7, channel = ?8,
-         runtime_version = ?9, failure_kind = ?10, failure_reason = ?11, exit_code = ?12,
-         recovery = ?13, gpu_disabled = ?14, events = events + 1`,
+         version = ?3, os = ?4, arch = ?5, os_build = ?6, os_revision = ?7,
+         distro_id = ?8, distro_version = ?9, kernel_version = ?10, session_type = ?11, channel = ?12,
+         runtime_engine = ?13, runtime_version = ?14, failure_kind = ?15, failure_reason = ?16,
+         exit_code = ?17, recovery = ?18, gpu_mode = ?19, events = events + 1`,
     ).bind(
       fingerprint, report.installId, report.version, report.os, report.arch,
-      report.device?.osBuild ?? 0, report.device?.osRevision ?? 0, channel,
-      webview2?.runtimeVersion ?? "", webview2?.kind ?? "", webview2?.reason ?? "",
-      webview2?.exitCode ?? null, webview2?.recovery ?? "",
-      webview2 ? (webview2.gpuDisabled ? 1 : 0) : null,
+      report.device?.osBuild ?? 0, report.device?.osRevision ?? 0,
+      report.device?.distroId ?? "", report.device?.distroVersion ?? "", report.device?.kernelVersion ?? "",
+      report.device?.sessionType ?? "", channel,
+      webRuntime?.engine ?? "", webRuntime?.runtimeVersion ?? "", webRuntime?.kind ?? "", webRuntime?.reason ?? "",
+      webRuntime?.exitCode ?? null, webRuntime?.recovery ?? "", webRuntime?.gpuMode ?? "unknown",
     ),
   );
   statements.push(
     db.prepare(
       `INSERT INTO report_event_dimensions (
-         date, fingerprint, install_id, version, os, arch, os_build, os_revision, channel,
-         runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled, events
-       ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
+         date, fingerprint, install_id, version, os, arch, os_build, os_revision,
+         distro_id, distro_version, kernel_version, session_type, channel,
+         runtime_engine, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_mode, events
+       ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, 1)
        ON CONFLICT (
-         date, fingerprint, install_id, version, os, arch, os_build, os_revision, channel,
-         runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled
+         date, fingerprint, install_id, version, os, arch, os_build, os_revision,
+         distro_id, distro_version, kernel_version, session_type, channel,
+         runtime_engine, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_mode
        ) DO UPDATE SET events = events + 1`,
     ).bind(
       fingerprint, report.installId, report.version, report.os, report.arch,
-      report.device?.osBuild ?? 0, report.device?.osRevision ?? 0, channel,
-      webview2?.runtimeVersion ?? "", webview2?.kind ?? "", webview2?.reason ?? "",
-      webview2?.exitCode === undefined ? "unknown" : String(webview2.exitCode), webview2?.recovery ?? "",
-      webview2 ? (webview2.gpuDisabled ? 1 : 0) : -1,
+      report.device?.osBuild ?? 0, report.device?.osRevision ?? 0,
+      report.device?.distroId ?? "", report.device?.distroVersion ?? "", report.device?.kernelVersion ?? "",
+      report.device?.sessionType ?? "", channel,
+      webRuntime?.engine ?? "", webRuntime?.runtimeVersion ?? "", webRuntime?.kind ?? "", webRuntime?.reason ?? "",
+      webRuntime?.exitCode === undefined ? "unknown" : String(webRuntime.exitCode), webRuntime?.recovery ?? "",
+      webRuntime?.gpuMode ?? "unknown",
     ),
   );
   return statements;
@@ -307,11 +387,18 @@ export async function groupDiagnosticSummary(env: Env, fingerprint: string): Pro
     ).bind(fingerprint).first<{ window_events: number; identified_events: number; affected_installs: number }>(),
     env.DB.prepare(
       `SELECT facet, value, COUNT(DISTINCT install_id) AS installs, SUM(events) AS events FROM (
-         SELECT 'osBuild' AS facet, CAST(os_build AS TEXT) AS value, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os_build > 0
+         SELECT 'platform' AS facet, os || ' ' || arch AS value, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os <> ''
+         UNION ALL SELECT 'osBuild', CAST(os_build AS TEXT), install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os_build > 0
+         UNION ALL SELECT 'osRevision', CAST(os_revision AS TEXT), install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os_revision > 0
          UNION ALL SELECT 'runtime', runtime_version, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND runtime_version <> ''
+         UNION ALL SELECT 'runtimeEngine', runtime_engine, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND runtime_engine <> ''
+         UNION ALL SELECT 'distro', distro_id || ' ' || distro_version, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND distro_id <> ''
+         UNION ALL SELECT 'kernel', kernel_version, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND kernel_version <> ''
+         UNION ALL SELECT 'session', session_type, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND session_type <> ''
+         UNION ALL SELECT 'kind', failure_kind, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND failure_kind <> ''
          UNION ALL SELECT 'reason', failure_reason, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND failure_reason <> ''
          UNION ALL SELECT 'exitCode', exit_code, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
-         UNION ALL SELECT 'gpu', CASE WHEN gpu_disabled = 1 THEN 'disabled' WHEN gpu_disabled = 0 THEN 'enabled' ELSE 'unknown' END, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
+         UNION ALL SELECT 'gpu', gpu_mode, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
          UNION ALL SELECT 'recovery', recovery, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND recovery <> ''
        ) GROUP BY facet, value ORDER BY facet, installs DESC`,
     ).bind(fingerprint).all<{ facet: string; value: string; installs: number; events: number }>(),

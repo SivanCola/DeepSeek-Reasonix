@@ -44,68 +44,13 @@ import {
   reportAggregateStatements,
   type DiagnosticFacets,
 } from "./diagnostics_v2";
+import { Report, WebRuntimeDiagnostic, type ReportPayload } from "./report_schema";
+import { statsFilters, type StatsFilters } from "./stats_filters";
+export { Report } from "./report_schema";
 export { diagnosticWindowWhere, effectiveGroupSeverity, isDevelopmentGroup } from "./diagnostics_v2";
 const MAX_BODY_BYTES = 96 * 1024;
 const LATEST_SAMPLES_PER_GROUP = 5;
 const GROUP_PATH_RE = /^\/stats\/group\/((?:dev:)?[0-9a-f]{64})$/;
-
-const Device = z
-  .object({
-    osVersion: z.string().max(128),
-    osBuild: z.number().int().min(0).max(1_000_000),
-    osRevision: z.number().int().min(0).max(1_000_000),
-    cpu: z.string().max(128),
-    cores: z.number().int().min(0).max(4096),
-    ramGb: z.number().min(0).max(65536),
-  })
-  .partial();
-
-const WebView2Diagnostic = z.object({
-  kind: z.string().trim().min(1).max(64).regex(/^[a-z0-9_]+$/),
-  reason: z.string().trim().min(1).max(64).regex(/^[a-z0-9_]+$/),
-  exitCode: z.number().int().min(-2147483648).max(2147483647).optional(),
-  processDescription: z.string().max(255).optional(),
-  failureSourceModule: z.string().max(255).refine((value) => !/[\\/]/.test(value)).optional(),
-  runtimeVersion: z.string().max(128),
-  gpuDisabled: z.boolean(),
-  recovery: z.enum(["not_applicable", "reload_succeeded", "reload_failed"]),
-});
-
-export const Report = z.object({
-  installId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
-  kind: z.enum(["crash", "exception", "feedback", "performance", "bot"]),
-  version: z.string().min(1).max(64),
-  os: z.string().min(1).max(32),
-  arch: z.string().min(1).max(32),
-  message: z.string().min(1).max(16 * 1024),
-  device: Device.optional(),
-  schemaVersion: z.number().int().min(1).max(10).optional(),
-  source: z.string().trim().min(1).max(32).regex(/^[a-z0-9_.-]+$/).optional(),
-  label: z.string().max(64).optional(),
-  errorType: z.string().max(128).optional(),
-  errorMessage: z.string().max(4 * 1024).optional(),
-  stack: z.string().max(16 * 1024).optional(),
-  componentStack: z.string().max(16 * 1024).optional(),
-  topFrame: z.string().max(300).optional(),
-  fingerprintHint: z.string().max(300).optional(),
-  buildCommit: z.string().max(64).optional(),
-  channel: z.string().max(32).optional(),
-  language: z.string().max(64).optional(),
-  view: z.string().max(200).optional(),
-  breadcrumbs: z
-    .array(
-      z.object({
-        t: z.number().int().optional(),
-        cat: z.string().max(64).optional(),
-        msg: z.string().max(240).optional(),
-      }),
-    )
-    .max(30)
-    .optional(),
-  occurredAt: z.string().max(64).optional(),
-  webview2: WebView2Diagnostic.optional(),
-});
-type ReportPayload = z.infer<typeof Report>;
 
 const ClientSurface = z.enum(["desktop", "cli"]);
 type ClientSurfaceName = z.infer<typeof ClientSurface>;
@@ -135,6 +80,14 @@ export const CLI_TELEMETRY_SCHEMA_SQL = [
      os_version TEXT NOT NULL DEFAULT '',
      os_build INTEGER NOT NULL DEFAULT 0,
      os_revision INTEGER NOT NULL DEFAULT 0,
+     channel TEXT NOT NULL DEFAULT '',
+     distro_id TEXT NOT NULL DEFAULT '',
+     distro_version TEXT NOT NULL DEFAULT '',
+     kernel_version TEXT NOT NULL DEFAULT '',
+     session_type TEXT NOT NULL DEFAULT '',
+     runtime_engine TEXT NOT NULL DEFAULT '',
+     runtime_version TEXT NOT NULL DEFAULT '',
+     gpu_mode TEXT NOT NULL DEFAULT '',
      opens INTEGER NOT NULL DEFAULT 1,
      PRIMARY KEY (date, install_id)
    )`,
@@ -157,6 +110,14 @@ export const CLI_TELEMETRY_SCHEMA_SQL = [
      arch TEXT NOT NULL DEFAULT '',
      os_build INTEGER NOT NULL DEFAULT 0,
      os_revision INTEGER NOT NULL DEFAULT 0,
+     channel TEXT NOT NULL DEFAULT '',
+     distro_id TEXT NOT NULL DEFAULT '',
+     distro_version TEXT NOT NULL DEFAULT '',
+     kernel_version TEXT NOT NULL DEFAULT '',
+     session_type TEXT NOT NULL DEFAULT '',
+     runtime_engine TEXT NOT NULL DEFAULT '',
+     runtime_version TEXT NOT NULL DEFAULT '',
+     gpu_mode TEXT NOT NULL DEFAULT '',
      event_count INTEGER NOT NULL DEFAULT 0,
      PRIMARY KEY (date, signal, bucket, install_id)
    )`,
@@ -189,6 +150,14 @@ export const Ping = z.object({
   osVersion: z.string().max(128).optional(),
   osBuild: z.number().int().min(0).max(1_000_000).optional(),
   osRevision: z.number().int().min(0).max(1_000_000).optional(),
+  channel: z.string().max(32).optional(),
+  distroId: z.string().max(64).optional(),
+  distroVersion: z.string().max(64).optional(),
+  kernelVersion: z.string().max(128).optional(),
+  sessionType: z.enum(["wayland", "x11", "remote", "unknown"]).optional(),
+  runtimeEngine: z.enum(["webview2", "webkitgtk", "unknown"]).optional(),
+  runtimeVersion: z.string().max(128).optional(),
+  gpuMode: z.enum(["enabled", "disabled", "always", "on_demand", "unknown"]).optional(),
   surface: ClientSurface.default("desktop"),
 });
 
@@ -216,6 +185,8 @@ const METRIC_SIGNALS = [
   "desktop_restore",
   "desktop_webview2_failure",
   "desktop_webview2_outcome",
+  "desktop_web_runtime_failure",
+  "desktop_web_runtime_outcome",
   "desktop_legacy_exit",
   "desktop_legacy_exit_phase",
   "cli_mode",
@@ -303,6 +274,14 @@ export const Metrics = z.object({
   arch: z.string().max(32).optional(),
   osBuild: z.number().int().min(0).max(1_000_000).optional(),
   osRevision: z.number().int().min(0).max(1_000_000).optional(),
+  channel: z.string().max(32).optional(),
+  distroId: z.string().max(64).optional(),
+  distroVersion: z.string().max(64).optional(),
+  kernelVersion: z.string().max(128).optional(),
+  sessionType: z.enum(["wayland", "x11", "remote", "unknown"]).optional(),
+  runtimeEngine: z.enum(["webview2", "webkitgtk", "unknown"]).optional(),
+  runtimeVersion: z.string().max(128).optional(),
+  gpuMode: z.enum(["enabled", "disabled", "always", "on_demand", "unknown"]).optional(),
   surface: ClientSurface.default("desktop"),
   counters: z
     .array(z.union([KnownMetricCounter, UnknownMetricCounter]))
@@ -383,6 +362,63 @@ export function normalizeForFingerprint(inputOrKind: FingerprintInput | string, 
     (input.fingerprintHint ? `${input.fingerprintHint}\n` : "") +
     normalizeFingerprintText(head)
   );
+}
+
+export function nativeWebRuntimeFingerprintBasis(input: {
+  engine: string;
+  kind: string;
+  reason: string;
+  exitCode?: number;
+}): string {
+  const kind = normalizeRuntimeBucket(input.engine, "kind", input.kind);
+  const reason = normalizeRuntimeBucket(input.engine, "reason", input.reason);
+  const normalizedExitCode = input.engine === "webview2" && kind === "render_process_unresponsive" && input.exitCode === 259 ? undefined : input.exitCode;
+  const exitCode = normalizedExitCode === undefined ? "unknown" : String(normalizedExitCode);
+  return [input.engine, kind, reason, exitCode].join("\n");
+}
+
+type NormalizedWebRuntime = z.infer<typeof WebRuntimeDiagnostic>;
+
+function basenameOnly(value: string | undefined): string {
+  return (value ?? "").split(/[\\/]/).pop()?.slice(0, 255) ?? "";
+}
+
+function normalizeRuntimeBucket(engine: string, field: "kind" | "reason", input: string): string {
+  const buckets = engine === "webview2"
+    ? field === "kind"
+      ? ["browser_process_exited", "render_process_exited", "render_process_unresponsive", "frame_render_process_exited", "utility_process_exited", "sandbox_helper_process_exited", "gpu_process_exited", "ppapi_plugin_process_exited", "ppapi_broker_process_exited", "unknown_process_exited", "unknown"]
+      : ["unexpected", "unresponsive", "terminated", "crashed", "launch_failed", "out_of_memory", "profile_deleted", "normal_exit", "abnormal_exit", "integrity_failure", "unknown"]
+    : field === "kind"
+      ? ["web_process", "unknown"]
+      : ["crashed", "out_of_memory", "terminated_by_api", "unknown"];
+  const value = input.trim().toLowerCase();
+  return buckets.includes(value) ? value : "unknown";
+}
+
+function normalizedWebRuntime(r: ReportPayload): NormalizedWebRuntime | undefined {
+  const input: NormalizedWebRuntime | undefined = r.webRuntime ?? (r.webview2
+    ? {
+        engine: "webview2",
+        kind: r.webview2.kind,
+        reason: r.webview2.reason,
+        exitCode: r.webview2.exitCode,
+        processDescription: r.webview2.processDescription,
+        failureSourceModule: r.webview2.failureSourceModule,
+        runtimeVersion: r.webview2.runtimeVersion,
+        gpuMode: r.webview2.gpuDisabled ? "disabled" : "enabled",
+        recovery: r.webview2.recovery,
+      }
+    : undefined);
+  if (!input) return undefined;
+  return {
+    ...input,
+    kind: normalizeRuntimeBucket(input.engine, "kind", input.kind),
+    reason: normalizeRuntimeBucket(input.engine, "reason", input.reason),
+    runtimeVersion: input.runtimeVersion.trim() || "unknown",
+    exitCode: input.engine === "webview2" && normalizeRuntimeBucket(input.engine, "kind", input.kind) === "render_process_unresponsive" && input.exitCode === 259 ? undefined : input.exitCode,
+    processDescription: scrubSensitiveText(input.processDescription ?? "").slice(0, 255),
+    failureSourceModule: basenameOnly(input.failureSourceModule),
+  };
 }
 
 function hasStructuredCrashFields(r: ReportPayload): boolean {
@@ -474,9 +510,17 @@ function severityForKind(kind: string): string {
 
 export function severityForReport(input: SeverityInput): string {
   if (isDevelopmentReport(input) || isOpaqueScriptErrorReport(input) || isKnownNonCrashDiagnostic(input)) return "low";
-  if (input.source === "webview2.process.native" && input.recovery === "reload_succeeded") return "low";
-  if (input.source === "webview2.process.native" && input.kind === "exception") return "high";
+  if ((input.source === "web.runtime.native" || input.source === "webview2.process.native") && input.recovery === "reload_succeeded") return "low";
+  if ((input.source === "web.runtime.native" || input.source === "webview2.process.native") && input.kind === "exception") return "high";
   return severityForKind(input.kind);
+}
+
+export function severityRank(severity: string): number {
+  return ({ low: 1, medium: 2, high: 3, critical: 4 })[severity] ?? 0;
+}
+
+export function maxSeverity(current: string, incoming: string): string {
+  return severityRank(incoming) > severityRank(current) ? incoming : current;
 }
 
 async function sha256Hex(s: string): Promise<string> {
@@ -525,16 +569,19 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
     ...b,
     msg: b.msg ? scrubSensitiveText(b.msg) : b.msg,
   }));
+  const webRuntime = normalizedWebRuntime(r);
   const webview2 = r.webview2
     ? {
         ...r.webview2,
-        processDescription: scrubSensitiveText(r.webview2.processDescription ?? ""),
-        failureSourceModule: r.webview2.failureSourceModule ?? "",
+        processDescription: scrubSensitiveText(r.webview2.processDescription ?? "").slice(0, 255),
+        failureSourceModule: basenameOnly(r.webview2.failureSourceModule),
       }
     : undefined;
 
-  const fingerprintBasis = hasStructuredCrashFields(r)
-    ? normalizeForFingerprint({
+  const fingerprintBasis = (r.source === "web.runtime.native" || r.source === "webview2.process.native") && webRuntime
+    ? nativeWebRuntimeFingerprintBasis(webRuntime)
+    : hasStructuredCrashFields(r)
+      ? normalizeForFingerprint({
         kind: r.kind,
         message,
         source: r.source,
@@ -543,8 +590,8 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
         errorMessage,
         topFrame,
         fingerprintHint,
-      })
-    : normalizeForFingerprint(r.kind, message);
+        })
+      : normalizeForFingerprint(r.kind, message);
   const now = new Date().toISOString();
   const title = crashTitle(message);
   const source = r.source ?? "legacy";
@@ -561,7 +608,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
     errorMessage,
     topFrame,
     channel,
-    recovery: webview2?.recovery,
+    recovery: webRuntime?.recovery,
   };
   const development = isDevelopmentReport(severityInput);
   const fingerprint = namespaceReportFingerprint(await sha256Hex(fingerprintBasis), development);
@@ -580,6 +627,11 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
        )
        VALUES (?1, ?2, 1, ?3, ?3, ?4, ?4, 'open', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?3, ?15)
        ON CONFLICT (fingerprint) DO UPDATE SET
+         kind = CASE
+           WHEN severity = 'critical' THEN kind
+           WHEN (CASE ?10 WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END) >
+                (CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END)
+             THEN ?2 ELSE kind END,
          count = count + 1,
          last_seen = ?3,
          last_version = ?4,
@@ -588,7 +640,11 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
          label = ?7,
          error_type = ?8,
          top_frame = ?9,
-         severity = CASE WHEN severity = 'critical' THEN severity WHEN ?10 = 'low' THEN 'low' ELSE severity END,
+         severity = CASE
+           WHEN severity = 'critical' THEN severity
+           WHEN (CASE ?10 WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END) >
+                (CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END)
+             THEN ?10 ELSE severity END,
          last_os = ?11,
          last_arch = ?12,
          last_build_commit = ?13,
@@ -603,9 +659,9 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
       `INSERT INTO reports (
          fingerprint, kind, version, os, arch, message, device, created_at,
          source, label, error_type, error_message, top_frame, build_commit, channel,
-         language, view, breadcrumbs, component_stack, stack, occurred_at, webview2
+         language, view, breadcrumbs, component_stack, stack, occurred_at, webview2, web_runtime
        )
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)`,
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)`,
     )
       .bind(
         fingerprint,
@@ -630,6 +686,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
         stack,
         r.occurredAt ?? "",
         webview2 ? JSON.stringify(webview2) : "",
+        webRuntime ? JSON.stringify(webRuntime) : "",
       );
 
     const pruneSamples = env.DB.prepare(
@@ -645,7 +702,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
     await env.DB.batch([
       groupWrite,
       sampleWrite,
-      ...reportAggregateStatements(env.DB, r, fingerprint, channel, webview2),
+      ...reportAggregateStatements(env.DB, r, fingerprint, channel, webRuntime),
       pruneSamples,
     ]);
   } catch (err) {
@@ -670,12 +727,21 @@ async function handlePing(request: Request, env: Env): Promise<Response> {
   try {
     if (p.surface === "cli") await ensureCLITelemetrySchema(env);
     await env.DB.prepare(
-      `INSERT INTO ${tables.pings} (date, install_id, version, os, arch, os_version, os_build, os_revision, opens)
-       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)
+      `INSERT INTO ${tables.pings} (
+         date, install_id, version, os, arch, os_version, os_build, os_revision, channel,
+         distro_id, distro_version, kernel_version, session_type, runtime_engine, runtime_version, gpu_mode, opens
+       )
+       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1)
        ON CONFLICT (date, install_id) DO UPDATE SET
-         opens = opens + 1, version = ?2, os_version = ?5, os_build = ?6, os_revision = ?7`,
+         opens = opens + 1, version = ?2, os_version = ?5, os_build = ?6, os_revision = ?7,
+         channel = ?8, distro_id = ?9, distro_version = ?10, kernel_version = ?11,
+         session_type = ?12, runtime_engine = ?13, runtime_version = ?14, gpu_mode = ?15`,
     )
-      .bind(p.installId, p.version, p.os, p.arch, p.osVersion ?? "", p.osBuild ?? 0, p.osRevision ?? 0)
+      .bind(
+        p.installId, p.version, p.os, p.arch, p.osVersion ?? "", p.osBuild ?? 0, p.osRevision ?? 0,
+        p.channel ?? "", p.distroId ?? "", p.distroVersion ?? "", p.kernelVersion ?? "",
+        p.sessionType ?? "", p.runtimeEngine ?? "", p.runtimeVersion ?? "", p.gpuMode ?? "",
+      )
       .run();
   } catch (err) {
     return storageUnavailable("ping", err);
@@ -711,15 +777,23 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
   }
   if (m.installId) {
     const userUpsert = env.DB.prepare(
-      `INSERT INTO ${tables.metricUsers} (date, version, os, arch, os_build, os_revision, signal, bucket, install_id, event_count)
-       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+      `INSERT INTO ${tables.metricUsers} (
+         date, version, os, arch, os_build, os_revision, channel, distro_id, distro_version,
+         kernel_version, session_type, runtime_engine, runtime_version, gpu_mode,
+         signal, bucket, install_id, event_count
+       )
+       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
        ON CONFLICT (date, signal, bucket, install_id) DO UPDATE SET
          version = ?1, os = ?2, arch = ?3, os_build = ?4, os_revision = ?5,
-         event_count = event_count + ?9`,
+         channel = ?6, distro_id = ?7, distro_version = ?8, kernel_version = ?9,
+         session_type = ?10, runtime_engine = ?11, runtime_version = ?12, gpu_mode = ?13,
+         event_count = event_count + ?17`,
     );
     try {
       await env.DB.batch(m.counters.map((c) => userUpsert.bind(
         m.version, m.os, m.arch ?? "", m.osBuild ?? 0, m.osRevision ?? 0,
+        m.channel ?? "", m.distroId ?? "", m.distroVersion ?? "", m.kernelVersion ?? "",
+        m.sessionType ?? "", m.runtimeEngine ?? "", m.runtimeVersion ?? "", m.gpuMode ?? "",
         c.signal, c.bucket, m.installId, c.count,
       )));
     } catch (err) {
@@ -750,54 +824,6 @@ async function formObject(request: Request): Promise<Record<string, string>> {
   for (const [k, v] of form) out[k] = typeof v === "string" ? v : "";
   return out;
 }
-
-type StatsFilters = {
-  surface: "desktop" | "cli";
-  status: string;
-  source: string;
-  version: string;
-  os: string;
-  platform: string;
-  osBuild: string;
-  arch: string;
-  channel: string;
-  runtimeVersion: string;
-  failureKind: string;
-  failureReason: string;
-  recovery: string;
-  gpu: string;
-  newLatest: boolean;
-  regressed: boolean;
-  windowDays: 7 | 30;
-  preferenceMode: "users" | "opens";
-};
-
-function statsFilters(url: URL): StatsFilters {
-  const status = url.searchParams.get("status") ?? "";
-  const surface = url.searchParams.get("surface") ?? "desktop";
-  const windowParam = url.searchParams.get("window") ?? "";
-  return {
-    surface: surface === "cli" ? "cli" : "desktop",
-    status: ["open", "resolved", "ignored"].includes(status) ? status : "",
-    source: (url.searchParams.get("source") ?? "").slice(0, 32),
-    version: (url.searchParams.get("version") ?? "").slice(0, 64),
-    os: (url.searchParams.get("os") ?? "").slice(0, 32),
-    platform: (url.searchParams.get("platform") ?? "").slice(0, 80),
-    osBuild: (url.searchParams.get("osBuild") ?? "").replace(/[^0-9]/g, "").slice(0, 7),
-    arch: (url.searchParams.get("arch") ?? "").slice(0, 32),
-    channel: (url.searchParams.get("channel") ?? "").slice(0, 32),
-    runtimeVersion: (url.searchParams.get("runtime") ?? "").slice(0, 128),
-    failureKind: (url.searchParams.get("failureKind") ?? "").slice(0, 64),
-    failureReason: (url.searchParams.get("reason") ?? "").slice(0, 64),
-    recovery: (url.searchParams.get("recovery") ?? "").slice(0, 32),
-    gpu: ["enabled", "disabled", "unknown"].includes(url.searchParams.get("gpu") ?? "") ? (url.searchParams.get("gpu") ?? "") : "",
-    newLatest: url.searchParams.get("new") === "latest",
-    regressed: url.searchParams.get("regressed") === "1",
-    windowDays: windowParam === "7d" ? 7 : 30,
-    preferenceMode: url.searchParams.get("prefs") === "opens" ? "opens" : "users",
-  };
-}
-
 
 type ParsedVersion = {
   version: string;
@@ -1024,9 +1050,11 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
   let sources: Bar[] = [];
   let diagnosticFacets: DiagnosticFacets = {
     versions: [], platforms: [],
-    osBuilds: [], architectures: [], channels: [], runtimes: [],
-    failureKinds: [], failureReasons: [], recoveries: [], gpuStates: [],
+    osBuilds: [], osRevisions: [], distros: [], distroVersions: [], kernels: [], sessions: [],
+    architectures: [], channels: [], runtimes: [], runtimeEngines: [],
+    failureKinds: [], failureReasons: [], exitCodes: [], recoveries: [], gpuStates: [],
   };
+  let installationLinkedSince = "";
   let overview: OverviewCounts = {
     latestAdoptionPct: null,
     openReports: 0,
@@ -1054,16 +1082,18 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
     overview = overviewR;
   } else if (activeModule === "diagnostics") {
     latestVersion = await latestObservedVersion(env, "desktop");
-    const [crashesR, sourcesR, facets] = await Promise.all([
+    const [crashesR, sourcesR, facets, linkedSince] = await Promise.all([
       crashGroups(env, filters, latestVersion),
       bars(`SELECT source AS label, COUNT(*) AS users FROM groups WHERE ${diagnosticWindowWhere(days)} GROUP BY source ORDER BY users DESC`),
       loadDiagnosticFacets(env, days),
+      env.DB.prepare("SELECT value FROM diagnostics_meta WHERE key = 'installation_linked_since'").first<{ value: string }>(),
     ]);
     crashes = crashesR.results;
     sources = sourcesR;
     versions = facets.versions;
     platforms = facets.platforms;
     diagnosticFacets = facets;
+    installationLinkedSince = linkedSince?.value ?? "";
   } else if (activeModule === "preferences") {
     const [metricsR, usersR] = await Promise.all([metricRows(env, days, surface), metricUserRows(env, days, surface)]);
     metrics = metricsR;
@@ -1085,7 +1115,7 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
 
   return html(
     renderStats(
-      { daily, versions, platforms, crashes, metrics, previousMetrics, metricUsers, metricUsersUnavailable, metricUsersComputedAt, sources, diagnosticFacets, overview, latestVersion, filters },
+      { daily, versions, platforms, crashes, metrics, previousMetrics, metricUsers, metricUsersUnavailable, metricUsersComputedAt, sources, diagnosticFacets, installationLinkedSince, overview, latestVersion, filters },
       user,
       activeModule,
     ),
@@ -1098,7 +1128,7 @@ async function handleGroup(env: Env, fingerprint: string, user: User): Promise<R
   group.severity = effectiveGroupSeverity(group);
   const reports = await env.DB.prepare(
     `SELECT version, os, arch, message, device, created_at, source, label, error_type, error_message,
-      top_frame, build_commit, channel, language, view, breadcrumbs, component_stack, stack, occurred_at, webview2
+      top_frame, build_commit, channel, language, view, breadcrumbs, component_stack, stack, occurred_at, webview2, web_runtime
      FROM reports WHERE fingerprint = ?1 ORDER BY id DESC`,
   )
     .bind(fingerprint)
@@ -1123,6 +1153,7 @@ async function handleGroup(env: Env, fingerprint: string, user: User): Promise<R
       stack: string;
       occurred_at: string;
       webview2: string;
+      web_runtime: string;
     }>();
   return html(renderGroup(group, reports.results, user, await groupDiagnosticSummary(env, fingerprint)));
 }

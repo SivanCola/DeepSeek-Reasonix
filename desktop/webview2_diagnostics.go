@@ -26,6 +26,18 @@ type webView2Diagnostic struct {
 	Recovery            string `json:"recovery"`
 }
 
+type webRuntimeDiagnostic struct {
+	Engine              string `json:"engine"`
+	Kind                string `json:"kind"`
+	Reason              string `json:"reason"`
+	ExitCode            *int32 `json:"exitCode,omitempty"`
+	ProcessDescription  string `json:"processDescription,omitempty"`
+	FailureSourceModule string `json:"failureSourceModule,omitempty"`
+	RuntimeVersion      string `json:"runtimeVersion"`
+	GPUMode             string `json:"gpuMode"`
+	Recovery            string `json:"recovery"`
+}
+
 type webView2NativeEvent struct {
 	Kind                int
 	Reason              int
@@ -87,10 +99,14 @@ func webView2Outcome(event webView2NativeEvent) (reportKind, outcome string) {
 	case 0:
 		return "crash", "fatal_app_exit"
 	case 1, 2:
-		if event.Recovery == webView2RecoverySucceeded {
+		switch event.Recovery {
+		case webView2RecoverySucceeded:
 			return "performance", "recovered"
+		case webView2RecoveryFailed:
+			return "exception", "recovery_failed"
+		default:
+			return "performance", "degraded"
 		}
-		return "exception", "recovery_failed"
 	default:
 		return "performance", "degraded"
 	}
@@ -105,13 +121,18 @@ func webView2NativeFailureReport(event webView2NativeEvent, runtimeVersion strin
 	if runtimeVersion == "" {
 		runtimeVersion = "unknown"
 	}
-	diagnostic := &webView2Diagnostic{
+	gpuMode := "enabled"
+	if gpuDisabled {
+		gpuMode = "disabled"
+	}
+	diagnostic := &webRuntimeDiagnostic{
+		Engine:              "webview2",
 		Kind:                kind,
 		Reason:              reason,
 		ProcessDescription:  sanitizeCrashText(event.ProcessDescription, 255),
 		FailureSourceModule: sanitizeFailureSourceModule(event.FailureSourceModule),
 		RuntimeVersion:      runtimeVersion,
-		GPUDisabled:         gpuDisabled,
+		GPUMode:             gpuMode,
 		Recovery:            recovery,
 	}
 	if event.ExitCodeAvailable {
@@ -125,14 +146,14 @@ func webView2NativeFailureReport(event webView2NativeEvent, runtimeVersion strin
 	}
 	report := baseCrashReport(reportKind)
 	report.SchemaVersion = 3
-	report.Source = "webview2.process.native"
+	report.Source = "web.runtime.native"
 	report.Label = "windows.webview2.process_failed"
 	report.ErrorType = "WebView2ProcessFailed"
 	report.ErrorMessage = sanitizeCrashText(fmt.Sprintf("WebView2 %s: %s (%s).", kind, reason, outcome), maxCrashFieldBytes)
 	report.TopFrame = "webview2.process." + kind
-	report.FingerprintHint = strings.Join([]string{"windows.webview2", kind, reason, fingerprintExitCode}, ".")
+	report.FingerprintHint = strings.Join([]string{"web.runtime", "webview2", kind, reason, fingerprintExitCode}, ".")
 	report.OccurredAt = time.Now().UTC().Format(time.RFC3339)
-	report.WebView2 = diagnostic
+	report.WebRuntime = diagnostic
 	report.Message = sanitizeCrashText(fmt.Sprintf(`[windows.webview2.process_failed]
 
 WebView2 reported a native process failure.
@@ -141,9 +162,9 @@ process kind: %s
 reason: %s
 exit code: %s
 runtime version: %s
-GPU disabled: %t
+GPU mode: %s
 recovery: %s
 process description: %s
-failure source module: %s`, kind, reason, fingerprintExitCode, runtimeVersion, gpuDisabled, recovery, diagnostic.ProcessDescription, diagnostic.FailureSourceModule), maxCrashDetailBytes)
+failure source module: %s`, kind, reason, fingerprintExitCode, runtimeVersion, gpuMode, recovery, diagnostic.ProcessDescription, diagnostic.FailureSourceModule), maxCrashDetailBytes)
 	return report, outcome
 }

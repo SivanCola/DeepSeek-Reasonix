@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"reasonix/internal/config"
+	"reasonix/internal/filelock"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/repair"
 )
@@ -55,6 +56,12 @@ type desktopLifecycleTracker struct {
 	state        desktopLifecycleState
 	now          func() time.Time
 	processAlive func(int) bool
+	updates      chan string
+	writerStop   chan struct{}
+	writerDone   chan struct{}
+	writerOnce   sync.Once
+	stopOnce     sync.Once
+	writerActive bool
 }
 
 func newDesktopLifecycleTracker(root, appVersion, appChannel string) *desktopLifecycleTracker {
@@ -76,43 +83,77 @@ func newDesktopLifecycleTracker(root, appVersion, appChannel string) *desktopLif
 		},
 		now:          func() time.Time { return time.Now().UTC() },
 		processAlive: desktopProcessAlive,
+		updates:      make(chan string, 1),
+		writerStop:   make(chan struct{}),
+		writerDone:   make(chan struct{}),
 	}
 }
 
-// prepareWebView2ProcessDiagnostics runs before Wails creates the native WebView
-// so browser-process failures during early startup can still be persisted. It
-// deliberately does not consume or create lifecycle records: Wails has not run
-// its single-instance gate yet, and a handoff process exits from that gate.
-func prepareWebView2ProcessDiagnostics(app *App) {
-	if app == nil || app.remoteWindowTicket != "" || version == "dev" {
+func prepareDesktopDiagnostics(app *App) {
+	if app == nil || app.remoteWindowTicket != "" || version == "dev" || activeWebView2ApprovalSmoke.enabled {
 		return
 	}
-	cfg, err := config.Load()
-	if err == nil && cfg.DesktopTelemetry() {
-		installWebView2ProcessObserver(app)
+	root := config.MemoryUserDir()
+	if root == "" {
+		return
 	}
+	diagnosticsDir := filepath.Join(root, "diagnostics")
+	if err := os.MkdirAll(diagnosticsDir, 0o700); err != nil {
+		return
+	}
+	release, err := filelock.TryAcquire(filepath.Join(diagnosticsDir, "primary.lock"))
+	if err != nil {
+		return
+	}
+	app.diagnosticsOwner = true
+	app.diagnosticsOwnerRelease = release
+
+	cfg, err := config.Load()
+	if err != nil || !cfg.DesktopTelemetry() {
+		return
+	}
+	app.diagnosticsTelemetry = true
+	tracker := newDesktopLifecycleTracker(root, version, channel)
+	if tracker.start() == nil {
+		app.lifecycle.tracker = tracker
+	}
+	installWebView2ProcessObserver(app)
+}
+
+func (a *App) releaseDesktopDiagnosticsOwnership() {
+	if a == nil || a.diagnosticsOwnerRelease == nil {
+		return
+	}
+	a.diagnosticsOwnerRelease()
+	a.diagnosticsOwnerRelease = nil
+	a.diagnosticsOwner = false
+	a.diagnosticsTelemetry = false
 }
 
 func initializeLifecycleDiagnostics(app *App) {
-	if app == nil || app.remoteWindowTicket != "" || app.lifecycle.tracker != nil {
+	if app == nil || app.remoteWindowTicket != "" || !app.diagnosticsOwner {
 		return
 	}
-	app.lifecycle.previousRun = repair.NewStartupTracker("").ObservePreviousRun()
 	cfg, err := config.Load()
 	if err != nil || version == "dev" {
 		return
 	}
-	tracker := newDesktopLifecycleTracker(config.MemoryUserDir(), version, channel)
-	enabled := cfg.DesktopTelemetry()
-	app.lifecycle.previousRuns = tracker.consumePrevious(enabled)
-	if enabled && tracker.start() == nil {
-		app.lifecycle.tracker = tracker
+	tracker := app.lifecycle.tracker
+	if tracker == nil {
+		tracker = newDesktopLifecycleTracker(config.MemoryUserDir(), version, channel)
 	}
+	enabled := cfg.DesktopTelemetry()
+	legacy := repair.NewStartupTracker("").ObservePreviousRun()
+	if enabled {
+		app.lifecycle.previousRun = legacy
+	}
+	app.lifecycle.previousRuns = tracker.consumePrevious(enabled)
+	installWebKitProcessObserver(app, enabled)
 }
 
 func (a *App) markDesktopHealthy() {
 	a.startupReady.Store(true)
-	a.lifecycle.tracker.mark("healthy")
+	a.lifecycle.tracker.markAsync("healthy")
 }
 
 func newDesktopLifecycleRunID() string {
@@ -127,7 +168,79 @@ func (t *desktopLifecycleTracker) start() error {
 	if t == nil || t.path == "" {
 		return nil
 	}
-	return t.writeState()
+	if err := t.writeState(); err != nil {
+		return err
+	}
+	t.writerOnce.Do(func() {
+		t.mu.Lock()
+		t.writerActive = true
+		t.mu.Unlock()
+		go t.runWriter()
+	})
+	return nil
+}
+
+func (t *desktopLifecycleTracker) runWriter() {
+	defer close(t.writerDone)
+	for {
+		select {
+		case phase := <-t.updates:
+			t.mark(phase)
+		case <-t.writerStop:
+			select {
+			case phase := <-t.updates:
+				t.mark(phase)
+			default:
+			}
+			return
+		}
+	}
+}
+
+// markAsync keeps normal startup and DOM-ready paths free from diagnostic I/O.
+// The single-slot queue is last-state-wins because lifecycle phases are
+// monotonic and only the newest pending phase is useful.
+func (t *desktopLifecycleTracker) markAsync(phase string) {
+	if t == nil || strings.TrimSpace(phase) == "" {
+		return
+	}
+	select {
+	case <-t.writerStop:
+		return
+	default:
+	}
+	select {
+	case t.updates <- phase:
+		return
+	default:
+	}
+	select {
+	case <-t.updates:
+	default:
+	}
+	select {
+	case t.updates <- phase:
+	default:
+	}
+}
+
+func (t *desktopLifecycleTracker) stopWriter() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	active := t.writerActive
+	t.mu.Unlock()
+	if !active {
+		return
+	}
+	t.stopOnce.Do(func() { close(t.writerStop) })
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-t.writerDone:
+	case <-timer.C:
+	}
 }
 
 func (t *desktopLifecycleTracker) mark(phase string) {
@@ -145,6 +258,7 @@ func (t *desktopLifecycleTracker) clean() {
 	if t == nil || t.path == "" {
 		return
 	}
+	t.stopWriter()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	_ = os.Remove(t.path)
@@ -189,6 +303,12 @@ func (t *desktopLifecycleTracker) consumePrevious(emit bool) []desktopLifecycleO
 			}
 			continue
 		}
+		// A newer Desktop may own a lifecycle schema this version cannot safely
+		// interpret. Preserve it verbatim so a downgrade never consumes or prunes
+		// future-format evidence.
+		if state.SchemaVersion != desktopLifecycleSchemaVersion {
+			continue
+		}
 		if t.processAlive(state.PID) {
 			continue
 		}
@@ -197,8 +317,14 @@ func (t *desktopLifecycleTracker) consumePrevious(emit bool) []desktopLifecycleO
 			continue
 		}
 		state, readErr = readDesktopLifecycleState(claimed)
+		if readErr != nil || state.SchemaVersion != desktopLifecycleSchemaVersion {
+			// The file changed between inspection and claim. Put it back when
+			// possible instead of deleting data that may belong to another schema.
+			_ = os.Rename(claimed, path)
+			continue
+		}
 		_ = os.Remove(claimed)
-		if readErr != nil || !emit {
+		if !emit {
 			continue
 		}
 		observations = append(observations, desktopLifecycleObservation{
@@ -238,7 +364,7 @@ func (t *desktopLifecycleTracker) pruneRecords() {
 		}
 		path := filepath.Join(t.dir, entry.Name())
 		state, err := readDesktopLifecycleState(path)
-		if err != nil || t.processAlive(state.PID) {
+		if err != nil || state.SchemaVersion != desktopLifecycleSchemaVersion || t.processAlive(state.PID) {
 			continue
 		}
 		if info, err := entry.Info(); err == nil {
