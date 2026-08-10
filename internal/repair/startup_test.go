@@ -76,9 +76,7 @@ func TestStartupTrackerConcurrentClaimReportsOnce(t *testing.T) {
 	var reports atomic.Int32
 	for range observers {
 		ready.Add(1)
-		done.Add(1)
-		go func() {
-			defer done.Done()
+		done.Go(func() {
 			tracker := NewStartupTracker(path)
 			tracker.processAlive = func(int) bool { return false }
 			ready.Done()
@@ -86,7 +84,7 @@ func TestStartupTrackerConcurrentClaimReportsOnce(t *testing.T) {
 			if tracker.ObservePreviousRun().Abnormal {
 				reports.Add(1)
 			}
-		}()
+		})
 	}
 	ready.Wait()
 	close(start)
