@@ -146,7 +146,10 @@ export function useTranscriptSelectionRetention({
     if (speed === 0) return;
     const max = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const next = Math.max(0, Math.min(max, scroll.scrollTop + speed));
-    if (next === scroll.scrollTop) return;
+    if (next === scroll.scrollTop) {
+      scheduleLogicalFocus();
+      return;
+    }
     if (!writeOffset("selection-edge-scroll", next)) return;
     scheduleLogicalFocus();
     edgeFrameRef.current = requestAnimationFrame(edgeScrollTick);

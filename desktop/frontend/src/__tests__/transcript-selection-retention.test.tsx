@@ -187,6 +187,8 @@ await act(async () => {
 });
 eq(transcriptSelectionStore.getSnapshot().mode, "logical-dragging", "cross-row selection promotes before the pointer gesture settles");
 await flushFramesOnce();
+eq(frames.size, 1, "loaded-history boundary schedules one final focus reconciliation");
+await flushFramesOnce();
 eq(frames.size, 0, "edge scrolling stops scheduling frames at the loaded-history boundary");
 
 committedCaretOffset = 2;
