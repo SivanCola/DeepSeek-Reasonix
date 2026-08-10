@@ -56,13 +56,16 @@ func TestEnqueueSnapshotAndRead(t *testing.T) {
 	if meta.ID != rec.ItemID || env.SubmitText != "hello world" {
 		t.Fatalf("read = meta=%+v env=%+v", meta, env)
 	}
-	// Permissions: dir 0700, blob 0600.
-	info, err := os.Stat(store.SessionInboxDir(session))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o700 {
-		t.Fatalf("inbox dir perm = %o", info.Mode().Perm())
+	// Permissions: dir 0700 on Unix. Windows reports 0777 for directories and
+	// does not enforce the same owner-only mode bits.
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(store.SessionInboxDir(session))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o700 {
+			t.Fatalf("inbox dir perm = %o", info.Mode().Perm())
+		}
 	}
 }
 
