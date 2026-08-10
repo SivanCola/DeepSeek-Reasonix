@@ -80,6 +80,7 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
   .reduce((total, path) => total + statSync(path).size, 0);
 // Native Web Animations and frame-batched scrolling avoid an eager animation
 // runtime. The shared reasoning display state adds a small always-available
-// contract; keep its raw allowance tightly ratcheted while gzip stays flat.
-assertBudget("initial raw JavaScript and CSS", rawInitialBytes, 2_203 * 1024);
+// contract. Native diagnostics privacy copy adds its attribution fields; keep
+// the raw allowance tightly ratcheted while gzip stays flat.
+assertBudget("initial raw JavaScript and CSS", rawInitialBytes, 2_205 * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
