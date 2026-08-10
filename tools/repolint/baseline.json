@@ -3,8 +3,8 @@
     "banner": 15,
     "commented-code": 0,
     "complexity": 2101,
-    "essay": 4071,
-    "file-size": 110182,
+    "essay": 4072,
+    "file-size": 110143,
     "function-size": 9157,
     "layering": 1,
     "marker": 0,
@@ -84,7 +84,7 @@
       "essay": 2
     },
     "desktop/frontend/src/App.tsx": {
-      "file-size": 4733
+      "file-size": 4736
     },
     "desktop/frontend/src/__tests__/app-chrome-tabs.test.ts": {
       "test-file-size": 19
@@ -153,7 +153,7 @@
       "file-size": 158
     },
     "desktop/frontend/src/components/Transcript.tsx": {
-      "file-size": 438
+      "file-size": 434
     },
     "desktop/frontend/src/components/UsageStatsPanel.tsx": {
       "file-size": 276
@@ -171,7 +171,7 @@
       "file-size": 225
     },
     "desktop/frontend/src/lib/transcriptStore.ts": {
-      "file-size": 307
+      "file-size": 269
     },
     "desktop/frontend/src/lib/types.ts": {
       "file-size": 1456
@@ -464,6 +464,9 @@
     },
     "internal/agent/compact_test.go": {
       "essay": 2
+    },
+    "internal/agent/context_manager.go": {
+      "essay": 1
     },
     "internal/agent/coordinator.go": {
       "essay": 15,

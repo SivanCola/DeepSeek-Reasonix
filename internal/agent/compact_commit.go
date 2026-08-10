@@ -19,22 +19,25 @@ type summaryProjectionCommit struct {
 
 // commitSummaryProjection CAS-installs a checkpoint under compactionMu:
 // transcript version/hash, projection version, and generation must still match.
+// The maintenance event is emitted only after the lock is released so a sink
+// that re-enters ContextMaintenanceSnapshot cannot deadlock.
 func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (CompactionState, error) {
 	state := a.summaryProjectionState(commit)
 	a.compactionMu.Lock()
-	defer a.compactionMu.Unlock()
 	current, currentVersion := a.session.snapshotMessagesVersion()
 	if currentVersion != commit.transcriptVersion ||
 		len(current) != len(commit.canonical) ||
 		coveredPrefixHash(current, len(current)) != coveredPrefixHash(commit.canonical, len(commit.canonical)) ||
 		a.compactionState.Projection.ProjectionVersion != commit.projectionVersion ||
 		a.compactionState.Generation != commit.generation {
+		a.compactionMu.Unlock()
 		return CompactionState{}, errCompressStaleContext
 	}
 	prev := a.compactionState
 	a.compactionState = state
 	if err := a.persistCompactionStateLocked(); err != nil {
 		a.compactionState = prev
+		a.compactionMu.Unlock()
 		if errors.Is(err, errCompressStaleContext) {
 			return CompactionState{}, err
 		}
@@ -44,8 +47,9 @@ func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (Compact
 	if commit.activeTurn != 0 && commit.trigger != CompactionTriggerManual {
 		a.lastCompactionTurn.Store(commit.activeTurn)
 	}
-	// Emit outside the critical section would be nicer, but receipt is stable.
-	a.emitContextMaintenance(state.LastReceipt)
+	receipt := state.LastReceipt
+	a.compactionMu.Unlock()
+	a.emitContextMaintenance(receipt)
 	return state, nil
 }
 

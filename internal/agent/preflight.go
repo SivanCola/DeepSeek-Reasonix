@@ -113,10 +113,11 @@ func (a *Agent) LoadProjectionSidecar(sessionPath string) {
 		a.compactionMu.Unlock()
 		return
 	}
-	// Rewrite legacy native-editing lineage to the current local key without
-	// bumping projection version or emitting applied events.
-	if keyOK && normalized != st.PromptCacheKey && key != "" {
+	// Only rewrite legacy native-editing lineage keys; exact matches stay pure-read.
+	needsNormalization := false
+	if keyOK && key != "" && normalized != st.PromptCacheKey {
 		st.PromptCacheKey = normalized
+		needsNormalization = true
 	}
 	// Only mark restored when the projection still matches the transcript.
 	var msgs []provider.Message
@@ -132,9 +133,10 @@ func (a *Agent) LoadProjectionSidecar(sessionPath string) {
 	a.compactionState = st
 	if valid {
 		a.checkpointState = "restored"
-		if keyOK && normalized != "" && st.PromptCacheKey == key {
-			// Persist normalized key so future loads match exactly.
-			_ = a.persistCompactionStateLocked()
+		if needsNormalization {
+			if err := a.persistCompactionStateLocked(); err != nil {
+				slog.Warn("agent: persist normalized projection lineage", "err", err)
+			}
 		}
 	} else {
 		a.checkpointState = "none"

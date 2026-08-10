@@ -65,9 +65,10 @@ func (m ContextManager) prepareOnce(ctx context.Context, policy ContextPreparePo
 		return PreparedContext{}, nil
 	}
 	visible := a.modelVisibleMessages()
-	// Threshold uses the final request shape (messages + tools + role
-	// projection), not bare messages. Interceptors run later for the real
-	// send; tools are the main under-count without this.
+	// Threshold uses the stable pre-interceptor request shape (messages + tools
+	// + role projection). Extension interceptors run only on the real sampling
+	// request so side-effecting plugins are not double-invoked; if they expand
+	// the prompt past the hard ceiling, overflow recovery still fires.
 	est := a.estimatedVisibleRequestTokens(visible)
 	prepared := PreparedContext{
 		Messages:          append([]provider.Message(nil), visible...),
@@ -176,8 +177,9 @@ func (m ContextManager) currentPrepared() PreparedContext {
 	}
 }
 
-// estimatedVisibleRequestTokens sizes the provider-bound view the way a
-// sampling request would: ModelMessages + role projection + tool schemas.
+// estimatedVisibleRequestTokens sizes the pre-interceptor sampling shape:
+// ModelMessages + role projection + tool schemas. Extension interceptors are
+// intentionally omitted here (see prepareOnce) to avoid double side effects.
 func (a *Agent) estimatedVisibleRequestTokens(visible []provider.Message) int {
 	if a == nil {
 		return 0
