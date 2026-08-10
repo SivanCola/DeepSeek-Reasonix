@@ -149,7 +149,12 @@ try {
     const transcript = document.querySelector(".transcript");
     if (!transcript) return false;
     const max = transcript.scrollHeight - transcript.clientHeight;
-    return max > 0 && transcript.scrollTop <= max * 0.3;
+    const viewport = transcript.getBoundingClientRect();
+    const visibleSelectable = [...transcript.querySelectorAll("[data-transcript-selectable]")].some((root) => {
+      const rect = root.getBoundingClientRect();
+      return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+    });
+    return max > 0 && transcript.scrollTop <= max * 0.3 && visibleSelectable;
   }, undefined, { timeout: 30_000 });
 
   const during = await page.evaluate(({ x, y }) => {
