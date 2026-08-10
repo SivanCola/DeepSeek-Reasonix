@@ -40,15 +40,31 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	return atomicWriteFile(path, data, perm, true)
 }
 
-// AtomicWriteFileStrict publishes only via atomic rename (no EXDEV copy) and
-// fsyncs the parent directory after rename so commit-pointer directory entries
-// survive power loss where directory metadata sync is supported.
+// AtomicWriteFileStrict publishes only via atomic rename (no EXDEV copy).
+// After a successful rename it best-effort fsyncs the parent directory so the
+// directory entry can survive power loss. A returned error always means the
+// destination was not published; post-rename dir-sync problems are not errors
+// (callers that roll back in-memory state on error would otherwise fork from
+// the on-disk pointer).
 func AtomicWriteFileStrict(path string, data []byte, perm os.FileMode) error {
 	return atomicWriteFile(path, data, perm, false)
 }
 
-// syncParentDirFn is a test seam for directory metadata durability after rename.
+// syncParentDirFn is the post-publish parent-dir fsync implementation.
+// Tests replace it via SetSyncParentDirForTest.
 var syncParentDirFn = syncParentDir
+
+// SetSyncParentDirForTest replaces post-rename parent-dir fsync. Restore with
+// the returned function. Production must leave the default in place.
+func SetSyncParentDirForTest(fn func(path string) error) (restore func()) {
+	prev := syncParentDirFn
+	if fn == nil {
+		syncParentDirFn = syncParentDir
+	} else {
+		syncParentDirFn = fn
+	}
+	return func() { syncParentDirFn = prev }
+}
 
 func atomicWriteFile(path string, data []byte, perm os.FileMode, allowCrossDeviceCopy bool) error {
 	Crash("atomic-write", path)
@@ -60,21 +76,20 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode, allowCrossDevic
 		os.Remove(tmpPath)
 		return err
 	}
-	// Strict only: parent-dir fsync after rename (power-loss durability).
+	// Strict only: parent-dir fsync is power-loss durability after publish.
+	// Never surface failures here — rename already committed the new file.
 	if !allowCrossDeviceCopy {
-		if err := syncParentDirFn(path); err != nil {
-			return err
-		}
+		_ = syncParentDirFn(path)
 	}
 	return nil
 }
 
-// syncParentDir fsyncs path's parent after rename. Unsupported on Windows /
-// some network FS — those errors are ignored (rename still crash-atomic).
+// syncParentDir fsyncs path's parent after rename (including "."). Unsupported
+// dir sync on Windows / some network FS is ignored.
 func syncParentDir(path string) error {
 	dirPath := filepath.Dir(path)
-	if dirPath == "" || dirPath == "." {
-		return nil
+	if dirPath == "" {
+		dirPath = "."
 	}
 	f, err := os.Open(dirPath)
 	if err != nil {

@@ -185,9 +185,10 @@ func LoadCompactionState(sessionPath string) (CompactionState, bool, error) {
 }
 
 // SaveCompactionState writes the sidecar via strict atomic publish (temp +
-// file fsync + rename + parent-dir fsync). Checkpoint sidecars are commit
-// pointers: EXDEV/copy fallbacks that can tear an existing file are rejected
-// so a failed write leaves the previous checkpoint intact.
+// file fsync + rename + best-effort parent-dir fsync). Checkpoint sidecars are
+// commit pointers: EXDEV/copy fallbacks that can tear an existing file are
+// rejected so a failed write leaves the previous checkpoint intact. A returned
+// error means the on-disk pointer was not published.
 func SaveCompactionState(sessionPath string, st CompactionState) error {
 	path := ContextStatePath(sessionPath)
 	if path == "" {
