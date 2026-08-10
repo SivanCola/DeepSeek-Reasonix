@@ -36,6 +36,52 @@ func (p *sharedWindowTestProvider) Stream(_ context.Context, req provider.Reques
 	return ch, nil
 }
 
+// Before any usage calibrates the session, the estimate compared against the
+// context window must still be tokens. It used to be characters, which reads
+// 3-4x high and compacted long before the configured ratio.
+func TestEstimatedPromptTokensStayInTokenUnitBeforeCalibration(t *testing.T) {
+	a := &Agent{contextWindow: 1_000_000}
+	cases := []struct {
+		name           string
+		text           string
+		realish, upper int
+	}{
+		// DeepSeek bills Chinese near 0.6 tokens per han rune, English near 0.25
+		// per character. The cold estimate may be conservative, never 3x.
+		{"chinese", strings.Repeat("上下文压缩策略", 8_000), 33_600, 50_000},
+		{"english", strings.Repeat("compact the context window ", 8_000), 54_000, 70_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := a.estimatedPromptTokens([]provider.Message{{Role: provider.RoleUser, Content: tc.text}})
+			if got < tc.realish/2 || got > tc.upper {
+				t.Fatalf("cold estimate = %d tokens, want between %d and %d (real ~%d)",
+					got, tc.realish/2, tc.upper, tc.realish)
+			}
+		})
+	}
+}
+
+// Desktop rebinds sessions constantly — tab switches, forks, and the snapshot
+// conflict path that adopts the newer disk transcript. Each rebind used to drop
+// the calibration and put the next turn back on the cold estimate.
+func TestSessionSwapKeepsPromptCalibration(t *testing.T) {
+	a := &Agent{contextWindow: 200_000}
+	msgs := []provider.Message{{Role: provider.RoleUser, Content: strings.Repeat("字", 60_000)}}
+	a.setPromptTokenCalibration(36_000, requestCalibrationShapeOf(provider.Request{Messages: msgs}))
+
+	before := a.estimatedPromptTokens(msgs)
+	a.SetSession(NewSession("system"))
+	after := a.estimatedPromptTokens(msgs)
+
+	if before != after {
+		t.Fatalf("estimate moved across a session swap: %d -> %d", before, after)
+	}
+	if after > 40_000 {
+		t.Fatalf("estimate = %d, want the calibrated ~36000 rather than a cold fallback", after)
+	}
+}
+
 func TestSharedWindowFoldUsesGuardedInputBudget(t *testing.T) {
 	prov := &sharedWindowTestProvider{budget: 128 * 1024, shared: true}
 	a := &Agent{
@@ -44,7 +90,9 @@ func TestSharedWindowFoldUsesGuardedInputBudget(t *testing.T) {
 		outputBudgetState: outputBudgetState{outputBudget: prov.budget},
 		sink:              event.Discard,
 	}
-	fold := []provider.Message{{Role: provider.RoleUser, Content: strings.Repeat("字", 50_000)}}
+	// 200K han runes is ~150K cold-start tokens against a 100K window: the fold
+	// genuinely cannot ride one call, which is what the guard exists to catch.
+	fold := []provider.Message{{Role: provider.RoleUser, Content: strings.Repeat("字", 200_000)}}
 
 	if _, err := a.foldToSummary(context.Background(), fold, ""); err != nil {
 		t.Fatalf("foldToSummary: %v", err)
@@ -124,14 +172,18 @@ func TestCalibratedOutputBudgetKeepsCJKConservativeFloor(t *testing.T) {
 		outputBudgetState: outputBudgetState{outputBudget: prov.budget}}
 	previous := []provider.Message{{Role: provider.RoleUser, Content: strings.Repeat("x", 300_000)}}
 	a.setPromptTokenCalibration(75_000, requestCalibrationShapeOf(provider.Request{Messages: previous}))
+	// Enough unrepresented CJK that the reply no longer fits beside it: at the
+	// corrected unit 430K runes leave most of a 1M window free.
 	current := append(append([]provider.Message(nil), previous...), provider.Message{
 		Role:             provider.RoleAssistant,
-		ReasoningContent: strings.Repeat("字", 430_000),
+		ReasoningContent: strings.Repeat("字", 1_200_000),
 		ToolCalls:        []provider.ToolCall{{ID: "call_1", Name: "bash", Arguments: `{}`}},
 	})
 
+	// The unrepresented CJK runes are priced at the cold rate: 3 bytes each at
+	// ~4 chars per token, i.e. 0.75 tokens per rune against a real ~0.6.
 	calibrated := a.estimatedPromptTokens(current)
-	wantFloor := 75_000 + 2*430_000
+	wantFloor := 75_000 + 1_200_000*3/4
 	if calibrated < wantFloor {
 		t.Fatalf("calibrated estimate %d fell below mixed-script safety floor %d", calibrated, wantFloor)
 	}
@@ -328,7 +380,7 @@ func TestSummarizeRejectsLengthTruncation(t *testing.T) {
 	}
 }
 
-func TestSetSessionResetsTokenCalibration(t *testing.T) {
+func TestSetSessionResetsPerTranscriptUsageState(t *testing.T) {
 	a := &Agent{}
 	a.lastUsage.Store(&provider.Usage{PromptTokens: 200_000})
 	active := requestCalibrationShape{requestChars: 900_000, compactChars: 850_000}
@@ -342,8 +394,8 @@ func TestSetSessionResetsTokenCalibration(t *testing.T) {
 	if got := a.activeReqShape.Load(); got != nil {
 		t.Fatalf("activeReqShape survived session switch: %+v", got)
 	}
-	if got := a.promptCalibration.Load(); got != nil {
-		t.Fatalf("promptCalibration survived session switch: %+v", got)
+	if got := a.promptCalibration.Load(); got == nil {
+		t.Fatal("promptCalibration was dropped on session switch; the tokenizer ratio outlives the transcript")
 	}
 }
 
