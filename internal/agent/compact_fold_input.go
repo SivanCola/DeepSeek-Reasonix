@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"reasonix/internal/provider"
 )
@@ -225,15 +224,4 @@ func (a *Agent) omitLowValueForSummary(fold []provider.Message, budget int) []pr
 	out = append(out, head...)
 	out = append(out, marker)
 	return append(out, tail...)
-}
-
-func joinSummaryInstructions(base, extra string) string {
-	base, extra = strings.TrimSpace(base), strings.TrimSpace(extra)
-	if base == "" {
-		return extra
-	}
-	if extra == "" {
-		return base
-	}
-	return base + "\n\n" + extra
 }

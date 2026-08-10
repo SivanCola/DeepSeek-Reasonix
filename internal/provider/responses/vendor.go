@@ -63,10 +63,6 @@ type vendorCapabilities struct {
 	// back to ordinary summarize without inheriting a large default".
 	compactionOutputTokens int
 
-	// nativeCompaction marks vendors with a dedicated compact endpoint.
-	// When false, agents must use ordinary summarize fallback.
-	nativeCompaction bool
-
 	// summaryRequired marks vendors whose Responses API requires the
 	// `summary` list on input reasoning items (DashScope; without it the
 	// server rejects with "Invalid 'summary': summary is required..."). The

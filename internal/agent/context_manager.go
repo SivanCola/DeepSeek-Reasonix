@@ -65,9 +65,13 @@ func (m ContextManager) prepareOnce(ctx context.Context, policy ContextPreparePo
 		return PreparedContext{}, nil
 	}
 	visible := a.modelVisibleMessages()
+	// Threshold uses the final request shape (messages + tools + role
+	// projection), not bare messages. Interceptors run later for the real
+	// send; tools are the main under-count without this.
+	est := a.estimatedVisibleRequestTokens(visible)
 	prepared := PreparedContext{
 		Messages:          append([]provider.Message(nil), visible...),
-		InputTokens:       a.estimatedPromptTokens(visible),
+		InputTokens:       est,
 		ProjectionVersion: a.currentProjectionVersion(),
 	}
 	if a.contextWindow <= 0 || len(visible) == 0 {
@@ -75,7 +79,6 @@ func (m ContextManager) prepareOnce(ctx context.Context, policy ContextPreparePo
 	}
 	fold := a.compactTrigger()
 	hard := a.hardInputCeiling()
-	est := prepared.InputTokens
 	if policy.ObservedInputTokens > 0 {
 		est = policy.ObservedInputTokens
 		prepared.InputTokens = est
@@ -168,7 +171,29 @@ func (m ContextManager) currentPrepared() PreparedContext {
 	visible := m.agent.modelVisibleMessages()
 	return PreparedContext{
 		Messages:          append([]provider.Message(nil), visible...),
-		InputTokens:       m.agent.estimatedPromptTokens(visible),
+		InputTokens:       m.agent.estimatedVisibleRequestTokens(visible),
 		ProjectionVersion: m.agent.currentProjectionVersion(),
 	}
+}
+
+// estimatedVisibleRequestTokens sizes the provider-bound view the way a
+// sampling request would: ModelMessages + role projection + tool schemas.
+func (a *Agent) estimatedVisibleRequestTokens(visible []provider.Message) int {
+	if a == nil {
+		return 0
+	}
+	msgs := a.providerProjectionMessages(provider.ModelMessages(append([]provider.Message(nil), visible...)))
+	for i := range msgs {
+		msgs[i].CreatedAt = 0
+	}
+	var tools []provider.ToolSchema
+	if a.tools != nil {
+		tools = a.tools.Schemas()
+	}
+	return a.estimatedRequestTokens(provider.Request{
+		Messages:    msgs,
+		Tools:       tools,
+		MaxTokens:   a.maxOutputTokens,
+		Temperature: provider.OptionalTemperature(a.temperature),
+	})
 }

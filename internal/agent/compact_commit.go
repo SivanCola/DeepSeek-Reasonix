@@ -17,31 +17,34 @@ type summaryProjectionCommit struct {
 	sourceTokens, projectionTokens                   int
 }
 
-// commitSummaryProjection performs the final CAS and durable sidecar switch
-// after all network and interceptor work has completed. Canonical history is
-// already the lossless archive, so checkpoint installation creates no copy.
+// commitSummaryProjection CAS-installs a checkpoint under compactionMu:
+// transcript version/hash, projection version, and generation must still match.
 func (a *Agent) commitSummaryProjection(commit summaryProjectionCommit) (CompactionState, error) {
-	current, currentVersion := a.session.snapshotMessagesVersion()
+	state := a.summaryProjectionState(commit)
 	a.compactionMu.Lock()
-	currentProjectionVersion := a.compactionState.Projection.ProjectionVersion
-	currentGeneration := a.compactionState.Generation
-	a.compactionMu.Unlock()
-	if currentVersion != commit.transcriptVersion || len(current) != len(commit.canonical) ||
+	defer a.compactionMu.Unlock()
+	current, currentVersion := a.session.snapshotMessagesVersion()
+	if currentVersion != commit.transcriptVersion ||
+		len(current) != len(commit.canonical) ||
 		coveredPrefixHash(current, len(current)) != coveredPrefixHash(commit.canonical, len(commit.canonical)) ||
-		currentProjectionVersion != commit.projectionVersion || currentGeneration != commit.generation {
+		a.compactionState.Projection.ProjectionVersion != commit.projectionVersion ||
+		a.compactionState.Generation != commit.generation {
 		return CompactionState{}, errCompressStaleContext
 	}
-
-	state := a.summaryProjectionState(commit)
-	if err := a.installProjectionIfCurrent(state, commit.projectionVersion, commit.generation); err != nil {
+	prev := a.compactionState
+	a.compactionState = state
+	if err := a.persistCompactionStateLocked(); err != nil {
+		a.compactionState = prev
 		if errors.Is(err, errCompressStaleContext) {
 			return CompactionState{}, err
 		}
 		return CompactionState{}, fmt.Errorf("persist projection: %w", err)
 	}
+	a.checkpointState = "applied"
 	if commit.activeTurn != 0 && commit.trigger != CompactionTriggerManual {
 		a.lastCompactionTurn.Store(commit.activeTurn)
 	}
+	// Emit outside the critical section would be nicer, but receipt is stable.
 	a.emitContextMaintenance(state.LastReceipt)
 	return state, nil
 }
@@ -59,8 +62,6 @@ func (a *Agent) summaryProjectionState(commit summaryProjectionCommit) Compactio
 		ResultTokens: commit.projectionTokens, SavedTokens: max(0, commit.sourceTokens-commit.projectionTokens),
 		SummaryHash: summaryHash, CacheBreak: true, CreatedAt: now,
 	}
-	// Schema v3 keeps projection + receipt primary. last_trigger / last_mode /
-	// last_*_tokens remain for status/report surfaces that still read them.
 	return CompactionState{
 		SchemaVersion: compactionStateSchemaCurrent, TranscriptVersion: commit.transcriptVersion,
 		Generation: commit.generation + 1, PromptCacheKey: a.currentPromptCacheKey(),

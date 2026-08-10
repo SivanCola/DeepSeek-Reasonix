@@ -146,20 +146,20 @@ type Tool interface {
 transcript，仅在唯一自动阈值被跨越时安装 provider 可见的短 **checkpoint**。
 
 - 每个 provider 声明 `context_window`（tokens）。唯一自动触发值是
-  `agent.compact_ratio`（默认 **0.85**；预设 0.70 / 0.80 / 0.85；范围 0.65–0.85）。  
+  `agent.compact_ratio`（默认 **0.85**；预设 0.70 / 0.80 / 0.85；范围 0.65–0.85）。
   `triggerTokens = floor(context_window × compact_ratio)`。
 - **阈值以下**绝不改写历史：不摘要、不安装 prune/snip projection、不写 sidecar、
   不增加 projection version、不发维护事件。任何改写都会使该点之后的 prompt 缓存失效。
-- **达到阈值**时运行 **一次** 摘要事务：  
-  `稳定前缀 + 一个结构化摘要 + 最近原文尾部`。  
-  正常验收：候选 ≤ 窗口 50%、严格小于源、且低于 `triggerTokens`；**不会**向 50% 回填。  
-  典型落地约占窗口 10%–30%。  
-  内部构造预算（非用户设置）：  
+- **达到阈值**时运行 **一次** 摘要事务：
+  `稳定前缀 + 一个结构化摘要 + 最近原文尾部`。
+  正常验收：候选 ≤ 窗口 50%、严格小于源、且低于 `triggerTokens`；**不会**向 50% 回填。
+  典型落地约占窗口 10%–30%。
+  内部构造预算（非用户设置）：
   `recentTailBudget = clamp(window×10%, 32K, 96K)`，摘要输出上限 **16K**。
 - 用户可用 `reasonix config compact-ratio [--local] [VALUE]` 查看或修改阈值。
   项目配置优先于桌面与新 CLI 会话共用的用户全局配置。UI 始终展示**实际生效**值。
-- `max_output_tokens` 是独立的**本轮**输出上限。  
-  推荐 `0`（**自动**，不是无限；DeepSeek 默认 high → 约 64K）。  
+- `max_output_tokens` 是独立的**本轮**输出上限。
+  推荐 `0`（**自动**，不是无限；DeepSeek 默认 high → 约 64K）。
   用户侧常用值：`32768` 普通编码/控费，`65536` 重推理/长工具链，`131072` 仅在反复
   `finish_reason=length` 时再考虑。负数为在协议允许时省略。仅在发送阶段按剩余
   窗口裁剪，**绝不**改变 `triggerTokens` 或维护时机。计费按实际 completion，不按配置上限。

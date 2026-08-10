@@ -31,18 +31,25 @@ func (a *Agent) ContextMaintenanceSnapshot() ContextMaintenanceSnapshot {
 	checkpointState := a.checkpointState
 	a.compactionMu.Unlock()
 	visible := canonical
-	if projectionValid(state, canonical, version, a.currentPromptCacheKey()) {
+	valid := projectionValid(state, canonical, version, a.currentPromptCacheKey())
+	if valid {
 		if projected := modelVisibleFromProjection(state.Projection, canonical); len(projected) > 0 {
 			visible = projected
 		}
 	}
 	trigger := a.compactTrigger()
+	// UI checkpoint label requires a still-valid covered prefix, not merely
+	// that the sidecar loaded.
+	uiCheckpoint := "none"
+	if valid && len(state.Projection.Messages) > 0 {
+		uiCheckpoint = stateCheckpointState(checkpointState, state)
+	}
 	snapshot := ContextMaintenanceSnapshot{
-		CanonicalTokens:   a.estimatedPromptTokens(provider.ModelMessages(canonical)),
-		ProjectedTokens:   a.estimatedPromptTokens(provider.ModelMessages(visible)),
+		CanonicalTokens:   a.estimatedVisibleRequestTokens(canonical),
+		ProjectedTokens:   a.estimatedVisibleRequestTokens(visible),
 		FoldTrigger:       trigger,
 		TriggerTokens:     trigger,
-		CheckpointState:   stateCheckpointState(checkpointState, state),
+		CheckpointState:   uiCheckpoint,
 		HardInputCeiling:  a.hardInputCeiling(),
 		ProjectionVersion: state.Projection.ProjectionVersion,
 	}

@@ -17,7 +17,7 @@ func TestCompactTriggerIndependentOfOutputBudget(t *testing.T) {
 		t.Fatalf("trigger = %d, want %d (compact_ratio only)", trigger, want)
 	}
 	// Oversized output budget must not lower the trigger.
-	a.outputBudgetState.outputBudget = 200_000
+	a.outputBudget = 200_000
 	if got := a.compactTrigger(); got != want {
 		t.Fatalf("trigger after larger output budget = %d, want %d", got, want)
 	}

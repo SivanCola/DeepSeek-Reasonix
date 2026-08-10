@@ -256,30 +256,30 @@ when the sole automatic threshold is crossed.
 
 - Each provider declares `context_window` (tokens). The only automatic trigger is
   `agent.compact_ratio` (default **0.85**; presets 0.70 / 0.80 / 0.85; range
-  0.65–0.85).  
+  0.65–0.85).
   `triggerTokens = floor(context_window × compact_ratio)`.
 - **Below the trigger** history is never rewritten: no summary, no prune/snip
   projection, no sidecar write, no projection-version bump, no maintenance event.
   Any rewrite would invalidate the prompt cache from that point on.
 - **At the trigger** Reasonix runs **one** summary transaction:
-  `stable prefix + one structured digest + recent verbatim tail`.  
+  `stable prefix + one structured digest + recent verbatim tail`.
   Acceptance (normal path): candidate ≤ 50% of the window, strictly smaller than
   the source, and below `triggerTokens`. Candidates are **not** padded toward 50%.
-  Typical landings are about 10%–30% of the window.  
-  Internal construction budgets (not user settings):  
+  Typical landings are about 10%–30% of the window.
+  Internal construction budgets (not user settings):
   `recentTailBudget = clamp(window×10%, 32K, 96K)`, summary output max **16K**.
 - Users inspect or change the threshold with
   `reasonix config compact-ratio [--local] [VALUE]`. Project config overrides the
   user-global value used by desktop and new CLI sessions. UI always shows the
   **effective** ratio.
-- `max_output_tokens` is an independent **per-turn** completion ceiling.  
-  Recommended: `0` (**automatic**, not unlimited; DeepSeek default high → ~64K).  
+- `max_output_tokens` is an independent **per-turn** completion ceiling.
+  Recommended: `0` (**automatic**, not unlimited; DeepSeek default high → ~64K).
   User presets: `32768` ordinary coding / cost control, `65536` heavy reasoning /
-  long tool loops, `131072` only after repeated `finish_reason=length`.  
+  long tool loops, `131072` only after repeated `finish_reason=length`.
   Negative omits optional wire limits when the protocol allows. Clipped only at
   send time against remaining window and **never** changes `triggerTokens` or
   maintenance timing. Billing follows actual completion tokens, not the ceiling.
-- Giant tool results are bounded **once**, on first entry to the model:  
+- Giant tool results are bounded **once**, on first entry to the model:
   `Content` is the stable ≤32KB visible form; `RawContent` holds the full original
   only when they differ. Maintenance never rewrites old tool bodies.
   `ModelMessages` strips `RawContent` so provider serialization and cache hashes

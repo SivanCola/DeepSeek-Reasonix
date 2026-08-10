@@ -553,20 +553,6 @@ func (a *Agent) planFoldRegion(msgs []provider.Message, force bool) (head, start
 	return head, start, start > head
 }
 
-// foldSource returns the current model-visible view for summary construction.
-// Automatic maintenance always merges "prior digest + new history", never
-// re-reads the full multi-million-token canonical transcript.
-func (a *Agent) foldSource(canonical []provider.Message) []provider.Message {
-	if visible := a.modelVisibleMessages(); len(visible) > 0 {
-		return visible
-	}
-	return canonical
-}
-
-// partitionFoldForProjection splits the fold region into keep-policy protected
-// messages and the remainder that folds. Prior digests always fold so each
-// checkpoint carries exactly one structured summary. early/carried are empty
-// for API compatibility with older call sites.
 func (a *Agent) partitionFoldForProjection(region []provider.Message) (early, carried, kept, fold []provider.Message) {
 	policyKeep := keepIndexes(region, a.keepPolicy)
 	for i, m := range region {

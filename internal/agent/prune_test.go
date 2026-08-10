@@ -53,7 +53,7 @@ func TestMaintenanceUsesSummaryNotPruneAtFoldTrigger(t *testing.T) {
 		{Role: provider.RoleSystem, Content: "sys"},
 		{Role: provider.RoleUser, Content: "task"},
 	}
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		id := "t" + string(rune('a'+i))
 		msgs = append(msgs,
 			provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: id, Name: "read_file", Arguments: "{}"}}},

@@ -74,3 +74,20 @@ export function formatContextMaintenanceNotice(m: WireContextMaintenance, t: Tra
   }
   return parts.join(" · ");
 }
+
+const MAX_SEEN_MAINTENANCE_OPS = 64;
+
+/** True when this operationId has not yet been rendered as a notice. */
+export function isNewMaintenanceOperation(seen: readonly string[] | undefined, operationId?: string): boolean {
+  const id = (operationId ?? "").trim();
+  if (!id) return true;
+  return !(seen ?? []).includes(id);
+}
+
+/** Remember an operationId for reconnect/replay dedupe (bounded FIFO). */
+export function rememberMaintenanceOperation(seen: readonly string[] | undefined, operationId?: string): string[] {
+  const id = (operationId ?? "").trim();
+  if (!id) return [...(seen ?? [])];
+  if ((seen ?? []).includes(id)) return [...(seen ?? [])];
+  return [...(seen ?? []), id].slice(-MAX_SEEN_MAINTENANCE_OPS);
+}

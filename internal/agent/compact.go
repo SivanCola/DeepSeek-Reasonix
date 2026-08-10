@@ -1,15 +1,10 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -152,22 +147,6 @@ func (a *Agent) exceptionalMinimumSavings() int {
 		return 0
 	}
 	return max(1, int(float64(a.contextWindow)*exceptionalMinSavingsRatio))
-}
-
-// summaryOutputBudget is the digest MaxTokens ceiling (16K), further reduced by
-// remaining space under the checkpoint ceiling when the rest of the candidate is known.
-func (a *Agent) summaryOutputBudget(prefixAndTailTokens int) int {
-	budget := summaryOutputMaxTokens
-	if a != nil && a.contextWindow > 0 && prefixAndTailTokens > 0 {
-		room := a.checkpointCeiling() - prefixAndTailTokens
-		if room < budget {
-			budget = room
-		}
-	}
-	if budget < 256 {
-		return 0
-	}
-	return budget
 }
 
 // foldEconomics estimates whether compacting the given region saves enough
@@ -457,10 +436,7 @@ func (a *Agent) planCompaction(msgs []provider.Message, min int, force bool) (he
 		start = tailStart(msgs, head, budget, a.tokPerChar(), a.tailFloor())
 		// Remeasure when force or non-strict roles; strict-alternating otherwise
 		// keeps a cheap tokPerChar overestimate of the tail under force.
-		floor := len(msgs) - a.tailFloor()
-		if floor < head {
-			floor = head
-		}
+		floor := max(head, len(msgs)-a.tailFloor())
 		remeasure := force || !a.strictAlternatingRoles
 		for remeasure && start < floor && estimateMessagesTokens(provider.ModelMessages(msgs[start:])) > budget {
 			start++
@@ -475,9 +451,7 @@ func (a *Agent) planCompaction(msgs []provider.Message, min int, force bool) (he
 			start--
 		}
 	}
-	if start < head {
-		start = head
-	}
+	start = max(start, head)
 	if start-head < min {
 		return head, start, false
 	}
@@ -687,62 +661,4 @@ func summarizeToolArgs(args string) string {
 	}
 	sort.Strings(keys)
 	return fmt.Sprintf("{%s} (%d keys)", strings.Join(keys, ", "), len(parsed))
-}
-
-// archiveMessages writes the dropped originals to a content-addressed .jsonl
-// (one message per line) under dir. Retrying the same failed/stale compaction
-// therefore reuses one archive instead of creating timestamp duplicates.
-func archiveMessages(dir string, msgs []provider.Message) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	var b bytes.Buffer
-	enc := json.NewEncoder(&b)
-	for _, m := range msgs {
-		if err := enc.Encode(m); err != nil {
-			return "", err
-		}
-	}
-	sum := sha256.Sum256(b.Bytes())
-	path := filepath.Join(dir, "context-"+hex.EncodeToString(sum[:16])+".jsonl")
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-	f, err := os.CreateTemp(dir, ".context-archive-*.tmp")
-	if err != nil {
-		return "", err
-	}
-	tmpName := f.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err := f.Chmod(0o600); err != nil {
-		_ = f.Close()
-		return "", err
-	}
-	if _, err := f.Write(b.Bytes()); err != nil {
-		_ = f.Close()
-		return "", err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Link(tmpName, path); err != nil {
-		if os.IsExist(err) {
-			return path, nil
-		}
-		return "", err
-	}
-	_ = os.Remove(tmpName)
-	cleanup = false
-	return path, nil
 }

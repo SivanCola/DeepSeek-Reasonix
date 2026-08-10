@@ -40,7 +40,7 @@ func (a *App) defaultSettingsView() SettingsView {
 		Agent: AgentView{
 			PlannerMaxSteps: 0, MaxSubagentDepth: agent.DefaultMaxSubagentDepth,
 			MaxSubagentConcurrency: agent.DefaultMaxSubagentConcurrency, MaxParallelWriters: agent.DefaultMaxParallelWriters,
-			ColdResumePrune: true, ReasoningLanguage: "auto",
+			ReasoningLanguage: "auto",
 			CompactRatio: defaults.Agent.CompactRatio, EffectiveCompactRatio: defaults.Agent.CompactRatio,
 		},
 		Bot: botSettingsView(config.BotConfig{}), AutoPlan: "off", DesktopLayoutStyle: "workbench",

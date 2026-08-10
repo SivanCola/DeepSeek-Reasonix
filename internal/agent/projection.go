@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -185,10 +184,10 @@ func LoadCompactionState(sessionPath string) (CompactionState, bool, error) {
 	return st, true, nil
 }
 
-// SaveCompactionState writes the sidecar via the shared Windows-safe atomic
-// publish path (temp + fsync + replace). Directory fsync is intentionally not
-// required: Windows returns ERROR_ACCESS_DENIED for directory Sync and would
-// otherwise fail every projection install.
+// SaveCompactionState writes the sidecar via strict atomic publish (temp +
+// fsync + rename only). Checkpoint sidecars are commit pointers: EXDEV/copy
+// fallbacks that can tear an existing file are rejected so a failed write
+// leaves the previous checkpoint intact.
 func SaveCompactionState(sessionPath string, st CompactionState) error {
 	path := ContextStatePath(sessionPath)
 	if path == "" {
@@ -205,7 +204,7 @@ func SaveCompactionState(sessionPath string, st CompactionState) error {
 		return err
 	}
 	b = append(b, '\n')
-	return fileutil.AtomicWriteFile(path, b, 0o644)
+	return fileutil.AtomicWriteFileStrict(path, b, 0o644)
 }
 
 // RemoveCompactionState deletes a corrupt or invalidated projection sidecar.
@@ -307,9 +306,9 @@ func projectionValid(st CompactionState, msgs []provider.Message, transcriptVers
 	if n <= 0 || n > len(msgs) {
 		return false
 	}
-	// Current lineage known: stored key must be present and equal.
+	// Current lineage known: stored key must match (legacy native suffix ok).
 	if cacheKey != "" {
-		if st.PromptCacheKey == "" || st.PromptCacheKey != cacheKey {
+		if _, ok := lineageKeyCompatible(st.PromptCacheKey, cacheKey); !ok {
 			return false
 		}
 	}
@@ -381,19 +380,4 @@ func formatSummaryMessage(summary string) provider.Message {
 			summary + "\n" +
 			summaryTagClose,
 	}
-}
-
-// extractLatestSummary returns the body of the newest compaction summary in msgs.
-func extractLatestSummary(msgs []provider.Message) string {
-	for i := range slices.Backward(msgs) {
-		if !isCompactionSummary(msgs[i]) {
-			continue
-		}
-		body := msgs[i].Content
-		body = strings.TrimPrefix(strings.TrimLeft(body, "\n "), summaryTagOpen)
-		body = strings.TrimSuffix(strings.TrimRight(body, "\n "), summaryTagClose)
-		body = strings.TrimPrefix(body, "\nSummary of earlier conversation (older messages were compacted to save context):\n")
-		return strings.TrimSpace(body)
-	}
-	return ""
 }

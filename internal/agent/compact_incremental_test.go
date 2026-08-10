@@ -48,16 +48,17 @@ func TestIncrementalFoldSummarizesPriorDigestPlusNewWork(t *testing.T) {
 		t.Fatal("second fold made no summarizer request")
 	}
 	// The second fold must see the prior digest in its input (incremental merge).
-	joined := ""
+	var joined strings.Builder
 	for _, req := range prov.got {
 		for _, m := range req.Messages {
-			joined += m.Content
+			joined.WriteString(m.Content)
 		}
 	}
-	if !strings.Contains(joined, summaryTagOpen) && !strings.Contains(joined, "merged digest") && !strings.Contains(joined, "Summary of earlier") {
+	joinedStr := joined.String()
+	if !strings.Contains(joinedStr, summaryTagOpen) && !strings.Contains(joinedStr, "merged digest") && !strings.Contains(joinedStr, "Summary of earlier") {
 		// The prior digest may be rendered as user content under the summary tag.
-		if !strings.Contains(joined, "new work") {
-			t.Fatalf("second fold input missing new work:\n%.400s", joined)
+		if !strings.Contains(joinedStr, "new work") {
+			t.Fatalf("second fold input missing new work:\n%.400s", joinedStr)
 		}
 	}
 	// Exactly one primary summary remains in the projection.
