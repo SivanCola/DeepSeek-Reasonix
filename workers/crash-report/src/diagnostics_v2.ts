@@ -59,6 +59,43 @@ export function diagnosticWindowWhere(days: 7 | 30): string {
   return `date(last_seen) >= date('now', '${currentWindowSince(days)}')`;
 }
 
+export type DiagnosticBar = { label: string; users: number };
+
+export type DiagnosticFacets = {
+  versions: DiagnosticBar[];
+  platforms: DiagnosticBar[];
+  osBuilds: DiagnosticBar[];
+  architectures: DiagnosticBar[];
+  channels: DiagnosticBar[];
+  runtimes: DiagnosticBar[];
+  failureKinds: DiagnosticBar[];
+  failureReasons: DiagnosticBar[];
+  recoveries: DiagnosticBar[];
+  gpuStates: DiagnosticBar[];
+};
+
+export async function diagnosticFacets(env: Env, days: 7 | 30): Promise<DiagnosticFacets> {
+  const since = currentWindowSince(days);
+  const facet = (expression: string, extra = "") => env.DB.prepare(
+    `SELECT ${expression} AS label, COUNT(DISTINCT install_id) AS users
+     FROM report_event_dimensions WHERE date >= date('now', '${since}') ${extra}
+     GROUP BY label ORDER BY users DESC LIMIT 20`,
+  ).all<DiagnosticBar>().then((result) => result.results);
+  const [versions, platforms, osBuilds, architectures, channels, runtimes, failureKinds, failureReasons, recoveries, gpuStates] = await Promise.all([
+    facet("version", "AND version <> ''"),
+    facet("os || ' ' || arch", "AND os <> '' AND arch <> ''"),
+    facet("CAST(os_build AS TEXT)", "AND os_build > 0"),
+    facet("arch", "AND arch <> ''"),
+    facet("channel", "AND channel <> ''"),
+    facet("runtime_version", "AND runtime_version <> ''"),
+    facet("failure_kind", "AND failure_kind <> ''"),
+    facet("failure_reason", "AND failure_reason <> ''"),
+    facet("recovery", "AND recovery <> ''"),
+    facet("CASE WHEN gpu_disabled = 1 THEN 'disabled' WHEN gpu_disabled = 0 THEN 'enabled' ELSE 'unknown' END"),
+  ]);
+  return { versions, platforms, osBuilds, architectures, channels, runtimes, failureKinds, failureReasons, recoveries, gpuStates };
+}
+
 type DiagnosticsGroupFilters = {
   status: string;
   source: string;
@@ -95,8 +132,8 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
     if (value === null) installBinds.pop();
   };
   if (filters.version) addInstall("version", filters.version);
-  if (filters.os) add("last_os = ?", filters.os);
-  if (filters.platform) add("last_os || ' ' || last_arch = ?", filters.platform);
+  if (filters.os) addInstall("os", filters.os);
+  if (filters.platform) addInstall("os || ' ' || arch", filters.platform);
   if (filters.osBuild) addInstall("os_build", Number(filters.osBuild));
   if (filters.arch) addInstall("arch", filters.arch);
   if (filters.channel) addInstall("channel", filters.channel);
@@ -104,7 +141,7 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
   if (filters.failureKind) addInstall("failure_kind", filters.failureKind);
   if (filters.failureReason) addInstall("failure_reason", filters.failureReason);
   if (filters.recovery) addInstall("recovery", filters.recovery);
-  if (filters.gpu) addInstall("gpu_disabled", filters.gpu === "unknown" ? null : filters.gpu === "disabled" ? 1 : 0);
+  if (filters.gpu) addInstall("gpu_disabled", filters.gpu === "unknown" ? -1 : filters.gpu === "disabled" ? 1 : 0);
   if (installWhere.length > 1) where.push("COALESCE(installations.affected_installs, 0) > 0");
   if (filters.newLatest && latestVersion) add("first_version = ?", latestVersion);
   if (filters.regressed) where.push("regressed_at <> ''");
@@ -126,7 +163,7 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
     FROM groups
     LEFT JOIN (
       SELECT fingerprint, COUNT(DISTINCT install_id) AS affected_installs
-      FROM report_installations WHERE ${installWhere.join(" AND ")} GROUP BY fingerprint
+      FROM report_event_dimensions WHERE ${installWhere.join(" AND ")} GROUP BY fingerprint
     ) installations ON installations.fingerprint = groups.fingerprint
     LEFT JOIN (
       SELECT fingerprint, SUM(events) AS window_events, SUM(identified_events) AS identified_events
@@ -232,5 +269,57 @@ export function reportAggregateStatements(
       webview2 ? (webview2.gpuDisabled ? 1 : 0) : null,
     ),
   );
+  statements.push(
+    db.prepare(
+      `INSERT INTO report_event_dimensions (
+         date, fingerprint, install_id, version, os, arch, os_build, os_revision, channel,
+         runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled, events
+       ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
+       ON CONFLICT (
+         date, fingerprint, install_id, version, os, arch, os_build, os_revision, channel,
+         runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled
+       ) DO UPDATE SET events = events + 1`,
+    ).bind(
+      fingerprint, report.installId, report.version, report.os, report.arch,
+      report.device?.osBuild ?? 0, report.device?.osRevision ?? 0, channel,
+      webview2?.runtimeVersion ?? "", webview2?.kind ?? "", webview2?.reason ?? "",
+      webview2?.exitCode === undefined ? "unknown" : String(webview2.exitCode), webview2?.recovery ?? "",
+      webview2 ? (webview2.gpuDisabled ? 1 : 0) : -1,
+    ),
+  );
   return statements;
+}
+
+export type GroupDiagnosticSummary = {
+  windowEvents: number;
+  identifiedEvents: number;
+  affectedInstalls: number;
+  distributions: { facet: string; value: string; installs: number; events: number }[];
+};
+
+export async function groupDiagnosticSummary(env: Env, fingerprint: string): Promise<GroupDiagnosticSummary> {
+  const [totals, distributions] = await Promise.all([
+    env.DB.prepare(
+      `SELECT
+         (SELECT COALESCE(SUM(events), 0) FROM report_daily WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS window_events,
+         (SELECT COALESCE(SUM(identified_events), 0) FROM report_daily WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS identified_events,
+         (SELECT COUNT(DISTINCT install_id) FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS affected_installs`,
+    ).bind(fingerprint).first<{ window_events: number; identified_events: number; affected_installs: number }>(),
+    env.DB.prepare(
+      `SELECT facet, value, COUNT(DISTINCT install_id) AS installs, SUM(events) AS events FROM (
+         SELECT 'osBuild' AS facet, CAST(os_build AS TEXT) AS value, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os_build > 0
+         UNION ALL SELECT 'runtime', runtime_version, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND runtime_version <> ''
+         UNION ALL SELECT 'reason', failure_reason, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND failure_reason <> ''
+         UNION ALL SELECT 'exitCode', exit_code, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
+         UNION ALL SELECT 'gpu', CASE WHEN gpu_disabled = 1 THEN 'disabled' WHEN gpu_disabled = 0 THEN 'enabled' ELSE 'unknown' END, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
+         UNION ALL SELECT 'recovery', recovery, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND recovery <> ''
+       ) GROUP BY facet, value ORDER BY facet, installs DESC`,
+    ).bind(fingerprint).all<{ facet: string; value: string; installs: number; events: number }>(),
+  ]);
+  return {
+    windowEvents: Number(totals?.window_events ?? 0),
+    identifiedEvents: Number(totals?.identified_events ?? 0),
+    affectedInstalls: Number(totals?.affected_installs ?? 0),
+    distributions: distributions.results,
+  };
 }

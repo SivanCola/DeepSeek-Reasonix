@@ -43,3 +43,15 @@ func (i *ICoreWebView2NavigationCompletedEventArgs) GetIsSuccess() (bool, error)
 	}
 	return value != 0, nil
 }
+
+func (i *ICoreWebView2NavigationCompletedEventArgs) GetNavigationID() (uint64, error) {
+	var value uint64
+	hr, _, _ := i.vtbl.GetNavigationId.Call(
+		uintptr(unsafe.Pointer(i)),
+		uintptr(unsafe.Pointer(&value)),
+	)
+	if windows.Handle(hr) != windows.S_OK {
+		return 0, syscall.Errno(hr)
+	}
+	return value, nil
+}

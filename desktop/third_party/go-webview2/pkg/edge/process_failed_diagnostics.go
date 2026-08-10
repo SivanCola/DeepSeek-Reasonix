@@ -41,7 +41,10 @@ func notifyProcessFailedObserver(diagnostic ProcessFailedDiagnostic) bool {
 }
 
 func collectProcessFailedDiagnostic(args *ICoreWebView2ProcessFailedEventArgs) ProcessFailedDiagnostic {
-	diagnostic := ProcessFailedDiagnostic{Recovery: "not_applicable"}
+	diagnostic := ProcessFailedDiagnostic{
+		Kind:     COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED,
+		Recovery: "not_applicable",
+	}
 	if kind, err := args.GetProcessFailedKind(); err == nil {
 		diagnostic.Kind = kind
 	}

@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -76,12 +75,10 @@ type Chromium struct {
 	permissionRequested              *iCoreWebView2PermissionRequestedEventHandler
 	webResourceRequested             *iCoreWebView2WebResourceRequestedEventHandler
 	acceleratorKeyPressed            *ICoreWebView2AcceleratorKeyPressedEventHandler
+	navigationStarting               *ICoreWebView2NavigationStartingEventHandler
 	navigationCompleted              *ICoreWebView2NavigationCompletedEventHandler
 	processFailed                    *ICoreWebView2ProcessFailedEventHandler
-	processRecoveryMu                sync.Mutex
-	lastProcessRecovery              time.Time
-	pendingProcessRecovery           *ProcessFailedDiagnostic
-	processRecoveryTimer             *time.Timer
+	processRecovery                  reasonixRecoveryState[ProcessFailedDiagnostic]
 
 	environment            *ICoreWebView2Environment
 	webview2RuntimeVersion string
@@ -137,6 +134,7 @@ func NewChromium() *Chromium {
 	e.permissionRequested = newICoreWebView2PermissionRequestedEventHandler(e)
 	e.webResourceRequested = newICoreWebView2WebResourceRequestedEventHandler(e)
 	e.acceleratorKeyPressed = newICoreWebView2AcceleratorKeyPressedEventHandler(e)
+	e.navigationStarting = newICoreWebView2NavigationStartingEventHandler(e)
 	e.navigationCompleted = newICoreWebView2NavigationCompletedEventHandler(e)
 	e.processFailed = newICoreWebView2ProcessFailedEventHandler(e)
 	e.containsFullScreenElementChanged = newICoreWebView2ContainsFullScreenElementChangedEventHandler(e)
@@ -163,11 +161,18 @@ func NewChromium() *Chromium {
 
 func (e *Chromium) ShuttingDown() {
 	e.shuttingDown = true
+	_, _ = e.processRecovery.finish()
 }
 
 func (e *Chromium) errorCallback(err error) {
 	e.globalErrorCallback(err)
 	os.Exit(1)
+}
+
+func (e *Chromium) nonFatalErrorCallback(err error) {
+	if e.globalErrorCallback != nil {
+		e.globalErrorCallback(err)
+	}
 }
 
 func (e *Chromium) SetErrorCallback(callback func(error)) {
@@ -392,6 +397,10 @@ func (e *Chromium) CreateCoreWebView2ControllerCompleted(res uintptr, controller
 	if err != nil {
 		e.errorCallback(err)
 	}
+	err = e.webview.AddNavigationStarting(e.navigationStarting, &token)
+	if err != nil {
+		e.errorCallback(err)
+	}
 	err = e.webview.AddProcessFailed(e.processFailed, &token)
 	if err != nil {
 		e.errorCallback(err)
@@ -576,6 +585,22 @@ func (e *Chromium) NavigationCompleted(sender *ICoreWebView2, args *ICoreWebView
 	return 0
 }
 
+func (e *Chromium) NavigationStarting(_ *ICoreWebView2, args *ICoreWebView2NavigationStartingEventArgs) uintptr {
+	if !e.processRecovery.hasPending() {
+		return 0
+	}
+	navigationID, err := args.GetNavigationID()
+	if err != nil {
+		e.nonFatalErrorCallback(fmt.Errorf("read WebView2 reload navigation ID: %w", err))
+		return 0
+	}
+	// Renderer recovery is armed immediately before Reload on WebView2's STA.
+	// Bind the first subsequent top-level navigation and accept only its exact
+	// completion ID; programmatic Reload is not reported as user initiated.
+	e.processRecovery.bindNavigation(navigationID)
+	return 0
+}
+
 func (e *Chromium) ProcessFailed(sender *ICoreWebView2, args *ICoreWebView2ProcessFailedEventArgs) uintptr {
 	diagnostic := collectProcessFailedDiagnostic(args)
 	if diagnostic.Kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
@@ -601,7 +626,7 @@ func (e *Chromium) ProcessFailed(sender *ICoreWebView2, args *ICoreWebView2Proce
 				if failed, ok := e.finishFailedRendererRecovery("reload_failed"); ok {
 					notifyProcessFailedObserver(failed)
 				}
-				e.errorCallback(fmt.Errorf("reload failed WebView2 renderer: %w", err))
+				e.nonFatalErrorCallback(fmt.Errorf("reload failed WebView2 renderer: %w", err))
 			}
 		}
 	} else if kind != COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
@@ -611,45 +636,42 @@ func (e *Chromium) ProcessFailed(sender *ICoreWebView2, args *ICoreWebView2Proce
 }
 
 func (e *Chromium) beginFailedRendererRecovery(diagnostic ProcessFailedDiagnostic, now time.Time) bool {
-	e.processRecoveryMu.Lock()
-	defer e.processRecoveryMu.Unlock()
-	if e.pendingProcessRecovery != nil ||
-		(!e.lastProcessRecovery.IsZero() && now.Sub(e.lastProcessRecovery) < reasonixProcessRecoveryCooldown) {
-		return false
-	}
-	e.lastProcessRecovery = now
-	e.pendingProcessRecovery = &diagnostic
-	e.processRecoveryTimer = time.AfterFunc(reasonixProcessRecoveryTimeout, func() {
-		if failed, ok := e.finishFailedRendererRecovery("reload_failed"); ok {
+	return e.processRecovery.begin(
+		diagnostic,
+		now,
+		reasonixProcessRecoveryCooldown,
+		reasonixProcessRecoveryTimeout,
+		func(failed ProcessFailedDiagnostic) {
+			failed.Recovery = "reload_failed"
 			notifyProcessFailedObserver(failed)
-		}
-	})
-	return true
+		},
+	)
 }
 
 func (e *Chromium) completeFailedRendererRecovery(args *ICoreWebView2NavigationCompletedEventArgs) (ProcessFailedDiagnostic, bool) {
+	navigationID, err := args.GetNavigationID()
+	if err != nil {
+		e.nonFatalErrorCallback(fmt.Errorf("read WebView2 completed navigation ID: %w", err))
+		return ProcessFailedDiagnostic{}, false
+	}
+	diagnostic, ok := e.processRecovery.completeNavigation(navigationID)
+	if !ok {
+		return ProcessFailedDiagnostic{}, false
+	}
 	recovery := "reload_failed"
 	if succeeded, err := args.GetIsSuccess(); err == nil && succeeded {
 		recovery = "reload_succeeded"
 	} else if err != nil {
-		e.errorCallback(fmt.Errorf("read WebView2 renderer reload outcome: %w", err))
+		e.nonFatalErrorCallback(fmt.Errorf("read WebView2 renderer reload outcome: %w", err))
 	}
-	return e.finishFailedRendererRecovery(recovery)
+	diagnostic.Recovery = recovery
+	return diagnostic, true
 }
 
 func (e *Chromium) finishFailedRendererRecovery(recovery string) (ProcessFailedDiagnostic, bool) {
-	e.processRecoveryMu.Lock()
-	if e.pendingProcessRecovery == nil {
-		e.processRecoveryMu.Unlock()
+	diagnostic, ok := e.processRecovery.finish()
+	if !ok {
 		return ProcessFailedDiagnostic{}, false
-	}
-	diagnostic := *e.pendingProcessRecovery
-	e.pendingProcessRecovery = nil
-	timer := e.processRecoveryTimer
-	e.processRecoveryTimer = nil
-	e.processRecoveryMu.Unlock()
-	if timer != nil {
-		timer.Stop()
 	}
 	diagnostic.Recovery = recovery
 	return diagnostic, true

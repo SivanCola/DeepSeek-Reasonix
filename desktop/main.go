@@ -133,9 +133,8 @@ func main() {
 		dragAndDrop = &options.DragAndDrop{DisableWebViewDrop: true}
 		bindings = nil
 	} else if !webView2ApprovalSmoke {
-		// Install the native observer before Wails creates the WebView. Lifecycle
-		// records themselves start from OnStartup, after Wails has rejected any
-		// second-instance handoff process.
+		// Install native diagnostics before Wails creates the WebView; lifecycle
+		// journaling starts after the single-instance gate in OnStartup.
 		prepareWebView2ProcessDiagnostics(app)
 		capturePendingUpdateHealthIdentity(app)
 	}

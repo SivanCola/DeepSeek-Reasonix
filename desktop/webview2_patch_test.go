@@ -103,7 +103,10 @@ func TestWebView2PatchWiring(t *testing.T) {
 	recoveryPolicyDefined := false
 	recoveryPolicyApplied := false
 	recoveryCompletionApplied := false
+	recoveryNavigationBound := false
 	nativeReloadApplied := false
+	nonFatalRecoveryErrors := false
+	fatalRecoveryErrors := false
 	diagnosticCollected := false
 	diagnosticObserved := false
 	for _, declaration := range parsed.Decls {
@@ -148,12 +151,27 @@ func TestWebView2PatchWiring(t *testing.T) {
 				if fn.Name.Name == "ProcessFailed" {
 					nativeReloadApplied = true
 				}
+			case "bindNavigation":
+				if fn.Name.Name == "NavigationStarting" {
+					recoveryNavigationBound = true
+				}
+			case "nonFatalErrorCallback":
+				if fn.Name.Name == "ProcessFailed" || fn.Name.Name == "completeFailedRendererRecovery" {
+					nonFatalRecoveryErrors = true
+				}
+			case "errorCallback":
+				if fn.Name.Name == "ProcessFailed" || fn.Name.Name == "completeFailedRendererRecovery" {
+					fatalRecoveryErrors = true
+				}
 			}
 			return true
 		})
 	}
-	if !recoveryPolicyDefined || !recoveryPolicyApplied || !recoveryCompletionApplied || !nativeReloadApplied {
+	if !recoveryPolicyDefined || !recoveryPolicyApplied || !recoveryCompletionApplied || !recoveryNavigationBound || !nativeReloadApplied {
 		t.Fatal("patched WebView2 must throttle and natively reload failed main renderers")
+	}
+	if !nonFatalRecoveryErrors || fatalRecoveryErrors {
+		t.Fatal("renderer recovery failures must be reported without exiting the desktop")
 	}
 	if !diagnosticCollected || !diagnosticObserved {
 		t.Fatal("patched WebView2 must collect and synchronously publish native process diagnostics")
@@ -175,6 +193,8 @@ func TestWebView2PatchWiring(t *testing.T) {
 		}
 	}
 	for _, requiredFile := range []string{
+		"ICoreWebView2NavigationStartingEventArgs.go",
+		"ICoreWebView2NavigationStartingEventHandler.go",
 		"ICoreWebView2ProcessFailedEventArgs2.go",
 		"ICoreWebView2ProcessFailedEventArgs3.go",
 		"process_failed_diagnostics.go",
@@ -183,12 +203,21 @@ func TestWebView2PatchWiring(t *testing.T) {
 			t.Fatalf("required native diagnostics patch %s is missing: %v", requiredFile, err)
 		}
 	}
+	diagnosticsData, err := os.ReadFile(filepath.Join("third_party", "go-webview2", "pkg", "edge", "process_failed_diagnostics.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(diagnosticsData), "COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED") {
+		t.Fatal("a failed process-kind getter must not default to a fatal browser exit")
+	}
 	navigationArgsData, err := os.ReadFile(filepath.Join("third_party", "go-webview2", "pkg", "edge", "ICoreWebView2NavigationCompletedEventArgs.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(navigationArgsData), "GetIsSuccess") {
-		t.Fatal("renderer recovery must read NavigationCompleted.IsSuccess before reporting success")
+	for _, expected := range []string{"GetIsSuccess", "GetNavigationID"} {
+		if !strings.Contains(string(navigationArgsData), expected) {
+			t.Fatalf("renderer recovery navigation completion must include %s", expected)
+		}
 	}
 
 	installerData, err := os.ReadFile("webview2_diagnostics_windows.go")

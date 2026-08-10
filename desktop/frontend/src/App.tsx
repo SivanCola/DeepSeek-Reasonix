@@ -55,7 +55,6 @@ import { decisionSurfaceMockFromInput, type DecisionSurfaceKind as MockDecisionS
 
 const UndoRewindBanner = lazy(() => import("./components/UndoRewindBanner").then((module) => ({ default: module.UndoRewindBanner })));
 const WebView2ApprovalSmoke = lazy(() => import("./lib/useWebView2ApprovalSmoke").then((module) => ({ default: module.WebView2ApprovalSmoke })));
-
 /** Footer decision surface kinds. Runtime blockers are explicit recovery choices. */
 type DecisionSurfaceKind = MockDecisionSurfaceKind | "extension_form";
 import { StatusBar } from "./components/StatusBar";
@@ -210,18 +209,14 @@ import { composerDraftKeyForTab } from "./lib/composerDraftKey";
 import { continueDelivery } from "./lib/deliveryContinue";
 import { activateGoalAndSubmitOnTab } from "./lib/goalSubmit";
 import logoWordmark from "./assets/logo-wordmark.svg";
-
 // Hold reasoning UI until the authoritative desktop startup settings arrive;
 // this prevents a hidden preference from flashing content during first paint.
 setReasoningDisplayPending();
-
 const TERMINAL_CLOSE_TRANSITION_MS = 250;
-
 function noticePreviewMockEnabled(): boolean {
   const value = browserMockScenarioParam();
   return value === "notice" || value === "notices" || value === "notice-preview";
 }
-
 function runtimeProfileShortKey(mode: TokenMode) {
   return mode === "economy"
     ? "composer.runtimeProfileEconomyShort" as const
@@ -229,7 +224,6 @@ function runtimeProfileShortKey(mode: TokenMode) {
       ? "composer.runtimeProfileDeliveryShort" as const
       : "composer.runtimeProfileBalancedShort" as const;
 }
-
 function noticePreviewItems(): Item[] {
   const notice = (index: number, level: "info" | "warn", text: string, detail: string, code?: string): Item => ({
     kind: "notice",
@@ -272,7 +266,6 @@ function noticePreviewItems(): Item[] {
     notice(26, "warn", "Guardian was disabled because it could not start.", "guardian startup failed: provider returned 401 unauthorized"),
   ];
 }
-
 function NoticePreviewPanel() {
   return (
     <div
@@ -292,7 +285,6 @@ function NoticePreviewPanel() {
     </div>
   );
 }
-
 const HistoryPanel = lazy(() => import("./components/HistoryPanel").then((module) => ({ default: module.HistoryPanel })));
 const SettingsPanel = lazy(() => import("./components/SettingsPanelEntry").then((module) => ({ default: module.SettingsPanel })));
 const RemotePanel = lazy(() => import("./components/RemotePanel").then((module) => ({ default: module.RemotePanel })));

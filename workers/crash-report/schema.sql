@@ -161,6 +161,35 @@ CREATE TABLE IF NOT EXISTS report_installations (
 CREATE INDEX IF NOT EXISTS report_installations_fingerprint_date
   ON report_installations (fingerprint, date);
 
+-- Event facts preserve every observed diagnostic environment. The per-install
+-- table above answers affected-install counts, but its latest-value dimensions
+-- must not relabel earlier GPU/runtime events from the same day.
+CREATE TABLE IF NOT EXISTS report_event_dimensions (
+  date TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  install_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  os TEXT NOT NULL,
+  arch TEXT NOT NULL,
+  os_build INTEGER NOT NULL DEFAULT 0,
+  os_revision INTEGER NOT NULL DEFAULT 0,
+  channel TEXT NOT NULL DEFAULT '',
+  runtime_version TEXT NOT NULL DEFAULT '',
+  failure_kind TEXT NOT NULL DEFAULT '',
+  failure_reason TEXT NOT NULL DEFAULT '',
+  exit_code TEXT NOT NULL DEFAULT 'unknown',
+  recovery TEXT NOT NULL DEFAULT '',
+  gpu_disabled INTEGER NOT NULL DEFAULT -1,
+  events INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (
+    date, fingerprint, install_id, version, os, arch, os_build, os_revision,
+    channel, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled
+  )
+);
+
+CREATE INDEX IF NOT EXISTS report_event_dimensions_fingerprint_date
+  ON report_event_dimensions (fingerprint, date);
+
 CREATE TABLE IF NOT EXISTS cli_metric_users (
   date TEXT NOT NULL,
   signal TEXT NOT NULL,

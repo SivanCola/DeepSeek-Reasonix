@@ -36,10 +36,13 @@ import {
   crashGroups,
   currentWindowSince,
   developmentGroupSQL,
+  diagnosticFacets as loadDiagnosticFacets,
   diagnosticWindowWhere,
   effectiveGroupSeverity,
+  groupDiagnosticSummary,
   isDevelopmentGroup,
   reportAggregateStatements,
+  type DiagnosticFacets,
 } from "./diagnostics_v2";
 export { diagnosticWindowWhere, effectiveGroupSeverity, isDevelopmentGroup } from "./diagnostics_v2";
 const MAX_BODY_BYTES = 96 * 1024;
@@ -990,16 +993,6 @@ async function metricUserRows(
 
 type Bar = { label: string; users: number };
 type MetricTotals = { signal: string; bucket: string; total: number }[];
-type DiagnosticFacets = {
-  osBuilds: Bar[];
-  architectures: Bar[];
-  channels: Bar[];
-  runtimes: Bar[];
-  failureKinds: Bar[];
-  failureReasons: Bar[];
-  recoveries: Bar[];
-  gpuStates: Bar[];
-};
 
 // Each stats module renders only its own section, so a page load should query
 // only what that section shows — the 30-day COUNT(DISTINCT) over metric_users,
@@ -1030,6 +1023,7 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
   let metricUsersComputedAt = "";
   let sources: Bar[] = [];
   let diagnosticFacets: DiagnosticFacets = {
+    versions: [], platforms: [],
     osBuilds: [], architectures: [], channels: [], runtimes: [],
     failureKinds: [], failureReasons: [], recoveries: [], gpuStates: [],
   };
@@ -1060,31 +1054,16 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
     overview = overviewR;
   } else if (activeModule === "diagnostics") {
     latestVersion = await latestObservedVersion(env, "desktop");
-    const installationsSince = `date >= date('now', '${since}')`;
-    const installationFacet = (expression: string, extra = "") => bars(
-      `SELECT ${expression} AS label, COUNT(DISTINCT install_id) AS users
-       FROM report_installations WHERE ${installationsSince} ${extra}
-       GROUP BY label ORDER BY users DESC LIMIT 20`,
-    );
-    const [crashesR, sourcesR, versionsR, platformsR, osBuilds, architectures, channels, runtimes, failureKinds, failureReasons, recoveries, gpuStates] = await Promise.all([
+    const [crashesR, sourcesR, facets] = await Promise.all([
       crashGroups(env, filters, latestVersion),
       bars(`SELECT source AS label, COUNT(*) AS users FROM groups WHERE ${diagnosticWindowWhere(days)} GROUP BY source ORDER BY users DESC`),
-      pingVersions(),
-      pingPlatforms(),
-      installationFacet("CAST(os_build AS TEXT)", "AND os_build > 0"),
-      installationFacet("arch", "AND arch <> ''"),
-      installationFacet("channel", "AND channel <> ''"),
-      installationFacet("runtime_version", "AND runtime_version <> ''"),
-      installationFacet("failure_kind", "AND failure_kind <> ''"),
-      installationFacet("failure_reason", "AND failure_reason <> ''"),
-      installationFacet("recovery", "AND recovery <> ''"),
-      installationFacet("CASE WHEN gpu_disabled = 1 THEN 'disabled' WHEN gpu_disabled = 0 THEN 'enabled' ELSE 'unknown' END"),
+      loadDiagnosticFacets(env, days),
     ]);
     crashes = crashesR.results;
     sources = sourcesR;
-    versions = versionsR;
-    platforms = platformsR;
-    diagnosticFacets = { osBuilds, architectures, channels, runtimes, failureKinds, failureReasons, recoveries, gpuStates };
+    versions = facets.versions;
+    platforms = facets.platforms;
+    diagnosticFacets = facets;
   } else if (activeModule === "preferences") {
     const [metricsR, usersR] = await Promise.all([metricRows(env, days, surface), metricUserRows(env, days, surface)]);
     metrics = metricsR;
@@ -1145,30 +1124,7 @@ async function handleGroup(env: Env, fingerprint: string, user: User): Promise<R
       occurred_at: string;
       webview2: string;
     }>();
-  const [totals, distributions] = await Promise.all([
-    env.DB.prepare(
-      `SELECT
-         (SELECT COALESCE(SUM(events), 0) FROM report_daily WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS window_events,
-         (SELECT COALESCE(SUM(identified_events), 0) FROM report_daily WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS identified_events,
-         (SELECT COUNT(DISTINCT install_id) FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS affected_installs`,
-    ).bind(fingerprint).first<{ window_events: number; identified_events: number; affected_installs: number }>(),
-    env.DB.prepare(
-      `SELECT facet, value, COUNT(DISTINCT install_id) AS installs, SUM(events) AS events FROM (
-         SELECT 'osBuild' AS facet, CAST(os_build AS TEXT) AS value, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os_build > 0
-         UNION ALL SELECT 'runtime', runtime_version, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND runtime_version <> ''
-         UNION ALL SELECT 'reason', failure_reason, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND failure_reason <> ''
-         UNION ALL SELECT 'exitCode', COALESCE(CAST(exit_code AS TEXT), 'unknown'), install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
-         UNION ALL SELECT 'gpu', CASE WHEN gpu_disabled = 1 THEN 'disabled' WHEN gpu_disabled = 0 THEN 'enabled' ELSE 'unknown' END, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
-         UNION ALL SELECT 'recovery', recovery, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND recovery <> ''
-       ) GROUP BY facet, value ORDER BY facet, installs DESC`,
-    ).bind(fingerprint).all<{ facet: string; value: string; installs: number; events: number }>(),
-  ]);
-  return html(renderGroup(group, reports.results, user, {
-    windowEvents: Number(totals?.window_events ?? 0),
-    identifiedEvents: Number(totals?.identified_events ?? 0),
-    affectedInstalls: Number(totals?.affected_installs ?? 0),
-    distributions: distributions.results,
-  }));
+  return html(renderGroup(group, reports.results, user, await groupDiagnosticSummary(env, fingerprint)));
 }
 
 async function handleGroupAction(request: Request, env: Env, admin: User, fingerprint: string): Promise<Response> {
@@ -1182,6 +1138,7 @@ async function handleGroupAction(request: Request, env: Env, admin: User, finger
       env.DB.prepare("DELETE FROM reports WHERE fingerprint = ?1").bind(fingerprint),
       env.DB.prepare("DELETE FROM report_daily WHERE fingerprint = ?1").bind(fingerprint),
       env.DB.prepare("DELETE FROM report_installations WHERE fingerprint = ?1").bind(fingerprint),
+      env.DB.prepare("DELETE FROM report_event_dimensions WHERE fingerprint = ?1").bind(fingerprint),
       env.DB.prepare("DELETE FROM groups WHERE fingerprint = ?1").bind(fingerprint),
     ]);
     await logAction(env, admin, "delete_group", fingerprint.slice(0, 8));
@@ -1357,6 +1314,7 @@ async function handleCommunityAction(
 const RETENTION = [
   { table: "report_daily", keepDays: 30 },
   { table: "report_installations", keepDays: 30 },
+  { table: "report_event_dimensions", keepDays: 30 },
   { table: "pings", keepDays: 30 },
   { table: "metrics", keepDays: 60 },
   { table: "metric_users", keepDays: 30 },

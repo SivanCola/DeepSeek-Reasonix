@@ -563,9 +563,7 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	// Wails has completed its single-instance gate before invoking OnStartup.
-	// Claim prior records and create this process's journal only for the primary
-	// Desktop, never for a short-lived handoff process.
+	// The single-instance gate ran; only the primary Desktop journals lifecycle.
 	initializeLifecycleDiagnostics(a)
 	a.startWindowsWebView2StartupFallback(ctx)
 	if a.lifecycle.tracker.mark("ready"); a.remoteWindowTicket != "" {
@@ -961,7 +959,7 @@ func (a *App) snapshotAllTabs() {
 // shutdown snapshots all tabs, saves the final window geometry, and closes tabs.
 func (a *App) shutdown(context.Context) {
 	if a.remoteWindowTicket != "" {
-		// Remote web window child: nothing to snapshot or stop locally.
+		// Remote web window child has no local state to stop.
 		return
 	}
 	defer a.lifecycle.tracker.clean()
@@ -1098,8 +1096,6 @@ func (a *App) domReady(_ context.Context) {
 
 	runtime.WindowShow(a.ctx)
 	a.markDesktopHealthy()
-	// Record last-known-good config after the UI is actually visible. This is
-	// independent of any startup health probation or crash-loop policy.
 	ctx := a.ctx
 	a.goSafe("recordHealthyConfig", func() {
 		timer := time.NewTimer(2 * time.Second)

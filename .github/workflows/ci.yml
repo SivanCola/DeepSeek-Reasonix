@@ -483,7 +483,9 @@ jobs:
 
       - name: test (Windows desktop and update helper)
         timeout-minutes: 15
-        run: go test ./...
+        run: |
+          go test ./...
+          (cd third_party/go-webview2 && go test ./pkg/edge)
 
       # Installer packaging is packaging validation, not a code gate: run it
       # on pushes to main-v2 (the release pipeline builds installers again
