@@ -149,13 +149,46 @@ try {
     const transcript = document.querySelector(".transcript");
     if (!transcript) return false;
     const max = transcript.scrollHeight - transcript.clientHeight;
-    const viewport = transcript.getBoundingClientRect();
-    const visibleSelectable = [...transcript.querySelectorAll("[data-transcript-selectable]")].some((root) => {
-      const rect = root.getBoundingClientRect();
-      return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
-    });
-    return max > 0 && transcript.scrollTop <= max * 0.3 && visibleSelectable;
+    return max > 0 && transcript.scrollTop <= max * 0.3;
   }, undefined, { timeout: 30_000 });
+  const neutralPoint = await page.evaluate(() => {
+    const rect = document.querySelector(".transcript")?.getBoundingClientRect();
+    return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+  });
+  assert(neutralPoint != null, "deep logical drag keeps the transcript mounted");
+  await page.mouse.move(neutralPoint.x, neutralPoint.y);
+  await page.waitForTimeout(100);
+  let logicalFocusPoint = null;
+  for (let index = 0; index < 40 && !logicalFocusPoint; index += 1) {
+    logicalFocusPoint = await page.evaluate(() => {
+      const transcript = document.querySelector(".transcript");
+      if (!transcript) return null;
+      const viewport = transcript.getBoundingClientRect();
+      const root = [...transcript.querySelectorAll("[data-transcript-selectable]")].find((element) => {
+        const rect = element.getBoundingClientRect();
+        const turn = element.textContent?.match(/\bbench turn (\d+):/);
+        return turn && Number(turn[1]) <= 16
+          && rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+      });
+      if (!root) return null;
+      const rect = root.getBoundingClientRect();
+      return {
+        x: Math.min(rect.right - 2, rect.left + 8),
+        y: (Math.max(rect.top, viewport.top) + Math.min(rect.bottom, viewport.bottom)) / 2,
+      };
+    });
+    if (!logicalFocusPoint) {
+      await page.mouse.wheel(0, -250);
+      await page.waitForTimeout(50);
+    }
+  }
+  assert(logicalFocusPoint != null, "deep logical drag settles over a visible 20+ turn target");
+  await page.mouse.move(logicalFocusPoint.x, logicalFocusPoint.y);
+  await page.waitForFunction(
+    () => document.querySelectorAll(".transcript-selection-overlay__rect").length > 0,
+    undefined,
+    { timeout: 5_000 },
+  );
 
   const during = await page.evaluate(({ x, y }) => {
     const selection = document.getSelection();
@@ -201,7 +234,7 @@ try {
       visibleSelectableRows,
       positiveRangeRows,
     };
-  }, points.edge);
+  }, logicalFocusPoint);
   assert(during.collapsed, `cross-row drag releases the browser Range after logical promotion (${JSON.stringify(during)})`);
   assert(during.mode === "logical-selecting", `cross-page drag remains owned by logical selection (${during.mode})`);
   assert(during.rows <= Math.ceil(baselineRows * 1.1) + 2, `logical selection keeps the virtual DOM bounded (${baselineRows} → ${during.rows})`);
