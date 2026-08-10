@@ -37,6 +37,11 @@ export function isTranscriptSelectionMode(mode: TranscriptScrollMode): boolean {
 /**
  * Central scroll-write arbitration. Browser-originated scrolling does not use
  * this path; every programmatic scrollTop write must name its owner here.
+ *
+ * Note: user-gesture locking is layered on top in
+ * `canTranscriptScrollOwnerWriteNow` (transcriptScrollSession.ts). Prefer that
+ * helper from runtime scroll writers so trackpad gestures are not fought by
+ * virtualizer/stream compensation.
  */
 export function canTranscriptScrollOwnerWrite(mode: TranscriptScrollMode, owner: TranscriptScrollOwner): boolean {
   if (isTranscriptSelectionMode(mode)) return owner === "selection-edge-scroll";
@@ -44,6 +49,8 @@ export function canTranscriptScrollOwnerWrite(mode: TranscriptScrollMode, owner:
   if (owner === "stream" || owner === "container-resize" || owner === "footer-resize") {
     return mode === "tail-follow";
   }
+  // Virtualizer compensation is allowed outside selection; the session layer
+  // (`canTranscriptScrollOwnerWriteNow`) additionally blocks it mid-gesture.
   if (owner === "virtualizer") return true;
   if (EXPLICIT_OWNERS.has(owner)) return true;
   return mode === "reconciling";

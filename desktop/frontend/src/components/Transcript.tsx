@@ -48,6 +48,7 @@ import { InlineAssistantReasoning } from "./InlineAssistantReasoning";
 import { LiveStreamContext } from "./LiveStreamContext";
 import { useTranscriptSelectableRows } from "../lib/useTranscriptSelectableRows";
 import { TranscriptSelectionOverlay } from "./TranscriptSelectionOverlay";
+import { attachNestedScrollHandoff } from "../lib/nestedScrollHandoff";
 type OpenTurnAction = { turn: number; menu: "summary" | "rewind" };
 const QUESTION_NAV_MIN_COUNT = 2;
 type AssistantReasoningDisplay = "normal" | "hide";
@@ -222,6 +223,7 @@ export function Transcript({
     canVirtualizerAdjust,
     captureViewportAnchor,
     reconcileViewportAnchor,
+    markUserGesture,
   } = useTranscriptScrollController();
   const autoScrollFrame = useRef<number | null>(null);
   const pendingRevealBottomScroll = useRef(false);
@@ -424,6 +426,28 @@ export function Transcript({
   const handleKeyScrollIntent = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
     if (onKeyScrollIntent(event)) cancelStreamingAutoScroll();
   }, [cancelStreamingAutoScroll, onKeyScrollIntent]);
+
+  // Promote edge / non-scrollable nested overflow wheels (tables with
+  // overflow-x:auto, code blocks, tool dumps) to the transcript so trackpad
+  // gestures never "stick" on an inner scroller mid-read.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handoff = attachNestedScrollHandoff({
+      parent: el,
+      onParentScrollIntent: () => {
+        markUserGesture();
+        cancelStreamingAutoScroll();
+        // Release tail-follow when the user scrolls via nested-edge handoff
+        // (native wheel after preventDefault may not reach React onWheelCapture).
+        if (stick.current) {
+          stick.current = false;
+          setScrollMode("manual", "nested-scroll-handoff");
+        }
+      },
+    });
+    return () => handoff.detach();
+  }, [cancelStreamingAutoScroll, markUserGesture, scrollRef, setScrollMode, stick]);
 
   const questions = useMemo<QuestionAnchor[]>(() => {
     const anchors: QuestionAnchor[] = [];

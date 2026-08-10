@@ -3,12 +3,16 @@ import type { KeyboardEvent as ReactKeyboardEvent, TouchEvent as ReactTouchEvent
 import { DUR_FAST, prefersReducedMotion } from "./motion";
 import { isEditableTarget } from "./keyboardShortcuts";
 import {
-  canTranscriptScrollOwnerWrite,
   isTranscriptSelectionMode,
   type TranscriptScrollMode,
   type TranscriptScrollOwner,
   type TranscriptViewportAnchor,
 } from "./transcriptScrollController";
+import {
+  canTranscriptScrollOwnerWriteNow,
+  canVirtualizerAdjustScroll,
+  noteUserGesture,
+} from "./transcriptScrollSession";
 
 declare global {
   interface Window {
@@ -39,12 +43,19 @@ function isScrollable(el: HTMLElement): boolean {
   return el.scrollHeight - el.clientHeight > 1;
 }
 
+/** Cancel an in-flight smooth scroll without going through owner arbitration. */
+function cancelInFlightSmoothScroll(el: HTMLElement) {
+  if (typeof el.scrollTo === "function") el.scrollTo({ top: el.scrollTop, behavior: "auto" });
+}
+
 /**
  * useScrollManager — frame-batched auto-scroll for the transcript container.
  *
  * - Auto-pins to the bottom when content is near the edge.
  * - Smooth scroll for jump-to-question navigation.
  * - Batches ResizeObserver callbacks into a single animation frame.
+ * - Holds a short user-gesture lock so virtualizer/stream writes cannot fight
+ *   native trackpad inertia (stalls/jumps in long transcripts).
  */
 export function useScrollManager() {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -58,6 +69,8 @@ export function useScrollManager() {
   const touchStartY = useRef<number | null>(null);
   const lastClientHeight = useRef<number | null>(null);
   const lastFooterHeight = useRef<number | null>(null);
+  /** Epoch ms until which compensating writers must stay silent. */
+  const gestureUntilRef = useRef(0);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const modeRef = useRef<TranscriptScrollMode>("tail-follow");
   const generationRef = useRef(0);
@@ -70,6 +83,10 @@ export function useScrollManager() {
       for (const frame of layoutScrollFrames.current) cancelAnimationFrame(frame);
       layoutScrollFrames.current = [];
     };
+  }, []);
+
+  const markUserGesture = useCallback(() => {
+    gestureUntilRef.current = noteUserGesture();
   }, []);
 
   const updateBottomState = useCallback((el: HTMLElement) => {
@@ -104,7 +121,7 @@ export function useScrollManager() {
 
   const writeOffset = useCallback((owner: TranscriptScrollOwner, top: number, behavior: ScrollBehavior = "auto") => {
     const el = scrollRef.current;
-    if (!el || !canTranscriptScrollOwnerWrite(modeRef.current, owner)) return false;
+    if (!el || !canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current)) return false;
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__?.(owner, top);
     if (typeof el.scrollTo === "function") el.scrollTo({ top, behavior });
     else el.scrollTop = top;
@@ -118,13 +135,15 @@ export function useScrollManager() {
       clearTimeout(smoothScrollTimer.current);
       smoothScrollTimer.current = null;
     }
-    // A same-position instant scroll cancels an in-flight native smooth scroll.
-    if (el) writeOffset("virtualizer", el.scrollTop);
+    // Cancel in-flight smooth scrolling without owner arbitration so a mid-gesture
+    // release is never blocked by the gesture lock itself.
+    if (el) cancelInFlightSmoothScroll(el);
     cancelPendingBottomScroll();
     stick.current = false;
     setIsAtBottom(false);
     modeRef.current = "manual";
-  }, [cancelPendingBottomScroll, writeOffset]);
+    if (scrollRef.current) scrollRef.current.dataset.scrollMode = "manual";
+  }, [cancelPendingBottomScroll]);
 
   const onWheelIntent = useCallback((event: ReactWheelEvent<HTMLElement>) => {
     const el = scrollRef.current;
@@ -132,12 +151,16 @@ export function useScrollManager() {
     // macOS/Chrome), not a scroll — treating it as scroll intent would release
     // tail-follow on a zoom that never actually moved scrollTop.
     if (!el || isTranscriptSelectionMode(modeRef.current) || !isScrollable(el) || event.ctrlKey || event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
+    // Any vertical wheel on a scrollable transcript starts the gesture lock so
+    // virtualizer remounts cannot rewrite scrollTop mid-inertia — including
+    // wheel-down at the bottom (tail-follow stays, compensation still freezes).
+    markUserGesture();
     if (event.deltaY < 0 || !isNearBottom(el)) {
       releaseAutoScroll();
       return true;
     }
     return false;
-  }, [releaseAutoScroll]);
+  }, [markUserGesture, releaseAutoScroll]);
 
   const onTouchStartIntent = useCallback((event: ReactTouchEvent<HTMLElement>) => {
     touchStartY.current = event.touches[0]?.clientY ?? null;
@@ -150,12 +173,13 @@ export function useScrollManager() {
     if (!el || isTranscriptSelectionMode(modeRef.current) || !isScrollable(el) || startY === null || currentY === undefined) return false;
     const deltaY = currentY - startY;
     if (Math.abs(deltaY) < TOUCH_SCROLL_THRESHOLD_PX) return false;
+    markUserGesture();
     if (deltaY > 0 || !isNearBottom(el)) {
       releaseAutoScroll();
       return true;
     }
     return false;
-  }, [releaseAutoScroll]);
+  }, [markUserGesture, releaseAutoScroll]);
 
   const onKeyScrollIntent = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     const el = scrollRef.current;
@@ -166,11 +190,12 @@ export function useScrollManager() {
     // on a completely unrelated stream, even though nothing was scrolled.
     if (!el || isTranscriptSelectionMode(modeRef.current) || !isScrollable(el) || isEditableTarget(event.target)) return false;
     if (SCROLL_BREAK_KEYS.has(event.key) || (CONDITIONAL_SCROLL_KEYS.has(event.key) && !isNearBottom(el))) {
+      markUserGesture();
       releaseAutoScroll();
       return true;
     }
     return false;
-  }, [releaseAutoScroll]);
+  }, [markUserGesture, releaseAutoScroll]);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -184,6 +209,7 @@ export function useScrollManager() {
     stick.current = false;
     setIsAtBottom(false);
     modeRef.current = "programmatic";
+    if (scrollRef.current) scrollRef.current.dataset.scrollMode = "programmatic";
     if (resizeFrame.current !== null) {
       cancelAnimationFrame(resizeFrame.current);
       resizeFrame.current = null;
@@ -209,9 +235,10 @@ export function useScrollManager() {
   /** Force-scroll to the bottom — used when a new question is sent. */
   const scrollToBottom = useCallback((force = false, owner: TranscriptScrollOwner = "stream") => {
     const el = scrollRef.current;
-    if (!el || !canTranscriptScrollOwnerWrite(modeRef.current, owner)) return;
+    if (!el || !canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current)) return;
     if (force) {
       modeRef.current = "tail-follow";
+      if (scrollRef.current) scrollRef.current.dataset.scrollMode = "tail-follow";
       stick.current = true;
       setIsAtBottom(true);
     }
@@ -272,6 +299,9 @@ export function useScrollManager() {
   /** Call when a new question is submitted — overrides stick state. */
   const onNewQuestion = useCallback(() => {
     stick.current = true;
+    // A new send is an explicit user action; clear any residual gesture lock so
+    // jump-bottom is not deferred by the previous scroll session.
+    gestureUntilRef.current = 0;
     scrollToBottom(true, "jump-bottom");
   }, [scrollToBottom]);
 
@@ -299,7 +329,9 @@ export function useScrollManager() {
         repinFrame.current = null;
         const delta = pendingRepinHeightDelta.current;
         pendingRepinHeightDelta.current = 0;
-        if (canTranscriptScrollOwnerWrite(modeRef.current, owner)) repinIfWasPinned(delta, owner);
+        if (canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current)) {
+          repinIfWasPinned(delta, owner);
+        }
       });
     },
     [repinIfWasPinned],
@@ -308,21 +340,25 @@ export function useScrollManager() {
   const resetGeneration = useCallback((_tabId?: string, _revealSignal?: number) => {
     generationRef.current += 1;
     cancelPendingBottomScroll();
+    gestureUntilRef.current = 0;
     if (smoothScrollTimer.current !== null) {
       clearTimeout(smoothScrollTimer.current);
       smoothScrollTimer.current = null;
       const el = scrollRef.current;
       modeRef.current = "programmatic";
-      if (el) writeOffset("virtualizer", el.scrollTop);
+      if (el) cancelInFlightSmoothScroll(el);
     }
     modeRef.current = "tail-follow";
     if (scrollRef.current) scrollRef.current.dataset.scrollMode = "tail-follow";
     stick.current = true;
     setIsAtBottom(true);
     return generationRef.current;
-  }, [cancelPendingBottomScroll, writeOffset]);
+  }, [cancelPendingBottomScroll]);
 
-  const canVirtualizerAdjust = useCallback(() => !isTranscriptSelectionMode(modeRef.current), []);
+  const canVirtualizerAdjust = useCallback(
+    () => canVirtualizerAdjustScroll(modeRef.current, gestureUntilRef.current),
+    [],
+  );
 
   const captureViewportAnchor = useCallback((): TranscriptViewportAnchor | null => {
     const el = scrollRef.current;
@@ -340,6 +376,8 @@ export function useScrollManager() {
   const reconcileViewportAnchor = useCallback((snapshot: TranscriptViewportAnchor | null) => {
     const el = scrollRef.current;
     if (!el || !snapshot || snapshot.generation !== generationRef.current) return false;
+    // Never fight an active trackpad gesture with anchor reconciliation.
+    if (!canVirtualizerAdjustScroll(modeRef.current, gestureUntilRef.current)) return false;
     const row = Array.from(el.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]"))
       .find((candidate) => candidate.dataset.rowKey === snapshot.rowKey);
     if (!row) return false;
@@ -392,5 +430,8 @@ export function useScrollManager() {
     canVirtualizerAdjust,
     captureViewportAnchor,
     reconcileViewportAnchor,
+    /** Marks an external user scroll intent (e.g. nested-edge handoff). */
+    markUserGesture,
+    gestureUntilRef,
   };
 }

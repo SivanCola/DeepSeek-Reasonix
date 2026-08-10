@@ -47,7 +47,12 @@ const VirtualMarkdownTable = memo(function VirtualMarkdownTable({
     initialRect: { width: 640, height: VIRTUAL_TABLE_MAX_HEIGHT },
   });
   return (
-    <div ref={scrollRef} className="md-table-virtual" style={{ maxHeight: VIRTUAL_TABLE_MAX_HEIGHT }}>
+    <div
+      ref={scrollRef}
+      className="md-table-virtual"
+      data-nested-scroll=""
+      style={{ maxHeight: VIRTUAL_TABLE_MAX_HEIGHT }}
+    >
       <table>
         {head}
         <tbody style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
@@ -76,7 +81,16 @@ const VirtualMarkdownTable = memo(function VirtualMarkdownTable({
 export const MarkdownTable = memo(function MarkdownTable({ children }: { children?: ReactNode }) {
   const tbody = findTablePart(children, "tbody");
   const rows = tableRows(tbody);
-  if (rows.length <= MARKDOWN_TABLE_VIRTUAL_MIN_ROWS) return <table>{children}</table>;
+  // Small tables stay in document flow. Horizontal overflow lives on a wrapper
+  // (overflow-y:hidden) so CSS does not promote overflow-y to auto and steal
+  // trackpad Y from the transcript.
+  if (rows.length <= MARKDOWN_TABLE_VIRTUAL_MIN_ROWS) {
+    return (
+      <div className="md-table-scroll">
+        <table>{children}</table>
+      </div>
+    );
+  }
   return <VirtualMarkdownTable head={findTablePart(children, "thead")} rows={rows} />;
 });
 
@@ -103,6 +117,7 @@ export const VirtualMarkdownSourceTable = memo(function VirtualMarkdownSourceTab
       ref={scrollRef}
       className="md-table-virtual"
       data-markdown-source-rows={data.rows.length}
+      data-nested-scroll=""
       style={{ maxHeight: VIRTUAL_TABLE_MAX_HEIGHT }}
     >
       <table>

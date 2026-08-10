@@ -101,6 +101,26 @@ if (api.stick.current) {
 }
 eq(scrollTop, 900, "a queued streaming auto-scroll would not yank after manual wheel intent");
 
+// Gesture lock: virtualizer/stream must not rewrite scrollTop mid-gesture.
+const writes: Array<[string, number]> = [];
+window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (owner, top) => {
+  writes.push([owner, top]);
+};
+scrollTop = 400;
+await act(async () => {
+  api!.stick.current = false;
+  api!.setMode("manual", "test");
+  api!.markUserGesture();
+  const virtualizerWrote = api!.writeOffset("virtualizer", 120);
+  const streamWrote = api!.writeOffset("stream", 900);
+  eq(virtualizerWrote, false, "virtualizer write is blocked during user gesture");
+  eq(streamWrote, false, "stream write is blocked during user gesture");
+  eq(api!.canVirtualizerAdjust(), false, "virtualizer adjust freezes during user gesture");
+});
+eq(scrollTop, 400, "scrollTop stays put when compensating owners fire mid-gesture");
+eq(writes.length, 0, "no compensating scroll writes are emitted mid-gesture");
+window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
+
 scrollTop = 900;
 await act(async () => {
   api!.stick.current = true;
