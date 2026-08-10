@@ -214,10 +214,7 @@ func TestDefaultSpawnerRunsPowerShellHookWithNestedQuotes(t *testing.T) {
 	// Cold PowerShell start under the Windows full suite (-p 4) can exceed the
 	// default 60s real-spawn budget when the runner is already hot from
 	// agent/boot/control packages. Keep the assertion, give the host longer.
-	timeout := realSpawnTimeout
-	if timeout < 2*time.Minute {
-		timeout = 2 * time.Minute
-	}
+	timeout := max(realSpawnTimeout, 2*time.Minute)
 	result := DefaultSpawner(context.Background(), SpawnInput{
 		Command: `$items = @("a b", "c'd", 'e"f', "中文", "🧪"); Write-Output ($items -join "|")`,
 		Mode:    ExecutionShell,
