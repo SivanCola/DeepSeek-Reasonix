@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"reasonix/internal/config"
+	"reasonix/internal/filelock"
 )
 
 // StartupState is the legacy startup-state.json shape written by v1.18-v1.19.
@@ -77,6 +78,15 @@ func readStartupState(path string) (StartupState, error) {
 // an unclean prior process at most once. A record owned by a live legacy
 // process is never touched, and no observation can alter startup behavior.
 func (t *StartupTracker) ObservePreviousRun() PreviousRunObservation {
+	if t.path == "" {
+		return PreviousRunObservation{}
+	}
+	release, err := filelock.TryAcquire(t.path + ".claim.lock")
+	if err != nil {
+		return PreviousRunObservation{}
+	}
+	defer release()
+
 	state, err := t.Read()
 	if err != nil || state.Phase == "" {
 		return PreviousRunObservation{}
