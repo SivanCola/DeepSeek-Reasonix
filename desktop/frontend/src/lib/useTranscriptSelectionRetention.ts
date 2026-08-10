@@ -123,8 +123,10 @@ export function useTranscriptSelectionRetention({
     const tracked = selectionRef.current;
     if (!tracked?.logical || !tracked.dragging || focusFrameRef.current !== null) return;
     focusFrameRef.current = requestAnimationFrame(() => {
-      focusFrameRef.current = null;
-      updateLogicalFocus();
+      focusFrameRef.current = requestAnimationFrame(() => {
+        focusFrameRef.current = null;
+        updateLogicalFocus();
+      });
     });
   }, [updateLogicalFocus]);
 
@@ -259,7 +261,7 @@ export function useTranscriptSelectionRetention({
         releasePointerCapture(tracked);
         transcriptSelectionStore.settleLogical();
         viewportAnchorRef.current = null;
-        setScrollMode("manual", "logical-selection-settled");
+        setScrollMode("manual", "logical-settled");
         publish();
         return;
       }

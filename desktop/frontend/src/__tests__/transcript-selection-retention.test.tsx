@@ -189,13 +189,18 @@ eq(transcriptSelectionStore.getSnapshot().mode, "logical-dragging", "cross-row s
 await flushFramesOnce();
 eq(frames.size, 1, "loaded-history boundary schedules one final focus reconciliation");
 await flushFramesOnce();
+eq(frames.size, 1, "the final focus reconciliation waits for the virtual DOM commit");
+await flushFramesOnce();
 eq(frames.size, 0, "edge scrolling stops scheduling frames at the loaded-history boundary");
 
 committedCaretOffset = 2;
 await act(async () => {
   root.render(<Harness tabId="tab-b" onReady={onReady} setMode={setMode} virtualRevision={1} />);
 });
-await drainFrames();
+api?.reconcileLogicalFocus();
+await flushFramesOnce();
+eq(frames.size, 1, "a coalesced virtual commit retains one post-commit focus reconciliation");
+await flushFramesOnce();
 eq(transcriptSelectionStore.getSnapshot().focus?.textOffset, 2, "virtual range commit re-resolves the logical focus without relying on DOM mutation delivery");
 
 committedCaretOffset = null;
