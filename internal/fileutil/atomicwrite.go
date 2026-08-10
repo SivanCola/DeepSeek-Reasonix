@@ -1,9 +1,12 @@
 package fileutil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"time"
 )
 
@@ -29,23 +32,23 @@ func Crash(op, path string) {
 	}
 }
 
-// AtomicWriteFile writes data to a sibling temporary file, fsyncs it, then
-// publishes it via ReplaceFile. On filesystems that support replacement rename,
-// readers see either the old file or the complete new file. ReplaceFile retains
-// its compatibility copy fallback for Windows filter drivers that reject a
-// same-directory rename as cross-device; callers that cannot tolerate that
-// non-atomic fallback must use AtomicWriteFileStrict.
+// AtomicWriteFile writes via temp + fsync + ReplaceFile. On rename-capable
+// filesystems readers see only the old or complete new file. ReplaceFile may
+// copy on Windows filter-driver EXDEV; callers that cannot tolerate that must
+// use AtomicWriteFileStrict.
 func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	return atomicWriteFile(path, data, perm, true)
 }
 
-// AtomicWriteFileStrict publishes data only through an atomic rename. Unlike
-// AtomicWriteFile, a cross-device/filter-driver error is returned without ever
-// truncating path. Use it for commit pointers whose corruption would make the
-// surrounding state impossible to recover automatically.
+// AtomicWriteFileStrict publishes only via atomic rename (no EXDEV copy) and
+// fsyncs the parent directory after rename so commit-pointer directory entries
+// survive power loss where directory metadata sync is supported.
 func AtomicWriteFileStrict(path string, data []byte, perm os.FileMode) error {
 	return atomicWriteFile(path, data, perm, false)
 }
+
+// syncParentDirFn is a test seam for directory metadata durability after rename.
+var syncParentDirFn = syncParentDir
 
 func atomicWriteFile(path string, data []byte, perm os.FileMode, allowCrossDeviceCopy bool) error {
 	Crash("atomic-write", path)
@@ -57,7 +60,40 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode, allowCrossDevic
 		os.Remove(tmpPath)
 		return err
 	}
+	// Strict only: parent-dir fsync after rename (power-loss durability).
+	if !allowCrossDeviceCopy {
+		if err := syncParentDirFn(path); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// syncParentDir fsyncs path's parent after rename. Unsupported on Windows /
+// some network FS — those errors are ignored (rename still crash-atomic).
+func syncParentDir(path string) error {
+	dirPath := filepath.Dir(path)
+	if dirPath == "" || dirPath == "." {
+		return nil
+	}
+	f, err := os.Open(dirPath)
+	if err != nil {
+		return fmt.Errorf("open parent dir for fsync %s: %w", path, err)
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		if runtime.GOOS == "windows" || isDirSyncUnsupported(err) {
+			return nil
+		}
+		return fmt.Errorf("fsync parent dir for %s: %w", path, err)
+	}
+	return nil
+}
+
+func isDirSyncUnsupported(err error) bool {
+	return errors.Is(err, syscall.EINVAL) ||
+		errors.Is(err, syscall.ENOTSUP) ||
+		errors.Is(err, syscall.ENOSYS)
 }
 
 // AtomicCreateFile publishes a complete file only when path is still absent.

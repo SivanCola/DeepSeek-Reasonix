@@ -35,8 +35,6 @@ func TestCompactionStateAtomicSaveLoad(t *testing.T) {
 		},
 		PromptCacheKey: "ws|sess|model",
 		LastCacheState: CacheStateCold,
-		LastTrigger:    CompactionTriggerPressure,
-		LastMode:       CompactionModeSummarized,
 		Generation:     7,
 		LastReceipt: &ContextMaintenanceReceipt{
 			Status: "applied", Action: "summary", ProjectionVersion: 1,
@@ -50,7 +48,7 @@ func TestCompactionStateAtomicSaveLoad(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("load: ok=%v err=%v", ok, err)
 	}
-	if got.SchemaVersion != compactionStateSchemaCurrent || got.TranscriptVersion != 3 || got.LastMode != CompactionModeSummarized {
+	if got.SchemaVersion != compactionStateSchemaCurrent || got.TranscriptVersion != 3 {
 		t.Fatalf("loaded state = %+v", got)
 	}
 	if len(got.Projection.Messages) != 2 || got.Projection.CoveredCount != 10 {

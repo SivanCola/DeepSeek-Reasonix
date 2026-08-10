@@ -107,6 +107,50 @@ func TestLoadProjectionSidecarDoesNotRewriteExactKey(t *testing.T) {
 	}
 }
 
+func TestSaveCompactionStateStripsLegacyWriterFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	st := CompactionState{
+		SchemaVersion:     compactionStateSchemaCurrent,
+		TranscriptVersion: 1,
+		PromptCacheKey:    "k",
+		LastTrigger:       CompactionTriggerPressure,
+		LastMode:          CompactionModeSummarized,
+		LastSourceTokens:  1000,
+		LastResultTokens:  200,
+		BlockedInputHash:  "legacy-blocked",
+		BlockedReason:     "legacy",
+		LastReceipt: &ContextMaintenanceReceipt{
+			Status: "applied", Action: "summary", ProjectionVersion: 1,
+			InputHash: "in", OutputHash: "out",
+		},
+	}
+	if err := SaveCompactionState(path, st); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(ContextStatePath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, banned := range []string{
+		`"last_trigger"`, `"last_mode"`, `"last_source_tokens"`,
+		`"last_result_tokens"`, `"blocked_input_hash"`, `"blocked_reason"`,
+	} {
+		if strings.Contains(string(raw), banned) {
+			t.Fatalf("new writer re-emitted %s:\n%s", banned, raw)
+		}
+	}
+	got, ok, err := LoadCompactionState(path)
+	if err != nil || !ok {
+		t.Fatalf("load: ok=%v err=%v", ok, err)
+	}
+	if got.LastMode != "" || got.LastTrigger != "" || got.BlockedInputHash != "" {
+		t.Fatalf("legacy mirrors present after save: %+v", got)
+	}
+	if got.LastReceipt == nil || got.LastReceipt.Status != "applied" {
+		t.Fatalf("receipt lost: %+v", got.LastReceipt)
+	}
+}
+
 func TestLoadProjectionSidecarNormalizesNativeKeyOnce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	msgs := []provider.Message{

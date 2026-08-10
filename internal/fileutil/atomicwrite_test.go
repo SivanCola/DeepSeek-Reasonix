@@ -145,6 +145,43 @@ func TestReplaceFileCrossDeviceCopiesImmediately(t *testing.T) {
 	}
 }
 
+func TestAtomicWriteFileStrictSyncsParentDir(t *testing.T) {
+	old := syncParentDirFn
+	calls := 0
+	syncParentDirFn = func(path string) error {
+		calls++
+		return old(path)
+	}
+	t.Cleanup(func() { syncParentDirFn = old })
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "pointer.json")
+	if err := AtomicWriteFileStrict(dest, []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("AtomicWriteFileStrict: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("parent dir sync calls = %d, want 1", calls)
+	}
+	if got, err := os.ReadFile(dest); err != nil || string(got) != `{"ok":true}` {
+		t.Fatalf("dest = %q, err=%v", got, err)
+	}
+}
+
+func TestAtomicWriteFileDoesNotRequireParentDirSync(t *testing.T) {
+	// Non-strict path keeps the historical file-only durability contract.
+	old := syncParentDirFn
+	syncParentDirFn = func(string) error {
+		t.Fatal("AtomicWriteFile must not require parent-dir sync")
+		return nil
+	}
+	t.Cleanup(func() { syncParentDirFn = old })
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := AtomicWriteFile(path, []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAtomicWriteFileStrictCrossDeviceKeepsExistingDestination(t *testing.T) {
 	oldRename := renameFile
 	renameFile = func(oldpath, newpath string) error {

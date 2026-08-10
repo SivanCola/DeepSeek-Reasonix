@@ -185,9 +185,9 @@ func LoadCompactionState(sessionPath string) (CompactionState, bool, error) {
 }
 
 // SaveCompactionState writes the sidecar via strict atomic publish (temp +
-// fsync + rename only). Checkpoint sidecars are commit pointers: EXDEV/copy
-// fallbacks that can tear an existing file are rejected so a failed write
-// leaves the previous checkpoint intact.
+// file fsync + rename + parent-dir fsync). Checkpoint sidecars are commit
+// pointers: EXDEV/copy fallbacks that can tear an existing file are rejected
+// so a failed write leaves the previous checkpoint intact.
 func SaveCompactionState(sessionPath string, st CompactionState) error {
 	path := ContextStatePath(sessionPath)
 	if path == "" {
@@ -198,6 +198,18 @@ func SaveCompactionState(sessionPath string, st CompactionState) error {
 	st.SchemaVersion = compactionStateSchemaCurrent
 	if st.UpdatedAt.IsZero() {
 		st.UpdatedAt = time.Now().UTC()
+	}
+	// LastReceipt is authoritative. Drop mirrored top-level last_*/blocked_*
+	// writer fields so new sidecars do not re-emit the pre-v3 dual schema.
+	// Old files with those keys still decode into the struct for readers.
+	st.LastTrigger = ""
+	st.LastMode = ""
+	st.LastSourceTokens = 0
+	st.LastResultTokens = 0
+	st.LastCompactionCost = 0
+	if st.LastReceipt != nil {
+		st.BlockedInputHash = ""
+		st.BlockedReason = ""
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {

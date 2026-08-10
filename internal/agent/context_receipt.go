@@ -98,8 +98,13 @@ func (a *Agent) recordContextMaintenanceOutcome(inputHash, trigger, action, stat
 	// Do not advance projection version on failure; generation still advances so
 	// CAS losers and concurrent writers cannot overwrite a newer success.
 	state.Generation++
-	state.BlockedInputHash = inputHash
-	state.BlockedReason = reason
+	// LastReceipt carries the blocked signal; clear legacy top-level mirrors.
+	state.BlockedInputHash = ""
+	state.BlockedReason = ""
+	state.LastTrigger = ""
+	state.LastMode = ""
+	state.LastSourceTokens = 0
+	state.LastResultTokens = 0
 	state.LastReceipt = &ContextMaintenanceReceipt{
 		OperationID: fmt.Sprintf("%s-%s-%d", status, action, state.Generation), Status: status, Action: action,
 		Trigger: trigger, SourceProjection: state.Projection.ProjectionVersion,

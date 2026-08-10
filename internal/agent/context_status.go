@@ -60,13 +60,20 @@ func (a *Agent) ContextMaintenanceSnapshot() ContextMaintenanceSnapshot {
 	}
 	snapshot.Headroom = max(0, snapshot.HardInputCeiling-snapshot.ProjectedTokens)
 	currentHash := a.contextMaintenanceInputHash(visible)
-	snapshot.Blocked = state.BlockedInputHash != "" && state.BlockedInputHash == currentHash
 	if state.LastReceipt != nil {
 		receipt := *state.LastReceipt
 		snapshot.LastReceipt = &receipt
 		if receipt.Status == "applied" && (receipt.Action == "prune" || receipt.Action == "summary") {
 			snapshot.LastSavedTokens = receipt.SavedTokens
 		}
+		// Generation-scoped blocked/failed receipts match contextMaintenanceBlocked.
+		if receipt.Status == "blocked" || receipt.Status == "failed" {
+			snapshot.Blocked = true
+		}
+	}
+	// Legacy sidecars may only have top-level BlockedInputHash.
+	if !snapshot.Blocked && state.BlockedInputHash != "" && state.BlockedInputHash == currentHash {
+		snapshot.Blocked = true
 	}
 	return snapshot
 }

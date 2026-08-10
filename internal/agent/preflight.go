@@ -106,8 +106,13 @@ func (a *Agent) LoadProjectionSidecar(sessionPath string) {
 	a.compactionMu.Lock()
 	key := a.currentPromptCacheKeyLocked()
 	normalized, keyOK := lineageKeyCompatible(st.PromptCacheKey, key)
-	if (key != "" && !keyOK) ||
-		(st.Projection.CoveredPrefixHash == "" && st.BlockedInputHash == "") {
+	// Keep receipt-only blocked/failed sidecars (no projection body) and legacy
+	// top-level BlockedInputHash so generation-scoped suppressions survive restart.
+	hasMaintenanceSignal := st.Projection.CoveredPrefixHash != "" ||
+		st.BlockedInputHash != "" ||
+		(st.LastReceipt != nil && (st.LastReceipt.Status == "blocked" || st.LastReceipt.Status == "failed" ||
+			st.LastReceipt.Status == "applied"))
+	if (key != "" && !keyOK) || !hasMaintenanceSignal {
 		a.compactionState = CompactionState{}
 		a.checkpointState = "none"
 		a.compactionMu.Unlock()

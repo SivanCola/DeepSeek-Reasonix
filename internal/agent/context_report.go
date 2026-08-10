@@ -63,10 +63,25 @@ func (a *Agent) ContextReport() ContextReport {
 	a.compactionMu.Lock()
 	st := a.compactionState
 	a.compactionMu.Unlock()
-	rep.LastTrigger, rep.LastMode = st.LastTrigger, st.LastMode
-	rep.LastSource, rep.LastResult = st.LastSourceTokens, st.LastResultTokens
+	// Prefer LastReceipt; fall back to legacy top-level mirrors from older sidecars.
+	if r := st.LastReceipt; r != nil && r.Status == "applied" {
+		rep.LastTrigger = r.Trigger
+		if r.Action == "summary" {
+			rep.LastMode = CompactionModeSummarized
+		} else if r.Action != "" {
+			rep.LastMode = r.Action
+		}
+		rep.LastSource, rep.LastResult = r.InputTokens, r.ResultTokens
+	} else {
+		rep.LastTrigger, rep.LastMode = st.LastTrigger, st.LastMode
+		rep.LastSource, rep.LastResult = st.LastSourceTokens, st.LastResultTokens
+	}
 	if rep.BlockedReason == "" {
-		rep.BlockedReason = st.BlockedReason
+		if r := st.LastReceipt; r != nil && (r.Status == "blocked" || r.Status == "failed") {
+			rep.BlockedReason = r.Reason
+		} else {
+			rep.BlockedReason = st.BlockedReason
+		}
 	}
 	return rep
 }

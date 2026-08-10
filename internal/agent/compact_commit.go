@@ -66,6 +66,8 @@ func (a *Agent) summaryProjectionState(commit summaryProjectionCommit) Compactio
 		ResultTokens: commit.projectionTokens, SavedTokens: max(0, commit.sourceTokens-commit.projectionTokens),
 		SummaryHash: summaryHash, CacheBreak: true, CreatedAt: now,
 	}
+	// LastReceipt is authoritative; do not mirror last_trigger/last_mode/token
+	// counters or top-level blocked_* fields (stripped again on save).
 	return CompactionState{
 		SchemaVersion: compactionStateSchemaCurrent, TranscriptVersion: commit.transcriptVersion,
 		Generation: commit.generation + 1, PromptCacheKey: a.currentPromptCacheKey(),
@@ -75,8 +77,6 @@ func (a *Agent) summaryProjectionState(commit summaryProjectionCommit) Compactio
 			SummaryHash: summaryHash, SourceTokens: commit.sourceTokens, ProjectionTokens: commit.projectionTokens,
 			ViewInputHash: commit.inputHash, ViewOutputHash: commit.outputHash, CreatedAt: now,
 		},
-		LastTrigger: commit.trigger, LastMode: CompactionModeSummarized,
-		LastSourceTokens: commit.sourceTokens, LastResultTokens: commit.projectionTokens,
 		LastReceipt: receipt, UpdatedAt: now,
 	}
 }

@@ -163,7 +163,11 @@ func (h *harness) runGeneration(ctx context.Context, gen int, probes []probe) ge
 	}
 	if st, ok, sterr := agent.LoadCompactionState(h.path); sterr == nil && ok {
 		r.ProjectionTokens = st.Projection.ProjectionTokens
-		r.Mode = st.LastMode
+		if st.LastReceipt != nil && st.LastReceipt.Action == "summary" {
+			r.Mode = agent.CompactionModeSummarized
+		} else if st.LastMode != "" {
+			r.Mode = st.LastMode
+		}
 	}
 	return r
 }
