@@ -358,6 +358,7 @@ jobs:
           pnpm --dir frontend test:terminal
           pnpm --dir frontend test:task-monitor
           pnpm --dir frontend test:motion
+          pnpm --dir frontend test:transcript
 
       - name: Test usage statistics frontend
         run: pnpm --dir frontend test:usage-stats

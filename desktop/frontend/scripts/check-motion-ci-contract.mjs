@@ -40,11 +40,25 @@ for (const required of [
   "check-waapi-contract.mjs --self-test",
   "native-motion.test.tsx",
   "approval-animation.test.tsx",
-  "transcript-virtualization.test.tsx",
 ]) {
   if (!motionScript.includes(required)) {
     throw new Error(`motion-ci-contract: test:motion must include ${required}`);
   }
 }
 
-console.log("motion-ci-contract: required lint plus Linux and Windows jobs run native motion gates, and Windows runs the real WebView2 smoke");
+if (motionScript.includes("transcript-virtualization.test.tsx")) {
+  throw new Error("motion-ci-contract: test:motion must not include the transcript virtualization suite");
+}
+
+const transcriptScript = packageJSON.scripts?.["test:transcript"] ?? "";
+if (transcriptScript !== "tsx src/__tests__/transcript-virtualization.test.tsx") {
+  throw new Error("motion-ci-contract: test:transcript must own the transcript virtualization suite");
+}
+
+const transcriptCommand = "pnpm --dir frontend test:transcript";
+const transcriptRuns = workflow.split(transcriptCommand).length - 1;
+if (!jobBody("desktop", "desktop-macos").includes(transcriptCommand) || transcriptRuns !== 1) {
+  throw new Error("motion-ci-contract: the Linux desktop job must run test:transcript exactly once");
+}
+
+console.log("motion-ci-contract: required jobs run focused native motion gates, Linux owns transcript virtualization, and Windows runs the real WebView2 smoke");
