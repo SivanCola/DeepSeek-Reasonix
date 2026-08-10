@@ -18,6 +18,7 @@ import {
   estimateHastBytes,
   markdownContentRevision,
   markdownUrlTransform,
+  parseMarkdown,
   parseMarkdownToBlocks,
   parseMarkdownToHast,
   sliceHastBlocks,
@@ -174,6 +175,42 @@ for (const unsafe of [
   ok(bytes > 0 && bytes < 100_000, "hast byte estimate is positive and bounded");
   const bigBlocks = parseMarkdownToBlocks(bigCode);
   ok(estimateHastBytes(bigBlocks) > bytes, "hast byte estimate grows with content");
+}
+
+console.log("\nmarkdown selection projection");
+
+{
+  const result = parseMarkdown([
+    "# 标题 😀",
+    "",
+    "段落 [链接文字](https://example.com) 与 $x^2$。",
+    "",
+    "内联 **粗体** *斜体*。",
+    "",
+    "- 第一项",
+    "- 第二项",
+    "",
+    "```ts",
+    "const value = 1;",
+    "```",
+    "",
+    "| 名称 | 值 |",
+    "| --- | --- |",
+    "| 一 | 1 |",
+  ].join("\n"));
+  eq(
+    result.selectionText,
+    "标题 😀\n\n段落 链接文字 与 $x^2$。\n\n内联 粗体 斜体。\n\n第一项\n第二项\n\nconst value = 1;\n\n名称\t值\n一\t1",
+    "selection projection preserves readable structure, code, tables, CJK, emoji and LaTeX",
+  );
+  eq(result.selectionRevision, markdownContentRevision(result.selectionText), "selection revision fingerprints projected UTF-16 text");
+}
+
+{
+  const rows = Array.from({ length: 52 }, (_, index) => `| row-${index} | ${index} |`).join("\n");
+  const result = parseMarkdown(`| name | value |\n| --- | --- |\n${rows}`);
+  ok(result.blocks.some((block) => block.virtualTable), "large plain table uses the virtual table representation");
+  ok(result.selectionText.includes("row-51\t51"), "virtual table projection includes rows that never mount in the DOM");
 }
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
