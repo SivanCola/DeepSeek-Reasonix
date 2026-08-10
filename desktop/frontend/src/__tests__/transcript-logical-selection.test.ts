@@ -14,6 +14,7 @@ import {
   type TranscriptSelectionPoint,
 } from "../lib/transcriptSelectionStore";
 import { userMessageSelectionText } from "../lib/transcriptSelectionText";
+import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "../lib/transcriptMarkdownCache";
 import { formatSelectedTextContext, formatSelectionLabels } from "../lib/selectedTextContext";
 
 let passed = 0;
@@ -56,6 +57,11 @@ console.log("\nlogical transcript selection store");
   const id = store.beginNative("tab-a");
   store.updateNativeRange(point("a", 2), point("c", 3));
   eq(store.promoteToLogical("tab-a", point("a", 2), point("c", 3), rows), id, "cross-row selection promotes in the source tab");
+  let redundantUpdates = 0;
+  const unsubscribe = store.subscribe(() => { redundantUpdates += 1; });
+  store.updateLogicalFocus(point("c", 3));
+  unsubscribe();
+  eq(redundantUpdates, 0, "unchanged caret reconciliation does not republish the selection snapshot");
   store.settleLogical();
   eq(await store.resolveText(id), "pha\n\nbravo\n\ncha", "forward selection resolves partial endpoints and full middle rows");
   eq(store.getSnapshot().mode, "logical-settled", "pointer release settles logical selection");
@@ -82,6 +88,33 @@ console.log("\nlogical transcript selection store");
   ok(!store.validateRows([row("a", "replaced", 3), row("b", "two")]), "non-append replacement invalidates selected content");
   eq(store.getSnapshot().mode, "none", "invalid content clears the logical selection");
   eq(pins, 0, "selection cleanup releases projection pins");
+}
+
+{
+  const cache = new TranscriptMarkdownCache(16);
+  const store = new TranscriptSelectionStore();
+  const rows = ["a", "b", "c", "d"].map((rowKey) => row(
+    rowKey,
+    rowKey,
+    1,
+    () => cache.pin(rowKey, 1),
+  ));
+  const value = (source: string): ParsedMarkdownValue => ({
+    source,
+    blocks: [],
+    selectionText: source,
+    selectionRevision: 1,
+    bytes: 8,
+  });
+  store.beginNative("tab-budget");
+  store.promoteToLogical("tab-budget", point("b", 0), point("c", 1), rows);
+  for (const entry of rows) cache.set(entry.rowKey, 1, value(entry.sourceText));
+  eq(cache.bytes, 32, "dragging may temporarily pin every prospective selection row");
+  store.settleLogical();
+  eq(cache.bytes, 16, "settling releases unselected projections back to the cache budget");
+  eq(cache.size(), 2, "settled selection retains only its final row interval");
+  eq([...store.getSnapshot().contentRevisions.keys()].join(","), "b,c", "settled snapshot drops revisions outside its final interval");
+  store.clear("done");
 }
 
 {

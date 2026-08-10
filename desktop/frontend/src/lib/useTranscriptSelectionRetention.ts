@@ -67,12 +67,15 @@ export function useTranscriptSelectionRetention({
   const settleFramesRef = useRef(new Set<number>());
   const focusFrameRef = useRef<number | null>(null);
   const edgeFrameRef = useRef<number | null>(null);
+  const logicalDomObserverRef = useRef<MutationObserver | null>(null);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const rowsRef = useRef(selectableRows);
   rowsRef.current = selectableRows;
 
   const publish = useCallback(() => setRevision((value) => value + 1), []);
   const cancelFrames = useCallback(() => {
+    logicalDomObserverRef.current?.disconnect();
+    logicalDomObserverRef.current = null;
     for (const frame of settleFramesRef.current) cancelAnimationFrame(frame);
     settleFramesRef.current.clear();
     if (focusFrameRef.current !== null) cancelAnimationFrame(focusFrameRef.current);
@@ -225,6 +228,12 @@ export function useTranscriptSelectionRetention({
       } catch {
         // Native fallback remains available when pointer capture is rejected.
       }
+      logicalDomObserverRef.current?.disconnect();
+      if (typeof MutationObserver !== "undefined") {
+        const observer = new MutationObserver(() => scheduleLogicalFocus());
+        observer.observe(scrollRef.current ?? tracked.captureElement, { childList: true, subtree: true });
+        logicalDomObserverRef.current = observer;
+      }
       scheduleEdgeScroll();
       publish();
     };
@@ -247,6 +256,8 @@ export function useTranscriptSelectionRetention({
         focusFrameRef.current = null;
         if (edgeFrameRef.current !== null) cancelAnimationFrame(edgeFrameRef.current);
         edgeFrameRef.current = null;
+        logicalDomObserverRef.current?.disconnect();
+        logicalDomObserverRef.current = null;
         updateLogicalFocus(lastPointerRef.current);
         tracked.dragging = false;
         releasePointerCapture(tracked);

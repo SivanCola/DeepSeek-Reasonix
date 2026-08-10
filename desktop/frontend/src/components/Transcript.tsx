@@ -18,11 +18,11 @@ import { useTranscriptEntranceAnimation } from "../lib/useEntranceAnimation";
 import { useTranscriptScrollController } from "../lib/useTranscriptScrollController";
 import { useTranscriptSelectionRetention } from "../lib/useTranscriptSelectionRetention";
 import { useTranscriptMeasurementInvalidation } from "../lib/useTranscriptMeasurementInvalidation";
+import { useTranscriptRowMeasurements } from "../lib/useTranscriptRowMeasurements";
 import { compactQuestionText, lastQuestionTurn, questionAnchorId, questionTurnsById, scrollVersion, type QuestionAnchor } from "../lib/transcriptGrouping";
 import {
   buildTranscriptRows,
   buildTurnModels,
-  estimateTranscriptRowSize,
   foldMapWithReasoningOpen,
   foldMapWithToggle,
   foldSegmentStates,
@@ -46,7 +46,6 @@ import { noteTranscriptRowCounts } from "../lib/sessionDiagnostics";
 import { useReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
 import { InlineAssistantReasoning } from "./InlineAssistantReasoning";
 import { LiveStreamContext } from "./LiveStreamContext";
-import { createTranscriptMeasureElement, estimateCachedTranscriptRowHeight, transcriptHeightCache, transcriptLayoutSignature } from "../lib/transcriptHeightCache";
 import { transcriptSelectableRows } from "../lib/transcriptSelectionText";
 import { TranscriptSelectionOverlay } from "./TranscriptSelectionOverlay";
 type OpenTurnAction = { turn: number; menu: "summary" | "rewind" };
@@ -622,17 +621,7 @@ export function Transcript({
     reconcileViewportAnchor,
   });
   const getRowKey = useCallback((index: number) => `${tabId ?? ""}:${String(rows[index]?.key ?? index)}`, [rows, tabId]);
-  const estimateRowSize = useCallback((index: number) => {
-    const row = rows[index];
-    const signature = transcriptLayoutSignature(scrollRef.current);
-    const cached = transcriptHeightCache.get(tabId ?? "", signature, String(row?.key ?? index));
-    if (cached != null) return cached;
-    return estimateCachedTranscriptRowHeight(row, scrollRef.current?.clientWidth ?? 0, estimateTranscriptRowSize(row));
-  }, [rows, scrollRef, tabId]);
-  const measureRowSize = useMemo(() => createTranscriptMeasureElement({
-    tabId: tabId ?? "",
-    getLayoutElement: () => scrollRef.current,
-  }), [scrollRef, tabId]);
+  const { estimateSize: estimateRowSize, layoutSnapshotRef, measureElement: measureRowSize } = useTranscriptRowMeasurements(tabId, rows);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -655,7 +644,12 @@ export function Transcript({
     useAnimationFrameWithResizeObserver: true,
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => canVirtualizerAdjust();
-  useTranscriptMeasurementInvalidation({ scrollRef, virtualizer, selectionActive: selectionRetention.active });
+  useTranscriptMeasurementInvalidation({
+    scrollRef,
+    layoutSnapshotRef,
+    virtualizer,
+    selectionActive: selectionRetention.active,
+  });
 
   const sizerRef = useCallback(
     (el: HTMLDivElement | null) => {

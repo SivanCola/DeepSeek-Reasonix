@@ -31,30 +31,36 @@ export const TranscriptSelectionOverlay = memo(function TranscriptSelectionOverl
   );
   const overlayRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<number | null>(null);
+  const retryRef = useRef(0);
+  const measureRef = useRef<() => void>(() => {});
   const [rects, setRects] = useState<SelectionRect[]>([]);
 
   const measure = useCallback(() => {
     frameRef.current = null;
     const overlay = overlayRef.current;
     const sizer = overlay?.parentElement;
+    const current = transcriptSelectionStore.getSnapshot();
     if (
       !overlay
       || !sizer
-      || snapshot.tabId !== tabId
-      || (snapshot.mode !== "logical-dragging" && snapshot.mode !== "logical-settled")
+      || current.tabId !== tabId
+      || (current.mode !== "logical-dragging" && current.mode !== "logical-settled")
     ) {
+      retryRef.current = 0;
       setRects((current) => current.length === 0 ? current : []);
       return;
     }
     const sizerRect = sizer.getBoundingClientRect();
     const next: SelectionRect[] = [];
+    let selectedMountedRoots = 0;
     const roots = sizer.querySelectorAll<HTMLElement>(".transcript__row[data-row-key] [data-transcript-selectable]");
     for (const root of roots) {
       const rowKey = root.closest<HTMLElement>(".transcript__row[data-row-key]")?.dataset.rowKey;
       if (!rowKey) continue;
       const projection = projectTranscriptSelectableDom(root);
-      const bounds = transcriptSelectionStore.rowBounds(snapshot.id, rowKey, projection.text.length);
+      const bounds = transcriptSelectionStore.rowBounds(current.id, rowKey, projection.text.length);
       if (!bounds || bounds.start === bounds.end) continue;
+      selectedMountedRoots += 1;
       const range = domRangeForTranscriptOffsets(root, bounds.start, bounds.end);
       if (!range || typeof range.getClientRects !== "function") continue;
       for (const rect of Array.from(range.getClientRects())) {
@@ -68,15 +74,27 @@ export const TranscriptSelectionOverlay = memo(function TranscriptSelectionOverl
       }
     }
     setRects((current) => sameRects(current, next) ? current : next);
-  }, [snapshot, tabId]);
+    // Direct virtualizer DOM updates and browser layout can land after the RAF
+    // that observed their mutation. Retry a selected mounted range for two
+    // paints instead of leaving a logical selection permanently invisible.
+    if (next.length === 0 && selectedMountedRoots > 0 && retryRef.current < 2) {
+      retryRef.current += 1;
+      frameRef.current = requestAnimationFrame(() => measureRef.current());
+      return;
+    }
+    retryRef.current = 0;
+  }, [tabId]);
+  measureRef.current = measure;
 
   const schedule = useCallback(() => {
-    if (frameRef.current === null) frameRef.current = requestAnimationFrame(measure);
+    if (frameRef.current !== null) return;
+    retryRef.current = 0;
+    frameRef.current = requestAnimationFrame(measure);
   }, [measure]);
 
   useLayoutEffect(() => {
     schedule();
-  }, [schedule, virtualRevision]);
+  }, [schedule, snapshot, virtualRevision]);
 
   useLayoutEffect(() => {
     const overlay = overlayRef.current;

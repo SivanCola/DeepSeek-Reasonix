@@ -37,7 +37,7 @@ export type TranscriptSelectableRow = {
 type FrozenSelection = {
   rows: readonly TranscriptSelectableRow[];
   rowIndex: ReadonlyMap<string, number>;
-  releases: Array<() => void>;
+  releases: Array<{ rowIndex: number; release: () => void }>;
 };
 
 const EMPTY_REVISIONS: ReadonlyMap<string, number> = new Map();
@@ -58,6 +58,12 @@ function withAffinity(
   affinity: TranscriptSelectionPoint["affinity"],
 ): TranscriptSelectionPoint {
   return point.affinity === affinity ? point : { ...point, affinity };
+}
+
+function samePoint(left: TranscriptSelectionPoint, right: TranscriptSelectionPoint): boolean {
+  return left.rowKey === right.rowKey
+    && left.textOffset === right.textOffset
+    && left.affinity === right.affinity;
 }
 
 export class TranscriptSelectionStore {
@@ -87,7 +93,7 @@ export class TranscriptSelectionStore {
     const frozen = this.frozen;
     this.frozen = null;
     if (!frozen) return;
-    for (const release of frozen.releases) release();
+    for (const pinned of frozen.releases) pinned.release();
   }
 
   beginNative(tabId: string): number {
@@ -123,15 +129,15 @@ export class TranscriptSelectionStore {
     const rowIndex = new Map(rows.map((row, index) => [row.rowKey, index]));
     if (!rowIndex.has(anchor.rowKey) || !rowIndex.has(focus.rowKey)) return null;
     this.releaseFrozen();
-    const releases: Array<() => void> = [];
-    for (const row of rows) {
-      if (!row.pin) continue;
+    const releases: FrozenSelection["releases"] = [];
+    rows.forEach((row, index) => {
+      if (!row.pin) return;
       try {
-        releases.push(row.pin());
+        releases.push({ rowIndex: index, release: row.pin() });
       } catch {
         // Cache pinning is an optimization; selection stays functional.
       }
-    }
+    });
     this.frozen = { rows: [...rows], rowIndex, releases };
     const direction = pointDirection(anchor, focus, rowIndex);
     this.publish({
@@ -150,17 +156,53 @@ export class TranscriptSelectionStore {
     if (this.snapshot.mode !== "logical-dragging" || !this.snapshot.anchor || !this.frozen) return;
     if (!this.frozen.rowIndex.has(focus.rowKey)) return;
     const direction = pointDirection(this.snapshot.anchor, focus, this.frozen.rowIndex);
+    const anchor = withAffinity(this.snapshot.anchor, direction);
+    const nextFocus = withAffinity(focus, direction);
+    if (
+      this.snapshot.direction === direction
+      && this.snapshot.focus
+      && samePoint(this.snapshot.anchor, anchor)
+      && samePoint(this.snapshot.focus, nextFocus)
+    ) return;
     this.publish({
       ...this.snapshot,
-      anchor: withAffinity(this.snapshot.anchor, direction),
-      focus: withAffinity(focus, direction),
+      anchor,
+      focus: nextFocus,
       direction,
     });
   }
 
   settleLogical(): void {
-    if (this.snapshot.mode !== "logical-dragging") return;
-    this.publish({ ...this.snapshot, mode: "logical-settled" });
+    const snapshot = this.snapshot;
+    const frozen = this.frozen;
+    if (snapshot.mode !== "logical-dragging" || !snapshot.anchor || !snapshot.focus || !frozen) return;
+    const anchorIndex = frozen.rowIndex.get(snapshot.anchor.rowKey);
+    const focusIndex = frozen.rowIndex.get(snapshot.focus.rowKey);
+    if (anchorIndex == null || focusIndex == null) {
+      this.clear("logical-endpoint-missing");
+      return;
+    }
+    const low = Math.min(anchorIndex, focusIndex);
+    const high = Math.max(anchorIndex, focusIndex);
+    const rows = frozen.rows.slice(low, high + 1);
+    const releases: FrozenSelection["releases"] = [];
+    for (const pinned of frozen.releases) {
+      if (pinned.rowIndex >= low && pinned.rowIndex <= high) {
+        releases.push({ rowIndex: pinned.rowIndex - low, release: pinned.release });
+      } else {
+        pinned.release();
+      }
+    }
+    this.frozen = {
+      rows,
+      rowIndex: new Map(rows.map((row, index) => [row.rowKey, index])),
+      releases,
+    };
+    this.publish({
+      ...snapshot,
+      mode: "logical-settled",
+      contentRevisions: new Map(rows.map((row) => [row.rowKey, row.contentRevision])),
+    });
   }
 
   clear(_reason = "clear"): void {

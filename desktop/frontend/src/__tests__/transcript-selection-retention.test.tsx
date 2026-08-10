@@ -36,6 +36,7 @@ globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.Event = dom.window.Event;
 globalThis.MouseEvent = dom.window.MouseEvent;
 globalThis.PointerEvent = dom.window.MouseEvent as unknown as typeof PointerEvent;
+globalThis.MutationObserver = dom.window.MutationObserver;
 
 let nextFrame = 1;
 const frames = new Map<number, FrameRequestCallback>();
@@ -167,7 +168,18 @@ await act(async () => {
   selection.removeAllRanges();
   selection.addRange(range);
   document.dispatchEvent(new window.Event("selectionchange"));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "logical-dragging", "cross-row selection promotes before the pointer gesture settles");
+
+await act(async () => {
   document.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true, clientX: 50, clientY: 10 }));
+  last.append(document.createElement("span"));
+  await Promise.resolve();
+});
+await drainFrames();
+eq(transcriptSelectionStore.getSnapshot().focus?.textOffset, 2, "virtual DOM replacement re-resolves the logical focus after commit");
+
+await act(async () => {
   document.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 100, clientY: 10 }));
 });
 eq(transcriptSelectionStore.getSnapshot().mode, "logical-settled", "cross-row selection settles in logical mode when caret APIs are available");
