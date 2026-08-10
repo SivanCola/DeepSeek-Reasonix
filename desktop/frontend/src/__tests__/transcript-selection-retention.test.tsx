@@ -105,8 +105,8 @@ function Harness({
     reconcileViewportAnchor: () => true,
   });
   useLayoutEffect(() => {
-    retention.reconcileLogicalFocusAfterVirtualCommit();
-  }, [retention.reconcileLogicalFocusAfterVirtualCommit, virtualRevision]);
+    retention.reconcileLogicalFocus();
+  }, [retention.reconcileLogicalFocus, virtualRevision]);
   useEffect(() => onReady(retention), [onReady, retention]);
   return (
     <div ref={scrollRef} onPointerDownCapture={retention.onPointerDownCapture}>

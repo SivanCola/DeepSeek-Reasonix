@@ -643,7 +643,7 @@ export function Transcript({
     directDomUpdates: true,
     // Batch ResizeObserver measurements into one layout read per frame.
     useAnimationFrameWithResizeObserver: true,
-    onChange: () => selectionRetention.reconcileLogicalFocusAfterVirtualCommit(),
+    onChange: () => selectionRetention.reconcileLogicalFocus(),
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => canVirtualizerAdjust();
   useTranscriptMeasurementInvalidation({
@@ -662,6 +662,9 @@ export function Transcript({
   );
   const virtualItems = virtualizer.getVirtualItems();
   const virtualRevision = virtualItems.map((item) => `${item.key}:${item.start}:${item.size}`).join("|");
+  useLayoutEffect(() => {
+    selectionRetention.reconcileLogicalFocus();
+  }, [selectionRetention.reconcileLogicalFocus, virtualRevision]);
   useEffect(() => {
     noteTranscriptRowCounts(virtualItems.length, rows.length);
   }, [virtualItems.length, rows.length]);

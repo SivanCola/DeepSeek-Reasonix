@@ -407,7 +407,7 @@ export function useTranscriptSelectionRetention({
     clear,
     active: selectionRef.current !== null,
     logical: selectionRef.current?.logical ?? false,
-    reconcileLogicalFocusAfterVirtualCommit: scheduleLogicalFocus,
+    reconcileLogicalFocus: scheduleLogicalFocus,
     onPointerDownCapture,
     rangeExtractor: (range: Range) => rangeExtractor(range),
   };
