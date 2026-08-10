@@ -6,6 +6,7 @@ import {
   domRangeForTranscriptOffsets,
   projectTranscriptSelectableDom,
   transcriptRowsAtLogicalPromotion,
+  transcriptSelectionProjectionReadyForNode,
 } from "../lib/transcriptSelectionDom";
 import {
   TranscriptSelectionStore,
@@ -124,6 +125,7 @@ console.log("\nlogical transcript DOM adapter");
   globalThis.HTMLElement = dom.window.HTMLElement;
   globalThis.Range = dom.window.Range;
   const root = document.getElementById("root") as HTMLElement;
+  ok(transcriptSelectionProjectionReadyForNode(root.firstChild), "rendered Markdown DOM is eligible for logical promotion");
   const projection = projectTranscriptSelectableDom(root);
   eq(projection.text, "Hello world\nnext\nbold italic\n$x^2$\nA\t1\nB\t2", "DOM projection filters controls and restores formula/table structure");
   const hello = root.querySelector("p")?.firstChild as Text;
@@ -140,6 +142,22 @@ console.log("\nlogical transcript DOM adapter");
     "a:message,a:reasoning",
     "logical promotion excludes reasoning text whose collapsible body is absent",
   );
+}
+
+{
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="transcript__row" data-row-key="fallback">
+      <div data-transcript-selectable="message"><div data-transcript-selection-source-fallback>**raw**</div></div>
+    </div>
+  </body>`);
+  globalThis.window = dom.window as unknown as Window & typeof globalThis;
+  globalThis.document = dom.window.document;
+  globalThis.Node = dom.window.Node;
+  globalThis.Element = dom.window.Element;
+  globalThis.HTMLElement = dom.window.HTMLElement;
+  const raw = document.querySelector("[data-transcript-selection-source-fallback]")?.firstChild ?? null;
+  ok(!transcriptSelectionProjectionReadyForNode(raw), "plain Markdown source fallback stays in native selection mode");
+  dom.window.close();
 }
 
 console.log("\nuser transcript selection projection");

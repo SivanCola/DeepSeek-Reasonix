@@ -9,6 +9,7 @@
 import { createElement, Fragment, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { JSDOM } from "jsdom";
 import { normalizeMath } from "../components/mathNormalize";
 import { createComponents } from "../components/markdownComponents";
 import { reasonixRehypePlugins, reasonixRemarkPlugins } from "../components/markdownRemarkPlugins";
@@ -24,6 +25,7 @@ import {
   sliceHastBlocks,
   type MarkdownBlock,
 } from "../lib/markdownPipeline";
+import { projectTranscriptSelectableDom } from "../lib/transcriptSelectionDom";
 
 let passed = 0;
 let failed = 0;
@@ -63,6 +65,17 @@ function renderBlocks(blocks: MarkdownBlock[]): string {
         createElement(Fragment, { key: block.key, children: hastBlockToJsx(block, components) as ReactNode })),
     }),
   );
+}
+
+function projectRenderedBlocks(blocks: MarkdownBlock[]): string {
+  const dom = new JSDOM(`<!doctype html><body><div id="root" data-transcript-selectable>${renderBlocks(blocks)}</div></body>`);
+  globalThis.Node = dom.window.Node;
+  globalThis.Element = dom.window.Element;
+  globalThis.HTMLElement = dom.window.HTMLElement;
+  const root = dom.window.document.getElementById("root") as HTMLElement;
+  const projected = projectTranscriptSelectableDom(root).text;
+  dom.window.close();
+  return projected;
 }
 
 console.log("\nmarkdown pipeline parity");
@@ -200,8 +213,13 @@ console.log("\nmarkdown selection projection");
   ].join("\n"));
   eq(
     result.selectionText,
-    "标题 😀\n\n段落 链接文字 与 $x^2$。\n\n内联 粗体 斜体。\n\n第一项\n第二项\n\nconst value = 1;\n\n名称\t值\n一\t1",
+    "标题 😀\n段落 链接文字 与 $x^2$。\n内联 粗体 斜体。\n第一项\n第二项\nconst value = 1;\n名称\t值\n一\t1",
     "selection projection preserves readable structure, code, tables, CJK, emoji and LaTeX",
+  );
+  eq(
+    result.selectionText,
+    projectRenderedBlocks(result.blocks),
+    "selection projection uses the same UTF-16 text as the rendered DOM adapter",
   );
   eq(result.selectionRevision, markdownContentRevision(result.selectionText), "selection revision fingerprints projected UTF-16 text");
 }

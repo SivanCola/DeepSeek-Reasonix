@@ -2,6 +2,7 @@ import type { TranscriptSelectableRow, TranscriptSelectionPoint } from "./transc
 
 export const TRANSCRIPT_SELECTABLE_SELECTOR = "[data-transcript-selectable]";
 export const TRANSCRIPT_ROW_SELECTOR = ".transcript__row[data-row-key]";
+const TRANSCRIPT_SOURCE_FALLBACK_SELECTOR = "[data-transcript-selection-source-fallback]";
 
 type ProjectionSegment = {
   node: Node;
@@ -33,6 +34,19 @@ export function selectableRootForNode(node: Node | null): HTMLElement | null {
 
 export function rowKeyForNode(node: Node | null): string | null {
   return elementForNode(node)?.closest<HTMLElement>(TRANSCRIPT_ROW_SELECTOR)?.dataset.rowKey ?? null;
+}
+
+/**
+ * Plain Markdown fallbacks expose source characters rather than the readable
+ * HAST projection. Keep the browser's native range until the canonical
+ * rendered projection is mounted, otherwise the frozen UTF-16 offsets can
+ * address different characters when the worker result arrives.
+ */
+export function transcriptSelectionProjectionReadyForNode(node: Node | null): boolean {
+  const root = selectableRootForNode(node);
+  return root != null
+    && !root.matches(TRANSCRIPT_SOURCE_FALLBACK_SELECTOR)
+    && !root.querySelector(TRANSCRIPT_SOURCE_FALLBACK_SELECTOR);
 }
 
 /**

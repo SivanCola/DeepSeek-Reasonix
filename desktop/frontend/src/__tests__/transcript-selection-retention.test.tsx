@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import type { Range as VirtualRange } from "@tanstack/react-virtual";
 import { useTranscriptSelectionRetention } from "../lib/useTranscriptSelectionRetention";
 import type { TranscriptScrollMode } from "../lib/transcriptScrollController";
+import { transcriptSelectionStore, type TranscriptSelectableRow } from "../lib/transcriptSelectionStore";
 
 type RetentionApi = ReturnType<typeof useTranscriptSelectionRetention>;
 
@@ -63,6 +64,10 @@ const rowIndexByKey = new Map([
   ["tool", 1],
   ["row-b", 2],
 ]);
+const selectableRows: TranscriptSelectableRow[] = [
+  { rowKey: "row-a", sourceText: "alpha", contentRevision: 1, resolveText: async () => "alpha" },
+  { rowKey: "row-b", sourceText: "bravo", contentRevision: 1, resolveText: async () => "bravo", kind: "reasoning" },
+];
 
 function Harness({
   tabId,
@@ -80,6 +85,7 @@ function Harness({
     tabId,
     revealSignal: 0,
     rowIndexByKey,
+    selectableRows,
     setScrollMode: setMode,
     cancelStreamingScroll: () => {},
     captureViewportAnchor: () => ({ rowKey: "row-a", viewportOffset: 0, generation: 0 }),
@@ -141,6 +147,58 @@ await act(async () => {
 await drainFrames();
 eq(document.getSelection()?.isCollapsed, true, "keyboard copy releases the native browser range after the copy event");
 eq(api?.rangeExtractor(virtualRange), [0], "keyboard copy releases selection-only virtual rows");
+
+const first = document.querySelector<HTMLElement>("[data-row-key='row-a'] [data-transcript-selectable]")!;
+const last = document.querySelector<HTMLElement>("[data-row-key='row-b'] [data-transcript-selectable]")!;
+const caretDocument = document as Document & {
+  caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+};
+caretDocument.caretPositionFromPoint = (x) => ({
+  offsetNode: last.firstChild!,
+  offset: x >= 100 ? 5 : x >= 50 ? 2 : 1,
+});
+
+await act(async () => {
+  first.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 0, clientY: 10 }));
+  const range = document.createRange();
+  range.setStart(first.firstChild!, 0);
+  range.setEnd(last.firstChild!, 1);
+  const selection = document.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.dispatchEvent(new window.Event("selectionchange"));
+  document.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true, clientX: 50, clientY: 10 }));
+  document.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 100, clientY: 10 }));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "logical-settled", "cross-row selection settles in logical mode when caret APIs are available");
+eq(transcriptSelectionStore.getSnapshot().focus?.textOffset, 5, "pointerup applies its exact final focus before settling");
+eq(mode, "manual", "settled logical selection releases scroll ownership");
+
+await act(async () => {
+  first.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 0, clientY: 10 }));
+  document.dispatchEvent(new window.MouseEvent("pointercancel", { bubbles: true, button: -1 }));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "none", "pointercancel clears selection even when the event has no pressed button");
+eq(api?.rangeExtractor(virtualRange), [0], "pointercancel releases selection-only virtual rows");
+eq(mode, "manual", "pointercancel releases selection scroll ownership");
+
+last.setAttribute("data-transcript-selection-source-fallback", "");
+await act(async () => {
+  first.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 0, clientY: 10 }));
+  const range = document.createRange();
+  range.setStart(first.firstChild!, 0);
+  range.setEnd(last.firstChild!, 2);
+  const selection = document.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.dispatchEvent(new window.Event("selectionchange"));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "native-dragging", "plain Markdown fallback does not promote incompatible offsets");
+await act(async () => {
+  document.dispatchEvent(new window.MouseEvent("pointercancel", { bubbles: true, button: -1 }));
+});
+last.removeAttribute("data-transcript-selection-source-fallback");
+delete caretDocument.caretPositionFromPoint;
 
 await act(async () => root.unmount());
 dom.window.close();

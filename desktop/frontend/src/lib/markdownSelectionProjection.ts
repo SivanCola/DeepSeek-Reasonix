@@ -145,5 +145,8 @@ export function markdownSelectionTextFromBlocks(blocks: readonly SelectionProjec
     for (const child of block.children) projectNode(child, output);
     return output.result();
   });
-  return projected.filter((text) => text !== "").join("\n\n");
+  // Keep this separator identical to the rendered DOM adapter. Logical
+  // selection endpoints are measured against that DOM projection, so adding
+  // an extra newline between parser blocks would shift every later offset.
+  return projected.filter((text) => text !== "").join("\n");
 }

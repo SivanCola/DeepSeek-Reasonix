@@ -5,6 +5,7 @@ import {
   TRANSCRIPT_SELECTABLE_SELECTOR,
   TRANSCRIPT_ROW_SELECTOR,
   transcriptRowsAtLogicalPromotion,
+  transcriptSelectionProjectionReadyForNode,
   transcriptSelectionPointFromClient,
   transcriptSelectionPointFromDom,
 } from "./transcriptSelectionDom";
@@ -105,16 +106,14 @@ export function useTranscriptSelectionRetention({
     publish();
   }, [cancelFrames, publish, releasePointerCapture, setScrollMode]);
 
-  const updateLogicalFocus = useCallback(() => {
+  const updateLogicalFocus = useCallback((pointer = lastPointerRef.current) => {
     const tracked = selectionRef.current;
-    const pointer = lastPointerRef.current;
     if (!tracked?.logical || !tracked.dragging || !pointer) return;
     const focus = transcriptSelectionPointFromClient(document, pointer.x, pointer.y);
     if (!focus) return;
     transcriptSelectionStore.updateLogicalFocus(focus);
     tracked.focusKey = focus.rowKey;
-    publish();
-  }, [publish]);
+  }, []);
 
   const scheduleLogicalFocus = useCallback(() => {
     if (focusFrameRef.current !== null) return;
@@ -204,6 +203,13 @@ export function useTranscriptSelectionRetention({
         publish();
         return;
       }
+      if (
+        !transcriptSelectionProjectionReadyForNode(selection.anchorNode)
+        || !transcriptSelectionProjectionReadyForNode(selection.focusNode)
+      ) {
+        publish();
+        return;
+      }
       const snapshotId = transcriptSelectionStore.promoteToLogical(
         tabId ?? "",
         anchor,
@@ -235,18 +241,23 @@ export function useTranscriptSelectionRetention({
     const finish = (event: PointerEvent) => {
       const tracked = selectionRef.current;
       if (event.button !== 0 || !tracked?.dragging || (event.pointerId !== tracked.pointerId && event.pointerId !== 0)) return;
-      tracked.dragging = false;
-      releasePointerCapture(tracked);
       if (tracked.logical) {
+        lastPointerRef.current = { x: event.clientX, y: event.clientY };
+        if (focusFrameRef.current !== null) cancelAnimationFrame(focusFrameRef.current);
+        focusFrameRef.current = null;
         if (edgeFrameRef.current !== null) cancelAnimationFrame(edgeFrameRef.current);
         edgeFrameRef.current = null;
-        updateLogicalFocus();
+        updateLogicalFocus(lastPointerRef.current);
+        tracked.dragging = false;
+        releasePointerCapture(tracked);
         transcriptSelectionStore.settleLogical();
         viewportAnchorRef.current = null;
         setScrollMode("manual", "logical-selection-settled");
         publish();
         return;
       }
+      tracked.dragging = false;
+      releasePointerCapture(tracked);
       const selection = document.getSelection();
       if (!selection || selection.isCollapsed || selection.toString().trim() === "") {
         clear("empty-pointerup");
@@ -269,6 +280,13 @@ export function useTranscriptSelectionRetention({
         settleFramesRef.current.add(innerFrame);
       });
       settleFramesRef.current.add(outerFrame);
+    };
+
+    const cancelGesture = (event: PointerEvent) => {
+      const tracked = selectionRef.current;
+      if (!tracked?.dragging || (event.pointerId !== tracked.pointerId && event.pointerId !== 0)) return;
+      document.getSelection()?.removeAllRanges();
+      clear("pointercancel");
     };
 
     const onCopy = () => {
@@ -311,7 +329,7 @@ export function useTranscriptSelectionRetention({
     document.addEventListener("selectionchange", onSelectionChange);
     document.addEventListener("pointermove", onPointerMove);
     document.addEventListener("pointerup", finish);
-    document.addEventListener("pointercancel", finish);
+    document.addEventListener("pointercancel", cancelGesture);
     document.addEventListener("copy", onCopy);
     document.addEventListener("keydown", onKeyDown);
     scroll?.addEventListener("scroll", onScroll, { passive: true });
@@ -319,7 +337,7 @@ export function useTranscriptSelectionRetention({
       document.removeEventListener("selectionchange", onSelectionChange);
       document.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("pointerup", finish);
-      document.removeEventListener("pointercancel", finish);
+      document.removeEventListener("pointercancel", cancelGesture);
       document.removeEventListener("copy", onCopy);
       document.removeEventListener("keydown", onKeyDown);
       scroll?.removeEventListener("scroll", onScroll);
