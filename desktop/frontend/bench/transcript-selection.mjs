@@ -147,22 +147,55 @@ try {
   await page.mouse.move(points.edge.x, points.edge.y);
   await page.waitForTimeout(6_000);
 
-  const during = await page.evaluate(() => {
+  const during = await page.evaluate(({ x, y }) => {
     const selection = document.getSelection();
     const writes = window.__transcriptProgrammaticWrites ?? [];
+    const transcript = document.querySelector(".transcript");
+    const viewport = transcript?.getBoundingClientRect();
+    const rowIndex = (node) => {
+      const element = node instanceof Element ? node : node?.parentElement;
+      const value = element?.closest(".transcript__row")?.dataset.index;
+      return value == null ? null : Number(value);
+    };
+    const selectableRoots = [...document.querySelectorAll("[data-transcript-selectable]")];
+    const visibleSelectableRows = selectableRoots
+      .filter((root) => {
+        const rect = root.getBoundingClientRect();
+        return viewport && rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+      })
+      .map(rowIndex);
+    const positiveRangeRows = selectableRoots
+      .filter((root) => {
+        const range = document.createRange();
+        range.selectNodeContents(root);
+        return [...range.getClientRects()].some((rect) => rect.width > 0 && rect.height > 0);
+      })
+      .map(rowIndex);
+    const hit = document.elementFromPoint(x, y);
+    const caret = document.caretPositionFromPoint?.(x, y)?.offsetNode
+      ?? document.caretRangeFromPoint?.(x, y)?.startContainer;
     return {
       collapsed: selection?.isCollapsed ?? true,
       rows: document.querySelectorAll(".transcript__row").length,
       writeCount: writes.length,
       writeOwners: [...new Set(writes.map((write) => write.owner))],
-      mode: document.querySelector(".transcript")?.dataset.scrollMode,
+      mode: transcript?.dataset.scrollMode,
       overlayRects: document.querySelectorAll(".transcript-selection-overlay__rect").length,
+      scrollTop: transcript?.scrollTop ?? null,
+      scrollHeight: transcript?.scrollHeight ?? null,
+      clientHeight: transcript?.clientHeight ?? null,
+      hitRow: rowIndex(hit),
+      hitSelectable: Boolean(hit?.closest("[data-transcript-selectable]")),
+      caretRow: rowIndex(caret),
+      mountedSelectableRows: selectableRoots.map(rowIndex),
+      visibleSelectableRows,
+      positiveRangeRows,
     };
-  });
+  }, points.edge);
   assert(during.collapsed, `cross-row drag releases the browser Range after logical promotion (${JSON.stringify(during)})`);
   assert(during.mode === "logical-selecting", `cross-page drag remains owned by logical selection (${during.mode})`);
   assert(during.rows <= Math.ceil(baselineRows * 1.1) + 2, `logical selection keeps the virtual DOM bounded (${baselineRows} → ${during.rows})`);
-  assert(during.overlayRects > 0, "logical selection paints mounted-row overlay rectangles");
+  assert(during.overlayRects > 0, `logical selection paints mounted-row overlay rectangles (${JSON.stringify(during)})`);
   if (during.writeOwners.some((owner) => owner !== "selection-edge-scroll")) {
     throw new Error(`logical gesture admitted non-selection scroll owners: ${JSON.stringify(during.writeOwners)}`);
   }
