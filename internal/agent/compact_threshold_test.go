@@ -32,10 +32,10 @@ func TestRecentTailBudgetClamp(t *testing.T) {
 		window int
 		want   int
 	}{
-		{128_000, minRecentTailTokens},          // 10% = 12.8K → clamp to 32K
-		{400_000, 40_000},                       // 10% = 40K
-		{1_000_000, maxRecentTailTokens},        // 10% = 100K → clamp to 96K
-		{2_000_000, maxRecentTailTokens},        // still 96K
+		{128_000, minRecentTailTokens},   // 10% = 12.8K → clamp to 32K
+		{400_000, 40_000},                // 10% = 40K
+		{1_000_000, maxRecentTailTokens}, // 10% = 100K → clamp to 96K
+		{2_000_000, maxRecentTailTokens}, // still 96K
 	}
 	for _, tc := range cases {
 		a := &Agent{contextWindow: tc.window, compactRatio: defaultCompactRatio}

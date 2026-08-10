@@ -540,8 +540,8 @@ type Agent struct {
 
 	// Context management keeps the canonical transcript immutable and installs
 	// at most one provider-visible checkpoint each time compactRatio is crossed.
-	contextWindow int
-	compactRatio  float64
+	contextWindow       int
+	compactRatio        float64
 	recentKeep          int
 	archiveDir          string
 	keepPolicy          KeepPolicy
@@ -1124,13 +1124,13 @@ type Options struct {
 
 	// Context management. ContextWindow <= 0 disables compaction. Ratios and
 	// RecentKeep fall back to defaults when unset.
-	ContextWindow          int
-	CompactRatio           float64
+	ContextWindow int
+	CompactRatio  float64
 	// Deprecated compatibility inputs. New agents ignore these fields; automatic
 	// maintenance is controlled only by CompactRatio.
-	SoftCompactRatio    float64
-	ToolResultSnipRatio float64
-	CompactForceRatio   float64
+	SoftCompactRatio       float64
+	ToolResultSnipRatio    float64
+	CompactForceRatio      float64
 	RecentKeep             int
 	ArchiveDir             string
 	KeepPolicy             KeepPolicy

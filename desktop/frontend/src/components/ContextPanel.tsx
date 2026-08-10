@@ -28,7 +28,6 @@ interface ContextPanelProps {
   usageSeq?: number;
 }
 
-
 function fmtDuration(ms: number, t: Translator): string {
   if (ms <= 0) return "-";
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
@@ -37,7 +36,6 @@ function fmtDuration(ms: number, t: Translator): string {
   if (minutes <= 0) return t("context.durationSeconds", { seconds });
   return t("context.durationMinutesSeconds", { minutes, seconds });
 }
-
 
 interface MetricTokenDisplay {
   display: string;

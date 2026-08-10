@@ -222,7 +222,7 @@ type Request struct {
 	// output (Responses: text.format.type=json_object). Nil omits the field
 	// entirely — the common path must stay byte-stable for prompt caching.
 	ResponseFormat *ResponseFormat `json:"ResponseFormat,omitempty"`
-	EffortOverride string `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
+	EffortOverride string          `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
 }
 
 // ResponseFormat asks a provider to constrain its output shape.
@@ -232,29 +232,15 @@ type ResponseFormat struct {
 	Type string `json:"type"`
 }
 
-// Automatic output budgets when max_output_tokens = 0 ("automatic", not
-// unlimited). These only bound this turn's completion; they never feed
-// compact_ratio or maintenance triggers.
+// Auto ladder for max_output_tokens=0. Bounds completion only; never compact_ratio.
 const (
-	// DefaultOrdinaryOutputTokens is the auto budget for non-reasoning turns
-	// (ordinary Q&A / thinking disabled).
-	DefaultOrdinaryOutputTokens = 16 * 1024
-	// DefaultReasoningOutputTokens is the auto budget for ordinary reasoning
-	// / coding-agent turns (32K).
-	DefaultReasoningOutputTokens = 32 * 1024
-	// DefaultHighReasoningOutputTokens is the auto budget for high/max effort
-	// and complex multi-tool coding turns (64K). Prefer this over 128K.
-	DefaultHighReasoningOutputTokens = 64 * 1024
-	// DefaultHighOutputTokens is the explicit 128K ceiling. It is never chosen
-	// automatically; set max_output_tokens = 131072 only after repeated
-	// finish_reason=length truncations. Context summary still uses its own 16K.
-	DefaultHighOutputTokens = 128 * 1024
+	DefaultOrdinaryOutputTokens      = 16 * 1024  // non-reasoning
+	DefaultReasoningOutputTokens     = 32 * 1024  // ordinary reasoning
+	DefaultHighReasoningOutputTokens = 64 * 1024  // high/max effort
+	DefaultHighOutputTokens          = 128 * 1024 // explicit only; never auto
 )
 
-// AutoOutputBudget resolves max_output_tokens=0 into a model-appropriate
-// total-output ceiling. Effort is the configured or per-request reasoning depth
-// (high/max raise the budget to 64K). Unknown compatible gateways should still
-// opt in by name rather than inheriting this merely from a wire shape.
+// AutoOutputBudget maps max_output_tokens=0 to 16K/32K/64K by reasoning effort.
 func AutoOutputBudget(reasoningEnabled bool, effort string) int {
 	if !reasoningEnabled {
 		return DefaultOrdinaryOutputTokens

@@ -391,40 +391,25 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 	startProjectionVersion := a.compactionState.Projection.ProjectionVersion
 	startGeneration := a.compactionState.Generation
 	a.compactionMu.Unlock()
-	// Incremental: summarize from the current model-visible view (prior digest
-	// + new history), never re-read the entire multi-million-token canonical.
-	visibleInput := canonical
-	if projectionValid(stateSnapshot, canonical, transcriptVersion, a.currentPromptCacheKey()) {
-		if projected := modelVisibleFromProjection(stateSnapshot.Projection, canonical); len(projected) > 0 {
-			visibleInput = projected
-		}
-	}
-	viewInputHash := providerVisibleFingerprint(provider.ModelMessages(visibleInput))
+	msgs := a.visibleInputForFold(stateSnapshot, canonical, transcriptVersion)
+	viewInputHash := providerVisibleFingerprint(provider.ModelMessages(msgs))
 	if trigger != CompactionTriggerManual && stateSnapshot.LastReceipt != nil && stateSnapshot.LastReceipt.Status == "applied" && stateSnapshot.LastReceipt.Action == "summary" && stateSnapshot.LastReceipt.InputHash == viewInputHash {
 		return CompactionNoop, nil
 	}
-	msgs := visibleInput
 	head, start, ok := a.planFoldRegion(msgs, force)
 	if !ok {
 		return CompactionNoop, nil
 	}
-	region := msgs[head:start]
-	_, _, kept, fold := a.partitionFoldForProjection(region)
-	if len(fold) == 0 {
+	_, _, kept, fold := a.partitionFoldForProjection(msgs[head:start])
+	if len(fold) == 0 || (!force && !foldEconomics(fold)) {
 		return CompactionNoop, nil
 	}
-	if !force && !foldEconomics(fold) {
-		return CompactionNoop, nil
-	}
-
-	// Fixed prefix that cannot be summarized away.
 	fixedPrefixTokens := estimateMessagesTokens(a.providerProjectionMessages(msgs[:head]))
 	if a.contextWindow > 0 && fixedPrefixTokens >= a.compactTrigger() {
 		return CompactionNoop, fmt.Errorf("%w: fixed prefix (%d tokens) already exceeds trigger (%d)", errCheckpointRejected, fixedPrefixTokens, a.compactTrigger())
 	}
 
 	a.sink.Emit(event.Event{Kind: event.CompactionStarted, Compaction: event.Compaction{Trigger: trigger}})
-
 	if a.hooks != nil {
 		if hookInstr := a.hooks.PreCompact(ctx, trigger); hookInstr != "" {
 			if instructions != "" {
@@ -433,7 +418,6 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 			instructions += hookInstr
 		}
 	}
-
 	var err error
 	fold, instructions, err = a.interceptCompactionPrepare(ctx, fold, instructions)
 	if err != nil {
@@ -445,10 +429,7 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 		return CompactionNoop, nil
 	}
 
-	// Use one estimator for both sides of the acceptance comparison so
-	// calibration differences cannot make a smaller projection look larger.
-	sourceTokens := a.estimatedPromptTokens(visibleInput)
-
+	sourceTokens := a.estimatedPromptTokens(msgs)
 	res, err := a.foldToSummary(ctx, fold, instructions)
 	summary := res.Text
 	tele := compactionTelemetryFromSummary(trigger, a.CacheState(), sourceTokens, res)
@@ -466,25 +447,15 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 		return CompactionNoop, err
 	}
 
-	// Content-driven candidate: stable prefix + one digest + keep + recent tail.
-	// Do not re-insert early user turns or carried digests to pad toward 50%.
-	projMsgs := make([]provider.Message, 0, head+1+len(kept)+len(msgs)-start)
-	projMsgs = append(projMsgs, msgs[:head]...)
-	projMsgs = append(projMsgs, formatSummaryMessage(summary))
-	projMsgs = append(projMsgs, kept...)
-	projMsgs = append(projMsgs, msgs[start:]...)
-	projMsgs = provider.ModelMessages(projMsgs)
-
+	projMsgs := checkpointProjectionMessages(msgs, head, start, kept, summary)
 	projTokens := a.estimatedPromptTokens(projMsgs)
 	fixedPrefixTokens = a.estimatedPromptTokens(msgs[:head])
 	tele.ProjectionTokens = projTokens
 	a.emitCompactionTelemetry(tele)
-
 	if err := a.acceptCheckpointCandidate(trigger, force, sourceTokens, projTokens, fixedPrefixTokens); err != nil {
 		a.emitCompactionAborted(trigger)
 		return CompactionNoop, err
 	}
-
 	viewOutputHash := providerVisibleFingerprint(provider.ModelMessages(projMsgs))
 	_, err = a.commitSummaryProjection(summaryProjectionCommit{
 		canonical: canonical, fold: fold, projected: projMsgs, result: res,
@@ -497,18 +468,33 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 		a.emitCompactionAborted(trigger)
 		return CompactionNoop, err
 	}
-
 	a.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{
 		Trigger: trigger, Messages: len(fold), Summary: summary,
 	}})
 	return CompactionInstalled, nil
 }
 
-// acceptCheckpointCandidate enforces the content-driven acceptance rules.
-// Normal automatic path: candidate ≤ 50%, strictly smaller, and below trigger.
-// Fixed-prefix exception: when the incompressible prefix alone exceeds 50%,
-// require ≥25% window savings and still land below trigger and hard ceiling.
-// Manual compress below the auto trigger may install any substantial reduction.
+// visibleInputForFold prefers the prior projection + new history over full canonical.
+func (a *Agent) visibleInputForFold(state CompactionState, canonical []provider.Message, transcriptVersion uint64) []provider.Message {
+	if projectionValid(state, canonical, transcriptVersion, a.currentPromptCacheKey()) {
+		if projected := modelVisibleFromProjection(state.Projection, canonical); len(projected) > 0 {
+			return projected
+		}
+	}
+	return canonical
+}
+
+func checkpointProjectionMessages(msgs []provider.Message, head, start int, kept []provider.Message, summary string) []provider.Message {
+	projMsgs := make([]provider.Message, 0, head+1+len(kept)+len(msgs)-start)
+	projMsgs = append(projMsgs, msgs[:head]...)
+	projMsgs = append(projMsgs, formatSummaryMessage(summary))
+	projMsgs = append(projMsgs, kept...)
+	projMsgs = append(projMsgs, msgs[start:]...)
+	return provider.ModelMessages(projMsgs)
+}
+
+// acceptCheckpointCandidate: ≤50% + smaller for auto; force may exceed 50%
+// only if still below trigger; manual below trigger accepts any savings.
 func (a *Agent) acceptCheckpointCandidate(trigger string, force bool, sourceTokens, candidateTokens, fixedPrefixTokens int) error {
 	if candidateTokens >= sourceTokens {
 		return fmt.Errorf("%w: candidate would not reduce tokens (%d >= %d)", errCheckpointRejected, candidateTokens, sourceTokens)
@@ -552,10 +538,7 @@ func (a *Agent) acceptCheckpointCandidate(trigger string, force bool, sourceToke
 	return nil
 }
 
-// planFoldRegion locates msgs[head:start] for a fold, stopping short of an
-// active turn so a tool loop is never folded mid-flight. ok is false when there
-// is nothing left to fold. force shrinks the recent-tail budget so CompactNow
-// still finds a fold when the whole transcript fits inside the normal 32K floor.
+// planFoldRegion returns [head:start] to fold; force shrinks the recent tail.
 func (a *Agent) planFoldRegion(msgs []provider.Message, force bool) (head, start int, ok bool) {
 	head, start, ok = a.planCompaction(msgs, minCompactMessages, force)
 	if !ok {

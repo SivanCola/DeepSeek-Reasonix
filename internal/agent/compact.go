@@ -57,12 +57,8 @@ const (
 // failure (then a mechanical fold) instead of hanging compaction indefinitely.
 const summaryTimeout = 90 * time.Second
 
-// summarySystemPrompt steers the executor to distill older history into a
-// structured briefing it can keep relying on after the originals are dropped.
-// The section layout mirrors what a coding agent actually needs to resume work
-// mid-task: the goal verbatim, the concrete state of the code, and an explicit
-// next step — so the post-compaction turn doesn't lose the thread or re-derive
-// decisions already made.
+// summarySystemPrompt asks for a structured resume briefing (facts, goal,
+// decisions, files, commands, errors, next step) under fixed headings.
 const summarySystemPrompt = `You are compacting the earlier part of a coding agent's conversation to save context.
 The agent keeps your summary alongside the user's own turns (kept verbatim) and the recent tail; your job is to fold the assistant/tool work into a briefing it can resume from.
 Write under these exact headings, omitting a heading only if it has no content:
@@ -317,12 +313,8 @@ func (a *Agent) pinnedPrefixLen(msgs []provider.Message) int {
 	return i
 }
 
-// fixedPinnableUserTurn reports whether a user turn is small enough to keep
-// verbatim in a position-stable prefix. Identity decisions must not use the
-// latest provider usage: after projection activates, that usage describes the
-// projection while the canonical transcript remains larger, which would make
-// the same turn drift in or out across compactions. Dynamic token calibration is
-// reserved for non-identity estimates such as tail sizing.
+// fixedPinnableUserTurn uses a fixed estimate only: provider usage after
+// projection would make the same turn drift across checkpoints.
 func (a *Agent) fixedPinnableUserTurn(m provider.Message) bool {
 	budget := maxPinnedFirstUserTokens
 	if a.contextWindow > 0 {
@@ -451,31 +443,20 @@ func toolCallIDs(m provider.Message) map[string]bool {
 	return ids
 }
 
-// planCompaction locates the region to summarize. head is the count of leading
-// messages preserved verbatim (see pinnedPrefixLen); start is where the preserved
-// recent tail begins, so msgs[head:start] is compacted. The tail is bounded by
-// recentTailBudget (10%/32K/96K clamp), never by a secondary user threshold.
-// When force is true and the whole transcript already fits in that budget, the
-// tail is capped to half the transcript so CompactNow can still fold older work.
-// ok is false when there is too little to compact.
+// planCompaction returns [head:start] to fold; the tail is recentTailBudget
+// unless force halves it so CompactNow still reduces mid-size sessions.
 func (a *Agent) planCompaction(msgs []provider.Message, min int, force bool) (head, start int, ok bool) {
 	head = a.pinnedPrefixLen(msgs)
 	if a.contextWindow > 0 {
 		budget := a.recentTailBudget()
 		if force {
-			// Forced maintenance must not no-op merely because the session is
-			// smaller than the normal recent-tail floor (common for guardian
-			// and directed /compact on mid-size sessions).
 			if half := estimateMessagesTokens(provider.ModelMessages(msgs)) / 2; half > 0 && half < budget {
 				budget = half
 			}
 		}
 		start = tailStart(msgs, head, budget, a.tokPerChar(), a.tailFloor())
-		// Re-measure with the real estimator and walk forward while the tail
-		// alone exceeds the budget. Always advance past tool results so the
-		// retained tail never begins mid tool-call group. Force always
-		// remeasures: strict-alternating sessions otherwise keep a cheap
-		// tokPerChar overestimate of the tail and CompactNow cannot reduce.
+		// Remeasure when force or non-strict roles; strict-alternating otherwise
+		// keeps a cheap tokPerChar overestimate of the tail under force.
 		floor := len(msgs) - a.tailFloor()
 		if floor < head {
 			floor = head
@@ -488,8 +469,7 @@ func (a *Agent) planCompaction(msgs []provider.Message, min int, force bool) (he
 			}
 		}
 	} else {
-		// No window to budget against (manual /compact on an unconfigured
-		// provider): keep a fixed count of recent messages, aligned off any tool.
+		// No window: keep a fixed recent count, aligned off tool results.
 		start = len(msgs) - a.tailFloor()
 		for start > head && start < len(msgs) && msgs[start].Role == provider.RoleTool {
 			start--

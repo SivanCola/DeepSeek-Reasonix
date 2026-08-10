@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
 	"reasonix/internal/store"
 )
@@ -185,15 +185,17 @@ func LoadCompactionState(sessionPath string) (CompactionState, bool, error) {
 	return st, true, nil
 }
 
-// SaveCompactionState writes the sidecar via temp file + atomic rename.
+// SaveCompactionState writes the sidecar via the shared Windows-safe atomic
+// publish path (temp + fsync + replace). Directory fsync is intentionally not
+// required: Windows returns ERROR_ACCESS_DENIED for directory Sync and would
+// otherwise fail every projection install.
 func SaveCompactionState(sessionPath string, st CompactionState) error {
 	path := ContextStatePath(sessionPath)
 	if path == "" {
 		return fmt.Errorf("empty session path")
 	}
-	// V3 preserves logical user-turn boundaries and coalesces roles only on
-	// outbound copies. Previous readers reject this boundary and fall back to
-	// canonical history instead of misreading the changed V1 invariant.
+	// V3 keeps logical user-turn boundaries; previous readers fall back to
+	// canonical history rather than misreading the V1 coalesced invariant.
 	st.SchemaVersion = compactionStateSchemaCurrent
 	if st.UpdatedAt.IsZero() {
 		st.UpdatedAt = time.Now().UTC()
@@ -203,48 +205,7 @@ func SaveCompactionState(sessionPath string, st CompactionState) error {
 		return err
 	}
 	b = append(b, '\n')
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if _, err := tmp.Write(b); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return err
-	}
-	dirHandle, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	if err := dirHandle.Sync(); err != nil {
-		_ = dirHandle.Close()
-		return err
-	}
-	if err := dirHandle.Close(); err != nil {
-		return err
-	}
-	cleanup = false
-	return nil
+	return fileutil.AtomicWriteFile(path, b, 0o644)
 }
 
 // RemoveCompactionState deletes a corrupt or invalidated projection sidecar.

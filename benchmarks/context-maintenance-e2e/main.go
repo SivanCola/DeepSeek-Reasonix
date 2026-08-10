@@ -1,14 +1,6 @@
-// Cost-capped seed → resume → continue smoke for content-driven context maintenance.
-//
-// Legs:
-//  1. seed: long tool-heavy transcript under a 1M window at compact_ratio=0.85;
-//     Prepare must install nothing; persist session (+ empty sidecar lineage).
-//  2. resume: load session, assert projection version unchanged, zero summary calls.
-//  3. continue: grow past trigger, allow at most one summary, cost-capped; post
-//     checkpoint Run must not re-summarize.
-//
-// Live legs need DEEPSEEK_API_KEY. Offline (`-offline`) covers seed/resume without
-// network (continue requires live for the summary transaction).
+// Cost-capped seed → resume → continue smoke for content-driven maintenance.
+// Offline covers seed/resume; live continue needs DEEPSEEK_API_KEY and allows
+// at most one summary after growing past compact_ratio=0.85.
 package main
 
 import (

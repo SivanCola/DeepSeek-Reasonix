@@ -1302,14 +1302,12 @@ type AgentConfig struct {
 	// Deprecated compatibility field paired with AutoPlan. Old TOML remains
 	// readable, but loading clears it and rendering omits it.
 	AutoPlanClassifier string `toml:"auto_plan_classifier"`
-	// Compaction window fractions: soft = notice only, compact = trigger, force = hard ceiling.
+	// Soft/snip/force are retired compatibility keys; only CompactRatio is active.
 	SoftCompactRatio    float64 `toml:"soft_compact_ratio"`
 	ToolResultSnipRatio float64 `toml:"tool_result_snip_ratio"`
 	CompactRatio        float64 `toml:"compact_ratio"`
 	CompactForceRatio   float64 `toml:"compact_force_ratio"`
-	// ContextEditing selects local maintenance (default) or explicitly opted-in
-	// Anthropic native tool clearing. Native is only honored by official
-	// Anthropic endpoints; compatible gateways remain local.
+	// ContextEditing is retired; native tool clearing is no longer an auto path.
 	ContextEditing string `toml:"context_editing"`
 	// Keep controls which compactable messages stay verbatim beyond the current
 	// user-fact/digest floor and recent tail. Empty uses the conservative default
@@ -1834,10 +1832,7 @@ func Default() *Config {
 			MaxSteps:        0,
 			PlannerMaxSteps: 0,
 			AutoPlan:        "off",
-			// Soft/snip/force ratios are deprecated compatibility fields: loading
-			// clears them, rendering omits them, and only CompactRatio drives
-			// automatic maintenance. Default 0.85 for new configs; explicit 0.8
-			// remains valid for users who set it.
+			// Soft/snip/force are load-only compatibility; CompactRatio alone drives maintenance.
 			SoftCompactRatio:       0,
 			ToolResultSnipRatio:    0,
 			CompactRatio:           0.85,

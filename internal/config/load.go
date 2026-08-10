@@ -1102,9 +1102,7 @@ func stripLegacyMemoryCompilerLines(raw string) (string, bool) {
 	return stripTOMLKeyLines(raw, "agent", "memory_compiler")
 }
 
-// MigrateLegacyMultiThresholdCompactionForRoot removes retired multi-threshold
-// compaction keys from user and project configs. Automatic maintenance is now
-// driven solely by compact_ratio (default 0.85).
+// MigrateLegacyMultiThresholdCompactionForRoot strips retired soft/snip/force keys.
 func MigrateLegacyMultiThresholdCompactionForRoot(root string) (bool, error) {
 	root = resolveRoot(root)
 	paths := make([]string, 0, 2)
