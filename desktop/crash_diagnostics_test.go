@@ -53,6 +53,50 @@ func TestWebView2FailureTrackerDeduplicatesSessionBursts(t *testing.T) {
 	}
 }
 
+func TestWebView2NativeFailureClassification(t *testing.T) {
+	tests := []struct {
+		name     string
+		event    webView2NativeEvent
+		kind     string
+		outcome  string
+		recovery string
+	}{
+		{name: "browser fatal", event: webView2NativeEvent{Kind: 0, ReasonAvailable: true, Reason: 3}, kind: "crash", outcome: "fatal_app_exit", recovery: webView2RecoveryNotApplicable},
+		{name: "renderer recovered", event: webView2NativeEvent{Kind: 1, Recovery: webView2RecoverySucceeded}, kind: "performance", outcome: "recovered", recovery: webView2RecoverySucceeded},
+		{name: "renderer recovery failed", event: webView2NativeEvent{Kind: 2, Recovery: webView2RecoveryFailed}, kind: "exception", outcome: "recovery_failed", recovery: webView2RecoveryFailed},
+		{name: "gpu degraded", event: webView2NativeEvent{Kind: 6}, kind: "performance", outcome: "degraded", recovery: webView2RecoveryNotApplicable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report, outcome := webView2NativeFailureReport(tt.event, "132.0.1", true)
+			if report.Kind != tt.kind || outcome != tt.outcome || report.WebView2 == nil || report.WebView2.Recovery != tt.recovery {
+				t.Fatalf("report=%+v diagnostic=%+v outcome=%q", report, report.WebView2, outcome)
+			}
+		})
+	}
+}
+
+func TestWebView2NativeFailureSanitizesModuleAndFingerprint(t *testing.T) {
+	report, _ := webView2NativeFailureReport(webView2NativeEvent{
+		Kind:                2,
+		Reason:              1,
+		ReasonAvailable:     true,
+		ExitCode:            259,
+		ExitCodeAvailable:   true,
+		FailureSourceModule: `C:\Users\alice\Security Suite\inject.dll`,
+		Recovery:            webView2RecoveryFailed,
+	}, "", false)
+	if got := report.WebView2.FailureSourceModule; got != "inject.dll" {
+		t.Fatalf("failure source module = %q", got)
+	}
+	if strings.Contains(report.Message, `C:\Users`) || strings.Contains(report.FingerprintHint, "259") {
+		t.Fatalf("report leaked a path or fingerprinted STILL_ACTIVE: %+v", report)
+	}
+	if report.FingerprintHint != "windows.webview2.render_process_unresponsive.unresponsive.unknown" {
+		t.Fatalf("fingerprint = %q", report.FingerprintHint)
+	}
+}
+
 func TestPreviousRunReportUsesOnlyBoundedLifecycleContext(t *testing.T) {
 	report := previousRunReport(repair.PreviousRunObservation{
 		Abnormal:       true,
@@ -63,11 +107,24 @@ func TestPreviousRunReportUsesOnlyBoundedLifecycleContext(t *testing.T) {
 		UpdateTo:       "v2",
 		UptimeBucket:   "m_2_10",
 	})
-	if report.Source != "native.lifecycle" || report.Label != "desktop.abnormal_exit" {
+	if report.Source != "native.lifecycle.legacy" || report.Label != "desktop.legacy_abnormal_exit" {
 		t.Fatalf("report = %+v", report)
 	}
 	if !strings.Contains(report.Message, "uptime bucket: m_2_10") {
 		t.Fatalf("message missing bounded uptime: %q", report.Message)
+	}
+}
+
+func TestDesktopLifecycleReportUsesCurrentLifecycleNamespace(t *testing.T) {
+	report := desktopLifecycleReport(desktopLifecycleObservation{
+		Version: "v1.23.0", Channel: "stable", Phase: "healthy",
+		StartedAt: "2026-08-10T01:00:00Z", UpdatedAt: "2026-08-10T02:00:00Z",
+	})
+	if report.Source != "native.lifecycle" || report.Label != "desktop.abnormal_exit.v2" {
+		t.Fatalf("report = %+v", report)
+	}
+	if report.FingerprintHint != "desktop.abnormal_exit.v2.healthy" {
+		t.Fatalf("fingerprint = %q", report.FingerprintHint)
 	}
 }
 

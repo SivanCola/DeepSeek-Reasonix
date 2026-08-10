@@ -510,6 +510,11 @@ type CrashRow = {
   last_channel: string;
   regressed_at: string;
   development?: boolean;
+  affected_installs?: number;
+  window_events?: number;
+  identified_events?: number;
+  identity_coverage?: number;
+  impact_rate?: number | null;
 };
 
 function clip(s: string, n: number): string {
@@ -564,7 +569,7 @@ function preferencePanel(title: string, body: string, active: boolean): string {
 
 function reportGroups(rows: CrashRow[], compact = false): string {
   if (!rows.length) return `<div class="empty">${i18n("No diagnostic reports yet — that's the good kind of empty", "还没有诊断报告，这是好消息")}</div>`;
-  return `<div class="crash-list${compact ? " compact" : ""}"><div class="crash-head"><span>${i18n("summary", "摘要")}</span><span>${i18n("scope", "范围")}</span><span>${i18n("health", "状态")}</span><span title="${i18n("Groups are filtered by the selected window; occurrence totals are lifetime counts", "分组按所选时间窗口过滤；次数为全生命周期累计")}">${i18n("lifetime count", "累计次数")}</span></div>${rows
+  return `<div class="crash-list${compact ? " compact" : ""}"><div class="crash-head"><span>${i18n("summary", "摘要")}</span><span>${i18n("scope", "范围")}</span><span>${i18n("health", "状态")}</span><span title="${i18n("Window events and affected installs; lifetime count remains visible for historical context", "窗口事件数和受影响安装数；同时保留全生命周期累计次数")}">${i18n("window / lifetime", "窗口 / 累计")}</span></div>${rows
     .map((c) => {
       const platform = [c.last_os, c.last_arch].filter(Boolean).join("/");
       const versions = `${c.first_version || "?"} → ${c.last_version || "?"}`;
@@ -575,7 +580,7 @@ function reportGroups(rows: CrashRow[], compact = false): string {
       }</span>
 <span class="crash-scope"><small>${esc(c.source || "legacy")}</small><small>${esc(versions)}</small><small>${platform ? esc(platform) : "unknown platform"}</small>${c.last_channel && c.last_channel !== "stable" ? `<small>${esc(c.last_channel)}</small>` : ""}</span>
 <span class="crash-health"><span class="pill">${esc(c.severity || "medium")}</span><span class="pill ${c.kind === "crash" ? "crash" : ""}">${esc(c.kind)}</span>${statusPill(c.status)}</span>
-<span class="crash-count">${c.count}</span>
+<span class="crash-count"><b>${Number(c.affected_installs ?? 0)} ${i18n("installs", "安装")}</b><small>${Number(c.window_events ?? 0)} ${i18n("events", "事件")} · ${Number(c.identity_coverage ?? 0) >= 0.9 ? `${Math.round(Number(c.identity_coverage) * 100)}% ${i18n("identified", "已关联")}${c.impact_rate !== null && c.impact_rate !== undefined ? ` · ${(c.impact_rate * 100).toFixed(1)}% ${i18n("impact", "影响率")}` : ""}` : i18n("sample incomplete", "样本不完整")}</small><small>${c.count} ${i18n("lifetime", "累计")}</small></span>
 </a>`;
     })
     .join("")}</div>`;
@@ -594,6 +599,16 @@ export function renderStats(
     /** Oldest computed_at in the rollup; empty when the window was queried live. */
     metricUsersComputedAt: string;
     sources: { label: string; users: number }[];
+    diagnosticFacets?: {
+      osBuilds: BarRow[];
+      architectures: BarRow[];
+      channels: BarRow[];
+      runtimes: BarRow[];
+      failureKinds: BarRow[];
+      failureReasons: BarRow[];
+      recoveries: BarRow[];
+      gpuStates: BarRow[];
+    };
     overview: OverviewCounts;
     latestVersion: string;
     filters: {
@@ -603,6 +618,14 @@ export function renderStats(
       version: string;
       os: string;
       platform: string;
+      osBuild?: string;
+      arch?: string;
+      channel?: string;
+      runtimeVersion?: string;
+      failureKind?: string;
+      failureReason?: string;
+      recovery?: string;
+      gpu?: string;
       newLatest: boolean;
       regressed: boolean;
       windowDays: 7 | 30;
@@ -615,6 +638,10 @@ export function renderStats(
   const days = lastDays(data.daily, data.filters.windowDays);
   const range = data.filters.windowDays;
   const rangeText = `${range}d`;
+  const diagnosticFacets = data.diagnosticFacets ?? {
+    osBuilds: [], architectures: [], channels: [], runtimes: [],
+    failureKinds: [], failureReasons: [], recoveries: [], gpuStates: [],
+  };
   const totalUsers = days.at(-1)?.users ?? 0;
   const anyPing = days.some((d) => d.opens > 0);
   const agentMetrics = data.metrics.filter((r) => AGENT_METRIC_SIGNALS.includes(r.signal));
@@ -649,6 +676,14 @@ export function renderStats(
     put("version", data.filters.version);
     put("os", data.filters.os);
     put("platform", data.filters.platform);
+    put("osBuild", data.filters.osBuild ?? "");
+    put("arch", data.filters.arch ?? "");
+    put("channel", data.filters.channel ?? "");
+    put("runtime", data.filters.runtimeVersion ?? "");
+    put("failureKind", data.filters.failureKind ?? "");
+    put("reason", data.filters.failureReason ?? "");
+    put("recovery", data.filters.recovery ?? "");
+    put("gpu", data.filters.gpu ?? "");
     put("surface", data.filters.surface === "cli" ? "cli" : "");
     if (data.filters.newLatest) params.set("new", "latest");
     if (data.filters.regressed) params.set("regressed", "1");
@@ -662,9 +697,9 @@ export function renderStats(
     const path = modulePath(module);
     return qs ? `${path}?${qs}` : path;
   };
-  const clearFiltersHref = filterQS({ status: "", source: "", version: "", os: "", platform: "", new: "", regressed: "" });
+  const clearFiltersHref = filterQS({ status: "", source: "", version: "", os: "", platform: "", osBuild: "", arch: "", channel: "", runtime: "", failureKind: "", reason: "", recovery: "", gpu: "", new: "", regressed: "" });
   const hasFilters = Boolean(
-    data.filters.status || data.filters.source || data.filters.version || data.filters.os || data.filters.platform || data.filters.newLatest || data.filters.regressed,
+    data.filters.status || data.filters.source || data.filters.version || data.filters.os || data.filters.platform || data.filters.osBuild || data.filters.arch || data.filters.channel || data.filters.runtimeVersion || data.filters.failureKind || data.filters.failureReason || data.filters.recovery || data.filters.gpu || data.filters.newLatest || data.filters.regressed,
   );
   const windowControls = `<div class="segmented" aria-label="Time window">
 <a class="${range === 7 ? "active" : ""}"${range === 7 ? ` aria-current="true"` : ""} href="${esc(filterQS({ window: "7d" }))}">7d</a>
@@ -719,6 +754,11 @@ ${filterTab("Regressed", "回归", filterQS({ regressed: data.filters.regressed 
 <section><h3>${i18n("Source", "来源")}</h3><div class="facet-list">${facetChips(data.sources, data.filters.source, (label) => filterQS({ source: label }), 4)}</div></section>
 <section><h3>${i18n("Version", "版本")}</h3><div class="facet-list">${facetChips(data.versions, data.filters.version, (label) => filterQS({ version: label }), 5)}</div></section>
 <section><h3>${i18n("Platform", "平台")}</h3><div class="facet-list">${facetChips(data.platforms, data.filters.platform, (label) => filterQS({ platform: label }), 4)}</div></section>
+<section><h3>${i18n("Windows build", "Windows build")}</h3><div class="facet-list">${facetChips(diagnosticFacets.osBuilds, data.filters.osBuild ?? "", (label) => filterQS({ osBuild: label }), 6)}${data.filters.osBuild !== "17763" ? `<a class="facet-chip" href="${esc(filterQS({ osBuild: "17763" }))}"><span class="facet-label">LTSC 2019 · 17763</span></a>` : ""}</div></section>
+<section><h3>${i18n("Architecture / channel", "架构 / 渠道")}</h3><div class="facet-list">${facetChips(diagnosticFacets.architectures, data.filters.arch ?? "", (label) => filterQS({ arch: label }), 4)}${facetChips(diagnosticFacets.channels, data.filters.channel ?? "", (label) => filterQS({ channel: label }), 4)}</div></section>
+<section><h3>WebView2 Runtime</h3><div class="facet-list">${facetChips(diagnosticFacets.runtimes, data.filters.runtimeVersion ?? "", (label) => filterQS({ runtime: label }), 5)}</div></section>
+<section><h3>${i18n("Failure kind / reason", "故障类型 / 原因")}</h3><div class="facet-list">${facetChips(diagnosticFacets.failureKinds, data.filters.failureKind ?? "", (label) => filterQS({ failureKind: label }), 5)}${facetChips(diagnosticFacets.failureReasons, data.filters.failureReason ?? "", (label) => filterQS({ reason: label }), 5)}</div></section>
+<section><h3>${i18n("Recovery / GPU", "恢复 / GPU")}</h3><div class="facet-list">${facetChips(diagnosticFacets.recoveries, data.filters.recovery ?? "", (label) => filterQS({ recovery: label }), 4)}${facetChips(diagnosticFacets.gpuStates, data.filters.gpu ?? "", (label) => filterQS({ gpu: label }), 3)}</div></section>
 </div></div>`;
   const usageModule = `<section id="usage" class="card full module-card"><div class="module-head"><div><span>${i18n("Module", "模块")}</span><h2>${i18n("Usage distribution", "使用分布")}</h2></div></div>
 <div class="module-panel wide"><h3>${i18nHTML(`Daily active installs <b>— ${rangeText}</b> (solid: users, faded: opens)`, `每日活跃 <b>— ${rangeText}</b>（实线：用户，淡色：打开次数）`)}</h3>
@@ -728,6 +768,7 @@ ${anyPing ? dailyChart(days) : `<div class="empty">${i18n("No pings yet — data
 <section class="module-panel"><h3>${i18nHTML(`Platforms <b>— ${rangeText}</b>`, `平台分布 <b>— ${rangeText}</b>`)}</h3>${listBars(data.platforms)}</section>
 </div></section>`;
   const diagnosticsModule = `<section id="diagnostics" class="card full module-card"><div class="module-head"><div><span>${i18n("Module", "模块")}</span><h2>${i18n("Diagnostic triage", "诊断分诊")}</h2></div><a class="module-action" href="#top">${i18n("Back to overview", "回到概览")}</a></div>
+<p class="sub">${i18n("Installation-linked data is available only from the diagnostics-v2 deployment date; historical device counts are not backfilled.", "可关联安装的数据仅从 diagnostics-v2 部署日起提供；历史设备数不回填。")}</p>
 <section class="module-panel"><h3>${i18nHTML("Needs attention <b>— top 10 release crashes and exceptions</b>", "优先处理 <b>— 正式版崩溃与异常 Top 10</b>")}</h3>${reportGroups(releaseCrashes.slice(0, 10), true)}</section>
 ${performanceDiagnostics.length ? `<section class="module-panel"><h3>${i18nHTML("Performance signals <b>— tracked separately from crashes</b>", "性能信号 <b>— 与崩溃分开统计</b>")}</h3>${reportGroups(performanceDiagnostics.slice(0, 5), true)}</section>` : ""}
 ${developmentDiagnostics.length ? `<section class="module-panel"><h3>${i18nHTML("Development diagnostics <b>— excluded from release priority</b>", "开发版诊断 <b>— 不计入正式版优先级</b>")}</h3>${reportGroups(developmentDiagnostics.slice(0, 5), true)}</section>` : ""}
@@ -858,6 +899,14 @@ type ReportSample = {
   component_stack: string;
   stack: string;
   occurred_at: string;
+  webview2: string;
+};
+
+type GroupDiagnosticSummary = {
+  windowEvents: number;
+  identifiedEvents: number;
+  affectedInstalls: number;
+  distributions: { facet: string; value: string; installs: number; events: number }[];
 };
 
 function manageGroup(group: Group): string {
@@ -902,6 +951,16 @@ function sampleReport(r: ReportSample, i: number): string {
     .map(([label, value]) => `<span><b>${label}</b>${esc(value)}</span>`)
     .join("");
   const stack = r.stack || r.component_stack;
+  let webview2 = "";
+  try {
+    const diagnostic = JSON.parse(r.webview2 || "") as Record<string, unknown>;
+    webview2 = Object.entries(diagnostic)
+      .filter(([, value]) => value !== "" && value !== undefined && value !== null)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join("\n");
+  } catch {
+    webview2 = "";
+  }
   return `<details class="sample" ${i === 0 ? "open" : ""}><summary>
 <span class="sample-id"><b>${esc(r.version)}</b><small>${esc(platform || "unknown platform")}</small></span>
 <span class="sample-title">${esc(clip(title, 110))}</span>
@@ -917,6 +976,7 @@ function sampleReport(r: ReportSample, i: number): string {
 <pre>${esc(r.message)}</pre>
 ${stack ? `<details class="sample-nested"><summary>${i18n("stack", "堆栈")}</summary><pre>${esc(stack)}</pre></details>` : ""}
 ${breadcrumbsList(r.breadcrumbs)}
+${webview2 ? `<details class="sample-nested"><summary>WebView2</summary><pre>${esc(webview2)}</pre></details>` : ""}
 </div></details>`;
 }
 
@@ -938,6 +998,7 @@ export function renderGroup(
   group: Group,
   reports: ReportSample[],
   user: User,
+  diagnostics?: GroupDiagnosticSummary,
 ): string {
   const samples = sampleReports(reports);
   const platform = [group.last_os, group.last_arch].filter(Boolean).join("/");
@@ -956,6 +1017,11 @@ export function renderGroup(
     .join("");
   const metrics = [
     [i18n("Occurrences", "出现次数"), String(group.count)],
+    ...(diagnostics ? [
+      [i18n("Affected installs (30d)", "受影响安装（30 天）"), String(diagnostics.affectedInstalls)],
+      [i18n("Window events (30d)", "窗口事件（30 天）"), String(diagnostics.windowEvents)],
+      [i18n("Identity coverage", "身份覆盖率"), diagnostics.windowEvents > 0 && diagnostics.identifiedEvents / diagnostics.windowEvents >= 0.9 ? `${Math.round(diagnostics.identifiedEvents / diagnostics.windowEvents * 100)}%` : "sample incomplete / 样本不完整"],
+    ] : []),
     [i18n("First seen", "首次出现"), `${group.first_seen.slice(0, 10)} · ${group.first_version || "?"}`],
     [i18n("Last seen", "最近出现"), `${group.last_seen.slice(0, 10)} · ${group.last_version || "?"}`],
     [i18n("Version range", "版本范围"), `${group.first_version || "?"} → ${group.last_version || "?"}`],
@@ -965,6 +1031,11 @@ export function renderGroup(
     .filter(Boolean)
     .map(([label, value]) => `<div><span>${label}</span><b>${esc(value)}</b></div>`)
     .join("");
+  const distributions = diagnostics?.distributions.length
+    ? `<div class="card full sample-card"><h2>${i18n("30-day technical distributions", "30 天技术分布")}</h2><div class="group-metrics">${diagnostics.distributions
+        .map((row) => `<div><span>${esc(row.facet)} · ${esc(row.value)}</span><b>${row.installs} ${i18n("installs", "安装")} · ${row.events} ${i18n("events", "事件")}</b></div>`)
+        .join("")}</div></div>`
+    : "";
 
   return page(
     `Reasonix · ${group.fingerprint.slice(0, 8)}`,
@@ -976,6 +1047,7 @@ ${group.title ? `<p class="summary group-summary">${esc(group.title)}</p>` : ""}
 <div class="group-metrics">${metrics}</div>
 ${group.note ? `<p class="group-note">${i18n("Note", "备注")}: ${esc(group.note)}</p>` : ""}</section>
 <div class="card full sample-card"><h2>${i18nHTML("Samples <b>— newest first, first sample plus latest 5 kept</b>", "样本 <b>— 最新优先，保留首个样本和最近 5 个</b>")}</h2>${samples}</div>
+${distributions}
 ${user.role === "admin" ? manageGroup(group) : ""}
 <a class="back" href="/stats">${i18n("Back to stats", "返回统计")}</a>`,
     userNav(user),

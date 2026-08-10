@@ -23,6 +23,7 @@ import (
 
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/reasonix does — boot.Build resolves providers/tools from these registries.
+	"reasonix/internal/config"
 	_ "reasonix/internal/provider/anthropic"
 	_ "reasonix/internal/provider/openai"
 	_ "reasonix/internal/provider/responses"
@@ -54,8 +55,9 @@ var channel = "stable"
 var macSelfUpdate = "false"
 
 const (
-	disableWebview2GPUEnv  = "REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU"
-	linuxDRIRenderNodeGlob = "/dev/dri/renderD*"
+	disableWebview2GPUEnv       = "REASONIX_DISABLE_WEBVIEW2_GPU"
+	legacyDisableWebview2GPUEnv = "REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU"
+	linuxDRIRenderNodeGlob      = "/dev/dri/renderD*"
 )
 
 func macSelfUpdateAllowed() bool {
@@ -68,12 +70,14 @@ func macSelfUpdateAllowed() bool {
 }
 
 func windowsWebview2GPUDisabled() bool {
-	if raw, ok := os.LookupEnv(disableWebview2GPUEnv); ok {
-		switch strings.ToLower(strings.TrimSpace(raw)) {
-		case "1", "true", "yes", "on":
-			return true
-		case "0", "false", "no", "off", "":
-			return false
+	for _, key := range []string{disableWebview2GPUEnv, legacyDisableWebview2GPUEnv} {
+		if raw, ok := os.LookupEnv(key); ok {
+			switch strings.ToLower(strings.TrimSpace(raw)) {
+			case "1", "true", "yes", "on":
+				return true
+			case "0", "false", "no", "off", "":
+				return false
+			}
 		}
 	}
 	return channel == "preview" || channel == "canary"
@@ -134,6 +138,17 @@ func main() {
 		// Observe previous run for crash diagnostics only. Startup tracking must
 		// never force Safe Mode, disable plugins, or select a previous binary.
 		app.previousRun = repair.NewStartupTracker("").ObservePreviousRun()
+		if cfg, err := config.Load(); err == nil && version != "dev" {
+			tracker := newDesktopLifecycleTracker(config.MemoryUserDir(), version, channel)
+			enabled := cfg.DesktopTelemetry()
+			app.previousLifecycleRuns = tracker.consumePrevious(enabled)
+			if enabled && tracker.start() == nil {
+				app.lifecycle = tracker
+			}
+			if enabled {
+				installWebView2ProcessObserver(app)
+			}
+		}
 		capturePendingUpdateHealthIdentity(app)
 	}
 

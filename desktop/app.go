@@ -333,7 +333,9 @@ type App struct {
 
 	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
 
-	previousRun repair.PreviousRunObservation
+	previousRun           repair.PreviousRunObservation
+	previousLifecycleRuns []desktopLifecycleObservation
+	lifecycle             *desktopLifecycleTracker
 	// Healthy-update identity is captured before Wails starts. A process may
 	// commit only the complete probationary transaction it actually booted from,
 	// never a rewritten or later same-version retry.
@@ -564,6 +566,7 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.lifecycle.mark("ready")
 	a.startWindowsWebView2StartupFallback(ctx)
 	if a.remoteWindowTicket != "" {
 		// Remote web window child: no local tabs, tray, heartbeat, providers,
@@ -961,6 +964,7 @@ func (a *App) shutdown(context.Context) {
 		// Remote web window child: nothing to snapshot or stop locally.
 		return
 	}
+	a.lifecycle.mark("shutting_down")
 	if a.workspaceHub != nil {
 		a.workspaceHub.close()
 	}
@@ -1045,6 +1049,7 @@ func (a *App) shutdown(context.Context) {
 		// Independent last-known-good config snapshot after a successful UI session.
 		_ = repair.RecordHealthyConfig(version)
 	}
+	a.lifecycle.clean()
 }
 
 // domReady is called (via OnDomReady) after the webview finishes loading its DOM
@@ -1094,6 +1099,7 @@ func (a *App) domReady(_ context.Context) {
 
 	runtime.WindowShow(a.ctx)
 	a.startupReady.Store(true)
+	a.lifecycle.mark("healthy")
 	// Record last-known-good config after the UI is actually visible. This is
 	// independent of any startup health probation or crash-loop policy.
 	ctx := a.ctx

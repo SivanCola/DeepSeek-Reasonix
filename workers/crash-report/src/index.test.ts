@@ -10,6 +10,7 @@ import {
   diagnosticWindowWhere,
   normalizeForFingerprint,
   Ping,
+  Report,
   Metrics,
   CLI_TELEMETRY_SCHEMA_SQL,
   ensureCLITelemetrySchema,
@@ -19,6 +20,8 @@ import {
 } from "./index";
 import { renderStats } from "./stats";
 import clientSurfaceMigrationSQL from "../migrate-client-surface.sql?raw";
+import diagnosticsMigrationSQL from "../migrate-diagnostics-v2.sql?raw";
+import freshSchemaSQL from "../schema.sql?raw";
 
 const base = {
   kind: "crash",
@@ -126,6 +129,64 @@ describe("metrics compatibility", () => {
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.counters).toHaveLength(4);
+  });
+});
+
+describe("diagnostics v2 compatibility and privacy", () => {
+  const oldReport = {
+    kind: "crash",
+    version: "v1.19.0",
+    os: "windows",
+    arch: "amd64",
+    message: "legacy payload",
+  } as const;
+
+  it("accepts old reports and additive Windows diagnostics", () => {
+    expect(Report.safeParse(oldReport).success).toBe(true);
+    const parsed = Report.safeParse({
+      ...oldReport,
+      installId: "b".repeat(32),
+      channel: "stable",
+      device: { osVersion: "Windows 10", osBuild: 17763, osRevision: 6293 },
+      webview2: {
+        kind: "browser_process_exited",
+        reason: "integrity_failure",
+        exitCode: -1073740760,
+        processDescription: "Browser",
+        failureSourceModule: "inject.dll",
+        runtimeVersion: "132.0.2957.140",
+        gpuDisabled: false,
+        recovery: "not_applicable",
+      },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects full failure-source paths and puts channel=test in development", () => {
+    expect(Report.safeParse({
+      ...oldReport,
+      webview2: {
+        kind: "browser_process_exited",
+        reason: "integrity_failure",
+        failureSourceModule: "C:\\Users\\alice\\inject.dll",
+        runtimeVersion: "132",
+        gpuDisabled: false,
+        recovery: "not_applicable",
+      },
+    }).success).toBe(false);
+    expect(isDevelopmentReport({ ...base, version: "v1.23.0", channel: "test" })).toBe(true);
+  });
+
+  it("keeps migration and fresh schema aligned for all diagnostics-v2 storage", () => {
+    for (const table of ["report_daily", "report_installations"]) {
+      expect(diagnosticsMigrationSQL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS\\s+${table}\\b`));
+      expect(freshSchemaSQL).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS\\s+${table}\\b`));
+    }
+    for (const column of ["webview2", "os_build", "os_revision", "event_count"]) {
+      expect(diagnosticsMigrationSQL).toContain(column);
+      expect(freshSchemaSQL).toContain(column);
+    }
+    expect(diagnosticsMigrationSQL).not.toMatch(/\bDROP\b/);
   });
 });
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"golang.org/x/mod/modfile"
@@ -102,6 +103,8 @@ func TestWebView2PatchWiring(t *testing.T) {
 	recoveryPolicyDefined := false
 	recoveryPolicyApplied := false
 	nativeReloadApplied := false
+	diagnosticCollected := false
+	diagnosticObserved := false
 	for _, declaration := range parsed.Decls {
 		fn, ok := declaration.(*ast.FuncDecl)
 		if !ok {
@@ -116,6 +119,15 @@ func TestWebView2PatchWiring(t *testing.T) {
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
+				return true
+			}
+			if ident, ok := call.Fun.(*ast.Ident); ok {
+				switch ident.Name {
+				case "collectProcessFailedDiagnostic":
+					diagnosticCollected = true
+				case "notifyProcessFailedObserver":
+					diagnosticObserved = true
+				}
 				return true
 			}
 			selector, ok := call.Fun.(*ast.SelectorExpr)
@@ -133,6 +145,42 @@ func TestWebView2PatchWiring(t *testing.T) {
 	}
 	if !recoveryPolicyDefined || !recoveryPolicyApplied || !nativeReloadApplied {
 		t.Fatal("patched WebView2 must throttle and natively reload failed main renderers")
+	}
+	if !diagnosticCollected || !diagnosticObserved {
+		t.Fatal("patched WebView2 must collect and synchronously publish native process diagnostics")
+	}
+
+	argsFile := filepath.Join("third_party", "go-webview2", "pkg", "edge", "ICoreWebView2ProcessFailedEventArgs.go")
+	argsData, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"{4DAB9422-46FA-4C3E-A5D2-41D2071D3680}",
+		"{AB667428-094D-5FD1-B480-8B4C0FDBDF2F}",
+		"GetICoreWebView2ProcessFailedEventArgs2",
+		"GetICoreWebView2ProcessFailedEventArgs3",
+	} {
+		if !strings.Contains(string(argsData), expected) {
+			t.Fatalf("patched WebView2 process-failed args must include %s", expected)
+		}
+	}
+	for _, requiredFile := range []string{
+		"ICoreWebView2ProcessFailedEventArgs2.go",
+		"ICoreWebView2ProcessFailedEventArgs3.go",
+		"process_failed_diagnostics.go",
+	} {
+		if _, err := os.Stat(filepath.Join("third_party", "go-webview2", "pkg", "edge", requiredFile)); err != nil {
+			t.Fatalf("required native diagnostics patch %s is missing: %v", requiredFile, err)
+		}
+	}
+
+	installerData, err := os.ReadFile("webview2_diagnostics_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(installerData), "edge.SetProcessFailedObserver") {
+		t.Fatal("Windows desktop must install the vendored WebView2 process-failed observer")
 	}
 
 	coreFile := filepath.Join("third_party", "go-webview2", "pkg", "edge", "corewebview2.go")

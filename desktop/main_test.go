@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
@@ -59,6 +60,11 @@ func TestMain(m *testing.M) {
 	os.Setenv("REASONIX_STATE_HOME", dir+"/state")
 	os.Setenv("REASONIX_CACHE_HOME", dir+"/cache")
 	os.Setenv("AppData", dir)
+	// Tests fail closed for telemetry. Any test that expects a request must
+	// replace the relevant endpoint with an httptest.Server explicitly.
+	crashEndpoint = "http://127.0.0.1:0/v1/report"
+	pingEndpoint = "http://127.0.0.1:0/v1/ping"
+	metricsEndpoint = "http://127.0.0.1:0/v1/metrics"
 	// Neutralize the Wails runtime-event bridge for the whole test binary:
 	// outside a running Wails app, runtime.EventsEmit log.Fatals on the plain
 	// contexts tests use, killing the process from any emitting code path.
@@ -70,11 +76,24 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func TestDesktopTestTelemetryEndpointsAreFailClosed(t *testing.T) {
+	for name, endpoint := range map[string]string{
+		"crash":   crashEndpoint,
+		"ping":    pingEndpoint,
+		"metrics": metricsEndpoint,
+	} {
+		if strings.Contains(endpoint, "crash.reasonix.io") {
+			t.Fatalf("%s test endpoint targets production: %s", name, endpoint)
+		}
+	}
+}
+
 func TestWindowsWebview2GPUDisabled(t *testing.T) {
 	oldChannel := channel
 	t.Cleanup(func() {
 		channel = oldChannel
 		os.Unsetenv(disableWebview2GPUEnv)
+		os.Unsetenv(legacyDisableWebview2GPUEnv)
 	})
 
 	tests := []struct {
@@ -104,6 +123,11 @@ func TestWindowsWebview2GPUDisabled(t *testing.T) {
 				t.Fatalf("windowsWebview2GPUDisabled() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+	os.Unsetenv(disableWebview2GPUEnv)
+	os.Setenv(legacyDisableWebview2GPUEnv, "1")
+	if !windowsWebview2GPUDisabled() {
+		t.Fatal("legacy WebView2 GPU override was not accepted")
 	}
 }
 

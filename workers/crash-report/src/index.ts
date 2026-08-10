@@ -39,13 +39,27 @@ const GROUP_PATH_RE = /^\/stats\/group\/((?:dev:)?[0-9a-f]{64})$/;
 const Device = z
   .object({
     osVersion: z.string().max(128),
+    osBuild: z.number().int().min(0).max(1_000_000),
+    osRevision: z.number().int().min(0).max(1_000_000),
     cpu: z.string().max(128),
     cores: z.number().int().min(0).max(4096),
     ramGb: z.number().min(0).max(65536),
   })
   .partial();
 
-const Report = z.object({
+const WebView2Diagnostic = z.object({
+  kind: z.string().trim().min(1).max(64).regex(/^[a-z0-9_]+$/),
+  reason: z.string().trim().min(1).max(64).regex(/^[a-z0-9_]+$/),
+  exitCode: z.number().int().min(-2147483648).max(2147483647).optional(),
+  processDescription: z.string().max(255).optional(),
+  failureSourceModule: z.string().max(255).refine((value) => !/[\\/]/.test(value)).optional(),
+  runtimeVersion: z.string().max(128),
+  gpuDisabled: z.boolean(),
+  recovery: z.enum(["not_applicable", "reload_succeeded", "reload_failed"]),
+});
+
+export const Report = z.object({
+  installId: z.string().regex(/^[0-9a-f]{32}$/).optional(),
   kind: z.enum(["crash", "exception", "feedback", "performance", "bot"]),
   version: z.string().min(1).max(64),
   os: z.string().min(1).max(32),
@@ -76,6 +90,7 @@ const Report = z.object({
     .max(30)
     .optional(),
   occurredAt: z.string().max(64).optional(),
+  webview2: WebView2Diagnostic.optional(),
 });
 type ReportPayload = z.infer<typeof Report>;
 
@@ -153,6 +168,8 @@ export const Ping = z.object({
   os: z.string().min(1).max(32),
   arch: z.string().min(1).max(32),
   osVersion: z.string().max(128).optional(),
+  osBuild: z.number().int().min(0).max(1_000_000).optional(),
+  osRevision: z.number().int().min(0).max(1_000_000).optional(),
   surface: ClientSurface.default("desktop"),
 });
 
@@ -179,6 +196,9 @@ const METRIC_SIGNALS = [
   "desktop_update_transition",
   "desktop_restore",
   "desktop_webview2_failure",
+  "desktop_webview2_outcome",
+  "desktop_legacy_exit",
+  "desktop_legacy_exit_phase",
   "cli_mode",
   "cli_profile",
   "cli_permission_mode",
@@ -261,6 +281,9 @@ export const Metrics = z.object({
     .optional(),
   version: z.string().min(1).max(64),
   os: z.string().min(1).max(32),
+  arch: z.string().max(32).optional(),
+  osBuild: z.number().int().min(0).max(1_000_000).optional(),
+  osRevision: z.number().int().min(0).max(1_000_000).optional(),
   surface: ClientSurface.default("desktop"),
   counters: z
     .array(z.union([KnownMetricCounter, UnknownMetricCounter]))
@@ -384,12 +407,14 @@ type SeverityInput = {
   errorMessage: string;
   topFrame: string;
   channel?: string;
+  recovery?: string;
 };
 
 const RESIZE_OBSERVER_NOTICE_RE = /^ResizeObserver loop (?:limit exceeded|completed with undelivered notifications\.?)$/;
 
 export function isDevelopmentReport(input: SeverityInput): boolean {
-  return input.channel?.trim().toLowerCase() === "dev" || input.version?.trim().toLowerCase().startsWith("dev") === true;
+  const channel = input.channel?.trim().toLowerCase();
+  return channel === "dev" || channel === "test" || input.version?.trim().toLowerCase().startsWith("dev") === true;
 }
 
 export function namespaceReportFingerprint(hash: string, development: boolean): string {
@@ -430,6 +455,8 @@ function severityForKind(kind: string): string {
 
 export function severityForReport(input: SeverityInput): string {
   if (isDevelopmentReport(input) || isOpaqueScriptErrorReport(input) || isKnownNonCrashDiagnostic(input)) return "low";
+  if (input.source === "webview2.process.native" && input.recovery === "reload_succeeded") return "low";
+  if (input.source === "webview2.process.native" && input.kind === "exception") return "high";
   return severityForKind(input.kind);
 }
 
@@ -479,6 +506,13 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
     ...b,
     msg: b.msg ? scrubSensitiveText(b.msg) : b.msg,
   }));
+  const webview2 = r.webview2
+    ? {
+        ...r.webview2,
+        processDescription: scrubSensitiveText(r.webview2.processDescription ?? ""),
+        failureSourceModule: r.webview2.failureSourceModule ?? "",
+      }
+    : undefined;
 
   const fingerprintBasis = hasStructuredCrashFields(r)
     ? normalizeForFingerprint({
@@ -508,6 +542,7 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
     errorMessage,
     topFrame,
     channel,
+    recovery: webview2?.recovery,
   };
   const development = isDevelopmentReport(severityInput);
   const fingerprint = namespaceReportFingerprint(await sha256Hex(fingerprintBasis), development);
@@ -550,9 +585,9 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
       `INSERT INTO reports (
          fingerprint, kind, version, os, arch, message, device, created_at,
          source, label, error_type, error_message, top_frame, build_commit, channel,
-         language, view, breadcrumbs, component_stack, stack, occurred_at
+         language, view, breadcrumbs, component_stack, stack, occurred_at, webview2
        )
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)`,
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)`,
     )
       .bind(
         fingerprint,
@@ -576,8 +611,48 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
         componentStack,
         stack,
         r.occurredAt ?? "",
+        webview2 ? JSON.stringify(webview2) : "",
       )
       .run();
+
+    await env.DB.prepare(
+      `INSERT INTO report_daily (date, fingerprint, events, identified_events)
+       VALUES (date('now'), ?1, 1, ?2)
+       ON CONFLICT (date, fingerprint) DO UPDATE SET
+         events = events + 1, identified_events = identified_events + ?2`,
+    )
+      .bind(fingerprint, r.installId ? 1 : 0)
+      .run();
+
+    if (r.installId) {
+      await env.DB.prepare(
+        `INSERT INTO report_installations (
+           date, fingerprint, install_id, version, os, arch, os_build, os_revision, channel,
+           runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_disabled, events
+         ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 1)
+         ON CONFLICT (date, fingerprint, install_id) DO UPDATE SET
+           version = ?3, os = ?4, arch = ?5, os_build = ?6, os_revision = ?7, channel = ?8,
+           runtime_version = ?9, failure_kind = ?10, failure_reason = ?11, exit_code = ?12,
+           recovery = ?13, gpu_disabled = ?14, events = events + 1`,
+      )
+        .bind(
+          fingerprint,
+          r.installId,
+          r.version,
+          r.os,
+          r.arch,
+          r.device?.osBuild ?? 0,
+          r.device?.osRevision ?? 0,
+          channel,
+          webview2?.runtimeVersion ?? "",
+          webview2?.kind ?? "",
+          webview2?.reason ?? "",
+          webview2?.exitCode ?? null,
+          webview2?.recovery ?? "",
+          webview2 ? (webview2.gpuDisabled ? 1 : 0) : null,
+        )
+        .run();
+    }
 
     await env.DB.prepare(
       `DELETE FROM reports
@@ -612,12 +687,12 @@ async function handlePing(request: Request, env: Env): Promise<Response> {
   try {
     if (p.surface === "cli") await ensureCLITelemetrySchema(env);
     await env.DB.prepare(
-      `INSERT INTO ${tables.pings} (date, install_id, version, os, arch, os_version, opens)
-       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, 1)
+      `INSERT INTO ${tables.pings} (date, install_id, version, os, arch, os_version, os_build, os_revision, opens)
+       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)
        ON CONFLICT (date, install_id) DO UPDATE SET
-         opens = opens + 1, version = ?2, os_version = ?5`,
+         opens = opens + 1, version = ?2, os_version = ?5, os_build = ?6, os_revision = ?7`,
     )
-      .bind(p.installId, p.version, p.os, p.arch, p.osVersion ?? "")
+      .bind(p.installId, p.version, p.os, p.arch, p.osVersion ?? "", p.osBuild ?? 0, p.osRevision ?? 0)
       .run();
   } catch (err) {
     return storageUnavailable("ping", err);
@@ -653,13 +728,17 @@ async function handleMetrics(request: Request, env: Env): Promise<Response> {
   }
   if (m.installId) {
     const userUpsert = env.DB.prepare(
-      `INSERT INTO ${tables.metricUsers} (date, version, os, signal, bucket, install_id)
-       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5)
+      `INSERT INTO ${tables.metricUsers} (date, version, os, arch, os_build, os_revision, signal, bucket, install_id, event_count)
+       VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
        ON CONFLICT (date, signal, bucket, install_id) DO UPDATE SET
-         version = ?1, os = ?2`,
+         version = ?1, os = ?2, arch = ?3, os_build = ?4, os_revision = ?5,
+         event_count = event_count + ?9`,
     );
     try {
-      await env.DB.batch(m.counters.map((c) => userUpsert.bind(m.version, m.os, c.signal, c.bucket, m.installId)));
+      await env.DB.batch(m.counters.map((c) => userUpsert.bind(
+        m.version, m.os, m.arch ?? "", m.osBuild ?? 0, m.osRevision ?? 0,
+        c.signal, c.bucket, m.installId, c.count,
+      )));
     } catch (err) {
       console.warn("metric_users write failed", err);
     }
@@ -696,6 +775,14 @@ type StatsFilters = {
   version: string;
   os: string;
   platform: string;
+  osBuild: string;
+  arch: string;
+  channel: string;
+  runtimeVersion: string;
+  failureKind: string;
+  failureReason: string;
+  recovery: string;
+  gpu: string;
   newLatest: boolean;
   regressed: boolean;
   windowDays: 7 | 30;
@@ -713,6 +800,14 @@ function statsFilters(url: URL): StatsFilters {
     version: (url.searchParams.get("version") ?? "").slice(0, 64),
     os: (url.searchParams.get("os") ?? "").slice(0, 32),
     platform: (url.searchParams.get("platform") ?? "").slice(0, 80),
+    osBuild: (url.searchParams.get("osBuild") ?? "").replace(/[^0-9]/g, "").slice(0, 7),
+    arch: (url.searchParams.get("arch") ?? "").slice(0, 32),
+    channel: (url.searchParams.get("channel") ?? "").slice(0, 32),
+    runtimeVersion: (url.searchParams.get("runtime") ?? "").slice(0, 128),
+    failureKind: (url.searchParams.get("failureKind") ?? "").slice(0, 64),
+    failureReason: (url.searchParams.get("reason") ?? "").slice(0, 64),
+    recovery: (url.searchParams.get("recovery") ?? "").slice(0, 32),
+    gpu: ["enabled", "disabled", "unknown"].includes(url.searchParams.get("gpu") ?? "") ? (url.searchParams.get("gpu") ?? "") : "",
     newLatest: url.searchParams.get("new") === "latest",
     regressed: url.searchParams.get("regressed") === "1",
     windowDays: windowParam === "7d" ? 7 : 30,
@@ -724,24 +819,57 @@ async function crashGroups(env: Env, filters: StatsFilters, latestVersion: strin
   const where: string[] = [diagnosticWindowWhere(filters.windowDays)];
   const binds: unknown[] = [];
   const add = (sql: string, value?: unknown) => {
-    where.push(sql.replace("?", `?${binds.length + 1}`));
+    where.push(sql);
     if (value !== undefined) binds.push(value);
   };
   if (filters.status) add("status = ?", filters.status);
   if (filters.source) add("source = ?", filters.source);
-  if (filters.version) add("last_version = ?", filters.version);
+  const installWhere: string[] = [`date >= date('now', '${currentWindowSince(filters.windowDays)}')`];
+  const installBinds: unknown[] = [];
+  const addInstall = (column: string, value: unknown) => {
+    installBinds.push(value);
+    installWhere.push(value === null ? `${column} IS NULL` : `${column} = ?`);
+    if (value === null) installBinds.pop();
+  };
+  if (filters.version) addInstall("version", filters.version);
   if (filters.os) add("last_os = ?", filters.os);
   if (filters.platform) add("last_os || ' ' || last_arch = ?", filters.platform);
+  if (filters.osBuild) addInstall("os_build", Number(filters.osBuild));
+  if (filters.arch) addInstall("arch", filters.arch);
+  if (filters.channel) addInstall("channel", filters.channel);
+  if (filters.runtimeVersion) addInstall("runtime_version", filters.runtimeVersion);
+  if (filters.failureKind) addInstall("failure_kind", filters.failureKind);
+  if (filters.failureReason) addInstall("failure_reason", filters.failureReason);
+  if (filters.recovery) addInstall("recovery", filters.recovery);
+  if (filters.gpu) addInstall("gpu_disabled", filters.gpu === "unknown" ? null : filters.gpu === "disabled" ? 1 : 0);
+  if (installWhere.length > 1) where.push("COALESCE(installations.affected_installs, 0) > 0");
   if (filters.newLatest && latestVersion) add("first_version = ?", latestVersion);
   if (filters.regressed) where.push("regressed_at <> ''");
   let latestOrder = "";
   if (latestVersion) {
-    latestOrder = `CASE WHEN first_version = ?${binds.length + 1} THEN 0 ELSE 1 END,`;
+    latestOrder = `CASE WHEN first_version = ? THEN 0 ELSE 1 END,`;
     binds.push(latestVersion);
   }
-  const sql = `SELECT fingerprint, kind, count, first_version, last_version, substr(last_seen, 1, 10) AS seen,
-      status, title, source, label, error_type, top_frame, severity, last_os, last_arch, last_channel, regressed_at
-    FROM groups ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+  const reportWindow = currentWindowSince(filters.windowDays);
+  const buildActiveInstalls = filters.osBuild
+    ? `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE date >= date('now', '${reportWindow}') AND os_build = ${Number(filters.osBuild)})`
+    : "0";
+  const sql = `SELECT groups.fingerprint, kind, count, first_version, last_version, substr(last_seen, 1, 10) AS seen,
+      status, title, source, label, error_type, top_frame, severity, last_os, last_arch, last_channel, regressed_at,
+      COALESCE(installations.affected_installs, 0) AS affected_installs,
+      COALESCE(daily.window_events, 0) AS window_events,
+      COALESCE(daily.identified_events, 0) AS identified_events,
+      ${buildActiveInstalls} AS active_build_installs
+    FROM groups
+    LEFT JOIN (
+      SELECT fingerprint, COUNT(DISTINCT install_id) AS affected_installs
+      FROM report_installations WHERE ${installWhere.join(" AND ")} GROUP BY fingerprint
+    ) installations ON installations.fingerprint = groups.fingerprint
+    LEFT JOIN (
+      SELECT fingerprint, SUM(events) AS window_events, SUM(identified_events) AS identified_events
+      FROM report_daily WHERE date >= date('now', '${reportWindow}') GROUP BY fingerprint
+    ) daily ON daily.fingerprint = groups.fingerprint
+    ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY
       CASE WHEN status = 'open' THEN 0 ELSE 1 END,
       CASE
@@ -758,11 +886,14 @@ async function crashGroups(env: Env, filters: StatsFilters, latestVersion: strin
       END,
       ${latestOrder}
       CASE WHEN regressed_at <> '' THEN 0 ELSE 1 END,
+      affected_installs DESC,
+      window_events DESC,
       count DESC,
       last_seen DESC
     LIMIT 50`;
+  const allBinds = [...installBinds, ...binds];
   const stmt = env.DB.prepare(sql);
-  const query = binds.length ? stmt.bind(...binds) : stmt;
+  const query = allBinds.length ? stmt.bind(...allBinds) : stmt;
   const result = await query.all<{
     fingerprint: string;
     kind: string;
@@ -781,9 +912,19 @@ async function crashGroups(env: Env, filters: StatsFilters, latestVersion: strin
     last_arch: string;
     last_channel: string;
     regressed_at: string;
+    affected_installs: number;
+    window_events: number;
+    identified_events: number;
+    active_build_installs: number;
   }>();
   result.results = result.results
-    .map((row) => ({ ...row, severity: effectiveGroupSeverity(row), development: isDevelopmentGroup(row) }))
+    .map((row) => ({
+      ...row,
+      severity: effectiveGroupSeverity(row),
+      development: isDevelopmentGroup(row),
+      identity_coverage: row.window_events ? row.identified_events / row.window_events : 0,
+      impact_rate: row.active_build_installs ? row.affected_installs / row.active_build_installs : null,
+    }))
     .sort((a, b) => compareDiagnosticPriority(a, b, latestVersion));
   return result;
 }
@@ -799,6 +940,7 @@ type GroupPriorityRow = {
   title: string;
   last_version: string;
   last_channel: string;
+  affected_installs?: number;
 };
 
 const developmentGroupSQL = `fingerprint LIKE 'dev:%'`;
@@ -830,6 +972,7 @@ function compareDiagnosticPriority(a: GroupPriorityRow, b: GroupPriorityRow, lat
   const severityRank = (value: string) => ({ critical: 0, high: 1, medium: 2, low: 3 })[value] ?? 4;
   return (
     statusRank(a.status) - statusRank(b.status) ||
+    Number(b.affected_installs ?? 0) - Number(a.affected_installs ?? 0) ||
     severityRank(a.severity) - severityRank(b.severity) ||
     Number(b.first_version === latestVersion) - Number(a.first_version === latestVersion) ||
     Number(Boolean(b.regressed_at)) - Number(Boolean(a.regressed_at)) ||
@@ -1040,6 +1183,16 @@ async function metricUserRows(
 
 type Bar = { label: string; users: number };
 type MetricTotals = { signal: string; bucket: string; total: number }[];
+type DiagnosticFacets = {
+  osBuilds: Bar[];
+  architectures: Bar[];
+  channels: Bar[];
+  runtimes: Bar[];
+  failureKinds: Bar[];
+  failureReasons: Bar[];
+  recoveries: Bar[];
+  gpuStates: Bar[];
+};
 
 // Each stats module renders only its own section, so a page load should query
 // only what that section shows — the 30-day COUNT(DISTINCT) over metric_users,
@@ -1069,6 +1222,10 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
   let metricUsersUnavailable = false;
   let metricUsersComputedAt = "";
   let sources: Bar[] = [];
+  let diagnosticFacets: DiagnosticFacets = {
+    osBuilds: [], architectures: [], channels: [], runtimes: [],
+    failureKinds: [], failureReasons: [], recoveries: [], gpuStates: [],
+  };
   let overview: OverviewCounts = {
     latestAdoptionPct: null,
     openReports: 0,
@@ -1096,16 +1253,31 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
     overview = overviewR;
   } else if (activeModule === "diagnostics") {
     latestVersion = await latestObservedVersion(env, "desktop");
-    const [crashesR, sourcesR, versionsR, platformsR] = await Promise.all([
+    const installationsSince = `date >= date('now', '${since}')`;
+    const installationFacet = (expression: string, extra = "") => bars(
+      `SELECT ${expression} AS label, COUNT(DISTINCT install_id) AS users
+       FROM report_installations WHERE ${installationsSince} ${extra}
+       GROUP BY label ORDER BY users DESC LIMIT 20`,
+    );
+    const [crashesR, sourcesR, versionsR, platformsR, osBuilds, architectures, channels, runtimes, failureKinds, failureReasons, recoveries, gpuStates] = await Promise.all([
       crashGroups(env, filters, latestVersion),
       bars(`SELECT source AS label, COUNT(*) AS users FROM groups WHERE ${diagnosticWindowWhere(days)} GROUP BY source ORDER BY users DESC`),
       pingVersions(),
       pingPlatforms(),
+      installationFacet("CAST(os_build AS TEXT)", "AND os_build > 0"),
+      installationFacet("arch", "AND arch <> ''"),
+      installationFacet("channel", "AND channel <> ''"),
+      installationFacet("runtime_version", "AND runtime_version <> ''"),
+      installationFacet("failure_kind", "AND failure_kind <> ''"),
+      installationFacet("failure_reason", "AND failure_reason <> ''"),
+      installationFacet("recovery", "AND recovery <> ''"),
+      installationFacet("CASE WHEN gpu_disabled = 1 THEN 'disabled' WHEN gpu_disabled = 0 THEN 'enabled' ELSE 'unknown' END"),
     ]);
     crashes = crashesR.results;
     sources = sourcesR;
     versions = versionsR;
     platforms = platformsR;
+    diagnosticFacets = { osBuilds, architectures, channels, runtimes, failureKinds, failureReasons, recoveries, gpuStates };
   } else if (activeModule === "preferences") {
     const [metricsR, usersR] = await Promise.all([metricRows(env, days, surface), metricUserRows(env, days, surface)]);
     metrics = metricsR;
@@ -1127,7 +1299,7 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
 
   return html(
     renderStats(
-      { daily, versions, platforms, crashes, metrics, previousMetrics, metricUsers, metricUsersUnavailable, metricUsersComputedAt, sources, overview, latestVersion, filters },
+      { daily, versions, platforms, crashes, metrics, previousMetrics, metricUsers, metricUsersUnavailable, metricUsersComputedAt, sources, diagnosticFacets, overview, latestVersion, filters },
       user,
       activeModule,
     ),
@@ -1140,7 +1312,7 @@ async function handleGroup(env: Env, fingerprint: string, user: User): Promise<R
   group.severity = effectiveGroupSeverity(group);
   const reports = await env.DB.prepare(
     `SELECT version, os, arch, message, device, created_at, source, label, error_type, error_message,
-      top_frame, build_commit, channel, language, view, breadcrumbs, component_stack, stack, occurred_at
+      top_frame, build_commit, channel, language, view, breadcrumbs, component_stack, stack, occurred_at, webview2
      FROM reports WHERE fingerprint = ?1 ORDER BY id DESC`,
   )
     .bind(fingerprint)
@@ -1164,8 +1336,32 @@ async function handleGroup(env: Env, fingerprint: string, user: User): Promise<R
       component_stack: string;
       stack: string;
       occurred_at: string;
+      webview2: string;
     }>();
-  return html(renderGroup(group, reports.results, user));
+  const [totals, distributions] = await Promise.all([
+    env.DB.prepare(
+      `SELECT
+         (SELECT COALESCE(SUM(events), 0) FROM report_daily WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS window_events,
+         (SELECT COALESCE(SUM(identified_events), 0) FROM report_daily WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS identified_events,
+         (SELECT COUNT(DISTINCT install_id) FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS affected_installs`,
+    ).bind(fingerprint).first<{ window_events: number; identified_events: number; affected_installs: number }>(),
+    env.DB.prepare(
+      `SELECT facet, value, COUNT(DISTINCT install_id) AS installs, SUM(events) AS events FROM (
+         SELECT 'osBuild' AS facet, CAST(os_build AS TEXT) AS value, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os_build > 0
+         UNION ALL SELECT 'runtime', runtime_version, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND runtime_version <> ''
+         UNION ALL SELECT 'reason', failure_reason, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND failure_reason <> ''
+         UNION ALL SELECT 'exitCode', COALESCE(CAST(exit_code AS TEXT), 'unknown'), install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
+         UNION ALL SELECT 'gpu', CASE WHEN gpu_disabled = 1 THEN 'disabled' WHEN gpu_disabled = 0 THEN 'enabled' ELSE 'unknown' END, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day')
+         UNION ALL SELECT 'recovery', recovery, install_id, events FROM report_installations WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND recovery <> ''
+       ) GROUP BY facet, value ORDER BY facet, installs DESC`,
+    ).bind(fingerprint).all<{ facet: string; value: string; installs: number; events: number }>(),
+  ]);
+  return html(renderGroup(group, reports.results, user, {
+    windowEvents: Number(totals?.window_events ?? 0),
+    identifiedEvents: Number(totals?.identified_events ?? 0),
+    affectedInstalls: Number(totals?.affected_installs ?? 0),
+    distributions: distributions.results,
+  }));
 }
 
 async function handleGroupAction(request: Request, env: Env, admin: User, fingerprint: string): Promise<Response> {
@@ -1177,6 +1373,8 @@ async function handleGroupAction(request: Request, env: Env, admin: User, finger
   if (a.action === "delete") {
     await env.DB.batch([
       env.DB.prepare("DELETE FROM reports WHERE fingerprint = ?1").bind(fingerprint),
+      env.DB.prepare("DELETE FROM report_daily WHERE fingerprint = ?1").bind(fingerprint),
+      env.DB.prepare("DELETE FROM report_installations WHERE fingerprint = ?1").bind(fingerprint),
       env.DB.prepare("DELETE FROM groups WHERE fingerprint = ?1").bind(fingerprint),
     ]);
     await logAction(env, admin, "delete_group", fingerprint.slice(0, 8));
@@ -1350,6 +1548,8 @@ async function handleCommunityAction(
 // throwing (all of /v1/ping, /v1/metrics and /v1/report 500 while reads keep
 // working — exactly the 2026-07-03 stats blackout).
 const RETENTION = [
+  { table: "report_daily", keepDays: 30 },
+  { table: "report_installations", keepDays: 30 },
   { table: "pings", keepDays: 30 },
   { table: "metrics", keepDays: 60 },
   { table: "metric_users", keepDays: 30 },

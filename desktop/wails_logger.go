@@ -60,7 +60,7 @@ func (l *crashCaptureLogger) Error(message string) {
 }
 
 func (l *crashCaptureLogger) captureWebView2Failure(message string) {
-	if goruntime.GOOS != "windows" {
+	if goruntime.GOOS != "windows" || webView2NativeObserverInstalled() {
 		return
 	}
 	kind, ok := parseWebView2ProcessFailure(message)

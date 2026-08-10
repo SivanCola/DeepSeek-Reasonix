@@ -571,6 +571,12 @@ func (e *Chromium) NavigationCompleted(sender *ICoreWebView2, args *ICoreWebView
 }
 
 func (e *Chromium) ProcessFailed(sender *ICoreWebView2, args *ICoreWebView2ProcessFailedEventArgs) uintptr {
+	diagnostic := collectProcessFailedDiagnostic(args)
+	if diagnostic.Kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
+		// Wails calls os.Exit(-1) for this kind. Persist the native details before
+		// control reaches the public callback so the fatal event is not lost.
+		notifyProcessFailedObserver(diagnostic)
+	}
 	if e.ProcessFailedCallback != nil {
 		e.ProcessFailedCallback(sender, args)
 	}
@@ -580,11 +586,20 @@ func (e *Chromium) ProcessFailed(sender *ICoreWebView2, args *ICoreWebView2Proce
 	// needs a native COM reload because JavaScript in that process may no longer
 	// run. Keep recovery below the public callback so Wails/Reasonix records the
 	// original failure first, and throttle it to avoid a crash/reload loop.
-	kind, err := args.GetProcessFailedKind()
-	if err == nil && e.shouldReloadFailedRenderer(kind, time.Now()) {
-		if err := sender.Reload(); err != nil {
-			e.errorCallback(fmt.Errorf("reload failed WebView2 renderer: %w", err))
+	kind := diagnostic.Kind
+	if kind != COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
+		if e.shouldReloadFailedRenderer(kind, time.Now()) {
+			if err := sender.Reload(); err != nil {
+				diagnostic.Recovery = "reload_failed"
+				e.errorCallback(fmt.Errorf("reload failed WebView2 renderer: %w", err))
+			} else {
+				diagnostic.Recovery = "reload_succeeded"
+			}
+		} else if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
+			kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE {
+			diagnostic.Recovery = "reload_failed"
 		}
+		notifyProcessFailedObserver(diagnostic)
 	}
 	return 0
 }

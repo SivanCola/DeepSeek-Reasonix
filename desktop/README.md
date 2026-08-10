@@ -240,8 +240,8 @@ handled here, and what to reach for if a target misbehaves:
 - **Windows / WebView2** — `Theme: SystemDefault` follows the OS light/dark
   setting; the installer embeds the WebView2 bootstrapper. Canary builds disable
   WebView2 GPU acceleration by default to smoke-test blank-window reports; set
-  `REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU=1` or `0` to force the fallback on or
-  off. The WebView2 shell always uses a direct connection for embedded assets
+  `REASONIX_DISABLE_WEBVIEW2_GPU=1` or `0` to force the fallback on or off. The
+  older `REASONIX_DESKTOP_DISABLE_WEBVIEW2_GPU` name remains accepted. The WebView2 shell always uses a direct connection for embedded assets
   and loopback remote-workspace pages; provider and other outbound traffic keeps
   using Reasonix's own proxy configuration. Remote Markdown images are fetched
   by the Go backend with the same proxy settings and re-served from the local
@@ -283,12 +283,15 @@ desktop/
 ## Telemetry
 
 The desktop app sends one anonymous ping per launch to `crash.reasonix.io`:
-a random install id (generated locally, tied to nothing), app version, OS,
-arch, and OS version. When the previous process ended abnormally, the next
+a random anonymous install id (generated locally and not an account id), app
+version, OS, architecture, OS build, and revision. When the previous process ended abnormally, the next
 normal launch may also send a bounded native diagnostic (lifecycle phase,
-symbolized stack, WebView2/window failure kind, and coarse device facts).
+symbolized stack, WebView2 Runtime/process reason/exit code/GPU/recovery fields,
+window failure kind, and coarse device facts).
 Panic values are removed and paths/secrets are scrubbed before the report is
-queued. It never includes conversations, API keys, or file contents.
+queued. The install id is attached only while sending and is not stored in a
+pending crash file. It never includes conversations, account data, API keys,
+file contents, or full local paths.
 
 Opt out any time: Settings > Updates > "Anonymous usage ping", or set
 `telemetry = false` under `[desktop]` in the global config. Dev builds

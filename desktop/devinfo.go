@@ -10,20 +10,25 @@ import (
 // CPU model, core count, RAM. Nothing here identifies a user or machine.
 
 type deviceInfo struct {
-	OSVersion string `json:"osVersion,omitempty"`
-	CPU       string `json:"cpu,omitempty"`
-	Cores     int    `json:"cores"`
-	RAMGB     int    `json:"ramGb,omitempty"`
+	OSVersion  string `json:"osVersion,omitempty"`
+	OSBuild    int    `json:"osBuild,omitempty"`
+	OSRevision int    `json:"osRevision,omitempty"`
+	CPU        string `json:"cpu,omitempty"`
+	Cores      int    `json:"cores"`
+	RAMGB      int    `json:"ramGb,omitempty"`
 }
 
 const gib = 1 << 30
 
 func collectDeviceInfo() deviceInfo {
+	osBuild, osRevision := platformOSBuild()
 	return deviceInfo{
-		OSVersion: platformOSVersion(),
-		CPU:       platformCPU(),
-		Cores:     runtime.NumCPU(),
-		RAMGB:     int((platformRAMBytes() + gib/2) / gib),
+		OSVersion:  platformOSVersion(),
+		OSBuild:    osBuild,
+		OSRevision: osRevision,
+		CPU:        platformCPU(),
+		Cores:      runtime.NumCPU(),
+		RAMGB:      int((platformRAMBytes() + gib/2) / gib),
 	}
 }
 

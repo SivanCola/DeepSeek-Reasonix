@@ -17,6 +17,8 @@ func platformOSVersion() string {
 	return "Linux"
 }
 
+func platformOSBuild() (int, int) { return 0, 0 }
+
 func platformCPU() string {
 	return parseCPUModel(readOr("/proc/cpuinfo"))
 }

@@ -514,10 +514,13 @@ type metricCounter struct {
 }
 
 type metricsPayload struct {
-	InstallID string          `json:"installId,omitempty"`
-	Version   string          `json:"version"`
-	OS        string          `json:"os"`
-	Counters  []metricCounter `json:"counters"`
+	InstallID  string          `json:"installId,omitempty"`
+	Version    string          `json:"version"`
+	OS         string          `json:"os"`
+	Arch       string          `json:"arch,omitempty"`
+	OSBuild    int             `json:"osBuild,omitempty"`
+	OSRevision int             `json:"osRevision,omitempty"`
+	Counters   []metricCounter `json:"counters"`
 }
 
 func flatten(c counters) []metricCounter {
@@ -552,7 +555,11 @@ func (a *App) flushMetrics() {
 	}
 	metricsPendingMu.Unlock()
 	flat := flatten(readCounters(temp))
-	payload := metricsPayload{Version: version, OS: runtime.GOOS, Counters: flat}
+	osBuild, osRevision := platformOSBuild()
+	payload := metricsPayload{
+		Version: version, OS: runtime.GOOS, Arch: runtime.GOARCH,
+		OSBuild: osBuild, OSRevision: osRevision, Counters: flat,
+	}
 	if id, err := installID(); err == nil {
 		payload.InstallID = id
 	}
