@@ -219,17 +219,17 @@ function nearestSelectableRoot(doc: Document, x: number, y: number): HTMLElement
 
 export function transcriptSelectionPointFromClient(doc: Document, x: number, y: number): TranscriptSelectionPoint | null {
   const caretDoc = doc as CaretDocument;
+  const root = nearestSelectableRoot(doc, x, y);
   const position = caretDoc.caretPositionFromPoint?.(x, y);
-  if (position) {
+  if (position && (!root || selectableRootForNode(position.offsetNode) === root)) {
     const point = transcriptSelectionPointFromDom(position.offsetNode, position.offset, x);
     if (point) return point;
   }
   const range = caretDoc.caretRangeFromPoint?.(x, y);
-  if (range) {
+  if (range && (!root || selectableRootForNode(range.startContainer) === root)) {
     const point = transcriptSelectionPointFromDom(range.startContainer, range.startOffset, x);
     if (point) return point;
   }
-  const root = nearestSelectableRoot(doc, x, y);
   if (!root) return null;
   const projection = projectTranscriptSelectableDom(root);
   const rowKey = rowKeyForNode(root);

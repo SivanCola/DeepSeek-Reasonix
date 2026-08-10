@@ -5,6 +5,7 @@ import {
   domPointToTranscriptOffset,
   domRangeForTranscriptOffsets,
   projectTranscriptSelectableDom,
+  transcriptSelectionPointFromClient,
   transcriptSelectionProjectionReadyForNode,
 } from "../lib/transcriptSelectionDom";
 import {
@@ -191,6 +192,36 @@ console.log("\nlogical transcript DOM adapter");
   eq(domPointToTranscriptOffset(root, hello, 3), 3, "DOM text boundary maps to a UTF-16 projection offset");
   const range = domRangeForTranscriptOffsets(root, 6, 11);
   eq(range?.toString(), "world", "logical offsets map back to a DOM highlight range");
+}
+
+{
+  const dom = new JSDOM(`<!doctype html><body>
+    <div class="transcript__row" data-row-key="stale"><div id="stale" data-transcript-selectable="message">stale</div></div>
+    <div class="transcript__row" data-row-key="visible"><div id="visible" data-transcript-selectable="message">visible</div></div>
+  </body>`);
+  globalThis.window = dom.window as unknown as Window & typeof globalThis;
+  globalThis.document = dom.window.document;
+  globalThis.Node = dom.window.Node;
+  globalThis.Element = dom.window.Element;
+  globalThis.HTMLElement = dom.window.HTMLElement;
+  globalThis.Range = dom.window.Range;
+  const stale = document.getElementById("stale") as HTMLElement;
+  const visible = document.getElementById("visible") as HTMLElement;
+  Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => visible });
+  Object.defineProperty(document, "caretPositionFromPoint", {
+    configurable: true,
+    value: () => ({ offsetNode: stale.firstChild, offset: 2 }),
+  });
+  Object.defineProperty(visible, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ left: 0, right: 100, top: 0, bottom: 20, width: 100, height: 20 }),
+  });
+  eq(
+    transcriptSelectionPointFromClient(document, 10, 10)?.rowKey,
+    "visible",
+    "client caret rejects a stale virtual row outside the geometric hit target",
+  );
+  dom.window.close();
 }
 
 {
