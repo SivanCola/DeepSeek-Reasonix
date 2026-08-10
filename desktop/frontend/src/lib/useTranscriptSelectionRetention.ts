@@ -4,12 +4,12 @@ import { createSelectionRangeExtractor, type TranscriptSelectionRowRange } from 
 import {
   TRANSCRIPT_SELECTABLE_SELECTOR,
   TRANSCRIPT_ROW_SELECTOR,
-  transcriptRowsAtLogicalPromotion,
   transcriptSelectionProjectionReadyForNode,
   transcriptSelectionPointFromClient,
   transcriptSelectionPointFromDom,
 } from "./transcriptSelectionDom";
 import { transcriptSelectionStore, type TranscriptSelectableRow } from "./transcriptSelectionStore";
+import { mergeTranscriptSelectableRows } from "./transcriptSelectionText";
 import type { TranscriptScrollMode, TranscriptScrollOwner, TranscriptViewportAnchor } from "./transcriptScrollController";
 
 const EDGE_SCROLL_ZONE_PX = 48;
@@ -40,6 +40,7 @@ export function useTranscriptSelectionRetention({
   revealSignal,
   rowIndexByKey,
   selectableRows = [],
+  selectableRowOverrides = [],
   scrollRef: providedScrollRef,
   setScrollMode,
   writeOffset = () => false,
@@ -51,6 +52,7 @@ export function useTranscriptSelectionRetention({
   revealSignal: number;
   rowIndexByKey: ReadonlyMap<string, number>;
   selectableRows?: readonly TranscriptSelectableRow[];
+  selectableRowOverrides?: readonly TranscriptSelectableRow[];
   scrollRef?: RefObject<HTMLDivElement | null>;
   setScrollMode: (mode: TranscriptScrollMode, reason?: string) => void;
   writeOffset?: (owner: TranscriptScrollOwner, top: number, behavior?: ScrollBehavior) => boolean;
@@ -67,15 +69,14 @@ export function useTranscriptSelectionRetention({
   const settleFramesRef = useRef(new Set<number>());
   const focusFrameRef = useRef<number | null>(null);
   const edgeFrameRef = useRef<number | null>(null);
-  const logicalDomObserverRef = useRef<MutationObserver | null>(null);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const rowsRef = useRef(selectableRows);
+  const rowOverridesRef = useRef(selectableRowOverrides);
   rowsRef.current = selectableRows;
+  rowOverridesRef.current = selectableRowOverrides;
 
   const publish = useCallback(() => setRevision((value) => value + 1), []);
   const cancelFrames = useCallback(() => {
-    logicalDomObserverRef.current?.disconnect();
-    logicalDomObserverRef.current = null;
     for (const frame of settleFramesRef.current) cancelAnimationFrame(frame);
     settleFramesRef.current.clear();
     if (focusFrameRef.current !== null) cancelAnimationFrame(focusFrameRef.current);
@@ -119,7 +120,8 @@ export function useTranscriptSelectionRetention({
   }, []);
 
   const scheduleLogicalFocus = useCallback(() => {
-    if (focusFrameRef.current !== null) return;
+    const tracked = selectionRef.current;
+    if (!tracked?.logical || !tracked.dragging || focusFrameRef.current !== null) return;
     focusFrameRef.current = requestAnimationFrame(() => {
       focusFrameRef.current = null;
       updateLogicalFocus();
@@ -144,10 +146,9 @@ export function useTranscriptSelectionRetention({
     if (speed === 0) return;
     const max = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const next = Math.max(0, Math.min(max, scroll.scrollTop + speed));
-    if (Math.abs(next - scroll.scrollTop) > 0.1) {
-      writeOffset("selection-edge-scroll", next);
-      scheduleLogicalFocus();
-    }
+    if (next === scroll.scrollTop) return;
+    if (!writeOffset("selection-edge-scroll", next)) return;
+    scheduleLogicalFocus();
     edgeFrameRef.current = requestAnimationFrame(edgeScrollTick);
   }, [scheduleLogicalFocus, scrollRef, writeOffset]);
 
@@ -217,7 +218,7 @@ export function useTranscriptSelectionRetention({
         tabId ?? "",
         anchor,
         focus,
-        transcriptRowsAtLogicalPromotion(rowsRef.current, document),
+        mergeTranscriptSelectableRows(rowsRef.current, rowOverridesRef.current),
       );
       if (snapshotId == null) return;
       tracked.logical = true;
@@ -227,12 +228,6 @@ export function useTranscriptSelectionRetention({
         tracked.captureElement.setPointerCapture(tracked.pointerId);
       } catch {
         // Native fallback remains available when pointer capture is rejected.
-      }
-      logicalDomObserverRef.current?.disconnect();
-      if (typeof MutationObserver !== "undefined") {
-        const observer = new MutationObserver(() => scheduleLogicalFocus());
-        observer.observe(scrollRef.current ?? tracked.captureElement, { childList: true, subtree: true });
-        logicalDomObserverRef.current = observer;
       }
       scheduleEdgeScroll();
       publish();
@@ -256,8 +251,6 @@ export function useTranscriptSelectionRetention({
         focusFrameRef.current = null;
         if (edgeFrameRef.current !== null) cancelAnimationFrame(edgeFrameRef.current);
         edgeFrameRef.current = null;
-        logicalDomObserverRef.current?.disconnect();
-        logicalDomObserverRef.current = null;
         updateLogicalFocus(lastPointerRef.current);
         tracked.dragging = false;
         releasePointerCapture(tracked);
@@ -391,8 +384,13 @@ export function useTranscriptSelectionRetention({
       clear("selection-endpoint-removed");
       return;
     }
-    transcriptSelectionStore.validateRows(selectableRows);
+    transcriptSelectionStore.validateRows(mergeTranscriptSelectableRows(selectableRows, rowOverridesRef.current));
   }, [clear, rowIndexByKey, selectableRows]);
+
+  useEffect(() => {
+    if (!selectionRef.current?.logical) return;
+    transcriptSelectionStore.validateRowChanges(selectableRowOverrides);
+  }, [selectableRowOverrides]);
 
   const rangeExtractor = useMemo(() => createSelectionRangeExtractor((): TranscriptSelectionRowRange | null => {
     const tracked = selectionRef.current;
@@ -406,6 +404,7 @@ export function useTranscriptSelectionRetention({
     clear,
     active: selectionRef.current !== null,
     logical: selectionRef.current?.logical ?? false,
+    reconcileLogicalFocusAfterVirtualCommit: scheduleLogicalFocus,
     onPointerDownCapture,
     rangeExtractor: (range: Range) => rangeExtractor(range),
   };

@@ -5,7 +5,6 @@ import {
   domPointToTranscriptOffset,
   domRangeForTranscriptOffsets,
   projectTranscriptSelectableDom,
-  transcriptRowsAtLogicalPromotion,
   transcriptSelectionProjectionReadyForNode,
 } from "../lib/transcriptSelectionDom";
 import {
@@ -13,7 +12,13 @@ import {
   type TranscriptSelectableRow,
   type TranscriptSelectionPoint,
 } from "../lib/transcriptSelectionStore";
-import { userMessageSelectionText } from "../lib/transcriptSelectionText";
+import {
+  mergeTranscriptSelectableRows,
+  transcriptLiveSelectableRows,
+  transcriptSelectableRows,
+  userMessageSelectionText,
+} from "../lib/transcriptSelectionText";
+import type { TranscriptRow } from "../lib/transcriptRows";
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "../lib/transcriptMarkdownCache";
 import { formatSelectedTextContext, formatSelectionLabels } from "../lib/selectedTextContext";
 
@@ -69,6 +74,27 @@ console.log("\nlogical transcript selection store");
 
 {
   const store = new TranscriptSelectionStore();
+  const rows = [
+    row("answer-a", "alpha"),
+    { ...row("offscreen-reasoning", "expanded thought"), kind: "reasoning" as const },
+    row("answer-b", "bravo"),
+  ];
+  const id = store.beginNative("tab-offscreen-reasoning");
+  store.promoteToLogical(
+    "tab-offscreen-reasoning",
+    point("answer-a", 0),
+    point("answer-b", 5),
+    rows,
+  );
+  eq(
+    await store.resolveText(id),
+    "alpha\n\nexpanded thought\n\nbravo",
+    "expanded offscreen reasoning remains in logical selection even when its DOM is not mounted",
+  );
+}
+
+{
+  const store = new TranscriptSelectionStore();
   const rows = [row("a", "A😀B"), row("b", "second")];
   const id = store.beginNative("tab-r");
   store.promoteToLogical("tab-r", point("b", 4), point("a", 3), rows);
@@ -83,9 +109,9 @@ console.log("\nlogical transcript selection store");
   store.beginNative("tab-p");
   store.promoteToLogical("tab-p", point("a", 0), point("b", 3), rows);
   eq(pins, 1, "promotion pins active cached projections");
-  ok(store.validateRows([row("a", "one more", 2), row("b", "two")]), "append-only content keeps the frozen selected prefix");
-  eq(store.getSnapshot().mode, "logical-dragging", "append-only validation does not clear selection");
-  ok(!store.validateRows([row("a", "replaced", 3), row("b", "two")]), "non-append replacement invalidates selected content");
+  ok(store.validateRowChanges([row("a", "one more", 2)]), "append-only live content keeps the frozen selected prefix");
+  eq(store.getSnapshot().mode, "logical-dragging", "incremental live validation does not clear an append-only selection");
+  ok(!store.validateRowChanges([row("a", "replaced", 3)]), "non-append live replacement invalidates selected content");
   eq(store.getSnapshot().mode, "none", "invalid content clears the logical selection");
   eq(pins, 0, "selection cleanup releases projection pins");
 }
@@ -165,16 +191,6 @@ console.log("\nlogical transcript DOM adapter");
   eq(domPointToTranscriptOffset(root, hello, 3), 3, "DOM text boundary maps to a UTF-16 projection offset");
   const range = domRangeForTranscriptOffsets(root, 6, 11);
   eq(range?.toString(), "world", "logical offsets map back to a DOM highlight range");
-  const promotionRows = transcriptRowsAtLogicalPromotion([
-    row("a", "answer"),
-    { ...row("hidden-reasoning", "secret"), kind: "reasoning" },
-    { ...row("a", "visible thought"), rowKey: "a", kind: "reasoning" },
-  ], document);
-  eq(
-    promotionRows.map((entry) => `${entry.rowKey}:${entry.kind ?? "message"}`).join(","),
-    "a:message,a:reasoning",
-    "logical promotion excludes reasoning text whose collapsible body is absent",
-  );
 }
 
 {
@@ -204,6 +220,42 @@ console.log("\nuser transcript selection projection");
     "question\n\nquoted context",
     "user projection keeps body and selected context while filtering attachment/card metadata",
   );
+}
+
+console.log("\nstreaming transcript selection projection");
+
+{
+  const rows: TranscriptRow[] = [
+    {
+      kind: "answer",
+      key: "a:history",
+      item: { kind: "assistant", id: "history", text: "stable history", reasoning: "", streaming: false },
+    },
+    {
+      kind: "answer",
+      key: "a:live",
+      item: { kind: "assistant", id: "live", text: "", reasoning: "", streaming: true },
+    },
+  ];
+  const base = transcriptSelectableRows(rows);
+  const byKey = new Map(base.map((entry) => [entry.rowKey, entry]));
+  const firstLive = transcriptLiveSelectableRows(byKey, {
+    id: "live",
+    text: "one",
+    reasoning: "",
+    reasoningComplete: true,
+  });
+  const secondLive = transcriptLiveSelectableRows(byKey, {
+    id: "live",
+    text: "one two",
+    reasoning: "",
+    reasoningComplete: true,
+  });
+  eq(firstLive.length, 1, "a streaming token projects only the active selectable row");
+  const firstMerged = mergeTranscriptSelectableRows(base, firstLive);
+  const secondMerged = mergeTranscriptSelectableRows(base, secondLive);
+  ok(firstMerged[0] === base[0] && secondMerged[0] === base[0], "successive stream updates reuse every historical projection object");
+  eq(secondMerged[1]?.sourceText, "one two", "the live override tracks the newest streamed answer text");
 }
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);

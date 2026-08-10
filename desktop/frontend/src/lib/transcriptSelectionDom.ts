@@ -1,4 +1,4 @@
-import type { TranscriptSelectableRow, TranscriptSelectionPoint } from "./transcriptSelectionStore";
+import type { TranscriptSelectionPoint } from "./transcriptSelectionStore";
 
 export const TRANSCRIPT_SELECTABLE_SELECTOR = "[data-transcript-selectable]";
 export const TRANSCRIPT_ROW_SELECTOR = ".transcript__row[data-row-key]";
@@ -47,23 +47,6 @@ export function transcriptSelectionProjectionReadyForNode(node: Node | null): bo
   return root != null
     && !root.matches(TRANSCRIPT_SOURCE_FALLBACK_SELECTOR)
     && !root.querySelector(TRANSCRIPT_SOURCE_FALLBACK_SELECTOR);
-}
-
-/**
- * A collapsed reasoning panel has source text but no selectable body. Do not
- * freeze that hidden text into a cross-row selection. Ordinary message bodies
- * remain selectable even while virtualized offscreen.
- */
-export function transcriptRowsAtLogicalPromotion(
-  rows: readonly TranscriptSelectableRow[],
-  doc: Document,
-): TranscriptSelectableRow[] {
-  const mountedReasoning = new Set(
-    Array.from(doc.querySelectorAll<HTMLElement>('[data-transcript-selectable="reasoning"]'))
-      .map((root) => rowKeyForNode(root))
-      .filter((key): key is string => key != null),
-  );
-  return rows.filter((row) => row.kind !== "reasoning" || mountedReasoning.has(row.rowKey));
 }
 
 function ignored(element: HTMLElement): boolean {

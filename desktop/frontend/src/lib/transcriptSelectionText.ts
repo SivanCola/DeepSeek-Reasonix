@@ -61,10 +61,9 @@ function markdownRow(rowKey: string, sourceText: string, entryId?: string): Tran
   };
 }
 
-/** Freeze-ready readable projections for every loaded selectable transcript row. */
+/** Stable readable projections for the structural transcript row model. */
 export function transcriptSelectableRows(
   rows: readonly TranscriptRow[],
-  live?: LiveStream,
 ): TranscriptSelectableRow[] {
   const selectable: TranscriptSelectableRow[] = [];
   for (const row of rows) {
@@ -80,17 +79,43 @@ export function transcriptSelectableRows(
       continue;
     }
     if (row.kind === "answer") {
-      const sourceText = live?.id === row.item.id ? live.text : row.item.text;
-      selectable.push(markdownRow(rowKey, sourceText, live?.id === row.item.id ? undefined : historyEntryIdForItemId(row.item.id)));
+      selectable.push(markdownRow(rowKey, row.item.text, historyEntryIdForItemId(row.item.id)));
       continue;
     }
     if (row.kind === "reasoning") {
-      const sourceText = live?.id === row.item.id ? live.reasoning : row.item.reasoning;
-      if (sourceText.trim()) selectable.push({
-        ...markdownRow(rowKey, sourceText, live?.id === row.item.id ? undefined : historyEntryIdForItemId(row.item.id)),
+      selectable.push({
+        ...markdownRow(rowKey, row.item.reasoning, historyEntryIdForItemId(row.item.id)),
         kind: "reasoning",
       });
     }
   }
   return selectable;
+}
+
+/**
+ * Project only the active stream rows. Token updates therefore hash at most
+ * the answer and reasoning bodies instead of every loaded history row.
+ */
+export function transcriptLiveSelectableRows(
+  rowsByKey: ReadonlyMap<string, TranscriptSelectableRow>,
+  live?: LiveStream,
+): TranscriptSelectableRow[] {
+  if (!live) return [];
+  const rows: TranscriptSelectableRow[] = [];
+  const answerKey = `a:${live.id}`;
+  if (rowsByKey.has(answerKey)) rows.push(markdownRow(answerKey, live.text));
+  const reasoningKey = `r:${live.id}`;
+  if (rowsByKey.has(reasoningKey)) {
+    rows.push({ ...markdownRow(reasoningKey, live.reasoning), kind: "reasoning" });
+  }
+  return rows;
+}
+
+/** Materialize the current freeze snapshot only when selection needs it. */
+export function mergeTranscriptSelectableRows(
+  rows: readonly TranscriptSelectableRow[],
+  overrides: readonly TranscriptSelectableRow[],
+): readonly TranscriptSelectableRow[] {
+  if (overrides.length === 0) return rows;
+  return rows.map((row) => overrides.find((candidate) => candidate.rowKey === row.rowKey) ?? row);
 }

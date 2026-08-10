@@ -1,7 +1,7 @@
 // Run: node --import tsx src/__tests__/transcript-selection-retention.test.tsx
 
 import { JSDOM } from "jsdom";
-import React, { useEffect } from "react";
+import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { Range as VirtualRange } from "@tanstack/react-virtual";
@@ -60,6 +60,14 @@ async function drainFrames() {
   }
 }
 
+async function flushFramesOnce() {
+  const pending = Array.from(frames.entries());
+  frames.clear();
+  await act(async () => {
+    for (const [, callback] of pending) callback(performance.now());
+  });
+}
+
 const rowIndexByKey = new Map([
   ["row-a", 0],
   ["tool", 1],
@@ -74,11 +82,14 @@ function Harness({
   tabId,
   onReady,
   setMode,
+  virtualRevision = 0,
 }: {
   tabId: string;
   onReady: (api: RetentionApi) => void;
   setMode: (mode: TranscriptScrollMode, reason?: string) => void;
+  virtualRevision?: number;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   // Transcript resets its scroll generation before the selection hook's own
   // tab-reset effect runs. The selection reset must not overwrite this mode.
   useEffect(() => setMode("tail-follow", "generation-reset"), [setMode, tabId]);
@@ -87,14 +98,18 @@ function Harness({
     revealSignal: 0,
     rowIndexByKey,
     selectableRows,
+    scrollRef,
     setScrollMode: setMode,
     cancelStreamingScroll: () => {},
     captureViewportAnchor: () => ({ rowKey: "row-a", viewportOffset: 0, generation: 0 }),
     reconcileViewportAnchor: () => true,
   });
+  useLayoutEffect(() => {
+    retention.reconcileLogicalFocusAfterVirtualCommit();
+  }, [retention.reconcileLogicalFocusAfterVirtualCommit, virtualRevision]);
   useEffect(() => onReady(retention), [onReady, retention]);
   return (
-    <div onPointerDownCapture={retention.onPointerDownCapture}>
+    <div ref={scrollRef} onPointerDownCapture={retention.onPointerDownCapture}>
       <div className="transcript__row" data-row-key="row-a"><div data-transcript-selectable="message">alpha</div></div>
       <div className="transcript__row" data-row-key="tool">tool</div>
       <div className="transcript__row" data-row-key="row-b"><div data-transcript-selectable="reasoning">bravo</div></div>
@@ -154,9 +169,10 @@ const last = document.querySelector<HTMLElement>("[data-row-key='row-b'] [data-t
 const caretDocument = document as Document & {
   caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
 };
+let committedCaretOffset: number | null = null;
 caretDocument.caretPositionFromPoint = (x) => ({
   offsetNode: last.firstChild!,
-  offset: x >= 100 ? 5 : x >= 50 ? 2 : 1,
+  offset: committedCaretOffset ?? (x >= 100 ? 5 : x >= 50 ? 2 : 1),
 });
 
 await act(async () => {
@@ -170,15 +186,17 @@ await act(async () => {
   document.dispatchEvent(new window.Event("selectionchange"));
 });
 eq(transcriptSelectionStore.getSnapshot().mode, "logical-dragging", "cross-row selection promotes before the pointer gesture settles");
+await flushFramesOnce();
+eq(frames.size, 0, "edge scrolling stops scheduling frames at the loaded-history boundary");
 
+committedCaretOffset = 2;
 await act(async () => {
-  document.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true, clientX: 50, clientY: 10 }));
-  last.append(document.createElement("span"));
-  await Promise.resolve();
+  root.render(<Harness tabId="tab-b" onReady={onReady} setMode={setMode} virtualRevision={1} />);
 });
 await drainFrames();
-eq(transcriptSelectionStore.getSnapshot().focus?.textOffset, 2, "virtual DOM replacement re-resolves the logical focus after commit");
+eq(transcriptSelectionStore.getSnapshot().focus?.textOffset, 2, "virtual range commit re-resolves the logical focus without relying on DOM mutation delivery");
 
+committedCaretOffset = null;
 await act(async () => {
   document.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 100, clientY: 10 }));
 });

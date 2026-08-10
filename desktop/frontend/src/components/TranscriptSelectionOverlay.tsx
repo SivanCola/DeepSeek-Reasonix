@@ -52,7 +52,6 @@ export const TranscriptSelectionOverlay = memo(function TranscriptSelectionOverl
     }
     const sizerRect = sizer.getBoundingClientRect();
     const next: SelectionRect[] = [];
-    let selectedMountedRoots = 0;
     const roots = sizer.querySelectorAll<HTMLElement>(".transcript__row[data-row-key] [data-transcript-selectable]");
     for (const root of roots) {
       const rowKey = root.closest<HTMLElement>(".transcript__row[data-row-key]")?.dataset.rowKey;
@@ -60,7 +59,6 @@ export const TranscriptSelectionOverlay = memo(function TranscriptSelectionOverl
       const projection = projectTranscriptSelectableDom(root);
       const bounds = transcriptSelectionStore.rowBounds(current.id, rowKey, projection.text.length);
       if (!bounds || bounds.start === bounds.end) continue;
-      selectedMountedRoots += 1;
       const range = domRangeForTranscriptOffsets(root, bounds.start, bounds.end);
       if (!range || typeof range.getClientRects !== "function") continue;
       for (const rect of Array.from(range.getClientRects())) {
@@ -74,10 +72,9 @@ export const TranscriptSelectionOverlay = memo(function TranscriptSelectionOverl
       }
     }
     setRects((current) => sameRects(current, next) ? current : next);
-    // Direct virtualizer DOM updates and browser layout can land after the RAF
-    // that observed their mutation. Retry a selected mounted range for two
-    // paints instead of leaving a logical selection permanently invisible.
-    if (next.length === 0 && selectedMountedRoots > 0 && retryRef.current < 2) {
+    // Direct virtualizer DOM updates and browser layout can land after the RAF.
+    // A bounded retry prevents a logical selection from staying invisible.
+    if (next.length === 0 && retryRef.current < 4) {
       retryRef.current += 1;
       frameRef.current = requestAnimationFrame(() => measureRef.current());
       return;

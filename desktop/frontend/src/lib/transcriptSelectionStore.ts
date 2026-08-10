@@ -24,7 +24,7 @@ export type TranscriptSelectionSnapshot = {
 
 export type TranscriptSelectableRow = {
   rowKey: string;
-  /** Reasoning rows are selectable only while their collapsible body exists. */
+  /** Collapsed reasoning is absent from the row model; mounted state is irrelevant. */
   kind?: "message" | "reasoning";
   contentRevision: number;
   /** Frozen source; append-only changes keep the selected prefix valid. */
@@ -269,6 +269,28 @@ export class TranscriptSelectionStore {
       const previous = frozen.rows[index];
       const next = current.get(previous.rowKey);
       if (!next || (next.contentRevision !== previous.contentRevision && !next.sourceText.startsWith(previous.sourceText))) {
+        this.clear("selected-row-changed");
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Validate a small set of live rows without rebuilding a map of all history. */
+  validateRowChanges(rows: readonly TranscriptSelectableRow[]): boolean {
+    const snapshot = this.snapshot;
+    const frozen = this.frozen;
+    if (!frozen || !snapshot.anchor || !snapshot.focus || !this.isLogical()) return true;
+    const anchorIndex = frozen.rowIndex.get(snapshot.anchor.rowKey);
+    const focusIndex = frozen.rowIndex.get(snapshot.focus.rowKey);
+    if (anchorIndex == null || focusIndex == null) return false;
+    const low = Math.min(anchorIndex, focusIndex);
+    const high = Math.max(anchorIndex, focusIndex);
+    for (const next of rows) {
+      const index = frozen.rowIndex.get(next.rowKey);
+      if (index == null || index < low || index > high) continue;
+      const previous = frozen.rows[index];
+      if (next.contentRevision !== previous.contentRevision && !next.sourceText.startsWith(previous.sourceText)) {
         this.clear("selected-row-changed");
         return false;
       }

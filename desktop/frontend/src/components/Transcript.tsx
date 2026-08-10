@@ -46,7 +46,7 @@ import { noteTranscriptRowCounts } from "../lib/sessionDiagnostics";
 import { useReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
 import { InlineAssistantReasoning } from "./InlineAssistantReasoning";
 import { LiveStreamContext } from "./LiveStreamContext";
-import { transcriptSelectableRows } from "../lib/transcriptSelectionText";
+import { useTranscriptSelectableRows } from "../lib/useTranscriptSelectableRows";
 import { TranscriptSelectionOverlay } from "./TranscriptSelectionOverlay";
 type OpenTurnAction = { turn: number; menu: "summary" | "rewind" };
 const QUESTION_NAV_MIN_COUNT = 2;
@@ -607,12 +607,13 @@ export function Transcript({
     rows.forEach((row, index) => map.set(String(row.key), index));
     return map;
   }, [rows]);
-  const selectableRows = useMemo(() => transcriptSelectableRows(rows, live), [rows, live]);
+  const [selectableRows, liveSelectableRows] = useTranscriptSelectableRows(rows, live);
   const selectionRetention = useTranscriptSelectionRetention({
     tabId,
     revealSignal,
     rowIndexByKey,
     selectableRows,
+    selectableRowOverrides: liveSelectableRows,
     scrollRef,
     setScrollMode,
     writeOffset,
@@ -660,6 +661,9 @@ export function Transcript({
   );
   const virtualItems = virtualizer.getVirtualItems();
   const virtualRevision = virtualItems.map((item) => `${item.key}:${item.start}:${item.size}`).join("|");
+  useLayoutEffect(() => {
+    selectionRetention.reconcileLogicalFocusAfterVirtualCommit();
+  }, [selectionRetention.reconcileLogicalFocusAfterVirtualCommit, virtualRevision]);
   useEffect(() => {
     noteTranscriptRowCounts(virtualItems.length, rows.length);
   }, [virtualItems.length, rows.length]);
