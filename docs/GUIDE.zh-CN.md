@@ -68,7 +68,6 @@ reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # max_output_tokens = 65536        # 重推理、长工具链
 # max_output_tokens = 131072       # 仅在反复 finish_reason=length 时再考虑
 # max_output_tokens 不参与 compact_ratio；只在发送阶段裁剪本轮最长输出
-# context_editing = "native"       # 仅官方 Anthropic 端点显式启用；默认 local
 
 [[providers]]
 name        = "deepseek-flash"
