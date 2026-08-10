@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/config"
 	"reasonix/internal/fileutil"
+	"reasonix/internal/repair"
 )
 
 const (
@@ -38,6 +40,12 @@ type desktopLifecycleObservation struct {
 	Phase     string
 	StartedAt string
 	UpdatedAt string
+}
+
+type desktopLifecycleRuntime struct {
+	previousRun  repair.PreviousRunObservation
+	previousRuns []desktopLifecycleObservation
+	tracker      *desktopLifecycleTracker
 }
 
 type desktopLifecycleTracker struct {
@@ -69,6 +77,26 @@ func newDesktopLifecycleTracker(root, appVersion, appChannel string) *desktopLif
 		now:          func() time.Time { return time.Now().UTC() },
 		processAlive: desktopProcessAlive,
 	}
+}
+
+func initializeLifecycleDiagnostics(app *App) {
+	app.lifecycle.previousRun = repair.NewStartupTracker("").ObservePreviousRun()
+	cfg, err := config.Load()
+	if err != nil || version == "dev" {
+		return
+	}
+	tracker := newDesktopLifecycleTracker(config.MemoryUserDir(), version, channel)
+	enabled := cfg.DesktopTelemetry()
+	app.lifecycle.previousRuns = tracker.consumePrevious(enabled)
+	if enabled && tracker.start() == nil {
+		app.lifecycle.tracker = tracker
+		installWebView2ProcessObserver(app)
+	}
+}
+
+func (a *App) markDesktopHealthy() {
+	a.startupReady.Store(true)
+	a.lifecycle.tracker.mark("healthy")
 }
 
 func newDesktopLifecycleRunID() string {

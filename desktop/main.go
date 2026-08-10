@@ -23,11 +23,9 @@ import (
 
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/reasonix does — boot.Build resolves providers/tools from these registries.
-	"reasonix/internal/config"
 	_ "reasonix/internal/provider/anthropic"
 	_ "reasonix/internal/provider/openai"
 	_ "reasonix/internal/provider/responses"
-	"reasonix/internal/repair"
 	_ "reasonix/internal/tool/builtin"
 )
 
@@ -137,18 +135,7 @@ func main() {
 	} else if !webView2ApprovalSmoke {
 		// Observe previous run for crash diagnostics only. Startup tracking must
 		// never force Safe Mode, disable plugins, or select a previous binary.
-		app.previousRun = repair.NewStartupTracker("").ObservePreviousRun()
-		if cfg, err := config.Load(); err == nil && version != "dev" {
-			tracker := newDesktopLifecycleTracker(config.MemoryUserDir(), version, channel)
-			enabled := cfg.DesktopTelemetry()
-			app.previousLifecycleRuns = tracker.consumePrevious(enabled)
-			if enabled && tracker.start() == nil {
-				app.lifecycle = tracker
-			}
-			if enabled {
-				installWebView2ProcessObserver(app)
-			}
-		}
+		initializeLifecycleDiagnostics(app)
 		capturePendingUpdateHealthIdentity(app)
 	}
 

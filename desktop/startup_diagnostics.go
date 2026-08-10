@@ -8,7 +8,7 @@ import (
 )
 
 func (a *App) recordPreviousRunDiagnostics() {
-	previous := a.previousRun
+	previous := a.lifecycle.previousRun
 	if previous.Abnormal {
 		report := previousRunReport(previous)
 		_ = writePendingReport(report, true)
@@ -18,7 +18,7 @@ func (a *App) recordPreviousRunDiagnostics() {
 			m.persist()
 		}
 	}
-	for _, lifecycle := range a.previousLifecycleRuns {
+	for _, lifecycle := range a.lifecycle.previousRuns {
 		_ = writePendingReport(desktopLifecycleReport(lifecycle), true)
 		if m := a.metrics.Load(); m != nil {
 			m.inc("desktop_exit", "abnormal")
