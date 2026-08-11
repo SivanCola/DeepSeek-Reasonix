@@ -4280,6 +4280,47 @@ api_key_env = "DEEPSEEK_API_KEY"
 	}
 }
 
+func TestBuildDoesNotMislabelMalformedConfigAsDeepSeekMigrationFailure(t *testing.T) {
+	home := isolateConfigHome(t)
+	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
+	userPath := config.UserConfigPath()
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw := `[[providers]]
+name = "deepseek-flash"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+model = "deepseek-v4-flash"
+api_key_env = "DEEPSEEK_API_KEY"
+
+[[plugins]]
+name = "windows-mcp"
+command = "C:\Users\reasonix\mcp.exe"
+`
+	if err := os.WriteFile(userPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var notices []event.Event
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice {
+			notices = append(notices, e)
+		}
+	})
+	ctrl, err := Build(context.Background(), Options{Sink: sink, WorkspaceRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	ctrl.Close()
+
+	for _, notice := range notices {
+		if notice.Text == "DeepSeek protocol migration did not complete." {
+			t.Fatalf("malformed config produced a misleading session notice: %+v", notice)
+		}
+	}
+}
+
 func TestBuildMigratesDeprecatedAgentStepLimitsWithOneNotice(t *testing.T) {
 	home := isolateConfigHome(t)
 	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))

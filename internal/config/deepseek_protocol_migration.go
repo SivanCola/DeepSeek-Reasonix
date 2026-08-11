@@ -136,6 +136,16 @@ func rewriteLegacyDeepSeekProtocol(raw, target string, automatic bool) (string, 
 		Providers []ProviderEntry `toml:"providers"`
 	}
 	if _, err := toml.Decode(raw, &decoded); err != nil {
+		// Startup's resilient config loader owns malformed-file recovery and
+		// exposes one actionable warning with open/reload controls. The automatic
+		// DeepSeek migration runs before that loader on every controller rebuild;
+		// surfacing the same parse error here produces a misleading migration
+		// notice whenever users switch sessions. Never rewrite invalid TOML, and
+		// keep the explicit Settings upgrade strict so a requested mutation still
+		// reports why it could not be applied.
+		if automatic {
+			return raw, false, nil
+		}
 		return raw, false, err
 	}
 	var generic struct {
