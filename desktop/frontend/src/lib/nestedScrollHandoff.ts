@@ -18,8 +18,8 @@ const DEFAULT_LINE_HEIGHT_PX = 16;
 export type NestedScrollHandoffOptions = {
   /** Outer reading scroller (`.transcript`). */
   parent: HTMLElement;
-  /** Called when a nested edge wheel is promoted to the parent (breaks tail-follow). */
-  onParentScrollIntent?: () => void;
+  /** Called with normalized deltaY when a nested edge wheel is promoted. */
+  onParentScrollIntent?: (deltaY: number) => void;
   /** Latch to the parent after the first edge handoff until this many ms of silence. */
   latchHoldMs?: number;
   now?: () => number;
@@ -147,7 +147,7 @@ export function attachNestedScrollHandoff(options: NestedScrollHandoffOptions): 
     // this trackpad gesture so the user does not re-latch into the nested box.
     if (latched) {
       event.preventDefault();
-      onParentScrollIntent?.();
+      onParentScrollIntent?.(delta.y);
       parent.scrollTop += delta.y;
       latchUntil = t + latchHoldMs;
       return;
@@ -159,7 +159,7 @@ export function attachNestedScrollHandoff(options: NestedScrollHandoffOptions): 
     if (!shouldHandoffVerticalWheel(event.target, parent, delta.y)) return;
 
     event.preventDefault();
-    onParentScrollIntent?.();
+    onParentScrollIntent?.(delta.y);
     parent.scrollTop += delta.y;
     latchUntil = t + latchHoldMs;
   };

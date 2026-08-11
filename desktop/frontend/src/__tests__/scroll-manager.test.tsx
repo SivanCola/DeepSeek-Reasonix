@@ -80,7 +80,9 @@ Object.defineProperty(transcript, "scrollTop", {
   set: (value) => { scrollTop = value; },
 });
 transcript.scrollTo = ((options: ScrollToOptions) => {
-  if (typeof options.top === "number") scrollTop = options.top;
+  if (typeof options.top === "number") {
+    scrollTop = Math.max(0, Math.min(options.top, transcript.scrollHeight - transcript.clientHeight));
+  }
 }) as typeof transcript.scrollTo;
 
 await act(async () => {
@@ -135,6 +137,81 @@ await act(async () => {
 });
 eq(api!.stick.current, true, "user scroll to the physical bottom restores tail-follow");
 eq(api!.modeRef.current, "tail-follow", "physical bottom clears manual mode");
+
+// Nested tables/code blocks hand their edge wheel to the transcript. A
+// downward handoff at the physical bottom is harmless: it still owns the
+// gesture (so compensating writers stay frozen), but must not detach the
+// transcript from streaming tail-follow.
+await act(async () => {
+  const released = api!.onNestedScrollIntent(48);
+  eq(released, false, "nested wheel-down at the bottom does not release tail-follow");
+});
+eq(api!.stick.current, true, "nested wheel-down at the bottom preserves the bottom pin");
+eq(api!.modeRef.current, "tail-follow", "nested wheel-down at the bottom preserves tail-follow mode");
+
+// If the final token grows the transcript while that harmless gesture lock is
+// active, the rejected passive write must be replayed once at gesture idle.
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1040 });
+await act(async () => {
+  const wrote = api!.writeOffset("stream", transcript.scrollHeight);
+  eq(wrote, false, "stream write is deferred while the harmless nested gesture is active");
+  api!.gestureLastActivityRef.current -= 100;
+  api!.onScrollEnd();
+});
+eq(scrollTop, 940, "deferred tail-follow replays to the current bottom after gesture idle");
+
+// Row measurements use the same deferred path. This covers async Markdown,
+// image and code-block growth that lands after the token frame itself.
+await act(async () => {
+  api!.onWheelIntent({ deltaX: 0, deltaY: 48 } as React.WheelEvent<HTMLElement>);
+});
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1080 });
+await act(async () => {
+  api!.scheduleRepinIfWasPinned(0, "row-size");
+  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+});
+eq(scrollTop, 940, "row-size repin stays silent during the active gesture");
+await act(async () => {
+  api!.gestureLastActivityRef.current -= 100;
+  api!.onScrollEnd();
+});
+eq(scrollTop, 980, "row-size repin replays once after gesture idle");
+
+// A real upward intent after a deferred passive write cancels the replay. The
+// reader must remain in control even when no later token arrives.
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1000 });
+scrollTop = 900;
+await act(async () => {
+  api!.onWheelIntent({ deltaX: 0, deltaY: 48 } as React.WheelEvent<HTMLElement>);
+});
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1040 });
+await act(async () => {
+  eq(api!.writeOffset("stream", transcript.scrollHeight), false, "passive tail write queues during downward gesture");
+  api!.onWheelIntent({ deltaX: 0, deltaY: -48 } as React.WheelEvent<HTMLElement>);
+  api!.gestureLastActivityRef.current -= 100;
+  api!.onScrollEnd();
+});
+eq(scrollTop, 900, "upward intent cancels a queued tail-follow replay");
+eq(api!.modeRef.current, "manual", "upward intent keeps manual ownership after idle");
+
+// Deferred work is scoped to the transcript generation. Switching tabs must
+// discard the previous tab's pending replay even if its idle callback arrives.
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1000 });
+scrollTop = 900;
+await act(async () => {
+  api!.setMode("tail-follow", "deferred-generation-test");
+  api!.stick.current = true;
+  api!.onWheelIntent({ deltaX: 0, deltaY: 48 } as React.WheelEvent<HTMLElement>);
+});
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1040 });
+await act(async () => {
+  eq(api!.writeOffset("stream", transcript.scrollHeight), false, "old generation queues a passive tail write");
+  api!.resetGeneration("next-tab", 2);
+});
+eq(scrollTop, 900, "tab generation reset discards the previous transcript's replay");
+
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1000 });
+scrollTop = 900;
 
 // Scrollbar drags do not emit wheel intent. The first unowned scroll away from
 // the physical bottom must establish the same manual latch for mouse users.

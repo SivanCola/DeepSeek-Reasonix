@@ -27,6 +27,7 @@ const GESTURE_BLOCKED_OWNERS = new Set<TranscriptScrollOwner>([
   "stream",
   "container-resize",
   "footer-resize",
+  "row-size",
 ]);
 
 export function noteUserGesture(now = Date.now(), holdMs = GESTURE_HOLD_MS): number {

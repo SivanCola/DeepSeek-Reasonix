@@ -115,10 +115,14 @@ ok(
 nestedTop = 0;
 parentTop = 100;
 let intents = 0;
+const handedOffDeltas: number[] = [];
 let clock = 1_000;
 const handoff = attachNestedScrollHandoff({
   parent,
-  onParentScrollIntent: () => { intents += 1; },
+  onParentScrollIntent: (deltaY) => {
+    intents += 1;
+    handedOffDeltas.push(deltaY);
+  },
   latchHoldMs: 200,
   now: () => clock,
 });
@@ -139,6 +143,7 @@ const edgeUp = wheelAt(inner, -40);
 ok(edgeUp.defaultPrevented, "edge wheel is preventDefaulted");
 eq(parentTop, 60, "edge wheel promotes deltaY onto parent scrollTop");
 ok(intents >= 1, "edge handoff notifies parent scroll intent");
+eq(handedOffDeltas[0], -40, "edge handoff reports normalized direction to the parent controller");
 
 // After an edge handoff, latch keeps driving the parent even if nested could scroll.
 clock += 10; // still inside latchHoldMs
@@ -147,6 +152,7 @@ nestedTop = 50;
 const latched = wheelAt(inner, -30);
 ok(latched.defaultPrevented, "latched gesture continues on parent");
 eq(parentTop, afterLatch - 30, "latched wheel keeps applying to parent");
+eq(handedOffDeltas[1], -30, "latched handoff keeps reporting normalized direction");
 
 // Once the latch expires, mid-body nested scroll is left to the browser.
 clock += 500;

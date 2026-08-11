@@ -33,6 +33,7 @@ const OWNED_ELSEWHERE = new Map(Object.entries({
   "settings-responsive-layout.test.ts": "test:settings-responsive",
   "transcript-virtualization.test.tsx": "test:transcript",
   "transcript-selection-runtime.test.ts": "test:transcript",
+  "transcript-scroll-controller.test.ts": "test:transcript",
   "transcript-scroll-session.test.ts": "test:transcript",
   "scroll-manager.test.tsx": "test:transcript",
   "nested-scroll-handoff.test.ts": "test:transcript",

@@ -45,6 +45,12 @@ const CONDITIONAL_SCROLL_KEYS = new Set([
   " ",
   "Spacebar",
 ]);
+const PASSIVE_TAIL_OWNERS = new Set<TranscriptScrollOwner>([
+  "stream",
+  "container-resize",
+  "footer-resize",
+  "row-size",
+]);
 
 function isNearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD_PX;
@@ -90,6 +96,10 @@ export function useScrollManager() {
   const gestureLastActivityRef = useRef(0);
   const gestureIdleTimerRef = useRef<number | null>(null);
   const gestureIdleListenersRef = useRef(new Set<() => void>());
+  const deferredTailRepinRef = useRef<{
+    generation: number;
+    owner: TranscriptScrollOwner;
+  } | null>(null);
   const programmaticScrollRef = useRef<{
     generation: number;
     owner: TranscriptScrollOwner;
@@ -205,21 +215,37 @@ export function useScrollManager() {
       repinFrame.current = null;
     }
     pendingRepinHeightDelta.current = 0;
+    deferredTailRepinRef.current = null;
     for (const frame of layoutScrollFrames.current) cancelAnimationFrame(frame);
     layoutScrollFrames.current = [];
   }, []);
 
   const setMode = useCallback((mode: TranscriptScrollMode, _reason?: string) => {
     if (mode === "tail-follow") tailFollowSuppressedRef.current = false;
+    else deferredTailRepinRef.current = null;
     modeRef.current = mode;
     if (scrollRef.current) scrollRef.current.dataset.scrollMode = mode;
     if (isTranscriptSelectionMode(mode)) cancelPendingBottomScroll();
   }, [cancelPendingBottomScroll]);
 
+  const deferTailRepin = useCallback((owner: TranscriptScrollOwner, now: number) => {
+    if (!PASSIVE_TAIL_OWNERS.has(owner)) return false;
+    if (!isUserGestureActive(gestureUntilRef.current, now)) return false;
+    if (modeRef.current !== "tail-follow" || !stick.current || tailFollowSuppressedRef.current) return false;
+    deferredTailRepinRef.current = { generation: generationRef.current, owner };
+    return true;
+  }, []);
+
   const writeOffset = useCallback((owner: TranscriptScrollOwner, top: number, behavior: ScrollBehavior = "auto") => {
     const el = scrollRef.current;
-    if (!el || !canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current)) return false;
+    if (!el) return false;
+    const now = Date.now();
+    if (!canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current, now)) {
+      deferTailRepin(owner, now);
+      return false;
+    }
     if (owner === "jump" || owner === "rewind" || owner === "jump-bottom" || owner === "custom-scrollbar") {
+      cancelPendingBottomScroll();
       clearGesture(false);
     }
     const target = Math.max(0, Math.min(top, Math.max(0, el.scrollHeight - el.clientHeight)));
@@ -239,7 +265,16 @@ export function useScrollManager() {
     if (typeof el.scrollTo === "function") el.scrollTo({ top, behavior });
     else el.scrollTop = top;
     return true;
-  }, [clearGesture]);
+  }, [cancelPendingBottomScroll, clearGesture, deferTailRepin]);
+
+  useEffect(() => onGestureIdle(() => {
+    const pending = deferredTailRepinRef.current;
+    deferredTailRepinRef.current = null;
+    const el = scrollRef.current;
+    if (!pending || !el || pending.generation !== generationRef.current) return;
+    if (modeRef.current !== "tail-follow" || !stick.current || tailFollowSuppressedRef.current) return;
+    writeOffset(pending.owner, el.scrollHeight);
+  }), [onGestureIdle, writeOffset]);
 
   const consumeProgrammaticScroll = useCallback((top: number) => {
     const marker = programmaticScrollRef.current;
@@ -333,9 +368,15 @@ export function useScrollManager() {
     return true;
   }, [markUserGesture, releaseAutoScroll]);
 
-  const onNestedScrollIntent = useCallback(() => {
+  const onNestedScrollIntent = useCallback((deltaY: number) => {
+    const el = scrollRef.current;
+    if (!el || isTranscriptSelectionMode(modeRef.current) || !isScrollable(el) || deltaY === 0) return false;
     markUserGesture("nested-scroll");
-    releaseAutoScroll();
+    if (deltaY < 0 || !isNearBottom(el)) {
+      releaseAutoScroll();
+      return true;
+    }
+    return false;
   }, [markUserGesture, releaseAutoScroll]);
 
   const onScroll = useCallback((event?: ReactUIEvent<HTMLElement>) => {
@@ -358,7 +399,7 @@ export function useScrollManager() {
     markUserGesture(gestureSourceRef.current ?? "native-scroll");
     tailFollowSuppressedRef.current = !isAtPhysicalBottom(el);
     updateBottomState(el);
-    if (!isNearBottom(el)) cancelPendingBottomScroll();
+    if (tailFollowSuppressedRef.current) cancelPendingBottomScroll();
   }, [cancelPendingBottomScroll, consumeProgrammaticScroll, markUserGesture, updateBottomState]);
 
   const onScrollEnd = useCallback(() => {
@@ -414,7 +455,7 @@ export function useScrollManager() {
   /** Force-scroll to the bottom — used when a new question is sent. */
   const scrollToBottom = useCallback((force = false, owner: TranscriptScrollOwner = "stream") => {
     const el = scrollRef.current;
-    if (!el || !canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current)) return;
+    if (!el || isTranscriptSelectionMode(modeRef.current)) return;
     if (force) {
       tailFollowSuppressedRef.current = false;
       modeRef.current = "tail-follow";
@@ -444,7 +485,9 @@ export function useScrollManager() {
 
   const snapToBottom = useCallback((owner: TranscriptScrollOwner = "jump-bottom") => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || isTranscriptSelectionMode(modeRef.current)) return;
+    const explicit = owner === "jump-bottom";
+    if (!explicit && (modeRef.current !== "tail-follow" || !stick.current || tailFollowSuppressedRef.current)) return;
     if (resizeFrame.current !== null) {
       cancelAnimationFrame(resizeFrame.current);
       resizeFrame.current = null;
@@ -453,10 +496,13 @@ export function useScrollManager() {
       clearTimeout(smoothScrollTimer.current);
       smoothScrollTimer.current = null;
     }
-    tailFollowSuppressedRef.current = false;
-    stick.current = true;
-    writeOffset(owner, el.scrollHeight);
-    setIsAtBottom(true);
+    if (explicit) {
+      tailFollowSuppressedRef.current = false;
+      modeRef.current = "tail-follow";
+      el.dataset.scrollMode = "tail-follow";
+      stick.current = true;
+    }
+    if (writeOffset(owner, el.scrollHeight)) setIsAtBottom(true);
   }, [writeOffset]);
 
   const scrollToBottomAfterLayout = useCallback((frames = 4, owner: TranscriptScrollOwner = "jump-bottom") => {
@@ -511,9 +557,7 @@ export function useScrollManager() {
         repinFrame.current = null;
         const delta = pendingRepinHeightDelta.current;
         pendingRepinHeightDelta.current = 0;
-        if (canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current)) {
-          repinIfWasPinned(delta, owner);
-        }
+        repinIfWasPinned(delta, owner);
       });
     },
     [repinIfWasPinned],

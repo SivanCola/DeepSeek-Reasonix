@@ -89,7 +89,7 @@ try {
     writes: window.__scrollWrites ?? [],
     gesture: document.querySelector(".transcript")?.dataset.scrollGesture,
   }));
-  assert(during.writes.every((write) => !["virtualizer", "stream", "container-resize", "footer-resize"].includes(write.owner)),
+  assert(during.writes.every((write) => !["virtualizer", "stream", "container-resize", "footer-resize", "row-size"].includes(write.owner)),
     `compensating owners stay silent during variable-height scroll (${JSON.stringify(during.writes)})`);
 
   await page.evaluate(() => document.querySelector(".transcript")?.dispatchEvent(new Event("scrollend")));
@@ -159,6 +159,42 @@ try {
       && transcript.dataset.scrollMode === "tail-follow";
   });
   assert(true, "user wheel back to the physical bottom explicitly restores tail-follow");
+
+  // A harmless downward wheel at the physical bottom still freezes passive
+  // writers. If the final row grows during that lock, the repin is deferred and
+  // replayed once after idle using the latest scrollHeight.
+  const harmlessDown = await page.evaluate(() => {
+    const transcript = document.querySelector(".transcript");
+    const rows = transcript ? [...transcript.querySelectorAll(".transcript__row")] : [];
+    const tailRow = rows.at(-1);
+    if (!(transcript instanceof HTMLElement) || !(tailRow instanceof HTMLElement)) return null;
+    transcript.scrollTop = transcript.scrollHeight;
+    window.__scrollWrites = [];
+    transcript.dispatchEvent(new WheelEvent("wheel", { deltaY: 48, bubbles: true, cancelable: true }));
+    tailRow.style.paddingBottom = `${Number.parseFloat(tailRow.style.paddingBottom || "0") + 160}px`;
+    return { gesture: transcript.dataset.scrollGesture, mode: transcript.dataset.scrollMode };
+  });
+  assert(harmlessDown?.gesture === "wheel" && harmlessDown.mode === "tail-follow",
+    `wheel-down at the physical bottom preserves tail-follow (${JSON.stringify(harmlessDown)})`);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+  const harmlessDuring = await page.evaluate(() => window.__scrollWrites ?? []);
+  assert(harmlessDuring.every((write) => !["virtualizer", "stream", "container-resize", "footer-resize", "row-size"].includes(write.owner)),
+    `tail growth stays write-free during the downward gesture (${JSON.stringify(harmlessDuring)})`);
+  await page.waitForTimeout(64);
+  await page.evaluate(() => document.querySelector(".transcript")?.dispatchEvent(new Event("scrollend")));
+  await page.waitForFunction(() => {
+    const transcript = document.querySelector(".transcript");
+    return transcript
+      && !transcript.dataset.scrollGesture
+      && transcript.dataset.scrollMode === "tail-follow"
+      && transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 0.5;
+  });
+  const harmlessSettled = await page.locator(".transcript").evaluate((element) => ({
+    distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+    mode: element.dataset.scrollMode,
+  }));
+  assert(harmlessSettled.distance <= 0.5 && harmlessSettled.mode === "tail-follow",
+    `deferred tail growth replays once after gesture idle (${JSON.stringify(harmlessSettled)})`);
 
   process.stdout.write("\ntranscript scroll stability browser gate passed\n");
 } finally {

@@ -1,5 +1,5 @@
 import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import type { ControllerLiveStore, Item, LiveStream } from "../lib/useController";
 import type { CheckpointMeta } from "../lib/types";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
@@ -16,6 +16,7 @@ import { getProcessFoldPreference, onProcessFoldPreferenceChange, type ProcessFo
 import { STEER_NOTICE_PREFIX, isSteerNoticeText } from "../lib/useController";
 import { useTranscriptEntranceAnimation } from "../lib/useEntranceAnimation";
 import { useTranscriptScrollController } from "../lib/useTranscriptScrollController";
+import { shouldAdjustScrollOnItemSizeChange, shouldRunStreamEndRepin } from "../lib/transcriptScrollController";
 import { useTranscriptSelectionRetention } from "../lib/useTranscriptSelectionRetention";
 import { useTranscriptMeasurementInvalidation } from "../lib/useTranscriptMeasurementInvalidation";
 import { useTranscriptRowMeasurements } from "../lib/useTranscriptRowMeasurements";
@@ -221,6 +222,7 @@ export function Transcript({
     lastClientHeight,
     lastFooterHeight,
     setMode: setScrollMode,
+    modeRef: scrollModeRef,
     writeOffset,
     resetGeneration,
     canVirtualizerAdjust,
@@ -331,6 +333,21 @@ export function Transcript({
       }
     };
   }, []);
+
+  // The settled assistant row can grow after turn_done while markdown swaps
+  // from the live renderer to parsed blocks. Run a passive fallback while the
+  // reader is still pinned; row measurements below cover later async growth.
+  const previousLiveRef = useRef<{ tabId: string | undefined; id: string | undefined }>({ tabId, id: undefined });
+  useEffect(() => {
+    const previous = previousLiveRef.current;
+    const sameTab = previous.tabId === tabId;
+    const hadLive = sameTab && previous.id !== undefined;
+    const hasLive = live?.id !== undefined;
+    previousLiveRef.current = { tabId, id: live?.id };
+    if (shouldRunStreamEndRepin(hadLive, hasLive, stick.current)) {
+      scrollToBottomAfterLayout(3, "stream");
+    }
+  }, [live?.id, scrollToBottomAfterLayout, stick, tabId]);
 
   // ResizeObserver for container height changes.
   useEffect(() => {
@@ -472,12 +489,20 @@ export function Transcript({
   });
   const getRowKey = useCallback((index: number) => `${tabId ?? ""}:${String(rows[index]?.key ?? index)}`, [rows, tabId]);
   const { estimateSize: estimateRowSize, layoutSnapshotRef, measureElement: measureRowSize } = useTranscriptRowMeasurements(tabId, rows);
+  const trackRowSizeChange = useCallback(
+    (element: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: Virtualizer<HTMLDivElement, HTMLDivElement>) => {
+      const height = measureRowSize(element, entry, instance);
+      if (stick.current) scheduleRepinIfWasPinned(0, "row-size");
+      return height;
+    },
+    [measureRowSize, scheduleRepinIfWasPinned, stick],
+  );
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     getItemKey: getRowKey,
     estimateSize: estimateRowSize,
-    measureElement: measureRowSize,
+    measureElement: trackRowSizeChange,
     overscan: VIRTUAL_OVERSCAN_ROWS,
     rangeExtractor: selectionRetention.rangeExtractor,
     // Key-anchored compensation: prepended history pages, fold toggles and
@@ -494,7 +519,10 @@ export function Transcript({
     useAnimationFrameWithResizeObserver: true,
     onChange: () => selectionRetention.reconcileLogicalFocus(),
   });
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => canVirtualizerAdjust();
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => (
+    canVirtualizerAdjust()
+    && shouldAdjustScrollOnItemSizeChange(stick.current, scrollModeRef.current)
+  );
   useTranscriptMeasurementInvalidation({
     scrollRef,
     layoutSnapshotRef,

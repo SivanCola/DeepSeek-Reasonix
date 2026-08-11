@@ -63,6 +63,10 @@ ok(
   "container-resize cannot rewrite scrollTop mid-gesture",
 );
 ok(
+  !canTranscriptScrollOwnerWriteNow("tail-follow", "row-size", until, t0 + 1),
+  "row-size cannot rewrite scrollTop mid-gesture",
+);
+ok(
   canTranscriptScrollOwnerWriteNow("manual", "jump", until, t0 + 1),
   "explicit jump still works during gesture",
 );

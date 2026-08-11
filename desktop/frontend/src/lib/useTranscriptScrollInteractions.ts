@@ -18,16 +18,15 @@ export function useTranscriptScrollInteractions({
   onTouchMoveIntent: (event: TouchEvent<HTMLElement>) => boolean;
   onKeyScrollIntent: (event: KeyboardEvent<HTMLElement>) => boolean;
   onPointerDownIntent: (event: PointerEvent<HTMLElement>) => boolean;
-  onNestedScrollIntent: () => void;
+  onNestedScrollIntent: (deltaY: number) => boolean;
   onScrollEnd: () => void;
   onSelectionPointerDown: (event: PointerEvent<HTMLElement>) => void;
 }) {
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
-    const onNestedIntent = () => {
-      onNestedScrollIntent();
-      cancelStreamingScroll();
+    const onNestedIntent = (deltaY: number) => {
+      if (onNestedScrollIntent(deltaY)) cancelStreamingScroll();
     };
     const handoff = attachNestedScrollHandoff({ parent: element, onParentScrollIntent: onNestedIntent });
     element.addEventListener("scrollend", onScrollEnd);
