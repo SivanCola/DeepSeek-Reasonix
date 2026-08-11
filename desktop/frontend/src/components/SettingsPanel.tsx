@@ -901,22 +901,51 @@ export function providerEditorEffectiveKind(isNewCustomProvider: boolean, kind: 
   return selected || kinds[0] || "openai";
 }
 
-function trimmedURL(value: string): string {
+function trimmedBaseURL(value: string): string {
   return value.trim().replace(/\/+$/, "");
 }
 
-export function providerChatURLPreview(baseUrl: string, chatUrl: string, fullURL: boolean): string {
-  if (fullURL) return trimmedURL(chatUrl);
-  const base = trimmedURL(baseUrl);
-  return base ? `${base}/chat/completions` : "";
+export function providerRequestURLFromConfig(kind: string, baseUrl: string, requestUrl: string, legacyChatUrl = ""): string {
+  const exactRequestURL = requestUrl.trim();
+  if (exactRequestURL) return exactRequestURL;
+  if (kind.trim().toLowerCase() === "openai") {
+    const legacyOpenAIRequestURL = legacyChatUrl.trim().replace(/\/+$/, "");
+    if (legacyOpenAIRequestURL) return legacyOpenAIRequestURL;
+  }
+  const base = trimmedBaseURL(baseUrl);
+  if (!base) return "";
+  switch (kind.trim().toLowerCase()) {
+    case "anthropic":
+      return base.endsWith("/v1") ? `${base}/messages` : `${base}/v1/messages`;
+    case "responses":
+    case "dashscope-responses":
+      return `${base}/responses`;
+    default:
+      return `${base}/chat/completions`;
+  }
 }
 
-export function providerBaseURLFromChatURL(chatUrl: string): string {
-  const full = trimmedURL(chatUrl);
-  for (const suffix of ["/chat/completions", "/responses", "/response"]) {
-    if (full.endsWith(suffix)) return trimmedURL(full.slice(0, -suffix.length));
+export function providerBaseURLFromRequestURL(kind: string, requestUrl: string): string {
+  const exactRequestURL = requestUrl.trim();
+  if (!exactRequestURL) return "";
+  const suffixes = kind.trim().toLowerCase() === "anthropic"
+    ? ["/v1/messages"]
+    : kind.trim().toLowerCase() === "responses" || kind.trim().toLowerCase() === "dashscope-responses"
+      ? ["/responses"]
+      : ["/chat/completions"];
+  try {
+    const parsed = new URL(exactRequestURL);
+    const pathname = parsed.pathname.replace(/\/+$/, "");
+    const suffix = suffixes.find((candidate) => pathname.endsWith(candidate));
+    parsed.pathname = suffix ? pathname.slice(0, -suffix.length) || "/" : pathname || "/";
+    parsed.search = "";
+    parsed.hash = "";
+    return trimmedBaseURL(parsed.toString());
+  } catch {
+    const suffix = suffixes.find((candidate) => exactRequestURL.endsWith(candidate));
+    if (suffix) return trimmedBaseURL(exactRequestURL.slice(0, -suffix.length));
   }
-  return full;
+  return trimmedBaseURL(exactRequestURL);
 }
 
 function formatProviderHeaders(headers: Record<string, string> | null | undefined): string {
@@ -1353,6 +1382,7 @@ export function normalizeProviderView(p: ProviderView): ProviderView {
     builtIn: Boolean(p.builtIn),
     added: Boolean(p.added),
     chatUrl: p.chatUrl ?? "",
+    requestUrl: p.requestUrl ?? "",
     models: asArray(p.models),
     visionModels,
     visionModelsConfigured: Boolean(p.visionModelsConfigured ?? visionModels.length > 0),
@@ -6215,9 +6245,14 @@ export function ProviderEditor({
   const t = useT();
   const [name, setName] = useState(initial?.name ?? "");
   const [kind, setKind] = useState(initial?.kind ?? "openai");
-  const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
-  const [chatUrl, setChatUrl] = useState(initial?.chatUrl ?? "");
-  const [fullChatUrl, setFullChatUrl] = useState(Boolean((initial?.chatUrl ?? "").trim()));
+  const [requestUrl, setRequestUrl] = useState(() => providerRequestURLFromConfig(
+    initial?.kind ?? "openai",
+    initial?.baseUrl ?? "",
+    initial?.requestUrl ?? "",
+    initial?.chatUrl ?? "",
+  ));
+  const providerUrlInputId = useId();
+  const providerUrlHelpId = useId();
   const [models, setModels] = useState((initial?.models ?? []).join(", "));
   const [modelCandidates, setModelCandidates] = useState<string[]>(initial?.models ?? []);
   const [visionModels, setVisionModels] = useState((initial?.visionModels ?? []).join(", "));
@@ -6253,15 +6288,18 @@ export function ProviderEditor({
     return choices.length > 0 ? choices : ["openai"];
   }, [kind, kinds]);
   const effectiveKind = providerEditorEffectiveKind(isNewCustomProvider, kind, providerKindChoices);
-  const effectiveBaseUrl = fullChatUrl ? providerBaseURLFromChatURL(chatUrl) : baseUrl.trim();
-  const effectiveChatUrl = fullChatUrl ? trimmedURL(chatUrl) : "";
+  const effectiveRequestUrl = requestUrl.trim();
+  const effectiveBaseUrl = providerBaseURLFromRequestURL(effectiveKind, effectiveRequestUrl);
   const effectiveModelsUrl = modelsUrl.trim();
   const initialEffectiveBaseUrl = initial
-    ? ((initial.chatUrl ?? "").trim() ? providerBaseURLFromChatURL(initial.chatUrl ?? "") : trimmedURL(initial.baseUrl))
+    ? providerBaseURLFromRequestURL(
+        initial.kind,
+        providerRequestURLFromConfig(initial.kind, initial.baseUrl, initial.requestUrl ?? "", initial.chatUrl ?? ""),
+      )
     : "";
   const retainedVisionCapability = initial &&
     effectiveKind.trim().toLowerCase() === initial.kind.trim().toLowerCase() &&
-    trimmedURL(effectiveBaseUrl) === initialEffectiveBaseUrl
+    trimmedBaseURL(effectiveBaseUrl) === initialEffectiveBaseUrl
     ? initial.visionCapability
     : undefined;
   const effectiveVisionCapability = providerVisionCapabilityForView({
@@ -6271,7 +6309,7 @@ export function ProviderEditor({
   });
   const retainedServerWebSearchCapability = initial &&
     effectiveKind.trim().toLowerCase() === initial.kind.trim().toLowerCase() &&
-    trimmedURL(effectiveBaseUrl) === initialEffectiveBaseUrl
+    trimmedBaseURL(effectiveBaseUrl) === initialEffectiveBaseUrl
     ? initial.serverWebSearchCapability
     : undefined;
   const effectiveServerWebSearchCapability = retainedServerWebSearchCapability ??
@@ -6286,7 +6324,6 @@ export function ProviderEditor({
   }, [extraBodyDraft, t]);
   const effectiveExtraBody = extraBodyParse.value;
   const extraBodyInvalid = Boolean(extraBodyDraft.trim() && extraBodyParse.error);
-  const previewChatUrl = providerChatURLPreview(baseUrl, chatUrl, fullChatUrl);
   const modelNames = useMemo(
     () => parseProviderListInput(models),
     [models],
@@ -6331,7 +6368,8 @@ export function ProviderEditor({
         added: initial?.added ?? true,
         kind: effectiveKind,
         baseUrl: effectiveBaseUrl,
-        chatUrl: effectiveChatUrl,
+        chatUrl: initial?.chatUrl ?? "",
+        requestUrl: effectiveRequestUrl,
         modelsUrl: effectiveModelsUrl,
         models: [],
         visionModels: [],
@@ -6387,7 +6425,8 @@ export function ProviderEditor({
       added: initial?.added ?? true,
       kind: effectiveKind,
       baseUrl: effectiveBaseUrl,
-      chatUrl: effectiveChatUrl,
+      chatUrl: initial?.chatUrl ?? "",
+      requestUrl: effectiveRequestUrl,
       models: ms,
       visionModels: vms,
       visionModelsConfigured: visionModelsConfigured || vms.length > 0,
@@ -6613,43 +6652,19 @@ export function ProviderEditor({
         ))}
       </select>
       <div className="mem-hint">{providerKindHint(effectiveKind, t)}</div>
-      <div className="set-row">
-        <label className="set-label set-grow">
-          {t(fullChatUrl ? "settings.providerChatUrlLabel" : "settings.providerBaseUrlLabel")}
-        </label>
-        <label className="set-check">
-          <input
-            type="checkbox"
-            checked={fullChatUrl}
-            onChange={(e) => {
-              const checked = e.target.checked;
-              setFullChatUrl(checked);
-              if (checked && !chatUrl.trim()) {
-                setChatUrl(providerChatURLPreview(baseUrl, "", false));
-              } else if (!checked && !baseUrl.trim()) {
-                setBaseUrl(providerBaseURLFromChatURL(chatUrl));
-              }
-            }}
-          />
-          {t("settings.providerUseFullChatUrl")}
-        </label>
-      </div>
+      <label className="set-label" htmlFor={providerUrlInputId}>
+        {t("settings.providerBaseUrlLabel")}
+      </label>
       <input
-        className="mem-input"
-        placeholder={t(fullChatUrl ? "settings.providerChatUrlPlaceholder" : "settings.providerBaseUrl")}
-        value={fullChatUrl ? chatUrl : baseUrl}
-        onChange={(e) => {
-          const value = e.target.value;
-          if (fullChatUrl) {
-            setChatUrl(value);
-            setBaseUrl(providerBaseURLFromChatURL(value));
-          } else {
-            setBaseUrl(value);
-          }
-        }}
+        id={providerUrlInputId}
+        className="mem-input provider-url-input"
+        aria-describedby={providerUrlHelpId}
+        placeholder={t("settings.providerChatUrlPlaceholder")}
+        value={requestUrl}
+        onChange={(e) => setRequestUrl(e.target.value)}
       />
-      <div className="mem-hint">
-        {previewChatUrl ? t("settings.providerRequestPreview", { url: previewChatUrl }) : t("settings.providerRequestPreviewEmpty")}
+      <div id={providerUrlHelpId} className="mem-hint">
+        {t("settings.providerRequestUrlHint")}
       </div>
       {!initial && (
         <>

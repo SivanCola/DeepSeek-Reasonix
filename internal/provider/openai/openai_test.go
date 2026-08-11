@@ -532,8 +532,8 @@ func TestStreamUsesConfiguredChatURL(t *testing.T) {
 	var sawRequest bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawRequest = true
-		if r.URL.Path != "/proxy/v1/chat/completions" {
-			t.Errorf("path = %s, want /proxy/v1/chat/completions", r.URL.Path)
+		if r.URL.RequestURI() != "/proxy/v1/chat/completions" {
+			t.Errorf("request URI = %s, want /proxy/v1/chat/completions", r.URL.RequestURI())
 			http.NotFound(w, r)
 			return
 		}
@@ -551,7 +551,7 @@ func TestStreamUsesConfiguredChatURL(t *testing.T) {
 		BaseURL: srv.URL + "/base",
 		Model:   "model-a",
 		APIKey:  "k",
-		Extra:   map[string]any{"chat_url": srv.URL + "/proxy/v1/chat/completions"},
+		Extra:   map[string]any{"chat_url": srv.URL + "/proxy/v1/chat/completions/"},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -577,6 +577,23 @@ func TestStreamUsesConfiguredChatURL(t *testing.T) {
 	}
 	if got.String() != "ok" {
 		t.Fatalf("streamed text = %q, want ok", got.String())
+	}
+}
+
+func TestNewPrefersExactRequestURLOverLegacyChatURL(t *testing.T) {
+	p, err := New(provider.Config{
+		BaseURL: "https://base.example.com/v1",
+		Model:   "model-a",
+		Extra: map[string]any{
+			"chat_url":    "https://legacy.example.com/chat/completions/",
+			"request_url": "https://exact.example.com/custom/?token=1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := p.(*client).chatURL; got != "https://exact.example.com/custom/?token=1" {
+		t.Fatalf("chatURL = %q, want exact request_url", got)
 	}
 }
 
