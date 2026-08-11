@@ -2177,6 +2177,14 @@ export function Composer({
         // requeued first, then admitted to the active turn below.
         if (!running || item.structured) return;
       }
+      if (durable && !running) {
+        // SetInboxPaused(false) is also the Controller's idempotent drain kick.
+        // It preserves durable FIFO ownership while giving an unexpectedly idle
+        // queue an explicit user recovery path without re-enqueueing the item.
+        await app.SetInboxPaused(targetTabId || "", false);
+        setGuidanceRetryNonce((value) => value + 1);
+        return;
+      }
       if (running && durable) {
         const receipt = await app.SteerInboxItem(targetTabId || "", item.id);
         if (receipt?.error) throw new Error(receipt.error);

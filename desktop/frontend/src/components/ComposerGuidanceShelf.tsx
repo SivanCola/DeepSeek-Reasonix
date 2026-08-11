@@ -86,14 +86,17 @@ export function ComposerGuidanceShelf({
             </span>
           </div>
           <div className="composer-guidance-list">
-            {visible.map((item) => {
+            {visible.map((item, index) => {
               const inFlight = guidanceIsInFlight(item.state);
               const needsRetry = guidanceNeedsRetry(item.state);
+              const waitingForEarlier = !running && !inFlight && index > 0;
               const actionLabel = inFlight
                 ? t("composer.guidanceInFlight")
-                : needsRetry
-                  ? t("composer.guidanceRetry")
-                  : t("composer.guidanceSend");
+                : waitingForEarlier
+                  ? t("composer.guidanceWaiting")
+                  : needsRetry
+                    ? t("composer.guidanceRetry")
+                    : t("composer.guidanceSend");
               return (
                 <div className="composer-guidance-item" key={item.id}>
                   <CornerDownRight size={14} className="composer-guidance-item__icon" />
@@ -103,11 +106,11 @@ export function ComposerGuidanceShelf({
                       className="composer-guidance-item__guide"
                       type="button"
                       aria-label={actionLabel}
-                      disabled={inFlight || (!needsRetry && !running) || disabled || readOnly || sendingId !== null || (!needsRetry && Boolean(item.structured)) || Boolean(item.paused)}
+                      disabled={inFlight || waitingForEarlier || disabled || readOnly || sendingId !== null || (running && !needsRetry && Boolean(item.structured)) || Boolean(item.paused)}
                       onClick={() => onSend(item)}
                     >
                       <CornerDownRight size={13} />
-                      <span>{t(needsRetry ? "composer.guidanceRetryMode" : "composer.guidanceMode")}</span>
+                      <span>{t(needsRetry ? "composer.guidanceRetryMode" : running ? "composer.guidanceMode" : "composer.guidanceSendMode")}</span>
                     </button>
                   </Tooltip>
                   <Tooltip label={inFlight ? actionLabel : t("composer.guidanceDismiss")}>

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"time"
 
 	"reasonix/internal/event"
 	"reasonix/internal/sessioninbox"
@@ -81,6 +82,11 @@ type inboxState struct {
 	activeOwnership    sync.Map
 	admittingOwnership sync.Map
 	dispatching        bool
+	dispatchPending    bool
+	// Retry bookkeeping is guarded by mu. Retries are bounded so a persistent
+	// disk or materialization failure cannot create a hot background loop.
+	dispatchRetryAttempts  int
+	dispatchRetryScheduled bool
 	// beforePreparedAdmission is a deterministic test hook for the gap between
 	// durable preparation and Controller admission. Production leaves it nil.
 	beforePreparedAdmission func()
@@ -91,6 +97,12 @@ type inboxState struct {
 	beforeCompletionAck func()
 	// beforeSnapshotRead exposes the final Store snapshot boundary to lock tests.
 	beforeSnapshotRead func()
+	// afterDispatchScan exposes the empty-scan boundary for lost-wakeup tests.
+	afterDispatchScan func(found bool)
+	// beforeDispatchSubmit injects a transient owner-level dispatch failure.
+	beforeDispatchSubmit func(itemID string) error
+	// scheduleDispatchRetry replaces the production timer in deterministic tests.
+	scheduleDispatchRetry func(delay time.Duration, retry func())
 }
 
 func (s *inboxState) trackActive(id string) {
@@ -703,42 +715,6 @@ func (c *Controller) onInboxSteerConsumed(itemID string) {
 		return
 	}
 	_ = st.SetState(itemID, sessioninbox.StateSteerConsumed, "")
-}
-
-// maybeDispatchInbox admits the next FIFO item when idle, not paused, and no
-// approval/ask UI is open.
-func (c *Controller) maybeDispatchInbox() {
-	c.inbox.mu.Lock()
-	if c.inbox.dispatching {
-		c.inbox.mu.Unlock()
-		return
-	}
-	c.inbox.dispatching = true
-	c.inbox.mu.Unlock()
-	defer func() {
-		c.inbox.mu.Lock()
-		c.inbox.dispatching = false
-		c.inbox.mu.Unlock()
-	}()
-
-	if c.PendingPrompt() {
-		return
-	}
-	c.mu.Lock()
-	busy := c.running || c.finishing || c.rotating || c.closed
-	c.mu.Unlock()
-	if busy {
-		return
-	}
-	st, err := c.ensureInbox()
-	if err != nil {
-		return
-	}
-	meta, ok := st.NextQueued()
-	if !ok {
-		return
-	}
-	_, _ = c.TrySubmitInboxItem(meta.ID)
 }
 
 // TryEnqueueAndSteer is a convenience for frontends: durable steer then TrySteer.

@@ -38,7 +38,13 @@ func (c *Controller) readSteerCandidate(st *sessioninbox.Store, id string) (sess
 // so large steer bodies do not accumulate in the agent heap.
 func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, error) {
 	c.inbox.admissionMu.Lock()
-	defer c.inbox.admissionMu.Unlock()
+	dispatchAfterUnlock := false
+	defer func() {
+		c.inbox.admissionMu.Unlock()
+		if dispatchAfterUnlock {
+			c.maybeDispatchInbox()
+		}
+	}()
 	st, err := c.ensureInbox()
 	if err != nil {
 		return sessioninbox.InboxReceipt{}, err
@@ -80,6 +86,7 @@ func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, er
 		return sessioninbox.InboxReceipt{ItemID: id, Disposition: sessioninbox.DispositionRejectedClosed, Capacity: cap}, nil
 	}
 	if rotating {
+		dispatchAfterUnlock = true
 		return sessioninbox.InboxReceipt{ItemID: id, Disposition: sessioninbox.DispositionRejectedRotating, Capacity: cap}, nil
 	}
 	// Capture only the store pointer + item id. Load body from disk at consume.
@@ -147,6 +154,7 @@ func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, er
 		return sessioninbox.InboxReceipt{}, err
 	}
 	sessioninbox.NoteSteerRejected()
+	dispatchAfterUnlock = true
 	return sessioninbox.InboxReceipt{
 		ItemID:      id,
 		Disposition: sessioninbox.DispositionQueuedFollowup,

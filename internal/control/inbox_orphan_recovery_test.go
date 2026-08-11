@@ -86,7 +86,10 @@ func TestTrySteerOrphanRequiresReviewBeforeExplicitRetry(t *testing.T) {
 	if err := os.WriteFile(session, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c := New(Options{SessionPath: session, SessionDir: dir, Sink: event.Discard})
+	runner := &gatedTurnRunner{started: make(chan struct{}), release: make(chan struct{})}
+	c := New(Options{Runner: runner, SessionPath: session, SessionDir: dir, Sink: event.Discard})
+	defer c.autosaveWG.Wait()
+	defer close(runner.release)
 	rec, err := c.EnqueueInbox(InboxRequest{Intent: sessioninbox.IntentSteer, Submit: "retry me"})
 	if err != nil {
 		t.Fatal(err)
@@ -116,11 +119,16 @@ func TestTrySteerOrphanRequiresReviewBeforeExplicitRetry(t *testing.T) {
 	if receipt.Disposition != sessioninbox.DispositionQueuedFollowup {
 		t.Fatalf("explicit retry disposition = %q", receipt.Disposition)
 	}
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("explicit retry did not dispatch the recovered item")
+	}
 	meta, _, err := c.ReadInboxItem(rec.ItemID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.State != sessioninbox.StateQueued || meta.Intent != sessioninbox.IntentFollowup {
+	if meta.State != sessioninbox.StateRunning || meta.Intent != sessioninbox.IntentFollowup {
 		t.Fatalf("explicit retry meta = %+v", meta)
 	}
 }

@@ -312,6 +312,63 @@ console.log("\ncomposer inbox recovery");
 
 {
   const dom = installDom();
+  let snapshot = {
+    revision: 4,
+    paused: false,
+    recovered: false,
+    recoveredCount: 0,
+    items: [
+      {
+        id: "idle-queued-1",
+        intent: "followup",
+        state: "queued",
+        preview: "Send the next instruction",
+        byteSize: 64,
+        position: 1,
+      },
+      {
+        id: "idle-queued-2",
+        intent: "followup",
+        state: "queued",
+        preview: "Wait behind the first instruction",
+        byteSize: 64,
+        position: 2,
+      },
+    ],
+    itemsCount: 2,
+    bytes: 128,
+    maxItems: 64,
+    maxBytes: 64 * 1024 * 1024,
+  };
+  const pauseCalls: Array<{ tabId: string; paused: boolean }> = [];
+  let steerCalls = 0;
+  installBridgeApp({
+    InboxSnapshot: async () => snapshot,
+    SetInboxPaused: async (tabId: string, paused: boolean) => {
+      pauseCalls.push({ tabId, paused });
+      snapshot = { ...snapshot, items: [], itemsCount: 0, bytes: 0 };
+    },
+    SteerInboxItem: async () => { steerCalls += 1; },
+  });
+  const { root } = await renderComposer({ running: false });
+
+  await waitFor("idle durable guidance rendered", () => document.querySelectorAll(".composer-guidance-item__guide").length === 2);
+  const guides = Array.from(document.querySelectorAll(".composer-guidance-item__guide")) as HTMLButtonElement[];
+  ok(!guides[0].disabled && guides[0].textContent === "Send", "idle FIFO head exposes an explicit send fallback");
+  ok(guides[0].getAttribute("aria-label") === "Send this guidance to the transcript", "idle send fallback has an accessible label");
+  ok(guides[1].disabled, "idle non-head guidance remains disabled to preserve FIFO order");
+  ok(guides[1].getAttribute("aria-label") === "Waiting for earlier queued guidance", "idle non-head guidance explains the FIFO gate");
+  await act(async () => { guides[0].click(); await flushTimers(); });
+  ok(pauseCalls.length === 1 && pauseCalls[0].tabId === "tab-a" && pauseCalls[0].paused === false, "idle send re-kicks the Controller drain without changing pause state");
+  ok(steerCalls === 0, "idle send never attempts active-turn steering");
+  await waitFor("idle durable guidance clears after dispatch kick", () => document.querySelector(".composer-guidance-item") === null);
+
+  await act(async () => { root.unmount(); });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
   let steerCalls = 0;
   let deleteCalls = 0;
   installBridgeApp({
