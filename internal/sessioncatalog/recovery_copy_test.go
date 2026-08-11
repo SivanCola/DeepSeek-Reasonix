@@ -206,6 +206,46 @@ func TestTopicTurnsIgnoreRecoveryCopyButKeepActivity(t *testing.T) {
 	}
 }
 
+func TestTopicTurnsUseMaxOfNormalLineageAndAdoptedRecovery(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	catalog, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "catalog.sqlite"), DisableRepair: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = catalog.Close(context.Background()) })
+	upsert := func(path string, turns int, recovered, recoveryCopy bool) {
+		t.Helper()
+		if err := catalog.UpsertSession(ctx, SessionRecord{
+			Path: path, Directory: "/s", Scope: "global", TopicID: "t",
+			Turns: turns, TurnsState: TurnsValid, Health: HealthOK,
+			Recovered: recovered, RecoveryCopy: recoveryCopy,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	upsert("/s/parent.jsonl", 3, false, false)
+	upsert("/s/adopted.jsonl", 5, true, false)
+	upsert("/s/copy.jsonl", 99, true, true)
+
+	topic, ok, err := catalog.GetTopic(ctx, TopicKey{Scope: "global", TopicID: "t"})
+	if err != nil || !ok {
+		t.Fatalf("GetTopic: ok=%v err=%v", ok, err)
+	}
+	if topic.Turns != 5 {
+		t.Fatalf("turns = %d, want max(normal=3, adopted=5); recovery copy must not inflate", topic.Turns)
+	}
+
+	upsert("/s/second-normal.jsonl", 4, false, false)
+	topic, ok, err = catalog.GetTopic(ctx, TopicKey{Scope: "global", TopicID: "t"})
+	if err != nil || !ok {
+		t.Fatalf("GetTopic after second normal: ok=%v err=%v", ok, err)
+	}
+	if topic.Turns != 7 {
+		t.Fatalf("turns = %d, want max(normal=7, adopted=5)", topic.Turns)
+	}
+}
+
 func TestRecoveryOnlyTopicState(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

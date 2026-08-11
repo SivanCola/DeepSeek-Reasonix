@@ -395,7 +395,9 @@ func recomputeTopic(ctx context.Context, tx *sql.Tx, key TopicKey) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM catalog_topics WHERE scope=? AND workspace_root=? AND topic_id=?`, key.Scope, key.WorkspaceRoot, key.TopicID)
 		return err
 	}
-	// recovery_copy rows skip turn/health totals; activity still updates recency.
+	// Covered copies skip turn/health totals but still update recency. Adopted
+	// branches are alternate continuations, so preserve the pre-catalog contract:
+	// max(sum(normal turns), max(adopted recovery turns)).
 	_, err := tx.ExecContext(ctx, `INSERT INTO catalog_topics(
         scope,workspace_root,topic_id,title,turns,turns_state,created_at,
         last_activity_at,recovery_state,health
@@ -403,7 +405,10 @@ func recomputeTopic(ctx context.Context, tx *sql.Tx, key TopicKey) error {
         COALESCE(NULLIF((SELECT COALESCE(NULLIF(custom_title,''), NULLIF(topic_title,''), preview, '')
             FROM catalog_sessions WHERE scope=? AND workspace_root=? AND topic_id=?
             ORDER BY recovery_copy ASC, last_activity_at DESC, path ASC LIMIT 1),''), ?),
-        COALESCE(SUM(CASE WHEN recovery_copy=0 AND turns_state='valid' THEN turns ELSE 0 END),0),
+		MAX(
+			COALESCE(SUM(CASE WHEN recovery_copy=0 AND recovered=0 AND turns_state='valid' THEN turns ELSE 0 END),0),
+			COALESCE(MAX(CASE WHEN recovery_copy=0 AND recovered=1 AND turns_state='valid' THEN turns ELSE 0 END),0)
+		),
         CASE WHEN SUM(CASE WHEN recovery_copy=0 AND turns_state='corrupt' THEN 1 ELSE 0 END)>0 THEN 'corrupt'
              WHEN SUM(CASE WHEN recovery_copy=0 AND turns_state='unknown' THEN 1 ELSE 0 END)>0 THEN 'unknown'
              WHEN SUM(CASE WHEN recovery_copy=0 THEN 1 ELSE 0 END)=0 THEN 'valid'

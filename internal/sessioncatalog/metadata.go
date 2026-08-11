@@ -55,8 +55,10 @@ func (c *Catalog) SyncMetadata(ctx context.Context, projects []ProjectRecord, to
             turns,turns_state,created_at,last_activity_at,recovery_state,health,metadata_present
         )
         SELECT ?,?,?,?,?,?,?,
-            COALESCE((SELECT SUM(CASE WHEN recovery_copy=0 AND turns_state='valid' THEN turns ELSE 0 END) FROM catalog_sessions
-                WHERE scope=? AND workspace_root=? AND topic_id=?),0),
+			COALESCE((SELECT MAX(
+				COALESCE(SUM(CASE WHEN recovery_copy=0 AND recovered=0 AND turns_state='valid' THEN turns ELSE 0 END),0),
+				COALESCE(MAX(CASE WHEN recovery_copy=0 AND recovered=1 AND turns_state='valid' THEN turns ELSE 0 END),0)
+			) FROM catalog_sessions WHERE scope=? AND workspace_root=? AND topic_id=?),0),
             COALESCE((SELECT CASE
                 WHEN SUM(CASE WHEN recovery_copy=0 AND turns_state='corrupt' THEN 1 ELSE 0 END)>0 THEN 'corrupt'
                 WHEN SUM(CASE WHEN recovery_copy=0 AND turns_state='unknown' THEN 1 ELSE 0 END)>0 THEN 'unknown'
