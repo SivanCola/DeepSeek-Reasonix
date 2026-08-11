@@ -13,11 +13,13 @@ import (
 
 func TestBuildScopesMalformedConfigDeepSeekMigrationWarningToNonDesktopFrontends(t *testing.T) {
 	tests := []struct {
-		name        string
-		statsSource string
-		wantNotice  bool
+		name           string
+		statsSource    string
+		handleWarnings bool
+		wantNotice     bool
 	}{
-		{name: "desktop uses persistent config warning", statsSource: "desktop"},
+		{name: "desktop accepts persistent config warning", statsSource: "desktop", handleWarnings: true},
+		{name: "desktop without warning handler keeps boot warning", statsSource: "desktop", wantNotice: true},
 		{name: "CLI keeps boot warning", statsSource: "cli", wantNotice: true},
 	}
 	for _, tt := range tests {
@@ -49,9 +51,15 @@ command = "C:\Users\reasonix\mcp.exe"
 					notices = append(notices, e)
 				}
 			})
-			ctrl, err := Build(context.Background(), Options{
-				Sink: sink, WorkspaceRoot: t.TempDir(), StatsSource: tt.statsSource,
-			})
+			var handledWarnings []string
+			opts := Options{Sink: sink, WorkspaceRoot: t.TempDir(), StatsSource: tt.statsSource}
+			if tt.handleWarnings {
+				opts.OnConfigLoadWarnings = func(warnings []string) bool {
+					handledWarnings = append([]string(nil), warnings...)
+					return true
+				}
+			}
+			ctrl, err := Build(context.Background(), opts)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}
@@ -66,6 +74,9 @@ command = "C:\Users\reasonix\mcp.exe"
 			}
 			if got := migrationNotice != nil; got != tt.wantNotice {
 				t.Fatalf("migration notice present = %v, want %v; notices=%+v", got, tt.wantNotice, notices)
+			}
+			if got := len(handledWarnings) > 0; got != tt.handleWarnings {
+				t.Fatalf("config warnings handled = %v, want %v; warnings=%v", got, tt.handleWarnings, handledWarnings)
 			}
 			if migrationNotice != nil &&
 				(migrationNotice.Level != event.LevelWarn || !strings.Contains(migrationNotice.Detail, "toml:")) {

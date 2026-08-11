@@ -3915,10 +3915,10 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 	sink := a.desktopControllerSink(buildSink, cfg.Notifications)
 
 	ctrl, err := boot.Build(buildCtx, boot.Options{
-		Model:                    model,
-		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
-		StatsSource:              "desktop",
+		Model:               model,
+		RequireKey:          false,
+		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
+		StatsSource:         "desktop", OnConfigLoadWarnings: a.emitConfigLoadWarnings,
 		Sink:                     sink,
 		WorkspaceRoot:            root,
 		SessionDir:               sessionDir,

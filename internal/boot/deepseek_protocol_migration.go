@@ -1,18 +1,18 @@
 package boot
 
 import (
-	"strings"
-
 	"reasonix/internal/config"
 )
 
 func deepSeekProtocolMigrationNoticeError(opts Options, cfg *config.Config, err error) error {
-	// Desktop renders resilient-loader warnings with open/reload controls.
-	// Suppress only the duplicate migration notice; headless frontends still
-	// need the boot event because they do not expose Config.LoadWarnings.
-	if strings.TrimSpace(opts.StatsSource) == "desktop" &&
-		cfg.HasLoadWarnings() && config.IsDeepSeekProtocolConfigParseError(err) {
-		return nil
+	// Suppress only after a frontend explicitly accepts the resilient-loader
+	// warnings. StatsSource is only a usage label and does not prove that its
+	// caller can present Config.LoadWarnings.
+	if cfg.HasLoadWarnings() && config.IsDeepSeekProtocolConfigParseError(err) &&
+		opts.OnConfigLoadWarnings != nil {
+		if opts.OnConfigLoadWarnings(cfg.LoadWarnings()) {
+			return nil
+		}
 	}
 	return err
 }

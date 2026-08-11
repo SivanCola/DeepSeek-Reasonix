@@ -120,14 +120,14 @@ type Options struct {
 	// so each tab loads its own config/skills/hooks without changing the process
 	// cwd — enabling concurrent multi-project sessions.
 	WorkspaceRoot string
-	// AutoPricingCurrency supplies a frontend-resolved pricing region when the
-	// persisted desktop currency and language settings are all automatic. It is
-	// applied to the in-memory config only and never turns Auto into a persisted
-	// CNY/USD choice.
+	// AutoPricingCurrency applies a frontend-resolved pricing region in memory
+	// without persisting an automatic choice.
 	AutoPricingCurrency string
-	// StatsSource labels this frontend's usage records (desktop/cli/serve).
-	// Empty disables usage recording for this controller.
+	// StatsSource labels usage records; empty disables usage recording.
 	StatsSource string
+	// OnConfigLoadWarnings accepts resilient-loader warnings. Returning true
+	// lets boot suppress the duplicate migration diagnostic.
+	OnConfigLoadWarnings func([]string) bool
 	// ExtraPlugins are session-scoped MCP servers supplied by a host transport
 	// (for example ACP session/new). They are connected eagerly for this
 	// controller but are not persisted to reasonix.toml.

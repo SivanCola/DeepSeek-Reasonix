@@ -1952,9 +1952,9 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRuntimeSnapshot, runtime normalizedTabRuntime, model, prevPath, setting string, oldCtrl control.SessionAPI, carried []provider.Message, reload bool) (control.SessionAPI, normalizedTabRuntime, string, error) {
 	opts := boot.Options{
 		Model: model, RequireKey: false,
-		RuntimeReload:            boot.RuntimeReload{ForceFullRebuild: reload},
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
-		StatsSource:              "desktop",
+		RuntimeReload:       boot.RuntimeReload{ForceFullRebuild: reload},
+		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
+		StatsSource:         "desktop", OnConfigLoadWarnings: a.emitConfigLoadWarnings,
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
