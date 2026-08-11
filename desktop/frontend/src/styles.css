@@ -5120,6 +5120,40 @@ button.reasoning-summary:focus-visible {
   overflow-y: hidden;
   margin: 0 0 12px;
 }
+/* Large tables default to an in-flow preview; expand mounts the virtual
+   scroller only when the user opts in (see MarkdownTable.tsx). */
+.md-table-fold {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.md-table-fold > .md-table-scroll,
+.md-table-fold > .md-table-virtual {
+  margin-bottom: 0;
+}
+.md-table-fold__toggle {
+  --wails-draggable: no-drag;
+  align-self: flex-start;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--fg-dim);
+  font-size: var(--text-xs, 12px);
+  line-height: 1.4;
+  cursor: pointer;
+}
+.md-table-fold__toggle:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 40%, var(--bg-soft));
+}
+.md-table-fold__toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
 .md table {
   border-collapse: collapse;
   margin: 0 0 12px;

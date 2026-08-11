@@ -11,6 +11,7 @@ import {
 import {
   canTranscriptScrollOwnerWriteNow,
   canVirtualizerAdjustScroll,
+  isUserGestureActive,
   noteUserGesture,
 } from "./transcriptScrollSession";
 
@@ -71,22 +72,67 @@ export function useScrollManager() {
   const lastFooterHeight = useRef<number | null>(null);
   /** Epoch ms until which compensating writers must stay silent. */
   const gestureUntilRef = useRef(0);
+  const gestureIdleTimerRef = useRef<number | null>(null);
+  const gestureIdleListenersRef = useRef(new Set<() => void>());
   const [isAtBottom, setIsAtBottom] = useState(true);
   const modeRef = useRef<TranscriptScrollMode>("tail-follow");
   const generationRef = useRef(0);
+
+  const flushGestureIdleListeners = useCallback(() => {
+    if (isUserGestureActive(gestureUntilRef.current)) return;
+    for (const listener of gestureIdleListenersRef.current) {
+      try {
+        listener();
+      } catch {
+        // Listener failures must not break scroll ownership.
+      }
+    }
+  }, []);
+
+  const scheduleGestureIdle = useCallback(() => {
+    if (gestureIdleTimerRef.current !== null) {
+      clearTimeout(gestureIdleTimerRef.current);
+      gestureIdleTimerRef.current = null;
+    }
+    if (gestureIdleListenersRef.current.size === 0) return;
+    const delay = Math.max(0, gestureUntilRef.current - Date.now()) + 16;
+    gestureIdleTimerRef.current = window.setTimeout(() => {
+      gestureIdleTimerRef.current = null;
+      if (isUserGestureActive(gestureUntilRef.current)) {
+        scheduleGestureIdle();
+        return;
+      }
+      flushGestureIdleListeners();
+    }, delay);
+  }, [flushGestureIdleListeners]);
 
   useEffect(() => {
     return () => {
       if (resizeFrame.current !== null) cancelAnimationFrame(resizeFrame.current);
       if (repinFrame.current !== null) cancelAnimationFrame(repinFrame.current);
       if (smoothScrollTimer.current !== null) clearTimeout(smoothScrollTimer.current);
+      if (gestureIdleTimerRef.current !== null) clearTimeout(gestureIdleTimerRef.current);
       for (const frame of layoutScrollFrames.current) cancelAnimationFrame(frame);
       layoutScrollFrames.current = [];
+      gestureIdleListenersRef.current.clear();
     };
   }, []);
 
   const markUserGesture = useCallback(() => {
     gestureUntilRef.current = noteUserGesture();
+    scheduleGestureIdle();
+  }, [scheduleGestureIdle]);
+
+  /**
+   * Subscribe to the first quiet frame after a user scroll gesture ends.
+   * Used to batch virtualizer.measure() so remount heights settle without
+   * fighting trackpad inertia mid-gesture.
+   */
+  const onGestureIdle = useCallback((listener: () => void) => {
+    gestureIdleListenersRef.current.add(listener);
+    return () => {
+      gestureIdleListenersRef.current.delete(listener);
+    };
   }, []);
 
   const updateBottomState = useCallback((el: HTMLElement) => {
@@ -432,6 +478,8 @@ export function useScrollManager() {
     reconcileViewportAnchor,
     /** Marks an external user scroll intent (e.g. nested-edge handoff). */
     markUserGesture,
+    /** Fires once after the gesture hold expires (idle remeasure hook). */
+    onGestureIdle,
     gestureUntilRef,
   };
 }

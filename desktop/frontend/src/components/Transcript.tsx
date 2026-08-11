@@ -224,6 +224,7 @@ export function Transcript({
     captureViewportAnchor,
     reconcileViewportAnchor,
     markUserGesture,
+    onGestureIdle,
   } = useTranscriptScrollController();
   const autoScrollFrame = useRef<number | null>(null);
   const pendingRevealBottomScroll = useRef(false);
@@ -676,6 +677,29 @@ export function Transcript({
     virtualizer,
     selectionActive: selectionRetention.active,
   });
+
+  // After a trackpad/wheel gesture settles, remeasure once and re-anchor the
+  // reading position. Doing this mid-gesture is what produced the jump/stall
+  // pattern on long markdown rows.
+  useEffect(() => {
+    return onGestureIdle(() => {
+      if (selectionRetention.active) return;
+      if (!canVirtualizerAdjust()) return;
+      const anchor = captureViewportAnchor();
+      virtualizer.measure();
+      requestAnimationFrame(() => {
+        if (!canVirtualizerAdjust()) return;
+        reconcileViewportAnchor(anchor);
+      });
+    });
+  }, [
+    canVirtualizerAdjust,
+    captureViewportAnchor,
+    onGestureIdle,
+    reconcileViewportAnchor,
+    selectionRetention.active,
+    virtualizer,
+  ]);
 
   const sizerRef = useCallback(
     (el: HTMLDivElement | null) => {

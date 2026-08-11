@@ -121,6 +121,21 @@ eq(scrollTop, 400, "scrollTop stays put when compensating owners fire mid-gestur
 eq(writes.length, 0, "no compensating scroll writes are emitted mid-gesture");
 window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
 
+// Idle remeasure: listeners fire after the gesture hold expires, not mid-gesture.
+let idleFires = 0;
+const stopIdle = api!.onGestureIdle(() => {
+  idleFires += 1;
+});
+await act(async () => {
+  api!.markUserGesture();
+});
+eq(idleFires, 0, "gesture idle does not fire while the hold is active");
+await act(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 280));
+});
+eq(idleFires, 1, "gesture idle fires once after the hold window");
+stopIdle();
+
 scrollTop = 900;
 await act(async () => {
   api!.stick.current = true;
