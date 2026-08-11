@@ -267,9 +267,9 @@ int reasonix_test_webkit_run(int mode) {
   g_signal_connect(widget, "load-changed", G_CALLBACK(reasonix_test_initial_load_changed), NULL);
   reasonix_test_loop = g_main_loop_new(NULL, FALSE);
   reasonix_test_safety_timeout_id = g_timeout_add_seconds(15, reasonix_test_safety_timeout, NULL);
-  webkit_web_view_load_html(reasonix_test_web_view,
-                           "<html><body>Reasonix WebKit native smoke</body></html>",
-                           NULL);
+  webkit_web_view_load_uri(
+      reasonix_test_web_view,
+      "data:text/html,%3Chtml%3E%3Cbody%3EReasonix%20WebKit%20native%20smoke%3C%2Fbody%3E%3C%2Fhtml%3E");
   g_main_loop_run(reasonix_test_loop);
 
   if (reasonix_test_safety_timeout_id != 0) {
