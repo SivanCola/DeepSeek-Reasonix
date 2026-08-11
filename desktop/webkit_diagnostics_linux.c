@@ -12,6 +12,7 @@
 
 static WebKitWebView *reasonix_web_view = NULL;
 static gboolean reasonix_recovery_pending = FALSE;
+static gboolean reasonix_recovery_load_started = FALSE;
 static gboolean reasonix_recovery_load_failed = FALSE;
 static gint64 reasonix_last_recovery_at = 0;
 static guint reasonix_recovery_timeout_id = 0;
@@ -51,6 +52,7 @@ static GtkWidget *reasonix_find_web_view(GtkWidget *widget) {
 static void reasonix_finish_recovery(int outcome) {
   if (!reasonix_recovery_pending) return;
   reasonix_recovery_pending = FALSE;
+  reasonix_recovery_load_started = FALSE;
   reasonix_recovery_load_failed = FALSE;
   if (reasonix_recovery_timeout_id != 0) {
     g_source_remove(reasonix_recovery_timeout_id);
@@ -65,6 +67,7 @@ static gboolean reasonix_recovery_timeout(gpointer data) {
   reasonix_recovery_timeout_id = 0;
   if (reasonix_recovery_pending) {
     reasonix_recovery_pending = FALSE;
+    reasonix_recovery_load_started = FALSE;
     reasonix_recovery_load_failed = FALSE;
     reasonixWebKitProcessTerminated((int)reasonix_pending_reason, 2,
                                     (unsigned long long)reasonix_pending_generation);
@@ -87,6 +90,7 @@ static void reasonix_web_process_terminated(WebKitWebView *web_view,
   reasonix_pending_reason = reason;
   reasonix_pending_generation = generation;
   reasonix_recovery_pending = TRUE;
+  reasonix_recovery_load_started = FALSE;
   reasonix_recovery_load_failed = FALSE;
   reasonix_recovery_timeout_id = g_timeout_add_seconds(REASONIX_RECOVERY_TIMEOUT_SECONDS,
                                                         reasonix_recovery_timeout, NULL);
@@ -103,14 +107,25 @@ static gboolean reasonix_load_failed(WebKitWebView *web_view, WebKitLoadEvent ev
   (void)uri;
   (void)error;
   (void)data;
-  if (reasonix_recovery_pending) reasonix_recovery_load_failed = TRUE;
+  // WebKit may deliver load-failed for the terminated navigation after the
+  // process-terminated signal. Only failures belonging to the reload that we
+  // started are recovery failures.
+  if (reasonix_recovery_pending && reasonix_recovery_load_started) {
+    reasonix_recovery_load_failed = TRUE;
+  }
   return FALSE;
 }
 
 static void reasonix_load_changed(WebKitWebView *web_view, WebKitLoadEvent event, gpointer data) {
   (void)web_view;
   (void)data;
-  if (reasonix_recovery_pending && event == WEBKIT_LOAD_FINISHED) {
+  if (!reasonix_recovery_pending) return;
+  if (event == WEBKIT_LOAD_STARTED) {
+    reasonix_recovery_load_started = TRUE;
+    reasonix_recovery_load_failed = FALSE;
+    return;
+  }
+  if (reasonix_recovery_load_started && event == WEBKIT_LOAD_FINISHED) {
 #ifdef REASONIX_WEBKIT_SMOKE
     if (reasonix_test_mode == REASONIX_WEBKIT_SMOKE_TIMEOUT) return;
     if (reasonix_test_mode == REASONIX_WEBKIT_SMOKE_FAILURE) {
@@ -215,6 +230,7 @@ int reasonix_test_webkit_run(int mode) {
   }
   reasonix_web_view = NULL;
   reasonix_recovery_pending = FALSE;
+  reasonix_recovery_load_started = FALSE;
   reasonix_recovery_load_failed = FALSE;
   reasonix_last_recovery_at = 0;
   reasonix_generation = 0;
