@@ -31,6 +31,13 @@ func (c *Controller) readSteerCandidate(st *sessioninbox.Store, id string) (sess
 	return st.ReadItem(id)
 }
 
+func (c *Controller) unlockInboxSteerAdmission(dispatch *bool) {
+	c.inbox.admissionMu.Unlock()
+	if *dispatch {
+		c.maybeDispatchInbox()
+	}
+}
+
 // TrySteerInboxItem persists intent=steer (if needed) and attempts mid-turn
 // admission. Rejected steers stay queued as follow-up.
 //
@@ -39,12 +46,7 @@ func (c *Controller) readSteerCandidate(st *sessioninbox.Store, id string) (sess
 func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, error) {
 	c.inbox.admissionMu.Lock()
 	dispatchAfterUnlock := false
-	defer func() {
-		c.inbox.admissionMu.Unlock()
-		if dispatchAfterUnlock {
-			c.maybeDispatchInbox()
-		}
-	}()
+	defer c.unlockInboxSteerAdmission(&dispatchAfterUnlock)
 	st, err := c.ensureInbox()
 	if err != nil {
 		return sessioninbox.InboxReceipt{}, err

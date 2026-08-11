@@ -17,6 +17,14 @@ const (
 	inboxDispatchRetry
 )
 
+// endRotation releases the admission gate and republishes durable queue work.
+func (c *Controller) endRotation() {
+	c.mu.Lock()
+	c.rotating = false
+	c.mu.Unlock()
+	c.maybeDispatchInbox()
+}
+
 // maybeDispatchInbox is a level-triggered kick, not a one-shot edge. Every
 // caller publishes pending work before checking whether a dispatcher is live.
 // The active dispatcher clears dispatching only while holding the same lock

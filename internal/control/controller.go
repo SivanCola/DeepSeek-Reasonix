@@ -2051,16 +2051,6 @@ func (c *Controller) beginRotation() error {
 	return nil
 }
 
-func (c *Controller) endRotation() {
-	c.mu.Lock()
-	c.rotating = false
-	c.mu.Unlock()
-	// A follow-up can be durably queued while the rotation gate is held. Re-open
-	// FIFO admission after the swap instead of leaving that valid queued item
-	// dependent on an unrelated future turn (#6210 regression shape).
-	c.maybeDispatchInbox()
-}
-
 // CancelRequested reports whether Cancel has been requested for the active turn.
 func (c *Controller) CancelRequested() bool {
 	c.mu.Lock()

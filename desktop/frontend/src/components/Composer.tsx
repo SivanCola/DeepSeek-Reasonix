@@ -7,7 +7,7 @@ import { DedupIndex, sha256 } from "../lib/attachDedup";
 import { app, onFilesDropped } from "../lib/bridge";
 import { enqueueInboxGuidance } from "../lib/inboxSubmit";
 import { formatInboxError } from "../lib/inboxError";
-import { guidanceNeedsRetry, guidanceTextMatches, markGuidanceQueued } from "../lib/composerGuidance";
+import { guidanceNeedsRetry, guidanceTextMatches, kickIdleGuidance, markGuidanceQueued } from "../lib/composerGuidance";
 import { canUsePromptHistory, composerEnterAction, composerEscapeAction, composerMenuKeyAction, insertComposerNewline, isFnKeyEvent, isImeKeyEvent, promptHistoryDirectionFromEvent } from "../lib/composerKeyboard";
 import { cacheGeneration, loadOlder } from "../lib/composerHistory";
 import { SPINNER_WORDS, useI18n, type Translator } from "../lib/i18n";
@@ -2177,14 +2177,7 @@ export function Composer({
         // requeued first, then admitted to the active turn below.
         if (!running || item.structured) return;
       }
-      if (durable && !running) {
-        // SetInboxPaused(false) is also the Controller's idempotent drain kick.
-        // It preserves durable FIFO ownership while giving an unexpectedly idle
-        // queue an explicit user recovery path without re-enqueueing the item.
-        await app.SetInboxPaused(targetTabId || "", false);
-        setGuidanceRetryNonce((value) => value + 1);
-        return;
-      }
+      if (durable && !running) return await kickIdleGuidance(app.SetInboxPaused, targetTabId || "", () => setGuidanceRetryNonce((value) => value + 1));
       if (running && durable) {
         const receipt = await app.SteerInboxItem(targetTabId || "", item.id);
         if (receipt?.error) throw new Error(receipt.error);
