@@ -68,8 +68,12 @@ reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # max_subagent_depth = 2              # nested delegation depth; set 1 for the old single-layer boundary
 # max_subagent_concurrency = 6        # session-wide sub-agent concurrency (task/fleet/skills)
 # max_parallel_writers = 3            # concurrent writers with non-overlapping write_paths
-tool_result_snip_ratio = 0.6       # at compact_ratio, pruning stale tool output replaces the summary if it gets under this
-# context_editing = "native"       # opt in only for the official Anthropic endpoint; default local
+# compact_ratio = 0.85             # sole auto trigger; presets 0.70 / 0.80 / 0.85
+# max_output_tokens = 0            # recommended: automatic (DeepSeek default high → ~64K; not unlimited)
+# max_output_tokens = 32768        # ordinary coding / cost control
+# max_output_tokens = 65536        # heavy reasoning / long tool loops
+# max_output_tokens = 131072       # only after repeated finish_reason=length
+# max_output_tokens never changes compact_ratio; only the final send-time clip does
 
 [[providers]]
 name        = "deepseek-flash"
@@ -1249,6 +1253,34 @@ accepted during upgrades, but their values are ignored and removed with a
 one-time notice. This prevents a stale hidden limit from truncating automatic
 progress or inherited subagent work. Use the one-off CLI `--max-steps` flag when
 an explicit run budget is needed; unattended bots retain `[bot].max_steps`.
+
+An ordinary chat task is instead bounded by what it spends. Rounds never
+measured the thing worth stopping — the same hundred cost minutes or hours
+depending on what each one read — so the gate is cost and wall clock. On
+reaching either, the task produces one tool-free summary and pauses; the work
+is saved and the next message continues it.
+
+```toml
+[agent]
+task_cost_budget = 5.0            # model pricing currency; off unless you set it
+task_time_budget_minutes = 60     # 0 = default (30); negative disables the axis
+```
+
+**Only wall clock has a default**, and it is deliberately loose — a gate that
+fires on real work is worse than no gate. There is no cost default because no
+amount of money is portable across models: a budget loose enough for a cheap
+model would land a frontier model within a couple of answers. Set
+`task_cost_budget` yourself when you know which model you are paying for.
+
+Cost also applies only to a priced model. Without a price table that axis stays
+inactive rather than reading the task as free, and wall clock still bounds it —
+including a free or local model's loop, the one case cost cannot see at all.
+
+Ordinary chat has no round ceiling. A turn that reaches a high round count
+without crossing either budget is one whose rounds are individually cheap and
+fast, which is the case least worth interrupting; rounds carry no information
+the two axes above do not already have. Use the one-off `--max-steps` flag when
+you specifically want a run bounded by rounds.
 
 Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only

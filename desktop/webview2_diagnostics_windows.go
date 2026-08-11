@@ -4,26 +4,21 @@ package main
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/wailsapp/go-webview2/pkg/edge"
 )
 
 var webView2ObserverState = struct {
 	sync.Once
-	events chan edge.ProcessFailedDiagnostic
+	events  chan edge.ProcessFailedDiagnostic
+	dropped atomic.Uint64
 }{events: make(chan edge.ProcessFailedDiagnostic, 32)}
 
 func installWebView2ProcessObserver(app *App) {
 	if app == nil {
 		return
 	}
-	gpuMode := "enabled"
-	if windowsWebview2GPUDisabled() {
-		gpuMode = "disabled"
-	}
-	publishWebRuntimeContext(webRuntimeContext{
-		Engine: "webview2", RuntimeVersion: webView2RuntimeVersion(), GPUMode: gpuMode,
-	})
 	nativeWebView2ObserverInstalled.Store(true)
 	process := func(diagnostic edge.ProcessFailedDiagnostic) {
 		event := webView2NativeEvent{
@@ -47,6 +42,7 @@ func installWebView2ProcessObserver(app *App) {
 		go func() {
 			for diagnostic := range webView2ObserverState.events {
 				process(diagnostic)
+				recordDroppedWebRuntimeEvents(app, "webview2", &webView2ObserverState.dropped)
 			}
 		}()
 		edge.SetProcessFailedObserver(func(diagnostic edge.ProcessFailedDiagnostic) {
@@ -59,9 +55,20 @@ func installWebView2ProcessObserver(app *App) {
 			select {
 			case webView2ObserverState.events <- diagnostic:
 			default:
-				// Keep the COM callback non-blocking. Lifecycle v2 remains the
-				// fallback for a pathological burst larger than the bounded queue.
+				// Keep the COM callback non-blocking and let the background consumer
+				// expose queue pressure as an aggregate, content-free metric.
+				webView2ObserverState.dropped.Add(1)
 			}
 		})
+	})
+}
+
+func refreshWebRuntimeContext() {
+	gpuMode := "enabled"
+	if windowsWebview2GPUDisabled() {
+		gpuMode = "disabled"
+	}
+	publishWebRuntimeContext(webRuntimeContext{
+		Engine: "webview2", RuntimeVersion: webView2RuntimeVersion(), GPUMode: gpuMode,
 	})
 }

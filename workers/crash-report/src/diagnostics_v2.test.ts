@@ -258,6 +258,79 @@ describe("diagnostics v2 storage consistency", () => {
     }
   });
 
+  it("preserves unidentified event dimensions without inventing an affected installation", () => {
+    type BoundStatement = { sql: string; binds: unknown[] };
+    const statements: BoundStatement[] = [];
+    const d1 = {
+      prepare(sql: string) {
+        const statement = {
+          sql,
+          binds: [] as unknown[],
+          bind(...binds: unknown[]) { statement.binds = binds; statements.push(statement); return statement; },
+        };
+        return statement;
+      },
+    } as unknown as D1Database;
+    reportAggregateStatements(d1, {
+      version: "v1.23.0", os: "linux", arch: "amd64",
+      device: { distroId: "ubuntu", distroVersion: "24.04", sessionType: "wayland" },
+    }, "f".repeat(64), "stable", {
+      engine: "webkitgtk", runtimeVersion: "2.44", kind: "web_process_terminated", reason: "crashed",
+      recovery: "reload_failed", gpuMode: "always",
+    });
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(freshSchemaSQL);
+      for (const statement of statements) db.prepare(statement.sql).run(...statement.binds as []);
+      expect(db.prepare("SELECT events, identified_events FROM report_daily").get()).toEqual({
+        events: 1, identified_events: 0,
+      });
+      expect(db.prepare(
+        "SELECT install_id, distro_id, recovery, events FROM report_event_dimensions",
+      ).get()).toEqual({ install_id: "", distro_id: "ubuntu", recovery: "reload_failed", events: 1 });
+      expect(db.prepare("SELECT COUNT(*) AS count FROM report_installations").get()).toEqual({ count: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("uses the same dimensions for filtered events, identity coverage, and installations", async () => {
+    let querySQL = "";
+    let queryBinds: unknown[] = [];
+    const row = {
+      fingerprint: "f".repeat(64), status: "open", severity: "high", regressed_at: "",
+      first_version: "v1.23.0", count: 2, seen: "2026-08-10", title: "renderer exited",
+      last_version: "v1.23.0", last_channel: "stable", affected_installs: 1,
+      window_events: 2, identified_events: 1, active_build_installs: 10,
+      dimension_base_installs: 10, dimension_covered_installs: 10, kind: "exception",
+      source: "web.runtime.native", label: "renderer_process_exited", error_type: "", top_frame: "",
+      last_os: "windows", last_arch: "amd64",
+    };
+    const db = {
+      prepare(sql: string) {
+        querySQL = sql;
+        const statement = {
+          bind(...binds: unknown[]) { queryBinds = binds; return statement; },
+          async all() { return { results: [row] }; },
+        };
+        return statement;
+      },
+    } as unknown as D1Database;
+    const result = await crashGroups({ DB: db } as unknown as Env, {
+      status: "", source: "", version: "", os: "", platform: "", osBuild: "17763", arch: "",
+      channel: "", runtimeVersion: "", failureKind: "", failureReason: "", recovery: "", gpu: "",
+      newLatest: false, regressed: false, windowDays: 7,
+    }, "");
+    expect(querySQL).toContain("COUNT(DISTINCT NULLIF(install_id, '')) AS affected_installs");
+    expect(querySQL).toContain("SUM(events) AS window_events");
+    expect(querySQL).toContain("SUM(CASE WHEN install_id <> '' THEN events ELSE 0 END) AS identified_events");
+    expect(querySQL).toContain("os_build = ?");
+    expect(querySQL).toContain("COALESCE(diagnostics.window_events, 0) > 0");
+    expect(querySQL).not.toContain("FROM report_daily WHERE");
+    expect(queryBinds).toContain(17763);
+    expect(result.results[0]).toMatchObject({ identity_coverage: 0.5, impact_rate: 0.1 });
+  });
+
   it("orders the SQL limit and returned groups by affected installations first", async () => {
     let querySQL = "";
     const row = (fingerprint: string, severity: string, affectedInstalls: number) => ({

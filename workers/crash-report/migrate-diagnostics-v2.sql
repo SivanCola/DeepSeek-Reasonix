@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS report_installations (
 CREATE INDEX IF NOT EXISTS report_installations_fingerprint_date
   ON report_installations (fingerprint, date);
 
+-- Empty install_id preserves unlinked events for filtered event totals without
+-- inventing a device identity; device counts always exclude the empty sentinel.
 CREATE TABLE IF NOT EXISTS report_event_dimensions (
   date TEXT NOT NULL,
   fingerprint TEXT NOT NULL,

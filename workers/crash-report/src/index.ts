@@ -187,6 +187,7 @@ const METRIC_SIGNALS = [
   "desktop_webview2_outcome",
   "desktop_web_runtime_failure",
   "desktop_web_runtime_outcome",
+  "desktop_web_runtime_dropped",
   "desktop_legacy_exit",
   "desktop_legacy_exit_phase",
   "cli_mode",

@@ -109,7 +109,11 @@ func prepareDesktopDiagnostics(app *App) {
 	app.diagnosticsOwnerRelease = release
 
 	cfg, err := config.Load()
-	if err != nil || !cfg.DesktopTelemetry() {
+	if err != nil {
+		return
+	}
+	app.diagnosticsConfigLoaded = true
+	if !cfg.DesktopTelemetry() {
 		return
 	}
 	app.diagnosticsTelemetry = true
@@ -127,6 +131,7 @@ func (a *App) releaseDesktopDiagnosticsOwnership() {
 	a.diagnosticsOwnerRelease()
 	a.diagnosticsOwnerRelease = nil
 	a.diagnosticsOwner = false
+	a.diagnosticsConfigLoaded = false
 	a.diagnosticsTelemetry = false
 }
 
@@ -134,21 +139,23 @@ func initializeLifecycleDiagnostics(app *App) {
 	if app == nil || app.remoteWindowTicket != "" || !app.diagnosticsOwner {
 		return
 	}
-	cfg, err := config.Load()
-	if err != nil || version == "dev" {
+	if !app.diagnosticsConfigLoaded || version == "dev" {
 		return
 	}
 	tracker := app.lifecycle.tracker
 	if tracker == nil {
 		tracker = newDesktopLifecycleTracker(config.MemoryUserDir(), version, channel)
 	}
-	enabled := cfg.DesktopTelemetry()
+	enabled := app.diagnosticsTelemetry
 	legacy := repair.NewStartupTracker("").ObservePreviousRun()
 	if enabled {
 		app.lifecycle.previousRun = legacy
 	}
 	app.lifecycle.previousRuns = tracker.consumePrevious(enabled)
 	installWebKitProcessObserver(app, enabled)
+	if enabled {
+		refreshWebRuntimeContext()
+	}
 }
 
 func (a *App) markDesktopHealthy() {

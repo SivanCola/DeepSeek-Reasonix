@@ -131,6 +131,10 @@ func TestWebView2PatchWiring(t *testing.T) {
 					diagnosticCollected = true
 				case "notifyProcessFailedObserver":
 					diagnosticObserved = true
+				case "reload":
+					if fn.Name.Name == "handleFailedRendererRecovery" {
+						nativeReloadApplied = true
+					}
 				}
 				return true
 			}
@@ -140,7 +144,7 @@ func TestWebView2PatchWiring(t *testing.T) {
 			}
 			switch selector.Sel.Name {
 			case "beginFailedRendererRecovery":
-				if fn.Name.Name == "ProcessFailed" {
+				if fn.Name.Name == "ProcessFailed" || fn.Name.Name == "handleFailedRendererRecovery" {
 					recoveryPolicyApplied = true
 				}
 			case "completeFailedRendererRecovery":
@@ -148,7 +152,7 @@ func TestWebView2PatchWiring(t *testing.T) {
 					recoveryCompletionApplied = true
 				}
 			case "Reload":
-				if fn.Name.Name == "ProcessFailed" {
+				if fn.Name.Name == "ProcessFailed" || fn.Name.Name == "handleFailedRendererRecovery" {
 					nativeReloadApplied = true
 				}
 			case "bindNavigation":
@@ -156,7 +160,7 @@ func TestWebView2PatchWiring(t *testing.T) {
 					recoveryNavigationBound = true
 				}
 			case "nonFatalErrorCallback":
-				if fn.Name.Name == "ProcessFailed" || fn.Name.Name == "completeFailedRendererRecovery" {
+				if fn.Name.Name == "ProcessFailed" || fn.Name.Name == "handleFailedRendererRecovery" || fn.Name.Name == "completeFailedRendererRecovery" {
 					nonFatalRecoveryErrors = true
 				}
 			case "errorCallback":

@@ -76,3 +76,52 @@ func TestReasonixRecoveryCooldownStartsAfterAcceptedFailure(t *testing.T) {
 	}
 	_, _ = state.finish()
 }
+
+func TestRendererFailureRejectedByRecoveryIsStillObserved(t *testing.T) {
+	now := time.Date(2026, 8, 11, 1, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name  string
+		setup func(*testing.T, *Chromium)
+	}{
+		{
+			name: "recovery pending",
+			setup: func(t *testing.T, chromium *Chromium) {
+				if !chromium.processRecovery.begin(ProcessFailedDiagnostic{}, now, time.Minute, 0, nil) {
+					t.Fatal("failed to arm pending recovery")
+				}
+			},
+		},
+		{
+			name: "cooldown active",
+			setup: func(t *testing.T, chromium *Chromium) {
+				if !chromium.processRecovery.begin(ProcessFailedDiagnostic{}, now, time.Minute, 0, nil) {
+					t.Fatal("failed to establish cooldown")
+				}
+				_, _ = chromium.processRecovery.finish()
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chromium := &Chromium{}
+			tt.setup(t, chromium)
+			var observed []ProcessFailedDiagnostic
+			SetProcessFailedObserver(func(diagnostic ProcessFailedDiagnostic) {
+				observed = append(observed, diagnostic)
+			})
+			t.Cleanup(func() { SetProcessFailedObserver(nil) })
+			reloads := 0
+			diagnostic := ProcessFailedDiagnostic{Kind: COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED}
+			chromium.handleFailedRendererRecovery(diagnostic, now.Add(time.Second), func() error {
+				reloads++
+				return nil
+			})
+			if reloads != 0 {
+				t.Fatalf("reloads = %d, want 0", reloads)
+			}
+			if len(observed) != 1 || observed[0].Recovery != "not_applicable" {
+				t.Fatalf("observed = %+v, want one not_applicable diagnostic", observed)
+			}
+		})
+	}
+}

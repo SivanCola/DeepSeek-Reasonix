@@ -84,7 +84,7 @@ export type DiagnosticFacets = {
 export async function diagnosticFacets(env: Env, days: 7 | 30): Promise<DiagnosticFacets> {
   const since = currentWindowSince(days);
   const facet = (expression: string, extra = "") => env.DB.prepare(
-    `SELECT ${expression} AS label, COUNT(DISTINCT install_id) AS users
+    `SELECT ${expression} AS label, COUNT(DISTINCT NULLIF(install_id, '')) AS users
      FROM report_event_dimensions WHERE date >= date('now', '${since}') ${extra}
      GROUP BY label ORDER BY users DESC LIMIT 20`,
   ).all<DiagnosticBar>().then((result) => result.results);
@@ -170,7 +170,7 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
   if (filters.exitCode) addInstall("exit_code", filters.exitCode);
   if (filters.recovery) addInstall("recovery", filters.recovery);
   if (filters.gpu) addInstall("gpu_mode", filters.gpu);
-  if (installWhere.length > 1) where.push("COALESCE(installations.affected_installs, 0) > 0");
+  if (installWhere.length > 1) where.push("COALESCE(diagnostics.window_events, 0) > 0");
   if (filters.newLatest && latestVersion) add("first_version = ?", latestVersion);
   if (filters.regressed) where.push("regressed_at <> ''");
   let latestOrder = "";
@@ -214,21 +214,20 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
   const coveredInstalls = `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE ${[...pingBaseWhere, ...dimensionKnown].join(" AND ")})`;
   const sql = `SELECT groups.fingerprint, kind, count, first_version, last_version, substr(last_seen, 1, 10) AS seen,
       status, title, source, label, error_type, top_frame, severity, last_os, last_arch, last_channel, regressed_at,
-      COALESCE(installations.affected_installs, 0) AS affected_installs,
-      COALESCE(daily.window_events, 0) AS window_events,
-      COALESCE(daily.identified_events, 0) AS identified_events,
+      COALESCE(diagnostics.affected_installs, 0) AS affected_installs,
+      COALESCE(diagnostics.window_events, 0) AS window_events,
+      COALESCE(diagnostics.identified_events, 0) AS identified_events,
       ${activeInstalls} AS active_build_installs,
       ${baseInstalls} AS dimension_base_installs,
       ${coveredInstalls} AS dimension_covered_installs
     FROM groups
     LEFT JOIN (
-      SELECT fingerprint, COUNT(DISTINCT install_id) AS affected_installs
+      SELECT fingerprint,
+        COUNT(DISTINCT NULLIF(install_id, '')) AS affected_installs,
+        SUM(events) AS window_events,
+        SUM(CASE WHEN install_id <> '' THEN events ELSE 0 END) AS identified_events
       FROM report_event_dimensions WHERE ${installWhere.join(" AND ")} GROUP BY fingerprint
-    ) installations ON installations.fingerprint = groups.fingerprint
-    LEFT JOIN (
-      SELECT fingerprint, SUM(events) AS window_events, SUM(identified_events) AS identified_events
-      FROM report_daily WHERE date >= date('now', '${reportWindow}') GROUP BY fingerprint
-    ) daily ON daily.fingerprint = groups.fingerprint
+    ) diagnostics ON diagnostics.fingerprint = groups.fingerprint
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY
       affected_installs DESC,
@@ -323,28 +322,29 @@ export function reportAggregateStatements(
          events = events + 1, identified_events = identified_events + ?2`,
     ).bind(fingerprint, report.installId ? 1 : 0),
   ];
-  if (!report.installId) return statements;
-  statements.push(
-    db.prepare(
-      `INSERT INTO report_installations (
-         date, fingerprint, install_id, version, os, arch, os_build, os_revision,
-         distro_id, distro_version, kernel_version, session_type, channel,
-         runtime_engine, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_mode, events
-       ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, 1)
-       ON CONFLICT (date, fingerprint, install_id) DO UPDATE SET
-         version = ?3, os = ?4, arch = ?5, os_build = ?6, os_revision = ?7,
-         distro_id = ?8, distro_version = ?9, kernel_version = ?10, session_type = ?11, channel = ?12,
-         runtime_engine = ?13, runtime_version = ?14, failure_kind = ?15, failure_reason = ?16,
-         exit_code = ?17, recovery = ?18, gpu_mode = ?19, events = events + 1`,
-    ).bind(
-      fingerprint, report.installId, report.version, report.os, report.arch,
-      report.device?.osBuild ?? 0, report.device?.osRevision ?? 0,
-      report.device?.distroId ?? "", report.device?.distroVersion ?? "", report.device?.kernelVersion ?? "",
-      report.device?.sessionType ?? "", channel,
-      webRuntime?.engine ?? "", webRuntime?.runtimeVersion ?? "", webRuntime?.kind ?? "", webRuntime?.reason ?? "",
-      webRuntime?.exitCode ?? null, webRuntime?.recovery ?? "", webRuntime?.gpuMode ?? "unknown",
-    ),
-  );
+  if (report.installId) {
+    statements.push(
+      db.prepare(
+        `INSERT INTO report_installations (
+           date, fingerprint, install_id, version, os, arch, os_build, os_revision,
+           distro_id, distro_version, kernel_version, session_type, channel,
+           runtime_engine, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_mode, events
+         ) VALUES (date('now'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, 1)
+         ON CONFLICT (date, fingerprint, install_id) DO UPDATE SET
+           version = ?3, os = ?4, arch = ?5, os_build = ?6, os_revision = ?7,
+           distro_id = ?8, distro_version = ?9, kernel_version = ?10, session_type = ?11, channel = ?12,
+           runtime_engine = ?13, runtime_version = ?14, failure_kind = ?15, failure_reason = ?16,
+           exit_code = ?17, recovery = ?18, gpu_mode = ?19, events = events + 1`,
+      ).bind(
+        fingerprint, report.installId, report.version, report.os, report.arch,
+        report.device?.osBuild ?? 0, report.device?.osRevision ?? 0,
+        report.device?.distroId ?? "", report.device?.distroVersion ?? "", report.device?.kernelVersion ?? "",
+        report.device?.sessionType ?? "", channel,
+        webRuntime?.engine ?? "", webRuntime?.runtimeVersion ?? "", webRuntime?.kind ?? "", webRuntime?.reason ?? "",
+        webRuntime?.exitCode ?? null, webRuntime?.recovery ?? "", webRuntime?.gpuMode ?? "unknown",
+      ),
+    );
+  }
   statements.push(
     db.prepare(
       `INSERT INTO report_event_dimensions (
@@ -358,7 +358,7 @@ export function reportAggregateStatements(
          runtime_engine, runtime_version, failure_kind, failure_reason, exit_code, recovery, gpu_mode
        ) DO UPDATE SET events = events + 1`,
     ).bind(
-      fingerprint, report.installId, report.version, report.os, report.arch,
+      fingerprint, report.installId ?? "", report.version, report.os, report.arch,
       report.device?.osBuild ?? 0, report.device?.osRevision ?? 0,
       report.device?.distroId ?? "", report.device?.distroVersion ?? "", report.device?.kernelVersion ?? "",
       report.device?.sessionType ?? "", channel,
@@ -381,12 +381,13 @@ export async function groupDiagnosticSummary(env: Env, fingerprint: string): Pro
   const [totals, distributions] = await Promise.all([
     env.DB.prepare(
       `SELECT
-         (SELECT COALESCE(SUM(events), 0) FROM report_daily WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS window_events,
-         (SELECT COALESCE(SUM(identified_events), 0) FROM report_daily WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS identified_events,
-         (SELECT COUNT(DISTINCT install_id) FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day')) AS affected_installs`,
+         COALESCE(SUM(events), 0) AS window_events,
+         COALESCE(SUM(CASE WHEN install_id <> '' THEN events ELSE 0 END), 0) AS identified_events,
+         COUNT(DISTINCT NULLIF(install_id, '')) AS affected_installs
+       FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day')`,
     ).bind(fingerprint).first<{ window_events: number; identified_events: number; affected_installs: number }>(),
     env.DB.prepare(
-      `SELECT facet, value, COUNT(DISTINCT install_id) AS installs, SUM(events) AS events FROM (
+      `SELECT facet, value, COUNT(DISTINCT NULLIF(install_id, '')) AS installs, SUM(events) AS events FROM (
          SELECT 'platform' AS facet, os || ' ' || arch AS value, install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os <> ''
          UNION ALL SELECT 'osBuild', CAST(os_build AS TEXT), install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os_build > 0
          UNION ALL SELECT 'osRevision', CAST(os_revision AS TEXT), install_id, events FROM report_event_dimensions WHERE fingerprint = ?1 AND date >= date('now', '-29 day') AND os_revision > 0

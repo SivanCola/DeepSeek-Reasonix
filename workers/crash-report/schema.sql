@@ -191,9 +191,9 @@ CREATE TABLE IF NOT EXISTS report_installations (
 CREATE INDEX IF NOT EXISTS report_installations_fingerprint_date
   ON report_installations (fingerprint, date);
 
--- Event facts preserve every observed diagnostic environment. The per-install
--- table above answers affected-install counts, but its latest-value dimensions
--- must not relabel earlier GPU/runtime events from the same day.
+-- Event facts preserve every observed diagnostic environment. Empty install_id
+-- is the sentinel for an event that did not carry an anonymous installation ID;
+-- it contributes to event totals and dimension filters but never device counts.
 CREATE TABLE IF NOT EXISTS report_event_dimensions (
   date TEXT NOT NULL,
   fingerprint TEXT NOT NULL,

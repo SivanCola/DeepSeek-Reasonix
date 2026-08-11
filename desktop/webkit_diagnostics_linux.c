@@ -4,7 +4,11 @@
 #include <webkit2/webkit2.h>
 
 #define REASONIX_RECOVERY_COOLDOWN_US (30 * G_USEC_PER_SEC)
+#ifdef REASONIX_WEBKIT_SMOKE
+#define REASONIX_RECOVERY_TIMEOUT_SECONDS 1
+#else
 #define REASONIX_RECOVERY_TIMEOUT_SECONDS 30
+#endif
 
 static WebKitWebView *reasonix_web_view = NULL;
 static gboolean reasonix_recovery_pending = FALSE;
@@ -14,6 +18,23 @@ static guint reasonix_recovery_timeout_id = 0;
 static guint64 reasonix_generation = 0;
 static guint64 reasonix_pending_generation = 0;
 static WebKitWebProcessTerminationReason reasonix_pending_reason = WEBKIT_WEB_PROCESS_CRASHED;
+
+#ifdef REASONIX_WEBKIT_SMOKE
+enum {
+  REASONIX_WEBKIT_SMOKE_SUCCESS = 1,
+  REASONIX_WEBKIT_SMOKE_FAILURE = 2,
+  REASONIX_WEBKIT_SMOKE_TIMEOUT = 3,
+  REASONIX_WEBKIT_SMOKE_COOLDOWN = 4
+};
+static GMainLoop *reasonix_test_loop = NULL;
+static WebKitWebView *reasonix_test_web_view = NULL;
+static int reasonix_test_mode = 0;
+static int reasonix_test_event_count = 0;
+static int reasonix_test_reload_count_value = 0;
+static gboolean reasonix_test_initial_termination = FALSE;
+static gboolean reasonix_test_timed_out = FALSE;
+static guint reasonix_test_safety_timeout_id = 0;
+#endif
 
 static GtkWidget *reasonix_find_web_view(GtkWidget *widget) {
   if (WEBKIT_IS_WEB_VIEW(widget)) return widget;
@@ -69,6 +90,9 @@ static void reasonix_web_process_terminated(WebKitWebView *web_view,
   reasonix_recovery_load_failed = FALSE;
   reasonix_recovery_timeout_id = g_timeout_add_seconds(REASONIX_RECOVERY_TIMEOUT_SECONDS,
                                                         reasonix_recovery_timeout, NULL);
+#ifdef REASONIX_WEBKIT_SMOKE
+  reasonix_test_reload_count_value++;
+#endif
   webkit_web_view_reload(web_view);
 }
 
@@ -87,6 +111,12 @@ static void reasonix_load_changed(WebKitWebView *web_view, WebKitLoadEvent event
   (void)web_view;
   (void)data;
   if (reasonix_recovery_pending && event == WEBKIT_LOAD_FINISHED) {
+#ifdef REASONIX_WEBKIT_SMOKE
+    if (reasonix_test_mode == REASONIX_WEBKIT_SMOKE_TIMEOUT) return;
+    if (reasonix_test_mode == REASONIX_WEBKIT_SMOKE_FAILURE) {
+      reasonix_recovery_load_failed = TRUE;
+    }
+#endif
     reasonix_finish_recovery(reasonix_recovery_load_failed ? 2 : 1);
   }
 }
@@ -133,3 +163,95 @@ static gboolean reasonix_attach_webkit_observer(gpointer data) {
 void reasonix_install_webkit_observer(void) {
   g_main_context_invoke(NULL, reasonix_attach_webkit_observer, NULL);
 }
+
+#ifdef REASONIX_WEBKIT_SMOKE
+static gboolean reasonix_test_terminate_again(gpointer data) {
+  (void)data;
+  if (reasonix_test_web_view != NULL) {
+    webkit_web_view_terminate_web_process(reasonix_test_web_view);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static void reasonix_test_initial_load_changed(WebKitWebView *web_view,
+                                                WebKitLoadEvent event,
+                                                gpointer data) {
+  (void)data;
+  if (event != WEBKIT_LOAD_FINISHED || reasonix_test_initial_termination) return;
+  reasonix_test_initial_termination = TRUE;
+  webkit_web_view_terminate_web_process(web_view);
+}
+
+static gboolean reasonix_test_safety_timeout(gpointer data) {
+  (void)data;
+  reasonix_test_safety_timeout_id = 0;
+  reasonix_test_timed_out = TRUE;
+  if (reasonix_test_loop != NULL) g_main_loop_quit(reasonix_test_loop);
+  return G_SOURCE_REMOVE;
+}
+
+void reasonix_test_webkit_event_seen(int reason, int recovery) {
+  (void)reason;
+  reasonix_test_event_count++;
+  if (reasonix_test_mode == REASONIX_WEBKIT_SMOKE_COOLDOWN &&
+      reasonix_test_event_count == 1 && recovery == 1) {
+    g_idle_add(reasonix_test_terminate_again, NULL);
+    return;
+  }
+  if (reasonix_test_loop != NULL) g_main_loop_quit(reasonix_test_loop);
+}
+
+int reasonix_test_webkit_reload_count(void) {
+  return reasonix_test_reload_count_value;
+}
+
+int reasonix_test_webkit_run(int mode) {
+  if (mode < REASONIX_WEBKIT_SMOKE_SUCCESS || mode > REASONIX_WEBKIT_SMOKE_COOLDOWN) return -1;
+  if (!gtk_init_check(NULL, NULL)) return -2;
+
+  if (reasonix_recovery_timeout_id != 0) {
+    g_source_remove(reasonix_recovery_timeout_id);
+    reasonix_recovery_timeout_id = 0;
+  }
+  reasonix_web_view = NULL;
+  reasonix_recovery_pending = FALSE;
+  reasonix_recovery_load_failed = FALSE;
+  reasonix_last_recovery_at = 0;
+  reasonix_generation = 0;
+  reasonix_pending_generation = 0;
+  reasonix_test_mode = mode;
+  reasonix_test_event_count = 0;
+  reasonix_test_reload_count_value = 0;
+  reasonix_test_initial_termination = FALSE;
+  reasonix_test_timed_out = FALSE;
+
+  GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  GtkWidget *widget = webkit_web_view_new();
+  if (window == NULL || widget == NULL) return -3;
+  gtk_container_add(GTK_CONTAINER(window), widget);
+  gtk_widget_show_all(window);
+  if (reasonix_attach_webkit_observer(NULL) != G_SOURCE_REMOVE || reasonix_web_view == NULL) {
+    gtk_widget_destroy(window);
+    return -4;
+  }
+  reasonix_test_web_view = WEBKIT_WEB_VIEW(widget);
+  g_signal_connect(widget, "load-changed", G_CALLBACK(reasonix_test_initial_load_changed), NULL);
+  reasonix_test_loop = g_main_loop_new(NULL, FALSE);
+  reasonix_test_safety_timeout_id = g_timeout_add_seconds(15, reasonix_test_safety_timeout, NULL);
+  webkit_web_view_load_html(reasonix_test_web_view,
+                           "<html><body>Reasonix WebKit native smoke</body></html>",
+                           "https://reasonix.invalid/");
+  g_main_loop_run(reasonix_test_loop);
+
+  if (reasonix_test_safety_timeout_id != 0) {
+    g_source_remove(reasonix_test_safety_timeout_id);
+    reasonix_test_safety_timeout_id = 0;
+  }
+  g_main_loop_unref(reasonix_test_loop);
+  reasonix_test_loop = NULL;
+  gtk_widget_destroy(window);
+  reasonix_test_web_view = NULL;
+  reasonix_web_view = NULL;
+  return reasonix_test_timed_out ? -5 : 0;
+}
+#endif

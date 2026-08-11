@@ -44,6 +44,12 @@ engine/kind/reason/exit code must share one fingerprint. Then verify:
 
 ## Normal-experience gates
 
+The candidate must keep pre-Wails work to one local configuration read, one
+non-blocking ownership lock, and one small atomic lifecycle write. Runtime
+discovery and all report/metric persistence run after Wails startup or on the
+bounded background consumers; COM and GTK callbacks only enqueue or increment
+an atomic drop counter. Diagnostic failure remains fail-open.
+
 Compare the same SHA with diagnostics disabled. Diagnostic initialization p95
 must be at most 10 ms and p99 at most 25 ms. DOM-ready p95 may regress by no
 more than `max(20 ms, 2%)`; shutdown p95 by no more than 20 ms; idle CPU by less

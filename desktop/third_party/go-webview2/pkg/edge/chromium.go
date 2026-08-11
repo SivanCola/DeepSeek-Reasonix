@@ -621,18 +621,28 @@ func (e *Chromium) ProcessFailed(sender *ICoreWebView2, args *ICoreWebView2Proce
 	kind := diagnostic.Kind
 	if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
 		kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE {
-		if e.beginFailedRendererRecovery(diagnostic, time.Now()) {
-			if err := sender.Reload(); err != nil {
-				if failed, ok := e.finishFailedRendererRecovery("reload_failed"); ok {
-					notifyProcessFailedObserver(failed)
-				}
-				e.nonFatalErrorCallback(fmt.Errorf("reload failed WebView2 renderer: %w", err))
-			}
-		}
+		e.handleFailedRendererRecovery(diagnostic, time.Now(), sender.Reload)
 	} else if kind != COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
 		notifyProcessFailedObserver(diagnostic)
 	}
 	return 0
+}
+
+func (e *Chromium) handleFailedRendererRecovery(diagnostic ProcessFailedDiagnostic, now time.Time, reload func() error) {
+	if !e.beginFailedRendererRecovery(diagnostic, now) {
+		// Cooldown suppresses another native reload, not the diagnostic event.
+		// Recording it as not_applicable preserves every renderer failure while
+		// keeping recovery bounded to one attempt.
+		diagnostic.Recovery = "not_applicable"
+		notifyProcessFailedObserver(diagnostic)
+		return
+	}
+	if err := reload(); err != nil {
+		if failed, ok := e.finishFailedRendererRecovery("reload_failed"); ok {
+			notifyProcessFailedObserver(failed)
+		}
+		e.nonFatalErrorCallback(fmt.Errorf("reload failed WebView2 renderer: %w", err))
+	}
 }
 
 func (e *Chromium) beginFailedRendererRecovery(diagnostic ProcessFailedDiagnostic, now time.Time) bool {

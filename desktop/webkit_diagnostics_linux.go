@@ -12,12 +12,19 @@ import "C"
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 var webKitObserverState = struct {
 	sync.Once
-	events chan webKitNativeEvent
+	events  chan webKitNativeEvent
+	dropped atomic.Uint64
 }{events: make(chan webKitNativeEvent, 32)}
+
+// observeWebKitNativeEvent is a no-op in production. The tagged native smoke
+// replaces it during process startup so an actual WebKit termination can drive
+// the same callback and recovery state machine without polling.
+var observeWebKitNativeEvent = func(webKitNativeEvent) {}
 
 func installWebKitProcessObserver(app *App, enabled bool) {
 	if app == nil || !enabled || !app.diagnosticsOwner {
@@ -30,6 +37,7 @@ func installWebKitProcessObserver(app *App, enabled bool) {
 				_ = writePendingReport(report, true)
 				app.recordDiagnosticMetric("desktop_web_runtime_failure", failureBucket)
 				app.recordDiagnosticMetric("desktop_web_runtime_outcome", outcome)
+				recordDroppedWebRuntimeEvents(app, "webkitgtk", &webKitObserverState.dropped)
 			}
 		}()
 		C.reasonix_install_webkit_observer()
@@ -60,10 +68,12 @@ func reasonixWebKitProcessTerminated(reason, recovery C.int, generation C.ulongl
 		reason: int(reason), recovery: int(recovery), generation: uint64(generation),
 		runtimeContext: webRuntimeContextForTelemetry(0),
 	}
+	observeWebKitNativeEvent(event)
 	select {
 	case webKitObserverState.events <- event:
 	default:
-		// Native failures are exceptionally rare. Keep the GTK callback bounded;
-		// lifecycle v2 remains the fallback if a pathological burst fills the queue.
+		// Keep the GTK callback bounded; the background consumer reports queue
+		// pressure without making this callback touch disk or network.
+		webKitObserverState.dropped.Add(1)
 	}
 }

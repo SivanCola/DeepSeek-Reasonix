@@ -40,11 +40,11 @@ import { createBoundedRefreshCoordinator, sameTabMetaLists, shouldRefreshTabMeta
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
 import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRemoteForwards, onRemoteServer, onRemoteStatus, onRuntimeRebuilt, onSessionRecovered, openExternal } from "./lib/bridge";
+import { useConfigLoadWarnings } from "./lib/useConfigLoadWarnings";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
 import { clearAttentionChimeKeys, playAttentionChime, playSuccessChime, shouldPlayAttentionChimeForEvent } from "./lib/sound";
 import { NoticeCard, Transcript } from "./components/Transcript";
 import { Composer } from "./components/Composer";
-import { TranscriptSelectionMenu } from "./components/TranscriptSelectionMenu";
 import { TodoPanel } from "./components/TodoPanel";
 import { ApprovalModal } from "./components/ApprovalModal";
 import { AskCard } from "./components/AskCard";
@@ -65,7 +65,6 @@ import { RemoteWorkspaceLaunchGate, resolveRemoteWorkspace } from "./lib/remoteW
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { UpdaterProvider } from "./lib/useUpdater";
-import { ContextPanel } from "./components/ContextPanel";
 import { Tooltip } from "./components/Tooltip";
 import { StartupSplash } from "./components/StartupSplash";
 import { OnboardingOverlay } from "./components/OnboardingOverlay";
@@ -285,6 +284,9 @@ function NoticePreviewPanel() {
     </div>
   );
 }
+
+const TranscriptSelectionMenu = lazy(() => import("./components/TranscriptSelectionMenu").then((module) => ({ default: module.TranscriptSelectionMenu })));
+const ContextPanel = lazy(() => import("./components/ContextPanel").then((module) => ({ default: module.ContextPanel })));
 const HistoryPanel = lazy(() => import("./components/HistoryPanel").then((module) => ({ default: module.HistoryPanel })));
 const SettingsPanel = lazy(() => import("./components/SettingsPanelEntry").then((module) => ({ default: module.SettingsPanel })));
 const RemotePanel = lazy(() => import("./components/RemotePanel").then((module) => ({ default: module.RemotePanel })));
@@ -1158,7 +1160,7 @@ export default function App() {
   const setSettingsFocus = useOverlayStore((s) => s.setSettingsFocus);
   const [desktopLayoutStyle, setDesktopLayoutStyle] = useState<DesktopLayoutStyle>("workbench");
   const singleSurfaceLayout = desktopLayoutStyle === "workbench" || desktopLayoutStyle === "creation";
-  const [configLoadWarnings, setConfigLoadWarnings] = useState<string[]>([]);
+  const { configLoadWarnings, applySnapshot: applyConfigWarningSnapshot, reload: reloadConfigWarnings, dismiss: dismissConfigWarnings } = useConfigLoadWarnings();
   const [startupUpdateChecksEnabled, setStartupUpdateChecksEnabled] = useState<boolean | null>(null);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const paletteOpen = useOverlayStore((s) => s.paletteOpen);
@@ -1524,11 +1526,7 @@ export default function App() {
       ]);
       if (cancelled) return;
       applyDesktopPreferences(settings);
-      setConfigLoadWarnings(
-        Array.isArray(settings.configWarnings)
-          ? settings.configWarnings.filter((w): w is string => typeof w === "string" && w.trim() !== "")
-          : [],
-      );
+      applyConfigWarningSnapshot(settings.configWarnings, settings.configWarningsRevision);
       hydrateDisplayMode(settings.displayMode);
       setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t, runtimeStatus));
       setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
@@ -1560,7 +1558,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopPreferences, t]);
+  }, [applyConfigWarningSnapshot, applyDesktopPreferences, t]);
 
   useEffect(() => {
     setSidebarImDetailConnectionId((current) => {
@@ -4861,8 +4859,7 @@ export default function App() {
                   void (async () => {
                     try {
                       const view = await app.ReloadUserConfig?.();
-                      if (view?.configWarnings) setConfigLoadWarnings(view.configWarnings);
-                      else setConfigLoadWarnings([]);
+                      reloadConfigWarnings(view?.configWarnings, view?.configWarningsRevision);
                     } catch {
                       /* keep banner */
                     }
@@ -4872,7 +4869,7 @@ export default function App() {
                 {t("config.reloadConfig")}
               </button>
               <span className="banner__hint">{t("config.doctorHint")}</span>
-              <button type="button" className="btn btn--small" onClick={() => setConfigLoadWarnings([])}>
+              <button type="button" className="btn btn--small" onClick={dismissConfigWarnings}>
                 {t("updater.dismiss")}
               </button>
             </div>
@@ -5289,21 +5286,23 @@ export default function App() {
                   <RemotePanel onClose={() => setWorkspacePanel(false)} />
                 </Suspense>
               ) : rightDockMode === "context" && desktopLayoutStyle !== "creation" ? (
-                <ContextPanel
-                  tabId={activeTabId}
-                  context={state.context}
-                  usage={state.usage}
-                  sessionTokens={state.sessionTokens}
-                  sessionCost={state.sessionCost}
-                  sessionCurrency={state.sessionCurrency}
-                  sessionTurns={sessionTurns}
-                  turnTokens={state.turnTotalTokens}
-                  turnCost={state.turnCost}
-                  balance={state.balance}
-                  sessionGen={state.sessionGen}
-                  refreshKey={dockRefreshKey + state.contextPanelSeq}
-                  usageSeq={state.usageSeq}
-                />
+                <Suspense fallback={null}>
+                  <ContextPanel
+                    tabId={activeTabId}
+                    context={state.context}
+                    usage={state.usage}
+                    sessionTokens={state.sessionTokens}
+                    sessionCost={state.sessionCost}
+                    sessionCurrency={state.sessionCurrency}
+                    sessionTurns={sessionTurns}
+                    turnTokens={state.turnTotalTokens}
+                    turnCost={state.turnCost}
+                    balance={state.balance}
+                    sessionGen={state.sessionGen}
+                    refreshKey={dockRefreshKey + state.contextPanelSeq}
+                    usageSeq={state.usageSeq}
+                  />
+                </Suspense>
               ) : (
                 <Suspense fallback={null}>
                   <WorkspacePanel
@@ -5507,11 +5506,12 @@ export default function App() {
       <HeartbeatPanel open={heartbeatOpen} onClose={() => setHeartbeatOpen(false)} onOpenTopic={(scope, workspaceRoot, topicId) => {
         void handleOpenTopic(scope, workspaceRoot, topicId);
       }} />
-      <TranscriptSelectionMenu
+      <Suspense fallback={null}><TranscriptSelectionMenu
         enabled={Boolean(activeTabId && !activeTab?.readOnly && !decisionSurface && !sidebarImDetailConnection && !hydratePlaceholderActive)}
         resetKey={activeTabId ?? ""}
         onAddToChat={addSelectedTextToComposer}
       />
+      </Suspense>
       {windowsFramelessChrome && (
         <WindowsWindowControls
           maximised={mainWindowMaximised}
