@@ -176,6 +176,18 @@ func (j *IngressJournal) Complete(eventID string) error {
 	return j.writeLocked(path, record)
 }
 
+// Abandon releases the in-process claim while keeping the durable received
+// record replayable. Hosts call it when admission fails before a session inbox
+// owns the turn.
+func (j *IngressJournal) Abandon(eventID string) {
+	if j == nil || strings.TrimSpace(eventID) == "" {
+		return
+	}
+	j.mu.Lock()
+	delete(j.inflight, strings.TrimSpace(eventID))
+	j.mu.Unlock()
+}
+
 func (j *IngressJournal) update(eventID string, mutate func(*ingressRecord)) error {
 	if j == nil || strings.TrimSpace(eventID) == "" {
 		return nil

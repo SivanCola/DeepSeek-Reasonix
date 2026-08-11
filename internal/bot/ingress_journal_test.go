@@ -52,3 +52,20 @@ func TestIngressJournalAcceptedEventIsReplayableButCarriesTurnID(t *testing.T) {
 		t.Fatalf("completed replay=%d err=%v", len(replay), err)
 	}
 }
+
+func TestIngressJournalAbandonAllowsReplay(t *testing.T) {
+	j, err := NewIngressJournal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate, err := j.Begin("event-1", map[string]string{"text": "hello"}); err != nil || duplicate {
+		t.Fatalf("first begin = %v, %v", duplicate, err)
+	}
+	if duplicate, _ := j.Begin("event-1", nil); !duplicate {
+		t.Fatal("in-flight event was not suppressed")
+	}
+	j.Abandon("event-1")
+	if duplicate, err := j.Begin("event-1", map[string]string{"text": "hello"}); err != nil || duplicate {
+		t.Fatalf("abandoned replay = %v, %v", duplicate, err)
+	}
+}

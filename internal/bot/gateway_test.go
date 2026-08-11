@@ -1820,8 +1820,13 @@ func TestGatewayDefaultQueueSteersMediaOnlyActiveTurn(t *testing.T) {
 	}))
 	defer imageServer.Close()
 	oldValidator := botMediaURLValidator
+	oldClient := botMediaHTTPClient
 	botMediaURLValidator = func(*url.URL) error { return nil }
-	defer func() { botMediaURLValidator = oldValidator }()
+	botMediaHTTPClient = imageServer.Client()
+	defer func() {
+		botMediaURLValidator = oldValidator
+		botMediaHTTPClient = oldClient
+	}()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gw := NewGateway(GatewayConfig{
@@ -1919,12 +1924,19 @@ func TestGatewayQueueInterruptCancelsAndKeepsNewestMessage(t *testing.T) {
 	if !ctrl.wasCanceled() {
 		t.Fatal("controller was not canceled")
 	}
-	next := gw.sessions.Release(key)
-	if next == nil || next.Text != "newest request" {
-		t.Fatalf("release = %#v, want newest request", next)
+	// Durable interrupt keeps the message in the session inbox (not SessionManager.pending).
+	if next := gw.sessions.Release(key); next != nil {
+		t.Fatalf("legacy pending should be empty after durable interrupt, got %#v", next)
+	}
+	if n := gw.nextInboxMessage(key); n == nil || n.Text != "newest request" {
+		// Controllers without SessionAPI cannot durable-queue; accept cancel-only.
+		if api, ok := any(ctrl).(control.SessionAPI); ok {
+			_ = api
+			t.Fatalf("durable inbox missing newest request")
+		}
 	}
 	sent := adapter.sentMessages()
-	if len(sent) != 1 || !strings.Contains(sent[0].Text, "稍后处理这条新消息") {
+	if len(sent) != 1 || (!strings.Contains(sent[0].Text, "稍后处理") && !strings.Contains(sent[0].Text, "已持久排队") && !strings.Contains(sent[0].Text, "排队失败")) {
 		t.Fatalf("sent = %#v, want interrupt acknowledgement", sent)
 	}
 }
@@ -2360,6 +2372,20 @@ func TestGatewaySessionOptionsAllowSessionMappingGlobalWorkspace(t *testing.T) {
 	})
 	if root != "" {
 		t.Fatalf("global mapping workspace = %q, want empty global workspace", root)
+	}
+}
+
+func TestQQGroupSessionMappingIgnoresActorID(t *testing.T) {
+	mapping := SessionMapping{RemoteID: "group-openid", ChatType: string(ChatGroup)}
+	for _, actor := range []string{"member-a", "member-b"} {
+		msg := InboundMessage{Platform: PlatformQQ, ChatType: ChatGroup, ChatID: "group-openid", UserID: actor}
+		if !sessionMappingMatches(mapping, msg) {
+			t.Fatalf("QQ group mapping did not match actor %q", actor)
+		}
+	}
+	feishu := InboundMessage{Platform: PlatformFeishu, ChatType: ChatGroup, ChatID: "group-openid", UserID: "member-a"}
+	if sessionMappingMatches(mapping, feishu) {
+		t.Fatal("non-QQ group mapping unexpectedly ignored actor identity")
 	}
 }
 

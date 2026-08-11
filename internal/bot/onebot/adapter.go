@@ -62,17 +62,19 @@ type adapter struct {
 	cfg    Config
 	logger *slog.Logger
 
-	msgCh     chan bot.InboundMessage
-	cancel    context.CancelFunc
-	loopWG    sync.WaitGroup
-	connMu    sync.Mutex
-	conn      *websocket.Conn
-	writeMu   sync.Mutex
-	pendingMu sync.Mutex
-	pending   map[string]chan oneBotResponse
-	echoSeq   atomic.Uint64
-	statusMu  sync.RWMutex
-	status    bot.AdapterLifecycleSnapshot
+	msgCh      chan bot.InboundMessage
+	cancel     context.CancelFunc
+	loopWG     sync.WaitGroup
+	connMu     sync.Mutex
+	conn       *websocket.Conn
+	writeMu    sync.Mutex
+	pendingMu  sync.Mutex
+	pending    map[string]chan oneBotResponse
+	echoSeq    atomic.Uint64
+	identityMu sync.RWMutex
+	selfID     string
+	statusMu   sync.RWMutex
+	status     bot.AdapterLifecycleSnapshot
 }
 
 func (a *adapter) Platform() bot.Platform { return bot.PlatformQQ }
@@ -145,13 +147,29 @@ func (a *adapter) connectAndServe(ctx context.Context) error {
 		defer close(readDone)
 		a.readLoop(ctx, conn)
 	}()
-	for _, action := range []string{"get_version_info", "get_login_info"} {
-		if _, err := a.rpc(dialCtx, action, map[string]any{}); err != nil {
-			_ = conn.Close()
-			<-readDone
-			return err
-		}
+	if _, err := a.rpc(dialCtx, "get_version_info", map[string]any{}); err != nil {
+		_ = conn.Close()
+		<-readDone
+		return err
 	}
+	loginData, err := a.rpc(dialCtx, "get_login_info", map[string]any{})
+	if err != nil {
+		_ = conn.Close()
+		<-readDone
+		return err
+	}
+	var login struct {
+		UserID oneBotID `json:"user_id"`
+	}
+	if err := json.Unmarshal(loginData, &login); err != nil || strings.TrimSpace(login.UserID.String()) == "" {
+		_ = conn.Close()
+		<-readDone
+		if err != nil {
+			return fmt.Errorf("onebot get_login_info returned invalid user_id: %w", err)
+		}
+		return fmt.Errorf("onebot get_login_info returned empty user_id")
+	}
+	a.setSelfID(login.UserID.String())
 	a.setStatus(bot.AdapterLifecycleSnapshot{Phase: "ready", Ready: true, LastReadyAt: time.Now(), LastError: ""})
 	<-readDone
 	return fmt.Errorf("onebot websocket disconnected")
@@ -210,7 +228,7 @@ func (a *adapter) Send(ctx context.Context, msg bot.OutboundMessage) (bot.SendRe
 		return bot.SendResult{}, err
 	}
 	var response struct {
-		MessageID json.Number `json:"message_id"`
+		MessageID oneBotID `json:"message_id"`
 	}
 	_ = json.Unmarshal(data, &response)
 	return bot.SendResult{MessageID: response.MessageID.String()}, nil
@@ -246,17 +264,17 @@ func (a *adapter) readLoop(ctx context.Context, conn *websocket.Conn) {
 		msg := bot.InboundMessage{
 			Platform:  bot.PlatformQQ,
 			ChatType:  bot.ChatDM,
-			ChatID:    event.UserID,
-			UserID:    event.UserID,
+			ChatID:    event.UserID.String(),
+			UserID:    event.UserID.String(),
 			UserName:  event.Sender.Nickname,
 			Text:      strings.TrimSpace(event.RawMessage),
-			MessageID: fmt.Sprint(event.MessageID),
+			MessageID: event.MessageID.String(),
 		}
 		appendOneBotMedia(&msg, event.Message)
 		if event.MessageType == "group" {
 			msg.ChatType = bot.ChatGroup
-			msg.ChatID = event.GroupID
-			if a.cfg.RequireMention && !oneBotMessageMentions(event.RawMessage, a.cfg.SelfID) {
+			msg.ChatID = event.GroupID.String()
+			if a.cfg.RequireMention && !oneBotMessageMentions(event.RawMessage, a.currentSelfID()) {
 				continue
 			}
 		}
@@ -264,8 +282,6 @@ func (a *adapter) readLoop(ctx context.Context, conn *websocket.Conn) {
 		case a.msgCh <- msg:
 		case <-ctx.Done():
 			return
-		default:
-			a.logger.Warn("onebot inbound channel full", "chat_type", msg.ChatType)
 		}
 	}
 }
@@ -280,6 +296,51 @@ type oneBotEnvelope struct {
 }
 
 type oneBotResponse struct{ Envelope oneBotEnvelope }
+
+type oneBotID string
+
+func (id *oneBotID) UnmarshalJSON(data []byte) error {
+	if id == nil {
+		return fmt.Errorf("onebot id receiver is nil")
+	}
+	data = []byte(strings.TrimSpace(string(data)))
+	if len(data) == 0 || string(data) == "null" {
+		*id = ""
+		return nil
+	}
+	if data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*id = oneBotID(strings.TrimSpace(value))
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err != nil {
+		return fmt.Errorf("invalid onebot id: %w", err)
+	}
+	*id = oneBotID(number.String())
+	return nil
+}
+
+func (id oneBotID) String() string { return string(id) }
+
+func (a *adapter) setSelfID(value string) {
+	a.identityMu.Lock()
+	a.selfID = strings.TrimSpace(value)
+	a.identityMu.Unlock()
+}
+
+func (a *adapter) currentSelfID() string {
+	a.identityMu.RLock()
+	value := a.selfID
+	a.identityMu.RUnlock()
+	if value != "" {
+		return value
+	}
+	return strings.TrimSpace(a.cfg.SelfID)
+}
 
 func (a *adapter) rpc(ctx context.Context, action string, params map[string]any) (json.RawMessage, error) {
 	if ctx == nil {
@@ -383,9 +444,9 @@ func (a *adapter) dropConn(conn *websocket.Conn) {
 type oneBotEvent struct {
 	PostType    string          `json:"post_type"`
 	MessageType string          `json:"message_type"`
-	UserID      string          `json:"user_id"`
-	GroupID     string          `json:"group_id"`
-	MessageID   int64           `json:"message_id"`
+	UserID      oneBotID        `json:"user_id"`
+	GroupID     oneBotID        `json:"group_id"`
+	MessageID   oneBotID        `json:"message_id"`
 	RawMessage  string          `json:"raw_message"`
 	Message     json.RawMessage `json:"message"`
 	Sender      struct {

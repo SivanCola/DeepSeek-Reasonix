@@ -316,6 +316,7 @@ func AdapterBindings(cfg *config.Config, enabled map[bot.Platform]bool, feishuDo
 	}
 	var bindings []bot.AdapterBinding
 	hasConnection := make(map[bot.Platform]bool)
+	hasOfficialQQ := false
 	for _, conn := range cfg.Bot.Connections {
 		if !conn.Enabled {
 			continue
@@ -355,6 +356,7 @@ func AdapterBindings(cfg *config.Config, enabled map[bot.Platform]bool, feishuDo
 			}
 			bindings = append(bindings, bot.AdapterBinding{ID: id, Protocol: "official", Domain: strings.TrimSpace(conn.Domain), Platform: platform, Adapter: qq.New(qqCfg, logger)})
 			hasConnection[platform] = true
+			hasOfficialQQ = true
 		case bot.PlatformFeishu:
 			feishuCfg := cfg.Bot.Feishu
 			feishuCfg.Enabled = true
@@ -375,7 +377,7 @@ func AdapterBindings(cfg *config.Config, enabled map[bot.Platform]bool, feishuDo
 			hasConnection[platform] = true
 		}
 	}
-	if enabled[bot.PlatformQQ] && !hasConnection[bot.PlatformQQ] {
+	if enabled[bot.PlatformQQ] && cfg.Bot.QQ.Enabled && !hasOfficialQQ {
 		bindings = append(bindings, bot.AdapterBinding{ID: string(bot.PlatformQQ), Protocol: "official", Platform: bot.PlatformQQ, Adapter: qq.New(cfg.Bot.QQ, logger)})
 	}
 	if enabled[bot.PlatformFeishu] && !hasConnection[bot.PlatformFeishu] {
@@ -551,10 +553,7 @@ func rememberInbound(msg bot.InboundMessage, sessionID string, actualWorkspaceRo
 
 	cfg := config.LoadForEdit(userPath)
 	now := time.Now().UTC().Format(time.RFC3339)
-	changed := false
-	if msg.Platform == bot.PlatformQQ && config.NormalizeLegacyQQConnection(cfg) {
-		changed = true
-	}
+	changed := msg.Platform == bot.PlatformQQ && config.NormalizeLegacyQQConnection(cfg)
 	for i := range cfg.Bot.Connections {
 		conn := &cfg.Bot.Connections[i]
 		provider := strings.ToLower(strings.TrimSpace(conn.Provider))

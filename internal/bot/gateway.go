@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/secrets"
+	"reasonix/internal/sessioninbox"
 )
 
 // GatewayConfig 是 BotGateway 的配置。
@@ -185,7 +186,6 @@ type BotGateway struct {
 	cfg      GatewayConfig
 	adapters []AdapterBinding
 	sessions *SessionManager
-	broker   *SessionBroker
 	startErr []error
 
 	lifecycleMu sync.Mutex
@@ -328,7 +328,6 @@ func NewGatewayWithAdapterBindings(cfg GatewayConfig, adapters []AdapterBinding,
 		cfg:                     cfg,
 		adapters:                normalizeAdapterBindings(adapters),
 		sessions:                NewSessionManager(cfg.Debounce),
-		broker:                  NewSessionBroker(),
 		controllers:             make(map[string]*sessionState),
 		pendingReactionCleanups: make(map[string][]func()),
 		allowlist:               make(map[Platform]map[string]bool),
@@ -785,12 +784,7 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 	}
 	var ingressID string
 	completeIngress := func() {
-		if ingressID == "" || gw.cfg.IngressJournal == nil {
-			return
-		}
-		if err := gw.cfg.IngressJournal.Complete(ingressID); err != nil {
-			gw.logger.Warn("complete bot ingress journal failed", "err", err)
-		}
+		gw.completeIngressMessage(ctx, binding.Adapter, msg)
 	}
 	if gw.cfg.IngressJournal != nil && strings.TrimSpace(msg.MessageID) != "" {
 		ingressID = strings.TrimSpace(msg.ConnectionID) + "\x00" + strings.TrimSpace(msg.Protocol) + "\x00" + string(msg.Platform) + "\x00" + strings.TrimSpace(msg.MessageID)
@@ -801,6 +795,9 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 		}
 		if duplicate {
 			gw.logger.Info("duplicate bot ingress suppressed", "platform", msg.Platform, "connection", msg.ConnectionID, "message", hashID(msg.MessageID))
+			if state, _, recordErr := gw.cfg.IngressJournal.Record(ingressID); recordErr == nil && state == IngressCompleted {
+				gw.ackProviderIngress(ctx, binding.Adapter, msg.MessageID)
+			}
 			return
 		}
 	}
@@ -879,90 +876,127 @@ func (gw *BotGateway) handleMessage(ctx context.Context, binding AdapterBinding,
 	cleanup := gw.addPendingReaction(ctx, binding.Platform, binding.Adapter, msg)
 
 	queueMode := gw.queueMode(key, msg)
+	warnDeprecatedQueueDrop(gw.cfg.QueueDrop)
 	if gw.sessions.IsActive(key) {
-		switch queueMode {
-		case QueueModeSteer:
-			if gw.steerActiveSession(ctx, binding.Adapter, key, msg) {
-				gw.logger.Info("bot message steered into active turn", "session", key[:8])
-				if cleanup != nil {
-					cleanup()
+		// Busy session: durable inbox is the authority (not SessionManager.pending).
+		if IsSlashBypass(msg.Text) {
+			// Slash commands still acquire through the session lock below.
+		} else {
+			switch queueMode {
+			case QueueModeSteer:
+				if rec, ok := gw.steerActiveSessionDurable(ctx, binding.Adapter, key, msg); ok {
+					gw.logger.Info("bot message steered into active turn", "session", key[:8], "item", rec.ItemID)
+					if cleanup != nil {
+						cleanup()
+					}
+					_ = gw.sendText(ctx, binding.Adapter, msg, formatQueuedReceipt(rec)+"（已并入当前任务）")
+					return
 				}
-				_ = gw.sendText(ctx, binding.Adapter, msg, "已收到，会并入当前任务。")
-				completeIngress()
+			case QueueModeInterrupt:
+				gw.cancelActiveSession(key)
+				runReactionCleanups(gw.takeReactionCleanups(key))
+				rec, err := gw.interruptActiveSessionDurable(ctx, binding.Adapter, key, msg)
+				gw.storeReactionCleanup(key, cleanup)
+				if err != nil {
+					gw.logger.Warn("bot interrupt enqueue failed", "session", key[:8], "err", err)
+					_ = gw.sendText(ctx, binding.Adapter, msg, "排队失败："+err.Error())
+					return
+				}
+				gw.logger.Info("bot active turn interrupted; newest message durable-queued", "session", key[:8], "item", rec.ItemID)
+				_ = gw.sendText(ctx, binding.Adapter, msg, "已停止当前任务。"+formatQueuedReceipt(rec))
 				return
+			case QueueModeCollect:
+				if rec, err := gw.collectActiveSessionDurable(ctx, binding.Adapter, key, msg); err == nil {
+					gw.storeReactionCleanup(key, cleanup)
+					_ = gw.sendText(ctx, binding.Adapter, msg, formatQueuedReceipt(rec))
+					return
+				} else if errors.Is(err, sessioninbox.ErrCapacityItems) || errors.Is(err, sessioninbox.ErrCapacityBytes) || errors.Is(err, sessioninbox.ErrItemTooLarge) {
+					if cleanup != nil {
+						cleanup()
+					}
+					_ = gw.sendText(ctx, binding.Adapter, msg, "当前会话排队已满，请稍后再发，或使用 /queue pause 后清理。")
+					return
+				}
+			default: // followup
+				if rec, err := gw.followupActiveSessionDurable(ctx, binding.Adapter, key, msg); err == nil {
+					gw.storeReactionCleanup(key, cleanup)
+					_ = gw.sendText(ctx, binding.Adapter, msg, formatQueuedReceipt(rec))
+					return
+				} else if errors.Is(err, sessioninbox.ErrCapacityItems) || errors.Is(err, sessioninbox.ErrCapacityBytes) || errors.Is(err, sessioninbox.ErrItemTooLarge) {
+					if cleanup != nil {
+						cleanup()
+					}
+					_ = gw.sendText(ctx, binding.Adapter, msg, "当前会话排队已满，请稍后再发。")
+					return
+				}
 			}
-		case QueueModeInterrupt:
-			gw.cancelActiveSession(key)
-			runReactionCleanups(gw.takeReactionCleanups(key))
-			result := gw.sessions.ReplacePending(key, msg)
-			gw.storeReactionCleanup(key, cleanup)
-			gw.logger.Info("bot active turn interrupted; newest message queued", "session", key[:8], "pending", result.Pending)
-			_ = gw.sendText(ctx, binding.Adapter, msg, "已停止当前任务，稍后处理这条新消息。")
-			return
 		}
 	}
 
-	// session 并发控制
+	// session 并发控制 — only the active-turn lock remains here; bodies live in inbox.
 	result := gw.sessions.TryAcquireWithQueue(key, msg, QueueOptions{
-		Mode: queueMode,
-		Cap:  gw.cfg.QueueCap,
-		Drop: gw.cfg.QueueDrop,
+		Mode: QueueModeFollowup, // never drop_old; capacity enforced by inbox
+		Cap:  sessioninbox.DefaultMaxItems,
+		Drop: QueueDropNew,
 	})
 	if result.Rejected {
 		gw.logger.Warn("bot queue rejected message", "session", key[:8], "pending", result.Pending, "mode", result.Mode)
 		if cleanup != nil {
 			cleanup()
 		}
-		_ = gw.sendText(ctx, binding.Adapter, msg, "当前会话排队已满，请稍后再发，或使用 /queue interrupt 中断当前任务。")
-		completeIngress()
+		_ = gw.sendText(ctx, binding.Adapter, msg, "当前会话排队已满，请稍后再发，或使用 /queue 管理队列。")
 		return
 	}
-	if result.Queued {
-		gw.logger.Debug("message queued", "session", key[:8], "mode", result.Mode, "pending", result.Pending, "dropped", result.Dropped)
-		gw.storeReactionCleanup(key, cleanup)
-		return
-	}
-	if !result.Acquired {
-		gw.logger.Debug("session busy without queue action", "session", key[:8])
-		gw.storeReactionCleanup(key, cleanup)
-		completeIngress()
-		return
-	}
-
-	// Run the turn on its own goroutine so the dispatch loop stays free to read
-	// the next inbound message. A turn that hits interactive approval/ask blocks
-	// inside RunTurn waiting for ctrl.Approve/AnswerQuestion — and the ONLY path
-	// that calls those is handleSlashCommand on this same dispatch goroutine. Run
-	// it inline and the loop can never deliver the /approve (or card) reply that
-	// would unblock it: the session wedges until restart (#4701, #4863, #4402).
-	// Per-session serialization is still held by the session lock (active[key]),
-	// which the deferred Release inside runTurn clears.
-	gw.turnWG.Go(func() {
-		gw.runTurn(ctx, binding.Adapter, key, msg, cleanup)
-	})
+	gw.dispatchQueueResult(ctx, binding.Adapter, key, msg, cleanup, result)
 }
 
 func (gw *BotGateway) queueMode(key string, msg InboundMessage) string {
 	return gw.sessions.QueueMode(key, gw.cfg.QueueMode)
 }
 
-func (gw *BotGateway) steerActiveSession(ctx context.Context, adapter Adapter, key string, msg InboundMessage) bool {
+func (gw *BotGateway) sessionAPI(key string) control.SessionAPI {
+	gw.mu.Lock()
+	state, ok := gw.controllers[key]
+	gw.mu.Unlock()
+	if !ok || state == nil || state.ctrl == nil {
+		return nil
+	}
+	if api, ok := state.ctrl.(control.SessionAPI); ok {
+		return api
+	}
+	return nil
+}
+
+func (gw *BotGateway) steerActiveSessionDurable(ctx context.Context, adapter Adapter, key string, msg InboundMessage) (sessioninbox.InboxReceipt, bool) {
 	text := strings.TrimSpace(msg.Text)
 	if text == "" && len(msg.MediaURLs) == 0 && len(msg.Media) == 0 {
-		return false
+		return sessioninbox.InboxReceipt{}, false
 	}
 	gw.mu.Lock()
 	state, ok := gw.controllers[key]
 	gw.mu.Unlock()
 	if !ok || state.ctrl == nil {
-		return false
+		return sessioninbox.InboxReceipt{}, false
 	}
-	text = gw.inputTextWithMedia(ctx, adapter, msg, state)
+	msg = gw.prepareDurableInboxMessage(ctx, adapter, msg, state)
+	text = msg.Text
 	if strings.TrimSpace(text) == "" {
-		return false
+		return sessioninbox.InboxReceipt{}, false
 	}
-	controller, ok := state.ctrl.(interface{ TrySteer(string) bool })
-	return ok && controller.TrySteer(text)
+	msg.Text = text
+	api, ok := state.ctrl.(control.SessionAPI)
+	if !ok {
+		// Legacy fallback.
+		if steerer, ok := state.ctrl.(interface{ TrySteer(string) bool }); ok && steerer.TrySteer(text) {
+			return sessioninbox.InboxReceipt{Disposition: sessioninbox.DispositionSteerAccepted}, true
+		}
+		return sessioninbox.InboxReceipt{}, false
+	}
+	rec, err := enqueueViaInbox(api, msg, sessioninbox.IntentSteer)
+	if err != nil {
+		return sessioninbox.InboxReceipt{}, false
+	}
+	return rec, true
 }
 
 func (gw *BotGateway) cancelActiveSession(key string) {
@@ -1715,9 +1749,16 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 		_ = gw.sendText(ctx, adapter, msg, text)
 
 	case strings.HasPrefix(msg.Text, "/queue"):
+		if reply, handled, kick := gw.handleQueueInboxCommand(ctx, key, msg); handled {
+			_ = gw.sendText(ctx, adapter, msg, reply)
+			if kick {
+				gw.kickInbox(ctx, adapter, key, msg)
+			}
+			return
+		}
 		mode, clear, statusOnly, ok := parseQueueCommand(msg.Text)
 		if !ok {
-			_ = gw.sendText(ctx, adapter, msg, "用法: /queue steer|followup|collect|interrupt|status|default")
+			_ = gw.sendText(ctx, adapter, msg, "用法: /queue steer|followup|collect|interrupt|status|list|show|delete|move|pause|resume|retry|default")
 			return
 		}
 		if statusOnly {
@@ -1827,6 +1868,22 @@ func (gw *BotGateway) handleSlashCommand(ctx context.Context, adapter Adapter, k
 			"/help - 显示帮助"
 		_ = gw.sendText(ctx, adapter, msg, help)
 	}
+}
+
+func (gw *BotGateway) kickInbox(ctx context.Context, adapter Adapter, key string, fallback InboundMessage) {
+	if gw.sessions.IsActive(key) {
+		return
+	}
+	next := gw.nextInboxTurn(key, fallback)
+	if next == nil {
+		return
+	}
+	if !gw.sessions.TryAcquireIdle(key) {
+		return
+	}
+	gw.turnWG.Go(func() {
+		gw.runTurnItem(ctx, adapter, key, next.msg, next.itemID, nil)
+	})
 }
 
 func slashCommandVerb(text string) string {
@@ -2045,11 +2102,18 @@ func parseQueueCommand(text string) (mode string, clear bool, statusOnly bool, o
 }
 
 func (gw *BotGateway) queueStatusText(key string, msg InboundMessage) string {
-	return fmt.Sprintf("当前队列模式：%s\n当前会话排队: %d\n全局上限: %d\n溢出策略: %s\n用法：/queue steer|followup|collect|interrupt|status|default",
+	inboxN := 0
+	paused := false
+	if api := gw.sessionAPI(key); api != nil {
+		snap := api.InboxSnapshot()
+		inboxN = len(snap.Items)
+		paused = snap.Paused
+	}
+	return fmt.Sprintf("当前队列模式：%s\n持久化 Inbox: %d%s\n全局上限: %d\n溢出策略: 拒绝新消息（queue_drop 已弃用）\n用法：/queue steer|followup|collect|interrupt|status|list|show|delete|move|pause|resume|retry|default",
 		queueModeLabel(gw.queueMode(key, msg)),
-		gw.sessions.PendingCount(key),
-		gw.cfg.QueueCap,
-		queueDropLabel(gw.cfg.QueueDrop),
+		inboxN,
+		map[bool]string{true: " (paused)", false: ""}[paused],
+		sessioninbox.DefaultMaxItems,
 	)
 }
 
@@ -2063,17 +2127,6 @@ func queueModeLabel(mode string) string {
 		return "打断重跑"
 	default:
 		return "即时补充"
-	}
-}
-
-func queueDropLabel(drop string) string {
-	switch NormalizeQueueDrop(drop) {
-	case QueueDropOld:
-		return "丢弃最早消息"
-	case QueueDropNew:
-		return "拒绝新消息"
-	default:
-		return "压缩摘要"
 	}
 }
 
@@ -2218,34 +2271,28 @@ func toolApprovalModeLabel(mode string) string {
 }
 
 func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, msg InboundMessage, cleanup func()) {
+	gw.runTurnItem(ctx, adapter, key, msg, "", cleanup)
+}
+
+func (gw *BotGateway) runTurnItem(ctx context.Context, adapter Adapter, key string, msg InboundMessage, inboxItemID string, cleanup func()) {
 	gw.logger.Info("bot turn started", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
-	defer func() {
-		// 检查是否有等待队列中的消息
-		next := gw.sessions.Release(key)
-		if next != nil {
-			if cleanup != nil {
-				cleanup()
-			}
-			nextCleanup := makeReactionCleanup(gw.takeReactionCleanups(key))
-			gw.logger.Info("bot pending message released", "platform", next.Platform, "chat_type", next.ChatType, "chat", hashID(next.ChatID), "session", key[:8])
-			gw.runTurn(ctx, adapter, key, *next, nextCleanup)
-			return
-		}
-		gw.flushReactionCleanups(key, cleanup)
-	}()
+	defer gw.finishTurnItem(ctx, adapter, key, msg, cleanup)
 
 	// 获取或创建 Controller
 	state := gw.getOrCreateSession(ctx, key, msg)
 	if state == nil || state.ctrl == nil {
 		_ = gw.sendText(ctx, adapter, msg, "内部错误：无法创建会话。")
-		gw.completeIngressMessage(msg)
+		gw.completeIngressMessage(ctx, adapter, msg)
 		return
 	}
 	gw.rememberSessionReady(msg, state.ctrl)
 
 	// 构建输入文本：群聊中在消息前加上发送者名，并把 IM 媒体保存为 @附件引用。
-	input := gw.inputTextWithMedia(ctx, adapter, msg, state)
-	if msg.ChatType == ChatGroup {
+	input := msg.Text
+	if inboxItemID == "" {
+		input = gw.inputTextWithMedia(ctx, adapter, msg, state)
+	}
+	if inboxItemID == "" && msg.ChatType == ChatGroup {
 		userName := strings.TrimSpace(msg.UserName)
 		if msg.ResolveUserName != nil {
 			if resolved := strings.TrimSpace(msg.ResolveUserName(ctx)); resolved != "" {
@@ -2310,24 +2357,6 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	// 创建带取消的 context
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	ingressID := gw.ingressIDForMessage(msg)
-	if ingressID != "" {
-		turnCtx = agent.WithHostTurnID(turnCtx, ingressID)
-	}
-	turnCtx = agent.WithHostTurnAccepted(turnCtx, func() {
-		if ingressID != "" && gw.cfg.IngressJournal != nil {
-			if err := gw.cfg.IngressJournal.MarkAccepted(ingressID, ingressID); err != nil {
-				gw.logger.Warn("mark bot ingress accepted failed", "err", err)
-			}
-		}
-		if gw.cfg.OnRemoteTurnAccepted != nil {
-			gw.cfg.OnRemoteTurnAccepted(msg, state.ctrl.SessionPath(), input)
-		}
-	})
-	if ingressID != "" && gw.cfg.IngressJournal != nil {
-		defer gw.completeIngressMessage(msg)
-	}
-
 	gw.mu.Lock()
 	live := gw.controllers[key] == state
 	if live {
@@ -2363,9 +2392,16 @@ func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, 
 	}()
 
 	// 运行一轮对话
-	err := gw.broker.SubmitTurn(turnCtx, TurnRequest{ID: gw.ingressIDForMessage(msg), SessionKey: key, Run: func(runCtx context.Context) error {
-		return state.ctrl.RunTurn(runCtx, input)
-	}})
+	var err error
+	if inboxItemID == "" {
+		err = state.ctrl.RunTurn(turnCtx, input)
+	} else if api, ok := state.ctrl.(interface {
+		RunInboxTurn(context.Context, string) error
+	}); ok {
+		err = api.RunInboxTurn(turnCtx, inboxItemID)
+	} else {
+		err = fmt.Errorf("controller cannot run durable inbox item")
+	}
 	sink.Emit(event.Event{Kind: event.TurnDone, Err: err})
 	if err != nil {
 		gw.logger.Warn("turn error", "session", key[:8], "err", err)
@@ -2381,13 +2417,41 @@ func (gw *BotGateway) ingressIDForMessage(msg InboundMessage) string {
 	return strings.TrimSpace(msg.ConnectionID) + "\x00" + strings.TrimSpace(msg.Protocol) + "\x00" + string(msg.Platform) + "\x00" + strings.TrimSpace(msg.MessageID)
 }
 
-func (gw *BotGateway) completeIngressMessage(msg InboundMessage) {
+func (gw *BotGateway) completeIngressMessage(ctx context.Context, adapter Adapter, msg InboundMessage) {
+	if gw == nil {
+		return
+	}
+	if id := gw.ingressIDForMessage(msg); id != "" && gw.cfg.IngressJournal != nil {
+		if err := gw.cfg.IngressJournal.Complete(id); err != nil {
+			gw.logger.Warn("complete bot ingress journal failed", "err", err)
+			return
+		}
+	}
+	gw.ackProviderIngress(ctx, adapter, msg.MessageID)
+}
+
+func (gw *BotGateway) ackProviderIngress(ctx context.Context, adapter Adapter, messageID string) {
+	ack, ok := adapter.(IngressAcknowledger)
+	if !ok || strings.TrimSpace(messageID) == "" {
+		return
+	}
+	if err := ack.AckIngress(ctx, messageID); err != nil {
+		gw.logger.Warn("ack provider ingress failed", "err", err)
+	}
+}
+
+func (gw *BotGateway) abandonIngressMessage(msg InboundMessage) {
 	if gw == nil || gw.cfg.IngressJournal == nil {
 		return
 	}
-	if id := gw.ingressIDForMessage(msg); id != "" {
-		if err := gw.cfg.IngressJournal.Complete(id); err != nil {
-			gw.logger.Warn("complete bot ingress journal failed", "err", err)
+	gw.cfg.IngressJournal.Abandon(gw.ingressIDForMessage(msg))
+}
+
+func (gw *BotGateway) retryProviderIngress(ctx context.Context, adapter Adapter, msg InboundMessage) {
+	gw.abandonIngressMessage(msg)
+	if retryer, ok := adapter.(IngressRetryer); ok {
+		if err := retryer.RetryIngress(ctx, msg.MessageID); err != nil {
+			gw.logger.Warn("request provider ingress retry failed", "err", err)
 		}
 	}
 }
@@ -2498,12 +2562,13 @@ func (gw *BotGateway) getOrCreateSession(ctx context.Context, key string, msg In
 			return true
 		}
 		if err := leases.Rebind(profile.sessionPath); err != nil {
-			if !degrade("lease held elsewhere", err) {
-				ctrl.Close()
-				leases.Release()
-				gw.logger.Error("attached bot session is in use", "err", control.SessionInUseMessage(err))
-				return nil
-			}
+			// Never replace an existing mapping merely because another frontend
+			// currently owns its controller. Starting fresh here silently rewrites
+			// the mapping and forks one conversation into multiple sessions.
+			ctrl.Close()
+			leases.Release()
+			gw.logger.Error("mapped bot session is in use", "err", control.SessionInUseMessage(err))
+			return nil
 		} else if loaded, err := agent.LoadSession(profile.sessionPath); err != nil {
 			if !degrade("load failed", err) {
 				ctrl.Close()
@@ -2932,7 +2997,12 @@ func sessionMappingIdentity(msg InboundMessage) (chatType string, userID string,
 	switch msg.ChatType {
 	case ChatGroup, ChatGuild:
 		chatType = string(msg.ChatType)
-		userID = strings.TrimSpace(msg.UserID)
+		// QQ group and guild mappings are conversation-scoped. The actor remains
+		// part of the structured turn context and authorization checks, but must
+		// not split one remote conversation into one session per member.
+		if msg.Platform != PlatformQQ {
+			userID = strings.TrimSpace(msg.UserID)
+		}
 	case ChatThread:
 		chatType = string(msg.ChatType)
 		threadID = strings.TrimSpace(msg.ThreadID)

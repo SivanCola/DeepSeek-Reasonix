@@ -203,6 +203,19 @@ func TestAdapterBindingsTreatsOneBotProviderAsQQProtocol(t *testing.T) {
 	}
 }
 
+func TestAdapterBindingsKeepsLegacyOfficialQQBesideOneBot(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bot.QQ = config.QQBotConfig{Enabled: true, AppID: "official-app", AppSecretEnv: "QQ_SECRET"}
+	cfg.Bot.Connections = []config.BotConnectionConfig{{
+		ID: "qq-personal", Provider: "onebot", Protocol: "onebot-v11", Enabled: true,
+		OneBot: config.OneBotConnectionOptions{WebSocketURL: "ws://127.0.0.1:3001", SelfID: "123"},
+	}}
+	bindings := AdapterBindings(cfg, map[bot.Platform]bool{bot.PlatformQQ: true}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if len(bindings) != 2 || bindings[0].Protocol != "onebot-v11" || bindings[1].Protocol != "official" {
+		t.Fatalf("bindings = %+v, want OneBot and legacy official QQ", bindings)
+	}
+}
+
 func TestRememberInboundSessionSharesThreadMappingAcrossUsers(t *testing.T) {
 	isolateUserConfig(t)
 	cfg := config.Default()

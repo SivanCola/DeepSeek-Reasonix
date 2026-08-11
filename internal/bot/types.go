@@ -260,6 +260,19 @@ type InteractionAdapter interface {
 	AckInteraction(context.Context, string) error
 }
 
+// IngressAcknowledger lets a transport remove its raw provider-event record
+// only after the host has durably accepted the corresponding conversation
+// item. Implementations must be idempotent.
+type IngressAcknowledger interface {
+	AckIngress(context.Context, string) error
+}
+
+// IngressRetryer asks a replay-capable transport to reconnect when the host
+// could not durably admit a provider event.
+type IngressRetryer interface {
+	RetryIngress(context.Context, string) error
+}
+
 type Interaction struct {
 	ID           string
 	ConnectionID string

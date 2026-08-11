@@ -23,8 +23,13 @@ func TestSaveInboundMediaStoresWorkspaceImageAttachment(t *testing.T) {
 	}))
 	defer srv.Close()
 	oldValidator := botMediaURLValidator
+	oldClient := botMediaHTTPClient
 	botMediaURLValidator = func(*url.URL) error { return nil }
-	defer func() { botMediaURLValidator = oldValidator }()
+	botMediaHTTPClient = srv.Client()
+	defer func() {
+		botMediaURLValidator = oldValidator
+		botMediaHTTPClient = oldClient
+	}()
 	workspace := t.TempDir()
 
 	ref, err := saveOneInboundMedia(context.Background(), workspace, srv.URL+"/shot.png")

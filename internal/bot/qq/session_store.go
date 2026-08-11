@@ -36,8 +36,11 @@ func saveQQGatewayRawEvent(appID string, sandbox bool, event gatewayPayload) err
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	identity := strings.TrimSpace(event.T)
-	if event.S != 0 {
+	identity := gatewayPayloadEventID(event)
+	if identity == "" {
+		identity = strings.TrimSpace(event.T)
+	}
+	if identity == strings.TrimSpace(event.T) && event.S != 0 {
 		identity = fmt.Sprintf("%s:%d", identity, event.S)
 	}
 	if identity == "" {
@@ -71,6 +74,53 @@ func saveQQGatewayRawEvent(appID string, sandbox bool, event gatewayPayload) err
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+func gatewayPayloadEventID(event gatewayPayload) string {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(event.D, &body) != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.ID)
+}
+
+func removeQQGatewayRawEvent(appID string, sandbox bool, eventID string) error {
+	eventID = strings.TrimSpace(eventID)
+	base := strings.TrimSpace(config.UserConfigPath())
+	if base == "" || eventID == "" {
+		return nil
+	}
+	dir := filepath.Join(filepath.Dir(base), "qq-gateway-events")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		var saved persistedGatewayEvent
+		if json.Unmarshal(data, &saved) != nil || strings.TrimSpace(saved.AppID) != strings.TrimSpace(appID) || saved.Sandbox != sandbox {
+			continue
+		}
+		if gatewayPayloadEventID(saved.Payload) != eventID {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 type persistedGatewayEvent struct {

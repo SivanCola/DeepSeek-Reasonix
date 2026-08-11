@@ -23,7 +23,7 @@ import (
 	"reasonix/internal/bot"
 	"reasonix/internal/config"
 
-	"golang.org/x/net/websocket"
+	"github.com/gorilla/websocket"
 )
 
 // New 创建 QQ Bot 适配器。
@@ -31,6 +31,39 @@ func New(cfg config.QQBotConfig, logger *slog.Logger) bot.Adapter {
 	return &adapter{
 		cfg:    cfg,
 		logger: logger.With("platform", "qq"),
+	}
+}
+
+// VerifyConnection performs the same Token -> Gateway -> Identify -> READY
+// path as the runtime and returns only after the provider reports READY.
+func VerifyConnection(ctx context.Context, cfg config.QQBotConfig) (GatewayStatusSnapshot, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a := New(cfg, slog.Default()).(*adapter)
+	if err := a.Start(ctx); err != nil {
+		return a.GatewayStatus(), err
+	}
+	defer a.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status := a.GatewayStatus()
+		if status.Ready && status.Phase == GatewayPhaseReady {
+			return status, nil
+		}
+		if status.Phase == GatewayPhaseFatal {
+			return status, fmt.Errorf("qq connection verification failed: %s", status.LastError)
+		}
+		select {
+		case <-ctx.Done():
+			status = a.GatewayStatus()
+			if status.LastError != "" {
+				return status, fmt.Errorf("qq connection verification timed out: %s", status.LastError)
+			}
+			return status, fmt.Errorf("qq connection verification timed out: %w", ctx.Err())
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -217,6 +250,15 @@ func (a *adapter) Messages() <-chan bot.InboundMessage {
 }
 
 func (a *adapter) Interactions() <-chan bot.Interaction { return a.interactionCh }
+
+func (a *adapter) AckIngress(_ context.Context, eventID string) error {
+	return removeQQGatewayRawEvent(a.appID(), a.cfg.Sandbox, eventID)
+}
+
+func (a *adapter) RetryIngress(_ context.Context, _ string) error {
+	a.closeConn()
+	return nil
+}
 
 func (a *adapter) AckInteraction(ctx context.Context, interactionID string) error {
 	return a.ackInteraction(ctx, interactionID)

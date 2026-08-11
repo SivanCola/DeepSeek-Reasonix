@@ -47,9 +47,11 @@ type Message struct {
 	// Content is the provider-visible conversation content. Keeping this legacy
 	// field provider-visible preserves replay for older CLI/Desktop releases.
 	Content string `json:"content,omitempty"`
-	// RawContent is the user-authored form of a user turn, when it differs from
-	// Content because the host added transient context. Older releases ignore
-	// this field and still replay the provider-visible Content safely.
+	// RawContent holds the full original when it differs from Content:
+	// for user turns, the user-authored text before host-injected context;
+	// for tool turns, the complete tool result when first-visible Content was
+	// bounded. ModelMessages always clears it so provider serialization, prompt
+	// cache hashes, and projection hashes never include it.
 	RawContent string `json:"raw_content,omitempty"`
 	// ProviderContent is a transitional field written by early Context Engine v2
 	// builds. Loaders migrate it into Content/RawContent before normal use.
@@ -88,12 +90,7 @@ type Message struct {
 	// model provider. Interrupted streaming output uses it so every frontend can
 	// replay what the user saw without feeding partial reasoning or tool-call
 	// arguments back into the next request.
-	LocalOnly bool `json:"local_only,omitempty"`
-	// HostTurnID is a local idempotency fence for remote transports. It lets a
-	// crash-replayed provider event find the already accepted user message. It
-	// is stripped by ModelMessages and therefore cannot change provider wire
-	// bytes or prompt-cache prefixes.
-	HostTurnID      string           `json:"host_turn_id,omitempty"`
+	LocalOnly       bool             `json:"local_only,omitempty"`
 	DecisionReceipt *DecisionReceipt `json:"decision_receipt,omitempty"`
 	// DecisionReceipts are local-only metadata attached to a provider-visible
 	// message. Keeping them on the existing assistant record preserves the
@@ -235,19 +232,26 @@ type ResponseFormat struct {
 	Type string `json:"type"`
 }
 
-// DefaultReasoningOutputTokens is the conservative provider-side budget used
-// for official reasoning APIs whose documented contract safely accepts 32K.
-// Unknown compatible gateways must opt in through configuration instead of
-// inheriting this value merely because they implement an OpenAI-shaped wire.
-const DefaultReasoningOutputTokens = 32 * 1024
+// Auto ladder for max_output_tokens=0. Bounds completion only; never compact_ratio.
+const (
+	DefaultOrdinaryOutputTokens      = 16 * 1024  // non-reasoning
+	DefaultReasoningOutputTokens     = 32 * 1024  // ordinary reasoning
+	DefaultHighReasoningOutputTokens = 64 * 1024  // high/max effort
+	DefaultHighOutputTokens          = 128 * 1024 // explicit only; never auto
+)
 
-// DefaultHighOutputTokens is the raised output budget for reasoning APIs whose
-// documented contract safely accepts 128K-class ceilings (DeepSeek Responses
-// API allows up to 384K; MiMo allows up to 131072). Long reasoning turns
-// truncate under 32K, forcing many small write→test→fix iterations; a 128K
-// budget lets the model finish in one pass. Kept in one place so the three
-// protocols (Responses / Chat Completions / Anthropic) cannot drift apart.
-const DefaultHighOutputTokens = 128 * 1024
+// AutoOutputBudget maps max_output_tokens=0 to 16K/32K/64K by reasoning effort.
+func AutoOutputBudget(reasoningEnabled bool, effort string) int {
+	if !reasoningEnabled {
+		return DefaultOrdinaryOutputTokens
+	}
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "high", "max":
+		return DefaultHighReasoningOutputTokens
+	default:
+		return DefaultReasoningOutputTokens
+	}
+}
 
 // TemperaturePtr wraps v in a pointer so callers that explicitly want a
 // specific temperature, including 0 for deterministic output, can distinguish
@@ -284,7 +288,7 @@ func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(ms
 func ModelMessages(msgs []Message) []Message {
 	needsCopy := false
 	for _, m := range msgs {
-		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || m.HostTurnID != "" || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
+		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
 			needsCopy = true
 			break
 		}
@@ -302,7 +306,6 @@ func ModelMessages(msgs []Message) []Message {
 			candidate.ProviderContent = ""
 		}
 		candidate.RawContent = ""
-		candidate.HostTurnID = ""
 		candidate.DecisionReceipt = nil
 		candidate.DecisionReceipts = nil
 		// Local shell metadata must never enter provider request bytes.
@@ -751,17 +754,9 @@ type Usage struct {
 	ContextCacheMissTokens  int
 }
 
-// ContextFillTokens returns the latest-attempt context fill (prompt+completion)
-// used by status bars and context panels. Falls back to billable totals when
-// no Context* fields were set (single-attempt / legacy usage events).
+// ContextFillTokens returns the latest prompt occupancy used by context gauges.
 func (u *Usage) ContextFillTokens() int {
-	if u == nil {
-		return 0
-	}
-	if u.ContextPromptTokens > 0 || u.ContextCompletionTokens > 0 {
-		return u.ContextPromptTokens + u.ContextCompletionTokens
-	}
-	return u.PromptTokens + u.CompletionTokens
+	return u.LatestPromptTokens()
 }
 
 // LatestPromptTokens returns the latest-attempt prompt size for context-aware

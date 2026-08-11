@@ -58,7 +58,11 @@ func TestConnectAndServeStartsReaderBeforeCapabilityRPC(t *testing.T) {
 				return
 			}
 			actions <- request.Action
-			_ = encoder.Encode(map[string]any{"status": "ok", "retcode": 0, "echo": request.Echo, "data": map[string]any{}})
+			data := map[string]any{}
+			if request.Action == "get_login_info" {
+				data["user_id"] = 123456789
+			}
+			_ = encoder.Encode(map[string]any{"status": "ok", "retcode": 0, "echo": request.Echo, "data": data})
 			if request.Action == "get_login_info" {
 				return
 			}
@@ -79,5 +83,25 @@ func TestConnectAndServeStartsReaderBeforeCapabilityRPC(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "get_version_info" || got[1] != "get_login_info" {
 		t.Fatalf("capability actions = %v, want version/login probes", got)
+	}
+	if selfID := a.currentSelfID(); selfID != "123456789" {
+		t.Fatalf("self id = %q, want login account id", selfID)
+	}
+}
+
+func TestOneBotEventAcceptsNumericAndStringIDs(t *testing.T) {
+	var numeric oneBotEvent
+	if err := json.Unmarshal([]byte(`{"post_type":"message","message_type":"group","user_id":123,"group_id":456,"message_id":789}`), &numeric); err != nil {
+		t.Fatalf("numeric ids: %v", err)
+	}
+	if numeric.UserID.String() != "123" || numeric.GroupID.String() != "456" || numeric.MessageID.String() != "789" {
+		t.Fatalf("numeric event = %+v", numeric)
+	}
+	var quoted oneBotEvent
+	if err := json.Unmarshal([]byte(`{"user_id":"123","group_id":"456","message_id":"789"}`), &quoted); err != nil {
+		t.Fatalf("quoted ids: %v", err)
+	}
+	if quoted.UserID.String() != "123" || quoted.GroupID.String() != "456" || quoted.MessageID.String() != "789" {
+		t.Fatalf("quoted event = %+v", quoted)
 	}
 }

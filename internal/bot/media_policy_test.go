@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,12 +12,58 @@ import (
 )
 
 func TestPrepareOutboundMediaReadsDataAndHashesIt(t *testing.T) {
-	prepared, err := PrepareOutboundMedia(context.Background(), OutboundMedia{Kind: "image", Name: "x.png", Data: []byte("png")}, MediaPolicy{MaxBytes: 100})
+	prepared, err := PrepareOutboundMedia(context.Background(), OutboundMedia{Kind: "file", Name: "x.txt", Data: []byte("png")}, MediaPolicy{MaxBytes: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if prepared.Size != 3 || prepared.SHA256 == "" || string(prepared.Data) != "png" {
 		t.Fatalf("prepared=%+v", prepared)
+	}
+}
+
+func TestPrepareOutboundMediaRejectsForgedMIME(t *testing.T) {
+	_, err := PrepareOutboundMedia(context.Background(), OutboundMedia{Kind: "image", MIME: "image/png", Data: []byte("not an image")}, MediaPolicy{MaxBytes: 100})
+	if err == nil || !strings.Contains(err.Error(), "MIME") {
+		t.Fatalf("forged image MIME was accepted: %v", err)
+	}
+}
+
+func TestPrepareOutboundMediaReadsSymlinkThroughRootWithoutEscape(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "inside.txt")
+	if err := os.WriteFile(inside, []byte("inside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	insideLink := filepath.Join(root, "inside-link.txt")
+	if err := os.Symlink(filepath.Base(inside), insideLink); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := PrepareOutboundMedia(context.Background(), OutboundMedia{Kind: "file", Path: insideLink}, MediaPolicy{LocalRoots: []string{root}, MaxBytes: 100})
+	if err != nil || string(prepared.Data) != "inside" {
+		t.Fatalf("in-root symlink = %+v, %v", prepared, err)
+	}
+	out := filepath.Join(filepath.Dir(root), "outside-link-target.txt")
+	if err := os.WriteFile(out, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	escape := filepath.Join(root, "escape.txt")
+	if err := os.Symlink(out, escape); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareOutboundMedia(context.Background(), OutboundMedia{Kind: "file", Path: escape}, MediaPolicy{LocalRoots: []string{root}, MaxBytes: 100}); err == nil {
+		t.Fatal("symlink escape was accepted")
+	}
+}
+
+func TestPinnedMediaTransportRejectsPrivateDialResolution(t *testing.T) {
+	oldLookup := mediaLookupIP
+	mediaLookupIP = func(context.Context, string, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+	defer func() { mediaLookupIP = oldLookup }()
+	_, err := pinnedMediaTransport(MediaPolicy{}).DialContext(context.Background(), "tcp", "cdn.example:443")
+	if err == nil || !strings.Contains(err.Error(), "private") {
+		t.Fatalf("private dial resolution was accepted: %v", err)
 	}
 }
 

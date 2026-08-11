@@ -14,6 +14,8 @@ import (
 
 	"reasonix/internal/bot"
 	"reasonix/internal/config"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestHandleDispatchDirectMessageUsesDirectChatType(t *testing.T) {
@@ -171,6 +173,21 @@ func TestQQFatalConfigurationErrorStopsRetry(t *testing.T) {
 	}
 	if qqFatalConfigurationError(fmt.Errorf("temporary gateway timeout")) {
 		t.Fatal("temporary network error classified fatal")
+	}
+}
+
+func TestQQGatewayCloseCodesAreClassified(t *testing.T) {
+	for _, code := range []int{4914, 4915} {
+		err := classifyQQGatewayReadError("read ready", &websocket.CloseError{Code: code, Text: "intent unauthorized"})
+		ge, ok := err.(*qqGatewayError)
+		if !ok || !ge.fatal || ge.code != code {
+			t.Fatalf("close %d classified as %#v, want fatal", code, err)
+		}
+	}
+	err := classifyQQGatewayReadError("read gateway message", &websocket.CloseError{Code: 4008, Text: "rate limited"})
+	ge, ok := err.(*qqGatewayError)
+	if !ok || ge.fatal || ge.retryAfter < time.Minute {
+		t.Fatalf("close 4008 classified as %#v, want >=1m retry", err)
 	}
 }
 

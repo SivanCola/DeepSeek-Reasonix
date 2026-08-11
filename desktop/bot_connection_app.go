@@ -272,7 +272,7 @@ func (a *App) pollQQConnectionInstall(installID string, session *botInstallSessi
 		envName := qqSecretEnvName(appID)
 		connID := connectionID("qq", appID)
 		now := time.Now().UTC().Format(time.RFC3339)
-		conn := config.BotConnectionConfig{ID: connID, Provider: "qq", Protocol: "official", Domain: "qq", Label: "QQ Bot", Enabled: true, Status: "connected", Credential: config.BotConnectionCredential{AppID: appID, AppSecretEnv: envName}, QQ: config.QQConnectionOptions{IntentProfile: "group_and_c2c", NativeStreaming: true, RequireMention: true, HistoryLimit: 20}, Access: botInstallAccess(result.UserOpenID), CreatedAt: now, UpdatedAt: now}
+		conn := config.BotConnectionConfig{ID: connID, Provider: "qq", Protocol: "official", Domain: "qq", Label: "QQ Bot", Enabled: true, Status: "configured", Credential: config.BotConnectionCredential{AppID: appID, AppSecretEnv: envName}, QQ: config.QQConnectionOptions{IntentProfile: "group_and_c2c", NativeStreaming: true, RequireMention: true, HistoryLimit: 20}, Access: botInstallAccess(result.UserOpenID), CreatedAt: now, UpdatedAt: now}
 		err := config.EditUserConfigWithCredentials(func(c *config.Config) ([]config.CredentialChange, error) {
 			for i, existing := range c.Bot.Connections {
 				if existing.ID == conn.ID {
@@ -293,8 +293,17 @@ func (a *App) pollQQConnectionInstall(installID string, session *botInstallSessi
 		if err != nil {
 			return BotInstallPollResult{Status: "error", Error: err.Error()}, nil
 		}
+		verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		_, verifyErr := qq.VerifyConnection(verifyCtx, config.QQBotConfig{
+			Enabled: true, AppID: appID, AppSecretEnv: envName,
+			IntentProfile: "group_and_c2c", NativeStreaming: true, RequireMention: true,
+		})
+		verifyCancel()
 		a.deleteBotInstall(installID)
 		a.refreshBotRuntimeAsync()
+		if verifyErr != nil {
+			return BotInstallPollResult{Done: true, Status: "configured", Connection: botConnectionView(conn), Message: "QQ Bot 凭据已保存，但 READY 检查未通过。请在连接诊断中重试。", Error: verifyErr.Error()}, nil
+		}
 		return BotInstallPollResult{Done: true, Status: "connected", Connection: botConnectionView(conn), Message: "QQ Bot 已绑定。请向 Bot 发送第一条消息完成回环测试。"}, nil
 	default:
 		return BotInstallPollResult{Status: "error", Error: "QQ 返回未知绑定状态。"}, nil

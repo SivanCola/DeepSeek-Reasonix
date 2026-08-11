@@ -217,7 +217,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Agent.RecoveryModel = "mimo-pro"
 	orig.Agent.RecoveryTemperature = 0.15
 	orig.Agent.ReasoningLanguage = "zh"
-	orig.Agent.ToolResultSnipRatio = 0.65
+	orig.Agent.CompactRatio = 0.8
 	orig.Agent.SubagentModel = "mimo-pro"
 	orig.Agent.SubagentModels = map[string]string{"review": "deepseek-pro"}
 	orig.Agent.MaxSubagentDepth = 3
@@ -325,7 +325,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.DefaultModel != "mimo-pro" {
 		t.Errorf("default_model = %q, want mimo-pro", got.DefaultModel)
 	}
-	if got.ConfigVersion != 5 {
+	if got.ConfigVersion != CurrentConfigVersion {
 		t.Errorf("config_version = %d, want 5", got.ConfigVersion)
 	}
 	if got.Language != "zh" {
@@ -421,17 +421,13 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.ReasoningLanguage != "zh" {
 		t.Errorf("reasoning_language = %q, want zh", got.Agent.ReasoningLanguage)
 	}
-	if got.Agent.SoftCompactRatio != orig.Agent.SoftCompactRatio {
-		t.Errorf("soft_compact_ratio = %v, want %v", got.Agent.SoftCompactRatio, orig.Agent.SoftCompactRatio)
-	}
-	if got.Agent.ToolResultSnipRatio != orig.Agent.ToolResultSnipRatio {
-		t.Errorf("tool_result_snip_ratio = %v, want %v", got.Agent.ToolResultSnipRatio, orig.Agent.ToolResultSnipRatio)
-	}
 	if got.Agent.CompactRatio != orig.Agent.CompactRatio {
 		t.Errorf("compact_ratio = %v, want %v", got.Agent.CompactRatio, orig.Agent.CompactRatio)
 	}
-	if got.Agent.CompactForceRatio != orig.Agent.CompactForceRatio {
-		t.Errorf("compact_force_ratio = %v, want %v", got.Agent.CompactForceRatio, orig.Agent.CompactForceRatio)
+	// Deprecated multi-threshold fields must not reappear after render/load.
+	if got.Agent.SoftCompactRatio != 0 || got.Agent.ToolResultSnipRatio != 0 || got.Agent.CompactForceRatio != 0 {
+		t.Errorf("deprecated compact ratios survived round-trip: soft=%v snip=%v force=%v",
+			got.Agent.SoftCompactRatio, got.Agent.ToolResultSnipRatio, got.Agent.CompactForceRatio)
 	}
 	if strings.Join(got.Agent.Keep, ",") != strings.Join(orig.Agent.Keep, ",") {
 		t.Errorf("keep = %v, want %v", got.Agent.Keep, orig.Agent.Keep)
@@ -794,7 +790,7 @@ func TestScopedRenderSeparatesUserAndProjectConfig(t *testing.T) {
 	c.Agent.RecoveryTemperature = 0.2
 
 	user := RenderTOMLForScope(c, RenderScopeUser)
-	for _, want := range []string{"config_version = 5", "[desktop]", `currency = "CNY"`, `theme = "dark"`, `terminal_theme = "auto"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, `recovery_model = "deepseek-pro"`, "[notifications]", "[tools.shell]"} {
+	for _, want := range []string{"config_version = 6", "[desktop]", `currency = "CNY"`, `theme = "dark"`, `terminal_theme = "auto"`, `close_behavior = "background"`, `status_bar_style = "text"`, `default_tool_approval_mode = "auto"`, `check_updates = false`, `recovery_model = "deepseek-pro"`, "[notifications]", "[tools.shell]"} {
 		if !strings.Contains(user, want) {
 			t.Fatalf("user render missing %q:\n%s", want, user)
 		}

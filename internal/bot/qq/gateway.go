@@ -7,10 +7,12 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,7 +26,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/textutil"
 
-	"golang.org/x/net/websocket"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -197,7 +199,8 @@ func (a *adapter) gatewayLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		ge, _ := err.(*qqGatewayError)
+		var ge *qqGatewayError
+		_ = errors.As(err, &ge)
 		if ge != nil && ge.resume {
 			// Invalid Resume: discard only the persisted gateway session and do
 			// one fresh Identify. This avoids both a stale Resume loop and a
@@ -437,11 +440,9 @@ func (a *adapter) connectGateway(ctx context.Context, token string, forceIdentif
 	ws := &wsClient{conn: conn, token: token, logger: a.logger}
 
 	var msg gatewayPayload
-	decoder := json.NewDecoder(conn)
-
 	// 第一次读取必须是 Hello
-	if err := decoder.Decode(&msg); err != nil {
-		return fmt.Errorf("read hello: %w", err)
+	if err := conn.ReadJSON(&msg); err != nil {
+		return classifyQQGatewayReadError("read hello", err)
 	}
 	if msg.Op != opHello {
 		return fmt.Errorf("expected op=%d hello, got op=%d", opHello, msg.Op)
@@ -488,8 +489,8 @@ func (a *adapter) connectGateway(ctx context.Context, token string, forceIdentif
 
 	// 读取 READY/RESUMED。其它首包表示握手失败；继续读循环会把
 	// Invalid Session 当作在线，是 #7424/#7816 的核心问题。
-	if err := decoder.Decode(&msg); err != nil {
-		return fmt.Errorf("read ready: %w", err)
+	if err := conn.ReadJSON(&msg); err != nil {
+		return classifyQQGatewayReadError("read ready", err)
 	}
 	if resume && msg.Op == opInvalid {
 		return &qqGatewayError{err: fmt.Errorf("qq gateway resume rejected (op=9)"), resume: true}
@@ -530,16 +531,18 @@ func (a *adapter) connectGateway(ctx context.Context, token string, forceIdentif
 	} else {
 		return &qqGatewayError{err: fmt.Errorf("qq gateway handshake expected %s, got op=%d event=%s", map[bool]string{true: "RESUMED", false: "READY"}[resume], msg.Op, msg.T), fatal: true}
 	}
-	// A gateway event can be persisted after the server sequence advances but
-	// before the host accepts the corresponding turn. Replay those durable raw
-	// dispatches before reading new traffic; the host ingress journal suppresses
-	// any event that already completed before the crash.
+	// Replay raw dispatches persisted after the server sequence advanced but
+	// before the host accepted the turn. The ingress journal suppresses events
+	// that completed before the crash.
 	if replay, replayErr := loadQQGatewayRawEvents(a.appID(), a.cfg.Sandbox); replayErr != nil {
 		a.logger.Warn("qq gateway replay journal unavailable", "err", replayErr)
 	} else {
 		for _, replayEvent := range replay {
 			if !a.handleDispatch(replayEvent) {
 				return fmt.Errorf("qq replay channel unavailable")
+			}
+			if !qqDispatchProducesIngress(replayEvent.T) {
+				_ = removeQQGatewayRawEvent(a.appID(), a.cfg.Sandbox, gatewayPayloadEventID(replayEvent))
 			}
 		}
 	}
@@ -581,11 +584,11 @@ func (a *adapter) connectGateway(ctx context.Context, token string, forceIdentif
 
 	// 主循环：读取 dispatch 事件
 	for {
-		if err := decoder.Decode(&msg); err != nil {
+		if err := conn.ReadJSON(&msg); err != nil {
 			a.logger.Error("decode gateway message", "err", err)
 			heartbeatCancel()
 			<-heartbeatDone
-			return err
+			return classifyQQGatewayReadError("read gateway message", err)
 		}
 		switch msg.Op {
 		case opDispatch:
@@ -599,6 +602,9 @@ func (a *adapter) connectGateway(ctx context.Context, token string, forceIdentif
 				heartbeatCancel()
 				<-heartbeatDone
 				return fmt.Errorf("qq inbound message channel is unavailable")
+			}
+			if !qqDispatchProducesIngress(msg.T) {
+				_ = removeQQGatewayRawEvent(a.appID(), a.cfg.Sandbox, gatewayPayloadEventID(msg))
 			}
 			ws.mu.Lock()
 			ws.lastSeq = msg.S
@@ -633,6 +639,15 @@ func (a *adapter) connectGateway(ctx context.Context, token string, forceIdentif
 	}
 }
 
+func qqDispatchProducesIngress(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "C2C_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE", "AT_MESSAGE_CREATE", "DIRECT_MESSAGE_CREATE", "MESSAGE_CREATE", "INTERACTION_CREATE":
+		return true
+	default:
+		return false
+	}
+}
+
 func qqInvalidSessionCode(raw json.RawMessage) int {
 	var body struct {
 		Code int `json:"code"`
@@ -641,20 +656,62 @@ func qqInvalidSessionCode(raw json.RawMessage) int {
 	return body.Code
 }
 
+func classifyQQGatewayReadError(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		message := fmt.Sprintf("%s: qq gateway closed (%d): %s", stage, closeErr.Code, strings.TrimSpace(closeErr.Text))
+		switch closeErr.Code {
+		case 4914, 4915:
+			return &qqGatewayError{err: errors.New(message), fatal: true, code: closeErr.Code}
+		case 4008:
+			return &qqGatewayError{err: errors.New(message), code: closeErr.Code, retryAfter: time.Minute}
+		}
+		if strings.Contains(closeErr.Text, "100017") {
+			return &qqGatewayError{err: errors.New(message), code: 100017, retryAfter: time.Minute}
+		}
+		return &qqGatewayError{err: errors.New(message), code: closeErr.Code}
+	}
+	return fmt.Errorf("%s: %w", stage, err)
+}
+
 // dialGateway dials the QQ gateway honoring ctx. The conn only becomes
 // trackable after the dial returns, so Stop can interrupt a stalled TCP dial
 // or WebSocket/TLS handshake only through ctx cancellation —
 // websocket.DialConfig would dial with context.Background() and leave Stop's
 // loopWG.Wait blocked with nothing to close.
 func (a *adapter) dialGateway(ctx context.Context, gatewayURL, token string) (*websocket.Conn, error) {
-	cfg, err := websocket.NewConfig(gatewayURL, gatewayURL)
-	if err != nil {
-		return nil, err
+	header := http.Header{}
+	header.Set("Authorization", "QQBot "+token)
+	header.Set("X-Union-Appid", a.appID())
+	// Gorilla does not observe ctx cancellation after TCP connects. Keep the raw
+	// connection cancellable until DialContext returns so Stop can drain a
+	// stalled HTTP handshake.
+	handshakeDone := make(chan struct{})
+	dialer := *websocket.DefaultDialer
+	netDialer := &net.Dialer{}
+	dialer.NetDialContext = func(_ context.Context, network, address string) (net.Conn, error) {
+		conn, err := netDialer.DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = conn.Close()
+			case <-handshakeDone:
+			}
+		}()
+		return conn, nil
 	}
-	cfg.Header = http.Header{}
-	cfg.Header.Set("Authorization", "QQBot "+token)
-	cfg.Header.Set("X-Union-Appid", a.appID())
-	return cfg.DialContext(ctx)
+	conn, response, err := dialer.DialContext(ctx, gatewayURL, header)
+	close(handshakeDone)
+	if response != nil && response.Body != nil {
+		_ = response.Body.Close()
+	}
+	return conn, err
 }
 
 // trackConn publishes the live gateway connection so Stop can close it and
@@ -781,9 +838,7 @@ func sanitizeHeartbeatInterval(interval time.Duration) time.Duration {
 
 func (ws *wsClient) send(op int, d json.RawMessage) error {
 	payload := gatewayPayload{Op: op, D: d}
-	data, _ := json.Marshal(payload)
-	_, err := ws.conn.Write(data)
-	return err
+	return ws.conn.WriteJSON(payload)
 }
 
 func (a *adapter) handleDispatch(msg gatewayPayload) bool {
@@ -1120,10 +1175,7 @@ func (a *adapter) uploadMediaChunked(ctx context.Context, msg bot.OutboundMessag
 		if start < 0 || start >= len(media.Data) {
 			return "", 0, fmt.Errorf("qq upload part index is invalid")
 		}
-		end := start + info.BlockSize
-		if end > len(media.Data) {
-			end = len(media.Data)
-		}
+		end := min(start+info.BlockSize, len(media.Data))
 		req, err := http.NewRequestWithContext(ctx, http.MethodPut, part.PresignedURL, bytes.NewReader(media.Data[start:end]))
 		if err != nil {
 			return "", 0, err

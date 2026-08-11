@@ -40,3 +40,18 @@ func TestRenderLegacyQQEmitsConnectionMirror(t *testing.T) {
 		t.Fatal("render mutated the caller config")
 	}
 }
+
+func TestNormalizeLegacyQQConnectionCoexistsWithOneBot(t *testing.T) {
+	cfg := Default()
+	cfg.Bot.QQ = QQBotConfig{Enabled: true, AppID: "official-app", AppSecretEnv: "QQ_SECRET"}
+	cfg.Bot.Connections = []BotConnectionConfig{{
+		ID: "qq-personal", Provider: "onebot", Protocol: "onebot-v11", Enabled: true,
+		OneBot: OneBotConnectionOptions{WebSocketURL: "ws://127.0.0.1:3001"},
+	}}
+	if !NormalizeLegacyQQConnection(cfg) {
+		t.Fatal("legacy official QQ connection was suppressed by OneBot")
+	}
+	if len(cfg.Bot.Connections) != 2 || cfg.Bot.Connections[1].Protocol != "official" {
+		t.Fatalf("connections = %+v, want OneBot plus official QQ", cfg.Bot.Connections)
+	}
+}

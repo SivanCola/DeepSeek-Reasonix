@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 
 const maxBotMediaBytes = 25 * 1024 * 1024
 
-var botMediaHTTPClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+var botMediaHTTPClient = &http.Client{Timeout: 30 * time.Second, Transport: pinnedMediaTransport(MediaPolicy{ResolveDNS: true}), CheckRedirect: func(req *http.Request, via []*http.Request) error {
 	if len(via) >= 3 {
 		return fmt.Errorf("too many media redirects")
 	}
@@ -97,10 +98,8 @@ func validatePublicMediaURL(u *url.URL) error {
 	if err != nil {
 		return fmt.Errorf("resolve media URL host: %w", err)
 	}
-	for _, ip := range ips {
-		if isPrivateMediaIP(ip) {
-			return fmt.Errorf("media URL resolves to a private address")
-		}
+	if slices.ContainsFunc(ips, isPrivateMediaIP) {
+		return fmt.Errorf("media URL resolves to a private address")
 	}
 	return nil
 }
