@@ -190,6 +190,31 @@ func TestDesktopLifecycleUnknownSchemaIsPreserved(t *testing.T) {
 	}
 }
 
+func TestDesktopLifecycleUnknownSchemaWithoutCurrentFieldsIsNeverPruned(t *testing.T) {
+	root := t.TempDir()
+	future := lifecycleTrackerForTest(t, root, 4242, "future-fields")
+	future.state.SchemaVersion = desktopLifecycleSchemaVersion + 1
+	future.state.PID = 0
+	future.state.Phase = ""
+	if err := future.start(); err != nil {
+		t.Fatal(err)
+	}
+	future.stopWriter()
+	old := time.Now().UTC().Add(-2 * desktopLifecycleRetention)
+	if err := os.Chtimes(future.path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := lifecycleTrackerForTest(t, root, os.Getpid(), "reader")
+	reader.now = func() time.Time { return time.Now().UTC() }
+	if got := reader.consumePrevious(true); len(got) != 0 {
+		t.Fatalf("future lifecycle record observed: %+v", got)
+	}
+	if _, err := os.Stat(future.path); err != nil {
+		t.Fatalf("future lifecycle record without v2 fields was pruned: %v", err)
+	}
+}
+
 func TestDesktopLifecycleCleanRemovesCurrentRecord(t *testing.T) {
 	tracker := lifecycleTrackerForTest(t, t.TempDir(), os.Getpid(), "current")
 	base := time.Date(2026, 8, 10, 1, 0, 0, 0, time.UTC)

@@ -304,7 +304,7 @@ func (t *desktopLifecycleTracker) consumePrevious(emit bool) []desktopLifecycleO
 		}
 		path := filepath.Join(t.dir, entry.Name())
 		state, readErr := readDesktopLifecycleState(path)
-		if readErr != nil || state.PID <= 0 || state.Phase == "" {
+		if readErr != nil {
 			if info, statErr := entry.Info(); statErr == nil && now.Sub(info.ModTime()) > desktopLifecycleRetention {
 				_ = os.Remove(path)
 			}
@@ -314,6 +314,12 @@ func (t *desktopLifecycleTracker) consumePrevious(emit bool) []desktopLifecycleO
 		// interpret. Preserve it verbatim so a downgrade never consumes or prunes
 		// future-format evidence.
 		if state.SchemaVersion != desktopLifecycleSchemaVersion {
+			continue
+		}
+		if state.PID <= 0 || state.Phase == "" {
+			if info, statErr := entry.Info(); statErr == nil && now.Sub(info.ModTime()) > desktopLifecycleRetention {
+				_ = os.Remove(path)
+			}
 			continue
 		}
 		if t.processAlive(state.PID) {
