@@ -40,7 +40,7 @@ class TestResizeObserver {
   disconnect() {}
 }
 
-function installDom() {
+function installDom(language = "en-US") {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
@@ -49,6 +49,7 @@ function installDom() {
   globalThis.window = dom.window as unknown as Window & typeof globalThis;
   globalThis.document = dom.window.document;
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(dom.window.navigator, "language", { configurable: true, value: language });
   globalThis.Node = dom.window.Node;
   globalThis.HTMLElement = dom.window.HTMLElement;
   globalThis.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
@@ -100,7 +101,7 @@ function installBridgeApp(methods: Record<string, unknown>) {
   };
 }
 
-async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {}) {
+async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {}, strictMode = false) {
   const rootEl = document.getElementById("root");
   if (!rootEl) throw new Error("missing root");
   const root = createRoot(rootEl);
@@ -130,14 +131,15 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
   };
   const paint = async (nextProps: Partial<Parameters<typeof Composer>[0]> = {}) => {
     currentProps = { ...currentProps, ...nextProps };
+    const view = (
+      <LocaleProvider>
+        <ToastProvider>
+          <Composer {...currentProps} />
+        </ToastProvider>
+      </LocaleProvider>
+    );
     await act(async () => {
-      root.render(
-        <LocaleProvider>
-          <ToastProvider>
-            <Composer {...currentProps} />
-          </ToastProvider>
-        </LocaleProvider>,
-      );
+      root.render(strictMode ? <React.StrictMode>{view}</React.StrictMode> : view);
       await flushTimers();
     });
   };
@@ -220,6 +222,89 @@ console.log("\ncomposer inbox recovery");
   resolveTabA(recoveredSnapshot(2));
   await act(async () => { await flushTimers(); });
   ok(document.querySelector(".composer-inbox-recovery") === null, "stale snapshot cannot show recovery controls on another session");
+
+  await act(async () => { root.unmount(); });
+  dom.window.close();
+}
+
+{
+  const dom = installDom("zh-CN");
+  const snapshot = {
+    revision: 3,
+    paused: false,
+    recovered: false,
+    recoveredCount: 0,
+    items: [{
+      id: "queued-before-pause",
+      intent: "followup",
+      state: "queued",
+      preview: "引导当前回合",
+      byteSize: 64,
+      position: 1,
+    }],
+    itemsCount: 1,
+    bytes: 64,
+    maxItems: 64,
+    maxBytes: 64 * 1024 * 1024,
+  };
+  installBridgeApp({
+    InboxSnapshot: async () => snapshot,
+    SteerInboxItem: async () => { throw new Error("reasonix_error:inbox_paused"); },
+  });
+  const { root } = await renderComposer({ running: true });
+
+  await waitFor("queued guidance rendered for localization check", () => document.querySelector(".composer-guidance-item__guide") !== null);
+  const guide = document.querySelector(".composer-guidance-item__guide") as HTMLButtonElement;
+  await act(async () => { guide.click(); await flushTimers(); });
+  await waitFor("localized paused toast rendered", () => document.querySelector(".toast__text")?.textContent === "收件箱已暂停");
+  ok(document.querySelector(".toast__text")?.textContent === "收件箱已暂停", "coded paused error renders in the active Chinese locale");
+
+  await act(async () => { root.unmount(); });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  let snapshot = {
+    revision: 2,
+    paused: true,
+    recovered: false,
+    recoveredCount: 0,
+    items: [{
+      id: "paused-queued-1",
+      intent: "followup",
+      state: "queued",
+      preview: "Guide the active turn",
+      byteSize: 64,
+      position: 1,
+    }],
+    itemsCount: 1,
+    bytes: 64,
+    maxItems: 64,
+    maxBytes: 64 * 1024 * 1024,
+  };
+  const pauseCalls: boolean[] = [];
+  installBridgeApp({
+    InboxSnapshot: async () => snapshot,
+    SetInboxPaused: async (_tabId: string, paused: boolean) => {
+      pauseCalls.push(paused);
+      if (!paused) snapshot = { ...snapshot, paused: false };
+    },
+  });
+  const { root } = await renderComposer({ running: true }, true);
+
+  await waitFor("ordinary pause banner rendered", () => document.querySelector(".composer-inbox-recovery") !== null);
+  const pauseBanner = document.querySelector(".composer-inbox-recovery");
+  ok(pauseBanner?.textContent?.includes("Inbox is paused") === true, "non-recovered pause exposes an actionable pause banner");
+  const guide = document.querySelector(".composer-guidance-item__guide") as HTMLButtonElement | null;
+  ok(guide?.disabled === true, "paused inbox disables guide admission instead of surfacing a backend error");
+
+  const buttons = Array.from(document.querySelectorAll(".composer-inbox-recovery .btn")) as HTMLButtonElement[];
+  if (buttons[1]) {
+    await act(async () => { buttons[1].click(); await flushTimers(); });
+    ok(pauseCalls.at(-1) === false, "continue resumes a non-recovered paused inbox");
+    await waitFor("ordinary pause banner cleared after resume", () => document.querySelector(".composer-inbox-recovery") === null);
+  }
 
   await act(async () => { root.unmount(); });
   dom.window.close();

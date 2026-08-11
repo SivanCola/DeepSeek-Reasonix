@@ -11,6 +11,7 @@ export type PendingGuidance = {
   state?: string;
   intent?: string;
   source?: string;
+  paused?: boolean;
   recoveredCount?: number;
   structured?: StructuredInvocationSubmit;
 };
@@ -19,6 +20,7 @@ export type InboxRecoveryNotice = {
   draftKey: string;
   tabId: string;
   count: number;
+  recovered: boolean;
 };
 
 export function ComposerGuidanceShelf({
@@ -62,6 +64,7 @@ export function ComposerGuidanceShelf({
         <InboxRecoveryBanner
           key={`${recovery.draftKey}:${recovery.tabId}`}
           count={recovery.count}
+          recovered={recovery.recovered}
           disabled={recoveryDisabled}
           tabId={recovery.tabId}
           onReview={onReview}
@@ -87,7 +90,7 @@ export function ComposerGuidanceShelf({
                     className="composer-guidance-item__guide"
                     type="button"
                     aria-label={t("composer.guidanceSend")}
-                    disabled={!running || disabled || readOnly || sendingId !== null || Boolean(item.structured)}
+                    disabled={!running || disabled || readOnly || sendingId !== null || Boolean(item.structured) || Boolean(item.paused)}
                     onClick={() => onSend(item)}
                   >
                     <CornerDownRight size={13} />
