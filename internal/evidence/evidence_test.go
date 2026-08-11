@@ -1015,6 +1015,82 @@ func TestToolCallMutatesForDeliveryProfile(t *testing.T) {
 	}
 }
 
+func TestClassifyToolCallSeparatesStateAndContentMutation(t *testing.T) {
+	tests := []struct {
+		name       string
+		toolName   string
+		args       string
+		readOnly   bool
+		want       ToolEffects
+		wantReason bool
+	}{
+		{
+			name: "branch listing", toolName: "bash", args: `{"command":"git branch -a"}`,
+			want: ToolEffects{Known: true},
+		},
+		{
+			name: "tag creation remains repository mutation in yolo", toolName: "bash", args: `{"command":"git tag v1.2.3"}`, readOnly: true,
+			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, RepositoryMutation: true}, wantReason: true,
+		},
+		{
+			name: "pure commit cements reviewed content", toolName: "bash", args: `{"command":"git commit -q -m checkpoint"}`,
+			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, RepositoryMutation: true}, wantReason: true,
+		},
+		{
+			name: "commit all includes content", toolName: "bash", args: `{"command":"git commit -am checkpoint"}`,
+			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, ContentMutation: true, RepositoryMutation: true}, wantReason: true,
+		},
+		{
+			name: "host clock write is not workspace write", toolName: "bash", args: `{"command":"date --set tomorrow"}`,
+			want: ToolEffects{Known: true, StateMutation: true}, wantReason: true,
+		},
+		{
+			name: "audit fix changes workspace content", toolName: "bash", args: `{"command":"npm audit fix"}`,
+			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, ContentMutation: true}, wantReason: true,
+		},
+		{
+			name: "verification stays non-mutating", toolName: "bash", args: `{"command":"go test ./..."}`,
+			want: ToolEffects{Known: true},
+		},
+		{
+			name: "unknown shell fails closed", toolName: "bash", args: `{"command":"custom-tool --run"}`,
+			want: ToolEffects{StateMutation: true, WorkspaceMutation: true, ContentMutation: true}, wantReason: true,
+		},
+		{
+			name: "trusted reader", toolName: "read_file", args: `{}`, readOnly: true,
+			want: ToolEffects{Known: true},
+		},
+		{
+			name: "generic writer", toolName: "edit_file", args: `{}`,
+			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, ContentMutation: true}, wantReason: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ClassifyToolCall(tt.toolName, json.RawMessage(tt.args), tt.readOnly)
+			if got.StateMutation != tt.want.StateMutation || got.WorkspaceMutation != tt.want.WorkspaceMutation ||
+				got.ContentMutation != tt.want.ContentMutation || got.RepositoryMutation != tt.want.RepositoryMutation || got.Known != tt.want.Known {
+				t.Fatalf("ClassifyToolCall(%q, %s, %t) = %+v, want %+v", tt.toolName, tt.args, tt.readOnly, got, tt.want)
+			}
+			if (got.Reason != "") != tt.wantReason {
+				t.Fatalf("ClassifyToolCall reason = %q, want non-empty=%t", got.Reason, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestReceiptMutationTracksContentNotRepositoryCement(t *testing.T) {
+	pure := ReceiptFromToolCall("bash", json.RawMessage(`{"command":"git commit -m checkpoint"}`), true, false)
+	if pure.Mutation {
+		t.Fatalf("pure commit receipt reopened content mutation debt: %+v", pure)
+	}
+	all := ReceiptFromToolCall("bash", json.RawMessage(`{"command":"git commit -am checkpoint"}`), true, false)
+	if !all.Mutation {
+		t.Fatalf("commit -a receipt must retain content mutation debt: %+v", all)
+	}
+}
+
 func TestRunnerWriteOutputFlagsCannotMasqueradeAsVerification(t *testing.T) {
 	// Snapshot flags rewrite checked-in fixtures and report/profile flags
 	// write explicit output paths; both must stay opaque mutations so the

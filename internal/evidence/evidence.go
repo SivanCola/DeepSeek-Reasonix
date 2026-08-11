@@ -1513,11 +1513,15 @@ func failedSessionCallIDs(msgs []provider.Message) map[string]bool {
 }
 
 func ReceiptFromToolCall(toolName string, args json.RawMessage, success bool, readOnly bool) Receipt {
+	effects := ClassifyToolCall(toolName, args, readOnly)
 	r := Receipt{
 		ToolName: toolName,
 		Args:     args,
 		Success:  success,
-		Mutation: ToolCallMutates(toolName, args, readOnly),
+		// Receipt.Mutation is delivery content debt. Repository-only state
+		// transitions such as a pure commit remain guarded writers, but do not
+		// force another content review pass by themselves.
+		Mutation: effects.ContentMutation,
 	}
 
 	var fields map[string]json.RawMessage
@@ -1571,31 +1575,83 @@ func ToolCallPaths(args json.RawMessage) []string {
 	return out
 }
 
-// ToolCallMutates is the delivery profile's conservative state-change
-// classifier. Trusted read-only tools never mutate. Meta tools that only
-// delegate (task, run_skill, review, …) never mutate by themselves — real
-// writes arrive via child evidence merge. Writer-capable tools do mutate,
-// except for bash commands that the host can prove are inspection or
-// verification commands.
-func ToolCallMutates(toolName string, args json.RawMessage, readOnly bool) bool {
-	if readOnly {
-		return false
-	}
-	if IsNonMutationMetaTool(toolName) {
-		return false
-	}
-	switch toolName {
-	case "ask", "todo_write", "complete_step", "bash_output", "wait":
-		return false
-	case "bash":
+// ToolEffects projects the shared shell effect model onto the boundaries used
+// by delivery, TaskPolicy, workspace serialization, and batch recovery.
+type ToolEffects struct {
+	StateMutation      bool
+	WorkspaceMutation  bool
+	ContentMutation    bool
+	RepositoryMutation bool
+	Known              bool
+	Reason             string
+}
+
+// ClassifyToolCall returns durable effects for one concrete tool invocation.
+// Bash is always classified from its arguments even when a caller claims a
+// read-only schema bit, preventing a stale/proxy hint from hiding a writer.
+func ClassifyToolCall(toolName string, args json.RawMessage, readOnly bool) ToolEffects {
+	name := strings.ToLower(strings.TrimSpace(toolName))
+	if name == "bash" || name == "shell" {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(args, &fields); err != nil {
-			return true
+			return unknownToolEffects("invalid shell arguments")
 		}
-		return bashMayMutate(stringField(fields, "command"))
-	default:
-		return true
+		command := stringField(fields, "command")
+		effect := shellsafe.ClassifyBash(command)
+		if effect.Certainty == shellsafe.EffectKnown {
+			return ToolEffects{
+				StateMutation:      effect.AnyMutation(),
+				WorkspaceMutation:  effect.WorkspaceMutation(),
+				ContentMutation:    effect.ContentMutation(),
+				RepositoryMutation: effect.RepositoryMutation(),
+				Known:              true,
+				Reason:             effect.Reason,
+			}
+		}
+		// Conventional verification commands are host-recognized separately
+		// from permission readers. They may execute code or fill caches, but
+		// do not create delivery content debt unless an output flag says so.
+		if !bashMayMutate(command) {
+			return ToolEffects{Known: true}
+		}
+		return unknownToolEffects(effect.Reason)
 	}
+	if readOnly {
+		return ToolEffects{Known: true}
+	}
+	if IsNonMutationMetaTool(toolName) {
+		return ToolEffects{Known: true}
+	}
+	switch name {
+	case "ask", "todo_write", "complete_step", "bash_output", "wait":
+		return ToolEffects{Known: true}
+	default:
+		return ToolEffects{
+			StateMutation:     true,
+			WorkspaceMutation: true,
+			ContentMutation:   true,
+			Known:             true,
+			Reason:            "writer-capable tool",
+		}
+	}
+}
+
+func unknownToolEffects(reason string) ToolEffects {
+	if strings.TrimSpace(reason) == "" {
+		reason = "tool effects are not statically known"
+	}
+	return ToolEffects{
+		StateMutation:     true,
+		WorkspaceMutation: true,
+		ContentMutation:   true,
+		Reason:            reason,
+	}
+}
+
+// ToolCallMutates is the compatibility projection for callers that need to
+// know whether any durable state may change.
+func ToolCallMutates(toolName string, args json.RawMessage, readOnly bool) bool {
+	return ClassifyToolCall(toolName, args, readOnly).StateMutation
 }
 
 // ToolCallRequiresDeliveryCriteria reports whether a call begins execution
@@ -1832,18 +1888,14 @@ func bashMayMutate(command string) bool {
 		return true
 	}
 	for _, segment := range segments {
-		normalized, safeRedirects := shellsafe.NormalizeBashSafeRedirectsForMatch(segment)
-		if !safeRedirects {
-			return true
+		normalized, _ := shellsafe.NormalizeBashSafeRedirectsForMatch(segment)
+		if normalized == "" {
+			normalized = segment
 		}
 		if staticFields, malformed := shellparse.StaticFields(normalized); malformed == "" && len(staticFields) > 0 && bashSegmentIsVerification(staticFields) {
 			continue
 		}
-		base, sub, fields, workspaceNonMutating := shellsafe.ClassifyWorkspaceNonMutatingCommand(normalized)
-		if !workspaceNonMutating {
-			return true
-		}
-		if bashReadOnlyCommandWrites(base, sub, fields) {
+		if shellsafe.ClassifyBash(segment).AnyMutation() {
 			return true
 		}
 	}
@@ -1873,7 +1925,7 @@ func bashCommandIsVerification(command string) bool {
 			found = true
 			continue
 		}
-		if _, _, readOnly := shellsafe.CommandIsReadOnly(normalized); !readOnly {
+		if shellsafe.ClassifyBash(normalized).AnyMutation() {
 			return false
 		}
 	}
@@ -2193,34 +2245,6 @@ func nodeTestFlagWritesFile(arg string) bool {
 	default:
 		return false
 	}
-}
-
-func bashReadOnlyCommandWrites(base, sub string, fields []string) bool {
-	args := fields[1:]
-	if sub != "" && len(args) > 0 {
-		args = args[1:]
-	}
-	switch base {
-	case "find":
-		return hasCommandArg(args, "-exec", "-execdir", "-delete", "-ok", "-okdir", "-fls", "-fprint", "-fprint0", "-fprintf")
-	case "sort":
-		for _, arg := range args {
-			if arg == "-o" || arg == "--output" || strings.HasPrefix(arg, "--output=") || strings.HasPrefix(arg, "-o") {
-				return true
-			}
-		}
-	case "git":
-		if sub == "diff" || sub == "show" || sub == "log" {
-			for _, arg := range args {
-				if arg == "--output" || strings.HasPrefix(arg, "--output=") {
-					return true
-				}
-			}
-		}
-	case "go":
-		return sub == "env" && hasCommandArg(args, "-w", "-u")
-	}
-	return false
 }
 
 func hasCommandArg(args []string, candidates ...string) bool {

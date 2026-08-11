@@ -173,7 +173,7 @@ func (t *OutcomeTracker) noteMutatedPaths(paths []string) {
 func (t *OutcomeTracker) commandExercisesMutation(command string) bool {
 	// Inspecting a mutated file (cat/grep/head) cannot falsify anything; only
 	// a command that can execute it discriminates.
-	if _, _, readOnly := shellsafe.CommandIsReadOnly(command); readOnly {
+	if !shellsafe.ClassifyBash(command).AnyMutation() {
 		return false
 	}
 	for base := range t.mutatedBases {
