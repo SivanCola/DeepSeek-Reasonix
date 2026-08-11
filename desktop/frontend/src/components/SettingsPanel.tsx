@@ -6,6 +6,7 @@ import { app, openExternal } from "../lib/bridge";
 import { normalizeLangPref, useI18n, useT, type DictKey, type LangPref } from "../lib/i18n";
 import { apiKeyEnvFromProviderName, createLatestRequestGate, inferredVisionModels, mergedFetchedProviderModels, mergeProviderModelContextWindows, providerApiKeyEnvForSave, providerDefaultModel, providerIsConfigured, providerModelCandidates, providerModelContextWindowDrafts, providerModelContextWindowIsSmall, providerRequiresKey } from "../lib/providerModels";
 import { cachedFetchProviderModels, invalidateProviderCacheByAPIKeyEnv, shouldSkipAutoRefresh } from "../lib/providerModelCache";
+import { providerBaseURLForSave, providerRequestURLFromConfig, trimmedBaseURL } from "../lib/providerEndpoint";
 import { opencodeGoPresetDescriptionKeys } from "../lib/providerPresetDescriptions";
 import { useUpdater } from "../lib/useUpdater";
 import {
@@ -899,53 +900,6 @@ export function providerEditorEffectiveKind(isNewCustomProvider: boolean, kind: 
   void isNewCustomProvider;
   const selected = kind.trim();
   return selected || kinds[0] || "openai";
-}
-
-function trimmedBaseURL(value: string): string {
-  return value.trim().replace(/\/+$/, "");
-}
-
-export function providerRequestURLFromConfig(kind: string, baseUrl: string, requestUrl: string, legacyChatUrl = ""): string {
-  const exactRequestURL = requestUrl.trim();
-  if (exactRequestURL) return exactRequestURL;
-  if (kind.trim().toLowerCase() === "openai") {
-    const legacyOpenAIRequestURL = legacyChatUrl.trim().replace(/\/+$/, "");
-    if (legacyOpenAIRequestURL) return legacyOpenAIRequestURL;
-  }
-  const base = trimmedBaseURL(baseUrl);
-  if (!base) return "";
-  switch (kind.trim().toLowerCase()) {
-    case "anthropic":
-      return base.endsWith("/v1") ? `${base}/messages` : `${base}/v1/messages`;
-    case "responses":
-    case "dashscope-responses":
-      return `${base}/responses`;
-    default:
-      return `${base}/chat/completions`;
-  }
-}
-
-export function providerBaseURLFromRequestURL(kind: string, requestUrl: string): string {
-  const exactRequestURL = requestUrl.trim();
-  if (!exactRequestURL) return "";
-  const suffixes = kind.trim().toLowerCase() === "anthropic"
-    ? ["/v1/messages"]
-    : kind.trim().toLowerCase() === "responses" || kind.trim().toLowerCase() === "dashscope-responses"
-      ? ["/responses"]
-      : ["/chat/completions"];
-  try {
-    const parsed = new URL(exactRequestURL);
-    const pathname = parsed.pathname.replace(/\/+$/, "");
-    const suffix = suffixes.find((candidate) => pathname.endsWith(candidate));
-    parsed.pathname = suffix ? pathname.slice(0, -suffix.length) || "/" : pathname || "/";
-    parsed.search = "";
-    parsed.hash = "";
-    return trimmedBaseURL(parsed.toString());
-  } catch {
-    const suffix = suffixes.find((candidate) => exactRequestURL.endsWith(candidate));
-    if (suffix) return trimmedBaseURL(exactRequestURL.slice(0, -suffix.length));
-  }
-  return trimmedBaseURL(exactRequestURL);
 }
 
 function formatProviderHeaders(headers: Record<string, string> | null | undefined): string {
@@ -6289,14 +6243,9 @@ export function ProviderEditor({
   }, [kind, kinds]);
   const effectiveKind = providerEditorEffectiveKind(isNewCustomProvider, kind, providerKindChoices);
   const effectiveRequestUrl = requestUrl.trim();
-  const effectiveBaseUrl = providerBaseURLFromRequestURL(effectiveKind, effectiveRequestUrl);
+  const effectiveBaseUrl = providerBaseURLForSave(initial, effectiveKind, effectiveRequestUrl);
   const effectiveModelsUrl = modelsUrl.trim();
-  const initialEffectiveBaseUrl = initial
-    ? providerBaseURLFromRequestURL(
-        initial.kind,
-        providerRequestURLFromConfig(initial.kind, initial.baseUrl, initial.requestUrl ?? "", initial.chatUrl ?? ""),
-      )
-    : "";
+  const initialEffectiveBaseUrl = initial ? trimmedBaseURL(initial.baseUrl) : "";
   const retainedVisionCapability = initial &&
     effectiveKind.trim().toLowerCase() === initial.kind.trim().toLowerCase() &&
     trimmedBaseURL(effectiveBaseUrl) === initialEffectiveBaseUrl

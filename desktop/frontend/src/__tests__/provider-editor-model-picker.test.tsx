@@ -306,7 +306,7 @@ await act(async () => {
   saveButton?.click();
   await flushPromises();
 });
-ok(migratedProvider?.requestUrl === "https://legacy.example.com/chat/completions", "saving migrates the legacy effective address to requestUrl");
+ok(migratedProvider?.requestUrl === "https://legacy.example.com/chat/completions" && migratedProvider?.baseUrl === legacyChatURLProvider.baseUrl, "saving migrates the legacy effective address without rewriting its baseUrl");
 ok(migratedProvider?.chatUrl === legacyChatURLProvider.chatUrl, "saving preserves the legacy chatUrl for compatibility");
 
 let exactProvider: ProviderView | undefined;
@@ -327,7 +327,7 @@ await act(async () => {
   exactSaveButton?.click();
   await flushPromises();
 });
-ok(exactProvider?.requestUrl === "https://exact.example.com/custom/?token=1", "saving preserves an explicit requestUrl exactly");
+ok(exactProvider?.requestUrl === "https://exact.example.com/custom/?token=1" && exactProvider?.baseUrl === legacyChatURLProvider.baseUrl, "saving preserves an explicit requestUrl and independent baseUrl exactly");
 
 await act(async () => {
   root.unmount();

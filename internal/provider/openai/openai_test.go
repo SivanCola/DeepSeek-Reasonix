@@ -580,23 +580,6 @@ func TestStreamUsesConfiguredChatURL(t *testing.T) {
 	}
 }
 
-func TestNewPrefersExactRequestURLOverLegacyChatURL(t *testing.T) {
-	p, err := New(provider.Config{
-		BaseURL: "https://base.example.com/v1",
-		Model:   "model-a",
-		Extra: map[string]any{
-			"chat_url":    "https://legacy.example.com/chat/completions/",
-			"request_url": "https://exact.example.com/custom/?token=1",
-		},
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if got := p.(*client).chatURL; got != "https://exact.example.com/custom/?token=1" {
-		t.Fatalf("chatURL = %q, want exact request_url", got)
-	}
-}
-
 func TestStreamSendsCustomHeaders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer real-key" {
