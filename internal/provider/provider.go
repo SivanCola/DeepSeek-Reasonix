@@ -11,8 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"unicode"
 
 	"reasonix/internal/nilutil"
@@ -43,19 +47,20 @@ type Message struct {
 	// Content is the provider-visible conversation content. Keeping this legacy
 	// field provider-visible preserves replay for older CLI/Desktop releases.
 	Content string `json:"content,omitempty"`
-	// RawContent is the user-authored form of a user turn, when it differs from
-	// Content because the host added transient context. Older releases ignore
-	// this field and still replay the provider-visible Content safely.
+	// RawContent holds the full original when it differs from Content:
+	// for user turns, the user-authored text before host-injected context;
+	// for tool turns, the complete tool result when first-visible Content was
+	// bounded. ModelMessages always clears it so provider serialization, prompt
+	// cache hashes, and projection hashes never include it.
 	RawContent string `json:"raw_content,omitempty"`
 	// ProviderContent is a transitional field written by early Context Engine v2
 	// builds. Loaders migrate it into Content/RawContent before normal use.
 	ProviderContent  string   `json:"provider_content,omitempty"`
 	Images           []string `json:"images,omitempty"`            // data URLs (data:<mime>;base64,…) on user (attachments) and tool (MCP image results) messages; embedded only for vision-capable models
 	ReasoningContent string   `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
-	// ReasoningID is the provider-issued identifier of the reasoning item
-	// (OpenAI Responses schema: Reasoning.id is required on input items).
-	// Captured from the streamed output item and round-tripped back into
-	// the input on subsequent turns, matching the wire schema.
+	// ReasoningID is the provider-issued reasoning-item id (OpenAI Responses:
+	// Reasoning.id is required on input items), captured from the streamed
+	// output item and round-tripped back into later inputs.
 	ReasoningID string `json:"reasoning_id,omitempty"`
 	// ReasoningStatus is the final status of the reasoning item
 	// ("in_progress" | "completed") as issued by the server's done event,
@@ -93,6 +98,27 @@ type Message struct {
 	// ModelMessages strips the field before handing requests to providers.
 	DecisionReceipts []*DecisionReceipt       `json:"decision_receipts,omitempty"`
 	InterruptedTurn  *InterruptedTurnRecovery `json:"interrupted_turn,omitempty"`
+	// ToolExecution is local shell UI metadata on tool-result messages. It is
+	// persisted for Desktop/CLI/Serve cards and stripped by ModelMessages before
+	// any provider request so tool schemas and prompt-cache prefixes stay stable.
+	ToolExecution *ToolExecution `json:"tool_execution,omitempty"`
+}
+
+// ToolExecution is host-local shell metadata mirrored from tool.ShellExecution.
+// Provider serializers must never emit this object on the wire.
+type ToolExecution struct {
+	Kind           string `json:"kind,omitempty"`
+	Shell          string `json:"shell,omitempty"`
+	ShellVersion   string `json:"shellVersion,omitempty"`
+	Platform       string `json:"platform,omitempty"`
+	SupportsAndAnd bool   `json:"supportsAndAnd"`
+	State          string `json:"state,omitempty"`
+	FailurePhase   string `json:"failurePhase,omitempty"`
+	ExitCode       *int   `json:"exitCode,omitempty"`
+	OutputTail     string `json:"outputTail,omitempty"`
+	MutationRisk   string `json:"mutationRisk,omitempty"`
+	Verification   string `json:"verification,omitempty"`
+	DurationMs     int64  `json:"durationMs,omitempty"`
 }
 
 // DecisionReceipt is durable, provider-excluded evidence of a user-owned
@@ -196,6 +222,7 @@ type Request struct {
 	// output (Responses: text.format.type=json_object). Nil omits the field
 	// entirely — the common path must stay byte-stable for prompt caching.
 	ResponseFormat *ResponseFormat `json:"ResponseFormat,omitempty"`
+	EffortOverride string          `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
 }
 
 // ResponseFormat asks a provider to constrain its output shape.
@@ -205,11 +232,26 @@ type ResponseFormat struct {
 	Type string `json:"type"`
 }
 
-// DefaultReasoningOutputTokens is the conservative provider-side budget used
-// for official reasoning APIs whose documented contract safely accepts 32K.
-// Unknown compatible gateways must opt in through configuration instead of
-// inheriting this value merely because they implement an OpenAI-shaped wire.
-const DefaultReasoningOutputTokens = 32 * 1024
+// Auto ladder for max_output_tokens=0. Bounds completion only; never compact_ratio.
+const (
+	DefaultOrdinaryOutputTokens      = 16 * 1024  // non-reasoning
+	DefaultReasoningOutputTokens     = 32 * 1024  // ordinary reasoning
+	DefaultHighReasoningOutputTokens = 64 * 1024  // high/max effort
+	DefaultHighOutputTokens          = 128 * 1024 // explicit only; never auto
+)
+
+// AutoOutputBudget maps max_output_tokens=0 to 16K/32K/64K by reasoning effort.
+func AutoOutputBudget(reasoningEnabled bool, effort string) int {
+	if !reasoningEnabled {
+		return DefaultOrdinaryOutputTokens
+	}
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "high", "max":
+		return DefaultHighReasoningOutputTokens
+	default:
+		return DefaultReasoningOutputTokens
+	}
+}
 
 // TemperaturePtr wraps v in a pointer so callers that explicitly want a
 // specific temperature, including 0 for deterministic output, can distinguish
@@ -246,7 +288,7 @@ func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(ms
 func ModelMessages(msgs []Message) []Message {
 	needsCopy := false
 	for _, m := range msgs {
-		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 {
+		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
 			needsCopy = true
 			break
 		}
@@ -266,6 +308,8 @@ func ModelMessages(msgs []Message) []Message {
 		candidate.RawContent = ""
 		candidate.DecisionReceipt = nil
 		candidate.DecisionReceipts = nil
+		// Local shell metadata must never enter provider request bytes.
+		candidate.ToolExecution = nil
 		out = append(out, candidate)
 	}
 	return out
@@ -489,7 +533,7 @@ func repairToolCallArgs(m Message) Message {
 func closeTruncatedJSON(s string) string {
 	var stack []byte
 	inStr, esc := false, false
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
 		if inStr {
 			switch {
@@ -529,8 +573,8 @@ func closeTruncatedJSON(s string) string {
 	case strings.HasSuffix(trimmed, ":"):
 		out = trimmed + "null"
 	}
-	for i := len(stack) - 1; i >= 0; i-- {
-		out += string(stack[i])
+	for _, v := range slices.Backward(stack) {
+		out += string(v)
 	}
 	if !json.Valid([]byte(out)) {
 		return "{}"
@@ -684,22 +728,55 @@ const (
 // Estimated marks counts reconstructed locally because the provider's terminal
 // usage record did not arrive; exact provider usage leaves it false.
 type Usage struct {
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-	CacheHitTokens   int    // prompt tokens served from cache
-	CacheMissTokens  int    // prompt tokens not cached
-	ReasoningTokens  int    // subset of CompletionTokens spent on chain-of-thought
-	FinishReason     string // "stop", "tool_calls", "length", "content_filter", "repetition_truncation", …
-	Estimated        bool
-	// BudgetAccounted is host-local bookkeeping: request-budget middleware has
-	// already committed these tokens, so an event-sink fallback must not count
-	// them twice. Provider implementations never serialize this field.
-	BudgetAccounted bool
+	PromptTokens           int
+	CompletionTokens       int
+	TotalTokens            int
+	CacheHitTokens         int     // prompt tokens served from cache
+	CacheMissTokens        int     // prompt tokens not cached, including CacheWriteTokens
+	CacheWriteTokens       int     // subset of CacheMissTokens used to create provider cache entries
+	CacheWriteBilledTokens float64 // cache-write charge expressed in ordinary input-token equivalents
+	ReasoningTokens        int     // subset of CompletionTokens spent on chain-of-thought
+	FinishReason           string  // "stop", "tool_calls", "length", "content_filter", "repetition_truncation", …
+	Estimated              bool
 	// RequestCount is the number of provider requests represented by this
 	// aggregate. Zero means one request for backward compatibility. Recovery
 	// paths that merge multiple attempts set the exact count.
 	RequestCount int
+	// Context* fields describe the latest single-request shape for context
+	// gauges and rebind telemetry. When zero, consumers fall back to the
+	// billable Prompt/Completion/… fields. Multi-attempt sampling recovery
+	// sets PromptTokens (etc.) to the billable aggregate and fills Context*
+	// from the final attempt only.
+	ContextPromptTokens     int
+	ContextCompletionTokens int
+	ContextReasoningTokens  int
+	ContextCacheHitTokens   int
+	ContextCacheMissTokens  int
+}
+
+// ContextFillTokens returns the latest-attempt context fill (prompt+completion)
+// used by status bars and context panels. Falls back to billable totals when
+// no Context* fields were set (single-attempt / legacy usage events).
+func (u *Usage) ContextFillTokens() int {
+	if u == nil {
+		return 0
+	}
+	if u.ContextPromptTokens > 0 || u.ContextCompletionTokens > 0 {
+		return u.ContextPromptTokens + u.ContextCompletionTokens
+	}
+	return u.PromptTokens + u.CompletionTokens
+}
+
+// LatestPromptTokens returns the latest-attempt prompt size for context-aware
+// runtime decisions. Falls back to PromptTokens for single-attempt legacy usage.
+func (u *Usage) LatestPromptTokens() int {
+	if u == nil {
+		return 0
+	}
+	if u.ContextPromptTokens > 0 {
+		return u.ContextPromptTokens
+	}
+	return u.PromptTokens
 }
 
 // Pricing is a provider's per-1M-token rates, used to estimate spend. Currency
@@ -723,8 +800,24 @@ func (p *Pricing) Cost(u *Usage) float64 {
 	} else if miss == 0 && hit > 0 && u.PromptTokens > hit {
 		miss = u.PromptTokens - hit
 	}
+	// CacheMissTokens intentionally remains the raw prompt-token denominator
+	// used by cache hit-rate displays, so cache writes are included there. For
+	// cost, split those writes back out and replace them with their provider-
+	// supplied input-token equivalent (for example Anthropic's 1.25x 5-minute
+	// writes or 2x 1-hour writes). Older providers leave both fields at zero and
+	// keep the legacy one-input-rate behavior. A write count without billed
+	// units also falls back to 1x for backward compatibility.
+	write := min(max(u.CacheWriteTokens, 0), miss)
+	billedWrite := 0.0
+	if write > 0 {
+		billedWrite = u.CacheWriteBilledTokens
+		if billedWrite <= 0 {
+			billedWrite = float64(write)
+		}
+	}
+	inputTokenUnits := float64(miss-write) + billedWrite
 	return (float64(hit)*p.CacheHit +
-		float64(miss)*p.Input +
+		inputTokenUnits*p.Input +
 		float64(u.CompletionTokens)*p.Output) / 1e6
 }
 
@@ -802,12 +895,24 @@ type Chunk struct {
 	Err             error           // ChunkError
 }
 
-// StreamInterruptedError marks a recoverable transport cut that happened after
-// the caller had already received model output. Providers must not replay these
-// requests themselves because doing so could duplicate visible text or tool
-// calls; the agent can append a tail recovery prompt instead.
+// Fixed stream-interrupt reasons for observability. Values are a closed enum
+// and must never carry URLs, tool arguments, file paths, or raw error text.
+const (
+	StreamInterruptConnectionReset = "connection_reset"
+	StreamInterruptPrematureEOF    = "premature_eof"
+	StreamInterruptIdleTimeout     = "idle_timeout"
+)
+
+// StreamInterruptedError marks that the current sampling attempt never reached
+// a clean provider terminal event and is therefore uncommitted. The Agent may
+// replay the exact same provider request. Providers must not perform body-phase
+// request replay themselves — that lives at the Agent layer so retry budgets,
+// UI rollback, and tool execution stay single-owner. context.Canceled, auth,
+// 4xx/schema errors, and unparseable complete protocol payloads must not use
+// this type.
 type StreamInterruptedError struct {
-	Err error
+	Err    error
+	Reason string // one of the StreamInterrupt* constants; may be empty for older callers
 }
 
 func (e *StreamInterruptedError) Error() string {
@@ -822,6 +927,50 @@ func (e *StreamInterruptedError) Unwrap() error {
 		return nil
 	}
 	return e.Err
+}
+
+// StreamInterrupt wraps err as a StreamInterruptedError with a fixed reason.
+func StreamInterrupt(err error, reason string) error {
+	if err == nil {
+		return nil
+	}
+	return &StreamInterruptedError{Err: err, Reason: reason}
+}
+
+// StreamInterruptReason returns the fixed reason when err is a stream
+// interruption, or empty otherwise.
+func StreamInterruptReason(err error) string {
+	var interrupted *StreamInterruptedError
+	if !errors.As(err, &interrupted) || interrupted == nil {
+		return ""
+	}
+	if interrupted.Reason != "" {
+		return interrupted.Reason
+	}
+	return ClassifyStreamInterrupt(interrupted.Err)
+}
+
+// ClassifyStreamInterrupt maps a transport error onto a fixed reason enum.
+// Prefer attaching Reason at the emit site; this is a best-effort fallback.
+func ClassifyStreamInterrupt(err error) string {
+	if err == nil {
+		return StreamInterruptPrematureEOF
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "stalled") || strings.Contains(msg, "idle timeout") || strings.Contains(msg, "no data for"):
+		return StreamInterruptIdleTimeout
+	case errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || strings.Contains(msg, "before completion") || strings.Contains(msg, "unexpected eof"):
+		return StreamInterruptPrematureEOF
+	case errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) ||
+		strings.Contains(msg, "connection reset") || strings.Contains(msg, "forcibly closed") || strings.Contains(msg, "broken pipe"):
+		return StreamInterruptConnectionReset
+	default:
+		if IsConnReset(err) {
+			return StreamInterruptConnectionReset
+		}
+		return StreamInterruptPrematureEOF
+	}
 }
 
 func IsStreamInterrupted(err error) bool {

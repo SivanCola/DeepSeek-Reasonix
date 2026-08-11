@@ -486,10 +486,10 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) HandlerWithCORS(origin string) http.Handler {
 	return corsMiddleware(s.handler(), origin)
 }
-
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.index)
+	mux.HandleFunc("GET /sessions/{id}", s.index)
 	mux.HandleFunc("GET /assets/logo-wordmark.svg", s.logoWordmark)
 	mux.HandleFunc("GET /provider-setup", s.providerSetupStatus)
 	mux.HandleFunc("POST /provider-setup", s.providerSetupSave)
@@ -497,6 +497,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /history", s.history)
 	mux.HandleFunc("GET /context", s.context)
 	mux.HandleFunc("POST /submit", s.submit)
+	s.registerInboxRoutes(mux)
 	mux.HandleFunc("POST /cancel", s.cancel)
 	mux.HandleFunc("POST /approve", s.approve)
 	mux.HandleFunc("POST /plan", s.plan)
@@ -653,7 +654,16 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch, unsubscribe := s.bc.Subscribe()
+	var ch <-chan []byte
+	var unsubscribe func()
+	// Subscribe and replay as one handoff. Prompt producers are serialized with
+	// this operation, so no original event can land between the two steps.
+	s.ctl().ReplayPendingPromptsWith(func() event.Sink {
+		ch, unsubscribe = s.bc.Subscribe()
+		return event.FuncSink(func(e event.Event) {
+			s.bc.EmitTo(ch, e)
+		})
+	})
 	defer unsubscribe()
 
 	fmt.Fprint(w, ": connected\n\n") // open the stream immediately
@@ -742,7 +752,24 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	// published replacement. This closes the check/build/swap race where a
 	// request could otherwise start on cur after reload's initial busy check.
 	s.bindMu.Lock()
-	s.ctl().SubmitHTTPFormat(body.Input, body.Format)
+	ctrl := s.ctl()
+	// Fix false 202 while a turn is active: SubmitHTTPFormat silently drops
+	// concurrent input. Clients must use POST /inbox/items for durable follow-up.
+	if ctrl.Running() {
+		s.bindMu.Unlock()
+		http.Error(w, "session is busy; use POST /inbox/items for durable follow-up", http.StatusConflict)
+		return
+	}
+	ctrl.SubmitHTTPFormat(body.Input, body.Format)
+	// After synchronous admission, a successful start sets Running. A silent
+	// drop (rotating/closed) leaves Running false — return 409 instead of 202.
+	// Finishing-window park also leaves Running false briefly; prefer 202 only
+	// when Running or a pending prompt is observed, else durable-queue guidance.
+	if !ctrl.Running() && !ctrl.RuntimeStatus().PendingPrompt {
+		s.bindMu.Unlock()
+		http.Error(w, "input was not admitted; session is rotating, closed, or finishing — use POST /inbox/items", http.StatusConflict)
+		return
+	}
 	s.bindMu.Unlock()
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -1145,10 +1172,8 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session is pending cleanup", http.StatusBadRequest)
 		return
 	}
-	// Session-path-changing critical sequence: two interleaved resumes would
-	// leave the controller on one session and the lease on another; serialize
-	// with /new, /fork, and switchModel. Taken after body/path validation so a
-	// slow client cannot hold the binding lock while uploading.
+	// Serialize with /new, /fork, and switchModel so the controller and lease
+	// cannot land on different sessions. Validate first to avoid slow holders.
 	s.bindMu.Lock()
 	defer s.bindMu.Unlock()
 	// Snapshot the current session before switching away — while this process

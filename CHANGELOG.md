@@ -8,6 +8,35 @@ branch.
 
 ### Fixed
 
+- Goal progress now uses a bounded, persisted novelty ledger instead of
+  treating all read-only turns as stalled or all successful reads as progress.
+  New read/search results advance research, exact tool/argument/result repeats
+  do not, while cross-turn no-progress streaks are observational rather than a
+  4/6/10 stop condition. Each Goal Run now defaults to 16 model rounds (unless
+  the user explicitly configured `max_steps`), followed by one summary-only
+  response and a resumable `goal_run_budget` pause. Repeating the same host
+  failure three times or completing six successful rounds without new evidence
+  similarly yields a resumable `goal_stuck` pause. The public `update_goal:
+  continue` status is normalized to
+  the FSM's internal running state, so it carries `next_action` without being
+  mistaken for terminal progress. The 10/20/40 cross-Run turn budgets remain an
+  independent backstop, and Goal status now persists real provider request
+  counts alongside observational tokens.
+
+- Goal is now the sole long-task runtime. Historical AutoResearch sidecars
+  migrate transactionally into research-budget Goals. Invalid archives block
+  fail closed and remain read-only, retaining the task id and compatibility mode
+  for a restart or `/goal resume` retry; successful Goal-only sidecars omit the
+  old task id and write an explicit downgrade fence so previous readers cannot
+  reactivate the removed runtime.
+
+- Context-dependent workflow tools now share one host-side execution boundary.
+  Goal, Plan sign-off, and background-job calls cannot reach permissions,
+  hooks, leases, or Execute outside their owning context; mixed batches execute
+  valid calls once and stop safely after one repair. Child agents also isolate
+  inherited Goal, Jobs, and live memory queues, while persisted tool identity
+  records the effective child schema projection.
+
 - **Issue #7575:** Linux Bash under bubblewrap no longer mounts a fresh empty
   `--tmpfs /tmp` on every call. Consecutive commands in the same logical session
   now share a private temporary directory (bound at `/tmp` on Linux, exported via
@@ -21,6 +50,66 @@ branch.
 
 - Added `[ui].show_turn_usage` so CLI/TUI users can hide per-request token and
   cost receipts from transcript scrollback without disabling usage accounting.
+
+## [1.20.0] — 2026-08-05
+
+Extension kernel, Task Monitor, and safer Goal completion.
+
+Compact decision surfaces, local decision receipts, unified extension kernel,
+native Task Monitor, bounded sub-agent progress, Goal fail-closed completion,
+MiMo and DashScope Responses fixes, SSH remote access simplification, and
+multiple Desktop stability improvements.
+
+### Highlights
+
+- **Unified Extension Kernel and Extension Protocol v1**: Immutable runtime
+  snapshots, fail-atomic reload, Plugin Manifest v1 (prompts, themes, full-trust
+  code runtimes), stable JSON-RPC sidecar protocol, interceptor dispatch,
+  streaming provider adapter, structured UI, and Go SDK.
+- **Native Task Monitor**: Monitor agent tasks natively in CLI and Desktop with
+  lifecycle semantics and session-scoped summary view.
+- **Bounded Sub-agent Progress Forwarding**: Forward structured progress for
+  `task`, `parallel_tasks`, and `fleet` without flooding the parent stream.
+  Renders nested lifecycle cards in Desktop and stable per-child transcript
+  slots in CLI.
+- **Goal Completion Fail-Closed**: Replace free-form Goal footer markers with a
+  stable `update_goal` tool and epoch-scoped per-turn reports. Centralized
+  completion logic with bounded evaluator, progress-aware budgets, and
+  pause/resume controls.
+- **Ablation Subsystem Switches**: Switch subsystems off behind one shared
+  vocabulary for controlled experiments. Includes planner, subagent, retrieval,
+  evidence, and compaction.
+- **Benchmark Cost per Solved Task**: Report cost per solved task, tokens per
+  solved, median wall time, and failure-class breakdown in e2e reports.
+- **Compact Decision Surfaces and Local Receipts**: Compact footer decision-card
+  layout with bounded scroll, dense action rows, and overflow disclosure.
+  Record bounded Ask, approval, and recovery decisions as local transcript
+  receipts.
+- **Simplified SSH Remote Access**: Remove Remote Workbench protocol and
+  stacks; reuse CLI/Serve remote model. Desktop opens per-host native web child
+  windows via SSH. Keyless remote Serve setup with loopback-only page.
+- **Model Usage Charts with Primer Palette**: Replace monochrome accent ramp
+  with GitHub Primer data-viz two-set categorical palette. Fix donut overflow
+  on hover and keyboard accessibility.
+- **Cross-platform Extension and Task Monitor Reliability**: Make
+  content-reference eviction deterministic, reject Unix and Windows absolute
+  plugin paths consistently, stabilize parallel-task cancellation, and restore
+  reliable Windows validation for Task Monitor and remote provider setup.
+- **MiMo and DashScope Responses Wire Alignment**: Fix multi-turn tool loops,
+  reasoning round-trip, JSON output for MiMo; fix DashScope second-turn 400
+  error, all-zero usage suppression, and vendor-aware cache TTL.
+- **Desktop Stability Fixes**: Recover stuck updates and legacy WebKit, contain
+  macOS alias repair startup crashes, keep composer overflow stacks readable,
+  and harden account verification and community flows.
+- **Remote Web Recovery After SSH Drops**: Add integration regression test for
+  SSH drop, forward recovery, and window reload. Document transient outage
+  behavior.
+- **CI: Auto-minimize Activity-Farming Spam Comments**: Detect and minimize
+  template spam comments from non-contributor accounts based on structural
+  signals.
+
+### Added
+
 - Added Extension Protocol v1 and the unified extension kernel: installed or
   linked sidecars can contribute tools, skills, commands, hooks, MCP servers,
   providers, interceptors, and structured UI surfaces through a versioned
@@ -79,9 +168,6 @@ branch.
   hatch.
 - Added `/status` details for the active model, effort, cache, Git state,
   background jobs, work profile, and provider balance where available.
-
-### Changed
-
 - Remote SSH workspaces now open as a standalone remote web window again.
   Opening a workspace from the status bar or the Remote Server tab starts or
   reuses the remote `reasonix serve`, tunnels its loopback port, and opens the
@@ -191,6 +277,21 @@ branch.
   private (`0600`, with private job directories), and the retired
   `redact_tool_output` setting is removed with a one-time upgrade notice.
 
+### Notes
+
+- Full bilingual release notes:
+  <https://reasonix.io/changelog/v1.20.0/> ·
+  [GitHub release](https://github.com/esengine/DeepSeek-Reasonix/releases/tag/desktop-v1.20.0).
+- The detailed entries below accumulated on `main-v2` after 1.0.0 and shipped
+  across 1.1.0–1.20.0; per-version attribution lives in the per-version release
+  notes linked above.
+
+## 1.1.0 – 1.19.7
+
+Per-version entries for the intermediate releases are published in the
+[bilingual release notes](https://reasonix.io/changelog/) and on the
+[GitHub releases page](https://github.com/esengine/DeepSeek-Reasonix/releases).
+
 ## [1.0.0] — 2026-06-03
 
 First stable release — a **ground-up rewrite in Go**. Not an upgrade of the `0.x`
@@ -235,4 +336,5 @@ TypeScript line; a new codebase that becomes the default (`main-v2`).
   support for the fetched runtime is unverified — install `codegraph` on PATH if
   the auto-fetch doesn't resolve there.
 
+[1.20.0]: https://github.com/esengine/DeepSeek-Reasonix/releases/tag/desktop-v1.20.0
 [1.0.0]: https://github.com/esengine/DeepSeek-Reasonix/releases/tag/v1.0.0
