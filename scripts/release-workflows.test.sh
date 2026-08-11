@@ -114,6 +114,8 @@ grep -Fq './release-control/scripts/test-webview2-native-smoke.ps1' "$repo_root/
 test -f "$repo_root/scripts/test-webview2-native-smoke.ps1"
 test ! -e "$repo_root/scripts/test-webview2-approval-smoke.ps1"
 grep -Fq 'name: Build Wails executable for native startup smoke' "$repo_root/.github/workflows/ci.yml"
+grep -Fq 'name: Test WebView2 native smoke state machine' "$repo_root/.github/workflows/ci.yml"
+grep -Fq '../scripts/test-webview2-native-smoke.ps1 -SelfTest' "$repo_root/.github/workflows/ci.yml"
 grep -Fq 'name: Smoke-test Wails/WebView2 native startup' "$repo_root/.github/workflows/ci.yml"
 grep -Fq '../scripts/test-webview2-native-smoke.ps1' "$repo_root/.github/workflows/ci.yml"
 grep -Fq 'wails build -clean -s -skipbindings -nopackage -platform windows/amd64 -webview2 embed' \

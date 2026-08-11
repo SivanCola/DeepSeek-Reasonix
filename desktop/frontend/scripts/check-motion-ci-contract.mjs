@@ -30,6 +30,8 @@ for (const [job, body, command] of [
 const windowsJob = jobBody("desktop-windows", "lint");
 for (const required of [
   "wails build -clean -s -skipbindings -nopackage -platform windows/amd64 -webview2 embed",
+  "Test WebView2 native smoke state machine",
+  "../scripts/test-webview2-native-smoke.ps1 -SelfTest",
   "Smoke-test Wails/WebView2 native startup",
   "../scripts/test-webview2-native-smoke.ps1",
 ]) {

@@ -473,6 +473,10 @@ jobs:
       - name: Test native motion contracts
         run: pnpm --dir frontend test:motion
 
+      - name: Test WebView2 native smoke state machine
+        shell: pwsh
+        run: ../scripts/test-webview2-native-smoke.ps1 -SelfTest
+
       # Build the real Wails executable on every desktop PR and exercise the
       # exact production startup path in Microsoft's installed WebView2 runtime.
       # The frontend and bindings were already built above, so this skips only

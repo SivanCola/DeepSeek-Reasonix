@@ -57,7 +57,12 @@ func TestWindowsWebView2SmokeUsesExternalProductionBinaryContract(t *testing.T) 
 		`$Process.MainWindowHandle`,
 		`$_.Name -ieq "msedgewebview2.exe"`,
 		`$_.CommandLine -match "--type=renderer"`,
-		`[DateTime]::UtcNow.AddSeconds($HealthySeconds)`,
+		`UIAutomationClient`,
+		`[System.Windows.Automation.ControlType]::Document`,
+		`[System.Windows.Automation.ControlType]::Edit`,
+		`Update-NativeSmokeStability`,
+		`a transient renderer handoff must reset without failing`,
+		`$HealthySeconds consecutive seconds`,
 		`$process.CloseMainWindow()`,
 		`$process.WaitForExit(10000)`,
 		`taskkill.exe /PID $process.Id /T /F`,
@@ -71,6 +76,7 @@ func TestWindowsWebView2SmokeUsesExternalProductionBinaryContract(t *testing.T) 
 		"mock-tool-approval",
 		"Element.prototype.animate",
 		"WebView2ApprovalSmokeBridge",
+		"Reasonix lost its main window or WebView2 renderer during the health window",
 	} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("Windows WebView2 smoke still contains production instrumentation %q", forbidden)
@@ -135,6 +141,10 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 		if !strings.Contains(workflow, want) {
 			t.Errorf("desktop release workflow is missing signing contract %q", want)
 		}
+	}
+	ciWorkflow := readTestFile(t, "../.github/workflows/ci.yml")
+	if !strings.Contains(ciWorkflow, `../scripts/test-webview2-native-smoke.ps1 -SelfTest`) {
+		t.Error("Windows CI must run the deterministic native smoke state-machine self-test")
 	}
 	for _, forbidden := range []string{
 		`signing-policy-slug: test-signing`,
