@@ -107,10 +107,8 @@ func TestDesktopDiagnosticsOwnershipIsNonBlockingAndExclusive(t *testing.T) {
 
 func TestDesktopDiagnosticsSkipsNonPrimaryLaunchModes(t *testing.T) {
 	oldVersion := version
-	oldSmoke := activeWebView2ApprovalSmoke.enabled
 	t.Cleanup(func() {
 		version = oldVersion
-		activeWebView2ApprovalSmoke.enabled = oldSmoke
 	})
 
 	remote := NewApp()
@@ -127,13 +125,6 @@ func TestDesktopDiagnosticsSkipsNonPrimaryLaunchModes(t *testing.T) {
 		t.Fatal("dev build claimed diagnostics ownership")
 	}
 
-	version = "v1.23.0"
-	activeWebView2ApprovalSmoke.enabled = true
-	smoke := NewApp()
-	prepareDesktopDiagnostics(smoke)
-	if smoke.diagnosticsOwner {
-		t.Fatal("approval smoke claimed diagnostics ownership")
-	}
 }
 
 func TestDesktopLifecycleLiveRecordIsPreserved(t *testing.T) {

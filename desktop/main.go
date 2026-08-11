@@ -101,7 +101,8 @@ func main() {
 	if handled, exitCode := maybeRunMacUpdateHandoff(os.Args[1:]); handled {
 		os.Exit(exitCode)
 	}
-	webView2ApprovalSmoke := prepareWebView2ApprovalSmoke()
+	capturePreviousFatalCrash()
+	installFatalCrashOutput()
 
 	launch := parseDesktopLaunchArgs(os.Args[1:])
 
@@ -110,7 +111,7 @@ func main() {
 	singleInstance := singleInstanceLock(app)
 	appMenu := app.createAppMenu()
 	dragAndDrop := &options.DragAndDrop{EnableFileDrop: true}
-	bindings := []any{app, &WebView2ApprovalSmokeBridge{app: app}}
+	bindings := []any{app}
 
 	if launch.RemoteWindowTicket != "" {
 		// A remote web child window: a second Reasonix process that hosts the
@@ -132,7 +133,7 @@ func main() {
 		appMenu = nil
 		dragAndDrop = &options.DragAndDrop{DisableWebViewDrop: true}
 		bindings = nil
-	} else if !webView2ApprovalSmoke {
+	} else {
 		// Claim diagnostics before Wails so second processes cannot create evidence.
 		prepareDesktopDiagnostics(app)
 		defer app.releaseDesktopDiagnosticsOwnership()
@@ -151,7 +152,6 @@ func main() {
 	// Other platforms provide a no-op implementation.
 	scheduleWebKitSignalHandlerRepair()
 
-	onStartup, onDomReady, onBeforeClose, onShutdown := app.webView2ApprovalSmokeLifecycle()
 	err := wails.Run(&options.App{
 		Title:     title,
 		Width:     width,
@@ -166,7 +166,6 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			Middleware: assetserver.ChainMiddleware(
-				app.webView2ApprovalSmokeMiddleware(),
 				app.remoteWindowAssetMiddleware(),
 				app.jsProfilingMiddleware(),
 				app.remoteMarkdownImageMiddleware(),
@@ -174,10 +173,10 @@ func main() {
 				app.themeAssetMiddleware(),
 			),
 		},
-		OnStartup:          onStartup,
-		OnDomReady:         onDomReady,
-		OnBeforeClose:      onBeforeClose,
-		OnShutdown:         onShutdown,
+		OnStartup:          app.startup,
+		OnDomReady:         app.domReady,
+		OnBeforeClose:      app.beforeClose,
+		OnShutdown:         app.shutdown,
 		Bind:               bindings,
 		SingleInstanceLock: singleInstance,
 
@@ -223,7 +222,6 @@ func main() {
 	if err != nil {
 		println("Error:", err.Error())
 	}
-	finishWebView2ApprovalSmokeProcess(err)
 }
 
 // desktopLaunchOptions captures legacy argv that old installers/shortcuts may

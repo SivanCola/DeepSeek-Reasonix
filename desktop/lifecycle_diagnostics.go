@@ -90,7 +90,7 @@ func newDesktopLifecycleTracker(root, appVersion, appChannel string) *desktopLif
 }
 
 func prepareDesktopDiagnostics(app *App) {
-	if app == nil || app.remoteWindowTicket != "" || version == "dev" || activeWebView2ApprovalSmoke.enabled {
+	if app == nil || app.remoteWindowTicket != "" || version == "dev" {
 		return
 	}
 	root := config.MemoryUserDir()
