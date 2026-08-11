@@ -217,6 +217,7 @@ type WorkspaceTab struct {
 	// telemetry/history or become configuration. Guarded by telemMu.
 	runtimeCostDisplayCurrency string
 	runtimeCostQuote           *billing.CostQuote
+	runtimeCostGeneration      uint64 // invalidates stale wallet responses
 	// telemetrySessionKey is the sessionRuntimeKey the telemetry above belongs
 	// to. Controller-side session rotations (typed /new, bot /reset) bypass the
 	// App bindings, so telemetry writers and readers re-key through
@@ -796,11 +797,7 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context
 	target.toolApprovalMode = source.toolApprovalMode
 	target.disabledMCP = cloneServerViewMap(source.disabledMCP)
 	target.mcpOrder = append([]string(nil), source.mcpOrder...)
-	target.readTelemetry = readTelemetry
-	target.usageTelemetry = usageTelemetry
-	target.runtimeCostDisplayCurrency = ""
-	target.runtimeCostQuote = nil
-	target.telemetrySessionKey = telemetrySessionKey
+	target.replaceTelemetry(tabTelemetrySnapshot{ReadFiles: readTelemetry, Usage: usageTelemetry}, telemetrySessionKey)
 	if app != nil {
 		key := sessionRuntimeKey(path)
 		rt := app.runtimeForTabLocked(source)
@@ -1170,6 +1167,7 @@ func (t *WorkspaceTab) resetTelemetry(sessionPath string) {
 	t.usageTelemetry = sessionUsageStats{}
 	t.runtimeCostDisplayCurrency = ""
 	t.runtimeCostQuote = nil
+	t.runtimeCostGeneration++
 	t.telemetrySessionKey = sessionRuntimeKey(sessionPath)
 	t.telemMu.Unlock()
 }
@@ -1201,6 +1199,7 @@ func (t *WorkspaceTab) syncTelemetryToSession(sessionPath string) {
 		t.usageTelemetry = snapshot.Usage
 		t.runtimeCostDisplayCurrency = ""
 		t.runtimeCostQuote = nil
+		t.runtimeCostGeneration++
 		t.telemetrySessionKey = key
 	}
 	t.telemMu.Unlock()
@@ -4122,13 +4121,7 @@ func (a *App) buildTabControllerWithContextAdmissionHeld(tab *WorkspaceTab, load
 			// across sessions and persisted the stale totals into the new
 			// session's sidecar on the next event (#5850).
 			snapshot := loadTelemetry(path + ".telemetry.json")
-			tab.telemMu.Lock()
-			tab.readTelemetry = snapshot.ReadFiles
-			tab.usageTelemetry = snapshot.Usage
-			tab.runtimeCostDisplayCurrency = ""
-			tab.runtimeCostQuote = nil
-			tab.telemetrySessionKey = sessionRuntimeKey(path)
-			tab.telemMu.Unlock()
+			tab.replaceTelemetry(snapshot, sessionRuntimeKey(path))
 		}
 	}
 

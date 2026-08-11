@@ -4299,13 +4299,7 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	tab.Ready = true
 	clearTabStartupError(tab)
 	tab.ActivityStatus = ""
-	tab.telemMu.Lock()
-	tab.readTelemetry = append([]readFileRecord(nil), candidate.telemetry.ReadFiles...)
-	tab.usageTelemetry = cloneSessionUsageStats(candidate.telemetry.Usage)
-	tab.runtimeCostDisplayCurrency = ""
-	tab.runtimeCostQuote = nil
-	tab.telemetrySessionKey = sessionRuntimeKey(sessionPath)
-	tab.telemMu.Unlock()
+	tab.replaceTelemetry(candidate.telemetry, sessionRuntimeKey(sessionPath))
 	if tab.sink != nil {
 		tab.sink.setBinding(tab.ID, a)
 		tab.sink.setContext(a.ctx)
@@ -6727,7 +6721,7 @@ func (a *App) Balance() BalanceInfo {
 
 func (a *App) BalanceForTab(tabID string) BalanceInfo {
 	currency := a.balanceDisplayCurrency()
-	ctrl := a.ctrlByTabID(tabID)
+	tab, ctrl, generation := a.balanceRequestTarget(tabID)
 	if ctrl == nil {
 		return BalanceInfo{}
 	}
@@ -6741,13 +6735,7 @@ func (a *App) BalanceForTab(tabID string) BalanceInfo {
 	display := b.DisplayForCurrency(currency)
 	currencies := b.Currencies()
 	primary := b.PrimaryCurrency()
-	if currency == "" && primary != "" {
-		// Re-check the tab/controller identity after the network call. A late
-		// response from an old tab/model may never rebind the current session.
-		if tab := a.tabByID(tabID); tab != nil && tab.Ctrl == ctrl {
-			tab.selectRuntimeDisplayCurrency(primary)
-		}
-	}
+	a.applyBalanceDisplayHint(tabID, tab, ctrl, currency, primary, generation)
 	detail := balanceDetail(b)
 	return BalanceInfo{
 		Available:           true,

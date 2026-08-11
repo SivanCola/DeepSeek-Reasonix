@@ -2041,7 +2041,7 @@ func TestSetDesktopLanguagePersistsResponseLanguageAndUpdatesLiveTabs(t *testing
 	}
 }
 
-func TestSetDesktopCurrencyPersistsRegionalOfficialPricing(t *testing.T) {
+func TestSetDesktopCurrencyPersistsDisplayWithoutRewritingOfficialPricing(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	app := NewApp()

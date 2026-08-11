@@ -1931,9 +1931,6 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 		oldCtrl.Close()
 	}
 	a.persistTabSessionPath(tab, path)
-	if setting == "currency" {
-		a.repriceTabUsageForCurrentCurrency(tab)
-	}
 	a.clearDeferredRebuild(tab.ID)
 	a.notifyTabRuntimeRebuilt(tab)
 	a.emitReady(a.ctx)
@@ -3289,57 +3286,26 @@ func (a *App) SetDesktopLanguage(lang string) error {
 	return nil
 }
 
-// SetDesktopCurrency updates the official pricing region independently from UI
-// language. Rebuild the active controller so subsequent usage carries the new
-// currency and regional rates through the existing structured cost fields.
+// SetDesktopCurrency persists a display-only preference and re-selects the
+// occurrence-time valuations already stored in each tab. Provider price tables
+// and live controllers are intentionally untouched.
 func (a *App) SetDesktopCurrency(currency string) error {
-	_, err := a.applyConfigChangeWithWarning("currency", func(c *config.Config) error {
+	err := a.applyConfigOnly(func(c *config.Config) error {
 		return c.SetDesktopCurrency(currency)
 	})
-	if err == nil {
-		a.scheduleCurrencyRefreshForOtherTabs()
+	if err != nil {
+		return err
 	}
-	return err
-}
 
-func (a *App) scheduleCurrencyRefreshForOtherTabs() {
-	if a == nil || a.ctx == nil {
-		return
-	}
+	a.sessionRemovalMu.Lock()
+	defer a.sessionRemovalMu.Unlock()
 	a.mu.RLock()
-	activeID := a.activeTabID
-	tabIDs := make([]string, 0, len(a.tabs))
-	for id, tab := range a.tabs {
-		if id != activeID && tab != nil && tab.Ctrl != nil && !tab.removed {
-			tabIDs = append(tabIDs, id)
-		}
-	}
+	tabs := append([]*WorkspaceTab(nil), a.runtimeTabsLocked()...)
 	a.mu.RUnlock()
-	for _, id := range tabIDs {
-		a.scheduleDeferredRebuild(id, "currency")
+	for _, tab := range tabs {
+		a.repriceTabUsageForCurrentCurrency(tab)
 	}
-}
-
-func (a *App) scheduleCurrencyRefreshForAllTabs() {
-	if a == nil {
-		return
-	}
-	a.mu.RLock()
-	tabIDs := make([]string, 0, len(a.tabs))
-	for id, tab := range a.tabs {
-		if tab != nil && tab.Ctrl != nil && !tab.removed {
-			tabIDs = append(tabIDs, id)
-		}
-	}
-	a.mu.RUnlock()
-	for _, id := range tabIDs {
-		a.scheduleDeferredRebuild(id, "currency")
-	}
-}
-
-func (a *App) desktopPricingFollowsDetectedLocale() bool {
-	cfg, _, err := a.loadDesktopUserConfigForView()
-	return err == nil && cfg.DesktopPricingFollowsDetectedLocale()
+	return nil
 }
 
 func (a *App) desktopEffectivePricingCurrency(cfg *config.Config) string {

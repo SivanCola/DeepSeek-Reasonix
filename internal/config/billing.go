@@ -189,13 +189,6 @@ func migrateBillingDisplayCurrency(c *Config) {
 	}
 }
 
-// DesktopPricingFollowsDetectedLocale reports whether Auto may supply a host
-// display-currency hint. Explicit preferences always win. Browser locale no
-// longer changes official provider price tables.
-func (c *Config) DesktopPricingFollowsDetectedLocale() bool {
-	return false
-}
-
 // DeepSeekOfficialPricingCurrency resolves which official DeepSeek table to
 // use for *new default template fills*. It no longer follows display currency
 // for existing providers — those use BillingCurrency. For templates without a
