@@ -45,6 +45,7 @@ func TestInboxWailsErrorsUseStableCodes(t *testing.T) {
 	}
 
 	unknown := errors.New("filesystem detail: /private/example")
+	//nolint:errorlint // Identity is the contract: unknown diagnostics must not be wrapped.
 	if got := inboxWailsError(unknown); got != unknown {
 		t.Fatalf("unknown diagnostic error = %q, want original error", got)
 	}

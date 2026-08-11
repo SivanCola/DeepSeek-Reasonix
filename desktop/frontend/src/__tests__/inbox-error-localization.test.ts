@@ -1,6 +1,6 @@
 // Run: tsx src/__tests__/inbox-error-localization.test.ts
 
-import { formatInboxError } from "../lib/inboxError";
+import { formatInboxCancelError, formatInboxError } from "../lib/inboxError";
 
 let passed = 0;
 let failed = 0;
@@ -41,9 +41,15 @@ eq(formatInboxError(new Error("inbox is paused"), "zh"), "收件箱已暂停", "
 eq(formatInboxError(new Error("workspace failed to start: internal detail"), "zh"), "工作区启动失败", "legacy startup detail is sanitized and localized");
 eq(formatInboxError("reasonix_error:inbox_paused", "zh-TW"), "收件匣已暫停", "traditional Chinese maps stable code");
 eq(formatInboxError(new Error("reasonix_error:inbox_paused"), "en"), "Inbox is paused", "English maps stable code");
+eq(
+  formatInboxCancelError(new Error("reasonix_error:inbox_invalid_state"), "zh"),
+  "取消失败：当前状态下无法操作这条收件箱指令",
+  "cancel failures localize both context and stable code",
+);
 
 const diagnostic = "filesystem detail: /private/example";
 eq(formatInboxError(new Error(diagnostic), "zh"), diagnostic, "unknown diagnostic details stay intact");
+eq(formatInboxCancelError(new Error(diagnostic), "zh"), `取消失败：${diagnostic}`, "localized cancel context preserves unknown diagnostics");
 
 if (failed > 0) {
   process.stderr.write(`\n${failed} failed, ${passed} passed\n`);

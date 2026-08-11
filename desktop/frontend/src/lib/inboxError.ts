@@ -23,6 +23,7 @@ const CODE_INDEX = {
 type InboxErrorCode = keyof typeof CODE_INDEX;
 const UNKNOWN_INDEX = 13;
 const STEER_QUEUED_INDEX = 14;
+const CANCEL_FAILED_INDEX = 15;
 
 const ERROR_COPY: Record<Locale, readonly string[]> = {
   en: [
@@ -41,6 +42,7 @@ const ERROR_COPY: Record<Locale, readonly string[]> = {
     "The workspace failed to start",
     "The inbox operation could not be completed",
     "The turn ended before guidance could be applied. It will remain queued for the next turn",
+    "Cancel failed: {error}",
   ],
   zh: [
     "收件箱已暂停",
@@ -58,6 +60,7 @@ const ERROR_COPY: Record<Locale, readonly string[]> = {
     "工作区启动失败",
     "无法完成收件箱操作",
     "引导尚未应用时当前回合已结束；它会保留在队列中，供下一回合处理",
+    "取消失败：{error}",
   ],
   "zh-TW": [
     "收件匣已暫停",
@@ -75,6 +78,7 @@ const ERROR_COPY: Record<Locale, readonly string[]> = {
     "工作區啟動失敗",
     "無法完成收件匣操作",
     "引導尚未套用時目前回合已結束；它會保留在佇列中，供下一回合處理",
+    "取消失敗：{error}",
   ],
 };
 
@@ -110,4 +114,8 @@ export function formatInboxError(error: unknown, locale: Locale): string {
 
 export function inboxSteerQueuedMessage(locale: Locale): string {
   return ERROR_COPY[locale][STEER_QUEUED_INDEX];
+}
+
+export function formatInboxCancelError(error: unknown, locale: Locale): string {
+  return ERROR_COPY[locale][CANCEL_FAILED_INDEX].replace("{error}", formatInboxError(error, locale));
 }

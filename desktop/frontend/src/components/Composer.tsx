@@ -1167,12 +1167,9 @@ export function Composer({
     wasRunningByDraftRef.current[draftKey] = running;
   }, [draftKey, running, text]);
 
-  // Legacy/local preview items still need the old frontend-owned send path.
-  // Durable items are dispatched exactly once by the Controller after TurnDone;
-  // Durable items are dispatched and acknowledged only by the Controller.
-  // This compatibility path drains legacy local preview items, while the
-  // draft-key guard prevents a stale tab render from submitting through the
-  // newly selected session's onSend.
+  // Legacy/local preview items still need the frontend-owned send path; durable items
+  // are dispatched and acknowledged exactly once by the Controller after TurnDone.
+  // The draft-key guard prevents this compatibility path from using a newly selected session's onSend.
   useEffect(() => {
     // Never auto-send guidance while a decision surface owns the footer —
     // the draft must stay intact until the user finishes the decision.
@@ -1195,8 +1192,7 @@ export function Composer({
       setGuidanceExpanded(false);
       return;
     }
-    // Refresh shelf from the durable server snapshot (metadata only). Running
-    // transitions are included so Controller-owned dispatch/ack is reflected.
+    // Refresh durable server metadata when running transitions change Controller-owned dispatch/ack.
     void app.InboxSnapshot(tabId || "").then((snap) => {
       if (!live) return;
       const durable = (snap?.items ?? []).map((it: { id: string; preview: string; state?: string; intent?: string; source?: string }) => ({
