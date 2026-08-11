@@ -15,8 +15,7 @@ import { useRemoteStore } from "../store/remote";
 type StatusBarLabelStyle = "icon" | "text";
 
 function formatRate(hit: number, denom: number): string | null {
-  if (denom <= 0) return null;
-  return ((hit / denom) * 100).toFixed(2);
+  return denom > 0 ? ((hit / denom) * 100).toFixed(2) : null;
 }
 
 // nowRate is the SINGLE-TURN prompt cache-hit % (latest turn) — the higher,
