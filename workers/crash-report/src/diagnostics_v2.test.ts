@@ -15,6 +15,12 @@ import {
 import type { Env } from "./env";
 import diagnosticsMigrationSQL from "../migrate-diagnostics-v2.sql?raw";
 import freshSchemaSQL from "../schema.sql?raw";
+import {
+  classifyDiagnosticsV2Schema,
+  diagnosticsV2SchemaEntries,
+  diagnosticsV2SchemaQuery,
+  parseWranglerRows,
+} from "../scripts/apply-diagnostics-v2.mjs";
 
 const oldReport = {
   kind: "crash",
@@ -25,6 +31,19 @@ const oldReport = {
 } as const;
 
 describe("diagnostics v2 compatibility and privacy", () => {
+  it("fails closed on a partially applied production migration", () => {
+    expect(classifyDiagnosticsV2Schema([]).state).toBe("absent");
+    const completeRows = (diagnosticsV2SchemaEntries as readonly string[]).map((entry: string) => {
+      const split = entry.indexOf(":");
+      return { kind: entry.slice(0, split), name: entry.slice(split + 1) };
+    });
+    expect(classifyDiagnosticsV2Schema(completeRows).state).toBe("complete");
+    const partial = classifyDiagnosticsV2Schema(completeRows.slice(1));
+    expect(partial.state).toBe("partial");
+    expect(partial.missing).toEqual([diagnosticsV2SchemaEntries[0]]);
+    expect(parseWranglerRows(JSON.stringify([{ results: completeRows }]))).toEqual(completeRows);
+  });
+
   it("accepts old reports plus Windows and Linux runtime diagnostics", () => {
     expect(Report.safeParse(oldReport).success).toBe(true);
     expect(Report.safeParse({
@@ -131,6 +150,9 @@ describe("diagnostics v2 compatibility and privacy", () => {
       for (const table of ["cli_pings", "cli_metric_users"]) {
         expect(columns(runtimeBootstrap, table)).toEqual(columns(fresh, table));
       }
+      expect(classifyDiagnosticsV2Schema(
+        migrated.prepare(diagnosticsV2SchemaQuery).all(),
+      ).state).toBe("complete");
     } finally {
       fresh.close();
       migrated.close();
