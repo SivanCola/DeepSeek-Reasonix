@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, type MutableRefObject, type RefObject } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
-import { readTranscriptLayoutSnapshot, type TranscriptLayoutSnapshot } from "./transcriptHeightCache";
+import { readTranscriptLayoutSnapshot, transcriptHeightCache, type TranscriptLayoutSnapshot } from "./transcriptHeightCache";
 import type { TranscriptViewportAnchor } from "./transcriptScrollController";
 
 /**
@@ -17,6 +17,9 @@ export function useTranscriptMeasurementInvalidation({
   onMeasureIdle,
   captureViewportAnchor,
   reconcileViewportAnchor,
+  deferredRowMeasurements,
+  tabId,
+  onMeasurementsFlushed,
 }: {
   scrollRef: RefObject<HTMLDivElement | null>;
   layoutSnapshotRef: MutableRefObject<TranscriptLayoutSnapshot>;
@@ -26,6 +29,9 @@ export function useTranscriptMeasurementInvalidation({
   onMeasureIdle: (listener: () => void) => () => void;
   captureViewportAnchor: () => TranscriptViewportAnchor | null;
   reconcileViewportAnchor: (snapshot: TranscriptViewportAnchor | null) => boolean;
+  deferredRowMeasurements?: MutableRefObject<Map<string, number>>;
+  tabId?: string;
+  onMeasurementsFlushed?: () => void;
 }) {
   const activeRef = useRef(selectionActive);
   const pendingRef = useRef(false);
@@ -33,7 +39,15 @@ export function useTranscriptMeasurementInvalidation({
   activeRef.current = selectionActive;
 
   const flushPending = useCallback(() => {
-    if (!pendingRef.current || activeRef.current || !canMeasure()) return;
+    if (activeRef.current || !canMeasure()) return;
+    if (deferredRowMeasurements?.current.size) {
+      for (const [rowKey, height] of deferredRowMeasurements.current) {
+        transcriptHeightCache.set(tabId ?? "", layoutSnapshotRef.current.signature, rowKey, height);
+      }
+      deferredRowMeasurements.current.clear();
+      pendingRef.current = true;
+    }
+    if (!pendingRef.current) return;
     pendingRef.current = false;
     const anchor = captureViewportAnchor();
     virtualizer.measure();
@@ -45,8 +59,9 @@ export function useTranscriptMeasurementInvalidation({
         return;
       }
       reconcileViewportAnchor(anchor);
+      onMeasurementsFlushed?.();
     });
-  }, [canMeasure, captureViewportAnchor, reconcileViewportAnchor, virtualizer]);
+  }, [canMeasure, captureViewportAnchor, deferredRowMeasurements, layoutSnapshotRef, onMeasurementsFlushed, reconcileViewportAnchor, tabId, virtualizer]);
 
   useEffect(() => {
     if (!selectionActive) flushPending();

@@ -90,12 +90,14 @@ export function useScrollManager() {
   const touchStartY = useRef<number | null>(null);
   const lastClientHeight = useRef<number | null>(null);
   const lastFooterHeight = useRef<number | null>(null);
+  const lastObservedScrollTopRef = useRef<number | null>(null);
   /** Epoch ms until which compensating writers must stay silent. */
   const gestureUntilRef = useRef(0);
   const gestureSourceRef = useRef<TranscriptUserScrollSource | null>(null);
   const gestureLastActivityRef = useRef(0);
   const gestureIdleTimerRef = useRef<number | null>(null);
   const gestureIdleListenersRef = useRef(new Set<() => void>());
+  const preserveTailDuringGestureRef = useRef(false);
   const deferredTailRepinRef = useRef<{
     generation: number;
     owner: TranscriptScrollOwner;
@@ -130,6 +132,7 @@ export function useScrollManager() {
     gestureUntilRef.current = 0;
     gestureSourceRef.current = null;
     gestureLastActivityRef.current = 0;
+    preserveTailDuringGestureRef.current = false;
     if (gestureIdleTimerRef.current !== null) {
       clearTimeout(gestureIdleTimerRef.current);
       gestureIdleTimerRef.current = null;
@@ -204,6 +207,13 @@ export function useScrollManager() {
     }
     return shouldFollow;
   }, []);
+
+  const restoreTailFollowAtBottom = useCallback((el: HTMLElement) => {
+    if (!tailFollowSuppressedRef.current || !isAtPhysicalBottom(el)) return false;
+    tailFollowSuppressedRef.current = false;
+    updateBottomState(el);
+    return true;
+  }, [updateBottomState]);
 
   const cancelPendingBottomScroll = useCallback(() => {
     if (resizeFrame.current !== null) {
@@ -283,10 +293,27 @@ export function useScrollManager() {
       return false;
     }
     if (marker.behavior === "smooth") return true;
-    if (Math.abs(marker.target - top) <= 1) {
-      programmaticScrollRef.current = null;
+    // A single controller write can produce more than one scroll event while
+    // the browser and virtualizer settle the following layout frames. Keep the
+    // ownership marker for its short hold window as long as those events still
+    // report the owned target. A different offset is genuine user/native input.
+    if (Math.abs(marker.target - top) <= 1) return true;
+    const el = scrollRef.current;
+    if (
+      PASSIVE_TAIL_OWNERS.has(marker.owner)
+      && modeRef.current === "tail-follow"
+      && stick.current
+      && !tailFollowSuppressedRef.current
+      && el
+      && (top >= marker.target - 1 || isAtPhysicalBottom(el))
+    ) {
+      // Scroll anchoring may advance the old bottom a few pixels at a time as
+      // the virtualizer publishes a larger tail. That monotonic movement is a
+      // continuation of the passive tail write, not a fresh user gesture.
+      marker.target = top;
       return true;
     }
+    programmaticScrollRef.current = null;
     return false;
   }, []);
 
@@ -301,6 +328,7 @@ export function useScrollManager() {
     // release is never blocked by the gesture lock itself.
     if (el) cancelInFlightSmoothScroll(el);
     cancelPendingBottomScroll();
+    preserveTailDuringGestureRef.current = false;
     tailFollowSuppressedRef.current = true;
     stick.current = false;
     setIsAtBottom(false);
@@ -322,8 +350,10 @@ export function useScrollManager() {
       releaseAutoScroll();
       return true;
     }
+    restoreTailFollowAtBottom(el);
+    preserveTailDuringGestureRef.current = stick.current;
     return false;
-  }, [markUserGesture, releaseAutoScroll]);
+  }, [markUserGesture, releaseAutoScroll, restoreTailFollowAtBottom]);
 
   const onTouchStartIntent = useCallback((event: ReactTouchEvent<HTMLElement>) => {
     touchStartY.current = event.touches[0]?.clientY ?? null;
@@ -341,8 +371,10 @@ export function useScrollManager() {
       releaseAutoScroll();
       return true;
     }
+    restoreTailFollowAtBottom(el);
+    preserveTailDuringGestureRef.current = stick.current;
     return false;
-  }, [markUserGesture, releaseAutoScroll]);
+  }, [markUserGesture, releaseAutoScroll, restoreTailFollowAtBottom]);
 
   const onKeyScrollIntent = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     const el = scrollRef.current;
@@ -357,8 +389,9 @@ export function useScrollManager() {
       releaseAutoScroll();
       return true;
     }
+    if (CONDITIONAL_SCROLL_KEYS.has(event.key)) restoreTailFollowAtBottom(el);
     return false;
-  }, [markUserGesture, releaseAutoScroll]);
+  }, [markUserGesture, releaseAutoScroll, restoreTailFollowAtBottom]);
 
   const onPointerDownIntent = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const el = scrollRef.current;
@@ -376,15 +409,23 @@ export function useScrollManager() {
       releaseAutoScroll();
       return true;
     }
+    restoreTailFollowAtBottom(el);
+    preserveTailDuringGestureRef.current = stick.current;
     return false;
-  }, [markUserGesture, releaseAutoScroll]);
+  }, [markUserGesture, releaseAutoScroll, restoreTailFollowAtBottom]);
 
   const onScroll = useCallback((event?: ReactUIEvent<HTMLElement>) => {
     const el = scrollRef.current;
     if (!el) return;
+    const previousTop = lastObservedScrollTopRef.current;
+    lastObservedScrollTopRef.current = el.scrollTop;
     const programmatic = consumeProgrammaticScroll(el.scrollTop) || isTranscriptSelectionMode(modeRef.current);
     if (programmatic) {
       updateBottomState(el, true);
+      return;
+    }
+    if (preserveTailDuringGestureRef.current && modeRef.current === "tail-follow") {
+      markUserGesture(gestureSourceRef.current ?? "native-scroll");
       return;
     }
     if (event?.nativeEvent.isTrusted === false && !isUserGestureActive(gestureUntilRef.current)) {
@@ -397,7 +438,8 @@ export function useScrollManager() {
     // scroll events without wheel samples. Treat every unowned scroll as user
     // activity; controller-owned writes are consumed above.
     markUserGesture(gestureSourceRef.current ?? "native-scroll");
-    tailFollowSuppressedRef.current = !isAtPhysicalBottom(el);
+    if (!isAtPhysicalBottom(el)) tailFollowSuppressedRef.current = true;
+    else if (previousTop !== null && el.scrollTop > previousTop + BOTTOM_REENGAGE_PX) tailFollowSuppressedRef.current = false;
     updateBottomState(el);
     if (tailFollowSuppressedRef.current) cancelPendingBottomScroll();
   }, [cancelPendingBottomScroll, consumeProgrammaticScroll, markUserGesture, updateBottomState]);

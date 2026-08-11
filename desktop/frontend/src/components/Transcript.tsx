@@ -231,6 +231,7 @@ export function Transcript({
     captureViewportAnchor,
     reconcileViewportAnchor,
     onGestureIdle,
+    gestureUntilRef,
     finishProgrammaticScroll,
   } = useTranscriptScrollController();
   const autoScrollFrame = useRef<number | null>(null);
@@ -490,14 +491,38 @@ export function Transcript({
     onSelectionPointerDown: selectionRetention.onPointerDownCapture,
   });
   const getRowKey = useCallback((index: number) => `${tabId ?? ""}:${String(rows[index]?.key ?? index)}`, [rows, tabId]);
-  const { estimateSize: estimateRowSize, layoutSnapshotRef, measureElement: measureRowSize } = useTranscriptRowMeasurements(tabId, rows);
+  const {
+    estimateSize: estimateRowSize,
+    layoutSnapshotRef,
+    measureElement: measureRowSize,
+  } = useTranscriptRowMeasurements(tabId, rows);
+  const deferredRowMeasurementsRef = useRef(new Map<string, number>());
+  const repinAfterMeasurementFlush = useCallback(() => {
+    // TanStack can publish its corrected total size one frame after measure().
+    // Re-pin across that short layout window so a growing tail cannot finish a
+    // few pixels above the new physical bottom.
+    if (stick.current) scrollToBottomAfterLayout(2, "row-size");
+  }, [scrollToBottomAfterLayout, stick]);
   const trackRowSizeChange = useCallback(
     (element: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: Virtualizer<HTMLDivElement, HTMLDivElement>) => {
+      if (gestureUntilRef.current > Date.now()) {
+        const index = instance.indexFromElement(element);
+        const key = index >= 0 && index < rows.length ? instance.options.getItemKey(index) : null;
+        const box = entry?.borderBoxSize?.[0];
+        const measured = box ? Math.round(box.blockSize) : element.offsetHeight;
+        const frozen = key == null
+          ? undefined
+          : instance.itemSizeCache.get(key) ?? instance.measurementsCache[index]?.size;
+        const rowKey = element.dataset.rowKey;
+        if (rowKey && measured > 0 && frozen !== measured) deferredRowMeasurementsRef.current.set(rowKey, measured);
+        if (stick.current) scheduleRepinIfWasPinned(0, "row-size");
+        return frozen ?? measured;
+      }
       const height = measureRowSize(element, entry, instance);
       if (stick.current) scheduleRepinIfWasPinned(0, "row-size");
       return height;
     },
-    [measureRowSize, scheduleRepinIfWasPinned, stick],
+    [gestureUntilRef, measureRowSize, rows.length, scheduleRepinIfWasPinned, stick],
   );
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -534,7 +559,13 @@ export function Transcript({
     onMeasureIdle: onGestureIdle,
     captureViewportAnchor,
     reconcileViewportAnchor,
+    deferredRowMeasurements: deferredRowMeasurementsRef,
+    tabId,
+    onMeasurementsFlushed: repinAfterMeasurementFlush,
   });
+  useEffect(() => () => {
+    deferredRowMeasurementsRef.current.clear();
+  }, [tabId]);
 
   const sizerRef = useCallback(
     (el: HTMLDivElement | null) => {

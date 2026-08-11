@@ -123,6 +123,25 @@ await act(async () => {
 });
 eq(scrollTop, 860, "streaming cannot re-pin after a settled short upward gesture");
 
+// A row-height correction can shrink the virtual extent until the browser
+// clamps the unchanged scrollTop to the new physical bottom. That layout
+// correction is not user intent and must not clear the manual-reading latch.
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 960 });
+await act(async () => {
+  api!.onScroll();
+});
+eq(api!.stick.current, false, "layout clamping to the physical bottom preserves the manual latch");
+eq(api!.modeRef.current, "manual", "layout clamping cannot masquerade as a downward user scroll");
+await act(async () => {
+  api!.onWheelIntent({ deltaX: 0, deltaY: 48 } as React.WheelEvent<HTMLElement>);
+});
+eq(api!.stick.current, true, "downward intent at a clamped physical bottom explicitly restores tail-follow");
+eq(api!.modeRef.current, "tail-follow", "bottom-edge intent restores tail-follow even without a scroll event");
+await act(async () => {
+  api!.onWheelIntent({ deltaX: 0, deltaY: -48 } as React.WheelEvent<HTMLElement>);
+});
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1000 });
+
 // User-owned downward scrolling may deliberately opt back into tail-follow,
 // but only after reaching the physical bottom rather than merely its 80px
 // proximity band.
@@ -326,9 +345,28 @@ await act(async () => {
   const wrote = api!.writeOffset("virtualizer", 500);
   eq(wrote, true, "virtualizer writes when no user gesture is active");
   api!.onScroll();
+  // Chromium can emit another scroll event for the same write after the
+  // virtualizer's following layout pass. It is still controller-owned.
+  api!.onScroll();
 });
-eq(api!.gestureSourceRef.current, null, "owned scroll event does not create a user session");
+eq(api!.gestureSourceRef.current, null, "owned scroll event window does not create a user session");
 eq(api!.canVirtualizerAdjust(), true, "owned scroll event keeps virtualizer writes enabled");
+
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1000 });
+scrollTop = 900;
+await act(async () => {
+  api!.setMode("tail-follow", "passive-layout-settle-test");
+  api!.stick.current = true;
+  api!.writeOffset("row-size", transcript.scrollHeight);
+  api!.onScroll();
+});
+Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 1020 });
+scrollTop = 902;
+await act(async () => {
+  api!.onScroll();
+});
+eq(api!.gestureSourceRef.current, null, "passive tail layout settling stays controller-owned");
+eq(api!.modeRef.current, "tail-follow", "passive tail layout settling preserves tail-follow mode");
 
 scrollTop = 900;
 await act(async () => {

@@ -57,9 +57,10 @@ const localeChunks = readdirSync(resolve(distDir, "assets"))
   .map((name) => resolve(distDir, "assets", name));
 
 console.log("\nbundle budgets");
-// The merged execution-setting controller adds 1.1 KiB gzip (0.27%) over the
-// 400.8 KiB base while keeping the interaction on the existing startup path.
-assertBudget("initial JavaScript gzip", initialJSGzip, 402 * 1024);
+// The merged execution-setting controller and gesture-stable transcript row
+// measurement add 1.6 KiB gzip (0.40%) over the 400.8 KiB base while keeping
+// both interactions on the existing startup path.
+assertBudget("initial JavaScript gzip", initialJSGzip, 402.5 * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 assertBudget("render-blocking CSS gzip", initialCSSGzip, 4 * 1024);
 // Extension surfaces, Task Monitor, and compact decision receipts share the
@@ -87,6 +88,6 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // startup config warnings, hover-revealed turn-action labels, and compact
 // execution-setting receipts add small always-available contracts. Keep the
 // raw allowance ratcheted while gzip startup budgets stay flat.
-// The same contract adds 4.2 KiB raw (0.19%) over the 2,264.0 KiB base.
-assertBudget("initial raw JavaScript and CSS", rawInitialBytes, 2_268.5 * 1024);
+// The same contracts add 5.8 KiB raw (0.26%) over the 2,264.0 KiB base.
+assertBudget("initial raw JavaScript and CSS", rawInitialBytes, 2_270 * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
