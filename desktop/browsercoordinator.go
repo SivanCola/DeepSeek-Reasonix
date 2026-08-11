@@ -427,7 +427,7 @@ func (b *browserCoordinator) callDirect(ctx context.Context, ownerID, method str
 			Params:          mustBrowserParams(browseripc.CancelParams{RequestID: req.RequestID}),
 		}
 		_ = b.writeRequest(writer, cancelReq, 0)
-		return fmt.Errorf("%w: %v", browseripcCodeError(browseripc.CodeCancelled, "request cancelled"), ctx.Err())
+		return fmt.Errorf("%w: %w", browseripcCodeError(browseripc.CodeCancelled, "request cancelled"), ctx.Err())
 	}
 }
 
@@ -1019,7 +1019,7 @@ func (b *browserCoordinator) startLocked(ctx context.Context) error {
 		b.mu.Lock()
 		b.lastErr = err
 		b.mu.Unlock()
-		return fmt.Errorf("%w: %v", ErrBrowserComponentMissing, err)
+		return fmt.Errorf("%w: %w", ErrBrowserComponentMissing, err)
 	}
 	env := allowlistedBrowserCompanionEnv()
 	cmd, writer, stdout, stderr, err := b.opts.spawn(ctx, path, env)
@@ -1103,7 +1103,7 @@ func (b *browserCoordinator) readLoop(token uint64, r io.Reader) {
 		}
 		payload, err := browseripc.ReadFrame(r, browseripc.FrameMaxBytes)
 		if err != nil {
-			if err == io.EOF || errors.Is(err, browseripc.ErrFrameTooLarge) {
+			if errors.Is(err, io.EOF) || errors.Is(err, browseripc.ErrFrameTooLarge) {
 				b.processDead(token, err)
 				return
 			}

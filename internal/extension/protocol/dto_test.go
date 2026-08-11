@@ -162,7 +162,7 @@ var methodFixtures = map[Method]struct {
 	MethodHostBrowserTabSnapshot: {
 		params: BrowserTabSnapshotParams{TabID: "tab-1", MaxChars: intPtr(1000)},
 		result: BrowserTabSnapshotResult{
-			Tab: BrowserTab{TabID: "tab-1", URL: "https://example.com/", Title: "Example", Active: true, Generation: 1},
+			Tab:    BrowserTab{TabID: "tab-1", URL: "https://example.com/", Title: "Example", Active: true, Generation: 1},
 			Origin: "https://example.com", Snapshot: "root",
 		},
 	},

@@ -404,7 +404,7 @@ func TestBrowserIPCRequestBudget(t *testing.T) {
 	a.browser.state = browserReady
 	a.browser.writer = discardWriteCloser{}
 	a.browser.mu.Unlock()
-	for i := 0; i < browseripc.MaxPendingRequests; i++ {
+	for i := range browseripc.MaxPendingRequests {
 		a.browser.mu.Lock()
 		a.browser.pending[fmt.Sprintf("req-%d", i)] = &pendingBrowserCall{
 			reply: make(chan browseripc.Response, 1),

@@ -411,10 +411,8 @@ func TestBrowserCoordinatorFrameLockDeterministic(t *testing.T) {
 		const writers = 16
 		adv := newTwoPhaseBarrierWriter(writers)
 		var wg sync.WaitGroup
-		for i := 0; i < writers; i++ {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
+		for i := range writers {
+			wg.Go(func() {
 				req := browseripc.Request{
 					ProtocolVersion: browseripc.ProtocolVersion,
 					RequestID:       fmt.Sprintf("r-%d", i),
@@ -423,7 +421,7 @@ func TestBrowserCoordinatorFrameLockDeterministic(t *testing.T) {
 					Params:          mustFakeJSON(browseripc.OwnerParams{OwnerID: "chat-1"}),
 				}
 				_ = browseripc.WriteRequest(adv, req) // deliberately no frame lock
-			}(i)
+			})
 		}
 		wg.Wait()
 		data := adv.bytes()
@@ -443,14 +441,12 @@ func TestBrowserCoordinatorFrameLockDeterministic(t *testing.T) {
 		b.mu.Unlock()
 
 		var wg sync.WaitGroup
-		for i := 0; i < writers; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range writers {
+			wg.Go(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 				defer cancel()
 				_ = b.callDirect(ctx, "chat-1", "tab.list", browseripc.OwnerParams{OwnerID: "chat-1"}, nil)
-			}()
+			})
 		}
 		wg.Wait()
 		if !framesParseCleanly(writer.bytes(), writers) {

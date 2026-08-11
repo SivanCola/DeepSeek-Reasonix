@@ -160,7 +160,11 @@ func TestOpenRecordsReceiptWithoutURL(t *testing.T) {
 }
 
 func TestCapabilitySchemaHashStable(t *testing.T) {
-	if SchemaHash() == "" || SchemaHash() != SchemaHash() {
+	hash := SchemaHash()
+	if hash == "" {
+		t.Fatal("schema hash is empty")
+	}
+	if next := SchemaHash(); next != hash {
 		t.Fatal("schema hash unstable")
 	}
 	cap := Capability()

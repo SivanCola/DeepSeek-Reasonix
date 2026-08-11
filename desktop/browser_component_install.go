@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -229,7 +230,7 @@ func extractBrowserComponentTarGZ(data []byte, dest string) error {
 	index := 0
 	for {
 		h, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -321,7 +322,7 @@ func scanBrowserComponentTarGZ(data []byte) ([]componentArchiveEntry, error) {
 	var entries []componentArchiveEntry
 	for {
 		h, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return entries, nil
 		}
 		if err != nil {

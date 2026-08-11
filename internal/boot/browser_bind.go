@@ -30,19 +30,3 @@ func bindBrowserHandlers(mgr *sidecar.Manager, backend browserhost.Backend, owne
 		client.SetBrowserHandler(binding)
 	}
 }
-
-// disposeBrowserHandlers cancels in-flight plugin browser calls for the
-// current bindings without touching BrowserCoordinator.
-func disposeBrowserHandlers(mgr *sidecar.Manager) {
-	if mgr == nil {
-		return
-	}
-	for _, client := range mgr.Clients() {
-		if h := client.BrowserHandler(); h != nil {
-			if d, ok := h.(interface{ Dispose() }); ok {
-				d.Dispose()
-			}
-		}
-		client.SetBrowserHandler(nil)
-	}
-}
