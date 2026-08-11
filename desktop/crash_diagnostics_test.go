@@ -126,9 +126,17 @@ func TestWebKitObserverReloadIsAbnormalPathOnly(t *testing.T) {
 	if strings.Count(text, "webkit_web_view_reload(") != 1 {
 		t.Fatalf("observer must have exactly one native reload call site")
 	}
-	termination, _, ok := strings.Cut(text, "static void reasonix_web_process_terminated")
-	if !ok || strings.Contains(termination, "webkit_web_view_reload(") {
-		t.Fatal("native reload escaped the web-process termination callback")
+	_, recoveryTail, ok := strings.Cut(text, "static gboolean reasonix_reload_after_termination")
+	if !ok {
+		t.Fatal("native reload is not deferred until after termination signal dispatch")
+	}
+	reloadHelper, terminationTail, ok := strings.Cut(recoveryTail, "static void reasonix_web_process_terminated")
+	if !ok || !strings.Contains(reloadHelper, "webkit_web_view_reload(") {
+		t.Fatal("native reload escaped the deferred recovery helper")
+	}
+	terminationBody, _, ok := strings.Cut(terminationTail, "static gboolean reasonix_load_failed")
+	if !ok || !strings.Contains(terminationBody, "reasonix_reload_after_termination") {
+		t.Fatal("web-process termination does not schedule the bounded recovery helper")
 	}
 	if !strings.Contains(text, "if (!reasonix_recovery_pending) return;") ||
 		!strings.Contains(text, "if (reasonix_recovery_load_started && event == WEBKIT_LOAD_FINISHED)") {

@@ -75,6 +75,18 @@ static gboolean reasonix_recovery_timeout(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
+static gboolean reasonix_reload_after_termination(gpointer data) {
+  WebKitWebView *web_view = WEBKIT_WEB_VIEW(data);
+  if (!reasonix_recovery_pending || web_view != reasonix_web_view) {
+    return G_SOURCE_REMOVE;
+  }
+#ifdef REASONIX_WEBKIT_SMOKE
+  reasonix_test_reload_count_value++;
+#endif
+  webkit_web_view_reload(web_view);
+  return G_SOURCE_REMOVE;
+}
+
 static void reasonix_web_process_terminated(WebKitWebView *web_view,
                                             WebKitWebProcessTerminationReason reason,
                                             gpointer data) {
@@ -94,10 +106,11 @@ static void reasonix_web_process_terminated(WebKitWebView *web_view,
   reasonix_recovery_load_failed = FALSE;
   reasonix_recovery_timeout_id = g_timeout_add_seconds(REASONIX_RECOVERY_TIMEOUT_SECONDS,
                                                         reasonix_recovery_timeout, NULL);
-#ifdef REASONIX_WEBKIT_SMOKE
-  reasonix_test_reload_count_value++;
-#endif
-  webkit_web_view_reload(web_view);
+  // Let WebKit finish dispatching the termination signal before starting a
+  // replacement process. Reloading synchronously from this callback is not
+  // reliable across WebKitGTK versions.
+  g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, reasonix_reload_after_termination,
+                  g_object_ref(web_view), g_object_unref);
 }
 
 static gboolean reasonix_load_failed(WebKitWebView *web_view, WebKitLoadEvent event,
