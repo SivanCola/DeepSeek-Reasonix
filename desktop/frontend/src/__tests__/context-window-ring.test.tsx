@@ -175,7 +175,7 @@ console.log("\ncontext window ring");
   const dom = installDom();
   installContextPanelMock(async () => contextPanelInfo(0));
 
-  const { root } = await renderRing({ context: { used: 1_400_000, window: 1_000_000, compactRatio: 0.8 } });
+  const { root } = await renderRing({ context: { used: 1_001, window: 1_000, compactRatio: 0.8 } });
   const button = document.querySelector(".context-ring") as HTMLButtonElement | null;
   if (!button) throw new Error("missing over-limit context ring button");
   await act(async () => {
@@ -185,7 +185,7 @@ console.log("\ncontext window ring");
 
   const popover = document.querySelector(".context-ring-popover");
   const fill = popover?.querySelector(".context-ring-popover__fill") as HTMLElement | null;
-  eq(popover?.querySelector(".context-ring-popover__pct")?.textContent, "140%", "ring popover reports the raw over-limit ratio");
+  eq(popover?.querySelector(".context-ring-popover__pct")?.textContent, "101%", "ring popover keeps a just-over-limit ratio visibly above 100 percent");
   eq(fill?.style.width, "100%", "ring popover fill is capped at the physical track width");
   eq(popover?.querySelectorAll(".context-ring-popover__seg").length, 0, "ring popover does not mix token composition into its capacity fill");
 

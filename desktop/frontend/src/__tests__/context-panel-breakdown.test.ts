@@ -173,6 +173,11 @@ eq(
   { raw: 140, display: 100 },
   "over-limit context preserves the raw percentage while capping the meter fill",
 );
+eq(
+  contextWindowPercentages(1_001, 1_000),
+  { raw: 101, display: 100 },
+  "just-over-limit context remains visibly over 100 percent after integer formatting",
+);
 eq(contextWindowStatus(33, 80), { tone: "good", key: "context.windowStatusHealthy" }, "low usage stays healthy");
 eq(contextWindowStatus(72, 80), { tone: "notice", key: "context.windowStatusWatch" }, "usage near compact threshold warns early");
 eq(contextWindowStatus(80, 80), { tone: "warn", key: "context.windowStatusPastCompact" }, "compact threshold reached takes warning tone");

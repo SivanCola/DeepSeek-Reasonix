@@ -87,7 +87,7 @@ await act(async () => {
     <LocaleProvider>
       <ContextPanel
         tabId="tab-capacity"
-        context={{ used: 1_400_000, window: 1_000_000, sessionTokens: 1_400_000, compactRatio: 0.8 }}
+        context={{ used: 1_001, window: 1_000, sessionTokens: 1_001, compactRatio: 0.8 }}
       />
     </LocaleProvider>,
   );
@@ -101,11 +101,11 @@ const usedPin = meter?.querySelector(".context-panel__capacity-pin--used");
 const compactMarker = meter?.querySelector(".context-panel__compact-marker") as HTMLElement | null;
 
 eq(capacity?.querySelector(".context-panel__capacity-status")?.textContent, "Over context limit", "over-limit status is explicit");
-eq(usedPin?.textContent, "140%", "percentage pin reports the raw context ratio");
+eq(usedPin?.textContent, "101%", "just-over-limit percentage pin remains visibly over 100 percent");
 eq(fill?.style.width, "100%", "capacity fill is capped at the physical track width");
 eq(meter?.querySelectorAll(".context-panel__progress-segment").length, 0, "capacity meter does not mix token composition into its fill");
 eq(compactMarker?.style.left, "80%", "compression threshold marker stays at the configured ratio");
-ok(meter?.getAttribute("aria-label")?.includes("140% used") === true, "accessible summary reports the raw ratio");
+ok(meter?.getAttribute("aria-label")?.includes("101% used") === true, "accessible summary reports the over-limit ratio");
 
 await act(async () => {
   root.unmount();
