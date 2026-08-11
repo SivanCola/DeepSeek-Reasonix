@@ -423,6 +423,7 @@ func TestCoordinatorBackoffFastFailsDoNotCount(t *testing.T) {
 // TestCoordinatorTimeout: an unresponsive companion surfaces CodeTimeout.
 func TestCoordinatorTimeout(t *testing.T) {
 	b, _, _, _ := newTestCoordinator(t, "hang")
+	b.opts.responseTimeout = 5 * time.Second
 	if err := b.ensureReady(context.Background()); err != nil {
 		t.Fatalf("start companion: %v", err)
 	}
@@ -437,6 +438,7 @@ func TestCoordinatorTimeout(t *testing.T) {
 // TestCoordinatorCancel: caller cancellation surfaces CodeCancelled.
 func TestCoordinatorCancel(t *testing.T) {
 	b, _, _, _ := newTestCoordinator(t, "hang")
+	b.opts.responseTimeout = 5 * time.Second
 	if err := b.ensureReady(context.Background()); err != nil {
 		t.Fatalf("start companion: %v", err)
 	}
