@@ -3,6 +3,7 @@
 import {
   canTranscriptScrollOwnerWriteNow,
   canVirtualizerAdjustScroll,
+  canScrollEndSettle,
   GESTURE_HOLD_MS,
   isUserGestureActive,
   noteUserGesture,
@@ -33,6 +34,8 @@ const until = noteUserGesture(t0, GESTURE_HOLD_MS);
 eq(until, t0 + GESTURE_HOLD_MS, "noteUserGesture extends hold from now");
 ok(isUserGestureActive(until, t0 + 10), "gesture is active just after the sample");
 ok(!isUserGestureActive(until, t0 + GESTURE_HOLD_MS + 1), "gesture expires after the hold window");
+ok(!canScrollEndSettle(t0, t0 + 10), "stale scrollend cannot terminate fresh input");
+ok(canScrollEndSettle(t0, t0 + 100), "scrollend settles after a quiet input window");
 
 ok(
   !canVirtualizerAdjustScroll("manual", until, t0 + 1),

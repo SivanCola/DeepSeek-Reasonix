@@ -13,6 +13,7 @@
 export const NESTED_SCROLL_ATTR = "data-nested-scroll";
 
 const EDGE_EPSILON_PX = 1;
+const DEFAULT_LINE_HEIGHT_PX = 16;
 
 export type NestedScrollHandoffOptions = {
   /** Outer reading scroller (`.transcript`). */
@@ -27,6 +28,21 @@ export type NestedScrollHandoffOptions = {
 export type NestedScrollHandoff = {
   detach: () => void;
 };
+
+/** Normalize WheelEvent line/page deltas before applying them to scrollTop. */
+export function normalizeWheelDelta(event: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode">, viewport: HTMLElement) {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
+    return { x: event.deltaX, y: event.deltaY };
+  }
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    const page = Math.max(1, viewport.clientHeight);
+    return { x: event.deltaX * page, y: event.deltaY * page };
+  }
+  const computed = typeof getComputedStyle === "function" ? getComputedStyle(viewport).lineHeight : "";
+  const parsed = Number.parseFloat(computed);
+  const line = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LINE_HEIGHT_PX;
+  return { x: event.deltaX * line, y: event.deltaY * line };
+}
 
 function overflowAllowsScroll(value: string): boolean {
   return value === "auto" || value === "scroll" || value === "overlay";
@@ -120,8 +136,9 @@ export function attachNestedScrollHandoff(options: NestedScrollHandoffOptions): 
   const onWheel = (event: WheelEvent) => {
     // Pinch-zoom is synthesized as ctrl+wheel on macOS trackpads.
     if (event.ctrlKey || event.defaultPrevented) return;
-    if (event.deltaY === 0) return;
-    if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    const delta = normalizeWheelDelta(event, parent);
+    if (delta.y === 0) return;
+    if (Math.abs(delta.x) > Math.abs(delta.y)) return;
 
     const t = now();
     const latched = latchUntil > t;
@@ -130,21 +147,21 @@ export function attachNestedScrollHandoff(options: NestedScrollHandoffOptions): 
     // this trackpad gesture so the user does not re-latch into the nested box.
     if (latched) {
       event.preventDefault();
-      parent.scrollTop += event.deltaY;
-      latchUntil = t + latchHoldMs;
       onParentScrollIntent?.();
+      parent.scrollTop += delta.y;
+      latchUntil = t + latchHoldMs;
       return;
     }
 
     // Nested scroller can still absorb this delta — let the browser handle it.
-    if (findVerticalScrollTarget(event.target, parent, event.deltaY)) return;
+    if (findVerticalScrollTarget(event.target, parent, delta.y)) return;
 
-    if (!shouldHandoffVerticalWheel(event.target, parent, event.deltaY)) return;
+    if (!shouldHandoffVerticalWheel(event.target, parent, delta.y)) return;
 
     event.preventDefault();
-    parent.scrollTop += event.deltaY;
-    latchUntil = t + latchHoldMs;
     onParentScrollIntent?.();
+    parent.scrollTop += delta.y;
+    latchUntil = t + latchHoldMs;
   };
 
   parent.addEventListener("wheel", onWheel, { capture: true, passive: false });

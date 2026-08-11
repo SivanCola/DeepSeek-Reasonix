@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ControllerLiveStore, Item, LiveStream } from "../lib/useController";
 import type { CheckpointMeta } from "../lib/types";
@@ -39,7 +39,6 @@ import {
   type TranscriptLiveFlags,
   type TranscriptRow,
 } from "../lib/transcriptRows";
-import { observeScrollContentSize } from "../lib/scrollContentObserver";
 import { getTranscriptStore } from "../lib/transcriptStore";
 import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib/markdownWorkerClient";
 import { noteTranscriptRowCounts } from "../lib/sessionDiagnostics";
@@ -48,7 +47,8 @@ import { InlineAssistantReasoning } from "./InlineAssistantReasoning";
 import { LiveStreamContext } from "./LiveStreamContext";
 import { useTranscriptSelectableRows } from "../lib/useTranscriptSelectableRows";
 import { TranscriptSelectionOverlay } from "./TranscriptSelectionOverlay";
-import { attachNestedScrollHandoff } from "../lib/nestedScrollHandoff";
+import { useCreationTranscriptScrollbar } from "../lib/useCreationTranscriptScrollbar";
+import { useTranscriptScrollInteractions } from "../lib/useTranscriptScrollInteractions";
 type OpenTurnAction = { turn: number; menu: "summary" | "rewind" };
 const QUESTION_NAV_MIN_COUNT = 2;
 type AssistantReasoningDisplay = "normal" | "hide";
@@ -206,7 +206,10 @@ export function Transcript({
     scrollRef,
     stick,
     onScroll,
+    onScrollEnd,
     onWheelIntent,
+    onPointerDownIntent,
+    onNestedScrollIntent,
     onTouchStartIntent,
     onTouchMoveIntent,
     onKeyScrollIntent,
@@ -223,182 +226,11 @@ export function Transcript({
     canVirtualizerAdjust,
     captureViewportAnchor,
     reconcileViewportAnchor,
-    markUserGesture,
     onGestureIdle,
+    finishProgrammaticScroll,
   } = useTranscriptScrollController();
   const autoScrollFrame = useRef<number | null>(null);
   const pendingRevealBottomScroll = useRef(false);
-  // Creation uses a custom scrollbar (native WebView2 thumb size is unreliable).
-  // Thin by default; only thickens when pointer is near the right rail / dragging.
-  const [creationScrollbar, setCreationScrollbar] = useState({
-    visible: false,
-    hot: false,
-    thumbTop: 0,
-    thumbHeight: 0,
-  });
-  const creationScrollbarHotRef = useRef(false);
-  const creationScrollbarDragRef = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
-  const SCROLLBAR_HOT_ZONE_PX = 18;
-  const SCROLLBAR_MIN_THUMB_PX = 28;
-
-  const syncCreationScrollbarMetrics = useCallback(() => {
-    if (!creationMode) return;
-    const el = scrollRef.current;
-    if (!el) {
-      setCreationScrollbar((prev) => (prev.visible || prev.hot ? { visible: false, hot: false, thumbTop: 0, thumbHeight: 0 } : prev));
-      return;
-    }
-    const { scrollTop, scrollHeight, clientHeight } = el;
-    const overflow = scrollHeight - clientHeight;
-    if (overflow <= 1 || clientHeight <= 0) {
-      setCreationScrollbar((prev) => (prev.visible || prev.hot ? { visible: false, hot: false, thumbTop: 0, thumbHeight: 0 } : prev));
-      return;
-    }
-    const thumbHeight = Math.max(SCROLLBAR_MIN_THUMB_PX, Math.round((clientHeight / scrollHeight) * clientHeight));
-    const maxThumbTop = Math.max(0, clientHeight - thumbHeight);
-    const thumbTop = Math.round((scrollTop / overflow) * maxThumbTop);
-    setCreationScrollbar((prev) => {
-      if (
-        prev.visible &&
-        prev.thumbTop === thumbTop &&
-        prev.thumbHeight === thumbHeight &&
-        prev.hot === creationScrollbarHotRef.current
-      ) {
-        return prev;
-      }
-      return {
-        visible: true,
-        hot: creationScrollbarHotRef.current,
-        thumbTop,
-        thumbHeight,
-      };
-    });
-  }, [SCROLLBAR_MIN_THUMB_PX, creationMode, scrollRef]);
-
-  const setCreationScrollbarHot = useCallback((next: boolean) => {
-    if (creationScrollbarHotRef.current === next) return;
-    creationScrollbarHotRef.current = next;
-    setCreationScrollbar((prev) => (prev.hot === next ? prev : { ...prev, hot: next }));
-  }, []);
-
-  useEffect(() => {
-    if (!creationMode) {
-      creationScrollbarHotRef.current = false;
-      creationScrollbarDragRef.current = null;
-      setCreationScrollbar({ visible: false, hot: false, thumbTop: 0, thumbHeight: 0 });
-      return;
-    }
-
-    const onPointerMove = (event: PointerEvent) => {
-      const drag = creationScrollbarDragRef.current;
-      const el = scrollRef.current;
-      if (drag && el) {
-        const overflow = el.scrollHeight - el.clientHeight;
-        if (overflow > 0) {
-          const thumbHeight = Math.max(SCROLLBAR_MIN_THUMB_PX, Math.round((el.clientHeight / el.scrollHeight) * el.clientHeight));
-          const maxThumbTop = Math.max(0, el.clientHeight - thumbHeight);
-          const startThumbTop = (drag.startScrollTop / overflow) * maxThumbTop;
-          const nextThumbTop = Math.min(maxThumbTop, Math.max(0, startThumbTop + (event.clientY - drag.startY)));
-          setScrollMode("programmatic", "custom-scrollbar-drag");
-          writeOffset("custom-scrollbar", maxThumbTop > 0 ? (nextThumbTop / maxThumbTop) * overflow : 0);
-          syncCreationScrollbarMetrics();
-        }
-        setCreationScrollbarHot(true);
-        return;
-      }
-
-      if (!el || el.scrollHeight <= el.clientHeight + 1) {
-        setCreationScrollbarHot(false);
-        return;
-      }
-      const rect = el.getBoundingClientRect();
-      const inY = event.clientY >= rect.top && event.clientY <= rect.bottom;
-      const fromRight = rect.right - event.clientX;
-      setCreationScrollbarHot(inY && fromRight >= -2 && fromRight <= SCROLLBAR_HOT_ZONE_PX);
-    };
-
-    const endDrag = (event?: PointerEvent) => {
-      if (!creationScrollbarDragRef.current) return;
-      creationScrollbarDragRef.current = null;
-      const el = scrollRef.current;
-      if (!el || !event) {
-        setCreationScrollbarHot(false);
-        return;
-      }
-      const rect = el.getBoundingClientRect();
-      const inY = event.clientY >= rect.top && event.clientY <= rect.bottom;
-      const fromRight = rect.right - event.clientX;
-      setCreationScrollbarHot(inY && fromRight >= -2 && fromRight <= SCROLLBAR_HOT_ZONE_PX);
-    };
-
-    const onPointerUp = (event: PointerEvent) => endDrag(event);
-    const onBlur = () => endDrag();
-
-    syncCreationScrollbarMetrics();
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    window.addEventListener("pointerup", onPointerUp, { passive: true });
-    window.addEventListener("pointercancel", onPointerUp, { passive: true });
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("resize", syncCreationScrollbarMetrics);
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("resize", syncCreationScrollbarMetrics);
-      creationScrollbarHotRef.current = false;
-      creationScrollbarDragRef.current = null;
-      setCreationScrollbar({ visible: false, hot: false, thumbTop: 0, thumbHeight: 0 });
-    };
-  }, [SCROLLBAR_HOT_ZONE_PX, SCROLLBAR_MIN_THUMB_PX, creationMode, scrollRef, setCreationScrollbarHot, setScrollMode, syncCreationScrollbarMetrics, writeOffset]);
-
-  const handleCreationScroll = useCallback(() => {
-    onScroll();
-    if (creationMode) syncCreationScrollbarMetrics();
-  }, [creationMode, onScroll, syncCreationScrollbarMetrics]);
-
-  useLayoutEffect(() => {
-    if (!creationMode) return;
-    syncCreationScrollbarMetrics();
-  }, [creationMode, items.length, syncCreationScrollbarMetrics]);
-
-  useEffect(() => {
-    if (!creationMode || !scrollRef.current) return;
-    return observeScrollContentSize(scrollRef.current, syncCreationScrollbarMetrics);
-  }, [creationMode, scrollRef, syncCreationScrollbarMetrics]);
-
-  const handleCreationScrollbarThumbPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!creationMode) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    event.preventDefault();
-    event.stopPropagation();
-    creationScrollbarDragRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startScrollTop: el.scrollTop,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setCreationScrollbarHot(true);
-  }, [creationMode, scrollRef, setCreationScrollbarHot]);
-
-  const handleCreationScrollbarRailPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!creationMode) return;
-    if ((event.target as HTMLElement | null)?.closest?.(".transcript__scrollbar-thumb")) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const overflow = el.scrollHeight - el.clientHeight;
-    if (overflow <= 1) return;
-    const thumbHeight = Math.max(SCROLLBAR_MIN_THUMB_PX, Math.round((el.clientHeight / el.scrollHeight) * el.clientHeight));
-    const maxThumbTop = Math.max(0, el.clientHeight - thumbHeight);
-    const y = event.clientY - rect.top - thumbHeight / 2;
-    const nextThumbTop = Math.min(maxThumbTop, Math.max(0, y));
-    setScrollMode("programmatic", "custom-scrollbar-rail");
-    writeOffset("custom-scrollbar", maxThumbTop > 0 ? (nextThumbTop / maxThumbTop) * overflow : 0);
-    syncCreationScrollbarMetrics();
-    setCreationScrollbarHot(true);
-  }, [SCROLLBAR_MIN_THUMB_PX, creationMode, scrollRef, setCreationScrollbarHot, setScrollMode, syncCreationScrollbarMetrics, writeOffset]);
 
   const entranceRef = useTranscriptEntranceAnimation<HTMLDivElement>(tabId, revealSignal, items);
 
@@ -416,39 +248,20 @@ export function Transcript({
     }
   }, []);
 
-  const handleWheelIntent = useCallback((event: React.WheelEvent<HTMLElement>) => {
-    if (onWheelIntent(event)) cancelStreamingAutoScroll();
-  }, [cancelStreamingAutoScroll, onWheelIntent]);
-
-  const handleTouchMoveIntent = useCallback((event: React.TouchEvent<HTMLElement>) => {
-    if (onTouchMoveIntent(event)) cancelStreamingAutoScroll();
-  }, [cancelStreamingAutoScroll, onTouchMoveIntent]);
-
-  const handleKeyScrollIntent = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
-    if (onKeyScrollIntent(event)) cancelStreamingAutoScroll();
-  }, [cancelStreamingAutoScroll, onKeyScrollIntent]);
-
-  // Promote edge / non-scrollable nested overflow wheels (tables with
-  // overflow-x:auto, code blocks, tool dumps) to the transcript so trackpad
-  // gestures never "stick" on an inner scroller mid-read.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const handoff = attachNestedScrollHandoff({
-      parent: el,
-      onParentScrollIntent: () => {
-        markUserGesture();
-        cancelStreamingAutoScroll();
-        // Release tail-follow when the user scrolls via nested-edge handoff
-        // (native wheel after preventDefault may not reach React onWheelCapture).
-        if (stick.current) {
-          stick.current = false;
-          setScrollMode("manual", "nested-scroll-handoff");
-        }
-      },
-    });
-    return () => handoff.detach();
-  }, [cancelStreamingAutoScroll, markUserGesture, scrollRef, setScrollMode, stick]);
+  const {
+    state: creationScrollbar,
+    handleScroll: handleCreationScroll,
+    onThumbPointerDown: handleCreationScrollbarThumbPointerDown,
+    onRailPointerDown: handleCreationScrollbarRailPointerDown,
+  } = useCreationTranscriptScrollbar({
+    enabled: creationMode,
+    contentRevision: items.length,
+    scrollRef,
+    onScroll,
+    setScrollMode,
+    writeOffset,
+    finishProgrammaticScroll,
+  });
 
   const questions = useMemo<QuestionAnchor[]>(() => {
     const anchors: QuestionAnchor[] = [];
@@ -646,6 +459,17 @@ export function Transcript({
     captureViewportAnchor,
     reconcileViewportAnchor,
   });
+  const scrollInteractions = useTranscriptScrollInteractions({
+    scrollRef,
+    cancelStreamingScroll: cancelStreamingAutoScroll,
+    onWheelIntent,
+    onTouchMoveIntent,
+    onKeyScrollIntent,
+    onPointerDownIntent,
+    onNestedScrollIntent,
+    onScrollEnd,
+    onSelectionPointerDown: selectionRetention.onPointerDownCapture,
+  });
   const getRowKey = useCallback((index: number) => `${tabId ?? ""}:${String(rows[index]?.key ?? index)}`, [rows, tabId]);
   const { estimateSize: estimateRowSize, layoutSnapshotRef, measureElement: measureRowSize } = useTranscriptRowMeasurements(tabId, rows);
   const virtualizer = useVirtualizer({
@@ -676,30 +500,11 @@ export function Transcript({
     layoutSnapshotRef,
     virtualizer,
     selectionActive: selectionRetention.active,
-  });
-
-  // After a trackpad/wheel gesture settles, remeasure once and re-anchor the
-  // reading position. Doing this mid-gesture is what produced the jump/stall
-  // pattern on long markdown rows.
-  useEffect(() => {
-    return onGestureIdle(() => {
-      if (selectionRetention.active) return;
-      if (!canVirtualizerAdjust()) return;
-      const anchor = captureViewportAnchor();
-      virtualizer.measure();
-      requestAnimationFrame(() => {
-        if (!canVirtualizerAdjust()) return;
-        reconcileViewportAnchor(anchor);
-      });
-    });
-  }, [
-    canVirtualizerAdjust,
+    canMeasure: canVirtualizerAdjust,
+    onMeasureIdle: onGestureIdle,
     captureViewportAnchor,
-    onGestureIdle,
     reconcileViewportAnchor,
-    selectionRetention.active,
-    virtualizer,
-  ]);
+  });
 
   const sizerRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -888,11 +693,11 @@ export function Transcript({
         className={`transcript${empty ? " transcript--empty" : ""}${creationMode ? " transcript--creation-scrollbar" : ""}${creationMode && creationScrollbar.hot ? " transcript--scrollbar-hot" : ""}`}
         ref={scrollRef}
         onScroll={creationMode ? handleCreationScroll : onScroll}
-        onWheelCapture={handleWheelIntent}
+        onWheelCapture={scrollInteractions.onWheelCapture}
         onTouchStartCapture={onTouchStartIntent}
-        onTouchMoveCapture={handleTouchMoveIntent}
-        onKeyDownCapture={handleKeyScrollIntent}
-        onPointerDownCapture={selectionRetention.onPointerDownCapture}
+        onTouchMoveCapture={scrollInteractions.onTouchMoveCapture}
+        onKeyDownCapture={scrollInteractions.onKeyDownCapture}
+        onPointerDownCapture={scrollInteractions.onPointerDownCapture}
       >
         {empty && !hydrating && <Welcome onPrompt={onPrompt} variant={welcomeVariant} />}
 

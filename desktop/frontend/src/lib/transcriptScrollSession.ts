@@ -11,6 +11,15 @@ import {
  * rewrite scrollTop — that fight is the main source of trackpad stall/jump.
  */
 export const GESTURE_HOLD_MS = 220;
+export const SCROLLEND_QUIET_MS = 48;
+
+export type TranscriptUserScrollSource =
+  | "wheel"
+  | "touch"
+  | "keyboard"
+  | "middle-button"
+  | "native-scroll"
+  | "nested-scroll";
 
 /** Owners that compete with native trackpad inertia and must stay silent mid-gesture. */
 const GESTURE_BLOCKED_OWNERS = new Set<TranscriptScrollOwner>([
@@ -26,6 +35,15 @@ export function noteUserGesture(now = Date.now(), holdMs = GESTURE_HOLD_MS): num
 
 export function isUserGestureActive(gestureUntil: number, now = Date.now()): boolean {
   return gestureUntil > now;
+}
+
+/** Reject a late scrollend from an older gesture if fresh input just arrived. */
+export function canScrollEndSettle(
+  lastActivityAt: number,
+  now = Date.now(),
+  quietMs = SCROLLEND_QUIET_MS,
+): boolean {
+  return lastActivityAt > 0 && now - lastActivityAt >= quietMs;
 }
 
 /**

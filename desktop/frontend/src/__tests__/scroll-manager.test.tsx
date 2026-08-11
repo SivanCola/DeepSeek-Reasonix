@@ -79,6 +79,9 @@ Object.defineProperty(transcript, "scrollTop", {
   get: () => scrollTop,
   set: (value) => { scrollTop = value; },
 });
+transcript.scrollTo = ((options: ScrollToOptions) => {
+  if (typeof options.top === "number") scrollTop = options.top;
+}) as typeof transcript.scrollTo;
 
 await act(async () => {
   api?.onScroll();
@@ -121,7 +124,7 @@ eq(scrollTop, 400, "scrollTop stays put when compensating owners fire mid-gestur
 eq(writes.length, 0, "no compensating scroll writes are emitted mid-gesture");
 window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
 
-// Idle remeasure: listeners fire after the gesture hold expires, not mid-gesture.
+// scrollend deterministically releases ownership and notifies idle subscribers.
 let idleFires = 0;
 const stopIdle = api!.onGestureIdle(() => {
   idleFires += 1;
@@ -131,10 +134,59 @@ await act(async () => {
 });
 eq(idleFires, 0, "gesture idle does not fire while the hold is active");
 await act(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 280));
+  api!.gestureLastActivityRef.current -= 100;
+  api!.onScrollEnd();
 });
-eq(idleFires, 1, "gesture idle fires once after the hold window");
+eq(idleFires, 1, "scrollend releases the gesture exactly once");
+eq(api!.canVirtualizerAdjust(), true, "virtualizer resumes immediately after scrollend");
 stopIdle();
+
+// A late scrollend from a controller write or an already-settled gesture must
+// not manufacture another idle notification.
+let strayIdleFires = 0;
+const stopStrayIdle = api!.onGestureIdle(() => {
+  strayIdleFires += 1;
+});
+await act(async () => {
+  api!.onScrollEnd();
+  await new Promise((resolve) => setTimeout(resolve, 24));
+});
+eq(strayIdleFires, 0, "stray scrollend does not create a synthetic idle cycle");
+stopStrayIdle();
+
+// Windows middle-button auto-scroll has no wheel samples after activation.
+scrollTop = 900;
+await act(async () => {
+  api!.stick.current = true;
+  const captured = api!.onPointerDownIntent({ button: 1 } as React.PointerEvent<HTMLElement>);
+  eq(captured, true, "middle-button pointerdown starts a native scroll session");
+});
+eq(api!.stick.current, false, "middle-button auto-scroll releases tail-follow");
+eq(api!.canVirtualizerAdjust(), false, "middle-button session freezes virtualizer compensation");
+api!.gestureLastActivityRef.current -= 100;
+api!.onScrollEnd();
+
+// Unowned native scroll events cover scrollbar drags and continued auto-scroll.
+scrollTop = 600;
+api!.gestureUntilRef.current = 0;
+await act(async () => {
+  api!.setMode("manual", "native-scroll-test");
+  api!.onScroll();
+});
+eq(api!.gestureSourceRef.current, "native-scroll", "unowned scroll starts a native gesture session");
+eq(api!.canVirtualizerAdjust(), false, "native scroll freezes compensating writers");
+api!.gestureLastActivityRef.current -= 100;
+api!.onScrollEnd();
+
+// Controller writes consume their own scroll event instead of masquerading as user input.
+await act(async () => {
+  api!.setMode("manual", "programmatic-scroll-test");
+  const wrote = api!.writeOffset("virtualizer", 500);
+  eq(wrote, true, "virtualizer writes when no user gesture is active");
+  api!.onScroll();
+});
+eq(api!.gestureSourceRef.current, null, "owned scroll event does not create a user session");
+eq(api!.canVirtualizerAdjust(), true, "owned scroll event keeps virtualizer writes enabled");
 
 scrollTop = 900;
 await act(async () => {

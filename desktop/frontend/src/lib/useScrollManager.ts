@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, TouchEvent as ReactTouchEvent, WheelEvent as ReactWheelEvent } from "react";
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  TouchEvent as ReactTouchEvent,
+  UIEvent as ReactUIEvent,
+  WheelEvent as ReactWheelEvent,
+} from "react";
 import { DUR_FAST, prefersReducedMotion } from "./motion";
 import { isEditableTarget } from "./keyboardShortcuts";
 import {
@@ -11,8 +17,10 @@ import {
 import {
   canTranscriptScrollOwnerWriteNow,
   canVirtualizerAdjustScroll,
+  canScrollEndSettle,
   isUserGestureActive,
   noteUserGesture,
+  type TranscriptUserScrollSource,
 } from "./transcriptScrollSession";
 
 declare global {
@@ -23,6 +31,7 @@ declare global {
 
 const BOTTOM_THRESHOLD_PX = 80;
 const TOUCH_SCROLL_THRESHOLD_PX = 2;
+const PROGRAMMATIC_SCROLL_EVENT_HOLD_MS = 96;
 const SCROLL_BREAK_KEYS = new Set([
   "ArrowUp",
   "PageUp",
@@ -72,8 +81,17 @@ export function useScrollManager() {
   const lastFooterHeight = useRef<number | null>(null);
   /** Epoch ms until which compensating writers must stay silent. */
   const gestureUntilRef = useRef(0);
+  const gestureSourceRef = useRef<TranscriptUserScrollSource | null>(null);
+  const gestureLastActivityRef = useRef(0);
   const gestureIdleTimerRef = useRef<number | null>(null);
   const gestureIdleListenersRef = useRef(new Set<() => void>());
+  const programmaticScrollRef = useRef<{
+    generation: number;
+    owner: TranscriptScrollOwner;
+    target: number;
+    behavior: ScrollBehavior;
+    expiresAt: number;
+  } | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const modeRef = useRef<TranscriptScrollMode>("tail-follow");
   const generationRef = useRef(0);
@@ -89,12 +107,24 @@ export function useScrollManager() {
     }
   }, []);
 
+  const clearGesture = useCallback((notify: boolean) => {
+    gestureUntilRef.current = 0;
+    gestureSourceRef.current = null;
+    gestureLastActivityRef.current = 0;
+    if (gestureIdleTimerRef.current !== null) {
+      clearTimeout(gestureIdleTimerRef.current);
+      gestureIdleTimerRef.current = null;
+    }
+    const element = scrollRef.current;
+    if (element) delete element.dataset.scrollGesture;
+    if (notify) flushGestureIdleListeners();
+  }, [flushGestureIdleListeners]);
+
   const scheduleGestureIdle = useCallback(() => {
     if (gestureIdleTimerRef.current !== null) {
       clearTimeout(gestureIdleTimerRef.current);
       gestureIdleTimerRef.current = null;
     }
-    if (gestureIdleListenersRef.current.size === 0) return;
     const delay = Math.max(0, gestureUntilRef.current - Date.now()) + 16;
     gestureIdleTimerRef.current = window.setTimeout(() => {
       gestureIdleTimerRef.current = null;
@@ -102,9 +132,9 @@ export function useScrollManager() {
         scheduleGestureIdle();
         return;
       }
-      flushGestureIdleListeners();
+      clearGesture(true);
     }, delay);
-  }, [flushGestureIdleListeners]);
+  }, [clearGesture]);
 
   useEffect(() => {
     return () => {
@@ -118,10 +148,20 @@ export function useScrollManager() {
     };
   }, []);
 
-  const markUserGesture = useCallback(() => {
-    gestureUntilRef.current = noteUserGesture();
+  const markUserGesture = useCallback((source: TranscriptUserScrollSource = "native-scroll") => {
+    const now = Date.now();
+    gestureUntilRef.current = noteUserGesture(now);
+    gestureLastActivityRef.current = now;
+    gestureSourceRef.current = source;
+    const element = scrollRef.current;
+    if (element) element.dataset.scrollGesture = source;
     scheduleGestureIdle();
   }, [scheduleGestureIdle]);
+
+  const finishUserGesture = useCallback(() => {
+    if (gestureUntilRef.current === 0 && gestureSourceRef.current === null) return;
+    clearGesture(true);
+  }, [clearGesture]);
 
   /**
    * Subscribe to the first quiet frame after a user scroll gesture ends.
@@ -135,12 +175,13 @@ export function useScrollManager() {
     };
   }, []);
 
-  const updateBottomState = useCallback((el: HTMLElement) => {
+  const updateBottomState = useCallback((el: HTMLElement, preserveMode = false) => {
     const atBottom = isNearBottom(el);
     stick.current = atBottom;
     setIsAtBottom(atBottom);
-    if (!isTranscriptSelectionMode(modeRef.current)) {
+    if (!preserveMode && !isTranscriptSelectionMode(modeRef.current)) {
       modeRef.current = atBottom ? "tail-follow" : "manual";
+      el.dataset.scrollMode = modeRef.current;
     }
     return atBottom;
   }, []);
@@ -168,10 +209,35 @@ export function useScrollManager() {
   const writeOffset = useCallback((owner: TranscriptScrollOwner, top: number, behavior: ScrollBehavior = "auto") => {
     const el = scrollRef.current;
     if (!el || !canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current)) return false;
+    if (owner === "jump" || owner === "rewind" || owner === "jump-bottom" || owner === "custom-scrollbar") {
+      clearGesture(false);
+    }
+    const target = Math.max(0, Math.min(top, Math.max(0, el.scrollHeight - el.clientHeight)));
+    programmaticScrollRef.current = {
+      generation: generationRef.current,
+      owner,
+      target,
+      behavior,
+      expiresAt: Date.now() + (behavior === "smooth" ? DUR_FAST * 2 * 1000 : PROGRAMMATIC_SCROLL_EVENT_HOLD_MS),
+    };
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__?.(owner, top);
     if (typeof el.scrollTo === "function") el.scrollTo({ top, behavior });
     else el.scrollTop = top;
     return true;
+  }, [clearGesture]);
+
+  const consumeProgrammaticScroll = useCallback((top: number) => {
+    const marker = programmaticScrollRef.current;
+    if (!marker || marker.generation !== generationRef.current || marker.expiresAt < Date.now()) {
+      programmaticScrollRef.current = null;
+      return false;
+    }
+    if (marker.behavior === "smooth") return true;
+    if (Math.abs(marker.target - top) <= 1) {
+      programmaticScrollRef.current = null;
+      return true;
+    }
+    return false;
   }, []);
 
   const releaseAutoScroll = useCallback(() => {
@@ -200,7 +266,7 @@ export function useScrollManager() {
     // Any vertical wheel on a scrollable transcript starts the gesture lock so
     // virtualizer remounts cannot rewrite scrollTop mid-inertia — including
     // wheel-down at the bottom (tail-follow stays, compensation still freezes).
-    markUserGesture();
+    markUserGesture("wheel");
     if (event.deltaY < 0 || !isNearBottom(el)) {
       releaseAutoScroll();
       return true;
@@ -219,7 +285,7 @@ export function useScrollManager() {
     if (!el || isTranscriptSelectionMode(modeRef.current) || !isScrollable(el) || startY === null || currentY === undefined) return false;
     const deltaY = currentY - startY;
     if (Math.abs(deltaY) < TOUCH_SCROLL_THRESHOLD_PX) return false;
-    markUserGesture();
+    markUserGesture("touch");
     if (deltaY > 0 || !isNearBottom(el)) {
       releaseAutoScroll();
       return true;
@@ -236,16 +302,66 @@ export function useScrollManager() {
     // on a completely unrelated stream, even though nothing was scrolled.
     if (!el || isTranscriptSelectionMode(modeRef.current) || !isScrollable(el) || isEditableTarget(event.target)) return false;
     if (SCROLL_BREAK_KEYS.has(event.key) || (CONDITIONAL_SCROLL_KEYS.has(event.key) && !isNearBottom(el))) {
-      markUserGesture();
+      markUserGesture("keyboard");
       releaseAutoScroll();
       return true;
     }
     return false;
   }, [markUserGesture, releaseAutoScroll]);
 
-  const onScroll = useCallback(() => {
+  const onPointerDownIntent = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const el = scrollRef.current;
-    if (el) updateBottomState(el);
+    if (event.button !== 1 || !el || !isScrollable(el) || isTranscriptSelectionMode(modeRef.current)) return false;
+    releaseAutoScroll();
+    markUserGesture("middle-button");
+    return true;
+  }, [markUserGesture, releaseAutoScroll]);
+
+  const onNestedScrollIntent = useCallback(() => {
+    markUserGesture("nested-scroll");
+    releaseAutoScroll();
+  }, [markUserGesture, releaseAutoScroll]);
+
+  const onScroll = useCallback((event?: ReactUIEvent<HTMLElement>) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const programmatic = consumeProgrammaticScroll(el.scrollTop) || isTranscriptSelectionMode(modeRef.current);
+    if (programmatic) {
+      updateBottomState(el, true);
+      return;
+    }
+    if (event?.nativeEvent.isTrusted === false && !isUserGestureActive(gestureUntilRef.current)) {
+      // Test harnesses and integration code sometimes dispatch a synthetic
+      // scroll after positioning the viewport. It is not user ownership.
+      updateBottomState(el);
+      return;
+    }
+    // Native scrollbar drags and Windows middle-button auto-scroll can emit
+    // scroll events without wheel samples. Treat every unowned scroll as user
+    // activity; controller-owned writes are consumed above.
+    markUserGesture(gestureSourceRef.current ?? "native-scroll");
+    updateBottomState(el);
+    if (!isNearBottom(el)) cancelPendingBottomScroll();
+  }, [cancelPendingBottomScroll, consumeProgrammaticScroll, markUserGesture, updateBottomState]);
+
+  const onScrollEnd = useCallback(() => {
+    // WebViews can dispatch scrollend after a controller-owned write or after
+    // the preceding native gesture was already settled. It is only a hint for
+    // an existing user session; never manufacture a new idle cycle from it.
+    if (gestureUntilRef.current === 0 || gestureSourceRef.current === null) return;
+    if (!canScrollEndSettle(gestureLastActivityRef.current)) {
+      scheduleGestureIdle();
+      return;
+    }
+    finishUserGesture();
+  }, [finishUserGesture, scheduleGestureIdle]);
+
+  const finishProgrammaticScroll = useCallback(() => {
+    programmaticScrollRef.current = null;
+    const el = scrollRef.current;
+    if (!el || isTranscriptSelectionMode(modeRef.current)) return;
+    modeRef.current = "manual";
+    updateBottomState(el);
   }, [updateBottomState]);
 
   /** Scroll smoothly to a specific element.  Used by the JumpBar. */
@@ -267,16 +383,16 @@ export function useScrollManager() {
     const target = Math.max(0, top);
     writeOffset("jump", target, reduced ? "auto" : "smooth");
     if (smoothScrollTimer.current !== null) clearTimeout(smoothScrollTimer.current);
-    if (reduced) updateBottomState(el);
+    if (reduced) finishProgrammaticScroll();
     else {
       const generation = generationRef.current;
       smoothScrollTimer.current = window.setTimeout(() => {
         smoothScrollTimer.current = null;
         if (generation !== generationRef.current) return;
-        updateBottomState(el);
+        finishProgrammaticScroll();
       }, DUR_FAST * 2 * 1000);
     }
-  }, [updateBottomState, writeOffset]);
+  }, [finishProgrammaticScroll, writeOffset]);
 
   /** Force-scroll to the bottom — used when a new question is sent. */
   const scrollToBottom = useCallback((force = false, owner: TranscriptScrollOwner = "stream") => {
@@ -347,9 +463,9 @@ export function useScrollManager() {
     stick.current = true;
     // A new send is an explicit user action; clear any residual gesture lock so
     // jump-bottom is not deferred by the previous scroll session.
-    gestureUntilRef.current = 0;
+    clearGesture(false);
     scrollToBottom(true, "jump-bottom");
-  }, [scrollToBottom]);
+  }, [clearGesture, scrollToBottom]);
 
   /**
    * Refresh pin state on resize — call from a ResizeObserver on the container.
@@ -386,7 +502,8 @@ export function useScrollManager() {
   const resetGeneration = useCallback((_tabId?: string, _revealSignal?: number) => {
     generationRef.current += 1;
     cancelPendingBottomScroll();
-    gestureUntilRef.current = 0;
+    clearGesture(false);
+    programmaticScrollRef.current = null;
     if (smoothScrollTimer.current !== null) {
       clearTimeout(smoothScrollTimer.current);
       smoothScrollTimer.current = null;
@@ -399,7 +516,7 @@ export function useScrollManager() {
     stick.current = true;
     setIsAtBottom(true);
     return generationRef.current;
-  }, [cancelPendingBottomScroll]);
+  }, [cancelPendingBottomScroll, clearGesture]);
 
   const canVirtualizerAdjust = useCallback(
     () => canVirtualizerAdjustScroll(modeRef.current, gestureUntilRef.current),
@@ -454,7 +571,10 @@ export function useScrollManager() {
     scrollRef,
     stick,
     onScroll,
+    onScrollEnd,
     onWheelIntent,
+    onPointerDownIntent,
+    onNestedScrollIntent,
     onTouchStartIntent,
     onTouchMoveIntent,
     onKeyScrollIntent,
@@ -481,5 +601,8 @@ export function useScrollManager() {
     /** Fires once after the gesture hold expires (idle remeasure hook). */
     onGestureIdle,
     gestureUntilRef,
+    gestureSourceRef,
+    gestureLastActivityRef,
+    finishProgrammaticScroll,
   };
 }

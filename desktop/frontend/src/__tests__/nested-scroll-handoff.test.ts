@@ -4,6 +4,7 @@ import { JSDOM } from "jsdom";
 import {
   attachNestedScrollHandoff,
   canElementScrollVertically,
+  normalizeWheelDelta,
   shouldHandoffVerticalWheel,
 } from "../lib/nestedScrollHandoff";
 
@@ -122,10 +123,11 @@ const handoff = attachNestedScrollHandoff({
   now: () => clock,
 });
 
-const wheelAt = (target: Element, deltaY: number) => {
+const wheelAt = (target: Element, deltaY: number, deltaMode: number = dom.window.WheelEvent.DOM_DELTA_PIXEL) => {
   const event = new dom.window.WheelEvent("wheel", {
     deltaY,
     deltaX: 0,
+    deltaMode,
     bubbles: true,
     cancelable: true,
   });
@@ -153,6 +155,22 @@ nestedTop = 50;
 const mid = wheelAt(inner, -20);
 ok(!mid.defaultPrevented, "mid nested wheel is left to the browser after latch expires");
 eq(parentTop, midTopBefore, "mid nested wheel does not move parent after latch expires");
+
+const lineDelta = normalizeWheelDelta({ deltaX: 0, deltaY: 2, deltaMode: dom.window.WheelEvent.DOM_DELTA_LINE }, parent);
+eq(lineDelta.y, 32, "line-mode wheel deltas use a stable pixel fallback");
+const pageDelta = normalizeWheelDelta({ deltaX: 0, deltaY: 1, deltaMode: dom.window.WheelEvent.DOM_DELTA_PAGE }, parent);
+eq(pageDelta.y, 200, "page-mode wheel deltas use the transcript viewport height");
+
+clock += 500;
+nestedTop = 0;
+parentTop = 500;
+wheelAt(inner, -2, dom.window.WheelEvent.DOM_DELTA_LINE);
+eq(parentTop, 468, "line-mode handoff applies normalized pixels instead of raw lines");
+
+clock += 500;
+parentTop = 500;
+wheelAt(inner, -1, dom.window.WheelEvent.DOM_DELTA_PAGE);
+eq(parentTop, 300, "page-mode handoff applies one viewport page");
 
 handoff.detach();
 dom.window.close();
