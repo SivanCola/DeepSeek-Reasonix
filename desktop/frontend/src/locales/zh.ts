@@ -2787,7 +2787,7 @@ export const zh: Record<DictKey, string> = {
   "settings.langAuto": "自动（跟随系统）",
   "settings.currency": "费用展示币种",
   "settings.currencyAuto": "自动（推荐）",
-  "settings.currencyHint": "自动优先单币种账户余额，否则使用模型价表币种。仅影响费用显示，不换算余额或改变模型价格；不可用时保留原币，混合币种分别显示。",
+  "settings.currencyHint": "仅影响费用显示，不换算余额或改变模型价格。自动优先账户币种，否则使用价表币种。",
   "context.sessionCostEstimated": "估算会话费用",
   "context.sessionCostPaygEquivalent": "按量等效估算",
   "context.sessionCostBucketed": "多币种",

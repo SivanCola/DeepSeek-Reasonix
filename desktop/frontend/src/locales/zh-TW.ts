@@ -1896,7 +1896,7 @@ export const zhTW: Record<DictKey, string> = {
   "settings.langAuto": "自動（跟隨系統）",
   "settings.currency": "費用顯示幣別",
   "settings.currencyAuto": "自動（建議）",
-  "settings.currencyHint": "自動優先單一幣別帳戶餘額，否則使用模型價目表幣別。僅影響費用顯示，不換算餘額或變更模型價格；不可用時保留原幣別，多幣別分開顯示。",
+  "settings.currencyHint": "僅影響費用顯示，不換算餘額或變更模型價格。自動優先帳戶幣別，否則使用價目表幣別。",
   "context.sessionCostEstimated": "估算會話費用",
   "context.sessionCostPaygEquivalent": "按量等效估算",
   "context.sessionCostBucketed": "多幣種",

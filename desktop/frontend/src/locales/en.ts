@@ -2784,7 +2784,7 @@ export const en = {
   "settings.langAuto": "Auto (system)",
   "settings.currency": "Cost display currency",
   "settings.currencyAuto": "Auto (recommended)",
-  "settings.currencyHint": "Auto prefers a single-currency account balance, then the model pricing-table currency. This only changes cost display; it does not convert balances or change model prices. Unavailable targets keep original currencies, with mixed currencies shown separately.",
+  "settings.currencyHint": "Display only; balances and model prices stay unchanged. Auto prefers the account currency, then the pricing-table currency.",
   "context.sessionCostEstimated": "Estimated session cost",
   "context.sessionCostPaygEquivalent": "PAYG-equivalent estimate",
   "context.sessionCostBucketed": "Multiple currencies",
