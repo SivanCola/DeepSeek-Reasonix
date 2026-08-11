@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"reasonix/internal/event"
 	"reasonix/internal/sessioninbox"
@@ -122,6 +123,51 @@ func TestTrySteerOrphanRequiresReviewBeforeExplicitRetry(t *testing.T) {
 	}
 }
 
+func TestRetryThenStaleSteerTreatsAlreadyRunningItemAsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	session := filepath.Join(dir, "s.jsonl")
+	if err := os.WriteFile(session, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &gatedTurnRunner{started: make(chan struct{}), release: make(chan struct{})}
+	c := New(Options{
+		Runner:      runner,
+		SessionPath: session,
+		SessionDir:  dir,
+		Sink:        event.Discard,
+	})
+	defer c.autosaveWG.Wait()
+	defer close(runner.release)
+	rec, err := c.EnqueueInbox(InboxRequest{Intent: sessioninbox.IntentFollowup, Submit: "retry once"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := c.ensureInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetState(rec.ItemID, sessioninbox.StateUncertain, "review retry"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.RetryInboxItem(rec.ItemID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("retry did not start the recovered item")
+	}
+
+	receipt, err := c.TrySteerInboxItem(rec.ItemID)
+	if err != nil {
+		t.Fatalf("retry already started the item, but stale steer returned: %v", err)
+	}
+	if receipt.Disposition != sessioninbox.DispositionSteerAccepted || !receipt.Idempotent {
+		t.Fatalf("stale steer receipt = %+v, want idempotent accepted", receipt)
+	}
+}
+
 func TestInboxAdmissionOwnsClaimBeforeSnapshotRecovery(t *testing.T) {
 	dir := t.TempDir()
 	session := filepath.Join(dir, "s.jsonl")
@@ -171,7 +217,7 @@ func TestInboxAdmissionOwnsClaimBeforeSnapshotRecovery(t *testing.T) {
 	c.autosaveWG.Wait()
 }
 
-func TestInboxCompletionOwnsItemUntilDurableAck(t *testing.T) {
+func TestInboxCompletionKeepsOwnershipWithoutHoldingAdmissionDuringSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	session := filepath.Join(dir, "s.jsonl")
 	if err := os.WriteFile(session, []byte("{}\n"), 0o644); err != nil {
@@ -179,6 +225,55 @@ func TestInboxCompletionOwnsItemUntilDurableAck(t *testing.T) {
 	}
 	c := New(Options{SessionPath: session, SessionDir: dir, Sink: event.Discard})
 	rec, err := c.EnqueueInbox(InboxRequest{Intent: sessioninbox.IntentSteer, Submit: "complete atomically"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := c.ensureInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetState(rec.ItemID, sessioninbox.StateSteerConsumed, ""); err != nil {
+		t.Fatal(err)
+	}
+	beforeSnapshot := make(chan struct{})
+	release := make(chan struct{})
+	c.inbox.mu.Lock()
+	c.inbox.trackActive(rec.ItemID)
+	c.inbox.beforeCompletionSnapshot = func() {
+		close(beforeSnapshot)
+		<-release
+	}
+	c.inbox.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		c.onInboxTurnDone()
+		close(done)
+	}()
+	<-beforeSnapshot
+	if !c.inbox.admissionMu.TryLock() {
+		t.Fatal("completion held admission lock across transcript snapshot boundary")
+	}
+	c.inbox.admissionMu.Unlock()
+	whileSaving := c.InboxSnapshot()
+	if whileSaving.Paused || len(whileSaving.Items) != 1 || whileSaving.Items[0].State != sessioninbox.StateSteerConsumed {
+		t.Fatalf("snapshot recovery lost active ownership during transcript save: %+v", whileSaving)
+	}
+	close(release)
+	<-done
+	snap := c.InboxSnapshot()
+	if snap.Paused || len(snap.Items) != 0 {
+		t.Fatalf("completed item survived durable acknowledgement: %+v", snap)
+	}
+}
+
+func TestInboxCompletionOwnsItemDuringDurableAck(t *testing.T) {
+	dir := t.TempDir()
+	session := filepath.Join(dir, "s.jsonl")
+	if err := os.WriteFile(session, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := New(Options{SessionPath: session, SessionDir: dir, Sink: event.Discard})
+	rec, err := c.EnqueueInbox(InboxRequest{Intent: sessioninbox.IntentSteer, Submit: "ack atomically"})
 	if err != nil {
 		t.Fatal(err)
 	}

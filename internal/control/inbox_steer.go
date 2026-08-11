@@ -7,6 +7,15 @@ import (
 	"reasonix/internal/sessioninbox"
 )
 
+func steerAlreadyAdmitted(state sessioninbox.InboxState) bool {
+	switch state {
+	case sessioninbox.StateRunning, sessioninbox.StateSteerAccepted, sessioninbox.StateSteerConsumed:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Controller) readSteerCandidate(st *sessioninbox.Store, id string) (sessioninbox.InboxItemMeta, sessioninbox.PromptEnvelope, error) {
 	meta, env, err := st.ReadItem(id)
 	if err != nil || (meta.State != sessioninbox.StateRunning && meta.State != sessioninbox.StateSteerAccepted && meta.State != sessioninbox.StateSteerConsumed) {
@@ -41,7 +50,10 @@ func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, er
 	if err != nil {
 		return sessioninbox.InboxReceipt{}, err
 	}
-	if meta.State == sessioninbox.StateSteerAccepted || meta.State == sessioninbox.StateSteerConsumed {
+	// RetryInboxItem may start this item while the frontend holds stale running=true.
+	// Treat the follow-up Steer as idempotent: the current turn already owns the
+	// durable body, so it must not be applied twice or reported as a false failure.
+	if steerAlreadyAdmitted(meta.State) {
 		return sessioninbox.InboxReceipt{
 			ItemID:      id,
 			Disposition: sessioninbox.DispositionSteerAccepted,

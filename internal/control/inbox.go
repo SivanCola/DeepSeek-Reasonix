@@ -79,6 +79,9 @@ type inboxState struct {
 	// beforePreparedAdmission is a deterministic test hook for the gap between
 	// durable preparation and Controller admission. Production leaves it nil.
 	beforePreparedAdmission func()
+	// beforeCompletionSnapshot exposes the slow snapshot boundary without
+	// changing production behavior.
+	beforeCompletionSnapshot func()
 	// beforeCompletionAck exposes the ownership-to-ack boundary to race tests.
 	beforeCompletionAck func()
 }
@@ -100,16 +103,13 @@ func (s *inboxState) untrackActive(id string) {
 	delete(s.activeItemIDs, id)
 }
 
-func (s *inboxState) takeActive() []string {
+func (s *inboxState) untrackActiveSet(ids []string) {
 	if s == nil || len(s.activeItemIDs) == 0 {
-		return nil
+		return
 	}
-	out := make([]string, 0, len(s.activeItemIDs))
-	for id := range s.activeItemIDs {
-		out = append(out, id)
+	for _, id := range ids {
+		delete(s.activeItemIDs, id)
 	}
-	s.activeItemIDs = nil
-	return out
 }
 
 func (s *inboxState) clearActive() {
@@ -579,28 +579,42 @@ func (c *Controller) receiptForAdmissionResult(id string, st *sessioninbox.Store
 // item is deferred until the finishing window closes so admission is not
 // rejected as busy.
 func (c *Controller) onInboxTurnDone() {
-	c.inbox.admissionMu.Lock()
-	defer c.inbox.admissionMu.Unlock()
 	c.inbox.mu.Lock()
-	ids := c.inbox.takeActive()
+	// Keep these IDs published as live ownership while SnapshotActivity runs.
+	// Inbox recovery can therefore proceed without waiting on extension hooks,
+	// transcript I/O, or the session file lock and will preserve this turn.
+	ids := c.inbox.activeIDs()
 	st := c.inbox.store
+	beforeSnapshot := c.inbox.beforeCompletionSnapshot
 	beforeAck := c.inbox.beforeCompletionAck
 	c.inbox.mu.Unlock()
 	if st == nil || len(ids) == 0 {
 		return
 	}
-	if beforeAck != nil {
-		beforeAck()
+	if beforeSnapshot != nil {
+		beforeSnapshot()
 	}
 	// Transcript snapshot is the durable receipt boundary for the whole set.
 	if err := c.SnapshotActivity(); err != nil {
 		slog.Warn("controller: inbox turn snapshot", "err", err)
+		c.inbox.admissionMu.Lock()
 		for _, id := range ids {
 			_ = st.SetState(id, sessioninbox.StateUncertain, "turn completed but transcript snapshot failed")
 		}
 		_ = st.SetPaused(true)
+		c.inbox.mu.Lock()
+		c.inbox.untrackActiveSet(ids)
+		c.inbox.mu.Unlock()
+		c.inbox.admissionMu.Unlock()
 		sessioninbox.NoteUncertain()
 		return
+	}
+	// Only the short ownership-to-ack transition excludes recovery. Successful
+	// dequeue or an explicit uncertain state is made durable before ownership
+	// is removed, so no orphan window is exposed.
+	c.inbox.admissionMu.Lock()
+	if beforeAck != nil {
+		beforeAck()
 	}
 	ackFailed := false
 	for _, id := range ids {
@@ -613,10 +627,14 @@ func (c *Controller) onInboxTurnDone() {
 			ackFailed = true
 		}
 	}
+	c.inbox.mu.Lock()
+	c.inbox.untrackActiveSet(ids)
+	c.inbox.mu.Unlock()
 	if ackFailed {
 		_ = st.SetPaused(true)
 		sessioninbox.NoteUncertain()
 	}
+	c.inbox.admissionMu.Unlock()
 }
 
 // onInboxUnappliedSteer keeps accepted-but-unapplied steers for inspection.
