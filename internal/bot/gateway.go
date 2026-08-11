@@ -2270,10 +2270,6 @@ func toolApprovalModeLabel(mode string) string {
 	}
 }
 
-func (gw *BotGateway) runTurn(ctx context.Context, adapter Adapter, key string, msg InboundMessage, cleanup func()) {
-	gw.runTurnItem(ctx, adapter, key, msg, "", cleanup)
-}
-
 func (gw *BotGateway) runTurnItem(ctx context.Context, adapter Adapter, key string, msg InboundMessage, inboxItemID string, cleanup func()) {
 	gw.logger.Info("bot turn started", "platform", msg.Platform, "chat_type", msg.ChatType, "chat", hashID(msg.ChatID), "session", key[:8])
 	defer gw.finishTurnItem(ctx, adapter, key, msg, cleanup)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -179,14 +180,14 @@ func TestQQFatalConfigurationErrorStopsRetry(t *testing.T) {
 func TestQQGatewayCloseCodesAreClassified(t *testing.T) {
 	for _, code := range []int{4914, 4915} {
 		err := classifyQQGatewayReadError("read ready", &websocket.CloseError{Code: code, Text: "intent unauthorized"})
-		ge, ok := err.(*qqGatewayError)
-		if !ok || !ge.fatal || ge.code != code {
+		var ge *qqGatewayError
+		if !errors.As(err, &ge) || !ge.fatal || ge.code != code {
 			t.Fatalf("close %d classified as %#v, want fatal", code, err)
 		}
 	}
 	err := classifyQQGatewayReadError("read gateway message", &websocket.CloseError{Code: 4008, Text: "rate limited"})
-	ge, ok := err.(*qqGatewayError)
-	if !ok || ge.fatal || ge.retryAfter < time.Minute {
+	var ge *qqGatewayError
+	if !errors.As(err, &ge) || ge.fatal || ge.retryAfter < time.Minute {
 		t.Fatalf("close 4008 classified as %#v, want >=1m retry", err)
 	}
 }

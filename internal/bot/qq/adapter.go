@@ -44,7 +44,7 @@ func VerifyConnection(ctx context.Context, cfg config.QQBotConfig) (GatewayStatu
 	if err := a.Start(ctx); err != nil {
 		return a.GatewayStatus(), err
 	}
-	defer a.Stop()
+	defer func() { _ = a.Stop() }()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
