@@ -269,7 +269,7 @@ int reasonix_test_webkit_run(int mode) {
   reasonix_test_safety_timeout_id = g_timeout_add_seconds(15, reasonix_test_safety_timeout, NULL);
   webkit_web_view_load_html(reasonix_test_web_view,
                            "<html><body>Reasonix WebKit native smoke</body></html>",
-                           "https://reasonix.invalid/");
+                           NULL);
   g_main_loop_run(reasonix_test_loop);
 
   if (reasonix_test_safety_timeout_id != 0) {
