@@ -1167,7 +1167,7 @@ export default function App() {
   const setSettingsFocus = useOverlayStore((s) => s.setSettingsFocus);
   const [desktopLayoutStyle, setDesktopLayoutStyle] = useState<DesktopLayoutStyle>("workbench");
   const singleSurfaceLayout = desktopLayoutStyle === "workbench" || desktopLayoutStyle === "creation";
-  const { configLoadWarnings, beginSnapshot: beginConfigWarningSnapshot, applySnapshot: applyConfigWarningSnapshot, reload: reloadConfigWarnings, dismiss: dismissConfigWarnings } = useConfigLoadWarnings();
+  const { configLoadWarnings, applySnapshot: applyConfigWarningSnapshot, reload: reloadConfigWarnings, dismiss: dismissConfigWarnings } = useConfigLoadWarnings();
   const [startupUpdateChecksEnabled, setStartupUpdateChecksEnabled] = useState<boolean | null>(null);
   const [histView, setHistView] = useState<HistoryViewState | null>(null);
   const paletteOpen = useOverlayStore((s) => s.paletteOpen);
@@ -1520,7 +1520,6 @@ export default function App() {
     setReasoningDisplayPending();
     let cancelled = false;
     const syncDesktopPreferences = async () => {
-      const warningEventRevision = beginConfigWarningSnapshot();
       const legacyLanguage = readLegacyLangPref();
       const legacyTheme = readLegacyThemePreference();
       if (legacyLanguage || legacyTheme.hasValue) {
@@ -1534,7 +1533,7 @@ export default function App() {
       ]);
       if (cancelled) return;
       applyDesktopPreferences(settings);
-      applyConfigWarningSnapshot(settings.configWarnings, warningEventRevision);
+      applyConfigWarningSnapshot(settings.configWarnings, settings.configWarningsRevision);
       hydrateDisplayMode(settings.displayMode);
       setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t, runtimeStatus));
       setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
@@ -1566,7 +1565,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyConfigWarningSnapshot, applyDesktopPreferences, beginConfigWarningSnapshot, t]);
+  }, [applyConfigWarningSnapshot, applyDesktopPreferences, t]);
 
   useEffect(() => {
     setSidebarImDetailConnectionId((current) => {
@@ -4867,7 +4866,7 @@ export default function App() {
                   void (async () => {
                     try {
                       const view = await app.ReloadUserConfig?.();
-                      reloadConfigWarnings(view?.configWarnings);
+                      reloadConfigWarnings(view?.configWarnings, view?.configWarningsRevision);
                     } catch {
                       /* keep banner */
                     }

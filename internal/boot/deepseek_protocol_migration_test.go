@@ -92,3 +92,53 @@ command = "C:\Users\reasonix\mcp.exe"
 		})
 	}
 }
+
+func TestBuildDeliversProjectConfigWarningsWithoutDeepSeekMigrationError(t *testing.T) {
+	home := isolateConfigHome(t)
+	t.Setenv("REASONIX_HOME", filepath.Join(home, "reasonix-home"))
+	workspace := t.TempDir()
+	projectPath := filepath.Join(workspace, "reasonix.toml")
+	raw := `[[plugins]]
+name = "windows-mcp"
+command = "C:\Users\reasonix\mcp.exe"
+`
+	if err := os.WriteFile(projectPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var handledWarnings []string
+	var notices []event.Event
+	ctrl, err := Build(context.Background(), Options{
+		WorkspaceRoot: workspace,
+		StatsSource:   "desktop",
+		Sink: event.FuncSink(func(e event.Event) {
+			if e.Kind == event.Notice {
+				notices = append(notices, e)
+			}
+		}),
+		OnConfigLoadWarnings: func(warnings []string) bool {
+			handledWarnings = append([]string(nil), warnings...)
+			return true
+		},
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	ctrl.Close()
+
+	if len(handledWarnings) == 0 || !strings.Contains(strings.Join(handledWarnings, "\n"), "project config") {
+		t.Fatalf("project config warnings were not delivered: %v", handledWarnings)
+	}
+	for _, notice := range notices {
+		if notice.Text == "DeepSeek protocol migration did not complete." {
+			t.Fatalf("project config damage produced an unrelated migration notice: %+v", notice)
+		}
+	}
+	next, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(next) != raw {
+		t.Fatalf("build rewrote malformed project config:\n%s", next)
+	}
+}

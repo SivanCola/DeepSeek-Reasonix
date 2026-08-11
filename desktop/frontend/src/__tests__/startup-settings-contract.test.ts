@@ -49,13 +49,13 @@ ok(
 ok(
   configWarningsSource.includes('EventsOn("config:load-warnings"') &&
     appSource.includes("useConfigLoadWarnings()") &&
-    configWarningsSource.includes("eventRevision.current += 1"),
+    appSource.includes("settings.configWarningsRevision"),
   "runtime config warnings update the persistent desktop banner",
 );
 ok(
-  configWarningsSource.includes("revision === eventRevision.current") &&
+  configWarningsSource.includes("revision < latestRevision.current") &&
     configWarningsSource.includes("seenKeys.current.has(key)"),
-  "startup responses cannot erase newer warnings and repeated session builds stay deduplicated",
+  "startup and reload barriers reject stale events while repeated session builds stay deduplicated",
 );
 ok(
   appSource.includes('hydrateReasoningDisplayMode("auto", false);'),

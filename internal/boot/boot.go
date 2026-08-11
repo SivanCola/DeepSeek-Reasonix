@@ -231,7 +231,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	deepSeekProtocolMigErr = deepSeekProtocolMigrationNoticeError(opts, cfg, deepSeekProtocolMigErr)
+	deepSeekProtocolMigErr = deepSeekProtocolMigrationNoticeError(handleConfigLoadWarnings(opts, cfg), deepSeekProtocolMigErr)
 	applyRuntimeAutoPricingCurrency(cfg, opts.AutoPricingCurrency)
 	// Arm the credential-protection layers from the user-global [secrets]
 	// section before any tool, hook, or plugin subprocess can spawn. Package
