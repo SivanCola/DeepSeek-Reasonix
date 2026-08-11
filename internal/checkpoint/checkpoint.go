@@ -500,10 +500,11 @@ func (s *Store) CaptureBefore(path string, opts CaptureBeforeOpts) {
 }
 
 // CaptureAfter records the after fingerprint for a path already in the current
-// (or any) checkpoint that owns it.
-func (s *Store) CaptureAfter(path string, opts CaptureAfterOpts) {
+// (or any) checkpoint that owns it and reports whether the durable file state
+// differs from the captured preimage.
+func (s *Store) CaptureAfter(path string, opts CaptureAfterOpts) bool {
 	if path == "" {
-		return
+		return false
 	}
 	pathKey := NormalizeRelPath(s.root, path)
 	fp, gap, err := CapturePath(path, CaptureOptions{
@@ -513,7 +514,9 @@ func (s *Store) CaptureAfter(path string, opts CaptureAfterOpts) {
 	if gap != nil {
 		s.RecordGap(*gap)
 	}
-	_ = err
+	if err != nil {
+		return false
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -524,10 +527,12 @@ func (s *Store) CaptureAfter(path string, opts CaptureAfterOpts) {
 	// Update after fingerprint on the most recent snap of this path.
 	updated := false
 	if s.cur != nil {
+		changed := false
 		for i := range s.cur.Files {
 			if NormalizeRelPath(s.root, s.cur.Files[i].Path) != pathKey {
 				continue
 			}
+			changed = fileSnapDiffersFromFingerprint(s.cur.Files[i], fp)
 			existed := fp.Existed
 			s.cur.Files[i].AfterExisted = &existed
 			s.cur.Files[i].AfterSHA256 = fp.SHA256
@@ -538,7 +543,7 @@ func (s *Store) CaptureAfter(path string, opts CaptureAfterOpts) {
 			s.recomputeCoverageLocked(s.cur)
 			s.persistBestEffort(s.cur)
 			s.lastUndo = nil // mutation invalidates undo
-			return
+			return changed
 		}
 	}
 	// Path might only appear in earlier turns; still record after on earliest?
@@ -550,15 +555,22 @@ func (s *Store) CaptureAfter(path string, opts CaptureAfterOpts) {
 			if NormalizeRelPath(s.root, c.Files[j].Path) != pathKey {
 				continue
 			}
+			changed := fileSnapDiffersFromFingerprint(c.Files[j], fp)
 			existed := fp.Existed
 			c.Files[j].AfterExisted = &existed
 			c.Files[j].AfterSHA256 = fp.SHA256
 			c.Files[j].AfterMode = fp.Mode
 			s.persistBestEffort(c)
 			s.lastUndo = nil
-			return
+			return changed
 		}
 	}
+	return false
+}
+
+func fileSnapDiffersFromFingerprint(before FileSnap, after Fingerprint) bool {
+	beforeExisted := before.Content != nil || before.BlobRef != "" || before.SHA256 != ""
+	return beforeExisted != after.Existed || before.SHA256 != after.SHA256 || before.Mode != after.Mode
 }
 
 // RecordGap appends a coverage gap to the current checkpoint.

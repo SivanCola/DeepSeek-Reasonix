@@ -1592,29 +1592,8 @@ type ToolEffects struct {
 func ClassifyToolCall(toolName string, args json.RawMessage, readOnly bool) ToolEffects {
 	name := strings.ToLower(strings.TrimSpace(toolName))
 	if name == "bash" || name == "shell" {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(args, &fields); err != nil {
-			return unknownToolEffects("invalid shell arguments")
-		}
-		command := stringField(fields, "command")
-		effect := shellsafe.ClassifyBash(command)
-		if effect.Certainty == shellsafe.EffectKnown {
-			return ToolEffects{
-				StateMutation:      effect.AnyMutation(),
-				WorkspaceMutation:  effect.WorkspaceMutation(),
-				ContentMutation:    effect.ContentMutation(),
-				RepositoryMutation: effect.RepositoryMutation(),
-				Known:              true,
-				Reason:             effect.Reason,
-			}
-		}
-		// Conventional verification commands are host-recognized separately
-		// from permission readers. They may execute code or fill caches, but
-		// do not create delivery content debt unless an output flag says so.
-		if !bashMayMutate(command) {
-			return ToolEffects{Known: true}
-		}
-		return unknownToolEffects(effect.Reason)
+		effects, _ := ClassifyBashToolCall(args)
+		return effects
 	}
 	if readOnly {
 		return ToolEffects{Known: true}
@@ -1631,9 +1610,59 @@ func ClassifyToolCall(toolName string, args json.RawMessage, readOnly bool) Tool
 			WorkspaceMutation: true,
 			ContentMutation:   true,
 			Known:             true,
-			Reason:            "writer-capable tool",
+			Reason:            "workspace content write by a writer-capable tool",
 		}
 	}
+}
+
+// ClassifyBashToolCall parses a Bash invocation once and returns both durable
+// tool effects and the stricter permission-reader projection.
+func ClassifyBashToolCall(args json.RawMessage) (ToolEffects, bool) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(args, &fields); err != nil {
+		return unknownToolEffects("invalid shell arguments"), false
+	}
+	command := stringField(fields, "command")
+	effect := shellsafe.ClassifyBash(command)
+	permissionReader := effect.IsPermissionReader()
+	if effect.Certainty == shellsafe.EffectKnown {
+		return ToolEffects{
+			StateMutation:      effect.AnyMutation(),
+			WorkspaceMutation:  effect.WorkspaceMutation(),
+			ContentMutation:    effect.ContentMutation(),
+			RepositoryMutation: effect.RepositoryMutation(),
+			Known:              true,
+			Reason:             commandEffectReason(effect),
+		}, permissionReader
+	}
+	// Conventional verification commands are host-recognized separately from
+	// permission readers. They may execute code or fill caches, but do not create
+	// delivery content debt unless an output flag says so.
+	if !bashMayMutate(command) {
+		return ToolEffects{Known: true}, false
+	}
+	return unknownToolEffects(effect.Reason), false
+}
+
+func commandEffectReason(effect shellsafe.CommandEffect) string {
+	domain := ""
+	switch {
+	case effect.Writes&shellsafe.WriteWorkspaceContent != 0:
+		domain = "workspace content write"
+	case effect.Writes&shellsafe.WriteRepositoryMetadata != 0:
+		domain = "repository metadata write"
+	case effect.Writes&shellsafe.WriteHostState != 0:
+		domain = "host state write"
+	case effect.Writes&shellsafe.WriteExternalState != 0:
+		domain = "external state write"
+	}
+	if domain == "" {
+		return effect.Reason
+	}
+	if effect.CommandFamily == "" {
+		return domain
+	}
+	return domain + " by " + effect.CommandFamily
 }
 
 func unknownToolEffects(reason string) ToolEffects {

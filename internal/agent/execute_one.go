@@ -12,7 +12,6 @@ import (
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/memory"
-	"reasonix/internal/permission"
 	"reasonix/internal/planmode"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
@@ -38,7 +37,7 @@ type toolCallPlan struct {
 	resolved     tool.ResolvedCall
 	resolvedMeta *tool.ResolvedCall
 
-	mutates                   bool
+	effects                   evidence.ToolEffects
 	verification              bool
 	planTransition            bool
 	planBefore                string
@@ -157,13 +156,20 @@ func (a *Agent) parseToolCall(ctx context.Context, plan *toolCallPlan) (toolOutc
 	plan.evidenceName = canonicalName
 	plan.evidenceArgs = json.RawMessage(plan.call.Arguments)
 	plan.readOnly = t.ReadOnly()
-	if canonicalName == "bash" && permission.BashCommandIsReadOnly(plan.execArgs) {
+	if canonicalName == "bash" {
+		var permissionReader bool
+		plan.effects, permissionReader = evidence.ClassifyBashToolCall(plan.execArgs)
+		if !permissionReader {
+			return toolOutcome{}, false
+		}
 		// Bash is schema-level writer-capable, but the host can resolve a
 		// concrete invocation to read-only after parsing its arguments. Carry
 		// that fact through permission, mutation accounting, evidence, and the
 		// refreshed local tool receipt without changing the provider schema.
 		plan.readOnly = true
 		plan.resolvedMeta = &tool.ResolvedCall{TargetName: canonicalName, ReadOnly: true}
+	} else {
+		plan.effects = evidence.ClassifyToolCall(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
 	}
 	return toolOutcome{}, false
 }
@@ -230,18 +236,18 @@ func contextualToolGateOutcome(ctx context.Context, target tool.Tool, name strin
 // read-only diagnosis (resolved ReadOnly with no verification classification)
 // still runs.
 func (a *Agent) applyMutationDependencyBarrier(plan *toolCallPlan) (toolOutcome, bool) {
-	if a == nil || plan == nil || !a.mutationDependencyBarrier.Load() {
+	if a == nil || plan == nil {
+		return toolOutcome{}, false
+	}
+	cause := a.mutationDependencyBarrier.Load()
+	if cause == nil {
 		return toolOutcome{}, false
 	}
 	verification := plan.evidenceName == "bash" && evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(plan.evidenceArgs))
-	// Prefer the post-gate mutates flag; fall back to !readOnly so a resolved
-	// writer proxy cannot claim non-mutation by skipping ToolCallMutates.
-	mutates := plan.mutates || !plan.readOnly
-	if !mutates && !verification {
+	if !plan.effects.StateMutation && !verification {
 		return toolOutcome{}, false
 	}
-	msg := "blocked: skipped because an earlier modification in this tool batch failed or was blocked. " +
-		"Fix or re-run the failed change first; verification was not executed."
+	msg := cause.message()
 	var ex *tool.ShellExecution
 	// Structured shell metadata only for bash cards; other tools keep plain text.
 	if plan.evidenceName == "bash" || plan.call.Name == "bash" {
@@ -315,6 +321,9 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 			return outcome, true
 		}
 		plan.readOnly = rc.ReadOnly
+		// Reclassify from the resolved target and arguments before every policy,
+		// barrier, lease, and evidence consumer sees the call.
+		plan.effects = evidence.ClassifyToolCall(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
 		if outcome, blocked := a.readOnlyExecutionBlock(t, &rc); blocked {
 			return outcome, true
 		}
@@ -453,7 +462,6 @@ func (a *Agent) applyDeliveryPolicyGates(plan *toolCallPlan) (toolOutcome, bool)
 		}, true
 	}
 
-	plan.mutates = evidence.ToolCallMutates(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
 	persistentWorkflowCall := a.deliveryPersistentExpected && !a.deliveryMutationExpected && plan.evidenceName == "remember"
 	if a.deliveryProfile && !persistentWorkflowCall && evidence.ToolCallRequiresDeliveryCriteria(plan.evidenceName, plan.evidenceArgs, plan.readOnly) && !a.deliveryCriteriaEstablished {
 		return toolOutcome{
@@ -462,7 +470,7 @@ func (a *Agent) applyDeliveryPolicyGates(plan *toolCallPlan) (toolOutcome, bool)
 			errMsg:  "blocked: delivery acceptance criteria required",
 		}, true
 	}
-	if a.deliveryProfile && !persistentWorkflowCall && plan.mutates && !a.hasActiveCanonicalTodo() {
+	if a.deliveryProfile && !persistentWorkflowCall && plan.effects.ContentMutation && !a.hasActiveCanonicalTodo() {
 		return toolOutcome{
 			output:  "blocked: delivery-first mode requires every state change to belong to the current in_progress todo. Preserve the completed todo prefix, append a concrete new item if more work was discovered, mark that item in_progress with todo_write, then retry this mutation.",
 			blocked: true,
@@ -488,7 +496,7 @@ func (a *Agent) applyRecoveryAndPermission(ctx context.Context, plan *toolCallPl
 		plan.recoveryGen = ctrl.Generation()
 		episodeStopped = ctrl.EpisodeStopped(a.recoveryTaskID)
 	}
-	if a.recoveryGate != nil && (plan.mutates || plan.verification || plan.planTransition || episodeStopped) {
+	if a.recoveryGate != nil && (plan.effects.StateMutation || plan.verification || plan.planTransition || episodeStopped) {
 		subject := recoverySubject(plan.evidenceName, plan.evidenceArgs)
 		if plan.planTransition {
 			subject = "Update the active execution plan"
@@ -598,7 +606,7 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	// concurrent and avoids holding the workspace during an approval prompt while
 	// still covering every write-side action that follows authorization.
 	// Lazy workspace lease on the first real writer for every role setting.
-	if plan.mutates && a.workspaceLease != nil {
+	if plan.effects.WorkspaceMutation && a.workspaceLease != nil {
 		if err := a.workspaceLease.AcquireWrite(ctx); err != nil {
 			return toolOutcome{
 				output:  fmt.Sprintf("blocked: the workspace did not become available for writing: %v", err),
@@ -624,7 +632,7 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	// check-before-write TOCTOU windows. Dynamic Economy/MCP tools are covered
 	// here after registry lookup without schema-changing wrappers.
 	// executeOne defers plan.releaseParentWrite so every return path releases.
-	if releaseParentWrite, perr := a.reserveParentWrite(plan.runTool, plan.runArgs, plan.readOnly); perr != nil {
+	if releaseParentWrite, perr := a.reserveParentWrite(plan.runTool, plan.runArgs, !plan.effects.WorkspaceMutation); perr != nil {
 		return toolOutcome{
 			output:  "blocked: " + perr.Error(),
 			blocked: true,
@@ -636,7 +644,7 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	// Acquire the checkpoint barrier before preimage capture and any hook. It is
 	// held through post hooks and AfterMutation so rewind cannot interleave with
 	// writer-side user code.
-	if !plan.readOnly && a.mutationObserver != nil && a.mutationObserver.Store() != nil {
+	if plan.effects.WorkspaceMutation && a.mutationObserver != nil && a.mutationObserver.Store() != nil {
 		barrier := a.mutationObserver.Store().Barrier()
 		if err := barrier.EnterWrite(); err != nil {
 			return toolOutcome{output: "blocked: " + err.Error(), blocked: true, errMsg: "blocked: mutation barrier unavailable"}, true
@@ -648,7 +656,7 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	// still finalizes the fingerprint on every return path. Built-in
 	// Previewers get precise paths (complete coverage). Bash / opaque MCP
 	// writers record explicit coverage gaps instead of guessing targets.
-	if !plan.readOnly {
+	if plan.effects.WorkspaceMutation {
 		a.observeBeforeMutation(ctx, plan)
 		plan.mutationObserved = plan.mutationPath != ""
 		if toolHooksMayMutateWorkspace(a.hooks) && a.mutationObserver != nil {
@@ -746,7 +754,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	permArgs := plan.permArgs
 	evidenceName := plan.evidenceName
 	evidenceArgs := plan.evidenceArgs
-	mutates := plan.mutates
+	mutates := plan.effects.StateMutation
 	recoveryGen := plan.recoveryGen
 
 	var result string
@@ -800,7 +808,6 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	if msg, refused := tool.BlockedMessage(err); refused {
 		return a.blockedToolOutcome(plan, msg)
 	}
-	a.recordToolReceipts(plan, result, execution, err)
 	// Track skill/capability outcomes for Delivery gates.
 	a.noteCapabilityInvocation(call.Name, json.RawMessage(call.Arguments), err)
 	// Success and failure hooks observe the result after the tool ran. Use the
@@ -816,6 +823,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	// change the previewed path even when the concrete tool returned an error.
 	a.observeAfterMutation(plan)
 	plan.mutationAfterDone = true
+	a.recordToolReceipts(plan, result, execution, err)
 	if a.recoveryGate != nil {
 		a.observeRecoveryResult(ctx, evidenceName, evidenceArgs, readOnly, mutates, result, err, false, false, recoveryGen)
 	}
@@ -905,13 +913,22 @@ func (a *Agent) observeBeforeMutation(ctx context.Context, plan *toolCallPlan) {
 
 // observeAfterMutation records the after fingerprint when a concrete path was
 // known before execution, regardless of tool success or failure.
-func (a *Agent) observeAfterMutation(plan *toolCallPlan) {
+func (a *Agent) observeAfterMutation(plan *toolCallPlan) bool {
 	if a == nil || plan == nil || plan.mutationPath == "" || a.mutationObserver == nil {
-		return
+		return false
 	}
 	toolName := plan.evidenceName
 	if toolName == "" {
 		toolName = plan.call.Name
 	}
-	a.mutationObserver.AfterMutation(plan.mutationPath, toolName)
+	changed := a.mutationObserver.AfterMutation(plan.mutationPath, toolName)
+	if changed {
+		// A nominal repository-only operation can run a hook that changes a
+		// captured file. Promote the concrete result before evidence is recorded
+		// so content review debt cannot be bypassed by post-execution effects.
+		plan.effects.StateMutation = true
+		plan.effects.WorkspaceMutation = true
+		plan.effects.ContentMutation = true
+	}
+	return changed
 }

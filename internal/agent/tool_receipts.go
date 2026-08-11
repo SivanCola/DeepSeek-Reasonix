@@ -26,10 +26,12 @@ func (a *Agent) recordToolReceipts(plan *toolCallPlan, result string, execution 
 	case plan.evidenceName != call.Name:
 		a.evidence.Record(evidence.ReceiptFromToolCall(call.Name, args, err == nil, true))
 		rec := evidence.ReceiptFromToolCall(plan.evidenceName, plan.evidenceArgs, err == nil, plan.readOnly)
+		rec.Mutation = plan.effects.ContentMutation
 		decorateExecutionReceipt(&rec, result, execution)
 		a.evidence.Record(rec)
 	default:
 		rec := evidence.ReceiptFromToolCall(call.Name, args, err == nil, plan.tool.ReadOnly())
+		rec.Mutation = plan.effects.ContentMutation
 		decorateExecutionReceipt(&rec, result, execution)
 		a.evidence.Record(rec)
 		if err == nil && call.Name == "todo_write" {
