@@ -1923,6 +1923,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	}
 
 	ctrlOpts := control.Options{
+		TaskBudget:                     taskBudgetFromConfig(cfg),
+		GoalTokenBudget:                cfg.Agent.GoalTokenBudget,
 		Runner:                         runner,
 		Executor:                       executor,
 		Sink:                           sink,
