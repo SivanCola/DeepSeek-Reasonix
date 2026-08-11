@@ -59,13 +59,20 @@ function Get-WebViewAutomationState {
             [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
             [System.Windows.Automation.ControlType]::Document
         )
-        $editCondition = [System.Windows.Automation.PropertyCondition]::new(
+        $composerTypeCondition = [System.Windows.Automation.PropertyCondition]::new(
             [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
             [System.Windows.Automation.ControlType]::Edit
         )
+        $composerIdCondition = [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+            "composer-input"
+        )
+        $composerCondition = [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.Condition[]]@($composerTypeCondition, $composerIdCondition)
+        )
         return [pscustomobject]@{
             DocumentReady = $null -ne $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $documentCondition)
-            ComposerReady = $null -ne $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+            ComposerReady = $null -ne $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $composerCondition)
             ErrorType = ""
         }
     }
