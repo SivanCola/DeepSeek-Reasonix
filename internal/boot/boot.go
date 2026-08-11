@@ -26,6 +26,7 @@ import (
 
 	"reasonix/internal/ablation"
 	"reasonix/internal/agent"
+	"reasonix/internal/browserhost"
 	"reasonix/internal/capability"
 	"reasonix/internal/command"
 	"reasonix/internal/config"
@@ -126,6 +127,12 @@ type Options struct {
 	// sessions; Economy installs them only after connect_tool_source requests
 	// their Source. CLI, serve, and Remote Workbench never set this field.
 	HostTools []tool.HostTool
+	// BrowserHost is the current chat's restricted browser backend. Non-nil
+	// advertises reasonix/browser/companion on the dependency graph (desktop).
+	// Nil means this frontend does not support browser (CLI/Serve/ACP/TUI);
+	// browser-dependent plugins stay Inactive and are never started. Companion
+	// install/ready/crashed state does not change this field.
+	BrowserHost browserhost.Backend
 	// AutoPricingCurrency supplies a frontend-resolved pricing region when the
 	// persisted desktop currency and language settings are all automatic. It is
 	// applied to the in-memory config only and never turns Auto into a persisted
@@ -2232,7 +2239,12 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		Registry:                reg,
 		ImplicitSkillInvocation: implicitSkillInvocation,
 	}
-	return finalizeBuildResult(&BuildResult{Controller: ctrl, Snapshot: snap, Runtime: runtimeSet, Owner: owner, Extensions: extensionMgr, Dispatcher: extensionDispatcher, ExtensionUI: extUIHub, ProviderResolver: providerResolver, BaseProviderResolver: baseResolver, Assembly: assembly}, !opts.deferPublish), nil
+	return finalizeBuildResult(&BuildResult{
+		Controller: ctrl, Snapshot: snap, Runtime: runtimeSet, Owner: owner,
+		Extensions: extensionMgr, Dispatcher: extensionDispatcher, ExtensionUI: extUIHub,
+		ProviderResolver: providerResolver, BaseProviderResolver: baseResolver, Assembly: assembly,
+		HostTools: opts.HostTools, BrowserHost: opts.BrowserHost,
+	}, !opts.deferPublish), nil
 }
 
 // effectivePlannerModel centralizes planner precedence. The explicit ACP hard

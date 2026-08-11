@@ -1961,6 +1961,7 @@ func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRunti
 		EffortOverride:           cloneStringPtr(snap.effort),
 		TokenMode:                runtime.tokenMode,
 		HostTools:                a.browserHostToolsForTab(tab.ID),
+		BrowserHost:              a.browserHostForTab(tab.ID),
 		SharedHost:               a.lookupSharedHost(snap.sharedHostKey),
 		CleanupPendingReconciler: reconcileDesktopCleanupPending,
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
