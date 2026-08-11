@@ -104,6 +104,71 @@ if (api.stick.current) {
 }
 eq(scrollTop, 900, "a queued streaming auto-scroll would not yank after manual wheel intent");
 
+// A short upward move remains inside the ordinary near-bottom threshold. It
+// must still latch manual mode after the gesture settles; otherwise the next
+// streaming token can pull the reader back to the bottom.
+scrollTop = 860;
+await act(async () => {
+  api!.onScroll();
+});
+eq(api!.stick.current, false, "short upward scroll keeps tail-follow disengaged inside the bottom threshold");
+eq(api!.modeRef.current, "manual", "short upward scroll preserves manual mode");
+await act(async () => {
+  api!.gestureLastActivityRef.current -= 100;
+  api!.onScrollEnd();
+  api!.scrollToBottom(false, "stream");
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+});
+eq(scrollTop, 860, "streaming cannot re-pin after a settled short upward gesture");
+
+// User-owned downward scrolling may deliberately opt back into tail-follow,
+// but only after reaching the physical bottom rather than merely its 80px
+// proximity band.
+scrollTop = 899;
+await act(async () => {
+  api!.onScroll();
+});
+eq(api!.stick.current, false, "manual latch remains one pixel above the physical bottom");
+scrollTop = 900;
+await act(async () => {
+  api!.onScroll();
+});
+eq(api!.stick.current, true, "user scroll to the physical bottom restores tail-follow");
+eq(api!.modeRef.current, "tail-follow", "physical bottom clears manual mode");
+
+// Scrollbar drags do not emit wheel intent. The first unowned scroll away from
+// the physical bottom must establish the same manual latch for mouse users.
+scrollTop = 870;
+await act(async () => {
+  api!.onScroll();
+});
+eq(api!.stick.current, false, "short native scrollbar drag disengages tail-follow without a wheel event");
+eq(api!.modeRef.current, "manual", "native scrollbar drag enters manual mode");
+scrollTop = 900;
+await act(async () => {
+  api!.onScroll();
+});
+eq(api!.stick.current, true, "scrollbar drag back to the physical bottom restores tail-follow");
+
+// Creation's custom scrollbar writes through the controller, so its scroll
+// events are intentionally classified as programmatic. Finishing that drag
+// must still apply the same user-intent latch.
+await act(async () => {
+  api!.setMode("programmatic", "custom-scrollbar-test");
+  api!.writeOffset("custom-scrollbar", 870);
+  api!.onScroll();
+  api!.finishProgrammaticScroll();
+});
+eq(api!.stick.current, false, "custom scrollbar near-bottom drag remains manual after pointerup");
+eq(api!.modeRef.current, "manual", "custom scrollbar finish preserves the manual latch");
+await act(async () => {
+  api!.setMode("programmatic", "custom-scrollbar-bottom-test");
+  api!.writeOffset("custom-scrollbar", 900);
+  api!.onScroll();
+  api!.finishProgrammaticScroll();
+});
+eq(api!.stick.current, true, "custom scrollbar drag to the physical bottom restores tail-follow");
+
 // Gesture lock: virtualizer/stream must not rewrite scrollTop mid-gesture.
 const writes: Array<[string, number]> = [];
 window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (owner, top) => {

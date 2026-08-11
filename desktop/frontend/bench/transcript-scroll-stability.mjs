@@ -117,6 +117,49 @@ try {
   await page.waitForFunction(() => !document.querySelector(".transcript")?.dataset.scrollGesture);
   assert(true, "middle-button session terminates on native scrollend");
 
+  // Reproduce the subtle tail-follow race: a short upward wheel stays inside
+  // the 80px near-bottom band, then the gesture settles before more content
+  // arrives. User intent must remain manual across that quiet boundary.
+  const jumpBottom = page.locator(".transcript__jump-bottom");
+  await jumpBottom.click();
+  await page.waitForFunction(() => {
+    const transcript = document.querySelector(".transcript");
+    return transcript && transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 0.5;
+  });
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -24);
+  await page.waitForFunction(() => {
+    const transcript = document.querySelector(".transcript");
+    if (!transcript) return false;
+    const distance = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight;
+    return distance > 0.5 && distance < 80 && transcript.dataset.scrollGesture === "wheel";
+  });
+  await page.waitForTimeout(64);
+  await page.evaluate(() => document.querySelector(".transcript")?.dispatchEvent(new Event("scrollend")));
+  await page.waitForFunction(() => !document.querySelector(".transcript")?.dataset.scrollGesture);
+  const shortUpward = await page.locator(".transcript").evaluate((element) => ({
+    distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+    mode: element.dataset.scrollMode,
+    top: element.scrollTop,
+  }));
+  assert(shortUpward.mode === "manual", `short upward wheel remains manual inside the bottom threshold (${JSON.stringify(shortUpward)})`);
+  await page.waitForTimeout(260);
+  const shortUpwardSettled = await page.locator(".transcript").evaluate((element) => ({
+    mode: element.dataset.scrollMode,
+    top: element.scrollTop,
+  }));
+  assert(shortUpwardSettled.mode === "manual" && Math.abs(shortUpwardSettled.top - shortUpward.top) <= 1,
+    `quiet-window expiry does not re-pin the short upward gesture (${JSON.stringify(shortUpwardSettled)})`);
+
+  await page.mouse.wheel(0, 120);
+  await page.waitForFunction(() => {
+    const transcript = document.querySelector(".transcript");
+    return transcript
+      && transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 0.5
+      && transcript.dataset.scrollMode === "tail-follow";
+  });
+  assert(true, "user wheel back to the physical bottom explicitly restores tail-follow");
+
   process.stdout.write("\ntranscript scroll stability browser gate passed\n");
 } finally {
   await browser?.close();

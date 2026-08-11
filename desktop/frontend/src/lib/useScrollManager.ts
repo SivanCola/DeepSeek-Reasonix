@@ -30,6 +30,7 @@ declare global {
 }
 
 const BOTTOM_THRESHOLD_PX = 80;
+const BOTTOM_REENGAGE_PX = 0.5;
 const TOUCH_SCROLL_THRESHOLD_PX = 2;
 const PROGRAMMATIC_SCROLL_EVENT_HOLD_MS = 96;
 const SCROLL_BREAK_KEYS = new Set([
@@ -47,6 +48,10 @@ const CONDITIONAL_SCROLL_KEYS = new Set([
 
 function isNearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_THRESHOLD_PX;
+}
+
+function isAtPhysicalBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_REENGAGE_PX;
 }
 
 function isScrollable(el: HTMLElement): boolean {
@@ -92,6 +97,10 @@ export function useScrollManager() {
     behavior: ScrollBehavior;
     expiresAt: number;
   } | null>(null);
+  // Near-bottom is a layout tolerance, not user intent. Once the reader moves
+  // upward, keep tail-follow suppressed until they explicitly return to the
+  // physical bottom (or use an explicit bottom/reset action).
+  const tailFollowSuppressedRef = useRef(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const modeRef = useRef<TranscriptScrollMode>("tail-follow");
   const generationRef = useRef(0);
@@ -176,14 +185,14 @@ export function useScrollManager() {
   }, []);
 
   const updateBottomState = useCallback((el: HTMLElement, preserveMode = false) => {
-    const atBottom = isNearBottom(el);
-    stick.current = atBottom;
-    setIsAtBottom(atBottom);
+    const shouldFollow = isNearBottom(el) && !tailFollowSuppressedRef.current;
+    stick.current = shouldFollow;
+    setIsAtBottom(shouldFollow);
     if (!preserveMode && !isTranscriptSelectionMode(modeRef.current)) {
-      modeRef.current = atBottom ? "tail-follow" : "manual";
+      modeRef.current = shouldFollow ? "tail-follow" : "manual";
       el.dataset.scrollMode = modeRef.current;
     }
-    return atBottom;
+    return shouldFollow;
   }, []);
 
   const cancelPendingBottomScroll = useCallback(() => {
@@ -201,6 +210,7 @@ export function useScrollManager() {
   }, []);
 
   const setMode = useCallback((mode: TranscriptScrollMode, _reason?: string) => {
+    if (mode === "tail-follow") tailFollowSuppressedRef.current = false;
     modeRef.current = mode;
     if (scrollRef.current) scrollRef.current.dataset.scrollMode = mode;
     if (isTranscriptSelectionMode(mode)) cancelPendingBottomScroll();
@@ -213,6 +223,11 @@ export function useScrollManager() {
       clearGesture(false);
     }
     const target = Math.max(0, Math.min(top, Math.max(0, el.scrollHeight - el.clientHeight)));
+    if (owner === "custom-scrollbar") {
+      tailFollowSuppressedRef.current = Math.max(0, el.scrollHeight - el.clientHeight) - target > BOTTOM_REENGAGE_PX;
+    } else if (owner === "jump-bottom") {
+      tailFollowSuppressedRef.current = false;
+    }
     programmaticScrollRef.current = {
       generation: generationRef.current,
       owner,
@@ -251,6 +266,7 @@ export function useScrollManager() {
     // release is never blocked by the gesture lock itself.
     if (el) cancelInFlightSmoothScroll(el);
     cancelPendingBottomScroll();
+    tailFollowSuppressedRef.current = true;
     stick.current = false;
     setIsAtBottom(false);
     modeRef.current = "manual";
@@ -340,6 +356,7 @@ export function useScrollManager() {
     // scroll events without wheel samples. Treat every unowned scroll as user
     // activity; controller-owned writes are consumed above.
     markUserGesture(gestureSourceRef.current ?? "native-scroll");
+    tailFollowSuppressedRef.current = !isAtPhysicalBottom(el);
     updateBottomState(el);
     if (!isNearBottom(el)) cancelPendingBottomScroll();
   }, [cancelPendingBottomScroll, consumeProgrammaticScroll, markUserGesture, updateBottomState]);
@@ -399,6 +416,7 @@ export function useScrollManager() {
     const el = scrollRef.current;
     if (!el || !canTranscriptScrollOwnerWriteNow(modeRef.current, owner, gestureUntilRef.current)) return;
     if (force) {
+      tailFollowSuppressedRef.current = false;
       modeRef.current = "tail-follow";
       if (scrollRef.current) scrollRef.current.dataset.scrollMode = "tail-follow";
       stick.current = true;
@@ -435,6 +453,7 @@ export function useScrollManager() {
       clearTimeout(smoothScrollTimer.current);
       smoothScrollTimer.current = null;
     }
+    tailFollowSuppressedRef.current = false;
     stick.current = true;
     writeOffset(owner, el.scrollHeight);
     setIsAtBottom(true);
@@ -474,6 +493,7 @@ export function useScrollManager() {
     (containerHeightDelta: number, owner: TranscriptScrollOwner = "container-resize") => {
       const el = scrollRef.current;
       if (!el) return;
+      if (tailFollowSuppressedRef.current) return;
       const bottomDistance = el.scrollHeight - el.scrollTop - el.clientHeight;
       if (!stick.current && bottomDistance + containerHeightDelta >= BOTTOM_THRESHOLD_PX) return;
       stick.current = true;
@@ -512,6 +532,7 @@ export function useScrollManager() {
       if (el) cancelInFlightSmoothScroll(el);
     }
     modeRef.current = "tail-follow";
+    tailFollowSuppressedRef.current = false;
     if (scrollRef.current) scrollRef.current.dataset.scrollMode = "tail-follow";
     stick.current = true;
     setIsAtBottom(true);
