@@ -113,7 +113,11 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	// A fresh user turn starts from zeroed per-turn host state; the new turn's
 	// values are computed below. Cross-turn state (checkpoint, scope, failure
 	// budgets) lives directly on Agent and is reconciled field by field.
-	a.perTurnState = perTurnState{turnInput: input}
+	// Host-composed input can contain transient capability, memory, and hook
+	// blocks. Keep the authenticated user text as the contract source so those
+	// implementation details never become acceptance criteria or completion
+	// receipt text. The provider still receives the composed input below.
+	a.perTurnState = perTurnState{turnInput: rawInput}
 	a.resetStructuralRunGuards()
 	scope, scoped := DeliveryExecutionScopeFromContext(ctx)
 	preserveEvidence := a.preserveEvidenceOnce
@@ -829,7 +833,7 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *runLoopState, te
 	if readiness.applies {
 		event.RecordReadinessAudit(a.sink, readiness.audit(evidence.ReadinessAllowed, a.readinessRecovered))
 	}
-	a.emitTurnShadows(state.input)
+	a.emitTurnShadows(a.turnInput)
 	if !a.closeSteerIntakeIfIdle() {
 		return true, nil
 	}
