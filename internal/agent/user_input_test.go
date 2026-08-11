@@ -119,6 +119,42 @@ Policy: prefer means use the skill for the required change
 	}
 }
 
+func TestCompletionContractUsesGoalScopeTaskText(t *testing.T) {
+	prov := &userInputCaptureProvider{}
+	a := New(prov, tool.NewRegistry(), NewSession("system"), Options{}, event.Discard)
+	ctx := WithRawUserInput(context.Background(), "Continue working.")
+	ctx = WithDeliveryExecutionScope(ctx, DeliveryExecutionScope{ID: "goal-1", TaskText: "fix the parser"})
+
+	if err := a.Run(ctx, "<goal-context>continue</goal-context>"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertAtomicCriterion(t, a, "fix the parser")
+}
+
+func TestCompletionContractUsesPristineSubagentTaskText(t *testing.T) {
+	prov := &userInputCaptureProvider{}
+	a := New(prov, tool.NewRegistry(), NewSession("system"), Options{
+		ClassifierTaskText: "fix the parser",
+	}, event.Discard)
+	const wrapped = "<workspace-context>private host framing</workspace-context>\n\nfix the parser"
+
+	if err := a.Run(context.Background(), wrapped); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertAtomicCriterion(t, a, "fix the parser")
+}
+
+func assertAtomicCriterion(t *testing.T, a *Agent, want string) {
+	t.Helper()
+	receipt := a.CompletionReceipt()
+	if receipt == nil || len(receipt.Gaps) == 0 {
+		t.Fatalf("completion receipt = %+v, want atomic criterion %q", receipt, want)
+	}
+	if got := receipt.Gaps[0].Detail; got != "r1: "+want {
+		t.Fatalf("atomic criterion = %q, want %q", got, want)
+	}
+}
+
 func TestSubagentImageCandidatesAreCopiedAndIsolated(t *testing.T) {
 	images := []string{"data:image/png;base64,AAAA"}
 	ctx := WithSubagentImageCandidates(context.Background(), images)
