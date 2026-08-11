@@ -70,9 +70,10 @@ if (localeChunks.length !== 2) {
 for (const path of localeChunks) {
   const name = basename(path);
   // Task Monitor, Extension UI, Storage & paths, and shell execution cards
-  // add their own labels. Reasoning and billing display controls add the latest
-  // localized copy. Keep both dictionaries within narrow allowances.
-  const budget = name.startsWith("zh-TW-") ? 54.8 * 1024 : 54.1 * 1024;
+  // add their own labels. Reasoning and billing display controls, status bar
+  // metrics, and capability busy guidance add the latest localized copy. Keep
+  // both dictionaries within narrow allowances.
+  const budget = name.startsWith("zh-TW-") ? 54.86 * 1024 : 54.12 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
