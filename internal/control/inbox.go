@@ -67,15 +67,20 @@ var _ Inbox = (*Controller)(nil)
 
 // inboxState is controller-owned inbox wiring (disk store + active items).
 type inboxState struct {
-	// admissionMu closes the durable-state gap between marking an item in
-	// flight and registering its live Controller ownership.
+	// admissionMu serializes competing admission state machines. Snapshot
+	// recovery and completion never hold it across Store I/O.
 	admissionMu sync.Mutex
 	mu          sync.Mutex
 	store       *sessioninbox.Store
 	// activeItemIDs includes the running follow-up and every accepted steer.
 	// TurnDone durable-acks the set so multi-steer rounds leave no orphans.
 	activeItemIDs map[string]struct{}
-	dispatching   bool
+	// activeOwnership mirrors activeItemIDs for lock-free recovery checks while
+	// the Store owns its transaction lock. admittingOwnership covers the narrow
+	// durable-claim -> active-registration transition.
+	activeOwnership    sync.Map
+	admittingOwnership sync.Map
+	dispatching        bool
 	// beforePreparedAdmission is a deterministic test hook for the gap between
 	// durable preparation and Controller admission. Production leaves it nil.
 	beforePreparedAdmission func()
@@ -84,6 +89,8 @@ type inboxState struct {
 	beforeCompletionSnapshot func()
 	// beforeCompletionAck exposes the ownership-to-ack boundary to race tests.
 	beforeCompletionAck func()
+	// beforeSnapshotRead exposes the final Store snapshot boundary to lock tests.
+	beforeSnapshotRead func()
 }
 
 func (s *inboxState) trackActive(id string) {
@@ -93,22 +100,29 @@ func (s *inboxState) trackActive(id string) {
 	if s.activeItemIDs == nil {
 		s.activeItemIDs = make(map[string]struct{})
 	}
+	s.activeOwnership.Store(id, struct{}{})
 	s.activeItemIDs[id] = struct{}{}
 }
 
 func (s *inboxState) untrackActive(id string) {
-	if s == nil || s.activeItemIDs == nil || id == "" {
+	if s == nil || id == "" {
 		return
 	}
-	delete(s.activeItemIDs, id)
+	if s.activeItemIDs != nil {
+		delete(s.activeItemIDs, id)
+	}
+	s.activeOwnership.Delete(id)
 }
 
 func (s *inboxState) untrackActiveSet(ids []string) {
-	if s == nil || len(s.activeItemIDs) == 0 {
+	if s == nil {
 		return
 	}
 	for _, id := range ids {
-		delete(s.activeItemIDs, id)
+		if s.activeItemIDs != nil {
+			delete(s.activeItemIDs, id)
+		}
+		s.activeOwnership.Delete(id)
 	}
 }
 
@@ -117,6 +131,32 @@ func (s *inboxState) clearActive() {
 		return
 	}
 	s.activeItemIDs = nil
+	s.activeOwnership.Clear()
+}
+
+func (s *inboxState) trackAdmission(id string) {
+	if s != nil && id != "" {
+		s.admittingOwnership.Store(id, struct{}{})
+	}
+}
+
+func (s *inboxState) untrackAdmission(id string) {
+	if s != nil && id != "" {
+		s.admittingOwnership.Delete(id)
+	}
+}
+
+// ownsItem is intentionally lock-free: Store recovery calls it while holding
+// its own transaction lock, and no Store -> Controller lock edge is allowed.
+func (s *inboxState) ownsItem(id string) bool {
+	if s == nil || id == "" {
+		return false
+	}
+	if _, ok := s.admittingOwnership.Load(id); ok {
+		return true
+	}
+	_, ok := s.activeOwnership.Load(id)
+	return ok
 }
 
 func (s *inboxState) activeIDs() []string {
@@ -273,19 +313,20 @@ func (c *Controller) EnqueueInbox(req InboxRequest) (sessioninbox.InboxReceipt, 
 }
 
 func (c *Controller) InboxSnapshot() sessioninbox.InboxSnapshot {
-	c.inbox.admissionMu.Lock()
-	defer c.inbox.admissionMu.Unlock()
 	st, err := c.ensureInbox()
 	if err != nil {
 		return sessioninbox.InboxSnapshot{}
 	}
-	c.inbox.mu.Lock()
-	activeIDs := c.inbox.activeIDs()
-	c.inbox.mu.Unlock()
-	if recovered, recoverErr := st.RecoverOrphanedInFlight(activeIDs); recoverErr != nil {
+	if recovered, recoverErr := st.RecoverOrphanedInFlightOwnedBy(c.inbox.ownsItem); recoverErr != nil {
 		slog.Warn("controller: recover orphaned inbox items", "err", recoverErr)
 	} else if recovered > 0 {
 		sessioninbox.NoteRecovered(recovered)
+	}
+	c.inbox.mu.Lock()
+	beforeSnapshotRead := c.inbox.beforeSnapshotRead
+	c.inbox.mu.Unlock()
+	if beforeSnapshotRead != nil {
+		beforeSnapshotRead()
 	}
 	return st.Snapshot()
 }
@@ -537,6 +578,8 @@ func (c *Controller) TrySubmitInboxItem(id string) (sessioninbox.InboxReceipt, e
 	}
 	// Persist the in-flight state before admission. Active tracking is installed
 	// only after Controller admission is reserved and before the turn can finish.
+	c.inbox.trackAdmission(id)
+	defer c.inbox.untrackAdmission(id)
 	if err := st.ClaimItem(id); err != nil {
 		return sessioninbox.InboxReceipt{}, err
 	}
@@ -597,7 +640,6 @@ func (c *Controller) onInboxTurnDone() {
 	// Transcript snapshot is the durable receipt boundary for the whole set.
 	if err := c.SnapshotActivity(); err != nil {
 		slog.Warn("controller: inbox turn snapshot", "err", err)
-		c.inbox.admissionMu.Lock()
 		for _, id := range ids {
 			_ = st.SetState(id, sessioninbox.StateUncertain, "turn completed but transcript snapshot failed")
 		}
@@ -605,14 +647,12 @@ func (c *Controller) onInboxTurnDone() {
 		c.inbox.mu.Lock()
 		c.inbox.untrackActiveSet(ids)
 		c.inbox.mu.Unlock()
-		c.inbox.admissionMu.Unlock()
 		sessioninbox.NoteUncertain()
 		return
 	}
-	// Only the short ownership-to-ack transition excludes recovery. Successful
-	// dequeue or an explicit uncertain state is made durable before ownership
-	// is removed, so no orphan window is exposed.
-	c.inbox.admissionMu.Lock()
+	// Keep ownership published through every durable acknowledgement. Recovery
+	// can run concurrently, sees these IDs as live without a Controller lock,
+	// and ownership is removed only after dequeue or uncertain state is durable.
 	if beforeAck != nil {
 		beforeAck()
 	}
@@ -627,14 +667,13 @@ func (c *Controller) onInboxTurnDone() {
 			ackFailed = true
 		}
 	}
-	c.inbox.mu.Lock()
-	c.inbox.untrackActiveSet(ids)
-	c.inbox.mu.Unlock()
 	if ackFailed {
 		_ = st.SetPaused(true)
 		sessioninbox.NoteUncertain()
 	}
-	c.inbox.admissionMu.Unlock()
+	c.inbox.mu.Lock()
+	c.inbox.untrackActiveSet(ids)
+	c.inbox.mu.Unlock()
 }
 
 // onInboxUnappliedSteer keeps accepted-but-unapplied steers for inspection.

@@ -21,10 +21,7 @@ func (c *Controller) readSteerCandidate(st *sessioninbox.Store, id string) (sess
 	if err != nil || (meta.State != sessioninbox.StateRunning && meta.State != sessioninbox.StateSteerAccepted && meta.State != sessioninbox.StateSteerConsumed) {
 		return meta, env, err
 	}
-	c.inbox.mu.Lock()
-	activeIDs := c.inbox.activeIDs()
-	c.inbox.mu.Unlock()
-	recovered, err := st.RecoverOrphanedInFlight(activeIDs)
+	recovered, err := st.RecoverOrphanedInFlightOwnedBy(c.inbox.ownsItem)
 	if err != nil {
 		return sessioninbox.InboxItemMeta{}, sessioninbox.PromptEnvelope{}, err
 	}
@@ -115,6 +112,8 @@ func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, er
 	// Persist the admission boundary before exposing the loader to the agent.
 	// Holding c.mu for the short in-memory enqueue serializes active tracking
 	// with finishGuardedTurn, so TurnDone cannot overtake an accepted steer.
+	c.inbox.trackAdmission(id)
+	defer c.inbox.untrackAdmission(id)
 	if len(env.FrozenImages) == 0 {
 		if err := st.SetState(id, sessioninbox.StateSteerAccepted, ""); err != nil {
 			return sessioninbox.InboxReceipt{}, err

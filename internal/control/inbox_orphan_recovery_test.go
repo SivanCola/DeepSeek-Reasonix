@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/filelock"
 	"reasonix/internal/sessioninbox"
 )
 
@@ -202,19 +204,74 @@ func TestInboxAdmissionOwnsClaimBeforeSnapshotRecovery(t *testing.T) {
 		resultCh <- result{receipt: receipt, err: submitErr}
 	}()
 	<-claimed
-	lockEscaped := c.inbox.admissionMu.TryLock()
-	if lockEscaped {
+	snapshotCh := make(chan sessioninbox.InboxSnapshot, 1)
+	go func() { snapshotCh <- c.InboxSnapshot() }()
+	var duringAdmission sessioninbox.InboxSnapshot
+	select {
+	case duringAdmission = <-snapshotCh:
+	case <-time.After(time.Second):
+		close(release)
+		<-resultCh
+		t.Fatal("snapshot recovery waited on the admission state machine")
+	}
+	if duringAdmission.Paused || len(duringAdmission.Items) != 1 || duringAdmission.Items[0].State != sessioninbox.StateRunning {
+		close(release)
+		<-resultCh
+		t.Fatalf("snapshot recovered a live admission: %+v", duringAdmission)
+	}
+	if c.inbox.admissionMu.TryLock() {
 		c.inbox.admissionMu.Unlock()
+		close(release)
+		<-resultCh
+		t.Fatal("admission hook did not hold the admission state machine")
 	}
 	close(release)
 	got := <-resultCh
-	if lockEscaped {
-		t.Fatal("snapshot recovery could enter between durable claim and active ownership")
-	}
 	if got.err != nil || got.receipt.Disposition != sessioninbox.DispositionStarted {
 		t.Fatalf("admission result = %+v, err=%v", got.receipt, got.err)
 	}
 	c.autosaveWG.Wait()
+}
+
+func TestInboxSnapshotDoesNotHoldAdmissionWhileDiskLocked(t *testing.T) {
+	dir := t.TempDir()
+	session := filepath.Join(dir, "s.jsonl")
+	if err := os.WriteFile(session, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := New(Options{SessionPath: session, SessionDir: dir, Sink: event.Discard})
+	st, err := c.ensureInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseDisk, err := filelock.Acquire(context.Background(), filepath.Join(st.Dir(), "transaction.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reachedRead := make(chan struct{})
+	c.inbox.mu.Lock()
+	c.inbox.beforeSnapshotRead = func() { close(reachedRead) }
+	c.inbox.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		_ = c.InboxSnapshot()
+		close(done)
+	}()
+	<-reachedRead
+	select {
+	case <-done:
+		releaseDisk()
+		t.Fatal("snapshot bypassed the held Store transaction lock")
+	default:
+	}
+	if !c.inbox.admissionMu.TryLock() {
+		releaseDisk()
+		<-done
+		t.Fatal("snapshot held admissionMu while waiting on transaction.lock")
+	}
+	c.inbox.admissionMu.Unlock()
+	releaseDisk()
+	<-done
 }
 
 func TestInboxCompletionKeepsOwnershipWithoutHoldingAdmissionDuringSnapshot(t *testing.T) {
@@ -266,7 +323,7 @@ func TestInboxCompletionKeepsOwnershipWithoutHoldingAdmissionDuringSnapshot(t *t
 	}
 }
 
-func TestInboxCompletionOwnsItemDuringDurableAck(t *testing.T) {
+func TestInboxCompletionOwnsItemWithoutHoldingAdmissionDuringDurableAck(t *testing.T) {
 	dir := t.TempDir()
 	session := filepath.Join(dir, "s.jsonl")
 	if err := os.WriteFile(session, []byte("{}\n"), 0o644); err != nil {
@@ -299,15 +356,20 @@ func TestInboxCompletionOwnsItemDuringDurableAck(t *testing.T) {
 		close(done)
 	}()
 	<-beforeAck
-	lockEscaped := c.inbox.admissionMu.TryLock()
-	if lockEscaped {
-		c.inbox.admissionMu.Unlock()
+	if !c.inbox.admissionMu.TryLock() {
+		close(release)
+		<-done
+		t.Fatal("completion held admission lock across durable acknowledgement")
+	}
+	c.inbox.admissionMu.Unlock()
+	whileAcking := c.InboxSnapshot()
+	if whileAcking.Paused || len(whileAcking.Items) != 1 || whileAcking.Items[0].State != sessioninbox.StateSteerConsumed {
+		close(release)
+		<-done
+		t.Fatalf("snapshot recovery lost active ownership during durable acknowledgement: %+v", whileAcking)
 	}
 	close(release)
 	<-done
-	if lockEscaped {
-		t.Fatal("snapshot recovery could enter between active ownership and durable acknowledgement")
-	}
 	snap := c.InboxSnapshot()
 	if snap.Paused || len(snap.Items) != 0 {
 		t.Fatalf("completed item survived durable acknowledgement: %+v", snap)
