@@ -4,8 +4,8 @@
     "commented-code": 0,
     "complexity": 2103,
     "essay": 4072,
-    "file-size": 109765,
-    "function-size": 9162,
+    "file-size": 109745,
+    "function-size": 9148,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
@@ -28,8 +28,8 @@
     "desktop/app.go": {
       "complexity": 63,
       "essay": 97,
-      "file-size": 11545,
-      "function-size": 386
+      "file-size": 11533,
+      "function-size": 380
     },
     "desktop/app_autosave_test.go": {
       "essay": 1
@@ -84,7 +84,7 @@
       "essay": 2
     },
     "desktop/frontend/src/App.tsx": {
-      "file-size": 4732
+      "file-size": 4730
     },
     "desktop/frontend/src/__tests__/app-chrome-tabs.test.ts": {
       "test-file-size": 19
@@ -126,7 +126,7 @@
       "file-size": 4003
     },
     "desktop/frontend/src/components/ContextPanel.tsx": {
-      "file-size": 36
+      "file-size": 38
     },
     "desktop/frontend/src/components/MemoryPanel.tsx": {
       "file-size": 1088
@@ -165,7 +165,7 @@
       "file-size": 415
     },
     "desktop/frontend/src/lib/bridge.ts": {
-      "file-size": 4746
+      "file-size": 4745
     },
     "desktop/frontend/src/lib/crash.ts": {
       "file-size": 225
@@ -177,7 +177,7 @@
       "file-size": 1511
     },
     "desktop/frontend/src/lib/useController.ts": {
-      "file-size": 3935
+      "file-size": 3936
     },
     "desktop/heartbeat.go": {
       "essay": 20,
@@ -207,7 +207,7 @@
     },
     "desktop/main.go": {
       "essay": 7,
-      "function-size": 9
+      "function-size": 7
     },
     "desktop/main_test.go": {
       "essay": 2
@@ -287,7 +287,7 @@
     "desktop/settings_app.go": {
       "complexity": 22,
       "essay": 26,
-      "file-size": 2776
+      "file-size": 2742
     },
     "desktop/settings_app_test.go": {
       "test-file-size": 1856
@@ -311,8 +311,8 @@
     "desktop/tabs.go": {
       "complexity": 74,
       "essay": 132,
-      "file-size": 8718,
-      "function-size": 632
+      "file-size": 8711,
+      "function-size": 626
     },
     "desktop/tabs_order_test.go": {
       "test-file-size": 395
@@ -473,7 +473,7 @@
     },
     "internal/agent/coordinator.go": {
       "essay": 15,
-      "file-size": 13
+      "file-size": 6
     },
     "internal/agent/coordinator_test.go": {
       "essay": 3,
@@ -1075,7 +1075,7 @@
     "internal/control/controller.go": {
       "complexity": 10,
       "essay": 162,
-      "file-size": 5410,
+      "file-size": 5457,
       "function-size": 75,
       "narrative": 4
     },
@@ -1199,7 +1199,7 @@
     },
     "internal/event/event.go": {
       "essay": 10,
-      "file-size": 48,
+      "file-size": 49,
       "narrative": 1
     },
     "internal/event/subagent_progress.go": {
@@ -1560,7 +1560,7 @@
     },
     "internal/provider/provider.go": {
       "essay": 51,
-      "file-size": 365
+      "file-size": 357
     },
     "internal/provider/responses/responses.go": {
       "complexity": 54,
