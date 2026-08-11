@@ -310,6 +310,126 @@ console.log("\ncomposer inbox recovery");
   dom.window.close();
 }
 
+{
+  const dom = installDom();
+  let steerCalls = 0;
+  let deleteCalls = 0;
+  installBridgeApp({
+    InboxSnapshot: async () => ({
+      revision: 4,
+      paused: false,
+      recovered: false,
+      recoveredCount: 0,
+      items: [{
+        id: "active-steer",
+        intent: "steer",
+        state: "steer_accepted",
+        preview: "Already admitted guidance",
+        byteSize: 64,
+        position: 1,
+      }],
+      itemsCount: 1,
+      bytes: 64,
+      maxItems: 64,
+      maxBytes: 64 * 1024 * 1024,
+    }),
+    SteerInboxItem: async () => { steerCalls += 1; },
+    DeleteInboxItem: async () => { deleteCalls += 1; },
+  });
+  const { root } = await renderComposer({ running: true });
+
+  await waitFor("active steer rendered", () => document.querySelector(".composer-guidance-item__guide") !== null);
+  const guide = document.querySelector(".composer-guidance-item__guide") as HTMLButtonElement;
+  const dismiss = document.querySelector(".composer-guidance-item__action") as HTMLButtonElement;
+  ok(guide.disabled && dismiss.disabled, "active steer disables send and delete actions");
+  ok(guide.getAttribute("aria-label") === "Guidance is already being applied", "active steer explains why actions are disabled");
+  await act(async () => { guide.click(); dismiss.click(); await flushTimers(); });
+  ok(steerCalls === 0 && deleteCalls === 0, "active steer never sends invalid backend operations");
+
+  await act(async () => { root.unmount(); });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  let retryCalls = 0;
+  let steerCalls = 0;
+  const snapshot = {
+    revision: 5,
+    paused: false,
+    recovered: true,
+    recoveredCount: 1,
+    items: [{
+      id: "uncertain-guidance",
+      intent: "followup",
+      state: "uncertain",
+      preview: "Retry recovered guidance",
+      byteSize: 64,
+      position: 1,
+    }],
+    itemsCount: 1,
+    bytes: 64,
+    maxItems: 64,
+    maxBytes: 64 * 1024 * 1024,
+  };
+  installBridgeApp({
+    InboxSnapshot: async () => snapshot,
+    RetryInboxItem: async () => { retryCalls += 1; },
+    SteerInboxItem: async () => { steerCalls += 1; },
+  });
+  const { root } = await renderComposer({ running: false });
+
+  await waitFor("uncertain guidance rendered", () => document.querySelector(".composer-guidance-item__guide") !== null);
+  const retry = document.querySelector(".composer-guidance-item__guide") as HTMLButtonElement;
+  ok(!retry.disabled && retry.textContent === "Retry", "uncertain idle guidance exposes an explicit retry action");
+  ok(retry.getAttribute("aria-label") === "Retry this guidance", "retry action has a state-aware accessible label");
+  await act(async () => { retry.click(); await flushTimers(); });
+  ok(retryCalls === 1 && steerCalls === 0, "idle retry requeues through the Controller without an invalid steer");
+
+  await act(async () => { root.unmount(); });
+  dom.window.close();
+}
+
+{
+  const dom = installDom();
+  let retryCalls = 0;
+  let steerCalls = 0;
+  installBridgeApp({
+    InboxSnapshot: async () => ({
+      revision: 6,
+      paused: false,
+      recovered: false,
+      recoveredCount: 0,
+      items: [{
+        id: "blocked-guidance",
+        intent: "steer",
+        state: "blocked",
+        preview: "Retry blocked guidance",
+        byteSize: 64,
+        position: 1,
+      }],
+      itemsCount: 1,
+      bytes: 64,
+      maxItems: 64,
+      maxBytes: 64 * 1024 * 1024,
+    }),
+    RetryInboxItem: async () => { retryCalls += 1; },
+    SteerInboxItem: async () => {
+      steerCalls += 1;
+      return { disposition: "queued_followup" };
+    },
+  });
+  const { root } = await renderComposer({ running: true });
+
+  await waitFor("blocked guidance rendered", () => document.querySelector(".composer-guidance-item__guide") !== null);
+  const retry = document.querySelector(".composer-guidance-item__guide") as HTMLButtonElement;
+  await act(async () => { retry.click(); await flushTimers(); });
+  ok(retryCalls === 1 && steerCalls === 1, "busy retry requeues before attempting active-turn admission");
+
+  await act(async () => { root.unmount(); });
+  dom.window.close();
+}
+
 if (failed > 0) {
   process.stderr.write(`\n${failed} failed, ${passed} passed\n`);
   process.exit(1);

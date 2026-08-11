@@ -67,8 +67,11 @@ var _ Inbox = (*Controller)(nil)
 
 // inboxState is controller-owned inbox wiring (disk store + active items).
 type inboxState struct {
-	mu    sync.Mutex
-	store *sessioninbox.Store
+	// admissionMu closes the durable-state gap between marking an item in
+	// flight and registering its live Controller ownership.
+	admissionMu sync.Mutex
+	mu          sync.Mutex
+	store       *sessioninbox.Store
 	// activeItemIDs includes the running follow-up and every accepted steer.
 	// TurnDone durable-acks the set so multi-steer rounds leave no orphans.
 	activeItemIDs map[string]struct{}
@@ -76,6 +79,8 @@ type inboxState struct {
 	// beforePreparedAdmission is a deterministic test hook for the gap between
 	// durable preparation and Controller admission. Production leaves it nil.
 	beforePreparedAdmission func()
+	// beforeCompletionAck exposes the ownership-to-ack boundary to race tests.
+	beforeCompletionAck func()
 }
 
 func (s *inboxState) trackActive(id string) {
@@ -112,6 +117,17 @@ func (s *inboxState) clearActive() {
 		return
 	}
 	s.activeItemIDs = nil
+}
+
+func (s *inboxState) activeIDs() []string {
+	if s == nil || len(s.activeItemIDs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.activeItemIDs))
+	for id := range s.activeItemIDs {
+		out = append(out, id)
+	}
+	return out
 }
 
 func (c *Controller) ensureInbox() (*sessioninbox.Store, error) {
@@ -257,9 +273,19 @@ func (c *Controller) EnqueueInbox(req InboxRequest) (sessioninbox.InboxReceipt, 
 }
 
 func (c *Controller) InboxSnapshot() sessioninbox.InboxSnapshot {
+	c.inbox.admissionMu.Lock()
+	defer c.inbox.admissionMu.Unlock()
 	st, err := c.ensureInbox()
 	if err != nil {
 		return sessioninbox.InboxSnapshot{}
+	}
+	c.inbox.mu.Lock()
+	activeIDs := c.inbox.activeIDs()
+	c.inbox.mu.Unlock()
+	if recovered, recoverErr := st.RecoverOrphanedInFlight(activeIDs); recoverErr != nil {
+		slog.Warn("controller: recover orphaned inbox items", "err", recoverErr)
+	} else if recovered > 0 {
+		sessioninbox.NoteRecovered(recovered)
 	}
 	return st.Snapshot()
 }
@@ -482,120 +508,10 @@ func (c *Controller) RefreshInboxReferences(id string) error {
 	return err
 }
 
-// TrySteerInboxItem persists intent=steer (if needed) and attempts mid-turn
-// admission. Rejected steers stay queued as follow-up.
-//
-// The agent loader only captures the item ID and re-reads the blob on consume
-// so large steer bodies do not accumulate in the agent heap.
-func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, error) {
-	st, err := c.ensureInbox()
-	if err != nil {
-		return sessioninbox.InboxReceipt{}, err
-	}
-	meta, env, err := st.ReadItem(id)
-	if err != nil {
-		return sessioninbox.InboxReceipt{}, err
-	}
-	if meta.State != sessioninbox.StateQueued && meta.State != sessioninbox.StateSteerAccepted {
-		return sessioninbox.InboxReceipt{}, sessioninbox.ErrInvalidState
-	}
-	if meta.State == sessioninbox.StateSteerAccepted {
-		return sessioninbox.InboxReceipt{
-			ItemID:      id,
-			Disposition: sessioninbox.DispositionSteerAccepted,
-			Paused:      st.Snapshot().Paused,
-			Capacity:    st.Snapshot().Capacity,
-			Idempotent:  true,
-		}, nil
-	}
-	snapshot := st.Snapshot()
-	if snapshot.Paused {
-		return sessioninbox.InboxReceipt{}, sessioninbox.ErrPaused
-	}
-	cap := snapshot.Capacity
-	c.mu.Lock()
-	rotating := c.rotating
-	closed := c.closed
-	c.mu.Unlock()
-	if closed {
-		return sessioninbox.InboxReceipt{ItemID: id, Disposition: sessioninbox.DispositionRejectedClosed, Capacity: cap}, nil
-	}
-	if rotating {
-		return sessioninbox.InboxReceipt{ItemID: id, Disposition: sessioninbox.DispositionRejectedRotating, Capacity: cap}, nil
-	}
-	// Capture only the store pointer + item id. Load body from disk at consume.
-	storeRef := st
-	itemID := id
-	loader := func() (string, error) {
-		_, env, err := storeRef.ReadItem(itemID)
-		if err != nil {
-			return "", err
-		}
-		text := strings.TrimSpace(env.SubmitText)
-		if text == "" {
-			text = strings.TrimSpace(env.DisplayText)
-		}
-		if text == "" {
-			return "", fmt.Errorf("inbox item %s has empty body", itemID)
-		}
-		materialized, images, block, materializeErr := applyInboxReferences(env)
-		if materializeErr != nil {
-			return "", materializeErr
-		}
-		if block != "" {
-			return "", fmt.Errorf("frozen reference unavailable: %s", block)
-		}
-		if len(images) > 0 {
-			return "", fmt.Errorf("image guidance requires a follow-up turn")
-		}
-		return firstNonEmptyStr(materialized, text), nil
-	}
-	// Persist the admission boundary before exposing the loader to the agent.
-	// Holding c.mu for the short in-memory enqueue serializes active tracking
-	// with finishGuardedTurn, so TurnDone cannot overtake an accepted steer.
-	if len(env.FrozenImages) == 0 {
-		if err := st.SetState(id, sessioninbox.StateSteerAccepted, ""); err != nil {
-			return sessioninbox.InboxReceipt{}, err
-		}
-	}
-	c.mu.Lock()
-	accepted := !c.closed && !c.rotating && c.running && c.executor != nil && len(env.FrozenImages) == 0 && c.executor.SteerItem(id, loader)
-	if accepted {
-		c.inbox.mu.Lock()
-		c.inbox.trackActive(id)
-		c.inbox.mu.Unlock()
-	}
-	c.mu.Unlock()
-	if accepted {
-		sessioninbox.NoteSteerAccepted()
-		return sessioninbox.InboxReceipt{
-			ItemID:      id,
-			Disposition: sessioninbox.DispositionSteerAccepted,
-			Paused:      st.Snapshot().Paused,
-			Capacity:    cap,
-		}, nil
-	}
-	// Rejected: keep as follow-up.
-	if len(env.FrozenImages) == 0 {
-		if err := st.SetState(id, sessioninbox.StateQueued, ""); err != nil {
-			_ = st.ForcePause(true, 1)
-			return sessioninbox.InboxReceipt{}, err
-		}
-	}
-	if err := st.ConvertIntent(id, sessioninbox.IntentFollowup); err != nil {
-		return sessioninbox.InboxReceipt{}, err
-	}
-	sessioninbox.NoteSteerRejected()
-	return sessioninbox.InboxReceipt{
-		ItemID:      id,
-		Disposition: sessioninbox.DispositionQueuedFollowup,
-		Paused:      st.Snapshot().Paused,
-		Capacity:    cap,
-	}, nil
-}
-
 // TrySubmitInboxItem admits a queued item as a new turn when the session is idle.
 func (c *Controller) TrySubmitInboxItem(id string) (sessioninbox.InboxReceipt, error) {
+	c.inbox.admissionMu.Lock()
+	defer c.inbox.admissionMu.Unlock()
 	st, err := c.ensureInbox()
 	if err != nil {
 		return sessioninbox.InboxReceipt{}, err
@@ -663,12 +579,18 @@ func (c *Controller) receiptForAdmissionResult(id string, st *sessioninbox.Store
 // item is deferred until the finishing window closes so admission is not
 // rejected as busy.
 func (c *Controller) onInboxTurnDone() {
+	c.inbox.admissionMu.Lock()
+	defer c.inbox.admissionMu.Unlock()
 	c.inbox.mu.Lock()
 	ids := c.inbox.takeActive()
 	st := c.inbox.store
+	beforeAck := c.inbox.beforeCompletionAck
 	c.inbox.mu.Unlock()
 	if st == nil || len(ids) == 0 {
 		return
+	}
+	if beforeAck != nil {
+		beforeAck()
 	}
 	// Transcript snapshot is the durable receipt boundary for the whole set.
 	if err := c.SnapshotActivity(); err != nil {

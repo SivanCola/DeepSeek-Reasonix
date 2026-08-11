@@ -7,6 +7,7 @@ import { DedupIndex, sha256 } from "../lib/attachDedup";
 import { app, onFilesDropped } from "../lib/bridge";
 import { enqueueInboxGuidance } from "../lib/inboxSubmit";
 import { formatInboxError } from "../lib/inboxError";
+import { guidanceNeedsRetry, guidanceTextMatches, markGuidanceQueued } from "../lib/composerGuidance";
 import { canUsePromptHistory, composerEnterAction, composerEscapeAction, composerMenuKeyAction, insertComposerNewline, isFnKeyEvent, isImeKeyEvent, promptHistoryDirectionFromEvent } from "../lib/composerKeyboard";
 import { cacheGeneration, loadOlder } from "../lib/composerHistory";
 import { SPINNER_WORDS, useI18n, type Translator } from "../lib/i18n";
@@ -259,16 +260,6 @@ function emptyComposerDraft(): ComposerDraft {
     pendingPaste: 0,
     submitting: false,
   };
-}
-
-// Exact (trimmed) equality only: the consumed-steer notice carries the steer
-// text verbatim, and substring matching removed the wrong queue item when one
-// queued text contained another (#6238).
-function guidanceTextMatches(queued: string, consumed: string): boolean {
-  const left = queued.trim();
-  const right = consumed.trim();
-  if (!left || !right) return false;
-  return left === right;
 }
 
 function cloneComposerDraft(draft: ComposerDraft): ComposerDraft {
@@ -2178,6 +2169,14 @@ export function Composer({
     if (running && item.structured) return;
     updateGuidanceSendingIdForDraft(targetDraftKey, item.id);
     try {
+      if (durable && guidanceNeedsRetry(item.state)) {
+        await app.RetryInboxItem(targetTabId || "", item.id);
+        updatePendingGuidanceForDraft(targetDraftKey, (items) => markGuidanceQueued(items, item.id));
+        setGuidanceRetryNonce((value) => value + 1);
+        // Idle retries dispatch a new turn in the Controller. Busy retries are
+        // requeued first, then admitted to the active turn below.
+        if (!running || item.structured) return;
+      }
       if (running && durable) {
         const receipt = await app.SteerInboxItem(targetTabId || "", item.id);
         if (receipt?.error) throw new Error(receipt.error);
