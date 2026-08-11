@@ -307,7 +307,7 @@ await act(async () => {
   await flushPromises();
 });
 ok(migratedProvider?.requestUrl === "https://legacy.example.com/chat/completions" && migratedProvider?.baseUrl === legacyChatURLProvider.baseUrl, "saving migrates the legacy effective address without rewriting its baseUrl");
-ok(migratedProvider?.chatUrl === legacyChatURLProvider.chatUrl, "saving preserves the legacy chatUrl for compatibility");
+ok(migratedProvider?.chatUrl === migratedProvider?.requestUrl, "saving mirrors the normalized legacy OpenAI endpoint for previous releases");
 
 let exactProvider: ProviderView | undefined;
 await act(async () => {
@@ -328,6 +328,7 @@ await act(async () => {
   await flushPromises();
 });
 ok(exactProvider?.requestUrl === "https://exact.example.com/custom/?token=1" && exactProvider?.baseUrl === legacyChatURLProvider.baseUrl, "saving preserves an explicit requestUrl and independent baseUrl exactly");
+ok(exactProvider?.chatUrl === exactProvider?.requestUrl, "saving mirrors the exact OpenAI request URL for previous releases");
 
 await act(async () => {
   root.unmount();

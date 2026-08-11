@@ -140,6 +140,9 @@ URL and stores it in `request_url`; Reasonix does not append or rewrite its path
 Existing TOML entries are not reinterpreted: legacy `chat_url` keeps its former
 OpenAI-only behavior, while Anthropic and Responses continue deriving their path
 from `base_url` until the provider is explicitly saved in the current desktop UI.
+Saving an OpenAI-compatible provider mirrors the exact address into legacy
+`chat_url`, so previous releases continue using the same target. Previous
+releases cannot honor arbitrary Anthropic or Responses request paths.
 If model discovery needs a separate address, set `models_url`; otherwise Reasonix
 probes candidates derived from `base_url`.
 

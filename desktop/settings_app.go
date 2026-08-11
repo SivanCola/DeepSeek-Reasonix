@@ -2410,6 +2410,9 @@ func saveProviderConfig(c *config.Config, p ProviderView) error {
 	e.BaseURL = p.BaseURL
 	e.ChatURL = strings.TrimSpace(p.ChatURL)
 	e.RequestURL = strings.TrimSpace(p.RequestURL)
+	if strings.EqualFold(strings.TrimSpace(e.Kind), "openai") && e.RequestURL != "" {
+		e.ChatURL = e.RequestURL
+	}
 	e.ModelsURL = strings.TrimSpace(p.ModelsURL)
 	e.APIKeyEnv = p.APIKeyEnv
 	e.Headers = p.Headers

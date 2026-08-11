@@ -141,7 +141,7 @@
       "file-size": 141
     },
     "desktop/frontend/src/components/SettingsPanel.tsx": {
-      "file-size": 6718
+      "file-size": 6719
     },
     "desktop/frontend/src/components/StatusBar.tsx": {
       "file-size": 36
@@ -287,7 +287,7 @@
     "desktop/settings_app.go": {
       "complexity": 22,
       "essay": 26,
-      "file-size": 2745
+      "file-size": 2748
     },
     "desktop/settings_app_test.go": {
       "test-file-size": 1863

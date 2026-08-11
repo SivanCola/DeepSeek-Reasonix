@@ -6244,6 +6244,7 @@ export function ProviderEditor({
   const effectiveKind = providerEditorEffectiveKind(isNewCustomProvider, kind, providerKindChoices);
   const effectiveRequestUrl = requestUrl.trim();
   const effectiveBaseUrl = providerBaseURLForSave(initial, effectiveKind, effectiveRequestUrl);
+  const effectiveLegacyChatUrl = effectiveKind.toLowerCase() === "openai" ? effectiveRequestUrl : initial?.chatUrl ?? "";
   const effectiveModelsUrl = modelsUrl.trim();
   const initialEffectiveBaseUrl = initial ? trimmedBaseURL(initial.baseUrl) : "";
   const retainedVisionCapability = initial &&
@@ -6317,7 +6318,7 @@ export function ProviderEditor({
         added: initial?.added ?? true,
         kind: effectiveKind,
         baseUrl: effectiveBaseUrl,
-        chatUrl: initial?.chatUrl ?? "",
+        chatUrl: effectiveLegacyChatUrl,
         requestUrl: effectiveRequestUrl,
         modelsUrl: effectiveModelsUrl,
         models: [],
@@ -6374,7 +6375,7 @@ export function ProviderEditor({
       added: initial?.added ?? true,
       kind: effectiveKind,
       baseUrl: effectiveBaseUrl,
-      chatUrl: initial?.chatUrl ?? "",
+      chatUrl: effectiveLegacyChatUrl,
       requestUrl: effectiveRequestUrl,
       models: ms,
       visionModels: vms,

@@ -2644,7 +2644,7 @@ export const en = {
   "settings.providerProtocolAnthropicHint": "For Claude-style Messages API services such as some coding-plan endpoints.",
   "settings.providerBaseUrlLabel": "API address",
   "settings.providerChatUrlPlaceholder": "e.g. https://api.openai.com/v1/chat/completions",
-  "settings.providerRequestUrlHint": "Enter the complete request address. Reasonix will not modify or complete its path.",
+  "settings.providerRequestUrlHint": "Enter the full request address; Reasonix uses it unchanged.",
   "settings.providerApiKeyEnvHint": "Generated from the provider name by default; change it only when you need a fixed env var name.",
   "settings.providerKey": "Key",
   "settings.providerKeyOptional": "Key",

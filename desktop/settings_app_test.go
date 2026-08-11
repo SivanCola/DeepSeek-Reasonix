@@ -853,7 +853,7 @@ func TestSaveProviderPersistsAuthHeader(t *testing.T) {
 	}
 }
 
-func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
+func TestSaveProviderPersistsAndMirrorsCustomEndpointURLs(t *testing.T) {
 	isolateDesktopUserDirs(t)
 
 	app := NewApp()
@@ -876,7 +876,7 @@ func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
 	if !ok {
 		t.Fatal("saved provider not found")
 	}
-	if got.ChatURL != "https://legacy.example.com/chat/completions/" {
+	if got.ChatURL != "https://proxy.example.com/custom/chat/completions/?token=1" {
 		t.Fatalf("saved chat_url = %q", got.ChatURL)
 	}
 	if got.RequestURL != "https://proxy.example.com/custom/chat/completions/?token=1" {
@@ -891,7 +891,7 @@ func TestSaveProviderPersistsCustomEndpointURLs(t *testing.T) {
 		if provider.Name != "sub2api" {
 			continue
 		}
-		if provider.ChatURL != "https://legacy.example.com/chat/completions/" {
+		if provider.ChatURL != "https://proxy.example.com/custom/chat/completions/?token=1" {
 			t.Fatalf("Settings chatUrl = %q", provider.ChatURL)
 		}
 		if provider.RequestURL != "https://proxy.example.com/custom/chat/completions/?token=1" {
