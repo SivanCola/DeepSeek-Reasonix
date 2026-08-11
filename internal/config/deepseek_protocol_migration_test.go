@@ -112,7 +112,7 @@ future_provider_field = "untouched"
 	}
 }
 
-func TestAutomaticDeepSeekProtocolMigrationDefersMalformedConfigToLoader(t *testing.T) {
+func TestAutomaticDeepSeekProtocolMigrationReportsMalformedConfigWithoutRewriting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("REASONIX_HOME", home)
 	path := filepath.Join(home, "config.toml")
@@ -132,8 +132,11 @@ command = "C:\Users\reasonix\mcp.exe"
 	}
 
 	changed, err := MigrateLegacyDeepSeekProtocolUserConfig()
-	if err != nil {
-		t.Fatalf("automatic migration surfaced an unrelated config parse error: %v", err)
+	if err == nil {
+		t.Fatal("automatic migration accepted malformed config")
+	}
+	if !IsDeepSeekProtocolConfigParseError(err) {
+		t.Fatalf("automatic migration error type = %T, want TOML parse error", err)
 	}
 	if changed {
 		t.Fatal("automatic migration reported changing malformed config")
