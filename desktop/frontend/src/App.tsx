@@ -2,7 +2,6 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import {
   Activity,
-  CircleHelp,
   Command,
   Copy as RestoreIcon,
   Download,
@@ -208,18 +207,14 @@ import { composerDraftKeyForTab } from "./lib/composerDraftKey";
 import { continueDelivery } from "./lib/deliveryContinue";
 import { activateGoalAndSubmitOnTab } from "./lib/goalSubmit";
 import logoWordmark from "./assets/logo-wordmark.svg";
-
 // Hold reasoning UI until the authoritative desktop startup settings arrive;
 // this prevents a hidden preference from flashing content during first paint.
 setReasoningDisplayPending();
-
 const TERMINAL_CLOSE_TRANSITION_MS = 250;
-
 function noticePreviewMockEnabled(): boolean {
   const value = browserMockScenarioParam();
   return value === "notice" || value === "notices" || value === "notice-preview";
 }
-
 function runtimeProfileShortKey(mode: TokenMode) {
   return mode === "economy"
     ? "composer.runtimeProfileEconomyShort" as const
@@ -227,7 +222,6 @@ function runtimeProfileShortKey(mode: TokenMode) {
       ? "composer.runtimeProfileDeliveryShort" as const
       : "composer.runtimeProfileBalancedShort" as const;
 }
-
 function noticePreviewItems(): Item[] {
   const notice = (index: number, level: "info" | "warn", text: string, detail: string, code?: string): Item => ({
     kind: "notice",
@@ -270,7 +264,6 @@ function noticePreviewItems(): Item[] {
     notice(26, "warn", "Guardian was disabled because it could not start.", "guardian startup failed: provider returned 401 unauthorized"),
   ];
 }
-
 function NoticePreviewPanel() {
   return (
     <div
@@ -4765,33 +4758,15 @@ export default function App() {
               {!sidebarCreation && shouldMountExternalOpener(activeTab, Boolean(sidebarImDetailConnection)) && activeTab && (
                 <ExternalOpener key={activeTab.id} tabId={activeTab.id} dismissSignal={transientOverlayDismissSignal} />
               )}
-              <Tooltip label={t("shortcuts.cheatsheetTitle")}>
+              <Tooltip label={t("summary.session")}>
                 <button
-                  className="topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
+                  className={`topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility${tasksOpen ? " topicbar__action-btn--active" : ""}`}
                   type="button"
-                  aria-label={t("shortcuts.cheatsheetTitle")}
-                  onClick={() => {
-                    closeTransientOverlays();
-                    setSettingsFocus(null);
-                    setSettingsTarget("shortcuts");
-                  }}
+                  aria-label={t("summary.session")}
+                  aria-expanded={tasksOpen}
+                  onClick={() => setTasksOpen((open) => !open)}
                 >
-                  <CircleHelp size={14} />
-                </button>
-              </Tooltip>
-              <Tooltip label={t("topicBar.command")}>
-                <button
-                  className={
-                    sidebarCreation
-                      ? "topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility"
-                      : "topicbar__action-btn topicbar__action-btn--label topicbar__action-btn--accent"
-                  }
-                  type="button"
-                  aria-label={t("topicBar.command")}
-                  onClick={() => void openPalette()}
-                >
-                  <Command size={14} />
-                  {!sidebarCreation && <span>{t("topicBar.command")}</span>}
+                  <Activity size={14} />
                 </button>
               </Tooltip>
               {(sidebarCreation || workbenchChromeHidden) && (
@@ -4812,19 +4787,8 @@ export default function App() {
                   </button>
                 </Tooltip>
               )}
-              <Tooltip label="Session summary">
-                <button
-                  className={`topicbar__action-btn topicbar__action-btn--icon topicbar__action-btn--utility${tasksOpen ? " topicbar__action-btn--active" : ""}`}
-                  type="button"
-                  aria-label="Session summary"
-                  aria-expanded={tasksOpen}
-                  onClick={() => setTasksOpen((open) => !open)}
-                >
-                  <Activity size={14} />
-                </button>
-              </Tooltip>
               {tasksOpen && (
-                <div className="taskmonitor-popover" role="dialog" aria-label="Session summary">
+                <div className="taskmonitor-popover" role="dialog" aria-label={t("summary.session")}>
                   <Suspense fallback={null}>
                     <TaskMonitorPanel
                       key={`${activeTab?.id || activeTabId || "none"}:${activeTab?.workspaceRoot || "global"}:${activeTab?.sessionPath || ""}`}

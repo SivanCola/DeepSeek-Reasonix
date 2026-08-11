@@ -55,7 +55,6 @@ import (
 	"reasonix/internal/repair"
 	"reasonix/internal/sessiontemp"
 	"reasonix/internal/skill"
-	"reasonix/internal/stats"
 	"reasonix/internal/store"
 	"reasonix/internal/taskmonitor"
 	"reasonix/internal/tool"
@@ -332,8 +331,13 @@ type App struct {
 	skillRootsCache skillRootsCache
 
 	heartbeat *HeartbeatEngine // scheduled heartbeat tasks; nil until startup
-
-	previousRun repair.PreviousRunObservation
+	lifecycle desktopLifecycleRuntime
+	// diagnosticsOwner is acquired before Wails starts so Linux's OnStartup
+	// ordering cannot let a second-instance handoff create lifecycle evidence.
+	diagnosticsOwner        bool
+	diagnosticsOwnerRelease func()
+	diagnosticsConfigLoaded bool
+	diagnosticsTelemetry    bool
 	// Healthy-update identity is captured before Wails starts. A process may
 	// commit only the complete probationary transaction it actually booted from,
 	// never a rewritten or later same-version retry.
@@ -564,7 +568,12 @@ func (a *App) Platform() string {
 // off the initialization in a background goroutine so the webview loads immediately.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Only the process that claimed the pre-Wails diagnostics lock consumes
+	// lifecycle evidence. This remains correct on Linux where Wails invokes
+	// OnStartup before its DBus single-instance handoff.
+	initializeLifecycleDiagnostics(a)
 	a.startWindowsWebView2StartupFallback(ctx)
+	a.lifecycle.tracker.markAsync("ready")
 	if a.remoteWindowTicket != "" {
 		// Remote web window child: no local tabs, tray, heartbeat, providers,
 		// or remote manager. domReady consumes the ticket and navigates; the
@@ -958,93 +967,10 @@ func (a *App) snapshotAllTabs() {
 // shutdown snapshots all tabs, saves the final window geometry, and closes tabs.
 func (a *App) shutdown(context.Context) {
 	if a.remoteWindowTicket != "" {
-		// Remote web window child: nothing to snapshot or stop locally.
+		// Remote web window child has no local state to stop.
 		return
 	}
-	if a.workspaceHub != nil {
-		a.workspaceHub.close()
-	}
-	// A real quit also terminates surviving web windows: their tunnels die with
-	// this process, so a leftover window would only show a dead Serve page.
-	// The remote Serve itself stays resident by design. Background (tray)
-	// close never reaches shutdown and keeps the windows alive.
-	a.closeAllRemoteWindows()
-	// Run after controller teardown (and after its deferred lifecycle unlocks)
-	// so every accepted usage record reaches disk before a normal app exit.
-	defer func() {
-		flushCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = stats.Flush(flushCtx, config.StatsDir())
-	}()
-	a.stopDeferredRebuildRetry()
-	a.stopHistoryIndexMigration()
-	a.stopMainThreadWatchdog()
-	if a.heartbeat != nil {
-		a.heartbeat.Stop()
-	}
-	a.stopBotRuntime()
-	a.stopRemoteRuntime()
-	a.stopTray()
-	// Terminal process shutdown is independent from controller teardown. Do it
-	// before acquiring runtime lifecycle locks so a slow PTY cannot delay while
-	// holding locks used by Wails-bound chat calls.
-	if a.terminals != nil {
-		a.terminals.closeAll()
-	}
-	// Save window geometry synchronously from Go so it's persisted even if the
-	// frontend's beforeunload promise hasn't resolved yet.
-	a.saveWindowStateSync()
-	// Serialize shutdown with controller rebuilds and live MCP mutations. This
-	// uses the same lifecycle lock order as lockMCPMutation so launch authorization
-	// or reconnect cannot have its captured Host closed underneath it.
-	a.runtimeRebuildMu.Lock()
-	defer a.runtimeRebuildMu.Unlock()
-	a.runtimeAdmissionMu.Lock()
-	defer a.runtimeAdmissionMu.Unlock()
-	// Close every shared plugin host before releasing the lifecycle barrier,
-	// even if a tab cleanup panics.
-	defer a.closeAllSharedHosts()
-
-	a.mu.RLock()
-	tabs := a.runtimeTabsLocked()
-	type shutdownItem struct {
-		tab      *WorkspaceTab
-		ctrl     control.SessionAPI
-		readOnly bool
-	}
-	items := make([]shutdownItem, 0, len(tabs))
-	for _, t := range tabs {
-		if t.Ctrl != nil {
-			items = append(items, shutdownItem{tab: t, ctrl: t.Ctrl, readOnly: t.ReadOnly})
-		}
-	}
-	a.mu.RUnlock()
-	for _, it := range items {
-		if !it.readOnly {
-			if err := it.ctrl.SnapshotForShutdown(); err != nil {
-				slog.Warn("desktop: shutdown snapshot failed", "tab", it.tab.ID, "err", err)
-			}
-		}
-		it.ctrl.Close()
-		it.tab.releaseSessionLease()
-		a.mu.Lock()
-		a.releaseSessionRuntimeLocked(it.tab)
-		a.mu.Unlock()
-	}
-	if a.startupReady.Load() {
-		// A visible UI is sufficient health evidence even if the user closes the
-		// window before the delayed post-DOM task runs.
-		if err := a.commitPendingUpdateHealth(); err != nil {
-			slog.Warn("desktop: commit healthy update during shutdown", "err", err)
-		}
-		if archived, err := archiveSupersededPendingUpdateAfterReady(); err != nil {
-			slog.Warn("desktop: retire superseded update during shutdown", "err", err)
-		} else if archived {
-			slog.Info("desktop: archived superseded update transaction during shutdown")
-		}
-		// Independent last-known-good config snapshot after a successful UI session.
-		_ = repair.RecordHealthyConfig(version)
-	}
+	completeDesktopShutdown(a.lifecycle.tracker, a.shutdownBody)
 }
 
 // domReady is called (via OnDomReady) after the webview finishes loading its DOM
@@ -1093,9 +1019,7 @@ func (a *App) domReady(_ context.Context) {
 	}
 
 	runtime.WindowShow(a.ctx)
-	a.startupReady.Store(true)
-	// Record last-known-good config after the UI is actually visible. This is
-	// independent of any startup health probation or crash-loop policy.
+	a.markDesktopHealthy()
 	ctx := a.ctx
 	a.goSafe("recordHealthyConfig", func() {
 		timer := time.NewTimer(2 * time.Second)
@@ -2387,10 +2311,10 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newSink := &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:               snap.model,
-		RequireKey:          false,
-		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
-		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
+		Model:                    snap.model,
+		RequireKey:               false,
+		StatsSource:              "desktop",
+		OnConfigLoadWarnings:     a.configLoadWarningsHandler(),
 		Sink:                     newSink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -4299,11 +4223,7 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	tab.Ready = true
 	clearTabStartupError(tab)
 	tab.ActivityStatus = ""
-	tab.telemMu.Lock()
-	tab.readTelemetry = append([]readFileRecord(nil), candidate.telemetry.ReadFiles...)
-	tab.usageTelemetry = cloneSessionUsageStats(candidate.telemetry.Usage)
-	tab.telemetrySessionKey = sessionRuntimeKey(sessionPath)
-	tab.telemMu.Unlock()
+	tab.replaceTelemetry(candidate.telemetry, sessionRuntimeKey(sessionPath))
 	if tab.sink != nil {
 		tab.sink.setBinding(tab.ID, a)
 		tab.sink.setContext(a.ctx)
@@ -4506,10 +4426,10 @@ func (a *App) buildSessionRebindCandidate(
 		ownsSharedHostRef = true
 	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:               model,
-		RequireKey:          false,
-		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
-		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
+		Model:                    model,
+		RequireKey:               false,
+		StatsSource:              "desktop",
+		OnConfigLoadWarnings:     a.configLoadWarningsHandler(),
 		Sink:                     a.desktopControllerSink(sink, cfg.Notifications),
 		WorkspaceRoot:            root,
 		SessionDir:               sessionDir,
@@ -6670,13 +6590,15 @@ func (a *App) ContextUsageForTab(tabID string) ContextInfo {
 				tab.syncTelemetryToSession(sp)
 			}
 		}
-		snap = tab.telemetrySnapshot()
+		snap = tab.displayTelemetrySnapshot()
 		info.SessionTokens = snap.Usage.TotalTokens
 		info.SessionCost = snap.Usage.SessionCost
 		info.SessionCurrency = snap.Usage.SessionCurrency
 		info.CacheHitTokens = snap.Usage.CacheHitTokens
 		info.CacheMissTokens = snap.Usage.CacheMissTokens
 		info.Estimated = snap.Usage.Estimated
+		info.SessionCostComplete = snap.Usage.SessionCostComplete
+		info.SessionCostQuote = snap.Usage.SessionCostQuote
 		info.Sources = snap.Usage.Sources
 	}
 	if ctrl == nil {
@@ -6693,13 +6615,24 @@ func (a *App) ContextUsageForTab(tabID string) ContextInfo {
 }
 
 // BalanceInfo is the wallet-balance readout for the status bar. Available is true
-// only when a balance was fetched; Display is the formatted amount (e.g. "¥110.00")
+// only when a balance was fetched; Display is the exact formatted amount (e.g.
+// "¥110.00")
 // and is "" when the active provider declares no balance_url — the frontend then
 // omits the readout. Err carries a fetch failure for an optional tooltip.
+// Wallet balances are displayed in their original currencies; no conversion
+// or cross-currency sum is performed.
 type BalanceInfo struct {
-	Available bool   `json:"available"`
-	Display   string `json:"display"`
-	Err       string `json:"err,omitempty"`
+	Available           bool     `json:"available"`
+	Display             string   `json:"display"`
+	Detail              string   `json:"detail,omitempty"` // per-wallet original balances
+	Complete            bool     `json:"complete"`
+	RateDate            string   `json:"rateDate,omitempty"`
+	Approx              bool     `json:"approx,omitempty"`
+	Currencies          []string `json:"currencies,omitempty"`
+	PrimaryCurrency     string   `json:"primaryCurrency,omitempty"`
+	CostDisplayCurrency string   `json:"costDisplayCurrency,omitempty"`
+	MultiCurrency       bool     `json:"multiCurrency,omitempty"`
+	Err                 string   `json:"err,omitempty"`
 }
 
 // Balance queries the active provider's wallet balance (a network call). It
@@ -6712,7 +6645,7 @@ func (a *App) Balance() BalanceInfo {
 
 func (a *App) BalanceForTab(tabID string) BalanceInfo {
 	currency := a.balanceDisplayCurrency()
-	ctrl := a.ctrlByTabID(tabID)
+	tab, ctrl, generation := a.balanceRequestTarget(tabID)
 	if ctrl == nil {
 		return BalanceInfo{}
 	}
@@ -6723,18 +6656,58 @@ func (a *App) BalanceForTab(tabID string) BalanceInfo {
 	if b == nil {
 		return BalanceInfo{} // provider declares no balance endpoint
 	}
-	return BalanceInfo{Available: true, Display: b.DisplayForCurrency(currency)}
+	display := b.DisplayForCurrency(currency)
+	currencies := b.Currencies()
+	primary := b.PrimaryCurrency()
+	a.applyBalanceDisplayHint(tabID, tab, ctrl, currency, primary, generation)
+	detail := balanceDetail(b)
+	return BalanceInfo{
+		Available:           true,
+		Display:             display,
+		Detail:              detail,
+		Complete:            true,
+		Currencies:          currencies,
+		PrimaryCurrency:     primary,
+		CostDisplayCurrency: firstNonEmptyString(currency, primary),
+		MultiCurrency:       len(currencies) > 1,
+	}
 }
 
-// balanceDisplayCurrency mirrors the effective pricing currency selected in
-// Settings. Auto resolves through the current desktop locale, matching the
-// controller rebuild path used by cost telemetry.
+func balanceDetail(b *billing.Balance) string {
+	if b == nil || len(b.Infos) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(b.Infos))
+	for _, info := range b.Infos {
+		cur := strings.ToUpper(strings.TrimSpace(info.Currency))
+		if cur == "" {
+			cur = "UNKNOWN"
+		}
+		parts = append(parts, cur+" "+strings.TrimSpace(info.TotalBalance))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// balanceDisplayCurrency resolves only an explicit global display currency.
+// Automatic mode leaves the wallet in its original currency.
 func (a *App) balanceDisplayCurrency() string {
 	cfg, _, err := a.loadDesktopUserConfigForView()
 	if err != nil {
 		return ""
 	}
-	return a.desktopEffectivePricingCurrency(cfg)
+	if pref := cfg.DisplayCurrencyPref(); pref != "" {
+		return pref
+	}
+	return cfg.ExplicitDisplayCurrency()
 }
 
 // JobView is one running background job (bash/task started with
@@ -10069,10 +10042,10 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 
 	stageStarted = time.Now()
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:               name,
-		RequireKey:          false,
-		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
-		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
+		Model:                    name,
+		RequireKey:               false,
+		StatsSource:              "desktop",
+		OnConfigLoadWarnings:     a.configLoadWarningsHandler(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -10144,6 +10117,9 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 			return fmt.Errorf("persist selected model: %w", err)
 		}
 	}
+	// A model switch changes the pricing context; discard the session-local
+	// automatic wallet hint and let the next balance response rebind it.
+	tab.clearRuntimeDisplayCurrency()
 	a.notifyTabRuntimeRebuilt(tab)
 	timing.SwapAndPersist = time.Since(stageStarted)
 	return nil
@@ -10252,10 +10228,10 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:               modelRef,
-		RequireKey:          false,
-		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
-		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
+		Model:                    modelRef,
+		RequireKey:               false,
+		StatsSource:              "desktop",
+		OnConfigLoadWarnings:     a.configLoadWarningsHandler(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -10392,10 +10368,10 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:               modelRef,
-		RequireKey:          false,
-		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
-		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
+		Model:                    modelRef,
+		RequireKey:               false,
+		StatsSource:              "desktop",
+		OnConfigLoadWarnings:     a.configLoadWarningsHandler(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
