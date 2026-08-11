@@ -46,12 +46,44 @@ func parseSignPathConfiguration(t *testing.T, name string) signPathArtifactConfi
 	return config
 }
 
+func TestWindowsWebView2SmokeUsesExternalProductionBinaryContract(t *testing.T) {
+	script := readTestFile(t, "../scripts/test-webview2-native-smoke.ps1")
+	for _, want := range []string{
+		`Resolve-Path $ExecutablePath`,
+		`$env:REASONIX_HOME = $smokeHome`,
+		`$env:REASONIX_STATE_HOME = $smokeState`,
+		`$env:REASONIX_CACHE_HOME = $smokeCache`,
+		`close_behavior = "quit"`,
+		`$Process.MainWindowHandle`,
+		`$_.Name -ieq "msedgewebview2.exe"`,
+		`$_.CommandLine -match "--type=renderer"`,
+		`[DateTime]::UtcNow.AddSeconds($HealthySeconds)`,
+		`$process.CloseMainWindow()`,
+		`$process.WaitForExit(10000)`,
+		`taskkill.exe /PID $process.Id /T /F`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("Windows WebView2 smoke is missing production-binary contract %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"REASONIX_WEBVIEW2_APPROVAL_SMOKE",
+		"mock-tool-approval",
+		"Element.prototype.animate",
+		"WebView2ApprovalSmokeBridge",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Errorf("Windows WebView2 smoke still contains production instrumentation %q", forbidden)
+		}
+	}
+}
+
 func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 	workflow := readTestFile(t, "../.github/workflows/release-desktop.yml")
 	orderedSteps := []string{
 		"name: Build and package",
 		"name: Checkout protected release verifier",
-		"name: Smoke-test Wails approval in WebView2",
+		"name: Smoke-test Wails/WebView2 native startup",
 		"name: Upload unsigned Windows payload for SignPath",
 		"name: Submit Windows payload for Authenticode signing",
 		"name: Approve and download signed Windows payload",
@@ -97,7 +129,7 @@ func TestWindowsReleaseSignsPayloadBeforeRepackaging(t *testing.T) {
 		`REASONIX_REQUIRE_PAYLOAD_MANIFEST: "1"`,
 		`ref: ${{ github.workflow_sha }}`,
 		`path: release-control`,
-		`./release-control/scripts/test-webview2-approval-smoke.ps1`,
+		`./release-control/scripts/test-webview2-native-smoke.ps1`,
 		`./release-control/scripts/verify-windows-authenticode.ps1`,
 	} {
 		if !strings.Contains(workflow, want) {
