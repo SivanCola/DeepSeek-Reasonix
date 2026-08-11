@@ -1,5 +1,5 @@
 import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ControllerLiveStore, Item, LiveStream } from "../lib/useController";
 import type { CheckpointMeta } from "../lib/types";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
@@ -490,46 +490,18 @@ export function Transcript({
     onScrollEnd,
     onSelectionPointerDown: selectionRetention.onPointerDownCapture,
   });
-  const getRowKey = useCallback((index: number) => `${tabId ?? ""}:${String(rows[index]?.key ?? index)}`, [rows, tabId]);
-  const {
-    estimateSize: estimateRowSize,
-    layoutSnapshotRef,
-    measureElement: measureRowSize,
-  } = useTranscriptRowMeasurements(tabId, rows);
-  const deferredRowMeasurementsRef = useRef(new Map<string, number>());
-  const repinAfterMeasurementFlush = useCallback(() => {
-    // TanStack can publish its corrected total size one frame after measure().
-    // Re-pin across that short layout window so a growing tail cannot finish a
-    // few pixels above the new physical bottom.
-    if (stick.current) scrollToBottomAfterLayout(2, "row-size");
-  }, [scrollToBottomAfterLayout, stick]);
-  const trackRowSizeChange = useCallback(
-    (element: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: Virtualizer<HTMLDivElement, HTMLDivElement>) => {
-      if (gestureUntilRef.current > Date.now()) {
-        const index = instance.indexFromElement(element);
-        const key = index >= 0 && index < rows.length ? instance.options.getItemKey(index) : null;
-        const box = entry?.borderBoxSize?.[0];
-        const measured = box ? Math.round(box.blockSize) : element.offsetHeight;
-        const frozen = key == null
-          ? undefined
-          : instance.itemSizeCache.get(key) ?? instance.measurementsCache[index]?.size;
-        const rowKey = element.dataset.rowKey;
-        if (rowKey && measured > 0 && frozen !== measured) deferredRowMeasurementsRef.current.set(rowKey, measured);
-        if (stick.current) scheduleRepinIfWasPinned(0, "row-size");
-        return frozen ?? measured;
-      }
-      const height = measureRowSize(element, entry, instance);
-      if (stick.current) scheduleRepinIfWasPinned(0, "row-size");
-      return height;
-    },
-    [gestureUntilRef, measureRowSize, rows.length, scheduleRepinIfWasPinned, stick],
-  );
+  const rowMeasurements = useTranscriptRowMeasurements(tabId, rows, {
+    gestureUntilRef,
+    stick,
+    scheduleRepinIfWasPinned,
+    scrollToBottomAfterLayout,
+  });
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    getItemKey: getRowKey,
-    estimateSize: estimateRowSize,
-    measureElement: trackRowSizeChange,
+    getItemKey: rowMeasurements.getItemKey,
+    estimateSize: rowMeasurements.estimateSize,
+    measureElement: rowMeasurements.measureElement,
     overscan: VIRTUAL_OVERSCAN_ROWS,
     rangeExtractor: selectionRetention.rangeExtractor,
     // Key-anchored compensation: prepended history pages, fold toggles and
@@ -552,20 +524,17 @@ export function Transcript({
   );
   useTranscriptMeasurementInvalidation({
     scrollRef,
-    layoutSnapshotRef,
+    layoutSnapshotRef: rowMeasurements.layoutSnapshotRef,
     virtualizer,
     selectionActive: selectionRetention.active,
     canMeasure: canVirtualizerAdjust,
     onMeasureIdle: onGestureIdle,
     captureViewportAnchor,
     reconcileViewportAnchor,
-    deferredRowMeasurements: deferredRowMeasurementsRef,
+    deferredRowMeasurements: rowMeasurements.deferredRowMeasurementsRef,
     tabId,
-    onMeasurementsFlushed: repinAfterMeasurementFlush,
+    onMeasurementsFlushed: rowMeasurements.onMeasurementsFlushed,
   });
-  useEffect(() => () => {
-    deferredRowMeasurementsRef.current.clear();
-  }, [tabId]);
 
   const sizerRef = useCallback(
     (el: HTMLDivElement | null) => {

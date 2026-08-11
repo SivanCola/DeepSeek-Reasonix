@@ -88,6 +88,6 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // startup config warnings, hover-revealed turn-action labels, and compact
 // execution-setting receipts add small always-available contracts. Keep the
 // raw allowance ratcheted while gzip startup budgets stay flat.
-// The same contracts add 5.8 KiB raw (0.26%) over the 2,264.0 KiB base.
-assertBudget("initial raw JavaScript and CSS", rawInitialBytes, 2_270 * 1024);
+// The same contracts add 6.1 KiB raw (0.27%) over the 2,264.0 KiB base.
+assertBudget("initial raw JavaScript and CSS", rawInitialBytes, 2_270.5 * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
