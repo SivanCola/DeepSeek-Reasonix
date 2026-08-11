@@ -2,8 +2,34 @@ package permission
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
+
+func TestPermissionConsumesSharedCommandEffectMatrix(t *testing.T) {
+	raw, err := os.ReadFile("../shellsafe/testdata/command_effects.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Command    string
+		PermissionReader bool
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			args, err := json.Marshal(map[string]string{"command": tc.Command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := BashCommandIsReadOnly(args); got != tc.PermissionReader {
+				t.Fatalf("BashCommandIsReadOnly(%q) = %t, want %t", tc.Command, got, tc.PermissionReader)
+			}
+		})
+	}
+}
 
 func TestIsReadOnlyBashSubject(t *testing.T) {
 	tests := []struct {

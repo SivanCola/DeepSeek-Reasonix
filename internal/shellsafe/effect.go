@@ -155,7 +155,7 @@ func classifyStaticFields(fields []string) CommandEffect {
 		return CommandEffect{Certainty: EffectKnown, UsesNetwork: true, CommandFamily: base, Reason: "network probe requires permission"}
 	}
 
-	if ReadOnlyCommands[base] {
+	if readOnlyCommands[base] {
 		effect := knownReader(base)
 		switch base {
 		case "find":
@@ -172,7 +172,7 @@ func classifyStaticFields(fields []string) CommandEffect {
 		}
 		return effect
 	}
-	if len(args) > 0 && ReadOnlyPrefixes[base][strings.ToLower(args[0])] {
+	if len(args) > 0 && readOnlyPrefixes[base][strings.ToLower(args[0])] {
 		effect := knownReader(joinFamily(base, strings.ToLower(args[0])))
 		if base == "docker" || base == "kubectl" {
 			effect.UsesNetwork = true
@@ -231,7 +231,7 @@ func classifyGit(args []string) CommandEffect {
 		}
 		return knownReader("git cat-file")
 	}
-	if ReadOnlyPrefixes["git"][sub] {
+	if readOnlyPrefixes["git"][sub] {
 		return knownReader("git " + sub)
 	}
 	return unknownEffect("git "+sub, "git subcommand effects are not statically known")
@@ -488,7 +488,7 @@ func classifyGo(args []string) CommandEffect {
 			}
 		}
 	}
-	if ReadOnlyPrefixes["go"][sub] {
+	if readOnlyPrefixes["go"][sub] {
 		return knownReader(family)
 	}
 	return unknownEffect(family, "go subcommand effects are not statically known")
@@ -510,7 +510,7 @@ func classifyNPM(args []string) CommandEffect {
 		}
 		return effect
 	}
-	if ReadOnlyPrefixes["npm"][sub] {
+	if readOnlyPrefixes["npm"][sub] {
 		effect := knownReader(family)
 		effect.UsesNetwork = sub == "view" || sub == "info" || sub == "outdated"
 		return effect

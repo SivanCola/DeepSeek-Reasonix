@@ -3,10 +3,38 @@ package evidence
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestEvidenceConsumesSharedCommandEffectMatrix(t *testing.T) {
+	raw, err := os.ReadFile("../shellsafe/testdata/command_effects.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Command                      string
+		Certainty                          string
+		TaskPolicyBlocked, ContentMutation bool
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			args, err := json.Marshal(map[string]string{"command": tc.Command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ClassifyToolCall("bash", args, false)
+			if got.Known != (tc.Certainty == "known") || got.StateMutation != tc.TaskPolicyBlocked || got.ContentMutation != tc.ContentMutation {
+				t.Fatalf("ClassifyToolCall(%q) = %+v, matrix known=%t state=%t content=%t", tc.Command, got, tc.Certainty == "known", tc.TaskPolicyBlocked, tc.ContentMutation)
+			}
+		})
+	}
+}
 
 func TestLedgerRecordsSuccessAndFailureReceipts(t *testing.T) {
 	ledger := NewLedger()

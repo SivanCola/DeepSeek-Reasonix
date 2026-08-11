@@ -1,6 +1,60 @@
 package shellsafe
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+type sharedEffectCase struct {
+	Name, Command                                    string
+	Certainty                                        string
+	Writes                                           []string
+	PermissionReader, ExecutesCode, UsesNetwork      bool
+	TaskPolicyBlocked, ContentMutation, BatchBarrier bool
+}
+
+func loadSharedEffectCases(t *testing.T, path string) []sharedEffectCase {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []sharedEffectCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	return cases
+}
+
+func TestSharedCommandEffectMatrix(t *testing.T) {
+	for _, tc := range loadSharedEffectCases(t, "testdata/command_effects.json") {
+		t.Run(tc.Name, func(t *testing.T) {
+			got := ClassifyBash(tc.Command)
+			wantCertainty := EffectKnown
+			if tc.Certainty == "unknown" {
+				wantCertainty = EffectUnknown
+			}
+			var wantWrites WriteDomain
+			for _, domain := range tc.Writes {
+				switch domain {
+				case "content":
+					wantWrites |= WriteWorkspaceContent
+				case "repository":
+					wantWrites |= WriteRepositoryMetadata
+				case "host":
+					wantWrites |= WriteHostState
+				case "external":
+					wantWrites |= WriteExternalState
+				}
+			}
+			if got.Certainty != wantCertainty || got.Writes != wantWrites || got.IsPermissionReader() != tc.PermissionReader ||
+				got.ExecutesCode != tc.ExecutesCode || got.UsesNetwork != tc.UsesNetwork || got.ContentMutation() != tc.ContentMutation {
+				t.Fatalf("ClassifyBash(%q) = %+v, matrix=%+v", tc.Command, got, tc)
+			}
+		})
+	}
+}
 
 func TestClassifyBashCommandEffects(t *testing.T) {
 	tests := []struct {
