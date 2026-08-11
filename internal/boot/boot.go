@@ -124,6 +124,9 @@ type Options struct {
 	// StatsSource labels this frontend's usage records (desktop/cli/serve).
 	// Empty disables usage recording for this controller.
 	StatsSource string
+	// OnConfigLoadWarnings accepts resilient-loader warnings. Returning true
+	// lets boot suppress the duplicate migration diagnostic.
+	OnConfigLoadWarnings func([]string) bool
 	// ExtraPlugins are session-scoped MCP servers supplied by a host transport
 	// (for example ACP session/new). They are connected eagerly for this
 	// controller but are not persisted to reasonix.toml.
@@ -215,18 +218,19 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	// One-time import of v1/v0.5 legacy config — runs before Load so the freshly
-	// written config + ~/.env are picked up this same boot. CLI Run also calls this
-	// before config-only commands; this call stays as the shared frontend fallback.
+	// Import v1/v0.5 config before Load so this boot sees the new config + ~/.env.
+	// CLI Run also calls this before config-only commands; keep a shared fallback.
 	migrated, migErr := config.MigrateLegacyIfNeededForRoot(root)
 	deepSeekProtocolMigrated, deepSeekProtocolMigErr := config.MigrateLegacyDeepSeekProtocolUserConfig()
 	stepLimitsMigrated, stepLimitMigErr := config.MigrateLegacyAgentStepLimitsForRoot(root)
 	redactToolOutputMigrated, redactToolOutputMigErr := config.MigrateLegacyRedactToolOutputForRoot(root)
 	memoryCompilerMigrated, memoryCompilerMigErr := config.MigrateLegacyMemoryCompilerForRoot(root)
+	multiThresholdMigrated, multiThresholdMigErr := config.MigrateLegacyMultiThresholdCompactionForRoot(root)
 	cfg, err := config.LoadForRoot(root)
 	if err != nil {
 		return nil, err
 	}
+	deepSeekProtocolMigErr = deepSeekProtocolMigrationNoticeError(handleConfigLoadWarnings(opts, cfg), deepSeekProtocolMigErr)
 	// Arm the credential-protection layers from the user-global [secrets]
 	// section before any tool, hook, or plugin subprocess can spawn. Package
 	// globals are correct here because [secrets] is user-global (project
@@ -494,6 +498,17 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			level = event.LevelWarn
 			text = "Deprecated memory_compiler setting was ignored."
 			detail += " The old key could not be removed: " + memoryCompilerMigErr.Error()
+		}
+		sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail})
+	}
+	if multiThresholdMigrated || multiThresholdMigErr != nil {
+		level := event.LevelInfo
+		text := "上下文维护已简化为单一自动压缩阈值。"
+		detail := "Context maintenance now uses a single automatic compact_ratio (default 0.85). soft_compact_ratio, tool_result_snip_ratio, compact_force_ratio, cold_resume_prune, and context_editing were removed from config."
+		if multiThresholdMigErr != nil {
+			level = event.LevelWarn
+			text = "Deprecated multi-threshold compaction keys were ignored."
+			detail += " The old keys could not be removed: " + multiThresholdMigErr.Error()
 		}
 		sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail})
 	}
@@ -1815,6 +1830,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		MaxSteps:    maxSteps,
 		MaxStepsKey: opts.MaxStepsKey,
 		Temperature: cfg.Agent.Temperature,
+		TaskBudget:  taskBudgetFromConfig(cfg),
 		Pricing:     entry.Price,
 		ModelRef:    modelRef,
 		Gate:        headlessGate,

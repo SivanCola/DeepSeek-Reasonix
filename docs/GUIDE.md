@@ -69,8 +69,12 @@ reasoning_language = "auto"      # visible reasoning text: auto|zh|en
 # max_subagent_depth = 2              # nested delegation depth; set 1 for the old single-layer boundary
 # max_subagent_concurrency = 6        # session-wide sub-agent concurrency (task/fleet/skills)
 # max_parallel_writers = 3            # concurrent writers with non-overlapping write_paths
-tool_result_snip_ratio = 0.6       # at compact_ratio, pruning stale tool output replaces the summary if it gets under this
-# context_editing = "native"       # opt in only for the official Anthropic endpoint; default local
+# compact_ratio = 0.85             # sole auto trigger; presets 0.70 / 0.80 / 0.85
+# max_output_tokens = 0            # recommended: automatic (DeepSeek default high → ~64K; not unlimited)
+# max_output_tokens = 32768        # ordinary coding / cost control
+# max_output_tokens = 65536        # heavy reasoning / long tool loops
+# max_output_tokens = 131072       # only after repeated finish_reason=length
+# max_output_tokens never changes compact_ratio; only the final send-time clip does
 
 [[providers]]
 name        = "deepseek-flash"
@@ -1250,6 +1254,35 @@ accepted during upgrades, but their values are ignored and removed with a
 one-time notice. This prevents a stale hidden limit from truncating automatic
 progress or inherited subagent work. Use the one-off CLI `--max-steps` flag when
 an explicit run budget is needed; unattended bots retain `[bot].max_steps`.
+
+**An ordinary chat task has no limit of any kind by default** — not rounds, not
+tokens, not time, not money. It runs until the model finishes, an adaptive
+guard decides it stopped making progress, or you stop it.
+
+An optional spend gate is available when you want one. It bounds a whole task
+(every "continue" included, until you start unrelated work), and on crossing it
+the task produces one tool-free summary and pauses; the work is saved and the
+next message continues it.
+
+```toml
+[agent]
+task_cost_budget = 5.0            # in the model's pricing currency
+task_time_budget_minutes = 60     # wall clock across the whole task
+```
+
+Both are off unless set. Neither has a default, because a stop is a judgement
+only you can make: no amount of money is portable across models — a budget
+loose enough for a cheap model would land a frontier model within a couple of
+answers — and a long task is as often the job you asked for as it is a runaway.
+
+Cost applies only to a priced model. Without a price table that axis stays
+inactive rather than reading the task as free; use the time axis for a free or
+local model.
+
+Rounds are deliberately not an axis. A turn that reaches a high round count
+without spending much is one whose rounds are individually cheap and fast,
+which is the case least worth interrupting. Use the one-off `--max-steps` flag
+when you specifically want a run bounded by rounds.
 
 Subagent skills inherit the executor model by default. Set `subagent_model` to
 run them on another configured model, or use `subagent_models` to override only

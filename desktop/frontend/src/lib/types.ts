@@ -1937,7 +1937,6 @@ export interface AgentView {
   maxSubagentConcurrency: number;
   maxParallelWriters: number;
   systemPrompt: string;
-  coldResumePrune: boolean;
   reasoningLanguage: string; // "auto" | "zh" | "en"
   compactRatio?: number; // Advanced global default; older backends omit it.
   effectiveCompactRatio?: number; // Active local session after project overrides.
@@ -2202,7 +2201,7 @@ export interface DesktopStartupSettingsView {
   checkUpdates: boolean; // check for new versions on startup
   updateChannel: string; // compatibility field; always "stable"
   conversationWidth?: string; // "standard" | "full"; absent from older Wails payloads
-  configWarnings?: string[]; // non-blocking load recovery notices
+  configWarnings?: string[]; configWarningsRevision?: number; // load recovery notices and async delivery barrier
   configPath?: string;
 }
 

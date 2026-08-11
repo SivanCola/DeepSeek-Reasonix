@@ -63,8 +63,12 @@ reasoning_language = "auto"      # 可见思考过程语言：auto|zh|en
 # max_subagent_depth = 2              # 子代理嵌套委派深度；设为 1 可恢复旧的单层边界
 # max_subagent_concurrency = 6        # 会话级子代理总并发（task/fleet/skills）
 # max_parallel_writers = 3            # 互不重叠 write_paths 时的并行写入上限
-tool_result_snip_ratio = 0.6       # 到达 compact_ratio 时，修剪旧工具输出若能降到此值以下则免去摘要
-# context_editing = "native"       # 仅官方 Anthropic 端点显式启用；默认 local
+# compact_ratio 是唯一自动维护阈值（默认 0.85；预设 0.70/0.80/0.85）
+# max_output_tokens = 0            # 推荐：自动（DeepSeek 默认 high → 约 64K；不是无限）
+# max_output_tokens = 32768        # 普通编码 / 控制费用
+# max_output_tokens = 65536        # 重推理、长工具链
+# max_output_tokens = 131072       # 仅在反复 finish_reason=length 时再考虑
+# max_output_tokens 不参与 compact_ratio；只在发送阶段裁剪本轮最长输出
 
 [[providers]]
 name        = "deepseek-flash"
@@ -970,6 +974,29 @@ Reasonix 会自动管理正常执行：活跃 Todo 连续 8 个工具调用轮�
 升级时仍可解析已有的 `[agent].max_steps` 和 `planner_max_steps`，但其值会被忽略，并在一次性
 迁移提示后从配置中移除，避免隐藏的旧上限截断自动进度管理或子 Agent 的继承任务。确实需要
 为单次运行设置预算时使用 CLI `--max-steps`；无人值守 Bot 仍保留 `[bot].max_steps`。
+
+**普通对话任务默认没有任何上限**——轮数、token、时长、花费都不限。它一直跑到模型自己
+结束、自适应守卫判定它不再产生进展，或者你手动停止为止。
+
+需要时可以自行开启花费闸门。它约束的是**整个任务**（包括每一次"继续"，直到你开始不相关的
+新工作）；越过阈值时会产出一次不带工具的总结然后暂停，已完成的工作全部保留，下一条消息
+即可继续。
+
+```toml
+[agent]
+task_cost_budget = 5.0            # 模型定价货币
+task_time_budget_minutes = 60     # 整个任务累计的墙钟时长
+```
+
+两个维度都默认关闭，也都没有默认值——**该不该停是只有你能下的判断**：金额在不同模型之间
+不可移植（对便宜模型足够宽松的额度，换成前沿模型可能问两句就触发），而任务跑得久，既可能
+是失控，也可能就是你要的活。
+
+成本维度只对有定价的模型生效：没有价目表时该维度直接不参与判断，而不是把任务读成免费；
+免费或本地模型请改用时长维度。
+
+轮数刻意不作为一个维度。能跑到很高轮数却没花多少钱的任务，说明它每一轮都又便宜又快，
+这恰恰是最不该打断的情况。确实想按轮数限制某次运行时，用一次性的 `--max-steps`。
 
 Subagent skills 默认继承执行器模型。设置 `subagent_model` 可让它们统一走另一个已配置
 模型；设置 `subagent_models` 则只覆盖 `review`、`security_review` 等指定 skill。
