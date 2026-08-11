@@ -1,6 +1,7 @@
 // Run: tsx src/__tests__/context-panel-breakdown.test.ts
 
-import { cacheHitTone, contextBreakdown, contextCostDisplay, contextSessionCache, contextSourceRows, contextUsageRefreshKey, contextWindowPercentages, contextWindowStatus, formatCacheHitRate, formatMetricTokens, formatSharePercent, liveTurnUsageBreakdown } from "../components/ContextPanel";
+import { cacheHitTone, contextBreakdown, contextCostDisplay, contextSessionCache, contextSourceRows, contextUsageRefreshKey, contextWindowStatus, formatCacheHitRate, formatMetricTokens, formatSharePercent, liveTurnUsageBreakdown } from "../components/ContextPanel";
+import { contextWindowPercentages } from "../lib/contextWindow";
 import { currencySymbol, formatMoney, formatMoneyLocalized } from "../lib/money";
 import type { WireUsage } from "../lib/types";
 

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { app } from "../lib/bridge";
+import { contextWindowPercentages } from "../lib/contextWindow";
 import { useI18n } from "../lib/i18n";
 import { formatMoneyLocalized } from "../lib/money";
 import type { BalanceInfo, ContextInfo, ContextPanelInfo } from "../lib/types";
 import { AnchoredPopover } from "./AnchoredPopover";
 import {
-  contextWindowPercentages,
   contextWindowStatus,
   formatCacheHitRate,
 } from "./ContextPanel";

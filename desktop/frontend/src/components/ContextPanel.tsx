@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
+import { contextWindowPercentages } from "../lib/contextWindow";
 import { useI18n, type Locale, type Translator } from "../lib/i18n";
 import { formatMoneyLocalized } from "../lib/money";
 import { formatTokens, formatOptionalTokens } from "../lib/format";
@@ -108,11 +109,6 @@ export function formatSharePercent(value: number, total: number): string {
 interface ContextWindowStatus {
   tone: "good" | "notice" | "warn";
   key: DictKey;
-}
-
-interface ContextWindowPercentages {
-  raw: number;
-  display: number;
 }
 
 export function contextCostDisplay({
@@ -244,15 +240,6 @@ export function contextBreakdown(
     reasoningPct,
     otherPct,
   };
-}
-
-export function contextWindowPercentages(usedTokens: number, windowTokens: number): ContextWindowPercentages {
-  if (!Number.isFinite(usedTokens) || !Number.isFinite(windowTokens) || usedTokens <= 0 || windowTokens <= 0) {
-    return { raw: 0, display: 0 };
-  }
-  const rounded = Math.max(0, Math.round((usedTokens / windowTokens) * 100));
-  const raw = usedTokens > windowTokens ? Math.max(101, rounded) : rounded;
-  return { raw, display: Math.min(100, raw) };
 }
 
 export function contextWindowStatus(rawUsagePct: number, compactPct: number): ContextWindowStatus {
