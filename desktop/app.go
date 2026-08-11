@@ -2419,10 +2419,10 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newSink := &tabEventSink{tabID: tab.ID, app: a, ctx: a.ctx}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:                    snap.model,
-		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
-		StatsSource:              "desktop",
+		Model:               snap.model,
+		RequireKey:          false,
+		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
+		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
 		Sink:                     newSink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -4543,10 +4543,10 @@ func (a *App) buildSessionRebindCandidate(
 		ownsSharedHostRef = true
 	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:                    model,
-		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
-		StatsSource:              "desktop",
+		Model:               model,
+		RequireKey:          false,
+		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
+		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
 		Sink:                     a.desktopControllerSink(sink, cfg.Notifications),
 		WorkspaceRoot:            root,
 		SessionDir:               sessionDir,
@@ -9641,11 +9641,10 @@ func (a *App) ModelsForTab(tabID string) []ModelInfo {
 	return mergeExtensionModelInfos(out, extensionCatalog, curModel)
 }
 
-// mergeExtensionModelInfos folds the tab controller's extension provider
-// catalog into the config-backed switcher list. Extension refs arrive fully
-// namespaced (plugin/<plugin>/<provider>/<model>) and need no provider-access
-// gate: installing/enabling the plugin package is the host-level grant. A nil
-// catalog (no provider-declaring sidecar) leaves the list untouched.
+// mergeExtensionModelInfos adds namespaced plugin models from the controller's
+// merged provider catalog. Base descriptors are already represented by out;
+// plugin refs need no provider-access gate because enabling the package grants
+// access. A nil catalog leaves the config-backed list untouched.
 func mergeExtensionModelInfos(out []ModelInfo, catalog []provider.Descriptor, curModel string) []ModelInfo {
 	if len(catalog) == 0 {
 		return out
@@ -9656,15 +9655,13 @@ func mergeExtensionModelInfos(out []ModelInfo, catalog []provider.Descriptor, cu
 	}
 	for _, d := range catalog {
 		ref := strings.TrimSpace(d.Ref)
-		if ref == "" || seen[ref] {
+		owner := providerext.PluginRefOwner(ref)
+		if ref == "" || owner == "" || seen[ref] {
 			continue
 		}
 		seen[ref] = true
-		providerName, model := "plugin", ref
-		if owner := providerext.PluginRefOwner(ref); owner != "" {
-			providerName = "plugin/" + owner
-			model = strings.TrimPrefix(ref, "plugin/"+owner+"/")
-		}
+		providerName := "plugin/" + owner
+		model := strings.TrimPrefix(ref, providerName+"/")
 		out = append(out, ModelInfo{Ref: ref, Provider: providerName, Model: model, Current: ref == curModel})
 	}
 	return out
@@ -10111,10 +10108,10 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 
 	stageStarted = time.Now()
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:                    name,
-		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
-		StatsSource:              "desktop",
+		Model:               name,
+		RequireKey:          false,
+		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
+		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -10296,10 +10293,10 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:                    modelRef,
-		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
-		StatsSource:              "desktop",
+		Model:               modelRef,
+		RequireKey:          false,
+		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
+		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
@@ -10438,10 +10435,10 @@ func (a *App) SetTokenModeForTab(tabID, mode string) error {
 	}
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
-		Model:                    modelRef,
-		RequireKey:               false,
-		AutoPricingCurrency:      a.desktopAutoPricingCurrency(),
-		StatsSource:              "desktop",
+		Model:               modelRef,
+		RequireKey:          false,
+		AutoPricingCurrency: a.desktopAutoPricingCurrency(),
+		StatsSource:         "desktop", OnConfigLoadWarnings: a.configLoadWarningsHandler(),
 		Sink:                     snap.sink,
 		WorkspaceRoot:            snap.workspaceRoot,
 		SessionDir:               sessionDirForSnapshot(snap),
