@@ -7,6 +7,12 @@ import (
 	"reasonix/internal/tool"
 )
 
+func (a *Agent) finalizeObservedToolReceipts(plan *toolCallPlan, result string, execution *tool.ShellExecution, err error) {
+	a.observeAfterMutation(plan)
+	plan.mutationAfterDone = true
+	a.recordToolReceipts(plan, result, execution, err)
+}
+
 // recordToolReceipts files the turn-scoped evidence for one executed call:
 // always the model-visible call for audit, plus the real target's attributes
 // for mutation/read classification when a proxy resolved elsewhere.

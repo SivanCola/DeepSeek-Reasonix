@@ -42,22 +42,14 @@ type CommandEffect struct {
 	Reason         string
 }
 
-func (e CommandEffect) AnyMutation() bool {
-	return e.Certainty != EffectKnown || e.Writes != 0
-}
-
+func (e CommandEffect) AnyMutation() bool { return e.Certainty != EffectKnown || e.Writes != 0 }
 func (e CommandEffect) WorkspaceMutation() bool {
 	return e.Certainty != EffectKnown || e.Writes&(WriteWorkspaceContent|WriteRepositoryMetadata) != 0
 }
-
 func (e CommandEffect) ContentMutation() bool {
 	return e.Certainty != EffectKnown || e.Writes&WriteWorkspaceContent != 0
 }
-
-func (e CommandEffect) RepositoryMutation() bool {
-	return e.Writes&WriteRepositoryMetadata != 0
-}
-
+func (e CommandEffect) RepositoryMutation() bool { return e.Writes&WriteRepositoryMetadata != 0 }
 func (e CommandEffect) IsPermissionReader() bool {
 	return e.Certainty == EffectKnown && e.Writes == 0 && e.PermissionSafe
 }
@@ -239,10 +231,8 @@ func classifyGit(args []string) CommandEffect {
 
 func classifyGitBranch(args []string) CommandEffect {
 	family := "git branch"
-	for _, arg := range args {
-		if branchMutationArg(arg) {
-			return knownWriter(family, WriteRepositoryMetadata, "updates branch refs or configuration")
-		}
+	if slices.ContainsFunc(args, branchMutationArg) {
+		return knownWriter(family, WriteRepositoryMetadata, "updates branch refs or configuration")
 	}
 	listing := len(args) == 0
 	operands := 0
@@ -540,11 +530,9 @@ func classifyCargo(args []string) CommandEffect {
 func knownReader(family string) CommandEffect {
 	return CommandEffect{Certainty: EffectKnown, PermissionSafe: true, CommandFamily: family}
 }
-
 func knownWriter(family string, writes WriteDomain, reason string) CommandEffect {
 	return CommandEffect{Certainty: EffectKnown, Writes: writes, CommandFamily: family, Reason: reason}
 }
-
 func unknownEffect(family, reason string) CommandEffect {
 	return CommandEffect{Certainty: EffectUnknown, CommandFamily: strings.TrimSpace(family), Reason: reason}
 }
@@ -622,40 +610,27 @@ func staticFieldsWithOutputRedirect(command string) ([]string, bool, bool) {
 }
 
 func branchMutationArg(arg string) bool {
-	name := strings.SplitN(arg, "=", 2)[0]
-	return slices.Contains([]string{"-d", "-D", "--delete", "--no-delete", "-m", "-M", "--move", "--no-move", "-c", "-C", "--copy", "--no-copy", "-f", "--force", "--no-force", "-t", "--track", "--no-track", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "--create-reflog", "--recurse-submodules"}, name)
+	return slices.Contains([]string{"-d", "-D", "--delete", "--no-delete", "-m", "-M", "--move", "--no-move", "-c", "-C", "--copy", "--no-copy", "-f", "--force", "--no-force", "-t", "--track", "--no-track", "-u", "--set-upstream-to", "--unset-upstream", "--edit-description", "--create-reflog", "--recurse-submodules"}, strings.SplitN(arg, "=", 2)[0])
 }
-
 func branchValueOption(arg string) bool {
-	name := strings.SplitN(arg, "=", 2)[0]
-	return slices.Contains([]string{"--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format", "--color", "--column", "--abbrev", "--no-contains", "--no-merged"}, name)
+	return slices.Contains([]string{"--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format", "--color", "--column", "--abbrev"}, strings.SplitN(arg, "=", 2)[0])
 }
-
 func tagMutationArg(arg string) bool {
-	name := strings.SplitN(arg, "=", 2)[0]
-	return slices.Contains([]string{"-d", "--delete", "-a", "--annotate", "-s", "--sign", "-u", "--local-user", "-f", "--force", "-m", "--message", "-F", "--file", "-e", "--edit", "--trailer", "--cleanup", "--create-reflog"}, name)
+	return slices.Contains([]string{"-d", "--delete", "-a", "--annotate", "-s", "--sign", "-u", "--local-user", "-f", "--force", "-m", "--message", "-F", "--file", "-e", "--edit", "--trailer", "--cleanup", "--create-reflog"}, strings.SplitN(arg, "=", 2)[0])
 }
-
 func tagFlagOption(arg string) bool {
-	name := strings.SplitN(arg, "=", 2)[0]
-	return slices.Contains([]string{"--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format", "--column", "--no-column", "--color", "--no-color", "--omit-empty", "--no-omit-empty"}, name)
+	return slices.Contains([]string{"--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format", "--column", "--no-column", "--color", "--no-color", "--omit-empty", "--no-omit-empty"}, strings.SplitN(arg, "=", 2)[0])
 }
 
 func tagOptionConsumesNext(arg string) bool {
-	if strings.Contains(arg, "=") {
-		return false
-	}
-	return slices.Contains([]string{"--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format"}, arg)
+	return !strings.Contains(arg, "=") && slices.Contains([]string{"--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format"}, arg)
 }
 
 func configReadAction(arg string) bool {
 	return slices.Contains([]string{"get", "get-all", "get-regexp", "get-urlmatch", "list", "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "--get-color", "--get-colorbool"}, strings.ToLower(arg))
 }
 
-func containsConfigReadAction(args []string) bool {
-	return slices.ContainsFunc(args, configReadAction)
-}
-
+func containsConfigReadAction(args []string) bool { return slices.ContainsFunc(args, configReadAction) }
 func configOptionConsumesNext(arg string) bool {
 	return slices.Contains([]string{"--file", "-f", "--blob", "--type", "--default", "--fixed-value"}, strings.ToLower(arg))
 }
@@ -669,15 +644,12 @@ func hasEffectArg(args []string, candidates ...string) bool {
 func hasArgPrefix(args []string, prefix string) bool {
 	return slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, prefix) })
 }
-
 func allEffectArgs(args []string, allowed ...string) bool {
 	return len(args) > 0 && !slices.ContainsFunc(args, func(arg string) bool { return !slices.Contains(allowed, arg) })
 }
-
 func hasOutputArg(args []string) bool {
 	return hasEffectArg(args, "-o", "--output") || hasArgPrefix(args, "-o")
 }
-
 func shortOptionContains(arg string, flag byte) bool {
 	return len(arg) > 1 && arg[0] == '-' && arg[1] != '-' && strings.ContainsRune(arg[1:], rune(flag))
 }

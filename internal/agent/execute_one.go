@@ -18,48 +18,6 @@ import (
 	"reasonix/internal/tool"
 )
 
-// toolCallPlan holds the resolved, policy-checked state for one tool call.
-// Package-private; not shared across goroutines beyond the single executeOne
-// invocation that owns it.
-type toolCallPlan struct {
-	call          provider.ToolCall
-	tool          tool.Tool
-	canonicalName string
-
-	permName     string
-	permArgs     json.RawMessage
-	execTool     tool.Tool
-	execArgs     json.RawMessage
-	evidenceName string
-	evidenceArgs json.RawMessage
-	readOnly     bool
-
-	resolved     tool.ResolvedCall
-	resolvedMeta *tool.ResolvedCall
-
-	effects                   evidence.ToolEffects
-	verification              bool
-	planTransition            bool
-	planBefore                string
-	planAfter                 string
-	planDiff                  string
-	planReplacementAuthorized bool
-	recoveryGen               uint64
-
-	runTool              tool.Tool
-	runArgs              json.RawMessage
-	cctx                 context.Context
-	releaseParentWrite   func()
-	releaseMutationWrite func()
-
-	// mutationPath is set when a Previewer described a concrete workspace path
-	// for AfterMutation fingerprint capture (success or failure).
-	mutationPath      string
-	mutationObserved  bool
-	mutationAfterDone bool
-	executed          bool
-}
-
 // executeOne runs a single tool call. It is pure with respect to the event sink
 // — the caller emits ToolDispatch/ToolResult — so it is safe to invoke from
 // parallel goroutines. Stages: parse → policy → prepare → finish.
@@ -321,9 +279,7 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 			return outcome, true
 		}
 		plan.readOnly = rc.ReadOnly
-		// Reclassify from the resolved target and arguments before every policy,
-		// barrier, lease, and evidence consumer sees the call.
-		plan.effects = evidence.ClassifyToolCall(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
+		plan.classifyEffects()
 		if outcome, blocked := a.readOnlyExecutionBlock(t, &rc); blocked {
 			return outcome, true
 		}
@@ -821,9 +777,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	}
 	// Always re-read after post hooks — partial writes and hook side effects can
 	// change the previewed path even when the concrete tool returned an error.
-	a.observeAfterMutation(plan)
-	plan.mutationAfterDone = true
-	a.recordToolReceipts(plan, result, execution, err)
+	a.finalizeObservedToolReceipts(plan, result, execution, err)
 	if a.recoveryGate != nil {
 		a.observeRecoveryResult(ctx, evidenceName, evidenceArgs, readOnly, mutates, result, err, false, false, recoveryGen)
 	}

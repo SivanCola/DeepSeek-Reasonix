@@ -94,13 +94,8 @@ func ContainsShellSyntax(cmd string) bool {
 	return shellparse.ContainsShellSyntax(cmd)
 }
 
-// CommandIsReadOnly reports whether the command's base/subcommand is in the
-// read-only tables, ignoring argument rigor (which each consumer applies). It
-// returns the base and subcommand so callers can run their own arg checks.
-// ok is false when the command contains shell syntax or the base/subcommand is
-// not a known read-only operation.
-// Deprecated: production policy consumers must use ClassifyBash and project
-// the specific effect axis they need.
+// CommandIsReadOnly is the legacy coarse read-only adapter.
+// Deprecated: production policy must use ClassifyBash and project its axis.
 func CommandIsReadOnly(command string) (base, sub string, ok bool) {
 	base, sub, _, ok = ClassifyReadOnlyCommand(command)
 	return base, sub, ok
@@ -162,12 +157,8 @@ func hasResolvedSubstitution(fields []string) bool {
 	return false
 }
 
-// resolvedReadOnlyFields accepts one narrow dynamic shape: a command from the
-// read-only table with a double-quoted command substitution whose nested
-// command is itself a single, static, argument-safe read-only command. It never
-// evaluates output. Unquoted substitutions, parameters, arithmetic, process
-// substitutions, redirects, assignments, chains, and background jobs remain
-// fail-closed.
+// resolvedReadOnlyFields accepts only recursively proven double-quoted command
+// substitutions. Every other dynamic or compound shape remains fail-closed.
 func resolvedReadOnlyFields(command string, nested bool) ([]string, bool, bool) {
 	file, err := shellparse.ParseBash(command)
 	if err != nil || len(file.Stmts) != 1 {

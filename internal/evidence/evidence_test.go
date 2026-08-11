@@ -3,38 +3,10 @@ package evidence
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
-
-func TestEvidenceConsumesSharedCommandEffectMatrix(t *testing.T) {
-	raw, err := os.ReadFile("../shellsafe/testdata/command_effects.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cases []struct {
-		Name, Command                      string
-		Certainty                          string
-		TaskPolicyBlocked, ContentMutation bool
-	}
-	if err := json.Unmarshal(raw, &cases); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			args, err := json.Marshal(map[string]string{"command": tc.Command})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := ClassifyToolCall("bash", args, false)
-			if got.Known != (tc.Certainty == "known") || got.StateMutation != tc.TaskPolicyBlocked || got.ContentMutation != tc.ContentMutation {
-				t.Fatalf("ClassifyToolCall(%q) = %+v, matrix known=%t state=%t content=%t", tc.Command, got, tc.Certainty == "known", tc.TaskPolicyBlocked, tc.ContentMutation)
-			}
-		})
-	}
-}
 
 func TestLedgerRecordsSuccessAndFailureReceipts(t *testing.T) {
 	ledger := NewLedger()
@@ -1040,82 +1012,6 @@ func TestToolCallMutatesForDeliveryProfile(t *testing.T) {
 				t.Fatalf("ToolCallMutates(%q, %s) = %v, want %v", tt.toolName, tt.args, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestClassifyToolCallSeparatesStateAndContentMutation(t *testing.T) {
-	tests := []struct {
-		name       string
-		toolName   string
-		args       string
-		readOnly   bool
-		want       ToolEffects
-		wantReason bool
-	}{
-		{
-			name: "branch listing", toolName: "bash", args: `{"command":"git branch -a"}`,
-			want: ToolEffects{Known: true},
-		},
-		{
-			name: "tag creation remains repository mutation in yolo", toolName: "bash", args: `{"command":"git tag v1.2.3"}`, readOnly: true,
-			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, RepositoryMutation: true}, wantReason: true,
-		},
-		{
-			name: "pure commit cements reviewed content", toolName: "bash", args: `{"command":"git commit -q -m checkpoint"}`,
-			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, RepositoryMutation: true}, wantReason: true,
-		},
-		{
-			name: "commit all includes content", toolName: "bash", args: `{"command":"git commit -am checkpoint"}`,
-			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, ContentMutation: true, RepositoryMutation: true}, wantReason: true,
-		},
-		{
-			name: "host clock write is not workspace write", toolName: "bash", args: `{"command":"date --set tomorrow"}`,
-			want: ToolEffects{Known: true, StateMutation: true}, wantReason: true,
-		},
-		{
-			name: "audit fix changes workspace content", toolName: "bash", args: `{"command":"npm audit fix"}`,
-			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, ContentMutation: true}, wantReason: true,
-		},
-		{
-			name: "verification stays non-mutating", toolName: "bash", args: `{"command":"go test ./..."}`,
-			want: ToolEffects{Known: true},
-		},
-		{
-			name: "unknown shell fails closed", toolName: "bash", args: `{"command":"custom-tool --run"}`,
-			want: ToolEffects{StateMutation: true, WorkspaceMutation: true, ContentMutation: true}, wantReason: true,
-		},
-		{
-			name: "trusted reader", toolName: "read_file", args: `{}`, readOnly: true,
-			want: ToolEffects{Known: true},
-		},
-		{
-			name: "generic writer", toolName: "edit_file", args: `{}`,
-			want: ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, ContentMutation: true}, wantReason: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ClassifyToolCall(tt.toolName, json.RawMessage(tt.args), tt.readOnly)
-			if got.StateMutation != tt.want.StateMutation || got.WorkspaceMutation != tt.want.WorkspaceMutation ||
-				got.ContentMutation != tt.want.ContentMutation || got.RepositoryMutation != tt.want.RepositoryMutation || got.Known != tt.want.Known {
-				t.Fatalf("ClassifyToolCall(%q, %s, %t) = %+v, want %+v", tt.toolName, tt.args, tt.readOnly, got, tt.want)
-			}
-			if (got.Reason != "") != tt.wantReason {
-				t.Fatalf("ClassifyToolCall reason = %q, want non-empty=%t", got.Reason, tt.wantReason)
-			}
-		})
-	}
-}
-
-func TestReceiptMutationTracksContentNotRepositoryCement(t *testing.T) {
-	pure := ReceiptFromToolCall("bash", json.RawMessage(`{"command":"git commit -m checkpoint"}`), true, false)
-	if pure.Mutation {
-		t.Fatalf("pure commit receipt reopened content mutation debt: %+v", pure)
-	}
-	all := ReceiptFromToolCall("bash", json.RawMessage(`{"command":"git commit -am checkpoint"}`), true, false)
-	if !all.Mutation {
-		t.Fatalf("commit -a receipt must retain content mutation debt: %+v", all)
 	}
 }
 

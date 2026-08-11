@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -497,80 +496,6 @@ func (s *Store) CaptureBefore(path string, opts CaptureBeforeOpts) {
 	s.cur.SchemaVersion = SchemaV2
 	s.recomputeCoverageLocked(s.cur)
 	s.persistBestEffort(s.cur)
-}
-
-// CaptureAfter records the after fingerprint for a path already in the current
-// (or any) checkpoint that owns it and reports whether the durable file state
-// differs from the captured preimage.
-func (s *Store) CaptureAfter(path string, opts CaptureAfterOpts) bool {
-	if path == "" {
-		return false
-	}
-	pathKey := NormalizeRelPath(s.root, path)
-	fp, gap, err := CapturePath(path, CaptureOptions{
-		WorkspaceRoot: s.root,
-		ReadContent:   true,
-	})
-	if gap != nil {
-		s.RecordGap(*gap)
-	}
-	if err != nil {
-		return false
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.mutationSeq = opts.Seq
-	if s.cur != nil {
-		s.cur.LastMutationSeq = opts.Seq
-	}
-	// Update after fingerprint on the most recent snap of this path.
-	updated := false
-	if s.cur != nil {
-		changed := false
-		for i := range s.cur.Files {
-			if NormalizeRelPath(s.root, s.cur.Files[i].Path) != pathKey {
-				continue
-			}
-			changed = fileSnapDiffersFromFingerprint(s.cur.Files[i], fp)
-			existed := fp.Existed
-			s.cur.Files[i].AfterExisted = &existed
-			s.cur.Files[i].AfterSHA256 = fp.SHA256
-			s.cur.Files[i].AfterMode = fp.Mode
-			updated = true
-		}
-		if updated {
-			s.recomputeCoverageLocked(s.cur)
-			s.persistBestEffort(s.cur)
-			s.lastUndo = nil // mutation invalidates undo
-			return changed
-		}
-	}
-	// Path might only appear in earlier turns; still record after on earliest?
-	// Ownership after is per-path last write — update the latest checkpoint that
-	// has this path.
-	for _, v := range slices.Backward(s.done) {
-		c := v
-		for j := range c.Files {
-			if NormalizeRelPath(s.root, c.Files[j].Path) != pathKey {
-				continue
-			}
-			changed := fileSnapDiffersFromFingerprint(c.Files[j], fp)
-			existed := fp.Existed
-			c.Files[j].AfterExisted = &existed
-			c.Files[j].AfterSHA256 = fp.SHA256
-			c.Files[j].AfterMode = fp.Mode
-			s.persistBestEffort(c)
-			s.lastUndo = nil
-			return changed
-		}
-	}
-	return false
-}
-
-func fileSnapDiffersFromFingerprint(before FileSnap, after Fingerprint) bool {
-	beforeExisted := before.Content != nil || before.BlobRef != "" || before.SHA256 != ""
-	return beforeExisted != after.Existed || before.SHA256 != after.SHA256 || before.Mode != after.Mode
 }
 
 // RecordGap appends a coverage gap to the current checkpoint.
