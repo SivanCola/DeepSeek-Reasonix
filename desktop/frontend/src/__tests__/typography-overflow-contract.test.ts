@@ -99,6 +99,19 @@ eq(
 eq(finalDeclaration(".transcript--empty", "overflow-y"), "auto", "empty transcript can scroll instead of clipping");
 eq(finalDeclaration(".welcome", "overflow"), "visible", "welcome empty state is not clipped by its own box");
 ok(
+  /\.md\s*>\s*:where\([^)]*p[^)]*ul[^)]*ol[^)]*\)\s*\{[^}]*content-visibility:\s*auto;[^}]*contain-intrinsic-size:\s*auto 72px;/.test(styles),
+  "non-transcript markdown still culls offscreen blocks with a 72px placeholder",
+);
+ok(
+  /\.transcript__row\s+\.md\s*>\s*\*\s*(?:,[^{]*)?\{[^}]*content-visibility:\s*visible;[^}]*contain-intrinsic-size:\s*none;/.test(styles),
+  "virtual transcript rows do not measure markdown through 72px placeholders",
+);
+ok(
+  hasDeclaration(".transcript__row .msg", "content-visibility", "visible") &&
+    hasDeclaration(".transcript__row .turn-collapse", "content-visibility", "visible"),
+  "virtual transcript cards stay measurable after the markdown override",
+);
+ok(
   hasDeclaration(".transcript--empty > .welcome", "margin-block", "auto"),
   "empty-state auto margins apply only to the welcome content",
 );
