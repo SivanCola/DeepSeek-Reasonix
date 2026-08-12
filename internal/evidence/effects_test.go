@@ -43,6 +43,7 @@ func TestClassifyToolCallSeparatesMutationDomains(t *testing.T) {
 		{"host clock", "bash", `{"command":"date --set tomorrow"}`, false, ToolEffects{Known: true, StateMutation: true}},
 		{"audit fix", "bash", `{"command":"npm audit fix"}`, false, ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, ContentMutation: true}},
 		{"verification", "bash", `{"command":"go test ./..."}`, false, ToolEffects{Known: true}},
+		{"env prefixed test", "bash", `{"command":"GOROOT=/x go test ./..."}`, false, ToolEffects{Known: true}},
 		{"unknown shell", "bash", `{"command":"custom-tool --run"}`, false, ToolEffects{StateMutation: true, WorkspaceMutation: true, ContentMutation: true}},
 		{"trusted reader", "read_file", `{}`, true, ToolEffects{Known: true}},
 		{"generic writer", "edit_file", `{}`, false, ToolEffects{Known: true, StateMutation: true, WorkspaceMutation: true, ContentMutation: true}},
