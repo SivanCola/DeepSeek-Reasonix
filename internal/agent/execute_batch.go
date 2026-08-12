@@ -85,7 +85,7 @@ type batchExecution struct {
 // across goroutines while unknown and writer calls run serially so write/read
 // ordering stays provider-ordered. ToolResult events are emitted after the
 // batch in call order. Images are aligned by index with results.
-func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) batchExecution {
+func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []provider.ToolCall) batchExecution {
 	// The assistant message already stored this slice in Session. Keep execution
 	// state separate so refreshing a dependent preview never mutates shared
 	// session memory outside Session's lock.
@@ -103,8 +103,8 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 	// for this batch, successes recorded during it (a mixed batch where only one
 	// call was guard-blocked) must already count as progress against the pass.
 	receiptMark := 0
-	if a.evidence != nil {
-		receiptMark = a.evidence.Len()
+	if a.task.ledger != nil {
+		receiptMark = a.task.ledger.Len()
 	}
 	// Full dispatches used the batch's initial file state. After a writer runs
 	// (even a failed one — disk may have mutated), refresh dependent writer
@@ -112,14 +112,14 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 	earlierWriterRan := false
 	surfaceWriters := make([]bool, len(calls))
 	run := func(i int) {
-		t, _, ambiguous := a.tools.ResolveCall(calls[i].Name)
+		t, _, ambiguous := a.svc.tools.ResolveCall(calls[i].Name)
 		known := t != nil && len(ambiguous) == 0
 		writer := known && !t.ReadOnly()
 		surfaceWriters[i] = writer
 		if earlierWriterRan && writer {
 			if refreshed, changed := refreshCurrentFileDiff(ctx, t, calls[i]); changed {
 				calls[i] = refreshed
-				a.session.UpdateToolCallPreview(refreshed)
+				a.sess.conversation.UpdateToolCallPreview(refreshed)
 				a.emitFullToolDispatch(ctx, refreshed, true)
 			}
 		}
@@ -128,15 +128,15 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 		if calls[i].Name == "complete_step" && completedStepInBatch {
 			output := "blocked: only one successful complete_step is allowed per tool-call round. Continue from the newly promoted in_progress todo in the next round instead of batching sign-offs."
 			outcomes[i] = toolOutcome{output: output, blocked: true, errMsg: "blocked: complete_step sign-offs must be serial"}
-			if a.evidence != nil {
-				a.evidence.Record(evidence.ReceiptFromToolCall(calls[i].Name, json.RawMessage(calls[i].Arguments), false, true))
+			if a.task.ledger != nil {
+				a.task.ledger.Record(evidence.ReceiptFromToolCall(calls[i].Name, json.RawMessage(calls[i].Arguments), false, true))
 			}
 			durations[i] = time.Since(start).Milliseconds()
 			results[i] = output
 			return
 		}
-		outcomes[i] = a.executeOne(ctx, calls[i])
-		recordWorkspaceMutation(a.sink, outcomes[i].workspaceMutation)
+		outcomes[i] = a.executeOne(ctx, turn, calls[i])
+		recordWorkspaceMutation(a.svc.sink, outcomes[i].workspaceMutation)
 		if outcomes[i].executed {
 			surfaceWriters[i] = outcomes[i].workspaceMutation != nil
 		}
@@ -155,7 +155,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 	}
 	finalize := func(i int) {
 		if calls[i].ResolvedReadOnly != nil {
-			a.session.UpdateToolCallResolution(calls[i])
+			a.sess.conversation.UpdateToolCallResolution(calls[i])
 			a.emitResolvedToolDispatch(calls[i])
 		}
 		if surfaceWriters[i] || (outcomes[i].resolved && !outcomes[i].resolvedReadOnly) {
@@ -235,7 +235,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 				if isVerification {
 					ex.Verification = tool.ShellVerificationNotRun
 				}
-				if t, _, amb := a.tools.ResolveCall(calls[j].Name); t != nil && len(amb) == 0 {
+				if t, _, amb := a.svc.tools.ResolveCall(calls[j].Name); t != nil && len(amb) == 0 {
 					if bt, ok := t.(tool.DetailedExecutor); ok {
 						if desc := bt.ExecutionDescriptor(json.RawMessage(calls[j].Arguments)); desc != nil {
 							ex.Shell = desc.Shell
@@ -258,7 +258,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 		mutationBatchStop = true
 	}
 
-	for _, batch := range partitionToolCalls(a.tools, calls) {
+	for _, batch := range partitionToolCalls(a.svc.tools, calls) {
 		if ctx.Err() != nil {
 			markCancelled(batch.start)
 			break
@@ -311,8 +311,16 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 				if results[i] != "" {
 					continue
 				}
-				if batchCallStaticallySkippable(a, calls[i]) {
-					markDependencySkipped(i, nil)
+				t, _, ambiguous := a.svc.tools.ResolveCall(calls[i].Name)
+				known := t != nil && len(ambiguous) == 0
+				readOnly := known && t.ReadOnly()
+				if calls[i].Name == "bash" && permission.BashCommandIsReadOnly(json.RawMessage(calls[i].Arguments)) {
+					readOnly = true
+				}
+				isVerification := calls[i].Name == "bash" && evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(json.RawMessage(calls[i].Arguments)))
+				mutates := evidence.ToolCallMutates(calls[i].Name, json.RawMessage(calls[i].Arguments), readOnly)
+				if mutates || isVerification {
+					markDependencySkipped(i)
 					// markDependencySkipped fills this index; move on.
 					if results[i] != "" {
 						continue
@@ -352,7 +360,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 
 	for i, c := range calls {
 		o := outcomes[i]
-		t, _, ambiguous := a.tools.ResolveCall(c.Name)
+		t, _, ambiguous := a.svc.tools.ResolveCall(c.Name)
 		ok := t != nil && len(ambiguous) == 0
 		readOnly := ok && t.ReadOnly()
 		if c.ResolvedReadOnly != nil {
@@ -380,9 +388,9 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 				tr.WorkspaceAllPaths = mutation.AllPaths
 			}
 		}
-		a.sink.Emit(event.Event{Kind: event.ToolResult, Tool: tr})
+		a.svc.sink.Emit(event.Event{Kind: event.ToolResult, Tool: tr})
 		if o.truncated && o.truncMsg != "" {
-			a.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: o.truncMsg})
+			a.svc.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: o.truncMsg})
 		}
 	}
 	a.applyBatchGuards(ctx, cancelled, calls, outcomes, results, receiptMark)
@@ -418,7 +426,7 @@ func batchCallMutationFailureCause(a *Agent, call provider.ToolCall, o toolOutco
 	readOnly := false
 	toolName := call.Name
 	toolArgs := json.RawMessage(call.Arguments)
-	t, _, ambiguous := a.tools.ResolveCall(call.Name)
+	t, _, ambiguous := a.svc.tools.ResolveCall(call.Name)
 	known := t != nil && len(ambiguous) == 0
 	if known {
 		readOnly = t.ReadOnly()
@@ -464,7 +472,7 @@ func batchCallMutationFailureCause(a *Agent, call provider.ToolCall, o toolOutco
 // not_run/dependency without resolving a proxy. Proxies and unknown tools
 // return false so executeOne can resolve the real target first.
 func batchCallStaticallySkippable(a *Agent, call provider.ToolCall) bool {
-	t, _, ambiguous := a.tools.ResolveCall(call.Name)
+	t, _, ambiguous := a.svc.tools.ResolveCall(call.Name)
 	if t == nil || len(ambiguous) > 0 {
 		// Unknown / ambiguous: fail closed via executeOne path.
 		return false
