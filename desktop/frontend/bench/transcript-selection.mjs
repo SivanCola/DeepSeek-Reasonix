@@ -121,7 +121,12 @@ try {
     })() : [];
     const start = textRects.find((rect) => rect.width > 8 && rect.bottom > viewport.top && rect.top < viewport.bottom) ?? candidate?.rect;
     if (!start) return null;
-    const startX = start.left + 2;
+    // Press mid-text rather than at the row's left edge. A left-edge caret
+    // freezes the anchor at offset 0, so an upward drag legitimately copies
+    // nothing from the anchor turn and the 20-turn count would depend only on
+    // how far the focus lands. Mid-text also exercises the frozen anchor's
+    // real character offset instead of the trivial row boundary.
+    const startX = Math.min(start.right - 4, start.left + Math.max(start.width * 0.45, 60));
     return {
       start: { x: startX, y: (Math.max(start.top, viewport.top) + Math.min(start.bottom, viewport.bottom)) / 2 },
       activate: { x: Math.min(start.right - 2, startX + 30), y: (Math.max(start.top, viewport.top) + Math.min(start.bottom, viewport.bottom)) / 2 },
@@ -172,38 +177,54 @@ try {
     transcript.dispatchEvent(new Event("scroll"));
   });
   await page.waitForTimeout(300);
+  // One extra turn of margin below the 20-turn contract: Virtuoso can still
+  // be settling row heights after edge scrolling, so the caret may land one
+  // row away from the measured target when the pointer move is delivered.
+  const focusTargetTurn = Math.max(0, points.anchorTurn - 21);
+  // Target one extra turn beyond the 20-turn contract: Virtuoso can still be
+  // settling row heights after edge scrolling, so the caret may land one row
+  // away from the measured target when the pointer move is delivered.
+  const findLogicalFocusPoint = () => page.evaluate((targetTurn) => {
+    const transcript = document.querySelector(".transcript");
+    if (!transcript) return null;
+    const viewport = transcript.getBoundingClientRect();
+    const root = [...transcript.querySelectorAll("[data-transcript-selectable]")].find((element) => {
+      const rect = element.getBoundingClientRect();
+      const turn = element.textContent?.match(/\bbench turn (\d+):/);
+      return turn && Number(turn[1]) <= targetTurn
+        && rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+    });
+    if (!root) return null;
+    const rect = root.getBoundingClientRect();
+    return {
+      x: Math.min(rect.right - 2, rect.left + 8),
+      y: (Math.max(rect.top, viewport.top) + Math.min(rect.bottom, viewport.bottom)) / 2,
+    };
+  }, Math.max(0, points.anchorTurn - 21));
   let logicalFocusPoint = null;
   for (let index = 0; index < 40 && !logicalFocusPoint; index += 1) {
-    logicalFocusPoint = await page.evaluate((targetTurn) => {
-      const transcript = document.querySelector(".transcript");
-      if (!transcript) return null;
-      const viewport = transcript.getBoundingClientRect();
-      const root = [...transcript.querySelectorAll("[data-transcript-selectable]")].find((element) => {
-        const rect = element.getBoundingClientRect();
-        const turn = element.textContent?.match(/\bbench turn (\d+):/);
-        return turn && Number(turn[1]) <= targetTurn
-          && rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
-      });
-      if (!root) return null;
-      const rect = root.getBoundingClientRect();
-      return {
-        x: Math.min(rect.right - 2, rect.left + 8),
-        y: (Math.max(rect.top, viewport.top) + Math.min(rect.bottom, viewport.bottom)) / 2,
-      };
-    }, Math.max(0, points.anchorTurn - 20));
+    logicalFocusPoint = await findLogicalFocusPoint();
     if (!logicalFocusPoint) {
       await page.mouse.wheel(0, -250);
       await page.waitForTimeout(50);
     }
   }
   assert(logicalFocusPoint != null, "deep logical drag settles over a visible 20+ turn target");
-  await page.mouse.move(logicalFocusPoint.x + 24, logicalFocusPoint.y, { steps: 4 });
-  await page.mouse.move(logicalFocusPoint.x, logicalFocusPoint.y, { steps: 8 });
-  await page.waitForFunction(
-    () => document.querySelectorAll(".transcript-selection-overlay__rect").length > 0,
-    undefined,
-    { timeout: 5_000 },
-  );
+  // Rows can shift between measuring the focus target and delivering the
+  // pointer move. Re-derive the coordinates on every attempt so the caret
+  // ends on a mounted selectable row and the overlay actually paints.
+  let overlayPainted = false;
+  for (let attempt = 0; attempt < 5 && !overlayPainted; attempt += 1) {
+    await page.mouse.move(logicalFocusPoint.x + 24, logicalFocusPoint.y, { steps: 4 });
+    await page.mouse.move(logicalFocusPoint.x, logicalFocusPoint.y, { steps: 8 });
+    overlayPainted = await page.waitForFunction(
+      () => document.querySelectorAll(".transcript-selection-overlay__rect").length > 0,
+      undefined,
+      { timeout: 3_000 },
+    ).then(() => true, () => false);
+    if (!overlayPainted) logicalFocusPoint = (await findLogicalFocusPoint()) ?? logicalFocusPoint;
+  }
+  assert(overlayPainted, "cross-page drag paints the logical selection overlay");
 
   const during = await page.evaluate(({ x, y }) => {
     const selection = document.getSelection();
@@ -320,8 +341,12 @@ try {
     transcript.scrollTop = 0;
     transcript.dispatchEvent(new Event("scroll"));
   });
+  // Query and scroll advancement are separate steps: advancing scrollTop in
+  // the same evaluate as a missed query lets the scroll position run ahead of
+  // Virtuoso's row mounting under load, skipping every selectable row. Give
+  // each position two settle periods and wrap around at the bottom.
   let forwardPoints = null;
-  for (let index = 0; index < 100 && !forwardPoints; index += 1) {
+  for (let index = 0; index < 120 && !forwardPoints; index += 1) {
     await page.waitForTimeout(50);
     forwardPoints = await page.evaluate(() => {
       const transcript = document.querySelector(".transcript");
@@ -339,10 +364,7 @@ try {
         return rects;
       }).filter((rect) => rect.width > 8 && rect.bottom > viewport.top + 4 && rect.top < viewport.bottom - 4);
       const start = textRects[0];
-      if (!start) {
-        transcript.scrollTop += transcript.clientHeight / 2;
-        return null;
-      }
+      if (!start) return null;
       const y = (Math.max(start.top, viewport.top + 4) + Math.min(start.bottom, viewport.bottom - 4)) / 2;
       return {
         start: { x: start.left + 2, y },
@@ -350,6 +372,14 @@ try {
         edge: { x: start.left + 2, y: viewport.bottom - 2 },
       };
     });
+    if (!forwardPoints && index % 2 === 1) {
+      await page.evaluate(() => {
+        const transcript = document.querySelector(".transcript");
+        if (!transcript) return;
+        const max = transcript.scrollHeight - transcript.clientHeight;
+        transcript.scrollTop = transcript.scrollTop >= max - 4 ? 0 : transcript.scrollTop + transcript.clientHeight / 2;
+      });
+    }
   }
   assert(forwardPoints != null, "settled reverse selection leaves a viewport where forward selection can start");
   await page.evaluate(() => {
