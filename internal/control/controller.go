@@ -3827,23 +3827,7 @@ func (c *Controller) snapshotWithDurability(markActivity, forceRewrite, shutdown
 	if strategyErr != nil {
 		return false, strategyErr
 	}
-	forceRewrite = forceRewrite || s.NeedsRewriteSave()
-	var err error
-	if forceRewrite {
-		err = s.SaveRewrite(path)
-	} else {
-		err = s.SaveSnapshot(path)
-		if errors.Is(err, agent.ErrSessionSnapshotConflict) {
-			// The no-rewrite decision may already be stale: auto-compaction
-			// can rewrite history between the decision and the write. Re-check
-			// and retry once as an owned rewrite before treating the failure as
-			// a real cross-runtime conflict.
-			if s.NeedsRewriteSave() {
-				forceRewrite = true
-				err = s.SaveRewrite(path)
-			}
-		}
-	}
+	err, forceRewrite := persistSessionSnapshot(s, path, forceRewrite)
 	if err != nil {
 		if shutdownRecovery && errors.Is(err, agent.ErrSessionFileLockHeld) {
 			recoveredPath, recoverErr := c.recoverShutdownSnapshot(path, err)
