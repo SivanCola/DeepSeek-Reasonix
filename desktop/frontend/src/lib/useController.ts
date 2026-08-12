@@ -705,6 +705,19 @@ function hasCachedLiveTurn(state: State | undefined): boolean {
   );
 }
 
+// Skip replace when a live transcript is already on screen; an empty
+// surface still has to apply history or switch-back shows Welcome.
+function shouldApplyHydratedHistory(
+  skipHistory: boolean,
+  hasProjection: boolean,
+  foregroundTurnActive: boolean,
+  state: State | undefined,
+): boolean {
+  if (skipHistory || !hasProjection) return false;
+  if (!foregroundTurnActive) return true;
+  return (state?.items.length ?? 0) === 0 && !hasCachedLiveTurn(state);
+}
+
 function hasReusableCachedTranscript(state: State | undefined, sessionPath?: string, revision?: number, digest?: string): boolean {
   if (!state || state.items.length === 0) return false;
   const expectedSessionPath = (sessionPath ?? "").trim();
@@ -2944,8 +2957,10 @@ export function useController() {
         dispatchTo(tabId, { type: "local_notice", level: "warn", text: errText });
         addBreadcrumb("tab.hydrate", `history failed ${tabId} ms=${Date.now() - historyStartedAt}`); return;
       }
-      if (!skipHistory && projection !== undefined && !foregroundTurnActive()) {
-        if (deferResetUntilHistory && stillCurrent()) dispatchTo(tabId, { type: "reset" });
+      if (shouldApplyHydratedHistory(skipHistory, projection !== undefined, foregroundTurnActive(), statesRef.current.get(tabId))) {
+        // Reset wipes running/live flags. Keep them when this apply is only
+        // filling an empty surface that already knows a turn is in flight.
+        if (deferResetUntilHistory && stillCurrent() && !foregroundTurnActive()) dispatchTo(tabId, { type: "reset" });
         dispatchTo(tabId, {
           type: "history_replace",
           items: projection.items,
@@ -4614,9 +4629,15 @@ export function useController() {
       await reassertVisibleTabAfterStaleNavigation("topic.activate", meta.id);
       return meta;
     }
-    // Save previous tab's items so the new tab can use them as a placeholder
-    // during loading, avoiding a blank/Welcome flash before history arrives.
-    const prevItems = activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current)?.items : undefined;
+    // Same-session items can fill the gap before history lands. Another
+    // session's transcript would look like the old chat on a new surface.
+    const prevState = activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current) : undefined;
+    const sameSession = Boolean(
+      meta.sessionPath &&
+      prevState?.meta?.sessionPath &&
+      prevState.meta.sessionPath === meta.sessionPath,
+    );
+    const prevItems = sameSession ? prevState?.items : undefined;
     pending.placeholderItems = prevItems;
     for (const id of Array.from(statesRef.current.keys())) {
       if (id !== meta.id) {
