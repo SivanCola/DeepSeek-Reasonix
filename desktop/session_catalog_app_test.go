@@ -245,6 +245,60 @@ func TestListProjectTopicsDoesNotDuplicateIndexedLiveTab(t *testing.T) {
 	}
 }
 
+func TestListProjectTopicsFoldsRestoredLegacyTopicTabIntoOneRow(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := desktopSessionDir(globalWorkspaceRoot())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	save := func(path, topic string) {
+		t.Helper()
+		session := agent.NewSession("sys")
+		session.Add(provider.Message{Role: provider.RoleUser, Content: "question"})
+		session.Add(provider.Message{Role: provider.RoleAssistant, Content: "answer"})
+		if err := session.Save(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := agent.SaveBranchMetaPreserveUpdated(path, agent.BranchMeta{
+			ID: agent.BranchID(path), Scope: "global", TopicID: topic,
+			TopicTitle: "Upgraded conversation",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root := filepath.Join(dir, "root.jsonl")
+	copyPath := filepath.Join(dir, "copy.jsonl")
+	save(root, "conversation")
+	save(copyPath, "legacy-copy-topic")
+	if err := agent.SaveBranchMetaPreserveUpdated(copyPath, agent.BranchMeta{
+		ID: "copy", Scope: "global", TopicID: "legacy-copy-topic",
+		Recovered: true, ParentID: "root", RecoveryDepth: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	installSessionCatalogForTest(t, app, dir, "global", "")
+	// A restored pre-upgrade tab still carries the legacy topic ID for the
+	// recovery copy that the catalog re-anchored onto the root logical topic.
+	// withLiveTopics must dedupe by the projected topic, not the tab's one,
+	// so the sidebar keeps exactly one row for the conversation.
+	app.tabs["tab-1"] = &WorkspaceTab{
+		ID: "tab-1", Scope: "global",
+		TopicID: "legacy-copy-topic", TopicTitle: "Upgraded conversation",
+		SessionPath: copyPath,
+	}
+	page, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: "global", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].TopicID != "conversation" {
+		t.Fatalf("page items = %#v, want one folded conversation row", page.Items)
+	}
+	if !page.Items[0].Open {
+		t.Fatal("open recovery tab must aggregate onto the logical row")
+	}
+}
+
 // The catalog goroutine outlives every request, so an unbounded metadata sync
 // there can hold the catalog's single-writer mutex forever and freeze the whole
 // sidebar. Guard the call shape, not just today's behaviour.

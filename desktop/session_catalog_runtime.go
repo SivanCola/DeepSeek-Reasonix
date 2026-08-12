@@ -182,6 +182,15 @@ func (a *App) metadataProjectTopics(scope, workspaceRoot string) []ProjectNode {
 }
 
 func (a *App) runtimeOnlyProjectTopics(scope, workspaceRoot string) []ProjectNode {
+	nodes, _ := a.runtimeOnlyProjectTopicsWithSessions(scope, workspaceRoot)
+	return nodes
+}
+
+// runtimeOnlyProjectTopicsWithSessions also reports each runtime topic's known
+// session paths so callers can resolve the topics those sessions project onto
+// in the catalog (a restored tab may carry a legacy topic ID for a re-anchored
+// recovery lineage).
+func (a *App) runtimeOnlyProjectTopicsWithSessions(scope, workspaceRoot string) ([]ProjectNode, map[string][]string) {
 	a.mu.RLock()
 	snapshots := []catalogRuntimeSnapshot{}
 	collect := func(tab *WorkspaceTab, open bool) {
@@ -209,11 +218,15 @@ func (a *App) runtimeOnlyProjectTopics(scope, workspaceRoot string) []ProjectNod
 	}
 	a.mu.RUnlock()
 	byTopic := map[string][]catalogRuntimeSnapshot{}
+	sessionsByTopic := map[string][]string{}
 	for _, snapshot := range snapshots {
 		if snapshot.sessionPath == "" && snapshot.ctrl != nil {
 			snapshot.sessionPath = snapshot.ctrl.SessionPath()
 		}
 		byTopic[snapshot.topicID] = append(byTopic[snapshot.topicID], snapshot)
+		if path := strings.TrimSpace(snapshot.sessionPath); path != "" {
+			sessionsByTopic[snapshot.topicID] = append(sessionsByTopic[snapshot.topicID], path)
+		}
 	}
 	topicIDs := make([]string, 0, len(byTopic))
 	for topicID := range byTopic {
@@ -266,7 +279,7 @@ func (a *App) runtimeOnlyProjectTopics(scope, workspaceRoot string) []ProjectNod
 		}
 		out = append(out, node)
 	}
-	return out
+	return out, sessionsByTopic
 }
 
 func (a *App) metadataTopicPage(req ProjectTopicPageRequest) ProjectTopicPage {
@@ -422,7 +435,7 @@ func (a *App) ListProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPage, 
 	if err != nil {
 		return page, err
 	}
-	return a.withLiveTopics(req, page), nil
+	return a.withLiveTopics(catalog, req, page), nil
 }
 
 // withLiveTopics restores topics the catalog does not (yet) carry. A tab is
@@ -430,7 +443,7 @@ func (a *App) ListProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPage, 
 // can lag a fresh session, fall behind a stalled writer, or run degraded — and
 // the sidebar must never hide a conversation this app is running. Only an
 // uncursored page merges, so keyset pagination past it stays the catalog's.
-func (a *App) withLiveTopics(req ProjectTopicPageRequest, page ProjectTopicPage) ProjectTopicPage {
+func (a *App) withLiveTopics(catalog *sessioncatalog.Catalog, req ProjectTopicPageRequest, page ProjectTopicPage) ProjectTopicPage {
 	if strings.TrimSpace(req.Cursor) != "" {
 		return page
 	}
@@ -440,8 +453,18 @@ func (a *App) withLiveTopics(req ProjectTopicPageRequest, page ProjectTopicPage)
 	}
 	query := strings.ToLower(strings.TrimSpace(req.Query))
 	live := []ProjectNode{}
-	for _, node := range a.runtimeOnlyProjectTopics(req.Scope, req.WorkspaceRoot) {
+	runtimeNodes, sessionsByTopic := a.runtimeOnlyProjectTopicsWithSessions(req.Scope, req.WorkspaceRoot)
+	ctx, cancel := a.catalogReadContext()
+	defer cancel()
+	for _, node := range runtimeNodes {
 		if indexed[node.TopicID] {
+			continue
+		}
+		// A restored tab may still carry a legacy topic ID for a recovery
+		// session the catalog re-anchored onto the root logical topic. That
+		// logical row already represents the conversation, so a second
+		// runtime-only row would break the one-row ordinary-list contract.
+		if liveTopicProjectedOnPage(ctx, catalog, sessionsByTopic[node.TopicID], indexed) {
 			continue
 		}
 		if query != "" && !strings.Contains(strings.ToLower(node.Label), query) {
@@ -469,6 +492,27 @@ func (a *App) withLiveTopics(req ProjectTopicPageRequest, page ProjectTopicPage)
 	}
 	page.Items = append(kept, page.Items...)
 	return page
+}
+
+// liveTopicProjectedOnPage reports whether every catalog-known session of a
+// runtime-only topic already projects onto a topic on this page. Any session
+// the catalog has not indexed yet keeps the live row (that is the lag case
+// withLiveTopics exists for), and an off-page projection also keeps it so an
+// open conversation never disappears from the first page.
+func liveTopicProjectedOnPage(ctx context.Context, catalog *sessioncatalog.Catalog, paths []string, indexed map[string]bool) bool {
+	if catalog == nil || len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		record, ok, err := catalog.GetSession(ctx, path)
+		if err != nil || !ok {
+			return false
+		}
+		if !indexed[record.TopicID] {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) catalogTopicPage(catalog *sessioncatalog.Catalog, req ProjectTopicPageRequest) (ProjectTopicPage, error) {
