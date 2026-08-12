@@ -2,7 +2,9 @@ package sessioncatalog
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"reasonix/internal/agent"
@@ -234,6 +236,80 @@ func TestRecoveryFilenameParentID(t *testing.T) {
 	}
 	if agent.LooksLikeRecoveryFilename("/s/chat.jsonl") {
 		t.Fatal("normal session must not look like recovery")
+	}
+}
+
+func TestUpgradeMatrixV4RebuildKeepsSingleLogicalRowAndAuthority(t *testing.T) {
+	// Simulates 1.24.2-style multi-topic recovery storm → new v4 projection →
+	// discard cache → reindex. Ordinary list stays one row; JSONL/meta bytes
+	// are never rewritten (the 1.23.0→new-version reinstall path).
+	ctx := context.Background()
+	dir := t.TempDir()
+	cacheDir := t.TempDir()
+	root := filepath.Join(dir, "root.jsonl")
+	copyPath := filepath.Join(dir, "copy.jsonl")
+	leaf := filepath.Join(dir, "leaf.jsonl")
+	saveLineageSession(t, root, "q", "a")
+	saveLineageSession(t, copyPath, "q", "a")
+	saveLineageSession(t, leaf, "q", "a", "next", "done")
+	for path, meta := range map[string]agent.BranchMeta{
+		root:     {ID: "root", Scope: "global", TopicID: "conversation", TopicTitle: "Upgraded"},
+		copyPath: {ID: "copy", Scope: "global", TopicID: "legacy-copy-topic", Recovered: true, ParentID: "root", RecoveryDepth: 1},
+		leaf:     {ID: "leaf", Scope: "global", TopicID: "legacy-leaf-topic", Recovered: true, ParentID: "copy", RecoveryDepth: 2},
+	} {
+		if err := agent.SaveBranchMetaPreserveUpdated(path, meta); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	before := map[string]string{}
+	for _, path := range []string{root, copyPath, leaf, agent.BranchMetaPath(root), agent.BranchMetaPath(copyPath), agent.BranchMetaPath(leaf)} {
+		before[path] = hash(path)
+	}
+
+	openAndList := func(label string) (topicID, rep string) {
+		t.Helper()
+		catalog, err := Open(ctx, Options{Path: filepath.Join(cacheDir, label+".sqlite"), DisableRepair: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer catalog.Close(ctx)
+		if err := catalog.ReconcileDirectory(ctx, DirectoryTarget{Path: dir, Scope: "global"}); err != nil {
+			t.Fatal(err)
+		}
+		page, err := catalog.ListTopics(ctx, TopicPageRequest{Scope: "global", Limit: 50})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Items) != 1 {
+			t.Fatalf("%s ListTopics = %+v, want one logical row", label, page.Items)
+		}
+		return page.Items[0].TopicID, page.Items[0].RepresentativePath
+	}
+
+	topic1, rep1 := openAndList("pass1")
+	topic2, rep2 := openAndList("pass2")
+	if topic1 != "conversation" || topic2 != "conversation" {
+		t.Fatalf("logical topics = %q/%q, want conversation both rebuilds", topic1, topic2)
+	}
+	if rep1 == "" || rep1 != rep2 {
+		t.Fatalf("representative unstable across rebuilds: %q vs %q", rep1, rep2)
+	}
+	for path, want := range before {
+		if got := hash(path); got != want {
+			t.Fatalf("authority file mutated during catalog rebuild: %s", path)
+		}
+	}
+	// v4 path is independent of older disposable caches.
+	if !strings.HasSuffix(filepath.ToSlash(DefaultPath()), "session-catalog/v4.sqlite") && DefaultPath() != "" {
+		t.Fatalf("DefaultPath = %q, want v4.sqlite", DefaultPath())
 	}
 }
 
