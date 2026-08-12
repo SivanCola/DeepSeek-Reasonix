@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/agent"
+	"reasonix/internal/provider"
 	"reasonix/internal/sessioncatalog"
 )
 
@@ -114,5 +116,62 @@ func TestProjectTreeShellSurvivesCatalogRevisionRace(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("snapshot projects = %#v, want Shell Race", snapshot.Projects)
+	}
+}
+
+func TestUpgradeLegacyRecoveryChainNeedsNoUserActionForOneRowSidebar(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := desktopSessionDir(globalWorkspaceRoot())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	save := func(path, topic string, messages ...provider.Message) {
+		t.Helper()
+		session := agent.NewSession("sys")
+		for _, message := range messages {
+			session.Add(message)
+		}
+		if err := session.Save(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := agent.SaveBranchMetaPreserveUpdated(path, agent.BranchMeta{
+			ID: agent.BranchID(path), Scope: "global", TopicID: topic,
+			TopicTitle: "Upgraded conversation",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q := provider.Message{Role: provider.RoleUser, Content: "question"}
+	a := provider.Message{Role: provider.RoleAssistant, Content: "answer"}
+	next := provider.Message{Role: provider.RoleUser, Content: "continue"}
+	done := provider.Message{Role: provider.RoleAssistant, Content: "done"}
+	root := filepath.Join(dir, "root.jsonl")
+	copy := filepath.Join(dir, "copy.jsonl")
+	leaf := filepath.Join(dir, "leaf.jsonl")
+	save(root, "conversation", q, a)
+	save(copy, "legacy-copy-topic", q, a)
+	save(leaf, "legacy-leaf-topic", q, a, next, done)
+	for path, meta := range map[string]agent.BranchMeta{
+		copy: {ID: "copy", Scope: "global", TopicID: "legacy-copy-topic", Recovered: true, ParentID: "root", RecoveryDepth: 1},
+		leaf: {ID: "leaf", Scope: "global", TopicID: "legacy-leaf-topic", Recovered: true, ParentID: "copy", RecoveryDepth: 2},
+	} {
+		if err := agent.SaveBranchMetaPreserveUpdated(path, meta); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	installSessionCatalogForTest(t, app, dir, "global", "")
+	page, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: "global", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].TopicID != "conversation" || len(page.Items[0].Children) != 0 {
+		t.Fatalf("zero-touch upgraded sidebar = %+v, want one ordinary conversation row", page.Items)
+	}
+	if page.Items[0].RecoveryBranchCount != 0 || page.Items[0].RecoveryUnresolvedCount != 0 ||
+		page.Items[0].Status == topicStatusDivergedRecovery {
+		// Recovery counts and conflict status belong only to History advanced
+		// views; the ordinary root row must stay a plain conversation line.
+		t.Fatalf("ordinary row leaked recovery decoration: %+v", page.Items[0])
 	}
 }

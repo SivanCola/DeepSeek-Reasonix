@@ -173,6 +173,8 @@ func recoveryRank(session SessionRecord) int {
 		return 3
 	case session.RecoveryRole == RecoveryRoleAdopted:
 		return 2
+	case session.RecoveryRole == RecoveryRolePreferred:
+		return 2
 	case session.RecoveryRole == RecoveryRoleDiverged || session.Recovered:
 		return 1
 	default:

@@ -307,6 +307,8 @@ func (a *App) projectNodeFromCatalogTopic(topic sessioncatalog.TopicRecord, topi
 		TurnsState: string(topic.TurnsState), Health: string(topic.Health),
 		CreatedAt: topic.CreatedAt, LastActivityAt: topic.LastActivityAt,
 		Pinned: topic.Pinned, Open: overlay.open, Running: overlay.running, Status: overlay.status,
+		// Ordinary tree is zero-config: never surface recovery counts, badges,
+		// or forced-handling status. History "other saved versions" owns that.
 		Children: []ProjectNode{},
 	}
 	// Fall back to topic-local preference when the workspace map is unavailable
@@ -319,9 +321,21 @@ func (a *App) projectNodeFromCatalogTopic(topic sessioncatalog.TopicRecord, topi
 	runtimeSessions := make([]runtimeSessionStatus, 0, len(topic.Sessions))
 	for _, session := range topic.Sessions {
 		sessionOverlay := sessionOverlays[sessionRuntimeKey(session.Path)]
+		// Aggregate open/running state from every physical member onto the
+		// single logical row — never expand recovery runtimes as children.
+		if sessionOverlay.open {
+			node.Open = true
+		}
+		if sessionOverlay.running {
+			node.Running = true
+			if node.Status == "" {
+				node.Status = sessionOverlay.status
+			}
+		}
 		// 1.23 ordinary-list contract: hide idle covered copies and non-
-		// preferred conflict forks. Open/running sessions stay reachable.
-		if !sessioncatalog.OrdinaryTreeSession(session, sessionOverlay.open, sessionOverlay.running, localPreferred) {
+		// preferred conflict forks. Open/running recovery is still not a
+		// second row — status is already aggregated above.
+		if !sessioncatalog.OrdinaryTreeSession(session, false, false, localPreferred) {
 			continue
 		}
 		visible = append(visible, session)
@@ -331,58 +345,27 @@ func (a *App) projectNodeFromCatalogTopic(topic sessioncatalog.TopicRecord, topi
 	}
 	summary := topicSummaryFromCatalogTopic(topic, visible)
 	if topicHiddenAsRecoveryOnly(summary, topic.Pinned, append(runtimeSessions, runtimeSessionStatus{
-		open: overlay.open, running: overlay.running,
+		open: overlay.open || node.Open, running: overlay.running || node.Running,
 	})) {
 		return ProjectNode{Children: []ProjectNode{}}, false
 	}
 	// After filtering non-preferred recovery forks, a topic may have nothing
 	// left. Keep pinned/open shells; otherwise drop the empty row.
 	if len(visible) == 0 {
-		if topic.Pinned || overlay.open || overlay.running {
+		if topic.Pinned || overlay.open || overlay.running || node.Open || node.Running {
 			return node, true
 		}
 		return ProjectNode{Children: []ProjectNode{}}, false
 	}
-	// A single effective session collapses to a normal topic row.
-	if len(visible) <= 1 {
-		return node, true
-	}
-	diverged := 0
-	for _, session := range visible {
-		if session.RecoveryRole == sessioncatalog.RecoveryRoleDiverged ||
-			(session.Recovered && !session.RecoveryCopy && session.RecoveryRole != sessioncatalog.RecoveryRoleAdopted) {
-			diverged++
-		}
-	}
-	if diverged >= 2 {
-		// Non-destructive choice prompt. The frontend renders the label from
-		// this status so it stays translated.
-		node.Status = topicStatusDivergedRecovery
-	}
-	for _, session := range visible {
-		sessionKind := "session"
-		if topic.Scope == "global" {
-			sessionKind = "global_session"
-		}
-		sessionOverlay := sessionOverlays[sessionRuntimeKey(session.Path)]
-		label := strings.TrimSpace(session.CustomTitle)
-		if label == "" {
-			label = strings.TrimSpace(session.Preview)
-		}
-		if label == "" {
-			label = filepath.Base(session.Path)
-		}
-		node.Children = append(node.Children, ProjectNode{
-			Key: projectSessionNodeKey(topic.Scope, session.Path), Kind: sessionKind,
-			Label: label, Root: topic.WorkspaceRoot, TopicID: topic.TopicID,
-			SessionPath: session.Path, Turns: session.Turns,
-			TurnsState: string(session.TurnsState), Health: string(session.Health),
-			CreatedAt: session.CreatedAt, LastActivityAt: session.LastActivityAt,
-			Open: sessionOverlay.open, Running: sessionOverlay.running, Status: sessionOverlay.status,
-			Recovered: session.Recovered, RecoveryReason: session.RecoveryReason,
-			RecoveryDigest: session.RecoveryDigest, RecoveryParentID: session.ParentID,
-			Children: []ProjectNode{},
-		})
+	// Ordinary list is always one logical row. Multiple normal non-recovery
+	// sessions under one topic also collapse: open/running already aggregated.
+	// History "other saved versions" is the only place physical forks appear.
+	if rep := strings.TrimSpace(topic.RepresentativePath); rep != "" {
+		node.SessionPath = rep
+	} else if path := sessioncatalog.CanonicalSessionPathForTopic(visible, ""); path != "" {
+		node.SessionPath = path
+	} else if len(visible) == 1 {
+		node.SessionPath = visible[0].Path
 	}
 	return node, true
 }
@@ -420,6 +403,10 @@ func (a *App) ListProjectTopics(req ProjectTopicPageRequest) (ProjectTopicPage, 
 	out := ProjectTopicPage{Items: []ProjectNode{}}
 	catalog := a.sessionCatalog.Load()
 	if catalog == nil {
+		// Catalog unavailable: use project metadata shells only. Never scan
+		// every recovery JSONL into the ordinary tree (1.23 contract).
+		// While opening/rebuilding with a live catalog, ListTopics already
+		// skips non-ordinary recovery shells so empty pages beat a replica wall.
 		return a.metadataTopicPage(req), nil
 	}
 	limit := req.Limit
@@ -592,6 +579,9 @@ func (a *App) catalogSessionPathForTopic(scope, workspaceRoot, topicID string) s
 	topic, ok, err := catalog.GetTopic(a.bootContext(), sessioncatalog.TopicKey{Scope: scope, WorkspaceRoot: workspaceRoot, TopicID: topicID})
 	if err != nil || !ok || len(topic.Sessions) == 0 {
 		return ""
+	}
+	if canonical := sessioncatalog.CanonicalSessionPathForTopic(topic.Sessions, ""); canonical != "" {
+		return canonical
 	}
 	preferred := sessioncatalog.PreferredOrdinarySessionPaths(topic.Sessions)
 	sort.SliceStable(topic.Sessions, func(i, j int) bool {

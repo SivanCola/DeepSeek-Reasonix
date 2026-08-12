@@ -45,14 +45,12 @@ func TestProjectNodeFromCatalogTopicFiltersIdleRecoveryCopies(t *testing.T) {
 	if !ok {
 		t.Fatal("mixed topic should stay visible")
 	}
-	// Parent + open copy remain; idle copy is filtered. Two sessions => children.
-	if len(node.Children) != 2 {
-		t.Fatalf("children = %d, want parent + open recovery copy", len(node.Children))
+	// Ordinary list is always one logical row; open recovery only flips Open.
+	if len(node.Children) != 0 {
+		t.Fatalf("children = %d, want collapsed logical row", len(node.Children))
 	}
-	for _, child := range node.Children {
-		if child.SessionPath == "/s/copy.jsonl" {
-			t.Fatal("idle recovery copy must not appear in project tree children")
-		}
+	if !node.Open {
+		t.Fatal("open recovery member must aggregate onto the logical row")
 	}
 }
 
