@@ -721,6 +721,7 @@ export function Transcript({
             components={hasOlderHistory ? TRANSCRIPT_VIRTUOSO_COMPONENTS_WITH_HEADER : TRANSCRIPT_VIRTUOSO_COMPONENTS}
             computeItemKey={(_index, row) => `${tabId ?? ""}:${String(row.key)}`}
             firstItemIndex={firstItemIndex}
+            alignToBottom
             followOutput={(atBottom) => atBottom ? "auto" : false}
             atBottomThreshold={TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX}
             atBottomStateChange={atBottomStateChange}

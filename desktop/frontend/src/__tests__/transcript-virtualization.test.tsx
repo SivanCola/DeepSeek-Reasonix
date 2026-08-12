@@ -248,23 +248,5 @@ function firstTextNode(root: Node): Text | null {
   }
 }
 
-// ── Short transcripts stay top-anchored ──────────────────────────────────────
-// A conversation shorter than the viewport renders from the top of the
-// transcript area. Virtuoso's alignToBottom margin trick pushes the whole list
-// to the viewport bottom, leaving a large empty band above short sessions.
-{
-  const harness = await createTranscriptHarness({ viewportHeight: 600, rowHeight: 100 });
-  try {
-    await harness.render(turns(1), { running: false });
-    await harness.settle();
-    const list = harness.container.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]');
-    ok(list != null, "short transcript mounts the Virtuoso item list");
-    ok(list?.style.marginTop !== "auto", `short content is not bottom-shifted (marginTop=${JSON.stringify(list?.style.marginTop ?? null)})`);
-  } finally {
-    await harness.unmount();
-    await harness.close();
-  }
-}
-
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
