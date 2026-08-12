@@ -42,7 +42,10 @@ const preview = spawn("pnpm", ["exec", "vite", "preview", "--port", String(port)
 let browser;
 try {
   await waitForServer();
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({
+    headless: true,
+    ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}),
+  });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => !document.querySelector(".startup-splash"), undefined, { timeout: 30_000 });
@@ -128,6 +131,72 @@ try {
   });
   assert(rapid.visible > 0, `rapid bidirectional scrolling leaves rendered coverage (${rapid.visible} visible rows)`);
   assert(rapid.top >= 0 && rapid.top <= rapid.max + 1, `rapid scrolling stays within the native scroll range (${rapid.top}/${rapid.max})`);
+
+  // A native scrollbar thumb drag owns the browser's scroll range. Keep
+  // Virtuoso's estimated size tree fixed until pointer release so newly
+  // visited variable-height rows cannot resize the thumb under the pointer.
+  // This is deliberately pointer-gutter-specific; the wheel assertions above
+  // continue to exercise ordinary chat-content scrolling and live measuring.
+  await transcript.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await page.waitForFunction(() => document.querySelector(".transcript__row"));
+  const nativeThumbProbe = await transcript.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const scaleX = rect.width / element.offsetWidth;
+    const contentRight = rect.left + (element.clientLeft + element.clientWidth) * scaleX;
+    const row = element.querySelector(".transcript__row");
+    if (!(row instanceof HTMLElement)) return null;
+    row.dataset.nativeScrollbarProbe = "true";
+    return {
+      x: Math.min(rect.right - 1, contentRight + Math.max(1, (rect.right - contentRight) / 2)),
+      y: rect.top + 5,
+      knownSize: Number.parseFloat(row.dataset.knownSize || "0"),
+      gutter: rect.right - contentRight,
+      scrollHeight: element.scrollHeight,
+    };
+  });
+  assert(nativeThumbProbe && nativeThumbProbe.gutter > 1, `workbench exposes a native scrollbar gutter (${nativeThumbProbe?.gutter ?? 0}px)`);
+  assert(nativeThumbProbe.knownSize > 0, `native scrollbar probe starts from a measured row (${nativeThumbProbe.knownSize}px)`);
+  await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.y);
+  await page.mouse.down();
+  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag === "true");
+  await page.waitForFunction(
+    (knownSize) => document.querySelector('[data-native-scrollbar-probe="true"]')?.style.height === `${knownSize}px`,
+    nativeThumbProbe.knownSize,
+  );
+  await transcript.evaluate((element) => {
+    const row = element.querySelector('[data-native-scrollbar-probe="true"]');
+    const content = row?.firstElementChild;
+    if (content instanceof HTMLElement) content.style.paddingBottom = `${Number.parseFloat(content.style.paddingBottom || "0") + 900}px`;
+  });
+  await page.waitForTimeout(100);
+  const duringNativeThumbDrag = await transcript.evaluate((element) => {
+    const row = element.querySelector('[data-native-scrollbar-probe="true"]');
+    return {
+      knownSize: row instanceof HTMLElement ? Number.parseFloat(row.dataset.knownSize || "0") : 0,
+      fixedHeight: row instanceof HTMLElement ? row.style.height : "",
+      rowHeight: row instanceof HTMLElement ? row.getBoundingClientRect().height : 0,
+      listHeight: element.querySelector('[data-testid="virtuoso-item-list"]')?.getBoundingClientRect().height ?? 0,
+      scrollHeight: element.scrollHeight,
+    };
+  });
+  assert(duringNativeThumbDrag.knownSize === nativeThumbProbe.knownSize, `native thumb drag freezes new row measurements (${duringNativeThumbDrag.knownSize}px)`);
+  assert(duringNativeThumbDrag.fixedHeight === `${nativeThumbProbe.knownSize}px`, `native thumb drag fixes mounted row layout (${duringNativeThumbDrag.fixedHeight})`);
+  assert(Math.abs(duringNativeThumbDrag.scrollHeight - nativeThumbProbe.scrollHeight) <= 8, `native thumb drag keeps the physical scroll range stable (${nativeThumbProbe.scrollHeight} → ${duringNativeThumbDrag.scrollHeight}; row ${duringNativeThumbDrag.rowHeight}; list ${duringNativeThumbDrag.listHeight})`);
+  await page.mouse.up();
+  await page.waitForFunction(
+    (knownSize) => {
+      const transcriptElement = document.querySelector(".transcript");
+      const row = document.querySelector('[data-native-scrollbar-probe="true"]');
+      return transcriptElement?.dataset.nativeScrollbarDrag !== "true"
+        && row instanceof HTMLElement
+        && Number.parseFloat(row.dataset.knownSize || "0") > knownSize + 800;
+    },
+    nativeThumbProbe.knownSize,
+  );
+  assert(true, "native thumb release resumes real row measurement");
 
   // Explicit bottom owns the tail. Subsequent async growth must use Virtuoso's
   // autoscroll API and remain at the physical bottom without Reasonix scrollTop

@@ -1,12 +1,13 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   TouchEvent as ReactTouchEvent,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import type { VirtuosoHandle } from "react-virtuoso";
+import type { SizeFunction, VirtuosoHandle } from "react-virtuoso";
 import { isEditableTarget } from "./keyboardShortcuts";
+import { isNativeVerticalScrollbarPointer, measureTranscriptVirtuosoItem } from "./transcriptNativeScrollbar";
 import {
   isTranscriptSelectionMode,
   type TranscriptScrollMode,
@@ -37,6 +38,8 @@ export function useTranscriptVirtuosoScroll() {
   const bottomRequestTimerRef = useRef<number | null>(null);
   const modeRef = useRef<TranscriptScrollMode>("tail-follow");
   const touchStartYRef = useRef<number | null>(null);
+  const nativeScrollbarDragRef = useRef(false);
+  const [nativeScrollbarDragging, setNativeScrollbarDragging] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
 
@@ -78,12 +81,40 @@ export function useTranscriptVirtuosoScroll() {
     publishMode(mode);
   }, [publishMode]);
 
+  const finishNativeScrollbarDrag = useCallback(() => {
+    if (!nativeScrollbarDragRef.current) return;
+    nativeScrollbarDragRef.current = false;
+    const element = scrollRef.current;
+    if (element) delete element.dataset.nativeScrollbarDrag;
+    // Changing itemSize re-attaches Virtuoso's ResizeObserver, so rows first
+    // visited during the drag are measured once after the thumb is released.
+    setNativeScrollbarDragging(false);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("pointerup", finishNativeScrollbarDrag, true);
+    window.addEventListener("pointercancel", finishNativeScrollbarDrag, true);
+    window.addEventListener("blur", finishNativeScrollbarDrag);
+    return () => {
+      window.removeEventListener("pointerup", finishNativeScrollbarDrag, true);
+      window.removeEventListener("pointercancel", finishNativeScrollbarDrag, true);
+      window.removeEventListener("blur", finishNativeScrollbarDrag);
+    };
+  }, [finishNativeScrollbarDrag]);
+
+  const itemSize = useCallback<SizeFunction>((element, field) => {
+    // The drag state intentionally changes this callback identity on release.
+    // Virtuoso then re-observes and records the real mounted row sizes.
+    return measureTranscriptVirtuosoItem(element, field, nativeScrollbarDragRef.current || nativeScrollbarDragging);
+  }, [nativeScrollbarDragging]);
+
   const scrollerRef = useCallback((node: HTMLElement | Window | null) => {
     const element = node instanceof HTMLElement ? node as HTMLDivElement : null;
+    if (scrollRef.current !== element) finishNativeScrollbarDrag();
     scrollRef.current = element;
     if (element) element.dataset.scrollMode = modeRef.current;
     setScrollElement((current) => current === element ? current : element);
-  }, []);
+  }, [finishNativeScrollbarDrag]);
 
   const releaseTailFollow = useCallback(() => {
     if (isTranscriptSelectionMode(modeRef.current)) return;
@@ -219,6 +250,16 @@ export function useTranscriptVirtuosoScroll() {
   }, [releaseTailFollow]);
 
   const onPointerDownIntent = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const element = scrollRef.current;
+    if (element && isNativeVerticalScrollbarPointer(element, event.nativeEvent)) {
+      if (!nativeScrollbarDragRef.current) {
+        nativeScrollbarDragRef.current = true;
+        element.dataset.nativeScrollbarDrag = "true";
+        setNativeScrollbarDragging(true);
+      }
+      releaseTailFollow();
+      return true;
+    }
     if (event.button !== 1) return false;
     releaseTailFollow();
     return true;
@@ -236,6 +277,8 @@ export function useTranscriptVirtuosoScroll() {
     virtuosoRef,
     scrollRef,
     scrollElement,
+    itemSize,
+    nativeScrollbarDragging,
     pinnedRef,
     isAtBottom,
     modeRef,
