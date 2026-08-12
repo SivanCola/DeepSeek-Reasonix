@@ -240,6 +240,30 @@ await act(async () => {
 eq(transcriptSelectionStore.getSnapshot().mode, "logical-settled", "a dead-native promoted gesture settles in logical mode");
 await drainFrames();
 
+// Chromium can also migrate a recycled Range anchor into the node that
+// replaced the row instead of collapsing the selection. The frozen anchor
+// must drive promotion; the migrated anchor node must not gate readiness.
+await act(async () => {
+  first.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+});
+await act(async () => {
+  const migrated = document.querySelector("[data-row-key='tool']")!;
+  const range = document.createRange();
+  range.setStart(migrated.firstChild!, 0);
+  range.setEnd(last.firstChild!, 2);
+  const selection = document.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  document.dispatchEvent(new window.Event("selectionchange"));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "logical-dragging", "a migrated native anchor still promotes from the frozen anchor");
+eq(transcriptSelectionStore.getSnapshot().anchor?.rowKey, "row-a", "promotion keeps the frozen pointer-down anchor row");
+await act(async () => {
+  document.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 100, clientY: 40 }));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "logical-settled", "a migrated-anchor promoted gesture settles in logical mode");
+await drainFrames();
+
 last.setAttribute("data-transcript-selection-source-fallback", "");
 await act(async () => {
   first.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 0, clientY: 10 }));

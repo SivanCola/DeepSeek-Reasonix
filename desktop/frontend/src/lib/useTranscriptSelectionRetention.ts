@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import {
   TRANSCRIPT_SELECTABLE_SELECTOR,
   TRANSCRIPT_ROW_SELECTOR,
+  selectableRootForNode,
   transcriptSelectionProjectionReadyAtPoint,
   transcriptSelectionProjectionReadyForNode,
   transcriptSelectionPointFromClient,
@@ -184,19 +185,21 @@ export function useTranscriptSelectionRetention({
     return true;
   }, [publish, scheduleEdgeScroll, setScrollMode, tabId]);
 
-  // Virtuoso can recycle the pointer-down row mid-drag, which collapses the
-  // native Range; a collapsed selection never satisfies the cross-row
-  // promotion conditions in onSelectionChange, so the gesture would strand in
-  // native mode and the user's cross-page selection would be lost. The frozen
-  // anchor plus the live pointer still describe the gesture, so promote from
-  // those instead.
+  // Virtuoso can recycle the pointer-down row mid-drag. The browser then
+  // either collapses the native Range or migrates its anchor into whatever
+  // node replaced the row, so the Range can never again satisfy the cross-row
+  // promotion conditions in onSelectionChange and the gesture would strand in
+  // native mode, losing the user's cross-page selection. The frozen anchor
+  // plus the live pointer still describe the gesture, so promote from those.
   const promoteDeadNativeGesture = useCallback(() => {
     const tracked = selectionRef.current;
     const pointer = lastPointerRef.current;
     if (!tracked || tracked.logical || !tracked.dragging || !tracked.anchorPoint || !pointer) return;
     if (!supportsCaretPoint(document)) return;
     const selection = document.getSelection();
-    if (selection && !selection.isCollapsed) return;
+    // Defer to the selectionchange path while the native Range can still
+    // drive promotion itself: alive and anchored inside a selectable row.
+    if (selection && !selection.isCollapsed && selectableRootForNode(selection.anchorNode)) return;
     const focus = transcriptSelectionPointFromClient(document, pointer.x, pointer.y);
     if (!focus || focus.rowKey === tracked.anchorPoint.rowKey) return;
     if (!transcriptSelectionProjectionReadyAtPoint(document, pointer.x, pointer.y)) return;
@@ -215,7 +218,12 @@ export function useTranscriptSelectionRetention({
     }
     const anchorKey = selectable.closest<HTMLElement>(TRANSCRIPT_ROW_SELECTOR)?.dataset.rowKey;
     if (!anchorKey) return;
-    const anchorPoint = transcriptSelectionPointFromClient(document, event.clientX, event.clientY);
+    // Freeze only offsets that address the canonical rendered projection; a
+    // plain Markdown fallback row would freeze source-character offsets that
+    // no longer match once the worker projection mounts.
+    const anchorPoint = transcriptSelectionProjectionReadyForNode(selectable)
+      ? transcriptSelectionPointFromClient(document, event.clientX, event.clientY)
+      : null;
     clear("new-pointer-selection");
     lifecycleGenerationRef.current += 1;
     cancelStreamingScroll();
@@ -259,10 +267,16 @@ export function useTranscriptSelectionRetention({
         publish();
         return;
       }
-      if (
-        !transcriptSelectionProjectionReadyForNode(selection.anchorNode)
-        || !transcriptSelectionProjectionReadyForNode(selection.focusNode)
-      ) {
+      // Readiness must follow the node that actually produced each point: a
+      // frozen anchor was verified ready when captured (its Range node may
+      // since have migrated into a recycled replacement), and a pointer-derived
+      // focus is checked at the pointer rather than at a dead focus node.
+      const anchorReady = tracked.anchorPoint != null
+        || transcriptSelectionProjectionReadyForNode(selection.anchorNode);
+      const focusReady = nativeFocus != null
+        ? transcriptSelectionProjectionReadyForNode(selection.focusNode)
+        : pointer != null && transcriptSelectionProjectionReadyAtPoint(document, pointer.x, pointer.y);
+      if (!anchorReady || !focusReady) {
         publish();
         return;
       }
