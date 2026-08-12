@@ -1655,44 +1655,6 @@ func normalizeOfficialDeepSeekModels(c *Config) {
 	}
 }
 
-// backfillOfficialDeepSeekResponsesModels upgrades the previous official
-// Responses contract (Flash only) onto Flash+Pro. A later user who unchecks
-// Pro keeps the Pro effort override and is not rewritten.
-func backfillOfficialDeepSeekResponsesModels(p *ProviderEntry) {
-	if !isOfficialDeepSeekResponsesProvider(p) {
-		return
-	}
-	switch strings.TrimSpace(p.Name) {
-	case "deepseek", "deepseek-responses":
-	default:
-		return
-	}
-	if p.HasModel("deepseek-v4-pro") {
-		return
-	}
-	models := p.ModelList()
-	if len(models) != 1 || models[0] != "deepseek-v4-flash" {
-		return
-	}
-	if override, ok := p.ModelOverrides["deepseek-v4-pro"]; ok && len(override.SupportedEfforts) > 0 {
-		return
-	}
-	p.Models = mergeModelLists(models, []string{"deepseek-v4-flash", "deepseek-v4-pro"})
-	p.Default = firstKnownModel(p.Default, p.Models, "deepseek-v4-flash")
-}
-
-func isOfficialDeepSeekResponsesProvider(p *ProviderEntry) bool {
-	return p != nil && strings.EqualFold(strings.TrimSpace(p.Kind), "responses") &&
-		officialProviderHost(p.BaseURL) == "api.deepseek.com"
-}
-
-func backfillOfficialDeepSeekResponsesCapabilities(p *ProviderEntry) {
-	if !isOfficialDeepSeekResponsesProvider(p) {
-		return
-	}
-	backfillOfficialDeepSeekEffortOverrides(p)
-}
-
 func backfillDeepSeekAnthropicCapabilities(p *ProviderEntry) {
 	if p == nil || !strings.EqualFold(strings.TrimSpace(p.Kind), "anthropic") ||
 		!IsOfficialDeepSeekWebSearchEndpoint(p) {
@@ -1702,40 +1664,6 @@ func backfillDeepSeekAnthropicCapabilities(p *ProviderEntry) {
 		p.Thinking = "enabled"
 	}
 	backfillOfficialDeepSeekEffortOverrides(p)
-}
-
-func backfillOfficialDeepSeekEffortOverrides(p *ProviderEntry) {
-	if p == nil {
-		return
-	}
-	capabilities := deepSeekV4EffortOverrides()
-	if model := strings.TrimSpace(p.Model); model != "" && len(p.Models) == 0 {
-		defaults, ok := capabilities[model]
-		if !ok || len(p.SupportedEfforts) > 0 {
-			return
-		}
-		p.SupportedEfforts = append([]string(nil), defaults.SupportedEfforts...)
-		if strings.TrimSpace(p.DefaultEffort) == "" {
-			p.DefaultEffort = defaults.DefaultEffort
-		}
-		return
-	}
-	if p.ModelOverrides == nil {
-		p.ModelOverrides = map[string]ProviderModelOverride{}
-	}
-	for model, defaults := range capabilities {
-		if !p.HasModel(model) {
-			continue
-		}
-		override := p.ModelOverrides[model]
-		if len(override.SupportedEfforts) == 0 {
-			override.SupportedEfforts = append([]string(nil), defaults.SupportedEfforts...)
-			if strings.TrimSpace(override.DefaultEffort) == "" {
-				override.DefaultEffort = defaults.DefaultEffort
-			}
-		}
-		p.ModelOverrides[model] = override
-	}
 }
 
 func officialProviderHost(baseURL string) string {
@@ -2081,16 +2009,16 @@ func ensureDeepSeekOfficialProvider(c *Config) {
 		return
 	}
 	entry := ProviderEntry{
-		Name:          "deepseek",
-		Kind:          "anthropic",
-		BaseURL:       deepSeekAnthropicBaseURL,
-		Models:        []string{"deepseek-v4-flash", "deepseek-v4-pro"},
-		Default:       "deepseek-v4-flash",
-		APIKeyEnv:     "DEEPSEEK_API_KEY",
-		BalanceURL:    "https://api.deepseek.com/user/balance",
-		Thinking:      "enabled",
-		WebSearch:     boolPointer(true),
-		ContextWindow: 1_000_000,
+		Name:           "deepseek",
+		Kind:           "anthropic",
+		BaseURL:        deepSeekAnthropicBaseURL,
+		Models:         []string{"deepseek-v4-flash", "deepseek-v4-pro"},
+		Default:        "deepseek-v4-flash",
+		APIKeyEnv:      "DEEPSEEK_API_KEY",
+		BalanceURL:     "https://api.deepseek.com/user/balance",
+		Thinking:       "enabled",
+		WebSearch:      boolPointer(true),
+		ContextWindow:  1_000_000,
 		Prices:         deepSeekV4PricesForConfig(c),
 		ModelOverrides: deepSeekV4EffortOverrides(),
 	}

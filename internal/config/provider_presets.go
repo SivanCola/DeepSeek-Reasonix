@@ -186,13 +186,6 @@ func kimiK3DirectOverride() ProviderModelOverride {
 	}
 }
 
-func deepSeekV4EffortOverrides() map[string]ProviderModelOverride {
-	return map[string]ProviderModelOverride{
-		"deepseek-v4-flash": {SupportedEfforts: []string{"disabled", "low", "high", "max"}, DefaultEffort: "high"},
-		"deepseek-v4-pro":   {SupportedEfforts: []string{"disabled", "high", "max"}, DefaultEffort: "high"},
-	}
-}
-
 var curatedProviderPresets = []ProviderPreset{
 	{
 		ID:          "deepseek-anthropic",
@@ -200,15 +193,15 @@ var curatedProviderPresets = []ProviderPreset{
 		Description: "Separate official DeepSeek Anthropic-compatible entry for Flash and Pro.",
 		KeyEnv:      "DEEPSEEK_API_KEY",
 		Entries: []ProviderEntry{{
-			Name:          "deepseek-anthropic",
-			Kind:          "anthropic",
-			BaseURL:       deepSeekAnthropicBaseURL,
-			Models:        deepSeekV4Models,
-			Default:       "deepseek-v4-flash",
-			APIKeyEnv:     "DEEPSEEK_API_KEY",
-			BalanceURL:    "https://api.deepseek.com/user/balance",
-			Thinking:      "enabled",
-			WebSearch:     boolPointer(true),
+			Name:           "deepseek-anthropic",
+			Kind:           "anthropic",
+			BaseURL:        deepSeekAnthropicBaseURL,
+			Models:         deepSeekV4Models,
+			Default:        "deepseek-v4-flash",
+			APIKeyEnv:      "DEEPSEEK_API_KEY",
+			BalanceURL:     "https://api.deepseek.com/user/balance",
+			Thinking:       "enabled",
+			WebSearch:      boolPointer(true),
 			ContextWindow:  1_000_000,
 			Prices:         deepSeekV4PricesUSD(),
 			ModelOverrides: deepSeekV4EffortOverrides(),
@@ -551,18 +544,18 @@ var curatedProviderPresets = []ProviderPreset{
 		Description: "Official stateless DeepSeek Responses API for Flash and Pro with server-side web search.",
 		KeyEnv:      "DEEPSEEK_API_KEY",
 		Entries: []ProviderEntry{{
-			Name:             "deepseek-responses",
-			Kind:             "responses",
-			BaseURL:          "https://api.deepseek.com",
-			Models:           deepSeekV4Models,
-			Default:          "deepseek-v4-flash",
-			APIKeyEnv:        "DEEPSEEK_API_KEY",
-			BalanceURL:       "https://api.deepseek.com/user/balance",
-			ContextWindow:    1_000_000,
-			Prices:           deepSeekV4PricesUSD(),
-			ResponsesMode:    "stateless",
-			WebSearch:        boolPointer(true),
-			ModelOverrides:   deepSeekV4EffortOverrides(),
+			Name:           "deepseek-responses",
+			Kind:           "responses",
+			BaseURL:        "https://api.deepseek.com",
+			Models:         deepSeekV4Models,
+			Default:        "deepseek-v4-flash",
+			APIKeyEnv:      "DEEPSEEK_API_KEY",
+			BalanceURL:     "https://api.deepseek.com/user/balance",
+			ContextWindow:  1_000_000,
+			Prices:         deepSeekV4PricesUSD(),
+			ResponsesMode:  "stateless",
+			WebSearch:      boolPointer(true),
+			ModelOverrides: deepSeekV4EffortOverrides(),
 		}},
 	},
 	{
