@@ -282,10 +282,11 @@ type ToolHooks interface {
 // into the main loop.
 type Agent struct {
 	agentConfig
-	prov    provider.Provider
-	tools   *tool.Registry
-	session *Session
-	sessMu  sync.Mutex // guards the session pointer for external Session()/SetSession
+	prov  provider.Provider
+	tools *tool.Registry
+	// sess is the state one conversation owns; SetSession restarts it. See
+	// sessionstate.go.
+	sess sessionRuntime
 	// executorHandoffGuard is enabled by Coordinator only for the executor agent.
 	executorHandoffGuard bool
 	pricing              *provider.Pricing
@@ -297,28 +298,10 @@ type Agent struct {
 	// never nil because New defaults it to event.Discard.
 	sink                event.Sink
 	requireVisibleFinal bool // internal callers require final Content
-	// lastUsage caches the latest provider telemetry for per-turn readouts.
-	// The run loop writes it while a frontend reads it, so it is atomic.
-	lastUsage atomic.Pointer[provider.Usage]
-	outputBudgetState
 
-	// sessCacheHit/sessCacheMiss accumulate cache tokens across every API call
-	// this session, so frontends can show the aggregate hit-rate (Σhit/Σ(hit+miss))
-	// — a steadier, cost-oriented number than the single-turn rate. They are NOT
-	// reset on compaction, so the aggregate never craters when the model-visible
-	// prefix is summarized away. Atomic: the run
-	// loop accumulates them while the status line reads them.
-	sessCacheHit  atomic.Int64
-	sessCacheMiss atomic.Int64
-
-	// lastPrefixShape records the previous provider request's cacheable prefix
-	// so usage events can explain prefix churn on the next request.
-	lastPrefixShape     PrefixShape
-	haveLastPrefixShape bool
-
-	// missingReasoning is the live view of one missing-reasoning incident.
-	// Loop-owned; SetSession clears all of it but the resolve watermark.
-	missingReasoning missingReasoningWatch
+	// unwrittenResolve is the resolve watermark a failed state write still owes.
+	// It outlives the conversation, which is why it is not in sessionRuntime.
+	unwrittenResolve unwrittenResolve
 
 	// missingReasoningWarnState rate-limits recovery retries across sessions and
 	// processes by an opaque provider-configuration fingerprint (#7059). The
@@ -438,13 +421,6 @@ type Agent struct {
 	// turn. See taskstate.go.
 	task taskRuntime
 
-	// todoState is the host's canonical task list: the latest successful
-	// todo_write with completions applied by complete_step. Unlike the per-turn
-	// ledger it survives turn boundaries and compaction (it never rides in the
-	// prompt), so the final-answer gate still sees an unfinished plan a later
-	// turn would otherwise hide. Rebuilt from the session in SetSession.
-	todoMu       sync.Mutex
-	todoState    []evidence.TodoItem
 	planContract *plancontract.Plan // approved plan this turn executes, if any
 
 	// hostAdvanceSeq guarantees unique tool IDs across turns: every
@@ -459,7 +435,7 @@ type Agent struct {
 	// deliveryProfile enables the runtime-enforced delivery contract. The stable
 	// profile prompt explains intent; this is host state and never enters the
 	// provider-cached prefix. The scope ID and checkpoint it works against live
-	// in task; the per-turn expectations live in perTurnState.
+	// in task; the per-turn expectations live in turn.
 	// When agentPreset is set, deliveryProfile is derived for baseline Delivery
 	// and may be elevated per-turn by TaskPolicy (e.g. Light high-risk).
 	deliveryProfile bool
@@ -468,36 +444,17 @@ type Agent struct {
 	// update subsequent turns without rebuilding the agent.
 	agentPreset atomic.Value // string light|balanced|delivery
 
-	// turnPolicy is frozen at the start of the current Run and never observes
-	// mid-turn SetAgentPreset changes.
-	turnPolicy taskpolicy.TaskPolicy
-	// turnPolicySet is true once beginRunTurn derived turnPolicy.
-	turnPolicySet bool
-
-	// perTurnState groups the host flags that are valid for exactly one
-	// Agent.Run. beginRunTurn zeroes the whole struct in one assignment, so a
-	// field added here can never be forgotten in the reset; state that must
-	// survive turns stays directly on Agent.
-	perTurnState
+	// turn is the state of the Run currently executing; beginRunTurn replaces
+	// it wholesale. See turnruntime.go.
+	turn turnRuntime
 
 	// ablation names the subsystems a benchmark arm switched off. The zero value
 	// is the control arm.
 	ablation ablation.Set
 
-	// classifierTaskText is the host-trusted task text for delivery intent
-	// classification, set by sub-agent spawners whose Run input carries host
-	// framing. Empty means classify the raw input verbatim.
-	classifierTaskText string
-
-	// preserveEvidenceOnce makes the next Run keep the turn evidence ledger
-	// instead of resetting it. RunSubAgentWithSession sets it before a
-	// review_report completion nudge so the retry can cite the read receipts
-	// the subagent already earned; consumed (cleared) by that Run.
-	preserveEvidenceOnce bool
-	// deliveryRecoveryPending is armed only when this agent exhausts final
-	// readiness. An explicit host recovery action can consume it to preserve the
-	// failed turn's receipts once; an ordinary user turn still resets evidence.
-	deliveryRecoveryPending bool
+	// pending is what an external caller arms before the next Run; see
+	// turnruntime.go.
+	pending pendingTurn
 
 	// capabilityLedger tracks require/prefer outcomes for this user turn only.
 	// Never serialized into prompts or session state.
@@ -506,8 +463,6 @@ type Agent struct {
 	capabilityAudit *capability.Audit
 	// capabilityGate is the turn's gate memory across final-answer retries.
 	capabilityGate capabilityGateState
-	// pendingReviewWarnings are warn-level findings to surface in the final summary.
-	pendingReviewWarnings []string
 
 	// memQueue, when non-nil, lets the remember/forget tools fold a turn-tail note
 	// about a just-made memory change into the next turn, so it applies this
@@ -519,50 +474,13 @@ type Agent struct {
 
 	// Context management keeps the canonical transcript immutable and installs
 	// at most one provider-visible checkpoint each time compactRatio is crossed.
-	keepPolicy      KeepPolicy
-	compaction      compactionProgress
-	sessionPath     string // bound transcript path for projection sidecars
-	workspaceID     string // stable prompt-cache lineage component
-	cacheState      string // legacy resume telemetry; never provider-visible
-	checkpointState string // none|restored|applied; runtime-only
-	compactionState CompactionState
-	// compactionMu guards projection snapshots/install and the in-memory sidecar
-	// generation. Network summarization never runs while this lock is held.
-	compactionMu sync.Mutex
-	// compactionRunMu singleflights the expensive summary transaction without
-	// holding the session lock during network I/O.
-	compactionRunMu        sync.Mutex
+	keepPolicy             KeepPolicy
 	strictAlternatingRoles bool // coalesce adjacent user turns on provider request copies
 	// activeTurnCreatedAt identifies the real/synthetic user message that began
 	// the currently running turn. Compaction may rewrite older history while a
 	// tool loop is active, but it must keep this message and everything after it
 	// verbatim so cancellation/crash recovery can retain completed tool pairs.
 	activeTurnCreatedAt atomic.Int64
-
-	// stormSig / stormCount track a run of turns that keep failing or getting
-	// blocked the same way so the loop can break a death-spiral. The signature is
-	// each call's (tool, error/blocker) in order, NOT (tool, args): a stuck model
-	// reliably reworks the arguments cosmetically (a re-worded essay, a reordered
-	// object, a different shell command) while the host returns the same refusal or
-	// failure every time — keying on args misses the loop entirely. Because errors
-	// that embed their subject (e.g. "file not found: /x") differ per target,
-	// genuine varied probing does not collapse to one signature. Reset whenever a
-	// turn does anything else (a different failure/block shape, or any success).
-	// See applyStormBreaker.
-	stormSig   string
-	stormCount int
-
-	// progress escalates adaptively on consecutive zero-evidence-gain rounds
-	// (see progress_guard.go); reset with the evidence ledger each turn.
-	progress progressGuard
-
-	// forkRestore, when armed, swaps the frozen fork-bundle conversation in
-	// right after beginRunTurn — the counterfactual-continuation seam.
-	forkRestore func(*runLoopState)
-
-	// lastReasoning is the previous executor round's reasoning-token spend,
-	// read by the governor trigger (live policy and fork capture alike).
-	lastReasoning int
 }
 
 type repeatFailureRecord struct {
@@ -759,9 +677,9 @@ func (a *Agent) MutationObserver() *checkpoint.MutationObserver {
 // /new handlers) can't race the swap. The run loop touches a.session directly and
 // only swaps it via SetSession while idle, so its reads need no lock.
 func (a *Agent) Session() *Session {
-	a.sessMu.Lock()
-	defer a.sessMu.Unlock()
-	return a.session
+	a.sess.mu.Lock()
+	defer a.sess.mu.Unlock()
+	return a.sess.conversation
 }
 
 // SetSession replaces the agent's conversation wholesale. Used by
@@ -769,27 +687,11 @@ func (a *Agent) Session() *Session {
 // so the model picks up exactly where it left off. Callers serialise it against a
 // running turn (it only fires while idle); sessMu guards the pointer swap itself.
 func (a *Agent) SetSession(s *Session) {
-	a.sessMu.Lock()
-	a.session = s
-	a.sessMu.Unlock()
-	a.sessCacheHit.Store(0)
-	a.sessCacheMiss.Store(0)
-	a.resetOutputBudgetState()
-	// pendingResolveAt is deliberately not cleared: an unwritten resolve
-	// watermark belongs to the provider configuration, not to the conversation
-	// being replaced, and the next missing turn still owes it a retry.
-	a.missingReasoning.active = false
-	a.missingReasoning.stateRecorded = false
-	a.missingReasoning.healthyStreak = 0
+	a.sess.reset(s)
+	// The replaced conversation's task is over, but the ledger and the bill
+	// answer to beginRunTurn's scope check rather than to this seam.
 	a.task.repeatFailures = nil
 	a.task.repeatScope = ""
-	a.compactionMu.Lock()
-	a.compactionState = CompactionState{} // lineage change; disk reloaded on Resume
-	a.cacheState = CacheStateUnknown
-	a.compactionMu.Unlock()
-	a.compaction.stuck = false
-	a.compaction.consecutive = 0
-	a.compaction.lastTurn.Store(0)
 	if s != nil {
 		a.rebuildTodoState(s.Snapshot())
 	}
@@ -799,12 +701,12 @@ func (a *Agent) SetSession(s *Session) {
 // reported (nil if no turn has run yet). The TUI uses it to show a context
 // gauge alongside the prompt; ContextManager.Prepare owns cache-breaking
 // maintenance decisions.
-func (a *Agent) LastUsage() *provider.Usage { return a.lastUsage.Load() }
+func (a *Agent) LastUsage() *provider.Usage { return a.sess.output.lastUsage.Load() }
 
 // SessionCache returns the cumulative cache hit/miss prompt tokens across every
 // API call this session — the basis for the status line's aggregate hit-rate.
 func (a *Agent) SessionCache() (hit, miss int) {
-	return int(a.sessCacheHit.Load()), int(a.sessCacheMiss.Load())
+	return int(a.sess.cacheHit.Load()), int(a.sess.cacheMiss.Load())
 }
 
 // ContextWindow returns the configured context-window size in tokens. 0
@@ -990,14 +892,14 @@ func UnappliedSteerNotice(text string) string {
 // before every provider request. itemID correlates the notice with the durable
 // session inbox entry when one exists.
 func (a *Agent) RecordUnappliedSteer(text string, itemID ...string) {
-	if a == nil || a.session == nil {
+	if a == nil || a.sess.conversation == nil {
 		return
 	}
 	id := ""
 	if len(itemID) > 0 {
 		id = itemID[0]
 	}
-	a.session.Add(provider.Message{
+	a.sess.conversation.Add(provider.Message{
 		Role:       provider.RoleTool,
 		Content:    a.withTurnPreferences(midTurnSteerMessage(text)),
 		ToolCallID: provider.LocalOnlyToolID,
@@ -1259,6 +1161,8 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 			temperature:        opts.Temperature,
 			usageSource:        usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
 			modelRef:           strings.TrimSpace(opts.ModelRef),
+			workspaceID:        strings.TrimSpace(opts.WorkspaceID),
+			classifierTaskText: opts.ClassifierTaskText,
 			writeWorkspaceRoot: strings.TrimSpace(opts.WriteWorkspaceRoot),
 			subagentDepth:      subagentDepth,
 			maxSubagentDepth:   maxSubagentDepth,
@@ -1267,9 +1171,13 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 			recentKeep:         opts.RecentKeep,
 			archiveDir:         opts.ArchiveDir,
 		},
-		prov:    prov,
-		tools:   tools,
-		session: session,
+		prov:  prov,
+		tools: tools,
+		sess: sessionRuntime{
+			conversation: session,
+			path:         strings.TrimSpace(opts.SessionPath),
+			cacheState:   CacheStateUnknown,
+		},
 		task: taskRuntime{
 			ledger: evidence.NewLedger(),
 			budget: runBudget{limit: normalizeTaskBudget(opts.TaskBudget)},
@@ -1298,19 +1206,15 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		projectChecks:             append([]instruction.VerifyCheck(nil), opts.ProjectChecks...),
 		deliveryProfile:           opts.DeliveryProfile || agentpreset.Normalize(opts.AgentPreset) == agentpreset.Delivery,
 		ablation:                  opts.Ablation,
-		classifierTaskText:        opts.ClassifierTaskText,
 		capabilityLedger:          opts.CapabilityLedger,
 		capabilityAudit:           opts.CapabilityAudit,
 		keepPolicy:                opts.KeepPolicy,
-		sessionPath:               strings.TrimSpace(opts.SessionPath),
-		workspaceID:               strings.TrimSpace(opts.WorkspaceID),
-		cacheState:                CacheStateUnknown,
 		strictAlternatingRoles:    opts.StrictAlternatingRoles,
 		mutationObserver:          opts.MutationObserver,
 	}
-	a.outputBudget = outputBudgetOf(prov)
-	if a.sessionPath != "" {
-		a.LoadProjectionSidecar(a.sessionPath)
+	a.sess.output.outputBudget = outputBudgetOf(prov)
+	if a.sess.path != "" {
+		a.LoadProjectionSidecar(a.sess.path)
 	}
 	preset := strings.TrimSpace(opts.AgentPreset)
 	if preset == "" && opts.DeliveryProfile {
@@ -1362,10 +1266,10 @@ func (a *Agent) AgentPreset() string {
 
 // TurnPolicy returns the frozen TaskPolicy for the active turn, if any.
 func (a *Agent) TurnPolicy() (taskpolicy.TaskPolicy, bool) {
-	if a == nil || !a.turnPolicySet {
+	if a == nil || !a.turn.policySet {
 		return taskpolicy.TaskPolicy{}, false
 	}
-	return a.turnPolicy, true
+	return a.turn.policy, true
 }
 
 func usageSourceOrDefault(source, fallback string) string {
@@ -1466,8 +1370,8 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	}
 
 	_, state := a.beginRunTurn(ctx, input)
-	if a.forkRestore != nil {
-		a.forkRestore(state)
+	if a.pending.forkRestore != nil {
+		a.pending.forkRestore(state)
 	}
 	state.runMaxSteps = runMaxSteps
 	state.runMaxStepsKey = runMaxStepsKey
@@ -1536,25 +1440,25 @@ func (a *Agent) RestoreDeliveryCheckpoint(checkpoint evidence.DeliveryCheckpoint
 // one explicit continuation. It returns false when there is no matching
 // readiness failure, so normal follow-up turns cannot inherit stale mutations.
 func (a *Agent) PrepareDeliveryRecovery() bool {
-	if !a.deliveryProfile || !a.deliveryRecoveryPending {
+	if !a.deliveryProfile || !a.pending.deliveryRecovery {
 		return false
 	}
-	a.preserveEvidenceOnce = true
-	a.deliveryRecoveryPending = false
+	a.pending.preserveEvidence = true
+	a.pending.deliveryRecovery = false
 	return true
 }
 
 func (a *Agent) updateDeliveryCheckpoint(runErr error) {
-	if !a.deliveryScopeActive || a.task.scopeID == "" || a.task.ledger == nil {
+	if !a.turn.deliveryScopeActive || a.task.scopeID == "" || a.task.ledger == nil {
 		return
 	}
 	cp := a.task.checkpoint
 	if cp.ScopeID != a.task.scopeID {
 		cp = evidence.DeliveryCheckpoint{ScopeID: a.task.scopeID}
 	}
-	cp.CriteriaEstablished = cp.CriteriaEstablished || a.deliveryCriteriaEstablished || a.task.ledger.HasSuccessfulTodoWrite()
+	cp.CriteriaEstablished = cp.CriteriaEstablished || a.turn.deliveryCriteriaEstablished || a.task.ledger.HasSuccessfulTodoWrite()
 	cp.WorkObserved = cp.WorkObserved || a.task.ledger.HasSuccessfulWorkReceipt()
-	persistentOnlyReady := a.deliveryPersistentExpected && !a.deliveryMutationExpected &&
+	persistentOnlyReady := a.turn.deliveryPersistentExpected && !a.turn.deliveryMutationExpected &&
 		a.task.ledger.HasSuccessfulToolReceipt("remember") && !a.task.ledger.HasSuccessfulMutationOtherThan("remember")
 	if _, ok := a.task.ledger.LatestSuccessfulMutationIndex(); ok && !persistentOnlyReady {
 		cp.MutationObserved = true
@@ -1570,7 +1474,7 @@ func (a *Agent) updateDeliveryCheckpoint(runErr error) {
 }
 
 func (a *Agent) deliveryMutationCheckpointReady() bool {
-	if a.task.ledger == nil || !a.deliveryCriteriaEstablished {
+	if a.task.ledger == nil || !a.turn.deliveryCriteriaEstablished {
 		return false
 	}
 	mutation, ok := a.task.ledger.LatestSuccessfulMutationIndex()
@@ -1584,15 +1488,15 @@ func (a *Agent) deliveryMutationCheckpointReady() bool {
 }
 
 func (a *Agent) setTodoState(todos []evidence.TodoItem) {
-	a.todoMu.Lock()
-	a.todoState = evidence.NormalizeSerialTodos(todos)
-	a.todoMu.Unlock()
+	a.sess.todoMu.Lock()
+	a.sess.todoState = evidence.NormalizeSerialTodos(todos)
+	a.sess.todoMu.Unlock()
 }
 
 func (a *Agent) hasActiveCanonicalTodo() bool {
-	a.todoMu.Lock()
-	defer a.todoMu.Unlock()
-	for _, todo := range a.todoState {
+	a.sess.todoMu.Lock()
+	defer a.sess.todoMu.Unlock()
+	for _, todo := range a.sess.todoState {
 		if canonicalTodoStatus(todo.Status) == "in_progress" {
 			return true
 		}
@@ -1601,11 +1505,11 @@ func (a *Agent) hasActiveCanonicalTodo() bool {
 }
 
 func (a *Agent) canonicalTodoProgress() (int, bool) {
-	a.todoMu.Lock()
-	defer a.todoMu.Unlock()
+	a.sess.todoMu.Lock()
+	defer a.sess.todoMu.Unlock()
 	completed := 0
 	incomplete := false
-	for _, todo := range a.todoState {
+	for _, todo := range a.sess.todoState {
 		status := canonicalTodoStatus(todo.Status)
 		if status == "completed" {
 			completed++
@@ -1637,18 +1541,18 @@ func registryHasWriterTools(reg *tool.Registry) bool {
 // synthetic todo_write so the task panel reflects it without the model
 // re-sending the whole list. No-op when nothing matches or it is already done.
 func (a *Agent) advanceCanonicalTodo(step string) {
-	a.todoMu.Lock()
-	if len(a.todoState) == 0 {
-		a.todoMu.Unlock()
+	a.sess.todoMu.Lock()
+	if len(a.sess.todoState) == 0 {
+		a.sess.todoMu.Unlock()
 		return
 	}
-	m, ok := evidence.MatchStep(step, a.todoState)
-	if !ok || !evidence.AdvanceSerialTodo(a.todoState, m.Index-1) {
-		a.todoMu.Unlock()
+	m, ok := evidence.MatchStep(step, a.sess.todoState)
+	if !ok || !evidence.AdvanceSerialTodo(a.sess.todoState, m.Index-1) {
+		a.sess.todoMu.Unlock()
 		return
 	}
-	snapshot := append([]evidence.TodoItem(nil), a.todoState...)
-	a.todoMu.Unlock()
+	snapshot := append([]evidence.TodoItem(nil), a.sess.todoState...)
+	a.sess.todoMu.Unlock()
 	a.recordTodoState(snapshot)
 	a.emitTodoState(snapshot, m.Index)
 }
@@ -2139,10 +2043,10 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 				responsesItems = append(responsesItems, append(json.RawMessage(nil), chunk.ResponsesItem...))
 			}
 		case provider.ChunkUsage:
-			usage, a.lastReasoning = chunk.Usage, chunk.Usage.ReasoningTokens
+			usage, a.turn.lastReasoning = chunk.Usage, chunk.Usage.ReasoningTokens
 			a.storeLatestRequestUsage(chunk.Usage)
-			a.sessCacheHit.Add(int64(chunk.Usage.CacheHitTokens))
-			a.sessCacheMiss.Add(int64(chunk.Usage.CacheMissTokens))
+			a.sess.cacheHit.Add(int64(chunk.Usage.CacheHitTokens))
+			a.sess.cacheMiss.Add(int64(chunk.Usage.CacheMissTokens))
 		case provider.ChunkError:
 			if provider.IsStreamInterrupted(chunk.Err) {
 				stored, _ := finishReasoning()
@@ -2231,7 +2135,7 @@ func (a *Agent) recordInterruptedDisplay(text, reasoning string, calls []provide
 			interrupted = append(interrupted, name)
 		}
 	}
-	a.session.Add(provider.Message{
+	a.sess.conversation.Add(provider.Message{
 		Role:             provider.RoleTool,
 		Content:          text,
 		ReasoningContent: reasoning,
@@ -2250,12 +2154,12 @@ func (a *Agent) recordInterruptedDisplay(text, reasoning string, calls []provide
 }
 
 func (a *Agent) capturePrefixShape(schemas []provider.ToolSchema) PrefixShape {
-	return CaptureShape(a.systemPrompt(), schemas, a.session.RewriteVersion())
+	return CaptureShape(a.systemPrompt(), schemas, a.sess.conversation.RewriteVersion())
 }
 
 func (a *Agent) systemPrompt() string {
 	var b strings.Builder
-	for _, m := range a.session.Messages {
+	for _, m := range a.sess.conversation.Messages {
 		if m.Role != provider.RoleSystem {
 			continue
 		}
@@ -2685,10 +2589,10 @@ func (a *Agent) planModeDecision(toolName string, readOnly bool, safety planmode
 
 func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
 	sig, ok := repeatSuccessSignature(call, t)
-	if !ok || a.repeatSuccessCounts == nil {
+	if !ok || a.turn.repeatSuccessCounts == nil {
 		return "", false
 	}
-	count := a.repeatSuccessCounts[sig]
+	count := a.turn.repeatSuccessCounts[sig]
 	if count < repeatSuccessBreakThreshold {
 		return "", false
 	}
@@ -2733,10 +2637,10 @@ func (a *Agent) recordRepeatSuccess(call provider.ToolCall, t tool.Tool) {
 	if !ok {
 		return
 	}
-	if a.repeatSuccessCounts == nil {
-		a.repeatSuccessCounts = make(map[string]int)
+	if a.turn.repeatSuccessCounts == nil {
+		a.turn.repeatSuccessCounts = make(map[string]int)
 	}
-	a.repeatSuccessCounts[sig]++
+	a.turn.repeatSuccessCounts[sig]++
 }
 
 func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) (string, bool) {

@@ -56,7 +56,7 @@ type batchExecution struct {
 // across goroutines while unknown and writer calls run serially so write/read
 // ordering stays provider-ordered. ToolResult events are emitted after the
 // batch in call order. Images are aligned by index with results.
-func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) batchExecution {
+func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []provider.ToolCall) batchExecution {
 	// The assistant message already stored this slice in Session. Keep execution
 	// state separate so refreshing a dependent preview never mutates shared
 	// session memory outside Session's lock.
@@ -90,7 +90,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 		if earlierWriterRan && writer {
 			if refreshed, changed := refreshCurrentFileDiff(ctx, t, calls[i]); changed {
 				calls[i] = refreshed
-				a.session.UpdateToolCallPreview(refreshed)
+				a.sess.conversation.UpdateToolCallPreview(refreshed)
 				a.emitFullToolDispatch(ctx, refreshed, true)
 			}
 		}
@@ -106,7 +106,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 			results[i] = output
 			return
 		}
-		outcomes[i] = a.executeOne(ctx, calls[i])
+		outcomes[i] = a.executeOne(ctx, turn, calls[i])
 		recordWorkspaceMutation(a.sink, outcomes[i].workspaceMutation)
 		if outcomes[i].executed {
 			surfaceWriters[i] = outcomes[i].workspaceMutation != nil
@@ -126,7 +126,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 	}
 	finalize := func(i int) {
 		if calls[i].ResolvedReadOnly != nil {
-			a.session.UpdateToolCallResolution(calls[i])
+			a.sess.conversation.UpdateToolCallResolution(calls[i])
 			a.emitResolvedToolDispatch(calls[i])
 		}
 		if surfaceWriters[i] || (outcomes[i].resolved && !outcomes[i].resolvedReadOnly) {
