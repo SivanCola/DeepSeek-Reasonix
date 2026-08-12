@@ -544,9 +544,9 @@ func (c *Catalog) ListTopics(ctx context.Context, req TopicPageRequest) (TopicPa
 		if err != nil {
 			return out, err
 		}
-		// Materialize the topic page before loading sessions. Nested SQLite
-		// queries while a rows cursor is open can exhaust the pool and deadlock
-		// under MaxOpenConns.
+		// Drain the page before hydrating sessions: an open cursor holds a
+		// connection, and listTopicSessions needs a second one, so nesting them
+		// deadlocks whenever the pool is saturated (always in memory mode).
 		scanned := make([]TopicRecord, 0, scanLimit)
 		for rows.Next() {
 			var item TopicRecord
@@ -565,9 +565,8 @@ func (c *Catalog) ListTopics(ctx context.Context, req TopicPageRequest) (TopicPa
 			return out, rowsErr
 		}
 		rawCount := len(scanned)
-		var lastScanned TopicRecord
+		overflow := false
 		for _, item := range scanned {
-			lastScanned = item
 			sessions, err := c.listTopicSessions(ctx, TopicKey{
 				Scope: item.Scope, WorkspaceRoot: item.WorkspaceRoot, TopicID: item.TopicID,
 			})
@@ -594,12 +593,14 @@ func (c *Catalog) ListTopics(ctx context.Context, req TopicPageRequest) (TopicPa
 			item.RepresentativePath = topicRepresentativePath(sessions)
 			out.Items = append(out.Items, item)
 			if len(out.Items) > req.Limit {
+				overflow = true
 				break
 			}
 		}
-		if len(out.Items) > req.Limit || rawCount < scanLimit || rawCount == 0 {
+		if overflow || rawCount < scanLimit || rawCount == 0 {
 			break
 		}
+		lastScanned := scanned[rawCount-1]
 		pinned := 0
 		if lastScanned.Pinned {
 			pinned = 1
