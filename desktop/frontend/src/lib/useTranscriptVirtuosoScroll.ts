@@ -22,6 +22,26 @@ declare global {
 
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 const SCROLL_DOWN_KEYS = new Set(["ArrowDown", "PageDown", "End", " ", "Spacebar"]);
+export const TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX = 4;
+
+export function isPinnedTranscriptLayoutGrowth({
+  pinned,
+  previousScrollHeight,
+  previousScrollTop,
+  scrollHeight,
+  scrollTop,
+}: {
+  pinned: boolean;
+  previousScrollHeight: number;
+  previousScrollTop: number;
+  scrollHeight: number;
+  scrollTop: number;
+}) {
+  return pinned
+    && previousScrollHeight > 0
+    && scrollHeight > previousScrollHeight + 1
+    && scrollTop >= previousScrollTop - 1;
+}
 
 /**
  * Product-level scroll intent around React Virtuoso.
@@ -36,6 +56,7 @@ export function useTranscriptVirtuosoScroll() {
   const pinnedRef = useRef(true);
   const bottomRequestRef = useRef(false);
   const bottomRequestTimerRef = useRef<number | null>(null);
+  const pinnedMetricsRef = useRef({ scrollHeight: 0, scrollTop: 0 });
   const modeRef = useRef<TranscriptScrollMode>("tail-follow");
   const touchStartYRef = useRef<number | null>(null);
   const nativeScrollbarDragRef = useRef(false);
@@ -68,7 +89,7 @@ export function useTranscriptVirtuosoScroll() {
       bottomRequestRef.current = false;
       const element = scrollRef.current;
       const atBottom = element != null
-        && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+        && element.scrollHeight - element.scrollTop - element.clientHeight <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
       pinnedRef.current = atBottom;
       setIsAtBottom(atBottom);
       if (!isTranscriptSelectionMode(modeRef.current)) {
@@ -112,7 +133,12 @@ export function useTranscriptVirtuosoScroll() {
     const element = node instanceof HTMLElement ? node as HTMLDivElement : null;
     if (scrollRef.current !== element) finishNativeScrollbarDrag();
     scrollRef.current = element;
-    if (element) element.dataset.scrollMode = modeRef.current;
+    if (element) {
+      element.dataset.scrollMode = modeRef.current;
+      if (pinnedRef.current) {
+        pinnedMetricsRef.current = { scrollHeight: element.scrollHeight, scrollTop: element.scrollTop };
+      }
+    }
     setScrollElement((current) => current === element ? current : element);
   }, [finishNativeScrollbarDrag]);
 
@@ -124,17 +150,41 @@ export function useTranscriptVirtuosoScroll() {
     publishMode("manual");
   }, [clearBottomRequest, publishMode]);
 
+  const followGrowingTail = useCallback(() => {
+    if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
+    const handle = virtuosoRef.current;
+    handle?.autoscrollToBottom();
+    requestAnimationFrame(() => {
+      if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
+      handle?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
+    });
+  }, []);
+
   const atBottomStateChange = useCallback((atBottom: boolean) => {
+    const element = scrollRef.current;
+    if (!atBottom && element && isPinnedTranscriptLayoutGrowth({
+      pinned: pinnedRef.current,
+      previousScrollHeight: pinnedMetricsRef.current.scrollHeight,
+      previousScrollTop: pinnedMetricsRef.current.scrollTop,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    })) {
+      // A mounted row grew while the reader still owned the tail. Virtuoso can
+      // publish `false` before totalListHeightChanged asks us to follow the new
+      // extent; preserve intent through that callback ordering race.
+      pinnedMetricsRef.current = { scrollHeight: element.scrollHeight, scrollTop: element.scrollTop };
+      followGrowingTail();
+      return;
+    }
     // Even inside a bottomRequest window, honor a state change if the reader
     // has genuinely scrolled away from the bottom. Virtuoso fires this callback
     // based on its measured threshold; double-check the native scroll position
     // so non-wheel upward scrolls (native scrollbar drag, middle-button autoscroll)
     // release tail-follow immediately rather than waiting for the timer.
     if (!atBottom && bottomRequestRef.current) {
-      const element = scrollRef.current;
       if (element) {
         const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-        if (distanceFromBottom > 4) {
+        if (distanceFromBottom > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) {
           clearBottomRequest();
           pinnedRef.current = false;
           setIsAtBottom(false);
@@ -143,13 +193,18 @@ export function useTranscriptVirtuosoScroll() {
       }
       return;
     }
-    if (atBottom) clearBottomRequest();
+    if (atBottom) {
+      clearBottomRequest();
+      if (element) {
+        pinnedMetricsRef.current = { scrollHeight: element.scrollHeight, scrollTop: element.scrollTop };
+      }
+    }
     pinnedRef.current = atBottom;
     setIsAtBottom(atBottom);
     if (!isTranscriptSelectionMode(modeRef.current)) {
       publishMode(atBottom ? "tail-follow" : "manual");
     }
-  }, [clearBottomRequest, publishMode]);
+  }, [clearBottomRequest, followGrowingTail, publishMode]);
 
   const reset = useCallback(() => {
     clearBottomRequest();
@@ -191,16 +246,6 @@ export function useTranscriptVirtuosoScroll() {
     handle?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior });
     requestAnimationFrame(() => handle?.autoscrollToBottom());
   }, [beginBottomRequest, publishMode]);
-
-  const followGrowingTail = useCallback(() => {
-    if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
-    const handle = virtuosoRef.current;
-    handle?.autoscrollToBottom();
-    requestAnimationFrame(() => {
-      if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
-      handle?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
-    });
-  }, []);
 
   const scrollToDataIndex = useCallback((firstItemIndex: number, dataIndex: number, behavior: "auto" | "smooth" = "auto") => {
     if (isTranscriptSelectionMode(modeRef.current)) return;

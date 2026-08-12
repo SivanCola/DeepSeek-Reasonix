@@ -82,7 +82,26 @@ try {
   assert(beforeGrowth.anchorKey && beforeGrowth.grownKey, "bench exposes a visible anchor and mounted dynamic row above it");
 
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await transcript.evaluate((element) => {
+    const initialTop = element.scrollTop;
+    let previousTop = initialTop;
+    let stableFrames = 0;
+    element.dataset.benchWheelSettled = "false";
+    const sample = () => {
+      const currentTop = element.scrollTop;
+      const moved = Math.abs(currentTop - initialTop) > 1;
+      stableFrames = moved && Math.abs(currentTop - previousTop) <= 0.5 ? stableFrames + 1 : 0;
+      previousTop = currentTop;
+      if (stableFrames >= 2) {
+        element.dataset.benchWheelSettled = "true";
+        return;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
   await page.mouse.wheel(0, -360);
+  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.benchWheelSettled === "true");
   const gestureStart = await transcript.evaluate((element) => element.scrollTop);
   await transcript.evaluate((element) => {
     const viewport = element.getBoundingClientRect();
@@ -202,10 +221,16 @@ try {
   // autoscroll API and remain at the physical bottom without Reasonix scrollTop
   // correction loops.
   const jumpBottom = page.locator(".transcript__jump-bottom");
-  if (await jumpBottom.count()) await jumpBottom.click();
+  await transcript.evaluate((element) => {
+    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight * 2);
+  });
+  await jumpBottom.waitFor({ state: "visible" });
+  await jumpBottom.click();
   await page.waitForFunction(() => {
     const element = document.querySelector(".transcript");
-    return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+    return element
+      && element.dataset.scrollMode === "tail-follow"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
   });
   await transcript.evaluate((element) => {
     const tail = [...element.querySelectorAll(".transcript__row")].at(-1);
