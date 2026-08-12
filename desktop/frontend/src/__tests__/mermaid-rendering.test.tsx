@@ -268,7 +268,7 @@ console.log("\nmermaid rendering");
     "a blank line after a list still commits the whole list",
   );
   const searchHtml = renderToStaticMarkup(<ReactMarkdown remarkPlugins={[]}>{searchDump}</ReactMarkdown>);
-  ok(searchHtml.includes("<ul>") && searchHtml.includes("<li>") && searchHtml.includes("https://example.com/a"),
+  ok(searchHtml.includes("<ul>") && searchHtml.includes("<li>") && searchHtml.includes("新闻本文"),
     "the search-list source still renders as a list in the final Markdown tree");
 }
 
