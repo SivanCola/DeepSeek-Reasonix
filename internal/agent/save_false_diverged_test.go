@@ -35,7 +35,7 @@ func TestSaveSnapshotStreamingAppendDoesNotDiverge(t *testing.T) {
 	if err := s.SaveSnapshot(path); err != nil {
 		t.Fatalf("initial save: %v", err)
 	}
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		s.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("u%d", i)})
 		s.Add(provider.Message{
 			Role: provider.RoleAssistant, Content: fmt.Sprintf("a%d", i),
@@ -113,7 +113,7 @@ func TestSaveSnapshotLeaseHeldSameRevisionAllowsReshapedPrefix(t *testing.T) {
 	}
 
 	// Keep the 30s autosave cadence growing the transcript on the same path.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		s.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("n%d", i)})
 		s.Add(provider.Message{Role: provider.RoleAssistant, Content: fmt.Sprintf("r%d", i)})
 		if err := s.SaveSnapshot(path); err != nil {
@@ -142,7 +142,7 @@ func TestSaveSnapshotChainAfterRecoveryForkDoesNotCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveRecoveryBranch: %v", err)
 	}
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		s.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("u%d", i)})
 		s.Add(provider.Message{Role: provider.RoleAssistant, Content: fmt.Sprintf("a%d", i), ReasoningContent: "x"})
 		if err := s.SaveSnapshot(info.Path); err != nil {
