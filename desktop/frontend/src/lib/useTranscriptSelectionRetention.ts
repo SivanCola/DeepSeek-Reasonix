@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import {
   TRANSCRIPT_SELECTABLE_SELECTOR,
   TRANSCRIPT_ROW_SELECTOR,
+  transcriptSelectionProjectionReadyAtPoint,
   transcriptSelectionProjectionReadyForNode,
   transcriptSelectionPointFromClient,
   transcriptSelectionPointFromDom,
@@ -158,6 +159,50 @@ export function useTranscriptSelectionRetention({
     if (edgeFrameRef.current === null) edgeFrameRef.current = requestAnimationFrame(edgeScrollTick);
   }, [edgeScrollTick]);
 
+  const promoteTrackedToLogical = useCallback((
+    tracked: TrackedSelection,
+    anchor: TranscriptSelectionPoint,
+    focus: TranscriptSelectionPoint,
+  ): boolean => {
+    const snapshotId = transcriptSelectionStore.promoteToLogical(
+      tabId ?? "",
+      anchor,
+      focus,
+      mergeTranscriptSelectableRows(rowsRef.current, rowOverridesRef.current),
+    );
+    if (snapshotId == null) return false;
+    tracked.logical = true;
+    document.getSelection()?.removeAllRanges();
+    setScrollMode("logical-selecting", "cross-row-selection");
+    try {
+      tracked.captureElement.setPointerCapture(tracked.pointerId);
+    } catch {
+      // Native fallback remains available when pointer capture is rejected.
+    }
+    scheduleEdgeScroll();
+    publish();
+    return true;
+  }, [publish, scheduleEdgeScroll, setScrollMode, tabId]);
+
+  // Virtuoso can recycle the pointer-down row mid-drag, which collapses the
+  // native Range; a collapsed selection never satisfies the cross-row
+  // promotion conditions in onSelectionChange, so the gesture would strand in
+  // native mode and the user's cross-page selection would be lost. The frozen
+  // anchor plus the live pointer still describe the gesture, so promote from
+  // those instead.
+  const promoteDeadNativeGesture = useCallback(() => {
+    const tracked = selectionRef.current;
+    const pointer = lastPointerRef.current;
+    if (!tracked || tracked.logical || !tracked.dragging || !tracked.anchorPoint || !pointer) return;
+    if (!supportsCaretPoint(document)) return;
+    const selection = document.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    const focus = transcriptSelectionPointFromClient(document, pointer.x, pointer.y);
+    if (!focus || focus.rowKey === tracked.anchorPoint.rowKey) return;
+    if (!transcriptSelectionProjectionReadyAtPoint(document, pointer.x, pointer.y)) return;
+    promoteTrackedToLogical(tracked, tracked.anchorPoint, focus);
+  }, [promoteTrackedToLogical]);
+
   const onPointerDownCapture = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     const target = event.target instanceof Element ? event.target : null;
@@ -196,6 +241,7 @@ export function useTranscriptSelectionRetention({
       const selection = document.getSelection();
       if (!selection || selection.isCollapsed) {
         if (!tracked.dragging) clear("selection-collapsed");
+        else promoteDeadNativeGesture();
         return;
       }
       // Freeze the pointer-down endpoint before Virtuoso is allowed to recycle
@@ -220,30 +266,17 @@ export function useTranscriptSelectionRetention({
         publish();
         return;
       }
-      const snapshotId = transcriptSelectionStore.promoteToLogical(
-        tabId ?? "",
-        anchor,
-        focus,
-        mergeTranscriptSelectableRows(rowsRef.current, rowOverridesRef.current),
-      );
-      if (snapshotId == null) return;
-      tracked.logical = true;
-      selection.removeAllRanges();
-      setScrollMode("logical-selecting", "cross-row-selection");
-      try {
-        tracked.captureElement.setPointerCapture(tracked.pointerId);
-      } catch {
-        // Native fallback remains available when pointer capture is rejected.
-      }
-      scheduleEdgeScroll();
-      publish();
+      promoteTrackedToLogical(tracked, anchor, focus);
     };
 
     const onPointerMove = (event: PointerEvent) => {
       const tracked = selectionRef.current;
       if (!tracked?.dragging || event.pointerId !== tracked.pointerId) return;
       lastPointerRef.current = { x: event.clientX, y: event.clientY };
-      if (!tracked.logical) return;
+      if (!tracked.logical) {
+        promoteDeadNativeGesture();
+        return;
+      }
       scheduleLogicalFocus();
       scheduleEdgeScroll();
     };
@@ -342,7 +375,7 @@ export function useTranscriptSelectionRetention({
       document.removeEventListener("keydown", onKeyDown);
       scroll?.removeEventListener("scroll", onScroll);
     };
-  }, [clear, publish, releasePointerCapture, scheduleEdgeScroll, scheduleLogicalFocus, scrollRef, setScrollMode, tabId, updateLogicalFocus]);
+  }, [clear, promoteDeadNativeGesture, promoteTrackedToLogical, publish, releasePointerCapture, scheduleEdgeScroll, scheduleLogicalFocus, scrollRef, setScrollMode, tabId, updateLogicalFocus]);
 
   useEffect(() => {
     lifecycleGenerationRef.current += 1;

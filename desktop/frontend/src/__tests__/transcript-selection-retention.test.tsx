@@ -215,6 +215,31 @@ eq(transcriptSelectionStore.getSnapshot().mode, "none", "pointercancel clears se
 eq(api?.active, false, "pointercancel releases transcript selection state");
 eq(mode, "manual", "pointercancel releases selection scroll ownership");
 
+// Virtuoso recycling the pointer-down row collapses the native Range
+// mid-drag. The frozen anchor plus the live pointer must still promote the
+// gesture to logical selection instead of stranding it in native mode.
+caretDocument.caretPositionFromPoint = (x) => x < 50
+  ? { offsetNode: first.firstChild!, offset: 1 }
+  : { offsetNode: last.firstChild!, offset: 2 };
+const pointDocument = document as Document & { elementFromPoint?: (x: number, y: number) => Element | null };
+pointDocument.elementFromPoint = (x) => (x < 50 ? first : last);
+await act(async () => {
+  first.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "native-dragging", "pointer down begins a native drag with a frozen anchor");
+await act(async () => {
+  document.getSelection()!.removeAllRanges();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  document.dispatchEvent(new window.MouseEvent("pointermove", { bubbles: true, clientX: 100, clientY: 40 }));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "logical-dragging", "a dead native range still promotes from the frozen anchor during drag");
+eq(mode, "logical-selecting", "dead-native promotion transfers scroll ownership to logical selection");
+await act(async () => {
+  document.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 100, clientY: 40 }));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "logical-settled", "a dead-native promoted gesture settles in logical mode");
+await drainFrames();
+
 last.setAttribute("data-transcript-selection-source-fallback", "");
 await act(async () => {
   first.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 0, clientY: 10 }));
