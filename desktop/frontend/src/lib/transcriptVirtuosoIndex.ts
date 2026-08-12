@@ -28,12 +28,19 @@ export function reconcileTranscriptVirtuosoIndex(
   // were prepended; feeding the inverse delta to firstItemIndex is Virtuoso's
   // contract for keeping the previous viewport in place.
   let delta = 0;
-  const searchLimit = Math.min(previous.keys.length, 64);
+  const searchLimit = Math.min(previous.keys.length, 128);
   for (let oldIndex = 0; oldIndex < searchLimit; oldIndex += 1) {
     const newIndex = keys.indexOf(previous.keys[oldIndex]);
     if (newIndex < 0) continue;
     delta = newIndex - oldIndex;
     break;
+  }
+  // If no overlap was found in the search window, treat the entire key set as
+  // replaced. The safe fallback is to keep firstItemIndex unchanged so the
+  // viewport stays where it was, rather than jumping arbitrarily.
+  if (delta === 0 && searchLimit > 0 && keys.length > 0 && !keys.includes(previous.keys[0])) {
+    // No overlap: full replacement. Maintain the previous index anchor.
+    return { resetKey, keys, firstItemIndex: previous.firstItemIndex };
   }
   return {
     resetKey,

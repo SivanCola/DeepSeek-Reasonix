@@ -93,6 +93,7 @@ if (!packageJSON.scripts?.["test:motion-browser"]?.includes("approval-animation.
 const transcriptScript = packageJSON.scripts?.["test:transcript"] ?? "";
 for (const required of [
   "transcript-virtuoso-index.test.ts",
+  "transcript-scroll-release.test.ts",
   "nested-scroll-handoff.test.ts",
   "creation-transcript-scrollbar.test.ts",
   "markdown-table-virtual.test.tsx",

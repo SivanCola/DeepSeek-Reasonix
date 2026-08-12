@@ -94,7 +94,24 @@ export function useTranscriptVirtuosoScroll() {
   }, [clearBottomRequest, publishMode]);
 
   const atBottomStateChange = useCallback((atBottom: boolean) => {
-    if (!atBottom && bottomRequestRef.current) return;
+    // Even inside a bottomRequest window, honor a state change if the reader
+    // has genuinely scrolled away from the bottom. Virtuoso fires this callback
+    // based on its measured threshold; double-check the native scroll position
+    // so non-wheel upward scrolls (native scrollbar drag, middle-button autoscroll)
+    // release tail-follow immediately rather than waiting for the timer.
+    if (!atBottom && bottomRequestRef.current) {
+      const element = scrollRef.current;
+      if (element) {
+        const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+        if (distanceFromBottom > 4) {
+          clearBottomRequest();
+          pinnedRef.current = false;
+          setIsAtBottom(false);
+          if (!isTranscriptSelectionMode(modeRef.current)) publishMode("manual");
+        }
+      }
+      return;
+    }
     if (atBottom) clearBottomRequest();
     pinnedRef.current = atBottom;
     setIsAtBottom(atBottom);
