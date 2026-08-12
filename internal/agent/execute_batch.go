@@ -311,16 +311,8 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 				if results[i] != "" {
 					continue
 				}
-				t, _, ambiguous := a.svc.tools.ResolveCall(calls[i].Name)
-				known := t != nil && len(ambiguous) == 0
-				readOnly := known && t.ReadOnly()
-				if calls[i].Name == "bash" && permission.BashCommandIsReadOnly(json.RawMessage(calls[i].Arguments)) {
-					readOnly = true
-				}
-				isVerification := calls[i].Name == "bash" && evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(json.RawMessage(calls[i].Arguments)))
-				mutates := evidence.ToolCallMutates(calls[i].Name, json.RawMessage(calls[i].Arguments), readOnly)
-				if mutates || isVerification {
-					markDependencySkipped(i)
+				if batchCallStaticallySkippable(a, calls[i]) {
+					markDependencySkipped(i, nil)
 					// markDependencySkipped fills this index; move on.
 					if results[i] != "" {
 						continue
@@ -443,8 +435,6 @@ func batchCallMutationFailureCause(a *Agent, call provider.ToolCall, o toolOutco
 		readOnly = o.effective.readOnly
 	}
 	effects := evidence.ClassifyToolCall(toolName, toolArgs, readOnly)
-	// Verification failures do not open the dependency barrier by themselves,
-	// but a verifier such as cargo check can also be a durable workspace writer.
 	if toolName == "bash" && evidence.IsDeliveryVerificationCommand(bashCommandFromArgs(toolArgs)) && !effects.StateMutation {
 		return nil
 	}

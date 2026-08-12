@@ -157,8 +157,12 @@ func hasResolvedSubstitution(fields []string) bool {
 	return false
 }
 
-// resolvedReadOnlyFields accepts only recursively proven double-quoted command
-// substitutions. Every other dynamic or compound shape remains fail-closed.
+// resolvedReadOnlyFields accepts one narrow dynamic shape: a command from the
+// read-only table with a double-quoted command substitution whose nested
+// command is itself a single, static, argument-safe read-only command. It never
+// evaluates output. Unquoted substitutions, parameters, arithmetic, process
+// substitutions, redirects, assignments, chains, and background jobs remain
+// fail-closed.
 func resolvedReadOnlyFields(command string, nested bool) ([]string, bool, bool) {
 	file, err := shellparse.ParseBash(command)
 	if err != nil || len(file.Stmts) != 1 {

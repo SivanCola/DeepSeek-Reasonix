@@ -194,7 +194,7 @@ func TestBatchDependencyBarrierReportsSanitizedRepositoryCause(t *testing.T) {
 	if err := a.Run(context.Background(), "tag then verify"); err != nil {
 		t.Fatal(err)
 	}
-	got := toolResultByID(a.session, "v1")
+	got := toolResultByID(a.sess.conversation, "v1")
 	if !strings.Contains(got, "repository metadata") {
 		t.Fatalf("dependency result = %q, want repository metadata cause", got)
 	}
@@ -217,7 +217,7 @@ func TestBatchDependencyBarrierDoesNotOpenForFailedBranchListing(t *testing.T) {
 		reg.Add(tl)
 	}
 	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
-	batch := a.executeBatch(context.Background(), []provider.ToolCall{
+	batch := a.executeBatch(context.Background(), &a.turn, []provider.ToolCall{
 		{ID: "r1", Name: "bash", Arguments: `{"command":"git branch -a"}`},
 		{ID: "e1", Name: "edit_file", Arguments: `{"path":"x.txt","old_string":"a","new_string":"b"}`},
 	})

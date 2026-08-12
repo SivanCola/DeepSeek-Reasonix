@@ -88,6 +88,11 @@ func TestClassifyBashCommandEffects(t *testing.T) {
 		{name: "config legacy get", command: "git config user.name", certainty: EffectKnown, permission: true, family: "git config"},
 		{name: "config local set", command: "git config user.name example", certainty: EffectKnown, writes: WriteRepositoryMetadata, family: "git config"},
 		{name: "config global set", command: "git config --global user.name example", certainty: EffectKnown, writes: WriteHostState, family: "git config"},
+		{name: "config edit", command: "git config --edit", certainty: EffectKnown, writes: WriteRepositoryMetadata, family: "git config"},
+		{name: "config global edit", command: "git config --global -e", certainty: EffectKnown, writes: WriteHostState, family: "git config"},
+		{name: "env prefixed status", command: "GOROOT=/x git status", certainty: EffectKnown, family: "git status"},
+		{name: "env utility status", command: "env GOROOT=/x git status", certainty: EffectKnown, family: "git status"},
+		{name: "env flags fail closed", command: "env -i git status", certainty: EffectUnknown, family: "env"},
 
 		{name: "worktree list", command: "git worktree list", certainty: EffectKnown, permission: true, family: "git worktree"},
 		{name: "worktree add", command: "git worktree add ../wt feature", certainty: EffectKnown, writes: WriteWorkspaceContent | WriteRepositoryMetadata, family: "git worktree"},

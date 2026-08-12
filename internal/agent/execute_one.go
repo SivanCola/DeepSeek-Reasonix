@@ -117,15 +117,14 @@ func (a *Agent) parseToolCall(ctx context.Context, plan *toolCallPlan) (toolOutc
 	if canonicalName == "bash" {
 		var permissionReader bool
 		plan.effects, permissionReader = evidence.ClassifyBashToolCall(plan.execArgs)
-		if !permissionReader {
-			return toolOutcome{}, false
+		if permissionReader {
+			// Bash is schema-level writer-capable, but the host can resolve a
+			// concrete invocation to read-only after parsing its arguments. Carry
+			// that fact through permission, mutation accounting, evidence, and the
+			// refreshed local tool receipt without changing the provider schema.
+			plan.readOnly = true
+			plan.resolvedMeta = &tool.ResolvedCall{TargetName: canonicalName, ReadOnly: true}
 		}
-		// Bash is schema-level writer-capable, but the host can resolve a
-		// concrete invocation to read-only after parsing its arguments. Carry
-		// that fact through permission, mutation accounting, evidence, and the
-		// refreshed local tool receipt without changing the provider schema.
-		plan.readOnly = true
-		plan.resolvedMeta = &tool.ResolvedCall{TargetName: canonicalName, ReadOnly: true}
 	} else {
 		plan.effects = evidence.ClassifyToolCall(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
 	}
@@ -418,7 +417,7 @@ func (a *Agent) applyDeliveryPolicyGates(turn *turnRuntime, plan *toolCallPlan) 
 		}, true
 	}
 
-	plan.mutates = evidence.ToolCallMutates(plan.evidenceName, plan.evidenceArgs, plan.readOnly)
+	plan.classifyEffects()
 	persistentWorkflowCall := turn.deliveryPersistentExpected && !turn.deliveryMutationExpected && plan.evidenceName == "remember"
 	if a.deliveryProfile && !persistentWorkflowCall && evidence.ToolCallRequiresDeliveryCriteria(plan.evidenceName, plan.evidenceArgs, plan.readOnly) && !turn.deliveryCriteriaEstablished {
 		return toolOutcome{
@@ -453,7 +452,7 @@ func (a *Agent) applyRecoveryAndPermission(ctx context.Context, plan *toolCallPl
 		plan.recoveryGen = ctrl.Generation()
 		episodeStopped = ctrl.EpisodeStopped(a.recovery.taskID)
 	}
-	if a.svc.recoveryGate != nil && (plan.mutates || plan.verification || plan.planTransition || episodeStopped) {
+	if a.svc.recoveryGate != nil && (plan.effects.StateMutation || plan.verification || plan.planTransition || episodeStopped) {
 		subject := recoverySubject(plan.evidenceName, plan.evidenceArgs)
 		if plan.planTransition {
 			subject = "Update the active execution plan"
@@ -563,7 +562,7 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	// concurrent and avoids holding the workspace during an approval prompt while
 	// still covering every write-side action that follows authorization.
 	// Lazy workspace lease on the first real writer for every role setting.
-	if plan.mutates && a.svc.workspaceLease != nil {
+	if plan.effects.WorkspaceMutation && a.svc.workspaceLease != nil {
 		if err := a.svc.workspaceLease.AcquireWrite(ctx); err != nil {
 			return toolOutcome{
 				output:  fmt.Sprintf("blocked: the workspace did not become available for writing: %v", err),
@@ -601,7 +600,7 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	// Acquire the checkpoint barrier before preimage capture and any hook. It is
 	// held through post hooks and AfterMutation so rewind cannot interleave with
 	// writer-side user code.
-	if !plan.readOnly && a.svc.mutationObserver != nil && a.svc.mutationObserver.Store() != nil {
+	if plan.effects.WorkspaceMutation && a.svc.mutationObserver != nil && a.svc.mutationObserver.Store() != nil {
 		barrier := a.svc.mutationObserver.Store().Barrier()
 		if err := barrier.EnterWrite(); err != nil {
 			return toolOutcome{output: "blocked: " + err.Error(), blocked: true, errMsg: "blocked: mutation barrier unavailable"}, true
@@ -778,8 +777,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	}
 	// Always re-read after post hooks — partial writes and hook side effects can
 	// change the previewed path even when the concrete tool returned an error.
-	a.observeAfterMutation(plan)
-	plan.mutationAfterDone = true
+	a.finalizeObservedToolReceipts(plan, result, execution, err)
 	if a.svc.recoveryGate != nil {
 		a.observeRecoveryResult(ctx, evidenceName, evidenceArgs, readOnly, mutates, result, err, false, false, recoveryGen)
 	}
@@ -869,13 +867,19 @@ func (a *Agent) observeBeforeMutation(ctx context.Context, plan *toolCallPlan) {
 
 // observeAfterMutation records the after fingerprint when a concrete path was
 // known before execution, regardless of tool success or failure.
-func (a *Agent) observeAfterMutation(plan *toolCallPlan) {
+func (a *Agent) observeAfterMutation(plan *toolCallPlan) bool {
 	if a == nil || plan == nil || plan.mutationPath == "" || a.svc.mutationObserver == nil {
-		return
+		return false
 	}
 	toolName := plan.evidenceName
 	if toolName == "" {
 		toolName = plan.call.Name
 	}
-	a.svc.mutationObserver.AfterMutation(plan.mutationPath, toolName)
+	changed := a.svc.mutationObserver.AfterMutation(plan.mutationPath, toolName)
+	if changed {
+		plan.effects.StateMutation = true
+		plan.effects.WorkspaceMutation = true
+		plan.effects.ContentMutation = true
+	}
+	return changed
 }

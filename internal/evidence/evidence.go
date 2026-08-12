@@ -1790,9 +1790,7 @@ func bashContainsVerificationSegment(command string) bool {
 		return false
 	}
 	for _, segment := range segments {
-		normalized, _ := shellsafe.NormalizeBashSafeRedirectsForMatch(segment)
-		fields, malformed := shellparse.StaticFields(normalized)
-		if malformed == "" && bashSegmentIsVerification(fields) {
+		if fields, ok := bashStaticArgv(segment); ok && bashSegmentIsVerification(fields) {
 			return true
 		}
 	}
@@ -1813,7 +1811,7 @@ func bashMayMutate(command string) bool {
 		if normalized == "" {
 			normalized = segment
 		}
-		if staticFields, malformed := shellparse.StaticFields(normalized); malformed == "" && len(staticFields) > 0 && bashSegmentIsVerification(staticFields) {
+		if fields, ok := bashStaticArgv(normalized); ok && bashSegmentIsVerification(fields) {
 			continue
 		}
 		if shellsafe.ClassifyBash(segment).AnyMutation() {
@@ -1838,8 +1836,8 @@ func bashCommandIsVerification(command string) bool {
 		if !safeRedirects {
 			return false
 		}
-		fields, malformed := shellparse.StaticFields(normalized)
-		if malformed != "" || len(fields) == 0 {
+		fields, ok := bashStaticArgv(normalized)
+		if !ok {
 			return false
 		}
 		if bashSegmentIsVerification(fields) {
@@ -1851,6 +1849,14 @@ func bashCommandIsVerification(command string) bool {
 		}
 	}
 	return found
+}
+
+func bashStaticArgv(command string) ([]string, bool) {
+	if fields, _, ok := shellsafe.CommandArgv(command); ok {
+		return fields, true
+	}
+	fields, malformed := shellparse.StaticFields(command)
+	return fields, malformed == "" && len(fields) > 0
 }
 
 // IsDeliveryVerificationCommand reports whether command is a host-recognized

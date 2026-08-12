@@ -53,9 +53,8 @@ func TestObservedFileChangePromotesRepositoryOnlyReceiptToContentMutation(t *tes
 		t.Fatalf("observed effect was not promoted: %+v", plan.effects)
 	}
 	a.recordToolReceipts(plan, "", nil, nil)
-	receipts := a.evidence.Receipts()
-	if len(receipts) != 1 || !receipts[0].Mutation {
-		t.Fatalf("promoted receipt = %+v", receipts)
+	if _, ok := a.task.ledger.LatestSuccessfulMutationIndex(); !ok {
+		t.Fatal("promoted receipt was not recorded as a content mutation")
 	}
 }
 

@@ -96,8 +96,8 @@ func ClassifyBash(command string) CommandEffect {
 
 func classifyBashSegment(segment string) CommandEffect {
 	if normalized, ok := NormalizeBashSafeRedirectsForMatch(segment); ok {
-		if fields, malformed := shellparse.StaticFields(normalized); malformed == "" && len(fields) > 0 {
-			return classifyStaticFields(fields)
+		if fields, envPrefixed, ok := staticArgv(normalized); ok {
+			return applyEnvPrefix(classifyStaticFields(fields), envPrefixed)
 		}
 		// Preserve the existing narrow, recursively proven command-substitution
 		// reader path. Its returned fields contain only opaque placeholders.
@@ -124,6 +124,65 @@ func classifyBashSegment(segment string) CommandEffect {
 		}
 	}
 	return effect
+}
+
+// staticArgv reduces one statically proven command to argv after stripping a
+// leading env wrapper. Env flags and expansions fail closed.
+func staticArgv(command string) ([]string, bool, bool) {
+	cmd, err := shellparse.ParseStaticCommand(command, shellparse.StaticCommandPolicy{
+		AllowEnvAssignments: true,
+		AllowStderrToStdout: true,
+	})
+	if err != nil || len(cmd.Argv) == 0 {
+		return nil, false, false
+	}
+	fields, envPrefixed, ok := unwrapEnvArgv(cmd.Argv)
+	if !ok {
+		return nil, envPrefixed, false
+	}
+	return fields, envPrefixed || len(cmd.Env) > 0, true
+}
+
+func unwrapEnvArgv(argv []string) ([]string, bool, bool) {
+	if len(argv) == 0 {
+		return nil, false, false
+	}
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(argv[0]), ".exe"))
+	if base != "env" {
+		return argv, false, true
+	}
+	rest := argv[1:]
+	for len(rest) > 0 {
+		tok := rest[0]
+		if strings.HasPrefix(tok, "-") {
+			return nil, true, false
+		}
+		if !strings.Contains(tok, "=") {
+			break
+		}
+		rest = rest[1:]
+	}
+	if len(rest) == 0 {
+		return nil, true, false
+	}
+	return rest, true, true
+}
+
+func applyEnvPrefix(effect CommandEffect, envPrefixed bool) CommandEffect {
+	if !envPrefixed {
+		return effect
+	}
+	effect.PermissionSafe = false
+	if effect.Reason == "" {
+		effect.Reason = "environment prefix requires permission"
+	}
+	return effect
+}
+
+// CommandArgv returns statically proven argv after stripping a leading env
+// prefix. ok is false for expansions, env flags, or unsupported syntax.
+func CommandArgv(command string) (argv []string, envPrefixed bool, ok bool) {
+	return staticArgv(strings.TrimSpace(command))
 }
 
 func classifyStaticFields(fields []string) CommandEffect {
@@ -331,6 +390,13 @@ func classifyGitConfig(args []string) CommandEffect {
 	hostScope := hasEffectArg(args, "--global", "--system")
 	for _, arg := range args {
 		name := strings.ToLower(strings.SplitN(arg, "=", 2)[0])
+		if slices.Contains([]string{"--edit", "-e"}, name) {
+			domain := WriteRepositoryMetadata
+			if hostScope {
+				domain = WriteHostState
+			}
+			return knownWriter(family, domain, "opens an editor that can write git configuration")
+		}
 		if slices.Contains([]string{"set", "unset", "unset-all", "add", "replace-all", "rename-section", "remove-section", "--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section"}, name) {
 			domain := WriteRepositoryMetadata
 			if hostScope {

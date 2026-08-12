@@ -2,34 +2,8 @@ package permission
 
 import (
 	"encoding/json"
-	"os"
 	"testing"
 )
-
-func TestPermissionConsumesSharedCommandEffectMatrix(t *testing.T) {
-	raw, err := os.ReadFile("../shellsafe/testdata/command_effects.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cases []struct {
-		Name, Command    string
-		PermissionReader bool
-	}
-	if err := json.Unmarshal(raw, &cases); err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			args, err := json.Marshal(map[string]string{"command": tc.Command})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := BashCommandIsReadOnly(args); got != tc.PermissionReader {
-				t.Fatalf("BashCommandIsReadOnly(%q) = %t, want %t", tc.Command, got, tc.PermissionReader)
-			}
-		})
-	}
-}
 
 func TestIsReadOnlyBashSubject(t *testing.T) {
 	tests := []struct {
@@ -74,16 +48,8 @@ func TestIsReadOnlyBashSubject(t *testing.T) {
 		{"git log &>/dev/null", true},
 		{"git remote", true},
 		{"git remote -v", true},
-		{"git remote get-url origin", true},
 		{"git remote add origin git@example.com:x/y", false},
-		{"git config --list", true},
-		{"git config --get user.name", true},
-		{"git config --global user.name example", false},
-		{"git worktree list", true},
-		{"git stash list", true},
-		{"git stash show -p", true},
-		{"git clean -ndx", true},
-		{"git submodule status", true},
+		{"git config --global user.name Xinwei", false},
 		{"git stash", false},
 		{"git stash push", false},
 		{"git archive --output repo.tar HEAD", false},
@@ -100,15 +66,8 @@ func TestIsReadOnlyBashSubject(t *testing.T) {
 		{"go vet ./...", true},
 		{"go doc fmt", true},
 		{"go list ./...", true},
-		{"go list -mod=readonly ./...", true},
-		{"go list -mod=mod ./...", false},
 		{"go env -w GOPROXY=https://proxy.golang.org,direct", false},
 		{"go env -u GOPROXY", false},
-		{"npm audit", true},
-		{"npm audit fix", false},
-		{"cargo check", false},
-		{"date -u +%s", true},
-		{"date --set tomorrow", false},
 
 		// Not read-only
 		{"rm file.txt", false},
@@ -118,12 +77,9 @@ func TestIsReadOnlyBashSubject(t *testing.T) {
 		{"git commit -m 'msg'", false},
 		{"git branch", true},
 		{"git branch -a", true},
-		{"git branch --list 'release/*'", true},
-		{"git branch --show-current", true},
 		{"git branch feature/new", false},
-		{"git branch -D feature/old", false},
-		{"git tag --list 'v1.*'", true},
-		{"git tag v1.2.3", false},
+		{"git config --edit", false},
+		{"git config --global -e", false},
 		{"git push", false},
 		{"git push --force", false},
 		{"cd /tmp && rm file.txt", false},

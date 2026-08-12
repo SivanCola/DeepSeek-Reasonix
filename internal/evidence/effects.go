@@ -47,7 +47,9 @@ func ClassifyBashToolCall(args json.RawMessage) (ToolEffects, bool) {
 			Known: true, Reason: commandEffectReason(effect),
 		}, effect.IsPermissionReader()
 	}
-	if !bashMayMutate(command) {
+	// Unknown syntax stays fail-closed unless the host recognized a verifier
+	// such as `go test` that ClassifyBash does not model as a known reader.
+	if bashCommandIsVerification(command) {
 		return ToolEffects{Known: true}, false
 	}
 	return unknownToolEffects(effect.Reason), false

@@ -11,13 +11,7 @@ func (a *Agent) taskPolicyToolGate(plan *toolCallPlan, args json.RawMessage) (to
 	if !a.turn.policySet {
 		return toolOutcome{}, false
 	}
-	if plan.mutates && !a.turn.policy.AllowsMutation() {
-		return policyBlock("the current task policy forbids workspace modifications (user constraint or plan mode)", "task policy forbids mutation")
-	}
-	if !a.turn.policy.AllowsExternal() && isExternalActionTool(plan.evidenceName, plan.permName, args) {
-		return policyBlock("the current task policy forbids push/publish/deploy-style external actions", "task policy forbids external action")
-	}
-	if plan.effects.StateMutation && !a.turnPolicy.AllowsMutation() {
+	if plan.effects.StateMutation && !a.turn.policy.AllowsMutation() {
 		reason := strings.TrimSpace(plan.effects.Reason)
 		if reason == "" {
 			reason = "state mutation whose effects cannot be proven read-only"
@@ -26,6 +20,9 @@ func (a *Agent) taskPolicyToolGate(plan *toolCallPlan, args json.RawMessage) (to
 			"the current task policy forbids "+reason+" (user constraint or plan mode)",
 			"task policy forbids "+reason,
 		)
+	}
+	if !a.turn.policy.AllowsExternal() && isExternalActionTool(plan.evidenceName, plan.permName, args) {
+		return policyBlock("the current task policy forbids push/publish/deploy-style external actions", "task policy forbids external action")
 	}
 	if isVerificationCommandTool(plan.evidenceName, plan.permName, args) {
 		if !a.turn.policy.AllowsTests() {
