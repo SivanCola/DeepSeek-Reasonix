@@ -4917,7 +4917,13 @@ func (c *Controller) ToolResult(toolID string) *ToolResultData {
 	if c.executor == nil {
 		return nil
 	}
-	msgs := c.executor.Session().Snapshot()
+	return lookupToolResult(c.executor.Session().Snapshot(), toolID)
+}
+
+func lookupToolResult(msgs []provider.Message, toolID string) *ToolResultData {
+	if toolID == "" {
+		return nil
+	}
 	// Search backwards: tool result first (most recent), then find the args
 	// from the preceding assistant turn.
 	for i, msg := range slices.Backward(msgs) {
@@ -4942,6 +4948,20 @@ func (c *Controller) ToolResult(toolID string) *ToolResultData {
 			}
 		}
 		return out
+	}
+	for _, msg := range slices.Backward(msgs) {
+		if msg.Role != provider.RoleAssistant {
+			continue
+		}
+		for _, search := range msg.ServerSearch {
+			if search.ID != toolID {
+				continue
+			}
+			return &ToolResultData{
+				Args:   provider.FormatServerSearchArgs(search.Query),
+				Output: provider.FormatServerSearchOutput(search.Results),
+			}
+		}
 	}
 	return nil
 }

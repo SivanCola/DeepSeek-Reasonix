@@ -1,0 +1,59 @@
+package provider
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestParseServerSearchHitsIgnoresEncryptedContent(t *testing.T) {
+	raw := json.RawMessage(`[{"type":"web_search_result","title":"Change Log","url":"https://api-docs.deepseek.com/updates/","encrypted_content":"xxx"},{"title":"No URL"},{"text":"body only"}]`)
+	got := ParseServerSearchHits(raw)
+	if len(got) != 2 || got[0].Title != "Change Log" || got[0].URL != "https://api-docs.deepseek.com/updates/" || got[1].Title != "No URL" || got[1].URL != "" {
+		t.Fatalf("hits = %#v", got)
+	}
+}
+
+func TestParseServerSearchQuery(t *testing.T) {
+	if got := ParseServerSearchQuery(`{"query":"bitcoin price"}`); got != "bitcoin price" {
+		t.Fatalf("query = %q", got)
+	}
+	if got := ParseServerSearchQuery(`{`); got != "" {
+		t.Fatalf("malformed query = %q", got)
+	}
+}
+
+func TestMergeServerSearch(t *testing.T) {
+	var dst []ServerSearchCall
+	dst = MergeServerSearch(dst, ServerSearchCall{ID: "s1", Query: "q"})
+	dst = MergeServerSearch(dst, ServerSearchCall{ID: "s1", Results: []ServerSearchHit{{Title: "A", URL: "https://a.example"}}, Raw: json.RawMessage(`[{"title":"A"}]`)})
+	if len(dst) != 1 || dst[0].Query != "q" || len(dst[0].Results) != 1 || string(dst[0].Raw) != `[{"title":"A"}]` {
+		t.Fatalf("merged = %#v", dst)
+	}
+}
+
+func TestFormatServerSearchOutput(t *testing.T) {
+	got := FormatServerSearchOutput([]ServerSearchHit{{Title: "A", URL: "https://a.example"}, {Title: "B"}})
+	if got != "A\nhttps://a.example\nB" {
+		t.Fatalf("output = %q", got)
+	}
+}
+
+func TestFormatServerSearchArgs(t *testing.T) {
+	if got := FormatServerSearchArgs("bitcoin"); got != `{"query":"bitcoin"}` {
+		t.Fatalf("args = %q", got)
+	}
+	if got := FormatServerSearchArgs("  "); got != "" {
+		t.Fatalf("blank query args = %q", got)
+	}
+}
+
+func TestServerSearchFromResponsesItem(t *testing.T) {
+	raw := json.RawMessage(`{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","query":"latest","sources":[{"title":"Change Log","url":"https://api-docs.deepseek.com/updates/"}]}}`)
+	got := ServerSearchFromResponsesItem(raw)
+	if got == nil || got.ID != "ws_1" || got.Query != "latest" || len(got.Results) != 1 || got.Results[0].Title != "Change Log" {
+		t.Fatalf("search = %#v", got)
+	}
+	if ServerSearchFromResponsesItem(json.RawMessage(`{"id":"x","type":"function_call"}`)) != nil {
+		t.Fatal("non-search item should be ignored")
+	}
+}

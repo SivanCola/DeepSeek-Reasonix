@@ -653,6 +653,11 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 						if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkResponsesItem, ResponsesItem: raw}) {
 							return
 						}
+						if search := provider.ServerSearchFromResponsesItem(raw); search != nil {
+							if !sendChunk(ctx, out, provider.Chunk{Type: provider.ChunkServerSearch, ServerSearch: search}) {
+								return
+							}
+						}
 					}
 				}
 			}

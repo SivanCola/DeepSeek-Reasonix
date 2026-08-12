@@ -729,6 +729,7 @@ export function isReadOnlyTool(name: string): boolean {
     case "grep":
     case "glob":
     case "web_fetch":
+    case "web_search":
     case "code_index":
     case "bash_output":
     case "waitJob":
@@ -738,6 +739,11 @@ export function isReadOnlyTool(name: string): boolean {
     default:
       return false;
   }
+}
+
+/** Read-only research tools collapse into a batch; provider search stays a card. */
+export function isBatchedReadOnlyTool(name: string, readOnly: boolean): boolean {
+  return readOnly && name !== "todo_write" && name !== "web_search";
 }
 
 const ARCHIVED_TOOL_ARG_LIMIT = 200;
@@ -883,6 +889,20 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       continue;
     }
     if (m.role === "assistant") {
+      for (const search of m.serverSearch ?? []) {
+        if (!search.id) continue;
+        const lines = (search.results ?? []).flatMap((hit) => [hit.title, hit.url].filter(Boolean));
+        items.push({
+          kind: "tool",
+          id: search.id,
+          name: "web_search",
+          args: search.query ? JSON.stringify({ query: search.query }) : "",
+          readOnly: true,
+          status: "done",
+          output: lines.join("\n"),
+        });
+        seq++;
+      }
       const hasText = m.content.trim() !== "" || (m.reasoning ?? "").trim() !== "";
       if (hasText) {
         const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);

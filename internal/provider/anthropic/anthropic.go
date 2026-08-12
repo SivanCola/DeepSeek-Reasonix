@@ -387,6 +387,23 @@ func (c *client) buildRequest(_ context.Context, req provider.Request) anthReque
 			} else if c.thinking == "adaptive" && m.ReasoningContent != "" && m.ReasoningSignature != "" {
 				blocks = append(blocks, contentBlock{Type: "thinking", Thinking: m.ReasoningContent, Signature: m.ReasoningSignature})
 			}
+			for _, search := range m.ServerSearch {
+				if search.ID == "" {
+					continue
+				}
+				input := json.RawMessage(`{}`)
+				if search.Query != "" {
+					if raw, err := json.Marshal(map[string]string{"query": search.Query}); err == nil {
+						input = raw
+					}
+				}
+				blocks = append(blocks, contentBlock{Type: "server_tool_use", ID: search.ID, Name: "web_search", Input: input})
+				raw := search.Raw
+				if len(raw) == 0 {
+					raw = json.RawMessage("[]")
+				}
+				blocks = append(blocks, contentBlock{Type: "web_search_tool_result", ToolUseID: search.ID, Content: json.RawMessage(append(json.RawMessage(nil), raw...))})
+			}
 			if m.Content != "" {
 				blocks = append(blocks, contentBlock{Type: "text", Text: m.Content})
 			}
@@ -545,7 +562,13 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	}
 
 	tools := map[int]*provider.ToolCall{} // tool_use blocks, keyed by content index
-	argBuckets := map[int]int{}           // last emitted 2KB progress bucket per block
+	type searchBlock struct {
+		call provider.ServerSearchCall
+		args string
+	}
+	searches := map[int]*searchBlock{}
+	searchByID := map[string]*searchBlock{}
+	argBuckets := map[int]int{} // last emitted 2KB progress bucket per block
 	var inTok, outTok, cacheCreate, cacheRead int
 	var stopReason string
 	haveUsage := false
@@ -604,18 +627,31 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 					if !send(provider.Chunk{Type: provider.ChunkToolCallStart, ToolCall: &provider.ToolCall{ID: tc.ID, Name: tc.Name}}) {
 						return
 					}
+				case "server_tool_use":
+					if ev.ContentBlock.Name != "web_search" || ev.ContentBlock.ID == "" {
+						break
+					}
+					block := &searchBlock{call: provider.ServerSearchCall{ID: ev.ContentBlock.ID}}
+					searches[ev.Index] = block
+					searchByID[block.call.ID] = block
+					if !send(provider.Chunk{Type: provider.ChunkServerSearch, ServerSearch: &provider.ServerSearchCall{ID: block.call.ID}}) {
+						return
+					}
 				case "web_search_tool_result":
-					// Search results are delivered inline in content_block.content as a
-					// JSON array of result objects (title, url, encrypted_content).
-					// Only the model sees the plain text; we surface titles and URLs.
-					// server_tool_use blocks (the model initiating the search) are
-					// intentionally skipped — the API executes them server-side and
-					// the results appear here.
-					formatted := formatWebSearchResults(ev.ContentBlock.Content)
-					if formatted != "" {
-						if !send(provider.Chunk{Type: provider.ChunkText, Text: formatted}) {
-							return
+					id := ev.ContentBlock.ToolUseID
+					block := searchByID[id]
+					if block == nil {
+						block = &searchBlock{call: provider.ServerSearchCall{ID: id}}
+						if id != "" {
+							searchByID[id] = block
 						}
+					}
+					if len(ev.ContentBlock.Content) > 0 {
+						block.call.Raw = append(json.RawMessage(nil), ev.ContentBlock.Content...)
+						block.call.Results = provider.ParseServerSearchHits(ev.ContentBlock.Content)
+					}
+					if !send(provider.Chunk{Type: provider.ChunkServerSearch, ServerSearch: cloneServerSearch(block.call)}) {
+						return
 					}
 				}
 			}
@@ -650,6 +686,15 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 					if bucket := len(tc.Arguments) / 2048; bucket > argBuckets[ev.Index] {
 						argBuckets[ev.Index] = bucket
 						if !send(provider.Chunk{Type: provider.ChunkToolCallArgsDelta, ToolCall: &provider.ToolCall{ID: tc.ID, Name: tc.Name}, ArgChars: len(tc.Arguments)}) {
+							return
+						}
+					}
+				}
+				if s := searches[ev.Index]; s != nil && ev.Delta.PartialJSON != "" {
+					s.args += ev.Delta.PartialJSON
+					if query := provider.ParseServerSearchQuery(s.args); query != "" {
+						s.call.Query = query
+						if !send(provider.Chunk{Type: provider.ChunkServerSearch, ServerSearch: &provider.ServerSearchCall{ID: s.call.ID, Query: query}}) {
 							return
 						}
 					}
@@ -767,6 +812,17 @@ type webSearchResult struct {
 	Title    string `json:"title"`
 	Text     string `json:"text"`
 	SiteName string `json:"site_name"`
+}
+
+func cloneServerSearch(call provider.ServerSearchCall) *provider.ServerSearchCall {
+	out := call
+	if len(call.Results) > 0 {
+		out.Results = append([]provider.ServerSearchHit(nil), call.Results...)
+	}
+	if len(call.Raw) > 0 {
+		out.Raw = append(json.RawMessage(nil), call.Raw...)
+	}
+	return &out
 }
 
 // formatWebSearchResults parses a web_search_tool_result content array

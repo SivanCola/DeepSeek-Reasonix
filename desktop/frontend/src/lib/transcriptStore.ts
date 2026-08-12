@@ -278,6 +278,19 @@ function convertRecord(
   }
 
   if (m.role === "assistant") {
+    for (const search of m.serverSearch ?? []) {
+      if (!search.id) continue;
+      const lines = (search.results ?? []).flatMap((hit) => [hit.title, hit.url].filter(Boolean));
+      items.push({
+        kind: "tool",
+        id: search.id,
+        name: "web_search",
+        args: search.query ? JSON.stringify({ query: search.query }) : "",
+        readOnly: true,
+        status: "done",
+        output: lines.join("\n"),
+      });
+    }
     const hasText = m.content.trim() !== "" || (m.reasoning ?? "").trim() !== "";
     if (hasText) {
       const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);

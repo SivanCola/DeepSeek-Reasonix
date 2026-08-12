@@ -697,6 +697,13 @@ export interface HistoryMessage {
   summary?: string;
   archive?: string;
   decisionReceipt?: WireDecisionReceipt;
+  serverSearch?: HistoryServerSearch[];
+}
+
+export interface HistoryServerSearch {
+  id: string;
+  query?: string;
+  results?: { title?: string; url?: string }[];
 }
 
 export interface HistoryToolCall {
