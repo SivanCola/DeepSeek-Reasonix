@@ -18,6 +18,7 @@ import { getTranscriptStore } from "./transcriptStore";
 import { uiPerfTracker } from "./uiPerf";
 import { getLocale, t, type DictKey } from "./i18n";
 import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceholders } from "./hydrateErrorState";
+import { hasCachedLiveTurn, sameSessionPlaceholderItems, shouldApplyHydratedHistory } from "./hydrateHistoryApply";
 import { hydrateIdentityCurrent } from "./sessionIdentity";
 import { sameTodoList } from "./todoVisibility";
 import { fileDiffFromWire, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
@@ -694,28 +695,6 @@ export function shouldReconcileStaleTurn(
 ): boolean {
   if (!state?.running || !state.turnActive || lastTurnActivityAt <= 0) return false;
   return Math.max(0, now - lastTurnActivityAt) >= timeoutMs;
-}
-
-function hasCachedLiveTurn(state: State | undefined): boolean {
-  if (!state?.running && !state?.turnActive) return false;
-  if (state.live || state.currentAssistant || state.pendingUser !== undefined) return true;
-  return state.items.some((item) =>
-    (item.kind === "assistant" && item.streaming) ||
-    (item.kind === "tool" && item.status === "running")
-  );
-}
-
-// Skip replace when a live transcript is already on screen; an empty
-// surface still has to apply history or switch-back shows Welcome.
-function shouldApplyHydratedHistory(
-  skipHistory: boolean,
-  hasProjection: boolean,
-  foregroundTurnActive: boolean,
-  state: State | undefined,
-): boolean {
-  if (skipHistory || !hasProjection) return false;
-  if (!foregroundTurnActive) return true;
-  return (state?.items.length ?? 0) === 0 && !hasCachedLiveTurn(state);
 }
 
 function hasReusableCachedTranscript(state: State | undefined, sessionPath?: string, revision?: number, digest?: string): boolean {
@@ -2957,9 +2936,7 @@ export function useController() {
         dispatchTo(tabId, { type: "local_notice", level: "warn", text: errText });
         addBreadcrumb("tab.hydrate", `history failed ${tabId} ms=${Date.now() - historyStartedAt}`); return;
       }
-      if (shouldApplyHydratedHistory(skipHistory, projection !== undefined, foregroundTurnActive(), statesRef.current.get(tabId))) {
-        // Reset wipes running/live flags. Keep them when this apply is only
-        // filling an empty surface that already knows a turn is in flight.
+      if (projection !== undefined && shouldApplyHydratedHistory(skipHistory, true, foregroundTurnActive(), statesRef.current.get(tabId))) {
         if (deferResetUntilHistory && stillCurrent() && !foregroundTurnActive()) dispatchTo(tabId, { type: "reset" });
         dispatchTo(tabId, {
           type: "history_replace",
@@ -4629,15 +4606,10 @@ export function useController() {
       await reassertVisibleTabAfterStaleNavigation("topic.activate", meta.id);
       return meta;
     }
-    // Same-session items can fill the gap before history lands. Another
-    // session's transcript would look like the old chat on a new surface.
-    const prevState = activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current) : undefined;
-    const sameSession = Boolean(
-      meta.sessionPath &&
-      prevState?.meta?.sessionPath &&
-      prevState.meta.sessionPath === meta.sessionPath,
+    const prevItems = sameSessionPlaceholderItems(
+      meta.sessionPath,
+      activeTabIdRef.current ? statesRef.current.get(activeTabIdRef.current) : undefined,
     );
-    const prevItems = sameSession ? prevState?.items : undefined;
     pending.placeholderItems = prevItems;
     for (const id of Array.from(statesRef.current.keys())) {
       if (id !== meta.id) {
@@ -4653,9 +4625,7 @@ export function useController() {
     noteActivationStarted(pending.requestId, meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
     dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
-    // The hydrate is driven by the activation's terminal "ready" event; until
-    // then keep the loading surface up with the previous tab's items as the
-    // placeholder (same no-flash behavior the immediate hydrate had).
+    // Ready hydrates; only same-session items are a safe placeholder.
     dispatchTo(meta.id, { type: "hydrate_start", reason: "open-topic", placeholderItems: prevItems });
     if (pending.terminal && pendingTopicActivationRef.current === pending) {
       // The terminal event beat the ticket resolution; process it now.
