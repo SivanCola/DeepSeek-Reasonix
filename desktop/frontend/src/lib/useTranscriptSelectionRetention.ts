@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import type { Range } from "@tanstack/react-virtual";
-import { createSelectionRangeExtractor, type TranscriptSelectionRowRange } from "./transcriptSelectionRange";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import {
   TRANSCRIPT_SELECTABLE_SELECTOR,
   TRANSCRIPT_ROW_SELECTOR,
@@ -8,9 +6,13 @@ import {
   transcriptSelectionPointFromClient,
   transcriptSelectionPointFromDom,
 } from "./transcriptSelectionDom";
-import { transcriptSelectionStore, type TranscriptSelectableRow } from "./transcriptSelectionStore";
+import {
+  transcriptSelectionStore,
+  type TranscriptSelectableRow,
+  type TranscriptSelectionPoint,
+} from "./transcriptSelectionStore";
 import { mergeTranscriptSelectableRows } from "./transcriptSelectionText";
-import type { TranscriptScrollMode, TranscriptScrollOwner, TranscriptViewportAnchor } from "./transcriptScrollController";
+import type { TranscriptScrollMode, TranscriptScrollOwner } from "./transcriptScrollController";
 
 const EDGE_SCROLL_ZONE_PX = 48;
 const EDGE_SCROLL_MIN_PX = 4;
@@ -18,6 +20,7 @@ const EDGE_SCROLL_MAX_PX = 24;
 
 type TrackedSelection = {
   anchorKey: string;
+  anchorPoint: TranscriptSelectionPoint | null;
   focusKey: string;
   dragging: boolean;
   logical: boolean;
@@ -45,8 +48,6 @@ export function useTranscriptSelectionRetention({
   setScrollMode,
   writeOffset = () => false,
   cancelStreamingScroll,
-  captureViewportAnchor,
-  reconcileViewportAnchor,
 }: {
   tabId?: string;
   revealSignal: number;
@@ -57,14 +58,11 @@ export function useTranscriptSelectionRetention({
   setScrollMode: (mode: TranscriptScrollMode, reason?: string) => void;
   writeOffset?: (owner: TranscriptScrollOwner, top: number, behavior?: ScrollBehavior) => boolean;
   cancelStreamingScroll: () => void;
-  captureViewportAnchor: () => TranscriptViewportAnchor | null;
-  reconcileViewportAnchor: (snapshot: TranscriptViewportAnchor | null) => boolean;
 }) {
   const fallbackScrollRef = useRef<HTMLDivElement>(null);
   const scrollRef = providedScrollRef ?? fallbackScrollRef;
   const selectionRef = useRef<TrackedSelection | null>(null);
   const [, setRevision] = useState(0);
-  const viewportAnchorRef = useRef<TranscriptViewportAnchor | null>(null);
   const lifecycleGenerationRef = useRef(0);
   const settleFramesRef = useRef(new Set<number>());
   const focusFrameRef = useRef<number | null>(null);
@@ -104,7 +102,6 @@ export function useTranscriptSelectionRetention({
     releasePointerCapture(tracked);
     selectionRef.current = null;
     lastPointerRef.current = null;
-    viewportAnchorRef.current = null;
     transcriptSelectionStore.clear(reason);
     setScrollMode("manual", reason);
     publish();
@@ -173,12 +170,13 @@ export function useTranscriptSelectionRetention({
     }
     const anchorKey = selectable.closest<HTMLElement>(TRANSCRIPT_ROW_SELECTOR)?.dataset.rowKey;
     if (!anchorKey) return;
+    const anchorPoint = transcriptSelectionPointFromClient(document, event.clientX, event.clientY);
     clear("new-pointer-selection");
     lifecycleGenerationRef.current += 1;
     cancelStreamingScroll();
-    viewportAnchorRef.current = captureViewportAnchor();
     selectionRef.current = {
       anchorKey,
+      anchorPoint: anchorPoint?.rowKey === anchorKey ? anchorPoint : null,
       focusKey: anchorKey,
       dragging: true,
       logical: false,
@@ -189,7 +187,7 @@ export function useTranscriptSelectionRetention({
     transcriptSelectionStore.beginNative(tabId ?? "");
     setScrollMode("native-selecting", "pointerdown");
     publish();
-  }, [cancelStreamingScroll, captureViewportAnchor, clear, publish, setScrollMode, tabId]);
+  }, [cancelStreamingScroll, clear, publish, setScrollMode, tabId]);
 
   useEffect(() => {
     const onSelectionChange = () => {
@@ -200,12 +198,15 @@ export function useTranscriptSelectionRetention({
         if (!tracked.dragging) clear("selection-collapsed");
         return;
       }
-      const anchor = transcriptSelectionPointFromDom(selection.anchorNode, selection.anchorOffset);
+      // Freeze the pointer-down endpoint before Virtuoso is allowed to recycle
+      // its row. A browser Range can otherwise migrate its anchor into the DOM
+      // node that replaced the original row during a long upward drag.
+      const anchor = tracked.anchorPoint
+        ?? transcriptSelectionPointFromDom(selection.anchorNode, selection.anchorOffset);
       const nativeFocus = transcriptSelectionPointFromDom(selection.focusNode, selection.focusOffset, lastPointerRef.current?.x);
       const pointer = lastPointerRef.current;
       const focus = nativeFocus ?? (pointer ? transcriptSelectionPointFromClient(document, pointer.x, pointer.y) : null);
       if (!anchor || !focus) return;
-      tracked.anchorKey = anchor.rowKey;
       tracked.focusKey = focus.rowKey;
       transcriptSelectionStore.updateNativeRange(anchor, focus);
       if (anchor.rowKey === focus.rowKey || !supportsCaretPoint(document)) {
@@ -260,7 +261,6 @@ export function useTranscriptSelectionRetention({
         tracked.dragging = false;
         releasePointerCapture(tracked);
         transcriptSelectionStore.settleLogical();
-        viewportAnchorRef.current = null;
         setScrollMode("manual", "logical-settled");
         publish();
         return;
@@ -277,18 +277,9 @@ export function useTranscriptSelectionRetention({
       const generation = lifecycleGenerationRef.current;
       selectionRef.current = settledSelection;
       publish();
-      const outerFrame = requestAnimationFrame(() => {
-        settleFramesRef.current.delete(outerFrame);
-        const innerFrame = requestAnimationFrame(() => {
-          settleFramesRef.current.delete(innerFrame);
-          if (generation !== lifecycleGenerationRef.current || selectionRef.current !== settledSelection) return;
-          reconcileViewportAnchor(viewportAnchorRef.current);
-          viewportAnchorRef.current = null;
-          setScrollMode("manual", "native-selection-settled");
-        });
-        settleFramesRef.current.add(innerFrame);
-      });
-      settleFramesRef.current.add(outerFrame);
+      if (generation === lifecycleGenerationRef.current && selectionRef.current === settledSelection) {
+        setScrollMode("manual", "native-selection-settled");
+      }
     };
 
     const cancelGesture = (event: PointerEvent) => {
@@ -351,7 +342,7 @@ export function useTranscriptSelectionRetention({
       document.removeEventListener("keydown", onKeyDown);
       scroll?.removeEventListener("scroll", onScroll);
     };
-  }, [clear, publish, reconcileViewportAnchor, releasePointerCapture, scheduleEdgeScroll, scheduleLogicalFocus, scrollRef, setScrollMode, tabId, updateLogicalFocus]);
+  }, [clear, publish, releasePointerCapture, scheduleEdgeScroll, scheduleLogicalFocus, scrollRef, setScrollMode, tabId, updateLogicalFocus]);
 
   useEffect(() => {
     lifecycleGenerationRef.current += 1;
@@ -360,7 +351,6 @@ export function useTranscriptSelectionRetention({
     releasePointerCapture(tracked);
     selectionRef.current = null;
     lastPointerRef.current = null;
-    viewportAnchorRef.current = null;
     document.getSelection()?.removeAllRanges();
     transcriptSelectionStore.clear("transcript-generation-reset");
     if (tracked) publish();
@@ -376,7 +366,6 @@ export function useTranscriptSelectionRetention({
     releasePointerCapture(tracked);
     selectionRef.current = null;
     lastPointerRef.current = null;
-    viewportAnchorRef.current = null;
     setScrollMode("manual", "logical-selection-cleared");
     publish();
   }), [cancelFrames, publish, releasePointerCapture, setScrollMode]);
@@ -397,20 +386,11 @@ export function useTranscriptSelectionRetention({
     transcriptSelectionStore.validateRowChanges(selectableRowOverrides);
   }, [selectableRowOverrides]);
 
-  const rangeExtractor = useMemo(() => createSelectionRangeExtractor((): TranscriptSelectionRowRange | null => {
-    const tracked = selectionRef.current;
-    if (!tracked || tracked.logical) return null;
-    const anchorIndex = rowIndexByKey.get(tracked.anchorKey);
-    const focusIndex = rowIndexByKey.get(tracked.focusKey);
-    return anchorIndex == null || focusIndex == null ? null : { anchorIndex, focusIndex };
-  }), [rowIndexByKey]);
-
   return {
     clear,
     active: selectionRef.current !== null,
     logical: selectionRef.current?.logical ?? false,
     reconcileLogicalFocus: scheduleLogicalFocus,
     onPointerDownCapture,
-    rangeExtractor: (range: Range) => rangeExtractor(range),
   };
 }

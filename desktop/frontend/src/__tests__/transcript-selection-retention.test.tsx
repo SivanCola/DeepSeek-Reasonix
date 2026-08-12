@@ -4,7 +4,6 @@ import { JSDOM } from "jsdom";
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import type { Range as VirtualRange } from "@tanstack/react-virtual";
 import { useTranscriptSelectionRetention } from "../lib/useTranscriptSelectionRetention";
 import type { TranscriptScrollMode } from "../lib/transcriptScrollController";
 import { transcriptSelectionStore, type TranscriptSelectableRow } from "../lib/transcriptSelectionStore";
@@ -101,8 +100,6 @@ function Harness({
     scrollRef,
     setScrollMode: setMode,
     cancelStreamingScroll: () => {},
-    captureViewportAnchor: () => ({ rowKey: "row-a", viewportOffset: 0, generation: 0 }),
-    reconcileViewportAnchor: () => true,
   });
   useLayoutEffect(() => {
     retention.reconcileLogicalFocus();
@@ -145,7 +142,7 @@ await act(async () => {
   root.render(<Harness tabId="tab-a" onReady={onReady} setMode={setMode} />);
 });
 await selectAcrossRows();
-eq(mode, "native-selecting", "cross-row pointer selection owns scrolling while dragging");
+eq(mode, "manual", "settled native selection releases scroll ownership without delayed anchor reconciliation");
 
 await act(async () => {
   root.render(<Harness tabId="tab-b" onReady={onReady} setMode={setMode} />);
@@ -155,14 +152,13 @@ eq(mode, "tail-follow", "tab reset rejects delayed selection settle callbacks");
 
 await selectAcrossRows();
 await drainFrames();
-const virtualRange: VirtualRange = { startIndex: 0, endIndex: 0, overscan: 0, count: 3 };
-eq(api?.rangeExtractor(virtualRange), [0, 1, 2], "settled native selection retains its continuous row interval");
+eq(api?.active, true, "settled native selection remains tracked until copy or dismissal");
 await act(async () => {
   document.dispatchEvent(new window.Event("copy", { bubbles: true }));
 });
 await drainFrames();
 eq(document.getSelection()?.isCollapsed, true, "keyboard copy releases the native browser range after the copy event");
-eq(api?.rangeExtractor(virtualRange), [0], "keyboard copy releases selection-only virtual rows");
+eq(api?.active, false, "keyboard copy releases transcript selection state");
 
 const first = document.querySelector<HTMLElement>("[data-row-key='row-a'] [data-transcript-selectable]")!;
 const last = document.querySelector<HTMLElement>("[data-row-key='row-b'] [data-transcript-selectable]")!;
@@ -216,7 +212,7 @@ await act(async () => {
   document.dispatchEvent(new window.MouseEvent("pointercancel", { bubbles: true, button: -1 }));
 });
 eq(transcriptSelectionStore.getSnapshot().mode, "none", "pointercancel clears selection even when the event has no pressed button");
-eq(api?.rangeExtractor(virtualRange), [0], "pointercancel releases selection-only virtual rows");
+eq(api?.active, false, "pointercancel releases transcript selection state");
 eq(mode, "manual", "pointercancel releases selection scroll ownership");
 
 last.setAttribute("data-transcript-selection-source-fallback", "");
