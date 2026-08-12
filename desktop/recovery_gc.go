@@ -6,18 +6,8 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
-	"reasonix/internal/config"
 	"reasonix/internal/sessioncatalog"
 )
-
-// recoveryGCInterval bounds how often the background sweep repeats after the
-// startup run. Covered copies are also reclaimed by the shorter startup grace.
-const recoveryGCInterval = 6 * time.Hour
-
-// recoveryGCFollowUpDelay re-runs the short-grace sweep once after startup so
-// branches that just crossed the 15-minute idle line are not left until the
-// next 6-hour tick.
-const recoveryGCFollowUpDelay = 20 * time.Minute
 
 // startRecoveryGC is intentionally a no-op for physical moves.
 //
@@ -35,19 +25,6 @@ func waitRecoveryGCStartup(done <-chan struct{}, elapsed <-chan time.Time) bool 
 	case <-done:
 		return false
 	}
-}
-
-// sweepReclaimableRecoveryBranches trashes conflict-recovery branches that
-// preserve nothing unique (their content is covered by a still-present parent
-// session), were never continued on, sat idle past the grace period, and are
-// not held by any runtime. Trashing — never hard deletion — keeps every swept
-// branch recoverable from the session trash. Returns how many were reclaimed.
-func (a *App) sweepReclaimableRecoveryBranches() int {
-	return a.sweepReclaimableRecoveryBranchesWithGrace(agent.RecoveryGCGracePeriod)
-}
-
-func (a *App) sweepReclaimableRecoveryBranchesWithGrace(grace time.Duration) int {
-	return a.reclaimRecoveryBranchesIn(recoveryGCDirs(), time.Now(), grace)
 }
 
 func (a *App) reclaimRecoveryBranchesIn(dirs []string, now time.Time, grace time.Duration) int {
@@ -143,31 +120,6 @@ func (a *App) reclaimAdoptedRecoveryGroup(group sessioncatalog.RecoveryGroup, no
 		a.removeSessionCatalogPath(path, "recovery_lineage_gc")
 	}
 	return moved
-}
-
-// recoveryGCDirs returns every session directory the desktop lists sessions
-// from: the global desktop and legacy shared dirs plus each saved project's
-// session dirs, deduplicated.
-func recoveryGCDirs() []string {
-	seen := map[string]bool{}
-	var dirs []string
-	add := func(dir string) {
-		key := projectRootKey(dir)
-		if dir == "" || seen[key] {
-			return
-		}
-		seen[key] = true
-		dirs = append(dirs, dir)
-	}
-	add(desktopSessionDir(globalWorkspaceRoot()))
-	add(config.SessionDir())
-	for _, project := range loadProjectsFile().Projects {
-		if root := normalizeProjectRoot(project.Root); root != "" {
-			add(desktopSessionDir(root))
-			add(config.ProjectSessionDir(root))
-		}
-	}
-	return dirs
 }
 
 // sessionOpenInAnyTab reports whether any tab's current session is path.

@@ -158,8 +158,12 @@ func TestCatalogAPIsSurviveASingleConnectionPool(t *testing.T) {
 			return err
 		}},
 		{"GetSession", func() error {
-			if _, ok, err := catalog.GetSession(call, path); err != nil || !ok {
-				return fmt.Errorf("ok=%v err=%v", ok, err)
+			_, ok, err := catalog.GetSession(call, path)
+			if err != nil {
+				return fmt.Errorf("get session: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("session %q missing from catalog", path)
 			}
 			return nil
 		}},
