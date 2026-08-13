@@ -31,6 +31,21 @@ func TestMergeServerSearch(t *testing.T) {
 	}
 }
 
+func TestFormatServerSearchFootnotes(t *testing.T) {
+	got := FormatServerSearchFootnotes([]ServerSearchHit{{Title: "Change Log", URL: "https://api-docs.deepseek.com/updates/"}, {Title: "No URL"}})
+	want := "\n\n- **Change Log**\n  <https://api-docs.deepseek.com/updates/>\n- **No URL**\n"
+	if got != want {
+		t.Fatalf("footnotes = %q, want %q", got, want)
+	}
+}
+
+func TestParseServerSearchOutput(t *testing.T) {
+	got := ParseServerSearchOutput("Change Log\nhttps://api-docs.deepseek.com/updates/\nNo URL")
+	if len(got) != 2 || got[0].Title != "Change Log" || got[0].URL != "https://api-docs.deepseek.com/updates/" || got[1].Title != "No URL" {
+		t.Fatalf("parsed = %#v", got)
+	}
+}
+
 func TestFormatServerSearchOutput(t *testing.T) {
 	got := FormatServerSearchOutput([]ServerSearchHit{{Title: "A", URL: "https://a.example"}, {Title: "B"}})
 	if got != "A\nhttps://a.example\nB" {

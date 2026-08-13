@@ -1,6 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BrainCircuit, ChevronDown, ChevronRight, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
+import { formatSearchFootnotesMarkdown } from "../lib/searchSources";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { ComposerContextCard } from "./ComposerContextCard";
@@ -866,8 +867,10 @@ export const AssistantMessage = memo(function AssistantMessage({
 }) {
   const reasoningDisplayMode = useReasoningDisplayMode();
   const hasText = item.streaming || item.text.trim() !== "";
-  const processOnly = Boolean(item.reasoning) && !hasText;
-  const processWithText = Boolean(item.reasoning) && hasText;
+  const footnotes = formatSearchFootnotesMarkdown(item.searchSources ?? []);
+  const hasFootnotes = footnotes !== "";
+  const processOnly = Boolean(item.reasoning) && !hasText && !hasFootnotes;
+  const processWithText = Boolean(item.reasoning) && (hasText || hasFootnotes);
   if (processOnly && (reasoningDisplayMode === "hidden" || reasoningDisplayMode === "pending")) return null;
   return (
     <div className={`msg msg--assistant${processOnly ? " msg--process-only" : ""}${processWithText ? " msg--process-with-text" : ""}`} data-history-restore={item.id.startsWith("h") ? "" : undefined} data-entrance={item.id}>
@@ -879,14 +882,21 @@ export const AssistantMessage = memo(function AssistantMessage({
           truncateStreamingReasoning={truncateStreamingReasoning}
         />
       )}
-      {hasText && (
+      {(hasText || hasFootnotes) && (
         <div className="msg__body" data-transcript-selectable="message">
-          <Markdown
-            text={item.text}
-            plainStatusBlocks={creationMode}
-            streaming={item.streaming}
-            entryId={historyEntryIdForItemId(item.id)}
-          />
+          {hasText && (
+            <Markdown
+              text={item.text}
+              plainStatusBlocks={creationMode}
+              streaming={item.streaming}
+              entryId={historyEntryIdForItemId(item.id)}
+            />
+          )}
+          {hasFootnotes && (
+            <div className="msg-search-sources">
+              <Markdown text={footnotes} />
+            </div>
+          )}
         </div>
       )}
       <MemoryCitations citations={item.memoryCitations} />

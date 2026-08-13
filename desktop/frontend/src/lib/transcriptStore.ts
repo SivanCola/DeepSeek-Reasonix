@@ -34,6 +34,7 @@ import { app } from "./bridge";
 import { noteHistoryPage, registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
+import { searchSourcesFromHistory } from "./searchSources";
 import { fileDiffFromWire, summarizeFileDiff } from "./tools";
 import {
   historyToolError,
@@ -292,7 +293,8 @@ function convertRecord(
       });
     }
     const hasText = m.content.trim() !== "" || (m.reasoning ?? "").trim() !== "";
-    if (hasText) {
+    const searchSources = searchSourcesFromHistory(m.serverSearch);
+    if (hasText || searchSources.length > 0) {
       const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);
       items.push({
         kind: "assistant",
@@ -302,6 +304,7 @@ function convertRecord(
         streaming: false,
         workDurationMs: m.workDurationMs,
         memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
+        searchSources: searchSources.length > 0 ? searchSources : undefined,
       });
     }
     const toolCalls = m.toolCalls ?? [];

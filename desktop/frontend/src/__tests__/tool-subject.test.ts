@@ -99,6 +99,7 @@ eq(searchHistory[0]?.kind === "tool" ? searchHistory[0].name : "", "web_search",
 eq(searchHistory[0]?.kind === "tool" ? subjectOf("web_search", searchHistory[0].args) : "", "bitcoin", "search card subject is the query");
 eq(searchHistory[1]?.kind, "assistant", "model text stays a separate assistant item");
 eq(searchHistory[1]?.kind === "assistant" ? searchHistory[1].text : "", "answer only", "answer text does not include search results");
+eq(searchHistory[1]?.kind === "assistant" ? searchHistory[1].searchSources?.[0]?.title : "", "新闻本文", "answer hydrates search footnotes");
 
 if (failed) {
   process.stdout.write(`\n${failed} failed, ${passed} passed\n`);

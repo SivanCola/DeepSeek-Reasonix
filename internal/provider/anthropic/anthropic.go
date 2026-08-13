@@ -830,27 +830,7 @@ func cloneServerSearch(call provider.ServerSearchCall) *provider.ServerSearchCal
 // encrypted_content rather than plain text at the transport layer; the
 // model still sees the original content.
 func formatWebSearchResults(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var results []webSearchResult
-	if err := json.Unmarshal(raw, &results); err != nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range results {
-		if r.Title == "" && r.URL == "" {
-			continue
-		}
-		fmt.Fprintf(&b, "\n- **%s**", r.Title)
-		if r.URL != "" {
-			fmt.Fprintf(&b, "\n  <%s>", r.URL)
-		}
-	}
-	if b.Len() == 0 {
-		return ""
-	}
-	return "\n" + b.String() + "\n"
+	return provider.FormatServerSearchFootnotes(provider.ParseServerSearchHits(raw))
 }
 
 // Messages API wire protocol

@@ -74,6 +74,54 @@ func FormatServerSearchArgs(query string) string {
 	return string(raw)
 }
 
+// FormatServerSearchFootnotes is the post-answer source list the desktop and
+// CLI render as markdown. It is display-only and must not be written into
+// Message.Content.
+func FormatServerSearchFootnotes(hits []ServerSearchHit) string {
+	if len(hits) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, hit := range hits {
+		if hit.Title == "" && hit.URL == "" {
+			continue
+		}
+		b.WriteString("\n- **")
+		b.WriteString(hit.Title)
+		b.WriteString("**")
+		if hit.URL != "" {
+			b.WriteString("\n  <")
+			b.WriteString(hit.URL)
+			b.WriteString(">")
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "\n" + b.String() + "\n"
+}
+
+// ParseServerSearchOutput reads title/URL pairs from FormatServerSearchOutput.
+func ParseServerSearchOutput(output string) []ServerSearchHit {
+	var out []ServerSearchHit
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://") {
+			if n := len(out); n > 0 && out[n-1].URL == "" {
+				out[n-1].URL = line
+			} else {
+				out = append(out, ServerSearchHit{URL: line})
+			}
+			continue
+		}
+		out = append(out, ServerSearchHit{Title: line})
+	}
+	return out
+}
+
 // FormatServerSearchOutput is the tool-card body: title then URL, one result
 // per pair. It is not assistant answer text.
 func FormatServerSearchOutput(hits []ServerSearchHit) string {
