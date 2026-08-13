@@ -2359,7 +2359,7 @@ func (a *App) openGlobalTabInactive(topicID string) (TabMeta, error) {
 }
 
 func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionPath string, activate bool) (TabMeta, error) {
-	actualRoot, sessionPath := a.resolveOpenTopicSessionPath(scope, workspaceRoot, sessionPath)
+	actualRoot, sessionPath := a.resolveOpenTopicSessionPath(scope, workspaceRoot, topicID, sessionPath)
 	targetKey := sessionRuntimeKey(sessionPath)
 
 	a.mu.Lock()
@@ -2389,7 +2389,7 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 			meta := a.tabMeta(tab, tab.ID == a.activeTabID)
 			a.saveTabsLocked()
 			a.mu.Unlock()
-			if sameSession {
+			if sameSession || tab.hasActiveRuntimeWork() {
 				return enrichTabMeta(meta), nil
 			}
 			if err := a.rebindTabToSessionPath(tab, sessionPath); err != nil {

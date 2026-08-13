@@ -40,10 +40,15 @@ func (a *App) resolveCanonicalSessionPath(path string) string {
 	return sessioncatalog.CanonicalSessionPathForTopic(topic.Sessions, path)
 }
 
-func (a *App) resolveOpenTopicSessionPath(scope, workspaceRoot, sessionPath string) (string, string) {
+func (a *App) resolveOpenTopicSessionPath(scope, workspaceRoot, topicID, sessionPath string) (string, string) {
 	actualRoot := workspaceRoot
 	if scope == "global" {
 		actualRoot = globalWorkspaceRoot()
+	}
+	// A live topic tab owns the surface. Continuing onto the covering leaf
+	// here would make the first session-key match prefer an idle leaf copy.
+	if a.topicHasActiveRuntimeWork(topicID) {
+		return actualRoot, sessionPath
 	}
 	if continued := a.continuePathForOpen(sessionPath); continued != "" {
 		sessionPath = continued
@@ -106,6 +111,10 @@ func (a *App) resumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		return HistoryPage{}, fmt.Errorf("tab is not ready")
+	}
+	if tab.hasActiveRuntimeWork() {
+		a.setTabReadOnly(tab.ID, false)
+		return a.HistoryPageForTab(tab.ID, 0, limit), nil
 	}
 	if continued := a.continuePathForOpen(path); continued != "" {
 		path = continued
