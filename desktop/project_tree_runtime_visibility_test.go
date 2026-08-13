@@ -38,6 +38,22 @@ func TestProjectTreeRuntimeSnapshotFindsRestoredTabBeforeFirstEvent(t *testing.T
 	}
 }
 
+func TestSyncProjectRootSpellingIncludesDetachedRuntime(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := normalizeProjectRoot(t.TempDir())
+	if err := addProject(root, "Project"); err != nil {
+		t.Fatalf("add project: %v", err)
+	}
+	app := NewApp()
+	app.detachedSessions["detached"] = &WorkspaceTab{
+		Scope: "project", WorkspaceRoot: root + string(os.PathSeparator) + ".",
+	}
+	app.syncTabWorkspaceRootSpellings()
+	if got := app.detachedSessions["detached"].WorkspaceRoot; got != root {
+		t.Fatalf("detached runtime root = %q, want canonical %q", got, root)
+	}
+}
+
 func TestKeepOnlyVisibleTabPublishesDetachedRuntimeProjection(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	projectA := t.TempDir()

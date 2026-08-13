@@ -11,6 +11,18 @@ type projectTreeRuntimeState struct {
 	revision atomic.Uint64
 }
 
+func syncRuntimeWorkspaceRootSpelling(tab *WorkspaceTab, projects []desktopProject) bool {
+	if tab == nil || tab.Scope != "project" {
+		return false
+	}
+	i := projectIndexByRoot(projects, tab.WorkspaceRoot)
+	if i < 0 || tab.WorkspaceRoot == projects[i].Root {
+		return false
+	}
+	tab.WorkspaceRoot = projects[i].Root
+	return true
+}
+
 // catalogRuntimeSnapshots copies runtime identity under App.mu, then lets all
 // controller calls happen after the app lock is released. Controllers own
 // their own locks and must never become part of the App.mu lock order.
