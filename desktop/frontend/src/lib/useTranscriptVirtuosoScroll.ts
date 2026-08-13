@@ -148,10 +148,12 @@ export function shouldClearBottomRequestOnAtBottomTrue() {
 
 export function shouldRemeasureMountedRowsForTailFinish({
   remeasuredThisCommand,
+  allowRemeasure = true,
 }: {
   remeasuredThisCommand: boolean;
+  allowRemeasure?: boolean;
 }) {
-  return !remeasuredThisCommand;
+  return allowRemeasure && !remeasuredThisCommand;
 }
 
 export function shouldFinishTailOnBottomRequestTimer({
@@ -242,7 +244,7 @@ export function useTranscriptVirtuosoScroll() {
     return atBottom;
   }, []);
 
-  const finishTailAtNativeBottom = useCallback((opts?: { force?: boolean }) => {
+  const finishTailAtNativeBottom = useCallback((opts?: { force?: boolean; allowRemeasure?: boolean }) => {
     if (isTranscriptSelectionMode(modeRef.current)) return;
     if (!opts?.force && !pinnedRef.current && !bottomRequestRef.current) return;
 
@@ -251,7 +253,6 @@ export function useTranscriptVirtuosoScroll() {
       if (!opts?.force && !pinnedRef.current && !bottomRequestRef.current) return;
       const atBottom = snapToNativeBottom();
       if (atBottom) {
-        remeasureForTailRef.current = false;
         pinnedRef.current = true;
         setIsAtBottom(true);
         publishMode("tail-follow");
@@ -260,7 +261,10 @@ export function useTranscriptVirtuosoScroll() {
       setIsAtBottom(false);
     };
 
-    if (shouldRemeasureMountedRowsForTailFinish({ remeasuredThisCommand: remeasureForTailRef.current })) {
+    if (shouldRemeasureMountedRowsForTailFinish({
+      remeasuredThisCommand: remeasureForTailRef.current,
+      allowRemeasure: opts?.allowRemeasure,
+    })) {
       remeasureForTailRef.current = true;
       setMeasureGeneration((generation) => generation + 1);
       requestAnimationFrame(applySnap);
@@ -351,7 +355,7 @@ export function useTranscriptVirtuosoScroll() {
     requestAnimationFrame(() => {
       if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
       handle?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
-      finishTailAtNativeBottom();
+      finishTailAtNativeBottom({ allowRemeasure: false });
     });
   }, [finishTailAtNativeBottom]);
 
@@ -377,8 +381,6 @@ export function useTranscriptVirtuosoScroll() {
       followGrowingTail();
       return;
     }
-    // LAST after a native snap reports atBottom=false. Finish the tail while
-    // pinned or while a jump request is open. Wheel/key/thumb already unpinned.
     if (!atBottom && shouldFinishTailOnAtBottomFalse({
       pinned: pinnedRef.current,
       bottomRequestActive: bottomRequestRef.current,
@@ -420,6 +422,7 @@ export function useTranscriptVirtuosoScroll() {
 
   const reset = useCallback(() => {
     clearBottomRequest();
+    remeasureForTailRef.current = false;
     pinnedRef.current = true;
     setIsAtBottom(true);
     publishMode("tail-follow");

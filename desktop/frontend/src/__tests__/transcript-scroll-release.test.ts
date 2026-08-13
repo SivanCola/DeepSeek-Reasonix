@@ -219,11 +219,15 @@ check(
 );
 check(
   shouldRemeasureMountedRowsForTailFinish({ remeasuredThisCommand: false }),
-  "a tail finish remasures even after a successful native snap",
+  "the first tail finish remasures mounted rows",
 );
 check(
   !shouldRemeasureMountedRowsForTailFinish({ remeasuredThisCommand: true }),
-  "a tail command remasures mounted rows only once",
+  "a post-success tail finish does not remasure again",
+);
+check(
+  !shouldRemeasureMountedRowsForTailFinish({ remeasuredThisCommand: false, allowRemeasure: false }),
+  "a pinned growth finish snaps without remasuring",
 );
 check(
   shouldFinishTailOnBottomRequestTimer({ pinned: true, bottomRequestWasActive: true }),
