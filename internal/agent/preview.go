@@ -301,9 +301,22 @@ func IsHostRecoveryGuidance(text string) bool {
 // VisibleSteerText is the user-authored mid-turn steer the transcript may
 // show. Host Auto Guard policy is not user-authored and must stay hidden.
 func VisibleSteerText(content string) (string, bool) {
-	text, ok := SteerText(content)
-	if !ok || IsHostRecoveryGuidance(text) {
+	text, handled := ReplaySteerText(content)
+	if !handled || text == "" {
 		return "", false
+	}
+	return text, true
+}
+
+// ReplaySteerText reports a persisted steer for display replay. handled is
+// true for any steer; text is empty when host Auto Guard policy must be omitted.
+func ReplaySteerText(content string) (text string, handled bool) {
+	text, isSteer := SteerText(content)
+	if !isSteer {
+		return "", false
+	}
+	if IsHostRecoveryGuidance(text) {
+		return "", true
 	}
 	return text, true
 }

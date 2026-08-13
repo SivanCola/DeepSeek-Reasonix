@@ -251,6 +251,13 @@ func appendHostRecoveryGuidance(result, guidance string) string {
 	return strings.TrimRight(result, "\n") + "\n\n" + guidance
 }
 
+func (a *Agent) withRecoveryObservation(ctx context.Context, toolName string, args json.RawMessage, readOnly, mutates bool, result string, err error, generation uint64) string {
+	if a == nil || a.svc.recoveryGate == nil {
+		return result
+	}
+	return appendHostRecoveryGuidance(result, a.observeRecoveryResult(ctx, toolName, args, readOnly, mutates, result, err, false, false, generation))
+}
+
 func (a *Agent) recoveryEpisodeControl() RecoveryEpisodeControl {
 	if a == nil || a.svc.recoveryGate == nil {
 		return nil

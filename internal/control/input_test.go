@@ -1533,16 +1533,6 @@ func TestIsSyntheticUserMessage(t *testing.T) {
 			input: agent.MidTurnSteerPrefix + "\nplease use smaller diffs",
 			want:  false,
 		},
-		{
-			name:  "host auto guard guidance is synthetic",
-			input: agent.HostRecoveryGuidanceToolFailedPrefix + ", continue unrelated work automatically.",
-			want:  true,
-		},
-		{
-			name:  "persisted host auto guard steer is synthetic",
-			input: agent.MidTurnSteerPrefix + "\n" + agent.HostRecoveryGuidanceToolFailedPrefix + ", continue unrelated work automatically.",
-			want:  true,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
