@@ -21,7 +21,8 @@ import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceh
 import { hasCachedLiveTurn, sameSessionPlaceholderItems, shouldApplyHydratedHistory } from "./hydrateHistoryApply";
 import { hydrateIdentityCurrent } from "./sessionIdentity";
 import { sameTodoList } from "./todoVisibility";
-import { mergeSearchSources, parseSearchSources, searchSourcesFromHistory, type SearchSource } from "./searchSources";
+import type { SearchSource } from "./searchSources";
+import { attachWebSearchOutput, historySearchAndAnswer } from "./searchTranscript";
 import { fileDiffFromWire, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
 import { modeHasAutoApproveTools, normalizeMode, normalizeToolApprovalMode } from "./types";
 import type {
@@ -743,10 +744,7 @@ export function isReadOnlyTool(name: string): boolean {
   }
 }
 
-/** Read-only research tools collapse into a batch; provider search stays a card. */
-export function isBatchedReadOnlyTool(name: string, readOnly: boolean): boolean {
-  return readOnly && name !== "todo_write" && name !== "web_search";
-}
+export { isBatchedReadOnlyTool } from "./searchTranscript";
 
 const ARCHIVED_TOOL_ARG_LIMIT = 200;
 
@@ -891,34 +889,17 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       continue;
     }
     if (m.role === "assistant") {
-      for (const search of m.serverSearch ?? []) {
-        if (!search.id) continue;
-        const lines = (search.results ?? []).flatMap((hit) => [hit.title, hit.url].filter(Boolean));
-        items.push({
-          kind: "tool",
-          id: search.id,
-          name: "web_search",
-          args: search.query ? JSON.stringify({ query: search.query }) : "",
-          readOnly: true,
-          status: "done",
-          output: lines.join("\n"),
-        });
-        seq++;
-      }
-      const hasText = m.content.trim() !== "" || (m.reasoning ?? "").trim() !== "";
-      const searchSources = searchSourcesFromHistory(m.serverSearch);
-      if (hasText || searchSources.length > 0) {
-        const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);
-        items.push({
-          kind: "assistant",
-          id: `${idPrefix}${seq}`,
-          text: m.content,
-          reasoning: m.reasoning ?? "",
-          streaming: false,
-          workDurationMs: m.workDurationMs,
-          memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
-          searchSources: searchSources.length > 0 ? searchSources : undefined,
-        });
+      const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);
+      const built = historySearchAndAnswer(`${idPrefix}${seq}`, {
+        content: m.content,
+        reasoning: m.reasoning,
+        workDurationMs: m.workDurationMs,
+        memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
+        serverSearch: m.serverSearch,
+      });
+      for (const item of built) {
+        if (item.kind === "assistant") item.id = `${idPrefix}${seq}`;
+        items.push(item);
         seq++;
       }
       const toolCalls = m.toolCalls ?? [];
@@ -1050,24 +1031,9 @@ function ensureAssistant(s: State): { items: Item[]; id: string; seq: number } {
     text: "",
     reasoning: "",
     streaming: true,
-    searchSources: s.pendingSearchSources && s.pendingSearchSources.length > 0 ? s.pendingSearchSources : undefined,
+    searchSources: s.pendingSearchSources?.length ? s.pendingSearchSources : undefined,
   };
   return { items: [...s.items, item], id, seq: s.seq + 1 };
-}
-
-function attachSearchSources(s: State, sources: SearchSource[]): State {
-  if (sources.length === 0) return s;
-  const pendingSearchSources = mergeSearchSources(s.pendingSearchSources, sources);
-  if (!s.currentAssistant) return { ...s, pendingSearchSources };
-  return {
-    ...s,
-    pendingSearchSources,
-    items: s.items.map((it) =>
-      it.kind === "assistant" && it.id === s.currentAssistant
-        ? { ...it, searchSources: mergeSearchSources(it.searchSources, sources) }
-        : it,
-    ),
-  };
 }
 
 function liveReasoningDurationMs(live?: LiveStream): number | undefined {
@@ -1679,11 +1645,7 @@ function applyEvent(s: State, e: WireEvent): State {
       }
       // A nested result refreshes its sub-agent parent's recent activity.
       if (t.parentId) touchSubagentParent(next, t.parentId);
-      const settled = { ...s, items: compactArchivedToolItems(next) };
-      if (t.name === "web_search" && t.output && !t.err) {
-        return attachSearchSources(settled, parseSearchSources(t.output));
-      }
-      return settled;
+      return attachWebSearchOutput({ ...s, items: compactArchivedToolItems(next) }, t.name, t.output, t.err);
     }
     case "tool_progress": {
       const t = e.tool;

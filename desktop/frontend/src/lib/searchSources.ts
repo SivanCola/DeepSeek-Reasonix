@@ -3,6 +3,12 @@ export type SearchSource = {
   url?: string;
 };
 
+export interface HistoryServerSearch {
+  id: string;
+  query?: string;
+  results?: { title?: string; url?: string }[];
+}
+
 export function isSafeHttpUrl(url: string): boolean {
   try {
     const parsed = new URL(url);

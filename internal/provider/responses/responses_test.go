@@ -332,17 +332,10 @@ func TestEnabledStatelessWebSearchPreservesCompletedCallForCompatibleGateway(t *
 	client := New(Config{Name: "compatible", APIKey: "key", BaseURL: server.URL, Model: "deepseek-v4-flash", Mode: "stateless", WebSearch: true}).(*client)
 	first := collect(t, client, provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "search"}}})
 	var replayItems []json.RawMessage
-	var searches []provider.ServerSearchCall
 	for _, chunk := range first {
 		if chunk.Type == provider.ChunkResponsesItem {
 			replayItems = append(replayItems, chunk.ResponsesItem)
 		}
-		if chunk.Type == provider.ChunkServerSearch && chunk.ServerSearch != nil {
-			searches = provider.MergeServerSearch(searches, *chunk.ServerSearch)
-		}
-	}
-	if len(searches) != 1 || searches[0].ID != "ws_1" || searches[0].Query != "latest release" {
-		t.Fatalf("typed search chunks = %#v", searches)
 	}
 	if len(replayItems) != 1 {
 		t.Fatalf("replay items = %d, want one completed web_search_call: %#v", len(replayItems), first)

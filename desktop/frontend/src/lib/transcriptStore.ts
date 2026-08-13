@@ -34,7 +34,7 @@ import { app } from "./bridge";
 import { noteHistoryPage, registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
-import { searchSourcesFromHistory } from "./searchSources";
+import { historySearchAndAnswer } from "./searchTranscript";
 import { fileDiffFromWire, summarizeFileDiff } from "./tools";
 import {
   historyToolError,
@@ -279,34 +279,14 @@ function convertRecord(
   }
 
   if (m.role === "assistant") {
-    for (const search of m.serverSearch ?? []) {
-      if (!search.id) continue;
-      const lines = (search.results ?? []).flatMap((hit) => [hit.title, hit.url].filter(Boolean));
-      items.push({
-        kind: "tool",
-        id: search.id,
-        name: "web_search",
-        args: search.query ? JSON.stringify({ query: search.query }) : "",
-        readOnly: true,
-        status: "done",
-        output: lines.join("\n"),
-      });
-    }
-    const hasText = m.content.trim() !== "" || (m.reasoning ?? "").trim() !== "";
-    const searchSources = searchSourcesFromHistory(m.serverSearch);
-    if (hasText || searchSources.length > 0) {
-      const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);
-      items.push({
-        kind: "assistant",
-        id,
-        text: m.content,
-        reasoning: m.reasoning ?? "",
-        streaming: false,
-        workDurationMs: m.workDurationMs,
-        memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
-        searchSources: searchSources.length > 0 ? searchSources : undefined,
-      });
-    }
+    const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);
+    items.push(...historySearchAndAnswer(id, {
+      content: m.content,
+      reasoning: m.reasoning,
+      workDurationMs: m.workDurationMs,
+      memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
+      serverSearch: m.serverSearch,
+    }));
     const toolCalls = m.toolCalls ?? [];
     // Positional scan cursor: id-less calls consume the following unconsumed
     // id-less tool rows in order, stopping at the first non-tool record —

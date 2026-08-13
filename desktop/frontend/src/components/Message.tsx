@@ -1,7 +1,8 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
-import { BrainCircuit, ChevronDown, ChevronRight, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
-import { formatSearchFootnotesMarkdown } from "../lib/searchSources";
+import { BrainCircuit, ChevronDown, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
+import { MemoryCitations } from "./MemoryCitations";
+import { hasSearchFootnotes, SearchFootnotes } from "./SearchFootnotes";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { ComposerContextCard } from "./ComposerContextCard";
@@ -15,10 +16,9 @@ import { Tooltip } from "./Tooltip";
 import { useReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
 import { historyEntryIdForItemId } from "../lib/transcriptRows";
 import { stripMemoryCompilerExecution } from "../lib/memoryCompilerDisplay";
-import { visibleTranscriptMemoryCitations } from "../lib/memoryCitationVisibility";
 import { invocationSegmentsFromMessage, type InvocationMetadataMap } from "../lib/invocationDisplay";
 import type { Item, MessageActionScope } from "../lib/useController";
-import type { CheckpointMeta, MemoryCitation } from "../lib/types";
+import type { CheckpointMeta } from "../lib/types";
 import { InvocationBadge } from "./InvocationBadge";
 import { CodeViewer } from "./CodeViewer";
 import { formatSelectionLabels, languageFor, parseSelectedTextContext, stripSelectionLabels } from "../lib/selectedTextContext";
@@ -145,58 +145,6 @@ export function parseSelectedTextBlocks(text: string, submitText?: string): Sele
     start = block.end + 1;
     return block;
   });
-}
-
-function MemoryCitations({ citations }: { citations?: MemoryCitation[] }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  const clean = visibleTranscriptMemoryCitations(citations)
-    .filter((citation) => (citation.source ?? citation.id ?? citation.note ?? "").trim() !== "")
-    .slice(0, 5);
-  if (clean.length === 0) return null;
-  return (
-    <div className="msg-memory-citations">
-      <button
-        type="button"
-        className="msg-memory-citations__toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <ChevronRight className={`msg-memory-citations__chevron${open ? " msg-memory-citations__chevron--open" : ""}`} size={15} />
-        <span>{t("msg.memoryCompilerCitationsCount", { n: clean.length })}</span>
-      </button>
-      {open && (
-        <div className="msg-memory-citations__body">
-          {clean.map((citation, index) => {
-            const lines = memoryCitationLines(citation, t);
-            return (
-              <div key={`${citation.id ?? citation.source}-${index}`} className="msg-memory-citations__item">
-                <div className="msg-memory-citations__source">
-                  <span>{memoryCitationSource(citation)}</span>
-                  {lines && <span className="msg-memory-citations__lines">{lines}</span>}
-                </div>
-                {citation.note && <div className="msg-memory-citations__note">{citation.note}</div>}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function memoryCitationSource(citation: MemoryCitation): string {
-  const source = (citation.source || citation.id || "Memory v5").trim();
-  if (citation.kind === "compiler_reference" && source === "Memory v5") return "Memory v5 compiler";
-  return source;
-}
-
-function memoryCitationLines(citation: MemoryCitation, t: ReturnType<typeof useT>): string {
-  const start = citation.lineStart ?? 0;
-  const end = citation.lineEnd ?? 0;
-  if (start <= 0) return "";
-  if (end > 0 && end !== start) return t("msg.memoryCitationLineRange", { start, end });
-  return t("msg.memoryCitationLine", { line: start });
 }
 
 function messageDate(value?: number): Date {
@@ -867,8 +815,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 }) {
   const reasoningDisplayMode = useReasoningDisplayMode();
   const hasText = item.streaming || item.text.trim() !== "";
-  const footnotes = formatSearchFootnotesMarkdown(item.searchSources ?? []);
-  const hasFootnotes = footnotes !== "";
+  const hasFootnotes = hasSearchFootnotes(item.searchSources);
   const processOnly = Boolean(item.reasoning) && !hasText && !hasFootnotes;
   const processWithText = Boolean(item.reasoning) && (hasText || hasFootnotes);
   if (processOnly && (reasoningDisplayMode === "hidden" || reasoningDisplayMode === "pending")) return null;
@@ -892,11 +839,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               entryId={historyEntryIdForItemId(item.id)}
             />
           )}
-          {hasFootnotes && (
-            <div className="msg-search-sources">
-              <Markdown text={footnotes} />
-            </div>
-          )}
+          <SearchFootnotes sources={item.searchSources} />
         </div>
       )}
       <MemoryCitations citations={item.memoryCitations} />

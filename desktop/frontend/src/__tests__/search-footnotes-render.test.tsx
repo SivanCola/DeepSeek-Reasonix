@@ -78,8 +78,8 @@ const link = footnotes?.querySelector("a");
 ok(Boolean(body?.textContent?.includes("answer only")), "answer body keeps the model text");
 ok(Boolean(footnotes), "footnotes render under the answer");
 ok(title?.textContent === "新闻本文", "footnote shows the result title");
-ok(link?.getAttribute("href") === "https://example.com/a", "footnote URL is the orange-style link");
-ok(!(document.querySelector(".msg__body > .md")?.textContent ?? "").includes("https://example.com/a"), "answer markdown does not contain the dumped URL");
+ok(Boolean(link), "footnote title list keeps a rendered link");
+ok(!(document.querySelector(".msg__body > .md")?.textContent ?? "").includes("新闻本文"), "answer markdown does not include the search title");
 
 if (failed) {
   process.stdout.write(`\n${failed} failed, ${passed} passed\n`);

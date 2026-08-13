@@ -387,23 +387,7 @@ func (c *client) buildRequest(_ context.Context, req provider.Request) anthReque
 			} else if c.thinking == "adaptive" && m.ReasoningContent != "" && m.ReasoningSignature != "" {
 				blocks = append(blocks, contentBlock{Type: "thinking", Thinking: m.ReasoningContent, Signature: m.ReasoningSignature})
 			}
-			for _, search := range m.ServerSearch {
-				if search.ID == "" {
-					continue
-				}
-				input := json.RawMessage(`{}`)
-				if search.Query != "" {
-					if raw, err := json.Marshal(map[string]string{"query": search.Query}); err == nil {
-						input = raw
-					}
-				}
-				blocks = append(blocks, contentBlock{Type: "server_tool_use", ID: search.ID, Name: "web_search", Input: input})
-				raw := search.Raw
-				if len(raw) == 0 {
-					raw = json.RawMessage("[]")
-				}
-				blocks = append(blocks, contentBlock{Type: "web_search_tool_result", ToolUseID: search.ID, Content: json.RawMessage(append(json.RawMessage(nil), raw...))})
-			}
+			blocks = appendServerSearchBlocks(blocks, m.ServerSearch)
 			if m.Content != "" {
 				blocks = append(blocks, contentBlock{Type: "text", Text: m.Content})
 			}
@@ -562,12 +546,7 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 	}
 
 	tools := map[int]*provider.ToolCall{} // tool_use blocks, keyed by content index
-	type searchBlock struct {
-		call provider.ServerSearchCall
-		args string
-	}
-	searches := map[int]*searchBlock{}
-	searchByID := map[string]*searchBlock{}
+	searches := newSearchStream()
 	argBuckets := map[int]int{} // last emitted 2KB progress bucket per block
 	var inTok, outTok, cacheCreate, cacheRead int
 	var stopReason string
@@ -619,40 +598,9 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 				mergeUsage(ev.Message.Usage)
 			}
 		case "content_block_start":
-			if ev.ContentBlock != nil {
-				switch ev.ContentBlock.Type {
-				case "tool_use":
-					tc := &provider.ToolCall{ID: ev.ContentBlock.ID, Name: ev.ContentBlock.Name}
-					tools[ev.Index] = tc
-					if !send(provider.Chunk{Type: provider.ChunkToolCallStart, ToolCall: &provider.ToolCall{ID: tc.ID, Name: tc.Name}}) {
-						return
-					}
-				case "server_tool_use":
-					if ev.ContentBlock.Name != "web_search" || ev.ContentBlock.ID == "" {
-						break
-					}
-					block := &searchBlock{call: provider.ServerSearchCall{ID: ev.ContentBlock.ID}}
-					searches[ev.Index] = block
-					searchByID[block.call.ID] = block
-					if !send(provider.Chunk{Type: provider.ChunkServerSearch, ServerSearch: &provider.ServerSearchCall{ID: block.call.ID}}) {
-						return
-					}
-				case "web_search_tool_result":
-					id := ev.ContentBlock.ToolUseID
-					block := searchByID[id]
-					if block == nil {
-						block = &searchBlock{call: provider.ServerSearchCall{ID: id}}
-						if id != "" {
-							searchByID[id] = block
-						}
-					}
-					if len(ev.ContentBlock.Content) > 0 {
-						block.call.Raw = append(json.RawMessage(nil), ev.ContentBlock.Content...)
-						block.call.Results = provider.ParseServerSearchHits(ev.ContentBlock.Content)
-					}
-					if !send(provider.Chunk{Type: provider.ChunkServerSearch, ServerSearch: cloneServerSearch(block.call)}) {
-						return
-					}
+			if chunk := beginContentBlock(ev.Index, ev.ContentBlock, tools, searches); chunk != nil {
+				if !send(*chunk) {
+					return
 				}
 			}
 		case "content_block_delta":
@@ -690,13 +638,9 @@ func (c *client) readStream(ctx context.Context, resp *http.Response, out chan<-
 						}
 					}
 				}
-				if s := searches[ev.Index]; s != nil && ev.Delta.PartialJSON != "" {
-					s.args += ev.Delta.PartialJSON
-					if query := provider.ParseServerSearchQuery(s.args); query != "" {
-						s.call.Query = query
-						if !send(provider.Chunk{Type: provider.ChunkServerSearch, ServerSearch: &provider.ServerSearchCall{ID: s.call.ID, Query: query}}) {
-							return
-						}
+				if next := searches.argsDelta(ev.Index, ev.Delta.PartialJSON); next != nil {
+					if !send(provider.Chunk{Type: provider.ChunkServerSearch, ServerSearch: next}) {
+						return
 					}
 				}
 			}
@@ -806,33 +750,6 @@ func mapStopReason(s string) string {
 	}
 }
 
-// webSearchResult is a single result from a web_search_tool_result block.
-type webSearchResult struct {
-	URL      string `json:"url"`
-	Title    string `json:"title"`
-	Text     string `json:"text"`
-	SiteName string `json:"site_name"`
-}
-
-func cloneServerSearch(call provider.ServerSearchCall) *provider.ServerSearchCall {
-	out := call
-	if len(call.Results) > 0 {
-		out.Results = append([]provider.ServerSearchHit(nil), call.Results...)
-	}
-	if len(call.Raw) > 0 {
-		out.Raw = append(json.RawMessage(nil), call.Raw...)
-	}
-	return &out
-}
-
-// formatWebSearchResults parses a web_search_tool_result content array
-// and formats titles and URLs as human-readable text. DeepSeek returns
-// encrypted_content rather than plain text at the transport layer; the
-// model still sees the original content.
-func formatWebSearchResults(raw json.RawMessage) string {
-	return provider.FormatServerSearchFootnotes(provider.ParseServerSearchHits(raw))
-}
-
 // Messages API wire protocol
 
 const cacheWrite5MinuteInputMultiplier = 1.25
@@ -930,14 +847,8 @@ type streamEvent struct {
 	Message *struct {
 		Usage *wireUsage `json:"usage"`
 	} `json:"message"`
-	ContentBlock *struct {
-		Type      string          `json:"type"`
-		ID        string          `json:"id"`
-		Name      string          `json:"name"`
-		ToolUseID string          `json:"tool_use_id"` // web_search_tool_result
-		Content   json.RawMessage `json:"content"`     // web_search_tool_result: array of result objects
-	} `json:"content_block"`
-	Delta *struct {
+	ContentBlock *streamContentBlock `json:"content_block"`
+	Delta        *struct {
 		Type             string          `json:"type"`         // text_delta | thinking_delta | signature_delta | input_json_delta | web_search_tool_result_delta
 		Text             string          `json:"text"`         // text_delta
 		Thinking         string          `json:"thinking"`     // thinking_delta
