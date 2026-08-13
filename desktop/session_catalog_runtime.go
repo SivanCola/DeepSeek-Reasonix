@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -448,11 +449,7 @@ func (a *App) catalogWorkspaceScanReady(catalog *sessioncatalog.Catalog, scope, 
 	ctx, cancel := a.catalogReadContext()
 	defer cancel()
 	scope, workspaceRoot = normalizeDesktopTopicScope(scope, workspaceRoot)
-	if catalog.HasWorkspaceRecords(ctx, scope, workspaceRoot) {
-		return true
-	}
-	ready := false
-	matched := false
+	matchedExisting := 0
 	for _, target := range a.sessionCatalogTargets() {
 		if target.Scope != scope {
 			continue
@@ -460,12 +457,18 @@ func (a *App) catalogWorkspaceScanReady(catalog *sessioncatalog.Catalog, scope, 
 		if scope == "project" && !sameProjectRoot(target.WorkspaceRoot, workspaceRoot) {
 			continue
 		}
-		matched = true
-		if catalog.DirectoryScanReady(ctx, target.Path) {
-			ready = true
+		if _, err := os.Stat(target.Path); os.IsNotExist(err) {
+			continue
+		}
+		matchedExisting++
+		if !catalog.DirectoryScanReady(ctx, target.Path) {
+			return false
 		}
 	}
-	return matched && ready
+	if matchedExisting > 0 {
+		return true
+	}
+	return catalog.HasWorkspaceRecords(ctx, scope, workspaceRoot)
 }
 
 func normalizeDesktopTopicScope(scope, workspaceRoot string) (string, string) {

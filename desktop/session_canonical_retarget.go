@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"reasonix/internal/agent"
@@ -37,6 +38,17 @@ func (a *App) resolveCanonicalSessionPath(path string) string {
 		return ""
 	}
 	return sessioncatalog.CanonicalSessionPathForTopic(topic.Sessions, path)
+}
+
+func (a *App) resolveOpenTopicSessionPath(scope, workspaceRoot, sessionPath string) (string, string) {
+	actualRoot := workspaceRoot
+	if scope == "global" {
+		actualRoot = globalWorkspaceRoot()
+	}
+	if continued := a.continuePathForOpen(sessionPath); continued != "" {
+		sessionPath = continued
+	}
+	return actualRoot, sessionPath
 }
 
 func (a *App) continuePathForOpen(path string) string {
@@ -90,26 +102,46 @@ func (a *App) continuePathForMissingParent(ctx context.Context, catalog *session
 	return ""
 }
 
+func (a *App) resumeSessionPageForTab(tabID, path string, limit int) (HistoryPage, error) {
+	tab, ctrl := a.tabAndCtrlByID(tabID)
+	if tab == nil || ctrl == nil {
+		return HistoryPage{}, fmt.Errorf("tab is not ready")
+	}
+	if continued := a.continuePathForOpen(path); continued != "" {
+		path = continued
+	}
+	sessionPath, _, err := validateSessionPath(controllerSessionDir(ctrl), path)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	loaded, err := loadResumableSession(sessionPath)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	if sessionRuntimeKey(tab.currentSessionPath()) != sessionRuntimeKey(sessionPath) {
+		if err := a.rebindTabToLoadedSessionPath(tab, sessionPath, loaded); err != nil {
+			return HistoryPage{}, err
+		}
+	}
+	a.setTabReadOnly(tab.ID, false)
+	return a.HistoryPageForTab(tab.ID, 0, limit), nil
+}
+
 func (a *App) retargetOpenTabsToCoveringLeaves() {
 	if a == nil {
 		return
 	}
-	type pending struct {
-		tab  *WorkspaceTab
-		next string
+	type candidate struct {
+		tab     *WorkspaceTab
+		current string
 	}
 	a.mu.RLock()
-	items := make([]pending, 0, len(a.tabs)+len(a.detachedSessions))
+	items := make([]candidate, 0, len(a.tabs)+len(a.detachedSessions))
 	collect := func(tab *WorkspaceTab) {
-		if tab == nil {
+		if tab == nil || tab.hasActiveRuntimeWork() {
 			return
 		}
-		current := tab.currentSessionPath()
-		next := a.continuePathForOpen(current)
-		if next == "" || sessionRuntimeKey(next) == sessionRuntimeKey(current) {
-			return
-		}
-		items = append(items, pending{tab: tab, next: next})
+		items = append(items, candidate{tab: tab, current: tab.currentSessionPath()})
 	}
 	for _, tab := range a.tabs {
 		collect(tab)
@@ -118,10 +150,25 @@ func (a *App) retargetOpenTabsToCoveringLeaves() {
 		collect(tab)
 	}
 	a.mu.RUnlock()
+	type pending struct {
+		tab  *WorkspaceTab
+		next string
+	}
+	ready := make([]pending, 0, len(items))
 	for _, item := range items {
+		next := a.continuePathForOpen(item.current)
+		if next == "" || sessionRuntimeKey(next) == sessionRuntimeKey(item.current) {
+			continue
+		}
+		ready = append(ready, pending{tab: item.tab, next: next})
+	}
+	for _, item := range ready {
+		if item.tab.hasActiveRuntimeWork() {
+			continue
+		}
 		if item.tab.Ctrl == nil {
 			a.mu.Lock()
-			if a.tabs[item.tab.ID] == item.tab || a.detachedSessions[sessionRuntimeKey(item.tab.currentSessionPath())] == item.tab {
+			if !item.tab.hasActiveRuntimeWork() && (a.tabs[item.tab.ID] == item.tab || a.detachedSessions[sessionRuntimeKey(item.tab.currentSessionPath())] == item.tab) {
 				item.tab.SessionPath = item.next
 				a.saveTabsLocked()
 			}
