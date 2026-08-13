@@ -40,20 +40,46 @@ func (a *App) resolveCanonicalSessionPath(path string) string {
 	return sessioncatalog.CanonicalSessionPathForTopic(topic.Sessions, path)
 }
 
-func (a *App) resolveOpenTopicSessionPath(scope, workspaceRoot, topicID, sessionPath string) (string, string) {
+func (a *App) resolveOpenTopicSessionPath(scope, workspaceRoot, sessionPath string) (string, string) {
 	actualRoot := workspaceRoot
 	if scope == "global" {
 		actualRoot = globalWorkspaceRoot()
 	}
-	// A live topic tab owns the surface. Continuing onto the covering leaf
-	// here would make the first session-key match prefer an idle leaf copy.
-	if a.topicHasActiveRuntimeWork(topicID) {
-		return actualRoot, sessionPath
-	}
+	// Only suppress covering-leaf continue when the live runtime is already
+	// on this path. Opening a different ordinary session of the same topic
+	// must still detach and switch (OpenGlobalTab latest-session contract).
 	if continued := a.continuePathForOpen(sessionPath); continued != "" {
+		if a.sessionHasActiveRuntimeWork(sessionPath) {
+			return actualRoot, sessionPath
+		}
 		sessionPath = continued
 	}
 	return actualRoot, sessionPath
+}
+
+func (a *App) sessionHasActiveRuntimeWork(path string) bool {
+	key := sessionRuntimeKey(path)
+	if a == nil || key == "" {
+		return false
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for _, tabs := range []map[string]*WorkspaceTab{a.tabs, a.detachedSessions} {
+		for _, tab := range tabs {
+			if tab != nil && sessionRuntimeKey(tab.currentSessionPath()) == key && tab.hasActiveRuntimeWork() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (a *App) skipCoveringLeafRebind(tab *WorkspaceTab, target string) bool {
+	if tab == nil || !tab.hasActiveRuntimeWork() {
+		return false
+	}
+	next := a.continuePathForOpen(tab.currentSessionPath())
+	return next != "" && sessionRuntimeKey(next) == sessionRuntimeKey(target)
 }
 
 func (a *App) continuePathForOpen(path string) string {
@@ -112,12 +138,11 @@ func (a *App) resumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 	if tab == nil || ctrl == nil {
 		return HistoryPage{}, fmt.Errorf("tab is not ready")
 	}
-	if tab.hasActiveRuntimeWork() {
-		a.setTabReadOnly(tab.ID, false)
-		return a.HistoryPageForTab(tab.ID, 0, limit), nil
-	}
 	if continued := a.continuePathForOpen(path); continued != "" {
-		path = continued
+		current := tab.currentSessionPath()
+		if !tab.hasActiveRuntimeWork() || sessionRuntimeKey(current) != sessionRuntimeKey(path) {
+			path = continued
+		}
 	}
 	sessionPath, _, err := validateSessionPath(controllerSessionDir(ctrl), path)
 	if err != nil {

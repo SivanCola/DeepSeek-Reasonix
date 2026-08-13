@@ -588,7 +588,7 @@ func TestOpenTopicTabKeepsRunningParentInsteadOfCoveringLeaf(t *testing.T) {
 	}
 	app.tabs = map[string]*WorkspaceTab{"running": running}
 
-	_, resolved := app.resolveOpenTopicSessionPath("global", "", "conversation", root)
+	_, resolved := app.resolveOpenTopicSessionPath("global", "", root)
 	if resolved != root {
 		t.Fatalf("resolve running open = %q, want parent %q", resolved, root)
 	}
@@ -606,7 +606,7 @@ func TestOpenTopicTabKeepsRunningParentInsteadOfCoveringLeaf(t *testing.T) {
 
 	idle := &WorkspaceTab{ID: "idle", Scope: "global", TopicID: "conversation", SessionPath: root}
 	app.tabs = map[string]*WorkspaceTab{"idle": idle}
-	_, idleResolved := app.resolveOpenTopicSessionPath("global", "", "conversation", root)
+	_, idleResolved := app.resolveOpenTopicSessionPath("global", "", root)
 	if idleResolved != leaf {
 		t.Fatalf("resolve idle open = %q, want covering leaf %q", idleResolved, leaf)
 	}
