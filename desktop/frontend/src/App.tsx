@@ -81,7 +81,7 @@ import { useTerminalStore } from "./store/terminal";
 import { hydrateReasoningDisplayMode, setReasoningDisplayPending } from "./lib/reasoningDisplayPreference";
 import { parseTodos } from "./lib/tools";
 import {
-  dismissedTodoKeyForScope,
+  dismissedCompletedTodoKey,
   resolveTodoPanelTodos,
   scopedTodoBatchKey,
   scopedTodoDismissalKey,
@@ -2136,12 +2136,13 @@ export default function App() {
     [activeTab, activeTabId, state.meta?.eventChannel],
   );
   const dismissedTodo = useMemo(
-    () => dismissedTodoKeyForScope(todoScope, dismissedTodoKeys, todoKey),
+    () => dismissedCompletedTodoKey(todoScope, dismissedTodoKeys, todoKey),
     [dismissedTodoKeys, todoKey, todoScope],
   );
   const scopedTodoKey = useMemo(() => scopedTodoDismissalKey(todoScope, todoKey), [todoKey, todoScope]);
   const scopedTodoBatch = useMemo(() => scopedTodoBatchKey(todoScope, todoBatch), [todoBatch, todoScope]);
-  const showTodos = shouldShowTodoPanel(todoKey, dismissedTodo, todos);
+  const persistedTodoBatches = state.meta?.sessionPath === activeTab?.sessionPath ? state.meta?.dismissedTodoBatches : undefined;
+  const showTodos = shouldShowTodoPanel(todoKey, dismissedTodo, todos, { batchKey: todoBatch, batches: persistedTodoBatches });
   const dismissTodos = useCallback(() => {
     if (!scopedTodoKey) return;
     setDismissedTodoKeys((current) => {
@@ -2151,7 +2152,10 @@ export default function App() {
       saveDismissedTodoKeys(next);
       return next;
     });
-  }, [scopedTodoKey]);
+    if (activeTabId && todoBatch) {
+      void app.DismissTodoBatchForTab(activeTabId, todoBatch).catch(() => undefined);
+    }
+  }, [activeTabId, scopedTodoKey, todoBatch]);
 
   const sessionTitle = topicTitle(activeTab);
   const sessionHasContent = state.items.length > 0 || Boolean(state.live?.text || state.live?.reasoning);

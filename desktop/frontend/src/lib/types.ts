@@ -938,6 +938,7 @@ export interface Meta {
   goalStatus?: GoalStatus;
   goalRuntime?: GoalRuntime;
   canonicalTodos?: Todo[];
+  dismissedTodoBatches?: string[];
 }
 
 export type CollaborationMode = "normal" | "plan" | "goal";

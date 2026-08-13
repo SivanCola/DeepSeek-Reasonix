@@ -364,6 +364,7 @@ export interface AppBindings extends SessionCatalogBindings, HistoryCatalogBindi
   ToolResultForTab(tabID: string, toolID: string): Promise<{ args: string; output: string; execution?: import("./types").WireShellExecution } | null>;
   Meta(): Promise<Meta>;
   MetaForTab(tabID: string): Promise<Meta>;
+  DismissTodoBatchForTab(tabID: string, batchKey: string): Promise<void>;
   Commands(): Promise<CommandInfo[]>;
   Capabilities(): Promise<CapabilitiesView>;
   MCPServers(): Promise<ServerView[]>;
@@ -3486,6 +3487,7 @@ function makeMockApp(): AppBindings {
             goalStatus: active?.goalStatus ?? (active?.goal ? "running" : "stopped"),
           };
         },
+        async DismissTodoBatchForTab() {},
         async MetaForTab(tabID) {
           const tab = mockTabs.find((item) => item.id === tabID) ?? mockTabs.find((item) => item.active) ?? mockTabs[0];
           const toolApprovalMode = normalizeToolApprovalMode(tab?.toolApprovalMode, tab ? normalizeMode(tab.mode) : "normal", settings.autoApproveTools);
