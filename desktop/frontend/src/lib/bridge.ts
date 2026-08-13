@@ -8,6 +8,7 @@ import { maybeShare } from "./queryCoalesce";
 import { makeMockSessionCatalogBindings } from "./sessionCatalogBridge";
 import { makeMockHistoryCatalogBindings, type HistoryCatalogBindings } from "./historyCatalogBridge";
 import { makeMockTaskCatalogBindings, type TaskCatalogBindings } from "./taskCatalogBridge";
+import { makeMockBlankProjectBindings, type BlankProjectBindings } from "./blankProjectBridge";
 import { t } from "./i18n";
 import { providerIsConfigured, providerRequiresKey, removeProviderAccessesForMock } from "./providerModels";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems } from "./statusBarItems";
@@ -141,8 +142,7 @@ function stripLegacyGoalBudgetFlags(arg: string): string {
 // Run `wails generate module` after adding/renaming a bound method on App, then
 // `pnpm typecheck` to verify the mock still satisfies the contract.
 //
-// Types for the new native-feel bindings — kept inline since they are
-// bridge-specific and only used in AppBindings / the dev mock.
+// Types for native-feel bindings, used only by AppBindings and the dev mock.
 interface NativeConfirmRequest {
   title: string;
   message: string;
@@ -160,13 +160,12 @@ interface DesktopWindowState {
   maximised: boolean;
 }
 
-// AppBindings is the hand-written contract between the React app and the Go
-// kernel. It uses local types (types.ts) so components don't import generated
-// model classes. _CheckGeneratedBindings catches drift: when a Go method is
+// AppBindings is the hand-written contract between React and Go. Components use
+// local types instead of generated model classes. _CheckGeneratedBindings catches drift: when a Go method is
 // added or renamed, the generated types shift, and a key present in GeneratedApp
 // but missing from AppBindings causes a type error here. Fix: add the new method
 // to AppBindings, then run `pnpm typecheck` to verify.
-export interface AppBindings extends SessionCatalogBindings, HistoryCatalogBindings, TaskCatalogBindings {
+export interface AppBindings extends SessionCatalogBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings {
   Platform(): Promise<string>;
   MinimiseMainWindow(): Promise<void>;
   ToggleMaximiseMainWindow(): Promise<void>;
@@ -328,8 +327,6 @@ export interface AppBindings extends SessionCatalogBindings, HistoryCatalogBindi
   ScanPromptHistory(nonce: string): Promise<PromptHistoryResult>;
   ListWorkspaces(): Promise<WorkspaceView[]>;
   PickWorkspace(): Promise<string>;
-  PickBlankProjectParent(): Promise<string>;
-  CreateBlankProject(parentDir: string, projectName: string): Promise<string>;
   SwitchWorkspace(path: string): Promise<string>;
   RemoveWorkspace(path: string): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
@@ -2447,6 +2444,7 @@ function makeMockApp(): AppBindings {
   };
   return {
     ...makeMockSessionCatalogBindings(cloneProjectTree),
+    ...makeMockBlankProjectBindings(),
     async MinimiseMainWindow() {
       console.info("mock MinimiseMainWindow");
     },
@@ -3394,17 +3392,6 @@ function makeMockApp(): AppBindings {
       // Browser dev has no native dialog; simulate picking a folder and re-root so
       // the topbar folder chip visibly changes.
       return mockSwitchWorkspace(cwd.endsWith("another-project") ? "~/projects/reasonix" : "~/projects/another-project");
-    },
-    async PickBlankProjectParent() {
-      return "~/projects";
-    },
-    async CreateBlankProject(parentDir: string, projectName: string) {
-      const parent = parentDir.replace(/[\\/]+$/, "");
-      const name = projectName.trim();
-      if (!parent || !name || name === "." || name === ".." || /[\\/]/.test(name)) {
-        throw new Error("project name must be a single folder name");
-      }
-      return `${parent}/${name}`;
     },
     async SwitchWorkspace(path: string) {
       return mockSwitchWorkspace(path);
