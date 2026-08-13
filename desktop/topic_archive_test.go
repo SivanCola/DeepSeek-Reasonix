@@ -501,9 +501,7 @@ func TestTrashTopicFallbackStaysOffCatalogSidebar(t *testing.T) {
 	leftoverA := filepath.Join(dir, "leftover-a.jsonl")
 	leftoverB := filepath.Join(dir, "leftover-b.jsonl")
 	for _, path := range []string{leftoverA, leftoverB} {
-		if _, err := os.Create(path); err != nil {
-			t.Fatalf("create leftover %s: %v", path, err)
-		}
+		writeZeroByteSession(t, path)
 		if err := pinNewEmptySessionBranchMeta(path, "project", projectRoot, "", defaultTopicTitle); err != nil {
 			t.Fatalf("pin leftover %s: %v", path, err)
 		}
@@ -585,9 +583,7 @@ func TestUnusedTransientBlankSessionOnlyMatchesZeroByteFiles(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	zero := filepath.Join(dir, "zero.jsonl")
-	if _, err := os.Create(zero); err != nil {
-		t.Fatalf("create zero-byte session: %v", err)
-	}
+	writeZeroByteSession(t, zero)
 	if !unusedTransientBlankSession(dir, zero) {
 		t.Fatal("zero-byte unindexed session should be an unused transient blank")
 	}
@@ -600,12 +596,17 @@ func TestUnusedTransientBlankSessionOnlyMatchesZeroByteFiles(t *testing.T) {
 	}
 }
 
+func writeZeroByteSession(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write zero-byte session %s: %v", path, err)
+	}
+}
+
 func writeEmptyNamedSession(t *testing.T, dir, name, topicID, topicTitle, workspaceRoot string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if _, err := os.Create(path); err != nil {
-		t.Fatalf("create empty session: %v", err)
-	}
+	writeZeroByteSession(t, path)
 	if err := pinNewEmptySessionBranchMeta(path, "project", workspaceRoot, topicID, topicTitle); err != nil {
 		t.Fatalf("pin empty session: %v", err)
 	}
