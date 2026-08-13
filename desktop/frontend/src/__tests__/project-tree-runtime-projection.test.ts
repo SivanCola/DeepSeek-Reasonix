@@ -11,7 +11,10 @@ const catalog: ProjectNode[] = [
 ];
 const overlaid = projectTreeApplyRuntimeTopics(catalog, [
   { scope: "project", workspaceRoot: "/a", node: {
-    key: "known", kind: "topic", label: "Known live", root: "/a", topicId: "known", running: true, status: "thinking", children: [],
+    key: "known", kind: "topic", label: "Known live", root: "/a", topicId: "known", running: true, status: "thinking", children: [
+      { key: "known-a", kind: "session", label: "Session A", topicId: "known", sessionPath: "/a/a.jsonl" },
+      { key: "known-b", kind: "session", label: "Session B", topicId: "known", sessionPath: "/a/b.jsonl" },
+    ],
   } },
   { scope: "project", workspaceRoot: "/b", node: {
     key: "new", kind: "topic", label: "New live", root: "/b", topicId: "new", running: true, status: "streaming", children: [],
@@ -21,7 +24,14 @@ const shape = (tree: ProjectNode[]) => tree.map((project) => project.children?.m
   topic.topicId, topic.running, (topic as RuntimeNode).runtimeOnly,
 ]));
 assert.deepEqual(shape(overlaid), [[['known', true, undefined]], [['new', true, true]]]);
+assert.equal(overlaid[0]?.children?.[0]?.children?.length, 2);
 assert.deepEqual(shape(projectTreeApplyRuntimeTopics(overlaid, [])), [[['known', undefined, undefined]], []]);
+assert.equal(projectTreeApplyRuntimeTopics(overlaid, [
+  { scope: "project", workspaceRoot: "/a", node: {
+    key: "known", kind: "topic", label: "Known live", root: "/a", topicId: "known", running: true, children: [],
+  } },
+], new Set(["known"]))[0]?.children?.length, 0);
+assert.equal(projectTreeApplyRuntimeTopics(overlaid, [])[0]?.children?.[0]?.children?.length, 0);
 
 const projects: ProjectNode[] = Array.from({ length: 100 }, (_, index) => ({
   key: `p-${index}`, kind: "project", label: `P ${index}`, root: `/p/${index}`, children: [],
