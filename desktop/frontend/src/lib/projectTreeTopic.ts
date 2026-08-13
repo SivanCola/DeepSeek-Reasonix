@@ -233,8 +233,8 @@ export function projectTreeTopicHasUnreadActivity(
   if (topicStatus(node) !== "") return false;
   const key = projectTreeReadActivityKey(node);
   const activityAt = topicActivityAt(node);
-  const readAt = Math.max(readActivity[key] ?? 0, baselineAt);
-  return Boolean(key && activityAt > 0 && readAt < activityAt);
+  if (!key || activityAt <= 0) return false;
+  return Math.max(readActivity[key] ?? 0, baselineAt) < activityAt;
 }
 
 export function projectTreeShouldRenderTopicActions(isSessionNode: boolean, variant: ProjectTreeVariant, unread: boolean): boolean {
