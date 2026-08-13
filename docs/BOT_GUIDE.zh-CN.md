@@ -392,7 +392,7 @@ flowchart TD
 
 YOLO 的边界很重要：
 
-- YOLO 会跳过普通工具审批。
+- YOLO 会跳过普通工具审批，包括 `remember`/`forget`。
 - YOLO 不会跳过硬性 `deny` 规则。
 - YOLO 不会自动回答模型提出的 Ask 问题。
 - YOLO 不会自动批准计划模式里的计划批准。

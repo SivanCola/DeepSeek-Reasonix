@@ -13,7 +13,7 @@ Tool permission is independent of collaboration mode:
 | --- | --- | --- | --- |
 | Ask | Request approval before controlled tools (writes, commands, etc.). | Unfamiliar repos, high-risk edits, production-related work, step-by-step review. | Many low-risk repeated operations, or when you already trust continuous execution. |
 | Auto | Auto-approve ordinary tool permissions; explicit `ask` / `deny` rules and plan confirmation still apply. A bounded new project/reference memory can use the safe create-only path; other memory mutations still ask. | Daily code reading, small fixes, tests, normal implementation in a trusted workspace. | When you want every write or command confirmed by hand. |
-| Yolo | Skip ordinary tool permission prompts so writes and commands run with fewer interruptions; `deny` rules, plan confirmation, ask questions, and forced fresh approvals still apply. | Temporary branches, roll-backable worktrees, bulk mechanical edits after a confirmed plan. | Production, sensitive files, delete/publish/push, or unclear requirements. |
+| Yolo | Skip ordinary tool permission prompts so writes, commands, and `remember`/`forget` run with fewer interruptions; `deny` rules, plan confirmation, ask questions, and sandbox/config reviews still apply. | Temporary branches, roll-backable worktrees, bulk mechanical edits after a confirmed plan. | Production, sensitive files, delete/publish/push, or unclear requirements. |
 
 ## Ask mode
 
@@ -82,10 +82,11 @@ Auto Guard has no writer-tool allowlist or reset ritual for users to manage. Per
 
 ## Yolo mode
 
-Yolo maximizes continuous execution. Ordinary tool permission prompts are skipped so writes and commands interrupt less.
+Yolo maximizes continuous execution. Ordinary tool permission prompts are skipped so writes, commands, and memory remember/forget interrupt less.
 
 Yolo is the only approval posture that may bypass the nested/indirect-Bash human
-requirement. It still does not bypass explicit `deny` rules or the sandbox.
+requirement and the interactive memory-approval prompt. It still does not bypass
+explicit `deny` rules, the sandbox, plan confirmation, or managed config writes.
 
 ### How to enable
 

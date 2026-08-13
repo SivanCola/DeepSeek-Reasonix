@@ -519,7 +519,7 @@ func normalizePlanModeReadOnlyCommandPrefix(prefix string) string {
 
 func (a *approvalManager) bypassAllowsLocked(tool, subject string, args json.RawMessage) bool {
 	if requiresFreshApprovalTool(tool) {
-		return false
+		return a.toolApprovalMode == ToolApprovalYolo && yoloBypassesMemoryApproval(tool)
 	}
 	if a.toolApprovalMode == ToolApprovalYolo {
 		return true
@@ -558,7 +558,7 @@ func (a *approvalManager) sessionGrantAllowsLocked(tool, subject string) bool {
 
 // drainedApproval is a pending approval removed by a posture switch, keeping
 // its prompt id so frontends can dismiss exactly the prompts the new posture
-// resolved (fresh/plan/memory prompts stay pending and must stay visible).
+// resolved (plan/sandbox/config prompts stay pending and must stay visible).
 type drainedApproval struct {
 	id    string
 	reply chan approvalReply
@@ -569,7 +569,7 @@ type drainedApproval struct {
 func (a *approvalManager) drainLocked(includeExplicitAsk bool) []drainedApproval {
 	pending := make([]drainedApproval, 0, len(a.approvals))
 	for id, approval := range a.approvals {
-		if approval.fresh || requiresFreshApprovalTool(approval.tool) {
+		if (approval.fresh || requiresFreshApprovalTool(approval.tool)) && !yoloBypassesMemoryApproval(approval.tool) {
 			continue
 		}
 		if approval.requireHuman && !includeExplicitAsk {
@@ -600,13 +600,25 @@ func normalizeToolApprovalMode(mode string) string {
 }
 
 // RequiresFreshHumanApprovalTool reports whether a tool's unsafe variants must
-// be answered by a human decision, not by YOLO/auto approval, Guardian, or a
-// non-interactive nil approver. A controller that owns the scoped memory store
-// may still classify a bounded new project memory as create-only and allow that
-// narrow operation in interactive or headless mode.
+// be answered by a human, not Auto, Guardian, hooks, or a headless nil
+// approver. Interactive YOLO may still auto-allow remember/forget. A controller
+// that owns the scoped memory store may still auto-allow a bounded create-only
+// project memory.
 func RequiresFreshHumanApprovalTool(tool string) bool {
 	switch tool {
 	case planApprovalTool, memoryRememberTool, memoryForgetTool, SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool:
+		return true
+	default:
+		return false
+	}
+}
+
+// yoloBypassesMemoryApproval reports whether interactive YOLO may answer
+// remember/forget without a prompt. Plan approval, sandbox escape, and
+// managed config writes stay fresh-human even in YOLO.
+func yoloBypassesMemoryApproval(tool string) bool {
+	switch tool {
+	case memoryRememberTool, memoryForgetTool:
 		return true
 	default:
 		return false

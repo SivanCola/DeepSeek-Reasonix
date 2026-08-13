@@ -425,7 +425,7 @@ flowchart TD
 
 YOLO boundaries:
 
-- YOLO skips ordinary tool approval prompts.
+- YOLO skips ordinary tool approval prompts, including `remember`/`forget`.
 - YOLO does not bypass hard `deny` rules.
 - YOLO does not answer model Ask questions for you.
 - YOLO does not approve plan-mode plan approvals for you.
