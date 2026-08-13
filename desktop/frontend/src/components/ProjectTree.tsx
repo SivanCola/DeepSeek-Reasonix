@@ -17,6 +17,7 @@ import { topicActivityTime } from "../lib/session";
 import { useT, type Translator } from "../lib/i18n";
 import { PROJECT_COLOR_OPTIONS, projectColorValue } from "../lib/projectColors";
 import { projectTreeWithoutTopics, reloadProjectTreeTopics, useProjectTreeArchiveController, type ProjectTreeRefresh, type ProjectTreeRefreshOptions } from "../lib/projectTreeArchive";
+import { loadWorkbenchOrganizeMode, loadWorkbenchSortMode, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreePreferences";
 import { topicShortcutLabel, type TopicShortcutEntry } from "../lib/topicShortcuts";
 import type { ShortcutPlatform } from "../lib/keyboardShortcuts";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
@@ -58,11 +59,8 @@ function projectNodeKey(node: ProjectNode, depth: number): string {
   return node.key || `${node.kind}-${node.root ?? ""}-${node.topicId ?? ""}-${depth}`;
 }
 
-
 type ProjectDropPosition = "before" | "after";
 type WorkbenchHeaderMenu = "more" | "add" | null;
-type WorkbenchOrganizeMode = "project" | "recent" | "time";
-type WorkbenchSortMode = "created" | "updated";
 
 type CollapseSnapshot = {
   expanded: Set<string>;
@@ -75,9 +73,6 @@ type PinnedTreeSections = {
 };
 
 const GLOBAL_PROJECT_ORDER_KEY = "__global__";
-const WORKBENCH_ORGANIZE_KEY = "projectTree:workbenchOrganize";
-// Shared by classic and workbench; key string kept for existing saved choices.
-const WORKBENCH_SORT_KEY = "projectTree:workbenchSort";
 const READ_ACTIVITY_KEY = "projectTree:readActivity";
 const READ_ACTIVITY_BASELINE_KEY = "projectTree:readActivityBaselineAt";
 
@@ -114,26 +109,6 @@ function loadReadActivityBaselineAt(): number {
   } catch {
     return Date.now();
   }
-}
-
-function loadWorkbenchOrganizeMode(): WorkbenchOrganizeMode {
-  try {
-    const value = localStorage.getItem(WORKBENCH_ORGANIZE_KEY);
-    if (value === "recent" || value === "time") return value;
-  } catch {
-    /* localStorage unavailable */
-  }
-  return "project";
-}
-
-function loadWorkbenchSortMode(): WorkbenchSortMode {
-  try {
-    const value = localStorage.getItem(WORKBENCH_SORT_KEY);
-    if (value === "created") return "created";
-  } catch {
-    /* localStorage unavailable */
-  }
-  return "updated";
 }
 
 function projectOrderKey(node: ProjectNode): string {

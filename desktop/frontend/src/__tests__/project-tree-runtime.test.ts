@@ -26,10 +26,9 @@ import {
   projectTreeTopicMenuOffersPin,
   projectTreeDedupedExactTime,
   projectTreeShellSignature,
-  createProjectTopicLoadGuard,
-  resetProjectTopicPageLoads,
 } from "../components/ProjectTree";
 import { projectTreeTrashingTopics } from "../lib/projectTreeArchive";
+import { runProjectTreeSortRuntimeTests } from "./project-tree-sort-runtime.test";
 import type { ProjectNode } from "../lib/types";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -746,42 +745,7 @@ eq(
   true,
   "shell refresh never clears loaded folders while asynchronous topic reloads are pending",
 );
-eq(
-  projectTreeSource.includes('sortMode,') && projectTreeSource.includes('requestedSortMode ?? workbenchSortModeRef.current'),
-  true,
-  "topic page requests carry the selected conversation sort mode",
-);
-eq(
-  projectTreeSource.includes('topicLoadGuardRef.current.invalidateAll()')
-    && projectTreeSource.includes('loadProjectTopics(project, false, sortMode)'),
-  true,
-  "changing the conversation sort mode invalidates old pages and reloads immediately",
-);
-
-const sortLoadGuard = createProjectTopicLoadGuard();
-const staleGeneration = sortLoadGuard.begin("project-a");
-let resolveStaleLoad: (() => void) | undefined;
-let staleLoadApplied = false;
-const staleLoad = new Promise<void>((resolve) => {
-  resolveStaleLoad = resolve;
-}).then(() => {
-  if (sortLoadGuard.isCurrent("project-a", staleGeneration)) staleLoadApplied = true;
-});
-sortLoadGuard.invalidateAll();
-resolveStaleLoad?.();
-await staleLoad;
-eq(staleLoadApplied, false, "a delayed old-sort response cannot apply after sort invalidation");
-
-const currentGeneration = sortLoadGuard.begin("project-a");
-eq(sortLoadGuard.isCurrent("project-a", currentGeneration), true, "the first request for the new sort remains current");
-eq(
-  resetProjectTopicPageLoads({
-    "project-a": { nextCursor: "old-sort-cursor", loading: true },
-    "project-b": { nextCursor: "another-old-cursor", loading: false },
-  }),
-  { "project-a": { loading: false }, "project-b": { loading: false } },
-  "sort invalidation clears pagination cursors before the new first page loads",
-);
+await runProjectTreeSortRuntimeTests(eq, projectTreeSource);
 
 eq(
   [
