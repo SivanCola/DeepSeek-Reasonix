@@ -2363,6 +2363,9 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 	if scope == "global" {
 		actualRoot = globalWorkspaceRoot()
 	}
+	if continued := a.continuePathForOpen(sessionPath); continued != "" {
+		sessionPath = continued
+	}
 	targetKey := sessionRuntimeKey(sessionPath)
 
 	a.mu.Lock()
@@ -3772,6 +3775,11 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		// not mistaken for a deliberate empty placeholder afterward.
 		hasPinnedPath = false
 		pinnedPath = ""
+	}
+	if hasPinnedPath {
+		if continued := a.continuePathForOpen(pinnedPath); continued != "" {
+			pinnedPath = continued
+		}
 	}
 	catalogTopicPath := ""
 	if hasPinnedPath {
