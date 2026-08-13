@@ -44,7 +44,7 @@ func catalogRuntimeStatus(activity string, runtimeStatus control.RuntimeStatus) 
 		return topicStatusWaitingConfirmation
 	}
 	if runtimeStatus.Running {
-		if status == "" || status == topicStatusError || status == topicStatusPaused {
+		if status == "" || status == topicStatusError || status == topicStatusPaused || status == topicStatusAwaitingDelivery {
 			return topicStatusThinking
 		}
 		return status
@@ -52,7 +52,7 @@ func catalogRuntimeStatus(activity string, runtimeStatus control.RuntimeStatus) 
 	if runtimeStatus.BackgroundJobs > 0 {
 		return topicStatusBackgroundJob
 	}
-	if status == topicStatusError || status == topicStatusPaused {
+	if status == topicStatusError || status == topicStatusPaused || status == topicStatusAwaitingDelivery {
 		return status
 	}
 	return status
