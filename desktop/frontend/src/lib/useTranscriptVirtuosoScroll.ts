@@ -164,6 +164,16 @@ export function shouldFinishTailOnBottomRequestTimer({
   return pinned || bottomRequestWasActive;
 }
 
+export function shouldFinishTailOnAtBottomFalse({
+  pinned,
+  bottomRequestActive,
+}: {
+  pinned: boolean;
+  bottomRequestActive: boolean;
+}) {
+  return pinned || bottomRequestActive;
+}
+
 export function shouldSnapPinnedWheelToNativeBottom({
   pinned,
   deltaY,
@@ -363,10 +373,12 @@ export function useTranscriptVirtuosoScroll() {
       followGrowingTail();
       return;
     }
-    // Even inside a bottomRequest window, honor a state change if the reader
-    // has genuinely scrolled away from the bottom. A leftover native gap after
-    // LAST is an undershoot: finish at the native extent instead of unpinning.
-    if (!atBottom && bottomRequestRef.current) {
+    // LAST after a native snap reports atBottom=false. Finish the tail while
+    // pinned or while a jump request is open. Wheel/key/thumb already unpinned.
+    if (!atBottom && shouldFinishTailOnAtBottomFalse({
+      pinned: pinnedRef.current,
+      bottomRequestActive: bottomRequestRef.current,
+    })) {
       if (element && shouldReleaseBottomRequestOnAtBottomFalse({
         distanceFromBottom: nativeTranscriptDistanceFromBottom(element),
         scrollTop: element.scrollTop,

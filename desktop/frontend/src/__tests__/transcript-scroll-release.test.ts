@@ -9,6 +9,7 @@ import {
   nativeTranscriptBottomTop,
   nativeTranscriptDistanceFromBottom,
   shouldClearBottomRequestOnAtBottomTrue,
+  shouldFinishTailOnAtBottomFalse,
   shouldFinishTailOnBottomRequestTimer,
   shouldKeepPinnedOnAtBottomFalse,
   shouldReleaseBottomRequestOnAtBottomFalse,
@@ -230,6 +231,18 @@ check(
 check(
   !shouldFinishTailOnBottomRequestTimer({ pinned: false, bottomRequestWasActive: false }),
   "the timer does not re-pin after an explicit release cleared the request",
+);
+check(
+  shouldFinishTailOnAtBottomFalse({ pinned: true, bottomRequestActive: false }),
+  "a pinned LAST overwrite after the jump window still finishes the tail",
+);
+check(
+  shouldFinishTailOnAtBottomFalse({ pinned: false, bottomRequestActive: true }),
+  "a jump-bottom request still finishes the tail even if LAST briefly unpinned",
+);
+check(
+  !shouldFinishTailOnAtBottomFalse({ pinned: false, bottomRequestActive: false }),
+  "an unpinned reader without a jump request keeps ordinary at-bottom updates",
 );
 check(
   shouldSnapPinnedWheelToNativeBottom({
