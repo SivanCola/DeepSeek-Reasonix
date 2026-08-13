@@ -4423,8 +4423,7 @@ export default function App() {
           )}
 
           <section className="sidebar__section sidebar__section--projects">
-            <Suspense fallback={null}>
-              <ProjectTree
+            <Suspense fallback={null}><ProjectTree
                 activeScope={activeTab?.scope}
                 activeWorkspaceRoot={activeTab?.workspaceRoot}
                 activeTopicId={activeTab?.topicId}
@@ -4447,8 +4446,7 @@ export default function App() {
                 showShortcutBadges={showTopicBadges}
                 shortcutPlatform={desktopPlatform}
                 onVisibleTopicsChange={handleVisibleTopicsChange}
-              />
-            </Suspense>
+              /></Suspense>
           </section>
 
           {sidebarWorkbench ? (

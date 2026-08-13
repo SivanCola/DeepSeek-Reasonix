@@ -1,6 +1,8 @@
 import { asArray } from "./array";
 import type { ProjectNode, ProjectRuntimeTopic, ProjectTreeRuntimeSnapshot } from "./types";
 
+type RuntimeProjectNode = ProjectNode & { runtimeOnly?: boolean };
+
 function withoutRuntimeState(node: ProjectNode): ProjectNode {
   return { ...node, open: undefined, running: undefined, status: undefined };
 }
@@ -13,8 +15,8 @@ export function projectTreeApplyRuntimeTopics(tree: ProjectNode[], topics: Proje
   return tree.map((project) => {
     if (project.kind !== "project" && project.kind !== "global_folder") return project;
     const scope = project.kind === "project" ? "project" : "global";
-    const base = asArray(project.children).filter((node) => !node.runtimeOnly).map(withoutRuntimeState);
-    const runtimeOnly: ProjectNode[] = [];
+    const base = asArray(project.children).filter((node) => !(node as RuntimeProjectNode).runtimeOnly).map(withoutRuntimeState);
+    const runtimeOnly: RuntimeProjectNode[] = [];
     for (const topic of topics) {
       if (!topic.node.topicId || topic.scope !== scope || (scope === "project" && topic.workspaceRoot !== (project.root ?? ""))) continue;
       const index = base.findIndex((node) => node.topicId === topic.node.topicId);

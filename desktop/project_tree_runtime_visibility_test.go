@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -12,56 +11,11 @@ import (
 	"reasonix/internal/control"
 )
 
-func benchmarkProjectTreeRuntimeApp(size int) *App {
-	app := NewApp()
-	for i := range size {
-		id := fmt.Sprintf("tab-%03d", i)
-		root := fmt.Sprintf("/workspace/%03d", i)
-		path := fmt.Sprintf("/sessions/%03d.jsonl", i)
-		app.tabs[id] = &WorkspaceTab{
-			ID: id, Scope: "project", WorkspaceRoot: root,
-			TopicID: "topic-" + id, TopicTitle: "Runtime " + id,
-			SessionPath: path,
-			Ctrl:        &activationStubController{sessionPath: path},
-			Ready:       true,
-		}
-	}
-	return app
-}
-
-func BenchmarkProjectTreeRuntimeSnapshot100(b *testing.B) {
-	app := benchmarkProjectTreeRuntimeApp(100)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = app.projectTreeRuntimeSnapshot(uint64(i + 1))
-	}
-}
-
-func BenchmarkProjectTreeRuntimeSnapshotJSON100(b *testing.B) {
-	app := benchmarkProjectTreeRuntimeApp(100)
-	snapshot := app.projectTreeRuntimeSnapshot(1)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := json.Marshal(snapshot); err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
 func TestProjectTreeRuntimeSnapshotWailsArraysAreNonNil(t *testing.T) {
-	app := NewApp()
-	snapshot := app.GetProjectTreeRuntimeSnapshot()
-	if snapshot.Topics == nil {
-		t.Fatal("empty runtime snapshot topics = nil, want [] for Wails")
-	}
+	snapshot := NewApp().GetProjectTreeRuntimeSnapshot()
 	raw, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatalf("marshal runtime snapshot: %v", err)
-	}
-	if !strings.Contains(string(raw), `"topics":[]`) {
-		t.Fatalf("runtime snapshot JSON = %s, want topics:[]", raw)
+	if err != nil || snapshot.Topics == nil || !strings.Contains(string(raw), `"topics":[]`) {
+		t.Fatalf("empty runtime snapshot = %s (%v), want non-nil topics:[]", raw, err)
 	}
 }
 

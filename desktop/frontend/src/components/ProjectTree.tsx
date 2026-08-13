@@ -23,6 +23,7 @@ import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type Cont
 import { Tooltip } from "./Tooltip";
 import { WorktreeBadge } from "./WorktreeBadge";
 import { useProjectCreation } from "./useProjectCreation";
+import { useProjectTreeRuntimeProjection } from "../lib/useProjectTreeRuntimeProjection";
 
 interface ProjectTreeProps {
   activeScope?: string;
@@ -409,7 +410,7 @@ export function ProjectTree({
   const [tree, setTree] = useState<ProjectNode[]>([]);
   const treeRef = useRef<ProjectNode[]>([]);
   const latestRevisionRef = useRef(0);
-  const runtimeProjectionRef = useRef<{ apply(tree: ProjectNode[]): ProjectNode[]; dispose(): void } | null>(null);
+  const applyRuntimeProjection = useProjectTreeRuntimeProjection(setTree);
   const [catalogStatus, setCatalogStatus] = useState<SessionCatalogStatus>({
     state: "opening", revision: 0, indexed: 0, total: 0, repairPending: 0,
   });
@@ -530,19 +531,16 @@ export function ProjectTree({
       }
       latestRevisionRef.current = Math.max(latestRevisionRef.current, page.revision);
       const items = asArray(page.items);
-      setTree((current) => {
-        const merged = current.map((node) => {
-          if (node.key !== key) return node;
-          return { ...node, children: mergeProjectTopicPage(asArray(node.children), items, append) };
-        });
-        return runtimeProjectionRef.current?.apply(merged) ?? merged;
-      });
+      setTree((current) => applyRuntimeProjection(current.map((node) => {
+        if (node.key !== key) return node;
+        return { ...node, children: mergeProjectTopicPage(asArray(node.children), items, append) };
+      })));
       updateTopicPageState(key, { nextCursor: page.nextCursor, loading: false });
     } catch {
       if (topicLoadSeqRef.current[key] !== seq) return;
       updateTopicPageState(key, { ...topicPageStateRef.current[key], loading: false });
     }
-  }, [query, timeFilter, updateTopicPageState]);
+  }, [applyRuntimeProjection, query, timeFilter, updateTopicPageState]);
   loadProjectTopicsRef.current = loadProjectTopics;
   // Snapshot is intentionally shells-only. Preserve already loaded pages by
   // project key so a metadata refresh does not collapse or blank the sidebar.
@@ -556,13 +554,10 @@ export function ProjectTree({
       setCatalogStatus(snapshot.catalog);
       setIndexingDone(Boolean(snapshot.indexingDone));
       const keepLoadedTopics = !options?.reloadTopics;
-      setTree((current) => {
-        const shells = projects.map((project) => {
-          const previous = current.find((node) => node.key === project.key);
-          return { ...project, children: projectTreeShellChildren(previous?.children, { keepLoadedTopics }) };
-        });
-        return runtimeProjectionRef.current?.apply(shells) ?? shells;
-      });
+      setTree((current) => applyRuntimeProjection(projects.map((project) => {
+        const previous = current.find((node) => node.key === project.key);
+        return { ...project, children: projectTreeShellChildren(previous?.children, { keepLoadedTopics }) };
+      })));
       if (options?.reloadTopics) {
         for (const project of projects) {
           void loadProjectTopicsRef.current(project);
@@ -571,7 +566,7 @@ export function ProjectTree({
     } catch {
       /* bridge unavailable */
     }
-  }, []);
+  }, [applyRuntimeProjection]);
   const { addingProject, handleAddProject, openBlankProjectFlow, blankProjectFlow } = useProjectCreation({
     onAddProject,
     onRefresh: refresh,
@@ -596,21 +591,6 @@ export function ProjectTree({
   useEffect(() => {
     void refresh();
   }, [refresh, refreshSignal]);
-
-  // Wails events are an external system: subscribe before reading the current
-  // snapshot, then use the independent runtime revision to make either arrival
-  // order deterministic. The listener's returned disposer mirrors setup.
-  useEffect(() => {
-    let active = true;
-    void import("../lib/projectTreeRuntime").then((runtime) => {
-      if (!active) return;
-      runtimeProjectionRef.current = runtime.bindProjectTreeRuntime(setTree, () => app.GetProjectTreeRuntimeSnapshot?.());
-    }).catch(() => {});
-    return () => {
-      active = false;
-      runtimeProjectionRef.current?.dispose();
-    };
-  }, []);
 
   useEffect(() => onProjectTreeChangedV2((event) => {
     if (!projectTreeRevisionIsFresh(latestRevisionRef.current, event.revision)) return;

@@ -518,8 +518,6 @@ export interface ProjectNode {
   recoveryUnresolvedCount?: number;
   recoveryCleanupEligibleCount?: number;
   isolatedWorktree?: boolean;
-  /** Compatibility row synthesized from a live runtime absent from the catalog. */
-  runtimeOnly?: boolean;
   children?: ProjectNode[];
 }
 

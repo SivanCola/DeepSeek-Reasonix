@@ -190,10 +190,7 @@ type App struct {
 	// may or may not hold a.mu, so it cannot re-lock). Never write it after
 	// startup.
 	projectTreeChangedHook func()
-	// projectTreeRuntimeRevision orders the process-local runtime projection.
-	// It is deliberately independent from the disposable catalog revision:
-	// active ownership can change without any session file or metadata write.
-	projectTreeRuntimeRevision atomic.Uint64
+	projectTreeRuntime     projectTreeRuntimeState
 
 	// singleSurfaceMu serializes open/reuse plus visible-tab pruning for the
 	// one-conversation layout so overlapping navigation cannot remove the tab

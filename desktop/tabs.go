@@ -833,12 +833,7 @@ func applyRuntimeTab(target, source *WorkspaceTab, path string, wailsCtx context
 	}
 }
 
-func (a *App) attachExistingSessionRuntime(tab *WorkspaceTab, path string, wailsCtx context.Context) (attached bool) {
-	defer func() {
-		if attached {
-			a.emitProjectTreeRuntimeChangedWithLegacy()
-		}
-	}()
+func (a *App) attachExistingSessionRuntimeCore(tab *WorkspaceTab, path string, wailsCtx context.Context) bool {
 	key := sessionRuntimeKey(path)
 	if tab == nil || key == "" {
 		return false
@@ -3159,14 +3154,7 @@ func (a *App) CloseTab(tabID string) error {
 	return a.closeTab(tabID, true)
 }
 
-func (a *App) closeTab(tabID string, allowDetach bool) (err error) {
-	// Register this defer before the lock-release defers below so publication
-	// happens only after every runtime/removal lock has been released.
-	defer func() {
-		if err == nil {
-			a.emitProjectTreeRuntimeChangedWithLegacy()
-		}
-	}()
+func (a *App) closeTabRuntime(tabID string, allowDetach bool) error {
 	defer a.lockRuntimeMutation("close-tab")()
 	a.sessionRemovalMu.Lock()
 	defer a.sessionRemovalMu.Unlock()
@@ -6452,35 +6440,33 @@ func loadTelemetry(path string) tabTelemetrySnapshot {
 // ProjectNode is one node in the sidebar project tree (a project folder or a
 // topic leaf).
 type ProjectNode struct {
-	Key                          string `json:"key"`  // stable key for React
-	Kind                         string `json:"kind"` // "project" | "topic" | "session" | "global_folder" | "global_topic" | "global_session"
-	Label                        string `json:"label"`
-	Root                         string `json:"root,omitempty"` // project workspace root
-	TopicID                      string `json:"topicId,omitempty"`
-	SessionPath                  string `json:"sessionPath,omitempty"`
-	ProjectColor                 string `json:"projectColor,omitempty"`
-	Turns                        int    `json:"turns,omitempty"`
-	TurnsState                   string `json:"turnsState,omitempty"`
-	Health                       string `json:"health,omitempty"`
-	CreatedAt                    int64  `json:"createdAt,omitempty"`
-	LastActivityAt               int64  `json:"lastActivityAt,omitempty"`
-	Open                         bool   `json:"open,omitempty"`
-	Running                      bool   `json:"running,omitempty"`
-	Status                       string `json:"status,omitempty"`
-	Pinned                       bool   `json:"pinned,omitempty"`
-	Recovered                    bool   `json:"recovered,omitempty"`
-	RecoveryReason               string `json:"recoveryReason,omitempty"`
-	RecoveryDigest               string `json:"recoveryDigest,omitempty"`
-	RecoveryParentID             string `json:"recoveryParentId,omitempty"`
-	RecoveryState                string `json:"recoveryState,omitempty"`
-	RecoveryBranchCount          int    `json:"recoveryBranchCount,omitempty"`
-	RecoveryUnresolvedCount      int    `json:"recoveryUnresolvedCount,omitempty"`
-	RecoveryCleanupEligibleCount int    `json:"recoveryCleanupEligibleCount,omitempty"`
-	IsolatedWorktree             bool   `json:"isolatedWorktree,omitempty"`
-	// RuntimeOnly marks a compatibility row synthesized from a live runtime
-	// that the durable catalog/metadata projection does not contain yet.
-	RuntimeOnly bool          `json:"runtimeOnly,omitempty"`
-	Children    []ProjectNode `json:"children,omitempty"`
+	Key                          string        `json:"key"`  // stable key for React
+	Kind                         string        `json:"kind"` // "project" | "topic" | "session" | "global_folder" | "global_topic" | "global_session"
+	Label                        string        `json:"label"`
+	Root                         string        `json:"root,omitempty"` // project workspace root
+	TopicID                      string        `json:"topicId,omitempty"`
+	SessionPath                  string        `json:"sessionPath,omitempty"`
+	ProjectColor                 string        `json:"projectColor,omitempty"`
+	Turns                        int           `json:"turns,omitempty"`
+	TurnsState                   string        `json:"turnsState,omitempty"`
+	Health                       string        `json:"health,omitempty"`
+	CreatedAt                    int64         `json:"createdAt,omitempty"`
+	LastActivityAt               int64         `json:"lastActivityAt,omitempty"`
+	Open                         bool          `json:"open,omitempty"`
+	Running                      bool          `json:"running,omitempty"`
+	Status                       string        `json:"status,omitempty"`
+	Pinned                       bool          `json:"pinned,omitempty"`
+	Recovered                    bool          `json:"recovered,omitempty"`
+	RecoveryReason               string        `json:"recoveryReason,omitempty"`
+	RecoveryDigest               string        `json:"recoveryDigest,omitempty"`
+	RecoveryParentID             string        `json:"recoveryParentId,omitempty"`
+	RecoveryState                string        `json:"recoveryState,omitempty"`
+	RecoveryBranchCount          int           `json:"recoveryBranchCount,omitempty"`
+	RecoveryUnresolvedCount      int           `json:"recoveryUnresolvedCount,omitempty"`
+	RecoveryCleanupEligibleCount int           `json:"recoveryCleanupEligibleCount,omitempty"`
+	IsolatedWorktree             bool          `json:"isolatedWorktree,omitempty"`
+	RuntimeOnly                  bool          `json:"runtimeOnly,omitempty"`
+	Children                     []ProjectNode `json:"children,omitempty"`
 }
 
 func normalizeTopicStatus(status string) string {
@@ -7002,42 +6988,6 @@ func (a *App) emitProjectTreeChangedForSessionDirs(dirs ...string) {
 func (a *App) emitProjectTreeMetadataChanged() {
 	a.requestSessionCatalogMetadataSync()
 	a.emitProjectTreeChangedEvent()
-}
-
-func (a *App) emitProjectTreeChangedEvent() {
-	if a.projectTreeChangedHook != nil {
-		a.projectTreeChangedHook()
-		return
-	}
-	// Structural mutations still send the one-release legacy invalidation.
-	// Runtime ownership is published on its own typed projection so current
-	// frontends do not reload catalog pages to discover an in-memory change.
-	a.emitProjectTreeRuntimeChanged()
-	a.emitRuntimeEvent("project-tree:changed")
-}
-
-func (a *App) emitProjectTreeRuntimeChanged() {
-	if a == nil {
-		return
-	}
-	revision := a.projectTreeRuntimeRevision.Add(1)
-	a.emitRuntimeEvent("project-tree:runtime-changed", a.projectTreeRuntimeSnapshot(revision))
-}
-
-// emitProjectTreeRuntimeChangedWithLegacy keeps the previous frontend usable
-// during the one-release Wails transition. Current frontends recognize the
-// reason and skip the legacy catalog refresh; older frontends still receive the
-// event they used before the runtime projection existed.
-func (a *App) emitProjectTreeRuntimeChangedWithLegacy() {
-	a.emitProjectTreeRuntimeChanged()
-	a.emitRuntimeEvent("project-tree:changed", map[string]string{"reason": "runtime"})
-}
-
-func (a *App) emitRuntimeEvent(name string, payload ...any) {
-	if a == nil || a.ctx == nil {
-		return
-	}
-	a.runtimeEvents.Emit(a.ctx, name, payload...)
 }
 
 // DeleteTopic removes a topic and its title metadata.
