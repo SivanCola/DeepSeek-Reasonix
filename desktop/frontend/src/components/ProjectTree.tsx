@@ -10,7 +10,7 @@ import { asArray } from "../lib/array";
 import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
-import { isRuntimeSessionNode, isTopicNode, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeWithoutTopic, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type ProjectTreeVariant } from "../lib/projectTreeTopic";
+import { createProjectTopicLoadGuard, isRuntimeSessionNode, isTopicNode, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeWithoutTopic, resetProjectTopicPageLoads, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, type ProjectTopicPageLoadState, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type ProjectTreeVariant } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import type { ProjectNode, SessionCatalogStatus } from "../lib/types";
 import { topicActivityTime } from "../lib/session";
@@ -413,7 +413,7 @@ export function ProjectTree({
     state: "opening", revision: 0, indexed: 0, total: 0, repairPending: 0,
   });
   const [indexingDone, setIndexingDone] = useState(false);
-  const [topicPageState, setTopicPageState] = useState<Record<string, { nextCursor?: string; loading: boolean }>>({});
+  const [topicPageState, setTopicPageState] = useState<Record<string, ProjectTopicPageLoadState>>({});
   const topicPageStateRef = useRef(topicPageState);
   const updateTopicPageState = useCallback((key: string, next: { nextCursor?: string; loading: boolean }) => {
     setTopicPageState((current) => {
@@ -444,6 +444,7 @@ export function ProjectTree({
   const [workbenchHeaderMenu, setWorkbenchHeaderMenu] = useState<WorkbenchHeaderMenu>(null);
   const [workbenchOrganizeMode, setWorkbenchOrganizeMode] = useState<WorkbenchOrganizeMode>(loadWorkbenchOrganizeMode);
   const [workbenchSortMode, setWorkbenchSortMode] = useState<WorkbenchSortMode>(loadWorkbenchSortMode);
+  const workbenchSortModeRef = useRef(workbenchSortMode);
   const [readActivity, setReadActivity] = useState<ProjectTreeReadActivity>(loadReadActivity);
   const [readBaselineAt] = useState(loadReadActivityBaselineAt);
   const filterRef = useRef<HTMLDivElement>(null);
@@ -505,17 +506,18 @@ export function ProjectTree({
     });
   }, []);
 
-  const loadProjectTopicsRef = useRef<(project: ProjectNode, append?: boolean) => Promise<void>>(async () => {});
+  const topicLoadGuardRef = useRef(createProjectTopicLoadGuard());
+  const loadProjectTopicsRef = useRef<(project: ProjectNode, append?: boolean, sortMode?: WorkbenchSortMode) => Promise<void>>(async () => {});
 
-  const loadProjectTopics = useCallback(async (project: ProjectNode, append = false) => {
+  const loadProjectTopics = useCallback(async (project: ProjectNode, append = false, requestedSortMode?: WorkbenchSortMode) => {
     if (project.kind !== "project" && project.kind !== "global_folder") return;
     const key = project.key;
     const pageState = topicPageStateRef.current[key];
     const cursor = append ? pageState?.nextCursor ?? "" : "";
     if (append && !cursor) return;
-    // Last-query-wins: never drop a newer search because an older page is still loading.
-    const seq = (topicLoadSeqRef.current[key] ?? 0) + 1;
-    topicLoadSeqRef.current[key] = seq;
+    const sortMode = creationTopics ? "updated" : requestedSortMode ?? workbenchSortModeRef.current;
+    // Last-query-wins: stale completions cannot overwrite a newer first page.
+    const generation = topicLoadGuardRef.current.begin(key);
     updateTopicPageState(key, { ...pageState, loading: true });
     try {
       const page = await app.ListProjectTopics({
@@ -525,8 +527,9 @@ export function ProjectTree({
         limit: timeFilter === "10" ? 10 : timeFilter === "20" ? 20 : 50,
         query: query.trim(),
         timeFilter: timeFilter === "10" || timeFilter === "20" || timeFilter === "all" ? "" : timeFilter,
+        sortMode,
       });
-      if (topicLoadSeqRef.current[key] !== seq) return;
+      if (!topicLoadGuardRef.current.isCurrent(key, generation)) return;
       if (!projectTreeRevisionIsFresh(latestRevisionRef.current, page.revision)) {
         updateTopicPageState(key, { ...topicPageStateRef.current[key], loading: false });
         return;
@@ -539,11 +542,36 @@ export function ProjectTree({
       }));
       updateTopicPageState(key, { nextCursor: page.nextCursor, loading: false });
     } catch {
-      if (topicLoadSeqRef.current[key] !== seq) return;
+      if (!topicLoadGuardRef.current.isCurrent(key, generation)) return;
       updateTopicPageState(key, { ...topicPageStateRef.current[key], loading: false });
     }
-  }, [currentArchiveTombstones, query, timeFilter, updateTopicPageState]);
+  }, [creationTopics, currentArchiveTombstones, query, timeFilter, updateTopicPageState]);
   loadProjectTopicsRef.current = loadProjectTopics;
+
+  const selectWorkbenchSortMode = useCallback((sortMode: WorkbenchSortMode) => {
+    if (workbenchSortModeRef.current === sortMode) {
+      closeMenu();
+      setFilterMenuOpen(false);
+      return;
+    }
+    // Invalidate before scheduling React state so an already-resolved older
+    // request cannot write back during the render/effect gap. Its pagination
+    // cursor belongs to the old order and must not be reused by the new query.
+    workbenchSortModeRef.current = sortMode;
+    topicLoadGuardRef.current.invalidateAll();
+    const resetPageState = resetProjectTopicPageLoads(topicPageStateRef.current);
+    topicPageStateRef.current = resetPageState;
+    setTopicPageState(resetPageState);
+    setWorkbenchSortMode(sortMode);
+    closeMenu();
+    setFilterMenuOpen(false);
+
+    const filtering = query.trim() !== "" || timeFilter !== "all";
+    for (const project of treeRef.current) {
+      const key = projectNodeKey(project, 0);
+      if (filtering || expanded.has(key)) void loadProjectTopics(project, false, sortMode);
+    }
+  }, [closeMenu, expanded, loadProjectTopics, query, timeFilter]);
   // Snapshot is intentionally shells-only. Preserve already loaded pages by
   // project key so a metadata refresh does not collapse or blank the sidebar.
   const refresh = useCallback(async (options?: ProjectTreeRefreshOptions) => {
@@ -1859,8 +1887,7 @@ export function ProjectTree({
       icon: <Clock size={13} />,
       label: menuLabelWithCheck(t("projectTree.sortByCreatedAt"), workbenchSortMode === "created"),
       onSelect: () => {
-        setWorkbenchSortMode("created");
-        closeMenu();
+        selectWorkbenchSortMode("created");
       },
     },
     {
@@ -1868,8 +1895,7 @@ export function ProjectTree({
       icon: <Pencil size={13} />,
       label: menuLabelWithCheck(t("projectTree.sortByUpdatedAt"), workbenchSortMode === "updated"),
       onSelect: () => {
-        setWorkbenchSortMode("updated");
-        closeMenu();
+        selectWorkbenchSortMode("updated");
       },
     },
   ];
@@ -2005,7 +2031,7 @@ export function ProjectTree({
                   <button
                     type="button"
                     className={`project-tree__time-filter-opt${workbenchSortMode === "updated" ? " project-tree__time-filter-opt--on" : ""}`}
-                    onClick={() => { setWorkbenchSortMode("updated"); setFilterMenuOpen(false); }}
+                    onClick={() => selectWorkbenchSortMode("updated")}
                     role="menuitem"
                   >
                     {t("projectTree.sortByUpdatedAt")}
@@ -2013,7 +2039,7 @@ export function ProjectTree({
                   <button
                     type="button"
                     className={`project-tree__time-filter-opt${workbenchSortMode === "created" ? " project-tree__time-filter-opt--on" : ""}`}
-                    onClick={() => { setWorkbenchSortMode("created"); setFilterMenuOpen(false); }}
+                    onClick={() => selectWorkbenchSortMode("created")}
                     role="menuitem"
                   >
                     {t("projectTree.sortByCreatedAt")}
