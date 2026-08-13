@@ -779,7 +779,12 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	// change the previewed path even when the concrete tool returned an error.
 	a.finalizeObservedToolReceipts(plan, result, execution, err)
 	if a.svc.recoveryGate != nil {
-		a.observeRecoveryResult(ctx, evidenceName, evidenceArgs, readOnly, mutates, result, err, false, false, recoveryGen)
+		// Ride the failed tool result so the model sees the policy on this
+		// same turn. Do not Steer: that persists a fake user message and
+		// the desktop renders it on the user side of the transcript.
+		if guidance := a.observeRecoveryResult(ctx, evidenceName, evidenceArgs, readOnly, mutates, result, err, false, false, recoveryGen); guidance != "" {
+			result = appendHostRecoveryGuidance(result, guidance)
+		}
 	}
 	if err != nil {
 		detail := result

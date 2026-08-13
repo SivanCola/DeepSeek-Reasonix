@@ -5486,6 +5486,9 @@ func replaySectionsForWithAssistantRenderer(
 		case provider.RoleUser:
 			// Steer messages are surfaced as a notice line, not a user bubble.
 			if steerText, isSteer := agent.SteerText(m.Content); isSteer {
+				if agent.IsHostRecoveryGuidance(steerText) {
+					continue
+				}
 				out = append(out, fmt.Sprintf("  ↪ %s\n\n", steerText))
 				continue
 			}

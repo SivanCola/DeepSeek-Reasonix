@@ -5682,6 +5682,9 @@ func (state *historyMessageConvertState) convertHistoryMessage(
 	}
 	if m.LocalOnly {
 		if steerText, isSteer := agent.SteerText(agent.UserMessageText(m)); isSteer {
+			if agent.IsHostRecoveryGuidance(steerText) {
+				return out
+			}
 			return append(out, HistoryMessage{
 				Role:    "notice",
 				Content: agent.UnappliedSteerNotice(steerText),
@@ -5706,6 +5709,9 @@ func (state *historyMessageConvertState) convertHistoryMessage(
 		// Check against the raw m.Content: resolveUserContent applies
 		// StripComposePrefixes which trims trailing whitespace.
 		if steerText, isSteer := agent.SteerText(agent.UserMessageText(m)); isSteer {
+			if agent.IsHostRecoveryGuidance(steerText) {
+				return out
+			}
 			return append(out, HistoryMessage{Role: "notice", Content: "↪ " + steerText})
 		}
 		content = historyUserDisplayContent(m, resolveUserContent)
