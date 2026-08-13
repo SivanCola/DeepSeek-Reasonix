@@ -41,7 +41,7 @@ func ParseServerSearchHits(raw json.RawMessage) []ServerSearchHit {
 		if hit.Title == "" && hit.URL == "" {
 			continue
 		}
-		out = append(out, ServerSearchHit{Title: hit.Title, URL: hit.URL})
+		out = append(out, ServerSearchHit(hit))
 	}
 	return out
 }
@@ -104,7 +104,7 @@ func FormatServerSearchFootnotes(hits []ServerSearchHit) string {
 // ParseServerSearchOutput reads title/URL pairs from FormatServerSearchOutput.
 func ParseServerSearchOutput(output string) []ServerSearchHit {
 	var out []ServerSearchHit
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
