@@ -30,37 +30,6 @@ export function loadWorkbenchSortMode(): WorkbenchSortMode {
   return "updated";
 }
 
-export type ProjectTopicPageLoadState = { nextCursor?: string; loading: boolean };
-
-export type ProjectTopicLoadGuard = {
-  begin: (key: string) => number;
-  invalidateAll: () => void;
-  isCurrent: (key: string, generation: number) => boolean;
-};
-
-export function createProjectTopicLoadGuard(): ProjectTopicLoadGuard {
-  const generations = new Map<string, number>();
-  return {
-    begin(key) {
-      const generation = (generations.get(key) ?? 0) + 1;
-      generations.set(key, generation);
-      return generation;
-    },
-    invalidateAll() {
-      for (const [key, generation] of generations) generations.set(key, generation + 1);
-    },
-    isCurrent(key, generation) {
-      return generations.get(key) === generation;
-    },
-  };
-}
-
-export function resetProjectTopicPageLoads(
-  current: Record<string, ProjectTopicPageLoadState>,
-): Record<string, ProjectTopicPageLoadState> {
-  return Object.fromEntries(Object.keys(current).map((key) => [key, { loading: false }]));
-}
-
 export function isRuntimeSessionNode(node: ProjectNode): boolean {
   return node.kind === "session" || node.kind === "global_session";
 }

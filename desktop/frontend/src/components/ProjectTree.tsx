@@ -10,7 +10,7 @@ import { asArray } from "../lib/array";
 import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
-import { createProjectTopicLoadGuard, isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeWithoutTopic, resetProjectTopicPageLoads, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTopicPageLoadState, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type ProjectTreeVariant, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
+import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeWithoutTopic, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type ProjectTreeVariant, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import type { ProjectNode, SessionCatalogStatus } from "../lib/types";
 import { topicActivityTime } from "../lib/session";
@@ -387,7 +387,7 @@ export function ProjectTree({
     state: "opening", revision: 0, indexed: 0, total: 0, repairPending: 0,
   });
   const [indexingDone, setIndexingDone] = useState(false);
-  const [topicPageState, setTopicPageState] = useState<Record<string, ProjectTopicPageLoadState>>({});
+  const [topicPageState, setTopicPageState] = useState<Record<string, { nextCursor?: string; loading: boolean }>>({});
   const topicPageStateRef = useRef(topicPageState);
   const updateTopicPageState = useCallback((key: string, next: { nextCursor?: string; loading: boolean }) => {
     setTopicPageState((current) => {
@@ -480,18 +480,19 @@ export function ProjectTree({
     });
   }, []);
 
-  const topicLoadGuardRef = useRef(createProjectTopicLoadGuard());
-  const loadProjectTopicsRef = useRef<(project: ProjectNode, append?: boolean, sortMode?: WorkbenchSortMode) => Promise<void>>(async () => {});
+  const topicLoadSeqRef = useRef<Record<string, number>>({});
+  const loadProjectTopicsRef = useRef<(project: ProjectNode, append?: boolean) => Promise<void>>(async () => {});
 
-  const loadProjectTopics = useCallback(async (project: ProjectNode, append = false, requestedSortMode?: WorkbenchSortMode) => {
+  const loadProjectTopics = useCallback(async (project: ProjectNode, append = false) => {
     if (project.kind !== "project" && project.kind !== "global_folder") return;
     const key = project.key;
     const pageState = topicPageStateRef.current[key];
     const cursor = append ? pageState?.nextCursor ?? "" : "";
     if (append && !cursor) return;
-    const sortMode = creationTopics ? "updated" : requestedSortMode ?? workbenchSortModeRef.current;
+    const sortMode = creationTopics ? "updated" : workbenchSortModeRef.current;
     // Last-query-wins: stale completions cannot overwrite a newer first page.
-    const generation = topicLoadGuardRef.current.begin(key);
+    const seq = (topicLoadSeqRef.current[key] ?? 0) + 1;
+    topicLoadSeqRef.current[key] = seq;
     updateTopicPageState(key, { ...pageState, loading: true });
     try {
       const page = await app.ListProjectTopics({
@@ -503,7 +504,7 @@ export function ProjectTree({
         timeFilter: timeFilter === "10" || timeFilter === "20" || timeFilter === "all" ? "" : timeFilter,
         sortMode,
       });
-      if (!topicLoadGuardRef.current.isCurrent(key, generation)) return;
+      if (topicLoadSeqRef.current[key] !== seq) return;
       if (!projectTreeRevisionIsFresh(latestRevisionRef.current, page.revision)) {
         updateTopicPageState(key, { ...topicPageStateRef.current[key], loading: false });
         return;
@@ -516,7 +517,7 @@ export function ProjectTree({
       }));
       updateTopicPageState(key, { nextCursor: page.nextCursor, loading: false });
     } catch {
-      if (!topicLoadGuardRef.current.isCurrent(key, generation)) return;
+      if (topicLoadSeqRef.current[key] !== seq) return;
       updateTopicPageState(key, { ...topicPageStateRef.current[key], loading: false });
     }
   }, [creationTopics, currentArchiveTombstones, query, timeFilter, updateTopicPageState]);
@@ -532,10 +533,9 @@ export function ProjectTree({
     // request cannot write back during the render/effect gap. Its pagination
     // cursor belongs to the old order and must not be reused by the new query.
     workbenchSortModeRef.current = sortMode;
-    topicLoadGuardRef.current.invalidateAll();
-    const resetPageState = resetProjectTopicPageLoads(topicPageStateRef.current);
-    topicPageStateRef.current = resetPageState;
-    setTopicPageState(resetPageState);
+    for (const key in topicLoadSeqRef.current) topicLoadSeqRef.current[key] += 1;
+    topicPageStateRef.current = {};
+    setTopicPageState({});
     setWorkbenchSortMode(sortMode);
     closeMenu();
     setFilterMenuOpen(false);
@@ -543,7 +543,7 @@ export function ProjectTree({
     const filtering = query.trim() !== "" || timeFilter !== "all";
     for (const project of treeRef.current) {
       const key = projectNodeKey(project, 0);
-      if (filtering || expanded.has(key)) void loadProjectTopics(project, false, sortMode);
+      if (filtering || expanded.has(key)) void loadProjectTopics(project);
     }
   }, [closeMenu, expanded, loadProjectTopics, query, timeFilter]);
   // Snapshot is intentionally shells-only. Preserve already loaded pages by
