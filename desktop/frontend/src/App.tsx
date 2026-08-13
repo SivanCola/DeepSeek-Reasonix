@@ -81,7 +81,7 @@ import { useTerminalStore } from "./store/terminal";
 import { hydrateReasoningDisplayMode, setReasoningDisplayPending } from "./lib/reasoningDisplayPreference";
 import { parseTodos } from "./lib/tools";
 import {
-  dismissedCompletedTodoKey,
+  dismissedTodoKeyForScope,
   resolveTodoPanelTodos,
   scopedTodoBatchKey,
   scopedTodoDismissalKey,
@@ -2107,12 +2107,10 @@ export default function App() {
   // a stale local dismissal cannot hide work that still blocks final readiness;
   // every new list starts collapsed while its header keeps showing live progress
   // and the current task; completed lists can then be dismissed. The dismissal
-  // key is still based on stable todo content/state so history reloads
-  // do not resurrect the same finished list under a different event id. The
-  // batch key ignores status changes so progress within the same task list does
-  // not look like a brand-new task batch. Dismissal and open state are scoped to
-  // the active session/topic/tab so different projects and sessions do not hide
-  // or reopen each other's todo panels.
+  // key is still based on stable todo content/state so history reloads do not
+  // resurrect the same finished list under a different event id. The batch key
+  // ignores status so progress in the same list is not a new batch. Dismissal
+  // is scoped per session/topic/tab and also persisted on the session sidecar.
   const todoEntry = useMemo(() => {
     for (let i = state.items.length - 1; i >= 0; i--) {
       const it = state.items[i];
@@ -2136,13 +2134,12 @@ export default function App() {
     [activeTab, activeTabId, state.meta?.eventChannel],
   );
   const dismissedTodo = useMemo(
-    () => dismissedCompletedTodoKey(todoScope, dismissedTodoKeys, todoKey),
+    () => dismissedTodoKeyForScope(todoScope, dismissedTodoKeys, todoKey),
     [dismissedTodoKeys, todoKey, todoScope],
   );
   const scopedTodoKey = useMemo(() => scopedTodoDismissalKey(todoScope, todoKey), [todoKey, todoScope]);
   const scopedTodoBatch = useMemo(() => scopedTodoBatchKey(todoScope, todoBatch), [todoBatch, todoScope]);
-  const persistedTodoBatches = state.meta?.sessionPath === activeTab?.sessionPath ? state.meta?.dismissedTodoBatches : undefined;
-  const showTodos = shouldShowTodoPanel(todoKey, dismissedTodo, todos, { batchKey: todoBatch, batches: persistedTodoBatches });
+  const showTodos = shouldShowTodoPanel(todoKey, dismissedTodo, todos, { batchKey: todoBatch, batches: state.meta?.sessionPath === activeTab?.sessionPath ? state.meta?.dismissedTodoBatches : undefined });
   const dismissTodos = useCallback(() => {
     if (!scopedTodoKey) return;
     setDismissedTodoKeys((current) => {
@@ -2152,9 +2149,7 @@ export default function App() {
       saveDismissedTodoKeys(next);
       return next;
     });
-    if (activeTabId && todoBatch) {
-      void app.DismissTodoBatchForTab(activeTabId, todoBatch).catch(() => undefined);
-    }
+    if (activeTabId && todoBatch) void app.DismissTodoBatchForTab(activeTabId, todoBatch).catch(() => undefined);
   }, [activeTabId, scopedTodoKey, todoBatch]);
 
   const sessionTitle = topicTitle(activeTab);

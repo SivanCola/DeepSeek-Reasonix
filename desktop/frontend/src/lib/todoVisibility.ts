@@ -76,23 +76,6 @@ export function dismissedTodoKeyForScope(
   return todoKey ?? null;
 }
 
-export function dismissedCompletedTodoKey(
-  scope: string | null | undefined,
-  dismissedKeys: ReadonlySet<string> | null | undefined,
-  todoKey: string | null | undefined,
-): string | null {
-  const exact = dismissedTodoKeyForScope(scope, dismissedKeys, todoKey);
-  if (exact) return exact;
-  const key = String(todoKey ?? "").trim();
-  if (!key || !dismissedKeys?.size) return null;
-  if (dismissedKeys.has(key)) return key;
-  const suffix = `\0${key}`;
-  for (const stored of dismissedKeys) {
-    if (stored.endsWith(suffix)) return key;
-  }
-  return null;
-}
-
 export function todoBatchKey(todos: Todo[]): string {
   if (todos.length === 0) return "";
   return JSON.stringify(todos.map((todo) => ({

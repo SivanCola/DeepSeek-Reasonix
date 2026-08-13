@@ -104,3 +104,59 @@ func TestDismissTodoBatchSkipsMissingTab(t *testing.T) {
 		t.Fatal("missing tab should fail")
 	}
 }
+
+func TestMetaForTabDoesNotReadSiblingCoveringLeaf(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "parent.jsonl")
+	leaf := filepath.Join(dir, "leaf.jsonl")
+	if err := os.WriteFile(parent, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leaf, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SaveBranchMeta(parent, agent.BranchMeta{ID: "parent"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SaveBranchMeta(leaf, agent.BranchMeta{
+		ID: "leaf", ParentID: "parent", DismissedTodoBatches: []string{`[{"content":"Ship"}]`},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.tabs = map[string]*WorkspaceTab{"tab-1": {ID: "tab-1", SessionPath: parent, Ready: true}}
+	app.activeTabID = "tab-1"
+	if got := app.dismissedTodoBatchesForSession(parent); len(got) != 0 {
+		t.Fatalf("read path saw covering-leaf batches = %#v", got)
+	}
+}
+
+func TestParentSessionPathRejectsTraversal(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := t.TempDir()
+	outside := filepath.Join(filepath.Dir(dir), "escaped.jsonl")
+	leaf := filepath.Join(dir, "leaf.jsonl")
+	if err := os.WriteFile(leaf, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SaveBranchMeta(leaf, agent.BranchMeta{ID: "leaf", ParentID: filepath.Join("..", "escaped")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := parentSessionPathForTodoDismissal(leaf); got != "" {
+		t.Fatalf("traversal parent = %q", got)
+	}
+
+	app := NewApp()
+	app.tabs = map[string]*WorkspaceTab{"tab-1": {ID: "tab-1", SessionPath: leaf}}
+	if err := app.DismissTodoBatchForTab("tab-1", `[{"content":"Ship"}]`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(agent.BranchMetaPath(outside)); !os.IsNotExist(err) {
+		t.Fatalf("traversal wrote outside the session dir: %v", err)
+	}
+	if !safeTodoDismissalParentID("parent") || safeTodoDismissalParentID("../escaped") || safeTodoDismissalParentID(`foo/bar`) {
+		t.Fatal("parent id sanitizer accepted a path-shaped id")
+	}
+}

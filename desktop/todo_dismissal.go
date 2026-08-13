@@ -30,7 +30,7 @@ func (a *App) DismissTodoBatchForTab(tabID, batchKey string) error {
 	return firstErr
 }
 
-func (a *App) todoDismissalPersistPaths(sessionPath string) []string {
+func (a *App) todoDismissalReadPaths(sessionPath string) []string {
 	sessionPath = strings.TrimSpace(sessionPath)
 	if sessionPath == "" {
 		return nil
@@ -39,6 +39,11 @@ func (a *App) todoDismissalPersistPaths(sessionPath string) []string {
 	if parent := parentSessionPathForTodoDismissal(sessionPath); parent != "" {
 		paths = append(paths, parent)
 	}
+	return uniqueExistingSessionPaths(paths)
+}
+
+func (a *App) todoDismissalPersistPaths(sessionPath string) []string {
+	paths := a.todoDismissalReadPaths(sessionPath)
 	if a != nil {
 		if leaf := strings.TrimSpace(a.continuePathForOpen(sessionPath)); leaf != "" {
 			paths = append(paths, leaf)
@@ -49,7 +54,7 @@ func (a *App) todoDismissalPersistPaths(sessionPath string) []string {
 
 func (a *App) dismissedTodoBatchesForSession(sessionPath string) []string {
 	var sets [][]string
-	for _, path := range a.todoDismissalPersistPaths(sessionPath) {
+	for _, path := range a.todoDismissalReadPaths(sessionPath) {
 		sets = append(sets, agent.DismissedTodoBatches(path))
 	}
 	out := agent.MergeDismissedTodoBatches(sets...)
@@ -65,10 +70,22 @@ func parentSessionPathForTodoDismissal(sessionPath string) string {
 		return ""
 	}
 	parentID := strings.TrimSpace(meta.ParentID)
-	if parentID == "" || parentID == agent.BranchID(sessionPath) {
+	if !safeTodoDismissalParentID(parentID) || parentID == agent.BranchID(sessionPath) {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(sessionPath), parentID+".jsonl")
+	dir := filepath.Clean(filepath.Dir(sessionPath))
+	candidate := filepath.Join(dir, parentID+".jsonl")
+	if filepath.Dir(filepath.Clean(candidate)) != dir {
+		return ""
+	}
+	return candidate
+}
+
+func safeTodoDismissalParentID(parentID string) bool {
+	if parentID == "" || parentID == "." || parentID == ".." {
+		return false
+	}
+	return filepath.Base(parentID) == parentID && !strings.ContainsAny(parentID, `/\`)
 }
 
 func uniqueExistingSessionPaths(paths []string) []string {

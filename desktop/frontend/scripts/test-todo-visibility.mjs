@@ -17,7 +17,6 @@ const transpiled = ts.transpileModule(source, {
 
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(transpiled).toString("base64")}`;
 const {
-  dismissedCompletedTodoKey,
   dismissedTodoKeyForScope,
   resolveTodoPanelTodos,
   sameStringList,
@@ -167,17 +166,6 @@ assert.equal(
   shouldShowTodoPanel(activeKey, null, activeTodos, { batchKey: todoBatchKey(activeTodos), batches: [todoBatchKey(activeTodos)] }),
   true,
   "a persisted completed-batch dismissal cannot hide unfinished work",
-);
-const remounted = dismissedCompletedTodoKey("session:leaf.jsonl", dismissedBySession, completedKey);
-assert.equal(
-  remounted,
-  completedKey,
-  "a completed dismissal survives a session-path remount in local storage",
-);
-assert.equal(
-  shouldShowTodoPanel(completedKey, remounted, completedTodos),
-  false,
-  "the remounted completed fingerprint stays hidden",
 );
 const completedBatch = todoBatchKey(completedTodos);
 assert.equal(
