@@ -1,12 +1,16 @@
 // Run: node --import tsx src/__tests__/transcript-scroll-release.test.ts
 // Regression: non-wheel upward scroll must release tail-follow immediately,
-// not wait 500ms. Covers the fix for native scrollbar drag and middle-button
-// autoscroll suppression during a bottomRequest window.
+// not wait 500ms. A LAST undershoot on a history session must finish at the
+// native extent so wheel/jump-bottom can reveal the last rows.
 
 import {
   isPinnedTranscriptLayoutGrowth,
   isPinnedTranscriptViewportChange,
+  nativeTranscriptBottomTop,
+  nativeTranscriptDistanceFromBottom,
   shouldKeepPinnedOnAtBottomFalse,
+  shouldReleaseBottomRequestOnAtBottomFalse,
+  shouldSnapPinnedWheelToNativeBottom,
   TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX,
 } from "../lib/useTranscriptVirtuosoScroll";
 
@@ -140,6 +144,70 @@ check(
 check(
   !shouldKeepPinnedOnAtBottomFalse(readingHistory),
   "unpinned history reading survives todo dismiss",
+);
+
+console.log("\ntranscript history native bottom");
+
+const lastItemUndershoot = {
+  scrollHeight: 10000,
+  scrollTop: 9320,
+  clientHeight: 600,
+};
+check(
+  nativeTranscriptDistanceFromBottom(lastItemUndershoot) === 80,
+  "an underestimated last row leaves a native gap below Virtuoso LAST",
+);
+check(
+  nativeTranscriptBottomTop(lastItemUndershoot) === 9400,
+  "jump-bottom and tail-follow finish at the native scroll extent",
+);
+check(
+  !shouldReleaseBottomRequestOnAtBottomFalse({
+    distanceFromBottom: nativeTranscriptDistanceFromBottom(lastItemUndershoot),
+    scrollTop: lastItemUndershoot.scrollTop,
+    previousScrollTop: 9320,
+  }),
+  "LAST undershoot during jump-bottom is not the reader leaving the tail",
+);
+check(
+  shouldReleaseBottomRequestOnAtBottomFalse({
+    distanceFromBottom: 900,
+    scrollTop: 8500,
+    previousScrollTop: 9400,
+  }),
+  "a real upward drag during jump-bottom still releases tail-follow",
+);
+check(
+  shouldSnapPinnedWheelToNativeBottom({
+    pinned: true,
+    deltaY: 120,
+    distanceFromBottom: 80,
+  }),
+  "wheel-down while pinned to a false tail consumes the native gap",
+);
+check(
+  !shouldSnapPinnedWheelToNativeBottom({
+    pinned: true,
+    deltaY: 120,
+    distanceFromBottom: 0,
+  }),
+  "wheel-down at the physical bottom stays in ordinary tail-follow",
+);
+check(
+  !shouldSnapPinnedWheelToNativeBottom({
+    pinned: true,
+    deltaY: -120,
+    distanceFromBottom: 80,
+  }),
+  "wheel-up still leaves tail-follow instead of snapping back down",
+);
+check(
+  !shouldSnapPinnedWheelToNativeBottom({
+    pinned: false,
+    deltaY: 120,
+    distanceFromBottom: 80,
+  }),
+  "an unpinned reader keeps ordinary wheel scrolling",
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);
