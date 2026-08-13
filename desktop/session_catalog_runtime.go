@@ -230,12 +230,10 @@ func runtimeProjectTopicNodes(scope, workspaceRoot string, snapshots []catalogRu
 			}
 			status := catalogRuntimeStatus(session.activity, runtimeStatus)
 			running := status != "" || runtimeStatus.Running || runtimeStatus.PendingPrompt || runtimeStatus.BackgroundJobs > 0
-			node.Open = node.Open || session.open
-			node.Running = node.Running || running
-			if node.Status == "" {
-				node.Status = status
-			}
 			if len(sessions) == 1 {
+				node.Open = session.open
+				node.Running = running
+				node.Status = status
 				continue
 			}
 			path := strings.TrimSpace(session.sessionPath)
