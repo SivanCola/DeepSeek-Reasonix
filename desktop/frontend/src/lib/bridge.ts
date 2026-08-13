@@ -328,6 +328,8 @@ export interface AppBindings extends SessionCatalogBindings, HistoryCatalogBindi
   ScanPromptHistory(nonce: string): Promise<PromptHistoryResult>;
   ListWorkspaces(): Promise<WorkspaceView[]>;
   PickWorkspace(): Promise<string>;
+  PickBlankProjectParent(): Promise<string>;
+  CreateBlankProject(parentDir: string, projectName: string): Promise<string>;
   SwitchWorkspace(path: string): Promise<string>;
   RemoveWorkspace(path: string): Promise<void>;
   ContextUsage(): Promise<ContextInfo>;
@@ -3392,6 +3394,17 @@ function makeMockApp(): AppBindings {
       // Browser dev has no native dialog; simulate picking a folder and re-root so
       // the topbar folder chip visibly changes.
       return mockSwitchWorkspace(cwd.endsWith("another-project") ? "~/projects/reasonix" : "~/projects/another-project");
+    },
+    async PickBlankProjectParent() {
+      return "~/projects";
+    },
+    async CreateBlankProject(parentDir: string, projectName: string) {
+      const parent = parentDir.replace(/[\\/]+$/, "");
+      const name = projectName.trim();
+      if (!parent || !name || name === "." || name === ".." || /[\\/]/.test(name)) {
+        throw new Error("project name must be a single folder name");
+      }
+      return `${parent}/${name}`;
     },
     async SwitchWorkspace(path: string) {
       return mockSwitchWorkspace(path);

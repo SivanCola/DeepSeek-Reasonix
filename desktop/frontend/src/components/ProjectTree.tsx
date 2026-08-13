@@ -2,7 +2,7 @@
 // It shows a tree of projects (each with expandable topics) plus a Global
 // section. Clicking a topic opens its tab; "+" next to a project creates a
 // new topic.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import { Archive, ArrowDown, Pencil, Plus, Folder, FolderPlus, Search, BriefcaseBusiness, Copy, FolderOpen, XCircle, Check, ListCollapse, ListRestart, MessageSquare, Clock, Pin, MoreHorizontal, Minimize2, Maximize2, GitBranch } from "lucide-react";
@@ -22,6 +22,9 @@ import type { ShortcutPlatform } from "../lib/keyboardShortcuts";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 import { Tooltip } from "./Tooltip";
 import { WorktreeBadge } from "./WorktreeBadge";
+
+const BlankProjectFlow = lazy(() => import("./BlankProjectFlow").then((module) => ({ default: module.BlankProjectFlow })));
+
 interface ProjectTreeProps {
   activeScope?: string;
   activeWorkspaceRoot?: string;
@@ -30,7 +33,7 @@ interface ProjectTreeProps {
   imTopicSources?: Record<string, ProjectTreeImTopicSource>;
   variant?: ProjectTreeVariant;
   onOpenTopic: (scope: string, workspaceRoot: string, topicId: string, sessionPath?: string) => Promise<void> | void;
-  onAddProject: () => Promise<void>;
+  onAddProject: (path?: string) => Promise<void>;
   onCreateTopic?: (scope: string, workspaceRoot: string) => Promise<void> | void;
   onCreateDeliveryWorktree?: (workspaceRoot: string) => Promise<void> | void;
   onRenameTopic?: (topicId: string, title: string) => Promise<void> | void;
@@ -432,6 +435,7 @@ export function ProjectTree({
   const [editingProject, setEditingProject] = useState<{ key: string; root: string } | null>(null);
   const [projectDraft, setProjectDraft] = useState("");
   const [addingProject, setAddingProject] = useState(false);
+  const [blankProjectFlowOpen, setBlankProjectFlowOpen] = useState(false);
   const [isolatingProject, setIsolatingProject] = useState<string | null>(null);
   const [worktreeAvailability, setWorktreeAvailability] = useState<Record<string, { available: boolean; reason?: string }>>({});
   const [confirmAction, setConfirmAction] = useState<{ topicId: string; action: "trash" } | null>(null);
@@ -796,6 +800,8 @@ export function ProjectTree({
     try {
       await onAddProject();
       await refresh();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err), "error");
     } finally {
       setAddingProject(false);
     }
@@ -1892,8 +1898,11 @@ export function ProjectTree({
       key: "blank-project",
       icon: <FolderPlus size={13} />,
       label: t("projectTree.createBlankProject"),
-      disabled: true,
-      onSelect: () => {},
+      disabled: addingProject,
+      onSelect: () => {
+        closeMenu();
+        setBlankProjectFlowOpen(true);
+      },
     },
     {
       key: "existing-folder",
@@ -2268,6 +2277,15 @@ export function ProjectTree({
           )}
         </div>,
         document.body,
+      )}
+      {blankProjectFlowOpen && (
+        <Suspense fallback={null}>
+          <BlankProjectFlow
+            onOpenProject={(path) => onAddProject(path)}
+            onRefresh={() => refresh()}
+            onClose={() => setBlankProjectFlowOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );
