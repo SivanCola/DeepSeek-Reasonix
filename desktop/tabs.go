@@ -2325,11 +2325,11 @@ func (a *App) openProjectTab(workspaceRoot, topicID string) (TabMeta, error) {
 	a.registerProjectRoot(workspaceRoot)
 
 	sessionPath, _ := a.findTopicSessionForTarget("project", workspaceRoot, topicID)
-	return a.openTopicTabPreferLive("project", workspaceRoot, topicID, sessionPath)
+	return a.openTopicTabWithActivation("project", workspaceRoot, topicID, sessionPath, true)
 }
 
 func (a *App) openTopicTab(scope, workspaceRoot, topicID, sessionPath string) (TabMeta, error) {
-	return a.openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionPath, true)
+	return a.openTopicTabPreferLiveActivation(scope, workspaceRoot, topicID, sessionPath, true)
 }
 
 func (a *App) openProjectTabInactive(workspaceRoot, topicID string) (TabMeta, error) {
@@ -2342,7 +2342,7 @@ func (a *App) openProjectTabInactive(workspaceRoot, topicID string) (TabMeta, er
 	a.registerProjectRoot(workspaceRoot)
 
 	sessionPath, _ := a.findTopicSessionForTarget("project", workspaceRoot, topicID)
-	return a.openTopicTabPreferLiveInactive("project", workspaceRoot, topicID, sessionPath)
+	return a.openTopicTabWithActivation("project", workspaceRoot, topicID, sessionPath, false)
 }
 
 func (a *App) openGlobalTabInactive(topicID string) (TabMeta, error) {
@@ -2352,7 +2352,7 @@ func (a *App) openGlobalTabInactive(topicID string) (TabMeta, error) {
 	}
 
 	sessionPath, _ := a.findTopicSessionForTarget("global", "", topicID)
-	return a.openTopicTabPreferLiveInactive("global", "", topicID, sessionPath)
+	return a.openTopicTabWithActivation("global", "", topicID, sessionPath, false)
 }
 
 func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionPath string, activate bool) (TabMeta, error) {
@@ -2461,7 +2461,7 @@ func (a *App) openGlobalTab(topicID string) (TabMeta, error) {
 	}
 
 	sessionPath, _ := a.findTopicSessionForTarget("global", "", topicID)
-	return a.openTopicTabPreferLive("global", "", topicID, sessionPath)
+	return a.openTopicTabWithActivation("global", "", topicID, sessionPath, true)
 }
 
 // OpenTopicSession opens a concrete saved session from the sidebar. Unlike
@@ -2489,7 +2489,7 @@ func (a *App) openTopicSession(scope, workspaceRoot, topicID, sessionPath string
 	if err != nil {
 		return TabMeta{}, err
 	}
-	return a.openTopicTabPreferLive(scope, workspaceRoot, topicID, validPath)
+	return a.openTopicTab(scope, workspaceRoot, topicID, validPath)
 }
 
 // ActivateTopic opens a topic into the single visible conversation surface used

@@ -1,9 +1,16 @@
 package main
 
+import (
+	"strings"
+
+	"reasonix/internal/sessioncatalog"
+)
+
 // preferLiveSessionPath chooses which session a topic row should open.
-// A live runtime wins over the catalog representative. An explicit
-// non-representative path (History inspect) is left alone.
-func preferLiveSessionPath(requested, live, representative string) string {
+// A live runtime wins over ordinary catalog rows (RepresentativePath,
+// canonical leaf, and the covering parent that continue would follow).
+// An explicit non-ordinary path (History inspect) is left alone.
+func preferLiveSessionPath(requested, live string, ordinary ...string) string {
 	liveKey := sessionRuntimeKey(live)
 	if liveKey == "" {
 		return requested
@@ -15,9 +22,13 @@ func preferLiveSessionPath(requested, live, representative string) string {
 		}
 		return requested
 	}
-	repKey := sessionRuntimeKey(representative)
-	if repKey == "" || reqKey == repKey {
+	if len(ordinary) == 0 {
 		return live
+	}
+	for _, path := range ordinary {
+		if sessionRuntimeKey(path) == reqKey {
+			return live
+		}
 	}
 	return requested
 }
@@ -66,16 +77,45 @@ func (a *App) liveRuntimeForTopicLocked(scope, workspaceRoot, topicID string) *W
 
 func (a *App) resolveOpenSessionPath(scope, workspaceRoot, topicID, requested string) string {
 	live := a.liveSessionPathForTopic(scope, workspaceRoot, topicID)
-	representative := a.catalogSessionPathForTopic(scope, workspaceRoot, topicID)
-	return preferLiveSessionPath(requested, live, representative)
+	return preferLiveSessionPath(requested, live, a.ordinaryOpenSessionPaths(scope, workspaceRoot, topicID, requested)...)
 }
 
-func (a *App) openTopicTabPreferLive(scope, workspaceRoot, topicID, sessionPath string) (TabMeta, error) {
-	return a.openTopicTabPreferLiveActivation(scope, workspaceRoot, topicID, sessionPath, true)
+func (a *App) catalogTopicRecord(scope, workspaceRoot, topicID string) (sessioncatalog.TopicRecord, bool) {
+	if a == nil || strings.TrimSpace(topicID) == "" {
+		return sessioncatalog.TopicRecord{}, false
+	}
+	catalog := a.sessionCatalog.Load()
+	if catalog == nil {
+		return sessioncatalog.TopicRecord{}, false
+	}
+	topic, ok, err := catalog.GetTopic(a.bootContext(), sessioncatalog.TopicKey{
+		Scope: scope, WorkspaceRoot: workspaceRoot, TopicID: topicID,
+	})
+	if err != nil || !ok {
+		return sessioncatalog.TopicRecord{}, false
+	}
+	return topic, true
 }
 
-func (a *App) openTopicTabPreferLiveInactive(scope, workspaceRoot, topicID, sessionPath string) (TabMeta, error) {
-	return a.openTopicTabPreferLiveActivation(scope, workspaceRoot, topicID, sessionPath, false)
+// ordinaryOpenSessionPaths are the catalog identities of the sidebar row:
+// RepresentativePath, the canonical covering leaf, and the parent that
+// continue would follow. History inspect paths are not in this set.
+func (a *App) ordinaryOpenSessionPaths(scope, workspaceRoot, topicID, requested string) []string {
+	var ordinary []string
+	if topic, ok := a.catalogTopicRecord(scope, workspaceRoot, topicID); ok {
+		if rep := strings.TrimSpace(topic.RepresentativePath); rep != "" {
+			ordinary = append(ordinary, rep)
+		}
+		if canonical := sessioncatalog.CanonicalSessionPathForTopic(topic.Sessions, ""); canonical != "" {
+			ordinary = append(ordinary, canonical)
+		}
+	} else if path := a.catalogSessionPathForTopic(scope, workspaceRoot, topicID); path != "" {
+		ordinary = append(ordinary, path)
+	}
+	if continued := a.continuePathForOpen(requested); continued != "" {
+		ordinary = append(ordinary, requested, continued)
+	}
+	return ordinary
 }
 
 func (a *App) openTopicTabPreferLiveActivation(scope, workspaceRoot, topicID, sessionPath string, activate bool) (TabMeta, error) {
