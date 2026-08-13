@@ -480,7 +480,6 @@ export function ProjectTree({
     });
   }, []);
 
-  const topicLoadSeqRef = useRef<Record<string, number>>({});
   const loadProjectTopicsRef = useRef<(project: ProjectNode, append?: boolean) => Promise<void>>(async () => {});
 
   const loadProjectTopics = useCallback(async (project: ProjectNode, append = false) => {
