@@ -9,10 +9,10 @@ import { Archive, ArrowDown, Pencil, Plus, Folder, FolderPlus, Search, Briefcase
 import { asArray } from "../lib/array";
 import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
-import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
-import { isRuntimeSessionNode, isTopicNode, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldHandleEvent, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeWithoutTopic, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type ProjectTreeVariant } from "../lib/projectTreeTopic";
+import { onProjectTreeChangedV2, onProjectTreeRuntimeChanged } from "../lib/sessionCatalogBridge";
+import { isRuntimeSessionNode, isTopicNode, mergeProjectTopicPage, projectTreeApplyRuntimeTopics, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeWithoutTopic, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type ProjectTreeVariant } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
-import type { ProjectNode, SessionCatalogStatus } from "../lib/types";
+import type { ProjectNode, ProjectTreeRuntimeSnapshot, SessionCatalogStatus } from "../lib/types";
 import { topicActivityTime } from "../lib/session";
 import { useT, type Translator } from "../lib/i18n";
 import { PROJECT_COLOR_OPTIONS, projectColorValue } from "../lib/projectColors";
@@ -407,6 +407,7 @@ export function ProjectTree({
   const [tree, setTree] = useState<ProjectNode[]>([]);
   const treeRef = useRef<ProjectNode[]>([]);
   const latestRevisionRef = useRef(0);
+  const runtimeSnapshotRef = useRef<ProjectTreeRuntimeSnapshot | null>(null);
   const [catalogStatus, setCatalogStatus] = useState<SessionCatalogStatus>({
     state: "opening", revision: 0, indexed: 0, total: 0, repairPending: 0,
   });
@@ -502,6 +503,12 @@ export function ProjectTree({
   const topicLoadSeqRef = useRef<Record<string, number>>({});
   const loadProjectTopicsRef = useRef<(project: ProjectNode, append?: boolean) => Promise<void>>(async () => {});
 
+  const applyRuntimeSnapshot = useCallback((snapshot: ProjectTreeRuntimeSnapshot) => {
+    if (runtimeSnapshotRef.current && !projectTreeRevisionIsFresh(runtimeSnapshotRef.current.revision, snapshot.revision)) return;
+    runtimeSnapshotRef.current = snapshot;
+    setTree((current) => projectTreeApplyRuntimeTopics(current, snapshot.topics));
+  }, []);
+
   const loadProjectTopics = useCallback(async (project: ProjectNode, append = false) => {
     if (project.kind !== "project" && project.kind !== "global_folder") return;
     const key = project.key;
@@ -528,10 +535,15 @@ export function ProjectTree({
       }
       latestRevisionRef.current = Math.max(latestRevisionRef.current, page.revision);
       const items = asArray(page.items);
-      setTree((current) => current.map((node) => {
-        if (node.key !== key) return node;
-        return { ...node, children: mergeProjectTopicPage(asArray(node.children), items, append) };
-      }));
+      setTree((current) => {
+        const merged = current.map((node) => {
+          if (node.key !== key) return node;
+          return { ...node, children: mergeProjectTopicPage(asArray(node.children), items, append) };
+        });
+        return runtimeSnapshotRef.current
+          ? projectTreeApplyRuntimeTopics(merged, runtimeSnapshotRef.current.topics)
+          : merged;
+      });
       updateTopicPageState(key, { nextCursor: page.nextCursor, loading: false });
     } catch {
       if (topicLoadSeqRef.current[key] !== seq) return;
@@ -551,10 +563,15 @@ export function ProjectTree({
       setCatalogStatus(snapshot.catalog);
       setIndexingDone(Boolean(snapshot.indexingDone));
       const keepLoadedTopics = !options?.reloadTopics;
-      setTree((current) => projects.map((project) => {
-        const previous = current.find((node) => node.key === project.key);
-        return { ...project, children: projectTreeShellChildren(previous?.children, { keepLoadedTopics }) };
-      }));
+      setTree((current) => {
+        const shells = projects.map((project) => {
+          const previous = current.find((node) => node.key === project.key);
+          return { ...project, children: projectTreeShellChildren(previous?.children, { keepLoadedTopics }) };
+        });
+        return runtimeSnapshotRef.current
+          ? projectTreeApplyRuntimeTopics(shells, runtimeSnapshotRef.current.topics)
+          : shells;
+      });
       if (options?.reloadTopics) {
         for (const project of projects) {
           void loadProjectTopicsRef.current(project);
@@ -584,8 +601,24 @@ export function ProjectTree({
     void refresh();
   }, [refresh, refreshSignal]);
 
+  // Wails events are an external system: subscribe before reading the current
+  // snapshot, then use the independent runtime revision to make either arrival
+  // order deterministic. The listener's returned disposer mirrors setup.
+  useEffect(() => {
+    let active = true;
+    const accept = (snapshot: ProjectTreeRuntimeSnapshot) => {
+      if (active) applyRuntimeSnapshot(snapshot);
+    };
+    const stop = onProjectTreeRuntimeChanged(accept);
+    void app.GetProjectTreeRuntimeSnapshot?.().then(accept).catch(() => {});
+    return () => {
+      active = false;
+      stop();
+    };
+  }, [applyRuntimeSnapshot]);
+
   useEffect(() => onProjectTreeChangedV2((event) => {
-    if (!projectTreeShouldHandleEvent(latestRevisionRef.current, event.revision, event.reason)) return;
+    if (!projectTreeRevisionIsFresh(latestRevisionRef.current, event.revision)) return;
     latestRevisionRef.current = Math.max(latestRevisionRef.current, event.revision);
     void app.GetSessionCatalogStatus().then(setCatalogStatus).catch(() => {});
     if (treeRef.current.length === 0) { void refresh(); return; } // race: event before shell

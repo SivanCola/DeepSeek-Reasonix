@@ -922,9 +922,16 @@ export function onReady(cb: (tabId?: string) => void): () => void {
 
 export function onProjectTreeChanged(cb: () => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
-    return window.runtime.EventsOn("project-tree:changed", () => cb());
+    return window.runtime.EventsOn("project-tree:changed", (payload?: unknown) => {
+      if (projectTreeLegacyEventIsRuntime(payload)) return;
+      cb();
+    });
   }
   return () => {};
+}
+
+export function projectTreeLegacyEventIsRuntime(payload: unknown): boolean {
+  return (payload as { reason?: unknown } | null)?.reason === "runtime";
 }
 
 // onTopicActivation subscribes to the "topic:activation" channel carrying the

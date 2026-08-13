@@ -16,7 +16,14 @@ assert.match(panel, /void refresh\(\)/, "empty-tree event path calls refresh");
 assert.match(
   panel,
   /onProjectTreeChangedV2[\s\S]*projectTreeRevisionIsFresh\(latestRevisionRef\.current, event\.revision\)/,
-  "equal-revision overlay events use the shared freshness contract",
+  "equal-revision catalog events use the shared freshness contract",
+);
+assert.match(panel, /onProjectTreeRuntimeChanged/, "runtime projection has a dedicated Wails subscription");
+assert.match(panel, /GetProjectTreeRuntimeSnapshot/, "runtime subscription reconciles with a post-subscribe snapshot");
+assert.doesNotMatch(
+  panel,
+  /onProjectTreeRuntimeChanged[\s\S]{0,1000}ListProjectTopics/,
+  "runtime events never reload catalog topic pages",
 );
 assert.doesNotMatch(
   panel,

@@ -1,6 +1,6 @@
 import { asArray } from "./array";
 import { getLocale, type DictKey, type Translator } from "./i18n";
-import type { ProjectNode, ProjectTopicStatus } from "./types";
+import type { ProjectNode, ProjectRuntimeTopic, ProjectTopicStatus } from "./types";
 
 export type ProjectTreeVariant = "classic" | "workbench" | "creation";
 
@@ -16,12 +16,49 @@ export function projectTreeRevisionIsFresh(currentRevision: number, incomingRevi
   return incomingRevision >= currentRevision;
 }
 
-// Runtime ownership is an overlay on the disposable catalog, so its
-// invalidation can legitimately carry an older catalog revision when an
-// unrelated catalog commit wins the event-delivery race. Never discard that
-// overlay refresh solely because the catalog revision advanced first.
-export function projectTreeShouldHandleEvent(currentRevision: number, incomingRevision: number, reason: string): boolean {
-  return reason === "runtime" || projectTreeRevisionIsFresh(currentRevision, incomingRevision);
+function projectTreeWithoutRuntimeState(node: ProjectNode): ProjectNode {
+  return {
+    ...node,
+    open: undefined,
+    running: undefined,
+    status: undefined,
+  };
+}
+
+// Runtime topics are a replace-all projection over catalog children. Rows
+// marked runtimeOnly came from the backend's one-release compatibility merge;
+// remove them before applying the current snapshot so a finished runtime can
+// disappear without a catalog round-trip.
+export function projectTreeApplyRuntimeTopics(tree: ProjectNode[], topics: ProjectRuntimeTopic[]): ProjectNode[] {
+  return tree.map((project) => {
+    if (project.kind !== "project" && project.kind !== "global_folder") return project;
+    const scope = project.kind === "project" ? "project" : "global";
+    const base = asArray(project.children)
+      .filter((node) => !node.runtimeOnly)
+      .map(projectTreeWithoutRuntimeState);
+    const runtimeOnly: ProjectNode[] = [];
+    for (const topic of topics) {
+      if (!topic.node.topicId || topic.scope !== scope || (scope === "project" && topic.workspaceRoot !== (project.root ?? ""))) continue;
+      const index = base.findIndex((node) => node.topicId === topic.node.topicId);
+      if (index < 0) {
+        runtimeOnly.push({
+          ...topic.node,
+          runtimeOnly: true,
+          children: asArray(topic.node.children),
+        });
+        continue;
+      }
+      const catalogNode = base[index];
+      base[index] = {
+        ...catalogNode,
+        sessionPath: topic.node.sessionPath,
+        open: topic.node.open,
+        running: topic.node.running,
+        status: topic.node.status,
+      };
+    }
+    return { ...project, children: [...runtimeOnly, ...base] };
+  });
 }
 
 // Project shells come from desktop-projects.json and are valid even when the

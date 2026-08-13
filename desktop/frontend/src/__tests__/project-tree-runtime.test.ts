@@ -7,7 +7,7 @@ import {
   projectTreeShellChildren,
   projectTreeEventAffectsFolder,
   projectTreeRevisionIsFresh,
-  projectTreeShouldHandleEvent,
+  projectTreeApplyRuntimeTopics,
   projectTreeShouldApplyShellSnapshot,
   defaultExpandedProjectTreeKeys,
   activeSessionAncestorKeys,
@@ -29,6 +29,8 @@ import {
   projectTreeShellSignature,
 } from "../components/ProjectTree";
 import { projectTreeTrashingTopics } from "../lib/projectTreeArchive";
+import { projectTreeLegacyEventIsRuntime } from "../lib/bridge";
+import { normalizeProjectTreeRuntimeSnapshot } from "../lib/sessionCatalogBridge";
 import type { ProjectNode } from "../lib/types";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -48,6 +50,17 @@ function eq(a: unknown, b: unknown, label: string) {
 }
 
 console.log("\nproject tree runtime sessions");
+
+eq(
+  normalizeProjectTreeRuntimeSnapshot({ revision: 0, topics: null }),
+  { revision: 0, topics: [] },
+  "runtime bridge normalizes a legacy/null Wails topic array",
+);
+eq(
+  [projectTreeLegacyEventIsRuntime({ reason: "runtime" }), projectTreeLegacyEventIsRuntime(undefined)],
+  [true, false],
+  "current frontend ignores only runtime-tagged legacy invalidations",
+);
 
 const noTrashingTopics = new Set<string>();
 const topicATrashing = projectTreeTrashingTopics(noTrashingTopics, "topic-a", true);
@@ -681,12 +694,65 @@ eq(
 
 eq(
   [
-    projectTreeShouldHandleEvent(12, 11, "runtime"),
-    projectTreeShouldHandleEvent(12, 11, "metadata"),
-    projectTreeShouldHandleEvent(12, 13, "reconcile_complete"),
+    projectTreeRevisionIsFresh(12, 11),
+    projectTreeRevisionIsFresh(12, 12),
+    projectTreeRevisionIsFresh(12, 13),
   ],
-  [true, false, true],
-  "runtime overlays refresh even if an unrelated catalog revision event arrived first",
+  [false, true, true],
+  "runtime projection has an independent monotonic revision",
+);
+
+const runtimeCatalogTree: ProjectNode[] = [
+  {
+    key: "project-a",
+    kind: "project",
+    label: "A",
+    root: "/a",
+    children: [{ key: "topic-known", kind: "topic", label: "Known", root: "/a", topicId: "known", children: [] }],
+  },
+  { key: "project-b", kind: "project", label: "B", root: "/b", children: [] },
+];
+const runtimeOverlaid = projectTreeApplyRuntimeTopics(runtimeCatalogTree, [
+  {
+    scope: "project",
+    workspaceRoot: "/a",
+    node: { key: "topic-known", kind: "topic", label: "Known live", root: "/a", topicId: "known", open: false, running: true, status: "thinking", children: [] },
+  },
+  {
+    scope: "project",
+    workspaceRoot: "/b",
+    node: { key: "topic-new", kind: "topic", label: "New live", root: "/b", topicId: "new", open: false, running: true, status: "streaming", children: [] },
+  },
+]);
+eq(
+  runtimeOverlaid.map((project) => project.children?.map((topic) => [topic.topicId, topic.running, topic.runtimeOnly])),
+  [[['known', true, undefined]], [['new', true, true]]],
+  "runtime projection patches catalog rows and inserts lagging live rows by logical identity",
+);
+const runtimeCleared = projectTreeApplyRuntimeTopics(runtimeOverlaid, []);
+eq(
+  runtimeCleared.map((project) => project.children?.map((topic) => [topic.topicId, topic.running, topic.runtimeOnly])),
+  [[['known', undefined, undefined]], []],
+  "replacing the runtime projection clears status and removes runtime-only rows without a catalog reload",
+);
+
+const hundredProjectShells: ProjectNode[] = Array.from({ length: 100 }, (_, index) => ({
+  key: `project-${index}`,
+  kind: "project" as const,
+  label: `Project ${index}`,
+  root: `/project/${index}`,
+  children: [],
+}));
+const hundredRuntimeTopics = hundredProjectShells.map((project, index) => ({
+  scope: "project",
+  workspaceRoot: project.root,
+  node: { key: `topic-${index}`, kind: "topic" as const, label: `Task ${index}`, root: project.root, topicId: `topic-${index}`, running: true, status: "thinking" as const, children: [] },
+}));
+const hundredOverlaid = projectTreeApplyRuntimeTopics(hundredProjectShells, hundredRuntimeTopics);
+eq(
+  hundredOverlaid.reduce((count, project) => count + (project.children?.filter((topic) => topic.running).length ?? 0), 0),
+  100,
+  "one in-memory runtime snapshot updates 100 projects without topic-page fanout",
 );
 
 eq(

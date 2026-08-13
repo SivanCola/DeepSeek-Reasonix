@@ -39,6 +39,36 @@ type catalogRuntimeOverlay struct {
 	status  string
 }
 
+// catalogRuntimeSnapshots copies runtime identity under App.mu, then lets all
+// controller calls happen after the app lock is released. RuntimeStatus is an
+// in-memory read, but controller implementations may own their own locks and
+// must never become part of the App.mu lock order.
+func (a *App) catalogRuntimeSnapshots() []catalogRuntimeSnapshot {
+	if a == nil {
+		return []catalogRuntimeSnapshot{}
+	}
+	a.mu.RLock()
+	snapshots := make([]catalogRuntimeSnapshot, 0, len(a.tabs)+len(a.detachedSessions))
+	collect := func(tab *WorkspaceTab, open bool) {
+		if tab == nil || strings.TrimSpace(tab.TopicID) == "" {
+			return
+		}
+		snapshots = append(snapshots, catalogRuntimeSnapshot{
+			scope: tab.Scope, workspaceRoot: tab.WorkspaceRoot, topicID: tab.TopicID,
+			sessionPath: tab.SessionPath, activity: tab.ActivityStatus, topicTitle: tab.TopicTitle,
+			ctrl: tab.Ctrl, open: open,
+		})
+	}
+	for _, tab := range a.tabs {
+		collect(tab, true)
+	}
+	for _, tab := range a.detachedSessions {
+		collect(tab, false)
+	}
+	a.mu.RUnlock()
+	return snapshots
+}
+
 func catalogRuntimeStatus(activity string, runtimeStatus control.RuntimeStatus) string {
 	status := normalizeTopicStatus(activity)
 	if runtimeStatus.PendingPrompt {
@@ -60,28 +90,9 @@ func catalogRuntimeStatus(activity string, runtimeStatus control.RuntimeStatus) 
 }
 
 func (a *App) catalogRuntimeOverlays() (map[string]catalogRuntimeOverlay, map[string]catalogRuntimeOverlay) {
-	a.mu.RLock()
-	snapshots := make([]catalogRuntimeSnapshot, 0, len(a.tabs)+len(a.detachedSessions))
-	collect := func(tab *WorkspaceTab, open bool) {
-		if tab == nil || strings.TrimSpace(tab.TopicID) == "" {
-			return
-		}
-		snapshots = append(snapshots, catalogRuntimeSnapshot{
-			scope: tab.Scope, workspaceRoot: tab.WorkspaceRoot, topicID: tab.TopicID,
-			sessionPath: tab.SessionPath, activity: tab.ActivityStatus, topicTitle: tab.TopicTitle,
-			ctrl: tab.Ctrl, open: open,
-		})
-	}
-	for _, tab := range a.tabs {
-		collect(tab, true)
-	}
-	for _, tab := range a.detachedSessions {
-		collect(tab, false)
-	}
-	a.mu.RUnlock()
 	topics := map[string]catalogRuntimeOverlay{}
 	sessions := map[string]catalogRuntimeOverlay{}
-	for _, snap := range snapshots {
+	for _, snap := range a.catalogRuntimeSnapshots() {
 		runtimeStatus := control.RuntimeStatus{}
 		path := strings.TrimSpace(snap.sessionPath)
 		if snap.ctrl != nil {
@@ -177,6 +188,7 @@ func (a *App) metadataProjectTopics(scope, workspaceRoot string) []ProjectNode {
 		if seen[runtimeNode.TopicID] || deleted[runtimeNode.TopicID] {
 			continue
 		}
+		runtimeNode.RuntimeOnly = true
 		out = append(out, runtimeNode)
 	}
 	return out
@@ -192,32 +204,21 @@ func (a *App) runtimeOnlyProjectTopics(scope, workspaceRoot string) []ProjectNod
 // in the catalog (a restored tab may carry a legacy topic ID for a re-anchored
 // recovery lineage).
 func (a *App) runtimeOnlyProjectTopicsWithSessions(scope, workspaceRoot string) ([]ProjectNode, map[string][]string) {
-	a.mu.RLock()
 	snapshots := []catalogRuntimeSnapshot{}
-	collect := func(tab *WorkspaceTab, open bool) {
-		if tab == nil || strings.TrimSpace(tab.TopicID) == "" {
-			return
-		}
+	for _, snapshot := range a.catalogRuntimeSnapshots() {
 		if scope == "project" {
-			if tab.Scope != "project" || !sameProjectRoot(tab.WorkspaceRoot, workspaceRoot) {
-				return
+			if snapshot.scope != "project" || !sameProjectRoot(snapshot.workspaceRoot, workspaceRoot) {
+				continue
 			}
-		} else if tab.Scope == "project" {
-			return
+		} else if snapshot.scope == "project" {
+			continue
 		}
-		snapshots = append(snapshots, catalogRuntimeSnapshot{
-			scope: tab.Scope, workspaceRoot: tab.WorkspaceRoot, topicID: tab.TopicID,
-			sessionPath: tab.SessionPath, activity: tab.ActivityStatus,
-			topicTitle: tab.TopicTitle, ctrl: tab.Ctrl, open: open,
-		})
+		snapshots = append(snapshots, snapshot)
 	}
-	for _, tab := range a.tabs {
-		collect(tab, true)
-	}
-	for _, tab := range a.detachedSessions {
-		collect(tab, false)
-	}
-	a.mu.RUnlock()
+	return runtimeProjectTopicNodes(scope, workspaceRoot, snapshots)
+}
+
+func runtimeProjectTopicNodes(scope, workspaceRoot string, snapshots []catalogRuntimeSnapshot) ([]ProjectNode, map[string][]string) {
 	byTopic := map[string][]catalogRuntimeSnapshot{}
 	sessionsByTopic := map[string][]string{}
 	for _, snapshot := range snapshots {
@@ -259,10 +260,12 @@ func (a *App) runtimeOnlyProjectTopicsWithSessions(scope, workspaceRoot string) 
 			}
 			status := catalogRuntimeStatus(session.activity, runtimeStatus)
 			running := status != "" || runtimeStatus.Running || runtimeStatus.PendingPrompt || runtimeStatus.BackgroundJobs > 0
-			if len(sessions) == 1 {
-				node.Open = session.open
-				node.Running = running
+			node.Open = node.Open || session.open
+			node.Running = node.Running || running
+			if node.Status == "" {
 				node.Status = status
+			}
+			if len(sessions) == 1 {
 				continue
 			}
 			path := strings.TrimSpace(session.sessionPath)
@@ -281,6 +284,55 @@ func (a *App) runtimeOnlyProjectTopicsWithSessions(scope, workspaceRoot string) 
 		out = append(out, node)
 	}
 	return out, sessionsByTopic
+}
+
+// GetProjectTreeRuntimeSnapshot returns the complete in-memory runtime
+// projection. The frontend subscribes first and then calls this method; the
+// independent revision makes either arrival order deterministic.
+func (a *App) GetProjectTreeRuntimeSnapshot() ProjectTreeRuntimeSnapshot {
+	revision := uint64(0)
+	if a != nil {
+		revision = a.projectTreeRuntimeRevision.Load()
+	}
+	return a.projectTreeRuntimeSnapshot(revision)
+}
+
+func (a *App) projectTreeRuntimeSnapshot(revision uint64) ProjectTreeRuntimeSnapshot {
+	type runtimeGroup struct {
+		scope         string
+		workspaceRoot string
+		snapshots     []catalogRuntimeSnapshot
+	}
+	groups := map[string]*runtimeGroup{}
+	for _, snapshot := range a.catalogRuntimeSnapshots() {
+		scope, root := normalizeDesktopTopicScope(snapshot.scope, snapshot.workspaceRoot)
+		snapshot.scope = scope
+		snapshot.workspaceRoot = root
+		key := topicSummaryKey(scope, root, snapshot.topicID)
+		group := groups[key]
+		if group == nil {
+			group = &runtimeGroup{scope: scope, workspaceRoot: root}
+			groups[key] = group
+		}
+		group.snapshots = append(group.snapshots, snapshot)
+	}
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	topics := make([]ProjectRuntimeTopic, 0, len(keys))
+	for _, key := range keys {
+		group := groups[key]
+		nodes, _ := runtimeProjectTopicNodes(group.scope, group.workspaceRoot, group.snapshots)
+		if len(nodes) == 0 {
+			continue
+		}
+		topics = append(topics, ProjectRuntimeTopic{
+			Scope: group.scope, WorkspaceRoot: group.workspaceRoot, Node: nodes[0],
+		})
+	}
+	return ProjectTreeRuntimeSnapshot{Revision: revision, Topics: topics}
 }
 
 func (a *App) metadataTopicPage(req ProjectTopicPageRequest) ProjectTopicPage {
@@ -546,6 +598,7 @@ func (a *App) withLiveTopics(catalog *sessioncatalog.Catalog, req ProjectTopicPa
 		if deleted[node.TopicID] {
 			continue
 		}
+		node.RuntimeOnly = true
 		node.CreatedAt = topicCreatedAtForTree(created, node.TopicID)
 		node.LastActivityAt = node.CreatedAt
 		kept = append(kept, node)

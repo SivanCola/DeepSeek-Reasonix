@@ -2,14 +2,89 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"reasonix/internal/control"
 )
 
-func TestKeepOnlyVisibleTabPublishesDetachedRuntimeToProjectTreeV2(t *testing.T) {
+func benchmarkProjectTreeRuntimeApp(size int) *App {
+	app := NewApp()
+	for i := range size {
+		id := fmt.Sprintf("tab-%03d", i)
+		root := fmt.Sprintf("/workspace/%03d", i)
+		path := fmt.Sprintf("/sessions/%03d.jsonl", i)
+		app.tabs[id] = &WorkspaceTab{
+			ID: id, Scope: "project", WorkspaceRoot: root,
+			TopicID: "topic-" + id, TopicTitle: "Runtime " + id,
+			SessionPath: path,
+			Ctrl:        &activationStubController{sessionPath: path},
+			Ready:       true,
+		}
+	}
+	return app
+}
+
+func BenchmarkProjectTreeRuntimeSnapshot100(b *testing.B) {
+	app := benchmarkProjectTreeRuntimeApp(100)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = app.projectTreeRuntimeSnapshot(uint64(i + 1))
+	}
+}
+
+func BenchmarkProjectTreeRuntimeSnapshotJSON100(b *testing.B) {
+	app := benchmarkProjectTreeRuntimeApp(100)
+	snapshot := app.projectTreeRuntimeSnapshot(1)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := json.Marshal(snapshot); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestProjectTreeRuntimeSnapshotWailsArraysAreNonNil(t *testing.T) {
+	app := NewApp()
+	snapshot := app.GetProjectTreeRuntimeSnapshot()
+	if snapshot.Topics == nil {
+		t.Fatal("empty runtime snapshot topics = nil, want [] for Wails")
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal runtime snapshot: %v", err)
+	}
+	if !strings.Contains(string(raw), `"topics":[]`) {
+		t.Fatalf("runtime snapshot JSON = %s, want topics:[]", raw)
+	}
+}
+
+func TestProjectTreeRuntimeSnapshotFindsRestoredTabBeforeFirstEvent(t *testing.T) {
+	app := NewApp()
+	app.tabs["restored"] = &WorkspaceTab{
+		ID: "restored", Scope: "project", WorkspaceRoot: "/workspace/restored",
+		TopicID: "topic-restored", TopicTitle: "Restored task",
+		SessionPath: "/sessions/restored.jsonl",
+		Ctrl:        &activationStubController{sessionPath: "/sessions/restored.jsonl"},
+		Ready:       true,
+	}
+	snapshot := app.GetProjectTreeRuntimeSnapshot()
+	if snapshot.Revision != 0 || len(snapshot.Topics) != 1 {
+		t.Fatalf("initial runtime snapshot = %+v, want one topic at revision 0", snapshot)
+	}
+	topic := snapshot.Topics[0]
+	if topic.Node.TopicID != "topic-restored" || !topic.Node.Open || !topic.Node.Running {
+		t.Fatalf("restored runtime topic = %+v, want open/running topic-restored", topic)
+	}
+}
+
+func TestKeepOnlyVisibleTabPublishesDetachedRuntimeProjection(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	projectA := t.TempDir()
 	projectB := t.TempDir()
@@ -80,22 +155,31 @@ func TestKeepOnlyVisibleTabPublishesDetachedRuntimeToProjectTreeV2(t *testing.T)
 	for {
 		select {
 		case emitted := <-events:
-			if emitted.name != "project-tree:changed-v2" {
+			if emitted.name != "project-tree:runtime-changed" {
 				continue
 			}
 			if len(emitted.payload) != 1 {
-				t.Fatalf("project-tree:changed-v2 payload count = %d, want 1", len(emitted.payload))
+				t.Fatalf("project-tree:runtime-changed payload count = %d, want 1", len(emitted.payload))
 			}
-			event, ok := emitted.payload[0].(ProjectTreeChangedV2)
+			event, ok := emitted.payload[0].(ProjectTreeRuntimeSnapshot)
 			if !ok {
-				t.Fatalf("project-tree:changed-v2 payload type = %T, want ProjectTreeChangedV2", emitted.payload[0])
+				t.Fatalf("project-tree:runtime-changed payload type = %T, want ProjectTreeRuntimeSnapshot", emitted.payload[0])
 			}
-			if event.Roots == nil || event.Reason != "runtime" {
-				t.Fatalf("project-tree:changed-v2 event = %+v, want a runtime broadcast with [] roots", event)
+			if event.Topics == nil || event.Revision == 0 {
+				t.Fatalf("project-tree:runtime-changed event = %+v, want a versioned runtime snapshot", event)
+			}
+			found := false
+			for _, topic := range event.Topics {
+				if topic.Scope == "project" && sameProjectRoot(topic.WorkspaceRoot, projectA) && topic.Node.TopicID == "topic-a" {
+					found = !topic.Node.Open && topic.Node.Running
+				}
+			}
+			if !found {
+				t.Fatalf("detached runtime topic missing from snapshot: %+v", event.Topics)
 			}
 			return
 		case <-deadline:
-			t.Fatal("detaching project A emitted no project-tree:changed-v2 refresh; the running conversation stays invisible")
+			t.Fatal("detaching project A emitted no runtime snapshot; the running conversation stays invisible")
 		}
 	}
 }
