@@ -120,19 +120,30 @@ export function shouldReleaseBottomRequestOnAtBottomFalse({
   distanceFromBottom,
   scrollTop,
   previousScrollTop,
+  previousScrollHeight,
+  previousClientHeight,
   scrollHeight,
   clientHeight,
 }: {
   distanceFromBottom: number;
   scrollTop: number;
   previousScrollTop: number;
+  previousScrollHeight?: number;
+  previousClientHeight?: number;
   scrollHeight: number;
   clientHeight: number;
 }) {
   if (distanceFromBottom <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) return false;
-  const nativeMax = nativeTranscriptBottomTop({ scrollHeight, clientHeight });
-  if (previousScrollTop >= nativeMax - TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) return false;
+  const previousNativeMax = nativeTranscriptBottomTop({
+    scrollHeight: previousScrollHeight ?? scrollHeight,
+    clientHeight: previousClientHeight ?? clientHeight,
+  });
+  if (previousScrollTop >= previousNativeMax - TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) return false;
   return previousScrollTop - scrollTop > BOTTOM_REQUEST_LEAVE_PX;
+}
+
+export function shouldClearBottomRequestOnAtBottomTrue() {
+  return false;
 }
 
 export function shouldRemeasureMountedRowsForTailFinish({
@@ -168,9 +179,8 @@ export function shouldSnapPinnedWheelToNativeBottom({
 /**
  * Product-level scroll intent around React Virtuoso.
  *
- * Virtuoso exclusively owns measurement and anchor compensation. This hook
- * only records whether the reader follows the tail and exposes explicit
- * navigation commands; it never tries to correct measured row positions.
+ * Virtuoso owns row measurement and anchors. This hook records tail-follow
+ * vs manual reading and finishes LAST undershoot at scrollHeight-clientHeight.
  */
 export function useTranscriptVirtuosoScroll() {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -322,9 +332,14 @@ export function useTranscriptVirtuosoScroll() {
 
   const followGrowingTail = useCallback(() => {
     if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
-    if (snapToNativeBottom()) return;
-    finishTailAtNativeBottom();
-  }, [finishTailAtNativeBottom, snapToNativeBottom]);
+    const handle = virtuosoRef.current;
+    handle?.autoscrollToBottom();
+    requestAnimationFrame(() => {
+      if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
+      handle?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
+      finishTailAtNativeBottom();
+    });
+  }, [finishTailAtNativeBottom]);
 
   const atBottomStateChange = useCallback((atBottom: boolean) => {
     const element = scrollRef.current;
@@ -356,6 +371,8 @@ export function useTranscriptVirtuosoScroll() {
         distanceFromBottom: nativeTranscriptDistanceFromBottom(element),
         scrollTop: element.scrollTop,
         previousScrollTop: pinnedMetricsRef.current.scrollTop,
+        previousScrollHeight: pinnedMetricsRef.current.scrollHeight,
+        previousClientHeight: pinnedMetricsRef.current.clientHeight,
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
       })) {
@@ -369,7 +386,7 @@ export function useTranscriptVirtuosoScroll() {
       return;
     }
     if (atBottom) {
-      clearBottomRequest();
+      if (shouldClearBottomRequestOnAtBottomTrue()) clearBottomRequest();
       if (element) {
         pinnedMetricsRef.current = {
           scrollHeight: element.scrollHeight,

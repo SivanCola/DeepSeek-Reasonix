@@ -8,6 +8,7 @@ import {
   isPinnedTranscriptViewportChange,
   nativeTranscriptBottomTop,
   nativeTranscriptDistanceFromBottom,
+  shouldClearBottomRequestOnAtBottomTrue,
   shouldFinishTailOnBottomRequestTimer,
   shouldKeepPinnedOnAtBottomFalse,
   shouldReleaseBottomRequestOnAtBottomFalse,
@@ -181,10 +182,28 @@ check(
     distanceFromBottom: 400,
     scrollTop: 9000,
     previousScrollTop: 9400,
+    previousScrollHeight: 10000,
+    previousClientHeight: 600,
     scrollHeight: 10000,
     clientHeight: 600,
   }),
   "LAST pullback from the native max is not the reader leaving",
+);
+check(
+  !shouldReleaseBottomRequestOnAtBottomFalse({
+    distanceFromBottom: 1200,
+    scrollTop: 9000,
+    previousScrollTop: 9400,
+    previousScrollHeight: 10000,
+    previousClientHeight: 600,
+    scrollHeight: 10800,
+    clientHeight: 600,
+  }),
+  "LAST pullback after last-row growth is not the reader leaving",
+);
+check(
+  !shouldClearBottomRequestOnAtBottomTrue(),
+  "a native snap at-bottom report must not cancel the jump-bottom timer",
 );
 check(
   shouldReleaseBottomRequestOnAtBottomFalse({
