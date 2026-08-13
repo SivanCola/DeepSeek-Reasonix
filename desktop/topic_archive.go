@@ -354,10 +354,15 @@ func (a *App) discardUnusedTransientBlankSessions(dirs []string, keepPath string
 }
 
 func unusedTransientBlankSession(dir, path string) bool {
-	if !sessionPathHasNoContent(dir, path) {
+	resolved, ok := pinnedTabSessionPath(dir, path)
+	if !ok {
 		return false
 	}
-	meta, ok, err := agent.LoadBranchMeta(path)
+	info, err := os.Stat(resolved)
+	if err != nil || info.IsDir() || info.Size() != 0 {
+		return false
+	}
+	meta, ok, err := agent.LoadBranchMeta(resolved)
 	if err != nil || !ok {
 		return true
 	}

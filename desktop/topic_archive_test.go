@@ -510,6 +510,13 @@ func TestTrashTopicFallbackStaysOffCatalogSidebar(t *testing.T) {
 	}
 	ghostID := agent.BranchID(filepath.Join(dir, "ghost-blank.jsonl"))
 	ghostPath := writeEmptyNamedSession(t, dir, "ghost-blank.jsonl", ghostID, defaultTopicTitle, projectRoot)
+	nonzeroPath := filepath.Join(dir, "system-only.jsonl")
+	if err := os.WriteFile(nonzeroPath, []byte(`{"role":"system","content":"identity"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write non-empty sibling: %v", err)
+	}
+	if err := pinNewEmptySessionBranchMeta(nonzeroPath, "project", projectRoot, "", defaultTopicTitle); err != nil {
+		t.Fatalf("pin non-empty sibling: %v", err)
+	}
 	ctrl := control.New(control.Options{SessionDir: dir, SessionPath: archivePath, Label: "test", WorkspaceRoot: projectRoot})
 	defer ctrl.Close()
 	app := &App{
@@ -535,6 +542,9 @@ func TestTrashTopicFallbackStaysOffCatalogSidebar(t *testing.T) {
 	}
 	if _, err := os.Stat(keepPath); err != nil {
 		t.Fatalf("kept session missing: %v", err)
+	}
+	if _, err := os.Stat(nonzeroPath); err != nil {
+		t.Fatalf("non-empty sibling must not be swept, stat err = %v", err)
 	}
 	for _, path := range []string{leftoverA, leftoverB, ghostPath} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -568,6 +578,25 @@ func TestTrashTopicFallbackStaysOffCatalogSidebar(t *testing.T) {
 		if _, err := os.Stat(fallbackPath); err != nil {
 			t.Fatalf("current fallback blank should remain writable: %v", err)
 		}
+	}
+}
+
+func TestUnusedTransientBlankSessionOnlyMatchesZeroByteFiles(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := t.TempDir()
+	zero := filepath.Join(dir, "zero.jsonl")
+	if _, err := os.Create(zero); err != nil {
+		t.Fatalf("create zero-byte session: %v", err)
+	}
+	if !unusedTransientBlankSession(dir, zero) {
+		t.Fatal("zero-byte unindexed session should be an unused transient blank")
+	}
+	nonzero := filepath.Join(dir, "nonzero.jsonl")
+	if err := os.WriteFile(nonzero, []byte(`{"role":"system","content":"identity"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write non-empty session: %v", err)
+	}
+	if unusedTransientBlankSession(dir, nonzero) {
+		t.Fatal("non-empty session must not be classified as an unused transient blank")
 	}
 }
 
