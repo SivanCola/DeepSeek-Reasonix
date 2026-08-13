@@ -732,9 +732,10 @@ eq(
 );
 
 const projectTreeSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../components/ProjectTree.tsx"), "utf8");
+const projectTreeArchiveSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/projectTreeArchive.ts"), "utf8");
 eq(projectTreeSource.includes("projectTreeWithoutTopic("), true, "TrashTopic removes the archived row before the shell refresh");
 eq(
-  projectTreeSource.includes("reloadTopicKeys"),
+  projectTreeArchiveSource.includes("reloadTopicKeys"),
   true,
   "archive refresh reloads only the affected topic folder after preserving the painted siblings",
 );

@@ -136,12 +136,16 @@ function testProjectTreeWiresEveryRaceGuard() {
     join(dirname(fileURLToPath(import.meta.url)), "../components/ProjectTree.tsx"),
     "utf8",
   );
-  assert.match(source, /invalidateProjectTreeTopicLoads[\s\S]*setTree\(\(current\) => projectTreeWithoutTopic/);
+  const archiveSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../lib/projectTreeArchive.ts"),
+    "utf8",
+  );
+  assert.match(archiveSource, /invalidateProjectTreeTopicLoads[\s\S]*optimisticallyRemoveTopic\(topicId\)/);
   assert.match(source, /projectTreeWithoutTopics\(asArray\(page\.items\), currentArchiveTombstones\(\)\)/);
-  assert.match(source, /archiveQueueRef\.current\.catch[\s\S]*\.then\(async \(\) =>/);
-  assert.match(source, /pendingLoads = targets\.map[\s\S]*onReloadStarted[\s\S]*await Promise\.all\(pendingLoads\)/);
-  assert.match(source, /onReloadStarted: \(\) => releaseArchiveTombstone\(topicId\)/);
-  assert.match(source, /await refresh\(reloadOptions\)[\s\S]*finally \{[\s\S]*endTrashingTopic\(topicId\)/);
+  assert.match(archiveSource, /archiveQueueRef\.current\.catch[\s\S]*\.then\(async \(\) =>/);
+  assert.match(archiveSource, /pendingLoads = targets\.map[\s\S]*onReloadStarted[\s\S]*await Promise\.all\(pendingLoads\)/);
+  assert.match(archiveSource, /onReloadStarted: \(\) => releaseArchiveTombstone\(topicId\)/);
+  assert.match(archiveSource, /await refreshRef\.current\(reloadOptions\)[\s\S]*finally \{[\s\S]*endTrashingTopic\(topicId\)/);
 }
 
 await testLatePreArchivePageCannotReinsertTopic();

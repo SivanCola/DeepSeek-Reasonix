@@ -10,13 +10,13 @@ import { asArray } from "../lib/array";
 import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
-import { invalidateProjectTreeTopicLoads, isRuntimeSessionNode, isTopicNode, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeFolderKeyForTopic, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeWithoutTopic, projectTreeWithoutTopics, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type ProjectTreeVariant } from "../lib/projectTreeTopic";
+import { isRuntimeSessionNode, isTopicNode, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeWithoutTopic, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type ProjectTreeVariant } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import type { ProjectNode, SessionCatalogStatus } from "../lib/types";
 import { topicActivityTime } from "../lib/session";
 import { useT, type Translator } from "../lib/i18n";
 import { PROJECT_COLOR_OPTIONS, projectColorValue } from "../lib/projectColors";
-import { useProjectTreeArchiveState } from "../lib/projectTreeArchive";
+import { projectTreeWithoutTopics, reloadProjectTreeTopics, useProjectTreeArchiveController, type ProjectTreeRefresh, type ProjectTreeRefreshOptions } from "../lib/projectTreeArchive";
 import { topicShortcutLabel, type TopicShortcutEntry } from "../lib/topicShortcuts";
 import type { ShortcutPlatform } from "../lib/keyboardShortcuts";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
@@ -455,14 +455,21 @@ export function ProjectTree({
   const [hoverCard, setHoverCard] = useState<{ key: string; card: ProjectTreeTopicHoverCard; left: number; top: number } | null>(null);
   const hoverCardTimerRef = useRef<number | null>(null);
   const creatingRef = useRef(false);
-  const {
-    trashingTopics,
-    beginTrashingTopic,
-    endTrashingTopic,
-    releaseArchiveTombstone,
-    currentArchiveTombstones,
-  } = useProjectTreeArchiveState();
-  const archiveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const closeMenu = useCallback(() => {
+    setMenuTopic(null);
+    setMenuProject(null);
+    setMenuPoint(null);
+    setConfirmAction(null);
+    setConfirmRemoveProject(null);
+    setWorkbenchHeaderMenu(null);
+  }, []);
+  const topicLoadSeqRef = useRef<Record<string, number>>({});
+  const refreshRef = useRef<ProjectTreeRefresh>(async () => {});
+  const { trashingTopics, currentArchiveTombstones, trashTopic } = useProjectTreeArchiveController({
+    treeRef, topicLoadSeqRef, topicPageStateRef, updateTopicPageState, refreshRef,
+    optimisticallyRemoveTopic: (topicId) => setTree((current) => projectTreeWithoutTopic(current, topicId)),
+    closeMenu, onTopicsChanged, showToast,
+  });
   const clickTimerRef = useRef<ProjectTreePendingTopicOpen | null>(null);
   useEffect(() => {
     return () => {
@@ -489,15 +496,6 @@ export function ProjectTree({
     });
   }, []);
 
-  const closeMenu = useCallback(() => {
-    setMenuTopic(null);
-    setMenuProject(null);
-    setMenuPoint(null);
-    setConfirmAction(null);
-    setConfirmRemoveProject(null);
-    setWorkbenchHeaderMenu(null);
-  }, []);
-
   const updateManuallyCollapsed = useCallback((updater: (prev: Set<string>) => Set<string>) => {
     setManuallyCollapsed((prev) => {
       const next = updater(prev);
@@ -506,7 +504,6 @@ export function ProjectTree({
     });
   }, []);
 
-  const topicLoadSeqRef = useRef<Record<string, number>>({});
   const loadProjectTopicsRef = useRef<(project: ProjectNode, append?: boolean) => Promise<void>>(async () => {});
 
   const loadProjectTopics = useCallback(async (project: ProjectNode, append = false) => {
@@ -548,18 +545,8 @@ export function ProjectTree({
   loadProjectTopicsRef.current = loadProjectTopics;
   // Snapshot is intentionally shells-only. Preserve already loaded pages by
   // project key so a metadata refresh does not collapse or blank the sidebar.
-  const refresh = useCallback(async (options?: {
-    reloadTopicKeys?: string[];
-    reloadAllTopics?: boolean;
-    onReloadStarted?: () => void;
-  }) => {
-    const reloadRequestedProjects = async (projects: ProjectNode[]) => {
-      const keys = new Set(options?.reloadTopicKeys ?? []);
-      const targets = projects.filter((project) => options?.reloadAllTopics || keys.has(project.key));
-      const pendingLoads = targets.map((project) => loadProjectTopicsRef.current(project));
-      if (pendingLoads.length > 0) options?.onReloadStarted?.();
-      await Promise.all(pendingLoads);
-    };
+  const refresh = useCallback(async (options?: ProjectTreeRefreshOptions) => {
+    const reloadRequestedProjects = (projects: ProjectNode[]) => reloadProjectTreeTopics(projects, options, loadProjectTopicsRef.current);
     try {
       const snapshot = await app.GetProjectTreeSnapshot();
       const rev = snapshot.revision ?? 0, empty = treeRef.current.length === 0;
@@ -585,6 +572,7 @@ export function ProjectTree({
       await reloadRequestedProjects(treeRef.current);
     }
   }, []);
+  refreshRef.current = refresh;
 
   useEffect(() => {
     treeRef.current = tree;
@@ -930,47 +918,6 @@ export function ProjectTree({
     }
   };
 
-  const trashTopic = async (topicId: string) => {
-    if (!beginTrashingTopic(topicId)) return;
-    const folderKey = projectTreeFolderKeyForTopic(treeRef.current, topicId);
-    const reloadOptions = {
-      reloadTopicKeys: folderKey ? [folderKey] : undefined,
-      reloadAllTopics: !folderKey,
-      onReloadStarted: () => releaseArchiveTombstone(topicId),
-    };
-    const invalidatedKeys = folderKey
-      ? [folderKey]
-      : treeRef.current.filter((node) => node.kind === "project" || node.kind === "global_folder").map((node) => node.key);
-    // Retire any request that captured the pre-archive catalog before it can
-    // reinsert the optimistic tombstone while the backend mutation is pending.
-    invalidateProjectTreeTopicLoads(topicLoadSeqRef.current, invalidatedKeys);
-    for (const key of invalidatedKeys) {
-      updateTopicPageState(key, { ...topicPageStateRef.current[key], loading: false });
-    }
-    setTree((current) => projectTreeWithoutTopic(current, topicId));
-    setMenuTopic(null);
-    setMenuPoint(null);
-    setConfirmAction(null);
-
-    const queued = archiveQueueRef.current.catch(() => undefined).then(async () => {
-      try {
-        await app.TrashTopic(topicId);
-      } catch (err) {
-        endTrashingTopic(topicId);
-        showToast(err instanceof Error ? err.message : String(err), "error");
-        await refresh(reloadOptions);
-        return;
-      }
-      try {
-        await refresh(reloadOptions);
-        await Promise.resolve(onTopicsChanged?.()).catch(() => undefined);
-      } finally {
-        endTrashingTopic(topicId);
-      }
-    });
-    archiveQueueRef.current = queued;
-    await queued;
-  };
   const setTopicPinned = async (topicId: string, pinned: boolean) => {
     try {
       await app.SetTopicPinned(topicId, pinned);

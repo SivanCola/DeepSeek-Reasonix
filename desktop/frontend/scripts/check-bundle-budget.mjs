@@ -63,8 +63,10 @@ console.log("\nbundle budgets");
 // competing state machines for a maintained library. Native-tail finish helpers
 // then sat on the 423.5 KiB gate (Windows CI: 423.5 / 423.5); this 0.5 KiB
 // raise (0.12%) absorbs that leave-cancel / remasure-once code without
-// widening the original Virtuoso exception.
-assertBudget("initial JavaScript gzip", initialJSGzip, 424.0 * 1024);
+// widening the original Virtuoso exception. Extracting project-tree archive
+// orchestration from the oversized component adds 155 bytes gzip; retain that
+// owner boundary with a narrowly rounded 0.25 KiB ratchet.
+assertBudget("initial JavaScript gzip", initialJSGzip, 424.25 * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 assertBudget("render-blocking CSS gzip", initialCSSGzip, 4 * 1024);
 // Extension surfaces, Task Monitor, and compact decision receipts share the
