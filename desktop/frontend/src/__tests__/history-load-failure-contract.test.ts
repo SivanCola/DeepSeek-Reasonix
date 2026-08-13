@@ -15,6 +15,12 @@ assert.match(controller, /applyHydrateErrorState|hydratePlaceholderItems/, "hydr
 assert.match(readFileSync(join(root, "lib/hydrateErrorState.ts"), "utf8"), /keptItems/, "hydrateErrorState preserves items");
 assert.match(controller, /throw new Error\(t\("history\.failedLoadHistory"\)\)/, "listSessions does not swallow failures as empty");
 assert.match(controller, /retrySessionHistory/, "retry path is exported");
+assert.match(controller, /shouldPreferResidentHistory\(reset, options\.preserveCachedHistory\)/, "retry hydrates fetch instead of serving the resident snapshot");
+assert.match(
+  controller,
+  /loadSessionDataForTab\(tabId, false, "startup", \{ preserveCachedHistory: true \}\)/,
+  "failed clear keeps the visible transcript instead of a resident snapshot",
+);
 assert.match(store, /slice\.error/, "transcript store rejects slice.error as failure");
 assert.match(app, /retrySessionHistory/, "App wires history retry control");
 assert.match(app, /history-load-error/, "App surfaces hydrate error banner");
