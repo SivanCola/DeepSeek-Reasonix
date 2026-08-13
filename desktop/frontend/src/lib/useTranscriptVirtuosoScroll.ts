@@ -114,19 +114,43 @@ export function isPhysicallyAtTranscriptBottom(
   return nativeTranscriptDistanceFromBottom(element) <= threshold;
 }
 
-// Virtuoso LAST/autoscroll can stop short of the native extent when the last
-// row is still catching up. A leftover downward gap is not the reader leaving.
+// Virtuoso LAST after a native snap writes a shorter size-tree top. That drop
+// is undershoot, not the reader leaving. Pointer/key leave already unpins.
 export function shouldReleaseBottomRequestOnAtBottomFalse({
   distanceFromBottom,
   scrollTop,
   previousScrollTop,
+  scrollHeight,
+  clientHeight,
 }: {
   distanceFromBottom: number;
   scrollTop: number;
   previousScrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
 }) {
   if (distanceFromBottom <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) return false;
+  const nativeMax = nativeTranscriptBottomTop({ scrollHeight, clientHeight });
+  if (previousScrollTop >= nativeMax - TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) return false;
   return previousScrollTop - scrollTop > BOTTOM_REQUEST_LEAVE_PX;
+}
+
+export function shouldRemeasureMountedRowsForTailFinish({
+  remeasuredThisCommand,
+}: {
+  remeasuredThisCommand: boolean;
+}) {
+  return !remeasuredThisCommand;
+}
+
+export function shouldFinishTailOnBottomRequestTimer({
+  pinned,
+  bottomRequestWasActive,
+}: {
+  pinned: boolean;
+  bottomRequestWasActive: boolean;
+}) {
+  return pinned || bottomRequestWasActive;
 }
 
 export function shouldSnapPinnedWheelToNativeBottom({
@@ -158,7 +182,7 @@ export function useTranscriptVirtuosoScroll() {
   const modeRef = useRef<TranscriptScrollMode>("tail-follow");
   const touchStartYRef = useRef<number | null>(null);
   const nativeScrollbarDragRef = useRef(false);
-  const remasureForTailRef = useRef(false);
+  const remeasureForTailRef = useRef(false);
   const [nativeScrollbarDragging, setNativeScrollbarDragging] = useState(false);
   const [measureGeneration, setMeasureGeneration] = useState(0);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -194,43 +218,48 @@ export function useTranscriptVirtuosoScroll() {
     return atBottom;
   }, []);
 
-  const finishTailAtNativeBottom = useCallback(() => {
-    if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
-    if (snapToNativeBottom()) {
-      remasureForTailRef.current = false;
-      pinnedRef.current = true;
-      setIsAtBottom(true);
-      publishMode("tail-follow");
-      return;
-    }
-    if (remasureForTailRef.current) return;
-    remasureForTailRef.current = true;
-    setMeasureGeneration((generation) => generation + 1);
-    requestAnimationFrame(() => {
-      if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
-      if (snapToNativeBottom()) {
-        remasureForTailRef.current = false;
+  const finishTailAtNativeBottom = useCallback((opts?: { force?: boolean }) => {
+    if (isTranscriptSelectionMode(modeRef.current)) return;
+    if (!opts?.force && !pinnedRef.current && !bottomRequestRef.current) return;
+
+    const applySnap = () => {
+      if (isTranscriptSelectionMode(modeRef.current)) return;
+      if (!opts?.force && !pinnedRef.current && !bottomRequestRef.current) return;
+      const atBottom = snapToNativeBottom();
+      if (atBottom) {
+        remeasureForTailRef.current = false;
         pinnedRef.current = true;
         setIsAtBottom(true);
         publishMode("tail-follow");
         return;
       }
       setIsAtBottom(false);
-    });
+    };
+
+    if (shouldRemeasureMountedRowsForTailFinish({ remeasuredThisCommand: remeasureForTailRef.current })) {
+      remeasureForTailRef.current = true;
+      setMeasureGeneration((generation) => generation + 1);
+      requestAnimationFrame(applySnap);
+      return;
+    }
+    applySnap();
   }, [publishMode, snapToNativeBottom]);
 
   const beginBottomRequest = useCallback(() => {
-    remasureForTailRef.current = false;
+    remeasureForTailRef.current = false;
     clearBottomRequest();
     bottomRequestRef.current = true;
-    // Virtuoso can briefly report `false` while its LAST-item request is
-    // converging. Keep tail intent through that window, then land on the
-    // native extent so a stale LAST cannot leave the last rows covered.
+    // LAST can overwrite a native snap and briefly unpin. Keep the request
+    // window, then remeasure and land on the native extent anyway.
     bottomRequestTimerRef.current = window.setTimeout(() => {
+      const bottomRequestWasActive = bottomRequestRef.current;
       bottomRequestTimerRef.current = null;
       bottomRequestRef.current = false;
-      if (!pinnedRef.current) return;
-      finishTailAtNativeBottom();
+      if (!shouldFinishTailOnBottomRequestTimer({
+        pinned: pinnedRef.current,
+        bottomRequestWasActive,
+      })) return;
+      finishTailAtNativeBottom({ force: true });
     }, 500);
   }, [clearBottomRequest, finishTailAtNativeBottom]);
 
@@ -293,14 +322,9 @@ export function useTranscriptVirtuosoScroll() {
 
   const followGrowingTail = useCallback(() => {
     if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
-    const handle = virtuosoRef.current;
-    handle?.autoscrollToBottom();
-    requestAnimationFrame(() => {
-      if (!pinnedRef.current || isTranscriptSelectionMode(modeRef.current)) return;
-      handle?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior: "auto" });
-      finishTailAtNativeBottom();
-    });
-  }, [finishTailAtNativeBottom]);
+    if (snapToNativeBottom()) return;
+    finishTailAtNativeBottom();
+  }, [finishTailAtNativeBottom, snapToNativeBottom]);
 
   const atBottomStateChange = useCallback((atBottom: boolean) => {
     const element = scrollRef.current;
@@ -332,6 +356,8 @@ export function useTranscriptVirtuosoScroll() {
         distanceFromBottom: nativeTranscriptDistanceFromBottom(element),
         scrollTop: element.scrollTop,
         previousScrollTop: pinnedMetricsRef.current.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
       })) {
         clearBottomRequest();
         pinnedRef.current = false;
@@ -393,13 +419,10 @@ export function useTranscriptVirtuosoScroll() {
     publishMode("tail-follow");
     const handle = virtuosoRef.current;
     handle?.scrollToIndex({ index: "LAST", align: "end", behavior: behavior === "smooth" ? "smooth" : "auto" });
-    // LAST can stop short of the native extent. Autoscroll next, then land on
-    // the physical bottom so a late LAST cannot cover the last rows.
-    handle?.scrollTo({ top: Number.MAX_SAFE_INTEGER, behavior });
-    requestAnimationFrame(() => {
-      handle?.autoscrollToBottom();
-      requestAnimationFrame(() => finishTailAtNativeBottom());
-    });
+    // LAST mounts the last rows. Remeasure those sizes, then finish at the
+    // native extent. Do not autoscrollToBottom — that LAST listener overwrites
+    // the native snap.
+    requestAnimationFrame(() => finishTailAtNativeBottom());
   }, [beginBottomRequest, finishTailAtNativeBottom, publishMode]);
 
   const scrollToDataIndex = useCallback((firstItemIndex: number, dataIndex: number, behavior: "auto" | "smooth" = "auto") => {

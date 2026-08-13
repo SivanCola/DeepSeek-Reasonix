@@ -8,10 +8,11 @@ import {
   isPinnedTranscriptViewportChange,
   nativeTranscriptBottomTop,
   nativeTranscriptDistanceFromBottom,
+  shouldFinishTailOnBottomRequestTimer,
   shouldKeepPinnedOnAtBottomFalse,
   shouldReleaseBottomRequestOnAtBottomFalse,
+  shouldRemeasureMountedRowsForTailFinish,
   shouldSnapPinnedWheelToNativeBottom,
-  TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX,
 } from "../lib/useTranscriptVirtuosoScroll";
 
 let passed = 0;
@@ -35,15 +36,19 @@ function mockAtBottomStateChange(
   atBottom: boolean,
   bottomRequestActive: boolean,
   scrollElement: { scrollHeight: number; scrollTop: number; clientHeight: number } | null,
+  previousScrollTop = 9397,
 ) {
   if (!atBottom && bottomRequestActive) {
-    if (scrollElement) {
-      const distanceFromBottom = scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
-      if (distanceFromBottom > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) {
-        return "manual"; // Released immediately by the fix
-      }
+    if (scrollElement && shouldReleaseBottomRequestOnAtBottomFalse({
+      distanceFromBottom: nativeTranscriptDistanceFromBottom(scrollElement),
+      scrollTop: scrollElement.scrollTop,
+      previousScrollTop,
+      scrollHeight: scrollElement.scrollHeight,
+      clientHeight: scrollElement.clientHeight,
+    })) {
+      return "manual";
     }
-    return "suppressed"; // Old behavior: early return, no mode change
+    return "suppressed";
   }
   return atBottom ? "tail-follow" : "manual";
 }
@@ -53,10 +58,10 @@ function mockAtBottomStateChange(
 const s1 = mockAtBottomStateChange(false, true, { scrollHeight: 10000, scrollTop: 9397, clientHeight: 600 });
 check(s1 === "suppressed", "physically at bottom during request window: intent preserved");
 
-// Scenario 2: atBottom=false during bottomRequest, physically far from bottom.
-// Expected: manual (native scrollbar drag or middle-button autoscroll moved away).
-const s2 = mockAtBottomStateChange(false, true, { scrollHeight: 10000, scrollTop: 8500, clientHeight: 600 });
-check(s2 === "manual", "non-wheel upward scroll during request window: release tail-follow immediately");
+// Scenario 2: LAST after a native snap pulls scrollTop back from the native max.
+// Expected: suppressed (undershoot; remasure + snap, do not unpin).
+const s2 = mockAtBottomStateChange(false, true, { scrollHeight: 10000, scrollTop: 9000, clientHeight: 600 }, 9400);
+check(s2 === "suppressed", "LAST pullback from the native max during request window: keep tail intent");
 
 // Scenario 3: atBottom=false, no active request.
 // Expected: manual (ordinary path).
@@ -166,16 +171,46 @@ check(
     distanceFromBottom: nativeTranscriptDistanceFromBottom(lastItemUndershoot),
     scrollTop: lastItemUndershoot.scrollTop,
     previousScrollTop: 9320,
+    scrollHeight: lastItemUndershoot.scrollHeight,
+    clientHeight: lastItemUndershoot.clientHeight,
   }),
   "LAST undershoot during jump-bottom is not the reader leaving the tail",
 );
 check(
+  !shouldReleaseBottomRequestOnAtBottomFalse({
+    distanceFromBottom: 400,
+    scrollTop: 9000,
+    previousScrollTop: 9400,
+    scrollHeight: 10000,
+    clientHeight: 600,
+  }),
+  "LAST pullback from the native max is not the reader leaving",
+);
+check(
   shouldReleaseBottomRequestOnAtBottomFalse({
     distanceFromBottom: 900,
-    scrollTop: 8500,
-    previousScrollTop: 9400,
+    scrollTop: 7500,
+    previousScrollTop: 8500,
+    scrollHeight: 10000,
+    clientHeight: 600,
   }),
-  "a real upward drag during jump-bottom still releases tail-follow",
+  "an upward leave that did not start at the native max still releases",
+);
+check(
+  shouldRemeasureMountedRowsForTailFinish({ remeasuredThisCommand: false }),
+  "a tail finish remasures even after a successful native snap",
+);
+check(
+  !shouldRemeasureMountedRowsForTailFinish({ remeasuredThisCommand: true }),
+  "a tail command remasures mounted rows only once",
+);
+check(
+  shouldFinishTailOnBottomRequestTimer({ pinned: false, bottomRequestWasActive: true }),
+  "the bottom-request timer still finishes the tail after a false LAST leave",
+);
+check(
+  !shouldFinishTailOnBottomRequestTimer({ pinned: false, bottomRequestWasActive: false }),
+  "the timer does not re-pin after an explicit release cleared the request",
 );
 check(
   shouldSnapPinnedWheelToNativeBottom({
