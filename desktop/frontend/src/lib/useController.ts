@@ -2935,9 +2935,7 @@ export function useController() {
       let projection = skipHistory
         ? undefined
         : await loadTimed("history", () =>
-            // Windowed slice load through the transcript store. Resident LRU
-            // hits are allowed only when the caller keeps cache; reset and
-            // explicit no-cache hydrates re-fetch.
+            // Resident LRU only when the caller keeps cache; reset/no-cache re-fetch.
             getTranscriptStore().loadLatest(tabId, sessionPath, {
               turns: HISTORY_PAGE_TURNS,
               preferResident: shouldPreferResidentHistory(reset, options.preserveCachedHistory),
