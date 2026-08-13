@@ -96,7 +96,7 @@ func TestRecordDismissedTodoBatchSkipsMissingSession(t *testing.T) {
 
 func TestNormalizeDismissedTodoBatchesCapsAndDedups(t *testing.T) {
 	keys := []string{" keep ", "keep", ""}
-	for i := 0; i < maxDismissedTodoBatches+2; i++ {
+	for i := range maxDismissedTodoBatches + 2 {
 		keys = append(keys, "batch-"+strconv.Itoa(i))
 	}
 	got := NormalizeDismissedTodoBatches(keys)
