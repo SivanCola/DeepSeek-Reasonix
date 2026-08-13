@@ -6991,7 +6991,14 @@ func (a *App) emitProjectTreeChangedEvent() {
 		a.projectTreeChangedHook()
 		return
 	}
-	a.emitRuntimeEvent("project-tree:changed")
+	// Runtime ownership (visible -> detached, detached -> visible) lives outside
+	// the disposable session catalog and therefore may not bump its revision.
+	// Publish a v2 invalidation at the current revision immediately; otherwise
+	// the current frontend, which subscribes only to the v2 stream, can keep an
+	// empty/stale project page while the conversation continues in the
+	// background. An empty roots slice is the established broadcast contract.
+	status := a.currentSessionCatalogStatus()
+	a.emitProjectTreeChangedV2(status.Revision, []string{}, "runtime")
 }
 
 func (a *App) emitRuntimeEvent(name string, payload ...any) {

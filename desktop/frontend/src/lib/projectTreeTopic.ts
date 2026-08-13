@@ -16,6 +16,14 @@ export function projectTreeRevisionIsFresh(currentRevision: number, incomingRevi
   return incomingRevision >= currentRevision;
 }
 
+// Runtime ownership is an overlay on the disposable catalog, so its
+// invalidation can legitimately carry an older catalog revision when an
+// unrelated catalog commit wins the event-delivery race. Never discard that
+// overlay refresh solely because the catalog revision advanced first.
+export function projectTreeShouldHandleEvent(currentRevision: number, incomingRevision: number, reason: string): boolean {
+  return reason === "runtime" || projectTreeRevisionIsFresh(currentRevision, incomingRevision);
+}
+
 // Project shells come from desktop-projects.json and are valid even when the
 // disposable catalog still reports revision 0. Catalog revision only gates
 // topic pages and non-empty tree refreshes after the first shell is painted.

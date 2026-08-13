@@ -7,6 +7,7 @@ import {
   projectTreeShellChildren,
   projectTreeEventAffectsFolder,
   projectTreeRevisionIsFresh,
+  projectTreeShouldHandleEvent,
   projectTreeShouldApplyShellSnapshot,
   defaultExpandedProjectTreeKeys,
   activeSessionAncestorKeys,
@@ -676,6 +677,16 @@ eq(
   [projectTreeRevisionIsFresh(12, 11), projectTreeRevisionIsFresh(12, 12), projectTreeRevisionIsFresh(12, 13)],
   [false, true, true],
   "project tree ignores stale snapshots and pages while accepting the current revision",
+);
+
+eq(
+  [
+    projectTreeShouldHandleEvent(12, 11, "runtime"),
+    projectTreeShouldHandleEvent(12, 11, "metadata"),
+    projectTreeShouldHandleEvent(12, 13, "reconcile_complete"),
+  ],
+  [true, false, true],
+  "runtime overlays refresh even if an unrelated catalog revision event arrived first",
 );
 
 eq(
