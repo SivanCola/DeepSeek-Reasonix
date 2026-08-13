@@ -9,6 +9,7 @@ import {
   nativeTranscriptBottomTop,
   nativeTranscriptDistanceFromBottom,
   shouldClearBottomRequestOnAtBottomTrue,
+  shouldClearBottomRequestOnWriteOffset,
   shouldFinishTailOnAtBottomFalse,
   shouldFinishTailOnBottomRequestTimer,
   shouldKeepPinnedOnAtBottomFalse,
@@ -225,12 +226,32 @@ check(
   "a tail command remasures mounted rows only once",
 );
 check(
-  shouldFinishTailOnBottomRequestTimer({ pinned: false, bottomRequestWasActive: true }),
-  "the bottom-request timer still finishes the tail after a false LAST leave",
+  shouldFinishTailOnBottomRequestTimer({ pinned: true, bottomRequestWasActive: true }),
+  "the bottom-request timer still finishes a pinned tail after LAST overwrite",
+);
+check(
+  !shouldFinishTailOnBottomRequestTimer({ pinned: false, bottomRequestWasActive: true }),
+  "an unpinned leave during the jump window is not force-snapped back",
 );
 check(
   !shouldFinishTailOnBottomRequestTimer({ pinned: false, bottomRequestWasActive: false }),
   "the timer does not re-pin after an explicit release cleared the request",
+);
+check(
+  shouldClearBottomRequestOnWriteOffset("custom-scrollbar"),
+  "creation-mode scrollbar drag cancels the jump-bottom window",
+);
+check(
+  shouldClearBottomRequestOnWriteOffset("rewind"),
+  "a programmatic rewind leave cancels the jump-bottom window",
+);
+check(
+  !shouldClearBottomRequestOnWriteOffset("jump-bottom"),
+  "jump-bottom itself still opens the request window",
+);
+check(
+  !shouldClearBottomRequestOnWriteOffset("selection-edge-scroll"),
+  "selection edge scroll does not cancel a jump window",
 );
 check(
   shouldFinishTailOnAtBottomFalse({ pinned: true, bottomRequestActive: false }),

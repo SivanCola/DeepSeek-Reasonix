@@ -161,7 +161,11 @@ export function shouldFinishTailOnBottomRequestTimer({
   pinned: boolean;
   bottomRequestWasActive: boolean;
 }) {
-  return pinned || bottomRequestWasActive;
+  return pinned && bottomRequestWasActive;
+}
+
+export function shouldClearBottomRequestOnWriteOffset(owner: TranscriptScrollOwner) {
+  return owner !== "jump-bottom" && owner !== "selection-edge-scroll";
 }
 
 export function shouldFinishTailOnAtBottomFalse({
@@ -269,8 +273,8 @@ export function useTranscriptVirtuosoScroll() {
     remeasureForTailRef.current = false;
     clearBottomRequest();
     bottomRequestRef.current = true;
-    // LAST can overwrite a native snap and briefly unpin. Keep the request
-    // window, then remeasure and land on the native extent anyway.
+    // LAST can overwrite a native snap. Keep the window so a still-pinned
+    // reader finishes at the native extent. An explicit leave cancels this.
     bottomRequestTimerRef.current = window.setTimeout(() => {
       const bottomRequestWasActive = bottomRequestRef.current;
       bottomRequestTimerRef.current = null;
@@ -279,7 +283,7 @@ export function useTranscriptVirtuosoScroll() {
         pinned: pinnedRef.current,
         bottomRequestWasActive,
       })) return;
-      finishTailAtNativeBottom({ force: true });
+      finishTailAtNativeBottom();
     }, 500);
   }, [clearBottomRequest, finishTailAtNativeBottom]);
 
@@ -430,7 +434,8 @@ export function useTranscriptVirtuosoScroll() {
       pinnedRef.current = true;
       setIsAtBottom(true);
       publishMode("tail-follow");
-    } else if (owner !== "selection-edge-scroll") {
+    } else if (shouldClearBottomRequestOnWriteOffset(owner)) {
+      clearBottomRequest();
       pinnedRef.current = false;
       setIsAtBottom(false);
       publishMode("programmatic");
@@ -438,7 +443,7 @@ export function useTranscriptVirtuosoScroll() {
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__?.(owner, top);
     virtuosoRef.current?.scrollTo({ top, behavior });
     return true;
-  }, [beginBottomRequest, publishMode]);
+  }, [beginBottomRequest, clearBottomRequest, publishMode]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     if (isTranscriptSelectionMode(modeRef.current)) return;
