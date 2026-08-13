@@ -5,7 +5,6 @@ import type {
   ProjectTopicPage,
   ProjectTopicPageRequest,
   ProjectTreeChangedV2,
-  ProjectTreeRuntimeSnapshot,
   SessionCatalogBindings,
 } from "./types";
 
@@ -20,21 +19,6 @@ export function onProjectTreeChangedV2(cb: (event: ProjectTreeChangedV2) => void
         reason: typeof event.reason === "string" ? event.reason : "changed",
       });
     });
-  }
-  return () => {};
-}
-
-export function normalizeProjectTreeRuntimeSnapshot(payload: unknown): ProjectTreeRuntimeSnapshot {
-  const value = (payload ?? {}) as Partial<ProjectTreeRuntimeSnapshot>;
-  return {
-    revision: value.revision ?? 0,
-    topics: asArray(value.topics),
-  };
-}
-
-export function onProjectTreeRuntimeChanged(cb: (event: ProjectTreeRuntimeSnapshot) => void): () => void {
-  if (typeof window !== "undefined" && window.runtime) {
-    return window.runtime.EventsOn("project-tree:runtime-changed", (payload?: unknown) => cb(normalizeProjectTreeRuntimeSnapshot(payload)));
   }
   return () => {};
 }

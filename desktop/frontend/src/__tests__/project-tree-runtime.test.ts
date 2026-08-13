@@ -7,7 +7,6 @@ import {
   projectTreeShellChildren,
   projectTreeEventAffectsFolder,
   projectTreeRevisionIsFresh,
-  projectTreeApplyRuntimeTopics,
   projectTreeShouldApplyShellSnapshot,
   defaultExpandedProjectTreeKeys,
   activeSessionAncestorKeys,
@@ -30,7 +29,7 @@ import {
 } from "../components/ProjectTree";
 import { projectTreeTrashingTopics } from "../lib/projectTreeArchive";
 import { projectTreeLegacyEventIsRuntime } from "../lib/bridge";
-import { normalizeProjectTreeRuntimeSnapshot } from "../lib/sessionCatalogBridge";
+import { normalizeProjectTreeRuntimeSnapshot, projectTreeApplyRuntimeTopics } from "../lib/projectTreeRuntime";
 import type { ProjectNode } from "../lib/types";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
