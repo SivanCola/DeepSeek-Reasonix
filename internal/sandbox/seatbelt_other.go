@@ -158,6 +158,23 @@ func bwrapProtectedWriteArgs(spec Spec, writeRoots []string) []string {
 	return out
 }
 
+func resolveExistingPaths(roots []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(roots))
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		abs, err := ResolveAbsPath(root)
+		if err == nil && !seen[abs] {
+			seen[abs] = true
+			out = append(out, abs)
+		}
+	}
+	return out
+}
+
 func bwrapTmpMountArgs(spec Spec) []string {
 	if dir := strings.TrimSpace(spec.SessionTemp); dir != "" {
 		return []string{"--bind", dir, "/tmp"}

@@ -163,26 +163,6 @@ func CollapseWriteRoots(dirs []string) []string {
 	return out
 }
 
-func resolveExistingPaths(roots []string) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(roots))
-	for _, d := range roots {
-		d = strings.TrimSpace(d)
-		if d == "" {
-			continue
-		}
-		abs, err := ResolveAbsPath(d)
-		if err != nil {
-			continue
-		}
-		if !seen[abs] {
-			seen[abs] = true
-			out = append(out, abs)
-		}
-	}
-	return out
-}
-
 func uniqueCleanDirs(dirs []string) []string {
 	seen := make(map[string]bool, len(dirs))
 	out := make([]string, 0, len(dirs))
