@@ -54,6 +54,10 @@ func tryTakeSessionLockFile(lockPath string) (*sessionLockFile, error) {
 	return &sessionLockFile{f: f}, nil
 }
 
+func tryTakeSessionLeaseLockFile(lockPath string) (*sessionLockFile, error) {
+	return tryTakeSessionLockFile(lockPath)
+}
+
 func (l *sessionLockFile) Unlock() {
 	_ = unix.Flock(int(l.f.Fd()), unix.LOCK_UN)
 	_ = l.f.Close()
@@ -70,7 +74,7 @@ func (l *sessionLockFile) writeOwnerInfo(b []byte) error {
 	if err := l.f.Truncate(0); err != nil {
 		return err
 	}
-	if _, err := l.f.WriteAt(b, 0); err != nil {
+	if _, err := l.f.WriteAt(sessionLeaseOwnerBytes(b), 0); err != nil {
 		return err
 	}
 	return l.f.Sync()
@@ -104,4 +108,8 @@ func tryLockSessionLeaseFile(path string) (func(), error) {
 		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
 		_ = f.Close()
 	}, nil
+}
+
+func readSessionLeaseLockFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
 }

@@ -64,9 +64,9 @@ func TestWriteOwnerInfoReplacesLockContents(t *testing.T) {
 	if err := lock.writeOwnerInfo(want); err != nil {
 		t.Fatalf("writeOwnerInfo second: %v", err)
 	}
-	got, err := os.ReadFile(lockPath)
+	got, err := readSessionLeaseLockFile(lockPath)
 	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
+		t.Fatalf("readSessionLeaseLockFile: %v", err)
 	}
 	if string(got) != string(want) {
 		t.Fatalf("lock contents = %q, want %q", got, want)

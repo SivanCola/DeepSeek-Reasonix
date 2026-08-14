@@ -40,6 +40,15 @@ type SessionLeaseInfo struct {
 	AcquiredAt  time.Time `json:"acquired_at"`
 }
 
+const sessionLeaseOwnerOffset int64 = 1
+
+func sessionLeaseOwnerBytes(b []byte) []byte {
+	payload := make([]byte, sessionLeaseOwnerOffset+int64(len(b)))
+	payload[0] = ' '
+	copy(payload[sessionLeaseOwnerOffset:], b)
+	return payload
+}
+
 type SessionLeaseError struct {
 	Path string
 	Info *SessionLeaseInfo
@@ -351,7 +360,8 @@ var errSessionLeaseInfoCorrupt = errors.New("session lease info corrupt")
 // absence of both sources reads as no-holder.
 func LoadSessionLeaseInfo(path string) (*SessionLeaseInfo, error) {
 	lockPath := store.SessionLeaseLock(canonicalSessionSavePath(path))
-	if b, err := fileencoding.ReadFileUTF8(lockPath); err == nil {
+	if raw, err := readSessionLeaseLockFile(lockPath); err == nil {
+		b := fileencoding.DecodeToUTF8(raw)
 		if info, decodeErr := decodeSessionLeaseInfo(b); decodeErr == nil {
 			return info, nil
 		} else if !errors.Is(decodeErr, os.ErrNotExist) {

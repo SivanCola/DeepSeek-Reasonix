@@ -5,6 +5,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync/atomic"
 	"unsafe"
@@ -57,6 +58,14 @@ var sessionLockDispositionFallbacks atomic.Int64
 // without blocking. The handle requests DELETE so RemoveAndUnlock can mark
 // disposition on the same handle that owns the lock.
 func tryTakeSessionLockFile(lockPath string) (*sessionLockFile, error) {
+	return tryTakeSessionLockFileAt(lockPath)
+}
+
+func tryTakeSessionLeaseLockFile(lockPath string) (*sessionLockFile, error) {
+	return tryTakeSessionLockFileAt(lockPath)
+}
+
+func tryTakeSessionLockFileAt(lockPath string) (*sessionLockFile, error) {
 	pathp, err := windows.UTF16PtrFromString(lockPath)
 	if err != nil {
 		return nil, err
@@ -102,12 +111,13 @@ func (l *sessionLockFile) writeOwnerInfo(b []byte) error {
 	if err := windows.SetEndOfFile(l.handle); err != nil {
 		return err
 	}
+	payload := sessionLeaseOwnerBytes(b)
 	var written uint32
-	if err := windows.WriteFile(l.handle, b, &written, nil); err != nil {
+	if err := windows.WriteFile(l.handle, payload, &written, nil); err != nil {
 		return err
 	}
-	if int(written) != len(b) {
-		return fmt.Errorf("lease owner info: short write %d of %d bytes", written, len(b))
+	if int(written) != len(payload) {
+		return fmt.Errorf("lease owner info: short write %d of %d bytes", written, len(payload))
 	}
 	return windows.FlushFileBuffers(l.handle)
 }
@@ -133,28 +143,56 @@ func (l *sessionLockFile) RemoveAndUnlock() error {
 }
 
 func tryLockSessionLeaseFile(path string) (func(), error) {
-	f, err := os.OpenFile(store.SessionLeaseLock(path), os.O_CREATE|os.O_RDWR, 0o600)
+	lockPath := store.SessionLeaseLock(path)
+	pathp, err := windows.UTF16PtrFromString(lockPath)
 	if err != nil {
-		// Cleanup holds lease lock files with DELETE access for a moment;
-		// Go's default share mode cannot coexist with that, so the open
-		// itself reports the file busy. Same retryable answer as a held lock.
+		return nil, err
+	}
+	handle, err := windows.CreateFile(pathp,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
 		if errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
 			return nil, ErrSessionLeaseHeld
 		}
 		return nil, err
 	}
-	handle := windows.Handle(f.Fd())
 	var overlapped windows.Overlapped
 	flags := uint32(windows.LOCKFILE_EXCLUSIVE_LOCK | windows.LOCKFILE_FAIL_IMMEDIATELY)
 	if err := windows.LockFileEx(handle, flags, 0, 1, 0, &overlapped); err != nil {
-		_ = f.Close()
-		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+		_ = windows.CloseHandle(handle)
+		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
 			return nil, ErrSessionLeaseHeld
 		}
 		return nil, err
 	}
 	return func() {
 		_ = windows.UnlockFileEx(handle, 0, 1, 0, &overlapped)
-		_ = f.Close()
+		_ = windows.CloseHandle(handle)
 	}, nil
+}
+
+func readSessionLeaseLockFile(path string) ([]byte, error) {
+	pathp, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(pathp,
+		windows.GENERIC_READ,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(handle), path)
+	if f == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, os.ErrInvalid
+	}
+	defer f.Close()
+	if _, err := f.Seek(sessionLeaseOwnerOffset, io.SeekStart); err != nil {
+		return nil, err
+	}
+	return io.ReadAll(f)
 }

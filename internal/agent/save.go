@@ -1720,14 +1720,14 @@ func removeStaleSessionLockSidecar(basePath, sidecarPath string) error {
 // removeStaleSessionLeaseLockSidecar retires a leftover .lease.lock. The file
 // is the lease lock itself, so taking it non-blocking proves no runtime holds
 // the lease, and RemoveAndUnlock deletes it atomically with the release.
-func removeStaleSessionLeaseLockSidecar(basePath, sidecarPath string) error {
+func removeStaleSessionLeaseLockSidecar(basePath, _ string) error {
 	basePath = canonicalSessionSavePath(basePath)
 	if sessionLeaseHeldLocally(basePath) {
 		return nil
 	}
-	lock, err := tryTakeSessionLockFile(sidecarPath)
+	lock, err := tryTakeSessionLeaseLock(basePath)
 	if err != nil {
-		if errors.Is(err, ErrSessionFileLockHeld) {
+		if errors.Is(err, ErrSessionLeaseHeld) {
 			return nil
 		}
 		return err
