@@ -3,6 +3,11 @@
 // first mutation until every participating agent run and background job has
 // finished, so review and verification cannot be invalidated by another
 // Delivery session changing the workspace mid-turn.
+//
+// The Owner is purely participation accounting: active runs, retained
+// background jobs, lazy acquisition, and the waiting/acquired UI states.
+// Cross-process and in-process serialization itself is delegated entirely to
+// internal/filelock.
 package workspacelease
 
 import (
@@ -16,12 +21,9 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
+
+	"reasonix/internal/filelock"
 )
-
-const retryInterval = 75 * time.Millisecond
-
-var errHeld = errors.New("workspace write lease is held")
 
 // WaitNotice is called once when an acquisition cannot complete immediately.
 // It must return quickly and must not call back into Owner.
@@ -33,7 +35,6 @@ type WaitNotice func()
 type Owner struct {
 	lockPath string
 	onWait   WaitNotice
-	local    *localLock
 
 	mu            sync.Mutex
 	activeRuns    int
@@ -62,15 +63,6 @@ func (o *Owner) State() State {
 	return State{Acquired: o.acquired, Waiting: o.waiting}
 }
 
-type localLock struct {
-	token chan struct{}
-}
-
-var localRegistry = struct {
-	sync.Mutex
-	locks map[string]*localLock
-}{locks: map[string]*localLock{}}
-
 // New returns a Delivery-session lease owner for workspaceRoot. lockDir must be
 // shared by Reasonix processes for cross-process protection; it is kept outside
 // the workspace so acquiring a lease never dirties user files.
@@ -89,19 +81,9 @@ func New(workspaceRoot, lockDir string, onWait WaitNotice) (*Owner, error) {
 	sum := sha256.Sum256([]byte(canonical))
 	key := hex.EncodeToString(sum[:])
 
-	localRegistry.Lock()
-	local := localRegistry.locks[key]
-	if local == nil {
-		local = &localLock{token: make(chan struct{}, 1)}
-		local.token <- struct{}{}
-		localRegistry.locks[key] = local
-	}
-	localRegistry.Unlock()
-
 	return &Owner{
 		lockPath: filepath.Join(lockDir, key+".lock"),
 		onWait:   onWait,
-		local:    local,
 	}, nil
 }
 
@@ -266,57 +248,32 @@ func (o *Owner) releaseIfIdleLocked() func() {
 	return release
 }
 
+// acquire performs the delegated lock acquisition:
+//
+//  1. filelock.TryAcquire attempts an immediate acquisition (local slot plus
+//     OS lock in one non-blocking step);
+//  2. on contention the waiting UI state flips on and the wait notice fires
+//     exactly once;
+//  3. filelock.Acquire waits bounded by ctx, serializing same-process owners
+//     through its own registry and cross-process writers through the lock file.
 func (o *Owner) acquire(ctx context.Context) (func(), error) {
-	waited := false
-	notifyWait := func() {
-		if waited {
-			return
-		}
-		waited = true
-		o.mu.Lock()
-		o.waiting = true
-		o.mu.Unlock()
-		if o.onWait != nil {
-			o.onWait()
-		}
+	release, err := filelock.TryAcquire(o.lockPath)
+	if err == nil {
+		return release, nil
+	}
+	if !errors.Is(err, filelock.ErrHeld) {
+		return nil, fmt.Errorf("acquire workspace write lease: %w", err)
 	}
 
-	select {
-	case <-o.local.token:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		notifyWait()
-		select {
-		case <-o.local.token:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	o.mu.Lock()
+	o.waiting = true
+	o.mu.Unlock()
+	if o.onWait != nil {
+		o.onWait()
 	}
-
-	releaseLocal := func() { o.local.token <- struct{}{} }
-	for {
-		releaseFile, err := tryLockFile(o.lockPath)
-		if err == nil {
-			return func() {
-				releaseFile()
-				releaseLocal()
-			}, nil
-		}
-		if !errors.Is(err, errHeld) {
-			releaseLocal()
-			return nil, fmt.Errorf("acquire workspace write lease: %w", err)
-		}
-		notifyWait()
-		timer := time.NewTimer(retryInterval)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			releaseLocal()
-			return nil, ctx.Err()
-		}
+	release, err = filelock.Acquire(ctx, o.lockPath)
+	if err != nil {
+		return nil, fmt.Errorf("acquire workspace write lease: %w", err)
 	}
+	return release, nil
 }
