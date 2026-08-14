@@ -1186,8 +1186,6 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// read_only_task, so they cannot write, install, mutate memory, resume/fork
 	// transcripts, or delegate further.
 	//
-	// Keep skill sub-agent options centralized so read-only and writer-capable
-	// runners cannot drift on compaction, language, or write-access settings.
 	subagentSkillOptions := newSubagentSkillOptionsFactory(cfg.Agent, headlessGate, keepPolicy, maxSubagentDepth, opts.Ablation, workspaceLease, writeRootSet)
 	readOnlySkillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {
 		if strings.TrimSpace(runOpts.ContinueFrom) != "" || strings.TrimSpace(runOpts.ForkFrom) != "" {
