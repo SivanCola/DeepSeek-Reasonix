@@ -53,9 +53,9 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => !document.querySelector(".startup-splash"), undefined, { timeout: 30_000 });
-  await page.click('.project-tree__topic-main:has-text("bench:tools-38t")');
+  await page.click('.project-tree__topic-main:has-text("bench:small-6t")');
   await page.waitForFunction(() => document.querySelectorAll(".transcript__row").length > 4, undefined, { timeout: 30_000 });
-  await page.waitForFunction(() => document.querySelector(".transcript")?.textContent?.includes("pkg-41/mod.go"), undefined, { timeout: 30_000 });
+  await page.waitForFunction(() => document.querySelector(".transcript")?.textContent?.includes("Asynchronously hydrated verification appendix"), undefined, { timeout: 30_000 });
   await page.evaluate(() => new Promise((resolve) => {
     let frames = 8;
     const settle = () => frames-- <= 0 ? resolve() : requestAnimationFrame(settle);
@@ -64,14 +64,38 @@ try {
   const hydrationTranscript = page.locator(".transcript");
   const hydrationBox = await hydrationTranscript.boundingBox();
   assert(hydrationBox != null, "async hydration exposes the transcript viewport");
+  const hydrationStart = await hydrationTranscript.evaluate((element) => ({
+    top: element.scrollTop,
+    max: element.scrollHeight - element.clientHeight,
+  }));
+  assert(hydrationStart.max > 0, `async hydration fixture is scrollable (${hydrationStart.max}px)`);
   await page.mouse.move(hydrationBox.x + hydrationBox.width / 2, hydrationBox.y + hydrationBox.height / 2);
-  await page.mouse.wheel(0, -360);
-  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "manual");
+  await page.mouse.wheel(0, hydrationStart.top < hydrationStart.max / 2 ? 360 : -360);
+  await page.waitForFunction(
+    (startTop) => {
+      const element = document.querySelector(".transcript");
+      return element instanceof HTMLElement
+        && element.dataset.scrollMode === "manual"
+        && Math.abs(element.scrollTop - startTop) > 1;
+    },
+    hydrationStart.top,
+    { timeout: 5_000 },
+  );
+  await page.evaluate(() => {
+    const element = document.querySelector(".transcript");
+    if (!(element instanceof HTMLElement)) return;
+    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight * 2.5);
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await page.waitForFunction(
+    () => document.querySelector(".transcript")?.dataset.scrollMode === "manual",
+    undefined,
+    { timeout: 5_000 },
+  );
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const hydrationAnchor = await page.evaluate(() => {
     const element = document.querySelector(".transcript");
     if (!(element instanceof HTMLElement)) return null;
-    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight * 2.5);
-    element.dispatchEvent(new Event("scroll"));
     const viewport = element.getBoundingClientRect();
     const visible = [...element.querySelectorAll(".transcript__row")]
       .filter((row) => row.getBoundingClientRect().bottom > viewport.top && row.getBoundingClientRect().top < viewport.bottom)
@@ -120,6 +144,9 @@ try {
       && element.dataset.scrollMode === "tail-follow"
       && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
   });
+  await page.click('.project-tree__topic-main:has-text("bench:tools-38t")');
+  await page.waitForFunction(() => document.querySelector(".project-tree__topic--active .project-tree__topic-label")?.textContent?.includes("bench:tools-38t"));
+  await page.waitForFunction(() => document.querySelector(".transcript")?.textContent?.includes("pkg-41/mod.go"), undefined, { timeout: 30_000 });
   const markdownVisibility = await page.evaluate(() => {
     const row = document.querySelector(".transcript__row");
     if (!(row instanceof HTMLElement)) return { inside: null, outside: null };

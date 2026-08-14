@@ -53,16 +53,7 @@ const benchToolTurn = (turn: number, callCount: number, answer: string): History
 const benchToolDenseHistory = (): HistoryMessage[] => {
   // 38 visible turns × 86 messages = 3268 provider messages (nominal 3255).
   const messages: HistoryMessage[] = [];
-  for (let turn = 1; turn <= 38; turn += 1) {
-    const answer = turn === 37
-      ? [
-          "# Asynchronously hydrated verification appendix",
-          ...Array.from({ length: 1_200 }, (_, row) => `- package-${row % 42}: verified row ${row} with stable virtual measurements`),
-          "ASYNC LAYOUT EXPANSION COMPLETE",
-        ].join("\n")
-      : turn % 4 === 0 ? `Batch ${turn} done: all checks green.` : "";
-    messages.push(...benchToolTurn(turn, 42, answer));
-  }
+  for (let turn = 1; turn <= 38; turn += 1) messages.push(...benchToolTurn(turn, 42, turn % 4 === 0 ? `Batch ${turn} done: all checks green.` : ""));
   return messages;
 };
 const benchMarkdownSection = (turn: number): string =>
@@ -122,7 +113,16 @@ const benchMarkdownHeavyHistory = (): HistoryMessage[] => {
 const benchSmallHistory = (): HistoryMessage[] => {
   // 6 visible turns × 78 messages = 468 provider messages (nominal 473).
   const messages: HistoryMessage[] = [];
-  for (let turn = 1; turn <= 6; turn += 1) messages.push(...benchToolTurn(turn, 38, `Batch ${turn} summary.`));
+  for (let turn = 1; turn <= 6; turn += 1) {
+    const answer = turn === 6
+      ? [
+          "# Asynchronously hydrated verification appendix",
+          ...Array.from({ length: 1_200 }, (_, row) => `- package-${row % 42}: verified row ${row} with stable virtual measurements`),
+          "ASYNC LAYOUT EXPANSION COMPLETE",
+        ].join("\n")
+      : `Batch ${turn} summary.`;
+    messages.push(...benchToolTurn(turn, 38, answer));
+  }
   return messages;
 };
 const benchGiantTurnHistory = (): HistoryMessage[] => {

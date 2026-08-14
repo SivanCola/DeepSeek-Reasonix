@@ -2114,7 +2114,7 @@ function makeMockApp(): AppBindings {
 	    const entries = messages.slice(lo, before).map((message, index) => {
 	      const entryId = `smock-${tabID}:r0:m${lo + index}:o0`;
 	      const content = message.content ?? "";
-	      const lazyContent = benchMock && content.length > 32 * 1024;
+	      const lazyContent = benchMock && content.includes("ASYNC LAYOUT EXPANSION COMPLETE");
 	      return {
 	        entryId, turn: turnsOf[lo + index], order: lo + index,
 	        message: lazyContent ? { ...message, content: content.slice(0, 4 * 1024) } : message,
@@ -3260,11 +3260,11 @@ function makeMockApp(): AppBindings {
         },
         async HistoryContentForTab(tabID: string, ref: HistoryContentRef, chunkIndex: number): Promise<HistoryContentChunk> {
           const out: HistoryContentChunk = { entryId: ref.entryId, field: ref.field, chunk: Math.max(0, chunkIndex), chunks: 1, data: "", done: true, stale: false };
-          if (benchMock && ref.size > 32 * 1024) await delay(1_500);
           const match = /:m(\d+):o\d+$/.exec(ref.entryId);
           if (!match) return out;
           const messages = await this.HistoryForTab(tabID);
           const message = messages[Number(match[1])];
+          if (benchMock && message?.content?.includes("ASYNC LAYOUT EXPANSION COMPLETE")) await delay(1_500);
           if (!message) return { ...out, stale: true };
           out.data = mockHistoryContentField(message, ref);
           out.chunks = 1;
