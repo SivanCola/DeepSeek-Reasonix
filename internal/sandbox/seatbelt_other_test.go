@@ -120,14 +120,29 @@ func TestBwrapWriteRootUnderTmpReopensExactDirectory(t *testing.T) {
 }
 
 func TestBwrapProtectedWriteArgsIncludesMissingStateBoundary(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "future-state")
+	home := t.TempDir()
+	state := filepath.Join(home, "future-state")
 	argv := bwrapBaseArgs(Spec{
 		Mode:                "enforce",
+		WriteRoots:          []string{home},
 		ProtectedWriteRoots: ProtectedWriteRoots(state),
 		MinimalWrites:       true,
 	})
 	if indexArgs(argv, "--ro-bind", state, state) < 0 {
 		t.Fatalf("missing protected state must fail closed at launch: %v", argv)
+	}
+}
+
+func TestBwrapProtectedWriteArgsSkipsUnreachableStateBoundary(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "future-state")
+	argv := bwrapBaseArgs(Spec{
+		Mode:                "enforce",
+		WriteRoots:          []string{t.TempDir()},
+		ProtectedWriteRoots: ProtectedWriteRoots(state),
+		MinimalWrites:       true,
+	})
+	if indexArgs(argv, "--ro-bind", state, state) >= 0 {
+		t.Fatalf("read-only filesystem already protects a disjoint state boundary: %v", argv)
 	}
 }
 

@@ -130,7 +130,8 @@ func bwrapBaseArgs(spec Spec) []string {
 }
 
 func bwrapProtectedWriteArgs(spec Spec, writeRoots []string) []string {
-	protected := resolveExistingPaths(spec.ProtectedWriteRoots)
+	protected := resolveProtectedWriteRoots(spec.ProtectedWriteRoots)
+	protected = overlappingProtectedWriteRoots(protected, writeRoots)
 	if len(protected) == 0 {
 		return nil
 	}
@@ -158,7 +159,21 @@ func bwrapProtectedWriteArgs(spec Spec, writeRoots []string) []string {
 	return out
 }
 
-func resolveExistingPaths(roots []string) []string {
+func overlappingProtectedWriteRoots(protected, writeRoots []string) []string {
+	var out []string
+	for _, prot := range protected {
+		for _, root := range writeRoots {
+			root = filepath.Clean(strings.TrimSpace(root))
+			if root != "" && root != "." && (PathWithin(root, prot) || PathWithin(prot, root)) {
+				out = append(out, prot)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func resolveProtectedWriteRoots(roots []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(roots))
 	for _, root := range roots {
