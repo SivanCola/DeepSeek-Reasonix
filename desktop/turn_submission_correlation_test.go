@@ -2,12 +2,46 @@ package main
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 )
+
+type turnFanoutGate struct {
+	kind    event.Kind
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+type admissionResult struct {
+	admission *tabTurnAdmission
+	err       error
+}
+
+type activeTurnStatusController struct {
+	control.SessionAPI
+}
+
+func (c *activeTurnStatusController) RuntimeStatus() control.RuntimeStatus {
+	return control.RuntimeStatus{Running: true, Cancellable: true}
+}
+
+func (c *activeTurnStatusController) TurnFinishingDone() (<-chan struct{}, bool) {
+	return nil, false
+}
+
+func (s *turnFanoutGate) Emit(e event.Event) {
+	if e.Kind != s.kind {
+		return
+	}
+	s.once.Do(func() { close(s.entered) })
+	<-s.release
+}
 
 func correlatedSubmissionID(t *testing.T, payload any) (string, *int) {
 	t.Helper()
@@ -126,6 +160,82 @@ func TestSubmitToTabWithIDCorrelatesOnlyAdmittedGuardedTurn(t *testing.T) {
 		case <-deadline:
 			t.Fatal("timed out waiting for guarded TurnDone")
 		}
+	}
+}
+
+func TestBeginTabTurnWaitsForTurnDoneFanoutBeforeRetry(t *testing.T) {
+	sink := &tabEventSink{tabID: "tab", ctx: context.Background()}
+	gate := &turnFanoutGate{kind: event.TurnDone, entered: make(chan struct{}), release: make(chan struct{})}
+	sink.SetBotSink(gate)
+	ctrl := control.New(control.Options{Sink: sink})
+	t.Cleanup(ctrl.Close)
+	tab := &WorkspaceTab{ID: "tab", Scope: "global", Ready: true, Ctrl: ctrl, sink: sink}
+	app := &App{tabs: map[string]*WorkspaceTab{tab.ID: tab}, activeTabID: tab.ID}
+	sink.app = app
+
+	if err := app.SubmitToTabWithID(tab.ID, "/mcp__definitely_missing", "u-first"); err != nil {
+		t.Fatalf("first submit: %v", err)
+	}
+	select {
+	case <-gate.entered:
+	case <-time.After(time.Second):
+		t.Fatal("first TurnDone did not enter the held fan-out")
+	}
+
+	result := make(chan admissionResult, 1)
+	go func() {
+		admission, _, err := app.beginTabTurn(tab.ID, false, "u-second")
+		result <- admissionResult{admission: admission, err: err}
+	}()
+	select {
+	case got := <-result:
+		if got.admission != nil {
+			got.admission.abort()
+		}
+		close(gate.release)
+		t.Fatalf("next submit returned inside TurnDone fan-out: %v", got.err)
+	default:
+	}
+
+	close(gate.release)
+	select {
+	case got := <-result:
+		if got.err != nil {
+			t.Fatalf("next submit after TurnDone fan-out: %v", got.err)
+		}
+		if got.admission == nil {
+			t.Fatal("next submit returned without an admission token")
+		}
+		got.admission.abort()
+	case <-time.After(time.Second):
+		t.Fatal("next submit did not retry after TurnDone fan-out")
+	}
+}
+
+func TestBeginTabTurnStillRejectsGenuinelyRunningTurn(t *testing.T) {
+	sink := &tabEventSink{tabID: "tab", ctx: context.Background()}
+	base := control.New(control.Options{Sink: sink})
+	t.Cleanup(base.Close)
+	ctrl := &activeTurnStatusController{SessionAPI: base}
+	tab := &WorkspaceTab{ID: "tab", Scope: "global", Ready: true, Ctrl: ctrl, sink: sink}
+	app := &App{tabs: map[string]*WorkspaceTab{tab.ID: tab}, activeTabID: tab.ID}
+	sink.app = app
+
+	result := make(chan admissionResult, 1)
+	go func() {
+		admission, _, err := app.beginTabTurn(tab.ID, false, "u-second")
+		result <- admissionResult{admission: admission, err: err}
+	}()
+	select {
+	case got := <-result:
+		if got.admission != nil {
+			got.admission.abort()
+		}
+		if !errors.Is(got.err, control.ErrTurnRunning) {
+			t.Fatalf("active-turn admission error = %v, want ErrTurnRunning", got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active-turn admission waited instead of returning ErrTurnRunning")
 	}
 }
 
