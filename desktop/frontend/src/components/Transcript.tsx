@@ -1,4 +1,4 @@
-import { forwardRef, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { forwardRef, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Virtuoso, type Components, type ItemProps, type ListItem, type ListProps } from "react-virtuoso";
 import type { ControllerLiveStore, Item, LiveStream } from "../lib/useController";
 import type { CheckpointMeta } from "../lib/types";
@@ -26,6 +26,7 @@ import {
   historyEntryIdForRow,
   reconcileFoldEntries,
   estimateTranscriptRowSize,
+  splitTranscriptLiveRows,
   userRowKey,
   EMPTY_FOLDS,
   NO_LIVE,
@@ -42,6 +43,8 @@ import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib
 import { noteTranscriptRowCounts } from "../lib/sessionDiagnostics";
 import { useReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
 import { InlineAssistantReasoning } from "./InlineAssistantReasoning";
+import { LiveTurnRegion } from "./LiveTurnRegion";
+import { useTick, workStatusLabel } from "../lib/workStatus";
 import { LiveStreamContext } from "./LiveStreamContext";
 import { useTranscriptSelectableRows } from "../lib/useTranscriptSelectableRows";
 import { TranscriptSelectionOverlay } from "./TranscriptSelectionOverlay";
@@ -56,19 +59,18 @@ const QUESTION_NAV_MIN_COUNT = 2;
 type AssistantReasoningDisplay = "normal" | "hide";
 const EMPTY_CHECKPOINTS: CheckpointMeta[] = [];
 const EMPTY_INVOCATION_METADATA: InvocationMetadataMap = {};
+const NO_HELD_ROWS: readonly TranscriptRow[] = [];
 
 const LiveAssistantMessage = memo(function LiveAssistantMessage({
   item,
   defaultExpanded = false,
   expandWhileStreaming = false,
-  truncateStreamingReasoning = false,
   creationMode = false,
   reasoningDisplay = "normal",
 }: {
   item: AssistantItem;
   defaultExpanded?: boolean;
   expandWhileStreaming?: boolean;
-  truncateStreamingReasoning?: boolean;
   creationMode?: boolean;
   reasoningDisplay?: AssistantReasoningDisplay;
 }) {
@@ -101,7 +103,6 @@ const LiveAssistantMessage = memo(function LiveAssistantMessage({
       item={shown}
       defaultExpanded={defaultExpanded}
       expandWhileStreaming={expandWhileStreaming}
-      truncateStreamingReasoning={truncateStreamingReasoning}
       creationMode={creationMode}
     />
   );
@@ -113,6 +114,14 @@ type TranscriptVirtuosoContext = {
   scrollElement: HTMLDivElement | null;
   nativeScrollbarDragging: boolean;
   overlayRevision: string;
+  /** The active turn's in-flow footer region; null when no turn is live. */
+  liveRegion: null | {
+    rows: readonly TranscriptRow[];
+    renderRow: (row: TranscriptRow) => ReactNode;
+    showStatus: boolean;
+    turnStartAt?: number;
+    onPointerDownCapture: (event: ReactPointerEvent<HTMLElement>) => void;
+  };
   olderHistory: null | {
     loading: boolean;
     label: string;
@@ -169,9 +178,28 @@ function TranscriptVirtuosoHeader({ context }: { context: TranscriptVirtuosoCont
   );
 }
 
+// The live turn region is the list's in-flow Footer: it scrolls with the
+// transcript but is never part of Virtuoso's measured size tree.
+function TranscriptVirtuosoFooter({ context }: { context: TranscriptVirtuosoContext }) {
+  const live = context.liveRegion;
+  if (!live || (live.rows.length === 0 && !live.showStatus)) return null;
+  return (
+    <LiveTurnRegion
+      rows={live.rows}
+      renderRow={live.renderRow}
+      showStatus={live.showStatus}
+      turnStartAt={live.turnStartAt}
+      tabId={context.tabId}
+      scrollElement={context.scrollElement}
+      onPointerDownCapture={live.onPointerDownCapture}
+    />
+  );
+}
+
 const TRANSCRIPT_VIRTUOSO_COMPONENTS: Components<TranscriptRow, TranscriptVirtuosoContext> = {
   Item: TranscriptVirtuosoItem,
   List: TranscriptVirtuosoList,
+  Footer: TranscriptVirtuosoFooter,
 };
 
 const TRANSCRIPT_VIRTUOSO_COMPONENTS_WITH_HEADER: Components<TranscriptRow, TranscriptVirtuosoContext> = {
@@ -181,31 +209,6 @@ const TRANSCRIPT_VIRTUOSO_COMPONENTS_WITH_HEADER: Components<TranscriptRow, Tran
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function useTick(on: boolean): number {
-  const [, setN] = useState(0);
-  useEffect(() => {
-    if (!on) return;
-    const id = window.setInterval(() => setN((n) => n + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [on]);
-  return Date.now();
-}
-function formatWorkDuration(durationMs: number, t: ReturnType<typeof useT>): string {
-  if (!Number.isFinite(durationMs) || durationMs <= 0) return "";
-  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes <= 0) return t("transcript.durationSeconds", { s: totalSeconds });
-  if (seconds <= 0) return t("transcript.durationMinutes", { m: minutes });
-  return t("transcript.durationMinutesSeconds", { m: minutes, s: seconds });
-}
-function workStatusLabel(durationMs: number, running: boolean, t: ReturnType<typeof useT>): string {
-  const duration = formatWorkDuration(durationMs, t);
-  if (running) {
-    return duration ? t("transcript.workingDuration", { duration }) : t("transcript.working");
-  }
-  return duration ? t("transcript.workedDuration", { duration }) : t("transcript.worked");
-}
 function assistantAnswerOnly(item: AssistantItem): AssistantItem {
   return { ...item, reasoning: "", reasoningComplete: true, reasoningDurationMs: undefined };
 }
@@ -281,6 +284,7 @@ export function Transcript({
     [liveProp, liveStore, tabId],
   );
   const live = useSyncExternalStore(subscribeLive, getLiveSnapshot, getLiveSnapshot);
+  const liveTailActiveRef = useRef(false);
   const {
     virtuosoRef,
     scrollRef,
@@ -306,7 +310,7 @@ export function Transcript({
     writeOffset,
     reset: resetScroll,
     finishProgrammaticScroll,
-  } = useTranscriptVirtuosoScroll();
+  } = useTranscriptVirtuosoScroll({ liveTailActiveRef });
   const virtuosoReadyRef = useRef(false);
   const layoutSurfaceKey = `${tabId ?? ""}:${revealSignal}`;
 
@@ -378,6 +382,22 @@ export function Transcript({
     if (!virtuosoReadyRef.current || !stick.current) return;
     followGrowingTail();
   }, [footerHeight, followGrowingTail, stick]);
+
+  // The live region grows from zero height and shrinks the history viewport
+  // mid-stream; keep the tail pinned across that viewport resize.
+  useEffect(() => {
+    const element = scrollElement;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    let lastHeight = element.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const height = element.clientHeight;
+      if (height === lastHeight) return;
+      lastHeight = height;
+      followGrowingTail();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [scrollElement, followGrowingTail]);
 
   // Sub-agent calls carry a parentId; collect them under their parent `task`
   // call so the parent card can render them nested, and skip them at top level.
@@ -457,22 +477,41 @@ export function Transcript({
     () => buildTranscriptRows(turnModels, { folds, foldPreference, hasOlderHistory, creationMode, turnForUser, hasCheckpointForTurn }),
     [turnModels, folds, foldPreference, hasOlderHistory, creationMode, turnForUser, hasCheckpointForTurn],
   );
+  // The active (streaming) turn renders as the list's in-flow Footer, outside
+  // the measured size tree: the list only ever owns static, bounded rows, so
+  // streaming never churns Virtuoso's measurements or scroll anchoring
+  // (#8657/#8688).
+  const liveSplit = useMemo(
+    () => splitTranscriptLiveRows(turnModels, rows, liveId, running),
+    [turnModels, rows, liveId, running],
+  );
   // Keep the load-older affordance in Virtuoso's measured Header slot so an
   // older page is a true data prepend, rather than an insertion after row 0.
   const virtualRows = useMemo(
-    () => rows[0]?.kind === "older-history" ? rows.slice(1) : rows,
-    [rows],
+    () => liveSplit.historyRows[0]?.kind === "older-history" ? liveSplit.historyRows.slice(1) : liveSplit.historyRows,
+    [liveSplit.historyRows],
   );
   const rowIndexByKey = useMemo(() => {
     const map = new Map<string, number>();
     virtualRows.forEach((row, index) => map.set(String(row.key), index));
     return map;
   }, [virtualRows]);
-  const [selectableRows, liveSelectableRows] = useTranscriptSelectableRows(virtualRows, live);
+  // Selection spans both regions: the logical model covers history + live
+  // rows, while Virtuoso index jumps keep using the history-only map above.
+  const allRows = useMemo(
+    () => [...virtualRows, ...liveSplit.liveRows],
+    [virtualRows, liveSplit.liveRows],
+  );
+  const allRowIndexByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    allRows.forEach((row, index) => map.set(String(row.key), index));
+    return map;
+  }, [allRows]);
+  const [selectableRows, liveSelectableRows] = useTranscriptSelectableRows(allRows, live);
   const selectionRetention = useTranscriptSelectionRetention({
     tabId,
     revealSignal,
-    rowIndexByKey,
+    rowIndexByKey: allRowIndexByKey,
     selectableRows,
     selectableRowOverrides: liveSelectableRows,
     scrollRef,
@@ -497,6 +536,7 @@ export function Transcript({
     restoreLocation,
     handleItemsRendered: handleRecoveryItemsRendered,
     scheduleBlankViewportCheck,
+    invalidateAnchors,
   } = useTranscriptVirtuosoRecovery({
     surfaceKey: layoutSurfaceKey,
     historyLayoutRevision,
@@ -513,29 +553,10 @@ export function Transcript({
     () => virtualRows.map((row) => String(row.key)).join("|"),
     [virtualRows],
   );
-  const virtuosoContext = useMemo<TranscriptVirtuosoContext>(() => ({
-    tabId,
-    scrollElement,
-    nativeScrollbarDragging,
-    overlayRevision,
-    olderHistory: hasOlderHistory
-      ? {
-          loading: loadingOlderHistory,
-          label: loadingOlderHistory ? t("common.loading") : t("transcript.showEarlierHistory", { n: olderHistoryCount }),
-          onLoad: onLoadOlderHistory,
-        }
-      : null,
-  }), [hasOlderHistory, loadingOlderHistory, nativeScrollbarDragging, olderHistoryCount, onLoadOlderHistory, overlayRevision, scrollElement, t, tabId]);
   const handleScrollerRef = useCallback((node: HTMLElement | Window | null) => {
     scrollerRef(node);
     entranceRef.current = node instanceof HTMLElement ? node as HTMLDivElement : null;
   }, [entranceRef, scrollerRef]);
-  const handleItemsRendered = useCallback((rendered: ListItem<TranscriptRow>[]) => {
-    noteTranscriptRowCounts(rendered.length, virtualRows.length);
-    selectionRetention.reconcileLogicalFocus();
-    handleRecoveryItemsRendered(rendered.length);
-  }, [handleRecoveryItemsRendered, selectionRetention.reconcileLogicalFocus, virtualRows.length]);
-
   const handleTranscriptScroll = useCallback(() => {
     if (creationMode) handleCreationScroll();
     scheduleBlankViewportCheck();
@@ -544,8 +565,18 @@ export function Transcript({
   const handleJumpToQuestion = useCallback((question: QuestionAnchor) => {
     const index = rowIndexByKey.get(String(userRowKey(question.id)));
     if (index == null) return;
+    invalidateAnchors();
     scrollToDataIndex(firstItemIndex, index, "smooth");
-  }, [firstItemIndex, rowIndexByKey, scrollToDataIndex]);
+  }, [firstItemIndex, invalidateAnchors, rowIndexByKey, scrollToDataIndex]);
+
+  // The jump-bottom click is explicit user intent: it outranks any in-flight
+  // recovery anchor restore and ends a stale selection gesture whose
+  // pointerup was lost (#8657/#8688).
+  const handleJumpToBottom = () => {
+    selectionRetention.endStaleGesture();
+    invalidateAnchors();
+    scrollToBottom();
+  };
 
   // After a non-fork rewind, scroll to the last user message (the
   // rewound-to point) so the user knows where they are.
@@ -554,6 +585,7 @@ export function Transcript({
     const lastQ = questions[questions.length - 1];
     const index = rowIndexByKey.get(String(userRowKey(lastQ.id)));
     if (index == null) return;
+    invalidateAnchors();
     scrollToDataIndex(firstItemIndex, index);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rewindSignal]);
@@ -561,7 +593,10 @@ export function Transcript({
   const empty = items.length === 0;
 
   // ── Row rendering ─────────────────────────────────────────────────────────
-  const renderRow = (row: TranscriptRow): ReactNode => {
+  // renderRow/itemContent keep stable identities: Transcript re-renders on
+  // every streaming frame, and Virtuoso re-maps every mounted row whenever
+  // itemContent changes identity.
+  const renderRow = useCallback((row: TranscriptRow): ReactNode => {
     switch (row.kind) {
       case "older-history":
         return (
@@ -648,7 +683,6 @@ export function Transcript({
             item={assistantAnswerOnly(row.item)}
             defaultExpanded={false}
             expandWhileStreaming={false}
-            truncateStreamingReasoning={true}
             creationMode={creationMode}
             reasoningDisplay="hide"
           />
@@ -691,7 +725,140 @@ export function Transcript({
         );
       }
     }
-  };
+  }, [
+    actionHoverMenus,
+    actionPending,
+    checkpointsByTurn,
+    creationMode,
+    handleFoldToggle,
+    handleReasoningManualOpen,
+    lastTurn,
+    loadingOlderHistory,
+    olderHistoryCount,
+    onDeliveryContinue,
+    onEditPrompt,
+    onLoadOlderHistory,
+    onOpenChanges,
+    onPrompt,
+    onRewind,
+    openAction,
+    rewindDisabled,
+    running,
+    subcallsByParent,
+    t,
+    tabId,
+    turnStartAt,
+  ]);
+  const renderVirtuosoRow = useCallback(
+    (_index: number, row: TranscriptRow) => renderRow(row),
+    [renderRow],
+  );
+
+  // ── Live-region completion handoff ────────────────────────────────────────
+  // When the active turn settles, its rows join the virtual data in the same
+  // commit that would unmount the live-region footer. While the view is at
+  // the bottom, keep painting the region's final content until Virtuoso
+  // reports the materialized tail row mounted, so completion does not flash
+  // stale history (#8657/#8688).
+  const heldLiveRowsRef = useRef<readonly TranscriptRow[]>([]);
+  const heldSurfaceRef = useRef(layoutSurfaceKey);
+  const [holdingLiveRegion, setHoldingLiveRegion] = useState(false);
+  const wasLiveActiveRef = useRef(false);
+  if (liveSplit.liveActive) {
+    wasLiveActiveRef.current = true;
+    heldSurfaceRef.current = layoutSurfaceKey;
+    heldLiveRowsRef.current = liveSplit.liveRows;
+    if (holdingLiveRegion) setHoldingLiveRegion(false);
+  } else if (wasLiveActiveRef.current) {
+    wasLiveActiveRef.current = false;
+    // Transcript is not keyed by tab: a hold captured on one surface must
+    // never paint into another after a tab switch.
+    if (heldSurfaceRef.current !== layoutSurfaceKey) heldLiveRowsRef.current = [];
+    if (heldLiveRowsRef.current.length > 0 && isAtBottom && !holdingLiveRegion) {
+      setHoldingLiveRegion(true);
+    }
+  }
+  // The materialization target can disappear mid-hold (rewind, fork, or a
+  // wholesale session replace): release immediately instead of pinning rows
+  // that are no longer in the transcript for the safety-timeout duration.
+  if (holdingLiveRegion && heldLiveRowsRef.current.length > 0) {
+    const lastHeldKey = String(heldLiveRowsRef.current[heldLiveRowsRef.current.length - 1].key);
+    if (!rows.some((row) => String(row.key) === lastHeldKey)) {
+      heldLiveRowsRef.current = [];
+      setHoldingLiveRegion(false);
+    }
+  }
+  useEffect(() => {
+    heldLiveRowsRef.current = [];
+    setHoldingLiveRegion(false);
+  }, [layoutSurfaceKey]);
+  useEffect(() => {
+    if (!holdingLiveRegion) return;
+    // Safety net: if the tail row never reports (e.g. the surface changed),
+    // release the hold instead of pinning stale content.
+    const timeout = window.setTimeout(() => {
+      heldLiveRowsRef.current = [];
+      setHoldingLiveRegion(false);
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [holdingLiveRegion]);
+  const heldLiveRows = heldSurfaceRef.current === layoutSurfaceKey ? heldLiveRowsRef.current : NO_HELD_ROWS;
+  const showLiveRegion = liveSplit.liveActive || (holdingLiveRegion && heldLiveRows.length > 0);
+  liveTailActiveRef.current = showLiveRegion;
+
+  const handleItemsRendered = useCallback((rendered: ListItem<TranscriptRow>[]) => {
+    noteTranscriptRowCounts(rendered.length, virtualRows.length);
+    selectionRetention.reconcileLogicalFocus();
+    handleRecoveryItemsRendered(rendered.length);
+    if (holdingLiveRegion) {
+      const held = heldLiveRowsRef.current;
+      const lastKey = held.length > 0 ? String(held[held.length - 1].key) : null;
+      if (lastKey === null || rendered.some((item) => String(item.data?.key ?? "") === lastKey)) {
+        heldLiveRowsRef.current = [];
+        setHoldingLiveRegion(false);
+      }
+    }
+  }, [handleRecoveryItemsRendered, holdingLiveRegion, selectionRetention.reconcileLogicalFocus, virtualRows.length]);
+
+  const virtuosoContext = useMemo<TranscriptVirtuosoContext>(() => ({
+    tabId,
+    scrollElement,
+    nativeScrollbarDragging,
+    overlayRevision,
+    liveRegion: showLiveRegion
+      ? {
+          rows: liveSplit.liveActive ? liveSplit.liveRows : heldLiveRows,
+          renderRow,
+          showStatus: liveSplit.liveActive,
+          turnStartAt,
+          onPointerDownCapture: selectionRetention.onPointerDownCapture,
+        }
+      : null,
+    olderHistory: hasOlderHistory
+      ? {
+          loading: loadingOlderHistory,
+          label: loadingOlderHistory ? t("common.loading") : t("transcript.showEarlierHistory", { n: olderHistoryCount }),
+          onLoad: onLoadOlderHistory,
+        }
+      : null,
+  }), [
+    hasOlderHistory,
+    heldLiveRows,
+    liveSplit.liveActive,
+    liveSplit.liveRows,
+    loadingOlderHistory,
+    nativeScrollbarDragging,
+    olderHistoryCount,
+    onLoadOlderHistory,
+    overlayRevision,
+    renderRow,
+    scrollElement,
+    selectionRetention.onPointerDownCapture,
+    showLiveRegion,
+    t,
+    tabId,
+    turnStartAt,
+  ]);
 
   // ── Assemble rendered output ──────────────────────────────────────────────
   return (
@@ -731,7 +898,7 @@ export function Transcript({
             scrollerRef={handleScrollerRef}
             itemsRendered={handleItemsRendered}
             totalListHeightChanged={followGrowingTail}
-            itemContent={(_index, row) => renderRow(row)}
+            itemContent={renderVirtuosoRow}
             onScroll={handleTranscriptScroll}
             onWheelCapture={scrollInteractions.onWheelCapture}
             onTouchStartCapture={onTouchStartIntent}
@@ -764,7 +931,7 @@ export function Transcript({
         <button
           type="button"
           className="transcript__jump-bottom"
-          onClick={() => scrollToBottom()}
+          onClick={handleJumpToBottom}
           aria-label={t("transcript.jumpToBottom")}
           title={t("transcript.jumpToBottom")}
         >
