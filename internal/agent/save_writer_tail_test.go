@@ -176,3 +176,18 @@ func TestWriterTailClassifyDoesNotRereadTranscriptBody(t *testing.T) {
 		t.Fatalf("decision = %+v, want upToDate without rereading wiped bodies", decision)
 	}
 }
+
+func TestWriterBoundSaveSkipsCompatibilityFileLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	s := NewSession("sys")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	bindSessionWriter(t, s, path)
+	held, err := lockSessionFile(path)
+	if err != nil {
+		t.Fatalf("lockSessionFile: %v", err)
+	}
+	defer held()
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("writer-bound save while .jsonl.lock held: %v", err)
+	}
+}
