@@ -118,7 +118,7 @@ func bwrapBaseArgs(spec Spec) []string {
 		args = args[1:] // drop --unshare-net
 	}
 	for _, root := range spec.WriteRoots {
-		args = append(args, "--bind", root, root)
+		args = append(args, bwrapWriteRootMountArgs(root)...)
 	}
 	if !spec.MinimalWrites {
 		for _, root := range linuxWriteDirs() {
@@ -180,6 +180,18 @@ func bwrapTmpMountArgs(spec Spec) []string {
 		return []string{"--bind", dir, "/tmp"}
 	}
 	return []string{"--tmpfs", "/tmp"}
+}
+
+func bwrapWriteRootMountArgs(root string) []string {
+	root = filepath.Clean(strings.TrimSpace(root))
+	if root == "" || root == "." {
+		return nil
+	}
+	if !filepath.IsAbs(root) || !pathWithin(root, "/tmp") {
+		return []string{"--bind", root, root}
+	}
+	out := bwrapTmpParentDirArgs(root)
+	return append(out, "--bind", root, root)
 }
 
 // bwrapForbidReadArgs returns mounts suitable for both configured directory
@@ -247,6 +259,11 @@ func bwrapExecutableMountArgs(args []string) []string {
 		source = resolved
 	}
 
+	out := bwrapTmpParentDirArgs(destination)
+	return append(out, "--ro-bind", source, destination)
+}
+
+func bwrapTmpParentDirArgs(destination string) []string {
 	parent := filepath.Dir(destination)
 	rel, err := filepath.Rel("/tmp", parent)
 	if err != nil {
@@ -261,7 +278,7 @@ func bwrapExecutableMountArgs(args []string) []string {
 		current = filepath.Join(current, part)
 		out = append(out, "--dir", current)
 	}
-	return append(out, "--ro-bind", source, destination)
+	return out
 }
 
 func pathWithin(path, root string) bool {

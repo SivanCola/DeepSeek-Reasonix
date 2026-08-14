@@ -95,12 +95,27 @@ func TestBwrapProtectedWriteArgsReallowsOnlySafeStateChild(t *testing.T) {
 		MinimalWrites:       true,
 	})
 	protect := indexArgs(argv, "--ro-bind", state, state)
-	safe := indexArgs(argv, "--bind", skills, skills)
-	if protect < 0 || safe < protect {
+	if protect < 0 || indexArgs(argv[protect+1:], "--bind", skills, skills) < 0 {
 		t.Fatalf("safe state child must be reopened after parent protection: %v", argv)
 	}
 	if got := indexArgs(argv[protect+1:], "--bind", projects, projects); got >= 0 {
 		t.Fatalf("project runtime state must not be reopened: %v", argv)
+	}
+}
+
+func TestBwrapWriteRootUnderTmpReopensExactDirectory(t *testing.T) {
+	root := "/tmp/project/cache"
+	argv := bwrapBaseArgs(Spec{
+		Mode:          "enforce",
+		WriteRoots:    []string{root},
+		SessionTemp:   "/private/session-tmp",
+		MinimalWrites: true,
+	})
+	tmpMount := indexArgs(argv, "--bind", "/private/session-tmp", "/tmp")
+	parent := indexArgs(argv, "--dir", "/tmp/project")
+	reopen := indexArgs(argv, "--bind", root, root)
+	if tmpMount < 0 || parent < tmpMount || reopen < parent {
+		t.Fatalf("temporary write root must be recreated after the private /tmp mount: %v", argv)
 	}
 }
 
