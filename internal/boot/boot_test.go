@@ -502,11 +502,11 @@ model = "x"
 	if len(msgs) < 3 || len(modelMessages) < 2 {
 		t.Fatalf("failed skill transcript = %+v, want a persisted child conversation", msgs)
 	}
-	joined := ""
+	var joined strings.Builder
 	for _, msg := range modelMessages {
-		joined += msg.Content
+		joined.WriteString(msg.Content)
 	}
-	if !strings.Contains(joined, "first skill task") && !strings.Contains(joined, "second skill task") && !strings.Contains(joined, "review") {
+	if !strings.Contains(joined.String(), "first skill task") && !strings.Contains(joined.String(), "second skill task") && !strings.Contains(joined.String(), "review") {
 		t.Fatalf("failed skill transcript = %+v, want the review task text", msgs)
 	}
 }

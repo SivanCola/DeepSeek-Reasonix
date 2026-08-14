@@ -682,7 +682,6 @@ func (s *acpSession) statusSnapshot() ReasonixSessionStatus {
 	ctrl := s.ctrl
 	model := s.model
 	effort := cloneStringPtr(s.effortOverride)
-	workMode := s.runtimeProfile
 	mode := s.modeID
 	runtimeState := s.runtimeState
 	telemetry := s.status
@@ -721,7 +720,7 @@ func (s *acpSession) statusSnapshot() ReasonixSessionStatus {
 	mode = normalizeACPCollaborationMode(mode)
 	// WorkMode is a deprecated wire-compat field pinned to the historical
 	// default; execution modes no longer exist at runtime.
-	workMode = "balanced"
+	workMode := "balanced"
 	if runtimeState.PlannerMode != "off" {
 		runtimeState.PlannerMode = "on"
 	}

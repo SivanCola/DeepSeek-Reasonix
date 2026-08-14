@@ -32,10 +32,6 @@ func footerInfo(value string) string {
 	return themeFg(activeCLITheme.info, value)
 }
 
-func footerSecondary(value string) string {
-	return themeFg(activeCLITheme.secondary, value)
-}
-
 func footerMetric(label, value string) string {
 	if strings.TrimSpace(value) == "" {
 		return ""

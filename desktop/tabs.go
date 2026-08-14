@@ -7544,10 +7544,6 @@ func (s tabRuntimeSnapshot) currentToolApprovalMode() string {
 	return normalizeToolApprovalMode(s.toolApprovalMode)
 }
 
-func (s tabRuntimeSnapshot) currentTokenMode() string {
-	return boot.NormalizeTokenMode(s.tokenMode)
-}
-
 // normalizedRuntime reads live Controller state only after the App snapshot has
 // released a.mu. Rebuild callers hold turnStartMu while invoking it, so all
 // three axes and the legacy Goal fallback describe one admitted runtime state.
