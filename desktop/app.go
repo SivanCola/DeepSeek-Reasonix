@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
@@ -51,6 +50,7 @@ import (
 	"reasonix/internal/notify"
 	"reasonix/internal/plugin"
 	"reasonix/internal/pluginpkg"
+	"reasonix/internal/proc"
 	"reasonix/internal/provider"
 	"reasonix/internal/repair"
 	"reasonix/internal/sessioncatalog"
@@ -363,7 +363,8 @@ type App struct {
 	healthyUpdateTransactionID string
 	// startupReady records that the window reached domReady so LKG config
 	// snapshots and update health are only committed after a real UI boot.
-	startupReady atomic.Bool
+	startupReady     atomic.Bool
+	webView2Recovery *webView2RecoveryCoordinator
 }
 
 type skillRootsCache struct {
@@ -562,6 +563,7 @@ func NewApp() *App {
 		remoteWindows:       newRemoteWindowRegistry(),
 		remoteWindowOwnerID: newRemoteWindowOwnerID(),
 	}
+	a.webView2Recovery = newWebView2RecoveryCoordinator(a)
 	a.workspaceHub = newWorkspaceChangeHub(a)
 	a.terminals = newTerminalManager(a)
 	a.botBridge = a.newBotBridge()
@@ -592,6 +594,7 @@ func (a *App) startup(ctx context.Context) {
 	// OnStartup before its DBus single-instance handoff.
 	initializeLifecycleDiagnostics(a)
 	a.startWindowsWebView2StartupFallback(ctx)
+	a.webView2Recovery.startGuidance(ctx)
 	a.lifecycle.tracker.markAsync("ready")
 	if a.remoteWindowTicket != "" {
 		// Remote web window child: no local tabs, tray, heartbeat, providers,
@@ -1017,6 +1020,7 @@ func (a *App) domReady(_ context.Context) {
 		a.domReadyRemoteWindow()
 		return
 	}
+	a.webView2Recovery.reportReady()
 
 	state, ok := loadWindowState()
 	if ok {
@@ -1072,6 +1076,16 @@ func (a *App) domReady(_ context.Context) {
 			slog.Info("desktop: archived superseded update transaction")
 		}
 	})
+}
+
+// ReportDesktopWebViewReady is the content-process heartbeat. OnDomReady proves
+// native navigation completed; this bound call additionally proves that React
+// and the Wails bridge are responsive after a renderer reload.
+func (a *App) ReportDesktopWebViewReady() {
+	if a == nil || a.webView2Recovery == nil {
+		return
+	}
+	a.webView2Recovery.reportReady()
 }
 
 func (a *App) commitPendingUpdateHealth() error {
@@ -10748,7 +10762,7 @@ var revealPath = defaultRevealPath
 func defaultRevealPath(path string) error {
 	switch goruntime.GOOS {
 	case "darwin":
-		return exec.Command("open", "-R", path).Start()
+		return proc.VisibleCommand("open", "-R", path).Start()
 	case "windows":
 		// explorer.exe lives in %SystemRoot%, which isn't always on PATH (the
 		// launch environment can strip it), so resolve it directly rather than
@@ -10761,13 +10775,13 @@ func defaultRevealPath(path string) error {
 		if root != "" {
 			explorer = filepath.Join(root, "explorer.exe")
 		}
-		return exec.Command(explorer, "/select,", path).Start()
+		return proc.VisibleCommand(explorer, "/select,", path).Start()
 	default:
 		dir := path
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			dir = filepath.Dir(path)
 		}
-		return exec.Command("xdg-open", dir).Start()
+		return proc.VisibleCommand("xdg-open", dir).Start()
 	}
 }
 
