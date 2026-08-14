@@ -16,6 +16,9 @@ func Command(name string, args ...string) *exec.Cmd {
 
 // CommandContext is Command with cancellation.
 func CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	// Dynamic executables are intentional for approved tools and terminals; name
+	// and args remain separate argv values, with any shell explicit at the caller.
+	// codeql[go/command-injection]
 	cmd := exec.CommandContext(ctx, name, args...)
 	HideWindow(cmd)
 	return cmd
