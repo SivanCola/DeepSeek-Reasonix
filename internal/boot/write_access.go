@@ -21,7 +21,6 @@ func newSubagentSkillOptionsFactory(
 	gate agent.Gate,
 	keepPolicy agent.KeepPolicy,
 	maxDepth int,
-	delivery bool,
 	ablationSet ablation.Set,
 	lease *workspacelease.Owner,
 	writeRoots *sandbox.WritableRootSet,
@@ -35,7 +34,7 @@ func newSubagentSkillOptionsFactory(
 			CompactRatio: cfg.CompactRatio, CompactForceRatio: cfg.CompactForceRatio, ContextEditing: cfg.ContextEditing,
 			ArchiveDir: config.ArchiveDir(), KeepPolicy: keepPolicy,
 			ResponseLanguage: agent.ResponseLanguageFromContext(ctx), ReasoningLanguage: agent.ReasoningLanguageFromContext(ctx),
-			SubagentDepth: childDepth, MaxSubagentDepth: maxDepth, DeliveryProfile: delivery,
+			SubagentDepth: childDepth, MaxSubagentDepth: maxDepth,
 			Ablation: ablationSet, WorkspaceLease: lease, WriteRoots: writeRoots,
 			DisableWriteAccessExpand: true, HomeDir: home, StateRoot: stateRoot,
 		}

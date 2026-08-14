@@ -137,7 +137,7 @@ const (
 // events. It never carries user prompts, file contents, command args, or
 // reviewer reasoning.
 type CompletionSummaryInfo struct {
-	Preset             string // light | balanced | delivery
+	Preset             string // deprecated wire-compat label; pinned to "balanced"
 	Verdict            string // complete | partial | blocked | continue
 	Mutations          int
 	ChecksPassed       int
@@ -471,8 +471,8 @@ type CacheDiagnostics struct {
 // Missing values are stable category ids; user-facing detail stays localized in
 // the frontend instead of scraping the diagnostic error string.
 type FinalReadiness struct {
-	Attempts int
-	Missing  []string
+	Attempts int      `json:"attempts,omitempty"`
+	Missing  []string `json:"missing,omitempty"`
 }
 
 const (

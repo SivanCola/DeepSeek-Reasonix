@@ -352,13 +352,12 @@ type chatTUI struct {
 	// skillPick is the interactive skill picker overlay for /skills. nil when closed.
 	skillPick *skillPicker
 
-	// buildController builds a fresh controller for a model/profile pair, carrying prior
-	// history across and pinning auto-save to resumePath so the continued
+	// buildController builds a fresh controller for a model choice, carrying
+	// prior history across and pinning auto-save to resumePath so the continued
 	// conversation stays in one file (set by chatREPL; it must NOT touch this
 	// model — the swap happens on the running copy). nil disables runtime
 	// rebuild commands. modelRef is the active "provider/model" ref, marked
-	// current in the picker. runtimeProfile stores boot's normalized token mode:
-	// full (displayed as balanced), economy, or delivery. oldCtrl is the
+	// current in the picker. oldCtrl is the
 	// outgoing controller, passed through so the replacement can carry forward
 	// same-session tool grants and Plan-mode read-only command trust that
 	// don't travel through carry/resumePath (see Controller.RestoreSessionAuthorizations).
@@ -373,10 +372,9 @@ type chatTUI struct {
 	lastBuildResult *boot.BuildResult
 	// pendingReload coalesces /reload requests made while a turn or a runtime
 	// switch is in flight; the TurnDone drain runs it once the TUI is idle.
-	pendingReload  bool
-	modelRef       string
-	runtimeProfile string
-	effortLevel    string // "" when the current provider/model has no configurable effort
+	pendingReload bool
+	modelRef      string
+	effortLevel   string // "" when the current provider/model has no configurable effort
 
 	// leases owns the session lease guarding the TUI's active session file (set
 	// by chatREPL; nil in tests and when persistence is disabled). Every in-TUI
@@ -435,7 +433,6 @@ const (
 
 type controllerBuildSpec struct {
 	ModelRef         string
-	RuntimeProfile   string
 	ToolApprovalMode string
 	PlanMode         bool
 	EffortOverride   *string
@@ -556,7 +553,6 @@ func (m chatTUI) refreshGitStatus() tea.Cmd {
 // mode that would occur if Close() were called from the build goroutine.
 type modelSwitchMsg struct {
 	ref           string
-	profile       string
 	ctrl          control.SessionAPI
 	oldCtrl       control.SessionAPI
 	label         string
@@ -1971,9 +1967,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.skills = msg.skills
 			m.setHostAndInvalidateSlashCatalog(msg.host)
 			m.modelRef = msg.ref
-			if msg.profile != "" {
-				m.runtimeProfile = msg.profile
-			}
 			m.refreshEffortStatus()
 			// Defer Close to exit; skip when subgraph rebuild reused the pointer.
 			if msg.oldCtrl != nil && msg.oldCtrl != msg.ctrl {
@@ -3656,13 +3649,6 @@ func (m chatTUI) jobsTag() string {
 	return dim(fmt.Sprintf("⚙ %d", n))
 }
 
-func (m chatTUI) workModeTag() string {
-	if m.runtimeProfile == "" {
-		return ""
-	}
-	return dim(fmt.Sprintf(i18n.M.WorkModeStatusFmt, runtimeProfileDisplay(m.runtimeProfile)))
-}
-
 func (m chatTUI) effortTag() string {
 	if m.effortLevel == "" {
 		return ""
@@ -3718,12 +3704,12 @@ func formatCompletionSummaryLine(c *event.CompletionSummaryInfo) string {
 	if c == nil {
 		return ""
 	}
-	preset := strings.TrimSpace(c.Preset)
-	if preset == "" {
-		preset = "balanced"
+	verdict := strings.TrimSpace(c.Verdict)
+	if verdict == "" {
+		verdict = "complete"
 	}
-	line := fmt.Sprintf("%s · %s · mut=%d · checks %d✓/%d✗/%d⊘",
-		preset, c.Verdict, c.Mutations, c.ChecksPassed, c.ChecksFailed, c.ChecksSuppressed)
+	line := fmt.Sprintf("%s · mut=%d · checks %d✓/%d✗/%d⊘",
+		verdict, c.Mutations, c.ChecksPassed, c.ChecksFailed, c.ChecksSuppressed)
 	if c.Review != "" && c.Review != "none" {
 		line += " · review=" + c.Review
 	}
@@ -4620,6 +4606,8 @@ func (m *chatTUI) ingestEvent(e event.Event) {
 		m.clearSubmittedPastes()
 		if e.Outcome == event.TurnOutcomeRecoveryPaused {
 			m.commitLine(wrapForViewport("⏸ "+i18n.M.RecoveryPaused, m.width, activeCLITheme.info))
+		} else if e.Outcome == event.TurnOutcomeFinalReadiness {
+			m.commitLine(wrapForViewport("ⓘ "+i18n.M.FinalReadinessRecovery, m.width, activeCLITheme.info))
 		} else if e.Err != nil && e.Err.Error() != "" && !strings.Contains(e.Err.Error(), "context canceled") {
 			m.commitLine(wrapForViewport(i18n.M.ErrorPrefix+" "+e.Err.Error(), m.width, activeCLITheme.warn))
 		}
@@ -4660,6 +4648,11 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	cmd := canonicalBuiltinSlashCommand(typedCmd)
 
 	switch cmd {
+	case control.ContinueChecksCommand:
+		prompt, _ := control.ParseFinalReadinessRecoveryCommand(input)
+		return m.startControllerTurn(input, input, func() {
+			m.ctrl.SubmitFinalReadinessRecovery(input, prompt)
+		})
 	case "/compact":
 		m.echoLocalCommand(input)
 		// Compaction makes a (network) summarizer call; run it off the Update loop
@@ -4907,9 +4900,6 @@ func (m *chatTUI) showStatusDetails() {
 		if tag := m.contextTag(); tag != "" {
 			lines = append(lines, "  context    "+tag)
 		}
-	}
-	if tag := m.workModeTag(); tag != "" {
-		lines = append(lines, "  profile    "+tag)
 	}
 	if m.effortLevel != "" {
 		// The persistent footer uses an uppercase semantic label. The expanded
@@ -5374,6 +5364,10 @@ func replaySectionsForWithAssistantRenderer(
 	var out []string
 	for _, m := range history {
 		if m.LocalOnly {
+			if m.FinalReadinessRecovery != nil && m.FinalReadinessRecovery.Pending {
+				out = append(out, fmt.Sprintf("  · %s\n\n", i18n.M.FinalReadinessRecovery))
+				continue
+			}
 			if reasoning := strings.TrimSpace(m.ReasoningContent); reasoning != "" {
 				out = append(out, dim("  ▎ "+i18n.M.ChatThinking)+"\n"+reasoningBlock(reasoning, width, 0)+"\n\n")
 			}
