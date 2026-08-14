@@ -1,6 +1,6 @@
 import { app } from "./bridge";
 import { t } from "./i18n";
-import type { RewindResultView } from "./types";
+import type { RewindResultView, TabMeta } from "./types";
 
 export async function commitRewindWithPreview(
   sourceTabId: string,
@@ -41,6 +41,38 @@ export function partialRewindNotice(result: RewindResultView): string {
   const detail = result.error
     || (result.conflicts?.length ? result.conflicts.join("; ") : "");
   return detail ? `${summary} ${detail}` : summary;
+}
+
+export function rewindFailureDetail(result?: RewindResultView | null): string {
+  return result?.error
+    || (result?.conflicts?.length ? result.conflicts.join("; ") : "")
+    || "rewind failed";
+}
+
+export function rewindOutcome(result: RewindResultView): RewindResultView & { ok: true } {
+  return { ...result, ok: true, tabId: result.tabId || result.tab?.id };
+}
+
+export async function settleRewindTarget(
+  result: RewindResultView,
+  adopt: (tab: TabMeta) => Promise<unknown>,
+  waitUntilReady: (tabId: string) => Promise<unknown>,
+): Promise<string | undefined> {
+  const targetTabId = result.tab?.id || result.tabId;
+  if (result.tab?.id) await adopt(result.tab);
+  else if (targetTabId) await waitUntilReady(targetTabId);
+  return targetTabId;
+}
+
+export function dispatchPartialRewindNotice(
+  notice: string,
+  sourceTabId: string,
+  targetTabId: string | undefined,
+  notify: (tabId: string, text: string) => void,
+): void {
+  if (!notice) return;
+  notify(sourceTabId, notice);
+  if (targetTabId && targetTabId !== sourceTabId) notify(targetTabId, notice);
 }
 
 export function undoCommittedRewind(sourceTabId: string, transactionId: string): Promise<RewindResultView> {

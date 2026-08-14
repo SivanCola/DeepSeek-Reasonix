@@ -4327,8 +4327,6 @@ export function useController() {
   const forget = useCallback(async (name: string) => { await app.Forget(name).catch(() => {}); }, []);
   const saveDoc = useCallback(async (path: string, body: string) => { await app.SaveDoc(path, body).catch(() => {}); }, []);
 
-  type RewindOutcome = Omit<RewindResultView, "ok"> & { ok: boolean };
-
   const adoptReturnedTab = async (tab: TabMeta, sourceTabId: string, navigationSeq: number, reason: string): Promise<string | undefined> => {
     const snapshotAt = promptEventClock();
     const navigationUnchanged = activeNavigationSeqRef.current === navigationSeq;
@@ -4356,8 +4354,7 @@ export function useController() {
     await reconcileTabRuntime(tab.id, { hydrateSessionData: false });
     return tab.id;
   };
-
-  const rewindForTabDetailed = useCallback(async (sourceTabId: string, turn: number, scope: string): Promise<RewindOutcome> => {
+  const rewindForTabDetailed = useCallback(async (sourceTabId: string, turn: number, scope: string): Promise<RewindResultView & { ok: boolean }> => {
     if (!sourceTabId) return { ok: false };
     const forkNavigationSeq = activeNavigationSeqRef.current;
     await waitForTabReady(sourceTabId);
@@ -4375,41 +4372,25 @@ export function useController() {
         return { ok: true, tabId: tab?.id, tab };
       }
 
-      let outcome: RewindOutcome = { ok: true };
+      let outcome: RewindResultView & { ok: boolean } = { ok: true };
       let partialNotice = "";
       if (actionScope === "summ-from") await app.SummarizeFromForTab(sourceTabId, turn);
       else if (actionScope === "summ-upto") await app.SummarizeUpToForTab(sourceTabId, turn);
       else {
-        const { commitRewindWithPreview, partialRewindNotice } = await import("./rewindCommit");
+        const { commitRewindWithPreview, partialRewindNotice, rewindFailureDetail, rewindOutcome, settleRewindTarget } = await import("./rewindCommit");
         const result = await commitRewindWithPreview(sourceTabId, turn, actionScope);
         if (!result?.ok) {
-          const detail = result?.error
-            || (result?.conflicts?.length ? result.conflicts.join("; ") : "")
-            || "rewind failed";
-          dispatchTo(sourceTabId, { type: "local_notice", level: "warn", text: detail });
+          dispatchTo(sourceTabId, { type: "local_notice", level: "warn", text: rewindFailureDetail(result) });
           return { ok: false, written: result?.written, deleted: result?.deleted };
         }
-        outcome = {
-          ...result,
-          ok: true,
-          tabId: result.tabId || result.tab?.id,
-        };
-        if (outcome.tab?.id) {
-          await adoptReturnedTab(outcome.tab, sourceTabId, forkNavigationSeq, "tab.rewind");
-          outcome.tabId = outcome.tab.id;
-        } else if (outcome.tabId) {
-          await waitForTabReady(outcome.tabId);
-        }
+        outcome = rewindOutcome(result);
+        outcome.tabId = await settleRewindTarget(result, tab => adoptReturnedTab(tab, sourceTabId, forkNavigationSeq, "tab.rewind"), waitForTabReady);
         partialNotice = partialRewindNotice(result);
       }
 
       await loadSessionDataForTab(sourceTabId, true, "rewind");
-      if (partialNotice) {
-        dispatchTo(sourceTabId, { type: "local_notice", level: "warn", text: partialNotice });
-        if (outcome.tabId && outcome.tabId !== sourceTabId) {
-          dispatchTo(outcome.tabId, { type: "local_notice", level: "warn", text: partialNotice });
-        }
-      }
+      const { dispatchPartialRewindNotice } = await import("./rewindCommit");
+      dispatchPartialRewindNotice(partialNotice, sourceTabId, outcome.tabId, (tabId, text) => dispatchTo(tabId, { type: "local_notice", level: "warn", text }));
       return outcome;
     } catch {
       return { ok: false };
