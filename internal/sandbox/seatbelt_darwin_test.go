@@ -178,6 +178,27 @@ func TestCommandUnwrappedWhenOff(t *testing.T) {
 	}
 }
 
+func TestProfileDeniesProtectedWriteRoots(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(home, ".reasonix")
+	sessions := filepath.Join(state, "sessions")
+	if err := os.MkdirAll(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profile := seatbeltProfile(Spec{
+		Mode:                "enforce",
+		WriteRoots:          []string{home},
+		ProtectedWriteRoots: []string{sessions},
+	})
+	if !strings.Contains(profile, `(deny file-write* (subpath "`+sessions+`")`) &&
+		!strings.Contains(profile, "deny file-write*") {
+		t.Fatalf("protected write deny missing:\n%s", profile)
+	}
+	if !strings.Contains(profile, "deny file-write*") || !strings.Contains(profile, sessions) {
+		t.Fatalf("expected deny of sessions in profile:\n%s", profile)
+	}
+}
+
 func TestProfileNetworkAndRoots(t *testing.T) {
 	with := seatbeltProfile(Spec{Mode: "enforce", WriteRoots: []string{"/work/proj"}, ForbidReadRoots: []string{"/etc/ssh", "/home/user/.ssh"}, Network: true})
 	if strings.Contains(with, "(deny network*)") {

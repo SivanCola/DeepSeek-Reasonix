@@ -310,6 +310,37 @@ type Approval struct {
 	// Recovery carries Auto Guard card fields when Kind is "recovery".
 	// Old frontends ignore it and still render a one-shot fresh approval.
 	Recovery *RecoveryApproval
+	// WriteAccess carries directory-expansion fields when Kind is "write_access".
+	// Old frontends ignore it and still render the ordinary four-choice card.
+	WriteAccess *WriteAccessApproval
+}
+
+// ApprovalKindWriteAccess is the Approval.Kind value for directory expansion.
+const ApprovalKindWriteAccess = "write_access"
+
+// WriteAccessApproval is the backward-compatible structured payload for
+// extending writable roots. Slices are never nil on the wire.
+type WriteAccessApproval struct {
+	Directories              []string `json:"directories"`
+	DisplayDirectories       []string `json:"display_directories"`
+	Justification            string   `json:"justification,omitempty"`
+	BroadHomeAccess          bool     `json:"broad_home_access,omitempty"`
+	OrdinaryPermissionNeeded bool     `json:"ordinary_permission_needed,omitempty"`
+	PersistAllowed           bool     `json:"persist_allowed,omitempty"`
+}
+
+// NormalizeWriteAccessApproval makes list fields non-nil for Wails/JSON.
+func NormalizeWriteAccessApproval(w *WriteAccessApproval) *WriteAccessApproval {
+	if w == nil {
+		return nil
+	}
+	if w.Directories == nil {
+		w.Directories = []string{}
+	}
+	if w.DisplayDirectories == nil {
+		w.DisplayDirectories = []string{}
+	}
+	return w
 }
 
 // RecoveryApproval is the backward-compatible structured payload for Auto

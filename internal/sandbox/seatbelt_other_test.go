@@ -58,6 +58,26 @@ func TestBwrapArgsForArgsMountsTemporaryExecutableAfterMasks(t *testing.T) {
 	}
 }
 
+func TestBwrapProtectedWriteArgsRemountsReadonly(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(home, ".reasonix")
+	sessions := filepath.Join(state, "sessions")
+	if err := os.MkdirAll(sessions, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argv := bwrapBaseArgs(Spec{
+		Mode:                "enforce",
+		WriteRoots:          []string{home},
+		ProtectedWriteRoots: []string{sessions},
+		MinimalWrites:       true,
+	})
+	homeBind := indexArgs(argv, "--bind", home, home)
+	protect := indexArgs(argv, "--ro-bind", sessions, sessions)
+	if homeBind < 0 || protect < 0 || protect < homeBind {
+		t.Fatalf("protected root must be remounted read-only after the home bind: %v", argv)
+	}
+}
+
 func TestBwrapArgsBindsSessionTempAtTmp(t *testing.T) {
 	private := t.TempDir()
 	argv := bwrapArgs(Spec{

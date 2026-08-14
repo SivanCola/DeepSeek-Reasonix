@@ -249,6 +249,7 @@ export function ApprovalModal({
 }) {
   const t = useT();
   const isPlanApproval = approval.tool === "exit_plan_mode";
+  const isWriteAccessApproval = approval.kind === "write_access" || Boolean(approval.write_access);
   const isRecoveryApproval = approval.kind === "recovery" || Boolean(approval.recovery);
   const recovery = approval.recovery;
   const recoveryChangeKind = (recovery?.change_kind ?? "").toLowerCase();
@@ -372,6 +373,38 @@ export function ApprovalModal({
             : t("approval.recoveryContinueDesc"),
           kind: "direct",
           run: () => resolveRecovery(grantSimilarForTask && recovery?.can_grant_task ? "continue_task" : "continue"),
+        },
+      ]
+    : isWriteAccessApproval
+    ? [
+        {
+          key: "1",
+          label: t("approval.writeAccessOnce"),
+          desc: t("approval.writeAccessOnceDesc"),
+          kind: "submit",
+          run: () => onAnswer(true, false, false),
+        },
+        {
+          key: "2",
+          label: t("approval.writeAccessSession"),
+          desc: t("approval.writeAccessSessionDesc"),
+          kind: "submit" as const,
+          run: () => onAnswer(true, true, false),
+        },
+        {
+          key: "3",
+          label: t("approval.writeAccessProject"),
+          desc: t("approval.writeAccessProjectDesc"),
+          kind: "submit" as const,
+          run: () => onAnswer(true, true, true),
+        },
+        {
+          key: "4",
+          label: t("approval.deny"),
+          desc: t("approval.denyDesc"),
+          tone: "danger" as const,
+          kind: "submit" as const,
+          run: () => onAnswer(false, false, false),
         },
       ]
     : isPlanApproval
@@ -748,6 +781,8 @@ export function ApprovalModal({
         title={
           isPlanApproval
             ? t("approval.planReady")
+            : isWriteAccessApproval
+              ? t("approval.writeAccessPending")
             : isRecoveryPlanChange
               ? t("approval.recoveryPlanChangePending")
               : isRecoveryApproval
@@ -923,7 +958,7 @@ export function ApprovalModal({
       >
         {(approvalModeRelaxed ||
           isRecoveryApproval ||
-          (!isPlanApproval && !isRecoveryApproval && (subject || (reasonOpen && reason))) ||
+          (!isPlanApproval && !isRecoveryApproval && (subject || isWriteAccessApproval || (reasonOpen && reason))) ||
           (isPlanApproval && revisionOpen)) && (
           <>
             {approvalModeRelaxed && !isRecoveryApproval && (
@@ -993,7 +1028,36 @@ export function ApprovalModal({
                 )}
               </dl>
             )}
-            {!isPlanApproval && !isRecoveryApproval && subject && (
+            {!isPlanApproval && !isRecoveryApproval && isWriteAccessApproval && (
+              <div className="approval-details">
+                {subject && <pre className="approval-subject">{subject}</pre>}
+                {(approval.write_access?.display_directories?.length || approval.write_access?.directories?.length) ? (
+                  <div className="approval-reason">
+                    <strong>{t("approval.writeAccessDirsLabel")}: </strong>
+                    {(approval.write_access?.display_directories?.length
+                      ? approval.write_access.display_directories
+                      : approval.write_access?.directories ?? []
+                    ).join(", ")}
+                  </div>
+                ) : null}
+                {approval.write_access?.justification && (
+                  <div className="approval-reason">
+                    <strong>{t("approval.writeAccessJustificationLabel")}: </strong>
+                    {approval.write_access.justification}
+                  </div>
+                )}
+                {approval.write_access?.broad_home_access && (
+                  <div className="approval-reason" role="alert" style={{ color: "var(--danger, #c0392b)", fontWeight: 600 }}>
+                    {t("approval.writeAccessHomeWarning")}
+                  </div>
+                )}
+                {approval.write_access?.ordinary_permission_needed && (
+                  <div className="approval-reason">{t("approval.writeAccessMergedHint")}</div>
+                )}
+                {reasonOpen && reason && <div className="approval-reason">{reason}</div>}
+              </div>
+            )}
+            {!isPlanApproval && !isRecoveryApproval && !isWriteAccessApproval && subject && (
               <div className="approval-details">
                 <pre className="approval-subject">{subject}</pre>
                 {reasonOpen && reason && <div className="approval-reason">{reason}</div>}

@@ -1,0 +1,403 @@
+package sandbox
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+)
+
+// NormalizeWriteDir expands a user- or model-supplied write directory into an
+// absolute, symlink-resolved path plus a short display form. raw may be
+// workspace-relative, start with ~, or contain ${HOME}. Globs are rejected.
+func NormalizeWriteDir(raw, workDir, home string) (abs, display string, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", fmt.Errorf("write directory is empty")
+	}
+	if writePathHasGlob(raw) {
+		return "", "", fmt.Errorf("write directory %q must be a concrete directory, not a glob", raw)
+	}
+	expanded, err := expandWritePath(raw, home)
+	if err != nil {
+		return "", "", err
+	}
+	if !filepath.IsAbs(expanded) {
+		base := strings.TrimSpace(workDir)
+		if base == "" {
+			base, err = os.Getwd()
+			if err != nil {
+				return "", "", fmt.Errorf("resolve write directory %q: %w", raw, err)
+			}
+		}
+		expanded = filepath.Join(base, expanded)
+	}
+	abs, err = ResolveAbsPath(expanded)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve write directory %q: %w", raw, err)
+	}
+	return abs, DisplayWritePath(abs, home), nil
+}
+
+func expandWritePath(raw, home string) (string, error) {
+	if strings.Contains(raw, "${HOME}") {
+		if strings.TrimSpace(home) == "" {
+			return "", fmt.Errorf("write directory %q uses ${HOME} but the home directory is unknown", raw)
+		}
+		raw = strings.ReplaceAll(raw, "${HOME}", home)
+	}
+	if raw == "~" || strings.HasPrefix(raw, "~/") || (runtime.GOOS == "windows" && strings.HasPrefix(raw, `~\`)) {
+		if strings.TrimSpace(home) == "" {
+			return "", fmt.Errorf("write directory %q uses ~ but the home directory is unknown", raw)
+		}
+		if raw == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, raw[2:]), nil
+	}
+	return raw, nil
+}
+
+func writePathHasGlob(raw string) bool {
+	return strings.ContainsAny(raw, "*?[")
+}
+
+// ResolveAbsPath resolves path to an absolute, cleaned form. Because a write
+// target need not exist yet, it resolves the deepest existing ancestor with
+// EvalSymlinks and re-appends the not-yet-existing tail.
+func ResolveAbsPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	tail := ""
+	cur := abs
+	for {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(real, tail), nil
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return abs, nil
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+		cur = parent
+	}
+}
+
+// DisplayWritePath returns a user-facing form such as ~/.local when abs sits
+// under home. Other paths stay absolute.
+func DisplayWritePath(abs, home string) string {
+	abs = canonicalDir(abs)
+	home = canonicalDir(home)
+	if abs == "" {
+		return ""
+	}
+	if home != "" && PathWithin(home, abs) {
+		rel, err := filepath.Rel(home, abs)
+		if err == nil {
+			if rel == "." {
+				return "~"
+			}
+			return "~/" + filepath.ToSlash(rel)
+		}
+	}
+	return abs
+}
+
+// FormatConfigWritePath stores home-relative paths as ${HOME}/... and other
+// paths as cleaned absolute paths.
+func FormatConfigWritePath(abs, home string) string {
+	abs = canonicalDir(abs)
+	home = canonicalDir(home)
+	if abs == "" {
+		return ""
+	}
+	if home != "" && PathWithin(home, abs) {
+		rel, err := filepath.Rel(home, abs)
+		if err == nil {
+			if rel == "." {
+				return "${HOME}"
+			}
+			return "${HOME}/" + filepath.ToSlash(rel)
+		}
+	}
+	return abs
+}
+
+// PathWithin reports whether path is at or below root. Both should be
+// absolute and cleaned.
+func PathWithin(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// CollapseWriteRoots deduplicates directories and drops children already
+// covered by an ancestor.
+func CollapseWriteRoots(dirs []string) []string {
+	cleaned := uniqueCleanDirs(dirs)
+	if len(cleaned) < 2 {
+		return cleaned
+	}
+	out := make([]string, 0, len(cleaned))
+	for _, dir := range cleaned {
+		covered := false
+		for _, other := range cleaned {
+			if other == dir {
+				continue
+			}
+			if PathWithin(other, dir) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+func resolveExistingPaths(roots []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(roots))
+	for _, d := range roots {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		abs, err := ResolveAbsPath(d)
+		if err != nil {
+			continue
+		}
+		if !seen[abs] {
+			seen[abs] = true
+			out = append(out, abs)
+		}
+	}
+	return out
+}
+
+func uniqueCleanDirs(dirs []string) []string {
+	seen := make(map[string]bool, len(dirs))
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if dir == "" || dir == "." || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		out = append(out, dir)
+	}
+	return out
+}
+
+// IsFilesystemRoot reports POSIX /, a Windows drive root, or a UNC share root.
+func IsFilesystemRoot(abs string) bool {
+	abs = filepath.Clean(strings.TrimSpace(abs))
+	if abs == "" {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		vol := filepath.VolumeName(abs)
+		if vol == "" {
+			return false
+		}
+		rest := strings.TrimPrefix(abs, vol)
+		return strings.Trim(rest, `\/`) == ""
+	}
+	return abs == string(filepath.Separator)
+}
+
+// IsHomeDir reports whether abs is the user's home directory.
+func IsHomeDir(abs, home string) bool {
+	abs = canonicalDir(abs)
+	home = canonicalDir(home)
+	if abs == "" || home == "" {
+		return false
+	}
+	if abs == home {
+		return true
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(abs, home)
+	}
+	return false
+}
+
+func canonicalDir(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if resolved, err := ResolveAbsPath(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
+}
+
+// ProtectedWriteRoots returns Reasonix session, runtime-state, and security
+// boundary paths that must stay read-only even after a broad home grant.
+func ProtectedWriteRoots(stateRoot string) []string {
+	stateRoot = filepath.Clean(strings.TrimSpace(stateRoot))
+	if stateRoot == "" {
+		return nil
+	}
+	roots := []string{
+		filepath.Join(stateRoot, "sessions"),
+		filepath.Join(stateRoot, "projects"),
+		filepath.Join(stateRoot, "settings.json"),
+		filepath.Join(stateRoot, "metrics-pending.json"),
+		filepath.Join(stateRoot, "crash-pending.json"),
+	}
+	if entries, err := os.ReadDir(stateRoot); err == nil {
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), "desktop-") {
+				roots = append(roots, filepath.Join(stateRoot, entry.Name()))
+			}
+		}
+	}
+	return roots
+}
+
+// IsProtectedWritePath reports whether abs is a Reasonix session store,
+// runtime ledger, or security-boundary file.
+func IsProtectedWritePath(abs, stateRoot string) bool {
+	abs = filepath.Clean(strings.TrimSpace(abs))
+	stateRoot = filepath.Clean(strings.TrimSpace(stateRoot))
+	if abs == "" || stateRoot == "" {
+		return false
+	}
+	if PathWithin(filepath.Join(stateRoot, "sessions"), abs) {
+		return true
+	}
+	if rel, err := filepath.Rel(stateRoot, abs); err == nil && rel != "." && !strings.Contains(rel, string(filepath.Separator)) {
+		if isProtectedStateFile(rel) {
+			return true
+		}
+	}
+	projects := filepath.Join(stateRoot, "projects")
+	if !PathWithin(projects, abs) {
+		return false
+	}
+	rel, err := filepath.Rel(projects, abs)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	return len(parts) >= 2 && parts[1] == "sessions"
+}
+
+func isProtectedStateFile(name string) bool {
+	lower := strings.ToLower(name)
+	if strings.HasPrefix(lower, "desktop-") {
+		return true
+	}
+	switch lower {
+	case "settings.json", "metrics-pending.json", "crash-pending.json":
+		return true
+	default:
+		return false
+	}
+}
+
+// NormalizeWriteDirs validates and collapses a list of requested write
+// directories. broadHome is true when the request includes the user's home.
+func NormalizeWriteDirs(raw []string, workDir, home, stateRoot string) (abs, display []string, broadHome bool, err error) {
+	seen := map[string]bool{}
+	for _, dir := range raw {
+		resolved, _, nerr := NormalizeWriteDir(dir, workDir, home)
+		if nerr != nil {
+			return nil, nil, false, nerr
+		}
+		if verr := ValidateWriteDir(resolved, stateRoot); verr != nil {
+			return nil, nil, false, verr
+		}
+		if seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		abs = append(abs, resolved)
+		if IsHomeDir(resolved, home) {
+			broadHome = true
+		}
+	}
+	abs = CollapseWriteRoots(abs)
+	display = make([]string, 0, len(abs))
+	for _, dir := range abs {
+		display = append(display, DisplayWritePath(dir, home))
+	}
+	if abs == nil {
+		abs = []string{}
+	}
+	return abs, display, broadHome, nil
+}
+
+// ValidateWriteDir rejects filesystem roots and Reasonix-protected paths.
+// The user's home directory is allowed; callers should flag it as high risk.
+func ValidateWriteDir(abs, stateRoot string) error {
+	if IsFilesystemRoot(abs) {
+		return fmt.Errorf("write directory %q is a filesystem root and cannot be granted", abs)
+	}
+	if IsProtectedWritePath(abs, stateRoot) {
+		return fmt.Errorf("write directory %q is a Reasonix session or runtime-state path and cannot be granted", abs)
+	}
+	return nil
+}
+
+// EnsureWriteDir creates abs with 0o755 when it does not exist, then
+// re-resolves the path so a symlink race cannot change its identity.
+func EnsureWriteDir(abs string) error {
+	abs = filepath.Clean(strings.TrimSpace(abs))
+	if abs == "" {
+		return fmt.Errorf("write directory is empty")
+	}
+	info, err := os.Lstat(abs)
+	switch {
+	case err == nil:
+		if info.Mode()&os.ModeSymlink != 0 {
+			resolved, rerr := filepath.EvalSymlinks(abs)
+			if rerr != nil {
+				return fmt.Errorf("resolve write directory %q: %w", abs, rerr)
+			}
+			info, err = os.Stat(resolved)
+			if err != nil {
+				return fmt.Errorf("stat write directory %q: %w", abs, err)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("write path %q is not a directory", abs)
+			}
+			return nil
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("write path %q is not a directory", abs)
+		}
+		return nil
+	case os.IsNotExist(err):
+		if err := os.MkdirAll(abs, 0o755); err != nil {
+			return fmt.Errorf("create write directory %q: %w", abs, err)
+		}
+	default:
+		return fmt.Errorf("stat write directory %q: %w", abs, err)
+	}
+	resolved, err := ResolveAbsPath(abs)
+	if err != nil {
+		return fmt.Errorf("re-resolve write directory %q: %w", abs, err)
+	}
+	if IsFilesystemRoot(resolved) {
+		return fmt.Errorf("write directory %q resolved to a filesystem root", abs)
+	}
+	info, err = os.Stat(resolved)
+	if err != nil {
+		return fmt.Errorf("stat created write directory %q: %w", abs, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("created write path %q is not a directory", abs)
+	}
+	return nil
+}

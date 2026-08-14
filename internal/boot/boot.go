@@ -709,6 +709,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		allowWriteRoots = nil
 	}
 	sessionGuard := builtin.NewSessionDataGuard(config.MemoryUserDir(), allowWriteRoots)
+	writeRootSet := sandbox.NewWritableRootSet(writeRoots)
+	bashSpec.ProtectedWriteRoots = sandbox.ProtectedWriteRoots(config.MemoryUserDir())
 	if bashSpec.Mode == "enforce" && !sandbox.Available() {
 		fmt.Fprintln(stderr, "warning: "+sandbox.UnavailableMessage())
 	}
@@ -728,7 +730,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	}
 	// Register the full built-in inventory for use_capability dispatch. The
 	// provider-visible surface is narrowed later via SetProviderVisibleTools.
-	addBuiltins(reg, enabledBuiltins, writeRoots, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
+	addBuiltins(reg, enabledBuiltins, writeRoots, writeRootSet, bashSpec, bashTimeout, searchSpec, stderr, root, proxySpec, forbidReadRoots, readPathResolver, sessionGuard, managedConfig, opts.FileOverlay, opts.TerminalRunner, sessionTemp, fileWriteReceipt)
 	// Use the caller-supplied shared host when set, so controllers for the same
 	// workspace root reuse running MCP processes (e.g. one CodeGraph daemon
 	// instead of one per tab). Otherwise construct a private host per controller.
@@ -1098,7 +1100,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			WithProfileLookup(profileLookup).
 			WithProfileConfigResolvers(profileConfigModel, profileConfigEffort).
 			WithBashSandboxEnforced(bashSandboxEnforced).
-			WithCapabilityRuntime(capRuntime)
+			WithCapabilityRuntime(capRuntime).
+			WithWriteRoots(writeRootSet)
 	}
 	addTaskTool := func() string {
 		if opts.Ablation.Off(ablation.Subagent) {
@@ -1206,27 +1209,31 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// compaction or language settings — add new fields here, not per runner.
 	subagentSkillOptions := func(sctx context.Context, steps int, price *provider.Pricing, ctxWin, childDepth int) agent.Options {
 		return agent.Options{
-			MaxSteps:            steps,
-			Temperature:         cfg.Agent.Temperature,
-			Pricing:             price,
-			UsageSource:         event.UsageSourceSubagent,
-			Gate:                headlessGate,
-			ContextWindow:       ctxWin,
-			RecentKeep:          cfg.Agent.RecentKeep,
-			SoftCompactRatio:    cfg.Agent.SoftCompactRatio,
-			ToolResultSnipRatio: cfg.Agent.ToolResultSnipRatio,
-			CompactRatio:        cfg.Agent.CompactRatio,
-			CompactForceRatio:   cfg.Agent.CompactForceRatio,
-			ContextEditing:      cfg.Agent.ContextEditing,
-			ArchiveDir:          config.ArchiveDir(),
-			KeepPolicy:          keepPolicy,
-			ResponseLanguage:    agent.ResponseLanguageFromContext(sctx),
-			ReasoningLanguage:   agent.ReasoningLanguageFromContext(sctx),
-			SubagentDepth:       childDepth,
-			MaxSubagentDepth:    maxSubagentDepth,
-			DeliveryProfile:     tokenDelivery,
-			Ablation:            opts.Ablation,
-			WorkspaceLease:      workspaceLease,
+			MaxSteps:                 steps,
+			Temperature:              cfg.Agent.Temperature,
+			Pricing:                  price,
+			UsageSource:              event.UsageSourceSubagent,
+			Gate:                     headlessGate,
+			ContextWindow:            ctxWin,
+			RecentKeep:               cfg.Agent.RecentKeep,
+			SoftCompactRatio:         cfg.Agent.SoftCompactRatio,
+			ToolResultSnipRatio:      cfg.Agent.ToolResultSnipRatio,
+			CompactRatio:             cfg.Agent.CompactRatio,
+			CompactForceRatio:        cfg.Agent.CompactForceRatio,
+			ContextEditing:           cfg.Agent.ContextEditing,
+			ArchiveDir:               config.ArchiveDir(),
+			KeepPolicy:               keepPolicy,
+			ResponseLanguage:         agent.ResponseLanguageFromContext(sctx),
+			ReasoningLanguage:        agent.ReasoningLanguageFromContext(sctx),
+			SubagentDepth:            childDepth,
+			MaxSubagentDepth:         maxSubagentDepth,
+			DeliveryProfile:          tokenDelivery,
+			Ablation:                 opts.Ablation,
+			WorkspaceLease:           workspaceLease,
+			WriteRoots:               writeRootSet,
+			DisableWriteAccessExpand: true,
+			HomeDir:                  userHomeDir(),
+			StateRoot:                config.MemoryUserDir(),
 		}
 	}
 	readOnlySkillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {
@@ -1339,10 +1346,12 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		// registry stop matching on continue_from (schema-hash check reports
 		// the mismatch).
 		var subReg *tool.Registry
+		var childWriteRoots *sandbox.WritableRootSet
 		if sk.ReadOnly {
 			subReg = agent.ReadOnlySubagentToolRegistryForDepthWithRuntime(reg, sk.AllowedTools, childDepth, maxSubagentDepth, capRuntime)
 		} else {
 			subReg = agent.SubagentToolRegistryForDepthWithRuntime(reg, sk.AllowedTools, childDepth, maxSubagentDepth, capRuntime)
+			subReg, childWriteRoots = agent.BindChildWriteRoots(subReg, writeRootSet, agent.WritePathSet{})
 		}
 		// Delivery risk gates require structured review_report from review
 		// subagents only — never expose it on the parent tool surface.
@@ -1403,6 +1412,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			}
 		}
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
+		if childWriteRoots != nil {
+			runOptions.WriteRoots = childWriteRoots
+		}
 		usageModelRef, _ := subagentIdentity(modelRef, effortRef)
 		runOptions.ModelRef = usageModelRef
 		// Delivery risk gates consume typed reports; outside Delivery a casual
@@ -1676,6 +1688,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		// (including late Economy/MCP adds) without wrapping tool schemas.
 		WriteScheduler:               subagentScheduler,
 		WriteWorkspaceRoot:           root,
+		WriteRoots:                   writeRootSet,
+		HomeDir:                      userHomeDir(),
+		StateRoot:                    config.MemoryUserDir(),
 		ProjectChecks:                projectChecks,
 		AgentPreset:                  agentPreset,
 		DeliveryProfile:              tokenDelivery,
@@ -1753,6 +1768,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 				CapabilityLedger:             plannerLedger,
 				CapabilityAudit:              plannerAudit,
 				MissingReasoningWarnStateDir: config.MissingReasoningWarnStateDir(),
+				WriteRoots:                   writeRootSet,
+				HomeDir:                      userHomeDir(),
+				StateRoot:                    config.MemoryUserDir(),
 			}
 			runner = agent.NewCoordinatorWithPlannerPolicy(plannerProv, plannerSess, pe.Price, plannerTools, plannerOpts, executor, cfg.Agent.Temperature, sink, control.NewPlannerPolicy())
 			label = entry.Model + " + planner " + pe.Model
@@ -1819,6 +1837,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		ApprovalTimeout:        opts.ApprovalTimeout,
 		RuntimeProfile:         runtimeProfile,
 		Ablation:               opts.Ablation,
+		WriteRoots:             writeRootSet,
+		BashSandboxEnforced:    bashSpec.Enforce() && sandbox.Available(),
+		OnPersistWriteAccess: func(dirs []string, permRule string) error {
+			return config.PersistProjectWriteAccess(rememberPermissionConfigPath(root), dirs, permRule)
+		},
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
 		},
@@ -2282,6 +2305,11 @@ func currentWorkspacePromptLine(root string) string {
 	return "Current workspace: " + strconv.Quote(root)
 }
 
+func userHomeDir() string {
+	home, _ := os.UserHomeDir()
+	return home
+}
+
 func resolveWorkspaceRoot(explicit string) string {
 	if explicit != "" {
 		return explicit
@@ -2544,12 +2572,12 @@ func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (p
 // and makes bash warn when a command references them. managedConfig names the
 // Reasonix-owned config files writable outside writeRoots after a fresh
 // per-write human approval.
-func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec, forbidReadRoots []string, readPathResolver *builtin.PathResolver, sessionGuard builtin.SessionDataGuard, managedConfig builtin.ManagedConfigPaths, overlay builtin.FileOverlay, terminal builtin.TerminalRunner, sessionTemp *sessiontemp.Manager, fileWriteReceipt func(path string, hadPrior bool, prior []byte)) {
+func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, writeRootSet *sandbox.WritableRootSet, bashSpec sandbox.Spec, bashTimeout time.Duration, searchSpec builtin.SearchSpec, stderr io.Writer, workDir string, proxySpec netclient.ProxySpec, forbidReadRoots []string, readPathResolver *builtin.PathResolver, sessionGuard builtin.SessionDataGuard, managedConfig builtin.ManagedConfigPaths, overlay builtin.FileOverlay, terminal builtin.TerminalRunner, sessionTemp *sessiontemp.Manager, fileWriteReceipt func(path string, hadPrior bool, prior []byte)) {
 	// If a workspace directory is set, use workspace-bound tools that resolve
 	// paths relative to that directory. Otherwise fall back to the process-cwd
 	// compile-time builtins.
 	if workDir != "" {
-		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec, ReadPaths: readPathResolver, SessionGuard: sessionGuard, ManagedConfig: managedConfig, FileOverlay: overlay, Terminal: terminal, SessionTemp: sessionTemp, FileWriteReceipt: fileWriteReceipt}
+		ws := builtin.Workspace{Dir: workDir, WriteRoots: writeRoots, WriteRootSet: writeRootSet, ForbidReadRoots: forbidReadRoots, Bash: bashSpec, BashTimeout: bashTimeout, Search: searchSpec, ProxySpec: proxySpec, ReadPaths: readPathResolver, SessionGuard: sessionGuard, ManagedConfig: managedConfig, FileOverlay: overlay, Terminal: terminal, SessionTemp: sessionTemp, FileWriteReceipt: fileWriteReceipt}
 		for _, t := range ws.Tools(enabled...) {
 			reg.Add(t)
 		}
@@ -2590,6 +2618,9 @@ func addBuiltins(reg *tool.Registry, enabled, writeRoots []string, bashSpec sand
 		searchTool,
 		builtin.ConfineWebFetch(proxySpec))
 	confined = append(confined, builtin.ConfineReaders(forbidReadRoots)...)
+	for i, tl := range confined {
+		confined[i] = builtin.BindWriteRootSet(tl, writeRootSet)
+	}
 	for _, t := range confined {
 		if _, ok := reg.Get(t.Name()); ok {
 			reg.Add(t)

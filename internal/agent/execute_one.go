@@ -501,6 +501,9 @@ func (a *Agent) applyRecoveryAndPermission(ctx context.Context, plan *toolCallPl
 		}
 		plan.planReplacementAuthorized = plan.planTransition && dec.AuthorizePlanReplacement
 	}
+	if blocked, early := a.applyWriteAccess(ctx, plan); early {
+		return blocked, true
+	}
 	// Trusted MCP fast path: installed tools and authorized lifecycle connects
 	// (mcp_connect__*) skip ordinary Ask/Auto/dontAsk gates. Only explicit deny
 	// and live authorization apply — first connect of an installed server must
@@ -521,7 +524,7 @@ func (a *Agent) applyRecoveryAndPermission(ctx context.Context, plan *toolCallPl
 				errMsg:  "blocked by permission policy",
 			}, true
 		}
-	} else if gate != nil {
+	} else if gate != nil && !plan.skipOrdinaryGate {
 		allow, reason, err := gate.Check(ctx, plan.permName, plan.permArgs, plan.readOnly)
 		if err != nil {
 			return toolOutcome{
@@ -677,7 +680,7 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	cctx = tool.WithProgress(cctx, func(chunk string) {
 		a.svc.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: callID, Output: chunk}})
 	})
-	plan.cctx = cctx
+	plan.cctx = a.stampWriteRoots(cctx, plan)
 	return toolOutcome{}, false
 }
 

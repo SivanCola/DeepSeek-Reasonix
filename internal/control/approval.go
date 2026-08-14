@@ -273,6 +273,27 @@ func (a *approvalManager) registerDecisionKindWithInput(tool, subject, reason st
 	return id, reply
 }
 
+func (a *approvalManager) registerWriteAccess(tool, subject, reason string, rawInput json.RawMessage, payload *event.WriteAccessApproval) (string, chan approvalReply) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.nextID++
+	id := strconv.Itoa(a.nextID)
+	reply := make(chan approvalReply, 1)
+	a.approvals[id] = pendingApproval{
+		id: id, tool: tool, subject: subject, reason: reason,
+		rawInput: append(json.RawMessage(nil), rawInput...),
+		fresh:    true, requireHuman: true, kind: writeAccessKind,
+		writeAccess: event.NormalizeWriteAccessApproval(payload), reply: reply,
+	}
+	return id, reply
+}
+
+func (a *approvalManager) peek(id string) pendingApproval {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.approvals[id]
+}
+
 // grantSession records a session-scoped grant so future calls in the same scope
 // short-circuit.
 func (a *approvalManager) grantSession(tool, subject string) {
@@ -307,6 +328,7 @@ func (a *approvalManager) grantPlanModeReadOnlyCommand(prefix string) {
 type SessionAuthorizations struct {
 	Grants                   []string
 	PlanModeReadOnlyCommands []string
+	WriteRoots               []string
 }
 
 func (a *approvalManager) snapshotSessionAuthorizations() SessionAuthorizations {
@@ -496,7 +518,7 @@ func (a *approvalManager) snapshotPrompts() ([]event.Approval, []event.Ask) {
 	for id, p := range a.approvals {
 		approvals = append(approvals, event.Approval{
 			ID: id, Tool: p.tool, Subject: p.subject, Reason: p.reason, RawInput: append(json.RawMessage(nil), p.rawInput...), Fresh: p.fresh,
-			Kind: p.kind, Recovery: p.recovery,
+			Kind: p.kind, Recovery: p.recovery, WriteAccess: event.NormalizeWriteAccessApproval(p.writeAccess),
 		})
 	}
 	asks := make([]event.Ask, 0, len(a.asks))
@@ -582,6 +604,9 @@ func (a *approvalManager) drainLocked(includeExplicitAsk bool) []drainedApproval
 	for id, approval := range a.approvals {
 		memoryBypass := isMemoryApprovalTool(approval.tool) && (a.toolApprovalMode == ToolApprovalYolo ||
 			a.toolApprovalMode == ToolApprovalAuto && approval.autoDrain)
+		if approval.kind == writeAccessKind {
+			continue
+		}
 		if (approval.fresh || requiresFreshApprovalTool(approval.tool)) && !memoryBypass {
 			continue
 		}

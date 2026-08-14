@@ -297,6 +297,30 @@ func (c *Coordinator) SetSandboxEscapeApprover(g sandbox.EscapeApprover) {
 
 // SetConfigWriteApprover propagates Reasonix-managed config write approvals to
 // both tool-using agents in two-model mode.
+func (c *Coordinator) SetWriteAccessGate(g WriteAccessGate) {
+	if c == nil {
+		return
+	}
+	if c.plannerAgent != nil {
+		c.plannerAgent.SetWriteAccessGate(g)
+	}
+	if c.executor != nil {
+		c.executor.SetWriteAccessGate(g)
+	}
+}
+
+func (c *Coordinator) SetWriteRoots(set *sandbox.WritableRootSet) {
+	if c == nil {
+		return
+	}
+	if c.plannerAgent != nil {
+		c.plannerAgent.SetWriteRoots(set)
+	}
+	if c.executor != nil {
+		c.executor.SetWriteRoots(set)
+	}
+}
+
 func (c *Coordinator) SetConfigWriteApprover(g tool.ConfigWriteApprover) {
 	if c == nil {
 		return

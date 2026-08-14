@@ -19,6 +19,7 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
+	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
 
@@ -251,6 +252,11 @@ func (c *blockingApprovalController) RunTurn(ctx context.Context, input string) 
 
 func (c *blockingApprovalController) Approve(id string, allow, session, persist bool) {
 	c.once.Do(func() { close(c.approved) })
+}
+
+func (c *blockingApprovalController) ResolveApproval(id string, allow bool, scope sandbox.ApprovalScope) error {
+	c.Approve(id, allow, scope != sandbox.ApprovalScopeOnce, scope == sandbox.ApprovalScopeProject)
+	return nil
 }
 
 type blockingAskController struct {
@@ -645,6 +651,30 @@ func TestGatewayAllowAll(t *testing.T) {
 
 	if !gw.checkAllowlist(PlatformQQ, InboundMessage{Platform: PlatformQQ, ChatType: ChatDM, UserID: "any_user"}) {
 		t.Error("allow_all should allow everyone")
+	}
+}
+
+func TestGatewayNormalizesWriteAccessShortcuts(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	gw := NewGateway(GatewayConfig{}, nil, logger)
+	key := "session-key"
+	gw.controllers[key] = &sessionState{
+		pendingApprovals: map[string]event.Approval{
+			"7": {ID: "7", Tool: "bash", Kind: event.ApprovalKindWriteAccess},
+		},
+		lastApprovalID: "7",
+	}
+	got, ok := gw.normalizeApprovalShortcut(key, "2")
+	if !ok || got != "/approve-session 7" {
+		t.Fatalf("write-access 2 = %q,%v; want /approve-session 7", got, ok)
+	}
+	got, ok = gw.normalizeApprovalShortcut(key, "3")
+	if !ok || got != "/approve-project 7" {
+		t.Fatalf("write-access 3 = %q,%v; want /approve-project 7", got, ok)
+	}
+	got, ok = gw.normalizeApprovalShortcut(key, "4")
+	if !ok || got != "/deny 7" {
+		t.Fatalf("write-access 4 = %q,%v; want /deny 7", got, ok)
 	}
 }
 

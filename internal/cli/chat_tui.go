@@ -3204,6 +3204,13 @@ func approvalChoices(a *event.Approval) []approvalChoice {
 		}
 	case a.Tool == planApprovalTool:
 		decisions = []approvalChoice{{allow: true}, {}, {exitPlan: true}}
+	case a != nil && (a.Kind == event.ApprovalKindWriteAccess || a.WriteAccess != nil):
+		decisions = []approvalChoice{
+			{allow: true},
+			{allow: true, allowForSession: true},
+			{allow: true, allowForSession: true, persistToConfig: true},
+			{},
+		}
 	case fresh && freshApprovalAllowsSession(a.Tool):
 		decisions = []approvalChoice{{allow: true}, {allow: true, allowForSession: true}, {}}
 	case fresh:
@@ -3252,6 +3259,9 @@ func approvalChoiceLabels(a *event.Approval) []string {
 	}
 	if a.Tool == agent.PlanModeReadOnlyCommandApprovalTool {
 		choices = i18n.M.PlanModeReadOnlyCommandChoices
+	}
+	if a.Kind == event.ApprovalKindWriteAccess || a.WriteAccess != nil {
+		choices = i18n.M.WriteAccessApprovalChoices
 	}
 	if !fresh && a.Tool == "bash" && permission.BashCommandPrefix(a.Subject) != "" {
 		prefixRule := permission.RememberRuleForScope(a.Tool, a.Subject)
@@ -3883,6 +3893,22 @@ func (m chatTUI) renderApprovalBanner() string {
 		// path being written, the flag that makes it destructive (#4682).
 		if body := approvalSubjectBody(full, strings.TrimSpace(subj), w); body != "" {
 			planDetails = append(planDetails, body)
+		}
+	}
+	if wa := m.pendingApproval.WriteAccess; wa != nil {
+		if len(wa.DisplayDirectories) > 0 {
+			planDetails = append(planDetails, strings.Join(wa.DisplayDirectories, ", "))
+		} else if len(wa.Directories) > 0 {
+			planDetails = append(planDetails, strings.Join(wa.Directories, ", "))
+		}
+		if wa.BroadHomeAccess {
+			planDetails = append(planDetails, i18n.M.WriteAccessHomeWarning)
+		}
+		if wa.OrdinaryPermissionNeeded {
+			planDetails = append(planDetails, i18n.M.WriteAccessMergedPermissionHint)
+		}
+		if wa.PersistAllowed {
+			planDetails = append(planDetails, i18n.M.WriteAccessProjectHint)
 		}
 	}
 	if reason := strings.TrimSpace(m.pendingApproval.Reason); reason != "" {

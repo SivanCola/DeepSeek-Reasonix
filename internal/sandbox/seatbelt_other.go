@@ -125,7 +125,46 @@ func bwrapBaseArgs(spec Spec) []string {
 			args = append(args, "--bind", root, root)
 		}
 	}
+	args = append(args, bwrapProtectedWriteArgs(spec)...)
 	return append(args, bwrapForbidReadArgs(spec.ForbidReadRoots)...)
+}
+
+func bwrapProtectedWriteArgs(spec Spec) []string {
+	protected := resolveExistingPaths(spec.ProtectedWriteRoots)
+	if len(protected) == 0 {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, root := range protected {
+		if seen[root] {
+			continue
+		}
+		if _, err := os.Lstat(root); err != nil {
+			continue
+		}
+		seen[root] = true
+		out = append(out, "--ro-bind", root, root)
+	}
+	for _, root := range spec.WriteRoots {
+		abs, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real
+		}
+		for _, prot := range protected {
+			if abs != prot && PathWithin(prot, abs) {
+				if _, err := os.Lstat(abs); err != nil {
+					break
+				}
+				out = append(out, "--bind", abs, abs)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func bwrapTmpMountArgs(spec Spec) []string {

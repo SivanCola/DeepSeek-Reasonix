@@ -143,15 +143,21 @@ func (s *renderSink) Emit(e event.Event) {
 		}
 		switch s.adapter.Platform() {
 		case PlatformQQ:
-			if isRecoveryApproval(e.Approval) {
+			switch {
+			case isRecoveryApproval(e.Approval):
 				msg.Keyboard = recoveryKeyboard(e.Approval)
-			} else {
+			case isWriteAccessApproval(e.Approval):
+				msg.Keyboard = writeAccessKeyboard(e.Approval.ID)
+			default:
 				msg.Keyboard = approvalKeyboard(e.Approval.ID)
 			}
 		case PlatformFeishu:
-			if isRecoveryApproval(e.Approval) {
+			switch {
+			case isRecoveryApproval(e.Approval):
 				msg.Card = recoveryCard(e.Approval, s.chatType, s.userID)
-			} else {
+			case isWriteAccessApproval(e.Approval):
+				msg.Card = writeAccessCard(e.Approval, s.chatType, s.userID)
+			default:
 				msg.Card = approvalCard(e.Approval, s.chatType, s.userID)
 			}
 		}
@@ -554,6 +560,9 @@ func isRecoveryPlanChange(a event.Approval) bool {
 func renderApprovalText(a event.Approval) string {
 	if isRecoveryApproval(a) {
 		return renderRecoveryText(a)
+	}
+	if isWriteAccessApproval(a) {
+		return renderWriteAccessText(a)
 	}
 	return fmt.Sprintf("⚠️ 需要批准操作:\n工具: %s\n操作: %s\n\nID: `%s`\n回复 1 批准，回复 2 拒绝；也可用 /approve %s 或 /deny %s。",
 		a.Tool, a.Subject, a.ID, a.ID, a.ID)

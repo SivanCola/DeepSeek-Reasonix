@@ -148,6 +148,16 @@ func ToWire(e event.Event) Event {
 			ID: e.Approval.ID, Tool: e.Approval.Tool, Subject: e.Approval.Subject,
 			Reason: e.Approval.Reason, Fresh: e.Approval.Fresh, Kind: e.Approval.Kind,
 		}
+		if wa := event.NormalizeWriteAccessApproval(e.Approval.WriteAccess); wa != nil {
+			w.Approval.WriteAccess = &WriteAccessApproval{
+				Directories:              append([]string{}, wa.Directories...),
+				DisplayDirectories:       append([]string{}, wa.DisplayDirectories...),
+				Justification:            wa.Justification,
+				BroadHomeAccess:          wa.BroadHomeAccess,
+				OrdinaryPermissionNeeded: wa.OrdinaryPermissionNeeded,
+				PersistAllowed:           wa.PersistAllowed,
+			}
+		}
 		if e.Approval.Recovery != nil {
 			r := e.Approval.Recovery
 			w.Approval.Recovery = &RecoveryApproval{
@@ -475,13 +485,24 @@ type CacheDiagnostics struct {
 
 // Approval is the JSON form of an event.Approval.
 type Approval struct {
-	ID       string            `json:"id"`
-	Tool     string            `json:"tool"`
-	Subject  string            `json:"subject" externalizable:"true"`
-	Reason   string            `json:"reason,omitempty" externalizable:"true"`
-	Fresh    bool              `json:"fresh,omitempty"`
-	Kind     string            `json:"kind,omitempty"` // tool | plan | recovery
-	Recovery *RecoveryApproval `json:"recovery,omitempty"`
+	ID          string               `json:"id"`
+	Tool        string               `json:"tool"`
+	Subject     string               `json:"subject" externalizable:"true"`
+	Reason      string               `json:"reason,omitempty" externalizable:"true"`
+	Fresh       bool                 `json:"fresh,omitempty"`
+	Kind        string               `json:"kind,omitempty"` // tool | plan | recovery | write_access
+	Recovery    *RecoveryApproval    `json:"recovery,omitempty"`
+	WriteAccess *WriteAccessApproval `json:"write_access,omitempty"`
+}
+
+// WriteAccessApproval is the JSON form of an event.WriteAccessApproval.
+type WriteAccessApproval struct {
+	Directories              []string `json:"directories"`
+	DisplayDirectories       []string `json:"display_directories"`
+	Justification            string   `json:"justification,omitempty"`
+	BroadHomeAccess          bool     `json:"broad_home_access,omitempty"`
+	OrdinaryPermissionNeeded bool     `json:"ordinary_permission_needed,omitempty"`
+	PersistAllowed           bool     `json:"persist_allowed,omitempty"`
 }
 
 // RecoveryApproval is the JSON form of an event.RecoveryApproval.
