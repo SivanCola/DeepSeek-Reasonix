@@ -505,22 +505,23 @@ func (s *Store) restoreOriginalRewind(original *TransactionManifest, applier Con
 
 func (s *Store) prepareTransaction(plan RewindPlan, applier ConversationApplier) (*TransactionManifest, error) {
 	tx := &TransactionManifest{
-		SchemaVersion:   SchemaV2,
-		ID:              newID("tx"),
-		WorkspaceRoot:   s.root,
-		State:           TxPrepared,
-		Kind:            "rewind",
-		Turn:            plan.Turn,
-		Scope:           plan.Scope,
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
-		SessionRevision: plan.SessionRevision,
-		WorkspaceToken:  plan.WorkspaceToken,
-		Coverage:        plan.Coverage,
-		CoverageGaps:    append([]CoverageGap(nil), plan.CoverageGaps...),
-		BoundaryIndex:   plan.BoundaryIndex,
-		HasBoundary:     plan.HasBoundary,
-		TruncateFrom:    plan.Turn,
+		SchemaVersion:      SchemaV2,
+		ID:                 newID("tx"),
+		WorkspaceRoot:      s.root,
+		State:              TxPrepared,
+		Kind:               "rewind",
+		Turn:               plan.Turn,
+		Scope:              plan.Scope,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+		SessionRevision:    plan.SessionRevision,
+		WorkspaceToken:     plan.WorkspaceToken,
+		Coverage:           plan.Coverage,
+		CoverageGaps:       append([]CoverageGap(nil), plan.CoverageGaps...),
+		BoundaryIndex:      plan.BoundaryIndex,
+		HasBoundary:        plan.HasBoundary,
+		ConversationAction: plan.ConversationAction,
+		TruncateFrom:       plan.Turn,
 	}
 	prepared := false
 	defer func() {
@@ -748,8 +749,7 @@ func (s *Store) commitTransaction(tx *TransactionManifest, applier ConversationA
 		return result, err
 	}
 
-	// Conversation after files.
-	if tx.Scope == RewindConversation || tx.Scope == RewindBoth {
+	if shouldTruncateConversation(tx) {
 		if inject != nil && inject.Phase == "conversation" {
 			err := fmt.Errorf("injected failure at conversation")
 			err = s.failTransaction(tx, tx.Targets, stages, err)
@@ -759,7 +759,6 @@ func (s *Store) commitTransaction(tx *TransactionManifest, applier ConversationA
 			return result, err
 		}
 		if applier != nil && tx.HasBoundary {
-			// Controller supplies forward via ApplyConversationTruncate.
 			if err := applier.ApplyConversationTruncate(tx.BoundaryIndex, tx.ConversationForward); err != nil {
 				restoreErr := s.restoreTransactionConversation(tx, applier)
 				err = s.failTransactionAfterStateCompensation(tx, tx.Targets, stages, err, restoreErr)
@@ -788,15 +787,13 @@ func (s *Store) commitTransaction(tx *TransactionManifest, applier ConversationA
 				result.Files = stages
 				return result, err
 			}
-		} else {
-			if err := s.TruncateFrom(tx.TruncateFrom); err != nil {
-				restoreErr := s.restoreTransactionConversation(tx, applier)
-				err = s.failTransactionAfterStateCompensation(tx, tx.Targets, stages, err, restoreErr)
-				result.OK = false
-				result.Error = err.Error()
-				result.Files = stages
-				return result, err
-			}
+		} else if err := s.TruncateFrom(tx.TruncateFrom); err != nil {
+			restoreErr := s.restoreTransactionConversation(tx, applier)
+			err = s.failTransactionAfterStateCompensation(tx, tx.Targets, stages, err, restoreErr)
+			result.OK = false
+			result.Error = err.Error()
+			result.Files = stages
+			return result, err
 		}
 	}
 
@@ -1315,6 +1312,9 @@ func (s *Store) precheckFiles(fromTurn int) []RewindConflict {
 		if err != nil {
 			// unreadable etc.
 			conflicts = append(conflicts, RewindConflict{Path: p, Reason: ConflictExternalChange, CheckpointSHA: rev.SHA256})
+			continue
+		}
+		if MatchesRestoreImage(fp, rev.SHA256, rev.Existed) {
 			continue
 		}
 		// Prefer after fingerprint for conflict detection.

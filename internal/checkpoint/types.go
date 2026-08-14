@@ -168,6 +168,7 @@ type RewindPlan struct {
 	BoundaryIndex      int              `json:"boundaryIndex,omitempty"`
 	HasBoundary        bool             `json:"hasBoundary"`
 	CreatedAt          time.Time        `json:"createdAt"`
+	ConversationAction string           `json:"conversationAction,omitempty"`
 	// Single-file revert extras.
 	Path               string `json:"path,omitempty"`
 	ConflictResolution string `json:"conflictResolution,omitempty"`
@@ -175,17 +176,21 @@ type RewindPlan struct {
 
 // RewindResult is returned after commit or undo.
 type RewindResult struct {
-	OK             bool             `json:"ok"`
-	TransactionID  string           `json:"transactionId,omitempty"`
-	UndoAvailable  bool             `json:"undoAvailable"`
-	Written        []string         `json:"written,omitempty"`
-	Deleted        []string         `json:"deleted,omitempty"`
-	Files          []FileStage      `json:"files,omitempty"`
-	ConversationOK bool             `json:"conversationOk,omitempty"`
-	Error          string           `json:"error,omitempty"`
-	Conflicts      []RewindConflict `json:"conflicts,omitempty"`
-	Coverage       Coverage         `json:"coverage,omitempty"`
-	CoverageGaps   []CoverageGap    `json:"coverageGaps,omitempty"`
+	OK                 bool             `json:"ok"`
+	TransactionID      string           `json:"transactionId,omitempty"`
+	UndoAvailable      bool             `json:"undoAvailable"`
+	Written            []string         `json:"written,omitempty"`
+	Deleted            []string         `json:"deleted,omitempty"`
+	Files              []FileStage      `json:"files,omitempty"`
+	ConversationOK     bool             `json:"conversationOk,omitempty"`
+	ConversationForked bool             `json:"conversationForked,omitempty"`
+	OperationID        string           `json:"operationId,omitempty"`
+	Branch             string           `json:"branch,omitempty"`
+	Partial            bool             `json:"partial,omitempty"`
+	Error              string           `json:"error,omitempty"`
+	Conflicts          []RewindConflict `json:"conflicts,omitempty"`
+	Coverage           Coverage         `json:"coverage,omitempty"`
+	CoverageGaps       []CoverageGap    `json:"coverageGaps,omitempty"`
 }
 
 // ConflictResolution chooses how to handle a single-file conflict on commit.
@@ -262,6 +267,7 @@ type TransactionManifest struct {
 	ConversationForward []byte `json:"conversationForward,omitempty"`
 	BoundaryIndex       int    `json:"boundaryIndex,omitempty"`
 	HasBoundary         bool   `json:"hasBoundary"`
+	ConversationAction  string `json:"conversationAction,omitempty"`
 	// TruncateFrom is the checkpoint turn to drop after a successful conversation rewind.
 	TruncateFrom int `json:"truncateFrom,omitempty"`
 	// CheckpointTurns holds serialized future checkpoints for undo.
