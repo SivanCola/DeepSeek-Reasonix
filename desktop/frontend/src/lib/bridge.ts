@@ -2108,18 +2108,19 @@ function makeMockApp(): AppBindings {
 	        if (turnsOf[i] >= oldestTurn) { lo = i; break; }
 	      }
 	    }
-	    // Entry budget: the real backend keeps the newest suffix within the
-	    // entries cap, so oversized turns page toward older history instead of
-	    // returning thousands of rows at once.
+	    // Keep the newest suffix within the real backend's entry cap.
 	    const maxEntries = Math.max(1, Math.floor(req.entries || 120));
 	    if (before - lo > maxEntries) lo = before - maxEntries;
-	    const entries = messages.slice(lo, before).map((message, index) => ({
-	      entryId: `smock-${tabID}:r0:m${lo + index}:o0`,
-	      turn: turnsOf[lo + index],
-	      order: lo + index,
-	      message,
-	      refs: [],
-	    }));
+	    const entries = messages.slice(lo, before).map((message, index) => {
+	      const entryId = `smock-${tabID}:r0:m${lo + index}:o0`;
+	      const content = message.content ?? "";
+	      const lazyContent = benchMock && content.length > 32 * 1024;
+	      return {
+	        entryId, turn: turnsOf[lo + index], order: lo + index,
+	        message: lazyContent ? { ...message, content: content.slice(0, 4 * 1024) } : message,
+	        refs: lazyContent ? [{ entryId, field: "content", size: content.length, chunks: 1, revision: 0, revKnown: false, digest: "" }] : [],
+	      };
+	    });
 	    const visibleTurns = entries.map((entry) => entry.turn).filter((value) => value > 0);
 	    return {
 	      entries,
@@ -3259,6 +3260,7 @@ function makeMockApp(): AppBindings {
         },
         async HistoryContentForTab(tabID: string, ref: HistoryContentRef, chunkIndex: number): Promise<HistoryContentChunk> {
           const out: HistoryContentChunk = { entryId: ref.entryId, field: ref.field, chunk: Math.max(0, chunkIndex), chunks: 1, data: "", done: true, stale: false };
+          if (benchMock && ref.size > 32 * 1024) await delay(1_500);
           const match = /:m(\d+):o\d+$/.exec(ref.entryId);
           if (!match) return out;
           const messages = await this.HistoryForTab(tabID);

@@ -522,18 +522,33 @@ export function buildTranscriptRows(models: readonly TurnModel[], options: Build
 
 // ── Measurement / identity helpers ────────────────────────────────────────────
 
-/** Ballpark row heights; measureElement corrects them on mount. */
+const TRANSCRIPT_ESTIMATED_LINE_CHARS = 88;
+const TRANSCRIPT_ESTIMATED_LINE_HEIGHT = 20;
+const TRANSCRIPT_MAX_ESTIMATED_TEXT_HEIGHT = 12_000;
+
+function estimateTranscriptTextSize(text: string | undefined, minimum: number): number {
+  if (!text) return minimum;
+  const explicitLines = text.split("\n").length;
+  const wrappedLines = Math.ceil(text.length / TRANSCRIPT_ESTIMATED_LINE_CHARS);
+  const lines = Math.max(explicitLines, wrappedLines);
+  return Math.min(
+    TRANSCRIPT_MAX_ESTIMATED_TEXT_HEIGHT,
+    Math.max(minimum, 44 + lines * TRANSCRIPT_ESTIMATED_LINE_HEIGHT),
+  );
+}
+
+/** Ballpark row heights; Virtuoso replaces them with real measurements on mount. */
 export function estimateTranscriptRowSize(row: TranscriptRow | undefined): number {
   if (!row) return 48;
   switch (row.kind) {
     case "older-history":
       return 44;
     case "user":
-      return 88;
+      return estimateTranscriptTextSize(row.item.text, 88);
     case "process-header":
       return 28;
     case "reasoning":
-      return 96;
+      return estimateTranscriptTextSize(row.item.reasoning, 96);
     case "tool":
       return 96;
     case "tool-batch":
@@ -547,7 +562,7 @@ export function estimateTranscriptRowSize(row: TranscriptRow | undefined): numbe
     case "compaction":
       return 36;
     case "answer":
-      return 160;
+      return estimateTranscriptTextSize(row.item.text, 160);
     case "extension":
       return 160;
     case "turn-actions":
