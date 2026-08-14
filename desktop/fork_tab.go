@@ -2,10 +2,13 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"reasonix/internal/agent"
 )
+
+const rewindForkAttachError = "conversation fork was created but could not be opened; open the recovery branch from session history"
 
 // openForkedSessionTab attaches an already-written fork session to a new tab.
 // The source tab keeps its controller and transcript. The fork becomes active
@@ -84,4 +87,21 @@ func (a *App) openForkedSessionTab(sourceTab *WorkspaceTab, newPath string) (Tab
 	a.emitProjectTreeChangedForSessionDirs(sessionDirectoryForPath(newPath))
 	a.startTabControllerBuild(tab)
 	return meta, nil
+}
+
+// attachForkedRewindTab fails closed when the durable branch cannot be attached
+// to a tab. In particular, callers must not treat the source tab as the rewind
+// target and accidentally resubmit the edited prompt into the parent session.
+func (a *App) attachForkedRewindTab(sourceTab *WorkspaceTab, view RewindResultView) RewindResultView {
+	meta, err := a.openForkedSessionTab(sourceTab, view.Branch)
+	if err != nil || meta.ID == "" {
+		slog.Warn("rewind: fork created but tab attach failed", "err", err)
+		view.OK = false
+		view.Partial = true
+		view.Error = rewindForkAttachError
+		return view
+	}
+	view.TabID = meta.ID
+	view.Tab = &meta
+	return view
 }

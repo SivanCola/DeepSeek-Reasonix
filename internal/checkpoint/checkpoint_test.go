@@ -263,33 +263,26 @@ func TestPersistV3KeepsCreatedFileSentinel(t *testing.T) {
 func TestGCDoesNotDeleteSharedBlobStillReferencedByNewerCheckpoint(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(t.TempDir(), "sess.ckpt")
-	a := filepath.Join(root, "a.txt")
-	b := filepath.Join(root, "b.txt")
-	write(t, a, "shared")
-	write(t, b, "shared")
 	s := New(dir, root)
-
-	s.Begin(0, "a", 0)
-	s.CaptureBefore(a, CaptureBeforeOpts{Source: CaptureBeforeMutation})
-	write(t, a, "a-edited")
-	s.CaptureAfter(a, CaptureAfterOpts{Seq: 1, Source: CaptureAfterMutation})
-	s.Begin(1, "b", 1)
-	s.CaptureBefore(b, CaptureBeforeOpts{Source: CaptureBeforeMutation})
-	write(t, b, "b-edited")
-	s.CaptureAfter(b, CaptureAfterOpts{Seq: 2, Source: CaptureAfterMutation})
-	s.Begin(2, "finalize", 2)
+	content := "shared"
+	ref, err := s.blobs.Put([]byte(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.done = []*Checkpoint{
+		{SchemaVersion: SchemaV2, Turn: 0, Files: []FileSnap{{Path: "a.txt", Content: &content, SHA256: ref, BlobRef: ref}}},
+		{SchemaVersion: SchemaV2, Turn: 1, Files: []FileSnap{{Path: "b.txt", Content: &content, SHA256: ref, BlobRef: ref}}},
+	}
 
 	s.mu.Lock()
-	ref := s.done[1].Files[0].BlobRef
 	s.retainN = 1
 	s.gcLocked()
 	s.mu.Unlock()
 	if ref == "" || !s.blobs.Has(ref) {
 		t.Fatalf("shared blob %q was removed while the newer checkpoint still referenced it", ref)
 	}
-	plan, err := s.PrepareRewind(1, RewindCode, 1, 0, false)
-	if err != nil || !plan.CanFiles {
-		t.Fatalf("newer checkpoint became unrecoverable: plan=%+v err=%v", plan, err)
+	if s.done[0].Files[0].BlobRef != "" || s.done[1].Files[0].BlobRef != ref {
+		t.Fatalf("legacy GC refs = old %q new %q", s.done[0].Files[0].BlobRef, s.done[1].Files[0].BlobRef)
 	}
 }
 

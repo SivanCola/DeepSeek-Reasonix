@@ -425,7 +425,7 @@ ok(
 );
 
 ok(
-  /const \[rewindStatesByTab, setRewindStatesByTab\] = useState<Record<string, RewindState>>\(\{\}\);/.test(appSource) &&
+  /const \[rewindStatesByTab, setRewindStatesByTab\] = useState<Record<string, RewindUndoState>>\(\{\}\);/.test(appSource) &&
     /setRewindStateForTab\(sourceTabId, null\);/.test(appSource) &&
     /setRewindCommittingForTab\(sourceTabId, true\);/.test(appSource),
   "committing optimistic rewind clears only the source tab before awaiting the backend",
@@ -434,15 +434,6 @@ ok(
 ok(
   /if \(scope === "code"\) \{[\s\S]*?rewindForTabDetailed\(sourceTabId, turn, scope\)[\s\S]*?transactionId: outcome\.transactionId/.test(appSource),
   "code-only rewind retains the committed transaction id for real undo",
-);
-
-ok(
-  /const targetTabId = outcome\.tabId \|\| sourceTabId/.test(appSource) &&
-    /undoTabId: sourceTabId/.test(appSource) &&
-    /const outcome = await rewindForTabDetailed\(sourceTabId, turn, "conversation"\)/.test(appSource) &&
-    /sendToTab\(targetTabId, next, submit, original\)/.test(appSource) &&
-    /adoptReturnedTab\(outcome\.tab, sourceTabId, forkNavigationSeq, "tab\.rewind"\)/.test(controllerSource),
-  "conversation rewind opens the fork tab and edit-resubmit sends on that tab",
 );
 
 ok(

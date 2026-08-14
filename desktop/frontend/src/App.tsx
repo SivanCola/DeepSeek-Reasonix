@@ -111,6 +111,7 @@ import {
   type WorkspaceConflictView,
 } from "./lib/types";
 import type { InvocationMetadataMap, StructuredInvocationSubmit } from "./lib/invocationDisplay";
+import type { RewindUndoState } from "./lib/rewindTypes";
 import { formatSelectionReference, type SelectedTextInsertRequest } from "./lib/selectedTextContext";
 import { resolveTaskMonitorSession } from "./lib/taskMonitorNavigation";
 import {
@@ -3376,22 +3377,14 @@ export default function App() {
   // On confirm, call Go prepare+commit immediately. Only after success does
   // the UI truncate the transcript, refresh files, and fill the composer.
   // Real backend undo uses UndoRewindForTab when a transaction id is available.
-  type RewindState = {
-    turnDiff: number;      // turns rolled back
-    transactionId?: string;
-    undoAvailable?: boolean;
-    undoTabId?: string;
-    filesRestored?: string[];
-    filesRemoved?: string[];
-  };
-  const [rewindStatesByTab, setRewindStatesByTab] = useState<Record<string, RewindState>>({});
+  const [rewindStatesByTab, setRewindStatesByTab] = useState<Record<string, RewindUndoState>>({});
   const rewindStatesByTabRef = useRef(rewindStatesByTab);
   rewindStatesByTabRef.current = rewindStatesByTab;
   const [rewindCommittingByTab, setRewindCommittingByTab] = useState<Record<string, boolean>>({});
   const rewindState = activeTabId ? rewindStatesByTab[activeTabId] ?? null : null;
   const rewindCommitting = Boolean(activeTabId && rewindCommittingByTab[activeTabId]);
 
-  const setRewindStateForTab = useCallback((tabId: string, nextState: RewindState | null) => {
+  const setRewindStateForTab = useCallback((tabId: string, nextState: RewindUndoState | null) => {
     if (!tabId) return;
     const next = { ...rewindStatesByTabRef.current };
     if (nextState) next[tabId] = nextState;

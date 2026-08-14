@@ -853,26 +853,7 @@ export interface CheckpointMeta {
   disabledReason?: string;
 }
 
-export interface RewindPlanView {
-  planId?: string;
-  turn?: number;
-  scope?: string;
-  coverage?: string;
-  coverageGaps?: string[];
-  legacy?: boolean;
-  expiredFilePayload?: boolean;
-  canFiles?: boolean;
-  canConversation?: boolean;
-  disabledReason?: string;
-  conflicts?: string[];
-  files?: string[];
-  fileCount?: number;
-  activeWriters?: number;
-  path?: string;
-  conversationAction?: string;
-  ok?: boolean;
-  error?: string;
-}
+export type { RewindPlanView } from "./rewindTypes";
 
 export interface RewindResultView {
   ok?: boolean;

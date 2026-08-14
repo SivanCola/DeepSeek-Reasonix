@@ -6,9 +6,10 @@ Reasonix 如何决定谁可以写会话、冲突如何落盘，以及回溯和�
 
 ## 会话写者
 
-同一会话文件同一时刻只有一个跨进程写者。票据是 session lease（`.lease.lock`）。
-生产路径上的 Controller 绑定带 generation 的 `SessionWriter`；重新绑定会使旧
-generation 立即失效。
+同一会话文件同一时刻只有一个跨进程写者。票据和持有者信息共用一个 session
+lease 文件（`.lease.lock`）。生产路径上的 Controller 绑定带 generation 的
+`SessionWriter`；重新绑定会使旧 generation 立即失效。旧 `.lease.json` 仅作为
+只读兼容来源。
 
 已经持有 `SessionWriter` 的保存不再获取遗留的 `.jsonl.lock`。未绑定的测试 /
 导入路径仍使用该兼容 flock。
@@ -31,7 +32,8 @@ no-op / append / replace。`.jsonl` 仍是兼容投影。
 - **两者**：先分叉，再恢复文件。文件冲突时保留新分支并返回 `partial=true`。
 
 新 checkpoint 写入 `turns/<turn>/meta.json` 和原始字节
-`files/NNNN.before`（schema v3）。旧的 v1/v2 `turn-N.json` 仍可读。
+`files/NNNN.before`（schema v3）。默认保留最近 100 个回合目录；新 checkpoint
+不再把载荷重复写入 blob。旧的 v1/v2 `turn-N.json` 及其 blob 仍可读。
 
 结构化写工具在发布前重新校验存在性、SHA-256 和 mode，不匹配则返回
 `ErrFileChanged`。

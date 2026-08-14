@@ -9,8 +9,8 @@
 // targets can't be known in advance), which is why the capture hook only fires for
 // tools that can Preview their change.
 //
-// Schema v2 adds content-addressed blob storage, after-write fingerprints,
-// coverage gaps, and transactional restore with compensation.
+// Schema v2 adds blobs and verified restore; v3 stores new preimages in per-turn
+// directories while retaining legacy blob and transaction compatibility.
 package checkpoint
 
 import (
@@ -381,7 +381,6 @@ func (s *Store) CaptureBeforeFromChange(ch diff.Change, opts CaptureBeforeOpts) 
 	var enc *fileenc.Kind
 	var mode uint32
 	var sha string
-	var blobRef string
 	var content *string
 
 	if ch.Kind != diff.Create {
@@ -405,17 +404,10 @@ func (s *Store) CaptureBeforeFromChange(ch diff.Change, opts CaptureBeforeOpts) 
 		if abs, aerr := safePath(s.root, ch.Path); aerr == nil {
 			if raw, rerr := secureReadFile(s.root, abs); rerr == nil {
 				sha = Digest(raw)
-				if s.blobs != nil {
-					if ref, perr := s.blobs.Put(raw); perr == nil {
-						blobRef = ref
-						// Keep decoded text content for in-memory FileState/API compat.
-					}
-				}
-				// For non-UTF8, Content stays as decoded OldText; bytes live in blob.
-				if enc == nil {
-					e, _ := fileenc.Detect(raw)
-					enc = &e
-				}
+				e, detected := fileenc.Detect(raw)
+				decoded := string(fileenc.Decode(detected, e))
+				content = &decoded
+				enc = &e
 			}
 		}
 	}
@@ -426,21 +418,15 @@ func (s *Store) CaptureBeforeFromChange(ch diff.Change, opts CaptureBeforeOpts) 
 		return
 	}
 	s.seen[pathKey] = true
-	if s.blobs != nil && content != nil && blobRef == "" {
-		if ref, err := s.blobs.Put([]byte(*content)); err == nil {
-			blobRef = ref
-		}
-	}
 	snap := FileSnap{
 		Path:          ch.Path,
 		Content:       content,
 		Encoding:      enc,
 		Mode:          mode,
 		SHA256:        sha,
-		BlobRef:       blobRef,
 		CaptureSource: opts.Source,
 	}
-	// Keep inline content alongside the blob ref so older binaries can still
+	// Keep inline content in memory so FileState and the legacy restore API can
 	// distinguish existing files from the nil-content deletion sentinel.
 	s.cur.Files = append(s.cur.Files, snap)
 	if s.cur.SchemaVersion < SchemaV3 {
@@ -479,11 +465,6 @@ func (s *Store) CaptureBefore(path string, opts CaptureBeforeOpts) {
 	if fp.Existed {
 		snap.Mode = fp.Mode
 		snap.SHA256 = fp.SHA256
-		if s.blobs != nil && len(fp.Content) > 0 {
-			if ref, err := s.blobs.Put(fp.Content); err == nil {
-				snap.BlobRef = ref
-			}
-		}
 		// Decoded text for API compat (FileState / legacy RestoreCode path).
 		enc, raw := fileenc.Detect(fp.Content)
 		text := string(fileenc.Decode(raw, enc))
@@ -607,9 +588,11 @@ func (s *Store) persistBestEffort(c *Checkpoint) {
 	}
 }
 
-// gcLocked drops file payloads for old checkpoints beyond retainN / blobQuota.
+// gcLocked removes old v3 turn directories and retains the legacy v1/v2 blob
+// quota policy for checkpoints written by older releases.
 // Caller holds s.mu.
 func (s *Store) gcLocked() {
+	s.pruneV3TurnsLocked()
 	if s.blobs == nil || s.retainN <= 0 {
 		return
 	}
@@ -620,7 +603,7 @@ func (s *Store) gcLocked() {
 	}
 	var withFiles []entry
 	for _, c := range all {
-		if len(c.Files) > 0 {
+		if c.SchemaVersion < SchemaV3 && len(c.Files) > 0 {
 			withFiles = append(withFiles, entry{c: c})
 		}
 	}

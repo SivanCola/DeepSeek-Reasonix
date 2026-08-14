@@ -129,6 +129,25 @@ func TestDesktopRewindCommitAndUndoUseAuthoritativeControllerState(t *testing.T)
 	}
 }
 
+func TestAttachForkedRewindTabFailsClosedWhenSourceIsGone(t *testing.T) {
+	app := NewApp()
+	source := &WorkspaceTab{ID: "removed"}
+	result := app.attachForkedRewindTab(source, RewindResultView{
+		OK:                 true,
+		ConversationForked: true,
+		Branch:             filepath.Join(t.TempDir(), "fork.jsonl"),
+	})
+	if result.OK || !result.Partial {
+		t.Fatalf("result = %+v, want failed partial result", result)
+	}
+	if result.Error != rewindForkAttachError {
+		t.Fatalf("error = %q, want stable path-free error", result.Error)
+	}
+	if result.TabID != "" || result.Tab != nil {
+		t.Fatalf("failed attach exposed target tab: %+v", result)
+	}
+}
+
 func seedCheckpoint(t *testing.T, ckptDir string, c checkpoint.Checkpoint) {
 	t.Helper()
 	b, err := json.Marshal(c)

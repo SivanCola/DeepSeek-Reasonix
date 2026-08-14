@@ -69,14 +69,18 @@ type Checkpoint struct {
 
 ## Storage
 
-- **Sidecar to the session**, under `config.SessionDir()`: `<session-id>.ckpt/`
-  with one JSON per checkpoint plus a small index (v1's layout — cheap delete, a
-  corrupt snapshot only loses itself). Kept separate from the message JSONL
-  (`agent.Session.Save`) so the session format is unchanged.
+- **Sidecar to the session**, under `config.SessionDir()`: `<session-id>.ckpt/`.
+  It is separate from the message JSONL (`agent.Session.Save`), so the session
+  format is unchanged.
 - **Persists across sessions** — resuming a session re-loads its checkpoints, so
   rewind works after a restart (Claude Code parity).
-- **Retention**: prune with the session (default ~30 days, configurable), to bound
-  disk from full-content snapshots.
+- **Schema v3 layout**: each turn is a directory:
+  `turns/<turn>/meta.json` plus raw `files/NNNN.before` payloads. New captures do
+  not duplicate preimages in the content-addressed blob store. v1/v2 JSON and
+  blobs remain readable for upgrade compatibility; transaction/undo payloads
+  may still use blobs.
+- **Retention**: keep the newest 100 v3 turn directories by default and remove
+  an expired turn as one directory. Session cleanup removes the whole sidecar.
 
 ## Controller API (the one seam both frontends drive)
 
@@ -87,8 +91,9 @@ drive rewind identically and none re-implement it.
 ```go
 type RewindScope int // Code | Conversation | Both
 
-func (c *Controller) Checkpoints() []CheckpointMeta      // for the picker
-func (c *Controller) Rewind(turn int, scope RewindScope) error
+func (c *Controller) Checkpoints() []CheckpointMeta
+func (c *Controller) PrepareRewind(turn int, scope RewindScope) (RewindPlan, error)
+func (c *Controller) CommitRewind(planID string) (RewindResult, error)
 ```
 
 - **Code**: for every checkpoint from `turn` to the latest, take the earliest
@@ -116,7 +121,7 @@ re-render uniformly.
 
 - Each user message in the transcript gets a hover **rewind** control → menu:
   **rewind code / rewind conversation / both / fork-from-here**.
-- It calls the same `controller.Rewind` over the Wails binding; the controller's
+- It calls the same prepare/commit rewind API over the Wails binding; the controller's
   event stream pushes the restored state and React re-renders. No rewind logic in
   the frontend.
 
@@ -124,22 +129,22 @@ re-render uniformly.
 
 - **bash / external side effects** (`rm`, `mv`, DB writes, deploys) are not
   tracked — rewind cannot undo them (Claude Code parity).
-- **External edits between turns**: a snapshot holds the file's turn-start
-  content, so restoring overwrites edits made outside reasonix in the meantime.
+- **External edits between turns**: restore compares the current existence,
+  SHA-256, and mode with Reasonix's last after-image. A mismatch is reported as
+  a conflict and is not overwritten.
 - **Deletions**: an edit-tool deletion is restorable (snapshot has the content); a
   `bash rm` is not.
-- **Large files**: full snapshots — retention cleanup bounds disk; revisit dedup
-  (content-addressed snapshots) if it becomes a problem.
+- **Large files**: full snapshots — the turn-directory retention bound limits
+  history length, not the size of an individual preimage.
 
 ## Phasing
 
-1. **Phase 1**: snapshot store + `executeOne` capture seam + `Controller.Rewind`
-   (code/conversation/both) + CLI picker (Esc-Esc + `/rewind`).
+1. **Phase 1**: snapshot store + `executeOne` capture seam + controller
+   prepare/commit (code/conversation/both) + CLI picker (Esc-Esc + `/rewind`).
 2. **Phase 2**: desktop hover-rewind UI; "fork from here"; "summarize from/up to
    here"; optional git-backed mode.
 
 ## Open questions
 
 - Snapshot on `/compact` and on `NewSession` boundaries?
-- Default retention window and whether to expose it in `[checkpoints]` config.
-- Content-addressed dedup vs one-file-per-snapshot from the start.
+- Whether to expose the 100-turn retention limit in `[checkpoints]` config.

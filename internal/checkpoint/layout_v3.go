@@ -48,12 +48,15 @@ func (s *Store) persistV3(c *Checkpoint) error {
 	for i, f := range c.Files {
 		snap := f
 		snap.BlobRef = ""
-		if f.Content != nil {
-			if err := fileutil.AtomicWriteFile(s.v3BeforePath(c.Turn, i), v3PayloadBytes(f), 0o644); err != nil {
+		payloadPath := s.v3BeforePath(c.Turn, i)
+		if f.Content != nil && !f.PayloadExpired {
+			if err := fileutil.AtomicWriteFile(payloadPath, v3PayloadBytes(f), 0o644); err != nil {
 				return err
 			}
 			snap.Content = nil
 			snap.Encoding = nil
+		} else if err := os.Remove(payloadPath); err != nil && !os.IsNotExist(err) {
+			return err
 		}
 		wire.Files[i] = snap
 	}
@@ -108,8 +111,14 @@ func (s *Store) loadV3Turns(seen map[int]bool) {
 		c.Turn = turn
 		c.SchemaVersion = SchemaV3
 		for i := range c.Files {
+			if c.Files[i].PayloadExpired {
+				continue
+			}
 			raw, err := os.ReadFile(s.v3BeforePath(turn, i))
 			if err != nil {
+				continue
+			}
+			if want := c.Files[i].SHA256; want != "" && Digest(raw) != want {
 				continue
 			}
 			enc, detected := fileenc.Detect(raw)
@@ -121,4 +130,50 @@ func (s *Store) loadV3Turns(seen map[int]bool) {
 		seen[turn] = true
 		s.done = append(s.done, &c)
 	}
+}
+
+// pruneV3TurnsLocked applies retention to complete v3 turn directories. Older
+// v1/v2 metadata remains on the legacy payload-expiration path so upgrades keep
+// reading and cleaning data written by previous releases.
+func (s *Store) pruneV3TurnsLocked() {
+	if s.dir == "" || s.retainN <= 0 {
+		return
+	}
+	var turns []*Checkpoint
+	for _, c := range s.all() {
+		if c.SchemaVersion >= SchemaV3 {
+			turns = append(turns, c)
+		}
+	}
+	excess := len(turns) - s.retainN
+	if excess <= 0 {
+		return
+	}
+	removed := make(map[*Checkpoint]bool, excess)
+	for _, c := range turns {
+		if excess == 0 {
+			break
+		}
+		if c == s.cur || s.protectTurns[c.Turn] {
+			continue
+		}
+		if err := os.RemoveAll(s.turnDir(c.Turn)); err != nil {
+			continue
+		}
+		removed[c] = true
+		excess--
+	}
+	if len(removed) == 0 {
+		return
+	}
+	kept := s.done[:0]
+	for _, c := range s.done {
+		if !removed[c] {
+			kept = append(kept, c)
+		}
+	}
+	s.done = kept
+	// Pre-v3 builds briefly wrote both a turn directory and a blob. Once such a
+	// turn ages out, the legacy mark-and-sweep can reclaim its orphaned blob.
+	s.pruneBlobsLocked()
 }

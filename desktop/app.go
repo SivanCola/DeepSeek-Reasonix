@@ -2428,16 +2428,7 @@ func (a *App) CommitRewindForTab(tabID, planID string, turn int, scope string) R
 		return view
 	}
 	if view.OK && view.ConversationForked && strings.TrimSpace(view.Branch) != "" && tab != nil {
-		meta, openErr := a.openForkedSessionTab(tab, view.Branch)
-		if openErr != nil {
-			if view.Error == "" {
-				view.Error = openErr.Error()
-			}
-		} else if meta.ID != "" {
-			copied := meta
-			view.TabID = copied.ID
-			view.Tab = &copied
-		}
+		view = a.attachForkedRewindTab(tab, view)
 	}
 	return view
 }

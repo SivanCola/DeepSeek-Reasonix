@@ -42,6 +42,7 @@ import type {
   Meta,
   Mode,
   QuestionAnswer,
+  RewindResultView,
   SessionMeta,
   TabMeta,
   TokenMode,
@@ -4301,18 +4302,7 @@ export function useController() {
   const forget = useCallback(async (name: string) => { await app.Forget(name).catch(() => {}); }, []);
   const saveDoc = useCallback(async (path: string, body: string) => { await app.SaveDoc(path, body).catch(() => {}); }, []);
 
-  type RewindOutcome = {
-    ok: boolean;
-    transactionId?: string;
-    undoAvailable?: boolean;
-    written?: string[];
-    deleted?: string[];
-    conversationForked?: boolean;
-    branch?: string;
-    partial?: boolean;
-    tabId?: string;
-    tab?: TabMeta;
-  };
+  type RewindOutcome = Omit<RewindResultView, "ok"> & { ok: boolean };
 
   const adoptReturnedTab = async (tab: TabMeta, sourceTabId: string, navigationSeq: number, reason: string): Promise<string | undefined> => {
     const snapshotAt = promptEventClock();
@@ -4375,6 +4365,7 @@ export function useController() {
         }
         outcome = {
           ...result,
+          ok: true,
           tabId: result.tabId || result.tab?.id,
         };
         if (outcome.tab?.id) {

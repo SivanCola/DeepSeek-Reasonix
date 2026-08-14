@@ -5,9 +5,10 @@ how rewind and workspace isolation interact.
 
 ## Session writers
 
-One session file has one cross-process writer at a time. The ticket is the
-session lease (`.lease.lock`). Production controllers bind a generation-bound
-`SessionWriter`; a rebind invalidates every older generation.
+One session file has one cross-process writer at a time. The ticket and holder
+metadata share one session lease file (`.lease.lock`). Production controllers
+bind a generation-bound `SessionWriter`; a rebind invalidates every older
+generation. Legacy `.lease.json` metadata remains read-only compatible.
 
 Saves that already hold a `SessionWriter` do not take the legacy `.jsonl.lock`.
 Unbound test/import paths still use that compatibility flock.
@@ -34,7 +35,9 @@ transcript view. `.jsonl` remains a compatibility projection.
   branch and reports `partial=true`.
 
 New checkpoints write `turns/<turn>/meta.json` plus raw `files/NNNN.before`
-payloads (schema v3). v1/v2 `turn-N.json` files remain readable.
+payloads (schema v3). The newest 100 turn directories are retained by default;
+new checkpoint payloads are not duplicated into blobs. v1/v2 `turn-N.json`
+files and their legacy blobs remain readable.
 
 Structured writers (`write_file`, `edit_file`, `multi_edit`, notebook edit)
 re-check existence, SHA-256, and mode before publish. A mismatch returns
