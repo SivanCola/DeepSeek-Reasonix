@@ -1965,56 +1965,6 @@ func stampRecoveryMeta(t *testing.T, path string, depth int) {
 	}
 }
 
-func TestSaveRecoveryBranchStampsAndCapsChainDepth(t *testing.T) {
-	dir := t.TempDir()
-
-	// Forking from a normal session stamps depth 1.
-	path, stale := divergedSessionPair(t, dir, "session.jsonl")
-	info, err := stale.SaveRecoveryBranch(RecoveryBranchOptions{OriginalPath: path})
-	if err != nil {
-		t.Fatalf("SaveRecoveryBranch: %v", err)
-	}
-	if info.Meta.RecoveryDepth != 1 {
-		t.Fatalf("first fork depth = %d, want 1", info.Meta.RecoveryDepth)
-	}
-
-	// Forking from a recovery branch increments the chain depth.
-	deeper, staleDeeper := divergedSessionPair(t, dir, "deeper.jsonl")
-	stampRecoveryMeta(t, deeper, 1)
-	info, err = staleDeeper.SaveRecoveryBranch(RecoveryBranchOptions{OriginalPath: deeper})
-	if err != nil {
-		t.Fatalf("SaveRecoveryBranch from depth 1: %v", err)
-	}
-	if info.Meta.RecoveryDepth != 2 {
-		t.Fatalf("nested fork depth = %d, want 2", info.Meta.RecoveryDepth)
-	}
-
-	// A legacy recovery meta without the depth field counts as depth 1.
-	legacy, staleLegacy := divergedSessionPair(t, dir, "legacy.jsonl")
-	stampRecoveryMeta(t, legacy, 0)
-	info, err = staleLegacy.SaveRecoveryBranch(RecoveryBranchOptions{OriginalPath: legacy})
-	if err != nil {
-		t.Fatalf("SaveRecoveryBranch from legacy recovery: %v", err)
-	}
-	if info.Meta.RecoveryDepth != 2 {
-		t.Fatalf("legacy nested fork depth = %d, want 2", info.Meta.RecoveryDepth)
-	}
-
-	// A parent at the cap refuses to fork deeper.
-	capped, staleCapped := divergedSessionPair(t, dir, "capped.jsonl")
-	stampRecoveryMeta(t, capped, SessionRecoveryMaxDepth)
-	if _, err := staleCapped.SaveRecoveryBranch(RecoveryBranchOptions{OriginalPath: capped}); !errors.Is(err, ErrSessionRecoveryDepthExceeded) {
-		t.Fatalf("SaveRecoveryBranch at cap err = %v, want ErrSessionRecoveryDepthExceeded", err)
-	}
-	forks, err := filepath.Glob(filepath.Join(dir, "capped-recovery-*.jsonl"))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	if len(forks) != 0 {
-		t.Fatalf("capped parent still forked: %v", forks)
-	}
-}
-
 func TestSaveRecoveryBranchDedupesByDigest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	current := NewSession("sys")

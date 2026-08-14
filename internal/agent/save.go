@@ -69,18 +69,14 @@ var (
 	// that are about to terminate can use this sentinel to persist a recovery
 	// branch without waiting on the same stalled file again.
 	ErrSessionFileLockHeld = errors.New("session file lock held")
-	// ErrSessionRecoveryDepthExceeded refuses a recovery fork whose parent is
-	// already SessionRecoveryMaxDepth recovery forks deep. A chain that deep
-	// means saves keep conflicting on branches this runtime itself created;
-	// forking further multiplies session files without converging (#5993).
+	// ErrSessionRecoveryDepthExceeded is retained for older callers. New
+	// recovery writes update one stable branch and no longer return it.
 	ErrSessionRecoveryDepthExceeded = errors.New("session recovery chain depth exceeded")
 	sessionWriterID                 = newSessionWriterID()
 )
 
-// SessionRecoveryMaxDepth bounds nested recovery forks: a normal session may
-// fork a recovery branch (depth 1), which may itself fork twice more under
-// genuine repeated incidents; past that the caller should stop forking and
-// write onto the branch it already owns.
+// SessionRecoveryMaxDepth is the historical nested-fork cap. New writes stamp
+// RecoveryDepth=1 and update one stable path instead of deepening a chain.
 const SessionRecoveryMaxDepth = 3
 
 type sessionPersistState struct {
@@ -758,36 +754,12 @@ func (s *Session) saveRecoveryBranch(opts RecoveryBranchOptions, shutdown bool) 
 		}
 	}
 
-	// Refuse to deepen a runaway chain: forking FROM a branch that is already
-	// at the depth cap only multiplies recovery files (#5993 reached 8 nested
-	// levels). The caller preserves the stale transcript in a writer-specific
-	// isolated branch instead of replacing the contested canonical branch.
-	parentDepth := 0
-	if parentMeta, ok, metaErr := LoadBranchMeta(originalPath); metaErr == nil && ok && parentMeta.Recovered {
-		parentDepth = parentMeta.RecoveryDepth
-		if parentDepth <= 0 {
-			// Legacy recovery meta predating RecoveryDepth.
-			parentDepth = 1
-		}
-	}
-	if parentDepth >= SessionRecoveryMaxDepth && !shutdown {
-		return RecoveryBranchInfo{}, fmt.Errorf("%w: %s is already %d recovery forks deep",
-			ErrSessionRecoveryDepthExceeded, originalPath, parentDepth)
-	}
-	recoveryDepth := min(parentDepth+1,
-		// A shutdown copy is allowed even when the ordinary conflict chain is
-		// capped because losing the only in-memory transcript is worse than one
-		// additional branch. Keep the saturated depth so later ordinary saves
-		// still enforce the existing anti-cascade policy.
-		SessionRecoveryMaxDepth)
-
-	// A live Session gets one stable lane. A different live Session in the same
-	// process gets a different lane, so it never overwrites an independent
-	// recovery branch merely because the process-wide writer ID matches.
+	// One stable recovery file per (root branch, writer generation). Nested
+	// -recovery- names peel back to the root so conflicts update in place.
 	for range 8 {
 		recoveryPath, lane := s.isolatedRecoverySessionPath(originalPath)
 		info, collision, err := s.writeRecoveryBranchAtPath(recoveryPath, opts, msgs, digest,
-			version, rewriteVersion, preview, turns, digestText, recoveryDepth, shutdown)
+			version, rewriteVersion, preview, turns, digestText, 1, shutdown)
 		if err != nil {
 			return RecoveryBranchInfo{}, err
 		}
@@ -806,7 +778,7 @@ func (s *Session) saveRecoveryBranchMeta(path string, opts RecoveryBranchOptions
 		meta.Name = firstNonEmpty(strings.TrimSpace(opts.Name), RecoveryBranchDefaultName)
 	}
 	if strings.TrimSpace(meta.ParentID) == "" {
-		meta.ParentID = BranchID(opts.OriginalPath)
+		meta.ParentID = recoveryRootID(opts.OriginalPath)
 	}
 	meta.ForkTurn = -1
 	meta.ForkMessageIndex = len(s.Snapshot())
