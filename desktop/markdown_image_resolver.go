@@ -63,11 +63,14 @@ func (a *App) ResolveMarkdownImageForTab(tabID, source string) MarkdownImageView
 		}
 		return MarkdownImageView{ErrorCode: code}
 	}
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return MarkdownImageView{ErrorCode: "not-found"}
 	}
 	openHref := localFileHref(path)
+	if info.Mode()&os.ModeSymlink != 0 {
+		return MarkdownImageView{OpenHref: openHref, ErrorCode: "forbidden"}
+	}
 	if info.IsDir() || !info.Mode().IsRegular() {
 		return MarkdownImageView{OpenHref: openHref, ErrorCode: "not-a-file"}
 	}
@@ -75,19 +78,28 @@ func (a *App) ResolveMarkdownImageForTab(tabID, source string) MarkdownImageView
 	if kind != "image" {
 		return MarkdownImageView{Filename: info.Name(), Size: info.Size(), OpenHref: openHref, ErrorCode: "unsupported-type"}
 	}
-	if err := validateMarkdownImageFile(path, mimeType, info.Size()); err != nil {
+	f, err := os.Open(path)
+	if err != nil {
+		return MarkdownImageView{Filename: info.Name(), OpenHref: openHref, ErrorCode: "not-found"}
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return MarkdownImageView{Filename: info.Name(), OpenHref: openHref, ErrorCode: "invalid-path"}
+	}
+	if err := validateOpenMarkdownImageFile(f, mimeType, opened.Size()); err != nil {
 		code := "invalid-image"
 		if errors.Is(err, errMarkdownImageTooLarge) {
 			code = "too-large"
 		}
-		return MarkdownImageView{Filename: info.Name(), Size: info.Size(), OpenHref: openHref, ErrorCode: code}
+		return MarkdownImageView{Filename: info.Name(), Size: opened.Size(), OpenHref: openHref, ErrorCode: code}
 	}
-	token := a.ensureMediaTokenStore().create(path, info.Name(), mimeType, kind, info.Size(), info.ModTime())
+	token := a.ensureMediaTokenStore().createMarkdownImage(path, info.Name(), mimeType, opened)
 	return MarkdownImageView{
 		URL:      "/__reasonix_workspace_media/" + token + "/" + url.PathEscape(info.Name()),
 		Filename: info.Name(),
 		Mime:     mimeType,
-		Size:     info.Size(),
+		Size:     opened.Size(),
 		OpenHref: openHref,
 	}
 }

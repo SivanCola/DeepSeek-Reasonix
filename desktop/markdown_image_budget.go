@@ -19,18 +19,13 @@ const markdownImageMaxPixels int64 = 40_000_000
 
 var errMarkdownImageTooLarge = errors.New("markdown image exceeds the decode budget")
 
-func validateMarkdownImageFile(path, mimeType string, size int64) error {
+func validateOpenMarkdownImageFile(f *os.File, mimeType string, size int64) error {
 	if size <= 0 {
 		return fmt.Errorf("empty image")
 	}
 	if size > remoteMarkdownImageMaxBytes {
 		return errMarkdownImageTooLarge
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
 	return validateMarkdownImageConfig(f, mimeType)
 }
 

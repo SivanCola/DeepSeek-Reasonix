@@ -7,6 +7,7 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const panel = readFileSync(resolve(testDir, "../components/WorkspacePanel.tsx"), "utf8");
 const stabilityCSS = readFileSync(resolve(testDir, "../components/WorkspacePanelStability.css"), "utf8");
 const workspaceChangesResource = readFileSync(resolve(testDir, "../lib/useWorkspaceChangesResource.ts"), "utf8");
+const workspaceTreeScrollPersistence = readFileSync(resolve(testDir, "../lib/useWorkspaceTreeScrollPersistence.ts"), "utf8");
 
 assert.match(
   workspaceChangesResource,
@@ -49,10 +50,18 @@ assert.match(
 );
 assert.match(
   panel,
-  /onScroll=\{\(event\) => \{\s*rememberWorkspaceTreeScroll\(workspaceMemoryKey, event\.currentTarget\.scrollTop\);/,
+  /onScroll=\{onWorkspaceTreeScroll\}/,
   "tree scrolling updates memory without synchronously serializing localStorage",
 );
-assert.match(panel, /addEventListener\("scrollend", flush\)/, "tree scroll persistence flushes at the native scroll boundary");
-assert.match(panel, /addEventListener\("pagehide", flush\)/, "pending tree scroll state flushes before page suspension");
+assert.match(
+  workspaceTreeScrollPersistence,
+  /addEventListener\("scrollend", flush\)/,
+  "tree scroll persistence flushes at the native scroll boundary",
+);
+assert.match(
+  workspaceTreeScrollPersistence,
+  /addEventListener\("pagehide", flush\)/,
+  "pending tree scroll state flushes before page suspension",
+);
 
 console.log("  PASS  workspace panel SWR and per-project restoration contract");

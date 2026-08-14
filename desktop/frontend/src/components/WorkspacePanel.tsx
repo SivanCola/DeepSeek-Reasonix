@@ -42,14 +42,13 @@ import { createWorkspaceRefreshScheduler } from "../lib/workspaceRefreshSchedule
 import { shouldScrollWorkspaceTreeSelection } from "../lib/workspaceTreeReveal";
 import { mergeWorkspaceSearchResults } from "../lib/workspaceTreeSearch";
 import {
-  flushWorkspaceTreeMemory,
   readWorkspaceTreeMemory,
   rememberWorkspaceTreeOpenDirs,
-  rememberWorkspaceTreeScroll,
   rememberWorkspaceTreeState,
   touchWorkspaceTreeVisit,
   workspaceTreeVisitId,
 } from "../lib/workspaceTreeMemory";
+import { useWorkspaceTreeScrollPersistence } from "../lib/useWorkspaceTreeScrollPersistence";
 import { loadLayoutSize, loadOptionalLayoutSize } from "../lib/layoutPreferences";
 import {
   RIGHT_DOCK_PREVIEW_DEFAULT_WIDTH,
@@ -206,6 +205,7 @@ export function WorkspacePanel({
   const legacyTreeWidth = loadOptionalLayoutSize("workspaceTreeWidth");
   const panelRef = useRef<HTMLElement>(null);
   const treeRef = useRef<HTMLDivElement>(null);
+  const onWorkspaceTreeScroll = useWorkspaceTreeScrollPersistence({ memoryKey: workspaceMemoryKey, open, scrollRef: treeRef });
   const filterRef = useRef<HTMLInputElement>(null);
   const previewBodyRef = useRef<HTMLDivElement>(null);
   const [entriesByDir, setEntriesByDir] = useState<Record<string, DirEntry[]>>({});
@@ -352,24 +352,6 @@ export function WorkspacePanel({
       });
     }
   }, [creationMode, legacyTreeWidth, onRestoreDockWidths, workspaceMemoryKey, workspaceMemoryVisitId]);
-
-  useEffect(() => {
-    if (!open) return;
-    const tree = treeRef.current;
-    const flush = () => flushWorkspaceTreeMemory();
-    const flushWhenHidden = () => {
-      if (document.visibilityState === "hidden") flush();
-    };
-    tree?.addEventListener("scrollend", flush);
-    window.addEventListener("pagehide", flush);
-    document.addEventListener("visibilitychange", flushWhenHidden);
-    return () => {
-      tree?.removeEventListener("scrollend", flush);
-      window.removeEventListener("pagehide", flush);
-      document.removeEventListener("visibilitychange", flushWhenHidden);
-      flush();
-    };
-  }, [open, workspaceMemoryKey]);
 
   useEffect(() => {
     if (memoryRestorePendingRef.current) return;
@@ -2159,9 +2141,7 @@ export function WorkspacePanel({
           className="workspace-tree"
           ref={treeRef}
           onContextMenu={openTreeBlankMenu}
-          onScroll={(event) => {
-            rememberWorkspaceTreeScroll(workspaceMemoryKey, event.currentTarget.scrollTop);
-          }}
+          onScroll={onWorkspaceTreeScroll}
           style={{
             height: "100%",
             overflow: "auto",
