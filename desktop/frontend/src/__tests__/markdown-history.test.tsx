@@ -2,8 +2,8 @@
 //
 // MarkdownHistory (worker-driven history rendering): transcript markdown cache
 // hits avoid re-parsing, revision (content) changes re-parse, and huge
-// documents mount their blocks progressively via idle callbacks. Uses the
-// in-process fallback client with a spy — jsdom has no Worker.
+// documents keep a viewport-driven tail window. Uses the in-process fallback
+// client with a spy — jsdom has no Worker.
 
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
@@ -48,23 +48,27 @@ globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
 globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
 
-let pendingIdle: Array<() => void> = [];
-Object.defineProperty(dom.window, "requestIdleCallback", {
-  configurable: true,
-  value: (callback: () => void) => {
-    pendingIdle.push(callback);
-    return pendingIdle.length;
-  },
-});
-Object.defineProperty(dom.window, "cancelIdleCallback", {
-  configurable: true,
-  value: () => undefined,
-});
+let intersectionCallback: IntersectionObserverCallback | undefined;
+class TestIntersectionObserver {
+  constructor(callback: IntersectionObserverCallback) {
+    intersectionCallback = callback;
+  }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords(): IntersectionObserverEntry[] { return []; }
+  readonly root = null;
+  readonly rootMargin = "0px";
+  readonly thresholds = [0];
+}
+globalThis.IntersectionObserver = TestIntersectionObserver as unknown as typeof IntersectionObserver;
+dom.window.IntersectionObserver = TestIntersectionObserver as unknown as typeof IntersectionObserver;
 
-function runIdle() {
-  const callbacks = pendingIdle;
-  pendingIdle = [];
-  for (const callback of callbacks) callback();
+async function intersectOlderSentinel(isIntersecting: boolean) {
+  await act(async () => {
+    intersectionCallback?.([{ isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 const flush = () => act(async () => {
@@ -172,7 +176,7 @@ console.log("\nmarkdown history rendering");
 
 // ── progressive mounting for huge documents ──────────────────────────────────
 {
-  const text = Array.from({ length: 60 }, (_, i) => `Paragraph ${i} with some *content*.`).join("\n\n");
+  const text = Array.from({ length: 240 }, (_, i) => `Paragraph ${i} with some *content*.`).join("\n\n");
   const root5 = createRoot(rootEl);
   await act(async () => {
     root5.render(<MarkdownHistory text={text} entryId="md-history-huge" fallback={null} />);
@@ -180,19 +184,32 @@ console.log("\nmarkdown history rendering");
   await flush();
   const container = rootEl.querySelector(".md[data-markdown-blocks]");
   ok(container, "huge document renders through blocks");
-  eq(container?.getAttribute("data-markdown-blocks"), "60", "all 60 blocks are in the render model");
-  eq(container?.getAttribute("data-markdown-visible-blocks"), "24", "visible block count exposes the initial idle chunk");
+  eq(container?.getAttribute("data-markdown-blocks"), "240", "all 240 blocks are in the render model");
+  eq(container?.getAttribute("data-markdown-visible-blocks"), "24", "visible block count exposes the initial tail window");
   const initialCount = container?.children.length ?? 0;
-  eq(initialCount, 24, "first commit mounts only the initial block chunk");
-  for (let i = 0; i < 5 && (rootEl.querySelector(".md[data-markdown-blocks]")?.children.length ?? 0) < 60; i += 1) {
-    await act(async () => {
-      runIdle();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-  }
-  eq(rootEl.querySelector(".md[data-markdown-blocks]")?.children.length, 60, "idle callbacks mount the remaining blocks");
-  eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "60", "visible block count reaches the render model");
-  ok(rootEl.textContent?.includes("Paragraph 59"), "the final block's content mounts");
+  eq(initialCount, 25, "first commit mounts the tail plus one inert viewport sentinel");
+  ok(!rootEl.textContent?.includes("Paragraph 0"), "the cold prefix stays out of the DOM");
+  ok(rootEl.textContent?.includes("Paragraph 239"), "the newest block mounts immediately");
+
+  await intersectOlderSentinel(true);
+  eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "120", "entering the older edge prepends one bounded page");
+  await intersectOlderSentinel(true);
+  eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "120", "a stationary sentinel cannot start a render loop");
+  await intersectOlderSentinel(false);
+  await intersectOlderSentinel(true);
+  eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "216", "leaving and re-entering requests the next page");
+  ok(rootEl.textContent?.includes("Paragraph 24"), "the second viewport request exposes older content");
+
+  const replacement = Array.from({ length: 240 }, (_, i) => `Replacement ${i} with some *content*.`).join("\n\n");
+  await act(async () => {
+    root5.render(<MarkdownHistory text={replacement} entryId="md-history-huge-replacement" fallback={null} />);
+  });
+  await flush();
+  eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "24", "an equal-sized replacement document resets to its own tail");
+  ok(!rootEl.textContent?.includes("Replacement 0"), "the replacement cannot inherit the previous document's expanded prefix");
+  ok(rootEl.textContent?.includes("Replacement 239"), "the replacement's newest block mounts immediately");
+  await intersectOlderSentinel(true);
+  eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "120", "a replacement document re-arms viewport paging");
   await act(async () => root5.unmount());
 }
 

@@ -7,12 +7,11 @@
 // While a parse is in flight the caller-provided fallback stays on screen
 // (plain full text for a fresh history mount — never truncated — or the
 // committed streaming view when a live answer just completed). A single huge
-// row mounts its blocks progressively: the first chunk immediately, the rest
-// in idle slices so one 500KiB answer cannot monopolize a frame.
+// row keeps a viewport-driven tail window: opening a session paints its newest
+// blocks, and scrolling toward older content prepends another bounded chunk.
 
-import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hastBlockToJsx } from "../lib/hastJsx";
-import { scheduleIdleTask } from "../lib/idleTask";
 import {
   estimateHastBytes,
   markdownContentRevision,
@@ -23,9 +22,14 @@ import { getTranscriptStore } from "../lib/transcriptStore";
 import { createComponents } from "./markdownComponents";
 import { VirtualMarkdownSourceTable } from "./MarkdownTable";
 
-// Blocks beyond this count mount in idle chunks instead of one commit.
-const PROGRESSIVE_INITIAL_BLOCKS = 24;
-const PROGRESSIVE_CHUNK_BLOCKS = 24;
+// A history surface opens at the newest transcript content. Keep the same
+// ownership inside a giant Markdown row: mount a small tail, then prepend a
+// larger page only when its leading edge enters the viewport. The previous
+// idle loop forced one React/layout commit per second until every block was in
+// the DOM, which could keep WebView2 busy for minutes after a session switch.
+const MARKDOWN_TAIL_BLOCKS = 24;
+const MARKDOWN_PREPEND_BLOCKS = 96;
+const MARKDOWN_SENTINEL_STYLE = { display: "block", height: 1 } as const;
 
 function cachedBlocks(entryId: string | undefined, revision: number, text: string): MarkdownBlock[] | undefined {
   if (!entryId) return undefined;
@@ -35,24 +39,50 @@ function cachedBlocks(entryId: string | undefined, revision: number, text: strin
   return cached && cached.source === text ? cached.blocks : undefined;
 }
 
-/** Mount blocks progressively once a document exceeds the initial chunk. */
-function useProgressiveBlockCount(total: number): number {
-  const immediate = total <= PROGRESSIVE_INITIAL_BLOCKS;
-  const [count, setCount] = useState(immediate ? total : PROGRESSIVE_INITIAL_BLOCKS);
-  const [prevTotal, setPrevTotal] = useState(total);
-  if (prevTotal !== total) {
-    // New document (text/revision changed): restart from the initial chunk.
-    setPrevTotal(total);
-    setCount(total <= PROGRESSIVE_INITIAL_BLOCKS ? total : PROGRESSIVE_INITIAL_BLOCKS);
-  }
+/** Keep a tail window whose older edge advances only on viewport demand. */
+function useProgressiveBlockStart(total: number, identity: MarkdownBlock[] | undefined): [number, () => void] {
+  const initialStart = Math.max(0, total - MARKDOWN_TAIL_BLOCKS);
+  const [window, setWindow] = useState({ identity, start: initialStart });
+  // Derive the new tail synchronously so a worker result never performs one
+  // discarded full-document JSX conversion before the reset effect commits.
+  const current = window.identity === identity ? window.start : initialStart;
   useEffect(() => {
-    if (count >= total) return;
-    // Each completed chunk re-runs this effect and schedules the next slice.
-    return scheduleIdleTask(() => {
-      setCount((current) => Math.min(total, current + PROGRESSIVE_CHUNK_BLOCKS));
+    setWindow((value) => value.identity === identity ? value : { identity, start: initialStart });
+  }, [identity, initialStart]);
+  const loadOlder = useCallback(() => {
+    setWindow((value) => {
+      const start = value.identity === identity ? value.start : initialStart;
+      return { identity, start: Math.max(0, start - MARKDOWN_PREPEND_BLOCKS) };
     });
-  }, [count, total]);
-  return Math.min(count, total);
+  }, [identity, initialStart]);
+  return [current, loadOlder];
+}
+
+function useOlderBlockSentinel(identity: MarkdownBlock[] | undefined, start: number, loadOlder: () => void) {
+  const sentinelRef = useRef<HTMLSpanElement>(null);
+  const armedRef = useRef(true);
+  const observedIdentityRef = useRef(identity);
+  useEffect(() => {
+    if (observedIdentityRef.current !== identity) {
+      observedIdentityRef.current = identity;
+      armedRef.current = true;
+    }
+    const sentinel = sentinelRef.current;
+    if (start <= 0 || !sentinel || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.some((entry) => entry.isIntersecting);
+      if (!visible) {
+        armedRef.current = true;
+        return;
+      }
+      if (!armedRef.current) return;
+      armedRef.current = false;
+      startTransition(loadOlder);
+    }, { rootMargin: "240px 0px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [identity, loadOlder, start]);
+  return sentinelRef;
 }
 
 export const MarkdownHistory = memo(function MarkdownHistory({
@@ -118,10 +148,12 @@ export const MarkdownHistory = memo(function MarkdownHistory({
   }, [text, entryId, revision]);
 
   const components = useMemo(() => createComponents(plainStatusBlocks), [plainStatusBlocks]);
-  const visibleCount = useProgressiveBlockCount(blocks?.length ?? 0);
+  const totalBlocks = blocks?.length ?? 0;
+  const [visibleStart, loadOlder] = useProgressiveBlockStart(totalBlocks, blocks);
+  const olderSentinelRef = useOlderBlockSentinel(blocks, visibleStart, loadOlder);
 
   // JSX per block depends only on the block and the components map; build it
-  // lazily so progressive mounting never re-converts settled blocks.
+  // lazily so viewport-window growth never re-converts settled blocks.
   const jsxCacheRef = useRef<{ blocks: MarkdownBlock[]; nodes: ReactNode[] } | null>(null);
   if (!blocks) return <>{fallback}</>;
   let cache = jsxCacheRef.current;
@@ -133,9 +165,12 @@ export const MarkdownHistory = memo(function MarkdownHistory({
     <div
       className="md"
       data-markdown-blocks={blocks.length}
-      data-markdown-visible-blocks={visibleCount}
+      data-markdown-visible-blocks={blocks.length - visibleStart}
+      data-markdown-window-start={visibleStart}
     >
-      {blocks.slice(0, visibleCount).map((block, index) => {
+      {visibleStart > 0 && <span ref={olderSentinelRef} style={MARKDOWN_SENTINEL_STYLE} data-markdown-older-sentinel aria-hidden="true" />}
+      {blocks.slice(visibleStart).map((block, offset) => {
+        const index = visibleStart + offset;
         const cached = cache.nodes[index];
         if (cached !== undefined) return <Fragment key={block.key}>{cached}</Fragment>;
         const node = block.virtualTable
