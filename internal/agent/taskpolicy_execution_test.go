@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -62,20 +64,53 @@ func TestTaskPolicyUsesStructuredCommandEffects(t *testing.T) {
 }
 
 func TestTaskPolicyEnforcesVerificationAllowlist(t *testing.T) {
+	var calls int32
 	reg := tool.NewRegistry()
-	reg.Add(fakeTool{name: "bash", readOnly: true})
+	reg.Add(fakeTool{name: "bash", readOnly: true, calls: &calls})
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{}, event.Discard)
 	a.turn.policy = taskpolicy.Derive(taskpolicy.Input{Raw: "fix it; only run go test ./internal/parser"})
 	a.turn.policySet = true
 	a.turn.deliveryCriteriaEstablished = true
 
-	blocked := a.executeOne(context.Background(), &a.turn, provider.ToolCall{Name: "bash", Arguments: `{"command":"npm test"}`})
-	if !blocked.blocked || !strings.Contains(blocked.errMsg, "allowlist") {
-		t.Fatalf("npm test outcome = %+v, want allowlist block", blocked)
+	for _, command := range []string{"npm test", "go vet ./...", "golangci-lint run", "npm run typecheck"} {
+		blocked := a.executeOne(context.Background(), &a.turn, provider.ToolCall{
+			Name: "bash", Arguments: `{"command":` + strconv.Quote(command) + `}`,
+		})
+		if !blocked.blocked || !strings.Contains(blocked.errMsg, "allowlist") {
+			t.Fatalf("%s outcome = %+v, want allowlist block", command, blocked)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("disallowed verification commands executed %d times, want 0", got)
 	}
 	allowed := a.executeOne(context.Background(), &a.turn, provider.ToolCall{Name: "bash", Arguments: `{"command":"go test ./internal/parser"}`})
 	if allowed.blocked || allowed.errMsg != "" {
 		t.Fatalf("allowed go test outcome = %+v", allowed)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("allowed verification command executed %d times, want 1", got)
+	}
+}
+
+func TestTaskPolicyForbidTestsBlocksEveryVerifier(t *testing.T) {
+	var calls int32
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "bash", readOnly: true, calls: &calls})
+	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{}, event.Discard)
+	a.turn.policy = taskpolicy.Derive(taskpolicy.Input{Raw: "fix it; don't run tests"})
+	a.turn.policySet = true
+	a.turn.deliveryCriteriaEstablished = true
+
+	for _, command := range []string{"go test ./...", "go vet ./...", "golangci-lint run", "npm run typecheck"} {
+		got := a.executeOne(context.Background(), &a.turn, provider.ToolCall{
+			Name: "bash", Arguments: `{"command":` + strconv.Quote(command) + `}`,
+		})
+		if !got.blocked || !strings.Contains(got.errMsg, "forbids verification commands") {
+			t.Fatalf("%s outcome = %+v, want user-constraint block", command, got)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("forbidden verification commands executed %d times, want 0", got)
 	}
 }
 
@@ -247,6 +282,39 @@ func TestPolicyEscalatesBeforeFirstSensitiveMutation(t *testing.T) {
 	}
 	if len(permission.checked) != 1 {
 		t.Fatalf("permission checks = %v, want exactly one for executable call", permission.checked)
+	}
+}
+
+func TestPolicyEscalatesDeepAbsoluteSensitiveMutationBeforeExecution(t *testing.T) {
+	var calls int32
+	root := t.TempDir()
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "edit_file", readOnly: false, calls: &calls})
+	permission := &stubGate{deny: map[string]bool{}}
+	a := New(nil, reg, NewSession("sys"), Options{Gate: permission, WriteWorkspaceRoot: root}, event.Discard)
+	a.turn.policy = taskpolicy.Derive(taskpolicy.Input{Raw: "fix this file", Anchored: true})
+	a.turn.policySet = true
+	args, err := json.Marshal(map[string]string{
+		"path":       filepath.Join(root, "internal", "provider", "openai", "responses", "client.go"),
+		"old_string": "old",
+		"new_string": "new",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := a.executeOne(context.Background(), &a.turn, provider.ToolCall{Name: "edit_file", Arguments: string(args)})
+	if !got.blocked || !strings.Contains(got.errMsg, "acceptance criteria") {
+		t.Fatalf("deep sensitive first mutation outcome = %+v, want pre-execution criteria block", got)
+	}
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("deep sensitive writer executed %d times before escalation, want 0", got)
+	}
+	if len(permission.checked) != 0 {
+		t.Fatalf("permission was requested for a deterministically blocked call: %v", permission.checked)
+	}
+	if a.turn.policy.Risk != taskpolicy.RiskHigh || a.turn.policy.Review != taskpolicy.ReviewForced || a.turn.policy.Verification != taskpolicy.VerifyFull {
+		t.Fatalf("policy after deep sensitive mutation = %+v, want high-risk full verification and forced review", a.turn.policy)
 	}
 }
 

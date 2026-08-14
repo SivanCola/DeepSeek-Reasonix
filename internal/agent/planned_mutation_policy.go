@@ -27,7 +27,7 @@ func (a *Agent) escalatePolicyForPlannedMutation(turn *turnRuntime, plan *toolCa
 	if a == nil || turn == nil || plan == nil || plan.readOnly || !turn.policySet || !turn.policy.AllowsMutation() || !plan.effects.ContentMutation {
 		return
 	}
-	switch evidence.ClassifyToolCallMutationRisk(plan.evidenceName, plan.evidenceArgs, plan.readOnly) {
+	switch evidence.ClassifyToolCallMutationRiskWithin(a.writeWorkspaceRoot, plan.evidenceName, plan.evidenceArgs, plan.readOnly) {
 	case evidence.RiskHigh:
 		turn.policy.RaiseRisk(taskpolicy.RiskHigh)
 	case evidence.RiskMedium:

@@ -223,7 +223,7 @@ func (a *Agent) deliveryReviewGateFailure() string {
 		return ""
 	}
 	a.emitTurnPhase(event.TurnPhaseReviewing)
-	risk := a.task.ledger.MutationRisk()
+	risk := a.task.ledger.MutationRiskWithin(a.writeWorkspaceRoot)
 	// TaskPolicy may force higher review than mutation-risk alone.
 	if a.turn.policySet {
 		switch a.turn.policy.Review {

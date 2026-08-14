@@ -895,7 +895,7 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 			jobCtx = WithParentSession(jobCtx, parentSession)
 			jobCtx = evidence.WithLedger(jobCtx, backgroundEvidence)
 			defer run.Release()
-			defer func() { jobs.PublishEvidence(jobCtx, backgroundEvidence.Summary()) }()
+			defer publishBackgroundEvidence(jobCtx, backgroundEvidence, t.workspaceRoot)
 			defer func() {
 				if r := recover(); r != nil {
 					panicErr := fmt.Errorf("internal error: panic: %v\n%s", r, debug.Stack())
@@ -1604,26 +1604,27 @@ func (t *TaskTool) runReadOnlySubSession(ctx context.Context, prompt string, sub
 // must stay uniform across those paths — add new fields here, not at call sites.
 func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *provider.Pricing, ctxWin, childDepth int, recoveryTaskID string, mutationObserver *checkpoint.MutationObserver) Options {
 	opts := Options{
-		MaxSteps:          maxSteps,
-		Temperature:       t.temperature,
-		Pricing:           pricing,
-		UsageSource:       event.UsageSourceSubagent,
-		Gate:              t.gate,
-		ContextWindow:     ctxWin,
-		RecentKeep:        t.recentKeep,
-		CompactRatio:      t.compactRatio,
-		ArchiveDir:        t.archiveDir,
-		KeepPolicy:        t.keepPolicy,
-		ResponseLanguage:  ResponseLanguageFromContext(ctx),
-		ReasoningLanguage: ReasoningLanguageFromContext(ctx),
-		SubagentDepth:     childDepth,
-		MaxSubagentDepth:  t.maxDepth(),
-		Ablation:          t.ablation,
-		WorkspaceLease:    t.workspaceLease,
-		RecoveryGate:      t.recoveryGate,
-		RecoveryAgentID:   "subagent",
-		RecoveryTaskID:    recoveryTaskID,
-		MutationObserver:  mutationObserver,
+		MaxSteps:           maxSteps,
+		Temperature:        t.temperature,
+		Pricing:            pricing,
+		UsageSource:        event.UsageSourceSubagent,
+		Gate:               t.gate,
+		ContextWindow:      ctxWin,
+		RecentKeep:         t.recentKeep,
+		CompactRatio:       t.compactRatio,
+		ArchiveDir:         t.archiveDir,
+		KeepPolicy:         t.keepPolicy,
+		ResponseLanguage:   ResponseLanguageFromContext(ctx),
+		ReasoningLanguage:  ReasoningLanguageFromContext(ctx),
+		SubagentDepth:      childDepth,
+		MaxSubagentDepth:   t.maxDepth(),
+		Ablation:           t.ablation,
+		WorkspaceLease:     t.workspaceLease,
+		WriteWorkspaceRoot: t.workspaceRoot,
+		RecoveryGate:       t.recoveryGate,
+		RecoveryAgentID:    "subagent",
+		RecoveryTaskID:     recoveryTaskID,
+		MutationObserver:   mutationObserver,
 	}
 	// Writer children inherit the parent turn's frozen risk and closure floors.
 	// The parent publishes its policy into the run context; a child that never

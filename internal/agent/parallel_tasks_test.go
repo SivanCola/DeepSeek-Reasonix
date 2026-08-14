@@ -521,6 +521,15 @@ func TestTaskToolSharesWorkspaceLeaseWithSubagents(t *testing.T) {
 	}
 }
 
+func TestTaskToolPropagatesWorkspaceRootToSubagents(t *testing.T) {
+	root := t.TempDir()
+	task := &TaskTool{workspaceRoot: root}
+	opts := task.subagentOptions(context.Background(), 0, nil, 0, 1, "", nil)
+	if opts.WriteWorkspaceRoot != root {
+		t.Fatalf("sub-agent workspace root = %q, want %q", opts.WriteWorkspaceRoot, root)
+	}
+}
+
 func TestSubagentRecoveryTaskIDIsStableAndIsolated(t *testing.T) {
 	ctx := WithToolCallContext(context.Background(), "call-17", event.Discard, nil, false)
 	if got := subagentRecoveryTaskID(ctx, ""); got != "subagent:call-17" {

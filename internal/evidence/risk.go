@@ -2,7 +2,7 @@ package evidence
 
 import (
 	"encoding/json"
-	"path/filepath"
+	pathpkg "path"
 	"strings"
 )
 
@@ -37,6 +37,14 @@ var highRiskToolHints = []string{
 // Medium: ordinary production code or limited multi-file edits.
 // High: security-sensitive surfaces, opaque mutations, or 10+ paths.
 func ClassifyMutationRisk(receipts []Receipt, after int) RiskLevel {
+	return ClassifyMutationRiskWithin(receipts, after, "")
+}
+
+// ClassifyMutationRiskWithin scores mutations after first normalizing absolute
+// paths against workspaceRoot. Callers that own a workspace should supply it:
+// checkout/temp ancestors are not change scope, while every path component
+// inside the workspace remains available to the sensitive-surface classifier.
+func ClassifyMutationRiskWithin(receipts []Receipt, after int, workspaceRoot string) RiskLevel {
 	start := max(after+1, 0)
 	var paths []string
 	seen := map[string]bool{}
@@ -90,10 +98,10 @@ func ClassifyMutationRisk(receipts []Receipt, after int) RiskLevel {
 		return RiskHigh
 	}
 	for _, p := range paths {
-		if pathLooksHighRisk(p) {
+		if pathLooksHighRisk(p, workspaceRoot) {
 			return RiskHigh
 		}
-		if !pathLooksLowRisk(p) {
+		if !pathLooksLowRisk(p, workspaceRoot) {
 			onlyLow = false
 			hasProd = true
 		}
@@ -110,6 +118,12 @@ func ClassifyMutationRisk(receipts []Receipt, after int) RiskLevel {
 // callers can ratchet host policy before permission or execution without an
 // auxiliary model request or a false success in the evidence ledger.
 func ClassifyToolCallMutationRisk(toolName string, args json.RawMessage, readOnly bool) RiskLevel {
+	return ClassifyToolCallMutationRiskWithin("", toolName, args, readOnly)
+}
+
+// ClassifyToolCallMutationRiskWithin projects one concrete mutation after
+// normalizing its declared paths against workspaceRoot.
+func ClassifyToolCallMutationRiskWithin(workspaceRoot, toolName string, args json.RawMessage, readOnly bool) RiskLevel {
 	if readOnly {
 		return RiskLow
 	}
@@ -117,18 +131,24 @@ func ClassifyToolCallMutationRisk(toolName string, args json.RawMessage, readOnl
 	if !receipt.Mutation {
 		return RiskLow
 	}
-	return ClassifyMutationRisk([]Receipt{receipt}, 0)
+	return ClassifyMutationRiskWithin([]Receipt{receipt}, 0, workspaceRoot)
 }
 
 // MutationRiskAfter classifies risk from the ledger starting at one mutation.
 func (l *Ledger) MutationRiskAfter(after int) RiskLevel {
+	return l.MutationRiskAfterWithin(after, "")
+}
+
+// MutationRiskAfterWithin classifies ledger mutations after normalizing paths
+// against workspaceRoot.
+func (l *Ledger) MutationRiskAfterWithin(after int, workspaceRoot string) RiskLevel {
 	if l == nil {
 		return RiskLow
 	}
 	l.mu.Lock()
 	receipts := append([]Receipt(nil), l.receipts...)
 	l.mu.Unlock()
-	return ClassifyMutationRisk(receipts, after)
+	return ClassifyMutationRiskWithin(receipts, after, workspaceRoot)
 }
 
 // MutationRisk classifies all successful mutations in the current ledger. Risk
@@ -136,6 +156,12 @@ func (l *Ledger) MutationRiskAfter(after int) RiskLevel {
 // hide an earlier security-sensitive or opaque mutation.
 func (l *Ledger) MutationRisk() RiskLevel {
 	return l.MutationRiskAfter(-1)
+}
+
+// MutationRiskWithin classifies the complete turn after normalizing paths
+// against workspaceRoot.
+func (l *Ledger) MutationRiskWithin(workspaceRoot string) RiskLevel {
+	return l.MutationRiskAfterWithin(-1, workspaceRoot)
 }
 
 // PathsSince returns distinct paths from successful mutation/write receipts at
@@ -165,9 +191,10 @@ func (l *Ledger) PathsSince(after int) []string {
 	return out
 }
 
-func pathLooksHighRisk(path string) bool {
-	lower := strings.ToLower(riskRelevantPath(path))
-	base := strings.ToLower(filepath.Base(path))
+func pathLooksHighRisk(path, workspaceRoot string) bool {
+	relevant := riskRelevantPath(path, workspaceRoot)
+	lower := strings.ToLower(relevant)
+	base := strings.ToLower(pathpkg.Base(relevant))
 	for _, hint := range highRiskPathHints {
 		if strings.Contains(lower, hint) || strings.Contains(base, hint) {
 			return true
@@ -176,25 +203,98 @@ func pathLooksHighRisk(path string) bool {
 	return false
 }
 
-// riskRelevantPath keeps relative paths intact and bounds absolute paths to
-// their semantic tail. Absolute workspace/temp ancestors are deployment
-// details, not change scope: a checkout named "toolbox" must not make every
-// edit high-risk. Three tail components still retain conventional surfaces
-// such as internal/auth/session.go and db/migrations/001.sql.
-func riskRelevantPath(path string) string {
-	normalized := strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), `\`, "/")
-	abs := strings.HasPrefix(normalized, "/") || (len(normalized) >= 3 && normalized[1] == ':' && normalized[2] == '/')
-	if !abs {
+// riskRelevantPath keeps relative paths intact and makes workspace-owned
+// absolute paths relative without discarding deep owner directories. When no
+// workspace root is available, only Go's recognizable t.TempDir prefix is
+// removed; every other absolute path stays conservative and fully visible.
+func riskRelevantPath(path, workspaceRoot string) string {
+	normalized := normalizeRiskPath(path)
+	if !riskPathIsAbs(normalized) {
 		return normalized
 	}
+	if relative, ok := riskPathWithin(workspaceRoot, normalized); ok {
+		return relative
+	}
 	parts := strings.FieldsFunc(normalized, func(r rune) bool { return r == '/' })
-	if len(parts) >= 3 && strings.HasPrefix(strings.ToLower(parts[len(parts)-3]), "test") && allDecimal(parts[len(parts)-2]) {
-		return parts[len(parts)-1]
+	for i := 0; i+2 < len(parts); i++ {
+		if goTestTempComponent(parts[i]) && allDecimal(parts[i+1]) {
+			// A real absolute owner directory named provider/auth/etc. must not
+			// disappear merely because a descendant happens to resemble the
+			// directory shape produced by testing.T.TempDir.
+			if pathPartsLookHighRisk(parts[:i]) {
+				return normalized
+			}
+			return strings.Join(parts[i+2:], "/")
+		}
 	}
-	if len(parts) > 3 {
-		parts = parts[len(parts)-3:]
+	return normalized
+}
+
+func normalizeRiskPath(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), `\`, "/")
+	if value == "" {
+		return ""
 	}
-	return strings.Join(parts, "/")
+	cleaned := pathpkg.Clean(value)
+	// path.Clean treats a Windows drive prefix as an ordinary path component
+	// and removes the root slash from "C:/". Restore it so drive roots remain
+	// absolute and can safely relativize paths in cross-platform evidence.
+	if len(value) == 3 && value[1] == ':' && value[2] == '/' && len(cleaned) == 2 && cleaned[1] == ':' {
+		return cleaned + "/"
+	}
+	return cleaned
+}
+
+func riskPathIsAbs(value string) bool {
+	return strings.HasPrefix(value, "/") || (len(value) >= 3 && value[1] == ':' && value[2] == '/')
+}
+
+func riskPathWithin(workspaceRoot, value string) (string, bool) {
+	root := normalizeRiskPath(workspaceRoot)
+	value = normalizeRiskPath(value)
+	if root == "" || !riskPathIsAbs(root) || !riskPathIsAbs(value) {
+		return "", false
+	}
+	rootCompare, valueCompare := root, value
+	if len(root) >= 3 && root[1] == ':' {
+		rootCompare = strings.ToLower(root)
+		valueCompare = strings.ToLower(value)
+	}
+	if valueCompare == rootCompare {
+		return ".", true
+	}
+	prefix := rootCompare + "/"
+	relativeStart := len(root) + 1
+	if strings.HasSuffix(rootCompare, "/") {
+		prefix = rootCompare
+		relativeStart = len(root)
+	}
+	if !strings.HasPrefix(valueCompare, prefix) {
+		return "", false
+	}
+	return value[relativeStart:], true
+}
+
+func pathPartsLookHighRisk(parts []string) bool {
+	lower := strings.ToLower(strings.Join(parts, "/"))
+	for _, hint := range highRiskPathHints {
+		if strings.Contains(lower, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+func goTestTempComponent(value string) bool {
+	lower := strings.ToLower(value)
+	if !strings.HasPrefix(lower, "test") {
+		return false
+	}
+	i := len(lower)
+	for i > len("test") && lower[i-1] >= '0' && lower[i-1] <= '9' {
+		i--
+	}
+	return i < len(lower)
 }
 
 func allDecimal(value string) bool {
@@ -209,28 +309,39 @@ func allDecimal(value string) bool {
 	return true
 }
 
-func pathLooksLowRisk(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(path))
-	base := filepath.Base(lower)
+func pathLooksLowRisk(path, workspaceRoot string) bool {
+	relevant := riskRelevantPath(path, workspaceRoot)
+	lower := strings.ToLower(relevant)
+	base := pathpkg.Base(lower)
 	if strings.HasSuffix(lower, "_test.go") || strings.HasSuffix(lower, "_test.ts") ||
 		strings.HasSuffix(lower, ".test.ts") || strings.HasSuffix(lower, ".test.tsx") ||
 		strings.HasSuffix(lower, "_spec.ts") || strings.HasSuffix(lower, ".spec.ts") {
 		return true
 	}
-	if strings.Contains(lower, "/testdata/") || strings.Contains(lower, "/__tests__/") ||
-		strings.Contains(lower, "/fixtures/") {
+	if !riskPathIsAbs(relevant) && (hasRiskPathSegment(lower, "testdata") ||
+		hasRiskPathSegment(lower, "__tests__") || hasRiskPathSegment(lower, "fixtures")) {
 		return true
 	}
 	switch {
 	case strings.HasSuffix(base, ".md"), strings.HasSuffix(base, ".mdx"),
 		strings.HasSuffix(base, ".txt"), strings.HasSuffix(base, ".rst"):
 		return true
-	case strings.Contains(lower, "/docs/"), strings.Contains(lower, "/locales/"),
-		strings.Contains(lower, "/i18n/"), strings.HasPrefix(base, "readme"):
+	case !riskPathIsAbs(relevant) && (hasRiskPathSegment(lower, "docs") ||
+		hasRiskPathSegment(lower, "locales") || hasRiskPathSegment(lower, "i18n")),
+		strings.HasPrefix(base, "readme"):
 		return true
 	case strings.HasSuffix(base, ".css") && !strings.Contains(lower, "sandbox"):
 		// Pure presentation styles are low risk unless mixed with other paths.
 		return true
+	}
+	return false
+}
+
+func hasRiskPathSegment(value, segment string) bool {
+	for _, part := range strings.Split(strings.Trim(value, "/"), "/") {
+		if part == segment {
+			return true
+		}
 	}
 	return false
 }

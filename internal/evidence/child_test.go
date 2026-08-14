@@ -124,6 +124,110 @@ func TestAbsoluteMutationRiskIgnoresWorkspaceAndTestHarnessAncestors(t *testing.
 	if high != RiskHigh {
 		t.Fatalf("absolute sensitive suffix risk = %s, want high", high)
 	}
+	deep := ClassifyToolCallMutationRisk(
+		"edit_file",
+		json.RawMessage(`{"path":"/tmp/TestBuildToolSchemas123/001/internal/provider/openai/responses/client.go"}`),
+		false,
+	)
+	if deep != RiskHigh {
+		t.Fatalf("deep absolute sensitive suffix risk = %s, want high", deep)
+	}
+}
+
+func TestWorkspaceRelativeMutationRiskPreservesDeepOwnerAndIgnoresCheckoutName(t *testing.T) {
+	root := "/workspace/toolbox"
+	ordinary := ClassifyToolCallMutationRiskWithin(
+		root,
+		"edit_file",
+		json.RawMessage(`{"path":"/workspace/toolbox/internal/agent/worker.go"}`),
+		false,
+	)
+	if ordinary != RiskMedium {
+		t.Fatalf("ordinary path inside toolbox checkout = %s, want medium", ordinary)
+	}
+	deep := ClassifyToolCallMutationRiskWithin(
+		root,
+		"edit_file",
+		json.RawMessage(`{"path":"/workspace/toolbox/internal/provider/openai/responses/client.go"}`),
+		false,
+	)
+	if deep != RiskHigh {
+		t.Fatalf("deep provider path = %s, want high", deep)
+	}
+	windows := ClassifyToolCallMutationRiskWithin(
+		`C:\workspace\toolbox`,
+		"edit_file",
+		json.RawMessage(`{"path":"c:\\workspace\\toolbox\\internal\\sandbox\\linux\\seccomp\\policy.go"}`),
+		false,
+	)
+	if windows != RiskHigh {
+		t.Fatalf("Windows deep sandbox path = %s, want high", windows)
+	}
+}
+
+func TestWorkspaceRelativeMutationRiskIgnoresLowRiskAncestorNames(t *testing.T) {
+	root := "/workspace/docs/project"
+	got := ClassifyToolCallMutationRiskWithin(
+		root,
+		"edit_file",
+		json.RawMessage(`{"path":"/workspace/docs/project/internal/agent/worker.go"}`),
+		false,
+	)
+	if got != RiskMedium {
+		t.Fatalf("production path beneath docs-named ancestor = %s, want medium", got)
+	}
+}
+
+func TestRiskPathWithinHonorsRootAndPathBoundaries(t *testing.T) {
+	tests := []struct {
+		name      string
+		root      string
+		path      string
+		want      string
+		wantMatch bool
+	}{
+		{
+			name:      "posix root",
+			root:      "/",
+			path:      "/internal/provider/client.go",
+			want:      "internal/provider/client.go",
+			wantMatch: true,
+		},
+		{
+			name:      "windows drive root",
+			root:      `C:\`,
+			path:      `c:\internal\provider\client.go`,
+			want:      "internal/provider/client.go",
+			wantMatch: true,
+		},
+		{
+			name:      "sibling prefix",
+			root:      "/workspace/toolbox",
+			path:      "/workspace/toolbox-copy/internal/agent.go",
+			wantMatch: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, matched := riskPathWithin(tt.root, tt.path)
+			if matched != tt.wantMatch || got != tt.want {
+				t.Fatalf("riskPathWithin(%q, %q) = (%q, %v), want (%q, %v)", tt.root, tt.path, got, matched, tt.want, tt.wantMatch)
+			}
+		})
+	}
+}
+
+func TestAbsoluteMutationRiskPreservesSensitiveOwnerBeforeTempShape(t *testing.T) {
+	receipts := []Receipt{{
+		ToolName: "edit_file",
+		Success:  true,
+		Write:    true,
+		Mutation: true,
+		Paths:    []string{"/workspace/provider/TestWorker123/001/internal/client.go"},
+	}}
+	if got := ClassifyMutationRisk(receipts, 0); got != RiskHigh {
+		t.Fatalf("risk = %q, want %q", got, RiskHigh)
+	}
 }
 
 func TestMutationRiskIncludesEarlierHighRiskMutation(t *testing.T) {
@@ -140,6 +244,20 @@ func TestMutationRiskIncludesEarlierHighRiskMutation(t *testing.T) {
 	}
 	if got := ledger.MutationRisk(); got != RiskHigh {
 		t.Fatalf("turn risk = %s, want earlier auth mutation to keep it high", got)
+	}
+}
+
+func TestLedgerMutationRiskWithinPreservesDeepSensitiveOwner(t *testing.T) {
+	root := "/workspace/toolbox"
+	ledger := NewLedger()
+	ledger.Record(ReceiptFromToolCall(
+		"edit_file",
+		json.RawMessage(`{"path":"/workspace/toolbox/internal/provider/openai/responses/client.go"}`),
+		true,
+		false,
+	))
+	if got := ledger.MutationRiskWithin(root); got != RiskHigh {
+		t.Fatalf("workspace-normalized ledger risk = %s, want high", got)
 	}
 }
 

@@ -277,7 +277,7 @@ func (a *Agent) escalatePolicyFromEvidence() {
 	}
 	p := &a.turn.policy
 	if _, ok := a.task.ledger.LatestSuccessfulMutationIndex(); ok {
-		switch a.task.ledger.MutationRisk() {
+		switch a.task.ledger.MutationRiskWithin(a.writeWorkspaceRoot) {
 		case evidence.RiskHigh:
 			p.RaiseRisk(taskpolicy.RiskHigh)
 		case evidence.RiskMedium:
