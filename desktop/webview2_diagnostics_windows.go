@@ -80,6 +80,14 @@ func installWebView2ProcessObserver(app *App) {
 			select {
 			case webView2ObserverState.events <- diagnostic:
 			default:
+				if diagnostic.Kind == edge.COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED ||
+					diagnostic.Kind == edge.COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE {
+					// GPU/utility storms may fill the diagnostic queue immediately
+					// before the renderer also fails. Recovery is control-plane work:
+					// never drop it merely because best-effort telemetry is congested.
+					go process(diagnostic)
+					return
+				}
 				// Keep the COM callback non-blocking and let the background consumer
 				// expose queue pressure as an aggregate, content-free metric.
 				webView2ObserverState.dropped.Add(1)

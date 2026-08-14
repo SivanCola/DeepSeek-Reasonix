@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -178,8 +179,7 @@ func (j webView2RecoveryJournal) automaticRestartAllowed(now time.Time) (bool, e
 	if err != nil {
 		return false, err
 	}
-	for index := len(records) - 1; index >= 0; index-- {
-		record := records[index]
+	for _, record := range slices.Backward(records) {
 		if record.Stage != "auto_restart" {
 			continue
 		}
@@ -197,8 +197,7 @@ func (j webView2RecoveryJournal) pendingGuidance(now time.Time) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	for index := len(records) - 1; index >= 0; index-- {
-		record := records[index]
+	for _, record := range slices.Backward(records) {
 		switch record.Stage {
 		case "guidance_shown":
 			return false, nil
@@ -218,6 +217,7 @@ type webView2RecoveryCoordinator struct {
 	journal webView2RecoveryJournal
 	now     func() time.Time
 
+	//lint:ignore U1000 Used by the Windows-only native failure path.
 	restartOnce sync.Once
 }
 
@@ -229,6 +229,7 @@ func newWebView2RecoveryCoordinator(app *App) *webView2RecoveryCoordinator {
 	}
 }
 
+//lint:ignore U1000 Used by webview2_diagnostics_windows.go.
 func (c *webView2RecoveryCoordinator) nativeFailure(event webView2NativeEvent) {
 	if c == nil {
 		return
@@ -269,6 +270,7 @@ func (c *webView2RecoveryCoordinator) reportReady() {
 	}
 }
 
+//lint:ignore U1000 Scheduled by nativeFailure on Windows.
 func (c *webView2RecoveryCoordinator) readyTimeout() {
 	c.mu.Lock()
 	next, action := c.state.tick(c.now())
@@ -281,6 +283,7 @@ func (c *webView2RecoveryCoordinator) readyTimeout() {
 	}
 }
 
+//lint:ignore U1000 Invoked by the Windows-only recovery path.
 func (c *webView2RecoveryCoordinator) requestRestart(reason string) {
 	c.restartOnce.Do(func() {
 		now := c.now()

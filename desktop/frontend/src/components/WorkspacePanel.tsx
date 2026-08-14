@@ -61,7 +61,6 @@ import type {
   GitCommitDetailView,
   RewindResultView,
   WorkspaceChangeDetailView,
-  WorkspaceChangesView,
   WireCompletionSummary,
 } from "../lib/types";
 import { workspaceGitStatusLabel } from "../lib/workspaceChanges";
@@ -86,6 +85,7 @@ import { MarkdownImageTabContext } from "./MarkdownImageContext";
 import { WorkspaceFileIcon } from "./WorkspaceFileIcon";
 import { WorkspaceMediaPreview } from "./WorkspaceMediaPreview";
 import { WorkspaceTreeMenu } from "./WorkspaceTreeMenu";
+import { useWorkspaceChangesResource } from "../lib/useWorkspaceChangesResource";
 import {
   workspaceBasename as basename, workspaceEntryPath as entryPath,
   workspaceFormatBytes as formatBytes, workspaceFormatCommitDate as formatCommitDate,
@@ -231,7 +231,6 @@ export function WorkspacePanel({
   // by default everywhere.
   const groupedChangesLayout = creationMode !== false || viewMode === "changed";
   const [gitHistoryResource, setGitHistoryResource] = useState(() => emptyKeyedResource<GitCommitView[]>());
-  const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChangesView | null>(null);
   const [changeDetailResource, setChangeDetailResource] = useState(() => emptyKeyedResource<WorkspaceChangeDetailView>());
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const [commitDetail, setCommitDetail] = useState<GitCommitDetailView | null>(null);
@@ -265,7 +264,6 @@ export function WorkspacePanel({
   const dismissedChangeListRequestIdRef = useRef<number | null>(null);
   const currentWorkspaceScopeKeyRef = useRef(workspaceScopeKey);
   const lastWorkspaceScopeKeyRef = useRef(workspaceScopeKey);
-  const workspaceChangesRequestIdRef = useRef(0);
   const changeDetailRequestIdRef = useRef(0);
   const gitHistoryRequestIdRef = useRef(0);
   const previewRequestIdRef = useRef(0);
@@ -298,6 +296,16 @@ export function WorkspacePanel({
   const changeDetailErr = changeDetailKey && changeDetailResource.key === changeDetailKey ? changeDetailResource.error : "";
   const gitHistory = gitHistoryResource.key === gitHistoryKey ? gitHistoryResource.data ?? [] : [];
   const loadingHistory = gitHistoryResource.key === gitHistoryKey && gitHistoryResource.status === "refreshing";
+  const gitHistoryErr = gitHistoryResource.key === gitHistoryKey ? gitHistoryResource.error : "";
+  const { workspaceChanges, loadingWorkspaceChanges, workspaceChangesErr, loadWorkspaceChanges, resetWorkspaceChanges } =
+    useWorkspaceChangesResource(workspaceTabId, workspaceScopeKey, workspaceRefresh.revisions.workingTree);
+  const overviewResourceStatus = workspaceChangesErr && workspaceChanges
+    ? { error: true, text: `${t("workspace.changesUnavailable")}: ${workspaceChangesErr}` }
+    : gitHistoryErr && gitHistory.length > 0
+      ? { error: true, text: `${t("workspace.historyUnavailable")}: ${gitHistoryErr}` }
+      : loadingWorkspaceChanges && workspaceChanges
+        ? { error: false, text: t("workspace.loadingChanges") }
+        : loadingHistory && gitHistory.length > 0 ? { error: false, text: t("workspace.loading") } : null;
 
   useEffect(() => {
     openDirsRef.current = openDirs;
@@ -395,27 +403,6 @@ export function WorkspacePanel({
       }
     }
   }, [selectedPath, workspaceRefresh.revisions.gitMeta, workspaceScopeKey, workspaceTabId]);
-
-  const loadWorkspaceChanges = useCallback(async () => {
-    const requestId = ++workspaceChangesRequestIdRef.current;
-    const requestTabId = workspaceTabId;
-    const requestScopeKey = workspaceScopeKey;
-    try {
-      const result = await app.WorkspaceChanges(requestTabId);
-      if (workspaceChangesRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
-        setWorkspaceChanges({
-          files: Array.isArray(result?.files) ? result.files : [],
-          gitAvailable: result?.gitAvailable !== false,
-          gitErr: result?.gitErr,
-          gitBranch: result?.gitBranch,
-        });
-      }
-    } catch {
-      if (workspaceChangesRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
-        setWorkspaceChanges({ files: [], gitAvailable: false });
-      }
-    }
-  }, [workspaceScopeKey, workspaceTabId]);
 
   const loadChangeDetail = useCallback(async () => {
     const requestId = ++changeDetailRequestIdRef.current;
@@ -524,8 +511,6 @@ export function WorkspacePanel({
     dirLoadRequestIdsRef.current = {};
     compactProbeInFlightRef.current.clear();
     setEntriesByDir({});
-    setSelectedFilePath(null);
-    setSelectedChangePath(null);
     setOpenTabs([]);
     setPreviewResource(emptyKeyedResource());
     setGitHistoryResource(emptyKeyedResource());
@@ -548,11 +533,10 @@ export function WorkspacePanel({
     lastWorkspaceScopeKeyRef.current = workspaceScopeKey;
     workingTreeRefreshSchedulerRef.current?.cancel();
     gitMetaRefreshSchedulerRef.current?.cancel();
-    workspaceChangesRequestIdRef.current += 1;
     changeDetailRequestIdRef.current += 1;
     gitHistoryRequestIdRef.current += 1;
     commitDetailRequestIdRef.current += 1;
-    setWorkspaceChanges(null);
+    resetWorkspaceChanges();
     setChangeDetailResource(emptyKeyedResource());
     setGitHistoryResource(emptyKeyedResource());
     setCommitHistoryOpen(false);
@@ -564,11 +548,10 @@ export function WorkspacePanel({
     lastChangeListRequestIdRef.current = null;
     dismissedChangeListRequestIdRef.current = null;
     if (viewMode === "changed") {
-      setSelectedChangePath(null);
       setOpenTabs([]);
       setPreviewResource(emptyKeyedResource());
     }
-  }, [open, viewMode, workspaceScopeKey]);
+  }, [open, resetWorkspaceChanges, viewMode, workspaceScopeKey]);
 
   useEffect(() => () => {
     workingTreeRefreshSchedulerRef.current?.cancel();
@@ -1749,17 +1732,25 @@ export function WorkspacePanel({
                   {workspaceGitWarning}
                 </div>
               )}
+              {overviewResourceStatus && (
+                <div className={`workspace-resource-status${overviewResourceStatus.error ? " workspace-resource-status--error" : ""}`} role={overviewResourceStatus.error ? "alert" : "status"}>
+                  {overviewResourceStatus.text}
+                </div>
+              )}
               {groupedChangesLayout ? (
                 <>
                   {sessionChanges.length > 0 && renderChangeScope(t("context.sessionChanges"), sessionChanges)}
                   {gitWorkingChanges.length > 0 && renderChangeScope(t("workspace.workingChanges"), gitWorkingChanges)}
-                  {!loadingHistory && !hasFileChanges && !workspaceGitWarning && (
+                  {!loadingWorkspaceChanges && !workspaceChangesErr && !hasFileChanges && !workspaceGitWarning && (
                     <div className="workspace-empty">{t("context.noChanges")}</div>
                   )}
-                  {loadingHistory ? (
-                    <div className="workspace-empty">{t("workspace.loading")}</div>
-                  ) : (
-                    <section className={`workspace-commit-history${commitHistoryOpen ? " workspace-commit-history--open" : ""}`}>
+                  {loadingWorkspaceChanges && !workspaceChanges && (
+                    <div className="workspace-empty">{t("workspace.loadingChanges")}</div>
+                  )}
+                  {workspaceChangesErr && !workspaceChanges && (
+                    <div className="workspace-empty workspace-empty--error">{t("workspace.changesUnavailable")}: {workspaceChangesErr}</div>
+                  )}
+                  <section className={`workspace-commit-history${commitHistoryOpen ? " workspace-commit-history--open" : ""}`}>
                       <button
                         className="workspace-commit-history__toggle"
                         type="button"
@@ -1773,7 +1764,13 @@ export function WorkspacePanel({
                         <span>{t("workspace.commitHistory")}</span>
                         <small>{t("workspace.commitHistoryMeta", { count: gitHistory.length })}</small>
                       </button>
-                      {commitHistoryOpen && (
+                      {commitHistoryOpen && (loadingHistory && gitHistory.length === 0 ? (
+                        <div className="workspace-empty">{t("workspace.loading")}</div>
+                      ) : gitHistoryErr && gitHistory.length === 0 ? (
+                        <div className="workspace-empty workspace-empty--error">{t("workspace.historyUnavailable")}: {gitHistoryErr}</div>
+                      ) : gitHistory.length === 0 ? (
+                        <div className="workspace-empty">{t("workspace.noCommitHistory")}</div>
+                      ) : (
                         <div className="workspace-git-history__list">
                           {gitHistory.map((commit) => (
                             <div key={commit.hash} className={`workspace-git-history__item${expandedCommit === commit.hash ? " workspace-git-history__item--expanded" : ""}`}>
@@ -1818,16 +1815,17 @@ export function WorkspacePanel({
                             </div>
                           ))}
                         </div>
-                      )}
+                      ))}
                     </section>
-                  )}
                 </>
               ) : (
                 <>
                   {sessionChanges.length > 0 && renderChangeScope(t("workspace.changedTab"), sessionChanges)}
                   {gitWorkingChanges.length > 0 && renderChangeScope(t("workspace.workingChanges"), gitWorkingChanges)}
-                  {loadingHistory ? (
+                  {loadingHistory && gitHistory.length === 0 ? (
                     <div className="workspace-empty">{t("workspace.loading")}</div>
+                  ) : gitHistoryErr && gitHistory.length === 0 ? (
+                    <div className="workspace-empty workspace-empty--error">{t("workspace.historyUnavailable")}: {gitHistoryErr}</div>
                   ) : gitHistory.length === 0 && !hasFileChanges ? (
                     <div className="workspace-empty">{workspaceGitWarning ? t("workspace.gitChangesUnknown") : t("workspace.noChanges")}</div>
                   ) : (
@@ -1930,11 +1928,13 @@ export function WorkspacePanel({
                 >
                   {commitHistoryOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   <span>{t("workspace.commitHistory")}</span>
-                  <small>{loadingHistory ? t("workspace.loading") : t("workspace.commitHistoryMeta", { count: gitHistory.length })}</small>
+                  <small>{loadingHistory && gitHistory.length === 0 ? t("workspace.loading") : t("workspace.commitHistoryMeta", { count: gitHistory.length })}</small>
                 </button>
                 {commitHistoryOpen && (
-                  loadingHistory ? (
+                  loadingHistory && gitHistory.length === 0 ? (
                     <div className="workspace-empty">{t("workspace.loading")}</div>
+                  ) : gitHistoryErr && gitHistory.length === 0 ? (
+                    <div className="workspace-empty workspace-empty--error">{t("workspace.historyUnavailable")}: {gitHistoryErr}</div>
                   ) : gitHistory.length === 0 ? (
                     <div className="workspace-empty">{t("workspace.noCommitHistory")}</div>
                   ) : (

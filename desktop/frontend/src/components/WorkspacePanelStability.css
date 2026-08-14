@@ -1,6 +1,8 @@
 .workspace-resource-status {
-  position: sticky;
+  position: absolute;
   top: 0;
+  right: 0;
+  left: 0;
   z-index: var(--z-workspace-status);
   padding: 3px 8px;
   border-bottom: 1px solid var(--border);
@@ -8,10 +10,16 @@
   color: var(--muted);
   font-size: var(--text-xs);
   line-height: 1.4;
+  pointer-events: none;
 }
 
 .workspace-resource-status--error {
   color: var(--danger);
+}
+
+.workspace-git-history,
+.workspace-current-change__body {
+  position: relative;
 }
 
 .layout--workspace-overlay .workbench-dock--overlay {

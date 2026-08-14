@@ -58,12 +58,6 @@ func (a *App) catalogWorkspaceAvailability(catalog *sessioncatalog.Catalog, scop
 	return availability
 }
 
-// catalogWorkspaceScanReady is retained for callers compiled against the old
-// helper; ready now means usable, while page metadata reports completeness.
-func (a *App) catalogWorkspaceScanReady(catalog *sessioncatalog.Catalog, scope, workspaceRoot string) bool {
-	return a.catalogWorkspaceAvailability(catalog, scope, workspaceRoot).usable
-}
-
 func (a *App) mergeMetadataTopics(req ProjectTopicPageRequest, page ProjectTopicPage) ProjectTopicPage {
 	if strings.TrimSpace(req.Cursor) != "" {
 		return page
