@@ -124,18 +124,22 @@ func TestMarkdownMediaTokenBindsAuthorizedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(path); err != nil {
+	replacementPath := filepath.Join(workspace, "replacement.png")
+	if err := os.WriteFile(replacementPath, markdownImageTestPNGConfig(10_000, 4_001), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, markdownImageTestPNGConfig(10_000, 4_001), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	replacement, err := os.Stat(path)
+	replacement, err := os.Stat(replacementPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if os.SameFile(authorized, replacement) {
 		t.Fatal("test replacement must have a different file identity")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacementPath, path); err != nil {
+		t.Fatal(err)
 	}
 
 	app := NewApp()
