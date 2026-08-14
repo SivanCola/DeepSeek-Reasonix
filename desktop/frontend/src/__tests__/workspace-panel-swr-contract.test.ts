@@ -47,5 +47,12 @@ assert.match(
   /\.workspace-resource-status\s*\{[\s\S]*?position:\s*absolute;/,
   "refresh and error badges overlay stale content without changing its layout",
 );
+assert.match(
+  panel,
+  /onScroll=\{\(event\) => \{\s*rememberWorkspaceTreeScroll\(workspaceMemoryKey, event\.currentTarget\.scrollTop\);/,
+  "tree scrolling updates memory without synchronously serializing localStorage",
+);
+assert.match(panel, /addEventListener\("scrollend", flush\)/, "tree scroll persistence flushes at the native scroll boundary");
+assert.match(panel, /addEventListener\("pagehide", flush\)/, "pending tree scroll state flushes before page suspension");
 
 console.log("  PASS  workspace panel SWR and per-project restoration contract");

@@ -42,8 +42,10 @@ import { createWorkspaceRefreshScheduler } from "../lib/workspaceRefreshSchedule
 import { shouldScrollWorkspaceTreeSelection } from "../lib/workspaceTreeReveal";
 import { mergeWorkspaceSearchResults } from "../lib/workspaceTreeSearch";
 import {
+  flushWorkspaceTreeMemory,
   readWorkspaceTreeMemory,
   rememberWorkspaceTreeOpenDirs,
+  rememberWorkspaceTreeScroll,
   rememberWorkspaceTreeState,
   touchWorkspaceTreeVisit,
   workspaceTreeVisitId,
@@ -350,6 +352,24 @@ export function WorkspacePanel({
       });
     }
   }, [creationMode, legacyTreeWidth, onRestoreDockWidths, workspaceMemoryKey, workspaceMemoryVisitId]);
+
+  useEffect(() => {
+    if (!open) return;
+    const tree = treeRef.current;
+    const flush = () => flushWorkspaceTreeMemory();
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    tree?.addEventListener("scrollend", flush);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    return () => {
+      tree?.removeEventListener("scrollend", flush);
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+      flush();
+    };
+  }, [open, workspaceMemoryKey]);
 
   useEffect(() => {
     if (memoryRestorePendingRef.current) return;
@@ -2140,7 +2160,7 @@ export function WorkspacePanel({
           ref={treeRef}
           onContextMenu={openTreeBlankMenu}
           onScroll={(event) => {
-            rememberWorkspaceTreeState(workspaceMemoryKey, { scrollTop: event.currentTarget.scrollTop });
+            rememberWorkspaceTreeScroll(workspaceMemoryKey, event.currentTarget.scrollTop);
           }}
           style={{
             height: "100%",

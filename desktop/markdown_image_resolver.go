@@ -75,6 +75,13 @@ func (a *App) ResolveMarkdownImageForTab(tabID, source string) MarkdownImageView
 	if kind != "image" {
 		return MarkdownImageView{Filename: info.Name(), Size: info.Size(), OpenHref: openHref, ErrorCode: "unsupported-type"}
 	}
+	if err := validateMarkdownImageFile(path, mimeType, info.Size()); err != nil {
+		code := "invalid-image"
+		if errors.Is(err, errMarkdownImageTooLarge) {
+			code = "too-large"
+		}
+		return MarkdownImageView{Filename: info.Name(), Size: info.Size(), OpenHref: openHref, ErrorCode: code}
+	}
 	token := a.ensureMediaTokenStore().create(path, info.Name(), mimeType, kind, info.Size(), info.ModTime())
 	return MarkdownImageView{
 		URL:      "/__reasonix_workspace_media/" + token + "/" + url.PathEscape(info.Name()),
@@ -137,8 +144,14 @@ func resolveMarkdownDataImage(source string) MarkdownImageView {
 	if len(data) > remoteMarkdownImageMaxBytes {
 		return MarkdownImageView{ErrorCode: "too-large"}
 	}
-	_, detected := safeRemoteMarkdownImage(data)
+	validated, detected := safeRemoteMarkdownImage(data)
 	if detected != declared || detected == "image/svg+xml" {
+		return MarkdownImageView{ErrorCode: "invalid-data"}
+	}
+	if err := validateMarkdownImageBytes(validated, detected); err != nil {
+		if errors.Is(err, errMarkdownImageTooLarge) {
+			return MarkdownImageView{ErrorCode: "too-large"}
+		}
 		return MarkdownImageView{ErrorCode: "invalid-data"}
 	}
 	return MarkdownImageView{URL: source, Mime: detected, Size: int64(len(data))}
