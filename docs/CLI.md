@@ -29,7 +29,6 @@ Running `reasonix` without a subcommand starts the interactive terminal UI. Use
 | Flag | Purpose |
 | --- | --- |
 | `--model NAME` | Select a configured provider or `provider/model` reference. |
-| `--preset`, `--profile` | Deprecated and ignored. Reasonix derives one adaptive standard execution per task; the flags are accepted for one compatibility version. |
 | `--effort LEVEL` | Override reasoning effort for this session. |
 | `--max-steps N` | Set a one-off maximum tool-call round budget; `0` uses automatic execution. |
 | `--dir PATH` | Change the workspace root before loading config and tools. |
@@ -403,13 +402,12 @@ single-key shortcuts.
 | `Ctrl+Y` | Toggle YOLO independently of the composer-mode cycle. |
 
 The responsive footer keeps interaction state on the left and, when space
-allows, places model, effort, and execution setting on the right. Its second row shows
+allows, places model and effort on the right. Its second row shows
 available repository and session telemetry such as cache hit rate, context use,
 compaction headroom, background jobs, and balance. `ready` means the composer is
 idle; that slot changes when a picker, approval, image paste, shell mode, or
 other interaction needs attention. Narrow terminals move or compact complete
-groups instead of cutting labels in half. Visible labels and execution-setting values
-follow `/language`.
+groups instead of cutting labels in half. Visible labels follow `/language`.
 
 Use `/theme auto|light|dark` to select the terminal background mode, or choose a
 named accent from `/theme`. Both composer borders, the insertion cursor,
@@ -468,8 +466,7 @@ Switching model or effort rebuilds the runtime while preserving the
 active conversation, session-scoped permission overrides, additional directory
 access, and session ownership. `/reload` uses the same fail-atomic rebuild.
 Execution modes no longer exist: planning, verification, and review strength
-follow task risk per turn. `/preset`, `/work-mode`, and `/profile` remain
-parseable for one compatibility version and do nothing.
+follow task risk per turn.
 
 ## Session catalog diagnostics
 

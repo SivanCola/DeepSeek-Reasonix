@@ -22,14 +22,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 	"unicode/utf16"
 
 	"reasonix/internal/ablation"
 	"reasonix/internal/agent"
-	"reasonix/internal/agentpreset"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
@@ -265,7 +263,6 @@ func configureCLIThemeFromConfigForTTYOutput() {
 // passes false so the session UI is reachable before a key is set. sink receives
 // the agent's typed event stream — runAgent passes a TextSink that renders to
 // stdout, the TUI passes an event-channel sink so events become tea.Msgs.
-// profile selects economy|balanced|delivery (empty = balanced/full).
 // workspaceRoot pins the project root explicitly (from --dir); empty falls back
 // to git-root detection.
 func setupProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, workspaceRoot string) (*control.Controller, error) {
@@ -410,27 +407,6 @@ func parseRuntimeProfile(value string) (string, error) {
 	}
 }
 
-// deprecatedModeNoticeOnce guards the one-per-process standard-execution notice
-// for deprecated --preset/--profile flags.
-var deprecatedModeNoticeOnce sync.Once
-
-// acceptDeprecatedModeFlag validates and ignores a deprecated mode flag value,
-// printing the standard-execution notice at most once per process.
-func acceptDeprecatedModeFlag(raw string) error {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	label, err := parseRuntimeProfile(raw)
-	if err != nil {
-		return err
-	}
-	deprecatedModeNoticeOnce.Do(func() {
-		fmt.Fprintln(os.Stderr, agentpreset.DeprecatedNotice)
-	})
-	_ = label
-	return nil
-}
-
 // chdirTo honours --dir: it switches the working directory before anything reads
 // it, so config discovery, the sandbox root, and file tools all resolve from the
 // chosen project root. Returns 2 (already reported) on failure, 0 otherwise.
@@ -506,11 +482,14 @@ func registerContinueFlag(fs *pflag.FlagSet) *bool {
 
 func runAgent(args []string, version string) int {
 	defer closeCLIUsageCatalogs()
+	args, deprecatedMode, err := consumeDeprecatedModeFlags(args, "profile", "preset")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
 	fs := pflag.NewFlagSet("run", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
-	presetFlag := fs.String("preset", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
 	maxSteps := fs.Int("max-steps", 0, "one-off max tool-call rounds (0 = automatic)")
 	showThinking := fs.Bool("show-thinking", false, "show thinking text instead of the collapsed thinking marker")
 	metricsPath := fs.String("metrics", "", "write a JSON token/cache/cost summary of the run to this path")
@@ -557,7 +536,7 @@ func runAgent(args []string, version string) int {
 		}
 		format = runOutputEventsJSONL
 	}
-	if err := acceptDeprecatedModeFlag(firstNonEmpty(strings.TrimSpace(*profileFlag), strings.TrimSpace(*presetFlag))); err != nil {
+	if err := acceptDeprecatedModeFlag(deprecatedMode); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
@@ -649,7 +628,7 @@ func runAgent(args []string, version string) int {
 	}
 	sessionMode := cliTelemetrySessionMode(*cont, strings.TrimSpace(*resume) != "", *copySession)
 	reporter := startCLITelemetry(cfg, telemetry.Options{
-		Version: version, Interactive: false, CLIMode: "run", Profile: "balanced",
+		Version: version, Interactive: false, CLIMode: "run",
 		PermissionMode: *permissionMode, SessionMode: sessionMode,
 	})
 
@@ -804,10 +783,13 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	if opts.command == "" {
 		opts.command = "serve"
 	}
+	args, deprecatedMode, err := consumeDeprecatedModeFlags(args, "profile", "preset")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
 	fs := flag.NewFlagSet(opts.command, flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
-	presetFlag := fs.String("preset", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
 	maxSteps := fs.Int("max-steps", 0, "one-off max tool-call rounds (0 = automatic)")
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
 	resume := fs.String("resume", "", "resume a saved session file")
@@ -849,7 +831,7 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 			return 2
 		}
 	}
-	if err := acceptDeprecatedModeFlag(firstNonEmpty(strings.TrimSpace(*profileFlag), strings.TrimSpace(*presetFlag))); err != nil {
+	if err := acceptDeprecatedModeFlag(deprecatedMode); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
@@ -989,11 +971,14 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 // prompt loop that keeps conversation context across turns. Exit with
 // 'exit'/'quit' or Ctrl-D.
 func chatREPL(args []string, version string) int {
+	args, deprecatedMode, err := consumeDeprecatedModeFlags(args, "profile", "preset")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
 	fs := pflag.NewFlagSet("reasonix", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
-	presetFlag := fs.String("preset", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
 	maxSteps := fs.Int("max-steps", 0, "one-off max tool-call rounds (0 = automatic)")
 	cont := registerContinueFlag(fs)
 	resume := fs.StringP("resume", "r", "", "resume by session ID/query, or open the picker when no value is given")
@@ -1017,7 +1002,7 @@ func chatREPL(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
-	if err := acceptDeprecatedModeFlag(firstNonEmpty(strings.TrimSpace(*profileFlag), strings.TrimSpace(*presetFlag))); err != nil {
+	if err := acceptDeprecatedModeFlag(deprecatedMode); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
@@ -1097,7 +1082,7 @@ func chatREPL(args []string, version string) int {
 	}
 	sessionMode := cliTelemetrySessionMode(*cont, resumeValue != "", *copySession)
 	reporter := startCLITelemetry(cfg, telemetry.Options{
-		Version: version, Interactive: isInteractive(), CLIMode: "tui", Profile: "balanced",
+		Version: version, Interactive: isInteractive(), CLIMode: "tui",
 		PermissionMode: *permissionMode, SessionMode: sessionMode,
 	})
 

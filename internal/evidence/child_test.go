@@ -91,6 +91,23 @@ func TestClassifyMutationRisk(t *testing.T) {
 	}
 }
 
+func TestMutationRiskIncludesEarlierHighRiskMutation(t *testing.T) {
+	ledger := NewLedger()
+	ledger.Record(ReceiptFromToolCall("edit_file", json.RawMessage(`{"path":"internal/auth/session.go"}`), true, false))
+	ledger.Record(ReceiptFromToolCall("edit_file", json.RawMessage(`{"path":"docs/GUIDE.md"}`), true, false))
+
+	latest, ok := ledger.LatestSuccessfulMutationIndex()
+	if !ok {
+		t.Fatal("expected mutations")
+	}
+	if got := ledger.MutationRiskAfter(latest); got != RiskLow {
+		t.Fatalf("latest-only risk = %s, want low test precondition", got)
+	}
+	if got := ledger.MutationRisk(); got != RiskHigh {
+		t.Fatalf("turn risk = %s, want earlier auth mutation to keep it high", got)
+	}
+}
+
 func TestStructuredReviewReportGate(t *testing.T) {
 	ledger := NewLedger()
 	ledger.Record(ReceiptFromToolCall("edit_file", json.RawMessage(`{"path":"internal/a.go"}`), true, false))

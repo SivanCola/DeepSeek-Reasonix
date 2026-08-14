@@ -161,3 +161,48 @@ func TestTaskPolicyRequiresPostMutationVerification(t *testing.T) {
 		t.Fatalf("readiness after verification = %+v, want ready", got)
 	}
 }
+
+func TestTaskPolicyAtomicContractRejectsFinalWithoutMutation(t *testing.T) {
+	policy := taskpolicy.Derive(taskpolicy.Input{Raw: "fix the typo in README.md", Anchored: true})
+	if !policy.RequireAtomicContract {
+		t.Fatal("test setup: expected atomic policy")
+	}
+	ledger := readinessLedger(evidence.Receipt{ToolName: "read_file", Success: true, Read: true, Paths: []string{"README.md"}})
+	a := &Agent{
+		task: taskRuntime{ledger: ledger},
+		turn: turnRuntime{policy: policy, policySet: true},
+	}
+
+	got := a.finalReadinessCheckFor()
+	if !strings.Contains(got.reason, "atomic modification contract") || got.missingMutation != 1 {
+		t.Fatalf("readiness = %+v, want missing atomic mutation", got)
+	}
+	a.armLoopGuardPass(ledger.Len())
+	if got := a.finalReadinessCheckFor(); got.reason == "" {
+		t.Fatal("loop guard must not convert a missing atomic mutation into completion")
+	}
+
+	ledger.Record(evidence.Receipt{ToolName: "edit_file", Success: true, Write: true, Mutation: true, Paths: []string{"README.md"}})
+	if got := a.finalReadinessCheckFor(); got.reason != "" {
+		t.Fatalf("readiness after mutation = %+v, want ready", got)
+	}
+}
+
+func TestPolicyEscalationIncludesEveryTurnMutation(t *testing.T) {
+	ledger := readinessLedger(
+		evidence.Receipt{ToolName: "edit_file", Success: true, Write: true, Mutation: true, Paths: []string{"internal/auth/session.go"}},
+		evidence.Receipt{ToolName: "edit_file", Success: true, Write: true, Mutation: true, Paths: []string{"docs/GUIDE.md"}},
+	)
+	a := &Agent{
+		task: taskRuntime{ledger: ledger},
+		turn: turnRuntime{
+			policy:    taskpolicy.Derive(taskpolicy.Input{Raw: "fix the typo in README.md", Anchored: true}),
+			policySet: true,
+		},
+	}
+
+	a.escalatePolicyFromEvidence()
+	if a.turn.policy.Risk != taskpolicy.RiskHigh || a.turn.policy.Review != taskpolicy.ReviewForced {
+		t.Fatalf("policy after evidence = %+v, want high-risk forced review", a.turn.policy)
+	}
+}

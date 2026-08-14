@@ -177,7 +177,7 @@ code; unsent counters stay in a bounded local queue for a later invocation.
 The ping contains a dedicated random 128-bit CLI install ID, CLI version, OS,
 architecture, and the `cli` surface marker. Counter batches use that same ID for
 daily active-install deduplication and contain only fixed buckets such as CLI
-mode/profile, permission/session mode, turn latency, finish reason, cache-hit
+surface, permission/session mode, turn latency, finish reason, cache-hit
 range, generic Provider/tool error class, compaction, recovery counters, and
 normalized UI language. This ID is separate from the desktop install ID and is
 not an account, hardware, repository, or session identifier.
@@ -616,13 +616,12 @@ Use `/theme auto|light|dark` to select the background mode, or `/theme <style>`
 to select one of the named accent palettes shown by bare `/theme`.
 
 The responsive footer keeps the active Ask/Auto/Plan or YOLO posture and current
-interaction state on the left. On wider terminals, model, effort, and work mode
+interaction state on the left. On wider terminals, model and effort
 stay together on the right; a second row shows available Git identity, cache hit
 rate, context use, compaction headroom, jobs, and balance. `ready` is the idle
 composer state, not a model-health check. Pickers, approvals, image paste, shell
 mode, and other active interactions replace it. Narrow terminals move, wrap, or
-compact whole groups; labels and displayed work-mode values follow `/language`,
-while `/work-mode` command arguments remain the stable English identifiers.
+compact whole groups; visible labels follow `/language`.
 
 Chat and transcript shortcuts:
 
@@ -973,7 +972,7 @@ convenient.
 ## Slash commands
 
 In an interactive `reasonix` session, built-in commands (`/compact`, `/context`, `/new`, `/clear`, `/rewind`,
-`/tree`, `/branch`, `/switch`, `/todo`, `/model`, `/work-mode`, `/mcp`, `/skills`, `/hooks`,
+`/tree`, `/branch`, `/switch`, `/todo`, `/model`, `/mcp`, `/skills`, `/hooks`,
 `/memory`, `/goal`, `/output-style`, `/sandbox`, `/language`,
 `/reasoning-language`, `/help`) run
 locally — `/help` lists them all. Built-in **skills** such as `/init`,
@@ -1319,7 +1318,7 @@ subagents with only read-only research tools plus safe foreground bash, return
 only the final answer, and do not create resumable subagent transcripts.
 Read-only nested delegation may be available until `max_subagent_depth` is
 reached, but writer-capable `task` / `run_skill` remain unavailable inside these
-read-only child registries. Execution settings share one tool surface: call
+read-only child registries. Every task shares one tool surface: call
 `use_capability` for `read_only_skill` and other optional tools. Subsequent
 writer calls still pass through Permissions/Sandbox.
 
@@ -1388,10 +1387,9 @@ is narrower than the dedicated Planner: the Planner accepts authorized opaque
 non-destructive MCP, while a strict child requires an explicit reader hint and
 never exposes writers at all.
 
-Reasonix runs a single adaptive **standard execution**. There is no startup
-execution setting: planning depth, verification breadth, and independent review
-follow the task's risk automatically, per turn. `--preset` and legacy
-`--profile` are accepted for one compatibility version and ignored.
+Reasonix runs a single adaptive **standard execution**: planning depth,
+verification breadth, and independent review follow the task's risk
+automatically, per turn.
 
 Every task shares the same provider-visible core tool surface: direct
 read/bash/edit/write, background-shell lifecycle tools, `ask`/`compress` when
@@ -1421,12 +1419,6 @@ What adapts is host policy, not the tool list:
 Meta tools such as `task`, `run_skill`, and `review` are not counted as mutations
 by themselves — only real child writes are. Read-only analysis remains available
 without forcing a write.
-
-`/preset`, `/work-mode`, and `/profile` remain parseable in the TUI for one
-compatibility version; they print a deprecation notice and change nothing.
-Desktop has no execution-mode control at all; tab metadata keeps the deprecated
-`agentPreset`/`tokenMode` fields pinned to safe values (`balanced`/`full`) for
-one compatibility version so older clients keep parsing.
 
 For interactive frontends, Plan Mode is always an explicit user choice. Select
 Plan in the desktop collaboration-mode control or cycle to Plan with

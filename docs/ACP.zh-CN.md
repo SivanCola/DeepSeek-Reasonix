@@ -26,9 +26,8 @@ reasonix acp
 reasonix acp --model deepseek-pro
 ```
 
-客户端未覆盖模型时，`--model` 用于选择启动模型。`--profile`（及 `--preset`）已弃用
-并忽略：Reasonix 使用同一套自适应标准执行，规划、验证与复查强度随任务风险自动调整，
-不存在需要配置的执行设定。
+客户端未覆盖模型时，`--model` 用于选择启动模型。Reasonix 使用同一套自适应标准执行，
+规划、验证与复查强度随任务风险自动调整。
 
 标准输出专用于 ACP 消息，Reasonix 会把诊断写入标准错误，因此 host 不应合并这两个
 流。尚未配置 provider 时先运行 `reasonix setup`；initialize 响应也会声明一个启动

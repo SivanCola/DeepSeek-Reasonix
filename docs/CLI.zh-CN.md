@@ -24,7 +24,6 @@ reasonix --dir /path/to/project
 | 参数 | 用途 |
 | --- | --- |
 | `--model NAME` | 选择已配置的 provider 或 `provider/model` 引用。 |
-| `--preset`、`--profile` | 已弃用并忽略。Reasonix 对每个任务自适应地使用同一套标准执行；旧参数仅为兼容一个版本而保留。 |
 | `--effort LEVEL` | 覆盖当前会话的 reasoning effort。 |
 | `--max-steps N` | 为本次运行设置工具调用轮数上限；`0` 使用自动执行。 |
 | `--dir PATH` | 加载配置和工具前切换 workspace 根目录。 |
@@ -402,8 +401,7 @@ SSH 下远端进程无法读取本机剪贴板，请使用终端粘贴快捷键�
 切换模型或 effort 会重建运行时，同时保留当前对话、会话级权限覆盖、附加目录
 访问权限和 session ownership。`/reload` 使用同一套失败原子重建语义。
 Reasonix 只有一种自适应标准执行：规划、验证与复查强度随任务风险自动调整，
-不再存在执行模式。`/preset`、`/work-mode` 与 `/profile` 仅兼容保留一个版本，
-可以解析但不再产生任何效果。
+不再存在执行模式。
 
 用量统计使用独立的可丢弃 rollup 投影：
 reasonix catalogs reindex usage [--json]

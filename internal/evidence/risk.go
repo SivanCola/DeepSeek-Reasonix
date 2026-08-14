@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// RiskLevel classifies the latest post-mutation change set for adaptive review.
+// RiskLevel classifies a post-mutation change set for adaptive review.
 type RiskLevel string
 
 const (
@@ -103,7 +103,7 @@ func ClassifyMutationRisk(receipts []Receipt, after int) RiskLevel {
 	return RiskMedium
 }
 
-// MutationRiskAfter classifies risk from the ledger using the latest mutation.
+// MutationRiskAfter classifies risk from the ledger starting at one mutation.
 func (l *Ledger) MutationRiskAfter(after int) RiskLevel {
 	if l == nil {
 		return RiskLow
@@ -112,6 +112,13 @@ func (l *Ledger) MutationRiskAfter(after int) RiskLevel {
 	receipts := append([]Receipt(nil), l.receipts...)
 	l.mu.Unlock()
 	return ClassifyMutationRisk(receipts, after)
+}
+
+// MutationRisk classifies all successful mutations in the current ledger. Risk
+// ratchets must use the complete turn scope: a later low-risk edit must never
+// hide an earlier security-sensitive or opaque mutation.
+func (l *Ledger) MutationRisk() RiskLevel {
+	return l.MutationRiskAfter(-1)
 }
 
 // PathsSince returns distinct paths from successful mutation/write receipts at

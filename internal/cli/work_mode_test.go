@@ -46,21 +46,64 @@ func TestParseAgentPresetAcceptsLegacyLabels(t *testing.T) {
 	}
 }
 
-func TestWorkModeCompletionPublishesPrimaryCommandNotAliases(t *testing.T) {
+func TestWorkModeCompletionHidesCompatibilityCommands(t *testing.T) {
 	m := newTestChatTUI()
-	if !hasLabel(m.slashItems(), "/preset") {
-		t.Fatal("slash completion missing /preset")
-	}
-	if hasLabel(m.slashItems(), "/profile") {
-		t.Fatal("technical /profile alias should not duplicate the primary command in the slash menu")
-	}
-	if hasLabel(m.slashItems(), "/work-mode") {
-		t.Fatal("legacy /work-mode alias should not duplicate the primary command in the slash menu")
+	for _, command := range []string{"/preset", "/profile", "/work-mode"} {
+		if hasLabel(m.slashItems(), command) {
+			t.Fatalf("compatibility command %q should not appear in slash completion", command)
+		}
 	}
 	for _, input := range []string{"/preset ", "/work-mode ", "/profile "} {
 		if _, _, ok := m.slashArgItems(input); ok {
 			t.Fatalf("%q should not offer execution-mode argument completion", input)
 		}
+	}
+}
+
+func TestConsumeDeprecatedModeFlagsKeepsCompatibilityOutOfPublicFlagSets(t *testing.T) {
+	clean, mode, err := consumeDeprecatedModeFlags([]string{
+		"--model", "deepseek", "--profile=delivery", "fix it", "--preset", "light",
+	}, "profile", "preset")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "delivery" {
+		t.Fatalf("mode = %q, want profile precedence delivery", mode)
+	}
+	if got := strings.Join(clean, " "); got != "--model deepseek fix it" {
+		t.Fatalf("clean args = %q", got)
+	}
+
+	clean, mode, err = consumeDeprecatedModeFlags([]string{"run", "--", "--profile", "delivery"}, "profile")
+	if err != nil || mode != "" || strings.Join(clean, " ") != "run -- --profile delivery" {
+		t.Fatalf("post-boundary args: clean=%v mode=%q err=%v", clean, mode, err)
+	}
+	if _, _, err := consumeDeprecatedModeFlags([]string{"--profile"}, "profile"); err == nil {
+		t.Fatal("missing compatibility flag value must fail")
+	}
+}
+
+func TestLegacyModeFlagsAreHiddenFromCommandHelp(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func() int
+	}{
+		{name: "run", run: func() int { return runAgent([]string{"--help"}, "dev") }},
+		{name: "chat", run: func() int { return chatREPL([]string{"--help"}, "dev") }},
+		{name: "web", run: func() int { return runWeb([]string{"--help"}) }},
+		{name: "acp", run: func() int { return acpCommand([]string{"--help"}, "dev") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := captureStdout(t, func() {
+				if code := tt.run(); code != 0 {
+					t.Fatalf("help exit code = %d, want 0", code)
+				}
+			})
+			if strings.Contains(out, "--profile") || strings.Contains(out, "--preset") {
+				t.Fatalf("legacy mode flag leaked into help:\n%s", out)
+			}
+		})
 	}
 }
 

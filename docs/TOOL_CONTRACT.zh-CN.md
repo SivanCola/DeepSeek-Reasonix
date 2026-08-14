@@ -49,10 +49,9 @@ Skill/MCP 的 require/prefer 路由受门禁约束（只读回答同样不能跳
 强制结构化 review/security_review，且 `review_report` 的 `reviewed_paths` 必须有宿主观测到的
 read/diff 证据。
 
-## 统一 Boot 工具面（所有执行设置）
+## 统一 Boot 工具面
 
-不再按执行模式切换工具面。每个会话，包括仍发送已弃用 preset/profile 标签的会话，都使用同一套
-provider 可见核心工具和同一个 `use_capability` 代理。
+每个会话都使用同一套 provider 可见核心工具和同一个 `use_capability` 代理。
 
 双模型 Planner 与全部 task/fleet 子 Agent 同样使用 `use_capability`（且从不暴露直接
 `mcp__*` schema）。Planner 与普通可写子 Agent 可调用已安装或项目配置 MCP，不要求
@@ -76,9 +75,7 @@ provider 可见核心工具和同一个 `use_capability` 代理。
 `tools/call` 前，frontend 都会再次复核当前 runtime 的 enable、授权与精确 Host 连接身份；另一个
 项目/tab 在共享 Host 上的同名 client 会在进程、网络或工具分发前被拒绝。
 
-固定代理的 provider 可见 name、description、schema 与顺序不会随 MCP inventory 变化；但 Balanced
-Executor 刻意保留直接 `mcp__*` 工具，因此安装、连接或刷新这些直接工具时，Executor 的整体 provider
-前缀仍可能变化。
+固定代理的 provider 可见 name、description、schema 与顺序不会随 MCP inventory 变化。
 
 `ask`, `docs`, `explore`, `fleet`, `forget`, `history`, `install_skill`, `install_source`,
 `list_sessions`, `lsp_definition`, `lsp_diagnostics`, `lsp_hover`,

@@ -223,7 +223,7 @@ func (a *Agent) deliveryReviewGateFailure() string {
 		return ""
 	}
 	a.emitTurnPhase(event.TurnPhaseReviewing)
-	risk := a.task.ledger.MutationRiskAfter(mutation)
+	risk := a.task.ledger.MutationRisk()
 	// TaskPolicy may force higher review than mutation-risk alone.
 	if a.turn.policySet {
 		switch a.turn.policy.Review {
@@ -237,7 +237,7 @@ func (a *Agent) deliveryReviewGateFailure() string {
 			return ""
 		}
 	}
-	paths := productionPaths(a.task.ledger.PathsSince(mutation))
+	paths := productionPaths(a.task.ledger.PathsSince(-1))
 	hasReviewTool := a.svc.tools != nil && (toolPresent(a.svc.tools, "review") || toolPresent(a.svc.tools, "run_skill") || toolPresent(a.svc.tools, "use_capability"))
 	hasSecurityTool := a.svc.tools != nil && (toolPresent(a.svc.tools, "security_review") || toolPresent(a.svc.tools, "run_skill") || toolPresent(a.svc.tools, "use_capability"))
 	switch risk {

@@ -97,15 +97,6 @@ Reasonix 只有一种执行体验：系统根据任务风险自动选择规划�
 只能返回 Partial、Unverified 或 Blocked，绝不“表面成功”。风险在任务内只升不降：回执
 发现改动触及高风险面或超出初始判断时，策略实时上调并补齐验证与复查。
 
-### 兼容说明
-
-- 旧的 `--preset` / `--profile` 参数、`/preset`、`/work-mode`、`/profile` 命令、ACP 的
-  `agent_preset` / `work_mode` 配置项在兼容期内仍可解析，但不产生任何效果，并提示
-  “Reasonix 已改用自适应标准执行”。
-- 旧会话、旧 tab 中的 `light` / `economy` / `balanced` / `full` / `delivery` 值可正常
-  读取；新写入固定使用安全兼容值 `agentPreset=balanced`、`tokenMode=full`。
-- Plan、Goal、工具审批、模型与推理强度是彼此独立的控制，不是执行模式。
-
 ## 协作方式如何组合
 
 | 组合 | 是否支持 | 说明 |

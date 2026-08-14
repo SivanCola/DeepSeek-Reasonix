@@ -768,7 +768,7 @@ RPC 调用。两者都可按服务器覆盖。
 
 ## 斜杠命令
 
-交互式 `reasonix` 会话里，内置命令（`/compact`、`/context`、`/new`、`/clear`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/work-mode`、`/mcp`、`/skills`、`/hooks`、`/memory`、`/goal`、`/output-style`、`/sandbox`、`/language`、`/reasoning-language`、`/help`）在本地执行——`/help` 可列出全部。
+交互式 `reasonix` 会话里，内置命令（`/compact`、`/context`、`/new`、`/clear`、`/rewind`、`/tree`、`/branch`、`/switch`、`/todo`、`/model`、`/mcp`、`/skills`、`/hooks`、`/memory`、`/goal`、`/output-style`、`/sandbox`、`/language`、`/reasoning-language`、`/help`）在本地执行——`/help` 可列出全部。
 内置 **Skill**（如 `/init`、`/explore`、`/test`、`/reasonix-guide`）也会出现在斜杠菜单，
 并可通过 `run_skill` 调用（正文按需加载；只有索引行进入缓存稳定前缀）。配置或能力排障时
 用 `/reasonix-guide`，它会引导运行 `reasonix doctor capabilities`（见
@@ -1062,9 +1062,8 @@ enable、授权与完整连接身份，因此共享 Host 中另一个项目/tab 
 server 无法在这里提升权限。严格只读边界比独立 Planner 更窄：Planner 接受已授权的 opaque
 非 destructive MCP，而严格只读子会话必须有明确 reader hint，且根本不暴露 writer。
 
-Reasonix 只有一种自适应**标准执行**：不存在启动执行设定，规划深度、验证广度
-与独立复查随任务风险逐 turn 自动调整。`--preset` 与兼容的 `--profile` 仅保留一个
-兼容版本，可以解析但被忽略。
+Reasonix 只有一种自适应**标准执行**：规划深度、验证广度与独立复查随任务风险逐 turn
+自动调整。
 
 所有任务共享同一套 provider 可见核心工具面（直接读/bash/编辑/写入、后台 shell
 生命周期工具，以及稳定的 `use_capability` 代理）。可选工具（搜索、MCP、skills、
@@ -1085,10 +1084,6 @@ provider schema，因此任何任务都不会制造新的工具 schema 缓存前
   Partial、Unverified 或 Blocked 结束，绝不产生 Complete。
 - 风险在 turn 内只升不降：回执发现改动触及高风险面或超出初始判断时，策略实时
   上调并补齐缺失的验证与复查。
-
-TUI 中的 `/preset`、`/work-mode` 与 `/profile` 仅兼容保留一个版本：打印弃用提示，
-不产生任何效果。桌面端没有执行模式入口；tab 元数据中的 `agentPreset`/`tokenMode`
-为兼容旧客户端固定写入安全值（`balanced`/`full`）一版。
 
 交互式前端中的计划模式始终由用户显式选择：桌面端在“协作方式”中选择计划模式，CLI 用
 `Shift+Tab` 切换到 Plan。Reasonix 先生成计划，待用户批准后工作流才切换到实施；规划期间的

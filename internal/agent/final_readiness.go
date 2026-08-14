@@ -104,6 +104,15 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 		}
 	}
 	writer, hasWriter := a.task.ledger.LatestSuccessfulWriterIndex()
+	atomicMutationMissing := false
+	if a.turn.policySet && a.turn.policy.RequireAtomicContract {
+		if _, ok := a.task.ledger.LatestSuccessfulMutationIndex(); !ok {
+			atomicMutationMissing = true
+			out.applies = true
+			out.missingMutation++
+			missing = append(missing, "the atomic modification contract requires a successful mutation before answering")
+		}
+	}
 	deliveryMutation := false
 	deliveryVerificationOnly := false
 	checkpoint := a.task.checkpoint
@@ -160,7 +169,7 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 	}
 	if !hasWriter {
 		if len(missing) > 0 {
-			if a.loopGuardAllowsFinal() {
+			if a.loopGuardAllowsFinal() && !atomicMutationMissing {
 				return out
 			}
 			out.reason = strings.Join(missing, "; ")
@@ -267,8 +276,8 @@ func (a *Agent) escalatePolicyFromEvidence() {
 		return
 	}
 	p := &a.turn.policy
-	if mutation, ok := a.task.ledger.LatestSuccessfulMutationIndex(); ok {
-		switch a.task.ledger.MutationRiskAfter(mutation) {
+	if _, ok := a.task.ledger.LatestSuccessfulMutationIndex(); ok {
+		switch a.task.ledger.MutationRisk() {
 		case evidence.RiskHigh:
 			p.RaiseRisk(taskpolicy.RiskHigh)
 		case evidence.RiskMedium:

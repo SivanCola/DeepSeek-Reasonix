@@ -57,11 +57,10 @@ a required capability); and medium/high-risk mutations force structured
 `review` / `security_review` results via the review-only `review_report` tool,
 whose `reviewed_paths` must be backed by host-observed read/diff receipts.
 
-## Unified Boot Surface (all execution settings)
+## Unified Boot Surface
 
-There is no per-mode tool surface. Every session, including sessions that still
-send a deprecated preset/profile label, uses the same provider-visible core
-tools and the same `use_capability` proxy.
+Every session uses the same provider-visible core tools and the same
+`use_capability` proxy.
 
 The two-model Planner and all task/fleet sub-agents also use `use_capability`
 (and never direct `mcp__*` schemas). Planner and ordinary writer-capable
@@ -98,9 +97,7 @@ authorization, and exact Host connection identity; another project/tab's
 same-name shared client is rejected without process, network, or tool dispatch.
 
 The fixed proxy's provider-visible name, description, schema, and ordering do
-not change when MCP inventory changes. Balanced Executor deliberately retains
-its direct `mcp__*` tools, so its overall provider prefix may still change when
-those direct tools are installed, connected, or refreshed.
+not change when MCP inventory changes.
 
 `ask`, `docs`, `explore`, `fleet`, `forget`, `history`, `install_skill`, `install_source`,
 `list_sessions`, `lsp_definition`, `lsp_diagnostics`, `lsp_hover`,
@@ -116,8 +113,8 @@ without injecting every report into the parent context at once. References are
 restricted to the current conversation lineage and workspace.
 
 `use_capability` (`action` = `list` | `inspect` | `call` | `decline`) is on the
-provider-visible surface for every task (there is no execution setting anymore:
-the adaptive standard execution derives policy from task risk). Optional tools stay registered for host dispatch but are not
+provider-visible surface for every task. The adaptive standard execution derives
+policy from task risk. Optional tools stay registered for host dispatch but are not
 expanded into the top-level provider schema; the model reaches them through
 `use_capability` without cache-breaking schema churn.
 
@@ -136,7 +133,6 @@ coding tools, background-shell lifecycle tools, and the stable capability proxy:
 Optional tools (`glob`, `grep`, `ls`, `web_fetch`, MCP, skills, subagents, docs,
 session history, memory mutation, workflow, and so on) remain in the host
 registry for dispatch. The model lists, inspects, calls, or declines them via
-`use_capability` without changing the provider tool list. Execution settings change
-host planning / verification / review policy, not which tools appear on the
-provider-visible surface. The retired `connect_tool_source` path is no longer
-registered.
+`use_capability` without changing the provider tool list. Task risk changes host
+planning, verification, and review policy, not which tools appear on the
+provider-visible surface. The retired `connect_tool_source` path is no longer registered.

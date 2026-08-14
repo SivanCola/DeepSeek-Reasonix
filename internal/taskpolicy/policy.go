@@ -195,7 +195,7 @@ func Derive(in Input) TaskPolicy {
 		risk = RiskMedium
 	}
 
-	route := chooseRoute(intent, risk, in)
+	route := chooseRoute(intent, risk, in, constraints)
 
 	if constraints.ForbidTests {
 		constraints.Notes = append(constraints.Notes, "forbid_tests")
@@ -218,7 +218,7 @@ func Derive(in Input) TaskPolicy {
 		Review:                review,
 		SecurityClass:         securityClass,
 		PolicyVersion:         PolicyVersion,
-		RequireAtomicContract: intent == taskintent.Mutation && route == RouteDirect && risk == RiskLow,
+		RequireAtomicContract: intent == taskintent.Mutation && route == RouteDirect && risk == RiskLow && !in.GoalActive,
 		AllowExploreSubagent:  risk >= RiskMedium || in.GoalActive,
 		SemanticRouterAllowed: risk >= RiskMedium || securityClass || in.GoalActive,
 	}
@@ -281,6 +281,9 @@ func chooseReview(risk Risk, securityClass bool, in Input, constraints Constrain
 		return ReviewNone
 	}
 	review := reviewForRisk(risk, securityClass)
+	if constraints.RequireFullVerification && review < ReviewForced {
+		review = ReviewForced
+	}
 	if in.GoalActive && review < ReviewForced {
 		review = ReviewForced
 		if securityClass {
@@ -491,13 +494,16 @@ func (p TaskPolicy) AllowsPartialWithoutChecks() bool {
 // plain queries, and anchored single-file atomic edits; light planning for
 // multi-file same-surface work; full planning for cross-surface, structured,
 // Goal-active, and high-risk tasks.
-func chooseRoute(intent Intent, risk Risk, in Input) Route {
+func chooseRoute(intent Intent, risk Risk, in Input, constraints Constraints) Route {
 	if intent == taskintent.Conversation || intent == taskintent.Advisory {
 		if !in.MultiFile && !in.Structured && risk == RiskLow {
 			return RouteDirect
 		}
 	}
 	if risk >= RiskHigh {
+		return RouteFullPlan
+	}
+	if constraints.RequireFullVerification && !constraints.ForbidMutation {
 		return RouteFullPlan
 	}
 	if in.GoalActive && (intent == taskintent.Mutation || in.MultiFile || in.Structured) && !in.Anchored {

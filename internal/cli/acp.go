@@ -34,9 +34,13 @@ import (
 // all diagnostics go to stderr. Each session is assembled by acpFactory, rooted
 // at the cwd the client opens.
 func acpCommand(args []string, version string) int {
+	args, deprecatedMode, err := consumeDeprecatedModeFlags(args, "profile")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		return 2
+	}
 	fs := flag.NewFlagSet("acp", flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
 	plannerFlag := fs.String("planner", "auto", "planner policy: auto | off")
 	networkFlag := fs.String("sandbox-network", "auto", "sandbox network policy: auto | on | off")
 	bashFlag := fs.String("sandbox-bash", "auto", "bash sandbox policy: auto | enforce")
@@ -68,7 +72,7 @@ func acpCommand(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "sandbox-bash must be auto or enforce")
 		return 2
 	}
-	if err := acceptDeprecatedModeFlag(*profileFlag); err != nil {
+	if err := acceptDeprecatedModeFlag(deprecatedMode); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}

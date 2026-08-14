@@ -92,9 +92,9 @@ func TestStandardPolicyMatrix(t *testing.T) {
 			name: "user full-verification request closes the loop",
 			in:   Input{Raw: "finish the refactor with complete verification and closed-loop delivery"},
 			want: TaskPolicy{
-				Intent: taskintent.Mutation, Risk: RiskLow, Route: RouteLightPlan,
+				Intent: taskintent.Mutation, Risk: RiskLow, Route: RouteFullPlan,
 				Constraints: Constraints{RequireFullVerification: true},
-				Evidence:    EvidenceClosedLoop, Verification: VerifyFull, Review: ReviewNone,
+				Evidence:    EvidenceClosedLoop, Verification: VerifyFull, Review: ReviewForced,
 			},
 		},
 	}
@@ -164,6 +164,10 @@ func TestLowRiskHasNoAuxiliaryModelSurfaces(t *testing.T) {
 	}
 	if atomic.AllowExploreSubagent || atomic.SemanticRouterAllowed {
 		t.Fatal("low-risk atomic edit must not allow auxiliary model surfaces")
+	}
+	goalContinuation := Derive(Input{Raw: "fix the typo in README.md", Anchored: true, GoalActive: true})
+	if goalContinuation.RequireAtomicContract {
+		t.Fatal("an active Goal must use its scope-level evidence contract, not a fresh atomic mutation contract")
 	}
 }
 

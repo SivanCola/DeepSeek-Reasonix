@@ -642,7 +642,7 @@ export function Composer({
   guidanceQueuePreviewItems?: readonly string[];
   showContextWindowRing?: boolean;
   // Creation empty-session hero: slim centered composer under the welcome
-  // headline (hides task/profile/approval chrome; keeps model + effort).
+  // headline (hides task/approval chrome; keeps model + effort).
   heroMode?: boolean;
   context?: ContextInfo;
   turnCost?: number;
@@ -737,7 +737,7 @@ export function Composer({
   const moreMenuAnchorRef = useRef<HTMLButtonElement>(null);
   const intentCloseTimerRef = useRef<number | null>(null);
   const moreCloseTimerRef = useRef<number | null>(null);
-  // Creation chrome: hover-open task/profile menus (same pattern as ContextWindowRing).
+  // Creation chrome: hover-open task menus (same pattern as ContextWindowRing).
   const intentHoverTimerRef = useRef<number | null>(null);
   const creationChrome = showContextWindowRing;
   const wasRunningByDraftRef = useRef<Record<string, boolean>>({ [draftKey]: running });
