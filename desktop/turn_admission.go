@@ -81,6 +81,13 @@ func (a *App) beginTabTurn(tabID string, reclaim bool, submissionID ...string) (
 					<-done
 					continue
 				}
+				// Fan-out can end between RuntimeStatus and TurnFinishingDone.
+				// Re-check before reporting busy so that completed boundary retries
+				// instead of preserving the original false rejection window.
+				if !ctrl.RuntimeStatus().Running {
+					abort()
+					continue
+				}
 			}
 			abort()
 			return nil, nil, control.ErrTurnRunning

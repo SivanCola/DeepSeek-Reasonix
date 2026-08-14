@@ -27,11 +27,32 @@ type activeTurnStatusController struct {
 	control.SessionAPI
 }
 
+type expiredTurnFinishingController struct {
+	control.SessionAPI
+	mu              sync.Mutex
+	boundaryChecked bool
+}
+
 func (c *activeTurnStatusController) RuntimeStatus() control.RuntimeStatus {
 	return control.RuntimeStatus{Running: true, Cancellable: true}
 }
 
 func (c *activeTurnStatusController) TurnFinishingDone() (<-chan struct{}, bool) {
+	return nil, false
+}
+
+func (c *expiredTurnFinishingController) RuntimeStatus() control.RuntimeStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return control.RuntimeStatus{Running: !c.boundaryChecked}
+}
+
+func (c *expiredTurnFinishingController) TurnFinishingDone() (<-chan struct{}, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Model fan-out ending after RuntimeStatus observed finishing=true but
+	// before the controller can return the boundary channel.
+	c.boundaryChecked = true
 	return nil, false
 }
 
@@ -237,6 +258,25 @@ func TestBeginTabTurnStillRejectsGenuinelyRunningTurn(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("active-turn admission waited instead of returning ErrTurnRunning")
 	}
+}
+
+func TestBeginTabTurnRetriesWhenFinishingBoundaryExpiresBetweenChecks(t *testing.T) {
+	sink := &tabEventSink{tabID: "tab", ctx: context.Background()}
+	base := control.New(control.Options{Sink: sink})
+	t.Cleanup(base.Close)
+	ctrl := &expiredTurnFinishingController{SessionAPI: base}
+	tab := &WorkspaceTab{ID: "tab", Scope: "global", Ready: true, Ctrl: ctrl, sink: sink}
+	app := &App{tabs: map[string]*WorkspaceTab{tab.ID: tab}, activeTabID: tab.ID}
+	sink.app = app
+
+	admission, _, err := app.beginTabTurn(tab.ID, false, "u-second")
+	if err != nil {
+		t.Fatalf("admission after expired finishing boundary: %v", err)
+	}
+	if admission == nil {
+		t.Fatal("admission after expired finishing boundary returned no token")
+	}
+	admission.abort()
 }
 
 func TestTabEventSinkDropsCorrelationWhenFrontendBindingChanges(t *testing.T) {
