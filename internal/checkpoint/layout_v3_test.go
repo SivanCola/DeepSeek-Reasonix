@@ -79,7 +79,7 @@ func TestV3RetentionRemovesWholeOldTurnDirectories(t *testing.T) {
 	target := filepath.Join(root, "a.txt")
 	s := New(dir, root)
 	s.retainN = 2
-	for turn := 0; turn < 4; turn++ {
+	for turn := range 4 {
 		if err := os.WriteFile(target, []byte{byte('0' + turn)}, 0o644); err != nil {
 			t.Fatal(err)
 		}
