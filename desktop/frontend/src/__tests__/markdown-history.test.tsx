@@ -214,7 +214,8 @@ console.log("\nmarkdown history rendering");
         : this.hasAttribute("data-markdown-scroll-anchor")
           ? Number(this.getAttribute("data-markdown-scroll-anchor")) < 300 ? 500 : 300
           : 0;
-    return { top, bottom: top, left: 0, right: 0, width: 0, height: 0, x: 0, y: top, toJSON: () => ({}) };
+    const height = this.hasAttribute("data-markdown-older-sentinel") ? 1 : 0;
+    return { top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({}) };
   };
   const text = Array.from({ length: 420 }, (_, i) => `Paragraph ${i} with some *content*.`).join("\n\n");
   const root5 = createRoot(rootEl);
@@ -233,7 +234,7 @@ console.log("\nmarkdown history rendering");
 
   await intersectSentinel("[data-markdown-older-sentinel]", true);
   eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "120", "entering the older edge prepends one bounded page");
-  eq(rootEl.scrollTop, 1_200, "prepending compensates for the old leading boundary's measured movement");
+  eq(rootEl.scrollTop, 1_199, "prepending compensates for the old leading block boundary's measured movement");
   await intersectSentinel("[data-markdown-older-sentinel]", true);
   eq(rootEl.querySelector(".md[data-markdown-blocks]")?.getAttribute("data-markdown-visible-blocks"), "120", "a stationary sentinel cannot start a render loop");
   await intersectSentinel("[data-markdown-older-sentinel]", false);

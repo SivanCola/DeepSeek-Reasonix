@@ -185,10 +185,14 @@ export const MarkdownHistory = memo(function MarkdownHistory({
     if (pendingAnchorRef.current?.identity === blocks) return;
     const scroller = rootRef.current?.closest<HTMLElement>(".transcript") ?? null;
     const index = direction === "older" ? blockWindow.start : blockWindow.end;
+    const boundary = sentinel.getBoundingClientRect();
     pendingAnchorRef.current = {
       identity: blocks,
       index,
-      top: sentinel.getBoundingClientRect().top,
+      // The older sentinel sits immediately before the old leading block, so
+      // its bottom is that block's stable boundary. The newer sentinel's top
+      // is already the boundary immediately after the old trailing block.
+      top: direction === "older" ? boundary.bottom : boundary.top,
       scroller,
     };
     moveBlockWindow(direction);
