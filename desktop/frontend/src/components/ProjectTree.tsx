@@ -387,7 +387,6 @@ export function ProjectTree({
   const [catalogStatus, setCatalogStatus] = useState<SessionCatalogStatus>({
     state: "opening", revision: 0, indexed: 0, total: 0, repairPending: 0,
   });
-  const [indexingDone, setIndexingDone] = useState(false);
   const [topicPageState, setTopicPageState] = useState<Record<string, { nextCursor?: string; loading: boolean }>>({});
   const topicPageStateRef = useRef(topicPageState);
   const updateTopicPageState = useCallback((key: string, next: { nextCursor?: string; loading: boolean }) => {
@@ -547,8 +546,9 @@ export function ProjectTree({
       if (filtering || expanded.has(key)) void loadProjectTopics(project);
     }
   }, [closeMenu, expanded, loadProjectTopics, query, timeFilter]);
-  // Snapshot is intentionally shells-only. Preserve already loaded pages by
-  // project key so a metadata refresh does not collapse or blank the sidebar.
+  // Snapshot carries project shells plus lightweight pinned topic shells.
+  // Preserve already loaded pages by project key while reconciling pins, so a
+  // metadata refresh does not collapse or blank the sidebar.
   const refresh = useCallback(async (options?: ProjectTreeRefreshOptions) => {
     const reloadRequestedProjects = (projects: ProjectNode[]) => reloadProjectTreeTopics(projects, options, loadProjectTopicsRef.current);
     try {
@@ -561,13 +561,12 @@ export function ProjectTree({
       if (projectTreeRevisionIsFresh(latestRevisionRef.current, rev)) latestRevisionRef.current = Math.max(latestRevisionRef.current, rev);
       const projects = asArray(snapshot.projects);
       setCatalogStatus(snapshot.catalog);
-      setIndexingDone(Boolean(snapshot.indexingDone));
       setTree((current) => applyRuntimeProjection(projects.map((project) => {
         const previous = current.find((node) => node.key === project.key);
         // Topic pages reload asynchronously. Keep the last painted children
         // until their replacement arrives so a mutation cannot blank every
         // expanded folder for the duration of a catalog scan.
-        return { ...project, children: projectTreeShellChildren(previous?.children) };
+        return { ...project, children: projectTreeShellChildren(previous?.children, project.children) };
       })));
       await reloadRequestedProjects(projects);
     } catch {
@@ -629,17 +628,6 @@ export function ProjectTree({
     }, 200);
     return () => clearTimeout(timer);
   }, [expanded, loadProjectTopics, projectShellSignature, query, timeFilter]);
-
-  // First catalog scan can finish before the frontend subscribed to v2 events.
-  // Reload expanded folders once indexingDone flips so the metadata fallback
-  // is replaced by the scanned projection without requiring New Chat.
-  useEffect(() => {
-    if (!indexingDone) return;
-    for (const project of treeRef.current) {
-      const key = projectNodeKey(project, 0);
-      if (expanded.has(key)) void loadProjectTopics(project);
-    }
-  }, [indexingDone, expanded, loadProjectTopics]);
 
   // Following the active topic is a view concern over the tree already held.
   useEffect(() => {
