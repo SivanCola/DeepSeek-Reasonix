@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -97,5 +98,60 @@ func TestRepeatedDivergenceRewritesOneRecoveryBranch(t *testing.T) {
 	}
 	if len(files) != 1 {
 		t.Fatalf("recovery files = %v, want 1", files)
+	}
+}
+
+func TestRecoveryGenerationDoesNotReusePreviousProcessPath(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "session.jsonl")
+	oldPath := stableRecoverySessionPath(root, "gen-1")
+	if err := os.WriteFile(oldPath, []byte(`{"role":"user","content":"previous process"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	current := NewSession("sys")
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "current process"})
+	writer, err := AcquireSessionWriter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Release()
+	if err := writer.Bind(current, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := current.SaveConflictRecoveryBranch(RecoveryBranchOptions{OriginalPath: root})
+	if err != nil {
+		t.Fatalf("SaveConflictRecoveryBranch: %v", err)
+	}
+	if info.Path == oldPath {
+		t.Fatalf("recovery reused previous-process path %q", oldPath)
+	}
+}
+
+func TestRecoveryGenerationRotatesAfterUnexpectedCollision(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "session.jsonl")
+	current := NewSession("sys")
+	current.Add(provider.Message{Role: provider.RoleUser, Content: "current process"})
+	writer, err := AcquireSessionWriter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Release()
+	if err := writer.Bind(current, 7); err != nil {
+		t.Fatal(err)
+	}
+
+	collidingPath := stableRecoverySessionPath(root, current.recoveryGenerationKey())
+	if err := os.WriteFile(collidingPath, []byte(`{"role":"user","content":"independent recovery"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := current.SaveConflictRecoveryBranch(RecoveryBranchOptions{OriginalPath: root})
+	if err != nil {
+		t.Fatalf("SaveConflictRecoveryBranch: %v", err)
+	}
+	if info.Path == collidingPath {
+		t.Fatalf("collision did not rotate recovery path %q", collidingPath)
 	}
 }

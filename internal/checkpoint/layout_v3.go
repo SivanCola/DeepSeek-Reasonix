@@ -41,6 +41,28 @@ func v3PayloadBytes(f FileSnap) []byte {
 }
 
 func (s *Store) persistV3(c *Checkpoint) error {
+	// Previous builds only inspect turn-N.json. Keep a payload-free v2 marker
+	// so their NextTurn remains monotonic across a downgrade; write it first so
+	// a crash can leave reduced rewind visibility, never an invisible turn.
+	marker := *c
+	marker.SchemaVersion = SchemaV2
+	marker.Files = []FileSnap{}
+	marker.Coverage = CoverageNone
+	marker.CoverageGaps = nil
+	marker.ActiveWriters = nil
+	marker.ExpiredFilePayload = true
+	markerBytes, err := json.Marshal(&marker)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return err
+	}
+	markerPath := filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", c.Turn))
+	if err := fileutil.AtomicWriteFileStrict(markerPath, markerBytes, 0o644); err != nil {
+		return err
+	}
+
 	turnDir := s.turnDir(c.Turn)
 	if err := os.MkdirAll(filepath.Join(turnDir, "files"), 0o755); err != nil {
 		return err
@@ -90,17 +112,18 @@ func (s *Store) removeTurnArtifacts(turns map[int]bool) error {
 	return nil
 }
 
-func (s *Store) loadV3Turns(seen map[int]bool) {
+func (s *Store) loadV3Turns() []*Checkpoint {
 	ents, err := os.ReadDir(s.turnsDir())
 	if err != nil {
-		return
+		return nil
 	}
+	var turns []*Checkpoint
 	for _, e := range ents {
 		if !e.IsDir() {
 			continue
 		}
 		turn, err := strconv.Atoi(e.Name())
-		if err != nil || seen[turn] {
+		if err != nil {
 			continue
 		}
 		b, err := fileenc.ReadFileUTF8(s.v3MetaPath(turn))
@@ -131,14 +154,43 @@ func (s *Store) loadV3Turns(seen map[int]bool) {
 			c.Files[i].BlobRef = ""
 			c.Files[i].rawContent = append([]byte(nil), raw...)
 		}
-		seen[turn] = true
-		s.done = append(s.done, &c)
+		turns = append(turns, &c)
 	}
+	return turns
 }
 
-// pruneV3TurnsLocked applies retention to complete v3 turn directories. Older
-// v1/v2 metadata remains on the legacy payload-expiration path so upgrades keep
-// reading and cleaning data written by previous releases.
+func (s *Store) v3PayloadSize(turn int) (int64, error) {
+	root := filepath.Join(s.turnDir(turn), "files")
+	var total int64
+	err := filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	return total, err
+}
+
+// pruneV3TurnsLocked applies both count retention and the legacy 1 GiB soft
+// payload budget to complete v3 turn directories. The current and protected
+// turns may temporarily exceed the budget; the next unprotected turn prunes
+// whole oldest directories. Older v1/v2 metadata remains on its legacy path.
 func (s *Store) pruneV3TurnsLocked() {
 	if s.dir == "" || s.retainN <= 0 {
 		return
@@ -150,22 +202,40 @@ func (s *Store) pruneV3TurnsLocked() {
 		}
 	}
 	excess := len(turns) - s.retainN
-	if excess <= 0 {
+	sizes := make(map[*Checkpoint]int64, len(turns))
+	var totalSize int64
+	sizeKnown := true
+	for _, c := range turns {
+		size, err := s.v3PayloadSize(c.Turn)
+		if err != nil {
+			sizeKnown = false
+			break
+		}
+		sizes[c] = size
+		totalSize += size
+	}
+	quotaExceeded := func() bool {
+		return sizeKnown && s.blobQuota > 0 && totalSize > s.blobQuota
+	}
+	if excess <= 0 && !quotaExceeded() {
 		return
 	}
-	removed := make(map[*Checkpoint]bool, excess)
+	removed := make(map[*Checkpoint]bool)
 	for _, c := range turns {
-		if excess == 0 {
+		if excess <= 0 && !quotaExceeded() {
 			break
 		}
 		if c == s.cur || s.protectTurns[c.Turn] {
 			continue
 		}
-		if err := os.RemoveAll(s.turnDir(c.Turn)); err != nil {
+		if err := s.removeTurnArtifacts(map[int]bool{c.Turn: true}); err != nil {
 			continue
 		}
 		removed[c] = true
-		excess--
+		if excess > 0 {
+			excess--
+		}
+		totalSize -= sizes[c]
 	}
 	if len(removed) == 0 {
 		return

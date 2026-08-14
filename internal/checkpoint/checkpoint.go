@@ -181,6 +181,9 @@ func New(dir, root string) *Store {
 		s.blobs = NewBlobStore(filepath.Join(dir, "blobs"))
 		s.load()
 		s.RecoverTransactions()
+		s.mu.Lock()
+		s.gcLocked()
+		s.mu.Unlock()
 	}
 	return s
 }
@@ -263,7 +266,21 @@ func (s *Store) InvalidateUndo() {
 }
 
 func (s *Store) load() {
-	seen := map[int]bool{}
+	type loadedCheckpoint struct {
+		checkpoint *Checkpoint
+		priority   int
+	}
+	loaded := map[int]loadedCheckpoint{}
+	choose := func(c *Checkpoint, priority int) {
+		if c == nil {
+			return
+		}
+		current, ok := loaded[c.Turn]
+		if !ok || c.Time.After(current.checkpoint.Time) ||
+			(c.Time.Equal(current.checkpoint.Time) && priority > current.priority) {
+			loaded[c.Turn] = loadedCheckpoint{checkpoint: c, priority: priority}
+		}
+	}
 	loadDir := func(dir string, expired bool) {
 		ents, err := os.ReadDir(dir)
 		if err != nil {
@@ -274,7 +291,7 @@ func (s *Store) load() {
 				continue
 			}
 			var turnNum int
-			if _, err := fmt.Sscanf(e.Name(), "turn-%d.json", &turnNum); err != nil || seen[turnNum] {
+			if _, err := fmt.Sscanf(e.Name(), "turn-%d.json", &turnNum); err != nil {
 				continue
 			}
 			b, err := fileenc.ReadFileUTF8(filepath.Join(dir, e.Name()))
@@ -309,14 +326,25 @@ func (s *Store) load() {
 					c.CoverageGaps = append(c.CoverageGaps, CoverageGap{Reason: GapLegacyUnverified, Detail: "v1 checkpoint cannot verify later manual edits"})
 				}
 			}
-			seen[turnNum] = true
-			s.done = append(s.done, &c)
+			priority := 2
+			if expired {
+				priority = 1
+			}
+			choose(&c, priority)
 		}
 	}
-	// v3 turn directories first; leftover v1/v2 turn-N.json stay readable.
-	s.loadV3Turns(seen)
 	loadDir(s.dir, false)
 	loadDir(s.expiredDir(), true)
+	// A v3 compatibility marker has the same timestamp as its turn directory,
+	// so v3 wins ties. A previous build that wrote a genuinely newer checkpoint
+	// with the same turn wins by timestamp instead of being hidden by load order.
+	for _, c := range s.loadV3Turns() {
+		choose(c, 3)
+	}
+	s.done = s.done[:0]
+	for _, item := range loaded {
+		s.done = append(s.done, item.checkpoint)
+	}
 	sort.Slice(s.done, func(i, j int) bool { return s.done[i].Turn < s.done[j].Turn })
 }
 
@@ -438,6 +466,7 @@ func (s *Store) CaptureBeforeFromChange(ch diff.Change, opts CaptureBeforeOpts) 
 	}
 	s.recomputeCoverageLocked(s.cur)
 	s.persistBestEffort(s.cur)
+	s.gcLocked()
 }
 
 // CaptureBefore records a preimage by Lstat+read of path.
@@ -486,6 +515,7 @@ func (s *Store) CaptureBefore(path string, opts CaptureBeforeOpts) {
 	}
 	s.recomputeCoverageLocked(s.cur)
 	s.persistBestEffort(s.cur)
+	s.gcLocked()
 }
 
 // RecordGap appends a coverage gap to the current checkpoint.
@@ -564,6 +594,9 @@ func (s *Store) persist(c *Checkpoint) error {
 	if s.dir == "" || c == nil {
 		return nil
 	}
+	if c.SchemaVersion >= SchemaV3 {
+		return s.persistV3(c)
+	}
 	// Keep inline Content even when BlobRef is present. Previous Reasonix builds
 	// ignore BlobRef and interpret nil Content as "the file did not exist";
 	// omitting it would make an older concurrently running binary delete files.
@@ -573,9 +606,6 @@ func (s *Store) persist(c *Checkpoint) error {
 	b, err := json.Marshal(&wire)
 	if err != nil {
 		return err
-	}
-	if c.SchemaVersion >= SchemaV3 {
-		return s.persistV3(c)
 	}
 	path := s.checkpointPath(c)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

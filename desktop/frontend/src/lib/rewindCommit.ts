@@ -35,6 +35,14 @@ export async function commitRewindWithPreview(
   return app.CommitRewindForTab(sourceTabId, remoteLegacy ? "" : (plan.planId || ""), turn, scope);
 }
 
+export function partialRewindNotice(result: RewindResultView): string {
+  if (!result.partial) return "";
+  const summary = t("rewind.partialRestoreFailed");
+  const detail = result.error
+    || (result.conflicts?.length ? result.conflicts.join("; ") : "");
+  return detail ? `${summary} ${detail}` : summary;
+}
+
 export function undoCommittedRewind(sourceTabId: string, transactionId: string): Promise<RewindResultView> {
   return app.UndoRewindForTab(sourceTabId, transactionId);
 }

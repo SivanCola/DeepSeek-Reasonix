@@ -277,7 +277,8 @@ type TransactionManifest struct {
 	Error             string `json:"error,omitempty"`
 }
 
-// Default retention for file payloads.
+// Default retention and soft byte budget for file payloads. Both v3 raw
+// preimages and legacy blobs use the same budget value in their own stores.
 const (
 	DefaultRetainCheckpoints = 100
 	DefaultBlobQuotaBytes    = 1 << 30  // 1 GiB

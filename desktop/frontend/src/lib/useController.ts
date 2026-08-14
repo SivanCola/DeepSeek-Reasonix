@@ -4354,10 +4354,11 @@ export function useController() {
       }
 
       let outcome: RewindOutcome = { ok: true };
+      let partialNotice = "";
       if (actionScope === "summ-from") await app.SummarizeFromForTab(sourceTabId, turn);
       else if (actionScope === "summ-upto") await app.SummarizeUpToForTab(sourceTabId, turn);
       else {
-        const { commitRewindWithPreview } = await import("./rewindCommit");
+        const { commitRewindWithPreview, partialRewindNotice } = await import("./rewindCommit");
         const result = await commitRewindWithPreview(sourceTabId, turn, actionScope);
         if (!result?.ok) {
           const detail = result?.error
@@ -4377,9 +4378,16 @@ export function useController() {
         } else if (outcome.tabId) {
           await waitForTabReady(outcome.tabId);
         }
+        partialNotice = partialRewindNotice(result);
       }
 
       await loadSessionDataForTab(sourceTabId, true, "rewind");
+      if (partialNotice) {
+        dispatchTo(sourceTabId, { type: "local_notice", level: "warn", text: partialNotice });
+        if (outcome.tabId && outcome.tabId !== sourceTabId) {
+          dispatchTo(outcome.tabId, { type: "local_notice", level: "warn", text: partialNotice });
+        }
+      }
       return outcome;
     } catch {
       return { ok: false };

@@ -51,9 +51,14 @@ type Checkpoint struct {
 - **跨进程保留**：恢复会话时会重新加载 checkpoint，重启后仍可 rewind，与 Claude Code 保持一致。
 - **Schema v3 布局**：每轮一个目录，包含 `turns/<turn>/meta.json` 和原始字节
   `files/NNNN.before`。新捕获不再把同一份 pre-image 重复写入内容寻址 blob。
-  升级后仍可读取 v1/v2 JSON 和 blob；事务 / undo 载荷仍可使用 blob。
-- **保留策略**：默认保留最近 100 个 v3 回合目录；过期时整目录删除。删除会话时会
-  清理整个 checkpoint sidecar。
+  升级后仍可读取 v1/v2 JSON 和 blob；事务 / undo 载荷仍可使用 blob。每个 v3
+  回合还会写入一个不含文件载荷的 v2 兼容标记（`turn-<turn>.json`）。降级到旧版
+  Reasonix 后，旧版可以据此保持 turn 编号单调递增，但不能恢复该标记对应的 v3
+  文件快照。
+- **保留策略**：默认保留最近 100 个 v3 回合目录，并对原始 v3 pre-image 使用
+  1 GiB 软上限。当前回合或事务保护中的回合可以暂时超过上限；解除保护后，从最旧
+  的完整回合目录开始清理。旧版 blob 在独立的兼容存储中使用相同的上限值。删除
+  会话时会清理整个 checkpoint sidecar。
 
 ## Controller API：两个前端共用的统一入口
 
@@ -91,8 +96,8 @@ func (c *Controller) CommitRewind(planID string) (RewindResult, error)
 - **回合之间的外部编辑**：恢复前会比较当前文件的存在性、SHA-256 和 mode 与
   Reasonix 最后一次 after-image；不匹配时报告冲突，不会覆盖。
 - **删除**：编辑工具执行的删除可以恢复，因为快照保存了原内容；`bash rm` 无法恢复。
-- **大文件**：当前保存完整快照；回合目录保留策略限制历史长度，但不限制单个
-  pre-image 的大小。
+- **大文件**：保存完整快照，但单文件捕获上限为 32 MiB。回合数和软字节上限共同
+  限制历史占用；当前回合或事务保护中的回合可以暂时超过字节上限。
 
 ## 阶段划分
 
@@ -102,4 +107,4 @@ func (c *Controller) CommitRewind(planID string) (RewindResult, error)
 ## 待确认问题
 
 - 是否在 `/compact` 和 `NewSession` 边界创建快照？
-- 是否需要在 `[checkpoints]` 配置中公开 100 回合的保留上限？
+- 是否需要在 `[checkpoints]` 配置中公开 100 回合与 1 GiB 软字节上限？

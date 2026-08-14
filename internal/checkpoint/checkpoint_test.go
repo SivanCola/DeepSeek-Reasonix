@@ -482,6 +482,9 @@ func TestTruncateFromReportsPersistentDeleteFailure(t *testing.T) {
 	store.Begin(0, "first", 0)
 	store.Begin(1, "second", 2)
 	blocked := filepath.Join(dir, "turn-1.json")
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(blocked, 0o755); err != nil {
 		t.Fatal(err)
 	}

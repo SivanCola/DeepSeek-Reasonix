@@ -78,9 +78,16 @@ type Checkpoint struct {
   `turns/<turn>/meta.json` plus raw `files/NNNN.before` payloads. New captures do
   not duplicate preimages in the content-addressed blob store. v1/v2 JSON and
   blobs remain readable for upgrade compatibility; transaction/undo payloads
-  may still use blobs.
+  may still use blobs. Each v3 turn also writes a payload-free v2 compatibility
+  marker (`turn-<turn>.json`). A previous Reasonix version can therefore keep
+  turn numbering monotonic after a downgrade, but cannot restore the v3 file
+  payload represented by that marker.
 - **Retention**: keep the newest 100 v3 turn directories by default and remove
-  an expired turn as one directory. Session cleanup removes the whole sidecar.
+  an expired turn as one directory. Raw v3 preimages also have a soft 1 GiB
+  budget; the current or transaction-protected turn may temporarily exceed it,
+  and older whole turns are removed once they are unprotected. Legacy blobs use
+  the same budget value in their separate compatibility store. Session cleanup
+  removes the whole sidecar.
 
 ## Controller API (the one seam both frontends drive)
 
@@ -134,8 +141,9 @@ re-render uniformly.
   a conflict and is not overwritten.
 - **Deletions**: an edit-tool deletion is restorable (snapshot has the content); a
   `bash rm` is not.
-- **Large files**: full snapshots — the turn-directory retention bound limits
-  history length, not the size of an individual preimage.
+- **Large files**: full snapshots, with a 32 MiB per-file capture limit. The
+  turn-count and soft byte budgets bound retained history; a protected or
+  current turn may temporarily exceed the byte budget.
 
 ## Phasing
 
@@ -147,4 +155,5 @@ re-render uniformly.
 ## Open questions
 
 - Snapshot on `/compact` and on `NewSession` boundaries?
-- Whether to expose the 100-turn retention limit in `[checkpoints]` config.
+- Whether to expose the 100-turn retention and 1 GiB soft byte limits in
+  `[checkpoints]` config.

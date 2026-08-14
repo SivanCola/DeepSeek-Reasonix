@@ -69,8 +69,19 @@ func (s *Session) recoveryGenerationKey() string {
 	if s == nil {
 		return SessionWriterID()
 	}
+	s.mu.Lock()
+	if s.recoveryLane != "" {
+		lane := s.recoveryLane
+		s.mu.Unlock()
+		return lane
+	}
+	s.mu.Unlock()
 	if auth := s.WriteAuthority(); auth != nil && auth.Generation() != 0 {
-		return fmt.Sprintf("gen-%d", auth.Generation())
+		writerID := SessionWriterID()
+		if writer := auth.Writer(); writer != nil && strings.TrimSpace(writer.WriterID()) != "" {
+			writerID = writer.WriterID()
+		}
+		return fmt.Sprintf("%s\x00gen-%d", writerID, auth.Generation())
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -88,7 +99,7 @@ func (s *Session) isolatedRecoverySessionPath(originalPath string) (string, stri
 func (s *Session) rotateRecoveryLane(current string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.recoveryLane == current {
+	if s.recoveryLane == "" || s.recoveryLane == current {
 		s.recoveryLane = newSessionWriterID()
 	}
 }
