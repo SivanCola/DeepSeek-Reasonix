@@ -312,8 +312,8 @@ func (s *Store) load() {
 			s.done = append(s.done, &c)
 		}
 	}
-	// Root turn files remain deliberately readable by previous releases. Expired
-	// metadata lives below a directory those releases never scan.
+	// v3 turn directories first; leftover v1/v2 turn-N.json stay readable.
+	s.loadV3Turns(seen)
 	loadDir(s.dir, false)
 	loadDir(s.expiredDir(), true)
 	sort.Slice(s.done, func(i, j int) bool { return s.done[i].Turn < s.done[j].Turn })
@@ -329,7 +329,7 @@ func (s *Store) Begin(turn int, prompt string, msgIndex int) {
 		s.done = append(s.done, s.cur)
 	}
 	s.cur = &Checkpoint{
-		SchemaVersion: SchemaV2,
+		SchemaVersion: SchemaV3,
 		Turn:          turn,
 		Time:          time.Now(),
 		Prompt:        prompt,
@@ -443,7 +443,9 @@ func (s *Store) CaptureBeforeFromChange(ch diff.Change, opts CaptureBeforeOpts) 
 	// Keep inline content alongside the blob ref so older binaries can still
 	// distinguish existing files from the nil-content deletion sentinel.
 	s.cur.Files = append(s.cur.Files, snap)
-	s.cur.SchemaVersion = SchemaV2
+	if s.cur.SchemaVersion < SchemaV3 {
+		s.cur.SchemaVersion = SchemaV3
+	}
 	s.recomputeCoverageLocked(s.cur)
 	s.persistBestEffort(s.cur)
 }
@@ -493,7 +495,9 @@ func (s *Store) CaptureBefore(path string, opts CaptureBeforeOpts) {
 	}
 	// Content nil + no blob → create (did not exist)
 	s.cur.Files = append(s.cur.Files, snap)
-	s.cur.SchemaVersion = SchemaV2
+	if s.cur.SchemaVersion < SchemaV3 {
+		s.cur.SchemaVersion = SchemaV3
+	}
 	s.recomputeCoverageLocked(s.cur)
 	s.persistBestEffort(s.cur)
 }
@@ -583,6 +587,9 @@ func (s *Store) persist(c *Checkpoint) error {
 	b, err := json.Marshal(&wire)
 	if err != nil {
 		return err
+	}
+	if c.SchemaVersion >= SchemaV3 {
+		return s.persistV3(c)
 	}
 	path := s.checkpointPath(c)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -870,18 +877,8 @@ func (s *Store) TruncateFrom(fromTurn int) error {
 	if s.cur != nil && s.cur.Turn >= fromTurn {
 		deleteTurns[s.cur.Turn] = true
 	}
-	if s.dir != "" {
-		for turn := range deleteTurns {
-			paths := []string{
-				filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", turn)),
-				filepath.Join(s.expiredDir(), fmt.Sprintf("turn-%d.json", turn)),
-			}
-			for _, path := range paths {
-				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-					return fmt.Errorf("remove checkpoint turn %d: %w", turn, err)
-				}
-			}
-		}
+	if err := s.removeTurnArtifacts(deleteTurns); err != nil {
+		return err
 	}
 
 	done := s.done[:0]

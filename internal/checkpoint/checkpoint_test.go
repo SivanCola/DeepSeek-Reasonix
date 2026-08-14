@@ -3,6 +3,7 @@ package checkpoint
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,7 +205,7 @@ func TestSnapshotDedupsFirstTouchWins(t *testing.T) {
 	}
 }
 
-func TestPersistV2RemainsReadableByLegacyBinary(t *testing.T) {
+func TestPersistV3KeepsCreatedFileSentinel(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(t.TempDir(), "sess.ckpt")
 	existing := filepath.Join(root, "existing.txt")
@@ -216,31 +217,46 @@ func TestPersistV2RemainsReadableByLegacyBinary(t *testing.T) {
 	s.CaptureBefore(existing, CaptureBeforeOpts{Source: CaptureBeforeMutation})
 	s.CaptureBefore(created, CaptureBeforeOpts{Source: CaptureBeforeMutation})
 
-	type legacyFile struct {
-		Path     string          `json:"path"`
-		Content  *string         `json:"content"`
-		Encoding json.RawMessage `json:"encoding,omitempty"`
+	type v3File struct {
+		Path    string  `json:"path"`
+		Content *string `json:"content"`
 	}
-	type legacyCheckpoint struct {
-		Files []legacyFile `json:"files"`
+	type v3Checkpoint struct {
+		SchemaVersion int      `json:"schemaVersion"`
+		Files         []v3File `json:"files"`
 	}
-	var legacy legacyCheckpoint
-	b, err := os.ReadFile(filepath.Join(dir, "turn-0.json"))
+	var meta v3Checkpoint
+	b, err := os.ReadFile(filepath.Join(dir, "turns", "0", "meta.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(b, &legacy); err != nil {
+	if err := json.Unmarshal(b, &meta); err != nil {
 		t.Fatal(err)
 	}
-	byPath := map[string]*string{}
-	for _, file := range legacy.Files {
-		byPath[file.Path] = file.Content
+	if meta.SchemaVersion != SchemaV3 {
+		t.Fatalf("schema = %d, want v3", meta.SchemaVersion)
 	}
-	if byPath[existing] == nil || *byPath[existing] != "before" {
-		t.Fatalf("legacy reader lost existing-file preimage: %#v", byPath[existing])
+	var existingIdx = -1
+	for i, file := range meta.Files {
+		if file.Path == existing {
+			existingIdx = i
+			if file.Content != nil {
+				t.Fatalf("v3 meta should not inline existing content: %#v", file.Content)
+			}
+		}
+		if file.Path == created && file.Content != nil {
+			t.Fatalf("created-file sentinel must stay nil: %#v", file.Content)
+		}
 	}
-	if content, ok := byPath[created]; !ok || content != nil {
-		t.Fatalf("legacy reader must keep created-file sentinel nil: present=%v content=%#v", ok, content)
+	if existingIdx < 0 {
+		t.Fatal("existing file missing from v3 meta")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "turns", "0", "files", fmt.Sprintf("%04d.before", existingIdx)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "before" {
+		t.Fatalf("before payload = %q", raw)
 	}
 }
 
@@ -454,10 +470,10 @@ func TestTruncateFromDropsFutureCheckpointsAndFiles(t *testing.T) {
 	if s.NextTurn() != 1 {
 		t.Fatalf("NextTurn after truncate = %d, want 1", s.NextTurn())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "turn-1.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "turns", "1")); !os.IsNotExist(err) {
 		t.Fatalf("turn-1 checkpoint should be deleted, stat err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "turn-2.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "turns", "2")); !os.IsNotExist(err) {
 		t.Fatalf("turn-2 checkpoint should be deleted, stat err=%v", err)
 	}
 	reloaded := New(dir, root)
@@ -473,9 +489,6 @@ func TestTruncateFromReportsPersistentDeleteFailure(t *testing.T) {
 	store.Begin(0, "first", 0)
 	store.Begin(1, "second", 2)
 	blocked := filepath.Join(dir, "turn-1.json")
-	if err := os.Remove(blocked); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.Mkdir(blocked, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +548,7 @@ func TestLazyDirectoryCreation(t *testing.T) {
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("directory should now exist: %v", err)
 	}
-	turnPath := filepath.Join(dir, "turn-0.json")
+	turnPath := filepath.Join(dir, "turns", "0", "meta.json")
 	if _, err := os.Stat(turnPath); err != nil {
 		t.Fatalf("turn file should now exist: %v", err)
 	}

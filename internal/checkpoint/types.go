@@ -10,6 +10,7 @@ import (
 const (
 	SchemaV1 = 1
 	SchemaV2 = 2
+	SchemaV3 = 3
 )
 
 // Coverage describes how completely a checkpoint captured workspace mutations.
