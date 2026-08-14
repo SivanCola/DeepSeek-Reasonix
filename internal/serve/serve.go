@@ -711,12 +711,8 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `unsupported format (supported: "json_object")`, http.StatusBadRequest)
 		return
 	}
-	if body.Action != "" && body.Action != control.FinalReadinessRecoveryAction {
-		http.Error(w, `unsupported action (supported: "final_readiness_recovery")`, http.StatusBadRequest)
-		return
-	}
-	if body.Action != "" && body.Format != "" {
-		http.Error(w, "format is unavailable for recovery actions", http.StatusBadRequest)
+	if err := validateSubmitAction(body.Format, body.Action); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	trimmed := strings.TrimSpace(body.Input)
@@ -763,11 +759,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session is busy; use POST /inbox/items for durable follow-up", http.StatusConflict)
 		return
 	}
-	if body.Action == control.FinalReadinessRecoveryAction {
-		ctrl.SubmitFinalReadinessRecovery(body.Input, body.Input)
-	} else {
-		ctrl.SubmitHTTPFormat(body.Input, body.Format)
-	}
+	submitWithAction(ctrl, body.Input, body.Format, body.Action)
 	// After synchronous admission, a successful start sets Running. A silent
 	// drop (rotating/closed) leaves Running false — return 409 instead of 202.
 	// Finishing-window park also leaves Running false briefly; prefer 202 only
@@ -862,12 +854,8 @@ type historyMessage struct {
 func historyMessages(msgs []provider.Message) []historyMessage {
 	out := make([]historyMessage, 0, len(msgs))
 	for _, m := range msgs {
-		if m.LocalOnly && m.FinalReadinessRecovery != nil {
-			if m.FinalReadinessRecovery.Pending {
-				out = append(out, historyMessage{
-					Role: "final_readiness", Missing: append([]string(nil), m.FinalReadinessRecovery.Missing...),
-				})
-			}
+		if recovered, handled := finalReadinessHistoryMessage(m); handled {
+			out = append(out, recovered...)
 			continue
 		}
 		// Steer messages are surfaced as a notice, not a user message.

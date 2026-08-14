@@ -1,6 +1,9 @@
 package control
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 const (
 	// FinalReadinessRecoveryAction is the typed transport action used by HTTP
@@ -23,4 +26,42 @@ func ParseFinalReadinessRecoveryCommand(input string) (prompt string, ok bool) {
 		prompt = defaultContinueChecksPrompt
 	}
 	return prompt, true
+}
+
+// RunFinalReadinessRecovery is the synchronous transport-neutral recovery path.
+func (c *Controller) RunFinalReadinessRecovery(ctx context.Context, input string) error {
+	return c.runSynchronousTurn(ctx, nil, func(runCtx context.Context) error {
+		if c.executor == nil || !c.executor.PrepareFinalReadinessRecovery() {
+			return ErrNoFinalReadinessRecovery
+		}
+		return c.runTurn(runCtx, input)
+	})
+}
+
+// SubmitFinalReadinessRecovery preserves the immediately preceding exhausted
+// ledger for one explicit asynchronous continuation.
+func (c *Controller) SubmitFinalReadinessRecovery(display, input string) {
+	c.runGuarded(func(ctx context.Context) error {
+		if c.executor == nil || !c.executor.PrepareFinalReadinessRecovery() {
+			return ErrNoFinalReadinessRecovery
+		}
+		return c.runGoalLoopWithRawDisplay(ctx, input, input, display)
+	})
+}
+
+// SubmitDeliveryRecovery preserves the v1.25 desktop/API symbol.
+func (c *Controller) SubmitDeliveryRecovery(display, input string) {
+	c.SubmitFinalReadinessRecovery(display, input)
+}
+
+func (c *Controller) submitFinalReadinessCommand(trimmed, display string) bool {
+	prompt, ok := ParseFinalReadinessRecoveryCommand(trimmed)
+	if !ok {
+		return false
+	}
+	if strings.TrimSpace(display) == "" {
+		display = trimmed
+	}
+	c.SubmitFinalReadinessRecovery(display, prompt)
+	return true
 }

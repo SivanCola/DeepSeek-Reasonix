@@ -76,6 +76,22 @@ func (a *Agent) PrepareFinalReadinessRecovery() bool {
 	return true
 }
 
+// beginFinalReadinessRecovery consumes a pending card when a user turn truly
+// begins and returns the evidence and audit state for that turn.
+func (a *Agent) beginFinalReadinessRecovery() (preserveEvidence, recovered bool) {
+	preserveEvidence = a.pending.preserveEvidence
+	if a.sess.conversation != nil {
+		a.sess.conversation.ConsumeFinalReadinessRecovery()
+	}
+	recovered = preserveEvidence || a.pending.finalReadinessRecovery
+	a.pending.preserveEvidence = false
+	a.pending.finalReadinessRecoveryPrepared = false
+	if !preserveEvidence {
+		a.pending.finalReadinessRecovery = false
+	}
+	return preserveEvidence, recovered
+}
+
 // PrepareDeliveryRecovery is the v1.25 compatibility name retained for older
 // desktop bindings and external integrations. Final readiness also applies to
 // targeted Light/Balanced turns, so new code should use the generic method.

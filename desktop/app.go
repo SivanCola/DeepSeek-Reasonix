@@ -5441,20 +5441,8 @@ func (state *historyMessageConvertState) convertHistoryMessage(
 			DecisionReceipt: cloneDecisionReceipt(m.DecisionReceipt),
 		})
 	}
-	if m.LocalOnly && m.FinalReadinessRecovery != nil && m.FinalReadinessRecovery.Pending {
-		return append(out, HistoryMessage{
-			Role: "notice", Code: event.NoticeCodeFinalReadiness, Level: "info", Pending: true,
-			Content: "Task status needs one more check; continue the remaining work.",
-			Readiness: &event.FinalReadiness{
-				Attempts: 1,
-				Missing:  append([]string(nil), m.FinalReadinessRecovery.Missing...),
-			},
-		})
-	}
-	if m.LocalOnly {
-		if rows, handled := historySteerRows(agent.UserMessageText(m), true); handled {
-			return append(out, rows...)
-		}
+	if rows, handled := historyLocalOnlyRows(m); handled {
+		return append(out, rows...)
 	}
 	if state.suppressCanonicalTurn {
 		if m.Role != provider.RoleUser || !agent.IsUserAuthoredTurn(agent.UserMessageText(m)) {

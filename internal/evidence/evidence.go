@@ -355,13 +355,6 @@ type DeliveryCheckpoint struct {
 	PendingMutation     bool   `json:"pendingMutation,omitempty"`
 }
 
-// FinalReadinessCheckpoint is the bounded, durable copy of a failed turn's
-// host evidence. It is persisted only in provider-excluded local metadata and
-// consumed only by an explicit recovery action.
-type FinalReadinessCheckpoint struct {
-	Receipts []Receipt `json:"receipts,omitempty"`
-}
-
 // Ledger stores the receipts available to complete_step for the current turn.
 type Ledger struct {
 	mu               sync.Mutex
@@ -453,56 +446,6 @@ func (l *Ledger) Record(r Receipt) {
 		}
 	}
 	l.receipts = append(l.receipts, r)
-}
-
-// FinalReadinessCheckpoint snapshots the current ledger without duplicating
-// large writer payloads (file contents, patches, delegated prompts). All facts
-// used by readiness are already normalized onto Receipt; raw Args are retained
-// only for the small structured records whose validators parse them again.
-func (l *Ledger) FinalReadinessCheckpoint() FinalReadinessCheckpoint {
-	if l == nil {
-		return FinalReadinessCheckpoint{}
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	receipts := make([]Receipt, len(l.receipts))
-	for i, receipt := range l.receipts {
-		receipts[i] = receipt
-		receipts[i].Args = recoveryReceiptArgs(receipt)
-	}
-	return FinalReadinessCheckpoint{Receipts: receipts}
-}
-
-// RestoreFinalReadinessCheckpoint replaces an empty rebuilt ledger with the
-// exact ordered evidence from the paused turn. Record is used so paths, todos,
-// and complete_step links receive the same normalization as live execution.
-func (l *Ledger) RestoreFinalReadinessCheckpoint(checkpoint FinalReadinessCheckpoint) bool {
-	if l == nil {
-		return false
-	}
-	l.Reset()
-	for _, receipt := range checkpoint.Receipts {
-		l.Record(receipt)
-	}
-	return true
-}
-
-func recoveryReceiptArgs(r Receipt) json.RawMessage {
-	switch r.ToolName {
-	case "bash":
-		if r.Command == "" {
-			return nil
-		}
-		args, _ := json.Marshal(map[string]string{"command": r.Command})
-		return args
-	case "complete_step", "review_report", "complete_subtask":
-		return append(json.RawMessage(nil), r.Args...)
-	default:
-		// Derived Receipt fields carry the readiness facts for readers, writers,
-		// todos, capabilities, and proxy targets. Dropping their raw arguments
-		// prevents a second copy of file contents or delegated prompts on disk.
-		return nil
-	}
 }
 
 // Len returns the number of receipts recorded this turn, giving callers a
