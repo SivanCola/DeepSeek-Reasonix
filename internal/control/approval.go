@@ -612,11 +612,11 @@ func normalizeToolApprovalMode(mode string) string {
 	}
 }
 
-// RequiresFreshHumanApprovalTool reports whether a tool's unsafe variants must
-// be answered by a human, not Auto, Guardian, hooks, or a headless nil
-// approver. Interactive YOLO may still auto-allow remember/forget. A controller
-// that owns the scoped memory store may still auto-allow a bounded create-only
-// project memory.
+// RequiresFreshHumanApprovalTool reports tools that session grants,
+// Guardian/hooks, and headless nil approvers cannot authorize. Interactive Auto
+// treats remember/forget as normal policy fallback, while interactive YOLO may
+// also bypass explicit memory ask rules. A controller that owns the scoped
+// memory store may still auto-allow a bounded create-only project memory.
 func RequiresFreshHumanApprovalTool(tool string) bool {
 	switch tool {
 	case planApprovalTool, memoryRememberTool, memoryForgetTool, SandboxEscapeApprovalTool, ManagedConfigWriteApprovalTool:

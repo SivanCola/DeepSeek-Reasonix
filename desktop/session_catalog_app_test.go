@@ -11,6 +11,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/history"
 	"reasonix/internal/provider"
 	"reasonix/internal/sessioncatalog"
 )
@@ -71,6 +72,36 @@ func TestProjectTreeSnapshotReturnsProjectShellWithoutMigratingSessions(t *testi
 	}
 	if _, err := os.Stat(legacyPath + ".meta"); !os.IsNotExist(err) {
 		t.Fatalf("snapshot migrated session metadata: %v", err)
+	}
+}
+
+func TestProjectTreeSnapshotIncludesPinnedTopicsForCollapsedFolders(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := t.TempDir()
+	if err := addProject(root, "Pinned Project"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setTopicTitle(root, "ordinary", "Ordinary chat"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setTopicTitle(root, "pinned", "Pinned chat"); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	if err := app.SetTopicPinned("pinned", true); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := app.GetProjectTreeSnapshot()
+	if len(snapshot.Projects) != 1 {
+		t.Fatalf("project shells = %#v, want one project", snapshot.Projects)
+	}
+	children := snapshot.Projects[0].Children
+	if len(children) != 1 || children[0].TopicID != "pinned" || !children[0].Pinned {
+		t.Fatalf("collapsed project children = %#v, want only pinned topic shell", children)
+	}
+	if children[0].Label != "Pinned chat" {
+		t.Fatalf("pinned topic label = %q, want %q", children[0].Label, "Pinned chat")
 	}
 }
 
@@ -244,6 +275,47 @@ func TestListProjectTopicsDoesNotDuplicateIndexedLiveTab(t *testing.T) {
 	}
 	if len(page.Items) != 1 {
 		t.Fatalf("page items = %#v, want the catalog row only", page.Items)
+	}
+}
+
+func TestListProjectTopicsHonorsConversationSortMode(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := t.TempDir()
+	if err := addProject(root, "Sortable Conversations"); err != nil {
+		t.Fatal(err)
+	}
+	sessionDir := desktopSessionDir(root)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	installSessionCatalogForTest(t, app, sessionDir, "project", root)
+	catalog := app.sessionCatalog.Load()
+	if catalog == nil {
+		t.Fatal("session catalog not installed")
+	}
+	for _, record := range []sessioncatalog.SessionRecord{
+		{Path: filepath.Join(sessionDir, "created-new.jsonl"), Directory: sessionDir, Scope: "project", WorkspaceRoot: root, TopicID: "created-new", TopicTitle: "Created New", CreatedAt: 300, LastActivityAt: 100, Turns: 1, TurnsState: sessioncatalog.TurnsValid, Health: sessioncatalog.HealthOK},
+		{Path: filepath.Join(sessionDir, "updated-new.jsonl"), Directory: sessionDir, Scope: "project", WorkspaceRoot: root, TopicID: "updated-new", TopicTitle: "Updated New", CreatedAt: 100, LastActivityAt: 300, Turns: 1, TurnsState: sessioncatalog.TurnsValid, Health: sessioncatalog.HealthOK},
+	} {
+		if err := catalog.UpsertSession(context.Background(), record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	created, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, SortMode: "created"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, SortMode: "updated"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Items) != 2 || created.Items[0].TopicID != "created-new" {
+		t.Fatalf("created sort = %#v, want created-new first", created.Items)
+	}
+	if len(updated.Items) != 2 || updated.Items[0].TopicID != "updated-new" {
+		t.Fatalf("updated sort = %#v, want updated-new first", updated.Items)
 	}
 }
 
@@ -435,7 +507,7 @@ func TestContinuePathForOpenFollowsCoveringLeafFromParent(t *testing.T) {
 	}
 }
 
-func TestListProjectTopicsWaitsUntilEveryGlobalDirectoryIsScanned(t *testing.T) {
+func TestListProjectTopicsUsesAvailableProjectionBeforeEveryGlobalDirectoryIsScanned(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	legacy := config.SessionDir()
 	global := desktopSessionDir(globalWorkspaceRoot())
@@ -474,8 +546,59 @@ func TestListProjectTopicsWaitsUntilEveryGlobalDirectoryIsScanned(t *testing.T) 
 		t.Fatal(err)
 	}
 	if len(page.Items) != 1 || page.Items[0].TopicID != "topic-keep" || page.Items[0].Label != "Previous chat" {
-		t.Fatalf("topics after only the empty global dir scanned = %#v, want metadata fallback", page.Items)
+		t.Fatalf("topics after only one global dir scanned = %#v, want merged metadata", page.Items)
 	}
+	if page.Complete || page.ReadyDirectories != 1 || page.PendingDirectories != 1 {
+		t.Fatalf("partial directory completeness = %+v", page)
+	}
+}
+
+func TestAuthoritativeBotStylePersistIndexesSessionImmediately(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	root := t.TempDir()
+	if err := addProject(root, "Bot project"); err != nil {
+		t.Fatal(err)
+	}
+	dir := desktopSessionDir(root)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	catalog, err := sessioncatalog.Open(context.Background(), sessioncatalog.Options{InMemory: true, DisableRepair: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.sessionCatalog.Store(catalog)
+	history.RegisterSessionPersistObserver(desktopSessionCatalogPersistObserverKey, desktopSessionCatalogPersistObserver{app: app})
+	t.Cleanup(func() {
+		history.RegisterSessionPersistObserver(desktopSessionCatalogPersistObserverKey, nil)
+		app.sessionCatalog.CompareAndSwap(catalog, nil)
+		_ = catalog.Close(context.Background())
+	})
+
+	path := filepath.Join(dir, "bot-session.jsonl")
+	if err := agent.SaveBranchMetaPreserveUpdated(path, agent.BranchMeta{
+		ID: agent.BranchID(path), Scope: "project", WorkspaceRoot: root,
+		TopicID: "bot-topic", TopicTitle: "Bot conversation",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session := agent.NewSession("system")
+	session.SetPersistObserver(history.PersistObserver())
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "hello from bot"})
+	if err := session.Save(path); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		page, listErr := app.ListProjectTopics(ProjectTopicPageRequest{Scope: "project", WorkspaceRoot: root, Limit: 50})
+		if listErr == nil && len(page.Items) == 1 && page.Items[0].TopicID == "bot-topic" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("authoritative bot-style persist did not enter the project catalog immediately")
 }
 
 type retargetRuntimeController struct {
