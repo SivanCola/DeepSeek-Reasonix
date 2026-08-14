@@ -6,29 +6,10 @@ import (
 	"sync"
 )
 
-// SessionWriter is the single authoritative writer identity for one session
-// file. It unifies what used to be spread across the lease, the lease-info
-// sidecar, and the session's own persist state:
-//
-//   - the session lease (the only cross-process write ticket for the path);
-//   - the writer identity (writer ID, PID, hostname) published inside the
-//     .lease.lock file for conflict diagnostics;
-//   - the writer generation: authorities minted through a SessionWriter are
-//     bound to it, and a rebind allocates a fresh generation so every older
-//     controller authority goes stale immediately;
-//   - in-writer save serialization (saveMu): all authority-guarded saves for
-//     the writer's path serialize through the writer, so concurrent savers
-//     inside one process (turn-end snapshot, periodic autosave, shutdown
-//     snapshot) can never interleave their write cycles;
-//   - the writer's event-log baseline: the last revision, content digest, and
-//     log tail position this writer persisted or adopted. The save protocol
-//     CASes against this baseline instead of re-deriving ownership from disk
-//     on every save.
-//
-// All production saves must be issued through a SessionWriter. Callers
-// without a long-lived controller (imports, migrations, one-shot tooling) use
-// SaveWithEphemeralWriter, which acquires the same session lease for the
-// duration of the save.
+// SessionWriter is the cross-process write identity for one session file:
+// lease, owner metadata, generation, save serialization, and event-log baseline.
+// Production saves go through a SessionWriter; one-shot callers use
+// SaveWithEphemeralWriter.
 type SessionWriter struct {
 	lease *SessionLease
 	info  SessionLeaseInfo
@@ -159,6 +140,7 @@ func (w *SessionWriter) Bind(sess *Session, generation uint64) error {
 		return err
 	}
 	sess.BindWriteAuthority(auth)
+	sess.syncWriterBaseline(w.Path())
 	return nil
 }
 
@@ -216,14 +198,8 @@ func (w *SessionWriter) Baseline(path string) (WriterBaseline, bool) {
 	}, true
 }
 
-// SaveWithEphemeralWriter persists a session while temporarily holding
-// path's session lease: acquire, save, release. This is the compat path for
-// callers without a long-lived controller — imports, migrations, fork/branch
-// creation, and one-shot tooling. A lease held by another runtime fails with
-// *SessionLeaseError instead of racing that writer. The session's authority
-// binding is deliberately untouched: adoptable sessions (fork copies) must
-// keep their unbound state so the controller that adopts them can rebind a
-// live authority.
+// SaveWithEphemeralWriter acquires path's session lease, saves, then releases.
+// It leaves any existing authority binding untouched so fork copies stay adoptable.
 func (s *Session) SaveWithEphemeralWriter(path string, save func(target string) error) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("empty session path")

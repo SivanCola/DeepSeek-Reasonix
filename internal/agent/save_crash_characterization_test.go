@@ -1,26 +1,12 @@
 package agent
 
-// Phase-0 characterization of the session save path's persistence boundaries.
-//
-// Each test injects a process-crash panic at exactly one durable boundary of
-// the save protocol (via fileutil.CrashPoint) and pins the recovery outcome:
-// what a fresh runtime loading the session observes, and how the next save
-// heals the artifacts the crash left behind. The concurrency/recovery refactor
-// must keep every outcome in this file identical; if a refactor legitimately
-// changes one, it must update the test in the same commit with the new
-// contract spelled out.
-//
-// Boundaries covered (in save-protocol order):
-//   - wal-append        : before the append/replace record lands in .events.jsonl
-//   - session-checkpoint: before the compatibility .jsonl checkpoint is renamed
-//   - branch-meta       : before the revision ledger records the new digest
-//   - event-index       : before the derived event index is published
-//
-// The display index boundary is covered through the shared "atomic-write" op.
+// Crash-injection pins for each durable save boundary. A refactor that
+// changes an outcome must update the matching test in the same commit.
 
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -290,18 +276,8 @@ func TestSavedSessionSidecarSetBaseline(t *testing.T) {
 		}
 	}
 	for name := range found {
-		known := false
-		for _, expected := range want {
-			if name == expected {
-				known = true
-				break
-			}
-		}
-		if !known {
-			// Lock sidecars are legacy save-path artifacts (the compatibility
-			// .jsonl.lock and the hidden meta lock); they are created empty and
-			// currently outlive the save. Pin them as a tolerated class here —
-			// the refactor removes them from the save path entirely.
+		if !slices.Contains(want, name) {
+			// Legacy .lock sidecars still outlive a save; the refactor removes them.
 			if strings.HasSuffix(name, ".lock") {
 				continue
 			}
@@ -324,7 +300,7 @@ func countEventLogRecords(t *testing.T, sessionPath string) int {
 		t.Fatalf("read event log: %v", err)
 	}
 	count := 0
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if strings.TrimSpace(line) != "" {
 			count++
 		}

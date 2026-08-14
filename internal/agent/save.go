@@ -328,7 +328,7 @@ func (s *Session) saveLocked(path string, mode sessionSaveMode) error {
 	}
 	repairLog := false
 	ownedRewrite := mode == sessionSaveRewrite || mode == sessionSaveRewriteCompact
-	decision, err := s.checkSnapshotWrite(path, msgs, digest, version, ownedRewrite)
+	decision, err := s.classifySnapshotWrite(path, msgs, digest, version, ownedRewrite)
 	if err != nil {
 		return err
 	}
@@ -1034,80 +1034,6 @@ func SessionContentIdentity(path string) (PersistedState, bool, error) {
 	}, true, nil
 }
 
-func (s *Session) markPersisted(path string, digest [sha256.Size]byte, version uint64, revision int64, rewriteVersion int) {
-	s.setPersistedBaseline(path, digest, version, revision, true, true, rewriteVersion)
-}
-
-// markPersistedFromLoad anchors the baseline a loader learned from disk. The
-// ledger revision is real, but the pairing of transcript and ledger was not
-// verified by a write — an interrupted earlier save can leave the ledger
-// describing older content — so the baseline never arms the snapshot no-op
-// fast path.
-func (s *Session) markPersistedFromLoad(path string, digest [sha256.Size]byte, version uint64, revision int64, rewriteVersion int) {
-	s.setPersistedBaseline(path, digest, version, revision, true, false, rewriteVersion)
-}
-
-// markPersistedRevisionUnknown records a baseline whose ledger revision could
-// not be learned because the meta sidecar was unreadable. The digest and
-// version still anchor ownership checks; revision-based CAS stays disarmed
-// until a successful save records the real revision via markPersisted.
-func (s *Session) markPersistedRevisionUnknown(path string, digest [sha256.Size]byte, version uint64, rewriteVersion int) {
-	s.setPersistedBaseline(path, digest, version, 0, false, false, rewriteVersion)
-}
-
-func (s *Session) setPersistedBaseline(path string, digest [sha256.Size]byte, version uint64, revision int64, revisionKnown, saveVerified bool, rewriteVersion int) {
-	s.mu.Lock()
-	s.persisted = sessionPersistState{
-		path:          canonicalSessionSavePath(path),
-		digest:        digest,
-		version:       version,
-		revision:      revision,
-		revisionKnown: revisionKnown,
-		saveVerified:  saveVerified,
-		ok:            true,
-	}
-	// rewriteVersion was captured together with the persisted snapshot; only
-	// move forward so a slower save that captured earlier cannot roll the
-	// baseline back below a rewrite a faster save already persisted.
-	if rewriteVersion > s.persistedRewriteVersion {
-		s.persistedRewriteVersion = rewriteVersion
-	}
-	if saveVerified {
-		// A completed save landed the current transcript — including any
-		// load-time normalization repair — and healed the on-disk event log
-		// (tail repair runs on every save; a damaged log forces the
-		// rewrite-and-compact shape). Leaving these flags set would disarm
-		// the snapshot no-op fast path for the rest of the process lifetime,
-		// so a session that was repaired once kept paying a full serialize +
-		// digest on every defensive snapshot. Nothing reads the live
-		// session's copies after a save: checkSnapshotWrite re-loads the
-		// on-disk state and consults that object's flags, not these.
-		s.normalizedDirty = false
-		s.rawMessages = nil
-		s.eventLogDamaged = false
-	}
-	writer := s.writeWriterLocked()
-	logTail := int64(0)
-	if info, err := os.Stat(store.SessionEventLog(path)); err == nil {
-		logTail = info.Size()
-	}
-	s.mu.Unlock()
-	// Keep the bound SessionWriter's baseline in lockstep: the writer is the
-	// durable home of the event-log CAS state (revision, digest, tail).
-	if writer != nil {
-		writer.RecordBaseline(path, revision, digestString(digest), revisionKnown, logTail)
-	}
-}
-
-// writeWriterLocked returns the SessionWriter behind the bound authority, if
-// the authority was minted through one. Callers hold s.mu.
-func (s *Session) writeWriterLocked() *SessionWriter {
-	if s.writeAuth == nil {
-		return nil
-	}
-	return s.writeAuth.writer
-}
-
 // sessionContentRevision reads the CAS ledger (revision + content digest) from
 // the branch-meta sidecar. A missing sidecar is revision 0 — a session that
 // has never recorded one. An unreadable sidecar is an error: reporting it as
@@ -1521,6 +1447,11 @@ func loadSessionUnlocked(path string) (*Session, error) {
 	}
 	s.Messages = normalized
 	if digest, err := digestSessionMessages(s.Messages); err == nil {
+		// Pair the raw pre-repair transcript when normalization changed it.
+		diskView := s.Messages
+		if s.normalizedDirty {
+			diskView = s.rawMessages
+		}
 		if meta, ok, metaErr := loadBranchMetaRetry(path); metaErr != nil {
 			// The sidecar exists but is unreadable even after retries (torn or
 			// corrupt). The session must still open, but revision 0 must not
@@ -1528,13 +1459,13 @@ func loadSessionUnlocked(path string) (*Session, error) {
 			// on-disk revision as another runtime's write and fork a recovery
 			// branch. Anchor the baseline on digest+version only until a
 			// successful save re-learns the revision.
-			s.markPersistedRevisionUnknown(path, digest, s.version, s.rewriteVersion)
+			s.markPersistedRevisionUnknown(path, digest, s.version, s.rewriteVersion, diskView)
 		} else {
 			revision := int64(0)
 			if ok {
 				revision = meta.Revision
 			}
-			s.markPersistedFromLoad(path, digest, s.version, revision, s.rewriteVersion)
+			s.markPersistedFromLoad(path, digest, s.version, revision, s.rewriteVersion, diskView)
 		}
 	}
 	return s, nil

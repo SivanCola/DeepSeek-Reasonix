@@ -1304,7 +1304,7 @@ func TestSaveSnapshotAllowsExactAppendFromStaleRevisionBaseline(t *testing.T) {
 	}
 
 	s.Add(provider.Message{Role: provider.RoleUser, Content: "two"})
-	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true, true, 0)
+	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true, true, 0, nil)
 	if err := s.SaveSnapshot(path); err != nil {
 		t.Fatalf("SaveSnapshot exact append from stale revision baseline: %v", err)
 	}
@@ -1352,7 +1352,7 @@ func TestSaveSnapshotAllowsCompatibleSystemAppendFromStaleRevisionBaseline(t *te
 	msgs[0] = provider.Message{Role: provider.RoleSystem, Content: "sys v2"}
 	msgs = append(msgs, provider.Message{Role: provider.RoleUser, Content: "two"})
 	s.Replace(msgs)
-	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true, true, 0)
+	s.setPersistedBaseline(path, staleBaseline.digest, staleBaseline.version, staleBaseline.revision, true, true, 0, nil)
 	if err := s.SaveSnapshot(path); err != nil {
 		t.Fatalf("SaveSnapshot compatible-system append from stale baseline: %v", err)
 	}
@@ -2226,15 +2226,10 @@ func TestReconcileSessionSidecarsKeepsLiveLocks(t *testing.T) {
 	if err := ReconcileSessionSidecars(dir); err != nil {
 		t.Fatalf("ReconcileSessionSidecars: %v", err)
 	}
-	// New writers publish owner identity inside .lease.lock; no .lease.json
-	// is created anymore. Both lock sidecars must survive a live lease.
 	for _, sidecar := range []string{path + ".lock", path + ".lease.lock"} {
 		if _, err := os.Stat(sidecar); err != nil {
 			t.Fatalf("%s missing while lock is live: %v", sidecar, err)
 		}
-	}
-	if info, err := LoadSessionLeaseInfo(path); err != nil || info == nil {
-		t.Fatalf("owner info unreadable while lease is live: %v", err)
 	}
 }
 

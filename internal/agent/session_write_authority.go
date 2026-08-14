@@ -119,12 +119,9 @@ func (a *SessionWriteAuthority) Covers(path string) bool {
 	return a.path == canonicalSessionSavePath(path)
 }
 
-// BeginSave marks an in-flight save against the issuing lease so Release waits
-// for the write cycle to finish. When the authority was minted through a
-// SessionWriter, the save also holds the writer's saveMu for its whole cycle,
-// serializing all saves issued through that writer. The returned release must
-// run exactly once. A missing or stale authority returns a typed error and does
-// not enter the diverged/recovery path.
+// BeginSave registers an in-flight save so Release waits for it. Writer-minted
+// authorities also hold saveMu for the whole cycle. The returned release runs
+// once; missing or stale authorities return a typed error, not recovery.
 func (a *SessionWriteAuthority) BeginSave(path string) (func(), error) {
 	if a == nil {
 		return nil, ErrSessionWriteAuthorityMissing

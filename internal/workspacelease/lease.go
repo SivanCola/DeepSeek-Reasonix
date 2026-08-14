@@ -1,13 +1,10 @@
 // Package workspacelease serializes Delivery writers that target the same
 // workspace. Readers never acquire a lease. A writer keeps its lease from the
 // first mutation until every participating agent run and background job has
-// finished, so review and verification cannot be invalidated by another
-// Delivery session changing the workspace mid-turn.
+// finished.
 //
-// The Owner is purely participation accounting: active runs, retained
-// background jobs, lazy acquisition, and the waiting/acquired UI states.
-// Cross-process and in-process serialization itself is delegated entirely to
-// internal/filelock.
+// Owner is participation accounting only. Cross-process and in-process
+// serialization is delegated to internal/filelock.
 package workspacelease
 
 import (
@@ -248,14 +245,8 @@ func (o *Owner) releaseIfIdleLocked() func() {
 	return release
 }
 
-// acquire performs the delegated lock acquisition:
-//
-//  1. filelock.TryAcquire attempts an immediate acquisition (local slot plus
-//     OS lock in one non-blocking step);
-//  2. on contention the waiting UI state flips on and the wait notice fires
-//     exactly once;
-//  3. filelock.Acquire waits bounded by ctx, serializing same-process owners
-//     through its own registry and cross-process writers through the lock file.
+// acquire tries filelock.TryAcquire, then waits via filelock.Acquire.
+// Contention flips waiting=true and fires the wait notice once.
 func (o *Owner) acquire(ctx context.Context) (func(), error) {
 	release, err := filelock.TryAcquire(o.lockPath)
 	if err == nil {

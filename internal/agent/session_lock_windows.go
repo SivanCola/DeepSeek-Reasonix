@@ -53,14 +53,9 @@ type sessionLockFile struct {
 // fallback reopens the cleanup-vs-saver window, so tests pin it at zero.
 var sessionLockDispositionFallbacks atomic.Int64
 
-// tryTakeSessionLockFile opens lockPath and takes its exclusive LockFileEx
-// region without blocking. A live holder surfaces as ErrSessionFileLockHeld.
-//
-// The handle asks for DELETE access up front: FileDispositionInfo requires it,
-// and requesting it at open time keeps RemoveAndUnlock's deletion on the very
-// handle that owns the lock. A sharing violation here means some process has
-// the file open through Go's default share mode (which excludes DELETE) — for
-// a lock file that is the same answer as losing the LockFileEx race.
+// tryTakeSessionLockFile opens lockPath and takes exclusive LockFileEx
+// without blocking. The handle requests DELETE so RemoveAndUnlock can mark
+// disposition on the same handle that owns the lock.
 func tryTakeSessionLockFile(lockPath string) (*sessionLockFile, error) {
 	pathp, err := windows.UTF16PtrFromString(lockPath)
 	if err != nil {
@@ -93,12 +88,8 @@ func (l *sessionLockFile) Unlock() {
 	_ = windows.CloseHandle(l.handle)
 }
 
-// writeOwnerInfo replaces the lock file's contents with b through the held
-// handle while the LockFileEx region is still held. Byte-range locks only
-// block other handles, so writing through the owning handle is safe; the
-// lease publishes its owner identity directly inside .lease.lock, so the
-// metadata dies with the lock file on RemoveAndUnlock instead of surviving
-// as a stale sidecar.
+// writeOwnerInfo replaces the lock file contents through the held handle
+// so owner identity lives inside .lease.lock and dies with RemoveAndUnlock.
 func (l *sessionLockFile) writeOwnerInfo(b []byte) error {
 	if l == nil || l.handle == 0 {
 		return errors.New("lease lock not held")
@@ -123,12 +114,8 @@ func (l *sessionLockFile) writeOwnerInfo(b []byte) error {
 	return windows.FlushFileBuffers(l.handle)
 }
 
-// RemoveAndUnlock deletes the lock file atomically with the release. Windows
-// refuses a path-based delete of a file this process still holds open, so the
-// removal is expressed on the held handle instead: mark the delete
-// disposition, then unlock and close. The name dies with the handle, leaving
-// no window where another process could adopt a lock file that is already
-// doomed.
+// RemoveAndUnlock marks delete-disposition on the held handle, then unlocks
+// and closes so the name dies with the handle.
 func (l *sessionLockFile) RemoveAndUnlock() error {
 	// FILE_DISPOSITION_INFO with its BOOLEAN widened to a full word.
 	info := struct{ DeleteFile uint32 }{DeleteFile: 1}

@@ -376,7 +376,7 @@ func decodeSessionLeaseInfo(b []byte) (*SessionLeaseInfo, error) {
 	}
 	var info SessionLeaseInfo
 	if err := json.Unmarshal(b, &info); err != nil {
-		return nil, fmt.Errorf("%w: %v", errSessionLeaseInfoCorrupt, err)
+		return nil, fmt.Errorf("%w: %w", errSessionLeaseInfoCorrupt, err)
 	}
 	return &info, nil
 }
