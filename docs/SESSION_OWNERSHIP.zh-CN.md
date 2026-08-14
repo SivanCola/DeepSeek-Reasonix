@@ -11,8 +11,14 @@ lease 文件（`.lease.lock`）。生产路径上的 Controller 绑定带 genera
 `SessionWriter`；重新绑定会使旧 generation 立即失效。旧 `.lease.json` 仅作为
 只读兼容来源。
 
-已经持有 `SessionWriter` 的保存不再获取遗留的 `.jsonl.lock`。未绑定的测试 /
-导入路径仍使用该兼容 flock。
+主动路径切换（`new`、`clear`、`fork`、`branch`、`switch`）采用“先准备、后发布”
+的交接：前端先取得目标 lease，并给尚未发布的 Session 绑定写权限，然后 Controller
+才替换路径。非破坏性切换失败时会保留源 Controller 及其 lease；`clear` 也不会
+发布一个没有 lease 的替代 Session。
+
+所有保存仍会获取有界等待的 `.jsonl.lock` 兼容锁。session lease 决定谁可以
+长期拥有 transcript；save lock 则让该 owner 与仍受支持的旧版本，以及尚未
+接入 lease 协议的一次性 recovery/import 写者保持互斥。
 
 事件日志（`.events.jsonl`）是权威来源。绑定写者的保存对日志尾部（size +
 index 的 revision/digest）做 CAS，并用配对的内存 transcript 视图判断
@@ -22,8 +28,9 @@ no-op / append / replace。`.jsonl` 仍是兼容投影。
 
 1. 事件日志尾部仍匹配当前写者 → 正常保存。
 2. 磁盘已经覆盖本地前缀 → 采用磁盘版本，不建分支。
-3. 真正分歧、日志被替换或原会话被删除 → 写入一条由根 branch ID + writer
-   generation 决定的稳定 recovery 文件。后续冲突更新同一路径，不再嵌套。
+3. 真正分歧、日志被替换或原会话被删除 → 写入一条由根 branch ID + 当前
+   Session 首次 writer generation 决定的稳定 recovery 文件。lease 重绑不会
+   改变该 lane；后续冲突更新同一路径，不再嵌套。
 
 ## 回溯
 
@@ -34,6 +41,9 @@ no-op / append / replace。`.jsonl` 仍是兼容投影。
 新 checkpoint 写入 `turns/<turn>/meta.json` 和原始字节
 `files/NNNN.before`（schema v3）。默认保留最近 100 个回合目录；新 checkpoint
 不再把载荷重复写入 blob。旧的 v1/v2 `turn-N.json` 及其 blob 仍可读。
+
+v2 兼容 marker 同时也是 v3 turn 的存活标记。旧版本截断 `turn-N.json` 后，
+对应的 v3 目录会被视为 tombstone；再次升级不会让已经删除的未来 checkpoint 复活。
 
 结构化写工具在发布前重新校验存在性、SHA-256 和 mode，不匹配则返回
 `ErrFileChanged`。

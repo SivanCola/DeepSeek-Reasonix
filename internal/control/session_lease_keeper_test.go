@@ -175,6 +175,67 @@ func TestSessionLeaseKeeperRecoveryRebindsControllerBeforeReturning(t *testing.T
 	releaseSave()
 }
 
+func TestSessionLeaseKeeperTransitionBindsCandidateBeforeMove(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.jsonl")
+	b := filepath.Join(dir, "b.jsonl")
+	current := agent.NewSession("sys")
+	exec := agent.New(nil, nil, current, agent.Options{}, event.Discard)
+	ctrl := New(Options{Executor: exec, SessionPath: a, Sink: event.Discard})
+	k := NewSessionLeaseKeeper()
+	defer k.Release()
+	if err := k.Rebind(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.BindControllerAuthority(ctrl); err != nil {
+		t.Fatal(err)
+	}
+
+	candidate := agent.NewSession("sys")
+	info := SessionTransitionInfo{OriginalPath: a, TargetPath: b, Reason: "fork", session: candidate}
+	if err := k.HandleSessionTransition(info); err != nil {
+		t.Fatalf("HandleSessionTransition: %v", err)
+	}
+	if got := k.HeldPath(); got != agent.CanonicalSessionPath(b) {
+		t.Fatalf("HeldPath = %q, want %q", got, agent.CanonicalSessionPath(b))
+	}
+	if auth := candidate.WriteAuthority(); auth == nil || !auth.Covers(b) {
+		t.Fatal("candidate was not bound before transition returned")
+	}
+	old, err := agent.TryAcquireSessionLease(a)
+	if err != nil {
+		t.Fatalf("old path remained held: %v", err)
+	}
+	old.Release()
+}
+
+func TestSessionLeaseKeeperTransitionFailureKeepsCurrentOwner(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.jsonl")
+	b := filepath.Join(dir, "b.jsonl")
+	holder, err := agent.TryAcquireSessionLease(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Release()
+	k := NewSessionLeaseKeeper()
+	defer k.Release()
+	if err := k.Rebind(a); err != nil {
+		t.Fatal(err)
+	}
+	candidate := agent.NewSession("sys")
+	err = k.HandleSessionTransition(SessionTransitionInfo{TargetPath: b, Reason: "switch", session: candidate})
+	if !errors.Is(err, agent.ErrSessionLeaseHeld) && !strings.Contains(err.Error(), "in use") {
+		t.Fatalf("HandleSessionTransition error = %v, want held", err)
+	}
+	if got := k.HeldPath(); got != agent.CanonicalSessionPath(a) {
+		t.Fatalf("failed transition moved keeper to %q", got)
+	}
+	if candidate.WriteAuthority() != nil {
+		t.Fatal("failed transition bound candidate authority")
+	}
+}
+
 func TestSessionInUseMessageNamesHolder(t *testing.T) {
 	acquired := time.Date(2026, 7, 6, 3, 4, 0, 0, time.UTC)
 	err := &agent.SessionLeaseError{

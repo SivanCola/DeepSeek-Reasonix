@@ -97,6 +97,12 @@ func (s *Store) removeTurnArtifacts(turns map[int]bool) error {
 		return nil
 	}
 	for turn := range turns {
+		// The compatibility marker is the cross-version liveness record. Remove
+		// payloads first so a crash can leave a visible payload-free turn, never
+		// a markerless directory that a newer reader resurrects after downgrade.
+		if err := os.RemoveAll(s.turnDir(turn)); err != nil {
+			return fmt.Errorf("remove checkpoint turn %d: %w", turn, err)
+		}
 		for _, path := range []string{
 			filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", turn)),
 			filepath.Join(s.expiredDir(), fmt.Sprintf("turn-%d.json", turn)),
@@ -104,9 +110,6 @@ func (s *Store) removeTurnArtifacts(turns map[int]bool) error {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("remove checkpoint turn %d: %w", turn, err)
 			}
-		}
-		if err := os.RemoveAll(s.turnDir(turn)); err != nil {
-			return fmt.Errorf("remove checkpoint turn %d: %w", turn, err)
 		}
 	}
 	return nil
@@ -124,6 +127,11 @@ func (s *Store) loadV3Turns() []*Checkpoint {
 		}
 		turn, err := strconv.Atoi(e.Name())
 		if err != nil {
+			continue
+		}
+		// Old readers truncate only turn-N.json. Treat marker absence as a
+		// tombstone so reopening with a newer build cannot revive those turns.
+		if _, err := os.Stat(filepath.Join(s.dir, fmt.Sprintf("turn-%d.json", turn))); err != nil {
 			continue
 		}
 		b, err := fileenc.ReadFileUTF8(s.v3MetaPath(turn))

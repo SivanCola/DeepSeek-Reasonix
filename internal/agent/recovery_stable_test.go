@@ -155,3 +155,34 @@ func TestRecoveryGenerationRotatesAfterUnexpectedCollision(t *testing.T) {
 		t.Fatalf("collision did not rotate recovery path %q", collidingPath)
 	}
 }
+
+func TestRecoveryGenerationStaysStableAfterRecoveryLeaseRebind(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "session.jsonl")
+	sess := NewSession("sys")
+	firstWriter, err := AcquireSessionWriter(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstWriter.Bind(sess, NextSessionWriteGeneration()); err != nil {
+		t.Fatal(err)
+	}
+	lane := sess.recoveryGenerationKey()
+	firstPath := stableRecoverySessionPath(root, lane)
+	firstWriter.Release()
+
+	secondWriter, err := AcquireSessionWriter(firstPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondWriter.Release()
+	if err := secondWriter.Bind(sess, NextSessionWriteGeneration()); err != nil {
+		t.Fatal(err)
+	}
+	if got := sess.recoveryGenerationKey(); got != lane {
+		t.Fatalf("recovery lane changed across lease rebind: %q -> %q", lane, got)
+	}
+	if got := stableRecoverySessionPath(firstPath, sess.recoveryGenerationKey()); got != firstPath {
+		t.Fatalf("second recovery target = %q, want stable %q", got, firstPath)
+	}
+}

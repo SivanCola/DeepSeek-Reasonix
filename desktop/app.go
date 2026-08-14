@@ -2072,6 +2072,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
+		OnSessionTransition:      a.handleTabSessionTransition(tab),
 	})
 	if err != nil {
 		if teardownTimedOut {
@@ -2350,24 +2351,14 @@ func (a *App) Rewind(turn int, scope string) error {
 
 // RewindForTab rewinds the requested tab instead of resolving the active tab at
 // execution time, which may have changed after frontend confirmation.
-// Compatibility wrapper over the transactional path when available; falls back
-// to Controller.Rewind which prechecks conversation before files for both scope.
+// Compatibility wrapper over the structured fork-first path. Conversation
+// rewind opens the fork as a new tab; it never retargets the source controller.
 func (a *App) RewindForTab(tabID string, turn int, scope string) error {
-	tab, ctrl := a.tabAndCtrlByID(tabID)
-	if a.tabIsReadOnly(tab) {
-		return readOnlyChannelErr()
-	}
-	if ctrl == nil {
+	result := a.CommitRewindForTab(tabID, "", turn, scope)
+	if result.OK {
 		return nil
 	}
-	s := control.RewindBoth
-	switch scope {
-	case "code":
-		s = control.RewindCode
-	case "conversation":
-		s = control.RewindConversation
-	}
-	return ctrl.Rewind(turn, s)
+	return errors.New(nonEmptyStr(result.Error, "rewind failed"))
 }
 
 // PreviewRewindForTab returns a structured precheck without mutating state.
@@ -4080,6 +4071,7 @@ func (a *App) buildSessionRebindCandidate(
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
+		OnSessionTransition:      a.handleTabSessionTransition(tab),
 	})
 	if err != nil {
 		sink.clearContext()
@@ -9701,8 +9693,8 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
-		// Same logical session: keep the private temporary directory across
-		// model switches (Issue #7575).
+		OnSessionTransition:      a.handleTabSessionTransition(tab),
+		// Keep the private temporary directory across model switches (#7575).
 		SessionTemp: sessionTempFromController(oldCtrl),
 	})
 	if err != nil {
@@ -9889,8 +9881,8 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		SubagentParentLive:       a.subagentParentProbeForBuild(tab),
 		SessionRecoveryMeta:      a.tabSessionRecoveryMeta(tab),
 		OnSessionRecovered:       a.handleTabSessionRecovered(tab),
-		// Same logical session: keep the private temporary directory across
-		// effort switches (Issue #7575).
+		OnSessionTransition:      a.handleTabSessionTransition(tab),
+		// Keep the private temporary directory across effort switches (#7575).
 		SessionTemp: sessionTempFromController(oldCtrl),
 	})
 	if err != nil {

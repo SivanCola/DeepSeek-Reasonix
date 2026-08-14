@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -216,8 +217,8 @@ func acquireSessionRedactionWriters(sessionPath string) ([]*agent.SessionWriter,
 }
 
 func releaseSessionRedactionWriters(writers []*agent.SessionWriter) {
-	for i := len(writers) - 1; i >= 0; i-- {
-		writers[i].Release()
+	for _, writer := range slices.Backward(writers) {
+		writer.Release()
 	}
 }
 

@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"reasonix/internal/provider"
 	"reasonix/internal/store"
@@ -177,7 +179,7 @@ func TestWriterTailClassifyDoesNotRereadTranscriptBody(t *testing.T) {
 	}
 }
 
-func TestWriterBoundSaveSkipsCompatibilityFileLock(t *testing.T) {
+func TestWriterBoundSaveHonorsCompatibilityFileLock(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	s := NewSession("sys")
 	s.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
@@ -187,7 +189,14 @@ func TestWriterBoundSaveSkipsCompatibilityFileLock(t *testing.T) {
 		t.Fatalf("lockSessionFile: %v", err)
 	}
 	defer held()
-	if err := s.SaveSnapshot(path); err != nil {
-		t.Fatalf("writer-bound save while .jsonl.lock held: %v", err)
+	prevWait, prevPoll := sessionFileLockWait, sessionFileLockPollInterval
+	sessionFileLockWait = 40 * time.Millisecond
+	sessionFileLockPollInterval = 5 * time.Millisecond
+	t.Cleanup(func() {
+		sessionFileLockWait = prevWait
+		sessionFileLockPollInterval = prevPoll
+	})
+	if err := s.SaveSnapshot(path); !errors.Is(err, ErrSessionFileLockHeld) {
+		t.Fatalf("writer-bound save error = %v, want ErrSessionFileLockHeld", err)
 	}
 }

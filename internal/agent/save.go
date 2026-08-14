@@ -235,20 +235,12 @@ func (s *Session) withSessionSaveLocks(path string, fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
-	if s.writerBoundSave(path) {
-		return fn()
-	}
 	unlockFile, err := lockSessionFile(path)
 	if err != nil {
 		return fmt.Errorf("lock session file: %w", err)
 	}
 	defer unlockFile()
 	return fn()
-}
-
-func (s *Session) writerBoundSave(path string) bool {
-	auth := s.WriteAuthority()
-	return auth != nil && auth.Writer() != nil && auth.Covers(path)
 }
 
 func sessionArtifactExists(path string) bool {

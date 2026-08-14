@@ -4389,8 +4389,8 @@ export function useController() {
       }
 
       await loadSessionDataForTab(sourceTabId, true, "rewind");
-      const { dispatchPartialRewindNotice } = await import("./rewindCommit");
-      dispatchPartialRewindNotice(partialNotice, sourceTabId, outcome.tabId, (tabId, text) => dispatchTo(tabId, { type: "local_notice", level: "warn", text }));
+      if (partialNotice) await import("./rewindCommit").then(({ dispatchPartialRewindNotice }) =>
+        dispatchPartialRewindNotice(partialNotice, sourceTabId, outcome.tabId, (tabId, text) => dispatchTo(tabId, { type: "local_notice", level: "warn", text })));
       return outcome;
     } catch {
       return { ok: false };

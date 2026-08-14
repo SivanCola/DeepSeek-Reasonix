@@ -76,17 +76,21 @@ func (s *Session) recoveryGenerationKey() string {
 		return lane
 	}
 	s.mu.Unlock()
+	candidate := ""
 	if auth := s.WriteAuthority(); auth != nil && auth.Generation() != 0 {
 		writerID := SessionWriterID()
 		if writer := auth.Writer(); writer != nil && strings.TrimSpace(writer.WriterID()) != "" {
 			writerID = writer.WriterID()
 		}
-		return fmt.Sprintf("%s\x00gen-%d", writerID, auth.Generation())
+		candidate = fmt.Sprintf("%s\x00gen-%d", writerID, auth.Generation())
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.recoveryLane == "" {
-		s.recoveryLane = newSessionWriterID()
+		if candidate == "" {
+			candidate = newSessionWriterID()
+		}
+		s.recoveryLane = candidate
 	}
 	return s.recoveryLane
 }

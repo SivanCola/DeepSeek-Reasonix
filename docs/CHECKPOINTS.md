@@ -81,7 +81,9 @@ type Checkpoint struct {
   may still use blobs. Each v3 turn also writes a payload-free v2 compatibility
   marker (`turn-<turn>.json`). A previous Reasonix version can therefore keep
   turn numbering monotonic after a downgrade, but cannot restore the v3 file
-  payload represented by that marker.
+  payload represented by that marker. The marker is also the v3 turn's liveness
+  record: if an older reader truncates the marker, a later upgrade ignores the
+  leftover directory instead of resurrecting the future turn.
 - **Retention**: keep the newest 100 v3 turn directories by default and remove
   an expired turn as one directory. Raw v3 preimages also have a soft 1 GiB
   budget; the current or transaction-protected turn may temporarily exceed it,

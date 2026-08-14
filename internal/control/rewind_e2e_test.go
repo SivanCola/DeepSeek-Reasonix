@@ -266,6 +266,38 @@ func TestRewindConversationSucceedsWithLiveBoundary(t *testing.T) {
 	}
 }
 
+func TestCompatibilityRewindTransfersLeaseBeforeForkSwitch(t *testing.T) {
+	c, ag, _ := runTwoTurns(t)
+	originalPath := c.SessionPath()
+	keeper := NewSessionLeaseKeeper()
+	defer keeper.Release()
+	if err := keeper.Rebind(originalPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := keeper.BindControllerAuthority(c); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.Rewind(1, RewindConversation); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	targetPath := c.SessionPath()
+	if targetPath == originalPath {
+		t.Fatal("conversation rewind did not switch to its fork")
+	}
+	if got := keeper.HeldPath(); got != agent.CanonicalSessionPath(targetPath) {
+		t.Fatalf("keeper path = %q, want %q", got, agent.CanonicalSessionPath(targetPath))
+	}
+	if auth := ag.Session().WriteAuthority(); auth == nil || !auth.Covers(targetPath) {
+		t.Fatal("fork was published without target write authority")
+	}
+	old, err := agent.TryAcquireSessionLease(originalPath)
+	if err != nil {
+		t.Fatalf("parent lease remained held after switch: %v", err)
+	}
+	old.Release()
+}
+
 func TestPositionalCompressionPreservesCheckpointLineage(t *testing.T) {
 	c, ag, _ := runTwoTurns(t)
 	sess := ag.Session()

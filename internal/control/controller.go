@@ -155,6 +155,7 @@ type Controller struct {
 	onRememberPlanModeReadOnlyCommand func(prefix string) PlanModeReadOnlyCommandTrustResult
 	sessionRecoveryMeta               func(SessionRecoveryRequest) agent.BranchMeta
 	onSessionRecovered                func(SessionRecoveryInfo) error
+	onSessionTransition               func(SessionTransitionInfo) error
 
 	// balanceURL/balanceKey target the active provider's optional wallet-balance
 	// endpoint (empty when the provider declares none). Captured at build so a
@@ -528,6 +529,9 @@ type Options struct {
 	// OnSessionRecovered is called after a stale runtime's transcript has been
 	// saved as a recovery branch, before the controller commits to that branch.
 	OnSessionRecovered func(SessionRecoveryInfo) error
+	// OnSessionTransition transfers write ownership before an intentional
+	// fork, branch, or switch publishes a different Session.
+	OnSessionTransition func(SessionTransitionInfo) error
 	// ApprovalTimeout bounds how long a tool-approval or ask prompt blocks waiting
 	// for a user decision. Zero (default) waits forever — right for an interactive
 	// terminal. Bot/headless frontends set a positive value so an unanswered
@@ -619,6 +623,7 @@ func New(opts Options) *Controller {
 		onRememberPlanModeReadOnlyCommand: opts.OnRememberPlanModeReadOnlyCommand,
 		sessionRecoveryMeta:               opts.SessionRecoveryMeta,
 		onSessionRecovered:                opts.OnSessionRecovered,
+		onSessionTransition:               opts.OnSessionTransition,
 		balanceURL:                        opts.BalanceURL,
 		balanceKey:                        opts.BalanceKey,
 		balanceClient:                     opts.BalanceClient,
@@ -646,7 +651,6 @@ func New(opts Options) *Controller {
 		c.sessionTemp = sessiontemp.New()
 	}
 	c.sessionTemp.Retain()
-
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
 		c.legacyResearchArchive = legacyResearchArchive{store: autoresearch.NewStore(opts.WorkspaceRoot)}
 	}
@@ -3011,23 +3015,30 @@ func (c *Controller) NewSession() error {
 	}
 	c.hooks.SessionEnd(context.Background(), "clear")
 	c.extensionSessionEvent(extension.PointSessionEnd, dispatch.PhaseEnd, oldPath)
+	freshPath := oldPath
+	if c.sessionDir != "" {
+		freshPath = agent.NewSessionPath(c.sessionDir, c.label)
+	}
+	freshSession := agent.NewSession(c.systemPrompt)
+	if freshPath != oldPath {
+		if err := c.prepareSessionTransition(freshPath, "new", freshSession); err != nil {
+			return fmt.Errorf("bind new session: %w", err)
+		}
+	}
 	// Hold snapshotMu across the swap so an in-flight save cannot pair the old
 	// path with the fresh session (or the fresh path with the old session).
 	c.snapshotMu.Lock()
-	if c.sessionDir != "" {
-		c.mu.Lock()
-		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
-		c.guardianPath = guardian.PathFor(c.sessionPath)
-		c.mu.Unlock()
-	}
+	c.mu.Lock()
+	c.sessionPath = freshPath
+	c.guardianPath = guardian.PathFor(freshPath)
+	c.mu.Unlock()
 	c.setActiveJobSession(c.SessionPath())
-	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.executor.SetSession(freshSession)
 	c.bindExecutorProjection(c.SessionPath(), false)
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}
 	c.ResetPlannerSession()
-	freshPath := c.SessionPath()
 	c.rebindCheckpoints(freshPath)
 	c.resetRecoveryForNewSession(freshPath)
 	c.rotateSessionTemp()
@@ -3100,22 +3111,33 @@ func (c *Controller) ClearSession() error {
 		}
 		destroy.Finish()
 	}
+	freshPath := oldPath
+	if c.sessionDir != "" {
+		freshPath = agent.NewSessionPath(c.sessionDir, c.label)
+	}
+	freshSession := agent.NewSession(c.systemPrompt)
+	if freshPath != oldPath {
+		if err := c.prepareSessionTransition(freshPath, "clear", freshSession); err != nil {
+			if destroy.Async {
+				destroy.Finish()
+			}
+			c.snapshotMu.Unlock()
+			return fmt.Errorf("bind cleared session: %w", err)
+		}
+	}
 	c.hooks.SessionEnd(context.Background(), "clear")
 	c.extensionSessionEvent(extension.PointSessionEnd, dispatch.PhaseEnd, oldPath)
-	if c.sessionDir != "" {
-		c.mu.Lock()
-		c.sessionPath = agent.NewSessionPath(c.sessionDir, c.label)
-		c.guardianPath = guardian.PathFor(c.sessionPath)
-		c.mu.Unlock()
-	}
+	c.mu.Lock()
+	c.sessionPath = freshPath
+	c.guardianPath = guardian.PathFor(freshPath)
+	c.mu.Unlock()
 	c.setActiveJobSession(c.SessionPath())
-	c.executor.SetSession(agent.NewSession(c.systemPrompt))
+	c.executor.SetSession(freshSession)
 	c.bindExecutorProjection(c.SessionPath(), false)
 	if c.guardianSess != nil {
 		c.guardianSess.Reset()
 	}
 	c.ResetPlannerSession()
-	freshPath := c.SessionPath()
 	c.rebindCheckpoints(freshPath)
 	c.resetRecoveryForNewSession(freshPath)
 	c.rotateSessionTemp()
@@ -3328,6 +3350,9 @@ func (c *Controller) forkNamedReady(turn int, name string, switchToFork bool) (s
 		return "", c.rewindFail(err)
 	}
 	if switchToFork {
+		if err := c.prepareSessionTransition(newPath, "fork", sess); err != nil {
+			return "", c.rewindFail(fmt.Errorf("bind fork session: %w", err))
+		}
 		// See snapshotMu: the swap must not interleave with an in-flight save.
 		c.snapshotMu.Lock()
 		c.executor.SetSession(sess)
@@ -3415,6 +3440,9 @@ func (c *Controller) Branch(name string) (string, error) {
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
+	if err := c.prepareSessionTransition(newPath, "branch", sess); err != nil {
+		return "", c.rewindFail(fmt.Errorf("bind branch session: %w", err))
+	}
 	// See snapshotMu: the swap must not interleave with an in-flight save.
 	c.snapshotMu.Lock()
 	c.executor.SetSession(sess)
@@ -3476,6 +3504,9 @@ func (c *Controller) SwitchBranch(ref string) (agent.BranchInfo, error) {
 	loaded, err := agent.LoadSession(match.Path)
 	if err != nil {
 		return agent.BranchInfo{}, c.rewindFail(err)
+	}
+	if err := c.prepareSessionTransition(match.Path, "switch", loaded); err != nil {
+		return agent.BranchInfo{}, c.rewindFail(fmt.Errorf("bind switched session: %w", err))
 	}
 	// See snapshotMu: the swap must not interleave with an in-flight save.
 	c.snapshotMu.Lock()

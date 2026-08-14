@@ -136,6 +136,8 @@ func (c *Controller) PrepareRewind(turn int, scope RewindScope) (checkpoint.Rewi
 }
 
 // CommitRewind executes a prepared plan under rotation gate + mutation barrier.
+// Conversation forks are returned detached so multi-tab frontends can keep the
+// parent controller; single-session frontends must activate result.Branch.
 func (c *Controller) CommitRewind(planID string) (checkpoint.RewindResult, error) {
 	if !c.checkpoints.enabled() || c.executor == nil {
 		return checkpoint.RewindResult{}, c.rewindFail(fmt.Errorf("checkpoints unavailable"))

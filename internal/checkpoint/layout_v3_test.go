@@ -219,6 +219,40 @@ func TestV3CompatibilityMarkerKeepsPreviousReaderMonotonic(t *testing.T) {
 	}
 }
 
+func TestV3MarkerDeletionFromPreviousReaderTombstonesTurn(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "ckpt")
+	target := filepath.Join(root, "a.txt")
+	s := New(dir, root)
+	for turn := range 3 {
+		if err := os.WriteFile(target, []byte{byte('0' + turn)}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		s.Begin(turn, "edit", turn)
+		s.CaptureBefore(target, CaptureBeforeOpts{})
+	}
+
+	// Supported previous readers truncate only their visible turn-N.json files;
+	// they do not know about turns/<n>. Simulate a downgrade rewind at turn 1.
+	for _, turn := range []int{1, 2} {
+		if err := os.Remove(filepath.Join(dir, fmt.Sprintf("turn-%d.json", turn))); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "turns", fmt.Sprint(turn), "meta.json")); err != nil {
+			t.Fatalf("v3 directory %d unexpectedly missing: %v", turn, err)
+		}
+	}
+
+	reloaded := New(dir, root)
+	metas := reloaded.List()
+	if len(metas) != 1 || metas[0].Turn != 0 {
+		t.Fatalf("markerless future turns resurrected: %+v", metas)
+	}
+	if got := reloaded.NextTurn(); got != 1 {
+		t.Fatalf("NextTurn after downgrade truncate = %d, want 1", got)
+	}
+}
+
 func TestV3LoadPrefersNewerLegacyCheckpointOnHistoricalTurnCollision(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(t.TempDir(), "ckpt")
