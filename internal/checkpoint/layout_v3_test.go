@@ -46,6 +46,27 @@ func TestV3PersistAndReload(t *testing.T) {
 	}
 }
 
+func TestV3PersistsMalformedEncodedPreimageExactly(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "ckpt")
+	target := filepath.Join(root, "odd-utf16.txt")
+	want := []byte{0xff, 0xfe, 0x00}
+	if err := os.WriteFile(target, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir, root)
+	s.Begin(0, "edit", 0)
+	s.CaptureBefore(target, CaptureBeforeOpts{})
+
+	got, err := os.ReadFile(filepath.Join(dir, "turns", "0", "files", "0000.before"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("raw preimage = %x, want %x", got, want)
+	}
+}
+
 func TestV3LoadRejectsCorruptPayload(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(t.TempDir(), "ckpt")

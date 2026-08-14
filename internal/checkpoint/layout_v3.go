@@ -28,6 +28,9 @@ func (s *Store) v3BeforePath(turn, index int) string {
 }
 
 func v3PayloadBytes(f FileSnap) []byte {
+	if f.rawContent != nil {
+		return f.rawContent
+	}
 	if f.Content == nil {
 		return nil
 	}
@@ -126,6 +129,7 @@ func (s *Store) loadV3Turns(seen map[int]bool) {
 			c.Files[i].Content = &text
 			c.Files[i].Encoding = &enc
 			c.Files[i].BlobRef = ""
+			c.Files[i].rawContent = append([]byte(nil), raw...)
 		}
 		seen[turn] = true
 		s.done = append(s.done, &c)

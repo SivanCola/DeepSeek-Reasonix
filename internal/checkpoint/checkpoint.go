@@ -48,6 +48,7 @@ type FileSnap struct {
 	AfterMode     uint32        `json:"afterMode,omitempty"`
 	// PayloadExpired marks that the blob was GC'd while metadata remains.
 	PayloadExpired bool `json:"payloadExpired,omitempty"`
+	rawContent     []byte
 }
 
 // FileState is the earliest pre-edit state recorded for a file in this
@@ -382,6 +383,7 @@ func (s *Store) CaptureBeforeFromChange(ch diff.Change, opts CaptureBeforeOpts) 
 	var mode uint32
 	var sha string
 	var content *string
+	var rawContent []byte
 
 	if ch.Kind != diff.Create {
 		old := ch.OldText
@@ -404,6 +406,7 @@ func (s *Store) CaptureBeforeFromChange(ch diff.Change, opts CaptureBeforeOpts) 
 		if abs, aerr := safePath(s.root, ch.Path); aerr == nil {
 			if raw, rerr := secureReadFile(s.root, abs); rerr == nil {
 				sha = Digest(raw)
+				rawContent = append([]byte(nil), raw...)
 				e, detected := fileenc.Detect(raw)
 				decoded := string(fileenc.Decode(detected, e))
 				content = &decoded
@@ -425,6 +428,7 @@ func (s *Store) CaptureBeforeFromChange(ch diff.Change, opts CaptureBeforeOpts) 
 		Mode:          mode,
 		SHA256:        sha,
 		CaptureSource: opts.Source,
+		rawContent:    rawContent,
 	}
 	// Keep inline content in memory so FileState and the legacy restore API can
 	// distinguish existing files from the nil-content deletion sentinel.
@@ -465,6 +469,7 @@ func (s *Store) CaptureBefore(path string, opts CaptureBeforeOpts) {
 	if fp.Existed {
 		snap.Mode = fp.Mode
 		snap.SHA256 = fp.SHA256
+		snap.rawContent = append([]byte(nil), fp.Content...)
 		// Decoded text for API compat (FileState / legacy RestoreCode path).
 		enc, raw := fileenc.Detect(fp.Content)
 		text := string(fileenc.Decode(raw, enc))

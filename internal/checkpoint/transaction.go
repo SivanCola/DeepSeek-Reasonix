@@ -504,25 +504,7 @@ func (s *Store) restoreOriginalRewind(original *TransactionManifest, applier Con
 }
 
 func (s *Store) prepareTransaction(plan RewindPlan, applier ConversationApplier) (*TransactionManifest, error) {
-	tx := &TransactionManifest{
-		SchemaVersion:      SchemaV2,
-		ID:                 newID("tx"),
-		WorkspaceRoot:      s.root,
-		State:              TxPrepared,
-		Kind:               "rewind",
-		Turn:               plan.Turn,
-		Scope:              plan.Scope,
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		SessionRevision:    plan.SessionRevision,
-		WorkspaceToken:     plan.WorkspaceToken,
-		Coverage:           plan.Coverage,
-		CoverageGaps:       append([]CoverageGap(nil), plan.CoverageGaps...),
-		BoundaryIndex:      plan.BoundaryIndex,
-		HasBoundary:        plan.HasBoundary,
-		ConversationAction: plan.ConversationAction,
-		TruncateFrom:       plan.Turn,
-	}
+	tx := newRewindTransaction(s.root, plan)
 	prepared := false
 	defer func() {
 		if !prepared {
@@ -626,7 +608,7 @@ func (s *Store) prepareTransaction(plan RewindPlan, applier ConversationApplier)
 		}
 	}
 
-	if (plan.Scope == RewindConversation || plan.Scope == RewindBoth) && applier != nil {
+	if shouldTruncateConversation(tx) && applier != nil {
 		// Backup future checkpoints for undo.
 		backup, err := s.backupCheckpointsFrom(plan.Turn)
 		if err != nil {
@@ -864,7 +846,7 @@ func (s *Store) SetConversationForward(txID string, forward []byte) error {
 		// Commit builds tx fresh; controller should pass forward via Commit options.
 		return err
 	}
-	tx.ConversationForward = forward
+	setTransactionConversationForward(&tx, forward)
 	tx.UpdatedAt = time.Now()
 	return s.persistTransaction(&tx)
 }
@@ -919,7 +901,7 @@ func (s *Store) CommitRewindWithForward(planID string, forward []byte, applier C
 	if err != nil {
 		return RewindResult{OK: false, Error: err.Error()}, err
 	}
-	tx.ConversationForward = forward
+	setTransactionConversationForward(tx, forward)
 	if err := s.persistTransaction(tx); err != nil {
 		return RewindResult{OK: false, Error: err.Error()}, err
 	}

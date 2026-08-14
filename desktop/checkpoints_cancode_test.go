@@ -114,6 +114,9 @@ func TestDesktopRewindCommitAndUndoUseAuthoritativeControllerState(t *testing.T)
 		t.Fatalf("fork history still contains rewound turn: %q", forkContents)
 	}
 
+	parentMessages := session.Snapshot()
+	parentMessages = append(parentMessages, provider.Message{Role: provider.RoleUser, Content: "parent continued"})
+	session.Replace(parentMessages)
 	undo := app.UndoRewindForTab("test", result.TransactionID)
 	if !undo.OK {
 		t.Fatalf("undo = %+v", undo)
@@ -121,11 +124,11 @@ func TestDesktopRewindCommitAndUndoUseAuthoritativeControllerState(t *testing.T)
 	if got, err := os.ReadFile(filePath); err != nil || string(got) != "after" {
 		t.Fatalf("file after undo = %q err=%v", got, err)
 	}
-	if got := ctrl.History(); len(got) != 5 {
-		t.Fatalf("controller history after undo = %d, want 5", len(got))
+	if got := ctrl.History(); len(got) != 6 || got[5].Content != "parent continued" {
+		t.Fatalf("controller history after undo = %+v, want continued parent", got)
 	}
-	if got := app.HistoryForTab("test"); len(got) != 5 {
-		t.Fatalf("desktop history after undo = %d, want 5", len(got))
+	if got := app.HistoryForTab("test"); len(got) != 6 || got[5].Content != "parent continued" {
+		t.Fatalf("desktop history after undo = %+v, want continued parent", got)
 	}
 }
 
