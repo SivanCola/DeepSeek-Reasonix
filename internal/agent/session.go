@@ -4,6 +4,7 @@ package agent
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"sync"
 
@@ -99,7 +100,7 @@ func (s *Session) ConsumeFinalReadinessRecovery() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := len(s.Messages) - 1; i >= 0; i-- {
+	for i := range slices.Backward(s.Messages) {
 		message := &s.Messages[i]
 		if message.LocalOnly && message.FinalReadinessRecovery != nil && message.FinalReadinessRecovery.Pending {
 			consumed := *message.FinalReadinessRecovery
