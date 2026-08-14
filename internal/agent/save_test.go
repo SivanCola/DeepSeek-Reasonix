@@ -2226,10 +2226,15 @@ func TestReconcileSessionSidecarsKeepsLiveLocks(t *testing.T) {
 	if err := ReconcileSessionSidecars(dir); err != nil {
 		t.Fatalf("ReconcileSessionSidecars: %v", err)
 	}
-	for _, sidecar := range []string{path + ".lock", path + ".lease.lock", path + ".lease.json"} {
+	// New writers publish owner identity inside .lease.lock; no .lease.json
+	// is created anymore. Both lock sidecars must survive a live lease.
+	for _, sidecar := range []string{path + ".lock", path + ".lease.lock"} {
 		if _, err := os.Stat(sidecar); err != nil {
 			t.Fatalf("%s missing while lock is live: %v", sidecar, err)
 		}
+	}
+	if info, err := LoadSessionLeaseInfo(path); err != nil || info == nil {
+		t.Fatalf("owner info unreadable while lease is live: %v", err)
 	}
 }
 

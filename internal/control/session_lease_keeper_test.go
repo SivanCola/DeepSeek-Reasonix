@@ -28,7 +28,7 @@ func TestSessionLeaseKeeperRebindMovesLease(t *testing.T) {
 	if got, want := k.HeldPath(), agent.CanonicalSessionPath(a); got != want {
 		t.Fatalf("HeldPath = %q, want %q", got, want)
 	}
-	if _, err := os.Stat(store.SessionLeaseInfo(agent.CanonicalSessionPath(a))); err != nil {
+	if info, err := agent.LoadSessionLeaseInfo(agent.CanonicalSessionPath(a)); err != nil || info == nil {
 		t.Fatalf("lease info for a missing: %v", err)
 	}
 	// a is held: an outside acquire must fail.
@@ -42,9 +42,10 @@ func TestSessionLeaseKeeperRebindMovesLease(t *testing.T) {
 	if got, want := k.HeldPath(), agent.CanonicalSessionPath(b); got != want {
 		t.Fatalf("HeldPath after rebind = %q, want %q", got, want)
 	}
-	// The old lease is released: a is acquirable again and its info is gone.
-	if _, err := os.Stat(store.SessionLeaseInfo(agent.CanonicalSessionPath(a))); !os.IsNotExist(err) {
-		t.Fatalf("lease info for a after rebind stat err = %v, want not exist", err)
+	// The old lease is released: a is acquirable again and its owner info
+	// (published inside .lease.lock) is gone with the lock file.
+	if _, err := agent.LoadSessionLeaseInfo(agent.CanonicalSessionPath(a)); !os.IsNotExist(err) {
+		t.Fatalf("lease info for a after rebind err = %v, want not exist", err)
 	}
 	lease, err := agent.TryAcquireSessionLease(a)
 	if err != nil {
@@ -129,8 +130,13 @@ func TestSessionLeaseKeeperReleaseRemovesLeaseInfo(t *testing.T) {
 	}
 	k.Release()
 	k.Release() // idempotent
+	// Owner info lives inside .lease.lock and dies with the lock file on
+	// release; no legacy .lease.json sidecar is left behind either.
+	if _, err := agent.LoadSessionLeaseInfo(agent.CanonicalSessionPath(a)); !os.IsNotExist(err) {
+		t.Fatalf("lease info after Release err = %v, want not exist", err)
+	}
 	if _, err := os.Stat(store.SessionLeaseInfo(agent.CanonicalSessionPath(a))); !os.IsNotExist(err) {
-		t.Fatalf("lease info after Release stat err = %v, want not exist", err)
+		t.Fatalf("legacy lease sidecar after Release stat err = %v, want not exist", err)
 	}
 	if got := k.HeldPath(); got != "" {
 		t.Fatalf("HeldPath after Release = %q, want empty", got)

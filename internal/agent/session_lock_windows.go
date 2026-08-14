@@ -4,6 +4,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"sync/atomic"
 	"unsafe"
@@ -90,6 +91,36 @@ func tryTakeSessionLockFile(lockPath string) (*sessionLockFile, error) {
 func (l *sessionLockFile) Unlock() {
 	_ = windows.UnlockFileEx(l.handle, 0, 1, 0, &l.overlapped)
 	_ = windows.CloseHandle(l.handle)
+}
+
+// writeOwnerInfo replaces the lock file's contents with b through the held
+// handle while the LockFileEx region is still held. Byte-range locks only
+// block other handles, so writing through the owning handle is safe; the
+// lease publishes its owner identity directly inside .lease.lock, so the
+// metadata dies with the lock file on RemoveAndUnlock instead of surviving
+// as a stale sidecar.
+func (l *sessionLockFile) writeOwnerInfo(b []byte) error {
+	if l == nil || l.handle == 0 {
+		return errors.New("lease lock not held")
+	}
+	if err := windows.SetFilePointerEx(l.handle, 0, nil, windows.FILE_BEGIN); err != nil {
+		return err
+	}
+	var written uint32
+	if err := windows.WriteFile(l.handle, b, &written, nil); err != nil {
+		return err
+	}
+	if int(written) != len(b) {
+		return fmt.Errorf("lease owner info: short write %d of %d bytes", written, len(b))
+	}
+	// Retract any stale bytes a previous holder left past the new document.
+	if err := windows.SetFilePointerEx(l.handle, int64(len(b)), nil, windows.FILE_BEGIN); err != nil {
+		return err
+	}
+	if err := windows.SetEndOfFile(l.handle); err != nil {
+		return err
+	}
+	return windows.FlushFileBuffers(l.handle)
 }
 
 // RemoveAndUnlock deletes the lock file atomically with the release. Windows

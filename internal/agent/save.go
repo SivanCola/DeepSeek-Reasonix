@@ -1057,7 +1057,6 @@ func (s *Session) markPersistedRevisionUnknown(path string, digest [sha256.Size]
 
 func (s *Session) setPersistedBaseline(path string, digest [sha256.Size]byte, version uint64, revision int64, revisionKnown, saveVerified bool, rewriteVersion int) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.persisted = sessionPersistState{
 		path:          canonicalSessionSavePath(path),
 		digest:        digest,
@@ -1087,6 +1086,26 @@ func (s *Session) setPersistedBaseline(path string, digest [sha256.Size]byte, ve
 		s.rawMessages = nil
 		s.eventLogDamaged = false
 	}
+	writer := s.writeWriterLocked()
+	logTail := int64(0)
+	if info, err := os.Stat(store.SessionEventLog(path)); err == nil {
+		logTail = info.Size()
+	}
+	s.mu.Unlock()
+	// Keep the bound SessionWriter's baseline in lockstep: the writer is the
+	// durable home of the event-log CAS state (revision, digest, tail).
+	if writer != nil {
+		writer.RecordBaseline(path, revision, digestString(digest), revisionKnown, logTail)
+	}
+}
+
+// writeWriterLocked returns the SessionWriter behind the bound authority, if
+// the authority was minted through one. Callers hold s.mu.
+func (s *Session) writeWriterLocked() *SessionWriter {
+	if s.writeAuth == nil {
+		return nil
+	}
+	return s.writeAuth.writer
 }
 
 // sessionContentRevision reads the CAS ledger (revision + content digest) from

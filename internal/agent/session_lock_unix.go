@@ -59,6 +59,23 @@ func (l *sessionLockFile) Unlock() {
 	_ = l.f.Close()
 }
 
+// writeOwnerInfo replaces the lock file's contents with b through the held
+// descriptor while the flock is still held. The lease publishes its owner
+// identity directly inside .lease.lock, so the metadata dies with the lock
+// file on RemoveAndUnlock instead of surviving as a stale sidecar.
+func (l *sessionLockFile) writeOwnerInfo(b []byte) error {
+	if l == nil || l.f == nil {
+		return errors.New("lease lock not held")
+	}
+	if err := l.f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := l.f.WriteAt(b, 0); err != nil {
+		return err
+	}
+	return l.f.Sync()
+}
+
 // RemoveAndUnlock deletes the lock file atomically with the release: the
 // unlink happens while the flock is still held, so a waiter blocked on this
 // inode can never adopt a file that is about to disappear for everyone else.

@@ -9,10 +9,11 @@ import (
 )
 
 // BindSessionWriteAuthority issues a generation-bound write authority from
-// lease and attaches it to the controller's executor session. Controllers must
-// call this after acquiring a lease and before entering Ready / Submit /
-// autosave / tab publication. A nil lease clears the bound authority so later
-// saves fail closed rather than forking recovery under a released lease.
+// the lease's SessionWriter and attaches it to the controller's executor
+// session. Controllers must call this after acquiring a lease and before
+// entering Ready / Submit / autosave / tab publication. A nil lease clears
+// the bound authority so later saves fail closed rather than forking
+// recovery under a released lease.
 func (c *Controller) BindSessionWriteAuthority(lease *agent.SessionLease) error {
 	if c == nil {
 		return nil
@@ -30,14 +31,15 @@ func (c *Controller) BindSessionWriteAuthority(lease *agent.SessionLease) error 
 		sess.ClearWriteAuthority()
 		return nil
 	}
-	auth, err := lease.IssueWriteAuthority(gen)
-	if err != nil {
+	// Authorities are minted through the lease's SessionWriter so all saves
+	// for the lease serialize through one writer and update its event-log
+	// baseline. Recovery handoff rebinds the lease before sessionPath updates,
+	// so the writer does not require path equality here. Saves still enforce
+	// auth.Covers(targetPath).
+	if err := lease.Writer().Bind(sess, gen); err != nil {
 		sess.ClearWriteAuthority()
 		return err
 	}
-	// Recovery handoff rebinds the lease before sessionPath updates, so do not
-	// require path equality here. Saves still enforce auth.Covers(targetPath).
-	sess.BindWriteAuthority(auth)
 	return nil
 }
 
