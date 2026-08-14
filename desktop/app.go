@@ -2205,6 +2205,8 @@ type RewindResultView struct {
 	OperationID        string   `json:"operationId,omitempty"`
 	Branch             string   `json:"branch,omitempty"`
 	Partial            bool     `json:"partial,omitempty"`
+	TabID              string   `json:"tabId,omitempty"`
+	Tab                *TabMeta `json:"tab,omitempty"`
 	Error              string   `json:"error,omitempty"`
 	Conflicts          []string `json:"conflicts,omitempty"`
 	Coverage           string   `json:"coverage,omitempty"`
@@ -2423,6 +2425,19 @@ func (a *App) CommitRewindForTab(tabID, planID string, turn int, scope string) R
 		if view.Error == "" {
 			view.Error = err.Error()
 		}
+		return view
+	}
+	if view.OK && view.ConversationForked && strings.TrimSpace(view.Branch) != "" && tab != nil {
+		meta, openErr := a.openForkedSessionTab(tab, view.Branch)
+		if openErr != nil {
+			if view.Error == "" {
+				view.Error = openErr.Error()
+			}
+		} else if meta.ID != "" {
+			copied := meta
+			view.TabID = copied.ID
+			view.Tab = &copied
+		}
 	}
 	return view
 }
@@ -2601,71 +2616,13 @@ func (a *App) ForkForTab(tabID string, turn int) (TabMeta, error) {
 		return TabMeta{}, nil
 	}
 	ctrl = sourceTab.Ctrl
-	scope := sourceTab.Scope
-	workspaceRoot := sourceTab.WorkspaceRoot
-	sourceTitle := sourceTab.TopicTitle
-	model := sourceTab.model
-	effort := cloneStringPtr(sourceTab.effort)
-	mode := currentTabMode(sourceTab)
-	toolApprovalMode := currentTabToolApprovalMode(sourceTab)
-	disabledMCP := cloneServerViewMap(sourceTab.disabledMCP)
-	mcpOrder := append([]string(nil), sourceTab.mcpOrder...)
 	a.mu.RUnlock()
 
 	newPath, err := ctrl.ForkSession(turn, "")
 	if err != nil {
 		return TabMeta{}, err
 	}
-	topicID := newTopicID()
-	topicTitle := a.forkTopicTitle(sourceTitle)
-	titleRoot := workspaceRoot
-	if scope == "global" {
-		titleRoot = ""
-	}
-	if err := setTopicTitle(titleRoot, topicID, topicTitle); err != nil {
-		return TabMeta{}, err
-	}
-	m, _ := agent.EnsureBranchMeta(newPath)
-	m.Scope = scope
-	m.WorkspaceRoot = workspaceRoot
-	m.TopicID = topicID
-	m.TopicTitle = topicTitle
-	if err := agent.SaveBranchMeta(newPath, m); err != nil {
-		return TabMeta{}, err
-	}
-	invalidateTopicSessionIndexForPath(newPath)
-
-	a.mu.Lock()
-	newTabID := a.newUniqueTabIDLocked()
-	tab := &WorkspaceTab{
-		ID:               newTabID,
-		Scope:            scope,
-		WorkspaceRoot:    workspaceRoot,
-		TopicID:          topicID,
-		TopicTitle:       topicTitle,
-		topicTitleSource: topicTitleSourceManual,
-		SessionPath:      newPath,
-		model:            model,
-		effort:           effort,
-		mode:             mode,
-		toolApprovalMode: toolApprovalMode,
-		disabledMCP:      disabledMCP,
-		mcpOrder:         mcpOrder,
-	}
-	tab.sink = &tabEventSink{tabID: newTabID, app: a}
-	a.tabs[newTabID] = tab
-	a.tabOrder = append(a.tabOrder, newTabID)
-	activateFork := a.activeTabID == sourceTab.ID
-	if activateFork {
-		a.activeTabID = newTabID
-	}
-	a.saveTabsLocked()
-	meta := a.tabMeta(tab, activateFork)
-	a.mu.Unlock()
-
-	a.emitProjectTreeChangedForSessionDirs(sessionDirectoryForPath(newPath))
-	a.startTabControllerBuild(tab)
-	return meta, nil
+	return a.openForkedSessionTab(sourceTab, newPath)
 }
 
 // SummarizeFrom / SummarizeUpTo compress model context after / before the start

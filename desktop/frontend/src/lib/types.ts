@@ -869,6 +869,7 @@ export interface RewindPlanView {
   fileCount?: number;
   activeWriters?: number;
   path?: string;
+  conversationAction?: string;
   ok?: boolean;
   error?: string;
 }
@@ -880,6 +881,12 @@ export interface RewindResultView {
   written?: string[];
   deleted?: string[];
   conversationOk?: boolean;
+  conversationForked?: boolean;
+  operationId?: string;
+  branch?: string;
+  partial?: boolean;
+  tabId?: string;
+  tab?: TabMeta;
   error?: string;
   conflicts?: string[];
   coverage?: string;

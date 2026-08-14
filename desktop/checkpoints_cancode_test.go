@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 )
 
 func TestDesktopRewindCommitAndUndoUseAuthoritativeControllerState(t *testing.T) {
+	isolateDesktopUserDirs(t)
 	dir := t.TempDir()
 	root := t.TempDir()
 	sessionPath := filepath.Join(dir, "s.jsonl")
@@ -56,8 +58,16 @@ func TestDesktopRewindCommitAndUndoUseAuthoritativeControllerState(t *testing.T)
 	}
 	ag := agent.New(nil, nil, session, agent.Options{}, event.Discard)
 	ctrl := control.New(control.Options{Executor: ag, Runner: ag, SessionDir: dir, SessionPath: sessionPath, WorkspaceRoot: root, Label: "test"})
-	app := &App{}
+	app := NewApp()
 	app.setTestCtrl(ctrl, "test")
+	app.tabs["test"].WorkspaceRoot = root
+	defer func() {
+		for _, tab := range app.tabs {
+			if tab != nil && tab.Ctrl != nil {
+				tab.Ctrl.Close()
+			}
+		}
+	}()
 
 	plan := app.PreviewRewindForTab("test", 1, "both")
 	if !plan.OK || !plan.CanFiles || !plan.CanConversation {
@@ -67,14 +77,41 @@ func TestDesktopRewindCommitAndUndoUseAuthoritativeControllerState(t *testing.T)
 	if !result.OK || !result.UndoAvailable || result.TransactionID == "" {
 		t.Fatalf("commit = %+v", result)
 	}
+	if !result.ConversationForked || result.Branch == "" || result.TabID == "" || result.Tab == nil {
+		t.Fatalf("commit fork wiring = %+v, want branch and tab", result)
+	}
 	if got, err := os.ReadFile(filePath); err != nil || string(got) != before {
 		t.Fatalf("file after commit = %q err=%v", got, err)
 	}
-	if got := ctrl.History(); len(got) != 3 {
-		t.Fatalf("controller history after commit = %d, want 3", len(got))
+	if got := ctrl.History(); len(got) != 5 {
+		t.Fatalf("source controller history after commit = %d, want 5", len(got))
 	}
-	if got := app.HistoryForTab("test"); len(got) != 3 {
-		t.Fatalf("desktop history after commit = %d, want 3", len(got))
+	if got := app.HistoryForTab("test"); len(got) != 5 {
+		t.Fatalf("source desktop history after commit = %d, want 5", len(got))
+	}
+	if got := ctrl.SessionPath(); got != sessionPath {
+		t.Fatalf("source session path = %q, want %q", got, sessionPath)
+	}
+	forkTab := app.tabs[result.TabID]
+	if forkTab == nil || forkTab.SessionPath != result.Branch {
+		t.Fatalf("fork tab = %+v, want session %q", forkTab, result.Branch)
+	}
+	if app.activeTabID != result.TabID {
+		t.Fatalf("active tab = %q, want fork %q", app.activeTabID, result.TabID)
+	}
+	forkSess, err := agent.LoadSession(result.Branch)
+	if err != nil {
+		t.Fatalf("LoadSession(fork): %v", err)
+	}
+	var forkContents []string
+	for _, msg := range forkSess.Messages {
+		forkContents = append(forkContents, msg.Content)
+	}
+	if !slices.Contains(forkContents, "first") || !slices.Contains(forkContents, "answer") {
+		t.Fatalf("fork history missing prefix: %q", forkContents)
+	}
+	if slices.Contains(forkContents, "edit") || slices.Contains(forkContents, "done") {
+		t.Fatalf("fork history still contains rewound turn: %q", forkContents)
 	}
 
 	undo := app.UndoRewindForTab("test", result.TransactionID)

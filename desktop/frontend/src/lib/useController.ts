@@ -4307,6 +4307,39 @@ export function useController() {
     undoAvailable?: boolean;
     written?: string[];
     deleted?: string[];
+    conversationForked?: boolean;
+    branch?: string;
+    partial?: boolean;
+    tabId?: string;
+    tab?: TabMeta;
+  };
+
+  const adoptReturnedTab = async (tab: TabMeta, sourceTabId: string, navigationSeq: number, reason: string): Promise<string | undefined> => {
+    const snapshotAt = promptEventClock();
+    const navigationUnchanged = activeNavigationSeqRef.current === navigationSeq;
+    const activateFork = tab.active && navigationUnchanged && activeTabIdRef.current === sourceTabId;
+    if (!activateFork) {
+      dispatchTo(tab.id, { type: "optimistic_meta", meta: metaFromTab(tab, statesRef.current.get(tab.id)?.meta) });
+      dispatchRuntimeStatusForTab(tab.id, tab, snapshotAt);
+      const currentTabId = activeTabIdRef.current;
+      if (tab.active) {
+        await reassertVisibleTabAfterStaleNavigation(reason, tab.id);
+      } else if (!tab.active && navigationUnchanged && currentTabId === sourceTabId) {
+        await syncActiveTabFromBackend(false, true);
+      }
+      addBreadcrumb(reason, `stale completion ${tab.id} current=${currentTabId ?? ""}`);
+      await waitForTabReady(tab.id);
+      return tab.id;
+    }
+    beginActiveNavigation();
+    setActiveTabId(tab.id);
+    activeTabIdRef.current = tab.id;
+    confirmBackendActiveTab(tab.id);
+    dispatchRuntimeStatusForTab(tab.id, tab, snapshotAt);
+    await waitForTabReady(tab.id);
+    await loadSessionDataForTab(tab.id, true);
+    await reconcileTabRuntime(tab.id, { hydrateSessionData: false });
+    return tab.id;
   };
 
   const rewindForTabDetailed = useCallback(async (sourceTabId: string, turn: number, scope: string): Promise<RewindOutcome> => {
@@ -4318,35 +4351,13 @@ export function useController() {
     dispatchTo(sourceTabId, { type: "local_notice", level: "info", text: messageActionBusyText(actionScope) });
     try {
       if (actionScope === "fork") {
-        const snapshotAt = promptEventClock();
         const tab = await app.ForkForTab(sourceTabId, turn);
         if (tab?.id) {
-          const navigationUnchanged = activeNavigationSeqRef.current === forkNavigationSeq;
-          const activateFork = tab.active && navigationUnchanged && activeTabIdRef.current === sourceTabId;
-          if (!activateFork) {
-            dispatchTo(tab.id, { type: "optimistic_meta", meta: metaFromTab(tab, statesRef.current.get(tab.id)?.meta) });
-            dispatchRuntimeStatusForTab(tab.id, tab, snapshotAt);
-            const currentTabId = activeTabIdRef.current;
-            if (tab.active) {
-              await reassertVisibleTabAfterStaleNavigation("tab.fork", tab.id);
-            } else if (!tab.active && navigationUnchanged && currentTabId === sourceTabId) {
-              await syncActiveTabFromBackend(false, true);
-            }
-            addBreadcrumb("tab.fork", `stale completion ${tab.id} current=${currentTabId ?? ""}`);
-            return { ok: true };
-          }
-          beginActiveNavigation();
-          setActiveTabId(tab.id);
-          activeTabIdRef.current = tab.id;
-          confirmBackendActiveTab(tab.id);
-          dispatchRuntimeStatusForTab(tab.id, tab, snapshotAt);
-          await waitForTabReady(tab.id);
-          await loadSessionDataForTab(tab.id, true);
-          await reconcileTabRuntime(tab.id, { hydrateSessionData: false });
+          await adoptReturnedTab(tab, sourceTabId, forkNavigationSeq, "tab.fork");
         } else {
           await syncActiveTabFromBackend(true);
         }
-        return { ok: true };
+        return { ok: true, tabId: tab?.id, tab };
       }
 
       let outcome: RewindOutcome = { ok: true };
@@ -4362,7 +4373,16 @@ export function useController() {
           dispatchTo(sourceTabId, { type: "local_notice", level: "warn", text: detail });
           return { ok: false, written: result?.written, deleted: result?.deleted };
         }
-        outcome = result as RewindOutcome;
+        outcome = {
+          ...result,
+          tabId: result.tabId || result.tab?.id,
+        };
+        if (outcome.tab?.id) {
+          await adoptReturnedTab(outcome.tab, sourceTabId, forkNavigationSeq, "tab.rewind");
+          outcome.tabId = outcome.tab.id;
+        } else if (outcome.tabId) {
+          await waitForTabReady(outcome.tabId);
+        }
       }
 
       await loadSessionDataForTab(sourceTabId, true, "rewind");

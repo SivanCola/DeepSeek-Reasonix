@@ -437,6 +437,15 @@ ok(
 );
 
 ok(
+  /const targetTabId = outcome\.tabId \|\| sourceTabId/.test(appSource) &&
+    /undoTabId: sourceTabId/.test(appSource) &&
+    /const outcome = await rewindForTabDetailed\(sourceTabId, turn, "conversation"\)/.test(appSource) &&
+    /sendToTab\(targetTabId, next, submit, original\)/.test(appSource) &&
+    /adoptReturnedTab\(outcome\.tab, sourceTabId, forkNavigationSeq, "tab\.rewind"\)/.test(controllerSource),
+  "conversation rewind opens the fork tab and edit-resubmit sends on that tab",
+);
+
+ok(
   /onSessionRevertCommitted\?\.\(workspaceTabId, result\)/.test(workspacePanelSource) &&
     /onSessionRevertCommitted=\{handleSessionRevertCommitted\}/.test(appSource) &&
     /handleSessionRevertCommitted[\s\S]*?transactionId: outcome\.transactionId/.test(appSource),
