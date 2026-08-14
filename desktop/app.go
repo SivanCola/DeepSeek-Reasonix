@@ -5041,6 +5041,7 @@ type HistoryMessage struct {
 	Summary         string                      `json:"summary,omitempty"`
 	Archive         string                      `json:"archive,omitempty"`
 	DecisionReceipt *provider.DecisionReceipt   `json:"decisionReceipt,omitempty"`
+	Readiness       *event.FinalReadiness       `json:"readiness,omitempty"`
 	ServerSearch    []provider.ServerSearchCall `json:"serverSearch,omitempty"`
 }
 
@@ -5438,6 +5439,16 @@ func (state *historyMessageConvertState) convertHistoryMessage(
 			Code:            event.NoticeCodeDecisionReceipt,
 			Level:           "info",
 			DecisionReceipt: cloneDecisionReceipt(m.DecisionReceipt),
+		})
+	}
+	if m.LocalOnly && m.FinalReadinessRecovery != nil && m.FinalReadinessRecovery.Pending {
+		return append(out, HistoryMessage{
+			Role: "notice", Code: event.NoticeCodeFinalReadiness, Level: "info", Pending: true,
+			Content: "Task status needs one more check; continue the remaining work.",
+			Readiness: &event.FinalReadiness{
+				Attempts: 1,
+				Missing:  append([]string(nil), m.FinalReadinessRecovery.Missing...),
+			},
 		})
 	}
 	if m.LocalOnly {

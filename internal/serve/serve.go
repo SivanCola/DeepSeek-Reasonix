@@ -696,17 +696,27 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Input  string `json:"input"`
 		Format string `json:"format"`
+		Action string `json:"action"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Input == "" {
 		http.Error(w, "missing input", http.StatusBadRequest)
 		return
 	}
 	body.Format = strings.TrimSpace(body.Format)
+	body.Action = strings.TrimSpace(body.Action)
 	switch body.Format {
 	case "", "json_object":
 		// Supported: empty = default text output, json_object = structured.
 	default:
 		http.Error(w, `unsupported format (supported: "json_object")`, http.StatusBadRequest)
+		return
+	}
+	if body.Action != "" && body.Action != control.FinalReadinessRecoveryAction {
+		http.Error(w, `unsupported action (supported: "final_readiness_recovery")`, http.StatusBadRequest)
+		return
+	}
+	if body.Action != "" && body.Format != "" {
+		http.Error(w, "format is unavailable for recovery actions", http.StatusBadRequest)
 		return
 	}
 	trimmed := strings.TrimSpace(body.Input)
@@ -753,7 +763,11 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session is busy; use POST /inbox/items for durable follow-up", http.StatusConflict)
 		return
 	}
-	ctrl.SubmitHTTPFormat(body.Input, body.Format)
+	if body.Action == control.FinalReadinessRecoveryAction {
+		ctrl.SubmitFinalReadinessRecovery(body.Input, body.Input)
+	} else {
+		ctrl.SubmitHTTPFormat(body.Input, body.Format)
+	}
 	// After synchronous admission, a successful start sets Running. A silent
 	// drop (rotating/closed) leaves Running false — return 409 instead of 202.
 	// Finishing-window park also leaves Running false briefly; prefer 202 only
@@ -838,6 +852,7 @@ type historyToolCall struct {
 type historyMessage struct {
 	Role       string            `json:"role"`
 	Content    string            `json:"content"`
+	Missing    []string          `json:"missing,omitempty"`
 	Reasoning  string            `json:"reasoning,omitempty"`
 	ToolCalls  []historyToolCall `json:"toolCalls,omitempty"`
 	ToolCallID string            `json:"toolCallId,omitempty"`
@@ -847,6 +862,14 @@ type historyMessage struct {
 func historyMessages(msgs []provider.Message) []historyMessage {
 	out := make([]historyMessage, 0, len(msgs))
 	for _, m := range msgs {
+		if m.LocalOnly && m.FinalReadinessRecovery != nil {
+			if m.FinalReadinessRecovery.Pending {
+				out = append(out, historyMessage{
+					Role: "final_readiness", Missing: append([]string(nil), m.FinalReadinessRecovery.Missing...),
+				})
+			}
+			continue
+		}
 		// Steer messages are surfaced as a notice, not a user message.
 		if m.Role == provider.RoleUser {
 			if text, handled := agent.ReplaySteerText(m.Content); handled {

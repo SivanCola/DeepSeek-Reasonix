@@ -89,6 +89,35 @@ func (s *Session) Add(m provider.Message) {
 	s.version++
 }
 
+// ConsumeFinalReadinessRecovery marks the newest pending readiness checkpoint
+// consumed before any next user turn (explicit recovery or ordinary follow-up).
+// This is local metadata only, so the rewrite does not alter provider bytes or
+// prompt-cache identity.
+func (s *Session) ConsumeFinalReadinessRecovery() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		message := &s.Messages[i]
+		if message.LocalOnly && message.FinalReadinessRecovery != nil && message.FinalReadinessRecovery.Pending {
+			consumed := *message.FinalReadinessRecovery
+			consumed.Pending = false
+			consumed.Missing = append([]string(nil), consumed.Missing...)
+			consumed.Checkpoint = append([]byte(nil), consumed.Checkpoint...)
+			message.FinalReadinessRecovery = &consumed
+			s.rewriteVersion++
+			s.version++
+			return true
+		}
+		if message.Role == provider.RoleUser && IsUserAuthoredTurn(message.Content) {
+			return false
+		}
+	}
+	return false
+}
+
 // AddDecisionReceipt persists local decision metadata without inserting a
 // standalone message into the current tool turn. Tool results must remain
 // directly adjacent to the assistant message that requested them; otherwise

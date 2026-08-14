@@ -857,7 +857,21 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       continue;
     }
     if (m.role === "notice") {
-      if (m.content.trim() !== "" || m.decisionReceipt) {
+      if (m.code === "final_readiness" && m.pending) {
+        items.push({
+          kind: "notice",
+          id: `${idPrefix}${seq}`,
+          level: "info",
+          variant: "delivery",
+          title: t("notice.deliveryIncompleteTitle"),
+          text: t("notice.deliveryIncompleteBody"),
+          detail: deliveryReadinessDetail(m.readiness),
+          action: "continue_delivery",
+        });
+        seq++;
+        continue;
+      }
+	  if (m.content.trim() !== "" || m.decisionReceipt) {
         const next = appendNoticeItem(items, seq, `${idPrefix}${seq}`, m.level === "warn" ? "warn" : "info", m.content, m.detail, m.code, m.decisionReceipt);
         items = next.items;
         seq = next.seq;

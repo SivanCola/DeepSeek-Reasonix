@@ -66,6 +66,11 @@ import (
 // while one is already active in the same Controller.
 var ErrTurnRunning = errors.New("turn already running")
 
+// ErrNoFinalReadinessRecovery means an explicit continuation did not match the
+// immediately preceding paused readiness check (for example, an old card after
+// a newer user turn). It must not silently become an ordinary turn.
+var ErrNoFinalReadinessRecovery = errors.New("no pending final-readiness check to continue")
+
 // ErrRuntimeDraining reports that a caller targeted a controller generation
 // superseded by a successful rebuild.
 var ErrRuntimeDraining = errors.New("runtime is draining after rebuild")
@@ -1102,6 +1107,17 @@ func (c *Controller) RunTurn(ctx context.Context, input string) error {
 	})
 }
 
+// RunFinalReadinessRecovery is the synchronous transport-neutral recovery path
+// used by ACP and other request/response frontends.
+func (c *Controller) RunFinalReadinessRecovery(ctx context.Context, input string) error {
+	return c.runSynchronousTurn(ctx, nil, func(runCtx context.Context) error {
+		if c.executor == nil || !c.executor.PrepareFinalReadinessRecovery() {
+			return ErrNoFinalReadinessRecovery
+		}
+		return c.runTurn(runCtx, input)
+	})
+}
+
 func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
 	return c.runTurnWithRawDisplay(ctx, input, raw, "")
 }
@@ -1236,17 +1252,24 @@ func (c *Controller) SubmitDisplay(display, input string) {
 	c.submit(input, display, "")
 }
 
-// SubmitDeliveryRecovery runs the same visible prompt path as SubmitDisplay but
-// first authorizes the executor to retain the immediately preceding exhausted
-// delivery ledger. The agent consumes that authorization once; if the card came
-// from an older/reloaded session this safely degrades to an ordinary turn.
-func (c *Controller) SubmitDeliveryRecovery(display, input string) {
+// SubmitFinalReadinessRecovery runs the same visible prompt path as
+// SubmitDisplay but first authorizes the executor to retain the immediately
+// preceding exhausted ledger. The authorization is durable across controller
+// rebuilds and one-shot; stale actions fail instead of inheriting unrelated
+// evidence or silently becoming ordinary turns.
+func (c *Controller) SubmitFinalReadinessRecovery(display, input string) {
 	c.runGuarded(func(ctx context.Context) error {
-		if c.executor != nil {
-			c.executor.PrepareDeliveryRecovery()
+		if c.executor == nil || !c.executor.PrepareFinalReadinessRecovery() {
+			return ErrNoFinalReadinessRecovery
 		}
 		return c.runGoalLoopWithRawDisplay(ctx, input, input, display)
 	})
+}
+
+// SubmitDeliveryRecovery preserves the v1.25 desktop/API symbol while routing
+// through the generic readiness owner.
+func (c *Controller) SubmitDeliveryRecovery(display, input string) {
+	c.SubmitFinalReadinessRecovery(display, input)
 }
 
 // SubmitInvocationDisplay executes composer-selected invocation entities
@@ -1428,6 +1451,13 @@ func (c *Controller) submitCommandOrTurnReady(trimmed, input, display string, sc
 		}
 	}
 	switch {
+	case trimmed == ContinueChecksCommand || strings.HasPrefix(trimmed, ContinueChecksCommand+" "):
+		prompt, _ := ParseFinalReadinessRecoveryCommand(trimmed)
+		shown := display
+		if strings.TrimSpace(shown) == "" {
+			shown = trimmed
+		}
+		c.SubmitFinalReadinessRecovery(shown, prompt)
 	case trimmed == "/compact" || strings.HasPrefix(trimmed, "/compact "):
 		focus := strings.TrimSpace(strings.TrimPrefix(trimmed, "/compact"))
 		go func() {

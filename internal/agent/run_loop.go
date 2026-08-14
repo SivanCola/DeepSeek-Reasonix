@@ -121,10 +121,16 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	a.resetStructuralRunGuards()
 	scope, scoped := DeliveryExecutionScopeFromContext(ctx)
 	preserveEvidence := a.pending.preserveEvidence
+	// A pending card belongs only to the immediately preceding turn. Starting
+	// any new user turn consumes its durable action; explicit recovery has
+	// already restored the checkpoint above via preserveEvidence.
+	if a.sess.conversation != nil {
+		a.sess.conversation.ConsumeFinalReadinessRecovery()
+	}
 	// A run that starts with a pending readiness recovery (or an explicit
 	// evidence-preserving continuation) and then passes readiness counts as a
 	// recovery in the final audit.
-	a.turn.readinessRecovered = preserveEvidence || a.pending.deliveryRecovery
+	a.turn.readinessRecovered = preserveEvidence || a.pending.finalReadinessRecovery
 	if a.task.ledger != nil {
 		switch {
 		case preserveEvidence:
@@ -136,8 +142,9 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 		}
 	}
 	a.pending.preserveEvidence = false
+	a.pending.finalReadinessRecoveryPrepared = false
 	if !preserveEvidence {
-		a.pending.deliveryRecovery = false
+		a.pending.finalReadinessRecovery = false
 	}
 	if scoped {
 		a.task.scopeID = scope.ID
@@ -563,7 +570,8 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 		// with the missing list as the next turn; plain Delivery turns surface
 		// the recovery card for an explicit user continuation.
 		event.RecordReadinessAudit(a.svc.sink, readiness.audit(evidence.ReadinessErrored, false))
-		a.pending.deliveryRecovery = true
+		a.pending.finalReadinessRecovery = true
+		a.persistFinalReadinessRecovery(readiness.missingIDs())
 		return false, &FinalReadinessError{Attempts: 1, Reason: readiness.reason, Missing: readiness.missingIDs()}
 	}
 	if !hasVisibleFinalAnswer(text) {

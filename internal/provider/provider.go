@@ -96,6 +96,12 @@ type Message struct {
 	// ModelMessages strips the field before handing requests to providers.
 	DecisionReceipts []*DecisionReceipt       `json:"decision_receipts,omitempty"`
 	InterruptedTurn  *InterruptedTurnRecovery `json:"interrupted_turn,omitempty"`
+	// FinalReadinessRecovery is the durable, provider-excluded authorization
+	// behind an explicit "continue checks" action. The opaque checkpoint is
+	// owned by the agent/evidence layer; keeping it on a LocalOnly sentinel lets
+	// a rebuilt controller resume the exact failed turn without changing the
+	// provider-visible transcript. Older readers safely drop the sentinel.
+	FinalReadinessRecovery *FinalReadinessRecovery `json:"final_readiness_recovery,omitempty"`
 	// ToolExecution is local shell UI metadata on tool-result messages. It is
 	// persisted for Desktop/CLI/Serve cards and stripped by ModelMessages before
 	// any provider request so tool schemas and prompt-cache prefixes stay stable.
@@ -151,6 +157,16 @@ type InterruptedToolSummary struct {
 	Files   []string `json:"files,omitempty"`
 	Added   int      `json:"added,omitempty"`
 	Removed int      `json:"removed,omitempty"`
+}
+
+// FinalReadinessRecovery stores only host-owned recovery state. Checkpoint is
+// opaque here to avoid coupling provider wire types to the evidence package.
+// The containing Message must always be LocalOnly and use the local-only tool
+// sentinel, which is what makes the addition backward- and cache-safe.
+type FinalReadinessRecovery struct {
+	Pending    bool            `json:"pending,omitempty"`
+	Missing    []string        `json:"missing,omitempty"`
+	Checkpoint json.RawMessage `json:"checkpoint,omitempty"`
 }
 
 // MemoryCitation is local display metadata for memories that influenced an
