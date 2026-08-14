@@ -8,7 +8,7 @@
 
 ## 目标
 
-让用户把会话回退到之前的节点，并恢复**代码**、**会话**或**两者**，且不改动 git 历史。CLI 与桌面端采用同一套机制，并与 Claude Code 的 Esc-Esc / `/rewind` 行为对齐。
+让用户把会话回退到之前的节点，并恢复**代码**、**会话**或**两者**，且不改动 git 历史。对话回溯改为显式分叉，父会话永不截断。详见 [会话所有权](./SESSION_OWNERSHIP.zh-CN.md)。CLI 与桌面端采用同一套机制。
 
 ## 机制：文件快照，而不是 git
 
@@ -63,7 +63,7 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error
 ```
 
 - **Code**：遍历从 `turn` 到最新的所有 checkpoint，按路径选取最早的 `FileSnap`，把文件恢复到对应内容；若为 `nil` 则删除。也就是撤销 `turn` 及之后的全部编辑。恢复前会再次按当前工作区根目录检查路径逃逸。
-- **Conversation**：把 `Session.Messages` 截断到 `turn` 对应用户消息之前，重新 `Save`，并发送替换后的历史事件供前端重绘。所选回合的提示会回填到输入框，方便修改后重发。
+- **Conversation**：在该回合边界创建新会话分支。父会话 transcript 永不截断。详见 [会话所有权](./SESSION_OWNERSHIP.zh-CN.md)。
 - **Both**：同时恢复代码与会话。
 
 统一的 `Rewound` 事件（或复用 history-replace 事件）让所有前端以相同方式重绘。

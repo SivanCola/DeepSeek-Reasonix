@@ -95,11 +95,10 @@ func (c *Controller) Rewind(turn int, scope RewindScope) error
   `FileSnap` per path and restore each file to that content (delete if `nil`) —
   i.e. undo all edits made at or after `turn`. Path-escape re-checked against the
   live workspace root.
-- **Conversation**: truncate `Session.Messages` to just before turn `turn`'s user
-  message, re-`Save`, and emit the truncated history as events so the frontend
-  re-renders. The turn's prompt is restored into the composer for re-send/edit
-  (Claude Code behavior).
-- **Both**: code + conversation.
+- **Conversation**: fork a new session at the turn boundary. The parent
+  transcript is never truncated. See [`SESSION_OWNERSHIP.md`](SESSION_OWNERSHIP.md).
+- **Both**: fork first, then restore files. A file conflict keeps the new
+  branch and reports `partial=true`.
 
 A `Rewound` event (or reuse of a history-replace event) lets every frontend
 re-render uniformly.
