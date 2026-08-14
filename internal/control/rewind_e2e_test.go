@@ -253,16 +253,16 @@ func TestRewindConversationSucceedsWithLiveBoundary(t *testing.T) {
 		t.Fatalf("Rewind with a live boundary: %v", err)
 	}
 	if got := len(ag.Session().Messages); got != boundary {
-		t.Fatalf("session truncated to %d messages, want boundary %d", got, boundary)
+		t.Fatalf("switched session = %d messages, want boundary %d", got, boundary)
 	}
 	ok := false
 	for _, e := range *events {
-		if e.Kind == event.Notice && strings.Contains(e.Text, "rewound conversation") {
+		if e.Kind == event.Notice && strings.Contains(e.Text, "forked conversation") {
 			ok = true
 		}
 	}
 	if !ok {
-		t.Fatal("expected a conversation-rewind success notice")
+		t.Fatal("expected a conversation-fork success notice")
 	}
 }
 

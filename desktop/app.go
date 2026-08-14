@@ -2188,21 +2188,26 @@ type RewindPlanView struct {
 	FileCount          int      `json:"fileCount"`
 	ActiveWriters      int      `json:"activeWriters,omitempty"`
 	Path               string   `json:"path,omitempty"`
+	ConversationAction string   `json:"conversationAction,omitempty"`
 	OK                 bool     `json:"ok"`
 	Error              string   `json:"error,omitempty"`
 }
 
 // RewindResultView is the desktop-facing commit/undo result.
 type RewindResultView struct {
-	OK             bool     `json:"ok"`
-	TransactionID  string   `json:"transactionId,omitempty"`
-	UndoAvailable  bool     `json:"undoAvailable"`
-	Written        []string `json:"written,omitempty"`
-	Deleted        []string `json:"deleted,omitempty"`
-	ConversationOK bool     `json:"conversationOk,omitempty"`
-	Error          string   `json:"error,omitempty"`
-	Conflicts      []string `json:"conflicts,omitempty"`
-	Coverage       string   `json:"coverage,omitempty"`
+	OK                 bool     `json:"ok"`
+	TransactionID      string   `json:"transactionId,omitempty"`
+	UndoAvailable      bool     `json:"undoAvailable"`
+	Written            []string `json:"written,omitempty"`
+	Deleted            []string `json:"deleted,omitempty"`
+	ConversationOK     bool     `json:"conversationOk,omitempty"`
+	ConversationForked bool     `json:"conversationForked,omitempty"`
+	OperationID        string   `json:"operationId,omitempty"`
+	Branch             string   `json:"branch,omitempty"`
+	Partial            bool     `json:"partial,omitempty"`
+	Error              string   `json:"error,omitempty"`
+	Conflicts          []string `json:"conflicts,omitempty"`
+	Coverage           string   `json:"coverage,omitempty"`
 }
 
 const checkpointFilePreviewLimit = 60
@@ -2516,6 +2521,7 @@ func rewindPlanToView(plan checkpoint.RewindPlan, scope string) RewindPlanView {
 		FileCount:          plan.FileCount,
 		ActiveWriters:      len(plan.ActiveWriters),
 		Path:               plan.Path,
+		ConversationAction: plan.ConversationAction,
 	}
 }
 
@@ -2540,16 +2546,24 @@ func rewindResultToView(result checkpoint.RewindResult) RewindResultView {
 			conflicts = append(conflicts, c.Reason)
 		}
 	}
+	txID := result.TransactionID
+	if result.OperationID != "" {
+		txID = result.OperationID
+	}
 	return RewindResultView{
-		OK:             result.OK,
-		TransactionID:  result.TransactionID,
-		UndoAvailable:  result.UndoAvailable,
-		Written:        result.Written,
-		Deleted:        result.Deleted,
-		ConversationOK: result.ConversationOK,
-		Error:          result.Error,
-		Conflicts:      conflicts,
-		Coverage:       string(result.Coverage),
+		OK:                 result.OK,
+		TransactionID:      txID,
+		OperationID:        nonEmptyStr(result.OperationID, result.TransactionID),
+		UndoAvailable:      result.UndoAvailable,
+		Written:            result.Written,
+		Deleted:            result.Deleted,
+		ConversationOK:     result.ConversationOK || result.ConversationForked,
+		ConversationForked: result.ConversationForked,
+		Branch:             result.Branch,
+		Partial:            result.Partial,
+		Error:              result.Error,
+		Conflicts:          conflicts,
+		Coverage:           string(result.Coverage),
 	}
 }
 

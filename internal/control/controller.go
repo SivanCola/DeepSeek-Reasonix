@@ -3279,15 +3279,6 @@ func (c *Controller) ForkSession(turn int, name string) (string, error) {
 }
 
 func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string, error) {
-	if c.executor == nil {
-		return "", c.rewindFail(fmt.Errorf("checkpoints unavailable"))
-	}
-	if c.sessionDir == "" {
-		return "", c.rewindFail(fmt.Errorf("fork needs session persistence, which is disabled"))
-	}
-	// Hold the rotation gate from before the pre-fork Snapshot through the
-	// switch below: a bare Running() check released here would let a turn start
-	// during the snapshot and then be switched onto the fork.
 	if err := c.beginRotation(); err != nil {
 		if errors.Is(err, errTurnRunningRotation) {
 			return "", c.rewindFail(fmt.Errorf("cannot fork while a turn is running"))
@@ -3295,6 +3286,16 @@ func (c *Controller) forkNamed(turn int, name string, switchToFork bool) (string
 		return "", c.rewindFail(err)
 	}
 	defer c.endRotation()
+	return c.forkNamedReady(turn, name, switchToFork)
+}
+
+func (c *Controller) forkNamedReady(turn int, name string, switchToFork bool) (string, error) {
+	if c.executor == nil {
+		return "", c.rewindFail(fmt.Errorf("checkpoints unavailable"))
+	}
+	if c.sessionDir == "" {
+		return "", c.rewindFail(fmt.Errorf("fork needs session persistence, which is disabled"))
+	}
 	boundary, hasBound := c.checkpoints.boundary(turn)
 	if !hasBound {
 		return "", c.rewindFail(fmt.Errorf("fork unavailable for turn %d (resumed session)", turn))
