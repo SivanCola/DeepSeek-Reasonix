@@ -94,7 +94,12 @@ func (l *sessionLockFile) writeOwnerInfo(b []byte) error {
 	if l == nil || l.handle == 0 {
 		return errors.New("lease lock not held")
 	}
-	if err := windows.SetFilePointerEx(l.handle, 0, nil, windows.FILE_BEGIN); err != nil {
+	// SetFilePointerEx is not in golang.org/x/sys/windows. Truncate via
+	// seek-to-zero + SetEndOfFile, then write the replacement document.
+	if _, err := windows.SetFilePointer(l.handle, 0, nil, windows.FILE_BEGIN); err != nil {
+		return err
+	}
+	if err := windows.SetEndOfFile(l.handle); err != nil {
 		return err
 	}
 	var written uint32
@@ -103,13 +108,6 @@ func (l *sessionLockFile) writeOwnerInfo(b []byte) error {
 	}
 	if int(written) != len(b) {
 		return fmt.Errorf("lease owner info: short write %d of %d bytes", written, len(b))
-	}
-	// Retract any stale bytes a previous holder left past the new document.
-	if err := windows.SetFilePointerEx(l.handle, int64(len(b)), nil, windows.FILE_BEGIN); err != nil {
-		return err
-	}
-	if err := windows.SetEndOfFile(l.handle); err != nil {
-		return err
 	}
 	return windows.FlushFileBuffers(l.handle)
 }
