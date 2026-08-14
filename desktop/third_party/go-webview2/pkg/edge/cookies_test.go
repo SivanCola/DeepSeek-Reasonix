@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"runtime"
 	"testing"
 	"time"
 	"unsafe"
@@ -12,6 +13,12 @@ import (
 )
 
 func TestCookieManager(t *testing.T) {
+	// COM apartment initialization is bound to the current OS thread. Keep the
+	// test goroutine pinned through WebView2 setup and teardown so Go cannot
+	// migrate it after CoInitializeEx.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	// Initialize COM
 	err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED)
 	if err != nil {
