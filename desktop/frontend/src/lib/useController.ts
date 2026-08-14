@@ -11,6 +11,7 @@ import { formatContextMaintenanceNotice, isNewMaintenanceOperation, rememberMain
 import { formatGuardianAssessmentNotice } from "./guardianEvents";
 import { completionSummaryNeedsAttention, completionSummaryNotice, normalizeCompletionSummary } from "./completionSummary";
 import { invalidateSharedQuery } from "./queryCoalesce";
+import { replayPendingPromptsForActiveTab } from "./promptReplay";
 import { createRafBatch } from "./rafBatch";
 import { aliasActivationRequest, noteActivationRequested, noteActivationSettled, noteActivationStarted } from "./sessionDiagnostics";
 import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type StreamDeltaEntry, type StreamSegment } from "./streamDeltaBatch";
@@ -2024,22 +2025,16 @@ export function reducer(s: State, a: Action): State {
       : s;
     case "hydrate_error": return applyHydrateErrorState(s, a.reason, a.error);
     case "backend_activation_start": {
-      // A tab-tagged ask can arrive while its session is in the background.
-      // When the tab metadata independently confirms a pending prompt, that
-      // cached card is authoritative enough to preserve across activation.
-      // Clearing it here made the UI depend entirely on a later replay, which
-      // can miss a detach/reattach window and strand the blocked turn.
+      // Backend metadata makes a cached background prompt safe to preserve.
+      // Otherwise retain the compatibility reset for stale/untagged events.
       const preservePrompt = Boolean(a.backendPendingPrompt && (s.approval || s.ask));
       return {
         ...s,
-        // Without backend confirmation, keep the compatibility reset for
-        // stale/untagged prompt events from the previously active controller.
         backendActivationPending: true,
         pendingPrompt: preservePrompt,
         approval: preservePrompt ? s.approval : undefined,
         ask: preservePrompt ? s.ask : undefined,
-        // A cleared prompt must re-anchor when replayed after activation. A
-        // confirmed cached prompt keeps its original freshness boundary.
+        // A confirmed cached prompt keeps its original freshness boundary.
         promptArrivedAt: preservePrompt ? s.promptArrivedAt : undefined,
         promptArrivedId: preservePrompt ? s.promptArrivedId : undefined,
         running: preservePrompt,
@@ -2561,19 +2556,7 @@ function settingSwitchNoticeText(
   return t(keys.failed, { err: msg });
 }
 
-export function replayPendingPromptsForActiveTab(
-  activeTabId: string | undefined,
-  replay: (tabId: string) => Promise<void> = (tabId) => {
-    // Older test/dev bindings may not expose the additive scoped method yet.
-    // Production builds use the tab-specific path; the global call remains a
-    // reconnect-compatible fallback.
-    const scopedReplay = app.ReplayPendingPromptsForTab;
-    return typeof scopedReplay === "function" ? scopedReplay(tabId) : app.ReplayPendingPrompts();
-  },
-): void {
-  if (!activeTabId) return;
-  void replay(activeTabId).catch(() => {});
-}
+export { replayPendingPromptsForActiveTab } from "./promptReplay";
 
 export function useController() {
   const statesRef = useRef<TabStates>(new Map());
@@ -4093,11 +4076,7 @@ export function useController() {
     navigationSeq: number,
     sessionSeq: number,
   ): Promise<boolean> => {
-    // Resume/open RPCs can reattach a running controller and replay its prompt
-    // before the RPC response arrives. The response-driven reset/history below
-    // necessarily clears that early event, so resample the transferred runtime
-    // epoch and pendingPrompt state only after hydration has settled, then ask
-    // that exact tab to replay once more.
+    // Resample and replay prompts cleared by post-Resume/Open hydration.
     await refreshMetaOnlyForTab(tabId);
     if (!isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(tabId, sessionSeq)) return false;
     await reconcileTabRuntime(tabId, { hydrateSessionData: false, refreshAncillary: false });
