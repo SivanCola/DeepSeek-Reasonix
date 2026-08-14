@@ -144,21 +144,6 @@ func (b bash) resolved() sandbox.Shell {
 	return sandbox.ResolveShell("", "", nil)
 }
 
-func (bash) Schema() json.RawMessage {
-	return json.RawMessage(`{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"},"run_in_background":{"type":"boolean","description":"Run detached: returns a job id immediately and keeps running across turns (no foreground timeout). Read new output with bash_output, wait with wait, stop it with kill_shell. Use for long-running commands like servers, watchers, or builds you don't need to block on."},"preserve_background_processes":{"type":"boolean","description":"After the shell command exits normally, keep any process-group members it intentionally left behind. Use only for deliberate daemonization, browser/GUI/session launchers such as playwright-cli open, or nohup/disown/setsid; cancellation and timeouts still kill the process group."},"additional_write_dirs":{"type":"array","items":{"type":"string"},"description":"Directories this command must write outside the workspace. Directories only, no globs. Accepts absolute paths, workspace-relative paths, ~, and ${HOME}. Request the smallest set needed; the host will not infer paths from the command text."},"justification":{"type":"string","description":"Required when additional_write_dirs is non-empty. Explain why those directories must be writable."}},"required":["command"]}`)
-}
-
-func (b bash) DeclareWriteAccess(args json.RawMessage) (tool.WriteAccessDeclaration, error) {
-	var p bashParams
-	if err := json.Unmarshal(args, &p); err != nil {
-		return tool.WriteAccessDeclaration{}, fmt.Errorf("invalid args: %w", err)
-	}
-	if err := validateBashWriteDirs(p); err != nil {
-		return tool.WriteAccessDeclaration{}, err
-	}
-	return tool.WriteAccessDeclaration{Directories: append([]string(nil), p.AdditionalWriteDirs...), Justification: strings.TrimSpace(p.Justification)}, nil
-}
-
 // ReadOnly is false: bash's effect cannot be inferred from args (rm, curl,
 // git commit, etc. are all reachable). Conservative even when a particular
 // command happens to be read-only — the agent batch decision can't tell.
@@ -196,25 +181,10 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 
 	var p bashParams
 	if err := json.Unmarshal(args, &p); err != nil {
-		ex.State = tool.ShellStateNotRun
-		ex.FailurePhase = tool.ShellPhasePreflight
-		ex.MutationRisk = tool.ShellMutationNotStarted
-		ex.DurationMs = time.Since(start).Milliseconds()
-		return tool.DetailedResult{Execution: ex}, fmt.Errorf("invalid args: %w", err)
+		return bashPreflightFailure(ex, start, fmt.Errorf("invalid args: %w", err))
 	}
-	if p.Command == "" {
-		ex.State = tool.ShellStateNotRun
-		ex.FailurePhase = tool.ShellPhasePreflight
-		ex.MutationRisk = tool.ShellMutationNotStarted
-		ex.DurationMs = time.Since(start).Milliseconds()
-		return tool.DetailedResult{Execution: ex}, fmt.Errorf("command is required")
-	}
-	if err := validateBashWriteDirs(p); err != nil {
-		ex.State = tool.ShellStateNotRun
-		ex.FailurePhase = tool.ShellPhasePreflight
-		ex.MutationRisk = tool.ShellMutationNotStarted
-		ex.DurationMs = time.Since(start).Milliseconds()
-		return tool.DetailedResult{Execution: ex}, err
+	if err := validateBashParams(p); err != nil {
+		return bashPreflightFailure(ex, start, err)
 	}
 
 	sh := b.resolved()
@@ -317,12 +287,8 @@ func (b bash) ExecuteDetailed(ctx context.Context, args json.RawMessage) (tool.D
 	out, runEx, err := b.runForegroundDetailed(ctx, p, sh, argv, wrapped, cmdEnv)
 	mergeRunInto(ex, runEx)
 	ex.DurationMs = time.Since(start).Milliseconds()
-	out = appendSessionDataHint(out, b.guard.CommandHint(b.workDir, p.Command))
-	if wrapped {
-		out = appendSandboxWriteHint(out, err, p, b.specForCall(ctx))
-	}
 	return tool.DetailedResult{
-		Output:    out,
+		Output:    b.appendWriteHints(ctx, out, err, p, wrapped),
 		Execution: ex,
 	}, err
 }

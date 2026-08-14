@@ -17,6 +17,7 @@ import {
   pickInlineFileReference,
   useFileReferenceMenu,
 } from "./FileReferenceMenu";
+import { WriteAccessApprovalDetails, writeAccessDecisionActions, type DecisionAction } from "./WriteAccessApproval";
 
 function requiresFreshHumanApproval(tool: string): boolean {
   return tool === "remember" || tool === "forget" || tool === "exit_plan_mode" || tool === "sandbox_escape" || tool === "config_write";
@@ -134,18 +135,6 @@ function localizePlanModeApprovalReason(tool: string, reason: string, t: Transla
   }
   return reason;
 }
-
-type DecisionAction = {
-  key: string;
-  label: string;
-  desc: string;
-  tone?: "default" | "danger";
-  primary?: boolean;
-  // Plan revision and plan guidance open inline editors instead of submitting.
-  // Other recovery actions use direct-click submit (no select-then-confirm).
-  kind: "submit" | "toggle-revision" | "toggle-guidance" | "direct";
-  run?: () => void;
-};
 
 const RECOVERY_FEEDBACK_MAX = 1000;
 
@@ -376,37 +365,7 @@ export function ApprovalModal({
         },
       ]
     : isWriteAccessApproval
-    ? [
-        {
-          key: "1",
-          label: t("approval.writeAccessOnce"),
-          desc: t("approval.writeAccessOnceDesc"),
-          kind: "submit",
-          run: () => onAnswer(true, false, false),
-        },
-        {
-          key: "2",
-          label: t("approval.writeAccessSession"),
-          desc: t("approval.writeAccessSessionDesc"),
-          kind: "submit" as const,
-          run: () => onAnswer(true, true, false),
-        },
-        {
-          key: "3",
-          label: t("approval.writeAccessProject"),
-          desc: t("approval.writeAccessProjectDesc"),
-          kind: "submit" as const,
-          run: () => onAnswer(true, true, true),
-        },
-        {
-          key: "4",
-          label: t("approval.deny"),
-          desc: t("approval.denyDesc"),
-          tone: "danger" as const,
-          kind: "submit" as const,
-          run: () => onAnswer(false, false, false),
-        },
-      ]
+    ? writeAccessDecisionActions(t, onAnswer)
     : isPlanApproval
     ? [
         {
@@ -1029,33 +988,7 @@ export function ApprovalModal({
               </dl>
             )}
             {!isPlanApproval && !isRecoveryApproval && isWriteAccessApproval && (
-              <div className="approval-details">
-                {subject && <pre className="approval-subject">{subject}</pre>}
-                {(approval.write_access?.display_directories?.length || approval.write_access?.directories?.length) ? (
-                  <div className="approval-reason">
-                    <strong>{t("approval.writeAccessDirsLabel")}: </strong>
-                    {(approval.write_access?.display_directories?.length
-                      ? approval.write_access.display_directories
-                      : approval.write_access?.directories ?? []
-                    ).join(", ")}
-                  </div>
-                ) : null}
-                {approval.write_access?.justification && (
-                  <div className="approval-reason">
-                    <strong>{t("approval.writeAccessJustificationLabel")}: </strong>
-                    {approval.write_access.justification}
-                  </div>
-                )}
-                {approval.write_access?.broad_home_access && (
-                  <div className="approval-reason" role="alert" style={{ color: "var(--danger, #c0392b)", fontWeight: 600 }}>
-                    {t("approval.writeAccessHomeWarning")}
-                  </div>
-                )}
-                {approval.write_access?.ordinary_permission_needed && (
-                  <div className="approval-reason">{t("approval.writeAccessMergedHint")}</div>
-                )}
-                {reasonOpen && reason && <div className="approval-reason">{reason}</div>}
-              </div>
+              <WriteAccessApprovalDetails approval={approval} subject={subject} reason={reason} reasonOpen={reasonOpen} t={t} />
             )}
             {!isPlanApproval && !isRecoveryApproval && !isWriteAccessApproval && subject && (
               <div className="approval-details">

@@ -128,40 +128,7 @@ func (s *renderSink) Emit(e event.Event) {
 		// still records the complete controller turn for desktop review.
 
 	case event.ApprovalRequest:
-		// 发送审批请求
-		if s.onApproval != nil {
-			s.onApproval(e.Approval)
-		}
-		approvalText := renderApprovalText(e.Approval)
-		msg := OutboundMessage{
-			ConnectionID: s.connID,
-			Domain:       s.domain,
-			ChatID:       s.chatID,
-			ChatType:     s.chatType,
-			Text:         approvalText,
-			ReplyToMsgID: s.replyTo,
-		}
-		switch s.adapter.Platform() {
-		case PlatformQQ:
-			switch {
-			case isRecoveryApproval(e.Approval):
-				msg.Keyboard = recoveryKeyboard(e.Approval)
-			case isWriteAccessApproval(e.Approval):
-				msg.Keyboard = writeAccessKeyboard(e.Approval.ID)
-			default:
-				msg.Keyboard = approvalKeyboard(e.Approval.ID)
-			}
-		case PlatformFeishu:
-			switch {
-			case isRecoveryApproval(e.Approval):
-				msg.Card = recoveryCard(e.Approval, s.chatType, s.userID)
-			case isWriteAccessApproval(e.Approval):
-				msg.Card = writeAccessCard(e.Approval, s.chatType, s.userID)
-			default:
-				msg.Card = approvalCard(e.Approval, s.chatType, s.userID)
-			}
-		}
-		_ = s.send(msg)
+		s.emitApproval(e.Approval)
 
 	case event.AskRequest:
 		if s.onAsk != nil {

@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -49,9 +51,20 @@ func TestWritableRootSetReplaceBaselineKeepsSession(t *testing.T) {
 	}
 }
 
+func TestWritableRootSetVerifiedBaselineSurvivesSessionClear(t *testing.T) {
+	base := t.TempDir()
+	project := t.TempDir()
+	set := NewWritableRootSet([]string{base})
+	set.GrantVerifiedBaseline([]string{canonicalDir(project)})
+	set.ClearSession()
+	if !set.Covers(project) {
+		t.Fatal("project grant should remain in the baseline after session clear")
+	}
+}
+
 func TestWritableRootSetPerCallDoesNotLeak(t *testing.T) {
 	base := t.TempDir()
-	once := t.TempDir()
+	once := canonicalDir(t.TempDir())
 	set := NewWritableRootSet([]string{base})
 	ctx := WithPerCallWriteRoots(context.Background(), []string{once})
 	if got := set.Effective(ctx); !containsRoot(got, once) {
@@ -106,6 +119,37 @@ func TestCloneRestricted(t *testing.T) {
 	inherited := set.CloneRestricted(nil)
 	if !inherited.Covers(sess) || !inherited.Covers(root) {
 		t.Fatal("empty cap should copy the current snapshot")
+	}
+}
+
+func TestStableWriteRootsDropsRetargetedIdentity(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not guaranteed on Windows runners")
+	}
+	root := canonicalDir(t.TempDir())
+	approved := filepath.Join(root, "approved")
+	redirected := filepath.Join(root, "redirected")
+	if err := os.MkdirAll(approved, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(redirected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(approved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(redirected, approved); err != nil {
+		t.Fatal(err)
+	}
+	set := newVerifiedWritableRootSet([]string{approved})
+	if got := set.EffectiveSandboxRoots(context.Background()); len(got) != 0 {
+		t.Fatalf("retargeted root must fail closed, got %v", got)
+	}
+	if set.Covers(approved) {
+		t.Fatal("retargeted root must no longer count as covered")
+	}
+	if got := set.Missing([]string{approved}); len(got) != 1 {
+		t.Fatalf("retargeted root must be eligible for re-approval, got %v", got)
 	}
 }
 

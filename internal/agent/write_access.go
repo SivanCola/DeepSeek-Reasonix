@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"reasonix/internal/nilutil"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 	"reasonix/internal/tool/builtin"
@@ -47,6 +48,79 @@ type WriteAccessDecision struct {
 // WriteAccessGate authorizes extra writable directories before a tool runs.
 type WriteAccessGate interface {
 	CheckWriteAccess(ctx context.Context, req WriteAccessCheck) (WriteAccessDecision, error)
+}
+
+func (b foregroundOnlyBash) DeclareWriteAccess(args json.RawMessage) (tool.WriteAccessDeclaration, error) {
+	if d, ok := b.inner.(tool.WriteAccessDeclarer); ok {
+		return d.DeclareWriteAccess(args)
+	}
+	return tool.WriteAccessDeclaration{}, nil
+}
+
+func (t *TaskTool) buildSubagentRegistry(spec ProfileExecSpec, toolNames []string, childDepth int) (*tool.Registry, *sandbox.WritableRootSet, error) {
+	if spec.Grant.ReadOnly {
+		reg := ReadOnlySubagentToolRegistryForDepthWithRuntime(t.parentReg, toolNames, childDepth, t.maxDepth(), t.capabilityRuntime)
+		if reg.Len() == 0 && !spec.Grant.AllowNoTools {
+			return nil, nil, fmt.Errorf("no read-only tools available for this sub-agent")
+		}
+		return reg, nil, nil
+	}
+	reg := t.buildSubReg(toolNames, childDepth)
+	// Explicit paths are an execution boundary and rebind/drop tools that cannot
+	// honor it. A synthesized whole-workspace claim preserves legacy boundaries.
+	if !spec.Grant.WritePaths.Empty() && !spec.Grant.WritePaths.WholeWorkspace {
+		bound, removed := BindWritePaths(reg, spec.Grant.WritePaths, t.workspaceRoot, t.bashCanEnforceWriteRoots())
+		reg = bound
+		if len(removed) > 0 && reg.Len() == 0 {
+			return nil, nil, fmt.Errorf("no path-bound write tools available after dropping unbound writers: %s", strings.Join(removed, ", "))
+		}
+	}
+	reg, roots := BindChildWriteRoots(reg, t.writeRoots, spec.Grant.WritePaths)
+	return reg, roots, nil
+}
+
+// SetConfigWriteApprover installs the optional per-write approval path used by
+// file tools for Reasonix-managed config outside the workspace roots.
+func (a *Agent) SetConfigWriteApprover(g tool.ConfigWriteApprover) {
+	if nilutil.IsNil(g) {
+		g = nil
+	}
+	a.svc.configWrite = g
+}
+
+func (a *Agent) SetWriteAccessGate(g WriteAccessGate) {
+	if nilutil.IsNil(g) {
+		g = nil
+	}
+	a.svc.writeAccess = g
+}
+
+func (a *Agent) SetWriteRoots(set *sandbox.WritableRootSet) {
+	a.svc.writeRoots = set
+}
+
+func (c *Coordinator) SetWriteAccessGate(g WriteAccessGate) {
+	if c == nil {
+		return
+	}
+	if c.plannerAgent != nil {
+		c.plannerAgent.SetWriteAccessGate(g)
+	}
+	if c.executor != nil {
+		c.executor.SetWriteAccessGate(g)
+	}
+}
+
+func (c *Coordinator) SetWriteRoots(set *sandbox.WritableRootSet) {
+	if c == nil {
+		return
+	}
+	if c.plannerAgent != nil {
+		c.plannerAgent.SetWriteRoots(set)
+	}
+	if c.executor != nil {
+		c.executor.SetWriteRoots(set)
+	}
 }
 
 func (a *Agent) applyWriteAccess(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {

@@ -19,6 +19,20 @@ const writeAccessKind = event.ApprovalKindWriteAccess
 // project-config transaction. A non-nil error must not grant or execute.
 type PersistWriteAccessFunc func(dirs []string, permRule string) error
 
+type controllerWriteAccess struct {
+	persist             PersistWriteAccessFunc
+	roots               *sandbox.WritableRootSet
+	interactive         bool
+	bashSandboxEnforced bool
+}
+
+func newControllerWriteAccess(opts Options) controllerWriteAccess {
+	return controllerWriteAccess{
+		persist: opts.OnPersistWriteAccess, roots: opts.WriteRoots,
+		bashSandboxEnforced: opts.BashSandboxEnforced,
+	}
+}
+
 func (c *Controller) CheckWriteAccess(ctx context.Context, req agent.WriteAccessCheck) (agent.WriteAccessDecision, error) {
 	if strings.EqualFold(req.Tool, "bash") && len(req.Declaration.Directories) == 0 {
 		return agent.WriteAccessDecision{Allow: true}, nil
@@ -33,13 +47,13 @@ func (c *Controller) CheckWriteAccess(ctx context.Context, req agent.WriteAccess
 	if err != nil {
 		return agent.WriteAccessDecision{Allow: false, Reason: err.Error()}, nil
 	}
-	if c.writeRoots == nil {
+	if c.writeAccess.roots == nil {
 		if len(abs) == 0 {
 			return agent.WriteAccessDecision{Allow: true}, nil
 		}
 		return agent.WriteAccessDecision{Allow: false, Reason: agentHeadlessWriteHint(display)}, nil
 	}
-	missing := c.writeRoots.Missing(abs)
+	missing := c.writeAccess.roots.Missing(abs)
 	if len(missing) == 0 {
 		return agent.WriteAccessDecision{Allow: true}, nil
 	}
@@ -51,7 +65,7 @@ func (c *Controller) CheckWriteAccess(ctx context.Context, req agent.WriteAccess
 	if !req.Expandable {
 		return agent.WriteAccessDecision{Allow: false, Reason: agent.SubagentWriteAccessMessage(missingDisplay)}, nil
 	}
-	if !c.interactiveWriteAccess {
+	if !c.writeAccess.interactive {
 		return agent.WriteAccessDecision{Allow: false, Reason: agentHeadlessWriteHint(missingDisplay)}, nil
 	}
 	if c.approval.mode() == ToolApprovalDontAsk {
@@ -124,7 +138,7 @@ func (c *Controller) ordinaryWriteDecision(toolName string, args []byte, readOnl
 }
 
 func (c *Controller) bashEnforcesSandbox() bool {
-	return c != nil && c.bashSandboxEnforced && sandbox.Available()
+	return c != nil && c.writeAccess.bashSandboxEnforced && sandbox.Available()
 }
 
 type writeAccessReply struct {
@@ -151,7 +165,7 @@ func (c *Controller) requestWriteAccess(ctx context.Context, req agent.WriteAcce
 		Justification:            justification,
 		BroadHomeAccess:          broadHome,
 		OrdinaryPermissionNeeded: mergeAsk,
-		PersistAllowed:           c.onPersistWriteAccess != nil,
+		PersistAllowed:           c.writeAccess.persist != nil,
 	})
 	reply, err := c.requestWriteAccessDecision(ctx, req.Tool, subject, req.Args, reason, payload)
 	if err != nil {
@@ -245,8 +259,24 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 		dirs = append([]string{}, pending.writeAccess.Directories...)
 		merge = pending.writeAccess.OrdinaryPermissionNeeded
 	}
+	stateRoot := config.MemoryUserDir()
+	verifiedDirs := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		verified, err := sandbox.EnsureWriteDir(dir, stateRoot)
+		if err != nil {
+			c.recordDecisionReceipt(pending, "deny")
+			pending.reply <- approvalReply{persistErr: err}
+			c.sink.Emit(event.Event{
+				Kind:  event.Notice,
+				Level: event.LevelWarn,
+				Text:  fmt.Sprintf("could not create approved write directory %s: %v", dir, err),
+			})
+			return err
+		}
+		verifiedDirs = append(verifiedDirs, verified)
+	}
 	if scope == sandbox.ApprovalScopeProject {
-		if err := c.persistWriteAccess(pending.tool, pending.subject, dirs, merge); err != nil {
+		if err := c.persistWriteAccess(pending.tool, pending.subject, verifiedDirs, merge); err != nil {
 			c.recordDecisionReceipt(pending, "deny")
 			pending.reply <- approvalReply{persistErr: err}
 			c.sink.Emit(event.Event{
@@ -257,23 +287,15 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 			return err
 		}
 	}
-	for _, dir := range dirs {
-		if err := sandbox.EnsureWriteDir(dir); err != nil {
-			c.recordDecisionReceipt(pending, "deny")
-			pending.reply <- approvalReply{persistErr: err}
-			c.sink.Emit(event.Event{
-				Kind:  event.Notice,
-				Level: event.LevelWarn,
-				Text:  fmt.Sprintf("could not create approved write directory %s: %v", dir, err),
-			})
-			return err
-		}
-	}
 	outcome := "allow_once"
-	reply := approvalReply{allow: true, onceDirs: dirs}
+	reply := approvalReply{allow: true, onceDirs: verifiedDirs}
 	if scope == sandbox.ApprovalScopeSession || scope == sandbox.ApprovalScopeProject {
-		if c.writeRoots != nil {
-			c.writeRoots.GrantSession(dirs)
+		if c.writeAccess.roots != nil {
+			if scope == sandbox.ApprovalScopeProject {
+				c.writeAccess.roots.GrantVerifiedBaseline(verifiedDirs)
+			} else {
+				c.writeAccess.roots.GrantVerifiedSession(verifiedDirs)
+			}
 		}
 		if merge {
 			c.approval.grantSession(pending.tool, pending.subject)
@@ -293,19 +315,19 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 }
 
 func (c *Controller) persistWriteAccess(toolName, subject string, dirs []string, mergePerm bool) error {
-	if c.onPersistWriteAccess == nil {
+	if c.writeAccess.persist == nil {
 		return fmt.Errorf("project persistence is not available")
 	}
 	rule := ""
 	if mergePerm {
 		rule = permission.RememberRuleForScope(toolName, subject)
 	}
-	return c.onPersistWriteAccess(dirs, rule)
+	return c.writeAccess.persist(dirs, rule)
 }
 
 func (c *Controller) clearSessionWriteAccess() {
-	if c.writeRoots != nil {
-		c.writeRoots.ClearSession()
+	if c.writeAccess.roots != nil {
+		c.writeAccess.roots.ClearSession()
 	}
 }
 

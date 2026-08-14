@@ -1204,38 +1204,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// read_only_task, so they cannot write, install, mutate memory, resume/fork
 	// transcripts, or delegate further.
 	//
-	// subagentSkillOptions is the single construction point for skill sub-agent
-	// run options, so the read-only and writer-capable runners cannot drift on
-	// compaction or language settings — add new fields here, not per runner.
-	subagentSkillOptions := func(sctx context.Context, steps int, price *provider.Pricing, ctxWin, childDepth int) agent.Options {
-		return agent.Options{
-			MaxSteps:                 steps,
-			Temperature:              cfg.Agent.Temperature,
-			Pricing:                  price,
-			UsageSource:              event.UsageSourceSubagent,
-			Gate:                     headlessGate,
-			ContextWindow:            ctxWin,
-			RecentKeep:               cfg.Agent.RecentKeep,
-			SoftCompactRatio:         cfg.Agent.SoftCompactRatio,
-			ToolResultSnipRatio:      cfg.Agent.ToolResultSnipRatio,
-			CompactRatio:             cfg.Agent.CompactRatio,
-			CompactForceRatio:        cfg.Agent.CompactForceRatio,
-			ContextEditing:           cfg.Agent.ContextEditing,
-			ArchiveDir:               config.ArchiveDir(),
-			KeepPolicy:               keepPolicy,
-			ResponseLanguage:         agent.ResponseLanguageFromContext(sctx),
-			ReasoningLanguage:        agent.ReasoningLanguageFromContext(sctx),
-			SubagentDepth:            childDepth,
-			MaxSubagentDepth:         maxSubagentDepth,
-			DeliveryProfile:          tokenDelivery,
-			Ablation:                 opts.Ablation,
-			WorkspaceLease:           workspaceLease,
-			WriteRoots:               writeRootSet,
-			DisableWriteAccessExpand: true,
-			HomeDir:                  userHomeDir(),
-			StateRoot:                config.MemoryUserDir(),
-		}
-	}
+	subagentSkillOptions := newSubagentSkillOptionsFactory(cfg.Agent, headlessGate, keepPolicy, maxSubagentDepth, tokenDelivery, opts.Ablation, workspaceLease, writeRootSet)
 	readOnlySkillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {
 		if strings.TrimSpace(runOpts.ContinueFrom) != "" || strings.TrimSpace(runOpts.ForkFrom) != "" {
 			return "", fmt.Errorf("read_only_skill does not support continue_from/fork_from")
@@ -1345,14 +1314,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		// command policy. Transcripts recorded against the writer-capable
 		// registry stop matching on continue_from (schema-hash check reports
 		// the mismatch).
-		var subReg *tool.Registry
-		var childWriteRoots *sandbox.WritableRootSet
-		if sk.ReadOnly {
-			subReg = agent.ReadOnlySubagentToolRegistryForDepthWithRuntime(reg, sk.AllowedTools, childDepth, maxSubagentDepth, capRuntime)
-		} else {
-			subReg = agent.SubagentToolRegistryForDepthWithRuntime(reg, sk.AllowedTools, childDepth, maxSubagentDepth, capRuntime)
-			subReg, childWriteRoots = agent.BindChildWriteRoots(subReg, writeRootSet, agent.WritePathSet{})
-		}
+		subReg, childWriteRoots := skillSubagentRegistry(sk, reg, childDepth, maxSubagentDepth, capRuntime, writeRootSet)
 		// Delivery risk gates require structured review_report from review
 		// subagents only — never expose it on the parent tool surface.
 		switch sk.Name {
@@ -1412,9 +1374,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			}
 		}
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
-		if childWriteRoots != nil {
-			runOptions.WriteRoots = childWriteRoots
-		}
+		runOptions.WriteRoots = childWriteRoots
 		usageModelRef, _ := subagentIdentity(modelRef, effortRef)
 		runOptions.ModelRef = usageModelRef
 		// Delivery risk gates consume typed reports; outside Delivery a casual
@@ -1839,9 +1799,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		Ablation:               opts.Ablation,
 		WriteRoots:             writeRootSet,
 		BashSandboxEnforced:    bashSpec.Enforce() && sandbox.Available(),
-		OnPersistWriteAccess: func(dirs []string, permRule string) error {
-			return config.PersistProjectWriteAccess(rememberPermissionConfigPath(root), dirs, permRule)
-		},
+		OnPersistWriteAccess:   projectWriteAccessPersister(root),
 		OnRemember: func(rule string) control.RememberResult {
 			return rememberPermissionRule(root, rule)
 		},
@@ -2303,11 +2261,6 @@ func currentWorkspacePromptLine(root string) string {
 		return ""
 	}
 	return "Current workspace: " + strconv.Quote(root)
-}
-
-func userHomeDir() string {
-	home, _ := os.UserHomeDir()
-	return home
 }
 
 func resolveWorkspaceRoot(explicit string) string {

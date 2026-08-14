@@ -684,22 +684,6 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 	return toolOutcome{}, false
 }
 
-type toolMutationHookReporter interface {
-	ToolMutationHooksEnabled() bool
-}
-
-func toolHooksMayMutateWorkspace(hooks ToolHooks) bool {
-	if hooks == nil {
-		return false
-	}
-	if reporter, ok := hooks.(toolMutationHookReporter); ok {
-		return reporter.ToolMutationHooksEnabled()
-	}
-	// Custom ToolHooks implementations predate the capability report. Preserve
-	// conservative coverage for them because their callbacks may write files.
-	return true
-}
-
 // finishToolExecution performs the concrete Execute, records evidence, runs
 // post hooks and recovery observation, and truncates the model-facing result.
 func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) toolOutcome {

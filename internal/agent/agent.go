@@ -524,29 +524,6 @@ func (a *Agent) SetSandboxEscapeApprover(g sandbox.EscapeApprover) {
 	a.svc.sandboxEscape = g
 }
 
-// SetConfigWriteApprover installs the optional per-write approval path used by
-// the file tools when a target is a Reasonix-managed config file outside the
-// workspace write roots.
-func (a *Agent) SetConfigWriteApprover(g tool.ConfigWriteApprover) {
-	if nilutil.IsNil(g) {
-		g = nil
-	}
-	a.svc.configWrite = g
-}
-
-// SetWriteAccessGate installs the host write-directory approval path.
-func (a *Agent) SetWriteAccessGate(g WriteAccessGate) {
-	if nilutil.IsNil(g) {
-		g = nil
-	}
-	a.svc.writeAccess = g
-}
-
-// SetWriteRoots installs the live writable-root manager.
-func (a *Agent) SetWriteRoots(set *sandbox.WritableRootSet) {
-	a.svc.writeRoots = set
-}
-
 func (a *Agent) withTurnPreferences(input string) string {
 	if a == nil {
 		return input

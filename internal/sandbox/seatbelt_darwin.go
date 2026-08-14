@@ -124,8 +124,12 @@ func explicitProtectedAllowDirs(spec Spec) []string {
 	if len(protected) == 0 {
 		return nil
 	}
+	stateRoot := singleProtectedStateRoot(protected)
 	var out []string
 	for _, root := range writeAllowDirsForSpec(spec) {
+		if stateRoot != "" && IsProtectedWritePath(root, stateRoot) {
+			continue
+		}
 		for _, prot := range protected {
 			if root != prot && PathWithin(prot, root) {
 				out = append(out, root)

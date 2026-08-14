@@ -148,10 +148,7 @@ type Controller struct {
 	closeOnce                         sync.Once                        // makes close idempotent under racing teardown paths
 	onRemember                        func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
 	onRememberPlanModeReadOnlyCommand func(prefix string) PlanModeReadOnlyCommandTrustResult
-	onPersistWriteAccess              PersistWriteAccessFunc
-	writeRoots                        *sandbox.WritableRootSet
-	interactiveWriteAccess            bool
-	bashSandboxEnforced               bool
+	writeAccess                       controllerWriteAccess
 	sessionRecoveryMeta               func(SessionRecoveryRequest) agent.BranchMeta
 	onSessionRecovered                func(SessionRecoveryInfo) error
 
@@ -578,6 +575,13 @@ type Options struct {
 // New builds a Controller. A nil Sink becomes event.Discard; unless the caller
 // already provided a goalUsageTee (NewGoalUsageTee), the sink is wrapped in one
 // so billable usage can be accounted to Goal budgets.
+func controllerSessionTemp(existing *sessiontemp.Manager) *sessiontemp.Manager {
+	if existing != nil {
+		return existing
+	}
+	return sessiontemp.New()
+}
+
 func New(opts Options) *Controller {
 	sink := opts.Sink
 	if nilutil.IsNil(sink) {
@@ -634,9 +638,7 @@ func New(opts Options) *Controller {
 		shell:                             opts.Shell,
 		onRemember:                        opts.OnRemember,
 		onRememberPlanModeReadOnlyCommand: opts.OnRememberPlanModeReadOnlyCommand,
-		onPersistWriteAccess:              opts.OnPersistWriteAccess,
-		writeRoots:                        opts.WriteRoots,
-		bashSandboxEnforced:               opts.BashSandboxEnforced,
+		writeAccess:                       newControllerWriteAccess(opts),
 		sessionRecoveryMeta:               opts.SessionRecoveryMeta,
 		onSessionRecovered:                opts.OnSessionRecovered,
 		balanceURL:                        opts.BalanceURL,
@@ -660,11 +662,7 @@ func New(opts Options) *Controller {
 	// Session-private temporary directory: reuse a shared Manager on hot
 	// rebuild, otherwise create one. Retain so ReleaseResources/Close drop the
 	// owner reference without racing a replacement Controller.
-	if opts.SessionTemp != nil {
-		c.sessionTemp = opts.SessionTemp
-	} else {
-		c.sessionTemp = sessiontemp.New()
-	}
+	c.sessionTemp = controllerSessionTemp(opts.SessionTemp)
 	c.sessionTemp.Retain()
 
 	if strings.TrimSpace(opts.WorkspaceRoot) != "" {
@@ -2139,57 +2137,6 @@ func (c *Controller) Turn() int {
 	return c.turn
 }
 
-// Approve answers a pending ApprovalRequest by ID: allow runs the call, session
-// also remembers a grant for the rest of the session so the same approval scope
-// is not re-prompted. Unknown/expired IDs are ignored.
-func (c *Controller) Approve(id string, allow, session, persist bool) {
-	if pending := c.approval.peek(id); pending.reply != nil && pending.kind == writeAccessKind {
-		_ = c.ResolveApproval(id, allow, scopeFromApprove(allow, session, persist))
-		return
-	}
-	// Recovery cards are strict fresh decisions. Prefer ResolveRecovery so a
-	// continue/deny from an old client that only knows Approve still maps onto
-	// the recovery state machine (allow=continue, deny=revise without feedback).
-	// Session/persist grants are intentionally ignored for recovery.
-	//
-	// Lookup must use the live waiter table (HasApproval), not Snapshot: pre-
-	// normal-execution plan prompts park a waiter without an armed taskRuntime, so
-	// they never appear in the persistence snapshot.
-	c.mu.Lock()
-	gate := c.recoveryGate
-	c.mu.Unlock()
-	if gate != nil && gate.HasApproval(id) {
-		action := agent.RecoveryActionRevise
-		if allow {
-			action = agent.RecoveryActionContinue
-		}
-		_ = c.ResolveRecovery(id, action, "")
-		return
-	}
-	pending := c.approval.resolve(id)
-	if pending.reply == nil {
-		return
-	}
-	outcome := "deny"
-	if pending.tool == planApprovalTool {
-		outcome = string(PlanDecisionRevisePlan)
-		if allow {
-			outcome = string(PlanDecisionStartExecution)
-		}
-	} else if allow {
-		switch {
-		case persist:
-			outcome = "allow_persistent"
-		case session:
-			outcome = "allow_session"
-		default:
-			outcome = "allow_once"
-		}
-	}
-	c.recordDecisionReceipt(pending, outcome)
-	pending.reply <- approvalReply{allow: allow, session: session, persist: persist} // buffered, never blocks
-}
-
 // ResolvePlanDecision answers the Plan card without collapsing revise and exit
 // into the generic approval boolean used by older clients.
 func (c *Controller) ResolvePlanDecision(id string, action PlanDecisionAction) error {
@@ -2254,14 +2201,14 @@ func (c *Controller) EnableInteractiveApproval() {
 	trustGate := planModeReadOnlyTrustApprover{c}
 	escapeApprover := sandboxEscapeApprover{c}
 	configApprover := managedConfigWriteApprover{c}
-	c.interactiveWriteAccess = true
+	c.writeAccess.interactive = true
 	if c.executor != nil {
 		c.executor.SetGate(c.newInteractiveGate())
 		c.executor.SetPlanModeReadOnlyTrustGate(trustGate)
 		c.executor.SetSandboxEscapeApprover(escapeApprover)
 		c.executor.SetConfigWriteApprover(configApprover)
 		c.executor.SetWriteAccessGate(c)
-		c.executor.SetWriteRoots(c.writeRoots)
+		c.executor.SetWriteRoots(c.writeAccess.roots)
 		c.executor.SetAsker(c)
 	}
 	if setter, ok := c.runner.(interface {
@@ -2287,7 +2234,7 @@ func (c *Controller) EnableInteractiveApproval() {
 	if setter, ok := c.runner.(interface {
 		SetWriteRoots(*sandbox.WritableRootSet)
 	}); ok {
-		setter.SetWriteRoots(c.writeRoots)
+		setter.SetWriteRoots(c.writeAccess.roots)
 	}
 	if setter, ok := c.runner.(interface {
 		SetPlannerPlanApprover(agent.PlannerPlanApprover)
@@ -2431,11 +2378,11 @@ func (c *Controller) ApplyHeadlessApprovalMode(mode string) {
 	if c.subagentGate != nil {
 		c.subagentGate.Update(mode)
 	}
-	c.interactiveWriteAccess = false
+	c.writeAccess.interactive = false
 	if c.executor != nil {
 		c.executor.SetGate(c.newHeadlessGate(mode))
 		c.executor.SetWriteAccessGate(c)
-		c.executor.SetWriteRoots(c.writeRoots)
+		c.executor.SetWriteRoots(c.writeAccess.roots)
 	}
 }
 
@@ -5503,8 +5450,8 @@ func (c *Controller) InheritLifecycleFrom(prev *Controller) {
 // RestoreSessionAuthorizations.
 func (c *Controller) SessionAuthorizations() SessionAuthorizations {
 	auth := c.approval.snapshotSessionAuthorizations()
-	if c.writeRoots != nil {
-		auth.WriteRoots = c.writeRoots.SessionRoots()
+	if c.writeAccess.roots != nil {
+		auth.WriteRoots = c.writeAccess.roots.SessionRoots()
 		if auth.WriteRoots == nil {
 			auth.WriteRoots = []string{}
 		}
@@ -5518,8 +5465,8 @@ func (c *Controller) SessionAuthorizations() SessionAuthorizations {
 // replacement forgets every grant the user already made this session.
 func (c *Controller) RestoreSessionAuthorizations(auth SessionAuthorizations) {
 	c.approval.restoreSessionAuthorizations(auth)
-	if c.writeRoots != nil && len(auth.WriteRoots) > 0 {
-		c.writeRoots.GrantSession(auth.WriteRoots)
+	if c.writeAccess.roots != nil && len(auth.WriteRoots) > 0 {
+		c.writeAccess.roots.GrantVerifiedSession(auth.WriteRoots)
 	}
 }
 

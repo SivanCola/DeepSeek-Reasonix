@@ -3,6 +3,7 @@
 import type { HistoryServerSearch } from "./searchSources";
 import type { Todo } from "./tools";
 import type { ContextMaintenanceInfo, WireContextMaintenance } from "./contextMaintenanceTypes";
+import type { WireApproval } from "./approvalTypes";
 export type { ContextMaintenanceInfo, ContextMaintenanceReceipt, WireContextMaintenance } from "./contextMaintenanceTypes";
 export type { ProjectRuntimeTopic, ProjectTopicKey, ProjectTopicPage, ProjectTopicPageRequest, ProjectTreeChangedV2, ProjectTreeRuntimeSnapshot, ProjectTreeSnapshot, SessionCatalogBindings, SessionCatalogStatus, SessionReference } from "./sessionCatalogTypes";
 export type EventKind =
@@ -186,25 +187,7 @@ export interface WireRecoveryApproval {
   task_grant_scope?: string;
 }
 
-export interface WireWriteAccessApproval {
-  directories?: string[];
-  display_directories?: string[];
-  justification?: string;
-  broad_home_access?: boolean;
-  ordinary_permission_needed?: boolean;
-  persist_allowed?: boolean;
-}
-
-export interface WireApproval {
-  id: string;
-  tool: string;
-  subject: string;
-  reason?: string;
-  fresh?: boolean;
-  kind?: "tool" | "plan" | "recovery" | "write_access" | string;
-  recovery?: WireRecoveryApproval;
-  write_access?: WireWriteAccessApproval;
-}
+export type { WireApproval, WireWriteAccessApproval } from "./approvalTypes";
 
 export interface WireGuardian {
   id: string;

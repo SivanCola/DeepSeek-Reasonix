@@ -207,13 +207,6 @@ func (b foregroundOnlyBash) Execute(ctx context.Context, args json.RawMessage) (
 
 func (b foregroundOnlyBash) ReadOnly() bool { return b.inner.ReadOnly() }
 
-func (b foregroundOnlyBash) DeclareWriteAccess(args json.RawMessage) (tool.WriteAccessDeclaration, error) {
-	if d, ok := b.inner.(tool.WriteAccessDeclarer); ok {
-		return d.DeclareWriteAccess(args)
-	}
-	return tool.WriteAccessDeclaration{}, nil
-}
-
 type readOnlyBash struct {
 	inner tool.Tool
 }
@@ -783,28 +776,9 @@ func (t *TaskTool) RunProfileSpec(ctx context.Context, spec ProfileExecSpec) (re
 	if err != nil {
 		return "", err
 	}
-	var subReg *tool.Registry
-	var childWriteRoots *sandbox.WritableRootSet
-	if spec.Grant.ReadOnly {
-		subReg = ReadOnlySubagentToolRegistryForDepthWithRuntime(t.parentReg, toolNames, childDepth, t.maxDepth(), t.capabilityRuntime)
-		if subReg.Len() == 0 && !spec.Grant.AllowNoTools {
-			return "", fmt.Errorf("no read-only tools available for this sub-agent")
-		}
-	} else {
-		subReg = t.buildSubReg(toolNames, childDepth)
-		// Explicit paths are an execution boundary and rebind/drop tools that
-		// cannot honor it. A synthesized whole-workspace claim is a scheduling
-		// boundary for omitted write_paths; it preserves the legacy registry and
-		// the parent session's existing sandbox/permission boundaries.
-		if !spec.Grant.WritePaths.Empty() && !spec.Grant.WritePaths.WholeWorkspace {
-			keepBash := t.bashCanEnforceWriteRoots()
-			bound, removed := BindWritePaths(subReg, spec.Grant.WritePaths, t.workspaceRoot, keepBash)
-			subReg = bound
-			if len(removed) > 0 && subReg.Len() == 0 {
-				return "", fmt.Errorf("no path-bound write tools available after dropping unbound writers: %s", strings.Join(removed, ", "))
-			}
-		}
-		subReg, childWriteRoots = BindChildWriteRoots(subReg, t.writeRoots, spec.Grant.WritePaths)
+	subReg, childWriteRoots, err := t.buildSubagentRegistry(spec, toolNames, childDepth)
+	if err != nil {
+		return "", err
 	}
 
 	modelRef, effortRef := spec.Worker.Model, spec.Worker.Effort

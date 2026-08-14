@@ -18,7 +18,7 @@ import (
 
 func TestResolveApprovalWriteAccessOnceDoesNotGrantSession(t *testing.T) {
 	dir := t.TempDir()
-	outside := t.TempDir()
+	outside := canonicalWriteTestDir(t)
 	set := sandbox.NewWritableRootSet([]string{dir})
 	c := New(Options{Policy: permission.New("allow", nil, nil, nil), WriteRoots: set})
 	id, reply := c.approval.registerWriteAccess("write_file", outside, "test", json.RawMessage(`{}`), &event.WriteAccessApproval{
@@ -39,7 +39,7 @@ func TestResolveApprovalWriteAccessOnceDoesNotGrantSession(t *testing.T) {
 
 func TestResolveApprovalWriteAccessSessionPersistsInSet(t *testing.T) {
 	dir := t.TempDir()
-	extra := t.TempDir()
+	extra := canonicalWriteTestDir(t)
 	set := sandbox.NewWritableRootSet([]string{dir})
 	c := New(Options{Policy: permission.New("allow", nil, nil, nil), WriteRoots: set})
 	id, reply := c.approval.registerWriteAccess("write_file", extra, "test", json.RawMessage(`{}`), &event.WriteAccessApproval{
@@ -59,7 +59,7 @@ func TestResolveApprovalWriteAccessSessionPersistsInSet(t *testing.T) {
 
 func TestResolveApprovalWriteAccessProjectFailureDoesNotGrant(t *testing.T) {
 	dir := t.TempDir()
-	extra := t.TempDir()
+	extra := canonicalWriteTestDir(t)
 	set := sandbox.NewWritableRootSet([]string{dir})
 	c := New(Options{
 		Policy:     permission.New("allow", nil, nil, nil),
@@ -80,6 +80,40 @@ func TestResolveApprovalWriteAccessProjectFailureDoesNotGrant(t *testing.T) {
 	}
 	if set.Covers(extra) {
 		t.Fatal("failed persist must not grant session access")
+	}
+}
+
+func TestResolveApprovalWriteAccessProjectSurvivesNewSession(t *testing.T) {
+	base := t.TempDir()
+	extra := canonicalWriteTestDir(t)
+	set := sandbox.NewWritableRootSet([]string{base})
+	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
+	var persisted []string
+	c := New(Options{
+		Executor:   exec,
+		Policy:     permission.New("allow", nil, nil, nil),
+		WriteRoots: set,
+		OnPersistWriteAccess: func(dirs []string, _ string) error {
+			persisted = append([]string(nil), dirs...)
+			return nil
+		},
+	})
+	c.SetSessionPath(agent.NewSessionPath(t.TempDir(), "test"))
+	id, reply := c.approval.registerWriteAccess("write_file", extra, "test", json.RawMessage(`{}`), &event.WriteAccessApproval{
+		Directories: []string{extra},
+	})
+	if err := c.ResolveApproval(id, true, sandbox.ApprovalScopeProject); err != nil {
+		t.Fatal(err)
+	}
+	got := <-reply
+	if !got.allow || !got.persist || len(persisted) != 1 || persisted[0] != extra {
+		t.Fatalf("project reply = %+v, persisted = %v", got, persisted)
+	}
+	if err := c.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	if !set.Covers(extra) {
+		t.Fatal("project write grant must survive /new as a baseline root")
 	}
 }
 
@@ -142,7 +176,7 @@ func TestCheckWriteAccessSubagentCannotExpand(t *testing.T) {
 	dir := t.TempDir()
 	set := sandbox.NewWritableRootSet([]string{dir})
 	c := New(Options{Policy: permission.New("allow", nil, nil, nil), WriteRoots: set})
-	c.interactiveWriteAccess = true
+	c.writeAccess.interactive = true
 	dec, err := c.CheckWriteAccess(context.Background(), agent.WriteAccessCheck{
 		Tool:       "write_file",
 		Expandable: false,
@@ -188,7 +222,7 @@ func TestCheckWriteAccessDenyBeatsDirectoryPrompt(t *testing.T) {
 		Policy:     permission.New("ask", nil, nil, []string{"write_file"}),
 		WriteRoots: set,
 	})
-	c.interactiveWriteAccess = true
+	c.writeAccess.interactive = true
 	dec, err := c.CheckWriteAccess(context.Background(), agent.WriteAccessCheck{
 		Tool:       "write_file",
 		Expandable: true,
@@ -211,7 +245,7 @@ func TestCheckWriteAccessBashWithoutSandboxSkips(t *testing.T) {
 	dir := t.TempDir()
 	set := sandbox.NewWritableRootSet([]string{dir})
 	c := New(Options{Policy: permission.New("allow", nil, nil, nil), WriteRoots: set})
-	c.interactiveWriteAccess = true
+	c.writeAccess.interactive = true
 	dec, err := c.CheckWriteAccess(context.Background(), agent.WriteAccessCheck{
 		Tool:       "bash",
 		Expandable: true,
@@ -226,4 +260,13 @@ func TestCheckWriteAccessBashWithoutSandboxSkips(t *testing.T) {
 	if !dec.Allow {
 		t.Fatalf("unenforced bash must keep existing platform behavior, got %+v", dec)
 	}
+}
+
+func canonicalWriteTestDir(t *testing.T) string {
+	t.Helper()
+	dir, err := sandbox.ResolveAbsPath(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

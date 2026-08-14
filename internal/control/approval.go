@@ -9,10 +9,53 @@ import (
 	"sync"
 	"time"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/event"
 	"reasonix/internal/i18n"
 	"reasonix/internal/permission"
 )
+
+// Approve answers a pending ApprovalRequest by ID. It remains the compatibility
+// bridge for clients that do not yet call the scope-aware resolver directly.
+func (c *Controller) Approve(id string, allow, session, persist bool) {
+	if pending := c.approval.peek(id); pending.reply != nil && pending.kind == writeAccessKind {
+		_ = c.ResolveApproval(id, allow, scopeFromApprove(allow, session, persist))
+		return
+	}
+	c.mu.Lock()
+	gate := c.recoveryGate
+	c.mu.Unlock()
+	if gate != nil && gate.HasApproval(id) {
+		action := agent.RecoveryActionRevise
+		if allow {
+			action = agent.RecoveryActionContinue
+		}
+		_ = c.ResolveRecovery(id, action, "")
+		return
+	}
+	pending := c.approval.resolve(id)
+	if pending.reply == nil {
+		return
+	}
+	outcome := "deny"
+	if pending.tool == planApprovalTool {
+		outcome = string(PlanDecisionRevisePlan)
+		if allow {
+			outcome = string(PlanDecisionStartExecution)
+		}
+	} else if allow {
+		switch {
+		case persist:
+			outcome = "allow_persistent"
+		case session:
+			outcome = "allow_session"
+		default:
+			outcome = "allow_once"
+		}
+	}
+	c.recordDecisionReceipt(pending, outcome)
+	pending.reply <- approvalReply{allow: allow, session: session, persist: persist}
+}
 
 // approvalManager owns the approval/ask prompt bookkeeping and the runtime
 // approval posture, behind its own locks and off the controller's c.mu. It is a

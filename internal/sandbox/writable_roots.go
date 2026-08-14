@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -31,6 +33,17 @@ func (s *WritableRootSet) ReplaceBaseline(roots []string) {
 	s.mu.Unlock()
 }
 
+// GrantVerifiedBaseline adds already-verified absolute identities to the
+// persistent baseline. They survive ClearSession and are not re-resolved.
+func (s *WritableRootSet) GrantVerifiedBaseline(dirs []string) {
+	if s == nil || len(dirs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	s.baseline = CollapseWriteRoots(append(append([]string{}, s.baseline...), verifiedDirs(dirs)...))
+	s.mu.Unlock()
+}
+
 // GrantSession adds directories to the session grant set.
 func (s *WritableRootSet) GrantSession(dirs []string) {
 	if s == nil || len(dirs) == 0 {
@@ -38,6 +51,17 @@ func (s *WritableRootSet) GrantSession(dirs []string) {
 	}
 	s.mu.Lock()
 	s.session = CollapseWriteRoots(append(append([]string{}, s.session...), canonicalDirs(dirs)...))
+	s.mu.Unlock()
+}
+
+// GrantVerifiedSession adds already-verified absolute identities without
+// following their path components again after the user approved them.
+func (s *WritableRootSet) GrantVerifiedSession(dirs []string) {
+	if s == nil || len(dirs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	s.session = CollapseWriteRoots(append(append([]string{}, s.session...), verifiedDirs(dirs)...))
 	s.mu.Unlock()
 }
 
@@ -76,13 +100,19 @@ func (s *WritableRootSet) Effective(ctx context.Context) []string {
 	return CollapseWriteRoots(append(s.Snapshot(), PerCallWriteRoots(ctx)...))
 }
 
+// EffectiveSandboxRoots omits any approved root whose identity has changed.
+// Bash uses this fail-closed view when constructing its OS sandbox.
+func (s *WritableRootSet) EffectiveSandboxRoots(ctx context.Context) []string {
+	return stableWriteRoots(s.Effective(ctx))
+}
+
 // Covers reports whether dir is inside the current baseline+session snapshot.
 func (s *WritableRootSet) Covers(dir string) bool {
 	dir = canonicalDir(dir)
 	if dir == "" {
 		return false
 	}
-	for _, root := range s.Snapshot() {
+	for _, root := range stableWriteRoots(s.Snapshot()) {
 		if PathWithin(root, dir) {
 			return true
 		}
@@ -95,7 +125,7 @@ func (s *WritableRootSet) Missing(dirs []string) []string {
 	if len(dirs) == 0 {
 		return nil
 	}
-	snap := s.Snapshot()
+	snap := stableWriteRoots(s.Snapshot())
 	var missing []string
 	for _, dir := range CollapseWriteRoots(canonicalDirs(dirs)) {
 		covered := false
@@ -118,9 +148,9 @@ func (s *WritableRootSet) Missing(dirs []string) []string {
 func (s *WritableRootSet) CloneRestricted(cap []string) *WritableRootSet {
 	snap := s.Snapshot()
 	if len(cap) == 0 {
-		return NewWritableRootSet(snap)
+		return newVerifiedWritableRootSet(snap)
 	}
-	return NewWritableRootSet(IntersectWriteRoots(snap, cap))
+	return newVerifiedWritableRootSet(intersectVerifiedWriteRoots(snap, canonicalDirs(cap)))
 }
 
 // IntersectWriteRoots returns directories that sit in both a and b, preferring
@@ -128,6 +158,10 @@ func (s *WritableRootSet) CloneRestricted(cap []string) *WritableRootSet {
 func IntersectWriteRoots(a, b []string) []string {
 	a = CollapseWriteRoots(canonicalDirs(a))
 	b = CollapseWriteRoots(canonicalDirs(b))
+	return intersectVerifiedWriteRoots(a, b)
+}
+
+func intersectVerifiedWriteRoots(a, b []string) []string {
 	if len(a) == 0 || len(b) == 0 {
 		return nil
 	}
@@ -152,7 +186,7 @@ func WithPerCallWriteRoots(ctx context.Context, dirs []string) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	dirs = CollapseWriteRoots(canonicalDirs(dirs))
+	dirs = CollapseWriteRoots(verifiedDirs(dirs))
 	if len(dirs) == 0 {
 		return ctx
 	}
@@ -176,4 +210,33 @@ func canonicalDirs(dirs []string) []string {
 		}
 	}
 	return out
+}
+
+func newVerifiedWritableRootSet(baseline []string) *WritableRootSet {
+	return &WritableRootSet{baseline: CollapseWriteRoots(verifiedDirs(baseline))}
+}
+
+func verifiedDirs(dirs []string) []string {
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if dir != "" && dir != "." && filepath.IsAbs(dir) {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+// stableWriteRoots drops roots whose current symlink-resolved identity no
+// longer matches the identity captured when the root was configured or
+// approved. Omitting a stale root makes sandbox construction fail closed.
+func stableWriteRoots(dirs []string) []string {
+	out := make([]string, 0, len(dirs))
+	for _, dir := range verifiedDirs(dirs) {
+		resolved, err := ResolveAbsPath(dir)
+		if err == nil && sameWritePath(dir, resolved) {
+			out = append(out, dir)
+		}
+	}
+	return CollapseWriteRoots(out)
 }

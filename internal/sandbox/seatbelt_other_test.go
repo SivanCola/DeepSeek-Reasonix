@@ -68,13 +68,51 @@ func TestBwrapProtectedWriteArgsRemountsReadonly(t *testing.T) {
 	argv := bwrapBaseArgs(Spec{
 		Mode:                "enforce",
 		WriteRoots:          []string{home},
-		ProtectedWriteRoots: []string{sessions},
+		ProtectedWriteRoots: ProtectedWriteRoots(state),
 		MinimalWrites:       true,
 	})
 	homeBind := indexArgs(argv, "--bind", home, home)
-	protect := indexArgs(argv, "--ro-bind", sessions, sessions)
+	protect := indexArgs(argv, "--ro-bind", state, state)
 	if homeBind < 0 || protect < 0 || protect < homeBind {
 		t.Fatalf("protected root must be remounted read-only after the home bind: %v", argv)
+	}
+}
+
+func TestBwrapProtectedWriteArgsReallowsOnlySafeStateChild(t *testing.T) {
+	state := t.TempDir()
+	skills := filepath.Join(state, "skills")
+	projects := filepath.Join(state, "projects", "slug")
+	if err := os.MkdirAll(skills, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projects, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argv := bwrapBaseArgs(Spec{
+		Mode:                "enforce",
+		WriteRoots:          []string{skills, projects},
+		ProtectedWriteRoots: ProtectedWriteRoots(state),
+		MinimalWrites:       true,
+	})
+	protect := indexArgs(argv, "--ro-bind", state, state)
+	safe := indexArgs(argv, "--bind", skills, skills)
+	if protect < 0 || safe < protect {
+		t.Fatalf("safe state child must be reopened after parent protection: %v", argv)
+	}
+	if got := indexArgs(argv[protect+1:], "--bind", projects, projects); got >= 0 {
+		t.Fatalf("project runtime state must not be reopened: %v", argv)
+	}
+}
+
+func TestBwrapProtectedWriteArgsIncludesMissingStateBoundary(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "future-state")
+	argv := bwrapBaseArgs(Spec{
+		Mode:                "enforce",
+		ProtectedWriteRoots: ProtectedWriteRoots(state),
+		MinimalWrites:       true,
+	})
+	if indexArgs(argv, "--ro-bind", state, state) < 0 {
+		t.Fatalf("missing protected state must fail closed at launch: %v", argv)
 	}
 }
 

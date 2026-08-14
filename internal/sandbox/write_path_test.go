@@ -118,11 +118,17 @@ func TestIsHomeDir(t *testing.T) {
 
 func TestProtectedWritePath(t *testing.T) {
 	state := t.TempDir()
+	if !IsProtectedWritePath(state, state) {
+		t.Fatal("state root must be protected")
+	}
 	if !IsProtectedWritePath(filepath.Join(state, "sessions", "a.json"), state) {
 		t.Fatal("sessions store must be protected")
 	}
 	if !IsProtectedWritePath(filepath.Join(state, "projects", "slug", "sessions", "a.json"), state) {
 		t.Fatal("project sessions must be protected")
+	}
+	if !IsProtectedWritePath(filepath.Join(state, "projects", "slug"), state) {
+		t.Fatal("project state must not be dynamically writable")
 	}
 	if !IsProtectedWritePath(filepath.Join(state, "settings.json"), state) {
 		t.Fatal("settings.json must be protected")
@@ -138,6 +144,21 @@ func TestProtectedWritePath(t *testing.T) {
 	}
 	if err := ValidateWriteDir(filepath.Join(state, "skills"), state); err != nil {
 		t.Fatalf("skills dir should be allowed: %v", err)
+	}
+}
+
+func TestProtectedWriteRootsProtectsFutureState(t *testing.T) {
+	state := t.TempDir()
+	want, err := ResolveAbsPath(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ProtectedWriteRoots(state)
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("ProtectedWriteRoots = %v, want state boundary %q", got, want)
+	}
+	if !PathWithin(got[0], filepath.Join(want, "desktop-future.json")) {
+		t.Fatal("state boundary should cover files created after sandbox startup")
 	}
 }
 
@@ -167,21 +188,53 @@ func TestNormalizeWriteDirsCollapsesDisplay(t *testing.T) {
 
 func TestEnsureWriteDirCreatesAndKeepsExisting(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "a", "b")
-	if err := EnsureWriteDir(dir); err != nil {
+	var err error
+	dir, err = ResolveAbsPath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(t.TempDir(), "state")
+	if got, err := EnsureWriteDir(dir, state); err != nil || got != dir {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		t.Fatalf("created dir missing: %v", err)
 	}
-	if err := EnsureWriteDir(dir); err != nil {
+	if _, err := EnsureWriteDir(dir, state); err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureWriteDir(file); err == nil {
+	if _, err := EnsureWriteDir(file, state); err == nil {
 		t.Fatal("file should not be accepted as a write directory")
+	}
+}
+
+func TestEnsureWriteDirRejectsApprovalIdentityChange(t *testing.T) {
+	root := t.TempDir()
+	approvedParent := filepath.Join(root, "approved")
+	if err := os.Mkdir(approvedParent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	approved, _, err := NormalizeWriteDir(filepath.Join(approvedParent, "nested"), root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, "state")
+	projects := filepath.Join(state, "projects")
+	if err := os.MkdirAll(projects, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(approvedParent); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(projects, approvedParent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureWriteDir(approved, state); err == nil {
+		t.Fatal("retargeting an approved ancestor into protected state must fail")
 	}
 }

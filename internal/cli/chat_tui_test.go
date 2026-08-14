@@ -1032,29 +1032,6 @@ func TestApprovalChoicesPreserveDecisionSemantics(t *testing.T) {
 			want: []approvalChoice{{allow: true}, {}, {exitPlan: true}},
 		},
 	}
-	writeAccess := approvalChoices(&event.Approval{
-		Tool: "bash", Kind: event.ApprovalKindWriteAccess,
-		WriteAccess: &event.WriteAccessApproval{Directories: []string{"/tmp/out"}, PersistAllowed: true},
-	})
-	wantWrite := []approvalChoice{
-		{allow: true},
-		{allow: true, allowForSession: true},
-		{allow: true, allowForSession: true, persistToConfig: true},
-		{},
-	}
-	if len(writeAccess) != len(wantWrite) {
-		t.Fatalf("write-access choices = %d, want %d", len(writeAccess), len(wantWrite))
-	}
-	for i := range writeAccess {
-		writeAccess[i].label = ""
-		if writeAccess[i] != wantWrite[i] {
-			t.Fatalf("write-access choice %d = %+v, want %+v", i, writeAccess[i], wantWrite[i])
-		}
-	}
-	writeLabels := approvalChoiceLabels(&event.Approval{Kind: event.ApprovalKindWriteAccess})
-	if len(writeLabels) != 4 || !strings.Contains(strings.ToLower(writeLabels[2]), "project") {
-		t.Fatalf("write-access labels = %v", writeLabels)
-	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := approvalChoices(&event.Approval{Tool: tt.tool, Subject: "echo hi"})

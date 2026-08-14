@@ -199,10 +199,18 @@ func uniqueCleanDirs(dirs []string) []string {
 
 // IsFilesystemRoot reports POSIX /, a Windows drive root, or a UNC share root.
 func IsFilesystemRoot(abs string) bool {
-	abs = filepath.Clean(strings.TrimSpace(abs))
-	if abs == "" {
+	raw := strings.TrimSpace(abs)
+	if raw == "" {
 		return false
 	}
+	if runtime.GOOS == "windows" {
+		// filepath.VolumeName(`\\`) is empty even though the current-drive root
+		// is just as broad as an explicit C:\\ root.
+		if strings.Trim(raw, `\/`) == "" {
+			return true
+		}
+	}
+	abs = filepath.Clean(raw)
 	if runtime.GOOS == "windows" {
 		vol := filepath.VolumeName(abs)
 		if vol == "" {
@@ -241,56 +249,55 @@ func canonicalDir(path string) string {
 	return filepath.Clean(path)
 }
 
-// ProtectedWriteRoots returns Reasonix session, runtime-state, and security
-// boundary paths that must stay read-only even after a broad home grant.
+// ProtectedWriteRoots returns the Reasonix state boundary that must stay
+// read-only after a broad ancestor grant. Protecting the parent also covers
+// state files that do not exist when the sandbox starts.
 func ProtectedWriteRoots(stateRoot string) []string {
-	stateRoot = filepath.Clean(strings.TrimSpace(stateRoot))
+	stateRoot = canonicalDir(stateRoot)
 	if stateRoot == "" {
 		return nil
 	}
-	roots := []string{
-		filepath.Join(stateRoot, "sessions"),
-		filepath.Join(stateRoot, "projects"),
-		filepath.Join(stateRoot, "settings.json"),
-		filepath.Join(stateRoot, "metrics-pending.json"),
-		filepath.Join(stateRoot, "crash-pending.json"),
+	return []string{stateRoot}
+}
+
+func singleProtectedStateRoot(protected []string) string {
+	if len(protected) != 1 {
+		return ""
 	}
-	if entries, err := os.ReadDir(stateRoot); err == nil {
-		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), "desktop-") {
-				roots = append(roots, filepath.Join(stateRoot, entry.Name()))
-			}
-		}
-	}
-	return roots
+	return protected[0]
 }
 
 // IsProtectedWritePath reports whether abs is a Reasonix session store,
 // runtime ledger, or security-boundary file.
 func IsProtectedWritePath(abs, stateRoot string) bool {
-	abs = filepath.Clean(strings.TrimSpace(abs))
-	stateRoot = filepath.Clean(strings.TrimSpace(stateRoot))
+	abs = canonicalDir(abs)
+	stateRoot = canonicalDir(stateRoot)
 	if abs == "" || stateRoot == "" {
 		return false
 	}
-	if PathWithin(filepath.Join(stateRoot, "sessions"), abs) {
+	if sameWritePath(abs, stateRoot) {
 		return true
 	}
-	if rel, err := filepath.Rel(stateRoot, abs); err == nil && rel != "." && !strings.Contains(rel, string(filepath.Separator)) {
+	if protectedPathWithin(filepath.Join(stateRoot, "sessions"), abs) {
+		return true
+	}
+	relRoot, relPath := stateRoot, abs
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		relRoot, relPath = strings.ToLower(relRoot), strings.ToLower(relPath)
+	}
+	if rel, err := filepath.Rel(relRoot, relPath); err == nil && rel != "." && !strings.Contains(rel, string(filepath.Separator)) {
 		if isProtectedStateFile(rel) {
 			return true
 		}
 	}
-	projects := filepath.Join(stateRoot, "projects")
-	if !PathWithin(projects, abs) {
-		return false
+	return protectedPathWithin(filepath.Join(stateRoot, "projects"), abs)
+}
+
+func protectedPathWithin(root, path string) bool {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		root, path = strings.ToLower(root), strings.ToLower(path)
 	}
-	rel, err := filepath.Rel(projects, abs)
-	if err != nil {
-		return false
-	}
-	parts := strings.Split(rel, string(filepath.Separator))
-	return len(parts) >= 2 && parts[1] == "sessions"
+	return PathWithin(root, path)
 }
 
 func isProtectedStateFile(name string) bool {
@@ -350,54 +357,70 @@ func ValidateWriteDir(abs, stateRoot string) error {
 	return nil
 }
 
-// EnsureWriteDir creates abs with 0o755 when it does not exist, then
-// re-resolves the path so a symlink race cannot change its identity.
-func EnsureWriteDir(abs string) error {
-	abs = filepath.Clean(strings.TrimSpace(abs))
-	if abs == "" {
-		return fmt.Errorf("write directory is empty")
+// EnsureWriteDir creates approved with 0o755 when it does not exist and
+// returns the verified identity that callers must grant. It rejects a path
+// whose symlink-resolved identity changed after the approval prompt.
+func EnsureWriteDir(approved, stateRoot string) (string, error) {
+	approved = filepath.Clean(strings.TrimSpace(approved))
+	if approved == "" || approved == "." {
+		return "", fmt.Errorf("write directory is empty")
 	}
-	info, err := os.Lstat(abs)
+	if !filepath.IsAbs(approved) {
+		return "", fmt.Errorf("write directory %q is not absolute", approved)
+	}
+	if err := ValidateWriteDir(approved, stateRoot); err != nil {
+		return "", err
+	}
+	resolved, err := ResolveAbsPath(approved)
+	if err != nil {
+		return "", fmt.Errorf("resolve approved write directory %q: %w", approved, err)
+	}
+	if !sameWritePath(approved, resolved) {
+		return "", fmt.Errorf("approved write directory %q changed identity to %q", approved, resolved)
+	}
+	if err := ValidateWriteDir(resolved, stateRoot); err != nil {
+		return "", err
+	}
+
+	info, err := os.Stat(resolved)
 	switch {
 	case err == nil:
-		if info.Mode()&os.ModeSymlink != 0 {
-			resolved, rerr := filepath.EvalSymlinks(abs)
-			if rerr != nil {
-				return fmt.Errorf("resolve write directory %q: %w", abs, rerr)
-			}
-			info, err = os.Stat(resolved)
-			if err != nil {
-				return fmt.Errorf("stat write directory %q: %w", abs, err)
-			}
-			if !info.IsDir() {
-				return fmt.Errorf("write path %q is not a directory", abs)
-			}
-			return nil
-		}
 		if !info.IsDir() {
-			return fmt.Errorf("write path %q is not a directory", abs)
+			return "", fmt.Errorf("write path %q is not a directory", approved)
 		}
-		return nil
 	case os.IsNotExist(err):
-		if err := os.MkdirAll(abs, 0o755); err != nil {
-			return fmt.Errorf("create write directory %q: %w", abs, err)
+		if err := os.MkdirAll(approved, 0o755); err != nil {
+			return "", fmt.Errorf("create write directory %q: %w", approved, err)
 		}
 	default:
-		return fmt.Errorf("stat write directory %q: %w", abs, err)
+		return "", fmt.Errorf("stat write directory %q: %w", approved, err)
 	}
-	resolved, err := ResolveAbsPath(abs)
+
+	resolved, err = ResolveAbsPath(approved)
 	if err != nil {
-		return fmt.Errorf("re-resolve write directory %q: %w", abs, err)
+		return "", fmt.Errorf("re-resolve write directory %q: %w", approved, err)
 	}
-	if IsFilesystemRoot(resolved) {
-		return fmt.Errorf("write directory %q resolved to a filesystem root", abs)
+	if !sameWritePath(approved, resolved) {
+		return "", fmt.Errorf("approved write directory %q changed identity to %q", approved, resolved)
+	}
+	if err := ValidateWriteDir(resolved, stateRoot); err != nil {
+		return "", err
 	}
 	info, err = os.Stat(resolved)
 	if err != nil {
-		return fmt.Errorf("stat created write directory %q: %w", abs, err)
+		return "", fmt.Errorf("stat created write directory %q: %w", approved, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("created write path %q is not a directory", abs)
+		return "", fmt.Errorf("created write path %q is not a directory", approved)
 	}
-	return nil
+	return resolved, nil
+}
+
+func sameWritePath(left, right string) bool {
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
