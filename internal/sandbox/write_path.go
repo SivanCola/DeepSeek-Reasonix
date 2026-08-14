@@ -240,13 +240,6 @@ func ProtectedWriteRoots(stateRoot string) []string {
 	return []string{stateRoot}
 }
 
-func singleProtectedStateRoot(protected []string) string {
-	if len(protected) != 1 {
-		return ""
-	}
-	return protected[0]
-}
-
 // IsProtectedWritePath reports whether abs is a Reasonix session store,
 // runtime ledger, or security-boundary file.
 func IsProtectedWritePath(abs, stateRoot string) bool {
