@@ -925,14 +925,12 @@ func TestCompletedProxyCallCountsOnAgentSkipExecutePath(t *testing.T) {
 		t.Fatalf("completed call audit = %d/%d, want 1/0", snap.MCPCall, snap.MCPCallFailures)
 	}
 }
-
 func TestCapabilityGateRecoveryIsAudited(t *testing.T) {
 	reg := tool.NewRegistry()
 	audit := &capability.Audit{}
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"),
 		Options{CapabilityLedger: capability.NewLedger(), CapabilityAudit: audit}, event.Discard)
-	a.turn.policySet = true
-	a.turn.policy = closedLoopTurnPolicy(taskpolicy.ReviewForced)
+	a.turn = turnRuntime{policySet: true, policy: closedLoopTurnPolicy(taskpolicy.ReviewForced)}
 	a.SeedCapabilityRoute(capability.RouteDecision{Candidates: []capability.RouteCandidate{
 		{Entry: capability.Entry{ID: "skill:review"}, Policy: capability.AutoUseRequire},
 	}})
@@ -1093,15 +1091,12 @@ func TestCapabilityGateAppliesToReadOnlyTasks(t *testing.T) {
 	reg := tool.NewRegistry()
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"),
 		Options{CapabilityLedger: capability.NewLedger()}, event.Discard)
-	a.turn.policySet = true
-	a.turn.policy = closedLoopTurnPolicy(taskpolicy.ReviewForced)
+	a.turn = turnRuntime{policySet: true, policy: closedLoopTurnPolicy(taskpolicy.ReviewForced)}
 	a.SeedCapabilityRoute(capability.RouteDecision{Candidates: []capability.RouteCandidate{
 		{Entry: capability.Entry{ID: "skill:review"}, Policy: capability.AutoUseRequire},
 	}})
-	// Only ordinary reads happened — no writer. The require gate must still hold.
 	a.task.ledger.Record(evidence.ReceiptFromToolCall("read_file", json.RawMessage(`{"path":"a.go"}`), true, true))
-	check := a.finalReadinessCheckFor()
-	if !strings.Contains(check.reason, "required capabilities") {
+	if check := a.finalReadinessCheckFor(); !strings.Contains(check.reason, "required capabilities") {
 		t.Fatalf("read-only answer must not skip the require gate; reason = %q", check.reason)
 	}
 }

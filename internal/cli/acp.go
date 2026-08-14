@@ -126,12 +126,7 @@ func (f *acpFactory) NewSession(ctx context.Context, p acp.SessionParams) (*cont
 	return boot.Build(ctx, opts)
 }
 
-// RebuildSession implements acp.SessionRebuilder: the replacement controller
-// comes from boot.Rebuild with the same boot.Options NewSession would use, so
-// _reasonix.io/session/reloadExtensions refreshes tool/skill/command/hook/
-// MCP/provider discovery while the session state migrates inside the boot
-// layer. ACP sessions hold no SharedHost — each controller owns its plugin
-// host, and the service releases the outgoing one only after the swap.
+// RebuildSession rebuilds the session controller with the same boot.Options.
 func (f *acpFactory) RebuildSession(ctx context.Context, p acp.SessionParams, old *control.Controller) (*control.Controller, error) {
 	opts, err := f.sessionBootOptions(p)
 	if err != nil {
@@ -278,12 +273,7 @@ func (f *acpFactory) SessionConfigState(_ context.Context, p acp.SessionConfigSt
 		return acp.SessionConfigState{}, err
 	}
 
-	// explicit wins over the configured default: p.Model is the session
-	// override requested by the ACP client, f.model is the factory-level
-	// override. Either being non-empty is an explicit choice that the
-	// helper treats as strict (no silent fallback). Only when both are
-	// empty do we let resolveModelForCLI apply the keyless-default
-	// fallback to the next configured provider (issue #6996).
+	// Session or factory model overrides are explicit; empty falls back (#6996).
 	explicit := firstNonEmpty(p.Model, f.model)
 	ref, _, err := resolveModelForCLI(explicit, cfg)
 	if err != nil {
@@ -372,10 +362,7 @@ func (f *acpFactory) SessionConfigState(_ context.Context, p acp.SessionConfigSt
 		cleared := ""
 		effortOverride = &cleared
 	}
-	// Execution modes are no longer published as config options. Old clients
-	// that still send agent_preset/work_mode receive a successful no-op with a
-	// deprecation notice (service.sessionSetConfigOption). RuntimeProfile stays
-	// pinned to the historical default for one-version-old status readers.
+	// RuntimeProfile stays pinned for old status readers; mode options are unpublished.
 	return acp.SessionConfigState{
 		Model:          currentModel,
 		EffortOverride: effortOverride,

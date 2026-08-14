@@ -10,11 +10,8 @@ import (
 	"reasonix/internal/i18n"
 )
 
-// Execution modes are gone: Reasonix runs one adaptive standard execution and
-// derives planning, verification, and review strength from task risk. This file
-// keeps the deprecated /preset, /work-mode, and /profile commands parseable for
-// one compatibility version. They perform no side effects and print a single
-// deprecation notice per process.
+// Deprecated /preset, /work-mode, and /profile stay parseable for one version.
+// They print a single deprecation notice and never change runtime policy.
 
 var presetDeprecationOnce sync.Once
 

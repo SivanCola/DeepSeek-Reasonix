@@ -369,20 +369,6 @@ func requestMessageContains(messages []provider.Message, role provider.Role, nee
 	return false
 }
 
-func userExecutionPolicy(messages []provider.Message) string {
-	for _, message := range messages {
-		if message.Role != provider.RoleUser {
-			continue
-		}
-		start := strings.Index(message.Content, "<execution-policy")
-		end := strings.Index(message.Content, "</execution-policy>")
-		if start >= 0 && end > start {
-			return message.Content[start : end+len("</execution-policy>")]
-		}
-	}
-	return ""
-}
-
 func requestToolSchemaContains(req provider.Request, name, want string) bool {
 	for _, schema := range req.Tools {
 		if schema.Name == name {
@@ -1109,57 +1095,6 @@ func (p *bootSubagentTestProvider) requestsSnapshot() []provider.Request {
 	return out
 }
 
-func bootLastUser(req provider.Request) string {
-	for _, v := range slices.Backward(req.Messages) {
-		if v.Role == provider.RoleUser {
-			return v.Content
-		}
-	}
-	return ""
-}
-
-func subagentRefFromHistory(t *testing.T, msgs []provider.Message) string {
-	t.Helper()
-	for _, msg := range msgs {
-		if msg.Role != provider.RoleTool {
-			continue
-		}
-		for line := range strings.SplitSeq(msg.Content, "\n") {
-			line = strings.TrimSpace(line)
-			for _, prefix := range []string{"Subagent reference: ", "Subagent reference (failed): "} {
-				if after, ok := strings.CutPrefix(line, prefix); ok {
-					return strings.TrimSpace(after)
-				}
-			}
-		}
-	}
-	if ref := firstPersistedSubagentRef(t, config.SessionDir()); ref != "" {
-		return ref
-	}
-	t.Fatalf("no subagent reference in history: %+v", msgs)
-	return ""
-}
-
-func firstPersistedSubagentRef(t *testing.T, sessionDir string) string {
-	t.Helper()
-	dir := filepath.Join(sessionDir, "subagents")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, "sa_") && strings.HasSuffix(name, ".jsonl") && !strings.Contains(name, ".events.") {
-			return strings.TrimSuffix(name, ".jsonl")
-		}
-	}
-	return ""
-}
-
-// TestBuildHeadlessRunRunsTaskSubagentWithoutSessionPath reproduces headless
-// `reasonix run`: a controller built via Build with NO SetSessionPath (exactly
-// what internal/cli.runAgent does) must still be able to run a `task` sub-agent.
-// Before the ephemeral fallback this failed with "parent session is required".
 func TestBuildHeadlessRunRunsTaskSubagentWithoutSessionPath(t *testing.T) {
 	isolateConfigHome(t)
 	dir := robustTempDir(t)

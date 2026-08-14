@@ -192,10 +192,7 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	a.turn.deliveryMutationExpected = intent == taskintent.Mutation && registryHasWriterTools(a.svc.tools)
 	a.turn.deliveryPersistentExpected = taskintent.NeedsPersistentAction(a.turn.turnInput)
 	a.turn.recoveryTaskSummary = boundedRecoveryTaskSummary(a.turn.turnInput)
-	// Freeze the TaskPolicy for this turn before the first model request. A
-	// policy injected by the controller (planner gate) wins; otherwise derive
-	// the standard policy from host-trusted input. Writer sub-agents merge
-	// their parent's floors on top.
+	// Planner-gate policy wins; otherwise derive. Writer children inherit floors.
 	if policy, ok := taskpolicy.FromContext(ctx); ok {
 		a.turn.policy = policy
 	} else {

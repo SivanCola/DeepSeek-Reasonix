@@ -11,10 +11,7 @@ import (
 	"reasonix/internal/taskpolicy"
 )
 
-// Final readiness: whether a turn has earned the right to stop. It reads the
-// evidence ledger, the frozen TaskPolicy's closed-loop level, and the approved
-// plan's contract, and says what is missing rather than merely that something
-// is.
+// Final readiness: whether the frozen TaskPolicy and ledger allow the turn to stop.
 
 type finalReadinessCheck struct {
 	applies                   bool
@@ -184,30 +181,7 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 	}
 	out.applies = true
 	if closedLoop {
-		a.emitTurnPhase(event.TurnPhaseVerifying)
-		criteriaEstablished := a.turn.deliveryCriteriaEstablished || (checkpointApplies && checkpoint.CriteriaEstablished)
-		if !criteriaEstablished {
-			out.missingAcceptanceCriteria++
-			missing = append(missing, "establish concrete acceptance criteria with todo_write before changing state")
-		}
-		hasCompleteStep := a.task.ledger.HasSuccessfulCompleteStepAfter(writer)
-		if !hasCompleteStep {
-			out.missingSignoff++
-			missing = append(missing, "call complete_step after the latest mutation")
-		}
-		if !a.task.ledger.HasSuccessfulDeliverySignoffAfter(writer) {
-			out.missingVerification++
-			missing = append(missing, "run relevant verification after the latest mutation and cite that successful command in complete_step")
-		}
-		if deliveryMutation && !a.task.ledger.HasSuccessfulReviewAfter(writer) {
-			out.missingReview++
-			missing = append(missing, "inspect the changed result after the latest mutation (read the touched file or run git diff/status)")
-		}
-		if msg := a.deliveryReviewGateFailure(); msg != "" {
-			out.missingReview++
-			missing = append(missing, msg)
-		}
-		// The capability gate already ran before the no-writer fast path above.
+		missing = a.appendClosedLoopReadiness(&out, missing, writer, deliveryMutation, checkpointApplies, checkpoint)
 	}
 	for _, check := range a.projectChecks {
 		if deliveryVerificationOnly {
@@ -238,6 +212,31 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 	return a.applyPartialCheckWaiver(out)
 }
 
+func (a *Agent) appendClosedLoopReadiness(out *finalReadinessCheck, missing []string, writer int, deliveryMutation, checkpointApplies bool, checkpoint evidence.DeliveryCheckpoint) []string {
+	a.emitTurnPhase(event.TurnPhaseVerifying)
+	if !(a.turn.deliveryCriteriaEstablished || (checkpointApplies && checkpoint.CriteriaEstablished)) {
+		out.missingAcceptanceCriteria++
+		missing = append(missing, "establish concrete acceptance criteria with todo_write before changing state")
+	}
+	if !a.task.ledger.HasSuccessfulCompleteStepAfter(writer) {
+		out.missingSignoff++
+		missing = append(missing, "call complete_step after the latest mutation")
+	}
+	if !a.task.ledger.HasSuccessfulDeliverySignoffAfter(writer) {
+		out.missingVerification++
+		missing = append(missing, "run relevant verification after the latest mutation and cite that successful command in complete_step")
+	}
+	if deliveryMutation && !a.task.ledger.HasSuccessfulReviewAfter(writer) {
+		out.missingReview++
+		missing = append(missing, "inspect the changed result after the latest mutation (read the touched file or run git diff/status)")
+	}
+	if msg := a.deliveryReviewGateFailure(); msg != "" {
+		out.missingReview++
+		missing = append(missing, msg)
+	}
+	return missing
+}
+
 func finalReadinessCheckSource(check instruction.VerifyCheck) string {
 	source := strings.TrimSpace(check.SourcePath)
 	if source == "" {
@@ -261,13 +260,8 @@ func finalReadinessIncompleteTodos(items []evidence.TodoStepMatch) string {
 	return "latest successful todo_write still has incomplete items: " + strings.Join(parts, ", ")
 }
 
-// escalatePolicyFromEvidence ratchets the frozen TaskPolicy from receipt-ledger
-// observations, implementing the standard escalation rules: mutations that
-// touch high-risk surfaces (public API, schema, persistence, auth, release or
-// build config) raise the risk floor; scope that outgrew the initial judgment
-// does the same; weak or uncovered acceptance criteria and required
-// verification that failed or could not run escalate a conditional review to
-// forced. Risk and review only ever move upward within a turn.
+// escalatePolicyFromEvidence ratchets risk/review upward from ledger receipts.
+// High-risk or oversized mutations raise floors; weak coverage forces review.
 func (a *Agent) escalatePolicyFromEvidence() {
 	if !a.turn.policySet || a.task.ledger == nil || !a.turn.policy.AllowsMutation() {
 		return

@@ -250,30 +250,21 @@ func (f *configurableFactory) SessionConfigState(_ context.Context, p SessionCon
 
 func requireNoExecutionModeOptions(t *testing.T, options []SessionConfigOption) {
 	t.Helper()
-	if _, ok := findConfigOption(options, "work_mode"); ok {
-		t.Fatal("ConfigOptions advertised work_mode")
-	}
-	if _, ok := findConfigOption(options, "agent_preset"); ok {
-		t.Fatal("ConfigOptions advertised agent_preset")
+	for _, id := range []string{"work_mode", "agent_preset"} {
+		if _, ok := findConfigOption(options, id); ok {
+			t.Fatalf("advertised %s", id)
+		}
 	}
 }
-
 func requireDeprecatedConfigNoop(t *testing.T, client *rpcClient, factory *configurableFactory, sessionID, configID, value string, buildsBefore int) SetSessionConfigOptionResult {
 	t.Helper()
-	resp := client.call(t, "session/set_config_option", SetSessionConfigOptionParams{
-		SessionID: sessionID,
-		ConfigID:  configID,
-		Value:     value,
-	})
+	resp := client.call(t, "session/set_config_option", SetSessionConfigOptionParams{SessionID: sessionID, ConfigID: configID, Value: value})
 	if resp.Error != nil {
 		t.Fatalf("set_config_option %s=%s: %+v", configID, value, resp.Error)
 	}
 	var set SetSessionConfigOptionResult
-	if err := json.Unmarshal(resp.Result, &set); err != nil {
-		t.Fatalf("set_config_option %s result: %v", configID, err)
-	}
-	if set.DeprecatedNotice != agentpreset.DeprecatedNotice {
-		t.Fatalf("set_config_option %s deprecatedNotice = %q, want %q", configID, set.DeprecatedNotice, agentpreset.DeprecatedNotice)
+	if err := json.Unmarshal(resp.Result, &set); err != nil || set.DeprecatedNotice != agentpreset.DeprecatedNotice {
+		t.Fatalf("set_config_option %s result err=%v notice=%q", configID, err, set.DeprecatedNotice)
 	}
 	if got := factory.buildCount(); got != buildsBefore {
 		t.Fatalf("set_config_option %s rebuilt controller: builds=%d, want %d", configID, got, buildsBefore)
@@ -1410,7 +1401,6 @@ func TestQueuedRebuildPreservesControllerSideAxisDrift(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("first prompt did not start")
 	}
-	// work_mode is accepted during a turn and does not queue a rebuild.
 	requireDeprecatedConfigNoop(t, client, factory, nr.SessionID, "work_mode", "delivery", 1)
 	if resp := client.call(t, "session/set_config_option", SetSessionConfigOptionParams{
 		SessionID: nr.SessionID,

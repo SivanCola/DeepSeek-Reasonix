@@ -69,10 +69,7 @@ type RouteCandidate struct {
 
 type RouteDecision struct {
 	Candidates []RouteCandidate
-	// ClosedLoop marks a closed-loop execution route: the transient block must
-	// direct the model to the stable use_capability proxy — connect_tool_source
-	// is not registered for closed-loop turns, so instructing it would dead-end
-	// the route.
+	// ClosedLoop routes through use_capability; connect_tool_source is unregistered.
 	ClosedLoop bool
 	// CapabilityProxy directs unready MCP candidates to use_capability rather
 	// than connect_tool_source. True for closed-loop routes and for dual-model

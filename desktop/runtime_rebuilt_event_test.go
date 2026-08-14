@@ -15,13 +15,8 @@ import (
 	"reasonix/internal/provider"
 )
 
-// TestRuntimeRebuildsEmitRuntimeRebuiltForTab pins the frontend contract the
-// prompt-chime dedupe depends on: every in-place controller replacement must
-// announce itself. Model and effort switches rebuild the tab's controller
-// WITHOUT an agent:ready — the rebuilt controller restarts its approval/ask
-// id counter at "1", so without runtime:rebuilt the frontend's id-keyed chime
-// dedupe mutes the first prompt after a switch. SetTokenMode is a deprecated
-// no-op and must not emit runtime:rebuilt.
+// TestRuntimeRebuildsEmitRuntimeRebuiltForTab pins the chime-dedupe contract:
+// model/effort rebuilds emit runtime:rebuilt; deprecated SetTokenMode does not.
 func TestRuntimeRebuildsEmitRuntimeRebuiltForTab(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")

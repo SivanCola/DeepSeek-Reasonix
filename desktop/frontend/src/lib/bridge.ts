@@ -590,6 +590,13 @@ export interface AppBindings extends SessionCatalogBindings, HistoryCatalogBindi
   OpenProjectTab(workspaceRoot: string, topicID: string): Promise<TabMeta>;
   IsolatedWorktreeAvailability(workspaceRoot: string): Promise<DeliveryWorktreeAvailability>;
   CreateIsolatedWorktree(workspaceRoot: string): Promise<DeliveryWorktreeOpenResult>;
+  // Deprecated one-version aliases kept bound for older desktop clients.
+  DeliveryWorktreeAvailability(workspaceRoot: string): Promise<DeliveryWorktreeAvailability>;
+  CreateDeliveryWorktree(workspaceRoot: string): Promise<DeliveryWorktreeOpenResult>;
+  SetAgentPreset(preset: string): Promise<void>;
+  SetAgentPresetForTab(tabID: string, preset: string): Promise<void>;
+  SetTokenMode(mode: string): Promise<void>;
+  SetTokenModeForTab(tabID: string, mode: string): Promise<void>;
   OpenGlobalTab(topicID: string): Promise<TabMeta>;
   OpenTopicSession(scope: string, workspaceRoot: string, topicID: string, sessionPath: string): Promise<TabMeta>;
   EnsureBlankTab(scope: string, workspaceRoot: string): Promise<TabMeta>;
@@ -1034,7 +1041,7 @@ function bridgeBreadcrumb(method: string): string {
   if (/^(AddSkillPath|RemoveSkillPath|SetSkillPathEnabled|RefreshSkills|SetSkillEnabled|SetSkillImplicitInvocation|AcceptSkillSuggestion|AvailableSubagentTools|CreateSubagentProfile|UpdateSubagentProfile|DeleteSubagentProfile|SetSubagentProfileModel|SetSubagentProfileEffort|TrySubagentProfile|CancelTrySubagentProfile)/.test(method))
     return `skill ${method}`;
   if (/^(MinimiseMainWindow|ToggleMaximiseMainWindow|IsMainWindowMaximised|CloseMainWindow)$/.test(method)) return `window ${method}`;
-  if (/^(OpenProjectTab|OpenGlobalTab|OpenTopicSession|EnsureBlankTab|ActivateTopic|StartTopicActivation|EnsureBlankSurface|SetActiveTab|CloseTab|ReorderTabs|CreateTopic|RenameTopic|DeleteTopic|TrashTopic|RenameProject|RemoveWorkspace|SwitchWorkspace|PickWorkspace|IsolatedWorktreeAvailability|CreateIsolatedWorktree)/.test(method))
+  if (/^(OpenProjectTab|OpenGlobalTab|OpenTopicSession|EnsureBlankTab|ActivateTopic|StartTopicActivation|EnsureBlankSurface|SetActiveTab|CloseTab|ReorderTabs|CreateTopic|RenameTopic|DeleteTopic|TrashTopic|RenameProject|RemoveWorkspace|SwitchWorkspace|PickWorkspace|IsolatedWorktreeAvailability|CreateIsolatedWorktree|DeliveryWorktreeAvailability|CreateDeliveryWorktree)/.test(method))
     return `nav ${method}`;
   return "";
 }
@@ -5035,6 +5042,13 @@ function makeMockApp(): AppBindings {
         ? { available: true, repoRoot: workspaceRoot, branch: "main", sourceDirty: false }
         : { available: false, reason: "project folder is required" };
     },
+    async DeliveryWorktreeAvailability(workspaceRoot: string) {
+      return this.IsolatedWorktreeAvailability(workspaceRoot);
+    },
+    async SetAgentPreset(_preset: string) {},
+    async SetAgentPresetForTab(_tabID: string, _preset: string) {},
+    async SetTokenMode(_mode: string) {},
+    async SetTokenModeForTab(_tabID: string, _mode: string) {},
     async CreateIsolatedWorktree(workspaceRoot: string) {
       if (!workspaceRoot) throw new Error("project folder is required");
       const suffix = Date.now().toString(36);
@@ -5052,6 +5066,9 @@ function makeMockApp(): AppBindings {
         sourceDirty: false,
         tab,
       };
+    },
+    async CreateDeliveryWorktree(workspaceRoot: string) {
+      return this.CreateIsolatedWorktree(workspaceRoot);
     },
     async OpenGlobalTab(_topicID: string) {
       const existing = mockTabs.find((tab) => tab.scope === "global" && tab.topicId === _topicID);

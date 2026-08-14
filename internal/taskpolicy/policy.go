@@ -9,7 +9,6 @@ package taskpolicy
 import (
 	"regexp"
 	"strings"
-	"unicode"
 
 	"reasonix/internal/shellparse"
 	"reasonix/internal/taskintent"
@@ -198,39 +197,11 @@ func Derive(in Input) TaskPolicy {
 
 	route := chooseRoute(intent, risk, in)
 
-	// Verification: targeted for ordinary work, project-level full checks for
-	// cross-surface or high-risk tasks, none for plain conversation.
-	verification := VerifyTargeted
-	if constraints.RequireFullVerification || risk >= RiskHigh {
-		verification = VerifyFull
-	} else if risk >= RiskMedium && (in.CrossSurface ||
-		(in.MultiFile && (intent == taskintent.Mutation || intent == taskintent.PersistentAction))) {
-		verification = VerifyFull
-	}
-	if intent == taskintent.Conversation || intent == taskintent.Advisory {
-		if !in.MultiFile && !in.Structured && risk == RiskLow {
-			verification = VerifyNone
-		}
-	}
 	if constraints.ForbidTests {
-		// Host still records the gap as Partial; verification commands stay blocked.
 		constraints.Notes = append(constraints.Notes, "forbid_tests")
 	}
-
-	// Review: none at low risk, conditional at medium, forced at high, and
-	// security review for safety classes. Active Goals add the forced floor
-	// because cross-turn work must not degrade. Read-only turns never need
-	// review.
-	review := reviewForRisk(risk, securityClass)
-	if in.GoalActive && !constraints.ForbidMutation && review < ReviewForced {
-		review = ReviewForced
-		if securityClass {
-			review = ReviewForcedSecurity
-		}
-	}
-	if constraints.ForbidMutation {
-		review = ReviewNone
-	}
+	verification := chooseVerification(intent, risk, in, constraints)
+	review := chooseReview(risk, securityClass, in, constraints)
 
 	// Evidence closed-loop level.
 	closedLoopTriggers := risk >= RiskHigh || securityClass || in.CrossSurface ||
@@ -288,6 +259,35 @@ func evidenceFor(intent Intent, risk Risk, closedLoopTriggers bool, in Input, co
 		}
 		return EvidenceTargeted
 	}
+}
+
+func chooseVerification(intent Intent, risk Risk, in Input, constraints Constraints) Verification {
+	verification := VerifyTargeted
+	if constraints.RequireFullVerification || risk >= RiskHigh {
+		verification = VerifyFull
+	} else if risk >= RiskMedium && (in.CrossSurface ||
+		(in.MultiFile && (intent == taskintent.Mutation || intent == taskintent.PersistentAction))) {
+		verification = VerifyFull
+	}
+	if (intent == taskintent.Conversation || intent == taskintent.Advisory) &&
+		!in.MultiFile && !in.Structured && risk == RiskLow {
+		return VerifyNone
+	}
+	return verification
+}
+
+func chooseReview(risk Risk, securityClass bool, in Input, constraints Constraints) Review {
+	if constraints.ForbidMutation {
+		return ReviewNone
+	}
+	review := reviewForRisk(risk, securityClass)
+	if in.GoalActive && review < ReviewForced {
+		review = ReviewForced
+		if securityClass {
+			review = ReviewForcedSecurity
+		}
+	}
+	return review
 }
 
 // reviewForRisk returns the standard review floor for a risk level.
@@ -687,135 +687,4 @@ func stripQuoted(s string, open, close rune) string {
 		}
 	}
 	return b.String()
-}
-
-// ExecutionPolicyBlock renders the short provider-visible transient user block
-// that freezes the standard execution policy for this turn. Callers persist it
-// in Message Content and keep the original user text in RawContent. Since
-// version 2 the block carries no preset: the standard policy is derived from
-// task risk, not a selectable mode.
-func ExecutionPolicyBlock(p TaskPolicy) string {
-	var b strings.Builder
-	b.WriteString(`<execution-policy version="`)
-	b.WriteString(itoa(p.PolicyVersion))
-	b.WriteString(`">`)
-	b.WriteByte('\n')
-	b.WriteString("route=")
-	b.WriteString(routeName(p.Route))
-	b.WriteString(" risk=")
-	b.WriteString(riskName(p.Risk))
-	b.WriteString(" verification=")
-	b.WriteString(verifyName(p.Verification))
-	b.WriteString(" review=")
-	b.WriteString(reviewName(p.Review))
-	b.WriteString(" evidence=")
-	b.WriteString(evidenceName(p.Evidence))
-	if p.Constraints.ForbidMutation {
-		b.WriteString("\nconstraint=no-mutation")
-	}
-	if p.Constraints.ForbidTests {
-		b.WriteString("\nconstraint=no-tests")
-	}
-	if p.Constraints.ForbidExternal {
-		b.WriteString("\nconstraint=no-external")
-	}
-	if len(p.Constraints.AllowedChecks) > 0 {
-		b.WriteString("\nconstraint=only-checks:")
-		b.WriteString(strings.Join(p.Constraints.AllowedChecks, ","))
-	}
-	if p.Constraints.PlanModeReadOnly {
-		b.WriteString("\nconstraint=plan-mode-read-only")
-	}
-	b.WriteString("\n</execution-policy>")
-	return b.String()
-}
-
-func routeName(r Route) string {
-	switch r {
-	case RouteLightPlan:
-		return "light-plan"
-	case RouteFullPlan:
-		return "full-plan"
-	default:
-		return "direct"
-	}
-}
-
-func riskName(r Risk) string {
-	switch r {
-	case RiskMedium:
-		return "medium"
-	case RiskHigh:
-		return "high"
-	default:
-		return "low"
-	}
-}
-
-func verifyName(v Verification) string {
-	switch v {
-	case VerifyTargeted:
-		return "targeted"
-	case VerifyFull:
-		return "full"
-	default:
-		return "none"
-	}
-}
-
-func reviewName(r Review) string {
-	switch r {
-	case ReviewConditional:
-		return "conditional"
-	case ReviewForced:
-		return "forced"
-	case ReviewForcedSecurity:
-		return "forced-security"
-	default:
-		return "none"
-	}
-}
-
-func evidenceName(e Evidence) string {
-	switch e {
-	case EvidenceTargeted:
-		return "targeted"
-	case EvidenceClosedLoop:
-		return "closed-loop"
-	default:
-		return "none"
-	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [12]byte
-	i := len(buf)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
-
-// HasInstructionalContent reports whether s has non-space runes.
-func HasInstructionalContent(s string) bool {
-	for _, r := range s {
-		if unicode.IsSpace(r) {
-			continue
-		}
-		return true
-	}
-	return false
 }

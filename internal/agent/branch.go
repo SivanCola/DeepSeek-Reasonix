@@ -32,14 +32,9 @@ type BranchMeta struct {
 	TopicTitle       string    `json:"topic_title,omitempty"`
 	CustomTitle      string    `json:"custom_title,omitempty"`
 	Model            string    `json:"model,omitempty"`
-	// TokenMode is a deprecated dual-write value (economy|full|delivery) kept
-	// for one compatibility version so older clients can keep parsing session
-	// metas. New writes pin it to the safe default "full"; it never influences
-	// runtime behavior.
+	// TokenMode is a deprecated dual-write field; new writes pin it to "full".
 	TokenMode string `json:"token_mode,omitempty"`
-	// AgentPreset is a deprecated role-setting label (light|balanced|delivery)
-	// kept for one compatibility version. New writes pin it to "balanced"; it
-	// never influences runtime behavior.
+	// AgentPreset is a deprecated dual-write field; new writes pin it to "balanced".
 	AgentPreset      string `json:"agent_preset,omitempty"`
 	Mode             string `json:"mode,omitempty"`
 	ToolApprovalMode string `json:"tool_approval_mode,omitempty"`

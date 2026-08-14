@@ -4,10 +4,8 @@ import (
 	"reasonix/internal/agentpreset"
 )
 
-// Deprecated execution-mode vocabulary re-exported for frontends that already
-// import boot. Reasonix runs one adaptive standard execution (internal/taskpolicy);
-// these identifiers exist only to parse old flags, persisted sessions, and tab
-// state during the compatibility window. Prefer agentpreset directly.
+// Deprecated execution-mode vocabulary re-exported for old frontends.
+// Runtime policy lives in internal/taskpolicy; these names only parse compat inputs.
 
 // Deprecated AgentPreset label constants — one compatibility version.
 const (

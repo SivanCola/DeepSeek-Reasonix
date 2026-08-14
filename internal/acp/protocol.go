@@ -350,9 +350,6 @@ type SetSessionConfigOptionParams struct {
 	Value     string `json:"value"`
 }
 
-// SetSessionConfigOptionResult returns the full refreshed config state.
-// DeprecatedNotice is set when the accepted option is a deprecated no-op
-// compatibility shim (execution modes): the call succeeds without switching.
 type SetSessionConfigOptionResult struct {
 	ConfigOptions    []SessionConfigOption `json:"configOptions"`
 	DeprecatedNotice string                `json:"deprecatedNotice,omitempty"`

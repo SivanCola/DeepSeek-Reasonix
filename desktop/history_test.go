@@ -1857,57 +1857,41 @@ func TestKeepOnlyVisibleTabPersistsRemovedSessionProfile(t *testing.T) {
 
 func TestLoadTabSessionProfileIgnoresTerminalGoalState(t *testing.T) {
 	isolateDesktopUserDirs(t)
-	root := globalTabWorkspaceRoot()
-	dir := desktopSessionDir(root)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir session dir: %v", err)
+	sessionPath := filepath.Join(desktopSessionDir(globalTabWorkspaceRoot()), "terminal-goal.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	sessionPath := filepath.Join(dir, "terminal-goal.jsonl")
 	writeHistoryTestSession(t, sessionPath, "terminal prompt")
 	if err := agent.SaveBranchMetaPreserveUpdated(sessionPath, agent.BranchMeta{
-		TokenMode:        boot.TokenModeEconomy,
-		Mode:             "plan",
-		ToolApprovalMode: control.ToolApprovalAuto,
-		Goal:             "stale terminal goal",
+		TokenMode: boot.TokenModeEconomy, Mode: "plan", ToolApprovalMode: control.ToolApprovalAuto, Goal: "stale terminal goal",
 	}); err != nil {
-		t.Fatalf("SaveBranchMetaPreserveUpdated: %v", err)
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(store.SessionGoalState(sessionPath), []byte(`{"goal":"stale terminal goal","status":"complete"}`), 0o644); err != nil {
-		t.Fatalf("write goal state: %v", err)
+		t.Fatal(err)
 	}
-
 	profile := loadTabSessionProfile(sessionPath)
-	if profile.goal != "" {
-		t.Fatalf("loaded profile goal = %q, want terminal goal ignored", profile.goal)
-	}
-	if profile.tokenMode != boot.TokenModeEconomy || profile.mode != "plan" || profile.toolApprovalMode != control.ToolApprovalAuto {
-		t.Fatalf("loaded profile = token:%q mode:%q approval:%q, want economy/plan/auto",
-			profile.tokenMode, profile.mode, profile.toolApprovalMode)
+	if profile.goal != "" || profile.tokenMode != boot.TokenModeEconomy || profile.mode != "plan" || profile.toolApprovalMode != control.ToolApprovalAuto {
+		t.Fatalf("profile=%+v", profile)
 	}
 	tab := &WorkspaceTab{}
 	applyTabSessionProfile(tab, profile)
-	if got := currentTabTokenMode(tab); got != boot.TokenModeFull {
-		t.Fatalf("legacy economy must not change runtime tokenMode: got %q", got)
+	if currentTabTokenMode(tab) != boot.TokenModeFull {
+		t.Fatal("legacy economy must not change runtime tokenMode")
 	}
 }
 
 func TestLoadTabSessionProfileMissingApprovalDefaultsAsk(t *testing.T) {
 	isolateDesktopUserDirs(t)
-	root := globalTabWorkspaceRoot()
-	dir := desktopSessionDir(root)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir session dir: %v", err)
+	sessionPath := filepath.Join(desktopSessionDir(globalTabWorkspaceRoot()), "legacy-missing-approval.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o755); err != nil {
+		t.Fatal(err)
 	}
-
-	sessionPath := filepath.Join(dir, "legacy-missing-approval.jsonl")
 	writeHistoryTestSession(t, sessionPath, "legacy prompt")
 	if err := agent.SaveBranchMetaPreserveUpdated(sessionPath, agent.BranchMeta{Mode: "normal"}); err != nil {
-		t.Fatalf("SaveBranchMetaPreserveUpdated: %v", err)
+		t.Fatal(err)
 	}
-
-	profile := loadTabSessionProfile(sessionPath)
-	if profile.toolApprovalMode != control.ToolApprovalAsk {
+	if profile := loadTabSessionProfile(sessionPath); profile.toolApprovalMode != control.ToolApprovalAsk {
 		t.Fatalf("legacy missing tool approval mode = %q, want ask", profile.toolApprovalMode)
 	}
 }
