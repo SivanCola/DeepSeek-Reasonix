@@ -10,7 +10,7 @@
 // row keeps a viewport-driven tail window: opening a session paints its newest
 // blocks, and scrolling toward older content prepends another bounded chunk.
 
-import { Fragment, memo, startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hastBlockToJsx } from "../lib/hastJsx";
 import {
   estimateHastBytes,
@@ -23,13 +23,28 @@ import { createComponents } from "./markdownComponents";
 import { VirtualMarkdownSourceTable } from "./MarkdownTable";
 
 // A history surface opens at the newest transcript content. Keep the same
-// ownership inside a giant Markdown row: mount a small tail, then prepend a
-// larger page only when its leading edge enters the viewport. The previous
-// idle loop forced one React/layout commit per second until every block was in
+// ownership inside a giant Markdown row: mount a small tail, then move a
+// bounded two-sided window only when one of its edges enters the viewport.
+// The previous idle loop forced one React/layout commit per second until every block was in
 // the DOM, which could keep WebView2 busy for minutes after a session switch.
 const MARKDOWN_TAIL_BLOCKS = 24;
 const MARKDOWN_PREPEND_BLOCKS = 96;
+const MARKDOWN_WINDOW_BLOCKS = MARKDOWN_TAIL_BLOCKS + MARKDOWN_PREPEND_BLOCKS * 2;
 const MARKDOWN_SENTINEL_STYLE = { display: "block", height: 1 } as const;
+const MARKDOWN_ANCHOR_STYLE = { display: "block", height: 0 } as const;
+
+type BlockWindow = {
+  identity: MarkdownBlock[] | undefined;
+  start: number;
+  end: number;
+};
+
+type PendingScrollAnchor = {
+  identity: MarkdownBlock[];
+  index: number;
+  top: number;
+  scroller: HTMLElement | null;
+};
 
 function cachedBlocks(entryId: string | undefined, revision: number, text: string): MarkdownBlock[] | undefined {
   if (!entryId) return undefined;
@@ -39,26 +54,39 @@ function cachedBlocks(entryId: string | undefined, revision: number, text: strin
   return cached && cached.source === text ? cached.blocks : undefined;
 }
 
-/** Keep a tail window whose older edge advances only on viewport demand. */
-function useProgressiveBlockStart(total: number, identity: MarkdownBlock[] | undefined): [number, () => void] {
-  const initialStart = Math.max(0, total - MARKDOWN_TAIL_BLOCKS);
-  const [window, setWindow] = useState({ identity, start: initialStart });
+/** Keep a bounded block window whose edges advance only on viewport demand. */
+function useProgressiveBlockWindow(total: number, identity: MarkdownBlock[] | undefined): [BlockWindow, (direction: "older" | "newer") => void] {
+  const initial = useMemo<BlockWindow>(() => ({
+    identity,
+    start: Math.max(0, total - MARKDOWN_TAIL_BLOCKS),
+    end: total,
+  }), [identity, total]);
+  const [window, setWindow] = useState(initial);
   // Derive the new tail synchronously so a worker result never performs one
   // discarded full-document JSX conversion before the reset effect commits.
-  const current = window.identity === identity ? window.start : initialStart;
+  const current = window.identity === identity ? window : initial;
   useEffect(() => {
-    setWindow((value) => value.identity === identity ? value : { identity, start: initialStart });
-  }, [identity, initialStart]);
-  const loadOlder = useCallback(() => {
+    setWindow((value) => value.identity === identity ? value : initial);
+  }, [identity, initial]);
+  const move = useCallback((direction: "older" | "newer") => {
     setWindow((value) => {
-      const start = value.identity === identity ? value.start : initialStart;
-      return { identity, start: Math.max(0, start - MARKDOWN_PREPEND_BLOCKS) };
+      const active = value.identity === identity ? value : initial;
+      if (direction === "older") {
+        const start = Math.max(0, active.start - MARKDOWN_PREPEND_BLOCKS);
+        return { identity, start, end: Math.min(active.end, start + MARKDOWN_WINDOW_BLOCKS) };
+      }
+      const end = Math.min(total, active.end + MARKDOWN_PREPEND_BLOCKS);
+      return { identity, start: Math.max(active.start, end - MARKDOWN_WINDOW_BLOCKS), end };
     });
-  }, [identity, initialStart]);
-  return [current, loadOlder];
+  }, [identity, initial, total]);
+  return [current, move];
 }
 
-function useOlderBlockSentinel(identity: MarkdownBlock[] | undefined, start: number, loadOlder: () => void) {
+function useBlockWindowSentinel(
+  identity: MarkdownBlock[] | undefined,
+  enabled: boolean,
+  onEnter: (sentinel: HTMLSpanElement) => void,
+) {
   const sentinelRef = useRef<HTMLSpanElement>(null);
   const armedRef = useRef(true);
   const observedIdentityRef = useRef(identity);
@@ -68,7 +96,7 @@ function useOlderBlockSentinel(identity: MarkdownBlock[] | undefined, start: num
       armedRef.current = true;
     }
     const sentinel = sentinelRef.current;
-    if (start <= 0 || !sentinel || typeof IntersectionObserver === "undefined") return;
+    if (!enabled || !sentinel || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver((entries) => {
       const visible = entries.some((entry) => entry.isIntersecting);
       if (!visible) {
@@ -77,11 +105,11 @@ function useOlderBlockSentinel(identity: MarkdownBlock[] | undefined, start: num
       }
       if (!armedRef.current) return;
       armedRef.current = false;
-      startTransition(loadOlder);
+      startTransition(() => onEnter(sentinel));
     }, { rootMargin: "240px 0px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [identity, loadOlder, start]);
+  }, [enabled, identity, onEnter]);
   return sentinelRef;
 }
 
@@ -149,36 +177,82 @@ export const MarkdownHistory = memo(function MarkdownHistory({
 
   const components = useMemo(() => createComponents(plainStatusBlocks), [plainStatusBlocks]);
   const totalBlocks = blocks?.length ?? 0;
-  const [visibleStart, loadOlder] = useProgressiveBlockStart(totalBlocks, blocks);
-  const olderSentinelRef = useOlderBlockSentinel(blocks, visibleStart, loadOlder);
+  const [blockWindow, moveBlockWindow] = useProgressiveBlockWindow(totalBlocks, blocks);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const pendingAnchorRef = useRef<PendingScrollAnchor | null>(null);
+  const moveFromBoundary = useCallback((direction: "older" | "newer", sentinel: HTMLSpanElement) => {
+    if (!blocks) return;
+    if (pendingAnchorRef.current?.identity === blocks) return;
+    const scroller = rootRef.current?.closest<HTMLElement>(".transcript") ?? null;
+    const index = direction === "older" ? blockWindow.start : blockWindow.end;
+    pendingAnchorRef.current = {
+      identity: blocks,
+      index,
+      top: sentinel.getBoundingClientRect().top,
+      scroller,
+    };
+    moveBlockWindow(direction);
+  }, [blockWindow.end, blockWindow.start, blocks, moveBlockWindow]);
+  const loadOlder = useCallback((sentinel: HTMLSpanElement) => moveFromBoundary("older", sentinel), [moveFromBoundary]);
+  const loadNewer = useCallback((sentinel: HTMLSpanElement) => moveFromBoundary("newer", sentinel), [moveFromBoundary]);
+  const olderSentinelRef = useBlockWindowSentinel(blocks, blockWindow.start > 0, loadOlder);
+  const newerSentinelRef = useBlockWindowSentinel(blocks, blockWindow.end < totalBlocks, loadNewer);
+
+  useLayoutEffect(() => {
+    const pending = pendingAnchorRef.current;
+    if (!pending) return;
+    if (pending.identity !== blocks) {
+      pendingAnchorRef.current = null;
+      return;
+    }
+    const anchor = rootRef.current?.querySelector<HTMLElement>(`[data-markdown-scroll-anchor="${pending.index}"]`);
+    pendingAnchorRef.current = null;
+    if (!anchor || !pending.scroller?.isConnected) return;
+    pending.scroller.scrollTop += anchor.getBoundingClientRect().top - pending.top;
+  }, [blockWindow.end, blockWindow.start, blocks]);
 
   // JSX per block depends only on the block and the components map; build it
   // lazily so viewport-window growth never re-converts settled blocks.
-  const jsxCacheRef = useRef<{ blocks: MarkdownBlock[]; nodes: ReactNode[] } | null>(null);
+  const jsxCacheRef = useRef<{ blocks: MarkdownBlock[]; nodes: Map<number, ReactNode> } | null>(null);
   if (!blocks) return <>{fallback}</>;
   let cache = jsxCacheRef.current;
   if (!cache || cache.blocks !== blocks) {
-    cache = { blocks, nodes: new Array<ReactNode>(blocks.length) };
+    cache = { blocks, nodes: new Map<number, ReactNode>() };
     jsxCacheRef.current = cache;
+  }
+  for (const index of cache.nodes.keys()) {
+    if (index < blockWindow.start || index >= blockWindow.end) cache.nodes.delete(index);
   }
   return (
     <div
+      ref={rootRef}
       className="md"
       data-markdown-blocks={blocks.length}
-      data-markdown-visible-blocks={blocks.length - visibleStart}
-      data-markdown-window-start={visibleStart}
+      data-markdown-visible-blocks={blockWindow.end - blockWindow.start}
+      data-markdown-window-start={blockWindow.start}
+      data-markdown-window-end={blockWindow.end}
+      data-markdown-window-cap={MARKDOWN_WINDOW_BLOCKS}
     >
-      {visibleStart > 0 && <span ref={olderSentinelRef} style={MARKDOWN_SENTINEL_STYLE} data-markdown-older-sentinel aria-hidden="true" />}
-      {blocks.slice(visibleStart).map((block, offset) => {
-        const index = visibleStart + offset;
-        const cached = cache.nodes[index];
-        if (cached !== undefined) return <Fragment key={block.key}>{cached}</Fragment>;
-        const node = block.virtualTable
-          ? <VirtualMarkdownSourceTable data={block.virtualTable} />
-          : hastBlockToJsx(block, components);
-        cache.nodes[index] = node;
-        return <Fragment key={block.key}>{node}</Fragment>;
+      {blockWindow.start > 0 && <span ref={olderSentinelRef} style={MARKDOWN_SENTINEL_STYLE} data-markdown-older-sentinel aria-hidden="true" />}
+      {blocks.slice(blockWindow.start, blockWindow.end).map((block, offset) => {
+        const index = blockWindow.start + offset;
+        const cached = cache.nodes.get(index);
+        const node = cached !== undefined
+          ? cached
+          : block.virtualTable
+            ? <VirtualMarkdownSourceTable data={block.virtualTable} />
+            : hastBlockToJsx(block, components);
+        if (cached === undefined) cache.nodes.set(index, node);
+        return (
+          <Fragment key={block.key}>
+            {pendingAnchorRef.current?.identity === blocks && pendingAnchorRef.current.index === index
+              ? <span style={MARKDOWN_ANCHOR_STYLE} data-markdown-scroll-anchor={index} aria-hidden="true" />
+              : null}
+            {node}
+          </Fragment>
+        );
       })}
+      {blockWindow.end < blocks.length && <span ref={newerSentinelRef} style={MARKDOWN_SENTINEL_STYLE} data-markdown-newer-sentinel aria-hidden="true" />}
     </div>
   );
 });
