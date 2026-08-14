@@ -871,7 +871,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         seq++;
         continue;
       }
-	  if (m.content.trim() !== "" || m.decisionReceipt) {
+      if (m.content.trim() !== "" || m.decisionReceipt) {
         const next = appendNoticeItem(items, seq, `${idPrefix}${seq}`, m.level === "warn" ? "warn" : "info", m.content, m.detail, m.code, m.decisionReceipt);
         items = next.items;
         seq = next.seq;

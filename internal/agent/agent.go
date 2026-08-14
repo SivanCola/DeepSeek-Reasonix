@@ -1269,6 +1269,10 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	// agent.before_start: an extension may abort the run before the user turn
 	// is appended. The redacted reason surfaces like a normal run error.
 	if err := a.interceptAgentStart(ctx); err != nil {
+		// Explicit readiness recovery is consumed only once beginRunTurn starts.
+		// If an extension blocks earlier, release the in-memory reservation so
+		// the still-pending durable marker can authorize a later retry.
+		a.pending.finalReadinessRecoveryPrepared = false
 		return err
 	}
 
