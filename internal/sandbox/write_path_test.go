@@ -238,3 +238,13 @@ func TestEnsureWriteDirRejectsApprovalIdentityChange(t *testing.T) {
 		t.Fatal("retargeting an approved ancestor into protected state must fail")
 	}
 }
+
+func TestSameWritePathRequiresExactIdentity(t *testing.T) {
+	approved := filepath.Join(t.TempDir(), "Approved")
+	if !sameWritePath(approved, approved) {
+		t.Fatal("identical approved paths should match")
+	}
+	if sameWritePath(approved, filepath.Join(filepath.Dir(approved), "approved")) {
+		t.Fatal("case-only path changes must not reuse an existing approval")
+	}
+}

@@ -419,8 +419,10 @@ func EnsureWriteDir(approved, stateRoot string) (string, error) {
 func sameWritePath(left, right string) bool {
 	left = filepath.Clean(left)
 	right = filepath.Clean(right)
-	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
-		return strings.EqualFold(left, right)
-	}
+	// Approval identity must remain byte-for-byte stable. macOS and Windows can
+	// both host case-sensitive volumes/directories, where EqualFold would accept
+	// a different target after an approved ancestor was replaced. The approved
+	// value is already produced by ResolveAbsPath, so a casing change is safer to
+	// reject and re-prompt than to treat as the same grant.
 	return left == right
 }
