@@ -91,6 +91,41 @@ func TestClassifyMutationRisk(t *testing.T) {
 	}
 }
 
+func TestClassifyToolCallMutationRiskBeforeExecution(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		args     json.RawMessage
+		readOnly bool
+		want     RiskLevel
+	}{
+		{name: "documentation edit", toolName: "edit_file", args: json.RawMessage(`{"path":"docs/GUIDE.md"}`), want: RiskLow},
+		{name: "production edit", toolName: "edit_file", args: json.RawMessage(`{"path":"internal/agent/agent.go"}`), want: RiskMedium},
+		{name: "sensitive edit", toolName: "edit_file", args: json.RawMessage(`{"path":"internal/auth/session.go"}`), want: RiskHigh},
+		{name: "opaque writer", toolName: "mcp__srv__write", args: json.RawMessage(`{}`), want: RiskHigh},
+		{name: "reader", toolName: "read_file", args: json.RawMessage(`{"path":"internal/auth/session.go"}`), readOnly: true, want: RiskLow},
+		{name: "guarded shell reader", toolName: "bash", args: json.RawMessage(`{"command":"node --version; bash --version"}`), readOnly: true, want: RiskLow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ClassifyToolCallMutationRisk(tt.toolName, tt.args, tt.readOnly); got != tt.want {
+				t.Fatalf("projected risk = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAbsoluteMutationRiskIgnoresWorkspaceAndTestHarnessAncestors(t *testing.T) {
+	low := ClassifyToolCallMutationRisk("edit_file", json.RawMessage(`{"path":"/tmp/TestBuildToolSchemas123/001/written.txt"}`), false)
+	if low != RiskLow {
+		t.Fatalf("absolute temp ancestor risk = %s, want low", low)
+	}
+	high := ClassifyToolCallMutationRisk("edit_file", json.RawMessage(`{"path":"/tmp/TestBuildToolSchemas123/001/internal/auth/session.go"}`), false)
+	if high != RiskHigh {
+		t.Fatalf("absolute sensitive suffix risk = %s, want high", high)
+	}
+}
+
 func TestMutationRiskIncludesEarlierHighRiskMutation(t *testing.T) {
 	ledger := NewLedger()
 	ledger.Record(ReceiptFromToolCall("edit_file", json.RawMessage(`{"path":"internal/auth/session.go"}`), true, false))

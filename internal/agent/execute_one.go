@@ -140,6 +140,9 @@ func (a *Agent) resolveToolPolicy(ctx context.Context, turn *turnRuntime, plan *
 	if blocked, early := a.applyContextualToolGate(ctx, plan); early {
 		return blocked, true
 	}
+	if blocked, early := a.applyTaskPolicyPreflight(turn, plan); early {
+		return blocked, true
+	}
 	if blocked, early := a.applyDeliveryPolicyGates(turn, plan); early {
 		return blocked, true
 	}
@@ -280,7 +283,7 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 		plan.readOnly = rc.ReadOnly
 		plan.classifyEffects()
 		if outcome, blocked := a.readOnlyExecutionBlock(t, &rc); blocked {
-			return outcome, true
+			return blockedShellOutcome(outcome, plan), true
 		}
 		if rc.Commit != nil {
 			if err := rc.Commit(); err != nil {
@@ -315,7 +318,7 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 			return out, true
 		}
 	} else if outcome, blocked := a.readOnlyExecutionBlock(t, nil); blocked {
-		return outcome, true
+		return blockedShellOutcome(outcome, plan), true
 	}
 
 	// A proxy resolution can point at a target with an explicit planning-phase
@@ -416,7 +419,6 @@ func (a *Agent) applyDeliveryPolicyGates(turn *turnRuntime, plan *toolCallPlan) 
 		}, true
 	}
 
-	plan.classifyEffects()
 	persistentWorkflowCall := turn.deliveryPersistentExpected && !turn.deliveryMutationExpected && plan.evidenceName == "remember"
 	if closedLoop && !persistentWorkflowCall && evidence.ToolCallRequiresAcceptanceCriteria(plan.evidenceName, plan.evidenceArgs, plan.readOnly) && !turn.deliveryCriteriaEstablished {
 		return toolOutcome{
@@ -550,13 +552,6 @@ func (a *Agent) applyRecoveryAndPermission(ctx context.Context, plan *toolCallPl
 // PreToolUse hooks and preview checkpoints, and injects call context. All of
 // this happens after permission and before the concrete Execute call.
 func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
-	policyArgs := plan.permArgs
-	if len(plan.resolved.Args) > 0 {
-		policyArgs = plan.resolved.Args
-	}
-	if outcome, blocked := a.taskPolicyToolGate(plan, policyArgs); blocked {
-		return outcome, true
-	}
 	// Acquire after permission is granted but before PreToolUse: hooks are user
 	// shell code and can themselves change the workspace. This keeps readers
 	// concurrent and avoids holding the workspace during an approval prompt while

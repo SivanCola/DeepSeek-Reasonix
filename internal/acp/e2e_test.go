@@ -474,7 +474,7 @@ func TestE2EApprovalRoundTrip(t *testing.T) {
 	prov := &scriptedProvider{name: "fake", responses: [][]provider.Chunk{
 		{
 			{Type: provider.ChunkText, Text: "Writing."},
-			toolCallChunk("w1", "writeit", `{"path":"out"}`),
+			toolCallChunk("w1", "writeit", `{"path":"README.md"}`),
 			{Type: provider.ChunkDone},
 		},
 		{
@@ -494,7 +494,7 @@ func TestE2EApprovalRoundTrip(t *testing.T) {
 	sid := openSession(t, client)
 	promptCh := client.callAsync("session/prompt", SessionPromptParams{
 		SessionID: sid,
-		Prompt:    []ContentBlock{{Type: "text", Text: "write out"}},
+		Prompt:    []ContentBlock{{Type: "text", Text: "write README.md"}},
 	})
 
 	// Answer the permission request while the prompt is still in flight. The

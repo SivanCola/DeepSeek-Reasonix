@@ -217,7 +217,7 @@ func (t startBackgroundJobTool) Description() string { return "start background 
 func (t startBackgroundJobTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object"}`)
 }
-func (t startBackgroundJobTool) ReadOnly() bool { return false }
+func (t startBackgroundJobTool) ReadOnly() bool { return true }
 func (t startBackgroundJobTool) Execute(ctx context.Context, _ json.RawMessage) (string, error) {
 	jm, ok := jobs.FromContext(ctx)
 	if !ok {

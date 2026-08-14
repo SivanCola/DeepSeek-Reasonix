@@ -206,3 +206,73 @@ func TestPolicyEscalationIncludesEveryTurnMutation(t *testing.T) {
 		t.Fatalf("policy after evidence = %+v, want high-risk forced review", a.turn.policy)
 	}
 }
+
+func TestPolicyEscalatesBeforeFirstSensitiveMutation(t *testing.T) {
+	var calls int32
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "edit_file", readOnly: false, calls: &calls})
+	permission := &stubGate{deny: map[string]bool{}}
+	a := New(nil, reg, NewSession("sys"), Options{Gate: permission}, event.Discard)
+	a.turn.policy = taskpolicy.Derive(taskpolicy.Input{Raw: "fix the typo in README.md", Anchored: true})
+	a.turn.policySet = true
+
+	got := a.executeOne(context.Background(), &a.turn, provider.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"internal/auth/session.go","old_string":"old","new_string":"new"}`,
+	})
+	if !got.blocked || !strings.Contains(got.errMsg, "acceptance criteria") {
+		t.Fatalf("sensitive first mutation outcome = %+v, want pre-execution criteria block", got)
+	}
+	if got := atomic.LoadInt32(&calls); got != 0 {
+		t.Fatalf("sensitive writer executed %d times before escalation, want 0", got)
+	}
+	if len(permission.checked) != 0 {
+		t.Fatalf("permission was requested for a deterministically blocked call: %v", permission.checked)
+	}
+	if a.turn.policy.Risk != taskpolicy.RiskHigh || !a.turn.policy.ClosedLoop() || a.turn.policy.Review != taskpolicy.ReviewForced {
+		t.Fatalf("policy after planned sensitive mutation = %+v, want high-risk closed loop", a.turn.policy)
+	}
+
+	a.turn.deliveryCriteriaEstablished = true
+	a.setTodoState([]evidence.TodoItem{{Content: "update session handling", Status: "in_progress"}})
+	got = a.executeOne(context.Background(), &a.turn, provider.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"internal/auth/session.go","old_string":"old","new_string":"new"}`,
+	})
+	if got.blocked || got.errMsg != "" {
+		t.Fatalf("sensitive mutation with host contract = %+v, want execution", got)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("sensitive writer executed %d times after contract, want 1", got)
+	}
+	if len(permission.checked) != 1 {
+		t.Fatalf("permission checks = %v, want exactly one for executable call", permission.checked)
+	}
+}
+
+func TestPlannedLowRiskMutationKeepsOrdinaryPath(t *testing.T) {
+	var calls int32
+	reg := tool.NewRegistry()
+	reg.Add(fakeTool{name: "edit_file", readOnly: false, calls: &calls})
+	permission := &stubGate{deny: map[string]bool{}}
+	a := New(nil, reg, NewSession("sys"), Options{Gate: permission}, event.Discard)
+	a.turn.policy = taskpolicy.Derive(taskpolicy.Input{Raw: "fix the typo in README.md", Anchored: true})
+	a.turn.policySet = true
+
+	got := a.executeOne(context.Background(), &a.turn, provider.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"README.md","old_string":"teh","new_string":"the"}`,
+	})
+	if got.blocked || got.errMsg != "" {
+		t.Fatalf("low-risk mutation outcome = %+v, want ordinary execution", got)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("low-risk writer calls = %d, want 1", got)
+	}
+	if len(permission.checked) != 1 {
+		t.Fatalf("permission checks = %v, want one ordinary check", permission.checked)
+	}
+	if a.turn.policy.Risk != taskpolicy.RiskLow || a.turn.policy.ClosedLoop() {
+		t.Fatalf("ordinary low-risk policy changed: %+v", a.turn.policy)
+	}
+}

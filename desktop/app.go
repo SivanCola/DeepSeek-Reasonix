@@ -1561,6 +1561,17 @@ func (a *App) ReplayPendingPrompts() {
 	}
 }
 
+// ReplayPendingPromptsForTab re-emits only the prompt owned by tabID. Tab
+// switches use this scoped form so a background session's ask/approval cannot
+// depend on whichever tab happens to be backend-active when the replay RPC
+// arrives. ReplayPendingPrompts remains bound for reconnect compatibility.
+func (a *App) ReplayPendingPromptsForTab(tabID string) {
+	ctrl := a.ctrlByTabID(tabID)
+	if ctrl != nil {
+		ctrl.ReplayPendingPrompts()
+	}
+}
+
 // SetPlanMode toggles the plan-first workflow while preserving the current
 // tool-approval posture and sandbox settings.
 func (a *App) SetPlanMode(on bool) {
@@ -3546,8 +3557,8 @@ func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) 
 	if tab == nil || ctrl == nil {
 		return []HistoryMessage{}, fmt.Errorf("tab is not ready")
 	}
-	if canonical := a.resolveCanonicalSessionPath(path); canonical != "" {
-		path = canonical
+	if continued := a.continuePathForOpen(path); continued != "" {
+		path = continued
 	}
 	sessionPath, _, err := validateSessionPath(controllerSessionDir(ctrl), path)
 	if err != nil {
@@ -4001,11 +4012,11 @@ func (a *App) reattachDetachedSessionRuntimeForRebind(
 	applyRuntimeTab(tab, detached, sessionPath, a.ctx, a)
 	a.saveTabsLocked()
 	attachedCtrl := tab.Ctrl
+	attachedSink := tab.sink
+	attachedEpoch := a.runtimeEpochForTabLocked(tab)
 	a.mu.Unlock()
 
-	if attachedCtrl != nil {
-		attachedCtrl.ReplayPendingPrompts()
-	}
+	a.replayPendingPromptsAfterRuntimeAttach(tab.ID, attachedSink, attachedCtrl, attachedEpoch)
 	return oldCtrl, oldSink, oldLease, oldHostKey, true
 }
 
@@ -5035,6 +5046,7 @@ type HistoryMessage struct {
 	Summary         string                      `json:"summary,omitempty"`
 	Archive         string                      `json:"archive,omitempty"`
 	DecisionReceipt *provider.DecisionReceipt   `json:"decisionReceipt,omitempty"`
+	Readiness       *event.FinalReadiness       `json:"readiness,omitempty"`
 	ServerSearch    []provider.ServerSearchCall `json:"serverSearch,omitempty"`
 }
 
@@ -5434,10 +5446,8 @@ func (state *historyMessageConvertState) convertHistoryMessage(
 			DecisionReceipt: cloneDecisionReceipt(m.DecisionReceipt),
 		})
 	}
-	if m.LocalOnly {
-		if rows, handled := historySteerRows(agent.UserMessageText(m), true); handled {
-			return append(out, rows...)
-		}
+	if rows, handled := historyLocalOnlyRows(m); handled {
+		return append(out, rows...)
 	}
 	if state.suppressCanonicalTurn {
 		if m.Role != provider.RoleUser || !agent.IsUserAuthoredTurn(agent.UserMessageText(m)) {

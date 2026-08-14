@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 )
@@ -103,6 +104,22 @@ func ClassifyMutationRisk(receipts []Receipt, after int) RiskLevel {
 	return RiskMedium
 }
 
+// ClassifyToolCallMutationRisk projects the risk of a concrete tool call
+// before it is allowed to mutate state. It uses the same receipt/path rules as
+// post-mutation classification, but the projected receipt is never recorded:
+// callers can ratchet host policy before permission or execution without an
+// auxiliary model request or a false success in the evidence ledger.
+func ClassifyToolCallMutationRisk(toolName string, args json.RawMessage, readOnly bool) RiskLevel {
+	if readOnly {
+		return RiskLow
+	}
+	receipt := ReceiptFromToolCall(toolName, args, true, readOnly)
+	if !receipt.Mutation {
+		return RiskLow
+	}
+	return ClassifyMutationRisk([]Receipt{receipt}, 0)
+}
+
 // MutationRiskAfter classifies risk from the ledger starting at one mutation.
 func (l *Ledger) MutationRiskAfter(after int) RiskLevel {
 	if l == nil {
@@ -149,7 +166,7 @@ func (l *Ledger) PathsSince(after int) []string {
 }
 
 func pathLooksHighRisk(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(path))
+	lower := strings.ToLower(riskRelevantPath(path))
 	base := strings.ToLower(filepath.Base(path))
 	for _, hint := range highRiskPathHints {
 		if strings.Contains(lower, hint) || strings.Contains(base, hint) {
@@ -157,6 +174,39 @@ func pathLooksHighRisk(path string) bool {
 		}
 	}
 	return false
+}
+
+// riskRelevantPath keeps relative paths intact and bounds absolute paths to
+// their semantic tail. Absolute workspace/temp ancestors are deployment
+// details, not change scope: a checkout named "toolbox" must not make every
+// edit high-risk. Three tail components still retain conventional surfaces
+// such as internal/auth/session.go and db/migrations/001.sql.
+func riskRelevantPath(path string) string {
+	normalized := strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), `\`, "/")
+	abs := strings.HasPrefix(normalized, "/") || (len(normalized) >= 3 && normalized[1] == ':' && normalized[2] == '/')
+	if !abs {
+		return normalized
+	}
+	parts := strings.FieldsFunc(normalized, func(r rune) bool { return r == '/' })
+	if len(parts) >= 3 && strings.HasPrefix(strings.ToLower(parts[len(parts)-3]), "test") && allDecimal(parts[len(parts)-2]) {
+		return parts[len(parts)-1]
+	}
+	if len(parts) > 3 {
+		parts = parts[len(parts)-3:]
+	}
+	return strings.Join(parts, "/")
+}
+
+func allDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func pathLooksLowRisk(path string) bool {

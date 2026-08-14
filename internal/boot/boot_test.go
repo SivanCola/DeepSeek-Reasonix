@@ -4320,6 +4320,7 @@ model = "x"
 	target := filepath.Join(extra, "sandboxed.txt")
 	command := "printf ok > " + strconv.Quote(target)
 	prov := testutil.NewMock("additional-dir-bash",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "todo-1", Name: "todo_write", Arguments: `{"todos":[{"content":"write sandboxed file","status":"in_progress"}]}`}}},
 		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "bash-1", Name: "bash", Arguments: fmt.Sprintf(`{"command":%q}`, command)}}},
 		testutil.Turn{Text: "done"},
 	)

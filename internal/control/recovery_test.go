@@ -48,6 +48,21 @@ func (recoveryTestFailError) Error() string { return "exit status 1" }
 
 var errRecoveryTestFail = recoveryTestFailError{}
 
+func addRecoveryTodoTool(t *testing.T, reg *tool.Registry) {
+	t.Helper()
+	todoWrite, ok := tool.LookupBuiltin("todo_write")
+	if !ok {
+		t.Fatal("todo_write builtin is not registered")
+	}
+	reg.Add(todoWrite)
+}
+
+func recoveryTodoTurn() []provider.Chunk {
+	return []provider.Chunk{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{
+		ID: "todo-1", Name: "todo_write", Arguments: `{"todos":[{"content":"complete recovery flow","status":"in_progress"}]}`,
+	}}}
+}
+
 type controlRecoveryReviewerFunc func(context.Context, *recovery.FailureEvent, []string, recovery.Proposal, string) (recovery.ReviewVerdict, error)
 
 func (f controlRecoveryReviewerFunc) Review(ctx context.Context, failure *recovery.FailureEvent, diagnosis []string, proposal recovery.Proposal, taskSummary string) (recovery.ReviewVerdict, error) {
@@ -57,9 +72,11 @@ func (f controlRecoveryReviewerFunc) Review(ctx context.Context, failure *recove
 func TestRecoveryExecutionRiskDoesNotPrompt(t *testing.T) {
 	bash := &recoveryWriteTool{name: "bash", failOnce: true}
 	reg := tool.NewRegistry()
+	addRecoveryTodoTool(t, reg)
 	reg.Add(bash)
 
 	prov := &recordingProvider{streams: [][]provider.Chunk{
+		recoveryTodoTurn(),
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"npx vitest run src/lib/foo.test.ts 2>&1 | tail -40"}`}}},
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "bash", Arguments: `{"command":"svn diff"}`}}},
 		{{Type: provider.ChunkText, Text: "done"}},
@@ -159,9 +176,11 @@ func TestRecoveryInactiveUnderYolo(t *testing.T) {
 	bash := &recoveryWriteTool{name: "bash", failOnce: true}
 	write := &recoveryWriteTool{name: "write_file"}
 	reg := tool.NewRegistry()
+	addRecoveryTodoTool(t, reg)
 	reg.Add(bash)
 	reg.Add(write)
 	prov := &recordingProvider{streams: [][]provider.Chunk{
+		recoveryTodoTurn(),
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "write_file", Arguments: `{"path":"a.go","content":"x"}`}}},
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "3", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
@@ -196,8 +215,10 @@ func TestRecoveryInactiveUnderYolo(t *testing.T) {
 func TestRecoveryHeadlessDoesNotBlockExecutionRisk(t *testing.T) {
 	bash := &recoveryWriteTool{name: "bash", failOnce: true}
 	reg := tool.NewRegistry()
+	addRecoveryTodoTool(t, reg)
 	reg.Add(bash)
 	prov := &recordingProvider{streams: [][]provider.Chunk{
+		recoveryTodoTurn(),
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "bash", Arguments: `{"command":"git push origin feature"}`}}},
 		{{Type: provider.ChunkText, Text: "reported blocker"}},

@@ -26,10 +26,12 @@ func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
 	bash := &recoveryWriteTool{name: "bash", failOnce: true}
 	read := &recoveryWriteTool{name: "read_file", readOnly: true}
 	reg := tool.NewRegistry()
+	addRecoveryTodoTool(t, reg)
 	reg.Add(bash)
 	reg.Add(read)
 
 	prov := &recordingProvider{streams: [][]provider.Chunk{
+		recoveryTodoTurn(),
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "1", Name: "bash", Arguments: `{"command":"go test ./..."}`}}},
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "2", Name: "read_file", Arguments: `{"path":"main.go"}`}}},
 		{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "3", Name: "bash", Arguments: `{"command":"git push origin feature"}`}}},
