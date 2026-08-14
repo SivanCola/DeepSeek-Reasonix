@@ -793,7 +793,7 @@ type Action =
   | { type: "hydrate_start"; reason: HydrateReason; placeholderItems?: Item[] }
   | { type: "hydrate_done" }
   | { type: "hydrate_error"; reason: HydrateReason; error: string }
-  | { type: "backend_activation_start" }
+  | { type: "backend_activation_start"; backendPendingPrompt?: boolean }
   | { type: "backend_activation_done" }
   | { type: "message_action_start"; action: MessageActionState }
   | { type: "message_action_done" }
@@ -2023,25 +2023,30 @@ export function reducer(s: State, a: Action): State {
       ? { ...s, hydrating: false, hydrateReason: undefined, hydrateError: undefined, hydrateHistoryLoaded: undefined, hydratePlaceholderItems: undefined }
       : s;
     case "hydrate_error": return applyHydrateErrorState(s, a.reason, a.error);
-    case "backend_activation_start": return {
-      ...s,
-      // The target tab may contain a prompt event that was routed there while
-      // frontend selection was ahead of backend activation. Reset that
-      // uncertain lifecycle first; optimistic backend metadata is applied
-      // immediately afterwards and restores a genuinely running target.
-      backendActivationPending: true,
-      pendingPrompt: false,
-      approval: undefined,
-      ask: undefined,
-      // New tab epoch: drop the prompt anchor so the post-activation replay
-      // re-anchors against this activation, keeping the #6429 stale-snapshot
-      // guard armed for the freshly restored prompt.
-      promptArrivedAt: undefined,
-      promptArrivedId: undefined,
-      running: false,
-      turnActive: false,
-      cancellable: false,
-    };
+    case "backend_activation_start": {
+      // A tab-tagged ask can arrive while its session is in the background.
+      // When the tab metadata independently confirms a pending prompt, that
+      // cached card is authoritative enough to preserve across activation.
+      // Clearing it here made the UI depend entirely on a later replay, which
+      // can miss a detach/reattach window and strand the blocked turn.
+      const preservePrompt = Boolean(a.backendPendingPrompt && (s.approval || s.ask));
+      return {
+        ...s,
+        // Without backend confirmation, keep the compatibility reset for
+        // stale/untagged prompt events from the previously active controller.
+        backendActivationPending: true,
+        pendingPrompt: preservePrompt,
+        approval: preservePrompt ? s.approval : undefined,
+        ask: preservePrompt ? s.ask : undefined,
+        // A cleared prompt must re-anchor when replayed after activation. A
+        // confirmed cached prompt keeps its original freshness boundary.
+        promptArrivedAt: preservePrompt ? s.promptArrivedAt : undefined,
+        promptArrivedId: preservePrompt ? s.promptArrivedId : undefined,
+        running: preservePrompt,
+        turnActive: preservePrompt,
+        cancellable: preservePrompt,
+      };
+    }
     case "backend_activation_done": return s.backendActivationPending ? { ...s, backendActivationPending: false } : s;
     case "message_action_start": return { ...s, messageAction: a.action };
     case "message_action_done": return { ...s, messageAction: undefined };
@@ -2556,9 +2561,18 @@ function settingSwitchNoticeText(
   return t(keys.failed, { err: msg });
 }
 
-export function replayPendingPromptsForActiveTab(activeTabId: string | undefined, replay: () => Promise<void> = () => app.ReplayPendingPrompts()): void {
+export function replayPendingPromptsForActiveTab(
+  activeTabId: string | undefined,
+  replay: (tabId: string) => Promise<void> = (tabId) => {
+    // Older test/dev bindings may not expose the additive scoped method yet.
+    // Production builds use the tab-specific path; the global call remains a
+    // reconnect-compatible fallback.
+    const scopedReplay = app.ReplayPendingPromptsForTab;
+    return typeof scopedReplay === "function" ? scopedReplay(tabId) : app.ReplayPendingPrompts();
+  },
+): void {
   if (!activeTabId) return;
-  void replay().catch(() => {});
+  void replay(activeTabId).catch(() => {});
 }
 
 export function useController() {
@@ -4074,6 +4088,23 @@ export function useController() {
     const m = statesRef.current.get(id)?.meta;
     await loadSessionDataForTab(id, false, "startup", { sessionPath: m?.sessionPath, sessionRevision: m?.sessionRevision, sessionDigest: m?.sessionDigest, preserveCachedHistory: false });
   }, [loadSessionDataForTab]);
+  const reconcileSessionNavigationForTab = useCallback(async (
+    tabId: string,
+    navigationSeq: number,
+    sessionSeq: number,
+  ): Promise<boolean> => {
+    // Resume/open RPCs can reattach a running controller and replay its prompt
+    // before the RPC response arrives. The response-driven reset/history below
+    // necessarily clears that early event, so resample the transferred runtime
+    // epoch and pendingPrompt state only after hydration has settled, then ask
+    // that exact tab to replay once more.
+    await refreshMetaOnlyForTab(tabId);
+    if (!isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(tabId, sessionSeq)) return false;
+    await reconcileTabRuntime(tabId, { hydrateSessionData: false, refreshAncillary: false });
+    if (!isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(tabId, sessionSeq)) return false;
+    replayPendingPromptsForActiveTab(tabId);
+    return true;
+  }, [isNavigationIntentCurrent, reconcileTabRuntime, refreshMetaOnlyForTab, sessionLoadCurrent]);
   const resumeSession = useCallback(async (path: string, tabId?: string, navigationIntentSeq?: number) => {
     const targetTabId = tabId || activeTabId;
     if (!targetTabId) return;
@@ -4102,11 +4133,10 @@ export function useController() {
     dispatchTo(targetTabId, { type: "reset" });
     dispatchTo(targetTabId, { type: "history_page", page, mode: "replace" });
     dispatchTo(targetTabId, { type: "hydrate_done" });
-    await refreshMetaOnlyForTab(targetTabId);
-    if (!isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(targetTabId, seq)) return;
+    if (!(await reconcileSessionNavigationForTab(targetTabId, navigationSeq, seq))) return;
     app.ContextUsageForTab(targetTabId).then((context) => dispatchTo(targetTabId, { type: "context", context })).catch(() => {});
     void refreshCheckpoints(targetTabId);
-  }, [activeTabId, beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, isNavigationIntentCurrent, loadSessionDataForTab, navigationCompletionCurrent, refreshCheckpoints, refreshMetaOnlyForTab, sessionLoadCurrent, waitForBackendActiveTab, waitForTabReady]);
+  }, [activeTabId, beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, loadSessionDataForTab, navigationCompletionCurrent, reconcileSessionNavigationForTab, refreshCheckpoints, sessionLoadCurrent, waitForBackendActiveTab, waitForTabReady]);
 
   const openChannelSession = useCallback(async (path: string, tabId: string, navigationIntentSeq?: number) => {
     if (!tabId) return;
@@ -4129,11 +4159,10 @@ export function useController() {
     dispatchTo(tabId, { type: "reset" });
     dispatchTo(tabId, { type: "history_page", page, mode: "replace" });
     dispatchTo(tabId, { type: "hydrate_done" });
-    await refreshMetaOnlyForTab(tabId);
-    if (!isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(tabId, seq)) return;
+    if (!(await reconcileSessionNavigationForTab(tabId, navigationSeq, seq))) return;
     app.ContextUsageForTab(tabId).then((context) => dispatchTo(tabId, { type: "context", context })).catch(() => {});
     void refreshCheckpoints(tabId);
-  }, [beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, isNavigationIntentCurrent, navigationCompletionCurrent, refreshCheckpoints, refreshMetaOnlyForTab, sessionLoadCurrent, waitForTabReady]);
+  }, [beginActiveNavigation, bumpSessionLoadSeq, dispatchTo, isNavigationIntentCurrent, navigationCompletionCurrent, reconcileSessionNavigationForTab, refreshCheckpoints, sessionLoadCurrent, waitForTabReady]);
 
   const previewSession = useCallback(async (path: string): Promise<HistoryMessage[]> => asArray<HistoryMessage>(await app.PreviewSession(path).catch(() => [])), []);
   const deleteSession = useCallback((path: string) => app.DeleteSession(path).finally(() => invalidateCache()), []);
@@ -4424,7 +4453,7 @@ export function useController() {
     addBreadcrumb("tab.switch", `click ${tabId}`);
     setActiveTabId(tabId);
     activeTabIdRef.current = tabId;
-    dispatchTo(tabId, { type: "backend_activation_start" });
+    dispatchTo(tabId, { type: "backend_activation_start", backendPendingPrompt: Boolean(optimisticTab?.pendingPrompt) });
     noteActivationStarted(switchRequestId, tabId);
     if (optimisticTab) {
       dispatchTo(tabId, { type: "optimistic_meta", meta: metaFromTab(optimisticTab, statesRef.current.get(tabId)?.meta) });
@@ -4444,6 +4473,10 @@ export function useController() {
           return false;
         }
         confirmBackendActiveTab(tabId);
+        // Re-run the scoped replay after backend activation. This closes the
+        // window where the runtime is reattached while the optimistic switch
+        // is in flight and the first replay still sees no controller on tabId.
+        replayPendingPromptsForActiveTab(tabId);
         addBreadcrumb("tab.switch", `set-active-done ${tabId} ms=${Date.now() - startedAt}`);
         return true;
       })

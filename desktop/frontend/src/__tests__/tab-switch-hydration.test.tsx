@@ -176,6 +176,11 @@ let setActiveCalls = 0;
 let newSessionCalls = 0;
 const newSessionTargets: string[] = [];
 let replayPendingPromptCalls = 0;
+const replayPendingPromptTargets: string[] = [];
+const replayTabIGate = deferred<void>();
+let holdReplayTabI = false;
+const promptABSwitchBGate = deferred<void>();
+let holdPromptABSwitchB = false;
 let failSetActiveFor = "";
 let holdNextForkResult = false;
 let forkStarted = false;
@@ -356,9 +361,32 @@ window.go = {
           });
         }
       },
+      ReplayPendingPromptsForTab: async (tabID: string) => {
+        replayPendingPromptCalls += 1;
+        replayPendingPromptTargets.push(tabID);
+        if (tabID === "tab-i" && holdReplayTabI) await replayTabIGate.promise;
+        const tab = tabsById.get(tabID);
+        if (!tab?.pendingPrompt) return;
+        for (const handler of eventHandlers) {
+          if (tabID === "tab-i") {
+            handler({
+              kind: "ask_request",
+              tabId: tabID,
+              ask: { id: `pending-${tabID}`, questions: [{ id: "choice", prompt: "Pick one", options: [] }] },
+            });
+          } else {
+            handler({
+              kind: "approval_request",
+              tabId: tabID,
+              approval: { id: `pending-${tabID}`, tool: "bash", subject: `pending ${tabID}` },
+            });
+          }
+        }
+      },
       SetActiveTab: async (tabID: string) => {
         setActiveCalls += 1;
         if (tabID === "tab-b") await setActiveBGate.promise;
+        if (tabID === "tab-b" && holdPromptABSwitchB) await promptABSwitchBGate.promise;
         if (tabID === "tab-e") await setActiveEGate.promise;
         if (tabID === "tab-f") await setActiveFGate.promise;
         if (tabID === "tab-f" && holdStaleSwitchF) {
@@ -535,14 +563,29 @@ await waitFor("tab-a restored after backend-running switch", () => controller?.a
 
 runningTabs.add("tab-i");
 const replayCallsBeforePendingSwitch = replayPendingPromptCalls;
+const replayTargetsBeforePendingSwitch = replayPendingPromptTargets.length;
+await act(async () => {
+  for (const handler of eventHandlers) {
+    handler({
+      kind: "ask_request",
+      tabId: "tab-i",
+      ask: { id: "pending-tab-i", questions: [{ id: "choice", prompt: "Pick one", options: [] }] },
+    });
+  }
+  await flushPromises();
+});
+holdReplayTabI = true;
 await act(async () => {
   await controller?.switchTab("tab-i", tabI);
   await flushPromises();
 });
 eq(controller?.activeTabId, "tab-i", "switching to a prompt-blocked tab activates the requested tab");
 ok(replayPendingPromptCalls > replayCallsBeforePendingSwitch, "pending backend prompts are replayed after tab activation");
-eq(controller?.state.approval?.id, "pending-tab-i", "a genuine pending approval survives the later hydration start");
-eq(controller?.state.running, true, "a genuine pending approval keeps the target tab running");
+ok(replayPendingPromptTargets.slice(replayTargetsBeforePendingSwitch).includes("tab-i"), "pending prompt replay is scoped to the selected tab");
+eq(controller?.state.ask?.id, "pending-tab-i", "a background ask survives activation while scoped replay is delayed");
+eq(controller?.state.running, true, "a genuine pending ask keeps the target tab running");
+holdReplayTabI = false;
+replayTabIGate.resolve();
 tabsById.set("tab-i", { ...tabI, pendingPrompt: false, running: false, cancellable: false });
 runningTabs.delete("tab-i");
 await act(async () => {
@@ -551,6 +594,53 @@ await act(async () => {
   await flushPromises();
 });
 await waitFor("tab-a restored after pending-prompt switch", () => controller?.activeTabId === "tab-a" && controller.state.items.some((item) => item.kind === "user" && item.text === "cached A"));
+
+const promptBlockedTabA = { ...tabA, running: true, pendingPrompt: true, cancellable: true };
+tabsById.set("tab-a", promptBlockedTabA);
+runningTabs.add("tab-a");
+await act(async () => {
+  for (const handler of eventHandlers) {
+    handler({
+      kind: "ask_request",
+      tabId: "tab-a",
+      ask: { id: "pending-tab-a-aba", questions: [{ id: "choice", prompt: "Keep me through A-B-A", options: [] }] },
+    });
+  }
+  await flushPromises();
+});
+eq(controller?.state.ask?.id, "pending-tab-a-aba", "A starts the rapid switch sequence with a visible ask");
+
+holdPromptABSwitchB = true;
+let promptSwitchToB: Promise<TabMeta[] | undefined> | undefined;
+await act(async () => {
+  promptSwitchToB = controller?.switchTab("tab-b", tabB);
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-b", "A→B makes B optimistic while its backend activation is delayed");
+
+await act(async () => {
+  await controller?.switchTab("tab-a", promptBlockedTabA);
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-a", "A→B→A returns to the prompt-blocked tab before B completes");
+eq(controller?.state.ask?.id, "pending-tab-a-aba", "returning to A preserves its ask during backend activation");
+
+holdPromptABSwitchB = false;
+await act(async () => {
+  promptABSwitchBGate.resolve();
+  await promptSwitchToB;
+  await flushPromises();
+});
+eq(controller?.activeTabId, "tab-a", "late B activation cannot replace A after A→B→A");
+eq(backendActiveId, "tab-a", "late B activation reasserts A as the backend owner");
+eq(controller?.state.ask?.id, "pending-tab-a-aba", "late B completion cannot clear A's ask");
+
+tabsById.set("tab-a", tabA);
+runningTabs.delete("tab-a");
+await act(async () => {
+  for (const handler of eventHandlers) handler({ kind: "turn_done", tabId: "tab-a" });
+  await flushPromises();
+});
 
 let switchToF: Promise<TabMeta[] | undefined> | undefined;
 await act(async () => {
