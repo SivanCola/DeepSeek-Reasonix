@@ -24,6 +24,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
+	"reasonix/internal/taskpolicy"
 	"reasonix/internal/tool"
 )
 
@@ -357,7 +358,7 @@ func TestPlannerFirstOnDemandMCPCallPreservesImages(t *testing.T) {
 	if host.HasClient("image") {
 		t.Fatal("test requires the MCP server to start on first tool dispatch")
 	}
-	if err := planner.Run(ctx, "take a screenshot"); err != nil {
+	if err := planner.Run(withNoClosedLoop(ctx), "take a screenshot"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if got := toolCalls.Load(); got != 1 {
@@ -929,7 +930,9 @@ func TestCapabilityGateRecoveryIsAudited(t *testing.T) {
 	reg := tool.NewRegistry()
 	audit := &capability.Audit{}
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"),
-		Options{DeliveryProfile: true, CapabilityLedger: capability.NewLedger(), CapabilityAudit: audit}, event.Discard)
+		Options{CapabilityLedger: capability.NewLedger(), CapabilityAudit: audit}, event.Discard)
+	a.turn.policySet = true
+	a.turn.policy = closedLoopTurnPolicy(taskpolicy.ReviewForced)
 	a.SeedCapabilityRoute(capability.RouteDecision{Candidates: []capability.RouteCandidate{
 		{Entry: capability.Entry{ID: "skill:review"}, Policy: capability.AutoUseRequire},
 	}})
@@ -1089,7 +1092,9 @@ func TestPlanModeBlocksAuthorizedDestructiveMCPThroughUseCapability(t *testing.T
 func TestCapabilityGateAppliesToReadOnlyTasks(t *testing.T) {
 	reg := tool.NewRegistry()
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"),
-		Options{DeliveryProfile: true, CapabilityLedger: capability.NewLedger()}, event.Discard)
+		Options{CapabilityLedger: capability.NewLedger()}, event.Discard)
+	a.turn.policySet = true
+	a.turn.policy = closedLoopTurnPolicy(taskpolicy.ReviewForced)
 	a.SeedCapabilityRoute(capability.RouteDecision{Candidates: []capability.RouteCandidate{
 		{Entry: capability.Entry{ID: "skill:review"}, Policy: capability.AutoUseRequire},
 	}})

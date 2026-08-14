@@ -67,6 +67,7 @@ func TestTaskPolicyEnforcesVerificationAllowlist(t *testing.T) {
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{}, event.Discard)
 	a.turn.policy = taskpolicy.Derive(taskpolicy.Input{Raw: "fix it; only run go test ./internal/parser"})
 	a.turn.policySet = true
+	a.turn.deliveryCriteriaEstablished = true
 
 	blocked := a.executeOne(context.Background(), &a.turn, provider.ToolCall{Name: "bash", Arguments: `{"command":"npm test"}`})
 	if !blocked.blocked || !strings.Contains(blocked.errMsg, "allowlist") {
@@ -97,6 +98,8 @@ func TestTaskPolicyBlocksExternalActionCommandVariants(t *testing.T) {
 	a := New(&scriptedProvider{name: "p"}, reg, NewSession("sys"), Options{}, event.Discard)
 	a.turn.policy = taskpolicy.Derive(taskpolicy.Input{Raw: "fix it, but don't push"})
 	a.turn.policySet = true
+	a.turn.deliveryCriteriaEstablished = true
+	a.setTodoState([]evidence.TodoItem{{Content: "fix it", Status: "in_progress"}})
 
 	for _, command := range []string{
 		"git -C ../repo push origin HEAD",
@@ -140,7 +143,7 @@ func TestTaskPolicyBlocksResolvedExternalCapability(t *testing.T) {
 func TestTaskPolicyRequiresPostMutationVerification(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "bash", readOnly: true})
-	writer := evidence.Receipt{ToolName: "write_file", Success: true, Write: true, Mutation: true}
+	writer := evidence.Receipt{ToolName: "write_file", Success: true, Write: true, Mutation: true, Paths: []string{"notes.txt"}}
 	check := evidence.Receipt{ToolName: "bash", Success: true, Command: "go test ./..."}
 	a := &Agent{
 		task: taskRuntime{ledger: readinessLedger(check, writer)},

@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,7 +48,7 @@ func TestRecoveryCheckpointScriptedE2E(t *testing.T) {
 	c.SetToolApprovalMode(ToolApprovalAuto)
 	c.EnableInteractiveApproval()
 
-	if err := c.Run(context.Background(), "test then fix"); err != nil {
+	if err := c.Run(context.Background(), "test then fix"); err != nil && !errors.As(err, new(*agent.FinalReadinessError)) {
 		t.Fatalf("Run: %v", err)
 	}
 

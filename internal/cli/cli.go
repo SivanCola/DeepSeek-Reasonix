@@ -22,12 +22,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf16"
 
 	"reasonix/internal/ablation"
 	"reasonix/internal/agent"
+	"reasonix/internal/agentpreset"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
@@ -203,7 +205,7 @@ func isDoctorRepairCommand(args []string) bool {
 
 func isDefaultInteractiveFlag(arg string) bool {
 	switch arg {
-	case "--model", "--max-steps", "--continue", "-c", "--resume", "-r", "--copy", "--dangerously-skip-permissions", "--yolo", "--permission-mode", "--effort", "--dir", "--add-dir", "--allowed-tools", "--allowedTools", "--profile":
+	case "--model", "--max-steps", "--continue", "-c", "--resume", "-r", "--copy", "--dangerously-skip-permissions", "--yolo", "--permission-mode", "--effort", "--dir", "--add-dir", "--allowed-tools", "--allowedTools", "--profile", "--preset":
 		return true
 	}
 	if name, _, ok := strings.Cut(arg, "="); ok && isDefaultInteractiveFlag(name) {
@@ -266,8 +268,8 @@ func configureCLIThemeFromConfigForTTYOutput() {
 // profile selects economy|balanced|delivery (empty = balanced/full).
 // workspaceRoot pins the project root explicitly (from --dir); empty falls back
 // to git-root detection.
-func setupProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, workspaceRoot string) (*control.Controller, error) {
-	return setupProfileWithOverrides(ctx, modelName, maxStepsOverride, requireKey, sink, profile, cliBuildOverrides{WorkspaceRoot: workspaceRoot})
+func setupProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, workspaceRoot string) (*control.Controller, error) {
+	return setupProfileWithOverrides(ctx, modelName, maxStepsOverride, requireKey, sink, cliBuildOverrides{WorkspaceRoot: workspaceRoot})
 }
 
 type cliBuildOverrides struct {
@@ -295,21 +297,18 @@ func sessionTempFromCLIController(ctrl control.SessionAPI) *sessiontemp.Manager 
 	return prev.SessionTemp()
 }
 
-func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) (*control.Controller, error) {
+func setupProfileWithOverrides(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, overrides cliBuildOverrides) (*control.Controller, error) {
 	migrateMCPConfigForCLIWorkspace()
-	return boot.Build(ctx, cliProfileBuildOptions(modelName, maxStepsOverride, requireKey, sink, profile, overrides))
+	return boot.Build(ctx, cliProfileBuildOptions(modelName, maxStepsOverride, requireKey, sink, overrides))
 }
 
-func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) boot.Options {
-	// profile is dual-write TokenMode; also set AgentPreset for the new path.
+func cliProfileBuildOptions(modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, overrides cliBuildOverrides) boot.Options {
 	return boot.Options{
 		Model:                modelName,
 		MaxSteps:             maxStepsOverride,
 		MaxStepsKey:          "--max-steps",
 		RequireKey:           requireKey,
 		Sink:                 sink,
-		AgentPreset:          boot.NormalizeAgentPreset(profile),
-		TokenMode:            boot.NormalizeTokenMode(profile),
 		SessionDir:           resolveCLISessionDir(),
 		WorkspaceRoot:        overrides.WorkspaceRoot,
 		EffortOverride:       overrides.Effort,
@@ -388,26 +387,48 @@ func resolveCLISessionDir() string {
 // setupQuietProfile is like setupProfile but guarantees plugin subprocess
 // stderr stays off the terminal. Interactive callers provide the private TUI
 // diagnostic writer; other callers fall back to io.Discard.
-func setupQuietProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, profile string, overrides cliBuildOverrides) (*control.Controller, error) {
+func setupQuietProfile(ctx context.Context, modelName string, maxStepsOverride int, requireKey bool, sink event.Sink, overrides cliBuildOverrides) (*control.Controller, error) {
 	if overrides.Stderr == nil {
 		overrides.Stderr = io.Discard
 	}
-	return boot.Build(ctx, cliProfileBuildOptions(modelName, maxStepsOverride, requireKey, sink, profile, overrides))
+	return boot.Build(ctx, cliProfileBuildOptions(modelName, maxStepsOverride, requireKey, sink, overrides))
 }
 
+// parseRuntimeProfile validates a deprecated execution-mode flag value. The
+// returned label is accepted for one compatibility version and ignored: the
+// adaptive standard execution policy derives from task risk, never a flag.
 func parseRuntimeProfile(value string) (string, error) {
-	// Accept both --preset light|balanced|delivery and legacy --profile
-	// economy|full|delivery. Returns dual-write TokenMode values.
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "balanced", boot.TokenModeFull:
-		return boot.TokenModeFull, nil
+		return "balanced", nil
 	case boot.TokenModeEconomy, "light", "lite", "eco":
-		return boot.TokenModeEconomy, nil
+		return "light", nil
 	case boot.TokenModeDelivery, "deliver", "quality":
-		return boot.TokenModeDelivery, nil
+		return "delivery", nil
 	default:
-		return "", fmt.Errorf("unknown execution setting %q (want light, balanced, or delivery; legacy: economy, full)", value)
+		return "", fmt.Errorf("unknown execution setting %q (accepted for compatibility: light, balanced, delivery; legacy: economy, full)", value)
 	}
+}
+
+// deprecatedModeNoticeOnce guards the one-per-process standard-execution notice
+// for deprecated --preset/--profile flags.
+var deprecatedModeNoticeOnce sync.Once
+
+// acceptDeprecatedModeFlag validates and ignores a deprecated mode flag value,
+// printing the standard-execution notice at most once per process.
+func acceptDeprecatedModeFlag(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	label, err := parseRuntimeProfile(raw)
+	if err != nil {
+		return err
+	}
+	deprecatedModeNoticeOnce.Do(func() {
+		fmt.Fprintln(os.Stderr, agentpreset.DeprecatedNotice)
+	})
+	_ = label
+	return nil
 }
 
 // chdirTo honours --dir: it switches the working directory before anything reads
@@ -488,8 +509,8 @@ func runAgent(args []string, version string) int {
 	fs := pflag.NewFlagSet("run", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "", "deprecated: use --preset (economy|balanced|delivery)")
-	presetFlag := fs.String("preset", "balanced", "agent execution setting: light | balanced | delivery")
+	profileFlag := fs.String("profile", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
+	presetFlag := fs.String("preset", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
 	maxSteps := fs.Int("max-steps", 0, "one-off max tool-call rounds (0 = automatic)")
 	showThinking := fs.Bool("show-thinking", false, "show thinking text instead of the collapsed thinking marker")
 	metricsPath := fs.String("metrics", "", "write a JSON token/cache/cost summary of the run to this path")
@@ -536,14 +557,7 @@ func runAgent(args []string, version string) int {
 		}
 		format = runOutputEventsJSONL
 	}
-	profileRaw := strings.TrimSpace(*profileFlag)
-	if profileRaw != "" {
-		fmt.Fprintln(os.Stderr, "warning: --profile is deprecated; use --preset light|balanced|delivery")
-	} else {
-		profileRaw = strings.TrimSpace(*presetFlag)
-	}
-	profile, err := parseRuntimeProfile(profileRaw)
-	if err != nil {
+	if err := acceptDeprecatedModeFlag(firstNonEmpty(strings.TrimSpace(*profileFlag), strings.TrimSpace(*presetFlag))); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
@@ -635,7 +649,7 @@ func runAgent(args []string, version string) int {
 	}
 	sessionMode := cliTelemetrySessionMode(*cont, strings.TrimSpace(*resume) != "", *copySession)
 	reporter := startCLITelemetry(cfg, telemetry.Options{
-		Version: version, Interactive: false, CLIMode: "run", Profile: profile,
+		Version: version, Interactive: false, CLIMode: "run", Profile: "balanced",
 		PermissionMode: *permissionMode, SessionMode: sessionMode,
 	})
 
@@ -698,7 +712,7 @@ func runAgent(args []string, version string) int {
 		OnSessionRecovered:   cliSessionRecoveredHandler(leases),
 		Ablation:             ablated,
 	}
-	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, true, sink, profile, overrides)
+	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, true, sink, overrides)
 	if err != nil {
 		if resultOutput != nil && format != runOutputText {
 			if encodeErr := resultOutput.Finalize("", started, err); encodeErr != nil {
@@ -792,8 +806,8 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	}
 	fs := flag.NewFlagSet(opts.command, flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "", "deprecated: use --preset (economy|balanced|delivery)")
-	presetFlag := fs.String("preset", "balanced", "agent execution setting: light | balanced | delivery")
+	profileFlag := fs.String("profile", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
+	presetFlag := fs.String("preset", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
 	maxSteps := fs.Int("max-steps", 0, "one-off max tool-call rounds (0 = automatic)")
 	addr := fs.String("addr", "127.0.0.1:8787", "listen address")
 	resume := fs.String("resume", "", "resume a saved session file")
@@ -835,14 +849,7 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 			return 2
 		}
 	}
-	profileRaw := strings.TrimSpace(*profileFlag)
-	if profileRaw != "" {
-		fmt.Fprintln(os.Stderr, "warning: --profile is deprecated; use --preset light|balanced|delivery")
-	} else {
-		profileRaw = strings.TrimSpace(*presetFlag)
-	}
-	profile, err := parseRuntimeProfile(profileRaw)
-	if err != nil {
+	if err := acceptDeprecatedModeFlag(firstNonEmpty(strings.TrimSpace(*profileFlag), strings.TrimSpace(*presetFlag))); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
@@ -939,7 +946,7 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	// Keep the browser reachable when the selected provider has no saved key.
 	// The loopback-only provider setup surface stores the missing credential and
 	// rebuilds this controller in place before the normal web UI is exposed.
-	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, false, bc, profile, cliBuildOverrides{
+	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, false, bc, cliBuildOverrides{
 		OnSessionRecovered: cliSessionRecoveredHandler(leases),
 	})
 	if err != nil {
@@ -985,8 +992,8 @@ func chatREPL(args []string, version string) int {
 	fs := pflag.NewFlagSet("reasonix", pflag.ContinueOnError)
 	fs.SetInterspersed(true)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "", "deprecated: use --preset (economy|balanced|delivery)")
-	presetFlag := fs.String("preset", "balanced", "agent execution setting: light | balanced | delivery")
+	profileFlag := fs.String("profile", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
+	presetFlag := fs.String("preset", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
 	maxSteps := fs.Int("max-steps", 0, "one-off max tool-call rounds (0 = automatic)")
 	cont := registerContinueFlag(fs)
 	resume := fs.StringP("resume", "r", "", "resume by session ID/query, or open the picker when no value is given")
@@ -1010,14 +1017,7 @@ func chatREPL(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
-	profileRaw := strings.TrimSpace(*profileFlag)
-	if profileRaw != "" {
-		fmt.Fprintln(os.Stderr, "warning: --profile is deprecated; use --preset light|balanced|delivery")
-	} else {
-		profileRaw = strings.TrimSpace(*presetFlag)
-	}
-	profile, err := parseRuntimeProfile(profileRaw)
-	if err != nil {
+	if err := acceptDeprecatedModeFlag(firstNonEmpty(strings.TrimSpace(*profileFlag), strings.TrimSpace(*presetFlag))); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
@@ -1097,7 +1097,7 @@ func chatREPL(args []string, version string) int {
 	}
 	sessionMode := cliTelemetrySessionMode(*cont, resumeValue != "", *copySession)
 	reporter := startCLITelemetry(cfg, telemetry.Options{
-		Version: version, Interactive: isInteractive(), CLIMode: "tui", Profile: profile,
+		Version: version, Interactive: isInteractive(), CLIMode: "tui", Profile: "balanced",
 		PermissionMode: *permissionMode, SessionMode: sessionMode,
 	})
 
@@ -1143,7 +1143,7 @@ func chatREPL(args []string, version string) int {
 		OnSessionRecovered: cliSessionRecoveredHandler(leases),
 	}
 	diagnostics.Milestone("controller_build_begin")
-	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, false, sink, profile, overrides)
+	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, false, sink, overrides)
 	if err != nil && errors.Is(err, boot.ErrUnknownModel) && isInteractive() && config.SourcePath() == "" {
 		// True first run whose default model can't resolve: guide setup, then retry.
 		// With a config present, fall through to the descriptive error — re-running
@@ -1152,7 +1152,7 @@ func chatREPL(args []string, version string) int {
 		if rc := interactiveSetup(defaultConfigTarget(), defaultEnvTarget()); rc != 0 {
 			return rc
 		}
-		ctrl, err = setupProfileWithOverrides(ctx, *model, *maxSteps, false, sink, profile, overrides)
+		ctrl, err = setupProfileWithOverrides(ctx, *model, *maxSteps, false, sink, overrides)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
@@ -1245,7 +1245,7 @@ func chatREPL(args []string, version string) int {
 		// Keep the logical-session private temporary directory across model /
 		// profile switches (Issue #7575).
 		effectiveOverrides.SessionTemp = sessionTempFromCLIController(oldCtrl)
-		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, spec.RuntimeProfile, effectiveOverrides)
+		c, err := setupQuietProfile(ctx, spec.ModelRef, *maxSteps, false, sink, effectiveOverrides)
 		if err != nil {
 			return nil, err
 		}
@@ -1273,7 +1273,6 @@ func chatREPL(args []string, version string) int {
 	// buildController so the replacement matches this session's launch wiring;
 	// the CLI holds no SharedHost, so each rebuild owns its plugin host.
 	m.bindRuntimeRebuilder(*maxSteps, sink, *yolo, overrides, cliProfileBuildOptions)
-	m.runtimeProfile = profile
 	if effortOverride != nil {
 		m.effortLevel = *effortOverride
 	}
@@ -1313,10 +1312,8 @@ func chatREPL(args []string, version string) int {
 	launchWebPath := ""
 	launchWebSessionID := ""
 	launchWebModelRef := ""
-	launchWebProfile := ""
 	if fm, ok := final.(chatTUI); ok {
 		launchWeb = fm.launchWebOnExit
-		launchWebProfile = fm.runtimeProfile
 		for _, oc := range fm.oldControllers {
 			if c, ok := oc.(*control.Controller); ok {
 				reporter.RecordRecovery(c.DrainRecoveryMetrics())
@@ -1350,7 +1347,7 @@ func chatREPL(args []string, version string) int {
 		// session as already in use. The deferred Release remains as a harmless
 		// final guard for every other return path.
 		leases.Release()
-		return runWebCommand(webHandoffArgs(launchWebPath, launchWebSessionID, launchWebModelRef, launchWebProfile))
+		return runWebCommand(webHandoffArgs(launchWebPath, launchWebSessionID, launchWebModelRef))
 	}
 	return 0
 }

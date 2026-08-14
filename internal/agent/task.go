@@ -24,6 +24,7 @@ import (
 	"reasonix/internal/planmode"
 	"reasonix/internal/provider"
 	"reasonix/internal/sessiontemp"
+	"reasonix/internal/taskpolicy"
 	"reasonix/internal/tool"
 	"reasonix/internal/workspacelease"
 )
@@ -263,7 +264,6 @@ type TaskTool struct {
 	baseEffort                    string
 	identityProfile               func(modelRef, effort string) (string, string)
 	maxSubagentDepth              int
-	deliveryProfile               bool
 	ablation                      ablation.Set
 	workspaceLease                *workspacelease.Owner
 	// scheduler is the session-scoped concurrency + write-claim controller.
@@ -394,14 +394,6 @@ func (t *TaskTool) WithTranscriptIdentityResolver(resolve func(modelRef, effort 
 
 func (t *TaskTool) WithMaxSubagentDepth(depth int) *TaskTool {
 	t.maxSubagentDepth = NormalizeMaxSubagentDepth(depth)
-	return t
-}
-
-// WithDeliveryProfile propagates the parent's runtime delivery contract into
-// writer-capable sub-agents. Read-only sub-agents may receive the flag too, but
-// the mutation gate remains dormant for them.
-func (t *TaskTool) WithDeliveryProfile(enabled bool) *TaskTool {
-	t.deliveryProfile = enabled
 	return t
 }
 
@@ -1626,13 +1618,19 @@ func (t *TaskTool) subagentOptions(ctx context.Context, maxSteps int, pricing *p
 		ReasoningLanguage: ReasoningLanguageFromContext(ctx),
 		SubagentDepth:     childDepth,
 		MaxSubagentDepth:  t.maxDepth(),
-		DeliveryProfile:   t.deliveryProfile,
 		Ablation:          t.ablation,
 		WorkspaceLease:    t.workspaceLease,
 		RecoveryGate:      t.recoveryGate,
 		RecoveryAgentID:   "subagent",
 		RecoveryTaskID:    recoveryTaskID,
 		MutationObserver:  mutationObserver,
+	}
+	// Writer children inherit the parent turn's frozen risk and closure floors.
+	// The parent publishes its policy into the run context; a child that never
+	// received it (direct unit construction) keeps its own derived policy.
+	if parent, ok := taskpolicy.FromContext(ctx); ok {
+		p := parent
+		opts.InheritedTaskPolicy = &p
 	}
 	return opts
 }

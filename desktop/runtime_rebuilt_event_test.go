@@ -17,10 +17,11 @@ import (
 
 // TestRuntimeRebuildsEmitRuntimeRebuiltForTab pins the frontend contract the
 // prompt-chime dedupe depends on: every in-place controller replacement must
-// announce itself. Model, effort, and token-mode switches rebuild the tab's
-// controller WITHOUT an agent:ready — the rebuilt controller restarts its
-// approval/ask id counter at "1", so without runtime:rebuilt the frontend's
-// id-keyed chime dedupe mutes the first prompt after a switch.
+// announce itself. Model and effort switches rebuild the tab's controller
+// WITHOUT an agent:ready — the rebuilt controller restarts its approval/ask
+// id counter at "1", so without runtime:rebuilt the frontend's id-keyed chime
+// dedupe mutes the first prompt after a switch. SetTokenMode is a deprecated
+// no-op and must not emit runtime:rebuilt.
 func TestRuntimeRebuildsEmitRuntimeRebuiltForTab(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	setDesktopTestCredential(t, "OLD_MODEL_KEY", "sk-test")
@@ -129,10 +130,12 @@ func TestRuntimeRebuildsEmitRuntimeRebuiltForTab(t *testing.T) {
 	if err := app.SetTokenModeForTab(tab.ID, "economy"); err != nil {
 		t.Fatalf("SetTokenModeForTab: %v", err)
 	}
-	waitCount(3, "token-mode switch")
-
+	// Give a real rebuild event time to arrive if the no-op regresses.
+	time.Sleep(50 * time.Millisecond)
 	mu.Lock()
-	defer mu.Unlock()
+	if len(rebuilt) != 2 {
+		t.Fatalf("after SetTokenModeForTab: runtime:rebuilt events = %v, want 2 (no rebuild)", rebuilt)
+	}
 	for i, id := range rebuilt {
 		if id == "VIA-APP-QUEUE" {
 			t.Fatalf("event %d took the App-level fallback queue; it must ride the tab sink queue so it orders before the rebuilt controller's agent events (full: %v)", i, rebuilt)
@@ -141,4 +144,5 @@ func TestRuntimeRebuildsEmitRuntimeRebuiltForTab(t *testing.T) {
 			t.Fatalf("event %d carried tab id %q, want %q (full: %v)", i, id, tab.ID, rebuilt)
 		}
 	}
+	mu.Unlock()
 }

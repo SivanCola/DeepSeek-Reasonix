@@ -12,8 +12,9 @@ import (
 )
 
 // Final readiness: whether a turn has earned the right to stop. It reads the
-// evidence ledger, the delivery profile, and the approved plan's contract, and
-// says what is missing rather than merely that something is.
+// evidence ledger, the frozen TaskPolicy's closed-loop level, and the approved
+// plan's contract, and says what is missing rather than merely that something
+// is.
 
 type finalReadinessCheck struct {
 	applies                   bool
@@ -93,6 +94,7 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 	if a.planMode.Load() {
 		return out
 	}
+	a.escalatePolicyFromEvidence()
 	{
 		incomplete, hasTodos := a.task.ledger.IncompleteLatestTodos()
 		if !hasTodos && a.task.ledger.HasAnySuccessfulReceipt() {
@@ -109,7 +111,8 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 	deliveryVerificationOnly := false
 	checkpoint := a.task.checkpoint
 	checkpointApplies := a.turn.deliveryScopeActive && checkpoint.ScopeID == a.task.scopeID
-	if a.deliveryProfile {
+	closedLoop := a.closedLoopActive()
+	if closedLoop {
 		if mutation, ok := a.task.ledger.LatestSuccessfulMutationIndex(); ok {
 			writer, hasWriter = mutation, true
 			deliveryMutation = true
@@ -167,7 +170,7 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 		}
 		return out
 	}
-	if !a.deliveryProfile && a.turn.policySet && a.turn.policy.Verification >= taskpolicy.VerifyTargeted &&
+	if !closedLoop && a.turn.policySet && a.turn.policy.Verification >= taskpolicy.VerifyTargeted &&
 		a.turn.policy.AllowsTests() && toolPresent(a.svc.tools, "bash") &&
 		!a.task.ledger.HasSuccessfulVerificationCommandAfter(writer) {
 		out.applies = true
@@ -176,11 +179,11 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 	}
 	hasProjectChecks := len(a.projectChecks) > 0
 	hasTodoReceipt := a.task.ledger.HasSuccessfulTodoWrite()
-	if !a.deliveryProfile && !hasProjectChecks && !hasTodoReceipt && len(missing) == 0 {
+	if !closedLoop && !hasProjectChecks && !hasTodoReceipt && len(missing) == 0 {
 		return finalReadinessCheck{}
 	}
 	out.applies = true
-	if a.deliveryProfile {
+	if closedLoop {
 		a.emitTurnPhase(event.TurnPhaseVerifying)
 		criteriaEstablished := a.turn.deliveryCriteriaEstablished || (checkpointApplies && checkpoint.CriteriaEstablished)
 		if !criteriaEstablished {
@@ -256,4 +259,45 @@ func finalReadinessIncompleteTodos(items []evidence.TodoStepMatch) string {
 		parts = append(parts, fmt.Sprintf("%s: %s", label, item.Status))
 	}
 	return "latest successful todo_write still has incomplete items: " + strings.Join(parts, ", ")
+}
+
+// escalatePolicyFromEvidence ratchets the frozen TaskPolicy from receipt-ledger
+// observations, implementing the standard escalation rules: mutations that
+// touch high-risk surfaces (public API, schema, persistence, auth, release or
+// build config) raise the risk floor; scope that outgrew the initial judgment
+// does the same; weak or uncovered acceptance criteria and required
+// verification that failed or could not run escalate a conditional review to
+// forced. Risk and review only ever move upward within a turn.
+func (a *Agent) escalatePolicyFromEvidence() {
+	if !a.turn.policySet || a.task.ledger == nil || !a.turn.policy.AllowsMutation() {
+		return
+	}
+	p := &a.turn.policy
+	if mutation, ok := a.task.ledger.LatestSuccessfulMutationIndex(); ok {
+		switch a.task.ledger.MutationRiskAfter(mutation) {
+		case evidence.RiskHigh:
+			p.RaiseRisk(taskpolicy.RiskHigh)
+		case evidence.RiskMedium:
+			p.RaiseRisk(taskpolicy.RiskMedium)
+		}
+	}
+	// Scope overrun: the change set grew well past a single-surface judgment.
+	if paths := a.task.ledger.PathsSince(-1); len(paths) > 8 && p.Risk < taskpolicy.RiskMedium {
+		p.RaiseRisk(taskpolicy.RiskMedium)
+	}
+	// Conditional review escalates to forced when acceptance coverage is weak,
+	// ambiguous, or uncovered, or when required verification failed or never ran.
+	if p.Review == taskpolicy.ReviewConditional {
+		incomplete, hasTodos := a.task.ledger.IncompleteLatestTodos()
+		weakCoverage := hasTodos && len(incomplete) > 0
+		if !weakCoverage && p.Evidence >= taskpolicy.EvidenceClosedLoop {
+			if mutation, ok := a.task.ledger.LatestSuccessfulMutationIndex(); ok {
+				weakCoverage = !a.task.ledger.HasSuccessfulVerificationCommandAfter(mutation) &&
+					!a.task.ledger.HasSuccessfulReviewAfter(mutation)
+			}
+		}
+		if weakCoverage {
+			p.EscalateConditionalReview("weak_evidence_coverage")
+		}
+	}
 }

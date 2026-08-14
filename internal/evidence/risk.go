@@ -47,7 +47,7 @@ func ClassifyMutationRisk(receipts []Receipt, after int) RiskLevel {
 	if after >= 0 && after < len(receipts) {
 		r := receipts[after]
 		if r.Success && r.Mutation {
-			if len(r.Paths) == 0 {
+			if len(r.Paths) == 0 && !memoryOnlyMutation(r.ToolName) {
 				opaque = true
 			}
 			for _, p := range r.Paths {
@@ -66,7 +66,7 @@ func ClassifyMutationRisk(receipts []Receipt, after int) RiskLevel {
 		if !r.Success || !r.Mutation {
 			continue
 		}
-		if len(r.Paths) == 0 {
+		if len(r.Paths) == 0 && !memoryOnlyMutation(r.ToolName) {
 			opaque = true
 		}
 		if toolLooksHighRisk(r.ToolName) {
@@ -176,6 +176,15 @@ func pathLooksLowRisk(path string) bool {
 		return true
 	}
 	return false
+}
+
+func memoryOnlyMutation(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "remember", "forget":
+		return true
+	default:
+		return false
+	}
 }
 
 func toolLooksHighRisk(name string) bool {

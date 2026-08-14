@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -74,7 +75,7 @@ func TestRecoveryExecutionRiskDoesNotPrompt(t *testing.T) {
 	c.SetToolApprovalMode(ToolApprovalAuto)
 	c.EnableInteractiveApproval()
 
-	if err := c.Run(context.Background(), "test then fix"); err != nil {
+	if err := c.Run(context.Background(), "test then fix"); err != nil && !errors.As(err, new(*agent.FinalReadinessError)) {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -176,7 +177,7 @@ func TestRecoveryInactiveUnderYolo(t *testing.T) {
 	c.SetToolApprovalMode(ToolApprovalYolo)
 	c.EnableInteractiveApproval()
 
-	if err := c.Run(context.Background(), "test then fix"); err != nil {
+	if err := c.Run(context.Background(), "test then fix"); err != nil && !errors.As(err, new(*agent.FinalReadinessError)) {
 		t.Fatalf("Run: %v", err)
 	}
 	if write.runs != 1 {
@@ -213,7 +214,7 @@ func TestRecoveryHeadlessDoesNotBlockExecutionRisk(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := c.Run(ctx, "test then fix"); err != nil {
+	if err := c.Run(ctx, "test then fix"); err != nil && !errors.As(err, new(*agent.FinalReadinessError)) {
 		t.Fatalf("headless Run: %v", err)
 	}
 	if bash.runs != 2 {

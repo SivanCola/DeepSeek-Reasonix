@@ -153,10 +153,6 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 		return ""
 	}
 	model := strings.TrimSpace(m.label)
-	work := ""
-	if m.runtimeProfile != "" {
-		work = runtimeProfileDisplay(m.runtimeProfile)
-	}
 	if maxWidth <= 0 {
 		maxWidth = 1
 	}
@@ -165,9 +161,6 @@ func (m chatTUI) statusModelWorkGroup(maxWidth int) string {
 	tail := make([]string, 0, 2)
 	if effort := m.effortTag(); effort != "" {
 		tail = append(tail, effort)
-	}
-	if work != "" {
-		tail = append(tail, footerMetric(i18n.M.ChatStatusWorkLabel, footerSecondary(work)))
 	}
 	if model == "" && len(tail) == 0 {
 		return ""

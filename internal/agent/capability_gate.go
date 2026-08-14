@@ -136,9 +136,9 @@ func splitMCP(name string) (server, raw string, ok bool) {
 	return parts[0], parts[1], true
 }
 
-// capabilityGateFailure is checked during final readiness for Delivery.
+// capabilityGateFailure is checked during final readiness for closed-loop turns.
 func (a *Agent) capabilityGateFailure() string {
-	if a == nil || !a.deliveryProfile || a.capabilityLedger == nil {
+	if a == nil || !a.closedLoopActive() || a.capabilityLedger == nil {
 		return ""
 	}
 	gate := a.capabilityLedger.CheckFinalGate()
@@ -198,14 +198,14 @@ func (a *Agent) capabilityGateFailure() string {
 }
 
 // deliveryReviewGateFailure enforces risk-adaptive structured review after the
-// latest mutation. When TaskPolicy is set, its Review level is authoritative;
-// otherwise Delivery-profile medium/high risk keeps the legacy matrix.
+// latest mutation. The frozen TaskPolicy's Review level and closed-loop flag
+// are authoritative.
 func (a *Agent) deliveryReviewGateFailure() string {
 	if a == nil || a.task.ledger == nil {
 		return ""
 	}
-	// Without Delivery elevation or a forced TaskPolicy review, skip.
-	if !a.deliveryProfile && !(a.turn.policySet && a.turn.policy.RequiresIndependentReview()) {
+	// Without closed-loop elevation or a forced TaskPolicy review, skip.
+	if !a.closedLoopActive() && !(a.turn.policySet && a.turn.policy.RequiresIndependentReview()) {
 		return ""
 	}
 	if a.subagentDepth > 0 {

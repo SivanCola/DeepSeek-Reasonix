@@ -351,8 +351,11 @@ type SetSessionConfigOptionParams struct {
 }
 
 // SetSessionConfigOptionResult returns the full refreshed config state.
+// DeprecatedNotice is set when the accepted option is a deprecated no-op
+// compatibility shim (execution modes): the call succeeds without switching.
 type SetSessionConfigOptionResult struct {
-	ConfigOptions []SessionConfigOption `json:"configOptions"`
+	ConfigOptions    []SessionConfigOption `json:"configOptions"`
+	DeprecatedNotice string                `json:"deprecatedNotice,omitempty"`
 }
 
 // SessionConfigOption is a single-value ACP session selector.

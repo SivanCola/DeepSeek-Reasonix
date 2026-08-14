@@ -15,9 +15,13 @@ configuration, plugins, and sandbox policy, see the [Guide](./GUIDE.md).
 ```sh
 reasonix
 reasonix --model deepseek-pro
-reasonix --preset delivery --effort high
+reasonix --effort high
 reasonix --dir /path/to/project
 ```
+
+Reasonix runs a single adaptive standard execution: planning depth,
+verification breadth, and independent review follow the task's risk
+automatically — there is no execution mode to pick.
 
 Running `reasonix` without a subcommand starts the interactive terminal UI. Use
 `reasonix setup` first when no provider is configured.
@@ -25,8 +29,7 @@ Running `reasonix` without a subcommand starts the interactive terminal UI. Use
 | Flag | Purpose |
 | --- | --- |
 | `--model NAME` | Select a configured provider or `provider/model` reference. |
-| `--preset light\|balanced\|delivery` | Select the agent execution setting (执行设定). Default: `balanced`. |
-| `--profile economy\|balanced\|delivery` | Deprecated alias for `--preset` (`economy` → `light`). |
+| `--preset`, `--profile` | Deprecated and ignored. Reasonix derives one adaptive standard execution per task; the flags are accepted for one compatibility version. |
 | `--effort LEVEL` | Override reasoning effort for this session. |
 | `--max-steps N` | Set a one-off maximum tool-call round budget; `0` uses automatic execution. |
 | `--dir PATH` | Change the workspace root before loading config and tools. |
@@ -137,8 +140,8 @@ echo "explain this code" | reasonix run
 ```
 
 `reasonix run` keeps the normal streamed terminal presentation unless `-p` or a
-structured output format is selected. It also accepts `--model`, `--preset`
-(or legacy `--profile`), `--max-steps`, `--effort`, `--dir`, `--add-dir`,
+structured output format is selected. It also accepts `--model`,
+`--max-steps`, `--effort`, `--dir`, `--add-dir`,
 `--continue`, `--resume QUERY`, `--copy`, `--allowed-tools`, `--permission-mode`,
 and `--auto` / `-y` (an alias for `--permission-mode auto`).
 
@@ -438,8 +441,7 @@ the displayed list matches the commands the TUI accepts.
 | `/model` | Search configured models and switch the active model. |
 | `/provider` | Choose a provider, then choose one of its configured models. |
 | `/resume` | Search recent sessions and switch to one. |
-| `/status` | Show model, effort, cache, Git, background jobs, and execution setting or balance details. |
-| `/preset [light\|balanced\|delivery]` | View or change the agent execution setting without rebuilding the controller. `/work-mode` and `/profile` remain compatibility aliases (`economy` → `light`). |
+| `/status` | Show model, effort, cache, Git, background jobs, and balance details. |
 | `/theme [auto\|light\|dark\|style]` | View or change the CLI background mode and accent palette. |
 | `/currency [auto\|CNY\|USD]` | View or change the user-global fee display currency and refresh the runtime. |
 | `/paste-image` | Read a clipboard image and insert an editable attachment token. |
@@ -465,9 +467,9 @@ the displayed list matches the commands the TUI accepts.
 Switching model or effort rebuilds the runtime while preserving the
 active conversation, session-scoped permission overrides, additional directory
 access, and session ownership. `/reload` uses the same fail-atomic rebuild.
-`/preset` (and legacy `/work-mode` / `/profile`) updates the execution setting
-in place without rebuilding the controller; all three execution settings share the
-same provider-visible tool surface (`use_capability` for optional tools).
+Execution modes no longer exist: planning, verification, and review strength
+follow task risk per turn. `/preset`, `/work-mode`, and `/profile` remain
+parseable for one compatibility version and do nothing.
 
 ## Session catalog diagnostics
 

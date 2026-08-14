@@ -1351,9 +1351,10 @@ func TestRebindTabToLoadedSessionPersistsAndRestoresSessionProfile(t *testing.T)
 	if err != nil || !ok {
 		t.Fatalf("LoadBranchMeta current ok=%v err=%v", ok, err)
 	}
-	if currentMeta.TokenMode != boot.TokenModeEconomy || currentMeta.Mode != "plan" || currentMeta.ToolApprovalMode != control.ToolApprovalAuto {
-		t.Fatalf("current session profile = token:%q mode:%q approval:%q, want economy/plan/auto",
-			currentMeta.TokenMode, currentMeta.Mode, currentMeta.ToolApprovalMode)
+	if currentMeta.TokenMode != boot.TokenModeFull || currentMeta.AgentPreset != boot.AgentPresetBalanced ||
+		currentMeta.Mode != "plan" || currentMeta.ToolApprovalMode != control.ToolApprovalAuto {
+		t.Fatalf("current session profile = token:%q preset:%q mode:%q approval:%q, want full/balanced/plan/auto",
+			currentMeta.TokenMode, currentMeta.AgentPreset, currentMeta.Mode, currentMeta.ToolApprovalMode)
 	}
 	if got := currentTabTokenMode(tab); got != boot.TokenModeFull {
 		t.Fatalf("rebound token mode = %q, want full", got)
@@ -1662,7 +1663,7 @@ func assertAtomicRebindFailurePreservedSource(
 		t.Fatalf("lease after failed rebind = %q, want source key %q", got, sessionRuntimeKey(sourcePath))
 	}
 	if !oldCtrl.PlanMode() || oldCtrl.ToolApprovalMode() != control.ToolApprovalYolo ||
-		currentTabTokenMode(tab) != boot.TokenModeEconomy {
+		currentTabTokenMode(tab) != boot.TokenModeFull {
 		t.Fatalf("source profile changed after failed rebind: plan=%v approval=%q token=%q",
 			oldCtrl.PlanMode(), oldCtrl.ToolApprovalMode(), currentTabTokenMode(tab))
 	}
@@ -1784,9 +1785,10 @@ func TestCloseTabPersistsSessionProfileBeforeRemovingVisibleTab(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadBranchMeta current ok=%v err=%v", ok, err)
 	}
-	if meta.TokenMode != boot.TokenModeEconomy || meta.Mode != "plan" || meta.ToolApprovalMode != control.ToolApprovalAuto || meta.Goal != "finish the review" {
-		t.Fatalf("closed session profile = token:%q mode:%q approval:%q goal:%q, want economy/plan/auto/goal",
-			meta.TokenMode, meta.Mode, meta.ToolApprovalMode, meta.Goal)
+	if meta.TokenMode != boot.TokenModeFull || meta.AgentPreset != boot.AgentPresetBalanced ||
+		meta.Mode != "plan" || meta.ToolApprovalMode != control.ToolApprovalAuto || meta.Goal != "finish the review" {
+		t.Fatalf("closed session profile = token:%q preset:%q mode:%q approval:%q goal:%q, want full/balanced/plan/auto/goal",
+			meta.TokenMode, meta.AgentPreset, meta.Mode, meta.ToolApprovalMode, meta.Goal)
 	}
 }
 
@@ -1846,9 +1848,10 @@ func TestKeepOnlyVisibleTabPersistsRemovedSessionProfile(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadBranchMeta removed ok=%v err=%v", ok, err)
 	}
-	if meta.TokenMode != boot.TokenModeEconomy || meta.Mode != "plan" || meta.ToolApprovalMode != control.ToolApprovalAuto || meta.Goal != "keep this profile" {
-		t.Fatalf("removed session profile = token:%q mode:%q approval:%q goal:%q, want economy/plan/auto/goal",
-			meta.TokenMode, meta.Mode, meta.ToolApprovalMode, meta.Goal)
+	if meta.TokenMode != boot.TokenModeFull || meta.AgentPreset != boot.AgentPresetBalanced ||
+		meta.Mode != "plan" || meta.ToolApprovalMode != control.ToolApprovalAuto || meta.Goal != "keep this profile" {
+		t.Fatalf("removed session profile = token:%q preset:%q mode:%q approval:%q goal:%q, want full/balanced/plan/auto/goal",
+			meta.TokenMode, meta.AgentPreset, meta.Mode, meta.ToolApprovalMode, meta.Goal)
 	}
 }
 
@@ -1881,6 +1884,11 @@ func TestLoadTabSessionProfileIgnoresTerminalGoalState(t *testing.T) {
 	if profile.tokenMode != boot.TokenModeEconomy || profile.mode != "plan" || profile.toolApprovalMode != control.ToolApprovalAuto {
 		t.Fatalf("loaded profile = token:%q mode:%q approval:%q, want economy/plan/auto",
 			profile.tokenMode, profile.mode, profile.toolApprovalMode)
+	}
+	tab := &WorkspaceTab{}
+	applyTabSessionProfile(tab, profile)
+	if got := currentTabTokenMode(tab); got != boot.TokenModeFull {
+		t.Fatalf("legacy economy must not change runtime tokenMode: got %q", got)
 	}
 }
 

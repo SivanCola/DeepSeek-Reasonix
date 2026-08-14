@@ -36,7 +36,7 @@ import (
 func acpCommand(args []string, version string) int {
 	fs := flag.NewFlagSet("acp", flag.ContinueOnError)
 	model := fs.String("model", "", "provider name (default: config default_model)")
-	profileFlag := fs.String("profile", "balanced", "runtime profile: economy | balanced | delivery")
+	profileFlag := fs.String("profile", "", "deprecated and ignored: Reasonix uses adaptive standard execution")
 	plannerFlag := fs.String("planner", "auto", "planner policy: auto | off")
 	networkFlag := fs.String("sandbox-network", "auto", "sandbox network policy: auto | on | off")
 	bashFlag := fs.String("sandbox-bash", "auto", "bash sandbox policy: auto | enforce")
@@ -68,8 +68,7 @@ func acpCommand(args []string, version string) int {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, "sandbox-bash must be auto or enforce")
 		return 2
 	}
-	profile, err := parseRuntimeProfile(*profileFlag)
-	if err != nil {
+	if err := acceptDeprecatedModeFlag(*profileFlag); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 2
 	}
@@ -78,7 +77,7 @@ func acpCommand(args []string, version string) int {
 	defer stop()
 
 	factory := &acpFactory{
-		model: *model, profile: profile, plannerOff: plannerMode == "off",
+		model: *model, plannerOff: plannerMode == "off",
 		networkOverride: networkOverride, workspaceOnly: *workspaceOnly,
 		bashOverride: bashMode, requireSandbox: bashMode == "enforce",
 	}
@@ -96,7 +95,6 @@ func acpCommand(args []string, version string) int {
 // for this session only.
 type acpFactory struct {
 	model            string
-	profile          string
 	plannerOff       bool
 	networkOverride  *bool
 	bashOverride     string
@@ -166,8 +164,6 @@ func (f *acpFactory) sessionBootOptions(p acp.SessionParams) (boot.Options, erro
 	}
 	return boot.Options{
 		Model:                    firstNonEmpty(p.Model, f.model),
-		TokenMode:                firstNonEmpty(p.RuntimeProfile, f.profile),
-		AgentPreset:              boot.NormalizeAgentPreset(firstNonEmpty(p.RuntimeProfile, f.profile)),
 		RequireKey:               true,
 		Sink:                     p.Sink,
 		StatsSource:              "cli",
@@ -191,7 +187,7 @@ func (f *acpFactory) SessionRuntimeState(_ context.Context, p acp.SessionRuntime
 	if err != nil {
 		return acp.SessionRuntimeState{}, err
 	}
-	plannerMode := effectiveACPPlannerMode(cfg, f.plannerOff, p.Model, p.RuntimeProfile)
+	plannerMode := effectiveACPPlannerMode(cfg, f.plannerOff, p.Model)
 	writeRoots := cfg.WriteRootsForRoot(p.Cwd)
 	if f.workspaceOnly {
 		writeRoots = []string{p.Cwd}
@@ -235,8 +231,8 @@ func (f *acpFactory) isSandboxAvailable() bool {
 	return sandbox.Available()
 }
 
-func effectiveACPPlannerMode(cfg *config.Config, disabled bool, model, profile string) string {
-	if cfg == nil || disabled || acpRuntimeProfile(profile) == "economy" {
+func effectiveACPPlannerMode(cfg *config.Config, disabled bool, model string) string {
+	if cfg == nil || disabled {
 		return "off"
 	}
 	plannerRef := strings.TrimSpace(cfg.Agent.PlannerModel)
@@ -349,7 +345,6 @@ func (f *acpFactory) SessionConfigState(_ context.Context, p acp.SessionConfigSt
 		}
 	}
 
-	runtimeProfile := acpRuntimeProfile(firstNonEmpty(p.RuntimeProfile, f.profile))
 	options := []acp.SessionConfigOption{{
 		ID:           "model",
 		Name:         "Model",
@@ -377,57 +372,20 @@ func (f *acpFactory) SessionConfigState(_ context.Context, p acp.SessionConfigSt
 		cleared := ""
 		effortOverride = &cleared
 	}
-	agentPreset := boot.NormalizeAgentPreset(runtimeProfile)
-	// New option id is agent_preset; work_mode remains for one compatibility version.
-	presetOptions := []acp.SessionConfigSelectOption{
-		{Value: "light", Name: "Light", Description: "Fast and reliable: on-demand capabilities, targeted verification"},
-		{Value: "balanced", Name: "Balanced", Description: "Adaptive planning and risk-tiered verification"},
-		{Value: "delivery", Name: "Delivery", Description: "Evidence closed-loop: full acceptance, verification, independent review"},
-	}
-	options = append(options, acp.SessionConfigOption{
-		ID:           "agent_preset",
-		Name:         "Execution Setting",
-		Category:     "agent_preset",
-		Type:         "select",
-		CurrentValue: agentPreset,
-		Options:      presetOptions,
-	})
-	// Deprecated dual-write option for older ACP clients.
-	options = append(options, acp.SessionConfigOption{
-		ID:           "work_mode",
-		Name:         "Work Mode (deprecated)",
-		Category:     "work_mode",
-		Type:         "select",
-		CurrentValue: runtimeProfile,
-		Options: []acp.SessionConfigSelectOption{
-			{Value: "economy", Name: "Economy", Description: "Deprecated alias for light"},
-			{Value: "balanced", Name: "Balanced", Description: "Deprecated alias for balanced"},
-			{Value: "delivery", Name: "Delivery", Description: "Deprecated alias for delivery"},
-		},
-	})
-
+	// Execution modes are no longer published as config options. Old clients
+	// that still send agent_preset/work_mode receive a successful no-op with a
+	// deprecation notice (service.sessionSetConfigOption). RuntimeProfile stays
+	// pinned to the historical default for one-version-old status readers.
 	return acp.SessionConfigState{
 		Model:          currentModel,
 		EffortOverride: effortOverride,
-		RuntimeProfile: runtimeProfile,
+		RuntimeProfile: "balanced",
 		Models: &acp.SessionModelState{
 			AvailableModels: modelInfos,
 			CurrentModelID:  currentModel,
 		},
 		ConfigOptions: options,
 	}, nil
-}
-
-func acpRuntimeProfile(value string) string {
-	// Dual-write: return legacy economy|balanced|delivery for RuntimeProfile.
-	switch boot.NormalizeAgentPreset(value) {
-	case boot.AgentPresetLight:
-		return "economy"
-	case boot.AgentPresetDelivery:
-		return "delivery"
-	default:
-		return "balanced"
-	}
 }
 
 func acpBuiltinTools(cfg *config.Config, cwd string, writeRoots []string) []tool.Tool {
