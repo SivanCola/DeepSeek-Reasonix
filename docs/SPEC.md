@@ -325,11 +325,12 @@ when the sole automatic threshold is crossed.
   budgets. This never mutates the stable system prompt or tool schemas.
 - The owning controller may auto-allow only a bounded, non-sensitive,
   create-only project/reference `remember`, including in a top-level headless
-  run. In Ask and Auto, global facts, preferences, feedback, updates,
-  duplicates, sensitive/oversized content, and every `forget` still require a
-  fresh human approval. Interactive YOLO treats `remember` and `forget` as
-  ordinary tool approvals and skips that prompt unless an explicit deny rule
-  matches. Guardian/safety review cannot answer these prompts on the user's
+  run. In Ask, global facts, preferences, feedback, updates, duplicates,
+  sensitive/oversized content, and every `forget` require a fresh human
+  approval. Interactive Auto treats `remember` and `forget` as normal policy
+  fallback while preserving explicit `ask` and `deny` rules. Interactive YOLO
+  bypasses memory ask prompts unless an explicit deny rule matches.
+  Guardian/safety review cannot answer these prompts on the user's
   behalf. Sub-agents and headless surfaces without the owning scoped
   controller fail closed, including headless YOLO except for the create-only
   path above. The approval request includes a compact preview, while
@@ -500,9 +501,10 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 - **User decisions are separate from tool approvals.** Runtime tool approval has
   three user-facing postures: `ask` ("需要批准"), `auto` ("自动批准"), and
   `yolo` ("Yolo批准"). `auto` lets the permission policy auto-approve the writer
-  fallback while preserving explicit ask/deny rules; `yolo` skips ordinary tool
-  permission prompts for approval-gated tools such as writers, Bash, and
-  interactive `remember`/`forget`. Explicit deny rules and forced fresh reviews
+  and interactive memory fallback while preserving explicit ask/deny rules;
+  `yolo` skips ordinary tool permission prompts for approval-gated tools such
+  as writers, Bash, and explicit interactive `remember`/`forget` ask prompts.
+  Explicit deny rules and forced fresh reviews
   for plans, sandbox escapes, and managed config writes still apply. Nested or indirect Bash
   commands require a human in interactive Ask/Auto even during the approved-plan
   window; ordinary expansions, assignments, redirects, and globs continue under
@@ -561,7 +563,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 | Tool approval posture | Tool approvals | Plan approval | `ask` questions |
 | --- | --- | --- | --- |
 | Need approval / `ask` | Follow permission policy (`Ask` prompts interactively) | Waits for user | Waits for user |
-| Auto approve / `auto` | Writer fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user |
+| Auto approve / `auto` | Writer fallback and interactive `remember`/`forget` fallback auto-allowed; explicit ask/deny rules still apply | Waits for user | Waits for user |
 | YOLO approval / `yolo` | Ordinary prompts auto-allowed, including `remember`/`forget`; deny rules and plan/sandbox/config reviews remain | Waits for user | Waits for user |
 | Approved-plan execution window | Approved plan's writer fallback is auto-allowed; explicit `ask` / `deny` rules remain | Future plans still wait | Waits for user |
 

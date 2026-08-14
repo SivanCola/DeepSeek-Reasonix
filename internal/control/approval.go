@@ -263,7 +263,7 @@ func (a *approvalManager) registerDecisionKindWithInput(tool, subject, reason st
 	reply := make(chan approvalReply, 1)
 	autoDrain := false
 	if !fresh && !requireHuman {
-		autoDrain = a.autoApprovalWouldAllowLocked(tool, subject)
+		autoDrain = a.autoApprovalWouldAllowLocked(tool, subject, rawInput)
 	}
 	a.approvals[id] = pendingApproval{
 		id:   id,
@@ -518,8 +518,16 @@ func normalizePlanModeReadOnlyCommandPrefix(prefix string) string {
 // decision helpers (caller holds a.mu)
 
 func (a *approvalManager) bypassAllowsLocked(tool, subject string, args json.RawMessage) bool {
+	if isMemoryApprovalTool(tool) {
+		switch a.toolApprovalMode {
+		case ToolApprovalYolo:
+			return true
+		case ToolApprovalAuto:
+			return a.autoApprovalWouldAllowLocked(tool, subject, args)
+		}
+	}
 	if requiresFreshApprovalTool(tool) {
-		return a.toolApprovalMode == ToolApprovalYolo && yoloBypassesMemoryApproval(tool)
+		return false
 	}
 	if a.toolApprovalMode == ToolApprovalYolo {
 		return true
@@ -535,12 +543,15 @@ func (a *approvalManager) bypassAllowsLocked(tool, subject string, args json.Raw
 	return policy.DecideSubject(tool, false, subject) == permission.Allow
 }
 
-func (a *approvalManager) autoApprovalWouldAllowLocked(tool, subject string) bool {
-	if requiresFreshApprovalTool(tool) {
+func (a *approvalManager) autoApprovalWouldAllowLocked(tool, subject string, args json.RawMessage) bool {
+	if requiresFreshApprovalTool(tool) && !isMemoryApprovalTool(tool) {
 		return false
 	}
 	policy := a.policy
 	policy.Mode = permission.Allow
+	if len(args) > 0 {
+		return policy.Decide(tool, false, args) == permission.Allow
+	}
 	return policy.DecideSubject(tool, false, subject) == permission.Allow
 }
 
@@ -569,7 +580,9 @@ type drainedApproval struct {
 func (a *approvalManager) drainLocked(includeExplicitAsk bool) []drainedApproval {
 	pending := make([]drainedApproval, 0, len(a.approvals))
 	for id, approval := range a.approvals {
-		if (approval.fresh || requiresFreshApprovalTool(approval.tool)) && !yoloBypassesMemoryApproval(approval.tool) {
+		memoryBypass := isMemoryApprovalTool(approval.tool) && (a.toolApprovalMode == ToolApprovalYolo ||
+			a.toolApprovalMode == ToolApprovalAuto && approval.autoDrain)
+		if (approval.fresh || requiresFreshApprovalTool(approval.tool)) && !memoryBypass {
 			continue
 		}
 		if approval.requireHuman && !includeExplicitAsk {
@@ -613,10 +626,7 @@ func RequiresFreshHumanApprovalTool(tool string) bool {
 	}
 }
 
-// yoloBypassesMemoryApproval reports whether interactive YOLO may answer
-// remember/forget without a prompt. Plan approval, sandbox escape, and
-// managed config writes stay fresh-human even in YOLO.
-func yoloBypassesMemoryApproval(tool string) bool {
+func isMemoryApprovalTool(tool string) bool {
 	switch tool {
 	case memoryRememberTool, memoryForgetTool:
 		return true

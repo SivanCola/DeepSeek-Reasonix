@@ -2306,10 +2306,11 @@ func (c *Controller) newInteractiveGate() *permission.Gate {
 		policy.Mode = permission.Ask
 	}
 	// SessionAllow must not cover fresh-human tools: it is checked before Ask,
-	// so `--allowed-tools remember` would skip the prompt. Interactive YOLO
-	// treats remember/forget as ordinary approvals and does not force Ask.
+	// so `--allowed-tools remember` would skip the prompt. Interactive Auto and
+	// YOLO treat remember/forget as ordinary policy decisions; Auto still
+	// preserves an explicit configured Ask rule, while YOLO bypasses it.
 	policy.SessionAllow = rulesWithoutFreshHumanApproval(policy.SessionAllow)
-	if mode != ToolApprovalYolo {
+	if mode != ToolApprovalAuto && mode != ToolApprovalYolo {
 		policy.Ask = append(policy.Ask,
 			permission.Rule{Tool: memoryRememberTool},
 			permission.Rule{Tool: memoryForgetTool},

@@ -201,7 +201,7 @@ new memory only when all of these conditions hold:
 The grant is one-shot and the storage layer enforces create-only semantics, so a
 concurrent fact cannot be overwritten after assessment.
 
-Everything else still requires explicit confirmation:
+Under Ask, everything else still requires explicit confirmation:
 
 - global facts;
 - `user` preferences and `feedback`;
@@ -210,8 +210,9 @@ Everything else still requires explicit confirmation:
 - sensitive or oversized content;
 - every `forget` operation.
 
-Ask and Auto do not bypass those confirmations. Interactive YOLO treats
-`remember` and `forget` as ordinary tool approvals and skips the prompt unless
+Ask keeps those confirmations. Interactive Auto treats `remember` and `forget`
+as normal policy fallback: default calls proceed, while explicit `ask` and
+`deny` rules remain effective. Interactive YOLO skips memory ask prompts unless
 an explicit deny rule matches. Guardian and permission hooks cannot approve
 them for the user. A top-level headless controller may use only the same
 one-shot low-risk create path above, including headless YOLO. Sub-agents and
