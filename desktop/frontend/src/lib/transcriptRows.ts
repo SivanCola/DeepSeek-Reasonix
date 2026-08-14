@@ -528,8 +528,17 @@ const TRANSCRIPT_MAX_ESTIMATED_TEXT_HEIGHT = 12_000;
 
 function estimateTranscriptTextSize(text: string | undefined, minimum: number): number {
   if (!text) return minimum;
-  const explicitLines = text.split("\n").length;
   const wrappedLines = Math.ceil(text.length / TRANSCRIPT_ESTIMATED_LINE_CHARS);
+  const cappedLines = Math.ceil(
+    (TRANSCRIPT_MAX_ESTIMATED_TEXT_HEIGHT - 44) / TRANSCRIPT_ESTIMATED_LINE_HEIGHT,
+  );
+  if (wrappedLines >= cappedLines) return TRANSCRIPT_MAX_ESTIMATED_TEXT_HEIGHT;
+  let explicitLines = 1;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) !== 10) continue;
+    explicitLines += 1;
+    if (explicitLines >= cappedLines) return TRANSCRIPT_MAX_ESTIMATED_TEXT_HEIGHT;
+  }
   const lines = Math.max(explicitLines, wrappedLines);
   return Math.min(
     TRANSCRIPT_MAX_ESTIMATED_TEXT_HEIGHT,
