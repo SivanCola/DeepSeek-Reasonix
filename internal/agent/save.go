@@ -489,6 +489,7 @@ func writeSessionMessages(path string, msgs []provider.Message) error {
 	// Write to a sibling tmp file then rename, so a crash mid-write can't
 	// leave a partial JSONL that won't reload. The fsync guards the anchor
 	// against power loss — it is the fallback when the event log is damaged.
+	fileutil.Crash("session-checkpoint", path)
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".session.*.tmp")
 	if err != nil {
 		return fmt.Errorf("create session tmp: %w", err)

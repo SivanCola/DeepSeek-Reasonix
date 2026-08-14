@@ -835,6 +835,7 @@ func writeSessionEventIndex(path string, msgs []provider.Message, digest [sha256
 	if indexPath == "" {
 		return nil
 	}
+	fileutil.Crash("event-index", indexPath)
 	logInfo, err := os.Stat(store.SessionEventLog(path))
 	if err != nil {
 		if os.IsNotExist(err) {
