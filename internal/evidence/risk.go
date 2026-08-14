@@ -3,6 +3,7 @@ package evidence
 import (
 	"encoding/json"
 	pathpkg "path"
+	"slices"
 	"strings"
 )
 
@@ -338,12 +339,7 @@ func pathLooksLowRisk(path, workspaceRoot string) bool {
 }
 
 func hasRiskPathSegment(value, segment string) bool {
-	for _, part := range strings.Split(strings.Trim(value, "/"), "/") {
-		if part == segment {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(strings.Trim(value, "/"), "/"), segment)
 }
 
 func memoryOnlyMutation(name string) bool {
