@@ -158,7 +158,7 @@ func TestReadOnlyRebuildStaysEmpty(t *testing.T) {
 	}
 }
 
-func TestGoalTodosDoNotBecomeStrictCriteria(t *testing.T) {
+func TestActiveGoalTodosBecomeStrictCriteriaUntilCompleted(t *testing.T) {
 	c := Rebuild(RebuildFacts{
 		HasActiveGoal: true,
 		Todos:         []evidence.TodoItem{{Content: "finish the task", Status: "in_progress"}},
@@ -167,10 +167,162 @@ func TestGoalTodosDoNotBecomeStrictCriteria(t *testing.T) {
 			Todos: []evidence.TodoItem{{Content: "finish the task", Status: "in_progress"}},
 		}},
 	})
-	for _, o := range c.Unsatisfied() {
-		if o.Kind == ObligationCriteria {
-			t.Fatalf("goal todos must not invent strict criteria: %+v", c.Obligations)
-		}
+	if !hasKind(c.Unsatisfied(), ObligationCriteria, EnforcementStrict) {
+		t.Fatalf("active goal todo must remain a strict criterion: %+v", c.Obligations)
+	}
+	c.AbsorbReceipt(2, evidence.Receipt{
+		ToolName: "todo_write", Success: true,
+		Todos: []evidence.TodoItem{{Content: "finish the task", Status: "completed"}},
+	}, "", false, false)
+	if hasKind(c.Unsatisfied(), ObligationCriteria, EnforcementStrict) {
+		t.Fatalf("completed goal todo must satisfy the strict criterion: %+v", c.Obligations)
+	}
+}
+
+func TestTargetedVerificationDoesNotSatisfyFullVerification(t *testing.T) {
+	write := evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"internal/auth/session.go"}`), Paths: []string{"internal/auth/session.go"},
+	}
+	targeted := evidence.Receipt{
+		ToolName: "bash", Success: true, Command: "go test ./internal/auth",
+		Verification: evidence.VerificationPassed,
+	}
+	c := Rebuild(RebuildFacts{Receipts: []evidence.Receipt{write, targeted}})
+	if !hasKind(c.Unsatisfied(), ObligationFullVerify, EnforcementStrict) {
+		t.Fatalf("targeted command must not prove full verification: %+v", c.Obligations)
+	}
+	c.AbsorbReceipt(3, evidence.Receipt{
+		ToolName: "bash", Success: true, Command: "go test ./...",
+		Verification: evidence.VerificationPassed,
+	}, "", false, false)
+	if hasKind(c.Unsatisfied(), ObligationFullVerify, EnforcementStrict) {
+		t.Fatalf("project-wide command must prove full verification: %+v", c.Obligations)
+	}
+}
+
+func TestDeclaredChecksCollectivelySatisfyFullVerification(t *testing.T) {
+	write := evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"schema/user.proto"}`), Paths: []string{"schema/user.proto"},
+	}
+	first := evidence.Receipt{ToolName: "bash", Success: true, Command: "go test ./...", Verification: evidence.VerificationPassed}
+	second := evidence.Receipt{ToolName: "bash", Success: true, Command: "go vet ./...", Verification: evidence.VerificationPassed}
+	c := Rebuild(RebuildFacts{ProjectChecks: []string{first.Command, second.Command}, Receipts: []evidence.Receipt{write, first}})
+	if !hasKind(c.Unsatisfied(), ObligationFullVerify, EnforcementStrict) {
+		t.Fatalf("one of two declared checks must not prove full verification: %+v", c.Obligations)
+	}
+	c.AbsorbReceipt(3, second, "", false, false)
+	if hasKind(c.Unsatisfied(), ObligationFullVerify, EnforcementStrict) {
+		t.Fatalf("all declared checks must prove full verification: %+v", c.Obligations)
+	}
+}
+
+func TestFailedOrUnscopedDeclaredCheckDoesNotProveFullVerification(t *testing.T) {
+	write := evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"schema/user.proto"}`), Paths: []string{"schema/user.proto"},
+	}
+	failed := evidence.Receipt{
+		ToolName: "bash", Success: true, Command: "go test ./...",
+		Verification: evidence.VerificationFailed,
+	}
+	c := Rebuild(RebuildFacts{ProjectChecks: []string{failed.Command}, Receipts: []evidence.Receipt{write, failed}})
+	if c.Checks[0].Status != Failed || !hasKind(c.Unsatisfied(), ObligationFullVerify, EnforcementStrict) {
+		t.Fatalf("failed declared check must leave full verification open: checks=%+v obligations=%+v", c.Checks, c.Obligations)
+	}
+
+	targeted := evidence.Receipt{
+		ToolName: "bash", Success: true, Command: "go test ./internal/auth",
+		Verification: evidence.VerificationPassed,
+	}
+	c = Rebuild(RebuildFacts{ProjectChecks: []string{""}, Receipts: []evidence.Receipt{write, targeted}})
+	if !hasKind(c.Unsatisfied(), ObligationFullVerify, EnforcementStrict) {
+		t.Fatalf("an unscoped declared check must not let a targeted command prove full verification: %+v", c.Obligations)
+	}
+}
+
+func TestLaterFailedVerificationRevokesEarlierProof(t *testing.T) {
+	write := evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"schema/user.proto"}`), Paths: []string{"schema/user.proto"},
+	}
+	pass := evidence.Receipt{
+		ToolName: "bash", Success: true, Command: "go test ./...",
+		Verification: evidence.VerificationPassed,
+	}
+	fail := pass
+	exitCode := 1
+	fail.Verification = ""
+	fail.ExitCode = &exitCode
+	c := Rebuild(RebuildFacts{ProjectChecks: []string{pass.Command}, Receipts: []evidence.Receipt{write, pass, fail}})
+	if c.Checks[0].Status != Failed || !hasKind(c.Unsatisfied(), ObligationFullVerify, EnforcementStrict) {
+		t.Fatalf("later failed verification must revoke the earlier proof: checks=%+v obligations=%+v", c.Checks, c.Obligations)
+	}
+}
+
+func TestReviewEvidenceMustMatchKindTargetAndVerdict(t *testing.T) {
+	prodWrite := evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"internal/agent/agent.go"}`), Paths: []string{"internal/agent/agent.go"},
+	}
+	unrelatedRead := evidence.Receipt{
+		ToolName: "read_file", Success: true, Read: true,
+		Args: json.RawMessage(`{"path":"README.md"}`), Paths: []string{"README.md"},
+	}
+	targetRead := evidence.Receipt{
+		ToolName: "read_file", Success: true, Read: true,
+		Args: json.RawMessage(`{"path":"internal/agent/agent.go"}`), Paths: []string{"internal/agent/agent.go"},
+	}
+	c := Rebuild(RebuildFacts{Receipts: []evidence.Receipt{prodWrite, unrelatedRead}})
+	if !hasKind(c.Unsatisfied(), ObligationDiffReview, EnforcementRecoverable) {
+		t.Fatalf("unrelated read must not review the changed target: %+v", c.Obligations)
+	}
+	c.AbsorbReceipt(3, targetRead, "", false, false)
+	if hasKind(c.Unsatisfied(), ObligationDiffReview, EnforcementRecoverable) {
+		t.Fatalf("target read must review the changed target: %+v", c.Obligations)
+	}
+
+	statusOnly := evidence.Receipt{
+		ToolName: "bash", Success: true, Read: true, OutputBytes: 20,
+		Command: "git status --short internal/agent/agent.go", Paths: []string{"internal/agent/agent.go"},
+	}
+	contentRead := evidence.Receipt{
+		ToolName: "bash", Success: true, Read: true, OutputBytes: 20,
+		Command: "git diff -- internal/agent/agent.go", Paths: []string{"internal/agent/agent.go"},
+	}
+	c = Rebuild(RebuildFacts{Receipts: []evidence.Receipt{prodWrite, statusOnly}})
+	if !hasKind(c.Unsatisfied(), ObligationDiffReview, EnforcementRecoverable) {
+		t.Fatalf("path mention without content must not prove review: %+v", c.Obligations)
+	}
+	c.AbsorbReceipt(3, contentRead, "", false, false)
+	if hasKind(c.Unsatisfied(), ObligationDiffReview, EnforcementRecoverable) {
+		t.Fatalf("content-producing targeted diff must prove review: %+v", c.Obligations)
+	}
+
+	authWrite := evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"internal/auth/session.go"}`), Paths: []string{"internal/auth/session.go"},
+	}
+	review := evidence.Receipt{
+		ToolName: "review_report", Success: true,
+		Args: json.RawMessage(`{"kind":"review","verdict":"pass","reviewed_paths":["internal/auth/session.go"],"findings":[]}`),
+	}
+	security := review
+	security.Args = json.RawMessage(`{"kind":"security","verdict":"pass","reviewed_paths":["internal/auth/session.go"],"findings":[]}`)
+	blocked := security
+	blocked.Args = json.RawMessage(`{"kind":"security","verdict":"block","reviewed_paths":["internal/auth/session.go"],"findings":[]}`)
+	c = Rebuild(RebuildFacts{Receipts: []evidence.Receipt{authWrite, review, blocked}})
+	if !hasKind(c.Unsatisfied(), ObligationSecurityReview, EnforcementStrict) {
+		t.Fatalf("ordinary or blocking report must not prove security review: %+v", c.Obligations)
+	}
+	c.AbsorbReceipt(4, security, "", false, false)
+	if hasKind(c.Unsatisfied(), ObligationSecurityReview, EnforcementStrict) {
+		t.Fatalf("passing security report must prove security review: %+v", c.Obligations)
+	}
+	c.AbsorbReceipt(5, blocked, "", false, false)
+	if !hasKind(c.Unsatisfied(), ObligationSecurityReview, EnforcementStrict) {
+		t.Fatalf("later blocking security report must revoke the earlier proof: %+v", c.Obligations)
 	}
 }
 
@@ -220,6 +372,25 @@ func TestEarlierPassingTestDoesNotSatisfyLaterWrite(t *testing.T) {
 	c := Rebuild(RebuildFacts{Receipts: []evidence.Receipt{pass, write}})
 	if !hasKind(c.Unsatisfied(), ObligationTargetedVerify, EnforcementRecoverable) {
 		t.Fatalf("old passing test must not cover a later write: %+v", c.Unsatisfied())
+	}
+}
+
+func TestAnyLaterWorkspaceWriteInvalidatesFullVerification(t *testing.T) {
+	authWrite := evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"internal/auth/session.go"}`), Paths: []string{"internal/auth/session.go"},
+	}
+	full := evidence.Receipt{
+		ToolName: "bash", Success: true, Command: "go test ./...",
+		Verification: evidence.VerificationPassed,
+	}
+	docsWrite := evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"README.md"}`), Paths: []string{"README.md"},
+	}
+	c := Rebuild(RebuildFacts{Receipts: []evidence.Receipt{authWrite, full, docsWrite}})
+	if !hasKind(c.Unsatisfied(), ObligationFullVerify, EnforcementStrict) {
+		t.Fatalf("an unrelated later write must stale project-wide verification: %+v", c.Obligations)
 	}
 }
 

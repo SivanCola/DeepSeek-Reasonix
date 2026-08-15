@@ -2,6 +2,7 @@ package runtimepolicy
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"reasonix/internal/evidence"
@@ -104,6 +105,7 @@ func (g ContractPreconditionGuard) BeforeTool(ctx CallContext) GuardDecision {
 		return GuardDecision{Action: GuardAbstain}
 	}
 	mapping := taskcontract.MapWriter(ctx.Profile, 0, ctx.WorkspaceRoot, ctx.TestsForbidden)
+	mapping.Preconditions = cumulativeWritePreconditions(ctx, mapping)
 	if len(mapping.Preconditions) == 0 {
 		return GuardDecision{Action: GuardAbstain}
 	}
@@ -132,6 +134,53 @@ func (g ContractPreconditionGuard) BeforeTool(ctx CallContext) GuardDecision {
 }
 func (ContractPreconditionGuard) AfterTool(ResultContext) []evidence.Receipt { return nil }
 func (ContractPreconditionGuard) BeforeStop(StopContext) StopDecision        { return StopDecision{} }
+
+func cumulativeWritePreconditions(ctx CallContext, mapping taskcontract.Mapping) []taskcontract.Obligation {
+	if len(mapping.Preconditions) > 0 {
+		return mapping.Preconditions
+	}
+	current := workspaceTargetKeys(ctx.Profile.TargetKeys())
+	if ctx.Profile.Known && ctx.Profile.WorkspaceWrite && len(current) == 0 && len(ctx.PriorWriteTargets) > 0 {
+		return multiFilePreconditions(nil)
+	}
+	all := append([]evidence.TargetKey(nil), ctx.PriorWriteTargets...)
+	for _, target := range current {
+		if !slices.Contains(all, target) {
+			all = append(all, target)
+		}
+	}
+	if len(all) < 2 || !ctx.PriorProductionWrite && !mappingHasProductionWrite(mapping) {
+		return nil
+	}
+	return multiFilePreconditions(all)
+}
+
+func workspaceTargetKeys(targets []evidence.TargetKey) []evidence.TargetKey {
+	var out []evidence.TargetKey
+	for _, target := range targets {
+		key := string(target)
+		if strings.HasPrefix(key, "file:") || strings.HasPrefix(key, "dir:") {
+			out = append(out, target)
+		}
+	}
+	return out
+}
+
+func mappingHasProductionWrite(mapping taskcontract.Mapping) bool {
+	for _, obligation := range mapping.PostSuccess {
+		if obligation.Origin != taskcontract.ReasonDocsEdit {
+			return true
+		}
+	}
+	return false
+}
+
+func multiFilePreconditions(targets []evidence.TargetKey) []taskcontract.Obligation {
+	return []taskcontract.Obligation{
+		{Kind: taskcontract.ObligationTodo, Enforcement: taskcontract.EnforcementRecoverable, Origin: taskcontract.ReasonMultiFile, Targets: append([]evidence.TargetKey(nil), targets...)},
+		{Kind: taskcontract.ObligationCriteria, Enforcement: taskcontract.EnforcementRecoverable, Origin: taskcontract.ReasonMultiFile, Targets: append([]evidence.TargetKey(nil), targets...)},
+	}
+}
 
 // MutationDependencyGuard blocks later mutations after an earlier batch failure.
 type MutationDependencyGuard struct{ Blocked bool }

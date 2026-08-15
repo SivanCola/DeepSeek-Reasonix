@@ -10,6 +10,13 @@ enter the executor. The dedicated planner runs only for an explicit Plan, an
 approval boundary, or Goal start. Todos and sub-agents are model-chosen. The
 host builds verification obligations from real tool actions.
 
+The host evaluates cumulative effects, not just one tool call at a time. A
+second production target upgrades sequential edits to multi-file preconditions.
+Full verification requires every repository-declared check, or an unmistakably
+project-wide verifier when no checks are declared. Reviews are accepted only
+when their type, target coverage, and non-blocking verdict match the outstanding
+obligation.
+
 Plan, Goal, permission, sandbox, and the task contract are independent states.
 Ask / Auto / Yolo keep their public meanings. The tool catalog stays stable so
 the prompt cache stays warm. The Harness minimal preset is not a task

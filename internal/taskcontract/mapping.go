@@ -37,9 +37,22 @@ func MapWriter(profile evidence.EffectProfile, seq int, workspaceRoot string, te
 		if testsForbidden && (kind == ObligationTargetedVerify || kind == ObligationFullVerify) {
 			enf = EnforcementAdvisory
 		}
-		mapping.PostSuccess = append(mapping.PostSuccess, newObligation(kind, enf, origin, seq, targets))
+		mapping.PostSuccess = appendScopedReviewObligations(mapping.PostSuccess, kind, enf, origin, seq, targets)
 	}
 	return mapping
+}
+
+func appendScopedReviewObligations(dst []Obligation, kind ObligationKind, enf Enforcement, origin ReasonCode, seq int, targets []evidence.TargetKey) []Obligation {
+	switch kind {
+	case ObligationDiffReview, ObligationIndependentReview, ObligationSecurityReview:
+		if len(targets) > 1 {
+			for _, target := range targets {
+				dst = append(dst, newObligation(kind, enf, origin, seq, []evidence.TargetKey{target}))
+			}
+			return dst
+		}
+	}
+	return append(dst, newObligation(kind, enf, origin, seq, targets))
 }
 
 type writerClass uint8

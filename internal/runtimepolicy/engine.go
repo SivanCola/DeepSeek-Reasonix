@@ -1,6 +1,7 @@
 package runtimepolicy
 
 import (
+	"strings"
 	"sync"
 
 	"reasonix/internal/evidence"
@@ -46,6 +47,7 @@ func (e *Engine) Rebuild(facts taskcontract.RebuildFacts) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.contract = taskcontract.Rebuild(facts)
+	e.seq = len(facts.Receipts)
 }
 
 // Snapshot copies the contract for lock-free inspection.
@@ -71,6 +73,7 @@ func (e *Engine) BeforeTool(ctx CallContext) GuardDecision {
 		ctx.HasTodo = ctx.HasTodo || hasTodo(e.contract)
 		ctx.HasCriteria = ctx.HasCriteria || hasCriteria(e.contract)
 		ctx.TestsForbidden = ctx.TestsForbidden || e.constraints.ForbidTests
+		ctx.PriorWriteTargets, ctx.PriorProductionWrite = observedWorkspaceWrites(e.contract)
 	}
 	var decisions []GuardDecision
 	for _, g := range e.guards {
@@ -100,7 +103,13 @@ func (e *Engine) CommitReceipt(ctx ResultContext) {
 	if e.contract == nil {
 		e.contract = taskcontract.New("")
 	}
-	e.contract.AbsorbReceipt(ctx.Seq, ctx.Receipt, ctx.WorkspaceRoot, ctx.TestsForbidden || e.constraints.ForbidTests)
+	e.contract.AbsorbReceipt(
+		ctx.Seq,
+		ctx.Receipt,
+		ctx.WorkspaceRoot,
+		ctx.TestsForbidden || e.constraints.ForbidTests,
+		e.constraints.RequireFullVerification,
+	)
 	for _, g := range e.guards {
 		_ = g.AfterTool(ctx)
 	}
@@ -125,7 +134,7 @@ func (e *Engine) SyncReceipts(receipts []evidence.Receipt, workspaceRoot string,
 			continue
 		}
 		e.seq = seq
-		e.contract.AbsorbReceipt(seq, rec, workspaceRoot, testsForbidden)
+		e.contract.AbsorbReceipt(seq, rec, workspaceRoot, testsForbidden, e.constraints.RequireFullVerification)
 	}
 }
 
@@ -190,6 +199,44 @@ func hasCriteria(c *taskcontract.Contract) bool {
 		}
 	}
 	return false
+}
+
+func observedWorkspaceWrites(c *taskcontract.Contract) ([]evidence.TargetKey, bool) {
+	if c == nil {
+		return nil, false
+	}
+	seen := make(map[evidence.TargetKey]bool)
+	var targets []evidence.TargetKey
+	production := false
+	for _, obligation := range c.Obligations {
+		local, prod := localWriteOrigin(obligation.Origin)
+		if !local {
+			continue
+		}
+		for _, target := range obligation.Targets {
+			key := string(target)
+			if (!strings.HasPrefix(key, "file:") && !strings.HasPrefix(key, "dir:")) || seen[target] {
+				continue
+			}
+			seen[target] = true
+			targets = append(targets, target)
+		}
+		production = production || prod
+	}
+	return targets, production
+}
+
+func localWriteOrigin(origin taskcontract.ReasonCode) (local, production bool) {
+	switch origin {
+	case taskcontract.ReasonDocsEdit:
+		return true, false
+	case taskcontract.ReasonProductionEdit, taskcontract.ReasonMultiFile,
+		taskcontract.ReasonSchemaPath, taskcontract.ReasonAuthPath,
+		taskcontract.ReasonDestructive, taskcontract.ReasonOpaqueWriter:
+		return true, true
+	default:
+		return false, false
+	}
 }
 
 func cloneContract(c *taskcontract.Contract) *taskcontract.Contract {

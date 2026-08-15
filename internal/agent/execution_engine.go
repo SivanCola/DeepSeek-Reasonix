@@ -59,14 +59,15 @@ func (a *Agent) rebuildTurnContract() {
 		receipts = a.task.ledger.Receipts()
 	}
 	a.turn.engine.Rebuild(taskcontract.RebuildFacts{
-		Plan:            plan,
-		Todos:           todos,
-		ProjectChecks:   checks,
-		Receipts:        receipts,
-		TestsForbidden:  a.turn.constraints.ForbidTests,
-		WorkspaceRoot:   a.writeWorkspaceRoot,
-		HasApprovedPlan: plan != nil,
-		HasActiveGoal:   a.turn.deliveryScopeActive,
+		Plan:                    plan,
+		Todos:                   todos,
+		ProjectChecks:           checks,
+		Receipts:                receipts,
+		TestsForbidden:          a.turn.constraints.ForbidTests,
+		RequireFullVerification: a.turn.constraints.RequireFullVerification,
+		WorkspaceRoot:           a.writeWorkspaceRoot,
+		HasApprovedPlan:         plan != nil,
+		HasActiveGoal:           a.turn.deliveryScopeActive,
 	})
 }
 

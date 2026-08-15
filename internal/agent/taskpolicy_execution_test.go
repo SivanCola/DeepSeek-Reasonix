@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/evidence"
 	"reasonix/internal/provider"
 	"reasonix/internal/runtimepolicy"
+	"reasonix/internal/taskcontract"
 	"reasonix/internal/tool"
 )
 
@@ -20,6 +21,23 @@ func setTurnConstraints(a *Agent, raw string) {
 	c := runtimepolicy.ParseConstraints(runtimepolicy.StripQuotedConstraints(raw))
 	a.turn.constraints = c
 	a.turn.engine = runtimepolicy.NewEngine(c)
+}
+
+func TestRebuildTurnContractEnforcesExplicitFullVerification(t *testing.T) {
+	a := New(nil, tool.NewRegistry(), NewSession(""), Options{}, event.Discard)
+	a.resetTurnEvidence()
+	setTurnConstraints(a, "请闭环交付")
+	a.task.ledger.Record(evidence.Receipt{
+		ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+		Args: json.RawMessage(`{"path":"README.md"}`), Paths: []string{"README.md"},
+	})
+	a.rebuildTurnContract()
+	for _, obligation := range a.turn.engine.Snapshot().Unsatisfied() {
+		if obligation.Kind == taskcontract.ObligationFullVerify && obligation.Enforcement == taskcontract.EnforcementStrict {
+			return
+		}
+	}
+	t.Fatalf("Agent rebuild dropped explicit full verification: %+v", a.turn.engine.Snapshot().Obligations)
 }
 
 func TestTaskPolicyUsesStructuredCommandEffects(t *testing.T) {

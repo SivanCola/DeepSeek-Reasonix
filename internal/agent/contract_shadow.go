@@ -17,6 +17,19 @@ import (
 // are what the work agreed to, and todo titles are only a restatement of the
 // steps. Without a plan the todo list stands in, as it always did.
 func buildShadowContract(input string, receipts []evidence.Receipt, plan *plancontract.Plan, projectChecks ...instruction.VerifyCheck) *taskcontract.Contract {
+	return buildShadowContractWithPolicy(input, receipts, plan, false, false, false, "", projectChecks...)
+}
+
+func buildShadowContractWithPolicy(
+	input string,
+	receipts []evidence.Receipt,
+	plan *plancontract.Plan,
+	goalActive bool,
+	testsForbidden bool,
+	requireFullVerification bool,
+	workspaceRoot string,
+	projectChecks ...instruction.VerifyCheck,
+) *taskcontract.Contract {
 	_ = input
 	var todos []evidence.TodoItem
 	for _, r := range receipts {
@@ -36,11 +49,15 @@ func buildShadowContract(input string, receipts []evidence.Receipt, plan *planco
 		planPtr = &facts
 	}
 	return taskcontract.Rebuild(taskcontract.RebuildFacts{
-		Plan:            planPtr,
-		Todos:           todos,
-		ProjectChecks:   checks,
-		Receipts:        receipts,
-		HasApprovedPlan: plan != nil,
+		Plan:                    planPtr,
+		Todos:                   todos,
+		ProjectChecks:           checks,
+		Receipts:                receipts,
+		TestsForbidden:          testsForbidden,
+		RequireFullVerification: requireFullVerification,
+		WorkspaceRoot:           workspaceRoot,
+		HasApprovedPlan:         plan != nil,
+		HasActiveGoal:           goalActive,
 	})
 }
 
@@ -78,7 +95,16 @@ func (a *Agent) LiveContract() *taskcontract.Contract {
 	if a == nil || a.task.ledger == nil {
 		return nil
 	}
-	return buildShadowContract(a.turn.turnInput, a.task.ledger.Receipts(), a.planContractSnapshot(), a.projectChecks...)
+	return buildShadowContractWithPolicy(
+		a.turn.turnInput,
+		a.task.ledger.Receipts(),
+		a.planContractSnapshot(),
+		a.turn.deliveryScopeActive,
+		a.turn.constraints.ForbidTests,
+		a.turn.constraints.RequireFullVerification,
+		a.writeWorkspaceRoot,
+		a.projectChecks...,
+	)
 }
 
 // observeContractRound records the contract after one tool round, so a
@@ -99,7 +125,16 @@ func (a *Agent) emitTurnShadows(input string) {
 	if a.task.ledger == nil {
 		return
 	}
-	c := buildShadowContract(input, a.task.ledger.Receipts(), a.planContractSnapshot(), a.projectChecks...)
+	c := buildShadowContractWithPolicy(
+		input,
+		a.task.ledger.Receipts(),
+		a.planContractSnapshot(),
+		a.turn.deliveryScopeActive,
+		a.turn.constraints.ForbidTests,
+		a.turn.constraints.RequireFullVerification,
+		a.writeWorkspaceRoot,
+		a.projectChecks...,
+	)
 	// Prefer the live contract when present so Suppressed/Partial state is not
 	// lost in the pure replay path.
 	if live := a.LiveContract(); live != nil && (live.HasSuppressed() || len(live.Requirements) > 0 || len(live.Checks) > 0) {

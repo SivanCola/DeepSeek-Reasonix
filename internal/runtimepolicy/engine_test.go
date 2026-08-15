@@ -255,6 +255,99 @@ func TestChildMergeInterleavesWithParentStop(t *testing.T) {
 	}
 }
 
+func TestSequentialProductionWritesEscalatePreconditions(t *testing.T) {
+	e := NewEngine(Constraints{})
+	e.CommitReceipt(writeResult("internal/agent/agent.go"))
+
+	if got := e.BeforeTool(writeCall("internal/agent/run_loop.go")); got.Action != GuardDeny {
+		t.Fatalf("second production target without todo and criteria = %+v, want deny", got)
+	}
+	if got := e.BeforeTool(writeCall("internal/agent/agent.go")); got.Action == GuardDeny {
+		t.Fatalf("repeat write to the same target must not become multi-file: %+v", got)
+	}
+
+	docs := NewEngine(Constraints{})
+	docs.CommitReceipt(writeResult("README.md"))
+	if got := docs.BeforeTool(writeCall("docs/usage.md")); got.Action == GuardDeny {
+		t.Fatalf("two docs targets must remain lightweight: %+v", got)
+	}
+
+	pathless := CallContext{Profile: evidence.EffectProfile{Known: true, WorkspaceWrite: true}}
+	if got := e.BeforeTool(pathless); got.Action != GuardDeny {
+		t.Fatalf("pathless writer after a production write must establish preconditions: %+v", got)
+	}
+}
+
+func TestRequireFullVerificationSurvivesParseRebuildAndReplay(t *testing.T) {
+	constraints := ParseConstraints("请闭环交付")
+	if !constraints.RequireFullVerification {
+		t.Fatal("explicit closed-loop request must require full verification")
+	}
+	e := NewEngine(constraints)
+	e.CommitReceipt(writeResult("README.md"))
+	if !hasUnsatisfiedKind(e.Snapshot(), taskcontract.ObligationFullVerify, taskcontract.EnforcementStrict) {
+		t.Fatalf("explicit full verification constraint missing after write: %+v", e.Snapshot().Obligations)
+	}
+	e.CommitReceipt(ResultContext{Receipt: evidence.Receipt{
+		ToolName: "bash", Success: true, Command: "go test ./internal/taskcontract",
+		Verification: evidence.VerificationPassed,
+	}})
+	if !hasUnsatisfiedKind(e.Snapshot(), taskcontract.ObligationFullVerify, taskcontract.EnforcementStrict) {
+		t.Fatal("targeted verification must not clear explicit full verification")
+	}
+	e.CommitReceipt(ResultContext{Receipt: evidence.Receipt{
+		ToolName: "bash", Success: true, Command: "go test ./...",
+		Verification: evidence.VerificationPassed,
+	}})
+	if hasUnsatisfiedKind(e.Snapshot(), taskcontract.ObligationFullVerify, taskcontract.EnforcementStrict) {
+		t.Fatal("full-project verification must clear explicit full verification")
+	}
+}
+
+func TestRebuildThenSyncDoesNotReplayReceipts(t *testing.T) {
+	receipts := []evidence.Receipt{writeResult("internal/agent/agent.go").Receipt}
+	e := NewEngine(Constraints{})
+	e.Rebuild(taskcontract.RebuildFacts{Receipts: receipts})
+	if got := e.Snapshot().Epoch(); got != 1 {
+		t.Fatalf("epoch after rebuild = %d, want 1", got)
+	}
+	e.SyncReceipts(receipts, "", false)
+	if got := e.Snapshot().Epoch(); got != 1 {
+		t.Fatalf("epoch after syncing rebuilt receipts = %d, want 1", got)
+	}
+}
+
+func writeCall(path string) CallContext {
+	args := json.RawMessage(`{"path":"` + path + `"}`)
+	return CallContext{
+		ToolName: "edit_file",
+		Args:     args,
+		Profile: evidence.ClassifyEffect(evidence.EffectInput{
+			ToolName: "edit_file", Args: args, ActualPaths: []string{path},
+		}),
+	}
+}
+
+func writeResult(path string) ResultContext {
+	call := writeCall(path)
+	return ResultContext{
+		Receipt: evidence.Receipt{
+			ToolName: "edit_file", Success: true, Write: true, Mutation: true,
+			Args: call.Args, Paths: []string{path},
+		},
+		Profile: call.Profile,
+	}
+}
+
+func hasUnsatisfiedKind(c *taskcontract.Contract, kind taskcontract.ObligationKind, enforcement taskcontract.Enforcement) bool {
+	for _, obligation := range c.Unsatisfied() {
+		if obligation.Kind == kind && obligation.Enforcement == enforcement {
+			return true
+		}
+	}
+	return false
+}
+
 func authWriteCall() CallContext {
 	return CallContext{
 		ToolName: "edit_file",

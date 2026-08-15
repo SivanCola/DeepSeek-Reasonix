@@ -62,7 +62,14 @@ rewrite the cache-stable system prompt, memory prefix, or tool schemas.
 Host verification obligations are fact-driven. They come from approved plans,
 active goals, the latest todo, project checks, and actual receipts — never from
 classifying the prompt as simple, light, or complex. Subsequent related writes
-invalidate earlier verification, review, and sign-off.
+invalidate earlier targeted verification, review, and sign-off; every later
+workspace write invalidates project-wide verification. A targeted command does
+not satisfy a full-verification obligation unless it is one of the repository's
+declared checks and all declared checks have passed. Review evidence must cover
+the changed target, match the required review kind, and have a non-blocking
+verdict. Sequential writes to a second production target establish the same
+todo and acceptance-criteria preconditions as a multi-file write observed in a
+single tool call.
 
 ## Example
 

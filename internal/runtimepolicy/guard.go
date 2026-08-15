@@ -27,16 +27,18 @@ type GuardDecision struct {
 
 // CallContext is the resolved, already-identified tool call.
 type CallContext struct {
-	ToolName       string
-	Args           json.RawMessage
-	Profile        evidence.EffectProfile
-	PlanReadOnly   bool
-	Interactive    bool
-	HasTodo        bool
-	HasCriteria    bool
-	Verification   bool
-	TestsForbidden bool
-	WorkspaceRoot  string
+	ToolName             string
+	Args                 json.RawMessage
+	Profile              evidence.EffectProfile
+	PlanReadOnly         bool
+	Interactive          bool
+	HasTodo              bool
+	HasCriteria          bool
+	Verification         bool
+	TestsForbidden       bool
+	WorkspaceRoot        string
+	PriorWriteTargets    []evidence.TargetKey
+	PriorProductionWrite bool
 }
 
 // ResultContext is the frozen post-execute receipt.

@@ -295,9 +295,9 @@ func (c *Contract) Observe(r evidence.Receipt) {
 			continue
 		}
 		c.Checks[i].Evidence = append(c.Checks[i].Evidence, ref)
-		if r.Success {
+		if ref.Success {
 			c.Checks[i].Status = Satisfied
-		} else if c.Checks[i].Status != Satisfied {
+		} else {
 			c.Checks[i].Status = Failed
 		}
 	}
@@ -711,7 +711,12 @@ func refFor(epoch uint64, r evidence.Receipt) EvidenceRef {
 	case r.Mutation || r.Write:
 		kind = EvidenceMutation
 	}
-	return EvidenceRef{Kind: kind, MutationEpoch: epoch, Source: r.ToolName, Success: r.Success}
+	success := r.Success && !verificationReceiptFailed(r)
+	return EvidenceRef{Kind: kind, MutationEpoch: epoch, Source: r.ToolName, Success: success}
+}
+
+func verificationReceiptFailed(r evidence.Receipt) bool {
+	return r.Verification == evidence.VerificationFailed || r.ExitCode != nil && *r.ExitCode != 0
 }
 
 func (c *Contract) checkMatches(check Check, r evidence.Receipt, ref EvidenceRef) bool {
