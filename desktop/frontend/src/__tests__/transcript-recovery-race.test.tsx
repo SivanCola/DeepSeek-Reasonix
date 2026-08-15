@@ -77,7 +77,7 @@ const virtuosoRef = {
 };
 let recovery: ReturnType<typeof useTranscriptVirtuosoRecovery> | undefined;
 
-function Probe({ surfaceKey, revision = 0 }: { surfaceKey: string; revision?: number }) {
+function Probe({ surfaceKey, revision = 0, hold = false }: { surfaceKey: string; revision?: number; hold?: boolean }) {
   recovery = useTranscriptVirtuosoRecovery({
     surfaceKey,
     historyLayoutRevision: revision,
@@ -88,6 +88,7 @@ function Probe({ surfaceKey, revision = 0 }: { surfaceKey: string; revision?: nu
     virtuosoRef,
     readyRef,
     scrollToBottom: () => { scrollToBottomCalls += 1; },
+    holdRevisionResets: hold,
   });
   return null;
 }
@@ -212,6 +213,36 @@ const settledScrollBy = scrollByCalls;
 const settledScrollToIndex = scrollToIndexCalls;
 await flushFrames();
 check(scrollByCalls === settledScrollBy && scrollToIndexCalls === settledScrollToIndex, "restore settles on the mounted anchor within the wall-clock budget");
+
+// ── Streaming hold: revisions defer until the stream ends
+await act(async () => root.render(<Probe surfaceKey="surface-g" hold={true} />));
+await flushFrames();
+const keySurfaceG = recovery?.resetKey;
+await act(async () => root.render(<Probe surfaceKey="surface-g" revision={1} hold={true} />));
+await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await flushFrames();
+check(recovery?.resetKey === keySurfaceG, "layout revision does not rebuild while the turn is streaming");
+await act(async () => root.render(<Probe surfaceKey="surface-g" revision={1} hold={false} />));
+await flushFrames();
+check(recovery?.resetKey !== keySurfaceG && recovery?.resetKey.startsWith("surface-g:"), "the deferred rebuild runs when the stream ends");
+
+// ── Revision rebuilds coalesce within the min interval
+await act(async () => root.render(<Probe surfaceKey="surface-h" />));
+await flushFrames();
+const keySurfaceH0 = recovery?.resetKey;
+await act(async () => root.render(<Probe surfaceKey="surface-h" revision={1} />));
+await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await flushFrames();
+check(recovery?.resetKey !== keySurfaceH0 && recovery?.resetKey.startsWith("surface-h:"), "first layout revision rebuilds after the batch window");
+await act(async () => recovery?.invalidateAnchors()); // simulate the restore completing
+const keySurfaceH1 = recovery?.resetKey;
+await act(async () => root.render(<Probe surfaceKey="surface-h" revision={2} />));
+await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await flushFrames();
+check(recovery?.resetKey === keySurfaceH1, "a second revision inside the coalescing window does not rebuild again");
+await act(async () => new Promise((resolve) => setTimeout(resolve, 620)));
+await flushFrames();
+check(recovery?.resetKey !== keySurfaceH1, "the coalesced rebuild fires when the interval lapses");
 
 await act(async () => root.unmount());
 dom.window.close();

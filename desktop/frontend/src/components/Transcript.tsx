@@ -579,6 +579,7 @@ export function Transcript({
     virtuosoRef,
     readyRef: virtuosoReadyRef,
     scrollToBottom,
+    holdRevisionResets: liveSplit.liveActive,
   });
   recoveryControlRef.current = { noteUserScrollIntent, invalidateAnchors };
   const heightEstimates = useMemo(() => virtualRows.map((row) => estimateTranscriptRowSize(row)), [virtualRows]);
