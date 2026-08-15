@@ -12,7 +12,9 @@ const (
 )
 
 func normalizeLegacyOpenCodeGoInstalls(c *Config) bool {
-	return normalizeLegacyOpenCodeGoKimiK3Catalog(c) || normalizeLegacyOpenCodeGoContextWindows(c)
+	changed := normalizeLegacyOpenCodeGoKimiK3Catalog(c)
+	changed = normalizeLegacyOpenCodeGoContextWindows(c) || changed
+	return changed
 }
 
 func officialOpenCodeGoKindURL(kind, baseURL string) bool {

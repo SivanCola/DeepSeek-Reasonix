@@ -5,7 +5,42 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
+
+	"reasonix/internal/provider"
 )
+
+func TestNormalizeLegacyOpenCodeGoInstallsAppliesCatalogAndWindowsInOnePass(t *testing.T) {
+	legacy := ProviderEntry{
+		Name:          "opencode-go",
+		Kind:          "openai",
+		BaseURL:       "https://opencode.ai/zen/go/v1",
+		Models:        append([]string(nil), legacyOpenCodeGoModels...),
+		Default:       "glm-5.2",
+		ContextWindow: legacyOpenCodeGoChatWindow,
+		PresetID:      "opencode-go",
+	}
+	second := legacy
+	second.Name = "opencode-go-secondary"
+	c := &Config{Providers: []ProviderEntry{legacy, second}}
+
+	if !normalizeLegacyOpenCodeGoInstalls(c) {
+		t.Fatal("combined OpenCode Go migration did not report a change")
+	}
+	for i := range c.Providers {
+		got := c.Providers[i]
+		if !got.HasModel("kimi-k3") {
+			t.Fatalf("provider %q did not receive the Kimi K3 catalog update", got.Name)
+		}
+		for model, limits := range provider.OpenCodeGoChatModels() {
+			if window := got.ModelOverrides[model].ContextWindow; window != limits.Context {
+				t.Fatalf("provider %q model %q window = %d, want %d", got.Name, model, window, limits.Context)
+			}
+		}
+	}
+	if normalizeLegacyOpenCodeGoInstalls(c) {
+		t.Fatal("combined OpenCode Go migration was not idempotent")
+	}
+}
 
 func TestNormalizeLegacyOpenCodeGoContextWindowsMigratesOnlyUntouchedPresets(t *testing.T) {
 	legacy := ProviderEntry{

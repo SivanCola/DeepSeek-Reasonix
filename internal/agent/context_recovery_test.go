@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -10,6 +12,24 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
+
+type budgetTestTool struct{}
+
+func (budgetTestTool) Name() string        { return "budget_fixture" }
+func (budgetTestTool) Description() string { return "Budget recovery request fixture." }
+func (budgetTestTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+}
+func (budgetTestTool) ReadOnly() bool { return true }
+func (budgetTestTool) Execute(context.Context, json.RawMessage) (string, error) {
+	return "ok", nil
+}
+
+func sameProviderRequestExceptMaxTokens(a, b provider.Request) bool {
+	a.MaxTokens = 0
+	b.MaxTokens = 0
+	return reflect.DeepEqual(a, b)
+}
 
 type scriptedBudgetProvider struct {
 	mu     sync.Mutex
@@ -60,7 +80,9 @@ func newBudgetAgent(t *testing.T, p provider.Provider) *Agent {
 	t.Helper()
 	sess := NewSession("")
 	sess.Replace([]provider.Message{{Role: provider.RoleUser, Content: "continue"}})
-	return New(p, tool.NewRegistry(), sess, Options{ContextWindow: 1_048_576, CompactRatio: 2, MaxOutputTokens: 0}, event.Discard)
+	registry := tool.NewRegistry()
+	registry.Add(budgetTestTool{})
+	return New(p, registry, sess, Options{ContextWindow: 1_048_576, CompactRatio: 2, MaxOutputTokens: 0, Temperature: 0.25}, event.Discard)
 }
 
 func TestContextLimitRecoveryChangesOnlyOutputField(t *testing.T) {
@@ -72,7 +94,23 @@ func TestContextLimitRecoveryChangesOnlyOutputField(t *testing.T) {
 		errs: []error{issue8909Limit(), nil},
 	}
 	a := newBudgetAgent(t, prov)
-	got := a.streamWithSamplingRecovery(context.Background(), 1)
+	a.sess.conversation.Replace([]provider.Message{
+		{
+			Role: provider.RoleAssistant, Content: "tool preface", ReasoningContent: "provider reasoning",
+			ReasoningSignature: "reasoning-signature", ReasoningID: "reasoning-id", ReasoningStatus: "completed",
+			ToolCalls:      []provider.ToolCall{{ID: "call-1", Name: "budget_fixture", Arguments: `{"q":"status"}`, ThoughtSignature: "thought-signature"}},
+			ResponsesItems: []json.RawMessage{json.RawMessage(`{"type":"reasoning","id":"item-1"}`)},
+			ServerSearch: []provider.ServerSearchCall{{
+				ID: "search-1", Query: "context budgets",
+				Results: []provider.ServerSearchHit{{Title: "Result", URL: "https://example.test"}},
+				Raw:     json.RawMessage(`{"query":"context budgets"}`),
+			}},
+		},
+		{Role: provider.RoleTool, Name: "budget_fixture", ToolCallID: "call-1", Content: "done"},
+		{Role: provider.RoleUser, Content: "continue", Images: []string{"data:image/png;base64,AA=="}},
+	})
+	beforeMessages := a.sess.conversation.Snapshot()
+	got := a.streamWithSamplingRecovery(WithResponseFormat(context.Background(), "json_object"), 1)
 	if got.err != nil {
 		t.Fatalf("recovery failed: %v", got.err)
 	}
@@ -81,8 +119,8 @@ func TestContextLimitRecoveryChangesOnlyOutputField(t *testing.T) {
 	if len(prov.reqs) != 2 {
 		t.Fatalf("requests = %d, want 2", len(prov.reqs))
 	}
-	if requestWireDigest(prov.reqs[0]) != requestWireDigest(prov.reqs[1]) {
-		t.Fatalf("messages/tools digest changed across recovery")
+	if !sameProviderRequestExceptMaxTokens(prov.reqs[0], prov.reqs[1]) {
+		t.Fatalf("provider request changed outside MaxTokens:\nfirst=%+v\nretry=%+v", prov.reqs[0], prov.reqs[1])
 	}
 	if prov.reqs[1].MaxTokens != 229_502 {
 		t.Fatalf("retry MaxTokens = %d, want 229502", prov.reqs[1].MaxTokens)
@@ -103,8 +141,8 @@ func TestContextLimitRecoveryChangesOnlyOutputField(t *testing.T) {
 	if budget.ObservedWindow != 1_048_576 || budget.ObservedPrompt != 810_882 || budget.ObservedCompletion != 354_469 {
 		t.Fatalf("retry observations = %+v", budget)
 	}
-	if len(a.sess.conversation.Snapshot()) != 1 {
-		t.Fatalf("recovery wrote extra turns: %+v", a.sess.conversation.Snapshot())
+	if after := a.sess.conversation.Snapshot(); !reflect.DeepEqual(after, beforeMessages) {
+		t.Fatalf("recovery mutated the transcript:\nbefore=%+v\nafter=%+v", beforeMessages, after)
 	}
 }
 

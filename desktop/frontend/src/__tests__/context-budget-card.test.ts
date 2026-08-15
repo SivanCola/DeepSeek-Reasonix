@@ -1,6 +1,12 @@
 // Run: tsx src/__tests__/context-budget-card.test.ts
 
-import { contextBudgetRecoveryKey, contextBudgetSourceKey, resolveContextBudget } from "../components/ContextBudgetCard";
+import {
+  contextBudgetRecoveryKey,
+  contextBudgetSourceKey,
+  resolveContextBudget,
+  sharedContextPhysicalRemaining,
+  showsSharedContextOverflowRisk,
+} from "../components/ContextBudgetCard";
 import type { ContextInfo, ContextPanelInfo } from "../lib/types";
 
 let passed = 0;
@@ -36,6 +42,13 @@ const fromContext = resolveContextBudget({
   contextBudget: { source: "learned" },
 } as ContextInfo, null);
 eq(fromContext?.source, "learned", "context info budget is used when panel omits it");
+
+eq(sharedContextPhysicalRemaining({ windowMode: "shared", physicalRemaining: -12 }), 0, "shared remaining is clamped");
+eq(sharedContextPhysicalRemaining({ windowMode: "unknown", physicalRemaining: 99 }), undefined, "unknown provider has no asserted physical remainder");
+eq(showsSharedContextOverflowRisk({ windowMode: "shared", physicalRemaining: 10, clipped: true }), true, "shared clipping explains overflow risk");
+eq(showsSharedContextOverflowRisk({ windowMode: "shared", physicalRemaining: 0 }), true, "exhausted shared window explains overflow risk");
+eq(showsSharedContextOverflowRisk({ windowMode: "unknown", physicalRemaining: -10 }), false, "unknown provider does not claim shared-window overflow");
+eq(showsSharedContextOverflowRisk({ windowMode: "independent", physicalRemaining: -10, clipped: true }), false, "independent provider does not claim shared-window overflow");
 
 if (failed > 0) {
   process.exit(1);

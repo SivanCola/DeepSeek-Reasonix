@@ -37,6 +37,15 @@ export function contextBudgetRecoveryKey(kind?: string): "context.budgetRecovery
   }
 }
 
+export function sharedContextPhysicalRemaining(budget?: ContextBudgetInfo): number | undefined {
+  if (!budget || budget.windowMode !== "shared") return undefined;
+  return Math.max(0, budget.physicalRemaining ?? 0);
+}
+
+export function showsSharedContextOverflowRisk(budget?: ContextBudgetInfo): boolean {
+  return budget?.windowMode === "shared" && ((budget.physicalRemaining ?? 0) <= 0 || Boolean(budget.clipped));
+}
+
 export function ContextBudgetCard({
   budget,
   t,
@@ -49,9 +58,9 @@ export function ContextBudgetCard({
   }
   const prompt = budget.promptTokens ?? 0;
   const reserved = budget.effectiveOutputTokens || budget.requestedOutputTokens || budget.autoOutputTokens || 0;
-  const remaining = budget.physicalRemaining ?? 0;
+  const remaining = sharedContextPhysicalRemaining(budget);
   const recovery = contextBudgetRecoveryKey(budget.lastRecovery);
-  const overflowRisk = remaining <= 0 || Boolean(budget.clipped);
+  const overflowRisk = showsSharedContextOverflowRisk(budget);
   return (
     <section className="context-panel__section context-panel__budget">
       <div className="context-panel__section-head">
@@ -68,7 +77,7 @@ export function ContextBudgetCard({
         </div>
         <div>
           <span>{t("context.budgetPhysicalRemaining")}</span>
-          <strong>{formatTokens(Math.max(0, remaining))}</strong>
+          <strong>{remaining === undefined ? "-" : formatTokens(remaining)}</strong>
         </div>
       </div>
       <p className="context-panel__budget-source">{t("context.budgetOutputSource")}: {t(contextBudgetSourceKey(budget.source))}</p>

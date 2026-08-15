@@ -3218,7 +3218,7 @@ export const zhTW: Record<DictKey, string> = {
   "context.windowCompactThreshold": "壓縮閾值",
   "context.windowCompactHeadroom": "壓縮前餘量",
   "context.budgetTitle": "本輪上下文預算",
-  "context.budgetOutputReserve": "輸出預留",
+  "context.budgetOutputReserve": "輸出預算",
   "context.budgetPhysicalRemaining": "物理剩餘空間",
   "context.budgetOutputSource": "輸出上限來源",
   "context.budgetSourceExplicit": "顯式設定",

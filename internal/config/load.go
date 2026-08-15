@@ -1526,7 +1526,7 @@ func mergeMissingKimiK3Override(p *ProviderEntry, defaults ProviderModelOverride
 // catalog from the original editable OpenCode Go preset. A user-curated model
 // list or custom endpoint is left alone, while other provider edits (headers,
 // key env, provider-wide context) survive the additive K3 capability update.
-func normalizeLegacyOpenCodeGoKimiK3Catalog(c *Config) bool {
+func normalizeLegacyOpenCodeGoKimiK3Catalog(c *Config) (changed bool) {
 	if c == nil {
 		return false
 	}
@@ -1548,9 +1548,9 @@ func normalizeLegacyOpenCodeGoKimiK3Catalog(c *Config) bool {
 			DefaultEffort:     "max",
 			ContextWindow:     1_048_576,
 		})
-		return true
+		changed = true
 	}
-	return false
+	return changed
 }
 
 func normalizeLegacyMimoProviderCatalogs(c *Config) bool {

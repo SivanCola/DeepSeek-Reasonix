@@ -3132,7 +3132,7 @@ export const en = {
   "context.windowCompactThreshold": "Compression threshold",
   "context.windowCompactHeadroom": "Before compression",
   "context.budgetTitle": "This turn's context budget",
-  "context.budgetOutputReserve": "Output reserve",
+  "context.budgetOutputReserve": "Output budget",
   "context.budgetPhysicalRemaining": "Physical remaining",
   "context.budgetOutputSource": "Output cap source",
   "context.budgetSourceExplicit": "Explicit config",

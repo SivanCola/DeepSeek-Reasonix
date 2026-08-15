@@ -24,8 +24,9 @@ type outputBudgetState struct {
 	admission         atomic.Pointer[contextAdmission]
 }
 
-// learnedContextBudget is a session-local observation of the live window.
-// It is never persisted and dies with the Agent (model/tab rebuild).
+// learnedContextBudget is an Agent-local observation of the live provider/model
+// window. It is never persisted and dies with the Agent (model/tab rebuild),
+// but survives transcript swaps handled by SetSession.
 type learnedContextBudget struct {
 	windowTokens     int
 	completionBudget int
@@ -78,14 +79,14 @@ type requestCalibrationShape struct {
 	cjkBytes     int64
 }
 
-// resetOutputBudgetState drops what belongs to the transcript being replaced.
-// The prompt-token calibration is a property of the model's tokenizer, and a
-// model switch rebuilds the agent, so it outlives the swap: dropping it sent
-// every rebind — resume, tab switch, recovery adopt — back to the cold
-// estimate for a turn.
+// reset drops what belongs to the transcript being replaced. Prompt-token
+// calibration and the learned window are properties of the bound model/provider,
+// and a model switch rebuilds the Agent, so they outlive SetSession. Admission
+// describes one transcript's latest request and must never bleed into the next.
 func (o *outputBudgetState) reset() {
 	o.lastUsage.Store(nil)
 	o.activeReqShape.Store(nil)
+	o.admission.Store(nil)
 }
 
 func (a *Agent) setPromptTokenCalibration(promptTokens int, shape requestCalibrationShape) {
@@ -368,7 +369,8 @@ func admissionSource(userMax int, policy provider.ContextBudgetPolicy, learnedWi
 }
 
 // effectiveOutputBudget clips completion tokens at send time only; it never
-// moves compact_ratio. Exhausted windows fail locally before HTTP 400.
+// moves compact_ratio. Calibrated exhausted windows fail locally; a cold
+// estimate that differs from the provider tokenizer uses bounded 400 recovery.
 func (a *Agent) effectiveOutputBudget(req provider.Request) (int, bool, error) {
 	adm, err := a.admitOutputBudget(req)
 	if err != nil {

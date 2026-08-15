@@ -2,9 +2,6 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 
 	"reasonix/internal/event"
@@ -14,48 +11,6 @@ import (
 type contextRecoveryBudget struct {
 	budgetRetries  int
 	compactRetries int
-}
-
-func requestWireDigest(req provider.Request) string {
-	type digestCall struct {
-		ID, Name, Arguments string
-	}
-	type digestMsg struct {
-		Role, Content, Name, ToolCallID string
-		ToolCalls                       []digestCall
-	}
-	type digestSchema struct {
-		Name, Description, Parameters string
-	}
-	out := struct {
-		Messages       []digestMsg
-		Tools          []digestSchema
-		Temperature    *float64
-		EffortOverride string
-		ResponseFormat *provider.ResponseFormat
-	}{
-		Temperature:    req.Temperature,
-		EffortOverride: req.EffortOverride,
-		ResponseFormat: req.ResponseFormat,
-	}
-	for _, msg := range req.Messages {
-		item := digestMsg{Role: string(msg.Role), Content: msg.Content, Name: msg.Name, ToolCallID: msg.ToolCallID}
-		for _, call := range msg.ToolCalls {
-			item.ToolCalls = append(item.ToolCalls, digestCall{ID: call.ID, Name: call.Name, Arguments: call.Arguments})
-		}
-		out.Messages = append(out.Messages, item)
-	}
-	for _, schema := range req.Tools {
-		out.Tools = append(out.Tools, digestSchema{
-			Name: schema.Name, Description: schema.Description, Parameters: string(schema.Parameters),
-		})
-	}
-	raw, err := json.Marshal(out)
-	if err != nil {
-		return ""
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
 }
 
 func (a *Agent) recoverContextLimit(ctx context.Context, frozen samplingRequest, err error, budget *contextRecoveryBudget) (samplingRequest, bool, string) {

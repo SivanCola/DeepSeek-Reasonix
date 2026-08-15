@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -176,5 +177,24 @@ func TestForkCaptureForwardsContextBudgetPolicy(t *testing.T) {
 	got := provider.ResolveContextBudgetPolicy(a.svc.prov)
 	if got.AutoOutputTokens != 384_000 || got.WindowMode != provider.ContextWindowShared {
 		t.Fatalf("wrapped policy = %+v", got)
+	}
+}
+
+func TestFreezeProviderRequestOwnsNestedServerSearchData(t *testing.T) {
+	req := provider.Request{Messages: []provider.Message{{
+		Role: provider.RoleAssistant,
+		ServerSearch: []provider.ServerSearchCall{{
+			ID:      "search-1",
+			Results: []provider.ServerSearchHit{{Title: "original", URL: "https://example.test/original"}},
+			Raw:     json.RawMessage(`{"value":"original"}`),
+		}},
+	}}}
+	frozen := freezeProviderRequest(req)
+	req.Messages[0].ServerSearch[0].Results[0].Title = "mutated"
+	req.Messages[0].ServerSearch[0].Raw[0] = '['
+
+	got := frozen.Messages[0].ServerSearch[0]
+	if got.Results[0].Title != "original" || string(got.Raw) != `{"value":"original"}` {
+		t.Fatalf("frozen server search shared mutable data: %+v", got)
 	}
 }
