@@ -45,6 +45,8 @@ Pause policy:
 
 Goal 模式里的任务合约会随 user turn 注入 provider 可见上下文，不会改写 cache-stable system prompt、memory prefix 或 tool schema。
 
+宿主验证义务由事实驱动：来源是批准的 Plan、活跃 Goal、最新 todo、项目检查和真实回执，而不是把提示词分类成简单、轻量或复杂。后续相关写入会使旧的验证、复查和签收重新变为未满足。
+
 ## 示例
 
 ```text

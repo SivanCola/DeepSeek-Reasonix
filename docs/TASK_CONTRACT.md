@@ -59,6 +59,11 @@ after the task is complete.
 The Goal-mode task contract rides the provider-visible user turn. It does not
 rewrite the cache-stable system prompt, memory prefix, or tool schemas.
 
+Host verification obligations are fact-driven. They come from approved plans,
+active goals, the latest todo, project checks, and actual receipts — never from
+classifying the prompt as simple, light, or complex. Subsequent related writes
+invalidate earlier verification, review, and sign-off.
+
 ## Example
 
 ```text
