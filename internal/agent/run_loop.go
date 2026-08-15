@@ -355,6 +355,7 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 	// One request counter spans every body attempt; each attempt records only
 	// its delta so RequestCount equals real HTTP POSTs (no triangular growth).
 	ctx = provider.WithRequestAttemptCounter(ctx)
+	var contextRecovery contextRecoveryBudget
 
 	var billable *provider.Usage
 	var last streamedTurn
@@ -402,9 +403,21 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 		last.usage = finalizeSamplingUsage(billable, result.usage)
 
 		if result.err != nil {
+			if next, retryContext, _ := a.recoverContextLimit(ctx, frozen, result.err, &contextRecovery); retryContext {
+				if streamSink != nil {
+					streamSink.Discard()
+				}
+				a.emitStreamAttempt(attemptID, event.StreamAttemptDiscard, attempt, "context_limit", result.err)
+				frozen = next
+				attempt = 0
+				continue
+			}
 			retry, terminal := a.handleSamplingError(ctx, attemptID, attempt, streamSink, &frozen, result, last, billable)
 			if retry {
 				continue
+			}
+			if provider.AsContextLimitError(result.err) != nil {
+				a.setLastRecovery(contextRecoveryFailed)
 			}
 			return terminal
 		}
