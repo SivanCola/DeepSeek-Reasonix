@@ -425,10 +425,11 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 		// prefix does not make a tool turn replayable.
 		issue := a.reasoningReplayIssue(result)
 		missing, shouldRetry := false, false
-		if issue == ReasoningReplayMissing {
+		switch issue {
+		case ReasoningReplayMissing:
 			missing = true
 			_, shouldRetry = a.observeMissingAssistantReasoning(result.assistantMessage(), result.reasoningComplete)
-		} else if issue == "" {
+		case "":
 			// Healthy replay-required turns advance the persisted anti-flapping
 			// streak and eventually re-arm recovery for a future regression.
 			a.observeMissingAssistantReasoning(result.assistantMessage(), result.reasoningComplete)
@@ -466,26 +467,7 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 					return terminal
 				}
 				streamSink.Discard()
-				a.storeLatestRequestUsage(retry.usage)
-				retry.usage = finalizeSamplingUsage(billable, retry.usage)
-				retryIssue := a.reasoningReplayIssue(retry)
-				if retryIssue != "" {
-					if retryIssue == ReasoningReplayMissing {
-						a.observeMissingAssistantReasoning(retry.assistantMessage(), retry.reasoningComplete)
-					} else {
-						event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryReasoningOverflowDetected})
-					}
-					event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningDetected})
-					event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
-					retry = a.finishUnreplayableReasoning(retry, retrySink, retryIssue)
-				} else if len(retry.calls) == 0 && len(retry.serverSearch) == 0 {
-					retrySink.Flush()
-					event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetryReplaced})
-				} else {
-					a.observeMissingAssistantReasoning(retry.assistantMessage(), retry.reasoningComplete)
-					retrySink.Flush()
-					event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetryRecovered})
-				}
+				retry = a.finishReasoningReplayRetry(retry, retrySink, billable)
 				a.emitReasoningReplayAttemptOutcome(attemptID, attempt, retry.err)
 				return retry
 			}
@@ -505,66 +487,6 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 		return result
 	}
 	return last
-}
-
-func (a *Agent) emitReasoningReplayAttemptOutcome(id string, attempt int, err error) {
-	if err != nil {
-		a.emitStreamAttempt(id, event.StreamAttemptDiscard, attempt, "reasoning_replay", err)
-		return
-	}
-	a.emitStreamAttempt(id, event.StreamAttemptCommit, attempt, "", nil)
-}
-
-func (a *Agent) reasoningReplayIssue(result streamedTurn) ReasoningReplayFailure {
-	if !provider.RequiresAssistantReasoningReplay(a.svc.prov, result.assistantMessage()) {
-		return ""
-	}
-	if !result.reasoningComplete {
-		return ReasoningReplayOverflow
-	}
-	if strings.TrimSpace(result.reasoning) == "" {
-		return ReasoningReplayMissing
-	}
-	return ""
-}
-
-func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredStreamSink, issue ReasoningReplayFailure) streamedTurn {
-	if issue == "" {
-		sink.Flush()
-		return result
-	}
-	if len(result.calls) > 0 && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
-		sink.Discard()
-		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryClientToolRejected})
-		result.err = &ReasoningReplayError{Kind: issue}
-		return result
-	}
-	if len(result.serverSearch) > 0 && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
-		if strings.TrimSpace(result.text) == "" {
-			sink.Discard()
-			result.err = &ReasoningReplayError{Kind: issue}
-			return result
-		}
-		// Preserve the answer and search cards locally. The provider projection
-		// removes these unreplayable search blocks on later requests.
-		result.reasoning = ""
-		result.signature = ""
-		result.reasoningID = ""
-		result.reasoningStatus = ""
-		result.reasoningComplete = true
-		sink.Flush()
-		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryServerSearchSalvaged})
-		return result
-	}
-	if provider.RequiresReasoningRoundTrip(a.svc.prov) && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
-		sink.Discard()
-		result.err = &ReasoningReplayError{Kind: issue}
-		return result
-	}
-	// OpenAI-style DeepSeek protocols deliberately serialize an empty
-	// reasoning_content field as their final compatibility fallback.
-	sink.Flush()
-	return result
 }
 
 func (a *Agent) emitStreamAttempt(id string, action event.StreamAttemptAction, attempt int, reason string, err error) {

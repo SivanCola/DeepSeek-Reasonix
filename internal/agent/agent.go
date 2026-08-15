@@ -1752,9 +1752,8 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 	collect := func(stored string, err error) streamedTurn {
 		return streamedTurn{
 			text: text.String(), reasoning: stored, signature: signature,
-			reasoningID: reasoningID, reasoningStatus: reasoningStatus,
-			reasoningComplete: reasoningComplete,
-			calls:             calls, responsesItems: responsesItems, serverSearch: search.calls, usage: usage,
+			reasoningID: reasoningID, reasoningStatus: reasoningStatus, reasoningComplete: reasoningComplete,
+			calls: calls, responsesItems: responsesItems, serverSearch: search.calls, usage: usage,
 			partialToolStarted: partialToolStarted, partialCalls: partialCalls,
 			maxArgChars: maxArgChars, err: err,
 		}
@@ -1769,9 +1768,7 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 			}
 		}
 		stored = display
-		providerBound := signature != "" || reasoningID != "" || reasoningStatus != ""
-		message := provider.Message{Role: provider.RoleAssistant, ToolCalls: calls, ServerSearch: search.calls}
-		if providerBound || provider.RequiresAssistantReasoningReplay(a.svc.prov, message) {
+		if a.preserveRawReasoning(signature, reasoningID, reasoningStatus, calls, search.calls) {
 			stored = original
 		}
 		return stored, display
@@ -1854,11 +1851,7 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 			// Bound stored hidden reasoning only. Do not cancel the provider
 			// stream: official DeepSeek bills this output and still needs to
 			// emit the visible answer or tool calls.
-			if a.reasoningByteLimit > 0 && reasoning.Len() > a.reasoningByteLimit {
-				reasoningComplete = false
-				reasoning.Reset()
-				reasoning.WriteString(snapToRuneBoundary(chunk.Text, 0, min(len(chunk.Text), a.reasoningByteLimit)))
-			}
+			reasoningComplete = boundReasoningReplay(&reasoning, chunk.Text, a.reasoningByteLimit, reasoningComplete)
 		case provider.ChunkText:
 			text.WriteString(chunk.Text)
 			sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text})
@@ -1927,6 +1920,15 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 			return collect(stored, chunk.Err)
 		}
 	}
+}
+
+func boundReasoningReplay(reasoning *strings.Builder, latest string, byteLimit int, complete bool) bool {
+	if byteLimit <= 0 || reasoning.Len() <= byteLimit {
+		return complete
+	}
+	reasoning.Reset()
+	reasoning.WriteString(snapToRuneBoundary(latest, 0, min(len(latest), byteLimit)))
+	return false
 }
 
 func bestEffortStreamUsage(current *provider.Usage, textBytes, reasoningBytes int, finishReason string) *provider.Usage {

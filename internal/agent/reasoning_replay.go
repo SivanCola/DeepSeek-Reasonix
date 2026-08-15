@@ -1,11 +1,106 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
+
+func (a *Agent) preserveRawReasoning(signature, reasoningID, reasoningStatus string, calls []provider.ToolCall, searches []provider.ServerSearchCall) bool {
+	if signature != "" || reasoningID != "" || reasoningStatus != "" {
+		return true
+	}
+	return provider.RequiresAssistantReasoningReplay(a.svc.prov, provider.Message{
+		Role: provider.RoleAssistant, ToolCalls: calls, ServerSearch: searches,
+	})
+}
+
+func (a *Agent) emitReasoningReplayAttemptOutcome(id string, attempt int, err error) {
+	if err != nil {
+		a.emitStreamAttempt(id, event.StreamAttemptDiscard, attempt, "reasoning_replay", err)
+		return
+	}
+	a.emitStreamAttempt(id, event.StreamAttemptCommit, attempt, "", nil)
+}
+
+func (a *Agent) reasoningReplayIssue(result streamedTurn) ReasoningReplayFailure {
+	if !provider.RequiresAssistantReasoningReplay(a.svc.prov, result.assistantMessage()) {
+		return ""
+	}
+	if !result.reasoningComplete {
+		return ReasoningReplayOverflow
+	}
+	if strings.TrimSpace(result.reasoning) == "" {
+		return ReasoningReplayMissing
+	}
+	return ""
+}
+
+func (a *Agent) finishReasoningReplayRetry(retry streamedTurn, sink *deferredStreamSink, billable *provider.Usage) streamedTurn {
+	a.storeLatestRequestUsage(retry.usage)
+	retry.usage = finalizeSamplingUsage(billable, retry.usage)
+	issue := a.reasoningReplayIssue(retry)
+	if issue != "" {
+		if issue == ReasoningReplayMissing {
+			a.observeMissingAssistantReasoning(retry.assistantMessage(), retry.reasoningComplete)
+		} else {
+			event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryReasoningOverflowDetected})
+		}
+		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningDetected})
+		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
+		return a.finishUnreplayableReasoning(retry, sink, issue)
+	}
+	if len(retry.calls) == 0 && len(retry.serverSearch) == 0 {
+		sink.Flush()
+		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetryReplaced})
+		return retry
+	}
+	a.observeMissingAssistantReasoning(retry.assistantMessage(), retry.reasoningComplete)
+	sink.Flush()
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetryRecovered})
+	return retry
+}
+
+func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredStreamSink, issue ReasoningReplayFailure) streamedTurn {
+	if issue == "" {
+		sink.Flush()
+		return result
+	}
+	if len(result.calls) > 0 && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+		sink.Discard()
+		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryClientToolRejected})
+		result.err = &ReasoningReplayError{Kind: issue}
+		return result
+	}
+	if len(result.serverSearch) > 0 && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+		if strings.TrimSpace(result.text) == "" {
+			sink.Discard()
+			result.err = &ReasoningReplayError{Kind: issue}
+			return result
+		}
+		// Preserve the answer and search cards locally. The provider projection
+		// removes these unreplayable search blocks on later requests.
+		result.reasoning = ""
+		result.signature = ""
+		result.reasoningID = ""
+		result.reasoningStatus = ""
+		result.reasoningComplete = true
+		sink.Flush()
+		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryServerSearchSalvaged})
+		return result
+	}
+	if provider.RequiresReasoningRoundTrip(a.svc.prov) && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+		sink.Discard()
+		result.err = &ReasoningReplayError{Kind: issue}
+		return result
+	}
+	// OpenAI-style DeepSeek protocols deliberately serialize an empty
+	// reasoning_content field as their final compatibility fallback.
+	sink.Flush()
+	return result
+}
 
 // CanReplayAssistantMessage lets the controller apply the provider-specific
 // half of interrupted-turn validation without exposing the provider itself.
@@ -127,10 +222,8 @@ func (a *Agent) ensureUnreplayableHistoryRecovery() {
 }
 
 func appendUniqueRecoveryName(dst []string, name string) []string {
-	for _, existing := range dst {
-		if existing == name {
-			return dst
-		}
+	if slices.Contains(dst, name) {
+		return dst
 	}
 	return append(dst, name)
 }
