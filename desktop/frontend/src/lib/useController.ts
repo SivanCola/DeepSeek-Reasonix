@@ -26,7 +26,7 @@ import { sameStringList, sameTodoList } from "./todoVisibility";
 import { useStaleTurnWatchdog } from "./useStaleTurnWatchdog";
 import type { SearchSource } from "./searchSources";
 import { attachWebSearchOutput, historySearchAndAnswer } from "./searchTranscript";
-import { fileDiffFromWire, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
+import { fileDiffFromWire, parseTodos, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
 import { modeHasAutoApproveTools, normalizeMode, normalizeToolApprovalMode } from "./types";
 import type {
   BalanceInfo,
@@ -235,7 +235,7 @@ export type Item =
   | { kind: "user"; id: string; submissionId?: string; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; memoryCitations?: MemoryCitation[]; searchSources?: SearchSource[] }
   | { kind: "phase"; id: string; text: string }
-  | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string; title?: string; variant?: "delivery" | "completion"; action?: "continue_delivery" | "open_changes"; decisionReceipt?: WireDecisionReceipt }
+  | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string; title?: string; variant?: "delivery" | "completion"; action?: "continue_delivery" | "open_changes"; decisionReceipt?: WireDecisionReceipt; missing?: string[] }
   | {
       kind: "compaction";
       id: string;
@@ -867,6 +867,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           text: t("notice.deliveryIncompleteBody"),
           detail: deliveryReadinessDetail(m.readiness),
           action: "continue_delivery",
+          missing: readinessMissingIds(m.readiness),
         });
         seq++;
         continue;
@@ -1819,9 +1820,15 @@ function applyEvent(s: State, e: WireEvent): State {
         if (it.kind === "tool" && it.status === "running") return { ...it, status: "stopped" as const };
         return it;
       });
-      let items: Item[] = s.deliveryRecoveryActive && !e.err
-        ? finalized.filter((item) => item.kind !== "notice" || item.variant !== "delivery")
-        : finalized;
+      // A todo-only readiness card is retracted once the turn's own items
+      // show an all-complete todo list (the panel is already green).
+      const todoGapResolved = !e.err && latestTodosAllComplete(finalized);
+      let items: Item[] = finalized;
+      if (s.deliveryRecoveryActive && !e.err) {
+        items = finalized.filter((item) => item.kind !== "notice" || item.variant !== "delivery");
+      } else if (todoGapResolved) {
+        items = finalized.filter((item) => item.kind !== "notice" || item.variant !== "delivery" || !todoOnlyMissing(item.missing));
+      }
       if (e.outcome === "final_readiness") {
         const previous = items.map((item) => item.kind === "notice" && item.variant === "delivery"
           ? { ...item, action: undefined }
@@ -1835,6 +1842,7 @@ function applyEvent(s: State, e: WireEvent): State {
           text: t("notice.deliveryIncompleteBody"),
           detail: deliveryReadinessDetail(e.readiness, e.err),
           action: "continue_delivery",
+          missing: readinessMissingIds(e.readiness),
         }];
       } else if (e.outcome === "recovery_paused") {
         // Informational pause — not a send failure. Composer is immediately free.
@@ -2305,6 +2313,27 @@ const deliveryRequirementKeys: Record<string, DictKey> = {
   mutation: "notice.deliveryRequirementMutation",
   capability: "notice.deliveryRequirementCapability",
 };
+
+export function readinessMissingIds(readiness: WireFinalReadiness | undefined): string[] {
+  return asArray(readiness?.missing).map((id) => String(id));
+}
+
+// A delivery notice whose only gap was unfinished todos becomes stale the
+// moment the list shows every item completed.
+function todoOnlyMissing(missing: string[] | undefined): boolean {
+  return Array.isArray(missing) && missing.length > 0 && missing.every((id) => id === "todo");
+}
+
+function latestTodosAllComplete(items: Item[]): boolean {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === "tool" && item.name === "todo_write" && !item.parentId && item.status === "done" && !item.error) {
+      const todos = parseTodos(item.args);
+      return todos.length > 0 && todos.every((todo) => String(todo.status ?? "").trim() === "completed");
+    }
+  }
+  return false;
+}
 
 export function deliveryReadinessDetail(readiness: WireFinalReadiness | undefined, fallback = ""): string {
   const labels = asArray(readiness?.missing)

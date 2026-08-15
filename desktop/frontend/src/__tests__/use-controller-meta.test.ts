@@ -706,5 +706,32 @@ eq(sameMeta(meta({ collaborationMode: "normal" }), meta({ collaborationMode: "pl
   eq(s.historyOlderLoading, false, "older history clears loading");
 }
 
+// ── Todo-only readiness cards retract once the list shows all complete ──────
+{
+  const args = JSON.stringify({ todos: [{ content: "Write verification notes", status: "completed" }] });
+  let s = reducer(initialState, { type: "event", e: { kind: "turn_done", outcome: "final_readiness", readiness: { missing: ["todo"], attempts: 1 } } });
+  ok(s.items.some((item) => item.kind === "notice" && item.variant === "delivery"), "todo-only readiness card shows at the gated turn");
+  s = reducer(s, { type: "event", e: { kind: "tool_dispatch", tool: { id: "tw1", name: "todo_write", args, readOnly: true } } });
+  s = reducer(s, { type: "event", e: { kind: "tool_result", tool: { id: "tw1", name: "todo_write", args, readOnly: true, output: "task list updated" } } });
+  s = reducer(s, { type: "event", e: { kind: "turn_done" } });
+  ok(!s.items.some((item) => item.kind === "notice" && item.variant === "delivery"), "an all-complete todo list retracts the stale todo-only card");
+}
+{
+  const args = JSON.stringify({ todos: [{ content: "Write verification notes", status: "completed" }] });
+  let s = reducer(initialState, { type: "event", e: { kind: "turn_done", outcome: "final_readiness", readiness: { missing: ["todo", "verification"], attempts: 1 } } });
+  s = reducer(s, { type: "event", e: { kind: "tool_dispatch", tool: { id: "tw2", name: "todo_write", args, readOnly: true } } });
+  s = reducer(s, { type: "event", e: { kind: "tool_result", tool: { id: "tw2", name: "todo_write", args, readOnly: true, output: "task list updated" } } });
+  s = reducer(s, { type: "event", e: { kind: "turn_done" } });
+  ok(s.items.some((item) => item.kind === "notice" && item.variant === "delivery"), "a card listing non-todo gaps survives todo completion");
+}
+{
+  const args = JSON.stringify({ todos: [{ content: "Write verification notes", status: "in_progress" }] });
+  let s = reducer(initialState, { type: "event", e: { kind: "turn_done", outcome: "final_readiness", readiness: { missing: ["todo"], attempts: 1 } } });
+  s = reducer(s, { type: "event", e: { kind: "tool_dispatch", tool: { id: "tw3", name: "todo_write", args, readOnly: true } } });
+  s = reducer(s, { type: "event", e: { kind: "tool_result", tool: { id: "tw3", name: "todo_write", args, readOnly: true, output: "task list updated" } } });
+  s = reducer(s, { type: "event", e: { kind: "turn_done" } });
+  ok(s.items.some((item) => item.kind === "notice" && item.variant === "delivery"), "an incomplete todo list keeps the todo-only card");
+}
+
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);
