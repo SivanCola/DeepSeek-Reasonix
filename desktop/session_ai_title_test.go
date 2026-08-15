@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/control"
@@ -116,6 +117,72 @@ func TestAIRenameSessionRejectsStaleProviderCompletion(t *testing.T) {
 		if ok && meta.CustomTitle != "" {
 			t.Fatalf("stale completion renamed %s to %q", path, meta.CustomTitle)
 		}
+	}
+}
+
+func TestAIRenameSessionRejectsCompletionAfterManualRename(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := t.TempDir()
+	path := agent.NewSessionPath(dir, "manual-wins")
+	writeHistoryTestSession(t, path, "original conversation")
+	started := make(chan struct{})
+	chunks := make(chan provider.Chunk, 2)
+	ctrl := newDesktopSessionTitleController(dir, path, &desktopSessionTitleProvider{started: started, chunks: chunks})
+	app := NewApp()
+	installDesktopSessionTitleTab(app, ctrl, "topic-manual", path)
+	defer ctrl.Close()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := app.AIRenameSession("topic-manual")
+		result <- err
+	}()
+	<-started
+	if err := app.RenameSession(path, "Newer manual title"); err != nil {
+		t.Fatal(err)
+	}
+	chunks <- provider.Chunk{Type: provider.ChunkText, Text: "Stale AI title"}
+	chunks <- provider.Chunk{Type: provider.ChunkDone}
+	close(chunks)
+
+	if err := <-result; err == nil || !strings.Contains(err.Error(), "title changed") {
+		t.Fatalf("stale AI completion error = %v", err)
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok || meta.CustomTitle != "Newer manual title" {
+		t.Fatalf("manual title was overwritten: meta=%+v ok=%v err=%v", meta, ok, err)
+	}
+}
+
+func TestSessionCustomTitleSurvivesTopicMetadataSync(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := t.TempDir()
+	topicID := "metadata-title"
+	path := writeTopicSessionWithPrompt(t, dir, "metadata-title.jsonl", topicID, "Original topic", "", "first prompt", time.Now())
+	if err := ensureTopicIndexed("global", "", topicID, "Original topic", topicTitleSourceManual); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	installSessionCatalogForTest(t, app, dir, "global", "")
+	catalog := app.sessionCatalog.Load()
+	if err := app.syncSessionCatalogMetadata(context.Background(), catalog); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.RenameSession(path, "AI session title"); err != nil {
+		t.Fatal(err)
+	}
+	if err := catalog.IndexSessionPath(context.Background(), sessioncatalog.DirectoryTarget{Path: dir, Scope: "global"}, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.syncSessionCatalogMetadata(context.Background(), catalog); err != nil {
+		t.Fatal(err)
+	}
+	page, err := app.ListProjectTopics(ProjectTopicPageRequest{Scope: "global", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Label != "AI session title" {
+		t.Fatalf("metadata sync replaced custom title: %+v", page.Items)
 	}
 }
 

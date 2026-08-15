@@ -3484,6 +3484,17 @@ func (a *App) renameSessionInDir(dir, path, title string) error {
 	return a.onSessionTitleChanged(dir, sessionPath, title)
 }
 
+func (a *App) renameSessionInDirIfTitleUnchanged(dir, path, expectedTitle, title string) error {
+	sessionPath, _, err := validateSessionPath(dir, path)
+	if err != nil {
+		return err
+	}
+	if err := agent.RenameSessionIfTitleUnchanged(sessionPath, expectedTitle, title); err != nil {
+		return err
+	}
+	return a.onSessionTitleChanged(dir, sessionPath, title)
+}
+
 // onSessionTitleChanged projects the canonical BranchMeta custom title into
 // the legacy desktop map and live catalog/UI indexes. The session directory is
 // supplied by the owning boot so background tabs never route through whichever

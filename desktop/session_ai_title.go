@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -38,6 +39,12 @@ func (a *App) AIRenameSession(topicID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("AI rename session: %w", err)
 	}
+	expectedTitle := ""
+	if meta, ok, loadErr := agent.LoadBranchMeta(validated); loadErr != nil {
+		return "", fmt.Errorf("AI rename session: read current title: %w", loadErr)
+	} else if ok {
+		expectedTitle = meta.CustomTitle
+	}
 	users := topicTitleUserTurnsFromSession(validated)
 	if len(users) == 0 {
 		return "", fmt.Errorf("session has no user messages to analyze")
@@ -49,7 +56,10 @@ func (a *App) AIRenameSession(topicID string) (string, error) {
 	if !a.topicControllerOwnsSession(topicID, ctrl, validated) {
 		return "", fmt.Errorf("session changed while AI rename was running; try again")
 	}
-	if err := a.renameSessionInDir(sessionDir, validated, title); err != nil {
+	if err := a.renameSessionInDirIfTitleUnchanged(sessionDir, validated, expectedTitle, title); err != nil {
+		if errors.Is(err, agent.ErrSessionTitleChanged) {
+			return "", fmt.Errorf("session title changed while AI rename was running; try again")
+		}
 		return "", err
 	}
 	return title, nil
