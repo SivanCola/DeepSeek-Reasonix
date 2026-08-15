@@ -23,7 +23,8 @@ type toolCallReasoningRequiredProvider struct {
 	*testutil.MockProvider
 }
 
-func (p toolCallReasoningRequiredProvider) RequiresToolCallReasoning() bool { return true }
+func (p toolCallReasoningRequiredProvider) RequiresToolCallReasoning() bool    { return true }
+func (p toolCallReasoningRequiredProvider) AllowsEmptyReasoningFallback() bool { return true }
 
 type configuredToolCallReasoningProvider struct {
 	*testutil.MockProvider
@@ -39,6 +40,7 @@ func (p *cancelMissingReasoningRetryProvider) Name() string { return "deepseek-c
 func (p *cancelMissingReasoningRetryProvider) RequiresToolCallReasoning() bool {
 	return true
 }
+func (p *cancelMissingReasoningRetryProvider) AllowsEmptyReasoningFallback() bool { return true }
 
 func (p *cancelMissingReasoningRetryProvider) Stream(ctx context.Context, _ provider.Request) (<-chan provider.Chunk, error) {
 	call := p.calls.Add(1)
@@ -73,7 +75,8 @@ func (p *cancelMissingReasoningRetryProvider) Stream(ctx context.Context, _ prov
 	return ch, nil
 }
 
-func (p configuredToolCallReasoningProvider) RequiresToolCallReasoning() bool { return true }
+func (p configuredToolCallReasoningProvider) RequiresToolCallReasoning() bool    { return true }
+func (p configuredToolCallReasoningProvider) AllowsEmptyReasoningFallback() bool { return true }
 func (p configuredToolCallReasoningProvider) MissingToolCallReasoningWarningIdentity() string {
 	return p.identity
 }

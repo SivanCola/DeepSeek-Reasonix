@@ -53,10 +53,6 @@ const maxExecutorHandoffNudges = 1
 // It does not cancel generation; official DeepSeek may emit up to 384K tokens.
 const defaultReasoningByteLimit = 8 << 20
 
-const finishReasonClientReasoningLimit = "client_reasoning_limit"
-
-var errReasoningByteLimitExceeded = errors.New("reasoning output exceeded client byte limit")
-
 // DeliveryRuntimeMarker is the delivery-mode contract block appended to user
 // turns (withTurnPreferences). Exported as the single source of truth for the
 // byte-exact suffix strip in preview derivation and for cross-package tests;
@@ -1747,6 +1743,7 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 	search := newSearchTurn()
 	var partialCalls []provider.ToolCall
 	var usage *provider.Usage
+	reasoningComplete := true
 	var partialToolStarted bool
 	var maxArgChars int
 	var lastArgProgress time.Time
@@ -1756,7 +1753,8 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 		return streamedTurn{
 			text: text.String(), reasoning: stored, signature: signature,
 			reasoningID: reasoningID, reasoningStatus: reasoningStatus,
-			calls: calls, responsesItems: responsesItems, serverSearch: search.calls, usage: usage,
+			reasoningComplete: reasoningComplete,
+			calls:             calls, responsesItems: responsesItems, serverSearch: search.calls, usage: usage,
 			partialToolStarted: partialToolStarted, partialCalls: partialCalls,
 			maxArgChars: maxArgChars, err: err,
 		}
@@ -1772,7 +1770,8 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 		}
 		stored = display
 		providerBound := signature != "" || reasoningID != "" || reasoningStatus != ""
-		if providerBound || provider.RequiresReasoningRoundTrip(a.svc.prov) || (len(calls) > 0 && provider.RequiresToolCallReasoning(a.svc.prov)) {
+		message := provider.Message{Role: provider.RoleAssistant, ToolCalls: calls, ServerSearch: search.calls}
+		if providerBound || provider.RequiresAssistantReasoningReplay(a.svc.prov, message) {
 			stored = original
 		}
 		return stored, display
@@ -1828,7 +1827,8 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 				return streamedTurn{
 					text: finalText, reasoning: finalReasoning, signature: signature,
 					reasoningID: reasoningID, reasoningStatus: reasoningStatus,
-					calls: calls, responsesItems: responsesItems, serverSearch: search.calls, usage: usage,
+					reasoningComplete: reasoningComplete,
+					calls:             calls, responsesItems: responsesItems, serverSearch: search.calls, usage: usage,
 					partialCalls: partialCalls, maxArgChars: maxArgChars,
 				}
 			}
@@ -1855,6 +1855,7 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 			// stream: official DeepSeek bills this output and still needs to
 			// emit the visible answer or tool calls.
 			if a.reasoningByteLimit > 0 && reasoning.Len() > a.reasoningByteLimit {
+				reasoningComplete = false
 				reasoning.Reset()
 				reasoning.WriteString(snapToRuneBoundary(chunk.Text, 0, min(len(chunk.Text), a.reasoningByteLimit)))
 			}
@@ -2805,8 +2806,6 @@ func finishReasonMessage(u *provider.Usage) (string, bool) {
 	switch u.FinishReason {
 	case "length":
 		return "response truncated: hit max output tokens", true
-	case finishReasonClientReasoningLimit:
-		return "response stopped: hit the client reasoning safety limit", true
 	case "content_filter":
 		return "response blocked by content filter", true
 	case "repetition_truncation":
