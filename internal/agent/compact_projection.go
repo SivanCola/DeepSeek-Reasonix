@@ -75,7 +75,7 @@ func (a *Agent) snapshotExplicitCompression() explicitCompressionSnapshot {
 	state := a.sess.compactionState
 	a.sess.compactionMu.Unlock()
 	visible := canonical
-	if projectionValid(state, canonical, version, cacheKey) {
+	if projectionValid(state, canonical, cacheKey) {
 		if projected := modelVisibleFromProjection(state.Projection, canonical); len(projected) > 0 {
 			visible = projected
 		}
@@ -505,7 +505,7 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 // canonical. The second return reports whether the projection was used, so
 // fold boundaries can be translated back to canonical indices.
 func (a *Agent) visibleInputForFold(state CompactionState, canonical []provider.Message, transcriptVersion uint64) ([]provider.Message, bool) {
-	if projectionValid(state, canonical, transcriptVersion, a.currentPromptCacheKey()) {
+	if projectionValid(state, canonical, a.currentPromptCacheKey()) {
 		if projected := modelVisibleFromProjection(state.Projection, canonical); len(projected) > 0 {
 			return projected, true
 		}
