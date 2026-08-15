@@ -48,6 +48,43 @@ globalThis.cancelAnimationFrame = cancelFrame;
 dom.window.requestAnimationFrame = requestFrame;
 dom.window.cancelAnimationFrame = cancelFrame;
 
+let clockNow = 10_000;
+let nextTimer = 1;
+const timers = new Map<number, { dueAt: number; run: () => void }>();
+const originalDateNow = Date.now;
+const originalSetTimeout = dom.window.setTimeout;
+const originalClearTimeout = dom.window.clearTimeout;
+Date.now = () => clockNow;
+dom.window.setTimeout = ((handler: TimerHandler, timeout = 0, ...args: unknown[]) => {
+  const id = nextTimer;
+  nextTimer += 1;
+  const run = typeof handler === "function"
+    ? () => handler(...args)
+    : () => { throw new Error("string timer handlers are unsupported in this test"); };
+  timers.set(id, { dueAt: clockNow + Math.max(0, timeout), run });
+  return id;
+}) as typeof dom.window.setTimeout;
+dom.window.clearTimeout = ((id: number | undefined) => {
+  if (id !== undefined) timers.delete(id);
+}) as typeof dom.window.clearTimeout;
+
+async function advanceClock(milliseconds: number) {
+  await act(async () => {
+    const target = clockNow + milliseconds;
+    while (true) {
+      const next = [...timers.entries()]
+        .filter(([, timer]) => timer.dueAt <= target)
+        .sort(([leftID, left], [rightID, right]) => left.dueAt - right.dueAt || leftID - rightID)[0];
+      if (!next) break;
+      const [id, timer] = next;
+      timers.delete(id);
+      clockNow = timer.dueAt;
+      timer.run();
+    }
+    clockNow = target;
+  });
+}
+
 async function flushFrames() {
   const pending = [...frames.entries()];
   frames.clear();
@@ -126,7 +163,7 @@ check(scrollToBottomCalls === 1, "a reset without an anchor settles at the botto
 
 // ── Blank-recovery cooldown: revision bump rebuilds, immediate re-blank is blocked
 await act(async () => root.render(<Probe surfaceKey="surface-c" revision={1} />));
-await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await advanceClock(60);
 await flushFrames();
 check(recovery?.resetKey === "surface-c:3", "layout revision rebuilds the size tree after the batch window");
 await act(async () => recovery?.handleItemsRendered(1));
@@ -150,10 +187,10 @@ await flushFrames();
 const keyBeforeIntent = recovery?.resetKey;
 await act(async () => recovery?.noteUserScrollIntent());
 await act(async () => root.render(<Probe surfaceKey="surface-d" revision={1} />));
-await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await advanceClock(60);
 await flushFrames();
 check(recovery?.resetKey === keyBeforeIntent, "layout revision does not rebuild the size tree mid-scroll");
-await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+await advanceClock(350);
 await flushFrames();
 check(recovery?.resetKey !== keyBeforeIntent && recovery?.resetKey.startsWith("surface-d:"), "deferred layout rebuild fires once the scroll goes quiet");
 
@@ -171,7 +208,7 @@ await flushFrames();
 await flushFrames();
 await flushFrames();
 check(scrollByCalls === frozenScrollBy && scrollToIndexCalls === frozenScrollToIndex, "a user scroll gesture aborts the in-flight restore");
-await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+await advanceClock(350);
 
 // ── Blank detection is gated while the user scrolls, armed again at idle
 await act(async () => root.render(<Probe surfaceKey="surface-e" />));
@@ -182,7 +219,7 @@ await act(async () => recovery?.scheduleBlankViewportCheck());
 await flushFrames();
 await flushFrames();
 check(recovery?.resetKey === keySurfaceE, "blank viewport during active user scrolling does not rebuild");
-await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+await advanceClock(350);
 await flushFrames();
 await flushFrames();
 check(recovery?.resetKey !== keySurfaceE && recovery?.resetKey.startsWith("surface-e:"), "a blank that persists into scroll idle earns a rebuild");
@@ -219,7 +256,7 @@ await act(async () => root.render(<Probe surfaceKey="surface-g" hold={true} />))
 await flushFrames();
 const keySurfaceG = recovery?.resetKey;
 await act(async () => root.render(<Probe surfaceKey="surface-g" revision={1} hold={true} />));
-await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await advanceClock(60);
 await flushFrames();
 check(recovery?.resetKey === keySurfaceG, "layout revision does not rebuild while the turn is streaming");
 await act(async () => root.render(<Probe surfaceKey="surface-g" revision={1} hold={false} />));
@@ -231,20 +268,23 @@ await act(async () => root.render(<Probe surfaceKey="surface-h" />));
 await flushFrames();
 const keySurfaceH0 = recovery?.resetKey;
 await act(async () => root.render(<Probe surfaceKey="surface-h" revision={1} />));
-await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await advanceClock(60);
 await flushFrames();
 check(recovery?.resetKey !== keySurfaceH0 && recovery?.resetKey.startsWith("surface-h:"), "first layout revision rebuilds after the batch window");
 await act(async () => recovery?.invalidateAnchors()); // simulate the restore completing
 const keySurfaceH1 = recovery?.resetKey;
 await act(async () => root.render(<Probe surfaceKey="surface-h" revision={2} />));
-await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await advanceClock(60);
 await flushFrames();
 check(recovery?.resetKey === keySurfaceH1, "a second revision inside the coalescing window does not rebuild again");
-await act(async () => new Promise((resolve) => setTimeout(resolve, 620)));
+await advanceClock(620);
 await flushFrames();
 check(recovery?.resetKey !== keySurfaceH1, "the coalesced rebuild fires when the interval lapses");
 
 await act(async () => root.unmount());
+Date.now = originalDateNow;
+dom.window.setTimeout = originalSetTimeout;
+dom.window.clearTimeout = originalClearTimeout;
 dom.window.close();
 
 if (failed > 0) {
