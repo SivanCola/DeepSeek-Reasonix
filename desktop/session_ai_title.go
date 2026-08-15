@@ -125,11 +125,10 @@ func sessionPreviewForPath(path string) string {
 			return preview
 		}
 	}
-	messages, _, _, err := agent.LoadSessionDisplayMessages(path)
-	if err != nil {
+	preview, ok, err := agent.LoadSessionPreviewFromDisplayIndex(path)
+	if err != nil || !ok {
 		return ""
 	}
-	preview, _ := agent.SessionPreviewFromMessages(messages)
 	return preview
 }
 

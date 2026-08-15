@@ -3499,12 +3499,12 @@ func (a *App) renameSessionInDirIfTitleUnchanged(dir, path, expectedTitle, title
 // the legacy desktop map and live catalog/UI indexes. The session directory is
 // supplied by the owning boot so background tabs never route through whichever
 // tab happens to be active when the tool finishes.
-func (a *App) onSessionTitleChanged(dir, sessionPath, title string) error {
+func (a *App) onSessionTitleChanged(dir, sessionPath, _ string) error {
 	validated, _, err := validateSessionPath(dir, sessionPath)
 	if err != nil {
 		return err
 	}
-	if err := setSessionTitle(dir, validated, title); err != nil {
+	if err := syncSessionTitleFromBranchMeta(dir, validated); err != nil {
 		return err
 	}
 	a.requestSessionCatalogPath("", "", validated)

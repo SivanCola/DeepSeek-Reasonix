@@ -154,6 +154,36 @@ func TestAIRenameSessionRejectsCompletionAfterManualRename(t *testing.T) {
 	}
 }
 
+func TestDelayedTitleCallbackProjectsCurrentCanonicalTitle(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	dir := t.TempDir()
+	path := agent.NewSessionPath(dir, "projection-race")
+	writeHistoryTestSession(t, path, "original conversation")
+	app := NewApp()
+
+	if err := agent.RenameSession(path, "AI title"); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.RenameSession(path, "Newer manual title"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.onSessionTitleChanged(dir, path, "Newer manual title"); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the older AI callback resuming after the newer manual callback.
+	if err := app.onSessionTitleChanged(dir, path, "AI title"); err != nil {
+		t.Fatal(err)
+	}
+
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok || meta.CustomTitle != "Newer manual title" {
+		t.Fatalf("canonical title = %+v, ok=%v, err=%v", meta, ok, err)
+	}
+	if got := loadSessionTitles(dir)[filepath.Base(path)]; got != "Newer manual title" {
+		t.Fatalf("legacy projection = %q, want canonical newer title", got)
+	}
+}
+
 func TestSessionCustomTitleSurvivesTopicMetadataSync(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	dir := t.TempDir()

@@ -280,23 +280,31 @@ func TestSyncMetadataPreservesRepresentativeSessionCustomTitle(t *testing.T) {
 	if err := catalog.UpsertSession(ctx, record); err != nil {
 		t.Fatal(err)
 	}
-	if err := catalog.SyncMetadata(ctx, nil, []TopicMetadata{{Scope: "global", TopicID: "titled", Title: "Changed topic"}}); err != nil {
+	if err := catalog.SyncMetadata(ctx, nil, []TopicMetadata{{
+		Scope: "global", TopicID: "titled", Title: "Changed topic", TitleSource: "auto",
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	topic, ok, err := catalog.GetTopic(ctx, TopicKey{Scope: "global", TopicID: "titled"})
-	if err != nil || !ok || topic.Title != "Explicit session title" {
+	if err != nil || !ok || topic.Title != "Explicit session title" || topic.TitleSource != "manual" {
 		t.Fatalf("custom title after metadata sync = %+v, ok=%v, err=%v", topic, ok, err)
+	}
+	page, err := catalog.ListTopics(ctx, TopicPageRequest{Scope: "global", Limit: 10})
+	if err != nil || len(page.Items) != 1 || page.Items[0].TitleSource != "manual" {
+		t.Fatalf("listed custom title source = %+v, err=%v", page.Items, err)
 	}
 	record.CustomTitle = ""
 	record.TopicTitle = "Changed topic"
 	if err := catalog.UpsertSession(ctx, record); err != nil {
 		t.Fatal(err)
 	}
-	if err := catalog.SyncMetadata(ctx, nil, []TopicMetadata{{Scope: "global", TopicID: "titled", Title: "Changed topic"}}); err != nil {
+	if err := catalog.SyncMetadata(ctx, nil, []TopicMetadata{{
+		Scope: "global", TopicID: "titled", Title: "Changed topic", TitleSource: "auto",
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	topic, ok, err = catalog.GetTopic(ctx, TopicKey{Scope: "global", TopicID: "titled"})
-	if err != nil || !ok || topic.Title != "Changed topic" {
+	if err != nil || !ok || topic.Title != "Changed topic" || topic.TitleSource != "auto" {
 		t.Fatalf("cleared custom title after metadata sync = %+v, ok=%v, err=%v", topic, ok, err)
 	}
 }
