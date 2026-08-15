@@ -129,13 +129,89 @@ await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
 await flushFrames();
 check(recovery?.resetKey === "surface-c:3", "layout revision rebuilds the size tree after the batch window");
 await act(async () => recovery?.handleItemsRendered(1));
+// Let the in-flight restore converge: place the anchor row at its target
+// offset so the correction loop settles within two stable frames (real DOMs
+// converge after each scrollBy; the stubbed rects here do not move unless we
+// move them, and the wall-clock budget would otherwise keep it alive).
+rowElement.getBoundingClientRect = () => ({ top: 0, bottom: 100, height: 100, left: 0, right: 800, width: 800, x: 0, y: 0, toJSON: () => ({}) });
 for (let i = 0; i < 10; i += 1) await flushFrames();
+rowElement.getBoundingClientRect = () => ({ top: 200, bottom: 300, height: 100, left: 0, right: 800, width: 800, x: 0, y: 200, toJSON: () => ({}) });
 scrollByCalls = 0;
 await act(async () => recovery?.scheduleBlankViewportCheck());
 await flushFrames();
 await flushFrames();
 check(recovery?.resetKey === "surface-c:3", "blank recovery within the cooldown window is ignored");
 check(scrollByCalls === 0, "cooldown-blocked blank check performs no correction");
+
+// ── User-scroll quiescence: a layout revision must not rebuild mid-scroll
+await act(async () => root.render(<Probe surfaceKey="surface-d" />));
+await flushFrames();
+const keyBeforeIntent = recovery?.resetKey;
+await act(async () => recovery?.noteUserScrollIntent());
+await act(async () => root.render(<Probe surfaceKey="surface-d" revision={1} />));
+await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+await flushFrames();
+check(recovery?.resetKey === keyBeforeIntent, "layout revision does not rebuild the size tree mid-scroll");
+await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+await flushFrames();
+check(recovery?.resetKey !== keyBeforeIntent && recovery?.resetKey.startsWith("surface-d:"), "deferred layout rebuild fires once the scroll goes quiet");
+
+// ── A user scroll gesture aborts the restore that rebuild just started
+scrollByCalls = 0;
+scrollToIndexCalls = 0;
+scrollToBottomCalls = 0;
+await act(async () => recovery?.handleItemsRendered(1));
+await flushFrames();
+check(scrollByCalls > 0 || scrollToIndexCalls > 0, "anchor restore is in flight after the deferred rebuild");
+await act(async () => recovery?.noteUserScrollIntent());
+const frozenScrollBy = scrollByCalls;
+const frozenScrollToIndex = scrollToIndexCalls;
+await flushFrames();
+await flushFrames();
+await flushFrames();
+check(scrollByCalls === frozenScrollBy && scrollToIndexCalls === frozenScrollToIndex, "a user scroll gesture aborts the in-flight restore");
+await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+
+// ── Blank detection is gated while the user scrolls, armed again at idle
+await act(async () => root.render(<Probe surfaceKey="surface-e" />));
+await flushFrames();
+const keySurfaceE = recovery?.resetKey;
+await act(async () => recovery?.noteUserScrollIntent());
+await act(async () => recovery?.scheduleBlankViewportCheck());
+await flushFrames();
+await flushFrames();
+check(recovery?.resetKey === keySurfaceE, "blank viewport during active user scrolling does not rebuild");
+await act(async () => new Promise((resolve) => setTimeout(resolve, 350)));
+await flushFrames();
+await flushFrames();
+check(recovery?.resetKey !== keySurfaceE && recovery?.resetKey.startsWith("surface-e:"), "a blank that persists into scroll idle earns a rebuild");
+
+// ── Restore waits for a slow-mounting anchor row beyond the old 8-frame budget
+await act(async () => root.render(<Probe surfaceKey="surface-f" />));
+await flushFrames();
+const keySurfaceF = recovery?.resetKey;
+await act(async () => recovery?.scheduleBlankViewportCheck());
+await flushFrames();
+await flushFrames();
+check(recovery?.resetKey !== keySurfaceF, "rebuild armed for the slow-mount restore");
+rowElement.remove();
+scrollByCalls = 0;
+scrollToIndexCalls = 0;
+await act(async () => recovery?.handleItemsRendered(1));
+for (let i = 0; i < 10; i += 1) await flushFrames();
+check(scrollToIndexCalls > 8, "restore keeps re-aiming past the old 8-frame budget while the anchor row is unmounted");
+scrollElement.appendChild(rowElement);
+rowElement.getBoundingClientRect = () => ({ top: 50, bottom: 150, height: 100, left: 0, right: 800, width: 800, x: 0, y: 50, toJSON: () => ({}) });
+await flushFrames();
+check(scrollByCalls > 0, "restore corrects once the anchor row mounts");
+rowElement.getBoundingClientRect = () => ({ top: 0, bottom: 100, height: 100, left: 0, right: 800, width: 800, x: 0, y: 0, toJSON: () => ({}) });
+await flushFrames();
+await flushFrames();
+await flushFrames();
+const settledScrollBy = scrollByCalls;
+const settledScrollToIndex = scrollToIndexCalls;
+await flushFrames();
+check(scrollByCalls === settledScrollBy && scrollToIndexCalls === settledScrollToIndex, "restore settles on the mounted anchor within the wall-clock budget");
 
 await act(async () => root.unmount());
 dom.window.close();
