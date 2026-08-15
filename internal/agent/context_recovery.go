@@ -87,7 +87,25 @@ func (a *Agent) recoverContextLimit(ctx context.Context, frozen samplingRequest,
 			next.MaxTokens = frozen.req.MaxTokens
 		}
 		budget.budgetRetries++
-		a.setLastRecovery(contextRecoveryLearnedRetry)
+		// Publish the request that will actually be retried, not the stale
+		// pre-error admission. The Context Panel reads this atomic snapshot while
+		// the turn is still active and after it completes.
+		adm.WindowMode = provider.ContextWindowShared.String()
+		adm.Source = provider.ContextBudgetSourceLearned
+		adm.WindowTokens = window
+		adm.PromptTokens = prompt
+		adm.PhysicalRemaining = physical
+		if adm.RequestedOutputTokens <= 0 {
+			adm.RequestedOutputTokens = limit.CompletionTokens
+		}
+		if omitted && adm.AutoOutputTokens <= 0 {
+			adm.AutoOutputTokens = limit.CompletionTokens
+		}
+		adm.EffectiveOutputTokens = next.MaxTokens
+		adm.Clipped = adm.RequestedOutputTokens > 0 && next.MaxTokens < adm.RequestedOutputTokens
+		adm.ApplyMaxTokens = next.MaxTokens > 0
+		adm.LastRecovery = contextRecoveryLearnedRetry
+		a.storeAdmission(adm)
 		a.emitContextRecoveryNotice(contextRecoveryLearnedRetry, limit, next.MaxTokens)
 		shape := a.requestCalibrationShape(next)
 		a.sess.output.activeReqShape.Store(&shape)

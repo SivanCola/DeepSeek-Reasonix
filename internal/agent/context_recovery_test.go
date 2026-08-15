@@ -90,8 +90,55 @@ func TestContextLimitRecoveryChangesOnlyOutputField(t *testing.T) {
 	if a.lastAdmission().LastRecovery != contextRecoveryLearnedRetry {
 		t.Fatalf("last recovery = %s", a.lastAdmission().LastRecovery)
 	}
+	budget := a.ContextMaintenanceSnapshot().ContextBudget
+	if budget == nil {
+		t.Fatal("missing context budget snapshot after learned retry")
+	}
+	if budget.Source != provider.ContextBudgetSourceLearned || budget.WindowMode != provider.ContextWindowShared.String() {
+		t.Fatalf("retry source/window = %s/%s, want learned/shared", budget.Source, budget.WindowMode)
+	}
+	if budget.RequestedOutputTokens != 384_000 || budget.EffectiveOutputTokens != 229_502 || budget.PhysicalRemaining != 229_502 || !budget.Clipped {
+		t.Fatalf("retry budget = %+v, want requested=384000 effective=physical=229502 clipped", budget)
+	}
+	if budget.ObservedWindow != 1_048_576 || budget.ObservedPrompt != 810_882 || budget.ObservedCompletion != 354_469 {
+		t.Fatalf("retry observations = %+v", budget)
+	}
 	if len(a.sess.conversation.Snapshot()) != 1 {
 		t.Fatalf("recovery wrote extra turns: %+v", a.sess.conversation.Snapshot())
+	}
+}
+
+func TestContextLimitRecoveryPublishesUnknownGatewayBudget(t *testing.T) {
+	limit := &provider.ContextLimitError{
+		APIError:         &provider.APIError{Provider: "compatible", Status: 400, Body: "context"},
+		WindowTokens:     20_000,
+		RequestedTokens:  25_000,
+		PromptTokens:     10_000,
+		CompletionTokens: 15_000,
+	}
+	prov := &scriptedBudgetProvider{
+		policy: provider.ContextBudgetPolicy{WindowMode: provider.ContextWindowUnknown, LimitMode: provider.OutputLimitOmitWhenSafe},
+		errs:   []error{limit, nil},
+	}
+	a := newBudgetAgent(t, prov)
+	got := a.streamWithSamplingRecovery(context.Background(), 1)
+	if got.err != nil {
+		t.Fatalf("unknown gateway recovery failed: %v", got.err)
+	}
+	prov.mu.Lock()
+	if len(prov.reqs) != 2 || prov.reqs[0].MaxTokens != 0 || prov.reqs[1].MaxTokens != 1_808 {
+		t.Fatalf("unknown gateway requests = %+v, want omitted then 1808", prov.reqs)
+	}
+	prov.mu.Unlock()
+	budget := a.ContextMaintenanceSnapshot().ContextBudget
+	if budget == nil {
+		t.Fatal("missing learned unknown-gateway budget")
+	}
+	if budget.Source != provider.ContextBudgetSourceLearned || budget.WindowMode != provider.ContextWindowShared.String() ||
+		budget.AutoOutputTokens != 15_000 || budget.RequestedOutputTokens != 15_000 ||
+		budget.EffectiveOutputTokens != 1_808 || budget.PhysicalRemaining != 1_808 || !budget.Clipped ||
+		budget.LastRecovery != contextRecoveryLearnedRetry {
+		t.Fatalf("unknown gateway retry budget = %+v", budget)
 	}
 }
 
