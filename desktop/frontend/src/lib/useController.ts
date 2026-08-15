@@ -72,7 +72,7 @@ export const SUBAGENT_PROGRESS_NOTICE = "reasonix.subagent.notice";
 // Reserved names are matched by prefix so a future channel never falls back
 // to ordinary tool output on older frontends.
 const SUBAGENT_PROGRESS_PREFIX = "reasonix.subagent.";
-const TURN_ACTIVITY_KINDS = new Set(["turn_started", "text", "reasoning", "message", "tool_dispatch", "tool_progress", "tool_result"]);
+const TURN_ACTIVITY_KINDS = new Set(["turn_started", "text", "reasoning", "message", "tool_dispatch", "tool_progress", "tool_result_preview", "tool_result"]);
 const SUBAGENT_PROGRESS_PHASES = new Set([
   "queued", "running", "reasoning", "responding", "tool", "retrying", "completed", "failed", "cancelled",
 ]);
@@ -1595,7 +1595,7 @@ function applyEvent(s: State, e: WireEvent): State {
       if (t.parentId) touchSubagentParent(items, t.parentId);
       return { ...settled, seq: settled.seq + 1, items };
     }
-    case "tool_result": {
+    case "tool_result_preview": case "tool_result": {
       const t = e.tool;
       if (!t) return s;
       const next = [...s.items];

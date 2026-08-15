@@ -453,7 +453,7 @@ eq(sameMeta(meta({ collaborationMode: "normal" }), meta({ collaborationMode: "pl
   });
   liveState = reducer(liveState, {
     type: "event",
-    e: { kind: "tool_result", tool: { id: "todo-live", name: "todo_write", readOnly: true, output: "Todos updated" } },
+    e: { kind: "tool_result_preview", tool: { id: "todo-live", name: "todo_write", readOnly: true, output: "Todos updated" } },
   });
   const liveTodo = liveState.items.find(
     (item): item is Extract<Item, { kind: "tool" }> => item.kind === "tool" && item.name === "todo_write",
@@ -461,7 +461,16 @@ eq(sameMeta(meta({ collaborationMode: "normal" }), meta({ collaborationMode: "pl
   eq(
     JSON.stringify(resolveTodoPanelTodos(liveState.meta?.canonicalTodos, liveTodo ? parseTodos(liveTodo.args) : undefined)),
     JSON.stringify(JSON.parse(liveArgs).todos),
-    "panel switches to the live todo_write snapshot after it arrives",
+    "panel switches to the live todo_write snapshot when its result preview arrives",
+  );
+  liveState = reducer(liveState, {
+    type: "event",
+    e: { kind: "tool_result", tool: { id: "todo-live", name: "todo_write", readOnly: true, output: "Todos updated", durationMs: 4 } },
+  });
+  eq(
+    liveState.items.filter((item) => item.kind === "tool" && item.id === "todo-live").length,
+    1,
+    "provider-ordered terminal result upserts the preview instead of duplicating the card",
   );
 }
 
