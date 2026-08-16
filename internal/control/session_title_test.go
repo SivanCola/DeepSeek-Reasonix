@@ -57,7 +57,7 @@ func TestGenerateSessionTitleUsesBoundedNoToolRequest(t *testing.T) {
 		t.Fatalf("requests = %d", len(prov.requests))
 	}
 	req := prov.requests[0]
-	if len(req.Tools) != 0 || req.MaxTokens != 128 || len(req.Messages) != 2 {
+	if len(req.Tools) != 0 || req.MaxTokens != 512 || req.EffortOverride != "low" || len(req.Messages) != 2 {
 		t.Fatalf("request = %+v", req)
 	}
 	if req.Messages[0].Content != sessionTitleSystemPrompt {
