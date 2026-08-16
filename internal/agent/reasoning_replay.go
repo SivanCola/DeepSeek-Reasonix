@@ -68,13 +68,17 @@ func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredS
 		sink.Flush()
 		return result
 	}
-	if len(result.calls) > 0 && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+	// Empty can replace reasoning the provider never emitted, never reasoning
+	// truncated by the client limit: preserved-thinking protocols require the
+	// returned content to remain complete and unchanged.
+	allowsFallback := issue == ReasoningReplayMissing && provider.AllowsEmptyReasoningFallback(a.svc.prov)
+	if len(result.calls) > 0 && !allowsFallback {
 		sink.Discard()
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryClientToolRejected})
 		result.err = &ReasoningReplayError{Kind: issue}
 		return result
 	}
-	if len(result.serverSearch) > 0 && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+	if len(result.serverSearch) > 0 && !allowsFallback {
 		if strings.TrimSpace(result.text) == "" {
 			sink.Discard()
 			result.err = &ReasoningReplayError{Kind: issue}
@@ -91,7 +95,7 @@ func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredS
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryServerSearchSalvaged})
 		return result
 	}
-	if provider.RequiresReasoningRoundTrip(a.svc.prov) && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+	if provider.RequiresReasoningRoundTrip(a.svc.prov) && !allowsFallback {
 		sink.Discard()
 		result.err = &ReasoningReplayError{Kind: issue}
 		return result

@@ -26,11 +26,15 @@ func (a *Agent) runSamplingAttempt(ctx context.Context, turn int, sink event.Sin
 }
 
 func (a *Agent) samplingAttemptSinks() (*deferredStreamSink, event.Sink) {
-	// Replay requirements own speculative event visibility. Even providers that
-	// suppress diagnostics must hide tool cards until replayability is known.
-	if provider.RequiresToolCallReasoning(a.svc.prov) ||
+	// Buffer when missing reasoning can reject or replace the attempt. Protocols
+	// that adopt an empty fallback without retry must keep streaming live because
+	// their first response always wins.
+	warnOnMissing := provider.WarnOnMissingToolCallReasoning(a.svc.prov)
+	replaySensitive := provider.RequiresToolCallReasoning(a.svc.prov) ||
 		provider.RequiresReasoningRoundTrip(a.svc.prov) ||
-		provider.WarnOnMissingToolCallReasoning(a.svc.prov) {
+		warnOnMissing
+	if replaySensitive && (!provider.AllowsEmptyReasoningFallback(a.svc.prov) ||
+		warnOnMissing) {
 		streamSink := newReasoningAwareStreamSink(a.svc.sink)
 		return streamSink, streamSink
 	}
