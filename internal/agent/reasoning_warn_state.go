@@ -53,6 +53,10 @@ type missingReasoningIncident struct {
 	// both generations continue to share the same active-incident boundary.
 	ResolveStreak         int   `json:"resolveStreak,omitempty"`
 	LastHealthyAtUnixNano int64 `json:"lastHealthyAtUnixNano,omitempty"`
+	// FallbackAtUnixNano is set only after a second missing-reasoning response.
+	// It extends the v2 document compatibly: older builds ignore it and keep
+	// honoring the same active-incident retry boundary.
+	FallbackAtUnixNano int64 `json:"fallbackAtUnixNano,omitempty"`
 }
 
 type missingReasoningWarnDocument struct {
@@ -147,12 +151,16 @@ func missingReasoningUnixNanoFromMillis(unixMs int64) (int64, bool) {
 	return unixMs * int64(time.Millisecond), true
 }
 
+func validMissingReasoningIncidentFields(incident missingReasoningIncident) bool {
+	return incident.LastMissingUnixNano >= 0 && incident.LastResolvedAtUnixNano >= 0 &&
+		incident.LastHealthyAtUnixNano >= 0 && incident.FallbackAtUnixNano >= 0 &&
+		incident.ResolveStreak >= 0 && incident.ResolveStreak < missingReasoningHealthyResolveStreak
+}
+
 func normalizeMissingReasoningIncident(incident missingReasoningIncident, now time.Time) (missingReasoningIncident, bool) {
 	incident.Fingerprint = strings.TrimSpace(incident.Fingerprint)
 	if !validMissingReasoningFingerprint(incident.Fingerprint) ||
-		incident.LastMissingUnixNano < 0 || incident.LastResolvedAtUnixNano < 0 ||
-		incident.LastHealthyAtUnixNano < 0 || incident.ResolveStreak < 0 ||
-		incident.ResolveStreak >= missingReasoningHealthyResolveStreak {
+		!validMissingReasoningIncidentFields(incident) {
 		return missingReasoningIncident{}, false
 	}
 
@@ -180,7 +188,8 @@ func normalizeMissingReasoningIncident(incident missingReasoningIncident, now ti
 
 	nowUnixNano := now.UnixNano()
 	if warnedAtUnixNano > nowUnixNano || incident.LastMissingUnixNano > nowUnixNano ||
-		incident.LastResolvedAtUnixNano > nowUnixNano || incident.LastHealthyAtUnixNano > nowUnixNano {
+		incident.LastResolvedAtUnixNano > nowUnixNano || incident.LastHealthyAtUnixNano > nowUnixNano ||
+		incident.FallbackAtUnixNano > nowUnixNano {
 		return missingReasoningIncident{}, false
 	}
 	if incident.LastMissingUnixNano > incident.LastResolvedAtUnixNano {
@@ -202,7 +211,7 @@ func normalizeMissingReasoningIncident(incident missingReasoningIncident, now ti
 		return incident, true
 	}
 	if incident.LastResolvedAtUnixNano <= 0 || incident.ResolveStreak != 0 ||
-		incident.LastHealthyAtUnixNano > incident.LastResolvedAtUnixNano {
+		incident.LastHealthyAtUnixNano > incident.LastResolvedAtUnixNano || incident.FallbackAtUnixNano != 0 {
 		return missingReasoningIncident{}, false
 	}
 	resolvedAt := time.Unix(0, incident.LastResolvedAtUnixNano)
@@ -214,7 +223,8 @@ func normalizeMissingReasoningIncident(incident missingReasoningIncident, now ti
 }
 
 func (incident missingReasoningIncident) lastEventUnixNano() int64 {
-	lastEvent := max(incident.LastHealthyAtUnixNano, max(incident.LastResolvedAtUnixNano, incident.LastMissingUnixNano))
+	lastEvent := max(incident.FallbackAtUnixNano,
+		max(incident.LastHealthyAtUnixNano, max(incident.LastResolvedAtUnixNano, incident.LastMissingUnixNano)))
 	return lastEvent
 }
 
@@ -400,6 +410,93 @@ func (s *missingReasoningWarnState) claim(fingerprint string) bool {
 	return s.claimAt(fingerprint, time.Now())
 }
 
+// activeAt reports whether the provider/configuration circuit is open. It is a
+// read-only transaction: failures return false so bookkeeping can never force
+// an unverified fallback mode.
+func (s *missingReasoningWarnState) activeAt(fingerprint string, observedAt time.Time) bool {
+	incident, exists := s.incidentAt(fingerprint, observedAt)
+	return exists && incident.LastMissingUnixNano > incident.LastResolvedAtUnixNano
+}
+
+func (s *missingReasoningWarnState) incidentAt(fingerprint string, observedAt time.Time) (missingReasoningIncident, bool) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if s == nil || s.dir == "" || !validMissingReasoningFingerprint(fingerprint) {
+		return missingReasoningIncident{}, false
+	}
+	observedAt = normalizeMissingReasoningObservedAt(observedAt)
+	processLock := s.processLock()
+	processLock.Lock()
+	defer processLock.Unlock()
+
+	release, err := s.acquire()
+	if err != nil {
+		return missingReasoningIncident{}, false
+	}
+	defer release()
+	incidents, err := s.load(missingReasoningTransactionNow(observedAt))
+	if err != nil {
+		return missingReasoningIncident{}, false
+	}
+	incident, exists := incidents[fingerprint]
+	return incident, exists
+}
+
+// fallbackActiveAt reports whether repeated omissions opened the adaptive
+// fallback circuit. A first omission only consumes the exact-replay budget and
+// must not disable thinking when that replay recovered successfully.
+func (s *missingReasoningWarnState) fallbackActiveAt(fingerprint string, observedAt time.Time) bool {
+	incident, exists := s.incidentAt(fingerprint, observedAt)
+	return exists && incident.LastMissingUnixNano > incident.LastResolvedAtUnixNano && incident.FallbackAtUnixNano != 0
+}
+
+// openFallbackAt records the second missing response that exhausted exact
+// replay. Persistence failure is non-fatal: the current conversation may still
+// use the verified fallback, but a future process will conservatively probe.
+func (s *missingReasoningWarnState) openFallbackAt(fingerprint string, observedAt time.Time) bool {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if s == nil || s.dir == "" || !validMissingReasoningFingerprint(fingerprint) {
+		return false
+	}
+	observedAt = normalizeMissingReasoningObservedAt(observedAt)
+	processLock := s.processLock()
+	processLock.Lock()
+	defer processLock.Unlock()
+
+	release, err := s.acquire()
+	if err != nil {
+		return false
+	}
+	defer release()
+	incidents, err := s.load(missingReasoningTransactionNow(observedAt))
+	if err != nil {
+		return false
+	}
+	incident, exists := incidents[fingerprint]
+	observedAtUnixNano := observedAt.UnixNano()
+	if exists && (observedAtUnixNano <= incident.LastResolvedAtUnixNano ||
+		observedAtUnixNano <= incident.LastHealthyAtUnixNano) {
+		return false
+	}
+	if !exists || incident.LastMissingUnixNano <= incident.LastResolvedAtUnixNano {
+		incident = missingReasoningIncident{
+			Fingerprint:            fingerprint,
+			WarnedAtUnixMs:         observedAt.UnixMilli(),
+			LastResolvedAtUnixNano: incident.LastResolvedAtUnixNano,
+		}
+	}
+	if observedAtUnixNano > incident.LastMissingUnixNano {
+		incident.LastMissingUnixMs = observedAt.UnixMilli()
+		incident.LastMissingUnixNano = observedAtUnixNano
+	}
+	incident.ResolveStreak = 0
+	incident.LastHealthyAtUnixNano = 0
+	if observedAtUnixNano > incident.FallbackAtUnixNano {
+		incident.FallbackAtUnixNano = observedAtUnixNano
+	}
+	incidents[fingerprint] = incident
+	return s.save(incidents) == nil
+}
+
 type missingReasoningResolveResult struct {
 	Recorded bool
 	Resolved bool
@@ -443,6 +540,7 @@ func (s *missingReasoningWarnState) resolveAt(fingerprint string, observedAt tim
 	if resolved {
 		incident.ResolveStreak = 0
 		incident.LastResolvedAtUnixNano = observedAtUnixNano
+		incident.FallbackAtUnixNano = 0
 	}
 	incidents[fingerprint] = incident
 	if s.save(incidents) != nil {

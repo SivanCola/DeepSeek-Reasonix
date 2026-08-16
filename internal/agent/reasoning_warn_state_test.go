@@ -53,6 +53,45 @@ func TestMissingReasoningWarnStatePersistsCurrentIncidentAcrossInstances(t *test
 	}
 }
 
+func TestMissingReasoningWarnStateActiveCircuitIsReadOnlyAndExpires(t *testing.T) {
+	dir := t.TempDir()
+	s := newMissingReasoningWarnState(dir)
+	fingerprint := warningFingerprint("deepseek-anthropic\x00v4-pro")
+	now := missingReasoningTestNow()
+	if s.activeAt(fingerprint, now) {
+		t.Fatal("fresh configuration unexpectedly has an active circuit")
+	}
+	if !s.claimAt(fingerprint, now) || !s.activeAt(fingerprint, now.Add(time.Minute)) {
+		t.Fatal("claimed incident did not open the circuit")
+	}
+	if s.fallbackActiveAt(fingerprint, now.Add(time.Minute)) {
+		t.Fatal("first omission must not open the fallback circuit")
+	}
+	if !s.openFallbackAt(fingerprint, now.Add(90*time.Second)) || !s.fallbackActiveAt(fingerprint, now.Add(2*time.Minute)) {
+		t.Fatal("second omission did not open the fallback circuit")
+	}
+	before, err := os.ReadFile(filepath.Join(dir, missingReasoningWarnStateFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.activeAt(fingerprint, now.Add(2*time.Minute)) {
+		t.Fatal("active circuit disappeared inside its cooldown")
+	}
+	after, err := os.ReadFile(filepath.Join(dir, missingReasoningWarnStateFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("activeAt mutated the persisted incident")
+	}
+	if s.activeAt(fingerprint, now.Add(missingReasoningWarnStateCooldown)) {
+		t.Fatal("circuit remained active at the cooldown boundary")
+	}
+	if s.fallbackActiveAt(fingerprint, now.Add(missingReasoningWarnStateCooldown)) {
+		t.Fatal("fallback circuit remained active at the cooldown boundary")
+	}
+}
+
 func TestMissingReasoningWarnStateSeparatesConfigurationFingerprints(t *testing.T) {
 	dir := t.TempDir()
 	s := newMissingReasoningWarnState(dir)
@@ -201,6 +240,27 @@ func TestMissingReasoningWarnStateDelayedFailureCannotReviveResolvedIncident(t *
 	}
 	if !s.claimAt(fingerprint, now) {
 		t.Fatal("healthy result did not re-arm a later regression")
+	}
+}
+
+func TestMissingReasoningWarnStateDelayedFallbackCannotReviveResolvedIncident(t *testing.T) {
+	s := newMissingReasoningWarnState(t.TempDir())
+	fingerprint := warningFingerprint("delayed-fallback")
+	now := missingReasoningTestNow()
+	if !s.claimAt(fingerprint, now) {
+		t.Fatal("fresh incident was not claimed")
+	}
+	for healthy := 1; healthy <= missingReasoningHealthyResolveStreak; healthy++ {
+		result := s.resolveAt(fingerprint, now.Add(time.Duration(healthy)*time.Minute))
+		if !result.Recorded {
+			t.Fatalf("healthy observation %d was not recorded", healthy)
+		}
+	}
+	if s.openFallbackAt(fingerprint, now.Add(time.Minute)) {
+		t.Fatal("stale fallback observation revived a resolved incident")
+	}
+	if s.fallbackActiveAt(fingerprint, now.Add(4*time.Minute)) {
+		t.Fatal("resolved incident became fallback-active after stale completion")
 	}
 }
 
@@ -503,5 +563,38 @@ func TestMissingReasoningWarnStateConcurrentClaimsKeepEveryConfiguration(t *test
 		if fresh.claimAt(warningFingerprint(label), now.Add(time.Minute)) {
 			t.Errorf("configuration %q was lost after concurrent claims", label)
 		}
+	}
+}
+
+func TestMissingReasoningWarnStateConcurrentFallbackOpenKeepsNewestObservation(t *testing.T) {
+	dir := t.TempDir()
+	fingerprint := warningFingerprint("deepseek-anthropic\x00concurrent-fallback")
+	base := missingReasoningTestNow()
+	const workers = 12
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func(offset int) {
+			defer wg.Done()
+			<-start
+			newMissingReasoningWarnState(dir).openFallbackAt(fingerprint, base.Add(time.Duration(offset)*time.Millisecond))
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	s := newMissingReasoningWarnState(dir)
+	latest := base.Add((workers - 1) * time.Millisecond)
+	if !s.fallbackActiveAt(fingerprint, latest.Add(time.Millisecond)) {
+		t.Fatal("concurrent opens did not leave the fallback circuit active")
+	}
+	incidents, err := s.load(latest.Add(time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	incident := incidents[fingerprint]
+	if incident.LastMissingUnixNano != latest.UnixNano() || incident.FallbackAtUnixNano != latest.UnixNano() {
+		t.Fatalf("concurrent fallback watermark = missing:%d fallback:%d, want %d", incident.LastMissingUnixNano, incident.FallbackAtUnixNano, latest.UnixNano())
 	}
 }

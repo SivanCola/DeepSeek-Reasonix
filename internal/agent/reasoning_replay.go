@@ -1,12 +1,48 @@
 package agent
 
 import (
+	"context"
 	"slices"
 	"strings"
 
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
+
+func (a *Agent) runMissingReasoningFallback(
+	ctx context.Context,
+	turn int,
+	frozen *samplingRequest,
+	attemptID string,
+	attempt int,
+	billable *provider.Usage,
+	discarded ...*deferredStreamSink,
+) (streamedTurn, bool) {
+	if !a.activateMissingReasoningFallback() {
+		return streamedTurn{}, false
+	}
+	for _, sink := range discarded {
+		if sink != nil {
+			sink.Discard()
+		}
+	}
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
+	a.emitProtocolRetry(2, true)
+	fallbackSink := newDeferredStreamSink(a.svc.sink)
+	fallback := a.runSamplingAttempt(ctx, turn, fallbackSink, frozen, attemptID)
+	billable = mergeSamplingUsage(billable, fallback.usage)
+	a.storeLatestRequestUsage(fallback.usage)
+	fallback.usage = finalizeSamplingUsage(billable, fallback.usage)
+	if fallback.err != nil {
+		fallbackSink.Discard()
+		a.emitReasoningReplayAttemptOutcome(attemptID, attempt, fallback.err)
+		return fallback, true
+	}
+	fallbackSink.Flush()
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetryRecovered})
+	a.emitReasoningReplayAttemptOutcome(attemptID, attempt, nil)
+	return fallback, true
+}
 
 func (a *Agent) preserveRawReasoning(signature, reasoningID, reasoningStatus string, calls []provider.ToolCall, searches []provider.ServerSearchCall) bool {
 	if signature != "" || reasoningID != "" || reasoningStatus != "" {
@@ -26,6 +62,9 @@ func (a *Agent) emitReasoningReplayAttemptOutcome(id string, attempt int, err er
 }
 
 func (a *Agent) reasoningReplayIssue(result streamedTurn) ReasoningReplayFailure {
+	if a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov) {
+		return ""
+	}
 	if !provider.RequiresAssistantReasoningReplay(a.svc.prov, result.assistantMessage()) {
 		return ""
 	}
@@ -109,7 +148,9 @@ func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredS
 // CanReplayAssistantMessage lets the controller apply the provider-specific
 // half of interrupted-turn validation without exposing the provider itself.
 func (a *Agent) CanReplayAssistantMessage(m provider.Message) bool {
-	if a == nil || provider.AllowsEmptyReasoningFallback(a.svc.prov) || !provider.RequiresAssistantReasoningReplay(a.svc.prov, m) {
+	if a == nil || provider.AllowsEmptyReasoningFallback(a.svc.prov) ||
+		(a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov)) ||
+		!provider.RequiresAssistantReasoningReplay(a.svc.prov, m) {
 		return true
 	}
 	return strings.TrimSpace(m.ReasoningContent) != ""
@@ -123,7 +164,8 @@ func (a *Agent) ensureUnreplayableHistoryRecovery() {
 	if a == nil || a.sess.conversation == nil {
 		return
 	}
-	if provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+	if provider.AllowsEmptyReasoningFallback(a.svc.prov) ||
+		(a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov)) {
 		return
 	}
 	msgs := a.sess.conversation.Snapshot()

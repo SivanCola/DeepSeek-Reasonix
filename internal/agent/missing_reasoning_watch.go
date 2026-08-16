@@ -1,11 +1,19 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"reasonix/internal/provider"
 )
+
+func (a *Agent) withMissingReasoningFallback(ctx context.Context) context.Context {
+	if a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov) {
+		return provider.WithMissingReasoningFallback(ctx)
+	}
+	return ctx
+}
 
 // missingReasoningWatch is this conversation's live view of one incident. Only
 // observeMissingToolCallReasoning moves these, and they belong to the session:
@@ -14,6 +22,10 @@ type missingReasoningWatch struct {
 	active        bool // gates the one automatic retry, not a user-visible warning
 	stateRecorded bool // avoids a file transaction on every healthy tool-call turn
 	healthyStreak int  // anti-flapping when no cross-process state dir is configured
+	// fallbackActive keeps a provider-declared recovery mode stable for the
+	// remainder of this conversation. Re-enabling reasoning inside a tool loop
+	// that already committed a no-reasoning turn would make its history invalid.
+	fallbackActive bool
 }
 
 // unwrittenResolve is a resolve whose state write failed. It answers to the
@@ -46,14 +58,13 @@ func (a *Agent) observeMissingAssistantReasoning(message provider.Message, compl
 	if !complete {
 		reasoning = ""
 	}
-	// Strict protocols cannot fall back to empty reasoning. Give each sampling
-	// boundary one exact retry; the retry finalizer rejects a second malformed
-	// response without executing tools.
-	if strings.TrimSpace(reasoning) == "" && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
-		return true, true
-	}
-	// Persist anti-flapping only when empty reasoning is a valid fallback.
+	// Persist the incident for strict and empty-fallback protocols alike. Strict
+	// providers used to bypass this state and pay for the same exact retry on
+	// every new Run; the shared incident now acts as the recovery circuit.
 	if !provider.WarnOnMissingToolCallReasoning(a.svc.prov) {
+		if strings.TrimSpace(reasoning) == "" && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+			return true, a.claimMissingReasoningIncident(time.Now())
+		}
 		return false, false
 	}
 	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
@@ -131,4 +142,54 @@ func (a *Agent) observeMissingAssistantReasoning(message provider.Message, compl
 		a.sess.missingReasoning.stateRecorded = true
 	}
 	return true, true
+}
+
+func (a *Agent) claimMissingReasoningIncident(observedAt time.Time) bool {
+	a.sess.missingReasoning.healthyStreak = 0
+	if s := a.svc.warnState; s != nil {
+		fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
+		claimed := s.claimAt(fingerprint, observedAt)
+		a.sess.missingReasoning.active = true
+		a.sess.missingReasoning.stateRecorded = true
+		return claimed
+	}
+	if a.sess.missingReasoning.active {
+		return false
+	}
+	a.sess.missingReasoning.active = true
+	a.sess.missingReasoning.stateRecorded = true
+	return true
+}
+
+// beginMissingReasoningFallback reuses an active provider/configuration
+// circuit before spending another normal request. It runs before history
+// projection so a no-reasoning tool loop stays intact on the recovery wire.
+func (a *Agent) beginMissingReasoningFallback() bool {
+	if a == nil || a.sess.missingReasoning.fallbackActive || !provider.SupportsMissingReasoningFallback(a.svc.prov) {
+		return a != nil && a.sess.missingReasoning.fallbackActive
+	}
+	if a.svc.warnState == nil {
+		return false
+	}
+	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
+	if !a.svc.warnState.fallbackActiveAt(fingerprint, time.Now()) {
+		return false
+	}
+	a.sess.missingReasoning.active = true
+	a.sess.missingReasoning.stateRecorded = true
+	a.sess.missingReasoning.fallbackActive = true
+	return true
+}
+
+func (a *Agent) activateMissingReasoningFallback() bool {
+	if a == nil || !provider.SupportsMissingReasoningFallback(a.svc.prov) {
+		return false
+	}
+	a.sess.missingReasoning.active = true
+	a.sess.missingReasoning.fallbackActive = true
+	if a.svc.warnState != nil {
+		fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
+		a.sess.missingReasoning.stateRecorded = a.svc.warnState.openFallbackAt(fingerprint, time.Now())
+	}
+	return true
 }
