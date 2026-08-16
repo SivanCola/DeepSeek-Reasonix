@@ -7,6 +7,7 @@ import { addBreadcrumb } from "./breadcrumbs";
 import { app, onEvent, onReady, onRuntimeRebuilt, onTabMeta, onTopicActivation } from "./bridge";
 import { invalidateCache } from "./composerHistory";
 import { formatInboxCancelError } from "./inboxError";
+import { requestInboxCancel, type CancelOutcome } from "./inboxCancel";
 import { formatContextMaintenanceNotice, isNewMaintenanceOperation, rememberMaintenanceOperation } from "./contextMaintenanceTypes";
 import { formatGuardianAssessmentNotice } from "./guardianEvents";
 import { completionSummaryNeedsAttention, completionSummaryNotice, normalizeCompletionSummary } from "./completionSummary";
@@ -281,11 +282,6 @@ export type Item =
       card: WireExtensionCard;
     };
 
-export type CancelOutcome = {
-  restoredText?: string;
-  discardedItemIds: string[];
-  warning?: string;
-};
 type ToolItem = Extract<Item, { kind: "tool" }>;
 export type ExtensionItem = Extract<Item, { kind: "extension" }>;
 // Extension UI surfaces (stage 8b2) — per-tab state fed by extension_surface /
@@ -3778,23 +3774,10 @@ export function useController() {
   const cancelTab = useCallback(async (tabId: string, inboxItemIDs: string[] = []): Promise<Omit<CancelOutcome, "restoredText">> => {
     const cancelHydrateGeneration = bumpCancelHydrateSeq(tabId);
     try {
-      let discardedItemIds: string[] = [];
-      let warning: string | undefined;
-      if (inboxItemIDs.length > 0 && typeof app.CancelTabWithInboxItemsResult === "function") {
-        const receipt = await app.CancelTabWithInboxItemsResult(tabId, inboxItemIDs);
-        discardedItemIds = asArray(receipt?.discardedItemIds).map(String);
-        warning = receipt?.warning?.trim() || undefined;
-      } else if (inboxItemIDs.length > 0) {
-        // Compatibility fallback: an old backend has no per-item receipt, so
-        // durable messages must remain in the queue instead of being restored
-        // optimistically into the draft.
-        await app.CancelTabWithInboxItems(tabId, inboxItemIDs);
-      } else {
-        await app.CancelTab(tabId);
-      }
+      const result = await requestInboxCancel(app, tabId, inboxItemIDs);
       scheduleCancelReconcile(tabId, 0, cancelHydrateGeneration);
-      if (warning) dispatchTo(tabId, { type: "local_notice", level: "warn", text: warning });
-      return { discardedItemIds, warning };
+      if (result.warning) dispatchTo(tabId, { type: "local_notice", level: "warn", text: result.warning });
+      return result;
     } catch (error) {
       dispatchTo(tabId, { type: "local_notice", level: "warn", text: formatInboxCancelError(error, getLocale()) });
       return { discardedItemIds: [] };
@@ -3802,14 +3785,11 @@ export function useController() {
   }, [bumpCancelHydrateSeq, dispatchTo, scheduleCancelReconcile]);
 
   const cancel = useCallback(async (inboxItemIDs: string[] = []): Promise<CancelOutcome> => {
-    const cur = stateRef.current;
-    const tabId = activeTabId;
+    const cur = stateRef.current, tabId = activeTabId;
     let restoredText: string | undefined;
     if (cur.running && cur.pendingUser !== undefined) {
       restoredText = cur.pendingUser;
-      if (tabId) {
-        dispatchTo(tabId, { type: "unsend" });
-      }
+      if (tabId) dispatchTo(tabId, { type: "unsend" });
     } else if (tabId) {
       dispatchTo(tabId, { type: "cancel_requested" });
     }

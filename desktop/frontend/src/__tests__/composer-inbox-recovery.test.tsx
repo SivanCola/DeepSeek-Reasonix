@@ -394,7 +394,6 @@ console.log("\ncomposer inbox recovery");
     DeleteInboxItem: async () => { deleteCalls += 1; },
   });
   const { root } = await renderComposer({ running: true });
-
   await waitFor("active steer rendered", () => document.querySelector(".composer-guidance-item__guide") !== null);
   const guide = document.querySelector(".composer-guidance-item__guide") as HTMLButtonElement;
   const actions = document.querySelectorAll(".composer-guidance-item__action");
@@ -407,7 +406,6 @@ console.log("\ncomposer inbox recovery");
   await act(async () => { root.unmount(); });
   dom.window.close();
 }
-
 {
   const dom = installDom();
   installBridgeApp({
@@ -449,7 +447,6 @@ console.log("\ncomposer inbox recovery");
   await act(async () => { root.unmount(); });
   dom.window.close();
 }
-
 {
   const dom = installDom();
   let retryCalls = 0;

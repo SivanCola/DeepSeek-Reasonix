@@ -24,7 +24,6 @@ import (
 	"reasonix/internal/fileutil"
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
-	"reasonix/internal/sessioninbox"
 	"reasonix/internal/store"
 	"reasonix/internal/worktree"
 	"slices"
@@ -1617,21 +1616,6 @@ func (s *tabEventSink) Emit(e event.Event) {
 		s.turn = turnSubmissionState{}
 		s.mu.Unlock()
 	}
-}
-
-// InboxChanged forwards Store revision notifications through the tab's
-// ordered, non-blocking runtime emitter. A late callback from an old session is
-// harmless because sessionPath lets the frontend reject the stale scope.
-func (s *tabEventSink) InboxChanged(snap sessioninbox.InboxSnapshot) {
-	if s == nil {
-		return
-	}
-	tabID, _ := s.binding()
-	s.emitRuntimeEvent("InboxChanged", inboxChangedView{
-		TabID:       tabID,
-		SessionPath: snap.SessionPath,
-		Revision:    snap.Revision,
-	})
 }
 
 // SetBotSink atomically sets or clears the bot event forwarder on this sink.
