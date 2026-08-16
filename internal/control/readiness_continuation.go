@@ -43,9 +43,10 @@ func finalReadinessWithAttempts(err error, attempts int) error {
 	return &copy
 }
 
-// hasPendingUserWork reads only already-owned in-memory state and an already
-// open inbox Store. It never creates an inbox or holds a Controller lock while
-// taking an Agent/Store lock.
+// hasPendingUserWork reads only already-owned state and an already open inbox
+// Store. It never creates an inbox or holds a Controller lock while taking an
+// Agent/Store lock. A busy or unreadable durable inbox conservatively yields to
+// potential user work.
 func (c *Controller) hasPendingUserWork() bool {
 	if c == nil {
 		return false
@@ -67,7 +68,17 @@ func (c *Controller) hasPendingUserWork() bool {
 	if store == nil {
 		return false
 	}
-	for _, item := range store.CachedSnapshot().Items {
+	snapshot, err := store.TryFreshSnapshot()
+	if err != nil {
+		return true
+	}
+	if snapshot.Readonly {
+		return true
+	}
+	for _, item := range snapshot.Items {
+		if item.RunID != "" && item.RunID != sessioninbox.ProcessRunID() {
+			return true
+		}
 		switch item.State {
 		case sessioninbox.StateQueued, sessioninbox.StateBlocked,
 			sessioninbox.StateUncertain, sessioninbox.StateSteerAccepted:
@@ -122,7 +133,7 @@ func (o *turnOrchestrator) continueUntilReady(ctx context.Context, turnErr error
 		if o.c.executor == nil || !o.c.executor.PrepareFinalReadinessRecovery() {
 			return finalReadinessWithAttempts(turnErr, initialAttempts+automaticTurns)
 		}
-		o.c.noticeDetail(i18n.M.ReadinessContinuing, prompt)
+		o.c.notice(i18n.M.ReadinessContinuing)
 		previousProgress = readinessErr.ProgressKey
 		automaticTurns++
 		turnErr = o.runOrchestratedTurn(ctx, orchestratedTurn{

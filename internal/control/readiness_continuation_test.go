@@ -9,8 +9,10 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
+	"reasonix/internal/i18n"
 	"reasonix/internal/instruction"
 	"reasonix/internal/provider"
+	"reasonix/internal/sessioninbox"
 	"reasonix/internal/tool"
 )
 
@@ -46,6 +48,7 @@ func readinessSyntheticTurns(c *Controller) int {
 
 func TestOrdinaryTurnAutomaticallyFinishesKnownChecks(t *testing.T) {
 	notices := 0
+	readinessNoticeDetail := ""
 	c, prov := readinessContinuationController(t, [][]provider.Chunk{
 		{toolCallChunk("write", "write_file", `{"path":"main.go","content":"package main"}`), {Type: provider.ChunkDone}},
 		textTurn("implemented"),
@@ -55,6 +58,9 @@ func TestOrdinaryTurnAutomaticallyFinishesKnownChecks(t *testing.T) {
 	}, event.FuncSink(func(e event.Event) {
 		if e.Kind == event.Notice && e.Text != "" {
 			notices++
+			if e.Text == i18n.M.ReadinessContinuing {
+				readinessNoticeDetail = e.Detail
+			}
 		}
 	}))
 
@@ -73,6 +79,9 @@ func TestOrdinaryTurnAutomaticallyFinishesKnownChecks(t *testing.T) {
 	}
 	if notices == 0 {
 		t.Fatal("automatic readiness continuation did not emit a progress notice")
+	}
+	if readinessNoticeDetail != "" {
+		t.Fatalf("automatic readiness continuation exposed notice detail %q", readinessNoticeDetail)
 	}
 	if c.executor.PrepareFinalReadinessRecovery() {
 		t.Fatal("successful automatic continuation left a manual recovery action pending")
@@ -275,6 +284,32 @@ func TestReadinessContinuationYieldsToCancellationAndPendingUserWork(t *testing.
 		var got *agent.FinalReadinessError
 		if !errors.As(err, &got) || got.Attempts != 1 {
 			t.Fatalf("continuation error = %v, want untouched readiness failure", err)
+		}
+	})
+
+	t.Run("queued inbox follow-up from another store", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "session.jsonl")
+		executor := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+		c := New(Options{Runner: executor, Executor: executor, SessionPath: path})
+		t.Cleanup(c.Close)
+		if snap := c.InboxSnapshot(); len(snap.Items) != 0 {
+			t.Fatalf("initial inbox snapshot = %+v, want empty", snap)
+		}
+
+		external, err := sessioninbox.Open(path, sessioninbox.Limits{})
+		if err != nil {
+			t.Fatalf("open external inbox: %v", err)
+		}
+		defer external.Close()
+		if _, err := external.Enqueue(sessioninbox.EnqueueRequest{
+			Intent:   sessioninbox.IntentFollowup,
+			Envelope: sessioninbox.PromptEnvelope{SubmitText: "external user follow-up"},
+		}); err != nil {
+			t.Fatalf("enqueue external follow-up: %v", err)
+		}
+
+		if !c.hasPendingUserWork() {
+			t.Fatal("pending-user check missed a follow-up committed by another Store")
 		}
 	})
 }
