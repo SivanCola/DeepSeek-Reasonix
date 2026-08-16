@@ -54,16 +54,19 @@ func (c *finalReadinessCheck) observeObligation(o taskcontract.Obligation) {
 		case taskcontract.ObligationTodo, taskcontract.ObligationCriteria,
 			taskcontract.ObligationFullVerify, taskcontract.ObligationIndependentReview,
 			taskcontract.ObligationSecurityReview, taskcontract.ObligationSignoff:
-			if o.Enforcement == taskcontract.EnforcementStrict ||
-				o.Kind == taskcontract.ObligationTodo || o.Kind == taskcontract.ObligationCriteria {
+			switch {
+			case o.Kind == taskcontract.ObligationTodo || o.Kind == taskcontract.ObligationCriteria:
 				c.continuationHighConfidence = true
-			} else if o.Enforcement == taskcontract.EnforcementRecoverable {
+			case o.Enforcement == taskcontract.EnforcementStrict:
+				c.continuationHighConfidence = true
+			case o.Enforcement == taskcontract.EnforcementRecoverable:
 				c.continuationGeneric = true
 			}
 		case taskcontract.ObligationTargetedVerify, taskcontract.ObligationDiffReview:
-			if o.Enforcement == taskcontract.EnforcementStrict {
+			switch o.Enforcement {
+			case taskcontract.EnforcementStrict:
 				c.continuationHighConfidence = true
-			} else if o.Enforcement == taskcontract.EnforcementRecoverable {
+			case taskcontract.EnforcementRecoverable:
 				c.continuationGeneric = true
 			}
 		default:
