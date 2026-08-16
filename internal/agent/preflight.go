@@ -128,10 +128,10 @@ func (a *Agent) LoadProjectionSidecar(sessionPath string) {
 	if a.sess.conversation != nil {
 		msgs, preRepair = a.sess.conversation.projectionValidationMessages()
 	}
+	needsNormalization := migrateBoundedCoveredPrefixHash(&st, msgs)
 	a.sess.compactionMu.Lock()
 	key := a.currentPromptCacheKeyLocked()
 	normalized, keyOK := lineageKeyCompatible(st.PromptCacheKey, key)
-	needsNormalization := false
 	// Keep receipt-only blocked/failed sidecars (no projection body) and legacy
 	// top-level BlockedInputHash so generation-scoped suppressions survive restart.
 	hasMaintenanceSignal := st.Projection.CoveredPrefixHash != "" ||

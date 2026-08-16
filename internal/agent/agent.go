@@ -1124,7 +1124,8 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 
 func deprecatedContextRetentionConfigured(opts Options) bool {
 	recentNonDefault := opts.RecentKeep > 0 && opts.RecentKeep != minRecentKeep
-	keepNonDefault := opts.KeepPolicy != 0 && opts.KeepPolicy != KeepErrors
+	defaultKeepPolicy := KeepErrors | KeepUserMarked
+	keepNonDefault := opts.KeepPolicy != 0 && opts.KeepPolicy != KeepErrors && opts.KeepPolicy != defaultKeepPolicy
 	return recentNonDefault || keepNonDefault
 }
 

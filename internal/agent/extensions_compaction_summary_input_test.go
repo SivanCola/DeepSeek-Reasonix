@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"reasonix/internal/extension"
 	"reasonix/internal/extension/dispatch"
 	"reasonix/internal/extension/protocol"
+	"reasonix/internal/provider"
 )
 
 func TestCompactionPrepareReplaceGuidance(t *testing.T) {
@@ -76,5 +78,41 @@ func TestCompactionPrepareReplaceMessages(t *testing.T) {
 	}
 	if !strings.Contains(telemetry, "summary_input="+SummaryInputExtensionRewritten) {
 		t.Fatalf("telemetry = %q, want extension-rewritten summary input", telemetry)
+	}
+}
+
+func TestCompactionPrepareGuidanceOnlyPreservesUnrepresentedMessageFields(t *testing.T) {
+	client := &fakeDispatchClient{interceptFn: func(ev protocol.InterceptEvent, payload json.RawMessage) (protocol.InterceptResult, error) {
+		if ev != protocol.EventCompactionPrepare {
+			return protocol.InterceptResult{Decision: protocol.DecisionContinue}, nil
+		}
+		var in dispatch.CompactionPreparePayload
+		if err := json.Unmarshal(payload, &in); err != nil {
+			return protocol.InterceptResult{}, err
+		}
+		in.Guidance = "keep the exact provider replay state"
+		return replaceWith(t, in), nil
+	}}
+	d := newExtDispatcher(client, true, nil, extension.PointCompactionPrepare)
+	a := New(&fakeProvider{reply: "summary"}, nil, NewSession("system"), Options{Extensions: d}, event.Discard)
+	fold := []provider.Message{
+		{
+			Role: provider.RoleAssistant, Content: "calling", ReasoningID: "reasoning-1", ReasoningStatus: "completed",
+			ResponsesItems: []json.RawMessage{json.RawMessage(`{"type":"reasoning","id":"reasoning-1"}`)},
+			ServerSearch:   []provider.ServerSearchCall{{ID: "search-1"}},
+			ToolCalls:      []provider.ToolCall{{ID: "call-1", Name: "read", Arguments: `{}`}},
+		},
+		{Role: provider.RoleTool, Name: "read", ToolCallID: "call-1", Content: "bounded", RawContent: "complete tool result"},
+	}
+	prepared, reason, err := a.prepareVisibleCompression(context.Background(), CompactionTriggerManual, fold, "", SummaryInputCachePrefix)
+	if err != nil || reason != "" {
+		t.Fatalf("prepareVisibleCompression: reason=%q err=%v", reason, err)
+	}
+	if prepared.instructions != "keep the exact provider replay state" || prepared.inputMode != SummaryInputCachePrefix {
+		t.Fatalf("prepared metadata = %+v", prepared)
+	}
+	want := modelInputMessages(fold)
+	if !reflect.DeepEqual(prepared.fold, want) {
+		t.Fatalf("guidance-only replacement changed fold:\n got=%+v\nwant=%+v", prepared.fold, want)
 	}
 }

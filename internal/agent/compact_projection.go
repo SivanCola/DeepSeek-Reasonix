@@ -344,7 +344,7 @@ func (a *Agent) prepareVisibleCompression(ctx context.Context, trigger string, f
 	if err != nil {
 		return preparedVisibleCompression{}, "", err
 	}
-	preparedFold = provider.ModelMessages(preparedFold)
+	preparedFold = modelInputMessages(preparedFold)
 	if len(preparedFold) == 0 {
 		return preparedVisibleCompression{}, "compaction hook removed the selected range", nil
 	}
@@ -423,25 +423,8 @@ func (a *Agent) compactToProjectionLocked(ctx context.Context, trigger, instruct
 	if !ok {
 		return CompactionNoop, nil
 	}
-	// start indexes the working view; covered is a canonical index. On a live
-	// projection the view is frozen body + canonical[prior:], so a boundary
-	// inside the body covers the prior range and past it maps offset-for-offset.
-	covered := start
-	var bodySuffix []provider.Message
-	if onProjection {
-		body := len(stateSnapshot.Projection.Messages)
-		prior := stateSnapshot.Projection.CoveredCount
-		if start < body {
-			covered = prior
-			// The unfolded remainder of the old body stays verbatim in the new
-			// body; it has no canonical tail to splice from.
-			bodySuffix = msgs[start:body]
-		} else {
-			covered = prior + (start - body)
-		}
-	}
-	kept, fold, retention := a.partitionFoldForProjection(msgs[head:start])
-	if len(fold) == 0 || (!force && !foldEconomics(fold)) {
+	_, preliminaryFold, _ := a.partitionFoldForProjection(msgs[head:start])
+	if len(preliminaryFold) == 0 || (!force && !foldEconomics(preliminaryFold)) {
 		return CompactionNoop, nil
 	}
 	fixedPrefixTokens := a.estimatedVisibleRequestTokens(msgs[:head])
@@ -457,6 +440,20 @@ func (a *Agent) compactToProjectionLocked(ctx context.Context, trigger, instruct
 			}
 			instructions += hookInstr
 		}
+	}
+	if mustFree {
+		start = a.maximumSafeSummaryPrefixEnd(msgs, head, start, instructions)
+		if start <= head {
+			a.emitCompactionAborted(trigger)
+			return CompactionNoop, fmt.Errorf("%w: no balanced prefix leaves enough room for a summary response", errCheckpointRejected)
+		}
+	}
+
+	covered, bodySuffix := projectionCoverageForFold(stateSnapshot, msgs, start, onProjection)
+	kept, fold, retention := a.partitionFoldForProjection(msgs[head:start])
+	if len(fold) == 0 {
+		a.emitCompactionAborted(trigger)
+		return CompactionNoop, nil
 	}
 	originalFoldHash := providerVisibleFingerprint(modelInputMessages(fold))
 	var err error
@@ -523,6 +520,21 @@ func (a *Agent) compactToProjectionLocked(ctx context.Context, trigger, instruct
 	return CompactionInstalled, nil
 }
 
+// projectionCoverageForFold maps a working-view boundary to canonical
+// coverage. A suffix inside an existing frozen body remains in the new body
+// because it has no corresponding canonical tail to splice from.
+func projectionCoverageForFold(state CompactionState, msgs []provider.Message, start int, onProjection bool) (int, []provider.Message) {
+	if !onProjection {
+		return start, nil
+	}
+	body := len(state.Projection.Messages)
+	prior := state.Projection.CoveredCount
+	if start < body {
+		return prior, msgs[start:body]
+	}
+	return prior + (start - body), nil
+}
+
 // visibleInputForFold prefers the prior projection + new history over full
 // canonical. The second return reports whether the projection was used, so
 // fold boundaries can be translated back to canonical indices.
@@ -569,6 +581,57 @@ func (a *Agent) planFoldRegion(msgs []provider.Message, force bool) (head, start
 		start = active
 	}
 	return head, start, start > head
+}
+
+// maximumSafeSummaryPrefixEnd returns the largest balanced contiguous prefix
+// whose exact summary request leaves the collector's minimum output budget.
+// The remaining middle and tail stay verbatim in the projection.
+func (a *Agent) maximumSafeSummaryPrefixEnd(msgs []provider.Message, head, end int, instructions string) int {
+	window := a.effectiveContextWindow()
+	if window <= 0 || head < 0 || end <= head || end > len(msgs) {
+		return end
+	}
+	policy := contextBudgetPolicyOf(a.svc.prov)
+	if policy.WindowMode == provider.ContextWindowUnknown {
+		// A learned overflow makes an unknown gateway shared-window. Otherwise
+		// preserve the request because the configured window may be an estimate.
+		if a.lastAdmission().ObservedWindow <= 0 {
+			return end
+		}
+		policy.WindowMode = provider.ContextWindowShared
+	}
+	maxPromptTokens := a.hardInputCeiling()
+	if policy.WindowMode == provider.ContextWindowShared {
+		maxPromptTokens = window - outputBudgetReserve - 256
+	}
+	if maxPromptTokens <= 0 {
+		return head
+	}
+	fits := func(candidate int) bool {
+		request := a.summaryRequest(msgs[head:candidate], instructions)
+		return a.estimatedRequestTokens(request) <= maxPromptTokens
+	}
+	if fits(end) {
+		return end
+	}
+
+	low, high, best := head+1, end-1, head
+	for low <= high {
+		mid := low + (high-low)/2
+		if fits(mid) {
+			best = mid
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+	// A tail beginning with a tool result would split it from the assistant
+	// tool-call message. Move the fold boundary back across the whole result
+	// group; the assistant call and all of its results then remain together.
+	for best > head && best < len(msgs) && msgs[best].Role == provider.RoleTool {
+		best--
+	}
+	return best
 }
 
 type userTurnRetention struct {

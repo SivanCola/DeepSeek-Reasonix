@@ -151,7 +151,7 @@ func (m ContextManager) foldContext(ctx context.Context, prepared PreparedContex
 		maxSummaries = 2
 	}
 	result := prepared
-	for attempt := 0; attempt < maxSummaries; attempt++ {
+	for range maxSummaries {
 		mustFree := policy.Trigger != CompactionTriggerManual && (policy.Trigger == CompactionTriggerOverflow || result.InputTokens >= hard)
 		outcome, err := a.compactToProjectionLocked(ctx, policy.Trigger, policy.Instructions, forceFold, mustFree)
 		if err != nil {

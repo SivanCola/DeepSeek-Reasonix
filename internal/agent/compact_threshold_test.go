@@ -51,13 +51,15 @@ func TestDefaultCompactRatioIsEightyPercent(t *testing.T) {
 }
 
 func TestDeprecatedRetentionWarningOnlyForNonDefaultValues(t *testing.T) {
-	if deprecatedContextRetentionConfigured(Options{}) || deprecatedContextRetentionConfigured(Options{RecentKeep: 2, KeepPolicy: KeepErrors}) {
+	if deprecatedContextRetentionConfigured(Options{}) ||
+		deprecatedContextRetentionConfigured(Options{RecentKeep: 2, KeepPolicy: KeepErrors}) ||
+		deprecatedContextRetentionConfigured(Options{RecentKeep: 2, KeepPolicy: KeepErrors | KeepUserMarked}) {
 		t.Fatal("default compatibility values must not warn")
 	}
 	if !deprecatedContextRetentionConfigured(Options{RecentKeep: 7}) {
 		t.Fatal("non-default recent_keep must warn")
 	}
-	if !deprecatedContextRetentionConfigured(Options{KeepPolicy: KeepErrors | KeepUserMarked}) {
+	if !deprecatedContextRetentionConfigured(Options{KeepPolicy: KeepUserMarked}) {
 		t.Fatal("non-default keep policy must warn")
 	}
 }

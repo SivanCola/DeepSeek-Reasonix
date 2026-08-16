@@ -352,22 +352,18 @@ func charsOfMessages(msgs []provider.Message) int {
 // summarize asks the executor's own provider to distill a replayed prefix into
 // a briefing. instructions is optional /compact focus + PreCompact text.
 // Named returns so defer can attach RequestCount and still return usage.
-func (a *Agent) summarize(ctx context.Context, region []provider.Message, instructions string) (summary string, usage *provider.Usage, err error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	ctx = provider.WithRequestAttemptCounter(ctx)
+func compactionInstructionWithFocus(instructions string) string {
 	instruction := compactionInstruction
 	if strings.TrimSpace(instructions) != "" {
 		instruction += "\n\nAdditional focus for this compaction (prioritize keeping this):\n" + strings.TrimSpace(instructions)
 	}
-	defer func() {
-		usage = provider.UsageWithRequestAttemptCount(ctx, usage)
-		if usage != nil && (usage.TotalTokens > 0 || usage.RequestCount > 0) {
-			a.svc.sink.Emit(event.Event{Kind: event.Usage, ModelRef: a.modelRef, Usage: usage, Pricing: a.svc.pricing, UsageSource: event.UsageSourceCompaction})
-		}
-	}()
-	defer trackPublishedHostStream(ctx, cancel)()
-	maxOut := summaryOutputMaxTokens
+	return instruction
+}
+
+// summaryRequest builds the exact cache-aligned request shape used by
+// summarize. Keeping planning and execution on this shared builder prevents a
+// supposedly safe overflow fold from being rejected only after it is selected.
+func (a *Agent) summaryRequest(region []provider.Message, instructions string) provider.Request {
 	prefix := append([]provider.Message(nil), region...)
 	if len(prefix) == 0 || prefix[0].Role != provider.RoleSystem {
 		visible := a.modelVisibleMessages()
@@ -376,17 +372,34 @@ func (a *Agent) summarize(ctx context.Context, region []provider.Message, instru
 		}
 	}
 	messages := a.normalizeModelRequestMessages(prefix)
-	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: instruction})
+	messages = append(messages, provider.Message{Role: provider.RoleUser, Content: compactionInstructionWithFocus(instructions)})
 	var schemas []provider.ToolSchema
 	if a.svc.tools != nil {
 		schemas = a.svc.tools.Schemas()
 	}
-	req := provider.Request{
+	return provider.Request{
 		Messages:    messages,
 		Tools:       schemas,
-		MaxTokens:   maxOut,
+		MaxTokens:   summaryOutputMaxTokens,
 		Temperature: provider.OptionalTemperature(a.temperature),
 	}
+}
+
+// summarize asks the executor's own provider to distill a replayed prefix into
+// a briefing. instructions is optional /compact focus + PreCompact text.
+// Named returns so defer can attach RequestCount and still return usage.
+func (a *Agent) summarize(ctx context.Context, region []provider.Message, instructions string) (summary string, usage *provider.Usage, err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ctx = provider.WithRequestAttemptCounter(ctx)
+	defer func() {
+		usage = provider.UsageWithRequestAttemptCount(ctx, usage)
+		if usage != nil && (usage.TotalTokens > 0 || usage.RequestCount > 0) {
+			a.svc.sink.Emit(event.Event{Kind: event.Usage, ModelRef: a.modelRef, Usage: usage, Pricing: a.svc.pricing, UsageSource: event.UsageSourceCompaction})
+		}
+	}()
+	defer trackPublishedHostStream(ctx, cancel)()
+	req := a.summaryRequest(region, instructions)
 	if err := a.applyAdmissionToRequest(&req); err != nil {
 		return "", usage, err
 	}
