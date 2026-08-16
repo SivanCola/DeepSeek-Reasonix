@@ -5,6 +5,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { useTranscriptVirtuosoRecovery } from "../lib/useTranscriptVirtuosoRecovery";
+import type { TranscriptScrollWriteRecord } from "../lib/transcriptScrollProbe";
 import type { TranscriptRow } from "../lib/transcriptRows";
 import type { Item } from "../lib/useController";
 
@@ -91,6 +92,10 @@ async function flushFrames() {
   await act(async () => pending.forEach(([, callback]) => callback(performance.now())));
 }
 
+// Runtime capture of every imperative scroll write (Phase 0 probe).
+const scrollWrites: TranscriptScrollWriteRecord[] = [];
+dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => { scrollWrites.push(write); };
+
 const scrollElement = dom.window.document.getElementById("scroll") as HTMLDivElement;
 const rowElement = scrollElement.querySelector<HTMLElement>(".transcript__row")!;
 scrollElement.getBoundingClientRect = () => ({ top: 0, bottom: 100, height: 100, left: 0, right: 800, width: 800, x: 0, y: 0, toJSON: () => ({}) });
@@ -99,7 +104,7 @@ Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value
 Object.defineProperty(scrollElement, "scrollHeight", { configurable: true, value: 500 });
 
 const item: Item = { kind: "assistant", id: "a", text: "answer", reasoning: "", streaming: false };
-const rows: TranscriptRow[] = [{ kind: "answer", key: "row-a", item }];
+const baseRows: TranscriptRow[] = [{ kind: "answer", key: "row-a", item }];
 const scrollRef = { current: scrollElement };
 const pinnedRef = { current: false };
 const readyRef = { current: true };
@@ -114,18 +119,16 @@ const virtuosoRef = {
 };
 let recovery: ReturnType<typeof useTranscriptVirtuosoRecovery> | undefined;
 
-function Probe({ surfaceKey, revision = 0, hold = false }: { surfaceKey: string; revision?: number; hold?: boolean }) {
+function Probe({ surfaceKey, rows = baseRows }: { surfaceKey: string; rows?: TranscriptRow[] }) {
   recovery = useTranscriptVirtuosoRecovery({
     surfaceKey,
-    historyLayoutRevision: revision,
     rows,
-    rowIndexByKey: new Map([["row-a", 0]]),
+    rowIndexByKey: new Map(rows.map((row, index) => [String(row.key), index])),
     scrollRef,
     pinnedRef,
     virtuosoRef,
     readyRef,
     scrollToBottom: () => { scrollToBottomCalls += 1; },
-    holdRevisionResets: hold,
   });
   return null;
 }
@@ -161,11 +164,13 @@ check(scrollByCalls === 0, "invalidated anchor stops the restore correction loop
 check(scrollToIndexCalls === 0, "invalidated anchor never re-aims at the stale row");
 check(scrollToBottomCalls === 1, "a reset without an anchor settles at the bottom");
 
-// ── Blank-recovery cooldown: revision bump rebuilds, immediate re-blank is blocked
-await act(async () => root.render(<Probe surfaceKey="surface-c" revision={1} />));
-await advanceClock(60);
+// ── Blank-recovery cooldown: immediate re-blank is blocked, a persistent
+// blank past the cooldown earns another rebuild
+await advanceClock(2_100);
+await act(async () => recovery?.scheduleBlankViewportCheck());
 await flushFrames();
-check(recovery?.resetKey === "surface-c:3", "layout revision rebuilds the size tree after the batch window");
+await flushFrames();
+check(recovery?.resetKey === "surface-c:3", "a later blank rebuilds the size tree again");
 await act(async () => recovery?.handleItemsRendered(1));
 // Let the in-flight restore converge: place the anchor row at its target
 // offset so the correction loop settles within two stable frames (real DOMs
@@ -180,27 +185,54 @@ await flushFrames();
 await flushFrames();
 check(recovery?.resetKey === "surface-c:3", "blank recovery within the cooldown window is ignored");
 check(scrollByCalls === 0, "cooldown-blocked blank check performs no correction");
+await advanceClock(2_100);
+await act(async () => recovery?.scheduleBlankViewportCheck());
+await flushFrames();
+await flushFrames();
+check(recovery?.resetKey === "surface-c:4", "a blank that persists past the cooldown earns another rebuild");
+await act(async () => recovery?.handleItemsRendered(1));
+rowElement.getBoundingClientRect = () => ({ top: 0, bottom: 100, height: 100, left: 0, right: 800, width: 800, x: 0, y: 0, toJSON: () => ({}) });
+for (let i = 0; i < 10; i += 1) await flushFrames();
+rowElement.getBoundingClientRect = () => ({ top: 200, bottom: 300, height: 100, left: 0, right: 800, width: 800, x: 0, y: 200, toJSON: () => ({}) });
 
-// ── User-scroll quiescence: a layout revision must not rebuild mid-scroll
+// ── Patch storm: content updates never remount and never write scroll (#8657)
+// Simulates the ref-resolution patch burst of a long session: dozens of row
+// updates landing while the user scrolls. The size tree must survive intact
+// and the recovery path must stay silent the whole time.
 await act(async () => root.render(<Probe surfaceKey="surface-d" />));
 await flushFrames();
-const keyBeforeIntent = recovery?.resetKey;
-await act(async () => recovery?.noteUserScrollIntent());
-await act(async () => root.render(<Probe surfaceKey="surface-d" revision={1} />));
-await advanceClock(60);
+const keyBeforeStorm = recovery?.resetKey;
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollToIndexCalls = 0;
+let stormRows = baseRows;
+for (let i = 0; i < 50; i += 1) {
+  stormRows = [...stormRows, { kind: "answer", key: `storm-${i}`, item: { ...item, id: `storm-${i}` } }];
+  await act(async () => root.render(<Probe surfaceKey="surface-d" rows={stormRows} />));
+  if (i % 7 === 0) await act(async () => recovery?.noteUserScrollIntent());
+  if (i % 5 === 0) await flushFrames();
+}
 await flushFrames();
-check(recovery?.resetKey === keyBeforeIntent, "layout revision does not rebuild the size tree mid-scroll");
+check(recovery?.resetKey === keyBeforeStorm, "a 50-patch content storm never remounts the size tree");
+check(scrollByCalls === 0 && scrollToIndexCalls === 0, "the patch storm performs zero recovery scroll writes");
+check(
+  scrollWrites.every((write) => write.owner !== "recovery"),
+  "the runtime probe records zero recovery-owned writes during the storm",
+);
 await advanceClock(350);
-await flushFrames();
-check(recovery?.resetKey !== keyBeforeIntent && recovery?.resetKey.startsWith("surface-d:"), "deferred layout rebuild fires once the scroll goes quiet");
 
-// ── A user scroll gesture aborts the restore that rebuild just started
+// ── A user scroll gesture aborts the restore that a watchdog rebuild started
 scrollByCalls = 0;
 scrollToIndexCalls = 0;
 scrollToBottomCalls = 0;
+await act(async () => recovery?.scheduleBlankViewportCheck());
+await advanceClock(2_100);
+await flushFrames();
+await flushFrames();
+check(recovery?.resetKey !== keyBeforeStorm, "watchdog rebuild still fires after the storm");
 await act(async () => recovery?.handleItemsRendered(1));
 await flushFrames();
-check(scrollByCalls > 0 || scrollToIndexCalls > 0, "anchor restore is in flight after the deferred rebuild");
+check(scrollByCalls > 0 || scrollToIndexCalls > 0, "anchor restore is in flight after the watchdog rebuild");
 await act(async () => recovery?.noteUserScrollIntent());
 const frozenScrollBy = scrollByCalls;
 const frozenScrollToIndex = scrollToIndexCalls;
@@ -250,36 +282,6 @@ const settledScrollBy = scrollByCalls;
 const settledScrollToIndex = scrollToIndexCalls;
 await flushFrames();
 check(scrollByCalls === settledScrollBy && scrollToIndexCalls === settledScrollToIndex, "restore settles on the mounted anchor within the wall-clock budget");
-
-// ── Streaming hold: revisions defer until the stream ends
-await act(async () => root.render(<Probe surfaceKey="surface-g" hold={true} />));
-await flushFrames();
-const keySurfaceG = recovery?.resetKey;
-await act(async () => root.render(<Probe surfaceKey="surface-g" revision={1} hold={true} />));
-await advanceClock(60);
-await flushFrames();
-check(recovery?.resetKey === keySurfaceG, "layout revision does not rebuild while the turn is streaming");
-await act(async () => root.render(<Probe surfaceKey="surface-g" revision={1} hold={false} />));
-await flushFrames();
-check(recovery?.resetKey !== keySurfaceG && recovery?.resetKey.startsWith("surface-g:"), "the deferred rebuild runs when the stream ends");
-
-// ── Revision rebuilds coalesce within the min interval
-await act(async () => root.render(<Probe surfaceKey="surface-h" />));
-await flushFrames();
-const keySurfaceH0 = recovery?.resetKey;
-await act(async () => root.render(<Probe surfaceKey="surface-h" revision={1} />));
-await advanceClock(60);
-await flushFrames();
-check(recovery?.resetKey !== keySurfaceH0 && recovery?.resetKey.startsWith("surface-h:"), "first layout revision rebuilds after the batch window");
-await act(async () => recovery?.invalidateAnchors()); // simulate the restore completing
-const keySurfaceH1 = recovery?.resetKey;
-await act(async () => root.render(<Probe surfaceKey="surface-h" revision={2} />));
-await advanceClock(60);
-await flushFrames();
-check(recovery?.resetKey === keySurfaceH1, "a second revision inside the coalescing window does not rebuild again");
-await advanceClock(620);
-await flushFrames();
-check(recovery?.resetKey !== keySurfaceH1, "the coalesced rebuild fires when the interval lapses");
 
 await act(async () => root.unmount());
 Date.now = originalDateNow;

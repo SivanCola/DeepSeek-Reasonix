@@ -246,7 +246,6 @@ export function Transcript({
   actionHoverMenus = false,
   rewindSignal = 0,
   revealSignal = 0,
-  historyLayoutRevision = 0,
   hydrating = false,
   hasOlderHistory = false,
   olderHistoryCount = 0,
@@ -275,7 +274,6 @@ export function Transcript({
   actionHoverMenus?: boolean;
   rewindSignal?: number;
   revealSignal?: number;
-  historyLayoutRevision?: number;
   hydrating?: boolean;
   hasOlderHistory?: boolean;
   olderHistoryCount?: number;
@@ -579,7 +577,6 @@ export function Transcript({
     noteScrollActivity,
   } = useTranscriptVirtuosoRecovery({
     surfaceKey: layoutSurfaceKey,
-    historyLayoutRevision,
     rows: virtualRows,
     rowIndexByKey,
     scrollRef,
@@ -587,7 +584,6 @@ export function Transcript({
     virtuosoRef,
     readyRef: virtuosoReadyRef,
     scrollToBottom,
-    holdRevisionResets: liveSplit.liveActive,
   });
   recoveryControlRef.current = { noteUserScrollIntent, invalidateAnchors };
   // Measured-geometry cache: remounts restart from real row heights instead
