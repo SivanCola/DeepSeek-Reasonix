@@ -513,6 +513,7 @@ export interface ProjectNode {
   recoveryUnresolvedCount?: number;
   recoveryCleanupEligibleCount?: number;
   isolatedWorktree?: boolean;
+  runtimeOnly?: boolean;
   children?: ProjectNode[];
 }
 

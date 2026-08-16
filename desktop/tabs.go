@@ -2458,7 +2458,7 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 
 	a.startTabControllerBuild(tab)
 	if scope == "project" {
-		a.emitProjectTreeChangedForSessionDirs(sessionDirectoryForPath(sessionPath))
+		a.emitProjectTreeRuntimeChangedForSessionDirs(sessionDirectoryForPath(sessionPath))
 	}
 	return enrichTabMeta(meta), nil
 }
@@ -3368,7 +3368,7 @@ func (a *App) keepOnlyVisibleTab(tabID string) (TabMeta, error) {
 	if err != nil {
 		return TabMeta{}, err
 	}
-	a.emitProjectTreeChanged()
+	a.emitProjectTreeRuntimeChangedWithCatalogRefresh()
 	return enrichTabMeta(meta), nil
 }
 
@@ -6975,11 +6975,15 @@ func (a *App) setTabActivityStatus(tabID, status string) bool {
 }
 
 func (a *App) emitProjectTreeChanged() {
+	a.requestProjectTreeCatalogRefresh()
+	a.emitProjectTreeChangedEvent()
+}
+
+func (a *App) requestProjectTreeCatalogRefresh() {
 	a.requestSessionCatalogMetadataSync()
 	for _, target := range a.sessionCatalogTargets() {
 		a.requestSessionCatalogReconcile(target.Path)
 	}
-	a.emitProjectTreeChangedEvent()
 }
 
 // emitProjectTreeChangedForSessionDirs schedules only the affected catalog

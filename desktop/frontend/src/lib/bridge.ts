@@ -927,7 +927,10 @@ export function onReady(cb: (tabId?: string) => void): () => void {
 
 export function onProjectTreeChanged(cb: () => void): () => void {
   if (realApp() && typeof window !== "undefined" && window.runtime) {
-    return window.runtime.EventsOn("project-tree:changed", (payload?: unknown) => (payload as { reason?: unknown } | undefined)?.reason !== "runtime" && cb());
+    return window.runtime.EventsOn("project-tree:changed", (payload?: unknown) => {
+      const reason = (payload as { reason?: unknown } | undefined)?.reason;
+      if (reason !== "runtime" && reason !== "catalog-v2") cb();
+    });
   }
   return () => {};
 }

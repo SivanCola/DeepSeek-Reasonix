@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { projectTreeApplyRuntimeTopics } from "../lib/projectTreeRuntime";
+import { createProjectTreeRuntimeProjection, projectTreeApplyRuntimeTopics } from "../lib/projectTreeRuntime";
 import type { ProjectNode } from "../lib/types";
 
-type RuntimeNode = ProjectNode & { runtimeOnly?: boolean };
 const catalog: ProjectNode[] = [
   { key: "project-a", kind: "project", label: "A", root: "/a", children: [
     { key: "known", kind: "topic", label: "Known", root: "/a", topicId: "known", children: [] },
@@ -21,7 +20,7 @@ const overlaid = projectTreeApplyRuntimeTopics(catalog, [
   } },
 ]);
 const shape = (tree: ProjectNode[]) => tree.map((project) => project.children?.map((topic) => [
-  topic.topicId, topic.running, (topic as RuntimeNode).runtimeOnly,
+  topic.topicId, topic.running, topic.runtimeOnly,
 ]));
 assert.deepEqual(shape(overlaid), [[['known', true, undefined]], [['new', true, true]]]);
 assert.equal(overlaid[0]?.children?.[0]?.children?.length, 2);
@@ -44,4 +43,41 @@ const topics = projects.map((project, index) => ({
 }));
 const hundred = projectTreeApplyRuntimeTopics(projects, topics);
 assert.equal(hundred.reduce((count, project) => count + (project.children?.filter((topic) => topic.running).length ?? 0), 0), 100);
+
+const stableProjection = createProjectTreeRuntimeProjection();
+const stableCatalog: ProjectNode[] = [{
+  key: "stable-project", kind: "project", label: "Stable", root: "/stable", children: [
+    { key: "topic-a", kind: "topic", label: "A", root: "/stable", topicId: "a", createdAt: 300, lastActivityAt: 600, children: [] },
+    { key: "topic-b", kind: "topic", label: "B", root: "/stable", topicId: "b", createdAt: 200, lastActivityAt: 500, children: [] },
+    { key: "topic-c", kind: "topic", label: "C", root: "/stable", topicId: "c", createdAt: 100, lastActivityAt: 400, children: [] },
+  ],
+}];
+const runtimeB = [{
+  scope: "project", workspaceRoot: "/stable", node: {
+    key: "topic-b", kind: "topic" as const, label: "B", root: "/stable", topicId: "b",
+    open: true, running: false, children: [],
+  },
+}];
+const projected = stableProjection.apply(stableCatalog, runtimeB);
+assert.strictEqual(projected[0]?.children?.[0], stableCatalog[0]?.children?.[0], "an unrelated row keeps its object identity");
+assert.strictEqual(projected[0]?.children?.[2], stableCatalog[0]?.children?.[2], "every unrelated row keeps its object identity");
+const repeated = stableProjection.apply(projected, structuredClone(runtimeB));
+assert.strictEqual(repeated, projected, "an equivalent runtime snapshot is a tree-level no-op");
+
+const transientCatalog: ProjectNode[] = [{
+  ...stableCatalog[0],
+  children: [stableCatalog[0]!.children![0]!, stableCatalog[0]!.children![2]!],
+}];
+const transient = stableProjection.apply(transientCatalog, structuredClone(runtimeB));
+const restoredRuntimeB = transient[0]?.children?.find((topic) => topic.topicId === "b");
+assert.equal(restoredRuntimeB?.runtimeOnly, true, "a catalog-lag row remains marked as runtime-only");
+assert.equal(restoredRuntimeB?.createdAt, 200, "a catalog-lag row retains its resident creation time");
+assert.equal(restoredRuntimeB?.lastActivityAt, 500, "a catalog-lag row retains its resident activity time");
+assert.deepEqual(
+  [...(transient[0]?.children ?? [])]
+    .sort((a, b) => (b.lastActivityAt || b.createdAt || 0) - (a.lastActivityAt || a.createdAt || 0))
+    .map((topic) => topic.topicId),
+  ["a", "b", "c"],
+  "catalog lag cannot move the active row to a zero-time sort position",
+);
 console.log("  PASS  project tree runtime projection");
