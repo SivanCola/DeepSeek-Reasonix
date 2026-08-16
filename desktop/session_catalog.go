@@ -444,8 +444,9 @@ func (a *App) emitProjectTreeChangedV2(revision uint64, roots []string, reason s
 	}
 	a.emitRuntimeEvent("project-tree:changed-v2", ProjectTreeChangedV2{Revision: revision, Roots: roots, Reason: reason})
 	// One-release compatibility event. Its wrapper is catalog-only, so legacy
-	// frontends refresh without reintroducing synchronous history I/O.
-	a.emitRuntimeEvent("project-tree:changed")
+	// frontends refresh without making current frontends rebuild the whole tree
+	// after they already consumed the targeted v2 revision.
+	a.emitRuntimeEvent("project-tree:changed", map[string]string{"reason": "catalog-v2"})
 }
 
 func (a *App) requestSessionCatalogReconcile(dir string) {

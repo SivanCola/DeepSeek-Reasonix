@@ -24553,7 +24553,7 @@ body > .mermaid-diagram--fullscreen {
 }
 :root[data-theme-style] .project-tree__topic-label {
   color: var(--fg);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 /* Extra spacing after expanded project section */
@@ -24622,7 +24622,7 @@ body > .mermaid-diagram--fullscreen {
 /* Active topic: keep text style unchanged (no color/font-weight change) */
 :root[data-theme-style] .sidebar--workbench .project-tree__topic--active .project-tree__topic-label {
   color: var(--fg);
-  font-weight: 550;
+  font-weight: 500;
 }
 
 /* Topic action icons (pin, archive): clean, no background, no border */
@@ -29983,7 +29983,7 @@ body > .mermaid-diagram--fullscreen {
 
 .sidebar--workbench .project-tree__topic--active .project-tree__topic-label {
   color: var(--fg);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .sidebar--workbench .project-tree__topic-im {
