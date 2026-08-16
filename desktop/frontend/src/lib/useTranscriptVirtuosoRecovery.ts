@@ -8,6 +8,7 @@ import {
   transcriptElementViewportIsBlank,
   type TranscriptLayoutAnchor,
 } from "./transcriptVirtuosoRecovery";
+import { noteTranscriptScrollWrite } from "./transcriptScrollProbe";
 
 const LAYOUT_INVALIDATION_BATCH_MS = 48;
 const BLANK_RECOVERY_COOLDOWN_MS = 2_000;
@@ -289,13 +290,19 @@ export function useTranscriptVirtuosoRecovery({
           return;
         }
         const location = transcriptAnchorInitialLocation(anchor, rowIndexByKey, firstItemIndex);
-        if (location) virtuosoRef.current?.scrollToIndex(location);
+        if (location) {
+          noteTranscriptScrollWrite({ owner: "recovery", kind: "scrollToIndex", index: location.index });
+          virtuosoRef.current?.scrollToIndex(location);
+        }
         requestAnimationFrame(() => restore(0));
         return;
       }
       const viewportTop = element.getBoundingClientRect().top;
       const correction = row.getBoundingClientRect().top - viewportTop - anchor.offset;
-      if (Math.abs(correction) > 1) virtuosoRef.current?.scrollBy({ top: correction, behavior: "auto" });
+      if (Math.abs(correction) > 1) {
+        noteTranscriptScrollWrite({ owner: "recovery", kind: "scrollBy", top: correction });
+        virtuosoRef.current?.scrollBy({ top: correction, behavior: "auto" });
+      }
       const nextStableFrames = Math.abs(correction) <= 1 ? stableFrames + 1 : 0;
       if (Date.now() < deadline && nextStableFrames < 2) {
         requestAnimationFrame(() => restore(nextStableFrames));

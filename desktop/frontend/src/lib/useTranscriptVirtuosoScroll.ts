@@ -18,12 +18,7 @@ import {
   type TranscriptScrollOwner,
   type TranscriptScrollState,
 } from "./transcriptScrollController";
-
-declare global {
-  interface Window {
-    __REASONIX_TRANSCRIPT_SCROLL_WRITE__?: (owner: TranscriptScrollOwner, top: number) => void;
-  }
-}
+import { noteTranscriptScrollWrite } from "./transcriptScrollProbe";
 
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 const SCROLL_DOWN_KEYS = new Set(["ArrowDown", "PageDown", "End", " ", "Spacebar"]);
@@ -88,9 +83,11 @@ export function useTranscriptVirtuosoScroll({
       // The live-region footer extends past the last virtual row. Virtuoso's
       // scrollTo clamps against the scroller's real DOM scrollHeight, footer
       // included, so this lands on the true bottom.
+      noteTranscriptScrollWrite({ owner: "tail-follow", kind: "scrollTo", top: element.scrollHeight });
       virtuosoRef.current?.scrollTo({ top: element.scrollHeight, behavior });
       return;
     }
+    noteTranscriptScrollWrite({ owner: "tail-follow", kind: "scrollToIndex", index: "LAST" });
     virtuosoRef.current?.scrollToIndex({
       index: "LAST",
       align: "end",
@@ -143,10 +140,11 @@ export function useTranscriptVirtuosoScroll({
         scheduleTailSettle();
         return;
       case "SCROLL_TO_INDEX":
+        noteTranscriptScrollWrite({ owner: "jump", kind: "scrollToIndex", index: command.index });
         handle?.scrollToIndex({ index: command.index, align: "start", behavior: command.behavior });
         return;
       case "SCROLL_TO_OFFSET":
-        window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__?.(command.owner, command.top);
+        noteTranscriptScrollWrite({ owner: command.owner, kind: "scrollTo", top: command.top });
         handle?.scrollTo({ top: command.top, behavior: command.behavior });
     }
   }, [scheduleTailSettle, scrollToTail]);
