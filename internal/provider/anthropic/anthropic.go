@@ -356,7 +356,11 @@ func (c *client) buildRequest(_ context.Context, req provider.Request) anthReque
 		msgs = append(msgs, anthMessage{Role: role, Content: blocks})
 	}
 
-	for _, m := range provider.SanitizeToolPairing(req.Messages) {
+	messages := req.Messages
+	if c.deepseek {
+		messages = projectDeepSeekReplaySafeMessages(messages)
+	}
+	for _, m := range provider.SanitizeToolPairing(messages) {
 		switch m.Role {
 		case provider.RoleSystem:
 			if m.Content != "" {

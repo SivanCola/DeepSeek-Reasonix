@@ -150,6 +150,50 @@ func TestRealDeepSeekAnthropicToolLoop(t *testing.T) {
 		len(second.text), len(second.reasoning), second.promptTokens, second.cacheHitTokens)
 }
 
+// TestRealDeepSeekAnthropicProjectsMissingThinkingHistory reproduces the
+// malformed persisted-history shape behind DeepSeek's
+// "content[].thinking must be passed back" HTTP 400. The provider boundary
+// must project the unreplayable tool activity away before sending the request,
+// while retaining the surrounding visible conversation.
+func TestRealDeepSeekAnthropicProjectsMissingThinkingHistory(t *testing.T) {
+	key := os.Getenv("DEEPSEEK_API_KEY")
+	if key == "" {
+		t.Skip("DEEPSEEK_API_KEY not set — skipping live probe")
+	}
+
+	p, err := New(provider.Config{
+		Name:    "deepseek-anthropic",
+		BaseURL: "https://api.deepseek.com/anthropic",
+		Model:   "deepseek-v4-flash",
+		APIKey:  key,
+		Extra: map[string]any{
+			"api_key_env": "DEEPSEEK_API_KEY",
+			"thinking":    "enabled",
+			"effort":      "high",
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	turn := collectLiveDeepSeekTurn(t, p, provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleUser, Content: "Inspect the marker using the tool."},
+			{
+				Role: provider.RoleAssistant, Content: "I inspected the marker.",
+				ToolCalls: []provider.ToolCall{{ID: "legacy-call", Name: "get_marker", Arguments: `{}`}},
+			},
+			{Role: provider.RoleTool, ToolCallID: "legacy-call", Name: "get_marker", Content: "legacy-result"},
+			{Role: provider.RoleUser, Content: "Reply with the single word: recovered."},
+		},
+		MaxTokens: 256,
+	})
+	if strings.TrimSpace(turn.text) == "" {
+		t.Fatalf("projected missing-thinking history returned no assistant text")
+	}
+	t.Logf("missing-thinking projection: text=%d reasoning=%d prompt=%d", len(turn.text), len(turn.reasoning), turn.promptTokens)
+}
+
 // TestRealDeepSeekAnthropicWebSearch verifies that the official Anthropic
 // compatibility endpoint accepts the server-side web_search tool and returns a
 // normal assistant completion. It is intentionally separate from the tool-loop
