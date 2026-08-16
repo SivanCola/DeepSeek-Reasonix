@@ -408,5 +408,6 @@ ok(
   "App navigation results require both queue ownership and the shared navigation intent",
 );
 
+await act(async () => root.unmount());
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
