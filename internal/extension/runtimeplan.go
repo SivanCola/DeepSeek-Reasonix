@@ -84,10 +84,10 @@ func (p *RuntimePlan) MayChangePrefix() bool {
 
 // AffectsSidecars reports whether any native runtime package must start/drain.
 func (p *RuntimePlan) AffectsSidecars() bool {
-	if p == nil || p.IsNoOp() {
+	if p == nil {
 		return false
 	}
-	return true
+	return p.RestartUnchangedSidecars || !p.IsNoOp()
 }
 
 // AffectsInterceptors reports whether the interceptor chain must rebuild.
