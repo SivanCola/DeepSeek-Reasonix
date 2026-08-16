@@ -20,11 +20,10 @@ import { join } from "node:path";
 
 const SOURCE_ROOT = new URL("../src", import.meta.url).pathname;
 
-// Phase 3 of the scroll-arbiter refactor shrinks this list to the arbiter
-// module alone; until then the two existing writer modules are grandfathered.
+// Only the scroll-arbiter hook may write to the transcript Virtuoso handle;
+// every other module routes through its dispatch/writeOffset/recovery API.
 const ALLOWED_WRITERS = new Set([
-  "lib/useTranscriptVirtuosoScroll.ts",
-  "lib/useTranscriptVirtuosoRecovery.ts",
+  "lib/useTranscriptScrollArbiter.ts",
 ]);
 
 // Matches imperative scroll calls on the transcript Virtuoso handle, whether

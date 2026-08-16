@@ -5,7 +5,7 @@ import {
   reduceTranscriptScroll,
   type TranscriptScrollEvent,
   type TranscriptScrollState,
-} from "../lib/transcriptScrollController";
+} from "../lib/transcriptScrollArbiter";
 
 let passed = 0;
 let failed = 0;

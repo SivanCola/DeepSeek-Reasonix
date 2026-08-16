@@ -37,7 +37,7 @@ import {
 import { getTranscriptStore } from "../lib/transcriptStore";
 import { createTranscriptMeasuredSizes, type TranscriptMeasuredSizes } from "../lib/transcriptMeasuredSizes";
 import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib/markdownWorkerClient";
-import { noteTranscriptRowCounts } from "../lib/sessionDiagnostics";
+import { noteTranscriptRecoveryTerminal, noteTranscriptRowCounts } from "../lib/sessionDiagnostics";
 import { useReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
 import { InlineAssistantReasoning } from "./InlineAssistantReasoning";
 import { LiveTurnRegion } from "./LiveTurnRegion";
@@ -49,8 +49,8 @@ import { useTranscriptSelectableRows } from "../lib/useTranscriptSelectableRows"
 import { TranscriptSelectionOverlay } from "./TranscriptSelectionOverlay";
 import { useCreationTranscriptScrollbar } from "../lib/useCreationTranscriptScrollbar";
 import { useTranscriptScrollInteractions } from "../lib/useTranscriptScrollInteractions";
-import { hasTranscriptScrollableRange, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX, useTranscriptVirtuosoScroll } from "../lib/useTranscriptVirtuosoScroll";
-import { useTranscriptVirtuosoRecovery, type TranscriptRecoveryControl } from "../lib/useTranscriptVirtuosoRecovery";
+import { hasTranscriptScrollableRange, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX, useTranscriptScrollArbiter } from "../lib/useTranscriptScrollArbiter";
+import { useTranscriptLayoutIntegrity } from "../lib/useTranscriptLayoutIntegrity";
 import { TranscriptLayoutIntentProvider } from "./TranscriptLayoutIntentContext";
 import { MarkdownImageTabContext } from "./MarkdownImageContext";
 
@@ -318,7 +318,10 @@ export function Transcript({
     writeOffset,
     reset: resetScroll,
     finishProgrammaticScroll,
-  } = useTranscriptVirtuosoScroll({ liveTailActiveRef });
+    submitRecoveryRequest,
+    retryRecoveryRequest,
+    lastGoodAnchorRef,
+  } = useTranscriptScrollArbiter({ liveTailActiveRef, onRecoveryTerminal: noteTranscriptRecoveryTerminal });
   const virtuosoReadyRef = useRef(false);
   const layoutSurfaceKey = `${tabId ?? ""}:${revealSignal}`;
 
@@ -516,6 +519,27 @@ export function Transcript({
     return map;
   }, [allRows]);
   const [selectableRows, liveSelectableRows] = useTranscriptSelectableRows(allRows, live);
+  const {
+    resetKey: virtuosoResetKey,
+    firstItemIndex,
+    restoreLocation,
+    handleItemsRendered: handleRecoveryItemsRendered,
+    scheduleBlankViewportCheck,
+    invalidateAnchors,
+    noteUserScrollIntent,
+    noteScrollActivity,
+  } = useTranscriptLayoutIntegrity({
+    surfaceKey: layoutSurfaceKey,
+    rows: virtualRows,
+    rowIndexByKey,
+    scrollRef,
+    pinnedRef: stick,
+    readyRef: virtuosoReadyRef,
+    scrollToBottom,
+    submitRecoveryRequest,
+    retryRecoveryRequest,
+    lastGoodAnchorRef,
+  });
   const selectionRetention = useTranscriptSelectionRetention({
     tabId,
     revealSignal,
@@ -527,34 +551,30 @@ export function Transcript({
     writeOffset,
     cancelStreamingScroll: cancelStreamingAndFollow,
   });
-  // Recovery control is bridged through a ref: these intent wrappers are
-  // created before useTranscriptVirtuosoRecovery returns its API below. User
-  // scroll intent aborts in-flight anchor restores and holds layout rebuilds
-  // until the scroll goes quiet (#8657/#8688 follow-up).
-  const recoveryControlRef = useRef<TranscriptRecoveryControl | null>(null);
-  const notifyRecoveryScrollIntent = useCallback(() => {
-    recoveryControlRef.current?.noteUserScrollIntent();
-  }, []);
+  // User scroll intent is reported to the layout-integrity hook (idle gating
+  // for the blank watchdog) and to the scroll arbiter itself, which preempts
+  // any in-flight recovery restore on its own intent events (#8657/#8688
+  // follow-up).
   const onWheelIntentWithRecovery = useCallback((event: ReactWheelEvent<HTMLElement>) => {
-    notifyRecoveryScrollIntent();
+    noteUserScrollIntent();
     return onWheelIntent(event);
-  }, [notifyRecoveryScrollIntent, onWheelIntent]);
+  }, [noteUserScrollIntent, onWheelIntent]);
   const onTouchStartIntentWithRecovery = useCallback((event: ReactTouchEvent<HTMLElement>) => {
-    notifyRecoveryScrollIntent();
+    noteUserScrollIntent();
     onTouchStartIntent(event);
-  }, [notifyRecoveryScrollIntent, onTouchStartIntent]);
+  }, [noteUserScrollIntent, onTouchStartIntent]);
   const onTouchMoveIntentWithRecovery = useCallback((event: ReactTouchEvent<HTMLElement>) => {
-    notifyRecoveryScrollIntent();
+    noteUserScrollIntent();
     return onTouchMoveIntent(event);
-  }, [notifyRecoveryScrollIntent, onTouchMoveIntent]);
+  }, [noteUserScrollIntent, onTouchMoveIntent]);
   const onKeyScrollIntentWithRecovery = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
-    notifyRecoveryScrollIntent();
+    noteUserScrollIntent();
     return onKeyScrollIntent(event);
-  }, [notifyRecoveryScrollIntent, onKeyScrollIntent]);
+  }, [noteUserScrollIntent, onKeyScrollIntent]);
   const onPointerDownIntentWithRecovery = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    notifyRecoveryScrollIntent();
+    noteUserScrollIntent();
     return onPointerDownIntent(event);
-  }, [notifyRecoveryScrollIntent, onPointerDownIntent]);
+  }, [noteUserScrollIntent, onPointerDownIntent]);
   const scrollInteractions = useTranscriptScrollInteractions({
     scrollRef,
     cancelStreamingScroll: cancelStreamingAutoScroll,
@@ -566,26 +586,6 @@ export function Transcript({
     onScrollEnd: finishProgrammaticScroll,
     onSelectionPointerDown: selectionRetention.onPointerDownCapture,
   });
-  const {
-    resetKey: virtuosoResetKey,
-    firstItemIndex,
-    restoreLocation,
-    handleItemsRendered: handleRecoveryItemsRendered,
-    scheduleBlankViewportCheck,
-    invalidateAnchors,
-    noteUserScrollIntent,
-    noteScrollActivity,
-  } = useTranscriptVirtuosoRecovery({
-    surfaceKey: layoutSurfaceKey,
-    rows: virtualRows,
-    rowIndexByKey,
-    scrollRef,
-    pinnedRef: stick,
-    virtuosoRef,
-    readyRef: virtuosoReadyRef,
-    scrollToBottom,
-  });
-  recoveryControlRef.current = { noteUserScrollIntent, invalidateAnchors };
   // Measured-geometry cache: remounts restart from real row heights instead
   // of static priors, so the size-tree collapse loses its blast radius.
   const measuredSizes = useMemo(() => createTranscriptMeasuredSizes(), [layoutSurfaceKey]);

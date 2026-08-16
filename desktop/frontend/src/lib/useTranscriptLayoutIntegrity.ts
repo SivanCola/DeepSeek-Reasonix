@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { VirtuosoHandle } from "react-virtuoso";
 import type { TranscriptRow } from "./transcriptRows";
 import { useTranscriptVirtuosoFirstItemIndex } from "./transcriptVirtuosoIndex";
 import {
@@ -8,7 +7,7 @@ import {
   transcriptElementViewportIsBlank,
   type TranscriptLayoutAnchor,
 } from "./transcriptVirtuosoRecovery";
-import { noteTranscriptScrollWrite } from "./transcriptScrollProbe";
+import type { TranscriptScrollArbiterRecoveryApi } from "./useTranscriptScrollArbiter";
 
 const BLANK_RECOVERY_COOLDOWN_MS = 2_000;
 // A viewport that blanks while the user is actively scrolling is almost always
@@ -16,62 +15,61 @@ const BLANK_RECOVERY_COOLDOWN_MS = 2_000;
 // size tree. Resets wait for the scroll to go quiet; only a blank that
 // survives into idle earns a rebuild.
 const USER_SCROLL_IDLE_MS = 320;
-// Anchor restores wait for the anchor row to actually mount. An 8-frame
-// budget (~128 ms) expired before heavy rows mounted on WebView2, stranding
-// the view at the estimate-based (higher) scrollToIndex landing — the
-// scroll-down/snap-up loop. Bound by wall clock instead.
-const ANCHOR_RESTORE_BUDGET_MS = 1_000;
-
-/** User-scroll signals the Transcript wires into its intent handlers. */
-export type TranscriptRecoveryControl = {
-  noteUserScrollIntent: () => void;
-  invalidateAnchors: () => void;
-};
 
 /**
- * Rebuilds a stale Virtuoso size tree while preserving the logical viewport.
+ * Detects a stale Virtuoso size tree and rebuilds it while preserving the
+ * logical viewport. This hook never writes scrolls itself and never touches
+ * the Virtuoso handle: anchor restores are submitted to the scroll arbiter
+ * as recovery requests with an explicit terminal state (done / cancelled /
+ * expired), and user scroll intent preempts them through the arbiter's own
+ * intent events (#8657).
  *
  * Content patches (history_items_patch) never reach this hook: they update
  * the row data and Virtuoso re-measures the mounted rows itself, which is
  * local, incremental, and keeps the measured size tree intact. The only
  * remaining rebuild trigger is the blank-viewport watchdog, which fires when
  * the size tree is genuinely broken — not on a schedule derived from content
- * revisions (#8657: revision-driven keyed remounts collapsed the measured
- * tree back to estimates several times per minute on long sessions, and the
- * estimate-based restore landings pulled the view away from the bottom).
+ * revisions.
  */
-export function useTranscriptVirtuosoRecovery({
+export function useTranscriptLayoutIntegrity({
   surfaceKey,
   rows,
   rowIndexByKey,
   scrollRef,
   pinnedRef,
-  virtuosoRef,
   readyRef,
   scrollToBottom,
+  submitRecoveryRequest,
+  retryRecoveryRequest,
+  lastGoodAnchorRef,
 }: {
   surfaceKey: string;
   rows: readonly TranscriptRow[];
   rowIndexByKey: ReadonlyMap<string, number>;
   scrollRef: RefObject<HTMLDivElement | null>;
   pinnedRef: RefObject<boolean>;
-  virtuosoRef: RefObject<VirtuosoHandle | null>;
   readyRef: RefObject<boolean>;
   scrollToBottom: () => void;
-}) {
+} & TranscriptScrollArbiterRecoveryApi) {
   const [resetEpoch, setResetEpoch] = useState(0);
   const blankCheckFrameRef = useRef<number | null>(null);
   const pendingAnchorRef = useRef<{ surfaceKey: string; anchor: TranscriptLayoutAnchor } | null>(null);
-  const stableManualAnchorRef = useRef<Extract<TranscriptLayoutAnchor, { mode: "manual" }> | null>(null);
   const lastBlankRecoveryAtRef = useRef(0);
   const userScrollActiveRef = useRef(false);
   const userScrollIdleTimerRef = useRef<number | null>(null);
+  // A single rAF-pair blank sighting can still be mount lag; only two
+  // consecutive idle blank checks earn a rebuild.
+  const consecutiveBlankRef = useRef(0);
+  const activeRecoveryIdRef = useRef<number | null>(null);
+  const suspendedRecoveryIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     pendingAnchorRef.current = null;
-    stableManualAnchorRef.current = null;
     lastBlankRecoveryAtRef.current = 0;
     userScrollActiveRef.current = false;
+    consecutiveBlankRef.current = 0;
+    activeRecoveryIdRef.current = null;
+    suspendedRecoveryIdRef.current = null;
     if (blankCheckFrameRef.current !== null) cancelAnimationFrame(blankCheckFrameRef.current);
     if (userScrollIdleTimerRef.current !== null) window.clearTimeout(userScrollIdleTimerRef.current);
     blankCheckFrameRef.current = null;
@@ -86,21 +84,26 @@ export function useTranscriptVirtuosoRecovery({
   const requestReset = useCallback((): boolean => {
     const element = scrollRef.current;
     if (!element || pendingAnchorRef.current?.surfaceKey === surfaceKey) return false;
-    const anchor = stableManualAnchorRef.current
-      ?? (pinnedRef.current ? { mode: "tail" } as const : captureTranscriptLayoutAnchor(element, false));
+    // A blank viewport already lost its physical anchor. Restore the last
+    // known-good position the arbiter tracked (a completed recovery or the
+    // user's own resting position) instead of snapping the nearest mounted
+    // row to the top, which systematically landed above the real position.
+    const anchor = pinnedRef.current
+      ? ({ mode: "tail" } as const)
+      : lastGoodAnchorRef.current ?? captureTranscriptLayoutAnchor(element, false);
     if (!anchor) return false;
     pendingAnchorRef.current = { surfaceKey, anchor };
     readyRef.current = false;
     setResetEpoch((epoch) => epoch + 1);
     return true;
-  }, [pinnedRef, readyRef, scrollRef, surfaceKey]);
+  }, [lastGoodAnchorRef, pinnedRef, readyRef, scrollRef, surfaceKey]);
 
-  // Explicit user scroll intent outranks recovery: drop any pending/cached
-  // anchor so an in-flight restore loop exits at its next frame check and a
-  // later reset re-captures from the user's own position (#8657/#8688).
+  // Explicit user scroll intent outranks recovery: drop any pending anchor so
+  // a later reset re-captures from the user's own position. An in-flight
+  // recovery request is preempted separately by the arbiter's own intent
+  // events (wheel/touch/key/pointer all dispatch through it) (#8657/#8688).
   const invalidateAnchors = useCallback(() => {
     pendingAnchorRef.current = null;
-    stableManualAnchorRef.current = null;
   }, []);
 
   const resetKey = `${surfaceKey}:${resetEpoch}`;
@@ -108,23 +111,59 @@ export function useTranscriptVirtuosoRecovery({
   const pendingAnchor = pendingAnchorRef.current?.surfaceKey === surfaceKey ? pendingAnchorRef.current.anchor : undefined;
   const restoreLocation = transcriptAnchorInitialLocation(pendingAnchor, rowIndexByKey, firstItemIndex);
 
+  const captureUserAnchor = useCallback((): TranscriptLayoutAnchor | undefined => {
+    const element = scrollRef.current;
+    return element ? captureTranscriptLayoutAnchor(element, pinnedRef.current) : undefined;
+  }, [pinnedRef, scrollRef]);
+
+  // Hands the pending rebuild anchor to the arbiter, which owns the actual
+  // aim/settle writes and the request's terminal state from here on.
+  const submitAnchorRecovery = useCallback((anchor: TranscriptLayoutAnchor) => {
+    if (pendingAnchorRef.current?.surfaceKey !== surfaceKey) return;
+    pendingAnchorRef.current = null;
+    const id = submitRecoveryRequest({
+      anchor,
+      locate: (current) => transcriptAnchorInitialLocation(current, rowIndexByKey, firstItemIndex),
+      captureUserAnchor,
+      onSettle: () => {
+        activeRecoveryIdRef.current = null;
+        suspendedRecoveryIdRef.current = null;
+      },
+      // On user-takeover the arbiter already recorded the user's viewport
+      // anchor as the new lastGoodAnchor; the integrity side simply stops.
+      onCancel: () => {
+        activeRecoveryIdRef.current = null;
+        suspendedRecoveryIdRef.current = null;
+      },
+      onSuspend: (suspendedId) => {
+        suspendedRecoveryIdRef.current = suspendedId;
+      },
+      onExpired: () => {
+        activeRecoveryIdRef.current = null;
+        suspendedRecoveryIdRef.current = null;
+      },
+    });
+    activeRecoveryIdRef.current = id;
+  }, [captureUserAnchor, firstItemIndex, rowIndexByKey, submitRecoveryRequest, surfaceKey]);
+
   const scheduleBlankViewportCheck = useCallback(() => {
-    if (pendingAnchorRef.current?.surfaceKey !== surfaceKey) {
-      const element = scrollRef.current;
-      const anchor = element ? captureTranscriptLayoutAnchor(element, pinnedRef.current) : undefined;
-      if (anchor?.mode === "manual") stableManualAnchorRef.current = anchor;
-      else if (anchor?.mode === "tail") stableManualAnchorRef.current = null;
-    }
     if (
       blankCheckFrameRef.current !== null
       || pendingAnchorRef.current?.surfaceKey === surfaceKey
+      || activeRecoveryIdRef.current !== null
     ) return;
     blankCheckFrameRef.current = requestAnimationFrame(() => {
       blankCheckFrameRef.current = requestAnimationFrame(() => {
         blankCheckFrameRef.current = null;
         if (userScrollActiveRef.current) return;
         const element = scrollRef.current;
-        if (!element || !transcriptElementViewportIsBlank(element)) return;
+        if (!element || !transcriptElementViewportIsBlank(element)) {
+          consecutiveBlankRef.current = 0;
+          return;
+        }
+        consecutiveBlankRef.current += 1;
+        if (consecutiveBlankRef.current < 2) return;
+        consecutiveBlankRef.current = 0;
         // Cooldown-only dedup: content revisions no longer reach this hook,
         // so they cannot rotate the dedup key mid-storm. A blank that
         // persists past the cooldown earns another rebuild.
@@ -134,15 +173,21 @@ export function useTranscriptVirtuosoRecovery({
         requestReset();
       });
     });
-  }, [pinnedRef, requestReset, scrollRef, surfaceKey]);
+  }, [requestReset, scrollRef, surfaceKey]);
 
   // Runs when user-driven scrolling has been quiet for USER_SCROLL_IDLE_MS:
+  // retry a budget-suspended recovery from the user's new position, then
   // re-check the viewport — a blank that persists into idle is genuine
   // breakage, not mount lag.
   const handleUserScrollIdle = useCallback(() => {
     userScrollActiveRef.current = false;
+    const suspendedId = suspendedRecoveryIdRef.current;
+    if (suspendedId !== null) {
+      suspendedRecoveryIdRef.current = null;
+      retryRecoveryRequest(suspendedId);
+    }
     scheduleBlankViewportCheck();
-  }, [scheduleBlankViewportCheck]);
+  }, [retryRecoveryRequest, scheduleBlankViewportCheck]);
 
   const armUserScrollIdleTimer = useCallback(() => {
     if (userScrollIdleTimerRef.current !== null) window.clearTimeout(userScrollIdleTimerRef.current);
@@ -167,65 +212,15 @@ export function useTranscriptVirtuosoRecovery({
     if (userScrollActiveRef.current) armUserScrollIdleTimer();
   }, [armUserScrollIdleTimer]);
 
-  const restoreAnchor = useCallback((anchor: TranscriptLayoutAnchor) => {
-    if (pendingAnchorRef.current?.surfaceKey !== surfaceKey) return;
-    if (anchor.mode === "tail") {
-      pendingAnchorRef.current = null;
-      scrollToBottom();
-      return;
-    }
-    const deadline = Date.now() + ANCHOR_RESTORE_BUDGET_MS;
-    const restore = (stableFrames: number) => {
-      if (pendingAnchorRef.current?.surfaceKey !== surfaceKey) return;
-      const element = scrollRef.current;
-      if (!element) {
-        pendingAnchorRef.current = null;
-        return;
-      }
-      const row = Array.from(element.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]"))
-        .find((candidate) => candidate.dataset.rowKey === anchor.rowKey);
-      if (!row) {
-        // Heavy rows can take far longer than a few frames to mount after a
-        // rebuild on slow renderers. Keep re-aiming until the wall-clock
-        // budget expires; a user gesture drops the anchor instead (#8657/#8688).
-        if (Date.now() >= deadline) {
-          pendingAnchorRef.current = null;
-          return;
-        }
-        const location = transcriptAnchorInitialLocation(anchor, rowIndexByKey, firstItemIndex);
-        if (location) {
-          noteTranscriptScrollWrite({ owner: "recovery", kind: "scrollToIndex", index: location.index });
-          virtuosoRef.current?.scrollToIndex(location);
-        }
-        requestAnimationFrame(() => restore(0));
-        return;
-      }
-      const viewportTop = element.getBoundingClientRect().top;
-      const correction = row.getBoundingClientRect().top - viewportTop - anchor.offset;
-      if (Math.abs(correction) > 1) {
-        noteTranscriptScrollWrite({ owner: "recovery", kind: "scrollBy", top: correction });
-        virtuosoRef.current?.scrollBy({ top: correction, behavior: "auto" });
-      }
-      const nextStableFrames = Math.abs(correction) <= 1 ? stableFrames + 1 : 0;
-      if (Date.now() < deadline && nextStableFrames < 2) {
-        requestAnimationFrame(() => restore(nextStableFrames));
-        return;
-      }
-      pendingAnchorRef.current = null;
-      stableManualAnchorRef.current = anchor;
-    };
-    requestAnimationFrame(() => restore(0));
-  }, [firstItemIndex, rowIndexByKey, scrollRef, scrollToBottom, virtuosoRef]);
-
   const handleItemsRendered = useCallback((renderedCount: number) => {
     if (!readyRef.current && renderedCount > 0) {
       readyRef.current = true;
       const pending = pendingAnchorRef.current;
-      if (pending?.surfaceKey === surfaceKey) restoreAnchor(pending.anchor);
+      if (pending?.surfaceKey === surfaceKey) submitAnchorRecovery(pending.anchor);
       else requestAnimationFrame(scrollToBottom);
     }
     scheduleBlankViewportCheck();
-  }, [readyRef, restoreAnchor, scheduleBlankViewportCheck, scrollToBottom, surfaceKey]);
+  }, [readyRef, scheduleBlankViewportCheck, scrollToBottom, submitAnchorRecovery, surfaceKey]);
 
   return {
     resetKey,
