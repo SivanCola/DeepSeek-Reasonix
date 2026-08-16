@@ -38,8 +38,9 @@ const TAIL_SETTLE_BUDGET_MS = 500;
 // the view at the estimate-based (higher) scrollToIndex landing — the
 // scroll-down/snap-up loop. Bound by wall clock instead; on expiry the
 // request suspends (no intermediate scrollBy ever lands while the anchor row
-// is unmounted) and retries from the user's own position on the next scroll
-// idle, up to RECOVERY_MAX_RETRIES times before going terminally expired.
+// is unmounted) and retries after a bounded quiet window, up to
+// RECOVERY_MAX_RETRIES times before going terminally expired. User intent
+// still preempts a suspended request instead of letting the retry take over.
 const ANCHOR_RESTORE_BUDGET_MS = 1_000;
 const RECOVERY_MAX_RETRIES = 2;
 const RECOVERY_CORRECTION_TOLERANCE_PX = 1;
@@ -319,9 +320,9 @@ export function useTranscriptScrollArbiter({
         // Heavy rows can take far longer than a few frames to mount after a
         // rebuild on slow renderers. Keep re-aiming until the wall-clock
         // budget expires — re-aims only, never an intermediate scrollBy into
-        // the estimate-based void. On expiry the request suspends; the next
-        // user scroll idle re-anchors on the user's position and retries
-        // (#8657/#8688).
+        // the estimate-based void. On expiry the request suspends; the
+        // integrity owner schedules a bounded retry unless user intent
+        // explicitly cancels it (#8657/#8688).
         if (Date.now() >= recovery.deadline) {
           recovery.status = "suspended";
           recovery.spec.onSuspend?.(recovery.id);
@@ -372,8 +373,9 @@ export function useTranscriptScrollArbiter({
     return id;
   }, [dispatch, launchRecovery]);
 
-  // Retries a budget-suspended request once per user scroll idle. The user's
-  // current position is the consistency source, so the retry re-anchors on it.
+  // Retries a budget-suspended request after the integrity owner's quiet
+  // window. The current viewport is the consistency source, so the retry
+  // re-anchors on it.
   const retryRecoveryRequest = useCallback((id: number) => {
     const recovery = recoveryRef.current;
     if (!recovery || recovery.id !== id || recovery.status !== "suspended") return;

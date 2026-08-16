@@ -382,9 +382,9 @@ check(
 );
 strayRow.remove();
 
-// ── T4: budget expiry suspends the request (no intermediate landing), the
-// next scroll idle retries from the user's position, and exhausted retries
-// report terminal expired.
+// ── T4: budget expiry suspends the request (no intermediate landing), a
+// bounded quiet-window retry keeps it from waiting forever for user input,
+// and exhausted retries report terminal expired.
 await switchSurface("surface-g");
 scrollElement.appendChild(rowElement);
 rowElement.getBoundingClientRect = () => rectAt(200);
@@ -407,24 +407,47 @@ await flushFrames();
 await flushFrames();
 check(scrollToIndexCalls === frozenReaims, "budget expiry suspends the request instead of abandoning it mid-flight");
 check(terminals.length === 0, "a suspended request reports no terminal state yet");
-await act(async () => integrity?.noteUserScrollIntent());
 await advanceClock(350);
 await flushFrames();
-check(scrollToIndexCalls === frozenReaims + 1, "the next scroll idle retries the suspended recovery once");
+check(scrollToIndexCalls === frozenReaims + 1, "the quiet-window timer retries a suspended recovery without user input");
 await advanceClock(1_100);
 await flushFrames();
-await act(async () => integrity?.noteUserScrollIntent());
 await advanceClock(350);
 await flushFrames();
 await advanceClock(1_100);
 await flushFrames();
-await act(async () => integrity?.noteUserScrollIntent());
 await advanceClock(350);
 check(
   terminals.some((terminal) => terminal.outcome === "expired"),
   "after max retries the suspended request reports terminal expired",
 );
 check(scrollByCalls === 0, "the whole expired lifecycle emitted zero intermediate scrollBy");
+
+// A real Transcript gesture first marks layout intent, then dispatches the
+// arbiter event. The latter must cancel a suspended request and its automatic
+// retry so scroll idle never steals the viewport back from the user.
+await switchSurface("surface-h");
+scrollElement.appendChild(rowElement);
+rowElement.getBoundingClientRect = () => rectAt(200);
+await act(async () => arbiter?.releaseTailFollow());
+await triggerWatchdogRebuild();
+rowElement.remove();
+scrollToIndexCalls = 0;
+terminals.length = 0;
+await act(async () => integrity?.handleItemsRendered(1));
+await flushFrames();
+await advanceClock(1_100);
+await flushFrames();
+const reaimsBeforeTakeover = scrollToIndexCalls;
+await act(async () => integrity?.noteUserScrollIntent());
+await act(async () => arbiter?.releaseTailFollow());
+check(
+  terminals.some((terminal) => terminal.outcome === "cancelled" && terminal.reason === "user-takeover"),
+  "the real Transcript user-intent order cancels a suspended recovery",
+);
+await advanceClock(350);
+await flushFrames();
+check(scrollToIndexCalls === reaimsBeforeTakeover, "a cancelled suspended recovery never retries after scroll idle");
 
 // ── T10: entering selection mode mid-recovery cancels it; selection-edge
 // scrolls are the only writes afterwards.
@@ -470,7 +493,7 @@ stubSnapshot = {
 await switchSurface("surface-k");
 await act(async () => arbiter?.releaseTailFollow());
 await triggerWatchdogRebuild();
-check(integrity?.restoreSnapshot === stubSnapshot, "watchdog rebuild restores the just-captured snapshot");
+check(integrity?.restoreSnapshot === undefined, "watchdog rebuild discards the size tree it just declared broken");
 await act(async () => integrity?.handleItemsRendered(1));
 await flushFrames();
 
@@ -486,27 +509,18 @@ await flushFrames();
 check(scrollToBottomCalls === scrollToBottomBeforeSnapshot, "a snapshot-restored mount does not jump to the bottom");
 
 // ── T9: the incoming surface prepended older history since the capture;
-// the snapshot restores with ranges translated by the prepend delta.
+// changed data/totalCount must discard the snapshot per Virtuoso's contract.
 const prependedRows: TranscriptRow[] = [
   { kind: "answer", key: "older-1", item: { ...item, id: "older-1" } },
   { kind: "answer", key: "older-2", item: { ...item, id: "older-2" } },
   ...baseRows,
 ];
 await switchSurface("surface-n", prependedRows);
-const prependRestore = integrity?.restoreSnapshot;
-check(
-  prependRestore !== undefined && prependRestore !== stubSnapshot,
-  "a prepended key sequence still restores the snapshot",
-);
-check(
-  prependRestore?.ranges[0].startIndex === 2 && prependRestore.ranges[0].endIndex === 2,
-  "prepend translates the restored ranges by the delta",
-);
-check(
-  prependRestore?.ranges[1].startIndex === 3 && prependRestore.ranges[1].endIndex === Infinity,
-  "an open-ended range translates its start but stays open",
-);
-check(prependRestore?.scrollTop === 420, "prepend keeps the captured scrollTop");
+check(integrity?.restoreSnapshot === undefined, "a prepended key sequence discards the captured snapshot");
+readyRef.current = false;
+await act(async () => integrity?.handleItemsRendered(1));
+await flushFrames();
+check(scrollToBottomCalls === scrollToBottomBeforeSnapshot + 1, "changed data falls back to normal first-mount positioning");
 
 // Different session (disjoint keys): the snapshot is discarded and the
 // first mount settles at the bottom as before.
@@ -516,7 +530,7 @@ check(integrity?.restoreSnapshot === undefined, "a disjoint key sequence discard
 readyRef.current = false;
 await act(async () => integrity?.handleItemsRendered(1));
 await flushFrames();
-check(scrollToBottomCalls === scrollToBottomBeforeSnapshot + 1, "a snapshot-less first mount settles at the bottom");
+check(scrollToBottomCalls === scrollToBottomBeforeSnapshot + 2, "a disjoint snapshot-less first mount settles at the bottom");
 stubSnapshot = null;
 
 await act(async () => root.unmount());

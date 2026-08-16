@@ -11,41 +11,23 @@ export type TranscriptStateSnapshot = {
   snapshot: StateSnapshot;
 };
 
-function prefixLength(keys: readonly string[], current: readonly string[]): number {
-  let index = 0;
-  while (index < keys.length && keys[index] === current[index]) index += 1;
-  return index;
-}
-
 /**
- * Adapts a captured snapshot to the current row key sequence, or returns
- * undefined when the data no longer matches (the caller then falls back to
- * the measured-height estimates from transcriptMeasuredSizes).
+ * Returns a captured snapshot only for the exact row sequence it measured.
+ * React Virtuoso's restoreStateFrom contract requires the same data and
+ * totalCount; changed data falls back to measured-height estimates plus the
+ * logical anchor instead of translating Virtuoso's internal ranges.
  *
- * - identical keys: restore as-is (watchdog rebuild, same-tab reveal);
- * - appended rows (snapshot keys are a prefix): ranges and scrollTop stay
- *   valid, old rows kept their data indexes;
- * - prepended rows (snapshot keys are a suffix): old rows moved `delta` data
- *   indexes down, so the ranges translate by the same delta;
- * - anything else (rewind, session switch): discard.
+ * This is intentionally stricter than key-overlap checks: append, prepend,
+ * rewind, and session switches all change totalCount and must discard.
  */
 export function resolveTranscriptStateSnapshot(
   record: TranscriptStateSnapshot | null,
   currentKeys: readonly string[],
 ): StateSnapshot | undefined {
   if (!record || record.keys.length === 0 || currentKeys.length === 0) return undefined;
-  if (prefixLength(record.keys, currentKeys) === record.keys.length) return record.snapshot;
-  if (record.keys.length > currentKeys.length) return undefined;
-  const delta = currentKeys.length - record.keys.length;
+  if (record.keys.length !== currentKeys.length) return undefined;
   for (let index = 0; index < record.keys.length; index += 1) {
-    if (record.keys[index] !== currentKeys[index + delta]) return undefined;
+    if (record.keys[index] !== currentKeys[index]) return undefined;
   }
-  return {
-    scrollTop: record.snapshot.scrollTop,
-    ranges: record.snapshot.ranges.map((range) => ({
-      ...range,
-      startIndex: range.startIndex + delta,
-      endIndex: range.endIndex === Infinity ? Infinity : range.endIndex + delta,
-    })),
-  };
+  return record.snapshot;
 }

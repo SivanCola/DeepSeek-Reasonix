@@ -59,6 +59,7 @@ export function useTranscriptLayoutIntegrity({
   const lastBlankRecoveryAtRef = useRef(0);
   const userScrollActiveRef = useRef(false);
   const userScrollIdleTimerRef = useRef<number | null>(null);
+  const recoveryRetryTimerRef = useRef<number | null>(null);
   // A single rAF-pair blank sighting can still be mount lag; only two
   // consecutive idle blank checks earn a rebuild.
   const consecutiveBlankRef = useRef(0);
@@ -92,13 +93,16 @@ export function useTranscriptLayoutIntegrity({
     suspendedRecoveryIdRef.current = null;
     if (blankCheckFrameRef.current !== null) cancelAnimationFrame(blankCheckFrameRef.current);
     if (userScrollIdleTimerRef.current !== null) window.clearTimeout(userScrollIdleTimerRef.current);
+    if (recoveryRetryTimerRef.current !== null) window.clearTimeout(recoveryRetryTimerRef.current);
     blankCheckFrameRef.current = null;
     userScrollIdleTimerRef.current = null;
+    recoveryRetryTimerRef.current = null;
   }, [surfaceKey]);
 
   useEffect(() => () => {
     if (blankCheckFrameRef.current !== null) cancelAnimationFrame(blankCheckFrameRef.current);
     if (userScrollIdleTimerRef.current !== null) window.clearTimeout(userScrollIdleTimerRef.current);
+    if (recoveryRetryTimerRef.current !== null) window.clearTimeout(recoveryRetryTimerRef.current);
   }, []);
 
   const requestReset = useCallback((): boolean => {
@@ -112,17 +116,15 @@ export function useTranscriptLayoutIntegrity({
       ? ({ mode: "tail" } as const)
       : lastGoodAnchorRef.current ?? captureTranscriptLayoutAnchor(element, false);
     if (!anchor) return false;
-    // Snapshot the outgoing measured tree before the keyed remount; the new
-    // tree restores from it when the row keys still match (#8657).
-    const snapshot = captureStateSnapshot();
-    if (snapshot && surfaceStateRef.current.rowKeys.length > 0) {
-      stateSnapshotRef.current = { keys: surfaceStateRef.current.rowKeys, snapshot };
-    }
+    // The watchdog only rebuilds after declaring the current size tree
+    // broken. Never feed that same tree back through restoreStateFrom; the
+    // measured-height cache plus the logical anchor rebuild it safely.
+    stateSnapshotRef.current = null;
     pendingAnchorRef.current = { surfaceKey, anchor };
     readyRef.current = false;
     setResetEpoch((epoch) => epoch + 1);
     return true;
-  }, [captureStateSnapshot, lastGoodAnchorRef, pinnedRef, readyRef, scrollRef, surfaceKey]);
+  }, [lastGoodAnchorRef, pinnedRef, readyRef, scrollRef, surfaceKey]);
 
   // Explicit user scroll intent outranks recovery: drop any pending anchor so
   // a later reset re-captures from the user's own position. An in-flight
@@ -151,6 +153,31 @@ export function useTranscriptLayoutIntegrity({
     return element ? captureTranscriptLayoutAnchor(element, pinnedRef.current) : undefined;
   }, [pinnedRef, scrollRef]);
 
+  const clearSuspendedRecovery = useCallback(() => {
+    suspendedRecoveryIdRef.current = null;
+    if (recoveryRetryTimerRef.current !== null) {
+      window.clearTimeout(recoveryRetryTimerRef.current);
+      recoveryRetryTimerRef.current = null;
+    }
+  }, []);
+
+  const armSuspendedRecoveryRetry = useCallback((id: number) => {
+    if (recoveryRetryTimerRef.current !== null) window.clearTimeout(recoveryRetryTimerRef.current);
+    const retryWhenIdle = () => {
+      recoveryRetryTimerRef.current = window.setTimeout(() => {
+        recoveryRetryTimerRef.current = null;
+        if (suspendedRecoveryIdRef.current !== id) return;
+        if (userScrollActiveRef.current) {
+          retryWhenIdle();
+          return;
+        }
+        suspendedRecoveryIdRef.current = null;
+        retryRecoveryRequest(id);
+      }, USER_SCROLL_IDLE_MS);
+    };
+    retryWhenIdle();
+  }, [retryRecoveryRequest]);
+
   // Hands the pending rebuild anchor to the arbiter, which owns the actual
   // aim/settle writes and the request's terminal state from here on.
   const submitAnchorRecovery = useCallback((anchor: TranscriptLayoutAnchor) => {
@@ -162,24 +189,25 @@ export function useTranscriptLayoutIntegrity({
       captureUserAnchor,
       onSettle: () => {
         activeRecoveryIdRef.current = null;
-        suspendedRecoveryIdRef.current = null;
+        clearSuspendedRecovery();
       },
       // On user-takeover the arbiter already recorded the user's viewport
       // anchor as the new lastGoodAnchor; the integrity side simply stops.
       onCancel: () => {
         activeRecoveryIdRef.current = null;
-        suspendedRecoveryIdRef.current = null;
+        clearSuspendedRecovery();
       },
       onSuspend: (suspendedId) => {
         suspendedRecoveryIdRef.current = suspendedId;
+        armSuspendedRecoveryRetry(suspendedId);
       },
       onExpired: () => {
         activeRecoveryIdRef.current = null;
-        suspendedRecoveryIdRef.current = null;
+        clearSuspendedRecovery();
       },
     });
     activeRecoveryIdRef.current = id;
-  }, [captureUserAnchor, firstItemIndex, rowIndexByKey, submitRecoveryRequest, surfaceKey]);
+  }, [armSuspendedRecoveryRetry, captureUserAnchor, clearSuspendedRecovery, firstItemIndex, rowIndexByKey, submitRecoveryRequest, surfaceKey]);
 
   const scheduleBlankViewportCheck = useCallback(() => {
     if (
@@ -210,19 +238,13 @@ export function useTranscriptLayoutIntegrity({
     });
   }, [requestReset, scrollRef, surfaceKey]);
 
-  // Runs when user-driven scrolling has been quiet for USER_SCROLL_IDLE_MS:
-  // retry a budget-suspended recovery from the user's new position, then
-  // re-check the viewport — a blank that persists into idle is genuine
-  // breakage, not mount lag.
+  // Runs when user-driven scrolling has been quiet for USER_SCROLL_IDLE_MS.
+  // Suspended recoveries own a separate bounded retry timer so they cannot
+  // wait forever for user input; this lane only re-checks the viewport.
   const handleUserScrollIdle = useCallback(() => {
     userScrollActiveRef.current = false;
-    const suspendedId = suspendedRecoveryIdRef.current;
-    if (suspendedId !== null) {
-      suspendedRecoveryIdRef.current = null;
-      retryRecoveryRequest(suspendedId);
-    }
     scheduleBlankViewportCheck();
-  }, [retryRecoveryRequest, scheduleBlankViewportCheck]);
+  }, [scheduleBlankViewportCheck]);
 
   const armUserScrollIdleTimer = useCallback(() => {
     if (userScrollIdleTimerRef.current !== null) window.clearTimeout(userScrollIdleTimerRef.current);

@@ -32,9 +32,9 @@ const keys = ["a", "b", "c"];
 const identical = resolveTranscriptStateSnapshot({ keys, snapshot: base }, ["a", "b", "c"]);
 check(identical === base, "identical row keys restore the captured snapshot");
 
-// Appended rows keep every captured data index: prefix match restores as-is.
+// React Virtuoso requires the same data and totalCount for restoreStateFrom.
 const appended = resolveTranscriptStateSnapshot({ keys, snapshot: base }, ["a", "b", "c", "d", "e"]);
-check(appended === base, "appended rows restore the captured snapshot unchanged");
+check(appended === undefined, "appended rows discard a snapshot with a different totalCount");
 
 // ── T6: disjoint keys discard the snapshot (session switch falls back to
 // measured-height estimates)
@@ -52,26 +52,10 @@ check(
   "an empty capture never restores",
 );
 
-// ── T9: prepended rows translate the ranges by the prepend delta
+// ── T9: prepended rows also change data/totalCount and must discard
 const prepended = resolveTranscriptStateSnapshot({ keys, snapshot: base }, ["n1", "n2", "a", "b", "c"]);
-check(prepended !== undefined && prepended !== base, "prepended rows still restore the snapshot");
-check(
-  prepended?.scrollTop === 420,
-  "prepend keeps the captured scrollTop",
-);
-check(
-  prepended?.ranges[0].startIndex === 2 && prepended.ranges[0].endIndex === 6,
-  "prepend translates range starts and ends by the delta",
-);
-check(
-  prepended?.ranges[1].startIndex === 7 && prepended.ranges[1].endIndex === 7,
-  "single-row ranges translate by the same delta",
-);
-check(
-  prepended?.ranges[2].endIndex === Infinity && prepended.ranges[2].startIndex === 8,
-  "an open-ended range translates its start but stays open",
-);
-check(base.ranges[0].startIndex === 0, "translation never mutates the captured snapshot");
+check(prepended === undefined, "prepended rows discard the snapshot instead of translating internal ranges");
+check(base.ranges[0].startIndex === 0, "discarding changed data never mutates the captured snapshot");
 
 if (failed > 0) {
   console.error(`\n${failed} transcript state snapshot test(s) failed; ${passed} passed.`);

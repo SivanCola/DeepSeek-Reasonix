@@ -17,8 +17,9 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const SOURCE_ROOT = new URL("../src", import.meta.url).pathname;
+const SOURCE_ROOT = fileURLToPath(new URL("../src", import.meta.url));
 
 // Only the scroll-arbiter hook may write to the transcript Virtuoso handle;
 // every other module routes through its dispatch/writeOffset/recovery API.
