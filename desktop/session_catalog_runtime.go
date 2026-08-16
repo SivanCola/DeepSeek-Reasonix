@@ -262,6 +262,7 @@ func (a *App) runtimeProjectTopicNodes(scope, workspaceRoot string, snapshots []
 
 func (a *App) metadataTopicPage(req ProjectTopicPageRequest) ProjectTopicPage {
 	items := a.metadataProjectTopics(req.Scope, req.WorkspaceRoot)
+	manualOrder := manualTopicOrderFor(req.Scope, req.WorkspaceRoot)
 	query := strings.ToLower(strings.TrimSpace(req.Query))
 	if query != "" {
 		filtered := items[:0]
@@ -273,15 +274,7 @@ func (a *App) metadataTopicPage(req ProjectTopicPageRequest) ProjectTopicPage {
 		items = filtered
 	}
 	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Pinned != items[j].Pinned {
-			return items[i].Pinned
-		}
-		left := projectTopicSortValue(items[i].CreatedAt, items[i].LastActivityAt, req.SortMode)
-		right := projectTopicSortValue(items[j].CreatedAt, items[j].LastActivityAt, req.SortMode)
-		if left != right {
-			return left > right
-		}
-		return items[i].TopicID < items[j].TopicID
+		return projectTopicLess(items[i], items[j], req.SortMode, manualOrder)
 	})
 	start := 0
 	if lastID, ok := strings.CutPrefix(req.Cursor, "meta:"); ok {
@@ -294,10 +287,19 @@ func (a *App) metadataTopicPage(req ProjectTopicPageRequest) ProjectTopicPage {
 	} else if strings.TrimSpace(req.Cursor) != "" {
 		start = len(items)
 		for index, item := range items {
-			after, err := sessioncatalog.TopicSortKeyAfterCursor(
-				req.Cursor, item.Pinned,
-				projectTopicSortValue(item.CreatedAt, item.LastActivityAt, req.SortMode), item.TopicID,
-			)
+			var after bool
+			var err error
+			if manualOrder {
+				after, err = sessioncatalog.TopicSortKeyAfterOrderedCursor(
+					req.Cursor, item.Pinned, item.SortOrder,
+					projectTopicSortValue(item.CreatedAt, item.LastActivityAt, req.SortMode), item.TopicID,
+				)
+			} else {
+				after, err = sessioncatalog.TopicSortKeyAfterCursor(
+					req.Cursor, item.Pinned,
+					projectTopicSortValue(item.CreatedAt, item.LastActivityAt, req.SortMode), item.TopicID,
+				)
+			}
 			if err != nil {
 				start = 0
 				break
@@ -565,6 +567,7 @@ func liveTopicProjectedOnPage(ctx context.Context, catalog *sessioncatalog.Catal
 
 func (a *App) catalogTopicPage(catalog *sessioncatalog.Catalog, req ProjectTopicPageRequest) (ProjectTopicPage, error) {
 	out := ProjectTopicPage{Items: []ProjectNode{}}
+	manualOrder := manualTopicOrderFor(req.Scope, req.WorkspaceRoot)
 	limit := req.Limit
 	if limit <= 0 {
 		limit = sessioncatalog.DefaultLimit
@@ -589,6 +592,7 @@ func (a *App) catalogTopicPage(catalog *sessioncatalog.Catalog, req ProjectTopic
 		page, err := catalog.ListTopics(ctx, sessioncatalog.TopicPageRequest{
 			Scope: req.Scope, WorkspaceRoot: req.WorkspaceRoot, Cursor: cursor,
 			Limit: limit, Query: req.Query, TimeFilter: req.TimeFilter, SortMode: req.SortMode,
+			ManualOrder: manualOrder,
 		})
 		if err != nil {
 			return out, err
@@ -602,7 +606,7 @@ func (a *App) catalogTopicPage(catalog *sessioncatalog.Catalog, req ProjectTopic
 			out.Items = append(out.Items, node)
 			if len(out.Items) == limit {
 				if i+1 < len(page.Items) || page.NextCursor != "" {
-					out.NextCursor = encodeProjectTopicCursor(topic, req.SortMode)
+					out.NextCursor = encodeProjectTopicCursor(topic, req.SortMode, manualOrder)
 				}
 				return out, nil
 			}
@@ -628,20 +632,61 @@ func projectTopicSortValue(createdAt, lastActivityAt int64, sortMode string) int
 	return createdAt
 }
 
-func encodeProjectTopicCursor(topic sessioncatalog.TopicRecord, sortMode string) string {
+func projectTopicLess(left, right ProjectNode, sortMode string, manualOrder bool) bool {
+	if left.Pinned != right.Pinned {
+		return left.Pinned
+	}
+	if manualOrder {
+		leftRank, rightRank := left.SortOrder, right.SortOrder
+		if leftRank < 0 {
+			leftRank = int(^uint(0) >> 1)
+		}
+		if rightRank < 0 {
+			rightRank = int(^uint(0) >> 1)
+		}
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+	}
+	leftActivity := projectTopicSortValue(left.CreatedAt, left.LastActivityAt, sortMode)
+	rightActivity := projectTopicSortValue(right.CreatedAt, right.LastActivityAt, sortMode)
+	if leftActivity != rightActivity {
+		return leftActivity > rightActivity
+	}
+	return left.TopicID < right.TopicID
+}
+
+func manualTopicOrderFor(scope, workspaceRoot string) bool {
+	f := loadProjectsFile()
+	if strings.TrimSpace(scope) != "project" {
+		return f.GlobalManualTopicOrder
+	}
+	if index := projectIndexByRoot(f.Projects, workspaceRoot); index >= 0 {
+		return f.Projects[index].ManualTopicOrder
+	}
+	return false
+}
+
+func encodeProjectTopicCursor(topic sessioncatalog.TopicRecord, sortMode string, manualOrder bool) string {
 	// Reuse the catalog's keyset cursor encoding by asking for the next page
 	// after this topic. ListTopics accepts the same opaque cursor it emits.
 	pinned := 0
 	if topic.Pinned {
 		pinned = 1
 	}
+	if manualOrder {
+		return sessioncatalog.EncodeOrderedTopicCursor(pinned, topic.SortOrder, projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode), topic.TopicID)
+	}
 	return sessioncatalog.EncodeTopicCursor(pinned, projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode), topic.TopicID)
 }
 
-func encodeProjectNodeCursor(topic ProjectNode, sortMode string) string {
+func encodeProjectNodeCursor(topic ProjectNode, sortMode string, manualOrder bool) string {
 	pinned := 0
 	if topic.Pinned {
 		pinned = 1
+	}
+	if manualOrder {
+		return sessioncatalog.EncodeOrderedTopicCursor(pinned, topic.SortOrder, projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode), topic.TopicID)
 	}
 	return sessioncatalog.EncodeTopicCursor(pinned, projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode), topic.TopicID)
 }

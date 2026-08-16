@@ -58,9 +58,11 @@ type sessionPathRequest struct {
 }
 
 type pageCursor struct {
-	Pinned   int    `json:"p"`
-	Activity int64  `json:"a"`
-	TopicID  string `json:"t"`
+	Pinned      int    `json:"p"`
+	ManualOrder bool   `json:"m,omitempty"`
+	SortOrder   int64  `json:"o,omitempty"`
+	Activity    int64  `json:"a"`
+	TopicID     string `json:"t"`
 }
 
 func Open(ctx context.Context, opts Options) (*Catalog, error) {
@@ -514,6 +516,9 @@ func (c *Catalog) ListTopics(ctx context.Context, req TopicPageRequest) (TopicPa
 	if err != nil {
 		return out, err
 	}
+	if cursor != nil && cursor.ManualOrder != req.ManualOrder {
+		return out, errCursorSortModeChanged
+	}
 	args := []any{req.Scope, req.WorkspaceRoot}
 	where := `scope=? AND workspace_root=?`
 	if query := strings.TrimSpace(req.Query); query != "" {
@@ -525,22 +530,40 @@ func (c *Catalog) ListTopics(ctx context.Context, req TopicPageRequest) (TopicPa
 		args = append(args, cutoff)
 	}
 	sortExpression := topicPageSortExpression(req.SortMode)
+	manualSortExpression := topicPageManualSortExpression()
 	scanCursor := cursor
 	scanLimit := max(req.Limit+1, 64)
 	for len(out.Items) <= req.Limit {
 		pageWhere := where
 		pageArgs := append([]any(nil), args...)
 		if scanCursor != nil {
-			pageWhere += ` AND (pinned<? OR (pinned=? AND ` + sortExpression + `<?) OR (pinned=? AND ` + sortExpression + `=? AND topic_id>?))`
-			pageArgs = append(pageArgs, scanCursor.Pinned, scanCursor.Pinned, scanCursor.Activity,
-				scanCursor.Pinned, scanCursor.Activity, scanCursor.TopicID)
+			if req.ManualOrder {
+				pageWhere += ` AND (pinned<? OR (pinned=? AND ` + manualSortExpression + `>?) OR ` +
+					`(pinned=? AND ` + manualSortExpression + `=? AND ` + sortExpression + `<?) OR ` +
+					`(pinned=? AND ` + manualSortExpression + `=? AND ` + sortExpression + `=? AND topic_id>?))`
+				pageArgs = append(pageArgs,
+					scanCursor.Pinned,
+					scanCursor.Pinned, scanCursor.SortOrder,
+					scanCursor.Pinned, scanCursor.SortOrder, scanCursor.Activity,
+					scanCursor.Pinned, scanCursor.SortOrder, scanCursor.Activity, scanCursor.TopicID,
+				)
+			} else {
+				pageWhere += ` AND (pinned<? OR (pinned=? AND ` + sortExpression + `<?) OR (pinned=? AND ` + sortExpression + `=? AND topic_id>?))`
+				pageArgs = append(pageArgs, scanCursor.Pinned, scanCursor.Pinned, scanCursor.Activity,
+					scanCursor.Pinned, scanCursor.Activity, scanCursor.TopicID)
+			}
 		}
 		pageArgs = append(pageArgs, scanLimit)
-		rows, err := c.db.QueryContext(ctx, `SELECT scope,workspace_root,topic_id,title,title_source,pinned,sort_order,
+		orderBy := `pinned DESC,` + sortExpression + ` DESC,topic_id ASC`
+		if req.ManualOrder {
+			orderBy = `pinned DESC,` + manualSortExpression + ` ASC,` + sortExpression + ` DESC,topic_id ASC`
+		}
+		rows, err := c.db.QueryContext(ctx, `SELECT scope,workspace_root,topic_id,title,title_source,pinned,
+			CASE WHEN metadata_present=1 THEN sort_order ELSE -1 END,
             turns,turns_state,created_at,last_activity_at,recovery_state,recovery_branch_count,
             recovery_unresolved_count,recovery_cleanup_eligible_count,health
             FROM catalog_topics WHERE `+pageWhere+`
-			ORDER BY pinned DESC,`+sortExpression+` DESC,topic_id ASC LIMIT ?`, pageArgs...)
+			ORDER BY `+orderBy+` LIMIT ?`, pageArgs...)
 		if err != nil {
 			return out, err
 		}
@@ -605,7 +628,11 @@ func (c *Catalog) ListTopics(ctx context.Context, req TopicPageRequest) (TopicPa
 		if lastScanned.Pinned {
 			pinned = 1
 		}
-		scanCursor = &pageCursor{Pinned: pinned, Activity: topicPageSortValue(lastScanned, req.SortMode), TopicID: lastScanned.TopicID}
+		scanCursor = &pageCursor{
+			Pinned: pinned, ManualOrder: req.ManualOrder,
+			SortOrder: topicPageManualSortValue(lastScanned),
+			Activity:  topicPageSortValue(lastScanned, req.SortMode), TopicID: lastScanned.TopicID,
+		}
 	}
 	more := len(out.Items) > req.Limit
 	if more {
@@ -617,7 +644,11 @@ func (c *Catalog) ListTopics(ctx context.Context, req TopicPageRequest) (TopicPa
 		if last.Pinned {
 			pinned = 1
 		}
-		out.NextCursor = encodeCursor(pageCursor{Pinned: pinned, Activity: topicPageSortValue(last, req.SortMode), TopicID: last.TopicID})
+		out.NextCursor = encodeCursor(pageCursor{
+			Pinned: pinned, ManualOrder: req.ManualOrder,
+			SortOrder: topicPageManualSortValue(last),
+			Activity:  topicPageSortValue(last, req.SortMode), TopicID: last.TopicID,
+		})
 	}
 	return out, nil
 }
@@ -673,7 +704,8 @@ func (c *Catalog) GetTopic(ctx context.Context, key TopicKey) (TopicRecord, bool
 	key.Scope, key.WorkspaceRoot = normalizeScope(key.Scope, key.WorkspaceRoot)
 	key.TopicID = strings.TrimSpace(key.TopicID)
 	item := TopicRecord{Sessions: []SessionRecord{}}
-	err := c.db.QueryRowContext(ctx, `SELECT scope,workspace_root,topic_id,title,title_source,pinned,sort_order,
+	err := c.db.QueryRowContext(ctx, `SELECT scope,workspace_root,topic_id,title,title_source,pinned,
+		CASE WHEN metadata_present=1 THEN sort_order ELSE -1 END,
         turns,turns_state,created_at,last_activity_at,recovery_state,recovery_branch_count,
         recovery_unresolved_count,recovery_cleanup_eligible_count,health
         FROM catalog_topics WHERE scope=? AND workspace_root=? AND topic_id=?`,
@@ -734,6 +766,20 @@ func topicRepresentativePath(sessions []SessionRecord) string {
 // same cursor shape catalog.ListTopics emits.
 func EncodeTopicCursor(pinned int, lastActivityAt int64, topicID string) string {
 	return encodeCursor(pageCursor{Pinned: pinned, Activity: lastActivityAt, TopicID: topicID})
+}
+
+// EncodeOrderedTopicCursor builds a cursor for a workspace with explicit
+// manual topic ordering. A negative sortOrder places metadata-free/runtime
+// topics after every explicitly ranked topic in the same pinned bucket.
+func EncodeOrderedTopicCursor(pinned, sortOrder int, lastActivityAt int64, topicID string) string {
+	manualSortOrder := int64(sortOrder)
+	if sortOrder < 0 {
+		manualSortOrder = unrankedTopicSortOrder
+	}
+	return encodeCursor(pageCursor{
+		Pinned: pinned, ManualOrder: true, SortOrder: manualSortOrder,
+		Activity: lastActivityAt, TopicID: topicID,
+	})
 }
 
 func encodeCursor(cursor pageCursor) string {

@@ -453,12 +453,18 @@ func (a *App) emitProjectTreeChangedV2(revision uint64, roots []string, reason s
 	a.emitRuntimeEvent("project-tree:changed", map[string]string{"reason": "catalog-v2"})
 }
 
-func (a *App) requestSessionCatalogReconcile(dir string) {
+type desktopCatalogReconcileJob struct {
+	target sessioncatalog.DirectoryTarget
+	dirty  bool
+}
+
+func (a *App) requestSessionCatalogReconcile(dir string) bool {
 	catalog := a.sessionCatalog.Load()
 	if catalog == nil || a.shuttingDown.Load() || strings.TrimSpace(dir) == "" {
-		return
+		return false
 	}
 	clean := filepath.Clean(dir)
+	key := projectRootKey(clean)
 	target := sessioncatalog.DirectoryTarget{Path: clean, Scope: "global"}
 	for _, candidate := range a.sessionCatalogTargets() {
 		if sameDesktopPath(candidate.Path, clean) {
@@ -466,7 +472,44 @@ func (a *App) requestSessionCatalogReconcile(dir string) {
 			break
 		}
 	}
-	go func() {
+	a.catalogReconcileMu.Lock()
+	if a.catalogReconcileJobs == nil {
+		a.catalogReconcileJobs = map[string]*desktopCatalogReconcileJob{}
+	}
+	if job := a.catalogReconcileJobs[key]; job != nil {
+		job.target = target
+		job.dirty = true
+		a.catalogReconcileMu.Unlock()
+		return true
+	}
+	a.catalogReconcileJobs[key] = &desktopCatalogReconcileJob{target: target}
+	a.catalogReconcileMu.Unlock()
+	go a.runSessionCatalogReconcile(key)
+	return true
+}
+
+func (a *App) runSessionCatalogReconcile(key string) {
+	for {
+		a.catalogReconcileMu.Lock()
+		job := a.catalogReconcileJobs[key]
+		if job == nil {
+			a.catalogReconcileMu.Unlock()
+			return
+		}
+		target := job.target
+		job.dirty = false
+		a.catalogReconcileMu.Unlock()
+		catalog := a.sessionCatalog.Load()
+		if catalog == nil || a.shuttingDown.Load() {
+			a.catalogReconcileMu.Lock()
+			delete(a.catalogReconcileJobs, key)
+			a.catalogReconcileMu.Unlock()
+			return
+		}
+
+		if a.catalogReconcileHook != nil {
+			a.catalogReconcileHook(target)
+		}
 		// Explicit reconcile bypasses disposable migration markers. Signatures
 		// keep periodic passes cheap, but an old CLI or restored backup must
 		// never be permanently hidden by a timestamp/content collision.
@@ -484,8 +527,31 @@ func (a *App) requestSessionCatalogReconcile(dir string) {
 			_ = a.syncSessionCatalogMetadata(ctx, catalog)
 			cancel()
 		}
-		catalog.RequestReconcile(target)
-	}()
+		// This runner already owns the per-directory single-flight slot, so keep
+		// it active until the catalog scan itself finishes. Enqueuing and
+		// returning here would reopen the pre-scan stampede window while the
+		// catalog worker was still reconciling the same directory.
+		if err := catalog.ReconcileDirectory(a.bootContext(), target); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Debug("desktop: reconcile session catalog", "path", target.Path, "err", err)
+		}
+
+		a.catalogReconcileMu.Lock()
+		job = a.catalogReconcileJobs[key]
+		if job == nil {
+			a.catalogReconcileMu.Unlock()
+			return
+		}
+		if job.dirty && !a.shuttingDown.Load() {
+			a.catalogReconcileMu.Unlock()
+			continue
+		}
+		delete(a.catalogReconcileJobs, key)
+		a.catalogReconcileMu.Unlock()
+		if a.catalogReconcileDoneHook != nil {
+			a.catalogReconcileDoneHook(target)
+		}
+		return
+	}
 }
 
 func sessionDirectoryForPath(path string) string {

@@ -5,7 +5,7 @@ import { asArray } from "../lib/array";
 import type { Translator } from "../lib/i18n";
 import { isTopicNode, projectTreeTopicArchiveBlocked } from "../lib/projectTreeTopic";
 import type { ProjectTreeRefresh } from "../lib/projectTreeArchive";
-import type { ProjectNode, SessionGroup } from "../lib/types";
+import type { ProjectNode, ProjectTreeOrganizationBindings, SessionGroup } from "../lib/types";
 import { ContextMenu, contextMenuPointFromEvent, type ContextMenuItem, type ContextMenuPoint } from "./ContextMenu";
 
 export type ProjectDropPosition = "before" | "after";
@@ -99,65 +99,114 @@ export function useProjectTreeOrganization({
   tree,
   refresh,
   onTopicsChanged,
+  organizationRevision = 0,
+  bindings = app,
 }: {
   tree: ProjectNode[];
   refresh: ProjectTreeRefresh;
   onTopicsChanged?: () => Promise<void> | void;
+  organizationRevision?: number;
+  bindings?: ProjectTreeOrganizationBindings;
 }): ProjectTreeOrganizationController {
   const [dragTopicID, setDragTopicID] = useState<string | null>(null);
   const [dropTopic, setDropTopic] = useState<{ topicID: string; position: ProjectDropPosition } | null>(null);
   const dragContextRef = useRef<{ scope: "global" | "project"; root: string } | null>(null);
   const [groupsByKey, setGroupsByKey] = useState<Record<string, SessionGroup[]>>({});
   const groupsRef = useRef(groupsByKey);
-  const mountedRef = useRef(true);
+  const mountedRef = useRef(false);
   const loadedGroupsRef = useRef(new Set<string>());
   const loadingGroupsRef = useRef(new Set<string>());
-  const groupSaveVersionsRef = useRef<Record<string, number>>({});
+  const groupMutationVersionsRef = useRef<Record<string, number>>({});
+  const groupLoadSequencesRef = useRef<Record<string, number>>({});
   const groupSaveChainsRef = useRef(new Map<string, Promise<void>>());
+  const organizationRevisionRef = useRef(organizationRevision);
   const [collapsedGroups, setCollapsedGroups] = useState(new Set<string>());
 
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const setKeyGroups = useCallback((key: string, groups: SessionGroup[]) => {
     groupsRef.current = { ...groupsRef.current, [key]: groups };
     setGroupsByKey(groupsRef.current);
   }, []);
 
+  const loadGroups = useCallback((key: string, force = false) => {
+    if (!force && (loadedGroupsRef.current.has(key) || loadingGroupsRef.current.has(key))) return;
+    const sequence = (groupLoadSequencesRef.current[key] ?? 0) + 1;
+    groupLoadSequencesRef.current[key] = sequence;
+    const mutationVersion = groupMutationVersionsRef.current[key] ?? 0;
+    loadingGroupsRef.current.add(key);
+    const { scope, root } = splitOrganizationKey(key);
+    const read = typeof bindings.GetProjectGroups === "function"
+      ? bindings.GetProjectGroups(scope, root)
+      : bindings.ListProjectGroups(scope, root).then((groups) => ({ groups, revision: 0, applied: true }));
+    void read.then((snapshot) => {
+      if (!mountedRef.current || groupLoadSequencesRef.current[key] !== sequence) return;
+      if ((groupMutationVersionsRef.current[key] ?? 0) !== mutationVersion) return;
+      // Never replace an optimistic state while its semantic mutations are
+      // queued. The CAS path reads the newest server snapshot before applying.
+      if (groupSaveChainsRef.current.has(key)) return;
+      loadedGroupsRef.current.add(key);
+      setKeyGroups(key, asArray(snapshot.groups));
+    }).catch(() => {}).finally(() => {
+      if (groupLoadSequencesRef.current[key] === sequence) loadingGroupsRef.current.delete(key);
+    });
+  }, [bindings, setKeyGroups]);
+
   useEffect(() => {
+    const force = organizationRevisionRef.current !== organizationRevision;
+    organizationRevisionRef.current = organizationRevision;
     for (const folder of tree) {
       if (folder.kind !== "project" && folder.kind !== "global_folder") continue;
       const key = projectTreeOrganizationKey(folder);
-      if (loadedGroupsRef.current.has(key) || loadingGroupsRef.current.has(key)) continue;
-      loadingGroupsRef.current.add(key);
-      const { scope, root } = splitOrganizationKey(key);
-      void app.ListProjectGroups(scope, root).then((groups) => {
-        if (!mountedRef.current) return;
-        loadedGroupsRef.current.add(key);
-        setKeyGroups(key, groups);
-      }).catch(() => {}).finally(() => loadingGroupsRef.current.delete(key));
+      loadGroups(key, force);
     }
-  }, [setKeyGroups, tree]);
+  }, [loadGroups, organizationRevision, tree]);
 
-  const persistGroups = useCallback((key: string, groups: SessionGroup[]) => {
-    const version = (groupSaveVersionsRef.current[key] ?? 0) + 1;
-    groupSaveVersionsRef.current[key] = version;
+  const persistGroups = useCallback((key: string, update: (groups: SessionGroup[]) => SessionGroup[], legacyGroups: SessionGroup[]) => {
+    const version = groupMutationVersionsRef.current[key] ?? 0;
     const { scope, root } = splitOrganizationKey(key);
     const previous = groupSaveChainsRef.current.get(key) ?? Promise.resolve();
-    const pending = previous.catch(() => {}).then(() => app.SaveSessionGroups(scope, root, groups));
+    let settledGroups: SessionGroup[] | null = null;
+    const pending = previous.catch(() => {}).then(async () => {
+      if (typeof bindings.GetProjectGroups !== "function" || typeof bindings.SaveSessionGroupsVersioned !== "function") {
+        await bindings.SaveSessionGroups(scope, root, legacyGroups);
+        return;
+      }
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const current = await bindings.GetProjectGroups(scope, root);
+        const next = update(asArray(current.groups));
+        const saved = await bindings.SaveSessionGroupsVersioned(scope, root, current.revision, next);
+        if (saved.applied) {
+          settledGroups = asArray(saved.groups);
+          return;
+        }
+      }
+      throw new Error("session groups changed too frequently; retrying from server state");
+    });
     groupSaveChainsRef.current.set(key, pending);
-    void pending.catch(async () => {
-      if (groupSaveVersionsRef.current[key] !== version) return;
-      const fresh = await app.ListProjectGroups(scope, root).catch(() => null);
-      if (fresh) setKeyGroups(key, fresh);
+    void pending.then(() => {
+      if (mountedRef.current && (groupMutationVersionsRef.current[key] ?? 0) === version && settledGroups) {
+        setKeyGroups(key, settledGroups);
+      }
+    }).catch(() => {
+      if ((groupMutationVersionsRef.current[key] ?? 0) !== version) return;
+      if (groupSaveChainsRef.current.get(key) === pending) groupSaveChainsRef.current.delete(key);
+      loadedGroupsRef.current.delete(key);
+      loadGroups(key, true);
     }).finally(() => {
       if (groupSaveChainsRef.current.get(key) === pending) groupSaveChainsRef.current.delete(key);
     });
-  }, [setKeyGroups]);
+  }, [bindings, loadGroups, setKeyGroups]);
 
   const mutateGroups = useCallback((key: string, update: (groups: SessionGroup[]) => SessionGroup[]) => {
     const next = update(groupsRef.current[key] ?? []);
+    groupMutationVersionsRef.current[key] = (groupMutationVersionsRef.current[key] ?? 0) + 1;
+    loadedGroupsRef.current.add(key);
     setKeyGroups(key, next);
-    persistGroups(key, next);
+    persistGroups(key, update, next);
   }, [persistGroups, setKeyGroups]);
 
   const clearTopicDrag = useCallback(() => {
@@ -211,13 +260,13 @@ export function useProjectTreeOrganization({
         const rect = event.currentTarget.getBoundingClientRect();
         const position = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
         const ordered = reorderedTopicIDs(tree, context.scope, context.root, draggedID, topicID, position);
-        if (ordered) void app.ReorderTopics(context.scope, context.root, ordered).then(() => refresh()).then(() => onTopicsChanged?.()).catch(() => refresh());
+        if (ordered) void bindings.ReorderTopics(context.scope, context.root, ordered).then(() => refresh()).then(() => onTopicsChanged?.()).catch(() => refresh());
       }
       clearTopicDrag();
     };
     props.onDragEnd = clearTopicDrag;
     return { className, props };
-  }, [clearTopicDrag, dragTopicID, dropTopic, onTopicsChanged, refresh, tree]);
+  }, [bindings, clearTopicDrag, dragTopicID, dropTopic, onTopicsChanged, refresh, tree]);
 
   const removeTopicFromGroups = useCallback((node: ProjectNode) => {
     const topicID = node.topicId;

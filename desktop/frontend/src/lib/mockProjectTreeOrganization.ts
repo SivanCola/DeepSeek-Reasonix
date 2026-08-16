@@ -1,9 +1,10 @@
 import { asArray } from "./array";
 import type { ProjectNode, ProjectTreeOrganizationBindings, SessionGroup } from "./types";
 
-type OrganizationBindings = Pick<ProjectTreeOrganizationBindings, "ReorderTopics" | "ListProjectGroups" | "SaveSessionGroups">;
+type OrganizationBindings = ProjectTreeOrganizationBindings;
 
 const groupsByKey: Record<string, SessionGroup[]> = {};
+const groupRevisionsByKey: Record<string, number> = {};
 
 function organizationKey(scope: string, workspaceRoot: string): string {
   return scope === "global" ? "global|" : `project|${workspaceRoot}`;
@@ -25,7 +26,22 @@ export function makeMockProjectTreeOrganizationBindings(tree: ProjectNode[]): Or
       return structuredClone(groupsByKey[organizationKey(scope, workspaceRoot)] ?? []);
     },
     async SaveSessionGroups(scope, workspaceRoot, groups) {
-      groupsByKey[organizationKey(scope, workspaceRoot)] = structuredClone(groups);
+      const key = organizationKey(scope, workspaceRoot);
+      groupsByKey[key] = structuredClone(groups);
+      groupRevisionsByKey[key] = (groupRevisionsByKey[key] ?? 0) + 1;
+    },
+    async GetProjectGroups(scope, workspaceRoot) {
+      const key = organizationKey(scope, workspaceRoot);
+      return { groups: structuredClone(groupsByKey[key] ?? []), revision: groupRevisionsByKey[key] ?? 0, applied: true };
+    },
+    async SaveSessionGroupsVersioned(scope, workspaceRoot, expectedRevision, groups) {
+      const key = organizationKey(scope, workspaceRoot), revision = groupRevisionsByKey[key] ?? 0;
+      if (revision !== expectedRevision) {
+        return { groups: structuredClone(groupsByKey[key] ?? []), revision, applied: false };
+      }
+      groupsByKey[key] = structuredClone(groups);
+      groupRevisionsByKey[key] = revision + 1;
+      return { groups: structuredClone(groups), revision: revision + 1, applied: true };
     },
   };
 }

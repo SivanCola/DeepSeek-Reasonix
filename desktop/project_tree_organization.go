@@ -21,12 +21,19 @@ type desktopProject struct {
 	PinnedTopics     []string       `json:"pinnedTopics,omitempty"`
 	ManualTopicOrder bool           `json:"manualTopicOrder,omitempty"`
 	Groups           []desktopGroup `json:"groups,omitempty"`
+	GroupsRevision   uint64         `json:"-"`
 }
 
 type desktopGroup struct {
 	ID       string   `json:"id"`
 	Title    string   `json:"title"`
 	TopicIDs []string `json:"topicIds,omitempty"`
+}
+
+type ProjectGroupsSnapshot struct {
+	Groups   []desktopGroup `json:"groups"`
+	Revision uint64         `json:"revision"`
+	Applied  bool           `json:"applied"`
 }
 
 type desktopProjectFile struct {
@@ -36,6 +43,7 @@ type desktopProjectFile struct {
 	GlobalPinnedTopics     []string         `json:"globalPinnedTopics,omitempty"`
 	GlobalManualTopicOrder bool             `json:"globalManualTopicOrder,omitempty"`
 	GlobalGroups           []desktopGroup   `json:"globalGroups,omitempty"`
+	GlobalGroupsRevision   uint64           `json:"-"`
 	DeletedTopics          []string         `json:"deletedTopics,omitempty"`
 	PinnedProjects         []string         `json:"pinnedProjects,omitempty"`
 	SidebarOrder           []string         `json:"sidebarOrder,omitempty"`
@@ -209,13 +217,39 @@ func (a *App) ListProjectGroups(scope, workspaceRoot string) ([]desktopGroup, er
 	}
 	f := loadProjectsFile()
 	if scope == "global" {
-		return normalizeGroups(f.GlobalGroups), nil
+		return nonNilGroups(f.GlobalGroups), nil
 	}
 	i := projectIndexByRoot(f.Projects, workspaceRoot)
 	if i < 0 {
-		return nil, nil
+		return []desktopGroup{}, nil
 	}
-	return normalizeGroups(f.Projects[i].Groups), nil
+	return nonNilGroups(f.Projects[i].Groups), nil
+}
+
+func nonNilGroups(groups []desktopGroup) []desktopGroup {
+	groups = normalizeGroups(groups)
+	if groups == nil {
+		return []desktopGroup{}
+	}
+	return groups
+}
+
+// GetProjectGroups is the versioned organization read used by current
+// frontends. ListProjectGroups remains for old binaries during the transition.
+func (a *App) GetProjectGroups(scope, workspaceRoot string) (ProjectGroupsSnapshot, error) {
+	scope, workspaceRoot, err := normalizeOrganizationTarget(scope, workspaceRoot)
+	if err != nil {
+		return ProjectGroupsSnapshot{Groups: []desktopGroup{}}, err
+	}
+	f := loadProjectsFile()
+	if scope == "global" {
+		return ProjectGroupsSnapshot{Groups: nonNilGroups(f.GlobalGroups), Revision: f.GlobalGroupsRevision, Applied: true}, nil
+	}
+	i := projectIndexByRoot(f.Projects, workspaceRoot)
+	if i < 0 {
+		return ProjectGroupsSnapshot{Groups: []desktopGroup{}, Applied: true}, nil
+	}
+	return ProjectGroupsSnapshot{Groups: nonNilGroups(f.Projects[i].Groups), Revision: f.Projects[i].GroupsRevision, Applied: true}, nil
 }
 
 func (a *App) SaveSessionGroups(scope, workspaceRoot string, groups []desktopGroup) error {
@@ -228,27 +262,92 @@ func (a *App) SaveSessionGroups(scope, workspaceRoot string, groups []desktopGro
 	}
 	normalized := normalizeGroups(groups)
 	if err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+		deleted := make(map[string]bool, len(f.DeletedTopics))
+		for _, topicID := range f.DeletedTopics {
+			deleted[topicID] = true
+		}
+		candidate := groupsWithoutDeletedTopics(normalized, deleted)
 		if scope == "global" {
-			if equalGroups(normalized, f.GlobalGroups) {
+			if equalGroups(candidate, f.GlobalGroups) {
 				return false, nil
 			}
-			f.GlobalGroups = normalized
+			f.GlobalGroups = candidate
+			f.GlobalGroupsRevision++
 			return true, nil
 		}
 		i := projectIndexByRoot(f.Projects, workspaceRoot)
 		if i < 0 {
 			return false, fmt.Errorf("project %q not found", workspaceRoot)
 		}
-		if equalGroups(normalized, f.Projects[i].Groups) {
+		if equalGroups(candidate, f.Projects[i].Groups) {
 			return false, nil
 		}
-		f.Projects[i].Groups = normalized
+		f.Projects[i].Groups = candidate
+		f.Projects[i].GroupsRevision++
 		return true, nil
 	}); err != nil {
 		return err
 	}
 	a.emitProjectTreeMetadataChanged()
 	return nil
+}
+
+// SaveSessionGroupsVersioned is a compare-and-swap over one workspace. It
+// prevents two windows (and archive cleanup) from overwriting each other's
+// full group snapshots. On conflict the current state is returned so the
+// frontend can reapply its semantic mutation and retry.
+func (a *App) SaveSessionGroupsVersioned(scope, workspaceRoot string, expectedRevision uint64, groups []desktopGroup) (ProjectGroupsSnapshot, error) {
+	scope, workspaceRoot, err := normalizeOrganizationTarget(scope, workspaceRoot)
+	if err != nil {
+		return ProjectGroupsSnapshot{Groups: []desktopGroup{}}, err
+	}
+	if err := validateSessionGroups(groups); err != nil {
+		return ProjectGroupsSnapshot{Groups: []desktopGroup{}}, err
+	}
+	normalized := normalizeGroups(groups)
+	result := ProjectGroupsSnapshot{Groups: []desktopGroup{}}
+	changed := false
+	err = updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+		deleted := make(map[string]bool, len(f.DeletedTopics))
+		for _, topicID := range f.DeletedTopics {
+			deleted[topicID] = true
+		}
+		candidate := groupsWithoutDeletedTopics(normalized, deleted)
+		currentGroups, currentRevision := f.GlobalGroups, f.GlobalGroupsRevision
+		var project *desktopProject
+		if scope == "project" {
+			i := projectIndexByRoot(f.Projects, workspaceRoot)
+			if i < 0 {
+				return false, fmt.Errorf("project %q not found", workspaceRoot)
+			}
+			project = &f.Projects[i]
+			currentGroups, currentRevision = project.Groups, project.GroupsRevision
+		}
+		if currentRevision != expectedRevision {
+			result = ProjectGroupsSnapshot{Groups: nonNilGroups(currentGroups), Revision: currentRevision, Applied: false}
+			return false, nil
+		}
+		if equalGroups(candidate, currentGroups) {
+			result = ProjectGroupsSnapshot{Groups: nonNilGroups(currentGroups), Revision: currentRevision, Applied: true}
+			return false, nil
+		}
+		currentRevision++
+		if project == nil {
+			f.GlobalGroups, f.GlobalGroupsRevision = candidate, currentRevision
+		} else {
+			project.Groups, project.GroupsRevision = candidate, currentRevision
+		}
+		result = ProjectGroupsSnapshot{Groups: nonNilGroups(candidate), Revision: currentRevision, Applied: true}
+		changed = true
+		return true, nil
+	})
+	if err != nil {
+		return ProjectGroupsSnapshot{Groups: []desktopGroup{}}, err
+	}
+	if changed {
+		a.emitProjectTreeMetadataChanged()
+	}
+	return result, nil
 }
 
 func equalGroups(left, right []desktopGroup) bool {

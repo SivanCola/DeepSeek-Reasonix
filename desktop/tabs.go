@@ -2318,10 +2318,18 @@ func (a *App) syncTabWorkspaceRootSpellings() {
 // registerProjectRoot indexes workspaceRoot in the project registry and
 // realigns open tabs when the registry adopted a new spelling of the root.
 func (a *App) registerProjectRoot(workspaceRoot string) {
-	_ = addProject(workspaceRoot, "")
+	_, _ = addProjectWithStatus(workspaceRoot, "")
 	a.syncTabWorkspaceRootSpellings()
-	if strings.TrimSpace(workspaceRoot) != "" {
-		a.requestSessionCatalogReconcile(desktopSessionDir(workspaceRoot))
+	root := normalizeProjectRoot(workspaceRoot)
+	if root == "" {
+		return
+	}
+	registrationKey := projectRootKey(root)
+	if _, loaded := a.catalogRegisteredProjectRoots.LoadOrStore(registrationKey, struct{}{}); loaded {
+		return
+	}
+	if !a.requestSessionCatalogReconcile(desktopSessionDir(root)) {
+		a.catalogRegisteredProjectRoots.Delete(registrationKey)
 	}
 }
 
@@ -5123,7 +5131,16 @@ func loadProjectsFile() desktopProjectFile {
 	}
 	var f desktopProjectFile
 	_ = json.Unmarshal(b, &f)
-	return normalizeProjectsFile(f)
+	f = normalizeProjectsFile(f)
+	if organization, ok := loadProjectOrganizationFile(); ok {
+		return applyProjectOrganization(f, organization)
+	}
+	// Upgrade existing inline organization state immediately. The sidecar is
+	// what makes a later old-version save non-destructive.
+	if projectsFileHasOrganization(f) {
+		_ = saveProjectOrganizationFile(f)
+	}
+	return f
 }
 
 func saveProjectsFile(f desktopProjectFile) error {
@@ -5132,6 +5149,9 @@ func saveProjectsFile(f desktopProjectFile) error {
 		return err
 	}
 	f = normalizeProjectsFile(f)
+	if err := saveProjectOrganizationFile(f); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
@@ -5248,6 +5268,7 @@ func removeTopicFromProjectsFile(topicID string) error {
 		}
 		if next, removed := groupsWithoutTopic(f.GlobalGroups, topicID); removed {
 			f.GlobalGroups = next
+			f.GlobalGroupsRevision++
 			changed = true
 		}
 		if next := prependUniqueString(f.DeletedTopics, topicID); !sameStringList(next, f.DeletedTopics) {
@@ -5265,6 +5286,7 @@ func removeTopicFromProjectsFile(topicID string) error {
 			}
 			if next, removed := groupsWithoutTopic(p.Groups, topicID); removed {
 				f.Projects[i].Groups = next
+				f.Projects[i].GroupsRevision++
 				changed = true
 			}
 		}
@@ -5321,6 +5343,7 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 		GlobalPinnedTopics:     uniqueStrings(f.GlobalPinnedTopics),
 		GlobalManualTopicOrder: f.GlobalManualTopicOrder,
 		GlobalGroups:           normalizeGroups(f.GlobalGroups),
+		GlobalGroupsRevision:   f.GlobalGroupsRevision,
 		DeletedTopics:          uniqueStrings(f.DeletedTopics),
 	}
 	for _, p := range f.Projects {
@@ -5345,6 +5368,7 @@ func normalizeProjectsFile(f desktopProjectFile) desktopProjectFile {
 			out.Projects[i].PinnedTopics = uniqueStrings(append(out.Projects[i].PinnedTopics, p.PinnedTopics...))
 			out.Projects[i].ManualTopicOrder = out.Projects[i].ManualTopicOrder || p.ManualTopicOrder
 			out.Projects[i].Groups = mergeDesktopGroups(out.Projects[i].Groups, p.Groups)
+			out.Projects[i].GroupsRevision = max(out.Projects[i].GroupsRevision, p.GroupsRevision)
 			continue
 		}
 		out.Projects = append(out.Projects, p)
@@ -5614,12 +5638,18 @@ func globalProjectTitle() string {
 }
 
 func addProject(root, title string) error {
+	_, err := addProjectWithStatus(root, title)
+	return err
+}
+
+func addProjectWithStatus(root, title string) (bool, error) {
 	root = normalizeProjectRoot(root)
 	if root == "" {
-		return fmt.Errorf("project root is required")
+		return false, fmt.Errorf("project root is required")
 	}
 	title = strings.TrimSpace(title)
-	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+	added := false
+	err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
 		for i, p := range f.Projects {
 			if sameProjectRoot(p.Root, root) {
 				changed := false
@@ -5638,8 +5668,10 @@ func addProject(root, title string) error {
 			}
 		}
 		f.Projects = append(f.Projects, desktopProject{Root: root, Title: title})
+		added = true
 		return true, nil
 	})
+	return added, err
 }
 
 func renameProject(root, title string) error {

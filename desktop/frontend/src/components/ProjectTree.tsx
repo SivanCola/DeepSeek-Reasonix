@@ -352,6 +352,7 @@ export function ProjectTree({
   const [tree, setTree] = useState<ProjectNode[]>([]);
   const treeRef = useRef<ProjectNode[]>([]);
   const latestRevisionRef = useRef(0);
+  const [organizationRevision, setOrganizationRevision] = useState(0);
   const topicRevisionRef = useRef<Record<string, number>>({});
   const [catalogStatus, setCatalogStatus] = useState<SessionCatalogStatus>({
     state: "opening", revision: 0, indexed: 0, total: 0, repairPending: 0,
@@ -574,6 +575,7 @@ export function ProjectTree({
   useEffect(() => onProjectTreeChangedV2((event) => {
     if (!projectTreeRevisionIsFresh(latestRevisionRef.current, event.revision)) return;
     latestRevisionRef.current = Math.max(latestRevisionRef.current, event.revision);
+    if (event.reason === "metadata") setOrganizationRevision((current) => Math.max(current, event.revision));
     void app.GetSessionCatalogStatus().then(setCatalogStatus).catch(() => {});
     if (treeRef.current.length === 0) { void refresh(); return; } // race: event before shell
     const affected = asArray(event.roots);
@@ -1080,7 +1082,7 @@ export function ProjectTree({
     }
   }, [onTopicsChanged, refresh, tree]);
 
-  const organization = useProjectTreeOrganization({ tree, refresh, onTopicsChanged });
+  const organization = useProjectTreeOrganization({ tree, refresh, onTopicsChanged, organizationRevision });
 
   const clearProjectDrag = useCallback(() => {
     setDragProjectRoot(null);
