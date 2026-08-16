@@ -480,6 +480,72 @@ try {
   });
   assert(true, "pinned dynamic tail growth remains at the physical bottom");
 
+  // ── #8657 residual: long session + measurement churn must still reach the
+  // bottom. The v1.25.3 report: on very long sessions the user could never
+  // scroll to the newest content — every approach was pulled back by
+  // estimate-based recovery landings while ref-resolution patches kept
+  // changing row heights. Reproduce the mechanics deterministically on the
+  // 38-turn session: start mid-list in manual mode, churn heights of rows
+  // above the viewport (async ref-resolution growth), and wheel downward
+  // repeatedly. The user must reach the physical bottom, without a single
+  // multi-screen upward snap and without any recovery-owned scroll write.
+  await transcript.evaluate((element) => {
+    element.scrollTop = Math.max(0, Math.floor((element.scrollHeight - element.clientHeight) / 2));
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -240);
+  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "manual", undefined, { timeout: 5_000 });
+  await transcript.evaluate((element) => {
+    window.__reachBottomProbe = { writes: [], snaps: [], done: false };
+    window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => window.__reachBottomProbe.writes.push(write);
+    let last = element.scrollTop;
+    const sample = () => {
+      const top = element.scrollTop;
+      if (last - top > element.clientHeight * 2) {
+        window.__reachBottomProbe.snaps.push({ from: Math.round(last), to: Math.round(top) });
+      }
+      last = top;
+      if (!window.__reachBottomProbe.done) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+    // Measurement churn: grow a random mounted row above the viewport every
+    // ~90 ms, mimicking ref-resolution patches landing during the gesture.
+    const churn = () => {
+      if (window.__reachBottomProbe.done) return;
+      const viewport = element.getBoundingClientRect();
+      const above = [...element.querySelectorAll(".transcript__row")].filter((row) => row.getBoundingClientRect().bottom <= viewport.top);
+      const row = above[Math.floor(Math.random() * above.length)];
+      if (row instanceof HTMLElement) {
+        row.style.paddingBottom = `${Number.parseFloat(row.style.paddingBottom || "0") + 160}px`;
+      }
+      setTimeout(churn, 90);
+    };
+    churn();
+  });
+  let reachedBottom = false;
+  for (let attempt = 0; attempt < 40 && !reachedBottom; attempt += 1) {
+    await page.mouse.wheel(0, 640);
+    await page.waitForTimeout(50);
+    reachedBottom = await transcript.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 1);
+  }
+  assert(reachedBottom, "repeated downward wheels reach the physical bottom through measurement churn (#8657)");
+  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "tail-follow", undefined, { timeout: 5_000 });
+  const reachProbe = await transcript.evaluate(() => {
+    window.__reachBottomProbe.done = true;
+    window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
+    return window.__reachBottomProbe;
+  });
+  assert(reachProbe.snaps.length === 0, `no multi-screen upward snap while wheeling down (${JSON.stringify(reachProbe.snaps.slice(0, 3))})`);
+  assert(
+    reachProbe.writes.every((write) => write.owner !== "recovery"),
+    `zero recovery-owned scroll writes during the reach-bottom gesture (${reachProbe.writes.length} writes)`,
+  );
+  // The tail holds while churn continues underneath the pinned view.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  const tailAfterChurn = await transcript.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight);
+  assert(tailAfterChurn <= 1, `tail-follow holds at the newest content while churn continues (${tailAfterChurn}px)`);
+
   process.stdout.write("\ntranscript scroll stability browser gate passed\n");
 } finally {
   await browser?.close();
