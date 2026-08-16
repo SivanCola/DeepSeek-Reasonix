@@ -258,6 +258,27 @@ func TestPruneToolResultUsesUnicodeCodePoints(t *testing.T) {
 	}
 }
 
+// Pruning must allocate for the retained head/marker/tail only. Converting the
+// complete input to []rune makes a large ASCII tool result consume roughly
+// four additional bytes per source byte exactly when maintenance is trying to
+// recover from context pressure.
+func TestPruneToolResultAllocationIsBoundedByRetainedContent(t *testing.T) {
+	const inputBytes = 256 << 10
+	large := strings.Repeat("x", inputBytes)
+	result := testing.Benchmark(func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			got, changed := pruneToolResultContent(large)
+			if !changed || len(got) == 0 {
+				b.Fatal("large tool result was not pruned")
+			}
+		}
+	})
+	if got := result.AllocedBytesPerOp(); got > 64<<10 {
+		t.Fatalf("prune allocated %d bytes/op for a %d-byte input; want allocation bounded by retained content", got, inputBytes)
+	}
+}
+
 func TestPrunePreservesToolEnvelopeMetadata(t *testing.T) {
 	exit := 7
 	original := provider.Message{

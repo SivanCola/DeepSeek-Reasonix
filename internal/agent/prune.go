@@ -3,7 +3,9 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
@@ -23,11 +25,43 @@ const (
 )
 
 func pruneToolResultContent(content string) (string, bool) {
-	runes := []rune(content)
-	if len(runes) <= toolPruneThresholdRunes {
+	if utf8.RuneCountInString(content) <= toolPruneThresholdRunes {
 		return content, false
 	}
-	return string(runes[:toolPruneHeadRunes]) + toolPruneMarker + string(runes[len(runes)-toolPruneTailRunes:]), true
+	headEnd := byteOffsetAfterRunes(content, toolPruneHeadRunes)
+	tailStart := byteOffsetBeforeLastRunes(content, toolPruneTailRunes)
+	var pruned strings.Builder
+	pruned.Grow(headEnd + len(toolPruneMarker) + len(content) - tailStart)
+	pruned.WriteString(content[:headEnd])
+	pruned.WriteString(toolPruneMarker)
+	pruned.WriteString(content[tailStart:])
+	return pruned.String(), true
+}
+
+func byteOffsetAfterRunes(content string, count int) int {
+	if count <= 0 {
+		return 0
+	}
+	seen := 0
+	for offset := range content {
+		if seen == count {
+			return offset
+		}
+		seen++
+	}
+	return len(content)
+}
+
+func byteOffsetBeforeLastRunes(content string, count int) int {
+	offset := len(content)
+	for range count {
+		if offset == 0 {
+			return 0
+		}
+		_, size := utf8.DecodeLastRuneInString(content[:offset])
+		offset -= size
+	}
+	return offset
 }
 
 // pruneToolResultsToProjectionLocked installs a durable, model-visible prune

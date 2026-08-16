@@ -14,8 +14,9 @@ import (
 // fold stopped reducing, how many ran back to back, and which retries already
 // ran in the active turn. The fields are cleared together on lineage resets.
 type compactionProgress struct {
-	stuck       bool // a fold landed above the trigger, so pressure retries are pointless
-	consecutive int  // back-to-back folds since one last helped
+	stuck          bool   // a fold landed above the trigger, so the same-view pressure retry is pointless
+	stuckInputHash string // provider-visible view covered by stuck; changed input may retry
+	consecutive    int    // back-to-back folds since one last helped
 	// failedTurn backs off changed-view retries within one active tool loop.
 	// A later user turn may retry, while hard-ceiling recovery bypasses it.
 	failedTurn atomic.Int64
@@ -114,7 +115,15 @@ func (m ContextManager) prepareOnce(ctx context.Context, policy ContextPreparePo
 	if est < fold {
 		a.sess.compaction.consecutive = 0
 		a.sess.compaction.stuck = false
+		a.sess.compaction.stuckInputHash = ""
 		a.sess.compaction.failedTurn.Store(0)
+	}
+	if a.sess.compaction.stuck && a.sess.compaction.stuckInputHash != inputHash {
+		// The previous projection could not reclaim enough from its exact view,
+		// but newly appended messages create a new fold boundary and may retry.
+		a.sess.compaction.stuck = false
+		a.sess.compaction.stuckInputHash = ""
+		a.sess.compaction.consecutive = 0
 	}
 	if a.sess.compaction.stuck && policy.Trigger == CompactionTriggerPressure && est < hard {
 		return prepared, nil
@@ -195,6 +204,7 @@ func (m ContextManager) foldContext(ctx context.Context, prepared PreparedContex
 		if policy.Trigger == CompactionTriggerManual || result.InputTokens < fold ||
 			(policy.Trigger == CompactionTriggerOverflow && result.InputTokens < hard) {
 			a.sess.compaction.stuck = false
+			a.sess.compaction.stuckInputHash = ""
 			a.sess.compaction.consecutive = 0
 			a.sess.compaction.failedTurn.Store(0)
 			return result, nil
@@ -204,8 +214,10 @@ func (m ContextManager) foldContext(ctx context.Context, prepared PreparedContex
 	}
 
 	reason := fmt.Sprintf("summary result remains above fold trigger after %d attempts (%d >= %d)", maxSummaries, result.InputTokens, fold)
-	a.recordContextMaintenanceBlocked(a.contextMaintenanceInputHash(result.Messages), policy.Trigger, "summary", reason)
+	blockedInputHash := a.contextMaintenanceInputHash(result.Messages)
+	a.recordContextMaintenanceBlocked(blockedInputHash, policy.Trigger, "summary", reason)
 	a.sess.compaction.stuck = true
+	a.sess.compaction.stuckInputHash = blockedInputHash
 	a.sess.compaction.consecutive += maxSummaries
 	if policy.Trigger == CompactionTriggerOverflow || result.InputTokens >= hard {
 		return PreparedContext{}, fmt.Errorf("%w: %s", ErrCompactionRequired, reason)

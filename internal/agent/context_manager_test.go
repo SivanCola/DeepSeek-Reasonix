@@ -199,6 +199,48 @@ func TestFailedSummaryReceiptTracksLatestViewHash(t *testing.T) {
 	}
 }
 
+// A successful summary that still lands above the soft trigger pauses only
+// that exact provider-visible view. Once new messages change the input hash,
+// maintenance must be allowed to try the newly foldable region instead of
+// coasting all the way to the physical ceiling.
+func TestStuckLatchDoesNotBlockChangedInput(t *testing.T) {
+	const window = 10_000
+	sess := &Session{Messages: []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: "task"},
+		{Role: provider.RoleAssistant, Content: strings.Repeat("old work ", 500)},
+		{Role: provider.RoleUser, Content: "current"},
+		{Role: provider.RoleAssistant, Content: "tail"},
+	}}
+	prov := &failingSummaryProvider{}
+	a := New(prov, tool.NewRegistry(), sess, Options{
+		ContextWindow: window, CompactRatio: 0.85, RecentKeep: 2,
+	}, event.Discard)
+	policy := ContextPreparePolicy{Trigger: CompactionTriggerPressure, ObservedInputTokens: 8600}
+
+	oldHash := a.contextMaintenanceInputHash(a.modelVisibleMessages())
+	a.sess.compaction.stuck = true
+	a.sess.compaction.stuckInputHash = oldHash
+	a.sess.compactionState.LastReceipt = &ContextMaintenanceReceipt{
+		Status: "blocked", Action: "summary", BlockedInputHash: oldHash,
+	}
+	if _, err := a.contextManager().Prepare(context.Background(), policy); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 0 {
+		t.Fatalf("same blocked view made %d summary calls, want 0", prov.calls)
+	}
+
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "new turn"})
+	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("new foldable work ", 100)})
+	if _, err := a.contextManager().Prepare(context.Background(), policy); err != nil {
+		t.Fatalf("changed input should be allowed one maintenance attempt: %v", err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("changed input made %d summary calls, want 1", prov.calls)
+	}
+}
+
 func TestFailedSummaryReceiptBacksOffChangedViewsWithinActiveTurn(t *testing.T) {
 	const window = 10_000
 	sess := &Session{Messages: []provider.Message{
