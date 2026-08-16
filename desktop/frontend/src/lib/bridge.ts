@@ -58,6 +58,7 @@ import type {
   HistoryPage,
   HistoryContentChunk,
   HistoryContentRef,
+  HistoryEntry,
   HistorySlice,
   HistorySliceRequest,
   TabMetaRefreshEvent,
@@ -1826,6 +1827,7 @@ function makeMockApp(): AppBindings {
         { key: "topic_bench_tools", kind: "topic", label: "● bench:tools-38t", root: "~/projects/reasonix", topicId: "topic_bench_tools", projectColor: "blue", turns: 38, lastActivityAt: mockNow - 120_000, open: true },
         { key: "topic_bench_small", kind: "topic", label: "bench:small-6t", root: "~/projects/reasonix", topicId: "topic_bench_small", projectColor: "green", turns: 6, lastActivityAt: mockNow - 180_000 },
         { key: "topic_bench_giant_turn", kind: "topic", label: "bench:giant-turn", root: "~/projects/reasonix", topicId: "topic_bench_giant_turn", projectColor: "amber", turns: 1, lastActivityAt: mockNow - 240_000 },
+        { key: "topic_bench_storm", kind: "topic", label: "bench:storm-40t", root: "~/projects/reasonix", topicId: "topic_bench_storm", projectColor: "red", turns: 40, lastActivityAt: mockNow - 300_000 },
       ],
     },
   ] : [
@@ -2118,11 +2120,28 @@ function makeMockApp(): AppBindings {
 	    const entries = messages.slice(lo, before).map((message, index) => {
 	      const entryId = `smock-${tabID}:r0:m${lo + index}:o0`;
 	      const content = message.content ?? "";
+	      const reasoning = message.reasoning ?? "";
 	      const lazyContent = benchMock && content.includes("ASYNC LAYOUT EXPANSION COMPLETE");
+	      // Storm fixture fields (BENCH_STORM_MARKER in bridgeBenchFixtures.ts):
+	      // serve the backend's ≤4KiB preview + content-ref contract so opening
+	      // the session paces a ref-resolution patch storm (#8657).
+	      const stormContent = benchMock && content.includes("BENCH STORM HYDRATION RESOLVED");
+	      const stormReasoning = benchMock && reasoning.includes("BENCH STORM HYDRATION RESOLVED");
+	      const refs: HistoryEntry["refs"] = [];
+	      if (lazyContent || stormContent) {
+	        refs.push({ entryId, field: "content", size: content.length, chunks: 1, revision: 0, revKnown: false, digest: "" });
+	      }
+	      if (stormReasoning) {
+	        refs.push({ entryId, field: "reasoning", size: reasoning.length, chunks: 1, revision: 0, revKnown: false, digest: "" });
+	      }
 	      return {
 	        entryId, turn: turnsOf[lo + index], order: lo + index,
-	        message: lazyContent ? { ...message, content: content.slice(0, 4 * 1024) } : message,
-	        refs: lazyContent ? [{ entryId, field: "content", size: content.length, chunks: 1, revision: 0, revKnown: false, digest: "" }] : [],
+	        message: refs.length > 0 ? {
+	          ...message,
+	          ...(lazyContent || stormContent ? { content: content.slice(0, 4 * 1024) } : {}),
+	          ...(stormReasoning ? { reasoning: reasoning.slice(0, 4 * 1024) } : {}),
+	        } : message,
+	        refs,
 	      };
 	    });
 	    const visibleTurns = entries.map((entry) => entry.turn).filter((value) => value > 0);
@@ -3270,6 +3289,12 @@ function makeMockApp(): AppBindings {
           const messages = await this.HistoryForTab(tabID);
           const message = messages[Number(match[1])];
           if (benchMock && message?.content?.includes("ASYNC LAYOUT EXPANSION COMPLETE")) await delay(1_500);
+          // Storm fixture: pace ref resolutions deterministically by entry
+          // index so opening the session produces a seconds-long patch storm
+          // instead of a single burst (#8657).
+          if (benchMock && (message?.content?.includes("BENCH STORM HYDRATION RESOLVED") || message?.reasoning?.includes("BENCH STORM HYDRATION RESOLVED"))) {
+            await delay(50 + (Number(match[1]) % 24) * 120);
+          }
           if (!message) return { ...out, stale: true };
           out.data = mockHistoryContentField(message, ref);
           out.chunks = 1;

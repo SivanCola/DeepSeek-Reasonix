@@ -496,14 +496,32 @@ try {
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.wheel(0, -240);
   await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "manual", undefined, { timeout: 5_000 });
-  await transcript.evaluate((element) => {
-    window.__reachBottomProbe = { writes: [], snaps: [], done: false };
+  await transcript.evaluate(() => {
+    window.__reachBottomProbe = { writes: [], snaps: [], remounts: 0, done: false };
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => window.__reachBottomProbe.writes.push(write);
-    let last = element.scrollTop;
+    // Re-query the scroller every frame: a remount replaces the element, and
+    // sampling a detached node reads scrollTop 0.
+    let scroller = document.querySelector(".transcript");
+    let last = scroller?.scrollTop ?? 0;
+    let displacedFrames = 0;
     const sample = () => {
+      const element = document.querySelector(".transcript");
+      if (element && element !== scroller) {
+        window.__reachBottomProbe.remounts += 1;
+        scroller = element;
+        last = element.scrollTop;
+      }
+      if (!element) {
+        if (!window.__reachBottomProbe.done) requestAnimationFrame(sample);
+        return;
+      }
       const top = element.scrollTop;
-      if (last - top > element.clientHeight * 2) {
-        window.__reachBottomProbe.snaps.push({ from: Math.round(last), to: Math.round(top) });
+      // Only a displacement persisting 5+ frames is a pull-back; a one-frame
+      // remount flash recovers by design (#8657).
+      if (last - top > element.clientHeight * 2) displacedFrames += 1;
+      else displacedFrames = 0;
+      if (displacedFrames === 5) {
+        window.__reachBottomProbe.snaps.push({ stuckAt: Math.round(top), droppedFrom: Math.round(last) });
       }
       last = top;
       if (!window.__reachBottomProbe.done) requestAnimationFrame(sample);
@@ -513,8 +531,13 @@ try {
     // ~90 ms, mimicking ref-resolution patches landing during the gesture.
     const churn = () => {
       if (window.__reachBottomProbe.done) return;
-      const viewport = element.getBoundingClientRect();
-      const above = [...element.querySelectorAll(".transcript__row")].filter((row) => row.getBoundingClientRect().bottom <= viewport.top);
+      const current = document.querySelector(".transcript");
+      if (!(current instanceof HTMLElement)) {
+        setTimeout(churn, 90);
+        return;
+      }
+      const viewport = current.getBoundingClientRect();
+      const above = [...current.querySelectorAll(".transcript__row")].filter((row) => row.getBoundingClientRect().bottom <= viewport.top);
       const row = above[Math.floor(Math.random() * above.length)];
       if (row instanceof HTMLElement) {
         row.style.paddingBottom = `${Number.parseFloat(row.style.paddingBottom || "0") + 160}px`;
@@ -536,7 +559,7 @@ try {
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
     return window.__reachBottomProbe;
   });
-  assert(reachProbe.snaps.length === 0, `no multi-screen upward snap while wheeling down (${JSON.stringify(reachProbe.snaps.slice(0, 3))})`);
+  assert(reachProbe.snaps.length === 0, `no persistent multi-screen pull-back while wheeling down (${JSON.stringify(reachProbe.snaps.slice(0, 3))}; ${reachProbe.remounts} remount(s))`);
   assert(
     reachProbe.writes.every((write) => write.owner !== "recovery"),
     `zero recovery-owned scroll writes during the reach-bottom gesture (${reachProbe.writes.length} writes)`,
@@ -545,6 +568,99 @@ try {
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 400)));
   const tailAfterChurn = await transcript.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight);
   assert(tailAfterChurn <= 1, `tail-follow holds at the newest content while churn continues (${tailAfterChurn}px)`);
+
+  // ── #8657 end-to-end: a real ref-resolution patch storm on a 40-turn
+  // session. Opening bench:storm-40t resolves ~24 ref-replaced fields at a
+  // paced interval (~3s of history_items_patch invalidations). The pre-fix
+  // chain turned every patch into a keyed remount at scroll idle, collapsing
+  // the measured size tree back to estimates and stranding the view several
+  // screens up — the user could never reach the bottom. Drive repeated
+  // downward wheels WITH periodic pauses (each pause is a scroll idle, the
+  // exact moment the old chain remounted) and require: bottom reached, no
+  // multi-screen upward snap, zero recovery-owned writes, tail holds.
+  await page.click('.project-tree__topic-main:has-text("bench:storm-40t")');
+  await page.waitForFunction(() => document.querySelectorAll(".transcript__row").length > 2, undefined, { timeout: 30_000 });
+  await page.evaluate(() => new Promise((resolve) => {
+    let frames = 6;
+    const settle = () => frames-- <= 0 ? resolve() : requestAnimationFrame(settle);
+    requestAnimationFrame(settle);
+  }));
+  const stormTranscript = page.locator(".transcript");
+  const stormBox = await stormTranscript.boundingBox();
+  assert(stormBox != null, "storm session exposes the transcript viewport");
+  await stormTranscript.evaluate((element) => {
+    element.scrollTop = Math.max(0, Math.floor((element.scrollHeight - element.clientHeight) / 2));
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await page.mouse.move(stormBox.x + stormBox.width / 2, stormBox.y + stormBox.height / 2);
+  await page.mouse.wheel(0, -240);
+  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "manual", undefined, { timeout: 5_000 });
+  await stormTranscript.evaluate(() => {
+    window.__stormProbe = { writes: [], snaps: [], remounts: 0, done: false };
+    window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => window.__stormProbe.writes.push(write);
+    // Re-query the scroller every frame: a remount (blank-watchdog rebuild)
+    // replaces the element, and sampling a detached node reads scrollTop 0.
+    let scroller = document.querySelector(".transcript");
+    let last = scroller?.scrollTop ?? 0;
+    let displacedFrames = 0;
+    const sample = () => {
+      const element = document.querySelector(".transcript");
+      if (element && element !== scroller) {
+        window.__stormProbe.remounts += 1;
+        scroller = element;
+        last = element.scrollTop;
+      }
+      if (!element) {
+        if (!window.__stormProbe.done) requestAnimationFrame(sample);
+        return;
+      }
+      const top = element.scrollTop;
+      // The product contract is "never LEFT several screens above": a
+      // one-frame flash during a genuine watchdog remount recovers; only a
+      // displacement that persists for 5+ frames is a pull-back (#8657).
+      if (last - top > element.clientHeight * 2) displacedFrames += 1;
+      else displacedFrames = 0;
+      if (displacedFrames === 5) {
+        window.__stormProbe.snaps.push({ stuckAt: Math.round(top), droppedFrom: Math.round(last) });
+      }
+      last = top;
+      if (!window.__stormProbe.done) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  let stormReached = false;
+  for (let attempt = 0; attempt < 60 && !stormReached; attempt += 1) {
+    await page.mouse.wheel(0, 640);
+    await page.waitForTimeout(60);
+    // Every sixth gesture, pause into scroll idle — the moment the pre-fix
+    // chain fired its revision-driven remount mid-approach.
+    if (attempt % 6 === 5) await page.waitForTimeout(500);
+    stormReached = await stormTranscript.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 1);
+  }
+  assert(stormReached, "repeated downward wheels reach the physical bottom through the ref-resolution storm (#8657)");
+  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "tail-follow", undefined, { timeout: 5_000 });
+  // The storm keeps resolving after the user lands; the tail must hold.
+  await page.waitForFunction(
+    () => document.querySelector(".transcript")?.textContent?.includes("storm-40-FINAL"),
+    undefined,
+    { timeout: 30_000 },
+  );
+  await page.waitForTimeout(600);
+  const stormTail = await stormTranscript.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight);
+  assert(stormTail <= 1, `tail-follow holds at the newest content until the storm fully resolves (${stormTail}px)`);
+  const stormProbe = await stormTranscript.evaluate(() => {
+    window.__stormProbe.done = true;
+    window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
+    return window.__stormProbe;
+  });
+  assert(
+    stormProbe.snaps.length === 0,
+    `no persistent multi-screen pull-back during the storm approach (${JSON.stringify(stormProbe.snaps.slice(0, 3))}; ${stormProbe.remounts} watchdog remount(s))`,
+  );
+  assert(
+    stormProbe.writes.every((write) => write.owner !== "recovery"),
+    `zero recovery-owned scroll writes through the storm (${stormProbe.writes.length} writes)`,
+  );
 
   process.stdout.write("\ntranscript scroll stability browser gate passed\n");
 } finally {
