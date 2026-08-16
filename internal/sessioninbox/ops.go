@@ -7,6 +7,17 @@ import (
 
 // DeleteItem removes metadata first, then the blob (crash may leave orphan).
 func (s *Store) DeleteItem(id string) error {
+	return s.deleteItem(id, false)
+}
+
+// DeletePendingOrAcceptedItem atomically withdraws a queued item or an
+// accepted-but-unconsumed steer. A concurrent consumed transition wins by
+// making the delete fail with ErrInvalidState.
+func (s *Store) DeletePendingOrAcceptedItem(id string) error {
+	return s.deleteItem(id, true)
+}
+
+func (s *Store) deleteItem(id string, allowAcceptedSteer bool) error {
 	if s == nil {
 		return ErrClosed
 	}
@@ -25,7 +36,7 @@ func (s *Store) DeleteItem(id string) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if !isPendingState(meta.State) {
+	if !isPendingState(meta.State) && !(allowAcceptedSteer && meta.State == StateSteerAccepted) {
 		return ErrInvalidState
 	}
 	next := s.man.clone()

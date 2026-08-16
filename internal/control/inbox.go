@@ -457,6 +457,8 @@ func (c *Controller) AppendInboxItem(id, text, idempotency string, extra map[str
 }
 
 func (c *Controller) DeleteInboxItem(id string) error {
+	c.inbox.admissionMu.Lock()
+	defer c.inbox.admissionMu.Unlock()
 	st, err := c.ensureInbox()
 	if err != nil {
 		return err
@@ -464,32 +466,11 @@ func (c *Controller) DeleteInboxItem(id string) error {
 	if _, recoverErr := st.RecoverOrphanedInFlightOwnedBy(c.inbox.ownsItem); recoverErr != nil {
 		slog.Warn("controller: recover inbox item before delete", "err", recoverErr, "id", id)
 	}
-	err = st.DeleteItem(id)
+	err = st.DeletePendingOrAcceptedItem(id)
 	if err == nil || errors.Is(err, sessioninbox.ErrNotFound) {
 		return nil
 	}
-	if !errors.Is(err, sessioninbox.ErrInvalidState) {
-		return err
-	}
-	meta, _, readErr := st.ReadItem(id)
-	if readErr != nil {
-		if errors.Is(readErr, sessioninbox.ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-	// An accepted-but-unconsumed steer is still waiting from the user's point
-	// of view. Roll it back to queued so the same delete path can remove it.
-	if meta.State != sessioninbox.StateSteerAccepted {
-		return err
-	}
-	if setErr := st.SetState(id, sessioninbox.StateQueued, ""); setErr != nil {
-		return err
-	}
-	if delErr := st.DeleteItem(id); delErr != nil && !errors.Is(delErr, sessioninbox.ErrNotFound) {
-		return delErr
-	}
-	return nil
+	return err
 }
 
 func (c *Controller) MoveInboxItem(id string, toIndex int) error {

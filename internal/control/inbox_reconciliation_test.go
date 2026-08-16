@@ -1,6 +1,7 @@
 package control
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -108,6 +109,40 @@ func TestCancelWithInboxItemsResultRestoresOnlyUnconsumedItems(t *testing.T) {
 	items := c.InboxSnapshot().Items
 	if len(items) != 1 || items[0].ID != consumed.ItemID {
 		t.Fatalf("remaining items = %+v", items)
+	}
+}
+
+func TestDeleteInboxItemDoesNotOverwriteConsumedSteer(t *testing.T) {
+	dir := t.TempDir()
+	session := filepath.Join(dir, "s.jsonl")
+	_ = os.WriteFile(session, []byte("{}\n"), 0o644)
+	c := New(Options{SessionPath: session, SessionDir: dir, Sink: event.Discard})
+	rec, err := c.EnqueueInbox(InboxRequest{Intent: sessioninbox.IntentSteer, Submit: "consumed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := c.ensureInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetState(rec.ItemID, sessioninbox.StateSteerAccepted, ""); err != nil {
+		t.Fatal(err)
+	}
+	c.inbox.mu.Lock()
+	c.inbox.trackActive(rec.ItemID)
+	c.inbox.mu.Unlock()
+	if err := st.MarkSteerConsumed(rec.ItemID); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteInboxItem(rec.ItemID); !errors.Is(err, sessioninbox.ErrInvalidState) {
+		t.Fatalf("delete consumed steer = %v, want ErrInvalidState", err)
+	}
+	meta, _, err := c.ReadInboxItem(rec.ItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.State != sessioninbox.StateSteerConsumed {
+		t.Fatalf("state = %q, want %q", meta.State, sessioninbox.StateSteerConsumed)
 	}
 }
 
