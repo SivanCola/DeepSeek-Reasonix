@@ -63,6 +63,16 @@ func (a *App) trashTopic(topicID string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if fallback.workspaceRoot != "" {
+		changedDirs = append(changedDirs, desktopSessionDir(fallback.workspaceRoot))
+	} else if fallback.needs {
+		changedDirs = append(changedDirs, desktopSessionDir(globalWorkspaceRoot()))
+	}
+	// Remove abandoned transient blanks before fallback construction registers
+	// the project; otherwise reconciliation can promote a default-titled blank
+	// into the topic registry and make it ineligible for cleanup.
+	trace.phase = "discard_existing_blanks"
+	a.discardUnusedTransientBlankSessions(changedDirs, "")
 	if fallback.needs {
 		trace.phase = "open_fallback"
 		fallback.topicID = ""
@@ -76,11 +86,6 @@ func (a *App) trashTopic(topicID string) (retErr error) {
 	a.mu.RLock()
 	if tab := a.tabs[a.activeTabID]; tab != nil {
 		keepPath = tab.SessionPath
-	}
-	if fallback.workspaceRoot != "" {
-		changedDirs = append(changedDirs, desktopSessionDir(fallback.workspaceRoot))
-	} else if fallback.needs {
-		changedDirs = append(changedDirs, desktopSessionDir(globalWorkspaceRoot()))
 	}
 	a.mu.RUnlock()
 	trace.phase = "discard_unused_blanks"
