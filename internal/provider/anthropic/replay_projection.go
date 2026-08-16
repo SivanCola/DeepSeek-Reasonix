@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"slices"
 	"strings"
 
 	"reasonix/internal/provider"
@@ -16,14 +17,7 @@ import (
 // cache prefix stay unchanged. For an unreplayable turn, preserve only visible
 // assistant text and drop the activity plus its contiguous client-tool results.
 func projectDeepSeekReplaySafeMessages(msgs []provider.Message) []provider.Message {
-	needsRepair := false
-	for _, m := range msgs {
-		if missingDeepSeekActivityThinking(m) {
-			needsRepair = true
-			break
-		}
-	}
-	if !needsRepair {
+	if !slices.ContainsFunc(msgs, missingDeepSeekActivityThinking) {
 		return msgs
 	}
 
