@@ -68,13 +68,17 @@ func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredS
 		sink.Flush()
 		return result
 	}
-	if len(result.calls) > 0 && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+	// Empty can replace reasoning the provider never emitted, never reasoning
+	// truncated by the client limit: preserved-thinking protocols require the
+	// returned content to remain complete and unchanged.
+	allowsFallback := issue == ReasoningReplayMissing && provider.AllowsEmptyReasoningFallback(a.svc.prov)
+	if len(result.calls) > 0 && !allowsFallback {
 		sink.Discard()
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryClientToolRejected})
 		result.err = &ReasoningReplayError{Kind: issue}
 		return result
 	}
-	if len(result.serverSearch) > 0 && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+	if len(result.serverSearch) > 0 && !allowsFallback {
 		if strings.TrimSpace(result.text) == "" {
 			sink.Discard()
 			result.err = &ReasoningReplayError{Kind: issue}
@@ -91,7 +95,7 @@ func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredS
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryServerSearchSalvaged})
 		return result
 	}
-	if provider.RequiresReasoningRoundTrip(a.svc.prov) && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+	if provider.RequiresReasoningRoundTrip(a.svc.prov) && !allowsFallback {
 		sink.Discard()
 		result.err = &ReasoningReplayError{Kind: issue}
 		return result
@@ -109,59 +113,6 @@ func (a *Agent) CanReplayAssistantMessage(m provider.Message) bool {
 		return true
 	}
 	return strings.TrimSpace(m.ReasoningContent) != ""
-}
-
-// repairUnreplayableReasoningHistory returns the provider-visible projection
-// for histories written by older versions that committed tool activity without
-// the reasoning required to replay it. Canonical session messages are never
-// modified. Healthy histories retain their backing slice for cache stability.
-func repairUnreplayableReasoningHistory(p provider.Provider, msgs []provider.Message) ([]provider.Message, bool) {
-	if provider.AllowsEmptyReasoningFallback(p) {
-		return msgs, false
-	}
-	needsRepair := false
-	for _, m := range msgs {
-		if m.Role == provider.RoleAssistant && provider.RequiresAssistantReasoningReplay(p, m) && strings.TrimSpace(m.ReasoningContent) == "" {
-			needsRepair = true
-			break
-		}
-	}
-	if !needsRepair {
-		return msgs, false
-	}
-
-	out := make([]provider.Message, 0, len(msgs))
-	for i := 0; i < len(msgs); {
-		m := msgs[i]
-		bad := m.Role == provider.RoleAssistant && provider.RequiresAssistantReasoningReplay(p, m) && strings.TrimSpace(m.ReasoningContent) == ""
-		if !bad {
-			out = append(out, m)
-			i++
-			continue
-		}
-
-		// Preserve any final/user-visible text as a plain assistant message, but
-		// never replay the malformed activity or provider-bound metadata.
-		if strings.TrimSpace(m.Content) != "" {
-			plain := m
-			plain.ReasoningContent = ""
-			plain.ReasoningSignature = ""
-			plain.ReasoningID = ""
-			plain.ReasoningStatus = ""
-			plain.ToolCalls = nil
-			plain.ServerSearch = nil
-			out = append(out, plain)
-		}
-		i++
-		if len(m.ToolCalls) > 0 {
-			// Tool results belong to the omitted assistant tool turn. They are
-			// contiguous in canonical sessions; stop at the next non-tool role.
-			for i < len(msgs) && msgs[i].Role == provider.RoleTool && !msgs[i].LocalOnly {
-				i++
-			}
-		}
-	}
-	return out, true
 }
 
 // ensureUnreplayableHistoryRecovery installs one existing-format LocalOnly

@@ -28,10 +28,11 @@ func TestRealOpenCodeGoDeepSeekAnthropicWebSearch(t *testing.T) {
 		Model:   "deepseek-v4-flash",
 		APIKey:  key,
 		Extra: map[string]any{
-			"api_key_env": "OPENCODE_GO_API_KEY",
-			"thinking":    "adaptive",
-			"effort":      "high",
-			"web_search":  true,
+			"api_key_env":        "OPENCODE_GO_API_KEY",
+			"reasoning_protocol": "deepseek",
+			"thinking":           "adaptive",
+			"effort":             "high",
+			"web_search":         true,
 		},
 	})
 	if err != nil {
@@ -56,7 +57,10 @@ func TestRealOpenCodeGoDeepSeekAnthropicToolLoop(t *testing.T) {
 	}
 	p, err := New(provider.Config{
 		Name: "opencode-go-deepseek-anthropic", BaseURL: "https://opencode.ai/zen/go", Model: "deepseek-v4-flash", APIKey: key,
-		Extra: map[string]any{"api_key_env": "OPENCODE_GO_API_KEY", "thinking": "adaptive", "effort": "high"},
+		Extra: map[string]any{
+			"api_key_env": "OPENCODE_GO_API_KEY", "reasoning_protocol": "deepseek",
+			"thinking": "adaptive", "effort": "high",
+		},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

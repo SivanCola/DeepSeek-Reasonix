@@ -35,12 +35,13 @@ func TestBuildRequestDeepSeekDropsUnreplayableToolActivity(t *testing.T) {
 }
 
 func TestDeepSeekReplayProjectionKeepsHealthyHistoryBacking(t *testing.T) {
+	c := &client{model: "deepseek-v4-flash", deepseek: true, thinking: "enabled"}
 	msgs := []provider.Message{{
 		Role: provider.RoleAssistant, ReasoningContent: "read it first",
 		ToolCalls: []provider.ToolCall{{ID: "read-1", Name: "read_file", Arguments: `{}`}},
 	}}
-	got := projectDeepSeekReplaySafeMessages(msgs)
-	if len(got) != 1 || &got[0] != &msgs[0] {
+	got, changed := provider.ProjectReplaySafeMessages(c, msgs)
+	if changed || len(got) != 1 || &got[0] != &msgs[0] {
 		t.Fatal("healthy replay history allocated or changed")
 	}
 }

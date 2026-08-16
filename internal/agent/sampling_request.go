@@ -125,7 +125,7 @@ func (a *Agent) buildSamplingRequest(ctx context.Context, trigger string) (sampl
 // explicit range compression can continue to resolve anchors across calls.
 func (a *Agent) providerProjectionMessages(msgs []provider.Message) []provider.Message {
 	if a != nil {
-		if repaired, changed := repairUnreplayableReasoningHistory(a.svc.prov, msgs); changed {
+		if repaired, changed := provider.ProjectReplaySafeMessages(a.svc.prov, msgs); changed {
 			msgs = repaired
 		}
 		if a.strictAlternatingRoles {

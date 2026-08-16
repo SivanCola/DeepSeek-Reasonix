@@ -358,7 +358,7 @@ func (c *client) buildRequest(_ context.Context, req provider.Request) anthReque
 
 	messages := req.Messages
 	if c.deepseek {
-		messages = projectDeepSeekReplaySafeMessages(messages)
+		messages, _ = provider.ProjectReplaySafeMessages(c, messages)
 	}
 	for _, m := range provider.SanitizeToolPairing(messages) {
 		switch m.Role {
