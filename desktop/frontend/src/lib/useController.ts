@@ -13,6 +13,7 @@ import { completionSummaryNeedsAttention, completionSummaryNotice, normalizeComp
 import { invalidateSharedQuery } from "./queryCoalesce";
 import { replayPendingPromptsForActiveTab } from "./promptReplay";
 import { createRafBatch } from "./rafBatch";
+import { foregroundRunningFromRuntimeMeta, type RuntimeMetaSnapshot } from "./runtimeMeta";
 import { aliasActivationRequest, noteActivationRequested, noteActivationSettled, noteActivationStarted } from "./sessionDiagnostics";
 import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type StreamDeltaEntry, type StreamSegment } from "./streamDeltaBatch";
 import { getTranscriptStore } from "./transcriptStore";
@@ -23,6 +24,7 @@ import { isHostRecoveryGuidance } from "./hostRecoverySteer";
 import { duplicateLiveItemIds, hasCachedLiveTurn, hydratedHistoryApplyMode, sameSessionPlaceholderItems, shouldPreferResidentHistory } from "./hydrateHistoryApply";
 import { hydrateIdentityCurrent } from "./sessionIdentity";
 import { sameStringList, sameTodoList } from "./todoVisibility";
+import { resolveTurnStartedAt } from "./turnTiming";
 import { useStaleTurnWatchdog } from "./useStaleTurnWatchdog";
 import type { SearchSource } from "./searchSources";
 import { attachWebSearchOutput, historySearchAndAnswer } from "./searchTranscript";
@@ -62,6 +64,7 @@ import type {
   WireUsage,
   WireShellExecution,
 } from "./types";
+export { foregroundRunningFromRuntimeMeta } from "./runtimeMeta";
 export type ToolStatus = "running" | "done" | "error" | "stopped";
 // Reserved ToolProgress channel names for sub-agent progress previews (the Go
 // tracker emits these; ordinary tool progress must never use them).
@@ -522,18 +525,6 @@ function usageTotalTokens(usage?: WireUsage): number {
   const promptTokens = usage.promptTokens || usage.cacheHitTokens + usage.cacheMissTokens;
   return Math.max(0, promptTokens + usage.completionTokens);
 }
-type RuntimeMetaSnapshot = {
-  running: boolean;
-  pendingPrompt?: boolean;
-  backgroundJobs?: number;
-  cancelRequested?: boolean;
-  cancellable?: boolean;
-};
-export function foregroundRunningFromRuntimeMeta(meta: RuntimeMetaSnapshot): boolean {
-  if (typeof meta.cancellable === "boolean") return meta.cancellable;
-  if ((meta.backgroundJobs ?? 0) > 0 && !meta.pendingPrompt) return false;
-  return Boolean(meta.running);
-}
 // Clock used to order live prompt events against runtime snapshot fetches.
 // Monotonic (immune to wall-clock jumps) with sub-millisecond resolution, so
 // an event and a snapshot initiated in the same millisecond still order
@@ -782,7 +773,7 @@ type Action =
   | { type: "unsend" }
   | { type: "send_confirmed"; submissionId: string }
   | { type: "send_failed"; submissionId: string; error: string }
-  | { type: "backend_status"; running: boolean; pendingPrompt?: boolean; backgroundJobs?: number; cancelRequested?: boolean; cancellable?: boolean; snapshotAt?: number }
+  | { type: "backend_status"; running: boolean; turnStartedAt?: number; pendingPrompt?: boolean; backgroundJobs?: number; cancelRequested?: boolean; cancellable?: boolean; snapshotAt?: number }
   | { type: "cancel_requested" }
   | { type: "meta"; meta: Meta }
   | { type: "optimistic_meta"; meta: Meta }
@@ -824,6 +815,7 @@ function backendStatusFromRuntimeMeta(meta: RuntimeMetaSnapshot): Extract<Action
   return {
     type: "backend_status",
     running: foregroundRunning,
+    turnStartedAt: meta.turnStartedAt,
     pendingPrompt: Boolean(meta.pendingPrompt),
     backgroundJobs: meta.backgroundJobs ?? 0,
     cancelRequested: Boolean(meta.cancelRequested),
@@ -1455,7 +1447,7 @@ function applyEvent(s: State, e: WireEvent): State {
         pendingPrompt: false,
         cancelRequested: false,
         cancellable: true,
-        ...resetTurnTiming(),
+        ...resetTurnTiming(resolveTurnStartedAt(fresh.running || fresh.turnActive ? fresh.turnStartAt : 0, e.turnStartedAt)),
       };
     }
     case "turn_phase": {
@@ -1956,6 +1948,7 @@ export function reducer(s: State, a: Action): State {
       const backgroundJobs = Math.max(0, a.backgroundJobs ?? s.backgroundJobs ?? 0);
       const cancelRequested = Boolean(a.cancelRequested);
       const foregroundRunning = foregroundRunningFromRuntimeMeta({ running: a.running, pendingPrompt, backgroundJobs, cancellable: a.cancellable });
+      const turnStartedAt = foregroundRunning ? resolveTurnStartedAt(s.running || s.turnActive ? s.turnStartAt : 0, a.turnStartedAt) : s.turnStartAt;
       // A retry event is newer evidence of foreground activity than an idle
       // snapshot whose fetch started earlier. Keep the turn cancellable until
       // a snapshot started after the retry confirms that it is actually idle.
@@ -1968,6 +1961,7 @@ export function reducer(s: State, a: Action): State {
         backgroundJobs === s.backgroundJobs &&
         cancelRequested === s.cancelRequested &&
         cancellable === s.cancellable &&
+        turnStartedAt === s.turnStartAt &&
         !clearsRetry
       ) return s;
       if (foregroundRunning) {
@@ -1979,7 +1973,7 @@ export function reducer(s: State, a: Action): State {
           backgroundJobs,
           cancelRequested,
           cancellable,
-          turnStartAt: s.turnStartAt || Date.now(),
+          turnStartAt: turnStartedAt,
         };
       }
       const telemetry = snapshotCompletedTurnTelemetry(s);
@@ -3209,6 +3203,7 @@ export function useController() {
     dispatchTo(tabId, {
       type: "backend_status",
       running: foregroundRunning,
+      turnStartedAt: tab.turnStartedAt,
       pendingPrompt: Boolean(tab.pendingPrompt),
       backgroundJobs: tab.backgroundJobs ?? 0,
       cancelRequested: Boolean(tab.cancelRequested),
