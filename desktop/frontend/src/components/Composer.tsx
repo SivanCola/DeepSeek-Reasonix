@@ -163,8 +163,43 @@ type WebkitFileEntry = {
   isDirectory?: boolean;
 };
 
+type GuidanceReceiptTracker = {
+  start(draftKey: string): void;
+  recordConsumed(draftKey: string, itemId: string): void;
+  takeConsumed(draftKey: string, itemId: string): boolean;
+  finish(draftKey: string): void;
+};
+
 const DEFAULT_COMPOSER_DRAFT_KEY = "__default_composer_draft__";
 const MAX_COMPOSER_EDIT_HISTORY = 50;
+
+function createGuidanceReceiptTracker(): GuidanceReceiptTracker {
+  const inFlight = new Map<string, number>();
+  const consumedBeforeReceipt = new Map<string, Set<string>>();
+  return {
+    start(draftKey) {
+      inFlight.set(draftKey, (inFlight.get(draftKey) ?? 0) + 1);
+    },
+    recordConsumed(draftKey, itemId) {
+      if ((inFlight.get(draftKey) ?? 0) === 0) return;
+      const consumed = consumedBeforeReceipt.get(draftKey) ?? new Set<string>();
+      consumed.add(itemId);
+      consumedBeforeReceipt.set(draftKey, consumed);
+    },
+    takeConsumed(draftKey, itemId) {
+      return consumedBeforeReceipt.get(draftKey)?.delete(itemId) ?? false;
+    },
+    finish(draftKey) {
+      const remaining = (inFlight.get(draftKey) ?? 1) - 1;
+      if (remaining > 0) {
+        inFlight.set(draftKey, remaining);
+        return;
+      }
+      inFlight.delete(draftKey);
+      consumedBeforeReceipt.delete(draftKey);
+    },
+  };
+}
 
 function lineCount(s: string): number {
   if (s === "") return 0;
@@ -715,8 +750,8 @@ export function Composer({
   const guidanceSendingIdRef = useRef<string | null>(null);
   const [loadingPastChats, setLoadingPastChats] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [cancelSettling, setCancelSettling] = useState(false);
-  const cancelSettlingRef = useRef(false);
+  const cancelSettlingDraftsRef = useRef(new Set<string>());
+  const [, setCancelSettlingRevision] = useState(0);
   const [inputMenuPoint, setInputMenuPoint] = useState<ContextMenuPoint | null>(null);
   const [composerPrompt, setComposerPrompt] = useState<string | null>(null);
   // Prompt history navigation (plain ↑/↓)
@@ -757,6 +792,8 @@ export function Composer({
   const lastGuidanceConsumedKeyByDraftRef = useRef<Record<string, string | undefined>>(
     guidanceConsumedKey ? { [draftKey]: guidanceConsumedKey } : {},
   );
+  const guidanceReceiptTrackerRef = useRef<GuidanceReceiptTracker | null>(null);
+  guidanceReceiptTrackerRef.current ??= createGuidanceReceiptTracker();
   const selfDispatchedGuidanceByDraftRef = useRef<Record<string, string[]>>({});
   const submittingRef = useRef(false);
   const nativeClipboardPasteTimerRef = useRef<number | null>(null);
@@ -1460,6 +1497,9 @@ export function Composer({
     if (guidanceConsumedKey === lastGuidanceConsumedKeyByDraftRef.current[draftKey]) return;
     lastGuidanceConsumedKeyByDraftRef.current[draftKey] = guidanceConsumedKey;
     const consumed = (guidanceConsumedText ?? "").trim();
+    if (guidanceConsumedItemId) {
+      guidanceReceiptTrackerRef.current?.recordConsumed(draftKey, guidanceConsumedItemId);
+    }
     if (!guidanceConsumedItemId && consumed && takeSelfDispatchedGuidance(consumed, draftKey)) return;
     updatePendingGuidanceForDraft(draftKey, (items) => {
       if (items.length === 0) return items;
@@ -2036,26 +2076,34 @@ export function Composer({
         const guidanceSubmitText = submitText.trim();
         if (guidanceText) {
           // Durable follow-up: only clear the composer after a durable receipt.
+          const receiptTracker = guidanceReceiptTrackerRef.current;
+          receiptTracker?.start(submitDraftKey);
           try {
             const receipt = await enqueueInboxGuidance(app, submitTabId || "", guidanceText, guidanceSubmitText, structured, { steer: true });
             if (receipt?.error) throw new Error(receipt.error);
-            updatePendingGuidanceForDraft(submitDraftKey, (items) => [
-              ...items.map((item) => receipt.paused ? { ...item, paused: true } : item),
-              {
-                id: receipt.itemId,
-                text: guidanceText.slice(0, 120),
-                submitText: "",
-                intent: "followup",
-                state: "queued",
-                source: "desktop",
-                paused: Boolean(receipt.paused),
-                structured,
-              },
-            ]);
+            const consumedBeforeReceipt = receiptTracker?.takeConsumed(submitDraftKey, receipt.itemId) ?? false;
+            if (!consumedBeforeReceipt) {
+              updatePendingGuidanceForDraft(submitDraftKey, (items) => {
+                const next = items.map((item) => receipt.paused ? { ...item, paused: true } : item);
+                if (next.some((item) => item.id === receipt.itemId)) return next;
+                return [...next, {
+                  id: receipt.itemId,
+                  text: guidanceText.slice(0, 120),
+                  submitText: "",
+                  intent: "followup",
+                  state: "queued",
+                  source: "desktop",
+                  paused: Boolean(receipt.paused),
+                  structured,
+                }];
+              });
+            }
             clearSubmittedDraft(submitDraftKey);
           } catch (error) {
             showToast(formatInboxError(error, locale), "warn");
             // Keep draft on durable failure.
+          } finally {
+            receiptTracker?.finish(submitDraftKey);
           }
         }
         return;
@@ -2683,10 +2731,10 @@ export function Composer({
   // handleCancel stops the in-flight turn; if it was cancelled before the server
   // replied, the just-sent text is handed back so we drop it back into the input.
   const handleCancel = async () => {
-    if (cancelSettlingRef.current) return;
-    cancelSettlingRef.current = true;
-    setCancelSettling(true);
     const targetDraftKey = activeDraftKeyRef.current;
+    if (cancelSettlingDraftsRef.current.has(targetDraftKey)) return;
+    cancelSettlingDraftsRef.current.add(targetDraftKey);
+    setCancelSettlingRevision((value) => value + 1);
     const ownedGuidance = pendingGuidanceRef.current.filter((item) => item.id.startsWith("local-") || item.source === "desktop");
     const durableItemIDs = ownedGuidance
       .map((item) => item.id)
@@ -2713,8 +2761,8 @@ export function Composer({
       if (nextText) setTextForDraft(targetDraftKey, nextText);
       if (targetDraftKey === activeDraftKeyRef.current && restorable.length > 0) setGuidanceExpanded(false);
     } finally {
-      cancelSettlingRef.current = false;
-      setCancelSettling(false);
+      cancelSettlingDraftsRef.current.delete(targetDraftKey);
+      setCancelSettlingRevision((value) => value + 1);
     }
   };
 
@@ -4491,7 +4539,7 @@ export function Composer({
                   className="composer__btn composer__btn--stop"
                   type="button"
                   onClick={() => void handleCancel()}
-                  disabled={cancelSettling}
+                  disabled={cancelSettlingDraftsRef.current.has(draftKey)}
                   aria-label={t("composer.stop")}
                 >
                   <Square size={12} fill="currentColor" />
