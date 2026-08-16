@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -146,6 +149,11 @@ func TestStrictMissingReasoningOpenCircuitStartsNextSessionInFallback(t *testing
 	if !state.claim(fingerprint) || !state.openFallbackAt(fingerprint, time.Now()) {
 		t.Fatal("failed to seed active circuit")
 	}
+	statePath := filepath.Join(stateDir, missingReasoningWarnStateFilename)
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	call := provider.ToolCall{ID: "safe", Name: "echo", Arguments: `{"text":"hi"}`}
 	mock := testutil.NewMock("strict-fallback",
 		testutil.Turn{ToolCalls: []provider.ToolCall{call}},
@@ -163,6 +171,95 @@ func TestStrictMissingReasoningOpenCircuitStartsNextSessionInFallback(t *testing
 	}
 	if got := sink.recoveryCount(event.ProtocolRecoveryMissingReasoningRetryAttempted); got != 0 {
 		t.Fatalf("exact retries = %d, want 0 after circuit opened", got)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("intentional fallback responses rewrote the missing-reasoning incident")
+	}
+}
+
+func TestStrictMissingReasoningHalfOpenFailureSkipsExactReplayAndBacksOff(t *testing.T) {
+	stateDir := t.TempDir()
+	seed := &strictFallbackReasoningProvider{MockProvider: testutil.NewMock("strict-fallback")}
+	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(seed)
+	state := newMissingReasoningWarnState(stateDir)
+	openedAt := time.Now().Add(-missingReasoningFallbackBackoffs[0] - 2*time.Second)
+	if !state.claimAt(fingerprint, openedAt) || !state.openFallbackAt(fingerprint, openedAt.Add(time.Second)) {
+		t.Fatal("failed to seed due half-open circuit")
+	}
+	call := func(id, text string) provider.ToolCall {
+		return provider.ToolCall{ID: id, Name: "echo", Arguments: `{"text":"` + text + `"}`}
+	}
+	mock := testutil.NewMock("strict-fallback",
+		testutil.Turn{ToolCalls: []provider.ToolCall{call("probe-bad", "must not run")}},
+		testutil.Turn{ToolCalls: []provider.ToolCall{call("fallback-safe", "hi")}},
+		testutil.Turn{Text: "done"},
+	)
+	prov := &strictFallbackReasoningProvider{MockProvider: mock}
+	sink := &recordSink{}
+	agent := New(prov, echoRegistry(), NewSession(""), Options{MissingReasoningWarnStateDir: stateDir}, sink)
+
+	if err := agent.Run(withNoClosedLoop(context.Background()), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := prov.fallbackCalls(), []bool{false, true, true}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("half-open calls = %v, want normal probe then direct fallback %v", got, want)
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryMissingReasoningRetryAttempted); got != 0 {
+		t.Fatalf("half-open exact retries = %d, want 0", got)
+	}
+	results := sink.kinds(event.ToolResult)
+	if len(results) != 1 || results[0].Tool.ID != "fallback-safe" {
+		t.Fatalf("tool results = %+v, want only fallback-safe", results)
+	}
+	incidents, err := state.load(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	incident := incidents[fingerprint]
+	if incident.FallbackLevel != 2 {
+		t.Fatalf("fallback level = %d, want 2 after failed half-open probe", incident.FallbackLevel)
+	}
+	if got := time.Unix(0, incident.NextProbeAtUnixNano).Sub(time.Unix(0, incident.FallbackAtUnixNano)); got != missingReasoningFallbackBackoffs[1] {
+		t.Fatalf("next probe delay = %v, want %v", got, missingReasoningFallbackBackoffs[1])
+	}
+}
+
+func TestStrictMissingReasoningHalfOpenClosesAfterThreeHealthyToolRounds(t *testing.T) {
+	stateDir := t.TempDir()
+	seed := &strictFallbackReasoningProvider{MockProvider: testutil.NewMock("strict-fallback")}
+	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(seed)
+	state := newMissingReasoningWarnState(stateDir)
+	openedAt := time.Now().Add(-missingReasoningFallbackBackoffs[0] - 2*time.Second)
+	if !state.claimAt(fingerprint, openedAt) || !state.openFallbackAt(fingerprint, openedAt.Add(time.Second)) {
+		t.Fatal("failed to seed due half-open circuit")
+	}
+	call := func(id string) provider.ToolCall {
+		return provider.ToolCall{ID: id, Name: "echo", Arguments: `{"text":"hi"}`}
+	}
+	mock := testutil.NewMock("strict-fallback",
+		testutil.Turn{Reasoning: "healthy one", ToolCalls: []provider.ToolCall{call("h1")}},
+		testutil.Turn{Reasoning: "healthy two", ToolCalls: []provider.ToolCall{call("h2")}},
+		testutil.Turn{Reasoning: "healthy three", ToolCalls: []provider.ToolCall{call("h3")}},
+		testutil.Turn{Text: "done"},
+	)
+	prov := &strictFallbackReasoningProvider{MockProvider: mock}
+	agent := New(prov, echoRegistry(), NewSession(""), Options{MissingReasoningWarnStateDir: stateDir}, event.Discard)
+
+	if err := agent.Run(withNoClosedLoop(context.Background()), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := prov.fallbackCalls(), []bool{false, false, false, false}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("healthy half-open calls = %v, want normal thinking %v", got, want)
+	}
+	if state.fallbackActiveAt(fingerprint, time.Now()) {
+		t.Fatal("three healthy half-open rounds did not close fallback circuit")
+	}
+	if got := state.claimRecoveryModeAt(fingerprint, time.Now()).Mode; got != missingReasoningRecoveryNormal {
+		t.Fatalf("post-recovery mode = %v, want normal", got)
 	}
 }
 

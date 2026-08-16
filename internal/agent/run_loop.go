@@ -198,7 +198,7 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	a.rebuildTurnContract()
 	// Reuse an open provider/configuration circuit before projecting history or
 	// spending another pair of normal thinking-mode requests.
-	if a.beginMissingReasoningFallback() {
+	if a.beginMissingReasoningRecovery() {
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetrySuppressed})
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
 	}

@@ -26,6 +26,10 @@ type missingReasoningWatch struct {
 	// remainder of this conversation. Re-enabling reasoning inside a tool loop
 	// that already committed a no-reasoning turn would make its history invalid.
 	fallbackActive bool
+	// probeClaimedAt identifies this session as the sole cross-process half-open
+	// owner. It stays in normal thinking mode until it proves three healthy tool
+	// rounds, fails once, or its persisted lease is superseded.
+	probeClaimedAt time.Time
 }
 
 // unwrittenResolve is a resolve whose state write failed. It answers to the
@@ -51,6 +55,12 @@ func (a *Agent) observeMissingToolCallReasoning(calls []provider.ToolCall, reaso
 // provider-executed tool activity while preserving its persisted incident and
 // anti-flapping behavior.
 func (a *Agent) observeMissingAssistantReasoning(message provider.Message, complete bool) (missing, shouldRetry bool) {
+	// Disabled-thinking fallback intentionally emits no replayable reasoning.
+	// Feeding those expected responses back into the incident watcher would
+	// reset health progress and rewrite the state file on every tool round.
+	if a.sess.missingReasoning.fallbackActive {
+		return false, false
+	}
 	if !provider.RequiresAssistantReasoningReplay(a.svc.prov, message) {
 		return false, false
 	}
@@ -70,45 +80,18 @@ func (a *Agent) observeMissingAssistantReasoning(message provider.Message, compl
 	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
 	observedAt := time.Now()
 	if strings.TrimSpace(reasoning) != "" {
-		if a.svc.warnState == nil {
-			if a.sess.missingReasoning.active {
-				a.sess.missingReasoning.healthyStreak++
-				if a.sess.missingReasoning.healthyStreak >= missingReasoningHealthyResolveStreak {
-					a.sess.missingReasoning.active = false
-					a.sess.missingReasoning.healthyStreak = 0
-				}
-			}
-			return false, false
-		}
-		shouldResolve := !a.sess.missingReasoning.stateRecorded || a.sess.missingReasoning.active
-		if shouldResolve {
-			result := missingReasoningResolveResult{Recorded: true, Resolved: true}
-			if pending := a.unwrittenResolve.at; !pending.IsZero() {
-				result = a.svc.warnState.resolveAt(fingerprint, pending)
-				if result.Recorded {
-					a.unwrittenResolve.at = time.Time{}
-				}
-			}
-			if result.Recorded {
-				result = a.svc.warnState.resolveAt(fingerprint, observedAt)
-			}
-			if !result.Recorded {
-				if observedAt.After(a.unwrittenResolve.at) {
-					a.unwrittenResolve.at = observedAt
-				}
-				a.sess.missingReasoning.active = true
-				a.sess.missingReasoning.stateRecorded = false
-			} else if result.Resolved {
-				a.sess.missingReasoning.active = false
-				a.sess.missingReasoning.stateRecorded = true
-			} else {
-				a.sess.missingReasoning.active = true
-				a.sess.missingReasoning.stateRecorded = false
-			}
-		}
+		a.recordHealthyAssistantReasoning(fingerprint, observedAt)
 		return false, false
 	}
 	a.sess.missingReasoning.healthyStreak = 0
+	if !a.sess.missingReasoning.probeClaimedAt.IsZero() {
+		// A half-open failure skips the correlated byte-identical replay. The run
+		// loop immediately takes the verified fallback, spending at most one
+		// additional normal request for this probe window.
+		a.sess.missingReasoning.active = true
+		a.sess.missingReasoning.stateRecorded = true
+		return true, false
+	}
 	if s := a.svc.warnState; s != nil {
 		stateReady := true
 		alreadyActive := a.sess.missingReasoning.active
@@ -144,6 +127,60 @@ func (a *Agent) observeMissingAssistantReasoning(message provider.Message, compl
 	return true, true
 }
 
+func (a *Agent) recordHealthyAssistantReasoning(fingerprint string, observedAt time.Time) {
+	if a.svc.warnState == nil {
+		if a.sess.missingReasoning.active {
+			a.sess.missingReasoning.healthyStreak++
+			if a.sess.missingReasoning.healthyStreak >= missingReasoningHealthyResolveStreak {
+				a.sess.missingReasoning.active = false
+				a.sess.missingReasoning.healthyStreak = 0
+			}
+		}
+		return
+	}
+	if a.sess.missingReasoning.stateRecorded && !a.sess.missingReasoning.active {
+		return
+	}
+	result := a.resolveHealthyAssistantReasoning(fingerprint, observedAt)
+	if !result.ProbeClaimedAt.IsZero() {
+		a.sess.missingReasoning.probeClaimedAt = result.ProbeClaimedAt
+	} else if result.Recorded {
+		// The persisted lease was resolved or superseded. This response remains
+		// valid for the current tool loop; the next Run obtains a fresh decision.
+		a.sess.missingReasoning.probeClaimedAt = time.Time{}
+	}
+	if !result.Recorded {
+		if observedAt.After(a.unwrittenResolve.at) {
+			a.unwrittenResolve.at = observedAt
+		}
+		a.sess.missingReasoning.active = true
+		a.sess.missingReasoning.stateRecorded = false
+		return
+	}
+	if result.Resolved {
+		a.sess.missingReasoning.active = false
+		a.sess.missingReasoning.stateRecorded = true
+		a.sess.missingReasoning.probeClaimedAt = time.Time{}
+		return
+	}
+	a.sess.missingReasoning.active = true
+	a.sess.missingReasoning.stateRecorded = false
+}
+
+func (a *Agent) resolveHealthyAssistantReasoning(fingerprint string, observedAt time.Time) missingReasoningResolveResult {
+	if probeClaimedAt := a.sess.missingReasoning.probeClaimedAt; !probeClaimedAt.IsZero() {
+		return a.svc.warnState.resolveProbeAt(fingerprint, probeClaimedAt, observedAt)
+	}
+	if pending := a.unwrittenResolve.at; !pending.IsZero() {
+		result := a.svc.warnState.resolveAt(fingerprint, pending)
+		if !result.Recorded {
+			return result
+		}
+		a.unwrittenResolve.at = time.Time{}
+	}
+	return a.svc.warnState.resolveAt(fingerprint, observedAt)
+}
+
 func (a *Agent) claimMissingReasoningIncident(observedAt time.Time) bool {
 	a.sess.missingReasoning.healthyStreak = 0
 	if s := a.svc.warnState; s != nil {
@@ -161,18 +198,26 @@ func (a *Agent) claimMissingReasoningIncident(observedAt time.Time) bool {
 	return true
 }
 
-// beginMissingReasoningFallback reuses an active provider/configuration
-// circuit before spending another normal request. It runs before history
-// projection so a no-reasoning tool loop stays intact on the recovery wire.
-func (a *Agent) beginMissingReasoningFallback() bool {
-	if a == nil || a.sess.missingReasoning.fallbackActive || !provider.SupportsMissingReasoningFallback(a.svc.prov) {
+// beginMissingReasoningRecovery chooses fallback or claims the one half-open
+// normal probe before history projection. Keeping the decision session-local
+// makes the provider-visible request shape stable for the resulting tool loop.
+func (a *Agent) beginMissingReasoningRecovery() bool {
+	if a == nil || a.sess.missingReasoning.fallbackActive ||
+		!a.sess.missingReasoning.probeClaimedAt.IsZero() || !provider.SupportsMissingReasoningFallback(a.svc.prov) {
 		return a != nil && a.sess.missingReasoning.fallbackActive
 	}
 	if a.svc.warnState == nil {
 		return false
 	}
 	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
-	if !a.svc.warnState.fallbackActiveAt(fingerprint, time.Now()) {
+	decision := a.svc.warnState.claimRecoveryModeAt(fingerprint, time.Now())
+	if decision.Mode == missingReasoningRecoveryProbe {
+		a.sess.missingReasoning.active = true
+		a.sess.missingReasoning.stateRecorded = true
+		a.sess.missingReasoning.probeClaimedAt = decision.ProbeClaimedAt
+		return false
+	}
+	if decision.Mode != missingReasoningRecoveryFallback {
 		return false
 	}
 	a.sess.missingReasoning.active = true
@@ -189,7 +234,13 @@ func (a *Agent) activateMissingReasoningFallback() bool {
 	a.sess.missingReasoning.fallbackActive = true
 	if a.svc.warnState != nil {
 		fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
-		a.sess.missingReasoning.stateRecorded = a.svc.warnState.openFallbackAt(fingerprint, time.Now())
+		observedAt := time.Now()
+		if probeClaimedAt := a.sess.missingReasoning.probeClaimedAt; !probeClaimedAt.IsZero() {
+			a.sess.missingReasoning.stateRecorded = a.svc.warnState.failProbeAt(fingerprint, probeClaimedAt, observedAt)
+		} else {
+			a.sess.missingReasoning.stateRecorded = a.svc.warnState.openFallbackAt(fingerprint, observedAt)
+		}
 	}
+	a.sess.missingReasoning.probeClaimedAt = time.Time{}
 	return true
 }
