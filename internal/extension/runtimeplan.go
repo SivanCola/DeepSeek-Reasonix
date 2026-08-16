@@ -52,6 +52,10 @@ type RuntimePlan struct {
 	Kind SubgraphKind
 	// Graph is the resolved target graph (may be nil for pure no-op plans).
 	Graph *DependencyGraph
+	// RestartUnchangedSidecars requests fresh native processes even when their
+	// dependency/capability identity is unchanged. It affects activation only,
+	// so IsNoOp and CacheHash remain stable.
+	RestartUnchangedSidecars bool
 }
 
 // IsNoOp reports whether the plan changes no components.
