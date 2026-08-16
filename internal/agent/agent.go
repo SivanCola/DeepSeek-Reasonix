@@ -778,12 +778,13 @@ func (a *Agent) flushSteerQueue() {
 	a.steerMu.Lock()
 	pending := a.steerQueue
 	a.steerQueue = nil
-	a.steerUnapplied = len(pending) > 0
+	a.steerUnapplied = false
 	if len(pending) > 0 {
 		a.steerConsumed = true
 	}
 	a.steerRunActive = false
 	a.steerMu.Unlock()
+	unapplied := false
 	for _, e := range pending {
 		text := e.text
 		if e.load != nil {
@@ -792,7 +793,11 @@ func (a *Agent) flushSteerQueue() {
 			}
 		}
 		a.RecordUnappliedSteer(text, e.itemID)
+		unapplied = true
 	}
+	a.steerMu.Lock()
+	a.steerUnapplied = unapplied
+	a.steerMu.Unlock()
 }
 
 // UnappliedSteerNotice returns the durable warning shown for guidance that was
@@ -1240,7 +1245,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 		// Explicit readiness recovery is consumed only once beginRunTurn starts.
 		// If an extension blocks earlier, release the in-memory reservation so
 		// the still-pending durable marker can authorize a later retry.
-		a.pending.finalReadinessRecoveryPrepared = false
+		a.RestoreFinalReadinessRecoveryPreparation()
 		return err
 	}
 

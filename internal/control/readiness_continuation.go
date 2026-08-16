@@ -135,10 +135,20 @@ func (o *turnOrchestrator) continueUntilReady(ctx context.Context, turnErr error
 		}
 		o.c.notice(i18n.M.ReadinessContinuing)
 		previousProgress = readinessErr.ProgressKey
-		automaticTurns++
-		turnErr = o.runOrchestratedTurn(ctx, orchestratedTurn{
+		nextErr := o.runOrchestratedTurn(ctx, orchestratedTurn{
 			input: prompt, raw: prompt, synthetic: true,
 		})
+		if o.c.executor.RestoreFinalReadinessRecoveryPreparation() {
+			// input.receive, PromptSubmit, or another host preflight ended before
+			// Agent.Run consumed the preparation. Preserve the recovery card and
+			// do not count a model turn that never happened as an attempt.
+			if nextErr != nil {
+				return nextErr
+			}
+			return finalReadinessWithAttempts(turnErr, initialAttempts+automaticTurns)
+		}
+		automaticTurns++
+		turnErr = nextErr
 		if turnErr == nil {
 			return nil
 		}
