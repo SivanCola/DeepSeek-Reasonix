@@ -5,7 +5,7 @@ import type {
   TouchEvent as ReactTouchEvent,
   WheelEvent as ReactWheelEvent,
 } from "react";
-import type { FlatIndexLocationWithAlign, SizeFunction, VirtuosoHandle } from "react-virtuoso";
+import type { FlatIndexLocationWithAlign, SizeFunction, StateSnapshot, VirtuosoHandle } from "react-virtuoso";
 import { isEditableTarget } from "./keyboardShortcuts";
 import { isNativeVerticalScrollbarPointer, measureTranscriptVirtuosoItem } from "./transcriptNativeScrollbar";
 import {
@@ -91,6 +91,10 @@ export type TranscriptScrollArbiterRecoveryApi = {
   submitRecoveryRequest: (spec: TranscriptRecoveryRequestSpec) => number;
   retryRecoveryRequest: (id: number) => void;
   lastGoodAnchorRef: RefObject<TranscriptLayoutAnchor | null>;
+  /** Synchronous getState read on the live Virtuoso handle; null when the
+   *  handle is unmounted. Used to snapshot the measured tree + scrollTop
+   *  before a keyed remount. */
+  captureStateSnapshot: () => StateSnapshot | null;
 };
 
 type ActiveTranscriptRecovery = {
@@ -498,6 +502,16 @@ export function useTranscriptScrollArbiter({
 
   const finishProgrammaticScroll = useCallback(() => dispatch({ type: "PROGRAMMATIC_END" }), [dispatch]);
 
+  // getState invokes its callback synchronously with the live measured tree
+  // and scrollTop (header height excluded).
+  const captureStateSnapshot = useCallback((): StateSnapshot | null => {
+    const handle = virtuosoRef.current;
+    if (!handle) return null;
+    let state: StateSnapshot | null = null;
+    handle.getState((snapshot) => { state = snapshot; });
+    return state;
+  }, []);
+
   const restoreTailIfNotScrollable = useCallback(() => {
     const element = scrollRef.current;
     if (!element || hasTranscriptScrollableRange(element)) return false;
@@ -596,5 +610,6 @@ export function useTranscriptScrollArbiter({
     submitRecoveryRequest,
     retryRecoveryRequest,
     lastGoodAnchorRef,
+    captureStateSnapshot,
   };
 }

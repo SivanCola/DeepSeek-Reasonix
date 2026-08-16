@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { TranscriptRow } from "./transcriptRows";
 import { useTranscriptVirtuosoFirstItemIndex } from "./transcriptVirtuosoIndex";
 import {
@@ -7,6 +7,7 @@ import {
   transcriptElementViewportIsBlank,
   type TranscriptLayoutAnchor,
 } from "./transcriptVirtuosoRecovery";
+import { resolveTranscriptStateSnapshot, type TranscriptStateSnapshot } from "./transcriptStateSnapshot";
 import type { TranscriptScrollArbiterRecoveryApi } from "./useTranscriptScrollArbiter";
 
 const BLANK_RECOVERY_COOLDOWN_MS = 2_000;
@@ -42,6 +43,7 @@ export function useTranscriptLayoutIntegrity({
   submitRecoveryRequest,
   retryRecoveryRequest,
   lastGoodAnchorRef,
+  captureStateSnapshot,
 }: {
   surfaceKey: string;
   rows: readonly TranscriptRow[];
@@ -62,6 +64,24 @@ export function useTranscriptLayoutIntegrity({
   const consecutiveBlankRef = useRef(0);
   const activeRecoveryIdRef = useRef<number | null>(null);
   const suspendedRecoveryIdRef = useRef<number | null>(null);
+  const rowKeys = useMemo(() => rows.map((row) => String(row.key)), [rows]);
+  const surfaceStateRef = useRef<{ surfaceKey: string; rowKeys: readonly string[] }>({ surfaceKey, rowKeys });
+  const stateSnapshotRef = useRef<TranscriptStateSnapshot | null>(null);
+  const appliedSnapshotRef = useRef(false);
+
+  // Render-phase surface transition: the outgoing Virtuoso is still mounted
+  // at this point (an effect cleanup would run after the keyed remount), so
+  // this is the last chance to snapshot its measured tree + scrollTop for
+  // the incoming surface to restore from.
+  if (surfaceStateRef.current.surfaceKey !== surfaceKey) {
+    const snapshot = captureStateSnapshot();
+    if (snapshot && surfaceStateRef.current.rowKeys.length > 0) {
+      stateSnapshotRef.current = { keys: surfaceStateRef.current.rowKeys, snapshot };
+    }
+    surfaceStateRef.current = { surfaceKey, rowKeys };
+  } else {
+    surfaceStateRef.current.rowKeys = rowKeys;
+  }
 
   useEffect(() => {
     pendingAnchorRef.current = null;
@@ -92,11 +112,17 @@ export function useTranscriptLayoutIntegrity({
       ? ({ mode: "tail" } as const)
       : lastGoodAnchorRef.current ?? captureTranscriptLayoutAnchor(element, false);
     if (!anchor) return false;
+    // Snapshot the outgoing measured tree before the keyed remount; the new
+    // tree restores from it when the row keys still match (#8657).
+    const snapshot = captureStateSnapshot();
+    if (snapshot && surfaceStateRef.current.rowKeys.length > 0) {
+      stateSnapshotRef.current = { keys: surfaceStateRef.current.rowKeys, snapshot };
+    }
     pendingAnchorRef.current = { surfaceKey, anchor };
     readyRef.current = false;
     setResetEpoch((epoch) => epoch + 1);
     return true;
-  }, [lastGoodAnchorRef, pinnedRef, readyRef, scrollRef, surfaceKey]);
+  }, [captureStateSnapshot, lastGoodAnchorRef, pinnedRef, readyRef, scrollRef, surfaceKey]);
 
   // Explicit user scroll intent outranks recovery: drop any pending anchor so
   // a later reset re-captures from the user's own position. An in-flight
@@ -110,6 +136,15 @@ export function useTranscriptLayoutIntegrity({
   const firstItemIndex = useTranscriptVirtuosoFirstItemIndex(rows, resetKey);
   const pendingAnchor = pendingAnchorRef.current?.surfaceKey === surfaceKey ? pendingAnchorRef.current.anchor : undefined;
   const restoreLocation = transcriptAnchorInitialLocation(pendingAnchor, rowIndexByKey, firstItemIndex);
+  // A usable snapshot outranks restoreLocation: Virtuoso pipes restoreStateFrom
+  // into the same initial-location stream, so the two never apply together.
+  const restoreSnapshot = useMemo(
+    () => resolveTranscriptStateSnapshot(stateSnapshotRef.current, rowKeys),
+    // stateSnapshotRef only changes at the capture points above; every remount
+    // path recomputes through one of these deps.
+    [rowKeys, surfaceKey, resetEpoch],
+  );
+  appliedSnapshotRef.current = restoreSnapshot !== undefined;
 
   const captureUserAnchor = useCallback((): TranscriptLayoutAnchor | undefined => {
     const element = scrollRef.current;
@@ -217,7 +252,9 @@ export function useTranscriptLayoutIntegrity({
       readyRef.current = true;
       const pending = pendingAnchorRef.current;
       if (pending?.surfaceKey === surfaceKey) submitAnchorRecovery(pending.anchor);
-      else requestAnimationFrame(scrollToBottom);
+      // A restored snapshot already placed the view; the first-mount
+      // scrollToBottom would yank it straight back to the tail.
+      else if (!appliedSnapshotRef.current) requestAnimationFrame(scrollToBottom);
     }
     scheduleBlankViewportCheck();
   }, [readyRef, scheduleBlankViewportCheck, scrollToBottom, submitAnchorRecovery, surfaceKey]);
@@ -226,6 +263,7 @@ export function useTranscriptLayoutIntegrity({
     resetKey,
     firstItemIndex,
     restoreLocation,
+    restoreSnapshot,
     handleItemsRendered,
     scheduleBlankViewportCheck,
     invalidateAnchors,

@@ -321,6 +321,7 @@ export function Transcript({
     submitRecoveryRequest,
     retryRecoveryRequest,
     lastGoodAnchorRef,
+    captureStateSnapshot,
   } = useTranscriptScrollArbiter({ liveTailActiveRef, onRecoveryTerminal: noteTranscriptRecoveryTerminal });
   const virtuosoReadyRef = useRef(false);
   const layoutSurfaceKey = `${tabId ?? ""}:${revealSignal}`;
@@ -523,6 +524,7 @@ export function Transcript({
     resetKey: virtuosoResetKey,
     firstItemIndex,
     restoreLocation,
+    restoreSnapshot,
     handleItemsRendered: handleRecoveryItemsRendered,
     scheduleBlankViewportCheck,
     invalidateAnchors,
@@ -539,6 +541,7 @@ export function Transcript({
     submitRecoveryRequest,
     retryRecoveryRequest,
     lastGoodAnchorRef,
+    captureStateSnapshot,
   });
   const selectionRetention = useTranscriptSelectionRetention({
     tabId,
@@ -929,7 +932,11 @@ export function Transcript({
             components={hasOlderHistory ? TRANSCRIPT_VIRTUOSO_COMPONENTS_WITH_HEADER : TRANSCRIPT_VIRTUOSO_COMPONENTS}
             computeItemKey={(_index, row) => `${tabId ?? ""}:${String(row.key)}`}
             firstItemIndex={firstItemIndex}
-            initialTopMostItemIndex={restoreLocation}
+            // A captured state snapshot (measured tree + scrollTop) restores
+            // through the same initial-location stream as
+            // initialTopMostItemIndex, so the two never apply together.
+            restoreStateFrom={restoreSnapshot}
+            initialTopMostItemIndex={restoreSnapshot ? undefined : restoreLocation}
             // Do not set alignToBottom: Virtuoso's margin-top:auto plus
             // firstItemIndex paints a ghost first-user bubble and empty band
             // in short chats. The coordinator owns tail following.

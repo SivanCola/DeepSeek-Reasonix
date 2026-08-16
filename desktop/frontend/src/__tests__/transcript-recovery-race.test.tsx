@@ -3,7 +3,7 @@
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import type { VirtuosoHandle } from "react-virtuoso";
+import type { StateSnapshot, VirtuosoHandle } from "react-virtuoso";
 import { useTranscriptScrollArbiter, type TranscriptRecoveryTerminal } from "../lib/useTranscriptScrollArbiter";
 import { useTranscriptLayoutIntegrity } from "../lib/useTranscriptLayoutIntegrity";
 import type { TranscriptScrollWriteRecord } from "../lib/transcriptScrollProbe";
@@ -116,10 +116,16 @@ let scrollByCalls = 0;
 let scrollToIndexCalls = 0;
 let scrollToCalls = 0;
 let scrollToBottomCalls = 0;
+// Null disables snapshot capture; the snapshot sections opt in explicitly so
+// the pre-snapshot scenarios keep their first-mount scrollToBottom behavior.
+let stubSnapshot: StateSnapshot | null = null;
 const virtuosoHandle = {
   scrollBy: () => { scrollByCalls += 1; },
   scrollToIndex: () => { scrollToIndexCalls += 1; },
   scrollTo: () => { scrollToCalls += 1; },
+  getState: (callback: (state: StateSnapshot) => void) => {
+    if (stubSnapshot) callback(stubSnapshot);
+  },
 } as unknown as VirtuosoHandle;
 let arbiter: ReturnType<typeof useTranscriptScrollArbiter> | undefined;
 let integrity: ReturnType<typeof useTranscriptLayoutIntegrity> | undefined;
@@ -139,6 +145,7 @@ function Probe({ surfaceKey, rows = baseRows }: { surfaceKey: string; rows?: Tra
     submitRecoveryRequest: scroll.submitRecoveryRequest,
     retryRecoveryRequest: scroll.retryRecoveryRequest,
     lastGoodAnchorRef: scroll.lastGoodAnchorRef,
+    captureStateSnapshot: scroll.captureStateSnapshot,
   });
   arbiter = scroll;
   integrity = layout;
@@ -453,6 +460,64 @@ check(
 let otherWriteOk = true;
 await act(async () => { otherWriteOk = arbiter?.writeOffset("jump", 5) ?? true; });
 check(!otherWriteOk, "non-selection writes stay rejected in selection mode");
+
+// ── T6: a snapshot captured before the keyed remount restores when the row
+// keys still match, and is discarded when they do not.
+stubSnapshot = {
+  ranges: [{ startIndex: 0, endIndex: 0, size: 100 }, { startIndex: 1, endIndex: Infinity, size: 80 }],
+  scrollTop: 420,
+};
+await switchSurface("surface-k");
+await act(async () => arbiter?.releaseTailFollow());
+await triggerWatchdogRebuild();
+check(integrity?.restoreSnapshot === stubSnapshot, "watchdog rebuild restores the just-captured snapshot");
+await act(async () => integrity?.handleItemsRendered(1));
+await flushFrames();
+
+// Same-tab reveal (new surface, same rows): the snapshot applies and the
+// first-mount scrollToBottom is suppressed — it would yank the restored
+// view straight back to the tail.
+await switchSurface("surface-m");
+check(integrity?.restoreSnapshot === stubSnapshot, "same-row surface remount offers the captured snapshot");
+readyRef.current = false;
+const scrollToBottomBeforeSnapshot = scrollToBottomCalls;
+await act(async () => integrity?.handleItemsRendered(1));
+await flushFrames();
+check(scrollToBottomCalls === scrollToBottomBeforeSnapshot, "a snapshot-restored mount does not jump to the bottom");
+
+// ── T9: the incoming surface prepended older history since the capture;
+// the snapshot restores with ranges translated by the prepend delta.
+const prependedRows: TranscriptRow[] = [
+  { kind: "answer", key: "older-1", item: { ...item, id: "older-1" } },
+  { kind: "answer", key: "older-2", item: { ...item, id: "older-2" } },
+  ...baseRows,
+];
+await switchSurface("surface-n", prependedRows);
+const prependRestore = integrity?.restoreSnapshot;
+check(
+  prependRestore !== undefined && prependRestore !== stubSnapshot,
+  "a prepended key sequence still restores the snapshot",
+);
+check(
+  prependRestore?.ranges[0].startIndex === 2 && prependRestore.ranges[0].endIndex === 2,
+  "prepend translates the restored ranges by the delta",
+);
+check(
+  prependRestore?.ranges[1].startIndex === 3 && prependRestore.ranges[1].endIndex === Infinity,
+  "an open-ended range translates its start but stays open",
+);
+check(prependRestore?.scrollTop === 420, "prepend keeps the captured scrollTop");
+
+// Different session (disjoint keys): the snapshot is discarded and the
+// first mount settles at the bottom as before.
+const foreignRows: TranscriptRow[] = [{ kind: "answer", key: "row-elsewhere", item: { ...item, id: "elsewhere" } }];
+await switchSurface("surface-l", foreignRows);
+check(integrity?.restoreSnapshot === undefined, "a disjoint key sequence discards the snapshot");
+readyRef.current = false;
+await act(async () => integrity?.handleItemsRendered(1));
+await flushFrames();
+check(scrollToBottomCalls === scrollToBottomBeforeSnapshot + 1, "a snapshot-less first mount settles at the bottom");
+stubSnapshot = null;
 
 await act(async () => root.unmount());
 Date.now = originalDateNow;
