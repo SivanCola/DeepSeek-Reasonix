@@ -575,11 +575,15 @@ func (o *turnOrchestrator) advanceGoalAfterTurn(ctx context.Context, expectedCon
 	var readinessErr *agent.FinalReadinessError
 	pauseCause, pauseReason, runPaused := goalPauseFromRunError(turnErr)
 	if errors.As(turnErr, &readinessErr) {
+		progressKey := readinessErr.ProgressKey
+		if progressKey == "" {
+			progressKey = readinessErr.Reason
+		}
 		readiness = agent.ReadinessResult{
 			Ready:       false,
 			Missing:     append([]string(nil), readinessErr.Missing...),
 			Reason:      readinessErr.Reason,
-			ProgressKey: readinessErr.Reason,
+			ProgressKey: progressKey,
 		}
 	} else if turnErr != nil && !runPaused {
 		// Terminal provider/host error: stop auto-continue without an FSM

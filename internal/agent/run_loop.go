@@ -528,7 +528,13 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 			event.RecordReadinessAudit(a.svc.sink, readiness.audit(evidence.ReadinessErrored, false))
 			a.pending.finalReadinessRecovery = true
 			a.persistFinalReadinessRecovery(readiness.missingIDs())
-			return false, &FinalReadinessError{Attempts: 1, Reason: readiness.reason, Missing: readiness.missingIDs()}
+			return false, &FinalReadinessError{
+				Attempts:          1,
+				Reason:            readiness.reason,
+				Missing:           readiness.missingIDs(),
+				ContinuationClass: readiness.continuationClass(),
+				ProgressKey:       readiness.progressSignature(),
+			}
 		}
 		event.RecordReadinessAudit(a.svc.sink, readiness.audit(evidence.ReadinessAllowed, a.turn.readinessRecovered))
 	}

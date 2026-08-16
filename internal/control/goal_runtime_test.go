@@ -687,8 +687,9 @@ func TestGoalDeliveryWorkflowCompletesAfterVerifiedSignoff(t *testing.T) {
 }
 
 // TestPlainDeliveryReadinessFailureRetriesThenSurfacesRecoveryCard covers the
-// plain (non-Goal) closed-loop case: the host retries known readiness gaps and
-// surfaces the recovery card only after the bounded attempts make no progress.
+// plain (non-Goal) closed-loop case: the host retries a known high-confidence
+// readiness gap once, then surfaces the recovery card when that turn makes no
+// host-observable progress instead of spending the second-turn allowance.
 func TestPlainDeliveryReadinessFailureRetriesThenSurfacesRecoveryCard(t *testing.T) {
 	todoWrite, _ := tool.LookupBuiltin("todo_write")
 	reg := tool.NewRegistry()
@@ -719,8 +720,8 @@ func TestPlainDeliveryReadinessFailureRetriesThenSurfacesRecoveryCard(t *testing
 	if ev.Readiness == nil || len(ev.Readiness.Missing) == 0 {
 		t.Fatalf("TurnDone.Readiness = %+v, want missing requirements for the recovery card", ev.Readiness)
 	}
-	if prov.call != 5 {
-		t.Fatalf("provider calls = %d, want 5 (work + final answer + two bounded readiness retries)", prov.call)
+	if prov.call != 4 {
+		t.Fatalf("provider calls = %d, want 4 (work + final answer + one no-progress readiness retry)", prov.call)
 	}
 	if got := c.GoalStatus(); got != GoalStatusStopped {
 		t.Fatalf("GoalStatus() = %q, want stopped (no goal involved)", got)

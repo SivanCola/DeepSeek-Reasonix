@@ -252,6 +252,18 @@ func (s *Store) Snapshot() InboxSnapshot {
 	return s.snapshotLocked()
 }
 
+// CachedSnapshot returns the Store's current in-memory metadata without taking
+// the cross-process disk lock. It is for owner-local admission decisions that
+// must not add disk-lock latency; Snapshot remains the authoritative refresh.
+func (s *Store) CachedSnapshot() InboxSnapshot {
+	if s == nil {
+		return InboxSnapshot{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snapshotLocked()
+}
+
 func (s *Store) snapshotLocked() InboxSnapshot {
 	m := s.man
 	if m == nil {

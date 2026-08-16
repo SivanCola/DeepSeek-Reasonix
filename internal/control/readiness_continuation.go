@@ -9,54 +9,130 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/evidence"
 	"reasonix/internal/i18n"
+	"reasonix/internal/sessioninbox"
 )
 
-// A turn that ends owing verification has not failed: the host read what is
-// missing from its own receipts, so asking the user to press continue only asks
-// them to relay a message the host already knows. Bound automatic continuation
-// by whether the gap is still shrinking instead.
-const readinessStallRounds = 2
+const (
+	readinessGenericTurns        = 1
+	readinessHighConfidenceTurns = 2
+)
+
+func readinessContinuationBudget(class agent.ReadinessContinuationClass) int {
+	switch class {
+	case agent.ReadinessContinuationGeneric:
+		return readinessGenericTurns
+	case agent.ReadinessContinuationHighConfidence:
+		return readinessHighConfidenceTurns
+	default:
+		return 0
+	}
+}
+
+func readinessMadeProgress(previous, current string) bool {
+	return previous != "" && current != "" && previous != current
+}
+
+func finalReadinessWithAttempts(err error, attempts int) error {
+	var readinessErr *agent.FinalReadinessError
+	if !errors.As(err, &readinessErr) || readinessErr == nil {
+		return err
+	}
+	copy := *readinessErr
+	copy.Missing = append([]string(nil), readinessErr.Missing...)
+	copy.Attempts = attempts
+	return &copy
+}
+
+// hasPendingUserWork reads only already-owned in-memory state and an already
+// open inbox Store. It never creates an inbox or holds a Controller lock while
+// taking an Agent/Store lock.
+func (c *Controller) hasPendingUserWork() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	canceling := c.canceling
+	parked := len(c.parkedTurns) > 0
+	executor := c.executor
+	c.mu.Unlock()
+	if canceling || parked {
+		return true
+	}
+	if executor != nil && executor.HasUnappliedSteer() {
+		return true
+	}
+	c.inbox.mu.Lock()
+	store := c.inbox.store
+	c.inbox.mu.Unlock()
+	if store == nil {
+		return false
+	}
+	for _, item := range store.CachedSnapshot().Items {
+		switch item.State {
+		case sessioninbox.StateQueued, sessioninbox.StateBlocked,
+			sessioninbox.StateUncertain, sessioninbox.StateSteerAccepted:
+			return true
+		}
+	}
+	return false
+}
 
 // continueUntilReady runs known missing requirements as synthetic follow-up
 // turns. The returned error is the last turn's outcome, so callers see one
 // foreground operation regardless of how many bounded continuations it used.
 func (o *turnOrchestrator) continueUntilReady(ctx context.Context, turnErr error) error {
-	best, stall := -1, 0
-	for {
+	var initial *agent.FinalReadinessError
+	if !errors.As(turnErr, &initial) || initial == nil {
+		return turnErr
+	}
+	budget := readinessContinuationBudget(initial.ContinuationClass)
+	if budget == 0 {
+		return turnErr
+	}
+	initialAttempts := max(initial.Attempts, 1)
+	automaticTurns := 0
+	previousProgress := initial.ProgressKey
+	for automaticTurns < budget {
 		var readinessErr *agent.FinalReadinessError
-		if !errors.As(turnErr, &readinessErr) {
+		if !errors.As(turnErr, &readinessErr) || readinessErr == nil {
 			return turnErr
-		}
-		gap := len(readinessErr.Missing)
-		switch {
-		case best < 0 || gap < best:
-			best, stall = gap, 0
-		default:
-			// Compare against the best round, not only the previous round, so
-			// an oscillating gap cannot reset the bound and run forever.
-			stall++
-			if stall >= readinessStallRounds {
-				return turnErr
-			}
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if o.c.CancelRequested() {
+			return context.Canceled
+		}
+		if o.c.hasPendingUserWork() {
+			return finalReadinessWithAttempts(turnErr, initialAttempts+automaticTurns)
+		}
+		if readinessContinuationBudget(readinessErr.ContinuationClass) == 0 {
+			return finalReadinessWithAttempts(turnErr, initialAttempts+automaticTurns)
+		}
+		if automaticTurns > 0 && !readinessMadeProgress(previousProgress, readinessErr.ProgressKey) {
+			return finalReadinessWithAttempts(turnErr, initialAttempts+automaticTurns)
+		}
 		prompt := readinessContinuationPrompt(o.c.goalTodos(), readinessErr.Reason)
 		if prompt == "" {
-			return turnErr
+			return finalReadinessWithAttempts(turnErr, initialAttempts+automaticTurns)
 		}
 		// Preserve the finished turn's receipts. Starting with an empty ledger
 		// would make the gap disappear because its evidence was dropped, not
 		// because the remaining checks actually passed.
 		if o.c.executor == nil || !o.c.executor.PrepareFinalReadinessRecovery() {
-			return turnErr
+			return finalReadinessWithAttempts(turnErr, initialAttempts+automaticTurns)
 		}
 		o.c.noticeDetail(i18n.M.ReadinessContinuing, prompt)
+		previousProgress = readinessErr.ProgressKey
+		automaticTurns++
 		turnErr = o.runOrchestratedTurn(ctx, orchestratedTurn{
 			input: prompt, raw: prompt, synthetic: true,
 		})
+		if turnErr == nil {
+			return nil
+		}
 	}
+	return finalReadinessWithAttempts(turnErr, initialAttempts+automaticTurns)
 }
 
 // readinessContinuationPrompt states only host-observed missing work. It is an
@@ -83,6 +159,6 @@ func readinessContinuationPrompt(todos []evidence.TodoItem, reason string) strin
 	for _, part := range parts {
 		b.WriteString("- " + part + "\n")
 	}
-	b.WriteString("Finish it now. Do the remaining work, then verify it and record the outcome.")
+	b.WriteString("Address only the readiness items above within the original request. Do not expand scope or repeat destructive or external actions. If an item cannot be completed because the environment or permissions are unavailable, record the exact limitation and stop.")
 	return b.String()
 }

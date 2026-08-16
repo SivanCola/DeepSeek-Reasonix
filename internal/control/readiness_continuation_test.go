@@ -3,25 +3,45 @@ package control
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
+	"reasonix/internal/instruction"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
 
 func readinessContinuationController(t *testing.T, turns [][]provider.Chunk, sink event.Sink) (*Controller, *scriptedTurns) {
+	return readinessContinuationControllerWithOptions(t, turns, sink, agent.Options{})
+}
+
+func readinessContinuationControllerWithOptions(t *testing.T, turns [][]provider.Chunk, sink event.Sink, opts agent.Options) (*Controller, *scriptedTurns) {
 	t.Helper()
 	reg := tool.NewRegistry()
 	reg.Add(minimalFakeTool{name: "write_file"})
 	reg.Add(minimalFakeTool{name: "read_file", readOnly: true})
 	reg.Add(minimalFakeTool{name: "bash"})
 	prov := &scriptedTurns{turns: turns}
-	executor := agent.New(prov, reg, agent.NewSession(""), agent.Options{}, event.Discard)
+	executor := agent.New(prov, reg, agent.NewSession("stable-system-prefix"), opts, event.Discard)
 	c := New(Options{Runner: executor, Executor: executor, Sink: sink})
 	t.Cleanup(c.Close)
 	return c, prov
+}
+
+func readinessSyntheticTurns(c *Controller) int {
+	if c == nil || c.executor == nil {
+		return 0
+	}
+	count := 0
+	for _, message := range c.executor.Session().Snapshot() {
+		if message.Role == provider.RoleUser && IsSyntheticUserMessage(message.Content) {
+			count++
+		}
+	}
+	return count
 }
 
 func TestOrdinaryTurnAutomaticallyFinishesKnownChecks(t *testing.T) {
@@ -44,6 +64,13 @@ func TestOrdinaryTurnAutomaticallyFinishesKnownChecks(t *testing.T) {
 	if prov.call < 5 {
 		t.Fatalf("provider calls = %d, want the host to continue through verification and review", prov.call)
 	}
+	if got := readinessSyntheticTurns(c); got != 1 {
+		t.Fatalf("synthetic readiness turns = %d, want 1", got)
+	}
+	messages := c.executor.Session().Snapshot()
+	if len(messages) == 0 || messages[0].Role != provider.RoleSystem || messages[0].Content != "stable-system-prefix" {
+		t.Fatalf("automatic continuation changed the stable system prefix: %+v", messages)
+	}
 	if notices == 0 {
 		t.Fatal("automatic readiness continuation did not emit a progress notice")
 	}
@@ -57,9 +84,33 @@ func TestReadinessContinuationPromptStaysHiddenFromUserHistory(t *testing.T) {
 	if !IsSyntheticUserMessage(prompt) {
 		t.Fatalf("readiness continuation was treated as user-authored text: %q", prompt)
 	}
+	for _, forbidden := range []string{"expand scope", "repeat destructive or external actions", "exact limitation"} {
+		if !strings.Contains(prompt, forbidden) {
+			t.Fatalf("readiness continuation prompt = %q, want safety clause %q", prompt, forbidden)
+		}
+	}
 }
 
-func TestOrdinaryReadinessContinuationStopsAfterStalledGap(t *testing.T) {
+func TestReadinessProgressRequiresTwoDistinctEvidenceKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		previous, current string
+		want              bool
+	}{
+		{name: "changed", previous: "before", current: "after", want: true},
+		{name: "unchanged", previous: "same", current: "same", want: false},
+		{name: "missing previous", current: "after", want: false},
+		{name: "missing current", previous: "before", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := readinessMadeProgress(tc.previous, tc.current); got != tc.want {
+				t.Fatalf("readinessMadeProgress(%q, %q) = %v, want %v", tc.previous, tc.current, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOrdinaryGenericReadinessContinuationStopsAfterOneTurn(t *testing.T) {
 	c, prov := readinessContinuationController(t, [][]provider.Chunk{
 		{toolCallChunk("write", "write_file", `{"path":"main.go","content":"package main"}`), {Type: provider.ChunkDone}},
 		textTurn("implemented without checks"),
@@ -68,10 +119,176 @@ func TestOrdinaryReadinessContinuationStopsAfterStalledGap(t *testing.T) {
 	err := newTurnOrchestrator(c).runGoalLoopWithRawDisplay(context.Background(), "update main.go", "update main.go", "")
 	var readinessErr *agent.FinalReadinessError
 	if !errors.As(err, &readinessErr) {
-		t.Fatalf("stalled continuation error = %v, want final readiness failure", err)
+		t.Fatalf("generic continuation error = %v, want final readiness failure", err)
 	}
-	if prov.call > 4 {
-		t.Fatalf("provider calls = %d, want the unchanged gap bounded after two retries", prov.call)
+	if readinessErr.Attempts != 2 {
+		t.Fatalf("readiness attempts = %d, want original + one automatic turn", readinessErr.Attempts)
+	}
+	if readinessErr.ContinuationClass != agent.ReadinessContinuationGeneric || readinessErr.ProgressKey == "" {
+		t.Fatalf("readiness classification = (%q, %q), want generic with a progress key", readinessErr.ContinuationClass, readinessErr.ProgressKey)
+	}
+	if got := readinessSyntheticTurns(c); got != 1 {
+		t.Fatalf("synthetic readiness turns = %d, want 1", got)
+	}
+	if prov.call > 3 {
+		t.Fatalf("provider calls = %d, want the generic gap bounded after one continuation", prov.call)
+	}
+}
+
+func TestHighConfidenceReadinessGetsSecondTurnOnlyAfterProgress(t *testing.T) {
+	c, _ := readinessContinuationControllerWithOptions(t, [][]provider.Chunk{
+		{toolCallChunk("write", "write_file", `{"path":"main.go","content":"package main"}`), {Type: provider.ChunkDone}},
+		textTurn("implemented without the required project check"),
+		{toolCallChunk("review", "read_file", `{"path":"main.go"}`), {Type: provider.ChunkDone}},
+		textTurn("reviewed but not verified"),
+		{toolCallChunk("verify", "bash", `{"command":"go test ./..."}`), {Type: provider.ChunkDone}},
+		textTurn("verified"),
+	}, event.Discard, agent.Options{ProjectChecks: []instruction.VerifyCheck{{
+		Command: "go test ./...", SourcePath: "AGENTS.md", Line: 3,
+	}}})
+
+	err := newTurnOrchestrator(c).runGoalLoopWithRawDisplay(context.Background(), "update main.go", "update main.go", "")
+	if err != nil {
+		t.Fatalf("high-confidence continuation returned error: %v", err)
+	}
+	if got := readinessSyntheticTurns(c); got != 2 {
+		t.Fatalf("synthetic readiness turns = %d, want 2 after review progress", got)
+	}
+}
+
+func TestHighConfidenceReadinessStopsAfterOneTurnWithoutProgress(t *testing.T) {
+	c, _ := readinessContinuationControllerWithOptions(t, [][]provider.Chunk{
+		{toolCallChunk("write", "write_file", `{"path":"main.go","content":"package main"}`), {Type: provider.ChunkDone}},
+		textTurn("implemented without the required project check"),
+		textTurn("still not verified"),
+	}, event.Discard, agent.Options{ProjectChecks: []instruction.VerifyCheck{{
+		Command: "go test ./...", SourcePath: "AGENTS.md", Line: 3,
+	}}})
+
+	err := newTurnOrchestrator(c).runGoalLoopWithRawDisplay(context.Background(), "update main.go", "update main.go", "")
+	var readinessErr *agent.FinalReadinessError
+	if !errors.As(err, &readinessErr) {
+		t.Fatalf("high-confidence continuation error = %v, want final readiness failure", err)
+	}
+	if readinessErr.Attempts != 2 {
+		t.Fatalf("readiness attempts = %d, want original + one no-progress turn", readinessErr.Attempts)
+	}
+	if readinessErr.ContinuationClass != agent.ReadinessContinuationHighConfidence {
+		t.Fatalf("ContinuationClass = %q, want high confidence", readinessErr.ContinuationClass)
+	}
+	if got := readinessSyntheticTurns(c); got != 1 {
+		t.Fatalf("synthetic readiness turns = %d, want 1 without progress", got)
+	}
+	if !c.executor.PrepareFinalReadinessRecovery() {
+		t.Fatal("bounded continuation did not preserve the manual recovery action")
+	}
+}
+
+func TestHighConfidenceReadinessNeverExceedsTwoTurns(t *testing.T) {
+	c, _ := readinessContinuationControllerWithOptions(t, [][]provider.Chunk{
+		{toolCallChunk("write", "write_file", `{"path":"main.go","content":"package main"}`), {Type: provider.ChunkDone}},
+		textTurn("implemented without the required project check"),
+		{toolCallChunk("review", "read_file", `{"path":"main.go"}`), {Type: provider.ChunkDone}},
+		textTurn("reviewed but not verified"),
+		{toolCallChunk("verify-other", "bash", `{"command":"go test ./internal/agent"}`), {Type: provider.ChunkDone}},
+		textTurn("ran a different verification command"),
+	}, event.Discard, agent.Options{ProjectChecks: []instruction.VerifyCheck{{
+		Command: "go test ./...", SourcePath: "AGENTS.md", Line: 3,
+	}}})
+
+	err := newTurnOrchestrator(c).runGoalLoopWithRawDisplay(context.Background(), "update main.go", "update main.go", "")
+	var readinessErr *agent.FinalReadinessError
+	if !errors.As(err, &readinessErr) {
+		t.Fatalf("high-confidence continuation error = %v, want final readiness failure", err)
+	}
+	if readinessErr.Attempts != 3 {
+		t.Fatalf("readiness attempts = %d, want original + two automatic turns", readinessErr.Attempts)
+	}
+	if got := readinessSyntheticTurns(c); got != 2 {
+		t.Fatalf("synthetic readiness turns = %d, want hard cap 2", got)
+	}
+	if !c.executor.PrepareFinalReadinessRecovery() {
+		t.Fatal("hard-cap exhaustion did not preserve the manual recovery action")
+	}
+}
+
+func TestReadinessContinuationYieldsToCancellationAndPendingUserWork(t *testing.T) {
+	readinessErr := &agent.FinalReadinessError{
+		Attempts: 1, Reason: "run verification", Missing: []string{"verification"},
+		ContinuationClass: agent.ReadinessContinuationGeneric, ProgressKey: "initial",
+	}
+
+	t.Run("cancelled context", func(t *testing.T) {
+		c, prov := readinessContinuationController(t, nil, event.Discard)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := newTurnOrchestrator(c).continueUntilReady(ctx, readinessErr)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("continuation error = %v, want context cancellation", err)
+		}
+		if prov.call != 0 {
+			t.Fatalf("provider calls = %d, want 0 after cancellation", prov.call)
+		}
+	})
+
+	t.Run("controller cancellation requested", func(t *testing.T) {
+		c, prov := readinessContinuationController(t, nil, event.Discard)
+		c.mu.Lock()
+		c.canceling = true
+		c.mu.Unlock()
+		err := newTurnOrchestrator(c).continueUntilReady(context.Background(), readinessErr)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("continuation error = %v, want controller cancellation", err)
+		}
+		if prov.call != 0 {
+			t.Fatalf("provider calls = %d, want 0 after controller cancellation", prov.call)
+		}
+	})
+
+	t.Run("parked user turn", func(t *testing.T) {
+		c, prov := readinessContinuationController(t, nil, event.Discard)
+		c.mu.Lock()
+		c.parkedTurns = append(c.parkedTurns, func(context.Context) error { return nil })
+		c.mu.Unlock()
+		err := newTurnOrchestrator(c).continueUntilReady(context.Background(), readinessErr)
+		var got *agent.FinalReadinessError
+		if !errors.As(err, &got) || got.Attempts != 1 {
+			t.Fatalf("continuation error = %v, want untouched readiness failure", err)
+		}
+		if prov.call != 0 {
+			t.Fatalf("provider calls = %d, want 0 with parked user work", prov.call)
+		}
+	})
+
+	t.Run("queued inbox follow-up", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "session.jsonl")
+		executor := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
+		c := New(Options{Runner: executor, Executor: executor, SessionPath: path})
+		t.Cleanup(c.Close)
+		if _, err := c.EnqueueInbox(InboxRequest{Submit: "user follow-up"}); err != nil {
+			t.Fatalf("EnqueueInbox: %v", err)
+		}
+		if err := c.SetInboxPausedPassive(true); err != nil {
+			t.Fatalf("SetInboxPausedPassive: %v", err)
+		}
+		err := newTurnOrchestrator(c).continueUntilReady(context.Background(), readinessErr)
+		var got *agent.FinalReadinessError
+		if !errors.As(err, &got) || got.Attempts != 1 {
+			t.Fatalf("continuation error = %v, want untouched readiness failure", err)
+		}
+	})
+}
+
+func TestReadinessContinuationZeroClassDefaultsToManualRecovery(t *testing.T) {
+	c, prov := readinessContinuationController(t, nil, event.Discard)
+	want := &agent.FinalReadinessError{Attempts: 1, Reason: "legacy readiness gap", Missing: []string{"verification"}}
+	err := newTurnOrchestrator(c).continueUntilReady(context.Background(), want)
+	var got *agent.FinalReadinessError
+	if !errors.As(err, &got) || got != want {
+		t.Fatalf("continuation error = %v, want the original conservative readiness error", err)
+	}
+	if prov.call != 0 {
+		t.Fatalf("provider calls = %d, want 0 for an unclassified legacy error", prov.call)
 	}
 }
 
