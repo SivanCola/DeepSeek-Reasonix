@@ -309,21 +309,6 @@ func (s *runOutputSink) Finalize(sessionID string, started time.Time, runErr err
 	})
 }
 
-func pricingCurrencyCode(value string) string {
-	value = strings.TrimSpace(value)
-	switch strings.ToUpper(value) {
-	case "", "CNY", "RMB", "CNH", "¥", "￥":
-		return "CNY"
-	case "USD", "$", "US$":
-		return "USD"
-	default:
-		if len(value) == 3 {
-			return strings.ToUpper(value)
-		}
-		return value
-	}
-}
-
 func (s *runOutputSink) machineEventRecordFor(e event.Event, sequence uint64) machineEventRecord {
 	record := machineEventRecord{SchemaVersion: machineSchemaVersion, Sequence: sequence, Kind: machineEventKind(e.Kind)}
 	switch e.Kind {
