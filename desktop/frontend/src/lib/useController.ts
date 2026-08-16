@@ -24,7 +24,7 @@ import { isHostRecoveryGuidance } from "./hostRecoverySteer";
 import { duplicateLiveItemIds, hasCachedLiveTurn, hydratedHistoryApplyMode, sameSessionPlaceholderItems, shouldPreferResidentHistory } from "./hydrateHistoryApply";
 import { hydrateIdentityCurrent } from "./sessionIdentity";
 import { sameStringList, sameTodoList } from "./todoVisibility";
-import { resolveTurnStartedAt } from "./turnTiming";
+import { resolveSnapshotTurnStartedAt, resolveTurnStartedAt, snapshotPredatesTurnLifecycle } from "./turnTiming";
 import { useStaleTurnWatchdog } from "./useStaleTurnWatchdog";
 import type { SearchSource } from "./searchSources";
 import { attachWebSearchOutput, historySearchAndAnswer } from "./searchTranscript";
@@ -377,6 +377,7 @@ interface State {
   discardTurn?: boolean;
   turnStartAt: number;
   turnDoneAt: number;
+  turnLifecycleObservedAt?: number;
   // Completion tokens accumulated across executor usage events within the
   // current turn. ReasoningTokens is a subset of CompletionTokens.
   turnOutputTokens: number;
@@ -1384,6 +1385,7 @@ function applyEvent(s: State, e: WireEvent): State {
         pendingPrompt: false,
         cancelRequested: false,
         cancellable: false,
+        turnLifecycleObservedAt: promptEventClock(),
         currentAssistant: undefined,
         live: undefined,
       };
@@ -1402,13 +1404,8 @@ function applyEvent(s: State, e: WireEvent): State {
     return applyExtensionSurfaceEvent(s, e.extension);
   }
   if (e.kind === "retrying") {
-    // Retrying is emitted synchronously from inside the foreground provider
-    // request, immediately before its cancellation-aware backoff. Treat it as
-    // authoritative proof that the turn is still active. An idle ListTabs
-    // snapshot fetched before this event can otherwise clear `running`,
-    // regardless of which one reaches the reducer first, and leave the
-    // composer showing "retrying (n/m)" without its Stop button (or Escape
-    // cancellation) until all retries are exhausted.
+    // Retrying is synchronous proof that the foreground turn is active. Keep
+    // older idle ListTabs completions from hiding Stop/Escape during backoff.
     return {
       ...s,
       retry: {
@@ -1447,6 +1444,7 @@ function applyEvent(s: State, e: WireEvent): State {
         pendingPrompt: false,
         cancelRequested: false,
         cancellable: true,
+        turnLifecycleObservedAt: promptEventClock(),
         ...resetTurnTiming(resolveTurnStartedAt(fresh.running || fresh.turnActive ? fresh.turnStartAt : 0, e.turnStartedAt)),
       };
     }
@@ -1866,6 +1864,7 @@ function applyEvent(s: State, e: WireEvent): State {
         approval: keepPlanApproval ? s.approval : undefined,
         ask: undefined,
         deliveryRecoveryActive: false,
+        turnLifecycleObservedAt: promptEventClock(),
         seq: s.seq + 1,
       };
       // Close user-wait unless the plan approval gate remains open.
@@ -1890,6 +1889,7 @@ export function reducer(s: State, a: Action): State {
         cancelRequested: false,
         cancellable: true,
         ...resetTurnTiming(),
+        turnLifecycleObservedAt: promptEventClock(),
         // New turn epoch: forget the previous prompt anchor so a genuinely new
         // prompt re-anchors freshly instead of inheriting a stale id/time.
         promptArrivedAt: undefined,
@@ -1915,6 +1915,7 @@ export function reducer(s: State, a: Action): State {
         promptArrivedAt: undefined,
         promptArrivedId: undefined,
         live: undefined,
+        turnLifecycleObservedAt: promptEventClock(),
       });
       return cleared;
     }
@@ -1936,19 +1937,16 @@ export function reducer(s: State, a: Action): State {
       const idx = s.items.findIndex((it) => it.kind === "user" && it.submissionId === a.submissionId);
       const items = idx >= 0 ? s.items.map((it, i) => (i === idx ? { ...it, submissionId: undefined, failed: true } : it)) : s.items;
       const notice: Item = { kind: "notice", id: `n${s.seq}`, level: "warn", text: a.error };
-      return { ...s, pendingUser: undefined, pendingSubmissionId: undefined, deliveryRecoveryActive: false, running: false, turnActive: false, pendingPrompt: false, cancelRequested: false, cancellable: false, live: undefined, seq: s.seq + 1, items: [...items, notice] };
+      return { ...s, pendingUser: undefined, pendingSubmissionId: undefined, deliveryRecoveryActive: false, running: false, turnActive: false, pendingPrompt: false, cancelRequested: false, cancellable: false, live: undefined, turnLifecycleObservedAt: promptEventClock(), seq: s.seq + 1, items: [...items, notice] };
     }
     case "backend_status": {
-      // A snapshot fetched before the live approval/ask event arrived cannot
-      // know about the prompt; everything it reports about the turn lifecycle
-      // is equally stale. Ignore it and let an explicit answer/cancel or a
-      // fresher snapshot settle the state (#6429).
-      if (runtimeSnapshotPredatesPrompt(s, a.snapshotAt)) return s;
+      // Reject snapshots that began before newer prompt or turn lifecycle evidence.
+      if (runtimeSnapshotPredatesPrompt(s, a.snapshotAt) || snapshotPredatesTurnLifecycle(s.turnLifecycleObservedAt, a.snapshotAt)) return s;
       const pendingPrompt = Boolean(a.pendingPrompt);
       const backgroundJobs = Math.max(0, a.backgroundJobs ?? s.backgroundJobs ?? 0);
       const cancelRequested = Boolean(a.cancelRequested);
       const foregroundRunning = foregroundRunningFromRuntimeMeta({ running: a.running, pendingPrompt, backgroundJobs, cancellable: a.cancellable });
-      const turnStartedAt = foregroundRunning ? resolveTurnStartedAt(s.running || s.turnActive ? s.turnStartAt : 0, a.turnStartedAt) : s.turnStartAt;
+      const turnStartedAt = foregroundRunning ? resolveSnapshotTurnStartedAt(s.running || s.turnActive ? s.turnStartAt : 0, a.turnStartedAt) : s.turnStartAt;
       // A retry event is newer evidence of foreground activity than an idle
       // snapshot whose fetch started earlier. Keep the turn cancellable until
       // a snapshot started after the retry confirms that it is actually idle.
