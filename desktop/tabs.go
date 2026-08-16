@@ -2312,24 +2312,6 @@ func (a *App) syncTabWorkspaceRootSpellings() {
 	}
 }
 
-// registerProjectRoot indexes workspaceRoot in the project registry and
-// realigns open tabs when the registry adopted a new spelling of the root.
-func (a *App) registerProjectRoot(workspaceRoot string) {
-	_, _ = addProjectWithStatus(workspaceRoot, "")
-	a.syncTabWorkspaceRootSpellings()
-	root := normalizeProjectRoot(workspaceRoot)
-	if root == "" {
-		return
-	}
-	registrationKey := projectRootKey(root)
-	if _, loaded := a.catalogRegisteredProjectRoots.LoadOrStore(registrationKey, struct{}{}); loaded {
-		return
-	}
-	if !a.requestSessionCatalogReconcile(desktopSessionDir(root)) {
-		a.catalogRegisteredProjectRoots.Delete(registrationKey)
-	}
-}
-
 // OpenProjectTab builds a controller scoped to workspaceRoot and opens the
 // session selected by the given topic. Topic selection resolves to a concrete
 // session path first; the visible tab is then attached to that session runtime.
@@ -5635,18 +5617,12 @@ func globalProjectTitle() string {
 }
 
 func addProject(root, title string) error {
-	_, err := addProjectWithStatus(root, title)
-	return err
-}
-
-func addProjectWithStatus(root, title string) (bool, error) {
 	root = normalizeProjectRoot(root)
 	if root == "" {
-		return false, fmt.Errorf("project root is required")
+		return fmt.Errorf("project root is required")
 	}
 	title = strings.TrimSpace(title)
-	added := false
-	err := updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
+	return updateProjectsFile(func(f *desktopProjectFile) (bool, error) {
 		for i, p := range f.Projects {
 			if sameProjectRoot(p.Root, root) {
 				changed := false
@@ -5665,10 +5641,8 @@ func addProjectWithStatus(root, title string) (bool, error) {
 			}
 		}
 		f.Projects = append(f.Projects, desktopProject{Root: root, Title: title})
-		added = true
 		return true, nil
 	})
-	return added, err
 }
 
 func renameProject(root, title string) error {

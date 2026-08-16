@@ -392,10 +392,9 @@ func unusedTransientBlankSession(dir, path string) bool {
 	if !isDefaultTopicTitle(meta.TopicTitle) && strings.TrimSpace(meta.TopicTitle) != "" {
 		return false
 	}
-	// A zero-byte, default-titled sidecar is transient regardless of whether a
-	// reconcile already projected it into the registry. The caller's keep set
-	// protects every visible/detached runtime; registry presence alone cannot
-	// prove user content and was the source of the archive ghost.
+	// A zero-byte default sidecar stays transient after registry projection.
+	// The caller's keep set protects every visible or detached runtime; registry
+	// presence alone cannot prove user content.
 	return true
 }
 

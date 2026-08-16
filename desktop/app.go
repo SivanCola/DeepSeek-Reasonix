@@ -137,10 +137,9 @@ type App struct {
 	catalogDone        chan struct{}
 	catalogRebuilding  atomic.Bool
 	shuttingDown       atomic.Bool
-	// catalogReconcileJobs coalesces the complete explicit-reconcile pipeline,
-	// including the legacy scan that runs before Catalog.ReconcileDirectory.
-	// Catalog already deduplicates its own worker; this map prevents callers
-	// from stampeding the otherwise-unbounded pre-scan goroutines.
+	// catalogReconcileJobs coalesces both the legacy pre-scan and catalog scan.
+	// Catalog deduplicates its worker; this also prevents callers from
+	// stampeding the otherwise-unbounded pre-scan goroutines.
 	catalogReconcileMu   sync.Mutex
 	catalogReconcileJobs map[string]*desktopCatalogReconcileJob
 	// Test-only deterministic boundary, set before concurrent requests.

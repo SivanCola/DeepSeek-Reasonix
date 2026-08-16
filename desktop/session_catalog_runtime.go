@@ -632,65 +632,6 @@ func projectTopicSortValue(createdAt, lastActivityAt int64, sortMode string) int
 	return createdAt
 }
 
-func projectTopicLess(left, right ProjectNode, sortMode string, manualOrder bool) bool {
-	if left.Pinned != right.Pinned {
-		return left.Pinned
-	}
-	if manualOrder {
-		leftRank, rightRank := left.SortOrder, right.SortOrder
-		if leftRank < 0 {
-			leftRank = int(^uint(0) >> 1)
-		}
-		if rightRank < 0 {
-			rightRank = int(^uint(0) >> 1)
-		}
-		if leftRank != rightRank {
-			return leftRank < rightRank
-		}
-	}
-	leftActivity := projectTopicSortValue(left.CreatedAt, left.LastActivityAt, sortMode)
-	rightActivity := projectTopicSortValue(right.CreatedAt, right.LastActivityAt, sortMode)
-	if leftActivity != rightActivity {
-		return leftActivity > rightActivity
-	}
-	return left.TopicID < right.TopicID
-}
-
-func manualTopicOrderFor(scope, workspaceRoot string) bool {
-	f := loadProjectsFile()
-	if strings.TrimSpace(scope) != "project" {
-		return f.GlobalManualTopicOrder
-	}
-	if index := projectIndexByRoot(f.Projects, workspaceRoot); index >= 0 {
-		return f.Projects[index].ManualTopicOrder
-	}
-	return false
-}
-
-func encodeProjectTopicCursor(topic sessioncatalog.TopicRecord, sortMode string, manualOrder bool) string {
-	// Reuse the catalog's keyset cursor encoding by asking for the next page
-	// after this topic. ListTopics accepts the same opaque cursor it emits.
-	pinned := 0
-	if topic.Pinned {
-		pinned = 1
-	}
-	if manualOrder {
-		return sessioncatalog.EncodeOrderedTopicCursor(pinned, topic.SortOrder, projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode), topic.TopicID)
-	}
-	return sessioncatalog.EncodeTopicCursor(pinned, projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode), topic.TopicID)
-}
-
-func encodeProjectNodeCursor(topic ProjectNode, sortMode string, manualOrder bool) string {
-	pinned := 0
-	if topic.Pinned {
-		pinned = 1
-	}
-	if manualOrder {
-		return sessioncatalog.EncodeOrderedTopicCursor(pinned, topic.SortOrder, projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode), topic.TopicID)
-	}
-	return sessioncatalog.EncodeTopicCursor(pinned, projectTopicSortValue(topic.CreatedAt, topic.LastActivityAt, sortMode), topic.TopicID)
-}
-
 func (a *App) GetTopicSummary(key ProjectTopicKey) (ProjectNode, error) {
 	if catalog := a.sessionCatalog.Load(); catalog != nil {
 		ctx, cancel := a.catalogReadContext()

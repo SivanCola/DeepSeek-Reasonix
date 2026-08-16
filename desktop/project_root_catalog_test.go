@@ -132,3 +132,35 @@ func TestExplicitReconcileCoalescesConcurrentRequests(t *testing.T) {
 		t.Fatalf("reconcile passes = %d, want one active pass plus one coalesced dirty pass", calls)
 	}
 }
+
+func TestStopSessionCatalogWaitsForExplicitReconcile(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	dir := t.TempDir()
+	installSessionCatalogForTest(t, app, dir, "global", "")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	app.catalogReconcileHook = func(sessioncatalog.DirectoryTarget) {
+		close(started)
+		<-release
+	}
+	app.requestSessionCatalogReconcile(dir)
+	<-started
+	stopped := make(chan struct{})
+	go func() {
+		app.stopSessionCatalog(time.Second)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+		t.Fatal("catalog stopped before its explicit reconcile released")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("catalog stop did not drain its explicit reconcile")
+	}
+}

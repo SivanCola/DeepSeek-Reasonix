@@ -270,6 +270,20 @@ func (a *App) stopSessionCatalog(timeout time.Duration) {
 	}
 	catalog := a.sessionCatalog.Swap(nil)
 	deadline := time.Now().Add(timeout)
+	// Pair the nil publication with the request-side locked recheck. Once this
+	// barrier passes, the snapshot contains every reconcile that can use catalog
+	// and no new one can be added.
+	a.catalogReconcileMu.Lock()
+	reconcileDone := make([]<-chan struct{}, 0, len(a.catalogReconcileJobs))
+	for _, job := range a.catalogReconcileJobs {
+		reconcileDone = append(reconcileDone, job.done)
+	}
+	a.catalogReconcileMu.Unlock()
+	for _, done := range reconcileDone {
+		if !waitChannelBefore(done, deadline) {
+			break
+		}
+	}
 	if catalog != nil {
 		remaining := max(time.Until(deadline), 0)
 		ctx, closeCancel := context.WithTimeout(context.Background(), remaining)
@@ -287,6 +301,21 @@ func (a *App) stopSessionCatalog(timeout time.Duration) {
 		case <-done:
 		case <-timer.C:
 		}
+	}
+}
+
+func waitChannelBefore(done <-chan struct{}, deadline time.Time) bool {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return false
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 
@@ -456,6 +485,7 @@ func (a *App) emitProjectTreeChangedV2(revision uint64, roots []string, reason s
 type desktopCatalogReconcileJob struct {
 	target sessioncatalog.DirectoryTarget
 	dirty  bool
+	done   chan struct{}
 }
 
 func (a *App) requestSessionCatalogReconcile(dir string) bool {
@@ -473,6 +503,10 @@ func (a *App) requestSessionCatalogReconcile(dir string) bool {
 		}
 	}
 	a.catalogReconcileMu.Lock()
+	if a.sessionCatalog.Load() != catalog || a.shuttingDown.Load() {
+		a.catalogReconcileMu.Unlock()
+		return false
+	}
 	if a.catalogReconcileJobs == nil {
 		a.catalogReconcileJobs = map[string]*desktopCatalogReconcileJob{}
 	}
@@ -482,13 +516,15 @@ func (a *App) requestSessionCatalogReconcile(dir string) bool {
 		a.catalogReconcileMu.Unlock()
 		return true
 	}
-	a.catalogReconcileJobs[key] = &desktopCatalogReconcileJob{target: target}
+	done := make(chan struct{})
+	a.catalogReconcileJobs[key] = &desktopCatalogReconcileJob{target: target, done: done}
 	a.catalogReconcileMu.Unlock()
-	go a.runSessionCatalogReconcile(key)
+	go a.runSessionCatalogReconcile(key, done)
 	return true
 }
 
-func (a *App) runSessionCatalogReconcile(key string) {
+func (a *App) runSessionCatalogReconcile(key string, done chan struct{}) {
+	defer close(done)
 	for {
 		a.catalogReconcileMu.Lock()
 		job := a.catalogReconcileJobs[key]
@@ -527,10 +563,9 @@ func (a *App) runSessionCatalogReconcile(key string) {
 			_ = a.syncSessionCatalogMetadata(ctx, catalog)
 			cancel()
 		}
-		// This runner already owns the per-directory single-flight slot, so keep
-		// it active until the catalog scan itself finishes. Enqueuing and
-		// returning here would reopen the pre-scan stampede window while the
-		// catalog worker was still reconciling the same directory.
+		// Keep the per-directory single-flight slot until the catalog scan ends.
+		// Enqueuing would reopen the pre-scan stampede window while the catalog
+		// worker was still reconciling the same directory.
 		if err := catalog.ReconcileDirectory(a.bootContext(), target); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Debug("desktop: reconcile session catalog", "path", target.Path, "err", err)
 		}
