@@ -24,7 +24,6 @@ import {
   foldSegmentStates,
   historyEntryIdForRow,
   reconcileFoldEntries,
-  estimateTranscriptRowSize,
   splitTranscriptLiveRows,
   userRowKey,
   EMPTY_FOLDS,
@@ -36,6 +35,7 @@ import {
   type TranscriptRow,
 } from "../lib/transcriptRows";
 import { getTranscriptStore } from "../lib/transcriptStore";
+import { createTranscriptMeasuredSizes, type TranscriptMeasuredSizes } from "../lib/transcriptMeasuredSizes";
 import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib/markdownWorkerClient";
 import { noteTranscriptRowCounts } from "../lib/sessionDiagnostics";
 import { useReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
@@ -116,6 +116,7 @@ type TranscriptVirtuosoContext = {
   scrollElement: HTMLDivElement | null;
   nativeScrollbarDragging: boolean;
   overlayRevision: string;
+  measuredSizes: TranscriptMeasuredSizes;
   /** The active turn's in-flow footer region; null when no turn is live. */
   liveRegion: null | {
     rows: readonly TranscriptRow[];
@@ -138,6 +139,13 @@ const TranscriptVirtuosoItem = forwardRef<HTMLDivElement, ItemProps<TranscriptRo
       if (entryId) getTranscriptStore().requestEntryFullContent(context.tabId, entryId);
     }, [context.tabId, entryId]);
     const knownSize = Number.parseFloat(String(props["data-known-size"] ?? ""));
+    useEffect(() => {
+      // Feed Virtuoso's own measurement back into the session cache so a
+      // future remount restarts from measured geometry, not static priors.
+      if (Number.isFinite(knownSize) && knownSize > 0) {
+        context.measuredSizes.record(String(item.key), item.kind, knownSize);
+      }
+    }, [context.measuredSizes, item.key, item.kind, knownSize]);
     const frozenStyle = context.nativeScrollbarDragging && Number.isFinite(knownSize) && knownSize > 0
       ? { ...style, boxSizing: "border-box" as const, height: knownSize, overflow: "hidden" as const }
       : style;
@@ -582,7 +590,10 @@ export function Transcript({
     holdRevisionResets: liveSplit.liveActive,
   });
   recoveryControlRef.current = { noteUserScrollIntent, invalidateAnchors };
-  const heightEstimates = useMemo(() => virtualRows.map((row) => estimateTranscriptRowSize(row)), [virtualRows]);
+  // Measured-geometry cache: remounts restart from real row heights instead
+  // of static priors, so the size-tree collapse loses its blast radius.
+  const measuredSizes = useMemo(() => createTranscriptMeasuredSizes(), [layoutSurfaceKey]);
+  const heightEstimates = useMemo(() => measuredSizes.synthesize(virtualRows), [measuredSizes, virtualRows]);
   const overlayRevision = useMemo(
     () => virtualRows.map((row) => String(row.key)).join("|"),
     [virtualRows],
@@ -860,6 +871,7 @@ export function Transcript({
     scrollElement,
     nativeScrollbarDragging,
     overlayRevision,
+    measuredSizes,
     liveRegion: showLiveRegion
       ? {
           rows: liveSplit.liveActive ? liveSplit.liveRows : heldLiveRows,
@@ -882,6 +894,7 @@ export function Transcript({
     liveSplit.liveActive,
     liveSplit.liveRows,
     loadingOlderHistory,
+    measuredSizes,
     nativeScrollbarDragging,
     olderHistoryCount,
     onLoadOlderHistory,
