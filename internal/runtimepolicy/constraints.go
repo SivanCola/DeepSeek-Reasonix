@@ -106,11 +106,10 @@ func hasExplicitReadOnlyClause(clause string) bool {
 
 func hasMutationContinuation(clause string) bool {
 	for _, marker := range []string{" then ", " and then ", " but then ", "然后", "再", "接着"} {
-		idx := strings.Index(clause, marker)
-		if idx < 0 {
+		_, tail, ok := strings.Cut(clause, marker)
+		if !ok {
 			continue
 		}
-		tail := clause[idx+len(marker):]
 		if matchesAny(tail, []string{
 			"fix", "repair", "implement", "write", "edit", "change", "modify", "create", "commit", "push",
 			"修复", "实现", "编写", "写入", "编辑", "修改", "创建", "提交", "推送",
@@ -165,11 +164,8 @@ func describesReadOnlyActor(clause string) bool {
 }
 
 func textAfterPhrase(clause, phrase string) (string, bool) {
-	idx := strings.Index(clause, phrase)
-	if idx < 0 {
-		return "", false
-	}
-	return strings.TrimSpace(clause[idx+len(phrase):]), true
+	_, tail, ok := strings.Cut(clause, phrase)
+	return strings.TrimSpace(tail), ok
 }
 
 func globalMutationTail(tail string) bool {
