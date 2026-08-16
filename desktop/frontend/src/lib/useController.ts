@@ -235,7 +235,7 @@ export type Item =
   | { kind: "user"; id: string; submissionId?: string; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; memoryCitations?: MemoryCitation[]; searchSources?: SearchSource[] }
   | { kind: "phase"; id: string; text: string }
-  | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string; title?: string; variant?: "delivery" | "completion"; action?: "continue_delivery" | "open_changes"; decisionReceipt?: WireDecisionReceipt; missing?: string[] }
+  | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string; title?: string; variant?: "delivery" | "completion"; action?: "continue_delivery" | "open_changes"; decisionReceipt?: WireDecisionReceipt; missing?: string[]; inboxItemId?: string }
   | {
       kind: "compaction";
       id: string;
@@ -280,6 +280,12 @@ export type Item =
       generation?: number;
       card: WireExtensionCard;
     };
+
+export type CancelOutcome = {
+  restoredText?: string;
+  discardedItemIds: string[];
+  warning?: string;
+};
 type ToolItem = Extract<Item, { kind: "tool" }>;
 export type ExtensionItem = Extract<Item, { kind: "extension" }>;
 // Extension UI surfaces (stage 8b2) — per-tab state fed by extension_surface /
@@ -1739,7 +1745,7 @@ function applyEvent(s: State, e: WireEvent): State {
     }
     case "steer":
       if (isHostRecoveryGuidance(e.text ?? "")) return s;
-      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `s${s.seq}`, level: "info", text: `${STEER_NOTICE_PREFIX}${e.text ?? ""}` }] };
+      return { ...s, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `s${s.seq}`, level: "info", text: `${STEER_NOTICE_PREFIX}${e.text ?? ""}`, inboxItemId: e.itemId }] };
     case "approval_request": {
       if (s.cancelRequested) return s;
       // A delayed re-delivery of a prompt the user already answered locally
@@ -3769,34 +3775,47 @@ export function useController() {
     dispatchTo(activeTabId, { type: "extension_notifications_drained" });
   }, [activeTabId, dispatchTo]);
 
-  const cancelTab = useCallback((tabId: string, inboxItemIDs: string[] = []) => {
+  const cancelTab = useCallback(async (tabId: string, inboxItemIDs: string[] = []): Promise<Omit<CancelOutcome, "restoredText">> => {
     const cancelHydrateGeneration = bumpCancelHydrateSeq(tabId);
-    const cancelRequest = inboxItemIDs.length > 0
-      ? app.CancelTabWithInboxItems(tabId, inboxItemIDs)
-      : app.CancelTab(tabId);
-    cancelRequest
-      .then(() => scheduleCancelReconcile(tabId, 0, cancelHydrateGeneration))
-      .catch((error) => {
-        dispatchTo(tabId, { type: "local_notice", level: "warn", text: formatInboxCancelError(error, getLocale()) });
-      });
+    try {
+      let discardedItemIds: string[] = [];
+      let warning: string | undefined;
+      if (inboxItemIDs.length > 0 && typeof app.CancelTabWithInboxItemsResult === "function") {
+        const receipt = await app.CancelTabWithInboxItemsResult(tabId, inboxItemIDs);
+        discardedItemIds = asArray(receipt?.discardedItemIds).map(String);
+        warning = receipt?.warning?.trim() || undefined;
+      } else if (inboxItemIDs.length > 0) {
+        // Compatibility fallback: an old backend has no per-item receipt, so
+        // durable messages must remain in the queue instead of being restored
+        // optimistically into the draft.
+        await app.CancelTabWithInboxItems(tabId, inboxItemIDs);
+      } else {
+        await app.CancelTab(tabId);
+      }
+      scheduleCancelReconcile(tabId, 0, cancelHydrateGeneration);
+      if (warning) dispatchTo(tabId, { type: "local_notice", level: "warn", text: warning });
+      return { discardedItemIds, warning };
+    } catch (error) {
+      dispatchTo(tabId, { type: "local_notice", level: "warn", text: formatInboxCancelError(error, getLocale()) });
+      return { discardedItemIds: [] };
+    }
   }, [bumpCancelHydrateSeq, dispatchTo, scheduleCancelReconcile]);
 
-  const cancel = useCallback((inboxItemIDs: string[] = []): string | undefined => {
+  const cancel = useCallback(async (inboxItemIDs: string[] = []): Promise<CancelOutcome> => {
     const cur = stateRef.current;
     const tabId = activeTabId;
+    let restoredText: string | undefined;
     if (cur.running && cur.pendingUser !== undefined) {
-      const text = cur.pendingUser;
+      restoredText = cur.pendingUser;
       if (tabId) {
         dispatchTo(tabId, { type: "unsend" });
-        cancelTab(tabId, inboxItemIDs);
       }
-      return text;
-    }
-    if (tabId) {
+    } else if (tabId) {
       dispatchTo(tabId, { type: "cancel_requested" });
-      cancelTab(tabId, inboxItemIDs);
     }
-    return undefined;
+    if (!tabId) return { restoredText, discardedItemIds: [] };
+    const result = await cancelTab(tabId, inboxItemIDs);
+    return { restoredText, ...result };
   }, [activeTabId, cancelTab, dispatchTo]);
 
   const approve = useCallback((id: string, allow: boolean, session: boolean, persist: boolean) => {

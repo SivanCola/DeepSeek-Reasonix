@@ -28,7 +28,7 @@ import {
   type StructuredInvocationSubmit,
 } from "../lib/invocationDisplay";
 import { formatTokens } from "../lib/format";
-import type { ControllerLiveStore } from "../lib/useController";
+import type { CancelOutcome, ControllerLiveStore } from "../lib/useController";
 import { clearLayoutSize, loadOptionalLayoutSize, saveLayoutSize } from "../lib/layoutPreferences";
 import { createRafResizeUpdater } from "../lib/resizeDrag";
 import { observeComposerMenuViewport } from "../lib/composerMenuViewport";
@@ -547,6 +547,7 @@ export function Composer({
   workspaceScopeKey,
   fileRefRefreshKey,
   guidanceConsumedKey,
+  guidanceConsumedItemId,
   guidanceConsumedText,
   guidanceQueuePreviewItems,
   showContextWindowRing = false,
@@ -575,9 +576,9 @@ export function Composer({
   onSend: (displayText: string, submitText?: string, tabId?: string, structured?: StructuredInvocationSubmit) => void | Promise<void>;
   onInvocationMetadataChange?: (metadata: Record<string, { kind: "skill" | "subagent"; color?: string }>) => void;
   onSteer?: (submitText: string, tabId?: string) => void | Promise<void>;
-  // Returns the un-sent text when cancelling before the server replied (so it can
-  // be restored to the input); undefined for a normal cancel.
-  onCancel: (queuedItemIDs?: string[]) => string | undefined;
+  // Returns the un-sent text plus the exact durable queue IDs the backend
+  // confirmed were withdrawn and are therefore safe to restore.
+  onCancel: (queuedItemIDs?: string[]) => Promise<CancelOutcome>;
   onCycleMode: () => void;
   onSetMode: (mode: Mode) => void;
   onSetCollaborationMode: (mode: CollaborationMode) => void;
@@ -638,6 +639,7 @@ export function Composer({
   workspaceScopeKey?: string;
   fileRefRefreshKey?: number | string;
   guidanceConsumedKey?: string;
+  guidanceConsumedItemId?: string;
   guidanceConsumedText?: string;
   guidanceQueuePreviewItems?: readonly string[];
   showContextWindowRing?: boolean;
@@ -712,6 +714,8 @@ export function Composer({
   const guidanceSendingIdRef = useRef<string | null>(null);
   const [loadingPastChats, setLoadingPastChats] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [cancelSettling, setCancelSettling] = useState(false);
+  const cancelSettlingRef = useRef(false);
   const [inputMenuPoint, setInputMenuPoint] = useState<ContextMenuPoint | null>(null);
   const [composerPrompt, setComposerPrompt] = useState<string | null>(null);
   // Prompt history navigation (plain ↑/↓)
@@ -1455,10 +1459,13 @@ export function Composer({
     if (guidanceConsumedKey === lastGuidanceConsumedKeyByDraftRef.current[draftKey]) return;
     lastGuidanceConsumedKeyByDraftRef.current[draftKey] = guidanceConsumedKey;
     const consumed = (guidanceConsumedText ?? "").trim();
-    if (consumed && takeSelfDispatchedGuidance(consumed, draftKey)) return;
+    if (!guidanceConsumedItemId && consumed && takeSelfDispatchedGuidance(consumed, draftKey)) return;
     updatePendingGuidanceForDraft(draftKey, (items) => {
       if (items.length === 0) return items;
-      const idx = consumed
+      const byID = guidanceConsumedItemId
+        ? items.findIndex((item) => item.id === guidanceConsumedItemId)
+        : -1;
+      const idx = guidanceConsumedItemId ? byID : consumed
         ? items.findIndex((item) => guidanceTextMatches(item.submitText, consumed) || guidanceTextMatches(item.text, consumed))
         : -1;
       // Only remove on a real match. Steer notices also fire for guidance this
@@ -1468,7 +1475,7 @@ export function Composer({
       if (idx < 0) return items;
       return items.filter((_, index) => index !== idx);
     });
-  }, [draftKey, guidanceDraftKey, guidanceConsumedKey, guidanceConsumedText, takeSelfDispatchedGuidance]);
+  }, [draftKey, guidanceDraftKey, guidanceConsumedKey, guidanceConsumedItemId, guidanceConsumedText, takeSelfDispatchedGuidance]);
 
   // When the @ trigger disappears (user deleted the @), close the past:chats
   // sub-menu and reset related state. Without this, showPastChats can outlive
@@ -1593,6 +1600,16 @@ export function Composer({
         composerEditSnapshot(targetDraftKey, { start: next.length, end: next.length }),
       );
     }
+  };
+
+  const setTextForDraft = (targetDraftKey: string, next: string) => {
+    if (targetDraftKey === activeDraftKeyRef.current) {
+      setTextCaretEnd(next);
+      return;
+    }
+    const draft = cloneComposerDraft(draftsBySessionRef.current[targetDraftKey] ?? emptyComposerDraft());
+    draft.text = next;
+    draftsBySessionRef.current[targetDraftKey] = draft;
   };
 
   const rememberCaret = () => {
@@ -2126,18 +2143,20 @@ export function Composer({
   };
 
   const dismissQueuedGuidance = async (item: PendingGuidance) => {
+    const targetDraftKey = activeDraftKeyRef.current;
+    const targetTabId = tabId || "";
     try {
       if (!item.id.startsWith("local-")) {
-        await app.DeleteInboxItem(tabId || "", item.id);
+        await app.DeleteInboxItem(targetTabId, item.id);
       }
       updatePendingGuidanceForDraft(
-        activeDraftKeyRef.current,
+        targetDraftKey,
         (items) => items.filter((queued) => queued.id !== item.id),
       );
     } catch (error) {
       if (isInboxItemMissing(error)) {
         updatePendingGuidanceForDraft(
-          activeDraftKeyRef.current,
+          targetDraftKey,
           (items) => items.filter((queued) => queued.id !== item.id),
         );
         return;
@@ -2149,9 +2168,11 @@ export function Composer({
   const editQueuedGuidance = async (item: PendingGuidance, nextText: string) => {
     const text = nextText.trim();
     if (!text || item.id.startsWith("local-")) return;
+    const targetDraftKey = activeDraftKeyRef.current;
+    const targetTabId = tabId || "";
     try {
-      await app.UpdateInboxItem(tabId || "", item.id, text, text);
-      updatePendingGuidanceForDraft(activeDraftKeyRef.current, (items) =>
+      await app.UpdateInboxItem(targetTabId, item.id, text, text);
+      updatePendingGuidanceForDraft(targetDraftKey, (items) =>
         items.map((queued) => queued.id === item.id ? { ...queued, text, submitText: text } : queued),
       );
     } catch (error) {
@@ -2660,31 +2681,40 @@ export function Composer({
 
   // handleCancel stops the in-flight turn; if it was cancelled before the server
   // replied, the just-sent text is handed back so we drop it back into the input.
-  const handleCancel = () => {
-    const ownedGuidance = pendingGuidance.filter((item) => item.id.startsWith("local-") || item.source === "desktop");
+  const handleCancel = async () => {
+    if (cancelSettlingRef.current) return;
+    cancelSettlingRef.current = true;
+    setCancelSettling(true);
+    const targetDraftKey = activeDraftKeyRef.current;
+    const ownedGuidance = pendingGuidanceRef.current.filter((item) => item.id.startsWith("local-") || item.source === "desktop");
     const durableItemIDs = ownedGuidance
       .map((item) => item.id)
       .filter((id) => !id.startsWith("local-"));
-    const restored = onCancel(durableItemIDs);
     if (goalModeOn && activeGoal) onClearGoal();
-    // A user-requested cancel must not let the natural-completion effect submit
-    // the queued follow-up. Fold it back into the draft: cancelling means "stop
-    // acting", not "discard what I typed" — the same contract onCancel already
-    // honors for un-sent text. Structured items fold back as their slash form
-    // (structured.display is valid /name syntax) so the invocation survives the
-    // round trip instead of degrading to its bare task text.
-    const queued = ownedGuidance
-      .map((item) => item.structured?.display ?? item.text)
-      .filter((part) => part.trim() !== "");
-    if (queued.length === 0) {
-      if (typeof restored === "string") setTextCaretEnd(restored);
-      return;
+    try {
+      const outcome = (await onCancel(durableItemIDs)) ?? { discardedItemIds: [] };
+      const discarded = new Set(outcome.discardedItemIds);
+      const restorable = ownedGuidance.filter((item) => item.id.startsWith("local-") || discarded.has(item.id));
+      const queued = restorable
+        .map((item) => item.structured?.display ?? item.text)
+        .filter((part) => part.trim() !== "");
+      const restoredIDs = new Set(restorable.map((item) => item.id));
+      if (restoredIDs.size > 0) {
+        updatePendingGuidanceForDraft(targetDraftKey, (items) => items.filter((item) => !restoredIDs.has(item.id)));
+      }
+      const draftText = targetDraftKey === activeDraftKeyRef.current
+        ? textRef.current
+        : (draftsBySessionRef.current[targetDraftKey]?.text ?? "");
+      const currentDraft = outcome.restoredText?.trim() === draftText.trim() ? "" : draftText;
+      const nextText = [outcome.restoredText, currentDraft, ...queued]
+        .filter((part): part is string => Boolean(part?.trim()))
+        .join("\n");
+      if (nextText) setTextForDraft(targetDraftKey, nextText);
+      if (targetDraftKey === activeDraftKeyRef.current && restorable.length > 0) setGuidanceExpanded(false);
+    } finally {
+      cancelSettlingRef.current = false;
+      setCancelSettling(false);
     }
-    const ownedIDs = new Set(ownedGuidance.map((item) => item.id));
-    updatePendingGuidanceForDraft(activeDraftKeyRef.current, (items) => items.filter((item) => !ownedIDs.has(item.id)));
-    setGuidanceExpanded(false);
-    const base = typeof restored === "string" ? restored : text;
-    setTextCaretEnd([base, ...queued].filter((part) => part.trim() !== "").join("\n"));
   };
 
   const pickCommand = (c: CommandInfo) => {
@@ -3418,7 +3448,7 @@ export function Composer({
     // restores the text if the server hadn't replied yet.
     if (composerEscapeAction(e.nativeEvent, running, composing) === "cancel") {
       e.preventDefault();
-      handleCancel();
+      void handleCancel();
     }
 
     // Browser undo owns ordinary DOM edits, while programmatic composer edits
@@ -4459,7 +4489,8 @@ export function Composer({
                 <button
                   className="composer__btn composer__btn--stop"
                   type="button"
-                  onClick={handleCancel}
+                  onClick={() => void handleCancel()}
+                  disabled={cancelSettling}
                   aria-label={t("composer.stop")}
                 >
                   <Square size={12} fill="currentColor" />

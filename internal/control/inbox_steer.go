@@ -1,9 +1,11 @@
 package control
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/sessioninbox"
 )
 
@@ -97,6 +99,9 @@ func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, er
 	loader := func() (string, error) {
 		_, env, err := storeRef.ReadItem(itemID)
 		if err != nil {
+			if errors.Is(err, sessioninbox.ErrNotFound) {
+				return "", agent.ErrSteerWithdrawn
+			}
 			return "", err
 		}
 		text := strings.TrimSpace(env.SubmitText)
@@ -116,7 +121,16 @@ func (c *Controller) TrySteerInboxItem(id string) (sessioninbox.InboxReceipt, er
 		if len(images) > 0 {
 			return "", fmt.Errorf("image guidance requires a follow-up turn")
 		}
-		return firstNonEmptyStr(materialized, text), nil
+		resolved := firstNonEmptyStr(materialized, text)
+		// This commit is the hand-off boundary. The Store compare-and-transition
+		// closes the loader-vs-cancel gap after TrySteerInboxItem returns.
+		if err := storeRef.MarkSteerConsumed(itemID); err != nil {
+			if errors.Is(err, sessioninbox.ErrNotFound) {
+				return "", agent.ErrSteerWithdrawn
+			}
+			return "", err
+		}
+		return resolved, nil
 	}
 	// Persist the admission boundary before exposing the loader to the agent.
 	// Holding c.mu for the short in-memory enqueue serializes active tracking
