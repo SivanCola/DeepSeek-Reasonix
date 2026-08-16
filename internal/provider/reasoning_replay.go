@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"slices"
 	"strings"
 
 	"reasonix/internal/nilutil"
@@ -66,14 +67,7 @@ func ProjectReplaySafeMessages(p Provider, msgs []Message) ([]Message, bool) {
 			strings.TrimSpace(m.ReasoningContent) == ""
 	}
 
-	needsProjection := false
-	for _, m := range msgs {
-		if isUnreplayable(m) {
-			needsProjection = true
-			break
-		}
-	}
-	if !needsProjection {
+	if !slices.ContainsFunc(msgs, isUnreplayable) {
 		return msgs, false
 	}
 
