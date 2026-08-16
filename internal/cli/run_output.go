@@ -212,10 +212,6 @@ func (s *runOutputSink) Emit(e event.Event) {
 				CacheWriteBilledTokens: e.Usage.CacheWriteBilledTokens,
 				Estimated:              e.Usage.Estimated,
 			}, time.Now().UTC())
-		} else if e.Pricing != nil {
-			s.cost += e.Pricing.Cost(e.Usage)
-			s.currency = pricingCurrencyCode(e.Pricing.Currency)
-			s.costComplete = true
 		}
 	}
 	if e.Kind == event.TurnDone {

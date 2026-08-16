@@ -37,9 +37,14 @@ var modelReasoningCapabilities = map[string]modelReasoningCapability{
 		Protocol: ReasoningProtocolDeepSeek,
 		Levels:   []string{"disabled", "low", "high", "max"},
 		Default:  "high",
-		Aliases:  map[string]string{"xhigh": "high"},
+		Aliases:  map[string]string{"medium": "high", "xhigh": "high"},
 	},
-	"deepseek-v4-pro": {Protocol: ReasoningProtocolDeepSeek, Levels: []string{"disabled", "high", "max"}, Default: "high"},
+	"deepseek-v4-pro": {
+		Protocol: ReasoningProtocolDeepSeek,
+		Levels:   []string{"disabled", "low", "high", "max"},
+		Default:  "high",
+		Aliases:  map[string]string{"medium": "high", "xhigh": "high"},
+	},
 }
 
 // EffortCapabilityForEntry returns the user-facing /effort levels for a resolved
@@ -154,8 +159,8 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 		}
 		return "", fmt.Errorf("usage: /effort auto|%s", strings.Join(supported, "|"))
 	}
-	// V4 Flash 0731 added a real low depth. Keep this model-scoped: Pro and
-	// generic DeepSeek-compatible endpoints still normalize low to high unless
+	// V4 Flash and Pro expose a real low depth. Keep this model-scoped: generic
+	// DeepSeek-compatible endpoints still normalize low to high unless
 	// they explicitly advertise a different supported_efforts list.
 	if cap, ok := resolvedModelReasoningCapability(e); ok {
 		explicit := explicitReasoningProtocol(e)

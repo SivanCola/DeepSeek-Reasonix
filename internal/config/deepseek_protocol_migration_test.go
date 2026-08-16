@@ -645,7 +645,7 @@ func TestNormalizeOfficialDeepSeekResponsesPresetAddsPro(t *testing.T) {
 		t.Fatalf("Flash effort override = %+v", flash)
 	}
 	pro := p.ModelOverrides["deepseek-v4-pro"]
-	if containsString(pro.SupportedEfforts, "low") || !containsString(pro.SupportedEfforts, "max") {
+	if !containsString(pro.SupportedEfforts, "low") || !containsString(pro.SupportedEfforts, "max") {
 		t.Fatalf("Pro effort override = %+v", pro)
 	}
 }
@@ -664,7 +664,7 @@ func TestNormalizeOfficialDeepSeekResponsesDoesNotRestoreUncheckedPro(t *testing
 		{
 			name: "leftover pro override is still treated as curated",
 			overrides: map[string]ProviderModelOverride{
-				"deepseek-v4-pro": {SupportedEfforts: []string{"disabled", "high", "max"}, DefaultEffort: "high"},
+				"deepseek-v4-pro": {SupportedEfforts: []string{"disabled", "low", "high", "max"}, DefaultEffort: "high"},
 			},
 		},
 	}

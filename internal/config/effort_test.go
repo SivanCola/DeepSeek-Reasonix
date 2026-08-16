@@ -38,16 +38,14 @@ func TestDeepSeekV4FlashEffortCapabilityIncludesLow(t *testing.T) {
 	}
 
 	pro := &ProviderEntry{Kind: "openai", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-pro"}
-	if got, err := NormalizeEffort(pro, "low"); err != nil || got != "high" {
-		t.Fatalf("Pro low = %q/%v, want existing high mapping", got, err)
+	if got, err := NormalizeEffort(pro, "low"); err != nil || got != "low" {
+		t.Fatalf("Pro low = %q/%v, want low/nil", got, err)
 	}
-	if got, err := NormalizeEffort(pro, "xhigh"); err != nil || got != "max" {
-		t.Fatalf("Pro xhigh = %q/%v, want max/nil", got, err)
+	if got, err := NormalizeEffort(pro, "xhigh"); err != nil || got != "high" {
+		t.Fatalf("Pro xhigh = %q/%v, want high/nil", got, err)
 	}
-	for _, level := range EffortCapabilityForEntry(pro).Levels {
-		if level == "low" {
-			t.Fatalf("Pro capability unexpectedly exposes low: %+v", EffortCapabilityForEntry(pro))
-		}
+	if cap := EffortCapabilityForEntry(pro); !containsString(cap.Levels, "low") {
+		t.Fatalf("Pro capability = %+v, want low", cap)
 	}
 }
 

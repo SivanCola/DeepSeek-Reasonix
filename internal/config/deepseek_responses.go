@@ -9,7 +9,7 @@ import (
 func deepSeekV4EffortOverrides() map[string]ProviderModelOverride {
 	return map[string]ProviderModelOverride{
 		"deepseek-v4-flash": {SupportedEfforts: []string{"disabled", "low", "high", "max"}, DefaultEffort: "high"},
-		"deepseek-v4-pro":   {SupportedEfforts: []string{"disabled", "high", "max"}, DefaultEffort: "high"},
+		"deepseek-v4-pro":   {SupportedEfforts: []string{"disabled", "low", "high", "max"}, DefaultEffort: "high"},
 	}
 }
 
