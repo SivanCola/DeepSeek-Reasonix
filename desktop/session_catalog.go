@@ -403,7 +403,7 @@ func (a *App) syncSessionCatalogMetadata(ctx context.Context, catalog *sessionca
 		projects[0].Title = "Global"
 	}
 	topics := []sessioncatalog.TopicMetadata{}
-	appendTopics := func(scope, root string, ids, pinnedIDs []string) {
+	appendTopics := func(scope, root string, ids, pinnedIDs []string, manualOrder bool) {
 		titles := loadTopicTitles(root)
 		sources := loadTopicTitleSources(root)
 		created := loadTopicCreatedAts(root)
@@ -416,14 +416,18 @@ func (a *App) syncSessionCatalogMetadata(ctx context.Context, catalog *sessionca
 			if title == "" {
 				title = defaultTopicTitle
 			}
+			sortOrder := -1
+			if manualOrder {
+				sortOrder = index
+			}
 			topics = append(topics, sessioncatalog.TopicMetadata{
 				Scope: scope, WorkspaceRoot: root, TopicID: topicID, Title: title,
 				TitleSource: sources[topicID], Pinned: containsDesktopString(pinnedIDs, topicID),
-				SortOrder: index, CreatedAt: topicCreatedAtForTree(created, topicID),
+				SortOrder: sortOrder, CreatedAt: topicCreatedAtForTree(created, topicID),
 			})
 		}
 	}
-	appendTopics("global", "", f.GlobalTopics, f.GlobalPinnedTopics)
+	appendTopics("global", "", f.GlobalTopics, f.GlobalPinnedTopics, f.GlobalManualTopicOrder)
 	for index, project := range f.Projects {
 		title := strings.TrimSpace(project.Title)
 		if title == "" {
@@ -433,7 +437,7 @@ func (a *App) syncSessionCatalogMetadata(ctx context.Context, catalog *sessionca
 			Scope: "project", WorkspaceRoot: project.Root, Title: title, Color: project.Color,
 			Pinned: containsDesktopString(f.PinnedProjects, project.Root), SortOrder: index,
 		})
-		appendTopics("project", project.Root, project.Topics, project.PinnedTopics)
+		appendTopics("project", project.Root, project.Topics, project.PinnedTopics, project.ManualTopicOrder)
 	}
 	return catalog.SyncMetadata(ctx, projects, topics)
 }

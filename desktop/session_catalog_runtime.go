@@ -97,16 +97,19 @@ func (a *App) metadataProjectTopics(scope, workspaceRoot string) []ProjectNode {
 	}
 	ids := f.GlobalTopics
 	pinnedIDs := f.GlobalPinnedTopics
+	manualOrder := f.GlobalManualTopicOrder
 	titleRoot := ""
 	projectColor := normalizeProjectColor(f.GlobalColor)
 	if scope == "project" {
 		ids = nil
 		pinnedIDs = nil
+		manualOrder = false
 		titleRoot = workspaceRoot
 		for _, project := range f.Projects {
 			if sameProjectRoot(project.Root, workspaceRoot) {
 				ids = project.Topics
 				pinnedIDs = project.PinnedTopics
+				manualOrder = project.ManualTopicOrder
 				projectColor = project.Color
 				break
 			}
@@ -123,7 +126,10 @@ func (a *App) metadataProjectTopics(scope, workspaceRoot string) []ProjectNode {
 	}
 	out := []ProjectNode{}
 	seen := map[string]bool{}
-	for _, topicID := range pinnedTopicIDs(orderedTopicIDs(ids, titles), pinnedIDs) {
+	for sortOrder, topicID := range pinnedTopicIDs(orderedTopicIDs(ids, titles), pinnedIDs) {
+		if !manualOrder {
+			sortOrder = -1
+		}
 		if deleted[topicID] {
 			continue
 		}
@@ -141,7 +147,7 @@ func (a *App) metadataProjectTopics(scope, workspaceRoot string) []ProjectNode {
 			Key: kind + "_" + topicID, Kind: kind,
 			Label: a.localizedTopicTitle(title, sources[topicID]), Root: workspaceRoot,
 			TopicID: topicID, ProjectColor: projectColor,
-			CreatedAt: topicCreatedAtForTree(created, topicID), Pinned: containsDesktopString(pinnedIDs, topicID),
+			CreatedAt: topicCreatedAtForTree(created, topicID), Pinned: containsDesktopString(pinnedIDs, topicID), SortOrder: sortOrder,
 			Open: overlay.open, Running: overlay.running, Status: overlay.status,
 			TurnsState: string(sessioncatalog.TurnsUnknown), Health: string(sessioncatalog.HealthOK),
 			Children: []ProjectNode{},
@@ -329,7 +335,8 @@ func (a *App) projectNodeFromCatalogTopic(topic sessioncatalog.TopicRecord, topi
 		Preview:    topicSessionPreview(topic.Sessions, topic.RepresentativePath),
 		TurnsState: string(topic.TurnsState), Health: string(topic.Health),
 		CreatedAt: topic.CreatedAt, LastActivityAt: topic.LastActivityAt,
-		Pinned: topic.Pinned, Open: overlay.open, Running: overlay.running, Status: overlay.status,
+		Pinned: topic.Pinned, SortOrder: topic.SortOrder,
+		Open: overlay.open, Running: overlay.running, Status: overlay.status,
 		// Ordinary tree is zero-config: never surface recovery counts, badges,
 		// or forced-handling status. History "other saved versions" owns that.
 		Children: []ProjectNode{},

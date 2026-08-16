@@ -63,6 +63,12 @@ export interface ProjectTreeRuntimeSnapshot {
   topics: ProjectRuntimeTopic[];
 }
 
+export interface SessionGroup {
+  id: string;
+  title: string;
+  topicIds?: string[];
+}
+
 export interface SessionCatalogBindings {
   GetProjectTreeSnapshot(): Promise<ProjectTreeSnapshot>;
   GetProjectTreeRuntimeSnapshot?(): Promise<ProjectTreeRuntimeSnapshot>;
@@ -70,6 +76,12 @@ export interface SessionCatalogBindings {
   GetTopicSummary(key: ProjectTopicKey): Promise<ProjectNode>;
   GetSessionCatalogStatus(): Promise<SessionCatalogStatus>;
   RebuildSessionCatalog(): Promise<void>;
+}
+
+export interface ProjectTreeOrganizationBindings {
+  ReorderTopics(scope: string, workspaceRoot: string, orderedTopicIDs: string[]): Promise<void>;
+  ListProjectGroups(scope: string, workspaceRoot: string): Promise<SessionGroup[]>;
+  SaveSessionGroups(scope: string, workspaceRoot: string, groups: SessionGroup[]): Promise<void>;
 }
 
 // SessionReference is a session selected via @ past:chats for context injection.
