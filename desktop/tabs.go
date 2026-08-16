@@ -2320,6 +2320,9 @@ func (a *App) syncTabWorkspaceRootSpellings() {
 func (a *App) registerProjectRoot(workspaceRoot string) {
 	_ = addProject(workspaceRoot, "")
 	a.syncTabWorkspaceRootSpellings()
+	if strings.TrimSpace(workspaceRoot) != "" {
+		a.requestSessionCatalogReconcile(desktopSessionDir(workspaceRoot))
+	}
 }
 
 // OpenProjectTab builds a controller scoped to workspaceRoot and opens the
@@ -2458,7 +2461,7 @@ func (a *App) openTopicTabWithActivation(scope, workspaceRoot, topicID, sessionP
 
 	a.startTabControllerBuild(tab)
 	if scope == "project" {
-		a.emitProjectTreeRuntimeChangedForSessionDirs(sessionDirectoryForPath(sessionPath))
+		a.emitProjectTreeRuntimeChangedWithLegacy()
 	}
 	return enrichTabMeta(meta), nil
 }

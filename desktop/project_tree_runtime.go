@@ -145,13 +145,6 @@ func (a *App) emitProjectTreeRuntimeChangedWithCatalogRefresh() {
 	a.emitProjectTreeRuntimeChangedWithLegacy()
 }
 
-func (a *App) emitProjectTreeRuntimeChangedForSessionDirs(dirs ...string) {
-	for _, dir := range dirs {
-		a.requestSessionCatalogReconcile(dir)
-	}
-	a.emitProjectTreeRuntimeChangedWithLegacy()
-}
-
 func (a *App) emitRuntimeEvent(name string, payload ...any) {
 	if a != nil && a.ctx != nil {
 		a.runtimeEvents.Emit(a.ctx, name, payload...)
