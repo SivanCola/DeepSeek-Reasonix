@@ -27,7 +27,7 @@ func (e *ReasoningReplayError) Error() string {
 	if e != nil && e.Kind == ReasoningReplayOverflow {
 		return "The provider reasoning exceeded the client safety limit, so Reasonix did not run the requested tools. Existing work was kept; retry to continue safely."
 	}
-	return "The provider omitted reasoning required to replay this tool turn, so Reasonix did not run the requested tools. Existing work was kept; retry to continue safely."
+	return "The provider omitted reasoning required to replay this tool turn after an automatic retry, so Reasonix did not run the requested tools. Existing work was kept; retry to make a fresh attempt."
 }
 
 // PauseClass names the guard that deliberately ended a run, so a host can

@@ -39,12 +39,22 @@ func (a *Agent) observeMissingToolCallReasoning(calls []provider.ToolCall, reaso
 // provider-executed tool activity while preserving its persisted incident and
 // anti-flapping behavior.
 func (a *Agent) observeMissingAssistantReasoning(message provider.Message, complete bool) (missing, shouldRetry bool) {
-	if !provider.RequiresAssistantReasoningReplay(a.svc.prov, message) || !provider.WarnOnMissingToolCallReasoning(a.svc.prov) {
+	if !provider.RequiresAssistantReasoningReplay(a.svc.prov, message) {
 		return false, false
 	}
 	reasoning := message.ReasoningContent
 	if !complete {
 		reasoning = ""
+	}
+	// Strict protocols cannot fall back to empty reasoning. Give each sampling
+	// boundary one exact retry; the retry finalizer rejects a second malformed
+	// response without executing tools.
+	if strings.TrimSpace(reasoning) == "" && !provider.AllowsEmptyReasoningFallback(a.svc.prov) {
+		return true, true
+	}
+	// Persist anti-flapping only when empty reasoning is a valid fallback.
+	if !provider.WarnOnMissingToolCallReasoning(a.svc.prov) {
+		return false, false
 	}
 	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
 	observedAt := time.Now()

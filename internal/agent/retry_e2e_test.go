@@ -178,3 +178,53 @@ func TestDeepSeekFlashMissingReasoningRecoveryWithRealSSE(t *testing.T) {
 		}
 	}
 }
+
+func TestGLMToolTurnWithoutReasoningContinuesWithoutRecovery(t *testing.T) {
+	var mu sync.Mutex
+	var bodies [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, append([]byte(nil), body...))
+		requestNo := len(bodies)
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requestNo == 1 {
+			_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"echo","arguments":"{\"text\":\"hi\"}"}}]},"finish_reason":"tool_calls"}]}`+"\n\n")
+		} else {
+			_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`+"\n\n")
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	prov, err := openai.New(provider.Config{
+		Name: "glm", BaseURL: srv.URL, Model: "glm-5.2", APIKey: "k",
+		Extra: map[string]any{"reasoning_protocol": "glm"},
+	})
+	if err != nil {
+		t.Fatalf("New provider: %v", err)
+	}
+	sink := &recordSink{}
+	a := New(prov, echoRegistry(), NewSession(""), Options{}, sink)
+	if err := a.Run(context.Background(), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	requestBodies := append([][]byte(nil), bodies...)
+	mu.Unlock()
+	if len(requestBodies) != 2 {
+		t.Fatalf("HTTP requests = %d, want tool turn and final turn without recovery", len(requestBodies))
+	}
+	if bytes.Contains(requestBodies[1], []byte(`"reasoning_content"`)) {
+		t.Fatal("GLM replay invented reasoning_content for a turn that emitted none")
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryMissingReasoningRetryAttempted); got != 0 {
+		t.Fatalf("missing-reasoning retries = %d, want 0", got)
+	}
+	if got := len(sink.kinds(event.ToolResult)); got != 1 {
+		t.Fatalf("tool results = %d, want 1", got)
+	}
+}

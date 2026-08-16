@@ -26,7 +26,11 @@ func (a *Agent) runSamplingAttempt(ctx context.Context, turn int, sink event.Sin
 }
 
 func (a *Agent) samplingAttemptSinks() (*deferredStreamSink, event.Sink) {
-	if provider.WarnOnMissingToolCallReasoning(a.svc.prov) {
+	// Replay requirements own speculative event visibility. Even providers that
+	// suppress diagnostics must hide tool cards until replayability is known.
+	if provider.RequiresToolCallReasoning(a.svc.prov) ||
+		provider.RequiresReasoningRoundTrip(a.svc.prov) ||
+		provider.WarnOnMissingToolCallReasoning(a.svc.prov) {
 		streamSink := newReasoningAwareStreamSink(a.svc.sink)
 		return streamSink, streamSink
 	}
