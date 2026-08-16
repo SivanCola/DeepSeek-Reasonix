@@ -191,7 +191,7 @@ func (a *Agent) finalReadinessCheckFor() finalReadinessCheck {
 			a.turn.engine.NoteRecoveryAttempt()
 		}
 		out.reason = strings.Join(missing, "; ")
-		if !a.closedLoopActive() {
+		if !a.turn.automaticReadinessContinuation && !a.closedLoopActive() {
 			return a.applyPartialCheckWaiver(out)
 		}
 		return out

@@ -129,6 +129,7 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	// values are computed below. Cross-turn state (checkpoint, scope, failure
 	// budgets) lives in taskRuntime and is reconciled there.
 	a.turn = turnRuntime{}
+	a.turn.automaticReadinessContinuation = automaticReadinessContinuationFromContext(ctx)
 	a.resetStructuralRunGuards()
 	scope, scoped := DeliveryExecutionScopeFromContext(ctx)
 	preserveEvidence, readinessRecovered := a.beginFinalReadinessRecovery()
@@ -519,10 +520,11 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 		return false, a.gracePause(state)
 	}
 	if readiness.reason != "" {
-		// Goal/Plan and fact contradictions (open todos, sign-off, action
-		// receipts) fail the run. Ordinary Recoverable/project/review gaps
-		// become an honest Partial completion instead of a recovery error.
-		if a.closedLoopActive() || readiness.incompleteTodos > 0 || readiness.missingSignoff > 0 || readiness.missingActionEvidence > 0 {
+		// The host owns the concrete missing requirements. Return them to the
+		// controller when automatic continuation is armed (or for the existing
+		// strict/Goal path). Unarmed ordinary agents retain their Partial
+		// contract and do not unexpectedly change the direct Agent API.
+		if a.turn.automaticReadinessContinuation || a.closedLoopActive() || readiness.incompleteTodos > 0 || readiness.missingSignoff > 0 || readiness.missingActionEvidence > 0 {
 			event.RecordReadinessAudit(a.svc.sink, readiness.audit(evidence.ReadinessErrored, false))
 			a.pending.finalReadinessRecovery = true
 			a.persistFinalReadinessRecovery(readiness.missingIDs())
