@@ -67,10 +67,15 @@ func (a *Agent) recoverContextLimit(ctx context.Context, frozen samplingRequest,
 		return samplingRequest{req: next}, true, contextRecoveryLearnedRetry
 	}
 	if budget.compactRetries == 0 {
+		startProjectionVersion := a.currentProjectionVersion()
 		if _, perr := a.contextManager().Prepare(ctx, ContextPreparePolicy{
 			Trigger: CompactionTriggerOverflow,
 			Force:   true,
 		}); perr != nil {
+			a.setLastRecovery(contextRecoveryFailed)
+			return samplingRequest{}, false, contextRecoveryFailed
+		}
+		if a.currentProjectionVersion() <= startProjectionVersion {
 			a.setLastRecovery(contextRecoveryFailed)
 			return samplingRequest{}, false, contextRecoveryFailed
 		}

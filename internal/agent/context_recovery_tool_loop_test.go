@@ -94,7 +94,7 @@ func chunks(items ...provider.Chunk) <-chan provider.Chunk {
 	return ch
 }
 
-func TestToolLoopRecoversFromTwoHardOverflowsInOneTurn(t *testing.T) {
+func TestToolLoopRetriesOriginalRequestAtMostOncePerOverflow(t *testing.T) {
 	prov := &repeatedOverflowProvider{rejectedAt: make(map[int]bool), maxToolCalls: 9}
 	reg := tool.NewRegistry()
 	reg.Add(overflowLoopTool{output: strings.Repeat("large deterministic tool output. ", 700)})
@@ -112,8 +112,9 @@ func TestToolLoopRecoversFromTwoHardOverflowsInOneTurn(t *testing.T) {
 		MaxOutputTokens: 1024,
 	}, sink)
 
-	if err := a.Run(context.Background(), "keep using the tool until the provider says the task is done"); err != nil {
-		t.Fatalf("Run after repeated context overflows: %v", err)
+	err := a.Run(context.Background(), "keep using the tool until the provider says the task is done")
+	if err == nil {
+		t.Fatal("second overflow in one request unexpectedly retried again")
 	}
 
 	prov.mu.Lock()
@@ -121,10 +122,7 @@ func TestToolLoopRecoversFromTwoHardOverflowsInOneTurn(t *testing.T) {
 	if prov.overflows != 2 {
 		t.Fatalf("provider overflows = %d, want 2", prov.overflows)
 	}
-	if prov.toolCalls != prov.maxToolCalls {
-		t.Fatalf("tool calls = %d, want %d", prov.toolCalls, prov.maxToolCalls)
-	}
-	if prov.summaries < 2 || applied < 2 {
-		t.Fatalf("summaries=%d applied=%d, want at least two progress-making recoveries", prov.summaries, applied)
+	if prov.summaries > 1 || applied > 1 {
+		t.Fatalf("summaries=%d applied=%d, want at most one overflow recovery", prov.summaries, applied)
 	}
 }

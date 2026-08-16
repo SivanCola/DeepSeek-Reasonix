@@ -154,6 +154,7 @@ type visibleCompressionPlan struct {
 type preparedVisibleCompression struct {
 	fold         []provider.Message
 	instructions string
+	inputMode    string
 }
 
 func (a *Agent) compressVisibleRange(
@@ -175,9 +176,13 @@ func (a *Agent) compressVisibleRange(
 		return plan.result, nil
 	}
 	result := plan.result
+	inputMode := SummaryInputNonPrefix
+	if direction == "before" && foldMatchesVisiblePrefix(snap.visible, plan.fold) {
+		inputMode = SummaryInputCachePrefix
+	}
 
 	a.svc.sink.Emit(event.Event{Kind: event.CompactionStarted, Compaction: event.Compaction{Trigger: trigger}})
-	prepared, reason, err := a.prepareVisibleCompression(ctx, trigger, plan.fold, instructions)
+	prepared, reason, err := a.prepareVisibleCompression(ctx, trigger, plan.fold, instructions, inputMode)
 	if err != nil {
 		a.emitCompactionAborted(trigger)
 		return tool.CompressResult{}, err
@@ -188,7 +193,7 @@ func (a *Agent) compressVisibleRange(
 		return result, nil
 	}
 
-	res, err := a.foldToSummary(ctx, prepared.fold, prepared.instructions)
+	res, err := a.foldToSummaryMode(ctx, prepared.fold, prepared.instructions, prepared.inputMode)
 	summary := res.Text
 	tele := compactionTelemetryFromSummary(trigger, a.CacheState(), result.SourceTokens, res)
 	if err != nil {
@@ -206,7 +211,7 @@ func (a *Agent) compressVisibleRange(
 	}
 
 	projection := buildVisibleCompressionProjection(snap.visible, plan, summary)
-	projectionTokens := estimateMessagesTokens(a.providerProjectionMessages(projection))
+	projectionTokens := a.estimatedVisibleRequestTokens(projection)
 	tele.ProjectionTokens = projectionTokens
 	result.Messages = len(plan.fold)
 	result.ProjectionTokens = projectionTokens
@@ -218,7 +223,7 @@ func (a *Agent) compressVisibleRange(
 		return result, nil
 	}
 
-	inputHash := providerVisibleFingerprint(provider.ModelMessages(snap.visible))
+	inputHash := providerVisibleFingerprint(modelInputMessages(snap.visible))
 	outputHash := providerVisibleFingerprint(projection)
 	state, err := a.commitSummaryProjection(summaryProjectionCommit{
 		canonical: snap.canonical, fold: prepared.fold, projected: projection, result: res,
@@ -244,6 +249,18 @@ func (a *Agent) compressVisibleRange(
 	return result, nil
 }
 
+func foldMatchesVisiblePrefix(visible, fold []provider.Message) bool {
+	head := 0
+	if len(visible) > 0 && visible[0].Role == provider.RoleSystem {
+		head = 1
+	}
+	if len(fold) == 0 || head+len(fold) > len(visible) {
+		return false
+	}
+	return providerVisibleFingerprint(modelInputMessages(fold)) ==
+		providerVisibleFingerprint(modelInputMessages(visible[head:head+len(fold)]))
+}
+
 func (a *Agent) explicitCompressionSnapshotCurrent(snap explicitCompressionSnapshot) bool {
 	current, version := a.sess.conversation.snapshotMessagesVersion()
 	a.sess.compactionMu.Lock()
@@ -257,7 +274,7 @@ func (a *Agent) explicitCompressionSnapshotCurrent(snap explicitCompressionSnaps
 }
 
 func (a *Agent) planVisibleCompression(snap explicitCompressionSnapshot, direction string, anchorIndex int, preview string) (visibleCompressionPlan, bool) {
-	sourceTokens := estimateMessagesTokens(snap.visible)
+	sourceTokens := a.estimatedVisibleRequestTokens(snap.visible)
 	plan := visibleCompressionPlan{result: tool.CompressResult{
 		Status:           "noop",
 		Direction:        direction,
@@ -313,7 +330,7 @@ func (a *Agent) planVisibleCompression(snap explicitCompressionSnapshot, directi
 	return plan, true
 }
 
-func (a *Agent) prepareVisibleCompression(ctx context.Context, trigger string, fold []provider.Message, instructions string) (preparedVisibleCompression, string, error) {
+func (a *Agent) prepareVisibleCompression(ctx context.Context, trigger string, fold []provider.Message, instructions, inputMode string) (preparedVisibleCompression, string, error) {
 	if a.svc.hooks != nil {
 		if hookInstructions := a.svc.hooks.PreCompact(ctx, trigger); hookInstructions != "" {
 			if instructions != "" {
@@ -322,6 +339,7 @@ func (a *Agent) prepareVisibleCompression(ctx context.Context, trigger string, f
 			instructions += hookInstructions
 		}
 	}
+	originalHash := providerVisibleFingerprint(modelInputMessages(fold))
 	preparedFold, preparedInstructions, err := a.interceptCompactionPrepare(ctx, fold, instructions)
 	if err != nil {
 		return preparedVisibleCompression{}, "", err
@@ -330,7 +348,10 @@ func (a *Agent) prepareVisibleCompression(ctx context.Context, trigger string, f
 	if len(preparedFold) == 0 {
 		return preparedVisibleCompression{}, "compaction hook removed the selected range", nil
 	}
-	return preparedVisibleCompression{fold: preparedFold, instructions: preparedInstructions}, "", nil
+	if providerVisibleFingerprint(modelInputMessages(preparedFold)) != originalHash {
+		inputMode = SummaryInputExtensionRewritten
+	}
+	return preparedVisibleCompression{fold: preparedFold, instructions: preparedInstructions, inputMode: inputMode}, "", nil
 }
 
 func buildVisibleCompressionProjection(visible []provider.Message, plan visibleCompressionPlan, summary string) []provider.Message {
@@ -343,7 +364,7 @@ func buildVisibleCompressionProjection(visible []provider.Message, plan visibleC
 			projection = append(projection, msg)
 		}
 	}
-	return provider.ModelMessages(projection)
+	return provider.ProjectionMessages(promoteToolRawContent(projection))
 }
 
 func compactionTelemetryFromSummary(trigger, cacheState string, sourceTokens int, res foldSummary) CompactionTelemetry {
@@ -353,6 +374,7 @@ func compactionTelemetryFromSummary(trigger, cacheState string, sourceTokens int
 		ProviderRequestID: res.RequestID,
 		FoldTokens:        res.FoldTokens,
 		Spans:             1, // one application-layer summary request per transaction
+		SummaryInputMode:  res.InputMode,
 	}
 	usage := res.Usage
 	if usage == nil {
@@ -384,6 +406,10 @@ func (a *Agent) compact(ctx context.Context, trigger, instructions string, force
 func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions string, force, mustFree bool) (CompactionOutcome, error) {
 	a.sess.compactionRunMu.Lock()
 	defer a.sess.compactionRunMu.Unlock()
+	return a.compactToProjectionLocked(ctx, trigger, instructions, force, mustFree)
+}
+
+func (a *Agent) compactToProjectionLocked(ctx context.Context, trigger, instructions string, force, mustFree bool) (CompactionOutcome, error) {
 	activeTurn := a.activeTurnCreatedAt.Load()
 	canonical, transcriptVersion := a.sess.conversation.snapshotMessagesVersion()
 	a.sess.compactionMu.Lock()
@@ -392,13 +418,7 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 	startGeneration := a.sess.compactionState.Generation
 	a.sess.compactionMu.Unlock()
 	msgs, onProjection := a.visibleInputForFold(stateSnapshot, canonical, transcriptVersion)
-	viewInputHash := providerVisibleFingerprint(provider.ModelMessages(msgs))
-	if a.sameTurnCompactionBlocked(activeTurn, trigger, mustFree, stateSnapshot, viewInputHash) {
-		return CompactionNoop, nil
-	}
-	if trigger != CompactionTriggerManual && stateSnapshot.LastReceipt != nil && stateSnapshot.LastReceipt.Status == "applied" && stateSnapshot.LastReceipt.Action == "summary" && stateSnapshot.LastReceipt.InputHash == viewInputHash {
-		return CompactionNoop, nil
-	}
+	viewInputHash := providerVisibleFingerprint(modelInputMessages(msgs))
 	head, start, ok := a.planFoldRegion(msgs, force)
 	if !ok {
 		return CompactionNoop, nil
@@ -424,7 +444,7 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 	if len(fold) == 0 || (!force && !foldEconomics(fold)) {
 		return CompactionNoop, nil
 	}
-	fixedPrefixTokens := estimateMessagesTokens(a.providerProjectionMessages(msgs[:head]))
+	fixedPrefixTokens := a.estimatedVisibleRequestTokens(msgs[:head])
 	if a.contextWindow > 0 && fixedPrefixTokens >= a.compactTrigger() {
 		return CompactionNoop, fmt.Errorf("%w: fixed prefix (%d tokens) already exceeds trigger (%d)", errCheckpointRejected, fixedPrefixTokens, a.compactTrigger())
 	}
@@ -438,6 +458,7 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 			instructions += hookInstr
 		}
 	}
+	originalFoldHash := providerVisibleFingerprint(modelInputMessages(fold))
 	var err error
 	fold, instructions, err = a.interceptCompactionPrepare(ctx, fold, instructions)
 	if err != nil {
@@ -449,8 +470,12 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 		return CompactionNoop, nil
 	}
 
-	sourceTokens := a.estimatedPromptTokens(msgs)
-	res, tele, err := a.foldOrDegrade(ctx, trigger, mustFree, fold, instructions, sourceTokens)
+	sourceTokens := a.estimatedVisibleRequestTokens(msgs)
+	inputMode := SummaryInputCachePrefix
+	if providerVisibleFingerprint(modelInputMessages(fold)) != originalFoldHash {
+		inputMode = SummaryInputExtensionRewritten
+	}
+	res, tele, err := a.foldSummaryWithTelemetry(ctx, trigger, fold, instructions, sourceTokens, inputMode)
 	if err != nil {
 		a.emitCompactionTelemetry(tele)
 		a.emitCompactionAborted(trigger)
@@ -472,16 +497,15 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 		projMsgs = append(projMsgs, provider.ProjectionMessages(bodySuffix)...)
 	}
 	spliced := append(append([]provider.Message(nil), projMsgs...), canonical[covered:]...)
-	projTokens := a.estimatedPromptTokens(spliced)
-	fixedPrefixTokens = a.estimatedPromptTokens(msgs[:head])
+	projTokens := a.estimatedVisibleRequestTokens(spliced)
 	tele.ProjectionTokens = projTokens
 	tele.UserTurnsKept, tele.UserTurnsDropped = retention.Kept, retention.Dropped
 	a.emitCompactionTelemetry(tele)
-	if err := a.acceptCheckpointCandidate(trigger, force, sourceTokens, projTokens, fixedPrefixTokens); err != nil {
+	if err := a.acceptCheckpointCandidate(trigger, sourceTokens, projTokens); err != nil {
 		a.emitCompactionAborted(trigger)
 		return CompactionNoop, err
 	}
-	viewOutputHash := providerVisibleFingerprint(provider.ModelMessages(spliced))
+	viewOutputHash := providerVisibleFingerprint(modelInputMessages(spliced))
 	_, err = a.commitSummaryProjection(summaryProjectionCommit{
 		canonical: canonical, fold: fold, projected: projMsgs, result: res,
 		transcriptVersion: transcriptVersion, projectionVersion: startProjectionVersion,
@@ -496,8 +520,6 @@ func (a *Agent) compactToProjection(ctx context.Context, trigger, instructions s
 	a.svc.sink.Emit(event.Event{Kind: event.CompactionDone, Compaction: event.Compaction{
 		Trigger: trigger, Messages: len(fold), Summary: summary,
 	}})
-	// Only once the checkpoint is committed: a rejected candidate folded nothing.
-	a.noticeDroppedUserTurns(retention)
 	return CompactionInstalled, nil
 }
 
@@ -521,47 +543,15 @@ func checkpointProjectionMessages(msgs []provider.Message, head int, kept []prov
 	return provider.ProjectionMessages(projMsgs)
 }
 
-// acceptCheckpointCandidate: ≤50% + smaller for auto; force may exceed 50%
-// only if still below trigger; manual below trigger accepts any savings.
-func (a *Agent) acceptCheckpointCandidate(trigger string, force bool, sourceTokens, candidateTokens, fixedPrefixTokens int) error {
+// acceptCheckpointCandidate requires real savings and, for automatic
+// maintenance, a result below the physical input ceiling.
+func (a *Agent) acceptCheckpointCandidate(trigger string, sourceTokens, candidateTokens int) error {
 	if candidateTokens >= sourceTokens {
 		return fmt.Errorf("%w: candidate would not reduce tokens (%d >= %d)", errCheckpointRejected, candidateTokens, sourceTokens)
 	}
-	triggerTokens := a.compactTrigger()
-	ceiling := a.checkpointCeiling()
 	hard := a.hardInputCeiling()
-	manualBelowTrigger := trigger == CompactionTriggerManual && sourceTokens < triggerTokens
-	if manualBelowTrigger {
-		// Directed manual compress: any real savings is acceptable.
-		return nil
-	}
-	if fixedPrefixTokens > ceiling {
-		// Exceptional path: fixed prefix alone already exceeds 50%.
-		savings := sourceTokens - candidateTokens
-		if savings < a.exceptionalMinimumSavings() {
-			return fmt.Errorf("%w: fixed-prefix exception requires ≥%d token savings, got %d", errCheckpointRejected, a.exceptionalMinimumSavings(), savings)
-		}
-		if triggerTokens > 0 && candidateTokens >= triggerTokens {
-			return fmt.Errorf("%w: candidate %d still at or above trigger %d", errCheckpointRejected, candidateTokens, triggerTokens)
-		}
-		if hard > 0 && candidateTokens >= hard {
-			return fmt.Errorf("%w: candidate %d still at or above physical ceiling %d", errCheckpointRejected, candidateTokens, hard)
-		}
-		return nil
-	}
-	if ceiling > 0 && candidateTokens > ceiling {
-		// keep / recent_keep / active-turn protection made the candidate large;
-		// this is not a fixed-prefix exception. Force/overflow may still land
-		// a strictly smaller view below the trigger when the ceiling cannot.
-		if !force {
-			return fmt.Errorf("%w: candidate %d exceeds checkpoint ceiling %d (protected content too large)", errCheckpointRejected, candidateTokens, ceiling)
-		}
-	}
-	if triggerTokens > 0 && candidateTokens >= triggerTokens && !force {
-		return fmt.Errorf("%w: candidate %d still at or above trigger %d", errCheckpointRejected, candidateTokens, triggerTokens)
-	}
-	if force && triggerTokens > 0 && candidateTokens >= triggerTokens {
-		return fmt.Errorf("%w: forced candidate %d still at or above trigger %d", errCheckpointRejected, candidateTokens, triggerTokens)
+	if trigger != CompactionTriggerManual && hard > 0 && candidateTokens >= hard {
+		return fmt.Errorf("%w: candidate %d still at or above physical ceiling %d", errCheckpointRejected, candidateTokens, hard)
 	}
 	return nil
 }
@@ -581,18 +571,19 @@ func (a *Agent) planFoldRegion(msgs []provider.Message, force bool) (head, start
 	return head, start, start > head
 }
 
+type userTurnRetention struct {
+	Kept    int
+	Dropped int
+}
+
 func (a *Agent) partitionFoldForProjection(region []provider.Message) (kept, fold []provider.Message, retention userTurnRetention) {
-	policyKeep, retention := a.keepIndexes(region)
-	for i, m := range region {
-		switch {
-		case m.LocalOnly: // display-only output never reaches a provider
-		case isCompactionSummary(m):
-			// Always merge prior digests into the single next summary.
-			fold = append(fold, m)
-		case policyKeep[i]:
-			kept = append(kept, a.keptForProjection(m))
-		default:
-			fold = append(fold, m)
+	for _, m := range region {
+		if m.LocalOnly {
+			continue
+		}
+		fold = append(fold, m)
+		if m.Role == provider.RoleUser && !isCompactionSummary(m) {
+			retention.Dropped++
 		}
 	}
 	return kept, fold, retention

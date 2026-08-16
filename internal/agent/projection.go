@@ -48,6 +48,12 @@ const (
 	CompactionModeSnip       = "snip"
 )
 
+const (
+	SummaryInputCachePrefix        = "cache_prefix"
+	SummaryInputExtensionRewritten = "extension_rewritten"
+	SummaryInputNonPrefix          = "non_prefix"
+)
+
 // ContextProjection is the model-visible view of a session. The canonical
 // transcript in Session.Messages is never replaced by this structure.
 type ContextProjection struct {
@@ -151,6 +157,7 @@ type CompactionTelemetry struct {
 	CacheWriteTokens  int    `json:"cache_write_tokens"`
 	RequestCount      int    `json:"request_count"`
 	ProviderRequestID string `json:"provider_request_id,omitempty"`
+	SummaryInputMode  string `json:"summary_input_mode,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 

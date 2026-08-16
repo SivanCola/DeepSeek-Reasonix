@@ -1108,7 +1108,7 @@ func TestToolAfterFailurePolicy(t *testing.T) {
 // newCompactionAgent builds an agent whose session has a foldable middle
 // (large assistant turns) so CompactNow always finds a region, with the
 // summarizer scripted to answer "SUMMARY TEXT". The recent tail stays small so
-// the content-driven candidate lands well under compact_ratio and the 50% ceiling.
+// the content-driven candidate lands under compact_ratio.
 func newCompactionAgent(t *testing.T, d *dispatch.Dispatcher) (*mockProvider, *Agent) {
 	t.Helper()
 	mp := &mockProvider{name: "p", chunks: []provider.Chunk{
@@ -1141,12 +1141,18 @@ func TestCompactionPrepareReplaceGuidance(t *testing.T) {
 	}}
 	d := newExtDispatcher(client, true, nil, extension.PointCompactionPrepare)
 	mp, a := newCompactionAgent(t, d)
+	telemetry := ""
+	a.svc.sink = event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice && e.Text == "compaction telemetry" {
+			telemetry = e.Detail
+		}
+	})
 	if err := a.CompactNow(context.Background(), ""); err != nil {
 		t.Fatalf("CompactNow: %v", err)
 	}
-	for i, req := range mp.requests { // a fold too large for one call is summarized in parts
-		if sys := req.Messages[0].Content; !strings.Contains(sys, "EXTENSION GUIDANCE") {
-			t.Fatalf("summarizer call %d of %d missing the replaced guidance:\n%.200q", i+1, len(mp.requests), sys)
+	for i, req := range mp.requests {
+		if instruction := req.Messages[len(req.Messages)-1].Content; !strings.Contains(instruction, "EXTENSION GUIDANCE") {
+			t.Fatalf("summarizer call %d of %d missing the replaced guidance:\n%.200q", i+1, len(mp.requests), instruction)
 		}
 	}
 	if sc := joinContents(visibleContext(a)); !strings.Contains(sc, "SUMMARY TEXT") {
@@ -1154,6 +1160,9 @@ func TestCompactionPrepareReplaceGuidance(t *testing.T) {
 	}
 	if n := client.notifyCountFor(protocol.EventCompactionPrepare); n != 1 {
 		t.Fatalf("compaction.prepare events = %d, want 1", n)
+	}
+	if !strings.Contains(telemetry, "summary_input="+SummaryInputCachePrefix) {
+		t.Fatalf("telemetry = %q, want cache-prefix summary input", telemetry)
 	}
 }
 
@@ -1168,12 +1177,20 @@ func TestCompactionPrepareReplaceMessages(t *testing.T) {
 	}}
 	d := newExtDispatcher(client, true, nil, extension.PointCompactionPrepare)
 	mp, a := newCompactionAgent(t, d)
+	telemetry := ""
+	a.svc.sink = event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice && e.Text == "compaction telemetry" {
+			telemetry = e.Detail
+		}
+	})
 	if err := a.CompactNow(context.Background(), ""); err != nil {
 		t.Fatalf("CompactNow: %v", err)
 	}
-	transcript := mp.requests[0].Messages[1].Content
-	if !strings.Contains(transcript, "EXTENSION FOLD") {
-		t.Fatalf("summarizer transcript = %.200q, want the replaced fold", transcript)
+	if got := joinContents(mp.requests[0].Messages); !strings.Contains(got, "EXTENSION FOLD") {
+		t.Fatalf("summarizer messages = %.200q, want the replaced fold", got)
+	}
+	if !strings.Contains(telemetry, "summary_input="+SummaryInputExtensionRewritten) {
+		t.Fatalf("telemetry = %q, want extension-rewritten summary input", telemetry)
 	}
 }
 
@@ -1660,8 +1677,8 @@ func TestCompactionPrepareSlotOwnerConsulted(t *testing.T) {
 	if err := a.CompactNow(context.Background(), ""); err != nil {
 		t.Fatalf("CompactNow: %v", err)
 	}
-	if sys := mp.requests[0].Messages[0].Content; !strings.Contains(sys, "OWNER GUIDANCE") {
-		t.Fatalf("summarizer system prompt missing the owner's guidance:\n%.200q", sys)
+	if instruction := mp.requests[0].Messages[len(mp.requests[0].Messages)-1].Content; !strings.Contains(instruction, "OWNER GUIDANCE") {
+		t.Fatalf("final summary instruction missing the owner's guidance:\n%.200q", instruction)
 	}
 }
 
@@ -1696,9 +1713,9 @@ func TestCompactionPrepareSlotOwnerFinalSayAfterChain(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("owner consulted %d times, want 2 (chain, then strategy)", calls)
 	}
-	sys := mp.requests[0].Messages[0].Content
-	if !strings.Contains(sys, "OWNER GUIDANCE") || strings.Contains(sys, "CHAIN GUIDANCE") {
-		t.Fatalf("summarizer system prompt = %.200q, want the strategy ruling to win", sys)
+	instruction := mp.requests[0].Messages[len(mp.requests[0].Messages)-1].Content
+	if !strings.Contains(instruction, "OWNER GUIDANCE") || strings.Contains(instruction, "CHAIN GUIDANCE") {
+		t.Fatalf("final summary instruction = %.200q, want the strategy ruling to win", instruction)
 	}
 }
 

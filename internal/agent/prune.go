@@ -1,20 +1,120 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
 
-// Tool-result helpers serve first-visible bounding and summary fold input.
-// Automatic prune/snip projections are gone; the public APIs are no-ops.
+// Legacy snip helpers still support compatibility storage. Their public APIs
+// are no-ops; pressure-time Harness pruning uses the rune-based policy below.
 const (
 	snippedMarker = "[snipped tool result — "
 	prunedMarker  = "[elided tool result — "
 	minPruneBytes = 1024
+
+	toolPruneThresholdRunes = 8192
+	toolPruneHeadRunes      = 4096
+	toolPruneTailRunes      = 1024
+	toolPruneMarker         = "[... tool result middle pruned ...]"
 )
+
+func pruneToolResultContent(content string) (string, bool) {
+	runes := []rune(content)
+	if len(runes) <= toolPruneThresholdRunes {
+		return content, false
+	}
+	return string(runes[:toolPruneHeadRunes]) + toolPruneMarker + string(runes[len(runes)-toolPruneTailRunes:]), true
+}
+
+// pruneToolResultsToProjectionLocked installs a durable, model-visible prune
+// projection. The caller owns compactionRunMu for the whole maintenance run;
+// canonical storage, including RawContent, is never modified.
+func (a *Agent) pruneToolResultsToProjectionLocked(trigger string) (bool, error) {
+	canonical, transcriptVersion := a.sess.conversation.snapshotMessagesVersion()
+	a.sess.compactionMu.Lock()
+	stateSnapshot := a.sess.compactionState
+	a.sess.compactionMu.Unlock()
+	visible, _ := a.visibleInputForFold(stateSnapshot, canonical, transcriptVersion)
+	projected := append([]provider.Message(nil), visible...)
+	affected := 0
+	for i := range projected {
+		if projected[i].Role != provider.RoleTool {
+			continue
+		}
+		source := projected[i].Content
+		if projected[i].RawContent != "" {
+			source = projected[i].RawContent
+		}
+		if projected[i].ProviderContent != "" {
+			source = projected[i].ProviderContent
+		}
+		if pruned, changed := pruneToolResultContent(source); changed {
+			projected[i].Content = pruned
+			projected[i].RawContent = ""
+			projected[i].ProviderContent = ""
+			affected++
+		}
+	}
+	if affected == 0 {
+		return false, nil
+	}
+	projected = provider.ProjectionMessages(projected)
+	sourceTokens := a.estimatedVisibleRequestTokens(visible)
+	resultTokens := a.estimatedVisibleRequestTokens(projected)
+	inputHash := a.contextMaintenanceInputHash(modelInputMessages(visible))
+	outputHash := providerVisibleFingerprint(modelInputMessages(projected))
+	projectionVersion := stateSnapshot.Projection.ProjectionVersion + 1
+	now := time.Now().UTC()
+	coveredHash := coveredPrefixHash(canonical, len(canonical))
+	receipt := &ContextMaintenanceReceipt{
+		OperationID: fmt.Sprintf("prune-%d-%s", projectionVersion, outputHash), Status: "applied", Action: "prune",
+		Trigger: trigger, SourceProjection: stateSnapshot.Projection.ProjectionVersion, ProjectionVersion: projectionVersion,
+		CoveredCount: len(canonical), CoveredPrefixHash: coveredHash, InputHash: inputHash, OutputHash: outputHash,
+		InputTokens: sourceTokens, ResultTokens: resultTokens, SavedTokens: max(0, sourceTokens-resultTokens),
+		AffectedToolResults: affected, CacheBreak: true, CreatedAt: now,
+	}
+	next := stateSnapshot
+	next.SchemaVersion = compactionStateSchemaCurrent
+	next.TranscriptVersion = transcriptVersion
+	next.Generation++
+	next.PromptCacheKey = a.currentPromptCacheKey()
+	next.Projection = ContextProjection{
+		Messages: projected, TranscriptVersion: transcriptVersion, ProjectionVersion: projectionVersion,
+		CoveredCount: len(canonical), CoveredPrefixHash: coveredHash, SourceTokens: sourceTokens,
+		ProjectionTokens: resultTokens, ViewInputHash: inputHash, ViewOutputHash: outputHash, CreatedAt: now,
+	}
+	next.LastReceipt = receipt
+	next.UpdatedAt = now
+
+	a.sess.compactionMu.Lock()
+	current, currentVersion := a.sess.conversation.snapshotMessagesVersion()
+	if currentVersion != transcriptVersion || len(current) != len(canonical) ||
+		coveredPrefixHash(current, len(current)) != coveredHash ||
+		a.sess.compactionState.Projection.ProjectionVersion != stateSnapshot.Projection.ProjectionVersion ||
+		a.sess.compactionState.Generation != stateSnapshot.Generation {
+		a.sess.compactionMu.Unlock()
+		return false, errCompressStaleContext
+	}
+	previous := a.sess.compactionState
+	a.sess.compactionState = next
+	if err := a.persistCompactionStateLocked(); err != nil {
+		a.sess.compactionState = previous
+		a.sess.compactionMu.Unlock()
+		if errors.Is(err, errCompressStaleContext) {
+			return false, err
+		}
+		return false, fmt.Errorf("persist prune projection: %w", err)
+	}
+	a.sess.checkpointState = "applied"
+	a.sess.compactionMu.Unlock()
+	a.emitContextMaintenance(receipt)
+	return true, nil
+}
 
 type toolResultMaintenanceMode int
 
