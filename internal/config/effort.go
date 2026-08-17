@@ -157,6 +157,16 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 		if containsString(supported, level) {
 			return level, nil
 		}
+		// Built-in DeepSeek V4 entries persist their canonical vocabulary in
+		// supported_efforts so it remains visible and round-trippable. Preserve
+		// the model's compatibility aliases when that list is still the exact
+		// built-in vocabulary; any user-customized list remains authoritative.
+		if cap, ok := modelReasoningCapabilityForEntry(e); ok &&
+			slices.Equal(supported, normalizedEffortLevels(cap.Levels)) {
+			if normalized, ok := cap.Aliases[level]; ok && containsString(supported, normalized) {
+				return normalized, nil
+			}
+		}
 		return "", fmt.Errorf("usage: /effort auto|%s", strings.Join(supported, "|"))
 	}
 	// V4 Flash and Pro expose a real low depth. Keep this model-scoped: generic
@@ -446,6 +456,13 @@ func mimoEffortCapability() EffortCapability {
 
 func resolvedModelReasoningCapability(e *ProviderEntry) (modelReasoningCapability, bool) {
 	if e == nil || e.Kind != "openai" {
+		return modelReasoningCapability{}, false
+	}
+	return modelReasoningCapabilityForEntry(e)
+}
+
+func modelReasoningCapabilityForEntry(e *ProviderEntry) (modelReasoningCapability, bool) {
+	if e == nil {
 		return modelReasoningCapability{}, false
 	}
 	cap, ok := modelReasoningCapabilities[strings.ToLower(strings.TrimSpace(e.Model))]

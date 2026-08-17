@@ -57,10 +57,16 @@ func backfillOfficialDeepSeekEffortOverrides(p *ProviderEntry) {
 	if p == nil {
 		return
 	}
+	// A provider-level vocabulary is user-owned and remains the fallback for
+	// every model without an explicit per-model override. Do not shadow it with
+	// generated model defaults on multi-model providers.
+	if len(p.SupportedEfforts) > 0 {
+		return
+	}
 	capabilities := deepSeekV4EffortOverrides()
 	if model := strings.TrimSpace(p.Model); model != "" && len(p.Models) == 0 {
 		defaults, ok := capabilities[model]
-		if !ok || len(p.SupportedEfforts) > 0 {
+		if !ok {
 			return
 		}
 		p.SupportedEfforts = append([]string(nil), defaults.SupportedEfforts...)

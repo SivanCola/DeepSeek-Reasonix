@@ -49,6 +49,33 @@ func TestDeepSeekV4FlashEffortCapabilityIncludesLow(t *testing.T) {
 	}
 }
 
+func TestDefaultDeepSeekV4EntriesAcceptCompatibilityAliases(t *testing.T) {
+	cfg := Default()
+	for _, ref := range []string{"deepseek-flash", "deepseek-pro"} {
+		entry, ok := cfg.ResolveModel(ref)
+		if !ok {
+			t.Fatalf("default model %q did not resolve", ref)
+		}
+		for _, alias := range []string{"medium", "xhigh"} {
+			got, err := NormalizeEffort(entry, alias)
+			if err != nil || got != "high" {
+				t.Errorf("%s %s = %q/%v, want high/nil", ref, alias, got, err)
+			}
+		}
+	}
+}
+
+func TestDeepSeekV4CustomEffortVocabularyRemainsAuthoritative(t *testing.T) {
+	entry := &ProviderEntry{
+		Kind:             "anthropic",
+		Model:            "deepseek-v4-pro",
+		SupportedEfforts: []string{"disabled", "high", "max"},
+	}
+	if _, err := NormalizeEffort(entry, "medium"); err == nil {
+		t.Fatal("custom supported_efforts should reject an undeclared compatibility alias")
+	}
+}
+
 func TestIsMiniMaxEntry(t *testing.T) {
 	for _, tc := range []struct {
 		baseURL string
