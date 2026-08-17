@@ -1305,10 +1305,7 @@ func newSubagentCapabilityFrontend(parent *tool.Registry, runtime *MCPCapability
 	if !ok {
 		return nil
 	}
-	if uc, ok := inner.(*UseCapabilityTool); ok {
-		return uc.CloneForAgent(nil, nil)
-	}
-	return inner
+	return cloneCapabilityFrontend(inner)
 }
 
 // mcpCapabilityAllowlist converts profile/call tool names into capability IDs

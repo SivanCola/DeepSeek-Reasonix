@@ -25,7 +25,7 @@ type toolResultPageHeader struct {
 	Complete   bool   `json:"complete"`
 }
 
-func executeToolResultPage(t *testing.T, proxy *UseCapabilityTool, callID, ref string, offset, limit int) (toolResultPageHeader, string, error) {
+func executeToolResultPage(t *testing.T, proxy tool.Tool, callID, ref string, offset, limit int) (toolResultPageHeader, string, error) {
 	t.Helper()
 	args, _ := json.Marshal(map[string]any{
 		"action": "call", "capability_id": sessionToolResultCapabilityID,
@@ -276,6 +276,90 @@ func TestRestrictedCapabilityProxyListsAndReadsOnlyOwnToolResults(t *testing.T) 
 	out, err := proxy.Execute(context.Background(), args)
 	if err != nil || !strings.HasSuffix(out, "\nown result") {
 		t.Fatalf("restricted self read: err=%v out=%q", err, out)
+	}
+}
+
+func TestRestrictedCapabilityFrontendCloneKeepsAgentSessionsIsolated(t *testing.T) {
+	parentInner := NewUseCapabilityTool(context.Background(), nil, nil, tool.NewRegistry(), nil, nil, nil)
+	parentProxy := &restrictedCapabilityProxy{
+		Tool: parentInner, resolver: parentInner,
+		allowed: map[string]bool{"mcp-server:allowed": true}, servers: map[string]bool{"allowed": true},
+	}
+	parentRegistry := tool.NewRegistry()
+	parentRegistry.Add(parentProxy)
+	_ = New(nil, parentRegistry, &Session{Messages: []provider.Message{{
+		Role: provider.RoleTool, ToolCallID: "call", Name: "read", Content: "parent",
+	}}}, Options{}, event.Discard)
+
+	childTool := newSubagentCapabilityFrontend(parentRegistry, nil)
+	childProxy, ok := childTool.(*restrictedCapabilityProxy)
+	if !ok {
+		t.Fatalf("child frontend type = %T, want *restrictedCapabilityProxy", childTool)
+	}
+	if childProxy == parentProxy || childProxy.Tool == parentProxy.Tool {
+		t.Fatal("child restricted frontend shares the parent's session-bindable proxy")
+	}
+	childRegistry := tool.NewRegistry()
+	childRegistry.Add(childProxy)
+	_ = New(nil, childRegistry, &Session{Messages: []provider.Message{{
+		Role: provider.RoleTool, ToolCallID: "call", Name: "read", Content: "child",
+	}}}, Options{}, event.Discard)
+
+	_, parentPage, parentErr := executeToolResultPage(t, parentProxy, "call", "", 0, 32)
+	_, childPage, childErr := executeToolResultPage(t, childProxy, "call", "", 0, 32)
+	if parentErr != nil || parentPage != "parent" {
+		t.Fatalf("parent page=%q err=%v", parentPage, parentErr)
+	}
+	if childErr != nil || childPage != "child" {
+		t.Fatalf("child page=%q err=%v", childPage, childErr)
+	}
+	childProxy.allowed["mcp-server:child-only"] = true
+	if parentProxy.allowed["mcp-server:child-only"] {
+		t.Fatal("child clone shares the parent's mutable capability allowlist")
+	}
+	beforeRegistry := tool.NewRegistry()
+	beforeRegistry.Add(parentProxy)
+	afterRegistry := tool.NewRegistry()
+	afterRegistry.Add(childProxy)
+	if parentProxy.Name() != childProxy.Name() || parentProxy.Description() != childProxy.Description() ||
+		!reflect.DeepEqual(parentProxy.Schema(), childProxy.Schema()) ||
+		!reflect.DeepEqual(beforeRegistry.Schemas(), afterRegistry.Schemas()) {
+		t.Fatal("cloning or binding changed provider-visible use_capability bytes")
+	}
+}
+
+func TestPlannerRestrictedCapabilityFrontendCloneKeepsExecutorSession(t *testing.T) {
+	inner := NewUseCapabilityTool(context.Background(), nil, nil, tool.NewRegistry(), nil, nil, nil)
+	executorProxy := &restrictedCapabilityProxy{
+		Tool: inner, resolver: inner,
+		allowed: map[string]bool{"mcp-server:allowed": true}, servers: map[string]bool{"allowed": true},
+	}
+	parent := tool.NewRegistry()
+	parent.Add(executorProxy)
+	_ = New(nil, parent, &Session{Messages: []provider.Message{{
+		Role: provider.RoleTool, ToolCallID: "call", Name: "read", Content: "executor",
+	}}}, Options{}, event.Discard)
+
+	plannerRegistry := PlannerToolRegistry(parent)
+	plannerTool, ok := plannerRegistry.Get("use_capability")
+	if !ok {
+		t.Fatal("planner missing use_capability")
+	}
+	plannerProxy, ok := plannerTool.(*restrictedCapabilityProxy)
+	if !ok || plannerProxy == executorProxy || plannerProxy.Tool == executorProxy.Tool {
+		t.Fatalf("planner frontend was not deeply cloned: %T", plannerTool)
+	}
+	_ = New(nil, plannerRegistry, &Session{Messages: []provider.Message{{
+		Role: provider.RoleTool, ToolCallID: "call", Name: "read", Content: "planner",
+	}}}, Options{}, event.Discard)
+
+	_, executorPage, executorErr := executeToolResultPage(t, executorProxy, "call", "", 0, 32)
+	_, plannerPage, plannerErr := executeToolResultPage(t, plannerProxy, "call", "", 0, 32)
+	if executorErr != nil || executorPage != "executor" {
+		t.Fatalf("executor page=%q err=%v", executorPage, executorErr)
+	}
+	if plannerErr != nil || plannerPage != "planner" {
+		t.Fatalf("planner page=%q err=%v", plannerPage, plannerErr)
 	}
 }
 

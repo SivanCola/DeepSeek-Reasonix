@@ -3,12 +3,67 @@ package agent
 import (
 	"encoding/json"
 	"strings"
+
+	"reasonix/internal/tool"
 )
 
 func (t *restrictedCapabilityProxy) bindToolResultSession(session func() *Session) {
 	if binder, ok := t.Tool.(toolResultSessionBinder); ok {
 		binder.bindToolResultSession(session)
 	}
+}
+
+// cloneCapabilityFrontend creates an Agent-owned frontend whenever binding a
+// session reader could otherwise mutate a parent Agent's tool. Unknown tools
+// remain shareable only when they cannot participate in session binding.
+func cloneCapabilityFrontend(frontend tool.Tool) tool.Tool {
+	switch typed := frontend.(type) {
+	case nil:
+		return nil
+	case *UseCapabilityTool:
+		if typed == nil {
+			return nil
+		}
+		return typed.CloneForAgent(nil, nil)
+	case *restrictedCapabilityProxy:
+		if typed == nil {
+			return nil
+		}
+		return typed.cloneForAgent()
+	default:
+		if _, sessionBindable := frontend.(toolResultSessionBinder); sessionBindable {
+			return nil
+		}
+		return frontend
+	}
+}
+
+func (t *restrictedCapabilityProxy) cloneForAgent() *restrictedCapabilityProxy {
+	if t == nil {
+		return nil
+	}
+	inner := cloneCapabilityFrontend(t.Tool)
+	resolver, ok := inner.(tool.CallResolver)
+	if inner == nil || !ok {
+		return nil
+	}
+	return &restrictedCapabilityProxy{
+		Tool:     inner,
+		resolver: resolver,
+		allowed:  cloneBoolMap(t.allowed),
+		servers:  cloneBoolMap(t.servers),
+	}
+}
+
+func cloneBoolMap(src map[string]bool) map[string]bool {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]bool, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 // emptyCapabilityListResult is the fail-closed list payload: no server metadata.
