@@ -623,7 +623,9 @@ try {
   for (let attempt = 0; attempt < 40 && !reachedBottom; attempt += 1) {
     await page.mouse.wheel(0, 640);
     await page.waitForTimeout(50);
-    reachedBottom = await transcript.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 1);
+    reachedBottom = await transcript.evaluate((element) =>
+      element.dataset.scrollMode === "tail-follow"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 1);
   }
   assert(reachedBottom, "repeated downward wheels reach the physical bottom through measurement churn (#8657)");
   await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "tail-follow", undefined, { timeout: 5_000 });
@@ -720,7 +722,9 @@ try {
     // Every sixth gesture, pause into scroll idle — the moment the pre-fix
     // chain fired its revision-driven remount mid-approach.
     if (attempt % 6 === 5) await page.waitForTimeout(500);
-    stormReached = await stormTranscript.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 1);
+    stormReached = await stormTranscript.evaluate((element) =>
+      element.dataset.scrollMode === "tail-follow"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 1);
   }
   assert(stormReached, "repeated downward wheels reach the physical bottom through the ref-resolution storm (#8657)");
   await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "tail-follow", undefined, { timeout: 5_000 });
