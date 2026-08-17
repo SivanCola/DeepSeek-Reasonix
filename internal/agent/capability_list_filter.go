@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 
 	"reasonix/internal/tool"
@@ -60,9 +61,7 @@ func cloneBoolMap(src map[string]bool) map[string]bool {
 		return nil
 	}
 	dst := make(map[string]bool, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
+	maps.Copy(dst, src)
 	return dst
 }
 
