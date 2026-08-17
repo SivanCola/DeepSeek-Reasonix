@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"reasonix/internal/agent"
@@ -161,7 +162,7 @@ func (o *turnOrchestrator) continueUntilReady(ctx context.Context, turnErr error
 // unchanged.
 func readinessContinuationPrompt(todos []evidence.TodoItem, missing []string, reason string) string {
 	var parts []string
-	if incomplete := evidence.IncompleteTodos(todos); readinessGapIncludes(missing, "todo") && len(incomplete) > 0 {
+	if incomplete := evidence.IncompleteTodos(todos); slices.Contains(missing, "todo") && len(incomplete) > 0 {
 		var b strings.Builder
 		b.WriteString("these tasks are still incomplete:")
 		for _, todo := range incomplete {
@@ -182,13 +183,4 @@ func readinessContinuationPrompt(todos []evidence.TodoItem, missing []string, re
 	}
 	b.WriteString("Address only the readiness items above within the original request. Do not expand scope or repeat destructive or external actions. If an item cannot be completed because the environment or permissions are unavailable, record the exact limitation and stop.")
 	return b.String()
-}
-
-func readinessGapIncludes(missing []string, want string) bool {
-	for _, id := range missing {
-		if id == want {
-			return true
-		}
-	}
-	return false
 }
