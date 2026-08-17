@@ -166,10 +166,9 @@ func showWindowRestoreFailure(app *App) {
 		if windowRestoreConfirmed() {
 			return
 		}
-		// A Wayland compositor may reject presentation when the triggering
-		// process has no activation token. If neither the main window nor its
-		// warning dialog became usable, a controlled exit is safer than an
-		// unreachable background process.
+		// A Wayland compositor may reject presentation without an activation token.
+		// If neither the main window nor its warning became usable, exit cleanly
+		// instead of leaving an unreachable background process.
 		app.forceQuit.Store(true)
 		C.reasonix_quit_unreachable_window()
 	})
