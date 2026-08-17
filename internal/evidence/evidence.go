@@ -359,6 +359,8 @@ type DeliveryCheckpoint struct {
 type Ledger struct {
 	mu               sync.Mutex
 	receipts         []Receipt
+	observations     []TextObservation
+	nextSequence     uint64
 	backgroundLeases []BackgroundLease
 }
 
@@ -372,6 +374,8 @@ func (l *Ledger) Reset() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.receipts = nil
+	l.observations = nil
+	l.nextSequence = 0
 	l.backgroundLeases = nil
 }
 
@@ -440,12 +444,59 @@ func (l *Ledger) Record(r Receipt) {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.nextSequence++
+	r.Sequence = l.nextSequence
 	if r.ToolName == "complete_step" && r.Step != "" && r.TodoStep == nil {
 		if match := latestTodoStep(r.Step, l.receipts); match.Found {
 			r.TodoStep = &match
 		}
 	}
 	l.receipts = append(l.receipts, r)
+}
+
+// ObservationBoundary freezes the ledger sequence at the start of a provider
+// tool-call batch. Observations recorded later in that batch are intentionally
+// ineligible as evidence because the model could not have seen their result.
+func (l *Ledger) ObservationBoundary() uint64 {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.nextSequence
+}
+
+// RecordTextObservation appends a validated model-visible text window under
+// the same sequence and mutex as ordinary tool receipts.
+func (l *Ledger) RecordTextObservation(o TextObservation) {
+	if l == nil || o.Path == "" || o.StartLine < 1 || len(o.LineHashes) == 0 {
+		return
+	}
+	o.LineHashes = append([]string(nil), o.LineHashes...)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.nextSequence++
+	o.Sequence = l.nextSequence
+	l.observations = append(l.observations, o)
+}
+
+// TextObservations returns a defensive copy of all current-turn observations.
+// Callers use the sequence to apply a previously frozen batch boundary.
+func (l *Ledger) TextObservations() []TextObservation {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.observations) == 0 {
+		return nil
+	}
+	out := make([]TextObservation, len(l.observations))
+	for i, o := range l.observations {
+		out[i] = o
+		out[i].LineHashes = append([]string(nil), o.LineHashes...)
+	}
+	return out
 }
 
 // Len returns the number of receipts recorded this turn, giving callers a

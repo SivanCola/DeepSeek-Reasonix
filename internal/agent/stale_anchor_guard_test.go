@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -9,7 +11,18 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
+	"reasonix/internal/tool/builtin"
 )
+
+type anchorAuditSink struct {
+	audits []event.AnchorSafetyAudit
+}
+
+func (s *anchorAuditSink) Emit(event.Event) {}
+
+func (s *anchorAuditSink) RecordAnchorSafetyAudit(a event.AnchorSafetyAudit) {
+	s.audits = append(s.audits, a)
+}
 
 func TestDeleteRangeRequiresReadAfterSameTurnWrite(t *testing.T) {
 	var deleteCalls int32
@@ -132,6 +145,79 @@ func TestDeleteRangeStillRequiresReadAfterWindowedRead(t *testing.T) {
 	}
 	if last := lastToolResult(a.sess.conversation, "delete_range"); !strings.Contains(last, "[fresh read required]") {
 		t.Fatalf("windowed read should not allow the second edit, got %q", last)
+	}
+}
+
+func TestDeleteRangeShadowRejectsSameBatchRead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.txt")
+	sink := &anchorAuditSink{}
+	reg := tool.NewRegistry()
+	for _, tl := range (builtin.Workspace{Dir: dir, WriteRoots: []string{dir}}).Tools("write_file", "read_file", "delete_range") {
+		reg.Add(tl)
+	}
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{
+			toolCallChunk("w", "write_file", `{"path":"sample.txt","content":"prefix\nstart\nmiddle\nend\nsuffix\n"}`),
+			toolCallChunk("r", "read_file", `{"path":"sample.txt"}`),
+			toolCallChunk("d", "delete_range", `{"path":"sample.txt","start_anchor":"start","end_anchor":"end"}`),
+			{Type: provider.ChunkDone},
+		},
+		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{}, sink)
+	if err := a.Run(withNoClosedLoop(context.Background()), "delete the middle range"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(sink.audits) != 1 {
+		t.Fatalf("anchor audits = %+v, want one", sink.audits)
+	}
+	audit := sink.audits[0]
+	if audit.Reason != anchorReasonSameBatchRead || !audit.SameBatchReadRejected || audit.ShadowAllowed || !audit.LegacyAllowed {
+		t.Fatalf("same-batch audit = %+v, want legacy allow and shadow block", audit)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "prefix\nsuffix\n" {
+		t.Fatalf("delete result = %q, want middle range removed", got)
+	}
+}
+
+func TestDeleteRangeShadowMatchesAfterInsertionAboveTarget(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.txt")
+	sink := &anchorAuditSink{}
+	reg := tool.NewRegistry()
+	for _, tl := range (builtin.Workspace{Dir: dir, WriteRoots: []string{dir}}).Tools("write_file", "read_file", "delete_range") {
+		reg.Add(tl)
+	}
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{toolCallChunk("w1", "write_file", `{"path":"sample.txt","content":"start\nmiddle\nend\nsuffix\n"}`), {Type: provider.ChunkDone}},
+		{toolCallChunk("r", "read_file", `{"path":"sample.txt"}`), {Type: provider.ChunkDone}},
+		{toolCallChunk("w2", "write_file", `{"path":"sample.txt","content":"prefix\nstart\nmiddle\nend\nsuffix\n"}`), {Type: provider.ChunkDone}},
+		{toolCallChunk("d", "delete_range", `{"path":"sample.txt","start_anchor":"start","end_anchor":"end"}`), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{}, sink)
+	if err := a.Run(withNoClosedLoop(context.Background()), "delete the middle range after an unrelated insertion"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(sink.audits) != 1 {
+		t.Fatalf("anchor audits = %+v, want one", sink.audits)
+	}
+	audit := sink.audits[0]
+	if audit.Reason != anchorReasonExactMatch || !audit.ShadowAllowed || audit.LegacyAllowed {
+		t.Fatalf("insertion audit = %+v, want shadow allow and legacy block", audit)
+	}
+	if got := lastToolResult(a.Session(), "delete_range"); !strings.Contains(got, "[fresh read required]") {
+		t.Fatalf("shadow-only delete should retain legacy block, got %q", got)
+	}
+	if got, err := os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	} else if string(got) != "prefix\nstart\nmiddle\nend\nsuffix\n" {
+		t.Fatalf("blocked delete changed file: %q", got)
 	}
 }
 

@@ -2513,7 +2513,7 @@ func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (strin
 		call.Name, count), true
 }
 
-func (a *Agent) staleAnchorEditBlock(call provider.ToolCall) (string, bool) {
+func (a *Agent) staleAnchorEditBlock(ctx context.Context, call provider.ToolCall) (string, bool) {
 	if a.task.ledger == nil || !anchorBasedEditTool(call.Name) {
 		return "", false
 	}
@@ -2522,7 +2522,14 @@ func (a *Agent) staleAnchorEditBlock(call provider.ToolCall) (string, bool) {
 		return "", false
 	}
 	writeIndex, ok := a.task.ledger.LatestSuccessfulWriteIndex(rec.Paths)
-	if !ok || a.task.ledger.HasSuccessfulAnchorRefreshReadAfter(rec.Paths, writeIndex) {
+	if !ok {
+		return "", false
+	}
+	boundary := observationBoundary(ctx, a.task.ledger.ObservationBoundary())
+	if target, _, ambiguous := a.svc.tools.ResolveCall(call.Name); target != nil && len(ambiguous) == 0 {
+		a.recordAnchorSafetyAudit(ctx, call, target, boundary, writeIndex)
+	}
+	if a.task.ledger.HasSuccessfulAnchorRefreshReadAfter(rec.Paths, writeIndex) {
 		return "", false
 	}
 	return fmt.Sprintf(

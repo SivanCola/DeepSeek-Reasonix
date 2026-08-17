@@ -90,6 +90,9 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 	// state separate so refreshing a dependent preview never mutates shared
 	// session memory outside Session's lock.
 	calls = append([]provider.ToolCall(nil), calls...)
+	if a.task.ledger != nil {
+		ctx = withObservationBoundary(ctx, a.task.ledger.ObservationBoundary())
+	}
 	for _, c := range calls {
 		a.emitFullToolDispatch(ctx, c, false)
 	}
