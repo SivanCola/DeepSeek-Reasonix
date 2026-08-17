@@ -252,6 +252,13 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# plan_mode_read_only_commands = [\"gh issue view\"]   # legacy compatibility only; Plan bash uses Permissions\n")
 	}
+	if scope != RenderScopeProject {
+		if c.Agent.LegacyAnchorSafetyGate {
+			b.WriteString("legacy_anchor_safety_gate = true   # rollback delete_range to the full-file fresh-read guard\n")
+		} else {
+			b.WriteString("# legacy_anchor_safety_gate = true   # rollback delete_range to the full-file fresh-read guard\n")
+		}
+	}
 	if c.Agent.PlannerModel != "" {
 		fmt.Fprintf(&b, "planner_model = %q   # low-frequency planner (two-model collaboration)\n", c.Agent.PlannerModel)
 	} else {

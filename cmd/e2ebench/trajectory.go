@@ -117,6 +117,10 @@ type trajectorySummary struct {
 	// or a verification-receipt backfill for recordings that predate it.
 	Outcome *outcomeSummary `json:"outcome,omitempty"`
 
+	// Anchor-safety shadow: content-free interval-fingerprint decisions. The
+	// trajectory never contains paths, anchors, source text, or line hashes.
+	AnchorSafety *anchorSafetySummary `json:"anchor_safety,omitempty"`
+
 	// Cognition: executor reasoning/completion joined per model round, plus a
 	// census of slow rounds — gaps that bought unusually large thinking.
 	ReasoningTokensTotal     int64         `json:"reasoning_tokens_total,omitempty"`
@@ -179,6 +183,7 @@ type trajectoryRecord struct {
 		RunwayIdle       int  `json:"runway_idle"`
 		RunwaySpent      bool `json:"runway_spent"`
 	} `json:"outcome_progress"`
+	AnchorSafetyAudit   *anchorSafetyRecord `json:"anchor_safety_audit"`
 	DelegationAdmission *struct {
 		Tool    string `json:"tool"`
 		Verdict string `json:"verdict"`
@@ -393,6 +398,9 @@ func (t *trajScan) record(rec trajectoryRecord) {
 			runway: op.Runway, runwayDry: op.RunwayDry, runwayIdle: op.RunwayIdle, runwaySpent: op.RunwaySpent,
 		})
 	}
+	if aa := rec.AnchorSafetyAudit; aa != nil {
+		t.recordAnchorSafetyAudit(*aa)
+	}
 	if da := rec.DelegationAdmission; da != nil {
 		t.s.DelegationCalls++
 		if da.Verdict == "deny" {
@@ -454,6 +462,52 @@ func (t *trajScan) record(rec trajectoryRecord) {
 		t.recordDispatch(rec)
 	case "tool_result":
 		t.recordResult(rec)
+	}
+}
+
+type anchorSafetyRecord struct {
+	Mode                  string `json:"mode"`
+	TaskMode              string `json:"task_mode"`
+	RangeLines            int    `json:"range_lines"`
+	ObservationAge        int    `json:"observation_age"`
+	LegacyAllowed         bool   `json:"legacy_allowed"`
+	ShadowAllowed         bool   `json:"shadow_allowed"`
+	Reason                string `json:"reason"`
+	SameBatchReadRejected bool   `json:"same_batch_read_rejected"`
+}
+
+func (t *trajScan) recordAnchorSafetyAudit(a anchorSafetyRecord) {
+	if t.s.AnchorSafety == nil {
+		t.s.AnchorSafety = &anchorSafetySummary{ByTaskMode: map[string]int{}}
+	}
+	s := t.s.AnchorSafety
+	s.Samples++
+	if a.ShadowAllowed {
+		s.ShadowAllows++
+	}
+	if a.LegacyAllowed {
+		s.LegacyAllows++
+	}
+	if a.ShadowAllowed && !a.LegacyAllowed {
+		s.ShadowOnlyAllows++
+	}
+	if !a.ShadowAllowed && a.LegacyAllowed {
+		s.ShadowOnlyBlocks++
+	}
+	if a.SameBatchReadRejected {
+		s.SameBatchReads++
+	}
+	s.MaxObservationAge = max(s.MaxObservationAge, a.ObservationAge)
+	s.ByTaskMode[a.TaskMode]++
+	switch a.Reason {
+	case "would_block_no_eligible_read":
+		s.NoEligibleReads++
+	case "would_block_partial_window":
+		s.PartialWindows++
+	case "would_block_target_changed":
+		s.TargetChanged++
+	case "native_target_invalid":
+		s.NativeInvalid++
 	}
 }
 

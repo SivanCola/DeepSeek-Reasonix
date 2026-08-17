@@ -269,6 +269,31 @@ func TestDeleteRangeShadowAllowsCompleteWindowedRead(t *testing.T) {
 	}
 }
 
+func TestDeleteRangeShadowBlocksPartialWindow(t *testing.T) {
+	dir := t.TempDir()
+	sink := &anchorAuditSink{}
+	reg := tool.NewRegistry()
+	for _, tl := range (builtin.Workspace{Dir: dir, WriteRoots: []string{dir}}).Tools("write_file", "read_file", "delete_range") {
+		reg.Add(tl)
+	}
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{toolCallChunk("w", "write_file", `{"path":"sample.txt","content":"before\nstart\nmiddle\nend\nafter\n"}`), {Type: provider.ChunkDone}},
+		{toolCallChunk("r", "read_file", `{"path":"sample.txt","offset":0,"limit":2}`), {Type: provider.ChunkDone}},
+		{toolCallChunk("d", "delete_range", `{"path":"sample.txt","start_anchor":"start","end_anchor":"end"}`), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
+	}}
+	a := New(prov, reg, NewSession(""), Options{}, sink)
+	if err := a.Run(withNoClosedLoop(context.Background()), "reject a partial read window"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(sink.audits) != 1 || sink.audits[0].Reason != anchorReasonPartialWindow || sink.audits[0].ShadowAllowed {
+		t.Fatalf("partial-window audit = %+v, want shadow block", sink.audits)
+	}
+	if got := lastToolResult(a.Session(), "delete_range"); !strings.Contains(got, "[fresh read required]") {
+		t.Fatalf("partial read window was accepted: %q", got)
+	}
+}
+
 func TestDeleteRangeShadowBlocksChangedTarget(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sample.txt")
