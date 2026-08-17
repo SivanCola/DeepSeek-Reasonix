@@ -27,6 +27,9 @@ func modelInputMessages(msgs []provider.Message) []provider.Message {
 // cleanup. Interceptors deliberately remain outside this helper.
 func (a *Agent) normalizeModelRequestMessages(msgs []provider.Message) []provider.Message {
 	requestMessages := a.providerProjectionMessages(modelInputMessages(msgs))
+	// ModelMessages intentionally has a zero-copy fast path for clean input.
+	// Detach before removing local metadata from the request-only representation.
+	requestMessages = append([]provider.Message(nil), requestMessages...)
 	for i := range requestMessages {
 		requestMessages[i].CreatedAt = 0
 		if requestMessages[i].Role == provider.RoleUser {
