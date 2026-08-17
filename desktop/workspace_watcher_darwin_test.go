@@ -24,7 +24,7 @@ import (
 const darwinLowNoFileChild = "REASONIX_DARWIN_LOW_NOFILE_CHILD"
 
 func TestDarwinWorkspaceWatcherReportsDeepFileOperations(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalWorkspaceRoot(t.TempDir())
 	w := newDarwinWatcherForTest(t)
 	if err := w.Add(root, true); err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestDarwinWorkspaceWatcherReportsDeepFileOperations(t *testing.T) {
 }
 
 func TestDarwinWorkspaceWatcherHonorsRecursiveModeAndRemove(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalWorkspaceRoot(t.TempDir())
 	nested := filepath.Join(root, "child", "grandchild")
 	if err := os.MkdirAll(nested, 0o700); err != nil {
 		t.Fatal(err)
