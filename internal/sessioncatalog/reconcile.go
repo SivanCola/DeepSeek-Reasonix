@@ -79,7 +79,10 @@ func (c *Catalog) ReconcileDirectory(ctx context.Context, target DirectoryTarget
 			records = append(records, record)
 			generations[record.Path] = generation
 		}
-		if err := c.upsertSessions(ctx, records, generations, "reconcile"); err != nil {
+		// The directory is not authoritative until finishDirectoryScan commits
+		// missing-row cleanup and scan readiness. Keep batch revisions internal so
+		// consumers cannot render each 64-row intermediate state.
+		if err := c.upsertSessionsWithoutNotification(ctx, records, generations, "reconcile"); err != nil {
 			c.failDirectoryScan(context.Background(), target.Path, err)
 			return err
 		}

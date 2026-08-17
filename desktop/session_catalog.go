@@ -601,13 +601,23 @@ func (a *App) requestSessionCatalogPath(scope, workspaceRoot, path string) {
 	if strings.TrimSpace(path) != "" {
 		_ = history.PersistObserver().EnqueueSessionPersist(agent.SessionPersistEvent{Path: path, Rewrite: true})
 	}
+	a.requestSessionCatalogIndexPath(scope, workspaceRoot, path)
+}
+
+// requestSessionCatalogIndexPath publishes one committed session/sidecar
+// change without walking its directory. A saturated exact-path queue falls
+// back to a scoped reconcile so the disposable projection still converges.
+func (a *App) requestSessionCatalogIndexPath(scope, workspaceRoot, path string) {
 	catalog := a.sessionCatalog.Load()
 	if catalog == nil || a.shuttingDown.Load() || strings.TrimSpace(path) == "" {
 		return
 	}
-	catalog.RequestIndexSession(sessioncatalog.DirectoryTarget{
+	target := sessioncatalog.DirectoryTarget{
 		Path: sessionDirectoryForPath(path), Scope: scope, WorkspaceRoot: workspaceRoot,
-	}, path)
+	}
+	if !catalog.RequestIndexSession(target, path) {
+		a.requestSessionCatalogReconcile(target.Path)
+	}
 }
 
 func (a *App) removeSessionCatalogPath(path, reason string) {
