@@ -63,6 +63,42 @@ type toolResultCandidate struct {
 	requiresRef bool
 }
 
+func toolResultRef(toolCallID, body string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(toolCallID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(body))
+	return fmt.Sprintf("tr-%x", h.Sum(nil)[:12])
+}
+
+func toolOutputRecoveryMarker(toolName, toolCallID, resultRef string, originalBytes, keptBytes int) string {
+	namePart := boundedMarkerField(toolName, 128, "tool")
+	idPart := boundedMarkerField(toolCallID, 128, "-")
+	exampleID := toolCallID
+	if len(exampleID) > 256 {
+		exampleID = "<full tool_call_id from this tool result>"
+	}
+	args, _ := json.Marshal(struct {
+		ToolCallID string `json:"tool_call_id"`
+		ResultRef  string `json:"result_ref"`
+		Offset     int    `json:"offset"`
+	}{ToolCallID: exampleID, ResultRef: resultRef})
+	return fmt.Sprintf(
+		"\n\n…[truncated tool=%s call_id=%s result_ref=%s original_bytes=%d kept_bytes=%d — full original retained locally; recover with use_capability(action=\"call\", capability_id=\"session:tool_result\", arguments=%s). If use_capability is unavailable, re-run the original tool with narrower arguments]…\n\n",
+		namePart, idPart, resultRef, originalBytes, keptBytes, args,
+	)
+}
+
+func boundedMarkerField(value string, maxBytes int, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	if len(value) <= maxBytes {
+		return value
+	}
+	return snapToRuneBoundary(value, 0, maxBytes) + "…"
+}
+
 func (t *sessionToolResultTool) Execute(_ context.Context, args json.RawMessage) (string, error) {
 	var p toolResultReadParams
 	if err := json.Unmarshal(args, &p); err != nil {
