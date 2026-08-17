@@ -126,13 +126,6 @@ reasonix_fsevents_subscription *reasonix_fsevents_start(
         free(subscription);
         return NULL;
     }
-    /*
-     * FSEventStreamStart() registers the stream asynchronously.  Flush once
-     * before returning so Add has a deterministic readiness boundary: all
-     * callbacks for filesystem activity that predates Add are finished, and
-     * activity after Add returns cannot fall into the registration window.
-     */
-    FSEventStreamFlushSync(subscription->stream);
     return subscription;
 }
 

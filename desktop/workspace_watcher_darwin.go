@@ -71,7 +71,6 @@ type darwinWorkspaceSubscription struct {
 	watcher    *darwinWorkspaceWatcher
 	path       string
 	recursive  bool
-	ready      atomic.Bool
 	native     *C.reasonix_fsevents_subscription
 	handle     cgo.Handle
 	stopOnce   sync.Once
@@ -116,7 +115,6 @@ func (w *darwinWorkspaceWatcher) Add(path string, recursive bool) error {
 		sub.handle.Delete()
 		return fmt.Errorf("start FSEvents stream for %q: %s", path, darwinFSEventsStartError(int(errorCode)))
 	}
-	sub.ready.Store(true)
 	w.watches[path] = sub
 	return nil
 }
@@ -190,7 +188,7 @@ func reasonixFSEventsEvent(token C.uintptr_t, eventPath *C.char, eventFlags C.ui
 }
 
 func (s *darwinWorkspaceSubscription) publish(path string, flags uint32) {
-	if path == "" || !s.ready.Load() || s.watcher.closed.Load() || !s.accepts(path) {
+	if path == "" || s.watcher.closed.Load() || !s.accepts(path) {
 		return
 	}
 	op, overflow := darwinWorkspaceEvent(flags)
