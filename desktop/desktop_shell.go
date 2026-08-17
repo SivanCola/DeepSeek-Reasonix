@@ -229,15 +229,6 @@ func (c *desktopShellCoordinator) trayStateChanged(ready bool) {
 	}
 }
 
-func (c *desktopShellCoordinator) isBackgroundHidden() bool {
-	if c == nil {
-		return false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.backgroundHidden
-}
-
 type desktopPresentAction uint8
 
 const (
