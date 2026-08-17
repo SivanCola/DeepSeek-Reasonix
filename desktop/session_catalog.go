@@ -597,6 +597,27 @@ func sessionDirectoryForPath(path string) string {
 	return filepath.Dir(path)
 }
 
+func (a *App) saveTabSessionMetaSnapshotAndIndex(snap tabSessionMetaSnapshot) error {
+	if err := saveTabSessionMetaSnapshot(snap); err != nil {
+		return err
+	}
+	// Transcript saves index through the observer; enqueue again after the
+	// sidecar commit so scope and title changes are visible without a full scan.
+	a.requestSessionCatalogIndexPath(snap.scope, snap.workspaceRoot, snap.path)
+	return nil
+}
+
+func discardTransientBlankSessionArtifacts(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	if err := removeDesktopSessionArtifacts(path); err != nil {
+		slog.Warn("desktop: discard transient blank session artifacts failed", "path", path, "err", err)
+		return false
+	}
+	return true
+}
+
 func (a *App) requestSessionCatalogPath(scope, workspaceRoot, path string) {
 	if strings.TrimSpace(path) != "" {
 		_ = history.PersistObserver().EnqueueSessionPersist(agent.SessionPersistEvent{Path: path, Rewrite: true})

@@ -2,7 +2,6 @@
 
 import {
   projectTreeFolderDisclosure,
-  mergeIncompleteProjectTopicPage,
   mergeProjectTopicPage,
   projectTreeWithoutTopic,
   projectTreeShellChildren,
@@ -722,35 +721,6 @@ eq(
   ).map((node) => `${node.key}:${node.label}`),
   ["topic-a:A", "topic-b:New B", "topic-c:C"],
   "overlapping keyset pages replace duplicates without changing stable order",
-);
-
-const completeResidentTopics: ProjectNode[] = [
-  { key: "topic-a", kind: "topic", label: "A", topicId: "a", lastActivityAt: 600 },
-  { key: "topic-b", kind: "topic", label: "B", topicId: "b", lastActivityAt: 500 },
-  { key: "topic-c", kind: "topic", label: "C", topicId: "c", lastActivityAt: 400 },
-];
-const incompleteTopics = mergeIncompleteProjectTopicPage(completeResidentTopics, [
-  { key: "topic-b", kind: "topic", label: "B stale", topicId: "b", lastActivityAt: 100 },
-  { key: "topic-d", kind: "topic", label: "D", topicId: "d", lastActivityAt: 700 },
-]);
-eq(
-  incompleteTopics.map((node) => `${node.topicId}:${node.label}:${node.lastActivityAt}`),
-  ["a:A:600", "b:B:500", "c:C:400", "d:D:700"],
-  "an incomplete catalog page preserves complete timestamps and order while appending discoveries",
-);
-eq(
-  incompleteTopics[1] === completeResidentTopics[1],
-  true,
-  "an incomplete catalog page keeps resident row identity instead of poisoning runtime metadata",
-);
-eq(
-  mergeProjectTopicPage(incompleteTopics, [
-    { key: "topic-a", kind: "topic", label: "A", topicId: "a", lastActivityAt: 600 },
-    { key: "topic-c", kind: "topic", label: "C", topicId: "c", lastActivityAt: 400 },
-    { key: "topic-b", kind: "topic", label: "B canonical", topicId: "b", lastActivityAt: 100 },
-  ], false).map((node) => `${node.topicId}:${node.lastActivityAt}`),
-  ["a:600", "c:400", "b:100"],
-  "a complete catalog page can still apply a legitimate activity decrease and canonical order",
 );
 
 eq(

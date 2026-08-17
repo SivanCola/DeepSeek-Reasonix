@@ -3444,17 +3444,6 @@ func (a *App) transientBlankSessionArtifactPath(tab *WorkspaceTab) (string, bool
 	return path, true
 }
 
-func discardTransientBlankSessionArtifacts(path string) bool {
-	if strings.TrimSpace(path) == "" {
-		return false
-	}
-	if err := removeDesktopSessionArtifacts(path); err != nil {
-		slog.Warn("desktop: discard transient blank session artifacts failed", "path", path, "err", err)
-		return false
-	}
-	return true
-}
-
 func (a *App) markTabRemoved(tab *WorkspaceTab) {
 	a.mu.Lock()
 	a.markTabRemovedLocked(tab)
@@ -7873,14 +7862,7 @@ func (a *App) saveTabSessionMetaForCurrentSession(tab *WorkspaceTab) error {
 	if !ok {
 		return nil
 	}
-	if err := saveTabSessionMetaSnapshot(snap); err != nil {
-		return err
-	}
-	// Snapshot persistence indexes transcript changes through the observer. The
-	// tab sidecar is committed afterwards, so enqueue the same path once more to
-	// make scope/title changes visible without a directory-wide reconcile.
-	a.requestSessionCatalogIndexPath(snap.scope, snap.workspaceRoot, snap.path)
-	return nil
+	return a.saveTabSessionMetaSnapshotAndIndex(snap)
 }
 
 func (a *App) tabSessionMetaSnapshotForCurrentSession(tab *WorkspaceTab) (tabSessionMetaSnapshot, bool) {
