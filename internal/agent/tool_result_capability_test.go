@@ -168,9 +168,15 @@ func TestSessionToolResultRequiresExactRefForDuplicateCallID(t *testing.T) {
 }
 
 func TestSessionToolResultValidatesLegacyAndPagingErrors(t *testing.T) {
+	fullLost := strings.Repeat("lost-new-result", 3000)
+	boundedLost, notice := truncateToolOutputFor(fullLost, "read_file", "lost-new")
+	if notice == "" {
+		t.Fatal("new lost-result fixture was not truncated")
+	}
 	session := &Session{Messages: []provider.Message{
 		{Role: provider.RoleTool, Name: "read_file", ToolCallID: "complete", Content: "完整结果"},
 		{Role: provider.RoleTool, Name: "read_file", ToolCallID: "lost", Content: "…[truncated tool=read_file call_id=lost]…"},
+		{Role: provider.RoleTool, Name: "read_file", ToolCallID: "lost-new", Content: boundedLost},
 	}}
 	_, proxy := newToolResultCapabilityAgent(t, session)
 
@@ -180,6 +186,13 @@ func TestSessionToolResultValidatesLegacyAndPagingErrors(t *testing.T) {
 	}
 	if _, _, err := executeToolResultPage(t, proxy, "lost", "", 0, 1024); err == nil || !strings.Contains(err.Error(), "full result is unavailable") {
 		t.Fatalf("legacy truncated result error = %v", err)
+	}
+	fullLostRef := toolResultRef("lost-new", fullLost)
+	if _, _, err := executeToolResultPage(t, proxy, "lost-new", "", 0, 1024); err == nil || !strings.Contains(err.Error(), fullLostRef) {
+		t.Fatalf("new truncated result did not request its marker ref: %v", err)
+	}
+	if _, _, err := executeToolResultPage(t, proxy, "lost-new", fullLostRef, 0, 1024); err == nil || !strings.Contains(err.Error(), "full result is unavailable") {
+		t.Fatalf("new truncated result with missing RawContent error = %v", err)
 	}
 	if _, _, err := executeToolResultPage(t, proxy, "complete", "", 1, 1024); err == nil || !strings.Contains(err.Error(), "UTF-8 character boundary") {
 		t.Fatalf("invalid UTF-8 offset error = %v", err)

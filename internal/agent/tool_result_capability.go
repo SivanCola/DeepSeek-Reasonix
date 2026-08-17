@@ -178,9 +178,15 @@ func findToolResultCandidate(msgs []provider.Message, toolCallID, resultRef stri
 			recoverable = !looksLikeTruncatedToolResult(msg.Content)
 		}
 		ref := toolResultRef(toolCallID, body)
+		requiresRef := strings.Contains(msg.Content, "…[truncated tool=") && strings.Contains(msg.Content, " result_ref=")
+		if !recoverable && requiresRef {
+			if markerRef, ok := toolResultRefFromMarker(msg.Content); ok {
+				ref = markerRef
+			}
+		}
 		candidate := toolResultCandidate{
 			name: msg.Name, body: body, resultRef: ref, recoverable: recoverable,
-			requiresRef: strings.Contains(msg.Content, "…[truncated tool=") && strings.Contains(msg.Content, " result_ref="),
+			requiresRef: requiresRef,
 		}
 		if resultRef != "" {
 			if ref == resultRef {
@@ -207,6 +213,28 @@ func findToolResultCandidate(msgs []provider.Message, toolCallID, resultRef stri
 		refs = append(refs, candidate.resultRef)
 	}
 	return toolResultCandidate{}, fmt.Errorf("session tool result: tool_call_id %q is ambiguous; retry with one of result_ref=%s", toolCallID, strings.Join(refs, ","))
+}
+
+func toolResultRefFromMarker(content string) (string, bool) {
+	const markerStart = "…[truncated tool="
+	start := strings.Index(content, markerStart)
+	if start < 0 {
+		return "", false
+	}
+	marker := content[start:]
+	if end := strings.Index(marker, "]…"); end >= 0 {
+		marker = marker[:end]
+	}
+	for _, field := range strings.Fields(marker) {
+		ref, ok := strings.CutPrefix(field, "result_ref=")
+		if !ok || len(ref) != len("tr-")+24 || !strings.HasPrefix(ref, "tr-") {
+			continue
+		}
+		if decoded, err := hex.DecodeString(strings.TrimPrefix(ref, "tr-")); err == nil && len(decoded) == 12 {
+			return ref, true
+		}
+	}
+	return "", false
 }
 
 func looksLikeTruncatedToolResult(content string) bool {
