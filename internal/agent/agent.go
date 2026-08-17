@@ -2518,54 +2518,6 @@ func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (strin
 		call.Name, count), true
 }
 
-func (a *Agent) staleAnchorEditBlock(ctx context.Context, call provider.ToolCall) (string, bool) {
-	if a.task.ledger == nil || !anchorBasedEditTool(call.Name) {
-		return "", false
-	}
-	rec := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), true, false)
-	if len(rec.Paths) == 0 {
-		return "", false
-	}
-	writeIndex, ok := a.task.ledger.LatestSuccessfulWriteIndex(rec.Paths)
-	if !ok {
-		return "", false
-	}
-	boundary := observationBoundary(ctx, a.task.ledger.ObservationBoundary())
-	if a.svc.tools != nil {
-		if target, _, ambiguous := a.svc.tools.ResolveCall(call.Name); target != nil && len(ambiguous) == 0 {
-			audit, shadowAllowed, supported := a.recordAnchorSafetyAudit(ctx, call, target, boundary, writeIndex)
-			if supported && !a.legacyAnchorSafetyGate {
-				if shadowAllowed || audit.Reason == anchorReasonNativeInvalid {
-					return "", false
-				}
-				return fmt.Sprintf(
-					"blocked: [fresh read required] %q targets %s, but no eligible model-visible read covers both anchors and the intervening lines. In a separate provider round, use read_file with a window covering both anchors and the whole range, then retry; reads from the same provider batch do not count.",
-					call.Name, strings.Join(rec.Paths, ", ")), true
-			}
-		}
-	}
-	if a.task.ledger.HasSuccessfulAnchorRefreshReadAfter(rec.Paths, writeIndex) {
-		return "", false
-	}
-	return fmt.Sprintf(
-		"blocked: [fresh read required] %q targets %s, which was already modified earlier this turn. Re-read the current file with read_file without offset/limit before another range deletion, or use multi_edit with exact replacements when possible. This prevents stale start/end anchors from selecting an unintended destructive span.",
-		call.Name, strings.Join(rec.Paths, ", ")), true
-}
-
-func anchorBasedEditTool(name string) bool {
-	switch name {
-	// edit_file synchronously reads the current file, requires a unique exact
-	// or narrowly fuzzy match, and returns the actual applied diff. Let it try
-	// optimistically; a stale old_string fails without writing and tells the
-	// model to re-read. delete_range remains guarded because two independently
-	// resolved anchors can otherwise select an unintended destructive span.
-	case "delete_range":
-		return true
-	default:
-		return false
-	}
-}
-
 func (a *Agent) recordRepeatSuccess(call provider.ToolCall, t tool.Tool) {
 	sig, ok := repeatSuccessSignature(call, t)
 	if !ok {

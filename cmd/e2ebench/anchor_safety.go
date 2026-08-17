@@ -21,6 +21,52 @@ type anchorSafetySummary struct {
 	ByTaskMode        map[string]int `json:"by_task_mode,omitempty"`
 }
 
+type anchorSafetyRecord struct {
+	Mode                  string `json:"mode"`
+	TaskMode              string `json:"task_mode"`
+	RangeLines            int    `json:"range_lines"`
+	ObservationAge        int    `json:"observation_age"`
+	LegacyAllowed         bool   `json:"legacy_allowed"`
+	ShadowAllowed         bool   `json:"shadow_allowed"`
+	Reason                string `json:"reason"`
+	SameBatchReadRejected bool   `json:"same_batch_read_rejected"`
+}
+
+func (t *trajScan) recordAnchorSafetyAudit(a anchorSafetyRecord) {
+	if t.s.AnchorSafety == nil {
+		t.s.AnchorSafety = &anchorSafetySummary{ByTaskMode: map[string]int{}}
+	}
+	s := t.s.AnchorSafety
+	s.Samples++
+	if a.ShadowAllowed {
+		s.ShadowAllows++
+	}
+	if a.LegacyAllowed {
+		s.LegacyAllows++
+	}
+	if a.ShadowAllowed && !a.LegacyAllowed {
+		s.ShadowOnlyAllows++
+	}
+	if !a.ShadowAllowed && a.LegacyAllowed {
+		s.ShadowOnlyBlocks++
+	}
+	if a.SameBatchReadRejected {
+		s.SameBatchReads++
+	}
+	s.MaxObservationAge = max(s.MaxObservationAge, a.ObservationAge)
+	s.ByTaskMode[a.TaskMode]++
+	switch a.Reason {
+	case "would_block_no_eligible_read":
+		s.NoEligibleReads++
+	case "would_block_partial_window":
+		s.PartialWindows++
+	case "would_block_target_changed":
+		s.TargetChanged++
+	case "native_target_invalid":
+		s.NativeInvalid++
+	}
+}
+
 func renderAnchorSafety(results []result) string {
 	var total anchorSafetySummary
 	runs := 0

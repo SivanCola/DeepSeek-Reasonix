@@ -454,51 +454,6 @@ func (l *Ledger) Record(r Receipt) {
 	l.receipts = append(l.receipts, r)
 }
 
-// ObservationBoundary freezes the ledger sequence at the start of a provider
-// tool-call batch. Observations recorded later in that batch are intentionally
-// ineligible as evidence because the model could not have seen their result.
-func (l *Ledger) ObservationBoundary() uint64 {
-	if l == nil {
-		return 0
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.nextSequence
-}
-
-// RecordTextObservation appends a validated model-visible text window under
-// the same sequence and mutex as ordinary tool receipts.
-func (l *Ledger) RecordTextObservation(o TextObservation) {
-	if l == nil || o.Path == "" || o.StartLine < 1 || len(o.LineHashes) == 0 {
-		return
-	}
-	o.LineHashes = append([]string(nil), o.LineHashes...)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.nextSequence++
-	o.Sequence = l.nextSequence
-	l.observations = append(l.observations, o)
-}
-
-// TextObservations returns a defensive copy of all current-turn observations.
-// Callers use the sequence to apply a previously frozen batch boundary.
-func (l *Ledger) TextObservations() []TextObservation {
-	if l == nil {
-		return nil
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if len(l.observations) == 0 {
-		return nil
-	}
-	out := make([]TextObservation, len(l.observations))
-	for i, o := range l.observations {
-		out[i] = o
-		out[i].LineHashes = append([]string(nil), o.LineHashes...)
-	}
-	return out
-}
-
 // Len returns the number of receipts recorded this turn, giving callers a
 // stable index to pass to the *Since matchers.
 func (l *Ledger) Len() int {
@@ -508,21 +463,6 @@ func (l *Ledger) Len() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.receipts)
-}
-
-// ReceiptSequence returns the shared ledger sequence for a receipt index.
-// It lets host-side shadow checks bind an observation to the write it is meant
-// to refresh without exposing ledger internals or persisting the sequence.
-func (l *Ledger) ReceiptSequence(index int) (uint64, bool) {
-	if l == nil {
-		return 0, false
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if index < 0 || index >= len(l.receipts) {
-		return 0, false
-	}
-	return l.receipts[index].Sequence, true
 }
 
 // ReceiptProgressSummary counts successful host-observable receipts by category
