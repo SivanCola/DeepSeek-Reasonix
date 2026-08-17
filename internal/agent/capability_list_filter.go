@@ -31,6 +31,13 @@ func cloneCapabilityFrontend(frontend tool.Tool) tool.Tool {
 			return nil
 		}
 		return typed.cloneForAgent()
+	case pathBoundCapabilityProxy:
+		inner := cloneCapabilityFrontend(typed.inner)
+		resolver, ok := inner.(tool.CallResolver)
+		if inner == nil || !ok {
+			return nil
+		}
+		return pathBoundCapabilityProxy{inner: inner, resolver: resolver}
 	default:
 		if _, sessionBindable := frontend.(toolResultSessionBinder); sessionBindable {
 			return nil

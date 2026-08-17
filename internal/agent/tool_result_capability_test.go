@@ -328,6 +328,67 @@ func TestRestrictedCapabilityFrontendCloneKeepsAgentSessionsIsolated(t *testing.
 	}
 }
 
+func TestPathBoundCapabilityFrontendBindsAndClonesAgentSessions(t *testing.T) {
+	for _, restricted := range []bool{false, true} {
+		name := "unrestricted"
+		if restricted {
+			name = "restricted"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			claim, err := NormalizeWritePaths(root, []string{"frontend"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseRegistry := tool.NewRegistry()
+			inner := NewUseCapabilityTool(context.Background(), nil, nil, baseRegistry, nil, nil, nil)
+			var frontend tool.Tool = inner
+			if restricted {
+				frontend = &restrictedCapabilityProxy{
+					Tool: inner, resolver: inner,
+					allowed: map[string]bool{"mcp-server:allowed": true}, servers: map[string]bool{"allowed": true},
+				}
+			}
+			baseRegistry.Add(frontend)
+			parentRegistry, removed := BindWritePaths(baseRegistry, claim, root, false)
+			if len(removed) != 0 {
+				t.Fatalf("path-bound registry removed tools: %v", removed)
+			}
+			parentTool, ok := parentRegistry.Get("use_capability")
+			if !ok {
+				t.Fatal("path-bound registry missing use_capability")
+			}
+			_ = New(nil, parentRegistry, &Session{Messages: []provider.Message{{
+				Role: provider.RoleTool, ToolCallID: "call", Name: "read", Content: "parent",
+			}}}, Options{}, event.Discard)
+
+			childTool := newSubagentCapabilityFrontend(parentRegistry, nil)
+			if childTool == nil {
+				t.Fatal("path-bound child frontend was dropped during clone")
+			}
+			childRegistry := tool.NewRegistry()
+			childRegistry.Add(childTool)
+			_ = New(nil, childRegistry, &Session{Messages: []provider.Message{{
+				Role: provider.RoleTool, ToolCallID: "call", Name: "read", Content: "child",
+			}}}, Options{}, event.Discard)
+
+			_, parentPage, parentErr := executeToolResultPage(t, parentTool, "call", "", 0, 32)
+			_, childPage, childErr := executeToolResultPage(t, childTool, "call", "", 0, 32)
+			if parentErr != nil || parentPage != "parent" {
+				t.Fatalf("path-bound parent page=%q err=%v", parentPage, parentErr)
+			}
+			if childErr != nil || childPage != "child" {
+				t.Fatalf("path-bound child page=%q err=%v", childPage, childErr)
+			}
+			if parentTool.Name() != childTool.Name() || parentTool.Description() != childTool.Description() ||
+				!reflect.DeepEqual(parentTool.Schema(), childTool.Schema()) ||
+				!reflect.DeepEqual(parentRegistry.Schemas(), childRegistry.Schemas()) {
+				t.Fatal("path-bound cloning or binding changed provider-visible use_capability bytes")
+			}
+		})
+	}
+}
+
 func TestPlannerRestrictedCapabilityFrontendCloneKeepsExecutorSession(t *testing.T) {
 	inner := NewUseCapabilityTool(context.Background(), nil, nil, tool.NewRegistry(), nil, nil, nil)
 	executorProxy := &restrictedCapabilityProxy{
