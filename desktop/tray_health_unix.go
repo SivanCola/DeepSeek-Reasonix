@@ -19,6 +19,118 @@ const (
 	statusNotifierProbeTimeout = 750 * time.Millisecond
 )
 
+type statusNotifierBusConnection struct {
+	conn   *dbus.Conn
+	cancel context.CancelFunc
+}
+
+func (c *statusNotifierBusConnection) close() {
+	if c == nil {
+		return
+	}
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
+}
+
+type statusNotifierProbe struct {
+	connection *statusNotifierBusConnection
+	connect    func(context.Context) (*statusNotifierBusConnection, error)
+}
+
+func newStatusNotifierProbe() *statusNotifierProbe {
+	return &statusNotifierProbe{connect: connectStatusNotifierSessionBus}
+}
+
+func connectStatusNotifierSessionBus(ctx context.Context) (*statusNotifierBusConnection, error) {
+	type connectionResult struct {
+		conn *dbus.Conn
+		err  error
+	}
+
+	connCtx, cancelConn := context.WithCancel(context.Background())
+	resultCh := make(chan connectionResult, 1)
+	go func() {
+		conn, err := dbus.SessionBusPrivateNoAutoStartup(dbus.WithContext(connCtx))
+		if err == nil {
+			err = conn.Auth(nil)
+		}
+		if err == nil {
+			err = conn.Hello()
+		}
+		resultCh <- connectionResult{conn: conn, err: err}
+	}()
+
+	select {
+	case result := <-resultCh:
+		if err := ctx.Err(); err != nil {
+			cancelConn()
+			if result.conn != nil {
+				_ = result.conn.Close()
+			}
+			return nil, err
+		}
+		if result.err != nil {
+			cancelConn()
+			if result.conn != nil {
+				_ = result.conn.Close()
+			}
+			return nil, result.err
+		}
+		return &statusNotifierBusConnection{conn: result.conn, cancel: cancelConn}, nil
+	case <-ctx.Done():
+		// Canceling the connection context closes the private transport. That
+		// interrupts Auth and Hello even though godbus does not expose
+		// context-aware variants for those operations.
+		cancelConn()
+		return nil, ctx.Err()
+	}
+}
+
+func (p *statusNotifierProbe) close() {
+	if p == nil {
+		return
+	}
+	p.connection.close()
+	p.connection = nil
+}
+
+func (p *statusNotifierProbe) reset() {
+	p.close()
+}
+
+func (p *statusNotifierProbe) probe(ctx context.Context, itemName string) (bool, string) {
+	if p == nil {
+		return false, "no_session_bus"
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, statusNotifierProbeTimeout)
+	defer cancel()
+	if p.connection == nil {
+		connect := p.connect
+		if connect == nil {
+			connect = connectStatusNotifierSessionBus
+		}
+		connection, err := connect(probeCtx)
+		if err != nil {
+			return false, "no_session_bus"
+		}
+		p.connection = connection
+	}
+	conn := p.connection.conn
+	if err := conn.BusObject().CallWithContext(probeCtx, "org.freedesktop.DBus.Peer.Ping", 0).Err; err != nil {
+		p.reset()
+		return false, "no_session_bus"
+	}
+	snapshot, err := readStatusNotifierSnapshot(probeCtx, conn, itemName)
+	if err != nil {
+		return false, "watcher_unresponsive"
+	}
+	return evaluateStatusNotifierSnapshot(snapshot, itemName)
+}
+
 func readStatusNotifierSnapshot(ctx context.Context, conn *dbus.Conn, itemName string) (statusNotifierSnapshot, error) {
 	snapshot := statusNotifierSnapshot{}
 	bus := conn.Object("org.freedesktop.DBus", dbus.ObjectPath("/org/freedesktop/DBus"))
@@ -57,40 +169,11 @@ func (a *App) startTrayHealthMonitor(t *desktopTray) {
 	t.healthMu.Unlock()
 	a.goSafe("trayStatusNotifierMonitor", func() {
 		itemName := fmt.Sprintf("org.kde.StatusNotifierItem-%d-1", os.Getpid())
-		var conn *dbus.Conn
-		defer func() {
-			if conn != nil {
-				_ = conn.Close()
-			}
-		}()
-		probe := func() (bool, string) {
-			if conn == nil {
-				var err error
-				conn, err = dbus.SessionBusPrivateNoAutoStartup()
-				if err != nil || conn.Auth(nil) != nil || conn.Hello() != nil {
-					if conn != nil {
-						_ = conn.Close()
-						conn = nil
-					}
-					return false, "no_session_bus"
-				}
-			}
-			probeCtx, cancel := context.WithTimeout(ctx, statusNotifierProbeTimeout)
-			defer cancel()
-			if err := conn.BusObject().CallWithContext(probeCtx, "org.freedesktop.DBus.Peer.Ping", 0).Err; err != nil {
-				_ = conn.Close()
-				conn = nil
-				return false, "no_session_bus"
-			}
-			snapshot, err := readStatusNotifierSnapshot(probeCtx, conn, itemName)
-			if err != nil {
-				return false, "watcher_unresponsive"
-			}
-			return evaluateStatusNotifierSnapshot(snapshot, itemName)
-		}
+		probe := newStatusNotifierProbe()
+		defer probe.close()
 
 		for {
-			ready, reason := probe()
+			ready, reason := probe.probe(ctx, itemName)
 			if ready {
 				a.setTrayHealth(t, "ready", "")
 			} else {

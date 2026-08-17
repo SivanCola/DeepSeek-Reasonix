@@ -5,6 +5,9 @@ package main
 /*
 #cgo pkg-config: gtk+-3.0
 #include <gtk/gtk.h>
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/gdkwayland.h>
+#endif
 #include <string.h>
 
 typedef struct {
@@ -22,6 +25,34 @@ static void reasonix_window_probe_unref(ReasonixWindowProbe *probe) {
   g_free(probe);
 }
 
+static gboolean reasonix_display_requires_active_window(void) {
+#ifdef GDK_WINDOWING_WAYLAND
+  // Mutter may keep a minimised Wayland surface visible and mapped in GTK's
+  // client-side state. Activation is the compositor acknowledgement that
+  // gtk_window_present actually restored it.
+  GdkDisplay *display = gdk_display_get_default();
+  return display != NULL && GDK_IS_WAYLAND_DISPLAY(display);
+#else
+  return FALSE;
+#endif
+}
+
+static gboolean reasonix_window_has_active_transient(GtkWindow *parent, GList *windows) {
+  for (GList *item = windows; item != NULL; item = item->next) {
+    GtkWidget *widget = GTK_WIDGET(item->data);
+    if (!GTK_IS_WINDOW(widget) || gtk_window_get_transient_for(GTK_WINDOW(widget)) != parent) continue;
+    GdkWindow *window = gtk_widget_get_window(widget);
+    if (window == NULL) continue;
+    GdkWindowState state = gdk_window_get_state(window);
+    if (gtk_widget_get_visible(widget) && gtk_widget_get_mapped(widget) &&
+        (state & (GDK_WINDOW_STATE_ICONIFIED | GDK_WINDOW_STATE_WITHDRAWN)) == 0 &&
+        gtk_window_is_active(GTK_WINDOW(widget))) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 static gboolean reasonix_probe_main_window(gpointer data) {
   ReasonixWindowProbe *probe = (ReasonixWindowProbe *)data;
   gboolean presented = FALSE;
@@ -34,8 +65,12 @@ static gboolean reasonix_probe_main_window(gpointer data) {
     GdkWindow *window = gtk_widget_get_window(widget);
     if (window == NULL) continue;
     GdkWindowState state = gdk_window_get_state(window);
+    gboolean compositor_confirmed = !reasonix_display_requires_active_window() ||
+        gtk_window_is_active(GTK_WINDOW(widget)) ||
+        reasonix_window_has_active_transient(GTK_WINDOW(widget), windows);
     if (gtk_widget_get_visible(widget) && gtk_widget_get_mapped(widget) &&
-        (state & (GDK_WINDOW_STATE_ICONIFIED | GDK_WINDOW_STATE_WITHDRAWN)) == 0) {
+        (state & (GDK_WINDOW_STATE_ICONIFIED | GDK_WINDOW_STATE_WITHDRAWN)) == 0 &&
+        compositor_confirmed) {
       presented = TRUE;
       break;
     }
