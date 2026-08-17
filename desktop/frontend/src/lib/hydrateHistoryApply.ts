@@ -75,6 +75,25 @@ export function hasCachedLiveTurn(state: HydrateLiveState | undefined): boolean 
   );
 }
 
+export function hasReusableCachedTranscript(
+  state: (HydrateLiveState & { meta?: SessionHydrateIdentity }) | undefined,
+  sessionPath?: string,
+  revision?: number,
+  digest?: string,
+): boolean {
+  if (!state || state.items.length === 0 || state.historyTotalTurns === 0) return false;
+  const expectedSessionPath = (sessionPath ?? "").trim();
+  if (!expectedSessionPath) return true;
+  if ((state.meta?.sessionPath ?? "").trim() !== expectedSessionPath) return false;
+  if (typeof revision === "number" && revision > 0) {
+    return state.historyRevision === revision && (digest ?? "") === (state.historyDigest ?? "");
+  }
+  if ((digest ?? "").trim() !== "") return state.historyDigest === digest;
+  // Missing backend fingerprints must not bless a resident page that already
+  // has one; the sidecar may be between atomic replacements.
+  return state.historyRevision === undefined && !state.historyDigest;
+}
+
 // An empty surface has to apply history or switch-back shows Welcome. A turn
 // that has already streamed rows keeps them — but a tab with no history page
 // behind it still gets one, prepended, instead of a blank transcript above the

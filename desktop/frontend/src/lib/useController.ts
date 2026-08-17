@@ -23,7 +23,7 @@ import { uiPerfTracker } from "./uiPerf";
 import { getLocale, t, type DictKey } from "./i18n";
 import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceholders } from "./hydrateErrorState";
 import { isHostRecoveryGuidance } from "./hostRecoverySteer";
-import { duplicateLiveItemIds, hasCachedLiveTurn, hydratedHistoryApplyMode, sameSessionHydrateIdentity, sameSessionPlaceholderItems, shouldPreferResidentHistory } from "./hydrateHistoryApply";
+import { duplicateLiveItemIds, hasCachedLiveTurn, hasReusableCachedTranscript, hydratedHistoryApplyMode, sameSessionHydrateIdentity, sameSessionPlaceholderItems, shouldPreferResidentHistory } from "./hydrateHistoryApply";
 import { hydrateIdentityCurrent } from "./sessionIdentity";
 import { sameStringList, sameTodoList } from "./todoVisibility";
 import { resolveSnapshotTurnStartedAt, resolveTurnStartedAt, snapshotPredatesTurnLifecycle } from "./turnTiming";
@@ -693,22 +693,6 @@ const CANCEL_RECONCILE_DELAYS_MS = [0, 100, 300, 1_000] as const;
 const STALE_PROMPT_RECONCILE_MS = 150;
 const STARTUP_READY_META_RECONCILE_MS = 250;
 const STARTUP_READY_META_RECONCILE_ATTEMPTS = 60;
-
-function hasReusableCachedTranscript(state: State | undefined, sessionPath?: string, revision?: number, digest?: string): boolean {
-  if (!state || state.items.length === 0) return false;
-  const expectedSessionPath = (sessionPath ?? "").trim();
-  if (!expectedSessionPath) return true;
-  if ((state.meta?.sessionPath ?? "").trim() !== expectedSessionPath) return false;
-  if (typeof revision === "number" && revision > 0) {
-    return state.historyRevision === revision && (digest ?? "") === (state.historyDigest ?? "");
-  }
-  if ((digest ?? "").trim() !== "") return state.historyDigest === digest;
-  // A cached page with a known fingerprint must not be reused when the
-  // backend temporarily cannot provide one (for example while its metadata
-  // sidecar is being atomically replaced). Reloading is the only way to avoid
-  // presenting a stale persisted transcript as current.
-  return state.historyRevision === undefined && !state.historyDigest;
-}
 
 function historyFingerprintMatchesMeta(history: { revision: number; revisionKnown?: boolean; digest?: string }, meta: Meta): boolean {
   const expectedDigest = (meta.sessionDigest ?? "").trim();
@@ -2595,6 +2579,7 @@ export function useController() {
   const modelSwitchQueueByTab = useRef(new Map<string, ModelSwitchQueueState>());
   const lastTurnActivityAtByTab = useRef(new Map<string, number>());
   const runtimeEpochByTabRef = useRef(new Map<string, string>());
+  const listedSessionIdentityByTabRef = useRef(new Map<string, { sessionPath?: string; sessionGeneration?: number }>());
   const appliedComposerProfileByTabRef = useRef(new Map<string, string>());
   const composerProfileInFlightByTabRef = useRef(new Map<string, { key: string; promise: Promise<boolean> }>());
   const composerProfileQueueByTabRef = useRef(new Map<string, Promise<void>>());
@@ -2895,10 +2880,10 @@ export function useController() {
   ) => {
     const surfacePolicy = options.surfacePolicy ?? "preserve-current"; const resetSurface = reset || surfacePolicy === "replace-surface";
     const stateMeta = statesRef.current.get(tabId)?.meta;
-    const sessionPath = (options.sessionPath ?? stateMeta?.sessionPath ?? "").trim();
-    const sessionRevision = options.sessionRevision ?? stateMeta?.sessionRevision;
-    const sessionDigest = options.sessionDigest ?? stateMeta?.sessionDigest;
-    const sessionGeneration = options.sessionGeneration ?? stateMeta?.sessionGeneration;
+    const sessionPath = ("sessionPath" in options ? options.sessionPath ?? "" : stateMeta?.sessionPath ?? "").trim();
+    const sessionRevision = "sessionRevision" in options ? options.sessionRevision : stateMeta?.sessionRevision;
+    const sessionDigest = "sessionDigest" in options ? options.sessionDigest : stateMeta?.sessionDigest;
+    const sessionGeneration = "sessionGeneration" in options ? options.sessionGeneration : stateMeta?.sessionGeneration;
     const canJoinInFlight = !resetSurface && !options.skipHistory;
     const shouldTrackInFlight = !options.skipHistory;
     if (canJoinInFlight) {
@@ -3196,6 +3181,7 @@ export function useController() {
 
   const activeTabFromBackend = useCallback(async (): Promise<TabMeta | undefined> => {
     const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
+    for (const tab of tabs) listedSessionIdentityByTabRef.current.set(tab.id, tab);
     return tabs.find((tab) => tab.active) ?? tabs[0];
   }, []);
 
@@ -4444,10 +4430,16 @@ export function useController() {
     const switchRequestId = `fe-switch-${Date.now()}-${topicActivationSeqRef.current}`;
     noteActivationRequested(switchRequestId);
     const previousTabId = activeTabIdRef.current;
-    const targetSessionPath = optimisticTab?.sessionPath ?? statesRef.current.get(tabId)?.meta?.sessionPath;
-    const targetSessionRevision = optimisticTab?.sessionRevision ?? statesRef.current.get(tabId)?.meta?.sessionRevision;
-    const targetSessionDigest = optimisticTab?.sessionDigest ?? statesRef.current.get(tabId)?.meta?.sessionDigest;
-    const preserveCachedHistory = hasReusableCachedTranscript(statesRef.current.get(tabId), targetSessionPath, targetSessionRevision, targetSessionDigest);
+    const targetState = statesRef.current.get(tabId);
+    const currentTargetIdentity = targetState?.meta ?? listedSessionIdentityByTabRef.current.get(tabId);
+    const targetIdentity = optimisticTab ? { sessionPath: optimisticTab.sessionPath, sessionGeneration: optimisticTab.sessionGeneration } : undefined;
+    const targetSessionPath = optimisticTab?.sessionPath;
+    const targetSessionRevision = optimisticTab?.sessionRevision;
+    const targetSessionDigest = optimisticTab?.sessionDigest;
+    const targetSessionGeneration = optimisticTab?.sessionGeneration;
+    const sameSession = sameSessionHydrateIdentity(targetIdentity, currentTargetIdentity);
+    const placeholderItems = sameSession ? targetState?.items : undefined;
+    const preserveCachedHistory = sameSession && hasReusableCachedTranscript(targetState, targetSessionPath, targetSessionRevision, targetSessionDigest);
     addBreadcrumb("tab.switch", `click ${tabId}`);
     setActiveTabId(tabId);
     activeTabIdRef.current = tabId;
@@ -4455,10 +4447,13 @@ export function useController() {
     noteActivationStarted(switchRequestId, tabId);
     if (optimisticTab) {
       dispatchTo(tabId, { type: "optimistic_meta", meta: metaFromTab(optimisticTab, statesRef.current.get(tabId)?.meta) });
+    }
+    if (!sameSession) dispatchTo(tabId, { type: "reset" });
+    if (optimisticTab) {
       const optimisticStatus = backendStatusFromRuntimeMeta(optimisticTab);
       if (optimisticStatus.running) dispatchTo(tabId, optimisticStatus);
     }
-    dispatchTo(tabId, { type: "hydrate_start", reason: "switch-tab" });
+    dispatchTo(tabId, { type: "hydrate_start", reason: "switch-tab", placeholderItems });
     addBreadcrumb("tab.switch", `active-rendered ${tabId} ms=${Date.now() - startedAt}`);
     const backendActivation = app.SetActiveTab(tabId)
       .then(async () => {
@@ -4500,11 +4495,14 @@ export function useController() {
         const tabs = await reconcileTabRuntime(tabId, { hydrateSessionData: false });
         if (!isNavigationIntentCurrent(navigationSeq)) return tabs;
         void loadSessionDataForTab(tabId, false, "switch-tab", {
-          skipHistory: hasCachedLiveTurn(statesRef.current.get(tabId)),
+          skipHistory: sameSession && hasCachedLiveTurn(statesRef.current.get(tabId)),
+          placeholderItems,
+          surfacePolicy: sameSession ? "preserve-current" : "replace-surface",
           preserveCachedHistory,
           sessionPath: targetSessionPath,
           sessionRevision: targetSessionRevision,
           sessionDigest: targetSessionDigest,
+          sessionGeneration: targetSessionGeneration,
         });
         noteActivationSettled(switchRequestId, "ready");
         return tabs;
@@ -4789,6 +4787,7 @@ export function useController() {
     // the surface the user just clicked.
     noteNavigationIntent: beginActiveNavigation,
     isNavigationIntentCurrent,
+    reassertVisibleTabAfterStaleNavigation,
     syncActiveTab: syncActiveTabFromBackend,
   };
 }

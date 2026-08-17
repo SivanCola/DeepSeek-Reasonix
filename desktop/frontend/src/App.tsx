@@ -179,7 +179,7 @@ import { hydrateDisplayMode } from "./lib/displayMode";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems, type StatusBarItemId } from "./lib/statusBarItems";
 import { paletteSessionDisplayTitle, paletteSessionHint, paletteSessionKeywords, sessionActivityTime } from "./lib/session";
 import { enqueueNavigationRequest, type PendingNavigationRequest } from "./lib/openTopicCoalescing";
-import { settleNavigationSurfaceIntent } from "./lib/navigationSurfaceTransition";
+import { guardBackendNavigationResult, settleNavigationSurfaceIntent } from "./lib/navigationSurfaceTransition";
 import {
   applyTheme,
   clearLegacyThemePreference,
@@ -1104,6 +1104,7 @@ export default function App() {
     activateTopic,
     noteNavigationIntent,
     isNavigationIntentCurrent,
+    reassertVisibleTabAfterStaleNavigation,
     syncActiveTab,
     ensureBlankTab,
     ensureBlankSurface,
@@ -3149,15 +3150,25 @@ export default function App() {
     beginNavigationSurface(navigationIntentSeq);
     try {
       const meta = await app.RevealBackgroundRuntime(tabId);
-      if (!isNavigationIntentCurrent(navigationIntentSeq)) return;
+      if (!await guardBackendNavigationResult({
+        intent: navigationIntentSeq,
+        targetTabId: meta.id,
+        kind: "tab.reveal-background",
+        isIntentCurrent: isNavigationIntentCurrent,
+        reassert: reassertVisibleTabAfterStaleNavigation,
+      })) return;
       await switchTab(meta.id, meta, navigationIntentSeq);
-      await refreshTabMetas(undefined, { afterMutation: true });
+      if (!isNavigationIntentCurrent(navigationIntentSeq)) return;
+      await refreshTabMetas(
+        () => isNavigationIntentCurrent(navigationIntentSeq),
+        { afterMutation: true },
+      );
     } catch (err) {
       if (isNavigationIntentCurrent(navigationIntentSeq)) showToast(err instanceof Error ? err.message : String(err), "error");
     } finally {
       settleNavigationSurface(navigationIntentSeq);
     }
-  }, [beginNavigationSurface, isNavigationIntentCurrent, noteNavigationIntent, refreshTabMetas, settleNavigationSurface, showToast, switchTab]);
+  }, [beginNavigationSurface, isNavigationIntentCurrent, noteNavigationIntent, reassertVisibleTabAfterStaleNavigation, refreshTabMetas, settleNavigationSurface, showToast, switchTab]);
 
   const handleTabChange = useCallback((id: string) => {
     closeTransientOverlays();
@@ -3228,16 +3239,26 @@ export default function App() {
     beginNavigationSurface(navigationIntentSeq);
     try {
       const meta = await app.RevealWorkspaceWriterForTab(activeTabId);
-      if (!isNavigationIntentCurrent(navigationIntentSeq)) return;
+      if (!await guardBackendNavigationResult({
+        intent: navigationIntentSeq,
+        targetTabId: meta.id,
+        kind: "tab.reveal-workspace-writer",
+        isIntentCurrent: isNavigationIntentCurrent,
+        reassert: reassertVisibleTabAfterStaleNavigation,
+      })) return;
       setWorkspaceConflict(null);
       await switchTab(meta.id, meta, navigationIntentSeq);
-      await refreshTabMetas(undefined, { afterMutation: true });
+      if (!isNavigationIntentCurrent(navigationIntentSeq)) return;
+      await refreshTabMetas(
+        () => isNavigationIntentCurrent(navigationIntentSeq),
+        { afterMutation: true },
+      );
     } catch (err) {
       if (isNavigationIntentCurrent(navigationIntentSeq)) showToast(err instanceof Error ? err.message : String(err), "error");
     } finally {
       settleNavigationSurface(navigationIntentSeq);
     }
-  }, [activeTabId, beginNavigationSurface, isNavigationIntentCurrent, noteNavigationIntent, refreshTabMetas, settleNavigationSurface, showToast, switchTab]);
+  }, [activeTabId, beginNavigationSurface, isNavigationIntentCurrent, noteNavigationIntent, reassertVisibleTabAfterStaleNavigation, refreshTabMetas, settleNavigationSurface, showToast, switchTab]);
 
   const continueInDeliveryWorktree = useCallback(async () => {
     const root = state.meta?.workspaceRoot || state.meta?.workspacePath || state.meta?.cwd;
