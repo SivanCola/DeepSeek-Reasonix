@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -166,8 +167,7 @@ func (t *sessionToolResultTool) Execute(_ context.Context, args json.RawMessage)
 
 func findToolResultCandidate(msgs []provider.Message, toolCallID, resultRef string) (toolResultCandidate, error) {
 	candidates := make([]toolResultCandidate, 0, 2)
-	for i := len(msgs) - 1; i >= 0; i-- {
-		msg := msgs[i]
+	for _, msg := range slices.Backward(msgs) {
 		if msg.Role != provider.RoleTool || msg.ToolCallID != toolCallID {
 			continue
 		}
@@ -225,7 +225,7 @@ func toolResultRefFromMarker(content string) (string, bool) {
 	if end := strings.Index(marker, "]…"); end >= 0 {
 		marker = marker[:end]
 	}
-	for _, field := range strings.Fields(marker) {
+	for field := range strings.FieldsSeq(marker) {
 		ref, ok := strings.CutPrefix(field, "result_ref=")
 		if !ok || len(ref) != len("tr-")+24 || !strings.HasPrefix(ref, "tr-") {
 			continue
