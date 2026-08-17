@@ -252,10 +252,9 @@ func summaryContentHash(summary string) string {
 }
 
 // coveredPrefixHash fingerprints the current model-visible prefix of msgs[:n].
-// Tool RawContent is promoted here because it is what new requests send to the
-// provider; bounded Content remains only the compatibility representation for
-// older readers. SanitizeToolPairing applies the same deterministic repair used
-// on the wire, keeping hashes stable when LoadSession repairs a transcript.
+// Tool Content is the stable bounded provider representation; RawContent is
+// local-only. SanitizeToolPairing applies the same deterministic repair used on
+// the wire, keeping hashes stable when LoadSession repairs a transcript.
 func coveredPrefixHash(msgs []provider.Message, n int) string {
 	if n <= 0 || n > len(msgs) {
 		return ""
@@ -264,9 +263,8 @@ func coveredPrefixHash(msgs []provider.Message, n int) string {
 	return providerVisibleFingerprint(provider.SanitizeToolPairing(visible))
 }
 
-// boundedCoveredPrefixHash reproduces the pre-RawContent v3 fingerprint. It
-// is accepted only for reading old sidecars; every new checkpoint writes the
-// current hash above so a later RawContent edit cannot reuse stale state.
+// boundedCoveredPrefixHash is the v3 bounded provider fingerprint. Keep the
+// named helper for old sidecar and load-repair compatibility tests.
 func boundedCoveredPrefixHash(msgs []provider.Message, n int) string {
 	if n <= 0 || n > len(msgs) {
 		return ""
@@ -275,11 +273,25 @@ func boundedCoveredPrefixHash(msgs []provider.Message, n int) string {
 	return providerVisibleFingerprint(provider.SanitizeToolPairing(visible))
 }
 
-// migrateBoundedCoveredPrefixHash upgrades a sidecar written before tool
-// RawContent became model-visible. Keeping this as an explicit load migration,
-// rather than a permanent validation fallback, ensures a later RawContent edit
-// invalidates the projection once the sidecar has been observed by this version.
-func migrateBoundedCoveredPrefixHash(st *CompactionState, msgs []provider.Message) bool {
+// promotedCoveredPrefixHash reproduces the temporary v3 behavior that promoted
+// full tool RawContent into every provider request.
+func promotedCoveredPrefixHash(msgs []provider.Message, n int) string {
+	if n <= 0 || n > len(msgs) {
+		return ""
+	}
+	promoted := append([]provider.Message(nil), msgs[:n]...)
+	for i := range promoted {
+		if promoted[i].Role == provider.RoleTool && promoted[i].RawContent != "" {
+			promoted[i].Content = promoted[i].RawContent
+		}
+	}
+	return providerVisibleFingerprint(provider.SanitizeToolPairing(provider.ModelMessages(promoted)))
+}
+
+// migratePromotedCoveredPrefixHash normalizes a sidecar written while full tool
+// RawContent was model-visible. Migration is exact: unrelated or stale hashes
+// are left invalid so the loader drops only their projection body.
+func migratePromotedCoveredPrefixHash(st *CompactionState, msgs []provider.Message) bool {
 	if st == nil {
 		return false
 	}
@@ -287,7 +299,7 @@ func migrateBoundedCoveredPrefixHash(st *CompactionState, msgs []provider.Messag
 	stored := st.Projection.CoveredPrefixHash
 	currentHash := coveredPrefixHash(msgs, n)
 	if stored == "" || currentHash == "" || stored == currentHash ||
-		stored != boundedCoveredPrefixHash(msgs, n) {
+		stored != promotedCoveredPrefixHash(msgs, n) {
 		return false
 	}
 	st.Projection.CoveredPrefixHash = currentHash

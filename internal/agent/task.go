@@ -1152,6 +1152,12 @@ func (t *restrictedCapabilityProxy) Description() string {
 	return t.Tool.Description()
 }
 
+func (t *restrictedCapabilityProxy) bindToolResultSession(session func() *Session) {
+	if binder, ok := t.Tool.(toolResultSessionBinder); ok {
+		binder.bindToolResultSession(session)
+	}
+}
+
 func (t *restrictedCapabilityProxy) check(args json.RawMessage) error {
 	var p struct {
 		Action       string `json:"action"`
@@ -1166,6 +1172,9 @@ func (t *restrictedCapabilityProxy) check(args json.RawMessage) error {
 	id := strings.TrimSpace(p.CapabilityID)
 	if id == "" {
 		return fmt.Errorf("capability_id is required")
+	}
+	if id == sessionToolResultCapabilityID {
+		return nil
 	}
 	if !t.allowed[id] {
 		return fmt.Errorf("capability %q is outside this subagent's allowed-tools", id)
@@ -1215,8 +1224,9 @@ func emptyCapabilityListResult(note string) string {
 		note = "list is filtered to this subagent's allowed MCP servers."
 	}
 	b, err := json.MarshalIndent(map[string]any{
-		"servers": []listServerInfo{},
-		"note":    note,
+		"capabilities": []any{},
+		"servers":      []listServerInfo{},
+		"note":         note,
 	}, "", "  ")
 	if err != nil {
 		return `{"servers":[],"note":"list is filtered to this subagent's allowed MCP servers."}`
@@ -1233,8 +1243,9 @@ func filterCapabilityListResult(raw string, servers map[string]bool) string {
 		return emptyCapabilityListResult(baseNote + " No allowed MCP servers were resolved from the profile allowlist.")
 	}
 	var payload struct {
-		Servers []listServerInfo `json:"servers"`
-		Note    string           `json:"note"`
+		Capabilities []json.RawMessage `json:"capabilities"`
+		Servers      []listServerInfo  `json:"servers"`
+		Note         string            `json:"note"`
 	}
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return emptyCapabilityListResult(baseNote + " List payload was unreadable; returning no servers (fail-closed).")
@@ -1246,6 +1257,16 @@ func filterCapabilityListResult(raw string, servers map[string]bool) string {
 		}
 	}
 	payload.Servers = filtered
+	filteredCapabilities := make([]json.RawMessage, 0, 1)
+	for _, raw := range payload.Capabilities {
+		var entry struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(raw, &entry) == nil && strings.TrimSpace(entry.ID) == sessionToolResultCapabilityID {
+			filteredCapabilities = append(filteredCapabilities, raw)
+		}
+	}
+	payload.Capabilities = filteredCapabilities
 	if payload.Note == "" {
 		payload.Note = baseNote
 	} else if !strings.Contains(payload.Note, "Filtered to this subagent") {

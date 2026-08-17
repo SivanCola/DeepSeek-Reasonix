@@ -15,22 +15,11 @@ type samplingRequest struct {
 	req provider.Request
 }
 
-// modelInputMessages derives provider-visible messages from durable storage.
-// Tool RawContent is the canonical full result while Content remains bounded
-// for readers from older Reasonix versions. Only the transport copy promotes
-// that full tool body; other RawContent fields keep their existing semantics.
+// modelInputMessages derives the stable provider-visible view from durable
+// storage. Tool Content is the first-visible bounded result; RawContent stays
+// local and is available only through the explicit session result reader.
 func modelInputMessages(msgs []provider.Message) []provider.Message {
-	return provider.ModelMessages(promoteToolRawContent(msgs))
-}
-
-func promoteToolRawContent(msgs []provider.Message) []provider.Message {
-	prepared := append([]provider.Message(nil), msgs...)
-	for i := range prepared {
-		if prepared[i].Role == provider.RoleTool && prepared[i].RawContent != "" {
-			prepared[i].Content = prepared[i].RawContent
-		}
-	}
-	return prepared
+	return provider.ModelMessages(msgs)
 }
 
 // normalizeModelRequestMessages is shared by ordinary sampling and compaction

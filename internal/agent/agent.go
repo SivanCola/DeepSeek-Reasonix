@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,9 +37,8 @@ import (
 	"reasonix/internal/workspacelease"
 )
 
-// maxToolOutputBytes keeps Content readable by older Reasonix versions.
-// RawContent retains the complete result and new request projections promote it
-// until pressure-time pruning installs a durable bounded view.
+// maxToolOutputBytes bounds the stable provider-visible Content. RawContent
+// retains the complete local result for explicit session-scoped paging.
 const maxToolOutputBytes = 32 * 1024
 
 var deprecatedContextRetentionWarning sync.Once
@@ -1139,6 +1139,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	}
 	a.SetResponseLanguage(opts.ResponseLanguage)
 	a.SetReasoningLanguage(opts.ReasoningLanguage)
+	a.bindToolResultSessionCapability()
 	a.maybeArmForkFromEnv()
 	a.maybeWrapForkCaptureProvider()
 	if warnDeprecatedRetention {
@@ -2759,16 +2760,15 @@ func firstLine(s string) string {
 	return s
 }
 
-// truncateToolOutput builds the compatibility Content form for a tool result.
-// Under-cap bodies are byte-identical; over-cap bodies keep a tool-aware head
-// and tail while RawContent stores the full original. New request projections
-// promote RawContent until pressure pruning, while older readers remain bounded.
+// truncateToolOutput builds the stable provider-visible Content form for a tool
+// result. Under-cap bodies are byte-identical; over-cap bodies keep a tool-aware
+// head and tail while RawContent stores the full local original.
 func truncateToolOutput(s string) (string, string) {
 	return truncateToolOutputFor(s, "", "")
 }
 
-// truncateToolOutputFor is the tool-aware compatibility-storage limiter.
-// toolName and toolCallID populate the marker used by older readers.
+// truncateToolOutputFor is the tool-aware provider-input limiter. toolName and
+// toolCallID populate the recovery marker.
 func truncateToolOutputFor(s, toolName, toolCallID string) (string, string) {
 	if len(s) <= maxToolOutputBytes {
 		return s, ""
@@ -2802,23 +2802,14 @@ func truncateToolOutputFor(s, toolName, toolCallID string) (string, string) {
 	}
 	head := snapToRuneBoundary(s, 0, headKeep)
 	tail := snapToRuneBoundary(s, len(s)-tailKeep, len(s))
-	omitted := len(s) - len(head) - len(tail)
-	namePart := toolName
-	if namePart == "" {
-		namePart = "tool"
-	}
-	idPart := toolCallID
-	if idPart == "" {
-		idPart = "-"
-	}
-	notice := fmt.Sprintf("tool output truncated: %d of %d bytes elided", omitted, len(s))
-	marker := fmt.Sprintf(
-		"\n\n…[truncated tool=%s call_id=%s original_bytes=%d kept_bytes=%d — full original retained in canonical transcript; re-read or retry with narrower args]…\n\n",
-		namePart, idPart, len(s), len(head)+len(tail),
-	)
-	body := head + marker + tail
-	if len(body) > maxToolOutputBytes {
-		overflow := len(body) - maxToolOutputBytes
+	resultRef := toolResultRef(toolCallID, s)
+	marker := toolOutputRecoveryMarker(toolName, toolCallID, resultRef, len(s), len(head)+len(tail))
+	for range 3 {
+		bodyLen := len(head) + len(marker) + len(tail)
+		if bodyLen <= maxToolOutputBytes {
+			break
+		}
+		overflow := bodyLen - maxToolOutputBytes
 		trimHead := overflow / 2
 		trimTail := overflow - trimHead
 		if trimHead < len(head) {
@@ -2827,9 +2818,46 @@ func truncateToolOutputFor(s, toolName, toolCallID string) (string, string) {
 		if trimTail < len(tail) {
 			tail = snapToRuneBoundary(tail, trimTail, len(tail))
 		}
-		body = head + marker + tail
+		marker = toolOutputRecoveryMarker(toolName, toolCallID, resultRef, len(s), len(head)+len(tail))
 	}
-	return body, notice
+	notice := fmt.Sprintf("tool output truncated: %d of %d bytes elided", len(s)-len(head)-len(tail), len(s))
+	return head + marker + tail, notice
+}
+
+func toolResultRef(toolCallID, body string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(toolCallID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(body))
+	return fmt.Sprintf("tr-%x", h.Sum(nil)[:12])
+}
+
+func toolOutputRecoveryMarker(toolName, toolCallID, resultRef string, originalBytes, keptBytes int) string {
+	namePart := boundedMarkerField(toolName, 128, "tool")
+	idPart := boundedMarkerField(toolCallID, 128, "-")
+	exampleID := toolCallID
+	if len(exampleID) > 256 {
+		exampleID = "<full tool_call_id from this tool result>"
+	}
+	args, _ := json.Marshal(struct {
+		ToolCallID string `json:"tool_call_id"`
+		ResultRef  string `json:"result_ref"`
+		Offset     int    `json:"offset"`
+	}{ToolCallID: exampleID, ResultRef: resultRef})
+	return fmt.Sprintf(
+		"\n\n…[truncated tool=%s call_id=%s result_ref=%s original_bytes=%d kept_bytes=%d — full original retained locally; recover with use_capability(action=\"call\", capability_id=\"session:tool_result\", arguments=%s). If use_capability is unavailable, re-run the original tool with narrower arguments]…\n\n",
+		namePart, idPart, resultRef, originalBytes, keptBytes, args,
+	)
+}
+
+func boundedMarkerField(value string, maxBytes int, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	if len(value) <= maxBytes {
+		return value
+	}
+	return snapToRuneBoundary(value, 0, maxBytes) + "…"
 }
 
 // snapToRuneBoundary returns s[lo:hi] with the bounds nudged outward until
