@@ -24,6 +24,61 @@ export type SessionHydrateIdentity = {
   sessionGeneration?: number;
 };
 
+export type HydrateSurfacePolicy = "preserve-current" | "replace-surface";
+
+type ActiveTabHydrationTarget = SessionHydrateIdentity & {
+  sessionRevision?: number;
+  sessionDigest?: string;
+};
+
+export type ActiveTabHydrationLoadOptions = ActiveTabHydrationTarget & {
+  preserveCachedHistory: boolean;
+  surfacePolicy?: HydrateSurfacePolicy;
+};
+
+export function activeTabHydrationPlan(
+  target: ActiveTabHydrationTarget,
+  current: SessionHydrateIdentity | undefined,
+  reset: boolean,
+  requestedPolicy?: HydrateSurfacePolicy,
+  requestedCache?: boolean,
+): {
+  sameSession: boolean;
+  surfacePolicy: HydrateSurfacePolicy;
+  loadOptions: ActiveTabHydrationLoadOptions;
+} {
+  const sameSession = sameSessionHydrateIdentity(target, current);
+  const surfacePolicy = requestedPolicy ?? (sameSession ? "preserve-current" : "replace-surface");
+  if (surfacePolicy === "replace-surface") {
+    return {
+      sameSession,
+      surfacePolicy,
+      loadOptions: {
+        preserveCachedHistory: false,
+        surfacePolicy,
+        sessionPath: target.sessionPath,
+        sessionRevision: target.sessionRevision,
+        sessionDigest: target.sessionDigest,
+        sessionGeneration: target.sessionGeneration,
+      },
+    };
+  }
+  return {
+    sameSession,
+    surfacePolicy,
+    loadOptions: {
+      preserveCachedHistory: sameSession && (requestedCache ?? !reset),
+      sessionPath: target.sessionPath,
+      sessionRevision: target.sessionRevision,
+      sessionDigest: target.sessionDigest,
+    },
+  };
+}
+
+type UnboundLiveSurfaceState = HydrateLiveState & {
+  hydrateHistoryLoaded?: boolean;
+};
+
 /** A surface may retain content only when the target session is provably the same. */
 export function sameSessionHydrateIdentity(
   target: SessionHydrateIdentity | undefined,
@@ -38,6 +93,38 @@ export function sameSessionHydrateIdentity(
     target.sessionGeneration !== current.sessionGeneration
   ) return false;
   return true;
+}
+
+/**
+ * Adopt only a live runtime tail that has never been bound to persisted
+ * history. This is the compatibility bridge for background runtime events
+ * that predate the tab metadata snapshot: it must never retain a resident
+ * transcript merely because the tab id matches.
+ */
+export function canAdoptUnboundLiveSurface(
+  target: SessionHydrateIdentity | undefined,
+  current: SessionHydrateIdentity | undefined,
+  state: UnboundLiveSurfaceState | undefined,
+  backendRunning: boolean,
+  targetRuntimeEpoch?: string,
+  currentRuntimeEpoch?: string,
+): boolean {
+  if (!backendRunning || !state) return false;
+  if (!(target?.sessionPath ?? "").trim()) return false;
+  if ((current?.sessionPath ?? "").trim()) return false;
+  if (state.hydrateHistoryLoaded || (state.historyTotalTurns ?? 0) > 0) return false;
+  if (state.historyRevision !== undefined || (state.historyDigest ?? "").trim()) return false;
+  if (!state.running && !state.turnActive) return false;
+  if (targetRuntimeEpoch && currentRuntimeEpoch && targetRuntimeEpoch !== currentRuntimeEpoch) return false;
+  return Boolean(
+    state.live ||
+    state.currentAssistant ||
+    state.pendingUser !== undefined ||
+    state.items.some((item) =>
+      (item.kind === "assistant" && item.streaming) ||
+      (item.kind === "tool" && item.status === "running"),
+    ),
+  );
 }
 
 export function shouldPreferResidentHistory(reset: boolean, preserveCachedHistory?: boolean): boolean {

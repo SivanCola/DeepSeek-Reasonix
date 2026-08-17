@@ -64,6 +64,15 @@ ok(appSource.includes("inert={composerSurfaceHidden ? true : undefined}"), "the 
 ok(appSource.includes("!runtimeTransitioning && showTodos"), "source-session Todo content is isolated");
 ok(appSource.includes("!runtimeTransitioning && rewindState"), "source-session rewind content is isolated");
 ok((appSource.match(/guardBackendNavigationResult\(\{/g) ?? []).length === 2, "both Reveal paths guard stale backend activation results");
+const switchFolderSource = appSource.slice(
+  appSource.indexOf("const switchFolder = useCallback"),
+  appSource.indexOf("const refreshProjectsAndTabs = useCallback"),
+);
+ok(switchFolderSource.includes("const navigationIntentSeq = noteNavigationIntent()"), "workspace navigation claims the shared intent before Wails");
+ok(switchFolderSource.includes("beginNavigationSurface(navigationIntentSeq)"), "workspace navigation masks the source surface before Wails");
+ok(switchFolderSource.includes("pickWorkspace(navigationIntentSeq)"), "folder-pick navigation carries the shared intent into the controller");
+ok(switchFolderSource.includes("switchWorkspace(path, navigationIntentSeq)"), "direct workspace navigation carries the shared intent into the controller");
+ok(switchFolderSource.includes("settleNavigationSurface(navigationIntentSeq)"), "workspace navigation compare-clears its surface mask");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

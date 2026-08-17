@@ -130,7 +130,9 @@ const tabO = tabMeta("tab-o", 1);
 const tabsById = new Map([tabA, tabO].map((tab) => [tab.id, tab]));
 let backendActiveId = "tab-a";
 let generationTwoHistory = deferred<HistoryMessage[]>();
-let holdGenerationTwoHistory = false;
+let heldTabOHistory: Promise<HistoryMessage[]> | null = null;
+let heldListTabs: Promise<TabMeta[]> | null = null;
+let heldListTabsStarted = false;
 
 function currentTabs(): TabMeta[] {
   return Array.from(tabsById.values()).map((tab) => ({ ...tab, active: tab.id === backendActiveId }));
@@ -143,7 +145,15 @@ window.runtime = {
 window.go = {
   main: {
     App: {
-      ListTabs: async () => currentTabs(),
+      ListTabs: async () => {
+        if (heldListTabs) {
+          const promise = heldListTabs;
+          heldListTabs = null;
+          heldListTabsStarted = true;
+          return promise;
+        }
+        return currentTabs();
+      },
       MetaForTab: async (tabID: string) => metaFor(tabsById.get(tabID) ?? tabA),
       ContextUsageForTab: async () => context,
       EffortForTab: async () => effort,
@@ -151,11 +161,13 @@ window.go = {
       JobsForTab: async () => jobs,
       CheckpointsForTab: async () => checkpoints,
       HistoryForTab: async (tabID: string) => {
-        if (tabID === "tab-o" && holdGenerationTwoHistory) {
-          holdGenerationTwoHistory = false;
-          return generationTwoHistory.promise;
+        if (tabID === "tab-o" && heldTabOHistory) {
+          const promise = heldTabOHistory;
+          heldTabOHistory = null;
+          return promise;
         }
-        return [userMessage(tabID === "tab-o" ? "history O generation 1" : "history A")];
+        const generation = tabsById.get(tabID)?.sessionGeneration ?? 0;
+        return [userMessage(tabID === "tab-o" ? `history O generation ${generation}` : "history A")];
       },
       HistorySliceForTab: async (tabID: string, request: HistorySliceRequest) => {
         const messages = await window.go.main.App.HistoryForTab(tabID);
@@ -191,7 +203,7 @@ await waitFor("source restored", () => controller?.activeTabId === "tab-a");
 const reboundTabO = { ...tabO, sessionGeneration: 2 };
 tabsById.set("tab-o", reboundTabO);
 generationTwoHistory = deferred<HistoryMessage[]>();
-holdGenerationTwoHistory = true;
+heldTabOHistory = generationTwoHistory.promise;
 await act(async () => { await controller?.switchTab("tab-o", reboundTabO); await flushPromises(); });
 
 eq(controller?.activeTabId, "tab-o", "generation-rebound tab becomes the selected target");
@@ -206,6 +218,47 @@ await act(async () => {
 });
 await waitFor("target history error", () => Boolean(controller?.state.hydrateError));
 ok(!(controller?.state.items.some((item) => item.kind === "user" && item.text === "history O generation 1") ?? false), "target history failure never restores the prior generation");
+
+// A mount/ready sync can start before a same-tab session rebind and resolve
+// afterwards. Its tab id still matches, so the navigation generation — not the
+// id — must fence the stale snapshot before it can rewrite optimistic meta.
+const staleGenerationTwoTabs = currentTabs();
+const staleListTabs = deferred<TabMeta[]>();
+heldListTabs = staleListTabs.promise;
+heldListTabsStarted = false;
+let staleSync: Promise<string | undefined> | undefined;
+await act(async () => {
+  staleSync = controller?.syncActiveTab(false);
+  await flushPromises();
+});
+ok(heldListTabsStarted, "backend sync is held before the newer same-tab navigation");
+
+const reboundTabOGenerationThree = { ...tabO, sessionGeneration: 3, active: true };
+tabsById.set("tab-o", reboundTabOGenerationThree);
+backendActiveId = "tab-o";
+const generationThreeHistory = deferred<HistoryMessage[]>();
+heldTabOHistory = generationThreeHistory.promise;
+await act(async () => {
+  await controller?.openProjectTab(reboundTabOGenerationThree.workspaceRoot, reboundTabOGenerationThree.topicId || "");
+  await flushPromises();
+});
+eq(controller?.state.meta?.sessionGeneration, 3, "newer same-tab navigation installs generation three identity");
+eq(controller?.state.hydrating, true, "generation three history remains pending");
+
+await act(async () => {
+  staleListTabs.resolve(staleGenerationTwoTabs);
+  await flushPromises();
+});
+eq(controller?.state.meta?.sessionGeneration, 3, "stale same-tab sync cannot restore generation two metadata");
+eq(controller?.state.hydrating, true, "stale same-tab sync cannot cancel generation three hydration");
+
+await act(async () => {
+  generationThreeHistory.resolve([userMessage("history O generation 3")]);
+  await Promise.all([generationThreeHistory.promise, staleSync]);
+  await flushPromises();
+});
+await waitFor("generation three history", () => controller?.state.items.some((item) => item.kind === "user" && item.text === "history O generation 3") ?? false);
+eq(controller?.state.meta?.sessionGeneration, 3, "generation three remains the settled session identity");
 
 await act(async () => { root.unmount(); });
 dom.window.close();

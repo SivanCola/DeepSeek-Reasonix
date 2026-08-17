@@ -23,7 +23,7 @@ import { uiPerfTracker } from "./uiPerf";
 import { getLocale, t, type DictKey } from "./i18n";
 import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceholders } from "./hydrateErrorState";
 import { isHostRecoveryGuidance } from "./hostRecoverySteer";
-import { duplicateLiveItemIds, hasCachedLiveTurn, hasReusableCachedTranscript, hydratedHistoryApplyMode, sameSessionHydrateIdentity, sameSessionPlaceholderItems, shouldPreferResidentHistory } from "./hydrateHistoryApply";
+import { activeTabHydrationPlan, canAdoptUnboundLiveSurface, duplicateLiveItemIds, hasCachedLiveTurn, hasReusableCachedTranscript, hydratedHistoryApplyMode, sameSessionHydrateIdentity, sameSessionPlaceholderItems, shouldPreferResidentHistory, type HydrateSurfacePolicy } from "./hydrateHistoryApply";
 import { hydrateIdentityCurrent } from "./sessionIdentity";
 import { sameStringList, sameTodoList } from "./todoVisibility";
 import { resolveSnapshotTurnStartedAt, resolveTurnStartedAt, snapshotPredatesTurnLifecycle } from "./turnTiming";
@@ -209,10 +209,7 @@ export type ControllerLiveStore = {
 export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversation" | "code" | "both";
 export type MessageActionState = { turn: number; scope: MessageActionScope };
 export type HydrateReason = "switch-tab" | "new-session" | "resume-session" | "open-topic" | "startup" | "rewind";
-type HydrateSurfacePolicy = "preserve-current" | "replace-surface";
-type SyncActiveTabOptions = {
-  preserveCachedHistory?: boolean;
-};
+type SyncActiveTabOptions = { preserveCachedHistory?: boolean; navigationIntentSeq?: number; surfacePolicy?: HydrateSurfacePolicy };
 // A ticketed StartTopicActivation in flight. Only the latest one is tracked:
 // superseded requests get "cancelled" from the backend and are ignored.
 type PendingTopicActivation = {
@@ -791,7 +788,7 @@ type Action =
   | { type: "history_items_patch"; patches: Record<string, Item> }
   | { type: "history_older_start" }
   | { type: "history_older_error" }
-  | { type: "local_notice"; level: "info" | "warn"; text: string }
+  | { type: "local_notice"; level: "info" | "warn"; text: string; preserveRuntime?: boolean }
   | { type: "clearApproval" }
   | { type: "clearAsk" }
   | { type: "clearExtensionForm" }
@@ -2119,7 +2116,7 @@ export function reducer(s: State, a: Action): State {
       });
       return changed ? { ...s, items: next, historyLayoutRevision: s.historyLayoutRevision + 1 } : s;
     }
-    case "local_notice": return { ...s, running: false, turnActive: false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
+    case "local_notice": return { ...s, running: a.preserveRuntime ? s.running : false, turnActive: a.preserveRuntime ? s.turnActive : false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": {
       const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask), resolvedPromptId: s.approval?.id ?? s.resolvedPromptId };
       return endPromptWaitIfIdle(next);
@@ -2956,7 +2953,8 @@ export function useController() {
       if (!skipHistory && projection === undefined) {
         const errText = t("history.failedLoadHistory");
         dispatchTo(tabId, { type: "hydrate_error", reason, error: errText });
-        dispatchTo(tabId, { type: "local_notice", level: "warn", text: errText });
+        // Hydration failure is not turn completion; keep any raced Ask/approval blocked.
+        dispatchTo(tabId, { type: "local_notice", level: "warn", text: errText, preserveRuntime: true });
         addBreadcrumb("tab.hydrate", `history failed ${tabId} ms=${Date.now() - historyStartedAt}`); return;
       }
       const applyProj = projection && {
@@ -3233,32 +3231,30 @@ export function useController() {
 
   const syncActiveTabFromBackend = useCallback(async (reset = false, guard = false, options: SyncActiveTabOptions = {}): Promise<string | undefined> => {
     const snapshotAt = promptEventClock();
+    // The navigation generation fences same-tab session rebinds as well as tab-id changes.
+    const expectedNavigationSeq = options.navigationIntentSeq ?? activeNavigationSeqRef.current;
     const active = await activeTabFromBackend();
     if (!active) return undefined;
+    if (!isNavigationIntentCurrent(expectedNavigationSeq)) return active.id;
     // When guard is true, skip if the frontend already settled on a
     // different tab while we were fetching — this prevents fire-and-forget
     // calls from mount/onReady from overwriting a user-initiated tab switch
     // (e.g. handleNewTab → ensureBlankSurface / switchTab).
-    if (guard && activeTabIdRef.current && activeTabIdRef.current !== active.id) {
-      return active.id;
-    }
-    if (activeTabIdRef.current !== active.id) beginActiveNavigation();
+    if (guard && activeTabIdRef.current && activeTabIdRef.current !== active.id) return active.id;
+    if (activeTabIdRef.current !== active.id && options.navigationIntentSeq === undefined) beginActiveNavigation();
+    const previousState = statesRef.current.get(active.id);
+    const hydration = activeTabHydrationPlan(active, previousState?.meta, reset, options.surfacePolicy, options.preserveCachedHistory);
     setActiveTabId(active.id);
     activeTabIdRef.current = active.id;
     confirmBackendActiveTab(active.id);
     if (active.runtime?.epoch) runtimeEpochByTabRef.current.set(active.id, active.runtime.epoch);
-    dispatchTo(active.id, { type: "optimistic_meta", meta: metaFromTab(active, statesRef.current.get(active.id)?.meta) });
-    const preserveCachedHistory = options.preserveCachedHistory ?? !reset;
-    if (!reset) dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
-    await loadSessionDataForTab(active.id, reset, "startup", {
-      preserveCachedHistory,
-      sessionPath: active.sessionPath,
-      sessionRevision: active.sessionRevision,
-      sessionDigest: active.sessionDigest,
-    });
-    if (reset) dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
+    dispatchTo(active.id, { type: "optimistic_meta", meta: metaFromTab(active, previousState?.meta) });
+    if (!reset && hydration.surfacePolicy === "preserve-current") dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
+    const load = loadSessionDataForTab(active.id, reset, "startup", hydration.loadOptions);
+    if (reset || hydration.surfacePolicy === "replace-surface") dispatchRuntimeStatusForTab(active.id, active, snapshotAt);
+    await load;
     return active.id;
-  }, [activeTabFromBackend, beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab]);
+  }, [activeTabFromBackend, beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, isNavigationIntentCurrent, loadSessionDataForTab]);
 
   const reconcileTabRuntime = useCallback(async (
     tabId: string,
@@ -4172,20 +4168,25 @@ export function useController() {
     await refreshMetaForTab(activeTabId);
   }, [activeTabId, refreshMetaForTab]);
 
-  const refreshWorkspaceState = useCallback(async (path: string): Promise<string> => {
-    if (path) await syncActiveTabFromBackend(true);
+  const refreshWorkspaceState = useCallback(async (path: string, navigationSeq: number): Promise<string> => {
+    if (!path) return path;
+    if (!isNavigationIntentCurrent(navigationSeq)) await reassertVisibleTabAfterStaleNavigation("workspace.switch", "");
+    else {
+      const activatedTabId = await syncActiveTabFromBackend(true, false, { navigationIntentSeq: navigationSeq, surfacePolicy: "replace-surface" });
+      if (!isNavigationIntentCurrent(navigationSeq)) await reassertVisibleTabAfterStaleNavigation("workspace.switch", activatedTabId ?? "");
+    }
     return path;
-  }, [syncActiveTabFromBackend]);
+  }, [isNavigationIntentCurrent, reassertVisibleTabAfterStaleNavigation, syncActiveTabFromBackend]);
 
-  const pickWorkspace = useCallback(async (): Promise<string> => {
-    beginActiveNavigation();
+  const pickWorkspace = useCallback(async (navigationIntentSeq?: number): Promise<string> => {
+    const navigationSeq = navigationIntentSeq ?? beginActiveNavigation();
     const path = await app.PickWorkspace();
-    return refreshWorkspaceState(path);
+    return refreshWorkspaceState(path, navigationSeq);
   }, [beginActiveNavigation, refreshWorkspaceState]);
-  const switchWorkspace = useCallback(async (path: string): Promise<string> => {
-    beginActiveNavigation();
+  const switchWorkspace = useCallback(async (path: string, navigationIntentSeq?: number): Promise<string> => {
+    const navigationSeq = navigationIntentSeq ?? beginActiveNavigation();
     const next = await app.SwitchWorkspace(path);
-    return refreshWorkspaceState(next);
+    return refreshWorkspaceState(next, navigationSeq);
   }, [beginActiveNavigation, refreshWorkspaceState]);
 
   const compact = useCallback(() => {
@@ -4438,6 +4439,9 @@ export function useController() {
     const targetSessionDigest = optimisticTab?.sessionDigest;
     const targetSessionGeneration = optimisticTab?.sessionGeneration;
     const sameSession = sameSessionHydrateIdentity(targetIdentity, currentTargetIdentity);
+    const optimisticStatus = optimisticTab ? backendStatusFromRuntimeMeta(optimisticTab) : undefined;
+    const adoptUnboundLiveSurface = canAdoptUnboundLiveSurface(targetIdentity, currentTargetIdentity, targetState, Boolean(optimisticStatus?.running), optimisticTab?.runtime?.epoch, runtimeEpochByTabRef.current.get(tabId));
+    const preserveTargetSurface = sameSession || adoptUnboundLiveSurface;
     const placeholderItems = sameSession ? targetState?.items : undefined;
     const preserveCachedHistory = sameSession && hasReusableCachedTranscript(targetState, targetSessionPath, targetSessionRevision, targetSessionDigest);
     addBreadcrumb("tab.switch", `click ${tabId}`);
@@ -4448,11 +4452,8 @@ export function useController() {
     if (optimisticTab) {
       dispatchTo(tabId, { type: "optimistic_meta", meta: metaFromTab(optimisticTab, statesRef.current.get(tabId)?.meta) });
     }
-    if (!sameSession) dispatchTo(tabId, { type: "reset" });
-    if (optimisticTab) {
-      const optimisticStatus = backendStatusFromRuntimeMeta(optimisticTab);
-      if (optimisticStatus.running) dispatchTo(tabId, optimisticStatus);
-    }
+    if (!preserveTargetSurface) dispatchTo(tabId, { type: "reset" });
+    if (optimisticStatus?.running) dispatchTo(tabId, optimisticStatus);
     dispatchTo(tabId, { type: "hydrate_start", reason: "switch-tab", placeholderItems });
     addBreadcrumb("tab.switch", `active-rendered ${tabId} ms=${Date.now() - startedAt}`);
     const backendActivation = app.SetActiveTab(tabId)
@@ -4497,7 +4498,7 @@ export function useController() {
         void loadSessionDataForTab(tabId, false, "switch-tab", {
           skipHistory: sameSession && hasCachedLiveTurn(statesRef.current.get(tabId)),
           placeholderItems,
-          surfacePolicy: sameSession ? "preserve-current" : "replace-surface",
+          surfacePolicy: preserveTargetSurface ? "preserve-current" : "replace-surface",
           preserveCachedHistory,
           sessionPath: targetSessionPath,
           sessionRevision: targetSessionRevision,
