@@ -60,31 +60,35 @@ func (a *Agent) recordModelTextObservation(plan *toolCallPlan, output string) {
 	})
 }
 
-// recordAnchorSafetyAudit computes the interval-fingerprint decision without
-// changing the legacy fresh-read gate. The newest eligible observation wins;
-// observations created after the frozen batch boundary are tracked but cannot
-// be used because the model has not seen their result yet.
-func (a *Agent) recordAnchorSafetyAudit(ctx context.Context, call provider.ToolCall, target tool.Tool, boundary uint64, writeIndex int) {
+// recordAnchorSafetyAudit computes and emits the interval-fingerprint decision.
+// The newest eligible observation after the relevant write wins; observations
+// created after the frozen batch boundary are tracked but cannot be used because
+// the model has not seen their result yet.
+func (a *Agent) recordAnchorSafetyAudit(ctx context.Context, call provider.ToolCall, target tool.Tool, boundary uint64, writeIndex int) (event.AnchorSafetyAudit, bool, bool) {
 	if a == nil || a.task.ledger == nil || target == nil {
-		return
+		return event.AnchorSafetyAudit{}, false, false
 	}
 	resolver, ok := target.(tool.AnchoredTextTarget)
 	if !ok {
-		return
+		return event.AnchorSafetyAudit{}, false, false
 	}
 	audit := event.AnchorSafetyAudit{
 		Mode:          "shadow",
 		TaskMode:      "interactive",
 		LegacyAllowed: a.task.ledger.HasSuccessfulAnchorRefreshReadAfter(evidence.ToolCallPaths(json.RawMessage(call.Arguments)), writeIndex),
 	}
+	writeSequence, _ := a.task.ledger.ReceiptSequence(writeIndex)
 	if a.closedLoopActive() {
 		audit.TaskMode = "loop"
+	}
+	emit := func() (event.AnchorSafetyAudit, bool, bool) {
+		event.RecordAnchorSafetyAudit(a.svc.sink, audit)
+		return audit, audit.ShadowAllowed, true
 	}
 	resolved, err := resolver.ResolveAnchoredTextTarget(ctx, json.RawMessage(call.Arguments))
 	if err != nil || resolved.Path == "" || resolved.StartLine < 1 || resolved.EndLine < resolved.StartLine || len(resolved.LineHashes) != resolved.EndLine-resolved.StartLine+1 {
 		audit.Reason = anchorReasonNativeInvalid
-		event.RecordAnchorSafetyAudit(a.svc.sink, audit)
-		return
+		return emit()
 	}
 	audit.RangeLines = len(resolved.LineHashes)
 	observations := a.task.ledger.TextObservations()
@@ -93,6 +97,9 @@ func (a *Agent) recordAnchorSafetyAudit(ctx context.Context, call provider.ToolC
 	for i := range observations {
 		o := observations[i]
 		if filepath.Clean(o.Path) != canonicalPath {
+			continue
+		}
+		if o.Sequence <= writeSequence {
 			continue
 		}
 		if o.Sequence > boundary {
@@ -111,16 +118,14 @@ func (a *Agent) recordAnchorSafetyAudit(ctx context.Context, call provider.ToolC
 		} else {
 			audit.Reason = anchorReasonNoEligibleRead
 		}
-		event.RecordAnchorSafetyAudit(a.svc.sink, audit)
-		return
+		return emit()
 	}
 	audit.ObservationAge = int(boundary - latest.Sequence)
 	if offset, matches := findHashSequence(latest.LineHashes, resolved.LineHashes); matches == 1 {
 		_ = offset
 		audit.ShadowAllowed = true
 		audit.Reason = anchorReasonExactMatch
-		event.RecordAnchorSafetyAudit(a.svc.sink, audit)
-		return
+		return emit()
 	}
 	obsEnd := latest.StartLine + len(latest.LineHashes) - 1
 	if latest.StartLine > resolved.StartLine || obsEnd < resolved.EndLine {
@@ -128,7 +133,7 @@ func (a *Agent) recordAnchorSafetyAudit(ctx context.Context, call provider.ToolC
 	} else {
 		audit.Reason = anchorReasonTargetChanged
 	}
-	event.RecordAnchorSafetyAudit(a.svc.sink, audit)
+	return emit()
 }
 
 func findHashSequence(window, target []string) (offset, matches int) {

@@ -510,6 +510,21 @@ func (l *Ledger) Len() int {
 	return len(l.receipts)
 }
 
+// ReceiptSequence returns the shared ledger sequence for a receipt index.
+// It lets host-side shadow checks bind an observation to the write it is meant
+// to refresh without exposing ledger internals or persisting the sequence.
+func (l *Ledger) ReceiptSequence(index int) (uint64, bool) {
+	if l == nil {
+		return 0, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if index < 0 || index >= len(l.receipts) {
+		return 0, false
+	}
+	return l.receipts[index].Sequence, true
+}
+
 // ReceiptProgressSummary counts successful host-observable receipts by category
 // for cross-turn progress signatures. Failed receipts and reads never count:
 // repeated reads, failed bookkeeping, and reworded answers must not masquerade

@@ -1035,6 +1035,10 @@ type Options struct {
 	// (or cloned for) sub-agents. nil disables v2 capture. Does not affect
 	// provider-visible tool schemas or prompts.
 	MutationObserver *checkpoint.MutationObserver
+	// LegacyAnchorSafetyGate is an internal kill switch for reverting
+	// delete_range to the pre-fingerprint full-file fresh-read requirement.
+	// It never enters provider-visible prompts or tool schemas.
+	LegacyAnchorSafetyGate bool
 }
 
 // New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
@@ -1091,22 +1095,23 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		svc: newAgentServices(prov, tools, sink, gate, planModeReadOnlyTrust,
 			sandboxEscapeApprover, configWriteApprover, hooks, opts),
 		agentConfig: agentConfig{
-			maxSteps:           opts.MaxSteps,
-			maxStepsKey:        maxStepsKey,
-			reasoningByteLimit: reasoningByteLimit,
-			maxOutputTokens:    opts.MaxOutputTokens,
-			temperature:        opts.Temperature,
-			usageSource:        usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
-			modelRef:           strings.TrimSpace(opts.ModelRef),
-			workspaceID:        strings.TrimSpace(opts.WorkspaceID),
-			classifierTaskText: opts.ClassifierTaskText,
-			writeWorkspaceRoot: strings.TrimSpace(opts.WriteWorkspaceRoot),
-			subagentDepth:      subagentDepth,
-			maxSubagentDepth:   maxSubagentDepth,
-			contextWindow:      opts.ContextWindow,
-			compactRatio:       opts.CompactRatio,
-			recentKeep:         opts.RecentKeep,
-			archiveDir:         opts.ArchiveDir,
+			maxSteps:               opts.MaxSteps,
+			maxStepsKey:            maxStepsKey,
+			reasoningByteLimit:     reasoningByteLimit,
+			maxOutputTokens:        opts.MaxOutputTokens,
+			temperature:            opts.Temperature,
+			usageSource:            usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
+			modelRef:               strings.TrimSpace(opts.ModelRef),
+			workspaceID:            strings.TrimSpace(opts.WorkspaceID),
+			classifierTaskText:     opts.ClassifierTaskText,
+			writeWorkspaceRoot:     strings.TrimSpace(opts.WriteWorkspaceRoot),
+			subagentDepth:          subagentDepth,
+			maxSubagentDepth:       maxSubagentDepth,
+			contextWindow:          opts.ContextWindow,
+			compactRatio:           opts.CompactRatio,
+			recentKeep:             opts.RecentKeep,
+			archiveDir:             opts.ArchiveDir,
+			legacyAnchorSafetyGate: opts.LegacyAnchorSafetyGate,
 		},
 		sess: sessionRuntime{
 			conversation: session,
@@ -2526,8 +2531,18 @@ func (a *Agent) staleAnchorEditBlock(ctx context.Context, call provider.ToolCall
 		return "", false
 	}
 	boundary := observationBoundary(ctx, a.task.ledger.ObservationBoundary())
-	if target, _, ambiguous := a.svc.tools.ResolveCall(call.Name); target != nil && len(ambiguous) == 0 {
-		a.recordAnchorSafetyAudit(ctx, call, target, boundary, writeIndex)
+	if a.svc.tools != nil {
+		if target, _, ambiguous := a.svc.tools.ResolveCall(call.Name); target != nil && len(ambiguous) == 0 {
+			audit, shadowAllowed, supported := a.recordAnchorSafetyAudit(ctx, call, target, boundary, writeIndex)
+			if supported && !a.legacyAnchorSafetyGate {
+				if shadowAllowed || audit.Reason == anchorReasonNativeInvalid {
+					return "", false
+				}
+				return fmt.Sprintf(
+					"blocked: [fresh read required] %q targets %s, but no eligible model-visible read covers both anchors and the intervening lines. In a separate provider round, use read_file with a window covering both anchors and the whole range, then retry; reads from the same provider batch do not count.",
+					call.Name, strings.Join(rec.Paths, ", ")), true
+			}
+		}
 	}
 	if a.task.ledger.HasSuccessfulAnchorRefreshReadAfter(rec.Paths, writeIndex) {
 		return "", false
