@@ -14,9 +14,7 @@ type desktopTray struct {
 
 func newDesktopTray() *desktopTray { return &desktopTray{ready: make(chan struct{})} }
 
-func (t *desktopTray) markReady() {
-	t.readyOnce.Do(func() { close(t.ready) })
-}
+func (t *desktopTray) markReady() { t.readyOnce.Do(func() { close(t.ready) }) }
 
 func (a *App) startTray() bool {
 	if a == nil || a.shuttingDown.Load() || a.forceQuit.Load() {
