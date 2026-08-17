@@ -19,6 +19,27 @@ export type HydrateProjection = {
   digest?: string;
 };
 
+export type SessionHydrateIdentity = {
+  sessionPath?: string;
+  sessionGeneration?: number;
+};
+
+/** A surface may retain content only when the target session is provably the same. */
+export function sameSessionHydrateIdentity(
+  target: SessionHydrateIdentity | undefined,
+  current: SessionHydrateIdentity | undefined,
+): boolean {
+  const targetPath = (target?.sessionPath ?? "").trim();
+  const currentPath = (current?.sessionPath ?? "").trim();
+  if (!targetPath || !currentPath || targetPath !== currentPath) return false;
+  if (
+    target?.sessionGeneration !== undefined &&
+    current?.sessionGeneration !== undefined &&
+    target.sessionGeneration !== current.sessionGeneration
+  ) return false;
+  return true;
+}
+
 export function shouldPreferResidentHistory(reset: boolean, preserveCachedHistory?: boolean): boolean {
   return !reset && preserveCachedHistory !== false;
 }
@@ -113,11 +134,8 @@ export function duplicateLiveItemIds(
 }
 
 export function sameSessionPlaceholderItems<T>(
-  targetSessionPath: string | undefined,
-  prev: { meta?: { sessionPath?: string }; items?: T[] } | undefined,
+  target: SessionHydrateIdentity | undefined,
+  prev: { meta?: SessionHydrateIdentity; items?: T[] } | undefined,
 ): T[] | undefined {
-  const target = (targetSessionPath ?? "").trim();
-  const current = (prev?.meta?.sessionPath ?? "").trim();
-  if (!target || !current || target !== current) return undefined;
-  return prev?.items;
+  return sameSessionHydrateIdentity(target, prev?.meta) ? prev?.items : undefined;
 }

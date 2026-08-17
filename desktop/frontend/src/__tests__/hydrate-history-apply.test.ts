@@ -4,6 +4,7 @@ import {
   duplicateLiveItemIds,
   hasCachedLiveTurn,
   hydratedHistoryApplyMode,
+  sameSessionHydrateIdentity,
   sameSessionPlaceholderItems,
   shouldPreferResidentHistory,
 } from "../lib/hydrateHistoryApply";
@@ -68,12 +69,30 @@ ok(
   "a live tail the page does not carry is kept",
 );
 ok(
-  sameSessionPlaceholderItems("a.jsonl", { meta: { sessionPath: "b.jsonl" }, items: [{ kind: "user" }] }) === undefined,
+  sameSessionPlaceholderItems({ sessionPath: "a.jsonl" }, { meta: { sessionPath: "b.jsonl" }, items: [{ kind: "user" }] }) === undefined,
   "foreign session items are not placeholders",
 );
 ok(
-  (sameSessionPlaceholderItems("a.jsonl", { meta: { sessionPath: "a.jsonl" }, items: [{ kind: "user" }] }) ?? []).length === 1,
+  (sameSessionPlaceholderItems({ sessionPath: "a.jsonl" }, { meta: { sessionPath: "a.jsonl" }, items: [{ kind: "user" }] }) ?? []).length === 1,
   "same-session items stay placeholders",
+);
+ok(
+  sameSessionHydrateIdentity(
+    { sessionPath: "a.jsonl", sessionGeneration: 3 },
+    { sessionPath: "a.jsonl", sessionGeneration: 3 },
+  ),
+  "same path and generation prove the same session",
+);
+ok(
+  !sameSessionHydrateIdentity(
+    { sessionPath: "a.jsonl", sessionGeneration: 4 },
+    { sessionPath: "a.jsonl", sessionGeneration: 3 },
+  ),
+  "different generations reject placeholders even when paths match",
+);
+ok(
+  !sameSessionHydrateIdentity({ sessionPath: "" }, { sessionPath: "" }),
+  "empty identities cannot prove the same session",
 );
 
 ok(
