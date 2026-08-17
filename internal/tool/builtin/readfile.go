@@ -82,7 +82,7 @@ func (r readFile) ObserveModelText(args json.RawMessage, output string) (tool.Mo
 	rp := resolveReadablePath(r.workDir, p.Path, r.paths)
 	var start int
 	var hashes []string
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		arrow := strings.Index(line, "→")
 		if arrow <= 0 {
 			continue
