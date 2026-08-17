@@ -153,19 +153,10 @@ func NormalizeEffort(e *ProviderEntry, raw string) (string, error) {
 		return normalizeKimiK3ReasoningEffort(level)
 	}
 	supported := normalizedSupportedEfforts(e)
+	level = normalizeBuiltInModelEffortAlias(e, supported, level)
 	if len(supported) > 0 {
 		if containsString(supported, level) {
 			return level, nil
-		}
-		// Built-in DeepSeek V4 entries persist their canonical vocabulary in
-		// supported_efforts so it remains visible and round-trippable. Preserve
-		// the model's compatibility aliases when that list is still the exact
-		// built-in vocabulary; any user-customized list remains authoritative.
-		if cap, ok := modelReasoningCapabilityForEntry(e); ok &&
-			slices.Equal(supported, normalizedEffortLevels(cap.Levels)) {
-			if normalized, ok := cap.Aliases[level]; ok && containsString(supported, normalized) {
-				return normalized, nil
-			}
 		}
 		return "", fmt.Errorf("usage: /effort auto|%s", strings.Join(supported, "|"))
 	}
@@ -467,6 +458,18 @@ func modelReasoningCapabilityForEntry(e *ProviderEntry) (modelReasoningCapabilit
 	}
 	cap, ok := modelReasoningCapabilities[strings.ToLower(strings.TrimSpace(e.Model))]
 	return cap, ok
+}
+
+func normalizeBuiltInModelEffortAlias(e *ProviderEntry, supported []string, level string) string {
+	cap, ok := modelReasoningCapabilityForEntry(e)
+	if !ok || !slices.Equal(supported, normalizedEffortLevels(cap.Levels)) {
+		return level
+	}
+	normalized, ok := cap.Aliases[level]
+	if !ok || !containsString(supported, normalized) {
+		return level
+	}
+	return normalized
 }
 
 func effortCapabilityFromModel(cap modelReasoningCapability) EffortCapability {
