@@ -518,7 +518,9 @@ try {
   // autoscroll API and remain at the physical bottom without Reasonix scrollTop
   // correction loops.
   const jumpBottom = page.locator(".transcript__jump-bottom");
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // Target the reserved transcript gutter so expanded nested tool/code
+  // scrollers cannot correctly retain this outer-reader intent.
+  await page.mouse.move(box.x + box.width - 6, box.y + box.height / 2);
   await page.mouse.wheel(0, -800);
   await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "manual");
   await jumpBottom.waitFor({ state: "visible" });
