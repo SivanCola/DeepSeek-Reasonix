@@ -286,11 +286,13 @@ try {
   // can see the bottom button moving while the viewport settles. A DOM click
   // still exercises the same React handler without waiting on button geometry.
   await page.locator(".transcript__jump-bottom").evaluate((button) => button.click());
+  // The arbiter's rest threshold is 4px: a late sub-threshold remeasure can
+  // legally rest at 2-4px from the extent without earning another write.
   await page.waitForFunction(() => {
     const element = document.querySelector(".transcript");
     return element instanceof HTMLElement
       && element.dataset.scrollMode === "tail-follow"
-      && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
   });
 
   // Stay on the tail. Opening the workspace dock must not crop right-aligned
@@ -316,10 +318,17 @@ try {
       fromBottom: +(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight).toFixed(2),
     };
   });
+  // Late hydration can momentarily detach the tail between the previous wait
+  // and this sample; the crop contract only needs a converged viewport.
+  await page.waitForFunction(() => {
+    const element = document.querySelector(".transcript");
+    return element instanceof HTMLElement
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+  });
   const dockOpen = await measureDockCrop();
   assert(dockOpen.ok, "tail-follow dock check can see the chat and a user bubble");
   assert(dockOpen.workspaceOpen === true, "bench starts with the workspace dock open");
-  assert(dockOpen.fromBottom <= 1, `dock-open check stays on the tail without scrolling up (${dockOpen.fromBottom})`);
+  assert(dockOpen.fromBottom <= 4, `dock-open check stays on the tail without scrolling up (${dockOpen.fromBottom})`);
   assert(dockOpen.overflowChatRight <= 1, `user bubble stays inside the chat column with the dock open (${dockOpen.overflowChatRight})`);
   assert(
     dockOpen.overflowDock == null || dockOpen.overflowDock <= 1,
@@ -358,11 +367,30 @@ try {
     );
   }
 
-  // Start away from either edge and record a visible stable row. Growing an
-  // already-mounted row above it reproduces async Markdown/tool hydration.
+  // Start away from either edge via a real upward gesture: user intent claims
+  // manual mode, which forbids tail writes for the rest of the section. The
+  // previous teleport-based setup left tail-follow armed, so the arbiter's
+  // legitimate pull-back raced the trusted wheel's async landing and the
+  // settle probe could fire on the pull-back instead of the gesture.
+  await moveToOuterReaderGutter(page, transcript);
+  await page.mouse.wheel(0, -1600);
+  // Playwright resolves mouse.wheel before Chromium finishes the trusted
+  // event's native default scroll. Let it land before sampling anchors.
+  await page.waitForTimeout(120);
+  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "manual", undefined, { timeout: 5_000 });
+  await transcript.evaluate((element) => new Promise((resolve) => {
+    let previousTop = element.scrollTop;
+    let stableFrames = 0;
+    const sample = () => {
+      const currentTop = element.scrollTop;
+      stableFrames = Math.abs(currentTop - previousTop) <= 0.5 ? stableFrames + 1 : 0;
+      previousTop = currentTop;
+      if (stableFrames >= 2) { resolve(); return; }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }));
   const beforeGrowth = await transcript.evaluate((element) => {
-    element.scrollTop = Math.max(0, element.scrollHeight - element.clientHeight * 2);
-    element.dispatchEvent(new Event("scroll"));
     const viewport = element.getBoundingClientRect();
     const rows = [...element.querySelectorAll(".transcript__row")];
     const visible = rows
@@ -381,28 +409,7 @@ try {
   });
   assert(beforeGrowth.anchorKey && beforeGrowth.grownKey, "bench exposes a visible anchor and mounted dynamic row above it");
 
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await transcript.evaluate((element) => {
-    const initialTop = element.scrollTop;
-    let previousTop = initialTop;
-    let stableFrames = 0;
-    element.dataset.benchWheelSettled = "false";
-    const sample = () => {
-      const currentTop = element.scrollTop;
-      const moved = Math.abs(currentTop - initialTop) > 1;
-      stableFrames = moved && Math.abs(currentTop - previousTop) <= 0.5 ? stableFrames + 1 : 0;
-      previousTop = currentTop;
-      if (stableFrames >= 2) {
-        element.dataset.benchWheelSettled = "true";
-        return;
-      }
-      requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-  });
-  await page.mouse.wheel(0, -360);
-  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.benchWheelSettled === "true");
-  const gestureStart = await transcript.evaluate((element) => element.scrollTop);
+  const gestureStart = beforeGrowth.top;
   await transcript.evaluate((element) => {
     const viewport = element.getBoundingClientRect();
     const rows = [...element.querySelectorAll(".transcript__row")];
@@ -858,6 +865,138 @@ try {
     stormProbe.writes.every((write) => write.owner !== "recovery"),
     `zero recovery-owned scroll writes through the storm (${stormProbe.writes.length} writes)`,
   );
+
+  // ── Reduced-motion tail stability (#9028/#9089). Windows reports
+  // prefers-reduced-motion: reduce whenever "Animate controls and elements
+  // inside windows" is off — the default on many machines. The global CSS
+  // reset then collapses every transition to ~0ms, layout churn lands one
+  // whole step per frame, and 1.28.0's tail writer chased each step through
+  // scrollToIndex against a stale size tree: a sustained per-frame flicker
+  // loop with the view never reaching the bottom (#9028 captured 340 no-op
+  // tail writes in 11s). The tail writer must stay calm through churn and
+  // still land on the physical bottom, with no OS setting involved.
+  const reducedPage = await browser.newPage({ viewport: { width: 1280, height: 800 }, reducedMotion: "reduce" });
+  await reducedPage.addInitScript(() => localStorage.setItem("reasonix-process-fold", "expanded"));
+  await reducedPage.goto(url, { waitUntil: "domcontentloaded" });
+  await reducedPage.waitForFunction(() => !document.querySelector(".startup-splash"), undefined, { timeout: 30_000 });
+  assert(
+    await reducedPage.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches),
+    "reduced-motion emulation is active",
+  );
+  await reducedPage.click('.project-tree__topic-main:has-text("bench:reported-long-turn")');
+  await reducedPage.waitForFunction(
+    () => document.querySelector(".transcript")?.textContent?.includes("Reported long turn complete."),
+    undefined,
+    { timeout: 30_000 },
+  );
+  // Let the open-time hydration burst converge, then watch the idle tail.
+  await reducedPage.waitForFunction(() => {
+    const element = document.querySelector(".transcript");
+    return element instanceof HTMLElement
+      && element.dataset.scrollMode === "tail-follow"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+  }, undefined, { timeout: 15_000 });
+  const reducedIdle = await reducedPage.evaluate(() => new Promise((resolve) => {
+    const element = document.querySelector(".transcript");
+    const writes = [];
+    window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => writes.push(write);
+    const tops = [];
+    let frames = 0;
+    const sample = () => {
+      if (element instanceof HTMLElement) tops.push(element.scrollTop);
+      frames += 1;
+      if (frames < 180) { requestAnimationFrame(sample); return; }
+      window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
+      let reversals = 0;
+      let lastDirection = 0;
+      for (let i = 1; i < tops.length; i += 1) {
+        const delta = tops[i] - tops[i - 1];
+        if (Math.abs(delta) <= 2) continue;
+        const direction = Math.sign(delta);
+        if (lastDirection !== 0 && direction !== lastDirection) reversals += 1;
+        lastDirection = direction;
+      }
+      const live = document.querySelector(".transcript");
+      resolve({
+        reversals,
+        tailWrites: writes.filter((write) => write.owner === "tail-follow").length,
+        finalDistance: live instanceof HTMLElement
+          ? live.scrollHeight - live.scrollTop - live.clientHeight
+          : Number.NaN,
+      });
+    };
+    requestAnimationFrame(sample);
+  }));
+  assert(
+    reducedIdle.reversals <= 2,
+    `reduced-motion idle tail does not ping-pong (${reducedIdle.reversals} direction reversals in 180 frames)`,
+  );
+  // The #9028 pathology was a sustained loop: ~340 tail writes in 11s (about
+  // 2 writes every 3 frames, forever). Late fixture hydration can still land
+  // a legitimate convergence burst inside the window, so gate on an order of
+  // magnitude below the pathology instead of near-zero.
+  assert(
+    reducedIdle.tailWrites < 30,
+    `reduced-motion idle tail never enters a sustained write loop (${reducedIdle.tailWrites} tail writes in 180 frames)`,
+  );
+  assert(
+    reducedIdle.finalDistance <= 4,
+    `reduced-motion tail rests on the physical bottom (${reducedIdle.finalDistance}px)`,
+  );
+  // The #9089 gesture: wheel up, wheel back to the bottom, release, idle.
+  await moveToOuterReaderGutter(reducedPage, reducedPage.locator(".transcript"));
+  await reducedPage.mouse.wheel(0, -900);
+  await reducedPage.waitForTimeout(120);
+  await reducedPage.mouse.wheel(0, 100_000);
+  await reducedPage.waitForFunction(() => {
+    const element = document.querySelector(".transcript");
+    return element instanceof HTMLElement
+      && element.dataset.scrollMode === "tail-follow"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+  }, undefined, { timeout: 10_000 });
+  const reducedReturn = await reducedPage.evaluate(() => new Promise((resolve) => {
+    const element = document.querySelector(".transcript");
+    const tops = [];
+    let frames = 0;
+    const sample = () => {
+      if (element instanceof HTMLElement) tops.push(element.scrollTop);
+      frames += 1;
+      if (frames < 120) { requestAnimationFrame(sample); return; }
+      let movingFrames = 0;
+      let reversals = 0;
+      let lastDirection = 0;
+      for (let i = 1; i < tops.length; i += 1) {
+        const delta = tops[i] - tops[i - 1];
+        if (Math.abs(delta) <= 2) continue;
+        movingFrames += 1;
+        const direction = Math.sign(delta);
+        if (lastDirection !== 0 && direction !== lastDirection) reversals += 1;
+        lastDirection = direction;
+      }
+      const live = document.querySelector(".transcript");
+      resolve({
+        movingFrames,
+        reversals,
+        finalDistance: live instanceof HTMLElement
+          ? live.scrollHeight - live.scrollTop - live.clientHeight
+          : Number.NaN,
+      });
+    };
+    requestAnimationFrame(sample);
+  }));
+  assert(
+    reducedReturn.reversals <= 2,
+    `reduced-motion return-to-bottom does not ping-pong (${reducedReturn.reversals} reversals in 120 frames)`,
+  );
+  assert(
+    reducedReturn.movingFrames < 12,
+    `reduced-motion return-to-bottom idles without sustained self-scrolling (${reducedReturn.movingFrames} moving frames in 120)`,
+  );
+  assert(
+    reducedReturn.finalDistance <= 4,
+    `reduced-motion return-to-bottom rests on the physical bottom (${reducedReturn.finalDistance}px)`,
+  );
+  await reducedPage.close();
 
   process.stdout.write("\ntranscript scroll stability browser gate passed\n");
 } finally {
