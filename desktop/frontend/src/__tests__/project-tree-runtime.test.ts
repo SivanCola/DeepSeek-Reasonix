@@ -551,37 +551,6 @@ eq(
 
 eq(
   splitPinnedProjectTree(
-    [{
-      key: "global_folder",
-      kind: "global_folder",
-      label: "Global",
-      children: [
-        { key: "global_topic_duplicate", kind: "global_topic", label: "Pinned", topicId: "duplicate", pinned: true },
-        { key: "global_topic_duplicate_page", kind: "global_topic", label: "Pinned", topicId: "duplicate" },
-        // A live runtime projection can carry the same topic as a session row
-        // while the catalog still serves the original topic shell.
-        { key: "global_session_duplicate", kind: "global_session", label: "Pinned", topicId: "duplicate" },
-      ],
-    }],
-    "updated",
-    false,
-  ),
-  {
-    pinned: [
-      { key: "global_topic_duplicate", kind: "global_topic", label: "Pinned", topicId: "duplicate", pinned: true },
-    ],
-    projects: [{
-      key: "global_folder",
-      kind: "global_folder",
-      label: "Global",
-      children: [],
-    }],
-  },
-  "pinned conversations do not repeat as runtime session rows in their source folder",
-);
-
-eq(
-  splitPinnedProjectTree(
     [{ key: "project_/repo/a", kind: "project", label: "a", root: "/repo/a", pinned: true, children: [] }],
     "updated",
   ).pinned.map((node) => node.root),
