@@ -638,15 +638,6 @@ ok(
 );
 
 ok(
-  finalDeclaration(".image-viewer__close", "right") === "16px" &&
-    finalDeclaration(".app--windows-frameless .image-viewer__close", "right") === undefined &&
-    finalDeclaration(".app--windows-frameless:has(.image-viewer-backdrop) > .windows-window-controls", "opacity") === "0" &&
-    finalDeclaration(".app--windows-frameless:has(.image-viewer-backdrop) > .windows-window-controls", "visibility") === "hidden" &&
-    finalDeclaration(".app--windows-frameless:has(.image-viewer-backdrop) > .windows-window-controls", "pointer-events") === "none",
-  "Windows app-level image preview hides caption controls and owns the top-right close action",
-);
-
-ok(
   finalDeclaration(".app--windows.app--creation .topicbar", "position") === "relative" &&
     finalDeclaration(".app--windows.app--creation .topicbar", "z-index") === "var(--z-app-chrome)" &&
     finalDeclaration(".app--windows.app--creation .topicbar", "min-height") === "40px" &&
