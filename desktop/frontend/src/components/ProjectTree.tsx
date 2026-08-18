@@ -232,6 +232,12 @@ export function classicTopicWindow(children: ProjectNode[], showAll: boolean): {
   };
 }
 
+function projectTreeTopicIdentity(node: ProjectNode): string | null {
+  if ((!isTopicNode(node) && !isRuntimeSessionNode(node)) || !node.topicId) return null;
+  const global = node.kind === "global_topic" || node.kind === "global_session";
+  return `${global ? "global" : "project"}\u001f${global ? "" : node.root ?? ""}\u001f${node.topicId}`;
+}
+
 export function splitPinnedProjectTree(
   nodes: ProjectNode[],
   sortMode: WorkbenchSortMode,
@@ -240,13 +246,27 @@ export function splitPinnedProjectTree(
   const pinnedTopics: ProjectNode[] = [];
   const pinnedProjects: ProjectNode[] = [];
   const projects: ProjectNode[] = [];
+  // A pinned topic shell can coexist briefly with a runtime session projection
+  // for the same logical conversation. Collect canonical pinned identities
+  // first so the source folder cannot paint that conversation a second time.
+  const pinnedTopicIdentities = new Set<string>();
+  for (const node of nodes) {
+    const identity = projectTreeTopicIdentity(node);
+    if (identity && node.pinned) pinnedTopicIdentities.add(identity);
+    if (node.kind !== "project" && node.kind !== "global_folder") continue;
+    for (const child of asArray(node.children)) {
+      const childIdentity = projectTreeTopicIdentity(child);
+      if (childIdentity && child.pinned) pinnedTopicIdentities.add(childIdentity);
+    }
+  }
 
   for (const node of nodes) {
     if (!node) continue;
     const isFolder = node.kind === "project" || node.kind === "global_folder";
     if (!isFolder) {
+      const identity = projectTreeTopicIdentity(node);
       if (node.pinned) pinnedTopics.push(node);
-      else projects.push(node);
+      else if (!identity || !pinnedTopicIdentities.has(identity)) projects.push(node);
       continue;
     }
 
@@ -258,10 +278,12 @@ export function splitPinnedProjectTree(
     const children = asArray(node.children);
     const nextChildren: ProjectNode[] = [];
     for (const child of children) {
+      const identity = projectTreeTopicIdentity(child);
       if (isTopicNode(child) && child.pinned) {
         pinnedTopics.push(child);
         continue;
       }
+      if (identity && pinnedTopicIdentities.has(identity)) continue;
       nextChildren.push(child);
     }
     projects.push({ ...node, children: nextChildren });
