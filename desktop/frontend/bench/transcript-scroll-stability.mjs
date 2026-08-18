@@ -50,6 +50,50 @@ async function moveToOuterReaderGutter(page, transcript) {
   await page.mouse.move(point.x, point.y);
 }
 
+async function waitForStableTranscriptGeometry(
+  page,
+  { timeout = 15_000, frames = 8, requireTail = false } = {},
+) {
+  await page.evaluate(({ timeout, frames, requireTail }) => new Promise((resolve, reject) => {
+    const startedAt = performance.now();
+    let previous = null;
+    let stableFrames = 0;
+    const sample = () => {
+      const element = document.querySelector(".transcript");
+      if (element instanceof HTMLElement) {
+        const current = {
+          mode: element.dataset.scrollMode,
+          height: element.scrollHeight,
+          top: element.scrollTop,
+          clientHeight: element.clientHeight,
+        };
+        const unchanged = previous != null
+          && current.mode === previous.mode
+          && Math.abs(current.height - previous.height) <= 0.5
+          && Math.abs(current.top - previous.top) <= 0.5
+          && current.clientHeight === previous.clientHeight;
+        stableFrames = unchanged ? stableFrames + 1 : 0;
+        previous = current;
+        const distance = current.height - current.top - current.clientHeight;
+        const expectedPosition = !requireTail || (current.mode === "tail-follow" && distance <= 4);
+        if (expectedPosition && stableFrames >= frames) {
+          resolve();
+          return;
+        }
+      } else {
+        previous = null;
+        stableFrames = 0;
+      }
+      if (performance.now() - startedAt >= timeout) {
+        reject(new Error(`transcript geometry did not stay stable for ${frames} frames`));
+        return;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }), { timeout, frames, requireTail });
+}
+
 async function waitForServer() {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -282,18 +326,52 @@ try {
   });
   assert(questionJumpWrites.length === 1, `question navigation clears stale selection and emits one indexed jump (${questionJumpWrites.length})`);
   await page.locator(".transcript__jump-bottom").waitFor({ state: "visible" });
-  // The question jump itself is smooth, so Playwright's actionability check
-  // can see the bottom button moving while the viewport settles. A DOM click
-  // still exercises the same React handler without waiting on button geometry.
-  await page.locator(".transcript__jump-bottom").evaluate((button) => button.click());
+  // The question jump itself is smooth. Wait for its geometry to settle before
+  // clicking the current button: resolving a locator while React remounts the
+  // moving control can otherwise call click() on a detached node, which never
+  // reaches React's delegated handler.
+  await waitForStableTranscriptGeometry(page, { timeout: 5_000, frames: 3 });
+  await page.evaluate(() => {
+    window.__reasonixJumpBottomWrites = [];
+    window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => window.__reasonixJumpBottomWrites.push(write);
+  });
+  const jumpBottomClicked = await page.evaluate(() => {
+    const button = document.querySelector(".transcript__jump-bottom");
+    if (!(button instanceof HTMLButtonElement) || !button.isConnected) return false;
+    button.click();
+    return true;
+  });
+  assert(jumpBottomClicked, "question jump exposes a connected jump-bottom control");
   // The arbiter's rest threshold is 4px: a late sub-threshold remeasure can
   // legally rest at 2-4px from the extent without earning another write.
-  await page.waitForFunction(() => {
-    const element = document.querySelector(".transcript");
-    return element instanceof HTMLElement
-      && element.dataset.scrollMode === "tail-follow"
-      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
-  });
+  try {
+    await page.waitForFunction(() => {
+      const element = document.querySelector(".transcript");
+      return element instanceof HTMLElement
+        && element.dataset.scrollMode === "tail-follow"
+        && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+    });
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const element = document.querySelector(".transcript");
+      return element instanceof HTMLElement ? {
+        mode: element.dataset.scrollMode,
+        distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        jumpVisible: Boolean(document.querySelector(".transcript__jump-bottom")),
+        selectionCollapsed: document.getSelection()?.isCollapsed ?? null,
+        writes: window.__reasonixJumpBottomWrites ?? [],
+      } : null;
+    });
+    throw new Error(`question jump-bottom did not settle (${JSON.stringify(state)})`, { cause: error });
+  } finally {
+    await page.evaluate(() => {
+      window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
+      window.__reasonixJumpBottomWrites = undefined;
+    });
+  }
 
   // Stay on the tail. Opening the workspace dock must not crop right-aligned
   // user bubbles — that is a width/padding bug, not the scroll-up overlap.
@@ -889,13 +967,11 @@ try {
     undefined,
     { timeout: 30_000 },
   );
-  // Let the open-time hydration burst converge, then watch the idle tail.
-  await reducedPage.waitForFunction(() => {
-    const element = document.querySelector(".transcript");
-    return element instanceof HTMLElement
-      && element.dataset.scrollMode === "tail-follow"
-      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
-  }, undefined, { timeout: 15_000 });
+  // Let the open-time hydration burst converge, then require several stable
+  // frames before watching the idle tail. A single bottom sample can race a
+  // late markdown/row remeasurement on loaded CI runners and contaminate the
+  // idle probe with legitimate convergence motion.
+  await waitForStableTranscriptGeometry(reducedPage, { requireTail: true });
   const reducedIdle = await reducedPage.evaluate(() => new Promise((resolve) => {
     const element = document.querySelector(".transcript");
     const writes = [];
@@ -929,7 +1005,7 @@ try {
   }));
   assert(
     reducedIdle.reversals <= 2,
-    `reduced-motion idle tail does not ping-pong (${reducedIdle.reversals} direction reversals in 180 frames)`,
+    `reduced-motion idle tail does not ping-pong (${reducedIdle.reversals} direction reversals in 180 frames; ${reducedIdle.tailWrites} writes; ${reducedIdle.finalDistance}px from bottom)`,
   );
   // The #9028 pathology was a sustained loop: ~340 tail writes in 11s (about
   // 2 writes every 3 frames, forever). Late fixture hydration can still land
