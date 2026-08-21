@@ -83,9 +83,11 @@ console.log("\nbundle budgets");
 // DingTalk channel status and locale wiring move the current-base production
 // build from 427.2 to 427.7 KiB and test from 428.6 to 429.1 KiB. The unified
 // state-aware geometry contract, session diagnostics counters, and guarded
-// native-scroll probes add 2.4 KiB gzip to the initial path. Keep the increase
-// explicit and bounded instead of hiding it in a broad percentage ratchet.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 430.4 : 430.4;
+// native-scroll probes add 2.4 KiB gzip to the initial path. The current
+// main-v2 merge adds another 0.3 KiB of deterministic shared startup code.
+// Keep the increase explicit and bounded instead of hiding it in a broad
+// percentage ratchet.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 430.9 : 430.9;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
