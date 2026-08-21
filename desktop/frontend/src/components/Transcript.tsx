@@ -68,7 +68,6 @@ import {
   TRANSCRIPT_VIRTUOSO_COMPONENTS_WITH_HEADER,
   type TranscriptVirtuosoContext,
 } from "./TranscriptVirtuosoParts";
-import FrontendDiagnosticsPanelImpl from "./FrontendDiagnosticsPanel";
 
 // NoticeCard lives with the other row cards; keep the historical export path.
 export { NoticeCard } from "./TranscriptCards";
@@ -83,11 +82,8 @@ const SHOW_FRONTEND_DIAGNOSTICS = typeof __BUILD_CHANNEL__ === "undefined"
   || __BUILD_CHANNEL__ === "preview"
   || __BUILD_CHANNEL__ === "canary"
   || Boolean(import.meta.env?.DEV);
-// Keep the module static so test harness teardown cannot leave a Vite module
-// request pending. The build-channel gate below still keeps the recorder
-// entry out of stable production UI.
 const FrontendDiagnosticsPanel = SHOW_FRONTEND_DIAGNOSTICS
-  ? FrontendDiagnosticsPanelImpl
+  ? lazy(() => import("./FrontendDiagnosticsPanel"))
   : null;
 const VIRTUAL_OVERSCAN_ROWS = 8;
 
