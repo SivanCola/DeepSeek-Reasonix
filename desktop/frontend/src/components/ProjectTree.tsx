@@ -26,6 +26,8 @@ import { Tooltip } from "./Tooltip";
 import { WorktreeBadge } from "./WorktreeBadge";
 import { useProjectCreation } from "./useProjectCreation";
 import { useProjectTreeRuntimeProjection } from "../lib/useProjectTreeRuntimeProjection";
+import { recordFrontendDiagnostic, registerFrontendDiagnosticStartHook } from "../lib/frontendDiagnosticBridge";
+import { summarizeProjectTreeSessions, type ProjectTreeSessionDiagnosticSummary } from "../lib/projectTreeDiagnostics";
 import { GLOBAL_PROJECT_ORDER_KEY, ProjectTreeFolderActivity, ProjectTreeGroupRows, applyProjectOrder, projectTreeProjectRoots, reorderedProjectRoots, useProjectTreeOrganization, type ProjectDropPosition } from "./ProjectTreeOrganization";
 
 interface ProjectTreeProps {
@@ -68,6 +70,52 @@ type CollapseSnapshot = {
   expanded: Set<string>;
   manuallyCollapsed: Set<string>;
 };
+
+type ProjectTreeDiagnosticSnapshot = ProjectTreeSessionDiagnosticSummary & {
+  directoryState: string;
+  scope: string;
+  variant: ProjectTreeVariant;
+  timeFilter: string;
+  queryActive: boolean;
+  timeFilterActive: boolean;
+  catalogPartial: boolean;
+  catalogRebuilding: boolean;
+  catalogRevision: number;
+  catalogIndexed: number;
+  catalogTotal: number;
+  unloadedSessions: number;
+  repairPending: number;
+  treeRevision: number;
+  organizationRevision: number;
+};
+
+function projectTreeDiagnosticChangeReason(
+  previous: ProjectTreeDiagnosticSnapshot | null,
+  current: ProjectTreeDiagnosticSnapshot,
+): string {
+  if (!previous) return "initial";
+  if (previous.recoveryCopies !== current.recoveryCopies || previous.recoveryCopySessions !== current.recoveryCopySessions) return "recovery-copy";
+  if (previous.runtimeOnlySessions !== current.runtimeOnlySessions || previous.runtimeSessions !== current.runtimeSessions) return "runtime-session";
+  if (previous.activeSessions !== current.activeSessions || previous.activeVisibleSessions !== current.activeVisibleSessions) return "active-session";
+  if (previous.queryActive !== current.queryActive || previous.timeFilterActive !== current.timeFilterActive || previous.hiddenByFilter !== current.hiddenByFilter) return "filter";
+  if (previous.visibleSessions !== current.visibleSessions
+    || previous.hiddenSessions !== current.hiddenSessions
+    || previous.hiddenByCollapsed !== current.hiddenByCollapsed
+    || previous.hiddenByTruncation !== current.hiddenByTruncation
+    || previous.expandedFolders !== current.expandedFolders
+    || previous.showAllFolders !== current.showAllFolders) return "visibility";
+  if (previous.workspaceSessions !== current.workspaceSessions
+    || previous.folderCount !== current.folderCount
+    || previous.catalogRevision !== current.catalogRevision
+    || previous.catalogIndexed !== current.catalogIndexed
+    || previous.catalogTotal !== current.catalogTotal
+    || previous.unloadedSessions !== current.unloadedSessions
+    || previous.repairPending !== current.repairPending
+    || previous.treeRevision !== current.treeRevision
+    || previous.organizationRevision !== current.organizationRevision
+    || previous.directoryState !== current.directoryState) return "catalog";
+  return "directory-update";
+}
 
 const READ_ACTIVITY_KEY = "projectTree:readActivity";
 const READ_ACTIVITY_BASELINE_KEY = "projectTree:readActivityBaselineAt";
@@ -1054,6 +1102,74 @@ export function ProjectTree({
       return changed ? next : prev;
     });
   }, [activeAncestorKeys, manuallyCollapsed]);
+
+  const projectTreeDiagnosticSnapshot = useMemo<ProjectTreeDiagnosticSnapshot>(() => {
+    const sessionSummary = summarizeProjectTreeSessions({
+      tree,
+      visibleTree,
+      expanded,
+      showAllTopics,
+      classicTruncationActive,
+      queryActive: query.trim().length > 0,
+      timeFilterActive: timeFilter !== "all",
+      projectNodeKey,
+      isActive: (node) => topicIsActive(node, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath),
+      isUnread: (node) => projectTreeTopicHasUnreadActivity(node, readActivity, activeScope, activeWorkspaceRoot, activeTopicId, activeSessionPath, readBaselineAt),
+    });
+    return {
+      ...sessionSummary,
+      directoryState: catalogStatus.state,
+      scope: activeScope === "global" ? "global" : activeScope ? "project" : "unknown",
+      variant,
+      timeFilter,
+      queryActive: query.trim().length > 0,
+      timeFilterActive: timeFilter !== "all",
+      catalogPartial: catalogStatus.state !== "ready"
+        || catalogStatus.repairPending > 0
+        || (catalogStatus.unindexedTargetCount ?? 0) > 0
+        || Boolean(catalogStatus.lastError),
+      catalogRebuilding: catalogStatus.state === "rebuilding",
+      catalogRevision: catalogStatus.revision,
+      catalogIndexed: catalogStatus.indexed,
+      catalogTotal: catalogStatus.total,
+      unloadedSessions: Math.max(0, catalogStatus.total - sessionSummary.workspaceSessions),
+      repairPending: catalogStatus.repairPending,
+      treeRevision: latestRevisionRef.current,
+      organizationRevision,
+    };
+  }, [activeScope, activeSessionPath, activeTopicId, activeWorkspaceRoot, catalogStatus, classicTruncationActive, expanded, organizationRevision, query, readActivity, readBaselineAt, showAllTopics, timeFilter, tree, variant, visibleTree]);
+
+  const projectTreeDiagnosticSnapshotRef = useRef<ProjectTreeDiagnosticSnapshot | null>(null);
+  const previousProjectTreeDiagnosticSnapshotRef = useRef<ProjectTreeDiagnosticSnapshot | null>(null);
+  const lastProjectTreeDiagnosticSignatureRef = useRef("");
+  projectTreeDiagnosticSnapshotRef.current = projectTreeDiagnosticSnapshot;
+  const projectTreeDiagnosticSignature = useMemo(() => JSON.stringify(projectTreeDiagnosticSnapshot), [projectTreeDiagnosticSnapshot]);
+  const emitProjectTreeDiagnosticSnapshot = useCallback((force = false, reasonOverride?: string) => {
+    const current = projectTreeDiagnosticSnapshotRef.current;
+    if (!current) return;
+    const signature = JSON.stringify(current);
+    if (!force && signature === lastProjectTreeDiagnosticSignatureRef.current) return;
+    const previous = previousProjectTreeDiagnosticSnapshotRef.current;
+    recordFrontendDiagnostic("workspace", "workspace.session-directory", {
+      ...current,
+      changeReason: reasonOverride ?? projectTreeDiagnosticChangeReason(previous, current),
+      deltaWorkspaceSessions: previous ? current.workspaceSessions - previous.workspaceSessions : 0,
+      deltaVisibleSessions: previous ? current.visibleSessions - previous.visibleSessions : 0,
+      deltaHiddenSessions: previous ? current.hiddenSessions - previous.hiddenSessions : 0,
+      deltaRecoveryCopies: previous ? current.recoveryCopies - previous.recoveryCopies : 0,
+      deltaRuntimeOnlySessions: previous ? current.runtimeOnlySessions - previous.runtimeOnlySessions : 0,
+    });
+    previousProjectTreeDiagnosticSnapshotRef.current = current;
+    lastProjectTreeDiagnosticSignatureRef.current = signature;
+  }, []);
+
+  useEffect(() => {
+    emitProjectTreeDiagnosticSnapshot();
+  }, [emitProjectTreeDiagnosticSnapshot, projectTreeDiagnosticSignature]);
+
+  useEffect(() => registerFrontendDiagnosticStartHook(() => {
+    emitProjectTreeDiagnosticSnapshot(true, "recorder-start");
+  }), [emitProjectTreeDiagnosticSnapshot]);
 
   const renderNode = (node: ProjectNode | null | undefined, depth: number, section: "pinned" | "projects" = "projects", isVisible = true) => {
     if (!node) return null;

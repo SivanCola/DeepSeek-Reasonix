@@ -269,6 +269,11 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
       await act(async () => current?.unmount());
     },
     close: async () => {
+      // React.lazy Markdown chunks may resolve just after the last act() in a
+      // block. Let those requests settle before tearing down Vite's SSR
+      // module runner; otherwise the runner reports a transport disconnect
+      // even though every assertion completed.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       await server.close();
     },
     loadModule: <T,>(path: string) => server.ssrLoadModule(path) as Promise<T>,
