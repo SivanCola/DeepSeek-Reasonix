@@ -258,6 +258,11 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
           ),
         );
       });
+      // Virtuoso and the lazy Markdown/live-region surfaces can schedule a
+      // second commit after the initial act (especially on a loaded CI
+      // runner). Drain one extra frame so render() promises a settled DOM to
+      // callers that intentionally assert immediately after rendering.
+      await flush();
       await flush();
     },
     flush,
