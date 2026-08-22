@@ -105,7 +105,9 @@ if (initialCSS.length > 0) {
 // application stylesheet loaded before React mounts. Keep their combined
 // allowance bounded even though the file is no longer render-blocking.
 // Navigation overlay styles add a bounded 0.1 KiB to the deferred shell.
-assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 114.2 * 1024);
+// The cleaned source panel adds 0.1 KiB gzip to the deferred shell on top of
+// the retained-transcript navigation allowance; keep the ratchet explicit.
+assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 114.3 * 1024);
 if (localeChunks.length !== 2) {
   throw new Error(`expected 2 on-demand Chinese locale chunks, found ${localeChunks.length}`);
 }
@@ -132,7 +134,7 @@ for (const path of localeChunks) {
   // connection, fallback, and legacy-state copy while removing protocol
   // choices from the primary UI; keep that complete guidance with a bounded
   // 0.4–0.5 KiB locale-only ratchet.
-  const budget = name.startsWith("zh-TW-") ? 57.1 * 1024 : 56.4 * 1024;
+  const budget = name.startsWith("zh-TW-") ? 57.2 * 1024 : 56.5 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
