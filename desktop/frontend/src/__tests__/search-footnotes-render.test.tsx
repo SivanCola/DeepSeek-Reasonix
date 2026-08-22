@@ -77,7 +77,7 @@ const toggle = panel?.querySelector<HTMLButtonElement>(".msg-search-sources__tog
 ok(Boolean(body?.textContent?.includes("answer only")), "answer body keeps the model text");
 ok(Boolean(panel), "sources panel renders under the answer");
 ok(toggle?.getAttribute("aria-expanded") === "false", "sources panel is collapsed by default");
-ok(!(panel?.textContent ?? "").includes("https://example.com/a"), "collapsed panel does not expose a long URL");
+ok(!panel?.querySelector(".msg-search-sources__body"), "collapsed panel does not expose source details");
 await act(async () => {
   toggle?.click();
 });
