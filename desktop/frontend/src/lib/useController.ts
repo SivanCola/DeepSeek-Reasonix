@@ -4559,6 +4559,10 @@ export function useController() {
           // remain on screen while the user retries.
           if (previousTabId && activeTabIdRef.current === tabId && isNavigationIntentCurrent(navigationSeq)) {
             await app.SetActiveTab(previousTabId).catch(() => undefined);
+            // A newer click may arrive while the backend rebind is in flight.
+            // Do not let this stale failure restore the old frontend selection
+            // after that intent has already won.
+            if (!isNavigationIntentCurrent(navigationSeq) || activeTabIdRef.current !== tabId) return tabs;
             setActiveTabId(previousTabId);
             activeTabIdRef.current = previousTabId;
           }
