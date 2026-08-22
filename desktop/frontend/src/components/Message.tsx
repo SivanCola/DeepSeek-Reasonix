@@ -1,8 +1,8 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BrainCircuit, ChevronDown, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
 import { MemoryCitations } from "./MemoryCitations";
-import { hasSearchSources, SearchSourcesPanel } from "./SearchSourcesPanel";
+import { hasSearchSources } from "../lib/searchSources";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { ComposerContextCard } from "./ComposerContextCard";
@@ -24,7 +24,7 @@ import { CodeViewer } from "./CodeViewer";
 import { formatSelectionLabels, languageFor, parseSelectedTextContext, stripSelectionLabels } from "../lib/selectedTextContext";
 import { AssistantReasoningPanel } from "./AssistantReasoningPanel";
 
-type AssistantItem = Extract<Item, { kind: "assistant" }>;
+const SearchSourcesPanel = lazy(() => import("./SearchSourcesPanel").then((module) => ({ default: module.SearchSourcesPanel }))); type AssistantItem = Extract<Item, { kind: "assistant" }>;
 export type TurnActionMenu = "summary" | "rewind";
 export const InvocationMetadataContext = createContext<InvocationMetadataMap>({});
 type ImSourceMessage = {
@@ -835,7 +835,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               entryId={historyEntryIdForItemId(item.id)}
             />
           )}
-          <SearchSourcesPanel sources={item.searchSources} />
+          <Suspense fallback={null}><SearchSourcesPanel sources={item.searchSources} /></Suspense>
         </div>
       )}
       <MemoryCitations citations={item.memoryCitations} />

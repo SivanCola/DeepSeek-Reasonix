@@ -126,6 +126,10 @@ export function normalizeSearchSources(sources: SearchSource[] | undefined): Sea
   return { visible, hiddenCount };
 }
 
+export function hasSearchSources(sources?: SearchSource[]): boolean {
+  return normalizeSearchSources(sources).visible.length > 0;
+}
+
 function sourceKey(source: SearchSource): string {
   return `${source.url ?? ""}\n${source.title ?? ""}`;
 }

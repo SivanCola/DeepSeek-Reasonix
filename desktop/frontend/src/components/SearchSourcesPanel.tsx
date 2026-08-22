@@ -66,7 +66,3 @@ export function SearchSourcesPanel({ sources }: { sources?: SearchSource[] }) {
     </section>
   );
 }
-
-export function hasSearchSources(sources?: SearchSource[]): boolean {
-  return normalizeSearchSources(sources).visible.length > 0;
-}
