@@ -13,9 +13,13 @@ function topicSortValue(node: ProjectNode, sortMode: WorkbenchSortMode): number 
   return topicActivityTime(node);
 }
 
+function isSortableConversation(node: ProjectNode): boolean {
+  return isTopicNode(node) || isRuntimeSessionNode(node);
+}
+
 function projectSortValue(node: ProjectNode, sortMode: WorkbenchSortMode): number {
   return asArray(node.children).reduce((max, child) => {
-    if (!isTopicNode(child)) return max;
+    if (!isSortableConversation(child)) return max;
     return Math.max(max, topicSortValue(child, sortMode));
   }, 0);
 }
@@ -28,7 +32,13 @@ function manualTopicOrder(a: ProjectNode, b: ProjectNode): number {
 
 function sortWorkbenchChildren(children: ProjectNode[], sortMode: WorkbenchSortMode): ProjectNode[] {
   return [...children].sort((a, b) => {
-    if (!isTopicNode(a) || !isTopicNode(b)) return 0;
+    // Runtime-only rows are the same logical conversations as catalog topics
+    // while a directory index catches up. Treat both shapes as sortable rows;
+    // returning 0 for a session-vs-topic pair makes the final order depend on
+    // whichever async snapshot happened to arrive first.
+    const aConversation = isSortableConversation(a);
+    const bConversation = isSortableConversation(b);
+    if (!aConversation || !bConversation) return aConversation === bConversation ? 0 : aConversation ? -1 : 1;
     if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
     const manualOrder = manualTopicOrder(a, b);
     if (manualOrder !== 0) return manualOrder;
