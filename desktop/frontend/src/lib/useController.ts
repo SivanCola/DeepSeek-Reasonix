@@ -4535,7 +4535,7 @@ export function useController() {
         }
         const tabs = await reconcileTabRuntime(tabId, { hydrateSessionData: false });
         if (!isNavigationIntentCurrent(navigationSeq)) return tabs;
-        void loadSessionDataForTab(tabId, false, "switch-tab", {
+        await loadSessionDataForTab(tabId, false, "switch-tab", {
           skipHistory: sameSession && hasCachedLiveTurn(statesRef.current.get(tabId)),
           placeholderItems,
           surfacePolicy: preserveTargetSurface ? "preserve-current" : "replace-surface",
@@ -4545,6 +4545,25 @@ export function useController() {
           sessionDigest: targetSessionDigest,
           sessionGeneration: targetSessionGeneration,
         });
+        // The navigation surface is committed by the caller only after the
+        // target history has been applied. This prevents the old surface from
+        // being replaced by an empty target state between SetActiveTab and
+        // the first history page.
+        if (!isNavigationIntentCurrent(navigationSeq)) return tabs;
+        const hydratedTargetState = statesRef.current.get(tabId);
+        if (hydratedTargetState?.hydrateError) {
+          noteActivationSettled(switchRequestId, "failed", hydratedTargetState.hydrateError);
+          // History loading errors are reported by loadSessionDataForTab as a
+          // state error rather than a rejected promise. Rebind the backend and
+          // visible tab to the previous session so the retained transcript can
+          // remain on screen while the user retries.
+          if (previousTabId && activeTabIdRef.current === tabId && isNavigationIntentCurrent(navigationSeq)) {
+            await app.SetActiveTab(previousTabId).catch(() => undefined);
+            setActiveTabId(previousTabId);
+            activeTabIdRef.current = previousTabId;
+          }
+          return tabs;
+        }
         noteActivationSettled(switchRequestId, "ready");
         return tabs;
       })
