@@ -90,7 +90,9 @@ console.log("\nbundle budgets");
 // The retained-transcript surface adds a small, bounded navigation owner to
 // the startup path (overlay state + stale-completion guard). Keep the increase
 // explicit and narrow; the measured build is 431.1 KiB gzip.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 431.3 : 431.3;
+// The web-search tool card now resolves the same display projection lazily so
+// its filtered count matches the assistant Sources panel.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 431.5 : 431.5;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
