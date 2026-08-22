@@ -2,7 +2,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRe
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BrainCircuit, ChevronDown, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
 import { MemoryCitations } from "./MemoryCitations";
-import { hasSearchFootnotes, SearchFootnotes } from "./SearchFootnotes";
+import { hasSearchSources, SearchSourcesPanel } from "./SearchSourcesPanel";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { ComposerContextCard } from "./ComposerContextCard";
@@ -812,7 +812,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 }) {
   const reasoningDisplayMode = useReasoningDisplayMode();
   const hasText = item.streaming || item.text.trim() !== "";
-  const hasFootnotes = hasSearchFootnotes(item.searchSources);
+  const hasFootnotes = hasSearchSources(item.searchSources);
   const processOnly = Boolean(item.reasoning) && !hasText && !hasFootnotes;
   const processWithText = Boolean(item.reasoning) && (hasText || hasFootnotes);
   if (processOnly && (reasoningDisplayMode === "hidden" || reasoningDisplayMode === "pending")) return null;
@@ -835,7 +835,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               entryId={historyEntryIdForItemId(item.id)}
             />
           )}
-          <SearchFootnotes sources={item.searchSources} />
+          <SearchSourcesPanel sources={item.searchSources} />
         </div>
       )}
       <MemoryCitations citations={item.memoryCitations} />

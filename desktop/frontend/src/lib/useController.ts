@@ -260,6 +260,7 @@ export type Item =
       capabilityId?: string;
       status: ToolStatus;
       output?: string;
+      searchSources?: SearchSource[]; // display-only provider search results; replay data stays in output/serverSearch
       error?: string;
       truncated?: boolean;
       dataArchived?: boolean; // args/output trimmed for memory; full data available via backend
@@ -1644,7 +1645,8 @@ function applyEvent(s: State, e: WireEvent): State {
       }
       // A nested result refreshes its sub-agent parent's recent activity.
       if (t.parentId) touchSubagentParent(next, t.parentId);
-      return attachWebSearchOutput({ ...s, items: compactArchivedToolItems(next) }, t.name, t.output, t.err);
+      const toolId = idx >= 0 && next[idx]?.kind === "tool" ? next[idx].id : t.id;
+      return attachWebSearchOutput({ ...s, items: compactArchivedToolItems(next) }, t.name, t.output, t.err, toolId);
     }
     case "tool_progress": {
       const t = e.tool;

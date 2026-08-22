@@ -1,17 +1,3 @@
-import { formatSearchFootnotesMarkdown } from "../lib/searchSources";
-import type { SearchSource } from "../lib/searchSources";
-import { Markdown } from "./Markdown";
-
-export function SearchFootnotes({ sources }: { sources?: SearchSource[] }) {
-  const footnotes = formatSearchFootnotesMarkdown(sources ?? []);
-  if (!footnotes) return null;
-  return (
-    <div className="msg-search-sources">
-      <Markdown text={footnotes} />
-    </div>
-  );
-}
-
-export function hasSearchFootnotes(sources?: SearchSource[]): boolean {
-  return formatSearchFootnotesMarkdown(sources ?? []) !== "";
-}
+// Backwards-compatible export for callers that still use the old name. The
+// display implementation is now the structured, collapsed sources panel.
+export { SearchSourcesPanel as SearchFootnotes, hasSearchSources as hasSearchFootnotes } from "./SearchSourcesPanel";
