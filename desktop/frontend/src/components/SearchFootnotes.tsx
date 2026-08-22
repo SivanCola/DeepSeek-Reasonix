@@ -1,5 +1,4 @@
 import { lazy, Suspense } from "react";
-import { hasSearchSources } from "../lib/searchSources";
 import type { SearchSource } from "../lib/searchSources";
 
 const SearchSourcesPanel = lazy(() => import("./SearchSourcesPanel").then((module) => ({ default: module.SearchSourcesPanel })));
@@ -14,4 +13,4 @@ export function SearchFootnotes({ sources }: { sources?: SearchSource[] }) {
   );
 }
 
-export const hasSearchFootnotes = hasSearchSources;
+export const hasSearchFootnotes = (sources?: SearchSource[]) => Boolean(sources?.length);

@@ -3,10 +3,10 @@
 import {
   formatSearchFootnotesMarkdown,
   mergeSearchSources,
-  normalizeSearchSources,
   parseSearchSources,
   searchSourcesFromHistory,
 } from "../lib/searchSources";
+import { normalizeSearchSources } from "../lib/searchSourcesPresentation";
 import { historyMessagesToItems, initialState, reducer } from "../lib/useController";
 import type { HistoryMessage, WireEvent } from "../lib/types";
 

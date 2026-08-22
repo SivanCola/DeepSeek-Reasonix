@@ -2,7 +2,6 @@ import { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { BrainCircuit, ChevronDown, FileText, Folder, GitBranch, Image, MessageSquare, Pencil, RotateCcw, ScrollText } from "lucide-react";
 import { MemoryCitations } from "./MemoryCitations";
-import { hasSearchSources } from "../lib/searchSources";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./CopyButton";
 import { ComposerContextCard } from "./ComposerContextCard";
@@ -812,7 +811,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 }) {
   const reasoningDisplayMode = useReasoningDisplayMode();
   const hasText = item.streaming || item.text.trim() !== "";
-  const hasFootnotes = hasSearchSources(item.searchSources);
+  const hasFootnotes = Boolean(item.searchSources?.length);
   const processOnly = Boolean(item.reasoning) && !hasText && !hasFootnotes;
   const processWithText = Boolean(item.reasoning) && (hasText || hasFootnotes);
   if (processOnly && (reasoningDisplayMode === "hidden" || reasoningDisplayMode === "pending")) return null;

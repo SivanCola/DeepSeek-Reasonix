@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { useT } from "../lib/i18n";
-import { normalizeSearchSources, type SearchSource } from "../lib/searchSources";
+import { normalizeSearchSources } from "../lib/searchSourcesPresentation";
+import type { SearchSource } from "../lib/searchSources";
 
 export function SearchSourcesPanel({ sources }: { sources?: SearchSource[] }) {
   const t = useT();
@@ -9,7 +10,7 @@ export function SearchSourcesPanel({ sources }: { sources?: SearchSource[] }) {
   const presentation = normalizeSearchSources(sources);
   if (presentation.visible.length === 0) return null;
 
-  const countLabel = t("sources.count", { n: presentation.visible.length });
+  const countLabel = String(presentation.visible.length);
   const hiddenLabel = presentation.hiddenCount > 0 ? ` · ${t("sources.hidden", { n: presentation.hiddenCount })}` : "";
 
   return (

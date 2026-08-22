@@ -15,7 +15,6 @@ import { ReasoningSummary } from "./ReasoningSummary";
 import { useReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
 import { useTranscriptUserResizeIntent } from "./TranscriptLayoutIntentContext";
 import { resolveToolCardDefaultOpen } from "../lib/transcriptRowGeometry";
-import { normalizeSearchSources } from "../lib/searchSources";
 
 type ToolItem = Extract<Item, { kind: "tool" }>;
 
@@ -261,12 +260,8 @@ export const ToolCard = memo(function ToolCard({ item, subcalls, tabId, displayN
   const effectiveOutput = fullData?.output ?? item.output;
   const execution = fullData?.execution ?? item.execution;
   const isWebSearch = item.name === "web_search";
-  const searchPresentation = isWebSearch ? normalizeSearchSources(item.searchSources) : undefined;
-  const searchVisibleCount = searchPresentation?.visible.length ?? 0;
-  const searchHiddenCount = searchPresentation?.hiddenCount ?? 0;
-  const searchResultLabel = isWebSearch && searchVisibleCount === 0 && searchHiddenCount > 0
-    ? t("sources.noValid")
-    : t("tool.searchResults", { n: searchVisibleCount });
+  const searchVisibleCount = item.searchSources?.length ?? 0;
+  const searchResultLabel = t("tool.searchResults", { n: searchVisibleCount });
   const isShellCard = Boolean(item.isShell || item.name === "bash" || execution);
   const displayOutput = isWebSearch || toolOutputDuplicatesError(effectiveOutput, item.error) ? undefined : effectiveOutput;
   const previewDiff = item.fileDiff?.diff ? item.fileDiff : undefined;
@@ -287,7 +282,7 @@ export const ToolCard = memo(function ToolCard({ item, subcalls, tabId, displayN
   // user sees progress; closed by default once settled.
   const hasArchivedOnDemandBody = Boolean(item.dataArchived && tabId);
   const hasArgsOrOutput = !previewDiff && diffs.length === 0 && (isWebSearch
-    ? Boolean(effectiveArgs || searchPresentation?.visible.length || searchPresentation?.hiddenCount)
+    ? Boolean(effectiveArgs || searchVisibleCount)
     : Boolean(effectiveArgs || displayOutput || hasArchivedOnDemandBody));
 
   // Shell output: split into preview + "show all" toggle.
@@ -511,7 +506,6 @@ export const ToolCard = memo(function ToolCard({ item, subcalls, tabId, displayN
             {subject && <div className="tool__search-query">{t("tool.searchQuery", { query: subject })}</div>}
             <div className="tool__search-count">
               {searchResultLabel}
-              {searchHiddenCount > 0 && ` · ${t("sources.hidden", { n: searchHiddenCount })}`}
             </div>
           </div>
         )}
