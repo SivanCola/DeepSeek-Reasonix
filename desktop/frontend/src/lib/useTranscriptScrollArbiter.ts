@@ -485,6 +485,19 @@ export function useTranscriptScrollArbiter({
     }
     const measured = measureTranscriptVirtuosoItem(element, field, frozen);
     const pendingGeometry = field === "offsetHeight" && hasPendingTranscriptGeometry(element);
+    if (field === "offsetHeight" && frozen) {
+      const estimate = Number.parseFloat(element.dataset.transcriptEstimate ?? element.dataset.knownSize ?? element.dataset.staticEstimate ?? "");
+      if (Number.isFinite(estimate) && estimate > 0) {
+        // Native thumb dragging owns the physical track. Keep the currently
+        // measured row box stable for that drag only; wheel/touch reading does
+        // not enter this branch and never freezes a recycled row.
+        element.style.height = `${estimate}px`;
+        element.dataset.transcriptGeometryFrozen = "true";
+      }
+    } else if (field === "offsetHeight" && element.dataset.transcriptGeometryFrozen === "true") {
+      element.style.removeProperty("height");
+      delete element.dataset.transcriptGeometryFrozen;
+    }
     if (field === "offsetHeight") {
       const currentRowKey = element.dataset.rowKey;
       if (currentRowKey) {
