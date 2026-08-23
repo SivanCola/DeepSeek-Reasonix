@@ -104,6 +104,7 @@ func TestExactIndexDoesNotDowngradeKnownCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	record.Preview, record.Turns, record.TurnsState, record.MetaFingerprint = "", 0, TurnsUnknown, "20:2"
+	record.Recovered, record.RecoveryReason, record.RecoveryDigest, record.ParentID = true, "recovery", "digest", "parent"
 	if err := catalog.UpsertSession(ctx, record); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +112,8 @@ func TestExactIndexDoesNotDowngradeKnownCounts(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
 	}
-	if got.TurnsState != TurnsValid || got.Turns != 1 || got.Preview != "hi" {
-		t.Fatalf("exact index downgraded known counts: %+v", got)
+	if got.TurnsState != TurnsValid || got.Turns != 1 || got.Preview != "hi" ||
+		!got.Recovered || got.RecoveryReason != "recovery" || got.RecoveryDigest != "digest" || got.ParentID != "parent" {
+		t.Fatalf("exact index lost known counts or recovery metadata: %+v", got)
 	}
 }

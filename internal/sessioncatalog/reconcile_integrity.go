@@ -167,11 +167,3 @@ func sameSessionIndexInput(got, want SessionRecord) bool {
 		got.ContentFingerprint == want.ContentFingerprint && got.MetaFingerprint == want.MetaFingerprint &&
 		got.Health == want.Health
 }
-
-func sameSessionIndexSource(got, want SessionRecord) bool {
-	return got.Path == want.Path && got.Directory == want.Directory &&
-		got.Scope == want.Scope && got.WorkspaceRoot == want.WorkspaceRoot &&
-		got.TopicID == want.TopicID && got.TopicTitle == want.TopicTitle &&
-		got.CustomTitle == want.CustomTitle && got.CreatedAt == want.CreatedAt &&
-		got.LastActivityAt == want.LastActivityAt && got.ContentFingerprint == want.ContentFingerprint
-}
