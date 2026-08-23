@@ -115,6 +115,15 @@ function group(providers: ProviderView[]): ProviderAccessGroup {
   };
 }
 
+function customGroup(provider: ProviderView): ProviderAccessGroup {
+  return {
+    ...group([provider]),
+    id: `custom:${provider.name}`,
+    label: provider.name,
+    builtIn: false,
+  };
+}
+
 function renderCard(
   providerGroup: ProviderAccessGroup,
   actions: {
@@ -128,7 +137,6 @@ function renderCard(
         group={providerGroup}
         busy={false}
         fetching={false}
-        defaultProvider=""
         editing={null}
         kinds={["anthropic", "openai"]}
         onEdit={() => undefined}
@@ -218,6 +226,39 @@ await act(async () => {
 ok(
   removedProviders.join(",") === "deepseek-flash,deepseek-pro",
   "card-level removal submits every grouped provider in one action",
+);
+
+let removedCustomProviders: string[] = [];
+await act(async () => {
+  root.render(renderCard(customGroup({ ...deepSeekAnthropic, name: "my-proxy", builtIn: false }), {
+    onDelete: async (providers) => {
+      removedCustomProviders = providers.map((provider) => provider.name);
+    },
+  }));
+  await flushPromises();
+});
+const defaultCustomMoreButton = rootEl.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]');
+ok(defaultCustomMoreButton?.disabled === false, "configured custom providers keep the removal menu available");
+await act(async () => {
+  defaultCustomMoreButton?.click();
+  await flushPromises();
+});
+let deleteDefaultCustomButton = Array.from(document.querySelectorAll("button"))
+  .find((button) => button.textContent?.trim() === "Remove access") as HTMLButtonElement | undefined;
+await act(async () => {
+  deleteDefaultCustomButton?.click();
+  await flushPromises();
+});
+deleteDefaultCustomButton = Array.from(document.querySelectorAll("button"))
+  .find((button) => button.textContent?.trim() === "Confirm delete provider") as HTMLButtonElement | undefined;
+ok(deleteDefaultCustomButton !== undefined, "configured custom provider can be confirmed for deletion");
+await act(async () => {
+  deleteDefaultCustomButton?.click();
+  await flushPromises();
+});
+ok(
+  removedCustomProviders.join(",") === "my-proxy",
+  "configured custom provider removal submits the selected provider",
 );
 
 await act(async () => {
