@@ -59,7 +59,7 @@ row.getBoundingClientRect = () => ({
 check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "ordinary wheel path keeps real dynamic measurement");
 check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 160, "native thumb drag keeps the existing Virtuoso size");
 row.dataset.transcriptEstimate = "180";
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 180, "manual reader freeze keeps the logical row estimate");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 180, "native thumb drag keeps the logical row estimate");
 delete row.dataset.transcriptEstimate;
 check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "real measurement resumes after thumb release");
 
