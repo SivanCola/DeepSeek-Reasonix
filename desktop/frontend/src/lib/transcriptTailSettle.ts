@@ -10,6 +10,7 @@ import type { TranscriptScrollMode } from "./transcriptScrollArbiter";
 import { nativeTranscriptBottomTop, nativeTranscriptDistanceFromBottom, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX } from "./transcriptScrollGeometry";
 
 const TAIL_STAGNANT_FRAME_LIMIT = 2;
+const TAIL_SETTLE_MAX_ATTEMPTS = 8;
 // Ignore one-frame extent oscillation; real growth remains displaced and
 // converges on the following frame (#9028/#9089).
 const TAIL_CONFIRM_OFF_BOTTOM_FRAMES = 2;
@@ -54,6 +55,7 @@ export function createTranscriptTailSettle({
     distance: number;
     stagnantFrames: number;
     offBottomFrames: number;
+    attempts: number;
   } | null = null;
   let jumpTailTimer: number | null = null;
   let layoutTransientIdleTimer: number | null = null;
@@ -169,8 +171,14 @@ export function createTranscriptTailSettle({
       const previous = tailSettleProgress;
       const offBottomFrames = (previous?.offBottomFrames ?? 0) + 1;
       if (offBottomFrames < TAIL_CONFIRM_OFF_BOTTOM_FRAMES) {
-        tailSettleProgress = { distance, stagnantFrames: 0, offBottomFrames };
+        tailSettleProgress = { distance, stagnantFrames: 0, offBottomFrames, attempts: offBottomFrames };
         tailSettleFrame = requestAnimationFrame(tick);
+        return;
+      }
+      const attempts = (previous?.attempts ?? 0) + 1;
+      if (attempts > TAIL_SETTLE_MAX_ATTEMPTS) {
+        tailSettleProgress = null;
+        armLayoutTransientIdle();
         return;
       }
       const stagnantFrames = previous && Math.abs(previous.distance - distance) <= 0.5
@@ -179,8 +187,8 @@ export function createTranscriptTailSettle({
       scrollToTail("auto", CAPTURE_TRANSCRIPT_SCROLL_DIAGNOSTICS && source
         ? { source, phase: "settle", settle: { frame: offBottomFrames, offBottomFrames, stagnantFrames } }
         : undefined);
-      tailSettleProgress = { distance, stagnantFrames, offBottomFrames };
-      if (stagnantFrames < TAIL_STAGNANT_FRAME_LIMIT) tailSettleFrame = requestAnimationFrame(tick);
+      tailSettleProgress = { distance, stagnantFrames, offBottomFrames, attempts };
+      if (stagnantFrames < TAIL_STAGNANT_FRAME_LIMIT && attempts < TAIL_SETTLE_MAX_ATTEMPTS) tailSettleFrame = requestAnimationFrame(tick);
       else armLayoutTransientIdle();
     };
     tailSettleFrame = requestAnimationFrame(tick);
