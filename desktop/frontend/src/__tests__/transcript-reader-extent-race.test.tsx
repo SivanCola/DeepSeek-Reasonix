@@ -84,7 +84,9 @@ const virtuosoHandle = {
     lastScrollByTop = options?.top ?? 0;
     scrollElement.scrollTop += lastScrollByTop;
   },
-  scrollTo: () => {},
+  scrollTo: (options?: { top?: number }) => {
+    scrollElement.scrollTop = options?.top ?? scrollElement.scrollTop;
+  },
   scrollToIndex: () => {},
   getState: () => {},
 } as unknown as VirtuosoHandle;
