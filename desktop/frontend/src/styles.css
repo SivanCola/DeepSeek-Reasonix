@@ -3595,6 +3595,14 @@ a[href] {
 .history-preview__body .transcript__row > * {
   max-width: none;
 }
+/* Keep the lazy Markdown source readable while Virtuoso waits for the real
+   parser result. The row itself remains free to measure once the marker is
+   removed; no manual-scroll path writes a forced row height. */
+.transcript__row .msg--assistant .msg__body > .md[data-transcript-geometry-pending] {
+  box-sizing: border-box;
+  height: max(0px, calc(var(--transcript-row-estimate) - 32px));
+  overflow: hidden;
+}
 /* Offscreen rows are unmounted by the virtualizer, so content-visibility
    culling is redundant inside rows — and skipping it keeps offsetHeight
    measurements exact instead of contain-intrinsic-size placeholders. */

@@ -4,8 +4,8 @@
 // - EAW-aware text estimation: full-width scripts wrap at roughly half the
 //   character count, so CJK rows must estimate higher than the old
 //   char-based formula; half-width text stays close to the old behavior.
-// - Measured-size cache: only an exact logical-row hit is reused; unseen rows
-//   always use their own state-aware static prior.
+// - Measured-size cache: exact row hits stay logical-row scoped; answer rows
+//   may use a bounded same-layout prior for first-visit stability.
 
 import {
   eastAsianWidthColumns,
@@ -293,7 +293,7 @@ function recordRow(store: ReturnType<typeof createTranscriptMeasuredSizes>, row:
   recordRow(store, fakeRow("a2", "answer", "second"), 300);
   recordRow(store, fakeRow("a3", "answer", "third"), 200);
   const unseen = fakeRow("a4", "answer", "some answer text that is long enough to matter");
-  eq(estimateFor(store, unseen), estimateTranscriptRowSize(unseen), "unseen row of a sampled kind uses its own static prior");
+  eq(estimateFor(store, unseen), 200, "unseen answer rows use a same-layout bounded prior");
   const toolRow = fakeRow("t1", "tool", "");
   eq(estimateFor(store, toolRow), estimateTranscriptRowSize(toolRow), "unsampled kind still uses the static prior");
 }
@@ -308,7 +308,7 @@ function recordRow(store: ReturnType<typeof createTranscriptMeasuredSizes>, row:
   recordRow(store, second, 400, 960);
   eq(estimateFor(store, first, 960), 632, "a later real measurement replaces the stale estimate for the same row");
   eq(estimateFor(store, second, 960), 400, "a second row keeps its own latest measurement");
-  eq(estimateFor(store, unseen, 960), estimateTranscriptRowSize(unseen, 960), "unseen rows never inherit another row's measurement");
+  eq(estimateFor(store, unseen, 960), 516, "answer prior uses one latest sample per logical row");
 }
 
 {

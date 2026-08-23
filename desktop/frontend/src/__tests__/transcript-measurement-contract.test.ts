@@ -12,8 +12,8 @@ assert.equal(
   "manual transcript scrolling must not force a recycled row height",
 );
 assert.equal(
-  styles.includes("data-transcript-geometry-pending"),
-  false,
-  "pending Markdown must not create a second fixed-height geometry contract",
+  styles.includes("\n  height: max(0px, calc(var(--transcript-row-estimate) - 32px))"),
+  true,
+  "pending Markdown uses only its bounded parser fallback height",
 );
 process.stdout.write("transcript measurement contract passed\n");

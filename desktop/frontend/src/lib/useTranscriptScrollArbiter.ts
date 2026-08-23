@@ -8,7 +8,7 @@ import type {
 import type { SizeFunction, VirtuosoHandle } from "react-virtuoso";
 import { isEditableTarget } from "./keyboardShortcuts";
 import { findVerticalScrollTarget, normalizeWheelDelta } from "./nestedScrollHandoff";
-import { isNativeVerticalScrollbarPointer, measureTranscriptVirtuosoItem } from "./transcriptNativeScrollbar";
+import { hasPendingTranscriptGeometry, isNativeVerticalScrollbarPointer, measureTranscriptVirtuosoItem } from "./transcriptNativeScrollbar";
 import {
   INITIAL_TRANSCRIPT_SCROLL_STATE,
   isSubstantialTranscriptDisplacement,
@@ -484,6 +484,7 @@ export function useTranscriptScrollArbiter({
       element.dataset.transcriptReaderFreeze = "true";
     }
     const measured = measureTranscriptVirtuosoItem(element, field, frozen);
+    const pendingGeometry = field === "offsetHeight" && hasPendingTranscriptGeometry(element);
     if (field === "offsetHeight") {
       const currentRowKey = element.dataset.rowKey;
       if (currentRowKey) {
@@ -494,14 +495,14 @@ export function useTranscriptScrollArbiter({
       }
     }
     if (CAPTURE_TRANSCRIPT_SCROLL_DIAGNOSTICS) noteTranscriptRowMeasurement(element, field, measured);
-    if (!frozen && field === "offsetHeight") {
+    if (!frozen && !pendingGeometry && field === "offsetHeight") {
       const rowKey = element.dataset.rowKey;
       const kind = element.dataset.rowKind as TranscriptRow["kind"] | undefined;
       const stateElement = element.querySelector<HTMLElement>("[data-transcript-layout-variant]");
       const rawVariant = stateElement?.dataset.transcriptLayoutVariant ?? element.dataset.transcriptLayoutVariant;
       const width = Number.parseFloat(element.dataset.transcriptContentWidth ?? "") || element.getBoundingClientRect().width;
       const rawSource = element.dataset.estimateSource;
-      const estimateSource = rawSource === "exact" || rawSource === "static"
+      const estimateSource = rawSource === "exact" || rawSource === "calibrated" || rawSource === "static"
         ? rawSource
         : undefined;
       const staticEstimate = Number.parseFloat(element.dataset.staticEstimate ?? "");

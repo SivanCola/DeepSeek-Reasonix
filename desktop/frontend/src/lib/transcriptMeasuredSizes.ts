@@ -2,8 +2,9 @@
  * Bounded, session-aware transcript geometry cache.
  *
  * Exact samples are keyed by session + row + layout state + content version +
- * readable width + typography. Samples never calibrate another logical row;
- * an unseen row always uses its own state-aware static estimate.
+ * readable width + typography. Exact samples never cross logical rows; a
+ * bounded answer-layout prior may calibrate an unseen row within the same
+ * static-estimate bucket and environment.
  */
 
 import {
@@ -17,6 +18,7 @@ import { transcriptRowMeasurementVersion, type TranscriptRow } from "./transcrip
 
 const DEFAULT_SESSION_CAP = 8;
 const DEFAULT_ROW_CAP = 4_096;
+const DEFAULT_CALIBRATION_SAMPLE_CAP = 32;
 
 type GeometrySample = {
   rowKey: string;
@@ -58,7 +60,19 @@ export type TranscriptMeasuredSizes = {
 export type TranscriptMeasuredSizesOptions = {
   maxSessions?: number;
   maxRowsPerSession?: number;
+  maxCalibrationSamples?: number;
 };
+
+function medianOf(samples: readonly number[]): number | undefined {
+  if (samples.length === 0) return undefined;
+  const sorted = [...samples].sort((left, right) => left - right);
+  const middle = sorted.length >> 1;
+  return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function calibrationBucket(staticEstimate: number): number {
+  return Math.max(0, Math.min(8, Math.floor(Math.log2(Math.max(64, staticEstimate) / 64))));
+}
 
 function normalizedWidth(width: number | undefined): number | undefined {
   return Number.isFinite(width) && (width ?? 0) > 0 ? width : undefined;
@@ -73,6 +87,7 @@ function environmentMatches(sample: GeometrySample, environment: TranscriptGeome
 export function createTranscriptMeasuredSizes(options: TranscriptMeasuredSizesOptions = {}): TranscriptMeasuredSizes {
   const maxSessions = Math.max(1, Math.round(options.maxSessions ?? DEFAULT_SESSION_CAP));
   const maxRowsPerSession = Math.max(1, Math.round(options.maxRowsPerSession ?? DEFAULT_ROW_CAP));
+  const maxCalibrationSamples = Math.max(1, Math.round(options.maxCalibrationSamples ?? DEFAULT_CALIBRATION_SAMPLE_CAP));
   const sessions = new Map<string, SessionMeasurements>();
 
   const touchSession = (sessionKey: string): SessionMeasurements => {
@@ -116,13 +131,15 @@ export function createTranscriptMeasuredSizes(options: TranscriptMeasuredSizesOp
 
   const synthesizeDetailed: TranscriptMeasuredSizes["synthesizeDetailed"] = (sessionKey, rows, environment) => {
     const session = touchSession(sessionKey);
-    // A late-content patch invalidates that row immediately.
+    // A late-content patch invalidates that row immediately and must not leave
+    // its old ratio available to calibrate a sibling.
     for (const row of rows) {
       const rowKey = String(row.key);
       const sample = session.rows.get(rowKey);
       if (sample && sample.measurementVersion !== transcriptRowMeasurementVersion(row)) session.rows.delete(rowKey);
     }
 
+    const samples = [...session.rows.values()];
     const heightEstimates: number[] = [];
     const estimateSources: TranscriptEstimateSource[] = [];
     for (const row of rows) {
@@ -141,6 +158,25 @@ export function createTranscriptMeasuredSizes(options: TranscriptMeasuredSizesOp
         heightEstimates.push(exact.height);
         estimateSources.push("exact");
         continue;
+      }
+
+      if (row.kind === "answer" && layoutVariant === "text-flow") {
+        const bucket = calibrationBucket(staticEstimate);
+        const ratios = samples
+          .filter((sample) => sample.kind === "answer"
+            && sample.layoutVariant === "text-flow"
+            && environmentMatches(sample, environment)
+            && sample.staticEstimate !== undefined
+            && sample.staticEstimate > 0
+            && calibrationBucket(sample.staticEstimate) === bucket)
+          .slice(-maxCalibrationSamples)
+          .map((sample) => sample.height / sample.staticEstimate!);
+        const ratio = medianOf(ratios);
+        if (ratio !== undefined) {
+          heightEstimates.push(Math.max(1, Math.round(staticEstimate * ratio * 2) / 2));
+          estimateSources.push("calibrated");
+          continue;
+        }
       }
 
       heightEstimates.push(staticEstimate);
