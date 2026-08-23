@@ -902,7 +902,8 @@ try {
     element.dispatchEvent(new Event("scroll"));
   });
   await page.waitForFunction(() => document.querySelector(".transcript__row"));
-  const nativeThumbProbe = await transcript.evaluate((element) => {
+  const useInTrackNativeThumbEnd = process.platform === "win32";
+  const nativeThumbProbe = await transcript.evaluate((element, useInTrackEnd) => {
     const rect = element.getBoundingClientRect();
     const scaleX = rect.width / element.offsetWidth;
     const contentRight = rect.left + (element.clientLeft + element.clientWidth) * scaleX;
@@ -912,12 +913,18 @@ try {
     return {
       x: Math.min(rect.right - 1, contentRight + Math.max(1, (rect.right - contentRight) / 2)),
       y: rect.top + 5,
-      bottomY: Math.min(window.innerHeight - 1, rect.bottom + Math.max(24, rect.height * 0.1)),
+      // Chromium's Windows scrollbar keeps the native thumb owned only while
+      // the pointer remains on the track. Linux themes clamp after the
+      // pointer crosses the track end, so retain the overshoot there while
+      // using the in-track endpoint on Windows.
+      bottomY: useInTrackEnd
+        ? Math.max(rect.top + 1, rect.bottom - 1)
+        : Math.min(window.innerHeight - 1, rect.bottom + Math.max(24, rect.height * 0.1)),
       knownSize: Number.parseFloat(row.dataset.knownSize || "0"),
       gutter: rect.right - contentRight,
       scrollHeight: element.scrollHeight,
     };
-  });
+  }, useInTrackNativeThumbEnd);
   if (process.platform === "darwin" && (!nativeThumbProbe || nativeThumbProbe.gutter <= 1)) {
     // macOS Chromium inherits system overlay scrollbars, so there is no
     // pointer-addressable native gutter. Linux/Windows CI still exercises the
