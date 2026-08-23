@@ -515,9 +515,9 @@ func sleepStreamRetryBackoff(ctx context.Context, attempt int) bool {
 }
 
 // handleFinalResponse processes a no-tool assistant turn: recovery pause,
-// readiness retry, empty final retry, executor handoff nudge, steer drain, and
-// final compaction. cont=true continues the tool loop; cont=false returns err
-// from Run (err may be nil for a clean final answer).
+// readiness boundary, empty-final retry, executor handoff nudge, steer drain,
+// and final compaction. cont=true continues the tool loop; cont=false returns
+// err from Run (err may be nil for a clean final answer).
 func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, text, reasoning string, usage *provider.Usage) (cont bool, err error) {
 	// Recovery finalization produced a summary. Keep it in the session,
 	// but still pause so Goal auto-continue cannot open another Run with

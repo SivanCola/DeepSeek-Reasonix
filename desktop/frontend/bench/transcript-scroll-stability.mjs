@@ -59,6 +59,7 @@ async function waitForStableTranscriptGeometry(
     const startedAt = performance.now();
     let previous = null;
     let stableFrames = 0;
+    let lastSample = null;
     const sample = () => {
       const element = document.querySelector(".transcript");
       if (element instanceof HTMLElement) {
@@ -68,6 +69,7 @@ async function waitForStableTranscriptGeometry(
           top: element.scrollTop,
           clientHeight: element.clientHeight,
         };
+        lastSample = { ...current, distance: current.height - current.top - current.clientHeight, stableFrames };
         const unchanged = previous != null
           && current.mode === previous.mode
           && Math.abs(current.height - previous.height) <= 0.5
@@ -86,7 +88,7 @@ async function waitForStableTranscriptGeometry(
         stableFrames = 0;
       }
       if (performance.now() - startedAt >= timeout) {
-        reject(new Error(`transcript geometry did not stay stable for ${frames} frames`));
+        reject(new Error(`transcript geometry did not stay stable for ${frames} frames: ${JSON.stringify(lastSample)}`));
         return;
       }
       requestAnimationFrame(sample);
@@ -275,7 +277,8 @@ async function waitForServer() {
   throw new Error("transcript scroll preview did not become ready");
 }
 
-const preview = spawn("pnpm", ["exec", "vite", "preview", "--port", String(port), "--strictPort", "--host", "127.0.0.1"], {
+const packageManager = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const preview = spawn(packageManager, ["exec", "vite", "preview", "--port", String(port), "--strictPort", "--host", "127.0.0.1"], {
   cwd: frontendDir,
   stdio: "ignore",
 });
@@ -1123,7 +1126,15 @@ try {
       element.dataset.scrollMode === "tail-follow"
       && element.scrollHeight - element.scrollTop - element.clientHeight <= 1);
   }
-  assert(reachedBottom, "repeated downward wheels reach the physical bottom through measurement churn (#8657)");
+  const reachState = reachedBottom ? null : await transcript.evaluate((element) => ({
+    mode: element.dataset.scrollMode,
+    distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+    top: element.scrollTop,
+    height: element.scrollHeight,
+    clientHeight: element.clientHeight,
+    writes: window.__reachBottomProbe.writes.slice(-8),
+  }));
+  assert(reachedBottom, `repeated downward wheels reach the physical bottom through measurement churn (#8657)${reachState ? `: ${JSON.stringify(reachState)}` : ""}`);
   await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "tail-follow", undefined, { timeout: 5_000 });
   const reachProbe = await transcript.evaluate(() => {
     window.__reachBottomProbe.done = true;

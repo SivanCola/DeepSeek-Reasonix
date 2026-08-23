@@ -9,6 +9,11 @@ import {
   type TranscriptScrollState,
 } from "../lib/transcriptScrollArbiter";
 import { pinTranscriptTailAfterViewportShrink } from "../lib/transcriptScrollGeometry";
+import {
+  TRANSCRIPT_TAIL_REARM_MIN_HEIGHT_PX,
+  transcriptTailSettleBudgetExhausted,
+  transcriptTailShouldReaim,
+} from "../lib/transcriptTailSettle";
 
 let passed = 0;
 let failed = 0;
@@ -220,6 +225,12 @@ check(
   shrinkOffBottom.commands.join(",") === "AUTOSCROLL_TO_BOTTOM,AUTOSCROLL_TO_BOTTOM",
   "delivered displacement and later growth both reconverge while tail-follow owns the viewport",
 );
+
+check(transcriptTailSettleBudgetExhausted(0) === false, "tail settle may re-aim before its bounded budget is spent");
+check(transcriptTailSettleBudgetExhausted(8) === true, "tail settle stops at its bounded re-aim budget");
+check(transcriptTailShouldReaim(null, 1_000) === true, "a fresh tail settle always re-aims");
+check(transcriptTailShouldReaim(1_000, 1_000 + TRANSCRIPT_TAIL_REARM_MIN_HEIGHT_PX - 1) === false, "sub-threshold tail measurement jitter does not re-aim");
+check(transcriptTailShouldReaim(1_000, 1_000 + TRANSCRIPT_TAIL_REARM_MIN_HEIGHT_PX) === true, "real tail growth re-arms the settle writer");
 
 const repeatedDisplacement = run([
   { type: "SCROLL_DELIVERED", atBottom: true, scrollable: true },

@@ -34,6 +34,7 @@ import type {
   TranscriptRecoveryTerminal,
 } from "./transcriptScrollRecovery";
 import {
+  MIN_REVERSE_JUMP_PX,
   transcriptScrollEventCancelsReaderExtentGuard,
   transcriptKeyboardScrollDelta,
 } from "./transcriptReaderExtentStability";
@@ -568,7 +569,14 @@ export function useTranscriptScrollArbiter({
     ) {
       deliverScroll(element);
     }
-    if (readerDeltaY !== undefined) readerExtent.arm(readerDeltaY);
+    if (readerDeltaY !== undefined) {
+      // A downward reader gesture at (or close to) the physical bottom has no
+      // extent above it to reverse onto. Arming the guard here would let a
+      // later extent rebound snap the viewport back up and fight the wheel.
+      const nearBottom = element
+        && nativeTranscriptDistanceFromBottom(element) < MIN_REVERSE_JUMP_PX;
+      if (readerDeltaY <= 0 || !nearBottom) readerExtent.arm(readerDeltaY);
+    }
     armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverScroll, dispatch, readerExtent]);
   const followGrowingTail = useCallback(() => {

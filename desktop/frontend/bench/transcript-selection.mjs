@@ -136,7 +136,8 @@ async function waitForServer() {
   throw new Error("transcript browser preview did not become ready");
 }
 
-const preview = spawn("pnpm", ["exec", "vite", "preview", "--port", String(port), "--strictPort", "--host", "127.0.0.1"], {
+const packageManager = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const preview = spawn(packageManager, ["exec", "vite", "preview", "--port", String(port), "--strictPort", "--host", "127.0.0.1"], {
   cwd: frontendDir,
   stdio: "ignore",
 });
