@@ -281,6 +281,7 @@ const packageManager = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const preview = spawn(packageManager, ["exec", "vite", "preview", "--port", String(port), "--strictPort", "--host", "127.0.0.1"], {
   cwd: frontendDir,
   stdio: "ignore",
+  shell: process.platform === "win32",
 });
 
 let browser;
