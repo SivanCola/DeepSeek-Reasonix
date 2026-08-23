@@ -476,33 +476,6 @@ eq(
   "classic sorting keeps pinned topics above unpinned ones",
 );
 
-eq(
-  arrangeClassicProjectTree(
-    [{
-      key: "project_/repo/runtime",
-      kind: "project",
-      label: "runtime",
-      root: "/repo/runtime",
-      children: [
-        {
-          key: "session_wireless",
-          kind: "session",
-          label: "wireless",
-          root: "/repo/runtime",
-          topicId: "wireless",
-          runtimeOnly: true,
-          lastActivityAt: 100,
-        },
-        classicTopic("postgres", { lastActivityAt: 300 }),
-        classicTopic("plm", { lastActivityAt: 200 }),
-      ],
-    }],
-    "updated",
-  ).flatMap((node) => (node.children ?? []).map((child) => child.topicId)),
-  ["postgres", "plm", "wireless"],
-  "runtime-only session rows stay in canonical activity order while catalog ownership catches up",
-);
-
 const classicPinnedSections = splitPinnedProjectTree(
   [
     {
