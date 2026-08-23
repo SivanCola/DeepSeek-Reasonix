@@ -3608,19 +3608,6 @@ a[href] {
   content-visibility: visible;
   contain-intrinsic-size: none;
 }
-/* A lazy Markdown source fallback is readable but does not have the final
-   block geometry. Give it the same physical box as Virtuoso's row seed so
-   the first measurement is truthful; releasing this fixed box when parsing
-   completes guarantees ResizeObserver sees any real height difference. */
-.transcript__row .msg--assistant .msg__body > .md[data-transcript-geometry-pending] {
-  box-sizing: border-box;
-  /* .msg contributes its 18px block margins (with the row's first-child
-     margin normalization this is 32px total). Reserve the full outer-row
-     inset here so the lazy fallback cannot be 16px taller than its seed and
-     later collapse while the reader is moving upward. */
-  height: max(0px, calc(var(--transcript-row-estimate) - 32px));
-  overflow: hidden;
-}
 .transcript__jump-bottom {
   --wails-draggable: no-drag;
   position: absolute;

@@ -7,7 +7,7 @@ import {
   type TranscriptTailWriteDiagnostic,
 } from "./transcriptScrollDiagnosticProbe";
 import type { TranscriptScrollMode } from "./transcriptScrollArbiter";
-import { nativeTranscriptDistanceFromBottom, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX } from "./transcriptScrollGeometry";
+import { nativeTranscriptBottomTop, nativeTranscriptDistanceFromBottom, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX } from "./transcriptScrollGeometry";
 
 const TAIL_STAGNANT_FRAME_LIMIT = 2;
 // Ignore one-frame extent oscillation; real growth remains displaced and
@@ -64,7 +64,7 @@ export function createTranscriptTailSettle({
   ) => {
     const element = scrollRef.current;
     if (!element) return;
-    const top = element.scrollHeight;
+    const top = nativeTranscriptBottomTop(element);
     if (CAPTURE_TRANSCRIPT_SCROLL_DIAGNOSTICS && diagnostic) {
       noteTranscriptScrollWrite({
         owner: "tail-follow",

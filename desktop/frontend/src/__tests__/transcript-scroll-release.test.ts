@@ -8,7 +8,7 @@ import {
   type TranscriptScrollEvent,
   type TranscriptScrollState,
 } from "../lib/transcriptScrollArbiter";
-import { pinTranscriptScrollerToNativeTail, pinTranscriptTailAfterViewportShrink } from "../lib/transcriptScrollGeometry";
+import { pinTranscriptTailAfterViewportShrink } from "../lib/transcriptScrollGeometry";
 
 let passed = 0;
 let failed = 0;
@@ -256,9 +256,9 @@ check(
 );
 
 const wrapScroller = { scrollHeight: 500, scrollTop: 400, clientHeight: 80 };
-check(pinTranscriptScrollerToNativeTail(wrapScroller) === true, "a composer-wrap viewport shrink is off-bottom and gets pinned");
-check(wrapScroller.scrollTop === 420, "pin writes the native tail top");
-check(pinTranscriptScrollerToNativeTail(wrapScroller) === false, "an already-pinned scroller is left alone");
+check(pinTranscriptTailAfterViewportShrink(wrapScroller, { contentExtent: 500, viewportExtent: 100 }, true) === 420, "a composer-wrap shrink returns the native tail target");
+check(wrapScroller.scrollTop === 400, "geometry helper does not write the native scroll position");
+check(pinTranscriptTailAfterViewportShrink(wrapScroller, { contentExtent: 500, viewportExtent: 80 }, true) === null, "the same shrink revision does not schedule a second tail write");
 
 const foldScroller = { scrollHeight: 500, scrollTop: 400, clientHeight: 80 };
 check(

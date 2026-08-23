@@ -8,7 +8,7 @@ import type {
 import type { SizeFunction, VirtuosoHandle } from "react-virtuoso";
 import { isEditableTarget } from "./keyboardShortcuts";
 import { findVerticalScrollTarget, normalizeWheelDelta } from "./nestedScrollHandoff";
-import { hasPendingTranscriptGeometry, isNativeVerticalScrollbarPointer, measureTranscriptVirtuosoItem } from "./transcriptNativeScrollbar";
+import { isNativeVerticalScrollbarPointer, measureTranscriptVirtuosoItem } from "./transcriptNativeScrollbar";
 import {
   INITIAL_TRANSCRIPT_SCROLL_STATE,
   isSubstantialTranscriptDisplacement,
@@ -97,10 +97,6 @@ export function useTranscriptScrollArbiter({
   const layoutTransientRef = useRef(false);
   const resizeSettleFrameRef = useRef<number | null>(null);
   const readerIntentTimerRef = useRef<number | null>(null);
-  // Last gesture direction controls whether recycled rows may update
-  // Virtuoso's size tree. This survives the short reader-intent lease so an
-  // upward wheel gesture cannot become a resize race between two deliveries.
-  const manualMeasurementFreezeRef = useRef(false);
   const followGeometryRef = useRef<TranscriptFollowGeometry>({ contentExtent: null, viewportExtent: null });
   const recoveryRef = useRef<ActiveTranscriptRecovery | null>(null);
   const nextRecoveryIdRef = useRef(0);
@@ -410,7 +406,6 @@ export function useTranscriptScrollArbiter({
   const reset = useCallback(() => {
     invalidateAsyncFrames();
     endReaderIntent();
-    manualMeasurementFreezeRef.current = false;
     followGeometryRef.current = { contentExtent: null, viewportExtent: null };
     dispatch({ type: "RESET" });
   }, [dispatch, endReaderIntent, invalidateAsyncFrames]);
@@ -419,7 +414,6 @@ export function useTranscriptScrollArbiter({
     switch (mode) {
       case "tail-follow": reset(); break;
       case "manual":
-        manualMeasurementFreezeRef.current = true;
         dispatch({ type: "MANUAL_READING" });
         break;
       case "user-resize": dispatch({ type: "USER_RESIZE_BEGIN" }); break;
@@ -481,36 +475,15 @@ export function useTranscriptScrollArbiter({
   }, [tailSettle]);
 
   const itemSize = useCallback<SizeFunction>((element, field) => {
-    // During an active manual gesture, keep Virtuoso's current size tree
-    // authoritative. Measuring a newly mounted asynchronous Markdown row in
-    // the middle of the gesture would change offsets under the pointer and
-    // produce the visible reverse frame this arbiter is meant to prevent.
-    // Freeze only an active upward reader gesture. A downward gesture is an
-    // explicit tail-claiming action and must keep measuring newly mounted
-    // rows so a long hydrated transcript can reach its real physical tail.
-    // Once the short reader-intent lease expires, normal measurements resume
-    // at the next idle frame without remounting Virtuoso.
-    const upwardManualGesture = stateRef.current.mode === "manual" && manualMeasurementFreezeRef.current;
-    const frozen = nativeScrollbarDragRef.current || nativeScrollbarDragging || upwardManualGesture;
+    // Native scrollbar dragging may keep the current Virtuoso size tree. Wheel
+    // and touch reading measure the current logical row normally; anchor
+    // compensation handles the settled layout delta instead of freezing a
+    // recycled DOM node to an estimate.
+    const frozen = nativeScrollbarDragRef.current || nativeScrollbarDragging;
     if (CAPTURE_TRANSCRIPT_SCROLL_DIAGNOSTICS && field === "offsetHeight" && stateRef.current.readerIntent) {
       element.dataset.transcriptReaderFreeze = "true";
     }
-    const pendingGeometry = field === "offsetHeight" && hasPendingTranscriptGeometry(element);
     const measured = measureTranscriptVirtuosoItem(element, field, frozen);
-    if (field === "offsetHeight" && frozen) {
-      const estimate = Number.parseFloat(element.dataset.transcriptEstimate ?? "");
-      if (Number.isFinite(estimate) && estimate > 0) {
-        // Match the physical recycled row to the same logical seed returned
-        // to Virtuoso. Without this, ResizeObserver can still see the real
-        // Markdown height after itemSize returned the seed and Virtuoso's
-        // built-in upward compensation writes the delta back to scrollTop.
-        element.style.setProperty("height", `${estimate}px`, "important");
-        element.dataset.transcriptGeometryFrozen = "true";
-      }
-    } else if (field === "offsetHeight" && element.dataset.transcriptGeometryFrozen === "true") {
-      element.style.removeProperty("height");
-      delete element.dataset.transcriptGeometryFrozen;
-    }
     if (field === "offsetHeight") {
       const currentRowKey = element.dataset.rowKey;
       if (currentRowKey) {
@@ -521,14 +494,14 @@ export function useTranscriptScrollArbiter({
       }
     }
     if (CAPTURE_TRANSCRIPT_SCROLL_DIAGNOSTICS) noteTranscriptRowMeasurement(element, field, measured);
-    if (!frozen && !pendingGeometry && field === "offsetHeight") {
+    if (!frozen && field === "offsetHeight") {
       const rowKey = element.dataset.rowKey;
       const kind = element.dataset.rowKind as TranscriptRow["kind"] | undefined;
       const stateElement = element.querySelector<HTMLElement>("[data-transcript-layout-variant]");
       const rawVariant = stateElement?.dataset.transcriptLayoutVariant ?? element.dataset.transcriptLayoutVariant;
       const width = Number.parseFloat(element.dataset.transcriptContentWidth ?? "") || element.getBoundingClientRect().width;
       const rawSource = element.dataset.estimateSource;
-      const estimateSource = rawSource === "exact" || rawSource === "compact-median" || rawSource === "calibrated" || rawSource === "static"
+      const estimateSource = rawSource === "exact" || rawSource === "static"
         ? rawSource
         : undefined;
       const staticEstimate = Number.parseFloat(element.dataset.staticEstimate ?? "");
@@ -573,9 +546,6 @@ export function useTranscriptScrollArbiter({
     if (element && !stateRef.current.scrollable && hasTranscriptScrollableRange(element)) {
       deliverScroll(element);
     }
-    manualMeasurementFreezeRef.current = readerDeltaY !== undefined
-      ? readerDeltaY < 0
-      : !claimPhysicalBottom;
     dispatch({ type: "USER_SCROLL_INTENT", canClaimTail: claimPhysicalBottom });
     if (
       claimPhysicalBottom
@@ -591,7 +561,7 @@ export function useTranscriptScrollArbiter({
     tailSettle.noteLayoutTransient();
     readerExtent.observe();
     const pinnedTop = scrollRef.current && pinTranscriptTailAfterViewportShrink(scrollRef.current, followGeometryRef.current, pinnedRef.current);
-    if (pinnedTop !== null) noteTranscriptScrollWrite({ owner: "tail-follow", kind: "scrollTo", top: pinnedTop });
+    if (pinnedTop !== null) tailSettle.scrollToTail("auto");
     if (followFrameRef.current !== null) return;
     const generation = generationRef.current;
     const scrollElement = scrollRef.current;

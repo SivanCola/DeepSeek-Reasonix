@@ -3,7 +3,6 @@
 import { deepEqual, equal } from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import {
-  hasPendingTranscriptGeometry,
   isNativeVerticalScrollbarPointer,
   measureTranscriptVirtuosoItem,
 } from "../lib/transcriptNativeScrollbar";
@@ -64,18 +63,8 @@ check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 180, "manual rea
 delete row.dataset.transcriptEstimate;
 check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "real measurement resumes after thumb release");
 
-const pendingMarkdown = dom.window.document.createElement("div");
-pendingMarkdown.dataset.transcriptGeometryPending = "true";
 row.dataset.staticEstimate = "157";
-row.appendChild(pendingMarkdown);
-check(hasPendingTranscriptGeometry(row), true, "a lazy Markdown fallback marks transient row geometry");
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 157, "pending Markdown keeps the state-aware initial seed");
-row.dataset.transcriptEstimate = "184";
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 184, "pending Markdown prefers the safely calibrated row seed");
-delete row.dataset.transcriptEstimate;
-pendingMarkdown.remove();
-check(hasPendingTranscriptGeometry(row), false, "resolved Markdown releases transient geometry");
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "resolved Markdown resumes browser measurement");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "Markdown fallback uses the current browser measurement");
 
 const measurementEvents: Array<{ type: string; fields: Record<string, unknown> }> = [];
 setTranscriptScrollDiagnosticSink((type, fields) => measurementEvents.push({ type, fields }));
