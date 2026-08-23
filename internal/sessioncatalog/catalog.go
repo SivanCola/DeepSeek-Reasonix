@@ -355,6 +355,21 @@ func (c *Catalog) upsertSessionsWithNotification(ctx context.Context, records []
 	if len(records) == 0 {
 		return nil
 	}
+	// Exact-path indexing is deliberately cheap and may be requested after every
+	// defensive snapshot. Do not publish a new catalog revision when the
+	// authoritative sidecar still describes the same projection; otherwise an
+	// idle tab can make the tree churn forever and repeatedly wake repair/UI work.
+	if len(records) == 1 && generations == nil {
+		record := classifyRecoveryLineage(normalizeSessionRecord(records[0]))
+		if record.LogicalTopicID == "" {
+			record.LogicalTopicID = record.TopicID
+		}
+		if existing, ok, err := c.GetSession(ctx, record.Path); err == nil && ok && existing.Path != "" &&
+			existing.MissingSince == 0 && (sameSessionIndexInput(existing, record) ||
+			(existing.TurnsState != TurnsUnknown && record.TurnsState == TurnsUnknown && sameSessionIndexSource(existing, record))) {
+			return nil
+		}
+	}
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
