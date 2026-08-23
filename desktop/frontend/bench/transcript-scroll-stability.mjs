@@ -902,8 +902,7 @@ try {
     element.dispatchEvent(new Event("scroll"));
   });
   await page.waitForFunction(() => document.querySelector(".transcript__row"));
-  const useInTrackNativeThumbEnd = process.platform === "win32";
-  const nativeThumbProbe = await transcript.evaluate((element, useInTrackEnd) => {
+  const nativeThumbProbe = await transcript.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     const scaleX = rect.width / element.offsetWidth;
     const contentRight = rect.left + (element.clientLeft + element.clientWidth) * scaleX;
@@ -913,22 +912,27 @@ try {
     return {
       x: Math.min(rect.right - 1, contentRight + Math.max(1, (rect.right - contentRight) / 2)),
       y: rect.top + 5,
-      // Chromium's Windows scrollbar keeps the native thumb owned only while
-      // the pointer remains on the track. Linux themes clamp after the
-      // pointer crosses the track end, so retain the overshoot there while
-      // using the in-track endpoint on Windows.
-      bottomY: useInTrackEnd
-        ? Math.max(rect.top + 1, rect.bottom - 1)
-        : Math.min(window.innerHeight - 1, rect.bottom + Math.max(24, rect.height * 0.1)),
+      // Browser themes clamp the held thumb only after the pointer crosses
+      // the track end, so the target deliberately overshoots the visible
+      // gutter where a native thumb is available.
+      bottomY: Math.min(window.innerHeight - 1, rect.bottom + Math.max(24, rect.height * 0.1)),
       knownSize: Number.parseFloat(row.dataset.knownSize || "0"),
       gutter: rect.right - contentRight,
       scrollHeight: element.scrollHeight,
     };
-  }, useInTrackNativeThumbEnd);
-  if (process.platform === "darwin" && (!nativeThumbProbe || nativeThumbProbe.gutter <= 1)) {
+  });
+  const nativeThumbDragSupported = process.platform !== "win32" || process.env.REASONIX_TRANSCRIPT_NATIVE_THUMB === "1";
+  if (!nativeThumbDragSupported) {
+    // Playwright's headless Chromium on Windows exposes the reserved gutter
+    // width but does not expose a pointer-draggable native thumb. The actual
+    // WebView2 path is covered by the Windows native smoke job; the geometry
+    // lock itself is covered by transcript-native-scrollbar.test.ts.
+    process.stdout.write("  SKIP  native thumb drag (headless Windows Chromium has no draggable native track)\n");
+  } else if (process.platform === "darwin" && (!nativeThumbProbe || nativeThumbProbe.gutter <= 1)) {
     // macOS Chromium inherits system overlay scrollbars, so there is no
-    // pointer-addressable native gutter. Linux/Windows CI still exercises the
-    // complete thumb ownership and measurement-freeze path below.
+    // pointer-addressable native gutter. Linux CI exercises the complete
+    // thumb ownership and measurement-freeze path below; Windows WebView2
+    // coverage is provided by the native smoke job.
     process.stdout.write("  SKIP  native thumb drag (host uses overlay scrollbars)\n");
   } else {
     assert(nativeThumbProbe && nativeThumbProbe.gutter > 1, `workbench exposes a native scrollbar gutter (${nativeThumbProbe?.gutter ?? 0}px)`);
