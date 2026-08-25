@@ -90,7 +90,7 @@ func TestTurnRuntimeAPIRoutesStopAnswerAndReplayByExactTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TurnEventsForTab after cancel: %v", err)
 	}
-	if after == nil || len(after) == 0 || after[len(after)-1].Status != event.TurnInterrupted {
+	if len(after) == 0 || after[len(after)-1].Status != event.TurnInterrupted {
 		t.Fatalf("events after cancel = %+v, want non-nil interrupted suffix", after)
 	}
 	if _, err := app.TurnEventsForTab(tab.ID, after[len(after)-1].Sequence); err != nil {

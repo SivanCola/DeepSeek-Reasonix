@@ -10,7 +10,7 @@
     "marker": 0,
     "narrative": 64,
     "struct-state": 113,
-    "test-file-size": 69418
+    "test-file-size": 69430
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -159,7 +159,7 @@
       "file-size": 1613
     },
     "desktop/frontend/src/lib/useController.ts": {
-      "file-size": 4060
+      "file-size": 4183
     },
     "desktop/heartbeat.go": {
       "essay": 7
@@ -494,7 +494,7 @@
     "internal/agent/save.go": {
       "complexity": 37,
       "essay": 79,
-      "file-size": 1476,
+      "file-size": 1478,
       "function-size": 105
     },
     "internal/agent/save_test.go": {
@@ -543,7 +543,7 @@
     "internal/agent/task.go": {
       "complexity": 19,
       "essay": 12,
-      "file-size": 1234,
+      "file-size": 1235,
       "function-size": 99
     },
     "internal/agent/task_test.go": {
@@ -570,7 +570,7 @@
     },
     "internal/boot/boot_test.go": {
       "essay": 3,
-      "test-file-size": 3778
+      "test-file-size": 3783
     },
     "internal/boot/extension_dispatch_test.go": {
       "essay": 3,
@@ -880,14 +880,14 @@
     "internal/control/controller.go": {
       "complexity": 11,
       "essay": 94,
-      "file-size": 5440,
+      "file-size": 5462,
       "function-size": 80,
       "narrative": 4,
       "struct-state": 17
     },
     "internal/control/controller_test.go": {
       "essay": 1,
-      "test-file-size": 4610
+      "test-file-size": 4619
     },
     "internal/control/extension_ui.go": {
       "essay": 4,
@@ -966,7 +966,7 @@
     },
     "internal/event/event.go": {
       "essay": 6,
-      "file-size": 84,
+      "file-size": 94,
       "narrative": 1
     },
     "internal/eventwire/wire.go": {
