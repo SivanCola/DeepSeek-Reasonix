@@ -36,10 +36,10 @@ export function measureTranscriptVirtuosoItem(
   // rendered rows, which would leave them visually misaligned after a manual
   // scroll/selection gesture ends (adapted from esengine#9366 by Linearl).
   if (freeze && field === "offsetHeight" && hasPendingTranscriptGeometry(element)) {
-    const transcriptEstimate = Number.parseFloat(element.dataset.transcriptEstimate ?? "");
-    if (Number.isFinite(transcriptEstimate) && transcriptEstimate > 0) return transcriptEstimate;
     const knownSize = Number.parseFloat(element.dataset.knownSize ?? "");
     if (Number.isFinite(knownSize) && knownSize > 0) return knownSize;
+    const transcriptEstimate = Number.parseFloat(element.dataset.transcriptEstimate ?? "");
+    if (Number.isFinite(transcriptEstimate) && transcriptEstimate > 0) return transcriptEstimate;
     const staticEstimate = Number.parseFloat(element.dataset.staticEstimate ?? "");
     if (Number.isFinite(staticEstimate) && staticEstimate > 0) return staticEstimate;
   }

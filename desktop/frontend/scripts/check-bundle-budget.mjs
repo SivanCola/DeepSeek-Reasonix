@@ -100,9 +100,14 @@ console.log("\nbundle budgets");
 // Exact-turn routing, the extracted event-gap projector, and the stale-history
 // fence measure 434.01 KiB gzip. Keep 0.39 KiB of build/toolchain headroom.
 // Checkpoint reset, epoch fencing, live-tail queuing, and history-prefix rebase
-// add 0.5 KiB gzip to that same runtime owner. Keep the complete recovery
-// transaction with a narrowly rounded 0.8 KiB (0.18%) ratchet.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 435.2 : 435.2;
+// add 0.5 KiB gzip to that same runtime owner.
+// The navigation surface transaction adds target identity checks, data/paint
+// terminals, and bounded history permits to the initial transcript path.
+// Failure-atomic source restoration, terminal surface promises, and the
+// one-page viewport permit are now part of the same startup path. The combined
+// build measures 437.36 KiB gzip, 2.56 KiB (0.59%) above the navigation base;
+// retain 0.34 KiB of deterministic build/toolchain headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 437.7 : 437.7;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -121,7 +126,9 @@ if (initialCSS.length > 0) {
 // the retained-transcript navigation allowance; keep the ratchet explicit.
 // The remote-project badge and static session rows move the shell stylesheet
 // to 114.48 KiB gzip. Keep a narrow 0.22 KiB ratchet.
-assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 114.7 * 1024);
+// The navigation mask's stable composer footprint measures 114.73 KiB; retain
+// less than 0.1 KiB of additional headroom.
+assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 114.8 * 1024);
 if (localeChunks.length !== 2) {
   throw new Error(`expected 2 on-demand Chinese locale chunks, found ${localeChunks.length}`);
 }
@@ -165,13 +172,16 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // More menu, completion summary) makes the latest-base merge 2353.1 KiB in
 // production and test channels both measure 2357.92 KiB after project-group
 // wiring. The complete theme-token contract and one shared operational-overlay
-// recipe put current main-v2 at 2359.29 KiB. Exact-turn command/Stop/Ask/Steer
+// recipe put the pre-navigation main-v2 path at 2359.29 KiB.
+// Exact-turn command/Stop/Ask/Steer
 // routing, extracted event-gap projection, and stale-history rejection move the
 // post-rebase build to 2365.59 KiB: a 6.30 KiB (0.267%) attributable increase.
-// The 6.91 KiB (0.293%) ratchet keeps 0.61 KiB of explicit headroom.
 // The checkpoint reset transaction adds 3.8 KiB raw (0.16%) for replay paging,
-// epoch/release fences, and stable history-prefix rebasing. Retain 0.6 KiB of
-// deterministic build headroom with a 2370.0 KiB ceiling.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_370.0 : 2_370.0;
+// epoch/release fences, and stable history-prefix rebasing.
+// Its failure-atomic completion paths plus the fixed navigation footer
+// footprint share that initial path. The combined build measures 2379.22 KiB,
+// 10.12 KiB (0.43%) above the navigation base; retain 0.58 KiB of deterministic
+// build/toolchain headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_379.8 : 2_379.8;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
