@@ -42,7 +42,7 @@ func (c *Catalog) ReconcileDirectory(ctx context.Context, target DirectoryTarget
 		return nil
 	}
 	now := c.opts.Now().UnixMilli()
-	generation, resumeCursor, err := c.beginDirectoryScan(ctx, target, signature, now)
+	generation, _, err := c.beginDirectoryScan(ctx, target, signature, now)
 	if err != nil {
 		return err
 	}
@@ -51,25 +51,13 @@ func (c *Catalog) ReconcileDirectory(ctx context.Context, target DirectoryTarget
 		c.failDirectoryScan(ctx, target.Path, err)
 		return err
 	}
-	start := 0
-	if resumeCursor != "" {
-		for i, info := range ordered {
-			if info.Path == resumeCursor {
-				start = i + 1
-				break
-			}
-		}
-	}
-	for ; start < len(ordered); start += 64 {
+	records := make([]SessionRecord, 0, len(ordered))
+	for start := 0; start < len(ordered); start += 64 {
 		if err := ctx.Err(); err != nil {
-			// Preserve scan_cursor so the next process resumes instead of
-			// re-decoding the whole directory after a forced shutdown.
 			c.failDirectoryScan(context.Background(), target.Path, err)
 			return err
 		}
 		end := min(start+64, len(ordered))
-		records := make([]SessionRecord, 0, end-start)
-		generations := make(map[string]int64, end-start)
 		for _, info := range ordered[start:end] {
 			record := recordFromOrder(target, info)
 			// This scan started while holding the directory lock after any
@@ -77,41 +65,22 @@ func (c *Catalog) ReconcileDirectory(ctx context.Context, target DirectoryTarget
 			// recreation and may supersede the in-memory removal tombstone.
 			c.removedPaths.Delete(record.Path)
 			records = append(records, record)
-			generations[record.Path] = generation
-		}
-		if err := c.upsertSessionsWithoutNotification(ctx, records, generations, "reconcile"); err != nil {
-			c.failDirectoryScan(context.Background(), target.Path, err)
-			return err
-		}
-		cursor := ""
-		if len(records) > 0 {
-			cursor = records[len(records)-1].Path
-		}
-		c.mutationMu.Lock()
-		_, cursorErr := c.db.ExecContext(ctx, `UPDATE catalog_directories SET scan_cursor=?,indexed=? WHERE path=?`, cursor, end, target.Path)
-		c.mutationMu.Unlock()
-		if cursorErr != nil {
-			return cursorErr
-		}
-		for _, record := range records {
-			if record.TurnsState == TurnsUnknown {
-				c.enqueueRepair(record.Path)
-			}
 		}
 		runtime.Gosched()
 	}
-	lineageRecords := make([]SessionRecord, 0, len(ordered))
-	for _, info := range ordered {
-		lineageRecords = append(lineageRecords, recordFromOrder(target, info))
+	for i := range records {
+		records[i] = classifyRecoveryLineageFromContent(normalizeSessionRecord(records[i]))
 	}
-	if err := c.refreshDirectoryRecoveryLineage(ctx, target, lineageRecords); err != nil {
+	records = promoteCanonicalLeaves(records)
+	if err := c.commitDirectoryProjection(ctx, target, signature, generation, now, records); err != nil {
 		c.failDirectoryScan(context.Background(), target.Path, err)
 		return err
 	}
-	if err := c.finishDirectoryScan(ctx, target, signature, generation, now, len(ordered)); err != nil {
-		return err
+	for _, record := range records {
+		if record.TurnsState == TurnsUnknown {
+			c.enqueueRepair(record.Path)
+		}
 	}
-	c.refreshCounts(ctx)
 	return nil
 }
 
@@ -333,8 +302,15 @@ func (c *Catalog) IndexSessionPath(ctx context.Context, target DirectoryTarget, 
 		order.LastActivityAt = info.ModTime()
 	}
 	record := recordFromOrder(target, order)
-	if err := c.UpsertSession(ctx, record); err != nil {
+	projectionDirty, err := c.upsertExactPathSession(ctx, record)
+	if err != nil {
 		return err
+	}
+	if projectionDirty {
+		// Queue after the exact source row is durable. The non-blocking worker
+		// will acquire this directory lock after IndexSessionPath returns and
+		// publish the full sibling-aware projection in one transaction.
+		c.RequestReconcile(target)
 	}
 	if record.TurnsState == TurnsUnknown {
 		c.enqueueRepair(record.Path)
@@ -462,6 +438,119 @@ func (c *Catalog) beginDirectoryScan(ctx context.Context, target DirectoryTarget
 		}
 	}
 	return generation, "", tx.Commit()
+}
+
+// commitDirectoryProjection publishes a complete sibling-aware directory
+// snapshot. Parsing and lineage classification happen before this function;
+// readers therefore observe either the previous committed projection or every
+// row, tombstone, missing marker, topic aggregate, and readiness update from
+// this transaction together.
+func (c *Catalog) commitDirectoryProjection(ctx context.Context, target DirectoryTarget, signature string, generation, now int64, records []SessionRecord) error {
+	c.mutationMu.Lock()
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		c.mutationMu.Unlock()
+		return err
+	}
+	rollback := func(commitErr error) error {
+		_ = tx.Rollback()
+		c.mutationMu.Unlock()
+		return commitErr
+	}
+	stmt, err := tx.PrepareContext(ctx, sessionInsertSQL+directoryProjectionUpdateSQL)
+	if err != nil {
+		return rollback(err)
+	}
+	affected := map[TopicKey]struct{}{}
+	for start := 0; start < len(records); start += 64 {
+		if err := ctx.Err(); err != nil {
+			_ = stmt.Close()
+			return rollback(err)
+		}
+		end := min(start+64, len(records))
+		for _, record := range records[start:end] {
+			var previous TopicKey
+			if err := tx.QueryRowContext(ctx, `SELECT scope,workspace_root,topic_id FROM catalog_sessions WHERE path=?`, record.Path).
+				Scan(&previous.Scope, &previous.WorkspaceRoot, &previous.TopicID); err == nil && previous.TopicID != "" {
+				affected[previous] = struct{}{}
+			} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				_ = stmt.Close()
+				return rollback(err)
+			}
+			if _, err := stmt.ExecContext(ctx, sessionRowValues(record, generation)...); err != nil {
+				_ = stmt.Close()
+				return rollback(err)
+			}
+			if record.TopicID != "" {
+				affected[TopicKey{Scope: record.Scope, WorkspaceRoot: record.WorkspaceRoot, TopicID: record.TopicID}] = struct{}{}
+			}
+			if err := updateFoldedTopicTombstones(ctx, tx, previous, record, now); err != nil {
+				_ = stmt.Close()
+				return rollback(err)
+			}
+		}
+		if c.testReconcileBatchHook != nil {
+			c.testReconcileBatchHook(end)
+		}
+		runtime.Gosched()
+	}
+	if err := stmt.Close(); err != nil {
+		return rollback(err)
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT scope,workspace_root,topic_id FROM catalog_sessions
+        WHERE directory=? AND seen_generation<? AND topic_id<>''`, target.Path, generation)
+	if err != nil {
+		return rollback(err)
+	}
+	for rows.Next() {
+		var key TopicKey
+		if err := rows.Scan(&key.Scope, &key.WorkspaceRoot, &key.TopicID); err != nil {
+			_ = rows.Close()
+			return rollback(err)
+		}
+		affected[key] = struct{}{}
+	}
+	if err := rows.Close(); err != nil {
+		return rollback(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE catalog_sessions SET
+        missing_since=CASE WHEN missing_since=0 THEN ? ELSE missing_since END,
+        health='missing'
+        WHERE directory=? AND seen_generation<?`, now, target.Path, generation); err != nil {
+		return rollback(err)
+	}
+	cutoff := now - c.opts.MissingGrace.Milliseconds()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM catalog_sessions
+        WHERE directory=? AND seen_generation<? AND missing_since>0 AND missing_since<=?`, target.Path, generation, cutoff); err != nil {
+		return rollback(err)
+	}
+	for key := range affected {
+		if err := recomputeTopic(ctx, tx, key); err != nil {
+			return rollback(err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE catalog_directories SET state='ready',error='',signature=?,
+		scan_cursor='',indexed=?,total=?,completed_at=? WHERE path=?`, signature, len(records), len(records), now, target.Path); err != nil {
+		return rollback(err)
+	}
+	revision, err := bumpRevision(ctx, tx)
+	if err != nil {
+		return rollback(err)
+	}
+	if err := tx.Commit(); err != nil {
+		c.mutationMu.Unlock()
+		return err
+	}
+	c.mutationMu.Unlock()
+
+	c.publishRevision(revision, []string{target.WorkspaceRoot}, "reconcile_complete")
+	c.refreshCounts(ctx)
+	c.statusMu.Lock()
+	c.status.State = StateReady
+	c.status.LastError = ""
+	c.statusMu.Unlock()
+	return nil
 }
 
 func (c *Catalog) finishDirectoryScan(ctx context.Context, target DirectoryTarget, signature string, generation, now int64, total int) error {
