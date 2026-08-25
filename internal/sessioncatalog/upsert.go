@@ -16,11 +16,6 @@ func (c *Catalog) upsertSessions(ctx context.Context, records []SessionRecord, g
 	return err
 }
 
-func (c *Catalog) upsertSessionsWithoutNotification(ctx context.Context, records []SessionRecord, generations map[string]int64, reason string) error {
-	_, err := c.upsertSessionsWithNotification(ctx, records, generations, reason, false, upsertDirectoryProjection)
-	return err
-}
-
 func (c *Catalog) upsertExactPathSession(ctx context.Context, record SessionRecord) (bool, error) {
 	dirty, err := c.upsertSessionsWithNotification(ctx, []SessionRecord{record}, nil, "write", true, upsertExactSource)
 	return len(dirty) > 0, err
