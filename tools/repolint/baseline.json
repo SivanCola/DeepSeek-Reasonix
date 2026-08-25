@@ -3,14 +3,14 @@
     "banner": 15,
     "commented-code": 0,
     "complexity": 1997,
-    "essay": 1969,
-    "file-size": 108352,
-    "function-size": 8625,
+    "essay": 1965,
+    "file-size": 108531,
+    "function-size": 8620,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
     "struct-state": 116,
-    "test-file-size": 69493
+    "test-file-size": 69480
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -25,8 +25,8 @@
     "desktop/app.go": {
       "complexity": 58,
       "essay": 64,
-      "file-size": 11116,
-      "function-size": 365,
+      "file-size": 11109,
+      "function-size": 360,
       "struct-state": 15
     },
     "desktop/app_test.go": {
@@ -99,7 +99,7 @@
       "file-size": 235
     },
     "desktop/frontend/src/components/CapabilitiesPanel.tsx": {
-      "file-size": 2653
+      "file-size": 2641
     },
     "desktop/frontend/src/components/Composer.tsx": {
       "file-size": 4006
@@ -156,7 +156,7 @@
       "file-size": 265
     },
     "desktop/frontend/src/lib/types.ts": {
-      "file-size": 1493
+      "file-size": 1497
     },
     "desktop/frontend/src/lib/useController.ts": {
       "file-size": 4268
@@ -552,7 +552,7 @@
     },
     "internal/agent/usecapability.go": {
       "essay": 8,
-      "file-size": 845
+      "file-size": 838
     },
     "internal/agent/usecapability_test.go": {
       "test-file-size": 1001
@@ -1170,12 +1170,12 @@
     },
     "internal/plugin/plugin.go": {
       "essay": 14,
-      "file-size": 1169,
+      "file-size": 1157,
       "function-size": 19
     },
     "internal/plugin/plugin_test.go": {
       "essay": 4,
-      "test-file-size": 918
+      "test-file-size": 905
     },
     "internal/plugin/stats.go": {
       "essay": 4
@@ -1183,11 +1183,8 @@
     "internal/plugin/stats_test.go": {
       "narrative": 1
     },
-    "internal/plugin/stdio_cancel_test.go": {
-      "essay": 1
-    },
     "internal/plugin/transport_stdio.go": {
-      "essay": 5
+      "essay": 2
     },
     "internal/pluginpkg/claude_compat.go": {
       "essay": 3,
@@ -1496,10 +1493,10 @@
       "essay": 1
     },
     "workers/crash-report/src/index.ts": {
-      "file-size": 686
+      "file-size": 874
     },
     "workers/crash-report/src/stats.ts": {
-      "file-size": 17
+      "file-size": 42
     }
   }
 }
