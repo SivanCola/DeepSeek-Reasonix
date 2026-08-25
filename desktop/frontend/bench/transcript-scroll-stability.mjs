@@ -978,25 +978,21 @@ try {
     });
     assert(nativeDragStart.scrollTop <= 1, `native thumb press keeps the viewport at the physical top (${nativeDragStart.scrollTop}px)`);
     assert(nativeDragStart.rowKey === nativeThumbProbe.rowKey, `native thumb press keeps the probed logical row (${nativeDragStart.rowKey || "missing"})`);
-    const nativeDragBaseline = await transcript.evaluate(async (element) => {
-      let stableFrames = 0;
-      let previousGeometry = "";
-      let geometry = null;
-      for (let frame = 0; frame < 120 && stableFrames < 4; frame += 1) {
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        const row = element.querySelector('[data-native-scrollbar-probe="true"]');
-        geometry = {
-          knownSize: row instanceof HTMLElement ? Number.parseFloat(row.dataset.knownSize || "0") : 0,
-          fixedHeight: row instanceof HTMLElement ? row.style.height : "",
-          rowHeight: row instanceof HTMLElement ? row.getBoundingClientRect().height : 0,
-          listHeight: element.querySelector('[data-testid="virtuoso-item-list"]')?.getBoundingClientRect().height ?? 0,
-          scrollHeight: element.scrollHeight,
-        };
-        const identity = JSON.stringify(geometry);
-        stableFrames = identity === previousGeometry ? stableFrames + 1 : 0;
-        previousGeometry = identity;
-      }
-      return geometry;
+    await page.waitForFunction(({ knownSize, rowKey }) => {
+      const row = document.querySelector('[data-native-scrollbar-probe="true"]');
+      return row instanceof HTMLElement
+        && row.dataset.rowKey === rowKey
+        && row.style.height === `${knownSize}px`;
+    }, { knownSize: nativeThumbProbe.knownSize, rowKey: nativeThumbProbe.rowKey });
+    const nativeDragBaseline = await transcript.evaluate((element) => {
+      const row = element.querySelector('[data-native-scrollbar-probe="true"]');
+      return {
+        knownSize: row instanceof HTMLElement ? Number.parseFloat(row.dataset.knownSize || "0") : 0,
+        fixedHeight: row instanceof HTMLElement ? row.style.height : "",
+        rowHeight: row instanceof HTMLElement ? row.getBoundingClientRect().height : 0,
+        listHeight: element.querySelector('[data-testid="virtuoso-item-list"]')?.getBoundingClientRect().height ?? 0,
+        scrollHeight: element.scrollHeight,
+      };
     });
     assert(nativeDragBaseline?.knownSize > 0, `native thumb drag starts from a measured logical row (${nativeDragBaseline?.knownSize ?? 0}px)`);
     assert(nativeDragBaseline.fixedHeight === `${nativeDragBaseline.knownSize}px`, `native thumb drag fixes mounted row layout (${nativeDragBaseline.fixedHeight})`);
