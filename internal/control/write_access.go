@@ -250,6 +250,7 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 	}
 	if !allow {
 		c.recordDecisionReceipt(pending, "deny")
+		c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: pending.id, Status: event.TurnInProgress})
 		pending.reply <- approvalReply{}
 		return nil
 	}
@@ -265,6 +266,7 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 		verified, err := sandbox.EnsureWriteDir(dir, stateRoot)
 		if err != nil {
 			c.recordDecisionReceipt(pending, "deny")
+			c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: pending.id, Status: event.TurnInProgress})
 			pending.reply <- approvalReply{persistErr: err}
 			c.sink.Emit(event.Event{
 				Kind:  event.Notice,
@@ -278,6 +280,7 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 	if scope == sandbox.ApprovalScopeProject {
 		if err := c.persistWriteAccess(pending.tool, pending.subject, verifiedDirs, merge); err != nil {
 			c.recordDecisionReceipt(pending, "deny")
+			c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: pending.id, Status: event.TurnInProgress})
 			pending.reply <- approvalReply{persistErr: err}
 			c.sink.Emit(event.Event{
 				Kind:  event.Notice,
@@ -310,6 +313,7 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 		}
 	}
 	c.recordDecisionReceipt(pending, outcome)
+	c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: pending.id, Status: event.TurnInProgress})
 	pending.reply <- reply
 	return nil
 }

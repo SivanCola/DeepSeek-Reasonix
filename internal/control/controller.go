@@ -314,7 +314,8 @@ type Controller struct {
 	// recoverInterruptedTurn or maybeColdResumePrune) while holding it.
 	snapshotMu sync.Mutex
 	// turn counts model turns this session, passed to hooks in their payload.
-	turn int
+	turn       int
+	turnEvents turnEventState
 
 	displayRecorder func(content, display string)
 
@@ -369,6 +370,10 @@ type RuntimeStatus struct {
 	BackgroundJobs  int
 	CancelRequested bool
 	Cancellable     bool
+	TurnID          string
+	Status          event.TurnStatus
+	TurnEventSeq    uint64
+	ReplayAfterSeq  uint64
 }
 
 const (
@@ -692,7 +697,7 @@ func New(opts Options) *Controller {
 	// Observe Steer / unapplied-steer for durable inbox state transitions.
 	// Must wrap both the controller sink and the executor sink: agent.Steer
 	// emits on the executor path, TurnDone on the controller path.
-	c.sink = &inboxEventSink{inner: c.sink, c: c}
+	c.sink = &inboxEventSink{inner: newTurnEventSink(c.sink, c), c: c}
 	if c.executor != nil {
 		c.executor.SetSink(c.sink)
 	}
@@ -768,17 +773,23 @@ func (c *Controller) installExtensionsLocked(d *dispatch.Dispatcher) {
 	// frontendEventSink wrapper underneath for extension rulings.
 	switch sink := c.sink.(type) {
 	case *inboxEventSink:
-		if existing, ok := sink.inner.(*frontendEventSink); ok {
+		if lifecycle, ok := sink.inner.(*turnEventSink); ok {
+			if existing, ok := lifecycle.inner.(*frontendEventSink); ok {
+				existing.setDispatcher(d)
+			} else {
+				lifecycle.inner = newFrontendEventSink(lifecycle.inner, d)
+			}
+		} else if existing, ok := sink.inner.(*frontendEventSink); ok {
 			existing.setDispatcher(d)
 		} else {
-			sink.inner = newFrontendEventSink(sink.inner, d)
+			sink.inner = newTurnEventSink(newFrontendEventSink(sink.inner, d), c)
 		}
 	case *frontendEventSink:
 		sink.setDispatcher(d)
 		// Ensure inbox observer stays outer.
-		c.sink = &inboxEventSink{inner: sink, c: c}
+		c.sink = &inboxEventSink{inner: newTurnEventSink(sink, c), c: c}
 	default:
-		c.sink = &inboxEventSink{inner: newFrontendEventSink(c.sink, d), c: c}
+		c.sink = &inboxEventSink{inner: newTurnEventSink(newFrontendEventSink(c.sink, d), c), c: c}
 	}
 	if c.executor != nil {
 		c.executor.SetExtensions(d)
@@ -948,6 +959,7 @@ func ckptDir(sessionPath string) string {
 func (c *Controller) rebindCheckpoints(sessionPath string) {
 	c.goals.setStatePath(goalStatePath(sessionPath))
 	c.checkpoints.rebind(ckptDir(sessionPath), c.workspaceRoot)
+	c.rebindTurnEvents(sessionPath)
 	if c.executor != nil {
 		c.wireMutationObserver()
 	}
@@ -958,6 +970,7 @@ func (c *Controller) rebindCheckpoints(sessionPath string) {
 // spawnGuardedTurn launches an admitted turn body plus its autosave companion.
 // The caller must already have claimed admission (running=true) under c.mu.
 func (c *Controller) spawnGuardedTurn(ctx context.Context, cancel context.CancelFunc, body func(ctx context.Context) error) {
+	body = c.prepareTurnAdmission(body)
 	ctx, completion := withGuardedTurnCompletion(ctx)
 	c.autosaveWG.Go(func() {
 		c.autosaveWhileRunning(ctx)
@@ -1041,6 +1054,7 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		Receipt:        c.executor.CompletionReceipt(),
 		ItemID:         activeInboxID,
 	}
+	done = c.applyTurnDoneProtocol(done, cancelRequested)
 	var readinessErr *agent.FinalReadinessError
 	if errors.As(err, &readinessErr) {
 		done.Readiness = &event.FinalReadiness{Attempts: readinessErr.Attempts, Missing: append([]string(nil), readinessErr.Missing...)}
@@ -2076,6 +2090,7 @@ func (c *Controller) Cancel() {
 	}
 	c.mu.Unlock()
 	if cancel != nil {
+		c.emitTurnStatus(event.TurnCancelling)
 		c.approval.clearAll()
 		cancel()
 		return
@@ -2126,12 +2141,17 @@ func (c *Controller) RuntimeStatus() RuntimeStatus {
 	c.mu.Unlock()
 	pending := c.approval.hasPending()
 	backgroundJobs := len(c.Jobs())
+	turnID, status, turnEventSeq, replayAfterSeq := c.turnEventRuntimeStatus()
 	return RuntimeStatus{
 		Running:         active,
 		PendingPrompt:   pending,
 		BackgroundJobs:  backgroundJobs,
 		CancelRequested: canceling,
 		Cancellable:     running || pending,
+		TurnID:          turnID,
+		Status:          status,
+		TurnEventSeq:    turnEventSeq,
+		ReplayAfterSeq:  replayAfterSeq,
 	}
 }
 
@@ -2163,6 +2183,7 @@ func (c *Controller) ResolvePlanDecision(id string, action PlanDecisionAction) e
 	}
 	pending.kind = "plan"
 	c.recordDecisionReceipt(pending, string(action))
+	c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
 	pending.reply <- approvalReply{allow: action == PlanDecisionStartExecution}
 	return nil
 }
@@ -2501,7 +2522,7 @@ func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]
 
 	c.approval.promptEmitMu.Lock()
 	c.approval.markAskEmitted(id)
-	c.sink.Emit(event.Event{Kind: event.AskRequest, Ask: event.Ask{ID: id, Questions: questions}})
+	c.sink.Emit(event.Event{Kind: event.AskRequest, ItemID: id, Ask: event.Ask{ID: id, Questions: questions}})
 	c.approval.promptEmitMu.Unlock()
 
 	waitCtx, cancelWait := c.approval.waitContext(ctx)
@@ -2533,6 +2554,7 @@ func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
 			}
 		}
 		c.recordAskDecisionReceipt(id, pending, answers)
+		c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
 		pending.reply <- answers // buffered, never blocks
 	}
 }
@@ -2638,7 +2660,7 @@ func (c *Controller) emitPendingPrompts(sink event.Sink, approvals []event.Appro
 		sink.Emit(c.approvalRequestEvent(a))
 	}
 	for _, a := range asks {
-		sink.Emit(event.Event{Kind: event.AskRequest, Ask: a})
+		sink.Emit(event.Event{Kind: event.AskRequest, ItemID: a.ID, Ask: a})
 	}
 }
 
@@ -6201,7 +6223,7 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 }
 
 func (c *Controller) approvalRequestEvent(approval event.Approval) event.Event {
-	return event.Event{Kind: event.ApprovalRequest, Approval: approval}
+	return event.Event{Kind: event.ApprovalRequest, ItemID: approval.ID, Approval: approval}
 }
 
 func (c *Controller) emitRememberResult(r RememberResult) {

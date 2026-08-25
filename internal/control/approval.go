@@ -54,6 +54,7 @@ func (c *Controller) Approve(id string, allow, session, persist bool) {
 		}
 	}
 	c.recordDecisionReceipt(pending, outcome)
+	c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
 	pending.reply <- approvalReply{allow: allow, session: session, persist: persist}
 }
 

@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/event"
 	"reasonix/internal/recovery"
 )
 
@@ -74,6 +75,7 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 			outcome = "recovery_continue_task"
 		}
 		c.recordDecisionReceipt(pending, outcome)
+		c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
 		switch action {
 		case agent.RecoveryActionContinue, agent.RecoveryActionContinueTask:
 			pending.reply <- approvalReply{allow: true}
