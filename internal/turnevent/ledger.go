@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -599,7 +600,7 @@ func (l *Ledger) poisonLocked(err error) error {
 }
 
 func (l *Ledger) unavailableLocked() error {
-	return fmt.Errorf("%w: %v", ErrTurnLedgerUnavailable, l.poisoned)
+	return fmt.Errorf("%w: %w", ErrTurnLedgerUnavailable, l.poisoned)
 }
 
 // AcknowledgeProjection records that the terminal display projection is
@@ -649,15 +650,14 @@ func (l *Ledger) AcknowledgeProjection(turnID string) error {
 }
 
 func (l *Ledger) terminalSequenceLocked(turnID string) uint64 {
-	for i := len(l.records) - 1; i >= 0; i-- {
-		rec := l.records[i]
+	for _, rec := range slices.Backward(l.records) {
 		if rec.TurnID == turnID && rec.Status.Terminal() {
 			return rec.Sequence
 		}
 	}
-	for i := len(l.summaries) - 1; i >= 0; i-- {
-		if l.summaries[i].TurnID == turnID {
-			return l.summaries[i].TerminalSequence
+	for _, summary := range slices.Backward(l.summaries) {
+		if summary.TurnID == turnID {
+			return summary.TerminalSequence
 		}
 	}
 	return 0

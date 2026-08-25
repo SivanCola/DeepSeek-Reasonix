@@ -435,7 +435,7 @@ func TestLedgerReplayPaginationAndOutOfRangeCursor(t *testing.T) {
 	if _, err := l.Begin(); err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
-	for i := 0; i < replayMaxEvents+25; i++ {
+	for i := range replayMaxEvents + 25 {
 		if _, ok, err := l.Append(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: "tool", Name: "bash", Output: "tick"}}, event.TurnInProgress); err != nil || !ok {
 			t.Fatalf("Append %d: ok=%v err=%v", i, ok, err)
 		}
@@ -727,7 +727,7 @@ func BenchmarkLedgerReplayMillionEventCheckpointTail(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		view, err := l.Replay(1_000_000)
 		if err != nil || len(view.Events) != 100 {
 			b.Fatalf("Replay: events=%d err=%v", len(view.Events), err)

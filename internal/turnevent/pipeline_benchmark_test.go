@@ -32,7 +32,7 @@ func BenchmarkCoalesceLedgerFrontend10000TextDeltas(b *testing.B) {
 	root := b.TempDir()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for iteration := 0; iteration < b.N; iteration++ {
+	for iteration := range b.N {
 		path := filepath.Join(root, fmt.Sprintf("text-%d.jsonl", iteration))
 		ledger, err := turnevent.Open(path, "benchmark")
 		if err != nil {
@@ -43,7 +43,7 @@ func BenchmarkCoalesceLedgerFrontend10000TextDeltas(b *testing.B) {
 		}
 		sink := &benchmarkLedgerSink{ledger: ledger}
 		stream := event.Coalesce(sink, event.DefaultStreamDeltaWindow)
-		for i := 0; i < 10_000; i++ {
+		for range 10_000 {
 			stream.Emit(event.Event{Kind: event.Text, Text: "x"})
 		}
 		if err := event.EmitChecked(stream, event.Event{Kind: event.TurnDone}); err != nil {
@@ -59,7 +59,7 @@ func BenchmarkLedger10000ToolProgressPersistentHandle(b *testing.B) {
 	root := b.TempDir()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for iteration := 0; iteration < b.N; iteration++ {
+	for iteration := range b.N {
 		path := filepath.Join(root, fmt.Sprintf("progress-%d.jsonl", iteration))
 		ledger, err := turnevent.Open(path, "benchmark")
 		if err != nil {
@@ -68,7 +68,7 @@ func BenchmarkLedger10000ToolProgressPersistentHandle(b *testing.B) {
 		if _, err := ledger.Begin(); err != nil {
 			b.Fatal(err)
 		}
-		for i := 0; i < 10_000; i++ {
+		for i := range 10_000 {
 			if _, ok, err := ledger.Append(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: "tool", Name: "bash", Output: "tick"}}, event.TurnInProgress); err != nil || !ok {
 				b.Fatalf("progress %d: ok=%v err=%v", i, ok, err)
 			}

@@ -502,21 +502,6 @@ func (a *approvalManager) cancelApprovalResolutionLocked(id string) {
 	}
 }
 
-// resolveTool removes id only when it belongs to the expected specialized
-// decision surface. A mismatched bridge call must not consume another approval
-// type that happens to share the same short numeric id.
-func (a *approvalManager) resolveTool(id, tool string) (pendingApproval, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	p, ok := a.approvals[id]
-	if !ok || p.tool != tool {
-		return pendingApproval{}, false
-	}
-	delete(a.approvals, id)
-	a.cancelApprovalResolutionLocked(id)
-	return p, true
-}
-
 func (a *approvalManager) resolveToolAfter(id, tool string, persist func(pendingApproval) error) (pendingApproval, bool, error) {
 	p := a.peek(id)
 	if p.reply == nil || p.tool != tool {
@@ -569,16 +554,6 @@ func (a *approvalManager) cancelAsk(id string) {
 	delete(a.asks, id)
 	a.cancelAskResolutionLocked(id)
 	a.mu.Unlock()
-}
-
-// resolveAsk removes and returns the pending ask for id (AnswerQuestion path).
-func (a *approvalManager) resolveAsk(id string) (pendingAsk, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	p, ok := a.asks[id]
-	delete(a.asks, id)
-	a.cancelAskResolutionLocked(id)
-	return p, ok
 }
 
 func (a *approvalManager) resolveAskAfter(id string, persist func(pendingAsk) error) (pendingAsk, bool, error) {
