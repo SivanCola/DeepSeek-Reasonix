@@ -346,6 +346,10 @@ func (c *Controller) rebindTurnEvents(sessionPath string) {
 	}
 	ledger, err := turnevent.Open(sessionPath, agent.BranchID(sessionPath))
 	if err != nil {
+		// Normalize platform-specific open errors behind the same storage
+		// sentinel used by append failures. Keep the original error in the
+		// chain so unsupported-schema callers can still inspect its type.
+		err = fmt.Errorf("%w: %w", turnevent.ErrTurnLedgerUnavailable, err)
 		slog.Warn("controller: open turn event ledger", "err", err, "session", agent.BranchID(sessionPath))
 		c.turnEvents.mu.Lock()
 		c.turnEvents.ledger = nil

@@ -2,14 +2,15 @@ package control
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/turnevent"
 )
 
 type turnEventGateRunner struct {
@@ -96,7 +97,7 @@ func TestTurnAdmissionLedgerFailureDoesNotRunProvider(t *testing.T) {
 	c.Submit("must not reach provider")
 	select {
 	case terminal := <-done:
-		if terminal.Err == nil || !strings.Contains(terminal.Err.Error(), "persist turn admission") {
+		if !errors.Is(terminal.Err, turnevent.ErrTurnLedgerUnavailable) {
 			t.Fatalf("terminal error = %v, want explicit ledger admission failure", terminal.Err)
 		}
 	case <-time.After(5 * time.Second):
