@@ -16,6 +16,8 @@ const maxFrameGapMs = Number(process.env.REASONIX_TRANSCRIPT_MAX_FRAME_GAP_MS ??
 const p95FrameGapMs = Number(process.env.REASONIX_TRANSCRIPT_P95_FRAME_GAP_MS ?? 80);
 const maxLongTaskMs = Number(process.env.REASONIX_TRANSCRIPT_MAX_LONG_TASK_MS ?? 250);
 const totalLongTaskMs = Number(process.env.REASONIX_TRANSCRIPT_TOTAL_LONG_TASK_MS ?? 750);
+const nativeThumbReplay = process.platform === "linux"
+  && process.env.REASONIX_TRANSCRIPT_NATIVE_THUMB === "1";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -288,7 +290,11 @@ let browser;
 try {
   await waitForServer();
   browser = await chromium.launch({
-    headless: true,
+    // Chromium's headless compositor reserves the native scrollbar gutter on
+    // Linux but does not expose its thumb to pointer input. CI runs this replay
+    // in Xvfb so the real browser-owned thumb remains draggable; other hosts
+    // keep the deterministic headless path and their platform-specific gates.
+    headless: !nativeThumbReplay,
     ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}),
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
