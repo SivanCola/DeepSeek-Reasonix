@@ -10,7 +10,7 @@
     "marker": 0,
     "narrative": 64,
     "struct-state": 116,
-    "test-file-size": 69480
+    "test-file-size": 69481
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -93,7 +93,7 @@
       "test-file-size": 228
     },
     "desktop/frontend/src/__tests__/tab-switch-hydration.test.tsx": {
-      "test-file-size": 160
+      "test-file-size": 161
     },
     "desktop/frontend/src/components/ApprovalModal.tsx": {
       "file-size": 235
