@@ -69,26 +69,22 @@ row.getBoundingClientRect = () => ({
   left: 0,
   toJSON: () => ({}),
 });
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "ordinary wheel path keeps real dynamic measurement");
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 640, "completed rows keep their measured height during native thumb drag");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight"), 640, "ordinary wheel path keeps real dynamic measurement");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight"), 640, "native thumb drag keeps real dynamic measurement");
 row.dataset.transcriptEstimate = "180";
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 640, "completed rows never regress to a logical estimate");
-delete row.dataset.knownSize;
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 640, "completed rows do not fall back to an estimate when known size is absent");
-row.dataset.knownSize = "160";
+check(measureTranscriptVirtuosoItem(row, "offsetHeight"), 640, "resolved rows ignore stale logical estimates during thumb drag");
 delete row.dataset.transcriptEstimate;
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "real measurement resumes after thumb release");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight"), 640, "real measurement remains active after thumb release");
 
 const pendingMarkdown = dom.window.document.createElement("div");
 pendingMarkdown.dataset.transcriptGeometryPending = "true";
 row.dataset.staticEstimate = "157";
 row.appendChild(pendingMarkdown);
 check(hasPendingTranscriptGeometry(row), true, "a lazy Markdown fallback marks transient row geometry");
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 160, "native thumb drag freezes only pending row geometry at its last measured size");
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 157, "pending Markdown keeps the state-aware initial seed");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight"), 157, "pending Markdown keeps the state-aware initial seed");
 pendingMarkdown.remove();
 check(hasPendingTranscriptGeometry(row), false, "resolved Markdown releases transient geometry");
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "resolved Markdown resumes browser measurement");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight"), 640, "resolved Markdown resumes browser measurement");
 
 const measurementEvents: Array<{ type: string; fields: Record<string, unknown> }> = [];
 setTranscriptScrollDiagnosticSink((type, fields) => measurementEvents.push({ type, fields }));

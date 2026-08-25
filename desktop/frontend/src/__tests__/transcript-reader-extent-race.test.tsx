@@ -54,7 +54,6 @@ async function flushFrames() {
 }
 
 const scrollWrites: TranscriptScrollWriteRecord[] = [];
-dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => { scrollWrites.push(write); };
 
 const rectAt = (top: number) => ({
   top,
@@ -78,15 +77,19 @@ Object.defineProperty(scrollElement, "scrollTop", { configurable: true, writable
 
 let scrollByCalls = 0;
 let lastScrollByTop = 0;
-const virtuosoHandle = {
-  scrollBy: (options?: { top?: number }) => {
+dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
+  scrollWrites.push(write);
+  if (write.kind === "scrollBy") {
     scrollByCalls += 1;
-    lastScrollByTop = options?.top ?? 0;
-    scrollElement.scrollTop += lastScrollByTop;
-  },
-  scrollTo: (options?: { top?: number }) => {
-    scrollElement.scrollTop = options?.top ?? scrollElement.scrollTop;
-  },
+    lastScrollByTop = write.top ?? 0;
+  }
+};
+const virtuosoHandle = {
+  // Match Virtuoso's synchronous native-scroller write so a following rAF
+  // observes the accepted correction instead of replaying a test-only stale
+  // scrollTop value.
+  scrollBy: ({ top }: { top: number }) => { scrollElement.scrollTop += top; },
+  scrollTo: () => {},
   scrollToIndex: () => {},
   getState: () => {},
 } as unknown as VirtuosoHandle;
@@ -104,8 +107,8 @@ await act(async () => {
   arbiter!.scrollerRef(scrollElement);
 });
 
-// Composer wrap shrinks the in-flow viewport. Tail-follow must pin the native
-// tail synchronously so jump-bottom cannot flash before the coalesced frame.
+// Composer wrap shrinks the in-flow viewport. A bottom-adjacent viewport stays
+// tail-owned without a synchronous write; the coalesced revision observes it.
 await act(async () => arbiter?.reset());
 scrollExtent = 500;
 scrollElement.scrollTop = 400;
@@ -114,7 +117,7 @@ await act(async () => arbiter?.followGrowingTail());
 await flushFrames();
 Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 80 });
 await act(async () => arbiter?.followGrowingTail());
-check(scrollElement.scrollTop === 420, "footer-driven viewport shrink pins the native tail before rAF");
+check(scrollElement.scrollTop === 400, "footer-driven viewport shrink performs no synchronous tail write");
 await act(async () => arbiter?.deliverScroll());
 check(arbiter?.isAtBottom === true, "tail-follow keeps isAtBottom through a composer-wrap gap");
 await flushFrames();
@@ -138,7 +141,7 @@ scrollExtent = 13_344;
 scrollElement.scrollTop = 12_618.67;
 rowElement.getBoundingClientRect = () => rectAt(1_836);
 await act(async () => arbiter?.deliverScroll());
-check(arbiter?.modeRef.current === "manual",
+check(arbiter?.modeRef.current === "reader-gesture",
   "a transient physical-bottom clamp cannot claim tail ownership");
 await act(async () => arbiter?.finishProgrammaticScroll());
 await act(async () => arbiter?.followGrowingTail());
@@ -213,9 +216,39 @@ await flushFrames();
 check(scrollByCalls === 0 && scrollWrites.length === 0,
   "selection ownership cancels a pending reader transaction");
 
-// A downward wheel at the physical bottom must not arm reader-extent
-// recovery. A later extent rebound would otherwise snap the viewport upward
-// and fight the user's wheel input.
+// WKWebView can replace the entire Virtuoso mount window in the scroll event
+// that reports a large reverse jump. Correct that event synchronously: by the
+// next animation frame the old logical anchor is already unmounted and the
+// user has seen the bad range for one paint.
+await act(async () => arbiter?.reset());
+Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 596 });
+scrollExtent = 23_349;
+scrollElement.scrollTop = 22_753;
+rowElement.getBoundingClientRect = () => rectAt(-11);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent = 23_269;
+scrollElement.scrollTop = 21_986;
+rowElement.remove();
+await act(async () => arbiter?.deliverScroll());
+check(scrollByCalls === 1 && lastScrollByTop === 687,
+  `an unmounted-anchor reverse jump is corrected in its scroll event (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the pre-paint correction still passes through the single writer");
+scrollElement.append(rowElement);
+
+// Near-bottom input uses the same reader transaction as every other logical
+// position. A synthetic >96px reverse displacement must be rejected instead
+// of slipping through the old near-bottom exception.
 await act(async () => arbiter?.reset());
 scrollExtent = 2_000;
 Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 725 });
@@ -234,8 +267,8 @@ await act(async () => arbiter?.onWheelIntent({
 scrollElement.scrollTop = 1_100;
 await act(async () => arbiter?.followGrowingTail());
 await flushFrames();
-check(scrollByCalls === 0 && scrollWrites.length === 0,
-  "near-bottom downward wheel does not arm the reader-extent guard");
+check(scrollByCalls === 1 && scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "near-bottom reader transaction rejects the same >96px reverse jump");
 
 await act(async () => root.unmount());
 dom.window.close();

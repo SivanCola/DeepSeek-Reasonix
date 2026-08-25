@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import {
+  acceptTranscriptReaderExtentCorrection,
   createTranscriptReaderExtentGuard,
+  extendTranscriptReaderExtentGuard,
+  MIN_REVERSE_JUMP_PX,
   observeTranscriptReaderExtent,
   resolveTranscriptReaderExtentCorrection,
+  transcriptReaderAnchorReverseDelta,
   transcriptReaderExtentCanCorrect,
   transcriptReaderExtentHasCollapsed,
+  transcriptReaderExtentReverseDelta,
+  type TranscriptExtentSnapshot,
   type TranscriptReaderExtentGuard,
 } from "./transcriptReaderExtentStability";
 import type { TranscriptScrollMode } from "./transcriptScrollArbiter";
 import { nativeTranscriptDistanceFromBottom } from "./transcriptScrollGeometry";
-import type { TranscriptScrollWriteRecord } from "./transcriptScrollProbe";
+import { recordTranscriptScrollDiagnostic, type TranscriptScrollWriteRecord } from "./transcriptScrollProbe";
 import { captureTranscriptLayoutAnchor } from "./transcriptVirtuosoRecovery";
 
 const READER_EXTENT_STABILITY_MS = 180;
@@ -26,11 +32,13 @@ export function useTranscriptReaderExtentStability({
   modeRef,
   scrollRef,
   writeCorrection,
+  lastWriteOwner,
 }: {
   generationRef: RefObject<number>;
   modeRef: RefObject<TranscriptScrollMode>;
   scrollRef: RefObject<HTMLDivElement | null>;
   writeCorrection: (write: TranscriptScrollWriteRecord) => boolean;
+  lastWriteOwner: () => string | undefined;
 }) {
   const guardRef = useRef<ActiveReaderExtentGuard | null>(null);
 
@@ -40,26 +48,146 @@ export function useTranscriptReaderExtentStability({
     if (guard?.frame != null) cancelAnimationFrame(guard.frame);
   }, []);
 
-  // While a guard is armed it owns post-gesture extent corrections; the
-  // steady-state anchor compensation must stay out of its way.
   const isActive = useCallback(() => guardRef.current !== null, []);
+
+  const anchorOffset = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
+    const row = guard.anchor
+      ? Array.from(element.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]"))
+        .find((candidate) => candidate.dataset.rowKey === guard.anchor?.rowKey)
+      : undefined;
+    return row ? row.getBoundingClientRect().top - element.getBoundingClientRect().top : undefined;
+  }, []);
+
+  const reportAnomaly = useCallback((
+    guard: ActiveReaderExtentGuard,
+    element: HTMLDivElement,
+    currentAnchorOffset?: number,
+  ) => {
+    const reverseDelta = Math.max(
+      transcriptReaderExtentReverseDelta(guard, element),
+      transcriptReaderAnchorReverseDelta(guard, element, currentAnchorOffset),
+    );
+    if (reverseDelta < MIN_REVERSE_JUMP_PX || guard.anomalyReported) return;
+    guard.anomalyReported = true;
+    recordTranscriptScrollDiagnostic("scroll-anomaly", {
+      source: "reader-gesture",
+      mode: modeRef.current,
+      owner: lastWriteOwner(),
+      direction: guard.direction > 0 ? "down" : "up",
+      reverseDelta,
+      extentDelta: element.scrollHeight - guard.acceptedHeight,
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+      bottomDistance: nativeTranscriptDistanceFromBottom(element),
+      waiting: true,
+      corrected: false,
+    });
+  }, [lastWriteOwner, modeRef]);
+
+  const correctAnomaly = useCallback((
+    active: ActiveReaderExtentGuard,
+    element: HTMLDivElement,
+    snapshot: TranscriptExtentSnapshot,
+    currentAnchorOffset?: number,
+  ) => {
+    reportAnomaly(active, element, currentAnchorOffset);
+    if (!transcriptReaderExtentCanCorrect(active, snapshot, currentAnchorOffset)) return false;
+    const correction = resolveTranscriptReaderExtentCorrection(active, snapshot, currentAnchorOffset);
+    const mode = modeRef.current;
+    if (correction === undefined || !writeCorrection({
+      owner: "reader-stability",
+      kind: "scrollBy",
+      top: correction,
+      source: "layout-height-changed",
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+      bottomDistance: nativeTranscriptDistanceFromBottom(element),
+      mode,
+    })) return false;
+    const extentDelta = snapshot.scrollHeight - active.acceptedHeight;
+    acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
+    recordTranscriptScrollDiagnostic("scroll-anomaly", {
+      source: "reader-gesture",
+      mode,
+      owner: lastWriteOwner(),
+      direction: active.direction > 0 ? "down" : "up",
+      reverseDelta: Math.abs(correction),
+      extentDelta,
+      scrollTop: snapshot.scrollTop,
+      scrollHeight: snapshot.scrollHeight,
+      clientHeight: snapshot.clientHeight,
+      bottomDistance: nativeTranscriptDistanceFromBottom(element),
+      waiting: false,
+      corrected: true,
+    });
+    return true;
+  }, [lastWriteOwner, modeRef, reportAnomaly, writeCorrection]);
 
   const observe = useCallback((element = scrollRef.current) => {
     const guard = guardRef.current;
     if (!element || guard?.element !== element) return false;
-    observeTranscriptReaderExtent(guard, element);
+    const snapshot = {
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    };
+    observeTranscriptReaderExtent(guard, snapshot);
+    correctAnomaly(guard, element, snapshot, anchorOffset(guard, element));
     return transcriptReaderExtentHasCollapsed(guard);
-  }, [scrollRef]);
+  }, [anchorOffset, correctAnomaly, scrollRef]);
+
+  const schedule = useCallback((active: ActiveReaderExtentGuard) => {
+    if (active.frame !== null) return;
+    const tick = () => {
+      active.frame = null;
+      const mode = modeRef.current;
+      if (
+        guardRef.current !== active
+        || generationRef.current !== active.generation
+        || scrollRef.current !== active.element
+        || (mode !== "reader-gesture" && mode !== "manual")
+      ) {
+        if (guardRef.current === active) guardRef.current = null;
+        return;
+      }
+      const element = active.element;
+      const snapshot = {
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+      };
+      observeTranscriptReaderExtent(active, snapshot);
+      const currentAnchorOffset = anchorOffset(active, element);
+      correctAnomaly(active, element, snapshot, currentAnchorOffset);
+      if (Date.now() >= active.deadline) {
+        if (guardRef.current === active) guardRef.current = null;
+        return;
+      }
+      active.frame = requestAnimationFrame(tick);
+    };
+    active.frame = requestAnimationFrame(tick);
+  }, [anchorOffset, correctAnomaly, generationRef, modeRef, scrollRef]);
 
   const arm = useCallback((deltaY: number) => {
-    cancel();
     const element = scrollRef.current;
     if (!element) return;
-    const guard = createTranscriptReaderExtentGuard(
-      element,
-      captureTranscriptLayoutAnchor(element, false),
-      deltaY,
-    );
+    const anchor = captureTranscriptLayoutAnchor(element, false);
+    const current = guardRef.current;
+    if (
+      current
+      && current.element === element
+      && current.generation === generationRef.current
+      && extendTranscriptReaderExtentGuard(current, element, anchor, deltaY)
+    ) {
+      current.deadline = Date.now() + READER_EXTENT_STABILITY_MS;
+      schedule(current);
+      return;
+    }
+
+    cancel();
+    const guard = createTranscriptReaderExtentGuard(element, anchor, deltaY);
     if (!guard) return;
     const active: ActiveReaderExtentGuard = {
       ...guard,
@@ -68,56 +196,9 @@ export function useTranscriptReaderExtentStability({
       deadline: Date.now() + READER_EXTENT_STABILITY_MS,
       frame: null,
     };
-    const tick = () => {
-      active.frame = null;
-      if (
-        guardRef.current !== active
-        || generationRef.current !== active.generation
-        || scrollRef.current !== active.element
-        || modeRef.current !== "manual"
-      ) {
-        if (guardRef.current === active) guardRef.current = null;
-        return;
-      }
-      const snapshot = {
-        scrollTop: element.scrollTop,
-        scrollHeight: element.scrollHeight,
-        clientHeight: element.clientHeight,
-      };
-      observeTranscriptReaderExtent(active, snapshot);
-      if (transcriptReaderExtentCanCorrect(active, snapshot)) {
-        const row = active.anchor
-          ? Array.from(element.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]"))
-            .find((candidate) => candidate.dataset.rowKey === active.anchor?.rowKey)
-          : undefined;
-        const currentAnchorOffset = row
-          ? row.getBoundingClientRect().top - element.getBoundingClientRect().top
-          : undefined;
-        const correction = resolveTranscriptReaderExtentCorrection(active, snapshot, currentAnchorOffset);
-        if (correction !== undefined && writeCorrection({
-            owner: "reader-stability",
-            kind: "scrollBy",
-            top: correction,
-            source: "layout-height-changed",
-            scrollTop: element.scrollTop,
-            scrollHeight: element.scrollHeight,
-            clientHeight: element.clientHeight,
-            bottomDistance: nativeTranscriptDistanceFromBottom(element),
-            mode: modeRef.current,
-          })) {
-          guardRef.current = null;
-          return;
-        }
-      }
-      if (Date.now() >= active.deadline) {
-        guardRef.current = null;
-        return;
-      }
-      active.frame = requestAnimationFrame(tick);
-    };
     guardRef.current = active;
-    active.frame = requestAnimationFrame(tick);
-  }, [cancel, generationRef, modeRef, scrollRef, writeCorrection]);
+    schedule(active);
+  }, [cancel, generationRef, schedule, scrollRef]);
 
   useEffect(() => cancel, [cancel]);
 

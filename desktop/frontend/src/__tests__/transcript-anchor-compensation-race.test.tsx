@@ -108,6 +108,7 @@ scrollElement.getBoundingClientRect = () => rectAt(0);
 rowElement.getBoundingClientRect = () => rectAt(200);
 Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 100 });
 let scrollExtent = 500;
+let tailClampLag = 0;
 Object.defineProperty(scrollElement, "scrollHeight", { configurable: true, get: () => scrollExtent });
 Object.defineProperty(scrollElement, "scrollTop", { configurable: true, writable: true, value: 0 });
 Object.defineProperty(scrollElement, "offsetWidth", { configurable: true, value: 800 });
@@ -120,7 +121,8 @@ const virtuosoHandle = {
   // Browser semantics: an offset write clamps against the current extent.
   scrollTo: (options?: { top?: number }) => {
     const top = options?.top ?? 0;
-    scrollElement.scrollTop = Math.max(0, Math.min(scrollExtent - scrollElement.clientHeight, top));
+    scrollElement.scrollTop = Math.max(0, Math.min(scrollExtent - scrollElement.clientHeight - tailClampLag, top));
+    tailClampLag = 0;
   },
   getState: () => {},
 } as unknown as VirtuosoHandle;
@@ -148,28 +150,46 @@ const wheel = async (deltaY: number) => act(async () => {
 });
 const wheelDown = () => wheel(40);
 
+// A downward wheel has no valid destination once a settled tail-follow
+// surface is already at its native maximum. Consuming that boundary default
+// keeps WebKit from resolving it against a stale virtual range.
+scrollElement.scrollTop = 400;
+let preventedBottomWheel = false;
+let acceptedBottomWheel = true;
+await act(async () => {
+  acceptedBottomWheel = arbiter?.onWheelIntent({
+    ctrlKey: false,
+    deltaX: 0,
+    deltaY: 40,
+    target: scrollElement,
+    preventDefault: () => { preventedBottomWheel = true; },
+  } as unknown as React.WheelEvent<HTMLElement>) ?? false;
+});
+check(acceptedBottomWheel === false && preventedBottomWheel, "stable physical tail consumes an over-boundary downward wheel");
+check(arbiter?.modeRef.current === "tail-follow", "over-boundary wheel keeps tail-follow ownership");
+
 // ── Bottom-hold re-entry (#8709/#9099): auto re-entry into tail-follow
 // requires the bottom to be HELD — two consecutive at-bottom deliveries inside
 // one reader-intent window with no upward gesture in between. A single
-// touch-down claims the gesture but stays manual.
+// touch-down claims the gesture but stays reader-owned.
 scrollElement.scrollTop = 400;
 await act(async () => arbiter?.releaseTailFollow());
 await wheelDown();
-check(arbiter?.modeRef.current === "manual", "a single downward touch-down stays manual");
-await wheelDown();
-check(arbiter?.modeRef.current === "tail-follow", "a held bottom (second delivery) re-enters tail-follow");
+check(arbiter?.modeRef.current === "reader-gesture", "a single downward touch-down stays reader-owned");
+await flushFrames();
+check(arbiter?.modeRef.current === "tail-follow", "a held bottom (next-frame delivery) re-enters tail-follow");
 
 // An upward gesture between at-bottom deliveries breaks the hold streak; the
 // next downward gesture restarts it from zero.
 await act(async () => arbiter?.releaseTailFollow());
 await wheelDown();
-check(arbiter?.modeRef.current === "manual", "one at-bottom delivery starts the hold without re-entering");
+check(arbiter?.modeRef.current === "reader-gesture", "one at-bottom delivery starts the hold without re-entering");
 await wheel(-40);
 scrollElement.scrollTop = 300;
 await act(async () => arbiter?.deliverScroll());
 scrollElement.scrollTop = 400;
 await wheelDown();
-check(arbiter?.modeRef.current === "manual", "an upward gesture between at-bottom deliveries breaks the hold");
+check(arbiter?.modeRef.current === "reader-gesture", "an upward gesture between at-bottom deliveries breaks the hold");
 await wheelDown();
 check(arbiter?.modeRef.current === "tail-follow", "two consecutive held deliveries after the reset re-enter tail-follow");
 
@@ -183,13 +203,13 @@ await advanceClock(200);
 check(arbiter?.modeRef.current === "tail-follow", "idle close re-samples a held physical bottom before ending intent");
 await act(async () => arbiter?.releaseTailFollow());
 await wheelDown();
-check(arbiter?.modeRef.current === "manual", "a fresh intent window rebuilds the bottom hold from zero");
+check(arbiter?.modeRef.current === "reader-gesture", "a fresh intent window rebuilds the bottom hold from zero");
 await wheelDown();
 check(arbiter?.modeRef.current === "tail-follow", "the fresh window re-enters tail-follow after its second delivery");
 
-// A thumb gesture that reaches the frozen native bottom claims the tail when
-// the drag's own deliveries already held the bottom before release resumes
-// real row measurements and changes the extent.
+// A thumb gesture that reaches the native bottom claims the tail only after
+// release has sampled two stable frames. A later real measurement is an
+// explicit geometry revision rather than a scroll-delivery feedback write.
 await act(async () => arbiter?.reset());
 scrollElement.scrollTop = 0;
 await act(async () => arbiter?.onPointerDownIntent({
@@ -199,13 +219,43 @@ await act(async () => arbiter?.onPointerDownIntent({
 scrollElement.scrollTop = 400;
 await act(async () => arbiter?.deliverScroll());
 await act(async () => window.dispatchEvent(new dom.window.Event("pointerup")));
+await flushFrames();
+await flushFrames();
 check(arbiter?.modeRef.current === "tail-follow", "native thumb release after a held physical bottom resumes tail-follow");
 scrollExtent = 900;
 await act(async () => arbiter?.deliverScroll());
-await flushFrames();
-await flushFrames();
-await flushFrames();
+await act(async () => arbiter?.noteGeometryChange("row-measure"));
+await advanceClock(80);
+for (let i = 0; i < 6; i += 1) await flushFrames();
 check(scrollElement.scrollTop === 800, "post-release remeasurement reconverges the claimed native bottom");
+scrollExtent = 500;
+
+// A WebView can clamp the first stable row-measure correction against the
+// previous Virtuoso range even though scrollHeight exposes the new bottom.
+// One residual revision retries after layout; the stable extent cannot loop.
+await act(async () => arbiter?.reset());
+scrollElement.scrollTop = 400;
+scrollWrites.length = 0;
+tailClampLag = 6;
+scrollExtent = 700;
+await act(async () => arbiter?.noteGeometryChange("row-measure"));
+check(scrollElement.scrollTop === 400, "row measurement does not write before geometry is stable");
+await advanceClock(80);
+for (let i = 0; i < 6; i += 1) await flushFrames();
+check(scrollElement.scrollTop === 594, "the fixture reproduces a stable-write clamp against the stale native range");
+await flushFrames();
+await flushFrames();
+await advanceClock(160);
+await advanceClock(80);
+for (let i = 0; i < 6; i += 1) await flushFrames();
+check(scrollElement.scrollTop === 600, "one residual geometry revision converges the stable native tail");
+for (let i = 0; i < 3; i += 1) await flushFrames();
+const residualWrites = scrollWrites.filter((write) => write.owner === "tail-follow");
+check(residualWrites.length === 2, `stable-height residual correction is bounded to one retry (${residualWrites.length})`);
+check(
+  new Set(residualWrites.map((write) => write.geometryRevision)).size === residualWrites.length,
+  "each residual correction consumes a distinct one-write geometry revision",
+);
 scrollExtent = 500;
 
 // ── Manual-mode viewport anchor compensation (#8438/#8488/#8897): an

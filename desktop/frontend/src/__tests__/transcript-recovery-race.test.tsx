@@ -95,7 +95,6 @@ async function flushFrames() {
 
 // Runtime capture of every imperative scroll write (Phase 0 probe).
 const scrollWrites: TranscriptScrollWriteRecord[] = [];
-dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => { scrollWrites.push(write); };
 
 // Terminal-state capture: Transcript wires this into session diagnostics.
 const terminals: TranscriptRecoveryTerminal[] = [];
@@ -122,15 +121,22 @@ let scrollByCalls = 0;
 let scrollToIndexCalls = 0;
 let scrollToCalls = 0;
 let scrollToBottomCalls = 0;
+dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
+  scrollWrites.push(write);
+  if (write.kind === "scrollBy") scrollByCalls += 1;
+  if (write.kind === "scrollTo") scrollToCalls += 1;
+  if (write.kind === "scrollToIndex") scrollToIndexCalls += 1;
+};
 // Null disables snapshot capture; the snapshot sections opt in explicitly so
 // the pre-snapshot scenarios keep their first-mount scrollToBottom behavior.
 let stubSnapshot: StateSnapshot | null = null;
 const virtuosoHandle = {
-  scrollBy: () => { scrollByCalls += 1; },
-  scrollToIndex: () => { scrollToIndexCalls += 1; },
+  scrollBy: () => {},
+  scrollToIndex: (location?: { index?: number | "LAST" }) => {
+    if (location?.index === "LAST") scrollElement.scrollTop = scrollExtent - scrollElement.clientHeight;
+  },
   // Browser semantics: an offset write clamps against the current extent.
   scrollTo: (options?: { top?: number }) => {
-    scrollToCalls += 1;
     const top = options?.top ?? 0;
     scrollElement.scrollTop = Math.max(0, Math.min(scrollExtent - scrollElement.clientHeight, top));
   },
@@ -257,18 +263,18 @@ await act(async () => {
     target: nestedScroller,
   } as React.WheelEvent<HTMLElement>) ?? false;
 });
-check(nestedWheelAccepted && arbiter?.modeRef.current === "manual", "a nested edge hands wheel ownership to the transcript");
+check(nestedWheelAccepted && arbiter?.modeRef.current === "reader-gesture", "a nested edge hands wheel ownership to the transcript");
 nestedScroller.remove();
 
-// A queued confirmation belongs to the surface that requested it. Resetting
-// before its frame runs must prevent the old request from writing the new one.
+// A queued confirmation belongs to its surface; reset prevents a stale write.
 scrollToCalls = 0;
 scrollElement.scrollTop = 0;
+const indexWritesBeforeReset = scrollToIndexCalls;
 await act(async () => arbiter?.scrollToBottom());
-check(scrollToCalls === 1, "bottom request performs its immediate native-extent write");
-await act(async () => arbiter?.reset());
-await flushFrames();
-check(scrollToCalls === 1, "a reset invalidates the previous surface's queued tail confirmation");
+check(scrollToIndexCalls === indexWritesBeforeReset + 1, "bottom request performs one tail-mount write");
+await act(async () => arbiter?.reset()); await flushFrames();
+await advanceClock(1_500);
+check(scrollToCalls === 0, "a reset invalidates the previous surface's queued native confirmation");
 
 // A jump-bottom transaction suppresses the blank watchdog while WebView2 and
 // Virtuoso are still exchanging scroll/measurement frames. The diagnostic
@@ -277,30 +283,27 @@ const keyBeforeJumpBlank = integrity?.resetKey;
 await act(async () => arbiter?.scrollToBottom());
 await triggerWatchdogRebuild();
 check(integrity?.resetKey === keyBeforeJumpBlank, "jump-bottom transients cannot trigger a blank size-tree rebuild");
-await advanceClock(350);
+await advanceClock(1_500);
 
-// Tail-follow is a persistent mode, not a six-frame retry window. As long as
-// growth keeps arriving (streaming), each height notification re-arms another
-// coalesced convergence and the view keeps landing on the current bottom.
+// Tail-follow persists, but a continuous size burst settles only after the
+// extent stays quiet; intermediate revisions coalesce instead of writing.
 scrollToCalls = 0;
 await act(async () => arbiter?.scrollToBottom());
+await advanceClock(1_500);
 for (let i = 0; i < 14; i += 1) {
   scrollExtent += 200;
   await advanceClock(40);
   await act(async () => arbiter?.followGrowingTail());
   await flushFrames();
 }
-for (let i = 0; i < 4; i += 1) await flushFrames();
-check(scrollToCalls > 6, `tail convergence remains live beyond the former six-frame budget (${scrollToCalls} writes)`);
-check(
-  scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight,
-  "sustained growth still lands on the physical bottom after the burst ends",
-);
+await advanceClock(80); for (let i = 0; i < 6; i += 1) await flushFrames();
+check(scrollToCalls >= 1 && scrollToCalls <= 2, `sustained growth coalesces to bounded tail convergence (${scrollToCalls} writes)`);
+check(scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight, "sustained growth still lands on the physical bottom after the burst ends");
 
 // ── Reduced-motion flicker filter (#9028/#9089): layout churn alternates the
-// extent between two values on consecutive frames. A tail displacement must
-// survive a full frame before the writer acts, so pure oscillation earns zero
-// writes; once the churn settles off-bottom, one write reconverges.
+// extent between two values on consecutive frames. Coalescing plus the
+// collapse filter keeps the whole oscillation to at most one growth write;
+// once the churn settles off-bottom, one revision reconverges.
 const churnBase = scrollExtent;
 scrollToCalls = 0;
 for (let i = 0; i < 8; i += 1) {
@@ -308,21 +311,17 @@ for (let i = 0; i < 8; i += 1) {
   await act(async () => arbiter?.followGrowingTail());
   await flushFrames();
 }
-check(scrollToCalls === 0, `alternating-extent churn earns zero tail writes (${scrollToCalls})`);
+check(scrollToCalls <= 1, `alternating-extent churn earns at most one tail write (${scrollToCalls})`);
 check(arbiter?.modeRef.current === "tail-follow", "churn does not revoke tail ownership");
 scrollExtent = churnBase + 700;
 await act(async () => arbiter?.followGrowingTail());
-for (let i = 0; i < 4; i += 1) await flushFrames();
-check(
-  scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight,
-  "a settled post-churn displacement reconverges on the physical bottom",
-);
+await advanceClock(80); for (let i = 0; i < 6; i += 1) await flushFrames();
+check(scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight, "a settled post-churn displacement reconverges on the physical bottom");
 check(scrollToCalls >= 1 && scrollToCalls <= 2, `post-churn convergence costs at most two writes (${scrollToCalls})`);
 
-// Replay the returned Windows trace: several different extents become visible
-// while one explicit jump owns the viewport. The writer may respond immediately
-// and perform one final correction, but must not write once per intermediate
-// height.
+// Replay the returned Windows trace while one explicit jump owns the viewport.
+// The writer may respond immediately and correct after native geometry settles,
+// but must not write once per intermediate height or moving offset.
 scrollToCalls = 0;
 scrollExtent = 5_154;
 scrollElement.scrollTop = 0;
@@ -333,13 +332,48 @@ for (const extent of [3_467, 6_785, 7_728, 5_525, 4_869]) {
   await act(async () => arbiter?.followGrowingTail());
   await flushFrames();
 }
-await advanceClock(240);
-for (let i = 0; i < 6; i += 1) await flushFrames();
-check(scrollToCalls <= 2, `one jump-bottom transaction emits at most two effective writes (${scrollToCalls})`);
+for (let i = 0; i < 30; i += 1) { scrollElement.scrollTop -= 2; await advanceClock(40); }
+check(scrollToCalls === 0, "jump-tail confirmation waits for a stable native offset"); await advanceClock(80); await advanceClock(360);
+for (let i = 0; i < 75; i += 1) { scrollElement.scrollTop -= 1; await advanceClock(40); } check(scrollToCalls === 0, "ordinary post-handoff offsets do not restart tail settling");
+await advanceClock(400); await advanceClock(400); for (let i = 0; i < 6; i += 1) await flushFrames();
+check(scrollToCalls <= 4, `one jump-bottom transaction emits at most four bounded writes (${scrollToCalls})`);
 check(
   scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight,
   `the bounded jump-bottom transaction still converges on the final native bottom (${scrollElement.scrollTop}/${scrollExtent - scrollElement.clientHeight})`,
 );
+
+// Defer the confirmation until pending Markdown geometry settles.
+const pendingGeometry = document.createElement("div");
+pendingGeometry.dataset.transcriptGeometryPending = ""; scrollElement.append(pendingGeometry);
+scrollToCalls = 0; scrollExtent = 5_000; scrollElement.scrollTop = 0;
+await act(async () => arbiter?.scrollToBottom());
+scrollExtent += 305;
+await advanceClock(350);
+check(scrollToCalls === 0, "pending Markdown geometry defers the native confirmation write");
+pendingGeometry.remove(); await advanceClock(1_040); await advanceClock(20);
+check(scrollToCalls === 1, "resolved Markdown geometry earns one final native confirmation");
+check(scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight, "the resolved handoff lands on the final native bottom");
+const postMeasureIndexWrites = scrollToIndexCalls; scrollElement.scrollTop -= 305; await advanceClock(400); for (let i = 0; i < 6; i += 1) await flushFrames();
+check(scrollToCalls === 2 && scrollToIndexCalls === postMeasureIndexWrites, "post-measure verification uses the native extent, not LAST");
+check(scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight, "post-measure verification restores the real native tail");
+await advanceClock(400); check(scrollToCalls === 2, "a stable native tail ends the bounded verification transaction");
+
+// Aggregate list-height observations are diagnostics only. A real itemSize
+// measurement earns one revision after a quiet stable window; this prevents a
+// tail write from changing the mount window and feeding a new write loop.
+scrollExtent = 500; scrollElement.scrollTop = 400;
+await act(async () => arbiter?.reset());
+await act(async () => arbiter?.observeListHeight(500));
+scrollToCalls = 0; scrollExtent = 805;
+await act(async () => arbiter?.observeListHeight(805));
+for (let i = 0; i < 6; i += 1) await flushFrames();
+check(scrollToCalls === 0, "Virtuoso total-height observation does not directly write");
+await act(async () => arbiter?.noteGeometryChange("row-measure"));
+check(scrollToCalls === 0, "a real row measurement waits for stable geometry");
+await advanceClock(80);
+for (let i = 0; i < 6; i += 1) await flushFrames();
+check(scrollToCalls === 1, "a stable real row measurement earns one tail write");
+check(scrollElement.scrollTop === 705, "the late size-tree revision converges to the native bottom");
 
 scrollExtent = 500;
 scrollElement.scrollTop = 400;

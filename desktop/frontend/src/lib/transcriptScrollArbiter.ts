@@ -1,9 +1,12 @@
 export type TranscriptScrollMode =
   | "tail-follow"
+  | "reader-gesture"
+  | "native-thumb"
   | "manual"
   | "user-resize"
   | "selection"
-  | "restoring";
+  | "programmatic"
+  | "recovery";
 
 export type TranscriptScrollOwner =
   | "jump"
@@ -43,7 +46,10 @@ export type TranscriptScrollEvent =
   | { type: "USER_SCROLL_INTENT"; canClaimTail: boolean }
   | { type: "MANUAL_READING" }
   | { type: "READER_INTENT_ENDED" }
-  | { type: "SCROLL_DELIVERED"; atBottom: boolean; scrollable: boolean; substantial?: boolean }
+  | { type: "NATIVE_SCROLLBAR_BEGIN" }
+  | { type: "NATIVE_SCROLLBAR_END" }
+  | { type: "SCROLL_DELIVERED"; atBottom: boolean; scrollable: boolean; substantial?: boolean; tailMounted?: boolean }
+  | { type: "GEOMETRY_CHANGED"; revision: number; deferUntilStable?: boolean }
   | { type: "TAIL_CONTENT_CHANGED" }
   | { type: "CONTENT_SHRANK" }
   | { type: "LAYOUT_HEIGHT_CHANGED" }
@@ -61,7 +67,7 @@ export type TranscriptScrollEvent =
   | { type: "RECOVERY_END"; id: number };
 
 export type TranscriptScrollCommand =
-  | { type: "AUTOSCROLL_TO_BOTTOM" }
+  | { type: "AUTOSCROLL_TO_BOTTOM"; revision?: number; deferUntilStable?: boolean }
   | { type: "SCROLL_TO_LAST"; behavior: "auto" | "smooth" }
   | { type: "SCROLL_TO_INDEX"; index: number; behavior: "auto" | "smooth" }
   | { type: "SCROLL_TO_OFFSET"; owner: TranscriptScrollOwner; top: number; behavior: ScrollBehavior }
@@ -145,7 +151,7 @@ export function reduceTranscriptScroll(
       }
       // A downward (tail-claiming) gesture keeps the current bottom-hold
       // streak alive; an upward or non-claiming gesture breaks it.
-      return preempt({ ...state, mode: "manual", readerIntent: true, readerIntentCanClaimTail: event.canClaimTail, bottomHoldCount: event.canClaimTail ? state.bottomHoldCount : 0, settleMode: "manual" });
+      return preempt({ ...state, mode: "reader-gesture", readerIntent: true, readerIntentCanClaimTail: event.canClaimTail, bottomHoldCount: event.canClaimTail ? state.bottomHoldCount : 0, settleMode: "manual" });
     case "MANUAL_READING":
       return preempt({ ...state, mode: "manual", readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "manual" });
     case "READER_INTENT_ENDED":
@@ -153,9 +159,36 @@ export function reduceTranscriptScroll(
       // downward gesture must re-establish the hold from zero.
       return transition(
         state.readerIntent || state.bottomHoldCount !== 0
-          ? { ...state, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0 }
+          ? {
+              ...state,
+              mode: state.mode === "reader-gesture" ? "manual" : state.mode,
+              readerIntent: false,
+              readerIntentCanClaimTail: false,
+              bottomHoldCount: 0,
+            }
           : state,
       );
+    case "NATIVE_SCROLLBAR_BEGIN":
+      return preempt({
+        ...state,
+        mode: "native-thumb",
+        atBottom: false,
+        readerIntent: false,
+        readerIntentCanClaimTail: false,
+        bottomHoldCount: 0,
+        settleMode: "manual",
+      });
+    case "NATIVE_SCROLLBAR_END":
+      return transition(state.mode === "native-thumb"
+        ? {
+            ...state,
+            mode: "reader-gesture",
+            readerIntent: true,
+            readerIntentCanClaimTail: true,
+            bottomHoldCount: 0,
+            settleMode: "manual",
+          }
+        : state);
     case "SCROLL_DELIVERED": {
       if (!event.scrollable) {
         return transition({ ...state, mode: "tail-follow", atBottom: true, scrollable: false, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "tail-follow" });
@@ -163,7 +196,8 @@ export function reduceTranscriptScroll(
       // The hold streak only accrues in manual mode (the only mode that can
       // re-enter tail-follow this way) and breaks whenever the delivery is
       // off the bottom.
-      const bottomHoldCount = event.atBottom && state.mode === "manual" ? state.bottomHoldCount + 1 : 0;
+      const canAccrueBottomHold = state.mode === "reader-gesture" && event.tailMounted !== false;
+      const bottomHoldCount = event.atBottom && canAccrueBottomHold ? state.bottomHoldCount + 1 : 0;
       const next = { ...state, atBottom: event.atBottom, scrollable: true, bottomHoldCount };
       if (
         event.atBottom
@@ -172,31 +206,26 @@ export function reduceTranscriptScroll(
         && bottomHoldCount >= TRANSCRIPT_BOTTOM_HOLD_DELIVERIES
         && state.mode !== "selection"
         && state.mode !== "user-resize"
-        && state.mode !== "restoring"
+        && state.mode !== "programmatic"
+        && state.mode !== "recovery"
       ) {
         next.mode = "tail-follow";
         next.settleMode = "tail-follow";
         next.bottomHoldCount = 0;
       }
+      // Scroll delivery is observation only. Tail convergence is scheduled by
+      // explicit geometry revisions, never by the delivery caused by a write.
+      return transition(next);
+    }
+    case "GEOMETRY_CHANGED":
       return transition(
-        next,
-        // One physical displacement may produce several scroll deliveries
-        // while WebView2/Virtuoso remeasures variable-height rows. Re-arming
-        // the tail writer for every repeated `false` delivery creates a
-        // visible write loop; layout/viewport events remain the convergence
-        // lane for later geometry changes. A substantial displacement is a
-        // real repositioning: the tail writer reconverges even when the
-        // previous delivery was already non-bottom, because a misread shrink
-        // (CONTENT_SHRANK below) can otherwise strand the viewport with no
-        // remaining convergence lane.
+        state.mode === "reader-gesture" && state.bottomHoldCount !== 0
+          ? { ...state, atBottom: false, bottomHoldCount: 0 }
+          : state,
         state.mode === "tail-follow"
-          && !event.atBottom
-          && !state.readerIntent
-          && (state.atBottom || event.substantial === true)
-          ? [{ type: "AUTOSCROLL_TO_BOTTOM" }]
+          ? [{ type: "AUTOSCROLL_TO_BOTTOM", revision: event.revision, deferUntilStable: event.deferUntilStable }]
           : [],
       );
-    }
     case "TAIL_CONTENT_CHANGED":
     case "LAYOUT_HEIGHT_CHANGED":
     case "VIEWPORT_RESIZED":
@@ -225,9 +254,9 @@ export function reduceTranscriptScroll(
     case "SELECTION_END":
       return transition(state.mode === "selection" ? { ...state, mode: "manual", settleMode: "manual" } : state);
     case "PROGRAMMATIC_BEGIN":
-      return preempt({ ...state, mode: "restoring", readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: event.settleMode ?? "manual" });
+      return preempt({ ...state, mode: "programmatic", readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: event.settleMode ?? "manual" });
     case "PROGRAMMATIC_END":
-      return transition(state.mode === "restoring" ? { ...state, mode: state.settleMode } : state);
+      return transition(state.mode === "programmatic" ? { ...state, mode: state.settleMode } : state);
     case "JUMP_TO_BOTTOM":
       return preempt(
         { ...state, mode: "tail-follow", atBottom: true, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "tail-follow" },
@@ -235,7 +264,7 @@ export function reduceTranscriptScroll(
       );
     case "JUMP_TO_INDEX":
       return preempt(
-        { ...state, mode: "restoring", atBottom: false, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "manual" },
+        { ...state, mode: "programmatic", atBottom: false, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "manual" },
         [{ type: "SCROLL_TO_INDEX", index: event.index, behavior: event.behavior ?? "auto" }],
       );
     case "SCROLL_TO_OFFSET":
@@ -251,7 +280,7 @@ export function reduceTranscriptScroll(
           ? { ...state, mode: "selection", readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "manual" }
           : event.owner === "jump-bottom"
             ? { ...state, mode: "tail-follow", atBottom: true, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "tail-follow" }
-            : { ...state, mode: "restoring", atBottom: false, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "manual" },
+            : { ...state, mode: "programmatic", atBottom: false, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "manual" },
         [{ type: "SCROLL_TO_OFFSET", owner: event.owner, top: event.top, behavior: event.behavior ?? "auto" }],
       );
     case "RECOVERY_BEGIN":
@@ -259,17 +288,17 @@ export function reduceTranscriptScroll(
       // through the same explicit cancel transition a takeover would use.
       if (state.recoveryId !== null && state.recoveryId !== event.id) {
         return transition(
-          { ...state, mode: "restoring", readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: event.settleMode ?? "manual", recoveryId: event.id },
+          { ...state, mode: "recovery", readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: event.settleMode ?? "manual", recoveryId: event.id },
           [{ type: "CANCEL_RECOVERY", id: state.recoveryId, reason: "superseded" }],
         );
       }
-      return transition({ ...state, mode: "restoring", readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: event.settleMode ?? "manual", recoveryId: event.id });
+      return transition({ ...state, mode: "recovery", readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: event.settleMode ?? "manual", recoveryId: event.id });
     case "RECOVERY_END":
       if (state.recoveryId !== event.id) return transition(state);
       return transition({
         ...state,
         recoveryId: null,
-        mode: state.mode === "restoring" ? state.settleMode : state.mode,
+        mode: state.mode === "recovery" ? state.settleMode : state.mode,
       });
   }
 }

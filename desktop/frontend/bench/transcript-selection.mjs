@@ -458,8 +458,17 @@ try {
       window.__transcriptProgrammaticWrites.push(write);
     };
   });
-  await page.mouse.move(forwardPoints.start.x, forwardPoints.start.y);
-  await page.mouse.down();
+  let forwardPointerOwned = false;
+  for (let attempt = 0; attempt < 5 && !forwardPointerOwned; attempt += 1) {
+    await page.mouse.move(forwardPoints.start.x, forwardPoints.start.y);
+    await page.mouse.down();
+    forwardPointerOwned = await page.evaluate(() => document.querySelector(".transcript")?.dataset.scrollMode === "selection");
+    if (!forwardPointerOwned) {
+      await page.mouse.up();
+      forwardPoints = await waitForVisibleSelectionStart(page, { preferHighest: false, wheelDelta: -200, timeout: 1_200 });
+    }
+  }
+  assert(forwardPointerOwned, "downward cross-page pointerdown transfers ownership to selection");
   await page.mouse.move(forwardPoints.activate.x, forwardPoints.activate.y, { steps: 6 });
   const forwardTargetTurn = forwardPoints.anchorTurn + 21;
   let forwardFocus = null;

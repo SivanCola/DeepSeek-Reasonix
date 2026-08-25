@@ -104,10 +104,13 @@ console.log("\nbundle budgets");
 // The navigation surface transaction adds target identity checks, data/paint
 // terminals, and bounded history permits to the initial transcript path.
 // Failure-atomic source restoration, terminal surface promises, and the
-// one-page viewport permit are now part of the same startup path. The combined
-// build measures 437.36 KiB gzip, 2.56 KiB (0.59%) above the navigation base;
-// retain 0.34 KiB of deterministic build/toolchain headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 437.7 : 437.7;
+// one-page viewport permit and durable turn runtime are part of the same
+// startup path. The current main-v2 build measures 437.36 KiB gzip.
+// Transcript scroll integrity adds the single-writer gateway, coalesced
+// geometry revisions, and reader-extent transaction to the eager transcript
+// path. The combined build is expected near 440.5 KiB gzip; retain only 0.2
+// KiB for build metadata/toolchain drift and remeasure after the rebase.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 440.7 : 440.7;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -128,7 +131,10 @@ if (initialCSS.length > 0) {
 // to 114.48 KiB gzip. Keep a narrow 0.22 KiB ratchet.
 // The navigation mask's stable composer footprint measures 114.73 KiB; retain
 // less than 0.1 KiB of additional headroom.
-assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 114.8 * 1024);
+// The zero-layout completion overlay adds 0.1 KiB gzip and keeps the live
+// Footer out of Virtuoso's measured flow during the history handoff.
+// The combined rebased shell measures 114.8 KiB; keep a 0.1 KiB ratchet.
+assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 114.9 * 1024);
 if (localeChunks.length !== 2) {
   throw new Error(`expected 2 on-demand Chinese locale chunks, found ${localeChunks.length}`);
 }
@@ -179,9 +185,13 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The checkpoint reset transaction adds 3.8 KiB raw (0.16%) for replay paging,
 // epoch/release fences, and stable history-prefix rebasing.
 // Its failure-atomic completion paths plus the fixed navigation footer
-// footprint share that initial path. The combined build measures 2379.22 KiB,
-// 10.12 KiB (0.43%) above the navigation base; retain 0.58 KiB of deterministic
-// build/toolchain headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_379.8 : 2_379.8;
+// footprint and durable turn runtime put current main-v2 at 2379.22 KiB raw.
+// The transcript integrity coordinator, completion overlay, and measured
+// cross-WebView footer inset, native list observer, and guarded LAST mount
+// before tail following add the pre-paint tail pin, residual verifier, and
+// stable-tail boundary guard. Visual-anchor and pre-paint correction during
+// active reader transactions are expected to bring the rebased surface near
+// 2393.2 KiB raw; retain 0.2 KiB and remeasure after the rebase.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_393.4 : 2_393.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
