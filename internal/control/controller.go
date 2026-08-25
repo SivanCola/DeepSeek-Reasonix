@@ -774,10 +774,11 @@ func (c *Controller) installExtensionsLocked(d *dispatch.Dispatcher) {
 	switch sink := c.sink.(type) {
 	case *inboxEventSink:
 		if lifecycle, ok := sink.inner.(*turnEventSink); ok {
-			if existing, ok := lifecycle.inner.(*frontendEventSink); ok {
+			current := lifecycle.innerSnapshot()
+			if existing, ok := current.(*frontendEventSink); ok {
 				existing.setDispatcher(d)
 			} else {
-				lifecycle.inner = newFrontendEventSink(lifecycle.inner, d)
+				lifecycle.setInner(newFrontendEventSink(current, d))
 			}
 		} else if existing, ok := sink.inner.(*frontendEventSink); ok {
 			existing.setDispatcher(d)
@@ -1010,12 +1011,19 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 	c.finishing = !c.closed
 	c.finishingBoundary.begin(c.finishing)
 	c.cancel = nil
-	c.canceling = false
+	// Keep the cancelling projection visible through TurnDone fan-out. Clearing
+	// it here creates a finishing-only window that looks like an ordinary
+	// running turn even though Stop has not reached its durable terminal event.
+	// A closed controller has no live surface and may clear immediately.
+	if c.closed {
+		c.canceling = false
+	}
 	c.mu.Unlock()
 
 	defer func() {
 		c.mu.Lock()
 		c.finishing = false
+		c.canceling = false
 		c.finishingBoundary.end()
 		if c.closed {
 			c.mu.Unlock()
@@ -1814,7 +1822,7 @@ func (c *Controller) RunShell(command string) {
 		diagnosticPreview := shellCommandPreview(command)
 		desc := shellrun.DescriptorFromShell(sh)
 
-		c.sink.Emit(event.Event{
+		if err := event.EmitChecked(c.sink, event.Event{
 			Kind: event.ToolDispatch,
 			Tool: event.Tool{
 				ID:   id,
@@ -1826,7 +1834,9 @@ func (c *Controller) RunShell(command string) {
 					State: tool.ShellStateRunning,
 				},
 			},
-		})
+		}); err != nil {
+			return fmt.Errorf("persist shell dispatch: %w", err)
+		}
 
 		start := time.Now()
 		res := shellrun.RunForeground(ctx, shellrun.Request{
@@ -2147,7 +2157,7 @@ func (c *Controller) RuntimeStatus() RuntimeStatus {
 		PendingPrompt:   pending,
 		BackgroundJobs:  backgroundJobs,
 		CancelRequested: canceling,
-		Cancellable:     running || pending,
+		Cancellable:     running || pending || canceling,
 		TurnID:          turnID,
 		Status:          status,
 		TurnEventSeq:    turnEventSeq,
@@ -2177,13 +2187,17 @@ func (c *Controller) ResolvePlanDecision(id string, action PlanDecisionAction) e
 	default:
 		return fmt.Errorf("unknown plan decision %q", action)
 	}
-	pending, ok := c.approval.resolveTool(id, planApprovalTool)
+	pending, ok, err := c.approval.resolveToolAfter(id, planApprovalTool, func(p pendingApproval) error {
+		return c.emitTurnEventChecked(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
+	})
+	if err != nil {
+		return err
+	}
 	if !ok || pending.reply == nil {
-		return fmt.Errorf("plan approval %q is no longer pending", id)
+		return nil
 	}
 	pending.kind = "plan"
 	c.recordDecisionReceipt(pending, string(action))
-	c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
 	pending.reply <- approvalReply{allow: action == PlanDecisionStartExecution}
 	return nil
 }
@@ -2521,8 +2535,12 @@ func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]
 	defer c.approval.promptMu.Unlock()
 
 	c.approval.promptEmitMu.Lock()
+	if err := event.EmitChecked(c.sink, event.Event{Kind: event.AskRequest, ItemID: id, Ask: event.Ask{ID: id, Questions: questions}}); err != nil {
+		c.approval.promptEmitMu.Unlock()
+		c.approval.cancelAsk(id)
+		return nil, fmt.Errorf("persist ask request: %w", err)
+	}
 	c.approval.markAskEmitted(id)
-	c.sink.Emit(event.Event{Kind: event.AskRequest, ItemID: id, Ask: event.Ask{ID: id, Questions: questions}})
 	c.approval.promptEmitMu.Unlock()
 
 	waitCtx, cancelWait := c.approval.waitContext(ctx)
@@ -2540,7 +2558,19 @@ func (c *Controller) Ask(ctx context.Context, questions []event.AskQuestion) ([]
 // AnswerQuestion resolves a pending AskRequest by ID with the user's selections.
 // Unknown/expired IDs are ignored.
 func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
-	if pending, ok := c.approval.resolveAsk(id); ok {
+	_ = c.AnswerQuestionChecked(id, answers)
+}
+
+// AnswerQuestionChecked persists the prompt transition before releasing the
+// agent loop. A failed ledger write leaves the prompt pending and retryable.
+func (c *Controller) AnswerQuestionChecked(id string, answers []event.AskAnswer) error {
+	pending, ok, err := c.approval.resolveAskAfter(id, func(p pendingAsk) error {
+		return c.emitTurnEventChecked(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
+	})
+	if err != nil {
+		return err
+	}
+	if ok {
 		// An answer batch with no selections is the explicit "skip and continue
 		// chat" path. End the current turn instead of feeding a prose dismissal
 		// back to the model and trusting it not to ask again (#6869).
@@ -2550,13 +2580,13 @@ func (c *Controller) AnswerQuestion(id string, answers []event.AskAnswer) {
 			c.mu.Unlock()
 			if activeTurn {
 				c.Cancel()
-				return
+				return nil
 			}
 		}
 		c.recordAskDecisionReceipt(id, pending, answers)
-		c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
 		pending.reply <- answers // buffered, never blocks
 	}
+	return nil
 }
 
 func (c *Controller) recordAskDecisionReceipt(id string, pending pendingAsk, answers []event.AskAnswer) {
@@ -5522,6 +5552,11 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 				c.jobs.Close() // cancel any still-running background jobs
 			}
 		}
+		if ledger := c.turnEventLedger(); ledger != nil {
+			if err := ledger.Close(); err != nil {
+				slog.Warn("controller: close turn event ledger", "err", err)
+			}
+		}
 		if c.cleanup != nil {
 			c.cleanup()
 		}
@@ -6204,7 +6239,11 @@ func (c *Controller) requestApprovalDecisionWithOptions(ctx context.Context, too
 		id, reply = c.approval.registerWithInput(tool, subject, reason, args)
 	}
 
-	c.sink.Emit(c.approvalRequestEvent(event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason, RawInput: append(json.RawMessage(nil), args...), Fresh: opts.fresh}))
+	if err := event.EmitChecked(c.sink, c.approvalRequestEvent(event.Approval{ID: id, Tool: tool, Subject: subject, Reason: reason, RawInput: append(json.RawMessage(nil), args...), Fresh: opts.fresh})); err != nil {
+		c.approval.promptEmitMu.Unlock()
+		c.approval.cancel(id)
+		return approvalReply{}, fmt.Errorf("persist approval request: %w", err)
+	}
 	c.approval.promptEmitMu.Unlock()
 	// The agent now needs the user's attention; a Notification hook can ping an
 	// external channel (desktop notice, phone) while the run blocks on the reply.

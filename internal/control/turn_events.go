@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
+	"reasonix/internal/evidence"
 	"reasonix/internal/sessioninbox"
 	"reasonix/internal/turnevent"
 )
@@ -17,9 +19,14 @@ import (
 // Provider-facing transcript messages remain a separate artifact.
 type turnEventSink struct {
 	event.AuditForwarder
-	inner event.Sink
-	c     *Controller
+	innerMu sync.RWMutex
+	inner   event.Sink
+	stream  event.Sink
+	c       *Controller
+	publish atomic.Int32
 }
+
+type turnEventDurableSink struct{ owner *turnEventSink }
 
 // turnEventState has an independent lock so ledger I/O never holds c.mu.
 type turnEventState struct {
@@ -29,54 +36,128 @@ type turnEventState struct {
 }
 
 func newTurnEventSink(inner event.Sink, c *Controller) *turnEventSink {
-	return &turnEventSink{AuditForwarder: event.AuditForwarder{Inner: inner}, inner: inner, c: c}
+	s := &turnEventSink{inner: inner, c: c}
+	s.stream = event.Coalesce(&turnEventDurableSink{owner: s}, event.DefaultStreamDeltaWindow)
+	s.AuditForwarder = event.AuditForwarder{Inner: s.stream}
+	return s
 }
 
 func (s *turnEventSink) InboxChanged(snap sessioninbox.InboxSnapshot) {
 	if s != nil {
-		notifyInboxChanged(s.inner, snap)
+		notifyInboxChanged(s.innerSnapshot(), snap)
 	}
 }
 
 var _ event.OptionalSinkCapabilities = (*turnEventSink)(nil)
+var _ event.CheckedSink = (*turnEventSink)(nil)
+var _ event.OptionalSinkCapabilities = (*turnEventDurableSink)(nil)
+var _ event.CheckedSink = (*turnEventDurableSink)(nil)
 
 func (s *turnEventSink) Emit(e event.Event) {
-	if err := s.emitChecked(e); err != nil {
-		// Ordinary event.Sink has no error return. Admission uses emitChecked
-		// directly and therefore fails closed before the provider starts; later
-		// runtime failures are surfaced and cancel-safe through the controller.
-		slog.Error("controller: append turn event ledger", "err", err, "turn_id", e.TurnID, "kind", e.Kind)
-		if e.Kind == event.TurnDone {
-			e.Err = errors.Join(e.Err, err)
-			e.Status = event.TurnFailed
-		}
-		if s != nil && s.inner != nil {
-			s.inner.Emit(e)
+	if s == nil {
+		return
+	}
+	if s.c != nil {
+		if ledger := s.c.turnEventLedger(); ledger != nil {
+			ledger.ObserveRawEvent(e)
 		}
 	}
+	if turnEventSynchronousBarrier(e.Kind) {
+		if err := event.EmitChecked(s.stream, e); err != nil {
+			s.fail(err)
+		}
+		return
+	}
+	s.stream.Emit(e)
+}
+
+func turnEventSynchronousBarrier(kind event.Kind) bool {
+	switch kind {
+	case event.ToolDispatch, event.ToolResult, event.AskRequest, event.ApprovalRequest,
+		event.PromptAnswered, event.TurnStatusChanged, event.TurnStarted, event.TurnDone:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *turnEventSink) EmitChecked(e event.Event) error {
+	if s == nil {
+		return nil
+	}
+	if s.c != nil {
+		if ledger := s.c.turnEventLedger(); ledger != nil {
+			ledger.ObserveRawEvent(e)
+		}
+	}
+	var err error
+	if s.publish.Load() > 0 && e.Kind == event.PromptAnswered {
+		// A frontend sink may synchronously answer the prompt it is currently
+		// receiving. The outer coalescer drainer cannot wait on itself; all prior
+		// deltas and the prompt are already durable, so append this nested barrier
+		// directly after them. Only prompt answers may use this re-entrant path;
+		// unrelated concurrent checked events must preserve coalescer ordering.
+		err = (&turnEventDurableSink{owner: s}).EmitChecked(e)
+	} else {
+		err = event.EmitChecked(s.stream, e)
+	}
+	if err != nil {
+		s.fail(err)
+	}
+	return err
+}
+
+func (s *turnEventSink) fail(err error) {
+	if s != nil && s.c != nil && err != nil {
+		s.c.failTurnEventLedger(err)
+	}
+}
+
+func (s *turnEventSink) innerSnapshot() event.Sink {
+	if s == nil {
+		return nil
+	}
+	s.innerMu.RLock()
+	defer s.innerMu.RUnlock()
+	return s.inner
+}
+
+func (s *turnEventSink) setInner(inner event.Sink) {
+	if s == nil {
+		return
+	}
+	s.innerMu.Lock()
+	s.inner = inner
+	s.innerMu.Unlock()
+}
+
+func (s *turnEventSink) publishInner(e event.Event) {
+	inner := s.innerSnapshot()
+	if inner == nil {
+		return
+	}
+	s.publish.Add(1)
+	defer s.publish.Add(-1)
+	inner.Emit(e)
 }
 
 // emitChecked persists before publish and returns durability failures to the
 // admission boundary. It also suppresses the executor's duplicate TurnStarted
 // because the controller has already committed that transition before the
 // provider goroutine is launched.
-func (s *turnEventSink) emitChecked(e event.Event) error {
+func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	if s == nil || s.c == nil {
 		return nil
 	}
 	ledger := s.c.turnEventLedger()
 	if ledger == nil {
-		if s.inner != nil {
-			s.inner.Emit(e)
-		}
+		s.publishInner(e)
 		return nil
 	}
 	// Outside-turn notices are not lifecycle records and must pass through after
 	// bootstrap or a terminal event.
 	if ledger.ActiveTurnID() == "" {
-		if s.inner != nil {
-			s.inner.Emit(e)
-		}
+		s.publishInner(e)
 		return nil
 	}
 	if e.Kind == event.TurnStarted && ledger.CurrentStatus() == event.TurnInProgress {
@@ -112,10 +193,85 @@ func (s *turnEventSink) emitChecked(e event.Event) error {
 	if !ok {
 		return nil
 	}
-	if s.inner != nil {
-		s.inner.Emit(stamped)
+	s.publishInner(stamped)
+	if e.Kind == event.TurnDone && !ledger.ProjectionAckRequired() {
+		if err := ledger.AcknowledgeProjection(stamped.TurnID); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (s *turnEventDurableSink) Emit(e event.Event) {
+	_ = s.EmitChecked(e)
+}
+
+func (s *turnEventDurableSink) EmitChecked(e event.Event) error {
+	if s == nil || s.owner == nil {
+		return nil
+	}
+	err := s.owner.persistAndPublish(e)
+	if err == nil {
+		return nil
+	}
+	// Coalesced stream events reach this checked boundary from an asynchronous
+	// drainer even when their original Emit caller cannot observe an error. Fail
+	// the Turn here so a poisoned WAL immediately cancels provider, prompt and
+	// process work instead of waiting for the next synchronous barrier.
+	slog.Error("controller: append turn event ledger", "err", err, "kind", e.Kind)
+	s.owner.fail(err)
+	if e.Kind == event.TurnDone {
+		// The durable terminal failed, so publish a sequence-free control-plane
+		// failure only to release UI state. It is never treated as ledger truth.
+		e.Err = errors.Join(e.Err, err)
+		e.Status = event.TurnFailed
+		if inner := s.owner.innerSnapshot(); inner != nil {
+			inner.Emit(e)
+		}
+	}
+	return err
+}
+
+func (s *turnEventDurableSink) inner() event.Sink {
+	if s == nil || s.owner == nil {
+		return nil
+	}
+	return s.owner.innerSnapshot()
+}
+
+func (s *turnEventDurableSink) RecordDelegationAudit(a evidence.DelegationAudit) {
+	event.RecordDelegationAudit(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordReadinessAudit(a evidence.ReadinessAudit) {
+	event.RecordReadinessAudit(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordAnchorSafetyAudit(a event.AnchorSafetyAudit) {
+	event.RecordAnchorSafetyAudit(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordTurnCompletion() { event.RecordTurnCompletion(s.inner()) }
+func (s *turnEventDurableSink) RecordContractShadow(a event.ContractShadowAudit) {
+	event.RecordContractShadow(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordCompletionReport(a event.CompletionReportAudit) {
+	event.RecordCompletionReport(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordMemoryRecall(a event.MemoryRecallAudit) {
+	event.RecordMemoryRecall(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordDelegationAdmission(a event.DelegationAdmissionAudit) {
+	event.RecordDelegationAdmission(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordOutcomeProgress(a evidence.OutcomeSample) {
+	event.RecordOutcomeProgress(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordProtocolRecovery(a event.ProtocolRecoveryAudit) {
+	event.RecordProtocolRecovery(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordWorkspaceMutation(a event.WorkspaceMutation) {
+	event.RecordWorkspaceMutation(s.inner(), a)
+}
+func (s *turnEventDurableSink) RecordRunBudget(a event.RunBudgetSample) {
+	event.RecordRunBudget(s.inner(), a)
 }
 
 func terminalTurnStatus(e event.Event) event.TurnStatus {
@@ -202,9 +358,36 @@ func (c *Controller) rebindTurnEvents(sessionPath string) {
 		return
 	}
 	c.turnEvents.mu.Lock()
+	previous := c.turnEvents.ledger
 	c.turnEvents.ledger = ledger
 	c.turnEvents.err = nil
 	c.turnEvents.mu.Unlock()
+	if previous != nil && previous != ledger {
+		if closeErr := previous.Close(); closeErr != nil {
+			slog.Warn("controller: close previous turn event ledger", "err", closeErr)
+		}
+	}
+}
+
+func (c *Controller) failTurnEventLedger(err error) {
+	if c == nil || err == nil {
+		return
+	}
+	c.turnEvents.mu.Lock()
+	if c.turnEvents.err == nil {
+		c.turnEvents.err = err
+	}
+	c.turnEvents.mu.Unlock()
+	c.mu.Lock()
+	cancel := c.cancel
+	if cancel != nil {
+		c.canceling = true
+	}
+	c.mu.Unlock()
+	if cancel != nil {
+		c.approval.clearAll()
+		cancel()
+	}
 }
 
 func (c *Controller) emitTurnStatus(status event.TurnStatus) {
@@ -221,19 +404,14 @@ func (c *Controller) emitTurnEventChecked(e event.Event) error {
 	if c == nil {
 		return nil
 	}
-	if inbox, ok := c.sink.(*inboxEventSink); ok {
-		if lifecycle, ok := inbox.inner.(*turnEventSink); ok {
-			return lifecycle.emitChecked(e)
-		}
-	}
-	c.sink.Emit(e)
-	return nil
+	return event.EmitChecked(c.sink, e)
 }
 
 // SetTurnEventRoutingMetadata attaches desktop routing identity to lifecycle
 // envelopes only. It never changes provider-visible prompts or tool schemas.
 func (c *Controller) SetTurnEventRoutingMetadata(runtimeEpoch, submissionID string) {
 	if ledger := c.turnEventLedger(); ledger != nil {
+		ledger.RequireProjectionAck(true)
 		ledger.SetRoutingMetadata(runtimeEpoch, submissionID)
 	}
 }
@@ -246,6 +424,52 @@ func (c *Controller) TurnEventsAfter(after uint64) ([]turnevent.Envelope, error)
 		return []turnevent.Envelope{}, nil
 	}
 	return ledger.EventsAfter(after)
+}
+
+func (c *Controller) TurnEventReplay(after uint64) (turnevent.ReplayView, error) {
+	ledger := c.turnEventLedger()
+	if ledger == nil {
+		return turnevent.ReplayView{Events: []turnevent.Envelope{}}, nil
+	}
+	return ledger.Replay(after)
+}
+
+func (c *Controller) AcknowledgeTurnProjection(turnID string) error {
+	ledger := c.turnEventLedger()
+	if ledger == nil {
+		return nil
+	}
+	return ledger.AcknowledgeProjection(turnID)
+}
+
+func (c *Controller) ObserveTurnProjectionRetry() {
+	if ledger := c.turnEventLedger(); ledger != nil {
+		ledger.ObserveProjectionRetry()
+	}
+}
+
+func (c *Controller) PendingTurnProjections() []turnevent.PendingProjection {
+	ledger := c.turnEventLedger()
+	if ledger == nil {
+		return []turnevent.PendingProjection{}
+	}
+	return ledger.PendingProjections()
+}
+
+func (c *Controller) TurnEventMetrics() turnevent.MetricsSnapshot {
+	ledger := c.turnEventLedger()
+	if ledger == nil {
+		return turnevent.MetricsSnapshot{}
+	}
+	return ledger.MetricsSnapshot()
+}
+
+func (c *Controller) DrainTurnEventMetrics() turnevent.MetricsSnapshot {
+	ledger := c.turnEventLedger()
+	if ledger == nil {
+		return turnevent.MetricsSnapshot{}
+	}
+	return ledger.DrainMetrics()
 }
 
 // TurnIDForSubmission exposes the synchronous admission receipt without

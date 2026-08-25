@@ -56,10 +56,12 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 	// Host hard-caps free-text feedback; empty revise is filled by the gate.
 	// Clip on a UTF-8 boundary so multi-byte runes are never split.
 	feedback = clipUTF8(feedback, 4*1024)
-	// Validate and resolve the gate first. In particular, an unsupported
-	// continue_task must leave the live approval intact so the frontend can
-	// recover and offer a one-shot decision instead.
-	if err := gate.Resolve(id, recovery.Action(action), feedback); err != nil {
+	// Validate the gate action, persist PromptAnswered, then release the gate.
+	// Unsupported continue_task and ledger failures both leave the live
+	// decision unresolved.
+	if err := gate.ResolveAfter(id, recovery.Action(action), feedback, func() error {
+		return c.emitTurnEventChecked(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
+	}); err != nil {
 		return err
 	}
 
@@ -75,7 +77,6 @@ func (c *Controller) ResolveRecovery(id string, action agent.RecoveryAction, fee
 			outcome = "recovery_continue_task"
 		}
 		c.recordDecisionReceipt(pending, outcome)
-		c.sink.Emit(event.Event{Kind: event.PromptAnswered, ItemID: id, Status: event.TurnInProgress})
 		switch action {
 		case agent.RecoveryActionContinue, agent.RecoveryActionContinueTask:
 			pending.reply <- approvalReply{allow: true}
@@ -333,7 +334,15 @@ func (c *Controller) emitRecoveryPrompt(ctx context.Context, taskID string, pend
 		}
 	}()
 
-	c.sink.Emit(c.approvalRequestEvent(ev))
+	if err := event.EmitChecked(c.sink, c.approvalRequestEvent(ev)); err != nil {
+		c.approval.cancel(id)
+		if gate != nil {
+			gate.UnbindApprovalID(taskID, id)
+		}
+		c.approval.promptEmitMu.Unlock()
+		c.approval.promptMu.Unlock()
+		return "", fmt.Errorf("persist Auto Guard approval request: %w", err)
+	}
 	c.approval.promptEmitMu.Unlock()
 	c.approval.promptMu.Unlock()
 

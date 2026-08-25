@@ -642,6 +642,11 @@ func (a *Agent) handleToolRound(ctx context.Context, state *turnRuntime, step in
 		receiptMark = a.task.ledger.Len()
 	}
 	batch := a.executeBatch(ctx, state, calls)
+	if batch.err != nil {
+		// No call from the batch has executed: executeBatch commits every full
+		// dispatch before entering its execution scheduler.
+		return false, batch.err
+	}
 	results, images := batch.results, batch.images
 	for i, call := range calls {
 		msg := provider.Message{
