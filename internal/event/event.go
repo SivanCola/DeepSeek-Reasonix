@@ -123,6 +123,13 @@ const (
 	// render the successful state early; append-only consumers should ignore it.
 	// The later ToolResult remains the call's only terminal event.
 	ToolResultPreview
+	// TurnStatusChanged is a content-free lifecycle transition such as
+	// waiting_user, cancelling, or returning to in_progress after an answer.
+	TurnStatusChanged
+	// PromptAnswered records that a durable Ask/approval item was answered and
+	// the same turn resumed. ItemID carries the stable prompt id; answer content
+	// remains in its purpose-built decision receipt rather than diagnostics.
+	PromptAnswered
 	// KindCount is a sentinel one past the last real Kind. New event kinds must
 	// be inserted above it so completeness tests cover them automatically.
 	KindCount
@@ -526,6 +533,9 @@ const (
 
 type Event struct {
 	Kind             Kind
+	TurnID           string                    // stable id of the owning top-level turn
+	Sequence         uint64                    // monotonic session-local event sequence
+	Status           TurnStatus                // lifecycle state after this event
 	Text             string                    // Reasoning / Text / Message / Notice / Phase
 	ModelRef         string                    // Usage: canonical "provider/model" ref that produced this usage
 	Detail           string                    // Notice: optional diagnostic text for expandable details
