@@ -72,7 +72,7 @@ func TestTurnRuntimeAPIRoutesStopAnswerAndReplayByExactTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TurnEventsForTab before cancel: %v", err)
 	}
-	if len(before) == 0 || before[0].Status != event.TurnQueued {
+	if len(before.Events) == 0 || before.Events[0].Status != event.TurnQueued {
 		t.Fatalf("events before cancel = %+v, want durable queued prefix", before)
 	}
 	if err := app.InterruptTurnForTab(tab.ID, start.TurnID); err != nil {
@@ -86,14 +86,18 @@ func TestTurnRuntimeAPIRoutesStopAnswerAndReplayByExactTurn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("turn did not reach terminal state after exact interrupt")
 	}
-	after, err := app.TurnEventsForTab(tab.ID, before[len(before)-1].Sequence)
+	after, err := app.TurnEventsForTab(tab.ID, before.Events[len(before.Events)-1].Sequence)
 	if err != nil {
 		t.Fatalf("TurnEventsForTab after cancel: %v", err)
 	}
-	if len(after) == 0 || after[len(after)-1].Status != event.TurnInterrupted {
+	if len(after.Events) == 0 || after.Events[len(after.Events)-1].Status != event.TurnInterrupted {
 		t.Fatalf("events after cancel = %+v, want non-nil interrupted suffix", after)
 	}
-	if _, err := app.TurnEventsForTab(tab.ID, after[len(after)-1].Sequence); err != nil {
+	empty, err := app.TurnEventsForTab(tab.ID, after.Events[len(after.Events)-1].Sequence)
+	if err != nil {
 		t.Fatalf("empty replay: %v", err)
+	}
+	if empty.Events == nil || len(empty.Events) != 0 {
+		t.Fatalf("empty replay events = %#v, want []", empty.Events)
 	}
 }

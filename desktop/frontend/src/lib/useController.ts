@@ -56,6 +56,7 @@ import type {
   TabMeta,
   ToolApprovalMode,
   TopicActivationEvent,
+  TurnEventReplayView,
   WireApproval,
   WireAsk,
   WireCompletionSummary,
@@ -372,6 +373,8 @@ interface State {
   historyOlderError?: string;
   historyRevision?: number;
   historyDigest?: string;
+  /** Number of leading items owned by the persisted transcript projection. */
+  historyPrefixCount: number;
   /** Bumped when lazy history content can change already-estimated row sizes. */
   historyLayoutRevision: number;
   backendActivationPending: boolean;
@@ -494,6 +497,7 @@ export const initialState: State = {
   historyHasOlder: false,
   historyOlderLoading: false,
   historyLayoutRevision: 0,
+  historyPrefixCount: 0,
   backendActivationPending: false,
   deliveryRecoveryActive: false,
   promptEpoch: 0,
@@ -813,6 +817,7 @@ type Action =
   // Items carry stable entryId-derived ids; prepend also lists existing item
   // ids superseded by cross-page tool call/result merges.
   | { type: "history_replace"; items: Item[]; startTurn: number; totalTurns: number; hasOlder: boolean; revision?: number; digest?: string }
+  | { type: "history_rebase"; items: Item[]; startTurn: number; totalTurns: number; hasOlder: boolean; revision?: number; digest?: string }
   | { type: "history_prepend"; items: Item[]; removeIds: string[]; startTurn: number; totalTurns: number; hasOlder: boolean; revision?: number; digest?: string }
   | { type: "history_items_patch"; patches: Record<string, Item> }
   | { type: "history_older_start" }
@@ -2149,7 +2154,7 @@ export function reducer(s: State, a: Action): State {
     case "message_action_done": return { ...s, messageAction: undefined };
     case "history": {
       const { items, seq } = historyMessagesToItems(a.messages, "h", s.seq);
-      return { ...s, items: compactArchivedToolItems(items), pendingSubmissionId: undefined, seq, hydrateHistoryLoaded: true, hydratePlaceholderItems: undefined, historyStartTurn: 0, historyTotalTurns: 0, historyHasOlder: false, historyOlderLoading: false, historyOlderError: undefined, historyRevision: undefined, historyDigest: undefined };
+      return { ...s, items: compactArchivedToolItems(items), historyPrefixCount: items.length, pendingSubmissionId: undefined, seq, hydrateHistoryLoaded: true, hydratePlaceholderItems: undefined, historyStartTurn: 0, historyTotalTurns: 0, historyHasOlder: false, historyOlderLoading: false, historyOlderError: undefined, historyRevision: undefined, historyDigest: undefined };
     }
     case "history_page": {
       if (historyRevisionIsOlder(s.historyRevision, a.page.revision)) return s;
@@ -2158,6 +2163,7 @@ export function reducer(s: State, a: Action): State {
       return {
         ...s,
         items: compactArchivedToolItems(nextItems),
+        historyPrefixCount: a.mode === "prepend" ? items.length + s.historyPrefixCount : items.length,
         pendingSubmissionId: a.mode === "replace" ? undefined : s.pendingSubmissionId,
         seq: Math.max(s.seq, seq),
         hydrateHistoryLoaded: true,
@@ -2178,6 +2184,7 @@ export function reducer(s: State, a: Action): State {
       return {
         ...s,
         items: compactArchivedToolItems(a.items),
+        historyPrefixCount: a.items.length,
         pendingSubmissionId: undefined,
         hydrateHistoryLoaded: true,
         hydratePlaceholderItems: undefined,
@@ -2189,13 +2196,37 @@ export function reducer(s: State, a: Action): State {
         historyRevision: a.revision,
         historyDigest: a.digest,
       };
+    case "history_rebase": {
+      if (historyRevisionIsOlder(s.historyRevision, a.revision)) return s;
+      const liveTail = s.items.slice(Math.min(s.historyPrefixCount, s.items.length));
+      const duplicates = new Set(duplicateLiveItemIds(a.items, liveTail));
+      const retainedTail = liveTail.filter((item) => !duplicates.has(item.id));
+      return {
+        ...s,
+        items: compactArchivedToolItems([...a.items, ...retainedTail]),
+        historyPrefixCount: a.items.length,
+        hydrateHistoryLoaded: true,
+        hydratePlaceholderItems: undefined,
+        historyStartTurn: a.startTurn,
+        historyTotalTurns: a.totalTurns,
+        historyHasOlder: a.hasOlder,
+        historyOlderLoading: false,
+        historyOlderError: undefined,
+        historyRevision: a.revision,
+        historyDigest: a.digest,
+        historyLayoutRevision: s.historyLayoutRevision + 1,
+      };
+    }
     case "history_prepend": {
       if (historyRevisionIsOlder(s.historyRevision, a.revision)) return s;
       const remove = a.removeIds.length > 0 ? new Set(a.removeIds) : undefined;
       const rest = remove ? s.items.filter((item) => !remove.has(item.id)) : s.items;
+      const prefix = s.items.slice(0, Math.min(s.historyPrefixCount, s.items.length));
+      const retainedPrefix = remove ? prefix.filter((item) => !remove.has(item.id)) : prefix;
       return {
         ...s,
         items: compactArchivedToolItems([...a.items, ...rest]),
+        historyPrefixCount: a.items.length + retainedPrefix.length,
         hydrateHistoryLoaded: true,
         hydratePlaceholderItems: undefined,
         historyStartTurn: a.startTurn,
@@ -3216,6 +3247,60 @@ export function useController() {
       }
     }
   }, [bumpSessionLoadSeq, cancelHydrateCurrent, dispatchTo, loadMetaForTab, refreshBalanceForTab, sessionLoadCurrent]);
+
+  const resetTurnEventProjection = useCallback(async (tabId: string, replay: TurnEventReplayView): Promise<boolean> => {
+    const state = statesRef.current.get(tabId);
+    if (!state) return false;
+    const sessionPath = state.meta?.sessionPath?.trim() ?? "";
+    const expectedEpoch = replay.runtimeEpoch?.trim() ?? "";
+    ensureTranscriptSubscription(tabId);
+    const projection = await getTranscriptStore().loadLatest(tabId, sessionPath, {
+      turns: HISTORY_PAGE_TURNS,
+      preferResident: false,
+      expectedRevision: replay.transcriptRevision,
+      expectedDigest: replay.transcriptDigest,
+    });
+    if (!projection) return false;
+    const current = statesRef.current.get(tabId);
+    if (!current || (current.meta?.sessionPath?.trim() ?? "") !== sessionPath) return false;
+    if (expectedEpoch && runtimeEpochByTabRef.current.get(tabId) !== expectedEpoch) return false;
+    if (replay.transcriptRevision !== undefined && projection.revisionKnown) {
+      if (projection.revision < replay.transcriptRevision) return false;
+      if (
+        projection.revision === replay.transcriptRevision &&
+        replay.transcriptDigest &&
+        projection.digest !== replay.transcriptDigest
+      ) {
+        return false;
+      }
+    }
+    if (
+      projection.revisionKnown &&
+      typeof current.historyRevision === "number" &&
+      current.historyRevision > projection.revision
+    ) return false;
+    if (
+      projection.revisionKnown &&
+      current.historyRevision === projection.revision &&
+      current.historyDigest &&
+      projection.digest !== current.historyDigest
+    ) return false;
+    dispatchTo(tabId, {
+      type: "history_rebase",
+      items: projection.items,
+      startTurn: projection.startTurn,
+      totalTurns: projection.totalTurns,
+      hasOlder: projection.hasOlder,
+      revision: projection.revisionKnown ? projection.revision : undefined,
+      digest: projection.digest || undefined,
+    });
+    return true;
+  }, [dispatchTo, ensureTranscriptSubscription]);
+
+  useEffect(() => {
+    turnEventProjector.bindReset(resetTurnEventProjection);
+    return () => turnEventProjector.unbindReset(resetTurnEventProjection);
+  }, [resetTurnEventProjection, turnEventProjector]);
 
   // On-demand full content for a ref-replaced history field (entries carrying
   // refs[] ship a ≤4KiB preview inline). Resolves through the transcript

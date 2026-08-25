@@ -154,8 +154,7 @@ window.go = {
       ReplayPendingPrompts: async () => {},
       TurnEventsForTab: async (_tabID: string, afterSeq: number) => {
         turnReplayCalls += 1;
-        if (afterSeq !== 1) return [];
-        return [
+        const events = afterSeq !== 1 ? [] : [
           {
             turnId: "turn-gap",
             seq: 2,
@@ -169,6 +168,14 @@ window.go = {
             event: { kind: "turn_status", turnId: "turn-gap", seq: 3, status: "waiting_user" },
           },
         ];
+        return {
+          events,
+          floorSeq: 1,
+          latestSeq: 3,
+          nextAfterSeq: events.length > 0 ? 3 : afterSeq,
+          hasMore: false,
+          resetRequired: false,
+        };
       },
       SubmitToTab: async () => {},
       SubmitToTabWithID: async () => {},
@@ -222,9 +229,7 @@ await act(async () => {
     handler({ kind: "turn_status", tabId: "tab-a", turnId: "turn-gap", seq: 1, status: "queued" });
     handler({ kind: "turn_status", tabId: "tab-a", turnId: "turn-gap", seq: 3, status: "waiting_user" });
   }
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let step = 0; step < 20; step += 1) await Promise.resolve();
 });
 eq(turnReplayCalls, 1, "sequence gap replays the durable missing prefix once");
 eq(controller?.state.items.find((item) => item.kind === "assistant")?.id, "a:turn-gap", "gap replay keeps the stable turn item id");

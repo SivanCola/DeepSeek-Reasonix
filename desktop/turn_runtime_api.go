@@ -108,30 +108,68 @@ func (a *App) AnswerPromptForTab(tabID, turnID, promptID string, answers []Quest
 	for i, answer := range answers {
 		out[i] = event.AskAnswer{QuestionID: answer.QuestionID, Selected: answer.Selected}
 	}
+	if checked, ok := ctrl.(interface {
+		AnswerQuestionChecked(string, []event.AskAnswer) error
+	}); ok {
+		return checked.AnswerQuestionChecked(promptID, out)
+	}
 	ctrl.AnswerQuestion(promptID, out)
 	return nil
 }
 
 type turnEventReader interface {
-	TurnEventsAfter(after uint64) ([]turnevent.Envelope, error)
+	TurnEventReplay(after uint64) (turnevent.ReplayView, error)
+}
+
+type TurnEventReplayView struct {
+	Events             []turnevent.Envelope `json:"events"`
+	FloorSequence      uint64               `json:"floorSeq"`
+	LatestSequence     uint64               `json:"latestSeq"`
+	NextAfterSequence  uint64               `json:"nextAfterSeq"`
+	HasMore            bool                 `json:"hasMore"`
+	ResetRequired      bool                 `json:"resetRequired"`
+	TranscriptRevision int64                `json:"transcriptRevision,omitempty"`
+	TranscriptDigest   string               `json:"transcriptDigest,omitempty"`
+	RuntimeEpoch       string               `json:"runtimeEpoch,omitempty"`
 }
 
 // TurnEventsForTab supplies the durable suffix used to repair sequence gaps or
 // rebuild after a runtime epoch change.
-func (a *App) TurnEventsForTab(tabID string, afterSeq uint64) ([]turnevent.Envelope, error) {
+func (a *App) TurnEventsForTab(tabID string, afterSeq uint64) (TurnEventReplayView, error) {
+	empty := TurnEventReplayView{Events: []turnevent.Envelope{}}
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if ctrl == nil {
-		return []turnevent.Envelope{}, a.workspaceNotReadyErr(tab)
+		return empty, a.workspaceNotReadyErr(tab)
 	}
 	reader, ok := ctrl.(turnEventReader)
 	if !ok {
-		return []turnevent.Envelope{}, fmt.Errorf("turn event replay is unavailable")
+		return empty, fmt.Errorf("turn event replay is unavailable")
 	}
-	events, err := reader.TurnEventsAfter(afterSeq)
-	if events == nil {
-		events = []turnevent.Envelope{}
+	// Fence the response with the controller generation bound to this exact
+	// controller snapshot. Re-check under the app lock before sampling the sink:
+	// a session rebind between tabAndCtrlByID and this point must not pair an old
+	// controller with the replacement runtime's epoch.
+	epoch := ""
+	a.mu.RLock()
+	bound := tab != nil && a.tabs[tabID] == tab && tab.Ctrl == ctrl
+	if bound && tab.sink != nil {
+		epoch = tab.sink.runtimeEpochSnapshot()
 	}
-	return events, err
+	a.mu.RUnlock()
+	if !bound {
+		return empty, fmt.Errorf("runtime changed while binding turn event replay")
+	}
+	replay, err := reader.TurnEventReplay(afterSeq)
+	if replay.Events == nil {
+		replay.Events = []turnevent.Envelope{}
+	}
+	return TurnEventReplayView{
+		Events: replay.Events, FloorSequence: replay.FloorSequence,
+		LatestSequence: replay.LatestSequence, NextAfterSequence: replay.NextAfterSequence,
+		HasMore: replay.HasMore, ResetRequired: replay.ResetRequired,
+		TranscriptRevision: replay.TranscriptRevision, TranscriptDigest: replay.TranscriptDigest,
+		RuntimeEpoch: epoch,
+	}, err
 }
 
 var _ control.SessionAPI = (*control.Controller)(nil)

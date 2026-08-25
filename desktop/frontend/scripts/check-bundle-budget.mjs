@@ -99,7 +99,10 @@ console.log("\nbundle budgets");
 // 432.28 KiB gzip; keep 0.22 KiB for build-SHA/toolchain drift.
 // Exact-turn routing, the extracted event-gap projector, and the stale-history
 // fence measure 434.01 KiB gzip. Keep 0.39 KiB of build/toolchain headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 434.4 : 434.4;
+// Checkpoint reset, epoch fencing, live-tail queuing, and history-prefix rebase
+// add 0.5 KiB gzip to that same runtime owner. Keep the complete recovery
+// transaction with a narrowly rounded 0.8 KiB (0.18%) ratchet.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 435.2 : 435.2;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -166,6 +169,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // routing, extracted event-gap projection, and stale-history rejection move the
 // post-rebase build to 2365.59 KiB: a 6.30 KiB (0.267%) attributable increase.
 // The 6.91 KiB (0.293%) ratchet keeps 0.61 KiB of explicit headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_366.2 : 2_366.2;
+// The checkpoint reset transaction adds 3.8 KiB raw (0.16%) for replay paging,
+// epoch/release fences, and stable history-prefix rebasing. Retain 0.6 KiB of
+// deterministic build headroom with a 2370.0 KiB ceiling.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_370.0 : 2_370.0;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
