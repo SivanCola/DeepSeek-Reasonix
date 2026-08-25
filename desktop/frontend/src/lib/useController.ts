@@ -209,6 +209,9 @@ export type ControllerLiveStore = {
 };
 export type MessageActionScope = "fork" | "summ-from" | "summ-upto" | "conversation" | "code" | "both";
 export type MessageActionState = { turn: number; scope: MessageActionScope };
+export type HistoryMutationKind = "replace" | "prepend" | "append" | "patch";
+export type HistoryMutation = { seq: number; kind: HistoryMutationKind };
+export type HistoryLoadTrigger = "viewport-user" | "question-jump" | "retry" | "auto-fill";
 export type HydrateReason = "switch-tab" | "new-session" | "resume-session" | "open-topic" | "startup" | "rewind";
 type SyncActiveTabOptions = { preserveCachedHistory?: boolean; navigationIntentSeq?: number; surfacePolicy?: HydrateSurfacePolicy };
 // A ticketed StartTopicActivation in flight. Only the latest one is tracked:
@@ -216,6 +219,9 @@ type SyncActiveTabOptions = { preserveCachedHistory?: boolean; navigationIntentS
 type PendingTopicActivation = {
   requestId: string;
   navigationSeq: number;
+  sourceTabId?: string;
+  sourceTab?: TabMeta;
+  sourceTabPromise?: Promise<TabMeta | undefined>;
   tabId?: string;
   placeholderItems?: Item[];
   surfacePolicy: HydrateSurfacePolicy;
@@ -370,6 +376,7 @@ interface State {
   historyDigest?: string;
   /** Bumped when lazy history content can change already-estimated row sizes. */
   historyLayoutRevision: number;
+  historyMutation: HistoryMutation;
   backendActivationPending: boolean;
   messageAction?: MessageActionState;
   currentAssistant?: string;
@@ -489,6 +496,7 @@ export const initialState: State = {
   historyHasOlder: false,
   historyOlderLoading: false,
   historyLayoutRevision: 0,
+  historyMutation: { seq: 0, kind: "replace" },
   backendActivationPending: false,
   deliveryRecoveryActive: false,
   promptEpoch: 0,
@@ -2064,7 +2072,7 @@ export function reducer(s: State, a: Action): State {
     case "message_action_done": return { ...s, messageAction: undefined };
     case "history": {
       const { items, seq } = historyMessagesToItems(a.messages, "h", s.seq);
-      return { ...s, items: compactArchivedToolItems(items), pendingSubmissionId: undefined, seq, hydrateHistoryLoaded: true, hydratePlaceholderItems: undefined, historyStartTurn: 0, historyTotalTurns: 0, historyHasOlder: false, historyOlderLoading: false, historyOlderError: undefined, historyRevision: undefined, historyDigest: undefined };
+      return { ...s, items: compactArchivedToolItems(items), pendingSubmissionId: undefined, seq, hydrateHistoryLoaded: true, hydratePlaceholderItems: undefined, historyStartTurn: 0, historyTotalTurns: 0, historyHasOlder: false, historyOlderLoading: false, historyOlderError: undefined, historyRevision: undefined, historyDigest: undefined, historyMutation: { seq: s.historyMutation.seq + 1, kind: "replace" } };
     }
     case "history_page": {
       const { items, seq, firstTurn } = historyPageItems(a.page);
@@ -2083,6 +2091,7 @@ export function reducer(s: State, a: Action): State {
         historyOlderError: undefined,
         historyRevision: a.page.revision,
         historyDigest: a.page.digest,
+        historyMutation: { seq: s.historyMutation.seq + 1, kind: a.mode },
       };
     }
     case "history_older_start": return s.historyOlderLoading && !s.historyOlderError ? s : { ...s, historyOlderLoading: true, historyOlderError: undefined };
@@ -2101,6 +2110,7 @@ export function reducer(s: State, a: Action): State {
         historyOlderError: undefined,
         historyRevision: a.revision,
         historyDigest: a.digest,
+        historyMutation: { seq: s.historyMutation.seq + 1, kind: "replace" },
       };
     case "history_prepend": {
       const remove = a.removeIds.length > 0 ? new Set(a.removeIds) : undefined;
@@ -2117,6 +2127,7 @@ export function reducer(s: State, a: Action): State {
         historyOlderError: undefined,
         historyRevision: a.revision,
         historyDigest: a.digest,
+        historyMutation: { seq: s.historyMutation.seq + 1, kind: "prepend" },
       };
     }
     // Ref-resolved full content landed for history items already on screen:
@@ -2130,7 +2141,7 @@ export function reducer(s: State, a: Action): State {
         changed = true;
         return patch;
       });
-      return changed ? { ...s, items: next, historyLayoutRevision: s.historyLayoutRevision + 1 } : s;
+      return changed ? { ...s, items: next, historyLayoutRevision: s.historyLayoutRevision + 1, historyMutation: { seq: s.historyMutation.seq + 1, kind: "patch" } } : s;
     }
     case "local_notice": return { ...s, running: a.preserveRuntime ? s.running : false, turnActive: a.preserveRuntime ? s.turnActive : false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": {
@@ -2190,8 +2201,18 @@ export function reducer(s: State, a: Action): State {
       };
     case "reset": return { ...initialState, meta: metaWithoutCanonicalTodos(s.meta), context: { used: 0, window: s.context.window, sessionTokens: 0, compactRatio: s.context.compactRatio }, balance: s.balance, effort: s.effort, jobs: s.jobs, hydrating: s.hydrating, hydrateReason: s.hydrateReason, hydrateError: s.hydrateError, hydrateHistoryLoaded: s.hydrateHistoryLoaded, hydratePlaceholderItems: s.hydratePlaceholderItems, backendActivationPending: s.backendActivationPending, sessionGen: s.sessionGen + 1, promptEpoch: s.promptEpoch + 1 };
     case "context_panel_refresh": return { ...s, contextPanelSeq: s.contextPanelSeq + 1 };
-    case "event": return applyEvent(s, a.e);
-    case "stream_batch": return applyStreamBatch(s, a.segments);
+    case "event": {
+      const next = applyEvent(s, a.e);
+      return next.items.length > s.items.length
+        ? { ...next, historyMutation: { seq: s.historyMutation.seq + 1, kind: "append" } }
+        : next;
+    }
+    case "stream_batch": {
+      const next = applyStreamBatch(s, a.segments);
+      return next.items.length > s.items.length
+        ? { ...next, historyMutation: { seq: s.historyMutation.seq + 1, kind: "append" } }
+        : next;
+    }
     default: return s;
   }
 }
@@ -3138,7 +3159,7 @@ export function useController() {
     return getTranscriptStore().requestFullContent(tabId, entryId, field);
   }, [ensureTranscriptSubscription]);
 
-  const loadOlderHistory = useCallback(async (tabId?: string, targetTurn?: number): Promise<boolean> => {
+  const loadOlderHistory = useCallback(async (tabId?: string, targetTurn?: number, trigger: HistoryLoadTrigger = "retry"): Promise<boolean> => {
     const targetTabId = tabId || activeTabIdRef.current;
     if (!targetTabId) return false;
     const state = statesRef.current.get(targetTabId);
@@ -3204,7 +3225,7 @@ export function useController() {
       }
       addBreadcrumb(
         "tab.hydrate",
-        `history older ${targetTabId} kind=${result.kind} items=${result.kind === "prepend" ? result.prependItems.length : result.items.length} turns=${result.startTurn}-${result.endTurn}/${result.totalTurns} ms=${Date.now() - startedAt}`,
+        `history older ${targetTabId} trigger=${trigger} kind=${result.kind} items=${result.kind === "prepend" ? result.prependItems.length : result.items.length} turns=${result.startTurn}-${result.endTurn}/${result.totalTurns} ms=${Date.now() - startedAt}`,
       );
       return true;
     } catch (err) {
@@ -3387,6 +3408,61 @@ export function useController() {
   // Events for superseded requestIds (including their "cancelled") are
   // dropped; agent:ready/agent:event handling is untouched and still covers
   // every non-ticketed flow (rebind, recovery, restore, SetActiveTab).
+  const restoreTopicActivationSource = useCallback(async (pending: PendingTopicActivation, targetTabId: string, error?: string) => {
+    const sourceTabId = pending.sourceTabId;
+    if (!sourceTabId || sourceTabId === targetTabId || !statesRef.current.has(sourceTabId)) return;
+    const sourceState = statesRef.current.get(sourceTabId);
+    if (!sourceState) return;
+    let restoredTabId = sourceTabId;
+    let restoredMeta: TabMeta | undefined;
+    const reboundExisting = await app.SetActiveTab(sourceTabId).then(() => true).catch(() => false);
+    if (!reboundExisting) {
+      const sourceTab = pending.sourceTab ?? await pending.sourceTabPromise;
+      if (!sourceTab?.topicId) return;
+      try {
+        restoredMeta = sourceTab.sessionPath
+          ? await app.OpenTopicSession(sourceTab.scope, sourceTab.workspaceRoot, sourceTab.topicId, sourceTab.sessionPath)
+          : await app.ActivateTopic(sourceTab.scope, sourceTab.workspaceRoot, sourceTab.topicId, "");
+        restoredTabId = restoredMeta.id;
+      } catch {
+        return;
+      }
+    }
+    if (!isNavigationIntentCurrent(pending.navigationSeq) || activeTabIdRef.current !== targetTabId) {
+      await reassertVisibleTabAfterStaleNavigation("topic.restore-source", restoredTabId);
+      return;
+    }
+    if (restoredMeta && restoredTabId !== sourceTabId) {
+      ensureTranscriptSubscription(restoredTabId);
+      statesRef.current.set(restoredTabId, {
+        ...sourceState,
+        meta: metaFromTab(restoredMeta, sourceState.meta),
+        hydrating: false,
+        hydrateReason: undefined,
+        hydrateError: undefined,
+        hydrateHistoryLoaded: true,
+        hydratePlaceholderItems: undefined,
+        backendActivationPending: false,
+      });
+      notifyLiveListeners(restoredTabId);
+    }
+    setActiveTabId(restoredTabId);
+    activeTabIdRef.current = restoredTabId;
+    confirmBackendActiveTab(restoredTabId);
+    if (error) dispatchTo(restoredTabId, { type: "local_notice", level: "warn", text: error, preserveRuntime: true });
+    if (restoredMeta && restoredTabId !== sourceTabId) {
+      void loadSessionDataForTab(restoredTabId, false, "open-topic", {
+        placeholderItems: sourceState.items,
+        preserveCachedHistory: false,
+        sessionPath: restoredMeta.sessionPath,
+        sessionRevision: restoredMeta.sessionRevision,
+        sessionDigest: restoredMeta.sessionDigest,
+        sessionGeneration: restoredMeta.sessionGeneration,
+        surfacePolicy: "preserve-current",
+      }).then(() => reconcileTabRuntime(restoredTabId, { hydrateSessionData: false })).catch(() => {});
+    }
+  }, [confirmBackendActiveTab, dispatchTo, ensureTranscriptSubscription, isNavigationIntentCurrent, loadSessionDataForTab, notifyLiveListeners, reassertVisibleTabAfterStaleNavigation, reconcileTabRuntime]);
+
   const handleTopicActivationEvent = useCallback((event: TopicActivationEvent) => {
     const pending = pendingTopicActivationRef.current;
     if (!pending || event.requestId !== pending.requestId) return;
@@ -3402,6 +3478,9 @@ export function useController() {
     if (event.phase === "cancelled") {
       noteActivationSettled(event.requestId, "cancelled");
       if (pendingTopicActivationRef.current === pending) pendingTopicActivationRef.current = undefined;
+      if (pending.tabId && isNavigationIntentCurrent(pending.navigationSeq) && activeTabIdRef.current === pending.tabId) {
+        void restoreTopicActivationSource(pending, pending.tabId);
+      }
       return;
     }
     pendingTopicActivationRef.current = undefined;
@@ -3410,19 +3489,33 @@ export function useController() {
     if (activeTabIdRef.current !== tabId) return;
     if (event.phase === "failed") {
       noteActivationSettled(event.requestId, "failed", event.error);
+      const safeError = t("history.failedOpenSession");
       dispatchTo(tabId, {
         type: "hydrate_error",
         reason: "open-topic",
-        error: event.error?.trim() || "session is not ready",
+        error: safeError,
       });
+      void restoreTopicActivationSource(pending, tabId, safeError);
       return;
     }
     noteActivationSettled(event.requestId, "ready");
     ensureTranscriptSubscription(tabId);
     void loadSessionDataForTab(tabId, true, "open-topic", { placeholderItems: pending.placeholderItems, surfacePolicy: pending.surfacePolicy })
-      .then(() => reconcileTabRuntime(tabId, { hydrateSessionData: false }))
-      .catch(() => {});
-  }, [dispatchTo, ensureTranscriptSubscription, isNavigationIntentCurrent, loadSessionDataForTab, reconcileTabRuntime]);
+      .then(() => {
+        if (!isNavigationIntentCurrent(pending.navigationSeq) || activeTabIdRef.current !== tabId) return;
+        const hydrated = statesRef.current.get(tabId);
+        if (hydrated?.hydrateError) {
+          void restoreTopicActivationSource(pending, tabId, t("history.failedOpenSession"));
+          return;
+        }
+        return reconcileTabRuntime(tabId, { hydrateSessionData: false });
+      })
+      .catch(() => {
+        if (isNavigationIntentCurrent(pending.navigationSeq) && activeTabIdRef.current === tabId) {
+          void restoreTopicActivationSource(pending, tabId, t("history.failedOpenSession"));
+        }
+      });
+  }, [dispatchTo, ensureTranscriptSubscription, isNavigationIntentCurrent, loadSessionDataForTab, reconcileTabRuntime, restoreTopicActivationSource]);
 
   useEffect(() => {
     const textBatch = createRafBatch<StreamDeltaEntry>((batch) => {
@@ -4538,7 +4631,7 @@ export function useController() {
         }
         const tabs = await reconcileTabRuntime(tabId, { hydrateSessionData: false });
         if (!isNavigationIntentCurrent(navigationSeq)) return tabs;
-        await loadSessionDataForTab(tabId, false, "switch-tab", {
+        const hydration = loadSessionDataForTab(tabId, false, "switch-tab", {
           skipHistory: sameSession && hasCachedLiveTurn(statesRef.current.get(tabId)),
           placeholderItems,
           surfacePolicy: preserveTargetSurface ? "preserve-current" : "replace-surface",
@@ -4548,30 +4641,30 @@ export function useController() {
           sessionDigest: targetSessionDigest,
           sessionGeneration: targetSessionGeneration,
         });
-        // The navigation surface is committed by the caller only after the
-        // target history has been applied. This prevents the old surface from
-        // being replaced by an empty target state between SetActiveTab and
-        // the first history page.
-        if (!isNavigationIntentCurrent(navigationSeq)) return tabs;
-        const hydratedTargetState = statesRef.current.get(tabId);
-        if (hydratedTargetState?.hydrateError) {
-          noteActivationSettled(switchRequestId, "failed", hydratedTargetState.hydrateError);
-          // History loading errors are reported by loadSessionDataForTab as a
-          // state error rather than a rejected promise. Rebind the backend and
-          // visible tab to the previous session so the retained transcript can
-          // remain on screen while the user retries.
-          if (previousTabId && activeTabIdRef.current === tabId && isNavigationIntentCurrent(navigationSeq)) {
-            await app.SetActiveTab(previousTabId).catch(() => undefined);
-            // A newer click may arrive while the backend rebind is in flight.
-            // Do not let this stale failure restore the old frontend selection
-            // after that intent has already won.
-            if (!isNavigationIntentCurrent(navigationSeq) || activeTabIdRef.current !== tabId) return tabs;
-            setActiveTabId(previousTabId);
-            activeTabIdRef.current = previousTabId;
+        // Release the click queue as soon as activation has yielded its target.
+        // Hydration continues independently; the App-level surface transaction
+        // retains the source until this target commits data and paint.
+        void hydration.then(async () => {
+          if (!isNavigationIntentCurrent(navigationSeq)) return;
+          const hydratedTargetState = statesRef.current.get(tabId);
+          if (hydratedTargetState?.hydrateError) {
+            noteActivationSettled(switchRequestId, "failed", hydratedTargetState.hydrateError);
+            if (previousTabId && activeTabIdRef.current === tabId) {
+              await app.SetActiveTab(previousTabId).catch(() => undefined);
+              if (!isNavigationIntentCurrent(navigationSeq) || activeTabIdRef.current !== tabId) return;
+              setActiveTabId(previousTabId);
+              activeTabIdRef.current = previousTabId;
+              confirmBackendActiveTab(previousTabId);
+            }
+            return;
           }
-          return tabs;
-        }
-        noteActivationSettled(switchRequestId, "ready");
+          noteActivationSettled(switchRequestId, "ready");
+        }).catch((err) => {
+          noteActivationSettled(switchRequestId, "failed", errorMessage(err));
+          if (isNavigationIntentCurrent(navigationSeq)) {
+            dispatchTo(tabId, { type: "hydrate_error", reason: "switch-tab", error: errorMessage(err) });
+          }
+        });
         return tabs;
       })
       .catch((err) => {
@@ -4671,8 +4764,17 @@ export function useController() {
     // pending ticket before the call so synchronously-emitted events match.
     topicActivationSeqRef.current += 1;
     const pending: PendingTopicActivation = {
-      requestId: `fe-act-${Date.now()}-${topicActivationSeqRef.current}`, navigationSeq, surfacePolicy: "replace-surface",
+      requestId: `fe-act-${Date.now()}-${topicActivationSeqRef.current}`,
+      navigationSeq,
+      sourceTabId: activeTabIdRef.current,
+      surfacePolicy: "replace-surface",
     };
+    if (pending.sourceTabId) {
+      pending.sourceTabPromise = app.ListTabs()
+        .then((tabs) => asArray(tabs).find((tab) => tab.id === pending.sourceTabId))
+        .catch(() => undefined);
+      void pending.sourceTabPromise.then((tab) => { pending.sourceTab = tab; });
+    }
     pendingTopicActivationRef.current = pending;
     noteActivationRequested(pending.requestId);
     const ticket = await app.StartTopicActivation({
@@ -4704,21 +4806,16 @@ export function useController() {
     const sameSession = sameSessionHydrateIdentity(meta, previousSurface?.meta);
     const prevItems = sameSessionPlaceholderItems(meta, previousSurface);
     pending.placeholderItems = prevItems; pending.surfacePolicy = sameSession ? "preserve-current" : "replace-surface";
-    for (const id of Array.from(statesRef.current.keys())) {
-      if (id !== meta.id) {
-        invalidateProviderStateForTab(id);
-        disposeComposerProfileState(id);
-        statesRef.current.delete(id);
-        releaseTranscriptState(id);
-      }
-    }
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
     noteActivationStarted(pending.requestId, meta.id);
     dispatchTo(meta.id, { type: "optimistic_meta", meta: metaFromTab(meta, statesRef.current.get(meta.id)?.meta) });
-    dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
     if (!sameSession) dispatchTo(meta.id, { type: "reset" });
+    // A new-surface reset clears volatile runtime flags. Publish the ticket's
+    // authoritative running state afterwards so a reattached live session
+    // cannot briefly become idle depending on React's reducer scheduling.
+    dispatchRuntimeStatusForTab(meta.id, meta, snapshotAt);
     // Ready hydrates; only same-session items are a safe placeholder.
     dispatchTo(meta.id, { type: "hydrate_start", reason: "open-topic", placeholderItems: prevItems });
     if (pending.terminal && pendingTopicActivationRef.current === pending) {
@@ -4726,7 +4823,7 @@ export function useController() {
       handleTopicActivationEvent(pending.terminal);
     }
     return meta;
-  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, disposeComposerProfileState, handleTopicActivationEvent, invalidateProviderStateForTab, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation, releaseTranscriptState]);
+  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, handleTopicActivationEvent, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation]);
 
   // Ensure a blank tab exists for the given scope — reuses an existing one
   // or creates a new tab, then loads its session data.
@@ -4762,14 +4859,6 @@ export function useController() {
       await reassertVisibleTabAfterStaleNavigation("surface.ensure-blank", meta.id);
       return meta;
     }
-    for (const id of Array.from(statesRef.current.keys())) {
-      if (id !== meta.id) {
-        invalidateProviderStateForTab(id);
-        disposeComposerProfileState(id);
-        statesRef.current.delete(id);
-        releaseTranscriptState(id);
-      }
-    }
     setActiveTabId(meta.id);
     activeTabIdRef.current = meta.id;
     confirmBackendActiveTab(meta.id);
@@ -4779,7 +4868,7 @@ export function useController() {
       .then(() => reconcileTabRuntime(meta.id, { hydrateSessionData: false }))
       .catch(() => {});
     return meta;
-  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, disposeComposerProfileState, invalidateProviderStateForTab, loadSessionDataForTab, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation, reconcileTabRuntime, releaseTranscriptState]);
+  }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation, reconcileTabRuntime]);
 
   const createIsolatedWorktree = useCallback(async (workspaceRoot: string, navigationIntentSeq?: number): Promise<DeliveryWorktreeOpenResult> => {
     const navigationSeq = navigationIntentSeq ?? beginActiveNavigation();
@@ -4806,6 +4895,19 @@ export function useController() {
     else void load;
     return result;
   }, [beginActiveNavigation, confirmBackendActiveTab, dispatchRuntimeStatusForTab, dispatchTo, loadSessionDataForTab, navigationCompletionCurrent, reassertVisibleTabAfterStaleNavigation, reconcileTabRuntime]);
+
+  const commitSingleSurfaceNavigation = useCallback((tabId: string) => {
+    if (!tabId || activeTabIdRef.current !== tabId) return false;
+    for (const id of Array.from(statesRef.current.keys())) {
+      if (id === tabId) continue;
+      invalidateProviderStateForTab(id);
+      disposeComposerProfileState(id);
+      statesRef.current.delete(id);
+      releaseTranscriptState(id);
+      notifyLiveListeners(id);
+    }
+    return true;
+  }, [disposeComposerProfileState, invalidateProviderStateForTab, notifyLiveListeners, releaseTranscriptState]);
 
   const closeTab = useCallback(async (
     tabId: string,
@@ -4845,7 +4947,7 @@ export function useController() {
     requestHistoryFullContent,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, rewindForTab, rewindForTabDetailed, undoRewindForTab, setModel, setEffort, cancelJob,
     fetchMemory, remember, forget, saveDoc,
-    switchTab, openProjectTab, openGlobalTab, openTopicSession, ensureBlankTab, activateTopic, ensureBlankSurface, createIsolatedWorktree, closeTab, reorderTabs,
+    switchTab, openProjectTab, openGlobalTab, openTopicSession, ensureBlankTab, activateTopic, ensureBlankSurface, createIsolatedWorktree, commitSingleSurfaceNavigation, closeTab, reorderTabs,
     // Invalidate in-flight navigation completions (activateTopic's stale
     // guard) from outside the hook. The App-level navigation queue must call
     // this at ENQUEUE time: a queued click does not run — and so does not

@@ -33,7 +33,7 @@ import { useWailsResizeFix } from "./lib/useWailsResizeFix";
 import { asArray } from "./lib/array";
 import { createBoundedRefreshCoordinator, sameTabMetaLists, shouldRefreshTabMetaForEvent, TAB_META_MAX_IN_FLIGHT } from "./lib/tabMetaRefresh";
 import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n, useT, type Translator } from "./lib/i18n";
-import { localizedNoticeText, useController, type Item, type LiveStream } from "./lib/useController";
+import { localizedNoticeText, useController, type HistoryLoadTrigger, type Item, type LiveStream } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRemoteForwards, onRemoteServer, onRemoteStatus, onRuntimeRebuilt, onSessionRecovered, openExternal } from "./lib/bridge";
 import { useConfigLoadWarnings } from "./lib/useConfigLoadWarnings";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
@@ -172,7 +172,13 @@ import { recordFrontendDiagnostic } from "./lib/frontendDiagnosticBridge";
 import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems, type StatusBarItemId } from "./lib/statusBarItems";
 import { paletteSessionDisplayTitle, paletteSessionHint, paletteSessionKeywords, sessionActivityTime } from "./lib/session";
 import { enqueueNavigationRequest, type PendingNavigationRequest } from "./lib/openTopicCoalescing";
-import { guardBackendNavigationResult, settleNavigationSurfaceIntent } from "./lib/navigationSurfaceTransition";
+import {
+  beginNavigationSurfaceState,
+  guardBackendNavigationResult,
+  markNavigationTargetMasked,
+  settleNavigationSurfaceState,
+  type NavigationSurfaceState,
+} from "./lib/navigationSurfaceTransition";
 import {
   applyTheme,
   clearLegacyThemePreference,
@@ -1109,6 +1115,7 @@ export default function App() {
     syncActiveTab,
     ensureBlankTab,
     ensureBlankSurface,
+    commitSingleSurfaceNavigation,
   } = useController();
   const { locale, setPref: setLocalePref } = useI18n();
   const t = useT();
@@ -1117,7 +1124,8 @@ export default function App() {
   const userPlanModeByTabRef = useRef<UserPlanModeIntents>({});
   const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
   const [tabOrderIds, setTabOrderIds] = useState<string[]>([]);
-  const [navigationSurfaceIntent, setNavigationSurfaceIntent] = useState<number | null>(null);
+  const [navigationSurface, setNavigationSurface] = useState<NavigationSurfaceState>(null);
+  const navigationSurfaceIntent = navigationSurface?.intent ?? null;
   type PreservedTranscriptSurface = {
     tabId?: string;
     items: Item[];
@@ -1126,7 +1134,7 @@ export default function App() {
   const [preservedTranscriptSurface, setPreservedTranscriptSurface] = useState<PreservedTranscriptSurface | null>(null);
   const renderedTranscriptSurfaceRef = useRef<PreservedTranscriptSurface | null>(null);
   const beginNavigationSurface = useCallback((intent: number) => {
-    recordFrontendDiagnostic("navigation", "navigation.begin", { phase: "begin" });
+    recordFrontendDiagnostic("navigation", "navigation.begin", { intent, phase: "begin" });
     const rendered = renderedTranscriptSurfaceRef.current;
     flushSync(() => {
       if (rendered && rendered.items.length > 0) {
@@ -1134,13 +1142,18 @@ export default function App() {
       } else {
         setPreservedTranscriptSurface(null);
       }
-      setNavigationSurfaceIntent(intent);
+      setNavigationSurface(beginNavigationSurfaceState(intent));
     });
   }, []);
   const settleNavigationSurface = useCallback((intent: number) => {
-    recordFrontendDiagnostic("navigation", "navigation.settle", { phase: "settle" });
-    setNavigationSurfaceIntent((current) => {
-      const next = settleNavigationSurfaceIntent(current, intent);
+    setNavigationSurface((current) => markNavigationTargetMasked(current, intent));
+  }, []);
+  const commitNavigationSurfacePaint = useCallback((intent: number, outcome: "ready" | "degraded") => {
+    recordFrontendDiagnostic("navigation", "navigation.paint-ready", { intent, outcome });
+    recordFrontendDiagnostic("navigation", "navigation.terminal", { intent, outcome });
+    recordFrontendDiagnostic("navigation", "navigation.settle", { intent, phase: "paint-ready", outcome });
+    setNavigationSurface((current) => {
+      const next = settleNavigationSurfaceState(current, intent);
       if (next === null) setPreservedTranscriptSurface(null);
       return next;
     });
@@ -1773,6 +1786,26 @@ export default function App() {
   const collaborationMode = displayedComposerProfileCollaborationMode(composerProfile);
   const toolApprovalMode = composerProfile.toolApprovalMode;
   const runtimeTransitioning = navigationSurfaceIntent !== null;
+  const navigationTargetDataReady = Boolean(
+    navigationSurface?.phase === "target-masked" &&
+    activeTabId &&
+    state.meta?.ready === true &&
+    !state.backendActivationPending &&
+    !state.hydrating,
+  );
+  const navigationDataReadyIntentRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!navigationTargetDataReady || navigationSurfaceIntent === null) return;
+    if (navigationDataReadyIntentRef.current === navigationSurfaceIntent) return;
+    navigationDataReadyIntentRef.current = navigationSurfaceIntent;
+    recordFrontendDiagnostic("navigation", "navigation.target-mounted", {
+      intent: navigationSurfaceIntent,
+    });
+    recordFrontendDiagnostic("navigation", "navigation.data-ready", {
+      intent: navigationSurfaceIntent,
+      outcome: "ready",
+    });
+  }, [navigationSurfaceIntent, navigationTargetDataReady]);
   const controllerReady =
     state.meta?.ready === true &&
     (!state.meta.runtime || state.meta.runtime.phase === "ready") &&
@@ -3485,9 +3518,10 @@ export default function App() {
     !transcriptHydrating &&
     !hydratePlaceholderActive;
   const transcriptItems = hydratePlaceholderActive ? state.hydratePlaceholderItems! : state.items;
-  const handleLoadOlderHistory = useCallback((targetTurn?: number) => (
-    activeTabId ? loadOlderHistory(activeTabId, targetTurn) : Promise.resolve(false)
-  ), [activeTabId, loadOlderHistory]);
+  const handleLoadOlderHistory = useCallback((targetTurn?: number, trigger: HistoryLoadTrigger = "retry") => {
+    recordFrontendDiagnostic("history", "history.older-request", { trigger });
+    return activeTabId ? loadOlderHistory(activeTabId, targetTurn, trigger) : Promise.resolve(false);
+  }, [activeTabId, loadOlderHistory]);
 
   // Display items: backend history is authoritative after immediate commit.
   // rewindState only drives the undo banner, not optimistic truncation.
@@ -3503,12 +3537,23 @@ export default function App() {
       geometrySessionKey: transcriptGeometrySessionKey,
     };
   }
-  const visibleTranscriptSurface = runtimeTransitioning && preservedTranscriptSurface
+  const visibleTranscriptSurface = runtimeTransitioning && !navigationTargetDataReady && preservedTranscriptSurface
     ? preservedTranscriptSurface
     : null;
   const visibleTranscriptItems = visibleTranscriptSurface?.items ?? displayItems;
   const visibleTranscriptTabId = visibleTranscriptSurface?.tabId ?? activeTabId;
   const visibleTranscriptGeometryKey = visibleTranscriptSurface?.geometrySessionKey ?? transcriptGeometrySessionKey;
+  const surfaceCommitToken = navigationTargetDataReady && navigationSurfaceIntent !== null
+    ? `navigation-${navigationSurfaceIntent}-${activeTabId ?? "blank"}`
+    : undefined;
+  const handleSurfacePaintReady = useCallback((token: string, outcome: "ready" | "degraded") => {
+    const match = /^navigation-(\d+)-/.exec(token);
+    if (!match) return;
+    const intent = Number(match[1]);
+    if (navigationSurface?.intent !== intent) return;
+    if (singleSurfaceLayout && activeTabId) commitSingleSurfaceNavigation(activeTabId);
+    commitNavigationSurfacePaint(intent, outcome);
+  }, [activeTabId, commitNavigationSurfacePaint, commitSingleSurfaceNavigation, navigationSurface?.intent, singleSurfaceLayout]);
   const latestGuidanceConsumed = useMemo(() => {
     for (let i = state.items.length - 1; i >= 0; i--) {
       const item = state.items[i];
@@ -4919,12 +4964,13 @@ export default function App() {
                       running={state.running || rewindCommitting}
                       turnStartAt={state.turnStartAt}
                       contentRevision={state.historyLayoutRevision}
+                      historyMutation={state.historyMutation}
                       welcomeVariant={sidebarCreation ? "creation" : "default"}
                       creationMode={sidebarCreation}
                       actionHoverMenus={sidebarCreation && !hydratePlaceholderActive && !runtimeTransitioning}
                       rewindSignal={rewindSignal}
                       revealSignal={transcriptRevealSignal}
-                      hydrating={runtimeTransitioning || transcriptHydrating}
+                      hydrating={transcriptHydrating || (runtimeTransitioning && !navigationTargetDataReady)}
                       hasOlderHistory={!runtimeTransitioning && state.historyHasOlder && !rewindState}
                       historyStartTurn={state.historyStartTurn}
                       historyTotalTurns={state.historyTotalTurns}
@@ -4932,6 +4978,8 @@ export default function App() {
                       olderHistoryError={state.historyOlderError}
                       onLoadOlderHistory={handleLoadOlderHistory}
                       invocationMetadata={visibleTranscriptTabId ? invocationMetadataByTab[visibleTranscriptTabId] : undefined}
+                      surfaceCommitToken={surfaceCommitToken}
+                      onSurfacePaintReady={handleSurfacePaintReady}
                     />
                   </div>
                   {runtimeTransitioning ? (
@@ -5115,10 +5163,14 @@ export default function App() {
             <div
               className={[
                 "composer-decision-host",
-                composerSurfaceHidden ? "composer-decision-host--hidden" : "",
+                runtimeTransitioning
+                  ? "composer-decision-host--footprint-hidden"
+                  : composerSurfaceHidden
+                    ? "composer-decision-host--hidden"
+                    : "",
                 creationEmptyHero ? "composer-decision-host--creation-hero" : "",
               ].filter(Boolean).join(" ")}
-              hidden={composerSurfaceHidden || undefined}
+              hidden={(!runtimeTransitioning && composerSurfaceHidden) || undefined}
               inert={composerSurfaceHidden ? true : undefined}
               aria-hidden={composerSurfaceHidden ? true : undefined}
             >

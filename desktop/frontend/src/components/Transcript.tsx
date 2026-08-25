@@ -1,6 +1,6 @@
 import { lazy, Suspense, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type TouchEvent as ReactTouchEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type WheelEvent as ReactWheelEvent } from "react";
 import { Virtuoso, type ListItem } from "react-virtuoso";
-import type { ControllerLiveStore, Item, LiveStream } from "../lib/useController";
+import type { ControllerLiveStore, HistoryLoadTrigger, HistoryMutation, Item, LiveStream } from "../lib/useController";
 import type { CheckpointMeta, WireCompletionSummary } from "../lib/types";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
 import { useT } from "../lib/i18n";
@@ -60,6 +60,7 @@ import { TranscriptLayoutIntentProvider, TranscriptScrollWriteProvider } from ".
 import { MarkdownImageTabContext } from "./MarkdownImageContext";
 import { recordTranscriptScrollDiagnostic } from "../lib/transcriptScrollProbe";
 import { recordFrontendDiagnostic } from "../lib/frontendDiagnosticBridge";
+import { advanceSurfacePaintCommit, type SurfacePaintProgress } from "../lib/navigationSurfaceTransition";
 import { useTranscriptQuestionJump, useTranscriptQuestions } from "../lib/useTranscriptQuestionNavigation";
 import {
   LiveAssistantMessage,
@@ -129,6 +130,9 @@ export function Transcript({
   turnStartAt,
   contentRevision = 0,
   invocationMetadata = EMPTY_INVOCATION_METADATA,
+  historyMutation,
+  surfaceCommitToken,
+  onSurfacePaintReady,
 }: {
   items: Item[];
   live?: LiveStream;
@@ -160,10 +164,13 @@ export function Transcript({
   historyTotalTurns?: number;
   loadingOlderHistory?: boolean;
   olderHistoryError?: string;
-  onLoadOlderHistory?: (targetTurn?: number) => boolean | Promise<boolean>;
+  onLoadOlderHistory?: (targetTurn?: number, trigger?: HistoryLoadTrigger) => boolean | Promise<boolean>;
   turnStartAt?: number;
   contentRevision?: number;
   invocationMetadata?: InvocationMetadataMap;
+  historyMutation?: HistoryMutation;
+  surfaceCommitToken?: string;
+  onSurfacePaintReady?: (token: string, outcome: "ready" | "degraded") => void;
 }) {
   const t = useT();
   const subscribeLive = useCallback(
@@ -177,6 +184,11 @@ export function Transcript({
   const live = useSyncExternalStore(subscribeLive, getLiveSnapshot, getLiveSnapshot);
   const layoutSurfaceKey = `${tabId ?? ""}:${revealSignal}`;
   const resolvedGeometrySessionKey = geometrySessionKey || `tab:${tabId ?? "preview"}`;
+  const surfacePaintRenderedTokenRef = useRef<string | null>(null);
+  const surfacePaintTerminalTokenRef = useRef<string | null>(null);
+  const [surfacePaintRenderSeq, setSurfacePaintRenderSeq] = useState(0);
+  const [surfacePaintReadySurfaceKey, setSurfacePaintReadySurfaceKey] = useState<string | null>(null);
+  useEffect(() => setSurfacePaintReadySurfaceKey(null), [layoutSurfaceKey]);
   // Transcript survives tab switches; the bounded LRU therefore survives
   // reveal resets while the Virtuoso view state still resets independently.
   const measuredSizes = useMemo(() => createTranscriptMeasuredSizes(), []);
@@ -507,6 +519,22 @@ export function Transcript({
     cancelStreamingScroll: cancelStreamingAndFollow,
   });
   const clearTranscriptSelection = selectionRetention.clear;
+  const olderHistoryPermitRef = useRef(0);
+  const autoFillPageCountRef = useRef(0);
+  const autoFillInFlightRef = useRef(false);
+  const touchStartYRef = useRef<number | null>(null);
+  useEffect(() => {
+    olderHistoryPermitRef.current = 0;
+    autoFillPageCountRef.current = 0;
+    autoFillInFlightRef.current = false;
+    touchStartYRef.current = null;
+  }, [layoutSurfaceKey]);
+  const grantOlderHistoryPermit = useCallback(() => {
+    // One unconsumed viewport permit prevents a wheel burst from turning one
+    // gesture into a page cascade after each prepend reaches startReached.
+    olderHistoryPermitRef.current = 1;
+    recordFrontendDiagnostic("history", "history.viewport-permit");
+  }, []);
   // User scroll intent is reported to the layout-integrity hook (idle gating
   // for the blank watchdog) and to the scroll arbiter itself, which preempts
   // any in-flight recovery restore on its own intent events (#8657/#8688
@@ -516,27 +544,42 @@ export function Transcript({
     if (accepted) {
       if (SHOW_SCROLL_DIAGNOSTICS) recordTranscriptScrollDiagnostic("wheel", { deltaY: event.deltaY });
       noteUserScrollIntent();
+      if (event.deltaY < 0) grantOlderHistoryPermit();
     }
     return accepted;
-  }, [noteUserScrollIntent, onWheelIntent]);
+  }, [grantOlderHistoryPermit, noteUserScrollIntent, onWheelIntent]);
   const onTouchStartIntentWithRecovery = useCallback((event: ReactTouchEvent<HTMLElement>) => {
+    touchStartYRef.current = event.touches[0]?.clientY ?? null;
     onTouchStartIntent(event);
   }, [onTouchStartIntent]);
   const onTouchMoveIntentWithRecovery = useCallback((event: ReactTouchEvent<HTMLElement>) => {
     const accepted = onTouchMoveIntent(event);
-    if (accepted) noteUserScrollIntent();
+    if (accepted) {
+      noteUserScrollIntent();
+      const currentY = event.touches[0]?.clientY;
+      if (currentY !== undefined && touchStartYRef.current !== null && currentY > touchStartYRef.current) {
+        grantOlderHistoryPermit();
+      }
+      if (currentY !== undefined) touchStartYRef.current = currentY;
+    }
     return accepted;
-  }, [noteUserScrollIntent, onTouchMoveIntent]);
+  }, [grantOlderHistoryPermit, noteUserScrollIntent, onTouchMoveIntent]);
   const onKeyScrollIntentWithRecovery = useCallback((event: ReactKeyboardEvent<HTMLElement>) => {
     const accepted = onKeyScrollIntent(event);
-    if (accepted) noteUserScrollIntent();
+    if (accepted) {
+      noteUserScrollIntent();
+      if (event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home") grantOlderHistoryPermit();
+    }
     return accepted;
-  }, [noteUserScrollIntent, onKeyScrollIntent]);
+  }, [grantOlderHistoryPermit, noteUserScrollIntent, onKeyScrollIntent]);
   const onPointerDownIntentWithRecovery = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const accepted = onPointerDownIntent(event);
-    if (accepted) noteUserScrollIntent();
+    if (accepted) {
+      noteUserScrollIntent();
+      grantOlderHistoryPermit();
+    }
     return accepted;
-  }, [noteUserScrollIntent, onPointerDownIntent]);
+  }, [grantOlderHistoryPermit, noteUserScrollIntent, onPointerDownIntent]);
   const scrollInteractions = useTranscriptScrollInteractions({
     scrollElement,
     cancelStreamingScroll: cancelStreamingAutoScroll,
@@ -634,7 +677,6 @@ export function Transcript({
     loadingOlderHistory,
     olderHistoryError,
     running,
-    suppressAutoComplete: hydrating,
     onLoadOlderHistory,
     clearTranscriptSelection,
     invalidateAnchors,
@@ -642,6 +684,43 @@ export function Transcript({
     setActiveQuestion,
     rewindSignal,
   });
+  const handleViewportEarlierHistoryReached = useCallback(() => {
+    if (hydrating || olderHistoryPermitRef.current <= 0) return;
+    olderHistoryPermitRef.current -= 1;
+    void handleEarlierHistoryReached();
+  }, [handleEarlierHistoryReached, hydrating]);
+  useEffect(() => {
+    if (surfacePaintReadySurfaceKey !== layoutSurfaceKey
+      || hydrating || !hasOlderHistory || loadingOlderHistory || olderHistoryError || running || !onLoadOlderHistory) return;
+    let frame: number | null = null;
+    let cancelled = false;
+    let attempts = 0;
+    const probeStableShortSurface = () => {
+      frame = null;
+      if (cancelled) return;
+      attempts += 1;
+      const element = scrollRef.current;
+      if (!element || !virtuosoReadyRef.current || layoutTransientRef.current) {
+        // The initial placement coordinator may stay transient for several
+        // frames while Virtuoso measures the first page. Wait for its real
+        // terminal geometry instead of treating mount/startReached as intent.
+        if (attempts < 180) frame = requestAnimationFrame(probeStableShortSurface);
+        return;
+      }
+      if (hasTranscriptScrollableRange(element)
+        || autoFillInFlightRef.current || autoFillPageCountRef.current >= 3) return;
+      autoFillInFlightRef.current = true;
+      autoFillPageCountRef.current += 1;
+      void Promise.resolve(onLoadOlderHistory(undefined, "auto-fill")).finally(() => {
+        autoFillInFlightRef.current = false;
+      });
+    };
+    frame = requestAnimationFrame(probeStableShortSurface);
+    return () => {
+      cancelled = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [hasOlderHistory, historyStartTurn, hydrating, layoutSurfaceKey, loadingOlderHistory, olderHistoryError, onLoadOlderHistory, running, scrollRef, surfacePaintReadySurfaceKey, surfacePaintRenderSeq, virtualRows.length]);
 
   // The jump-bottom click is explicit user intent: it outranks any in-flight
   // recovery anchor restore and ends a stale selection gesture whose
@@ -873,13 +952,75 @@ export function Transcript({
         setHoldingLiveRegion(false);
       }
     }
-  }, [handleRecoveryItemsRendered, holdingLiveRegion, scheduleActiveQuestionSync, selectionRetention.reconcileLogicalFocus, virtualRows.length]);
+    if (rendered.length > 0 && surfaceCommitToken && surfacePaintRenderedTokenRef.current !== surfaceCommitToken) {
+      surfacePaintRenderedTokenRef.current = surfaceCommitToken;
+      setSurfacePaintRenderSeq((value) => value + 1);
+    }
+  }, [handleRecoveryItemsRendered, holdingLiveRegion, layoutSurfaceKey, scheduleActiveQuestionSync, selectionRetention.reconcileLogicalFocus, surfaceCommitToken, virtualRows.length]);
+
+  const prependLayoutTransientRef = useRef(false);
+  useEffect(() => {
+    if (historyMutation?.kind !== "prepend") return;
+    prependLayoutTransientRef.current = true;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        prependLayoutTransientRef.current = false;
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      prependLayoutTransientRef.current = false;
+    };
+  }, [historyMutation?.kind, historyMutation?.seq]);
 
   const handleTotalListHeightChanged = useCallback((height: number) => {
     if (SHOW_SCROLL_DIAGNOSTICS) recordTranscriptScrollDiagnostic("list-height", { listHeight: height });
-    if (hydrating) return;
+    if (hydrating || prependLayoutTransientRef.current) return;
     followGrowingTail();
   }, [followGrowingTail, hydrating]);
+
+  useEffect(() => {
+    const token = surfaceCommitToken;
+    if (!token || hydrating || !onSurfacePaintReady || surfacePaintTerminalTokenRef.current === token) return;
+    let frame: number | null = null;
+    let cancelled = false;
+    let progress: SurfacePaintProgress = { attempts: 0, stableFrames: 0 };
+    const emptySurface = virtualRows.length === 0;
+    const finish = (outcome: "ready" | "degraded") => {
+      if (cancelled || surfacePaintTerminalTokenRef.current === token) return;
+      surfacePaintTerminalTokenRef.current = token;
+      recordFrontendDiagnostic("transcript", "transcript.initial-placement-terminal", {
+        intent: Number(/^navigation-(\d+)-/.exec(token)?.[1] ?? 0),
+        outcome,
+      });
+      setSurfacePaintReadySurfaceKey(layoutSurfaceKey);
+      onSurfacePaintReady(token, outcome);
+    };
+    const tick = () => {
+      frame = null;
+      if (cancelled) return;
+      const element = scrollRef.current;
+      const rendered = emptySurface || surfacePaintRenderedTokenRef.current === token;
+      const placementReady = emptySurface
+        ? Boolean(element)
+        : Boolean(element && virtuosoReadyRef.current && !layoutTransientRef.current);
+      const bottomReady = !element ||
+        element.scrollHeight - element.scrollTop - element.clientHeight <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
+      const decision = advanceSurfacePaintCommit(progress, { rendered, placementReady, geometryReady: bottomReady });
+      progress = decision.progress;
+      if (decision.outcome) {
+        finish(decision.outcome);
+        return;
+      }
+      if (decision.requestRecovery) scheduleBlankViewportCheck();
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [hydrating, layoutSurfaceKey, layoutTransientRef, onSurfacePaintReady, scheduleBlankViewportCheck, scrollRef, surfaceCommitToken, surfacePaintRenderSeq, virtualRows.length]);
 
   const virtuosoContext = useMemo<TranscriptVirtuosoContext>(() => ({
     tabId,
@@ -1001,7 +1142,7 @@ export function Transcript({
               : { top: 480, bottom: 480 }}
             scrollerRef={handleScrollerRef}
             itemsRendered={handleItemsRendered}
-            startReached={handleEarlierHistoryReached}
+            startReached={handleViewportEarlierHistoryReached}
             totalListHeightChanged={handleTotalListHeightChanged}
             itemContent={renderVirtuosoRow}
             onScroll={handleTranscriptScroll}

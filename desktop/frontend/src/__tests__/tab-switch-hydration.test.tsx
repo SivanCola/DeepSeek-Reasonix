@@ -785,6 +785,10 @@ await waitFor("single-surface activation replaces visible tab", () =>
   (controller.state.items.some((item) => item.kind === "user" && item.text === "history G") ?? false)
 );
 await act(async () => {
+  controller?.commitSingleSurfaceNavigation("tab-g");
+  await flushPromises();
+});
+await act(async () => {
   metaH.resolve({ ...metaFor(tabH), label: "stale-model-tab-h" });
   await metaH.promise;
   await flushPromises();
