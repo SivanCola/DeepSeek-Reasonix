@@ -68,6 +68,11 @@ func (c *Catalog) ReconcileDirectory(ctx context.Context, target DirectoryTarget
 		}
 		runtime.Gosched()
 	}
+	records, err = c.preserveKnownSourceStates(ctx, target.Path, records)
+	if err != nil {
+		c.failDirectoryScan(context.Background(), target.Path, err)
+		return err
+	}
 	for i := range records {
 		records[i] = classifyRecoveryLineageFromContent(normalizeSessionRecord(records[i]))
 	}
@@ -618,151 +623,6 @@ func (c *Catalog) finishDirectoryScan(ctx context.Context, target DirectoryTarge
 	c.status.State = StateReady
 	c.status.LastError = ""
 	c.statusMu.Unlock()
-	return nil
-}
-
-func (c *Catalog) enqueueRepair(path string) {
-	if c == nil || c.opts.DisableRepair || strings.TrimSpace(path) == "" {
-		return
-	}
-	if _, loaded := c.repairQueued.LoadOrStore(path, struct{}{}); loaded {
-		return
-	}
-	select {
-	case c.repairCh <- path:
-	case <-c.stop:
-		c.repairQueued.Delete(path)
-	default:
-		// Channel pressure must never permanently drop unknown rows. Leave them
-		// in the DB and clear the in-memory marker so the drain ticker requeues.
-		c.repairQueued.Delete(path)
-	}
-}
-
-func (c *Catalog) enqueuePersistedRepairs(ctx context.Context) {
-	c.drainUnknownRepairs(ctx, c.opts.QueueCapacity)
-}
-
-// drainUnknownRepairs pulls the next batch of turns_state=unknown paths from the
-// durable projection. Combined with the repair ticker this gives eventual
-// completeness even when more than QueueCapacity sessions need repair.
-func (c *Catalog) drainUnknownRepairs(ctx context.Context, limit int) {
-	if c == nil || c.db == nil || c.opts.DisableRepair || limit <= 0 {
-		return
-	}
-	if err := ctx.Err(); err != nil {
-		return
-	}
-	rows, err := c.db.QueryContext(ctx, `SELECT path FROM catalog_sessions
-        WHERE turns_state='unknown' ORDER BY last_activity_at DESC LIMIT ?`, limit)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var path string
-		if rows.Scan(&path) == nil {
-			c.enqueueRepair(path)
-		}
-	}
-}
-
-func (c *Catalog) repairLoop() {
-	defer c.workers.Done()
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case path := <-c.repairCh:
-			c.repairSession(c.workerCtx, path)
-			c.repairQueued.Delete(path)
-			c.drainUnknownRepairs(c.workerCtx, 32)
-			runtime.Gosched()
-		case <-ticker.C:
-			c.drainUnknownRepairs(c.workerCtx, 64)
-		case <-c.stop:
-			return
-		}
-	}
-}
-
-func (c *Catalog) repairSession(workerCtx context.Context, path string) {
-	if workerCtx.Err() != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(workerCtx, 30*time.Second)
-	defer cancel()
-	// LoadSessionDisplayMessages is not yet context-aware; check before/after.
-	msgs, _, _, err := agent.LoadSessionDisplayMessages(path)
-	if ctx.Err() != nil || workerCtx.Err() != nil {
-		return
-	}
-	if err != nil {
-		_ = c.applyRepairResult(ctx, path, "", 0, false, "repair_corrupt")
-		return
-	}
-	preview, turns := agent.SessionPreviewFromMessages(msgs)
-	if err := agent.UpdateBranchMeta(path, false, func(meta *agent.BranchMeta) error {
-		meta.Preview = preview
-		meta.Turns = turns
-		meta.SchemaVersion = agent.BranchMetaCountsVersion
-		return nil
-	}); err != nil {
-		return
-	}
-	if ctx.Err() != nil || workerCtx.Err() != nil {
-		return
-	}
-	_ = c.applyRepairResult(ctx, path, preview, turns, true, "repair")
-}
-
-func (c *Catalog) applyRepairResult(ctx context.Context, path, preview string, turns int, valid bool, reason string) error {
-	c.mutationMu.Lock()
-	defer c.mutationMu.Unlock()
-	tx, err := c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	var key TopicKey
-	if err := tx.QueryRowContext(ctx, `SELECT scope,workspace_root,topic_id FROM catalog_sessions WHERE path=?`, path).Scan(&key.Scope, &key.WorkspaceRoot, &key.TopicID); err != nil {
-		_ = tx.Rollback()
-		if err == sql.ErrNoRows {
-			return nil
-		}
-		return err
-	}
-	if valid {
-		recoveryCopy := agent.RecoveryBranchCoveredByParent(path, filepath.Dir(path))
-		if _, err := tx.ExecContext(ctx, `UPDATE catalog_sessions SET preview=?,turns=?,turns_state='valid',
-            health='ok',recovery_copy=?,meta_fingerprint=? WHERE path=?`,
-			preview, turns, boolToInt(recoveryCopy), fileFingerprint(agent.BranchMetaPath(path)), path); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-	} else if _, err := tx.ExecContext(ctx, `UPDATE catalog_sessions SET turns_state='corrupt',health='corrupt',recovery_copy=0 WHERE path=?`, path); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if key.TopicID != "" {
-		if err := recomputeTopic(ctx, tx, key); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-	}
-	revision, err := bumpRevision(ctx, tx)
-	if err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	c.publishRevision(revision, []string{key.WorkspaceRoot}, reason)
-	c.refreshCounts(ctx)
-	// Repair changes content-derived listing metadata. Reconcile the directory
-	// immediately so lineage cannot remain stuck in its pre-repair projection.
-	// Requests are coalesced and never block the repair worker.
-	c.RequestReconcile(DirectoryTarget{Path: filepath.Dir(path), Scope: key.Scope, WorkspaceRoot: key.WorkspaceRoot})
 	return nil
 }
 
