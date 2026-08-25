@@ -97,7 +97,9 @@ console.log("\nbundle budgets");
 // Remote onboarding [0.5/3] adds project-group and credential-chain wiring on
 // top of the lazy wizard. Production and test-channel builds both measure
 // 432.28 KiB gzip; keep 0.22 KiB for build-SHA/toolchain drift.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 432.5 : 432.5;
+// Exact-turn routing, the extracted event-gap projector, and the stale-history
+// fence measure 434.01 KiB gzip. Keep 0.39 KiB of build/toolchain headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 434.4 : 434.4;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -159,10 +161,11 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // (0.021%). The workspace panel rework (change-row hover/revert, status badges,
 // More menu, completion summary) makes the latest-base merge 2353.1 KiB in
 // production and test channels both measure 2357.92 KiB after project-group
-// wiring. Retain it with 0.28 KiB of build-SHA/toolchain headroom.
-// The complete theme-token contract and one shared operational-overlay recipe
-// add 1.09 KiB raw CSS while remaining inside the existing gzip CSS ceiling.
-// Keep only 0.21 KiB of raw headroom so this remains a narrow, measured ratchet.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_359.5 : 2_359.5;
+// wiring. The complete theme-token contract and one shared operational-overlay
+// recipe put current main-v2 at 2359.29 KiB. Exact-turn command/Stop/Ask/Steer
+// routing, extracted event-gap projection, and stale-history rejection move the
+// post-rebase build to 2365.59 KiB: a 6.30 KiB (0.267%) attributable increase.
+// The 6.91 KiB (0.293%) ratchet keeps 0.61 KiB of explicit headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_366.2 : 2_366.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

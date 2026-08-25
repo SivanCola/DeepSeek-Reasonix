@@ -58,9 +58,9 @@ row.getBoundingClientRect = () => ({
   toJSON: () => ({}),
 });
 check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "ordinary wheel path keeps real dynamic measurement");
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 160, "native thumb drag keeps the existing Virtuoso size");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 640, "completed rows keep their measured height during native thumb drag");
 row.dataset.transcriptEstimate = "180";
-check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 180, "native thumb drag keeps the logical row estimate");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 640, "completed rows never regress to a logical estimate");
 delete row.dataset.transcriptEstimate;
 check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 640, "real measurement resumes after thumb release");
 
@@ -69,6 +69,7 @@ pendingMarkdown.dataset.transcriptGeometryPending = "true";
 row.dataset.staticEstimate = "157";
 row.appendChild(pendingMarkdown);
 check(hasPendingTranscriptGeometry(row), true, "a lazy Markdown fallback marks transient row geometry");
+check(measureTranscriptVirtuosoItem(row, "offsetHeight", true), 160, "native thumb drag freezes only pending row geometry at its last measured size");
 check(measureTranscriptVirtuosoItem(row, "offsetHeight", false), 157, "pending Markdown keeps the state-aware initial seed");
 pendingMarkdown.remove();
 check(hasPendingTranscriptGeometry(row), false, "resolved Markdown releases transient geometry");
