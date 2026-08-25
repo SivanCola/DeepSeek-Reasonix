@@ -9074,6 +9074,10 @@ body > .mermaid-diagram--fullscreen {
   visibility: hidden;
   pointer-events: none;
 }
+.footer--navigation-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
 .prompt-shelf__card {
   display: grid;
   gap: 8px;

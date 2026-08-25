@@ -20,7 +20,7 @@ export type NavigationSurfaceState = null | {
   targetSurfaceKey?: string;
 };
 
-export type SurfacePaintProgress = { attempts: number; stableFrames: number };
+export type SurfacePaintProgress = { attempts: number; stableFrames: number; geometryKey?: string };
 export type SurfacePaintDecision = {
   progress: SurfacePaintProgress;
   outcome?: "ready" | "degraded";
@@ -30,20 +30,22 @@ export type SurfacePaintDecision = {
 /** Deterministic paint gate shared by Transcript and its fake-clock tests. */
 export function advanceSurfacePaintCommit(
   current: SurfacePaintProgress,
-  sample: { rendered: boolean; placementReady: boolean; geometryReady: boolean },
+  sample: { rendered: boolean; placementReady: boolean; geometryReady: boolean; geometryKey?: string },
 ): SurfacePaintDecision {
   const attempts = current.attempts + 1;
-  const stableFrames = sample.rendered && sample.placementReady && sample.geometryReady
-    ? current.stableFrames + 1
+  const ready = sample.rendered && sample.placementReady && sample.geometryReady && Boolean(sample.geometryKey);
+  const stableFrames = ready
+    ? (current.geometryKey === sample.geometryKey ? current.stableFrames + 1 : 1)
     : 0;
+  const geometryKey = ready ? sample.geometryKey : undefined;
   if (stableFrames >= 2) {
-    return { progress: { attempts, stableFrames }, outcome: "ready", requestRecovery: false };
+    return { progress: { attempts, stableFrames, geometryKey }, outcome: "ready", requestRecovery: false };
   }
   if (attempts >= 180) {
-    return { progress: { attempts, stableFrames }, outcome: "degraded", requestRecovery: false };
+    return { progress: { attempts, stableFrames, geometryKey }, outcome: "degraded", requestRecovery: false };
   }
   return {
-    progress: { attempts, stableFrames },
+    progress: { attempts, stableFrames, geometryKey },
     requestRecovery: attempts === 60 || attempts === 120,
   };
 }

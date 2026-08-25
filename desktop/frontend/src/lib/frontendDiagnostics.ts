@@ -212,7 +212,8 @@ export function analyzeFrontendDiagnosticAnomalies(events: readonly FrontendDiag
       navigation.set(event.intent, { counts: new Set(), rows: [] });
     }
     if (event.type === "navigation.paint-ready" && event.intent !== undefined) painted.add(event.intent);
-    if (event.type === "navigation.settle" && event.intent !== undefined && !painted.has(event.intent)) {
+    if (event.type === "navigation.settle" && event.intent !== undefined && event.outcome !== "failed" &&
+      event.outcome !== "cancelled" && event.outcome !== "superseded" && !painted.has(event.intent)) {
       anomalies.push({ code: "settle-before-paint-ready", intent: event.intent });
     }
     if (event.type === "history.older-request" && event.trigger === "viewport-user") {

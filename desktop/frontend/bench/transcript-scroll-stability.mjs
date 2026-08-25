@@ -443,6 +443,7 @@ try {
   await page.click('.project-tree__topic-main:has-text("bench:tools-38t")');
   await page.waitForFunction(() => document.querySelector(".project-tree__topic--active .project-tree__topic-label")?.textContent?.includes("bench:tools-38t"));
   await page.waitForFunction(() => document.querySelector(".transcript")?.textContent?.includes("pkg-41/mod.go"), undefined, { timeout: 30_000 });
+  await page.waitForFunction(() => !document.querySelector(".transcript-navigation-overlay"), undefined, { timeout: 30_000 });
   const markdownVisibility = await page.evaluate(() => {
     const row = document.querySelector(".transcript__row");
     if (!(row instanceof HTMLElement)) return { inside: null, outside: null };
@@ -902,7 +903,23 @@ try {
     element.dispatchEvent(new Event("scroll"));
   });
   await page.waitForFunction(() => document.querySelector(".transcript__row"));
-  const nativeThumbProbe = await transcript.evaluate((element) => {
+  const nativeThumbProbe = await transcript.evaluate(async (element) => {
+    // The scroll-to-top event can leave a recycled Virtuoso node mounted for
+    // a few frames. Starting the drag from that node races its old
+    // data-known-size against the newly assigned logical row and makes the
+    // geometry-freeze assertion nondeterministic. Require the logical row and
+    // its measured size to settle before marking the probe.
+    let stableFrames = 0;
+    let previousIdentity = "";
+    for (let frame = 0; frame < 120 && stableFrames < 4; frame += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const candidate = element.querySelector(".transcript__row");
+      const identity = candidate instanceof HTMLElement
+        ? `${candidate.dataset.rowKey ?? ""}:${candidate.dataset.knownSize ?? ""}`
+        : "";
+      stableFrames = identity && identity === previousIdentity ? stableFrames + 1 : 0;
+      previousIdentity = identity;
+    }
     const rect = element.getBoundingClientRect();
     const scaleX = rect.width / element.offsetWidth;
     const contentRight = rect.left + (element.clientLeft + element.clientWidth) * scaleX;
@@ -928,22 +945,41 @@ try {
     // WebView2 path is covered by the Windows native smoke job; the geometry
     // lock itself is covered by transcript-native-scrollbar.test.ts.
     process.stdout.write("  SKIP  native thumb drag (headless Windows Chromium has no draggable native track)\n");
-  } else if (process.platform === "darwin" && (!nativeThumbProbe || nativeThumbProbe.gutter <= 1)) {
-    // macOS Chromium inherits system overlay scrollbars, so there is no
-    // pointer-addressable native gutter. Linux CI exercises the complete
-    // thumb ownership and measurement-freeze path below; Windows WebView2
-    // coverage is provided by the native smoke job.
-    process.stdout.write("  SKIP  native thumb drag (host uses overlay scrollbars)\n");
+  } else if (process.platform === "darwin") {
+    // Headless macOS Chromium does not expose a deterministic pointer-draggable
+    // thumb: hosts with overlay scrollbars have no gutter, while hosts with a
+    // reserved gutter accept pointer-down but do not reliably move the thumb.
+    // Linux CI exercises the full drag/freeze path; Windows WebView2 coverage
+    // is provided by the native smoke job.
+    process.stdout.write("  SKIP  native thumb drag (headless macOS Chromium has no deterministic native track)\n");
   } else {
     assert(nativeThumbProbe && nativeThumbProbe.gutter > 1, `workbench exposes a native scrollbar gutter (${nativeThumbProbe?.gutter ?? 0}px)`);
     assert(nativeThumbProbe.knownSize > 0, `native scrollbar probe starts from a measured row (${nativeThumbProbe.knownSize}px)`);
     await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.y);
     await page.mouse.down();
     await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag === "true");
-    await page.waitForFunction(
-      (knownSize) => document.querySelector('[data-native-scrollbar-probe="true"]')?.style.height === `${knownSize}px`,
-      nativeThumbProbe.knownSize,
-    );
+    const nativeDragBaseline = await transcript.evaluate(async (element) => {
+      let stableFrames = 0;
+      let previousGeometry = "";
+      let geometry = null;
+      for (let frame = 0; frame < 120 && stableFrames < 4; frame += 1) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const row = element.querySelector('[data-native-scrollbar-probe="true"]');
+        geometry = {
+          knownSize: row instanceof HTMLElement ? Number.parseFloat(row.dataset.knownSize || "0") : 0,
+          fixedHeight: row instanceof HTMLElement ? row.style.height : "",
+          rowHeight: row instanceof HTMLElement ? row.getBoundingClientRect().height : 0,
+          listHeight: element.querySelector('[data-testid="virtuoso-item-list"]')?.getBoundingClientRect().height ?? 0,
+          scrollHeight: element.scrollHeight,
+        };
+        const identity = JSON.stringify(geometry);
+        stableFrames = identity === previousGeometry ? stableFrames + 1 : 0;
+        previousGeometry = identity;
+      }
+      return geometry;
+    });
+    assert(nativeDragBaseline?.knownSize > 0, `native thumb drag starts from a measured logical row (${nativeDragBaseline?.knownSize ?? 0}px)`);
+    assert(nativeDragBaseline.fixedHeight === `${nativeDragBaseline.knownSize}px`, `native thumb drag fixes mounted row layout (${nativeDragBaseline.fixedHeight})`);
     await transcript.evaluate((element) => {
       const row = element.querySelector('[data-native-scrollbar-probe="true"]');
       const content = row?.firstElementChild;
@@ -960,9 +996,9 @@ try {
         scrollHeight: element.scrollHeight,
       };
     });
-    assert(duringNativeThumbDrag.knownSize === nativeThumbProbe.knownSize, `native thumb drag freezes new row measurements (${duringNativeThumbDrag.knownSize}px)`);
-    assert(duringNativeThumbDrag.fixedHeight === `${nativeThumbProbe.knownSize}px`, `native thumb drag fixes mounted row layout (${duringNativeThumbDrag.fixedHeight})`);
-    assert(Math.abs(duringNativeThumbDrag.scrollHeight - nativeThumbProbe.scrollHeight) <= 8, `native thumb drag keeps the physical scroll range stable (${nativeThumbProbe.scrollHeight} → ${duringNativeThumbDrag.scrollHeight}; row ${duringNativeThumbDrag.rowHeight}; list ${duringNativeThumbDrag.listHeight})`);
+    assert(duringNativeThumbDrag.knownSize === nativeDragBaseline.knownSize, `native thumb drag freezes new row measurements (${duringNativeThumbDrag.knownSize}px)`);
+    assert(duringNativeThumbDrag.fixedHeight === nativeDragBaseline.fixedHeight, `native thumb drag fixes mounted row layout (${duringNativeThumbDrag.fixedHeight})`);
+    assert(Math.abs(duringNativeThumbDrag.scrollHeight - nativeDragBaseline.scrollHeight) <= 8, `native thumb drag keeps the physical scroll range stable (${nativeDragBaseline.scrollHeight} → ${duringNativeThumbDrag.scrollHeight}; row ${duringNativeThumbDrag.rowHeight}; list ${duringNativeThumbDrag.listHeight})`);
     await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.bottomY, { steps: 8 });
     await page.waitForFunction(() => {
       const element = document.querySelector(".transcript");

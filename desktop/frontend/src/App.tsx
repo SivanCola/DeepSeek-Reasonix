@@ -1,5 +1,4 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { flushSync } from "react-dom";
 import { ShellExpandProvider, useShellExpand } from "./lib/shellExpand";
 import {
   Activity,
@@ -173,12 +172,9 @@ import { DEFAULT_STATUS_BAR_ITEMS, normalizeStatusBarItems, type StatusBarItemId
 import { paletteSessionDisplayTitle, paletteSessionHint, paletteSessionKeywords, sessionActivityTime } from "./lib/session";
 import { enqueueNavigationRequest, type PendingNavigationRequest } from "./lib/openTopicCoalescing";
 import {
-  beginNavigationSurfaceState,
   guardBackendNavigationResult,
-  markNavigationTargetMasked,
-  settleNavigationSurfaceState,
-  type NavigationSurfaceState,
 } from "./lib/navigationSurfaceTransition";
+import { useNavigationSurface } from "./lib/useNavigationSurface";
 import {
   applyTheme,
   clearLegacyThemePreference,
@@ -1124,40 +1120,12 @@ export default function App() {
   const userPlanModeByTabRef = useRef<UserPlanModeIntents>({});
   const [tabMetas, setTabMetas] = useState<TabMeta[]>([]);
   const [tabOrderIds, setTabOrderIds] = useState<string[]>([]);
-  const [navigationSurface, setNavigationSurface] = useState<NavigationSurfaceState>(null);
-  const navigationSurfaceIntent = navigationSurface?.intent ?? null;
-  type PreservedTranscriptSurface = {
-    tabId?: string;
-    items: Item[];
-    geometrySessionKey?: string;
-  };
-  const [preservedTranscriptSurface, setPreservedTranscriptSurface] = useState<PreservedTranscriptSurface | null>(null);
-  const renderedTranscriptSurfaceRef = useRef<PreservedTranscriptSurface | null>(null);
-  const beginNavigationSurface = useCallback((intent: number) => {
-    recordFrontendDiagnostic("navigation", "navigation.begin", { intent, phase: "begin" });
-    const rendered = renderedTranscriptSurfaceRef.current;
-    flushSync(() => {
-      if (rendered && rendered.items.length > 0) {
-        setPreservedTranscriptSurface(rendered);
-      } else {
-        setPreservedTranscriptSurface(null);
-      }
-      setNavigationSurface(beginNavigationSurfaceState(intent));
-    });
-  }, []);
-  const settleNavigationSurface = useCallback((intent: number) => {
-    setNavigationSurface((current) => markNavigationTargetMasked(current, intent));
-  }, []);
-  const commitNavigationSurfacePaint = useCallback((intent: number, outcome: "ready" | "degraded") => {
-    recordFrontendDiagnostic("navigation", "navigation.paint-ready", { intent, outcome });
-    recordFrontendDiagnostic("navigation", "navigation.terminal", { intent, outcome });
-    recordFrontendDiagnostic("navigation", "navigation.settle", { intent, phase: "paint-ready", outcome });
-    setNavigationSurface((current) => {
-      const next = settleNavigationSurfaceState(current, intent);
-      if (next === null) setPreservedTranscriptSurface(null);
-      return next;
-    });
-  }, []);
+  const {
+    surface: navigationSurface, intent: navigationSurfaceIntent, transitioning: runtimeTransitioning, dataReady: navigationTargetDataReady,
+    preserved: preservedTranscriptSurface, renderedRef: renderedTranscriptSurfaceRef, begin: beginNavigationSurface, maskTarget: settleNavigationSurface, commitPaint: commitNavigationSurfacePaint,
+  } = useNavigationSurface({
+    activeTabId, ready: state.meta?.ready === true, backendActivationPending: Boolean(state.backendActivationPending), hydrating: Boolean(state.hydrating), hydrateError: state.hydrateError,
+  });
   const [tabRevealSignal, setTabRevealSignal] = useState(0);
   const [transcriptRevealSignal, setTranscriptRevealSignal] = useState(0);
   const startupSplashVisible = useOverlayStore((s) => s.startupSplashVisible);
@@ -1785,27 +1753,6 @@ export default function App() {
   const goal = composerProfile.goal;
   const collaborationMode = displayedComposerProfileCollaborationMode(composerProfile);
   const toolApprovalMode = composerProfile.toolApprovalMode;
-  const runtimeTransitioning = navigationSurfaceIntent !== null;
-  const navigationTargetDataReady = Boolean(
-    navigationSurface?.phase === "target-masked" &&
-    activeTabId &&
-    state.meta?.ready === true &&
-    !state.backendActivationPending &&
-    !state.hydrating,
-  );
-  const navigationDataReadyIntentRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!navigationTargetDataReady || navigationSurfaceIntent === null) return;
-    if (navigationDataReadyIntentRef.current === navigationSurfaceIntent) return;
-    navigationDataReadyIntentRef.current = navigationSurfaceIntent;
-    recordFrontendDiagnostic("navigation", "navigation.target-mounted", {
-      intent: navigationSurfaceIntent,
-    });
-    recordFrontendDiagnostic("navigation", "navigation.data-ready", {
-      intent: navigationSurfaceIntent,
-      outcome: "ready",
-    });
-  }, [navigationSurfaceIntent, navigationTargetDataReady]);
   const controllerReady =
     state.meta?.ready === true &&
     (!state.meta.runtime || state.meta.runtime.phase === "ready") &&
@@ -1835,7 +1782,7 @@ export default function App() {
     if (clearContextPending) return "clear_context";
     return null;
   }, [clearContextPending, pendingClose, state.approval, state.ask, state.extensionForm, workspaceConflict]);
-  const visibleDecisionSurface = runtimeTransitioning ? null : decisionSurface;
+  const visibleDecisionSurface = decisionSurface;
   const composerSurfaceHidden = runtimeTransitioning || Boolean(decisionSurface);
   decisionSurfaceRef.current = decisionSurface;
   useEffect(() => {
@@ -3519,7 +3466,6 @@ export default function App() {
     !hydratePlaceholderActive;
   const transcriptItems = hydratePlaceholderActive ? state.hydratePlaceholderItems! : state.items;
   const handleLoadOlderHistory = useCallback((targetTurn?: number, trigger: HistoryLoadTrigger = "retry") => {
-    recordFrontendDiagnostic("history", "history.older-request", { trigger });
     return activeTabId ? loadOlderHistory(activeTabId, targetTurn, trigger) : Promise.resolve(false);
   }, [activeTabId, loadOlderHistory]);
 
@@ -4995,8 +4941,10 @@ export default function App() {
           </main>
 
           {!sidebarImDetailConnection && (
-          <footer className={["footer", terminalPanelOpen && !sidebarCreation ? "footer--compact" : "", visibleDecisionSurface ? "footer--decision" : ""].filter(Boolean).join(" ")} ref={footerRef}>
-            {!runtimeTransitioning && showTodos && (
+          <footer
+            className={["footer", terminalPanelOpen && !sidebarCreation ? "footer--compact" : "", visibleDecisionSurface ? "footer--decision" : "", runtimeTransitioning ? "footer--navigation-hidden" : ""].filter(Boolean).join(" ")} ref={footerRef} style={navigationSurface?.phase === "source-retained" && footerHeight > 0 ? { height: footerHeight, minHeight: footerHeight, boxSizing: "border-box" } : undefined} inert={runtimeTransitioning || undefined} aria-hidden={runtimeTransitioning || undefined}
+          >
+            {showTodos && (
               <TodoPanel
                 key={scopedTodoBatch}
                 stateKey={scopedTodoBatch}
@@ -5004,7 +4952,7 @@ export default function App() {
                 onDismiss={dismissTodos}
               />
             )}
-            {!runtimeTransitioning && rewindState && (
+            {rewindState && (
               <Suspense fallback={null}><UndoRewindBanner
                 meta={{
                   turns: rewindState.turnDiff,
@@ -5170,7 +5118,7 @@ export default function App() {
                     : "",
                 creationEmptyHero ? "composer-decision-host--creation-hero" : "",
               ].filter(Boolean).join(" ")}
-              hidden={(!runtimeTransitioning && composerSurfaceHidden) || undefined}
+              hidden={Boolean(decisionSurface) || undefined}
               inert={composerSurfaceHidden ? true : undefined}
               aria-hidden={composerSurfaceHidden ? true : undefined}
             >

@@ -100,7 +100,10 @@ console.log("\nbundle budgets");
 // The navigation surface transaction adds target identity checks, data/paint
 // terminals, and bounded history permits to the initial transcript path. The
 // measured build is 434.2 KiB gzip; retain 0.3 KiB for toolchain drift.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 434.5 : 434.5;
+// Failure-atomic source restoration, terminal surface promises, and the
+// one-page viewport permit raise the measured path to 434.8 KiB. Keep 0.2 KiB
+// of headroom without widening unrelated lazy chunks.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 435.0 : 435.0;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -170,6 +173,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Keep only 0.21 KiB of raw headroom so this remains a narrow, measured ratchet.
 // The navigation transaction measures 2365.8 KiB raw; keep the corresponding
 // raw allowance as narrow as the gzip ratchet above.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_366.2 : 2_366.2;
+// Its failure-atomic completion paths plus the fixed navigation footer
+// footprint measure 2369.1 KiB raw after minifying; retain 0.5 KiB
+// for build metadata and toolchain drift.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_369.6 : 2_369.6;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

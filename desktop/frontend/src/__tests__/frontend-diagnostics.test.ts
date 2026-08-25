@@ -146,5 +146,9 @@ assert.deepEqual(analyzeFrontendDiagnosticAnomalies([
   { t: 0, type: "history.viewport-permit" },
   { t: 1, type: "history.older-request", trigger: "viewport-user" },
 ]), [], "a viewport page request consumes one explicit user permit without a false anomaly");
+assert.deepEqual(analyzeFrontendDiagnosticAnomalies([
+  { t: 0, type: "navigation.begin", intent: 9 },
+  { t: 1, type: "navigation.settle", intent: 9, outcome: "failed" },
+]), [], "a failed data terminal may release its mask without a paint-ready false positive");
 
 console.log("frontend diagnostics tests passed");
