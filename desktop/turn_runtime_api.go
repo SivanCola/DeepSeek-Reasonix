@@ -145,10 +145,9 @@ func (a *App) TurnEventsForTab(tabID string, afterSeq uint64) (TurnEventReplayVi
 	if !ok {
 		return empty, fmt.Errorf("turn event replay is unavailable")
 	}
-	// Fence the response with the controller generation bound to this exact
-	// controller snapshot. Re-check under the app lock before sampling the sink:
-	// a session rebind between tabAndCtrlByID and this point must not pair an old
-	// controller with the replacement runtime's epoch.
+	// Re-check the controller under the app lock before sampling the epoch.
+	// This prevents pairing an old controller with a replacement runtime after
+	// a session rebind races tabAndCtrlByID.
 	epoch := ""
 	a.mu.RLock()
 	bound := tab != nil && a.tabs[tabID] == tab && tab.Ctrl == ctrl

@@ -1011,9 +1011,8 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 	c.finishing = !c.closed
 	c.finishingBoundary.begin(c.finishing)
 	c.cancel = nil
-	// Keep the cancelling projection visible through TurnDone fan-out. Clearing
-	// it here creates a finishing-only window that looks like an ordinary
-	// running turn even though Stop has not reached its durable terminal event.
+	// Keep cancelling visible through TurnDone fan-out; clearing it here creates
+	// a finishing-only window before Stop reaches its durable terminal event.
 	// A closed controller has no live surface and may clear immediately.
 	if c.closed {
 		c.canceling = false

@@ -257,9 +257,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// metrics via opts.Sink, ACP/eventwire bridges, Desktop) so all see the
 	// same occurrence-time quote. Order from the agent:
 	//   GoalUsageTee → Sync → CostQuote → [Recorder] → frontend
-	// The controller installs the single stream coalescer immediately before its
-	// durable turn ledger, so the ledger and every frontend observe identical
-	// event boundaries.
+	// The controller coalesces before its ledger so every consumer shares boundaries.
 	quoteCtx := &event.QuoteContext{
 		DisplayRequest: billing.DisplayRequest{
 			Currency: cfg.ExplicitDisplayCurrency(),

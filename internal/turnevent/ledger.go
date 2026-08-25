@@ -622,10 +622,8 @@ func (l *Ledger) AcknowledgeProjection(turnID string) error {
 		return fmt.Errorf("turn %s has no durable terminal event", turnID)
 	}
 	if l.projectionAcks[turnID] >= seq || seq <= l.projectionCommittedThrough {
-		// A previous atomic checkpoint replacement may have failed after the
-		// acknowledgement itself became durable. Retry opportunistically, but a
-		// retention optimization must never turn a committed projection into a
-		// user-visible storage failure.
+		// Retry a failed checkpoint after its acknowledgement became durable.
+		// Retention work must not turn a committed projection into a storage error.
 		_ = l.maybeCompactLocked(false)
 		return nil
 	}

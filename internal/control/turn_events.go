@@ -92,11 +92,9 @@ func (s *turnEventSink) EmitChecked(e event.Event) error {
 	}
 	var err error
 	if s.publish.Load() > 0 && e.Kind == event.PromptAnswered {
-		// A frontend sink may synchronously answer the prompt it is currently
-		// receiving. The outer coalescer drainer cannot wait on itself; all prior
-		// deltas and the prompt are already durable, so append this nested barrier
-		// directly after them. Only prompt answers may use this re-entrant path;
-		// unrelated concurrent checked events must preserve coalescer ordering.
+		// A frontend may answer during prompt publication, so the coalescer cannot
+		// wait on itself. Only that already-ordered PromptAnswered barrier may use
+		// this re-entrant path; other checked events preserve coalescer ordering.
 		err = (&turnEventDurableSink{owner: s}).EmitChecked(e)
 	} else {
 		err = event.EmitChecked(s.stream, e)
@@ -214,10 +212,8 @@ func (s *turnEventDurableSink) EmitChecked(e event.Event) error {
 	if err == nil {
 		return nil
 	}
-	// Coalesced stream events reach this checked boundary from an asynchronous
-	// drainer even when their original Emit caller cannot observe an error. Fail
-	// the Turn here so a poisoned WAL immediately cancels provider, prompt and
-	// process work instead of waiting for the next synchronous barrier.
+	// Async stream callers cannot observe checked errors. Fail the Turn here so
+	// a poisoned WAL immediately cancels provider, prompt, and process work.
 	slog.Error("controller: append turn event ledger", "err", err, "kind", e.Kind)
 	s.owner.fail(err)
 	if e.Kind == event.TurnDone {
