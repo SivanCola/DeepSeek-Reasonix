@@ -529,7 +529,7 @@ jobs:
           args: --timeout=5m
 
       - name: WKWebView native transcript smoke
-        timeout-minutes: 3
+        timeout-minutes: 4
         run: |
           set -euo pipefail
           pnpm --dir frontend exec vite preview --host 127.0.0.1 --port 4173 >"$RUNNER_TEMP/reasonix-transcript-preview.log" 2>&1 &
@@ -558,11 +558,15 @@ jobs:
             -result-file "$smoke_result"
           sleep 2
           osascript -e 'tell application id "io.reasonix.transcript-smoke" to activate'
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 160); do
             if test -s "$smoke_result"; then break; fi
             sleep 1
           done
-          test -s "$smoke_result"
+          if ! test -s "$smoke_result"; then
+            cat "$RUNNER_TEMP/reasonix-transcript-preview.log"
+            pgrep -fl 'reasonix-transcript-smoke' || true
+            exit 1
+          fi
           node -e 'const fs=require("fs"); const result=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!result.passed) throw new Error(JSON.stringify(result));' "$smoke_result"
 
   # Desktop project-root matching is case-insensitive only on Windows

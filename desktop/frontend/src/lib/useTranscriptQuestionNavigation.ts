@@ -13,6 +13,7 @@ import {
   type QuestionAnchorPosition,
 } from "./transcriptGrouping";
 import { userRowKey } from "./transcriptRows";
+import type { TranscriptLayoutAnchor } from "./transcriptVirtuosoRecovery";
 
 type PendingQuestionJump = {
   surfaceKey: string;
@@ -132,6 +133,7 @@ export function useTranscriptQuestionJump({
   clearTranscriptSelection,
   invalidateAnchors,
   scrollToDataIndex,
+  recoverPlacement,
   setActiveQuestion,
   rewindSignal,
 }: {
@@ -148,6 +150,7 @@ export function useTranscriptQuestionJump({
   clearTranscriptSelection: (reason?: string) => void;
   invalidateAnchors: () => void;
   scrollToDataIndex: (index: number, behavior?: "auto" | "smooth") => void;
+  recoverPlacement: (anchor: TranscriptLayoutAnchor) => void;
   setActiveQuestion: (turn: number | null) => void;
   rewindSignal: number;
 }) {
@@ -250,10 +253,11 @@ export function useTranscriptQuestionJump({
       // write is an immediate final placement after the authoritative page is
       // committed. Smooth animation would expose another intermediate path.
       jumpToLoadedQuestion(question, "auto");
+      recoverPlacement({ mode: "manual", rowKey: userRowKey(question.id), offset: 0 });
     } else if (!loadingOlderHistory && !olderHistoryError) {
       requestQuestionHistory(pendingQuestion, false, "question-jump");
     }
-  }, [jumpToLoadedQuestion, layoutSurfaceKey, loadedByTurn, loadingOlderHistory, olderHistoryError, pendingQuestion, requestQuestionHistory, settlePendingQuestion]);
+  }, [jumpToLoadedQuestion, layoutSurfaceKey, loadedByTurn, loadingOlderHistory, olderHistoryError, pendingQuestion, recoverPlacement, requestQuestionHistory, settlePendingQuestion]);
 
   useEffect(() => {
     if (!pendingQuestion || pendingQuestion.surfaceKey !== layoutSurfaceKey || pendingQuestion.phase !== "landing") return;

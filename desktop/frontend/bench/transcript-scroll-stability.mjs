@@ -711,9 +711,45 @@ try {
 
   await page.evaluate(() => {
     window.__reasonixQuestionJumpWrites = [];
+    window.__reasonixQuestionJumpVisual = {
+      active: true,
+      maskSeen: false,
+      opaqueMaskSeen: false,
+      nonOpaqueMaskSeen: false,
+      exposedEmptyFrames: 0,
+    };
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
       if (write.owner === "jump") window.__reasonixQuestionJumpWrites.push(write);
     };
+    const recordMask = () => {
+      const state = window.__reasonixQuestionJumpVisual;
+      if (!state?.active) return;
+      const mask = document.querySelector("[data-question-jump-mask='true']");
+      if (!(mask instanceof HTMLElement)) return;
+      state.maskSeen = true;
+      const style = getComputedStyle(mask);
+      const opaque = style.visibility !== "hidden"
+        && style.display !== "none"
+        && Number.parseFloat(style.opacity || "1") > 0
+        && style.backgroundColor !== "transparent"
+        && style.backgroundColor !== "rgba(0, 0, 0, 0)";
+      state.opaqueMaskSeen ||= opaque;
+      state.nonOpaqueMaskSeen ||= !opaque;
+    };
+    const observer = new MutationObserver(recordMask);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+    window.__reasonixQuestionJumpMaskObserver = observer;
+    const sampleVisibleSurface = () => {
+      const state = window.__reasonixQuestionJumpVisual;
+      if (!state?.active) return;
+      const mask = document.querySelector("[data-question-jump-mask='true']");
+      const writes = window.__reasonixQuestionJumpWrites ?? [];
+      if (state.maskSeen && !mask && writes.length === 0 && !document.querySelector(".transcript__row")) {
+        state.exposedEmptyFrames += 1;
+      }
+      requestAnimationFrame(sampleVisibleSurface);
+    };
+    requestAnimationFrame(sampleVisibleSurface);
   });
   const questionRail = page.locator(".jump-scroll");
   const questionRailBox = await questionRail.boundingBox();
@@ -722,16 +758,22 @@ try {
     const rail = document.querySelector(".jump-scroll");
     if (!(rail instanceof HTMLElement)) return null;
     const railRect = rail.getBoundingClientRect();
-    const marker = [...rail.querySelectorAll(".jump-item")].find((item) => {
+    const marker = [...rail.querySelectorAll(".jump-item[data-loaded='false']")].filter((item) => {
       const rect = item.getBoundingClientRect();
       const middle = rect.top + rect.height / 2;
       return middle >= railRect.top && middle <= railRect.bottom;
-    });
+    }).at(-1);
     if (!(marker instanceof HTMLElement)) return null;
     const rect = marker.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      loaded: marker.dataset.loaded,
+      turn: marker.dataset.turn,
+    };
   });
-  assert(questionTargetPoint != null, "question navigator exposes an earlier visible marker");
+  assert(questionTargetPoint != null, "question navigator exposes an earlier visible unloaded marker");
+  assert(questionTargetPoint.loaded === "false", `question navigation regression targets unloaded history (turn ${questionTargetPoint.turn})`);
   const staleSelectionMode = await page.evaluate(() => {
     const target = document.querySelector("[data-transcript-selectable]");
     const transcript = document.querySelector(".transcript");
@@ -752,15 +794,63 @@ try {
     questionTargetPoint.x,
     questionTargetPoint.y,
   );
-  const questionJumpWrites = await page.evaluate(() => {
+  try {
+    await page.waitForFunction(() => (
+      (window.__reasonixQuestionJumpWrites?.length ?? 0) >= 1
+        && window.__reasonixQuestionJumpVisual?.maskSeen === true
+        && !document.querySelector("[data-question-jump-mask='true']")
+    ), undefined, { timeout: 30_000 });
+  } catch (error) {
+    const state = await page.evaluate(() => ({
+      writes: window.__reasonixQuestionJumpWrites ?? [],
+      visual: window.__reasonixQuestionJumpVisual,
+      mask: document.querySelector("[data-question-jump-mask='true']")?.getAttribute("data-question-jump-phase") ?? "missing",
+      rows: document.querySelector(".transcript")?.getAttribute("data-transcript-row-count") ?? "missing",
+      scrollMode: document.querySelector(".transcript")?.getAttribute("data-scroll-mode") ?? "missing",
+    }));
+    throw new Error(`unloaded question navigation did not commit: ${JSON.stringify(state)}`, { cause: error });
+  }
+  const questionJumpResult = await page.evaluate(() => {
     const writes = window.__reasonixQuestionJumpWrites ?? [];
+    const visual = window.__reasonixQuestionJumpVisual;
+    const transcript = document.querySelector(".transcript");
+    const geometry = transcript instanceof HTMLElement ? {
+      firstItemIndex: transcript.dataset.transcriptFirstItemIndex,
+      rowCount: transcript.dataset.transcriptRowCount,
+      scrollTop: transcript.scrollTop,
+      scrollHeight: transcript.scrollHeight,
+      clientHeight: transcript.clientHeight,
+    } : null;
+    if (visual) visual.active = false;
+    window.__reasonixQuestionJumpMaskObserver?.disconnect();
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
     window.__reasonixQuestionJumpWrites = undefined;
-    return writes;
+    window.__reasonixQuestionJumpVisual = undefined;
+    window.__reasonixQuestionJumpMaskObserver = undefined;
+    return { writes, visual, geometry };
   });
-  assert(questionJumpWrites.length === 1, `question navigation clears stale selection and emits one indexed jump (${questionJumpWrites.length})`);
-  await page.locator(".transcript__jump-bottom").waitFor({ state: "visible" });
-  // The question jump itself is smooth. Wait for its geometry to settle before
+  const questionJumpWrites = questionJumpResult.writes;
+  assert(questionJumpResult.visual?.maskSeen === true, "unloaded question navigation masks intermediate history windows");
+  assert(questionJumpResult.visual?.opaqueMaskSeen === true && questionJumpResult.visual?.nonOpaqueMaskSeen === false, "question navigation mask is opaque before the target commits");
+  assert(questionJumpResult.visual?.exposedEmptyFrames === 0, "unloaded question navigation exposes no blank transcript frames");
+  assert(questionJumpWrites.length === 1, `question navigation clears stale selection and emits one indexed jump (${questionJumpWrites.length}; ${JSON.stringify({ writes: questionJumpWrites, geometry: questionJumpResult.geometry })})`);
+  try {
+    await page.locator(".transcript__jump-bottom").waitFor({ state: "visible", timeout: 5_000 });
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const element = document.querySelector(".transcript");
+      return element instanceof HTMLElement ? {
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+        mode: element.dataset.scrollMode,
+        writes: window.__reasonixQuestionJumpWrites ?? [],
+      } : null;
+    });
+    throw new Error(`question jump did not expose the jump-bottom control: ${JSON.stringify({ state, questionJumpWrites })}`, { cause: error });
+  }
+  // The final question jump is immediate. Wait for its geometry to settle before
   // clicking the current button: resolving a locator while React remounts the
   // moving control can otherwise call click() on a detached node, which never
   // reaches React's delegated handler.

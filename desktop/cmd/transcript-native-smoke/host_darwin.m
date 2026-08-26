@@ -16,6 +16,7 @@
 @property(nonatomic) NSInteger finishTailStableChecks;
 @property(nonatomic) NSPoint transcriptPoint;
 @property(nonatomic) BOOL loaded;
+@property(nonatomic) BOOL ready;
 @property(nonatomic) BOOL done;
 @end
 
@@ -37,6 +38,39 @@
                                          data1:0
                                          data2:0];
   [NSApp postEvent:wake atStart:NO];
+}
+
+- (void)finishTimeoutWithPrefix:(NSString *)prefix {
+  if (self.done) return;
+  NSString *fallback = [NSString stringWithFormat:@"{\"type\":\"error\",\"message\":\"%@; diagnostic probe timed out\"}", prefix];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    [self finishWithResult:fallback];
+  });
+  NSString *probe = @"JSON.stringify({readyState:document.readyState,topicCount:document.querySelectorAll('.project-tree__topic-main').length,hasActiveTopic:Boolean(document.querySelector('.project-tree__topic--active')),transcript:Boolean(document.querySelector('.transcript')),rows:document.querySelector('.transcript')?.dataset.transcriptRowCount||'0',bootstrap:document.querySelector('.transcript')?.dataset.transcriptGeometryBootstrap||'',rect:document.querySelector('.transcript')&&[document.querySelector('.transcript').clientWidth,document.querySelector('.transcript').clientHeight],raf:window.__reasonixSmokeRaf,contract:Boolean(window.__reasonixNativeTranscriptSmoke),phase:window.__reasonixNativeTranscriptSmokeState?.phase||'missing'})";
+  [self.webView evaluateJavaScript:probe completionHandler:^(id value, NSError *error) {
+    if (self.done) return;
+    NSString *detail = error ? error.localizedDescription : [NSString stringWithFormat:@"%@ nativeVisible=%d occlusion=%lu key=%d main=%d", [value description], self.window.isVisible, (unsigned long)self.window.occlusionState, self.window.isKeyWindow, self.window.isMainWindow];
+    NSDictionary *payload = @{ @"type": @"error", @"message": [NSString stringWithFormat:@"%@: %@", prefix, detail] };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    [self finishWithResult:[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]];
+  }];
+}
+
+- (void)scheduleStartupWatchdog {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 90 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    if (self.done || self.ready) return;
+    NSString *prefix = self.loaded
+      ? @"WKWebView fixture loaded but did not become ready"
+      : @"WKWebView navigation timed out";
+    [self finishTimeoutWithPrefix:prefix];
+  });
+}
+
+- (void)scheduleInteractionWatchdog {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    if (self.done) return;
+    [self finishTimeoutWithPrefix:@"WKWebView native interaction timed out after ready"];
+  });
 }
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
@@ -74,6 +108,9 @@
   NSDictionary *payload = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
   NSString *type = [payload isKindOfClass:[NSDictionary class]] ? payload[@"type"] : nil;
   if ([type isEqualToString:@"ready"]) {
+    if (self.ready) return;
+    self.ready = YES;
+    [self scheduleInteractionWatchdog];
     self.wheelTick = 0;
     NSDictionary *point = [payload[@"point"] isKindOfClass:[NSDictionary class]] ? payload[@"point"] : nil;
     const CGFloat x = [point[@"x"] respondsToSelector:@selector(doubleValue)] ? [point[@"x"] doubleValue] : NSMidX(self.webView.bounds);
@@ -235,19 +272,7 @@ char *reasonix_transcript_smoke_darwin(const char *url, const char *script) {
     [host.window makeMainWindow];
     [host.window makeKeyWindow];
     [host.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithUTF8String:url]]]];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 80 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-      if (!host.loaded) {
-        [host finishWithResult:@"{\"type\":\"error\",\"message\":\"WKWebView navigation timed out\"}"];
-        return;
-      }
-      NSString *probe = @"JSON.stringify({readyState:document.readyState,topicCount:document.querySelectorAll('.project-tree__topic-main').length,hasActiveTopic:Boolean(document.querySelector('.project-tree__topic--active')),transcript:Boolean(document.querySelector('.transcript')),rows:document.querySelector('.transcript')?.dataset.transcriptRowCount||'0',bootstrap:document.querySelector('.transcript')?.dataset.transcriptGeometryBootstrap||'',rect:document.querySelector('.transcript')&&[document.querySelector('.transcript').clientWidth,document.querySelector('.transcript').clientHeight],raf:window.__reasonixSmokeRaf,contract:Boolean(window.__reasonixNativeTranscriptSmoke),phase:window.__reasonixNativeTranscriptSmokeState?.phase||'missing'})";
-      [host.webView evaluateJavaScript:probe completionHandler:^(id value, NSError *error) {
-        NSString *detail = error ? error.localizedDescription : [NSString stringWithFormat:@"%@ nativeVisible=%d occlusion=%lu key=%d main=%d", [value description], host.window.isVisible, (unsigned long)host.window.occlusionState, host.window.isKeyWindow, host.window.isMainWindow];
-        NSDictionary *payload = @{ @"type": @"error", @"message": [NSString stringWithFormat:@"WKWebView fixture loaded but did not become ready: %@", detail] };
-        NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
-        [host finishWithResult:[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]];
-      }];
-    });
+    [host scheduleStartupWatchdog];
     [NSApp run];
     [contentController removeScriptMessageHandlerForName:@"reasonixNativeSmoke"];
     [host.window orderOut:nil];

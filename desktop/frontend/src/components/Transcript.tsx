@@ -484,6 +484,7 @@ export function Transcript({
     invalidateAnchors,
     noteUserScrollIntent,
     noteScrollActivity,
+    recoverAnchor,
     safeMode: layoutSafeMode,
   } = useTranscriptLayoutIntegrity({
     surfaceKey: layoutSurfaceKey,
@@ -635,6 +636,7 @@ export function Transcript({
     clearTranscriptSelection,
     invalidateAnchors,
     scrollToDataIndex,
+    recoverPlacement: recoverAnchor,
     setActiveQuestion,
     rewindSignal,
   });
