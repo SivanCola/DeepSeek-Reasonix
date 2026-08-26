@@ -106,6 +106,11 @@ export function isTranscriptContentShrink(delta: number): boolean {
   return delta <= -TRANSCRIPT_CONTENT_SHRINK_THRESHOLD_PX;
 }
 
+export function transcriptReaderBufferingForMode(active: boolean, mode: TranscriptScrollMode): boolean {
+  if (mode === "tail-follow") return active;
+  return mode === "reader-gesture" || mode === "manual" || mode === "native-thumb";
+}
+
 // Auto re-entry into tail-follow requires the bottom to be held stable: this
 // many consecutive at-bottom deliveries with no upward gesture in between. A
 // single touch-down (one wheel tick, a thumb flick, a browser clamp landing on

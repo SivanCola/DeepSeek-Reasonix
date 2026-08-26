@@ -5,6 +5,7 @@ import {
   isSubstantialTranscriptDisplacement,
   isTranscriptContentShrink,
   reduceTranscriptScroll,
+  transcriptReaderBufferingForMode,
   type TranscriptScrollEvent,
   type TranscriptScrollState,
 } from "../lib/transcriptScrollArbiter";
@@ -301,6 +302,9 @@ check(
   pinTranscriptTailAfterViewportShrink(foldScroller, { contentExtent: 500, viewportExtent: 100 }, false) === null,
   "manual reading suppresses viewport-shrink pinning",
 );
+check(transcriptReaderBufferingForMode(false, "reader-gesture"), "reader input enables the bounded virtual-row buffer");
+check(transcriptReaderBufferingForMode(true, "tail-follow"), "tail handoff retains the active reader buffer");
+check(!transcriptReaderBufferingForMode(true, "selection"), "selection releases the reader buffer");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

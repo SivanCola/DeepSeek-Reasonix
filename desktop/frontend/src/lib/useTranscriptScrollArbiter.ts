@@ -12,7 +12,7 @@ import { hasPendingTranscriptGeometry, isNativeVerticalScrollbarPointer, measure
 import {
   INITIAL_TRANSCRIPT_SCROLL_STATE,
   isTranscriptSelectionMode,
-  reduceTranscriptScroll,
+  reduceTranscriptScroll, transcriptReaderBufferingForMode,
   type TranscriptRecoveryCancelReason,
   type TranscriptScrollCommand,
   type TranscriptScrollEvent,
@@ -103,8 +103,7 @@ export function useTranscriptScrollArbiter({
   onRecoveryTerminalRef.current = onRecoveryTerminal;
   const onItemMeasuredRef = useRef(onItemMeasured);
   onItemMeasuredRef.current = onItemMeasured;
-  const [isAtBottom, setIsAtBottom] = useState(true); const [nativeScrollbarDragging, setNativeScrollbarDragging] = useState(false);
-  const [readerBuffering, setReaderBuffering] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true); const [nativeScrollbarDragging, setNativeScrollbarDragging] = useState(false); const [readerBuffering, setReaderBuffering] = useState(false);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
   const writerRef = useRef<ReturnType<typeof createTranscriptScrollWriter> | null>(null);
   const writer = writerRef.current ??= createTranscriptScrollWriter({
@@ -201,13 +200,7 @@ export function useTranscriptScrollArbiter({
     stateRef.current = state;
     modeRef.current = state.mode;
     pinnedRef.current = state.mode === "tail-follow";
-    setReaderBuffering((active) => (
-      state.mode === "reader-gesture" || state.mode === "manual" || state.mode === "native-thumb"
-        ? true
-        : state.mode === "tail-follow"
-          ? active
-          : false
-    ));
+    setReaderBuffering((active) => transcriptReaderBufferingForMode(active, state.mode));
     // Keep jump-bottom manual-only while tail-follow repairs footer resize gaps.
     setIsAtBottom(state.atBottom || state.mode === "tail-follow");
     if (scrollRef.current) {
@@ -217,7 +210,6 @@ export function useTranscriptScrollArbiter({
       scrollRef.current.dataset.transcriptCanClaimTail = state.readerIntentCanClaimTail ? "true" : "false";
     }
   }, []);
-
   const runCommand = useCallback((command: TranscriptScrollCommand, source: TranscriptScrollDiagnosticSource) => {
     switch (command.type) {
       case "AUTOSCROLL_TO_BOTTOM":
@@ -468,8 +460,7 @@ export function useTranscriptScrollArbiter({
   }, [finishRecovery, launchRecovery]);
 
   const reset = useCallback(() => {
-    setReaderBuffering(false);
-    invalidateAsyncFrames();
+    setReaderBuffering(false); invalidateAsyncFrames();
     endReaderIntent();
     resetGeometry();
     dispatch({ type: "RESET" });
@@ -774,8 +765,7 @@ export function useTranscriptScrollArbiter({
     scrollElement,
     layoutTransientRef,
     itemSize,
-    nativeScrollbarDragging,
-    readerBuffering,
+    nativeScrollbarDragging, readerBuffering,
     pinnedRef,
     isAtBottom,
     modeRef,
