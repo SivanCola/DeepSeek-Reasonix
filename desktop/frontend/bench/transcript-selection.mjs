@@ -192,12 +192,25 @@ try {
       throw new Error(`transcript disappeared during selection preload (${JSON.stringify({ pageErrors, state })})`);
     }
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.wheel(0, -100_000);
-    const loaded = await page.waitForFunction((previous) => {
-      const transcript = document.querySelector(".transcript");
-      const current = Number(transcript?.getAttribute("data-transcript-row-count") ?? 0);
-      return current > previous;
-    }, before, { timeout: 2_000 }).then(() => true, () => false);
+    // Use bounded native deliveries so the reader-extent guard can keep a
+    // painted range mounted while we travel to startReached. One compositor-
+    // sized jump can legitimately be held before it reaches the page boundary.
+    let loaded = false;
+    for (let attempt = 0; attempt < 80 && !loaded; attempt += 1) {
+      await page.mouse.wheel(0, -800);
+      loaded = await page.waitForFunction((previous) => {
+        const transcript = document.querySelector(".transcript");
+        const current = Number(transcript?.getAttribute("data-transcript-row-count") ?? 0);
+        return current > previous;
+      }, before, { timeout: 120 }).then(() => true, () => false);
+    }
+    if (!loaded) {
+      loaded = await page.waitForFunction((previous) => {
+        const transcript = document.querySelector(".transcript");
+        const current = Number(transcript?.getAttribute("data-transcript-row-count") ?? 0);
+        return current > previous;
+      }, before, { timeout: 2_000 }).then(() => true, () => false);
+    }
     if (!loaded) break;
   }
   await clickIfPresent(page, ".transcript__jump-bottom");
@@ -265,14 +278,6 @@ try {
     return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
   });
   assert(neutralPoint != null, "deep logical drag keeps the transcript mounted");
-  await page.mouse.move(neutralPoint.x, neutralPoint.y);
-  await page.evaluate(() => {
-    const transcript = document.querySelector(".transcript");
-    if (!transcript) return;
-    transcript.scrollTop = (transcript.scrollHeight - transcript.clientHeight) * 0.1;
-    transcript.dispatchEvent(new Event("scroll"));
-  });
-  await page.waitForTimeout(300);
   // One extra turn of margin below the 20-turn contract: Virtuoso can still
   // be settling row heights after edge scrolling, so the caret may land one
   // row away from the measured target when the pointer move is delivered.
@@ -298,12 +303,12 @@ try {
     };
   }, Math.max(0, points.anchorTurn - 21));
   let logicalFocusPoint = null;
-  for (let index = 0; index < 40 && !logicalFocusPoint; index += 1) {
+  // Keep using the product's selection-edge writer while the pointer remains
+  // at the top edge. Direct scrollTop jumps during an active selection bypass
+  // the single-writer contract and can race Virtuoso's anchor compensation.
+  for (let index = 0; index < 160 && !logicalFocusPoint; index += 1) {
     logicalFocusPoint = await findLogicalFocusPoint();
-    if (!logicalFocusPoint) {
-      await page.mouse.wheel(0, -250);
-      await page.waitForTimeout(50);
-    }
+    if (!logicalFocusPoint) await page.waitForTimeout(50);
   }
   assert(logicalFocusPoint != null, "deep logical drag settles over a visible 20+ turn target");
   // Rows can shift between measuring the focus target and delivering the

@@ -229,8 +229,13 @@ export function resolveTranscriptReaderExtentCorrection(
   const targetAnchorOffset = nativeReverse >= MIN_REVERSE_JUMP_PX
     ? guard.targetAnchorOffset
     : physicalTargetOffset;
-  const anchorTarget = !correctableBlankForward
-    && guard.anchor
+  // A forward blank is not a reader position. Hold the last occupied native
+  // coordinate while Virtuoso mounts the requested range; targeting the
+  // accumulated wheel expectation here leaves the viewport inside the same
+  // empty range and lets that blank reach paint.
+  const anchorTarget = correctableBlankForward
+    ? guard.acceptedTop
+    : guard.anchor
     && targetAnchorOffset !== undefined
     && currentAnchorOffset !== undefined
     && Number.isFinite(currentAnchorOffset)

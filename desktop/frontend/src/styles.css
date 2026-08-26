@@ -3610,6 +3610,9 @@ a[href] {
   height: var(--transcript-bottom-inset, 32px);
   pointer-events: none;
 }
+.transcript__footer {
+  width: 100%;
+}
 .transcript__older-status {
   display: flex;
   align-items: center;

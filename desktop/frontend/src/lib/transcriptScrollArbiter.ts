@@ -105,6 +105,17 @@ export const TRANSCRIPT_SUBSTANTIAL_DISPLACEMENT_PX = 24;
 export const TRANSCRIPT_READER_OVERSCAN_ROWS = 24;
 export const TRANSCRIPT_READER_VIEWPORT_BUFFER = 1;
 
+export function transcriptReaderViewportBuffer(userAgent?: string): number {
+  if (!userAgent) return TRANSCRIPT_READER_VIEWPORT_BUFFER;
+  // WKWebView can coalesce native wheel delivery beyond one compositor
+  // viewport before Virtuoso commits its replacement range. Chromium and
+  // WebView2 do not need the extra mounted viewport, whose larger size tree
+  // can delay their final tail measurement.
+  return /AppleWebKit/i.test(userAgent) && !/(?:Chrome|Chromium|CriOS|Edg|OPR)\//i.test(userAgent)
+    ? 2
+    : TRANSCRIPT_READER_VIEWPORT_BUFFER;
+}
+
 export function isSubstantialTranscriptDisplacement(distance: number): boolean {
   return distance >= TRANSCRIPT_SUBSTANTIAL_DISPLACEMENT_PX;
 }
@@ -205,10 +216,13 @@ export function reduceTranscriptScroll(
       if (!event.scrollable) {
         return transition({ ...state, mode: "tail-follow", atBottom: true, scrollable: false, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "tail-follow" });
       }
-      // The hold streak only accrues in manual mode (the only mode that can
-      // re-enter tail-follow this way) and breaks whenever the delivery is
-      // off the bottom.
-      const canAccrueBottomHold = state.mode === "reader-gesture" && event.tailMounted !== false;
+      // The hold streak only accrues for a tail-claiming reader gesture and
+      // breaks whenever the delivery is off the bottom. Upward/native
+      // correction deliveries cannot claim the tail accidentally.
+      const canAccrueBottomHold = state.mode === "reader-gesture"
+        && state.readerIntent
+        && state.readerIntentCanClaimTail
+        && event.tailMounted !== false;
       const bottomHoldCount = event.atBottom && canAccrueBottomHold ? state.bottomHoldCount + 1 : 0;
       const next = { ...state, atBottom: event.atBottom, scrollable: true, bottomHoldCount };
       if (

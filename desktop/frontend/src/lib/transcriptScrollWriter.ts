@@ -260,6 +260,13 @@ export function createTranscriptScrollWriter({
       case "scrollToIndex":
         clearReaderVisualBridge();
         handle.scrollToIndex({ index: request.index!, align: request.align ?? "start", behavior });
+        if (request.index === "LAST" && request.align === "end") {
+          // Virtuoso aligns the last data row, but its in-flow Footer (live
+          // turn and bottom inset) remains below that row. Synchronize the
+          // same tail transaction with the already-mounted native extent so
+          // WebViews do not stop one footer-height above the physical end.
+          writeNative(element, element.scrollHeight - element.clientHeight, behavior);
+        }
         return true;
     }
   };

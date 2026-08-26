@@ -138,10 +138,10 @@ console.log("\nbundle budgets");
 // 452.1 KiB. Native-delivery direction synchronization and its correction-
 // acknowledgement fence close the controller-input WebView gap. Accepting a
 // coalesced native delivery before observation and releasing a passed forward
-// correction measure 452.473 KiB. A bounded one-viewport reader window,
-// stale-paint rebase, and logical blank hold measure 452.512 KiB; retain
-// 0.088 KiB of headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 452.6 : 452.6;
+// correction measure 452.473 KiB. The native blank hold, WKWebView's second
+// compositor viewport, Footer extent observer, and physical-LAST sync measure
+// 452.675 KiB; retain 0.125 KiB of headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 452.8 : 452.8;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -223,8 +223,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // its transform feedback fence, and adaptive reader buffer measure 2429.5 KiB.
 // Native-delivery direction synchronization, coalesced-input classification,
 // and the passed-forward-correction fence measure 2430.713 KiB raw. The
-// bounded one-viewport reader window, stale-paint rebase, and logical blank
-// hold measure 2430.900 KiB; retain 0.200 KiB of decimal headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_431.1 : 2_431.1;
+// native blank hold, platform-bounded reader window, Footer observer, and
+// physical-LAST sync measure 2431.764 KiB; retain 0.236 KiB of headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_432.0 : 2_432.0;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

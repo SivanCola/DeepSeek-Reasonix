@@ -542,12 +542,16 @@ try {
     const streamingBox = await transcript.boundingBox();
     if (!streamingBox) throw new Error("streaming history viewport disappeared while loading pages");
     await page.mouse.move(streamingBox.x + streamingBox.width / 2, streamingBox.y + streamingBox.height / 2);
-    await page.mouse.wheel(0, -100_000);
-    await page.waitForFunction(
-      (before) => Number.parseInt(document.querySelector(".transcript")?.dataset.transcriptRowCount ?? "0", 10) > before,
-      previousRows,
-      { timeout: 5_000 },
-    );
+    let loaded = false;
+    for (let attempt = 0; attempt < 80 && !loaded; attempt += 1) {
+      await page.mouse.wheel(0, -800);
+      loaded = await page.waitForFunction(
+        (before) => Number.parseInt(document.querySelector(".transcript")?.dataset.transcriptRowCount ?? "0", 10) > before,
+        previousRows,
+        { timeout: 120 },
+      ).then(() => true, () => false);
+    }
+    if (!loaded) throw new Error(`streaming history did not load beyond ${previousRows} rows`);
     streamingShape = await readStreamingShape();
   }
   assert(streamingShape.totalRows >= 400, `streaming stability fixture has 400+ variable-height rows (${streamingShape.totalRows})`);

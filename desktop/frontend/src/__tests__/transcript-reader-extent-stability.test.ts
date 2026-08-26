@@ -257,7 +257,7 @@ const coalescedForwardSnapshot = { scrollTop: 7_600, scrollHeight: 20_000, clien
 observeTranscriptReaderExtent(coalescedForwardBlank, coalescedForwardSnapshot, undefined, true);
 assert.equal(
   resolveTranscriptReaderExtentCorrection(coalescedForwardBlank, coalescedForwardSnapshot),
-  -200,
+  -2_600,
   "a coalesced requested wheel range holds its last nonblank logical target",
 );
 

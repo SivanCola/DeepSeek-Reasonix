@@ -58,7 +58,7 @@ import { useTranscriptScrollInteractions } from "../lib/useTranscriptScrollInter
 import { useLiveTurnHandoff } from "../lib/useLiveTurnHandoff";
 import { useTranscriptListGeometryObserver } from "../lib/useTranscriptListGeometryObserver";
 import { hasTranscriptScrollableRange, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX, useTranscriptScrollArbiter } from "../lib/useTranscriptScrollArbiter";
-import { TRANSCRIPT_READER_OVERSCAN_ROWS, TRANSCRIPT_READER_VIEWPORT_BUFFER } from "../lib/transcriptScrollArbiter";
+import { TRANSCRIPT_READER_OVERSCAN_ROWS, transcriptReaderViewportBuffer } from "../lib/transcriptScrollArbiter";
 import { useTranscriptLayoutIntegrity } from "../lib/useTranscriptLayoutIntegrity";
 import { TranscriptLayoutIntentProvider, TranscriptScrollWriteProvider } from "./TranscriptLayoutIntentContext";
 import { MarkdownImageTabContext } from "./MarkdownImageContext";
@@ -879,6 +879,7 @@ export function Transcript({
           onGeometryChange: handleLiveRegionGeometryChange,
         }
       : null,
+    onFooterGeometryChange: handleLiveRegionGeometryChange,
     olderHistory: hasOlderHistory && (loadingOlderHistory || Boolean(olderHistoryError))
       ? {
           loading: loadingOlderHistory,
@@ -971,7 +972,7 @@ export function Transcript({
             heightEstimates={heightEstimates}
             itemSize={itemSize}
             minOverscanItemCount={layoutSafeMode ? { top: 32, bottom: 32 } : readerBuffering ? { top: TRANSCRIPT_READER_OVERSCAN_ROWS, bottom: TRANSCRIPT_READER_OVERSCAN_ROWS } : { top: VIRTUAL_OVERSCAN_ROWS, bottom: VIRTUAL_OVERSCAN_ROWS }}
-            increaseViewportBy={layoutSafeMode ? { top: (scrollElement?.clientHeight ?? 0) * 2, bottom: (scrollElement?.clientHeight ?? 0) * 2 } : readerBuffering ? { top: (scrollElement?.clientHeight ?? 0) * TRANSCRIPT_READER_VIEWPORT_BUFFER, bottom: (scrollElement?.clientHeight ?? 0) * TRANSCRIPT_READER_VIEWPORT_BUFFER } : { top: 480, bottom: 480 }}
+            increaseViewportBy={layoutSafeMode ? { top: (scrollElement?.clientHeight ?? 0) * 2, bottom: (scrollElement?.clientHeight ?? 0) * 2 } : readerBuffering ? { top: (scrollElement?.clientHeight ?? 0) * transcriptReaderViewportBuffer(scrollElement?.ownerDocument.defaultView?.navigator.userAgent), bottom: (scrollElement?.clientHeight ?? 0) * transcriptReaderViewportBuffer(scrollElement?.ownerDocument.defaultView?.navigator.userAgent) } : { top: 480, bottom: 480 }}
             scrollerRef={handleScrollerRef}
             itemsRendered={handleItemsRendered}
             startReached={handleViewportEarlierHistoryReached}

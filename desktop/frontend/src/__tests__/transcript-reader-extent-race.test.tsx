@@ -607,7 +607,7 @@ try {
 }
 
 // WKWebView can briefly outrun Virtuoso's mounted range. The blank native
-// coordinate must not survive a paint. Hold the last requested logical
+// coordinate must not survive a paint. Hold the last occupied logical
 // position immediately, and do not reissue the async native correction while
 // its first write is pending.
 await act(async () => arbiter?.reset());
@@ -639,8 +639,8 @@ scrollElement.scrollTo = () => {};
 try {
   await act(async () => arbiter?.deliverScroll());
   await act(async () => arbiter?.observeReaderExtent());
-  check(scrollByCalls === 1 && lastScrollByTop === -1_218,
-    `the blank frame is synchronously held at the requested logical position once (${lastScrollByTop}px)`);
+  check(scrollByCalls === 1 && lastScrollByTop === -1_242,
+    `the blank frame is synchronously held at the last occupied logical position once (${lastScrollByTop}px)`);
   check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
     "an unacknowledged WebKit correction is not emitted again");
 } finally {
