@@ -183,17 +183,15 @@ assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "reader correc
 assert.equal(element.scrollTop, 1_640);
 assert.equal(list.style.translate, "0 0px", "native acknowledgement retains a zero-offset bridge through the next paint");
 bridgeRowRawTop += 590;
-const lateRangeRow = dom.window.document.createElement("div");
-lateRangeRow.className = "transcript__row";
-lateRangeRow.dataset.rowKey = "late-range-row";
-list.prepend(lateRangeRow);
+list.style.transform = "translateY(670px)";
 await Promise.resolve();
 assert.equal(list.style.translate, "0 -590px", "a late same-paint range replacement keeps the corrected row visually fixed");
-lateRangeRow.remove();
+await Promise.resolve();
+assert.equal(list.style.translate, "0 -590px", "the bridge ignores its own style mutation instead of feeding back");
 frames.shift()?.(16);
 await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 assert.equal(list.style.translate, "", "the acknowledged bridge releases after the protected paint");
-assert.equal(list.style.transform, "translateY(80px)", "bridge cleanup preserves Virtuoso's range transform");
+assert.equal(list.style.transform, "translateY(670px)", "bridge cleanup preserves Virtuoso's range transform");
 
 assert.equal(writer.write({
   owner: "reader-stability",

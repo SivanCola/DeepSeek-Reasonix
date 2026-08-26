@@ -215,7 +215,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // the final pre-paint anchor and passive native-bottom sampler measure 2426.4
 // KiB. The complete painted-range guard, post-paint baseline fence, and
 // extent-scoped wheel proof measure 2428.0 KiB. The same-paint native bridge
-// measures 2429.1 KiB; retain 0.1 KiB without widening per-chunk ratchets.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_429.2 : 2_429.2;
+// and its transform-only feedback fence measure 2429.3 KiB; retain 0.1 KiB
+// without widening per-chunk ratchets.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_429.4 : 2_429.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

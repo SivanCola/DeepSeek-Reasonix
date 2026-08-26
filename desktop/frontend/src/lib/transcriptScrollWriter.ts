@@ -75,6 +75,7 @@ export function createTranscriptScrollWriter({
     cleanupTimer: number | null;
     observer: MutationObserver | null;
     rowOffsets: ReadonlyMap<string, number>;
+    listTransform: string;
     translateY: number;
   } | null = null;
 
@@ -155,6 +156,7 @@ export function createTranscriptScrollWriter({
               cleanupTimer: null as number | null,
               observer: null as MutationObserver | null,
               rowOffsets: new Map([...paintedRows].map(([rowKey, offset]) => [rowKey, offset - correction])),
+              listTransform: list.style.transform,
               translateY: -correction,
             };
             const setTranslate = (translateY: number) => {
@@ -164,8 +166,20 @@ export function createTranscriptScrollWriter({
             setTranslate(-correction);
             const MutationObserverCtor = view.MutationObserver;
             if (MutationObserverCtor && pending.rowOffsets.size > 0) {
-              pending.observer = new MutationObserverCtor(() => {
+              pending.observer = new MutationObserverCtor((mutations) => {
                 if (readerVisualBridge !== pending) return;
+                const rangeChanged = mutations.some((mutation) => {
+                  if (mutation.type === "childList") return true;
+                  if (mutation.target !== list) return true;
+                  const listTransform = list.style.transform;
+                  if (listTransform === pending.listTransform) return false;
+                  pending.listTransform = listTransform;
+                  return true;
+                });
+                // `setTranslate` itself mutates the list's style attribute.
+                // Ignore that independent-property-only record, while still
+                // observing Virtuoso's transform changes on the same node.
+                if (!rangeChanged) return;
                 const currentRows = captureReaderBridgeRows(element, list);
                 const deltas = [...currentRows].flatMap(([rowKey, offset]) => {
                   const target = pending.rowOffsets.get(rowKey);
@@ -183,6 +197,8 @@ export function createTranscriptScrollWriter({
               pending.observer.observe(list, {
                 childList: true,
                 subtree: true,
+                attributes: true,
+                attributeFilter: ["style"],
               });
             }
             const commit = () => {
