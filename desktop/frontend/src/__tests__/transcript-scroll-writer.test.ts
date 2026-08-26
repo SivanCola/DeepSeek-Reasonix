@@ -156,9 +156,8 @@ bridgeRow.className = "transcript__row";
 bridgeRow.dataset.rowKey = "bridge-row";
 bridgeRowRawTop = 500;
 bridgeRow.getBoundingClientRect = () => {
-  const translateParts = list.style.translate.split(" ");
-  const translate = Number.parseFloat(translateParts[translateParts.length - 1] ?? "0") || 0;
-  const top = (bridgeRowRawTop ?? 0) + translate;
+  const visualOffset = Number.parseFloat(list.style.top) || 0;
+  const top = (bridgeRowRawTop ?? 0) + visualOffset;
   return {
     x: 0, y: top, top, left: 0, right: 800, bottom: top + 100,
     width: 800, height: 100, toJSON: () => ({}),
@@ -175,22 +174,22 @@ assert.equal(writer.write({
 }), true);
 assert.equal(calls.length, 3, "reader correction does not enqueue a second Virtuoso range reconciliation");
 assert.equal(nativeScrolls.length, 1, "large reader correction waits for its visual bridge frame");
-assert.equal(list.style.translate, "0 -440px", "reader correction holds the painted logical anchor before native range reconciliation");
+assert.equal(list.style.top, "-440px", "reader correction holds the painted logical anchor before native range reconciliation");
 list.style.transform = "translateY(80px)";
-assert.equal(list.style.translate, "0 -440px", "Virtuoso's range transform cannot overwrite the independent reader bridge");
+assert.equal(list.style.top, "-440px", "Virtuoso's range transform cannot overwrite the independent reader bridge");
 frames.shift()?.(0);
 assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "reader correction targets the currently painted native scroller on the bridge frame");
 assert.equal(element.scrollTop, 1_640);
-assert.equal(list.style.translate, "0 0px", "native acknowledgement retains a zero-offset bridge through the next paint");
+assert.equal(list.style.top, "0px", "native acknowledgement retains a zero-offset bridge through the next paint");
 bridgeRowRawTop += 590;
 list.style.transform = "translateY(670px)";
 await Promise.resolve();
-assert.equal(list.style.translate, "0 -590px", "a late same-paint range replacement keeps the corrected row visually fixed");
+assert.equal(list.style.top, "-590px", "a late same-paint range replacement keeps the corrected row visually fixed");
 await Promise.resolve();
-assert.equal(list.style.translate, "0 -590px", "the bridge ignores its own style mutation instead of feeding back");
+assert.equal(list.style.top, "-590px", "the bridge ignores its own style mutation instead of feeding back");
 frames.shift()?.(16);
 await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
-assert.equal(list.style.translate, "", "the acknowledged bridge releases after the protected paint");
+assert.equal(list.style.top, "", "the acknowledged bridge releases after the protected paint");
 assert.equal(list.style.transform, "translateY(670px)", "bridge cleanup preserves Virtuoso's range transform");
 
 assert.equal(writer.write({
@@ -201,11 +200,11 @@ assert.equal(writer.write({
   expectedGeneration: 5,
   geometryRevision: 12,
 }), true);
-assert.equal(list.style.translate, "0 -160px");
+assert.equal(list.style.top, "-160px");
 generationRef.current = 6;
 frames.shift()?.(16);
 assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "stale visual bridge never writes into a replacement surface");
-assert.equal(list.style.translate, "", "stale visual bridge still restores the list before paint");
+assert.equal(list.style.top, "", "stale visual bridge still restores the list before paint");
 
 modeRef.current = "reader-gesture";
 nativeScrollCommits = false;
@@ -217,16 +216,16 @@ assert.equal(writer.write({
   expectedGeneration: 6,
   geometryRevision: 13,
 }), true);
-assert.equal(list.style.translate, "0 -280px");
+assert.equal(list.style.top, "-280px");
 frames.shift()?.(24);
-assert.equal(list.style.translate, "0 -280px", "an unacknowledged native offset keeps the bridge painted");
+assert.equal(list.style.top, "-280px", "an unacknowledged native offset keeps the bridge painted");
 nativeScrollCommits = true;
 frames.shift()?.(32);
 assert.equal(element.scrollTop, 1_920, "the bounded bridge retries the native target");
-assert.equal(list.style.translate, "0 0px", "native acknowledgement keeps the retried bridge through paint");
+assert.equal(list.style.top, "0px", "native acknowledgement keeps the retried bridge through paint");
 frames.shift()?.(48);
 await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
-assert.equal(list.style.translate, "", "the retried bridge releases after the protected paint");
+assert.equal(list.style.top, "", "the retried bridge releases after the protected paint");
 
 assert.equal(writer.write({
   owner: "reader-stability",
@@ -236,7 +235,7 @@ assert.equal(writer.write({
   expectedGeneration: 6,
   geometryRevision: 14,
 }), true);
-assert.equal(list.style.translate, "0 -280px");
+assert.equal(list.style.top, "-280px");
 modeRef.current = "programmatic";
 assert.equal(writer.write({
   owner: "jump",
@@ -246,7 +245,7 @@ assert.equal(writer.write({
   expectedGeneration: 6,
   geometryRevision: 14,
 }), true);
-assert.equal(list.style.translate, "", "a new owner cancels the pending reader visual bridge");
+assert.equal(list.style.top, "", "a new owner cancels the pending reader visual bridge");
 const nativeCountAfterJump = nativeScrolls.length;
 frames.shift()?.(32);
 assert.equal(nativeScrolls.length, nativeCountAfterJump, "a cancelled reader bridge cannot land after a jump");

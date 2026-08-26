@@ -69,14 +69,14 @@ export function createTranscriptScrollWriter({
   let readerVisualBridge: {
     frame: number;
     list: HTMLElement;
-    originalTranslate: string;
+    originalTop: string;
     view: Window;
     attempts: number;
     cleanupTimer: number | null;
     observer: MutationObserver | null;
     rowOffsets: ReadonlyMap<string, number>;
     listTransform: string;
-    translateY: number;
+    offsetY: number;
   } | null = null;
 
   const clearReaderVisualBridge = () => {
@@ -86,8 +86,8 @@ export function createTranscriptScrollWriter({
     if (pending.frame > 0) pending.view.cancelAnimationFrame(pending.frame);
     if (pending.cleanupTimer != null) pending.view.clearTimeout(pending.cleanupTimer);
     pending.observer?.disconnect();
-    if (pending.originalTranslate) pending.list.style.setProperty("translate", pending.originalTranslate);
-    else pending.list.style.removeProperty("translate");
+    if (pending.originalTop) pending.list.style.top = pending.originalTop;
+    else pending.list.style.removeProperty("top");
   };
 
   const writeNative = (element: HTMLDivElement, top: number, behavior: ScrollBehavior) => {
@@ -142,28 +142,28 @@ export function createTranscriptScrollWriter({
           const view = element.ownerDocument.defaultView;
           const list = element.querySelector<HTMLElement>(".transcript__virtual-sizer");
           if (view && list && Math.abs(correction) > 2 && shouldBridgeTranscriptReaderCorrection(view)) {
-            // Virtuoso owns `transform` and can overwrite it later in the same
-            // frame. The independent translate property composes with that
-            // range transform and survives until the native offset commits.
-            const originalTranslate = list.style.getPropertyValue("translate");
+            // Virtuoso owns `transform`; relative `top` is an independent,
+            // layout-neutral visual offset supported by older WKWebView builds
+            // that do not reliably paint the individual `translate` property.
+            const originalTop = list.style.top;
             const paintedRows = captureReaderBridgeRows(element, list);
             const pending = {
               frame: 0,
               list,
-              originalTranslate,
+              originalTop,
               view,
               attempts: 0,
               cleanupTimer: null as number | null,
               observer: null as MutationObserver | null,
               rowOffsets: new Map([...paintedRows].map(([rowKey, offset]) => [rowKey, offset - correction])),
               listTransform: list.style.transform,
-              translateY: -correction,
+              offsetY: -correction,
             };
-            const setTranslate = (translateY: number) => {
-              pending.translateY = translateY;
-              list.style.setProperty("translate", `0 ${translateY}px`);
+            const setVisualOffset = (offsetY: number) => {
+              pending.offsetY = offsetY;
+              list.style.top = `${offsetY}px`;
             };
-            setTranslate(-correction);
+            setVisualOffset(-correction);
             const MutationObserverCtor = view.MutationObserver;
             if (MutationObserverCtor && pending.rowOffsets.size > 0) {
               pending.observer = new MutationObserverCtor((mutations) => {
@@ -176,7 +176,7 @@ export function createTranscriptScrollWriter({
                   pending.listTransform = listTransform;
                   return true;
                 });
-                // `setTranslate` itself mutates the list's style attribute.
+                // `setVisualOffset` itself mutates the list's style attribute.
                 // Ignore that independent-property-only record, while still
                 // observing Virtuoso's transform changes on the same node.
                 if (!rangeChanged) return;
@@ -192,7 +192,7 @@ export function createTranscriptScrollWriter({
                 // queued range replacement later in the same paint. Hold the
                 // last corrected rows in place until the reader guard issues
                 // the replacement range's final native target.
-                setTranslate(pending.translateY - displacement);
+                setVisualOffset(pending.offsetY - displacement);
               });
               pending.observer.observe(list, {
                 childList: true,
@@ -216,7 +216,7 @@ export function createTranscriptScrollWriter({
               writeNative(element, targetTop, behavior);
               const remaining = element.scrollTop - targetTop;
               if (Math.abs(remaining) <= 2) {
-                setTranslate(0);
+                setVisualOffset(0);
                 // Do not tear down in the acknowledgement rAF. WKWebView can
                 // apply its queued Virtuoso range after this callback but
                 // before the same rendering opportunity paints.
@@ -233,7 +233,7 @@ export function createTranscriptScrollWriter({
                 clearReaderVisualBridge();
                 return;
               }
-              setTranslate(remaining);
+              setVisualOffset(remaining);
               pending.frame = view.requestAnimationFrame(commit);
             };
             pending.frame = view.requestAnimationFrame(commit);
