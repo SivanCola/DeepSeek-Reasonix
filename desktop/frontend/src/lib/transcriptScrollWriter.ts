@@ -22,13 +22,14 @@ export type TranscriptScrollWriter = {
 
 /**
  * Safari/WKWebView and WebKitGTK can defer a native scroll range update by one
- * paint. Chromium applies the same write synchronously; transforming its
- * virtual sizer during a prepend can instead feed a perpetual measurement
- * loop, so the visual bridge is deliberately engine-scoped.
+ * paint. WebView2 applies the offset synchronously but can replace it with the
+ * same frame's virtual range. Ordinary Chromium does neither, so the visual
+ * bridge remains scoped to the affected desktop engines.
  */
 export function shouldBridgeTranscriptReaderCorrection(view: Window): boolean {
   const userAgent = view.navigator.userAgent;
-  return /AppleWebKit/i.test(userAgent) && !/(?:Chrome|Chromium|CriOS|Edg|OPR)\//i.test(userAgent);
+  return /Edg\//i.test(userAgent)
+    || (/AppleWebKit/i.test(userAgent) && !/(?:Chrome|Chromium|CriOS|OPR)\//i.test(userAgent));
 }
 
 /**
@@ -53,7 +54,7 @@ export function createTranscriptScrollWriter({
   let readerVisualBridge: {
     frame: number;
     list: HTMLElement;
-    originalTransform: string;
+    originalTranslate: string;
     view: Window;
   } | null = null;
 
@@ -62,7 +63,8 @@ export function createTranscriptScrollWriter({
     readerVisualBridge = null;
     if (!pending) return;
     pending.view.cancelAnimationFrame(pending.frame);
-    pending.list.style.transform = pending.originalTransform;
+    if (pending.originalTranslate) pending.list.style.setProperty("translate", pending.originalTranslate);
+    else pending.list.style.removeProperty("translate");
   };
 
   const writeNative = (element: HTMLDivElement, top: number, behavior: ScrollBehavior) => {
@@ -118,12 +120,15 @@ export function createTranscriptScrollWriter({
           const view = element.ownerDocument.defaultView;
           const list = element.querySelector<HTMLElement>(".transcript__virtual-sizer");
           if (view && list && Math.abs(correction) > 2 && shouldBridgeTranscriptReaderCorrection(view)) {
-            const originalTransform = list.style.transform;
-            list.style.transform = `translateY(${-correction}px)`;
+            // Virtuoso owns `transform` and can overwrite it later in the same
+            // frame. The independent translate property composes with that
+            // range transform and survives until the native offset commits.
+            const originalTranslate = list.style.getPropertyValue("translate");
+            list.style.setProperty("translate", `0 ${-correction}px`);
             const pending = {
               frame: 0,
               list,
-              originalTransform,
+              originalTranslate,
               view,
             };
             pending.frame = view.requestAnimationFrame(() => {
@@ -134,7 +139,8 @@ export function createTranscriptScrollWriter({
                 && scrollRef.current === element
                 && (modeRef.current === "reader-gesture" || modeRef.current === "manual")
               ) writeNative(element, targetTop, behavior);
-              list.style.transform = originalTransform;
+              if (originalTranslate) list.style.setProperty("translate", originalTranslate);
+              else list.style.removeProperty("translate");
             });
             readerVisualBridge = pending;
             return true;

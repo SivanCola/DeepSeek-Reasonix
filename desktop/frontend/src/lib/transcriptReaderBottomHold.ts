@@ -11,6 +11,7 @@ import {
 
 type MutableRef<T> = { current: T };
 type NativeExtent = { scrollHeight: number; clientHeight: number };
+const MAX_TAIL_MOUNT_CHECKS = 8;
 
 function tailIsMounted(element: HTMLElement): boolean {
   if (element.querySelector("[data-live-region='true']")) return true;
@@ -50,11 +51,13 @@ export function createTranscriptReaderBottomHold({
 }): TranscriptReaderBottomHold {
   let frame: number | null = null;
   let heldExtent: NativeExtent | null = null;
+  let tailMountChecks = 0;
 
   const cancel = () => {
     if (frame !== null) cancelAnimationFrame(frame);
     frame = null;
     heldExtent = null;
+    tailMountChecks = 0;
   };
 
   const deliver = (element: HTMLDivElement) => {
@@ -83,14 +86,15 @@ export function createTranscriptReaderBottomHold({
     const state = stateRef.current;
     if (
       atBottom
-      && tailMounted
       && state.mode === "reader-gesture"
       && state.readerIntent
       && state.readerIntentCanClaimTail
       && frame === null
     ) {
+      if (!tailMounted && tailMountChecks >= MAX_TAIL_MOUNT_CHECKS) return;
       const generation = generationRef.current;
-      heldExtent = { scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
+      heldExtent = tailMounted ? { scrollHeight: element.scrollHeight, clientHeight: element.clientHeight } : null;
+      tailMountChecks = tailMounted ? 0 : tailMountChecks + 1;
       frame = requestAnimationFrame(() => {
         const held = heldExtent;
         frame = null;

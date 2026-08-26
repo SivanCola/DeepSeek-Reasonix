@@ -16,7 +16,7 @@ import {
 import type { TranscriptScrollMode } from "./transcriptScrollArbiter";
 import { nativeTranscriptDistanceFromBottom } from "./transcriptScrollGeometry";
 import { recordTranscriptScrollDiagnostic, type TranscriptScrollWriteRecord } from "./transcriptScrollProbe";
-import { captureTranscriptLayoutAnchor, transcriptElementViewportIsBlank } from "./transcriptVirtuosoRecovery";
+import { captureLeadingTranscriptLayoutAnchor, transcriptElementViewportIsBlank } from "./transcriptVirtuosoRecovery";
 
 const READER_EXTENT_ACTIVE_MS = 180;
 // WebView2 can coalesce a sustained native wheel burst and commit Virtuoso's
@@ -220,7 +220,7 @@ export function useTranscriptReaderExtentStability({
   const arm = useCallback((deltaY: number) => {
     const element = scrollRef.current;
     if (!element) return;
-    const anchor = captureTranscriptLayoutAnchor(element, false);
+    const anchor = captureLeadingTranscriptLayoutAnchor(element);
     const current = guardRef.current;
     const extensionAnchor = current?.anchor
       && anchorOffset(current, element) !== undefined

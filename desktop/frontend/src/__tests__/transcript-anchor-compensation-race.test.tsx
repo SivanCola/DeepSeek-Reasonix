@@ -222,6 +222,31 @@ await act(async () => window.dispatchEvent(new dom.window.Event("pointerup")));
 await flushFrames();
 await flushFrames();
 check(arbiter?.modeRef.current === "tail-follow", "native thumb release after a held physical bottom resumes tail-follow");
+
+// A real virtual range can reach the native bottom before its LAST row mounts.
+// Keep a bounded release probe alive until that row becomes observable.
+await act(async () => arbiter?.reset());
+scrollElement.dataset.transcriptRowCount = "2";
+scrollElement.dataset.transcriptFirstItemIndex = "0";
+rowElement.dataset.itemIndex = "0";
+scrollElement.scrollTop = 0;
+await act(async () => arbiter?.onPointerDownIntent({
+  button: 0,
+  nativeEvent: { button: 0, clientX: 795 },
+} as React.PointerEvent<HTMLElement>));
+scrollElement.scrollTop = 400;
+await act(async () => arbiter?.deliverScroll());
+await act(async () => window.dispatchEvent(new dom.window.Event("pointerup")));
+await flushFrames();
+check(arbiter?.modeRef.current === "reader-gesture", "bottom release waits while the virtual tail is unmounted");
+rowElement.dataset.itemIndex = "1";
+await flushFrames();
+await flushFrames();
+check(arbiter?.modeRef.current === "tail-follow", "bounded release sampling claims the newly mounted virtual tail");
+delete scrollElement.dataset.transcriptRowCount;
+delete scrollElement.dataset.transcriptFirstItemIndex;
+delete rowElement.dataset.itemIndex;
+
 scrollExtent = 900;
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.noteGeometryChange("row-measure"));

@@ -280,9 +280,14 @@ check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
 // before its mutation observer runs. Keep the still-mounted prior anchor so
 // that the new range's first row cannot bless its own visual reversal.
 await act(async () => arbiter?.reset());
-scrollExtent = 24_557;
-scrollElement.scrollTop = 21_082;
-rowElement.getBoundingClientRect = () => rectAt(13);
+scrollExtent = 21_716;
+scrollElement.scrollTop = 4_678;
+rowElement.getBoundingClientRect = () => rectAt(-1);
+const oldSecondRow = dom.window.document.createElement("div");
+oldSecondRow.className = "transcript__row";
+oldSecondRow.dataset.rowKey = "old-second-row";
+oldSecondRow.getBoundingClientRect = () => rectAt(36);
+scrollElement.append(oldSecondRow);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
 await act(async () => arbiter?.onWheelIntent({
@@ -295,10 +300,16 @@ await act(async () => arbiter?.onWheelIntent({
 const incomingRow = dom.window.document.createElement("div");
 incomingRow.className = "transcript__row";
 incomingRow.dataset.rowKey = "incoming-row";
-incomingRow.getBoundingClientRect = () => rectAt(12);
+incomingRow.getBoundingClientRect = () => rectAt(-25);
+const incomingSecondRow = dom.window.document.createElement("div");
+incomingSecondRow.className = "transcript__row";
+incomingSecondRow.dataset.rowKey = "incoming-second-row";
+incomingSecondRow.getBoundingClientRect = () => rectAt(7);
 scrollElement.prepend(incomingRow);
-scrollElement.scrollTop = 21_182;
-rowElement.getBoundingClientRect = () => rectAt(428);
+incomingRow.after(incomingSecondRow);
+oldSecondRow.remove();
+scrollElement.scrollTop = 4_702;
+rowElement.getBoundingClientRect = () => rectAt(559);
 scrollWrites.length = 0;
 scrollByCalls = 0;
 await act(async () => arbiter?.onWheelIntent({
@@ -309,11 +320,12 @@ await act(async () => arbiter?.onWheelIntent({
   target: scrollElement,
 } as React.WheelEvent<HTMLElement>));
 await act(async () => arbiter?.observeReaderExtent());
-check(scrollByCalls === 1 && lastScrollByTop === 515,
+check(scrollByCalls === 1 && lastScrollByTop === 584,
   `a wheel cannot replace the mounted pre-swap anchor before observation (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the interleaved wheel/range correction keeps the single-writer contract");
 incomingRow.remove();
+incomingSecondRow.remove();
 
 // WebView2 can deliver the Virtuoso range replacement after its 180ms reader
 // intent idle boundary. Keep the accepted logical row alive across that

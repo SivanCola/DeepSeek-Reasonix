@@ -200,7 +200,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // 2397.01 KiB raw. The passive native range-commit lease adds 0.59 KiB while
 // keeping its active frame sampling at 180ms; retain 0.20 KiB instead of
 // replacing the gate with a percentage. Blank-range rejection and async-write
-// deduplication measure 2398.5 KiB; retain the same 0.20 KiB headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_398.7 : 2_398.7;
+// deduplication plus cross-WebView visual bridging and bounded tail-mount
+// confirmation and explicit history-mutation ownership measure 2399.3 KiB;
+// retain the same 0.20 KiB headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_399.5 : 2_399.5;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

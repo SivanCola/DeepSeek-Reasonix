@@ -133,7 +133,6 @@ export function useTranscriptScrollArbiter({
     writeCorrection: writeReaderCorrection,
     lastWriteOwner: writer.lastOwner,
   });
-
   // The tail writer and its bounded settle loop live in their own controller
   // (file-size budget); all inputs are stable refs, so it is created once.
   const tailSettleRef = useRef<TranscriptTailSettle | null>(null);
@@ -785,6 +784,7 @@ export function useTranscriptScrollArbiter({
     atBottomStateChange,
     deliverScroll,
     observeReaderExtent: readerExtent.observe,
+    cancelReaderExtent: readerExtent.cancel,
     onWheelIntent,
     onTouchStartIntent,
     onTouchMoveIntent,

@@ -101,6 +101,26 @@ export function captureVisibleTranscriptLayoutAnchor(
   return anchor ? { mode: "manual", rowKey: anchor.rowKey, offset: anchor.top - viewport.top } : undefined;
 }
 
+/** Reader transactions retain a leading row that is only fractionally clipped.
+ * A replacement range often preserves only that boundary row, making it the
+ * last proof that the painted viewport moved backwards. Rows that are already
+ * materially clipped remain browser-owned and must not override Virtuoso's
+ * ordinary prepend compensation. */
+export function captureLeadingTranscriptLayoutAnchor(
+  element: HTMLElement,
+): Extract<TranscriptLayoutAnchor, { mode: "manual" }> | undefined {
+  const rect = element.getBoundingClientRect();
+  const viewport = { top: rect.top, bottom: rect.bottom };
+  const visible = readTranscriptRowRects(element)
+    .filter((row) => rowIntersectsViewport(row, viewport))
+    .sort((left, right) => left.top - right.top);
+  const leading = visible[0];
+  const anchor = leading && leading.top >= viewport.top - 2
+    ? leading
+    : visible.find((row) => row.top >= viewport.top) ?? leading;
+  return anchor ? { mode: "manual", rowKey: anchor.rowKey, offset: anchor.top - viewport.top } : undefined;
+}
+
 export function transcriptElementViewportIsBlank(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
   if (rect.bottom <= rect.top) return false;

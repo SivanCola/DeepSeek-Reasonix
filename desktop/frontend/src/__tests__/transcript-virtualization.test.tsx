@@ -117,7 +117,10 @@ function firstTextNode(root: Node): Text | null {
     ok(anchorIdBefore != null && absoluteIndexBefore != null, "found a stable mounted anchor row before the prepend");
     // Prepend five older turns (15 rows) — the reading position must follow
     // the anchor row, not the row index.
-    await harness.render([...turns(5, "old-"), ...turns(20)], { running: false });
+    await harness.render([...turns(5, "old-"), ...turns(20)], {
+      running: false,
+      historyMutation: { seq: 1, kind: "prepend" },
+    });
     await harness.waitFor(
       () => anchorIdBefore != null
         && harness.container.querySelector(`#${anchorIdBefore}`) !== null,

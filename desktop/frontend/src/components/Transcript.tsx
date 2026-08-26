@@ -127,6 +127,7 @@ export function Transcript({
   turnStartAt,
   contentRevision = 0,
   invocationMetadata = EMPTY_INVOCATION_METADATA,
+  historyMutation,
   surfaceCommitToken,
   onSurfacePaintReady,
 }: {
@@ -238,6 +239,7 @@ export function Transcript({
     atBottomStateChange,
     deliverScroll,
     observeReaderExtent,
+    cancelReaderExtent,
     scrollToBottom,
     noteGeometryChange,
     observeListHeight,
@@ -258,6 +260,12 @@ export function Transcript({
   });
   const virtuosoReadyRef = useRef(false);
   const entranceRef = useTranscriptEntranceAnimation<HTMLDivElement>(tabId, revealSignal, items);
+
+  // Replace/prepend already has a layout owner; an old reader lease must not
+  // reinterpret its authoritative movement as a native range regression.
+  useLayoutEffect(() => {
+    if (historyMutation?.kind === "replace" || historyMutation?.kind === "prepend") cancelReaderExtent();
+  }, [cancelReaderExtent, historyMutation?.kind, historyMutation?.seq]);
 
   // Lease the markdown parse worker for as long as a transcript surface is
   // mounted; the last release terminates the thread (it re-spawns lazily).

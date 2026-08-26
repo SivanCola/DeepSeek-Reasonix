@@ -25,6 +25,11 @@ Object.defineProperty(dom.window.navigator, "userAgent", {
   configurable: true,
   value: "Mozilla/5.0 AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0",
 });
+assert.equal(shouldBridgeTranscriptReaderCorrection(dom.window as unknown as Window), true);
+Object.defineProperty(dom.window.navigator, "userAgent", {
+  configurable: true,
+  value: "Mozilla/5.0 AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36",
+});
 assert.equal(shouldBridgeTranscriptReaderCorrection(dom.window as unknown as Window), false);
 Object.defineProperty(dom.window.navigator, "userAgent", {
   configurable: true,
@@ -147,11 +152,14 @@ assert.equal(writer.write({
 }), true);
 assert.equal(calls.length, 3, "reader correction does not enqueue a second Virtuoso range reconciliation");
 assert.equal(nativeScrolls.length, 1, "large reader correction waits for its visual bridge frame");
-assert.equal(list.style.transform, "translateY(-440px)", "reader correction holds the painted logical anchor before native range reconciliation");
+assert.equal(list.style.translate, "0 -440px", "reader correction holds the painted logical anchor before native range reconciliation");
+list.style.transform = "translateY(80px)";
+assert.equal(list.style.translate, "0 -440px", "Virtuoso's range transform cannot overwrite the independent reader bridge");
 frames.shift()?.(0);
 assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "reader correction targets the currently painted native scroller on the bridge frame");
 assert.equal(element.scrollTop, 1_640);
-assert.equal(list.style.transform, "", "native reader correction releases its temporary visual bridge before paint");
+assert.equal(list.style.translate, "", "native reader correction releases its temporary visual bridge before paint");
+assert.equal(list.style.transform, "translateY(80px)", "bridge cleanup preserves Virtuoso's range transform");
 
 assert.equal(writer.write({
   owner: "reader-stability",
@@ -161,11 +169,11 @@ assert.equal(writer.write({
   expectedGeneration: 5,
   geometryRevision: 12,
 }), true);
-assert.equal(list.style.transform, "translateY(-160px)");
+assert.equal(list.style.translate, "0 -160px");
 generationRef.current = 6;
 frames.shift()?.(16);
 assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "stale visual bridge never writes into a replacement surface");
-assert.equal(list.style.transform, "", "stale visual bridge still restores the list before paint");
+assert.equal(list.style.translate, "", "stale visual bridge still restores the list before paint");
 
 assert.equal(writer.write({
   owner: "reader-stability",
@@ -175,7 +183,7 @@ assert.equal(writer.write({
   expectedGeneration: 6,
   geometryRevision: 13,
 }), true);
-assert.equal(list.style.transform, "translateY(-280px)");
+assert.equal(list.style.translate, "0 -280px");
 modeRef.current = "programmatic";
 assert.equal(writer.write({
   owner: "jump",
@@ -185,7 +193,7 @@ assert.equal(writer.write({
   expectedGeneration: 6,
   geometryRevision: 13,
 }), true);
-assert.equal(list.style.transform, "", "a new owner cancels the pending reader visual bridge");
+assert.equal(list.style.translate, "", "a new owner cancels the pending reader visual bridge");
 const nativeCountAfterJump = nativeScrolls.length;
 frames.shift()?.(32);
 assert.equal(nativeScrolls.length, nativeCountAfterJump, "a cancelled reader bridge cannot land after a jump");
