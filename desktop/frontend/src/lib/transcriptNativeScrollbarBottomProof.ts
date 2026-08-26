@@ -6,8 +6,8 @@ import {
 type MutableRef<T> = { current: T };
 
 export type TranscriptNativeScrollbarBottomProof = {
-  begin: (element: HTMLDivElement) => void;
-  observe: (element: HTMLDivElement) => void;
+  begin: (element: HTMLDivElement, pointerY?: number) => void;
+  observe: (element: HTMLDivElement, pointerY?: number) => void;
   finish: (element: HTMLDivElement | null) => boolean;
   cancel: () => void;
 };
@@ -26,6 +26,7 @@ export function createTranscriptNativeScrollbarBottomProof({
 }): TranscriptNativeScrollbarBottomProof {
   let activeElement: HTMLDivElement | null = null;
   let initialTop = 0;
+  let initialPointerY: number | null = null;
   let frame: number | null = null;
   let moved = false;
   let reachedBottom = false;
@@ -35,8 +36,13 @@ export function createTranscriptNativeScrollbarBottomProof({
     frame = null;
   };
 
-  const observe = (element: HTMLDivElement) => {
-    moved ||= Math.abs(element.scrollTop - initialTop) > 1;
+  const observe = (element: HTMLDivElement, pointerY?: number) => {
+    if (activeElement !== element) return;
+    // A native thumb can leave and return to the bottom between both rAF and
+    // scroll delivery. Pointer movement proves the transaction moved; finish
+    // still requires the real scroller to be physically at bottom.
+    moved ||= Math.abs(element.scrollTop - initialTop) > 1
+      || (pointerY !== undefined && initialPointerY !== null && Math.abs(pointerY - initialPointerY) > 2);
     reachedBottom ||= moved && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
   };
 
@@ -51,14 +57,16 @@ export function createTranscriptNativeScrollbarBottomProof({
   const cancel = () => {
     cancelFrame();
     activeElement = null;
+    initialPointerY = null;
     moved = false;
     reachedBottom = false;
   };
 
-  const begin = (element: HTMLDivElement) => {
+  const begin = (element: HTMLDivElement, pointerY?: number) => {
     cancel();
     activeElement = element;
     initialTop = element.scrollTop;
+    initialPointerY = pointerY ?? null;
     frame = requestAnimationFrame(sample);
   };
 

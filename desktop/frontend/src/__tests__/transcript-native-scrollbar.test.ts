@@ -106,6 +106,14 @@ bottomProof.observe(proofElement);
 proofTop = 500;
 check(bottomProof.finish(proofElement), true,
   "native scroll delivery retains an away-and-back thumb when rAF misses the excursion");
+bottomProof.begin(proofElement, 500);
+bottomProof.observe(proofElement, 498);
+check(bottomProof.finish(proofElement), false,
+  "subpixel pointer jitter at an initial-bottom thumb grants no bottom proof");
+bottomProof.begin(proofElement, 500);
+bottomProof.observe(proofElement, 452);
+check(bottomProof.finish(proofElement), true,
+  "pointer travel retains an away-and-back thumb when scroll and rAF both miss the excursion");
 bottomProof.begin(proofElement);
 proofTop = 500;
 proofHeight = 1_100;

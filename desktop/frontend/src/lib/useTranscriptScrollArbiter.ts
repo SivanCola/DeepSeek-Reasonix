@@ -513,21 +513,21 @@ export function useTranscriptScrollArbiter({
     }
   }, [endReaderIntent, finishNativeScrollbarDrag]);
 
+  const observePointerIntent = useCallback((event: PointerEvent) => {
+    const element = scrollRef.current; if (nativeScrollbarDragRef.current && element) nativeScrollbarBottomProof.observe(element, event.clientY);
+  }, [nativeScrollbarBottomProof]);
+
   const finishAllReaderIntent = useCallback(() => {
     finishPointerIntent();
     endReaderIntent();
   }, [endReaderIntent, finishPointerIntent]);
 
   useEffect(() => {
-    window.addEventListener("pointerup", finishPointerIntent, true);
-    window.addEventListener("pointercancel", finishPointerIntent, true);
-    window.addEventListener("blur", finishAllReaderIntent);
+    window.addEventListener("pointermove", observePointerIntent, true); window.addEventListener("pointerup", finishPointerIntent, true); window.addEventListener("pointercancel", finishPointerIntent, true); window.addEventListener("blur", finishAllReaderIntent);
     return () => {
-      window.removeEventListener("pointerup", finishPointerIntent, true);
-      window.removeEventListener("pointercancel", finishPointerIntent, true);
-      window.removeEventListener("blur", finishAllReaderIntent);
+      window.removeEventListener("pointermove", observePointerIntent, true); window.removeEventListener("pointerup", finishPointerIntent, true); window.removeEventListener("pointercancel", finishPointerIntent, true); window.removeEventListener("blur", finishAllReaderIntent);
     };
-  }, [finishAllReaderIntent, finishPointerIntent]);
+  }, [finishAllReaderIntent, finishPointerIntent, observePointerIntent]);
 
   useEffect(() => () => {
     if (resizeSettleFrameRef.current !== null) cancelAnimationFrame(resizeSettleFrameRef.current);
@@ -743,7 +743,7 @@ export function useTranscriptScrollArbiter({
     if (element && isNativeVerticalScrollbarPointer(element, event.nativeEvent)) {
       if (!nativeScrollbarDragRef.current) {
         nativeScrollbarDragRef.current = true; setNativeScrollbarDragging(true); element.dataset.nativeScrollbarDrag = "true";
-        nativeScrollbarBottomProof.begin(element);
+        nativeScrollbarBottomProof.begin(element, event.clientY);
         dispatch({ type: "NATIVE_SCROLLBAR_BEGIN" });
       }
       return true;

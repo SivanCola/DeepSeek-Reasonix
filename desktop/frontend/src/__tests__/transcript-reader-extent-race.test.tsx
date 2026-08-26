@@ -538,6 +538,37 @@ await act(async () => arbiter?.deliverScroll());
 check(scrollWrites.length === 3,
   `progress beyond a stalled forward correction releases the next range correction (${scrollWrites.length})`);
 scrollElement.scrollTo = nativeOriginalScrollTo;
+
+// WKWebView can paint an accepted native-scroll range, then replace it before
+// the deferred post-paint baseline timer runs. The native delivery itself is
+// the last reliable observation of that range; retain its barely visible
+// boundary row so the next older range cannot flash downward.
+await act(async () => arbiter?.reset());
+scrollExtent = 24_765;
+scrollElement.scrollTop = 18_768;
+rowElement.dataset.rowKey = "row-495";
+rowElement.getBoundingClientRect = () => rectAt(-99);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollElement.scrollTop += 24;
+await act(async () => arbiter?.deliverScroll());
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent = 24_506;
+rowElement.getBoundingClientRect = () => rectAt(573);
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 672,
+  `an accepted native delivery retains its painted boundary before replacement (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the native-delivery baseline correction keeps the single-writer contract");
+rowElement.dataset.rowKey = "row-a";
 Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: originalUserAgent });
 
 // A correction acknowledgement can share a native delivery with the next

@@ -557,7 +557,15 @@ export function useTranscriptReaderExtentStability({
       && active?.element === element
       && active.direction === (nativeDelta < 0 ? -1 : 1)
       && Math.abs(active.acceptedTop - element.scrollTop) <= 2
-    ) active.expectedTop = element.scrollTop;
+    ) {
+      active.expectedTop = element.scrollTop;
+      // Native scroll delivery observes the range that the WebView actually
+      // painted for this accepted offset. Preserve it synchronously: WKWebView
+      // can replace that range before the post-paint timer runs, leaving only
+      // one boundary row with which to prove the visual reversal.
+      const paintedRows = capturePaintedReaderRows(element);
+      if (paintedRows.size > 0) promotePaintedReaderRows(active, paintedRows);
+    }
     lastNativeDeliveryRef.current = {
       element,
       generation,
