@@ -13,7 +13,7 @@ type MutableRef<T> = { current: T };
 type NativeExtent = { scrollHeight: number; clientHeight: number };
 // Native ranges can settle well before a loaded CI WebView mounts LAST. Keep
 // the explicit bottom-release proof bounded to roughly two seconds at 60fps.
-const MAX_TAIL_MOUNT_CHECKS = 120;
+export const MAX_TAIL_MOUNT_CHECKS = 120;
 
 function tailIsMounted(element: HTMLElement): boolean {
   if (element.querySelector("[data-live-region='true']")) return true;
@@ -93,7 +93,16 @@ export function createTranscriptReaderBottomHold({
       && state.readerIntentCanClaimTail
       && frame === null
     ) {
-      if (!tailMounted && tailMountChecks >= MAX_TAIL_MOUNT_CHECKS) return;
+      if (!tailMounted && tailMountChecks >= MAX_TAIL_MOUNT_CHECKS) {
+        // The native thumb proved the physical end, but a loaded WebView can
+        // leave Virtuoso's LAST row unmounted beyond the passive observation
+        // budget. Hand that bounded failure to the existing jump-tail
+        // transaction instead of abandoning the reader in manual mode. This
+        // is one arbiter-owned command after release, never a direct write.
+        cancel();
+        dispatch({ type: "JUMP_TO_BOTTOM" });
+        return;
+      }
       const generation = generationRef.current;
       heldExtent = tailMounted ? { scrollHeight: element.scrollHeight, clientHeight: element.clientHeight } : null;
       tailMountChecks = tailMounted ? 0 : tailMountChecks + 1;

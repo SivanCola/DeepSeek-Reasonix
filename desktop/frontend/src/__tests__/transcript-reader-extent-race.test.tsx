@@ -327,10 +327,11 @@ check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
 incomingRow.remove();
 incomingSecondRow.remove();
 
-// WebView2 can deliver the Virtuoso range replacement after its 180ms reader
-// intent idle boundary. Keep the accepted logical row alive across that
-// bounded compositor delay instead of accepting the late range as a new
-// position. The fake clock makes this race deterministic without sleeping.
+// Native WebViews can deliver the Virtuoso range replacement well after the
+// 180ms reader-intent idle boundary. Keep the accepted logical row alive
+// across a multi-second compositor delay instead of accepting the late range
+// as a new position. The fake clock makes this race deterministic without
+// sleeping.
 await act(async () => arbiter?.reset());
 scrollExtent = 24_592;
 Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 725 });
@@ -351,7 +352,7 @@ try {
   } as React.WheelEvent<HTMLElement>));
   scrollWrites.length = 0;
   scrollByCalls = 0;
-  fakeNow += 300;
+  fakeNow += 1_600;
   await flushFrames();
   fakeNow += 60;
   scrollExtent = 24_656;
@@ -431,6 +432,26 @@ await act(async () => arbiter?.followGrowingTail());
 await flushFrames();
 check(scrollByCalls === 1 && scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "near-bottom reader transaction rejects the same >96px reverse jump");
+
+// A logical tail can temporarily expose a small native footer remainder while
+// its final measurement lands. Downward input must consume that native range
+// without releasing tail ownership and restarting LAST on every tick.
+await act(async () => arbiter?.reset());
+scrollExtent = 2_000;
+Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 725 });
+scrollElement.scrollTop = 1_206;
+await act(async () => arbiter?.deliverScroll());
+let preventedTailWheel = false;
+const acceptedTailWheel = await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 120,
+  target: scrollElement,
+  preventDefault: () => { preventedTailWheel = true; },
+} as React.WheelEvent<HTMLElement>));
+check(acceptedTailWheel === true && arbiter?.modeRef.current === "tail-follow" && !preventedTailWheel,
+  "downward input consumes a measured native tail remainder without restarting LAST");
 
 await act(async () => root.unmount());
 dom.window.close();

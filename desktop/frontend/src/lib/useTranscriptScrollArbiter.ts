@@ -694,13 +694,13 @@ export function useTranscriptScrollArbiter({
       scrollToBottom();
       return false;
     }
-    if (
-      delta.y > 0 && modeRef.current === "tail-follow" && !layoutTransientRef.current
-      && bottomDistance <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
-    ) {
-      // A stable physical tail has no lower reader position; consume WebKit rubber-band.
-      event.preventDefault?.();
-      return false;
+    if (delta.y > 0 && modeRef.current === "tail-follow" && !layoutTransientRef.current) {
+      if (bottomDistance <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) {
+        // A stable physical tail has no lower reader position; consume WebKit rubber-band.
+        event.preventDefault?.();
+        return false;
+      }
+      return true; // Consume a measured native footer remainder without restarting LAST.
     }
     releaseTailFollow(delta.y > 0, delta.y);
     return true;

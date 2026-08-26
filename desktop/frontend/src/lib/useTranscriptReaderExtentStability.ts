@@ -24,7 +24,13 @@ const READER_EXTENT_ACTIVE_MS = 180;
 // last accepted logical row passively across that bounded compositor delay;
 // ownership changes still cancel immediately and ordinary sub-96px layout
 // jitter never earns a correction.
-const READER_EXTENT_RETENTION_MS = 700;
+// Native WebViews may commit a queued Virtuoso range several seconds after
+// the wheel event that selected it (notably while the host process is also
+// measuring streamed rows). Keep this lease passive after 180ms: it owns no
+// frame loop or scroll position, but a pre-paint mutation/resize observation
+// can still reject a late replacement range. Explicit ownership changes
+// cancel it immediately.
+const READER_EXTENT_RETENTION_MS = 5_000;
 
 type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   element: HTMLDivElement;
