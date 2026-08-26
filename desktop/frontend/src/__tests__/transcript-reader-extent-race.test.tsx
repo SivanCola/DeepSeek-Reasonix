@@ -365,8 +365,10 @@ const lastPaintedRow = dom.window.document.createElement("div");
 lastPaintedRow.className = "transcript__row";
 lastPaintedRow.dataset.rowKey = "row-463";
 lastPaintedRow.getBoundingClientRect = () => rectAt(-18);
-rowElement.replaceWith(lastPaintedRow);
 scrollElement.scrollTop = 17_475;
+rowElement.getBoundingClientRect = () => rectAt(-42);
+await act(async () => arbiter?.observeReaderExtent());
+rowElement.replaceWith(lastPaintedRow);
 await act(async () => arbiter?.observeReaderExtent());
 scrollWrites.length = 0;
 scrollByCalls = 0;
@@ -541,6 +543,19 @@ const acceptedTailWheel = await act(async () => arbiter?.onWheelIntent({
 } as React.WheelEvent<HTMLElement>));
 check(acceptedTailWheel === true && arbiter?.modeRef.current === "tail-follow" && !preventedTailWheel,
   "downward input consumes a measured native tail remainder without restarting LAST");
+
+scrollElement.scrollTop = 1_206;
+arbiter!.layoutTransientRef.current = true;
+const acceptedTransientTailWheel = await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 120,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+check(acceptedTransientTailWheel === true && arbiter?.modeRef.current === "tail-follow",
+  "downward input cannot restart LAST while its tail transaction is transient");
+arbiter!.layoutTransientRef.current = false;
 
 await act(async () => root.unmount());
 dom.window.close();

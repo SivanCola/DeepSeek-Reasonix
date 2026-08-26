@@ -184,16 +184,18 @@ export function transcriptReaderExtentCanCorrect(
 ): boolean {
   if (Math.abs(snapshot.clientHeight - guard.clientHeight) > 1) return false;
   const blankForward = transcriptReaderBlankForwardDelta(guard);
+  const correctableBlankForward = blankForward >= MIN_REVERSE_JUMP_PX
+    && blankForward <= guard.clientHeight * 2;
   if (
     transcriptReaderExtentReverseDelta(guard, snapshot) < MIN_REVERSE_JUMP_PX
     && transcriptReaderAnchorReverseDelta(guard, snapshot, currentAnchorOffset) < MIN_REVERSE_JUMP_PX
-    && blankForward < MIN_REVERSE_JUMP_PX
+    && !correctableBlankForward
   ) return false;
   const extentGrowth = snapshot.scrollHeight - guard.acceptedHeight;
   const physicalMovement = snapshot.scrollTop - guard.acceptedTop;
   const anchorCompensationTolerance = Math.max(8, guard.clientHeight * 0.1);
   if (
-    blankForward < MIN_REVERSE_JUMP_PX
+    !correctableBlankForward
     && extentGrowth > 0
     && Math.abs(physicalMovement - extentGrowth) <= anchorCompensationTolerance
   ) return false;
@@ -211,13 +213,15 @@ export function resolveTranscriptReaderExtentCorrection(
   const maxTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
   const nativeReverse = transcriptReaderExtentReverseDelta(guard, snapshot);
   const blankForward = transcriptReaderBlankForwardDelta(guard);
+  const correctableBlankForward = blankForward >= MIN_REVERSE_JUMP_PX
+    && blankForward <= guard.clientHeight * 2;
   const physicalTargetOffset = guard.anchor && guard.anchorScrollTop !== undefined
     ? guard.anchor.offset - (snapshot.scrollTop - guard.anchorScrollTop)
     : undefined;
   const targetAnchorOffset = nativeReverse >= MIN_REVERSE_JUMP_PX
     ? guard.targetAnchorOffset
     : physicalTargetOffset;
-  const anchorTarget = blankForward >= MIN_REVERSE_JUMP_PX
+  const anchorTarget = correctableBlankForward
     ? guard.expectedTop
     : guard.anchor
     && targetAnchorOffset !== undefined
@@ -231,7 +235,7 @@ export function resolveTranscriptReaderExtentCorrection(
   const correction = targetTop - snapshot.scrollTop;
   const directionalCorrection = guard.direction * correction;
   return directionalCorrection > DIRECTION_JITTER_PX
-    || (blankForward >= MIN_REVERSE_JUMP_PX && directionalCorrection < -DIRECTION_JITTER_PX)
+    || (correctableBlankForward && directionalCorrection < -DIRECTION_JITTER_PX)
     ? correction
     : undefined;
 }

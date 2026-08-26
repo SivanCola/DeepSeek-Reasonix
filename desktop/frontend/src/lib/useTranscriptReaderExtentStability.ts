@@ -229,7 +229,11 @@ export function useTranscriptReaderExtentStability({
     const corrected = correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
     if (
       accepted
-      && guard.direction * (snapshot.scrollTop - previousAcceptedTop) > 2
+      && (
+        guard.direction * (snapshot.scrollTop - previousAcceptedTop) > 2
+        || !guard.anchor
+        || currentAnchorOffset === undefined
+      )
       && !corrected
       && guard.pendingCorrectionTop === undefined
     ) {
@@ -274,7 +278,11 @@ export function useTranscriptReaderExtentStability({
       const corrected = correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
       if (
         accepted
-        && active.direction * (snapshot.scrollTop - previousAcceptedTop) > 2
+        && (
+          active.direction * (snapshot.scrollTop - previousAcceptedTop) > 2
+          || !active.anchor
+          || currentAnchorOffset === undefined
+        )
         && !corrected
         && active.pendingCorrectionTop === undefined
       ) {

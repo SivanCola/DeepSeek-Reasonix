@@ -214,4 +214,17 @@ assert.equal(
   "the reader restores the last logical row offset after a visual-only reverse jump",
 );
 
+const directNativeJump = createTranscriptReaderExtentGuard(
+  { scrollTop: 20_156, scrollHeight: 36_928, clientHeight: 596 },
+  { mode: "manual", rowKey: "deep-row", offset: 20 },
+  -1,
+)!;
+const directNativeTop = { scrollTop: 0, scrollHeight: 36_928, clientHeight: 596 };
+observeTranscriptReaderExtent(directNativeJump, directNativeTop, undefined, true);
+assert.equal(
+  resolveTranscriptReaderExtentCorrection(directNativeJump, directNativeTop),
+  undefined,
+  "a multi-viewport native reposition is not mistaken for a wheel-range blank",
+);
+
 console.log("transcript reader extent stability tests passed");
