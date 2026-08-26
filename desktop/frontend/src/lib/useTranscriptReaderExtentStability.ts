@@ -18,13 +18,21 @@ import { nativeTranscriptDistanceFromBottom } from "./transcriptScrollGeometry";
 import { recordTranscriptScrollDiagnostic, type TranscriptScrollWriteRecord } from "./transcriptScrollProbe";
 import { captureTranscriptLayoutAnchor } from "./transcriptVirtuosoRecovery";
 
-const READER_EXTENT_STABILITY_MS = 180;
+const READER_EXTENT_ACTIVE_MS = 180;
+// WebView2 can coalesce a sustained native wheel burst and commit Virtuoso's
+// replacement range after the reader-intent idle timer has fired. Retain the
+// last accepted logical row passively across that bounded compositor delay;
+// ownership changes still cancel immediately and ordinary sub-96px layout
+// jitter never earns a correction.
+const READER_EXTENT_RETENTION_MS = 700;
 
 type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   element: HTMLDivElement;
   generation: number;
   deadline: number;
+  activeFrameDeadline: number;
   frame: number | null;
+  expiryTimer: number | null;
 };
 
 export function useTranscriptReaderExtentStability({
@@ -42,11 +50,26 @@ export function useTranscriptReaderExtentStability({
 }) {
   const guardRef = useRef<ActiveReaderExtentGuard | null>(null);
 
+  const clearActive = useCallback((guard: ActiveReaderExtentGuard) => {
+    if (guardRef.current === guard) guardRef.current = null;
+    if (guard.frame != null) cancelAnimationFrame(guard.frame);
+    if (guard.expiryTimer != null) window.clearTimeout(guard.expiryTimer);
+    guard.frame = null;
+    guard.expiryTimer = null;
+  }, []);
+
   const cancel = useCallback(() => {
     const guard = guardRef.current;
-    guardRef.current = null;
-    if (guard?.frame != null) cancelAnimationFrame(guard.frame);
-  }, []);
+    if (guard) clearActive(guard);
+  }, [clearActive]);
+
+  const renewLease = useCallback((guard: ActiveReaderExtentGuard) => {
+    const now = Date.now();
+    guard.activeFrameDeadline = now + READER_EXTENT_ACTIVE_MS;
+    guard.deadline = now + READER_EXTENT_RETENTION_MS;
+    if (guard.expiryTimer != null) window.clearTimeout(guard.expiryTimer);
+    guard.expiryTimer = window.setTimeout(() => clearActive(guard), READER_EXTENT_RETENTION_MS);
+  }, [clearActive]);
 
   const isActive = useCallback(() => guardRef.current !== null, []);
 
@@ -128,6 +151,10 @@ export function useTranscriptReaderExtentStability({
   const observe = useCallback((element = scrollRef.current) => {
     const guard = guardRef.current;
     if (!element || guard?.element !== element) return false;
+    if (Date.now() >= guard.deadline) {
+      clearActive(guard);
+      return false;
+    }
     const snapshot = {
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
@@ -137,7 +164,7 @@ export function useTranscriptReaderExtentStability({
     observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset);
     correctAnomaly(guard, element, snapshot, currentAnchorOffset);
     return transcriptReaderExtentHasCollapsed(guard);
-  }, [anchorOffset, correctAnomaly, scrollRef]);
+  }, [anchorOffset, clearActive, correctAnomaly, scrollRef]);
 
   const schedule = useCallback((active: ActiveReaderExtentGuard) => {
     if (active.frame !== null) return;
@@ -150,7 +177,7 @@ export function useTranscriptReaderExtentStability({
         || scrollRef.current !== active.element
         || (mode !== "reader-gesture" && mode !== "manual")
       ) {
-        if (guardRef.current === active) guardRef.current = null;
+        if (guardRef.current === active) clearActive(active);
         return;
       }
       const element = active.element;
@@ -162,14 +189,14 @@ export function useTranscriptReaderExtentStability({
       const currentAnchorOffset = anchorOffset(active, element);
       observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset);
       correctAnomaly(active, element, snapshot, currentAnchorOffset);
-      if (Date.now() >= active.deadline) {
-        if (guardRef.current === active) guardRef.current = null;
-        return;
-      }
+      // After the ordinary 180ms active sampling window, keep the accepted
+      // anchor as a passive lease. Mutation/resize/native-scroll observers can
+      // still reject a late WebView range swap without spinning a frame loop.
+      if (Date.now() >= active.activeFrameDeadline) return;
       active.frame = requestAnimationFrame(tick);
     };
     active.frame = requestAnimationFrame(tick);
-  }, [anchorOffset, correctAnomaly, generationRef, modeRef, scrollRef]);
+  }, [anchorOffset, clearActive, correctAnomaly, generationRef, modeRef, scrollRef]);
 
   const arm = useCallback((deltaY: number) => {
     const element = scrollRef.current;
@@ -182,7 +209,7 @@ export function useTranscriptReaderExtentStability({
       && current.generation === generationRef.current
       && extendTranscriptReaderExtentGuard(current, element, anchor, deltaY)
     ) {
-      current.deadline = Date.now() + READER_EXTENT_STABILITY_MS;
+      renewLease(current);
       schedule(current);
       return;
     }
@@ -194,12 +221,15 @@ export function useTranscriptReaderExtentStability({
       ...guard,
       element,
       generation: generationRef.current,
-      deadline: Date.now() + READER_EXTENT_STABILITY_MS,
+      deadline: 0,
+      activeFrameDeadline: 0,
       frame: null,
+      expiryTimer: null,
     };
     guardRef.current = active;
+    renewLease(active);
     schedule(active);
-  }, [cancel, generationRef, schedule, scrollRef]);
+  }, [cancel, generationRef, renewLease, schedule, scrollRef]);
 
   useEffect(() => cancel, [cancel]);
 

@@ -75,11 +75,11 @@
 }
 
 - (void)scheduleInteractionWatchdog {
-  // The deterministic native workload is about 41 seconds at ideal timer
-  // cadence (1200 * 24ms plus the bounded 240 * 50ms tail phase). Hosted
-  // WKWebView runners can deliver those timers at roughly half speed, so keep
-  // the behavioral workload intact and budget for scheduler variance.
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+  // The deterministic native workload is about 62 seconds at ideal timer
+  // cadence (1200 * 40ms, a 2s drain, and the bounded 240 * 50ms tail phase).
+  // Hosted WKWebView runners can deliver those timers at roughly half speed,
+  // so keep the behavioral workload intact and budget for scheduler variance.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 150 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
     if (self.done) return;
     [self finishTimeoutWithPrefix:@"WKWebView native interaction timed out after ready"];
   });
@@ -138,7 +138,11 @@
     // workflow's earlier best-effort app activation.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
       if (self.done) return;
-      self.wheelTimer = [NSTimer scheduledTimerWithTimeInterval:0.024
+      // WKWebView processes native wheel input asynchronously. A 24ms source
+      // cadence can fill the hosted runner's WebContent event queue before its
+      // geometry probe runs; 40ms preserves the full 1200-event workload while
+      // keeping native input and painted frames in bounded lockstep.
+      self.wheelTimer = [NSTimer scheduledTimerWithTimeInterval:0.040
                                                          target:self
                                                        selector:@selector(sendWheel:)
                                                        userInfo:nil
@@ -240,7 +244,10 @@
     // After an idle boundary, keep sending bounded ordinary wheel events until
     // the native extent is stably at the tail. This remains native input; the
     // JavaScript probe only decides when the platform-specific fixture stops.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+    // Drain WKWebView's native event queue before asking the WebContent process
+    // for geometry. Without this boundary all 1200 events can complete on the
+    // host while the first JavaScript tail probe remains queued indefinitely.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
       self.finishWheelEvents = 0;
       self.finishTailStableChecks = 0;
       [self finishWheelBurst:8];

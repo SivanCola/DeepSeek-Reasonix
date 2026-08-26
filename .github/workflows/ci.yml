@@ -529,7 +529,7 @@ jobs:
           args: --timeout=5m
 
       - name: WKWebView native transcript smoke
-        timeout-minutes: 5
+        timeout-minutes: 6
         run: |
           set -euo pipefail
           pnpm --dir frontend exec vite preview --host 127.0.0.1 --port 4173 >"$RUNNER_TEMP/reasonix-transcript-preview.log" 2>&1 &
@@ -558,7 +558,7 @@ jobs:
             -result-file "$smoke_result"
           sleep 2
           osascript -e 'tell application id "io.reasonix.transcript-smoke" to activate'
-          for _ in $(seq 1 220); do
+          for _ in $(seq 1 260); do
             if test -s "$smoke_result"; then break; fi
             sleep 1
           done

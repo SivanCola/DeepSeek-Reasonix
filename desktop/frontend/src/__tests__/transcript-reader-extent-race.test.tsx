@@ -272,6 +272,45 @@ check(scrollByCalls === 1 && lastScrollByTop === 532,
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the range-mutation correction still passes through the single writer");
 
+// WebView2 can deliver the Virtuoso range replacement after its 180ms reader
+// intent idle boundary. Keep the accepted logical row alive across that
+// bounded compositor delay instead of accepting the late range as a new
+// position. The fake clock makes this race deterministic without sleeping.
+await act(async () => arbiter?.reset());
+scrollExtent = 24_592;
+Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 725 });
+scrollElement.scrollTop = 19_228;
+rowElement.getBoundingClientRect = () => rectAt(-28);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+const originalDateNow = Date.now;
+let fakeNow = 10_000;
+Date.now = () => fakeNow;
+try {
+  await act(async () => arbiter?.onWheelIntent({
+    ctrlKey: false,
+    deltaMode: 0,
+    deltaX: 0,
+    deltaY: 24,
+    target: scrollElement,
+  } as React.WheelEvent<HTMLElement>));
+  scrollWrites.length = 0;
+  scrollByCalls = 0;
+  fakeNow += 300;
+  await flushFrames();
+  fakeNow += 60;
+  scrollExtent = 24_656;
+  scrollElement.scrollTop = 19_368;
+  rowElement.getBoundingClientRect = () => rectAt(433);
+  await act(async () => arbiter?.observeReaderExtent());
+  check(scrollByCalls === 1 && lastScrollByTop > 460,
+    `the delayed range replacement restores the accepted logical row (${lastScrollByTop}px)`);
+  check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+    "the delayed native correction still passes through the single writer");
+} finally {
+  Date.now = originalDateNow;
+}
+
 // Near-bottom input uses the same reader transaction as every other logical
 // position. A synthetic >96px reverse displacement must be rejected instead
 // of slipping through the old near-bottom exception.

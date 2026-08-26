@@ -635,8 +635,9 @@ try {
   await page.waitForTimeout(220);
 
   // Repeat the cadence during one continuous small-delta reader transaction.
-  // Every wheel extends the same 180ms lease; growth below the visible anchor
-  // must never turn a downward gesture into a >96px reverse displacement.
+  // Every wheel extends the same bounded reader-anchor lease; growth below the
+  // visible anchor must never turn a downward gesture into a >96px reverse
+  // displacement, including a delayed native range commit.
   await transcript.evaluate((element) => {
     element.scrollTop = Math.floor((element.scrollHeight - element.clientHeight) * 0.45);
     element.dispatchEvent(new Event("scroll"));

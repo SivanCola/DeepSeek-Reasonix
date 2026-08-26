@@ -195,8 +195,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // active reader transactions, range-mutation pre-paint correction, and
 // native-only reader stabilization, its one-frame visual bridge, and the
 // unloaded-question paint commit bring the combined rebased surface to
-// 2397.01 KiB raw; retain 0.29 KiB rather than
+// 2397.01 KiB raw. The passive native range-commit lease adds 0.59 KiB while
+// keeping its active frame sampling at 180ms; retain 0.20 KiB instead of
 // replacing the gate with a percentage.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_397.3 : 2_397.3;
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_397.8 : 2_397.8;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
