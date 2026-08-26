@@ -518,23 +518,20 @@ const stalledForwardTarget = scrollWrites.at(-1)?.top ?? 0;
 await act(async () => arbiter?.observeReaderExtent());
 check(scrollWrites.length === 2,
   "an unacknowledged forward native correction remains single-owned");
-const progressedRow = dom.window.document.createElement("div");
-progressedRow.className = "transcript__row";
-progressedRow.dataset.rowKey = "row-native-progress";
-progressedRow.getBoundingClientRect = () => rectAt(20);
-rowElement.replaceWith(progressedRow);
 scrollElement.scrollTop = stalledForwardTarget + scrollElement.clientHeight + 24;
+rowElement.getBoundingClientRect = () => rectAt(30);
 await act(async () => arbiter?.deliverScroll());
+check(scrollWrites.length === 2,
+  "progress beyond a stalled forward correction discards its non-adjacent painted baseline");
 await flushFrames();
 await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 scrollExtent += 170;
 scrollElement.scrollTop += 24;
-progressedRow.getBoundingClientRect = () => rectAt(190);
+rowElement.getBoundingClientRect = () => rectAt(200);
 await act(async () => arbiter?.deliverScroll());
 check(scrollWrites.length === 3,
   `progress beyond a stalled forward correction releases the next range correction (${scrollWrites.length})`);
 scrollElement.scrollTo = nativeOriginalScrollTo;
-progressedRow.replaceWith(rowElement);
 Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: originalUserAgent });
 
 // A correction acknowledgement can share a native delivery with the next

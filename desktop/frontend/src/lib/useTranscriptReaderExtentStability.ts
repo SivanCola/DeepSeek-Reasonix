@@ -190,6 +190,15 @@ export function useTranscriptReaderExtentStability({
     guard.pendingCorrectionTop = undefined;
     guard.pendingCorrectionForward = undefined;
     guard.pendingAnchor = undefined;
+    if (passedForwardCorrection && !transcriptElementViewportIsBlank(element)) {
+      // Once real native input has moved more than a viewport beyond a
+      // stalled forward correction, the rows captured before that correction
+      // are no longer an adjacent painted frame. Comparing a newly mounted
+      // range with that stale map creates a correction staircase on WebViews.
+      // Rebase the passive visual guard here; a later mutation is still
+      // compared with this current occupied range before it can paint.
+      guard.paintedRows = capturePaintedReaderRows(element);
+    }
     // A correction intentionally drops the stale pre-swap anchor. Re-anchor
     // as soon as the native offset reaches or passes that correction in the
     // gesture direction. Native hosts can coalesce the next wheel delta with
