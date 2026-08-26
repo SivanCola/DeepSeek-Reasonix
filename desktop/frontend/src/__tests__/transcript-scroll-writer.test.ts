@@ -45,6 +45,10 @@ dom.window.cancelAnimationFrame = ((id: number) => {
 }) as typeof dom.window.cancelAnimationFrame;
 const element = dom.window.document.getElementById("scroll") as HTMLDivElement;
 const list = element.querySelector<HTMLElement>(".transcript__virtual-sizer")!;
+element.getBoundingClientRect = () => ({
+  x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 800,
+  width: 800, height: 800, toJSON: () => ({}),
+});
 Object.defineProperties(element, {
   scrollTop: { configurable: true, writable: true, value: 320 },
   scrollHeight: { configurable: true, value: 3_000 },
@@ -54,9 +58,13 @@ Object.defineProperties(element, {
 const calls: Array<{ operation: string; value: unknown }> = [];
 const nativeScrolls: ScrollToOptions[] = [];
 let nativeScrollCommits = true;
+let bridgeRowRawTop: number | null = null;
 element.scrollTo = ((value: ScrollToOptions) => {
   nativeScrolls.push(value);
-  if (nativeScrollCommits && value.top !== undefined) element.scrollTop = value.top;
+  if (nativeScrollCommits && value.top !== undefined) {
+    if (bridgeRowRawTop !== null) bridgeRowRawTop -= value.top - element.scrollTop;
+    element.scrollTop = value.top;
+  }
 }) as typeof element.scrollTo;
 const writes: TranscriptScrollWriteRecord[] = [];
 dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => writes.push(write);
@@ -143,6 +151,20 @@ assert.equal(writer.write({
 assert.deepEqual(calls[2]?.value, { index: "LAST", align: "end", behavior: "auto" }, "the writer can mount the measured tail before native confirmation");
 
 modeRef.current = "reader-gesture";
+const bridgeRow = dom.window.document.createElement("div");
+bridgeRow.className = "transcript__row";
+bridgeRow.dataset.rowKey = "bridge-row";
+bridgeRowRawTop = 500;
+bridgeRow.getBoundingClientRect = () => {
+  const translateParts = list.style.translate.split(" ");
+  const translate = Number.parseFloat(translateParts[translateParts.length - 1] ?? "0") || 0;
+  const top = (bridgeRowRawTop ?? 0) + translate;
+  return {
+    x: 0, y: top, top, left: 0, right: 800, bottom: top + 100,
+    width: 800, height: 100, toJSON: () => ({}),
+  };
+};
+list.append(bridgeRow);
 assert.equal(writer.write({
   owner: "reader-stability",
   operation: "scrollTo",
@@ -159,7 +181,14 @@ assert.equal(list.style.translate, "0 -440px", "Virtuoso's range transform canno
 frames.shift()?.(0);
 assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "reader correction targets the currently painted native scroller on the bridge frame");
 assert.equal(element.scrollTop, 1_640);
-assert.equal(list.style.translate, "", "native reader correction releases its temporary visual bridge before paint");
+assert.equal(list.style.translate, "0 0px", "native acknowledgement retains a zero-offset bridge through the next paint");
+bridgeRowRawTop += 590;
+bridgeRow.style.paddingTop = "1px";
+await Promise.resolve();
+assert.equal(list.style.translate, "0 -590px", "a late same-paint range replacement keeps the corrected row visually fixed");
+frames.shift()?.(16);
+await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+assert.equal(list.style.translate, "", "the acknowledged bridge releases after the protected paint");
 assert.equal(list.style.transform, "translateY(80px)", "bridge cleanup preserves Virtuoso's range transform");
 
 assert.equal(writer.write({
@@ -192,7 +221,10 @@ assert.equal(list.style.translate, "0 -280px", "an unacknowledged native offset 
 nativeScrollCommits = true;
 frames.shift()?.(32);
 assert.equal(element.scrollTop, 1_920, "the bounded bridge retries the native target");
-assert.equal(list.style.translate, "", "native acknowledgement releases the retried bridge");
+assert.equal(list.style.translate, "0 0px", "native acknowledgement keeps the retried bridge through paint");
+frames.shift()?.(48);
+await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+assert.equal(list.style.translate, "", "the retried bridge releases after the protected paint");
 
 assert.equal(writer.write({
   owner: "reader-stability",

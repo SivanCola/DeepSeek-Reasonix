@@ -22,6 +22,19 @@ export type TranscriptScrollWriter = {
 
 const READER_BRIDGE_MAX_FRAMES = 6;
 
+function captureReaderBridgeRows(element: HTMLDivElement, list: HTMLElement): ReadonlyMap<string, number> {
+  const viewport = element.getBoundingClientRect();
+  const rows = new Map<string, number>();
+  for (const row of list.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]")) {
+    const rowKey = row.dataset.rowKey;
+    const rect = row.getBoundingClientRect();
+    if (rowKey && rect.bottom > viewport.top && rect.top < viewport.bottom) {
+      rows.set(rowKey, rect.top - viewport.top);
+    }
+  }
+  return rows;
+}
+
 /**
  * Safari/WKWebView and WebKitGTK can defer a native scroll range update by one
  * paint. WebView2 applies the offset synchronously but can replace it with the
@@ -59,6 +72,10 @@ export function createTranscriptScrollWriter({
     originalTranslate: string;
     view: Window;
     attempts: number;
+    cleanupTimer: number | null;
+    observer: MutationObserver | null;
+    rowOffsets: ReadonlyMap<string, number>;
+    translateY: number;
   } | null = null;
 
   const clearReaderVisualBridge = () => {
@@ -66,6 +83,8 @@ export function createTranscriptScrollWriter({
     readerVisualBridge = null;
     if (!pending) return;
     if (pending.frame > 0) pending.view.cancelAnimationFrame(pending.frame);
+    if (pending.cleanupTimer != null) pending.view.clearTimeout(pending.cleanupTimer);
+    pending.observer?.disconnect();
     if (pending.originalTranslate) pending.list.style.setProperty("translate", pending.originalTranslate);
     else pending.list.style.removeProperty("translate");
   };
@@ -126,14 +145,48 @@ export function createTranscriptScrollWriter({
             // frame. The independent translate property composes with that
             // range transform and survives until the native offset commits.
             const originalTranslate = list.style.getPropertyValue("translate");
-            list.style.setProperty("translate", `0 ${-correction}px`);
+            const paintedRows = captureReaderBridgeRows(element, list);
             const pending = {
               frame: 0,
               list,
               originalTranslate,
               view,
               attempts: 0,
+              cleanupTimer: null as number | null,
+              observer: null as MutationObserver | null,
+              rowOffsets: new Map([...paintedRows].map(([rowKey, offset]) => [rowKey, offset - correction])),
+              translateY: -correction,
             };
+            const setTranslate = (translateY: number) => {
+              pending.translateY = translateY;
+              list.style.setProperty("translate", `0 ${translateY}px`);
+            };
+            setTranslate(-correction);
+            const MutationObserverCtor = view.MutationObserver;
+            if (MutationObserverCtor && pending.rowOffsets.size > 0) {
+              pending.observer = new MutationObserverCtor(() => {
+                if (readerVisualBridge !== pending) return;
+                const currentRows = captureReaderBridgeRows(element, list);
+                const deltas = [...currentRows].flatMap(([rowKey, offset]) => {
+                  const target = pending.rowOffsets.get(rowKey);
+                  return target === undefined ? [] : [offset - target];
+                }).sort((left, right) => left - right);
+                if (deltas.length === 0) return;
+                const displacement = deltas[Math.floor(deltas.length / 2)];
+                if (Math.abs(displacement) <= 2) return;
+                // A native acknowledgement can be followed by Virtuoso's
+                // queued range replacement later in the same paint. Hold the
+                // last corrected rows in place until the reader guard issues
+                // the replacement range's final native target.
+                setTranslate(pending.translateY - displacement);
+              });
+              pending.observer.observe(list, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["style"],
+              });
+            }
             const commit = () => {
               if (readerVisualBridge !== pending) return;
               pending.frame = 0;
@@ -148,11 +201,25 @@ export function createTranscriptScrollWriter({
               pending.attempts += 1;
               writeNative(element, targetTop, behavior);
               const remaining = element.scrollTop - targetTop;
-              if (Math.abs(remaining) <= 2 || pending.attempts >= READER_BRIDGE_MAX_FRAMES) {
+              if (Math.abs(remaining) <= 2) {
+                setTranslate(0);
+                // Do not tear down in the acknowledgement rAF. WKWebView can
+                // apply its queued Virtuoso range after this callback but
+                // before the same rendering opportunity paints.
+                pending.frame = view.requestAnimationFrame(() => {
+                  pending.frame = 0;
+                  pending.cleanupTimer = view.setTimeout(() => {
+                    pending.cleanupTimer = null;
+                    if (readerVisualBridge === pending) clearReaderVisualBridge();
+                  }, 0);
+                });
+                return;
+              }
+              if (pending.attempts >= READER_BRIDGE_MAX_FRAMES) {
                 clearReaderVisualBridge();
                 return;
               }
-              list.style.setProperty("translate", `0 ${remaining}px`);
+              setTranslate(remaining);
               pending.frame = view.requestAnimationFrame(commit);
             };
             pending.frame = view.requestAnimationFrame(commit);
