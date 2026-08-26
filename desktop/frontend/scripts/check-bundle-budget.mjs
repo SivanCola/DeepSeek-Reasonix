@@ -135,9 +135,10 @@ console.log("\nbundle budgets");
 // path is 451.2 KiB. Retaining the last complete painted range closes the
 // remaining WKWebView boundary-row race at 451.6 KiB. The same-paint native
 // acknowledgement bridge, transform fence, and adaptive reader buffer measure
-// 452.1 KiB. Native-delivery direction synchronization closes the controller-
-// input WebView gap at 452.33 KiB; retain 0.07 KiB of decimal headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 452.4 : 452.4;
+// 452.1 KiB. Native-delivery direction synchronization and its correction-
+// acknowledgement fence close the controller-input WebView gap at 452.42 KiB;
+// retain 0.08 KiB of decimal headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 452.5 : 452.5;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -217,8 +218,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // KiB. The complete painted-range guard, post-paint baseline fence, and
 // extent-scoped wheel proof measure 2428.0 KiB. The same-paint native bridge
 // its transform feedback fence, and adaptive reader buffer measure 2429.5 KiB.
-// Native-delivery direction synchronization measures 2430.10 KiB raw; retain
-// the smallest 0.1 KiB decimal headroom for Node/toolchain variance.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_430.2 : 2_430.2;
+// Native-delivery direction synchronization and its acknowledgement fence
+// measure 2430.46 KiB raw; retain 0.04 KiB of decimal headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_430.5 : 2_430.5;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

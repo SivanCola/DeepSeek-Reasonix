@@ -447,7 +447,7 @@ export function useTranscriptReaderExtentStability({
     schedule(active);
   }, [anchorOffset, cancel, generationRef, renewLease, schedule, scrollRef]);
 
-  const syncNativeDirection = useCallback((deltaY: number) => {
+  const syncNativeDirection = useCallback((deltaY: number, acceptedDelivery: boolean) => {
     const current = guardRef.current;
     if (
       current
@@ -455,16 +455,33 @@ export function useTranscriptReaderExtentStability({
       && current.generation === generationRef.current
       && current.direction === (deltaY < 0 ? -1 : 1)
     ) {
+      if (acceptedDelivery) current.expectedTop = current.element.scrollTop;
       renewLease(current);
       schedule(current);
-    } else arm(deltaY);
+      return;
+    }
+    arm(deltaY);
+    const next = guardRef.current;
+    if (next) {
+      // This path observes a delivery that has already moved the native
+      // scroller. Unlike a pre-scroll wheel intent, its current top/anchor is
+      // the expectation; adding deltaY again would create an overshoot.
+      next.expectedTop = next.element.scrollTop;
+      next.anchorScrollTop = next.anchor ? next.element.scrollTop : undefined;
+      next.targetAnchorOffset = next.anchor?.offset;
+    }
   }, [arm, generationRef, renewLease, schedule, scrollRef]);
 
   const observeNativeDelivery = useCallback((element: HTMLDivElement) => {
     const generation = generationRef.current;
     const previous = lastNativeDeliveryRef.current;
     const deliveredTop = element.scrollTop;
+    const pendingBeforeObservation = guardRef.current?.pendingCorrectionTop !== undefined;
     observe(element);
+    const active = guardRef.current;
+    const pendingAfterObservation = active?.pendingCorrectionTop !== undefined;
+    const acceptedDelivery = active?.element === element
+      && Math.abs(active.acceptedTop - element.scrollTop) <= 2;
     const nativeDelta = previous?.element === element && previous.generation === generation
       ? deliveredTop - previous.top
       : 0;
@@ -476,7 +493,11 @@ export function useTranscriptReaderExtentStability({
       && (modeRef.current === "reader-gesture" || modeRef.current === "manual")
       && view
       && shouldBridgeTranscriptReaderCorrection(view)
-    ) syncNativeDirection(nativeDelta);
+      // A correction can be applied or acknowledged during this delivery.
+      // Never feed that writer-owned offset back as fresh native input.
+      && !pendingBeforeObservation
+      && !pendingAfterObservation
+    ) syncNativeDirection(nativeDelta, acceptedDelivery);
   }, [generationRef, modeRef, observe, syncNativeDirection]);
 
   useEffect(() => cancel, [cancel]);

@@ -495,6 +495,19 @@ check(scrollByCalls === 1 && lastScrollByTop === 170,
   `native scroll delivery replaces an opposite setup direction before a late range swap (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "native direction reconciliation keeps the late range correction single-owned");
+const nativeCorrectionTarget = scrollElement.scrollTop;
+scrollElement.scrollTop = nativeCorrectionTarget - 43;
+rowElement.getBoundingClientRect = () => rectAt(-49);
+await act(async () => arbiter?.deliverScroll());
+scrollElement.scrollTop = nativeCorrectionTarget;
+await act(async () => arbiter?.deliverScroll());
+check(scrollWrites.length === 1,
+  "a delayed native correction acknowledgement is not recycled as opposite user input");
+scrollElement.scrollTop += 24;
+rowElement.getBoundingClientRect = () => rectAt(-73);
+await act(async () => arbiter?.deliverScroll());
+check(scrollWrites.length === 1,
+  "forward input after the acknowledgement resumes without a correction feedback loop");
 Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: originalUserAgent });
 
 // A correction acknowledgement can share a native delivery with the next
