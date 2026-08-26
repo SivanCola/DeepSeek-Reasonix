@@ -6,26 +6,52 @@ import type { RefObject } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import type { TranscriptScrollMode } from "../lib/transcriptScrollArbiter";
 import type { TranscriptScrollWriteRecord } from "../lib/transcriptScrollProbe";
-import { createTranscriptScrollWriter } from "../lib/transcriptScrollWriter";
+import {
+  createTranscriptScrollWriter,
+  shouldBridgeTranscriptReaderCorrection,
+} from "../lib/transcriptScrollWriter";
 
 console.log("\ntranscript scroll writer");
 
-const dom = new JSDOM('<div id="scroll"></div>');
+const dom = new JSDOM('<div id="scroll"><div class="transcript__virtual-sizer"></div></div>');
 globalThis.window = dom.window as unknown as Window & typeof globalThis;
 globalThis.document = dom.window.document;
+Object.defineProperty(dom.window.navigator, "userAgent", {
+  configurable: true,
+  value: "Mozilla/5.0 AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15",
+});
+assert.equal(shouldBridgeTranscriptReaderCorrection(dom.window as unknown as Window), true);
+Object.defineProperty(dom.window.navigator, "userAgent", {
+  configurable: true,
+  value: "Mozilla/5.0 AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0",
+});
+assert.equal(shouldBridgeTranscriptReaderCorrection(dom.window as unknown as Window), false);
+Object.defineProperty(dom.window.navigator, "userAgent", {
+  configurable: true,
+  value: "Mozilla/5.0 AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15",
+});
+const frames: FrameRequestCallback[] = [];
+dom.window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+  frames.push(callback);
+  return frames.length;
+}) as typeof dom.window.requestAnimationFrame;
+dom.window.cancelAnimationFrame = ((id: number) => {
+  frames[id - 1] = () => {};
+}) as typeof dom.window.cancelAnimationFrame;
 const element = dom.window.document.getElementById("scroll") as HTMLDivElement;
+const list = element.querySelector<HTMLElement>(".transcript__virtual-sizer")!;
 Object.defineProperties(element, {
   scrollTop: { configurable: true, writable: true, value: 320 },
-  scrollHeight: { configurable: true, value: 2_000 },
+  scrollHeight: { configurable: true, value: 3_000 },
   clientHeight: { configurable: true, value: 800 },
 });
 
 const calls: Array<{ operation: string; value: unknown }> = [];
 const nativeScrolls: ScrollToOptions[] = [];
-element.scrollTo = (value: ScrollToOptions) => {
+element.scrollTo = ((value: ScrollToOptions) => {
   nativeScrolls.push(value);
   if (value.top !== undefined) element.scrollTop = value.top;
-};
+}) as typeof element.scrollTo;
 const writes: TranscriptScrollWriteRecord[] = [];
 dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => writes.push(write);
 const handle = {
@@ -120,7 +146,48 @@ assert.equal(writer.write({
   geometryRevision: 11,
 }), true);
 assert.equal(calls.length, 3, "reader correction does not enqueue a second Virtuoso range reconciliation");
-assert.equal(nativeScrolls.at(-1)?.top, 1_640, "reader correction targets the currently painted native scroller");
+assert.equal(nativeScrolls.length, 1, "large reader correction waits for its visual bridge frame");
+assert.equal(list.style.transform, "translateY(-440px)", "reader correction holds the painted logical anchor before native range reconciliation");
+frames.shift()?.(0);
+assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "reader correction targets the currently painted native scroller on the bridge frame");
 assert.equal(element.scrollTop, 1_640);
+assert.equal(list.style.transform, "", "native reader correction releases its temporary visual bridge before paint");
+
+assert.equal(writer.write({
+  owner: "reader-stability",
+  operation: "scrollTo",
+  top: 1_800,
+  source: "layout-height-changed",
+  expectedGeneration: 5,
+  geometryRevision: 12,
+}), true);
+assert.equal(list.style.transform, "translateY(-160px)");
+generationRef.current = 6;
+frames.shift()?.(16);
+assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "stale visual bridge never writes into a replacement surface");
+assert.equal(list.style.transform, "", "stale visual bridge still restores the list before paint");
+
+assert.equal(writer.write({
+  owner: "reader-stability",
+  operation: "scrollTo",
+  top: 1_920,
+  source: "layout-height-changed",
+  expectedGeneration: 6,
+  geometryRevision: 13,
+}), true);
+assert.equal(list.style.transform, "translateY(-280px)");
+modeRef.current = "programmatic";
+assert.equal(writer.write({
+  owner: "jump",
+  operation: "scrollToIndex",
+  index: 14,
+  source: "question-navigation",
+  expectedGeneration: 6,
+  geometryRevision: 13,
+}), true);
+assert.equal(list.style.transform, "", "a new owner cancels the pending reader visual bridge");
+const nativeCountAfterJump = nativeScrolls.length;
+frames.shift()?.(32);
+assert.equal(nativeScrolls.length, nativeCountAfterJump, "a cancelled reader bridge cannot land after a jump");
 
 console.log("transcript scroll writer tests passed");

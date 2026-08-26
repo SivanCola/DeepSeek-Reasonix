@@ -621,7 +621,7 @@ export function Transcript({
     scheduleActiveQuestionSync();
     scheduleBlankViewportCheck();
   }, [creationMode, deliverScroll, handleCreationScroll, noteScrollActivity, pagingAuthorization, scheduleActiveQuestionSync, scheduleBlankViewportCheck]);
-  const [handleJumpToQuestion, handleEarlierHistoryReached, retryOlderHistory] = useTranscriptQuestionJump({
+  const [handleJumpToQuestion, handleEarlierHistoryReached, retryOlderHistory, questionJumpSurface] = useTranscriptQuestionJump({
     questions,
     loadedByTurn,
     layoutSurfaceKey,
@@ -630,6 +630,7 @@ export function Transcript({
     loadingOlderHistory,
     olderHistoryError,
     running,
+    scrollElement,
     onLoadOlderHistory,
     clearTranscriptSelection,
     invalidateAnchors,
@@ -902,7 +903,7 @@ export function Transcript({
     <MarkdownImageTabContext.Provider value={tabId ?? ""}>
     <TranscriptLayoutIntentProvider value={beginUserResize}>
     <TranscriptScrollWriteProvider value={writeOffset}>
-    <div className="transcript-shell">
+    <div className="transcript-shell" aria-busy={Boolean(questionJumpSurface) || undefined}>
       {empty ? (
         <div
           className={`transcript transcript--empty${creationMode ? " transcript--creation-scrollbar" : ""}`}
@@ -1026,6 +1027,18 @@ export function Transcript({
         >
           <ArrowDown size={18} strokeWidth={2.2} aria-hidden="true" />
         </button>
+      )}
+      {questionJumpSurface && (
+        <div
+          className="transcript-navigation-overlay transcript-question-jump-overlay"
+          data-question-jump-mask="true"
+          data-question-jump-phase={questionJumpSurface.phase}
+          role="status"
+          aria-live="polite"
+        >
+          <span className="transcript-navigation-overlay__spinner" aria-hidden="true" />
+          <span>{t("common.loading")}</span>
+        </div>
       )}
       {FrontendDiagnosticsPanel && <Suspense fallback={null}><FrontendDiagnosticsPanel scrollElement={scrollElement} totalRows={virtualRows.length} /></Suspense>}
     </div>

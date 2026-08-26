@@ -9,7 +9,11 @@ import {
   transcriptReaderExtentHasCollapsed,
 } from "../lib/transcriptReaderExtentStability";
 import { transcriptTailExtentCollapsed } from "../lib/transcriptTailSettle";
-import { nativeDownwardCollapseReplay, reasoningExtentReplay } from "./transcript-diagnostic-replay.fixtures";
+import {
+  nativeDownwardCollapseReplay,
+  reasoningExtentReplay,
+  unloadedQuestionJumpReplay,
+} from "./transcript-diagnostic-replay.fixtures";
 
 console.log("\ntranscript diagnostic geometry replays");
 
@@ -38,7 +42,13 @@ assert.equal(
   "ordinary streaming measurement jitter remains live",
 );
 
-const serialized = JSON.stringify({ native, reasoning });
+const questionJump = unloadedQuestionJumpReplay;
+assert.deepEqual(questionJump.windows.map((window) => window.rowCount), [434, 847, 994],
+  "the unloaded question-jump replay preserves the observed row-count sequence");
+assert.equal(questionJump.windows[questionJump.windows.length - 1]?.firstTurn, questionJump.requestedTurn,
+  "the final targeted page contains the requested anonymous turn");
+
+const serialized = JSON.stringify({ native, reasoning, questionJump });
 for (const forbidden of ["text", "rowKey", "session", "path", "model", "content"]) {
   assert.equal(serialized.includes(forbidden), false, `replay fixtures exclude ${forbidden}`);
 }

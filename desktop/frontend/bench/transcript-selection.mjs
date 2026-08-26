@@ -151,6 +151,8 @@ try {
     ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}),
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error instanceof Error ? error.message : String(error)));
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Performance.enable");
   const retainedHeap = async () => {
@@ -178,8 +180,17 @@ try {
   // the background, but viewport paging now requires one permit per page.
   for (let pageIndex = 0; pageIndex < 32; pageIndex += 1) {
     const before = Number(await page.locator(".transcript").getAttribute("data-transcript-row-count") ?? 0);
-    const box = await page.locator(".transcript").boundingBox();
-    if (!box) break;
+    const box = await page.locator(".transcript").boundingBox({ timeout: 2_000 }).catch(() => null);
+    if (!box) {
+      const state = await Promise.race([
+        page.evaluate(() => ({
+          body: document.body.innerText.slice(0, 500),
+          url: location.href,
+        })).catch((error) => ({ error: error instanceof Error ? error.message : String(error) })),
+        new Promise((resolve) => setTimeout(() => resolve({ error: "renderer unresponsive" }), 2_000)),
+      ]);
+      throw new Error(`transcript disappeared during selection preload (${JSON.stringify({ pageErrors, state })})`);
+    }
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.wheel(0, -100_000);
     const loaded = await page.waitForFunction((previous) => {

@@ -43,11 +43,8 @@ import { useTranscriptReaderExtentStability } from "./useTranscriptReaderExtentS
 import { createTranscriptScrollWriter } from "./transcriptScrollWriter";
 import { createTranscriptReaderBottomHold } from "./transcriptReaderBottomHold";
 import { createTranscriptGeometryRevision, type TranscriptGeometryChangeSource } from "./transcriptGeometryRevision";
-export type {
-  TranscriptRecoveryRequestSpec,
-  TranscriptRecoveryTerminal,
-  TranscriptScrollArbiterRecoveryApi,
-} from "./transcriptScrollRecovery";
+import { shouldClaimTranscriptTailFromWheel } from "./transcriptWheelTailClaim";
+export type { TranscriptRecoveryRequestSpec, TranscriptRecoveryTerminal, TranscriptScrollArbiterRecoveryApi } from "./transcriptScrollRecovery";
 export { hasTranscriptScrollableRange, nativeTranscriptBottomTop, nativeTranscriptDistanceFromBottom, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX };
 export type { TranscriptGeometryChangeSource } from "./transcriptGeometryRevision";
 
@@ -691,21 +688,23 @@ export function useTranscriptScrollArbiter({
     if (delta.y === 0 || Math.abs(delta.x) > Math.abs(delta.y)) return false;
     if (findVerticalScrollTarget(event.target, element, delta.y)) return false;
     if (restoreTailIfNotScrollable()) return false;
+    const bottomDistance = nativeTranscriptDistanceFromBottom(element);
+    if (modeRef.current !== "tail-follow" && shouldClaimTranscriptTailFromWheel(bottomDistance, delta.y, layoutTransientRef.current)) {
+      event.preventDefault?.();
+      scrollToBottom();
+      return false;
+    }
     if (
-      delta.y > 0
-      && modeRef.current === "tail-follow"
-      && !layoutTransientRef.current
-      && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
+      delta.y > 0 && modeRef.current === "tail-follow" && !layoutTransientRef.current
+      && bottomDistance <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
     ) {
-      // There is no reader position below a stable physical tail. WebKit can
-      // otherwise resolve this over-boundary wheel against a stale Virtuoso
-      // range and jump several screens upward before the reader guard runs.
-      event.preventDefault();
+      // A stable physical tail has no lower reader position; consume WebKit rubber-band.
+      event.preventDefault?.();
       return false;
     }
     releaseTailFollow(delta.y > 0, delta.y);
     return true;
-  }, [releaseTailFollow, restoreTailIfNotScrollable]);
+  }, [releaseTailFollow, restoreTailIfNotScrollable, scrollToBottom]);
 
   const onTouchStartIntent = useCallback((event: ReactTouchEvent<HTMLElement>) => {
     touchStartYRef.current = event.touches[0]?.clientY ?? null;

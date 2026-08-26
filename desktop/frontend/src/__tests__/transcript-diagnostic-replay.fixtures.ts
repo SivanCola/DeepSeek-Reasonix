@@ -13,3 +13,18 @@ export const reasoningExtentReplay = {
   clientHeight: 778,
   extents: [19_037, 12_618, 19_012, 24_627, 19_008] as const,
 } as const;
+
+// A question-rail click targeted an unloaded turn while two targeted history
+// pages were prepended. Only the observed row counts and anonymous absolute
+// turn windows are retained; the source transcript and user-hosted export are
+// deliberately excluded.
+export const unloadedQuestionJumpReplay = {
+  targetTurn: 0,
+  requestedTurn: 1,
+  totalTurns: 994,
+  windows: [
+    { firstTurn: 561, lastTurn: 994, hasOlderHistory: true, rowCount: 434 },
+    { firstTurn: 148, lastTurn: 994, hasOlderHistory: true, rowCount: 847 },
+    { firstTurn: 1, lastTurn: 994, hasOlderHistory: false, rowCount: 994 },
+  ] as const,
+} as const;

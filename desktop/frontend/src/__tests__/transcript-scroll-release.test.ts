@@ -14,6 +14,7 @@ import {
   transcriptTailSettleBudgetExhausted,
   transcriptTailShouldReaim,
 } from "../lib/transcriptTailSettle";
+import { shouldClaimTranscriptTailFromWheel } from "../lib/transcriptWheelTailClaim";
 
 let passed = 0;
 let failed = 0;
@@ -40,6 +41,11 @@ function run(events: readonly TranscriptScrollEvent[], initial = INITIAL_TRANSCR
 }
 
 console.log("\ntranscript scroll controller");
+
+check(shouldClaimTranscriptTailFromWheel(17, 24, false), "a stable final downward wheel claims the remaining native tail range");
+check(!shouldClaimTranscriptTailFromWheel(0, 24, false), "a reader gesture already at the physical tail keeps its correction transaction");
+check(!shouldClaimTranscriptTailFromWheel(97, 24, false), "a mid-transcript wheel keeps native reader ownership");
+check(!shouldClaimTranscriptTailFromWheel(17, 24, true), "transient layout never claims the tail from estimated geometry");
 
 const streaming = run([
   { type: "SCROLL_DELIVERED", atBottom: true, scrollable: true },

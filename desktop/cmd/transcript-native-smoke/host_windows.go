@@ -99,6 +99,12 @@ const (
 	// Virtuoso range. Keep the finishing burst bounded, but leave enough native
 	// input to cross the final measured-row correction after stream growth.
 	finishWheelTicks = 64
+	// The injected contract has its own 80 second startup watchdog. Keep the
+	// native host startup bound just above that, then grant a fresh interaction
+	// budget after the contract reports the controller target. The sustained
+	// wheel phase alone intentionally lasts about 40 seconds.
+	transcriptSmokeStartupTimeout     = 90 * time.Second
+	transcriptSmokeInteractionTimeout = 60 * time.Second
 )
 
 func (state *transcriptWheelState) advance(now time.Time) error {
@@ -159,6 +165,22 @@ func createTranscriptSmokeWindow() (windows.Handle, error) {
 	return windows.Handle(hwnd), nil
 }
 
+func transcriptSmokeTimeoutError(navigationCompleted bool, ready *smokeMessage, wheelState transcriptWheelState) error {
+	phase := "startup"
+	if ready != nil {
+		phase = "native-input"
+	}
+	if wheelState.finishSent {
+		phase = "result"
+	}
+	return fmt.Errorf(
+		"WebView2 smoke timed out: phase=%s navigationCompleted=%t ready=%t sustained=%d/%d finish=%d/%d finishSent=%t",
+		phase, navigationCompleted, ready != nil,
+		wheelState.sustained, sustainedWheelTicks,
+		wheelState.finish, finishWheelTicks, wheelState.finishSent,
+	)
+}
+
 func runTranscriptNativeSmoke(url, script string) (string, error) {
 	if runtime.GOARCH != "amd64" {
 		return "", fmt.Errorf("WebView2 smoke input layout is unsupported on %s", runtime.GOARCH)
@@ -210,7 +232,8 @@ func runTranscriptNativeSmoke(url, script string) (string, error) {
 	chromium.Focus()
 	chromium.Navigate(url)
 
-	deadline := time.Now().Add(85 * time.Second)
+	deadline := time.Now().Add(transcriptSmokeStartupTimeout)
+	navigationCompleted := false
 	var ready *smokeMessage
 	var result string
 	wheelState := transcriptWheelState{}
@@ -223,6 +246,7 @@ func runTranscriptNativeSmoke(url, script string) (string, error) {
 		}
 		select {
 		case <-navigationChannel:
+			navigationCompleted = true
 			chromium.Eval(script)
 		default:
 		}
@@ -235,6 +259,9 @@ func runTranscriptNativeSmoke(url, script string) (string, error) {
 				}
 				switch message.Type {
 				case "ready":
+					if ready == nil {
+						deadline = time.Now().Add(transcriptSmokeInteractionTimeout)
+					}
 					copy := message
 					ready = &copy
 					var screenPoint = smokePoint{x: int32(message.Point.X), y: int32(message.Point.Y)}
@@ -262,7 +289,7 @@ func runTranscriptNativeSmoke(url, script string) (string, error) {
 		time.Sleep(time.Millisecond)
 	}
 	if result == "" {
-		return "", fmt.Errorf("WebView2 smoke timed out")
+		return "", transcriptSmokeTimeoutError(navigationCompleted, ready, wheelState)
 	}
 	return result, nil
 }

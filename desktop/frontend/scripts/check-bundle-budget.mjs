@@ -108,9 +108,11 @@ console.log("\nbundle budgets");
 // startup path. The current main-v2 build measures 437.36 KiB gzip.
 // Transcript scroll integrity adds the single-writer gateway, coalesced
 // geometry revisions, and reader-extent transaction to the eager transcript
-// path. The combined rebased build measures 440.7 KiB gzip; retain only 0.2
+// path. Native reader visual bridging plus the failure-atomic unloaded-question
+// mask and final-wheel tail claim bring the combined rebased build to
+// 441.86 KiB gzip; retain only 0.24
 // KiB for build metadata/toolchain drift.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 440.9 : 440.9;
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 442.1 : 442.1;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -191,9 +193,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // before tail following add the pre-paint tail pin, residual verifier, and
 // stable-tail boundary guard. Visual-anchor and pre-paint correction during
 // active reader transactions, range-mutation pre-paint correction, and
-// native-only reader stabilization bring the combined rebased surface to
-// 2393.4 KiB raw; retain 0.2 KiB rather than
+// native-only reader stabilization, its one-frame visual bridge, and the
+// unloaded-question paint commit bring the combined rebased surface to
+// 2397.01 KiB raw; retain 0.29 KiB rather than
 // replacing the gate with a percentage.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_393.6 : 2_393.6;
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_397.3 : 2_397.3;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
