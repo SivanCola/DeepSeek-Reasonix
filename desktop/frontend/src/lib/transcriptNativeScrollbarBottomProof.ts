@@ -26,6 +26,7 @@ export function createTranscriptNativeScrollbarBottomProof({
   let activeElement: HTMLDivElement | null = null;
   let initialTop = 0;
   let frame: number | null = null;
+  let moved = false;
   let reachedBottom = false;
 
   const cancelFrame = () => {
@@ -37,16 +38,15 @@ export function createTranscriptNativeScrollbarBottomProof({
     frame = null;
     const element = activeElement;
     if (!element || scrollRef.current !== element) return;
-    if (
-      Math.abs(element.scrollTop - initialTop) > 1
-      && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
-    ) reachedBottom = true;
+    if (Math.abs(element.scrollTop - initialTop) > 1) moved = true;
+    if (moved && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) reachedBottom = true;
     frame = requestAnimationFrame(sample);
   };
 
   const cancel = () => {
     cancelFrame();
     activeElement = null;
+    moved = false;
     reachedBottom = false;
   };
 
@@ -58,10 +58,12 @@ export function createTranscriptNativeScrollbarBottomProof({
   };
 
   const finish = (element: HTMLDivElement | null) => {
+    const movedBeforeRelease = Boolean(element && (moved || Math.abs(element.scrollTop - initialTop) > 1));
     const proved = Boolean(
       element
       && activeElement === element
       && scrollRef.current === element
+      && movedBeforeRelease
       && (reachedBottom || nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX)
     );
     cancel();

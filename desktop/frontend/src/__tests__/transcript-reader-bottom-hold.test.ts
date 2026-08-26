@@ -68,7 +68,7 @@ const [, deliver] = createTranscriptReaderBottomHold({
 });
 deliverScrollRef.current = () => deliver(element);
 
-deliver(element);
+deliver(element, true);
 for (let index = 0; index <= MAX_TAIL_MOUNT_CHECKS; index += 1) {
   const pending = [...frames.values()];
   frames.clear();
@@ -115,7 +115,7 @@ const [, deliverUnstable] = createTranscriptReaderBottomHold({
   dispatch: unstableDispatch,
 });
 unstableDeliverRef.current = () => deliverUnstable(unstableElement);
-deliverUnstable(unstableElement);
+deliverUnstable(unstableElement, true);
 for (let index = 0; index <= MAX_TAIL_MOUNT_CHECKS; index += 1) {
   unstableExtent += 2;
   const pending = [...frames.values()];
@@ -125,6 +125,49 @@ for (let index = 0; index <= MAX_TAIL_MOUNT_CHECKS; index += 1) {
 check(unstableStateRef.current.mode === "tail-follow", "a perpetually revising mounted tail cannot strand native-thumb release");
 check(unstableCommands.filter((command) => command === "SCROLL_TO_LAST").length === 1,
   "the unstable mounted tail also hands off to one bounded jump-tail transaction");
+
+// A wheel can touch the current native bottom while Virtuoso is still
+// expanding its measured range. That bottom belongs only to the old extent;
+// it must not survive the growth and force LAST through an unmounted window.
+let wheelExtent = 1_000;
+const wheelElement = {
+  scrollTop: 500,
+  get scrollHeight() { return wheelExtent; },
+  clientHeight: 500,
+  dataset: { transcriptRowCount: "10", transcriptFirstItemIndex: "100" },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+} as unknown as HTMLDivElement;
+const wheelStateRef = {
+  current: reduceTranscriptScroll(
+    { ...INITIAL_TRANSCRIPT_SCROLL_STATE, scrollable: true },
+    { type: "USER_SCROLL_INTENT", canClaimTail: true },
+  ).state,
+};
+const wheelCommands: string[] = [];
+const wheelDispatch = (event: TranscriptScrollEvent) => {
+  const result = reduceTranscriptScroll(wheelStateRef.current, event);
+  wheelStateRef.current = result.state;
+  wheelCommands.push(...result.commands.map((command) => command.type));
+};
+const wheelDeliverRef: { current: ((target?: HTMLDivElement) => void) | null } = { current: null };
+const [, deliverWheel] = createTranscriptReaderBottomHold({
+  scrollRef: { current: wheelElement },
+  stateRef: wheelStateRef as { current: TranscriptScrollState },
+  generationRef,
+  deliverScrollRef: wheelDeliverRef,
+  dispatch: wheelDispatch,
+});
+wheelDeliverRef.current = () => deliverWheel(wheelElement);
+deliverWheel(wheelElement);
+wheelExtent += 128;
+for (let index = 0; index <= MAX_TAIL_MOUNT_CHECKS; index += 1) {
+  const pending = [...frames.values()];
+  frames.clear();
+  pending.forEach((callback) => callback(index));
+}
+check(wheelStateRef.current.mode === "reader-gesture", "an expanding wheel extent discards its stale physical-bottom proof");
+check(wheelCommands.includes("SCROLL_TO_LAST") === false, "extent growth cannot force an unmounted wheel range to LAST");
 
 // A loaded native host can deliver rAF far below 60fps. The release budget is
 // also wall-clock bounded so 120 nominal frames cannot turn into a permanent

@@ -337,12 +337,53 @@ await act(async () => arbiter?.onWheelIntent({
   target: scrollElement,
 } as React.WheelEvent<HTMLElement>));
 await act(async () => arbiter?.observeReaderExtent());
-check(scrollByCalls === 1 && lastScrollByTop === 584,
+check(scrollByCalls === 1 && lastScrollByTop === 560,
   `a wheel cannot replace the mounted pre-swap anchor before observation (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the interleaved wheel/range correction keeps the single-writer contract");
 incomingRow.remove();
 incomingSecondRow.remove();
+
+// WKWebView can retire the leading row before the hook's next sample while a
+// boundary row from the last painted frame remains barely visible. Protect
+// that common row too; the single leading-anchor lookup alone has no DOM node
+// left with which to prove the 577px visual reversal returned by native CI.
+await act(async () => arbiter?.reset());
+scrollExtent = 20_804;
+scrollElement.scrollTop = 3_937;
+rowElement.getBoundingClientRect = () => rectAt(-32);
+const paintedBoundaryRow = dom.window.document.createElement("div");
+paintedBoundaryRow.className = "transcript__row";
+paintedBoundaryRow.dataset.rowKey = "row-115";
+paintedBoundaryRow.getBoundingClientRect = () => rectAt(0);
+scrollElement.append(paintedBoundaryRow);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+rowElement.remove();
+const olderRangeRow = dom.window.document.createElement("div");
+olderRangeRow.className = "transcript__row";
+olderRangeRow.dataset.rowKey = "row-101";
+olderRangeRow.getBoundingClientRect = () => rectAt(0);
+scrollElement.prepend(olderRangeRow);
+scrollElement.scrollTop = 3_961;
+paintedBoundaryRow.getBoundingClientRect = () => rectAt(577);
+scrollWrites.length = 0;
+scrollByCalls = 0;
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 577,
+  `the last common painted row blocks the native 577px range reversal (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the common-row pre-paint correction keeps the single-writer contract");
+olderRangeRow.remove();
+paintedBoundaryRow.remove();
+scrollElement.append(rowElement);
 
 // A long gesture can outlive its original leading row. Commit each accepted
 // forward frame as the next guard anchor so a later visual-only range swap is
@@ -408,7 +449,7 @@ scrollWrites.length = 0;
 scrollByCalls = 0;
 scrollElement.scrollTop += 72;
 await act(async () => arbiter?.observeReaderExtent());
-check(scrollByCalls === 1 && lastScrollByTop === 668,
+check(scrollByCalls === 1 && lastScrollByTop === 596,
   `a coalesced acknowledgement cannot bless the next older range (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the acknowledgement-range race remains a single owned correction");

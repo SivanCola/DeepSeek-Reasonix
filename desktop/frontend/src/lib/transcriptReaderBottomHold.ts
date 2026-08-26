@@ -56,6 +56,7 @@ export function createTranscriptReaderBottomHold({
   let heldExtent: NativeExtent | null = null;
   let totalChecks = 0;
   let startedAt: number | null = null;
+  let nativeProof = false;
 
   const cancel = () => {
     if (frame !== null) cancelAnimationFrame(frame);
@@ -63,12 +64,14 @@ export function createTranscriptReaderBottomHold({
     heldExtent = null;
     totalChecks = 0;
     startedAt = null;
+    nativeProof = false;
   };
 
   const deliver = (element: HTMLDivElement, provedBottom = false) => {
     if (provedBottom && totalChecks === 0) {
       totalChecks = 1;
       startedAt = Date.now();
+      nativeProof = true;
     }
     const distance = nativeTranscriptDistanceFromBottom(element);
     const atBottom = distance <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
@@ -78,6 +81,15 @@ export function createTranscriptReaderBottomHold({
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
       heldExtent = null;
+      // A released native thumb is an explicit destination and retains its
+      // bounded LAST fallback while the range is measured. An ordinary wheel
+      // only proved the old physical extent: if that extent grows, discard
+      // the stale proof so it cannot jump through an unmounted range and
+      // expose a blank frame.
+      if (!nativeProof) {
+        totalChecks = 0;
+        startedAt = null;
+      }
       dispatch({
         type: "SCROLL_DELIVERED",
         atBottom: false,
@@ -118,7 +130,7 @@ export function createTranscriptReaderBottomHold({
       }
       const generation = generationRef.current;
       startedAt ??= Date.now();
-      heldExtent = tailMounted ? { scrollHeight: element.scrollHeight, clientHeight: element.clientHeight } : null;
+      heldExtent = { scrollHeight: element.scrollHeight, clientHeight: element.clientHeight };
       totalChecks += 1;
       frame = requestAnimationFrame(() => {
         const held = heldExtent;
@@ -134,6 +146,10 @@ export function createTranscriptReaderBottomHold({
         ) return;
         if (held && extentChanged(held, element)) {
           const currentDistance = nativeTranscriptDistanceFromBottom(element);
+          if (!nativeProof) {
+            totalChecks = 0;
+            startedAt = null;
+          }
           dispatch({
             type: "SCROLL_DELIVERED",
             atBottom: false,

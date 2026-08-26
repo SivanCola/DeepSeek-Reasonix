@@ -42,7 +42,41 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   expiryTimer: number | null;
   pendingCorrectionTop?: number;
   pendingAnchor?: readonly [rowKey: string, offsetAtTarget: number];
+  paintedRows: ReadonlyMap<string, number>;
 };
+
+type PaintedReaderReverse = {
+  delta: number;
+  rowKey: string;
+  currentOffset: number;
+};
+
+function capturePaintedReaderRows(element: HTMLDivElement): ReadonlyMap<string, number> {
+  const viewport = element.getBoundingClientRect();
+  const rows = new Map<string, number>();
+  for (const row of element.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]")) {
+    const rowKey = row.dataset.rowKey;
+    const rect = row.getBoundingClientRect();
+    if (rowKey && rect.bottom > viewport.top && rect.top < viewport.bottom) {
+      rows.set(rowKey, rect.top - viewport.top);
+    }
+  }
+  return rows;
+}
+
+function paintedReaderReverse(
+  guard: ActiveReaderExtentGuard,
+  element: HTMLDivElement,
+): PaintedReaderReverse | undefined {
+  const current = capturePaintedReaderRows(element);
+  const common = [...current].flatMap(([rowKey, currentOffset]) => {
+    const previousOffset = guard.paintedRows.get(rowKey);
+    return previousOffset === undefined
+      ? []
+      : [{ delta: guard.direction * (currentOffset - previousOffset), rowKey, currentOffset }];
+  }).sort((left, right) => left.delta - right.delta);
+  return common.length > 0 ? common[Math.floor(common.length / 2)] : undefined;
+}
 
 function readerAnchorOffset(element: HTMLDivElement, rowKey: string): number | undefined {
   const row = Array.from(element.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]"))
@@ -132,11 +166,13 @@ export function useTranscriptReaderExtentStability({
     guard: ActiveReaderExtentGuard,
     element: HTMLDivElement,
     currentAnchorOffset?: number,
+    paintedReverse?: PaintedReaderReverse,
   ) => {
     const reverseDelta = Math.max(
       transcriptReaderExtentReverseDelta(guard, element),
       transcriptReaderAnchorReverseDelta(guard, element, currentAnchorOffset),
       transcriptReaderBlankForwardDelta(guard),
+      paintedReverse?.delta ?? 0,
     );
     if (reverseDelta < MIN_REVERSE_JUMP_PX || guard.anomalyReported) return;
     guard.anomalyReported = true;
@@ -161,17 +197,29 @@ export function useTranscriptReaderExtentStability({
     element: HTMLDivElement,
     snapshot: TranscriptExtentSnapshot,
     currentAnchorOffset?: number,
+    paintedReverse?: PaintedReaderReverse,
   ) => {
-    reportAnomaly(active, element, currentAnchorOffset);
-    if (!transcriptReaderExtentCanCorrect(active, snapshot, currentAnchorOffset)) return false;
-    const correction = resolveTranscriptReaderExtentCorrection(active, snapshot, currentAnchorOffset);
+    reportAnomaly(active, element, currentAnchorOffset, paintedReverse);
+    const paintedCorrection = paintedReverse && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
+      ? active.direction * paintedReverse.delta
+      : undefined;
+    if (
+      paintedCorrection === undefined
+      && !transcriptReaderExtentCanCorrect(active, snapshot, currentAnchorOffset)
+    ) return false;
+    const rawCorrection = paintedCorrection
+      ?? resolveTranscriptReaderExtentCorrection(active, snapshot, currentAnchorOffset);
+    const maxTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
+    const correctionTarget = rawCorrection === undefined
+      ? undefined
+      : Math.max(0, Math.min(maxTop, snapshot.scrollTop + rawCorrection));
+    const correction = correctionTarget === undefined ? undefined : correctionTarget - snapshot.scrollTop;
     const mode = modeRef.current;
-    const correctionTarget = correction === undefined ? undefined : snapshot.scrollTop + correction;
     if (
       correctionTarget !== undefined
       && active.pendingCorrectionTop !== undefined
       && Math.abs(correctionTarget - active.pendingCorrectionTop) <= 2
-    ) return false;
+    ) return true;
     if (correction === undefined || !writeCorrection({
       owner: "reader-stability",
       kind: "scrollBy",
@@ -184,9 +232,11 @@ export function useTranscriptReaderExtentStability({
       mode,
     })) return false;
     active.pendingCorrectionTop = correctionTarget;
-    active.pendingAnchor = active.anchor && currentAnchorOffset !== undefined
-      ? [active.anchor.rowKey, currentAnchorOffset - correction]
-      : undefined;
+    active.pendingAnchor = paintedReverse
+      ? [paintedReverse.rowKey, paintedReverse.currentOffset - correction]
+      : active.anchor && currentAnchorOffset !== undefined
+        ? [active.anchor.rowKey, currentAnchorOffset - correction]
+        : undefined;
     const extentDelta = snapshot.scrollHeight - active.acceptedHeight;
     acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
     recordTranscriptScrollDiagnostic("scroll-anomaly", {
@@ -222,11 +272,17 @@ export function useTranscriptReaderExtentStability({
     const viewportBlank = transcriptElementViewportIsBlank(element);
     const currentAnchorOffset = anchorOffset(guard, element);
     const previousAcceptedTop = guard.acceptedTop;
-    const accepted = observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset, viewportBlank);
+    const paintedReverse = viewportBlank ? undefined : paintedReaderReverse(guard, element);
+    let corrected = paintedReverse && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
+      ? correctAnomaly(guard, element, snapshot, currentAnchorOffset, paintedReverse)
+      : false;
+    const accepted = corrected
+      ? false
+      : observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset, viewportBlank);
     // An unpainted Virtuoso range cannot supply a trustworthy visual anchor,
     // but a native extent reversal/collapse can still be corrected from the
     // last accepted logical position.
-    const corrected = correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+    corrected = corrected || correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
     if (
       accepted
       && (
@@ -247,6 +303,7 @@ export function useTranscriptReaderExtentStability({
         guard.targetAnchorOffset = anchor.offset;
       }
     }
+    if (accepted && !corrected && !viewportBlank) guard.paintedRows = capturePaintedReaderRows(element);
     return transcriptReaderExtentHasCollapsed(guard);
   }, [acknowledgeCorrection, anchorOffset, clearActive, correctAnomaly, scrollRef]);
 
@@ -274,8 +331,14 @@ export function useTranscriptReaderExtentStability({
       const viewportBlank = transcriptElementViewportIsBlank(element);
       const currentAnchorOffset = anchorOffset(active, element);
       const previousAcceptedTop = active.acceptedTop;
-      const accepted = observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
-      const corrected = correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+      const paintedReverse = viewportBlank ? undefined : paintedReaderReverse(active, element);
+      let corrected = paintedReverse && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
+        ? correctAnomaly(active, element, snapshot, currentAnchorOffset, paintedReverse)
+        : false;
+      const accepted = corrected
+        ? false
+        : observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
+      corrected = corrected || correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
       if (
         accepted
         && (
@@ -293,6 +356,7 @@ export function useTranscriptReaderExtentStability({
           active.targetAnchorOffset = anchor.offset;
         }
       }
+      if (accepted && !corrected && !viewportBlank) active.paintedRows = capturePaintedReaderRows(element);
       // After the ordinary 180ms active sampling window, keep the accepted
       // anchor as a passive lease. Mutation/resize/native-scroll observers can
       // still reject a late WebView range swap without spinning a frame loop.
@@ -335,6 +399,7 @@ export function useTranscriptReaderExtentStability({
       activeFrameDeadline: 0,
       frame: null,
       expiryTimer: null,
+      paintedRows: capturePaintedReaderRows(element),
     };
     guardRef.current = active;
     renewLease(active);

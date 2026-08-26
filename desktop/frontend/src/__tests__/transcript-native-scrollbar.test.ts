@@ -90,11 +90,21 @@ proofTop = 300;
 flushProofFrames(1);
 check(bottomProof.finish(proofElement), false,
   "dragging away from an initial tail does not retain false bottom proof");
+proofTop = 500;
+bottomProof.begin(proofElement);
+check(bottomProof.finish(proofElement), false,
+  "pressing an initial-bottom thumb without movement grants no bottom proof");
+bottomProof.begin(proofElement);
+proofTop = 300;
+flushProofFrames(2);
+proofTop = 500;
+check(bottomProof.finish(proofElement), true,
+  "a thumb that leaves and returns to its initial bottom retains movement proof");
 bottomProof.begin(proofElement);
 proofTop = 500;
 proofHeight = 1_100;
 bottomProof.cancel();
-flushProofFrames(2);
+flushProofFrames(3);
 check(bottomProof.finish(proofElement), false,
   "surface invalidation clears retained native-bottom proof");
 
