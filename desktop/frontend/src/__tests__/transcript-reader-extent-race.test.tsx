@@ -68,9 +68,13 @@ const rectAt = (top: number) => ({
 });
 const scrollElement = dom.window.document.getElementById("scroll") as HTMLDivElement;
 const rowElement = scrollElement.querySelector<HTMLElement>(".transcript__row")!;
-scrollElement.getBoundingClientRect = () => rectAt(0);
 rowElement.getBoundingClientRect = () => rectAt(20);
 Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 725 });
+scrollElement.getBoundingClientRect = () => ({
+  ...rectAt(0),
+  bottom: scrollElement.clientHeight,
+  height: scrollElement.clientHeight,
+});
 let scrollExtent = 15_829;
 Object.defineProperty(scrollElement, "scrollHeight", { configurable: true, get: () => scrollExtent });
 Object.defineProperty(scrollElement, "scrollTop", { configurable: true, writable: true, value: 14_567.47 });
@@ -272,6 +276,45 @@ check(scrollByCalls === 1 && lastScrollByTop === 532,
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the range-mutation correction still passes through the single writer");
 
+// A following native wheel can arrive after the replacement range mounts but
+// before its mutation observer runs. Keep the still-mounted prior anchor so
+// that the new range's first row cannot bless its own visual reversal.
+await act(async () => arbiter?.reset());
+scrollExtent = 24_557;
+scrollElement.scrollTop = 21_082;
+rowElement.getBoundingClientRect = () => rectAt(13);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+const incomingRow = dom.window.document.createElement("div");
+incomingRow.className = "transcript__row";
+incomingRow.dataset.rowKey = "incoming-row";
+incomingRow.getBoundingClientRect = () => rectAt(12);
+scrollElement.prepend(incomingRow);
+scrollElement.scrollTop = 21_182;
+rowElement.getBoundingClientRect = () => rectAt(428);
+scrollWrites.length = 0;
+scrollByCalls = 0;
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 515,
+  `a wheel cannot replace the mounted pre-swap anchor before observation (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the interleaved wheel/range correction keeps the single-writer contract");
+incomingRow.remove();
+
 // WebView2 can deliver the Virtuoso range replacement after its 180ms reader
 // intent idle boundary. Keep the accepted logical row alive across that
 // bounded compositor delay instead of accepting the late range as a new
@@ -311,6 +354,47 @@ try {
   Date.now = originalDateNow;
 }
 
+// WKWebView can briefly outrun Virtuoso's mounted range. The blank native
+// coordinate must not become the accepted logical position, and an async
+// native correction must not be reissued while its first write is pending.
+await act(async () => arbiter?.reset());
+scrollExtent = 20_416;
+scrollElement.scrollTop = 2_413;
+rowElement.getBoundingClientRect = () => rectAt(20);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollElement.scrollTop = 3_655;
+rowElement.getBoundingClientRect = () => rectAt(900);
+await act(async () => arbiter?.deliverScroll());
+const replacementRow = dom.window.document.createElement("div");
+replacementRow.className = "transcript__row";
+replacementRow.dataset.rowKey = "row-b";
+replacementRow.getBoundingClientRect = () => rectAt(20);
+rowElement.replaceWith(replacementRow);
+scrollElement.scrollTop = 2_756;
+const originalScrollTo = scrollElement.scrollTo;
+scrollElement.scrollTo = () => {};
+try {
+  await act(async () => arbiter?.deliverScroll());
+  await act(async () => arbiter?.observeReaderExtent());
+  check(scrollByCalls === 1 && lastScrollByTop === 899,
+    `the mounted replacement range restores the pre-paint blank watermark once (${lastScrollByTop}px)`);
+  check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+    "an unacknowledged WebKit correction is not emitted again");
+} finally {
+  scrollElement.scrollTo = originalScrollTo;
+  replacementRow.replaceWith(rowElement);
+}
+
 // Near-bottom input uses the same reader transaction as every other logical
 // position. A synthetic >96px reverse displacement must be rejected instead
 // of slipping through the old near-bottom exception.
@@ -318,6 +402,7 @@ await act(async () => arbiter?.reset());
 scrollExtent = 2_000;
 Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 725 });
 scrollElement.scrollTop = 1_275;
+rowElement.getBoundingClientRect = () => rectAt(20);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
 scrollWrites.length = 0;

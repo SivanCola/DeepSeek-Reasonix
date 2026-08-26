@@ -614,15 +614,16 @@ export function useTranscriptScrollArbiter({
       deliverScroll(element);
     }
     dispatch({ type: "USER_SCROLL_INTENT", canClaimTail: claimPhysicalBottom });
+    // Fence the synthetic delivery from a retained opposite-direction guard.
+    if (readerDeltaY !== undefined) {
+      readerExtent.arm(readerDeltaY);
+    }
     if (
       claimPhysicalBottom
       && element
       && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
     ) {
       deliverScroll(element);
-    }
-    if (readerDeltaY !== undefined) {
-      readerExtent.arm(readerDeltaY);
     }
     armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverScroll, dispatch, readerExtent]);

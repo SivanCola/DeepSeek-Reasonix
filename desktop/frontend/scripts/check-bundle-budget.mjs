@@ -112,7 +112,9 @@ console.log("\nbundle budgets");
 // mask and final-wheel tail claim bring the combined rebased build to
 // 441.86 KiB gzip; retain only 0.24
 // KiB for build metadata/toolchain drift.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 442.1 : 442.1;
+// Rejecting blank native ranges and deduplicating asynchronous WebKit
+// corrections measures 442.3 KiB; retain a narrow 0.1 KiB ratchet.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 442.4 : 442.4;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -197,7 +199,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // unloaded-question paint commit bring the combined rebased surface to
 // 2397.01 KiB raw. The passive native range-commit lease adds 0.59 KiB while
 // keeping its active frame sampling at 180ms; retain 0.20 KiB instead of
-// replacing the gate with a percentage.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_397.8 : 2_397.8;
+// replacing the gate with a percentage. Blank-range rejection and async-write
+// deduplication measure 2398.5 KiB; retain the same 0.20 KiB headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_398.7 : 2_398.7;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

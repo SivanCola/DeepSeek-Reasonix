@@ -26,6 +26,7 @@ export type TranscriptReaderExtentGuard = {
   anchor?: Extract<TranscriptLayoutAnchor, { mode: "manual" }>;
   anchorScrollTop?: number;
   targetAnchorOffset?: number;
+  blankTop?: number;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -90,6 +91,7 @@ export function observeTranscriptReaderExtent(
   guard: TranscriptReaderExtentGuard,
   snapshot: TranscriptExtentSnapshot,
   currentAnchorOffset?: number,
+  viewportBlank = false,
 ): void {
   if (Math.abs(snapshot.clientHeight - guard.clientHeight) > 1) return;
   guard.minimumHeight = Math.min(guard.minimumHeight, snapshot.scrollHeight);
@@ -97,6 +99,25 @@ export function observeTranscriptReaderExtent(
     guard.collapsed = true;
     return;
   }
+
+  // A native scroller can outrun Virtuoso's mounted range for one or two
+  // frames. That empty coordinate is not a logical reader position: remember
+  // its furthest directional offset, but never let it replace the last
+  // accepted row. When the new range mounts, a reverse from this watermark is
+  // corrected before it can become the new baseline.
+  if (viewportBlank) {
+    guard.blankTop = guard.blankTop === undefined
+      ? snapshot.scrollTop
+      : guard.direction > 0
+        ? Math.max(guard.blankTop, snapshot.scrollTop)
+        : Math.min(guard.blankTop, snapshot.scrollTop);
+    return;
+  }
+  const blankReverse = guard.blankTop === undefined
+    ? 0
+    : guard.direction * (guard.blankTop - snapshot.scrollTop);
+  if (blankReverse >= MIN_REVERSE_JUMP_PX) return;
+  guard.blankTop = undefined;
 
   // Do not replace the last accepted logical position with a same-direction
   // native offset whose painted anchor moved backwards. Virtuoso can advance
@@ -122,9 +143,13 @@ export function transcriptReaderExtentReverseDelta(
   guard: TranscriptReaderExtentGuard,
   snapshot: TranscriptExtentSnapshot,
 ): number {
-  return guard.direction > 0
+  const acceptedReverse = guard.direction > 0
     ? guard.acceptedTop - snapshot.scrollTop
     : snapshot.scrollTop - guard.acceptedTop;
+  const blankReverse = guard.blankTop === undefined
+    ? 0
+    : guard.direction * (guard.blankTop - snapshot.scrollTop);
+  return Math.max(acceptedReverse, blankReverse);
 }
 
 export function transcriptReaderAnchorReverseDelta(
@@ -183,7 +208,9 @@ export function resolveTranscriptReaderExtentCorrection(
     && currentAnchorOffset !== undefined
     && Number.isFinite(currentAnchorOffset)
     ? snapshot.scrollTop + currentAnchorOffset - targetAnchorOffset
-    : guard.expectedTop;
+    : nativeReverse >= MIN_REVERSE_JUMP_PX && guard.blankTop !== undefined
+      ? guard.blankTop
+      : guard.expectedTop;
   const targetTop = clamp(anchorTarget, 0, maxTop);
   const correction = targetTop - snapshot.scrollTop;
   return guard.direction * correction > DIRECTION_JITTER_PX ? correction : undefined;
@@ -207,6 +234,7 @@ export function acceptTranscriptReaderExtentCorrection(
   guard.anchor = undefined;
   guard.anchorScrollTop = undefined;
   guard.targetAnchorOffset = undefined;
+  guard.blankTop = undefined;
 }
 
 export function transcriptKeyboardScrollDelta(

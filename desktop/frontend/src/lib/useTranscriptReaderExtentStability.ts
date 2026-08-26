@@ -16,7 +16,7 @@ import {
 import type { TranscriptScrollMode } from "./transcriptScrollArbiter";
 import { nativeTranscriptDistanceFromBottom } from "./transcriptScrollGeometry";
 import { recordTranscriptScrollDiagnostic, type TranscriptScrollWriteRecord } from "./transcriptScrollProbe";
-import { captureTranscriptLayoutAnchor } from "./transcriptVirtuosoRecovery";
+import { captureTranscriptLayoutAnchor, transcriptElementViewportIsBlank } from "./transcriptVirtuosoRecovery";
 
 const READER_EXTENT_ACTIVE_MS = 180;
 // WebView2 can coalesce a sustained native wheel burst and commit Virtuoso's
@@ -33,6 +33,7 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   activeFrameDeadline: number;
   frame: number | null;
   expiryTimer: number | null;
+  pendingCorrectionTop?: number;
 };
 
 export function useTranscriptReaderExtentStability({
@@ -118,6 +119,12 @@ export function useTranscriptReaderExtentStability({
     if (!transcriptReaderExtentCanCorrect(active, snapshot, currentAnchorOffset)) return false;
     const correction = resolveTranscriptReaderExtentCorrection(active, snapshot, currentAnchorOffset);
     const mode = modeRef.current;
+    const correctionTarget = correction === undefined ? undefined : snapshot.scrollTop + correction;
+    if (
+      correctionTarget !== undefined
+      && active.pendingCorrectionTop !== undefined
+      && Math.abs(correctionTarget - active.pendingCorrectionTop) <= 2
+    ) return false;
     if (correction === undefined || !writeCorrection({
       owner: "reader-stability",
       kind: "scrollBy",
@@ -129,6 +136,7 @@ export function useTranscriptReaderExtentStability({
       bottomDistance: nativeTranscriptDistanceFromBottom(element),
       mode,
     })) return false;
+    active.pendingCorrectionTop = correctionTarget;
     const extentDelta = snapshot.scrollHeight - active.acceptedHeight;
     acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
     recordTranscriptScrollDiagnostic("scroll-anomaly", {
@@ -160,9 +168,16 @@ export function useTranscriptReaderExtentStability({
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
     };
+    if (guard.pendingCorrectionTop !== undefined && Math.abs(snapshot.scrollTop - guard.pendingCorrectionTop) <= 2) {
+      guard.pendingCorrectionTop = undefined;
+    }
+    const viewportBlank = transcriptElementViewportIsBlank(element);
     const currentAnchorOffset = anchorOffset(guard, element);
-    observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset);
-    correctAnomaly(guard, element, snapshot, currentAnchorOffset);
+    observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset, viewportBlank);
+    // An unpainted Virtuoso range cannot supply a trustworthy visual anchor,
+    // but a native extent reversal/collapse can still be corrected from the
+    // last accepted logical position.
+    correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
     return transcriptReaderExtentHasCollapsed(guard);
   }, [anchorOffset, clearActive, correctAnomaly, scrollRef]);
 
@@ -186,9 +201,13 @@ export function useTranscriptReaderExtentStability({
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
       };
+      if (active.pendingCorrectionTop !== undefined && Math.abs(snapshot.scrollTop - active.pendingCorrectionTop) <= 2) {
+        active.pendingCorrectionTop = undefined;
+      }
+      const viewportBlank = transcriptElementViewportIsBlank(element);
       const currentAnchorOffset = anchorOffset(active, element);
-      observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset);
-      correctAnomaly(active, element, snapshot, currentAnchorOffset);
+      observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
+      correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
       // After the ordinary 180ms active sampling window, keep the accepted
       // anchor as a passive lease. Mutation/resize/native-scroll observers can
       // still reject a late WebView range swap without spinning a frame loop.
@@ -203,11 +222,17 @@ export function useTranscriptReaderExtentStability({
     if (!element) return;
     const anchor = captureTranscriptLayoutAnchor(element, false);
     const current = guardRef.current;
+    const extensionAnchor = current?.anchor
+      && anchorOffset(current, element) !== undefined
+      && anchor?.mode === "manual"
+      && anchor.rowKey !== current.anchor.rowKey
+      ? undefined
+      : anchor;
     if (
       current
       && current.element === element
       && current.generation === generationRef.current
-      && extendTranscriptReaderExtentGuard(current, element, anchor, deltaY)
+      && extendTranscriptReaderExtentGuard(current, element, extensionAnchor, deltaY)
     ) {
       renewLease(current);
       schedule(current);
@@ -229,7 +254,7 @@ export function useTranscriptReaderExtentStability({
     guardRef.current = active;
     renewLease(active);
     schedule(active);
-  }, [cancel, generationRef, renewLease, schedule, scrollRef]);
+  }, [anchorOffset, cancel, generationRef, renewLease, schedule, scrollRef]);
 
   useEffect(() => cancel, [cancel]);
 
