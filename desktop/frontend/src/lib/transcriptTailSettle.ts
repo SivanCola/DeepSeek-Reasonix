@@ -15,6 +15,10 @@ const TAIL_COLLAPSE_STABLE_FRAMES = 2;
 const TAIL_ROW_MEASURE_STABLE_FRAMES = 5;
 const TAIL_GEOMETRY_STABLE_MS = 80;
 export const TRANSCRIPT_TAIL_REARM_MIN_HEIGHT_PX = 24;
+// Identical no-op settle resends stay bounded so observer noise cannot loop
+// per revision; the post-measure jump path uses the same three-correction
+// ceiling for its own measured-tail retries.
+const TAIL_SETTLE_MAX_STAGNANT_RESENDS = 2;
 // Virtuoso keeps an auto scrollToIndex request alive for up to 1.2s while its
 // size tree refreshes. Do not start the native-extent confirmation until that
 // bounded mount/measurement pass has finished.
@@ -124,6 +128,13 @@ export function createTranscriptTailSettle({
     lastCollapsedHeight: number | null;
   } | null = null;
   let writtenRevision = -1;
+  let stagnantWrite: {
+    generation: number;
+    target: number;
+    scrollTop: number;
+    height: number;
+    consecutive: number;
+  } | null = null;
   let jumpTailTimer: number | null = null;
   let jumpTailStartedAt: number | null = null;
   let jumpTailRevision = 0;
@@ -208,6 +219,7 @@ export function createTranscriptTailSettle({
     tailSettleFrame = null;
     pending = null;
     writtenRevision = -1;
+    stagnantWrite = null;
     lastStableHeight = null;
     if (jumpTailTimer !== null) window.clearTimeout(jumpTailTimer);
     jumpTailTimer = null;
@@ -287,12 +299,37 @@ export function createTranscriptTailSettle({
     }
 
     if (writtenRevision !== transaction.revision) {
+      const target = nativeTranscriptBottomTop(element);
+      // A settle resend whose target, native offset, and extent all match the
+      // previous attempt was already rejected by the engine; replaying it per
+      // incoming revision turns observer noise into a doomed write loop.
+      // Real scroll movement or extent change re-arms corrections at once,
+      // and a bounded resend budget keeps late clamp recovery alive.
+      const identicalNoOp = stagnantWrite !== null
+        && stagnantWrite.generation === generationRef.current
+        && Math.abs(stagnantWrite.target - target) <= JUMP_TAIL_NATIVE_THRESHOLD_PX
+        && Math.abs(stagnantWrite.scrollTop - element.scrollTop) <= JUMP_TAIL_NATIVE_THRESHOLD_PX
+        && Math.abs(stagnantWrite.height - element.scrollHeight) <= JUMP_TAIL_STABLE_EPSILON_PX;
+      if (identicalNoOp && stagnantWrite!.consecutive >= TAIL_SETTLE_MAX_STAGNANT_RESENDS) {
+        pending = null;
+        armLayoutTransientIdle();
+        return;
+      }
       const wrote = scrollToTail(
         "auto",
         { source: transaction.source, phase: "settle", settle: { frame: transaction.collapseFrames, offBottomFrames: transaction.offBottomFrames, stagnantFrames: 0 } },
         transaction.revision,
       );
-      if (wrote) writtenRevision = transaction.revision;
+      if (wrote) {
+        writtenRevision = transaction.revision;
+        stagnantWrite = {
+          generation: generationRef.current,
+          target,
+          scrollTop: element.scrollTop,
+          height: element.scrollHeight,
+          consecutive: identicalNoOp ? stagnantWrite!.consecutive + 1 : 0,
+        };
+      }
     }
     pending = null;
     armLayoutTransientIdle();
