@@ -11,7 +11,9 @@ import {
 
 type MutableRef<T> = { current: T };
 type NativeExtent = { scrollHeight: number; clientHeight: number };
-const MAX_TAIL_MOUNT_CHECKS = 8;
+// Native ranges can settle well before a loaded CI WebView mounts LAST. Keep
+// the explicit bottom-release proof bounded to roughly two seconds at 60fps.
+const MAX_TAIL_MOUNT_CHECKS = 120;
 
 function tailIsMounted(element: HTMLElement): boolean {
   if (element.querySelector("[data-live-region='true']")) return true;

@@ -20,6 +20,8 @@ export type TranscriptScrollWriter = {
   lastOwner: () => string | undefined;
 };
 
+const READER_BRIDGE_MAX_FRAMES = 6;
+
 /**
  * Safari/WKWebView and WebKitGTK can defer a native scroll range update by one
  * paint. WebView2 applies the offset synchronously but can replace it with the
@@ -56,13 +58,14 @@ export function createTranscriptScrollWriter({
     list: HTMLElement;
     originalTranslate: string;
     view: Window;
+    attempts: number;
   } | null = null;
 
   const clearReaderVisualBridge = () => {
     const pending = readerVisualBridge;
     readerVisualBridge = null;
     if (!pending) return;
-    pending.view.cancelAnimationFrame(pending.frame);
+    if (pending.frame > 0) pending.view.cancelAnimationFrame(pending.frame);
     if (pending.originalTranslate) pending.list.style.setProperty("translate", pending.originalTranslate);
     else pending.list.style.removeProperty("translate");
   };
@@ -110,10 +113,9 @@ export function createTranscriptScrollWriter({
           // Reader protection corrects the currently painted native range.
           // Sending the same command through Virtuoso can enqueue a second
           // range reconciliation and reintroduce the displacement on the next
-          // frame. WebKit can also defer the native range update for one paint,
-          // so bridge that frame with a transform that does not affect layout;
-          // the next rAF applies the native offset and removes the transform
-          // atomically before paint. Virtuoso's native listener observes it.
+          // frame. WebKit can defer the native range update, so retain a
+          // layout-neutral bridge until the native offset acknowledges the
+          // target (with a bounded retry budget).
           clearReaderVisualBridge();
           const targetTop = Math.max(0, Math.min(request.top!, element.scrollHeight - element.clientHeight));
           const correction = targetTop - element.scrollTop;
@@ -130,18 +132,30 @@ export function createTranscriptScrollWriter({
               list,
               originalTranslate,
               view,
+              attempts: 0,
             };
-            pending.frame = view.requestAnimationFrame(() => {
+            const commit = () => {
               if (readerVisualBridge !== pending) return;
-              readerVisualBridge = null;
-              if (
+              pending.frame = 0;
+              if (!(
                 generationRef.current === generation
                 && scrollRef.current === element
                 && (modeRef.current === "reader-gesture" || modeRef.current === "manual")
-              ) writeNative(element, targetTop, behavior);
-              if (originalTranslate) list.style.setProperty("translate", originalTranslate);
-              else list.style.removeProperty("translate");
-            });
+              )) {
+                clearReaderVisualBridge();
+                return;
+              }
+              pending.attempts += 1;
+              writeNative(element, targetTop, behavior);
+              const remaining = element.scrollTop - targetTop;
+              if (Math.abs(remaining) <= 2 || pending.attempts >= READER_BRIDGE_MAX_FRAMES) {
+                clearReaderVisualBridge();
+                return;
+              }
+              list.style.setProperty("translate", `0 ${remaining}px`);
+              pending.frame = view.requestAnimationFrame(commit);
+            };
+            pending.frame = view.requestAnimationFrame(commit);
             readerVisualBridge = pending;
             return true;
           }

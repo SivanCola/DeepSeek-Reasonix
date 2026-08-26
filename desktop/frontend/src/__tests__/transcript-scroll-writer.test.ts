@@ -53,9 +53,10 @@ Object.defineProperties(element, {
 
 const calls: Array<{ operation: string; value: unknown }> = [];
 const nativeScrolls: ScrollToOptions[] = [];
+let nativeScrollCommits = true;
 element.scrollTo = ((value: ScrollToOptions) => {
   nativeScrolls.push(value);
-  if (value.top !== undefined) element.scrollTop = value.top;
+  if (nativeScrollCommits && value.top !== undefined) element.scrollTop = value.top;
 }) as typeof element.scrollTo;
 const writes: TranscriptScrollWriteRecord[] = [];
 dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => writes.push(write);
@@ -175,6 +176,8 @@ frames.shift()?.(16);
 assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 1_640, "stale visual bridge never writes into a replacement surface");
 assert.equal(list.style.translate, "", "stale visual bridge still restores the list before paint");
 
+modeRef.current = "reader-gesture";
+nativeScrollCommits = false;
 assert.equal(writer.write({
   owner: "reader-stability",
   operation: "scrollTo",
@@ -184,6 +187,22 @@ assert.equal(writer.write({
   geometryRevision: 13,
 }), true);
 assert.equal(list.style.translate, "0 -280px");
+frames.shift()?.(24);
+assert.equal(list.style.translate, "0 -280px", "an unacknowledged native offset keeps the bridge painted");
+nativeScrollCommits = true;
+frames.shift()?.(32);
+assert.equal(element.scrollTop, 1_920, "the bounded bridge retries the native target");
+assert.equal(list.style.translate, "", "native acknowledgement releases the retried bridge");
+
+assert.equal(writer.write({
+  owner: "reader-stability",
+  operation: "scrollTo",
+  top: 2_200,
+  source: "layout-height-changed",
+  expectedGeneration: 6,
+  geometryRevision: 14,
+}), true);
+assert.equal(list.style.translate, "0 -280px");
 modeRef.current = "programmatic";
 assert.equal(writer.write({
   owner: "jump",
@@ -191,7 +210,7 @@ assert.equal(writer.write({
   index: 14,
   source: "question-navigation",
   expectedGeneration: 6,
-  geometryRevision: 13,
+  geometryRevision: 14,
 }), true);
 assert.equal(list.style.translate, "", "a new owner cancels the pending reader visual bridge");
 const nativeCountAfterJump = nativeScrolls.length;

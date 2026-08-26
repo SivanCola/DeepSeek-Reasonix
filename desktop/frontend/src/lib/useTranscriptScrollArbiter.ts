@@ -165,7 +165,6 @@ export function useTranscriptScrollArbiter({
   const geometry = geometryRef.current;
   const [cancelGeometry, noteGeometryChange, observeListHeight, resetGeometry] = geometry;
   noteGeometryChangeRef.current = noteGeometryChange;
-
   const invalidateAsyncFrames = useCallback(() => {
     generationRef.current += 1;
     if (resizeSettleFrameRef.current !== null) cancelAnimationFrame(resizeSettleFrameRef.current);
@@ -272,6 +271,7 @@ export function useTranscriptScrollArbiter({
     }
     const previousState = stateRef.current;
     const result = reduceTranscriptScroll(previousState, event);
+    if (previousState.mode !== "tail-follow" && result.state.mode === "tail-follow") readerExtent.cancel();
     const source = recordTranscriptScrollTransition(event, previousState, result.state, result.commands, scrollRef.current);
     publishState(result.state);
     for (const command of result.commands) runCommand(command, source);
