@@ -485,9 +485,10 @@ export function useTranscriptScrollArbiter({
     }
   }, [dispatch, reset]);
 
-  const finishNativeScrollbarDrag = useCallback(() => {
+  const finishNativeScrollbarDrag = useCallback((pointerY?: number) => {
     if (!nativeScrollbarDragRef.current) return;
     const element = scrollRef.current;
+    if (element && pointerY !== undefined) nativeScrollbarBottomProof.observe(element, pointerY);
     const reachedBottom = nativeScrollbarBottomProof.finish(element);
     nativeScrollbarDragRef.current = false; setNativeScrollbarDragging(false);
     dispatch({ type: "NATIVE_SCROLLBAR_END" });
@@ -505,17 +506,13 @@ export function useTranscriptScrollArbiter({
     if (!reachedBottom) armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverScroll, dispatch, nativeScrollbarBottomProof]);
 
-  const finishPointerIntent = useCallback(() => {
-    if (nativeScrollbarDragRef.current) finishNativeScrollbarDrag();
+  const finishPointerIntent = useCallback((event?: PointerEvent) => {
+    if (nativeScrollbarDragRef.current) finishNativeScrollbarDrag(event?.clientY);
     if (middlePointerScrollRef.current) {
       middlePointerScrollRef.current = false;
       endReaderIntent();
     }
   }, [endReaderIntent, finishNativeScrollbarDrag]);
-
-  const observePointerIntent = useCallback((event: PointerEvent) => {
-    const element = scrollRef.current; if (nativeScrollbarDragRef.current && element) nativeScrollbarBottomProof.observe(element, event.clientY);
-  }, [nativeScrollbarBottomProof]);
 
   const finishAllReaderIntent = useCallback(() => {
     finishPointerIntent();
@@ -523,11 +520,11 @@ export function useTranscriptScrollArbiter({
   }, [endReaderIntent, finishPointerIntent]);
 
   useEffect(() => {
-    window.addEventListener("pointermove", observePointerIntent, true); window.addEventListener("pointerup", finishPointerIntent, true); window.addEventListener("pointercancel", finishPointerIntent, true); window.addEventListener("blur", finishAllReaderIntent);
+    window.addEventListener("pointerup", finishPointerIntent, true); window.addEventListener("pointercancel", finishPointerIntent, true); window.addEventListener("blur", finishAllReaderIntent);
     return () => {
-      window.removeEventListener("pointermove", observePointerIntent, true); window.removeEventListener("pointerup", finishPointerIntent, true); window.removeEventListener("pointercancel", finishPointerIntent, true); window.removeEventListener("blur", finishAllReaderIntent);
+      window.removeEventListener("pointerup", finishPointerIntent, true); window.removeEventListener("pointercancel", finishPointerIntent, true); window.removeEventListener("blur", finishAllReaderIntent);
     };
-  }, [finishAllReaderIntent, finishPointerIntent, observePointerIntent]);
+  }, [finishAllReaderIntent, finishPointerIntent]);
 
   useEffect(() => () => {
     if (resizeSettleFrameRef.current !== null) cancelAnimationFrame(resizeSettleFrameRef.current);

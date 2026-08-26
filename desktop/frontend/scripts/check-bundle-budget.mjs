@@ -141,8 +141,10 @@ console.log("\nbundle budgets");
 // correction measure 452.473 KiB. The native blank hold, WKWebView's second
 // compositor viewport, Footer extent observer, and physical-LAST sync measure
 // 452.675 KiB. Native-thumb pointer travel closes the remaining coalesced
-// away-and-back release gap at 452.853 KiB; retain a 0.047 KiB bound.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 452.9 : 452.9;
+// away-and-back release gap at 452.853 KiB. Synchronously retaining every
+// accepted native frame and fencing an unacknowledged correction measure
+// 452.953 KiB; retain a 0.047 KiB bound.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 453.0 : 453.0;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -229,8 +231,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Retaining the preceding painted range across duplicate observer promotions,
 // sampling native-thumb movement on real scroll delivery, and carrying the
 // reader correction through its bounded tail handoff measure 2432.297 KiB.
-// Native-thumb pointer travel brings the measured path to 2432.661 KiB;
-// retain 0.039 KiB of raw/toolchain headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_432.7 : 2_432.7;
+// Native-thumb pointer travel brings the measured path to 2432.661 KiB. The
+// accepted-frame and pending-correction fences measure 2432.735 KiB; retain
+// 0.065 KiB of raw/toolchain headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_432.8 : 2_432.8;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

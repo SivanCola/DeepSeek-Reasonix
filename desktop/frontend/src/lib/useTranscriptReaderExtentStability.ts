@@ -45,6 +45,7 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   expiryTimer: number | null;
   pendingCorrectionTop?: number;
   pendingCorrectionForward?: boolean;
+  pendingCorrectionAcknowledged?: boolean;
   pendingAnchor?: readonly [rowKey: string, offsetAtTarget: number];
   paintedRows: ReadonlyMap<string, number>;
   previousPaintedRows?: ReadonlyMap<string, number>;
@@ -209,12 +210,14 @@ export function useTranscriptReaderExtentStability({
           guard.anchor = { mode: "manual", rowKey: pendingAnchor[0], offset: pendingAnchor[1] };
           guard.anchorScrollTop = guard.pendingCorrectionTop;
           guard.targetAnchorOffset = pendingAnchor[1];
+          guard.pendingCorrectionAcknowledged = true;
           return;
         }
       }
     }
     guard.pendingCorrectionTop = undefined;
     guard.pendingCorrectionForward = undefined;
+    guard.pendingCorrectionAcknowledged = undefined;
     guard.pendingAnchor = undefined;
     if (passedForwardCorrection && !transcriptElementViewportIsBlank(element)) {
       // Once real native input has moved more than a viewport beyond a
@@ -276,6 +279,16 @@ export function useTranscriptReaderExtentStability({
     paintedReverse?: PaintedReaderReverse,
   ) => {
     reportAnomaly(active, element, currentAnchorOffset, paintedReverse);
+    if (
+      active.pendingCorrectionTop !== undefined
+      && active.pendingCorrectionAcknowledged !== true
+    ) {
+      // WebView2 may defer a native correction even though the writer accepted
+      // it. Until a delivery reaches that target, a different target derived
+      // from another transient Virtuoso range is not new user intent. Keep the
+      // first write single-flight instead of alternating between range estimates.
+      return true;
+    }
     // Extent collapse/rebound owns the logical target. A smaller displacement
     // from rows painted while the native range was clamped must not replace
     // the pre-collapse accepted position with that transient viewport.
@@ -313,6 +326,7 @@ export function useTranscriptReaderExtentStability({
     })) return false;
     active.pendingCorrectionTop = correctionTarget;
     active.pendingCorrectionForward = active.direction * correction > 0;
+    active.pendingCorrectionAcknowledged = false;
     active.pendingAnchor = paintedReverse
       ? [paintedReverse.rowKey, paintedReverse.currentOffset - correction]
       : active.anchor && currentAnchorOffset !== undefined
@@ -337,7 +351,10 @@ export function useTranscriptReaderExtentStability({
     return true;
   }, [lastWriteOwner, modeRef, reportAnomaly, writeCorrection]);
 
-  const observe = useCallback((element = scrollRef.current) => {
+  const observe = useCallback((
+    element = scrollRef.current,
+    promoteAcceptedNativeFrame = false,
+  ) => {
     const guard = guardRef.current;
     if (!element || guard?.element !== element) return false;
     const now = Date.now();
@@ -393,7 +410,18 @@ export function useTranscriptReaderExtentStability({
         guard.targetAnchorOffset = anchor.offset;
       }
     }
-    if (accepted && !corrected && !viewportBlank) commitPaintedRowsAfterPaint(guard, element);
+    if (accepted && !corrected && !viewportBlank) {
+      if (promoteAcceptedNativeFrame) {
+        // A native scroll event is the last synchronous observation of the
+        // range actually delivered by the host. Preserve it immediately while
+        // retaining the prior window: WKWebView can replace the range before
+        // the deferred paint timer runs.
+        const paintedRows = capturePaintedReaderRows(element);
+        if (paintedRows.size > 0) promotePaintedReaderRows(guard, paintedRows);
+      } else {
+        commitPaintedRowsAfterPaint(guard, element);
+      }
+    }
     return transcriptReaderExtentHasCollapsed(guard);
   }, [acknowledgeCorrection, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, modeRef, scrollRef]);
 
@@ -548,7 +576,7 @@ export function useTranscriptReaderExtentStability({
     // opposite setup direction can misclassify the first >96px native move as
     // a reverse layout anomaly and write against real user input.
     if (nativeInput) syncNativeDirection(nativeDelta);
-    observe(element);
+    observe(element, true);
     const active = guardRef.current;
     const pendingAfterObservation = active?.pendingCorrectionTop !== undefined;
     if (
@@ -559,12 +587,6 @@ export function useTranscriptReaderExtentStability({
       && Math.abs(active.acceptedTop - element.scrollTop) <= 2
     ) {
       active.expectedTop = element.scrollTop;
-      // Native scroll delivery observes the range that the WebView actually
-      // painted for this accepted offset. Preserve it synchronously: WKWebView
-      // can replace that range before the post-paint timer runs, leaving only
-      // one boundary row with which to prove the visual reversal.
-      const paintedRows = capturePaintedReaderRows(element);
-      if (paintedRows.size > 0) promotePaintedReaderRows(active, paintedRows);
     }
     lastNativeDeliveryRef.current = {
       element,

@@ -237,6 +237,21 @@ await flushFrames();
 await flushFrames();
 check(arbiter?.modeRef.current === "tail-follow", "native thumb release after a held physical bottom resumes tail-follow");
 
+// GTK can consume every pointermove and coalesce the away-and-back scroll
+// range. The capture-phase pointerup still proves the native thumb travelled;
+// combine that with the final physical-bottom geometry before claiming tail.
+await act(async () => arbiter?.reset());
+scrollElement.scrollTop = 400;
+await act(async () => arbiter?.onPointerDownIntent({
+  button: 0,
+  clientY: 500,
+  nativeEvent: { button: 0, clientX: 795, clientY: 500 },
+} as React.PointerEvent<HTMLElement>));
+await act(async () => window.dispatchEvent(new dom.window.MouseEvent("pointerup", { clientY: 452 })));
+await flushFrames();
+await flushFrames();
+check(arbiter?.modeRef.current === "tail-follow", "release pointer travel proves a coalesced away-and-back native thumb");
+
 // A real virtual range can reach the native bottom before its LAST row mounts.
 // Keep a bounded release probe alive until that row becomes observable.
 await act(async () => arbiter?.reset());
@@ -364,6 +379,56 @@ check(
   scrollWrites.filter((write) => write.owner === "anchor-compensation").length === 0,
   "user scroll intent cancels a pending anchor compensation",
 );
+
+// A host scroll delivery can be accepted without WebKit input classification.
+// Preserve that delivered range before the next replacement removes its
+// leading row; the shared clipped boundary still proves the visual reversal.
+await act(async () => arbiter?.reset());
+scrollExtent = 500; scrollElement.scrollTop = 200;
+rowElement.getBoundingClientRect = () => rectAt(-20);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await wheel(24);
+const nativeLeading = dom.window.document.createElement("div");
+nativeLeading.className = "transcript__row"; nativeLeading.dataset.rowKey = "native-leading";
+nativeLeading.getBoundingClientRect = () => rectAt(-95);
+const nativeBoundary = dom.window.document.createElement("div");
+nativeBoundary.className = "transcript__row"; nativeBoundary.dataset.rowKey = "native-boundary";
+nativeBoundary.getBoundingClientRect = () => rectAt(-80);
+rowElement.replaceWith(nativeLeading); scrollElement.append(nativeBoundary);
+scrollElement.scrollTop += 24;
+await act(async () => arbiter?.deliverScroll());
+scrollWrites.length = 0;
+nativeLeading.remove(); nativeBoundary.getBoundingClientRect = () => rectAt(18);
+await act(async () => arbiter?.observeReaderExtent());
+const nativeRangeWrites = scrollWrites.filter((write) => write.owner === "reader-stability");
+check(nativeRangeWrites.length === 1
+  && (nativeRangeWrites[0]!.top ?? 0) - (nativeRangeWrites[0]!.scrollTop ?? 0) === 98,
+  "every accepted native delivery retains its boundary before replacement");
+nativeBoundary.replaceWith(rowElement); rowElement.dataset.rowKey = "row-a";
+
+// WebView2 can defer an accepted native correction. Changing range estimates
+// during that gap must not alternate targets before the first acknowledgement.
+await act(async () => arbiter?.reset());
+scrollExtent = 500; scrollElement.scrollTop = 172;
+rowElement.getBoundingClientRect = () => rectAt(-29);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await wheel(24); scrollWrites.length = 0;
+const deferredNativeScrollTo = scrollElement.scrollTo;
+scrollElement.scrollTo = () => {};
+try {
+  rowElement.getBoundingClientRect = () => rectAt(67);
+  await act(async () => arbiter?.observeReaderExtent());
+  rowElement.getBoundingClientRect = () => rectAt(90); scrollExtent += 60;
+  await act(async () => arbiter?.observeReaderExtent());
+  rowElement.getBoundingClientRect = () => rectAt(75); scrollExtent -= 20;
+  await act(async () => arbiter?.observeReaderExtent());
+  check(scrollWrites.filter((write) => write.owner === "reader-stability").length === 1,
+    "an unacknowledged native correction suppresses alternating targets");
+} finally {
+  scrollElement.scrollTo = deferredNativeScrollTo;
+}
 
 await act(async () => root.unmount());
 Date.now = originalDateNow;
