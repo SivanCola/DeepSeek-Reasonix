@@ -311,7 +311,7 @@ export function useTranscriptScrollArbiter({
 
   const deliverScroll = useCallback((element = scrollRef.current, provedNativeBottom = false) => {
     if (!element) return;
-    readerExtent.observe(element);
+    readerExtent.observeNativeDelivery(element);
     deliverBottomHold(element, provedNativeBottom);
     if (stateRef.current.readerIntent) armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverBottomHold, readerExtent]);

@@ -463,6 +463,40 @@ check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the continuous painted-anchor correction keeps the single-writer contract");
 lastPaintedRow.replaceWith(rowElement);
 
+// Native host input can advance the scroller without surfacing a React wheel
+// event. Reconcile the guard direction from consecutive native scroll
+// deliveries so the setup wheel's opposite direction cannot leave the real
+// forward traversal unprotected.
+const originalUserAgent = dom.window.navigator.userAgent;
+Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: "AppleWebKit/605.1.15" });
+await act(async () => arbiter?.reset());
+scrollExtent = 24_515;
+scrollElement.scrollTop = 23_160;
+rowElement.getBoundingClientRect = () => rectAt(-25);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: -1,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollElement.scrollTop += 24;
+rowElement.getBoundingClientRect = () => rectAt(-49);
+await act(async () => arbiter?.deliverScroll());
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent += 170;
+scrollElement.scrollTop += 24;
+rowElement.getBoundingClientRect = () => rectAt(121);
+await act(async () => arbiter?.deliverScroll());
+check(scrollByCalls === 1 && lastScrollByTop === 170,
+  `native scroll delivery replaces an opposite setup direction before a late range swap (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "native direction reconciliation keeps the late range correction single-owned");
+Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: originalUserAgent });
+
 // A correction acknowledgement can share a native delivery with the next
 // older range swap. Validate the retained correction anchor before accepting
 // that delivery, otherwise its wrong leading row becomes the new baseline.

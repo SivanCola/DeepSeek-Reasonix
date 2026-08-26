@@ -17,6 +17,7 @@ import {
 import type { TranscriptScrollMode } from "./transcriptScrollArbiter";
 import { nativeTranscriptDistanceFromBottom } from "./transcriptScrollGeometry";
 import { recordTranscriptScrollDiagnostic, type TranscriptScrollWriteRecord } from "./transcriptScrollProbe";
+import { shouldBridgeTranscriptReaderCorrection } from "./transcriptScrollWriter";
 import { captureLeadingTranscriptLayoutAnchor, transcriptElementViewportIsBlank } from "./transcriptVirtuosoRecovery";
 
 const READER_EXTENT_ACTIVE_MS = 180;
@@ -100,6 +101,11 @@ export function useTranscriptReaderExtentStability({
   lastWriteOwner: () => string | undefined;
 }) {
   const guardRef = useRef<ActiveReaderExtentGuard | null>(null);
+  const lastNativeDeliveryRef = useRef<{
+    element: HTMLDivElement;
+    generation: number;
+    top: number;
+  } | null>(null);
 
   const clearActive = useCallback((guard: ActiveReaderExtentGuard) => {
     if (guardRef.current === guard) guardRef.current = null;
@@ -441,7 +447,42 @@ export function useTranscriptReaderExtentStability({
     schedule(active);
   }, [anchorOffset, cancel, generationRef, renewLease, schedule, scrollRef]);
 
+  const syncNativeDirection = useCallback((deltaY: number) => {
+    const current = guardRef.current;
+    if (
+      current
+      && current.element === scrollRef.current
+      && current.generation === generationRef.current
+      && current.direction === (deltaY < 0 ? -1 : 1)
+    ) {
+      renewLease(current);
+      schedule(current);
+    } else arm(deltaY);
+  }, [arm, generationRef, renewLease, schedule, scrollRef]);
+
+  const observeNativeDelivery = useCallback((element: HTMLDivElement) => {
+    const generation = generationRef.current;
+    const previous = lastNativeDeliveryRef.current;
+    const deliveredTop = element.scrollTop;
+    observe(element);
+    const nativeDelta = previous?.element === element && previous.generation === generation
+      ? deliveredTop - previous.top
+      : 0;
+    lastNativeDeliveryRef.current = { element, generation, top: element.scrollTop };
+    const view = element.ownerDocument.defaultView;
+    if (
+      Math.abs(nativeDelta) > 2
+      && Math.abs(nativeDelta) <= element.clientHeight * 0.5
+      && (modeRef.current === "reader-gesture" || modeRef.current === "manual")
+      && view
+      && shouldBridgeTranscriptReaderCorrection(view)
+    ) syncNativeDirection(nativeDelta);
+  }, [generationRef, modeRef, observe, syncNativeDirection]);
+
   useEffect(() => cancel, [cancel]);
 
-  return useMemo(() => ({ arm, cancel, observe, isActive }), [arm, cancel, observe, isActive]);
+  return useMemo(
+    () => ({ arm, cancel, observe, observeNativeDelivery, isActive }),
+    [arm, cancel, observe, observeNativeDelivery, isActive],
+  );
 }
