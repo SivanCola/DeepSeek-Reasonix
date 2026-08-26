@@ -14,6 +14,7 @@ type NativeExtent = { scrollHeight: number; clientHeight: number };
 // Native ranges can settle well before a loaded CI WebView mounts LAST. Keep
 // the explicit bottom-release proof bounded to roughly two seconds at 60fps.
 export const MAX_TAIL_MOUNT_CHECKS = 120;
+export const MAX_TAIL_MOUNT_HOLD_MS = 2_000;
 
 function tailIsMounted(element: HTMLElement): boolean {
   if (element.querySelector("[data-live-region='true']")) return true;
@@ -54,12 +55,14 @@ export function createTranscriptReaderBottomHold({
   let frame: number | null = null;
   let heldExtent: NativeExtent | null = null;
   let totalChecks = 0;
+  let startedAt: number | null = null;
 
   const cancel = () => {
     if (frame !== null) cancelAnimationFrame(frame);
     frame = null;
     heldExtent = null;
     totalChecks = 0;
+    startedAt = null;
   };
 
   const deliver = (element: HTMLDivElement) => {
@@ -96,7 +99,10 @@ export function createTranscriptReaderBottomHold({
       && activeClaim
       && frame === null
     ) {
-      if (totalChecks >= MAX_TAIL_MOUNT_CHECKS) {
+      if (
+        totalChecks >= MAX_TAIL_MOUNT_CHECKS
+        || (startedAt !== null && Date.now() - startedAt >= MAX_TAIL_MOUNT_HOLD_MS)
+      ) {
         // The native thumb proved the physical end, but a loaded WebView can
         // leave LAST unmounted or keep revising its extent beyond the passive
         // observation budget. Hand that bounded failure to the existing jump-tail
@@ -107,6 +113,7 @@ export function createTranscriptReaderBottomHold({
         return;
       }
       const generation = generationRef.current;
+      startedAt ??= Date.now();
       heldExtent = tailMounted ? { scrollHeight: element.scrollHeight, clientHeight: element.clientHeight } : null;
       totalChecks += 1;
       frame = requestAnimationFrame(() => {

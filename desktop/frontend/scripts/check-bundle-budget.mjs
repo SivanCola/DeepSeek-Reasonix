@@ -203,7 +203,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // of bounded headroom alongside the gzip ratchet above.
 // Transcript navigation and scroll integrity add target commit fencing,
 // native reader stabilization, and the privacy-safe unloaded-question replay.
-// The merged build measures 2424.5 KiB; retain 0.2 KiB of bounded headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_424.7 : 2_424.7;
+// The merged build measures 2424.5 KiB. Correction-ack validation and a real
+// wall-clock native-tail bound bring it to 2424.9 KiB; retain 0.2 KiB of
+// bounded headroom without widening the gzip or per-chunk ratchets.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_425.1 : 2_425.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

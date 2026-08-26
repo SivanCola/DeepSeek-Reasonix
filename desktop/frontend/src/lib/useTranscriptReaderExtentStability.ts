@@ -40,7 +40,14 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   frame: number | null;
   expiryTimer: number | null;
   pendingCorrectionTop?: number;
+  pendingAnchor?: readonly [rowKey: string, offsetAtTarget: number];
 };
+
+function readerAnchorOffset(element: HTMLDivElement, rowKey: string): number | undefined {
+  const row = Array.from(element.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]"))
+    .find((candidate) => candidate.dataset.rowKey === rowKey);
+  return row ? row.getBoundingClientRect().top - element.getBoundingClientRect().top : undefined;
+}
 
 export function useTranscriptReaderExtentStability({
   generationRef,
@@ -81,18 +88,33 @@ export function useTranscriptReaderExtentStability({
   const isActive = useCallback(() => guardRef.current !== null, []);
 
   const anchorOffset = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
-    const row = guard.anchor
-      ? Array.from(element.querySelectorAll<HTMLElement>(".transcript__row[data-row-key]"))
-        .find((candidate) => candidate.dataset.rowKey === guard.anchor?.rowKey)
-      : undefined;
-    return row ? row.getBoundingClientRect().top - element.getBoundingClientRect().top : undefined;
+    return guard.anchor ? readerAnchorOffset(element, guard.anchor.rowKey) : undefined;
   }, []);
 
   const acknowledgeCorrection = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement, snapshot: TranscriptExtentSnapshot) => {
     if (guard.pendingCorrectionTop === undefined) return;
     const progressPastTarget = guard.direction * (snapshot.scrollTop - guard.pendingCorrectionTop);
     if (progressPastTarget < -2 || progressPastTarget > guard.clientHeight) return;
+    const pendingAnchor = guard.pendingAnchor;
+    if (pendingAnchor) {
+      const currentOffset = readerAnchorOffset(element, pendingAnchor[0]);
+      if (currentOffset !== undefined) {
+        const expectedOffset = pendingAnchor[1] - (snapshot.scrollTop - guard.pendingCorrectionTop);
+        if (guard.direction * (currentOffset - expectedOffset) >= MIN_REVERSE_JUMP_PX) {
+          // The native offset acknowledged the write in the same delivery
+          // that committed another older Virtuoso range. Keep the correction
+          // anchor long enough for the ordinary anomaly path below to reject
+          // that range; blessing its leading row here would make the visual
+          // reversal the next transaction's baseline.
+          guard.anchor = { mode: "manual", rowKey: pendingAnchor[0], offset: pendingAnchor[1] };
+          guard.anchorScrollTop = guard.pendingCorrectionTop;
+          guard.targetAnchorOffset = pendingAnchor[1];
+          return;
+        }
+      }
+    }
     guard.pendingCorrectionTop = undefined;
+    guard.pendingAnchor = undefined;
     // A correction intentionally drops the stale pre-swap anchor. Re-anchor
     // as soon as the native offset reaches or passes that correction in the
     // gesture direction. Native hosts can coalesce the next wheel delta with
@@ -160,6 +182,9 @@ export function useTranscriptReaderExtentStability({
       mode,
     })) return false;
     active.pendingCorrectionTop = correctionTarget;
+    active.pendingAnchor = active.anchor && currentAnchorOffset !== undefined
+      ? [active.anchor.rowKey, currentAnchorOffset - correction]
+      : undefined;
     const extentDelta = snapshot.scrollHeight - active.acceptedHeight;
     acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
     recordTranscriptScrollDiagnostic("scroll-anomaly", {

@@ -344,6 +344,38 @@ check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
 incomingRow.remove();
 incomingSecondRow.remove();
 
+// A correction acknowledgement can share a native delivery with the next
+// older range swap. Validate the retained correction anchor before accepting
+// that delivery, otherwise its wrong leading row becomes the new baseline.
+await act(async () => arbiter?.reset());
+Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 596 });
+scrollExtent = 20_411;
+scrollElement.scrollTop = 1_728;
+rowElement.getBoundingClientRect = () => rectAt(-29);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollWrites.length = 0;
+scrollByCalls = 0;
+rowElement.getBoundingClientRect = () => rectAt(567);
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 596,
+  `the first replacement range receives its reader correction (${lastScrollByTop}px)`);
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollElement.scrollTop += 72;
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 668,
+  `a coalesced acknowledgement cannot bless the next older range (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the acknowledgement-range race remains a single owned correction");
+
 // Native WebViews can deliver the Virtuoso range replacement well after the
 // 180ms reader-intent idle boundary. Keep the accepted logical row alive
 // across a multi-second compositor delay instead of accepting the late range
@@ -446,6 +478,10 @@ await act(async () => arbiter?.onWheelIntent({
 } as React.WheelEvent<HTMLElement>));
 scrollElement.scrollTop = 1_100;
 await act(async () => arbiter?.followGrowingTail());
+// Model the browser applying the first correction before the hook's rAF
+// acknowledgement; otherwise this static jsdom rect still describes the
+// pre-write range and intentionally looks like a second native swap.
+rowElement.getBoundingClientRect = () => rectAt(-100);
 await flushFrames();
 check(scrollByCalls === 1 && scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "near-bottom reader transaction rejects the same >96px reverse jump");

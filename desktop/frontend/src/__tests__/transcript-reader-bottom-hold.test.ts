@@ -8,6 +8,7 @@ import {
 } from "../lib/transcriptScrollArbiter";
 import {
   createTranscriptReaderBottomHold,
+  MAX_TAIL_MOUNT_HOLD_MS,
   MAX_TAIL_MOUNT_CHECKS,
 } from "../lib/transcriptReaderBottomHold";
 
@@ -124,6 +125,49 @@ for (let index = 0; index <= MAX_TAIL_MOUNT_CHECKS; index += 1) {
 check(unstableStateRef.current.mode === "tail-follow", "a perpetually revising mounted tail cannot strand native-thumb release");
 check(unstableCommands.filter((command) => command === "SCROLL_TO_LAST").length === 1,
   "the unstable mounted tail also hands off to one bounded jump-tail transaction");
+
+// A loaded native host can deliver rAF far below 60fps. The release budget is
+// also wall-clock bounded so 120 nominal frames cannot turn into a permanent
+// manual state under runner contention.
+const slowStateRef = {
+  current: reduceTranscriptScroll(
+    { ...INITIAL_TRANSCRIPT_SCROLL_STATE, scrollable: true },
+    { type: "NATIVE_SCROLLBAR_BEGIN" },
+  ).state,
+};
+slowStateRef.current = reduceTranscriptScroll(slowStateRef.current, { type: "NATIVE_SCROLLBAR_END" }).state;
+const slowCommands: string[] = [];
+const slowDispatch = (event: TranscriptScrollEvent) => {
+  const result = reduceTranscriptScroll(slowStateRef.current, event);
+  slowStateRef.current = result.state;
+  slowCommands.push(...result.commands.map((command) => command.type));
+};
+const slowDeliverRef: { current: ((target?: HTMLDivElement) => void) | null } = { current: null };
+const [, deliverSlow] = createTranscriptReaderBottomHold({
+  scrollRef,
+  stateRef: slowStateRef as { current: TranscriptScrollState },
+  generationRef,
+  deliverScrollRef: slowDeliverRef,
+  dispatch: slowDispatch,
+});
+slowDeliverRef.current = () => deliverSlow(element);
+const originalDateNow = Date.now;
+let fakeNow = 50_000;
+Date.now = () => fakeNow;
+try {
+  deliverSlow(element);
+  for (let index = 0; index < 6; index += 1) {
+    fakeNow += MAX_TAIL_MOUNT_HOLD_MS / 4;
+    const pending = [...frames.values()];
+    frames.clear();
+    pending.forEach((callback) => callback(index));
+  }
+} finally {
+  Date.now = originalDateNow;
+}
+check(slowStateRef.current.mode === "tail-follow", "slow native frames still exhaust the wall-clock release budget");
+check(slowCommands.filter((command) => command === "SCROLL_TO_LAST").length === 1,
+  "the wall-clock fallback emits exactly one arbiter-owned tail transaction");
 
 if (failed > 0) {
   console.error(`\n${failed} transcript reader bottom hold test(s) failed; ${passed} passed.`);
