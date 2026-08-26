@@ -61,7 +61,10 @@ export function useTranscriptListGeometryObserver({
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["style"],
+      // React Virtuoso can recycle an item shell by changing its logical row
+      // identity without changing the sizer height or wrapper style. Observe
+      // those identity commits too so the reader guard runs before paint.
+      attributeFilter: ["style", "data-row-key", "data-item-index"],
     });
     attachCurrentList();
     return () => {

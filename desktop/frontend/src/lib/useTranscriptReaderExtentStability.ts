@@ -47,6 +47,7 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   pendingCorrectionForward?: boolean;
   pendingAnchor?: readonly [rowKey: string, offsetAtTarget: number];
   paintedRows: ReadonlyMap<string, number>;
+  previousPaintedRows?: ReadonlyMap<string, number>;
 };
 
 type PaintedReaderReverse = {
@@ -73,13 +74,19 @@ function paintedReaderReverse(
   element: HTMLDivElement,
 ): PaintedReaderReverse | undefined {
   const current = capturePaintedReaderRows(element);
-  const common = [...current].flatMap(([rowKey, currentOffset]) => {
-    const previousOffset = guard.paintedRows.get(rowKey);
-    return previousOffset === undefined
-      ? []
-      : [{ delta: guard.direction * (currentOffset - previousOffset), rowKey, currentOffset }];
-  }).sort((left, right) => left.delta - right.delta);
-  return common.length > 0 ? common[Math.floor(common.length / 2)] : undefined;
+  let strongest: PaintedReaderReverse | undefined;
+  for (const paintedRows of [guard.paintedRows, guard.previousPaintedRows]) {
+    if (!paintedRows) continue;
+    const common = [...current].flatMap(([rowKey, currentOffset]) => {
+      const previousOffset = paintedRows.get(rowKey);
+      return previousOffset === undefined
+        ? []
+        : [{ delta: guard.direction * (currentOffset - previousOffset), rowKey, currentOffset }];
+    }).sort((left, right) => left.delta - right.delta);
+    const candidate = common[Math.floor(common.length / 2)];
+    if (candidate && (!strongest || candidate.delta > strongest.delta)) strongest = candidate;
+  }
+  return strongest;
 }
 
 function readerAnchorOffset(element: HTMLDivElement, rowKey: string): number | undefined {
@@ -158,6 +165,7 @@ export function useTranscriptReaderExtentStability({
           || Date.now() >= guard.deadline
           || transcriptElementViewportIsBlank(element)
         ) return;
+        guard.previousPaintedRows = guard.paintedRows;
         guard.paintedRows = capturePaintedReaderRows(element);
       }, 0);
     });
@@ -198,6 +206,7 @@ export function useTranscriptReaderExtentStability({
       // Rebase the passive visual guard here; a later mutation is still
       // compared with this current occupied range before it can paint.
       guard.paintedRows = capturePaintedReaderRows(element);
+      guard.previousPaintedRows = undefined;
     }
     // A correction intentionally drops the stale pre-swap anchor. Re-anchor
     // as soon as the native offset reaches or passes that correction in the

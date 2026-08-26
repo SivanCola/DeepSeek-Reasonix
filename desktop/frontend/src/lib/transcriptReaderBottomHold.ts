@@ -36,7 +36,7 @@ function extentChanged(held: NativeExtent, element: HTMLElement): boolean {
 
 export type TranscriptReaderBottomHold = readonly [
   cancel: () => void,
-  deliver: (element: HTMLDivElement, provedBottom?: boolean) => void,
+  deliver: (element: HTMLDivElement, provedBottom?: boolean) => boolean,
 ];
 
 export function createTranscriptReaderBottomHold({
@@ -126,7 +126,7 @@ export function createTranscriptReaderBottomHold({
         // is one arbiter-owned command after release, never a direct write.
         cancel();
         dispatch({ type: "JUMP_TO_BOTTOM" });
-        return;
+        return false;
       }
       const generation = generationRef.current;
       startedAt ??= Date.now();
@@ -163,6 +163,10 @@ export function createTranscriptReaderBottomHold({
     } else if (!activeClaim) {
       cancel();
     }
+    // An explicit native-thumb bottom proof owns its bounded tail-mount
+    // transaction. The ordinary reader idle timer must not end that intent
+    // before LAST mounts or the bounded jump fallback runs.
+    return nativeProof && activeClaim;
   };
 
   return [cancel, deliver];

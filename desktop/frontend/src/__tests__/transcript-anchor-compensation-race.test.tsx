@@ -245,6 +245,8 @@ await act(async () => arbiter?.deliverScroll());
 await act(async () => window.dispatchEvent(new dom.window.Event("pointerup")));
 await flushFrames();
 check(arbiter?.modeRef.current === "reader-gesture", "bottom release waits while the virtual tail is unmounted");
+await advanceClock(250);
+check(arbiter?.modeRef.current === "reader-gesture", "native bottom proof outlives the ordinary reader idle window");
 rowElement.dataset.itemIndex = "1";
 await flushFrames();
 await flushFrames();

@@ -385,10 +385,11 @@ olderRangeRow.remove();
 paintedBoundaryRow.remove();
 scrollElement.append(rowElement);
 
-// WKWebView may publish an intermediate range with no rows in common before
-// it applies the final translated range in the same rendering opportunity.
-// That unpainted mutation must not replace the last painted baseline: the
-// final range can restore exactly one boundary row and expose the reversal.
+// WKWebView may publish an intermediate range with no rows in common, then
+// promote it before a later native task applies the final translated range.
+// Keep one prior painted baseline: the final range can restore exactly one
+// older boundary row and expose a reversal that the intermediate map cannot
+// identify.
 await act(async () => arbiter?.reset());
 scrollExtent = 20_957;
 scrollElement.scrollTop = 4_974;
@@ -410,6 +411,8 @@ intermediateRow.getBoundingClientRect = () => rectAt(-13);
 rowElement.replaceWith(intermediateRow);
 scrollElement.scrollTop = 4_998;
 await act(async () => arbiter?.observeReaderExtent());
+await flushFrames();
+await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 const finalBoundaryRow = dom.window.document.createElement("div");
 finalBoundaryRow.className = "transcript__row";
 finalBoundaryRow.dataset.rowKey = "row-142";
@@ -419,9 +422,9 @@ scrollWrites.length = 0;
 scrollByCalls = 0;
 await act(async () => arbiter?.observeReaderExtent());
 check(scrollByCalls === 1 && lastScrollByTop === 597,
-  `an unpainted no-common range cannot erase the last painted boundary row (${lastScrollByTop}px)`);
+  `a promoted no-common range cannot erase the prior painted boundary row (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
-  "the staged painted-range correction keeps the single-writer contract");
+  "the prior-painted-range correction keeps the single-writer contract");
 intermediateRow.remove();
 finalBoundaryRow.replaceWith(rowElement);
 rowElement.dataset.rowKey = "row-a";

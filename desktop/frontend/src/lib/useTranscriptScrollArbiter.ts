@@ -312,8 +312,8 @@ export function useTranscriptScrollArbiter({
   const deliverScroll = useCallback((element = scrollRef.current, provedNativeBottom = false) => {
     if (!element) return;
     readerExtent.observeNativeDelivery(element);
-    deliverBottomHold(element, provedNativeBottom);
-    if (stateRef.current.readerIntent) armReaderIntentIdle();
+    const retainsNativeBottomIntent = deliverBottomHold(element, provedNativeBottom);
+    if (stateRef.current.readerIntent && !retainsNativeBottomIntent) armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverBottomHold, readerExtent]);
   deliverScrollRef.current = deliverScroll;
 
@@ -502,7 +502,7 @@ export function useTranscriptScrollArbiter({
         });
       });
     }
-    armReaderIntentIdle();
+    if (!reachedBottom) armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverScroll, dispatch, nativeScrollbarBottomProof]);
 
   const finishPointerIntent = useCallback(() => {
