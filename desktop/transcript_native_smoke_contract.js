@@ -38,8 +38,13 @@
     growthSurface: null,
     initialDistance: 0,
     phase: "waiting-topic",
+    writes: [],
   };
   window.__reasonixNativeTranscriptSmokeState = state;
+  window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
+    state.writes.push(write);
+    if (state.writes.length > 80) state.writes.shift();
+  };
 
   const visibleRows = (element) => {
     const viewport = element.getBoundingClientRect();
@@ -313,6 +318,7 @@
       growthTicks: state.growthTicks,
       paddingBottom: element instanceof HTMLElement ? Number.parseFloat(getComputedStyle(element).paddingBottom) : null,
       footerBottomDistance: viewportRect && footerRect ? footerRect.bottom - viewportRect.bottom : null,
+      writes: state.writes.slice(-20),
     };
     post(result);
     return result;

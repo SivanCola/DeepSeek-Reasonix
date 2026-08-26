@@ -133,8 +133,9 @@ export function useTranscriptReaderExtentStability({
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
     };
-    observeTranscriptReaderExtent(guard, snapshot);
-    correctAnomaly(guard, element, snapshot, anchorOffset(guard, element));
+    const currentAnchorOffset = anchorOffset(guard, element);
+    observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset);
+    correctAnomaly(guard, element, snapshot, currentAnchorOffset);
     return transcriptReaderExtentHasCollapsed(guard);
   }, [anchorOffset, correctAnomaly, scrollRef]);
 
@@ -158,8 +159,8 @@ export function useTranscriptReaderExtentStability({
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
       };
-      observeTranscriptReaderExtent(active, snapshot);
       const currentAnchorOffset = anchorOffset(active, element);
+      observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset);
       correctAnomaly(active, element, snapshot, currentAnchorOffset);
       if (Date.now() >= active.deadline) {
         if (guardRef.current === active) guardRef.current = null;

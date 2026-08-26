@@ -200,7 +200,9 @@ const visualReverse = createTranscriptReaderExtentGuard(
   24,
 )!;
 const visualReverseSnapshot = { scrollTop: 18_425, scrollHeight: 23_385, clientHeight: 596 };
-observeTranscriptReaderExtent(visualReverse, visualReverseSnapshot);
+observeTranscriptReaderExtent(visualReverse, visualReverseSnapshot, 479);
+assert.equal(visualReverse.acceptedTop, 18_401,
+  "a visual reverse cannot replace the last accepted logical reader position");
 assert.equal(
   transcriptReaderExtentCanCorrect(visualReverse, visualReverseSnapshot, 479),
   true,

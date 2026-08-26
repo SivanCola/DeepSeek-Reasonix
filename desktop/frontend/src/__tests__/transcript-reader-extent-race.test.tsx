@@ -79,9 +79,9 @@ let scrollByCalls = 0;
 let lastScrollByTop = 0;
 dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
   scrollWrites.push(write);
-  if (write.kind === "scrollBy") {
+  if (write.owner === "reader-stability") {
     scrollByCalls += 1;
-    lastScrollByTop = write.top ?? 0;
+    lastScrollByTop = (write.top ?? 0) - write.scrollTop;
   }
 };
 const virtuosoHandle = {
@@ -89,7 +89,7 @@ const virtuosoHandle = {
   // observes the accepted correction instead of replaying a test-only stale
   // scrollTop value.
   scrollBy: ({ top }: { top: number }) => { scrollElement.scrollTop += top; },
-  scrollTo: () => {},
+  scrollTo: ({ top }: { top: number }) => { scrollElement.scrollTop = top; },
   scrollToIndex: () => {},
   getState: () => {},
 } as unknown as VirtuosoHandle;
@@ -245,6 +245,32 @@ check(scrollByCalls === 1 && lastScrollByTop === 687,
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the pre-paint correction still passes through the single writer");
 scrollElement.append(rowElement);
+
+// A Virtuoso range commit can move the old visible rows without emitting a
+// native scroll event. The list MutationObserver calls this pre-paint reader
+// observation before replacing the transaction's logical anchor.
+await act(async () => arbiter?.reset());
+scrollExtent = 22_834;
+scrollElement.scrollTop = 15_438;
+rowElement.getBoundingClientRect = () => rectAt(-16);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent = 23_114;
+rowElement.getBoundingClientRect = () => rectAt(516);
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 532,
+  `a DOM-range-only visual reverse is corrected before paint (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the range-mutation correction still passes through the single writer");
 
 // Near-bottom input uses the same reader transaction as every other logical
 // position. A synthetic >96px reverse displacement must be rejected instead

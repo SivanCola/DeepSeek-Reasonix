@@ -108,9 +108,9 @@ console.log("\nbundle budgets");
 // startup path. The current main-v2 build measures 437.36 KiB gzip.
 // Transcript scroll integrity adds the single-writer gateway, coalesced
 // geometry revisions, and reader-extent transaction to the eager transcript
-// path. The combined build is expected near 440.5 KiB gzip; retain only 0.2
-// KiB for build metadata/toolchain drift and remeasure after the rebase.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 440.7 : 440.7;
+// path. The combined rebased build measures 440.7 KiB gzip; retain only 0.2
+// KiB for build metadata/toolchain drift.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 440.9 : 440.9;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -190,8 +190,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // cross-WebView footer inset, native list observer, and guarded LAST mount
 // before tail following add the pre-paint tail pin, residual verifier, and
 // stable-tail boundary guard. Visual-anchor and pre-paint correction during
-// active reader transactions are expected to bring the rebased surface near
-// 2393.2 KiB raw; retain 0.2 KiB and remeasure after the rebase.
+// active reader transactions and range-mutation pre-paint correction bring
+// the combined rebased surface to 2393.2 KiB raw; retain 0.2 KiB rather than
+// replacing the gate with a percentage.
 const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_393.4 : 2_393.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

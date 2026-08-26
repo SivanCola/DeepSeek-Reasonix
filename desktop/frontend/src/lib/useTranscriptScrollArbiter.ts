@@ -122,7 +122,7 @@ export function useTranscriptScrollArbiter({
     if (write.top === undefined) return false;
     return writer.write({
       ...write,
-      operation: "scrollBy",
+      operation: "scrollTo", top: (write.scrollTop ?? scrollRef.current?.scrollTop ?? 0) + write.top,
       behavior: "auto",
       source: write.source ?? "layout-height-changed",
       expectedGeneration: write.generation ?? generationRef.current,
@@ -760,7 +760,6 @@ export function useTranscriptScrollArbiter({
     releaseTailFollow(deltaY > 0, deltaY);
     return true;
   }, [releaseTailFollow, restoreTailIfNotScrollable]);
-
   return {
     virtuosoRef,
     scrollRef,
@@ -785,6 +784,7 @@ export function useTranscriptScrollArbiter({
     beginUserResize,
     atBottomStateChange,
     deliverScroll,
+    observeReaderExtent: readerExtent.observe,
     onWheelIntent,
     onTouchStartIntent,
     onTouchMoveIntent,

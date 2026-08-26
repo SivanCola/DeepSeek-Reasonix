@@ -237,6 +237,7 @@ export function Transcript({
     scrollerRef,
     atBottomStateChange,
     deliverScroll,
+    observeReaderExtent,
     scrollToBottom,
     noteGeometryChange,
     observeListHeight,
@@ -505,6 +506,7 @@ export function Transcript({
     enabled: !hydrating,
     surfaceKey: `${layoutSurfaceKey}:${virtuosoResetKey}`,
     noteGeometryChange,
+    observeReaderExtent,
   });
   const selectionRetention = useTranscriptSelectionRetention({
     tabId,

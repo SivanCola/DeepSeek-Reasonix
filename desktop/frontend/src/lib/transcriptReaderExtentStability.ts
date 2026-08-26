@@ -89,6 +89,7 @@ export function extendTranscriptReaderExtentGuard(
 export function observeTranscriptReaderExtent(
   guard: TranscriptReaderExtentGuard,
   snapshot: TranscriptExtentSnapshot,
+  currentAnchorOffset?: number,
 ): void {
   if (Math.abs(snapshot.clientHeight - guard.clientHeight) > 1) return;
   guard.minimumHeight = Math.min(guard.minimumHeight, snapshot.scrollHeight);
@@ -97,6 +98,11 @@ export function observeTranscriptReaderExtent(
     return;
   }
 
+  // Do not replace the last accepted logical position with a same-direction
+  // native offset whose painted anchor moved backwards. Virtuoso can advance
+  // scrollTop while swapping in an older range, so scrollTop direction alone
+  // is not sufficient evidence that the reader advanced.
+  if (transcriptReaderAnchorReverseDelta(guard, snapshot, currentAnchorOffset) >= MIN_REVERSE_JUMP_PX) return;
   const movement = snapshot.scrollTop - guard.acceptedTop;
   if (guard.direction * movement >= -DIRECTION_JITTER_PX) {
     guard.acceptedTop = snapshot.scrollTop;

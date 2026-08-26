@@ -295,6 +295,7 @@ try {
     // in Xvfb so the real browser-owned thumb remains draggable; other hosts
     // keep the deterministic headless path and their platform-specific gates.
     headless: !nativeThumbReplay,
+    ...(nativeThumbReplay ? { args: ["--show-scrollbars", "--disable-features=OverlayScrollbar"] } : {}),
     ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}),
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -1224,6 +1225,10 @@ try {
         await resetNativeThumbProbeToTop();
         const candidateY = trackTop + offset;
         await page.mouse.move(nativeThumbProbe.x, candidateY);
+        // GTK can reserve the gutter before it paints the hover thumb. Wait
+        // for that native hover transition so pointerdown hits the thumb
+        // instead of its underlying track.
+        await page.waitForTimeout(180);
         await page.mouse.down();
         await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag === "true");
         // A track press pages immediately, before the pointer moves. A real
@@ -1253,19 +1258,24 @@ try {
           // GTK can defer a track page until the pointer first moves, so the
           // multi-viewport check alone is insufficient. Only a captured thumb
           // can traverse the complete physical range in the same gesture.
-          await page.mouse.move(nativeThumbProbe.x, trackBottomY, { steps: 8 });
-          await page.waitForTimeout(64);
-          let bottomDistance = await transcript.evaluate(
-            (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
-          );
-          if (bottomDistance > 1) {
-            await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.bottomY, { steps: 2 });
+          let bottomDistance = Number.POSITIVE_INFINITY;
+          let bottomAttempts = 0;
+          // Reaching the current track end can materialize more Virtuoso rows
+          // and extend the native range while the thumb is still captured.
+          // Re-aim the same captured thumb (without releasing/re-grabbing) so
+          // discovery proves traversal of the final physical range.
+          for (; bottomAttempts < 12 && bottomDistance > 1; bottomAttempts += 1) {
+            if (bottomAttempts > 0) {
+              await page.mouse.move(nativeThumbProbe.x, trackBottomY - 12, { steps: 2 });
+            }
+            await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.bottomY, { steps: 4 });
             await page.waitForTimeout(64);
             bottomDistance = await transcript.evaluate(
               (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
             );
           }
           motionRecord.bottomDistance = bottomDistance;
+          motionRecord.bottomAttempts = bottomAttempts;
           if (bottomDistance <= 1) {
             if (!holdOnSuccess) {
               await page.mouse.up();

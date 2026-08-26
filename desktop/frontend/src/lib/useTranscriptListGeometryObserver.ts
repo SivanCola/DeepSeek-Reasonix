@@ -12,11 +12,13 @@ export function useTranscriptListGeometryObserver({
   enabled,
   surfaceKey,
   noteGeometryChange,
+  observeReaderExtent,
 }: {
   scrollElement: HTMLDivElement | null;
   enabled: boolean;
   surfaceKey: string;
   noteGeometryChange: (source: TranscriptGeometryChangeSource) => void;
+  observeReaderExtent: () => boolean;
 }) {
   useEffect(() => {
     if (!enabled || !scrollElement || typeof ResizeObserver === "undefined") return;
@@ -28,6 +30,10 @@ export function useTranscriptListGeometryObserver({
       if (!observedList) return;
       const height = observedList.getBoundingClientRect().height;
       if (Math.abs(height - previousHeight) <= 0.5) return;
+      // ResizeObserver sees the final laid-out range before paint. Recheck the
+      // reader anchor here because a child-list mutation can arrive before
+      // Virtuoso applies its translated range offset.
+      observeReaderExtent();
       previousHeight = height;
       noteGeometryChange("row-measure");
     });
@@ -43,12 +49,24 @@ export function useTranscriptListGeometryObserver({
     // effect have committed. Track that lifecycle without turning every row
     // mutation into a geometry revision; once attached, the fast connected
     // check exits before querying the subtree.
-    const mountObserver = new MutationObserverCtor(attachCurrentList);
-    mountObserver.observe(scrollElement, { childList: true, subtree: true });
+    const mountObserver = new MutationObserverCtor(() => {
+      attachCurrentList();
+      // Virtuoso can replace its mounted range without changing native
+      // scrollTop. MutationObserver runs after that DOM commit but before
+      // paint, which is the last point where an active reader transaction can
+      // reject the visible anchor displacement without flashing one frame.
+      observeReaderExtent();
+    });
+    mountObserver.observe(scrollElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style"],
+    });
     attachCurrentList();
     return () => {
       mountObserver.disconnect();
       observer.disconnect();
     };
-  }, [enabled, noteGeometryChange, scrollElement, surfaceKey]);
+  }, [enabled, noteGeometryChange, observeReaderExtent, scrollElement, surfaceKey]);
 }
