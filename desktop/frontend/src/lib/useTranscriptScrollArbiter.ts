@@ -104,6 +104,7 @@ export function useTranscriptScrollArbiter({
   const onItemMeasuredRef = useRef(onItemMeasured);
   onItemMeasuredRef.current = onItemMeasured;
   const [isAtBottom, setIsAtBottom] = useState(true); const [nativeScrollbarDragging, setNativeScrollbarDragging] = useState(false);
+  const [readerBuffering, setReaderBuffering] = useState(false);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
   const writerRef = useRef<ReturnType<typeof createTranscriptScrollWriter> | null>(null);
   const writer = writerRef.current ??= createTranscriptScrollWriter({
@@ -200,6 +201,13 @@ export function useTranscriptScrollArbiter({
     stateRef.current = state;
     modeRef.current = state.mode;
     pinnedRef.current = state.mode === "tail-follow";
+    setReaderBuffering((active) => (
+      state.mode === "reader-gesture" || state.mode === "manual" || state.mode === "native-thumb"
+        ? true
+        : state.mode === "tail-follow"
+          ? active
+          : false
+    ));
     // Keep jump-bottom manual-only while tail-follow repairs footer resize gaps.
     setIsAtBottom(state.atBottom || state.mode === "tail-follow");
     if (scrollRef.current) {
@@ -460,6 +468,7 @@ export function useTranscriptScrollArbiter({
   }, [finishRecovery, launchRecovery]);
 
   const reset = useCallback(() => {
+    setReaderBuffering(false);
     invalidateAsyncFrames();
     endReaderIntent();
     resetGeometry();
@@ -766,6 +775,7 @@ export function useTranscriptScrollArbiter({
     layoutTransientRef,
     itemSize,
     nativeScrollbarDragging,
+    readerBuffering,
     pinnedRef,
     isAtBottom,
     modeRef,

@@ -225,6 +225,7 @@ export function Transcript({
     scrollRef,
     itemSize,
     nativeScrollbarDragging,
+    readerBuffering,
     scrollElement,
     pinnedRef: stick,
     onWheelIntent,
@@ -970,10 +971,14 @@ export function Transcript({
             itemSize={itemSize}
             minOverscanItemCount={layoutSafeMode
               ? { top: 32, bottom: 32 }
-              : { top: VIRTUAL_OVERSCAN_ROWS, bottom: VIRTUAL_OVERSCAN_ROWS }}
+              : readerBuffering
+                ? { top: 24, bottom: 24 }
+                : { top: VIRTUAL_OVERSCAN_ROWS, bottom: VIRTUAL_OVERSCAN_ROWS }}
             increaseViewportBy={layoutSafeMode
               ? { top: (scrollElement?.clientHeight ?? 0) * 2, bottom: (scrollElement?.clientHeight ?? 0) * 2 }
-              : { top: 480, bottom: 480 }}
+              : readerBuffering
+                ? { top: scrollElement?.clientHeight ?? 0, bottom: scrollElement?.clientHeight ?? 0 }
+                : { top: 480, bottom: 480 }}
             scrollerRef={handleScrollerRef}
             itemsRendered={handleItemsRendered}
             startReached={handleViewportEarlierHistoryReached}

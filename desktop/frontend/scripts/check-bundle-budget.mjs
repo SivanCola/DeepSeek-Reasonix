@@ -134,9 +134,9 @@ console.log("\nbundle budgets");
 // virtual range, and samples thumb-bottom before React delivery; the measured
 // path is 451.2 KiB. Retaining the last complete painted range closes the
 // remaining WKWebView boundary-row race at 451.6 KiB. The same-paint native
-// acknowledgement bridge measures 452.0 KiB; keep only 0.1 KiB of explicit
-// headroom for that invariant.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 452.1 : 452.1;
+// acknowledgement bridge, transform fence, and adaptive reader buffer measure
+// 452.1 KiB; keep only 0.1 KiB of explicit headroom for those invariants.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 452.2 : 452.2;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -215,8 +215,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // the final pre-paint anchor and passive native-bottom sampler measure 2426.4
 // KiB. The complete painted-range guard, post-paint baseline fence, and
 // extent-scoped wheel proof measure 2428.0 KiB. The same-paint native bridge
-// and its transform-only feedback fence measure 2429.3 KiB; retain 0.1 KiB
-// without widening per-chunk ratchets.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_429.4 : 2_429.4;
+// its transform feedback fence, and adaptive reader buffer measure 2429.5 KiB;
+// retain 0.1 KiB without widening per-chunk ratchets.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_429.6 : 2_429.6;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
