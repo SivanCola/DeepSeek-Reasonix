@@ -42,8 +42,16 @@
 
 - (void)finishTimeoutWithPrefix:(NSString *)prefix {
   if (self.done) return;
-  NSString *fallback = [NSString stringWithFormat:@"{\"type\":\"error\",\"message\":\"%@; diagnostic probe timed out\"}", prefix];
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    NSDictionary *payload = @{
+      @"type": @"error",
+      @"message": [NSString stringWithFormat:
+        @"%@; diagnostic probe timed out (ready=%d wheel=%ld/1200 finish=%ld/240 timer=%d key=%d main=%d)",
+        prefix, self.ready, (long)self.wheelTick, (long)self.finishWheelEvents,
+        self.wheelTimer != nil, self.window.isKeyWindow, self.window.isMainWindow],
+    };
+    NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    NSString *fallback = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     [self finishWithResult:fallback];
   });
   NSString *probe = @"JSON.stringify({readyState:document.readyState,topicCount:document.querySelectorAll('.project-tree__topic-main').length,hasActiveTopic:Boolean(document.querySelector('.project-tree__topic--active')),transcript:Boolean(document.querySelector('.transcript')),rows:document.querySelector('.transcript')?.dataset.transcriptRowCount||'0',bootstrap:document.querySelector('.transcript')?.dataset.transcriptGeometryBootstrap||'',rect:document.querySelector('.transcript')&&[document.querySelector('.transcript').clientWidth,document.querySelector('.transcript').clientHeight],raf:window.__reasonixSmokeRaf,contract:Boolean(window.__reasonixNativeTranscriptSmoke),phase:window.__reasonixNativeTranscriptSmokeState?.phase||'missing'})";
@@ -67,7 +75,11 @@
 }
 
 - (void)scheduleInteractionWatchdog {
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+  // The deterministic native workload is about 41 seconds at ideal timer
+  // cadence (1200 * 24ms plus the bounded 240 * 50ms tail phase). Hosted
+  // WKWebView runners can deliver those timers at roughly half speed, so keep
+  // the behavioral workload intact and budget for scheduler variance.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
     if (self.done) return;
     [self finishTimeoutWithPrefix:@"WKWebView native interaction timed out after ready"];
   });
