@@ -8,6 +8,7 @@ import {
   measureTranscriptVirtuosoItem,
 } from "../lib/transcriptNativeScrollbar";
 import { noteTranscriptRowMeasurement, setTranscriptScrollDiagnosticSink } from "../lib/transcriptScrollProbe";
+import { createTranscriptNativeScrollbarBottomProof } from "../lib/transcriptNativeScrollbarBottomProof";
 import { advanceViewportPagePermit, grantsNativeScrollbarPagePermit } from "../lib/useTranscriptNavigationSurface";
 
 let passed = 0;
@@ -54,6 +55,48 @@ check(advanceViewportPagePermit(viewportPermit, 0), 2, "wheel burst events canno
 viewportPermit = advanceViewportPagePermit(viewportPermit, 2);
 check(advanceViewportPagePermit(viewportPermit, 1), 0, "request completion clears burst permits before prepend reaches the start");
 check(advanceViewportPagePermit(advanceViewportPagePermit(viewportPermit, 0), 1), 2, "a later user gesture can request one new page");
+
+let nextFrame = 1;
+const frames = new Map<number, FrameRequestCallback>();
+globalThis.requestAnimationFrame = (callback) => {
+  const id = nextFrame++;
+  frames.set(id, callback);
+  return id;
+};
+globalThis.cancelAnimationFrame = (id) => { frames.delete(id); };
+const flushProofFrames = (time: number) => {
+  const pending = [...frames.values()];
+  frames.clear();
+  pending.forEach((callback) => callback(time));
+};
+let proofTop = 400;
+let proofHeight = 1_000;
+const proofElement = {
+  get scrollTop() { return proofTop; },
+  get scrollHeight() { return proofHeight; },
+  clientHeight: 500,
+} as HTMLDivElement;
+const proofScrollRef = { current: proofElement as HTMLDivElement | null };
+const bottomProof = createTranscriptNativeScrollbarBottomProof({
+  scrollRef: proofScrollRef,
+});
+bottomProof.begin(proofElement);
+proofTop = 500;
+flushProofFrames(0);
+check(bottomProof.finish(proofElement), true,
+  "a passive frame retains native-bottom proof before React delivers scroll");
+bottomProof.begin(proofElement);
+proofTop = 300;
+flushProofFrames(1);
+check(bottomProof.finish(proofElement), false,
+  "dragging away from an initial tail does not retain false bottom proof");
+bottomProof.begin(proofElement);
+proofTop = 500;
+proofHeight = 1_100;
+bottomProof.cancel();
+flushProofFrames(2);
+check(bottomProof.finish(proofElement), false,
+  "surface invalidation clears retained native-bottom proof");
 
 Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 600 });
 check(isNativeVerticalScrollbarPointer(transcript, { button: 0, clientX: 1095 }), false, "an empty native gutter without overflow does not start the lock");

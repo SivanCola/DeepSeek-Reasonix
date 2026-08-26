@@ -344,6 +344,41 @@ check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
 incomingRow.remove();
 incomingSecondRow.remove();
 
+// A long gesture can outlive its original leading row. Commit each accepted
+// forward frame as the next guard anchor so a later visual-only range swap is
+// compared with the row the user actually saw immediately before the swap.
+await act(async () => arbiter?.reset());
+Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 596 });
+scrollExtent = 24_906;
+scrollElement.scrollTop = 17_451;
+rowElement.getBoundingClientRect = () => rectAt(-18);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+const lastPaintedRow = dom.window.document.createElement("div");
+lastPaintedRow.className = "transcript__row";
+lastPaintedRow.dataset.rowKey = "row-463";
+lastPaintedRow.getBoundingClientRect = () => rectAt(-18);
+rowElement.replaceWith(lastPaintedRow);
+scrollElement.scrollTop = 17_475;
+await act(async () => arbiter?.observeReaderExtent());
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent = 25_187;
+lastPaintedRow.getBoundingClientRect = () => rectAt(515);
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 533,
+  `the last painted row protects a later visual-only range swap (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the continuous painted-anchor correction keeps the single-writer contract");
+lastPaintedRow.replaceWith(rowElement);
+
 // A correction acknowledgement can share a native delivery with the next
 // older range swap. Validate the retained correction anchor before accepting
 // that delivery, otherwise its wrong leading row becomes the new baseline.
@@ -417,8 +452,9 @@ try {
 }
 
 // WKWebView can briefly outrun Virtuoso's mounted range. The blank native
-// coordinate must not become the accepted logical position, and an async
-// native correction must not be reissued while its first write is pending.
+// coordinate must not survive a paint. Hold the last requested logical
+// position immediately, and do not reissue the async native correction while
+// its first write is pending.
 await act(async () => arbiter?.reset());
 scrollExtent = 20_416;
 scrollElement.scrollTop = 2_413;
@@ -448,8 +484,8 @@ scrollElement.scrollTo = () => {};
 try {
   await act(async () => arbiter?.deliverScroll());
   await act(async () => arbiter?.observeReaderExtent());
-  check(scrollByCalls === 1 && lastScrollByTop === 899,
-    `the mounted replacement range restores the pre-paint blank watermark once (${lastScrollByTop}px)`);
+  check(scrollByCalls === 1 && lastScrollByTop === -1_218,
+    `the blank frame is synchronously held at the requested logical position once (${lastScrollByTop}px)`);
   check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
     "an unacknowledged WebKit correction is not emitted again");
 } finally {
@@ -477,7 +513,7 @@ await act(async () => arbiter?.onWheelIntent({
   target: scrollElement,
 } as React.WheelEvent<HTMLElement>));
 scrollElement.scrollTop = 1_100;
-await act(async () => arbiter?.followGrowingTail());
+await act(async () => arbiter?.observeReaderExtent());
 // Model the browser applying the first correction before the hook's rAF
 // acknowledgement; otherwise this static jsdom rect still describes the
 // pre-write range and intentionally looks like a second native swap.

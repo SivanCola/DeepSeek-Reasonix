@@ -44,6 +44,7 @@ import { createTranscriptScrollWriter } from "./transcriptScrollWriter";
 import { createTranscriptReaderBottomHold } from "./transcriptReaderBottomHold";
 import { createTranscriptGeometryRevision, type TranscriptGeometryChangeSource } from "./transcriptGeometryRevision";
 import { shouldClaimTranscriptTailFromWheel } from "./transcriptWheelTailClaim";
+import { createTranscriptNativeScrollbarBottomProof } from "./transcriptNativeScrollbarBottomProof";
 export type { TranscriptRecoveryRequestSpec, TranscriptRecoveryTerminal, TranscriptScrollArbiterRecoveryApi } from "./transcriptScrollRecovery";
 export { hasTranscriptScrollableRange, nativeTranscriptBottomTop, nativeTranscriptDistanceFromBottom, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX };
 export type { TranscriptGeometryChangeSource } from "./transcriptGeometryRevision";
@@ -79,10 +80,8 @@ export function useTranscriptScrollArbiter({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<TranscriptScrollState>(INITIAL_TRANSCRIPT_SCROLL_STATE);
-  const pinnedRef = useRef(true);
-  const modeRef = useRef<TranscriptScrollMode>("tail-follow");
-  const touchStartYRef = useRef<number | null>(null);
-  const nativeScrollbarDragRef = useRef(false); const nativeScrollbarReachedBottomRef = useRef(false);
+  const pinnedRef = useRef(true); const modeRef = useRef<TranscriptScrollMode>("tail-follow");
+  const touchStartYRef = useRef<number | null>(null); const nativeScrollbarDragRef = useRef(false);
   const middlePointerScrollRef = useRef(false);
   const deliverScrollRef = useRef<((element?: HTMLDivElement) => void) | null>(null);
   const dispatchEventRef = useRef<((event: TranscriptScrollEvent) => void) | null>(null);
@@ -104,17 +103,17 @@ export function useTranscriptScrollArbiter({
   onRecoveryTerminalRef.current = onRecoveryTerminal;
   const onItemMeasuredRef = useRef(onItemMeasured);
   onItemMeasuredRef.current = onItemMeasured;
-  const [isAtBottom, setIsAtBottom] = useState(true);
-  const [nativeScrollbarDragging, setNativeScrollbarDragging] = useState(false);
+  const [isAtBottom, setIsAtBottom] = useState(true); const [nativeScrollbarDragging, setNativeScrollbarDragging] = useState(false);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
   const writerRef = useRef<ReturnType<typeof createTranscriptScrollWriter> | null>(null);
-  writerRef.current ??= createTranscriptScrollWriter({
+  const writer = writerRef.current ??= createTranscriptScrollWriter({
     virtuosoRef,
     scrollRef,
     modeRef,
     generationRef,
   });
-  const writer = writerRef.current;
+  const nativeScrollbarBottomProofRef = useRef<ReturnType<typeof createTranscriptNativeScrollbarBottomProof> | null>(null);
+  const nativeScrollbarBottomProof = nativeScrollbarBottomProofRef.current ??= createTranscriptNativeScrollbarBottomProof({ scrollRef });
   const writeReaderCorrection = useCallback((write: TranscriptScrollWriteRecord) => {
     if (write.top === undefined) return false;
     return writer.write({
@@ -174,7 +173,8 @@ export function useTranscriptScrollArbiter({
     tailSettle.cancel();
     anchorCompensationRef.current?.reset();
     readerExtent.cancel();
-  }, [cancelBottomHold, cancelGeometry, readerExtent, tailSettle]);
+    nativeScrollbarBottomProof.cancel();
+  }, [cancelBottomHold, cancelGeometry, nativeScrollbarBottomProof, readerExtent, tailSettle]);
 
   // Executes the reducer's CANCEL_RECOVERY command. The cancelling event
   // already cleared recoveryId in the published state, so no RECOVERY_END
@@ -312,7 +312,6 @@ export function useTranscriptScrollArbiter({
   const deliverScroll = useCallback((element = scrollRef.current, provedNativeBottom = false) => {
     if (!element) return;
     readerExtent.observe(element);
-    if (nativeScrollbarDragRef.current && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) nativeScrollbarReachedBottomRef.current = true;
     deliverBottomHold(element, provedNativeBottom);
     if (stateRef.current.readerIntent) armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverBottomHold, readerExtent]);
@@ -489,8 +488,8 @@ export function useTranscriptScrollArbiter({
   const finishNativeScrollbarDrag = useCallback(() => {
     if (!nativeScrollbarDragRef.current) return;
     const element = scrollRef.current;
-    const reachedBottom = nativeScrollbarReachedBottomRef.current || Boolean(element && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX);
-    nativeScrollbarDragRef.current = false; nativeScrollbarReachedBottomRef.current = false; setNativeScrollbarDragging(false);
+    const reachedBottom = nativeScrollbarBottomProof.finish(element);
+    nativeScrollbarDragRef.current = false; setNativeScrollbarDragging(false);
     dispatch({ type: "NATIVE_SCROLLBAR_END" });
     if (element) {
       delete element.dataset.nativeScrollbarDrag;
@@ -504,7 +503,7 @@ export function useTranscriptScrollArbiter({
       });
     }
     armReaderIntentIdle();
-  }, [armReaderIntentIdle, deliverScroll, dispatch]);
+  }, [armReaderIntentIdle, deliverScroll, dispatch, nativeScrollbarBottomProof]);
 
   const finishPointerIntent = useCallback(() => {
     if (nativeScrollbarDragRef.current) finishNativeScrollbarDrag();
@@ -742,8 +741,8 @@ export function useTranscriptScrollArbiter({
     const element = scrollRef.current;
     if (element && isNativeVerticalScrollbarPointer(element, event.nativeEvent)) {
       if (!nativeScrollbarDragRef.current) {
-        nativeScrollbarDragRef.current = true; nativeScrollbarReachedBottomRef.current = false; setNativeScrollbarDragging(true);
-        element.dataset.nativeScrollbarDrag = "true";
+        nativeScrollbarDragRef.current = true; setNativeScrollbarDragging(true); element.dataset.nativeScrollbarDrag = "true";
+        nativeScrollbarBottomProof.begin(element);
         dispatch({ type: "NATIVE_SCROLLBAR_BEGIN" });
       }
       return true;
@@ -752,7 +751,7 @@ export function useTranscriptScrollArbiter({
     middlePointerScrollRef.current = true;
     releaseTailFollow();
     return true;
-  }, [dispatch, releaseTailFollow, restoreTailIfNotScrollable]);
+  }, [dispatch, nativeScrollbarBottomProof, releaseTailFollow, restoreTailIfNotScrollable]);
 
   const onNestedScrollIntent = useCallback((deltaY: number) => {
     if (deltaY === 0 || restoreTailIfNotScrollable()) return false;

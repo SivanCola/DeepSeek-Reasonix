@@ -6,6 +6,7 @@ import {
   MIN_REVERSE_JUMP_PX,
   observeTranscriptReaderExtent,
   resolveTranscriptReaderExtentCorrection,
+  transcriptReaderBlankForwardDelta,
   transcriptReaderAnchorReverseDelta,
   transcriptReaderExtentCanCorrect,
   transcriptReaderExtentHasCollapsed,
@@ -135,6 +136,7 @@ export function useTranscriptReaderExtentStability({
     const reverseDelta = Math.max(
       transcriptReaderExtentReverseDelta(guard, element),
       transcriptReaderAnchorReverseDelta(guard, element, currentAnchorOffset),
+      transcriptReaderBlankForwardDelta(guard),
     );
     if (reverseDelta < MIN_REVERSE_JUMP_PX || guard.anomalyReported) return;
     guard.anomalyReported = true;
@@ -219,11 +221,28 @@ export function useTranscriptReaderExtentStability({
     acknowledgeCorrection(guard, element, snapshot);
     const viewportBlank = transcriptElementViewportIsBlank(element);
     const currentAnchorOffset = anchorOffset(guard, element);
-    observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset, viewportBlank);
+    const previousAcceptedTop = guard.acceptedTop;
+    const accepted = observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset, viewportBlank);
     // An unpainted Virtuoso range cannot supply a trustworthy visual anchor,
     // but a native extent reversal/collapse can still be corrected from the
     // last accepted logical position.
-    correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+    const corrected = correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+    if (
+      accepted
+      && guard.direction * (snapshot.scrollTop - previousAcceptedTop) > 2
+      && !corrected
+      && guard.pendingCorrectionTop === undefined
+    ) {
+      const anchor = captureLeadingTranscriptLayoutAnchor(element);
+      if (anchor) {
+        // Commit the row that was actually painted for this accepted frame.
+        // The next Virtuoso range swap is compared with this row rather than
+        // a possibly unmounted row from the beginning of a long gesture.
+        guard.anchor = anchor;
+        guard.anchorScrollTop = snapshot.scrollTop;
+        guard.targetAnchorOffset = anchor.offset;
+      }
+    }
     return transcriptReaderExtentHasCollapsed(guard);
   }, [acknowledgeCorrection, anchorOffset, clearActive, correctAnomaly, scrollRef]);
 
@@ -250,8 +269,22 @@ export function useTranscriptReaderExtentStability({
       acknowledgeCorrection(active, element, snapshot);
       const viewportBlank = transcriptElementViewportIsBlank(element);
       const currentAnchorOffset = anchorOffset(active, element);
-      observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
-      correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+      const previousAcceptedTop = active.acceptedTop;
+      const accepted = observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
+      const corrected = correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+      if (
+        accepted
+        && active.direction * (snapshot.scrollTop - previousAcceptedTop) > 2
+        && !corrected
+        && active.pendingCorrectionTop === undefined
+      ) {
+        const anchor = captureLeadingTranscriptLayoutAnchor(element);
+        if (anchor) {
+          active.anchor = anchor;
+          active.anchorScrollTop = snapshot.scrollTop;
+          active.targetAnchorOffset = anchor.offset;
+        }
+      }
       // After the ordinary 180ms active sampling window, keep the accepted
       // anchor as a passive lease. Mutation/resize/native-scroll observers can
       // still reject a late WebView range swap without spinning a frame loop.
