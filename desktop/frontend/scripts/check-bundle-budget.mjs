@@ -138,8 +138,8 @@ console.log("\nbundle budgets");
 // 452.1 KiB. Native-delivery direction synchronization and its correction-
 // acknowledgement fence close the controller-input WebView gap. Accepting a
 // coalesced native delivery before observation and releasing a passed forward
-// correction measure 452.473 KiB. A bounded three-viewport reader window and
-// its stale-paint rebase measure 452.499 KiB; retain 0.101 KiB of headroom.
+// correction measure 452.473 KiB. A bounded two-viewport reader window and
+// its stale-paint rebase measure 452.480 KiB; retain 0.120 KiB of headroom.
 const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 452.6 : 452.6;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
@@ -222,8 +222,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // its transform feedback fence, and adaptive reader buffer measure 2429.5 KiB.
 // Native-delivery direction synchronization, coalesced-input classification,
 // and the passed-forward-correction fence measure 2430.713 KiB raw. The
-// bounded reader window and stale-paint rebase measure 2430.804 KiB; retain
-// 0.096 KiB of decimal headroom.
+// bounded two-viewport reader window and stale-paint rebase measure 2430.728
+// KiB; retain 0.172 KiB of decimal headroom.
 const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_430.9 : 2_430.9;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

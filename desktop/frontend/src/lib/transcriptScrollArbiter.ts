@@ -99,11 +99,11 @@ export const TRANSCRIPT_CONTENT_SHRINK_THRESHOLD_PX = 24;
 export const TRANSCRIPT_SUBSTANTIAL_DISPLACEMENT_PX = 24;
 
 // Native WKWebView/WebView2 may coalesce more than one viewport of wheel
-// delivery while Virtuoso commits measured rows. Keep a three-viewport,
-// 48-row window only after reader ownership has been established; ordinary
+// delivery while Virtuoso commits measured rows. Keep a two-viewport,
+// 32-row window only after reader ownership has been established; ordinary
 // idle surfaces retain the much smaller default window.
-export const TRANSCRIPT_READER_OVERSCAN_ROWS = 48;
-export const TRANSCRIPT_READER_VIEWPORT_BUFFER = 3;
+export const TRANSCRIPT_READER_OVERSCAN_ROWS = 32;
+export const TRANSCRIPT_READER_VIEWPORT_BUFFER = 2;
 
 export function isSubstantialTranscriptDisplacement(distance: number): boolean {
   return distance >= TRANSCRIPT_SUBSTANTIAL_DISPLACEMENT_PX;
