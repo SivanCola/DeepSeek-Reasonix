@@ -288,7 +288,7 @@ scrollByCalls = 0;
 scrollExtent += 318;
 rowElement.getBoundingClientRect = () => rectAt(530);
 await act(async () => arbiter?.observeReaderExtent());
-check(scrollByCalls === 1 && lastScrollByTop === 570,
+check(scrollByCalls === 1 && lastScrollByTop === 546,
   `an acknowledged correction re-anchors the next coalesced range swap (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the re-anchored range correction keeps the single-writer contract");
@@ -384,6 +384,47 @@ check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
 olderRangeRow.remove();
 paintedBoundaryRow.remove();
 scrollElement.append(rowElement);
+
+// WKWebView may publish an intermediate range with no rows in common before
+// it applies the final translated range in the same rendering opportunity.
+// That unpainted mutation must not replace the last painted baseline: the
+// final range can restore exactly one boundary row and expose the reversal.
+await act(async () => arbiter?.reset());
+scrollExtent = 20_957;
+scrollElement.scrollTop = 4_974;
+rowElement.dataset.rowKey = "row-142";
+rowElement.getBoundingClientRect = () => rectAt(-6);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+const intermediateRow = dom.window.document.createElement("div");
+intermediateRow.className = "transcript__row";
+intermediateRow.dataset.rowKey = "row-128";
+intermediateRow.getBoundingClientRect = () => rectAt(-13);
+rowElement.replaceWith(intermediateRow);
+scrollElement.scrollTop = 4_998;
+await act(async () => arbiter?.observeReaderExtent());
+const finalBoundaryRow = dom.window.document.createElement("div");
+finalBoundaryRow.className = "transcript__row";
+finalBoundaryRow.dataset.rowKey = "row-142";
+finalBoundaryRow.getBoundingClientRect = () => rectAt(591);
+scrollElement.append(finalBoundaryRow);
+scrollWrites.length = 0;
+scrollByCalls = 0;
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 597,
+  `an unpainted no-common range cannot erase the last painted boundary row (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the staged painted-range correction keeps the single-writer contract");
+intermediateRow.remove();
+finalBoundaryRow.replaceWith(rowElement);
+rowElement.dataset.rowKey = "row-a";
 
 // A long gesture can outlive its original leading row. Commit each accepted
 // forward frame as the next guard anchor so a later visual-only range swap is

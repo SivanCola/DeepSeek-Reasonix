@@ -39,6 +39,8 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   deadline: number;
   activeFrameDeadline: number;
   frame: number | null;
+  paintFrame: number | null;
+  paintTimer: number | null;
   expiryTimer: number | null;
   pendingCorrectionTop?: number;
   pendingAnchor?: readonly [rowKey: string, offsetAtTarget: number];
@@ -102,8 +104,12 @@ export function useTranscriptReaderExtentStability({
   const clearActive = useCallback((guard: ActiveReaderExtentGuard) => {
     if (guardRef.current === guard) guardRef.current = null;
     if (guard.frame != null) cancelAnimationFrame(guard.frame);
+    if (guard.paintFrame != null) cancelAnimationFrame(guard.paintFrame);
+    if (guard.paintTimer != null) window.clearTimeout(guard.paintTimer);
     if (guard.expiryTimer != null) window.clearTimeout(guard.expiryTimer);
     guard.frame = null;
+    guard.paintFrame = null;
+    guard.paintTimer = null;
     guard.expiryTimer = null;
   }, []);
 
@@ -125,6 +131,29 @@ export function useTranscriptReaderExtentStability({
   const anchorOffset = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
     return guard.anchor ? readerAnchorOffset(element, guard.anchor.rowKey) : undefined;
   }, []);
+
+  const commitPaintedRowsAfterPaint = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
+    if (guard.paintFrame !== null || guard.paintTimer !== null) return;
+    guard.paintFrame = requestAnimationFrame(() => {
+      guard.paintFrame = null;
+      // A Virtuoso range replacement can pass through multiple mutation
+      // records in one rendering opportunity. Promote the candidate only
+      // after that opportunity has painted; otherwise a transient range with
+      // no common rows can erase the last user-visible baseline before the
+      // final range restores one boundary row.
+      guard.paintTimer = window.setTimeout(() => {
+        guard.paintTimer = null;
+        if (
+          guardRef.current !== guard
+          || generationRef.current !== guard.generation
+          || scrollRef.current !== element
+          || Date.now() >= guard.deadline
+          || transcriptElementViewportIsBlank(element)
+        ) return;
+        guard.paintedRows = capturePaintedReaderRows(element);
+      }, 0);
+    });
+  }, [generationRef, scrollRef]);
 
   const acknowledgeCorrection = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement, snapshot: TranscriptExtentSnapshot) => {
     if (guard.pendingCorrectionTop === undefined) return;
@@ -200,7 +229,11 @@ export function useTranscriptReaderExtentStability({
     paintedReverse?: PaintedReaderReverse,
   ) => {
     reportAnomaly(active, element, currentAnchorOffset, paintedReverse);
-    const paintedCorrection = paintedReverse && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
+    // Extent collapse/rebound owns the logical target. A smaller displacement
+    // from rows painted while the native range was clamped must not replace
+    // the pre-collapse accepted position with that transient viewport.
+    const paintedCorrection = !active.collapsed
+      && paintedReverse && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
       ? active.direction * paintedReverse.delta
       : undefined;
     if (
@@ -303,9 +336,9 @@ export function useTranscriptReaderExtentStability({
         guard.targetAnchorOffset = anchor.offset;
       }
     }
-    if (accepted && !corrected && !viewportBlank) guard.paintedRows = capturePaintedReaderRows(element);
+    if (accepted && !corrected && !viewportBlank) commitPaintedRowsAfterPaint(guard, element);
     return transcriptReaderExtentHasCollapsed(guard);
-  }, [acknowledgeCorrection, anchorOffset, clearActive, correctAnomaly, scrollRef]);
+  }, [acknowledgeCorrection, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, scrollRef]);
 
   const schedule = useCallback((active: ActiveReaderExtentGuard) => {
     if (active.frame !== null) return;
@@ -356,7 +389,7 @@ export function useTranscriptReaderExtentStability({
           active.targetAnchorOffset = anchor.offset;
         }
       }
-      if (accepted && !corrected && !viewportBlank) active.paintedRows = capturePaintedReaderRows(element);
+      if (accepted && !corrected && !viewportBlank) commitPaintedRowsAfterPaint(active, element);
       // After the ordinary 180ms active sampling window, keep the accepted
       // anchor as a passive lease. Mutation/resize/native-scroll observers can
       // still reject a late WebView range swap without spinning a frame loop.
@@ -364,7 +397,7 @@ export function useTranscriptReaderExtentStability({
       active.frame = requestAnimationFrame(tick);
     };
     active.frame = requestAnimationFrame(tick);
-  }, [acknowledgeCorrection, anchorOffset, clearActive, correctAnomaly, generationRef, modeRef, scrollRef]);
+  }, [acknowledgeCorrection, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, generationRef, modeRef, scrollRef]);
 
   const arm = useCallback((deltaY: number) => {
     const element = scrollRef.current;
@@ -398,6 +431,8 @@ export function useTranscriptReaderExtentStability({
       deadline: 0,
       activeFrameDeadline: 0,
       frame: null,
+      paintFrame: null,
+      paintTimer: null,
       expiryTimer: null,
       paintedRows: capturePaintedReaderRows(element),
     };

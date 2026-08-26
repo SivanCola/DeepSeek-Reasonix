@@ -212,8 +212,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The merged build measures 2424.5 KiB. Correction-ack validation and a real
 // wall-clock native-tail bound and release proof bring it to 2425.2 KiB;
 // the final pre-paint anchor and passive native-bottom sampler measure 2426.4
-// KiB. The complete painted-range guard and extent-scoped wheel proof measure
-// 2427.5 KiB; retain 0.1 KiB without widening per-chunk ratchets.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_427.6 : 2_427.6;
+// KiB. The complete painted-range guard, post-paint baseline fence, and
+// extent-scoped wheel proof measure 2428.0 KiB; retain 0.1 KiB without
+// widening per-chunk ratchets.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_428.1 : 2_428.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
