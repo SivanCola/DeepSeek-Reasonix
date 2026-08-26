@@ -79,12 +79,13 @@ check(commands.filter((command) => command === "SCROLL_TO_LAST").length === 1,
   "a stalled LAST mount hands off to exactly one arbiter-owned tail transaction");
 
 // A mounted tail whose native extent changes every frame must spend the same
-// total budget. Otherwise each changed extent resets the two-sample hold and
-// a released scrollbar thumb can remain manual forever.
+// total budget, even after the expanding range moves the proven native bottom
+// outside the threshold. Otherwise a released thumb can remain manual forever.
 let unstableExtent = 1_000;
+const unstableTop = 500;
 const tailRow = { dataset: { itemIndex: "109" } };
 const unstableElement = {
-  get scrollTop() { return unstableExtent - 500; },
+  get scrollTop() { return unstableTop; },
   get scrollHeight() { return unstableExtent; },
   clientHeight: 500,
   dataset: { transcriptRowCount: "10", transcriptFirstItemIndex: "100" },

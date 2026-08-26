@@ -88,11 +88,12 @@ export function createTranscriptReaderBottomHold({
     });
 
     const state = stateRef.current;
-    if (
-      atBottom
-      && state.mode === "reader-gesture"
+    const activeClaim = state.mode === "reader-gesture"
       && state.readerIntent
-      && state.readerIntentCanClaimTail
+      && state.readerIntentCanClaimTail;
+    if (
+      (atBottom || totalChecks)
+      && activeClaim
       && frame === null
     ) {
       if (totalChecks >= MAX_TAIL_MOUNT_CHECKS) {
@@ -132,7 +133,7 @@ export function createTranscriptReaderBottomHold({
         }
         deliverScrollRef.current?.(element);
       });
-    } else if (!atBottom) {
+    } else if (!activeClaim) {
       cancel();
     }
   };

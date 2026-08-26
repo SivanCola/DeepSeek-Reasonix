@@ -276,16 +276,16 @@ check(scrollByCalls === 1 && lastScrollByTop === 532,
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the range-mutation correction still passes through the single writer");
 
-// The first correction drops its stale anchor. Once the native offset
-// acknowledges that write, capture the corrected leading row again so a
-// coalesced host wheel stream cannot make the next visual-only range swap
-// invisible to the guard.
-rowElement.getBoundingClientRect = () => rectAt(-16);
+// The first correction drops its stale anchor. A native host can acknowledge
+// that write and coalesce the next +24px wheel into the same scroll event, so
+// the reported offset passes the exact target. Capture the corrected leading
+// row at that event before the following visual-only range swap.
+scrollElement.scrollTop += 24;
+rowElement.getBoundingClientRect = () => rectAt(-40);
 await act(async () => arbiter?.observeReaderExtent());
 scrollWrites.length = 0;
 scrollByCalls = 0;
 scrollExtent += 318;
-scrollElement.scrollTop += 24;
 rowElement.getBoundingClientRect = () => rectAt(530);
 await act(async () => arbiter?.observeReaderExtent());
 check(scrollByCalls === 1 && lastScrollByTop === 570,

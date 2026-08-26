@@ -89,12 +89,15 @@ export function useTranscriptReaderExtentStability({
   }, []);
 
   const acknowledgeCorrection = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement, snapshot: TranscriptExtentSnapshot) => {
-    if (guard.pendingCorrectionTop === undefined || Math.abs(snapshot.scrollTop - guard.pendingCorrectionTop) > 2) return;
+    if (guard.pendingCorrectionTop === undefined) return;
+    const progressPastTarget = guard.direction * (snapshot.scrollTop - guard.pendingCorrectionTop);
+    if (progressPastTarget < -2 || progressPastTarget > guard.clientHeight) return;
     guard.pendingCorrectionTop = undefined;
     // A correction intentionally drops the stale pre-swap anchor. Re-anchor
-    // as soon as the native offset acknowledges that correction so a host
-    // which coalesces the following wheel events cannot leave the next visual
-    // range replacement protected by physical scrollTop alone.
+    // as soon as the native offset reaches or passes that correction in the
+    // gesture direction. Native hosts can coalesce the next wheel delta with
+    // the acknowledgement (for example target+24), and exact equality would
+    // leave the following visual range replacement protected by scrollTop alone.
     const anchor = captureLeadingTranscriptLayoutAnchor(element);
     if (!anchor) return;
     guard.anchor = anchor;
