@@ -82,7 +82,7 @@ export function useTranscriptScrollArbiter({
   const pinnedRef = useRef(true);
   const modeRef = useRef<TranscriptScrollMode>("tail-follow");
   const touchStartYRef = useRef<number | null>(null);
-  const nativeScrollbarDragRef = useRef(false);
+  const nativeScrollbarDragRef = useRef(false); const nativeScrollbarReachedBottomRef = useRef(false);
   const middlePointerScrollRef = useRef(false);
   const deliverScrollRef = useRef<((element?: HTMLDivElement) => void) | null>(null);
   const dispatchEventRef = useRef<((event: TranscriptScrollEvent) => void) | null>(null);
@@ -309,10 +309,11 @@ export function useTranscriptScrollArbiter({
     }, READER_INTENT_IDLE_MS);
   }, [dispatch]);
 
-  const deliverScroll = useCallback((element = scrollRef.current) => {
+  const deliverScroll = useCallback((element = scrollRef.current, provedNativeBottom = false) => {
     if (!element) return;
     readerExtent.observe(element);
-    deliverBottomHold(element);
+    if (nativeScrollbarDragRef.current && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) nativeScrollbarReachedBottomRef.current = true;
+    deliverBottomHold(element, provedNativeBottom);
     if (stateRef.current.readerIntent) armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverBottomHold, readerExtent]);
   deliverScrollRef.current = deliverScroll;
@@ -488,15 +489,15 @@ export function useTranscriptScrollArbiter({
   const finishNativeScrollbarDrag = useCallback(() => {
     if (!nativeScrollbarDragRef.current) return;
     const element = scrollRef.current;
-    nativeScrollbarDragRef.current = false;
-    setNativeScrollbarDragging(false);
+    const reachedBottom = nativeScrollbarReachedBottomRef.current || Boolean(element && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX);
+    nativeScrollbarDragRef.current = false; nativeScrollbarReachedBottomRef.current = false; setNativeScrollbarDragging(false);
     dispatch({ type: "NATIVE_SCROLLBAR_END" });
     if (element) {
       delete element.dataset.nativeScrollbarDrag;
       const generation = generationRef.current;
       requestAnimationFrame(() => {
         if (generationRef.current !== generation || scrollRef.current !== element) return;
-        deliverScroll(element);
+        deliverScroll(element, reachedBottom);
         requestAnimationFrame(() => {
           if (generationRef.current === generation && scrollRef.current === element) deliverScroll(element);
         });
@@ -741,8 +742,7 @@ export function useTranscriptScrollArbiter({
     const element = scrollRef.current;
     if (element && isNativeVerticalScrollbarPointer(element, event.nativeEvent)) {
       if (!nativeScrollbarDragRef.current) {
-        nativeScrollbarDragRef.current = true;
-        setNativeScrollbarDragging(true);
+        nativeScrollbarDragRef.current = true; nativeScrollbarReachedBottomRef.current = false; setNativeScrollbarDragging(true);
         element.dataset.nativeScrollbarDrag = "true";
         dispatch({ type: "NATIVE_SCROLLBAR_BEGIN" });
       }

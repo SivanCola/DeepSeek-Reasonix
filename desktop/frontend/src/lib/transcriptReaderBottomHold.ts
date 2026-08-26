@@ -36,7 +36,7 @@ function extentChanged(held: NativeExtent, element: HTMLElement): boolean {
 
 export type TranscriptReaderBottomHold = readonly [
   cancel: () => void,
-  deliver: (element: HTMLDivElement) => void,
+  deliver: (element: HTMLDivElement, provedBottom?: boolean) => void,
 ];
 
 export function createTranscriptReaderBottomHold({
@@ -65,7 +65,11 @@ export function createTranscriptReaderBottomHold({
     startedAt = null;
   };
 
-  const deliver = (element: HTMLDivElement) => {
+  const deliver = (element: HTMLDivElement, provedBottom = false) => {
+    if (provedBottom && totalChecks === 0) {
+      totalChecks = 1;
+      startedAt = Date.now();
+    }
     const distance = nativeTranscriptDistanceFromBottom(element);
     const atBottom = distance <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
     const tailMounted = tailIsMounted(element);

@@ -142,20 +142,28 @@ const slowDispatch = (event: TranscriptScrollEvent) => {
   slowStateRef.current = result.state;
   slowCommands.push(...result.commands.map((command) => command.type));
 };
+const provedElement = {
+  scrollTop: 400,
+  scrollHeight: 1_000,
+  clientHeight: 500,
+  dataset: { transcriptRowCount: "10", transcriptFirstItemIndex: "100" },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+} as unknown as HTMLDivElement;
 const slowDeliverRef: { current: ((target?: HTMLDivElement) => void) | null } = { current: null };
 const [, deliverSlow] = createTranscriptReaderBottomHold({
-  scrollRef,
+  scrollRef: { current: provedElement },
   stateRef: slowStateRef as { current: TranscriptScrollState },
   generationRef,
   deliverScrollRef: slowDeliverRef,
   dispatch: slowDispatch,
 });
-slowDeliverRef.current = () => deliverSlow(element);
+slowDeliverRef.current = () => deliverSlow(provedElement);
 const originalDateNow = Date.now;
 let fakeNow = 50_000;
 Date.now = () => fakeNow;
 try {
-  deliverSlow(element);
+  deliverSlow(provedElement, true);
   for (let index = 0; index < 6; index += 1) {
     fakeNow += MAX_TAIL_MOUNT_HOLD_MS / 4;
     const pending = [...frames.values()];
@@ -165,7 +173,7 @@ try {
 } finally {
   Date.now = originalDateNow;
 }
-check(slowStateRef.current.mode === "tail-follow", "slow native frames still exhaust the wall-clock release budget");
+check(slowStateRef.current.mode === "tail-follow", "a pre-release bottom proof survives an off-bottom extent change");
 check(slowCommands.filter((command) => command === "SCROLL_TO_LAST").length === 1,
   "the wall-clock fallback emits exactly one arbiter-owned tail transaction");
 

@@ -128,8 +128,9 @@ console.log("\nbundle budgets");
 // Transcript scroll integrity adds the single-writer gateway, native reader
 // correction bridge, failure-atomic unloaded-question mask, and bounded tail
 // handoff on top of that remote-session surface. The merged build measures
-// 450.6 KiB; retain 0.2 KiB of bounded build/toolchain headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 450.8 : 450.8;
+// 450.6 KiB. Persisting native-thumb bottom proof measures 450.8 KiB; retain
+// 0.1 KiB of bounded headroom without widening the per-chunk ratchet.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 450.9 : 450.9;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -204,8 +205,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Transcript navigation and scroll integrity add target commit fencing,
 // native reader stabilization, and the privacy-safe unloaded-question replay.
 // The merged build measures 2424.5 KiB. Correction-ack validation and a real
-// wall-clock native-tail bound bring it to 2424.9 KiB; retain 0.2 KiB of
-// bounded headroom without widening the gzip or per-chunk ratchets.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_425.1 : 2_425.1;
+// wall-clock native-tail bound and release proof bring it to 2425.2 KiB;
+// retain 0.1 KiB of bounded headroom without widening per-chunk ratchets.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_425.3 : 2_425.3;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
