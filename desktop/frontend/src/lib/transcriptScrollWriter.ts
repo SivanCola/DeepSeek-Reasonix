@@ -183,8 +183,6 @@ export function createTranscriptScrollWriter({
               pending.observer.observe(list, {
                 childList: true,
                 subtree: true,
-                attributes: true,
-                attributeFilter: ["style"],
               });
             }
             const commit = () => {
