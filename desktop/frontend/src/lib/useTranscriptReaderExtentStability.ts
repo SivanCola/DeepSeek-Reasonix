@@ -88,6 +88,20 @@ export function useTranscriptReaderExtentStability({
     return row ? row.getBoundingClientRect().top - element.getBoundingClientRect().top : undefined;
   }, []);
 
+  const acknowledgeCorrection = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement, snapshot: TranscriptExtentSnapshot) => {
+    if (guard.pendingCorrectionTop === undefined || Math.abs(snapshot.scrollTop - guard.pendingCorrectionTop) > 2) return;
+    guard.pendingCorrectionTop = undefined;
+    // A correction intentionally drops the stale pre-swap anchor. Re-anchor
+    // as soon as the native offset acknowledges that correction so a host
+    // which coalesces the following wheel events cannot leave the next visual
+    // range replacement protected by physical scrollTop alone.
+    const anchor = captureLeadingTranscriptLayoutAnchor(element);
+    if (!anchor) return;
+    guard.anchor = anchor;
+    guard.anchorScrollTop = snapshot.scrollTop;
+    guard.targetAnchorOffset = anchor.offset;
+  }, []);
+
   const reportAnomaly = useCallback((
     guard: ActiveReaderExtentGuard,
     element: HTMLDivElement,
@@ -174,9 +188,7 @@ export function useTranscriptReaderExtentStability({
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
     };
-    if (guard.pendingCorrectionTop !== undefined && Math.abs(snapshot.scrollTop - guard.pendingCorrectionTop) <= 2) {
-      guard.pendingCorrectionTop = undefined;
-    }
+    acknowledgeCorrection(guard, element, snapshot);
     const viewportBlank = transcriptElementViewportIsBlank(element);
     const currentAnchorOffset = anchorOffset(guard, element);
     observeTranscriptReaderExtent(guard, snapshot, currentAnchorOffset, viewportBlank);
@@ -185,7 +197,7 @@ export function useTranscriptReaderExtentStability({
     // last accepted logical position.
     correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
     return transcriptReaderExtentHasCollapsed(guard);
-  }, [anchorOffset, clearActive, correctAnomaly, scrollRef]);
+  }, [acknowledgeCorrection, anchorOffset, clearActive, correctAnomaly, scrollRef]);
 
   const schedule = useCallback((active: ActiveReaderExtentGuard) => {
     if (active.frame !== null) return;
@@ -207,9 +219,7 @@ export function useTranscriptReaderExtentStability({
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
       };
-      if (active.pendingCorrectionTop !== undefined && Math.abs(snapshot.scrollTop - active.pendingCorrectionTop) <= 2) {
-        active.pendingCorrectionTop = undefined;
-      }
+      acknowledgeCorrection(active, element, snapshot);
       const viewportBlank = transcriptElementViewportIsBlank(element);
       const currentAnchorOffset = anchorOffset(active, element);
       observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
@@ -221,7 +231,7 @@ export function useTranscriptReaderExtentStability({
       active.frame = requestAnimationFrame(tick);
     };
     active.frame = requestAnimationFrame(tick);
-  }, [anchorOffset, clearActive, correctAnomaly, generationRef, modeRef, scrollRef]);
+  }, [acknowledgeCorrection, anchorOffset, clearActive, correctAnomaly, generationRef, modeRef, scrollRef]);
 
   const arm = useCallback((deltaY: number) => {
     const element = scrollRef.current;

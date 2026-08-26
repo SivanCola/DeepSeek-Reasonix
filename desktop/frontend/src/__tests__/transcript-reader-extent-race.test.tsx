@@ -276,6 +276,23 @@ check(scrollByCalls === 1 && lastScrollByTop === 532,
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the range-mutation correction still passes through the single writer");
 
+// The first correction drops its stale anchor. Once the native offset
+// acknowledges that write, capture the corrected leading row again so a
+// coalesced host wheel stream cannot make the next visual-only range swap
+// invisible to the guard.
+rowElement.getBoundingClientRect = () => rectAt(-16);
+await act(async () => arbiter?.observeReaderExtent());
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent += 318;
+scrollElement.scrollTop += 24;
+rowElement.getBoundingClientRect = () => rectAt(530);
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollByCalls === 1 && lastScrollByTop === 570,
+  `an acknowledged correction re-anchors the next coalesced range swap (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the re-anchored range correction keeps the single-writer contract");
+
 // A following native wheel can arrive after the replacement range mounts but
 // before its mutation observer runs. Keep the still-mounted prior anchor so
 // that the new range's first row cannot bless its own visual reversal.

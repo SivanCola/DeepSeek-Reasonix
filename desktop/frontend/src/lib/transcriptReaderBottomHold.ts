@@ -53,13 +53,13 @@ export function createTranscriptReaderBottomHold({
 }): TranscriptReaderBottomHold {
   let frame: number | null = null;
   let heldExtent: NativeExtent | null = null;
-  let tailMountChecks = 0;
+  let totalChecks = 0;
 
   const cancel = () => {
     if (frame !== null) cancelAnimationFrame(frame);
     frame = null;
     heldExtent = null;
-    tailMountChecks = 0;
+    totalChecks = 0;
   };
 
   const deliver = (element: HTMLDivElement) => {
@@ -68,7 +68,9 @@ export function createTranscriptReaderBottomHold({
     const tailMounted = tailIsMounted(element);
     if (heldExtent && extentChanged(heldExtent, element)) {
       // The earlier bottom sample belongs to a different native extent.
-      cancel();
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      heldExtent = null;
       dispatch({
         type: "SCROLL_DELIVERED",
         atBottom: false,
@@ -93,10 +95,10 @@ export function createTranscriptReaderBottomHold({
       && state.readerIntentCanClaimTail
       && frame === null
     ) {
-      if (!tailMounted && tailMountChecks >= MAX_TAIL_MOUNT_CHECKS) {
+      if (totalChecks >= MAX_TAIL_MOUNT_CHECKS) {
         // The native thumb proved the physical end, but a loaded WebView can
-        // leave Virtuoso's LAST row unmounted beyond the passive observation
-        // budget. Hand that bounded failure to the existing jump-tail
+        // leave LAST unmounted or keep revising its extent beyond the passive
+        // observation budget. Hand that bounded failure to the existing jump-tail
         // transaction instead of abandoning the reader in manual mode. This
         // is one arbiter-owned command after release, never a direct write.
         cancel();
@@ -105,7 +107,7 @@ export function createTranscriptReaderBottomHold({
       }
       const generation = generationRef.current;
       heldExtent = tailMounted ? { scrollHeight: element.scrollHeight, clientHeight: element.clientHeight } : null;
-      tailMountChecks = tailMounted ? 0 : tailMountChecks + 1;
+      totalChecks += 1;
       frame = requestAnimationFrame(() => {
         const held = heldExtent;
         frame = null;
