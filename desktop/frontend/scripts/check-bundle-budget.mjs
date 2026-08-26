@@ -225,6 +225,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // and the passed-forward-correction fence measure 2430.713 KiB raw. The
 // native blank hold, platform-bounded reader window, Footer observer, and
 // physical-LAST sync measure 2431.764 KiB; retain 0.236 KiB of headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_432.0 : 2_432.0;
+// Retaining the preceding painted range across duplicate observer promotions,
+// sampling native-thumb movement on real scroll delivery, and carrying the
+// reader correction through its bounded tail handoff measure 2432.297 KiB.
+// Retain 0.103 KiB of raw/toolchain headroom; the gzip ratchet is unchanged.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_432.4 : 2_432.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

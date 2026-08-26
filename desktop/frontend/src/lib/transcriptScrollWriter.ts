@@ -207,7 +207,7 @@ export function createTranscriptScrollWriter({
               if (!(
                 generationRef.current === generation
                 && scrollRef.current === element
-                && (modeRef.current === "reader-gesture" || modeRef.current === "manual")
+                && (modeRef.current === "reader-gesture" || modeRef.current === "manual" || modeRef.current === "tail-follow")
               )) {
                 clearReaderVisualBridge();
                 return;

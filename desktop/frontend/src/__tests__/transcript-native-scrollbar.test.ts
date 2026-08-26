@@ -101,6 +101,12 @@ proofTop = 500;
 check(bottomProof.finish(proofElement), true,
   "a thumb that leaves and returns to its initial bottom retains movement proof");
 bottomProof.begin(proofElement);
+proofTop = 300;
+bottomProof.observe(proofElement);
+proofTop = 500;
+check(bottomProof.finish(proofElement), true,
+  "native scroll delivery retains an away-and-back thumb when rAF misses the excursion");
+bottomProof.begin(proofElement);
 proofTop = 500;
 proofHeight = 1_100;
 bottomProof.cancel();

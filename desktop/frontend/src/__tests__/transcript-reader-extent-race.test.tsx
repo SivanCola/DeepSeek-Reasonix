@@ -413,6 +413,9 @@ scrollElement.scrollTop = 4_998;
 await act(async () => arbiter?.observeReaderExtent());
 await flushFrames();
 await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+await act(async () => arbiter?.observeReaderExtent());
+await flushFrames();
+await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 const finalBoundaryRow = dom.window.document.createElement("div");
 finalBoundaryRow.className = "transcript__row";
 finalBoundaryRow.dataset.rowKey = "row-142";
@@ -424,7 +427,7 @@ await act(async () => arbiter?.observeReaderExtent());
 check(scrollByCalls === 1 && lastScrollByTop === 597,
   `a promoted no-common range cannot erase the prior painted boundary row (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
-  "the prior-painted-range correction keeps the single-writer contract");
+  "duplicate promotions retain the prior range and keep the single-writer contract");
 intermediateRow.remove();
 finalBoundaryRow.replaceWith(rowElement);
 rowElement.dataset.rowKey = "row-a";

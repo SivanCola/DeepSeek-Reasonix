@@ -173,16 +173,24 @@ check(arbiter?.modeRef.current === "tail-follow", "over-boundary wheel keeps tai
 // one reader-intent window with no upward gesture in between. A single
 // touch-down claims the gesture but stays reader-owned.
 scrollElement.scrollTop = 400;
-rowElement.getBoundingClientRect = () => rectAt(0);
+rowElement.getBoundingClientRect = () => rectAt(-99);
 await act(async () => arbiter?.releaseTailFollow());
 await wheelDown();
 check(arbiter?.modeRef.current === "reader-gesture", "a single downward touch-down stays reader-owned");
 await flushFrames();
 check(arbiter?.modeRef.current === "tail-follow", "a held bottom (next-frame delivery) re-enters tail-follow");
 scrollWrites.length = 0;
-rowElement.getBoundingClientRect = () => rectAt(600);
+scrollExtent = 1_100;
+rowElement.getBoundingClientRect = () => rectAt(99);
 await act(async () => arbiter?.observeReaderExtent());
-check(!scrollWrites.some((write) => write.owner === "reader-stability"), "tail-follow handoff cancels the old reader lease");
+check(scrollWrites.some((write) => write.owner === "reader-stability"), "tail-follow handoff retains one active-frame reader correction");
+scrollWrites.length = 0;
+await advanceClock(200);
+rowElement.getBoundingClientRect = () => rectAt(-99);
+await act(async () => arbiter?.observeReaderExtent());
+check(!scrollWrites.some((write) => write.owner === "reader-stability"), "tail-follow handoff correction expires with the active reader frame");
+scrollExtent = 500;
+scrollElement.scrollTop = 400;
 rowElement.getBoundingClientRect = () => rectAt(200);
 
 // An upward gesture between at-bottom deliveries breaks the hold streak; the

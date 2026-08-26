@@ -271,7 +271,6 @@ export function useTranscriptScrollArbiter({
     }
     const previousState = stateRef.current;
     const result = reduceTranscriptScroll(previousState, event);
-    if (previousState.mode !== "tail-follow" && result.state.mode === "tail-follow") readerExtent.cancel();
     const source = recordTranscriptScrollTransition(event, previousState, result.state, result.commands, scrollRef.current);
     publishState(result.state);
     for (const command of result.commands) runCommand(command, source);
@@ -311,10 +310,11 @@ export function useTranscriptScrollArbiter({
 
   const deliverScroll = useCallback((element = scrollRef.current, provedNativeBottom = false) => {
     if (!element) return;
+    if (nativeScrollbarDragRef.current) nativeScrollbarBottomProof.observe(element);
     readerExtent.observeNativeDelivery(element);
     const retainsNativeBottomIntent = deliverBottomHold(element, provedNativeBottom);
     if (stateRef.current.readerIntent && !retainsNativeBottomIntent) armReaderIntentIdle();
-  }, [armReaderIntentIdle, deliverBottomHold, readerExtent]);
+  }, [armReaderIntentIdle, deliverBottomHold, nativeScrollbarBottomProof, readerExtent]);
   deliverScrollRef.current = deliverScroll;
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {

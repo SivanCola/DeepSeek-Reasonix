@@ -69,6 +69,25 @@ function capturePaintedReaderRows(element: HTMLDivElement): ReadonlyMap<string, 
   return rows;
 }
 
+function promotePaintedReaderRows(
+  guard: ActiveReaderExtentGuard,
+  next: ReadonlyMap<string, number>,
+) {
+  let commonRows = 0;
+  for (const rowKey of next.keys()) {
+    if (guard.paintedRows.has(rowKey)) commonRows += 1;
+  }
+  // Mutation, resize, scroll, and rAF observers can all promote the same
+  // mounted Virtuoso window before the native smoke sampler reaches its next
+  // painted frame. Refresh that window's offsets without rotating away the
+  // preceding logical range. Only a majority range replacement advances the
+  // two-window history.
+  if (commonRows * 2 < Math.min(guard.paintedRows.size, next.size)) {
+    guard.previousPaintedRows = guard.paintedRows;
+  }
+  guard.paintedRows = next;
+}
+
 function paintedReaderReverse(
   guard: ActiveReaderExtentGuard,
   element: HTMLDivElement,
@@ -165,8 +184,7 @@ export function useTranscriptReaderExtentStability({
           || Date.now() >= guard.deadline
           || transcriptElementViewportIsBlank(element)
         ) return;
-        guard.previousPaintedRows = guard.paintedRows;
-        guard.paintedRows = capturePaintedReaderRows(element);
+        promotePaintedReaderRows(guard, capturePaintedReaderRows(element));
       }, 0);
     });
   }, [generationRef, scrollRef]);
@@ -322,7 +340,16 @@ export function useTranscriptReaderExtentStability({
   const observe = useCallback((element = scrollRef.current) => {
     const guard = guardRef.current;
     if (!element || guard?.element !== element) return false;
-    if (Date.now() >= guard.deadline) {
+    const now = Date.now();
+    const mode = modeRef.current;
+    if (
+      now >= guard.deadline
+      || (
+        mode !== "reader-gesture"
+        && mode !== "manual"
+        && (mode !== "tail-follow" || now >= guard.activeFrameDeadline)
+      )
+    ) {
       clearActive(guard);
       return false;
     }
@@ -368,7 +395,7 @@ export function useTranscriptReaderExtentStability({
     }
     if (accepted && !corrected && !viewportBlank) commitPaintedRowsAfterPaint(guard, element);
     return transcriptReaderExtentHasCollapsed(guard);
-  }, [acknowledgeCorrection, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, scrollRef]);
+  }, [acknowledgeCorrection, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, modeRef, scrollRef]);
 
   const schedule = useCallback((active: ActiveReaderExtentGuard) => {
     if (active.frame !== null) return;
@@ -379,7 +406,11 @@ export function useTranscriptReaderExtentStability({
         guardRef.current !== active
         || generationRef.current !== active.generation
         || scrollRef.current !== active.element
-        || (mode !== "reader-gesture" && mode !== "manual")
+        || (
+          mode !== "reader-gesture"
+          && mode !== "manual"
+          && (mode !== "tail-follow" || Date.now() >= active.activeFrameDeadline)
+        )
       ) {
         if (guardRef.current === active) clearActive(active);
         return;
