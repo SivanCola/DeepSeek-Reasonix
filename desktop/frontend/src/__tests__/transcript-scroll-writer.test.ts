@@ -21,6 +21,11 @@ Object.defineProperties(element, {
 });
 
 const calls: Array<{ operation: string; value: unknown }> = [];
+const nativeScrolls: ScrollToOptions[] = [];
+element.scrollTo = (value: ScrollToOptions) => {
+  nativeScrolls.push(value);
+  if (value.top !== undefined) element.scrollTop = value.top;
+};
 const writes: TranscriptScrollWriteRecord[] = [];
 dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => writes.push(write);
 const handle = {
@@ -50,6 +55,7 @@ assert.equal(writer.write({
   geometryRevision: 9,
 }), true);
 assert.equal(calls[0]?.operation, "scrollTo", "auto pixel writes synchronize Virtuoso's native scroll callback");
+assert.equal(nativeScrolls.length, 1, "ordinary absolute writes also synchronize the current native scroller");
 assert.equal(element.scrollTop, 1_200);
 assert.deepEqual(
   { sequence: writes[0]?.sequence, generation: writes[0]?.generation, revision: writes[0]?.geometryRevision, owner: writes[0]?.owner },
@@ -103,5 +109,18 @@ assert.equal(writer.write({
   geometryRevision: 10,
 }), true);
 assert.deepEqual(calls[2]?.value, { index: "LAST", align: "end", behavior: "auto" }, "the writer can mount the measured tail before native confirmation");
+
+modeRef.current = "reader-gesture";
+assert.equal(writer.write({
+  owner: "reader-stability",
+  operation: "scrollTo",
+  top: 1_640,
+  source: "layout-height-changed",
+  expectedGeneration: 5,
+  geometryRevision: 11,
+}), true);
+assert.equal(calls.length, 3, "reader correction does not enqueue a second Virtuoso range reconciliation");
+assert.equal(nativeScrolls.at(-1)?.top, 1_640, "reader correction targets the currently painted native scroller");
+assert.equal(element.scrollTop, 1_640);
 
 console.log("transcript scroll writer tests passed");

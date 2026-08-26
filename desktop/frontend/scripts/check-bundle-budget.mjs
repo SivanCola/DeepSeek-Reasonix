@@ -190,9 +190,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // cross-WebView footer inset, native list observer, and guarded LAST mount
 // before tail following add the pre-paint tail pin, residual verifier, and
 // stable-tail boundary guard. Visual-anchor and pre-paint correction during
-// active reader transactions and range-mutation pre-paint correction bring
-// the combined rebased surface to 2393.2 KiB raw; retain 0.2 KiB rather than
+// active reader transactions, range-mutation pre-paint correction, and
+// native-only reader stabilization bring the combined rebased surface to
+// 2393.4 KiB raw; retain 0.2 KiB rather than
 // replacing the gate with a percentage.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_393.4 : 2_393.4;
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_393.6 : 2_393.6;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

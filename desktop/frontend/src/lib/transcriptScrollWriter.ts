@@ -74,6 +74,15 @@ export function createTranscriptScrollWriter({
     const behavior = request.behavior === "smooth" ? "smooth" : "auto";
     switch (request.operation) {
       case "scrollTo":
+        if (request.owner === "reader-stability") {
+          // Reader protection corrects the currently painted native range.
+          // Sending the same command through Virtuoso can enqueue a second
+          // range reconciliation and reintroduce the displacement on the next
+          // frame; its native scroll listener observes this absolute write.
+          if (typeof element.scrollTo === "function") element.scrollTo({ top: request.top, behavior });
+          else element.scrollTop = request.top!;
+          return true;
+        }
         // Keep Virtuoso's internal location and the current native scroller
         // synchronized as one logical write. The handle can briefly point at
         // a superseded scroller during a surface commit, while a native-only

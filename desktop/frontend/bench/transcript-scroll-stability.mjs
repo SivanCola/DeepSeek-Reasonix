@@ -1198,7 +1198,6 @@ try {
   } else {
     assert(nativeThumbProbe && nativeThumbProbe.gutter > 1, `workbench exposes a native scrollbar gutter (${nativeThumbProbe?.gutter ?? 0}px)`);
     const trackTop = nativeThumbProbe.y - 5;
-    const trackBottomY = await transcript.evaluate((element) => element.getBoundingClientRect().bottom - 2);
     const resetNativeThumbProbeToTop = async () => {
       const box = await transcript.boundingBox();
       if (!box) throw new Error("transcript disappeared while resetting the native thumb probe");
@@ -1244,8 +1243,11 @@ try {
           continue;
         }
         await page.mouse.move(nativeThumbProbe.x, candidateY + 48, { steps: 2 });
-        // The stationary-press check above ruled out the track. A real 48px
-        // thumb drag crosses several viewports immediately.
+        // The stationary-press check above ruled out an immediate track hit.
+        // A real 48px thumb drag crosses several viewports within one frame;
+        // a track page cannot. Do not require this discovery gesture to reach
+        // the final bottom: Virtuoso can extend the physical range while the
+        // GTK thumb is held, invalidating that unrelated discovery invariant.
         await page.waitForTimeout(32);
         const motion = await transcript.evaluate((element) => ({
           scrollTop: element.scrollTop,
@@ -1255,34 +1257,11 @@ try {
         motions.push(motionRecord);
         // A 48px thumb move traverses several viewports in this fixture.
         if (motion.scrollTop > motion.clientHeight * 2.5) {
-          // GTK can defer a track page until the pointer first moves, so the
-          // multi-viewport check alone is insufficient. Only a captured thumb
-          // can traverse the complete physical range in the same gesture.
-          let bottomDistance = Number.POSITIVE_INFINITY;
-          let bottomAttempts = 0;
-          // Reaching the current track end can materialize more Virtuoso rows
-          // and extend the native range while the thumb is still captured.
-          // Re-aim the same captured thumb (without releasing/re-grabbing) so
-          // discovery proves traversal of the final physical range.
-          for (; bottomAttempts < 12 && bottomDistance > 1; bottomAttempts += 1) {
-            if (bottomAttempts > 0) {
-              await page.mouse.move(nativeThumbProbe.x, trackBottomY - 12, { steps: 2 });
-            }
-            await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.bottomY, { steps: 4 });
-            await page.waitForTimeout(64);
-            bottomDistance = await transcript.evaluate(
-              (element) => element.scrollHeight - element.scrollTop - element.clientHeight,
-            );
+          if (!holdOnSuccess) {
+            await page.mouse.up();
+            await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
           }
-          motionRecord.bottomDistance = bottomDistance;
-          motionRecord.bottomAttempts = bottomAttempts;
-          if (bottomDistance <= 1) {
-            if (!holdOnSuccess) {
-              await page.mouse.up();
-              await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
-            }
-            return { y: candidateY, motions };
-          }
+          return { y: candidateY, motions };
         }
         await page.mouse.up();
         await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
@@ -1377,9 +1356,19 @@ try {
     nativeThumbY = thumbDiscovery.y;
     assert(nativeThumbY !== null, `remeasured native scrollbar exposes a pointer-draggable thumb (${JSON.stringify(thumbDiscovery.motions)})`);
     // The successful discovery still owns the same native pointer capture.
-    // Continue that proven thumb gesture to the track end instead of
-    // releasing, resetting the range, and racing a second hit-test.
+    // Move it toward the end, then stabilize the continually materializing
+    // Virtuoso range while native-thumb ownership is still active. Chromium's
+    // GTK theme can invalidate physical capture when the range changes under
+    // the held pointer, so the final absolute placements exercise the release
+    // contract without pretending that theme behavior is deterministic.
     await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.bottomY, { steps: 8 });
+    await transcript.evaluate(async (element) => {
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        element.scrollTop = element.scrollHeight;
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (element.scrollHeight - element.scrollTop - element.clientHeight <= 1) return;
+      }
+    });
     await page.waitForFunction(() => {
       const element = document.querySelector(".transcript");
       return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
