@@ -98,12 +98,12 @@ export const TRANSCRIPT_CONTENT_SHRINK_THRESHOLD_PX = 24;
 // tail writer's job even when the previous delivery was already non-bottom.
 export const TRANSCRIPT_SUBSTANTIAL_DISPLACEMENT_PX = 24;
 
-// Native WKWebView/WebView2 may coalesce more than one viewport of wheel
-// delivery while Virtuoso commits measured rows. Keep a two-viewport,
-// 32-row window only after reader ownership has been established; ordinary
-// idle surfaces retain the much smaller default window.
-export const TRANSCRIPT_READER_OVERSCAN_ROWS = 32;
-export const TRANSCRIPT_READER_VIEWPORT_BUFFER = 2;
+// Native WKWebView/WebView2 may coalesce wheel delivery while Virtuoso commits
+// measured rows. Keep one viewport and 24 rows only after reader ownership
+// has been established; the logical guard holds larger blank deliveries and
+// ordinary idle surfaces retain the much smaller default window.
+export const TRANSCRIPT_READER_OVERSCAN_ROWS = 24;
+export const TRANSCRIPT_READER_VIEWPORT_BUFFER = 1;
 
 export function isSubstantialTranscriptDisplacement(distance: number): boolean {
   return distance >= TRANSCRIPT_SUBSTANTIAL_DISPLACEMENT_PX;

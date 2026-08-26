@@ -648,6 +648,35 @@ try {
   replacementRow.replaceWith(rowElement);
 }
 
+// Hosted WKWebView can deliver a native range reset whose scrollTop moves
+// backwards by the length of the loaded window and exposes no mounted row.
+// Restore the last requested logical position synchronously; the empty native
+// coordinate must never become the pending correction target.
+await act(async () => arbiter?.reset());
+scrollExtent = 21_689;
+Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 596 });
+scrollElement.scrollTop = 18_553;
+rowElement.getBoundingClientRect = () => rectAt(-26);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent = 21_918;
+scrollElement.scrollTop = 1_323;
+rowElement.getBoundingClientRect = () => rectAt(900);
+await act(async () => arbiter?.deliverScroll());
+check(scrollByCalls === 1 && lastScrollByTop === 17_254,
+  `a catastrophic reverse blank restores the requested logical position (${lastScrollByTop}px)`);
+check(scrollElement.scrollTop === 18_577,
+  "the reverse blank is corrected before it can become a painted reader baseline");
+
 // Near-bottom input uses the same reader transaction as every other logical
 // position. A synthetic >96px reverse displacement must be rejected instead
 // of slipping through the old near-bottom exception.

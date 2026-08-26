@@ -227,4 +227,38 @@ assert.equal(
   "a multi-viewport native reposition is not mistaken for a wheel-range blank",
 );
 
+const reverseBlank = createTranscriptReaderExtentGuard(
+  { scrollTop: 18_553, scrollHeight: 21_689, clientHeight: 596 },
+  { mode: "manual", rowKey: "row-573", offset: -26 },
+  24,
+)!;
+const reverseBlankSnapshot = { scrollTop: 1_323, scrollHeight: 21_918, clientHeight: 596 };
+observeTranscriptReaderExtent(reverseBlank, reverseBlankSnapshot, undefined, true);
+assert.equal(
+  resolveTranscriptReaderExtentCorrection(reverseBlank, reverseBlankSnapshot),
+  17_254,
+  "a catastrophic reverse blank restores the requested logical reader target",
+);
+
+const coalescedForwardBlank = createTranscriptReaderExtentGuard(
+  { scrollTop: 5_000, scrollHeight: 20_000, clientHeight: 596 },
+  { mode: "manual", rowKey: "row-200", offset: 20 },
+  24,
+)!;
+for (let index = 1; index < 100; index += 1) {
+  assert.equal(extendTranscriptReaderExtentGuard(
+    coalescedForwardBlank,
+    { scrollTop: 5_000, scrollHeight: 20_000, clientHeight: 596 },
+    { mode: "manual", rowKey: "row-200", offset: 20 },
+    24,
+  ), true);
+}
+const coalescedForwardSnapshot = { scrollTop: 7_600, scrollHeight: 20_000, clientHeight: 596 };
+observeTranscriptReaderExtent(coalescedForwardBlank, coalescedForwardSnapshot, undefined, true);
+assert.equal(
+  resolveTranscriptReaderExtentCorrection(coalescedForwardBlank, coalescedForwardSnapshot),
+  -200,
+  "a coalesced requested wheel range holds its last nonblank logical target",
+);
+
 console.log("transcript reader extent stability tests passed");

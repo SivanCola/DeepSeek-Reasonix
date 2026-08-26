@@ -307,8 +307,8 @@ check(
 check(transcriptReaderBufferingForMode(false, "reader-gesture"), "reader input enables the bounded virtual-row buffer");
 check(transcriptReaderBufferingForMode(true, "tail-follow"), "tail handoff retains the active reader buffer");
 check(!transcriptReaderBufferingForMode(true, "selection"), "selection releases the reader buffer");
-check(TRANSCRIPT_READER_VIEWPORT_BUFFER === 2, "reader buffering covers two coalesced native viewports");
-check(TRANSCRIPT_READER_OVERSCAN_ROWS === 32, "reader buffering retains a bounded 32-row window per edge");
+check(TRANSCRIPT_READER_VIEWPORT_BUFFER === 1, "reader buffering retains one mounted native viewport");
+check(TRANSCRIPT_READER_OVERSCAN_ROWS === 24, "reader buffering retains a bounded 24-row window per edge");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
