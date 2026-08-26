@@ -44,6 +44,7 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   paintTimer: number | null;
   expiryTimer: number | null;
   pendingCorrectionTop?: number;
+  pendingCorrectionForward?: boolean;
   pendingAnchor?: readonly [rowKey: string, offsetAtTarget: number];
   paintedRows: ReadonlyMap<string, number>;
 };
@@ -104,6 +105,7 @@ export function useTranscriptReaderExtentStability({
   const lastNativeDeliveryRef = useRef<{
     element: HTMLDivElement;
     generation: number;
+    height: number;
     top: number;
   } | null>(null);
 
@@ -164,9 +166,11 @@ export function useTranscriptReaderExtentStability({
   const acknowledgeCorrection = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement, snapshot: TranscriptExtentSnapshot) => {
     if (guard.pendingCorrectionTop === undefined) return;
     const progressPastTarget = guard.direction * (snapshot.scrollTop - guard.pendingCorrectionTop);
-    if (progressPastTarget < -2 || progressPastTarget > guard.clientHeight) return;
+    const passedForwardCorrection = progressPastTarget > guard.clientHeight
+      && guard.pendingCorrectionForward === true;
+    if (progressPastTarget < -2 || (progressPastTarget > guard.clientHeight && !passedForwardCorrection)) return;
     const pendingAnchor = guard.pendingAnchor;
-    if (pendingAnchor) {
+    if (!passedForwardCorrection && pendingAnchor) {
       const currentOffset = readerAnchorOffset(element, pendingAnchor[0]);
       if (currentOffset !== undefined) {
         const expectedOffset = pendingAnchor[1] - (snapshot.scrollTop - guard.pendingCorrectionTop);
@@ -184,6 +188,7 @@ export function useTranscriptReaderExtentStability({
       }
     }
     guard.pendingCorrectionTop = undefined;
+    guard.pendingCorrectionForward = undefined;
     guard.pendingAnchor = undefined;
     // A correction intentionally drops the stale pre-swap anchor. Re-anchor
     // as soon as the native offset reaches or passes that correction in the
@@ -271,6 +276,7 @@ export function useTranscriptReaderExtentStability({
       mode,
     })) return false;
     active.pendingCorrectionTop = correctionTarget;
+    active.pendingCorrectionForward = active.direction * correction > 0;
     active.pendingAnchor = paintedReverse
       ? [paintedReverse.rowKey, paintedReverse.currentOffset - correction]
       : active.anchor && currentAnchorOffset !== undefined
@@ -447,7 +453,7 @@ export function useTranscriptReaderExtentStability({
     schedule(active);
   }, [anchorOffset, cancel, generationRef, renewLease, schedule, scrollRef]);
 
-  const syncNativeDirection = useCallback((deltaY: number, acceptedDelivery: boolean) => {
+  const syncNativeDirection = useCallback((deltaY: number) => {
     const current = guardRef.current;
     if (
       current
@@ -455,7 +461,6 @@ export function useTranscriptReaderExtentStability({
       && current.generation === generationRef.current
       && current.direction === (deltaY < 0 ? -1 : 1)
     ) {
-      if (acceptedDelivery) current.expectedTop = current.element.scrollTop;
       renewLease(current);
       schedule(current);
       return;
@@ -477,27 +482,39 @@ export function useTranscriptReaderExtentStability({
     const previous = lastNativeDeliveryRef.current;
     const deliveredTop = element.scrollTop;
     const pendingBeforeObservation = guardRef.current?.pendingCorrectionTop !== undefined;
-    observe(element);
-    const active = guardRef.current;
-    const pendingAfterObservation = active?.pendingCorrectionTop !== undefined;
-    const acceptedDelivery = active?.element === element
-      && Math.abs(active.acceptedTop - element.scrollTop) <= 2;
-    const nativeDelta = previous?.element === element && previous.generation === generation
-      ? deliveredTop - previous.top
-      : 0;
-    lastNativeDeliveryRef.current = { element, generation, top: element.scrollTop };
+    const sameSurface = previous?.element === element && previous.generation === generation;
+    const nativeDelta = sameSurface ? deliveredTop - previous.top : 0;
+    const extentDelta = sameSurface ? element.scrollHeight - previous.height : 0;
+    const layoutAnchored = Math.abs(extentDelta) > 2
+      && Math.abs(nativeDelta - extentDelta) <= Math.max(8, element.clientHeight * 0.1);
     const view = element.ownerDocument.defaultView;
-    if (
-      Math.abs(nativeDelta) > 2
-      && Math.abs(nativeDelta) <= element.clientHeight * 0.5
+    const nativeInput = Math.abs(nativeDelta) > 2
+      && Math.abs(nativeDelta) <= element.clientHeight
+      && !layoutAnchored
       && (modeRef.current === "reader-gesture" || modeRef.current === "manual")
       && view
       && shouldBridgeTranscriptReaderCorrection(view)
-      // A correction can be applied or acknowledged during this delivery.
-      // Never feed that writer-owned offset back as fresh native input.
-      && !pendingBeforeObservation
+      && !pendingBeforeObservation;
+    // Reconcile a coalesced delivery before observing it. Otherwise an
+    // opposite setup direction can misclassify the first >96px native move as
+    // a reverse layout anomaly and write against real user input.
+    if (nativeInput) syncNativeDirection(nativeDelta);
+    observe(element);
+    const active = guardRef.current;
+    const pendingAfterObservation = active?.pendingCorrectionTop !== undefined;
+    if (
+      nativeInput
       && !pendingAfterObservation
-    ) syncNativeDirection(nativeDelta, acceptedDelivery);
+      && active?.element === element
+      && active.direction === (nativeDelta < 0 ? -1 : 1)
+      && Math.abs(active.acceptedTop - element.scrollTop) <= 2
+    ) active.expectedTop = element.scrollTop;
+    lastNativeDeliveryRef.current = {
+      element,
+      generation,
+      height: element.scrollHeight,
+      top: element.scrollTop,
+    };
   }, [generationRef, modeRef, observe, syncNativeDirection]);
 
   useEffect(() => cancel, [cancel]);

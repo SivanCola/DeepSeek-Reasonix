@@ -482,7 +482,7 @@ await act(async () => arbiter?.onWheelIntent({
   deltaY: -1,
   target: scrollElement,
 } as React.WheelEvent<HTMLElement>));
-scrollElement.scrollTop += 24;
+scrollElement.scrollTop += 320;
 rowElement.getBoundingClientRect = () => rectAt(-49);
 await act(async () => arbiter?.deliverScroll());
 scrollWrites.length = 0;
@@ -492,7 +492,7 @@ scrollElement.scrollTop += 24;
 rowElement.getBoundingClientRect = () => rectAt(121);
 await act(async () => arbiter?.deliverScroll());
 check(scrollByCalls === 1 && lastScrollByTop === 170,
-  `native scroll delivery replaces an opposite setup direction before a late range swap (${lastScrollByTop}px)`);
+  `a coalesced native delivery replaces an opposite setup direction before a late range swap (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "native direction reconciliation keeps the late range correction single-owned");
 const nativeCorrectionTarget = scrollElement.scrollTop;
@@ -508,6 +508,33 @@ rowElement.getBoundingClientRect = () => rectAt(-73);
 await act(async () => arbiter?.deliverScroll());
 check(scrollWrites.length === 1,
   "forward input after the acknowledgement resumes without a correction feedback loop");
+const nativeOriginalScrollTo = scrollElement.scrollTo;
+scrollElement.scrollTo = () => {};
+scrollExtent += 170;
+scrollElement.scrollTop += 24;
+rowElement.getBoundingClientRect = () => rectAt(97);
+await act(async () => arbiter?.deliverScroll());
+const stalledForwardTarget = scrollWrites.at(-1)?.top ?? 0;
+await act(async () => arbiter?.observeReaderExtent());
+check(scrollWrites.length === 2,
+  "an unacknowledged forward native correction remains single-owned");
+const progressedRow = dom.window.document.createElement("div");
+progressedRow.className = "transcript__row";
+progressedRow.dataset.rowKey = "row-native-progress";
+progressedRow.getBoundingClientRect = () => rectAt(20);
+rowElement.replaceWith(progressedRow);
+scrollElement.scrollTop = stalledForwardTarget + scrollElement.clientHeight + 24;
+await act(async () => arbiter?.deliverScroll());
+await flushFrames();
+await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+scrollExtent += 170;
+scrollElement.scrollTop += 24;
+progressedRow.getBoundingClientRect = () => rectAt(190);
+await act(async () => arbiter?.deliverScroll());
+check(scrollWrites.length === 3,
+  `progress beyond a stalled forward correction releases the next range correction (${scrollWrites.length})`);
+scrollElement.scrollTo = nativeOriginalScrollTo;
+progressedRow.replaceWith(rowElement);
 Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: originalUserAgent });
 
 // A correction acknowledgement can share a native delivery with the next
