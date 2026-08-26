@@ -95,27 +95,41 @@ console.log("\nbundle budgets");
 // is 431.509 KiB gzip; keep 0.1 KiB of explicit headroom for hash/toolchain
 // drift instead of relying on a rounded equality.
 // Remote onboarding [0.5/3] adds project-group and credential-chain wiring on
-// top of the lazy wizard. Production and test-channel builds both measure
-// 432.28 KiB gzip; keep 0.22 KiB for build-SHA/toolchain drift.
-// Exact-turn routing, the extracted event-gap projector, and the stale-history
-// fence measure 434.01 KiB gzip. Keep 0.39 KiB of build/toolchain headroom.
-// Checkpoint reset, epoch fencing, live-tail queuing, and history-prefix rebase
-// add 0.5 KiB gzip to that same runtime owner.
-// The navigation surface transaction adds target identity checks, data/paint
-// terminals, and bounded history permits to the initial transcript path.
-// Failure-atomic source restoration, terminal surface promises, and the
-// one-page viewport permit and durable turn runtime are part of the same
-// startup path. The current main-v2 build measures 437.36 KiB gzip.
-// Transcript scroll integrity adds the single-writer gateway, coalesced
-// geometry revisions, and reader-extent transaction to the eager transcript
-// path. Native reader visual bridging plus the failure-atomic unloaded-question
-// mask and final-wheel tail claim bring the combined rebased build to
-// 441.86 KiB gzip; retain only 0.24
-// KiB for build metadata/toolchain drift.
-// Rejecting blank native ranges, deduplicating asynchronous WebKit corrections,
-// and retaining a native correction until acknowledgement measure 442.5 KiB;
-// retain a narrow 0.1 KiB ratchet.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 442.6 : 442.6;
+// top of the lazy wizard. Exact-turn routing, the extracted event-gap
+// projector, checkpoint resets, and the navigation surface transaction bring
+// the current main-v2 path to 437.36 KiB gzip.
+// The full remote-session surface adds the lazy transcript bridge and tab
+// lifecycle on top of [0.5/3]. Keep the measured stack's narrow ratchet.
+// Remote approval hardening adds authoritative composer-profile hydration,
+// scoped rewind dispatch, and attachment/inbox fences to the always-mounted
+// remote hook. The measured production path is 438.38 KiB gzip after keeping
+// the integration modules below repolint's ownership ceilings; retain 0.12 KiB
+// toolchain headroom with a bounded 1.4 KiB ratchet.
+// Remote status isolation keeps the always-mounted status bar on the active
+// remote transcript and routes job cancellation to that host. Parsers and
+// retry policy remain lazy; the measured selector adds under 0.1 KiB gzip.
+// Remote runtime parity adds scoped approvals, status-only reconciliation,
+// session quality-floor routing, dropped-frame reconciliation, and remote
+// runtime-command dispatch. The measured initial path is 439.60 KiB;
+// retain 0.10 KiB of bounded toolchain headroom.
+// Closing the remaining review gaps adds generation-fenced hydration plus
+// remote-only tool payload, Todo, and terminal isolation. The measured path is
+// 439.74 KiB; retain 0.06 KiB of headroom with a 0.1 KiB ratchet.
+// The final remote-runtime parity pass adds remote run-strip telemetry,
+// explicit session verbs, and specialized plan decisions. The measured path
+// is 440.02 KiB. The current main-v2 turn-event, finish-protocol, and session
+// repair runtime then moves the combined path to 445.097 KiB; retain 0.103 KiB
+// of bounded build/toolchain headroom.
+// Atomic remote profile changes, exact approval draining, and generation-safe
+// history handoff bring the measured path to 445.228 KiB. Retain 0.072 KiB of
+// headroom with the smallest existing decimal ratchet.
+// Direct pending-prompt recovery and authoritative remote Goal state bring the
+// measured path to 445.473 KiB. Retain 0.027 KiB of bounded headroom.
+// Transcript scroll integrity adds the single-writer gateway, native reader
+// correction bridge, failure-atomic unloaded-question mask, and bounded tail
+// handoff on top of that remote-session surface. The merged build measures
+// 450.6 KiB; retain 0.2 KiB of bounded build/toolchain headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 450.8 : 450.8;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -132,14 +146,10 @@ if (initialCSS.length > 0) {
 // Navigation overlay styles add a bounded 0.1 KiB to the deferred shell.
 // The cleaned source panel adds 0.1 KiB gzip to the deferred shell on top of
 // the retained-transcript navigation allowance; keep the ratchet explicit.
-// The remote-project badge and static session rows move the shell stylesheet
-// to 114.48 KiB gzip. Keep a narrow 0.22 KiB ratchet.
-// The navigation mask's stable composer footprint measures 114.73 KiB; retain
-// less than 0.1 KiB of additional headroom.
-// The zero-layout completion overlay adds 0.1 KiB gzip and keeps the live
-// Footer out of Virtuoso's measured flow during the history handoff.
-// The combined rebased shell measures 114.8 KiB; keep a 0.1 KiB ratchet.
-assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 114.9 * 1024);
+// The navigation mask's stable composer footprint and remote tab/surface
+// states bring the merged shell to roughly 115.7 KiB gzip. The transcript
+// completion overlay keeps the live Footer out of Virtuoso's measured flow.
+assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 116.0 * 1024);
 if (localeChunks.length !== 2) {
   throw new Error(`expected 2 on-demand Chinese locale chunks, found ${localeChunks.length}`);
 }
@@ -166,9 +176,8 @@ for (const path of localeChunks) {
   // connection, fallback, and legacy-state copy while removing protocol
   // choices from the primary UI; keep that complete guidance with a bounded
   // 0.4–0.5 KiB locale-only ratchet.
-  // Remote-project actions keep the complete localized labels at measured
-  // sizes of 57.17 KiB (zh) and 57.89 KiB (zh-TW), each with ~0.2 KiB margin.
-  const budget = name.startsWith("zh-TW-") ? 58.1 * 1024 : 57.4 * 1024;
+  // Remote-session actions and disconnected-shell guidance add bounded copy.
+  const budget = name.startsWith("zh-TW-") ? 58.5 * 1024 : 57.8 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
@@ -182,29 +191,19 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // (0.021%). The workspace panel rework (change-row hover/revert, status badges,
 // More menu, completion summary) makes the latest-base merge 2353.1 KiB in
 // production and test channels both measure 2357.92 KiB after project-group
-// wiring. The complete theme-token contract and one shared operational-overlay
-// recipe put the pre-navigation main-v2 path at 2359.29 KiB.
-// Exact-turn command/Stop/Ask/Steer
-// routing, extracted event-gap projection, and stale-history rejection move the
-// post-rebase build to 2365.59 KiB: a 6.30 KiB (0.267%) attributable increase.
-// The checkpoint reset transaction adds 3.8 KiB raw (0.16%) for replay paging,
-// epoch/release fences, and stable history-prefix rebasing.
-// Its failure-atomic completion paths plus the fixed navigation footer
-// footprint and durable turn runtime put current main-v2 at 2379.22 KiB raw.
-// The transcript integrity coordinator, completion overlay, and measured
-// cross-WebView footer inset, native list observer, and guarded LAST mount
-// before tail following add the pre-paint tail pin, residual verifier, and
-// stable-tail boundary guard. Visual-anchor and pre-paint correction during
-// active reader transactions, range-mutation pre-paint correction, and
-// native-only reader stabilization, its one-frame visual bridge, and the
-// unloaded-question paint commit bring the combined rebased surface to
-// 2397.01 KiB raw. The passive native range-commit lease adds 0.59 KiB while
-// keeping its active frame sampling at 180ms; retain 0.20 KiB instead of
-// replacing the gate with a percentage. Blank-range rejection and async-write
-// deduplication plus cross-WebView visual bridging and bounded tail-mount
-// confirmation, acknowledged native commits, and explicit history-mutation
-// ownership measure 2399.5 KiB;
-// retain the same 0.20 KiB headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_399.7 : 2_399.7;
+// wiring. Exact-turn routing, checkpoint resets, and failure-atomic navigation
+// bring the current main-v2 path to 2379.22 KiB. The remote approval
+// fences, extracted ownership modules, and remote status-bar isolation bring
+// the measured initial payload to 2380.9 KiB; retain 0.1 KiB of bounded
+// raw/toolchain headroom. Scoped remote approvals, status reconciliation, and
+// runtime command dispatch bring the measured payload to 2382.9 KiB. The
+// remaining review fences measure 2383.2 KiB; retain 0.1 KiB of headroom.
+// Final remote-runtime parity measures 2384.4 KiB raw. The current main-v2
+// runtime additions bring the combined path to 2404.364 KiB; retain 0.136 KiB
+// of bounded headroom alongside the gzip ratchet above.
+// Transcript navigation and scroll integrity add target commit fencing,
+// native reader stabilization, and the privacy-safe unloaded-question replay.
+// The merged build measures 2424.5 KiB; retain 0.2 KiB of bounded headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_424.7 : 2_424.7;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

@@ -6,9 +6,11 @@ import { createRoot } from "react-dom/client";
 import type { StateSnapshot, VirtuosoHandle } from "react-virtuoso";
 import { useTranscriptScrollArbiter, type TranscriptRecoveryTerminal } from "../lib/useTranscriptScrollArbiter";
 import { useTranscriptLayoutIntegrity } from "../lib/useTranscriptLayoutIntegrity";
+import { createTranscriptMeasuredSizes } from "../lib/transcriptMeasuredSizes";
 import type { TranscriptScrollWriteRecord } from "../lib/transcriptScrollProbe";
-import type { TranscriptRow } from "../lib/transcriptRows";
+import { buildTranscriptRows, buildTurnModels, EMPTY_FOLDS, transcriptRowMeasurementVersion, type TranscriptRow } from "../lib/transcriptRows";
 import type { Item } from "../lib/useController";
+import { installTranscriptRaceClock } from "./helpers/transcriptRaceClock";
 
 let passed = 0;
 let failed = 0;
@@ -50,42 +52,7 @@ globalThis.cancelAnimationFrame = cancelFrame;
 dom.window.requestAnimationFrame = requestFrame;
 dom.window.cancelAnimationFrame = cancelFrame;
 
-let clockNow = 10_000;
-let nextTimer = 1;
-const timers = new Map<number, { dueAt: number; run: () => void }>();
-const originalDateNow = Date.now;
-const originalSetTimeout = dom.window.setTimeout;
-const originalClearTimeout = dom.window.clearTimeout;
-Date.now = () => clockNow;
-dom.window.setTimeout = ((handler: TimerHandler, timeout = 0, ...args: unknown[]) => {
-  const id = nextTimer;
-  nextTimer += 1;
-  const run = typeof handler === "function"
-    ? () => handler(...args)
-    : () => { throw new Error("string timer handlers are unsupported in this test"); };
-  timers.set(id, { dueAt: clockNow + Math.max(0, timeout), run });
-  return id;
-}) as typeof dom.window.setTimeout;
-dom.window.clearTimeout = ((id: number | undefined) => {
-  if (id !== undefined) timers.delete(id);
-}) as typeof dom.window.clearTimeout;
-
-async function advanceClock(milliseconds: number) {
-  await act(async () => {
-    const target = clockNow + milliseconds;
-    while (true) {
-      const next = [...timers.entries()]
-        .filter(([, timer]) => timer.dueAt <= target)
-        .sort(([leftID, left], [rightID, right]) => left.dueAt - right.dueAt || leftID - rightID)[0];
-      if (!next) break;
-      const [id, timer] = next;
-      timers.delete(id);
-      clockNow = timer.dueAt;
-      timer.run();
-    }
-    clockNow = target;
-  });
-}
+const { advanceClock, restore: restoreClock } = installTranscriptRaceClock(dom.window as unknown as Window);
 
 async function flushFrames() {
   const pending = [...frames.entries()];
@@ -121,25 +88,17 @@ let scrollByCalls = 0;
 let scrollToIndexCalls = 0;
 let scrollToCalls = 0;
 let scrollToBottomCalls = 0;
-dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
-  scrollWrites.push(write);
-  if (write.kind === "scrollBy") scrollByCalls += 1;
-  if (write.kind === "scrollTo") scrollToCalls += 1;
-  if (write.kind === "scrollToIndex") scrollToIndexCalls += 1;
-};
-// Null disables snapshot capture; the snapshot sections opt in explicitly so
-// the pre-snapshot scenarios keep their first-mount scrollToBottom behavior.
+dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => { scrollWrites.push(write);
+  if (write.kind === "scrollBy") scrollByCalls += 1; if (write.kind === "scrollTo") scrollToCalls += 1;
+  if (write.kind === "scrollToIndex") scrollToIndexCalls += 1; };
+// Null disables capture; snapshot sections opt in after the first-mount cases.
 let stubSnapshot: StateSnapshot | null = null;
 const virtuosoHandle = {
   scrollBy: () => {},
-  scrollToIndex: (location?: { index?: number | "LAST" }) => {
-    if (location?.index === "LAST") scrollElement.scrollTop = scrollExtent - scrollElement.clientHeight;
-  },
+  scrollToIndex: (location?: { index?: number | "LAST" }) => { if (location?.index === "LAST") scrollElement.scrollTop = scrollExtent - scrollElement.clientHeight; },
   // Browser semantics: an offset write clamps against the current extent.
-  scrollTo: (options?: { top?: number }) => {
-    const top = options?.top ?? 0;
-    scrollElement.scrollTop = Math.max(0, Math.min(scrollExtent - scrollElement.clientHeight, top));
-  },
+  scrollTo: (options?: { top?: number }) => { const top = options?.top ?? 0;
+    scrollElement.scrollTop = Math.max(0, Math.min(scrollExtent - scrollElement.clientHeight, top)); },
   getState: (callback: (state: StateSnapshot) => void) => {
     if (stubSnapshot) callback(stubSnapshot);
   },
@@ -277,40 +236,29 @@ await advanceClock(1_500);
 check(scrollToCalls === 0, "a reset invalidates the previous surface's queued native confirmation");
 
 // A jump-bottom transaction suppresses the blank watchdog while WebView2 and
-// Virtuoso are still exchanging scroll/measurement frames. The diagnostic
-// packages showed the old watchdog rebuilding inside this exact window.
+// Virtuoso exchange frames; diagnostics showed a rebuild in this exact window.
 const keyBeforeJumpBlank = integrity?.resetKey;
 await act(async () => arbiter?.scrollToBottom());
 await triggerWatchdogRebuild();
 check(integrity?.resetKey === keyBeforeJumpBlank, "jump-bottom transients cannot trigger a blank size-tree rebuild");
 await advanceClock(1_500);
 
-// Tail-follow persists, but a continuous size burst settles only after the
-// extent stays quiet; intermediate revisions coalesce instead of writing.
+// A continuous size burst settles after the extent quiets; revisions coalesce.
 scrollToCalls = 0;
 await act(async () => arbiter?.scrollToBottom());
 await advanceClock(1_500);
-for (let i = 0; i < 14; i += 1) {
-  scrollExtent += 200;
-  await advanceClock(40);
-  await act(async () => arbiter?.followGrowingTail());
-  await flushFrames();
-}
+for (let i = 0; i < 14; i += 1) { scrollExtent += 200; await advanceClock(40);
+  await act(async () => arbiter?.followGrowingTail()); await flushFrames(); }
 await advanceClock(80); for (let i = 0; i < 6; i += 1) await flushFrames();
 check(scrollToCalls >= 1 && scrollToCalls <= 2, `sustained growth coalesces to bounded tail convergence (${scrollToCalls} writes)`);
 check(scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight, "sustained growth still lands on the physical bottom after the burst ends");
 
-// ── Reduced-motion flicker filter (#9028/#9089): layout churn alternates the
-// extent between two values on consecutive frames. Coalescing plus the
-// collapse filter keeps the whole oscillation to at most one growth write;
-// once the churn settles off-bottom, one revision reconverges.
+// Reduced-motion churn alternates two extents. Coalescing keeps the oscillation
+// to at most one write; after it settles off-bottom, one revision reconverges.
 const churnBase = scrollExtent;
 scrollToCalls = 0;
-for (let i = 0; i < 8; i += 1) {
-  scrollExtent = i % 2 === 0 ? churnBase + 700 : churnBase;
-  await act(async () => arbiter?.followGrowingTail());
-  await flushFrames();
-}
+for (let i = 0; i < 8; i += 1) { scrollExtent = i % 2 === 0 ? churnBase + 700 : churnBase;
+  await act(async () => arbiter?.followGrowingTail()); await flushFrames(); }
 check(scrollToCalls <= 1, `alternating-extent churn earns at most one tail write (${scrollToCalls})`);
 check(arbiter?.modeRef.current === "tail-follow", "churn does not revoke tail ownership");
 scrollExtent = churnBase + 700;
@@ -319,28 +267,22 @@ await advanceClock(80); for (let i = 0; i < 6; i += 1) await flushFrames();
 check(scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight, "a settled post-churn displacement reconverges on the physical bottom");
 check(scrollToCalls >= 1 && scrollToCalls <= 2, `post-churn convergence costs at most two writes (${scrollToCalls})`);
 
-// Replay the returned Windows trace while one explicit jump owns the viewport.
-// The writer may respond immediately and correct after native geometry settles,
-// but must not write once per intermediate height or moving offset.
+// Replay the Windows trace: one jump may correct after geometry settles, but
+// must not write once per intermediate height or moving offset.
 scrollToCalls = 0;
 scrollExtent = 5_154;
 scrollElement.scrollTop = 0;
 await act(async () => arbiter?.scrollToBottom());
-for (const extent of [3_467, 6_785, 7_728, 5_525, 4_869]) {
-  scrollExtent = extent;
+for (const extent of [3_467, 6_785, 7_728, 5_525, 4_869]) { scrollExtent = extent;
   scrollElement.scrollTop = Math.min(scrollElement.scrollTop, scrollExtent - scrollElement.clientHeight);
-  await act(async () => arbiter?.followGrowingTail());
-  await flushFrames();
-}
+  await act(async () => arbiter?.followGrowingTail()); await flushFrames(); }
 for (let i = 0; i < 30; i += 1) { scrollElement.scrollTop -= 2; await advanceClock(40); }
 check(scrollToCalls === 0, "jump-tail confirmation waits for a stable native offset"); await advanceClock(80); await advanceClock(360);
 for (let i = 0; i < 75; i += 1) { scrollElement.scrollTop -= 1; await advanceClock(40); } check(scrollToCalls === 0, "ordinary post-handoff offsets do not restart tail settling");
 await advanceClock(400); await advanceClock(400); for (let i = 0; i < 6; i += 1) await flushFrames();
 check(scrollToCalls <= 4, `one jump-bottom transaction emits at most four bounded writes (${scrollToCalls})`);
-check(
-  scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight,
-  `the bounded jump-bottom transaction still converges on the final native bottom (${scrollElement.scrollTop}/${scrollExtent - scrollElement.clientHeight})`,
-);
+check(scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight,
+  `the bounded jump-bottom transaction still converges on the final native bottom (${scrollElement.scrollTop}/${scrollExtent - scrollElement.clientHeight})`);
 
 // Defer the confirmation until pending Markdown geometry settles.
 const pendingGeometry = document.createElement("div");
@@ -358,20 +300,15 @@ check(scrollToCalls === 2 && scrollToIndexCalls === postMeasureIndexWrites, "pos
 check(scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight, "post-measure verification restores the real native tail");
 await advanceClock(400); check(scrollToCalls === 2, "a stable native tail ends the bounded verification transaction");
 
-// Aggregate list-height observations are diagnostics only. A real itemSize
-// measurement earns one revision after a quiet stable window; this prevents a
-// tail write from changing the mount window and feeding a new write loop.
+// Aggregate list heights are diagnostics; a real itemSize measurement earns
+// one revision after a quiet window and cannot feed a tail-write loop.
 scrollExtent = 500; scrollElement.scrollTop = 400;
-await act(async () => arbiter?.reset());
-await act(async () => arbiter?.observeListHeight(500));
+await act(async () => arbiter?.reset()); await act(async () => arbiter?.observeListHeight(500));
 scrollToCalls = 0; scrollExtent = 805;
-await act(async () => arbiter?.observeListHeight(805));
-for (let i = 0; i < 6; i += 1) await flushFrames();
+await act(async () => arbiter?.observeListHeight(805)); for (let i = 0; i < 6; i += 1) await flushFrames();
 check(scrollToCalls === 0, "Virtuoso total-height observation does not directly write");
-await act(async () => arbiter?.noteGeometryChange("row-measure"));
-check(scrollToCalls === 0, "a real row measurement waits for stable geometry");
-await advanceClock(80);
-for (let i = 0; i < 6; i += 1) await flushFrames();
+await act(async () => arbiter?.noteGeometryChange("row-measure")); check(scrollToCalls === 0, "a real row measurement waits for stable geometry");
+await advanceClock(80); for (let i = 0; i < 6; i += 1) await flushFrames();
 check(scrollToCalls === 1, "a stable real row measurement earns one tail write");
 check(scrollElement.scrollTop === 705, "the late size-tree revision converges to the native bottom");
 
@@ -754,6 +691,72 @@ await flushFrames();
 check(scrollToBottomCalls === scrollToBottomBeforeSnapshot + 3, "a disjoint snapshot-less first mount settles at the bottom");
 stubSnapshot = null;
 
+// A prepended turn may reuse the mounted process id while its content patches.
+const duplicateCurrent: Item[] = [
+  { kind: "user", id: "u-duplicate-current", text: "current" }, { kind: "phase", id: "duplicate-process-id", text: "working" },
+];
+const duplicateOptions = { folds: EMPTY_FOLDS, foldPreference: "auto" as const, hasOlderHistory: false, creationMode: false, turnForUser: () => undefined };
+const duplicateBeforeRows = buildTranscriptRows(buildTurnModels(duplicateCurrent), duplicateOptions);
+const duplicateAfterRows = buildTranscriptRows(buildTurnModels([
+  { kind: "user", id: "u-duplicate-older", text: "older" }, { kind: "phase", id: "duplicate-process-id", text: "older work" },
+  { kind: "assistant", id: "a-duplicate-older", text: "older answer", reasoning: "", streaming: false }, duplicateCurrent[0],
+  { ...duplicateCurrent[1], text: "working with a late patch" } as Item,
+  { kind: "assistant", id: "a-duplicate-current", text: "late outside answer", reasoning: "", streaming: false },
+]), duplicateOptions);
+const duplicateBeforeHeader = duplicateBeforeRows.find((row) => row.kind === "process-header")!;
+const duplicateAfterHeader = duplicateAfterRows.find((row) => row.kind === "process-header" && "segment" in row
+  && row.segment.processItems.some((item) => item.kind === "phase" && item.text.includes("late patch")))!;
+check(duplicateAfterHeader.key === duplicateBeforeHeader.key, "prepend plus outside-content patch preserves the mounted duplicate-process row key");
+const duplicateMeasurements = createTranscriptMeasuredSizes();
+const duplicateEnvironment = { contentWidth: 800, typographySignature: "race-test" };
+duplicateMeasurements.recordGeometry("duplicate-session", { rowKey: String(duplicateBeforeHeader.key), kind: duplicateBeforeHeader.kind,
+  layoutVariant: duplicateBeforeHeader.layoutVariant, height: 144, environment: duplicateEnvironment,
+  measurementVersion: transcriptRowMeasurementVersion(duplicateBeforeHeader) });
+check(duplicateMeasurements.synthesizeDetailed("duplicate-session", [duplicateBeforeHeader], duplicateEnvironment).estimateSources[0] === "exact", "the mounted duplicate-process row reuses its exact measured height before the patch");
+check(duplicateMeasurements.synthesizeDetailed("duplicate-session", [duplicateAfterHeader], duplicateEnvironment).estimateSources[0] !== "exact", "the late process patch invalidates only its stale measurement version");
+await switchSurface("surface-duplicate-process", duplicateBeforeRows);
+await act(async () => arbiter?.releaseTailFollow());
+scrollElement.scrollTop = 160; const duplicateResetKey = integrity?.resetKey;
+scrollWrites.length = 0; scrollByCalls = 0; scrollToCalls = 0; scrollToIndexCalls = 0;
+await act(async () => root.render(<Probe surfaceKey="surface-duplicate-process" rows={duplicateAfterRows} />));
+await flushFrames();
+check(integrity?.resetKey === duplicateResetKey, "prepend plus outside-content patch keeps the Virtuoso generation mounted");
+check(scrollElement.scrollTop === 160, "prepend plus outside-content patch preserves the reader viewport");
+check(scrollByCalls === 0 && scrollToCalls === 0 && scrollToIndexCalls === 0 && scrollWrites.length === 0,
+  "prepend plus outside-content patch emits no recovery or direct scroll writes");
+
+// Imported pages may also repeat user/assistant ids. The already mounted
+// current turn keeps its unsuffixed keys while older duplicates receive stable
+// identity hashes, so the prepend does not reset the reader's surface.
+const duplicateTurnCurrent: Item[] = [
+  { kind: "user", id: "duplicate-turn-user", text: "current", createdAt: 200 },
+  { kind: "assistant", id: "duplicate-turn-answer", text: "current answer", reasoning: "", streaming: false },
+];
+const duplicateTurnBeforeRows = buildTranscriptRows(buildTurnModels(duplicateTurnCurrent), duplicateOptions);
+const duplicateTurnAfterRows = buildTranscriptRows(buildTurnModels([
+  { kind: "user", id: "duplicate-turn-user", text: "older", createdAt: 100, historyTurn: 1 },
+  { kind: "assistant", id: "duplicate-turn-answer", text: "older answer", reasoning: "", streaming: false },
+  ...duplicateTurnCurrent,
+]), duplicateOptions);
+const duplicateTurnBeforeKeys = duplicateTurnBeforeRows.map((row) => row.key);
+const duplicateTurnCurrentKeys = duplicateTurnAfterRows.filter((row) =>
+  (row.kind === "user" && row.item.text === "current")
+  || (row.kind === "answer" && row.item.text === "current answer")
+).map((row) => row.key);
+check(JSON.stringify(duplicateTurnCurrentKeys) === JSON.stringify(duplicateTurnBeforeKeys),
+  "prepending duplicate turn ids preserves every mounted current-turn row key");
+check(duplicateTurnAfterRows.slice(0, 2).every((row) => String(row.key).includes("@") && !String(row.key).includes("#")),
+  "older duplicate turn rows use immutable identity hashes instead of occurrence suffixes");
+await switchSurface("surface-duplicate-turn", duplicateTurnBeforeRows);
+await act(async () => arbiter?.releaseTailFollow());
+scrollElement.scrollTop = 180; const duplicateTurnResetKey = integrity?.resetKey;
+scrollWrites.length = 0; scrollByCalls = 0; scrollToCalls = 0; scrollToIndexCalls = 0;
+await act(async () => root.render(<Probe surfaceKey="surface-duplicate-turn" rows={duplicateTurnAfterRows} />));
+await flushFrames();
+check(integrity?.resetKey === duplicateTurnResetKey, "duplicate turn prepend keeps the Virtuoso generation mounted");
+check(scrollElement.scrollTop === 180, "duplicate turn prepend preserves the reader viewport");
+check(scrollByCalls === 0 && scrollToCalls === 0 && scrollToIndexCalls === 0 && scrollWrites.length === 0,
+  "duplicate turn prepend emits no recovery or direct scroll writes");
 // A 10,000-row generation gets only one keyed reset and one bounded probe.
 const longRows: TranscriptRow[] = Array.from({ length: 10_000 }, (_, index) => ({
   kind: "answer", key: `long-${index}`,
@@ -786,9 +789,7 @@ await triggerWatchdogRebuild();
 check(integrity?.resetKey !== nextGenerationResetBefore, "a changed 10,000-row generation receives a fresh hard-reset budget");
 
 await act(async () => root.unmount());
-Date.now = originalDateNow;
-dom.window.setTimeout = originalSetTimeout;
-dom.window.clearTimeout = originalClearTimeout;
+restoreClock();
 dom.window.close();
 
 if (failed > 0) {
