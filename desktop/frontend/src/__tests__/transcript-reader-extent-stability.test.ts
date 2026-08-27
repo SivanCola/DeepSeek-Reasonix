@@ -6,6 +6,7 @@ import {
   createTranscriptReaderExtentGuard,
   extendTranscriptReaderExtentGuard,
   observeTranscriptReaderExtent,
+  resolveTranscriptReaderPaintedReverse,
   resolveTranscriptReaderExtentCorrection,
   transcriptScrollEventCancelsReaderExtentGuard,
   transcriptKeyboardScrollDelta,
@@ -18,6 +19,12 @@ console.log("\ntranscript reader extent stability");
 assert.equal(transcriptReaderPaintedSlideIsAdjacent(690, 596), true);
 assert.equal(transcriptReaderPaintedSlideIsAdjacent(17_588, 596), false,
   "a multi-range replacement is not an adjacent painted-frame correction");
+const newestPaintedReverse = resolveTranscriptReaderPaintedReverse(
+  [new Map([["newest", -21]]), new Map([["stale", -900]])],
+  new Map([["newest", 552], ["stale", 400]]), 1,
+);
+assert.equal(newestPaintedReverse?.screenDelta, 573,
+  "an older retained range cannot mask the newest repairable reverse frame");
 
 const reported = createTranscriptReaderExtentGuard(
   { scrollTop: 14_567.47, scrollHeight: 15_829, clientHeight: 725 },

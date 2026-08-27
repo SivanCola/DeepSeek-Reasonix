@@ -187,11 +187,13 @@
     kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent,
     self.window.windowNumber
   );
-  // Route the native NSEvent through NSWindow's ordinary hit-test path. Calling
-  // WKWebView's outer responder directly reaches WebContent but can skip the
-  // default scroll target on headless CI hosts.
+  // Resolve the native content responder from the page-provided view point.
+  // A hosted runner can deliver the wheel event to WebContent while its global
+  // window coordinate misses the default scroll target; view-local hit testing
+  // keeps the event on WKWebView's native responder path.
   NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
-  if (event != nil) [self.window sendEvent:event];
+  NSView *target = [self.webView hitTest:viewPoint] ?: self.webView;
+  if (event != nil) [target scrollWheel:event];
   CFRelease(cgEvent);
 }
 

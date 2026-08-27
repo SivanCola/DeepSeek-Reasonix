@@ -6,6 +6,7 @@ import {
   MIN_REVERSE_JUMP_PX,
   observeTranscriptReaderExtent,
   retainTranscriptReaderPaintedBaseline,
+  resolveTranscriptReaderPaintedReverse,
   resolveTranscriptReaderExtentCorrection,
   transcriptReaderDirectionHandoffBaseline,
   transcriptReaderPaintedRangeReplaced,
@@ -16,7 +17,7 @@ import {
   transcriptReaderExtentCanCorrect,
   transcriptReaderExtentHasCollapsed,
   transcriptReaderExtentReverseDelta,
-  type TranscriptExtentSnapshot,
+  type TranscriptExtentSnapshot, type TranscriptReaderPaintedReverse,
   type TranscriptReaderExtentGuard,
 } from "./transcriptReaderExtentStability";
 import type { TranscriptScrollMode } from "./transcriptScrollArbiter";
@@ -80,15 +81,6 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   pinLastHeight?: number;
 };
 
-type PaintedReaderReverse = {
-  delta: number;
-  /** Median viewport-relative slide of shared rows without gesture-direction
-   * weighting; positive means content moved down-screen. */
-  screenDelta: number;
-  rowKey: string;
-  currentOffset: number;
-};
-
 function capturePaintedReaderRows(element: HTMLDivElement): ReadonlyMap<string, number> {
   const viewport = element.getBoundingClientRect();
   const rows = new Map<string, number>();
@@ -115,25 +107,6 @@ function promotePaintedReaderRows(
     guard.paintedHistory = [guard.paintedRows, ...guard.paintedHistory].slice(0, 3);
   }
   guard.paintedRows = next;
-}
-
-function paintedReaderReverse(
-  guard: ActiveReaderExtentGuard,
-  current: ReadonlyMap<string, number>,
-): PaintedReaderReverse | undefined {
-  let strongest: PaintedReaderReverse | undefined;
-  for (const paintedRows of [guard.paintedRows, ...guard.paintedHistory]) {
-    const common = [...current].flatMap(([rowKey, currentOffset]) => {
-      const previousOffset = paintedRows.get(rowKey);
-      return previousOffset === undefined
-        ? []
-        : [{ screenDelta: currentOffset - previousOffset, rowKey, currentOffset }];
-    }).map((entry) => ({ ...entry, delta: guard.direction * entry.screenDelta }))
-      .sort((left, right) => left.screenDelta - right.screenDelta);
-    const candidate = common[Math.floor(common.length / 2)];
-    if (candidate && (!strongest || Math.abs(candidate.screenDelta) > Math.abs(strongest.screenDelta))) strongest = candidate;
-  }
-  return strongest;
 }
 
 function readerAnchorOffset(element: HTMLDivElement, rowKey: string): number | undefined {
@@ -309,7 +282,7 @@ export function useTranscriptReaderExtentStability({
     active: ActiveReaderExtentGuard,
     element: HTMLDivElement,
     snapshot: TranscriptExtentSnapshot,
-    paintedReverse?: PaintedReaderReverse,
+    paintedReverse?: TranscriptReaderPaintedReverse,
     viewportBlank = false,
   ): boolean => {
     const heightDelta = active.pinLastHeight === undefined
@@ -377,7 +350,7 @@ export function useTranscriptReaderExtentStability({
     guard: ActiveReaderExtentGuard,
     element: HTMLDivElement,
     currentAnchorOffset?: number,
-    paintedReverse?: PaintedReaderReverse,
+    paintedReverse?: TranscriptReaderPaintedReverse,
   ) => {
     const reverseDelta = Math.max(
       transcriptReaderExtentReverseDelta(guard, element),
@@ -408,7 +381,7 @@ export function useTranscriptReaderExtentStability({
     element: HTMLDivElement,
     snapshot: TranscriptExtentSnapshot,
     currentAnchorOffset?: number,
-    paintedReverse?: PaintedReaderReverse,
+    paintedReverse?: TranscriptReaderPaintedReverse,
     requiresVirtuosoSync = false,
   ) => {
     reportAnomaly(active, element, currentAnchorOffset, paintedReverse);
@@ -521,7 +494,9 @@ export function useTranscriptReaderExtentStability({
     const currentAnchorOffset = anchorOffset(guard, element);
     const previousAcceptedTop = guard.acceptedTop;
     const currentPaintedRows = viewportBlank ? undefined : capturePaintedReaderRows(element);
-    const paintedReverse = currentPaintedRows ? paintedReaderReverse(guard, currentPaintedRows) : undefined;
+    const paintedReverse = currentPaintedRows ? resolveTranscriptReaderPaintedReverse(
+      [guard.paintedRows, ...guard.paintedHistory], currentPaintedRows, guard.direction,
+    ) : undefined;
     const requiresVirtuosoSync = currentPaintedRows !== undefined
       && currentPaintedRows.size > 0
       && guard.paintedRows.size > 0
@@ -606,7 +581,9 @@ export function useTranscriptReaderExtentStability({
       const currentAnchorOffset = anchorOffset(active, element);
       const previousAcceptedTop = active.acceptedTop;
       const currentPaintedRows = viewportBlank ? undefined : capturePaintedReaderRows(element);
-      const paintedReverse = currentPaintedRows ? paintedReaderReverse(active, currentPaintedRows) : undefined;
+      const paintedReverse = currentPaintedRows ? resolveTranscriptReaderPaintedReverse(
+        [active.paintedRows, ...active.paintedHistory], currentPaintedRows, active.direction,
+      ) : undefined;
       const requiresVirtuosoSync = currentPaintedRows !== undefined
         && currentPaintedRows.size > 0
         && active.paintedRows.size > 0
@@ -739,7 +716,10 @@ export function useTranscriptReaderExtentStability({
     const activeBeforeDelivery = guardRef.current;
     const visualReverseBeforeDelivery = activeBeforeDelivery?.element === element
       && activeBeforeDelivery.generation === generation
-      ? paintedReaderReverse(activeBeforeDelivery, capturePaintedReaderRows(element))
+      ? resolveTranscriptReaderPaintedReverse(
+        [activeBeforeDelivery.paintedRows, ...activeBeforeDelivery.paintedHistory],
+        capturePaintedReaderRows(element), activeBeforeDelivery.direction,
+      )
       : undefined;
     // A measured range replacement can lower native scrollTop while moving
     // every shared row down-screen. That is layout-owned reverse motion, not

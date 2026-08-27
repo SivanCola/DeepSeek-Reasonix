@@ -8,6 +8,34 @@ export function transcriptReaderPaintedSlideIsAdjacent(screenDelta: number, clie
   return Math.abs(screenDelta) <= clientHeight * MAX_ADJACENT_PAINTED_SLIDE_VIEWPORTS;
 }
 
+export type TranscriptReaderPaintedReverse = {
+  delta: number;
+  screenDelta: number;
+  rowKey: string;
+  currentOffset: number;
+};
+
+/** Prefer the newest reverse frame; older retained ranges are only
+ * fallbacks when the current Virtuoso window shares no useful row. */
+export function resolveTranscriptReaderPaintedReverse(
+  previous: readonly ReadonlyMap<string, number>[],
+  current: ReadonlyMap<string, number>,
+  direction: -1 | 1,
+): TranscriptReaderPaintedReverse | undefined {
+  let fallback: TranscriptReaderPaintedReverse | undefined;
+  for (const paintedRows of previous) {
+    const common = [...current].flatMap(([rowKey, currentOffset]) => {
+      const previousOffset = paintedRows.get(rowKey);
+      return previousOffset === undefined ? [] : [{ screenDelta: currentOffset - previousOffset, rowKey, currentOffset }];
+    }).map((entry) => ({ ...entry, delta: direction * entry.screenDelta }))
+      .sort((left, right) => left.screenDelta - right.screenDelta);
+    const candidate = common[Math.floor(common.length / 2)];
+    if (candidate && candidate.delta >= MIN_REVERSE_JUMP_PX) return candidate;
+    fallback ??= candidate;
+  }
+  return fallback;
+}
+
 export function transcriptReaderPaintedRangesShareRow(
   previous: ReadonlyMap<string, unknown>,
   next: ReadonlyMap<string, unknown>,

@@ -286,8 +286,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // 2442.994 KiB; retain about 0.1 KiB of raw/toolchain headroom.
 // Preserving the prior painted candidate and deferring mouse-pointer release
 // to Chromium's compatibility mouseup with a missing-event fallback measure
-// 2443.3 KiB. Keep the same bounded 0.1 KiB allowance for these native-input
-// terminal invariants.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_443.4 : 2_443.4;
+// 2443.3 KiB. Preferring the newest repairable painted frame over stale range
+// history measures 2443.477 KiB; retain about 0.12 KiB of raw/toolchain
+// headroom for these native-input terminal invariants.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_443.6 : 2_443.6;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

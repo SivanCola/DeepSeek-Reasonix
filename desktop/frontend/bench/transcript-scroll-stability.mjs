@@ -1579,7 +1579,7 @@ try {
           && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
       });
     } catch (error) {
-      const release = await transcript.evaluate((element) => ({
+      const release = await transcript.evaluate((element, context) => ({
         mode: element.dataset.scrollMode,
         distance: element.scrollHeight - element.scrollTop - element.clientHeight,
         readerIntent: element.dataset.transcriptReaderIntent,
@@ -1588,10 +1588,10 @@ try {
         scrollTop: element.scrollTop,
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
-        beforeRelease: bottomThumbBeforeRelease,
-        motions: bottomThumb.motions,
+        beforeRelease: context.beforeRelease,
+        motions: context.motions,
         events: window.__nativeBottomEvents ?? [],
-      }));
+      }), { beforeRelease: bottomThumbBeforeRelease, motions: bottomThumb.motions });
       throw new Error(`native bottom-thumb release did not settle: ${JSON.stringify(release)}`, { cause: error });
     }
     assert(true, "native thumb release transfers to tail-follow after two stable bottom samples");
