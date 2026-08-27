@@ -196,8 +196,9 @@ export function useTranscriptScrollArbiter({
     modeRef.current = state.mode;
     pinnedRef.current = state.mode === "tail-follow";
     setReaderBuffering((active) => transcriptReaderBufferingForMode(active, state.mode, eventType));
-    // Keep jump-bottom manual-only while tail-follow repairs footer resize gaps.
-    setIsAtBottom(state.atBottom || state.mode === "tail-follow");
+    // Publish committed tail ownership; physical coincidence in manual mode
+    // must keep the explicit jump-bottom path available.
+    setIsAtBottom(state.mode === "tail-follow");
     if (scrollRef.current) {
       scrollRef.current.dataset.scrollMode = state.mode;
       scrollRef.current.dataset.transcriptReaderIntent = state.readerIntent ? "true" : "false";

@@ -54,6 +54,25 @@
     });
   };
 
+  const outerReaderPoint = (element) => {
+    const viewport = element.getBoundingClientRect();
+    for (const row of visibleRows(element)) {
+      const rect = row.getBoundingClientRect();
+      const visibleTop = Math.max(viewport.top, rect.top);
+      const visibleBottom = Math.min(viewport.bottom, rect.bottom);
+      if (visibleBottom - visibleTop < 2) continue;
+      const y = visibleTop + (visibleBottom - visibleTop) / 2;
+      // Match the browser gate: row padding is owned by Transcript, while
+      // code/table descendants may own their own nested scrollports.
+      for (const x of [rect.left + 16, rect.right - 16]) {
+        if (document.elementFromPoint(x, y) === row) {
+          return { x: Math.round(x), y: Math.round(y) };
+        }
+      }
+    }
+    return null;
+  };
+
   const scheduleSample = () => {
     requestAnimationFrame(() => window.setTimeout(sample, 0));
   };
@@ -245,11 +264,12 @@
     state.phase = "ready";
     state.growthTimer = window.setInterval(growFooter, 16);
     scheduleSample();
-    const rect = element.getBoundingClientRect();
+    const point = outerReaderPoint(element);
+    if (!point) throw new Error("native transcript outer reader target is unavailable");
     post({
       type: "ready",
       rows: Number.parseInt(element.dataset.transcriptRowCount ?? "0", 10),
-      point: { x: Math.round(rect.left + 24), y: Math.round(rect.top + rect.height / 2) },
+      point,
     });
   };
 

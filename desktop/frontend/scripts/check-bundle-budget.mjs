@@ -164,9 +164,10 @@ console.log("\nbundle budgets");
 // to the always-mounted footer path. Keep the state/routing guard with a narrow
 // ratchet rather than showing idle restored work as actively running. The
 // main-v2-only path measures 445.9 KiB. The integrated transcript and remote
-// changes measure 454.7 KiB; retain only about 0.1 KiB of bounded toolchain
-// headroom over that combined result.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 454.8 : 454.8;
+// changes measure 454.7 KiB. Synchronizing no-common reader ranges, rejecting
+// non-adjacent painted ranges, and limiting pins to extent-backed slides
+// measures 454.998 KiB; retain about 0.10 KiB of toolchain headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 455.1 : 455.1;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -271,8 +272,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Runtime-aware Todo status and exact-tab continuation then add to the same
 // initial path. The main-v2-only payload measures 2406.2 KiB. The integrated
 // payload measures 2441.2 KiB. Retaining the last painted reader baseline
-// across several same-offset range candidates brings that path to 2441.4 KiB;
-// retain only about 0.1 KiB of raw/toolchain headroom for all three owners.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_441.5 : 2_441.5;
+// across several same-offset range candidates brings that path to 2441.4 KiB.
+// Synchronizing a fully replaced occupied range, rejecting non-adjacent
+// painted candidates, and retaining user-owned stable-extent slides measures
+// 2442.144 KiB; retain about 0.056 KiB of raw/toolchain headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_442.2 : 2_442.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

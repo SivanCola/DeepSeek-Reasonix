@@ -189,12 +189,12 @@ check(
 );
 rowElement.getBoundingClientRect = () => rectAt(200);
 
-// The native extent is authoritative even when Virtuoso reports a stale
-// logical atBottom value after delayed row measurement.
+// Native extent stays authoritative when delayed row measurement leaves Virtuoso's logical atBottom stale.
 scrollElement.scrollTop = 400;
 await act(async () => arbiter?.atBottomStateChange(false));
 check(arbiter?.isAtBottom === true, "physical bottom overrides a stale Virtuoso atBottom=false report");
-
+await act(async () => arbiter?.releaseTailFollow());
+check(arbiter?.isAtBottom === false, "manual ownership remains explicit when its native offset happens to be at bottom");
 // A nested code/tool scrollport owns the wheel until it reaches its edge.
 // Capturing the event on Transcript must not release tail-follow early.
 const nestedScroller = dom.window.document.createElement("div");

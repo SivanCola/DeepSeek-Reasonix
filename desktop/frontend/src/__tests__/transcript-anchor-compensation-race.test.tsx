@@ -580,16 +580,28 @@ try {
     await act(async () => arbiter?.observeReaderExtent());
     const pinWrites = scrollWrites.filter((write) => write.owner === "reader-stability");
     check(pinWrites.length === 1
-      && pinWrites[0]?.kind === "scrollToIndex"
-      && pinWrites[0]?.index === 11
-      && pinWrites[0]?.offset === -420,
-      "one frozen-offset extent slide restores the shared row's prior viewport offset");
+      && pinWrites[0]?.kind === "scrollTo"
+      && pinWrites[0]?.top === 1_880,
+      "one frozen-offset extent slide synchronizes Virtuoso and native pixels without an indexed remount");
     const followupBefore = scrollWrites.filter((write) => write.owner === "reader-stability").length;
     await act(async () => arbiter?.observeReaderExtent());
     check(
       scrollWrites.filter((write) => write.owner === "reader-stability").length <= followupBefore + 1,
       "a settled pin does not replay against its acknowledged target",
     );
+
+    await act(async () => arbiter?.reset());
+    scrollExtent = 6_000;
+    scrollElement.scrollTop = 2_000;
+    pinnedRowTop = 100;
+    scrollWrites.length = 0;
+    await act(async () => arbiter?.releaseTailFollow());
+    await wheel(-400);
+    await flushFrames();
+    pinnedRowTop += 400;
+    await act(async () => arbiter?.observeReaderExtent());
+    check(scrollWrites.every((write) => write.owner !== "reader-stability"),
+      "a stable-extent range slide remains user-owned instead of cancelling upward input");
   } finally {
     scrollElement.getBoundingClientRect = originalScrollRect;
     Object.defineProperty(scrollElement, "clientHeight", originalClientDescriptor);

@@ -9,10 +9,15 @@ import {
   resolveTranscriptReaderExtentCorrection,
   transcriptScrollEventCancelsReaderExtentGuard,
   transcriptKeyboardScrollDelta,
+  transcriptReaderPaintedSlideIsAdjacent,
   transcriptReaderExtentCanCorrect,
 } from "../lib/transcriptReaderExtentStability";
 
 console.log("\ntranscript reader extent stability");
+
+assert.equal(transcriptReaderPaintedSlideIsAdjacent(690, 596), true);
+assert.equal(transcriptReaderPaintedSlideIsAdjacent(17_588, 596), false,
+  "a multi-range replacement is not an adjacent painted-frame correction");
 
 const reported = createTranscriptReaderExtentGuard(
   { scrollTop: 14_567.47, scrollHeight: 15_829, clientHeight: 725 },

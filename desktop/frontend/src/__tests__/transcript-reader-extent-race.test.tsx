@@ -81,6 +81,7 @@ Object.defineProperty(scrollElement, "scrollTop", { configurable: true, writable
 
 let scrollByCalls = 0;
 let lastScrollByTop = 0;
+let virtuosoScrollToCalls = 0;
 dom.window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
   scrollWrites.push(write);
   if (write.owner === "reader-stability") {
@@ -93,7 +94,7 @@ const virtuosoHandle = {
   // observes the accepted correction instead of replaying a test-only stale
   // scrollTop value.
   scrollBy: ({ top }: { top: number }) => { scrollElement.scrollTop += top; },
-  scrollTo: ({ top }: { top: number }) => { scrollElement.scrollTop = top; },
+  scrollTo: ({ top }: { top: number }) => { virtuosoScrollToCalls += 1; scrollElement.scrollTop = top; },
   scrollToIndex: () => {},
   getState: () => {},
 } as unknown as VirtuosoHandle;
@@ -685,15 +686,15 @@ try {
   replacementRow.replaceWith(rowElement);
 }
 
-// Hosted WKWebView can deliver a native range reset whose scrollTop moves
-// backwards by the length of the loaded window and exposes no mounted row.
-// Restore the last requested logical position synchronously; the empty native
-// coordinate must never become the pending correction target.
+// Hosted WKWebView can replace every occupied row while pulling native
+// scrollTop backwards. A pixel-only correction cannot remount that logical
+// range, so the same writer transaction must synchronize Virtuoso too.
 await act(async () => arbiter?.reset());
-scrollExtent = 21_689;
+scrollExtent = 24_514;
 Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 596 });
-scrollElement.scrollTop = 18_553;
-rowElement.getBoundingClientRect = () => rectAt(-26);
+scrollElement.scrollTop = 23_874;
+rowElement.dataset.rowKey = "row-612";
+rowElement.getBoundingClientRect = () => rectAt(-21);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
 await act(async () => arbiter?.onWheelIntent({
@@ -705,14 +706,16 @@ await act(async () => arbiter?.onWheelIntent({
 } as React.WheelEvent<HTMLElement>));
 scrollWrites.length = 0;
 scrollByCalls = 0;
-scrollExtent = 21_918;
-scrollElement.scrollTop = 1_323;
-rowElement.getBoundingClientRect = () => rectAt(900);
-await act(async () => arbiter?.deliverScroll());
-check(scrollByCalls === 1 && lastScrollByTop === 17_254,
-  `a catastrophic reverse blank restores the requested logical position (${lastScrollByTop}px)`);
-check(scrollElement.scrollTop === 18_577,
-  "the reverse blank is corrected before it can become a painted reader baseline");
+const syncCallsBeforeReplacement = virtuosoScrollToCalls;
+replacementRow.dataset.rowKey = "row-574";
+replacementRow.getBoundingClientRect = () => rectAt(-9);
+rowElement.replaceWith(replacementRow);
+scrollElement.scrollTop = 22_558;
+await act(async () => arbiter?.observeReaderExtent());
+check(virtuosoScrollToCalls === syncCallsBeforeReplacement + 1,
+  "a no-common occupied range correction synchronizes Virtuoso and native pixels");
+replacementRow.replaceWith(rowElement);
+rowElement.dataset.rowKey = "row-a";
 
 // Near-bottom input uses the same reader transaction as every other logical
 // position. A synthetic >96px reverse displacement must be rejected instead

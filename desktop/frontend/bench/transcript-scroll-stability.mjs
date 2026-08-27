@@ -562,6 +562,13 @@ try {
   // Resolve and click in one browser task. A final reader correction can
   // legitimately remove this conditional control between Playwright's
   // isVisible() and click() calls when it has already committed the tail.
+  await page.waitForFunction(() => {
+    const element = document.querySelector(".transcript");
+    return document.querySelector(".transcript__jump-bottom")?.isConnected
+      || (element instanceof HTMLElement
+        && element.dataset.scrollMode === "tail-follow"
+        && element.scrollHeight - element.scrollTop - element.clientHeight <= 4);
+  }, undefined, { timeout: 5_000 }).catch(() => {});
   const streamingTailAction = await transcript.evaluate((element) => {
     const button = document.querySelector(".transcript__jump-bottom");
     if (button instanceof HTMLButtonElement && button.isConnected) {
@@ -571,9 +578,10 @@ try {
     return element.dataset.scrollMode === "tail-follow"
       && element.scrollHeight - element.scrollTop - element.clientHeight <= 4
       ? "already-tail"
-      : "missing";
+      : `missing:${element.dataset.scrollMode}:${element.scrollHeight - element.scrollTop - element.clientHeight}`;
   });
-  assert(streamingTailAction !== "missing", "streaming fixture either exposes a connected jump-bottom control or is already committed at the physical tail");
+  assert(!streamingTailAction.startsWith("missing:"),
+    `streaming fixture either exposes a connected jump-bottom control or is already committed at the physical tail (${streamingTailAction})`);
   await page.waitForFunction(() => {
     const element = document.querySelector(".transcript");
     return element instanceof HTMLElement

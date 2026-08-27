@@ -22,6 +22,18 @@
 
 @implementation ReasonixTranscriptSmokeHost
 
+- (void)ensureInteractionFocus {
+  if (NSApp.isActive && self.window.isKeyWindow) return;
+  [self.window orderFrontRegardless];
+  [self.window makeMainWindow];
+  [self.window makeKeyWindow];
+  [self.window makeFirstResponder:self.webView];
+  // This executable is a native-input test host, not the product process.
+  // Reclaiming focus keeps a long wheel workload deterministic if another
+  // runner window becomes active between its ready and finish boundaries.
+  [NSApp activateIgnoringOtherApps:YES];
+}
+
 - (void)finishWithResult:(NSString *)result {
   if (self.done) return;
   self.done = YES;
@@ -128,11 +140,7 @@
     const CGFloat x = [point[@"x"] respondsToSelector:@selector(doubleValue)] ? [point[@"x"] doubleValue] : NSMidX(self.webView.bounds);
     const CGFloat y = [point[@"y"] respondsToSelector:@selector(doubleValue)] ? [point[@"y"] doubleValue] : NSMidY(self.webView.bounds);
     self.transcriptPoint = NSMakePoint(x, NSHeight(self.webView.bounds) - y);
-    [self.window orderFrontRegardless];
-    [self.window makeMainWindow];
-    [self.window makeKeyWindow];
-    [self.window makeFirstResponder:self.webView];
-    [NSApp activate];
+    [self ensureInteractionFocus];
     // The contract waits for settled Virtuoso geometry before posting ready.
     // Re-establish native focus at that boundary instead of relying on the
     // workflow's earlier best-effort app activation.
@@ -156,6 +164,7 @@
 }
 
 - (void)dispatchWheelDelta:(int32_t)delta atViewPoint:(NSPoint)viewPoint {
+  [self ensureInteractionFocus];
   CGEventRef cgEvent = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 1, delta);
   if (cgEvent == NULL) return;
   NSPoint windowPoint = [self.webView convertPoint:viewPoint toView:nil];

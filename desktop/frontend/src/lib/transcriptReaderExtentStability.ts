@@ -2,6 +2,19 @@ import type { TranscriptLayoutAnchor } from "./transcriptVirtuosoRecovery";
 import type { TranscriptScrollEvent } from "./transcriptScrollArbiter";
 
 export const MIN_REVERSE_JUMP_PX = 96;
+const MAX_ADJACENT_PAINTED_SLIDE_VIEWPORTS = 1.5;
+
+export function transcriptReaderPaintedSlideIsAdjacent(screenDelta: number, clientHeight: number) {
+  return Math.abs(screenDelta) <= clientHeight * MAX_ADJACENT_PAINTED_SLIDE_VIEWPORTS;
+}
+
+export function transcriptReaderPaintedRangesShareRow(
+  previous: ReadonlyMap<string, unknown>,
+  next: ReadonlyMap<string, unknown>,
+) {
+  for (const rowKey of next.keys()) if (previous.has(rowKey)) return true;
+  return false;
+}
 
 export function transcriptReaderPaintedRangeReplaced(
   previous: ReadonlyMap<string, unknown>,

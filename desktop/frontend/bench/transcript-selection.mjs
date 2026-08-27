@@ -65,6 +65,10 @@ async function clickIfPresent(page, selector) {
 }
 
 async function waitForVisibleSelectionStart(page, { preferHighest, wheelDelta, timeout = 15_000 } = {}) {
+  await page.evaluate(() => {
+    window.__selectionSearchWrites = [];
+    window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => window.__selectionSearchWrites.push(write);
+  });
   const box = await page.locator(".transcript").boundingBox();
   if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   const delta = wheelDelta ?? (preferHighest ? -400 : 400);
@@ -120,6 +124,7 @@ async function waitForVisibleSelectionStart(page, { preferHighest, wheelDelta, t
       scrollHeight: transcript?.scrollHeight ?? null,
       clientHeight: transcript?.clientHeight ?? null,
       mode: transcript?.dataset.scrollMode ?? null,
+      writes: window.__selectionSearchWrites?.slice(-20) ?? [],
       viewport: viewport ? { top: viewport.top, bottom: viewport.bottom } : null,
     };
   });

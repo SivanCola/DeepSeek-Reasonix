@@ -8,6 +8,8 @@ import {
   retainTranscriptReaderPaintedBaseline,
   resolveTranscriptReaderExtentCorrection,
   transcriptReaderPaintedRangeReplaced,
+  transcriptReaderPaintedRangesShareRow,
+  transcriptReaderPaintedSlideIsAdjacent,
   transcriptReaderBlankForwardDelta,
   transcriptReaderAnchorReverseDelta,
   transcriptReaderExtentCanCorrect,
@@ -29,7 +31,6 @@ const READER_EXTENT_ACTIVE_MS = 180;
 // painted slide must dominate it by this ratio to earn a repair, and slides
 // beyond one and a half viewports belong to mounted-range replacement paths.
 const READER_PIN_INPUT_DOMINANCE_RATIO = 4;
-const READER_PIN_MAX_SLIDE_VIEWPORTS = 1.5;
 // Inside one viewport of the physical tail the pinned-tail handoff owns the
 // geometry: reader anchoring there fights Virtuoso's own clamp and wedges
 // manual-mode scrolling (#transcript-selection field replay).
@@ -117,9 +118,8 @@ function promotePaintedReaderRows(
 
 function paintedReaderReverse(
   guard: ActiveReaderExtentGuard,
-  element: HTMLDivElement,
+  current: ReadonlyMap<string, number>,
 ): PaintedReaderReverse | undefined {
-  const current = capturePaintedReaderRows(element);
   let strongest: PaintedReaderReverse | undefined;
   for (const paintedRows of [guard.paintedRows, guard.previousPaintedRows]) {
     if (!paintedRows) continue;
@@ -152,7 +152,7 @@ export function useTranscriptReaderExtentStability({
   generationRef: RefObject<number>;
   modeRef: RefObject<TranscriptScrollMode>;
   scrollRef: RefObject<HTMLDivElement | null>;
-  writeCorrection: (write: TranscriptScrollWriteRecord) => boolean;
+  writeCorrection: (write: TranscriptScrollWriteRecord & { virtuosoSync?: boolean }) => boolean;
   lastWriteOwner: () => string | undefined;
 }) {
   const guardRef = useRef<ActiveReaderExtentGuard | null>(null);
@@ -243,27 +243,30 @@ export function useTranscriptReaderExtentStability({
 
   const acknowledgeCorrection = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement, snapshot: TranscriptExtentSnapshot) => {
     if (guard.pendingCorrectionTop === undefined) return;
+    const pendingAnchor = guard.pendingAnchor;
     const progressPastTarget = guard.direction * (snapshot.scrollTop - guard.pendingCorrectionTop);
     const passedForwardCorrection = progressPastTarget > guard.clientHeight
       && guard.pendingCorrectionForward === true;
     if (progressPastTarget < -2 || (progressPastTarget > guard.clientHeight && !passedForwardCorrection)) return;
-    const pendingAnchor = guard.pendingAnchor;
     if (!passedForwardCorrection && pendingAnchor) {
       const currentOffset = readerAnchorOffset(element, pendingAnchor[0]);
-      if (currentOffset !== undefined) {
-        const expectedOffset = pendingAnchor[1] - (snapshot.scrollTop - guard.pendingCorrectionTop);
-        if (guard.direction * (currentOffset - expectedOffset) >= MIN_REVERSE_JUMP_PX) {
-          // The native offset acknowledged the write in the same delivery
-          // that committed another older Virtuoso range. Keep the correction
-          // anchor long enough for the ordinary anomaly path below to reject
-          // that range; blessing its leading row here would make the visual
-          // reversal the next transaction's baseline.
-          guard.anchor = { mode: "manual", rowKey: pendingAnchor[0], offset: pendingAnchor[1] };
-          guard.anchorScrollTop = guard.pendingCorrectionTop;
-          guard.targetAnchorOffset = pendingAnchor[1];
-          guard.pendingCorrectionAcknowledged = true;
-          return;
-        }
+      // A native offset can acknowledge before Virtuoso remounts the logical
+      // range that owns it. Keep the single-flight correction pending until
+      // its anchor is present; otherwise the replacement range is blessed and
+      // starts a staircase of mutually incompatible pixel targets.
+      if (currentOffset === undefined) return;
+      const expectedOffset = pendingAnchor[1] - (snapshot.scrollTop - guard.pendingCorrectionTop);
+      if (guard.direction * (currentOffset - expectedOffset) >= MIN_REVERSE_JUMP_PX) {
+        // The native offset acknowledged the write in the same delivery
+        // that committed another older Virtuoso range. Keep the correction
+        // anchor long enough for the ordinary anomaly path below to reject
+        // that range; blessing its leading row here would make the visual
+        // reversal the next transaction's baseline.
+        guard.anchor = { mode: "manual", rowKey: pendingAnchor[0], offset: pendingAnchor[1] };
+        guard.anchorScrollTop = guard.pendingCorrectionTop;
+        guard.targetAnchorOffset = pendingAnchor[1];
+        guard.pendingCorrectionAcknowledged = true;
+        return;
       }
     }
     guard.pendingCorrectionTop = undefined;
@@ -309,6 +312,10 @@ export function useTranscriptReaderExtentStability({
     paintedReverse?: PaintedReaderReverse,
     viewportBlank = false,
   ): boolean => {
+    const heightDelta = active.pinLastHeight === undefined
+      ? 0
+      : snapshot.scrollHeight - active.pinLastHeight;
+    active.pinLastHeight = snapshot.scrollHeight;
     if (
       viewportBlank
       || !paintedReverse
@@ -318,42 +325,33 @@ export function useTranscriptReaderExtentStability({
       || Math.abs(paintedReverse.screenDelta) < MIN_REVERSE_JUMP_PX
       || Math.abs(snapshot.scrollHeight - snapshot.scrollTop - snapshot.clientHeight)
         < snapshot.clientHeight * READER_PIN_MIN_TAIL_DISTANCE_VIEWPORTS
+      || !transcriptReaderPaintedSlideIsAdjacent(paintedReverse.screenDelta, snapshot.clientHeight)
+      || Math.abs(heightDelta) < MIN_REVERSE_JUMP_PX
       || Math.abs(paintedReverse.screenDelta)
-        > snapshot.clientHeight * READER_PIN_MAX_SLIDE_VIEWPORTS
+        > Math.abs(heightDelta) + Math.max(8, snapshot.clientHeight * 0.1)
       || Math.abs(paintedReverse.screenDelta)
         < READER_PIN_INPUT_DOMINANCE_RATIO * Math.abs(snapshot.scrollTop - active.baselineScrollTop)
     ) return false;
-    // Commit the correction through Virtuoso itself: aligning the shared
-    // anchor row remounts the window that matches the repaired offset in the
-    // same rendering opportunity, so massed measured-height bursts cannot
-    // leave the native scroller parked inside unmounted territory.
-    const anchorRow = Array.from(element.querySelectorAll<HTMLElement>('.transcript__row[data-row-key]'))
-      .find((candidate) => candidate.dataset.rowKey === paintedReverse.rowKey);
-    const anchorIndex = Number(anchorRow?.dataset.itemIndex);
-    if (!Number.isInteger(anchorIndex)) return false;
     const maxTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
     const pendingTarget = Math.max(0, Math.min(maxTop, snapshot.scrollTop + paintedReverse.screenDelta));
     const correction = pendingTarget - snapshot.scrollTop;
     if (!writeCorrection({
       owner: "reader-stability",
-      kind: "scrollToIndex",
-      index: anchorIndex,
-      // Virtuoso's start-aligned offset is the inverse of the desired
-      // viewport-relative row position. Restore the pre-slide offset instead
-      // of snapping the shared row to the viewport edge.
-      offset: paintedReverse.screenDelta - paintedReverse.currentOffset,
+      kind: "scrollBy",
+      top: paintedReverse.screenDelta,
       source: "layout-height-changed",
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
       bottomDistance: nativeTranscriptDistanceFromBottom(element),
       mode: modeRef.current,
+      virtuosoSync: true,
     })) return false;
     active.pendingCorrectionTop = pendingTarget;
     armPendingRelease(active);
     active.pendingCorrectionForward = correction > 0;
     active.pendingCorrectionAcknowledged = false;
-    active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset];
+    active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset - correction];
     acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
     active.paintedRows = capturePaintedReaderRows(element);
     active.previousPaintedRows = undefined;
@@ -411,6 +409,7 @@ export function useTranscriptReaderExtentStability({
     snapshot: TranscriptExtentSnapshot,
     currentAnchorOffset?: number,
     paintedReverse?: PaintedReaderReverse,
+    requiresVirtuosoSync = false,
   ) => {
     reportAnomaly(active, element, currentAnchorOffset, paintedReverse);
     if (
@@ -427,7 +426,9 @@ export function useTranscriptReaderExtentStability({
     // from rows painted while the native range was clamped must not replace
     // the pre-collapse accepted position with that transient viewport.
     const paintedCorrection = !active.collapsed
-      && paintedReverse && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
+      && paintedReverse
+      && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
+      && transcriptReaderPaintedSlideIsAdjacent(paintedReverse.screenDelta, snapshot.clientHeight)
       ? active.direction * paintedReverse.delta
       : undefined;
     if (
@@ -435,7 +436,9 @@ export function useTranscriptReaderExtentStability({
       && !transcriptReaderExtentCanCorrect(active, snapshot, currentAnchorOffset)
     ) return false;
     const rawCorrection = paintedCorrection
-      ?? resolveTranscriptReaderExtentCorrection(active, snapshot, currentAnchorOffset);
+      ?? (requiresVirtuosoSync && currentAnchorOffset === undefined
+        ? active.acceptedTop - snapshot.scrollTop
+        : resolveTranscriptReaderExtentCorrection(active, snapshot, currentAnchorOffset));
     const maxTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
     const correctionTarget = rawCorrection === undefined
       ? undefined
@@ -457,6 +460,7 @@ export function useTranscriptReaderExtentStability({
       clientHeight: element.clientHeight,
       bottomDistance: nativeTranscriptDistanceFromBottom(element),
       mode,
+      virtuosoSync: requiresVirtuosoSync,
     })) return false;
     active.pendingCorrectionTop = correctionTarget;
     armPendingRelease(active);
@@ -466,7 +470,9 @@ export function useTranscriptReaderExtentStability({
       ? [paintedReverse.rowKey, paintedReverse.currentOffset - correction]
       : active.anchor && currentAnchorOffset !== undefined
         ? [active.anchor.rowKey, currentAnchorOffset - correction]
-        : undefined;
+        : active.anchor
+          ? [active.anchor.rowKey, active.targetAnchorOffset ?? active.anchor.offset]
+          : undefined;
     const extentDelta = snapshot.scrollHeight - active.acceptedHeight;
     acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
     recordTranscriptScrollDiagnostic("scroll-anomaly", {
@@ -514,9 +520,14 @@ export function useTranscriptReaderExtentStability({
     const viewportBlank = transcriptElementViewportIsBlank(element);
     const currentAnchorOffset = anchorOffset(guard, element);
     const previousAcceptedTop = guard.acceptedTop;
-    const paintedReverse = viewportBlank ? undefined : paintedReaderReverse(guard, element);
+    const currentPaintedRows = viewportBlank ? undefined : capturePaintedReaderRows(element);
+    const paintedReverse = currentPaintedRows ? paintedReaderReverse(guard, currentPaintedRows) : undefined;
+    const requiresVirtuosoSync = currentPaintedRows !== undefined
+      && currentPaintedRows.size > 0
+      && guard.paintedRows.size > 0
+      && !transcriptReaderPaintedRangesShareRow(guard.paintedRows, currentPaintedRows);
     let corrected = paintedReverse && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
-      ? correctAnomaly(guard, element, snapshot, currentAnchorOffset, paintedReverse)
+      ? correctAnomaly(guard, element, snapshot, currentAnchorOffset, paintedReverse, requiresVirtuosoSync)
       : false;
     const accepted = corrected
       ? false
@@ -524,7 +535,9 @@ export function useTranscriptReaderExtentStability({
     // An unpainted Virtuoso range cannot supply a trustworthy visual anchor,
     // but a native extent reversal/collapse can still be corrected from the
     // last accepted logical position.
-    corrected = corrected || correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+    corrected = corrected || correctAnomaly(
+      guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset, undefined, requiresVirtuosoSync,
+    );
     corrected = corrected || pinReadingAnchor(guard, element, snapshot, viewportBlank ? undefined : paintedReverse, viewportBlank);
     if (
       accepted
@@ -592,14 +605,21 @@ export function useTranscriptReaderExtentStability({
       const viewportBlank = transcriptElementViewportIsBlank(element);
       const currentAnchorOffset = anchorOffset(active, element);
       const previousAcceptedTop = active.acceptedTop;
-      const paintedReverse = viewportBlank ? undefined : paintedReaderReverse(active, element);
+      const currentPaintedRows = viewportBlank ? undefined : capturePaintedReaderRows(element);
+      const paintedReverse = currentPaintedRows ? paintedReaderReverse(active, currentPaintedRows) : undefined;
+      const requiresVirtuosoSync = currentPaintedRows !== undefined
+        && currentPaintedRows.size > 0
+        && active.paintedRows.size > 0
+        && !transcriptReaderPaintedRangesShareRow(active.paintedRows, currentPaintedRows);
       let corrected = paintedReverse && paintedReverse.delta >= MIN_REVERSE_JUMP_PX
-        ? correctAnomaly(active, element, snapshot, currentAnchorOffset, paintedReverse)
+        ? correctAnomaly(active, element, snapshot, currentAnchorOffset, paintedReverse, requiresVirtuosoSync)
         : false;
       const accepted = corrected
         ? false
         : observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
-      corrected = corrected || correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+      corrected = corrected || correctAnomaly(
+        active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset, undefined, requiresVirtuosoSync,
+      );
       corrected = corrected || pinReadingAnchor(active, element, snapshot, viewportBlank ? undefined : paintedReverse, viewportBlank);
       if (
         accepted
@@ -665,6 +685,7 @@ export function useTranscriptReaderExtentStability({
       expiryTimer: null,
       paintedRows: capturePaintedReaderRows(element),
       baselineScrollTop: element.scrollTop,
+      pinLastHeight: element.scrollHeight,
     };
     guardRef.current = active;
     renewLease(active);
@@ -706,7 +727,7 @@ export function useTranscriptReaderExtentStability({
     const activeBeforeDelivery = guardRef.current;
     const visualReverseBeforeDelivery = activeBeforeDelivery?.element === element
       && activeBeforeDelivery.generation === generation
-      ? paintedReaderReverse(activeBeforeDelivery, element)
+      ? paintedReaderReverse(activeBeforeDelivery, capturePaintedReaderRows(element))
       : undefined;
     // A measured range replacement can lower native scrollTop while moving
     // every shared row down-screen. That is layout-owned reverse motion, not
