@@ -491,7 +491,10 @@ try {
     const rail = document.querySelector(".jump-scroll");
     if (!(rail instanceof HTMLElement)) return null;
     const railRect = rail.getBoundingClientRect();
-    const marker = [...rail.querySelectorAll(".jump-item")].find((item) => {
+    // This assertion covers clearing a stale selection before an immediate,
+    // already-mounted indexed jump. Unloaded markers intentionally use the
+    // masked history transaction and are covered by the 434→847→994 replay.
+    const marker = [...rail.querySelectorAll('.jump-item[data-loaded="true"]')].find((item) => {
       const rect = item.getBoundingClientRect();
       const middle = rect.top + rect.height / 2;
       return middle >= railRect.top && middle <= railRect.bottom;
@@ -500,7 +503,7 @@ try {
     const rect = marker.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   });
-  assert(questionTargetPoint != null, "question navigator exposes an earlier visible marker");
+  assert(questionTargetPoint != null, "question navigator exposes an earlier loaded marker");
   const staleSelectionMode = await page.evaluate(() => {
     const target = document.querySelector("[data-transcript-selectable]");
     const transcript = document.querySelector(".transcript");
