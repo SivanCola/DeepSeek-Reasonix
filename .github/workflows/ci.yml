@@ -647,6 +647,20 @@ jobs:
           curl --fail --silent 'http://127.0.0.1:4173/?mock=bench&bench=1' >/dev/null
           go run -tags reasonix_transcript_smoke ./cmd/transcript-native-smoke
 
+      - name: Test WebView2 transcript selection compositor
+        shell: pwsh
+        timeout-minutes: 5
+        run: ../scripts/test-transcript-selection-webview2.ps1 -Iterations 3
+
+      - name: Upload WebView2 transcript selection evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: webview2-transcript-selection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/reasonix-transcript-selection-smoke
+          if-no-files-found: warn
+          retention-days: 14
+
       # Build the real Wails executable on every desktop PR and exercise the
       # exact production startup path in Microsoft's installed WebView2 runtime.
       # The frontend and bindings were already built above, so this skips only

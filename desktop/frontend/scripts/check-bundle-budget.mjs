@@ -239,7 +239,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // bounded settle-resend guard measures 2433.1 KiB; the reading-anchor pin,
 // its tail-proximity gate and the gateway normalization reach 2435.8 KiB.
 // Indexed reader offsets plus opposite extent/input classification measure
-// 2436.6 KiB; retain 0.2 KiB of raw/toolchain headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_436.8 : 2_436.8;
+// 2436.6 KiB; the merged selection compositor bridge reaches 2436.8 KiB.
+// Retain 0.2 KiB of raw/toolchain headroom on the integrated surface.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_437.0 : 2_437.0;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
