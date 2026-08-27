@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -9,6 +12,35 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/topicstate"
 )
+
+func (m *topicStateManager) openTopicStoreWithRecovery(ctx context.Context, scope *topicStateScope) (*topicstate.Store, error) {
+	store, err := topicstate.Open(ctx, scope.path)
+	if err == nil || !topicstate.IsCorruptionError(err) {
+		return store, err
+	}
+	recovered, recoveryErr := recoverTopicRecordsFromSessions(scope.root)
+	hasLegacy := legacyTopicFilesExist(scope.root)
+	if recoveryErr != nil {
+		slog.Warn("desktop: topic session recovery source incomplete", "scope", topicScopeKind(scope.root), "error_type", topicStateErrorType(recoveryErr))
+	}
+	if !hasLegacy && len(recovered) == 0 {
+		return nil, err
+	}
+	quarantined, quarantineErr := topicstate.Quarantine(scope.path, m.now())
+	if quarantineErr != nil {
+		return nil, fmt.Errorf("preserve corrupt topic database: %w", quarantineErr)
+	}
+	slog.Warn("desktop: rebuilt corrupt topic state", "scope", topicScopeKind(scope.root), "records", len(recovered), "legacy", hasLegacy, "quarantined", filepath.Base(quarantined))
+	store, err = topicstate.Open(ctx, scope.path)
+	if err != nil || len(recovered) == 0 {
+		return store, err
+	}
+	if _, err := store.ReplaceAll(ctx, recovered); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return store, nil
+}
 
 // recoverTopicRecordsFromSessions reconstructs only metadata already carried
 // by valid branch sidecars. It is used after a quick_check failure, before the

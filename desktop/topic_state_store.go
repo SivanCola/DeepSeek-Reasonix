@@ -167,39 +167,29 @@ func (m *topicStateManager) ensureOpenLocked(scope *topicStateScope) error {
 func (m *topicStateManager) ensureOpenAndReconcileLocked(scope *topicStateScope) error {
 	ctx := context.Background()
 	if scope.store == nil {
-		store, err := topicstate.Open(ctx, scope.path)
-		if err != nil && topicstate.IsCorruptionError(err) {
-			recovered, recoveryErr := recoverTopicRecordsFromSessions(scope.root)
-			hasLegacy := legacyTopicFilesExist(scope.root)
-			if recoveryErr != nil {
-				slog.Warn("desktop: topic session recovery source incomplete", "scope", topicScopeKind(scope.root), "error_type", topicStateErrorType(recoveryErr))
-			}
-			if !hasLegacy && len(recovered) == 0 {
-				return err
-			}
-			quarantined, quarantineErr := topicstate.Quarantine(scope.path, m.now())
-			if quarantineErr != nil {
-				return fmt.Errorf("preserve corrupt topic database: %w", quarantineErr)
-			}
-			slog.Warn("desktop: rebuilt corrupt topic state", "scope", topicScopeKind(scope.root), "records", len(recovered), "legacy", hasLegacy, "quarantined", filepath.Base(quarantined))
-			store, err = topicstate.Open(ctx, scope.path)
-			if err == nil && len(recovered) > 0 {
-				if _, replaceErr := store.ReplaceAll(ctx, recovered); replaceErr != nil {
-					_ = store.Close()
-					return replaceErr
-				}
-			}
-		}
+		store, err := m.openTopicStoreWithRecovery(ctx, scope)
 		if err != nil {
 			return err
 		}
 		scope.store = store
 	}
-	legacy, err := readLegacyTopicSnapshot(scope.root)
+	dbSnapshot, err := scope.store.Snapshot(ctx)
 	if err != nil {
 		return err
 	}
-	dbSnapshot, err := scope.store.Snapshot(ctx)
+	// Publish a pending authoritative snapshot before inspecting legacy digests;
+	// otherwise a half-written mirror can look like an old-version edit and roll
+	// metadata back into SQLite.
+	if dbSnapshot.State.LegacyBridge && dbSnapshot.State.LegacyPendingRevision != 0 {
+		if err := m.mirrorIfPendingLocked(ctx, scope); err != nil {
+			return err
+		}
+		dbSnapshot, err = scope.store.Snapshot(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	legacy, err := readLegacyTopicSnapshot(scope.root)
 	if err != nil {
 		return err
 	}
@@ -246,12 +236,14 @@ func (m *topicStateManager) mirrorIfPendingLocked(ctx context.Context, scope *to
 			return err
 		}
 	}
-	legacy, err := readLegacyTopicSnapshot(scope.root)
-	if err != nil {
-		return err
-	}
-	if snapshot.State.LegacyPendingRevision == 0 && legacyDigestsMatch(snapshot.State, legacy.digests) {
-		return nil
+	if snapshot.State.LegacyPendingRevision == 0 {
+		legacy, err := readLegacyTopicSnapshot(scope.root)
+		if err != nil {
+			return err
+		}
+		if legacyDigestsMatch(snapshot.State, legacy.digests) {
+			return nil
+		}
 	}
 	digests, err := writeLegacyTopicSnapshot(scope.root, snapshot.Records)
 	if err != nil {

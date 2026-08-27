@@ -145,6 +145,53 @@ func TestLegacyAutoMetaMergePreservesDatabaseOnlyUnknownFields(t *testing.T) {
 	}
 }
 
+func TestRestartRepairsPendingMirrorBeforeLegacyReconciliation(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	workspaceRoot := t.TempDir()
+	seedLegacyTopicBridge(t, workspaceRoot)
+	if err := createTopicState(workspaceRoot, "topic-1", defaultTopicTitle, topicTitleSourceAuto, 123); err != nil {
+		t.Fatal(err)
+	}
+	initial := autoTopicTitleProposal{Title: "Initial title", Stage: 1, UserTurns: 1, BasisHash: "initial"}
+	if applied, err := applyAutoTopicTitle(workspaceRoot, "topic-1", initial.Title, initial); err != nil || !applied {
+		t.Fatalf("apply initial title: applied=%v err=%v", applied, err)
+	}
+
+	topicLegacyWriteHookForTest = func(path string) error {
+		if path == topicAutoTitleMetaPath(workspaceRoot) {
+			return errors.New("injected partial legacy mirror")
+		}
+		return nil
+	}
+	t.Cleanup(func() { topicLegacyWriteHookForTest = nil })
+	updated := autoTopicTitleProposal{Title: "Updated title", Stage: 3, UserTurns: 4, BasisHash: "updated"}
+	if applied, err := applyAutoTopicTitle(workspaceRoot, "topic-1", updated.Title, updated); err != nil || !applied {
+		t.Fatalf("apply updated title: applied=%v err=%v", applied, err)
+	}
+	desktopTopicState.close()
+	topicLegacyWriteHookForTest = nil
+
+	snapshot, err := desktopTopicState.snapshot(workspaceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := snapshot.Records["topic-1"]
+	var meta topicAutoTitleMeta
+	if err := json.Unmarshal(record.AutoMeta, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if record.Title != updated.Title || meta.Stage != updated.Stage || meta.BasisHash != updated.BasisHash {
+		t.Fatalf("pending mirror rolled SQLite back: record=%+v meta=%+v", record, meta)
+	}
+	legacy, err := loadLegacyAutoMetaMap(topicAutoTitleMetaPath(workspaceRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := legacy["topic-1"]; got.Stage != updated.Stage || got.BasisHash != updated.BasisHash {
+		t.Fatalf("pending mirror was not repaired: %+v", got)
+	}
+}
+
 func TestCompoundTopicMutationsCommitOneRevision(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	workspaceRoot := t.TempDir()
