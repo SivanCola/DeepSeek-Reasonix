@@ -262,6 +262,70 @@ func TestAutomaticTitleDoesNotOverwriteConcurrentManualRename(t *testing.T) {
 	}
 }
 
+func TestManualRenamePublishesAfterInFlightAutomaticTitle(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	workspaceRoot := t.TempDir()
+	app := NewApp()
+	topic, err := app.CreateTopic("project", workspaceRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := desktopSessionDir(workspaceRoot)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := writeTopicSessionWithPrompt(t, dir, "rename-race.jsonl", topic.ID, defaultTopicTitle, workspaceRoot, "automatic candidate", time.Now())
+	ctrl := controllerWithContent(t, path)
+	defer ctrl.Close()
+	tab := &WorkspaceTab{
+		ID: "rename-race", Scope: "project", WorkspaceRoot: workspaceRoot,
+		TopicID: topic.ID, TopicTitle: defaultTopicTitle, topicTitleSource: topicTitleSourceAuto,
+		SessionPath: path, Ctrl: ctrl,
+	}
+	app.tabs[tab.ID] = tab
+	app.tabOrder = []string{tab.ID}
+
+	autoCommitted := make(chan struct{})
+	releaseAuto := make(chan struct{})
+	topicAutoTitleCommittedHookForTest = func() {
+		close(autoCommitted)
+		<-releaseAuto
+	}
+	t.Cleanup(func() { topicAutoTitleCommittedHookForTest = nil })
+	autoDone := make(chan bool, 1)
+	go func() { autoDone <- app.maybeAutoTitleTopic(tab) }()
+	<-autoCommitted
+
+	renameDone := make(chan error, 1)
+	go func() { renameDone <- app.RenameTopic(topic.ID, "Manual title wins") }()
+	select {
+	case err := <-renameDone:
+		t.Fatalf("manual rename bypassed in-flight auto publication: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseAuto)
+	if updated := <-autoDone; !updated {
+		t.Fatal("automatic title was not applied before the manual rename")
+	}
+	if err := <-renameDone; err != nil {
+		t.Fatal(err)
+	}
+
+	if got := loadTopicTitle(workspaceRoot, topic.ID); got != "Manual title wins" {
+		t.Fatalf("authoritative title = %q", got)
+	}
+	if tab.TopicTitle != "Manual title wins" || tab.topicTitleSource != topicTitleSourceManual {
+		t.Fatalf("tab title publication = %q source=%q", tab.TopicTitle, tab.topicTitleSource)
+	}
+	meta, ok, err := agent.LoadBranchMeta(path)
+	if err != nil || !ok {
+		t.Fatalf("load branch metadata: ok=%v err=%v", ok, err)
+	}
+	if meta.TopicTitle != "Manual title wins" {
+		t.Fatalf("session metadata title = %q", meta.TopicTitle)
+	}
+}
+
 func TestFutureTopicSchemaWithoutLegacyReturnsVisibleReadError(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	workspaceRoot := t.TempDir()

@@ -70,8 +70,10 @@ cd DeepSeek-Reasonix && make build                        # -> bin/reasonix(.exe
 
 Desktop 会自动把四个旧 `desktop-topic-*.json` 索引迁移到 Reasonix 状态根目录下按
 scope 隔离的权威 SQLite 数据库。已存在旧文件的 scope 会继续同步 JSON，因此正常降级到
-前一版本 Desktop 时仍能读取标题和时间；全新 scope 只写 SQLite。迁移不会删除旧文件，
-也不会修改项目拥有的 `.reasonix` 资产。不支持新旧 Desktop 同时写同一个工作区。
+前一版本 Desktop 时仍能读取标题和时间；全新 scope 只写 SQLite，旧版 Desktop 无法直接
+读取这部分状态：现有 session metadata 可能恢复标题，但不保证创建时间和自动标题阶段完整。
+迁移不会删除旧文件，也不会修改项目拥有的 `.reasonix` 资产。不支持新旧 Desktop 同时写
+同一个工作区。
 
 ## Context Engine v2 升级
 
