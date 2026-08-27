@@ -597,6 +597,10 @@ export function useTranscriptScrollArbiter({
     if (element) {
       element.dataset.scrollMode = stateRef.current.mode;
       deliverScroll(element);
+      const generation = generationRef.current;
+      requestAnimationFrame(() => {
+        if (generationRef.current === generation && scrollRef.current === element && modeRef.current === "tail-follow") noteGeometryChangeRef.current?.("viewport");
+      });
     }
     setScrollElement((current) => current === element ? current : element);
   }, [deliverScroll, finishNativeScrollbarDrag, invalidateAsyncFrames]);

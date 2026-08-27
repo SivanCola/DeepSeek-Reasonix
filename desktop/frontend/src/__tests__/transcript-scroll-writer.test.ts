@@ -166,6 +166,8 @@ assert.equal(writer.write({
 }), true);
 assert.deepEqual(calls[3]?.value, { index: "LAST", align: "end", behavior: "auto" }, "the writer can mount the measured tail before native confirmation");
 assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 2_200, "the same LAST transaction includes the in-flow footer in the native target");
+frames.shift()?.(0);
+frames.shift()?.(16);
 element.scrollTop = 1_200;
 
 modeRef.current = "reader-gesture";
@@ -267,5 +269,29 @@ assert.equal(list.style.top, "", "a new owner cancels the pending reader visual 
 const nativeCountAfterJump = nativeScrolls.length;
 frames.shift()?.(32);
 assert.equal(nativeScrolls.length, nativeCountAfterJump, "a cancelled reader bridge cannot land after a jump");
+
+// A Virtuoso tail write can briefly commit a shorter range at the requested
+// native bottom, then restore its measured extent on the following frame. The
+// writer owns one bounded post-range confirmation so that restored extent is
+// committed without introducing another scroll owner.
+while (frames.length > 0) frames.shift()?.(0);
+modeRef.current = "tail-follow";
+Object.defineProperty(element, "scrollHeight", { configurable: true, value: 3_000 });
+element.scrollTop = 2_000;
+assert.equal(writer.write({
+  owner: "tail-follow",
+  operation: "scrollTo",
+  top: 2_200,
+  behavior: "auto",
+  source: "geometry-changed",
+  expectedGeneration: 6,
+  geometryRevision: 15,
+}), true);
+Object.defineProperty(element, "scrollHeight", { configurable: true, value: 4_000 });
+element.scrollTop = 1_200;
+frames.shift()?.(64);
+assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 3_200,
+  "tail confirmation targets the restored native extent after Virtuoso commits its range");
+assert.equal(element.scrollTop, 3_200, "tail confirmation reaches the restored physical bottom");
 
 console.log("transcript scroll writer tests passed");

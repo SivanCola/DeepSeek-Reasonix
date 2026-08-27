@@ -150,7 +150,13 @@ console.log("\nbundle budgets");
 // clamp, captured thumb-travel proof, and bounded LAST fallback measure
 // 453.852 KiB; keep them with a 0.1 KiB decimal ratchet and roughly 0.048 KiB
 // of remaining headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 453.9 : 453.9;
+// Confirming the native extent after a logical-LAST handoff, remounting an
+// unmounted tail before paint, and re-arming tail convergence when the
+// committed scroller replaces its hydration predecessor, plus the bounded
+// post-range native confirmation, measure 454.3 KiB.
+// Retain about 0.1 KiB of toolchain headroom without widening any per-chunk
+// budget.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 454.4 : 454.4;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -244,8 +250,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Indexed reader offsets plus opposite extent/input classification measure
 // 2436.6 KiB; the merged selection compositor bridge reaches 2436.8 KiB.
 // The native-range clamp, captured thumb proof, and bounded LAST fallback
-// measure 2437.342 KiB; retain about 0.058 KiB of raw/toolchain headroom on
-// the integrated surface.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_437.4 : 2_437.4;
+// measure 2437.342 KiB. Post-LAST native confirmation, unmounted-tail remount,
+// committed-scroller re-arm, and bounded post-range native confirmation bring
+// the integrated surface to 2439.1 KiB. Retain about 0.1 KiB of raw/toolchain
+// headroom without widening the per-chunk ceiling.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_439.2 : 2_439.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

@@ -19,6 +19,40 @@ function assert(condition, message) {
   process.stdout.write(`  PASS  ${message}\n`);
 }
 
+async function waitForStableSelectionViewport(page, { frames = 8, timeout = 10_000 } = {}) {
+  await page.evaluate(({ frames, timeout }) => new Promise((resolve, reject) => {
+    const startedAt = performance.now();
+    let previous = null;
+    let stableFrames = 0;
+    const sample = () => {
+      const transcript = document.querySelector(".transcript");
+      if (transcript instanceof HTMLElement) {
+        const current = {
+          top: transcript.scrollTop,
+          height: transcript.scrollHeight,
+          clientHeight: transcript.clientHeight,
+        };
+        const stable = previous !== null
+          && Math.abs(current.top - previous.top) <= 0.5
+          && Math.abs(current.height - previous.height) <= 0.5
+          && current.clientHeight === previous.clientHeight;
+        stableFrames = stable ? stableFrames + 1 : 0;
+        previous = current;
+        if (stableFrames >= frames) {
+          resolve();
+          return;
+        }
+      }
+      if (performance.now() - startedAt >= timeout) {
+        reject(new Error(`selection viewport did not settle: ${JSON.stringify(previous)}`));
+        return;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }), { frames, timeout });
+}
+
 async function clickIfPresent(page, selector) {
   // Keep optional-control discovery and activation in one browser task so a
   // state update cannot unmount the element between separate Playwright calls.
@@ -568,6 +602,7 @@ try {
     undefined,
     { timeout: 10_000 },
   );
+  await waitForStableSelectionViewport(page);
   const beforeCopy = await page.evaluate(() => ({
     overlayRects: document.querySelectorAll(".transcript-selection-overlay__rect").length,
     scrollTop: document.querySelector(".transcript")?.scrollTop ?? 0,

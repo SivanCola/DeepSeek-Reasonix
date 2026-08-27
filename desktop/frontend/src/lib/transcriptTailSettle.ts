@@ -138,6 +138,7 @@ export function createTranscriptTailSettle({
   let jumpTailTimer: number | null = null;
   let jumpTailStartedAt: number | null = null;
   let jumpTailRevision = 0;
+  let jumpTailRemounts = 0;
   let layoutTransientIdleTimer: number | null = null;
   let residualVerificationTimer: number | null = null;
   let residualCorrectionHeight: number | null = null;
@@ -214,6 +215,13 @@ export function createTranscriptTailSettle({
     return wrote;
   };
 
+  const remountJumpTail = (element: HTMLElement, source: TranscriptScrollDiagnosticSource, revision: number) => {
+    if (jumpTailRemounts >= TAIL_SETTLE_MAX_STAGNANT_RESENDS || transcriptTailIsMounted(element)) return false;
+    if (!scrollToTail("auto", { source, phase: "initial" }, revision)) return false;
+    jumpTailRemounts += 1;
+    return true;
+  };
+
   const cancel = () => {
     if (tailSettleFrame !== null) cancelAnimationFrame(tailSettleFrame);
     tailSettleFrame = null;
@@ -257,6 +265,18 @@ export function createTranscriptTailSettle({
       transaction.stableFrames = 0;
     } else {
       transaction.stableFrames += 1;
+    }
+    // An empty mounted range is never a valid tail coordinate, even when the
+    // browser has already clamped the native offset to its current physical
+    // bottom. Mutation/ResizeObserver delivers this tick before paint, so hand
+    // the repair to Virtuoso's logical LAST transaction now instead of letting
+    // a blank range become the next stable native baseline.
+    if (!transcriptTailIsMounted(element)) {
+      pending = null;
+      stagnantWrite = null;
+      scrollToTail("auto", { source: transaction.source, phase: "initial" }, transaction.revision);
+      schedule(transaction.revision, true, transaction.source);
+      return;
     }
     // WebKit can retain the old scrollTop for the remainder of the current
     // layout opportunity after a virtual range contracts. A negative bottom
@@ -377,10 +397,10 @@ export function createTranscriptTailSettle({
       const startedAt = Date.now();
       jumpTailStartedAt = startedAt;
       jumpTailRevision = geometryRevision;
+      jumpTailRemounts = 0;
       let previousHeight = element.scrollHeight;
       let previousTop = element.scrollTop;
       let stableFrames = 0;
-      let stableSince: number | null = null;
       const confirmJumpTail = () => {
         jumpTailTimer = null;
         if (
@@ -395,22 +415,30 @@ export function createTranscriptTailSettle({
         const height = transactionElement.scrollHeight;
         const top = transactionElement.scrollTop;
         const pendingGeometry = transactionElement.querySelector("[data-transcript-geometry-pending]") !== null;
+        const tailMounted = transcriptTailIsMounted(transactionElement);
         // Relinquish the initial jump as soon as the logical tail is mounted
         // and native geometry itself is stable for two samples. Requiring
         // every mounted row's Virtuoso known-size metadata to match here can
         // keep the jump owner alive for seconds even though the physical tail
         // is already settled, suppressing deferred live-size revisions.
         const sampleStable = !pendingGeometry
-          && transcriptTailIsMounted(transactionElement)
+          && tailMounted
           && Math.abs(height - previousHeight) <= JUMP_TAIL_STABLE_EPSILON_PX
           && Math.abs(top - previousTop) <= JUMP_TAIL_STABLE_EPSILON_PX;
         stableFrames = sampleStable ? stableFrames + 1 : 0;
-        stableSince = sampleStable ? stableSince ?? Date.now() : null;
         previousHeight = height;
         previousTop = top;
         const elapsed = Date.now() - startedAt;
+        if (!pendingGeometry && remountJumpTail(transactionElement, source, jumpTailRevision)) {
+          previousHeight = transactionElement.scrollHeight;
+          previousTop = transactionElement.scrollTop;
+          stableFrames = 0;
+          jumpTailTimer = window.setTimeout(confirmJumpTail, JUMP_TAIL_SAMPLE_MS);
+          return;
+        }
         if (
           nativeTranscriptDistanceFromBottom(transactionElement) <= JUMP_TAIL_NATIVE_THRESHOLD_PX
+          && tailMounted
           && stableFrames >= TAIL_COLLAPSE_STABLE_FRAMES
         ) {
           jumpTailStartedAt = null;
@@ -419,9 +447,8 @@ export function createTranscriptTailSettle({
         }
         if (
           (elapsed >= JUMP_TAIL_TRANSACTION_MS
-            && stableFrames >= TAIL_COLLAPSE_STABLE_FRAMES
-            && stableSince !== null
-            && Date.now() - stableSince >= JUMP_TAIL_STABLE_MS)
+            && !pendingGeometry
+            && tailMounted)
           || elapsed >= JUMP_TAIL_MAX_WAIT_MS
         ) {
           let wrote = false;
@@ -453,7 +480,11 @@ export function createTranscriptTailSettle({
               }
               const verifyHeight = transactionElement.scrollHeight;
               const verifyTop = transactionElement.scrollTop;
-              const verifyStable = transcriptTailMountIsMeasured(transactionElement)
+              const verifyPendingGeometry = transactionElement.querySelector("[data-transcript-geometry-pending]") !== null;
+              const verifyTailMounted = transcriptTailIsMounted(transactionElement);
+              const verifyStable = !verifyPendingGeometry
+                && verifyTailMounted
+                && transcriptTailMountIsMeasured(transactionElement)
                 && Math.abs(verifyHeight - verifyPreviousHeight) <= JUMP_TAIL_STABLE_EPSILON_PX
                 && Math.abs(verifyTop - verifyPreviousTop) <= JUMP_TAIL_STABLE_EPSILON_PX;
               verifyStableFrames = verifyStable ? verifyStableFrames + 1 : 0;
@@ -463,7 +494,10 @@ export function createTranscriptTailSettle({
               const verifyStableWindow = verifyStableFrames >= JUMP_TAIL_POST_MEASURE_STABLE_FRAMES
                 && verifyStableSince !== null
                 && Date.now() - verifyStableSince >= JUMP_TAIL_STABLE_MS;
-              if (nativeTranscriptDistanceFromBottom(transactionElement) <= JUMP_TAIL_NATIVE_THRESHOLD_PX) {
+              if (
+                nativeTranscriptDistanceFromBottom(transactionElement) <= JUMP_TAIL_NATIVE_THRESHOLD_PX
+                && verifyTailMounted
+              ) {
                 if (
                   verifyStableWindow
                   || Date.now() - verifyStartedAt >= JUMP_TAIL_POST_MEASURE_MAX_WAIT_MS
@@ -475,16 +509,21 @@ export function createTranscriptTailSettle({
                 jumpTailTimer = window.setTimeout(verifyMeasuredTail, JUMP_TAIL_SAMPLE_MS);
                 return;
               }
+              const correctionWindowElapsed = Date.now() - verifyStartedAt >= JUMP_TAIL_STABLE_MS;
               if (
                 remainingCorrections > 0
-                && (verifyStableWindow
-                  || Date.now() - verifyStartedAt >= JUMP_TAIL_POST_MEASURE_MAX_WAIT_MS)
+                && !verifyPendingGeometry
+                && (verifyStableWindow || correctionWindowElapsed)
               ) {
-                scrollToTail(
-                  "auto",
-                  { source, phase: "settle", settle: { frame: stableFrames, offBottomFrames, stagnantFrames: 0 } },
-                  jumpTailRevision,
-                );
+                if (!verifyTailMounted) {
+                  scrollToTail("auto", { source, phase: "initial" }, jumpTailRevision);
+                } else {
+                  scrollToTail(
+                    "auto",
+                    { source, phase: "settle", settle: { frame: stableFrames, offBottomFrames, stagnantFrames: 0 } },
+                    jumpTailRevision,
+                  );
+                }
                 remainingCorrections -= 1;
                 offBottomFrames += 1;
                 verifyPreviousHeight = transactionElement.scrollHeight;
@@ -522,6 +561,10 @@ export function createTranscriptTailSettle({
       jumpTailRevision = Math.max(jumpTailRevision, geometryRevision);
       const tailMounted = transcriptTailIsMounted(element);
       const offBottom = nativeTranscriptDistanceFromBottom(element) > JUMP_TAIL_NATIVE_THRESHOLD_PX;
+      if (geometryRevision > writtenRevision && remountJumpTail(element, source, geometryRevision)) {
+        writtenRevision = geometryRevision;
+        return;
+      }
       if (deferUntilStable && tailMounted && offBottom) {
         // A real measured extent has grown after LAST mounted. End the mount
         // transaction before handing this revision to the stable-frame path;

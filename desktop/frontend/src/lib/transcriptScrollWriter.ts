@@ -53,6 +53,9 @@ export function writeTranscriptReaderCorrection(
 }
 
 const READER_BRIDGE_MAX_FRAMES = 6;
+const TAIL_NATIVE_COMMIT_MAX_FRAMES = 12;
+const TAIL_NATIVE_COMMIT_STABLE_FRAMES = 2;
+const TAIL_NATIVE_COMMIT_EPSILON_PX = 1;
 
 function captureReaderBridgeRows(element: HTMLDivElement, list: HTMLElement): ReadonlyMap<string, number> {
   const viewport = element.getBoundingClientRect();
@@ -123,6 +126,16 @@ export function createTranscriptScrollWriter({
     listTransform: string;
     offsetY: number;
   } | null = null;
+  let tailNativeCommit: {
+    frame: number;
+    element: HTMLDivElement;
+    generation: number;
+    samples: number;
+    stableFrames: number;
+    previousHeight: number;
+    previousTop: number;
+    view: Window;
+  } | null = null;
 
   const clearReaderVisualBridge = () => {
     const pending = readerVisualBridge;
@@ -140,6 +153,63 @@ export function createTranscriptScrollWriter({
     else element.scrollTop = top;
   };
 
+  const clearTailNativeCommit = () => {
+    const pending = tailNativeCommit;
+    tailNativeCommit = null;
+    if (pending?.frame) pending.view.cancelAnimationFrame(pending.frame);
+  };
+
+  const armTailNativeCommit = (element: HTMLDivElement, generation: number) => {
+    if (tailNativeCommit?.element === element && tailNativeCommit.generation === generation) return;
+    clearTailNativeCommit();
+    const view = element.ownerDocument.defaultView;
+    if (!view) return;
+    const pending = {
+      frame: 0,
+      element,
+      generation,
+      samples: 0,
+      stableFrames: 0,
+      previousHeight: element.scrollHeight,
+      previousTop: element.scrollTop,
+      view,
+    };
+    const confirm = () => {
+      pending.frame = 0;
+      if (tailNativeCommit !== pending) return;
+      if (
+        generationRef.current !== pending.generation
+        || scrollRef.current !== pending.element
+        || modeRef.current !== "tail-follow"
+      ) {
+        clearTailNativeCommit();
+        return;
+      }
+      pending.samples += 1;
+      const height = element.scrollHeight;
+      const top = element.scrollTop;
+      const target = Math.max(0, height - element.clientHeight);
+      const stable = Math.abs(height - pending.previousHeight) <= TAIL_NATIVE_COMMIT_EPSILON_PX
+        && Math.abs(top - pending.previousTop) <= TAIL_NATIVE_COMMIT_EPSILON_PX;
+      const atBottom = Math.abs(target - top) <= TAIL_NATIVE_COMMIT_EPSILON_PX;
+      pending.stableFrames = stable && atBottom ? pending.stableFrames + 1 : 0;
+      pending.previousHeight = height;
+      pending.previousTop = top;
+      if (pending.stableFrames >= TAIL_NATIVE_COMMIT_STABLE_FRAMES) {
+        clearTailNativeCommit();
+        return;
+      }
+      if (!atBottom) writeNative(element, target, "auto");
+      if (pending.samples >= TAIL_NATIVE_COMMIT_MAX_FRAMES) {
+        clearTailNativeCommit();
+        return;
+      }
+      pending.frame = view.requestAnimationFrame(confirm);
+    };
+    tailNativeCommit = pending;
+    pending.frame = view.requestAnimationFrame(confirm);
+  };
+
   const write = (rawRequest: WriterRequestInput): boolean => {
     const request = normalizeWriterInput(rawRequest);
     const handle = virtuosoRef.current;
@@ -151,6 +221,7 @@ export function createTranscriptScrollWriter({
 
     sequence += 1;
     lastOwner = request.owner;
+    const nativeBottomBeforeWrite = element.scrollHeight - element.clientHeight;
     const record: TranscriptScrollWriteRecord = {
       owner: request.owner,
       kind: request.operation,
@@ -172,6 +243,8 @@ export function createTranscriptScrollWriter({
       stagnantFrames: request.stagnantFrames,
     };
     noteTranscriptScrollWrite(record);
+
+    if (request.owner !== "tail-follow") clearTailNativeCommit();
 
     const behavior = request.behavior === "smooth" ? "smooth" : "auto";
     switch (request.operation) {
@@ -306,6 +379,10 @@ export function createTranscriptScrollWriter({
         // races without creating a second owner or diagnostic sequence.
         handle.scrollTo({ top: request.top, behavior });
         if (typeof element.scrollTo === "function") writeNative(element, request.top!, behavior);
+        if (
+          request.owner === "tail-follow"
+          && Math.abs(request.top! - nativeBottomBeforeWrite) <= TAIL_NATIVE_COMMIT_EPSILON_PX
+        ) armTailNativeCommit(element, generation);
         return true;
       case "scrollBy":
         clearReaderVisualBridge();
@@ -325,6 +402,7 @@ export function createTranscriptScrollWriter({
           // same tail transaction with the already-mounted native extent so
           // WebViews do not stop one footer-height above the physical end.
           writeNative(element, element.scrollHeight - element.clientHeight, behavior);
+          if (request.owner === "tail-follow") armTailNativeCommit(element, generation);
         }
         return true;
     }

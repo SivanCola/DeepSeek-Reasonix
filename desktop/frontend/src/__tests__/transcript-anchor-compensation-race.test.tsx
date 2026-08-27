@@ -304,7 +304,8 @@ scrollExtent = 500;
 
 // A WebView can clamp the first stable row-measure correction against the
 // previous Virtuoso range even though scrollHeight exposes the new bottom.
-// One residual revision retries after layout; the stable extent cannot loop.
+// The same logical writer transaction confirms the restored native range on
+// the following frame; the stable extent cannot start a residual loop.
 await act(async () => arbiter?.reset());
 scrollElement.scrollTop = 400;
 scrollWrites.length = 0;
@@ -313,20 +314,23 @@ scrollExtent = 700;
 await act(async () => arbiter?.noteGeometryChange("row-measure"));
 check(scrollElement.scrollTop === 400, "row measurement does not write before geometry is stable");
 await advanceClock(80);
-for (let i = 0; i < 6; i += 1) await flushFrames();
-check(scrollElement.scrollTop === 594, "the fixture reproduces a stable-write clamp against the stale native range");
+for (let i = 0; i < 6 && scrollElement.scrollTop === 400; i += 1) await flushFrames();
+check(scrollElement.scrollTop === 594,
+  `the fixture reproduces a stable-write clamp against the stale native range (${scrollElement.scrollTop})`);
+await flushFrames();
+check(scrollElement.scrollTop === 600, "the bounded native confirmation commits the restored tail range");
 await flushFrames();
 await flushFrames();
 await advanceClock(160);
 await advanceClock(80);
 for (let i = 0; i < 6; i += 1) await flushFrames();
-check(scrollElement.scrollTop === 600, "one residual geometry revision converges the stable native tail");
+check(scrollElement.scrollTop === 600, "the stable native tail remains converged after residual verification");
 for (let i = 0; i < 3; i += 1) await flushFrames();
 const residualWrites = scrollWrites.filter((write) => write.owner === "tail-follow");
-check(residualWrites.length === 2, `stable-height residual correction is bounded to one retry (${residualWrites.length})`);
+check(residualWrites.length === 1, `stable-height repair remains one logical writer transaction (${residualWrites.length})`);
 check(
   new Set(residualWrites.map((write) => write.geometryRevision)).size === residualWrites.length,
-  "each residual correction consumes a distinct one-write geometry revision",
+  "the native confirmation does not fabricate a second geometry revision",
 );
 scrollExtent = 500;
 

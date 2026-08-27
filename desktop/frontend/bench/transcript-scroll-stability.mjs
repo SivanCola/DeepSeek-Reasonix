@@ -1605,13 +1605,27 @@ try {
   // Re-measure and target the reserved row gutter inside the scrollport. The
   // native scrollbar gutter itself is browser-owned and can swallow this wheel
   // immediately after a thumb release.
-  await moveToOuterReaderGutter(page, transcript);
-  await page.mouse.wheel(0, -800);
-  // Playwright resolves mouse.wheel before Chromium finishes the trusted
-  // event's native default scroll. Let that input settle before sampling the
-  // arbiter state or issuing another protocol command.
-  await page.waitForTimeout(100);
-  await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.scrollMode === "manual");
+  let readerDetachedFromTail = false;
+  for (let attempt = 0; attempt < 4 && !readerDetachedFromTail; attempt += 1) {
+    await moveToOuterReaderGutter(page, transcript, attempt === 0);
+    await page.mouse.wheel(0, -800);
+    // Playwright resolves mouse.wheel before Chromium finishes the trusted
+    // event's native default scroll. The reserved gutter can also swallow the
+    // first wheel after a thumb/range handoff, so require both reader ownership
+    // and real physical travel before looking for the jump-bottom control.
+    try {
+      await page.waitForFunction(() => {
+        const element = document.querySelector(".transcript");
+        return element instanceof HTMLElement
+          && element.dataset.scrollMode === "manual"
+          && element.scrollHeight - element.scrollTop - element.clientHeight > 32;
+      }, undefined, { timeout: 2_000 });
+      readerDetachedFromTail = true;
+    } catch {
+      // Retry with a fresh trusted wheel target; do not assign scrollTop.
+    }
+  }
+  assert(readerDetachedFromTail, "an upward wheel detaches the reader from the physical tail");
   await jumpBottom.waitFor({ state: "visible" });
   await jumpBottom.click();
   await page.waitForFunction(() => {
@@ -1953,6 +1967,8 @@ try {
         top: element.scrollTop,
         height: element.scrollHeight,
         clientHeight: element.clientHeight,
+        pendingGeometry: element.querySelectorAll("[data-transcript-geometry-pending]").length,
+        mountedItemIndices: Array.from(element.querySelectorAll(".transcript__row[data-item-index]"), (row) => row.dataset.itemIndex),
         writes: window.__reducedOpenWrites.slice(-12),
       } : null;
     });
@@ -2020,6 +2036,10 @@ try {
   }, reducedBottomTop, { timeout: 5_000 });
   let reducedClaimedTail = false;
   for (let attempt = 0; attempt < 20 && !reducedClaimedTail; attempt += 1) {
+    // Each wheel can replace the virtual range under the fixed screen point.
+    // Re-target row padding so a newly mounted nested Markdown scroller cannot
+    // consume the next trusted wheel before the transcript arbiter sees it.
+    await moveToOuterReaderGutter(reducedPage, reducedTranscript, false);
     await reducedPage.mouse.wheel(0, 640);
     await reducedPage.waitForTimeout(50);
     reducedClaimedTail = await reducedTranscript.evaluate((element) => element.dataset.scrollMode === "tail-follow");
@@ -2033,7 +2053,12 @@ try {
       // its existing message; this wait only admits the queued rAF handoff.
     }
   }
-  assert(reducedClaimedTail, "reduced-motion repeated downward wheels reclaim tail ownership (#9089)");
+  const reducedClaimState = await reducedTranscript.evaluate((element) => ({
+    mode: element.dataset.scrollMode,
+    distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+  }));
+  assert(reducedClaimedTail,
+    `reduced-motion repeated downward wheels reclaim tail ownership (#9089; ${JSON.stringify(reducedClaimState)})`);
   await reducedPage.waitForFunction(() => {
     const element = document.querySelector(".transcript");
     return element instanceof HTMLElement

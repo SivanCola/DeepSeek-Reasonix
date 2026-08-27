@@ -20,7 +20,15 @@ const frameQueue: Array<FrameRequestCallback> = [];
 type EngineRejects = boolean;
 
 function runFixture(engineRejects: EngineRejects, afterRejectedWrite?: (element: { scrollTop: number; scrollHeight: number; clientHeight: number }) => void) {
-  const element = { scrollTop: 863, scrollHeight: 1_000, clientHeight: 100 };
+  const element = {
+    scrollTop: 863,
+    scrollHeight: 1_000,
+    clientHeight: 100,
+    dataset: {},
+    getBoundingClientRect: () => ({ top: 0, bottom: 100 }),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
   const writes: TranscriptScrollWriteRecord[] = [];
   const layoutTransient = { current: false };
   const settle = createTranscriptTailSettle({
@@ -135,6 +143,20 @@ function runFixture(engineRejects: EngineRejects, afterRejectedWrite?: (element:
   assert.equal(writes[0]?.top, 900, "the pre-paint clamp targets the real native bottom");
   assert.equal(element.scrollTop, 900, "the invalid native offset is corrected synchronously");
   console.log("  PASS  a contracted native range is clamped before its invalid tail can paint");
+}
+
+{
+  const { element, writes, pumpRevision } = runFixture(true);
+  const offscreenRow = {
+    dataset: { rowKey: "stale-row", itemIndex: "998" },
+    getBoundingClientRect: () => ({ top: 180, bottom: 220, height: 40 }),
+  };
+  element.dataset = { transcriptRowCount: "1", transcriptFirstItemIndex: "999" };
+  (element as unknown as { querySelectorAll: () => unknown[] }).querySelectorAll = () => [offscreenRow];
+  pumpRevision();
+  assert.equal(writes.length, 1, "a pre-paint unmounted tail spends one bounded writer transaction");
+  assert.equal(writes[0]?.kind, "scrollToIndex", "a pre-paint unmounted tail remounts logical LAST");
+  console.log("  PASS  an unmounted tail range is remounted before it becomes a painted baseline");
 }
 
 console.log("transcript tail settle stagnation tests passed");
