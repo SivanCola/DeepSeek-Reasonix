@@ -39,12 +39,21 @@
     initialDistance: 0,
     phase: "waiting-topic",
     writes: [],
+    wheelEvents: 0,
+    wheelDelta: 0,
+    wheelMaxDelta: 0,
   };
   window.__reasonixNativeTranscriptSmokeState = state;
   window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
     state.writes.push(write);
     if (state.writes.length > 80) state.writes.shift();
   };
+  window.addEventListener("wheel", (event) => {
+    if (!state.active) return;
+    state.wheelEvents += 1;
+    state.wheelDelta += event.deltaY;
+    state.wheelMaxDelta = Math.max(state.wheelMaxDelta, Math.abs(event.deltaY));
+  }, { capture: true, passive: true });
 
   const visibleRows = (element) => {
     const viewport = element.getBoundingClientRect();
@@ -261,6 +270,9 @@
     state.active = true;
     state.growthTicks = 0;
     state.growthSurface = growthSurface;
+    state.wheelEvents = 0;
+    state.wheelDelta = 0;
+    state.wheelMaxDelta = 0;
     state.phase = "ready";
     state.growthTimer = window.setInterval(growFooter, 16);
     scheduleSample();
@@ -336,6 +348,9 @@
       distance,
       mode: element?.dataset.scrollMode ?? "missing",
       growthTicks: state.growthTicks,
+      wheelEvents: state.wheelEvents,
+      wheelDelta: state.wheelDelta,
+      wheelMaxDelta: state.wheelMaxDelta,
       paddingBottom: element instanceof HTMLElement ? Number.parseFloat(getComputedStyle(element).paddingBottom) : null,
       footerBottomDistance: viewportRect && footerRect ? footerRect.bottom - viewportRect.bottom : null,
       writes: state.writes.slice(-20),

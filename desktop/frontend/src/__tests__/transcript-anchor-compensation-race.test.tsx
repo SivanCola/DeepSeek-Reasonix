@@ -268,6 +268,35 @@ await flushFrames();
 await flushFrames();
 check(arbiter?.modeRef.current === "tail-follow", "captured pointer travel survives an original-coordinate native release");
 
+// Chromium's native gutter can report an original-coordinate PointerEvent,
+// followed by the real release coordinate on the compatibility MouseEvent.
+// Defer mouse-pointer termination so that coordinate remains movement proof.
+await act(async () => arbiter?.reset());
+scrollElement.scrollTop = 400;
+await act(async () => arbiter?.onPointerDownIntent({
+  button: 0,
+  clientY: 500,
+  nativeEvent: { button: 0, clientX: 795, clientY: 500 },
+} as React.PointerEvent<HTMLElement>));
+const nativePointerUp = new dom.window.MouseEvent("pointerup", { clientY: 500 });
+Object.defineProperty(nativePointerUp, "pointerType", { value: "mouse" });
+await act(async () => window.dispatchEvent(nativePointerUp));
+check(scrollElement.dataset.nativeScrollbarDrag === "true", "mouse pointerup waits for the compatibility release coordinate");
+await act(async () => window.dispatchEvent(new dom.window.MouseEvent("mouseup", { clientY: 452 })));
+await flushFrames();
+await flushFrames();
+check(arbiter?.modeRef.current === "tail-follow", "compatibility mouseup proves native thumb travel");
+
+// A host that omits compatibility mouseup must not strand native-thumb mode.
+await act(async () => arbiter?.reset());
+scrollElement.scrollTop = 400;
+await act(async () => arbiter?.onPointerDownIntent({ button: 0, clientY: 500, nativeEvent: { button: 0, clientX: 795, clientY: 500 } } as React.PointerEvent<HTMLElement>));
+const cancelledMousePointer = new dom.window.MouseEvent("pointercancel", { clientY: 500 });
+Object.defineProperty(cancelledMousePointer, "pointerType", { value: "mouse" });
+await act(async () => window.dispatchEvent(cancelledMousePointer));
+await advanceClock(0);
+check(scrollElement.dataset.nativeScrollbarDrag === undefined, "missing compatibility mouseup falls back without stranding native-thumb mode");
+
 // A real virtual range can reach the native bottom before its LAST row mounts.
 // Keep a bounded release probe alive until that row becomes observable.
 await act(async () => arbiter?.reset());

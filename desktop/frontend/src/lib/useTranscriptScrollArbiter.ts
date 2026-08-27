@@ -503,28 +503,28 @@ export function useTranscriptScrollArbiter({
     }
     if (!reachedBottom) armReaderIntentIdle();
   }, [armReaderIntentIdle, deliverScroll, dispatch, nativeScrollbarBottomProof]);
-
   const finishPointerIntent = useCallback((event?: PointerEvent) => {
-    if (nativeScrollbarDragRef.current) finishNativeScrollbarDrag(event?.clientY);
-    if (middlePointerScrollRef.current) {
-      middlePointerScrollRef.current = false;
-      endReaderIntent();
+    if (event?.pointerType === "mouse" && nativeScrollbarDragRef.current) {
+      const drag = nativeScrollbarDragRef.current;
+      window.setTimeout(() => { if (drag && nativeScrollbarDragRef.current === drag) finishNativeScrollbarDrag(); }, 0);
+      return; // Mouseup retains the native gutter coordinate; the task is a missing-mouseup fallback.
     }
+    if (nativeScrollbarDragRef.current) finishNativeScrollbarDrag(event?.clientY);
+    if (middlePointerScrollRef.current) { middlePointerScrollRef.current = false; endReaderIntent(); }
   }, [endReaderIntent, finishNativeScrollbarDrag]);
-
+  const finishMouseIntent = useCallback((event: MouseEvent) => { if (nativeScrollbarDragRef.current) finishNativeScrollbarDrag(event.clientY); if (middlePointerScrollRef.current) { middlePointerScrollRef.current = false; endReaderIntent(); } }, [endReaderIntent, finishNativeScrollbarDrag]);
   const finishAllReaderIntent = useCallback(() => {
     finishPointerIntent();
     endReaderIntent();
   }, [endReaderIntent, finishPointerIntent]);
 
   useEffect(() => {
-    const observeNativeThumb = (event: PointerEvent) => { const element = scrollRef.current; if (nativeScrollbarDragRef.current && element) nativeScrollbarBottomProof.observe(element, event.clientY); };
-    window.addEventListener("pointermove", observeNativeThumb, true); window.addEventListener("pointerup", finishPointerIntent, true); window.addEventListener("pointercancel", finishPointerIntent, true); window.addEventListener("blur", finishAllReaderIntent);
+    const observeNativeThumb = (event: PointerEvent | MouseEvent) => { const element = scrollRef.current; if (nativeScrollbarDragRef.current && element) nativeScrollbarBottomProof.observe(element, event.clientY); };
+    window.addEventListener("pointermove", observeNativeThumb, true); window.addEventListener("mousemove", observeNativeThumb, true); window.addEventListener("pointerup", finishPointerIntent, true); window.addEventListener("pointercancel", finishPointerIntent, true); window.addEventListener("mouseup", finishMouseIntent, true); window.addEventListener("blur", finishAllReaderIntent);
     return () => {
-      window.removeEventListener("pointermove", observeNativeThumb, true); window.removeEventListener("pointerup", finishPointerIntent, true); window.removeEventListener("pointercancel", finishPointerIntent, true); window.removeEventListener("blur", finishAllReaderIntent);
+      window.removeEventListener("pointermove", observeNativeThumb, true); window.removeEventListener("mousemove", observeNativeThumb, true); window.removeEventListener("pointerup", finishPointerIntent, true); window.removeEventListener("pointercancel", finishPointerIntent, true); window.removeEventListener("mouseup", finishMouseIntent, true); window.removeEventListener("blur", finishAllReaderIntent);
     };
-  }, [finishAllReaderIntent, finishPointerIntent, nativeScrollbarBottomProof]);
-
+  }, [finishAllReaderIntent, finishMouseIntent, finishPointerIntent, nativeScrollbarBottomProof]);
   useEffect(() => () => {
     if (resizeSettleFrameRef.current !== null) cancelAnimationFrame(resizeSettleFrameRef.current);
     if (readerIntentTimerRef.current !== null) window.clearTimeout(readerIntentTimerRef.current);

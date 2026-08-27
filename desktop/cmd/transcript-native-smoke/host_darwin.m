@@ -4,7 +4,6 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <WebKit/WebKit.h>
 #include <string.h>
-#include <unistd.h>
 
 @interface ReasonixTranscriptSmokeHost : NSObject <WKNavigationDelegate, WKScriptMessageHandler>
 @property(nonatomic, strong) WKWebView *webView;
@@ -167,14 +166,10 @@
 
 - (void)dispatchWheelDelta:(int32_t)delta atViewPoint:(NSPoint)viewPoint {
   [self ensureInteractionFocus];
-  // Quartz defaults to roughly ten pixels per line. Although the event is
-  // created as continuous/pixel input, the hosted WKWebView route can consume
-  // its line/fixed-point fields and turn -24 into only about -2px. An explicit
-  // source keeps all public scroll fields on the requested pixel scale.
-  CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
-  if (source != NULL) CGEventSourceSetPixelsPerLine(source, 1.0);
-  CGEventRef cgEvent = CGEventCreateScrollWheelEvent(source, kCGScrollEventUnitPixel, 1, delta);
-  if (source != NULL) CFRelease(source);
+  // Preserve the requested high-resolution pixel delta. Routing the resulting
+  // NSEvent through WKWebView's responder is what crosses into WebContent;
+  // source-level Quartz posting either needs Accessibility or misses it.
+  CGEventRef cgEvent = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 1, delta);
   if (cgEvent == NULL) return;
   NSPoint windowPoint = [self.webView convertPoint:viewPoint toView:nil];
   NSPoint screenPoint = [self.window convertPointToScreen:windowPoint];
@@ -192,11 +187,11 @@
     kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent,
     self.window.windowNumber
   );
-  // Enter the host's native event queue so AppKit and WebKit perform their
-  // ordinary window and responder routing. Direct scrollWheel: delivery can
-  // be discarded by the hosted WebContent process on CI even while the outer
-  // window remains key; targeting our own pid avoids global cursor dependence.
-  CGEventPostToPid(getpid(), cgEvent);
+  // Deliver the native NSEvent to WKWebView's NSResponder entry point. This
+  // needs no Accessibility grant and still crosses WebKit's isolated-process
+  // event bridge; the fixture's WheelEvent counter proves that handoff.
+  NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
+  if (event != nil) [self.webView scrollWheel:event];
   CFRelease(cgEvent);
 }
 

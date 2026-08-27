@@ -465,13 +465,16 @@ rowElement.dataset.rowKey = "row-505";
 rowElement.getBoundingClientRect = () => rectAt(-20);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
-await act(async () => arbiter?.onWheelIntent({
-  ctrlKey: false,
-  deltaMode: 0,
-  deltaX: 0,
-  deltaY: -1,
-  target: scrollElement,
-} as React.WheelEvent<HTMLElement>));
+await wheel(-1);
+const handoffCandidate = dom.window.document.createElement("div");
+handoffCandidate.className = "transcript__row";
+handoffCandidate.dataset.rowKey = "row-392";
+handoffCandidate.getBoundingClientRect = () => rectAt(-12);
+rowElement.replaceWith(handoffCandidate);
+await act(async () => arbiter?.observeReaderExtent());
+await flushFrames();
+await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+handoffCandidate.replaceWith(rowElement);
 scrollWrites.length = 0;
 scrollByCalls = 0;
 scrollExtent += 33;
@@ -490,13 +493,7 @@ rowElement.dataset.rowKey = "row-a";
 rowElement.getBoundingClientRect = () => rectAt(-25);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
-await act(async () => arbiter?.onWheelIntent({
-  ctrlKey: false,
-  deltaMode: 0,
-  deltaX: 0,
-  deltaY: -1,
-  target: scrollElement,
-} as React.WheelEvent<HTMLElement>));
+await wheel(-1);
 scrollElement.scrollTop += 320;
 rowElement.getBoundingClientRect = () => rectAt(-49);
 await act(async () => arbiter?.deliverScroll());

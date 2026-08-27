@@ -7,7 +7,7 @@ import {
   observeTranscriptReaderExtent,
   retainTranscriptReaderPaintedBaseline,
   resolveTranscriptReaderExtentCorrection,
-  transcriptReaderDirectionHandoffReversed,
+  transcriptReaderDirectionHandoffBaseline,
   transcriptReaderPaintedRangeReplaced,
   transcriptReaderPaintedRangesShareRow,
   transcriptReaderPaintedSlideIsAdjacent,
@@ -706,11 +706,11 @@ export function useTranscriptReaderExtentStability({
     }
     const incomingPaintedRows = current?.element === scrollRef.current
       ? capturePaintedReaderRows(current.element) : undefined;
-    const priorPaint = current && current.element === scrollRef.current
-      && current.generation === generationRef.current && incomingPaintedRows
-      && transcriptReaderDirectionHandoffReversed(current.paintedRows, incomingPaintedRows, deltaY)
-      ? [current.paintedRows, current.baselineScrollTop, current.pinLastHeight] as const
-      : undefined;
+    const priorPaintedRows = current && current.generation === generationRef.current && incomingPaintedRows ? transcriptReaderDirectionHandoffBaseline(
+      [current.paintedRows, current.previousPaintedRows], incomingPaintedRows, deltaY,
+    ) : undefined;
+    const priorPaint = current && priorPaintedRows
+      ? [priorPaintedRows, current.baselineScrollTop, current.pinLastHeight] as const : undefined;
     arm(deltaY);
     const next = guardRef.current;
     if (next) {
