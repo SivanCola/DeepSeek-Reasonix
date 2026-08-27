@@ -1495,6 +1495,28 @@ try {
     });
     assert(await settleNativeRangeAtBottom(), "remeasured native range settles at the physical bottom before release replay");
     const trackEndY = await transcript.evaluate((element) => element.getBoundingClientRect().bottom);
+    await page.evaluate(() => {
+      window.__nativeBottomEvents = [];
+      const capture = (event) => {
+        const element = document.querySelector(".transcript");
+        if (!(element instanceof HTMLElement)) return;
+        window.__nativeBottomEvents.push({
+          type: event.type,
+          clientY: "clientY" in event ? Math.round(event.clientY) : null,
+          pointerType: "pointerType" in event ? event.pointerType : null,
+          buttons: "buttons" in event ? event.buttons : null,
+          scrollTop: Math.round(element.scrollTop),
+          distance: Math.round(element.scrollHeight - element.scrollTop - element.clientHeight),
+          drag: element.dataset.nativeScrollbarDrag ?? null,
+          readerIntent: element.dataset.transcriptReaderIntent ?? null,
+          canClaimTail: element.dataset.transcriptCanClaimTail ?? null,
+        });
+        if (window.__nativeBottomEvents.length > 60) window.__nativeBottomEvents.shift();
+      };
+      for (const type of ["pointermove", "pointerup", "pointercancel", "mousemove", "mouseup", "blur"]) {
+        window.addEventListener(type, capture, true);
+      }
+    });
     const findDraggableBottomThumb = async () => {
       const motions = [];
       for (const offset of [2, 4, 6, 8, 12, 16, 20, 24, 28, 32]) {
@@ -1540,6 +1562,13 @@ try {
     };
     const bottomThumb = await findDraggableBottomThumb();
     assert(bottomThumb.y !== null, `remeasured native scrollbar exposes a bottom thumb (${JSON.stringify(bottomThumb.motions)})`);
+    const bottomThumbBeforeRelease = await transcript.evaluate((element) => ({
+      mode: element.dataset.scrollMode,
+      distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+      readerIntent: element.dataset.transcriptReaderIntent,
+      canClaimTail: element.dataset.transcriptCanClaimTail,
+      drag: element.dataset.nativeScrollbarDrag,
+    }));
     await page.mouse.up();
     await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
     try {
@@ -1559,6 +1588,9 @@ try {
         scrollTop: element.scrollTop,
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
+        beforeRelease: bottomThumbBeforeRelease,
+        motions: bottomThumb.motions,
+        events: window.__nativeBottomEvents ?? [],
       }));
       throw new Error(`native bottom-thumb release did not settle: ${JSON.stringify(release)}`, { cause: error });
     }

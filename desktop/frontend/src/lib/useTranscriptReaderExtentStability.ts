@@ -68,7 +68,7 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   pendingCorrectionAcknowledged?: boolean;
   pendingAnchor?: readonly [rowKey: string, offsetAtTarget: number];
   paintedRows: ReadonlyMap<string, number>;
-  previousPaintedRows?: ReadonlyMap<string, number>;
+  paintedHistory: readonly ReadonlyMap<string, number>[];
   /** Scroll offset captured beside the painted baseline. Equality across an
    * observation proves an anchor break is pure layout shift, not input. */
   baselineScrollTop?: number;
@@ -110,9 +110,9 @@ function promotePaintedReaderRows(
   // mounted Virtuoso window before the native smoke sampler reaches its next
   // painted frame. Refresh that window's offsets without rotating away the
   // preceding logical range. Only a majority range replacement advances the
-  // two-window history.
+  // bounded three-generation history.
   if (transcriptReaderPaintedRangeReplaced(guard.paintedRows, next)) {
-    guard.previousPaintedRows = guard.paintedRows;
+    guard.paintedHistory = [guard.paintedRows, ...guard.paintedHistory].slice(0, 3);
   }
   guard.paintedRows = next;
 }
@@ -122,8 +122,7 @@ function paintedReaderReverse(
   current: ReadonlyMap<string, number>,
 ): PaintedReaderReverse | undefined {
   let strongest: PaintedReaderReverse | undefined;
-  for (const paintedRows of [guard.paintedRows, guard.previousPaintedRows]) {
-    if (!paintedRows) continue;
+  for (const paintedRows of [guard.paintedRows, ...guard.paintedHistory]) {
     const common = [...current].flatMap(([rowKey, currentOffset]) => {
       const previousOffset = paintedRows.get(rowKey);
       return previousOffset === undefined
@@ -282,7 +281,7 @@ export function useTranscriptReaderExtentStability({
       // Rebase the passive visual guard here; a later mutation is still
       // compared with this current occupied range before it can paint.
       guard.paintedRows = capturePaintedReaderRows(element);
-      guard.previousPaintedRows = undefined;
+      guard.paintedHistory = [];
       guard.baselineScrollTop = element.scrollTop;
     }
     // A correction intentionally drops the stale pre-swap anchor. Re-anchor
@@ -355,7 +354,7 @@ export function useTranscriptReaderExtentStability({
     active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset - correction];
     acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
     active.paintedRows = capturePaintedReaderRows(element);
-    active.previousPaintedRows = undefined;
+    active.paintedHistory = [];
     active.baselineScrollTop = element.scrollTop;
     recordTranscriptScrollDiagnostic("scroll-anomaly", {
       source: "reader-gesture",
@@ -685,6 +684,7 @@ export function useTranscriptReaderExtentStability({
       paintTimer: null,
       expiryTimer: null,
       paintedRows: capturePaintedReaderRows(element),
+      paintedHistory: [],
       baselineScrollTop: element.scrollTop,
       pinLastHeight: element.scrollHeight,
     };
@@ -707,7 +707,7 @@ export function useTranscriptReaderExtentStability({
     const incomingPaintedRows = current?.element === scrollRef.current
       ? capturePaintedReaderRows(current.element) : undefined;
     const priorPaintedRows = current && current.generation === generationRef.current && incomingPaintedRows ? transcriptReaderDirectionHandoffBaseline(
-      [current.paintedRows, current.previousPaintedRows], incomingPaintedRows, deltaY,
+      [current.paintedRows, ...current.paintedHistory], incomingPaintedRows, deltaY,
     ) : undefined;
     const priorPaint = current && priorPaintedRows
       ? [priorPaintedRows, current.baselineScrollTop, current.pinLastHeight] as const : undefined;
@@ -717,7 +717,7 @@ export function useTranscriptReaderExtentStability({
       // The first real native direction can arrive with its range swap.
       if (priorPaint) {
         [next.paintedRows, next.baselineScrollTop, next.pinLastHeight] = priorPaint;
-        next.previousPaintedRows = undefined; // Drop the replaced range.
+        next.paintedHistory = []; // Drop the replaced ranges.
       }
       // This path observes a delivery that has already moved the native
       // scroller. Unlike a pre-scroll wheel intent, its current top/anchor is

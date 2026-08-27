@@ -187,11 +187,11 @@
     kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent,
     self.window.windowNumber
   );
-  // Deliver the native NSEvent to WKWebView's NSResponder entry point. This
-  // needs no Accessibility grant and still crosses WebKit's isolated-process
-  // event bridge; the fixture's WheelEvent counter proves that handoff.
+  // Route the native NSEvent through NSWindow's ordinary hit-test path. Calling
+  // WKWebView's outer responder directly reaches WebContent but can skip the
+  // default scroll target on headless CI hosts.
   NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
-  if (event != nil) [self.webView scrollWheel:event];
+  if (event != nil) [self.window sendEvent:event];
   CFRelease(cgEvent);
 }
 

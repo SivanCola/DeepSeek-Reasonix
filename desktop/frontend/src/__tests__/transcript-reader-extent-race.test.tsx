@@ -466,12 +466,16 @@ rowElement.getBoundingClientRect = () => rectAt(-20);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
 await wheel(-1);
-const handoffCandidate = dom.window.document.createElement("div");
-handoffCandidate.className = "transcript__row";
-handoffCandidate.dataset.rowKey = "row-392";
-handoffCandidate.getBoundingClientRect = () => rectAt(-12);
-rowElement.replaceWith(handoffCandidate);
-await act(async () => arbiter?.observeReaderExtent());
+let handoffCandidate = rowElement;
+for (const rowKey of ["row-392", "row-404", "row-418"]) {
+  const replacement = dom.window.document.createElement("div");
+  replacement.className = "transcript__row";
+  replacement.dataset.rowKey = rowKey;
+  replacement.getBoundingClientRect = () => rectAt(-12);
+  handoffCandidate.replaceWith(replacement);
+  handoffCandidate = replacement;
+  await act(async () => arbiter?.observeReaderExtent());
+}
 await flushFrames();
 await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 handoffCandidate.replaceWith(rowElement);
@@ -482,7 +486,7 @@ scrollElement.scrollTop += 340;
 rowElement.getBoundingClientRect = () => rectAt(589);
 await act(async () => arbiter?.deliverScroll());
 check(scrollByCalls === 1 && lastScrollByTop === 609,
-  `direction handoff retains the pre-replacement painted row (${lastScrollByTop}px)`);
+  `direction handoff retains the three-generation painted row (${lastScrollByTop}px)`);
 check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
   "the coalesced direction/range correction remains single-owned");
 
