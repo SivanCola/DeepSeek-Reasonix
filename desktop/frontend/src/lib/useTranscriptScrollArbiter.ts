@@ -115,6 +115,18 @@ export function useTranscriptScrollArbiter({
   const nativeScrollbarBottomProofRef = useRef<ReturnType<typeof createTranscriptNativeScrollbarBottomProof> | null>(null);
   const nativeScrollbarBottomProof = nativeScrollbarBottomProofRef.current ??= createTranscriptNativeScrollbarBottomProof({ scrollRef });
   const writeReaderCorrection = useCallback((write: TranscriptScrollWriteRecord & { virtuosoSync?: boolean }) => {
+    if (write.kind === "scrollToIndex") {
+      if (write.index === undefined || typeof write.index !== "number") return false;
+      return writer.write({
+        ...write,
+        operation: "scrollToIndex",
+        align: "start",
+        behavior: "auto",
+        source: write.source ?? "layout-height-changed",
+        expectedGeneration: write.generation ?? generationRef.current,
+        geometryRevision: write.geometryRevision ?? geometryRevisionRef.current,
+      });
+    }
     if (write.top === undefined) return false;
     return writer.write({
       ...write,

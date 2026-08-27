@@ -446,7 +446,8 @@ try {
     scrollExtent = 6_000;
     scrollElement.scrollTop = 2_000;
     scrollWrites.length = 0;
-    let pinnedRowTop = 300;
+    rowElement.dataset.itemIndex = "11";
+    let pinnedRowTop = 420;
     rowElement.getBoundingClientRect = () => rectAt(pinnedRowTop);
     await act(async () => arbiter?.releaseTailFollow());
     await wheelDown();
@@ -455,17 +456,14 @@ try {
     await advanceClock(2);
     await flushFrames();
 
-    pinnedRowTop += 120;
-    scrollExtent += 120;
+    pinnedRowTop -= 120;
+    scrollExtent -= 120;
     await act(async () => arbiter?.observeReaderExtent());
     const pinWrites = scrollWrites.filter((write) => write.owner === "reader-stability");
-    check(pinWrites.length === 1,
-      "one frozen-offset extent slide earns exactly one reading-position pin");
-    check(
-      pinWrites[0]?.top === 2_120
-        && Math.abs(scrollElement.scrollTop - 2_120) <= 2,
-      "the pin restores every painted row by the observed screen displacement",
-    );
+    check(pinWrites.length === 1
+      && pinWrites[0]?.kind === "scrollToIndex"
+      && pinWrites[0]?.index === 11,
+      "one frozen-offset extent slide earns exactly one anchored reading-position jump");
     const followupBefore = scrollWrites.filter((write) => write.owner === "reader-stability").length;
     await act(async () => arbiter?.observeReaderExtent());
     check(

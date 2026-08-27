@@ -23,11 +23,20 @@ import { captureLeadingTranscriptLayoutAnchor, transcriptElementViewportIsBlank 
 const READER_EXTENT_ACTIVE_MS = 180;
 // A frozen native offset proves an anchor break is layout-only; anything past
 // this jitter is real input and must never be overridden.
-const READER_PIN_FROZEN_TOP_PX = 2;
-// Genuine measured-extent drift arrives in sub-viewport increments. A larger
-// one-frame step or slide means a mounted-range replacement, which the
-// direction-gated reverse path owns instead.
-const READER_PIN_MAX_STEP_RATIO = 0.5;
+// Real scrolling motion may accompany a measured burst on slow engines; the
+// painted slide must dominate it by this ratio to earn a repair, and slides
+// beyond one and a half viewports belong to mounted-range replacement paths.
+const READER_PIN_INPUT_DOMINANCE_RATIO = 4;
+const READER_PIN_MAX_SLIDE_VIEWPORTS = 1.5;
+// Inside one viewport of the physical tail the pinned-tail handoff owns the
+// geometry: reader anchoring there fights Virtuoso's own clamp and wedges
+// manual-mode scrolling (#transcript-selection field replay).
+const READER_PIN_MIN_TAIL_DISTANCE_VIEWPORTS = 1.0;
+// A correction whose native offset was displaced by a coalesced range swap
+// can never reach acknowledgement; bound its single-flight lifetime so later
+// reading-position repairs are not wedged behind it (same lease pattern as
+// READER_EXTENT_RETENTION_MS).
+const READER_PENDING_RELEASE_MS = 600;
 // WebView2 can coalesce a sustained native wheel burst and commit Virtuoso's
 // replacement range after the reader-intent idle timer has fired. Retain the
 // last accepted logical row passively across that bounded compositor delay;
@@ -59,6 +68,9 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   /** Scroll offset captured beside the painted baseline. Equality across an
    * observation proves an anchor break is pure layout shift, not input. */
   baselineScrollTop?: number;
+  /** Bounded lifetime for the outstanding single-flight correction so a
+   * displaced target cannot wedge later repairs. */
+  pendingReleaseTimer?: number | null;
   /** Extent seen by the previous pin probe; measures per-observation layout
    * step size independently of the shared accepted-extent bookkeeping. */
   pinLastHeight?: number;
@@ -159,10 +171,12 @@ export function useTranscriptReaderExtentStability({
     if (guard.paintFrame != null) cancelAnimationFrame(guard.paintFrame);
     if (guard.paintTimer != null) window.clearTimeout(guard.paintTimer);
     if (guard.expiryTimer != null) window.clearTimeout(guard.expiryTimer);
+    if (guard.pendingReleaseTimer != null) window.clearTimeout(guard.pendingReleaseTimer);
     guard.frame = null;
     guard.paintFrame = null;
     guard.paintTimer = null;
     guard.expiryTimer = null;
+    guard.pendingReleaseTimer = null;
   }, []);
 
   const cancel = useCallback(() => {
@@ -182,6 +196,18 @@ export function useTranscriptReaderExtentStability({
 
   const anchorOffset = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
     return guard.anchor ? readerAnchorOffset(element, guard.anchor.rowKey) : undefined;
+  }, []);
+
+  const armPendingRelease = useCallback((guard: ActiveReaderExtentGuard) => {
+    if (guard.pendingReleaseTimer != null) window.clearTimeout(guard.pendingReleaseTimer);
+    guard.pendingReleaseTimer = window.setTimeout(() => {
+      guard.pendingReleaseTimer = null;
+      if (guardRef.current !== guard || guard.pendingCorrectionTop === undefined) return;
+      guard.pendingCorrectionTop = undefined;
+      guard.pendingCorrectionForward = undefined;
+      guard.pendingCorrectionAcknowledged = undefined;
+      guard.pendingAnchor = undefined;
+    }, READER_PENDING_RELEASE_MS);
   }, []);
 
   const commitPaintedRowsAfterPaint = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
@@ -276,30 +302,35 @@ export function useTranscriptReaderExtentStability({
     paintedReverse?: PaintedReaderReverse,
     viewportBlank = false,
   ): boolean => {
-    const maxStep = snapshot.clientHeight * READER_PIN_MAX_STEP_RATIO;
-    const heightStep = active.pinLastHeight === undefined
-      ? 0
-      : snapshot.scrollHeight - active.pinLastHeight;
-    active.pinLastHeight = snapshot.scrollHeight;
     if (
       viewportBlank
       || !paintedReverse
       || active.baselineScrollTop === undefined
-      || Math.abs(snapshot.scrollTop - active.baselineScrollTop) > READER_PIN_FROZEN_TOP_PX
       || active.pendingCorrectionTop !== undefined
       || active.collapsed
-      || Math.abs(heightStep) > maxStep
       || Math.abs(paintedReverse.screenDelta) < MIN_REVERSE_JUMP_PX
-      || Math.abs(paintedReverse.screenDelta) > maxStep
-    ) return false; // slides beyond half a viewport are range swaps, not drift
+      || Math.abs(snapshot.scrollHeight - snapshot.scrollTop - snapshot.clientHeight)
+        < snapshot.clientHeight * READER_PIN_MIN_TAIL_DISTANCE_VIEWPORTS
+      || Math.abs(paintedReverse.screenDelta)
+        > snapshot.clientHeight * READER_PIN_MAX_SLIDE_VIEWPORTS
+      || Math.abs(paintedReverse.screenDelta)
+        < READER_PIN_INPUT_DOMINANCE_RATIO * Math.abs(snapshot.scrollTop - active.baselineScrollTop)
+    ) return false;
+    // Commit the correction through Virtuoso itself: aligning the shared
+    // anchor row remounts the window that matches the repaired offset in the
+    // same rendering opportunity, so massed measured-height bursts cannot
+    // leave the native scroller parked inside unmounted territory.
+    const anchorRow = Array.from(element.querySelectorAll<HTMLElement>('.transcript__row[data-row-key]'))
+      .find((candidate) => candidate.dataset.rowKey === paintedReverse.rowKey);
+    const anchorIndex = Number(anchorRow?.dataset.itemIndex);
+    if (!Number.isInteger(anchorIndex)) return false;
     const maxTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
-    const correctionTarget = Math.max(0, Math.min(maxTop, snapshot.scrollTop + paintedReverse.screenDelta));
-    const correction = correctionTarget - snapshot.scrollTop;
-    if (Math.abs(correction) < MIN_REVERSE_JUMP_PX) return false;
+    const pendingTarget = Math.max(0, Math.min(maxTop, snapshot.scrollTop + paintedReverse.screenDelta));
+    const correction = pendingTarget - snapshot.scrollTop;
     if (!writeCorrection({
       owner: "reader-stability",
-      kind: "scrollTo",
-      top: correctionTarget,
+      kind: "scrollToIndex",
+      index: anchorIndex,
       source: "layout-height-changed",
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
@@ -307,13 +338,13 @@ export function useTranscriptReaderExtentStability({
       bottomDistance: nativeTranscriptDistanceFromBottom(element),
       mode: modeRef.current,
     })) return false;
-    active.pendingCorrectionTop = correctionTarget;
-    active.pendingCorrectionForward = false;
+    active.pendingCorrectionTop = pendingTarget;
+    armPendingRelease(active);
+    active.pendingCorrectionForward = correction > 0;
     active.pendingCorrectionAcknowledged = false;
-    active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset - correction];
+    active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset];
+    armPendingRelease(active);
     acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
-    // The write itself moves the rows back under the frozen offset; promote a
-    // fresh occupied baseline so the next observation compares like ranges.
     active.paintedRows = capturePaintedReaderRows(element);
     active.previousPaintedRows = undefined;
     active.baselineScrollTop = element.scrollTop;
@@ -332,7 +363,7 @@ export function useTranscriptReaderExtentStability({
       corrected: true,
     });
     return true;
-  }, [lastWriteOwner, modeRef, writeCorrection]);
+  }, [armPendingRelease, lastWriteOwner, modeRef, writeCorrection]);
 
   const reportAnomaly = useCallback((
     guard: ActiveReaderExtentGuard,
@@ -418,6 +449,7 @@ export function useTranscriptReaderExtentStability({
       mode,
     })) return false;
     active.pendingCorrectionTop = correctionTarget;
+    armPendingRelease(active);
     active.pendingCorrectionForward = active.direction * correction > 0;
     active.pendingCorrectionAcknowledged = false;
     active.pendingAnchor = paintedReverse
@@ -520,7 +552,7 @@ export function useTranscriptReaderExtentStability({
       }
     }
     return transcriptReaderExtentHasCollapsed(guard);
-  }, [acknowledgeCorrection, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, modeRef, pinReadingAnchor, scrollRef]);
+  }, [acknowledgeCorrection, armPendingRelease, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, modeRef, pinReadingAnchor, scrollRef]);
 
   const schedule = useCallback((active: ActiveReaderExtentGuard) => {
     if (active.frame !== null) return;
@@ -559,6 +591,7 @@ export function useTranscriptReaderExtentStability({
         : observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
       corrected = corrected || correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
       corrected = corrected || pinReadingAnchor(active, element, snapshot, viewportBlank ? undefined : paintedReverse, viewportBlank);
+      corrected = corrected || pinReadingAnchor(active, element, snapshot, viewportBlank ? undefined : paintedReverse, viewportBlank);
       if (
         accepted
         && (
@@ -584,7 +617,7 @@ export function useTranscriptReaderExtentStability({
       active.frame = requestAnimationFrame(tick);
     };
     active.frame = requestAnimationFrame(tick);
-  }, [acknowledgeCorrection, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, generationRef, modeRef, pinReadingAnchor, scrollRef]);
+  }, [acknowledgeCorrection, armPendingRelease, anchorOffset, clearActive, commitPaintedRowsAfterPaint, correctAnomaly, generationRef, modeRef, pinReadingAnchor, scrollRef]);
 
   const arm = useCallback((deltaY: number) => {
     const element = scrollRef.current;
