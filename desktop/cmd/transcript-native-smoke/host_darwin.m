@@ -167,7 +167,14 @@
 
 - (void)dispatchWheelDelta:(int32_t)delta atViewPoint:(NSPoint)viewPoint {
   [self ensureInteractionFocus];
-  CGEventRef cgEvent = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 1, delta);
+  // Quartz defaults to roughly ten pixels per line. Although the event is
+  // created as continuous/pixel input, the hosted WKWebView route can consume
+  // its line/fixed-point fields and turn -24 into only about -2px. An explicit
+  // source keeps all public scroll fields on the requested pixel scale.
+  CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
+  if (source != NULL) CGEventSourceSetPixelsPerLine(source, 1.0);
+  CGEventRef cgEvent = CGEventCreateScrollWheelEvent(source, kCGScrollEventUnitPixel, 1, delta);
+  if (source != NULL) CFRelease(source);
   if (cgEvent == NULL) return;
   NSPoint windowPoint = [self.webView convertPoint:viewPoint toView:nil];
   NSPoint screenPoint = [self.window convertPointToScreen:windowPoint];

@@ -112,6 +112,14 @@ await act(async () => {
   arbiter!.scrollerRef(scrollElement);
 });
 
+const wheel = (deltaY: number) => act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+
 // Composer wrap shrinks the in-flow viewport. A bottom-adjacent viewport stays
 // tail-owned without a synchronous write; the coalesced revision observes it.
 await act(async () => arbiter?.reset());
@@ -135,13 +143,7 @@ scrollElement.scrollTop = 14_567.47;
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
 scrollWrites.length = 0;
-await act(async () => arbiter?.onWheelIntent({
-  ctrlKey: false,
-  deltaMode: 0,
-  deltaX: 0,
-  deltaY: 133.33,
-  target: scrollElement,
-} as React.WheelEvent<HTMLElement>));
+await wheel(133.33);
 scrollExtent = 13_344;
 scrollElement.scrollTop = 12_618.67;
 rowElement.getBoundingClientRect = () => rectAt(1_836);
@@ -200,13 +202,7 @@ await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
 scrollWrites.length = 0;
 scrollByCalls = 0;
-await act(async () => arbiter?.onWheelIntent({
-  ctrlKey: false,
-  deltaMode: 0,
-  deltaX: 0,
-  deltaY: 133.33,
-  target: scrollElement,
-} as React.WheelEvent<HTMLElement>));
+await wheel(133.33);
 scrollElement.scrollTop = 1_960;
 rowElement.getBoundingClientRect = () => rectAt(60);
 await act(async () => arbiter?.followGrowingTail());
@@ -232,13 +228,7 @@ scrollElement.scrollTop = 22_753;
 rowElement.getBoundingClientRect = () => rectAt(-11);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
-await act(async () => arbiter?.onWheelIntent({
-  ctrlKey: false,
-  deltaMode: 0,
-  deltaX: 0,
-  deltaY: 24,
-  target: scrollElement,
-} as React.WheelEvent<HTMLElement>));
+await wheel(24);
 scrollWrites.length = 0;
 scrollByCalls = 0;
 scrollExtent = 23_269;
@@ -260,13 +250,7 @@ scrollElement.scrollTop = 15_438;
 rowElement.getBoundingClientRect = () => rectAt(-16);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
-await act(async () => arbiter?.onWheelIntent({
-  ctrlKey: false,
-  deltaMode: 0,
-  deltaX: 0,
-  deltaY: 24,
-  target: scrollElement,
-} as React.WheelEvent<HTMLElement>));
+await wheel(24);
 scrollWrites.length = 0;
 scrollByCalls = 0;
 scrollExtent = 23_114;
@@ -308,13 +292,7 @@ oldSecondRow.getBoundingClientRect = () => rectAt(36);
 scrollElement.append(oldSecondRow);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());
-await act(async () => arbiter?.onWheelIntent({
-  ctrlKey: false,
-  deltaMode: 0,
-  deltaX: 0,
-  deltaY: 24,
-  target: scrollElement,
-} as React.WheelEvent<HTMLElement>));
+await wheel(24);
 const incomingRow = dom.window.document.createElement("div");
 incomingRow.className = "transcript__row";
 incomingRow.dataset.rowKey = "incoming-row";
@@ -476,9 +454,39 @@ lastPaintedRow.replaceWith(rowElement);
 // forward traversal unprotected.
 const originalUserAgent = dom.window.navigator.userAgent;
 Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: "AppleWebKit/605.1.15" });
+// The first host-native delivery can both replace the synthetic setup
+// direction and commit an older Virtuoso range. Preserve the prior painted
+// boundary across that handoff instead of constructing the new guard from the
+// already-reversed DOM.
+await act(async () => arbiter?.reset());
+scrollExtent = 24_489;
+scrollElement.scrollTop = 18_920;
+rowElement.dataset.rowKey = "row-505";
+rowElement.getBoundingClientRect = () => rectAt(-20);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: -1,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent += 33;
+scrollElement.scrollTop += 340;
+rowElement.getBoundingClientRect = () => rectAt(589);
+await act(async () => arbiter?.deliverScroll());
+check(scrollByCalls === 1 && lastScrollByTop === 609,
+  `direction handoff retains the pre-replacement painted row (${lastScrollByTop}px)`);
+check(scrollWrites.length === 1 && scrollWrites[0].owner === "reader-stability",
+  "the coalesced direction/range correction remains single-owned");
+
 await act(async () => arbiter?.reset());
 scrollExtent = 24_515;
 scrollElement.scrollTop = 23_160;
+rowElement.dataset.rowKey = "row-a";
 rowElement.getBoundingClientRect = () => rectAt(-25);
 await act(async () => arbiter?.deliverScroll());
 await act(async () => arbiter?.releaseTailFollow());

@@ -25,6 +25,19 @@ export function transcriptReaderPaintedRangeReplaced(
   return commonRows * 2 < Math.min(previous.size, next.size);
 }
 
+/** Keep the prior painted range only when a new native direction's first
+ * delivery already contains a user-visible reversal. */
+export function transcriptReaderDirectionHandoffReversed(
+  previous: ReadonlyMap<string, number>,
+  next: ReadonlyMap<string, number>,
+  deltaY: number,
+) {
+  const deltas = [...next].flatMap(([key, offset]) => previous.has(key) ? [offset - previous.get(key)!] : [])
+    .sort((left, right) => left - right);
+  const screenDelta = deltas[Math.floor(deltas.length / 2)];
+  return screenDelta !== undefined && (deltaY < 0 ? -1 : 1) * screenDelta >= MIN_REVERSE_JUMP_PX;
+}
+
 export function retainTranscriptReaderPaintedBaseline(
   previous: ReadonlyMap<string, unknown>,
   next: ReadonlyMap<string, unknown>,

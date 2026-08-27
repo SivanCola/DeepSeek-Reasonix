@@ -169,7 +169,10 @@ console.log("\nbundle budgets");
 // measures 454.998 KiB; retain about 0.10 KiB of toolchain headroom.
 // The native-thumb release proof and WebView2-only second compositor viewport
 // measure 455.103 KiB; retain the same narrow 0.1 KiB toolchain allowance.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 455.2 : 455.2;
+// Retaining the pre-swap painted range across a coalesced native-direction
+// handoff and task-sampling a compositor-owned thumb measure 455.4 KiB. Keep
+// 0.1 KiB of bounded headroom for the two platform-terminal invariants.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 455.5 : 455.5;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -279,6 +282,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // painted candidates, and retaining user-owned stable-extent slides measures
 // 2442.144 KiB. Latching native-thumb movement from real scroll delivery
 // measures 2442.3 KiB; retain about 0.1 KiB of raw/toolchain headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_442.4 : 2_442.4;
+// The coalesced direction handoff and compositor-task thumb proof measure
+// 2442.994 KiB; retain about 0.1 KiB of raw/toolchain headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_443.1 : 2_443.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

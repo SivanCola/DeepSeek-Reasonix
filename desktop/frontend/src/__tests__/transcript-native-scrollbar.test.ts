@@ -118,6 +118,31 @@ bottomProof.begin(proofElement, 500);
 bottomProof.observe(proofElement, 452);
 check(bottomProof.finish(proofElement), [true, true],
   "pointer travel retains an away-and-back thumb when scroll and rAF both miss the excursion");
+let pollCallback: (() => void) | undefined;
+const originalSetInterval = dom.window.setInterval.bind(dom.window);
+const originalClearInterval = dom.window.clearInterval.bind(dom.window);
+dom.window.setInterval = ((callback: TimerHandler) => {
+  pollCallback = callback as () => void;
+  return 77;
+}) as typeof dom.window.setInterval;
+dom.window.clearInterval = (() => {}) as typeof dom.window.clearInterval;
+let polledTop = 500;
+const polledElement = dom.window.document.createElement("div");
+Object.defineProperties(polledElement, {
+  clientHeight: { configurable: true, value: 500 },
+  scrollHeight: { configurable: true, value: 1_000 },
+  scrollTop: { configurable: true, get: () => polledTop },
+});
+const polledRef = { current: polledElement as HTMLDivElement | null };
+const polledProof = createTranscriptNativeScrollbarBottomProof({ scrollRef: polledRef });
+polledProof.begin(polledElement);
+polledTop = 300;
+pollCallback?.();
+polledTop = 500;
+check(polledProof.finish(polledElement), [true, true],
+  "task sampling retains an away-and-back native thumb when compositor tracking suspends rAF");
+dom.window.setInterval = originalSetInterval;
+dom.window.clearInterval = originalClearInterval;
 proofTop = 100;
 bottomProof.begin(proofElement);
 const replacementProofElement = { scrollTop: 500, scrollHeight: 1_000, clientHeight: 500 } as HTMLDivElement;

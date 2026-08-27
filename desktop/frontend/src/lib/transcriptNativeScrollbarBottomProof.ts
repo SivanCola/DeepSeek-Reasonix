@@ -28,12 +28,17 @@ export function createTranscriptNativeScrollbarBottomProof({
   let initialTop = 0;
   let initialPointerY: number | null = null;
   let frame: number | null = null;
+  let pollTimer: number | null = null;
+  let pollView: Window | null = null;
   let moved = false;
   let reachedBottom = false;
 
   const cancelFrame = () => {
     if (frame !== null) cancelAnimationFrame(frame);
     frame = null;
+    if (pollTimer !== null) pollView?.clearInterval(pollTimer);
+    pollTimer = null;
+    pollView = null;
   };
 
   const observe = (element: HTMLDivElement, pointerY?: number) => {
@@ -68,6 +73,14 @@ export function createTranscriptNativeScrollbarBottomProof({
     initialTop = element.scrollTop;
     initialPointerY = pointerY ?? null;
     frame = requestAnimationFrame(sample);
+    // Native GTK/Chromium scrollbar tracking can suspend rAF and consume DOM
+    // pointermove events while the thumb owns the compositor. A passive task
+    // sampler retains only the fact that the real scrollTop moved; it neither
+    // writes geometry nor extends ownership, and is cancelled on every
+    // terminal path. This keeps a stationary bottom click distinguishable
+    // from an away-and-back drag whose intermediate events were coalesced.
+    pollView = element.ownerDocument?.defaultView ?? null;
+    if (pollView) pollTimer = pollView.setInterval(() => observe(element), 8);
   };
 
   const finish = (element: HTMLDivElement | null) => {

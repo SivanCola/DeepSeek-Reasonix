@@ -7,6 +7,7 @@ import {
   observeTranscriptReaderExtent,
   retainTranscriptReaderPaintedBaseline,
   resolveTranscriptReaderExtentCorrection,
+  transcriptReaderDirectionHandoffReversed,
   transcriptReaderPaintedRangeReplaced,
   transcriptReaderPaintedRangesShareRow,
   transcriptReaderPaintedSlideIsAdjacent,
@@ -691,7 +692,6 @@ export function useTranscriptReaderExtentStability({
     renewLease(active);
     schedule(active);
   }, [anchorOffset, cancel, generationRef, renewLease, schedule, scrollRef]);
-
   const syncNativeDirection = useCallback((deltaY: number) => {
     const current = guardRef.current;
     if (
@@ -704,9 +704,21 @@ export function useTranscriptReaderExtentStability({
       schedule(current);
       return;
     }
+    const incomingPaintedRows = current?.element === scrollRef.current
+      ? capturePaintedReaderRows(current.element) : undefined;
+    const priorPaint = current && current.element === scrollRef.current
+      && current.generation === generationRef.current && incomingPaintedRows
+      && transcriptReaderDirectionHandoffReversed(current.paintedRows, incomingPaintedRows, deltaY)
+      ? [current.paintedRows, current.baselineScrollTop, current.pinLastHeight] as const
+      : undefined;
     arm(deltaY);
     const next = guardRef.current;
     if (next) {
+      // The first real native direction can arrive with its range swap.
+      if (priorPaint) {
+        [next.paintedRows, next.baselineScrollTop, next.pinLastHeight] = priorPaint;
+        next.previousPaintedRows = undefined; // Drop the replaced range.
+      }
       // This path observes a delivery that has already moved the native
       // scroller. Unlike a pre-scroll wheel intent, its current top/anchor is
       // the expectation; adding deltaY again would create an overshoot.
