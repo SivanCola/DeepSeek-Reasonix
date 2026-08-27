@@ -334,7 +334,7 @@ check(TRANSCRIPT_READER_VIEWPORT_BUFFER === 1, "reader buffering retains one mou
 check(TRANSCRIPT_READER_OVERSCAN_ROWS === 24, "reader buffering retains a bounded 24-row window per edge");
 check(transcriptReaderViewportBuffer("Mozilla/5.0 AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15") === 2, "WKWebView retains a second compositor viewport");
 check(transcriptReaderViewportBuffer("Mozilla/5.0 AppleWebKit/537.36 Chrome/128.0 Safari/537.36 Edg/128.0") === 1, "WebView2 retains the bounded default viewport");
-check(transcriptReaderViewportBuffer("Mozilla/5.0 AppleWebKit/537.36 Chrome/128.0 Safari/537.36 Edg/128.0", true) === 2, "native WebView2 retains a second compositor viewport");
+check(transcriptReaderViewportBuffer("Mozilla/5.0 AppleWebKit/537.36 Chrome/128.0 Safari/537.36 Edg/128.0", true) === 3, "native WebView2 retains three compositor viewports");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

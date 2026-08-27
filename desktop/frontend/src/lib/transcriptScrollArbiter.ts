@@ -99,19 +99,19 @@ export const TRANSCRIPT_CONTENT_SHRINK_THRESHOLD_PX = 24;
 export const TRANSCRIPT_SUBSTANTIAL_DISPLACEMENT_PX = 24;
 
 // Native WKWebView/WebView2 may coalesce wheel delivery while Virtuoso commits
-// measured rows. Keep one viewport and 24 rows only after reader ownership
-// has been established; the logical guard holds larger blank deliveries and
-// ordinary idle surfaces retain the much smaller default window.
+// measured rows. Keep a platform-bounded window and 24 rows only after reader
+// ownership has been established; ordinary idle surfaces retain the smaller
+// default window.
 export const TRANSCRIPT_READER_OVERSCAN_ROWS = 24;
 export const TRANSCRIPT_READER_VIEWPORT_BUFFER = 1;
 
 export function transcriptReaderViewportBuffer(userAgent?: string, nativeWebView2 = false): number {
-  if (nativeWebView2) return 2;
+  if (nativeWebView2) return 3;
   if (!userAgent) return TRANSCRIPT_READER_VIEWPORT_BUFFER;
   // WKWebView can coalesce native wheel delivery beyond one compositor
   // viewport before Virtuoso commits its replacement range. Chromium and
-  // WebView2 do not need the extra mounted viewport, whose larger size tree
-  // can delay their final tail measurement.
+  // ordinary Chromium/WebView2 browser replays do not need the extra mounted
+  // viewport, whose larger size tree can delay their final tail measurement.
   return /AppleWebKit/i.test(userAgent) && !/(?:Chrome|Chromium|CriOS|Edg|OPR)\//i.test(userAgent)
     ? 2
     : TRANSCRIPT_READER_VIEWPORT_BUFFER;

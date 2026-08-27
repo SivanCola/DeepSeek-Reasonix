@@ -4,6 +4,7 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <WebKit/WebKit.h>
 #include <string.h>
+#include <unistd.h>
 
 @interface ReasonixTranscriptSmokeHost : NSObject <WKNavigationDelegate, WKScriptMessageHandler>
 @property(nonatomic, strong) WKWebView *webView;
@@ -184,12 +185,11 @@
     kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent,
     self.window.windowNumber
   );
-  NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
-  // WKWebView is a native container; its hit-tested WebKit child is the
-  // reliable scroll-wheel receiver. Hosted runners can keep the outer window
-  // key while declining synthetic window routing or container forwarding.
-  NSView *target = [self.webView hitTest:viewPoint] ?: self.webView;
-  if (event != nil) [target scrollWheel:event];
+  // Enter the host's native event queue so AppKit and WebKit perform their
+  // ordinary window and responder routing. Direct scrollWheel: delivery can
+  // be discarded by the hosted WebContent process on CI even while the outer
+  // window remains key; targeting our own pid avoids global cursor dependence.
+  CGEventPostToPid(getpid(), cgEvent);
   CFRelease(cgEvent);
 }
 

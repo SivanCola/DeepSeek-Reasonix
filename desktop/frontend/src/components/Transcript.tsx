@@ -622,7 +622,7 @@ export function Transcript({
     }
   }, [entranceRef, refreshGeometryEnvironment, scrollerRef]);
   const handleTranscriptScroll = useCallback(() => {
-    deliverScroll();
+    deliverScroll(undefined, false, true);
     noteScrollActivity();
     pagingAuthorization.noteScrollPosition();
     if (creationMode) handleCreationScroll();

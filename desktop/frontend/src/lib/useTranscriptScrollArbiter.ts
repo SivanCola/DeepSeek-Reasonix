@@ -81,7 +81,7 @@ export function useTranscriptScrollArbiter({
   const scrollRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<TranscriptScrollState>(INITIAL_TRANSCRIPT_SCROLL_STATE);
   const pinnedRef = useRef(true); const modeRef = useRef<TranscriptScrollMode>("tail-follow");
-  const touchStartYRef = useRef<number | null>(null); const nativeScrollbarDragRef = useRef(false);
+  const touchStartYRef = useRef<number | null>(null); const nativeScrollbarDragRef = useRef<[startTop: number, moved: boolean] | null>(null);
   const middlePointerScrollRef = useRef(false);
   const deliverScrollRef = useRef<((element?: HTMLDivElement) => void) | null>(null);
   const dispatchEventRef = useRef<((event: TranscriptScrollEvent) => void) | null>(null);
@@ -306,9 +306,9 @@ export function useTranscriptScrollArbiter({
     }, READER_INTENT_IDLE_MS);
   }, [dispatch]);
 
-  const deliverScroll = useCallback((element = scrollRef.current, provedNativeBottom = false) => {
+  const deliverScroll = useCallback((element = scrollRef.current, provedNativeBottom = false, nativeScrollEvent = false) => {
     if (!element) return;
-    if (nativeScrollbarDragRef.current) nativeScrollbarBottomProof.observe(element);
+    if (nativeScrollbarDragRef.current) { nativeScrollbarDragRef.current[1] ||= nativeScrollEvent && Math.abs(element.scrollTop - nativeScrollbarDragRef.current[0]) > 1; nativeScrollbarBottomProof.observe(element); }
     readerExtent.observeNativeDelivery(element);
     const retainsNativeBottomIntent = deliverBottomHold(element, provedNativeBottom);
     if (stateRef.current.readerIntent && !retainsNativeBottomIntent) armReaderIntentIdle();
@@ -487,8 +487,8 @@ export function useTranscriptScrollArbiter({
     if (!nativeScrollbarDragRef.current) return;
     const element = scrollRef.current;
     if (element && pointerY !== undefined) nativeScrollbarBottomProof.observe(element, pointerY);
-    const [thumbMoved, reachedBottom] = nativeScrollbarBottomProof.finish(element);
-    nativeScrollbarDragRef.current = false; setNativeScrollbarDragging(false);
+    const [provedThumbMoved, reachedBottom] = nativeScrollbarBottomProof.finish(element); const thumbMoved = provedThumbMoved || Boolean(nativeScrollbarDragRef.current?.[1]);
+    nativeScrollbarDragRef.current = null; setNativeScrollbarDragging(false);
     dispatch({ type: "NATIVE_SCROLLBAR_END", canClaimTail: thumbMoved });
     if (element) {
       delete element.dataset.nativeScrollbarDrag;
@@ -742,7 +742,7 @@ export function useTranscriptScrollArbiter({
     const element = scrollRef.current;
     if (element && isNativeVerticalScrollbarPointer(element, event.nativeEvent)) {
       if (!nativeScrollbarDragRef.current) {
-        nativeScrollbarDragRef.current = true; setNativeScrollbarDragging(true); element.dataset.nativeScrollbarDrag = "true";
+        nativeScrollbarDragRef.current = [element.scrollTop, false]; setNativeScrollbarDragging(true); element.dataset.nativeScrollbarDrag = "true";
         nativeScrollbarBottomProof.begin(element, event.clientY);
         dispatch({ type: "NATIVE_SCROLLBAR_BEGIN" });
       }
