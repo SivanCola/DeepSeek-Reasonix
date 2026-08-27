@@ -144,8 +144,9 @@ console.log("\nbundle budgets");
 // away-and-back release gap at 452.853 KiB. Synchronously retaining every
 // accepted native frame and fencing an unacknowledged correction measure
 // 452.953 KiB. The bounded settle-resend guard stays within 0.1 KiB of that
-// mark; the reading-anchor pin's frozen-offset probe adds 0.2 KiB more.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 453.4 : 453.4;
+// mark; the reading-anchor pin plus the gateway sync normalization measure
+// 453.6 KiB locally while CI gzip lands a display step higher.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 453.7 : 453.7;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -234,8 +235,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // reader correction through its bounded tail handoff measure 2432.297 KiB.
 // Native-thumb pointer travel brings the measured path to 2432.661 KiB. The
 // accepted-frame and pending-correction fences measure 2432.735 KiB; the
-// bounded settle-resend guard measures 2433.1 KiB, the reading-anchor pin
-// 2434.8 KiB and its tail-proximity gate 2434.95 KiB; retain 0.05 KiB.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_435.0 : 2_435.0;
+// bounded settle-resend guard measures 2433.1 KiB; the reading-anchor pin,
+// its tail-proximity gate and the gateway normalization reach 2435.8 KiB
+// locally with the same compressor step retained above.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_436.2 : 2_436.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

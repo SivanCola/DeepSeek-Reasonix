@@ -27,6 +27,11 @@ const READER_EXTENT_ACTIVE_MS = 180;
 // ignore anything beyond one and a half viewports, which belongs to the
 // mounted-range replacement paths.
 const READER_PIN_INPUT_DOMINANCE_RATIO = 4;
+// A correction whose native offset was displaced by a coalesced range swap
+// can never reach acknowledgement; bound its single-flight lifetime so later
+// reading-position repairs are not wedged behind it (same lease pattern as
+// READER_EXTENT_RETENTION_MS).
+const READER_PENDING_RELEASE_MS = 600;
 const READER_PIN_MAX_SLIDE_VIEWPORTS = 1.5;
 // Inside one viewport of the physical tail the pinned-tail handoff owns the
 // geometry: reader anchoring there fights Virtuoso's own clamp and wedges
@@ -63,6 +68,8 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   /** Scroll offset captured beside the painted baseline. Equality across an
    * observation proves an anchor break is pure layout shift, not input. */
   baselineScrollTop?: number;
+  /** Single-flight correction release timer, mirroring the retention lease. */
+  pendingReleaseTimer?: number | null;
 };
 
 type PaintedReaderReverse = {
@@ -160,10 +167,12 @@ export function useTranscriptReaderExtentStability({
     if (guard.paintFrame != null) cancelAnimationFrame(guard.paintFrame);
     if (guard.paintTimer != null) window.clearTimeout(guard.paintTimer);
     if (guard.expiryTimer != null) window.clearTimeout(guard.expiryTimer);
+    if (guard.pendingReleaseTimer != null) window.clearTimeout(guard.pendingReleaseTimer);
     guard.frame = null;
     guard.paintFrame = null;
     guard.paintTimer = null;
     guard.expiryTimer = null;
+    guard.pendingReleaseTimer = null;
   }, []);
 
   const cancel = useCallback(() => {
@@ -183,6 +192,18 @@ export function useTranscriptReaderExtentStability({
 
   const anchorOffset = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
     return guard.anchor ? readerAnchorOffset(element, guard.anchor.rowKey) : undefined;
+  }, []);
+
+  const armPendingRelease = useCallback((guard: ActiveReaderExtentGuard) => {
+    if (guard.pendingReleaseTimer != null) window.clearTimeout(guard.pendingReleaseTimer);
+    guard.pendingReleaseTimer = window.setTimeout(() => {
+      guard.pendingReleaseTimer = null;
+      if (guardRef.current !== guard || guard.pendingCorrectionTop === undefined) return;
+      guard.pendingCorrectionTop = undefined;
+      guard.pendingCorrectionForward = undefined;
+      guard.pendingCorrectionAcknowledged = undefined;
+      guard.pendingAnchor = undefined;
+    }, READER_PENDING_RELEASE_MS);
   }, []);
 
   const commitPaintedRowsAfterPaint = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
@@ -315,6 +336,7 @@ export function useTranscriptReaderExtentStability({
       snapshot.scrollHeight - snapshot.clientHeight,
       writtenTop,
     ));
+    armPendingRelease(active);
     active.pendingCorrectionForward = false;
     active.pendingCorrectionAcknowledged = false;
     active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset - correction];
@@ -425,6 +447,7 @@ export function useTranscriptReaderExtentStability({
       mode,
     })) return false;
     active.pendingCorrectionTop = correctionTarget;
+    armPendingRelease(active);
     active.pendingCorrectionForward = active.direction * correction > 0;
     active.pendingCorrectionAcknowledged = false;
     active.pendingAnchor = paintedReverse
@@ -490,8 +513,6 @@ export function useTranscriptReaderExtentStability({
     // but a native extent reversal/collapse can still be corrected from the
     // last accepted logical position.
     corrected = corrected || correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
-    // eslint-disable-next-line no-console
-    console.error("PIND", JSON.stringify({ vb: viewportBlank, sd: paintedReverse?.screenDelta ?? null, bs: guard.baselineScrollTop, st: snapshot.scrollTop, pend: guard.pendingCorrectionTop ?? null }));
     corrected = corrected || pinReadingAnchor(guard, element, snapshot, viewportBlank ? undefined : paintedReverse, viewportBlank);
     if (
       accepted
