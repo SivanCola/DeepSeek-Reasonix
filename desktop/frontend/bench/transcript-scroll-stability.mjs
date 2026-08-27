@@ -973,7 +973,16 @@ try {
   } else {
     assert(nativeThumbProbe && nativeThumbProbe.gutter > 1, `workbench exposes a native scrollbar gutter (${nativeThumbProbe?.gutter ?? 0}px)`);
     const trackTop = nativeThumbProbe.y - 5;
-    const thumbCandidateOffsets = [4, 8, 12, 16, 20, 24, 28, 32];
+    const coarseThumbCandidateOffsets = [4, 8, 12, 16, 20, 24, 28, 32];
+    // Native scrollbar themes may expose a very narrow draggable hitbox
+    // between a top button and the track. Keep the fast coarse probes first,
+    // then inspect every physical pixel near the track start so a theme
+    // boundary cannot be misclassified as host input being unavailable.
+    const thumbCandidateOffsets = [
+      ...coarseThumbCandidateOffsets,
+      ...Array.from({ length: 64 }, (_, index) => index + 1)
+        .filter((offset) => !coarseThumbCandidateOffsets.includes(offset)),
+    ];
     const thumbCandidateMotions = [];
     let nativeThumbY = null;
     for (const offset of thumbCandidateOffsets) {
