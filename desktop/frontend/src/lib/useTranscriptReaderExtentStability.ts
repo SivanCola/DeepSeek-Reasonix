@@ -21,22 +21,13 @@ import { shouldBridgeTranscriptReaderCorrection } from "./transcriptScrollWriter
 import { captureLeadingTranscriptLayoutAnchor, transcriptElementViewportIsBlank } from "./transcriptVirtuosoRecovery";
 
 const READER_EXTENT_ACTIVE_MS = 180;
-// Genuine measured-extent drift arrives in sub-viewport increments; slow
-// engines coalesce more into one frame but still deliver tiny native input
-// against it. Require the screen slide to dominate real scrolling motion, and
-// ignore anything beyond one and a half viewports, which belongs to the
-// mounted-range replacement paths.
-const READER_PIN_INPUT_DOMINANCE_RATIO = 4;
-// A correction whose native offset was displaced by a coalesced range swap
-// can never reach acknowledgement; bound its single-flight lifetime so later
-// reading-position repairs are not wedged behind it (same lease pattern as
-// READER_EXTENT_RETENTION_MS).
-const READER_PENDING_RELEASE_MS = 600;
-const READER_PIN_MAX_SLIDE_VIEWPORTS = 1.5;
-// Inside one viewport of the physical tail the pinned-tail handoff owns the
-// geometry: reader anchoring there fights Virtuoso's own clamp and wedges
-// manual-mode scrolling (#transcript-selection field replay).
-const READER_PIN_MIN_TAIL_DISTANCE_VIEWPORTS = 1.0;
+// A frozen native offset proves an anchor break is layout-only; anything past
+// this jitter is real input and must never be overridden.
+const READER_PIN_FROZEN_TOP_PX = 2;
+// Genuine measured-extent drift arrives in sub-viewport increments. A larger
+// one-frame step or slide means a mounted-range replacement, which the
+// direction-gated reverse path owns instead.
+const READER_PIN_MAX_STEP_RATIO = 0.5;
 // WebView2 can coalesce a sustained native wheel burst and commit Virtuoso's
 // replacement range after the reader-intent idle timer has fired. Retain the
 // last accepted logical row passively across that bounded compositor delay;
@@ -68,8 +59,9 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   /** Scroll offset captured beside the painted baseline. Equality across an
    * observation proves an anchor break is pure layout shift, not input. */
   baselineScrollTop?: number;
-  /** Single-flight correction release timer, mirroring the retention lease. */
-  pendingReleaseTimer?: number | null;
+  /** Extent seen by the previous pin probe; measures per-observation layout
+   * step size independently of the shared accepted-extent bookkeeping. */
+  pinLastHeight?: number;
 };
 
 type PaintedReaderReverse = {
@@ -150,7 +142,7 @@ export function useTranscriptReaderExtentStability({
   generationRef: RefObject<number>;
   modeRef: RefObject<TranscriptScrollMode>;
   scrollRef: RefObject<HTMLDivElement | null>;
-  writeCorrection: (write: TranscriptScrollWriteRecord & { virtuosoSync?: boolean }) => boolean;
+  writeCorrection: (write: TranscriptScrollWriteRecord) => boolean;
   lastWriteOwner: () => string | undefined;
 }) {
   const guardRef = useRef<ActiveReaderExtentGuard | null>(null);
@@ -167,12 +159,10 @@ export function useTranscriptReaderExtentStability({
     if (guard.paintFrame != null) cancelAnimationFrame(guard.paintFrame);
     if (guard.paintTimer != null) window.clearTimeout(guard.paintTimer);
     if (guard.expiryTimer != null) window.clearTimeout(guard.expiryTimer);
-    if (guard.pendingReleaseTimer != null) window.clearTimeout(guard.pendingReleaseTimer);
     guard.frame = null;
     guard.paintFrame = null;
     guard.paintTimer = null;
     guard.expiryTimer = null;
-    guard.pendingReleaseTimer = null;
   }, []);
 
   const cancel = useCallback(() => {
@@ -192,18 +182,6 @@ export function useTranscriptReaderExtentStability({
 
   const anchorOffset = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
     return guard.anchor ? readerAnchorOffset(element, guard.anchor.rowKey) : undefined;
-  }, []);
-
-  const armPendingRelease = useCallback((guard: ActiveReaderExtentGuard) => {
-    if (guard.pendingReleaseTimer != null) window.clearTimeout(guard.pendingReleaseTimer);
-    guard.pendingReleaseTimer = window.setTimeout(() => {
-      guard.pendingReleaseTimer = null;
-      if (guardRef.current !== guard || guard.pendingCorrectionTop === undefined) return;
-      guard.pendingCorrectionTop = undefined;
-      guard.pendingCorrectionForward = undefined;
-      guard.pendingCorrectionAcknowledged = undefined;
-      guard.pendingAnchor = undefined;
-    }, READER_PENDING_RELEASE_MS);
   }, []);
 
   const commitPaintedRowsAfterPaint = useCallback((guard: ActiveReaderExtentGuard, element: HTMLDivElement) => {
@@ -298,22 +276,21 @@ export function useTranscriptReaderExtentStability({
     paintedReverse?: PaintedReaderReverse,
     viewportBlank = false,
   ): boolean => {
-    const maxSlide = snapshot.clientHeight * READER_PIN_MAX_SLIDE_VIEWPORTS;
-    const minTailDistance = snapshot.clientHeight * READER_PIN_MIN_TAIL_DISTANCE_VIEWPORTS;
-    const tailDistance = snapshot.scrollHeight - snapshot.scrollTop - snapshot.clientHeight;
-    const inputDelta = active.baselineScrollTop === undefined
-      ? Number.POSITIVE_INFINITY
-      : snapshot.scrollTop - active.baselineScrollTop;
+    const maxStep = snapshot.clientHeight * READER_PIN_MAX_STEP_RATIO;
+    const heightStep = active.pinLastHeight === undefined
+      ? 0
+      : snapshot.scrollHeight - active.pinLastHeight;
+    active.pinLastHeight = snapshot.scrollHeight;
     if (
       viewportBlank
-      || tailDistance < minTailDistance
       || !paintedReverse
+      || active.baselineScrollTop === undefined
+      || Math.abs(snapshot.scrollTop - active.baselineScrollTop) > READER_PIN_FROZEN_TOP_PX
       || active.pendingCorrectionTop !== undefined
       || active.collapsed
+      || Math.abs(heightStep) > maxStep
       || Math.abs(paintedReverse.screenDelta) < MIN_REVERSE_JUMP_PX
-      || Math.abs(paintedReverse.screenDelta) > maxSlide
-      || Math.abs(paintedReverse.screenDelta)
-        < READER_PIN_INPUT_DOMINANCE_RATIO * Math.abs(inputDelta)
+      || Math.abs(paintedReverse.screenDelta) > maxStep
     ) return false; // slides beyond half a viewport are range swaps, not drift
     const maxTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
     const correctionTarget = Math.max(0, Math.min(maxTop, snapshot.scrollTop + paintedReverse.screenDelta));
@@ -321,22 +298,16 @@ export function useTranscriptReaderExtentStability({
     if (Math.abs(correction) < MIN_REVERSE_JUMP_PX) return false;
     if (!writeCorrection({
       owner: "reader-stability",
-      kind: "scrollBy",
-      top: paintedReverse.screenDelta,
+      kind: "scrollTo",
+      top: correctionTarget,
       source: "layout-height-changed",
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
       bottomDistance: nativeTranscriptDistanceFromBottom(element),
       mode: modeRef.current,
-      virtuosoSync: true,
     })) return false;
-    const writtenTop = snapshot.scrollTop + paintedReverse.screenDelta;
-    active.pendingCorrectionTop = Math.max(0, Math.min(
-      snapshot.scrollHeight - snapshot.clientHeight,
-      writtenTop,
-    ));
-    armPendingRelease(active);
+    active.pendingCorrectionTop = correctionTarget;
     active.pendingCorrectionForward = false;
     active.pendingCorrectionAcknowledged = false;
     active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset - correction];
@@ -447,7 +418,6 @@ export function useTranscriptReaderExtentStability({
       mode,
     })) return false;
     active.pendingCorrectionTop = correctionTarget;
-    armPendingRelease(active);
     active.pendingCorrectionForward = active.direction * correction > 0;
     active.pendingCorrectionAcknowledged = false;
     active.pendingAnchor = paintedReverse

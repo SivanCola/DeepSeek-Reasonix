@@ -436,19 +436,11 @@ try {
 // scrollTop stays frozen, that slide is pure above-window extent drift: one
 // bounded reader-stability write must restore the painted positions without
 // any direction-gated reverse classification.
-function makePinFixture() {
+{
   const originalClientDescriptor = Object.getOwnPropertyDescriptor(scrollElement, "clientHeight")!;
   Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 600 });
   const originalScrollRect = scrollElement.getBoundingClientRect;
   scrollElement.getBoundingClientRect = () => ({ ...rectAt(0), height: 600, bottom: 600 });
-  return () => {
-    scrollElement.getBoundingClientRect = originalScrollRect;
-    Object.defineProperty(scrollElement, "clientHeight", originalClientDescriptor);
-  };
-}
-
-{
-  const restoreViewport = makePinFixture();
   try {
     await act(async () => arbiter?.reset());
     scrollExtent = 6_000;
@@ -474,41 +466,15 @@ function makePinFixture() {
         && Math.abs(scrollElement.scrollTop - 2_120) <= 2,
       "the pin restores every painted row by the observed screen displacement",
     );
-  } finally {
-    restoreViewport();
-  }
-}
-
-// The slow-engine generalization: native motion may be present as long as the
-// painted slide dominates it.
-{
-  const restoreViewport = makePinFixture();
-  try {
-    await act(async () => arbiter?.reset());
-    scrollExtent = 6_000;
-    scrollElement.scrollTop = 3_000;
-    scrollWrites.length = 0;
-    let movingRowTop = 300;
-    rowElement.getBoundingClientRect = () => rectAt(movingRowTop);
-    await act(async () => arbiter?.releaseTailFollow());
-    await wheelDown();
-    check(arbiter?.modeRef.current === "reader-gesture", "the dominance fixture also starts from a reader gesture");
-    await flushFrames();
-    await advanceClock(2);
-    await flushFrames();
-
-    // Real scrolling moves the offset by 30 while a measured extent burst
-    // slides content 180px down-screen: the pin must follow the dominant
-    // component instead of refusing non-frozen frames.
-    movingRowTop += 180;
-    scrollExtent += 210;
-    scrollElement.scrollTop += 30;
+    const followupBefore = scrollWrites.filter((write) => write.owner === "reader-stability").length;
     await act(async () => arbiter?.observeReaderExtent());
-    const dominantWrites = scrollWrites.filter((write) => write.owner === "reader-stability");
-    check(dominantWrites.length === 1 && dominantWrites[0]?.top === 3_210,
-      "a dominant painted slide pins alongside small native motion");
+    check(
+      scrollWrites.filter((write) => write.owner === "reader-stability").length <= followupBefore + 1,
+      "a settled pin does not replay against its acknowledged target",
+    );
   } finally {
-    restoreViewport();
+    scrollElement.getBoundingClientRect = originalScrollRect;
+    Object.defineProperty(scrollElement, "clientHeight", originalClientDescriptor);
   }
 }
 
