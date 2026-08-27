@@ -21,13 +21,13 @@ import { shouldBridgeTranscriptReaderCorrection } from "./transcriptScrollWriter
 import { captureLeadingTranscriptLayoutAnchor, transcriptElementViewportIsBlank } from "./transcriptVirtuosoRecovery";
 
 const READER_EXTENT_ACTIVE_MS = 180;
-// A frozen native offset proves an anchor break is layout-only; anything past
-// this jitter is real input and must never be overridden.
-const READER_PIN_FROZEN_TOP_PX = 2;
-// Genuine measured-extent drift arrives in sub-viewport increments. A larger
-// one-frame step or slide means a mounted-range replacement, which the
-// direction-gated reverse path owns instead.
-const READER_PIN_MAX_STEP_RATIO = 0.5;
+// Genuine measured-extent drift arrives in sub-viewport increments; slow
+// engines coalesce more into one frame but still deliver tiny native input
+// against it. Require the screen slide to dominate real scrolling motion, and
+// ignore anything beyond one and a half viewports, which belongs to the
+// mounted-range replacement paths.
+const READER_PIN_INPUT_DOMINANCE_RATIO = 4;
+const READER_PIN_MAX_SLIDE_VIEWPORTS = 1.5;
 // WebView2 can coalesce a sustained native wheel burst and commit Virtuoso's
 // replacement range after the reader-intent idle timer has fired. Retain the
 // last accepted logical row passively across that bounded compositor delay;
@@ -59,9 +59,6 @@ type ActiveReaderExtentGuard = TranscriptReaderExtentGuard & {
   /** Scroll offset captured beside the painted baseline. Equality across an
    * observation proves an anchor break is pure layout shift, not input. */
   baselineScrollTop?: number;
-  /** Extent seen by the previous pin probe; measures per-observation layout
-   * step size independently of the shared accepted-extent bookkeeping. */
-  pinLastHeight?: number;
 };
 
 type PaintedReaderReverse = {
@@ -276,21 +273,19 @@ export function useTranscriptReaderExtentStability({
     paintedReverse?: PaintedReaderReverse,
     viewportBlank = false,
   ): boolean => {
-    const maxStep = snapshot.clientHeight * READER_PIN_MAX_STEP_RATIO;
-    const heightStep = active.pinLastHeight === undefined
-      ? 0
-      : snapshot.scrollHeight - active.pinLastHeight;
-    active.pinLastHeight = snapshot.scrollHeight;
+    const maxSlide = snapshot.clientHeight * READER_PIN_MAX_SLIDE_VIEWPORTS;
+    const inputDelta = active.baselineScrollTop === undefined
+      ? Number.POSITIVE_INFINITY
+      : snapshot.scrollTop - active.baselineScrollTop;
     if (
       viewportBlank
       || !paintedReverse
-      || active.baselineScrollTop === undefined
-      || Math.abs(snapshot.scrollTop - active.baselineScrollTop) > READER_PIN_FROZEN_TOP_PX
       || active.pendingCorrectionTop !== undefined
       || active.collapsed
-      || Math.abs(heightStep) > maxStep
       || Math.abs(paintedReverse.screenDelta) < MIN_REVERSE_JUMP_PX
-      || Math.abs(paintedReverse.screenDelta) > maxStep
+      || Math.abs(paintedReverse.screenDelta) > maxSlide
+      || Math.abs(paintedReverse.screenDelta)
+        < READER_PIN_INPUT_DOMINANCE_RATIO * Math.abs(inputDelta)
     ) return false; // slides beyond half a viewport are range swaps, not drift
     const maxTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
     const correctionTarget = Math.max(0, Math.min(maxTop, snapshot.scrollTop + paintedReverse.screenDelta));
