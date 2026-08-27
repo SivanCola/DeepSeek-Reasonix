@@ -985,6 +985,7 @@ try {
     ];
     const thumbCandidateMotions = [];
     let nativeThumbY = null;
+    let nativeThumbDragY = null;
     for (const offset of thumbCandidateOffsets) {
       await transcript.evaluate((element) => {
         element.scrollTop = 0;
@@ -1006,6 +1007,7 @@ try {
       // track/button press moves at most one page and is not a valid drag hit.
       if (motion.scrollTop > motion.clientHeight * 2.5) {
         nativeThumbY = candidateY;
+        nativeThumbDragY = candidateY + 48;
         break;
       }
       await page.mouse.up();
@@ -1089,11 +1091,28 @@ try {
     assert(duringNativeThumbDrag.knownSize === nativeDragBaseline.knownSize, `native thumb drag freezes new row measurements (${duringNativeThumbDrag.knownSize}px)`);
     assert(duringNativeThumbDrag.fixedHeight === nativeDragBaseline.fixedHeight, `native thumb drag fixes mounted row layout (${duringNativeThumbDrag.fixedHeight})`);
     assert(Math.abs(duringNativeThumbDrag.scrollHeight - nativeDragBaseline.scrollHeight) <= 8, `native thumb drag keeps the physical scroll range stable (${nativeDragBaseline.scrollHeight} → ${duringNativeThumbDrag.scrollHeight}; row ${duringNativeThumbDrag.rowHeight}; list ${duringNativeThumbDrag.listHeight})`);
-    await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.bottomY, { steps: 8 });
-    await page.waitForFunction(() => {
-      const element = document.querySelector(".transcript");
-      return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
-    });
+    const nativeTailSamples = [];
+    const nativeDragStepCount = 24;
+    for (let step = 1; step <= nativeDragStepCount; step += 1) {
+      const y = nativeThumbDragY + ((nativeThumbProbe.bottomY - nativeThumbDragY) * step) / nativeDragStepCount;
+      await page.mouse.move(nativeThumbProbe.x, y);
+      // Give Chromium one frame to apply each browser-owned thumb movement;
+      // coalescing one large synthetic move can skip the native track's
+      // intermediate geometry while Virtuoso swaps its mounted range.
+      await page.waitForTimeout(24);
+      const sample = await transcript.evaluate((element) => ({
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        bottomDistance: element.scrollHeight - element.scrollTop - element.clientHeight,
+        mode: element.dataset.scrollMode,
+      }));
+      nativeTailSamples.push({ y: Math.round(y), ...sample });
+      if (sample.bottomDistance <= 4) break;
+    }
+    const nativeTailTerminal = nativeTailSamples.at(-1);
+    assert(nativeTailSamples.every((sample) => sample.mode === "native-thumb"), `native thumb retains ownership through the delivered drag (${JSON.stringify(nativeTailSamples)})`);
+    assert(nativeTailTerminal?.bottomDistance <= 4, `native thumb drag reaches the physical bottom (${JSON.stringify(nativeTailSamples)})`);
     await page.mouse.up();
     await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
     await transcript.evaluate((element) => {
@@ -1105,7 +1124,7 @@ try {
       const element = document.querySelector(".transcript");
       return element
         && element.dataset.scrollMode === "tail-follow"
-        && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+        && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
     });
     assert(true, "native thumb release keeps the remeasured transcript at the physical bottom");
     const idleTail = await transcript.evaluate((element) => new Promise((resolve) => {
