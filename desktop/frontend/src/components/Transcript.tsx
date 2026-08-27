@@ -239,7 +239,7 @@ export function Transcript({
     scrollToBottom,
     followGrowingTail,
     beginUserResize,
-    scrollToDataIndex,
+    scrollToDataIndex, beginQuestionJump, finishQuestionJump,
     releaseTailFollow,
     setMode: setScrollMode,
     writeOffset,
@@ -605,7 +605,7 @@ export function Transcript({
     questions, loadedByTurn, layoutSurfaceKey, rowIndexByKey,
     hasOlderHistory, loadingOlderHistory, olderHistoryError, running, scrollElement, scheduleRecovery: scheduleBlankViewportCheck,
     onLoadOlderHistory, clearTranscriptSelection, invalidateAnchors,
-    scrollToDataIndex, setActiveQuestion, rewindSignal,
+    beginQuestionJump, finishQuestionJump, scrollToDataIndex, setActiveQuestion, rewindSignal,
   });
   const handleViewportEarlierHistoryReached = useCallback(() => {
     if (hydrating || !pagingAuthorization.consume()) return;

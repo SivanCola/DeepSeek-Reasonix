@@ -213,6 +213,45 @@ await flushFrames();
 check(scrollByCalls === 0 && scrollWrites.length === 0,
   "selection ownership cancels a pending reader transaction");
 
+// A question jump owns the whole masked paging/landing transaction, not only
+// the final indexed write. Entering it must invalidate a queued reader
+// correction, and a generic scrollend from the indexed placement must not
+// release ownership before the matching paint terminal.
+await act(async () => arbiter?.reset());
+scrollExtent = 5_000;
+scrollElement.scrollTop = 2_000;
+rowElement.getBoundingClientRect = () => rectAt(20);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 133.33,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollExtent = 4_000;
+scrollElement.scrollTop = 1_000;
+rowElement.getBoundingClientRect = () => rectAt(1_020);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.beginQuestionJump(77));
+scrollWrites.length = 0;
+scrollByCalls = 0;
+scrollExtent = 5_000;
+await act(async () => arbiter?.followGrowingTail());
+await flushFrames();
+check(scrollWrites.length === 0 && scrollByCalls === 0,
+  "question-jump ownership cancels queued reader and tail writers");
+await act(async () => arbiter?.finishProgrammaticScroll());
+check(String(arbiter?.modeRef.current) === "restoring",
+  "generic scrollend cannot release a masked question jump");
+await act(async () => arbiter?.finishQuestionJump(76));
+check(String(arbiter?.modeRef.current) === "restoring",
+  "a stale question-jump terminal cannot release the current transaction");
+await act(async () => arbiter?.finishQuestionJump(77));
+check(String(arbiter?.modeRef.current) === "manual",
+  "the matching paint terminal releases question-jump ownership");
+
 // A downward wheel at the physical bottom must not arm reader-extent
 // recovery. A later extent rebound would otherwise snap the viewport upward
 // and fight the user's wheel input.

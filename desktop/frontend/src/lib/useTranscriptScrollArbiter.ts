@@ -48,6 +48,7 @@ import { createTranscriptTailSettle, type TranscriptTailSettle } from "./transcr
 import { useTranscriptReaderExtentStability } from "./useTranscriptReaderExtentStability";
 import { useTranscriptNativeScrollbarOwnership } from "./useTranscriptNativeScrollbarOwnership";
 import { createTranscriptScrollWriter } from "./transcriptScrollWriter";
+import { createTranscriptQuestionJumpOwnership } from "./transcriptQuestionJumpOwnership";
 export type {
   TranscriptRecoveryRequestSpec,
   TranscriptRecoveryTerminal,
@@ -94,6 +95,7 @@ export function useTranscriptScrollArbiter({
   const middlePointerScrollRef = useRef(false);
   const deliverScrollRef = useRef<((element?: HTMLDivElement) => void) | null>(null);
   const generationRef = useRef(0);
+  const questionJumpOwnershipRef = useRef<ReturnType<typeof createTranscriptQuestionJumpOwnership> | null>(null);
   const geometryRevisionRef = useRef(0);
   const followFrameRef = useRef<number | null>(null);
   // Virtuoso reuses physical row elements. A known size from the previous
@@ -274,6 +276,8 @@ export function useTranscriptScrollArbiter({
     readerIntentTimerRef.current = null;
     dispatch({ type: "READER_INTENT_ENDED" });
   }, [dispatch]);
+  questionJumpOwnershipRef.current ??= createTranscriptQuestionJumpOwnership({ invalidateAsyncFrames, endReaderIntent, dispatch });
+  const questionJumpOwnership = questionJumpOwnershipRef.current;
 
   const armReaderIntentIdle = useCallback(() => {
     if (readerIntentTimerRef.current !== null) window.clearTimeout(readerIntentTimerRef.current);
@@ -446,6 +450,7 @@ export function useTranscriptScrollArbiter({
   }, [finishRecovery, launchRecovery]);
 
   const reset = useCallback(() => {
+    questionJumpOwnership.reset();
     invalidateAsyncFrames();
     endReaderIntent();
     followGeometryRef.current = { contentExtent: null, viewportExtent: null };
@@ -678,9 +683,13 @@ export function useTranscriptScrollArbiter({
   }, [dispatch]);
 
   const finishProgrammaticScroll = useCallback(() => {
+    // Native scrollend can fire after the indexed jump but before the target
+    // has survived its two-frame paint commit. Only the matching jump token
+    // may release that transaction.
+    if (questionJumpOwnership.blocksGenericFinish()) return;
     dispatch({ type: "PROGRAMMATIC_END" });
     endReaderIntent();
-  }, [dispatch, endReaderIntent]);
+  }, [dispatch, endReaderIntent, questionJumpOwnership]);
 
   const captureStateSnapshot = useCallback(() => captureTranscriptVirtuosoState(virtuosoRef.current), []);
 
@@ -764,37 +773,17 @@ export function useTranscriptScrollArbiter({
   }, [releaseTailFollow, restoreTailIfNotScrollable]);
 
   return {
-    virtuosoRef,
-    scrollRef,
-    scrollElement,
-    layoutTransientRef,
-    itemSize,
-    nativeScrollbarDragging,
-    pinnedRef,
-    isAtBottom,
-    modeRef,
-    scrollerRef,
-    setMode,
-    reset,
-    writeOffset,
-    scrollToBottom,
-    followGrowingTail,
-    scrollToDataIndex,
-    finishProgrammaticScroll,
-    releaseTailFollow,
-    beginUserResize,
-    atBottomStateChange,
-    deliverScroll,
-    onWheelIntent,
-    onTouchStartIntent,
-    onTouchMoveIntent,
-    onTouchEndIntent,
-    onKeyScrollIntent,
-    onPointerDownIntent,
-    onNestedScrollIntent,
-    submitRecoveryRequest,
-    retryRecoveryRequest,
-    lastGoodAnchorRef,
-    captureStateSnapshot,
+    virtuosoRef, scrollRef, scrollElement, layoutTransientRef,
+    itemSize, nativeScrollbarDragging, pinnedRef, isAtBottom, modeRef,
+    scrollerRef, setMode, reset, writeOffset,
+    scrollToBottom, followGrowingTail, scrollToDataIndex,
+    beginQuestionJump: questionJumpOwnership.begin,
+    finishQuestionJump: questionJumpOwnership.finish,
+    finishProgrammaticScroll, releaseTailFollow, beginUserResize,
+    atBottomStateChange, deliverScroll, onWheelIntent,
+    onTouchStartIntent, onTouchMoveIntent, onTouchEndIntent,
+    onKeyScrollIntent, onPointerDownIntent, onNestedScrollIntent,
+    submitRecoveryRequest, retryRecoveryRequest,
+    lastGoodAnchorRef, captureStateSnapshot,
   };
 }

@@ -132,6 +132,8 @@ export function useTranscriptQuestionJump({
   onLoadOlderHistory,
   clearTranscriptSelection,
   invalidateAnchors,
+  beginQuestionJump,
+  finishQuestionJump,
   scrollToDataIndex,
   setActiveQuestion,
   rewindSignal,
@@ -149,6 +151,8 @@ export function useTranscriptQuestionJump({
   onLoadOlderHistory?: (targetTurn?: number, trigger?: HistoryLoadTrigger) => boolean | Promise<boolean>;
   clearTranscriptSelection: (reason?: string) => void;
   invalidateAnchors: () => void;
+  beginQuestionJump: (token: number) => void;
+  finishQuestionJump: (token: number) => boolean;
   scrollToDataIndex: (index: number, behavior?: "auto" | "smooth") => void;
   setActiveQuestion: (turn: number | null) => void;
   rewindSignal: number;
@@ -167,8 +171,9 @@ export function useTranscriptQuestionJump({
     const next = outcome === "failed" ? { ...current, phase: "failed" as const } : null;
     pendingQuestionRef.current = next;
     setPendingQuestion((value) => settleQuestionJumpSurfaceState(value, token, next));
+    finishQuestionJump(token);
     recordFrontendDiagnostic("transcript", "transcript.question-jump-terminal", { intent: token, outcome });
-  }, []);
+  }, [finishQuestionJump]);
   const requestOlderHistory = useCallback(async (targetTurn?: number, retry = false, trigger: HistoryLoadTrigger = "retry"): Promise<boolean> => {
     if (!hasOlderHistory || loadingOlderHistory || running || !onLoadOlderHistory || (!retry && olderHistoryError)) return false;
     if (olderRequestInFlightRef.current === layoutSurfaceKey) return false;
@@ -221,9 +226,10 @@ export function useTranscriptQuestionJump({
     // detail of one surface transaction.
     flushSync(() => replacePendingQuestion(pending));
     recordFrontendDiagnostic("transcript", "transcript.question-jump-begin", { intent: pending.token });
+    beginQuestionJump(pending.token);
     if (loaded) jumpToLoadedQuestion(question, "auto");
     else requestQuestionHistory(pending, true, "question-jump");
-  }, [clearTranscriptSelection, jumpToLoadedQuestion, layoutSurfaceKey, replacePendingQuestion, requestQuestionHistory, setActiveQuestion, settlePendingQuestion]);
+  }, [beginQuestionJump, clearTranscriptSelection, jumpToLoadedQuestion, layoutSurfaceKey, replacePendingQuestion, requestQuestionHistory, setActiveQuestion, settlePendingQuestion]);
 
   useEffect(() => {
     if (!pendingQuestion || pendingQuestion.surfaceKey !== layoutSurfaceKey) return;
@@ -302,11 +308,12 @@ export function useTranscriptQuestionJump({
       const retry = { ...pendingQuestion, phase: "loading" as const };
       pendingQuestionRef.current = retry;
       setPendingQuestion((value) => settleQuestionJumpSurfaceState(value, pendingQuestion.token, retry));
+      beginQuestionJump(retry.token);
       requestQuestionHistory(retry, true, "retry");
       return;
     }
     void requestOlderHistory(targetTurn, true, "retry");
-  }, [layoutSurfaceKey, pendingQuestion, requestOlderHistory, requestQuestionHistory]);
+  }, [beginQuestionJump, layoutSurfaceKey, pendingQuestion, requestOlderHistory, requestQuestionHistory]);
 
   useEffect(() => {
     if (rewindSignal <= 0 || questions.length === 0) return;

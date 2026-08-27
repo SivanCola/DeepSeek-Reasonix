@@ -134,10 +134,11 @@ console.log("\nbundle budgets");
 // ratchet rather than showing idle restored work as actively running. The
 // combined path measures 445.9 KiB; retain 0.1 KiB of toolchain headroom.
 // Transcript surface ownership and the token-fenced unloaded-question commit
-// move the exact main-v2 baseline from 445.865 to 447.321 KiB gzip (+0.33%).
-// Keep only 0.179 KiB of build/toolchain headroom; native validation hosts and
-// test fixtures stay outside the production graph.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 447.5 : 447.5;
+// move the exact main-v2 baseline from 445.865 to 447.587 KiB gzip (+0.39%).
+// The final 0.266 KiB retains jump ownership through paint-ready instead of
+// allowing a native scrollend to release it. Keep only 0.213 KiB headroom;
+// native validation hosts and test fixtures stay outside the production graph.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 447.8 : 447.8;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -213,8 +214,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Runtime-aware Todo status and exact-tab continuation then add to the same
 // initial path. The combined payload measures 2406.2 KiB; retain 0.1 KiB of
 // raw/toolchain headroom for both owners.
-// The same transcript transaction measures 2412.305 KiB raw (+0.25%) against
-// the 2406.204 KiB baseline. Retain 0.195 KiB of bounded headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_412.5 : 2_412.5;
+// The same transcript transaction measures 2413.012 KiB raw (+0.28%) against
+// the 2406.204 KiB baseline. Retain 0.188 KiB of bounded headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_413.2 : 2_413.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
