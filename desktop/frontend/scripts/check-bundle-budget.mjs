@@ -234,8 +234,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // reader correction through its bounded tail handoff measure 2432.297 KiB.
 // Native-thumb pointer travel brings the measured path to 2432.661 KiB. The
 // accepted-frame and pending-correction fences measure 2432.735 KiB; the
-// bounded settle-resend guard measures 2433.1 KiB and the reading-anchor pin
-// 2434.8 KiB; retain 0.1 KiB.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_434.9 : 2_434.9;
+// bounded settle-resend guard measures 2433.1 KiB, the reading-anchor pin
+// 2434.8 KiB and its tail-proximity gate 2434.95 KiB; retain 0.05 KiB.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_435.0 : 2_435.0;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

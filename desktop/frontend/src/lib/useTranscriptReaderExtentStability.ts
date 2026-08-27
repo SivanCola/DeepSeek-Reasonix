@@ -28,6 +28,10 @@ const READER_EXTENT_ACTIVE_MS = 180;
 // mounted-range replacement paths.
 const READER_PIN_INPUT_DOMINANCE_RATIO = 4;
 const READER_PIN_MAX_SLIDE_VIEWPORTS = 1.5;
+// Inside one viewport of the physical tail the pinned-tail handoff owns the
+// geometry: reader anchoring there fights Virtuoso's own clamp and wedges
+// manual-mode scrolling (#transcript-selection field replay).
+const READER_PIN_MIN_TAIL_DISTANCE_VIEWPORTS = 1.0;
 // WebView2 can coalesce a sustained native wheel burst and commit Virtuoso's
 // replacement range after the reader-intent idle timer has fired. Retain the
 // last accepted logical row passively across that bounded compositor delay;
@@ -139,7 +143,7 @@ export function useTranscriptReaderExtentStability({
   generationRef: RefObject<number>;
   modeRef: RefObject<TranscriptScrollMode>;
   scrollRef: RefObject<HTMLDivElement | null>;
-  writeCorrection: (write: TranscriptScrollWriteRecord) => boolean;
+  writeCorrection: (write: TranscriptScrollWriteRecord & { virtuosoSync?: boolean }) => boolean;
   lastWriteOwner: () => string | undefined;
 }) {
   const guardRef = useRef<ActiveReaderExtentGuard | null>(null);
@@ -274,11 +278,14 @@ export function useTranscriptReaderExtentStability({
     viewportBlank = false,
   ): boolean => {
     const maxSlide = snapshot.clientHeight * READER_PIN_MAX_SLIDE_VIEWPORTS;
+    const minTailDistance = snapshot.clientHeight * READER_PIN_MIN_TAIL_DISTANCE_VIEWPORTS;
+    const tailDistance = snapshot.scrollHeight - snapshot.scrollTop - snapshot.clientHeight;
     const inputDelta = active.baselineScrollTop === undefined
       ? Number.POSITIVE_INFINITY
       : snapshot.scrollTop - active.baselineScrollTop;
     if (
       viewportBlank
+      || tailDistance < minTailDistance
       || !paintedReverse
       || active.pendingCorrectionTop !== undefined
       || active.collapsed
@@ -293,16 +300,21 @@ export function useTranscriptReaderExtentStability({
     if (Math.abs(correction) < MIN_REVERSE_JUMP_PX) return false;
     if (!writeCorrection({
       owner: "reader-stability",
-      kind: "scrollTo",
-      top: correctionTarget,
+      kind: "scrollBy",
+      top: paintedReverse.screenDelta,
       source: "layout-height-changed",
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
       bottomDistance: nativeTranscriptDistanceFromBottom(element),
       mode: modeRef.current,
+      virtuosoSync: true,
     })) return false;
-    active.pendingCorrectionTop = correctionTarget;
+    const writtenTop = snapshot.scrollTop + paintedReverse.screenDelta;
+    active.pendingCorrectionTop = Math.max(0, Math.min(
+      snapshot.scrollHeight - snapshot.clientHeight,
+      writtenTop,
+    ));
     active.pendingCorrectionForward = false;
     active.pendingCorrectionAcknowledged = false;
     active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset - correction];
@@ -478,6 +490,8 @@ export function useTranscriptReaderExtentStability({
     // but a native extent reversal/collapse can still be corrected from the
     // last accepted logical position.
     corrected = corrected || correctAnomaly(guard, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
+    // eslint-disable-next-line no-console
+    console.error("PIND", JSON.stringify({ vb: viewportBlank, sd: paintedReverse?.screenDelta ?? null, bs: guard.baselineScrollTop, st: snapshot.scrollTop, pend: guard.pendingCorrectionTop ?? null }));
     corrected = corrected || pinReadingAnchor(guard, element, snapshot, viewportBlank ? undefined : paintedReverse, viewportBlank);
     if (
       accepted

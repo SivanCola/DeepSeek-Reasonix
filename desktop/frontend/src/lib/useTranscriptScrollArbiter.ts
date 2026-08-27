@@ -114,7 +114,7 @@ export function useTranscriptScrollArbiter({
   });
   const nativeScrollbarBottomProofRef = useRef<ReturnType<typeof createTranscriptNativeScrollbarBottomProof> | null>(null);
   const nativeScrollbarBottomProof = nativeScrollbarBottomProofRef.current ??= createTranscriptNativeScrollbarBottomProof({ scrollRef });
-  const writeReaderCorrection = useCallback((write: TranscriptScrollWriteRecord) => {
+  const writeReaderCorrection = useCallback((write: TranscriptScrollWriteRecord & { virtuosoSync?: boolean }) => {
     if (write.top === undefined) return false;
     return writer.write({
       ...write,
@@ -123,6 +123,7 @@ export function useTranscriptScrollArbiter({
       source: write.source ?? "layout-height-changed",
       expectedGeneration: write.generation ?? generationRef.current,
       geometryRevision: write.geometryRevision ?? geometryRevisionRef.current,
+      virtuosoSync: write.virtuosoSync,
     });
   }, [writer]);
   const readerExtent = useTranscriptReaderExtentStability({

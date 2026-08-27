@@ -13,6 +13,10 @@ export type TranscriptScrollWriterRequest = Omit<
   align?: "start" | "center" | "end";
   expectedGeneration: number;
   geometryRevision: number;
+  /** Reader-correction scrollers move the viewport into ranges Virtuoso has
+   * not reconciled yet; routing them through the handle keeps the mounted
+   * window committed in the same frame the offset lands. */
+  virtuosoSync?: boolean;
 };
 
 export type TranscriptScrollWriter = {
@@ -53,6 +57,19 @@ export function shouldBridgeTranscriptReaderCorrection(view: Window): boolean {
  * rejected before they can land on a replacement surface. Native scrollbar
  * dragging is browser-owned and suppresses every imperative write.
  */
+type WriterRequestInput = Omit<TranscriptScrollWriterRequest, "kind"> & {
+  kind?: TranscriptScrollWriterRequest["operation"];
+};
+
+/** The gateway accepts record-shaped or request-shaped corrections; both carry
+ * `operation` semantics through `operation`/`kind` respectively. */
+function normalizeWriterInput(request: WriterRequestInput): TranscriptScrollWriterRequest {
+  if (request.operation === undefined && request.kind !== undefined) {
+    return { ...request, operation: request.kind } as TranscriptScrollWriterRequest;
+  }
+  return request as TranscriptScrollWriterRequest;
+}
+
 export function createTranscriptScrollWriter({
   virtuosoRef,
   scrollRef,
@@ -95,7 +112,8 @@ export function createTranscriptScrollWriter({
     else element.scrollTop = top;
   };
 
-  const write = (request: TranscriptScrollWriterRequest): boolean => {
+  const write = (rawRequest: WriterRequestInput): boolean => {
+    const request = normalizeWriterInput(rawRequest);
     const handle = virtuosoRef.current;
     const element = scrollRef.current;
     const generation = generationRef.current;
@@ -129,6 +147,13 @@ export function createTranscriptScrollWriter({
     const behavior = request.behavior === "smooth" ? "smooth" : "auto";
     switch (request.operation) {
       case "scrollTo":
+        if (request.owner === "reader-stability" && request.virtuosoSync === true) {
+          clearReaderVisualBridge();
+          const syncTarget = Math.max(0, Math.min(request.top!, element.scrollHeight - element.clientHeight));
+          handle.scrollTo({ top: syncTarget, behavior });
+          if (typeof element.scrollTo === "function") writeNative(element, syncTarget, behavior);
+          return true;
+        }
         if (request.owner === "reader-stability") {
           // Reader protection corrects the currently painted native range.
           // Sending the same command through Virtuoso can enqueue a second
