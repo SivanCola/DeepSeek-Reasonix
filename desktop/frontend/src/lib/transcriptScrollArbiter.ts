@@ -62,7 +62,7 @@ export type TranscriptScrollEvent =
   | { type: "PROGRAMMATIC_END" }
   | { type: "JUMP_TO_BOTTOM"; behavior?: ScrollBehavior }
   | { type: "JUMP_TO_INDEX"; index: number; behavior?: "auto" | "smooth" }
-  | { type: "SCROLL_TO_OFFSET"; owner: TranscriptScrollOwner; top: number; behavior?: ScrollBehavior }
+  | { type: "SCROLL_TO_OFFSET"; owner: TranscriptScrollOwner; top: number; behavior?: ScrollBehavior; anchor?: { index: number; offset: number } }
   | { type: "RECOVERY_BEGIN"; id: number; settleMode?: "tail-follow" | "manual" }
   | { type: "RECOVERY_END"; id: number };
 
@@ -70,7 +70,7 @@ export type TranscriptScrollCommand =
   | { type: "AUTOSCROLL_TO_BOTTOM"; revision?: number; deferUntilStable?: boolean }
   | { type: "SCROLL_TO_LAST"; behavior: "auto" | "smooth" }
   | { type: "SCROLL_TO_INDEX"; index: number; behavior: "auto" | "smooth" }
-  | { type: "SCROLL_TO_OFFSET"; owner: TranscriptScrollOwner; top: number; behavior: ScrollBehavior }
+  | { type: "SCROLL_TO_OFFSET"; owner: TranscriptScrollOwner; top: number; behavior: ScrollBehavior; anchor?: { index: number; offset: number } }
   | { type: "CANCEL_RECOVERY"; id: number; reason: TranscriptRecoveryCancelReason };
 
 export type TranscriptScrollTransition = {
@@ -299,7 +299,7 @@ export function reduceTranscriptScroll(
       // block-window prepend) without flipping the mode or claiming/releasing
       // the tail, and they never preempt an in-flight recovery.
       if (event.owner === "anchor-compensation" || event.owner === "block-window-prepend") {
-        return transition(state, [{ type: "SCROLL_TO_OFFSET", owner: event.owner, top: event.top, behavior: event.behavior ?? "auto" }]);
+        return transition(state, [{ type: "SCROLL_TO_OFFSET", owner: event.owner, top: event.top, behavior: event.behavior ?? "auto", anchor: event.anchor }]);
       }
       return preempt(
         event.owner === "selection-edge-scroll"
@@ -307,7 +307,7 @@ export function reduceTranscriptScroll(
           : event.owner === "jump-bottom"
             ? { ...state, mode: "tail-follow", atBottom: true, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "tail-follow" }
             : { ...state, mode: "programmatic", atBottom: false, readerIntent: false, readerIntentCanClaimTail: false, bottomHoldCount: 0, settleMode: "manual" },
-        [{ type: "SCROLL_TO_OFFSET", owner: event.owner, top: event.top, behavior: event.behavior ?? "auto" }],
+        [{ type: "SCROLL_TO_OFFSET", owner: event.owner, top: event.top, behavior: event.behavior ?? "auto", anchor: event.anchor }],
       );
     case "RECOVERY_BEGIN":
       // At most one recovery in flight: a new request supersedes the old one

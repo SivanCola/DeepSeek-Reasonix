@@ -140,6 +140,22 @@ assert.deepEqual(calls[1]?.value, { index: 42, align: "start", behavior: "auto" 
 assert.equal(writes[1]?.sequence, 2, "sequence numbers count only delivered writes");
 
 assert.equal(writer.write({
+  owner: "reader-stability",
+  operation: "scrollToIndex",
+  index: 17,
+  align: "start",
+  offset: -240,
+  source: "layout-height-changed",
+  expectedGeneration: 5,
+  geometryRevision: 10,
+}), true);
+assert.deepEqual(
+  calls[2]?.value,
+  { index: 17, align: "start", behavior: "auto", offset: -240 },
+  "anchored reader jumps preserve the requested viewport-relative row offset",
+);
+
+assert.equal(writer.write({
   owner: "tail-follow",
   operation: "scrollToIndex",
   index: "LAST",
@@ -148,7 +164,7 @@ assert.equal(writer.write({
   expectedGeneration: 5,
   geometryRevision: 10,
 }), true);
-assert.deepEqual(calls[2]?.value, { index: "LAST", align: "end", behavior: "auto" }, "the writer can mount the measured tail before native confirmation");
+assert.deepEqual(calls[3]?.value, { index: "LAST", align: "end", behavior: "auto" }, "the writer can mount the measured tail before native confirmation");
 assert.equal(nativeScrolls[nativeScrolls.length - 1]?.top, 2_200, "the same LAST transaction includes the in-flow footer in the native target");
 element.scrollTop = 1_200;
 
@@ -174,7 +190,7 @@ assert.equal(writer.write({
   expectedGeneration: 5,
   geometryRevision: 11,
 }), true);
-assert.equal(calls.length, 3, "reader correction does not enqueue a second Virtuoso range reconciliation");
+assert.equal(calls.length, 4, "reader correction does not enqueue a second Virtuoso range reconciliation");
 assert.equal(nativeScrolls.length, 2, "large reader correction waits for its visual bridge frame");
 assert.equal(list.style.top, "-440px", "reader correction holds the painted logical anchor before native range reconciliation");
 list.style.transform = "translateY(80px)";

@@ -11,6 +11,7 @@ export type TranscriptScrollWriterRequest = Omit<
   source: string;
   behavior?: ScrollBehavior;
   align?: "start" | "center" | "end";
+  offset?: number;
   expectedGeneration: number;
   geometryRevision: number;
   /** Reader-correction scrollers move the viewport into ranges Virtuoso has
@@ -23,6 +24,33 @@ export type TranscriptScrollWriter = {
   write: (request: TranscriptScrollWriterRequest) => boolean;
   lastOwner: () => string | undefined;
 };
+
+export function writeTranscriptReaderCorrection(
+  writer: TranscriptScrollWriter,
+  write: TranscriptScrollWriteRecord & { virtuosoSync?: boolean },
+  generation: number,
+  geometryRevision: number,
+  currentScrollTop: number,
+): boolean {
+  const common = {
+    ...write,
+    behavior: "auto" as const,
+    source: write.source ?? "layout-height-changed",
+    expectedGeneration: write.generation ?? generation,
+    geometryRevision: write.geometryRevision ?? geometryRevision,
+  };
+  if (write.kind === "scrollToIndex") {
+    if (write.index === undefined || typeof write.index !== "number") return false;
+    return writer.write({ ...common, operation: "scrollToIndex", index: write.index, align: "start" });
+  }
+  if (write.top === undefined) return false;
+  return writer.write({
+    ...common,
+    operation: "scrollTo",
+    top: (write.scrollTop ?? currentScrollTop) + write.top,
+    virtuosoSync: write.virtuosoSync,
+  });
+}
 
 const READER_BRIDGE_MAX_FRAMES = 6;
 
@@ -128,6 +156,7 @@ export function createTranscriptScrollWriter({
       kind: request.operation,
       top: request.top,
       index: request.index,
+      offset: request.offset,
       source: request.source,
       phase: request.phase,
       scrollTop: element.scrollTop,
@@ -284,7 +313,12 @@ export function createTranscriptScrollWriter({
         return true;
       case "scrollToIndex":
         clearReaderVisualBridge();
-        handle.scrollToIndex({ index: request.index!, align: request.align ?? "start", behavior });
+        handle.scrollToIndex({
+          index: request.index!,
+          align: request.align ?? "start",
+          behavior,
+          ...(request.offset === undefined ? {} : { offset: request.offset }),
+        });
         if (request.index === "LAST" && request.align === "end") {
           // Virtuoso aligns the last data row, but its in-flow Footer (live
           // turn and bottom inset) remains below that row. Synchronize the

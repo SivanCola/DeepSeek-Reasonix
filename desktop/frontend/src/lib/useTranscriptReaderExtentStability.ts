@@ -331,6 +331,10 @@ export function useTranscriptReaderExtentStability({
       owner: "reader-stability",
       kind: "scrollToIndex",
       index: anchorIndex,
+      // Virtuoso's start-aligned offset is the inverse of the desired
+      // viewport-relative row position. Restore the pre-slide offset instead
+      // of snapping the shared row to the viewport edge.
+      offset: paintedReverse.screenDelta - paintedReverse.currentOffset,
       source: "layout-height-changed",
       scrollTop: element.scrollTop,
       scrollHeight: element.scrollHeight,
@@ -343,7 +347,6 @@ export function useTranscriptReaderExtentStability({
     active.pendingCorrectionForward = correction > 0;
     active.pendingCorrectionAcknowledged = false;
     active.pendingAnchor = [paintedReverse.rowKey, paintedReverse.currentOffset];
-    armPendingRelease(active);
     acceptTranscriptReaderExtentCorrection(active, snapshot, correction);
     active.paintedRows = capturePaintedReaderRows(element);
     active.previousPaintedRows = undefined;
@@ -591,7 +594,6 @@ export function useTranscriptReaderExtentStability({
         : observeTranscriptReaderExtent(active, snapshot, currentAnchorOffset, viewportBlank);
       corrected = corrected || correctAnomaly(active, element, snapshot, viewportBlank ? undefined : currentAnchorOffset);
       corrected = corrected || pinReadingAnchor(active, element, snapshot, viewportBlank ? undefined : paintedReverse, viewportBlank);
-      corrected = corrected || pinReadingAnchor(active, element, snapshot, viewportBlank ? undefined : paintedReverse, viewportBlank);
       if (
         accepted
         && (
@@ -694,6 +696,26 @@ export function useTranscriptReaderExtentStability({
     const sameSurface = previous?.element === element && previous.generation === generation;
     const nativeDelta = sameSurface ? deliveredTop - previous.top : 0;
     const extentDelta = sameSurface ? element.scrollHeight - previous.height : 0;
+    const activeBeforeDelivery = guardRef.current;
+    const visualReverseBeforeDelivery = activeBeforeDelivery?.element === element
+      && activeBeforeDelivery.generation === generation
+      ? paintedReaderReverse(activeBeforeDelivery, element)
+      : undefined;
+    // A measured range replacement can lower native scrollTop while moving
+    // every shared row down-screen. That is layout-owned reverse motion, not
+    // an upward user gesture. Real direction changes have already armed the
+    // guard from wheel/touch/key intent before the host delivers scroll.
+    const retainsArmedDirection = sameSurface
+      && activeBeforeDelivery !== null
+      && activeBeforeDelivery !== undefined
+      // Only a live pre-scroll intent can overrule the native delta. The
+      // passive five-second lease protects late layout commits, but its
+      // direction may belong to an earlier gesture; retaining that stale
+      // direction turns the next real gesture into a multi-screen repair.
+      && Date.now() < activeBeforeDelivery.activeFrameDeadline
+      && activeBeforeDelivery.direction * nativeDelta < -2
+      && Math.abs(extentDelta) > 2
+      && (visualReverseBeforeDelivery?.delta ?? 0) >= MIN_REVERSE_JUMP_PX;
     const layoutAnchored = Math.abs(extentDelta) > 2
       && Math.abs(nativeDelta - extentDelta) <= Math.max(8, element.clientHeight * 0.1);
     const view = element.ownerDocument.defaultView;
@@ -703,7 +725,8 @@ export function useTranscriptReaderExtentStability({
       && (modeRef.current === "reader-gesture" || modeRef.current === "manual")
       && view
       && shouldBridgeTranscriptReaderCorrection(view)
-      && !pendingBeforeObservation;
+      && !pendingBeforeObservation
+      && !retainsArmedDirection;
     // Reconcile a coalesced delivery before observing it. Otherwise an
     // opposite setup direction can misclassify the first >96px native move as
     // a reverse layout anomaly and write against real user input.

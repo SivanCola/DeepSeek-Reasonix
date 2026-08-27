@@ -17,6 +17,7 @@ export type TranscriptScrollWriteRecord = {
   kind: "scrollTo" | "scrollBy" | "scrollToIndex";
   top?: number;
   index?: number | "LAST";
+  offset?: number;
   source?: string;
   phase?: "initial" | "settle";
   scrollTop?: number;
@@ -67,6 +68,7 @@ export function noteTranscriptScrollWrite(write: TranscriptScrollWriteRecord): v
     operation: write.kind,
     targetTop: write.top,
     targetIndex: write.index,
+    targetOffset: write.offset,
     source: write.source,
     phase: write.phase,
     scrollTop: write.scrollTop,

@@ -1308,11 +1308,21 @@ try {
         const mode = document.querySelector(".transcript")?.dataset.scrollMode;
         return mode === "reader-gesture" || mode === "manual";
       });
-      await transcript.evaluate((element) => {
-        element.scrollTop = 0;
-        element.dispatchEvent(new Event("scroll"));
+      await transcript.evaluate(async (element) => {
+        let stableFrames = 0;
+        for (let frame = 0; frame < 120; frame += 1) {
+          if (element.scrollTop > 1) {
+            element.scrollTop = 0;
+            element.dispatchEvent(new Event("scroll"));
+            stableFrames = 0;
+          } else {
+            stableFrames += 1;
+            if (stableFrames >= 2) return;
+          }
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+        throw new Error(`native thumb reset did not stabilize (${element.scrollTop}/${element.scrollHeight}/${element.dataset.scrollMode})`);
       });
-      await page.waitForFunction(() => (document.querySelector(".transcript")?.scrollTop ?? Number.POSITIVE_INFINITY) <= 1);
     };
     const findDraggableNativeThumb = async (holdOnSuccess = false) => {
       const motions = [];

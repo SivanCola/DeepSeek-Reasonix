@@ -40,7 +40,7 @@ import { captureTranscriptLayoutAnchor, type TranscriptLayoutAnchor } from "./tr
 import { createTranscriptAnchorCompensation, type TranscriptAnchorCompensation } from "./transcriptAnchorCompensation";
 import { createTranscriptTailSettle, type TranscriptTailSettle } from "./transcriptTailSettle";
 import { useTranscriptReaderExtentStability } from "./useTranscriptReaderExtentStability";
-import { createTranscriptScrollWriter } from "./transcriptScrollWriter";
+import { createTranscriptScrollWriter, writeTranscriptReaderCorrection } from "./transcriptScrollWriter";
 import { createTranscriptReaderBottomHold } from "./transcriptReaderBottomHold";
 import { createTranscriptGeometryRevision, type TranscriptGeometryChangeSource } from "./transcriptGeometryRevision";
 import { shouldClaimTranscriptTailFromWheel } from "./transcriptWheelTailClaim";
@@ -114,30 +114,12 @@ export function useTranscriptScrollArbiter({
   });
   const nativeScrollbarBottomProofRef = useRef<ReturnType<typeof createTranscriptNativeScrollbarBottomProof> | null>(null);
   const nativeScrollbarBottomProof = nativeScrollbarBottomProofRef.current ??= createTranscriptNativeScrollbarBottomProof({ scrollRef });
-  const writeReaderCorrection = useCallback((write: TranscriptScrollWriteRecord & { virtuosoSync?: boolean }) => {
-    if (write.kind === "scrollToIndex") {
-      if (write.index === undefined || typeof write.index !== "number") return false;
-      return writer.write({
-        ...write,
-        operation: "scrollToIndex",
-        align: "start",
-        behavior: "auto",
-        source: write.source ?? "layout-height-changed",
-        expectedGeneration: write.generation ?? generationRef.current,
-        geometryRevision: write.geometryRevision ?? geometryRevisionRef.current,
-      });
-    }
-    if (write.top === undefined) return false;
-    return writer.write({
-      ...write,
-      operation: "scrollTo", top: (write.scrollTop ?? scrollRef.current?.scrollTop ?? 0) + write.top,
-      behavior: "auto",
-      source: write.source ?? "layout-height-changed",
-      expectedGeneration: write.generation ?? generationRef.current,
-      geometryRevision: write.geometryRevision ?? geometryRevisionRef.current,
-      virtuosoSync: write.virtuosoSync,
-    });
-  }, [writer]);
+  const writeReaderCorrection = useCallback(
+    (write: TranscriptScrollWriteRecord & { virtuosoSync?: boolean }) => writeTranscriptReaderCorrection(
+      writer, write, generationRef.current, geometryRevisionRef.current, scrollRef.current?.scrollTop ?? 0,
+    ),
+    [writer],
+  );
   const readerExtent = useTranscriptReaderExtentStability({
     generationRef,
     modeRef,
@@ -242,7 +224,9 @@ export function useTranscriptScrollArbiter({
         writer.write({ owner: "jump", operation: "scrollToIndex", index: command.index, behavior: command.behavior, source, expectedGeneration: generationRef.current, geometryRevision: geometryRevisionRef.current });
         return;
       case "SCROLL_TO_OFFSET":
-        writer.write({ owner: command.owner, operation: "scrollTo", top: command.top, behavior: command.behavior, source, expectedGeneration: generationRef.current, geometryRevision: geometryRevisionRef.current });
+        writer.write(command.anchor
+          ? { owner: command.owner, operation: "scrollToIndex", index: command.anchor.index, align: "start", offset: command.anchor.offset, behavior: command.behavior, source, expectedGeneration: generationRef.current, geometryRevision: geometryRevisionRef.current }
+          : { owner: command.owner, operation: "scrollTo", top: command.top, behavior: command.behavior, source, expectedGeneration: generationRef.current, geometryRevision: geometryRevisionRef.current });
         return;
       case "CANCEL_RECOVERY":
         cancelInFlightRecovery(command.id, command.reason);

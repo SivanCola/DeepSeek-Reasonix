@@ -365,6 +365,30 @@ const shrinkWrites = scrollWrites.filter((write) => write.owner === "anchor-comp
 check(shrinkWrites.length === 1 && shrinkWrites[0]?.top === 100, "an above-viewport collapse compensates upward exactly once");
 check(scrollElement.scrollTop === 100, "the upward compensation restores the anchor offset");
 
+// A multi-viewport range replacement must not use an absolute scrollTop that
+// can commit ahead of Virtuoso's mounted window. Preserve the sampled row at
+// its prior viewport offset with one indexed transaction.
+await act(async () => arbiter?.reset());
+rowElement.dataset.itemIndex = "15";
+scrollElement.scrollTop = 100;
+scrollExtent = 1_200;
+rowElement.getBoundingClientRect = () => rectAt(150 - scrollElement.scrollTop);
+await act(async () => arbiter?.setMode("manual", "large-anchor-compensation"));
+await act(async () => arbiter?.deliverScroll());
+scrollWrites.length = 0;
+rowElement.getBoundingClientRect = () => rectAt(-150 - scrollElement.scrollTop);
+await act(async () => arbiter?.followGrowingTail());
+for (let i = 0; i < 3; i += 1) await flushFrames();
+const indexedCompensation = scrollWrites.filter((write) => write.owner === "anchor-compensation");
+check(
+  indexedCompensation.length === 1
+    && indexedCompensation[0]?.kind === "scrollToIndex"
+    && indexedCompensation[0]?.index === 15
+    && indexedCompensation[0]?.offset === -50,
+  "large manual anchor drift commits one viewport-preserving indexed transaction",
+);
+delete rowElement.dataset.itemIndex;
+
 // A user gesture mid-compensation cancels the loop: the reader owns the
 // viewport from there on.
 await act(async () => arbiter?.deliverScroll());
@@ -406,6 +430,81 @@ check(nativeRangeWrites.length === 1
   && (nativeRangeWrites[0]!.top ?? 0) - (nativeRangeWrites[0]!.scrollTop ?? 0) === 98,
   "every accepted native delivery retains its boundary before replacement");
 nativeBoundary.replaceWith(rowElement); rowElement.dataset.rowKey = "row-a";
+
+// WebView2 can report a small opposite scrollTop delta in the same delivery
+// that a measured range grows above the viewport. The shared painted rows are
+// the stronger signal: keep the armed downward direction and repair the
+// layout-owned reverse slide instead of reclassifying it as upward input.
+{
+  const originalUserAgent = dom.window.navigator.userAgent;
+  const originalClientDescriptor = Object.getOwnPropertyDescriptor(scrollElement, "clientHeight")!;
+  const originalScrollRect = scrollElement.getBoundingClientRect;
+  const painted = Array.from({ length: 9 }, (_, index) => {
+    const row = dom.window.document.createElement("div");
+    row.className = "transcript__row";
+    row.dataset.rowKey = `coalesced-${index}`;
+    let top = 20 + index * 55;
+    row.getBoundingClientRect = () => rectAt(top);
+    scrollElement.append(row);
+    return { row, move: (delta: number) => { top += delta; } };
+  });
+  Object.defineProperty(dom.window.navigator, "userAgent", {
+    configurable: true,
+    value: "Mozilla/5.0 AppleWebKit/537.36 Chrome/128 Safari/537.36 Edg/128",
+  });
+  Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 600 });
+  scrollElement.getBoundingClientRect = () => ({ ...rectAt(0), height: 600, bottom: 600 });
+  try {
+    await act(async () => arbiter?.reset());
+    scrollExtent = 24_305;
+    scrollElement.scrollTop = 23_658;
+    await act(async () => arbiter?.setMode("manual", "coalesced-layout-setup"));
+    await act(async () => arbiter?.deliverScroll());
+    await act(async () => arbiter?.releaseTailFollow(false, 40));
+    scrollWrites.length = 0;
+
+    scrollElement.scrollTop = 23_616;
+    scrollExtent = 24_591;
+    painted.forEach(({ move }) => move(328));
+    await act(async () => arbiter?.deliverScroll());
+
+    const coalescedWrites = scrollWrites.filter((write) => write.owner === "reader-stability");
+    check(
+      coalescedWrites.length === 1
+        && (coalescedWrites[0]?.top ?? 0) - (coalescedWrites[0]?.scrollTop ?? 0) >= 300,
+      "coalesced opposite scrollTop and extent growth preserves the armed reader direction",
+    );
+
+    // The passive five-second layout lease must not preserve that direction
+    // after the 180ms input transaction ends. A later opposite native
+    // delivery is a fresh gesture even when its Virtuoso range changes in the
+    // same frame (the WKWebView smoke begins this way).
+    await act(async () => arbiter?.reset());
+    scrollExtent = 6_000;
+    scrollElement.scrollTop = 2_000;
+    painted.forEach(({ move }) => move(-328));
+    await act(async () => arbiter?.setMode("manual", "expired-direction-setup"));
+    await act(async () => arbiter?.deliverScroll());
+    await act(async () => arbiter?.releaseTailFollow(false, -40));
+    await advanceClock(200);
+    scrollWrites.length = 0;
+
+    scrollElement.scrollTop = 2_040;
+    scrollExtent = 6_280;
+    painted.forEach(({ move }) => move(-300));
+    await act(async () => arbiter?.deliverScroll());
+
+    check(
+      scrollWrites.every((write) => write.owner !== "reader-stability"),
+      "an expired opposite direction cannot turn fresh native input into a reader repair",
+    );
+  } finally {
+    painted.forEach(({ row }) => row.remove());
+    Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: originalUserAgent });
+    Object.defineProperty(scrollElement, "clientHeight", originalClientDescriptor);
+    scrollElement.getBoundingClientRect = originalScrollRect;
+  }
+}
 
 // WebView2 can defer an accepted native correction. Changing range estimates
 // during that gap must not alternate targets before the first acknowledgement.
@@ -462,8 +561,9 @@ try {
     const pinWrites = scrollWrites.filter((write) => write.owner === "reader-stability");
     check(pinWrites.length === 1
       && pinWrites[0]?.kind === "scrollToIndex"
-      && pinWrites[0]?.index === 11,
-      "one frozen-offset extent slide earns exactly one anchored reading-position jump");
+      && pinWrites[0]?.index === 11
+      && pinWrites[0]?.offset === -420,
+      "one frozen-offset extent slide restores the shared row's prior viewport offset");
     const followupBefore = scrollWrites.filter((write) => write.owner === "reader-stability").length;
     await act(async () => arbiter?.observeReaderExtent());
     check(
