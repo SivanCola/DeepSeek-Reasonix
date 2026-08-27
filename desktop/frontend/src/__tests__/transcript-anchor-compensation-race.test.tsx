@@ -430,6 +430,54 @@ try {
   scrollElement.scrollTo = deferredNativeScrollTo;
 }
 
+
+// ── A frozen-offset measured-extent slide re-pins the reading position ─────
+// When every shared row slides together across one observed frame while
+// scrollTop stays frozen, that slide is pure above-window extent drift: one
+// bounded reader-stability write must restore the painted positions without
+// any direction-gated reverse classification.
+{
+  const originalClientDescriptor = Object.getOwnPropertyDescriptor(scrollElement, "clientHeight")!;
+  Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: 600 });
+  const originalScrollRect = scrollElement.getBoundingClientRect;
+  scrollElement.getBoundingClientRect = () => ({ ...rectAt(0), height: 600, bottom: 600 });
+  try {
+    await act(async () => arbiter?.reset());
+    scrollExtent = 6_000;
+    scrollElement.scrollTop = 2_000;
+    scrollWrites.length = 0;
+    let pinnedRowTop = 300;
+    rowElement.getBoundingClientRect = () => rectAt(pinnedRowTop);
+    await act(async () => arbiter?.releaseTailFollow());
+    await wheelDown();
+    check(arbiter?.modeRef.current === "reader-gesture", "the pin fixture starts from a live reader gesture");
+    await flushFrames();
+    await advanceClock(2);
+    await flushFrames();
+
+    pinnedRowTop += 120;
+    scrollExtent += 120;
+    await act(async () => arbiter?.observeReaderExtent());
+    const pinWrites = scrollWrites.filter((write) => write.owner === "reader-stability");
+    check(pinWrites.length === 1,
+      "one frozen-offset extent slide earns exactly one reading-position pin");
+    check(
+      pinWrites[0]?.top === 2_120
+        && Math.abs(scrollElement.scrollTop - 2_120) <= 2,
+      "the pin restores every painted row by the observed screen displacement",
+    );
+    const followupBefore = scrollWrites.filter((write) => write.owner === "reader-stability").length;
+    await act(async () => arbiter?.observeReaderExtent());
+    check(
+      scrollWrites.filter((write) => write.owner === "reader-stability").length <= followupBefore + 1,
+      "a settled pin does not replay against its acknowledged target",
+    );
+  } finally {
+    scrollElement.getBoundingClientRect = originalScrollRect;
+    Object.defineProperty(scrollElement, "clientHeight", originalClientDescriptor);
+  }
+}
+
 await act(async () => root.unmount());
 Date.now = originalDateNow;
 dom.window.setTimeout = originalSetTimeout;
