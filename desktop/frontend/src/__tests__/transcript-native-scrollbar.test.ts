@@ -1,6 +1,6 @@
 // Run: pnpm exec tsx src/__tests__/transcript-native-scrollbar.test.ts
 
-import { deepEqual, equal } from "node:assert/strict";
+import { deepEqual } from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import {
@@ -14,7 +14,7 @@ import { advanceViewportPagePermit, grantsNativeScrollbarPagePermit } from "../l
 
 let passed = 0;
 function check(actual: unknown, expected: unknown, label: string) {
-  equal(actual, expected, label);
+  deepEqual(actual, expected, label);
   process.stdout.write(`  PASS  ${label}\n`);
   passed += 1;
 }
@@ -87,43 +87,50 @@ const bottomProof = createTranscriptNativeScrollbarBottomProof({
 bottomProof.begin(proofElement);
 proofTop = 500;
 flushProofFrames(0);
-check(bottomProof.finish(proofElement), true,
+check(bottomProof.finish(proofElement), [true, true],
   "a passive frame retains native-bottom proof before React delivers scroll");
 bottomProof.begin(proofElement);
 proofTop = 300;
 flushProofFrames(1);
-check(bottomProof.finish(proofElement), false,
+check(bottomProof.finish(proofElement), [true, false],
   "dragging away from an initial tail does not retain false bottom proof");
 proofTop = 500;
 bottomProof.begin(proofElement);
-check(bottomProof.finish(proofElement), false,
+check(bottomProof.finish(proofElement), [false, false],
   "pressing an initial-bottom thumb without movement grants no bottom proof");
 bottomProof.begin(proofElement);
 proofTop = 300;
 flushProofFrames(2);
 proofTop = 500;
-check(bottomProof.finish(proofElement), true,
+check(bottomProof.finish(proofElement), [true, true],
   "a thumb that leaves and returns to its initial bottom retains movement proof");
 bottomProof.begin(proofElement);
 proofTop = 300;
 bottomProof.observe(proofElement);
 proofTop = 500;
-check(bottomProof.finish(proofElement), true,
+check(bottomProof.finish(proofElement), [true, true],
   "native scroll delivery retains an away-and-back thumb when rAF misses the excursion");
 bottomProof.begin(proofElement, 500);
 bottomProof.observe(proofElement, 498);
-check(bottomProof.finish(proofElement), false,
+check(bottomProof.finish(proofElement), [false, false],
   "subpixel pointer jitter at an initial-bottom thumb grants no bottom proof");
 bottomProof.begin(proofElement, 500);
 bottomProof.observe(proofElement, 452);
-check(bottomProof.finish(proofElement), true,
+check(bottomProof.finish(proofElement), [true, true],
   "pointer travel retains an away-and-back thumb when scroll and rAF both miss the excursion");
+proofTop = 100;
+bottomProof.begin(proofElement);
+const replacementProofElement = { scrollTop: 500, scrollHeight: 1_000, clientHeight: 500 } as HTMLDivElement;
+proofScrollRef.current = replacementProofElement;
+check(bottomProof.finish(replacementProofElement), [false, false],
+  "a stale thumb release cannot transfer movement proof to a replacement surface");
+proofScrollRef.current = proofElement;
 bottomProof.begin(proofElement);
 proofTop = 500;
 proofHeight = 1_100;
 bottomProof.cancel();
 flushProofFrames(3);
-check(bottomProof.finish(proofElement), false,
+check(bottomProof.finish(proofElement), [false, false],
   "surface invalidation clears retained native-bottom proof");
 
 Object.defineProperty(transcript, "scrollHeight", { configurable: true, value: 600 });

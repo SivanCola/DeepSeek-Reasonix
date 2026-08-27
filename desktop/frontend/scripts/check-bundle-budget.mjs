@@ -167,7 +167,9 @@ console.log("\nbundle budgets");
 // changes measure 454.7 KiB. Synchronizing no-common reader ranges, rejecting
 // non-adjacent painted ranges, and limiting pins to extent-backed slides
 // measures 454.998 KiB; retain about 0.10 KiB of toolchain headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 455.1 : 455.1;
+// The native-thumb release proof and WebView2-only second compositor viewport
+// measure 455.103 KiB; retain the same narrow 0.1 KiB toolchain allowance.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 455.2 : 455.2;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via

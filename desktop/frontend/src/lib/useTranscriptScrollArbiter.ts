@@ -487,15 +487,15 @@ export function useTranscriptScrollArbiter({
     if (!nativeScrollbarDragRef.current) return;
     const element = scrollRef.current;
     if (element && pointerY !== undefined) nativeScrollbarBottomProof.observe(element, pointerY);
-    const reachedBottom = nativeScrollbarBottomProof.finish(element);
+    const [thumbMoved, reachedBottom] = nativeScrollbarBottomProof.finish(element);
     nativeScrollbarDragRef.current = false; setNativeScrollbarDragging(false);
-    dispatch({ type: "NATIVE_SCROLLBAR_END" });
+    dispatch({ type: "NATIVE_SCROLLBAR_END", canClaimTail: thumbMoved });
     if (element) {
       delete element.dataset.nativeScrollbarDrag;
       const generation = generationRef.current;
       requestAnimationFrame(() => {
         if (generationRef.current !== generation || scrollRef.current !== element) return;
-        deliverScroll(element, reachedBottom);
+        deliverScroll(element, reachedBottom || (thumbMoved && nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX));
         requestAnimationFrame(() => {
           if (generationRef.current === generation && scrollRef.current === element) deliverScroll(element);
         });

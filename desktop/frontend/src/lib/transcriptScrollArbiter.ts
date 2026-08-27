@@ -47,7 +47,7 @@ export type TranscriptScrollEvent =
   | { type: "MANUAL_READING" }
   | { type: "READER_INTENT_ENDED" }
   | { type: "NATIVE_SCROLLBAR_BEGIN" }
-  | { type: "NATIVE_SCROLLBAR_END" }
+  | { type: "NATIVE_SCROLLBAR_END"; canClaimTail: boolean }
   | { type: "SCROLL_DELIVERED"; atBottom: boolean; scrollable: boolean; substantial?: boolean; tailMounted?: boolean }
   | { type: "GEOMETRY_CHANGED"; revision: number; deferUntilStable?: boolean }
   | { type: "TAIL_CONTENT_CHANGED" }
@@ -105,7 +105,8 @@ export const TRANSCRIPT_SUBSTANTIAL_DISPLACEMENT_PX = 24;
 export const TRANSCRIPT_READER_OVERSCAN_ROWS = 24;
 export const TRANSCRIPT_READER_VIEWPORT_BUFFER = 1;
 
-export function transcriptReaderViewportBuffer(userAgent?: string): number {
+export function transcriptReaderViewportBuffer(userAgent?: string, nativeWebView2 = false): number {
+  if (nativeWebView2) return 2;
   if (!userAgent) return TRANSCRIPT_READER_VIEWPORT_BUFFER;
   // WKWebView can coalesce native wheel delivery beyond one compositor
   // viewport before Virtuoso commits its replacement range. Chromium and
@@ -136,7 +137,7 @@ export function transcriptReaderBufferingForMode(
   // Once an ordinary wheel/touch intent settles, release the extra range
   // before the next gesture. Keeping it alive in idle manual mode lets a late
   // size-tree commit move the first selection even though no scroll writer ran.
-  if (eventType === "READER_INTENT_ENDED" && mode !== "selection") return false;
+  if (eventType === "READER_INTENT_ENDED" && mode === "manual") return false;
   if (mode === "tail-follow" || mode === "manual" || mode === "selection") return active;
   return mode === "reader-gesture" || mode === "native-thumb";
 }
@@ -219,7 +220,7 @@ export function reduceTranscriptScroll(
             ...state,
             mode: "reader-gesture",
             readerIntent: true,
-            readerIntentCanClaimTail: true,
+            readerIntentCanClaimTail: event.canClaimTail,
             bottomHoldCount: 0,
             settleMode: "manual",
           }

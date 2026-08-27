@@ -94,6 +94,22 @@ const returned = run([
 ]);
 check(returned.state.mode === "tail-follow", "holding the real bottom across two deliveries re-engages tail-follow");
 
+const stationaryNativeThumb = run([
+  { type: "NATIVE_SCROLLBAR_BEGIN" },
+  { type: "NATIVE_SCROLLBAR_END", canClaimTail: false },
+  { type: "SCROLL_DELIVERED", atBottom: true, scrollable: true, tailMounted: true },
+  { type: "SCROLL_DELIVERED", atBottom: true, scrollable: true, tailMounted: true },
+]);
+check(stationaryNativeThumb.state.mode === "reader-gesture", "a stationary native thumb cannot claim tail ownership");
+
+const movedNativeThumb = run([
+  { type: "NATIVE_SCROLLBAR_BEGIN" },
+  { type: "NATIVE_SCROLLBAR_END", canClaimTail: true },
+  { type: "SCROLL_DELIVERED", atBottom: true, scrollable: true, tailMounted: true },
+  { type: "SCROLL_DELIVERED", atBottom: true, scrollable: true, tailMounted: true },
+]);
+check(movedNativeThumb.state.mode === "tail-follow", "a moved native thumb can transfer a stable bottom to tail-follow");
+
 const geometryChangedBetweenBottomSamples = run([
   { type: "SCROLL_DELIVERED", atBottom: true, scrollable: true },
   { type: "USER_SCROLL_INTENT", canClaimTail: true },
@@ -310,6 +326,7 @@ check(transcriptReaderBufferingForMode(true, "tail-follow"), "tail handoff retai
 check(transcriptReaderBufferingForMode(true, "manual"), "reader idle retains an established reader buffer");
 check(!transcriptReaderBufferingForMode(false, "manual"), "programmatic manual mode does not create a reader buffer");
 check(!transcriptReaderBufferingForMode(true, "manual", "READER_INTENT_ENDED"), "settled reader input releases its extra virtual range");
+check(transcriptReaderBufferingForMode(true, "tail-follow", "READER_INTENT_ENDED"), "tail handoff retains its painted virtual range after intent expiry");
 check(transcriptReaderBufferingForMode(true, "selection"), "selection retains the painted reader buffer");
 check(transcriptReaderBufferingForMode(true, "selection", "READER_INTENT_ENDED"), "selection retains its range when an older reader timer expires");
 check(!transcriptReaderBufferingForMode(false, "selection"), "selection does not create a reader buffer from an idle surface");
@@ -317,6 +334,7 @@ check(TRANSCRIPT_READER_VIEWPORT_BUFFER === 1, "reader buffering retains one mou
 check(TRANSCRIPT_READER_OVERSCAN_ROWS === 24, "reader buffering retains a bounded 24-row window per edge");
 check(transcriptReaderViewportBuffer("Mozilla/5.0 AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15") === 2, "WKWebView retains a second compositor viewport");
 check(transcriptReaderViewportBuffer("Mozilla/5.0 AppleWebKit/537.36 Chrome/128.0 Safari/537.36 Edg/128.0") === 1, "WebView2 retains the bounded default viewport");
+check(transcriptReaderViewportBuffer("Mozilla/5.0 AppleWebKit/537.36 Chrome/128.0 Safari/537.36 Edg/128.0", true) === 2, "native WebView2 retains a second compositor viewport");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

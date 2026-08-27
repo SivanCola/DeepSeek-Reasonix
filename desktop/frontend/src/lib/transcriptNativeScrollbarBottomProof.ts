@@ -8,7 +8,7 @@ type MutableRef<T> = { current: T };
 export type TranscriptNativeScrollbarBottomProof = {
   begin: (element: HTMLDivElement, pointerY?: number) => void;
   observe: (element: HTMLDivElement, pointerY?: number) => void;
-  finish: (element: HTMLDivElement | null) => boolean;
+  finish: (element: HTMLDivElement | null) => readonly [moved: boolean, reachedBottom: boolean];
   cancel: () => void;
 };
 
@@ -71,16 +71,18 @@ export function createTranscriptNativeScrollbarBottomProof({
   };
 
   const finish = (element: HTMLDivElement | null) => {
-    const movedBeforeRelease = Boolean(element && (moved || Math.abs(element.scrollTop - initialTop) > 1));
-    const proved = Boolean(
-      element
-      && activeElement === element
-      && scrollRef.current === element
-      && movedBeforeRelease
-      && (reachedBottom || nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX)
-    );
+    const matchesActiveElement = Boolean(element && activeElement === element && scrollRef.current === element);
+    const movedBeforeRelease = Boolean(matchesActiveElement && element && (moved || Math.abs(element.scrollTop - initialTop) > 1));
+    const release = [
+      movedBeforeRelease,
+      Boolean(
+        element
+        && movedBeforeRelease
+        && (reachedBottom || nativeTranscriptDistanceFromBottom(element) <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX)
+      ),
+    ] as const;
     cancel();
-    return proved;
+    return release;
   };
 
   return { begin, observe, finish, cancel };

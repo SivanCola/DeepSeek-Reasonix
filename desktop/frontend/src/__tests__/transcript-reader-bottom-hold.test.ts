@@ -49,7 +49,7 @@ const stateRef = {
     { type: "NATIVE_SCROLLBAR_BEGIN" },
   ).state,
 };
-stateRef.current = reduceTranscriptScroll(stateRef.current, { type: "NATIVE_SCROLLBAR_END" }).state;
+stateRef.current = reduceTranscriptScroll(stateRef.current, { type: "NATIVE_SCROLLBAR_END", canClaimTail: true }).state;
 const scrollRef = { current: element };
 const generationRef = { current: 7 };
 const commands: string[] = [];
@@ -99,7 +99,7 @@ const unstableStateRef = {
     { type: "NATIVE_SCROLLBAR_BEGIN" },
   ).state,
 };
-unstableStateRef.current = reduceTranscriptScroll(unstableStateRef.current, { type: "NATIVE_SCROLLBAR_END" }).state;
+unstableStateRef.current = reduceTranscriptScroll(unstableStateRef.current, { type: "NATIVE_SCROLLBAR_END", canClaimTail: true }).state;
 const unstableCommands: string[] = [];
 const unstableDispatch = (event: TranscriptScrollEvent) => {
   const result = reduceTranscriptScroll(unstableStateRef.current, event);
@@ -178,7 +178,7 @@ const slowStateRef = {
     { type: "NATIVE_SCROLLBAR_BEGIN" },
   ).state,
 };
-slowStateRef.current = reduceTranscriptScroll(slowStateRef.current, { type: "NATIVE_SCROLLBAR_END" }).state;
+slowStateRef.current = reduceTranscriptScroll(slowStateRef.current, { type: "NATIVE_SCROLLBAR_END", canClaimTail: true }).state;
 const slowCommands: string[] = [];
 const slowDispatch = (event: TranscriptScrollEvent) => {
   const result = reduceTranscriptScroll(slowStateRef.current, event);

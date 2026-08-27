@@ -855,6 +855,11 @@ export function Transcript({
     if (!hydrating) noteGeometryChange("live-footer");
   }, [hydrating, noteGeometryChange]);
 
+  const readerWindow = scrollElement?.ownerDocument.defaultView as (Window & { chrome?: { webview?: unknown } }) | null | undefined;
+  const readerViewportBuffer = transcriptReaderViewportBuffer(
+    readerWindow?.navigator.userAgent,
+    Boolean(readerWindow?.chrome?.webview),
+  );
   const virtuosoContext = useMemo<TranscriptVirtuosoContext>(() => ({
     tabId,
     scrollElement,
@@ -969,7 +974,7 @@ export function Transcript({
             heightEstimates={heightEstimates}
             itemSize={itemSize}
             minOverscanItemCount={layoutSafeMode ? { top: 32, bottom: 32 } : readerBuffering ? { top: TRANSCRIPT_READER_OVERSCAN_ROWS, bottom: TRANSCRIPT_READER_OVERSCAN_ROWS } : { top: VIRTUAL_OVERSCAN_ROWS, bottom: VIRTUAL_OVERSCAN_ROWS }}
-            increaseViewportBy={layoutSafeMode ? { top: (scrollElement?.clientHeight ?? 0) * 2, bottom: (scrollElement?.clientHeight ?? 0) * 2 } : readerBuffering ? { top: (scrollElement?.clientHeight ?? 0) * transcriptReaderViewportBuffer(scrollElement?.ownerDocument.defaultView?.navigator.userAgent), bottom: (scrollElement?.clientHeight ?? 0) * transcriptReaderViewportBuffer(scrollElement?.ownerDocument.defaultView?.navigator.userAgent) } : { top: 480, bottom: 480 }}
+            increaseViewportBy={layoutSafeMode ? { top: (scrollElement?.clientHeight ?? 0) * 2, bottom: (scrollElement?.clientHeight ?? 0) * 2 } : readerBuffering ? { top: (scrollElement?.clientHeight ?? 0) * readerViewportBuffer, bottom: (scrollElement?.clientHeight ?? 0) * readerViewportBuffer } : { top: 480, bottom: 480 }}
             scrollerRef={handleScrollerRef}
             itemsRendered={handleItemsRendered}
             startReached={handleViewportEarlierHistoryReached}
