@@ -252,6 +252,22 @@ await flushFrames();
 await flushFrames();
 check(arbiter?.modeRef.current === "tail-follow", "release pointer travel proves a coalesced away-and-back native thumb");
 
+// Some native themes preserve pointermove at the window boundary but report
+// pointerup back at the original thumb coordinate. Retain that intermediate
+// travel so an away-and-back bottom release cannot lose its explicit proof.
+await act(async () => arbiter?.reset());
+scrollElement.scrollTop = 400;
+await act(async () => arbiter?.onPointerDownIntent({
+  button: 0,
+  clientY: 500,
+  nativeEvent: { button: 0, clientX: 795, clientY: 500 },
+} as React.PointerEvent<HTMLElement>));
+await act(async () => window.dispatchEvent(new dom.window.MouseEvent("pointermove", { clientY: 452 })));
+await act(async () => window.dispatchEvent(new dom.window.MouseEvent("pointerup", { clientY: 500 })));
+await flushFrames();
+await flushFrames();
+check(arbiter?.modeRef.current === "tail-follow", "captured pointer travel survives an original-coordinate native release");
+
 // A real virtual range can reach the native bottom before its LAST row mounts.
 // Keep a bounded release probe alive until that row becomes observable.
 await act(async () => arbiter?.reset());

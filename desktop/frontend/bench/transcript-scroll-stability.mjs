@@ -559,7 +559,15 @@ try {
   // No-input tail-follow under a 16ms reasoning cadence. Growing the real
   // mounted tail row drives the same ResizeObserver/itemSize path as streamed
   // Markdown without adding a test API to the production bundle.
-  await page.locator(".transcript__jump-bottom").click();
+  const streamingJumpBottom = page.locator(".transcript__jump-bottom");
+  if (await streamingJumpBottom.isVisible()) {
+    await streamingJumpBottom.click();
+  } else {
+    const alreadyAtStreamingTail = await transcript.evaluate((element) =>
+      element.dataset.scrollMode === "tail-follow"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4);
+    assert(alreadyAtStreamingTail, "streaming fixture without a jump-bottom control is already committed at the physical tail");
+  }
   await page.waitForFunction(() => {
     const element = document.querySelector(".transcript");
     return element instanceof HTMLElement
@@ -1520,12 +1528,26 @@ try {
     assert(bottomThumb.y !== null, `remeasured native scrollbar exposes a bottom thumb (${JSON.stringify(bottomThumb.motions)})`);
     await page.mouse.up();
     await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
-    await page.waitForFunction(() => {
-      const element = document.querySelector(".transcript");
-      return element
-        && element.dataset.scrollMode === "tail-follow"
-        && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
-    });
+    try {
+      await page.waitForFunction(() => {
+        const element = document.querySelector(".transcript");
+        return element
+          && element.dataset.scrollMode === "tail-follow"
+          && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+      });
+    } catch (error) {
+      const release = await transcript.evaluate((element) => ({
+        mode: element.dataset.scrollMode,
+        distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+        readerIntent: element.dataset.transcriptReaderIntent,
+        canClaimTail: element.dataset.transcriptCanClaimTail,
+        bottomHold: element.dataset.transcriptBottomHoldCount,
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+      }));
+      throw new Error(`native bottom-thumb release did not settle: ${JSON.stringify(release)}`, { cause: error });
+    }
     assert(true, "native thumb release transfers to tail-follow after two stable bottom samples");
     await transcript.evaluate((element) => {
       const tail = [...element.querySelectorAll(".transcript__row")].at(-1);

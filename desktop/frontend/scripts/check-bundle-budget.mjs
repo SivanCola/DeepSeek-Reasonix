@@ -146,8 +146,11 @@ console.log("\nbundle budgets");
 // 452.953 KiB. The bounded settle-resend guard stays within 0.1 KiB of that
 // mark; the reading-anchor pin plus the gateway sync normalization measure
 // 453.6 KiB. Viewport-preserving indexed offsets and coalesced extent/input
-// classification retain 0.1 KiB of gzip headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 453.8 : 453.8;
+// classification retain 0.1 KiB of gzip headroom. The pre-paint native-range
+// clamp, captured thumb-travel proof, and bounded LAST fallback measure
+// 453.852 KiB; keep them with a 0.1 KiB decimal ratchet and roughly 0.048 KiB
+// of remaining headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 453.9 : 453.9;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -240,7 +243,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // its tail-proximity gate and the gateway normalization reach 2435.8 KiB.
 // Indexed reader offsets plus opposite extent/input classification measure
 // 2436.6 KiB; the merged selection compositor bridge reaches 2436.8 KiB.
-// Retain 0.2 KiB of raw/toolchain headroom on the integrated surface.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_437.0 : 2_437.0;
+// The native-range clamp, captured thumb proof, and bounded LAST fallback
+// measure 2437.342 KiB; retain about 0.058 KiB of raw/toolchain headroom on
+// the integrated surface.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_437.4 : 2_437.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

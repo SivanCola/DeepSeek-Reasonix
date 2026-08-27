@@ -54,16 +54,18 @@ function runFixture(engineRejects: EngineRejects) {
 }
 
 {
-  const { writes, pumpRevision } = runFixture(true);
-  for (let index = 0; index < 8; index += 1) pumpRevision();
-  assert.ok(writes.length === 3,
-    `identical rejected resends stay bounded at three total writes (got ${writes.length as number})`);
-  console.log("  PASS  identical rejected resends stay bounded at three total writes");
+  const { writes, settle, pumpRevision } = runFixture(true);
+  for (let index = 0; index < 4; index += 1) pumpRevision();
+  assert.ok(writes.length === 4,
+    `identical rejected resends hand off after three absolute writes (got ${writes.length as number})`);
+  assert.equal(writes[writes.length - 1]?.kind, "scrollToIndex", "the bounded fallback mounts logical LAST");
+  settle.cancel();
+  console.log("  PASS  identical rejected resends hand off once to the bounded LAST transaction");
 }
 
 {
-  const { element, writes, pumpRevision } = runFixture(true);
-  for (let index = 0; index < 8; index += 1) pumpRevision();
+  const { element, writes, settle, pumpRevision } = runFixture(true);
+  for (let index = 0; index < 3; index += 1) pumpRevision();
   assert.ok(writes.length === 3);
   element.scrollHeight += 30;
   pumpRevision();
@@ -73,11 +75,13 @@ function runFixture(engineRejects: EngineRejects) {
     "the re-armed write targets the grown extent");
   console.log("  PASS  a real extent change re-arms corrections past the stagnation bound");
 
-  for (let index = 0; index < 8; index += 1) pumpRevision();
+  for (let index = 0; index < 3; index += 1) pumpRevision();
   const resumeCount: number = writes.length;
-  assert.ok(resumeCount === 6,
-    `the bounded budget resumes counting after re-arm (got ${resumeCount})`);
-  console.log("  PASS  the bounded budget resumes counting after re-arm");
+  assert.ok(resumeCount === 7,
+    `the bounded budget resumes and hands off after re-arm (got ${resumeCount})`);
+  assert.equal(writes[writes.length - 1]?.kind, "scrollToIndex");
+  settle.cancel();
+  console.log("  PASS  the bounded fallback budget resumes counting after re-arm");
 }
 
 {
@@ -99,6 +103,19 @@ function runFixture(engineRejects: EngineRejects) {
   assert.ok(writes.length <= 2,
     `an honoring engine converges without repeat resends (got ${writes.length})`);
   console.log("  PASS  an honoring engine converges without repeat resends");
+}
+
+{
+  const { element, writes, pumpRevision } = runFixture(false);
+  // Reproduce WebKit retaining the old native top during a virtual-range
+  // contraction. The resulting negative bottom distance must not be accepted
+  // as a settled tail for even one rendering opportunity.
+  element.scrollTop = 1_000;
+  pumpRevision();
+  assert.equal(writes.length, 1, "an out-of-range tail receives one writer-owned clamp");
+  assert.equal(writes[0]?.top, 900, "the pre-paint clamp targets the real native bottom");
+  assert.equal(element.scrollTop, 900, "the invalid native offset is corrected synchronously");
+  console.log("  PASS  a contracted native range is clamped before its invalid tail can paint");
 }
 
 console.log("transcript tail settle stagnation tests passed");

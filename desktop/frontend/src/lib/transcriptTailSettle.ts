@@ -258,6 +258,20 @@ export function createTranscriptTailSettle({
     } else {
       transaction.stableFrames += 1;
     }
+    // WebKit can retain the old scrollTop for the remainder of the current
+    // layout opportunity after a virtual range contracts. A negative bottom
+    // distance is therefore not a settled tail: it is an invalid native
+    // offset that would be clamped only after painting a reverse/blank frame.
+    // Correct that overshoot synchronously through the single writer while
+    // ResizeObserver/MutationObserver are still in the pre-paint checkpoint.
+    if (distance < -JUMP_TAIL_NATIVE_THRESHOLD_PX) {
+      const wrote = scrollToTail(
+        "auto",
+        { source: transaction.source, phase: "settle" },
+        transaction.revision,
+      );
+      if (wrote) writtenRevision = transaction.revision;
+    }
     if (distance <= JUMP_TAIL_NATIVE_THRESHOLD_PX) {
       transaction.bottomFrames += 1;
       if (
@@ -312,7 +326,13 @@ export function createTranscriptTailSettle({
         && Math.abs(stagnantWrite.height - element.scrollHeight) <= JUMP_TAIL_STABLE_EPSILON_PX;
       if (identicalNoOp && stagnantWrite!.consecutive >= TAIL_SETTLE_MAX_STAGNANT_RESENDS) {
         pending = null;
-        armLayoutTransientIdle();
+        stagnantWrite = null;
+        // The native engine accepted the same absolute destination without
+        // retaining it across the virtual range commit. Stop resending that
+        // coordinate and hand the bounded recovery to Virtuoso's logical LAST
+        // mount transaction through the same writer.
+        scrollToTail("auto", { source: transaction.source, phase: "initial" }, transaction.revision);
+        schedule(transaction.revision, true, transaction.source);
         return;
       }
       const wrote = scrollToTail(

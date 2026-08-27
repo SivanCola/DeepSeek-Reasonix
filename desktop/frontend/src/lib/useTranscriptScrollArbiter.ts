@@ -517,11 +517,12 @@ export function useTranscriptScrollArbiter({
   }, [endReaderIntent, finishPointerIntent]);
 
   useEffect(() => {
-    window.addEventListener("pointerup", finishPointerIntent, true); window.addEventListener("pointercancel", finishPointerIntent, true); window.addEventListener("blur", finishAllReaderIntent);
+    const observeNativeThumb = (event: PointerEvent) => { const element = scrollRef.current; if (nativeScrollbarDragRef.current && element) nativeScrollbarBottomProof.observe(element, event.clientY); };
+    window.addEventListener("pointermove", observeNativeThumb, true); window.addEventListener("pointerup", finishPointerIntent, true); window.addEventListener("pointercancel", finishPointerIntent, true); window.addEventListener("blur", finishAllReaderIntent);
     return () => {
-      window.removeEventListener("pointerup", finishPointerIntent, true); window.removeEventListener("pointercancel", finishPointerIntent, true); window.removeEventListener("blur", finishAllReaderIntent);
+      window.removeEventListener("pointermove", observeNativeThumb, true); window.removeEventListener("pointerup", finishPointerIntent, true); window.removeEventListener("pointercancel", finishPointerIntent, true); window.removeEventListener("blur", finishAllReaderIntent);
     };
-  }, [finishAllReaderIntent, finishPointerIntent]);
+  }, [finishAllReaderIntent, finishPointerIntent, nativeScrollbarBottomProof]);
 
   useEffect(() => () => {
     if (resizeSettleFrameRef.current !== null) cancelAnimationFrame(resizeSettleFrameRef.current);
