@@ -124,9 +124,21 @@ export function isTranscriptContentShrink(delta: number): boolean {
   return delta <= -TRANSCRIPT_CONTENT_SHRINK_THRESHOLD_PX;
 }
 
-export function transcriptReaderBufferingForMode(active: boolean, mode: TranscriptScrollMode): boolean {
-  if (mode === "tail-follow") return active;
-  return mode === "reader-gesture" || mode === "manual" || mode === "native-thumb";
+export function transcriptReaderBufferingForMode(
+  active: boolean,
+  mode: TranscriptScrollMode,
+  eventType?: TranscriptScrollEvent["type"],
+): boolean {
+  // Selection is a temporary higher-priority owner on the same painted
+  // reader range. Tearing down and recreating its larger Virtuoso window on
+  // every pointerdown/pointerup remeasures newly mounted rows and moves the
+  // selected text under the pointer (#9473 integration).
+  // Once an ordinary wheel/touch intent settles, release the extra range
+  // before the next gesture. Keeping it alive in idle manual mode lets a late
+  // size-tree commit move the first selection even though no scroll writer ran.
+  if (eventType === "READER_INTENT_ENDED" && mode !== "selection") return false;
+  if (mode === "tail-follow" || mode === "manual" || mode === "selection") return active;
+  return mode === "reader-gesture" || mode === "native-thumb";
 }
 
 // Auto re-entry into tail-follow requires the bottom to be held stable: this

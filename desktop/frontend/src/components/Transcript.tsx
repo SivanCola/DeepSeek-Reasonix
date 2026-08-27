@@ -247,7 +247,6 @@ export function Transcript({
     observeListHeight,
     beginUserResize,
     scrollToDataIndex,
-    releaseTailFollow,
     setMode: setScrollMode,
     writeOffset,
     reset: resetScroll,
@@ -277,11 +276,6 @@ export function Transcript({
   }, []);
 
   const cancelStreamingAutoScroll = useCallback(() => {}, []);
-
-  const cancelStreamingAndFollow = useCallback(() => {
-    cancelStreamingAutoScroll();
-    releaseTailFollow();
-  }, [cancelStreamingAutoScroll, releaseTailFollow]);
 
   const {
     state: creationScrollbar,
@@ -528,7 +522,10 @@ export function Transcript({
     scrollRef,
     setScrollMode,
     writeOffset,
-    cancelStreamingScroll: cancelStreamingAndFollow,
+    // Entering selection already preempts tail-follow through SELECTION_BEGIN.
+    // Do not also synthesize USER_SCROLL_INTENT: that would mount the reader
+    // buffer under the pointer even though no scrolling occurred.
+    cancelStreamingScroll: cancelStreamingAutoScroll,
   });
   const clearTranscriptSelection = selectionRetention.clear;
   const { readySurfaceKey: surfacePaintReadySurfaceKey, markItemsRendered: markSurfaceItemsRendered } = useTranscriptSurfaceCommit({

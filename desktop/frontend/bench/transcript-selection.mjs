@@ -170,6 +170,9 @@ async function runSelectionTableRepaintGeometry(page) {
         scrollTop: transcript.scrollTop,
         scrollHeight: transcript.scrollHeight,
         clientHeight: transcript.clientHeight,
+        mode: transcript.dataset.scrollMode,
+        mountedRows: transcript.querySelectorAll(".transcript__row").length,
+        jumpBottom: Boolean(document.querySelector(".transcript__jump-bottom")),
         table: rect(table),
         row: rect(row),
         target: rect(targetElement),
@@ -232,6 +235,13 @@ async function runSelectionTableRepaintGeometry(page) {
     const settled = samples.at(-1);
     delete window.__selectionTableProbe;
     return {
+      initial: {
+        scrollTop: baseline.scrollTop,
+        scrollHeight: baseline.scrollHeight,
+        clientHeight: baseline.clientHeight,
+        mode: baseline.mode,
+        mountedRows: baseline.mountedRows,
+      },
       samples: samples.length,
       maxTableDelta: maxDelta("table"),
       maxRowDelta: maxDelta("row"),
@@ -241,6 +251,23 @@ async function runSelectionTableRepaintGeometry(page) {
           && sample.scrollHeight === baseline.scrollHeight
           && sample.clientHeight === baseline.clientHeight
       )),
+      geometryChanges: samples.filter((sample) => (
+        sample.scrollTop !== baseline.scrollTop
+          || sample.scrollHeight !== baseline.scrollHeight
+          || sample.clientHeight !== baseline.clientHeight
+      )).map(({ event, scrollTop, scrollHeight, clientHeight, mode, mountedRows, jumpBottom, table, row, target }) => ({
+        event,
+        scrollTop,
+        scrollHeight,
+        clientHeight,
+        bottomDistance: scrollHeight - scrollTop - clientHeight,
+        mode,
+        mountedRows,
+        jumpBottom,
+        table,
+        row,
+        target,
+      })),
       hostStable: samples.every((sample) => sample.hostCount === 1 && sample.hostStable),
       observedOpen: samples.some((sample) => sample.hostState === "open"),
       settledState: settled.hostState,
@@ -250,8 +277,15 @@ async function runSelectionTableRepaintGeometry(page) {
   });
   assert(result.samples >= 13, `selection-table records pointer, selection, and frame geometry (${result.samples} samples)`);
   assert(result.hostStable, "four native multi-clicks retain one transcript action host identity");
-  assert(result.observedOpen, "native multi-click selection opens the transcript action host");
-  assert(result.scrollStable, "native multi-click selection preserves scrollTop/scrollHeight/clientHeight");
+  assert(result.observedOpen, result.observedOpen
+    ? "native multi-click selection opens the transcript action host"
+    : `native multi-click selection opens the transcript action host (${JSON.stringify(result)})`);
+  assert(
+    result.scrollStable,
+    result.scrollStable
+      ? "native multi-click selection preserves scrollTop/scrollHeight/clientHeight"
+      : `native multi-click selection preserves scrollTop/scrollHeight/clientHeight (${JSON.stringify(result)})`,
+  );
   assert(result.maxTableDelta <= 0.5, `table top/left stay within 0.5px (${result.maxTableDelta})`);
   assert(result.maxRowDelta <= 0.5, `table row top/left stay within 0.5px (${result.maxRowDelta})`);
   assert(result.maxTargetDelta <= 0.5, `strong target top/left stay within 0.5px (${result.maxTargetDelta})`);

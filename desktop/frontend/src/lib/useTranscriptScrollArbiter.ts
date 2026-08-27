@@ -191,11 +191,11 @@ export function useTranscriptScrollArbiter({
     onRecoveryTerminalRef.current?.({ id, outcome: "cancelled", reason });
   }, []);
 
-  const publishState = useCallback((state: TranscriptScrollState) => {
+  const publishState = useCallback((state: TranscriptScrollState, eventType?: TranscriptScrollEvent["type"]) => {
     stateRef.current = state;
     modeRef.current = state.mode;
     pinnedRef.current = state.mode === "tail-follow";
-    setReaderBuffering((active) => transcriptReaderBufferingForMode(active, state.mode));
+    setReaderBuffering((active) => transcriptReaderBufferingForMode(active, state.mode, eventType));
     // Keep jump-bottom manual-only while tail-follow repairs footer resize gaps.
     setIsAtBottom(state.atBottom || state.mode === "tail-follow");
     if (scrollRef.current) {
@@ -269,7 +269,7 @@ export function useTranscriptScrollArbiter({
     const previousState = stateRef.current;
     const result = reduceTranscriptScroll(previousState, event);
     const source = recordTranscriptScrollTransition(event, previousState, result.state, result.commands, scrollRef.current);
-    publishState(result.state);
+    publishState(result.state, event.type);
     for (const command of result.commands) runCommand(command, source);
     // Post-publish so the controller's SCROLL_DELIVERED anchor sampling sees
     // the new state.

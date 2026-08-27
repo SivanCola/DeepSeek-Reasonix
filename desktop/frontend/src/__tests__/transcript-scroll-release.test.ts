@@ -307,7 +307,12 @@ check(
 );
 check(transcriptReaderBufferingForMode(false, "reader-gesture"), "reader input enables the bounded virtual-row buffer");
 check(transcriptReaderBufferingForMode(true, "tail-follow"), "tail handoff retains the active reader buffer");
-check(!transcriptReaderBufferingForMode(true, "selection"), "selection releases the reader buffer");
+check(transcriptReaderBufferingForMode(true, "manual"), "reader idle retains an established reader buffer");
+check(!transcriptReaderBufferingForMode(false, "manual"), "programmatic manual mode does not create a reader buffer");
+check(!transcriptReaderBufferingForMode(true, "manual", "READER_INTENT_ENDED"), "settled reader input releases its extra virtual range");
+check(transcriptReaderBufferingForMode(true, "selection"), "selection retains the painted reader buffer");
+check(transcriptReaderBufferingForMode(true, "selection", "READER_INTENT_ENDED"), "selection retains its range when an older reader timer expires");
+check(!transcriptReaderBufferingForMode(false, "selection"), "selection does not create a reader buffer from an idle surface");
 check(TRANSCRIPT_READER_VIEWPORT_BUFFER === 1, "reader buffering retains one mounted native viewport");
 check(TRANSCRIPT_READER_OVERSCAN_ROWS === 24, "reader buffering retains a bounded 24-row window per edge");
 check(transcriptReaderViewportBuffer("Mozilla/5.0 AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15") === 2, "WKWebView retains a second compositor viewport");
