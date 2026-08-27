@@ -127,6 +127,7 @@ type PromptHistoryResult struct {
 type App struct {
 	ctx          context.Context
 	workspaceHub *workspaceChangeHub
+	topicState   *topicStateManager
 
 	// sessionCatalog is a disposable, asynchronously opened projection of
 	// authoritative session sidecars. Project-shell APIs must tolerate nil here:
@@ -440,6 +441,7 @@ func NewApp() *App {
 		botRuntime:           newDesktopBotRuntime(),
 		remoteWindows:        newRemoteWindowRegistry(),
 		remoteWindowOwnerID:  newRemoteWindowOwnerID(),
+		topicState:           desktopTopicState,
 	}
 	a.desktopShell.trayState = "probing"
 	a.webView2Recovery = newWebView2RecoveryCoordinator(a)
