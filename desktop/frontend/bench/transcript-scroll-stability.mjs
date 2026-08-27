@@ -559,15 +559,21 @@ try {
   // No-input tail-follow under a 16ms reasoning cadence. Growing the real
   // mounted tail row drives the same ResizeObserver/itemSize path as streamed
   // Markdown without adding a test API to the production bundle.
-  const streamingJumpBottom = page.locator(".transcript__jump-bottom");
-  if (await streamingJumpBottom.isVisible()) {
-    await streamingJumpBottom.click();
-  } else {
-    const alreadyAtStreamingTail = await transcript.evaluate((element) =>
-      element.dataset.scrollMode === "tail-follow"
-      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4);
-    assert(alreadyAtStreamingTail, "streaming fixture without a jump-bottom control is already committed at the physical tail");
-  }
+  // Resolve and click in one browser task. A final reader correction can
+  // legitimately remove this conditional control between Playwright's
+  // isVisible() and click() calls when it has already committed the tail.
+  const streamingTailAction = await transcript.evaluate((element) => {
+    const button = document.querySelector(".transcript__jump-bottom");
+    if (button instanceof HTMLButtonElement && button.isConnected) {
+      button.click();
+      return "clicked";
+    }
+    return element.dataset.scrollMode === "tail-follow"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4
+      ? "already-tail"
+      : "missing";
+  });
+  assert(streamingTailAction !== "missing", "streaming fixture either exposes a connected jump-bottom control or is already committed at the physical tail");
   await page.waitForFunction(() => {
     const element = document.querySelector(".transcript");
     return element instanceof HTMLElement

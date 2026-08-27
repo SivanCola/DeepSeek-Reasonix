@@ -5,6 +5,7 @@ import {
   createTranscriptReaderExtentGuard,
   extendTranscriptReaderExtentGuard,
   observeTranscriptReaderExtent,
+  retainTranscriptReaderPaintedBaseline,
   resolveTranscriptReaderExtentCorrection,
   transcriptReaderExtentHasCollapsed,
 } from "../lib/transcriptReaderExtentStability";
@@ -30,6 +31,16 @@ assert.equal(resolveTranscriptReaderExtentCorrection(guard, native.collapsed), u
 const correction = resolveTranscriptReaderExtentCorrection(guard, native.rebound);
 assert.ok(correction !== undefined && correction > 1_900,
   `the rebound restores the last accepted downward position (${correction}px)`);
+
+let paintedRange = new Map([["row-592", -103]]);
+for (const rowKey of ["row-580", "row-574"]) {
+  const candidate = new Map([[rowKey, 0]]);
+  assert.equal(retainTranscriptReaderPaintedBaseline(paintedRange, candidate, 22_584, 22_584), true,
+    `the 22584/+690 replay retains its user-painted boundary across ${rowKey}`);
+  if (!retainTranscriptReaderPaintedBaseline(paintedRange, candidate, 22_584, 22_584)) paintedRange = candidate;
+}
+assert.equal(paintedRange.has("row-592"), true,
+  "multiple no-common range commits cannot rotate away the last painted boundary");
 
 const reasoning = reasoningExtentReplay;
 const collapseFlags = reasoning.extents.slice(1).map((height, index) =>

@@ -5,7 +5,9 @@ import {
   extendTranscriptReaderExtentGuard,
   MIN_REVERSE_JUMP_PX,
   observeTranscriptReaderExtent,
+  retainTranscriptReaderPaintedBaseline,
   resolveTranscriptReaderExtentCorrection,
+  transcriptReaderPaintedRangeReplaced,
   transcriptReaderBlankForwardDelta,
   transcriptReaderAnchorReverseDelta,
   transcriptReaderExtentCanCorrect,
@@ -102,16 +104,12 @@ function promotePaintedReaderRows(
   guard: ActiveReaderExtentGuard,
   next: ReadonlyMap<string, number>,
 ) {
-  let commonRows = 0;
-  for (const rowKey of next.keys()) {
-    if (guard.paintedRows.has(rowKey)) commonRows += 1;
-  }
   // Mutation, resize, scroll, and rAF observers can all promote the same
   // mounted Virtuoso window before the native smoke sampler reaches its next
   // painted frame. Refresh that window's offsets without rotating away the
   // preceding logical range. Only a majority range replacement advances the
   // two-window history.
-  if (commonRows * 2 < Math.min(guard.paintedRows.size, next.size)) {
+  if (transcriptReaderPaintedRangeReplaced(guard.paintedRows, next)) {
     guard.previousPaintedRows = guard.paintedRows;
   }
   guard.paintedRows = next;
@@ -228,7 +226,16 @@ export function useTranscriptReaderExtentStability({
           || Date.now() >= guard.deadline
           || transcriptElementViewportIsBlank(element)
         ) return;
-        promotePaintedReaderRows(guard, capturePaintedReaderRows(element));
+        const next = capturePaintedReaderRows(element);
+        // One native offset can pass through several no-common Virtuoso
+        // ranges before the host paints the final translated window. None of
+        // those layout-only candidates may rotate away the last range the
+        // reader actually saw; the final window may retain only its boundary
+        // row, which is still enough to prove and repair the full slide.
+        if (retainTranscriptReaderPaintedBaseline(
+          guard.paintedRows, next, guard.baselineScrollTop, element.scrollTop,
+        )) return;
+        promotePaintedReaderRows(guard, next);
         guard.baselineScrollTop = element.scrollTop;
       }, 0);
     });

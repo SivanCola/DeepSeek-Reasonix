@@ -270,8 +270,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // ratchet above.
 // Runtime-aware Todo status and exact-tab continuation then add to the same
 // initial path. The main-v2-only payload measures 2406.2 KiB. The integrated
-// payload measures 2441.2 KiB; retain only about 0.1 KiB of raw/toolchain
-// headroom for both owners.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_441.3 : 2_441.3;
+// payload measures 2441.2 KiB. Retaining the last painted reader baseline
+// across several same-offset range candidates brings that path to 2441.4 KiB;
+// retain only about 0.1 KiB of raw/toolchain headroom for all three owners.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_441.5 : 2_441.5;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

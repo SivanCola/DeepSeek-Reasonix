@@ -2,6 +2,25 @@ import type { TranscriptLayoutAnchor } from "./transcriptVirtuosoRecovery";
 import type { TranscriptScrollEvent } from "./transcriptScrollArbiter";
 
 export const MIN_REVERSE_JUMP_PX = 96;
+
+export function transcriptReaderPaintedRangeReplaced(
+  previous: ReadonlyMap<string, unknown>,
+  next: ReadonlyMap<string, unknown>,
+) {
+  let commonRows = 0;
+  for (const rowKey of next.keys()) if (previous.has(rowKey)) commonRows += 1;
+  return commonRows * 2 < Math.min(previous.size, next.size);
+}
+
+export function retainTranscriptReaderPaintedBaseline(
+  previous: ReadonlyMap<string, unknown>,
+  next: ReadonlyMap<string, unknown>,
+  baselineScrollTop: number | undefined,
+  currentScrollTop: number,
+) {
+  return transcriptReaderPaintedRangeReplaced(previous, next)
+    && Math.abs(currentScrollTop - (baselineScrollTop ?? currentScrollTop)) <= 2;
+}
 const REVERSE_JUMP_VIEWPORT_RATIO = 0.5;
 const EXTENT_REBOUND_VIEWPORT_RATIO = 0.5;
 const DIRECTION_JITTER_PX = 2;
