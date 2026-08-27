@@ -421,21 +421,34 @@ func (s *Store) ReplaceSources(ctx context.Context, values map[string]string) (S
 	})
 }
 
-// ReplaceTitleIndex replaces titles and their sources in one transaction.
-func (s *Store) ReplaceTitleIndex(ctx context.Context, titles, sources map[string]string) (State, error) {
+// MergeMissingTitleIndex fills title-index gaps from a scan-built snapshot
+// without replacing values written after that scan began. Background session
+// repair uses this compare-at-commit behavior so a concurrent manual rename
+// cannot be reverted by stale whole-map data.
+func (s *Store) MergeMissingTitleIndex(ctx context.Context, titles, sources map[string]string, deleted map[string]bool) (State, error) {
 	return s.replaceField(ctx, func(records map[string]Record) {
-		for id, record := range records {
-			record.Title = ""
-			record.TitleSource = ""
-			records[id] = record
+		for id := range deleted {
+			delete(records, id)
 		}
 		for id, value := range titles {
+			if deleted[id] {
+				continue
+			}
 			record := records[id]
+			if strings.TrimSpace(record.Title) != "" {
+				continue
+			}
 			record.TopicID, record.Title = id, value
 			records[id] = record
 		}
 		for id, value := range sources {
+			if deleted[id] {
+				continue
+			}
 			record := records[id]
+			if strings.TrimSpace(record.TitleSource) != "" {
+				continue
+			}
 			record.TopicID, record.TitleSource = id, value
 			records[id] = record
 		}

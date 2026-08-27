@@ -168,13 +168,27 @@ func (m *topicStateManager) ensureOpenAndReconcileLocked(scope *topicStateScope)
 	ctx := context.Background()
 	if scope.store == nil {
 		store, err := topicstate.Open(ctx, scope.path)
-		if err != nil && topicstate.IsCorruptionError(err) && legacyTopicFilesExist(scope.root) {
+		if err != nil && topicstate.IsCorruptionError(err) {
+			recovered, recoveryErr := recoverTopicRecordsFromSessions(scope.root)
+			hasLegacy := legacyTopicFilesExist(scope.root)
+			if recoveryErr != nil {
+				slog.Warn("desktop: topic session recovery source incomplete", "scope", topicScopeKind(scope.root), "error_type", topicStateErrorType(recoveryErr))
+			}
+			if !hasLegacy && len(recovered) == 0 {
+				return err
+			}
 			quarantined, quarantineErr := topicstate.Quarantine(scope.path, m.now())
 			if quarantineErr != nil {
 				return fmt.Errorf("preserve corrupt topic database: %w", quarantineErr)
 			}
-			slog.Warn("desktop: rebuilt corrupt topic state from legacy data", "scope", topicScopeKind(scope.root), "quarantined", filepath.Base(quarantined))
+			slog.Warn("desktop: rebuilt corrupt topic state", "scope", topicScopeKind(scope.root), "records", len(recovered), "legacy", hasLegacy, "quarantined", filepath.Base(quarantined))
 			store, err = topicstate.Open(ctx, scope.path)
+			if err == nil && len(recovered) > 0 {
+				if _, replaceErr := store.ReplaceAll(ctx, recovered); replaceErr != nil {
+					_ = store.Close()
+					return replaceErr
+				}
+			}
 		}
 		if err != nil {
 			return err
@@ -251,15 +265,7 @@ func (m *topicStateManager) setTitle(workspaceRoot, topicID, title, source strin
 	topicID, title, source = strings.TrimSpace(topicID), strings.TrimSpace(title), strings.TrimSpace(source)
 	return m.mutate(workspaceRoot, func(ctx context.Context, store *topicstate.Store) (topicstate.State, error) {
 		return store.Update(ctx, topicID, func(record *topicstate.Record) {
-			record.Title = title
-			if title == "" || source == "" {
-				record.TitleSource = ""
-			} else {
-				record.TitleSource = source
-			}
-			if source == topicTitleSourceManual || (source == topicTitleSourceAuto && isDefaultTopicTitle(title)) {
-				record.AutoMeta = nil
-			}
+			applyTopicTitle(record, title, source)
 		})
 	}, func() error { return setLegacyTopicTitle(workspaceRoot, topicID, title, source) })
 }
@@ -303,14 +309,11 @@ func (m *topicStateManager) replaceSources(workspaceRoot string, values map[stri
 	}, func() error { return writeLegacyStringMap(workspaceRoot, topicTitleSourcesPath(workspaceRoot), values) })
 }
 
-func (m *topicStateManager) replaceTitleIndex(workspaceRoot string, titles, sources map[string]string) error {
+func (m *topicStateManager) mergeMissingTitleIndex(workspaceRoot string, titles, sources map[string]string) error {
 	return m.mutate(workspaceRoot, func(ctx context.Context, store *topicstate.Store) (topicstate.State, error) {
-		return store.ReplaceTitleIndex(ctx, titles, sources)
+		return store.MergeMissingTitleIndex(ctx, titles, sources, deletedTopicSet())
 	}, func() error {
-		if err := writeLegacyStringMap(workspaceRoot, topicTitlesPath(workspaceRoot), titles); err != nil {
-			return err
-		}
-		return writeLegacyStringMap(workspaceRoot, topicTitleSourcesPath(workspaceRoot), sources)
+		return mergeLegacyMissingTitleIndex(workspaceRoot, titles, sources)
 	})
 }
 
@@ -324,7 +327,8 @@ func loadTopicTitles(workspaceRoot string) map[string]string {
 	values := map[string]string{}
 	snapshot, err := desktopTopicState.snapshot(workspaceRoot)
 	if err != nil {
-		legacy, _ := loadLegacyStringMap(topicTitlesPath(workspaceRoot))
+		legacy, legacyErr := loadLegacyStringMap(topicTitlesPath(workspaceRoot))
+		logTopicStateReadFallback(workspaceRoot, err, legacyErr, legacyTopicFilesExist(workspaceRoot))
 		for id, title := range legacy {
 			values[id] = agent.UserPreviewText(title)
 		}
@@ -342,7 +346,8 @@ func loadTopicTitleSources(workspaceRoot string) map[string]string {
 	values := map[string]string{}
 	snapshot, err := desktopTopicState.snapshot(workspaceRoot)
 	if err != nil {
-		legacy, _ := loadLegacyStringMap(topicTitleSourcesPath(workspaceRoot))
+		legacy, legacyErr := loadLegacyStringMap(topicTitleSourcesPath(workspaceRoot))
+		logTopicStateReadFallback(workspaceRoot, err, legacyErr, legacyTopicFilesExist(workspaceRoot))
 		return legacy
 	}
 	for id, record := range snapshot.Records {
@@ -357,7 +362,8 @@ func loadTopicCreatedAts(workspaceRoot string) map[string]int64 {
 	values := map[string]int64{}
 	snapshot, err := desktopTopicState.snapshot(workspaceRoot)
 	if err != nil {
-		legacy, _ := loadLegacyInt64Map(topicCreatedAtsPath(workspaceRoot))
+		legacy, legacyErr := loadLegacyInt64Map(topicCreatedAtsPath(workspaceRoot))
+		logTopicStateReadFallback(workspaceRoot, err, legacyErr, legacyTopicFilesExist(workspaceRoot))
 		return legacy
 	}
 	for id, record := range snapshot.Records {
@@ -372,7 +378,8 @@ func loadTopicAutoTitleMeta(workspaceRoot string) map[string]topicAutoTitleMeta 
 	values := map[string]topicAutoTitleMeta{}
 	snapshot, err := desktopTopicState.snapshot(workspaceRoot)
 	if err != nil {
-		legacy, _ := loadLegacyAutoMetaMap(topicAutoTitleMetaPath(workspaceRoot))
+		legacy, legacyErr := loadLegacyAutoMetaMap(topicAutoTitleMetaPath(workspaceRoot))
+		logTopicStateReadFallback(workspaceRoot, err, legacyErr, legacyTopicFilesExist(workspaceRoot))
 		return legacy
 	}
 	for id, record := range snapshot.Records {
@@ -391,7 +398,7 @@ func saveTopicTitleIndex(workspaceRoot string, titles, sources map[string]string
 	if sources == nil {
 		sources = loadTopicTitleSources(workspaceRoot)
 	}
-	return desktopTopicState.replaceTitleIndex(workspaceRoot, titles, sources)
+	return desktopTopicState.mergeMissingTitleIndex(workspaceRoot, titles, sources)
 }
 
 func readLegacyTopicSnapshot(workspaceRoot string) (legacyTopicSnapshot, error) {
@@ -488,7 +495,7 @@ func mergeLegacyTopicSnapshot(current map[string]topicstate.Record, legacy legac
 			record.CreatedAtMS = createdAt
 		}
 		if raw := legacy.autoMeta[id]; len(raw) > 0 {
-			record.AutoMeta = append(json.RawMessage(nil), raw...)
+			record.AutoMeta = mergeLegacyAutoMeta(record.AutoMeta, raw)
 		}
 		merged[id] = record
 	}

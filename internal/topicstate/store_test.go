@@ -125,6 +125,44 @@ func TestReplaceFieldPreservesUnknownAutoMetadata(t *testing.T) {
 	}
 }
 
+func TestMergeMissingTitleIndexDoesNotOverwriteNewerRename(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "topic-state-v1.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if _, err := store.Update(ctx, "topic-1", func(record *Record) {
+		record.Title = "New manual title"
+		record.TitleSource = "manual"
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MergeMissingTitleIndex(ctx,
+		map[string]string{"topic-1": "Stale repaired title", "topic-2": "Recovered title"},
+		map[string]string{"topic-1": "auto", "topic-2": "manual"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.Records["topic-1"]; got.Title != "New manual title" || got.TitleSource != "manual" {
+		t.Fatalf("newer rename was overwritten: %+v", got)
+	}
+	if got := after.Records["topic-2"]; got.Title != "Recovered title" || got.TitleSource != "manual" {
+		t.Fatalf("missing topic was not repaired: %+v", got)
+	}
+	if after.State.Revision != before.State.Revision+1 {
+		t.Fatalf("revision = %d, want %d", after.State.Revision, before.State.Revision+1)
+	}
+}
+
 func TestStoreRejectsFutureSchemaWithoutChangingFile(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "topic-state-v1.sqlite")
