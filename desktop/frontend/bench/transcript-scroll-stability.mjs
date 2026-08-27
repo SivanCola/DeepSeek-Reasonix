@@ -1002,51 +1002,38 @@ try {
         clientHeight: element.clientHeight,
       }));
       thumbCandidateMotions.push({ offset, scrollTop: motion.scrollTop });
-      await page.mouse.up();
-      await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
       // A 48px thumb move traverses several viewports in this fixture. A
       // track/button press moves at most one page and is not a valid drag hit.
       if (motion.scrollTop > motion.clientHeight * 2.5) {
         nativeThumbY = candidateY;
         break;
       }
+      await page.mouse.up();
+      await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
     }
     if (nativeThumbY === null) {
       process.stdout.write(`  SKIP  native thumb drag (headed Linux Chromium host-input-unavailable; ${JSON.stringify(thumbCandidateMotions)})\n`);
     } else {
-    await transcript.evaluate((element) => {
-      element.scrollTop = 0;
-      element.dispatchEvent(new Event("scroll"));
-    });
-    nativeThumbProbe = await transcript.evaluate(async (element, input) => {
-      let stableFrames = 0;
-      let previousIdentity = "";
-      for (let frame = 0; frame < 120 && stableFrames < 4; frame += 1) {
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        if (element.scrollTop > 1) {
-          element.scrollTop = 0;
-          element.dispatchEvent(new Event("scroll"));
-          stableFrames = 0;
-          previousIdentity = "";
-          continue;
-        }
-        const candidate = element.querySelector(".transcript__row");
-        const identity = candidate instanceof HTMLElement
-          ? `${candidate.dataset.rowKey ?? ""}:${candidate.dataset.knownSize ?? ""}`
-          : "";
-        stableFrames = identity && identity === previousIdentity ? stableFrames + 1 : 0;
-        previousIdentity = identity;
-      }
+    // Continue the same pointer transaction that proved native input was
+    // delivered. Releasing, resetting, and reusing the old Y coordinate does
+    // not prove the browser theme exposed the thumb at that coordinate again.
+    nativeThumbProbe = await transcript.evaluate((element, input) => {
       element.querySelectorAll('[data-native-scrollbar-probe="true"]').forEach((node) => {
         if (node instanceof HTMLElement) delete node.dataset.nativeScrollbarProbe;
       });
-      const row = element.querySelector(".transcript__row");
+      const viewport = element.getBoundingClientRect();
+      const row = [...element.querySelectorAll(".transcript__row")]
+        .find((candidate) => {
+          const rect = candidate.getBoundingClientRect();
+          return rect.bottom > viewport.top && rect.top < viewport.bottom;
+        });
       if (!(row instanceof HTMLElement)) return null;
       row.dataset.nativeScrollbarProbe = "true";
       return {
         ...input.probe,
         y: input.y,
         scrollTop: element.scrollTop,
+        clientHeight: element.clientHeight,
         rowKey: row.dataset.rowKey ?? "",
         knownSize: Number.parseFloat(row.dataset.knownSize || "0"),
         scrollHeight: element.scrollHeight,
@@ -1054,11 +1041,8 @@ try {
     }, { probe: nativeThumbProbe, y: nativeThumbY });
     assert(nativeThumbProbe, "native scrollbar probe remains available after draggable-thumb discovery");
     assert(true, `native scrollbar exposes a pointer-draggable thumb (${Math.round(nativeThumbY - trackTop)}px from track start)`);
-    assert(nativeThumbProbe.scrollTop <= 1, `native scrollbar probe starts at the physical top (${nativeThumbProbe.scrollTop}px)`);
+    assert(nativeThumbProbe.scrollTop > nativeThumbProbe.clientHeight * 2.5, `native scrollbar discovery delivers forward physical progress (${nativeThumbProbe.scrollTop}px)`);
     assert(nativeThumbProbe.knownSize > 0, `native scrollbar probe starts from a measured row (${nativeThumbProbe.knownSize}px)`);
-    await page.mouse.move(nativeThumbProbe.x, nativeThumbProbe.y);
-    await page.mouse.down();
-    await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag === "true");
     const nativeDragStart = await transcript.evaluate((element) => {
       const row = element.querySelector('[data-native-scrollbar-probe="true"]');
       return {
@@ -1066,7 +1050,7 @@ try {
         rowKey: row instanceof HTMLElement ? row.dataset.rowKey ?? "" : "",
       };
     });
-    assert(nativeDragStart.scrollTop <= 1, `native thumb press keeps the viewport at the physical top (${nativeDragStart.scrollTop}px)`);
+    assert(Math.abs(nativeDragStart.scrollTop - nativeThumbProbe.scrollTop) <= 1, `native thumb transaction keeps its delivered position (${nativeThumbProbe.scrollTop} → ${nativeDragStart.scrollTop}px)`);
     assert(nativeDragStart.rowKey === nativeThumbProbe.rowKey, `native thumb press keeps the probed logical row (${nativeDragStart.rowKey || "missing"})`);
     await page.waitForFunction(({ knownSize, rowKey }) => {
       const row = document.querySelector('[data-native-scrollbar-probe="true"]');
