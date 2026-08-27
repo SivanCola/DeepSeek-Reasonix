@@ -473,6 +473,54 @@ ok(newestSurface === null, "only C's own terminal releases the latest surface");
   }
 }
 
+// ── A targeted jump waits behind an existing history request ───────────────
+{
+  const harness = await createTranscriptHarness({ viewportHeight: 200, rowHeight: 100 });
+  try {
+    let attempts = 0;
+    let resolveLoad: ((loaded: boolean) => void) | undefined;
+    const onLoadOlderHistory = () => {
+      attempts += 1;
+      return new Promise<boolean>((resolve) => { resolveLoad = resolve; });
+    };
+    const render = (loadingOlderHistory: boolean) => harness.render(historyTurns(81, 100), {
+      running: false,
+      questionNavigator: true,
+      hasOlderHistory: true,
+      loadingOlderHistory,
+      historyStartTurn: 81,
+      historyTotalTurns: 100,
+      onLoadOlderHistory,
+    });
+
+    await render(true);
+    await harness.settle();
+    const jumpScroll = stubRailGeometry(harness.container, 100);
+    await act(async () => {
+      jumpScroll.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientY: railClientY(10, 100),
+      }));
+    });
+    await harness.flush();
+    ok(Boolean(harness.container.querySelector("[data-question-jump-mask='true']")), "an unloaded jump waits behind an existing history request without dropping its mask");
+    ok(attempts === 0, "an existing history request prevents a duplicate targeted request");
+
+    await render(false);
+    await harness.waitFor(() => attempts === 1, "the queued targeted request after existing history settles");
+    await act(async () => resolveLoad?.(false));
+    await harness.waitFor(
+      () => !harness.container.querySelector("[data-question-jump-mask='true']"),
+      "the queued targeted request terminal",
+    );
+  } finally {
+    await harness.unmount();
+    await harness.close();
+  }
+}
+
 // ── A rejected targeted request cannot strand the opaque surface ───────────
 {
   const harness = await createTranscriptHarness({ viewportHeight: 200, rowHeight: 100 });

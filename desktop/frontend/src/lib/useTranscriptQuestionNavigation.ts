@@ -190,13 +190,18 @@ export function useTranscriptQuestionJump({
     }
   }, [hasOlderHistory, layoutSurfaceKey, loadingOlderHistory, olderHistoryError, onLoadOlderHistory, running]);
   const requestQuestionHistory = useCallback((pending: PendingQuestionJump, retry: boolean, trigger: HistoryLoadTrigger) => {
-    const alreadyInFlight = olderRequestInFlightRef.current === pending.surfaceKey;
+    // A viewport/auto-fill request may already own the controller's loading
+    // slot without owning this hook's lease (for example when the callback
+    // commits `loadingOlderHistory` synchronously). Keep the opaque jump queued
+    // until that request settles instead of misclassifying backpressure as a
+    // failed target page.
+    if (loadingOlderHistory || olderRequestInFlightRef.current === pending.surfaceKey) return;
     void requestOlderHistory(pending.turn + 1, retry, trigger).then((loaded) => {
-      if (!loaded && !alreadyInFlight && pendingQuestionRef.current?.token === pending.token) {
+      if (!loaded && pendingQuestionRef.current?.token === pending.token) {
         settlePendingQuestion(pending.token, "failed");
       }
     });
-  }, [requestOlderHistory, settlePendingQuestion]);
+  }, [loadingOlderHistory, requestOlderHistory, settlePendingQuestion]);
   const jumpToLoadedQuestion = useCallback((question: QuestionAnchor, behavior: "auto" | "smooth" = "smooth") => {
     const index = rowIndexByKey.get(userRowKey(question.id));
     if (index == null) return;
