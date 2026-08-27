@@ -182,7 +182,11 @@ func (m *topicStateManager) ensureOpenAndReconcileLocked(scope *topicStateScope)
 	// metadata back into SQLite.
 	if dbSnapshot.State.LegacyBridge && dbSnapshot.State.LegacyPendingRevision != 0 {
 		if err := m.mirrorIfPendingLocked(ctx, scope); err != nil {
-			return err
+			// SQLite remains readable and authoritative. Do not reconcile the
+			// known-partial JSON snapshot, and do not divert a following mutation
+			// into the legacy-only fallback path.
+			slog.Warn("desktop: topic legacy mirror still pending", "scope", topicScopeKind(scope.root), "error_type", topicStateErrorType(err))
+			return nil
 		}
 		dbSnapshot, err = scope.store.Snapshot(ctx)
 		if err != nil {
@@ -208,7 +212,12 @@ func (m *topicStateManager) ensureOpenAndReconcileLocked(scope *topicStateScope)
 			return err
 		}
 	}
-	return m.mirrorIfPendingLocked(ctx, scope)
+	if err := m.mirrorIfPendingLocked(ctx, scope); err != nil {
+		// Migration/reconciliation already committed to SQLite. Keep the outbox
+		// pending and let this access use the authoritative store.
+		slog.Warn("desktop: topic legacy mirror pending after reconcile", "scope", topicScopeKind(scope.root), "error_type", topicStateErrorType(err))
+	}
+	return nil
 }
 
 func (m *topicStateManager) mirrorIfPendingLocked(ctx context.Context, scope *topicStateScope) error {

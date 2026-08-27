@@ -168,6 +168,11 @@ func TestRestartRepairsPendingMirrorBeforeLegacyReconciliation(t *testing.T) {
 	if applied, err := applyAutoTopicTitle(workspaceRoot, "topic-1", updated.Title, updated); err != nil || !applied {
 		t.Fatalf("apply updated title: applied=%v err=%v", applied, err)
 	}
+	// A second write while the mirror is still failing must advance SQLite,
+	// not silently succeed through the legacy-only fallback.
+	if err := setTopicCreatedAt(workspaceRoot, "topic-1", 999); err != nil {
+		t.Fatal(err)
+	}
 	desktopTopicState.close()
 	topicLegacyWriteHookForTest = nil
 
@@ -180,7 +185,7 @@ func TestRestartRepairsPendingMirrorBeforeLegacyReconciliation(t *testing.T) {
 	if err := json.Unmarshal(record.AutoMeta, &meta); err != nil {
 		t.Fatal(err)
 	}
-	if record.Title != updated.Title || meta.Stage != updated.Stage || meta.BasisHash != updated.BasisHash {
+	if record.Title != updated.Title || record.CreatedAtMS != 999 || meta.Stage != updated.Stage || meta.BasisHash != updated.BasisHash {
 		t.Fatalf("pending mirror rolled SQLite back: record=%+v meta=%+v", record, meta)
 	}
 	legacy, err := loadLegacyAutoMetaMap(topicAutoTitleMetaPath(workspaceRoot))
