@@ -1,6 +1,7 @@
 // Run: pnpm exec tsx src/__tests__/transcript-native-scrollbar.test.ts
 
 import { deepEqual, equal } from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import {
   hasPendingTranscriptGeometry,
@@ -41,6 +42,9 @@ transcript.getBoundingClientRect = () => ({
 });
 
 process.stdout.write("\ntranscript native scrollbar\n");
+const transcriptStyles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+check(/\.transcript\s*\{\s*overscroll-behavior:\s*none;?\s*\}/.test(transcriptStyles), true,
+  "the transcript disables local native rubber-band beyond its virtual range");
 check(isNativeVerticalScrollbarPointer(transcript, { button: 0, clientX: 1095 }), true, "left-button in the right native gutter starts the lock");
 check(isNativeVerticalScrollbarPointer(transcript, { button: 0, clientX: 1085 }), false, "left-button in chat content does not start the lock");
 check(isNativeVerticalScrollbarPointer(transcript, { button: 1, clientX: 1095 }), false, "middle-button autoscroll is not classified as thumb dragging");

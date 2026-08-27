@@ -36,6 +36,11 @@ globalThis.ResizeObserver = TestResizeObserver as unknown as typeof ResizeObserv
 const scrollElement = dom.window.document.getElementById("scroll") as HTMLDivElement;
 const sizer = scrollElement.querySelector<HTMLElement>(".transcript__virtual-sizer")!;
 const row = scrollElement.querySelector<HTMLElement>(".transcript__row")!;
+let nativeScrollHeight = 2_000;
+Object.defineProperty(scrollElement, "scrollHeight", {
+  configurable: true,
+  get: () => nativeScrollHeight,
+});
 let height = 1_000;
 sizer.getBoundingClientRect = () => ({
   x: 0, y: 0, top: 0, left: 0, right: 800, bottom: height,
@@ -71,6 +76,14 @@ assert.equal(geometryRevisions, 1, "an unchanged delivery does not publish anoth
 row.style.transform = "translateY(427px)";
 await act(async () => { await Promise.resolve(); });
 assert.equal(readerObservations, 2, "a range style mutation rechecks visual reader displacement");
+assert.equal(geometryRevisions, 1, "a range mutation with the same native extent emits no geometry revision");
+
+nativeScrollHeight = 3_280;
+row.style.transform = "translateY(1707px)";
+await act(async () => { await Promise.resolve(); });
+assert.equal(readerObservations, 3, "a translated range extent change still rechecks the reader anchor");
+assert.equal(geometryRevisions, 2,
+  "a native extent change with the same mounted-list height publishes one deferred geometry revision");
 
 await act(async () => root.unmount());
 assert.equal(TestResizeObserver.current?.disconnected, true, "the list observer disconnects on cleanup");

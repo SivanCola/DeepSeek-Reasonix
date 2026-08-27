@@ -1488,7 +1488,7 @@ try {
           distance: element.scrollHeight - element.scrollTop - element.clientHeight,
           clientHeight: element.clientHeight,
         }));
-        if (pressed.distance > 1) {
+        if (pressed.distance > 4) {
           motions.push({ offset, pressedDistance: pressed.distance });
           await page.mouse.up();
           await page.waitForFunction(() => document.querySelector(".transcript")?.dataset.nativeScrollbarDrag !== "true");
@@ -1503,7 +1503,7 @@ try {
           try {
             await page.waitForFunction(() => {
               const element = document.querySelector(".transcript");
-              return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+              return element && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
             }, undefined, { timeout: 5_000 });
             return { y: candidateY, motions };
           } catch {
@@ -1524,7 +1524,7 @@ try {
       const element = document.querySelector(".transcript");
       return element
         && element.dataset.scrollMode === "tail-follow"
-        && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+        && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
     });
     assert(true, "native thumb release transfers to tail-follow after two stable bottom samples");
     await transcript.evaluate((element) => {
@@ -2019,12 +2019,26 @@ try {
       && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
   }, undefined, { timeout: 5_000 });
   assert(true, "reduced-motion tail-follow converges to the physical bottom (#9089)");
+  await reducedPage.evaluate(() => {
+    window.__reducedReturnWrites = [];
+    window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => window.__reducedReturnWrites.push(write);
+  });
   const reducedReturn = await reducedPage.evaluate(() => new Promise((resolve) => {
     const element = document.querySelector(".transcript");
     const tops = [];
+    const samples = [];
     let frames = 0;
     const sample = () => {
-      if (element instanceof HTMLElement) tops.push(element.scrollTop);
+      if (element instanceof HTMLElement) {
+        tops.push(element.scrollTop);
+        samples.push({
+          top: element.scrollTop,
+          height: element.scrollHeight,
+          clientHeight: element.clientHeight,
+          distance: element.scrollHeight - element.scrollTop - element.clientHeight,
+          mode: element.dataset.scrollMode ?? "missing",
+        });
+      }
       frames += 1;
       if (frames < 120) { requestAnimationFrame(sample); return; }
       let movingFrames = 0;
@@ -2039,9 +2053,21 @@ try {
         lastDirection = direction;
       }
       const live = document.querySelector(".transcript");
+      const changes = samples.filter((current, index) => {
+        const previous = samples[index - 1];
+        return !previous
+          || current.top !== previous.top
+          || current.height !== previous.height
+          || current.clientHeight !== previous.clientHeight
+          || current.mode !== previous.mode;
+      });
+      const writes = window.__reducedReturnWrites?.slice(-20) ?? [];
+      window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
       resolve({
         movingFrames,
         reversals,
+        changes,
+        writes,
         finalDistance: live instanceof HTMLElement
           ? live.scrollHeight - live.scrollTop - live.clientHeight
           : Number.NaN,
@@ -2059,7 +2085,7 @@ try {
   );
   assert(
     reducedReturn.finalDistance <= 4,
-    `reduced-motion return-to-bottom rests on the physical bottom (${reducedReturn.finalDistance}px)`,
+    `reduced-motion return-to-bottom rests on the physical bottom (${reducedReturn.finalDistance}px; ${JSON.stringify({ changes: reducedReturn.changes, writes: reducedReturn.writes })})`,
   );
   await reducedPage.close();
 

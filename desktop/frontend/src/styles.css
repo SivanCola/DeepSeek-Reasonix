@@ -27098,6 +27098,15 @@ body > .mermaid-diagram--fullscreen {
   overscroll-behavior: contain;
 }
 
+/* The virtual transcript can replace its native extent between adjacent
+   paints. Local rubber-band is therefore not merely decorative: WKWebView can
+   expose an out-of-range blank viewport and then visibly snap back when the
+   Virtuoso range commits. Keep containment on ordinary panels, but make the
+   transcript boundary strict. */
+.transcript {
+  overscroll-behavior: none;
+}
+
 /* Disable cross-document view transitions — the webview has no navigation. */
 ::view-transition-old(root),
 ::view-transition-new(root) {

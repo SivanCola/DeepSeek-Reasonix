@@ -26,6 +26,7 @@ export function useTranscriptListGeometryObserver({
     if (!MutationObserverCtor) return;
     let observedList: HTMLElement | null = null;
     let previousHeight = 0;
+    let previousScrollHeight = scrollElement.scrollHeight;
     const observer = new ResizeObserver(() => {
       if (!observedList) return;
       const height = observedList.getBoundingClientRect().height;
@@ -35,6 +36,7 @@ export function useTranscriptListGeometryObserver({
       // Virtuoso applies its translated range offset.
       observeReaderExtent();
       previousHeight = height;
+      previousScrollHeight = scrollElement.scrollHeight;
       noteGeometryChange("row-measure");
     });
     const attachCurrentList = () => {
@@ -56,6 +58,17 @@ export function useTranscriptListGeometryObserver({
       // paint, which is the last point where an active reader transaction can
       // reject the visible anchor displacement without flashing one frame.
       observeReaderExtent();
+      // The translated range spacer can change the native extent while the
+      // mounted item-list box keeps the same height. That is invisible to the
+      // ResizeObserver above, but a pinned tail still needs one deferred
+      // geometry revision to follow the new physical bottom. Compare the real
+      // extent so ordinary row identity/style mutations remain diagnostics-
+      // only and a scrollTop write cannot feed back into another revision.
+      const scrollHeight = scrollElement.scrollHeight;
+      if (Math.abs(scrollHeight - previousScrollHeight) > 0.5) {
+        previousScrollHeight = scrollHeight;
+        noteGeometryChange("row-measure");
+      }
     });
     mountObserver.observe(scrollElement, {
       childList: true,
