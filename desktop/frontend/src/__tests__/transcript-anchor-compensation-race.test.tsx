@@ -215,6 +215,20 @@ await act(async () => arbiter?.releaseTailFollow());
 await wheelDown();
 await advanceClock(200);
 check(arbiter?.modeRef.current === "tail-follow", "idle close re-samples a held physical bottom before ending intent");
+
+// WebView2 may coalesce the entire final wheel segment: the native scroller is
+// physically at the bottom, but no delivery observed it before the idle probe.
+// Keep the expanded reader range for one frame so the hold completes before a
+// manual-mode Virtuoso contraction can expose the old rows at a new offset.
+await act(async () => arbiter?.releaseTailFollow());
+scrollElement.scrollTop = 300;
+await wheelDown();
+scrollElement.scrollTop = 400;
+await advanceClock(200);
+check(arbiter?.modeRef.current === "reader-gesture", "a first idle bottom sample retains reader ownership through paint");
+await flushFrames();
+check(arbiter?.modeRef.current === "tail-follow", "the next painted bottom sample commits tail ownership before buffer release");
+
 await act(async () => arbiter?.releaseTailFollow());
 await wheelDown();
 check(arbiter?.modeRef.current === "reader-gesture", "a fresh intent window rebuilds the bottom hold from zero");
@@ -282,6 +296,8 @@ const nativePointerUp = new dom.window.MouseEvent("pointerup", { clientY: 500 })
 Object.defineProperty(nativePointerUp, "pointerType", { value: "mouse" });
 await act(async () => window.dispatchEvent(nativePointerUp));
 check(scrollElement.dataset.nativeScrollbarDrag === "true", "mouse pointerup waits for the compatibility release coordinate");
+await advanceClock(16);
+check(scrollElement.dataset.nativeScrollbarDrag === "true", "a later-task GTK mouseup wins over the bounded fallback");
 await act(async () => window.dispatchEvent(new dom.window.MouseEvent("mouseup", { clientY: 452 })));
 await flushFrames();
 await flushFrames();
@@ -294,7 +310,7 @@ await act(async () => arbiter?.onPointerDownIntent({ button: 0, clientY: 500, na
 const cancelledMousePointer = new dom.window.MouseEvent("pointercancel", { clientY: 500 });
 Object.defineProperty(cancelledMousePointer, "pointerType", { value: "mouse" });
 await act(async () => window.dispatchEvent(cancelledMousePointer));
-await advanceClock(0);
+await advanceClock(64);
 check(scrollElement.dataset.nativeScrollbarDrag === undefined, "missing compatibility mouseup falls back without stranding native-thumb mode");
 
 // A real virtual range can reach the native bottom before its LAST row mounts.

@@ -42,6 +42,7 @@ import { createTranscriptTailSettle, type TranscriptTailSettle } from "./transcr
 import { useTranscriptReaderExtentStability } from "./useTranscriptReaderExtentStability";
 import { createTranscriptScrollWriter, writeTranscriptReaderCorrection } from "./transcriptScrollWriter";
 import { createTranscriptReaderBottomHold } from "./transcriptReaderBottomHold";
+import { createTranscriptReaderIntentIdle } from "./transcriptReaderIntentIdle";
 import { createTranscriptGeometryRevision, type TranscriptGeometryChangeSource } from "./transcriptGeometryRevision";
 import { shouldClaimTranscriptTailFromWheel } from "./transcriptWheelTailClaim";
 import { createTranscriptNativeScrollbarBottomProof } from "./transcriptNativeScrollbarBottomProof";
@@ -49,7 +50,7 @@ export type { TranscriptRecoveryRequestSpec, TranscriptRecoveryTerminal, Transcr
 export { hasTranscriptScrollableRange, nativeTranscriptBottomTop, nativeTranscriptDistanceFromBottom, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX };
 export type { TranscriptGeometryChangeSource } from "./transcriptGeometryRevision";
 
-const READER_INTENT_IDLE_MS = 180;
+const NATIVE_MOUSE_COMPAT_RELEASE_MS = 64;
 // Slow WebView2 rows need a wall-clock mount budget. Expiry suspends without
 // an intermediate scrollBy, then retries after a bounded quiet window.
 const ANCHOR_RESTORE_BUDGET_MS = 1_000;
@@ -91,7 +92,6 @@ export function useTranscriptScrollArbiter({
   const measuredRowKeyRef = useRef(new WeakMap<HTMLElement, string>());
   const layoutTransientRef = useRef(false);
   const resizeSettleFrameRef = useRef<number | null>(null);
-  const readerIntentTimerRef = useRef<number | null>(null);
   const recoveryRef = useRef<ActiveTranscriptRecovery | null>(null);
   const nextRecoveryIdRef = useRef(0);
   // Last known-good viewport anchor: updated on every completed recovery, on
@@ -145,6 +145,15 @@ export function useTranscriptScrollArbiter({
   });
   const bottomHold = bottomHoldRef.current;
   const [cancelBottomHold, deliverBottomHold] = bottomHold;
+  const readerIntentIdleRef = useRef<ReturnType<typeof createTranscriptReaderIntentIdle> | null>(null);
+  readerIntentIdleRef.current ??= createTranscriptReaderIntentIdle({
+    scrollRef,
+    stateRef,
+    generationRef,
+    deliverScrollRef,
+    dispatch: (event) => dispatchEventRef.current?.(event),
+  });
+  const [endReaderIntent, armReaderIntentIdle, cancelReaderIntentIdle] = readerIntentIdleRef.current;
   const geometryRef = useRef<ReturnType<typeof createTranscriptGeometryRevision> | null>(null);
   geometryRef.current ??= createTranscriptGeometryRevision({
     scrollRef,
@@ -286,25 +295,6 @@ export function useTranscriptScrollArbiter({
     readerExtentIsActive: readerExtent.isActive,
   });
   const anchorCompensation = anchorCompensationRef.current;
-
-  const endReaderIntent = useCallback(() => {
-    if (readerIntentTimerRef.current !== null) window.clearTimeout(readerIntentTimerRef.current);
-    readerIntentTimerRef.current = null;
-    dispatch({ type: "READER_INTENT_ENDED" });
-  }, [dispatch]);
-
-  const armReaderIntentIdle = useCallback(() => {
-    if (readerIntentTimerRef.current !== null) window.clearTimeout(readerIntentTimerRef.current);
-    readerIntentTimerRef.current = window.setTimeout(() => {
-      readerIntentTimerRef.current = null;
-      // A large wheel/touch gesture can clamp the browser to the physical
-      // bottom without emitting a second scroll event. Re-sample once before
-      // closing the intent window so the bottom-hold policy can complete on
-      // real WebView2/native scrolling as well as on synthetic deliveries.
-      deliverScrollRef.current?.(scrollRef.current ?? undefined);
-      dispatch({ type: "READER_INTENT_ENDED" });
-    }, READER_INTENT_IDLE_MS);
-  }, [dispatch]);
 
   const deliverScroll = useCallback((element = scrollRef.current, provedNativeBottom = false, nativeScrollEvent = false) => {
     if (!element) return;
@@ -506,8 +496,11 @@ export function useTranscriptScrollArbiter({
   const finishPointerIntent = useCallback((event?: PointerEvent) => {
     if (event?.pointerType === "mouse" && nativeScrollbarDragRef.current) {
       const drag = nativeScrollbarDragRef.current;
-      window.setTimeout(() => { if (drag && nativeScrollbarDragRef.current === drag) finishNativeScrollbarDrag(); }, 0);
-      return; // Mouseup retains the native gutter coordinate; the task is a missing-mouseup fallback.
+      const pointerY = event.clientY;
+      window.setTimeout(() => {
+        if (drag && nativeScrollbarDragRef.current === drag) finishNativeScrollbarDrag(pointerY);
+      }, NATIVE_MOUSE_COMPAT_RELEASE_MS);
+      return; // Mouseup retains the native gutter coordinate; the timer is a bounded missing-mouseup fallback.
     }
     if (nativeScrollbarDragRef.current) finishNativeScrollbarDrag(event?.clientY);
     if (middlePointerScrollRef.current) { middlePointerScrollRef.current = false; endReaderIntent(); }
@@ -527,7 +520,7 @@ export function useTranscriptScrollArbiter({
   }, [finishAllReaderIntent, finishMouseIntent, finishPointerIntent, nativeScrollbarBottomProof]);
   useEffect(() => () => {
     if (resizeSettleFrameRef.current !== null) cancelAnimationFrame(resizeSettleFrameRef.current);
-    if (readerIntentTimerRef.current !== null) window.clearTimeout(readerIntentTimerRef.current);
+    cancelReaderIntentIdle();
     if (recoveryRef.current?.frame != null) cancelAnimationFrame(recoveryRef.current.frame);
     tailSettle.cancel();
     cancelGeometry();
@@ -535,7 +528,7 @@ export function useTranscriptScrollArbiter({
     anchorCompensationRef.current?.reset();
     generationRef.current += 1;
     recoveryRef.current = null;
-  }, [cancelBottomHold, cancelGeometry, tailSettle]);
+  }, [cancelBottomHold, cancelGeometry, cancelReaderIntentIdle, tailSettle]);
 
   const itemSize = useCallback<SizeFunction>((element, field) => {
     if (CAPTURE_TRANSCRIPT_SCROLL_DIAGNOSTICS && field === "offsetHeight" && stateRef.current.readerIntent) {

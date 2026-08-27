@@ -4,6 +4,7 @@
 #import <CoreGraphics/CoreGraphics.h>
 #import <WebKit/WebKit.h>
 #include <string.h>
+#include <unistd.h>
 
 @interface ReasonixTranscriptSmokeHost : NSObject <WKNavigationDelegate, WKScriptMessageHandler>
 @property(nonatomic, strong) WKWebView *webView;
@@ -15,6 +16,7 @@
 @property(nonatomic) NSInteger finishWheelEvents;
 @property(nonatomic) NSInteger finishTailStableChecks;
 @property(nonatomic) NSPoint transcriptPoint;
+@property(nonatomic) BOOL directWheelFallback;
 @property(nonatomic) BOOL loaded;
 @property(nonatomic) BOOL ready;
 @property(nonatomic) BOOL done;
@@ -166,10 +168,20 @@
 
 - (void)dispatchWheelDelta:(int32_t)delta atViewPoint:(NSPoint)viewPoint {
   [self ensureInteractionFocus];
-  // Preserve the requested high-resolution pixel delta. Routing the resulting
-  // NSEvent through WKWebView's responder is what crosses into WebContent;
-  // source-level Quartz posting either needs Accessibility or misses it.
-  CGEventRef cgEvent = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 1, delta);
+  // Hosted macOS 26 can deliver a directly invoked scrollWheel: event into
+  // WebContent without running its default scrolling action. Queue a native
+  // mouse-wheel event for this process instead, so AppKit and WebKit own the
+  // complete responder/default-action path. Line units avoid the hosted
+  // runner's 10:1 pixel-to-line reinterpretation while still exercising a
+  // public, platform-native wheel source.
+  int32_t wheelDelta = delta;
+  CGScrollEventUnit unit = kCGScrollEventUnitPixel;
+  if (!self.directWheelFallback) {
+    wheelDelta = delta / 10;
+    if (wheelDelta == 0 && delta != 0) wheelDelta = delta < 0 ? -1 : 1;
+    unit = kCGScrollEventUnitLine;
+  }
+  CGEventRef cgEvent = CGEventCreateScrollWheelEvent(NULL, unit, 1, wheelDelta);
   if (cgEvent == NULL) return;
   NSPoint windowPoint = [self.webView convertPoint:viewPoint toView:nil];
   NSPoint screenPoint = [self.window convertPointToScreen:windowPoint];
@@ -187,14 +199,29 @@
     kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent,
     self.window.windowNumber
   );
-  // Resolve the native content responder from the page-provided view point.
-  // A hosted runner can deliver the wheel event to WebContent while its global
-  // window coordinate misses the default scroll target; view-local hit testing
-  // keeps the event on WKWebView's native responder path.
-  NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
-  NSView *target = [self.webView hitTest:viewPoint] ?: self.webView;
-  if (event != nil) [target scrollWheel:event];
+  if (self.directWheelFallback) {
+    NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
+    NSView *target = [self.webView hitTest:viewPoint] ?: self.webView;
+    if (event != nil) [target scrollWheel:event];
+  } else {
+    CGEventPostToPid(getpid(), cgEvent);
+  }
   CFRelease(cgEvent);
+}
+
+- (void)probeQueuedWheelDelivery {
+  if (self.done || self.directWheelFallback) return;
+  NSString *probe = @"window.__reasonixNativeTranscriptSmokeState?.wheelEvents||0";
+  [self.webView evaluateJavaScript:probe completionHandler:^(id value, NSError *error) {
+    if (self.done || self.directWheelFallback || error) return;
+    if ([value respondsToSelector:@selector(integerValue)] && [value integerValue] == 0) {
+      // Posting to our own native queue needs no WebView test hook, but older
+      // local macOS installations can still require an Accessibility grant.
+      // A proven zero-delivery result selects the responder route that those
+      // hosts accept; hosted macOS 26 stays on the full AppKit queue path.
+      self.directWheelFallback = YES;
+    }
+  }];
 }
 
 - (void)dispatchWheelDelta:(int32_t)delta {
@@ -269,6 +296,7 @@
   }
   [self dispatchWheelDelta:-24];
   self.wheelTick += 1;
+  if (self.wheelTick == 50) [self probeQueuedWheelDelivery];
 }
 
 @end

@@ -170,9 +170,10 @@ console.log("\nbundle budgets");
 // The native-thumb release proof and WebView2-only second compositor viewport
 // measure 455.103 KiB; retain the same narrow 0.1 KiB toolchain allowance.
 // Retaining the pre-swap painted range across a coalesced native-direction
-// handoff and task-sampling a compositor-owned thumb measure 455.4 KiB. Keep
-// 0.1 KiB of bounded headroom for the two platform-terminal invariants.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 455.5 : 455.5;
+// handoff and task-sampling a compositor-owned thumb measure 455.4 KiB. A
+// one-frame bottom-hold commit and the bounded GTK compatibility-release wait
+// measure 455.564 KiB; retain about 0.14 KiB of gzip/toolchain headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 455.7 : 455.7;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -287,8 +288,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // Preserving the prior painted candidate and deferring mouse-pointer release
 // to Chromium's compatibility mouseup with a missing-event fallback measure
 // 2443.3 KiB. Preferring the newest repairable painted frame over stale range
-// history measures 2443.477 KiB; retain about 0.12 KiB of raw/toolchain
-// headroom for these native-input terminal invariants.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_443.6 : 2_443.6;
+// history measures 2443.477 KiB. Retaining the reader buffer through its final
+// bottom-hold paint and waiting for GTK's compatibility mouseup measure
+// 2443.907 KiB; retain about 0.19 KiB of raw/toolchain headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_444.1 : 2_444.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
