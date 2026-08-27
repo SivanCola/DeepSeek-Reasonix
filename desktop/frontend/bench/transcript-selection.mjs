@@ -563,7 +563,11 @@ try {
     transcript.scrollTop = top;
     transcript.dispatchEvent(new Event("scroll"));
   }, settled.scrollTop);
-  await page.waitForTimeout(250);
+  await page.waitForFunction(
+    () => document.querySelectorAll(".transcript-selection-overlay__rect").length > 0,
+    undefined,
+    { timeout: 10_000 },
+  );
   const beforeCopy = await page.evaluate(() => ({
     overlayRects: document.querySelectorAll(".transcript-selection-overlay__rect").length,
     scrollTop: document.querySelector(".transcript")?.scrollTop ?? 0,
@@ -648,15 +652,40 @@ try {
   await page.mouse.move(forwardPoints.activate.x, forwardPoints.activate.y, { steps: 6 });
   const forwardTargetTurn = forwardPoints.anchorTurn + 21;
   let forwardFocus = null;
-  for (let index = 0; index < 80 && !forwardFocus; index += 1) {
+  for (let index = 0; index < 160 && !forwardFocus; index += 1) {
     forwardFocus = await findVisibleTurnTarget(page, { min: forwardTargetTurn });
     if (!forwardFocus) {
-      await page.mouse.wheel(0, 250);
-      await page.mouse.move(forwardPoints.edge.x, forwardPoints.edge.y, { steps: 4 });
+      // Chromium can coalesce a move to the pointer's existing coordinate.
+      // Oscillate inside the edge zone so the selection hook receives a real
+      // pointermove after each virtual range change. Once the native range is
+      // promoted, the product's selection-edge writer owns the remaining
+      // travel; the wheel remains only a user-input nudge before that handoff.
+      const edgeX = forwardPoints.edge.x + (index % 2 === 0 ? -12 : 12);
+      const edgeWriterOwnsTravel = await page.evaluate(() => (
+        (window.__transcriptProgrammaticWrites ?? []).some((write) => write.owner === "selection-edge-scroll")
+      ));
+      if (!edgeWriterOwnsTravel) await page.mouse.wheel(0, 250);
+      await page.mouse.move(edgeX, forwardPoints.edge.y, { steps: 4 });
       await page.waitForTimeout(50);
     }
   }
-  assert(forwardFocus != null, "downward logical drag settles over a visible 20+ turn target");
+  if (!forwardFocus) {
+    const forwardDiag = await page.evaluate(() => {
+      const transcript = document.querySelector(".transcript");
+      return {
+        scrollTop: transcript?.scrollTop ?? null,
+        scrollHeight: transcript?.scrollHeight ?? null,
+        clientHeight: transcript?.clientHeight ?? null,
+        mode: transcript?.dataset.scrollMode ?? null,
+        owners: [...new Set((window.__transcriptProgrammaticWrites ?? []).map((write) => write.owner))],
+        mountedTurns: [...document.querySelectorAll("[data-transcript-selectable]")]
+          .map((element) => Number(element.textContent?.match(/\bbench turn (\d+):/)?.[1] ?? -1))
+          .filter((turn) => turn >= 0),
+      };
+    });
+    throw new Error(`downward logical drag did not reach a visible 20+ turn target (${JSON.stringify(forwardDiag)})`);
+  }
+  assert(true, "downward logical drag settles over a visible 20+ turn target");
   let forwardPromoted = false;
   for (let attempt = 0; attempt < 5 && !forwardPromoted; attempt += 1) {
     await page.mouse.move(forwardFocus.x + 24, forwardFocus.y, { steps: 4 });

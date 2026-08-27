@@ -19,7 +19,7 @@ const frameQueue: Array<FrameRequestCallback> = [];
 
 type EngineRejects = boolean;
 
-function runFixture(engineRejects: EngineRejects) {
+function runFixture(engineRejects: EngineRejects, afterRejectedWrite?: (element: { scrollTop: number; scrollHeight: number; clientHeight: number }) => void) {
   const element = { scrollTop: 863, scrollHeight: 1_000, clientHeight: 100 };
   const writes: TranscriptScrollWriteRecord[] = [];
   const layoutTransient = { current: false };
@@ -30,6 +30,7 @@ function runFixture(engineRejects: EngineRejects) {
         // An engine clamp/consume that leaves the physical offset unchanged
         // reproduces the doomed-resend regime.
         if (!engineRejects) element.scrollTop = request.top ?? element.scrollTop;
+        else afterRejectedWrite?.(element);
         return true;
       },
       lastOwner: () => "tail-follow",
@@ -51,6 +52,24 @@ function runFixture(engineRejects: EngineRejects) {
     // verification arms real timers that this fixture intentionally ignores.
   };
   return { element, writes, settle, pumpRevision };
+}
+
+{
+  const { element, writes, settle, pumpRevision } = runFixture(true, (current) => {
+    // React Virtuoso may replace the physical range synchronously while the
+    // native absolute write is being processed. The next geometry signal can
+    // return to the exact same rejected request state.
+    current.scrollHeight += 200;
+  });
+  for (let index = 0; index < 4; index += 1) {
+    element.scrollTop = 863;
+    element.scrollHeight = 1_000;
+    pumpRevision();
+  }
+  assert.equal(writes.length, 4, "a repeating post-write extent cycle still reaches the bounded handoff");
+  assert.equal(writes[writes.length - 1]?.kind, "scrollToIndex", "the repeating extent cycle mounts logical LAST");
+  settle.cancel();
+  console.log("  PASS  post-write range replacement cannot reset the stagnant handoff budget");
 }
 
 {

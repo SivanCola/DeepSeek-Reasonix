@@ -314,16 +314,22 @@ export function createTranscriptTailSettle({
 
     if (writtenRevision !== transaction.revision) {
       const target = nativeTranscriptBottomTop(element);
+      const attemptedScrollTop = element.scrollTop;
+      const attemptedHeight = element.scrollHeight;
       // A settle resend whose target, native offset, and extent all match the
       // previous attempt was already rejected by the engine; replaying it per
       // incoming revision turns observer noise into a doomed write loop.
-      // Real scroll movement or extent change re-arms corrections at once,
-      // and a bounded resend budget keeps late clamp recovery alive.
+      // Compare the geometry that requested the write, not the state after
+      // writer.write(): Virtuoso may synchronously replace its range/extent
+      // while processing the request. Real pre-write movement or extent
+      // change still re-arms corrections at once, while a repeating range
+      // cycle reaches the bounded logical-LAST handoff.
       const identicalNoOp = stagnantWrite !== null
         && stagnantWrite.generation === generationRef.current
         && Math.abs(stagnantWrite.target - target) <= JUMP_TAIL_NATIVE_THRESHOLD_PX
-        && Math.abs(stagnantWrite.scrollTop - element.scrollTop) <= JUMP_TAIL_NATIVE_THRESHOLD_PX
-        && Math.abs(stagnantWrite.height - element.scrollHeight) <= JUMP_TAIL_STABLE_EPSILON_PX;
+        && Math.abs(stagnantWrite.scrollTop - attemptedScrollTop) <= JUMP_TAIL_NATIVE_THRESHOLD_PX
+        && Math.abs(stagnantWrite.height - attemptedHeight) <= JUMP_TAIL_STABLE_EPSILON_PX;
+      const stagnantFrames = identicalNoOp ? stagnantWrite!.consecutive + 1 : 0;
       if (identicalNoOp && stagnantWrite!.consecutive >= TAIL_SETTLE_MAX_STAGNANT_RESENDS) {
         pending = null;
         stagnantWrite = null;
@@ -337,7 +343,7 @@ export function createTranscriptTailSettle({
       }
       const wrote = scrollToTail(
         "auto",
-        { source: transaction.source, phase: "settle", settle: { frame: transaction.collapseFrames, offBottomFrames: transaction.offBottomFrames, stagnantFrames: 0 } },
+        { source: transaction.source, phase: "settle", settle: { frame: transaction.collapseFrames, offBottomFrames: transaction.offBottomFrames, stagnantFrames } },
         transaction.revision,
       );
       if (wrote) {
@@ -345,9 +351,9 @@ export function createTranscriptTailSettle({
         stagnantWrite = {
           generation: generationRef.current,
           target,
-          scrollTop: element.scrollTop,
-          height: element.scrollHeight,
-          consecutive: identicalNoOp ? stagnantWrite!.consecutive + 1 : 0,
+          scrollTop: attemptedScrollTop,
+          height: attemptedHeight,
+          consecutive: stagnantFrames,
         };
       }
     }
