@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"slices"
 )
 
 type Rect struct {
@@ -72,13 +73,9 @@ func Compare(base, current image.Image, crop Rect, masks []Rect, options Compare
 	result := CompareResult{}
 	for y := cropBounds.Min.Y; y < cropBounds.Max.Y; y++ {
 		for x := cropBounds.Min.X; x < cropBounds.Max.X; x++ {
-			masked := false
-			for _, mask := range maskBounds {
-				if image.Pt(x, y).In(mask) {
-					masked = true
-					break
-				}
-			}
+			masked := slices.ContainsFunc(maskBounds, func(mask image.Rectangle) bool {
+				return image.Pt(x, y).In(mask)
+			})
 			if masked {
 				continue
 			}

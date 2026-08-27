@@ -34,7 +34,7 @@ func TestComparePixelContract(t *testing.T) {
 	t.Run("ratio", func(t *testing.T) {
 		base := solidImage(100, 100)
 		current := solidImage(100, 100)
-		for index := 0; index < 6; index++ {
+		for index := range 6 {
 			current.SetRGBA(index*10, index*10, color.RGBA{R: 255, A: 255})
 		}
 		result, _, err := Compare(base, current, crop, nil, options)
@@ -58,8 +58,8 @@ func TestComparePixelContract(t *testing.T) {
 
 func solidImage(width, height int) *image.RGBA {
 	value := image.NewRGBA(image.Rect(0, 0, width, height))
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
+	for y := range height {
+		for x := range width {
 			value.SetRGBA(x, y, color.RGBA{R: 20, G: 30, B: 40, A: 255})
 		}
 	}
