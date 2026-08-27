@@ -140,6 +140,7 @@
     const CGFloat x = [point[@"x"] respondsToSelector:@selector(doubleValue)] ? [point[@"x"] doubleValue] : NSMidX(self.webView.bounds);
     const CGFloat y = [point[@"y"] respondsToSelector:@selector(doubleValue)] ? [point[@"y"] doubleValue] : NSMidY(self.webView.bounds);
     self.transcriptPoint = NSMakePoint(x, NSHeight(self.webView.bounds) - y);
+    [self.window makeFirstResponder:self.webView];
     [self ensureInteractionFocus];
     // The contract waits for settled Virtuoso geometry before posting ready.
     // Re-establish native focus at that boundary instead of relying on the
@@ -171,10 +172,7 @@
   NSPoint screenPoint = [self.window convertPointToScreen:windowPoint];
   NSScreen *screen = self.window.screen ?: NSScreen.mainScreen;
   NSRect screenFrame = screen.frame;
-  CGPoint quartzPoint = CGPointMake(
-    screenPoint.x,
-    NSMaxY(screenFrame) - screenPoint.y
-  );
+  CGPoint quartzPoint = CGPointMake(screenPoint.x, NSMaxY(screenFrame) - screenPoint.y);
   CGEventSetLocation(cgEvent, quartzPoint);
   CGEventSetIntegerValueField(
     cgEvent,
@@ -187,9 +185,11 @@
     self.window.windowNumber
   );
   NSEvent *event = [NSEvent eventWithCGEvent:cgEvent];
-  // Route the native event through AppKit so hit testing and the WKWebView
-  // responder chain do not depend on the CI desktop's current mouse location.
-  if (event != nil) [self.window sendEvent:event];
+  // WKWebView is a native container; its hit-tested WebKit child is the
+  // reliable scroll-wheel receiver. Hosted runners can keep the outer window
+  // key while declining synthetic window routing or container forwarding.
+  NSView *target = [self.webView hitTest:viewPoint] ?: self.webView;
+  if (event != nil) [target scrollWheel:event];
   CFRelease(cgEvent);
 }
 
