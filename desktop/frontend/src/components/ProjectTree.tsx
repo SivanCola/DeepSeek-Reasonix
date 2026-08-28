@@ -458,11 +458,10 @@ export function ProjectTree({
       await refresh();
     } catch {
       catalogRebuildFailedRef.current = true; catalogStatusGenerationRef.current += 1; setCatalogStatus(catalogStatus);
-      showToast(t("projectTree.catalogRepairFailed"), "error");
     } finally {
       rebuildingCatalogRef.current = false;
     }
-  }, [catalogStatus, refresh, showToast, t]);
+  }, [catalogStatus, refresh]);
 
   useEffect(() => {
     treeRef.current = tree;
@@ -2185,7 +2184,7 @@ export function ProjectTree({
       )}
       {catalogNotice && (
         <div className="project-tree__catalog-progress" role="status">
-          <span>{catalogNotice !== "working" ? t("projectTree.catalogRepairFailed") : catalogStatus.total <= 0 ? t("projectTree.indexing")
+          <span>{catalogNotice !== "working" ? `${t("projectTree.indexing")} — ${t("task.state.failed")}` : catalogStatus.total <= 0 ? t("projectTree.indexing")
               : t("projectTree.indexingProgress", { done: catalogStatus.indexed, total: catalogStatus.total })}</span>
           {catalogNotice === "rebuild" && (
             <button type="button" className="project-tree__catalog-rebuild" onClick={() => void rebuildSessionCatalog()}>

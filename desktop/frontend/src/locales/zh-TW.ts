@@ -1082,7 +1082,6 @@ export const zhTW: Record<DictKey, string> = {
   "projectTree.searchPlaceholder": "搜尋專案或會話",
   "projectTree.indexing": "正在整理歷史",
   "projectTree.indexingProgress": "正在整理歷史（{done}/{total}）",
-  "projectTree.catalogRepairFailed": "歷史整理失敗",
   "projectTree.recovered": "已恢復",
   "projectTree.recoveryOnly": "可恢復",
   "projectTree.rebuildCatalog": "重建索引",
