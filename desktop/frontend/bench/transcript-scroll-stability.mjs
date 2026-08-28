@@ -1008,14 +1008,27 @@ try {
         scrollTop: element.scrollTop,
         clientHeight: element.clientHeight,
       }));
-      thumbCandidateMotions.push({ offset, midpoint: midpoint.scrollTop, scrollTop: motion.scrollTop });
-      // A real thumb follows both pointer increments. A held track/button can
-      // auto-repeat across several pages and used to satisfy the old absolute
-      // distance check even though later pointer movement had no effect.
+      await page.mouse.move(nativeThumbProbe.x, candidateY + 96);
+      await page.waitForTimeout(24);
+      const confirmation = await transcript.evaluate((element) => ({
+        scrollTop: element.scrollTop,
+        clientHeight: element.clientHeight,
+      }));
+      thumbCandidateMotions.push({
+        offset,
+        midpoint: midpoint.scrollTop,
+        scrollTop: motion.scrollTop,
+        confirmation: confirmation.scrollTop,
+      });
+      // A real thumb follows every pointer increment. A held track/button can
+      // auto-repeat across several pages and can satisfy the first two distance
+      // checks before stopping. Require a third, farther move to prove that the
+      // browser-owned control keeps following the pointer transaction.
       if (motion.scrollTop > motion.clientHeight * 2.5
-        && motion.scrollTop - midpoint.scrollTop > motion.clientHeight) {
+        && motion.scrollTop - midpoint.scrollTop > motion.clientHeight
+        && confirmation.scrollTop - motion.scrollTop > confirmation.clientHeight * 2) {
         nativeThumbY = candidateY;
-        nativeThumbDragY = candidateY + 48;
+        nativeThumbDragY = candidateY + 96;
         break;
       }
       await page.mouse.up();
