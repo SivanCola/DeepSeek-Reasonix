@@ -138,12 +138,14 @@ console.log("\nbundle budgets");
 // The final 0.266 KiB retains jump ownership through paint-ready instead of
 // allowing a native scrollend to release it. Keep only 0.213 KiB headroom;
 // native validation hosts and test fixtures stay outside the production graph.
-// On current main-v2, the Todo lifecycle moves the baseline to 447.639 KiB.
-// Pre-paint live-tail stabilization and its monotonic live-footer guard add
-// 0.682 KiB gzip after extracting their ownership modules below repolint's
-// source ceilings. The measured path is 448.321 KiB; retain only 0.079 KiB of
-// bounded toolchain headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 448.4 : 448.4;
+// Notification volume plus per-source loudness normalization moves current
+// main-v2 from 447.639 to 447.882 KiB gzip (+0.243 KiB). Retain 0.118 KiB of
+// bounded build/toolchain headroom.
+// Pre-paint live-tail stabilization and its monotonic live-footer guard then
+// add 0.695 KiB after extracting ownership modules below repolint's source
+// ceilings. The combined path measures 448.577 KiB; retain 0.123 KiB of
+// bounded build/toolchain headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 448.7 : 448.7;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -221,11 +223,14 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // raw/toolchain headroom for both owners.
 // The same transcript transaction measures 2413.012 KiB raw (+0.28%) against
 // the 2406.204 KiB baseline. Retain 0.188 KiB of bounded headroom.
+// The notification-volume control adds one persisted master gain, per-source
+// loudness trims, and its accessible Settings surface. Current main-v2 moves
+// from 2413.183 to 2414.879 KiB raw (+1.696 KiB); retain 0.121 KiB of bounded
+// headroom.
 // Owner-lifecycle reasoning disclosure, pre-paint tail pinning, and the live
-// footer growth floor add 2.390 KiB to the current 2413.183 KiB baseline after
-// extracting their ownership modules below repolint's source ceilings. The
-// measured initial path is 2415.572 KiB raw; retain 0.128 KiB while preventing
-// phase-boundary collapse and WebView2 reverse flashes.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_415.7 : 2_415.7;
+// footer growth floor then add 2.390 KiB after extracting ownership modules
+// below repolint's source ceilings. The combined path measures 2417.269 KiB;
+// retain 0.131 KiB while preventing phase-boundary reverse flashes.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_417.4 : 2_417.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
