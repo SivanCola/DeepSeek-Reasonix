@@ -190,9 +190,9 @@ func (a *App) startSessionCatalog() {
 	}()
 }
 
-func (a *App) stopSessionCatalog(timeout time.Duration) {
+func (a *App) stopSessionCatalog(timeout time.Duration) bool {
 	if a == nil {
-		return
+		return true
 	}
 	a.catalogLifecycleMu.Lock()
 	cancel := a.catalogCancel
@@ -214,29 +214,26 @@ func (a *App) stopSessionCatalog(timeout time.Duration) {
 		reconcileDone = append(reconcileDone, job.done)
 	}
 	a.catalogReconcileMu.Unlock()
+	stopped := true
 	for _, done := range reconcileDone {
 		if !waitChannelBefore(done, deadline) {
+			stopped = false
 			break
 		}
 	}
 	if catalog != nil {
 		remaining := max(time.Until(deadline), 0)
 		ctx, closeCancel := context.WithTimeout(context.Background(), remaining)
-		_ = catalog.Close(ctx)
+		err := catalog.Close(ctx)
 		closeCancel()
-	}
-	if done != nil {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return
-		}
-		timer := time.NewTimer(remaining)
-		defer timer.Stop()
-		select {
-		case <-done:
-		case <-timer.C:
+		if err != nil {
+			stopped = false
 		}
 	}
+	if done != nil && !waitChannelBefore(done, deadline) {
+		stopped = false
+	}
+	return stopped
 }
 
 func waitChannelBefore(done <-chan struct{}, deadline time.Time) bool {

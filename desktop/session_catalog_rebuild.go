@@ -7,9 +7,15 @@ import (
 	"reasonix/internal/sessioncatalog"
 )
 
+var errSessionCatalogStopTimeout = errors.New("session catalog did not stop before the rebuild deadline")
+
 // RebuildSessionCatalog owns the bounded, one-shot rebuild transaction. The
 // replacement watcher is always an ordinary watcher and never owns rebuilding.
 func (a *App) RebuildSessionCatalog() error {
+	return a.rebuildSessionCatalog(5 * time.Second)
+}
+
+func (a *App) rebuildSessionCatalog(stopTimeout time.Duration) error {
 	if a == nil || a.shuttingDown.Load() {
 		return errors.New("application is shutting down")
 	}
@@ -33,7 +39,9 @@ func (a *App) RebuildSessionCatalog() error {
 
 	// Rebuild must not race the old SQLite handle on Windows, where publishing
 	// the atomic replacement can fail while that handle is still closing.
-	a.stopSessionCatalog(5 * time.Second)
+	if !a.stopSessionCatalog(stopTimeout) {
+		return errSessionCatalogStopTimeout
+	}
 	replacement, err := sessioncatalog.RebuildWithRevisionFloor(
 		a.bootContext(), sessioncatalog.DefaultPath(), a.sessionCatalogTargets(), status.Revision,
 	)
