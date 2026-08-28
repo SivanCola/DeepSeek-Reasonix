@@ -196,6 +196,28 @@ scrollElement.scrollTop = 400;
 await act(async () => arbiter?.atBottomStateChange(false));
 check(arbiter?.isAtBottom === true, "physical bottom overrides a stale Virtuoso atBottom=false report");
 
+// A live-footer structural commit (answer -> tool) can expose the new native
+// extent before Virtuoso reports its footer height. Tail ownership repairs the
+// offset synchronously so WebView2 never paints the clamped intermediate frame.
+scrollExtent = 700;
+scrollElement.scrollTop = 477;
+scrollToCalls = 0;
+await act(async () => arbiter?.pinLiveTailBeforePaint());
+check(
+  scrollElement.scrollTop === 600 && scrollToCalls === 1,
+  "a claimed live tail pins the new native extent before paint",
+);
+await act(async () => arbiter?.releaseTailFollow());
+scrollExtent = 800;
+scrollElement.scrollTop = 500;
+scrollToCalls = 0;
+await act(async () => arbiter?.pinLiveTailBeforePaint());
+check(
+  scrollElement.scrollTop === 500 && scrollToCalls === 0,
+  "a manual reader is never moved by live-tail commit stabilization",
+);
+await act(async () => arbiter?.reset());
+
 // A nested code/tool scrollport owns the wheel until it reaches its edge.
 // Capturing the event on Transcript must not release tail-follow early.
 const nestedScroller = dom.window.document.createElement("div");

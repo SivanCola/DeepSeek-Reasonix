@@ -156,6 +156,8 @@ export interface SegmentModel {
   displayItems: Item[];
   /** Turn-level: the turn renders anything outside its folds. */
   hasOutsideContent: boolean;
+  /** Disclosure ownership: every untouched segment stays open until its turn settles. */
+  foldActive: boolean;
   hasRunningWork: boolean;
   durationMs: number;
   /** "full" carries the work-duration label; earlier segments only list counts. */
@@ -257,6 +259,7 @@ export function buildTurnModels(
       const isLastSegment = segmentIndex === segments.length - 1;
       const displayItems = foldDisplayItems(segment.processItems, live, hideReasoning);
       const turnActive = model.isActive && isLastSegment;
+      const hasRunningWork = segmentHasRunningWork(displayItems, turnActive, live);
       return {
         // Duplicate raw ids occur in imported/merged histories. Derive the
         // disambiguator from stable turn/item identity rather than occurrence
@@ -273,7 +276,8 @@ export function buildTurnModels(
         outsideItems: segment.outsideItems,
         displayItems,
         hasOutsideContent: turnHasOutsideContent,
-        hasRunningWork: segmentHasRunningWork(displayItems, turnActive, live),
+        foldActive: model.isActive || hasRunningWork,
+        hasRunningWork,
         durationMs: isLastSegment ? turnWorkDurationMs(model.turnItems) : 0,
         labelStyle: isLastSegment ? "full" : "counts",
         turnActive,
@@ -303,10 +307,10 @@ export type FoldMap = ReadonlyMap<string, FoldEntry>;
 export const EMPTY_FOLDS: FoldMap = new Map();
 
 export function defaultFoldOpen(
-  segment: { hasOutsideContent: boolean; hasRunningWork: boolean; keepReasoningExpanded?: boolean },
+  segment: { hasOutsideContent: boolean; hasRunningWork: boolean; foldActive?: boolean; keepReasoningExpanded?: boolean },
   preference: ProcessFoldPreference,
 ): boolean {
-  return preference === "expanded" || segment.keepReasoningExpanded === true || !segment.hasOutsideContent || segment.hasRunningWork;
+  return preference === "expanded" || segment.keepReasoningExpanded === true || !segment.hasOutsideContent || segment.foldActive === true || segment.hasRunningWork;
 }
 
 export interface FoldSegmentState {
@@ -324,7 +328,7 @@ export function foldSegmentStates(models: readonly TurnModel[], keepReasoningExp
       out.push({
         key: segment.key,
         hasOutsideContent: segment.hasOutsideContent,
-        hasRunningWork: segment.hasRunningWork,
+        hasRunningWork: segment.foldActive,
         keepReasoningExpanded: keepReasoningExpanded && segment.displayItems.some((item) => item.kind === "assistant"),
       });
     }
@@ -442,7 +446,7 @@ type TranscriptRowContent =
   | { kind: "older-history"; key: string }
   | { kind: "user"; key: string; item: UserItem; turn: number | undefined }
   | { kind: "process-header"; key: string; segment: SegmentModel; open: boolean }
-  | { kind: "reasoning"; key: string; item: AssistantItem; segmentKey: string }
+  | { kind: "reasoning"; key: string; item: AssistantItem; segmentKey: string; autoFollowActive?: boolean }
   | { kind: "tool"; key: string; item: ToolItem }
   | { kind: "tool-batch"; key: string; items: ToolItem[] }
   | { kind: "tool-group"; key: string; items: ToolItem[]; groupKind: ToolGroupKind }
@@ -623,9 +627,10 @@ function processBodyRows(
           key: `r:${it.id}`,
           item: it as AssistantItem,
           segmentKey: segment.key,
+          autoFollowActive: segment.foldActive,
           layoutVariant: resolveReasoningLayoutVariant(
             reasoningDisplayMode,
-            Boolean((it as AssistantItem).streaming && !(it as AssistantItem).reasoningComplete),
+            segment.foldActive,
           ) ?? "reasoning-summary",
         });
         break;
@@ -718,6 +723,16 @@ export interface TranscriptLiveSplit {
   liveRows: TranscriptRow[];
   /** True while a turn is active — the live region may render a status row even when liveRows is empty. */
   liveActive: boolean;
+}
+
+export function resolveLiveTurnGrowthFloor(
+  previousRowCount: number,
+  nextRowCount: number,
+  previousHeight: number,
+  heldHeight: number | null,
+): number | null {
+  if (nextRowCount <= previousRowCount || previousHeight <= 0) return heldHeight;
+  return Math.max(previousHeight, heldHeight ?? 0);
 }
 
 function firstRowKeyForModel(model: TurnModel): string | undefined {

@@ -25,6 +25,7 @@ import {
   foldMapWithToggle,
   foldSegmentStates,
   reconcileFoldEntries,
+  resolveLiveTurnGrowthFloor,
   splitTranscriptLiveRows,
   EMPTY_FOLDS,
   NO_LIVE,
@@ -237,6 +238,7 @@ export function Transcript({
     atBottomStateChange,
     deliverScroll,
     scrollToBottom,
+    pinLiveTailBeforePaint,
     followGrowingTail,
     beginUserResize,
     scrollToDataIndex, beginQuestionJump, finishQuestionJump,
@@ -442,6 +444,71 @@ export function Transcript({
     () => splitTranscriptLiveRows(turnModels, rows, liveId, running),
     [turnModels, rows, liveId, running],
   );
+  const liveGeometryRevision = useMemo(
+    () => liveSplit.liveRows.map((row) => [
+      String(row.key),
+      row.kind,
+      transcriptRowLayoutVariant(row),
+      transcriptRowMeasurementVersion(row),
+    ].join("\u0000")).join("\u0001"),
+    [liveSplit.liveRows],
+  );
+  const previousLiveRowCountRef = useRef(liveSplit.liveRows.length);
+  const previousLiveHeightRef = useRef(0);
+  const [heldLiveMinHeight, setHeldLiveMinHeight] = useState<number | null>(null);
+  const heldLiveMinHeightRef = useRef(heldLiveMinHeight);
+  heldLiveMinHeightRef.current = heldLiveMinHeight;
+  const liveMinHeight = resolveLiveTurnGrowthFloor(
+    previousLiveRowCountRef.current,
+    liveSplit.liveRows.length,
+    previousLiveHeightRef.current,
+    heldLiveMinHeight,
+  );
+  // Structural live-footer changes (answer/tool boundaries) must repair the
+  // claimed tail in the same commit. Waiting for Virtuoso's asynchronous
+  // footer measurement leaves one WebView2 paint at the browser-clamped old
+  // offset, which is visible as a backwards jump in compact reasoning modes.
+  useLayoutEffect(() => {
+    if (!liveSplit.liveActive) {
+      previousLiveRowCountRef.current = 0;
+      previousLiveHeightRef.current = 0;
+      if (heldLiveMinHeight !== null) setHeldLiveMinHeight(null);
+      return;
+    }
+    const region = scrollElement?.querySelector<HTMLElement>(".transcript__live-region");
+    const content = region?.querySelector<HTMLElement>(".transcript__live-content");
+    const floor = resolveLiveTurnGrowthFloor(
+      previousLiveRowCountRef.current,
+      liveSplit.liveRows.length,
+      previousLiveHeightRef.current,
+      heldLiveMinHeight,
+    );
+    previousLiveRowCountRef.current = liveSplit.liveRows.length;
+    if (region && content) {
+      const naturalHeight = content.getBoundingClientRect().height;
+      if (floor !== null && naturalHeight + 0.5 < floor) {
+        if (heldLiveMinHeight !== floor) setHeldLiveMinHeight(floor);
+        previousLiveHeightRef.current = floor;
+      } else {
+        if (heldLiveMinHeight !== null && naturalHeight + 0.5 >= heldLiveMinHeight) setHeldLiveMinHeight(null);
+        previousLiveHeightRef.current = Math.max(naturalHeight, region.getBoundingClientRect().height);
+      }
+    }
+    if (!hydrating && stick.current) pinLiveTailBeforePaint();
+  }, [heldLiveMinHeight, hydrating, liveGeometryRevision, liveSplit.liveActive, liveSplit.liveRows, pinLiveTailBeforePaint, scrollElement, stick]);
+
+  useLayoutEffect(() => {
+    const content = scrollElement?.querySelector<HTMLElement>(".transcript__live-content");
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const naturalHeight = content.getBoundingClientRect().height;
+      const held = heldLiveMinHeightRef.current;
+      if (held !== null && naturalHeight + 0.5 >= held) setHeldLiveMinHeight(null);
+      if (held === null) previousLiveHeightRef.current = naturalHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [liveGeometryRevision, scrollElement]);
   // Keep the load-older affordance in Virtuoso's measured Header slot so an
   // older page is a true data prepend, rather than an insertion after row 0.
   const virtualRows = useMemo(
@@ -666,7 +733,11 @@ export function Transcript({
       case "reasoning":
         return (
           <div className="turn-collapse__body">
-            <InlineAssistantReasoning item={row.item} onManualOpen={() => handleReasoningManualOpen(row.segmentKey)} />
+            <InlineAssistantReasoning
+              item={row.item}
+              autoFollowActive={row.autoFollowActive}
+              onManualOpen={() => handleReasoningManualOpen(row.segmentKey)}
+            />
           </div>
         );
       case "tool":
@@ -889,6 +960,7 @@ export function Transcript({
           renderRow,
           showStatus: liveSplit.liveActive,
           turnStartAt,
+          minHeight: liveMinHeight ?? undefined,
           onPointerDownCapture: selectionRetention.onPointerDownCapture,
         }
       : null,
@@ -907,6 +979,7 @@ export function Transcript({
     heldLiveRows,
     liveSplit.liveActive,
     liveSplit.liveRows,
+    liveMinHeight,
     loadingOlderHistory,
     contentRevision,
     nativeScrollbarDragging,

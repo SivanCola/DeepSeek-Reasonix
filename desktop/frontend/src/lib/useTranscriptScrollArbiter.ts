@@ -312,6 +312,22 @@ export function useTranscriptScrollArbiter({
     dispatch({ type: "JUMP_TO_BOTTOM", behavior });
   }, [dispatch]);
 
+  // A structural live-footer commit can make WebView2 expose the new rows one
+  // paint before Virtuoso's totalListHeightChanged callback. If the browser
+  // clamps the old offset in that gap, the whole viewport flashes backwards.
+  // Pin the native extent synchronously from Transcript's layout effect while
+  // retaining the existing tail owner; manual/selection readers are ignored.
+  const pinLiveTailBeforePaint = useCallback(() => {
+    if (!scrollRef.current || modeRef.current !== "tail-follow") return false;
+    geometryRevisionRef.current += 1;
+    tailSettle.noteLayoutTransient();
+    tailSettle.scrollToTail("auto", CAPTURE_TRANSCRIPT_SCROLL_DIAGNOSTICS
+      ? { source: "tail-content-changed", phase: "initial" }
+      : undefined);
+    tailSettle.schedule(false, "tail-content-changed");
+    return true;
+  }, [tailSettle]);
+
   // Reaches a terminal state for a recovery the arbiter itself ends (done /
   // expired / scroller gone). Preemption cancels go through
   // cancelInFlightRecovery instead, driven by the reducer's CANCEL command.
@@ -776,7 +792,7 @@ export function useTranscriptScrollArbiter({
     virtuosoRef, scrollRef, scrollElement, layoutTransientRef,
     itemSize, nativeScrollbarDragging, pinnedRef, isAtBottom, modeRef,
     scrollerRef, setMode, reset, writeOffset,
-    scrollToBottom, followGrowingTail, scrollToDataIndex,
+    scrollToBottom, pinLiveTailBeforePaint, followGrowingTail, scrollToDataIndex,
     beginQuestionJump: questionJumpOwnership.begin,
     finishQuestionJump: questionJumpOwnership.finish,
     finishProgrammaticScroll, releaseTailFollow, beginUserResize,

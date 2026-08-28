@@ -138,7 +138,11 @@ console.log("\nbundle budgets");
 // The final 0.266 KiB retains jump ownership through paint-ready instead of
 // allowing a native scrollend to release it. Keep only 0.213 KiB headroom;
 // native validation hosts and test fixtures stay outside the production graph.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 447.8 : 447.8;
+// On current main-v2, the Todo lifecycle moves the baseline to 447.639 KiB.
+// Pre-paint live-tail stabilization and its monotonic live-footer guard add
+// 0.589 KiB gzip. The measured path is 448.228 KiB; retain only 0.072 KiB of
+// bounded toolchain headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 448.3 : 448.3;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -216,6 +220,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // raw/toolchain headroom for both owners.
 // The same transcript transaction measures 2413.012 KiB raw (+0.28%) against
 // the 2406.204 KiB baseline. Retain 0.188 KiB of bounded headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_413.2 : 2_413.2;
+// Owner-lifecycle reasoning disclosure, pre-paint tail pinning, and the live
+// footer growth floor add 2.019 KiB to the current 2413.183 KiB baseline. The
+// measured initial path is 2415.201 KiB raw; retain 0.099 KiB while preventing
+// phase-boundary collapse and WebView2 reverse flashes.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_415.3 : 2_415.3;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
