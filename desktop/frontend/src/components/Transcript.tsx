@@ -236,7 +236,7 @@ export function Transcript({
     scrollToBottom,
     pinLiveTailBeforePaint,
     followGrowingTail,
-    beginUserResize,
+    beginUserResize, userResizeRevision,
     scrollToDataIndex, beginQuestionJump, finishQuestionJump,
     releaseTailFollow,
     setMode: setScrollMode,
@@ -433,7 +433,8 @@ export function Transcript({
     [turnModels, folds, foldPreference, hasOlderHistory, creationMode, turnForUser, hasCheckpointForTurn, reasoningDisplayMode, subcallsByParent],
   );
   const { liveSplit, liveMinHeight } = useTranscriptLiveTurnStability({
-    turnModels, rows, liveId, running, scrollElement, hydrating, tailOwnedRef: stick, pinLiveTailBeforePaint,
+    turnModels, rows, liveId, running, stabilityKey: `${layoutSurfaceKey}:${userResizeRevision}`,
+    scrollElement, hydrating, tailOwnedRef: stick, pinLiveTailBeforePaint,
   });
   // Keep the load-older affordance in Virtuoso's measured Header slot so an
   // older page is a true data prepend, rather than an insertion after row 0.

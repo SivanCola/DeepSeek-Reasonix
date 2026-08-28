@@ -120,6 +120,7 @@ export function useTranscriptScrollArbiter({
   onItemMeasuredRef.current = onItemMeasured;
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
+  const [userResizeRevision, setUserResizeRevision] = useState(0);
   const writerRef = useRef<ReturnType<typeof createTranscriptScrollWriter> | null>(null);
   writerRef.current ??= createTranscriptScrollWriter({ virtuosoRef, scrollRef, modeRef, generationRef });
   const writer = writerRef.current;
@@ -649,6 +650,7 @@ export function useTranscriptScrollArbiter({
   }, [anchorCompensation, dispatch, readerExtent, tailSettle]);
 
   const beginUserResize = useCallback(() => {
+    setUserResizeRevision((revision) => revision + 1);
     dispatch({ type: "USER_RESIZE_BEGIN" });
     if (resizeSettleFrameRef.current !== null) cancelAnimationFrame(resizeSettleFrameRef.current);
     const generation = generationRef.current;
@@ -781,7 +783,7 @@ export function useTranscriptScrollArbiter({
     scrollToBottom, pinLiveTailBeforePaint, followGrowingTail, scrollToDataIndex,
     beginQuestionJump: questionJumpOwnership.begin,
     finishQuestionJump: questionJumpOwnership.finish,
-    finishProgrammaticScroll, releaseTailFollow, beginUserResize,
+    finishProgrammaticScroll, releaseTailFollow, beginUserResize, userResizeRevision,
     atBottomStateChange, deliverScroll, onWheelIntent,
     onTouchStartIntent, onTouchMoveIntent, onTouchEndIntent,
     onKeyScrollIntent, onPointerDownIntent, onNestedScrollIntent,
