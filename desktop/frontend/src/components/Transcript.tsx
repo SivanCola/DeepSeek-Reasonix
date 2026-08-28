@@ -25,17 +25,16 @@ import {
   foldMapWithToggle,
   foldSegmentStates,
   reconcileFoldEntries,
-  resolveLiveTurnGrowthFloor,
-  splitTranscriptLiveRows,
   EMPTY_FOLDS,
   NO_LIVE,
-  type AssistantItem,
   type FoldMap,
   type ToolItem,
   type TranscriptLiveFlags,
   type TranscriptRow,
   transcriptRowMeasurementVersion,
 } from "../lib/transcriptRows";
+import { assistantAnswerOnly } from "../lib/transcriptLiveTurn";
+import { useTranscriptLiveTurnStability } from "../lib/useTranscriptLiveTurnStability";
 import { createTranscriptMeasuredSizes, type TranscriptSynthesizedSizes } from "../lib/transcriptMeasuredSizes";
 import {
   transcriptRowLayoutVariant,
@@ -89,9 +88,6 @@ const FrontendDiagnosticsPanel = SHOW_FRONTEND_DIAGNOSTICS
   : null;
 const VIRTUAL_OVERSCAN_ROWS = 8;
 
-function assistantAnswerOnly(item: AssistantItem): AssistantItem {
-  return { ...item, reasoning: "", reasoningComplete: true, reasoningDurationMs: undefined };
-}
 export function Transcript({
   items,
   live: liveProp,
@@ -436,79 +432,9 @@ export function Transcript({
     }),
     [turnModels, folds, foldPreference, hasOlderHistory, creationMode, turnForUser, hasCheckpointForTurn, reasoningDisplayMode, subcallsByParent],
   );
-  // The active (streaming) turn renders as the list's in-flow Footer, outside
-  // the measured size tree: the list only ever owns static, bounded rows, so
-  // streaming never churns Virtuoso's measurements or scroll anchoring
-  // (#8657/#8688).
-  const liveSplit = useMemo(
-    () => splitTranscriptLiveRows(turnModels, rows, liveId, running),
-    [turnModels, rows, liveId, running],
-  );
-  const liveGeometryRevision = useMemo(
-    () => liveSplit.liveRows.map((row) => [
-      String(row.key),
-      row.kind,
-      transcriptRowLayoutVariant(row),
-      transcriptRowMeasurementVersion(row),
-    ].join("\u0000")).join("\u0001"),
-    [liveSplit.liveRows],
-  );
-  const previousLiveRowCountRef = useRef(liveSplit.liveRows.length);
-  const previousLiveHeightRef = useRef(0);
-  const [heldLiveMinHeight, setHeldLiveMinHeight] = useState<number | null>(null);
-  const heldLiveMinHeightRef = useRef(heldLiveMinHeight);
-  heldLiveMinHeightRef.current = heldLiveMinHeight;
-  const liveMinHeight = resolveLiveTurnGrowthFloor(
-    previousLiveRowCountRef.current,
-    liveSplit.liveRows.length,
-    previousLiveHeightRef.current,
-    heldLiveMinHeight,
-  );
-  // Structural live-footer changes (answer/tool boundaries) must repair the
-  // claimed tail in the same commit. Waiting for Virtuoso's asynchronous
-  // footer measurement leaves one WebView2 paint at the browser-clamped old
-  // offset, which is visible as a backwards jump in compact reasoning modes.
-  useLayoutEffect(() => {
-    if (!liveSplit.liveActive) {
-      previousLiveRowCountRef.current = 0;
-      previousLiveHeightRef.current = 0;
-      if (heldLiveMinHeight !== null) setHeldLiveMinHeight(null);
-      return;
-    }
-    const region = scrollElement?.querySelector<HTMLElement>(".transcript__live-region");
-    const content = region?.querySelector<HTMLElement>(".transcript__live-content");
-    const floor = resolveLiveTurnGrowthFloor(
-      previousLiveRowCountRef.current,
-      liveSplit.liveRows.length,
-      previousLiveHeightRef.current,
-      heldLiveMinHeight,
-    );
-    previousLiveRowCountRef.current = liveSplit.liveRows.length;
-    if (region && content) {
-      const naturalHeight = content.getBoundingClientRect().height;
-      if (floor !== null && naturalHeight + 0.5 < floor) {
-        if (heldLiveMinHeight !== floor) setHeldLiveMinHeight(floor);
-        previousLiveHeightRef.current = floor;
-      } else {
-        if (heldLiveMinHeight !== null && naturalHeight + 0.5 >= heldLiveMinHeight) setHeldLiveMinHeight(null);
-        previousLiveHeightRef.current = Math.max(naturalHeight, region.getBoundingClientRect().height);
-      }
-    }
-    if (!hydrating && stick.current) pinLiveTailBeforePaint();
-  }, [heldLiveMinHeight, hydrating, liveGeometryRevision, liveSplit.liveActive, liveSplit.liveRows, pinLiveTailBeforePaint, scrollElement, stick]);
-
-  useLayoutEffect(() => {
-    const content = scrollElement?.querySelector<HTMLElement>(".transcript__live-content");
-    if (!content || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => {
-      const naturalHeight = content.getBoundingClientRect().height;
-      const held = heldLiveMinHeightRef.current;
-      if (held !== null && naturalHeight + 0.5 >= held) setHeldLiveMinHeight(null);
-      if (held === null) previousLiveHeightRef.current = naturalHeight;
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [liveGeometryRevision, scrollElement]);
+  const { liveSplit, liveMinHeight } = useTranscriptLiveTurnStability({
+    turnModels, rows, liveId, running, scrollElement, hydrating, tailOwnedRef: stick, pinLiveTailBeforePaint,
+  });
   // Keep the load-older affordance in Virtuoso's measured Header slot so an
   // older page is a true data prepend, rather than an insertion after row 0.
   const virtualRows = useMemo(

@@ -5,12 +5,11 @@ import {
   buildTranscriptRows,
   buildTurnModels,
   EMPTY_FOLDS,
-  resolveLiveTurnGrowthFloor,
-  splitTranscriptLiveRows,
   userRowKey,
   type BuildRowsOptions,
   type TranscriptLiveFlags,
 } from "../lib/transcriptRows";
+import { resolveLiveTurnGrowthFloor, splitTranscriptLiveRows } from "../lib/transcriptLiveTurn";
 
 let passed = 0;
 let failed = 0;
