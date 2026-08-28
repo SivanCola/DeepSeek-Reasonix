@@ -55,6 +55,7 @@ type SessionCatalogStatus struct {
 	Indexed         int64  `json:"indexed"`
 	Total           int64  `json:"total"`
 	RepairPending   int64  `json:"repairPending"`
+	CanRebuild      bool   `json:"canRebuild"`
 	LastError       string `json:"lastError,omitempty"`
 	QuarantinedPath string `json:"quarantinedPath,omitempty"`
 }
@@ -136,12 +137,14 @@ func flushDesktopDerivedCatalogs(ctx context.Context) error {
 
 func sessionCatalogStatus(status sessioncatalog.Status) SessionCatalogStatus {
 	return SessionCatalogStatus{
-		State:           string(status.State),
-		Mode:            string(status.Mode),
-		Revision:        status.Revision,
-		Indexed:         status.Indexed,
-		Total:           status.Total,
-		RepairPending:   status.RepairPending,
+		State:         string(status.State),
+		Mode:          string(status.Mode),
+		Revision:      status.Revision,
+		Indexed:       status.Indexed,
+		Total:         status.Total,
+		RepairPending: status.RepairPending,
+		CanRebuild: status.RepairPending == 0 && (status.State == sessioncatalog.StateDegraded ||
+			(status.State == sessioncatalog.StateReady && strings.TrimSpace(status.LastError) != "")),
 		LastError:       status.LastError,
 		QuarantinedPath: status.QuarantinedPath,
 	}
@@ -151,16 +154,21 @@ func (a *App) currentSessionCatalogStatus() SessionCatalogStatus {
 	if a == nil {
 		return SessionCatalogStatus{State: string(sessioncatalog.StateDegraded), Mode: string(sessioncatalog.ModeMemory)}
 	}
+	if catalog := a.sessionCatalog.Load(); catalog != nil {
+		status := sessionCatalogStatus(catalog.Status())
+		if a.catalogRebuilding.Load() {
+			status.State = string(sessioncatalog.StateRebuilding)
+			status.CanRebuild = false
+		}
+		return status
+	}
 	if a.catalogRebuilding.Load() {
 		return SessionCatalogStatus{State: string(sessioncatalog.StateRebuilding)}
-	}
-	if catalog := a.sessionCatalog.Load(); catalog != nil {
-		return sessionCatalogStatus(catalog.Status())
 	}
 	return SessionCatalogStatus{State: string(sessioncatalog.StateOpening)}
 }
 
-func (a *App) startSessionCatalog(rebuild bool) {
+func (a *App) startSessionCatalog() {
 	if a == nil || a.shuttingDown.Load() {
 		return
 	}
@@ -173,14 +181,12 @@ func (a *App) startSessionCatalog(rebuild bool) {
 	done := make(chan struct{})
 	a.catalogCancel = cancel
 	a.catalogDone = done
-	a.catalogRebuilding.Store(rebuild)
 	a.catalogLifecycleMu.Unlock()
 	history.RegisterSessionPersistObserver(desktopSessionCatalogPersistObserverKey, desktopSessionCatalogPersistObserver{app: a})
 
 	go func() {
 		defer close(done)
-		defer a.catalogRebuilding.Store(false)
-		a.runSessionCatalog(ctx, rebuild)
+		a.runSessionCatalog(ctx)
 	}()
 }
 

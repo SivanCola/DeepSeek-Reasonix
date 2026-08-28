@@ -1324,6 +1324,7 @@ export const zh: Record<DictKey, string> = {
   "projectTree.searchPlaceholder": "搜索项目或会话",
   "projectTree.indexing": "正在整理历史",
   "projectTree.indexingProgress": "正在整理历史（{done}/{total}）",
+  "projectTree.catalogRepairFailed": "历史整理失败",
   "projectTree.recovered": "已恢复",
   "projectTree.recoveryOnly": "可恢复",
   "projectTree.rebuildCatalog": "重建索引",

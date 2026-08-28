@@ -6,6 +6,7 @@ import { asArray } from "../lib/array";
 import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
+import { sessionCatalogNotice } from "../lib/sessionCatalogPresentation";
 import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeTopicPageSignature, projectTreeTopicRecoveryCopyCount, projectTreeWithoutTopic, projectTreeWithTopicTitle, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import { arrangeClassicProjectTree, arrangeWorkbenchTree, classicTopicWindow, CLASSIC_TOPIC_PREVIEW_LIMIT, splitPinnedProjectTree, type PinnedTreeSections } from "../lib/projectTreePresentation";
@@ -449,18 +450,19 @@ export function ProjectTree({
   });
 
   const rebuildSessionCatalog = useCallback(async () => {
-    if (rebuildingCatalogRef.current || catalogStatus.canRebuild === false) return;
+    if (rebuildingCatalogRef.current || catalogStatus.canRebuild !== true) return;
     rebuildingCatalogRef.current = true;
+    setCatalogStatus({ ...catalogStatus, state: "rebuilding", canRebuild: false });
     try {
       await app.RebuildSessionCatalog();
-      showToast(t("projectTree.rebuildCatalog"), "info");
-      void refresh();
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error), "error", { durationMs: 6000 });
+      await refresh();
+    } catch {
+      setCatalogStatus(catalogStatus);
+      showToast(t("projectTree.catalogRepairFailed"), "error");
     } finally {
       rebuildingCatalogRef.current = false;
     }
-  }, [catalogStatus.canRebuild, refresh, showToast, t]);
+  }, [catalogStatus, refresh, showToast, t]);
 
   useEffect(() => {
     treeRef.current = tree;
@@ -2166,6 +2168,7 @@ export function ProjectTree({
   // Reset topic index counter and visible topics collector before each render.
   topicIndexRef.current = 0;
   visibleTopicsCollectorRef.current = [];
+  const catalogNotice = sessionCatalogNotice(catalogStatus);
 
   return (
     <div className="project-tree">
@@ -2180,12 +2183,11 @@ export function ProjectTree({
           />
         </label>
       )}
-      {(catalogStatus.state === "opening" || catalogStatus.state === "rebuilding" || catalogStatus.repairPending > 0 || (catalogStatus.unindexedTargetCount ?? 0) > 0 || Boolean(catalogStatus.lastError)) && (
+      {catalogNotice && (
         <div className="project-tree__catalog-progress" role="status">
-          <span>{catalogStatus.lastError
-            ? t("projectTree.rebuildCatalog")
-            : t("projectTree.indexingProgress", { done: catalogStatus.indexed, total: catalogStatus.total || "?" })}</span>
-          {catalogStatus.canRebuild !== false && catalogStatus.state !== "rebuilding" && (
+          <span>{catalogNotice !== "working" ? t("projectTree.catalogRepairFailed") : catalogStatus.total <= 0 ? t("projectTree.indexing")
+              : t("projectTree.indexingProgress", { done: catalogStatus.indexed, total: catalogStatus.total })}</span>
+          {catalogNotice === "rebuild" && (
             <button type="button" className="project-tree__catalog-rebuild" onClick={() => void rebuildSessionCatalog()}>
               {t("projectTree.rebuildCatalog")}
             </button>

@@ -1323,6 +1323,7 @@ export const en = {
   "projectTree.searchPlaceholder": "Search projects or sessions",
   "projectTree.indexing": "Organizing history",
   "projectTree.indexingProgress": "Organizing history ({done}/{total})",
+  "projectTree.catalogRepairFailed": "History organization failed",
   "projectTree.recovered": "Recovered",
   "projectTree.recoveryOnly": "Recoverable",
   "projectTree.rebuildCatalog": "Rebuild index",
