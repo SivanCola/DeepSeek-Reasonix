@@ -6,8 +6,7 @@ import { asArray } from "../lib/array";
 import { useToast } from "../lib/toast";
 import { app } from "../lib/bridge";
 import { onProjectTreeChangedV2 } from "../lib/sessionCatalogBridge";
-import { sessionCatalogNotice } from "../lib/sessionCatalogPresentation";
-import { sessionCatalogStatusWriteIsAllowed } from "../lib/sessionCatalogStatusOwnership";
+import { sessionCatalogNotice, sessionCatalogStatusWriteIsAllowed } from "../lib/sessionCatalogPresentation";
 import { isRuntimeSessionNode, isTopicNode, loadWorkbenchOrganizeMode, loadWorkbenchSortMode, mergeIncompleteProjectTopicPage, mergeProjectTopicPage, projectTreeDedupedExactTime, projectTreeEventAffectsFolder, projectTreeFolderDisclosure, projectTreeReadActivityKey, projectTreeRevisionIsFresh, projectTreeShellChildren, projectTreeShellSignature, projectTreeShouldApplyShellSnapshot, projectTreeShouldRenderTopicActions, projectTreeShouldSuppressOpenForRename, projectTreeTopicArchiveBlocked, projectTreeTopicHasUnreadActivity, projectTreeTopicHoverCardModel, projectTreeTopicMenuOffersPin, projectTreeTopicMetaLine, projectTreeTopicOpenRequest, projectTreeTopicPageIsFresh, projectTreeTopicPageSignature, projectTreeTopicRecoveryCopyCount, projectTreeWithoutTopic, projectTreeWithTopicTitle, topicActivityAt, topicActivityDateLabel, topicActivityLabel, topicIsActive, topicStatus, topicStatusLabel, topicUnknownTimeLabel, WORKBENCH_ORGANIZE_KEY, WORKBENCH_SORT_KEY, type ProjectTreePendingTopicOpen, type ProjectTreeReadActivity, type ProjectTreeTopicHoverCard, type WorkbenchOrganizeMode, type WorkbenchSortMode } from "../lib/projectTreeTopic";
 export * from "../lib/projectTreeTopic";
 import { arrangeClassicProjectTree, arrangeWorkbenchTree, classicTopicWindow, CLASSIC_TOPIC_PREVIEW_LIMIT, splitPinnedProjectTree, type PinnedTreeSections } from "../lib/projectTreePresentation";
@@ -231,9 +230,7 @@ export function ProjectTree({
   const [catalogStatus, setCatalogStatus] = useState<SessionCatalogStatus>({
     state: "opening", revision: 0, indexed: 0, total: 0, repairPending: 0,
   });
-  const catalogStatusGenerationRef = useRef(0);
-  const rebuildingCatalogRef = useRef(false);
-  const catalogRebuildFailedRef = useRef(false);
+  const catalogStatusGenerationRef = useRef(0), rebuildingCatalogRef = useRef(false), catalogRebuildFailedRef = useRef(false);
   const [topicPageState, setTopicPageState] = useState<Record<string, { nextCursor?: string; loading: boolean }>>({});
   const topicPageStateRef = useRef(topicPageState);
   const updateTopicPageState = useCallback((key: string, next: { nextCursor?: string; loading: boolean }) => {
@@ -417,8 +414,7 @@ export function ProjectTree({
   // Preserve already loaded pages by project key while reconciling pins, so a
   // metadata refresh does not collapse or blank the sidebar.
   const refresh = useCallback(async (options?: ProjectTreeRefreshOptions) => {
-    const reloadRequestedProjects = (projects: ProjectNode[]) => reloadProjectTreeTopics(projects, options, loadProjectTopicsRef.current);
-    const catalogStatusGeneration = catalogStatusGenerationRef.current;
+    const reloadRequestedProjects = (projects: ProjectNode[]) => reloadProjectTreeTopics(projects, options, loadProjectTopicsRef.current), catalogStatusGeneration = catalogStatusGenerationRef.current;
     try {
       const snapshot = await app.GetProjectTreeSnapshot();
       const rev = snapshot.revision ?? 0, empty = treeRef.current.length === 0;
@@ -428,9 +424,7 @@ export function ProjectTree({
       }
       if (projectTreeRevisionIsFresh(latestRevisionRef.current, rev)) latestRevisionRef.current = Math.max(latestRevisionRef.current, rev);
       const projects = asArray(snapshot.projects);
-      if (sessionCatalogStatusWriteIsAllowed(catalogStatusGenerationRef.current, catalogStatusGeneration, catalogRebuildFailedRef.current)) {
-        setCatalogStatus(snapshot.catalog);
-      }
+      if (sessionCatalogStatusWriteIsAllowed(catalogStatusGenerationRef.current, catalogStatusGeneration, catalogRebuildFailedRef.current)) setCatalogStatus(snapshot.catalog);
       setTree((current) => applyRuntimeProjection(projects.map((project) => {
         const previous = current.find((node) => node.key === project.key);
         // Topic pages reload asynchronously. Keep the last painted children
@@ -457,18 +451,13 @@ export function ProjectTree({
 
   const rebuildSessionCatalog = useCallback(async () => {
     if (rebuildingCatalogRef.current || catalogStatus.canRebuild !== true) return;
-    rebuildingCatalogRef.current = true;
-    catalogRebuildFailedRef.current = false;
-    catalogStatusGenerationRef.current += 1;
+    rebuildingCatalogRef.current = true; catalogRebuildFailedRef.current = false; catalogStatusGenerationRef.current += 1;
     setCatalogStatus({ ...catalogStatus, state: "rebuilding", canRebuild: false });
     try {
-      await app.RebuildSessionCatalog();
-      catalogStatusGenerationRef.current += 1;
+      await app.RebuildSessionCatalog(); catalogStatusGenerationRef.current += 1;
       await refresh();
     } catch {
-      catalogRebuildFailedRef.current = true;
-      catalogStatusGenerationRef.current += 1;
-      setCatalogStatus(catalogStatus);
+      catalogRebuildFailedRef.current = true; catalogStatusGenerationRef.current += 1; setCatalogStatus(catalogStatus);
       showToast(t("projectTree.catalogRepairFailed"), "error");
     } finally {
       rebuildingCatalogRef.current = false;
@@ -504,11 +493,7 @@ export function ProjectTree({
     latestRevisionRef.current = Math.max(latestRevisionRef.current, event.revision);
     if (event.reason === "metadata") setOrganizationRevision((current) => Math.max(current, event.revision));
     const catalogStatusGeneration = catalogStatusGenerationRef.current;
-    void app.GetSessionCatalogStatus().then((status) => {
-      if (sessionCatalogStatusWriteIsAllowed(catalogStatusGenerationRef.current, catalogStatusGeneration, catalogRebuildFailedRef.current)) {
-        setCatalogStatus(status);
-      }
-    }).catch(() => {});
+    void app.GetSessionCatalogStatus().then((status) => { if (sessionCatalogStatusWriteIsAllowed(catalogStatusGenerationRef.current, catalogStatusGeneration, catalogRebuildFailedRef.current)) setCatalogStatus(status); }).catch(() => {});
     if (treeRef.current.length === 0) { void refresh(); return; } // race: event before shell
     const affected = asArray(event.roots);
     for (const project of treeRef.current) {
@@ -517,7 +502,6 @@ export function ProjectTree({
       if (projectTreeEventAffectsFolder(project, affected)) void loadProjectTopics(project);
     }
   }), [expanded, loadProjectTopics, refresh]);
-
   // Debounce query/timeFilter reloads so typing does not stampede the catalog.
   // Dependency is the project-shell signature, not tree: topic page loads
   // rewrite children and would otherwise re-arm this effect in a loop.

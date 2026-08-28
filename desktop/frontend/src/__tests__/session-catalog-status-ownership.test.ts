@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { sessionCatalogStatusWriteIsAllowed } from "../lib/sessionCatalogStatusOwnership";
+import { sessionCatalogStatusWriteIsAllowed } from "../lib/sessionCatalogPresentation";
 
 let generation = 0;
 const renderedStates: string[] = [];
@@ -40,7 +40,7 @@ assert.deepEqual(renderedStates, ["degraded", "ready"], "a new rebuild re-enable
 const projectTreeSource = readFileSync(new URL("../components/ProjectTree.tsx", import.meta.url), "utf8");
 assert.match(
   projectTreeSource,
-  /catch \{\s*catalogRebuildFailedRef\.current = true;\s*catalogStatusGenerationRef\.current \+= 1;\s*setCatalogStatus\(catalogStatus\)/,
+  /catch \{\s*catalogRebuildFailedRef\.current = true; catalogStatusGenerationRef\.current \+= 1; setCatalogStatus\(catalogStatus\)/,
   "ProjectTree invalidates older status reads before restoring a failed rebuild",
 );
 assert.match(

@@ -11,3 +11,13 @@ export function sessionCatalogNotice(status: SessionCatalogStatus): SessionCatal
   if (status.state === "degraded" || status.lastError) return status.canRebuild === true ? "rebuild" : "failed";
   return null;
 }
+
+// Local rebuild transitions own status over older asynchronous reads. A failed
+// rebuild also keeps its retryable snapshot until the next rebuild clears it.
+export function sessionCatalogStatusWriteIsAllowed(
+  currentGeneration: number,
+  candidateGeneration: number,
+  rebuildFailed: boolean,
+): boolean {
+  return !rebuildFailed && candidateGeneration === currentGeneration;
+}
