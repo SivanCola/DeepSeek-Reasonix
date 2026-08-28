@@ -118,6 +118,22 @@ func TestRebuildSessionCatalogReturnsWithOrdinaryWatcherRunning(t *testing.T) {
 	app.startSessionCatalog()
 	oldCatalog := waitForSessionCatalogForTest(t, app, nil)
 	t.Cleanup(func() { app.stopSessionCatalog(time.Second) })
+	for range 32 {
+		if err := oldCatalog.SyncMetadata(context.Background(), nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldRevision := oldCatalog.Status().Revision
+	app.ctx = context.Background()
+	events := make(chan ProjectTreeChangedV2, 8)
+	app.runtimeEvents.emit = func(_ context.Context, name string, payload ...any) {
+		if name != "project-tree:changed-v2" || len(payload) != 1 {
+			return
+		}
+		if event, ok := payload[0].(ProjectTreeChangedV2); ok {
+			events <- event
+		}
+	}
 
 	if err := app.RebuildSessionCatalog(); err != nil {
 		t.Fatal(err)
@@ -130,6 +146,26 @@ func TestRebuildSessionCatalogReturnsWithOrdinaryWatcherRunning(t *testing.T) {
 	if status := newCatalog.Status(); status.State != sessioncatalog.StateReady {
 		t.Fatalf("replacement watcher status = %q, want ready", status.State)
 	}
+	if revision := newCatalog.Status().Revision; revision < oldRevision {
+		t.Fatalf("replacement watcher revision = %d, want at least previous revision %d", revision, oldRevision)
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if event.Reason != "catalog_rebuild_finished" {
+				continue
+			}
+			if event.Revision < oldRevision {
+				t.Fatalf("finished event revision = %d, want at least previous revision %d", event.Revision, oldRevision)
+			}
+			goto finishedEventObserved
+		case <-deadline:
+			t.Fatal("catalog rebuild finished event was not published")
+		}
+	}
+
+finishedEventObserved:
 	if app.catalogRebuilding.Load() {
 		t.Fatal("the long-lived watcher took ownership of rebuilding")
 	}

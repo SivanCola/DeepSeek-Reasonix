@@ -17,6 +17,7 @@ func (a *App) RebuildSessionCatalog() error {
 		return nil
 	}
 	status := a.currentSessionCatalogStatus()
+	finishedRevision := status.Revision
 	a.emitProjectTreeChangedV2(status.Revision, nil, "catalog_rebuild_started")
 	defer func() {
 		if !a.shuttingDown.Load() {
@@ -26,13 +27,18 @@ func (a *App) RebuildSessionCatalog() error {
 		}
 		a.catalogRebuilding.Store(false)
 		if !a.shuttingDown.Load() {
-			a.emitProjectTreeChangedV2(status.Revision, nil, "catalog_rebuild_finished")
+			a.emitProjectTreeChangedV2(finishedRevision, nil, "catalog_rebuild_finished")
 		}
 	}()
 
 	// Rebuild must not race the old SQLite handle on Windows, where publishing
 	// the atomic replacement can fail while that handle is still closing.
 	a.stopSessionCatalog(5 * time.Second)
-	_, err := sessioncatalog.Rebuild(a.bootContext(), sessioncatalog.DefaultPath(), a.sessionCatalogTargets())
+	replacement, err := sessioncatalog.RebuildWithRevisionFloor(
+		a.bootContext(), sessioncatalog.DefaultPath(), a.sessionCatalogTargets(), status.Revision,
+	)
+	if err == nil {
+		finishedRevision = max(finishedRevision, replacement.Revision)
+	}
 	return err
 }
