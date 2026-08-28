@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { sessionCatalogStatusWriteIsAllowed } from "../lib/sessionCatalogPresentation";
 
 let generation = 0;
+const statusWriteIsAllowed = (candidateGeneration: number, rebuildFailed: boolean) => !rebuildFailed && candidateGeneration === generation;
 const renderedStates: string[] = [];
 let resolveRemoteStatus: ((state: string) => void) | undefined;
 const remoteStatus = new Promise<string>((resolve) => {
@@ -10,7 +10,7 @@ const remoteStatus = new Promise<string>((resolve) => {
 });
 const remoteGeneration = generation;
 const lateRemoteWrite = remoteStatus.then((state) => {
-  if (sessionCatalogStatusWriteIsAllowed(generation, remoteGeneration, false)) renderedStates.push(state);
+  if (statusWriteIsAllowed(remoteGeneration, false)) renderedStates.push(state);
 });
 
 // The Wails rebuild rejects after the finished event has already started its
@@ -26,7 +26,7 @@ assert.deepEqual(
 );
 
 const postFailureGeneration = generation;
-if (sessionCatalogStatusWriteIsAllowed(generation, postFailureGeneration, true)) renderedStates.push("opening");
+if (statusWriteIsAllowed(postFailureGeneration, true)) renderedStates.push("opening");
 assert.deepEqual(
   renderedStates,
   ["degraded"],
@@ -34,7 +34,7 @@ assert.deepEqual(
 );
 
 const retryGeneration = generation;
-if (sessionCatalogStatusWriteIsAllowed(generation, retryGeneration, false)) renderedStates.push("ready");
+if (statusWriteIsAllowed(retryGeneration, false)) renderedStates.push("ready");
 assert.deepEqual(renderedStates, ["degraded", "ready"], "a new rebuild re-enables authoritative status writes");
 
 const projectTreeSource = readFileSync(new URL("../components/ProjectTree.tsx", import.meta.url), "utf8");
@@ -45,12 +45,12 @@ assert.match(
 );
 assert.match(
   projectTreeSource,
-  /GetSessionCatalogStatus\(\)[\s\S]*sessionCatalogStatusWriteIsAllowed\(catalogStatusGenerationRef\.current, catalogStatusGeneration, catalogRebuildFailedRef\.current\)/,
+  /GetSessionCatalogStatus\(\)[\s\S]*!catalogRebuildFailedRef\.current && catalogStatusGeneration === catalogStatusGenerationRef\.current/,
   "ProjectTree fences every event-driven status write behind rebuild ownership",
 );
 assert.match(
   projectTreeSource,
-  /GetProjectTreeSnapshot\(\)[\s\S]*sessionCatalogStatusWriteIsAllowed\(catalogStatusGenerationRef\.current, catalogStatusGeneration, catalogRebuildFailedRef\.current\)/,
+  /GetProjectTreeSnapshot\(\)[\s\S]*!catalogRebuildFailedRef\.current && catalogStatusGeneration === catalogStatusGenerationRef\.current/,
   "ProjectTree fences snapshot status writes behind the same rebuild ownership",
 );
 
