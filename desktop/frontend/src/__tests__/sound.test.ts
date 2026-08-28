@@ -6,6 +6,7 @@ import {
   attentionChimeEventKey,
   clearAttentionChimeKeys,
   getNotificationVolume,
+  notificationWavGain,
   notificationVolumeToGain,
   normalizeNotificationVolume,
   playAttentionChime,
@@ -53,6 +54,15 @@ Object.defineProperty(globalThis, "localStorage", {
   eq(getNotificationVolume(), DEFAULT_NOTIFICATION_VOLUME, "invalid persisted volume recovers to the default");
   eq(normalizeNotificationVolume(72.6), 73, "notification volume normalizes fractional values to an integer percentage");
   eq(notificationVolumeToGain(70), 0.7, "notification volume converts percentages to Web Audio gain");
+  const normalizedWavGains = [
+    notificationWavGain("positive", 1),
+    notificationWavGain("correct", 1),
+    notificationWavGain("start", 1),
+    notificationWavGain("back", 1),
+  ];
+  eq(normalizedWavGains.join(","), "0.62,0.85,1,0.7", "bundled WAVs use their measured loudness-normalization trims");
+  eq(Math.max(...normalizedWavGains), 1, "WAV normalization never boosts a source above its recorded peak");
+  eq(notificationWavGain("start", 0.7), 0.7, "the master volume scales a normalized WAV after its source trim");
 }
 
 {

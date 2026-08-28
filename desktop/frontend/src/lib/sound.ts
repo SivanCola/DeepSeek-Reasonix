@@ -70,6 +70,25 @@ export function notificationVolumeToGain(volume: unknown): number {
   return normalizeNotificationVolume(volume) / NOTIFICATION_VOLUME_MAX;
 }
 
+type WavSoundPref = Exclude<SoundWavPref, "off" | "synth">;
+
+// The bundled WAV files differ by up to 4.1 LUFS. These trims normalize them
+// to the quietest source (-18.9 LUFS) without boosting any asset above its
+// recorded peak. The master volume is applied after the source trim.
+const WAV_LOUDNESS_TRIM: Record<WavSoundPref, number> = {
+  positive: 0.62,
+  correct: 0.85,
+  start: 1,
+  back: 0.70,
+};
+
+export function notificationWavGain(pref: WavSoundPref, outputVolume: number): number {
+  const safeVolume = Number.isFinite(outputVolume)
+    ? Math.min(1, Math.max(0, outputVolume))
+    : 0;
+  return safeVolume * WAV_LOUDNESS_TRIM[pref];
+}
+
 function soundFilePath(pref: SoundWavPref): string {
   switch (pref) {
     case "positive": return "./sounds/mixkit-positive-notification-951.wav";
@@ -149,14 +168,14 @@ function playSynthAttention(ctx: AudioContext, outputVolume: number): void {
 
 // ── Play helpers ─────────────────────────────────────────────────────────────
 
-async function playWav(pref: SoundWavPref, volume: number, fallback: (ctx: AudioContext, outputVolume: number) => void): Promise<void> {
+async function playWav(pref: WavSoundPref, volume: number, fallback: (ctx: AudioContext, outputVolume: number) => void): Promise<void> {
   const url = soundFilePath(pref);
   if (!url) return;
   const ctx = new AudioContext();
   try {
     const buf = await loadBuffer(ctx, url);
     if (buf) {
-      playBuffer(ctx, buf, volume);
+      playBuffer(ctx, buf, notificationWavGain(pref, volume));
     } else {
       fallback(ctx, volume);
     }
