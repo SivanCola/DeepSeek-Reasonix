@@ -320,7 +320,7 @@ try {
     max: element.scrollHeight - element.clientHeight,
   }));
   assert(hydrationStart.max > 0, `async hydration fixture is scrollable (${hydrationStart.max}px)`);
-  await page.mouse.move(hydrationBox.x + hydrationBox.width / 2, hydrationBox.y + hydrationBox.height / 2);
+  await moveToOuterReaderGutter(page, hydrationTranscript);
   await page.mouse.wheel(0, hydrationStart.top < hydrationStart.max / 2 ? 360 : -360);
   await page.waitForFunction(
     (startTop) => {
