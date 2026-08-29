@@ -49,7 +49,7 @@ func reviewSubagentSkillOptions(
 	price *provider.Pricing,
 	ctxWin, childDepth int,
 	factory func(context.Context, int, *provider.Pricing, int, int) agent.Options,
-) (string, int, agent.Options) {
+) (string, agent.Options) {
 	reviewTokens := 0
 	if reviewTask, reviewSteps, tokens, ok := agent.PrepareReviewSubagentContext(ctx, profile, task); ok {
 		task, steps, reviewTokens = reviewTask, reviewSteps, tokens
@@ -58,7 +58,7 @@ func reviewSubagentSkillOptions(
 	if reviewTokens > 0 {
 		opts.MaxOutputTokens = reviewTokens
 	}
-	return task, steps, opts
+	return task, opts
 }
 
 func skillSubagentRegistry(
