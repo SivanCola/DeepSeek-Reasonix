@@ -224,6 +224,9 @@ type ToolSchema struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  json.RawMessage `json:"parameters"`
+	Deferred    bool            `json:"deferred,omitempty"`
+	Strict      bool            `json:"strict,omitempty"`
+	Namespace   string          `json:"namespace,omitempty"`
 }
 
 // Request is a single completion request.
@@ -237,6 +240,7 @@ type Request struct {
 	// entirely — the common path must stay byte-stable for prompt caching.
 	ResponseFormat *ResponseFormat `json:"ResponseFormat,omitempty"`
 	EffortOverride string          `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
+	ToolSearch     *ToolSearch     `json:"-"`
 }
 
 // ResponseFormat asks a provider to constrain its output shape.
@@ -273,20 +277,6 @@ func AutoOutputBudget(reasoningEnabled bool, effort string) int {
 	default:
 		return DefaultReasoningOutputTokens
 	}
-}
-
-// TemperaturePtr wraps v in a pointer so callers that explicitly want a
-// specific temperature, including 0 for deterministic output, can distinguish
-// that intent from "not set, use the provider default".
-func TemperaturePtr(v float64) *float64 { return &v }
-
-// OptionalTemperature returns nil when v is zero, matching the historical
-// config behavior where 0 meant "not configured", and a pointer otherwise.
-func OptionalTemperature(v float64) *float64 {
-	if v == 0 {
-		return nil
-	}
-	return &v
 }
 
 // interruptedToolResult stands in for a tool result that never landed — an

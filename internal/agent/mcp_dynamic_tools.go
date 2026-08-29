@@ -87,11 +87,16 @@ func (t *UseCapabilityTool) resolveUnconnectedMCPCall(id string, args json.RawMe
 		}
 	}
 	readOnly := false
-	if cached, found := plugin.CachedToolSafetyForSpec(spec, raw); found {
+	var schema json.RawMessage
+	if cached, _, found := t.localMCPTool(server, raw); found {
+		destructive = destructive || cached.Destructive
+		readOnly = cached.ReadOnly
+		schema = cached.Schema
+	} else if cached, found := plugin.CachedToolSafetyForSpec(spec, raw); found {
 		destructive = destructive || cached.Destructive
 		readOnly = cached.ReadOnly
 	}
-	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName, destructive: destructive, readOnly: readOnly}
+	lazy := &onDemandMCPTool{proxy: t, spec: spec, server: server, raw: raw, modelName: modelName, destructive: destructive, readOnly: readOnly, schema: schema}
 	base.Target = lazy
 	base.TargetName = modelName
 	base.ReadOnly = lazy.ReadOnly()

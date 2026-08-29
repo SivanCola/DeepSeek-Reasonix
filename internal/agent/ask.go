@@ -35,8 +35,8 @@ func (*AskTool) Schema() json.RawMessage {
   "questions":{
     "type":"array",
     "minItems":1,
-    "maxItems":4,
-    "description":"1-4 questions to ask together.",
+    "maxItems":3,
+    "description":"1-3 related questions to ask together. Same ambiguity is asked only once.",
     "items":{
       "type":"object",
       "properties":{
@@ -58,7 +58,9 @@ func (*AskTool) Schema() json.RawMessage {
       },
       "required":["question","header","options"]
     }
-  }
+  },
+  "decision_id":{"type":"string","description":"Required when reopening a previously accepted decision; cite the original decision_id."},
+  "new_evidence":{"type":"string","description":"Required with decision_id when asking again after the user already accepted a consequence."}
 },
 "required":["questions"]
 }`)
@@ -69,22 +71,9 @@ func (*AskTool) Schema() json.RawMessage {
 func (*AskTool) ReadOnly() bool { return true }
 
 func (*AskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		Questions []struct {
-			Header      string `json:"header"`
-			Question    string `json:"question"`
-			MultiSelect bool   `json:"multiSelect"`
-			Options     []struct {
-				Label       string `json:"label"`
-				Description string `json:"description"`
-			} `json:"options"`
-		} `json:"questions"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid args: %w", err)
-	}
-	if len(p.Questions) == 0 {
-		return "", fmt.Errorf("at least one question is required")
+	p, err := parseAskArgs(args)
+	if err != nil {
+		return "", err
 	}
 
 	qs := make([]event.AskQuestion, 0, len(p.Questions))
@@ -115,6 +104,14 @@ func (*AskTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		})
 	}
 
+	id := strings.TrimSpace(p.DecisionID)
+	if id == "" {
+		id = decisionIDForQuestions(qs)
+	}
+	if dec, ok := existingDecision(ctx, id); ok && strings.TrimSpace(p.Evidence) == "" {
+		return fmt.Sprintf("Host reused accepted decision %s. The user already chose: %s. Continue with that decision unless you supply decision_id and new_evidence.", dec.ID, dec.Answer), nil
+	}
+
 	_, _, asker, ok := CallContext(ctx)
 	if !ok || asker == nil {
 		// Headless / no interactive user: don't block an autonomous run, but make
@@ -126,7 +123,9 @@ func (*AskTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("ask: %w", err)
 	}
-	return formatAnswers(qs, answers), nil
+	summary := formatAnswers(qs, answers)
+	rememberDecision(ctx, id, qs[0].Prompt, summary)
+	return summary + "\n\ndecision_id: " + id, nil
 }
 
 // formatAnswers renders the user's selections as a compact, model-facing summary,

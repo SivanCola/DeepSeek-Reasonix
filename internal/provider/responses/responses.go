@@ -298,23 +298,7 @@ func (c *client) buildRequestBody(req provider.Request) (map[string]any, bool, [
 		body["temperature"] = *req.Temperature
 	}
 	if c.webSearch || len(req.Tools) > 0 {
-		tools := make([]map[string]any, 0, len(req.Tools)+1)
-		// Keep the server tool first and stable across turns. DeepSeek executes
-		// this tool itself; ordinary Reasonix tools remain function entries.
-		if c.webSearch {
-			tools = append(tools, map[string]any{"type": "web_search"})
-		}
-		for _, tool := range req.Tools {
-			parameters := tool.Parameters
-			if len(parameters) == 0 {
-				parameters = provider.CanonicalizeSchema(nil)
-			}
-			tools = append(tools, map[string]any{
-				"type": "function", "name": tool.Name, "description": tool.Description,
-				"parameters": json.RawMessage(parameters),
-			})
-		}
-		body["tools"] = tools
+		body["tools"] = encodeResponsesTools(c, req)
 	}
 	instructions, rest := splitInstructions(messages)
 	if instructions != "" {

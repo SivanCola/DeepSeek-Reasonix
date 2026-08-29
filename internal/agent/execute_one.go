@@ -22,7 +22,7 @@ import (
 // — the caller emits ToolDispatch/ToolResult — so it is safe to invoke from
 // parallel goroutines. Stages: parse → policy → prepare → finish.
 func (a *Agent) executeOne(ctx context.Context, turn *turnRuntime, call provider.ToolCall) (out toolOutcome) {
-	ctx = a.withAgentContext(ctx)
+	ctx = withTurnState(a.withAgentContext(ctx), turn)
 	plan := &toolCallPlan{call: call}
 	defer func() {
 		if plan.mutationObserved && !plan.mutationAfterDone {
@@ -138,6 +138,9 @@ func (a *Agent) parseToolCall(ctx context.Context, plan *toolCallPlan) (toolOutc
 // Guard, and permission checks. Permission must complete before any write lease.
 func (a *Agent) resolveToolPolicy(ctx context.Context, turn *turnRuntime, plan *toolCallPlan) (toolOutcome, bool) {
 	if blocked, early := a.applyPlanModeAndProxy(ctx, plan); early {
+		return blocked, true
+	}
+	if blocked, early := a.applyResolvedTargetGates(plan); early {
 		return blocked, true
 	}
 	if blocked, early := a.applyContextualToolGate(ctx, plan); early {
@@ -636,7 +639,6 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	plan.executed = true
 	cctx := plan.cctx
 	runTool := plan.runTool
-	runArgs := plan.runArgs
 	call := plan.call
 	t := plan.tool
 	readOnly := plan.readOnly
@@ -662,32 +664,13 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	if a.plannerMCPExecution && isMCPExecutionTarget(runTool, permName) && mcpServerAuthorized(runTool) && !mcpDestructiveHint(runTool) {
 		cctx = tool.WithNonDestructiveMCPExecutionIntent(cctx)
 	}
+	plan.cctx = cctx
 	var execution *tool.ShellExecution
-	if de, ok := runTool.(tool.DetailedExecutor); ok {
-		var detailed tool.DetailedResult
-		detailed, err = de.ExecuteDetailed(cctx, runArgs)
-		result, images, execution = detailed.Output, detailed.Images, detailed.Execution
-		// Annotate verification outcome when the host classified this call as a verifier.
-		if execution != nil && plan.verification {
-			switch {
-			case err != nil:
-				execution.Verification = tool.ShellVerificationFailed
-			default:
-				execution.Verification = tool.ShellVerificationPassed
-			}
-		} else if execution != nil && execution.Verification == "" {
-			execution.Verification = tool.ShellVerificationNotVerification
+	result, images, execution, err = a.dispatchResolvedTool(cctx, plan)
+	if err == nil && a.capabilityAudit != nil {
+		if _, mcp := plan.execTool.(tool.MCPMetadata); mcp {
+			a.capabilityAudit.RecordRemoteDispatch()
 		}
-		// Sole opaque inline interpreters are allowed outside Delivery but cannot
-		// prove mutation completeness.
-		if execution != nil && evidence.BashCommandMayBeOpaqueMutation(runArgs) &&
-			execution.MutationRisk == tool.ShellMutationMayHaveCompleted {
-			execution.MutationRisk = tool.ShellMutationUnknown
-		}
-	} else if it, ok := runTool.(tool.ImageTool); ok {
-		result, images, err = it.ExecuteWithImages(cctx, runArgs)
-	} else {
-		result, err = runTool.Execute(cctx, runArgs)
 	}
 	// tool.after: extensions rule on the executed result (success or error)
 	// before evidence, hooks, and recovery observation, so every downstream
@@ -727,13 +710,14 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		}
 		a.recordRepeatFailure(call, t, err)
 		rawErr := fmt.Sprintf("error: %v\n%s", err, detail)
-		body, truncMsg := truncateToolOutputFor(rawErr, call.Name, call.ID)
+		a.observeErrorCategory(call, err)
+		body, truncMsg, original := a.boundProviderVisibleResult(rawErr, call.Name, call.ID)
 		out := toolOutcome{
-			output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg,
+			output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "" || original != "", truncMsg: truncMsg,
 			execution: execution, recoveryGeneration: recoveryGen,
 		}
-		if truncMsg != "" {
-			out.rawOutput = rawErr
+		if original != "" {
+			out.rawOutput = original
 		}
 		return out
 	}
@@ -747,13 +731,13 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	if a.svc.hooks != nil && call.Name == "task" && !isBackgroundTaskCall(call.Arguments) {
 		a.svc.hooks.SubagentStop(ctx, result)
 	}
-	body, truncMsg := truncateToolOutputFor(result, call.Name, call.ID)
+	body, truncMsg, original := a.boundProviderVisibleResult(result, call.Name, call.ID)
 	out := toolOutcome{
-		output: body, images: images, truncated: truncMsg != "", truncMsg: truncMsg,
+		output: body, images: images, truncated: truncMsg != "" || original != "", truncMsg: truncMsg,
 		execution: execution, recoveryGeneration: recoveryGen,
 	}
-	if truncMsg != "" {
-		out.rawOutput = result
+	if original != "" {
+		out.rawOutput = original
 	}
 	return out
 }
