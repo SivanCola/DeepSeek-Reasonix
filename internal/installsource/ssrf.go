@@ -15,11 +15,9 @@ import (
 // runs at dial time on the resolved IP and then dials that vetted IP, so a
 // public host that DNS-rebinds to an internal address is caught too.
 //
-// When the transport routes through an HTTP/HTTPS proxy, the dial-time check
-// only ever sees the proxy's address, so the request-level wrapper below also
-// rejects IP-literal destinations before anything is forwarded. That is the
-// same boundary web_fetch's proxy path enforces: hostname targets are resolved
-// by the proxy, which cannot be re-validated locally.
+// When the transport routes through an HTTP/HTTPS proxy the dial-time check
+// only sees the proxy address, so the request-level wrapper below also rejects
+// IP-literal destinations before forwarding — web_fetch's proxy boundary.
 //
 // This mirrors web_fetch's guard (internal/tool/builtin/webfetch.go); the
 // install_source tool fetches the same kind of untrusted URLs and must not be

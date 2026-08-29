@@ -12,18 +12,13 @@ import (
 // preview.go gives the file-writing built-ins the optional tool.Previewer
 // capability: compute the change a call would make, reading the current file
 // but never writing. A front-end (e.g. a desktop approval card) calls Preview
-// before the permission gate runs Execute.
+// before the permission gate runs Execute, so every Preview confines its path
+// with confinePreview first: the read must be as bounded as the write.
 //
 // Each Preview mirrors its Execute's transformation exactly — same arg parsing,
 // same uniqueness / not-found rules — so the previewed NewText equals what
-// Execute would persist. That equality is asserted by TestPreviewMatchesExecute
-// in preview_test.go, which runs Execute against a temp file and compares; if
-// an Execute body ever drifts, that test fails rather than the preview lying.
-//
-// Every Preview also confines the path with confinePreview before reading:
-// a preview runs before the permission gate, so without it an absolute path
-// outside the write roots would be read (and its contents diffed into the
-// approval card and session log) even though Execute would refuse the write.
+// Execute would persist (asserted by TestPreviewMatchesExecute in
+// preview_test.go; drift fails the test rather than the preview lying).
 
 // Preview computes the change write_file would make. A path that does not yet
 // exist is a Create; an existing one is a Modify.

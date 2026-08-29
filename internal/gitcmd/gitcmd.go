@@ -16,14 +16,9 @@
 // five sites ended up carrying them and two did not.
 //
 // Content filters (filter.<driver>.clean/smudge) are selected per driver name
-// through .gitattributes, so they cannot be disabled by a fixed key list the
-// way the settings above can. Diff invocations instead neutralize every filter
-// driver defined in the repository's local .git/config — the only place the
-// repository's author can put one — by overriding its command to empty (which
-// git treats as "no filter": the diff renders the raw bytes on both sides).
-// Residual: filters reached through .git/config include.path chains, and
-// core.sshCommand for network transports (ls-remote/fetch/push against a
-// repository-local remote), remain the user's own configuration to vet.
+// through .gitattributes, so diffs neutralize every driver defined in the
+// repository's local .git/config instead (see filterNeutralizingConfig).
+// include.path chains and core.sshCommand remain the user's own to vet.
 package gitcmd
 
 import (
