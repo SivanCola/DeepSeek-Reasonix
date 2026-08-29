@@ -60,9 +60,23 @@
   };
   window.__reasonixNativeTranscriptSmokeState = state;
   window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
+    const previousWrite = state.writes.at(-1);
     state.writes.push(write);
     if (state.writes.length > 80) state.writes.shift();
     if (write.kind !== "pinTail" || write.rejectedReason || !Number.isFinite(write.top)) return;
+    const repeatedClamp = previousWrite?.kind === "pinTail"
+      && !previousWrite.rejectedReason
+      && Math.abs(previousWrite.top - write.top) <= 1
+      && Math.abs(previousWrite.scrollHeight - write.scrollHeight) <= 1
+      && Math.abs(previousWrite.clientHeight - write.clientHeight) <= 1
+      && Math.abs(previousWrite.scrollTop - write.scrollTop) <= 0.5;
+    const reportedResidual = write.scrollHeight - write.clientHeight - write.scrollTop;
+    const learnedClamp = previousWrite?.kind === "pinTail"
+      && previousWrite.top >= write.scrollHeight - write.clientHeight - 4
+      && Math.abs(write.top - write.scrollTop) <= 1;
+    if ((repeatedClamp || learnedClamp) && reportedResidual > 4 && reportedResidual <= 64) {
+      state.reachableTailResidual = reportedResidual;
+    }
     requestAnimationFrame(() => {
       const element = state.transcript;
       if (!(element instanceof HTMLElement)) return;

@@ -261,9 +261,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The off-flow composer measurement mirror adds 0.472 KiB raw while removing
 // live-textarea layout mutation. The merged path measures 2444.806 KiB; retain
 // 0.194 KiB of bounded toolchain headroom without widening gzip/chunk gates.
-// The observed WebView2 tail clamp adds 0.428 KiB raw while keeping the gzip
-// gate unchanged. The measured path is 2445.234 KiB; retain 0.066 KiB of
+// The observed WebView2 tail clamp adds 0.711 KiB raw while keeping the gzip
+// gate unchanged. The measured path is 2445.517 KiB; retain 0.083 KiB of
 // bounded toolchain headroom rather than weakening native-tail correctness.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_445.3 : 2_445.3;
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_445.6 : 2_445.6;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

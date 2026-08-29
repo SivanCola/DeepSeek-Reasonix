@@ -83,6 +83,7 @@ export function createTranscriptTailSettle({
   let tailPinned = false;
   let ineffectivePin = false;
   let pendingPin: { top: number; height: number; previousTop: number } | null = null;
+  let lastPinAttempt: { element: HTMLDivElement; top: number; height: number; clientHeight: number; previousTop: number } | null = null;
   // 0=fresh, 1=awaiting LAST commit, 2=LAST committed, 3=quiet retry spent.
   let fallbackState = 0;
   let fallbackEpoch = -1;
@@ -108,6 +109,13 @@ export function createTranscriptTailSettle({
   ) => {
     const element = scrollRef.current;
     if (!element) return;
+    const previousAttempt = lastPinAttempt;
+    if (
+      previousAttempt?.element === element
+      && Math.abs(previousAttempt.height - element.scrollHeight) <= 1
+      && Math.abs(previousAttempt.clientHeight - element.clientHeight) <= 1
+      && previousAttempt.top >= element.scrollHeight - element.clientHeight - TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
+    ) observeNativeTranscriptTailClamp(element, previousAttempt.previousTop);
     const top = nativeTranscriptBottomTop(element);
     const beforeTop = element.scrollTop;
     if (fallbackEpoch !== ownershipEpochRef.current) {
@@ -131,6 +139,13 @@ export function createTranscriptTailSettle({
       offBottomFrames: diagnostic?.settle?.offBottomFrames,
       stagnantFrames: diagnostic?.settle?.stagnantFrames,
     })) return;
+    lastPinAttempt = {
+      element,
+      top,
+      height: element.scrollHeight,
+      clientHeight: element.clientHeight,
+      previousTop: beforeTop,
+    };
     // WebKit/Virtuoso can accept a physical tail target while its size tree
     // still clamps the native scroller to the previous mounted range. Quarantine
     // that no-op until the quiet window instead of retrying every revision.
