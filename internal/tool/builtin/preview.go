@@ -19,6 +19,11 @@ import (
 // Execute would persist. That equality is asserted by TestPreviewMatchesExecute
 // in preview_test.go, which runs Execute against a temp file and compares; if
 // an Execute body ever drifts, that test fails rather than the preview lying.
+//
+// Every Preview also confines the path with confinePreview before reading:
+// a preview runs before the permission gate, so without it an absolute path
+// outside the write roots would be read (and its contents diffed into the
+// approval card and session log) even though Execute would refuse the write.
 
 // Preview computes the change write_file would make. A path that does not yet
 // exist is a Create; an existing one is a Modify.
@@ -34,6 +39,9 @@ func (w writeFile) Preview(ctx context.Context, args json.RawMessage) (diff.Chan
 		return diff.Change{}, fmt.Errorf("path is required")
 	}
 	p.Path = resolveIn(w.workDir, p.Path)
+	if err := confinePreview(effectiveWriteRoots(ctx, w.rootSet, w.roots), w.guard, w.managed, p.Path); err != nil {
+		return diff.Change{}, err
+	}
 
 	old, kind := "", diff.Create
 	if src, err := readEditSource(ctx, w.overlay, p.Path); err == nil {
@@ -63,6 +71,9 @@ func (e editFile) Preview(ctx context.Context, args json.RawMessage) (diff.Chang
 		return diff.Change{}, fmt.Errorf("old_string is required")
 	}
 	p.Path = resolveIn(e.workDir, p.Path)
+	if err := confinePreview(effectiveWriteRoots(ctx, e.rootSet, e.roots), e.guard, e.managed, p.Path); err != nil {
+		return diff.Change{}, err
+	}
 
 	src, err := readEditSource(ctx, e.overlay, p.Path)
 	if err != nil {
@@ -102,6 +113,9 @@ func (m multiEdit) Preview(ctx context.Context, args json.RawMessage) (diff.Chan
 		return diff.Change{}, fmt.Errorf("edits must not be empty")
 	}
 	p.Path = resolveIn(m.workDir, p.Path)
+	if err := confinePreview(effectiveWriteRoots(ctx, m.rootSet, m.roots), m.guard, m.managed, p.Path); err != nil {
+		return diff.Change{}, err
+	}
 
 	src, err := readEditSource(ctx, m.overlay, p.Path)
 	if err != nil {

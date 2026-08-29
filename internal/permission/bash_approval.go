@@ -108,6 +108,13 @@ func isIndirectExecution(fields []string) bool {
 		return hasAnyFoldedArg(args, "-r")
 	case "find":
 		return hasAnyFoldedArg(args, "-exec", "-execdir", "-ok", "-okdir")
+	case "awk", "gawk", "mawk", "nawk":
+		// awk has no inline-code flag: the program is the first positional
+		// argument unless it comes from a script via -f/--file. An inline
+		// program can run shell commands (system(), "| getline"), so it gets
+		// the same treatment as python -c; awk -f script.awk stays reusable
+		// like python script.py.
+		return !hasAnyFoldedArg(args, "-f", "--file")
 	default:
 		return false
 	}

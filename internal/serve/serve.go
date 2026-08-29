@@ -91,6 +91,74 @@ type Server struct {
 	detached      map[string]*detachedSession
 	tagsMu        sync.Mutex
 	tags          map[*control.Controller]*sessionTagSink
+	// hostGate is the Host-header allowlist state for hostGuard. Set from the
+	// listen address before Handler() is built (Run / RunGraceful /
+	// RunGracefulListener); the zero value restricts Host to loopback, the
+	// safe default for direct Handler() consumers.
+	hostGate hostGateState
+}
+
+// hostGateState captures which Host headers hostGuard accepts, derived from
+// the listen address. Wildcard and non-loopback binds deliberately expose the
+// server beyond this machine, so Host policing there adds nothing and is off.
+type hostGateState struct {
+	behindProxy bool
+	allowAny    bool
+	listenHost  string // specific, non-wildcard host the server is bound to
+}
+
+// setListenAddr derives hostGate from the address Run-style entry points will
+// listen on. It must be called before Handler(); a later call only affects
+// servers whose Handler is rebuilt.
+func (s *Server) setListenAddr(addr string) {
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	s.hostGate = hostGateState{
+		behindProxy: s.auth != nil && s.auth.behindProxy,
+		listenHost:  strings.ToLower(host),
+		allowAny:    isUnspecifiedHost(host),
+	}
+}
+
+func isUnspecifiedHost(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsUnspecified()
+}
+
+// hostGuard rejects requests whose Host header names neither a loopback
+// interface nor the address serve actually listens on.
+//
+// csrfGuard's application/json requirement only holds while an attacker's page
+// stays cross-origin: a DNS-rebinding page is served from evil.example, which
+// is then re-pointed at 127.0.0.1, making every subsequent fetch same-origin —
+// no preflight, any Content-Type, and full read access to responses. Such a
+// page can drive the unauthenticated agent endpoints (POST /bypass, /submit)
+// and read /history verbatim. Pinning Host to the interfaces we serve breaks
+// that: the rebound name never matches the allowlist.
+//
+// Exemptions: behind_proxy deployments send the reverse proxy's public
+// hostname and must instead run an authenticated mode; wildcard / non-loopback
+// binds (allowAny) intentionally expose the server. Requests with no Host at
+// all (raw HTTP/1.0 clients) pass — nothing to validate.
+func (s *Server) hostGuard(next http.Handler) http.Handler {
+	gate := s.hostGate
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.ToLower(strings.Trim(host, "[]"))
+		if host == "" || gate.behindProxy || gate.allowAny ||
+			isLoopbackHost(host) || host == gate.listenHost {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "misdirected request: Host is not a serve listen address",
+			http.StatusMisdirectedRequest)
+	})
 }
 
 // SetControllerBuildOptions records the process-local options used to build
@@ -581,7 +649,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /skills", s.skills)
 	mux.HandleFunc("GET /todos", s.todos)
 	mux.HandleFunc("POST /delete-session", s.deleteSession)
-	return logMiddleware(gzipMiddleware(s.auth.middleware(csrfGuard(mux))))
+	return logMiddleware(gzipMiddleware(s.auth.middleware(s.hostGuard(csrfGuard(mux)))))
 }
 
 func (s *Server) reloadExtensionsHTTP(w http.ResponseWriter, r *http.Request) {
@@ -619,6 +687,7 @@ func csrfGuard(next http.Handler) http.Handler {
 // "ask" decisions surface as approval_request events answered via POST /approve.
 func (s *Server) Run(addr string) error {
 	s.ctl().EnableInteractiveApproval()
+	s.setListenAddr(addr)
 	return http.ListenAndServe(addr, s.Handler())
 }
 
@@ -626,6 +695,7 @@ func (s *Server) Run(addr string) error {
 // the provided context and drains active connections for up to 10 seconds
 // before returning.
 func (s *Server) RunGraceful(ctx context.Context, addr string) error {
+	s.setListenAddr(addr)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -638,6 +708,7 @@ func (s *Server) RunGraceful(ctx context.Context, addr string) error {
 // listen first, record ln.Addr(), then hand the listener here.
 func (s *Server) RunGracefulListener(ctx context.Context, ln net.Listener) error {
 	s.ctl().EnableInteractiveApproval()
+	s.setListenAddr(ln.Addr().String())
 	srv := &http.Server{
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,

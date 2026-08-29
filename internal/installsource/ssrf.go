@@ -15,6 +15,12 @@ import (
 // runs at dial time on the resolved IP and then dials that vetted IP, so a
 // public host that DNS-rebinds to an internal address is caught too.
 //
+// When the transport routes through an HTTP/HTTPS proxy, the dial-time check
+// only ever sees the proxy's address, so the request-level wrapper below also
+// rejects IP-literal destinations before anything is forwarded. That is the
+// same boundary web_fetch's proxy path enforces: hostname targets are resolved
+// by the proxy, which cannot be re-validated locally.
+//
 // This mirrors web_fetch's guard (internal/tool/builtin/webfetch.go); the
 // install_source tool fetches the same kind of untrusted URLs and must not be
 // the one un-guarded path. Kept in sync by hand — both block the same set.
@@ -27,15 +33,29 @@ func ssrfGuardClient(base *http.Client) *http.Client {
 			inner = (&net.Dialer{}).DialContext
 		}
 		ct.DialContext = ssrfDial(inner)
-		guarded.Transport = ct
+		guarded.Transport = &ssrfRequestGuard{base: ct}
 	} else {
 		// Non-*http.Transport (or nil Transport): build a fresh guarded transport.
 		// The real paths — boot's netclient and the tests' httptest client — are
 		// always *http.Transport, so this branch only covers a bare &http.Client{}.
-		guarded.Transport = &http.Transport{DialContext: ssrfDial((&net.Dialer{}).DialContext)}
+		guarded.Transport = &ssrfRequestGuard{base: &http.Transport{DialContext: ssrfDial((&net.Dialer{}).DialContext)}}
 	}
 	return &guarded
 }
+
+// ssrfRequestGuard vetoes requests whose destination is a blocked IP literal
+// before the transport dials anything — including, and mainly for, the proxy
+// path, where the wrapped DialContext would otherwise validate only the proxy.
+func (rt *ssrfRequestGuard) RoundTrip(req *http.Request) (*http.Response, error) {
+	if host := req.URL.Hostname(); host != "" {
+		if ip := net.ParseIP(host); ip != nil && blockedFetchIP(ip) {
+			return nil, fmt.Errorf("refusing to fetch internal address %s", host)
+		}
+	}
+	return rt.base.RoundTrip(req)
+}
+
+type ssrfRequestGuard struct{ base http.RoundTripper }
 
 func ssrfDial(inner func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
