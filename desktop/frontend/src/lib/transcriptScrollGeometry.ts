@@ -7,31 +7,46 @@ export type TranscriptFollowGeometry = {
   viewportExtent: number | null;
 };
 
+type NativeTranscriptGeometry = {
+  scrollHeight: number;
+  clientHeight: number;
+  offsetHeight?: number;
+};
+
+/** WebView2 can under-report clientHeight while clamping the transcript's
+ * scrollTop against its painted border box. Transcript has no block border or
+ * horizontal scrollbar, so the larger extent is the reachable viewport. */
+export function nativeTranscriptViewportExtent(element: NativeTranscriptGeometry) {
+  const offsetHeight = Number.isFinite(element.offsetHeight) ? element.offsetHeight ?? 0 : 0;
+  return Math.max(0, element.clientHeight, offsetHeight);
+}
+
 export function nativeTranscriptDistanceFromBottom(element: {
   scrollHeight: number;
   scrollTop: number;
   clientHeight: number;
+  offsetHeight?: number;
 }) {
-  return element.scrollHeight - element.scrollTop - element.clientHeight;
+  return element.scrollHeight - element.scrollTop - nativeTranscriptViewportExtent(element);
 }
 
-export function nativeTranscriptBottomTop(element: { scrollHeight: number; clientHeight: number }) {
-  return Math.max(0, element.scrollHeight - element.clientHeight);
+export function nativeTranscriptBottomTop(element: NativeTranscriptGeometry) {
+  return Math.max(0, element.scrollHeight - nativeTranscriptViewportExtent(element));
 }
 
 export function hasTranscriptScrollableRange(
-  element: { scrollHeight: number; clientHeight: number },
+  element: NativeTranscriptGeometry,
   threshold = TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX,
 ) {
   return nativeTranscriptBottomTop(element) > threshold;
 }
 
 export function pinTranscriptTailAfterViewportShrink(
-  element: { scrollHeight: number; scrollTop: number; clientHeight: number },
+  element: { scrollHeight: number; scrollTop: number; clientHeight: number; offsetHeight?: number },
   geometry: TranscriptFollowGeometry,
   tailFollow: boolean,
 ): number | null {
-  const viewport = element.clientHeight;
+  const viewport = nativeTranscriptViewportExtent(element);
   const viewportShrunk = geometry.viewportExtent != null
     && geometry.viewportExtent - viewport > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
   geometry.viewportExtent = viewport;

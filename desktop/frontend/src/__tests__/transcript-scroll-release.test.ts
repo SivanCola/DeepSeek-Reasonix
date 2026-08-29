@@ -8,7 +8,12 @@ import {
   type TranscriptScrollEvent,
   type TranscriptScrollState,
 } from "../lib/transcriptScrollArbiter";
-import { pinTranscriptTailAfterViewportShrink } from "../lib/transcriptScrollGeometry";
+import {
+  nativeTranscriptBottomTop,
+  nativeTranscriptDistanceFromBottom,
+  nativeTranscriptViewportExtent,
+  pinTranscriptTailAfterViewportShrink,
+} from "../lib/transcriptScrollGeometry";
 import {
   TRANSCRIPT_TAIL_REARM_MIN_HEIGHT_PX,
   transcriptTailSettleBudgetExhausted,
@@ -266,6 +271,11 @@ check(!isTranscriptContentShrink(80), "content growth is not a shrink");
 
 check(isSubstantialTranscriptDisplacement(1200), "a thumb-drop-sized gap is a substantial displacement");
 check(!isSubstantialTranscriptDisplacement(4), "bottom-adjacent jitter is not substantial");
+
+const webView2Scroller = { scrollHeight: 21_442, scrollTop: 20_827, clientHeight: 578, offsetHeight: 615 };
+check(nativeTranscriptViewportExtent(webView2Scroller) === 615, "WebView2 uses the larger painted transcript viewport");
+check(nativeTranscriptBottomTop(webView2Scroller) === 20_827, "WebView2 native tail target stays physically reachable");
+check(nativeTranscriptDistanceFromBottom(webView2Scroller) === 0, "WebView2 reachable tail is classified at bottom");
 
 // A misread shrink (native-thumb release remeasure seen as a height drop)
 // leaves layout convergence inert; a later substantial displacement delivery
