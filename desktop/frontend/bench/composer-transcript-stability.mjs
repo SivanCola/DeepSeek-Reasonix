@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { startPreviewServer } from "./vite-preview-server.mjs";
 
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
@@ -136,12 +136,7 @@ async function settleFrames(page, count = 4) {
   }), count);
 }
 
-const packageManager = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-const server = spawn(packageManager, ["exec", "vite", "--port", String(port), "--strictPort", "--host", "127.0.0.1"], {
-  cwd: frontendDir,
-  stdio: "ignore",
-  shell: process.platform === "win32",
-});
+const server = await startPreviewServer(frontendDir, port);
 
 let browser;
 try {
@@ -306,5 +301,5 @@ try {
   assert(pageErrors.length === 0, `browser reports no page errors (${pageErrors.length})`);
 } finally {
   if (browser) await browser.close();
-  server.kill("SIGTERM");
+  await server.close();
 }
