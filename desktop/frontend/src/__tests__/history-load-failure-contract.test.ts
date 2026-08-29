@@ -18,12 +18,12 @@ assert.match(controller, /throw new Error\(t\("history\.failedLoadHistory"\)\)/,
 assert.match(controller, /retrySessionHistory/, "retry path is exported");
 assert.match(
   transcript,
-  /if \(hydrating \|\| !virtuosoReadyRef\.current \|\| !stick\.current\) return;\n    followGrowingTail\("footer-resize"\);\n  \}, \[footerHeight, followGrowingTail, hydrating, stick\]\);/,
-  "footer resize is routed through the coalesced tail-follow path without depending on item appends",
+  /if \(!virtuosoReadyRef\.current \|\| !stick\.current\) return;\n    followGrowingTail\("footer-resize"\);\n  \}, \[footerHeight, followGrowingTail, stick\]\);/,
+  "a tail-owned footer resize is repaired during hydration without moving a manual reader",
 );
 assert.match(
   transcript,
-  /if \(!hydrating \|\| stick\.current\) followGrowingTail\("viewport-resize"\);/,
+  /if \(!hydrating \|\| scrollModeRef\.current === "tail-follow"\) followGrowingTail\("viewport-resize"\);/,
   "a hydrating transcript still repairs a restored-draft viewport resize when it owns tail-follow without moving a manual reader",
 );
 assert.match(controller, /shouldPreferResidentHistory\(resetSurface, options\.preserveCachedHistory\)/, "retry hydrates fetch instead of serving the resident snapshot");

@@ -311,9 +311,9 @@ export function Transcript({
   }, [resetScroll, revealSignal, tabId]);
 
   useEffect(() => {
-    if (hydrating || !virtuosoReadyRef.current || !stick.current) return;
+    if (!virtuosoReadyRef.current || !stick.current) return;
     followGrowingTail("footer-resize");
-  }, [footerHeight, followGrowingTail, hydrating, stick]);
+  }, [footerHeight, followGrowingTail, stick]);
 
   const refreshGeometryEnvironment = useCallback((element: HTMLElement) => {
     const next = readTranscriptGeometryEnvironment(element);
@@ -345,12 +345,12 @@ export function Transcript({
       }
       if (height !== lastHeight) {
         lastHeight = height;
-        if (!hydrating || stick.current) followGrowingTail("viewport-resize");
+        if (!hydrating || scrollModeRef.current === "tail-follow") followGrowingTail("viewport-resize");
       }
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [hydrating, scrollElement, followGrowingTail, refreshGeometryEnvironment, stick]);
+  }, [hydrating, scrollElement, followGrowingTail, refreshGeometryEnvironment, scrollModeRef]);
 
   // Typography settings update CSS variables synchronously. Re-read the
   // geometry signature without remounting Virtuoso; old exact samples then
