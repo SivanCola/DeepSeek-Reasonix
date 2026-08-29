@@ -43,6 +43,7 @@
     wheelDelta: 0,
     wheelInsideTranscript: 0,
     wheelMaxDelta: 0,
+    reachableTailResidual: 0,
     composer: {
       enabled: false,
       active: false,
@@ -61,6 +62,24 @@
   window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
     state.writes.push(write);
     if (state.writes.length > 80) state.writes.shift();
+    if (write.kind !== "pinTail" || write.rejectedReason || !Number.isFinite(write.top)) return;
+    requestAnimationFrame(() => {
+      const element = state.transcript;
+      if (!(element instanceof HTMLElement)) return;
+      const theoreticalTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const residual = theoreticalTop - element.scrollTop;
+      const sameGeometry = Math.abs(element.scrollHeight - write.scrollHeight) <= 1
+        && Math.abs(element.clientHeight - write.clientHeight) <= 1;
+      if (
+        sameGeometry
+        && write.top >= theoreticalTop - 4
+        && Math.abs(element.scrollTop - write.scrollTop) <= 0.5
+        && residual > 4
+        && residual <= 64
+      ) {
+        state.reachableTailResidual = residual;
+      }
+    });
   };
   window.addEventListener("wheel", (event) => {
     if (!state.active) return;
@@ -70,11 +89,16 @@
     state.wheelMaxDelta = Math.max(state.wheelMaxDelta, Math.abs(event.deltaY));
   }, { capture: true, passive: true });
 
-  // WebView2 can clamp scrollTop against the painted border box while
-  // clientHeight reports a smaller logical viewport. Transcript has no block
-  // border or horizontal scrollbar, so the larger extent is the reachable one.
-  const viewportExtent = (element) => Math.max(element.clientHeight, element.offsetHeight);
-  const tailDistance = (element) => element.scrollHeight - element.scrollTop - viewportExtent(element);
+  // WebView2 can expose a stable Virtuoso scrollHeight with a small terminal
+  // range that scrollTop cannot reach. Accept it only after an explicit native
+  // tail write is synchronously clamped at unchanged geometry.
+  const tailDistance = (element) => {
+    const theoreticalTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    const observedTop = theoreticalTop - state.reachableTailResidual;
+    if (element.scrollTop <= observedTop + 4) return observedTop - element.scrollTop;
+    state.reachableTailResidual = 0;
+    return theoreticalTop - element.scrollTop;
+  };
 
   const visibleRows = (element) => {
     const viewport = element.getBoundingClientRect();
@@ -383,6 +407,7 @@
       clientHeight: element?.clientHeight ?? null,
       offsetHeight: element?.offsetHeight ?? null,
       rectHeight: element ? element.getBoundingClientRect().height : null,
+      reachableTailResidual: state.reachableTailResidual,
       bottomDistance: element
         ? Math.round(tailDistance(element))
         : null,

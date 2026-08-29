@@ -10,28 +10,45 @@ export type TranscriptFollowGeometry = {
 type NativeTranscriptGeometry = {
   scrollHeight: number;
   clientHeight: number;
-  offsetHeight?: number;
+  scrollTop?: number;
 };
 
-/** WebView2 can under-report clientHeight while clamping the transcript's
- * scrollTop against its painted border box. Transcript has no block border or
- * horizontal scrollbar, so the larger extent is the reachable viewport. */
-export function nativeTranscriptViewportExtent(element: NativeTranscriptGeometry) {
-  const offsetHeight = Number.isFinite(element.offsetHeight) ? element.offsetHeight ?? 0 : 0;
-  return Math.max(0, element.clientHeight, offsetHeight);
+const observedNativeTranscriptTailResiduals = new WeakMap<object, number>();
+
+/** Remember a small, synchronous native clamp after an explicit tail write.
+ * WebView2 can expose a stable Virtuoso scrollHeight whose last few pixels are
+ * not reachable through scrollTop. Large gaps are still treated as stale
+ * virtual ranges and must go through the LAST-item recovery path. */
+export function observeNativeTranscriptTailClamp(
+  element: NativeTranscriptGeometry & { scrollTop: number },
+  previousTop: number,
+): boolean {
+  const theoreticalTop = Math.max(0, element.scrollHeight - element.clientHeight);
+  const residual = theoreticalTop - element.scrollTop;
+  if (
+    Math.abs(element.scrollTop - previousTop) > 0.5
+    || residual <= TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
+    || residual > 64
+  ) return false;
+  observedNativeTranscriptTailResiduals.set(element, residual);
+  return true;
 }
 
 export function nativeTranscriptDistanceFromBottom(element: {
   scrollHeight: number;
   scrollTop: number;
   clientHeight: number;
-  offsetHeight?: number;
 }) {
-  return element.scrollHeight - element.scrollTop - nativeTranscriptViewportExtent(element);
+  return nativeTranscriptBottomTop(element) - element.scrollTop;
 }
 
 export function nativeTranscriptBottomTop(element: NativeTranscriptGeometry) {
-  return Math.max(0, element.scrollHeight - nativeTranscriptViewportExtent(element));
+  const theoreticalTop = Math.max(0, element.scrollHeight - element.clientHeight);
+  const residual = observedNativeTranscriptTailResiduals.get(element) ?? 0;
+  const observedTop = theoreticalTop - residual;
+  if (element.scrollTop == null || element.scrollTop <= observedTop + TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) return observedTop;
+  observedNativeTranscriptTailResiduals.delete(element);
+  return theoreticalTop;
 }
 
 export function hasTranscriptScrollableRange(
@@ -42,11 +59,11 @@ export function hasTranscriptScrollableRange(
 }
 
 export function pinTranscriptTailAfterViewportShrink(
-  element: { scrollHeight: number; scrollTop: number; clientHeight: number; offsetHeight?: number },
+  element: { scrollHeight: number; scrollTop: number; clientHeight: number },
   geometry: TranscriptFollowGeometry,
   tailFollow: boolean,
 ): number | null {
-  const viewport = nativeTranscriptViewportExtent(element);
+  const viewport = Math.max(0, element.clientHeight);
   const viewportShrunk = geometry.viewportExtent != null
     && geometry.viewportExtent - viewport > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
   geometry.viewportExtent = viewport;

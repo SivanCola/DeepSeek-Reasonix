@@ -5,7 +5,7 @@ import {
   type TranscriptTailWriteDiagnostic,
 } from "./transcriptScrollDiagnosticProbe";
 import type { TranscriptScrollMode } from "./transcriptScrollArbiter";
-import { nativeTranscriptBottomTop, nativeTranscriptDistanceFromBottom, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX } from "./transcriptScrollGeometry";
+import { nativeTranscriptBottomTop, nativeTranscriptDistanceFromBottom, observeNativeTranscriptTailClamp, TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX } from "./transcriptScrollGeometry";
 import type { TranscriptScrollWriter } from "./transcriptScrollWriter";
 import type { TranscriptGeometryChangeSource } from "./transcriptGeometryRevision";
 
@@ -82,7 +82,7 @@ export function createTranscriptTailSettle({
   let lastBottomViewport: number | null = null;
   let tailPinned = false;
   let ineffectivePin = false;
-  let pendingPin: { top: number; height: number } | null = null;
+  let pendingPin: { top: number; height: number; previousTop: number } | null = null;
   // 0=fresh, 1=awaiting LAST commit, 2=LAST committed, 3=quiet retry spent.
   let fallbackState = 0;
   let fallbackEpoch = -1;
@@ -134,9 +134,15 @@ export function createTranscriptTailSettle({
     // WebKit/Virtuoso can accept a physical tail target while its size tree
     // still clamps the native scroller to the previous mounted range. Quarantine
     // that no-op until the quiet window instead of retrying every revision.
-    ineffectivePin = nativeTranscriptDistanceFromBottom(element) > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
+    const observedClamp = behavior === "auto"
+      && observeNativeTranscriptTailClamp(element, beforeTop);
+    ineffectivePin = !observedClamp
+      && nativeTranscriptDistanceFromBottom(element) > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX
       && Math.abs(element.scrollTop - beforeTop) <= 0.5;
-    pendingPin = ineffectivePin ? null : { top, height: element.scrollHeight };
+    pendingPin = ineffectivePin || observedClamp ? null : { top, height: element.scrollHeight, previousTop: beforeTop };
+    if (observedClamp) {
+      tailPinned = true;
+    }
     if (ineffectivePin) requestTailMount();
   };
 
@@ -307,6 +313,13 @@ export function createTranscriptTailSettle({
         }
         if (held) pendingPin = null;
         else if (sameExtent) {
+          if (observeNativeTranscriptTailClamp(element, pendingPin.previousTop)) {
+            pendingPin = null;
+            tailPinned = true;
+            tailSettleProgress = null;
+            armLayoutTransientIdle();
+            return;
+          }
           // The browser accepted the write synchronously, then Virtuoso
           // restored the previous range on the next frame. Quarantine that
           // revision rather than chasing it with another write.
