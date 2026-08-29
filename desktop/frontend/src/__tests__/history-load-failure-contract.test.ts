@@ -21,6 +21,11 @@ assert.match(
   /if \(hydrating \|\| !virtuosoReadyRef\.current \|\| !stick\.current\) return;\n    followGrowingTail\("footer-resize"\);\n  \}, \[footerHeight, followGrowingTail, hydrating, stick\]\);/,
   "footer resize is routed through the coalesced tail-follow path without depending on item appends",
 );
+assert.match(
+  transcript,
+  /if \(!hydrating \|\| stick\.current\) followGrowingTail\("viewport-resize"\);/,
+  "a hydrating transcript still repairs a restored-draft viewport resize when it owns tail-follow without moving a manual reader",
+);
 assert.match(controller, /shouldPreferResidentHistory\(resetSurface, options\.preserveCachedHistory\)/, "retry hydrates fetch instead of serving the resident snapshot");
 assert.match(
   controller,

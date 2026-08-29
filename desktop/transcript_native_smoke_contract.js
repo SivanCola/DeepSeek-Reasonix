@@ -464,9 +464,8 @@
     await loadHistoryRows(element, 400);
     // A real history jump owns manual-reader mode and must expose the product's
     // jump-bottom control. When the initial window already has enough rows,
-    // however, WebView2 may preserve logical tail ownership while applying the
-    // prepared draft's viewport shrink one paint late. Normalize only that
-    // fixture setup state; never hide a missing manual-reader recovery control.
+    // the control is correctly absent and the product must preserve its
+    // physical tail without a fixture-owned scroll write.
     let jumpBottom = document.querySelector(".transcript__jump-bottom");
     if (!jumpBottom && element.dataset.scrollMode !== "tail-follow") {
       jumpBottom = await waitFor(() => document.querySelector(".transcript__jump-bottom"), 10000)
@@ -474,9 +473,7 @@
     }
     if (jumpBottom instanceof HTMLElement) {
       jumpBottom.click();
-    } else if (element.dataset.scrollMode === "tail-follow") {
-      element.scrollTop = element.scrollHeight;
-    } else {
+    } else if (element.dataset.scrollMode !== "tail-follow") {
       throw new Error(`native transcript fixture left manual-reader mode without a jump-bottom control: ${describeTranscriptState(element)}`);
     }
     state.phase = "waiting-loaded-tail";

@@ -345,12 +345,12 @@ export function Transcript({
       }
       if (height !== lastHeight) {
         lastHeight = height;
-        if (!hydrating) followGrowingTail("viewport-resize");
+        if (!hydrating || stick.current) followGrowingTail("viewport-resize");
       }
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [hydrating, scrollElement, followGrowingTail, refreshGeometryEnvironment]);
+  }, [hydrating, scrollElement, followGrowingTail, refreshGeometryEnvironment, stick]);
 
   // Typography settings update CSS variables synchronously. Re-read the
   // geometry signature without remounting Virtuoso; old exact samples then
