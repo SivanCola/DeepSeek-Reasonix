@@ -138,6 +138,22 @@ for (const block of matchingBlocks(".transcript")) {
 }
 ok(hasDeclaration(".transcript", "--transcript-inline-pad", "32px"), "default transcript inline inset is 32px");
 ok(hasDeclaration(".transcript", "--transcript-inline-pad", "16px"), "narrow viewports tighten the transcript inline inset");
+eq(
+  finalDeclaration(".transcript:not(.transcript--empty)", "padding-bottom"),
+  "0 !important",
+  "Virtuoso scroller keeps block-end padding out of WebView2 scroll geometry",
+);
+eq(finalDeclaration(".transcript:not(.transcript--empty)::after", "display"), "block", "transcript renders a reachable terminal spacer");
+eq(
+  finalDeclaration(".transcript:not(.transcript--empty)::after", "height"),
+  "28px",
+  "terminal spacer preserves the visual block-end inset",
+);
+eq(
+  finalDeclaration(".history-preview__body .transcript:not(.transcript--empty)::after", "height"),
+  "18px",
+  "history preview preserves its compact block-end inset",
+);
 eq(finalDeclaration(".transcript__row", "padding-left"), "var(--transcript-inline-pad, 32px)", "virtual rows own the left inset");
 eq(finalDeclaration(".transcript__row", "padding-right"), "var(--transcript-inline-pad, 32px)", "virtual rows own the right inset");
 eq(finalDeclaration(".transcript__header", "padding-left"), "var(--transcript-inline-pad, 32px)", "load-older header uses the same inline inset");

@@ -29123,6 +29123,20 @@ body > .mermaid-diagram--fullscreen {
   padding: 24px 0 28px;
 }
 
+/* WebView2 counts block-end scroller padding in scrollHeight but can clamp
+   scrollTop before it. Replace that visual padding with a reachable box. */
+.transcript:not(.transcript--empty) {
+  padding-bottom: 0 !important;
+}
+.transcript:not(.transcript--empty)::after {
+  content: "";
+  display: block;
+  height: 28px;
+}
+.history-preview__body .transcript:not(.transcript--empty)::after {
+  height: 18px;
+}
+
 :root[data-theme-style] .transcript--empty {
   padding: 26px 32px 38px;
 }
