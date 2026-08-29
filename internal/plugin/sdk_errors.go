@@ -67,6 +67,9 @@ func hasMCPTransportRejection(err error) bool {
 	return found
 }
 
+// visitMCPRPCErrors walks every concrete error-tree node because errors.As
+// returns only the first matching RPC error and would hide transport evidence.
+//nolint:errorlint // Direct inspection distinguishes server errors from the SDK transport sentinel.
 func visitMCPRPCErrors(err error, visit func(*mcpjsonrpc.Error)) {
 	if err == nil {
 		return
