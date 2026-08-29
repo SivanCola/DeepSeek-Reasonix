@@ -19,6 +19,11 @@ type mcpListObserverBinder interface {
 	bindMCPListObserver(func(mcpListObservation))
 }
 
+func (a *Agent) bindCapabilityObservers() {
+	a.bindToolResultSessionCapability()
+	a.bindMCPListObserverCapability()
+}
+
 func (a *Agent) bindMCPListObserverCapability() {
 	if a == nil || a.svc.tools == nil {
 		return
