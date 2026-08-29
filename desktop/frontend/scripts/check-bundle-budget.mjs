@@ -251,6 +251,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The reader transaction contract then adds a measured 15.317 KiB raw on the
 // merged main-v2 baseline (including its own prepaint port), bringing the
 // path to 2437.892 KiB; retain 0.108 KiB of bounded headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_438.0 : 2_438.0;
+// The off-flow composer measurement mirror adds 0.472 KiB raw while removing
+// live-textarea layout mutation. The fixed path measures 2438.364 KiB; retain
+// 0.136 KiB of bounded toolchain headroom without widening gzip/chunk gates.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_438.5 : 2_438.5;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
