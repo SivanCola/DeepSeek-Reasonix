@@ -155,7 +155,10 @@ console.log("\nbundle budgets");
 // terminal-notice dedupe flag, while provider no_proxy copy now states the
 // custom-proxy precedence. The merged path measures 455.9 KiB; retain 0.1 KiB
 // of bounded build/toolchain headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 456.0 : 456.0;
+// Exhausted tail repair now releases ownership so jump-bottom remains usable
+// after a stranded native WebView extent. The measured path is 456.050 KiB;
+// retain 0.050 KiB with the smallest existing decimal ratchet.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 456.1 : 456.1;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -269,6 +272,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // 0.194 KiB of bounded toolchain headroom without widening gzip/chunk gates.
 // Stream-failure visibility and corrected proxy guidance bring the merged path
 // to 2446.6 KiB; retain the smallest existing decimal ratchet.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_446.7 : 2_446.7;
+// The stranded-tail recovery transition brings the measured initial payload
+// to 2447.031 KiB; retain 0.069 KiB of bounded build/toolchain headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_447.1 : 2_447.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

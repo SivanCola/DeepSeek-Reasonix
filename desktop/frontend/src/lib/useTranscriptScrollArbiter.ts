@@ -166,6 +166,7 @@ export function useTranscriptScrollArbiter({
   const tailSettleRef = useRef<TranscriptTailSettle | null>(null);
   tailSettleRef.current ??= createTranscriptTailSettle({
     writer, scrollRef, modeRef, generationRef, ownershipEpochRef, geometryRevisionRef, layoutTransientRef,
+    onStranded: () => dispatchRef.current({ type: "TAIL_SETTLE_EXHAUSTED" }),
   });
   const tailSettle = tailSettleRef.current;
   const geometryControllerRef = useRef<TranscriptGeometryRevisionController | null>(null);

@@ -29,6 +29,10 @@ export function transcriptTailShouldReaim(previousBottomHeight: number | null, c
   return currentHeight - previousBottomHeight >= TRANSCRIPT_TAIL_REARM_MIN_HEIGHT_PX;
 }
 
+export function transcriptTailIsStranded(mode: TranscriptScrollMode, distance: number): boolean {
+  return mode === "tail-follow" && distance > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
+}
+
 export type TranscriptTailSettle = {
   /** Native-extent tail write. Converges against real DOM geometry and avoids
    *  scrollToIndex("LAST") retries against a stale Virtuoso size tree (#9028). */
@@ -59,6 +63,7 @@ export function createTranscriptTailSettle({
   ownershipEpochRef,
   geometryRevisionRef,
   layoutTransientRef,
+  onStranded,
 }: {
   writer: TranscriptScrollWriter;
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -67,6 +72,8 @@ export function createTranscriptTailSettle({
   ownershipEpochRef: RefObject<number>;
   geometryRevisionRef: RefObject<number>;
   layoutTransientRef: RefObject<boolean>;
+  /** Releases exhausted tail ownership so the jump-bottom recovery stays reachable. */
+  onStranded?: () => void;
 }): TranscriptTailSettle {
   let tailSettleFrame: number | null = null;
   let tailSettleProgress: {
@@ -164,7 +171,10 @@ export function createTranscriptTailSettle({
         fallbackState = 3;
         ineffectivePin = false;
         schedule(false, "layout-height-changed");
+        return;
       }
+      const element = scrollRef.current;
+      if (element && transcriptTailIsStranded(modeRef.current, nativeTranscriptDistanceFromBottom(element))) onStranded?.();
     }, LAYOUT_TRANSIENT_IDLE_MS);
   };
 

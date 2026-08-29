@@ -300,8 +300,15 @@ await advanceClock(240);
 for (let i = 0; i < 6; i += 1) await flushFrames();
 check(scrollToCalls <= 2, `one jump-bottom transaction emits at most two effective writes (${scrollToCalls})`);
 check(
+  arbiter?.modeRef.current === "manual" && arbiter?.isAtBottom === false,
+  "an exhausted jump-bottom transaction exposes manual recovery",
+);
+await act(async () => arbiter?.scrollToBottom());
+await advanceClock(240);
+for (let i = 0; i < 2; i += 1) await flushFrames();
+check(
   scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight,
-  `the bounded jump-bottom transaction still converges on the final native bottom (${scrollElement.scrollTop}/${scrollExtent - scrollElement.clientHeight})`,
+  `the exposed jump-bottom retry converges on the final native bottom (${scrollElement.scrollTop}/${scrollExtent - scrollElement.clientHeight})`,
 );
 
 scrollExtent = 500;
