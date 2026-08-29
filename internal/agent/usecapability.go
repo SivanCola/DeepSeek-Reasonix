@@ -329,7 +329,11 @@ func cachedToolsForSpec(spec plugin.Spec, profile plugin.HostProfile) ([]plugin.
 }
 
 func runtimePluginEntry(entry config.PluginEntry) config.PluginEntry {
-	out := config.PluginEntry{Name: strings.TrimSpace(entry.Name), Source: entry.Source}
+	out := config.PluginEntry{
+		Name:        strings.TrimSpace(entry.Name),
+		Concurrency: strings.ToLower(strings.TrimSpace(entry.Concurrency)),
+		Source:      entry.Source,
+	}
 	if entry.AutoStart != nil {
 		value := *entry.AutoStart
 		out.AutoStart = &value
