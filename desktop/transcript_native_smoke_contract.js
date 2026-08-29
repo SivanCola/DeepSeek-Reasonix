@@ -47,6 +47,7 @@
       enabled: false,
       active: false,
       input: null,
+      initialValue: "",
       baseline: null,
       samples: [],
       observer: null,
@@ -220,10 +221,10 @@
     });
   };
 
-  const runNativeComposer = async (element) => {
+  const prepareNativeComposer = async (element) => {
     if (new URLSearchParams(window.location.search).get("nativeComposer") !== "1") return;
     state.transcript = element;
-    state.phase = "waiting-native-composer";
+    state.phase = "preparing-native-composer";
     const input = await waitFor(() => document.querySelector(
       "textarea.composer__input:not(.composer__input--measure)",
     ), 10000);
@@ -232,6 +233,21 @@
     input.focus();
     await waitFor(() => input.value === initialValue && input.getBoundingClientRect().height > 32, 10000);
     await document.fonts.ready;
+
+    state.composer.input = input;
+    state.composer.initialValue = initialValue;
+  };
+
+  const runNativeComposer = async (element) => {
+    if (new URLSearchParams(window.location.search).get("nativeComposer") !== "1") return;
+    state.transcript = element;
+    state.phase = "waiting-native-composer";
+    const composer = state.composer;
+    const input = composer.input;
+    if (!(input instanceof HTMLTextAreaElement) || input.value !== composer.initialValue) {
+      throw new Error("native composer draft was not prepared before loading history");
+    }
+    input.focus();
     await waitForStableTail(element, 2, 10000);
     await waitForStableViewport(element, 12, 15000);
     const initialDistance = element.scrollHeight - element.scrollTop - element.clientHeight;
@@ -239,7 +255,6 @@
       throw new Error(`native composer did not start at a stable tail: ${describeTranscriptState(element)}`);
     }
 
-    const composer = state.composer;
     composer.enabled = true;
     composer.active = true;
     composer.input = input;
@@ -250,7 +265,7 @@
       height: element.scrollHeight,
       clientHeight: element.clientHeight,
       inputHeight: input.getBoundingClientRect().height,
-      initialValue,
+      initialValue: composer.initialValue,
     };
     composer.onScroll = () => sampleComposer("scroll");
     element.addEventListener("scroll", composer.onScroll, { passive: true });
@@ -444,6 +459,7 @@
     // has to satisfy the stricter tail and geometry gates below before native
     // sampling starts.
     await waitForStableViewport(element, 2, 15000);
+    await prepareNativeComposer(element);
     state.phase = "loading-targeted-history";
     await loadHistoryRows(element, 400);
     // When the initial history window already meets the row minimum, no
