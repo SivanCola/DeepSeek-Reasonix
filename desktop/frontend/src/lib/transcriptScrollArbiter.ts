@@ -235,7 +235,7 @@ export function reduceTranscriptScroll(
       return transition(state, state.mode === "tail-follow" ? [{ type: "AUTOSCROLL_TO_BOTTOM" }] : []);
     case "TAIL_SETTLE_EXHAUSTED":
       return state.mode === "tail-follow"
-        ? preempt({ ...state, mode: "manual", atBottom: false, settleMode: "manual" })
+        ? transition({ ...state, atBottom: false })
         : transition(state);
     case "CONTENT_SHRANK":
       // Auto-fold collapse shortens the transcript. Keep tail ownership but
