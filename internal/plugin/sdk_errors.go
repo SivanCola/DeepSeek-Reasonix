@@ -6,8 +6,47 @@ import (
 	"io"
 	"strings"
 
+	mcpjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func isExplicitMCPSessionMissing(err error) bool {
+	if errors.Is(err, mcpsdk.ErrSessionMissing) {
+		return true
+	}
+	var rpcErr *mcpjsonrpc.Error
+	if !errors.As(err, &rpcErr) || rpcErr == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(rpcErr.Message))
+	for _, marker := range []string{
+		"session not found",
+		"session missing",
+		"session expired",
+		"invalid session",
+		"unknown session",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMCPHTTPNotFound recognizes the status-only error emitted by newer Go MCP
+// SDKs for a plain HTTP 404 when no session ID exists. It intentionally does
+// not match arbitrary "not found" prose so a tool-level domain error cannot be
+// mistaken for an endpoint or protocol mismatch.
+func isMCPHTTPNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return message == "not found" ||
+		strings.HasSuffix(message, ": not found") ||
+		strings.Contains(message, "http 404") ||
+		strings.Contains(message, "status 404")
+}
 
 func isTerminalSDKError(err error) bool {
 	return errors.Is(err, mcpsdk.ErrConnectionClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
@@ -31,7 +70,7 @@ func classifySessionError(err error) SessionErrorKind {
 		return SessionErrorNone
 	}
 	switch {
-	case errors.Is(err, mcpsdk.ErrSessionMissing):
+	case isExplicitMCPSessionMissing(err):
 		return SessionErrorSessionMissing
 	case errors.Is(err, context.DeadlineExceeded):
 		return SessionErrorTimeout
