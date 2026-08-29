@@ -297,8 +297,14 @@ for (const extent of [3_467, 6_785, 7_728, 5_525, 4_869]) {
   await flushFrames();
 }
 await advanceClock(240);
+// WebView2 may publish one more viewport/footer extent after the first quiet
+// confirmation. The same bounded jump transaction must absorb that second
+// stage without opening an unbounded scroll loop.
+scrollExtent += 37;
+scrollElement.scrollTop = Math.min(scrollElement.scrollTop, scrollExtent - scrollElement.clientHeight);
+await advanceClock(240);
 for (let i = 0; i < 6; i += 1) await flushFrames();
-check(scrollToCalls <= 2, `one jump-bottom transaction emits at most two effective writes (${scrollToCalls})`);
+check(scrollToCalls <= 3, `one jump-bottom transaction emits at most three effective writes (${scrollToCalls})`);
 check(
   scrollElement.scrollTop === scrollExtent - scrollElement.clientHeight,
   `the bounded jump-bottom transaction still converges on the final native bottom (${scrollElement.scrollTop}/${scrollExtent - scrollElement.clientHeight})`,

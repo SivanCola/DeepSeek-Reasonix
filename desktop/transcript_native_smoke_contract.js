@@ -377,6 +377,7 @@
       bottomDistance: element
         ? Math.round(element.scrollHeight - element.scrollTop - element.clientHeight)
         : null,
+      recentWrites: state.writes.slice(-8),
     });
   };
 

@@ -76,8 +76,10 @@ export function createTranscriptTailSettle({
     attempts: number;
   } | null = null;
   let jumpTailTimer: number | null = null;
+  let jumpTailFollowupTimer: number | null = null;
   let layoutTransientIdleTimer: number | null = null;
   let lastBottomHeight: number | null = null;
+  let lastBottomViewport: number | null = null;
   let tailPinned = false;
   let ineffectivePin = false;
   let pendingPin: { top: number; height: number } | null = null;
@@ -113,6 +115,7 @@ export function createTranscriptTailSettle({
       fallbackState = 0;
     }
     lastBottomHeight = element.scrollHeight;
+    lastBottomViewport = element.clientHeight;
     tailPinned = false;
     if (!writer.write({
       owner: "tail-follow",
@@ -142,12 +145,15 @@ export function createTranscriptTailSettle({
     tailSettleFrame = null;
     tailSettleProgress = null;
     lastBottomHeight = null;
+    lastBottomViewport = null;
     tailPinned = false;
     ineffectivePin = false;
     pendingPin = null;
     fallbackState = 0;
     if (jumpTailTimer !== null) window.clearTimeout(jumpTailTimer);
     jumpTailTimer = null;
+    if (jumpTailFollowupTimer !== null) window.clearTimeout(jumpTailFollowupTimer);
+    jumpTailFollowupTimer = null;
     if (layoutTransientIdleTimer !== null) window.clearTimeout(layoutTransientIdleTimer);
     layoutTransientIdleTimer = null;
     layoutTransientRef.current = false;
@@ -157,7 +163,7 @@ export function createTranscriptTailSettle({
     if (layoutTransientIdleTimer !== null) window.clearTimeout(layoutTransientIdleTimer);
     layoutTransientIdleTimer = window.setTimeout(() => {
       layoutTransientIdleTimer = null;
-      if (tailSettleFrame !== null) return;
+      if (tailSettleFrame !== null || jumpTailTimer !== null || jumpTailFollowupTimer !== null) return;
       layoutTransientRef.current = false;
       tailSettleProgress = null;
       if (ineffectivePin && modeRef.current === "tail-follow" && fallbackState !== 1 && fallbackState !== 3) {
@@ -208,21 +214,39 @@ export function createTranscriptTailSettle({
     }
     if (jump) {
       if (jumpTailTimer !== null) window.clearTimeout(jumpTailTimer);
+      if (jumpTailFollowupTimer !== null) window.clearTimeout(jumpTailFollowupTimer);
+      jumpTailFollowupTimer = null;
       const transactionElement = scrollElement;
-      jumpTailTimer = window.setTimeout(() => {
-        jumpTailTimer = null;
+      const confirmJumpTail = (settleFrame: number, final: boolean) => {
         const element = scrollRef.current;
         if (element && element === transactionElement && modeRef.current === "tail-follow") {
           const distance = nativeTranscriptDistanceFromBottom(element);
           if (distance > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX) {
+            const geometryChanged = lastBottomHeight !== null && (
+              Math.abs(element.scrollHeight - lastBottomHeight) > 1
+              || (lastBottomViewport !== null && Math.abs(element.clientHeight - lastBottomViewport) > 1)
+            );
+            if (geometryChanged) geometryRevisionRef.current += 1;
             scrollToTail("auto", CAPTURE_TRANSCRIPT_SCROLL_DIAGNOSTICS && source
-              ? { source, phase: "settle", settle: { frame: 0, offBottomFrames: 0, stagnantFrames: 0 } }
+              ? { source, phase: "settle", settle: { frame: settleFrame, offBottomFrames: 0, stagnantFrames: 0 } }
               : undefined);
           }
-          armLayoutTransientIdle();
+          if (!final) {
+            jumpTailFollowupTimer = window.setTimeout(() => {
+              jumpTailFollowupTimer = null;
+              confirmJumpTail(2, true);
+            }, JUMP_TAIL_TRANSACTION_MS);
+          } else {
+            armLayoutTransientIdle();
+          }
         } else {
+          jumpTailFollowupTimer = null;
           layoutTransientRef.current = false;
         }
+      };
+      jumpTailTimer = window.setTimeout(() => {
+        jumpTailTimer = null;
+        confirmJumpTail(1, false);
       }, JUMP_TAIL_TRANSACTION_MS);
     }
     if (jumpTailTimer !== null) return;
