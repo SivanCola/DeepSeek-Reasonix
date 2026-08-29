@@ -4,13 +4,13 @@
     "commented-code": 0,
     "complexity": 1992,
     "essay": 1961,
-    "file-size": 107967,
+    "file-size": 108072,
     "function-size": 8580,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
     "struct-state": 116,
-    "test-file-size": 69472
+    "test-file-size": 69569
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -123,7 +123,7 @@
       "file-size": 141
     },
     "desktop/frontend/src/components/SettingsPanel.tsx": {
-      "file-size": 7263
+      "file-size": 7276
     },
     "desktop/frontend/src/components/StatusBar.tsx": {
       "file-size": 43
@@ -147,7 +147,7 @@
       "file-size": 180
     },
     "desktop/frontend/src/lib/bridge.ts": {
-      "file-size": 4901
+      "file-size": 4902
     },
     "desktop/frontend/src/lib/crash.ts": {
       "file-size": 225
@@ -156,10 +156,10 @@
       "file-size": 264
     },
     "desktop/frontend/src/lib/types.ts": {
-      "file-size": 1527
+      "file-size": 1528
     },
     "desktop/frontend/src/lib/useController.ts": {
-      "file-size": 4127
+      "file-size": 4158
     },
     "desktop/heartbeat.go": {
       "essay": 7
@@ -222,8 +222,7 @@
     },
     "desktop/session_catalog_runtime.go": {
       "complexity": 1,
-      "essay": 2,
-      "file-size": 2
+      "essay": 2
     },
     "desktop/session_key_test.go": {
       "essay": 3
@@ -247,10 +246,10 @@
     "desktop/settings_app.go": {
       "complexity": 29,
       "essay": 6,
-      "file-size": 2909
+      "file-size": 2946
     },
     "desktop/settings_app_test.go": {
-      "test-file-size": 1856
+      "test-file-size": 1917
     },
     "desktop/shared_host.go": {
       "essay": 1
@@ -378,7 +377,7 @@
     "internal/agent/agent.go": {
       "complexity": 31,
       "essay": 25,
-      "file-size": 2042,
+      "file-size": 2059,
       "function-size": 104,
       "struct-state": 2
     },
@@ -442,7 +441,7 @@
       "function-size": 24
     },
     "internal/agent/loop_e2e_test.go": {
-      "test-file-size": 230
+      "test-file-size": 266
     },
     "internal/agent/migrate.go": {
       "complexity": 32,
@@ -776,7 +775,7 @@
     },
     "internal/cli/setup_manager.go": {
       "essay": 1,
-      "file-size": 126
+      "file-size": 131
     },
     "internal/cli/shell_completion.go": {
       "function-size": 117

@@ -155,7 +155,11 @@ console.log("\nbundle budgets");
 // and the blank-rebound prepaint lane) adds a measured 3.978 KiB gzip on the
 // merged main-v2 baseline, bringing the path to 453.736 KiB; retain 0.064
 // KiB of bounded headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 453.8 : 453.8;
+// Stream-failure visibility (#9560): the last-discard reason notice in the
+// turn_done reducer plus en-locale provider no_proxy strings and the shared
+// reason-text helper add ~0.46 KiB gzip; the measured path is 454.2 KiB.
+// Retain bounded headroom with the smallest existing decimal ratchet.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 454.3 : 454.3;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -202,7 +206,10 @@ for (const path of localeChunks) {
   // choices from the primary UI; keep that complete guidance with a bounded
   // 0.4–0.5 KiB locale-only ratchet.
   // Git-Bash installation guidance adds localized copy across dialects.
-  const budget = name.startsWith("zh-TW-") ? 59.0 * 1024 : 58.5 * 1024;
+  // Stream-failure visibility (#9560) adds five notice/toggle strings per
+  // dialect; the traditional chunk measures just over the rounded gate, so
+  // keep the same 0.1 KiB decimal ratchet instead of trimming user guidance.
+  const budget = name.startsWith("zh-TW-") ? 59.1 * 1024 : 58.5 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
@@ -251,6 +258,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The reader transaction contract then adds a measured 15.317 KiB raw on the
 // merged main-v2 baseline (including its own prepaint port), bringing the
 // path to 2437.892 KiB; retain 0.108 KiB of bounded headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_438.0 : 2_438.0;
+// Stream-failure visibility (#9560) adds ~1.4 KiB raw (notice strings plus
+// reducer/helper code); the measured path is 2439.3 KiB. Retain the smallest
+// existing decimal ratchet without widening gzip or chunk ceilings.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_439.4 : 2_439.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

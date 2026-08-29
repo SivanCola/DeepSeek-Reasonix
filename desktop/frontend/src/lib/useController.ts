@@ -501,6 +501,10 @@ export interface State {
   // Speculative sampling-attempt journal for Codex-style stream replay.
   // Host-local only; never hydrated from history.
   streamAttemptJournal?: StreamAttemptJournal;
+  // Most recent discarded sampling attempt's failure reason within this turn
+  // (idle_timeout | premature_eof | connection_reset). Host-local; used to
+  // explain an interrupted turn whose stream had already been failing (#9560).
+  lastStreamInterrupt?: { reason: string; attempt: number; at: number };
 }
 
 type NavigationSourceSnapshot = {
@@ -1286,6 +1290,17 @@ function applyExtensionForm(s: State, surface: WireExtensionSurface): State {
   };
 }
 
+// streamInterruptReasonText localizes the closed host enum a stream-attempt
+// discard carries (idle_timeout | premature_eof | connection_reset).
+function streamInterruptReasonText(reason: string): string {
+  switch (reason) {
+    case "idle_timeout": return t("notice.streamInterruptReason.idleTimeout");
+    case "premature_eof": return t("notice.streamInterruptReason.prematureEof");
+    case "connection_reset": return t("notice.streamInterruptReason.connectionReset");
+    default: return t("notice.streamInterruptReason.unknown");
+  }
+}
+
 function applyStreamAttempt(s: State, e: WireEvent): State {
   const sa = e.streamAttempt;
   if (!sa?.id || !sa.action) return s;
@@ -1347,6 +1362,9 @@ function applyStreamAttempt(s: State, e: WireEvent): State {
         live,
         turnArgChars: journal.baselineTurnArgChars,
         streamAttemptJournal: undefined,
+        lastStreamInterrupt: sa.reason
+          ? { reason: sa.reason, attempt: sa.attempt ?? 0, at: promptEventClock() }
+          : s.lastStreamInterrupt,
         running: true,
         turnActive: true,
         cancellable: true,
@@ -1496,6 +1514,7 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
         pendingPrompt: false,
         cancelRequested: false,
         cancellable: true,
+        lastStreamInterrupt: undefined,
         turnLifecycleObservedAt: promptEventClock(),
         ...resetTurnTiming(resolveTurnStartedAt(fresh.running || fresh.turnActive ? fresh.turnStartAt : 0, e.turnStartedAt)),
       };
@@ -1929,12 +1948,23 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
           text: t("notice.recoveryPausedBody"),
         }];
       } else if (e.status === "interrupted") {
-        items = [...finalized, {
+        const interruptItems: Item[] = [{
           kind: "notice",
           id: `e${s.seq}`,
           level: "info",
           text: t("notice.cancelledTurnDisplay"),
         }];
+        // A stop during a broken provider stream would otherwise look like an
+        // unexplained silence; surface the last known failure reason (#9560).
+        if (s.lastStreamInterrupt?.reason) {
+          interruptItems.push({
+            kind: "notice",
+            id: `e${s.seq + 1}`,
+            level: "warn",
+            text: t("notice.streamInterruptReason", { reason: streamInterruptReasonText(s.lastStreamInterrupt.reason) }),
+          });
+        }
+        items = [...finalized, ...interruptItems];
       } else if (e.err) {
         items = [...finalized, { kind: "notice", id: `e${s.seq}`, level: "warn", text: e.err }];
       }
@@ -1958,7 +1988,8 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
         ask: undefined,
         deliveryRecoveryActive: false,
         turnLifecycleObservedAt: promptEventClock(),
-        seq: s.seq + 1,
+        seq: s.seq + Math.max(items.length - finalized.length, 1),
+        lastStreamInterrupt: undefined,
       };
       // Close user-wait unless the plan approval gate remains open.
       if (!keepPlanApproval) next = endPromptWait(next, now);
