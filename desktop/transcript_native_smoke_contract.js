@@ -462,19 +462,29 @@
     await prepareNativeComposer(element);
     state.phase = "loading-targeted-history";
     await loadHistoryRows(element, 400);
-    // When the initial history window already meets the row minimum, no
-    // question jump ever ran and the view never left the tail, so the
-    // jump-bottom control is correctly absent. Only a genuine jump away from
-    // the tail needs the control to return.
-    const jumpBottom = await waitFor(() => document.querySelector(".transcript__jump-bottom"), 10000)
-      .catch(() => null);
-    if (!jumpBottom && (element.dataset.scrollMode !== "tail-follow"
-      || element.scrollHeight - element.scrollTop - element.clientHeight > 4)) {
-      throw new Error(`native transcript fixture left the tail without a jump-bottom control: ${describeTranscriptState(element)}`);
+    // A real history jump owns manual-reader mode and must expose the product's
+    // jump-bottom control. When the initial window already has enough rows,
+    // however, WebView2 may preserve logical tail ownership while applying the
+    // prepared draft's viewport shrink one paint late. Normalize only that
+    // fixture setup state; never hide a missing manual-reader recovery control.
+    let jumpBottom = document.querySelector(".transcript__jump-bottom");
+    if (!jumpBottom && element.dataset.scrollMode !== "tail-follow") {
+      jumpBottom = await waitFor(() => document.querySelector(".transcript__jump-bottom"), 10000)
+        .catch(() => null);
     }
-    jumpBottom?.click();
+    if (jumpBottom instanceof HTMLElement) {
+      jumpBottom.click();
+    } else if (element.dataset.scrollMode === "tail-follow") {
+      element.scrollTop = element.scrollHeight;
+    } else {
+      throw new Error(`native transcript fixture left manual-reader mode without a jump-bottom control: ${describeTranscriptState(element)}`);
+    }
     state.phase = "waiting-loaded-tail";
     await waitForStableTail(element, 2, 10000);
+    if (element.dataset.scrollMode !== "tail-follow"
+      || element.scrollHeight - element.scrollTop - element.clientHeight > 4) {
+      throw new Error(`native transcript fixture could not establish the loaded tail: ${describeTranscriptState(element)}`);
+    }
     // The initial tools page can keep settling its Virtuoso estimates after a
     // couple of visually stable frames on a slower hosted WebView2. Run the
     // composer regression only after the long loaded surface has held both
