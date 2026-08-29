@@ -1,6 +1,9 @@
 package provider
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestNativeToolSearchDefaultOffKeepsVisibleBytes(t *testing.T) {
 	visible := []ToolSchema{{Name: "use_capability", Description: "proxy", Parameters: []byte(`{"type":"object"}`)}}
@@ -12,15 +15,15 @@ func TestNativeToolSearchDefaultOffKeepsVisibleBytes(t *testing.T) {
 }
 
 func TestNativeToolSearchUnsupportedProviders(t *testing.T) {
-	for _, name := range []string{"deepseek", "dashscope", "openai-compatible"} {
-		if nativeToolSearchSupportedName(name) {
-			t.Fatalf("%s must not enable native tool search", name)
-		}
-	}
-	if !nativeToolSearchSupportedName("openai") || !nativeToolSearchSupportedName("anthropic") {
-		t.Fatal("first-party openai/anthropic should be eligible")
+	if NativeToolSearchSupported(namedProvider("openai")) {
+		t.Fatal("provider names must not imply protocol support")
 	}
 }
+
+type namedProvider string
+
+func (p namedProvider) Name() string                                          { return string(p) }
+func (p namedProvider) Stream(context.Context, Request) (<-chan Chunk, error) { return nil, nil }
 
 func TestNativeToolSearchPreviewMarksDeferred(t *testing.T) {
 	restore := SetNativeToolSearchPreviewForTest(true)

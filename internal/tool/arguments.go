@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -78,20 +79,39 @@ func ValidateArguments(target Tool, raw json.RawMessage) ArgumentValidationResul
 	if target == nil {
 		return ArgumentValidationResult{CompileErr: fmt.Errorf("argument validation target is nil")}
 	}
-	raw = NormalizeArguments(raw)
-	schemaRaw := bytes.TrimSpace(target.Schema())
+	result := ValidateJSONSchemaValue(target.Schema(), NormalizeArguments(raw))
+	if result.CompileErr != nil {
+		if _, thirdParty := target.(MCPMetadata); thirdParty {
+			result.Skipped = true
+			result.CompileErr = nil
+			return result
+		}
+		return result
+	}
+
+	if conditional, ok := target.(ArgumentValidator); ok && len(result.Violations) < maxArgumentViolations {
+		remaining := maxArgumentViolations - len(result.Violations)
+		extra := conditional.ValidateArguments(NormalizeArguments(raw))
+		if len(extra) > remaining {
+			extra = extra[:remaining]
+		}
+		result.Violations = append(result.Violations, extra...)
+	}
+	return result
+}
+
+// ValidateJSONSchemaValue validates an arbitrary JSON value against a schema.
+// It is used for third-party MCP outputSchema telemetry as well as argument
+// contracts; callers decide whether a compile failure is fatal or advisory.
+func ValidateJSONSchemaValue(schemaRaw, raw json.RawMessage) ArgumentValidationResult {
+	schemaRaw = bytes.TrimSpace(schemaRaw)
 	fingerprint := schemaFingerprint(schemaRaw)
 	result := ArgumentValidationResult{Fingerprint: fingerprint}
 	compiled := loadCompiledArgumentSchema(fingerprint, schemaRaw)
 	if compiled.err != nil {
-		if _, thirdParty := target.(MCPMetadata); thirdParty {
-			result.Skipped = true
-			return result
-		}
 		result.CompileErr = compiled.err
 		return result
 	}
-
 	var value any
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
@@ -105,14 +125,6 @@ func ValidateArguments(target Tool, raw json.RawMessage) ArgumentValidationResul
 	}
 	if err := compiled.schema.Validate(value); err != nil {
 		result.Violations = validationViolations(err)
-	}
-	if conditional, ok := target.(ArgumentValidator); ok && len(result.Violations) < maxArgumentViolations {
-		remaining := maxArgumentViolations - len(result.Violations)
-		extra := conditional.ValidateArguments(raw)
-		if len(extra) > remaining {
-			extra = extra[:remaining]
-		}
-		result.Violations = append(result.Violations, extra...)
 	}
 	return result
 }
@@ -182,8 +194,8 @@ func compileArgumentSchema(fingerprint string, raw []byte) compiledArgumentSchem
 }
 
 func validationViolations(err error) []ArgumentViolation {
-	validationErr, ok := err.(*jsonschema.ValidationError)
-	if !ok {
+	var validationErr *jsonschema.ValidationError
+	if !errors.As(err, &validationErr) {
 		return []ArgumentViolation{{Path: "", Keyword: "schema", Expected: "arguments satisfying the tool schema"}}
 	}
 	leaves := make([]*jsonschema.ValidationError, 0, maxArgumentViolations)

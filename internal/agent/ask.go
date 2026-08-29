@@ -105,11 +105,18 @@ func (*AskTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 	}
 
 	id := strings.TrimSpace(p.DecisionID)
+	explicitID := id != ""
 	if id == "" {
 		id = decisionIDForQuestions(qs)
 	}
-	if dec, ok := existingDecision(ctx, id); ok && strings.TrimSpace(p.Evidence) == "" {
-		return fmt.Sprintf("Host reused accepted decision %s. The user already chose: %s. Continue with that decision unless you supply decision_id and new_evidence.", dec.ID, dec.Answer), nil
+	if dec, ok := existingDecision(ctx, id); ok {
+		if strings.TrimSpace(p.Evidence) == "" {
+			return fmt.Sprintf("Host reused accepted decision %s. The user already chose: %s. Continue with that decision unless you supply decision_id and new_evidence.", dec.ID, dec.Answer), nil
+		}
+	} else if explicitID {
+		if _, hasAcceptedDecision := firstExistingDecision(ctx); hasAcceptedDecision {
+			return "", fmt.Errorf("unknown decision_id %q; cite the original accepted decision_id and include new_evidence to reopen it", id)
+		}
 	}
 
 	_, _, asker, ok := CallContext(ctx)

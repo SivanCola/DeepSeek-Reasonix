@@ -113,7 +113,8 @@ func TestValidateArgumentsCapsViolations(t *testing.T) {
 
 func TestSchemaFingerprintStable(t *testing.T) {
 	raw := json.RawMessage(`{"type":"object"}`)
-	if SchemaFingerprint(raw) != SchemaFingerprint(raw) || SchemaFingerprint(raw) == "" {
+	copyRaw := append(json.RawMessage(nil), raw...)
+	if SchemaFingerprint(raw) != SchemaFingerprint(copyRaw) || SchemaFingerprint(raw) == "" {
 		t.Fatal("fingerprint not stable")
 	}
 }

@@ -426,6 +426,8 @@ type UseCapabilityTool struct {
 	// leak into planner or child frontends before their Agent binds them.
 	toolResultMu      sync.RWMutex
 	toolResultSession func() *Session
+	mcpListMu         sync.RWMutex
+	mcpListObserver   func(mcpListObservation)
 	// state is session-shared connection observation when built via
 	// MCPCapabilityRuntime; nil falls back to a private map for tests.
 	state *mcpProxySharedState
@@ -1014,6 +1016,7 @@ func (t *UseCapabilityTool) ensureServerToolsForSpec(ctx context.Context, server
 	if life == nil {
 		life = context.Background()
 	}
+	started := time.Now()
 	result := t.host.EnsureConnectedInBackground(life, spec)
 	waitBudget := plugin.DefaultStartupWaitBudget()
 	timer := time.NewTimer(waitBudget)
@@ -1037,6 +1040,16 @@ func (t *UseCapabilityTool) ensureServerToolsForSpec(ctx context.Context, server
 		return nil, fmt.Errorf("connect %q: %w", server, err)
 	}
 	t.ensureState().markConnected(server)
+	schemaBytes := 0
+	for _, target := range tools {
+		schemaBytes += len(target.Schema())
+	}
+	durationMs := time.Since(started).Milliseconds()
+	t.capabilityAudit().RecordMCPList("remote", durationMs, len(tools), schemaBytes)
+	t.observeMCPList(mcpListObservation{
+		Server: server, Source: "remote", DurationMs: durationMs,
+		ToolCount: len(tools), SchemaBytes: schemaBytes, NetworkCall: true,
+	})
 	// Intentionally do NOT add tools to t.registry — provider schema stays stable.
 	_ = tools
 	return t.serverToolsForSpec(ctx, server, spec)

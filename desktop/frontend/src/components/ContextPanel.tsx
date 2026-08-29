@@ -1,6 +1,6 @@
 // ContextPanel shows the active tab's context gauge and token usage.
 // All visible text is routed through the i18n dictionary.
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { asArray } from "../lib/array";
 import { app } from "../lib/bridge";
 import { contextWindowPercentages } from "../lib/contextWindow";
@@ -12,9 +12,9 @@ import type { DictKey } from "../locales/en";
 import type { BalanceInfo, ContextInfo, ContextPanelInfo, UsageSourceStats, WireUsage } from "../lib/types";
 import { contextSessionCache } from "../lib/contextSessionCache";
 import { ContextBudgetCard, resolveContextBudget } from "./ContextBudgetCard";
-import { McpListLayers } from "./McpListLayers";
 import type { Item } from "../lib/useController";
 export { contextSessionCache } from "../lib/contextSessionCache";
+const McpListLayers = lazy(() => import("./McpListLayers").then((module) => ({ default: module.McpListLayers })));
 interface ContextPanelProps {
   tabId?: string;
   items?: Item[];
@@ -621,7 +621,9 @@ export function ContextPanel({
               </div>
             </div><ContextBudgetCard budget={resolveContextBudget(context, info)} t={t} />
           </section>
-          <McpListLayers items={items} t={t} />
+          <Suspense fallback={null}>
+            <McpListLayers items={items} t={t} />
+          </Suspense>
           <section className="context-panel__section context-panel__session-section">
             <SectionHeading title={t("context.sessionMetrics")} />
             <div className="context-panel__session-metrics">

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"reasonix/internal/tool"
 )
 
 const (
@@ -21,6 +23,10 @@ var toolResultImageMimes = map[string]bool{
 }
 
 func parseToolResult(res json.RawMessage) (string, []string, error) {
+	return parseToolResultWithSchema(res, nil)
+}
+
+func parseToolResultWithSchema(res, outputSchema json.RawMessage) (string, []string, error) {
 	var out struct {
 		Content []struct {
 			Type     string `json:"type"`
@@ -34,6 +40,13 @@ func parseToolResult(res json.RawMessage) (string, []string, error) {
 	}
 	if err := json.Unmarshal(res, &out); err != nil {
 		return "", nil, fmt.Errorf("decode tool result: %w", err)
+	}
+	structured := bytes.TrimSpace(out.StructuredContent)
+	if len(outputSchema) > 0 && len(structured) > 0 && !bytes.Equal(structured, []byte("null")) {
+		validation := tool.ValidateJSONSchemaValue(outputSchema, structured)
+		if validation.CompileErr != nil || len(validation.Violations) > 0 {
+			hostProtocol.outputSchemaMismatch.Add(1)
+		}
 	}
 	var sb strings.Builder
 	var images []string

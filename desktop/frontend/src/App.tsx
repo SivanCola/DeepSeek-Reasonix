@@ -35,7 +35,6 @@ import { clearLegacyLangPref, normalizeLangPref, readLegacyLangPref, t, useI18n,
 import { useActiveRemoteSession } from "./lib/useRemoteSession";
 import { useRemoteTabOpened } from "./lib/useRemoteTabOpened";
 import { renameCurrentRemoteSession } from "./lib/remoteSessionActions";
-import { sessionItemsToJson, sessionItemsToMarkdown } from "./lib/sessionExport";
 import { localizedNoticeText, useController, type HistoryLoadTrigger, type Item } from "./lib/useController";
 import { app, onEvent, onProjectTreeChanged, onReady, onRemoteForwards, onRemoteServer, onRemoteStatus, onRuntimeRebuilt, onSessionRecovered, openExternal } from "./lib/bridge";
 import { useConfigLoadWarnings } from "./lib/useConfigLoadWarnings";
@@ -2063,11 +2062,11 @@ export default function App() {
     applyThemeScene(sessionHasContent ? "task" : "home");
   }, [sessionHasContent]);
   const getSessionMarkdown = useCallback(
-    () => sessionItemsToMarkdown(sessionTitle, exportItems, exportLive),
+    async () => (await import("./lib/sessionExportData")).sessionItemsToMarkdown(sessionTitle, exportItems, exportLive),
     [exportItems, exportLive, sessionTitle],
   );
   const getSessionJson = useCallback(
-    () => sessionItemsToJson(sessionTitle, exportItems, exportLive),
+    async () => (await import("./lib/sessionExportData")).sessionItemsToJson(sessionTitle, exportItems, exportLive),
     [exportItems, exportLive, sessionTitle],
   );
 
@@ -2089,21 +2088,21 @@ export default function App() {
         if (format === "json") {
           const path = await app.PickExportFile(`${base}.json`, "application/json");
           if (path) {
-            await app.SaveExportFile(path, getSessionJson(), false);
+            await app.SaveExportFile(path, await getSessionJson(), false);
             showToast(t("topicBar.exportSuccess", { count: 1 }), "info");
           }
         } else if (format === "pdf") {
           const path = await app.PickExportFile(`${base}.pdf`, "application/pdf");
           if (!path) return;
           const { blobToBase64, renderSessionPdfBlob } = await import("./lib/sessionExport");
-          const blob = await renderSessionPdfBlob(getSessionMarkdown(), sessionTitle);
+          const blob = await renderSessionPdfBlob(await getSessionMarkdown(), sessionTitle);
           await app.SaveExportFile(path, await blobToBase64(blob), true);
           showToast(t("topicBar.exportSuccess", { count: 1 }), "info");
         } else if (format === "image") {
           const path = await app.PickExportFile(`${base}.png`, "image/png");
           if (!path) return;
           const { renderSessionImageBase64Payloads } = await import("./lib/sessionExport");
-          const payloads = await renderSessionImageBase64Payloads(getSessionMarkdown());
+          const payloads = await renderSessionImageBase64Payloads(await getSessionMarkdown());
           await app.SaveExportImageFiles(path, payloads);
           showToast(
             payloads.length > 1
@@ -2114,7 +2113,7 @@ export default function App() {
         } else {
           const path = await app.PickExportFile(`${base}.md`, "text/markdown");
           if (path) {
-            await app.SaveExportFile(path, getSessionMarkdown(), false);
+            await app.SaveExportFile(path, await getSessionMarkdown(), false);
             showToast(t("topicBar.exportSuccess", { count: 1 }), "info");
           }
         }

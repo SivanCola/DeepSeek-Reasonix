@@ -32,9 +32,10 @@ func (t *UseCapabilityTool) searchCapabilities(query string, limit int) (string,
 	queryNorm := normalizeSearchText(query)
 	queryTokens := searchTokens(query)
 	cat := t.currentCatalog()
+	mcpSchemas := t.mcpSearchSchemaIndex()
 	results := make([]capabilitySearchResult, 0, len(cat.Entries))
 	for _, entry := range cat.Entries {
-		arguments, schemaText := t.capabilitySchemaSearchData(entry)
+		arguments, schemaText := t.capabilitySchemaSearchData(entry, mcpSchemas)
 		document := strings.Join([]string{entry.ID, entry.Name, entry.Source, entry.ToolName, entry.Description, schemaText}, " ")
 		score := capabilitySearchScore(entry, document, queryNorm, queryTokens)
 		if score == 0 {
@@ -106,12 +107,12 @@ func capabilitySearchScore(entry capability.Entry, document, queryNorm string, q
 	return score
 }
 
-func (t *UseCapabilityTool) capabilitySchemaSearchData(entry capability.Entry) ([]string, string) {
+func (t *UseCapabilityTool) capabilitySchemaSearchData(entry capability.Entry, mcpSchemas map[string]plugin.CachedTool) ([]string, string) {
 	var schema json.RawMessage
 	if entry.Kind == capability.KindMCPTool {
 		server, raw, err := parseMCPCapabilityID(entry.ID)
 		if err == nil {
-			if cached, _, ok := t.localMCPTool(server, raw); ok {
+			if cached, ok := mcpSchemas[server+"\x00"+raw]; ok {
 				schema = cached.Schema
 			}
 		}
@@ -129,6 +130,63 @@ func (t *UseCapabilityTool) capabilitySchemaSearchData(entry capability.Entry) (
 		}
 	}
 	return schemaSearchData(schema)
+}
+
+// mcpSearchSchemaIndex takes one local snapshot per search. The old per-entry
+// localMCPTool path deep-copied the whole runtime catalog for every MCP tool,
+// making a large 88KB catalog quadratic even though discovery is local-only.
+func (t *UseCapabilityTool) mcpSearchSchemaIndex() map[string]plugin.CachedTool {
+	index := map[string]plugin.CachedTool{}
+	add := func(server string, tools []plugin.CachedTool) {
+		for _, cached := range tools {
+			key := server + "\x00" + cached.Name
+			if _, exists := index[key]; !exists {
+				index[key] = cached
+			}
+		}
+	}
+	if t.runtime != nil {
+		_, cached, _, _, live := t.runtime.CapabilityCatalogState()
+		for server, tools := range live {
+			add(server, tools)
+		}
+		for server, tools := range cached {
+			add(server, tools)
+		}
+	} else {
+		for server, tools := range t.ensureState().snapshotLiveTools() {
+			add(server, tools)
+		}
+		if t.host != nil {
+			for _, spec := range t.specs {
+				if live, ok := t.host.CachedTools(spec.Name); ok {
+					add(spec.Name, snapshotMCPTools(live))
+				}
+			}
+		}
+	}
+	if t.registry != nil {
+		for _, name := range t.registry.AllNames() {
+			target, ok := t.registry.Get(name)
+			if !ok {
+				continue
+			}
+			metadata, ok := target.(tool.MCPMetadata)
+			if !ok {
+				continue
+			}
+			add(metadata.MCPServerName(), []plugin.CachedTool{{
+				Name: metadata.MCPRawToolName(), Description: target.Description(),
+				Schema: target.Schema(), ReadOnly: target.ReadOnly(),
+			}})
+		}
+	}
+	for _, spec := range t.specs {
+		if cached, ok := plugin.LoadCachedSchemaForSpec(spec); ok {
+			add(spec.Name, cached.Tools)
+		}
+	}
+	return index
 }
 
 func schemaSearchData(raw json.RawMessage) ([]string, string) {
@@ -262,7 +320,7 @@ func normalizeSearchText(value string) string {
 }
 
 func containsSearchToken(document, token string) bool {
-	for _, candidate := range strings.Fields(document) {
+	for candidate := range strings.FieldsSeq(document) {
 		if candidate == token || strings.Contains(candidate, token) {
 			return true
 		}

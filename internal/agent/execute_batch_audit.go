@@ -50,10 +50,7 @@ func (a *Agent) recordToolExecutionAudit(readOnly, parallel bool, startedAt, dur
 	if a == nil || a.capabilityAudit == nil || startedAt <= 0 {
 		return
 	}
-	queueMs := startedAt - batchStart.UnixMilli()
-	if queueMs < 0 {
-		queueMs = 0
-	}
+	queueMs := max(startedAt-batchStart.UnixMilli(), 0)
 	rawBytes := len(o.output)
 	if o.rawOutput != "" {
 		rawBytes = len(o.rawOutput)

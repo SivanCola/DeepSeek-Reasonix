@@ -506,16 +506,10 @@ func parallelisableCall(r *tool.Registry, call provider.ToolCall) bool {
 		class := classifier.ClassifyCall(json.RawMessage(call.Arguments))
 		return class.Known && class.ReadOnly && class.ParallelSafe
 	}
-	return target.ReadOnly()
-}
-
-func parallelisable(r *tool.Registry, name string) bool {
-	switch name {
-	case "complete_step", "todo_write", "wait", "bash_output", "use_capability", "compress":
+	if _, dynamic := target.(tool.CallResolver); dynamic {
 		return false
 	}
-	t, _, ambiguous := r.ResolveCall(name)
-	return t != nil && len(ambiguous) == 0 && t.ReadOnly()
+	return target.ReadOnly()
 }
 
 func runParallel(ctx context.Context, start, end int, run func(int)) int {

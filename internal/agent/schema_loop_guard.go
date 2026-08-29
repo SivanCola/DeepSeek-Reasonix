@@ -13,24 +13,21 @@ type schemaErrorRecord struct {
 }
 
 func (a *Agent) schemaErrorContract(plan *toolCallPlan, result tool.ArgumentValidationResult, sig string) (string, bool) {
-	record := a.turn.loop.schemaError(sig)
-	record.count++
+	record := a.turn.loop.incrementSchemaError(sig, strings.TrimSpace(plan.resolved.CapabilityID))
 	msg := argumentValidationMessage(plan, result)
 	switch {
 	case record.count == 2 && !record.inspectAttached:
 		if summary := a.schemaInspectSummary(plan); summary != "" {
 			msg += "\n\nHost attached inspect summary after a repeated schema error:\n" + summary
-			record.inspectAttached = true
+			a.turn.loop.markSchemaInspectAttached(sig)
 		}
 	case record.count >= 3:
 		msg = fmtSchemaBlockMessage(plan.permName, shortSchemaFingerprint(result.Fingerprint))
-		a.turn.loop.noteSchemaError(sig, record)
 		if a.capabilityAudit != nil {
 			a.capabilityAudit.RecordLoopGuard("blocked")
 		}
 		return msg, true
 	}
-	a.turn.loop.noteSchemaError(sig, record)
 	if a.capabilityAudit != nil {
 		a.capabilityAudit.RecordLoopGuard("repeat_failure")
 	}
@@ -74,5 +71,5 @@ func (a *Agent) clearSchemaErrorsAfterInspect(id string) {
 	if id == "" {
 		return
 	}
-	a.turn.loop.clearSchemaErrors(func(sig string) bool { return strings.Contains(sig, id) })
+	a.turn.loop.clearSchemaErrorsForCapability(id)
 }

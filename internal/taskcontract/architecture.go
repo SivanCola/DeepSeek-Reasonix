@@ -1,6 +1,10 @@
 package taskcontract
 
-import "reasonix/internal/evidence"
+import (
+	"slices"
+
+	"reasonix/internal/evidence"
+)
 
 const (
 	architectureLargeFiles    = 8
@@ -48,10 +52,8 @@ func applyArchitectureReview(class writerClass, profile evidence.EffectProfile, 
 }
 
 func ensureObligationKind(kinds []ObligationKind, kind ObligationKind) []ObligationKind {
-	for _, existing := range kinds {
-		if existing == kind {
-			return kinds
-		}
+	if slices.Contains(kinds, kind) {
+		return kinds
 	}
 	return append(kinds, kind)
 }

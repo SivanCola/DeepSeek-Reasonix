@@ -23,3 +23,17 @@ func TestParseToolResultStructuredContentVariants(t *testing.T) {
 		t.Fatalf("error result: %q %v", text, err)
 	}
 }
+
+func TestOutputSchemaMismatchIsTelemetryOnly(t *testing.T) {
+	ResetProtocolMetricsForTest()
+	text, _, err := parseToolResultWithSchema(
+		[]byte(`{"content":[],"structuredContent":{"ok":"not-a-boolean"}}`),
+		[]byte(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}`),
+	)
+	if err != nil || text == "" {
+		t.Fatalf("third-party output mismatch must not fail: text=%q err=%v", text, err)
+	}
+	if got := OutputSchemaMismatchCount(); got != 1 {
+		t.Fatalf("mismatch count = %d, want 1", got)
+	}
+}

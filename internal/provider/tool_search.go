@@ -3,6 +3,7 @@ package provider
 import (
 	"net/url"
 	"strings"
+	"sync/atomic"
 )
 
 // ToolSearch is a request-level native tool-search experiment. Unsupported
@@ -13,41 +14,32 @@ type ToolSearch struct {
 
 // nativeToolSearchPreview is compiled off for 1.33.0. First-party OpenAI
 // Responses and Anthropic may enable it later after the preview experiment.
-var nativeToolSearchPreview = false
+var nativeToolSearchPreview atomic.Bool
 
-func NativeToolSearchPreviewEnabled() bool { return nativeToolSearchPreview }
+func NativeToolSearchPreviewEnabled() bool { return nativeToolSearchPreview.Load() }
 
 func SetNativeToolSearchPreviewForTest(enabled bool) func() {
-	prev := nativeToolSearchPreview
-	nativeToolSearchPreview = enabled
-	return func() { nativeToolSearchPreview = prev }
+	prev := nativeToolSearchPreview.Swap(enabled)
+	return func() { nativeToolSearchPreview.Store(prev) }
 }
 
-// NativeToolSearchSupported reports first-party OpenAI Responses or Anthropic.
-// DeepSeek, DashScope, and OpenAI-compatible gateways stay on the fixed proxy.
+type nativeToolSearchProvider interface {
+	NativeToolSearchAvailable() bool
+}
+
+// NativeToolSearchSupported reports explicit adapter capability. The first
+// preview supports first-party OpenAI Responses only; Anthropic stays on the
+// fixed proxy until its server-side tool-search result blocks can be replayed.
 func NativeToolSearchSupported(p Provider) bool {
 	if p == nil {
 		return false
 	}
-	return nativeToolSearchSupportedName(p.Name())
-}
-
-func nativeToolSearchSupportedName(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
-	switch {
-	case strings.Contains(name, "deepseek"), strings.Contains(name, "dashscope"),
-		strings.Contains(name, "qwen"), strings.Contains(name, "compatible"):
-		return false
-	case name == "openai" || strings.HasPrefix(name, "openai-") || name == "responses":
-		return true
-	case name == "anthropic" || strings.HasPrefix(name, "anthropic"):
-		return true
-	}
-	return false
+	capable, ok := p.(nativeToolSearchProvider)
+	return ok && capable.NativeToolSearchAvailable()
 }
 
 func NativeToolSearchEnabled(p Provider) bool {
-	return nativeToolSearchPreview && NativeToolSearchSupported(p)
+	return nativeToolSearchPreview.Load() && NativeToolSearchSupported(p)
 }
 
 // ApplyNativeToolSearch marks extra MCP schemas deferred when the preview is
@@ -67,7 +59,6 @@ func ApplyNativeToolSearch(visible, extra []ToolSchema, p Provider) []ToolSchema
 			continue
 		}
 		schema.Deferred = true
-		schema.Strict = true
 		out = append(out, schema)
 		seen[schema.Name] = true
 	}

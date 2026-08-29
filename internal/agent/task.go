@@ -1147,6 +1147,17 @@ type restrictedCapabilityProxy struct {
 	servers map[string]bool
 }
 
+func (t *restrictedCapabilityProxy) ClassifyCall(args json.RawMessage) tool.CallClass {
+	if t == nil || t.check(args) != nil {
+		return tool.CallClass{}
+	}
+	classifier, ok := t.Tool.(tool.BatchClassifier)
+	if !ok {
+		return tool.CallClass{}
+	}
+	return classifier.ClassifyCall(args)
+}
+
 // Description is fixed: never embed dynamic capability IDs (they change with
 // MCP install/tool-list and would break the stable provider tool prefix).
 func (t *restrictedCapabilityProxy) Description() string {
@@ -1161,7 +1172,8 @@ func (t *restrictedCapabilityProxy) check(args json.RawMessage) error {
 	if err := json.Unmarshal(args, &p); err != nil {
 		return fmt.Errorf("invalid args: %w", err)
 	}
-	if strings.EqualFold(strings.TrimSpace(p.Action), "list") {
+	action := strings.ToLower(strings.TrimSpace(p.Action))
+	if action == "list" || action == "search" {
 		return nil
 	}
 	id := strings.TrimSpace(p.CapabilityID)
@@ -1189,8 +1201,14 @@ func (t *restrictedCapabilityProxy) ResolveCall(ctx context.Context, args json.R
 		Action string `json:"action"`
 	}
 	_ = json.Unmarshal(args, &p)
-	if strings.EqualFold(strings.TrimSpace(p.Action), "list") && rc.SkipExecute {
-		rc.Result = filterCapabilityListResult(rc.Result, t.servers)
+	action := strings.ToLower(strings.TrimSpace(p.Action))
+	if rc.SkipExecute {
+		switch action {
+		case "list":
+			rc.Result = filterCapabilityListResult(rc.Result, t.servers)
+		case "search":
+			rc.Result = filterCapabilitySearchResult(rc.Result, t.allowed)
+		}
 	}
 	return rc, nil
 }
@@ -1207,8 +1225,11 @@ func (t *restrictedCapabilityProxy) Execute(ctx context.Context, args json.RawMe
 		Action string `json:"action"`
 	}
 	_ = json.Unmarshal(args, &p)
-	if strings.EqualFold(strings.TrimSpace(p.Action), "list") {
+	switch strings.ToLower(strings.TrimSpace(p.Action)) {
+	case "list":
 		return filterCapabilityListResult(out, t.servers), nil
+	case "search":
+		return filterCapabilitySearchResult(out, t.allowed), nil
 	}
 	return out, nil
 }

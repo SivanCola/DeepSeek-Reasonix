@@ -52,4 +52,39 @@ func TestDispatchResolvedToolDoesNotRetryWriterTransient(t *testing.T) {
 	}
 }
 
+type fixedErrorTool struct {
+	err   error
+	calls atomic.Int32
+}
+
+func (t *fixedErrorTool) Name() string            { return "read_file" }
+func (t *fixedErrorTool) Description() string     { return "" }
+func (t *fixedErrorTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *fixedErrorTool) ReadOnly() bool          { return true }
+func (t *fixedErrorTool) Execute(context.Context, json.RawMessage) (string, error) {
+	t.calls.Add(1)
+	return "", t.err
+}
+
+func TestDispatchResolvedToolNeverRetriesCancellationOrAmbiguousDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "cancelled", err: context.Canceled},
+		{name: "deadline", err: context.DeadlineExceeded},
+		{name: "may have completed", err: errors.New("connection reset after dispatch; execution may have completed and was not retried")},
+		{name: "unknown result", err: errors.New("connection closed after dispatch; execution result is unknown")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := &fixedErrorTool{err: tc.err}
+			plan := &toolCallPlan{runTool: target, runArgs: json.RawMessage(`{}`), readOnly: true}
+			_, _, _, _ = (&Agent{}).dispatchResolvedTool(context.Background(), plan)
+			if got := target.calls.Load(); got != 1 {
+				t.Fatalf("calls = %d, want 1", got)
+			}
+		})
+	}
+}
+
 var _ tool.Tool = (*transientOnceTool)(nil)

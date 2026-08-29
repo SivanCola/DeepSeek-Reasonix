@@ -13,11 +13,46 @@ import (
 
 type recordingAsker struct {
 	questions []event.AskQuestion
+	calls     int
 }
 
 func (r *recordingAsker) Ask(_ context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error) {
+	r.calls++
 	r.questions = questions
 	return []event.AskAnswer{{QuestionID: "q1", Selected: []string{"Keep going"}}}, nil
+}
+
+func TestAskToolReusesAcceptedDecisionAndRejectsSpoofedID(t *testing.T) {
+	turn := &turnRuntime{}
+	asker := &recordingAsker{}
+	ctx := withTurnState(withCallContext(context.Background(), "call", event.Discard, asker, false), turn)
+	args := []byte(`{"decision_id":"dec-original","questions":[{"header":"Direction","question":"Which path?","options":[{"label":"Keep going"},{"label":"Stop"}]}]}`)
+	if _, err := NewAskTool().Execute(ctx, args); err != nil {
+		t.Fatalf("first ask: %v", err)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker calls = %d", asker.calls)
+	}
+	second, err := NewAskTool().Execute(ctx, []byte(`{"decision_id":"dec-original","questions":[{"header":"Direction","question":"Which path?","options":[{"label":"Keep going"},{"label":"Stop"}]}]}`))
+	if err != nil || !strings.Contains(second, "dec-original") || asker.calls != 1 {
+		t.Fatalf("repeat clarification = %q err=%v calls=%d", second, err, asker.calls)
+	}
+	if _, err := NewAskTool().Execute(ctx, []byte(`{"questions":[{"header":"Environment","question":"Which deployment target?","options":[{"label":"Staging"},{"label":"Production"}]}]}`)); err != nil {
+		t.Fatalf("unrelated clarification should remain available: %v", err)
+	}
+	if asker.calls != 2 {
+		t.Fatalf("unrelated clarification calls = %d, want 2", asker.calls)
+	}
+	_, err = NewAskTool().Execute(ctx, []byte(`{"decision_id":"dec-spoofed","new_evidence":"changed","questions":[{"header":"Again","question":"Ask again?","options":[{"label":"Yes"},{"label":"No"}]}]}`))
+	if err == nil || !strings.Contains(err.Error(), "unknown decision_id") || asker.calls != 2 {
+		t.Fatalf("spoofed decision: err=%v calls=%d", err, asker.calls)
+	}
+	if _, err := NewAskTool().Execute(ctx, []byte(`{"decision_id":"dec-original","new_evidence":"new failing test","questions":[{"header":"Again","question":"Reconsider?","options":[{"label":"Keep going"},{"label":"Stop"}]}]}`)); err != nil {
+		t.Fatalf("evidence-backed reopen: %v", err)
+	}
+	if asker.calls != 3 {
+		t.Fatalf("reopened asker calls = %d, want 3", asker.calls)
+	}
 }
 
 func TestAskToolRejectsBlankOptionLabels(t *testing.T) {

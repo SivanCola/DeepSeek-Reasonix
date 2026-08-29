@@ -29,26 +29,23 @@ func errorCategory(toolName, errMsg string) string {
 	return toolName + ":" + msg
 }
 
-func (a *Agent) observeErrorCategory(call provider.ToolCall, err error) {
-	if a == nil || err == nil {
-		return
-	}
-	name := call.Name
-	if call.ResolvedName != "" {
-		name = call.ResolvedName
-	}
-	cat := errorCategory(name, err.Error())
-	a.turn.loop.noteErrorCategory(cat)
-}
-
 func consecutiveNormalizedFailure(calls []provider.ToolCall, outcomes []toolOutcome, loop *turnLoopState) bool {
-	if len(calls) == 0 || len(outcomes) == 0 || loop == nil {
+	if loop == nil {
 		return false
 	}
-	name := calls[0].Name
-	if calls[0].ResolvedName != "" {
-		name = calls[0].ResolvedName
+	categories := map[string]int{}
+	for i := 0; i < len(calls) && i < len(outcomes); i++ {
+		if strings.TrimSpace(outcomes[i].errMsg) == "" {
+			continue
+		}
+		name := calls[i].Name
+		if calls[i].ResolvedName != "" {
+			name = calls[i].ResolvedName
+		}
+		category := errorCategory(name, outcomes[i].errMsg)
+		if strings.Contains(category, ":exit:") || strings.Contains(category, ":test_failure") {
+			categories[category]++
+		}
 	}
-	cat := errorCategory(name, outcomes[0].errMsg)
-	return loop.errorCategoryCount(cat) >= 2 && (strings.Contains(cat, ":exit:") || strings.Contains(cat, ":test_failure"))
+	return loop.advanceErrorCategories(categories)
 }

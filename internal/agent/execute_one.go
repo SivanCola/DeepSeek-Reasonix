@@ -300,6 +300,9 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 			}
 		}
 		if rc.SkipExecute {
+			if rc.ProxyAction == "inspect" {
+				a.clearSchemaErrorsAfterInspect(rc.CapabilityID)
+			}
 			// Resolution completed without target execution; still record a meta receipt.
 			// A connected mcp-server call completes during resolution by listing
 			// its live tools, so account for that successful call here too.
@@ -710,7 +713,6 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		}
 		a.recordRepeatFailure(call, t, err)
 		rawErr := fmt.Sprintf("error: %v\n%s", err, detail)
-		a.observeErrorCategory(call, err)
 		body, truncMsg, original := a.boundProviderVisibleResult(rawErr, call.Name, call.ID)
 		out := toolOutcome{
 			output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "" || original != "", truncMsg: truncMsg,

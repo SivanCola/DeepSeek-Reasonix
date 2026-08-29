@@ -60,6 +60,18 @@ func existingDecision(ctx context.Context, id string) (acceptedDecision, bool) {
 	return turn.loop.decision(id)
 }
 
+func firstExistingDecision(ctx context.Context) (acceptedDecision, bool) {
+	turn := turnStateFrom(ctx)
+	if turn == nil {
+		return acceptedDecision{}, false
+	}
+	decisions := turn.loop.snapshotDecisions()
+	if len(decisions) == 0 {
+		return acceptedDecision{}, false
+	}
+	return decisions[0], true
+}
+
 type askArgs struct {
 	DecisionID string `json:"decision_id"`
 	Evidence   string `json:"new_evidence"`

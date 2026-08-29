@@ -19,6 +19,7 @@ const (
 	NoticeCodeBackgroundJobFinished                             = "background_job_finished"
 	NoticeCodeCancelledTurn                                     = "cancelled_turn_display"
 	NoticeCodeUnappliedSteer                                    = "unapplied_steer"
+	NoticeCodeMCPToolsList                                      = "mcp_tools_list"
 	NoticeCodeSessionRecoveryForked                             = "session_recovery_forked"
 	NoticeCodeSessionRecoveryAdopted                            = "session_recovery_adopted"
 	NoticeCodeSessionRecoveryAdoptedCovered                     = "session_recovery_adopted_covered"

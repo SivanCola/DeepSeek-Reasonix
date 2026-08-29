@@ -17,7 +17,7 @@ func TestMapWriterArchitectureWorthyCases(t *testing.T) {
 	}
 
 	var largePaths []string
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		largePaths = append(largePaths, "internal/agent/file"+string(rune('a'+i))+".go")
 	}
 	large := evidence.ClassifyEffect(evidence.EffectInput{ToolName: "edit_file", ActualPaths: largePaths})

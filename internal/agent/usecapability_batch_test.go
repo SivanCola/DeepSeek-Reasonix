@@ -43,6 +43,33 @@ func TestPartitionToolCallsKeepsUnknownCapabilitySerial(t *testing.T) {
 	}
 }
 
+func TestCapabilityWrappersForwardPureBatchClassification(t *testing.T) {
+	inner := NewUseCapabilityTool(t.Context(), nil, nil, nil, nil, nil, nil)
+	pathBound := pathBoundCapabilityProxy{inner: inner, resolver: inner}
+	restricted := &restrictedCapabilityProxy{
+		Tool: inner, resolver: inner,
+		allowed: map[string]bool{"mcp-server:github": true}, servers: map[string]bool{"github": true},
+	}
+	for name, wrapped := range map[string]tool.Tool{"path-bound": pathBound, "restricted": restricted} {
+		t.Run(name, func(t *testing.T) {
+			reg := tool.NewRegistry()
+			reg.Add(wrapped)
+			got := partitionToolCalls(reg, []provider.ToolCall{{
+				ID: "1", Name: "use_capability", Arguments: `{"action":"inspect","capability_id":"mcp-server:github"}`,
+			}})
+			if len(got) != 1 || !got[0].parallel {
+				t.Fatalf("wrapped inspect must remain parallel: %+v", got)
+			}
+			serial := partitionToolCalls(reg, []provider.ToolCall{{
+				ID: "2", Name: "use_capability", Arguments: `{"action":"call","capability_id":"mcp-tool:github/write","arguments":{}}`,
+			}})
+			if len(serial) != 1 || serial[0].parallel {
+				t.Fatalf("unknown writer must remain serial: %+v", serial)
+			}
+		})
+	}
+}
+
 func TestClassifyCallSearchIsReadOnlyParallel(t *testing.T) {
 	proxy := NewUseCapabilityTool(t.Context(), nil, nil, nil, nil, nil, nil)
 	class := proxy.ClassifyCall(json.RawMessage(`{"action":"search","query":"x"}`))
@@ -102,6 +129,31 @@ func TestPartitionStatefulBrowserMCPStaysSerial(t *testing.T) {
 	class := proxy.ClassifyCall(json.RawMessage(`{"action":"call","capability_id":"mcp-tool:chrome-devtools/navigate","arguments":{}}`))
 	if class.ParallelSafe {
 		t.Fatalf("stateful browser MCP must not be parallel-safe: %+v", class)
+	}
+}
+
+func TestOnDemandConnectEmitsOneSessionRemoteToolsListObservation(t *testing.T) {
+	t.Setenv("REASONIX_CACHE_HOME", t.TempDir())
+	var toolCalls atomic.Int32
+	server := readonlyMCPServer(t, "observed", &toolCalls)
+	defer server.Close()
+	host := plugin.NewHost()
+	defer host.Close()
+	spec := plugin.Spec{Name: "observed", Type: "http", URL: server.URL, Authorized: true}
+	proxy := NewUseCapabilityTool(t.Context(), host, []plugin.Spec{spec}, tool.NewRegistry(), nil, nil, nil)
+	var observations []mcpListObservation
+	proxy.bindMCPListObserver(func(observation mcpListObservation) { observations = append(observations, observation) })
+	if _, err := proxy.ensureServerToolsForSpec(t.Context(), spec.Name, spec); err != nil {
+		t.Fatalf("first connect: %v", err)
+	}
+	if len(observations) != 1 || observations[0].Source != "remote" || !observations[0].NetworkCall || observations[0].ToolCount != 1 {
+		t.Fatalf("observations = %+v", observations)
+	}
+	if _, err := proxy.ensureServerToolsForSpec(t.Context(), spec.Name, spec); err != nil {
+		t.Fatalf("shared-host reuse: %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("shared-host reuse emitted a remote list: %+v", observations)
 	}
 }
 

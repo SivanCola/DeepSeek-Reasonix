@@ -13,10 +13,11 @@ type protocolListStats struct {
 }
 
 type protocolMetrics struct {
-	toolsList atomic.Int64
-	toolsCall atomic.Int64
-	remote    atomic.Int64
-	lists     protocolListStats
+	toolsList            atomic.Int64
+	toolsCall            atomic.Int64
+	remote               atomic.Int64
+	outputSchemaMismatch atomic.Int64
+	lists                protocolListStats
 }
 
 // ToolsListStats is a snapshot of MCP tools/list observations.
@@ -62,8 +63,9 @@ func countListedTools(res json.RawMessage) (n, schemaBytes int) {
 	return len(out.Tools), schemaBytes
 }
 
-func ToolsListCount() int64 { return hostProtocol.toolsList.Load() }
-func ToolsCallCount() int64 { return hostProtocol.toolsCall.Load() }
+func ToolsListCount() int64            { return hostProtocol.toolsList.Load() }
+func ToolsCallCount() int64            { return hostProtocol.toolsCall.Load() }
+func OutputSchemaMismatchCount() int64 { return hostProtocol.outputSchemaMismatch.Load() }
 
 // SnapshotToolsListStats returns process-local tools/list counters.
 func SnapshotToolsListStats() ToolsListStats {
@@ -80,6 +82,7 @@ func ResetProtocolMetricsForTest() {
 	hostProtocol.toolsList.Store(0)
 	hostProtocol.toolsCall.Store(0)
 	hostProtocol.remote.Store(0)
+	hostProtocol.outputSchemaMismatch.Store(0)
 	hostProtocol.lists.durationMs.Store(0)
 	hostProtocol.lists.toolCount.Store(0)
 	hostProtocol.lists.schemaBytes.Store(0)

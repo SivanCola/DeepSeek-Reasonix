@@ -1237,6 +1237,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 				steps = 5
 			}
 		}
+		reviewOutputTokens := 0
+		if reviewTask, reviewSteps, reviewTokens, ok := agent.PrepareReviewSubagentContext(sctx, sk.Name, task); ok {
+			task, steps = reviewTask, reviewSteps
+			reviewOutputTokens = reviewTokens
+		}
 		// Custom and named built-in profiles fully control their system prompt
 		// (no implicit concise/DefaultReadOnlyTaskSystemPrompt overlay).
 		sysPrompt := strings.TrimSpace(sk.Body)
@@ -1244,6 +1249,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			sysPrompt = agent.DefaultReadOnlyTaskSystemPrompt
 		}
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
+		if reviewOutputTokens > 0 {
+			runOptions.MaxOutputTokens = reviewOutputTokens
+		}
 		usageModelRef, _ := subagentIdentity(modelRef, effortRef)
 		runOptions.ModelRef = usageModelRef
 		// Review gates consume typed, host-verifiable reports so a review
@@ -1362,7 +1370,15 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 				steps = 5
 			}
 		}
+		reviewOutputTokens := 0
+		if reviewTask, reviewSteps, reviewTokens, ok := agent.PrepareReviewSubagentContext(sctx, sk.Name, task); ok {
+			task, steps = reviewTask, reviewSteps
+			reviewOutputTokens = reviewTokens
+		}
 		runOptions := subagentSkillOptions(sctx, steps, price, ctxWin, childDepth)
+		if reviewOutputTokens > 0 {
+			runOptions.MaxOutputTokens = reviewOutputTokens
+		}
 		runOptions.WriteRoots = childWriteRoots
 		usageModelRef, _ := subagentIdentity(modelRef, effortRef)
 		runOptions.ModelRef = usageModelRef

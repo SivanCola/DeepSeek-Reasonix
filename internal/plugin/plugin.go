@@ -1864,5 +1864,5 @@ func (t *remoteTool) ExecuteWithImages(ctx context.Context, args json.RawMessage
 	if err != nil {
 		return "", nil, err
 	}
-	return parseToolResult(res)
+	return parseToolResultWithSchema(res, t.outputSchema)
 }

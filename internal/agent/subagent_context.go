@@ -67,6 +67,22 @@ func applyReviewBudget(spec *ProfileExecSpec) {
 	}
 }
 
+// PrepareReviewSubagentContext applies the same bounded review contract used
+// by task/profile delegation to built-in skill runners. The returned boolean
+// is false for non-review profiles so their existing budgets remain unchanged.
+func PrepareReviewSubagentContext(ctx context.Context, profile, objective string) (prompt string, maxSteps, maxOutputTokens int, ok bool) {
+	spec := ProfileExecSpec{
+		Task:   TaskSpec{Objective: objective},
+		Worker: WorkerSpec{Profile: profile},
+	}
+	applyReviewBudget(&spec)
+	if spec.Sched.MaxSteps == 0 && spec.Sched.MaxOutputTokens == 0 {
+		return objective, 0, 0, false
+	}
+	fillChildFacts(ctx, &spec)
+	return composeChildTaskPrompt(spec), spec.Sched.MaxSteps, spec.Sched.MaxOutputTokens, true
+}
+
 type childOutputBudgetKey struct{}
 
 func withChildOutputBudget(ctx context.Context, n int) context.Context {
@@ -132,22 +148,41 @@ func compactParentFacts(ledger *evidence.Ledger) (string, []string) {
 			}
 		}
 	}
+	sort.Strings(anchors)
 	if successes == 0 {
 		return "", anchors
 	}
-	return fmt.Sprintf("%d successful receipts (%d mutations, %d reads).", successes, mutations, reads), anchors
-}
-
-func (s *turnLoopState) snapshotDecisions() []acceptedDecision {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.acceptedDecisions) == 0 {
-		return nil
+	var facts []string
+	for i := len(receipts) - 1; i >= 0 && len(facts) < 12; i-- {
+		rec := receipts[i]
+		if !rec.Success {
+			continue
+		}
+		kind := "other"
+		switch {
+		case rec.Mutation || rec.Write:
+			kind = "write"
+		case rec.Read:
+			kind = "read"
+		}
+		line := fmt.Sprintf("- tool=%s kind=%s paths=%d output_bytes=%d", rec.ToolName, kind, len(rec.Paths), rec.OutputBytes)
+		if rec.Verification != "" {
+			line += " verification=" + rec.Verification
+		}
+		if rec.ExitCode != nil {
+			line += fmt.Sprintf(" exit_code=%d", *rec.ExitCode)
+		}
+		if rec.OutputDigest != "" {
+			digest := rec.OutputDigest
+			if len(digest) > 12 {
+				digest = digest[:12]
+			}
+			line += " output_digest=" + digest
+		}
+		facts = append(facts, line)
 	}
-	out := make([]acceptedDecision, 0, len(s.acceptedDecisions))
-	for _, dec := range s.acceptedDecisions {
-		out = append(out, dec)
+	for left, right := 0, len(facts)-1; left < right; left, right = left+1, right-1 {
+		facts[left], facts[right] = facts[right], facts[left]
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
+	return fmt.Sprintf("%d successful receipts (%d mutations, %d reads).\n%s", successes, mutations, reads, strings.Join(facts, "\n")), anchors
 }

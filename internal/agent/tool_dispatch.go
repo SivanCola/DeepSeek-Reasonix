@@ -11,7 +11,7 @@ import (
 
 func (a *Agent) dispatchResolvedTool(ctx context.Context, plan *toolCallPlan) (result string, images []string, execution *tool.ShellExecution, err error) {
 	result, images, execution, err = a.invokeResolvedTool(ctx, plan)
-	if err == nil || !plan.readOnly || !isTransientToolError(err) {
+	if err == nil || ctx.Err() != nil || !plan.readOnly || !isTransientToolError(err) {
 		return result, images, execution, err
 	}
 	if plan.effects.StateMutation {
@@ -59,9 +59,17 @@ func isTransientToolError(err error) bool {
 		return false
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
+		return false
 	}
 	msg := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"execution may have completed", "execution result is unknown",
+		"after dispatch", "was not retried",
+	} {
+		if strings.Contains(msg, token) {
+			return false
+		}
+	}
 	for _, token := range []string{
 		"timeout", "temporar", "connection reset", "connection refused",
 		"broken pipe", "eof", "i/o timeout", "tls handshake", "unavailable",

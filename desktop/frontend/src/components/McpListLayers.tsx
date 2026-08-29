@@ -1,5 +1,5 @@
 import type { Translator } from "../lib/i18n";
-import { mcpListAttribution, type McpListAttribution } from "../lib/sessionExport";
+import { mcpListAttribution, type McpListAttribution } from "../lib/mcpListAttribution";
 import type { Item } from "../lib/useController";
 
 export function McpListLayers({ items, t }: { items?: Item[]; t: Translator }) {

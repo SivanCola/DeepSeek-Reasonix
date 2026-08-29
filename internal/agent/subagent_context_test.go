@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -50,7 +51,7 @@ func TestFillChildFactsFromParentTurnAndLedger(t *testing.T) {
 	if !strings.Contains(spec.Context.EvidenceSummary, "1 successful") {
 		t.Fatalf("summary = %q", spec.Context.EvidenceSummary)
 	}
-	if len(spec.Context.FileAnchors) != 1 || spec.Context.FileAnchors[0] != "internal/agent/ask.go" {
+	if len(spec.Context.FileAnchors) != 1 || filepath.ToSlash(spec.Context.FileAnchors[0]) != "internal/agent/ask.go" {
 		t.Fatalf("anchors = %v", spec.Context.FileAnchors)
 	}
 	prompt := composeChildTaskPrompt(spec)
@@ -72,5 +73,26 @@ func TestChildMaxStepsForSpecStampsReviewOutputBudget(t *testing.T) {
 	opts := task.subagentOptions(ctx, steps, nil, 0, 1, "", nil)
 	if opts.MaxOutputTokens != defaultReviewOutputTokens {
 		t.Fatalf("child options max output = %d", opts.MaxOutputTokens)
+	}
+}
+
+func TestPrepareReviewSubagentContextAddsBoundedVerifiedFacts(t *testing.T) {
+	ledger := evidence.NewLedger()
+	exit := 0
+	ledger.Record(evidence.Receipt{
+		ToolName: "go_test", Success: true, Read: true, Paths: []string{"z.go", "a.go"},
+		OutputBytes: 42, OutputDigest: "0123456789abcdef", ExitCode: &exit, Verification: evidence.VerificationPassed,
+	})
+	prompt, steps, tokens, ok := PrepareReviewSubagentContext(evidence.WithLedger(context.Background(), ledger), "review", "review change")
+	if !ok || steps != defaultReviewMaxSteps || tokens != defaultReviewOutputTokens {
+		t.Fatalf("review budget = ok:%v steps:%d tokens:%d", ok, steps, tokens)
+	}
+	for _, want := range []string{"tool=go_test", "output_bytes=42", "output_digest=0123456789ab", "verification=passed", "a.go", "verdict"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("review prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if _, _, _, ok := PrepareReviewSubagentContext(context.Background(), "explore", "look"); ok {
+		t.Fatal("non-review profile must retain its existing runner budget")
 	}
 }
