@@ -14,23 +14,25 @@ func isExplicitMCPSessionMissing(err error) bool {
 	if errors.Is(err, mcpsdk.ErrSessionMissing) {
 		return true
 	}
-	var rpcErr *mcpjsonrpc.Error
-	if !errors.As(err, &rpcErr) || rpcErr == nil {
+	if !isMCPHTTPNotFound(err) || !hasMCPTransportRejection(err) {
 		return false
 	}
-	message := strings.ToLower(strings.TrimSpace(rpcErr.Message))
-	for _, marker := range []string{
-		"session not found",
-		"session missing",
-		"session expired",
-		"invalid session",
-		"unknown session",
-	} {
-		if strings.Contains(message, marker) {
-			return true
+	found := false
+	visitMCPRPCErrors(err, func(rpcErr *mcpjsonrpc.Error) {
+		message := strings.ToLower(strings.TrimSpace(rpcErr.Message))
+		for _, marker := range []string{
+			"session not found",
+			"session missing",
+			"session expired",
+			"invalid session",
+			"unknown session",
+		} {
+			if strings.Contains(message, marker) {
+				found = true
+			}
 		}
-	}
-	return false
+	})
+	return found
 }
 
 // isMCPHTTPNotFound recognizes the status-only error emitted by newer Go MCP
@@ -41,11 +43,49 @@ func isMCPHTTPNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
+	hasRPCError := false
+	visitMCPRPCErrors(err, func(*mcpjsonrpc.Error) {
+		hasRPCError = true
+	})
+	if hasRPCError && !hasMCPTransportRejection(err) {
+		return false
+	}
 	message := strings.ToLower(strings.TrimSpace(err.Error()))
 	return message == "not found" ||
 		strings.HasSuffix(message, ": not found") ||
 		strings.Contains(message, "http 404") ||
 		strings.Contains(message, "status 404")
+}
+
+func hasMCPTransportRejection(err error) bool {
+	found := false
+	visitMCPRPCErrors(err, func(rpcErr *mcpjsonrpc.Error) {
+		if rpcErr.Code == -32005 && strings.EqualFold(strings.TrimSpace(rpcErr.Message), "rejected by transport") {
+			found = true
+		}
+	})
+	return found
+}
+
+func visitMCPRPCErrors(err error, visit func(*mcpjsonrpc.Error)) {
+	if err == nil {
+		return
+	}
+	if rpcErr, ok := err.(*mcpjsonrpc.Error); ok && rpcErr != nil {
+		visit(rpcErr)
+	}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, child := range wrapped.Unwrap() {
+			visitMCPRPCErrors(child, visit)
+		}
+	case interface{ Unwrap() error }:
+		visitMCPRPCErrors(wrapped.Unwrap(), visit)
+	}
+}
+
+func (t *sdkSessionTransport) isStreamableHTTPNotFound(err error) bool {
+	return canonicalMCPRuntimeTransport(t.spec.Type) == "streamable-http" && isMCPHTTPNotFound(err)
 }
 
 func isTerminalSDKError(err error) bool {

@@ -18,7 +18,7 @@ func (t *sdkSessionTransport) call(ctx context.Context, method string, params an
 		return result, nil
 	}
 
-	if isExplicitMCPSessionMissing(err) || managed.session.ID() == "" && isMCPHTTPNotFound(err) {
+	if isExplicitMCPSessionMissing(err) || managed.session.ID() == "" && t.isStreamableHTTPNotFound(err) {
 		if managed.session.ID() == "" {
 			endpointErr := fmt.Errorf("MCP endpoint returned HTTP 404 without an established session: %w", err)
 			t.noteRuntimeError(managed, SessionErrorProtocol, endpointErr)

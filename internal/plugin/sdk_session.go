@@ -502,7 +502,7 @@ func (t *sdkSessionTransport) handleSessionEnd(managed *managedMCPSession, err e
 		return
 	}
 	t.current = nil
-	if managed.session.ID() == "" && (errors.Is(err, mcpsdk.ErrSessionMissing) || isMCPHTTPNotFound(err)) {
+	if managed.session.ID() == "" && (errors.Is(err, mcpsdk.ErrSessionMissing) || t.isStreamableHTTPNotFound(err)) {
 		t.state = SessionStateFailed
 		t.lastErrorKind = SessionErrorProtocol
 		t.lastError = t.safeErrorText(fmt.Errorf("MCP endpoint returned HTTP 404 without an established session: %w", err), "")
