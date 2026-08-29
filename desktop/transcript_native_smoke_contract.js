@@ -231,8 +231,13 @@
     setNativeTextareaValue(input, initialValue);
     input.focus();
     await waitFor(() => input.value === initialValue && input.getBoundingClientRect().height > 32, 10000);
+    await document.fonts.ready;
     await waitForStableTail(element, 2, 10000);
-    await waitForStableViewport(element, 4, 10000);
+    await waitForStableViewport(element, 12, 15000);
+    const initialDistance = element.scrollHeight - element.scrollTop - element.clientHeight;
+    if (element.dataset.scrollMode !== "tail-follow" || initialDistance > 4) {
+      throw new Error(`native composer did not start at a stable tail: ${describeTranscriptState(element)}`);
+    }
 
     const composer = state.composer;
     composer.enabled = true;
@@ -291,6 +296,14 @@
         Math.abs(sample.height - baseline.height) > 0.5 || sample.clientHeight !== baseline.clientHeight
       )).length;
       const finalDistance = element.scrollHeight - element.scrollTop - element.clientHeight;
+      const finalGeometry = {
+        top: element.scrollTop,
+        height: element.scrollHeight,
+        clientHeight: element.clientHeight,
+      };
+      const changedSamples = composer.samples.filter((sample) => (
+        Math.abs(sample.height - baseline.height) > 0.5 || sample.clientHeight !== baseline.clientHeight
+      ));
       composer.result = {
         passed: composer.samples.length >= 8
           && baseline.inputHeight > 32
@@ -304,7 +317,17 @@
         geometryChanges,
         finalDistance,
         inputHeight: baseline.inputHeight,
+        finalInputHeight: composer.input.getBoundingClientRect().height,
         finalValueMatches: composer.input.value === baseline.initialValue,
+        baseline: {
+          top: baseline.top,
+          height: baseline.height,
+          clientHeight: baseline.clientHeight,
+        },
+        finalGeometry,
+        changedSamples: changedSamples.length > 0
+          ? [changedSamples[0], changedSamples[changedSamples.length - 1]]
+          : [],
       };
       if (!composer.result.passed) {
         throw new Error(`native composer stability failed: ${JSON.stringify(composer.result)}`);
@@ -421,7 +444,6 @@
     // has to satisfy the stricter tail and geometry gates below before native
     // sampling starts.
     await waitForStableViewport(element, 2, 15000);
-    await runNativeComposer(element);
     state.phase = "loading-targeted-history";
     await loadHistoryRows(element, 400);
     // When the initial history window already meets the row minimum, no
@@ -437,10 +459,13 @@
     jumpBottom?.click();
     state.phase = "waiting-loaded-tail";
     await waitForStableTail(element, 2, 10000);
-    // Loaded WebView2 may continue cycling its estimate-only tail by one row;
-    // the manual-reader stability gate below remains strict and is the actual
-    // prerequisite for starting native input sampling.
-    await waitForStableViewport(element, 2, 10000);
+    // The initial tools page can keep settling its Virtuoso estimates after a
+    // couple of visually stable frames on a slower hosted WebView2. Run the
+    // composer regression only after the long loaded surface has held both
+    // its tail and geometry across a stricter painted-frame window, so the
+    // samples isolate keyboard-driven layout from first-load measurement.
+    await waitForStableViewport(element, 12, 15000);
+    await runNativeComposer(element);
     // Position through the product's indexed question navigator. Directly
     // assigning scrollTop while LAST is mounted lets Virtuoso's pending tail
     // range replace the requested history window on WKWebView.
