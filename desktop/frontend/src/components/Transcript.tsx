@@ -310,10 +310,10 @@ export function Transcript({
     virtuosoReadyRef.current = false;
   }, [resetScroll, revealSignal, tabId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!virtuosoReadyRef.current || !stick.current) return;
-    followGrowingTail("footer-resize");
-  }, [footerHeight, followGrowingTail, stick]);
+    scrollToBottom();
+  }, [footerHeight, scrollToBottom, stick]);
 
   const refreshGeometryEnvironment = useCallback((element: HTMLElement) => {
     const next = readTranscriptGeometryEnvironment(element);

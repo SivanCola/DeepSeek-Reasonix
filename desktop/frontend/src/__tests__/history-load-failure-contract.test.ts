@@ -18,8 +18,8 @@ assert.match(controller, /throw new Error\(t\("history\.failedLoadHistory"\)\)/,
 assert.match(controller, /retrySessionHistory/, "retry path is exported");
 assert.match(
   transcript,
-  /if \(!virtuosoReadyRef\.current \|\| !stick\.current\) return;\n    followGrowingTail\("footer-resize"\);\n  \}, \[footerHeight, followGrowingTail, stick\]\);/,
-  "a tail-owned footer resize is repaired during hydration without moving a manual reader",
+  /useLayoutEffect\(\(\) => \{\n    if \(!virtuosoReadyRef\.current \|\| !stick\.current\) return;\n    scrollToBottom\(\);\n  \}, \[footerHeight, scrollToBottom, stick\]\);/,
+  "a tail-owned footer resize uses the immediate and bounded bottom transaction before paint without moving a manual reader",
 );
 assert.match(
   transcript,
