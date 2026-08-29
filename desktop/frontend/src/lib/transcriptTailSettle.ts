@@ -29,6 +29,10 @@ export function transcriptTailShouldReaim(previousBottomHeight: number | null, c
   return currentHeight - previousBottomHeight >= TRANSCRIPT_TAIL_REARM_MIN_HEIGHT_PX;
 }
 
+export function transcriptTailIsStranded(mode: TranscriptScrollMode, distance: number, exhausted: boolean): boolean {
+  return exhausted && mode === "tail-follow" && distance > TRANSCRIPT_AT_BOTTOM_THRESHOLD_PX;
+}
+
 export type TranscriptTailSettle = {
   /** Native-extent tail write. Converges against real DOM geometry and avoids
    *  scrollToIndex("LAST") retries against a stale Virtuoso size tree (#9028). */
@@ -59,6 +63,7 @@ export function createTranscriptTailSettle({
   ownershipEpochRef,
   geometryRevisionRef,
   layoutTransientRef,
+  onStranded,
 }: {
   writer: TranscriptScrollWriter;
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -67,6 +72,8 @@ export function createTranscriptTailSettle({
   ownershipEpochRef: RefObject<number>;
   geometryRevisionRef: RefObject<number>;
   layoutTransientRef: RefObject<boolean>;
+  /** Releases exhausted tail ownership so the jump-bottom recovery stays reachable. */
+  onStranded?: () => void;
 }): TranscriptTailSettle {
   let tailSettleFrame: number | null = null;
   let tailSettleProgress: {
@@ -82,6 +89,7 @@ export function createTranscriptTailSettle({
   let lastBottomViewport: number | null = null;
   let tailPinned = false;
   let ineffectivePin = false;
+  let settleExhausted = false;
   let pendingPin: { top: number; height: number; previousTop: number } | null = null;
   let lastPinAttempt: { element: HTMLDivElement; top: number; height: number; clientHeight: number; previousTop: number } | null = null;
   // 0=fresh, 1=awaiting LAST commit, 2=LAST committed, 3=quiet retry spent.
@@ -169,6 +177,7 @@ export function createTranscriptTailSettle({
     lastBottomViewport = null;
     tailPinned = false;
     ineffectivePin = false;
+    settleExhausted = false;
     pendingPin = null;
     fallbackState = 0;
     if (jumpTailTimer !== null) window.clearTimeout(jumpTailTimer);
@@ -187,11 +196,16 @@ export function createTranscriptTailSettle({
       if (tailSettleFrame !== null || jumpTailTimer !== null || jumpTailFollowupTimer !== null) return;
       layoutTransientRef.current = false;
       tailSettleProgress = null;
-      if (ineffectivePin && modeRef.current === "tail-follow" && fallbackState !== 1 && fallbackState !== 3) {
+      if (ineffectivePin && modeRef.current === "tail-follow" && fallbackState !== 3) {
         fallbackState = 3;
         ineffectivePin = false;
         schedule(false, "layout-height-changed");
+        return;
       }
+      const element = scrollRef.current;
+      const exhausted = settleExhausted || (ineffectivePin && fallbackState === 3);
+      settleExhausted = false;
+      if (element && transcriptTailIsStranded(modeRef.current, nativeTranscriptDistanceFromBottom(element), exhausted)) onStranded?.();
     }, LAYOUT_TRANSIENT_IDLE_MS);
   };
 
@@ -293,6 +307,7 @@ export function createTranscriptTailSettle({
       return;
     }
     const generation = generationRef.current;
+    settleExhausted = false;
     const tick = () => {
       tailSettleFrame = null;
       if (
@@ -368,6 +383,7 @@ export function createTranscriptTailSettle({
       }
       const attempts = (previous?.attempts ?? 0) + 1;
       if (transcriptTailSettleBudgetExhausted(attempts)) {
+        settleExhausted = true;
         tailSettleProgress = null;
         armLayoutTransientIdle();
         return;
@@ -380,7 +396,10 @@ export function createTranscriptTailSettle({
         : undefined);
       tailSettleProgress = { distance, stagnantFrames, offBottomFrames, attempts };
       if (stagnantFrames < TAIL_STAGNANT_FRAME_LIMIT && !transcriptTailSettleBudgetExhausted(attempts)) tailSettleFrame = requestAnimationFrame(tick);
-      else armLayoutTransientIdle();
+      else {
+        settleExhausted = true;
+        armLayoutTransientIdle();
+      }
     };
     tailSettleFrame = requestAnimationFrame(tick);
   };
