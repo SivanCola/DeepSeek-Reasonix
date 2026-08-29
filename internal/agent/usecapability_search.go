@@ -182,7 +182,7 @@ func (t *UseCapabilityTool) mcpSearchSchemaIndex() map[string]plugin.CachedTool 
 		}
 	}
 	for _, spec := range t.specs {
-		if cached, ok := plugin.LoadCachedSchemaForSpec(spec); ok {
+		if cached, ok := plugin.LoadCachedSchemaForSpecProfile(spec, t.hostProfileFor()); ok {
 			add(spec.Name, cached.Tools)
 		}
 	}
@@ -277,7 +277,7 @@ func (t *UseCapabilityTool) localMCPTools(server string) ([]plugin.CachedTool, s
 		}
 	}
 	if spec, ok := t.specFor(server); ok {
-		if cached, ok := plugin.LoadCachedSchemaForSpec(spec); ok && len(cached.Tools) > 0 {
+		if cached, ok := plugin.LoadCachedSchemaForSpecProfile(spec, t.hostProfileFor()); ok && len(cached.Tools) > 0 {
 			return cloneCachedTools(cached.Tools), "disk_cache"
 		}
 	}
