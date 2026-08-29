@@ -288,8 +288,8 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) error {
 			a.recordInterruptedDisplay(text, reasoning, partialCalls, true, state.workDurationMs())
 			// A broken provider stream can otherwise look like a silent hang
 			// followed only by the generic interrupted-turn notice (#9560).
-			if msg := streamInterruptNotice(err); msg != "" {
-				a.svc.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: msg})
+			if code, msg := streamInterruptNotice(err); msg != "" {
+				a.svc.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Code: code, Text: msg})
 			}
 			return err
 		}

@@ -1054,6 +1054,9 @@ func TestRunNotifiesWhenStreamRetriesExhausted(t *testing.T) {
 	for _, e := range sink.kinds(event.Notice) {
 		if e.Level == event.LevelWarn && strings.Contains(e.Text, "idle timeout") {
 			sawExplanation = true
+			if e.Code != event.NoticeCodeStreamInterruptedIdleTimeout {
+				t.Fatalf("stream interruption notice code = %q", e.Code)
+			}
 			if strings.Contains(e.Text, "gw.invalid") || strings.Contains(e.Text, "dial tcp") {
 				t.Fatalf("notice leaks raw transport error text: %q", e.Text)
 			}

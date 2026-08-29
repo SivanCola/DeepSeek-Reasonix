@@ -2714,4 +2714,9 @@ func TestWithProbeDirectHostMirrorsProviderNoProxy(t *testing.T) {
 	if slices.Contains(direct.DirectHosts, "gw.example.internal") {
 		t.Fatalf("provider without no_proxy must stay proxied, got DirectHosts %v", direct.DirectHosts)
 	}
+
+	ipv6 := withProbeDirectHost(auto, "https://[2001:db8::1]:8443/v1", true)
+	if !slices.Contains(ipv6.DirectHosts, "2001:db8::1") {
+		t.Fatalf("IPv6 provider host = %v, want brackets and port removed", ipv6.DirectHosts)
+	}
 }

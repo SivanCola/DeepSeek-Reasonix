@@ -24,7 +24,7 @@ function noticeTexts(state: ReducerState): Array<{ level: string; text: string }
 }
 
 function interruptedTurnWithDiscard(reason?: string): ReducerState {
-  let state = reducer(initialState, { type: "user", text: "hello", seq: 0 });
+  let state = reducer(initialState, { type: "user", text: "hello", seq: 0, submissionId: "stream-reason" });
   state = reducer(state, { type: "event", e: { kind: "turn_started" } });
   state = reducer(state, { type: "event", e: { kind: "stream_attempt", streamAttempt: { id: "sa-1", action: "begin", attempt: 1, max: 6 } } });
   if (reason) {
@@ -58,16 +58,33 @@ console.log("\ninterrupted turn surfaces the last stream failure reason (#9560)"
 
 {
   // A discard from an earlier turn must not leak into a later interrupted turn.
-  let state = reducer(initialState, { type: "user", text: "one", seq: 0 });
+  let state = reducer(initialState, { type: "user", text: "one", seq: 0, submissionId: "stream-one" });
   state = reducer(state, { type: "event", e: { kind: "turn_started" } });
   state = reducer(state, { type: "event", e: { kind: "stream_attempt", streamAttempt: { id: "sa-1", action: "begin", attempt: 1, max: 6 } } });
   state = reducer(state, { type: "event", e: { kind: "stream_attempt", streamAttempt: { id: "sa-1", action: "discard", attempt: 1, max: 6, reason: "idle_timeout" } } });
   state = reducer(state, { type: "event", e: { kind: "turn_done", status: "completed" } });
-  state = reducer(state, { type: "user", text: "two", seq: 5 });
+  state = reducer(state, { type: "user", text: "two", seq: 5, submissionId: "stream-two" });
   state = reducer(state, { type: "event", e: { kind: "turn_started" } });
   state = reducer(state, { type: "event", e: { kind: "turn_done", status: "interrupted" } });
   const notices = noticeTexts(state).filter((n) => n.level === "warn" && n.text.includes("idle timeout"));
   ok(notices.length === 0, "stale reason from a previous turn is cleared on turn_started", notices);
+}
+
+{
+  // The agent emits one safe reason before the controller closes the turn with
+  // its raw error. Desktop must keep the safe notice without adding a duplicate.
+  let state = reducer(initialState, { type: "user", text: "hello", seq: 0, submissionId: "stream-terminal" });
+  state = reducer(state, { type: "event", e: { kind: "turn_started" } });
+  state = reducer(state, { type: "event", e: {
+    kind: "notice",
+    level: "warn",
+    code: "stream_interrupted_idle_timeout",
+    text: "model stream stalled: no data arrived before the idle timeout; check the provider gateway or network proxy",
+  } });
+  state = reducer(state, { type: "event", e: { kind: "turn_done", status: "failed", err: "raw upstream transport failure" } });
+  const notices = noticeTexts(state);
+  ok(notices.filter((n) => n.level === "warn").length === 1, "terminal stream failure renders one warning", notices);
+  ok(!notices.some((n) => n.text.includes("raw upstream")), "duplicate raw turn error is suppressed", notices);
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);

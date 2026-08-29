@@ -534,10 +534,14 @@ func providerManagerItems(s *providerSetupSession) []menuItem {
 func addProviderToSession(s *providerSetupSession, anthropic bool) bool {
 	var result providerPromptResult
 	var err error
+	var proxy netclient.ProxySpec
+	if s != nil && s.cfg != nil {
+		proxy = s.cfg.NetworkProxySpec()
+	}
 	if anthropic {
-		result, err = promptAnthropicProvider()
+		result, err = promptAnthropicProvider(proxy)
 	} else {
-		result, err = promptCustomProvider()
+		result, err = promptCustomProvider(proxy)
 	}
 	if err != nil {
 		if !errors.Is(err, errCancelled) {

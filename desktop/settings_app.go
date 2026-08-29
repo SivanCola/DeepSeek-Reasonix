@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -3009,13 +3008,13 @@ func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
 	return nonNil(chatProviderModels(models)), nil
 }
 
-// networkProxySpecForRoot resolves the proxy policy chat requests use for this
-// workspace. It rides the same credential-free read-only load as the Settings
-// view so probing never pins credentials into the process env. A missing or
-// unreadable config falls back to the default policy rather than blocking
-// model discovery.
+// networkProxySpecForRoot resolves the effective proxy policy chat requests use
+// for this workspace. The load includes project reasonix.toml and project .env
+// expansion but never pins provider credentials into the process environment.
+// A missing or unreadable config falls back to the default policy rather than
+// blocking model discovery.
 func (a *App) networkProxySpecForRoot(root string) netclient.ProxySpec {
-	cfg, _, err := a.loadDesktopUserConfigForViewForRoot(root)
+	cfg, err := config.LoadForRootWithoutCredentialsReadOnly(root)
 	if err != nil || cfg == nil {
 		return netclient.ProxySpec{}
 	}
@@ -3030,13 +3029,11 @@ func withProbeDirectHost(spec netclient.ProxySpec, baseURL string, noProxy bool)
 	if !noProxy || netclient.NormalizeMode(spec.Mode) == netclient.ModeCustom {
 		return spec
 	}
-	host := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(baseURL), "https://"), "http://")
-	if i := strings.IndexAny(host, "/"); i >= 0 {
-		host = host[:i]
+	u, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return spec
 	}
-	if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
-		host = h
-	}
+	host := u.Hostname()
 	if host == "" || slices.Contains(spec.DirectHosts, host) {
 		return spec
 	}

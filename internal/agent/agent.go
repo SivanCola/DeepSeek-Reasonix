@@ -23,6 +23,7 @@ import (
 	"reasonix/internal/extension/dispatch"
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
+	"reasonix/internal/mcpinteraction"
 	"reasonix/internal/memory"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/plancontract"
@@ -541,6 +542,10 @@ func (a *Agent) withTurnPreferences(input string) string {
 // SetAsker installs the asker the `ask` tool uses to question the user.
 // Interactive frontends wire one in; headless runs leave it nil.
 func (a *Agent) SetAsker(as Asker) { a.svc.asker = as }
+
+// SetInteractionBroker installs the broker that carries MCP server-initiated
+// elicitations to the user. Headless runs leave it nil so requests cancel.
+func (a *Agent) SetInteractionBroker(b mcpinteraction.Broker) { a.svc.interactionBroker = b }
 
 // SetMemoryQueue installs the sink the remember/forget tools use to apply a
 // memory change in the current session. The controller wires itself in.
@@ -2845,15 +2850,15 @@ func finishReasonMessage(u *provider.Usage) (string, bool) {
 // terminal, in words a user can act on. Only the closed StreamInterrupt* enum
 // is rendered — the wrapped transport error can carry URLs or gateway bodies
 // and must not reach the transcript (#9560).
-func streamInterruptNotice(err error) string {
+func streamInterruptNotice(err error) (code, text string) {
 	switch provider.StreamInterruptReason(err) {
 	case provider.StreamInterruptIdleTimeout:
-		return "model stream stalled: no data arrived before the idle timeout; check the provider gateway or network proxy"
+		return event.NoticeCodeStreamInterruptedIdleTimeout, "model stream stalled: no data arrived before the idle timeout; check the provider gateway or network proxy"
 	case provider.StreamInterruptPrematureEOF:
-		return "model stream ended before completion; the provider gateway or network proxy dropped the connection"
+		return event.NoticeCodeStreamInterruptedPrematureEOF, "model stream ended before completion; the provider gateway or network proxy dropped the connection"
 	case provider.StreamInterruptConnectionReset:
-		return "model connection was reset; check the provider gateway or network proxy"
+		return event.NoticeCodeStreamInterruptedConnectionReset, "model connection was reset; check the provider gateway or network proxy"
 	default:
-		return ""
+		return "", ""
 	}
 }
