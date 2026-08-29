@@ -15,7 +15,7 @@
 // used to be spelled out at each call site, which is exactly how three of the
 // five sites ended up carrying them and two did not.
 //
-// Content filters (filter.<driver>.clean/smudge) are selected per driver name
+// Content filters (filter.<driver>.clean/process) are selected per driver name
 // through .gitattributes, so diffs neutralize every driver defined in the
 // repository's local .git/config instead (see filterNeutralizingConfig).
 // include.path chains and core.sshCommand remain the user's own to vet.
@@ -81,8 +81,9 @@ func argsFor(goos, dir string, extraConfig []string, args ...string) []string {
 // command the repository's local .git/config defines, but only when args runs a
 // diff — the one gitcmd subcommand that invokes clean filters on working-tree
 // content. A diff compares the file's raw bytes, so an emptied filter is the
-// correct rendering, not a degraded one. Emptying clean alone would make a
-// filter marked required fail the diff outright, so required is forced off too.
+// correct rendering, not a degraded one. Git prefers a long-running process
+// filter over clean when one is configured, so both command forms are emptied;
+// required is forced off so a disabled required filter does not fail the diff.
 func filterNeutralizingConfig(dir string, args []string) []string {
 	sub, cDir := gitSubcommand(args)
 	if sub != "diff" {
@@ -95,10 +96,11 @@ func filterNeutralizingConfig(dir string, args []string) []string {
 	if len(drivers) == 0 {
 		return nil
 	}
-	out := make([]string, 0, 2*len(drivers))
+	out := make([]string, 0, 3*len(drivers))
 	for _, name := range drivers {
 		out = append(out,
 			"filter."+name+".clean=",
+			"filter."+name+".process=",
 			"filter."+name+".required=false",
 		)
 	}
@@ -140,62 +142,77 @@ func gitSubcommand(args []string) (sub, cDir string) {
 // config yields no drivers (nothing to neutralize). User and system config are
 // deliberately not read — those are the user's own choices.
 func localFilterDrivers(dir string) []string {
-	cfgPath := localGitConfigPath(dir)
-	if cfgPath == "" {
-		return nil
-	}
-	f, err := os.Open(cfgPath)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
-
 	var drivers []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "[filter ") {
+	for _, cfgPath := range localGitConfigPaths(dir) {
+		f, err := os.Open(cfgPath)
+		if err != nil {
 			continue
 		}
-		name := strings.TrimSuffix(strings.TrimPrefix(line, "[filter "), "]")
-		name = strings.Trim(strings.TrimSpace(name), `"`)
-		if name == "" || slices.Contains(drivers, name) {
-			continue
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if len(line) < 2 || line[0] != '[' || line[len(line)-1] != ']' {
+				continue
+			}
+			section := strings.TrimSpace(line[1 : len(line)-1])
+			i := strings.IndexAny(section, " \t")
+			if i < 0 || !strings.EqualFold(section[:i], "filter") {
+				continue
+			}
+			name := strings.Trim(strings.TrimSpace(section[i:]), `"`)
+			if name == "" || slices.Contains(drivers, name) {
+				continue
+			}
+			drivers = append(drivers, name)
 		}
-		drivers = append(drivers, name)
+		_ = f.Close()
 	}
 	return drivers
 }
 
-// localGitConfigPath resolves the repository-local config for a working tree at
-// dir: .git/config when .git is a directory, or <gitdir>/config when .git is a
-// linked worktree file ("gitdir: <path>", possibly relative to dir).
-func localGitConfigPath(dir string) string {
+// localGitConfigPaths resolves the repository-local configs for a working tree.
+// Linked worktrees inherit <commondir>/config and may add
+// <gitdir>/config.worktree when extensions.worktreeConfig is enabled.
+func localGitConfigPaths(dir string) []string {
 	if dir == "" {
 		dir = "."
 	}
 	dotGit := filepath.Join(dir, ".git")
 	info, err := os.Stat(dotGit)
 	if err != nil {
-		return ""
+		return nil
 	}
-	if info.IsDir() {
-		return filepath.Join(dotGit, "config")
+	gitdir := dotGit
+	if !info.IsDir() {
+		data, readErr := os.ReadFile(dotGit)
+		if readErr != nil {
+			return nil
+		}
+		line := strings.TrimSpace(string(data))
+		rest, ok := strings.CutPrefix(line, "gitdir:")
+		if !ok {
+			return nil
+		}
+		gitdir = strings.TrimSpace(rest)
+		if !filepath.IsAbs(gitdir) {
+			gitdir = filepath.Join(dir, gitdir)
+		}
 	}
-	data, err := os.ReadFile(dotGit)
-	if err != nil {
-		return ""
+	gitdir = filepath.Clean(gitdir)
+	commonDir := gitdir
+	if data, readErr := os.ReadFile(filepath.Join(gitdir, "commondir")); readErr == nil {
+		commonDir = strings.TrimSpace(string(data))
+		if !filepath.IsAbs(commonDir) {
+			commonDir = filepath.Join(gitdir, commonDir)
+		}
+		commonDir = filepath.Clean(commonDir)
 	}
-	line := strings.TrimSpace(string(data))
-	rest, ok := strings.CutPrefix(line, "gitdir:")
-	if !ok {
-		return ""
+	paths := []string{filepath.Join(commonDir, "config")}
+	worktreeConfig := filepath.Join(gitdir, "config.worktree")
+	if worktreeConfig != paths[0] {
+		paths = append(paths, worktreeConfig)
 	}
-	gitdir := strings.TrimSpace(rest)
-	if !filepath.IsAbs(gitdir) {
-		gitdir = filepath.Join(dir, gitdir)
-	}
-	return filepath.Join(gitdir, "config")
+	return paths
 }
 
 // hardenSubcommand adds the flags that disable repository-configured programs

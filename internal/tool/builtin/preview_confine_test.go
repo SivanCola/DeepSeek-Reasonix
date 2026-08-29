@@ -22,31 +22,35 @@ func TestPreviewRejectsPathsOutsideWriteRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	guard := NewSessionDataGuard(workspace, nil)
-	tools := ConfineWriters([]string{workspace}, guard, ManagedConfigPaths{})
-
-	previews := map[string]tool.Previewer{}
-	for _, tl := range tools {
-		if p, ok := tl.(tool.Previewer); ok {
-			previews[tl.Name()] = p
-		}
-	}
-
 	cases := map[string]map[string]any{
-		"write_file": {"path": secret, "content": "x"},
-		"edit_file":  {"path": secret, "old_string": "SECRET", "new_string": "PWNED"},
-		"multi_edit": {"path": secret, "edits": []map[string]any{{"old_string": "SECRET", "new_string": "PWNED"}}},
+		"write_file":    {"path": secret, "content": "x"},
+		"edit_file":     {"path": secret, "old_string": "SECRET", "new_string": "PWNED"},
+		"multi_edit":    {"path": secret, "edits": []map[string]any{{"old_string": "SECRET", "new_string": "PWNED"}}},
+		"delete_range":  {"path": secret, "start_anchor": "SECRET MATERIAL", "end_anchor": "SECRET MATERIAL"},
+		"delete_symbol": {"path": secret, "name": "secret"},
 	}
-	for name, args := range cases {
-		p, ok := previews[name]
-		if !ok {
-			t.Fatalf("%s does not implement tool.Previewer", name)
+	for _, managed := range []ManagedConfigPaths{
+		{},
+		NewManagedConfigPaths([]string{secret}),
+	} {
+		previews := map[string]tool.Previewer{}
+		for _, tl := range ConfineWriters([]string{workspace}, guard, managed) {
+			if p, ok := tl.(tool.Previewer); ok {
+				previews[tl.Name()] = p
+			}
 		}
-		raw, err := json.Marshal(args)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := p.Preview(context.Background(), raw); err == nil {
-			t.Fatalf("%s previewed an out-of-roots path without error", name)
+		for name, args := range cases {
+			p, ok := previews[name]
+			if !ok {
+				t.Fatalf("%s does not implement tool.Previewer", name)
+			}
+			raw, err := json.Marshal(args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := p.Preview(context.Background(), raw); err == nil {
+				t.Fatalf("%s previewed an out-of-roots path without error", name)
+			}
 		}
 	}
 }

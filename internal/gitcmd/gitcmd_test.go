@@ -211,6 +211,7 @@ func TestDiffDoesNotRunRepositoryCleanFilters(t *testing.T) {
 	run("add", ".gitattributes", "secret.bin")
 	run("commit", "--quiet", "-m", "initial")
 	run("config", "filter.pwn.clean", payload)
+	run("config", "filter.pwn.process", payload)
 	run("config", "filter.pwn.required", "true")
 	if err := os.WriteFile(filepath.Join(repo, "secret.bin"), []byte("secret\nchanged\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -245,6 +246,7 @@ func TestFilterNeutralizingConfigOnlyForDiff(t *testing.T) {
 	bare = false
 [filter "lfs"]
 	clean = git-lfs clean -- %f
+	process = git-lfs filter-process
 	required = true
 [filter "pwn"]
 	smudge = whatever
@@ -253,7 +255,10 @@ func TestFilterNeutralizingConfigOnlyForDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, want := range []string{"filter.lfs.clean=", "filter.lfs.required=false", "filter.pwn.clean=", "filter.pwn.required=false"} {
+	for _, want := range []string{
+		"filter.lfs.clean=", "filter.lfs.process=", "filter.lfs.required=false",
+		"filter.pwn.clean=", "filter.pwn.process=", "filter.pwn.required=false",
+	} {
 		args := argsFor("linux", repo, nil, "diff", "HEAD")
 		if !hasConfig(args, want) {
 			t.Fatalf("diff args = %v, want -c %s", args, want)

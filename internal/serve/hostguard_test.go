@@ -106,6 +106,22 @@ func TestHostGuardExemptsBehindProxy(t *testing.T) {
 	}
 }
 
+func TestHostGuardDoesNotExemptUnauthenticatedProxyMode(t *testing.T) {
+	s := New(control.New(control.Options{}), NewBroadcaster(), config.ServeConfig{
+		AuthMode:    "none",
+		BehindProxy: true,
+	})
+	s.setListenAddr("127.0.0.1:8787")
+
+	req := httptest.NewRequest(http.MethodGet, "/history", nil)
+	req.Host = "evil.example:8787"
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("GET /history = %d, want %d", rec.Code, http.StatusMisdirectedRequest)
+	}
+}
+
 func TestSetListenAddrBracketedIPv6(t *testing.T) {
 	s := New(control.New(control.Options{}), NewBroadcaster(), config.ServeConfig{})
 	s.setListenAddr("[::1]:8787")

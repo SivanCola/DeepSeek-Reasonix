@@ -25,9 +25,10 @@ func (s *Server) setListenAddr(addr string) {
 	}
 	host = strings.Trim(host, "[]")
 	s.hostGate = hostGateState{
-		behindProxy: s.auth != nil && s.auth.behindProxy,
-		listenHost:  strings.ToLower(host),
-		allowAny:    isUnspecifiedHost(host),
+		behindProxy: s.auth != nil && s.auth.behindProxy &&
+			(s.auth.mode == authToken || s.auth.mode == authPassword),
+		listenHost: strings.ToLower(host),
+		allowAny:   isUnspecifiedHost(host),
 	}
 }
 
