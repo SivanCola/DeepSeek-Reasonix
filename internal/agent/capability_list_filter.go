@@ -20,6 +20,13 @@ func (t *restrictedCapabilityProxy) bindMCPListObserver(observer func(mcpListObs
 	}
 }
 
+func (t *restrictedCapabilityProxy) activateMCPListObserver() func() {
+	if activator, ok := t.Tool.(mcpListObserverActivator); ok {
+		return activator.activateMCPListObserver()
+	}
+	return func() {}
+}
+
 // cloneCapabilityFrontend creates an Agent-owned frontend whenever binding a
 // session reader could otherwise mutate a parent Agent's tool. Unknown tools
 // remain shareable only when they cannot participate in session binding.

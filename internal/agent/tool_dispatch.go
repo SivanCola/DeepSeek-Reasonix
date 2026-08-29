@@ -58,6 +58,10 @@ func isTransientToolError(err error) bool {
 	if err == nil {
 		return false
 	}
+	var classified interface{ RetryableToolError() bool }
+	if errors.As(err, &classified) {
+		return classified.RetryableToolError()
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}

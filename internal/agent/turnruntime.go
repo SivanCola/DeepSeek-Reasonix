@@ -76,6 +76,7 @@ type turnRuntime struct {
 	// succeeding over and over leaves no error for a failure-only breaker.
 	repeatSuccessCounts map[string]int
 	loop                turnLoopState
+	softBudgetMutation  bool
 
 	// constraints and engine are frozen at the start of the Run.
 	constraints runtimepolicy.Constraints

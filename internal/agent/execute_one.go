@@ -51,11 +51,6 @@ func (a *Agent) executeOne(ctx context.Context, turn *turnRuntime, call provider
 	if blocked, early := a.parseToolCall(ctx, plan); early {
 		return blocked
 	}
-	// tool.before: extensions rule on the parsed call before any policy orpermission check.
-	// Avalidreplacementisre-parsed so every later stagesees the call that will actually execute.
-	if blocked, early := a.interceptToolBefore(ctx, plan); early {
-		return blocked
-	}
 	if blocked, early := a.resolveToolPolicy(ctx, turn, plan); early {
 		return blocked
 	}
@@ -141,6 +136,29 @@ func (a *Agent) resolveToolPolicy(ctx context.Context, turn *turnRuntime, plan *
 		return blocked, true
 	}
 	if blocked, early := a.applyResolvedTargetGates(plan); early {
+		return blocked, true
+	}
+	// Resolve and validate before invoking the extension sidecar. A replacement
+	// is resolved and validated again before permission, hooks, leases, process
+	// startup, or tools/call.
+	originalName, originalArgs := plan.call.Name, plan.call.Arguments
+	if blocked, early := a.interceptToolBefore(ctx, plan); early {
+		return blocked, true
+	}
+	if plan.call.Name != originalName || plan.call.Arguments != originalArgs {
+		replacement := plan.call
+		*plan = toolCallPlan{call: replacement}
+		if blocked, early := a.parseToolCall(ctx, plan); early {
+			return blocked, true
+		}
+		if blocked, early := a.applyPlanModeAndProxy(ctx, plan); early {
+			return blocked, true
+		}
+		if blocked, early := a.applyResolvedTargetGates(plan); early {
+			return blocked, true
+		}
+	}
+	if blocked, early := a.commitResolvedSkip(plan); early {
 		return blocked, true
 	}
 	if blocked, early := a.applyContextualToolGate(ctx, plan); early {
@@ -273,7 +291,10 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 			plan.permName = rc.TargetName
 			plan.evidenceName = rc.TargetName
 		}
-		if len(rc.Args) > 0 {
+		// An unavailable resolution has no concrete target contract. Keep the
+		// original proxy arguments so host validation checks use_capability itself
+		// and the deterministic disabled/unregistered reason remains intact.
+		if len(rc.Args) > 0 && !rc.Unavailable {
 			plan.permArgs = rc.Args
 			plan.evidenceArgs = rc.Args
 			plan.execArgs = rc.Args
@@ -288,17 +309,6 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 		plan.classifyEffects()
 		if outcome, blocked := a.readOnlyExecutionBlock(t, &rc); blocked {
 			return blockedShellOutcome(outcome, plan), true
-		}
-		if rc.Commit != nil {
-			if err := rc.Commit(); err != nil {
-				return toolOutcome{
-					output: fmt.Sprintf("error: %v", err),
-					errMsg: firstLine(err.Error()),
-				}, true
-			}
-		}
-		if rc.SkipExecute {
-			return a.resolvedSkipOutcome(plan, rc), true
 		}
 	} else if outcome, blocked := a.readOnlyExecutionBlock(t, nil); blocked {
 		return blockedShellOutcome(outcome, plan), true
@@ -334,6 +344,25 @@ func (a *Agent) applyPlanModeAndProxy(ctx context.Context, plan *toolCallPlan) (
 			blocked: true,
 			errMsg:  "blocked: MCP target is unavailable during planning",
 		}, true
+	}
+	return toolOutcome{}, false
+}
+
+// commitResolvedSkip applies deferred proxy bookkeeping only after the
+// validated call has passed tool.before. Discovery and decline actions then
+// finish locally without entering permission, hook, lease, or Execute paths.
+func (a *Agent) commitResolvedSkip(plan *toolCallPlan) (toolOutcome, bool) {
+	if plan == nil || plan.resolvedMeta == nil {
+		return toolOutcome{}, false
+	}
+	resolved := plan.resolved
+	if resolved.Commit != nil {
+		if err := resolved.Commit(); err != nil {
+			return toolOutcome{output: fmt.Sprintf("error: %v", err), errMsg: firstLine(err.Error())}, true
+		}
+	}
+	if resolved.SkipExecute {
+		return a.resolvedSkipOutcome(plan, resolved), true
 	}
 	return toolOutcome{}, false
 }
@@ -634,14 +663,12 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	if a.plannerMCPExecution && isMCPExecutionTarget(runTool, permName) && mcpServerAuthorized(runTool) && !mcpDestructiveHint(runTool) {
 		cctx = tool.WithNonDestructiveMCPExecutionIntent(cctx)
 	}
+	if a.capabilityAudit != nil {
+		cctx = tool.WithRemoteDispatchObserver(cctx, a.capabilityAudit.RecordRemoteDispatch)
+	}
 	plan.cctx = cctx
 	var execution *tool.ShellExecution
 	result, images, execution, err = a.dispatchResolvedTool(cctx, plan)
-	if err == nil && a.capabilityAudit != nil {
-		if _, mcp := plan.execTool.(tool.MCPMetadata); mcp {
-			a.capabilityAudit.RecordRemoteDispatch()
-		}
-	}
 	// tool.after: extensions rule on the executed result (success or error)
 	// before evidence, hooks, and recovery observation, so every downstreamconsumer sees the final
 	// (possiblyreplaced) outcome.

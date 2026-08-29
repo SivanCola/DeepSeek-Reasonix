@@ -24,13 +24,6 @@ func (a *Agent) applyArgumentValidation(plan *toolCallPlan) (toolOutcome, bool) 
 	if plan == nil || plan.execTool == nil {
 		return toolOutcome{}, false
 	}
-	_, conditional := plan.execTool.(tool.ArgumentValidator)
-	_, mcp := plan.execTool.(tool.MCPMetadata)
-	// Direct built-ins keep their own parsers. Validate proxy, MCP, and
-	// conditional tools here so a generic outer schema cannot hide the target.
-	if !conditional && !mcp && plan.resolved.TargetName == "" {
-		return toolOutcome{}, false
-	}
 	normalized := tool.NormalizeArguments(plan.execArgs)
 	plan.execArgs = normalized
 	plan.permArgs = normalized

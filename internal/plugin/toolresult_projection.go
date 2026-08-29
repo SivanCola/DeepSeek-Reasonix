@@ -10,6 +10,20 @@ import (
 	"unicode/utf8"
 )
 
+// mcpApplicationError is a successful tools/call response whose MCP isError
+// flag is set. It is deterministic application feedback, not a transport
+// failure, so the agent must never retry it merely because its human-readable
+// message contains words such as "timeout" or "unavailable".
+type mcpApplicationError struct {
+	message string
+}
+
+func (e *mcpApplicationError) Error() string { return e.message }
+
+// RetryableToolError is consumed by the agent retry classifier without
+// creating a plugin dependency in the tool package.
+func (*mcpApplicationError) RetryableToolError() bool { return false }
+
 // Rich MCP content is additive to the ordinary text projection. Bound it
 // separately so structured data and embedded resources cannot unexpectedly
 // consume an entire model context or smuggle large inline binary payloads into
@@ -149,7 +163,7 @@ func parseToolResultProjection(res json.RawMessage, includeRich bool) (string, [
 	}
 	text := sb.String()
 	if out.IsError {
-		return text, images, fmt.Errorf("plugin tool reported error: %s", text)
+		return text, images, &mcpApplicationError{message: fmt.Sprintf("plugin tool reported error: %s", text)}
 	}
 	return text, images, nil
 }

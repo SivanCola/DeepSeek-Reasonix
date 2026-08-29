@@ -57,6 +57,11 @@ type fixedErrorTool struct {
 	calls atomic.Int32
 }
 
+type deterministicApplicationError string
+
+func (e deterministicApplicationError) Error() string          { return string(e) }
+func (deterministicApplicationError) RetryableToolError() bool { return false }
+
 func (t *fixedErrorTool) Name() string            { return "read_file" }
 func (t *fixedErrorTool) Description() string     { return "" }
 func (t *fixedErrorTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
@@ -75,6 +80,7 @@ func TestDispatchResolvedToolNeverRetriesCancellationOrAmbiguousDispatch(t *test
 		{name: "deadline", err: context.DeadlineExceeded},
 		{name: "may have completed", err: errors.New("connection reset after dispatch; execution may have completed and was not retried")},
 		{name: "unknown result", err: errors.New("connection closed after dispatch; execution result is unknown")},
+		{name: "typed application unavailable", err: deterministicApplicationError("resource unavailable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			target := &fixedErrorTool{err: tc.err}

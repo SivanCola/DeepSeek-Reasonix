@@ -37,7 +37,9 @@ type MCPCapabilityRuntime struct {
 	servers    map[string]mcpRuntimeServer
 	gates      mcpServerGates
 	// shared connection observation across all frontends on this session.
-	state *mcpProxySharedState
+	state       *mcpProxySharedState
+	frontendsMu sync.RWMutex
+	frontends   map[*UseCapabilityTool]int
 }
 
 type mcpRuntimeServer struct {
@@ -76,12 +78,13 @@ func (t *UseCapabilityTool) hostProfileFor() plugin.HostProfile {
 // on-demand MCP child process lifetimes; specs must be the boot-converted specs.
 func NewMCPCapabilityRuntime(lifeCtx context.Context, host *plugin.Host, specs []plugin.Spec, reg *tool.Registry, catalog func() capability.Catalog) *MCPCapabilityRuntime {
 	r := &MCPCapabilityRuntime{
-		lifeCtx:  lifeCtx,
-		host:     host,
-		registry: reg,
-		catalog:  catalog,
-		servers:  map[string]mcpRuntimeServer{},
-		state:    &mcpProxySharedState{connected: map[string]bool{}},
+		lifeCtx:   lifeCtx,
+		host:      host,
+		registry:  reg,
+		catalog:   catalog,
+		servers:   map[string]mcpRuntimeServer{},
+		state:     &mcpProxySharedState{connected: map[string]bool{}},
+		frontends: map[*UseCapabilityTool]int{},
 	}
 	r.ConfigureServers(nil, specs, nil)
 	if host != nil {
@@ -375,7 +378,7 @@ func (r *MCPCapabilityRuntime) NewFrontend(ledger *capability.Ledger, audit *cap
 	if r == nil {
 		return NewUseCapabilityTool(context.Background(), nil, nil, nil, ledger, audit, nil)
 	}
-	return &UseCapabilityTool{
+	frontend := &UseCapabilityTool{
 		host:     r.host,
 		lifeCtx:  r.lifeCtx,
 		runtime:  r,
@@ -384,6 +387,56 @@ func (r *MCPCapabilityRuntime) NewFrontend(ledger *capability.Ledger, audit *cap
 		audit:    audit,
 		catalog:  r.catalog,
 		state:    r.state,
+	}
+	return frontend
+}
+
+func (r *MCPCapabilityRuntime) activateFrontend(frontend *UseCapabilityTool) func() {
+	if r == nil || frontend == nil {
+		return func() {}
+	}
+	r.frontendsMu.Lock()
+	if r.frontends == nil {
+		r.frontends = map[*UseCapabilityTool]int{}
+	}
+	r.frontends[frontend]++
+	r.frontendsMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.frontendsMu.Lock()
+			if r.frontends[frontend] <= 1 {
+				delete(r.frontends, frontend)
+			} else {
+				r.frontends[frontend]--
+			}
+			r.frontendsMu.Unlock()
+		})
+	}
+}
+
+func (r *MCPCapabilityRuntime) notifyToolListChanged(server string, tools []tool.Tool) {
+	if r == nil {
+		return
+	}
+	schemaBytes := 0
+	for _, target := range tools {
+		if target != nil {
+			schemaBytes += len(target.Schema())
+		}
+	}
+	r.frontendsMu.RLock()
+	frontends := make([]*UseCapabilityTool, 0, len(r.frontends))
+	for frontend := range r.frontends {
+		frontends = append(frontends, frontend)
+	}
+	r.frontendsMu.RUnlock()
+	for _, frontend := range frontends {
+		frontend.capabilityAudit().RecordMCPList("remote", "list_changed", 0, len(tools), schemaBytes)
+		frontend.observeMCPList(mcpListObservation{
+			Server: server, Source: "remote", Trigger: "list_changed",
+			ToolCount: len(tools), SchemaBytes: schemaBytes, NetworkCall: true,
+		})
 	}
 }
 
@@ -541,7 +594,7 @@ func (t *UseCapabilityTool) CloneForAgent(ledger *capability.Ledger, audit *capa
 	if state == nil {
 		state = &mcpProxySharedState{connected: map[string]bool{}}
 	}
-	return &UseCapabilityTool{
+	clone := &UseCapabilityTool{
 		host:     t.host,
 		lifeCtx:  t.lifeCtx,
 		specs:    t.specs,
@@ -552,6 +605,7 @@ func (t *UseCapabilityTool) CloneForAgent(ledger *capability.Ledger, audit *capa
 		catalog:  t.catalog,
 		state:    state,
 	}
+	return clone
 }
 
 func (*UseCapabilityTool) Name() string { return "use_capability" }
@@ -1063,9 +1117,9 @@ func (t *UseCapabilityTool) ensureServerToolsForSpec(ctx context.Context, server
 		schemaBytes += len(target.Schema())
 	}
 	durationMs := time.Since(started).Milliseconds()
-	t.capabilityAudit().RecordMCPList("remote", durationMs, len(tools), schemaBytes)
+	t.capabilityAudit().RecordMCPList("remote", "connect", durationMs, len(tools), schemaBytes)
 	t.observeMCPList(mcpListObservation{
-		Server: server, Source: "remote", DurationMs: durationMs,
+		Server: server, Source: "remote", Trigger: "connect", DurationMs: durationMs,
 		ToolCount: len(tools), SchemaBytes: schemaBytes, NetworkCall: true,
 	})
 	// Intentionally do NOT add tools to t.registry — provider schema stays stable.

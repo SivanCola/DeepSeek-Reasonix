@@ -1,6 +1,9 @@
 package capability
 
-import "sync"
+import (
+	"maps"
+	"sync"
+)
 
 // Audit is a non-persisted capability/routing counters sink, mirroring
 // readiness audit collection for run --metrics and e2ebench.
@@ -62,6 +65,7 @@ type MCPListAudit struct {
 	SharedHost, DiskCache, Remote int
 	DurationMs                    int64
 	ToolCount, SchemaBytes        int
+	Triggers                      map[string]int `json:"triggers,omitempty"`
 }
 
 // ToolExecAudit records classified tool execution without payloads.
@@ -130,8 +134,8 @@ func (a *Audit) RecordRemoteDispatch() {
 	a.mu.Unlock()
 }
 
-// RecordMCPList records one tools/list observation by source.
-func (a *Audit) RecordMCPList(source string, durationMs int64, toolCount, schemaBytes int) {
+// RecordMCPList records one tools/list observation by source and host trigger.
+func (a *Audit) RecordMCPList(source, trigger string, durationMs int64, toolCount, schemaBytes int) {
 	if a == nil {
 		return
 	}
@@ -148,6 +152,12 @@ func (a *Audit) RecordMCPList(source string, durationMs int64, toolCount, schema
 	a.MCPLists.DurationMs += durationMs
 	a.MCPLists.ToolCount += toolCount
 	a.MCPLists.SchemaBytes += schemaBytes
+	if trigger != "" {
+		if a.MCPLists.Triggers == nil {
+			a.MCPLists.Triggers = map[string]int{}
+		}
+		a.MCPLists.Triggers[trigger]++
+	}
 }
 
 // RecordLoopGuard records a host loop-guard action without payloads.
@@ -389,7 +399,7 @@ func (a *Audit) Snapshot() Audit {
 		Discovery:              a.Discovery,
 		Arguments:              a.Arguments,
 		LoopGuard:              a.LoopGuard,
-		MCPLists:               a.MCPLists,
+		MCPLists:               cloneMCPListAudit(a.MCPLists),
 		ToolExec:               a.ToolExec,
 		Phases:                 a.Phases,
 		ReviewBlocks:           a.ReviewBlocks,
@@ -399,4 +409,13 @@ func (a *Audit) Snapshot() Audit {
 		RouterCost:             a.RouterCost,
 		RouterLatencyMs:        a.RouterLatencyMs,
 	}
+}
+
+func cloneMCPListAudit(in MCPListAudit) MCPListAudit {
+	out := in
+	if len(in.Triggers) > 0 {
+		out.Triggers = make(map[string]int, len(in.Triggers))
+		maps.Copy(out.Triggers, in.Triggers)
+	}
+	return out
 }

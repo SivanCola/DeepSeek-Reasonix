@@ -10,7 +10,11 @@ import (
 func (a *Agent) boundProviderVisibleResult(raw, toolName, callID string) (body, notice, original string) {
 	summarized := summarizeCIOutput(raw)
 	body, notice = truncateToolOutputFor(summarized, toolName, callID)
-	body = a.dedupeProviderVisibleResult(callID, raw, body)
+	deduped := a.dedupeProviderVisibleResult(callID, raw, body)
+	if deduped != body {
+		original = raw
+	}
+	body = deduped
 	if summarized != raw || notice != "" {
 		original = raw
 	}

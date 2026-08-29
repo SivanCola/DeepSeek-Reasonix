@@ -37,6 +37,10 @@ func TestAskToolReusesAcceptedDecisionAndRejectsSpoofedID(t *testing.T) {
 	if err != nil || !strings.Contains(second, "dec-original") || asker.calls != 1 {
 		t.Fatalf("repeat clarification = %q err=%v calls=%d", second, err, asker.calls)
 	}
+	rephrased, err := NewAskTool().Execute(ctx, []byte(`{"questions":[{"header":"Direction","question":"Please choose the direction now.","options":[{"label":"Keep going"},{"label":"Stop"}]}]}`))
+	if err != nil || !strings.Contains(rephrased, "same ambiguity") || !strings.Contains(rephrased, "dec-original") || asker.calls != 1 {
+		t.Fatalf("rephrased clarification = %q err=%v calls=%d", rephrased, err, asker.calls)
+	}
 	if _, err := NewAskTool().Execute(ctx, []byte(`{"questions":[{"header":"Environment","question":"Which deployment target?","options":[{"label":"Staging"},{"label":"Production"}]}]}`)); err != nil {
 		t.Fatalf("unrelated clarification should remain available: %v", err)
 	}

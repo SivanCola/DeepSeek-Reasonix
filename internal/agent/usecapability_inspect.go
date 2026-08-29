@@ -126,13 +126,17 @@ func (t *UseCapabilityTool) decorateMCPInspect(payload map[string]any, e capabil
 	}
 	tools, source := t.localMCPTools(server)
 	payload["source"] = source
-	if t.capabilityAudit() != nil {
-		schemaBytes := 0
-		for _, item := range tools {
-			schemaBytes += len(item.Schema)
-		}
-		t.capabilityAudit().RecordMCPList(source, 0, len(tools), schemaBytes)
+	schemaBytes := 0
+	for _, item := range tools {
+		schemaBytes += len(item.Schema)
 	}
+	if t.capabilityAudit() != nil {
+		t.capabilityAudit().RecordMCPList(source, "inspect", 0, len(tools), schemaBytes)
+	}
+	t.observeMCPList(mcpListObservation{
+		Server: server, Source: source, Trigger: "inspect",
+		ToolCount: len(tools), SchemaBytes: schemaBytes, NetworkCall: false,
+	})
 	if e.Kind == capability.KindMCPTool {
 		_, raw, err := parseMCPCapabilityID(e.ID)
 		if err != nil {
@@ -208,7 +212,37 @@ func marshalBoundedInspect(payload map[string]any) string {
 		payload["schema_omitted"] = "input schema exceeded the 16KB inspect response limit"
 		b, _ = json.MarshalIndent(payload, "", "  ")
 	}
+	if len(b) > maxInspectBytes {
+		// Third-party descriptions and metadata are untrusted and may exceed the
+		// limit even after schemas/tool rows are removed. Preserve only bounded
+		// scalar identity fields; never return oversized or invalid JSON.
+		bounded := map[string]any{
+			"truncated": true,
+			"note":      "inspect response exceeded the 16KB limit; narrow the capability_id or page the underlying result",
+		}
+		for _, key := range []string{"id", "kind", "name", "status", "source", "schema_fingerprint"} {
+			if value, ok := payload[key].(string); ok && value != "" {
+				bounded[key] = truncateInspectString(value, 1024)
+			}
+		}
+		for _, key := range []string{"read_only", "network_call", "auto_start"} {
+			if value, ok := payload[key].(bool); ok {
+				bounded[key] = value
+			}
+		}
+		b, _ = json.MarshalIndent(bounded, "", "  ")
+	}
+	if len(b) > maxInspectBytes {
+		return `{"truncated":true,"note":"inspect response exceeded the 16KB limit"}`
+	}
 	return string(b)
+}
+
+func truncateInspectString(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit-len("...")] + "..."
 }
 
 // inspectToolListJSON renders the compact directory returned after a server

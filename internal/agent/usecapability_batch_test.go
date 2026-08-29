@@ -146,7 +146,7 @@ func TestOnDemandConnectEmitsOneSessionRemoteToolsListObservation(t *testing.T) 
 	if _, err := proxy.ensureServerToolsForSpec(t.Context(), spec.Name, spec); err != nil {
 		t.Fatalf("first connect: %v", err)
 	}
-	if len(observations) != 1 || observations[0].Source != "remote" || !observations[0].NetworkCall || observations[0].ToolCount != 1 {
+	if len(observations) != 1 || observations[0].Source != "remote" || observations[0].Trigger != "connect" || !observations[0].NetworkCall || observations[0].ToolCount != 1 {
 		t.Fatalf("observations = %+v", observations)
 	}
 	if _, err := proxy.ensureServerToolsForSpec(t.Context(), spec.Name, spec); err != nil {
@@ -154,6 +154,28 @@ func TestOnDemandConnectEmitsOneSessionRemoteToolsListObservation(t *testing.T) 
 	}
 	if len(observations) != 1 {
 		t.Fatalf("shared-host reuse emitted a remote list: %+v", observations)
+	}
+}
+
+func TestListChangedIsAttributedOnlyToActiveRuntimeFrontend(t *testing.T) {
+	runtime := NewMCPCapabilityRuntime(t.Context(), nil, nil, tool.NewRegistry(), nil)
+	audit := &capability.Audit{}
+	frontend := runtime.NewFrontend(nil, audit)
+	var observations []mcpListObservation
+	frontend.bindMCPListObserver(func(observation mcpListObservation) { observations = append(observations, observation) })
+	release := frontend.activateMCPListObserver()
+	runtime.notifyToolListChanged("svc", []tool.Tool{fakeTool{name: "mcp__svc__read", readOnly: true}})
+	if len(observations) != 1 || observations[0].Trigger != "list_changed" || !observations[0].NetworkCall {
+		t.Fatalf("observations = %+v", observations)
+	}
+	snapshot := audit.Snapshot()
+	if snapshot.MCPLists.Remote != 1 || snapshot.MCPLists.Triggers["list_changed"] != 1 {
+		t.Fatalf("MCP list audit = %+v", snapshot.MCPLists)
+	}
+	release()
+	runtime.notifyToolListChanged("svc", []tool.Tool{fakeTool{name: "mcp__svc__read", readOnly: true}})
+	if len(observations) != 1 || audit.Snapshot().MCPLists.Remote != 1 {
+		t.Fatalf("inactive frontend retained list_changed attribution: observations=%+v audit=%+v", observations, audit.Snapshot().MCPLists)
 	}
 }
 

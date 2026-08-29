@@ -1880,6 +1880,7 @@ func (t *remoteTool) callRaw(ctx context.Context, args json.RawMessage) (json.Ra
 			return nil, fmt.Errorf("MCP server %q changed the authorization or destructive classification for tool %q; the call was blocked before dispatch — retry so Reasonix can re-apply the current Planner MCP safety boundary", t.client.name, t.rawName)
 		}
 	}
+	tool.ObserveRemoteDispatch(ctx)
 	res, err := t.client.call(ctx, "tools/call", map[string]any{
 		"name":      t.rawName,
 		"arguments": argMap,

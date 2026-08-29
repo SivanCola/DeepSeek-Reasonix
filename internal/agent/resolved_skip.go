@@ -34,10 +34,10 @@ func (a *Agent) resolvedSkipOutcome(plan *toolCallPlan, resolved tool.ResolvedCa
 	if resolved.Unavailable {
 		return toolOutcome{output: result, errMsg: firstLine(resolved.UnavailableReason)}
 	}
-	body, truncMsg := truncateToolOutputFor(result, call.Name, call.ID)
-	out := toolOutcome{output: body, truncated: truncMsg != "", truncMsg: truncMsg}
-	if truncMsg != "" {
-		out.rawOutput = result
+	body, truncMsg, original := a.boundProviderVisibleResult(result, call.Name, call.ID)
+	out := toolOutcome{output: body, truncated: truncMsg != "" || original != "", truncMsg: truncMsg}
+	if original != "" {
+		out.rawOutput = original
 	}
 	return out
 }

@@ -60,7 +60,8 @@ func TestMCPInvalidArgumentsDoNotCallRemote(t *testing.T) {
 	proxy := runtime.NewFrontend(capability.NewLedger(), nil)
 	reg := tool.NewRegistry()
 	reg.Add(proxy)
-	a := New(nil, reg, NewSession("sys"), Options{}, event.Discard)
+	audit := &capability.Audit{}
+	a := New(nil, reg, NewSession("sys"), Options{CapabilityAudit: audit}, event.Discard)
 	out := a.executeOne(ctx, &a.turn, provider.ToolCall{
 		ID: "mcp-bad", Name: "use_capability",
 		Arguments: `{"action":"call","capability_id":"mcp-tool:svc/search","arguments":{}}`,
@@ -70,6 +71,37 @@ func TestMCPInvalidArgumentsDoNotCallRemote(t *testing.T) {
 	}
 	if !strings.Contains(out.output, "argument validation failed") && !strings.Contains(out.output, "required") {
 		t.Fatalf("expected validation failure, got %q", out.output)
+	}
+	if got := audit.Snapshot().Arguments.RemoteDispatch; got != 0 {
+		t.Fatalf("remote dispatch audit = %d, want 0", got)
+	}
+	valid := a.executeOne(ctx, &a.turn, provider.ToolCall{
+		ID: "mcp-good", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:svc/search","arguments":{"q":"reasonix"}}`,
+	})
+	if valid.errMsg != "" {
+		t.Fatalf("valid call = %+v", valid)
+	}
+	if got := audit.Snapshot().Arguments.RemoteDispatch; got != 1 {
+		t.Fatalf("remote dispatch audit = %d, want 1", got)
+	}
+}
+
+func TestUnavailableMCPCallPreservesResolutionReason(t *testing.T) {
+	runtime := NewMCPCapabilityRuntime(t.Context(), nil, nil, tool.NewRegistry(), nil)
+	proxy := runtime.NewFrontend(capability.NewLedger(), nil)
+	reg := tool.NewRegistry()
+	reg.Add(proxy)
+	a := New(nil, reg, NewSession("sys"), Options{}, event.Discard)
+	out := a.executeOne(t.Context(), &a.turn, provider.ToolCall{
+		ID: "mcp-missing", Name: "use_capability",
+		Arguments: `{"action":"call","capability_id":"mcp-tool:never-configured/ping","arguments":{}}`,
+	})
+	if !strings.Contains(out.output, `MCP server "never-configured" is not registered in this session`) {
+		t.Fatalf("unavailable output = %q", out.output)
+	}
+	if strings.Contains(out.output, "argument validation failed") {
+		t.Fatalf("unavailable resolution was validated as a concrete tool: %q", out.output)
 	}
 }
 

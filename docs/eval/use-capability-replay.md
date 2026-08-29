@@ -1,36 +1,48 @@
-# use_capability replay eval
+# `use_capability` paired replay qualification
 
-This is the 1.33.0 paired-run procedure for cache-stable `use_capability` versus a
-prefix that expands MCP tools into the provider-visible schema. Live model runs
-are optional and must use disposable Reasonix homes.
+The Reasonix 1.33.0 speed/quality release gate requires real paired model runs.
+The JSON array in `internal/eval/replay/testdata/paired_runs.json` is synthetic
+unit-test data for the median helper only; the release gate rejects it.
 
-## What to measure
+## Required run design
 
-For the same five tasks, run each task twice:
+Run the same fixed task set on the baseline and candidate with the same model,
+effort, workspace, branch, skills, agents, and MCP configuration. Use disposable
+`REASONIX_HOME` and `REASONIX_CACHE_HOME` directories and run at least five
+pairs. Do not store prompts, credentials, arguments, or machine-local paths in
+the result file.
 
-1. **Proxy (default):** `use_capability` only. Shared Host + disk schema cache.
-2. **Baseline:** a throwaway config that still expands MCP tools into the
-   provider request (native Tool Search must stay off).
+Record these content-free values for each side:
 
-Record `tools/list` count, first-token latency, and cache-hit tokens. Do not
-upload prompts, secrets, or workspace paths.
+- duration, total tokens, cache-hit rate, and main-model rounds;
+- tool argument failures, remote invalid calls, and clarification count;
+- candidate quality checks: source conflict found, user decision respected, no
+  unresolved implementation choice, and correct code anchors/tests.
 
-## Procedure
+The release dataset is an object with `evidence_kind: "live_paired"`, `model`,
+`task_set`, and a `pairs` array. Each pair contains `name`, `baseline`, and
+`candidate`; the field names match `replay.ReleaseRun` in
+`internal/eval/replay/median.go`.
 
-1. Use a throwaway `REASONIX_HOME` / `REASONIX_CACHE_HOME`.
-2. Pick five representative tasks that need MCP discovery then a call.
-3. For each task, run proxy then baseline. Keep model, effort, and workspace
-   identical.
-4. Write the five pairs as JSON matching
-   `internal/eval/replay/testdata/paired_runs.json`.
-5. Compute medians:
+## Blocking gate
+
+Run:
 
 ```bash
-go test ./internal/eval/replay/ -run TestMedianReportFivePairedRuns
+go run ./internal/eval/replay/cmd/gate -input /absolute/path/to/live-paired-runs.json
 ```
 
-The fixture proves the median helper. Replace its numbers with live pairs when
-credentials are available. Report the median `tools/list` delta and latency
-delta; a proxy win is a negative list delta (fewer remote lists).
+Exit status is non-zero when data is missing/synthetic or any gate fails. The
+gate requires:
 
-Native first-party Tool Search stays default-off and is not part of this eval.
+- at least five unique live pairs;
+- median duration reduction of at least 40%;
+- median token reduction of at least 35%;
+- median cache-hit decline no worse than 2 percentage points;
+- median main-model rounds at most 12;
+- zero candidate invalid remote calls and argument failures;
+- at most one clarification per candidate run;
+- all four candidate quality checks true.
+
+The report also emits candidate duration/token P90. Native first-party Tool
+Search remains default-off and is not part of this qualification.

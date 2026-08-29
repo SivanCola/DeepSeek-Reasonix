@@ -18,6 +18,7 @@ type turnLoopState struct {
 	acceptedDecisions       map[string]acceptedDecision
 	previousErrorCategories map[string]struct{}
 	softBudgetNudged        bool
+	softBudgetNudgeRound    int
 }
 
 func (s *turnLoopState) setDispatchClasses(classes map[string]tool.CallClass) {
@@ -101,12 +102,16 @@ func (s *turnLoopState) rememberFingerprint(fp, callID string) (prev string, see
 }
 
 func (s *turnLoopState) rememberDecision(id, question, answer string) {
+	s.rememberDecisionAmbiguity(id, question, answer, decisionAmbiguity{})
+}
+
+func (s *turnLoopState) rememberDecisionAmbiguity(id, question, answer string, ambiguity decisionAmbiguity) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.acceptedDecisions == nil {
 		s.acceptedDecisions = map[string]acceptedDecision{}
 	}
-	s.acceptedDecisions[id] = acceptedDecision{ID: id, Question: question, Answer: answer}
+	s.acceptedDecisions[id] = acceptedDecision{ID: id, Question: question, Answer: answer, Ambiguity: ambiguity}
 }
 
 func (s *turnLoopState) decision(id string) (acceptedDecision, bool) {
@@ -145,12 +150,19 @@ func (s *turnLoopState) advanceErrorCategories(current map[string]int) bool {
 	return hit
 }
 
-func (s *turnLoopState) markSoftBudgetNudged() bool {
+func (s *turnLoopState) markSoftBudgetNudged(round int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.softBudgetNudged {
 		return false
 	}
 	s.softBudgetNudged = true
+	s.softBudgetNudgeRound = round
 	return true
+}
+
+func (s *turnLoopState) softBudgetNudgedAt() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.softBudgetNudgeRound
 }

@@ -9,6 +9,7 @@ import (
 type mcpListObservation struct {
 	Server      string `json:"server"`
 	Source      string `json:"source"`
+	Trigger     string `json:"trigger"`
 	DurationMs  int64  `json:"duration_ms"`
 	ToolCount   int    `json:"tool_count"`
 	SchemaBytes int    `json:"schema_bytes"`
@@ -19,9 +20,28 @@ type mcpListObserverBinder interface {
 	bindMCPListObserver(func(mcpListObservation))
 }
 
+type mcpListObserverActivator interface {
+	activateMCPListObserver() func()
+}
+
 func (a *Agent) bindCapabilityObservers() {
 	a.bindToolResultSessionCapability()
 	a.bindMCPListObserverCapability()
+}
+
+func (a *Agent) activateMCPListObserver() func() {
+	if a == nil || a.svc.tools == nil {
+		return func() {}
+	}
+	proxy, ok := a.svc.tools.Get("use_capability")
+	if !ok {
+		return func() {}
+	}
+	activator, ok := proxy.(mcpListObserverActivator)
+	if !ok {
+		return func() {}
+	}
+	return activator.activateMCPListObserver()
 }
 
 func (a *Agent) bindMCPListObserverCapability() {
@@ -62,4 +82,11 @@ func (t *UseCapabilityTool) observeMCPList(observation mcpListObservation) {
 	if observer != nil {
 		observer(observation)
 	}
+}
+
+func (t *UseCapabilityTool) activateMCPListObserver() func() {
+	if t == nil || t.runtime == nil {
+		return func() {}
+	}
+	return t.runtime.activateFrontend(t)
 }

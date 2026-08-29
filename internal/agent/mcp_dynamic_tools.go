@@ -42,11 +42,11 @@ func (r *MCPCapabilityRuntime) applyToolListChange(spec plugin.Spec, tools []too
 	}
 	name := strings.TrimSpace(spec.Name)
 	r.dispatchMu.Lock()
-	defer r.dispatchMu.Unlock()
 	r.mu.RLock()
 	configured, ok := r.servers[name]
 	r.mu.RUnlock()
 	if !ok || !configured.enabled || !plugin.MCPRuntimeSpecMatches(configured.spec, spec) {
+		r.dispatchMu.Unlock()
 		return
 	}
 	if r.registry != nil {
@@ -59,6 +59,8 @@ func (r *MCPCapabilityRuntime) applyToolListChange(spec plugin.Spec, tools []too
 	}
 	r.state.markConnected(name)
 	r.state.setLiveTools(name, snapshotMCPTools(tools))
+	r.dispatchMu.Unlock()
+	r.notifyToolListChanged(name, tools)
 }
 
 func snapshotMCPTools(tools []tool.Tool) []plugin.CachedTool {

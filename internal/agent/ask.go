@@ -113,6 +113,10 @@ func (*AskTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		if strings.TrimSpace(p.Evidence) == "" {
 			return fmt.Sprintf("Host reused accepted decision %s. The user already chose: %s. Continue with that decision unless you supply decision_id and new_evidence.", dec.ID, dec.Answer), nil
 		}
+	} else if !explicitID {
+		if dec, matched := matchingExistingDecision(ctx, qs); matched {
+			return fmt.Sprintf("Host reused accepted decision %s for the same ambiguity. The user already chose: %s. Continue with that decision; to reopen it, cite decision_id %s and supply new_evidence.", dec.ID, dec.Answer, dec.ID), nil
+		}
 	} else if explicitID {
 		if _, hasAcceptedDecision := firstExistingDecision(ctx); hasAcceptedDecision {
 			return "", fmt.Errorf("unknown decision_id %q; cite the original accepted decision_id and include new_evidence to reopen it", id)
@@ -131,7 +135,7 @@ func (*AskTool) Execute(ctx context.Context, args json.RawMessage) (string, erro
 		return "", fmt.Errorf("ask: %w", err)
 	}
 	summary := formatAnswers(qs, answers)
-	rememberDecision(ctx, id, qs[0].Prompt, summary)
+	rememberDecisionForQuestions(ctx, id, qs[0].Prompt, summary, qs)
 	return summary + "\n\ndecision_id: " + id, nil
 }
 

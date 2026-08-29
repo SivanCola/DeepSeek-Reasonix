@@ -14,7 +14,6 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/fileutil"
-	"reasonix/internal/plugin"
 )
 
 // SourceUsage is one Usage origin's share of a run. Steps counts every billed
@@ -589,6 +588,14 @@ func (m *RunMetrics) MergeCapabilityAudit(snap *capability.Audit) {
 	m.CapabilityMCPLists.DurationMs += snap.MCPLists.DurationMs
 	m.CapabilityMCPLists.ToolCount += snap.MCPLists.ToolCount
 	m.CapabilityMCPLists.SchemaBytes += snap.MCPLists.SchemaBytes
+	if len(snap.MCPLists.Triggers) > 0 {
+		if m.CapabilityMCPLists.Triggers == nil {
+			m.CapabilityMCPLists.Triggers = map[string]int{}
+		}
+		for trigger, count := range snap.MCPLists.Triggers {
+			m.CapabilityMCPLists.Triggers[trigger] += count
+		}
+	}
 	m.CapabilityToolExec.Calls += snap.ToolExec.Calls
 	m.CapabilityToolExec.ReadOnly += snap.ToolExec.ReadOnly
 	m.CapabilityToolExec.Parallel += snap.ToolExec.Parallel
@@ -602,15 +609,6 @@ func (m *RunMetrics) MergeCapabilityAudit(snap *capability.Audit) {
 	m.CapabilityPhases.UserWaitMs += snap.Phases.UserWaitMs
 	m.CapabilityPhases.CompactMs += snap.Phases.CompactMs
 	m.CapabilityPhases.ReviewMs += snap.Phases.ReviewMs
-	stats := plugin.SnapshotToolsListStats()
-	if m.CapabilityMCPLists.DurationMs == 0 && stats.DurationMs > 0 {
-		m.CapabilityMCPLists.DurationMs += stats.DurationMs
-		m.CapabilityMCPLists.ToolCount += int(stats.ToolCount)
-		m.CapabilityMCPLists.SchemaBytes += int(stats.SchemaBytes)
-	}
-	if m.CapabilityMCPLists.Remote == 0 && stats.Remote > 0 {
-		m.CapabilityMCPLists.Remote += int(stats.Remote)
-	}
 }
 
 // MergeCapabilityAuditCounters copies capability counters into RunMetrics.

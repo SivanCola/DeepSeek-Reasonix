@@ -35,19 +35,14 @@ func parseUseCapabilityArgs(raw json.RawMessage) (useCapabilityArgs, string, str
 	return args, action, id, nil
 }
 
-// normalizeMCPToolArguments accepts an object or one JSON string containing an
-// object. It runs before permission, hooks, evidence, audit, and execution.
+// normalizeMCPToolArguments accepts only an object. It deliberately does not
+// unwrap JSON strings, rename fields, coerce values, or guess enums: schema
+// mistakes must produce one precise repair contract instead of hidden behavior
+// that differs between direct and proxied MCP calls.
 func normalizeMCPToolArguments(raw json.RawMessage) (json.RawMessage, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
 		return json.RawMessage(`{}`), nil
-	}
-	if strings.HasPrefix(trimmed, `"`) {
-		var inner string
-		if err := json.Unmarshal(raw, &inner); err != nil {
-			return nil, fmt.Errorf("arguments for an MCP tool must be a JSON object or a single JSON string containing an object: %w", err)
-		}
-		trimmed = strings.TrimSpace(inner)
 	}
 	var object map[string]any
 	if !strings.HasPrefix(trimmed, "{") || json.Unmarshal([]byte(trimmed), &object) != nil || object == nil {

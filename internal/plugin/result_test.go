@@ -22,6 +22,10 @@ func TestParseToolResultStructuredContentVariants(t *testing.T) {
 	if err == nil || text != "boom" {
 		t.Fatalf("error result: %q %v", text, err)
 	}
+	classified, ok := err.(interface{ RetryableToolError() bool })
+	if !ok || classified.RetryableToolError() {
+		t.Fatalf("MCP isError must be a typed non-retryable application error: %T", err)
+	}
 }
 
 func TestOutputSchemaMismatchIsTelemetryOnly(t *testing.T) {
