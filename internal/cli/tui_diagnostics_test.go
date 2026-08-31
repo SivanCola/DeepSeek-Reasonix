@@ -349,9 +349,12 @@ func TestWatchdogCancelOncePerGeneration(t *testing.T) {
 	// Heartbeat aborts grace (cancelIssued stays sticky).
 	clock.now = clock.now.Add(time.Second)
 	d.NoteActiveHeartbeat("elapsed_tick")
-	// Second stall on the same generation.
-	clock.now = clock.now.Add(tuiWatchdogStall)
-	d.onTick(clock.now)
+	// Second stall on the same generation, accumulated with 1s ticks — a
+	// single >stall clock step would read as a suspend/resume clock jump.
+	for range int(tuiWatchdogStall / time.Second) {
+		clock.now = clock.now.Add(time.Second)
+		d.onTick(clock.now)
+	}
 	if d.cancelCalls.Load() != 1 {
 		t.Fatalf("second stall re-canceled: cancelCalls=%d, want 1", d.cancelCalls.Load())
 	}
@@ -489,5 +492,78 @@ func TestChatTUIWatchdogLifecycleHelpers(t *testing.T) {
 	m.noteWatchdogIdle()
 	if d.phaseForTest() != watchdogIdle {
 		t.Fatalf("phase after idle = %s, want idle", d.phaseForTest())
+	}
+}
+
+// TestWatchdogClockJumpAfterSuspendDoesNotKill pins the #9233 path: after a
+// suspend/resume (or scheduler starvation) the first ticks see a stale
+// heartbeat age, but the >stall gap between consecutive ~1s ticks proves the
+// process slept rather than the event loop wedging — refresh instead of
+// dumping, canceling, and killing a healthy turn.
+func TestWatchdogClockJumpAfterSuspendDoesNotKill(t *testing.T) {
+	clock := &fakeWatchClock{now: time.Unix(1_700_000_000, 0)}
+	d := newWatchdogForTest(t, clock)
+	d.NoteBooted()
+	d.NoteRunning(func() {})
+
+	// Healthy heartbeats for a while.
+	for range 5 {
+		clock.now = clock.now.Add(time.Second)
+		d.NoteActiveHeartbeat("elapsed_tick")
+		d.onTick(clock.now)
+	}
+	// Suspend: the next tick arrives a minute late with no heartbeats during
+	// sleep, then ticks resume at 1s cadence.
+	clock.now = clock.now.Add(time.Minute)
+	d.onTick(clock.now)
+	// Resumed: ticks and heartbeats continue at their normal cadence.
+	for range 12 {
+		clock.now = clock.now.Add(time.Second)
+		d.NoteActiveHeartbeat("elapsed_tick")
+		d.onTick(clock.now)
+	}
+	if got := d.dumpCalls.Load(); got != 0 {
+		t.Fatalf("post-resume dumpCalls = %d, want 0", got)
+	}
+	if got := d.cancelCalls.Load(); got != 0 {
+		t.Fatalf("post-resume cancelCalls = %d, want 0 (healthy turn survived the suspend)", got)
+	}
+	if got := d.killCalls.Load(); got != 0 {
+		t.Fatalf("post-resume killCalls = %d, want 0", got)
+	}
+}
+
+// TestWatchdogKillRequestsGracefulShutdownFirst verifies the hard kill asks
+// the program to snapshot and quit cleanly (the SIGHUP path) and only falls
+// back to Kill when the graceful request goes nowhere (#9233).
+func TestWatchdogKillRequestsGracefulShutdownFirst(t *testing.T) {
+	prevDelay := watchdogKillFallbackDelay
+	watchdogKillFallbackDelay = 5 * time.Millisecond
+	t.Cleanup(func() { watchdogKillFallbackDelay = prevDelay })
+
+	clock := &fakeWatchClock{now: time.Unix(1_700_000_000, 0)}
+	d := newWatchdogForTest(t, clock)
+	shutdowns := 0
+	d.shutdownFn = func() { shutdowns++ }
+	d.NoteBooted()
+	d.NoteRunning(func() {})
+
+	// Real stall: escalate, cancel, grace, kill decision.
+	clock.now = clock.now.Add(tuiWatchdogStall)
+	d.onTick(clock.now)
+	clock.now = clock.now.Add(time.Second)
+	d.onTick(clock.now)
+	clock.now = clock.now.Add(tuiWatchdogCancelGrace)
+	d.onTick(clock.now)
+
+	if shutdowns != 1 {
+		t.Fatalf("graceful shutdown requests = %d, want 1", shutdowns)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && d.killCalls.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if got := d.killCalls.Load(); got != 1 {
+		t.Fatalf("fallback killCalls = %d, want 1 after the fallback window", got)
 	}
 }
