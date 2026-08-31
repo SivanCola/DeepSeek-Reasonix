@@ -63,29 +63,6 @@ const (
 	maxFileSearchItems = 20
 )
 
-// slashItems returns the cached slash catalog. Rebuilds only after
-// invalidateSlashCatalog — never on ordinary keystrokes.
-func (m *chatTUI) slashItems() []compItem {
-	if m.slashCatalogOnce && m.slashCatalog != nil {
-		return m.slashCatalog
-	}
-	items := m.buildSlashCatalog()
-	// Immutable snapshot so keystroke filtering never mutates shared state.
-	out := make([]compItem, len(items))
-	copy(out, items)
-	m.slashCatalog = out
-	m.slashCatalogOnce = true
-	return m.slashCatalog
-}
-
-// invalidateSlashCatalog drops the cached catalog so the next slashItems call
-// rebuilds it. Call from model switch, skill rescan, /reload-cmd, and any path
-// that mutates commands/skills/host/extension actions.
-func (m *chatTUI) invalidateSlashCatalog() {
-	m.slashCatalogOnce = false
-	m.slashCatalog = nil
-}
-
 // refreshHostAndInvalidateSlashCatalog reloads m.host from the controller and
 // drops the slash catalog so MCP prompts (and any host-backed menu entries)
 // rebuild on the next slashItems call. Use after connect/disconnect/remove/
@@ -284,7 +261,7 @@ func (m *chatTUI) slashArgItems(val string) ([]compItem, int, bool) {
 	// offer identical sub-command hints. We supply the data from the TUI's own
 	// cached lists (no live controller needed), build the items, and adapt them
 	// to compItem.
-	items, from := control.SlashArgItems(val, m.slashArgData())
+	items, from := control.SlashArgItems(val, m.slashArgDataSnapshot())
 	if len(items) == 0 {
 		return nil, 0, false
 	}
@@ -326,7 +303,7 @@ func (m *chatTUI) explicitSubcommandItems(val string) ([]compItem, int, bool) {
 	default:
 		return nil, 0, false
 	}
-	items, _ := control.SlashArgItems(cmd+" ", m.slashArgData())
+	items, _ := control.SlashArgItems(cmd+" ", m.slashArgDataSnapshot())
 	if len(items) == 0 {
 		return nil, 0, false
 	}

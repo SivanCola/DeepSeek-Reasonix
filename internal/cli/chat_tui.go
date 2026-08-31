@@ -358,11 +358,10 @@ type chatTUI struct {
 	// in the slash menu as "/<name>" and managed via /skills.
 	skills []skill.Skill
 
-	// slashCatalog is an immutable completion list rebuilt only on explicit
-	// invalidation (model switch, skill rescan, /reload-cmd, …). Ordinary
-	// keystrokes only filter this snapshot — no fingerprint walk (#6417, #7090).
-	slashCatalog     []compItem
-	slashCatalogOnce bool // true when slashCatalog holds a valid snapshot
+	// slashCache holds the immutable slash catalog and the arg-completion data
+	// snapshot, rebuilt only on explicit invalidation — never on keystrokes
+	// (#6417, #7090, #9503).
+	slashCache *slashCompletionCache
 
 	// skillPick is the interactive skill picker overlay for /skills. nil when closed.
 	skillPick *skillPicker

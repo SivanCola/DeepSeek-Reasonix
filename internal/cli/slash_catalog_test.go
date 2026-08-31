@@ -123,11 +123,11 @@ func TestMCPSurfaceReadyInvalidatesSlashCatalog(t *testing.T) {
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
 	m.skills = []skill.Skill{{Name: "warm", Description: "warm"}}
 	_ = m.slashItems()
-	if !m.slashCatalogOnce {
+	if m.slashCache == nil || m.slashCache.items == nil {
 		t.Fatal("expected warm catalog")
 	}
 	m.ingestEvent(event.Event{Kind: event.MCPSurfaceReady})
-	if m.slashCatalogOnce {
+	if m.slashCache != nil {
 		t.Fatal("MCPSurfaceReady must invalidate slash catalog")
 	}
 }
@@ -241,5 +241,70 @@ func BenchmarkSlashCompletionKeystroke(b *testing.B) {
 	if b.N > 0 {
 		// Informational soft gate; CI machines vary.
 		_ = time.Millisecond
+	}
+}
+
+func TestSlashArgDataSnapshotsAcrossKeystrokes(t *testing.T) {
+	isolateUserConfig(t)
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.skills = []skill.Skill{{Name: "warm", Description: "warm"}}
+	m.modelRef = "prov/model"
+
+	first := m.slashArgDataSnapshot()
+	if len(first.Skills) != 1 || first.Skills[0].Name != "warm" {
+		t.Fatalf("arg data snapshot lost skills: %+v", first)
+	}
+	// Between keystrokes of one popup the snapshot must be served from cache:
+	// mutating the model's own lists stays invisible until a rebuild trigger.
+	m.skills = []skill.Skill{{Name: "changed"}}
+	second := m.slashArgDataSnapshot()
+	if second.Skills[0].Name != "warm" {
+		t.Fatal("arg data rebuilt between keystrokes of the same popup")
+	}
+
+	m.modelRef = "prov/other"
+	third := m.slashArgDataSnapshot()
+	if third.Skills[0].Name != "changed" {
+		t.Fatal("model switch must rebuild the arg data snapshot")
+	}
+	if third.CurrentModel != "prov/other" || third.CurrentProvider != "prov" {
+		t.Fatalf("rebuilt arg data kept stale model identity: %+v", third)
+	}
+
+	m.skills = []skill.Skill{{Name: "again"}}
+	m.invalidateSlashCatalog()
+	fourth := m.slashArgDataSnapshot()
+	if fourth.Skills[0].Name != "again" {
+		t.Fatal("invalidateSlashCatalog must rebuild the arg data snapshot")
+	}
+}
+
+func BenchmarkSlashArgCompletionKeystroke(b *testing.B) {
+	root := b.TempDir()
+	b.Setenv("HOME", root)
+	b.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+	b.Setenv("XDG_CONFIG_HOME", root+"/config")
+	b.Chdir(root)
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.modelRef = "prov/model"
+	m.skills = make([]skill.Skill, 0, 1000)
+	for i := range 1000 {
+		m.skills = append(m.skills, skill.Skill{
+			Name:        fmt.Sprintf("bench-skill-%04d", i),
+			Description: "benchmark skill description " + strings.Repeat("x", 80),
+		})
+	}
+	_ = m.slashItems()
+	_ = m.slashArgDataSnapshot() // warm snapshots once
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		m.input.SetValue("/language e")
+		m.updateCompletion()
+		if !m.completion.active {
+			b.Fatal("expected completion menu")
+		}
 	}
 }
