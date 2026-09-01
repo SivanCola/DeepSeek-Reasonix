@@ -29,4 +29,7 @@ const (
 	NoticeCodeSessionRecoveryDepthCap                           = "session_recovery_depth_cap"
 	NoticeCodeSessionShutdownRecoveryForked                     = "session_shutdown_recovery_forked"
 	NoticeCodeDecisionReceipt, NoticeCodeContextEditingFallback = "decision_receipt", "context_editing_fallback"
+	NoticeCodeSessionTakenOver                                  = "session_taken_over"
+	NoticeCodeSessionReclaimRequested                           = "session_reclaim_requested"
+	NoticeCodeSessionReclaimed                                  = "session_reclaimed"
 )
