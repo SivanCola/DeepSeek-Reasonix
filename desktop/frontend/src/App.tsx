@@ -74,6 +74,7 @@ import { WorktreeBadge } from "./components/WorktreeBadge";
 import { CopyButton } from "./components/CopyButton";
 import { ExternalOpener, shouldMountExternalOpener } from "./components/ExternalOpener";
 import { TopicbarMoreMenu } from "./components/TopicbarMoreMenu";
+import { RemoteReclaimBanner } from "./components/RemoteReclaimBanner";
 import { startTerminalEventBridge } from "./lib/terminalEvents";
 import { applyTerminalThemePreference } from "./lib/terminalTheme";
 import { formatTerminalOutputForComposer } from "./lib/terminalOutput";
@@ -1125,7 +1126,6 @@ export default function App() {
   const [tasksOpen, setTasksOpen] = useState<false | "session" | "all">(false);
   const [takeoverDialogTab, setTakeoverDialogTab] = useState<string | null>(null);
   const [reclaimBusyTab, setReclaimBusyTab] = useState<string | null>(null);
-  const [reclaimArmed, setReclaimArmed] = useState(false);
   const [liveSidebarWidth, setLiveSidebarWidth] = useState<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [viewportHeight, setViewportHeight] = useState(() => (typeof window === "undefined" ? 720 : window.innerHeight));
@@ -4741,31 +4741,17 @@ export default function App() {
           </header>
 
           {activeTab?.takenOver && activeTab?.remote ? (
-            <div className="banner banner--warning banner--actionable">
-              <span className="banner__msg">{t("takeover.remoteBanner")}</span>
-              <span className="banner__spacer" />
-              <button
-                type="button"
-                className={`btn btn--small${reclaimArmed ? " btn--danger" : ""}`}
-                disabled={reclaimBusyTab === activeTab.id}
-                title={reclaimArmed ? t("takeover.reclaimConfirm") : t("takeover.reclaimTitle")}
-                onClick={() => {
-                  const tabId = activeTab.id;
-                  if (!tabId || reclaimBusyTab) return;
-                  if (!reclaimArmed) {
-                    setReclaimArmed(true);
-                    return;
-                  }
-                  setReclaimArmed(false);
-                  setReclaimBusyTab(tabId);
-                  app.ReclaimRemoteTabSession(tabId)
-                    .catch((error) => console.warn("[takeover] reclaim failed", error))
-                    .finally(() => setReclaimBusyTab(null));
-                }}
-              >
-                {reclaimBusyTab === activeTab.id ? t("takeover.reclaiming") : reclaimArmed ? t("takeover.reclaimConfirmButton") : t("takeover.reclaim")}
-              </button>
-            </div>
+            <RemoteReclaimBanner
+              tabId={activeTab.id}
+              busyTabId={reclaimBusyTab}
+              onReclaim={(tabId) => {
+                if (reclaimBusyTab) return;
+                setReclaimBusyTab(tabId);
+                app.ReclaimRemoteTabSession(tabId)
+                  .catch((error) => console.warn("[takeover] reclaim failed", error))
+                  .finally(() => setReclaimBusyTab(null));
+              }}
+            />
           ) : null}
           {(() => {
             const blocked = tabMetas.find((tab) => tab.runtime?.issue?.code === "session_lease_held" && !tab.remote);

@@ -48,12 +48,12 @@ export function SessionTakeoverDialog({ tabId, onClose }: { tabId: string; onClo
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        onClose();
+        if (!busyMode) onClose();
       }
     };
     document.addEventListener("keydown", onKeyDown, { capture: true });
     return () => document.removeEventListener("keydown", onKeyDown, { capture: true });
-  }, [onClose]);
+  }, [busyMode, onClose]);
 
   const take = (mode: "wait" | "interrupt") => {
     if (busyMode) return;
