@@ -298,8 +298,86 @@ func wireFrameMustReachSubscriber(data []byte) bool {
 	if json.Unmarshal(data, &frame) != nil {
 		return false
 	}
-	return frame.Kind == "turn_done" || frame.Kind == "session_changed" ||
-		frame.Kind == "notice" && frame.Code == event.NoticeCodeBackgroundJobFinished
+	switch {
+	case frame.Kind == "turn_done", frame.Kind == "session_changed":
+		return true
+	case frame.Kind == "notice":
+		return noticeCodeMustReachSubscriber(frame.Code)
+	}
+	return false
+}
+
+// noticeCodeMustReachSubscriber lists notice codes whose delivery cannot be
+// recovered by refetching /history: they flip a surface's ownership state
+// (taken over / handed back), so a dropped frame would leave a client acting
+// on stale read/write permissions until its next poll.
+func noticeCodeMustReachSubscriber(code string) bool {
+	switch code {
+	case event.NoticeCodeBackgroundJobFinished,
+		event.NoticeCodeSessionTakenOver,
+		event.NoticeCodeSessionReclaimRequested,
+		event.NoticeCodeSessionReclaimed:
+		return true
+	}
+	return false
+}
+
+// EmitWire publishes an externally authored wire frame (same JSON contract as
+// locally emitted events) to every subscriber. The local-takeover mirror uses
+// it: a desktop writer that owns the session file pushes its frames through
+// Serve so the remote tab keeps rendering the conversation live without any
+// change to its own pipeline.
+func (b *Broadcaster) EmitWire(wired eventwire.Event) {
+	if wired.SessionPath != "" {
+		wired.SessionPath = agent.CanonicalSessionPath(wired.SessionPath)
+	}
+	b.mu.Lock()
+	observedCurrent := b.current
+	b.mu.Unlock()
+	wired.SessionCurrent = wired.SessionPath != "" && wired.SessionPath == observedCurrent
+	data, err := json.Marshal(wired)
+	if err != nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.current != observedCurrent {
+		wired.SessionCurrent = wired.SessionPath != "" && wired.SessionPath == b.current
+		data, err = json.Marshal(wired)
+		if err != nil {
+			return
+		}
+	}
+	for ch := range b.subs {
+		enqueueSubscriberWireFrame(ch, data, wired.Kind)
+	}
+}
+
+// wireKindIsPriority mirrors eventIsPriority for externally supplied frames,
+// which arrive as wire kind strings rather than typed event.Kind values.
+func wireKindIsPriority(kind string) bool {
+	switch kind {
+	case "reasoning", "text", "tool_progress", "stream_attempt":
+		return false
+	default:
+		return true
+	}
+}
+
+func enqueueSubscriberWireFrame(ch chan []byte, data []byte, kind string) {
+	priority := wireKindIsPriority(kind)
+	if !priority && len(ch) >= cap(ch)-subscriberPriorityReserve {
+		return
+	}
+	select {
+	case ch <- data:
+		return
+	default:
+		if !wireFrameMustReachSubscriber(data) || !evictRecoverableSubscriberFrame(ch) {
+			return
+		}
+	}
+	ch <- data
 }
 
 // Subscribe registers a new SSE client and returns its channel plus an
