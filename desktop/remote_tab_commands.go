@@ -121,7 +121,11 @@ func (a *App) resumeRemoteTabSessionPathForOpenSelection(tabID, name, sessionPat
 		return true
 	}
 	if tab.client == nil || tab.state != "ready" {
-		if selectionRevision != 0 && (tab.state == "connecting" || tab.state == "reconnecting") {
+		if tab.state == "connecting" || tab.state == "reconnecting" {
+			// Always defer the selection while connecting: the first click
+			// after a fresh desktop start has selectionRevision 0, which
+			// previously fell through to "return false" — the user's click
+			// was silently dropped because the SSH tunnel wasn't ready yet.
 			requeueRemoteTabOpenSelectionLocked(tab, &remoteTabPendingOpenSelection{
 				name: strings.TrimSpace(name), path: strings.TrimSpace(sessionPath), title: strings.TrimSpace(sessionTitle),
 				revision: selectionRevision, deferred: true, identityCommitted: true, previous: previous,
@@ -206,9 +210,17 @@ func (a *App) resumeRemoteTabSessionPathForOpenSelection(tabID, name, sessionPat
 		if title == "" {
 			title = name
 		}
+		// A 204 from /resume on a session a local runtime owns is a spectator
+		// mount, not ownership. The provisional route is already committed by
+		// beginRemoteTabProvisionalResume, so flip the tab read-only BEFORE the
+		// resume publication emits ready: the frontend rehydrates with
+		// /history?session= only when takenOver is already set.
+		a.markRemoteTabSpectatorIfLocalOwned(ctx, tabID, client, base, gen)
 		if !a.commitAndPublishRemoteTabResume(tabID, tab, client, gen, route, target, title) {
 			// A newer route won the publication fence; never restore the older
-			// selection over it.
+			// selection over it. The spectator pin was for the losing route —
+			// drop it so the winning session renders as foreground.
+			a.clearRemoteTabSpectator(tabID, gen)
 			return true
 		}
 		a.goRemoteTabSafe("remoteTabResumeStatus", func() { _, _ = a.RemoteTabStatus(tabID) })
