@@ -294,32 +294,7 @@ drain:
 }
 
 func wireFrameMustReachSubscriber(data []byte) bool {
-	var frame eventwire.Event
-	if json.Unmarshal(data, &frame) != nil {
-		return false
-	}
-	switch {
-	case frame.Kind == "turn_done", frame.Kind == "session_changed":
-		return true
-	case frame.Kind == "notice":
-		return noticeCodeMustReachSubscriber(frame.Code)
-	}
-	return false
-}
-
-// noticeCodeMustReachSubscriber lists notice codes whose delivery cannot be
-// recovered by refetching /history: they flip a surface's ownership state
-// (taken over / handed back), so a dropped frame would leave a client acting
-// on stale read/write permissions until its next poll.
-func noticeCodeMustReachSubscriber(code string) bool {
-	switch code {
-	case event.NoticeCodeBackgroundJobFinished,
-		event.NoticeCodeSessionTakenOver,
-		event.NoticeCodeSessionReclaimRequested,
-		event.NoticeCodeSessionReclaimed:
-		return true
-	}
-	return false
+	return eventwire.FrameMustReachMirror(data)
 }
 
 // EmitWire publishes an externally authored wire frame (same JSON contract as
@@ -356,12 +331,7 @@ func (b *Broadcaster) EmitWire(wired eventwire.Event) {
 // wireKindIsPriority mirrors eventIsPriority for externally supplied frames,
 // which arrive as wire kind strings rather than typed event.Kind values.
 func wireKindIsPriority(kind string) bool {
-	switch kind {
-	case "reasoning", "text", "tool_progress", "stream_attempt":
-		return false
-	default:
-		return true
-	}
+	return !eventwire.WireKindIsRecoverable(kind)
 }
 
 func enqueueSubscriberWireFrame(ch chan []byte, data []byte, kind string) {

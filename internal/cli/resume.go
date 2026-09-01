@@ -331,12 +331,12 @@ func (m *chatTUI) runTakeoverCommand(input string) {
 	}
 	loaded, err := cliPrepareTakeoverCandidate(binding, m.leases)
 	if err != nil {
-		cliReturnFailedTakeover(binding, m.leases)
+		_ = cliReturnFailedTakeover(binding, m.leases, m.takeover)
 		m.notice("takeover: " + err.Error())
 		return
 	}
 	if err := binding.commitPrevious(m.takeover); err != nil {
-		cliReturnFailedTakeover(binding, m.leases)
+		_ = cliReturnFailedTakeover(binding, m.leases, m.takeover)
 		m.notice("takeover: " + err.Error())
 		return
 	}

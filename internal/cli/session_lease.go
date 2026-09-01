@@ -63,12 +63,12 @@ func (m *chatTUI) commitLoadedSessionSwitch(path string, loaded *agent.Session) 
 	}
 	if m.leases != nil {
 		if err := m.leases.BindSessionAuthority(loaded); err != nil {
-			cliReturnFailedTakeover(binding, m.leases)
+			_ = cliReturnFailedTakeover(binding, m.leases, m.takeover)
 			return err
 		}
 	}
 	if err := binding.commitPrevious(m.takeover); err != nil {
-		cliReturnFailedTakeover(binding, m.leases)
+		_ = cliReturnFailedTakeover(binding, m.leases, m.takeover)
 		return err
 	}
 	m.ctrl.Resume(loaded, path)

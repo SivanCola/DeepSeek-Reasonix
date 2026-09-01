@@ -461,6 +461,58 @@ func (k *SessionLeaseKeeper) RetireDetachedForHandoff(targetWriterID, handoffID 
 	return nil
 }
 
+// RestoreDetachedReturningCurrent rolls a RebindDetaching transaction back to
+// previous while returning the receiver's newly acquired lease through a
+// reverse reservation. The old binding is restored even when publishing that
+// reservation fails. In that case the returned detached keeper still owns the
+// target lease and must be retained and retried with RetireDetachedForHandoff;
+// releasing it while the process remains alive would reopen a third-writer
+// race before the intended owner can consume the reservation.
+//
+// Callers use this before publishing a controller for the receiver's target.
+func (k *SessionLeaseKeeper) RestoreDetachedReturningCurrent(previous *SessionLeaseKeeper, targetWriterID, handoffID string) (*SessionLeaseKeeper, error) {
+	return k.restoreDetachedReturningCurrentWith(previous, func(lease *agent.SessionLease) error {
+		return lease.ReleaseForHandoff(targetWriterID, handoffID)
+	})
+}
+
+func (k *SessionLeaseKeeper) restoreDetachedReturningCurrentWith(previous *SessionLeaseKeeper, release func(*agent.SessionLease) error) (*SessionLeaseKeeper, error) {
+	if k == nil || previous == nil || k == previous {
+		return nil, fmt.Errorf("invalid detached session rollback")
+	}
+	k.mu.Lock()
+	previous.mu.Lock()
+	defer previous.mu.Unlock()
+	defer k.mu.Unlock()
+	if k.lease == nil {
+		return nil, fmt.Errorf("no current session lease held")
+	}
+	if previous.lease == nil && previous.controller == nil && len(previous.retired) == 0 {
+		return nil, fmt.Errorf("no previous session binding held")
+	}
+	if k.controller != nil || len(k.retired) != 0 {
+		return nil, fmt.Errorf("current session binding was already published")
+	}
+
+	current := k.lease
+	releaseErr := release(current)
+	var pending *SessionLeaseKeeper
+	if releaseErr != nil {
+		pending = &SessionLeaseKeeper{lease: current, ownershipBinder: k.ownershipBinder}
+	}
+
+	inLease, inCtrl, inRetired, inBinder := previous.lease, previous.controller, previous.retired, previous.ownershipBinder
+	previous.lease, previous.controller, previous.retired = nil, nil, nil
+	if k.ownershipBinder == nil {
+		k.ownershipBinder = inBinder
+	}
+	k.lease, k.controller, k.retired = inLease, inCtrl, inRetired
+	if inCtrl != nil {
+		k.bindTransferredController(inCtrl)
+	}
+	return pending, releaseErr
+}
+
 func (k *SessionLeaseKeeper) rebindDetachingWith(path string, acquire func(string) (*agent.SessionLease, error)) (*SessionLeaseKeeper, error) {
 	if k == nil {
 		return nil, nil

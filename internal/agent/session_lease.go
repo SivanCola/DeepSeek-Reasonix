@@ -43,6 +43,34 @@ type SessionLeaseInfo struct {
 	HandoffExpiresAt time.Time `json:"handoff_expires_at,omitempty"`
 }
 
+// MarshalJSON makes the zero time genuinely optional. encoding/json does not
+// apply omitempty to a value time.Time, and writing year 1 would make legacy
+// metadata look like an explicit (expired) reservation. Older readers still
+// ignore these unknown fields, but they do not enforce an active reservation:
+// every concurrent writer sharing a state directory must therefore be upgraded
+// before takeover is used.
+func (i SessionLeaseInfo) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		SessionPath      string     `json:"session_path"`
+		WriterID         string     `json:"writer_id"`
+		PID              int        `json:"pid"`
+		Hostname         string     `json:"hostname,omitempty"`
+		AcquiredAt       time.Time  `json:"acquired_at"`
+		HandoffTo        string     `json:"handoff_to,omitempty"`
+		HandoffID        string     `json:"handoff_id,omitempty"`
+		HandoffExpiresAt *time.Time `json:"handoff_expires_at,omitempty"`
+	}
+	var expires *time.Time
+	if !i.HandoffExpiresAt.IsZero() {
+		value := i.HandoffExpiresAt
+		expires = &value
+	}
+	return json.Marshal(wire{
+		SessionPath: i.SessionPath, WriterID: i.WriterID, PID: i.PID, Hostname: i.Hostname,
+		AcquiredAt: i.AcquiredAt, HandoffTo: i.HandoffTo, HandoffID: i.HandoffID, HandoffExpiresAt: expires,
+	})
+}
+
 // SessionLeaseHandoffWindow bounds how long a released lease stays reserved
 // for its explicitly named successor. The OS lock is free during this window,
 // but new-version callers must present the matching writer and generation.

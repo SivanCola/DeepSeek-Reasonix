@@ -106,6 +106,8 @@ func discoverCLIServes() []cliServeRecord {
 	return out
 }
 
+var discoverCLIServesForTakeover = discoverCLIServes
+
 // cliServeForPID finds the resident serve holding the lease by matching the
 // holder PID the lease error reported.
 func cliServeForPID(pid int) *cliServeRecord {
@@ -207,7 +209,7 @@ func cliTakeoverHeldSession(sessionPath string, leaseErr error, leases *control.
 	}
 	binding := &cliTakeoverBinding{path: sessionPath, record: *record, client: client, grant: grant}
 	if manager != nil {
-		current, _, _ := manager.snapshot()
+		current, _, _, _ := manager.snapshot()
 		if current != nil && !manager.Returned() && agent.CanonicalSessionPath(current.path) != agent.CanonicalSessionPath(sessionPath) {
 			binding.priorMirror = current
 		}
@@ -259,8 +261,17 @@ func readCLITakeoverAnswer() (string, error) {
 const (
 	cliTakeoverFlushEvery = 120 * time.Millisecond
 	cliTakeoverHeartbeat  = 5 * time.Second
-	cliTakeoverMaxFrames  = 512
+	cliTakeoverMaxFrames  = eventwire.MirrorBatchMaxFrames
 )
+
+const cliTakeoverRediscoverFailures = 3
+
+type cliPendingReturn struct {
+	keeper  *control.SessionLeaseKeeper
+	binding *cliTakeoverBinding
+	nextTry time.Time
+	backoff time.Duration
+}
 
 // cliTakeoverManager is the outermost CLI event sink while a handed-off
 // session is active. It preserves the terminal sink, mirrors the same typed
@@ -272,36 +283,59 @@ type cliTakeoverManager struct {
 	inner  event.Sink
 	leases *control.SessionLeaseKeeper
 
+	// Lock order is returnMu -> sendMu -> mu. Emit only takes mu, so the model
+	// event sink never waits for an HTTP request.
+	returnMu sync.Mutex
+	sendMu   sync.Mutex
 	mu       sync.Mutex
 	binding  *cliTakeoverBinding
+	revision uint64
+	failures int
 	ctrl     control.SessionAPI
-	queue    []eventwire.Event
-	wake     chan struct{}
-	stop     chan struct{}
-	done     chan struct{}
-	onYield  func()
-	returnMu sync.Mutex
+	queue    eventwire.MirrorQueue
+	pending  []*cliPendingReturn
+	// retirePending is a deterministic failure-injection seam for the pending
+	// return retry loop. Production calls RetireDetachedForHandoff directly.
+	retirePending func(*control.SessionLeaseKeeper, string, string) error
+	wake          chan struct{}
+	stop          chan struct{}
+	done          chan struct{}
+	onYield       func()
 
 	started    bool
 	stopOnce   sync.Once
 	reclaiming atomic.Bool
 	returned   atomic.Bool
+	closed     atomic.Bool
 }
 
 func newCLITakeoverManager(inner event.Sink, leases *control.SessionLeaseKeeper) *cliTakeoverManager {
 	return &cliTakeoverManager{AuditForwarder: event.AuditForwarder{Inner: inner}, inner: inner, leases: leases}
 }
 
+func (m *cliTakeoverManager) SetInner(inner event.Sink) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.inner = inner
+	m.AuditForwarder.Inner = inner
+	m.mu.Unlock()
+}
+
 func (m *cliTakeoverManager) Emit(e event.Event) {
 	if m == nil {
 		return
 	}
-	if m.inner != nil {
-		m.inner.Emit(e)
+	m.mu.Lock()
+	inner := m.inner
+	m.mu.Unlock()
+	if inner != nil {
+		inner.Emit(e)
 	}
 	m.mu.Lock()
 	if m.binding != nil && !m.returned.Load() {
-		m.queue = append(m.queue, eventwire.ToWire(e))
+		m.queue.Push(eventwire.ToWire(e))
 	}
 	wake := m.wake
 	m.mu.Unlock()
@@ -314,16 +348,19 @@ func (m *cliTakeoverManager) Emit(e event.Event) {
 }
 
 func (m *cliTakeoverManager) EmitChecked(e event.Event) error {
-	if checked, ok := m.inner.(event.CheckedSink); ok {
+	m.mu.Lock()
+	inner := m.inner
+	m.mu.Unlock()
+	if checked, ok := inner.(event.CheckedSink); ok {
 		if err := checked.EmitChecked(e); err != nil {
 			return err
 		}
-	} else if m.inner != nil {
-		m.inner.Emit(e)
+	} else if inner != nil {
+		inner.Emit(e)
 	}
 	m.mu.Lock()
 	if m.binding != nil && !m.returned.Load() {
-		m.queue = append(m.queue, eventwire.ToWire(e))
+		m.queue.Push(eventwire.ToWire(e))
 	}
 	wake := m.wake
 	m.mu.Unlock()
@@ -349,16 +386,27 @@ func (m *cliTakeoverManager) Activate(binding *cliTakeoverBinding) {
 	if m == nil || binding == nil {
 		return
 	}
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
 	m.mu.Lock()
 	m.binding = binding
-	if !m.started {
-		m.started = true
-		m.wake = make(chan struct{}, 1)
-		m.stop = make(chan struct{})
-		m.done = make(chan struct{})
-		go m.run()
-	}
+	m.revision++
+	m.failures = 0
+	m.returned.Store(false)
+	m.reclaiming.Store(false)
+	m.ensureStartedLocked()
 	m.mu.Unlock()
+}
+
+func (m *cliTakeoverManager) ensureStartedLocked() {
+	if m.started {
+		return
+	}
+	m.started = true
+	m.wake = make(chan struct{}, 1)
+	m.stop = make(chan struct{})
+	m.done = make(chan struct{})
+	go m.run()
 }
 
 func (m *cliTakeoverManager) SetYieldCallback(fn func()) {
@@ -373,10 +421,10 @@ func (m *cliTakeoverManager) SetYieldCallback(fn func()) {
 func (m *cliTakeoverManager) Reclaiming() bool { return m != nil && m.reclaiming.Load() }
 func (m *cliTakeoverManager) Returned() bool   { return m != nil && m.returned.Load() }
 
-func (m *cliTakeoverManager) snapshot() (*cliTakeoverBinding, control.SessionAPI, func()) {
+func (m *cliTakeoverManager) snapshot() (*cliTakeoverBinding, control.SessionAPI, func(), uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.binding, m.ctrl, m.onYield
+	return m.binding, m.ctrl, m.onYield, m.revision
 }
 
 func (m *cliTakeoverManager) run() {
@@ -391,6 +439,8 @@ func (m *cliTakeoverManager) run() {
 	defer timer.Stop()
 	heartbeat := time.NewTicker(cliTakeoverHeartbeat)
 	defer heartbeat.Stop()
+	retry := time.NewTicker(250 * time.Millisecond)
+	defer retry.Stop()
 	armed := false
 	for {
 		select {
@@ -411,15 +461,15 @@ func (m *cliTakeoverManager) run() {
 			if !m.push(true) {
 				return
 			}
+		case <-retry.C:
+			m.retryPendingReturns(false)
 		}
 	}
 }
 
 func (m *cliTakeoverManager) drain() []eventwire.Event {
 	m.mu.Lock()
-	count := min(len(m.queue), cliTakeoverMaxFrames)
-	frames := append([]eventwire.Event(nil), m.queue[:count]...)
-	m.queue = m.queue[count:]
+	frames := m.queue.Take(cliTakeoverMaxFrames)
 	m.mu.Unlock()
 	return frames
 }
@@ -429,13 +479,13 @@ func (m *cliTakeoverManager) requeue(frames []eventwire.Event) {
 		return
 	}
 	m.mu.Lock()
-	m.queue = append(frames, m.queue...)
+	m.queue.Prepend(frames)
 	m.mu.Unlock()
 }
 
 func (m *cliTakeoverManager) wakeIfQueued() {
 	m.mu.Lock()
-	pending, wake := len(m.queue) > 0, m.wake
+	pending, wake := m.queue.Len() > 0, m.wake
 	m.mu.Unlock()
 	if pending && wake != nil {
 		select {
@@ -446,10 +496,16 @@ func (m *cliTakeoverManager) wakeIfQueued() {
 }
 
 func (m *cliTakeoverManager) push(heartbeat bool) bool {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
+	return m.pushLocked(heartbeat)
+}
+
+func (m *cliTakeoverManager) pushLocked(heartbeat bool) bool {
 	if m.returned.Load() {
 		return false
 	}
-	binding, _, _ := m.snapshot()
+	binding, _, _, revision := m.snapshot()
 	if binding == nil || binding.client == nil || binding.grant.MirrorID == "" {
 		return true
 	}
@@ -457,9 +513,29 @@ func (m *cliTakeoverManager) push(heartbeat bool) bool {
 	if len(frames) == 0 && !heartbeat {
 		return true
 	}
-	payload, _ := json.Marshal(map[string]any{
-		"sessionPath": binding.path, "mirrorId": binding.grant.MirrorID, "frames": frames,
-	})
+	marshal := func(batch []eventwire.Event) ([]byte, error) {
+		return json.Marshal(map[string]any{
+			"sessionPath": binding.path, "mirrorId": binding.grant.MirrorID, "frames": batch,
+		})
+	}
+	batch, remainder, payload, marshalErr := eventwire.MarshalMirrorBatch(frames, eventwire.MirrorBatchMaxBytes, marshal)
+	if marshalErr == nil && len(batch) == 0 && len(frames) > 0 && len(remainder) > 0 {
+		remainder = remainder[1:]
+	}
+	m.requeue(remainder)
+	if marshalErr != nil {
+		m.requeue(batch)
+		return true
+	}
+	if len(batch) == 0 && len(frames) > 0 {
+		// A single frame larger than the HTTP protocol permits cannot ever be
+		// delivered. Durable history remains authoritative for its content.
+		m.wakeIfQueued()
+		if !heartbeat {
+			return true
+		}
+		payload, _ = marshal(nil)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, binding.record.base+"/external/frames", bytes.NewReader(payload))
 	if err == nil {
@@ -471,38 +547,67 @@ func (m *cliTakeoverManager) push(heartbeat bool) bool {
 	}
 	if err != nil {
 		cancel()
-		m.requeue(frames)
-		return true
+		if !m.bindingCurrent(binding, revision) {
+			return true
+		}
+		m.requeue(batch)
+		return m.readoptLocked(binding, revision)
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	resp.Body.Close()
 	cancel()
-	if resp.StatusCode == http.StatusConflict {
-		m.requeue(frames)
-		return m.readopt()
-	}
-	if resp.StatusCode != http.StatusOK {
-		m.requeue(frames)
+	if !m.bindingCurrent(binding, revision) {
 		return true
 	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusConflict {
+		m.requeue(batch)
+		return m.readoptLocked(binding, revision)
+	}
+	if resp.StatusCode != http.StatusOK {
+		m.requeue(batch)
+		m.mu.Lock()
+		if m.binding == binding && m.revision == revision {
+			m.failures++
+		}
+		failures := m.failures
+		m.mu.Unlock()
+		if failures >= cliTakeoverRediscoverFailures {
+			return m.readoptLocked(binding, revision)
+		}
+		return true
+	}
+	m.mu.Lock()
+	if m.binding == binding && m.revision == revision {
+		m.failures = 0
+	}
+	m.mu.Unlock()
 	var out struct {
 		ReclaimRequested bool   `json:"reclaimRequested"`
 		ReclaimMode      string `json:"reclaimMode"`
 	}
 	if json.Unmarshal(body, &out) == nil && out.ReclaimRequested {
-		m.requestYield(out.ReclaimMode == "interrupt")
+		m.requestYieldFor(binding, revision, out.ReclaimMode == "interrupt")
 		return true
 	}
 	m.wakeIfQueued()
 	return true
 }
 
-func (m *cliTakeoverManager) readopt() bool {
-	binding, _, _ := m.snapshot()
-	if binding == nil {
+func (m *cliTakeoverManager) bindingCurrent(binding *cliTakeoverBinding, revision uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.binding == binding && m.revision == revision && !m.returned.Load()
+}
+
+// readoptLocked discovers the current Serve endpoint and rotates the mirror
+// generation. sendMu is held by the caller, so a binding switch cannot race a
+// late response from the endpoint being replaced.
+func (m *cliTakeoverManager) readoptLocked(binding *cliTakeoverBinding, revision uint64) bool {
+	if binding == nil || !m.bindingCurrent(binding, revision) {
 		return false
 	}
-	for _, record := range discoverCLIServes() {
+	conflicted := false
+	for _, record := range discoverCLIServesForTakeover() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		client, err := cliServeClient(ctx, record)
 		if err != nil {
@@ -526,27 +631,42 @@ func (m *cliTakeoverManager) readopt() bool {
 		resp.Body.Close()
 		cancel()
 		if resp.StatusCode == http.StatusConflict {
-			m.requestYield(false)
-			return false
+			conflicted = true
+			continue
 		}
 		var grant cliTakeoverGrant
-		if resp.StatusCode == http.StatusOK && json.Unmarshal(body, &grant) == nil && grant.MirrorID != "" && grant.ReturnHandoffID != "" {
+		if resp.StatusCode == http.StatusOK && json.Unmarshal(body, &grant) == nil &&
+			grant.MirrorID != "" && grant.ReturnHandoffID != "" && grant.SourceWriterID != "" &&
+			grant.TargetWriterID == agent.SessionWriterID() &&
+			agent.CanonicalSessionPath(grant.SessionPath) == agent.CanonicalSessionPath(binding.path) {
 			m.mu.Lock()
-			if m.binding == binding {
+			if m.binding == binding && m.revision == revision && !m.returned.Load() {
 				m.binding = &cliTakeoverBinding{path: binding.path, record: record, client: client, grant: grant}
+				m.revision++
+				m.failures = 0
 			}
 			m.mu.Unlock()
 			return true
 		}
 	}
+	if conflicted {
+		m.requestYieldFor(binding, revision, false)
+	}
 	return true
 }
 
-func (m *cliTakeoverManager) requestYield(interrupt bool) {
+func (m *cliTakeoverManager) requestYieldFor(binding *cliTakeoverBinding, revision uint64, interrupt bool) {
+	if !m.bindingCurrent(binding, revision) {
+		return
+	}
 	if !m.reclaiming.CompareAndSwap(false, true) {
 		return
 	}
-	_, ctrl, callback := m.snapshot()
+	current, ctrl, callback, currentRevision := m.snapshot()
+	if current != binding || currentRevision != revision {
+		m.reclaiming.Store(false)
+		return
+	}
 	if interrupt && ctrl != nil {
 		ctrl.Cancel()
 	}
@@ -559,7 +679,7 @@ func (m *cliTakeoverManager) requestYield(interrupt bool) {
 			m.reclaiming.Store(false)
 			return
 		}
-		if err := m.returnLease(); err != nil {
+		if err := m.returnLeaseFor(binding, revision); err != nil {
 			m.reclaiming.Store(false)
 			return
 		}
@@ -570,9 +690,16 @@ func (m *cliTakeoverManager) requestYield(interrupt bool) {
 }
 
 func (m *cliTakeoverManager) returnLease() error {
+	return m.returnLeaseFor(nil, 0)
+}
+
+func (m *cliTakeoverManager) returnLeaseFor(expected *cliTakeoverBinding, revision uint64) error {
 	m.returnMu.Lock()
 	defer m.returnMu.Unlock()
-	binding, ctrl, _ := m.snapshot()
+	binding, ctrl, _, currentRevision := m.snapshot()
+	if expected != nil && (binding != expected || currentRevision != revision) {
+		return fmt.Errorf("takeover mirror changed before reclaim completed")
+	}
 	if binding == nil || m.returned.Load() {
 		return nil
 	}
@@ -596,7 +723,7 @@ func (m *cliTakeoverManager) RebindAway(path string) (bool, error) {
 	if m == nil {
 		return false, nil
 	}
-	binding, _, _ := m.snapshot()
+	binding, _, _, _ := m.snapshot()
 	if binding == nil || m.returned.Load() || agent.CanonicalSessionPath(binding.path) == agent.CanonicalSessionPath(path) {
 		return false, nil
 	}
@@ -623,7 +750,9 @@ func (m *cliTakeoverManager) RebindAway(path string) (bool, error) {
 	m.mirrorEnd(binding)
 	m.mu.Lock()
 	m.binding = nil
-	m.queue = nil
+	m.queue.Reset()
+	m.revision++
+	m.failures = 0
 	m.started = false
 	m.wake = nil
 	m.stop = nil
@@ -647,7 +776,7 @@ func cliAcquireFreeSession(path string, leases *control.SessionLeaseKeeper, mana
 	}
 	binding := &cliTakeoverBinding{path: path}
 	if manager != nil {
-		current, _, _ := manager.snapshot()
+		current, _, _, _ := manager.snapshot()
 		if current != nil && !manager.Returned() && agent.CanonicalSessionPath(current.path) != agent.CanonicalSessionPath(path) {
 			binding.priorMirror = current
 		}
@@ -704,7 +833,7 @@ func (m *cliTakeoverManager) commitPriorMirror(next *cliTakeoverBinding) error {
 	}
 	m.returnMu.Lock()
 	defer m.returnMu.Unlock()
-	current, _, _ := m.snapshot()
+	current, _, _, _ := m.snapshot()
 	if current != next.priorMirror || m.returned.Load() {
 		return fmt.Errorf("current takeover mirror changed during session switch")
 	}
@@ -730,7 +859,9 @@ func (m *cliTakeoverManager) commitPriorMirror(next *cliTakeoverBinding) error {
 	m.mirrorEnd(current)
 	m.mu.Lock()
 	m.binding = nil
-	m.queue = nil
+	m.queue.Reset()
+	m.revision++
+	m.failures = 0
 	m.started = false
 	m.wake = nil
 	m.stop = nil
@@ -743,6 +874,15 @@ func (m *cliTakeoverManager) commitPriorMirror(next *cliTakeoverBinding) error {
 }
 
 func (m *cliTakeoverManager) mirrorEnd(binding *cliTakeoverBinding) {
+	if m == nil {
+		return
+	}
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
+	m.mirrorEndLocked(binding)
+}
+
+func (m *cliTakeoverManager) mirrorEndLocked(binding *cliTakeoverBinding) {
 	if binding == nil || binding.client == nil {
 		return
 	}
@@ -761,28 +901,115 @@ func (m *cliTakeoverManager) mirrorEnd(binding *cliTakeoverBinding) {
 	}
 }
 
-func cliReturnFailedTakeover(binding *cliTakeoverBinding, leases *control.SessionLeaseKeeper) {
-	if binding == nil || leases == nil {
+func (m *cliTakeoverManager) holdPendingReturn(keeper *control.SessionLeaseKeeper, binding *cliTakeoverBinding) {
+	if m == nil || keeper == nil || binding == nil {
 		return
+	}
+	m.mu.Lock()
+	m.pending = append(m.pending, &cliPendingReturn{
+		keeper: keeper, binding: binding, nextTry: time.Now().Add(200 * time.Millisecond), backoff: 200 * time.Millisecond,
+	})
+	m.ensureStartedLocked()
+	wake := m.wake
+	m.mu.Unlock()
+	if wake != nil {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (m *cliTakeoverManager) retryPendingReturns(force bool) {
+	if m == nil {
+		return
+	}
+	m.returnMu.Lock()
+	defer m.returnMu.Unlock()
+	now := time.Now()
+	m.mu.Lock()
+	pending := append([]*cliPendingReturn(nil), m.pending...)
+	m.mu.Unlock()
+	for _, item := range pending {
+		if item == nil || item.keeper == nil || item.binding == nil || (!force && now.Before(item.nextTry)) {
+			continue
+		}
+		var err error
+		if m.retirePending != nil {
+			err = m.retirePending(item.keeper, item.binding.grant.SourceWriterID, item.binding.grant.ReturnHandoffID)
+		} else {
+			err = item.keeper.RetireDetachedForHandoff(item.binding.grant.SourceWriterID, item.binding.grant.ReturnHandoffID)
+		}
+		if err == nil {
+			m.mirrorEnd(item.binding)
+			m.mu.Lock()
+			for i, candidate := range m.pending {
+				if candidate == item {
+					m.pending = append(m.pending[:i], m.pending[i+1:]...)
+					break
+				}
+			}
+			m.mu.Unlock()
+			continue
+		}
+		m.mu.Lock()
+		item.backoff = min(item.backoff*2, 5*time.Second)
+		item.nextTry = now.Add(item.backoff)
+		m.mu.Unlock()
+	}
+}
+
+// cliReturnFailedTakeover restores the source binding after a candidate load
+// or commit failure. A failed reverse-reservation write leaves the target in a
+// manager-owned detached keeper; mirror-end is withheld until a retry succeeds.
+func cliReturnFailedTakeover(binding *cliTakeoverBinding, leases *control.SessionLeaseKeeper, manager *cliTakeoverManager) error {
+	if binding == nil || leases == nil {
+		return nil
 	}
 	if binding.grant.ReturnHandoffID != "" && binding.grant.SourceWriterID != "" {
-		if err := leases.ReleaseForHandoff(binding.grant.SourceWriterID, binding.grant.ReturnHandoffID); err != nil {
-			// Keep the source writable even if the reverse reservation cannot be
-			// persisted. mirror-end lets Serve retry ordinary recovery.
-			leases.Release()
+		var pending *control.SessionLeaseKeeper
+		var err error
+		if binding.previous != nil {
+			pending, err = leases.RestoreDetachedReturningCurrent(
+				binding.previous, binding.grant.SourceWriterID, binding.grant.ReturnHandoffID,
+			)
+			binding.previous = nil
+		} else {
+			pending = leases.Split()
+			if pending == nil {
+				return fmt.Errorf("failed takeover target lease is unavailable")
+			}
+			err = pending.RetireDetachedForHandoff(binding.grant.SourceWriterID, binding.grant.ReturnHandoffID)
+			if err == nil {
+				pending = nil
+			}
+		}
+		if err != nil {
+			if manager == nil || pending == nil {
+				return fmt.Errorf("return failed takeover lease: %w", err)
+			}
+			manager.holdPendingReturn(pending, binding)
+			return fmt.Errorf("return failed takeover lease (retrying): %w", err)
 		}
 	} else {
-		leases.Release()
-	}
-	if binding.previous != nil {
-		leases.Adopt(binding.previous)
-		binding.previous = nil
+		current := leases.Split()
+		if binding.previous != nil {
+			leases.Adopt(binding.previous)
+			binding.previous = nil
+		}
+		if current != nil {
+			current.RetireDetached()
+		}
 	}
 	if binding.grant.MirrorID == "" {
-		return
+		return nil
 	}
-	m := &cliTakeoverManager{leases: leases}
-	m.mirrorEnd(binding)
+	if manager != nil {
+		manager.mirrorEnd(binding)
+	} else {
+		(&cliTakeoverManager{}).mirrorEnd(binding)
+	}
+	return nil
 }
 
 func cliEndFailedHandoff(binding *cliTakeoverBinding) {
@@ -800,8 +1027,12 @@ func (m *cliTakeoverManager) Close() error {
 	if m == nil {
 		return nil
 	}
+	if !m.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	var closeErr error
 	if m.reclaiming.Load() {
-		_, ctrl, _ := m.snapshot()
+		_, ctrl, _, _ := m.snapshot()
 		deadline := time.Now().Add(cliTakeoverTimeout)
 		for ctrl != nil && ctrl.Running() && time.Now().Before(deadline) {
 			time.Sleep(50 * time.Millisecond)
@@ -811,7 +1042,7 @@ func (m *cliTakeoverManager) Close() error {
 		}
 	}
 	if err := m.returnLease(); err != nil {
-		return err
+		closeErr = err
 	}
 	m.mu.Lock()
 	started, stop, done := m.started, m.stop, m.done
@@ -820,5 +1051,20 @@ func (m *cliTakeoverManager) Close() error {
 		m.stopOnce.Do(func() { close(stop) })
 		<-done
 	}
-	return nil
+	m.retryPendingReturns(true)
+	m.mu.Lock()
+	remaining := append([]*cliPendingReturn(nil), m.pending...)
+	m.pending = nil
+	m.mu.Unlock()
+	for _, item := range remaining {
+		if item != nil && item.keeper != nil {
+			// Close is the final CLI teardown. Keep the target fenced until this
+			// point, then let process cleanup release an unreturnable OS lease.
+			item.keeper.Release()
+		}
+	}
+	if len(remaining) > 0 && closeErr == nil {
+		closeErr = fmt.Errorf("unable to publish %d pending session return reservation(s)", len(remaining))
+	}
+	return closeErr
 }

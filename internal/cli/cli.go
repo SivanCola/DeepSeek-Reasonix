@@ -643,6 +643,12 @@ func runAgent(args []string, version string) int {
 	// silently double-writing. Released after the controller closes.
 	leases := control.NewSessionLeaseKeeper()
 	defer leases.Release()
+	takeoverManager := newCLITakeoverManager(nil, leases)
+	defer func() {
+		if err := takeoverManager.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		}
+	}()
 	var resumeSession *agent.Session
 	var takeoverBinding *cliTakeoverBinding
 	if resumePath != "" {
@@ -654,14 +660,14 @@ func runAgent(args []string, version string) int {
 		}
 		bindErr := leases.Rebind(resumePath)
 		if errors.Is(bindErr, agent.ErrSessionLeaseHeld) && *takeover {
-			takeoverBinding, err = cliTakeoverHeldSession(resumePath, bindErr, leases, nil)
+			takeoverBinding, err = cliTakeoverHeldSession(resumePath, bindErr, leases, takeoverManager)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 				return 1
 			}
 			resumeSession, err = cliPrepareTakeoverCandidate(takeoverBinding, leases)
 			if err != nil {
-				cliReturnFailedTakeover(takeoverBinding, leases)
+				_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 				return 1
 			}
@@ -683,11 +689,11 @@ func runAgent(args []string, version string) int {
 
 	chain, err := buildRunSink(format, *printOnly, *showThinking, *metricsPath, *trajectoryPath, cfg, reporter)
 	if err != nil {
-		cliReturnFailedTakeover(takeoverBinding, leases)
+		_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
-	takeoverManager := newCLITakeoverManager(chain.sink, leases)
+	takeoverManager.SetInner(chain.sink)
 	chain.sink = takeoverManager
 	sink, resultOutput, metrics := chain.sink, chain.resultOutput, chain.metrics
 	if resumePath != "" {
@@ -719,7 +725,7 @@ func runAgent(args []string, version string) int {
 	}
 	ctrl, err := setupProfileWithOverrides(ctx, *model, *maxSteps, true, sink, overrides)
 	if err != nil {
-		cliReturnFailedTakeover(takeoverBinding, leases)
+		_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 		if resultOutput != nil && format != runOutputText {
 			if encodeErr := resultOutput.Finalize("", started, err); encodeErr != nil {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, encodeErr)
@@ -740,7 +746,7 @@ func runAgent(args []string, version string) int {
 	// --continue: resume the most recent saved session.
 	if resumePath != "" {
 		if err := takeoverBinding.commitPrevious(takeoverManager); err != nil {
-			cliReturnFailedTakeover(takeoverBinding, leases)
+			_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
@@ -752,17 +758,12 @@ func runAgent(args []string, version string) int {
 	// Fresh sessions take the lease too (defensive: the path is brand new); a
 	// resumed path is already held, making this a no-op.
 	if err := rebindCLIControllerAuthority(leases, ctrl); err != nil {
-		cliReturnFailedTakeover(takeoverBinding, leases)
+		_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, control.SessionInUseMessage(err)+"; "+control.SessionLeaseCloseHint)
 		return 1
 	}
 	if takeoverBinding != nil {
 		takeoverManager.Activate(takeoverBinding)
-		defer func() {
-			if err := takeoverManager.Close(); err != nil {
-				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			}
-		}()
 	}
 	reclaimCLIRecoveryBranches(ctrl.SessionDir())
 
@@ -1123,6 +1124,12 @@ func chatREPL(args []string, version string) int {
 	// and this chat from silently double-writing one transcript.
 	leases := control.NewSessionLeaseKeeper()
 	defer leases.Release()
+	takeoverManager := newCLITakeoverManager(nil, leases)
+	defer func() {
+		if err := takeoverManager.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+		}
+	}()
 	var takeoverBinding *cliTakeoverBinding
 	var startupResumeSession *agent.Session
 	if resumePath != "" {
@@ -1133,14 +1140,14 @@ func chatREPL(args []string, version string) int {
 		}
 		bindErr := leases.Rebind(resumePath)
 		if errors.Is(bindErr, agent.ErrSessionLeaseHeld) && cliSessionTakeoverCandidate(bindErr) && promptSessionTakeover(bindErr) {
-			takeoverBinding, err = cliTakeoverHeldSession(resumePath, bindErr, leases, nil)
+			takeoverBinding, err = cliTakeoverHeldSession(resumePath, bindErr, leases, takeoverManager)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 				return 1
 			}
 			startupResumeSession, err = cliPrepareTakeoverCandidate(takeoverBinding, leases)
 			if err != nil {
-				cliReturnFailedTakeover(takeoverBinding, leases)
+				_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 				return 1
 			}
@@ -1168,7 +1175,7 @@ func chatREPL(args []string, version string) int {
 	var sink event.Sink = &eventSink{ch: eventCh}
 	sink = withNotifications(sink, cfg)
 	sink = reporter.Wrap(sink)
-	takeoverManager := newCLITakeoverManager(sink, leases)
+	takeoverManager.SetInner(sink)
 	sink = takeoverManager
 	var effortOverride *string
 	if strings.TrimSpace(*effort) != "" {
@@ -1192,13 +1199,13 @@ func chatREPL(args []string, version string) int {
 		// the wizard would overwrite the user's config (#2856).
 		fmt.Fprintln(os.Stderr, i18n.M.ReconfigureOnUnknownModel)
 		if rc := interactiveSetup(defaultConfigTarget(), defaultEnvTarget()); rc != 0 {
-			cliReturnFailedTakeover(takeoverBinding, leases)
+			_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 			return rc
 		}
 		ctrl, err = setupProfileWithOverrides(ctx, *model, *maxSteps, false, sink, overrides)
 	}
 	if err != nil {
-		cliReturnFailedTakeover(takeoverBinding, leases)
+		_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
@@ -1209,7 +1216,7 @@ func chatREPL(args []string, version string) int {
 	// session lands in a new file stamped with the model name.
 	if resumePath != "" {
 		if err := takeoverBinding.commitPrevious(takeoverManager); err != nil {
-			cliReturnFailedTakeover(takeoverBinding, leases)
+			_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
@@ -1219,7 +1226,7 @@ func chatREPL(args []string, version string) int {
 	// Fresh sessions take the lease too (defensive: the path is brand new); a
 	// resumed path is already held, making this a no-op.
 	if err := rebindCLIControllerAuthority(leases, ctrl); err != nil {
-		cliReturnFailedTakeover(takeoverBinding, leases)
+		_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, control.SessionInUseMessage(err)+"; "+control.SessionLeaseCloseHint)
 		return 1
 	}

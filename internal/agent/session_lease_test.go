@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -164,6 +166,28 @@ func TestSessionLeaseLegacyMetadataDefaultsHandoffFields(t *testing.T) {
 	}
 	if info.HandoffTo != "" || info.HandoffID != "" || !info.HandoffExpiresAt.IsZero() {
 		t.Fatalf("legacy metadata decoded with reservation: %+v", info)
+	}
+}
+
+func TestSessionLeaseMetadataOmitsEmptyHandoffAndIgnoresUnknownFields(t *testing.T) {
+	encoded, err := json.Marshal(SessionLeaseInfo{
+		SessionPath: "x", WriterID: "writer", PID: 1, AcquiredAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	for _, field := range []string{"handoff_to", "handoff_id", "handoff_expires_at"} {
+		if strings.Contains(text, field) {
+			t.Fatalf("empty %s was serialized: %s", field, text)
+		}
+	}
+	info, err := decodeSessionLeaseInfo([]byte(`{"session_path":"x","writer_id":"legacy","pid":1,"acquired_at":"2026-01-01T00:00:00Z","future_field":{"nested":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.WriterID != "legacy" || info.HandoffTo != "" || info.HandoffID != "" || !info.HandoffExpiresAt.IsZero() {
+		t.Fatalf("unknown-field metadata decoded incorrectly: %+v", info)
 	}
 }
 

@@ -62,6 +62,13 @@ type takeoverGrant struct {
 // takeoverHandoffTimeout bounds the drain window for a wait-mode takeover.
 const takeoverHandoffTimeout = 5 * time.Minute
 
+// takeoverAfterGrantHookForTest deterministically pauses a takeover after
+// Serve published its grant but before the desktop enters the rebuild
+// transaction. Production leaves it nil.
+var takeoverAfterGrantHookForTest func()
+
+var takeoverFindTargetForTest func(context.Context, *App, string) (takeoverServeRecord, *http.Client, SessionTakeoverView, error)
+
 // takeoverServeRecord is one resident serve discovered from this machine's
 // remote state directory, reachable over loopback HTTP.
 type takeoverServeRecord struct {
@@ -127,6 +134,8 @@ func discoverLocalTakeoverServes() []takeoverServeRecord {
 	return out
 }
 
+var discoverLocalTakeoverServesForMirror = discoverLocalTakeoverServes
+
 // takeoverProcessAlive reports whether a pid is a live process on this host.
 // The takeover protocol only ever talks to serves that are actually running;
 // everything else is stale state.
@@ -173,7 +182,7 @@ func takeoverOwnership(ctx context.Context, client *http.Client, base, sessionPa
 // findTakeoverTarget scans resident serves for one holding (or mirroring) the
 // session, and returns a ready-to-use client for it.
 func (a *App) findTakeoverTarget(ctx context.Context, sessionPath string) (takeoverServeRecord, *http.Client, SessionTakeoverView, error) {
-	records := discoverLocalTakeoverServes()
+	records := discoverLocalTakeoverServesForMirror()
 	// Handshake failures back off: a serve whose token file was rotated by a
 	// later bootstrap would otherwise burn a failed login every probe.
 	records = a.serveProbesFresh(records)
@@ -252,7 +261,15 @@ func (a *App) TakeoverSession(tabID, mode string) error {
 	a.mu.RUnlock()
 	ctx, cancel := context.WithTimeout(context.Background(), takeoverHandoffTimeout+30*time.Second)
 	defer cancel()
-	record, client, view, err := a.findTakeoverTarget(ctx, path)
+	var record takeoverServeRecord
+	var client *http.Client
+	var view SessionTakeoverView
+	var err error
+	if takeoverFindTargetForTest != nil {
+		record, client, view, err = takeoverFindTargetForTest(ctx, a, path)
+	} else {
+		record, client, view, err = a.findTakeoverTarget(ctx, path)
+	}
 	if err != nil {
 		return err
 	}
@@ -283,45 +300,83 @@ func (a *App) TakeoverSession(tabID, mode string) error {
 		return fmt.Errorf("takeover handoff: invalid grant")
 	}
 	if grant.TargetWriterID != agent.SessionWriterID() {
+		a.endFailedTakeover(record, client, grant)
 		return fmt.Errorf("takeover handoff: grant targets another runtime")
+	}
+	if sessionRuntimeKey(grant.SessionPath) != "" && sessionRuntimeKey(grant.SessionPath) != sessionRuntimeKey(path) {
+		a.endFailedTakeover(record, client, grant)
+		return fmt.Errorf("takeover handoff: grant targets another session")
+	}
+	if hook := takeoverAfterGrantHookForTest; hook != nil {
+		hook()
+	}
+
+	// The handoff request must not hold runtimeRebuildMu because Serve may wait
+	// for an active turn. Once the grant exists, however, validation, targeted
+	// acquisition, lease/mirror installation and controller publication are one
+	// serialized transaction. A concurrent tab rebuild therefore wins before
+	// acquisition or waits until this transaction commits; it can never be
+	// overwritten by a stale takeover.
+	a.runtimeRebuildMu.Lock()
+	defer a.runtimeRebuildMu.Unlock()
+	a.mu.RLock()
+	epochCurrent := a.tabByIDLocked(tabID) == tab && a.runtimeEpochForTabLocked(tab) == sourceEpoch
+	pathCurrent := sessionRuntimeKey(tab.currentSessionPath()) == sessionRuntimeKey(path)
+	retryable := a.tabs[tab.ID] == tab && !tab.removed && tab.Ctrl == nil && tab.StartupErrLeaseHeld
+	a.mu.RUnlock()
+	if !epochCurrent || !pathCurrent || !retryable || tab.sessionLeaseRuntimeKey() != "" {
+		a.endFailedTakeover(record, client, grant)
+		return fmt.Errorf("tab changed while taking over the session; retry")
 	}
 	lease, err := agent.TryAcquireSessionLeaseWithHandoff(path, grant.SourceWriterID, grant.HandoffID)
 	if err != nil {
 		a.endFailedTakeover(record, client, grant)
 		return userFacingSessionLeaseError("", err)
 	}
-	a.mu.RLock()
-	epochCurrent := a.tabByIDLocked(tabID) == tab && a.runtimeEpochForTabLocked(tab) == sourceEpoch
-	a.mu.RUnlock()
-	if !epochCurrent || sessionRuntimeKey(tab.currentSessionPath()) != sessionRuntimeKey(path) || !a.tabHasRetryableStartupLeaseError(tab) {
-		_ = lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID)
-		a.endFailedTakeover(record, client, grant)
-		return fmt.Errorf("tab changed while taking over the session; retry")
-	}
 	oldLease := tab.swapSessionLease(lease)
 	if oldLease != nil {
 		tab.swapSessionLease(oldLease)
-		_ = lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID)
+		if err := lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID); err != nil {
+			// This cannot be installed on the changed tab; let a return-only
+			// mirror retain and retry it without disturbing the old tab lease.
+			key := sessionRuntimeKey(path)
+			a.registerTakeoverMirror(key, tabID, path, record, client, grant)
+			a.takeoverMirrorForKey(key).holdPendingReturn(lease)
+			return fmt.Errorf("return takeover lease: %w", err)
+		}
 		a.endFailedTakeover(record, client, grant)
 		return fmt.Errorf("tab already owns another session lease")
 	}
 
 	key := sessionRuntimeKey(path)
 	a.registerTakeoverMirror(key, tabID, path, record, client, grant)
-	a.runtimeRebuildMu.Lock()
+	previousStartupErr := tab.StartupErr
+	previousLeaseHeld := tab.StartupErrLeaseHeld
+	previousReady := tab.Ready
 	err = a.rebuildStartupTabLocked(tab)
-	a.runtimeRebuildMu.Unlock()
-	if err == nil && a.controllerForTab(tab) == nil {
-		err = fmt.Errorf("session startup did not publish a controller")
+	if err == nil {
+		ctrl := a.controllerForTab(tab)
+		if ctrl == nil || sessionRuntimeKey(ctrl.SessionPath()) != key || tab.sessionLeaseRuntimeKey() != key {
+			err = fmt.Errorf("session startup did not publish the handed-off controller")
+		}
 	}
 	if err != nil {
 		if returned := tab.takeSessionLease(); returned != nil {
-			_ = returned.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID)
+			if m := a.takeoverMirrorForKey(key); m != nil {
+				m.returnLeaseAfterFailedTakeover(returned)
+			} else if releaseErr := returned.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID); releaseErr != nil {
+				tab.adoptSessionLease(returned)
+			}
 		}
-		if m := a.takeoverMirrorForKey(key); m != nil {
-			m.stopAndFinalize(false)
+		a.mu.Lock()
+		if a.tabs[tab.ID] == tab && !tab.removed && tab.Ctrl == nil {
+			tab.StartupErr = previousStartupErr
+			tab.StartupErrLeaseHeld = previousLeaseHeld
+			tab.Ready = previousReady
+			a.setSessionRuntimePhaseLocked(tab, sessionRuntimeLeaseBlocked, &sessionLeaseBusyError{})
+			a.saveTabsLocked()
 		}
-		a.endFailedTakeover(record, client, grant)
+		a.mu.Unlock()
 		return err
 	}
 	a.clearDeferredRebuild(tabID)
@@ -347,14 +402,19 @@ type takeoverMirror struct {
 	key         string
 	sessionPath string
 
-	mu        sync.Mutex
-	tabID     string
-	sink      *tabEventSink
-	client    *http.Client
-	record    takeoverServeRecord
-	grant     takeoverGrant
-	queue     []eventwire.Event
-	lastFlush time.Time
+	mu              sync.Mutex
+	tabID           string
+	sink            *tabEventSink
+	client          *http.Client
+	record          takeoverServeRecord
+	grant           takeoverGrant
+	bindingRevision uint64
+	queue           eventwire.MirrorQueue
+	lastFlush       time.Time
+	pendingReturn   *agent.SessionLease
+	returnNextTry   time.Time
+	returnBackoff   time.Duration
+	releaseHandoff  func(*agent.SessionLease, string, string) error
 
 	reclaimRequested    atomic.Bool
 	demoted             atomic.Bool
@@ -368,7 +428,7 @@ type takeoverMirror struct {
 }
 
 const (
-	takeoverMirrorMaxQueue   = 512
+	takeoverMirrorMaxQueue   = eventwire.MirrorBatchMaxFrames
 	takeoverMirrorFlushEvery = 120 * time.Millisecond
 	takeoverMirrorHeartbeat  = 5 * time.Second
 )
@@ -527,6 +587,8 @@ func (a *App) registerTakeoverMirror(key, tabID, sessionPath string, record take
 	m.record = record
 	m.client = client
 	m.grant = grant
+	m.bindingRevision++
+	m.consecutiveFailures = 0
 	m.mu.Unlock()
 	a.takeoverMu.Unlock()
 	a.attachTakeoverMirror(tabID, sessionPath)
@@ -586,7 +648,9 @@ func (a *App) stopTakeoverMirrors() {
 // tabs instead of waiting out the stale-mirror timeout.
 func (a *App) endTakeoverMirrors() {
 	for _, m := range a.snapshotTakeoverMirrors() {
-		m.mirrorEnd()
+		if m.finalizePendingReturn() {
+			m.mirrorEnd()
+		}
 		m.detach()
 	}
 }
@@ -638,7 +702,7 @@ func (m *takeoverMirror) forwardEvent(e event.Event) {
 	}
 	wired := eventwire.ToWire(e)
 	m.mu.Lock()
-	m.queue = append(m.queue, wired)
+	m.queue.Push(wired)
 	m.mu.Unlock()
 	select {
 	case m.wake <- struct{}{}:
@@ -646,10 +710,112 @@ func (m *takeoverMirror) forwardEvent(e event.Event) {
 	}
 }
 
+// holdPendingReturn transfers a failed takeover target into the mirror. The
+// tab's prior state stays intact while this independent lease fences out third
+// writers until its reverse reservation is durably published.
+func (m *takeoverMirror) holdPendingReturn(lease *agent.SessionLease) {
+	if m == nil || lease == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.pendingReturn != nil && m.pendingReturn != lease {
+		m.mu.Unlock()
+		lease.Release()
+		return
+	}
+	m.pendingReturn = lease
+	m.returnBackoff = 200 * time.Millisecond
+	m.returnNextTry = time.Now()
+	m.mu.Unlock()
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (m *takeoverMirror) returnLeaseAfterFailedTakeover(lease *agent.SessionLease) {
+	m.holdPendingReturn(lease)
+}
+
+// retryPendingReturn reports true only when it published a pending reverse
+// reservation. The run loop then ends the mirror from its own goroutine,
+// avoiding stop/join self-deadlock.
+func (m *takeoverMirror) retryPendingReturn(force bool) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	lease := m.pendingReturn
+	grant := m.grant
+	nextTry := m.returnNextTry
+	release := m.releaseHandoff
+	m.mu.Unlock()
+	if lease == nil || (!force && time.Now().Before(nextTry)) {
+		return false
+	}
+	var err error
+	if release != nil {
+		err = release(lease, grant.SourceWriterID, grant.ReturnHandoffID)
+	} else {
+		err = lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pendingReturn != lease {
+		return false
+	}
+	if err == nil {
+		m.pendingReturn = nil
+		m.returnBackoff = 0
+		m.returnNextTry = time.Time{}
+		return true
+	}
+	if m.returnBackoff <= 0 {
+		m.returnBackoff = 200 * time.Millisecond
+	} else {
+		m.returnBackoff = min(m.returnBackoff*2, 5*time.Second)
+	}
+	m.returnNextTry = time.Now().Add(m.returnBackoff)
+	return false
+}
+
+// finalizePendingReturn runs at final app teardown. A reservation that still
+// cannot be written keeps its lease until this point, then releases the OS
+// lock without sending mirror-end; Serve will recover it as a vanished writer.
+func (m *takeoverMirror) finalizePendingReturn() bool {
+	if m == nil {
+		return true
+	}
+	if m.retryPendingReturn(true) {
+		return true
+	}
+	m.mu.Lock()
+	lease := m.pendingReturn
+	m.pendingReturn = nil
+	m.mu.Unlock()
+	if lease != nil {
+		lease.Release()
+		return false
+	}
+	return true
+}
+
 func (m *takeoverMirror) snapshotClient() (*http.Client, takeoverServeRecord, string, takeoverGrant) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.client, m.record, m.tabID, m.grant
+}
+
+func (m *takeoverMirror) snapshotBinding() (*http.Client, takeoverServeRecord, string, takeoverGrant, uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.client, m.record, m.tabID, m.grant, m.bindingRevision
+}
+
+func (m *takeoverMirror) bindingCurrent(client *http.Client, grant takeoverGrant, revision uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.client == client && m.grant.MirrorID == grant.MirrorID && m.bindingRevision == revision
 }
 
 func (m *takeoverMirror) run(initialClient *http.Client, initialRecord takeoverServeRecord) {
@@ -666,8 +832,10 @@ func (m *takeoverMirror) run(initialClient *http.Client, initialRecord takeoverS
 		<-flushTimer.C
 	}
 	heartbeat := time.NewTicker(takeoverMirrorHeartbeat)
+	retryReturn := time.NewTicker(250 * time.Millisecond)
 	defer flushTimer.Stop()
 	defer heartbeat.Stop()
+	defer retryReturn.Stop()
 	flushArmed := false
 	for {
 		select {
@@ -689,6 +857,12 @@ func (m *takeoverMirror) run(initialClient *http.Client, initialRecord takeoverS
 			if !m.pushOnce(true) {
 				return
 			}
+		case <-retryReturn.C:
+			if m.retryPendingReturn(false) {
+				m.detach()
+				m.mirrorEnd()
+				return
+			}
 		}
 		// A mirror whose tab is gone entirely (closed, not detached) ends
 		// itself so Serve can hand the session back to the remote side.
@@ -701,7 +875,7 @@ func (m *takeoverMirror) run(initialClient *http.Client, initialRecord takeoverS
 }
 
 func (m *takeoverMirror) pushOnce(heartbeat bool) bool {
-	client, record, _, grant := m.snapshotClient()
+	client, record, _, grant, revision := m.snapshotBinding()
 	if client == nil || grant.MirrorID == "" {
 		return true
 	}
@@ -709,26 +883,50 @@ func (m *takeoverMirror) pushOnce(heartbeat bool) bool {
 	if len(frames) == 0 && !heartbeat {
 		return true
 	}
-	payload, err := json.Marshal(map[string]any{
-		"sessionPath": m.sessionPath, "mirrorId": grant.MirrorID, "frames": frames,
-	})
+	marshal := func(batch []eventwire.Event) ([]byte, error) {
+		return json.Marshal(map[string]any{
+			"sessionPath": m.sessionPath, "mirrorId": grant.MirrorID, "frames": batch,
+		})
+	}
+	batch, remainder, payload, err := eventwire.MarshalMirrorBatch(frames, eventwire.MirrorBatchMaxBytes, marshal)
+	if err == nil && len(batch) == 0 && len(frames) > 0 && len(remainder) > 0 {
+		remainder = remainder[1:]
+	}
+	m.requeue(remainder)
 	if err != nil {
-		m.requeue(frames)
+		m.requeue(batch)
 		return true
+	}
+	if len(batch) == 0 && len(frames) > 0 {
+		m.wakeIfQueued()
+		if !heartbeat {
+			return true
+		}
+		payload, _ = marshal(nil)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	resp, err := serveDo(ctx, client, http.MethodPost, serveURL(record.base, "/external/frames"), payload)
 	if err != nil {
 		cancel()
-		m.requeue(frames)
-		return true
+		if !m.bindingCurrent(client, grant, revision) {
+			return true
+		}
+		m.requeue(batch)
+		return m.retryAdoptOrDemote(client, grant, revision)
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	resp.Body.Close()
 	cancel()
+	if !m.bindingCurrent(client, grant, revision) {
+		return true
+	}
 	switch resp.StatusCode {
 	case http.StatusOK:
-		m.consecutiveFailures = 0
+		m.mu.Lock()
+		if m.bindingRevision == revision {
+			m.consecutiveFailures = 0
+		}
+		m.mu.Unlock()
 		var out struct {
 			ReclaimRequested bool   `json:"reclaimRequested"`
 			ReclaimMode      string `json:"reclaimMode"`
@@ -738,19 +936,23 @@ func (m *takeoverMirror) pushOnce(heartbeat bool) bool {
 		}
 		m.wakeIfQueued()
 		return true
-	case http.StatusConflict:
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusConflict:
 		slog.Info("desktop: mirror generation rejected — attempting re-adopt",
 			"session", m.sessionPath)
-		m.requeue(frames)
-		return m.retryAdoptOrDemote()
+		m.requeue(batch)
+		return m.retryAdoptOrDemote(client, grant, revision)
 	default:
-		m.requeue(frames)
-		m.consecutiveFailures++
-		if m.consecutiveFailures < 3 {
+		m.requeue(batch)
+		m.mu.Lock()
+		if m.bindingRevision == revision {
+			m.consecutiveFailures++
+		}
+		failures := m.consecutiveFailures
+		m.mu.Unlock()
+		if failures < 3 {
 			return true
 		}
-		m.consecutiveFailures = 0
-		return m.retryAdoptOrDemote()
+		return m.retryAdoptOrDemote(client, grant, revision)
 	}
 }
 
@@ -759,8 +961,12 @@ func (m *takeoverMirror) pushOnce(heartbeat bool) bool {
 // already owns the session (reclaim completed or another writer took over),
 // demotes this tab to read-only and releases the lease so the remote side
 // can proceed. Returns true if re-adopted (caller continues the loop).
-func (m *takeoverMirror) retryAdoptOrDemote() bool {
-	records := discoverLocalTakeoverServes()
+func (m *takeoverMirror) retryAdoptOrDemote(oldClient *http.Client, oldGrant takeoverGrant, revision uint64) bool {
+	if !m.bindingCurrent(oldClient, oldGrant, revision) {
+		return true
+	}
+	conflicted := false
+	records := discoverLocalTakeoverServesForMirror()
 	for _, record := range records {
 		if !pathWithinDir(m.sessionPath, config.ProjectSessionDir(record.state.Workspace)) {
 			continue
@@ -785,42 +991,46 @@ func (m *takeoverMirror) retryAdoptOrDemote() bool {
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			var grant takeoverGrant
-			if json.Unmarshal(respBody, &grant) != nil || grant.MirrorID == "" || grant.ReturnHandoffID == "" {
+			if json.Unmarshal(respBody, &grant) != nil || grant.MirrorID == "" || grant.ReturnHandoffID == "" || grant.SourceWriterID == "" ||
+				grant.TargetWriterID != agent.SessionWriterID() || sessionRuntimeKey(grant.SessionPath) != sessionRuntimeKey(m.sessionPath) {
 				continue
 			}
 			// Re-adopted: swap in the fresh client and keep mirroring.
 			m.mu.Lock()
-			m.client = client
-			m.record = record
-			m.grant = grant
+			if m.client == oldClient && m.grant.MirrorID == oldGrant.MirrorID && m.bindingRevision == revision {
+				m.client = client
+				m.record = record
+				m.grant = grant
+				m.bindingRevision++
+				m.consecutiveFailures = 0
+			}
 			m.mu.Unlock()
 			slog.Info("desktop: mirror re-adopted with fresh credentials",
 				"session", m.sessionPath, "base", record.base)
 			return true
 		}
 		if resp.StatusCode == http.StatusConflict {
-			// Serve holds this session (string in body mentions handoff) —
-			// the remote side re-owns it. Demote to release the lease.
-			slog.Info("desktop: serve holds session — demoting to release lease",
-				"session", m.sessionPath, "status", resp.StatusCode)
-			go m.demote(false)
-			return false
+			conflicted = true
+			continue
 		}
 		// Other statuses: try next record.
 	}
-	// No serve accepted the re-adopt. If the tab is still live, keep the
-	// local session but stop the forwarder (remote can't see content).
-	slog.Warn("desktop: mirror re-adopt failed on all serves — stopping forwarder",
+	if conflicted && m.bindingCurrent(oldClient, oldGrant, revision) {
+		slog.Info("desktop: serve holds session — demoting to release lease",
+			"session", m.sessionPath)
+		go m.demote(false)
+		return false
+	}
+	// The Serve may be restarting or its state/token files may not have become
+	// visible yet. Keep the bounded queue and retry on the next heartbeat.
+	slog.Warn("desktop: mirror re-adopt unavailable; retaining local writer and bounded queue",
 		"session", m.sessionPath)
-	m.detach()
-	return false
+	return true
 }
 
 func (m *takeoverMirror) drainQueue() []eventwire.Event {
 	m.mu.Lock()
-	count := min(len(m.queue), takeoverMirrorMaxQueue)
-	frames := append([]eventwire.Event(nil), m.queue[:count]...)
-	m.queue = m.queue[count:]
+	frames := m.queue.Take(takeoverMirrorMaxQueue)
 	m.mu.Unlock()
 	return frames
 }
@@ -830,13 +1040,13 @@ func (m *takeoverMirror) requeue(frames []eventwire.Event) {
 		return
 	}
 	m.mu.Lock()
-	m.queue = append(frames, m.queue...)
+	m.queue.Prepend(frames)
 	m.mu.Unlock()
 }
 
 func (m *takeoverMirror) wakeIfQueued() {
 	m.mu.Lock()
-	pending := len(m.queue) > 0
+	pending := m.queue.Len() > 0
 	m.mu.Unlock()
 	if pending {
 		select {
@@ -855,8 +1065,14 @@ func (m *takeoverMirror) flushOnce(ctx context.Context) {
 	if len(frames) == 0 {
 		return
 	}
-	payload, err := json.Marshal(map[string]any{"sessionPath": m.sessionPath, "mirrorId": grant.MirrorID, "frames": frames})
+	marshal := func(batch []eventwire.Event) ([]byte, error) {
+		return json.Marshal(map[string]any{"sessionPath": m.sessionPath, "mirrorId": grant.MirrorID, "frames": batch})
+	}
+	batch, _, payload, err := eventwire.MarshalMirrorBatch(frames, eventwire.MirrorBatchMaxBytes, marshal)
 	if err != nil {
+		return
+	}
+	if len(batch) == 0 {
 		return
 	}
 	flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -1002,6 +1218,12 @@ func (m *takeoverMirror) emitNoticeSink(sink *tabEventSink, level event.Level, c
 // mirrorEnd tells Serve the writer is gone so the remote side resumes without
 // waiting for the stale-mirror timeout. Best effort.
 func (m *takeoverMirror) mirrorEnd() {
+	m.mu.Lock()
+	pending := m.pendingReturn != nil
+	m.mu.Unlock()
+	if pending {
+		return
+	}
 	client, record, _, grant := m.snapshotClient()
 	if client == nil || grant.MirrorID == "" {
 		return

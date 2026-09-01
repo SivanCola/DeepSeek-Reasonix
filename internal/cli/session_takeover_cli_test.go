@@ -2,10 +2,13 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -305,7 +308,10 @@ func TestCLIFailedTakeoverRestoresSourceAndReturnsTarget(t *testing.T) {
 			MirrorID: "target-mirror", SourceWriterID: "target-serve", ReturnHandoffID: "return-target",
 		},
 	}
-	cliReturnFailedTakeover(binding, leases)
+	manager := newCLITakeoverManager(&takeoverRecordSink{}, leases)
+	if err := cliReturnFailedTakeover(binding, leases, manager); err != nil {
+		t.Fatal(err)
+	}
 	if got := leases.HeldPath(); got != agent.CanonicalSessionPath(current) {
 		t.Fatalf("held path = %q, want restored source", got)
 	}
@@ -318,5 +324,318 @@ func TestCLIFailedTakeoverRestoresSourceAndReturnsTarget(t *testing.T) {
 	}
 	if !mirrorEnded.Load() {
 		t.Fatal("failed target mirror was not ended")
+	}
+}
+
+func TestCLITakeoverManagerSerializesRequestsAndDiscardsStaleReclaim(t *testing.T) {
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var inFlight atomic.Int32
+	var maxInFlight atomic.Int32
+	var mu sync.Mutex
+	var batches [][]eventwire.Event
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			observed := maxInFlight.Load()
+			if current <= observed || maxInFlight.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+		var body struct {
+			Frames []eventwire.Event `json:"frames"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		mu.Lock()
+		batches = append(batches, append([]eventwire.Event(nil), body.Frames...))
+		call := len(batches)
+		mu.Unlock()
+		if call == 1 {
+			close(firstEntered)
+			<-releaseFirst
+			_ = json.NewEncoder(w).Encode(map[string]bool{"reclaimRequested": true})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"reclaimRequested": false})
+	}))
+	defer srv.Close()
+
+	m := newCLITakeoverManager(&takeoverRecordSink{}, nil)
+	firstBinding := &cliTakeoverBinding{
+		path: "a.jsonl", record: cliServeRecord{base: srv.URL}, client: srv.Client(),
+		grant: cliTakeoverGrant{MirrorID: "mirror-a"},
+	}
+	m.binding = firstBinding
+	m.revision = 1
+	m.Emit(event.Event{Kind: event.Text, Text: "A"})
+	firstDone := make(chan struct{})
+	go func() {
+		m.push(false)
+		close(firstDone)
+	}()
+	<-firstEntered
+
+	// Model a completed generation switch while the old HTTP response is in
+	// flight. The response must be ignored before it can request a reclaim.
+	m.mu.Lock()
+	m.binding = &cliTakeoverBinding{
+		path: "b.jsonl", record: cliServeRecord{base: srv.URL}, client: srv.Client(),
+		grant: cliTakeoverGrant{MirrorID: "mirror-b"},
+	}
+	m.revision++
+	m.mu.Unlock()
+	m.Emit(event.Event{Kind: event.Text, Text: "B"})
+	secondDone := make(chan struct{})
+	go func() {
+		m.push(false)
+		close(secondDone)
+	}()
+	close(releaseFirst)
+	<-firstDone
+	<-secondDone
+
+	if got := maxInFlight.Load(); got != 1 {
+		t.Fatalf("max requests in flight = %d, want 1", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(batches) != 2 || len(batches[0]) != 1 || batches[0][0].Text != "A" || len(batches[1]) != 1 || batches[1][0].Text != "B" {
+		t.Fatalf("batches = %+v, want A then B", batches)
+	}
+	if m.Reclaiming() {
+		t.Fatal("stale reclaim response affected the new binding")
+	}
+}
+
+func TestCLITakeoverManagerReadoptsOnAuthFailureAndServerMove(t *testing.T) {
+	var delivered atomic.Int32
+	newServe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/token":
+			w.WriteHeader(http.StatusNoContent)
+		case "/adopt":
+			_ = json.NewEncoder(w).Encode(cliTakeoverGrant{
+				SessionPath: "session.jsonl", MirrorID: "mirror-new", ReturnHandoffID: "return-new",
+				SourceWriterID: "serve-new", TargetWriterID: agent.SessionWriterID(),
+			})
+		case "/external/frames":
+			delivered.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]bool{"reclaimRequested": false})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer newServe.Close()
+	oldServe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer oldServe.Close()
+	originalDiscover := discoverCLIServesForTakeover
+	discoverCLIServesForTakeover = func() []cliServeRecord {
+		return []cliServeRecord{{base: newServe.URL, token: "fresh"}}
+	}
+	t.Cleanup(func() { discoverCLIServesForTakeover = originalDiscover })
+
+	m := newCLITakeoverManager(&takeoverRecordSink{}, nil)
+	m.binding = &cliTakeoverBinding{
+		path: "session.jsonl", record: cliServeRecord{base: oldServe.URL}, client: oldServe.Client(),
+		grant: cliTakeoverGrant{MirrorID: "mirror-old"},
+	}
+	m.revision = 1
+	m.Emit(event.Event{Kind: event.Text, Text: "recover me"})
+	if !m.push(false) || !m.push(false) {
+		t.Fatal("manager stopped during re-adopt")
+	}
+	if delivered.Load() != 1 {
+		t.Fatalf("new serve received %d frame batches, want 1", delivered.Load())
+	}
+	binding, _, _, revision := m.snapshot()
+	if binding == nil || binding.grant.MirrorID != "mirror-new" || revision <= 1 {
+		t.Fatalf("binding after re-adopt = %+v revision=%d", binding, revision)
+	}
+}
+
+func TestCLITakeoverManagerReadoptsAfterConnectionRefused(t *testing.T) {
+	deadServe := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := deadServe.URL
+	deadClient := deadServe.Client()
+	deadServe.Close()
+	var delivered atomic.Bool
+	newServe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/token":
+			w.WriteHeader(http.StatusNoContent)
+		case "/adopt":
+			_ = json.NewEncoder(w).Encode(cliTakeoverGrant{SessionPath: "session.jsonl", MirrorID: "new", ReturnHandoffID: "return", SourceWriterID: "source", TargetWriterID: agent.SessionWriterID()})
+		case "/external/frames":
+			delivered.Store(true)
+			_ = json.NewEncoder(w).Encode(map[string]bool{"reclaimRequested": false})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer newServe.Close()
+	originalDiscover := discoverCLIServesForTakeover
+	discoverCLIServesForTakeover = func() []cliServeRecord {
+		return []cliServeRecord{{base: newServe.URL, token: "fresh"}}
+	}
+	t.Cleanup(func() { discoverCLIServesForTakeover = originalDiscover })
+	m := newCLITakeoverManager(nil, nil)
+	m.binding = &cliTakeoverBinding{path: "session.jsonl", record: cliServeRecord{base: deadURL}, client: deadClient, grant: cliTakeoverGrant{MirrorID: "old"}}
+	m.revision = 1
+	m.Emit(event.Event{Kind: event.Text, Text: "recover"})
+	if !m.push(false) || !m.push(false) || !delivered.Load() {
+		t.Fatal("connection refusal did not rediscover and deliver through the new serve")
+	}
+}
+
+func TestCLITakeoverManagerKeepsActualRequestBelowEightMiB(t *testing.T) {
+	var maxBody atomic.Int64
+	var delivered atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for {
+			observed := maxBody.Load()
+			if int64(len(body)) <= observed || maxBody.CompareAndSwap(observed, int64(len(body))) {
+				break
+			}
+		}
+		if len(body) > eventwire.MirrorBatchMaxBytes {
+			t.Errorf("request body = %d bytes", len(body))
+		}
+		var payload struct {
+			Frames []eventwire.Event `json:"frames"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Error(err)
+			return
+		}
+		delivered.Add(int32(len(payload.Frames)))
+		_ = json.NewEncoder(w).Encode(map[string]bool{"reclaimRequested": false})
+	}))
+	defer srv.Close()
+	m := newCLITakeoverManager(nil, nil)
+	m.binding = &cliTakeoverBinding{path: "session.jsonl", record: cliServeRecord{base: srv.URL}, client: srv.Client(), grant: cliTakeoverGrant{MirrorID: "mirror"}}
+	m.revision = 1
+	chunk := strings.Repeat("x", 1<<20)
+	for i := 0; i < 10; i++ {
+		m.Emit(event.Event{Kind: event.Text, Text: chunk})
+	}
+	for delivered.Load() < 10 {
+		if !m.push(false) {
+			t.Fatal("manager stopped while chunking large request")
+		}
+	}
+	if maxBody.Load() > eventwire.MirrorBatchMaxBytes {
+		t.Fatalf("largest body = %d", maxBody.Load())
+	}
+}
+
+func TestCLITakeoverManagerRediscoverAfterThreeServerErrors(t *testing.T) {
+	oldServe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer oldServe.Close()
+	newServe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/token":
+			w.WriteHeader(http.StatusNoContent)
+		case "/adopt":
+			_ = json.NewEncoder(w).Encode(cliTakeoverGrant{SessionPath: "session.jsonl", MirrorID: "new", ReturnHandoffID: "return", SourceWriterID: "source", TargetWriterID: agent.SessionWriterID()})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]bool{"reclaimRequested": false})
+		}
+	}))
+	defer newServe.Close()
+	var discoveries atomic.Int32
+	originalDiscover := discoverCLIServesForTakeover
+	discoverCLIServesForTakeover = func() []cliServeRecord {
+		discoveries.Add(1)
+		return []cliServeRecord{{base: newServe.URL, token: "fresh"}}
+	}
+	t.Cleanup(func() { discoverCLIServesForTakeover = originalDiscover })
+
+	m := newCLITakeoverManager(&takeoverRecordSink{}, nil)
+	m.binding = &cliTakeoverBinding{path: "session.jsonl", record: cliServeRecord{base: oldServe.URL}, client: oldServe.Client(), grant: cliTakeoverGrant{MirrorID: "old"}}
+	m.revision = 1
+	m.Emit(event.Event{Kind: event.Text, Text: "retry"})
+	for i := 0; i < cliTakeoverRediscoverFailures; i++ {
+		if !m.push(false) {
+			t.Fatal("manager stopped before rediscovery")
+		}
+	}
+	if discoveries.Load() != 1 {
+		t.Fatalf("discoveries = %d, want 1 after threshold", discoveries.Load())
+	}
+}
+
+func TestCLITakeoverManagerRetainsPendingReturnUntilReservationSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.jsonl")
+	target := filepath.Join(dir, "target.jsonl")
+	leases := control.NewSessionLeaseKeeper()
+	defer leases.Release()
+	if err := leases.Rebind(source); err != nil {
+		t.Fatal(err)
+	}
+	targetKeeper := control.NewSessionLeaseKeeper()
+	if err := targetKeeper.Rebind(target); err != nil {
+		t.Fatal(err)
+	}
+	var mirrorEnded atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/mirror-end" {
+			mirrorEnded.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	binding := &cliTakeoverBinding{
+		path: target, record: cliServeRecord{base: srv.URL}, client: srv.Client(),
+		grant: cliTakeoverGrant{MirrorID: "mirror", SourceWriterID: "serve", ReturnHandoffID: "return"},
+	}
+	m := newCLITakeoverManager(&takeoverRecordSink{}, leases)
+	wantErr := errors.New("injected reservation failure")
+	var calls atomic.Int32
+	m.retirePending = func(keeper *control.SessionLeaseKeeper, writerID, handoffID string) error {
+		if calls.Add(1) == 1 {
+			return wantErr
+		}
+		return keeper.RetireDetachedForHandoff(writerID, handoffID)
+	}
+	m.pending = []*cliPendingReturn{{keeper: targetKeeper, binding: binding, nextTry: time.Now()}}
+	m.retryPendingReturns(true)
+	if mirrorEnded.Load() {
+		t.Fatal("mirror ended before the reservation succeeded")
+	}
+	if got := leases.HeldPath(); got != agent.CanonicalSessionPath(source) {
+		t.Fatalf("source keeper moved to %q", got)
+	}
+	if third, err := agent.TryAcquireSessionLease(target); !errors.Is(err, agent.ErrSessionLeaseHeld) {
+		if third != nil {
+			third.Release()
+		}
+		t.Fatalf("third writer acquired pending target: %v", err)
+	}
+	m.retryPendingReturns(true)
+	if !mirrorEnded.Load() {
+		t.Fatal("mirror did not end after reservation retry succeeded")
+	}
+	info, err := agent.LoadSessionLeaseInfo(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HandoffTo != "serve" || info.HandoffID != "return" {
+		t.Fatalf("target reservation = %+v", info)
 	}
 }

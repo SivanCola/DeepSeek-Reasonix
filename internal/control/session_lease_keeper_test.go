@@ -529,3 +529,77 @@ func TestSessionLeaseKeeperSplitAndAdopt(t *testing.T) {
 		t.Fatalf("source keeper still holds %q", got)
 	}
 }
+
+func TestSessionLeaseKeeperRollbackRetainsTargetWhenReservationWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.jsonl")
+	target := filepath.Join(dir, "target.jsonl")
+	keeper := NewSessionLeaseKeeper()
+	defer keeper.Release()
+	if err := keeper.Rebind(source); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := keeper.RebindDetaching(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("injected reservation write failure")
+	pending, err := keeper.restoreDetachedReturningCurrentWith(previous, func(*agent.SessionLease) error {
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) || pending == nil {
+		t.Fatalf("rollback = (%v, %v), want pending keeper and injected error", pending, err)
+	}
+	defer pending.Release()
+	if got, want := keeper.HeldPath(), agent.CanonicalSessionPath(source); got != want {
+		t.Fatalf("restored path = %q, want %q", got, want)
+	}
+	if got, want := pending.HeldPath(), agent.CanonicalSessionPath(target); got != want {
+		t.Fatalf("pending path = %q, want %q", got, want)
+	}
+	if got := previous.HeldPath(); got != "" {
+		t.Fatalf("previous keeper still owns %q", got)
+	}
+	if _, err := agent.TryAcquireSessionLease(target); !errors.Is(err, agent.ErrSessionLeaseHeld) {
+		t.Fatalf("third writer acquired pending target: %v", err)
+	}
+	if err := pending.RetireDetachedForHandoff("serve-writer", "return-target"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := agent.LoadSessionLeaseInfo(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HandoffTo != "serve-writer" || info.HandoffID != "return-target" {
+		t.Fatalf("target reservation = %+v", info)
+	}
+}
+
+func TestSessionLeaseKeeperRollbackRestoresSourceAfterReservation(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.jsonl")
+	target := filepath.Join(dir, "target.jsonl")
+	keeper := NewSessionLeaseKeeper()
+	defer keeper.Release()
+	if err := keeper.Rebind(source); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := keeper.RebindDetaching(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := keeper.RestoreDetachedReturningCurrent(previous, "serve-writer", "return-target")
+	if err != nil || pending != nil {
+		t.Fatalf("rollback = (%v, %v), want success", pending, err)
+	}
+	if got, want := keeper.HeldPath(), agent.CanonicalSessionPath(source); got != want {
+		t.Fatalf("restored path = %q, want %q", got, want)
+	}
+	info, err := agent.LoadSessionLeaseInfo(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HandoffTo != "serve-writer" || info.HandoffID != "return-target" {
+		t.Fatalf("target reservation = %+v", info)
+	}
+}
