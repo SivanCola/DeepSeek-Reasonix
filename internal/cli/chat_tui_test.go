@@ -978,11 +978,11 @@ func TestModalPanelsHideComposerBox(t *testing.T) {
 		{
 			name: "resume picker",
 			setup: func(m *chatTUI) {
-				m.resumePick = &resumePicker{sessions: []agent.SessionInfo{{
+				m.resumePick = &resumePicker{entries: []resumeEntry{{session: agent.SessionInfo{
 					Path:    "one.jsonl",
 					Preview: "previous task",
 					Turns:   3,
-				}}, sel: 0, active: -1}
+				}}}, sel: 0, active: -1}
 			},
 			render: func(m chatTUI) string { return m.renderResumePicker() },
 		},

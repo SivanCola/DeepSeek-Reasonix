@@ -319,6 +319,10 @@ type chatTUI struct {
 	// resumePick is the interactive "/resume" session picker overlay. Non-nil
 	// while the user browses saved sessions with ↑/↓ and confirms with Enter.
 	resumePick *resumePicker
+	// pendingTakeoverPath remembers the last /resume target refused because a
+	// resident serve on this machine holds its lease; "/takeover" force-takes
+	// that session back.
+	pendingTakeoverPath string
 	// quickPick owns searchable single-choice overlays such as /model and
 	// /provider. It never invokes a raw-mode prompt inside Bubble Tea.
 	quickPick *quickPicker
@@ -4725,6 +4729,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashClsDone)
 	case "/resume":
 		m.runResumeCommand(input)
+	case "/takeover":
+		m.runTakeoverCommand(input)
 	case "/status":
 		m.echoLocalCommand(input)
 		m.showStatusDetails()

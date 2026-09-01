@@ -504,6 +504,7 @@ func runAgent(args []string, version string) int {
 	cont := registerContinueFlag(fs)
 	resume := fs.String("resume", "", "resume by session file path, session ID, or machine session ID (takes precedence over --continue)")
 	copySession := fs.Bool("copy", false, "with --resume/--continue: duplicate the session and continue in the copy (escape hatch when the original is held by another Reasonix process)")
+	takeover := fs.Bool("takeover", false, "with --resume/--continue: when a resident serve on this machine holds the session, take it over instead of refusing")
 	effort := fs.String("effort", "", "session reasoning effort override")
 	permissionMode := fs.String("permission-mode", "ask", "permission mode: manual | ask | auto | acceptEdits | dontAsk | plan | bypassPermissions")
 	autoApprove := fs.BoolP("auto", "y", false, "explicitly auto-approve ordinary writer fallbacks (alias for --permission-mode auto)")
@@ -644,11 +645,19 @@ func runAgent(args []string, version string) int {
 	defer leases.Release()
 	var resumeSession *agent.Session
 	if resumePath != "" {
-		if err := leases.Rebind(resumePath); err != nil {
-			if errors.Is(err, agent.ErrSessionLeaseHeld) {
-				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, sessionLeaseResumeRefusal(err))
-			} else {
+		bindErr := leases.Rebind(resumePath)
+		if errors.Is(bindErr, agent.ErrSessionLeaseHeld) && *takeover {
+			if err := cliTakeoverHeldSession(resumePath, bindErr); err != nil {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+				return 1
+			}
+			bindErr = leases.Rebind(resumePath)
+		}
+		if bindErr != nil {
+			if errors.Is(bindErr, agent.ErrSessionLeaseHeld) {
+				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, sessionLeaseResumeRefusal(bindErr))
+			} else {
+				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, bindErr)
 			}
 			return 1
 		}
@@ -1088,11 +1097,19 @@ func chatREPL(args []string, version string) int {
 	leases := control.NewSessionLeaseKeeper()
 	defer leases.Release()
 	if resumePath != "" {
-		if err := leases.Rebind(resumePath); err != nil {
-			if errors.Is(err, agent.ErrSessionLeaseHeld) {
-				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, sessionLeaseResumeRefusal(err))
-			} else {
+		bindErr := leases.Rebind(resumePath)
+		if errors.Is(bindErr, agent.ErrSessionLeaseHeld) && cliSessionTakeoverCandidate(bindErr) && promptSessionTakeover(bindErr) {
+			if err := cliTakeoverHeldSession(resumePath, bindErr); err != nil {
 				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
+				return 1
+			}
+			bindErr = leases.Rebind(resumePath)
+		}
+		if bindErr != nil {
+			if errors.Is(bindErr, agent.ErrSessionLeaseHeld) {
+				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, sessionLeaseResumeRefusal(bindErr))
+			} else {
+				fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, bindErr)
 			}
 			return 1
 		}
