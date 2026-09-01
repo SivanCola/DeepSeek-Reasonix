@@ -107,6 +107,26 @@ func (e *takeoverReturnEnv) assertReturned(t *testing.T) {
 	}
 }
 
+func (e *takeoverReturnEnv) assertActiveLeaseReturned(t *testing.T) {
+	t.Helper()
+	if got := e.leases.HeldPath(); got != "" {
+		t.Fatalf("held path after return = %q, want none", got)
+	}
+	info, err := agent.LoadSessionLeaseInfo(e.source)
+	if err != nil || info == nil || info.HandoffTo != "serve-new" || info.HandoffID != "return-new" {
+		t.Fatalf("source reservation = %+v, error=%v", info, err)
+	}
+	binding, _, _, _ := e.manager.snapshot()
+	if binding != nil {
+		t.Fatalf("active binding survived return: %+v", binding.grant)
+	}
+	e.servers.mu.Lock()
+	defer e.servers.mu.Unlock()
+	if len(e.servers.oldEnd) != 0 || len(e.servers.newEnd) != 1 || e.servers.newEnd[0] != "mirror-new" {
+		t.Fatalf("mirror-end old=%v new=%v", e.servers.oldEnd, e.servers.newEnd)
+	}
+}
+
 func TestCLITakeoverManagerReturnsRefreshedMirrorGeneration(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -170,5 +190,28 @@ func TestCLITakeoverManagerReturnFailureKeepsRefreshedMirrorActive(t *testing.T)
 	defer e.servers.mu.Unlock()
 	if len(e.servers.oldEnd)+len(e.servers.newEnd) != 0 {
 		t.Fatalf("mirror ended after reservation failure")
+	}
+}
+
+func TestCLITakeoverManagerReclaimAndCloseReturnRefreshedGeneration(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*takeoverReturnEnv) error
+	}{
+		{name: "reclaim", run: func(e *takeoverReturnEnv) error {
+			e.manager.reclaiming.Store(true)
+			return e.manager.returnLeaseFor(e.oldBinding, 1)
+		}},
+		{name: "close", run: func(e *takeoverReturnEnv) error {
+			return e.manager.Close()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTakeoverReturnEnv(t)
+			if err := tc.run(e); err != nil {
+				t.Fatal(err)
+			}
+			e.assertActiveLeaseReturned(t)
+		})
 	}
 }

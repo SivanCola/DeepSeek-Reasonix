@@ -172,9 +172,10 @@ func TestSessionLeaseKeeperConsumesForwardHandoffBeforeReturningCurrent(t *testi
 	if err := k.Rebind(current); err != nil {
 		t.Fatal(err)
 	}
-	if err := k.RebindWithHandoffReturningCurrent(
-		target, agent.SessionWriterID(), "forward-1", "serve-writer", "return-1",
-	); err != nil {
+	pending, err := k.RebindWithHandoffReturningCurrent(
+		target, agent.SessionWriterID(), "forward-1", "return-target", "serve-writer", "return-1",
+	)
+	if err != nil || pending != nil {
 		t.Fatal(err)
 	}
 	if got := k.HeldPath(); got != agent.CanonicalSessionPath(target) {
@@ -186,6 +187,44 @@ func TestSessionLeaseKeeperConsumesForwardHandoffBeforeReturningCurrent(t *testi
 	}
 	if info == nil || info.HandoffTo != "serve-writer" || info.HandoffID != "return-1" {
 		t.Fatalf("current reverse reservation = %+v", info)
+	}
+}
+
+func TestSessionLeaseKeeperTwoSidedRollbackRetainsTargetAfterBothReservationsFail(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.jsonl")
+	target := filepath.Join(dir, "target.jsonl")
+	keeper := NewSessionLeaseKeeper()
+	defer keeper.Release()
+	if err := keeper.Rebind(source); err != nil {
+		t.Fatal(err)
+	}
+	wantSourceErr := errors.New("injected source reservation failure")
+	wantTargetErr := errors.New("injected target reservation failure")
+	pending, err := keeper.rebindWithHandoffReturningCurrentWith(
+		target,
+		agent.TryAcquireSessionLease,
+		func(*SessionLeaseKeeper) error { return wantSourceErr },
+		func(*agent.SessionLease) error { return wantTargetErr },
+	)
+	if !errors.Is(err, wantSourceErr) || !errors.Is(err, wantTargetErr) || pending == nil {
+		t.Fatalf("rollback = (%v, %v), want pending keeper and both errors", pending, err)
+	}
+	defer pending.Release()
+	if got, want := keeper.HeldPath(), agent.CanonicalSessionPath(source); got != want {
+		t.Fatalf("restored source = %q, want %q", got, want)
+	}
+	if got, want := pending.HeldPath(), agent.CanonicalSessionPath(target); got != want {
+		t.Fatalf("pending target = %q, want %q", got, want)
+	}
+	if third, acquireErr := agent.TryAcquireSessionLease(target); !errors.Is(acquireErr, agent.ErrSessionLeaseHeld) {
+		if third != nil {
+			third.Release()
+		}
+		t.Fatalf("third writer acquired pending target: %v", acquireErr)
+	}
+	if err := pending.RetireDetachedForHandoff(agent.SessionWriterID(), "return-target"); err != nil {
+		t.Fatal(err)
 	}
 }
 

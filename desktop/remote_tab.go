@@ -211,7 +211,7 @@ func (a *App) markRemoteTabSpectatorIfLocalOwned(ctx context.Context, tabID stri
 	// both as read-only spectator surfaces, so the banner and the take-back
 	// button must appear for either — otherwise the tab unlocks its composer
 	// against a transcript it cannot write.
-	locallyOwned := view.Mirrored || view.Holder == "external" || view.Holder == "other"
+	locallyOwned := takeoverViewLocallyOwned(view)
 	a.remoteTabMu.Lock()
 	current := a.remoteTabs[tabID]
 	if current != tab || current == nil || current.gen != gen || current.client != client ||
@@ -738,6 +738,7 @@ func (a *App) ReclaimRemoteTabSession(tabID string) error {
 			tab.runtime.revision == observedRuntimeRevision && tab.selectionRevision == observedSelectionRevision &&
 			agent.CanonicalSessionPath(tab.routing.currentPath) == agent.CanonicalSessionPath(expectedPath)
 	}
+	reconcileOwnership := func() { a.reconcileRemoteTabReclaimOwnership(tabID, client, base, expectedPath, stillCurrent) }
 	// Short timeout: the serve caps un-mirrored reclaims at 10s and mirrored
 	// ones use the writer's cooperative heartbeat (seconds, not minutes). A
 	// long client-side timeout only hangs the UI button.
@@ -750,26 +751,19 @@ func (a *App) ReclaimRemoteTabSession(tabID string) error {
 	})
 	resp, err := serveDo(ctx, client, http.MethodPost, serveURL(base, "/reclaim"), body)
 	if err != nil {
+		reconcileOwnership()
 		return fmt.Errorf("reclaim session: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != http.StatusNoContent {
 		errMsg := strings.TrimSpace(string(respBody))
-		// A 409 whose error says the writer still holds the session means the
-		// reclaim genuinely failed: keep the spectator pin so the banner stays
-		// and the tab keeps its read-only file-backed view for retry. Clearing
-		// the pin here used to demote the tab to a plain foreground follower —
-		// the next /status poll then adopted whatever session Serve happened
-		// to hold, visually jumping the tab away from the session being
-		// reclaimed. Only a session no runtime holds makes the pin stale.
-		if !strings.Contains(errMsg, "did not yield") && !strings.Contains(errMsg, "never registered a mirror") {
-			a.remoteTabMu.Lock()
-			if tab := a.remoteTabs[tabID]; stillCurrent(tab) {
-				tab.session.takenOver = false
-			}
-			a.remoteTabMu.Unlock()
-		}
+		// A failed reclaim is not proof that ownership changed. Keep the
+		// spectator pin until a fenced ownership probe proves this exact tab,
+		// route, runtime, and selection generation is no longer locally owned.
+		// This covers generation conflicts and transient 5xx responses without
+		// reopening input against an ambiguous writer.
+		reconcileOwnership()
 		return fmt.Errorf("reclaim session: %s", errMsg)
 	}
 	// Reclaim succeeded: Serve now owns the session again. Clear the spectator

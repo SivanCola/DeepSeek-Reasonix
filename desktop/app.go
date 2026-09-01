@@ -291,9 +291,9 @@ type App struct {
 
 	// takeoverMirrors tracks sessions this desktop took over from a local
 	// serve: the tab writes locally while its events mirror to the remote tab.
-	// Keyed by sessionRuntimeKey; guarded by takeoverMu.
-	takeoverMirrors map[string]*takeoverMirror
-	takeoverMu      sync.Mutex
+	takeoverMirrors        map[string]*takeoverMirror
+	takeoverAdoptRevisions map[string]uint64
+	takeoverMu             sync.Mutex
 	// serveProbeUntil suppresses serve probing after a failed handshake
 	// (rotated token file); guarded by serveProbeMu.
 	serveProbeUntil map[string]time.Time

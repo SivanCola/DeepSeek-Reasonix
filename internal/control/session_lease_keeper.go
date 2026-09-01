@@ -102,11 +102,45 @@ func (k *SessionLeaseKeeper) RebindReturningCurrent(path, targetWriterID, handof
 
 // RebindWithHandoffReturningCurrent is the two-sided handoff variant: acquire
 // the new session through its forward reservation, then return the current
-// session through its reverse reservation as one keeper transaction.
-func (k *SessionLeaseKeeper) RebindWithHandoffReturningCurrent(path, sourceWriterID, acquireHandoffID, targetWriterID, returnHandoffID string) error {
-	return k.rebindReturningCurrentWith(path, targetWriterID, returnHandoffID, func(target string) (*agent.SessionLease, error) {
-		return agent.TryAcquireSessionLeaseWithHandoff(target, sourceWriterID, acquireHandoffID)
-	})
+// session through its reverse reservation as one keeper transaction. If both
+// the source return and the target rollback reservation fail, the source is
+// restored and pending retains the live target lease for retry. Callers must
+// keep pending until RetireDetachedForHandoff succeeds.
+func (k *SessionLeaseKeeper) RebindWithHandoffReturningCurrent(
+	path, sourceWriterID, acquireHandoffID, acquiredReturnHandoffID, targetWriterID, returnHandoffID string,
+) (pending *SessionLeaseKeeper, err error) {
+	return k.rebindWithHandoffReturningCurrentWith(
+		path,
+		func(target string) (*agent.SessionLease, error) {
+			return agent.TryAcquireSessionLeaseWithHandoff(target, sourceWriterID, acquireHandoffID)
+		},
+		func(previous *SessionLeaseKeeper) error {
+			return previous.RetireDetachedForHandoff(targetWriterID, returnHandoffID)
+		},
+		func(target *agent.SessionLease) error {
+			return target.ReleaseForHandoff(sourceWriterID, acquiredReturnHandoffID)
+		},
+	)
+}
+
+func (k *SessionLeaseKeeper) rebindWithHandoffReturningCurrentWith(
+	path string,
+	acquire func(string) (*agent.SessionLease, error),
+	returnPrevious func(*SessionLeaseKeeper) error,
+	returnTarget func(*agent.SessionLease) error,
+) (*SessionLeaseKeeper, error) {
+	previous, err := k.rebindDetachingWith(path, acquire)
+	if err != nil || previous == nil {
+		return nil, err
+	}
+	if err := returnPrevious(previous); err != nil {
+		pending, rollbackErr := k.restoreDetachedReturningCurrentWith(previous, returnTarget)
+		if rollbackErr != nil {
+			return pending, errors.Join(err, fmt.Errorf("return acquired target: %w", rollbackErr))
+		}
+		return nil, err
+	}
+	return nil, nil
 }
 
 func (k *SessionLeaseKeeper) rebindReturningCurrentWith(path, targetWriterID, handoffID string, acquire func(string) (*agent.SessionLease, error)) error {

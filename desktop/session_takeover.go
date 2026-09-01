@@ -402,6 +402,10 @@ type takeoverMirror struct {
 	key         string
 	sessionPath string
 
+	// sendMu serializes every binding user and writer: HTTP forwarding,
+	// re-adoption, grant replacement, reverse reservation, and mirror-end.
+	// Code holding sendMu may take mu; the inverse order is forbidden.
+	sendMu          sync.Mutex
 	mu              sync.Mutex
 	tabID           string
 	sink            *tabEventSink
@@ -418,6 +422,7 @@ type takeoverMirror struct {
 
 	reclaimRequested    atomic.Bool
 	demoted             atomic.Bool
+	returned            atomic.Bool
 	stopping            atomic.Bool
 	consecutiveFailures int32
 	stop                chan struct{}
@@ -475,85 +480,6 @@ func (a *App) noteServeProbeFailure(base string) {
 	a.serveProbeMu.Unlock()
 }
 
-func (a *App) adoptSessionFromLocalServe(tabID, sessionPath string) {
-	if a.adoptSessionFromLocalServeOnce(tabID, sessionPath) {
-		return
-	}
-	// The announce can race a serve restart (token rotation, probe backoff)
-	// or transient discovery failures. Dropping it silently leaves a foreign
-	// lease the remote side can see but never reclaim cooperatively; retry
-	// once after the backoff window while the tab still shows the session.
-	time.AfterFunc(serveProbeBackoffWindow, func() {
-		if tab := a.tabByID(tabID); tab != nil && !tab.ReadOnly &&
-			strings.TrimSpace(tab.currentSessionPath()) == strings.TrimSpace(sessionPath) {
-			a.adoptSessionFromLocalServeOnce(tabID, sessionPath)
-		}
-	})
-}
-
-// adoptSessionFromLocalServeOnce announces a directly-opened local session to
-// a resident serve. It reports false when no serve could be told, so the
-// caller can retry.
-func (a *App) adoptSessionFromLocalServeOnce(tabID, sessionPath string) bool {
-	key := sessionRuntimeKey(sessionPath)
-	if key == "" {
-		return true
-	}
-	a.takeoverMu.Lock()
-	exists := a.takeoverMirrors[key] != nil
-	a.takeoverMu.Unlock()
-	if exists {
-		return true
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	serves := discoverLocalTakeoverServes()
-	for _, serve := range serves {
-		workspaceDir := config.ProjectSessionDir(serve.state.Workspace)
-		if workspaceDir == "" || !pathWithinDir(sessionPath, workspaceDir) {
-			continue
-		}
-		client, err := takeoverClient(ctx, serve)
-		if err != nil {
-			continue
-		}
-		view, err := takeoverOwnership(ctx, client, serve.base, sessionPath)
-		if err != nil {
-			continue
-		}
-		switch view.Holder {
-		case "serve":
-			// Serve owns it; the handoff takeover flow applies instead.
-			return true
-		case "external":
-			// Another local runtime already owns and mirrors it.
-			return true
-		}
-		body, err := json.Marshal(map[string]string{"sessionPath": sessionPath, "writerId": agent.SessionWriterID()})
-		if err != nil {
-			continue
-		}
-		resp, err := serveDo(ctx, client, http.MethodPost, serveURL(serve.base, "/adopt"), body)
-		if err != nil {
-			continue
-		}
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			continue
-		}
-		var grant takeoverGrant
-		if json.Unmarshal(respBody, &grant) != nil || grant.MirrorID == "" || grant.ReturnHandoffID == "" {
-			continue
-		}
-		a.registerTakeoverMirror(key, tabID, sessionPath, serve, client, grant)
-		slog.Info("desktop: local session adopted by serve for remote spectating",
-			"tab", tabID, "session", sessionPath, "serve", serve.base)
-		return true
-	}
-	return false
-}
-
 // pathWithinDir reports whether child is inside dir (canonical path prefix).
 func pathWithinDir(child, dir string) bool {
 	child = strings.TrimRight(filepath.Clean(child), string(filepath.Separator)) + string(filepath.Separator)
@@ -565,32 +491,40 @@ func (a *App) registerTakeoverMirror(key, tabID, sessionPath string, record take
 	if key == "" {
 		return
 	}
-	a.takeoverMu.Lock()
-	if a.takeoverMirrors == nil {
-		a.takeoverMirrors = map[string]*takeoverMirror{}
-	}
-	m := a.takeoverMirrors[key]
-	if m == nil {
-		m = &takeoverMirror{
-			app:         a,
-			key:         key,
-			sessionPath: sessionPath,
-			stop:        make(chan struct{}),
-			done:        make(chan struct{}),
-			wake:        make(chan struct{}, 1),
+	var m *takeoverMirror
+	for {
+		a.takeoverMu.Lock()
+		if a.takeoverMirrors == nil {
+			a.takeoverMirrors = map[string]*takeoverMirror{}
 		}
-		a.takeoverMirrors[key] = m
-		go m.run(client, record)
+		m = a.takeoverMirrors[key]
+		if m == nil || m.returned.Load() || m.stopping.Load() {
+			m = newTakeoverMirror(a, key, tabID, sessionPath, nil, record, client, grant)
+			a.takeoverMirrors[key] = m
+			a.takeoverMu.Unlock()
+			go m.run(client, record)
+			break
+		}
+		a.takeoverMu.Unlock()
+		m.sendMu.Lock()
+		a.takeoverMu.Lock()
+		current := a.takeoverMirrors[key] == m
+		a.takeoverMu.Unlock()
+		if !current || m.returned.Load() || m.stopping.Load() {
+			m.sendMu.Unlock()
+			continue
+		}
+		m.mu.Lock()
+		m.tabID = tabID
+		m.record = record
+		m.client = client
+		m.grant = grant
+		m.bindingRevision++
+		m.consecutiveFailures = 0
+		m.mu.Unlock()
+		m.sendMu.Unlock()
+		break
 	}
-	m.mu.Lock()
-	m.tabID = tabID
-	m.record = record
-	m.client = client
-	m.grant = grant
-	m.bindingRevision++
-	m.consecutiveFailures = 0
-	m.mu.Unlock()
-	a.takeoverMu.Unlock()
 	a.attachTakeoverMirror(tabID, sessionPath)
 }
 
@@ -744,6 +678,8 @@ func (m *takeoverMirror) retryPendingReturn(force bool) bool {
 	if m == nil {
 		return false
 	}
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
 	m.mu.Lock()
 	lease := m.pendingReturn
 	grant := m.grant
@@ -768,6 +704,10 @@ func (m *takeoverMirror) retryPendingReturn(force bool) bool {
 		m.pendingReturn = nil
 		m.returnBackoff = 0
 		m.returnNextTry = time.Time{}
+		// Fence grant replacement before the run loop sends mirror-end. A new
+		// registration will create its own mirror instead of rotating the
+		// generation whose target lease was just returned.
+		m.returned.Store(true)
 		return true
 	}
 	if m.returnBackoff <= 0 {
@@ -875,6 +815,15 @@ func (m *takeoverMirror) run(initialClient *http.Client, initialRecord takeoverS
 }
 
 func (m *takeoverMirror) pushOnce(heartbeat bool) bool {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
+	return m.pushOnceLocked(heartbeat)
+}
+
+func (m *takeoverMirror) pushOnceLocked(heartbeat bool) bool {
+	if m.returned.Load() {
+		return false
+	}
 	client, record, _, grant, revision := m.snapshotBinding()
 	if client == nil || grant.MirrorID == "" {
 		return true
@@ -1018,7 +967,7 @@ func (m *takeoverMirror) retryAdoptOrDemote(oldClient *http.Client, oldGrant tak
 	if conflicted && m.bindingCurrent(oldClient, oldGrant, revision) {
 		slog.Info("desktop: serve holds session — demoting to release lease",
 			"session", m.sessionPath)
-		go m.demote(false)
+		m.requestDemote("")
 		return false
 	}
 	// The Serve may be restarting or its state/token files may not have become
@@ -1057,6 +1006,15 @@ func (m *takeoverMirror) wakeIfQueued() {
 }
 
 func (m *takeoverMirror) flushOnce(ctx context.Context) {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
+	m.flushOnceLocked(ctx)
+}
+
+func (m *takeoverMirror) flushOnceLocked(ctx context.Context) {
+	if m.returned.Load() {
+		return
+	}
 	client, record, _, grant := m.snapshotClient()
 	if client == nil || grant.MirrorID == "" {
 		return
@@ -1181,20 +1139,39 @@ func (m *takeoverMirror) demote(interrupt bool) {
 		a.setTabReadOnly(tab.ID, false)
 		return
 	}
-	_, _, _, grant := m.snapshotClient()
-	lease := tab.takeSessionLease()
-	if lease == nil {
-		a.setTabReadOnly(tab.ID, false)
-		return
-	}
-	if err := lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID); err != nil {
-		tab.adoptSessionLease(lease)
+	if err := m.returnLeaseForDemotion(tab); err != nil {
 		a.setTabReadOnly(tab.ID, false)
 		return
 	}
 	m.stopAndFinalize(false)
-	m.mirrorEnd()
 	m.startSpectate(tab, sink)
+}
+
+// returnLeaseForDemotion waits for any in-flight sender/re-adoption, then uses
+// one stable binding for the reverse reservation and mirror-end. returned is
+// published before releasing sendMu, so the forwarding loop cannot issue a
+// later request from the retired generation while demote stops and joins it.
+func (m *takeoverMirror) returnLeaseForDemotion(tab *WorkspaceTab) error {
+	if m == nil || tab == nil {
+		return fmt.Errorf("takeover return target unavailable")
+	}
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
+	client, record, _, grant := m.snapshotClient()
+	if client == nil || grant.MirrorID == "" || grant.SourceWriterID == "" || grant.ReturnHandoffID == "" {
+		return fmt.Errorf("takeover return binding unavailable")
+	}
+	lease := tab.takeSessionLease()
+	if lease == nil {
+		return fmt.Errorf("takeover session lease unavailable")
+	}
+	if err := lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID); err != nil {
+		tab.adoptSessionLease(lease)
+		return err
+	}
+	m.returned.Store(true)
+	m.mirrorEndLocked(client, record, grant)
+	return nil
 }
 
 // emitTakeoverNotice surfaces a takeover lifecycle change as a notice frame on
@@ -1218,6 +1195,8 @@ func (m *takeoverMirror) emitNoticeSink(sink *tabEventSink, level event.Level, c
 // mirrorEnd tells Serve the writer is gone so the remote side resumes without
 // waiting for the stale-mirror timeout. Best effort.
 func (m *takeoverMirror) mirrorEnd() {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
 	m.mu.Lock()
 	pending := m.pendingReturn != nil
 	m.mu.Unlock()
@@ -1228,6 +1207,10 @@ func (m *takeoverMirror) mirrorEnd() {
 	if client == nil || grant.MirrorID == "" {
 		return
 	}
+	m.mirrorEndLocked(client, record, grant)
+}
+
+func (m *takeoverMirror) mirrorEndLocked(client *http.Client, record takeoverServeRecord, grant takeoverGrant) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	payload, _ := json.Marshal(map[string]string{"sessionPath": m.sessionPath, "mirrorId": grant.MirrorID})

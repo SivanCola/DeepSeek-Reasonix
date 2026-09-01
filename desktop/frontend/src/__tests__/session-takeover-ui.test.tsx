@@ -4,6 +4,8 @@ import React from "react";
 import { JSDOM } from "jsdom";
 import { act } from "react";
 import type { AppBindings } from "../lib/bridge";
+import { activeLeaseBlockedTab } from "../lib/tabMetaRefresh";
+import type { TabMeta } from "../lib/types";
 
 let passed = 0;
 let failed = 0;
@@ -18,6 +20,12 @@ function ok(value: boolean, label: string) {
 }
 
 console.log("\nSession takeover UI lifecycle");
+const tabMetas = [
+  { id: "tab-a", remote: false, runtime: { phase: "lease_blocked", epoch: "a", issue: { code: "session_lease_held", message: "held", retryable: true } } },
+  { id: "tab-b", remote: false, runtime: { phase: "ready", epoch: "b" } },
+] as TabMeta[];
+ok(activeLeaseBlockedTab(tabMetas, "tab-b") === undefined, "background lease conflicts do not arm the active tab");
+ok(activeLeaseBlockedTab(tabMetas, "tab-a")?.id === "tab-a", "the active lease-blocked tab exposes takeover");
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
   pretendToBeVisual: true,
   url: "http://localhost/",
