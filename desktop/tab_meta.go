@@ -11,14 +11,17 @@ type TabMeta struct {
 	IsolatedWorktree bool          `json:"isolatedWorktree,omitempty"`
 	Remote           *RemoteTabRef `json:"remote,omitempty"`
 	// RemoteState seeds restored remote shells before their first state event.
-	RemoteState       string             `json:"remoteState,omitempty"`
-	TopicID           string             `json:"topicId"`
-	TopicTitle        string             `json:"topicTitle"`
-	SessionPath       string             `json:"sessionPath,omitempty"`
-	SessionRevision   int64              `json:"sessionRevision,omitempty"`
-	SessionDigest     string             `json:"sessionDigest,omitempty"`
-	SessionGeneration uint64             `json:"sessionGeneration,omitempty"`
-	ReadOnly          bool               `json:"readOnly,omitempty"`
+	RemoteState       string `json:"remoteState,omitempty"`
+	TopicID           string `json:"topicId"`
+	TopicTitle        string `json:"topicTitle"`
+	SessionPath       string `json:"sessionPath,omitempty"`
+	SessionRevision   int64  `json:"sessionRevision,omitempty"`
+	SessionDigest     string `json:"sessionDigest,omitempty"`
+	SessionGeneration uint64 `json:"sessionGeneration,omitempty"`
+	ReadOnly          bool   `json:"readOnly,omitempty"`
+	// TakenOver marks a remote tab whose session a local runtime on the serve
+	// host took over: read-only here until the user reclaims it.
+	TakenOver         bool               `json:"takenOver,omitempty"`
 	ProjectColor      string             `json:"projectColor,omitempty"`
 	Label             string             `json:"label"`
 	Ready             bool               `json:"ready"`
