@@ -36,6 +36,7 @@ import { useActiveRemoteSession } from "./lib/useRemoteSession";
 import { useRemoteTabOpened } from "./lib/useRemoteTabOpened";
 import { renameCurrentRemoteSession } from "./lib/remoteSessionActions";
 import { localizedNoticeText, useController, type HistoryLoadTrigger, type Item } from "./lib/useController";
+import { onTabMeta } from "./lib/bridge";
 import { app, onEvent, onProjectTreeChanged, onReady, onRemoteForwards, onRemoteServer, onRemoteStatus, onRuntimeRebuilt, openExternal } from "./lib/bridge";
 import { useConfigLoadWarnings } from "./lib/useConfigLoadWarnings";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
@@ -49,6 +50,7 @@ import { ClearContextCard } from "./components/ClearContextCard";
 import { RuntimeDecisionCard } from "./components/RuntimeDecisionCard";
 import { decisionSurfaceMockFromInput, type DecisionSurfaceKind as MockDecisionSurfaceKind } from "./lib/decisionSurfaceMock";
 const UndoRewindBanner = lazy(() => import("./components/UndoRewindBanner").then((module) => ({ default: module.UndoRewindBanner })));
+const SessionTakeoverDialog = lazy(() => import("./components/SessionTakeoverDialog").then((module) => ({ default: module.SessionTakeoverDialog })));
 const ProjectTree = lazy(() => import("./components/ProjectTree").then((module) => ({ default: module.ProjectTree })));
 const RemoteSessionSurface = lazy(() => import("./components/RemoteSessionSurface").then((module) => ({ default: module.RemoteSessionSurface })));
 const ExtensionFormDialog = lazy(() => import("./components/ExtensionFormDialog").then((module) => ({ default: module.ExtensionFormDialog })));
@@ -1122,6 +1124,9 @@ export default function App() {
   const setSidebarWidth = useLayoutStore((s) => s.setSidebarWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const [tasksOpen, setTasksOpen] = useState<false | "session" | "all">(false);
+  const [takeoverDialogTab, setTakeoverDialogTab] = useState<string | null>(null);
+  const [reclaimBusyTab, setReclaimBusyTab] = useState<string | null>(null);
+  const [reclaimArmed, setReclaimArmed] = useState(false);
   const [liveSidebarWidth, setLiveSidebarWidth] = useState<number | null>(null);
   const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 1440 : window.innerWidth));
   const [viewportHeight, setViewportHeight] = useState(() => (typeof window === "undefined" ? 720 : window.innerHeight));
@@ -1162,6 +1167,11 @@ export default function App() {
     const unsubReady = onReady((readyTabId) => {
       recordFrontendDiagnostic("runtime", "runtime.ready", { ready: true, hasActiveTab: Boolean(readyTabId) });
       clearAttentionChimeKeys(attentionChimeEvents.current, readyTabId);
+      // A failed startup (lease blocked, no model) never emits agent events,
+      // so the tabMetas list would keep the stale "starting" runtime and the
+      // takeover banner/button would have nothing to render. Refresh the list
+      // on every ready signal — the coordinator bounds the fetch rate.
+      void refreshTabMetas();
       if (!readyTabId || readyTabId === workspaceScopeActiveTabRef.current) {
         setWorkspaceControllerEpoch((value) => value + 1);
       }
@@ -1176,10 +1186,17 @@ export default function App() {
         setWorkspaceControllerEpoch((value) => value + 1);
       }
     });
+    // The backend pushes authoritative per-tab meta after state changes that
+    // produce no agent events (e.g. a lease-blocked startup). Refresh the list
+    // so the takeover banner/button render even when the active tab differs.
+    const unsubTabMeta = onTabMeta(() => {
+      void refreshTabMetas();
+    });
     return () => {
       unsub();
       unsubReady();
       unsubRebuilt();
+      unsubTabMeta();
     };
   }, []);
 
@@ -1584,6 +1601,10 @@ export default function App() {
     [activeTabId, tabMetas],
   );
   const { active: remoteSurfaceActive, session: remoteSession, ready: remoteComposerReady, onSend: remoteSend, onCancel: remoteCancel } = useActiveRemoteSession(activeTab, showToast);
+
+  // Remote tab became ready: refresh the tab list so the spectator banner
+  // (takenOver) renders. The agent:ready event only fires for local tabs;
+  // remote tabs publish readiness via remote-tab:<id>:state, which
   const visibleRuntimeState = remoteSurfaceActive ? remoteSession.transcript : state;
   const localWorkspaceDockBlocked = remoteSurfaceActive && (rightDockMode === "files" || rightDockMode === "changed");
   const surfaceWorkspacePanelRenderable = effectiveWorkspacePanelRenderable && !localWorkspaceDockBlocked;
@@ -2408,6 +2429,17 @@ export default function App() {
     }
     return tabs;
   }, []);
+  // Remote tab became ready: refresh the tab list so the spectator banner
+  // (takenOver) renders. The agent:ready event only fires for local tabs;
+  // remote tabs publish readiness via remote-tab:<id>:state, which
+  // useRemoteSession consumes internally without notifying the tabMetas list.
+  useEffect(() => {
+    if (remoteSession?.state !== "ready") return;
+    void refreshTabMetas();
+    const late = setTimeout(() => void refreshTabMetas(), 500);
+    return () => clearTimeout(late);
+  }, [remoteSession?.state, refreshTabMetas]);
+
   const seedActiveTabMeta = useCallback((tab: TabMeta): void => {
     setTabMetas((current) => seedActiveTabMetaList(current, tab));
     setTabOrderIds((current) => current.includes(tab.id) ? current : [...current, tab.id]);
@@ -4724,9 +4756,57 @@ export default function App() {
             </div>
           </header>
 
-          {state.meta?.startupErr && (
-            <div className="banner banner--error">{t("topbar.startupError", { msg: state.meta.startupErr })}</div>
-          )}
+          {activeTab?.takenOver && activeTab?.remote ? (
+            <div className="banner banner--warning banner--actionable">
+              <span className="banner__msg">{t("takeover.remoteBanner")}</span>
+              <span className="banner__spacer" />
+              <button
+                type="button"
+                className={`btn btn--small${reclaimArmed ? " btn--danger" : ""}`}
+                disabled={reclaimBusyTab === activeTab.id}
+                title={reclaimArmed ? t("takeover.reclaimConfirm") : t("takeover.reclaimTitle")}
+                onClick={() => {
+                  const tabId = activeTab.id;
+                  if (!tabId || reclaimBusyTab) return;
+                  if (!reclaimArmed) {
+                    setReclaimArmed(true);
+                    return;
+                  }
+                  setReclaimArmed(false);
+                  setReclaimBusyTab(tabId);
+                  app.ReclaimRemoteTabSession(tabId)
+                    .catch((error) => console.warn("[takeover] reclaim failed", error))
+                    .finally(() => setReclaimBusyTab(null));
+                }}
+              >
+                {reclaimBusyTab === activeTab.id ? t("takeover.reclaiming") : reclaimArmed ? t("takeover.reclaimConfirmButton") : t("takeover.reclaim")}
+              </button>
+            </div>
+          ) : null}
+          {(() => {
+            const blocked = tabMetas.find((tab) => tab.runtime?.issue?.code === "session_lease_held" && !tab.remote);
+            if (blocked) {
+              return (
+                <div className="banner banner--error">
+                  <span className="banner__msg">{t("topbar.startupError", { msg: blocked.runtime!.issue!.message })}</span>
+                  <span className="banner__spacer" />
+                  <button type="button" className="btn btn--small" onClick={() => setTakeoverDialogTab(blocked.id)}>
+                    {t("takeover.bannerButton")}
+                  </button>
+                </div>
+              );
+            }
+            return state.meta?.startupErr ? (
+              <div className="banner banner--error">
+                <span className="banner__msg">{t("topbar.startupError", { msg: state.meta.startupErr })}</span>
+              </div>
+            ) : null;
+          })()}
+          {takeoverDialogTab ? (
+            <Suspense fallback={null}>
+              <SessionTakeoverDialog tabId={takeoverDialogTab} onClose={() => setTakeoverDialogTab(null)} />
+            </Suspense>
+          ) : null}
           {configLoadWarnings.length > 0 && (
             <div className="banner banner--warning banner--actionable">
               <span className="banner__msg" title={configLoadWarnings.join("\n")}>
