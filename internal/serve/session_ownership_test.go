@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -59,12 +60,19 @@ func (c *runningForeverController) RuntimeStatus() control.RuntimeStatus {
 	return control.RuntimeStatus{Running: true}
 }
 
+type snapshotFailController struct {
+	*control.Controller
+}
+
+func (c *snapshotFailController) Snapshot() error { return fmt.Errorf("snapshot failed") }
+
 type ownershipFixture struct {
 	server *Server
 	srv    *httptest.Server
 	leases *control.SessionLeaseKeeper
 	active string
 	dir    string
+	grant  mirrorGrant
 }
 
 func newOwnershipFixture(t *testing.T) *ownershipFixture {
@@ -136,12 +144,28 @@ func (f *ownershipFixture) ownershipView(t *testing.T, session string) ownership
 // handoffForce performs the takeover a confirmed local window would issue.
 func (f *ownershipFixture) handoffForce(t *testing.T, mode string) (int, string) {
 	t.Helper()
-	return f.post(t, "/handoff", map[string]any{
-		"sessionPath": f.active,
-		"force":       true,
-		"mode":        mode,
-		"timeoutMs":   3000,
+	status, body := f.post(t, "/handoff", map[string]any{
+		"sessionPath":    f.active,
+		"targetWriterId": agent.SessionWriterID(),
+		"force":          true,
+		"mode":           mode,
+		"timeoutMs":      3000,
 	})
+	if status == http.StatusOK {
+		if err := json.Unmarshal([]byte(body), &f.grant); err != nil {
+			t.Fatalf("decode handoff grant: %v", err)
+		}
+	}
+	return status, body
+}
+
+func (f *ownershipFixture) acquireHandedOff(t *testing.T) *agent.SessionLease {
+	t.Helper()
+	lease, err := agent.TryAcquireSessionLeaseWithHandoff(f.active, f.grant.SourceWriterID, f.grant.HandoffID)
+	if err != nil {
+		t.Fatalf("acquire handed-off lease: %v", err)
+	}
+	return lease
 }
 
 // TestOwnershipReportsHolderStates covers the free / serve / other triangle a
@@ -183,10 +207,7 @@ func TestHandoffReleasesLeaseAndGatesMutations(t *testing.T) {
 		t.Fatalf("handoff status = %d, want 200 (body %q)", status, body)
 	}
 
-	writerLease, err := agent.TryAcquireSessionLease(f.active)
-	if err != nil {
-		t.Fatalf("local writer could not acquire after handoff: %v", err)
-	}
+	writerLease := f.acquireHandedOff(t)
 	defer writerLease.Release()
 
 	if view := f.ownershipView(t, f.active); view.Holder != "external" || !view.Mirrored || !view.TakenOver {
@@ -216,6 +237,42 @@ func TestHandoffReleasesLeaseAndGatesMutations(t *testing.T) {
 	}
 }
 
+func TestHandoffSnapshotFailureKeepsServeLeaseAndMirrorUnpublished(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "active.jsonl")
+	saveServeTestSession(t, active)
+	bc := NewBroadcaster()
+	base := control.New(control.Options{Sink: bc, SessionDir: dir, SessionPath: active})
+	ctrl := &snapshotFailController{Controller: base}
+	server := New(ctrl, bc, config.ServeConfig{})
+	leases := control.NewSessionLeaseKeeper()
+	defer leases.Release()
+	defer base.Close()
+	if err := leases.Rebind(active); err != nil {
+		t.Fatal(err)
+	}
+	server.SetSessionLeases(leases)
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+	payload, _ := json.Marshal(map[string]any{
+		"sessionPath": active, "targetWriterId": "target", "force": true, "mode": "wait",
+	})
+	resp, err := http.Post(srv.URL+"/handoff", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAllOrFatal(t, resp)
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(body, "snapshot") {
+		t.Fatalf("handoff snapshot failure = %d %q, want 500", resp.StatusCode, body)
+	}
+	if got := leases.HeldPath(); got != agent.CanonicalSessionPath(active) {
+		t.Fatalf("held path = %q, want active", got)
+	}
+	if _, ok := server.mirroredEntry(active); ok {
+		t.Fatal("snapshot failure published a mirror")
+	}
+}
+
 // TestHandoffRefusedWhileAttachedWithoutForce proves an unconfirmed takeover
 // cannot yank the session while a remote client is watching.
 func TestHandoffRefusedWhileAttachedWithoutForce(t *testing.T) {
@@ -223,7 +280,7 @@ func TestHandoffRefusedWhileAttachedWithoutForce(t *testing.T) {
 	events := subscribeServeEvents(t, f.srv.URL+"/events?all=1")
 	defer events.close()
 
-	status, body := f.post(t, "/handoff", map[string]any{"sessionPath": f.active})
+	status, body := f.post(t, "/handoff", map[string]any{"sessionPath": f.active, "targetWriterId": agent.SessionWriterID()})
 	if status != http.StatusConflict || !strings.Contains(body, "force") {
 		t.Fatalf("unforced handoff with subscriber = %d %q, want 409 force guidance", status, body)
 	}
@@ -251,6 +308,7 @@ func TestExternalFramesReachSubscriber(t *testing.T) {
 
 	status, body := f.post(t, "/external/frames", map[string]any{
 		"sessionPath": f.active,
+		"mirrorId":    f.grant.MirrorID,
 		"frames":      []map[string]any{{"kind": "text", "text": "writer says hi"}},
 	})
 	if status != http.StatusOK {
@@ -268,7 +326,7 @@ func TestExternalFramesReachSubscriber(t *testing.T) {
 
 	// A heartbeat (empty frames) reports no pending reclaim.
 	var resp externalFramesResponse
-	status, body = f.post(t, "/external/frames", map[string]any{"sessionPath": f.active, "frames": []map[string]any{}})
+	status, body = f.post(t, "/external/frames", map[string]any{"sessionPath": f.active, "mirrorId": f.grant.MirrorID, "frames": []map[string]any{}})
 	if status != http.StatusOK || json.Unmarshal([]byte(body), &resp) != nil || resp.ReclaimRequested {
 		t.Fatalf("heartbeat = %d %q, want reclaimRequested=false", status, body)
 	}
@@ -284,10 +342,7 @@ func TestReclaimRestoresRemoteOwnership(t *testing.T) {
 		t.Fatalf("handoff status = %d (body %q)", status, body)
 	}
 
-	writerLease, err := agent.TryAcquireSessionLease(f.active)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writerLease := f.acquireHandedOff(t)
 	var writerHeld atomic.Bool
 	writerHeld.Store(true)
 	withForeignWriterLease(t, f.active, &writerHeld)
@@ -318,7 +373,7 @@ func TestReclaimRestoresRemoteOwnership(t *testing.T) {
 		t.Fatal("reclaim request never became visible to the writer")
 	}
 	var heartbeat externalFramesResponse
-	status, body := f.post(t, "/external/frames", map[string]any{"sessionPath": f.active, "frames": []map[string]any{}})
+	status, body := f.post(t, "/external/frames", map[string]any{"sessionPath": f.active, "mirrorId": f.grant.MirrorID, "frames": []map[string]any{}})
 	if status != http.StatusOK || json.Unmarshal([]byte(body), &heartbeat) != nil || !heartbeat.ReclaimRequested {
 		t.Fatalf("writer heartbeat = %d %q, want reclaimRequested=true", status, body)
 	}
@@ -355,14 +410,11 @@ func TestMirrorEndRequiresReleasedLease(t *testing.T) {
 		t.Fatalf("handoff status = %d (body %q)", status, body)
 	}
 
-	writerLease, err := agent.TryAcquireSessionLease(f.active)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writerLease := f.acquireHandedOff(t)
 	var writerHeld atomic.Bool
 	writerHeld.Store(true)
 	withForeignWriterLease(t, f.active, &writerHeld)
-	if status, body := f.post(t, "/mirror-end", map[string]string{"sessionPath": f.active}); status != http.StatusConflict {
+	if status, body := f.post(t, "/mirror-end", map[string]string{"sessionPath": f.active, "mirrorId": f.grant.MirrorID}); status != http.StatusConflict {
 		t.Fatalf("mirror-end with live writer = %d %q, want 409", status, body)
 	}
 	if view := f.ownershipView(t, f.active); !view.Mirrored {
@@ -371,7 +423,7 @@ func TestMirrorEndRequiresReleasedLease(t *testing.T) {
 
 	writerHeld.Store(false)
 	writerLease.Release()
-	if status, body := f.post(t, "/mirror-end", map[string]string{"sessionPath": f.active}); status != http.StatusNoContent {
+	if status, body := f.post(t, "/mirror-end", map[string]string{"sessionPath": f.active, "mirrorId": f.grant.MirrorID}); status != http.StatusNoContent {
 		t.Fatalf("mirror-end after release = %d %q, want 204", status, body)
 	}
 	if got := f.leases.HeldPath(); got != agent.CanonicalSessionPath(f.active) {
@@ -379,6 +431,91 @@ func TestMirrorEndRequiresReleasedLease(t *testing.T) {
 	}
 	if view := f.ownershipView(t, f.active); view.Holder != "serve" || view.Mirrored {
 		t.Fatalf("post mirror-end ownership = %+v, want serve without mirror", view)
+	}
+}
+
+func TestMirrorEndLoadFailureKeepsMirrorRetryable(t *testing.T) {
+	f := newOwnershipFixture(t)
+	if status, body := f.handoffForce(t, "wait"); status != http.StatusOK {
+		t.Fatalf("handoff = %d %q", status, body)
+	}
+	writerLease := f.acquireHandedOff(t)
+	if err := writerLease.ReleaseForHandoff(f.grant.SourceWriterID, f.grant.ReturnHandoffID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agent.SessionEventLogPath(f.active), []byte(`{"schema_version":999,"type":"replace"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, body := f.post(t, "/mirror-end", map[string]string{"sessionPath": f.active, "mirrorId": f.grant.MirrorID})
+	if status < http.StatusBadRequest {
+		t.Fatalf("mirror-end with unloadable session = %d %q, want failure", status, body)
+	}
+	if _, ok := f.server.mirroredEntry(f.active); !ok {
+		t.Fatal("load failure cleared mirror generation")
+	}
+}
+
+func TestMirrorEndCommitFailureRestoresPreviousServeSession(t *testing.T) {
+	f := newOwnershipFixture(t)
+	if status, body := f.handoffForce(t, "wait"); status != http.StatusOK {
+		t.Fatalf("handoff = %d %q", status, body)
+	}
+	writerLease := f.acquireHandedOff(t)
+	previousPath := filepath.Join(f.dir, "previous.jsonl")
+	saveServeTestSession(t, previousPath)
+	previousLoaded, err := agent.LoadSession(previousPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousCtrl := f.server.ctl()
+	if err := f.leases.Rebind(previousPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.leases.BindSessionAuthority(previousLoaded); err != nil {
+		t.Fatal(err)
+	}
+	previousCtrl.Resume(previousLoaded, previousPath)
+	if concrete, ok := previousCtrl.(*control.Controller); ok {
+		if err := f.leases.BindControllerAuthority(concrete); err != nil {
+			t.Fatal(err)
+		}
+		f.server.setControllerPath(concrete, previousPath)
+	}
+	previousPath = f.leases.HeldPath()
+	if err := writerLease.ReleaseForHandoff(f.grant.SourceWriterID, f.grant.ReturnHandoffID); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := control.New(control.Options{SessionDir: f.dir, SessionPath: filepath.Join(f.dir, "replacement.jsonl")})
+	defer replacement.Close()
+	resumeBindHookForTest = func() {
+		f.server.mu.Lock()
+		f.server.ctrl = replacement
+		f.server.mu.Unlock()
+	}
+	t.Cleanup(func() { resumeBindHookForTest = nil })
+	status, _ := f.post(t, "/mirror-end", map[string]string{"sessionPath": f.active, "mirrorId": f.grant.MirrorID})
+	resumeBindHookForTest = nil
+	f.server.mu.Lock()
+	f.server.ctrl = previousCtrl
+	f.server.mu.Unlock()
+	if status != http.StatusConflict {
+		t.Fatalf("commit-raced mirror-end status = %d, want 409", status)
+	}
+	if got := f.leases.HeldPath(); got != previousPath {
+		t.Fatalf("restored lease = %q, want %q", got, previousPath)
+	}
+	if got := agent.CanonicalSessionPath(previousCtrl.SessionPath()); got != previousPath {
+		t.Fatalf("restored controller path = %q, want %q", got, previousPath)
+	}
+	if err := previousCtrl.Snapshot(); err != nil {
+		t.Fatalf("restored controller lost authority: %v", err)
+	}
+	if !f.server.sessionMirrored(f.active) {
+		t.Fatal("commit failure cleared mirror generation")
+	}
+	if status, body := f.post(t, "/mirror-end", map[string]string{"sessionPath": f.active, "mirrorId": f.grant.MirrorID}); status != http.StatusNoContent {
+		t.Fatalf("retry mirror-end = %d %q, want 204", status, body)
 	}
 }
 
@@ -402,7 +539,7 @@ func TestHandoffWaitsOnRunningForeground(t *testing.T) {
 	srv := httptest.NewServer(server.Handler())
 	defer srv.Close()
 
-	payload, _ := json.Marshal(map[string]any{"sessionPath": active, "force": true, "mode": "wait", "timeoutMs": 400})
+	payload, _ := json.Marshal(map[string]any{"sessionPath": active, "targetWriterId": agent.SessionWriterID(), "force": true, "mode": "wait", "timeoutMs": 400})
 	resp, err := http.Post(srv.URL+"/handoff", "application/json", strings.NewReader(string(payload)))
 	if err != nil {
 		t.Fatal(err)
@@ -557,7 +694,7 @@ func TestAdoptRegistersDirectlyOpenedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writerLease.Release()
-	status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other})
+	status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other, "writerId": agent.SessionWriterID()})
 	if status != http.StatusOK || !strings.Contains(body, "adopted") {
 		t.Fatalf("adopt status = %d %q, want 200 adopted", status, body)
 	}
@@ -565,7 +702,7 @@ func TestAdoptRegistersDirectlyOpenedSession(t *testing.T) {
 		t.Fatalf("post-adopt ownership = %+v, want external mirror", view)
 	}
 	// Idempotent second adopt.
-	status, _ = f.post(t, "/adopt", map[string]string{"sessionPath": other})
+	status, _ = f.post(t, "/adopt", map[string]string{"sessionPath": other, "writerId": agent.SessionWriterID()})
 	if status != http.StatusOK {
 		t.Fatalf("second adopt status = %d, want 200", status)
 	}
@@ -575,9 +712,78 @@ func TestAdoptRegistersDirectlyOpenedSession(t *testing.T) {
 // through /handoff, not /adopt.
 func TestAdoptRefusedForServeHeldSession(t *testing.T) {
 	f := newOwnershipFixture(t)
-	status, body := f.post(t, "/adopt", map[string]string{"sessionPath": f.active})
+	status, body := f.post(t, "/adopt", map[string]string{"sessionPath": f.active, "writerId": agent.SessionWriterID()})
 	if status != http.StatusConflict || !strings.Contains(body, "handoff") {
 		t.Fatalf("adopt of serve-held session = %d %q, want 409 handoff hint", status, body)
+	}
+}
+
+func TestAdoptRequiresLiveClaimedWriter(t *testing.T) {
+	f := newOwnershipFixture(t)
+	other := filepath.Join(f.dir, "other.jsonl")
+	saveServeTestSession(t, other)
+	writerLease, err := agent.TryAcquireSessionLease(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writerLease.Release()
+
+	status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other, "writerId": "not-the-owner"})
+	if status != http.StatusConflict || !strings.Contains(body, "claimed writer") {
+		t.Fatalf("adopt with false owner = %d %q, want 409", status, body)
+	}
+	if view := f.ownershipView(t, other); view.Mirrored {
+		t.Fatalf("false adoption published mirror: %+v", view)
+	}
+}
+
+func TestMirrorGenerationFencesFramesAndEnd(t *testing.T) {
+	f := newOwnershipFixture(t)
+	if status, body := f.handoffForce(t, "wait"); status != http.StatusOK {
+		t.Fatalf("handoff = %d %q", status, body)
+	}
+	writerLease := f.acquireHandedOff(t)
+	defer writerLease.Release()
+
+	status, _ := f.post(t, "/external/frames", map[string]any{
+		"sessionPath": f.active, "mirrorId": "old-generation", "frames": []eventwire.Event{},
+	})
+	if status != http.StatusConflict {
+		t.Fatalf("stale frames status = %d, want 409", status)
+	}
+	status, _ = f.post(t, "/mirror-end", map[string]string{"sessionPath": f.active, "mirrorId": "old-generation"})
+	if status != http.StatusConflict {
+		t.Fatalf("stale mirror-end status = %d, want 409", status)
+	}
+	if view := f.ownershipView(t, f.active); !view.Mirrored || view.Holder != "external" {
+		t.Fatalf("stale generation changed ownership: %+v", view)
+	}
+}
+
+func TestExternalFramesRequestLimits(t *testing.T) {
+	f := newOwnershipFixture(t)
+	if status, body := f.handoffForce(t, "wait"); status != http.StatusOK {
+		t.Fatalf("handoff = %d %q", status, body)
+	}
+	writerLease := f.acquireHandedOff(t)
+	defer writerLease.Release()
+
+	frames := make([]eventwire.Event, externalFramesMaxCount+1)
+	status, _ := f.post(t, "/external/frames", map[string]any{
+		"sessionPath": f.active, "mirrorId": f.grant.MirrorID, "frames": frames,
+	})
+	if status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("too many frames status = %d, want 413", status)
+	}
+
+	oversized := `{"sessionPath":` + fmt.Sprintf("%q", f.active) + `,"mirrorId":` + fmt.Sprintf("%q", f.grant.MirrorID) + `,"padding":"` + strings.Repeat("x", externalFramesMaxBody) + `"}`
+	resp, err := http.Post(f.srv.URL+"/external/frames", "application/json", strings.NewReader(oversized))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d, want 413", resp.StatusCode)
 	}
 }
 
@@ -592,7 +798,7 @@ func TestMirroredStatusAndHistoryBySession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writerLease.Release()
-	if status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other}); status != http.StatusOK {
+	if status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other, "writerId": agent.SessionWriterID()}); status != http.StatusOK {
 		t.Fatalf("adopt failed: %d %q", status, body)
 	}
 	extendSessionOnDisk(t, other, "writer turn")
@@ -619,7 +825,7 @@ func TestResumeSpectatorMountOnMirroredSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writerLease.Release()
-	if status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other}); status != http.StatusOK {
+	if status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other, "writerId": agent.SessionWriterID()}); status != http.StatusOK {
 		t.Fatalf("adopt failed: %d %q", status, body)
 	}
 	status, body := f.post(t, "/resume", map[string]string{"path": other})
@@ -662,7 +868,7 @@ func TestSpectatorSwitchCommandsPassTheFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writerLease.Release()
-	if status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other}); status != http.StatusOK {
+	if status, body := f.post(t, "/adopt", map[string]string{"sessionPath": other, "writerId": agent.SessionWriterID()}); status != http.StatusOK {
 		t.Fatalf("adopt failed: %d %q", status, body)
 	}
 	// Spectator mounts on the mirrored session.
@@ -710,7 +916,7 @@ func TestAutoReclaimCompletesOutstandingReclaim(t *testing.T) {
 	held.Store(true)
 	withForeignWriterLease(t, other, held)
 
-	if status, body := f.post(t, "/adopt", map[string]any{"sessionPath": other}); status != http.StatusOK {
+	if status, body := f.post(t, "/adopt", map[string]any{"sessionPath": other, "writerId": agent.SessionWriterID()}); status != http.StatusOK {
 		t.Fatalf("adopt = %d %q", status, body)
 	}
 	// The writer ignores the reclaim: the wait times out, the flag stays set.
@@ -726,8 +932,9 @@ func TestAutoReclaimCompletesOutstandingReclaim(t *testing.T) {
 	backdate := func() {
 		f.server.mirrorMu.Lock()
 		defer f.server.mirrorMu.Unlock()
-		if m := f.server.mirrored[canonical]; m != nil {
+		if m, ok := f.server.mirrored[canonical]; ok {
 			m.lastContact = time.Now().Add(-2 * mirrorStaleAfter)
+			f.server.mirrored[canonical] = m
 		}
 	}
 

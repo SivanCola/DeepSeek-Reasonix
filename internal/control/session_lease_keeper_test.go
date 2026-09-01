@@ -120,6 +120,135 @@ func TestSessionLeaseKeeperEmptyPathReleases(t *testing.T) {
 	lease.Release()
 }
 
+func TestSessionLeaseKeeperRebindReturningCurrentIsFailureAtomic(t *testing.T) {
+	dir := t.TempDir()
+	current := filepath.Join(dir, "current.jsonl")
+	target := filepath.Join(dir, "target.jsonl")
+	blocked := filepath.Join(dir, "blocked.jsonl")
+	k := NewSessionLeaseKeeper()
+	defer k.Release()
+	if err := k.Rebind(current); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := agent.TryAcquireSessionLease(blocked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Release()
+	if err := k.RebindReturningCurrent(blocked, "serve-writer", "return-1"); !errors.Is(err, agent.ErrSessionLeaseHeld) {
+		t.Fatalf("blocked rebind = %v, want held", err)
+	}
+	if got := k.HeldPath(); got != agent.CanonicalSessionPath(current) {
+		t.Fatalf("held path after failure = %q, want %q", got, current)
+	}
+	if err := k.RebindReturningCurrent(target, "serve-writer", "return-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := k.HeldPath(); got != agent.CanonicalSessionPath(target) {
+		t.Fatalf("held path = %q, want target", got)
+	}
+	info, err := agent.LoadSessionLeaseInfo(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil || info.HandoffTo != "serve-writer" || info.HandoffID != "return-1" {
+		t.Fatalf("reverse reservation = %+v", info)
+	}
+}
+
+func TestSessionLeaseKeeperConsumesForwardHandoffBeforeReturningCurrent(t *testing.T) {
+	dir := t.TempDir()
+	current := filepath.Join(dir, "current.jsonl")
+	target := filepath.Join(dir, "target.jsonl")
+	targetSource, err := agent.TryAcquireSessionLease(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := targetSource.ReleaseForHandoff(agent.SessionWriterID(), "forward-1"); err != nil {
+		t.Fatal(err)
+	}
+	k := NewSessionLeaseKeeper()
+	defer k.Release()
+	if err := k.Rebind(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.RebindWithHandoffReturningCurrent(
+		target, agent.SessionWriterID(), "forward-1", "serve-writer", "return-1",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := k.HeldPath(); got != agent.CanonicalSessionPath(target) {
+		t.Fatalf("held path = %q, want target", got)
+	}
+	info, err := agent.LoadSessionLeaseInfo(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil || info.HandoffTo != "serve-writer" || info.HandoffID != "return-1" {
+		t.Fatalf("current reverse reservation = %+v", info)
+	}
+}
+
+func TestSessionLeaseKeeperRetiresDetachedSourceWithoutClearingReplacementAuthority(t *testing.T) {
+	dir := t.TempDir()
+	current := filepath.Join(dir, "current.jsonl")
+	target := filepath.Join(dir, "target.jsonl")
+	currentSession := agent.NewSession("sys")
+	if err := currentSession.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	targetSession := agent.NewSession("sys")
+	if err := targetSession.Save(target); err != nil {
+		t.Fatal(err)
+	}
+	loadedTarget, err := agent.LoadSession(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := agent.New(nil, nil, currentSession, agent.Options{}, event.Discard)
+	ctrl := New(Options{Executor: exec, SessionPath: current, Sink: event.Discard})
+	defer ctrl.Close()
+	k := NewSessionLeaseKeeper()
+	defer k.Release()
+	if err := k.Rebind(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.BindControllerAuthority(ctrl); err != nil {
+		t.Fatal(err)
+	}
+	targetSource, err := agent.TryAcquireSessionLease(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := targetSource.ReleaseForHandoff(agent.SessionWriterID(), "forward-target"); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := k.RebindDetachingWithHandoff(target, agent.SessionWriterID(), "forward-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := k.BindSessionAuthority(loadedTarget); err != nil {
+		t.Fatal(err)
+	}
+	if err := previous.RetireDetachedForHandoff("serve-writer", "return-current"); err != nil {
+		t.Fatal(err)
+	}
+	ctrl.Resume(loadedTarget, target)
+	if err := k.BindControllerAuthority(ctrl); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctrl.Snapshot(); err != nil {
+		t.Fatalf("replacement snapshot lost authority: %v", err)
+	}
+	info, err := agent.LoadSessionLeaseInfo(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil || info.HandoffTo != "serve-writer" || info.HandoffID != "return-current" {
+		t.Fatalf("source reverse reservation = %+v", info)
+	}
+}
+
 func TestSessionLeaseKeeperReleaseRemovesLeaseInfo(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.jsonl")

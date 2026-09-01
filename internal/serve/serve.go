@@ -96,7 +96,7 @@ type Server struct {
 	// runtime via POST /handoff. Serve answers reads from the transcript file
 	// and mirrors the writer's frames, but holds no write authority.
 	mirrorMu sync.Mutex
-	mirrored map[string]*mirroredSession
+	mirrored map[string]mirroredSession
 }
 
 // SetControllerBuildOptions records the process-local options used to build
@@ -120,7 +120,7 @@ func New(ctrl control.SessionAPI, bc *Broadcaster, serveCfg config.ServeConfig) 
 		detached:    map[string]*detachedSession{},
 		tags:        map[*control.Controller]*sessionTagSink{},
 		leaseOwners: map[*control.Controller]*control.SessionLeaseKeeper{},
-		mirrored:    map[string]*mirroredSession{},
+		mirrored:    map[string]mirroredSession{},
 	}
 	bc.SetCurrentSession(agent.CanonicalSessionPath(ctrl.SessionPath()))
 	if cfg, err := config.Load(); err == nil {
@@ -1413,7 +1413,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		sess["running"] = false
 		sess["pendingPrompt"] = false
 		sess["takenOver"] = true
-		if m := s.mirroredEntry(canonical); m != nil {
+		if m, ok := s.mirroredEntry(canonical); ok {
 			sess["reclaimRequested"] = m.reclaimRequested
 		}
 		s.bindMu.Unlock()
