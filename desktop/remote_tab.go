@@ -727,10 +727,17 @@ func (a *App) ReclaimRemoteTabSession(tabID string) error {
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != http.StatusNoContent {
 		errMsg := strings.TrimSpace(string(respBody))
-		// The reclaim failed but the spectator pin may be stale (the serve
-		// might have already moved on). Clear it so the banner doesn't
-		// linger on a session the tab is no longer watching.
-		a.clearRemoteTabSpectator(tabID, 0)
+		// A 409 whose error says the writer still holds the session means the
+		// reclaim genuinely failed: keep the spectator pin so the banner stays
+		// and the tab keeps its read-only file-backed view for retry. Clearing
+		// the pin here used to demote the tab to a plain foreground follower —
+		// the next /status poll then adopted whatever session Serve happened
+		// to hold, visually jumping the tab away from the session being
+		// reclaimed. Only a session no runtime holds makes the pin stale.
+		if !strings.Contains(errMsg, "did not yield") &&
+			!strings.Contains(errMsg, "never registered a mirror") {
+			a.clearRemoteTabSpectator(tabID, 0)
+		}
 		return fmt.Errorf("reclaim session: %s", errMsg)
 	}
 	// Reclaim succeeded: Serve now owns the session again. Clear the spectator
