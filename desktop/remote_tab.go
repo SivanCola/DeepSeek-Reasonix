@@ -195,7 +195,12 @@ func (a *App) markRemoteTabSpectatorIfLocalOwned(ctx context.Context, tabID stri
 	probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
 	view, probeErr := takeoverOwnership(probeCtx, client, base, path)
 	probeCancel()
-	if probeErr != nil || !(view.Mirrored || view.Holder == "external") {
+	// "external" = a mirrored local writer; "other" = a local runtime holds
+	// the lease without a registered mirror (adopter absent). Serve mounts
+	// both as read-only spectator surfaces, so the banner and the take-back
+	// button must appear for either — otherwise the tab unlocks its composer
+	// against a transcript it cannot write.
+	if probeErr != nil || !(view.Mirrored || view.Holder == "external" || view.Holder == "other") {
 		// The probed session is not locally owned (e.g. a fresh /new or a
 		// free session). Clear any stale spectator pin left over from the
 		// previous session so the banner and read-only composer go away.

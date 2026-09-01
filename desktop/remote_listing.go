@@ -454,13 +454,17 @@ listingAttempt:
 				tab.routing.running = authoritative
 				if authoritativeCurrent != nil {
 					path := strings.TrimSpace(authoritativeCurrent.Path)
-					pathChanged := adoptRemoteTabSessionPathLocked(tab, path)
-					tab.session.name = strings.TrimSpace(authoritativeCurrent.Name)
-					if pathChanged {
-						tab.topicTitle = authoritativeTitle
-						meta := remoteTabMetaLocked(tab)
-						routeUpdate = &meta
-						routeReadyBarrier = remoteTabReadyBarrier(tab, true)
+					// The listing's "current" is Serve's foreground; it must not
+					// re-route a spectator's explicitly selected session.
+					if path == tab.routing.currentPath || !tab.session.takenOver {
+						pathChanged := adoptRemoteTabSessionPathLocked(tab, path)
+						tab.session.name = strings.TrimSpace(authoritativeCurrent.Name)
+						if pathChanged {
+							tab.topicTitle = authoritativeTitle
+							meta := remoteTabMetaLocked(tab)
+							routeUpdate = &meta
+							routeReadyBarrier = remoteTabReadyBarrier(tab, true)
+						}
 					}
 				}
 			} else {

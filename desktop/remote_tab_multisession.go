@@ -199,7 +199,20 @@ func (a *App) adoptRemoteTabFrameCurrent(tabID string, gen uint64, sessionPath s
 	}
 	a.remoteTabMu.Lock()
 	current := a.remoteTabs[tabID]
-	if current != tab || current.gen != gen || !adoptRemoteTabSessionPathLocked(current, sessionPath) {
+	if current != tab || current.gen != gen {
+		a.remoteTabMu.Unlock()
+		return
+	}
+	// A spectator watches the session it explicitly selected; the serve's
+	// foreground keeps emitting current markers for other sessions, and
+	// adopting one silently re-routes the tab while the spectator banner
+	// (takenOver) stays pinned to the old session — reclaim and submit then
+	// target a session the tab is not displaying.
+	if sessionPath != current.routing.currentPath && current.session.takenOver {
+		a.remoteTabMu.Unlock()
+		return
+	}
+	if !adoptRemoteTabSessionPathLocked(current, sessionPath) {
 		a.remoteTabMu.Unlock()
 		return
 	}

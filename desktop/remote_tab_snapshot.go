@@ -245,6 +245,12 @@ func (a *App) recordRemoteTabSessionStatus(tabID string, client *http.Client, ge
 		a.remoteTabMu.Unlock()
 		return false
 	}
+	// A spectator watches the session it explicitly selected; the foreground
+	// status of a different session must not re-route its tab.
+	if payload.SessionPath != "" && payload.SessionPath != tab.routing.currentPath && tab.session.takenOver {
+		a.remoteTabMu.Unlock()
+		return false
+	}
 	before := remoteTabMetaLocked(tab)
 	pathChanged := adoptRemoteTabSessionPathLocked(tab, payload.SessionPath)
 	if pathChanged {

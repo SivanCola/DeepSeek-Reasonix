@@ -371,15 +371,34 @@ func (a *App) noteServeProbeFailure(base string) {
 }
 
 func (a *App) adoptSessionFromLocalServe(tabID, sessionPath string) {
+	if a.adoptSessionFromLocalServeOnce(tabID, sessionPath) {
+		return
+	}
+	// The announce can race a serve restart (token rotation, probe backoff)
+	// or transient discovery failures. Dropping it silently leaves a foreign
+	// lease the remote side can see but never reclaim cooperatively; retry
+	// once after the backoff window while the tab still shows the session.
+	time.AfterFunc(serveProbeBackoffWindow, func() {
+		if tab := a.tabByID(tabID); tab != nil && !tab.ReadOnly &&
+			strings.TrimSpace(tab.currentSessionPath()) == strings.TrimSpace(sessionPath) {
+			a.adoptSessionFromLocalServeOnce(tabID, sessionPath)
+		}
+	})
+}
+
+// adoptSessionFromLocalServeOnce announces a directly-opened local session to
+// a resident serve. It reports false when no serve could be told, so the
+// caller can retry.
+func (a *App) adoptSessionFromLocalServeOnce(tabID, sessionPath string) bool {
 	key := sessionRuntimeKey(sessionPath)
 	if key == "" {
-		return
+		return true
 	}
 	a.takeoverMu.Lock()
 	exists := a.takeoverMirrors[key] != nil
 	a.takeoverMu.Unlock()
 	if exists {
-		return
+		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -400,29 +419,30 @@ func (a *App) adoptSessionFromLocalServe(tabID, sessionPath string) {
 		switch view.Holder {
 		case "serve":
 			// Serve owns it; the handoff takeover flow applies instead.
-			return
+			return true
 		case "external":
 			// Another local runtime already owns and mirrors it.
-			return
+			return true
 		}
 		body, err := json.Marshal(map[string]string{"sessionPath": sessionPath})
 		if err != nil {
-			return
+			continue
 		}
 		resp, err := serveDo(ctx, client, http.MethodPost, serveURL(serve.base, "/adopt"), body)
 		if err != nil {
-			return
+			continue
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			return
+			continue
 		}
 		a.registerTakeoverMirror(key, tabID, sessionPath, serve, client)
 		slog.Info("desktop: local session adopted by serve for remote spectating",
 			"tab", tabID, "session", sessionPath, "serve", serve.base)
-		return
+		return true
 	}
+	return false
 }
 
 // pathWithinDir reports whether child is inside dir (canonical path prefix).
