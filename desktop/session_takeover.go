@@ -16,17 +16,16 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"reasonix/internal/agent"
@@ -48,6 +47,16 @@ type SessionTakeoverView struct {
 	Mirrored       bool   `json:"mirrored"`
 	HolderPID      int    `json:"holderPid,omitempty"`
 	HolderHost     string `json:"holderHost,omitempty"`
+}
+
+type takeoverGrant struct {
+	SessionPath     string `json:"sessionPath"`
+	MirrorID        string `json:"mirrorId"`
+	HandoffID       string `json:"handoffId,omitempty"`
+	ReturnHandoffID string `json:"returnHandoffId"`
+	SourceWriterID  string `json:"sourceWriterId"`
+	TargetWriterID  string `json:"targetWriterId"`
+	Status          string `json:"status"`
 }
 
 // takeoverHandoffTimeout bounds the drain window for a wait-mode takeover.
@@ -122,20 +131,7 @@ func discoverLocalTakeoverServes() []takeoverServeRecord {
 // The takeover protocol only ever talks to serves that are actually running;
 // everything else is stale state.
 func takeoverProcessAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 performs no delivery; EPERM still means the process exists,
-	// only ESRCH/ErrProcessDone means it is gone.
-	err = proc.Signal(os.Signal(syscall.Signal(0)))
-	if errors.Is(err, os.ErrProcessDone) {
-		return false
-	}
-	return err == nil || errors.Is(err, syscall.EPERM)
+	return desktopProcessAlive(pid)
 }
 
 func takeoverClient(ctx context.Context, record takeoverServeRecord) (*http.Client, error) {
@@ -150,7 +146,8 @@ func takeoverClient(ctx context.Context, record takeoverServeRecord) (*http.Clie
 }
 
 func takeoverOwnership(ctx context.Context, client *http.Client, base, sessionPath string) (SessionTakeoverView, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serveURL(base, "/ownership?session="+urlQueryEscape(sessionPath)), nil)
+	query := url.Values{"session": []string{sessionPath}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serveURL(base, "/ownership?"+query.Encode()), nil)
 	if err != nil {
 		return SessionTakeoverView{}, err
 	}
@@ -173,20 +170,6 @@ func takeoverOwnership(ctx context.Context, client *http.Client, base, sessionPa
 	return view, nil
 }
 
-func urlQueryEscape(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.', r == '~', r == '/', r == ':', r == '\\':
-			b.WriteRune(r)
-		default:
-			fmt.Fprintf(&b, "%%%02X", r)
-		}
-	}
-	return b.String()
-}
-
 // findTakeoverTarget scans resident serves for one holding (or mirroring) the
 // session, and returns a ready-to-use client for it.
 func (a *App) findTakeoverTarget(ctx context.Context, sessionPath string) (takeoverServeRecord, *http.Client, SessionTakeoverView, error) {
@@ -207,7 +190,7 @@ func (a *App) findTakeoverTarget(ctx context.Context, sessionPath string) (takeo
 			lastErr = err
 			continue
 		}
-		if view.Holder == "serve" || view.Mirrored {
+		if view.Holder == "serve" && !view.Mirrored {
 			return record, client, view, nil
 		}
 	}
@@ -251,6 +234,9 @@ func (a *App) TakeoverSession(tabID, mode string) error {
 	if tab == nil {
 		return fmt.Errorf("unknown tab")
 	}
+	if !a.tabHasRetryableStartupLeaseError(tab) {
+		return fmt.Errorf("tab is no longer waiting for a session lease")
+	}
 	path := strings.TrimSpace(tab.currentSessionPath())
 	if path == "" {
 		path = strings.TrimSpace(tab.SessionPath)
@@ -261,20 +247,24 @@ func (a *App) TakeoverSession(tabID, mode string) error {
 	if mode != "wait" && mode != "interrupt" {
 		mode = "wait"
 	}
+	a.mu.RLock()
+	sourceEpoch := a.runtimeEpochForTabLocked(tab)
+	a.mu.RUnlock()
 	ctx, cancel := context.WithTimeout(context.Background(), takeoverHandoffTimeout+30*time.Second)
 	defer cancel()
 	record, client, view, err := a.findTakeoverTarget(ctx, path)
 	if err != nil {
 		return err
 	}
-	if !view.Mirrored && view.Holder != "serve" {
+	if view.Mirrored || view.Holder != "serve" {
 		return fmt.Errorf("serve no longer holds this session (%s)", view.Holder)
 	}
 	body, err := json.Marshal(map[string]any{
-		"sessionPath": path,
-		"force":       true,
-		"mode":        mode,
-		"timeoutMs":   takeoverHandoffTimeout.Milliseconds(),
+		"sessionPath":    path,
+		"targetWriterId": agent.SessionWriterID(),
+		"force":          true,
+		"mode":           mode,
+		"timeoutMs":      takeoverHandoffTimeout.Milliseconds(),
 	})
 	if err != nil {
 		return err
@@ -288,14 +278,65 @@ func (a *App) TakeoverSession(tabID, mode string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("takeover handoff: %s", strings.TrimSpace(string(respBody)))
 	}
+	var grant takeoverGrant
+	if err := json.Unmarshal(respBody, &grant); err != nil || grant.MirrorID == "" || grant.HandoffID == "" || grant.SourceWriterID == "" {
+		return fmt.Errorf("takeover handoff: invalid grant")
+	}
+	if grant.TargetWriterID != agent.SessionWriterID() {
+		return fmt.Errorf("takeover handoff: grant targets another runtime")
+	}
+	lease, err := agent.TryAcquireSessionLeaseWithHandoff(path, grant.SourceWriterID, grant.HandoffID)
+	if err != nil {
+		a.endFailedTakeover(record, client, grant)
+		return userFacingSessionLeaseError("", err)
+	}
+	a.mu.RLock()
+	epochCurrent := a.tabByIDLocked(tabID) == tab && a.runtimeEpochForTabLocked(tab) == sourceEpoch
+	a.mu.RUnlock()
+	if !epochCurrent || sessionRuntimeKey(tab.currentSessionPath()) != sessionRuntimeKey(path) || !a.tabHasRetryableStartupLeaseError(tab) {
+		_ = lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID)
+		a.endFailedTakeover(record, client, grant)
+		return fmt.Errorf("tab changed while taking over the session; retry")
+	}
+	oldLease := tab.swapSessionLease(lease)
+	if oldLease != nil {
+		tab.swapSessionLease(oldLease)
+		_ = lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID)
+		a.endFailedTakeover(record, client, grant)
+		return fmt.Errorf("tab already owns another session lease")
+	}
 
-	// Remember the mirror target so the rebuilt tab's sink starts forwarding
-	// frames, then wake the deferred rebuild loop instead of waiting out its
-	// 2s poll.
 	key := sessionRuntimeKey(path)
-	a.registerTakeoverMirror(key, tabID, path, record, client)
-	a.kickDeferredRebuildRetry()
+	a.registerTakeoverMirror(key, tabID, path, record, client, grant)
+	a.runtimeRebuildMu.Lock()
+	err = a.rebuildStartupTabLocked(tab)
+	a.runtimeRebuildMu.Unlock()
+	if err == nil && a.controllerForTab(tab) == nil {
+		err = fmt.Errorf("session startup did not publish a controller")
+	}
+	if err != nil {
+		if returned := tab.takeSessionLease(); returned != nil {
+			_ = returned.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID)
+		}
+		if m := a.takeoverMirrorForKey(key); m != nil {
+			m.stopAndFinalize(false)
+		}
+		a.endFailedTakeover(record, client, grant)
+		return err
+	}
+	a.clearDeferredRebuild(tabID)
 	return nil
+}
+
+func (a *App) endFailedTakeover(record takeoverServeRecord, client *http.Client, grant takeoverGrant) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	payload, _ := json.Marshal(map[string]string{"sessionPath": grant.SessionPath, "mirrorId": grant.MirrorID})
+	resp, err := serveDo(ctx, client, http.MethodPost, serveURL(record.base, "/mirror-end"), payload)
+	if err == nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
 }
 
 // takeoverMirror forwards one local tab's events to the serve that used to own
@@ -311,6 +352,7 @@ type takeoverMirror struct {
 	sink      *tabEventSink
 	client    *http.Client
 	record    takeoverServeRecord
+	grant     takeoverGrant
 	queue     []eventwire.Event
 	lastFlush time.Time
 
@@ -320,6 +362,9 @@ type takeoverMirror struct {
 	consecutiveFailures int32
 	stop                chan struct{}
 	done                chan struct{}
+	wake                chan struct{}
+	stopOnce            sync.Once
+	detachOnce          sync.Once
 }
 
 const (
@@ -424,7 +469,7 @@ func (a *App) adoptSessionFromLocalServeOnce(tabID, sessionPath string) bool {
 			// Another local runtime already owns and mirrors it.
 			return true
 		}
-		body, err := json.Marshal(map[string]string{"sessionPath": sessionPath})
+		body, err := json.Marshal(map[string]string{"sessionPath": sessionPath, "writerId": agent.SessionWriterID()})
 		if err != nil {
 			continue
 		}
@@ -432,12 +477,16 @@ func (a *App) adoptSessionFromLocalServeOnce(tabID, sessionPath string) bool {
 		if err != nil {
 			continue
 		}
-		_, _ = io.Copy(io.Discard, resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			continue
 		}
-		a.registerTakeoverMirror(key, tabID, sessionPath, serve, client)
+		var grant takeoverGrant
+		if json.Unmarshal(respBody, &grant) != nil || grant.MirrorID == "" || grant.ReturnHandoffID == "" {
+			continue
+		}
+		a.registerTakeoverMirror(key, tabID, sessionPath, serve, client, grant)
 		slog.Info("desktop: local session adopted by serve for remote spectating",
 			"tab", tabID, "session", sessionPath, "serve", serve.base)
 		return true
@@ -452,7 +501,7 @@ func pathWithinDir(child, dir string) bool {
 	return strings.HasPrefix(strings.ToLower(child), strings.ToLower(dir))
 }
 
-func (a *App) registerTakeoverMirror(key, tabID, sessionPath string, record takeoverServeRecord, client *http.Client) {
+func (a *App) registerTakeoverMirror(key, tabID, sessionPath string, record takeoverServeRecord, client *http.Client, grant takeoverGrant) {
 	if key == "" {
 		return
 	}
@@ -468,6 +517,7 @@ func (a *App) registerTakeoverMirror(key, tabID, sessionPath string, record take
 			sessionPath: sessionPath,
 			stop:        make(chan struct{}),
 			done:        make(chan struct{}),
+			wake:        make(chan struct{}, 1),
 		}
 		a.takeoverMirrors[key] = m
 		go m.run(client, record)
@@ -476,6 +526,7 @@ func (a *App) registerTakeoverMirror(key, tabID, sessionPath string, record take
 	m.tabID = tabID
 	m.record = record
 	m.client = client
+	m.grant = grant
 	m.mu.Unlock()
 	a.takeoverMu.Unlock()
 	a.attachTakeoverMirror(tabID, sessionPath)
@@ -550,6 +601,35 @@ func (a *App) snapshotTakeoverMirrors() []*takeoverMirror {
 	return mirrors
 }
 
+// returnTakeoverLeaseForShutdown publishes the reverse reservation while the
+// tab still owns its lease. The controller snapshot has already completed in
+// shutdownBody; a failed reservation leaves the lease installed so the normal
+// release fallback can still make progress.
+func (a *App) returnTakeoverLeaseForShutdown(tab *WorkspaceTab) bool {
+	if tab == nil {
+		return false
+	}
+	path := strings.TrimSpace(tab.currentSessionPath())
+	m := a.takeoverMirrorForKey(sessionRuntimeKey(path))
+	if m == nil {
+		return false
+	}
+	_, _, _, grant := m.snapshotClient()
+	if grant.SourceWriterID == "" || grant.ReturnHandoffID == "" {
+		return false
+	}
+	lease := tab.takeSessionLease()
+	if lease == nil {
+		return false
+	}
+	if err := lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID); err != nil {
+		tab.adoptSessionLease(lease)
+		slog.Warn("desktop: reserve takeover lease return during shutdown", "session", path, "err", err)
+		return false
+	}
+	return true
+}
+
 // forwardEvent enqueues one local event for the mirror. Called from the tab
 // sink's Emit; must never block the agent loop.
 func (m *takeoverMirror) forwardEvent(e event.Event) {
@@ -558,20 +638,18 @@ func (m *takeoverMirror) forwardEvent(e event.Event) {
 	}
 	wired := eventwire.ToWire(e)
 	m.mu.Lock()
-	if len(m.queue) >= takeoverMirrorMaxQueue {
-		// The remote refetches /history to reconcile; dropping the oldest
-		// delta is the same lossy contract a slow SSE subscriber already has.
-		copy(m.queue, m.queue[1:])
-		m.queue = m.queue[:len(m.queue)-1]
-	}
 	m.queue = append(m.queue, wired)
 	m.mu.Unlock()
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
 }
 
-func (m *takeoverMirror) snapshotClient() (*http.Client, takeoverServeRecord, string) {
+func (m *takeoverMirror) snapshotClient() (*http.Client, takeoverServeRecord, string, takeoverGrant) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.client, m.record, m.tabID
+	return m.client, m.record, m.tabID, m.grant
 }
 
 func (m *takeoverMirror) run(initialClient *http.Client, initialRecord takeoverServeRecord) {
@@ -583,99 +661,96 @@ func (m *takeoverMirror) run(initialClient *http.Client, initialRecord takeoverS
 	}
 	m.mu.Unlock()
 
-	ticker := time.NewTicker(takeoverMirrorFlushEvery)
-	defer ticker.Stop()
-	var lastPush time.Time
+	flushTimer := time.NewTimer(time.Hour)
+	if !flushTimer.Stop() {
+		<-flushTimer.C
+	}
+	heartbeat := time.NewTicker(takeoverMirrorHeartbeat)
+	defer flushTimer.Stop()
+	defer heartbeat.Stop()
+	flushArmed := false
 	for {
 		select {
 		case <-m.stop:
 			m.flushOnce(context.Background())
 			return
-		case <-ticker.C:
-		}
-		if m.stopping.Load() {
-			return
-		}
-		client, record, tabID := m.snapshotClient()
-		if client == nil {
-			continue
-		}
-		// Self-heal the sink wiring: rebuilds and tab switches rebind sinks
-		// without takeover knowledge.
-		m.app.attachTakeoverMirror(tabID, m.sessionPath)
-
-		due := len(m.drainQueue()) > 0 || time.Since(lastPush) >= takeoverMirrorHeartbeat
-		if !due {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		frames := m.drainQueue()
-		payload, err := json.Marshal(map[string]any{
-			"sessionPath": m.sessionPath,
-			"frames":      frames,
-		})
-		if err != nil {
-			cancel()
-			continue
-		}
-		resp, err := serveDo(ctx, client, http.MethodPost, serveURL(record.base, "/external/frames"), payload)
-		if err != nil {
-			// Mirror transport failed; push the frames back so the next
-			// heartbeat retries them, and keep serving the local session.
-			cancel()
-			m.requeue(frames)
-			lastPush = time.Now()
-			continue
-		}
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-		resp.Body.Close()
-		cancel()
-		lastPush = time.Now()
-		switch resp.StatusCode {
-		case http.StatusOK:
-			m.consecutiveFailures = 0
-			var out struct {
-				ReclaimRequested bool   `json:"reclaimRequested"`
-				ReclaimMode      string `json:"reclaimMode"`
+		case <-m.wake:
+			if !flushArmed {
+				flushTimer.Reset(takeoverMirrorFlushEvery)
+				flushArmed = true
 			}
-			if json.Unmarshal(body, &out) == nil && out.ReclaimRequested {
-				m.requestDemote(out.ReclaimMode)
+			continue
+		case <-flushTimer.C:
+			flushArmed = false
+			if !m.pushOnce(false) {
+				return
 			}
-		case http.StatusConflict:
-			// Serve no longer knows this mirror: either the session was
-			// reclaimed (serve re-owns it) or serve restarted (all
-			// in-memory mirror state lost). Try re-adopting with fresh
-			// credentials; if the serve already owns the session,
-			// demote to release the lease.
-			slog.Info("desktop: mirror 409 — attempting re-adopt or demote",
-				"session", m.sessionPath)
-			if m.retryAdoptOrDemote() {
-				continue // re-adopted with fresh credentials
-			}
-			return // demoted (lease released) or fatal
-		default:
-			// Auth failure (401 from a rotated token) or transport glitch.
-			// After consecutive failures, re-adopt with fresh credentials;
-			// the stale client's cookie/token is permanently invalid after
-			// a serve restart.
-			m.consecutiveFailures++
-			if m.consecutiveFailures >= 3 {
-				slog.Warn("desktop: mirror heartbeat failing — re-adopting",
-					"session", m.sessionPath, "status", resp.StatusCode,
-					"failures", m.consecutiveFailures)
-				m.consecutiveFailures = 0
-				if m.retryAdoptOrDemote() {
-					continue
-				}
+		case <-heartbeat.C:
+			if !m.pushOnce(true) {
 				return
 			}
 		}
 		// A mirror whose tab is gone entirely (closed, not detached) ends
 		// itself so Serve can hand the session back to the remote side.
 		if !m.app.takeoverTabLive(m.sessionPath) {
-			m.shutdown(true)
+			m.detach()
+			m.mirrorEnd()
 			return
 		}
+	}
+}
+
+func (m *takeoverMirror) pushOnce(heartbeat bool) bool {
+	client, record, _, grant := m.snapshotClient()
+	if client == nil || grant.MirrorID == "" {
+		return true
+	}
+	frames := m.drainQueue()
+	if len(frames) == 0 && !heartbeat {
+		return true
+	}
+	payload, err := json.Marshal(map[string]any{
+		"sessionPath": m.sessionPath, "mirrorId": grant.MirrorID, "frames": frames,
+	})
+	if err != nil {
+		m.requeue(frames)
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	resp, err := serveDo(ctx, client, http.MethodPost, serveURL(record.base, "/external/frames"), payload)
+	if err != nil {
+		cancel()
+		m.requeue(frames)
+		return true
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	resp.Body.Close()
+	cancel()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		m.consecutiveFailures = 0
+		var out struct {
+			ReclaimRequested bool   `json:"reclaimRequested"`
+			ReclaimMode      string `json:"reclaimMode"`
+		}
+		if json.Unmarshal(body, &out) == nil && out.ReclaimRequested {
+			m.requestDemote(out.ReclaimMode)
+		}
+		m.wakeIfQueued()
+		return true
+	case http.StatusConflict:
+		slog.Info("desktop: mirror generation rejected — attempting re-adopt",
+			"session", m.sessionPath)
+		m.requeue(frames)
+		return m.retryAdoptOrDemote()
+	default:
+		m.requeue(frames)
+		m.consecutiveFailures++
+		if m.consecutiveFailures < 3 {
+			return true
+		}
+		m.consecutiveFailures = 0
+		return m.retryAdoptOrDemote()
 	}
 }
 
@@ -696,7 +771,7 @@ func (m *takeoverMirror) retryAdoptOrDemote() bool {
 			cancel()
 			continue
 		}
-		body, bodyErr := json.Marshal(map[string]string{"sessionPath": m.sessionPath})
+		body, bodyErr := json.Marshal(map[string]string{"sessionPath": m.sessionPath, "writerId": agent.SessionWriterID()})
 		if bodyErr != nil {
 			cancel()
 			continue
@@ -706,13 +781,18 @@ func (m *takeoverMirror) retryAdoptOrDemote() bool {
 		if respErr != nil {
 			continue
 		}
-		io.Copy(io.Discard, resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
+			var grant takeoverGrant
+			if json.Unmarshal(respBody, &grant) != nil || grant.MirrorID == "" || grant.ReturnHandoffID == "" {
+				continue
+			}
 			// Re-adopted: swap in the fresh client and keep mirroring.
 			m.mu.Lock()
 			m.client = client
 			m.record = record
+			m.grant = grant
 			m.mu.Unlock()
 			slog.Info("desktop: mirror re-adopted with fresh credentials",
 				"session", m.sessionPath, "base", record.base)
@@ -723,7 +803,7 @@ func (m *takeoverMirror) retryAdoptOrDemote() bool {
 			// the remote side re-owns it. Demote to release the lease.
 			slog.Info("desktop: serve holds session — demoting to release lease",
 				"session", m.sessionPath, "status", resp.StatusCode)
-			m.demote(false)
+			go m.demote(false)
 			return false
 		}
 		// Other statuses: try next record.
@@ -732,14 +812,15 @@ func (m *takeoverMirror) retryAdoptOrDemote() bool {
 	// local session but stop the forwarder (remote can't see content).
 	slog.Warn("desktop: mirror re-adopt failed on all serves — stopping forwarder",
 		"session", m.sessionPath)
-	m.shutdown(false)
+	m.detach()
 	return false
 }
 
 func (m *takeoverMirror) drainQueue() []eventwire.Event {
 	m.mu.Lock()
-	frames := m.queue
-	m.queue = nil
+	count := min(len(m.queue), takeoverMirrorMaxQueue)
+	frames := append([]eventwire.Event(nil), m.queue[:count]...)
+	m.queue = m.queue[count:]
 	m.mu.Unlock()
 	return frames
 }
@@ -750,22 +831,31 @@ func (m *takeoverMirror) requeue(frames []eventwire.Event) {
 	}
 	m.mu.Lock()
 	m.queue = append(frames, m.queue...)
-	if len(m.queue) > takeoverMirrorMaxQueue {
-		m.queue = m.queue[:takeoverMirrorMaxQueue]
-	}
 	m.mu.Unlock()
 }
 
+func (m *takeoverMirror) wakeIfQueued() {
+	m.mu.Lock()
+	pending := len(m.queue) > 0
+	m.mu.Unlock()
+	if pending {
+		select {
+		case m.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
 func (m *takeoverMirror) flushOnce(ctx context.Context) {
-	client, record, _ := m.snapshotClient()
-	if client == nil {
+	client, record, _, grant := m.snapshotClient()
+	if client == nil || grant.MirrorID == "" {
 		return
 	}
 	frames := m.drainQueue()
 	if len(frames) == 0 {
 		return
 	}
-	payload, err := json.Marshal(map[string]any{"sessionPath": m.sessionPath, "frames": frames})
+	payload, err := json.Marshal(map[string]any{"sessionPath": m.sessionPath, "mirrorId": grant.MirrorID, "frames": frames})
 	if err != nil {
 		return
 	}
@@ -848,11 +938,8 @@ func (m *takeoverMirror) demote(interrupt bool) {
 		a.mu.RLock()
 		sink = tab.sink
 		a.mu.RUnlock()
-		// Block new submits at the UI level first, then drop the lease so
-		// Serve's reclaim can complete. The controller stays open but inert;
-		// with the tab read-only no turn can be admitted.
+		// Block new submits before waiting for the current turn to drain.
 		a.setTabReadOnly(tab.ID, true)
-		tab.releaseSessionLeaseForKey(m.key)
 	}
 	m.emitNoticeSink(sink, event.LevelWarn, "session_taken_over_local",
 		"This session was taken back by the remote side. This window is a read-only spectator.")
@@ -862,7 +949,34 @@ func (m *takeoverMirror) demote(interrupt bool) {
 		// already running so the drain completes quickly.
 		tab.Ctrl.Cancel()
 	}
-	m.shutdown(false)
+	if tab == nil || tab.Ctrl == nil {
+		return
+	}
+	deadline := time.Now().Add(takeoverHandoffTimeout)
+	for controllerHasActiveRuntimeWork(tab.Ctrl) && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if controllerHasActiveRuntimeWork(tab.Ctrl) {
+		a.setTabReadOnly(tab.ID, false)
+		return
+	}
+	if err := tab.Ctrl.Snapshot(); err != nil {
+		slog.Warn("desktop: snapshot before returning takeover", "session", m.sessionPath, "err", err)
+		a.setTabReadOnly(tab.ID, false)
+		return
+	}
+	_, _, _, grant := m.snapshotClient()
+	lease := tab.takeSessionLease()
+	if lease == nil {
+		a.setTabReadOnly(tab.ID, false)
+		return
+	}
+	if err := lease.ReleaseForHandoff(grant.SourceWriterID, grant.ReturnHandoffID); err != nil {
+		tab.adoptSessionLease(lease)
+		a.setTabReadOnly(tab.ID, false)
+		return
+	}
+	m.stopAndFinalize(false)
 	m.mirrorEnd()
 	m.startSpectate(tab, sink)
 }
@@ -888,13 +1002,13 @@ func (m *takeoverMirror) emitNoticeSink(sink *tabEventSink, level event.Level, c
 // mirrorEnd tells Serve the writer is gone so the remote side resumes without
 // waiting for the stale-mirror timeout. Best effort.
 func (m *takeoverMirror) mirrorEnd() {
-	client, record, _ := m.snapshotClient()
-	if client == nil {
+	client, record, _, grant := m.snapshotClient()
+	if client == nil || grant.MirrorID == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	payload, _ := json.Marshal(map[string]string{"sessionPath": m.sessionPath})
+	payload, _ := json.Marshal(map[string]string{"sessionPath": m.sessionPath, "mirrorId": grant.MirrorID})
 	resp, err := serveDo(ctx, client, http.MethodPost, serveURL(record.base, "/mirror-end"), payload)
 	if err != nil {
 		return
@@ -905,29 +1019,29 @@ func (m *takeoverMirror) mirrorEnd() {
 
 // stopLoop halts the forwarding goroutine. Idempotent.
 func (m *takeoverMirror) stopLoop() {
-	if !m.stopping.CompareAndSwap(false, true) {
-		return
-	}
-	close(m.stop)
+	m.stopping.Store(true)
+	m.stopOnce.Do(func() { close(m.stop) })
 	<-m.done
 }
 
 // detach removes the mirror from the app registry and clears the sink hook.
 func (m *takeoverMirror) detach() {
-	m.app.takeoverMu.Lock()
-	if m.app.takeoverMirrors[m.key] == m {
-		delete(m.app.takeoverMirrors, m.key)
-	}
-	m.app.takeoverMu.Unlock()
-	if sink := m.currentSink(); sink != nil {
-		sink.setTakeoverMirror(nil)
-	}
+	m.detachOnce.Do(func() {
+		m.app.takeoverMu.Lock()
+		if m.app.takeoverMirrors[m.key] == m {
+			delete(m.app.takeoverMirrors, m.key)
+		}
+		m.app.takeoverMu.Unlock()
+		if sink := m.currentSink(); sink != nil {
+			sink.setTakeoverMirror(nil)
+		}
+	})
 }
 
 // shutdown stops the forwarding loop and deregisters the mirror; when
 // notifyServe is set (the mirror ended without a demotion, e.g. its tab
 // closed) Serve is told the writer is gone once it can accept that.
-func (m *takeoverMirror) shutdown(notifyServe bool) {
+func (m *takeoverMirror) stopAndFinalize(notifyServe bool) {
 	m.stopLoop()
 	m.detach()
 	if notifyServe {
@@ -945,7 +1059,7 @@ func (m *takeoverMirror) currentSink() *tabEventSink {
 // (the remote side is the writer again) into the tab's event channel. The
 // frames are the same wire contract the local reducer already consumes.
 func (m *takeoverMirror) startSpectate(tab *WorkspaceTab, sink *tabEventSink) {
-	client, record, _ := m.snapshotClient()
+	client, record, _, _ := m.snapshotClient()
 	if tab == nil || sink == nil || client == nil {
 		return
 	}

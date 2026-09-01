@@ -400,6 +400,9 @@ type chatTUI struct {
 	// operation that rebinds the controller to another session file must move
 	// the lease first — see rebindSessionLease / followSessionLease.
 	leases *control.SessionLeaseKeeper
+	// takeover mirrors a session acquired from a resident Serve and blocks
+	// admission while that Serve is reclaiming it.
+	takeover *cliTakeoverManager
 
 	// outputStyle is the active output-style name (config agent.output_style),
 	// shown as the current entry in the /output-style listing. "" = default.
@@ -1935,7 +1938,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tuiShutdownMsg:
-		if m.ctrl != nil {
+		if m.ctrl != nil && (m.takeover == nil || !m.takeover.Returned()) {
 			_ = m.ctrl.Snapshot()
 			m.followSessionLease()
 		}
@@ -1956,6 +1959,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.followSessionLease()
 		} else {
 			m.ctrl = msg.ctrl
+			if m.takeover != nil {
+				m.takeover.AttachController(msg.ctrl)
+			}
 			m.updateWatchdogStatusProvider()
 			m.label = msg.label
 			m.commands = msg.commands
@@ -4283,6 +4289,10 @@ func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd
 // controller can choose inline vs isolated subagent execution from the live
 // skill's RunAs metadata without the TUI reimplementing that policy.
 func (m *chatTUI) startControllerTurn(displayed, restore string, start func()) tea.Cmd {
+	if m.takeover != nil && m.takeover.Reclaiming() {
+		m.notice("the remote side is taking this session back; new input is disabled")
+		return nil
+	}
 	// Flush any half-streamed leftover before the new turn (defensive).
 	m.commitReasoning()
 	m.commitPending()
@@ -4670,6 +4680,10 @@ func elapsedTick() tea.Cmd {
 // output to scrollback; MCP prompt / custom commands resolve to a model turn.
 func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	typedCmd := strings.TrimSpace(strings.SplitN(input, " ", 2)[0])
+	if m.takeover != nil && m.takeover.Reclaiming() && typedCmd != "/quit" && typedCmd != "/exit" {
+		m.notice("the remote side is taking this session back; new input is disabled")
+		return nil
+	}
 
 	if strings.HasPrefix(typedCmd, "/mcp__") {
 		return m.runMCPPrompt(input)

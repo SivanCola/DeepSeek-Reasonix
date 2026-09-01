@@ -4031,14 +4031,11 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 		tab.sink.setBinding(tab.ID, a)
 		tab.sink.setContext(a.ctx)
 	}
-	// A session taken over from a local serve mirrors its frames; rewire the
-	// fresh sink so the rebuild keeps the mirror alive.
-	a.attachTakeoverMirror(tab.ID, sessionPath)
-	// A session opened directly (no serve lease involved) still announces
-	// itself to a resident serve so the remote tab can watch and reclaim it.
-	if !tab.ReadOnly {
-		go a.adoptSessionFromLocalServe(tab.ID, sessionPath)
-	}
+	// Wiring a mirror inspects App state under a read lock, so defer it until
+	// after this transaction releases App.mu. The same applies to asynchronous
+	// adoption: publishing the committed identity first lets its stale-result
+	// fence observe one coherent runtime generation.
+	shouldAdopt := !tab.ReadOnly
 	if detachSource {
 		a.newSessionRuntimeLocked(tab, transition.targetKey)
 	}
@@ -4048,6 +4045,10 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	candidate.sink = nil
 	committed = true
 	a.mu.Unlock()
+	a.attachTakeoverMirror(tab.ID, sessionPath)
+	if shouldAdopt {
+		go a.adoptSessionFromLocalServe(tab.ID, sessionPath)
+	}
 	// Test-only observation point: the replacement is committed but the retired
 	// sink still carries its old epoch. Production has no hook and immediately
 	// fences that sink below.

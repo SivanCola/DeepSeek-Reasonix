@@ -264,9 +264,12 @@ func (m *chatTUI) runResumeCommand(input string) {
 	// Persist the conversation we're leaving so switching back later restores it.
 	// Snapshot before moving the lease: the outgoing session must be written
 	// while this process still owns it.
-	_ = m.ctrl.Snapshot()
+	if err := m.ctrl.Snapshot(); err != nil {
+		m.notice("resume: snapshot current session: " + err.Error())
+		return
+	}
 	m.followSessionLease()
-	if err := m.rebindSessionLease(target.session.Path); err != nil {
+	if err := m.commitLoadedSessionSwitch(target.session.Path, loaded); err != nil {
 		m.notice("resume: " + sessionLeaseHeldNotice(err))
 		if cliSessionTakeoverCandidate(err) {
 			m.pendingTakeoverPath = target.session.Path
@@ -274,7 +277,6 @@ func (m *chatTUI) runResumeCommand(input string) {
 		}
 		return
 	}
-	m.ctrl.Resume(loaded, target.session.Path)
 	m.replayActiveBranch(i18n.M.ResumedTitle)
 }
 
@@ -304,47 +306,50 @@ func (m *chatTUI) runTakeoverCommand(input string) {
 		m.notice(i18n.M.ResumeBusy)
 		return
 	}
-	bindErr := m.leases.Rebind(target)
-	if bindErr == nil {
-		// Nobody holds it anymore; plain resume is enough.
-		m.pendingTakeoverPath = ""
-		loaded, err := agent.LoadSession(target)
-		if err != nil {
-			m.notice("takeover: " + err.Error())
-			return
-		}
-		_ = m.ctrl.Snapshot()
-		m.followSessionLease()
-		if err := m.rebindSessionLease(target); err != nil {
-			m.notice("takeover: " + sessionLeaseHeldNotice(err))
-			return
-		}
-		m.ctrl.Resume(loaded, target)
-		m.replayActiveBranch(i18n.M.ResumedTitle)
-		return
-	}
-	if !cliSessionTakeoverCandidate(bindErr) {
-		m.notice("takeover: " + sessionLeaseHeldNotice(bindErr))
-		return
-	}
-	m.notice("taking the session over from the resident serve…")
-	if err := cliTakeoverHeldSession(target, bindErr); err != nil {
-		m.notice("takeover: " + err.Error())
-		return
-	}
-	loaded, err := agent.LoadSession(target)
+	_, err := loadResumableSession(target)
 	if err != nil {
 		m.notice("takeover: " + err.Error())
 		return
 	}
-	_ = m.ctrl.Snapshot()
+	if err := m.ctrl.Snapshot(); err != nil {
+		m.notice("takeover: snapshot current session: " + err.Error())
+		return
+	}
 	m.followSessionLease()
-	if err := m.rebindSessionLease(target); err != nil {
-		m.notice("takeover: " + sessionLeaseHeldNotice(err))
+	binding, bindErr := cliAcquireFreeSession(target, m.leases, m.takeover)
+	if bindErr != nil {
+		if !cliSessionTakeoverCandidate(bindErr) {
+			m.notice("takeover: " + sessionLeaseHeldNotice(bindErr))
+			return
+		}
+		m.notice("taking the session over from the resident serve…")
+		binding, err = cliTakeoverHeldSession(target, bindErr, m.leases, m.takeover)
+		if err != nil {
+			m.notice("takeover: " + err.Error())
+			return
+		}
+	}
+	loaded, err := cliPrepareTakeoverCandidate(binding, m.leases)
+	if err != nil {
+		cliReturnFailedTakeover(binding, m.leases)
+		m.notice("takeover: " + err.Error())
+		return
+	}
+	if err := binding.commitPrevious(m.takeover); err != nil {
+		cliReturnFailedTakeover(binding, m.leases)
+		m.notice("takeover: " + err.Error())
+		return
+	}
+	m.ctrl.Resume(loaded, target)
+	if err := bindChatTUIAuthority(m); err != nil {
+		m.notice("takeover: " + err.Error())
 		return
 	}
 	m.pendingTakeoverPath = ""
-	m.ctrl.Resume(loaded, target)
+	if m.takeover != nil && binding.grant.MirrorID != "" {
+		m.takeover.AttachController(m.ctrl)
+		m.takeover.Activate(binding)
+	}
 	m.replayActiveBranch(i18n.M.ResumedTitle)
 	m.notice("session taken over; the remote side is now read-only and can take it back")
 }

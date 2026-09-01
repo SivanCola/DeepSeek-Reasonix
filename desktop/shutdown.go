@@ -100,7 +100,9 @@ func (a *App) shutdownBody() {
 			}
 		}
 		it.ctrl.Close()
-		it.tab.releaseSessionLease()
+		if !a.returnTakeoverLeaseForShutdown(it.tab) {
+			it.tab.releaseSessionLease()
+		}
 		a.mu.Lock()
 		a.releaseSessionRuntimeLocked(it.tab)
 		a.mu.Unlock()

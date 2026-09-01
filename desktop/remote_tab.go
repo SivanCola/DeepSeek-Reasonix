@@ -188,8 +188,10 @@ func (a *App) markRemoteTabSpectatorIfLocalOwned(ctx context.Context, tabID stri
 	a.remoteTabMu.Lock()
 	tab := a.remoteTabs[tabID]
 	path := ""
+	selectionRevision := uint64(0)
 	if tab != nil && tab.gen == gen {
 		path = strings.TrimSpace(tab.routing.currentPath)
+		selectionRevision = tab.selectionRevision
 	}
 	a.remoteTabMu.Unlock()
 	if path == "" {
@@ -198,22 +200,35 @@ func (a *App) markRemoteTabSpectatorIfLocalOwned(ctx context.Context, tabID stri
 	probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
 	view, probeErr := takeoverOwnership(probeCtx, client, base, path)
 	probeCancel()
+	// A transport failure says nothing about ownership. Preserve the current
+	// spectator pin and let the next status/notice probe retry instead of
+	// briefly reopening input against an ownership state we could not prove.
+	if probeErr != nil {
+		return
+	}
 	// "external" = a mirrored local writer; "other" = a local runtime holds
 	// the lease without a registered mirror (adopter absent). Serve mounts
 	// both as read-only spectator surfaces, so the banner and the take-back
 	// button must appear for either — otherwise the tab unlocks its composer
 	// against a transcript it cannot write.
-	if probeErr != nil || !(view.Mirrored || view.Holder == "external" || view.Holder == "other") {
+	locallyOwned := view.Mirrored || view.Holder == "external" || view.Holder == "other"
+	a.remoteTabMu.Lock()
+	current := a.remoteTabs[tabID]
+	if current != tab || current == nil || current.gen != gen || current.client != client ||
+		current.selectionRevision != selectionRevision ||
+		agent.CanonicalSessionPath(current.routing.currentPath) != agent.CanonicalSessionPath(path) {
+		a.remoteTabMu.Unlock()
+		return
+	}
+	if !locallyOwned {
 		// The probed session is not locally owned (e.g. a fresh /new or a
 		// free session). Clear any stale spectator pin left over from the
 		// previous session so the banner and read-only composer go away.
-		a.clearRemoteTabSpectator(tabID, gen)
+		current.session.takenOver = false
+		a.remoteTabMu.Unlock()
 		return
 	}
-	a.remoteTabMu.Lock()
-	if current := a.remoteTabs[tabID]; current != nil && current.gen == gen {
-		current.session.takenOver = true
-	}
+	current.session.takenOver = true
 	a.remoteTabMu.Unlock()
 	// No remote-tab:updated emit: the async probe racing with hydration
 	// causes the frontend to re-render mid-fetch, appearing as a retry
@@ -709,6 +724,20 @@ func (a *App) ReclaimRemoteTabSession(tabID string) error {
 	if strings.TrimSpace(expectedPath) == "" {
 		return fmt.Errorf("remote tab %q has no active session", tabID)
 	}
+	a.remoteTabMu.Lock()
+	observedTab := a.remoteTabs[tabID]
+	observedGen, observedRuntimeRevision, observedSelectionRevision := uint64(0), uint64(0), uint64(0)
+	if observedTab != nil {
+		observedGen = observedTab.gen
+		observedRuntimeRevision = observedTab.runtime.revision
+		observedSelectionRevision = observedTab.selectionRevision
+	}
+	a.remoteTabMu.Unlock()
+	stillCurrent := func(tab *remoteTab) bool {
+		return tab != nil && tab == observedTab && tab.client == client && tab.gen == observedGen &&
+			tab.runtime.revision == observedRuntimeRevision && tab.selectionRevision == observedSelectionRevision &&
+			agent.CanonicalSessionPath(tab.routing.currentPath) == agent.CanonicalSessionPath(expectedPath)
+	}
 	// Short timeout: the serve caps un-mirrored reclaims at 10s and mirrored
 	// ones use the writer's cooperative heartbeat (seconds, not minutes). A
 	// long client-side timeout only hangs the UI button.
@@ -734,9 +763,12 @@ func (a *App) ReclaimRemoteTabSession(tabID string) error {
 		// the next /status poll then adopted whatever session Serve happened
 		// to hold, visually jumping the tab away from the session being
 		// reclaimed. Only a session no runtime holds makes the pin stale.
-		if !strings.Contains(errMsg, "did not yield") &&
-			!strings.Contains(errMsg, "never registered a mirror") {
-			a.clearRemoteTabSpectator(tabID, 0)
+		if !strings.Contains(errMsg, "did not yield") && !strings.Contains(errMsg, "never registered a mirror") {
+			a.remoteTabMu.Lock()
+			if tab := a.remoteTabs[tabID]; stillCurrent(tab) {
+				tab.session.takenOver = false
+			}
+			a.remoteTabMu.Unlock()
 		}
 		return fmt.Errorf("reclaim session: %s", errMsg)
 	}
@@ -744,7 +776,7 @@ func (a *App) ReclaimRemoteTabSession(tabID string) error {
 	// pin immediately so the composer un-locks without waiting for the next
 	// status poll to observe takenOver=false.
 	a.remoteTabMu.Lock()
-	if tab := a.remoteTabs[tabID]; tab != nil {
+	if tab := a.remoteTabs[tabID]; stillCurrent(tab) {
 		tab.session.takenOver = false
 		meta := remoteTabMetaLocked(tab)
 		a.remoteTabMu.Unlock()
