@@ -333,7 +333,9 @@ func (k *SessionLeaseKeeper) RebindDetaching(path string) (*SessionLeaseKeeper, 
 	if k.lease != nil || k.controller != nil || len(k.retired) > 0 {
 		dst = &SessionLeaseKeeper{lease: k.lease, controller: k.controller, retired: k.retired, ownershipBinder: k.ownershipBinder}
 	}
-	if dst.controller != nil {
+	// dst stays nil when the keeper holds nothing at all (e.g. its lease was
+	// released by a session handoff); there is no controller to rebind then.
+	if dst != nil && dst.controller != nil {
 		dst.bindTransferredController(dst.controller)
 	}
 	k.lease, k.controller, k.retired = lease, nil, nil
