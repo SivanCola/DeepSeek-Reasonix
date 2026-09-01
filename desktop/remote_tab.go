@@ -35,7 +35,6 @@ func remoteSessionTransitionBusy(err error) bool {
 // /new or /resume frames are not missed. The caller's context owns the pump;
 // handshake and session entry use a bounded child context.
 func (a *App) attachRemoteTabServe(ctx context.Context, tabID, base, token, instanceID string, opts RemoteTabOpenOptions) (bool, error) {
-	attachStart := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -47,7 +46,6 @@ func (a *App) attachRemoteTabServe(ctx context.Context, tabID, base, token, inst
 		log.Printf("[remote] attachRemoteTabServe: handshake FAILED tab=%s base=%q err=%v", tabID, base, err)
 		return false, err
 	}
-	handshakeDur := time.Since(attachStart)
 	a.remoteTabMu.Lock()
 	tab := a.remoteTabs[tabID]
 	a.remoteTabMu.Unlock()
@@ -174,8 +172,6 @@ func (a *App) attachRemoteTabServe(ctx context.Context, tabID, base, token, inst
 	if !a.markRemoteTabAttached(tabID, gen) {
 		return false, fmt.Errorf("remote tab %q event stream closed during session attach", tabID)
 	}
-	log.Printf("[remote] attach COMPLETE tab=%s entered=%v handshake=%v total=%v",
-		tabID, entered, handshakeDur.Round(time.Millisecond), time.Since(attachStart).Round(time.Millisecond))
 	return entered, nil
 }
 
@@ -625,7 +621,6 @@ func (a *App) remoteTabCommandTarget(tabID string) (*http.Client, string, string
 	}
 	a.remoteTabMu.Unlock()
 	if !usable {
-		log.Printf("[remote] remoteTabCommandClient: REFUSED tab=%q (tab=%v client=%v)", tabID, tab != nil, tab != nil && tab.client != nil)
 		return nil, "", "", fmt.Errorf("remote tab %q is not connected", tabID)
 	}
 	return client, base, expectedPath, nil
@@ -736,29 +731,14 @@ func remoteSessionTakenOver(err error) bool {
 }
 
 func (a *App) SubmitRemoteTab(tabID, text string) error {
-	start := time.Now()
 	client, base, expectedPath, err := a.remoteTabCommandTarget(tabID)
 	if err != nil {
 		return err
 	}
-	targetDur := time.Since(start)
-
 	ctx, cancel := commandContext(a)
 	defer cancel()
 	body, _ := json.Marshal(map[string]string{"input": text})
-	buildDur := time.Since(start)
-
-	started := time.Now()
-	err = servePostForSession(ctx, client, serveURL(base, "/submit"), body, expectedPath)
-	postDur := time.Since(started)
-	if err != nil {
-		log.Printf("[remote] submit FAILED tab=%s target=%v build=%v post=%v err=%v",
-			tabID, targetDur.Round(time.Millisecond), buildDur.Round(time.Millisecond), postDur.Round(time.Millisecond), err)
-	} else {
-		log.Printf("[remote] submit OK tab=%s target=%v post=%v total=%v",
-			tabID, targetDur.Round(time.Millisecond), postDur.Round(time.Millisecond), time.Since(start).Round(time.Millisecond))
-	}
-	return err
+	return servePostForSession(ctx, client, serveURL(base, "/submit"), body, expectedPath)
 }
 
 func (a *App) CancelRemoteTab(tabID string) error {
