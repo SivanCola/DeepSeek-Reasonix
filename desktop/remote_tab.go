@@ -35,6 +35,7 @@ func remoteSessionTransitionBusy(err error) bool {
 // /new or /resume frames are not missed. The caller's context owns the pump;
 // handshake and session entry use a bounded child context.
 func (a *App) attachRemoteTabServe(ctx context.Context, tabID, base, token, instanceID string, opts RemoteTabOpenOptions) (bool, error) {
+	attachStart := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -46,6 +47,7 @@ func (a *App) attachRemoteTabServe(ctx context.Context, tabID, base, token, inst
 		log.Printf("[remote] attachRemoteTabServe: handshake FAILED tab=%s base=%q err=%v", tabID, base, err)
 		return false, err
 	}
+	handshakeDur := time.Since(attachStart)
 	a.remoteTabMu.Lock()
 	tab := a.remoteTabs[tabID]
 	a.remoteTabMu.Unlock()
@@ -154,8 +156,17 @@ func (a *App) attachRemoteTabServe(ctx context.Context, tabID, base, token, inst
 	// ownership transfer. Confirm via /ownership and mark the tab read-only
 	// BEFORE publishing readiness: the frontend hydrates as soon as it hears
 	// ready, and its /history?session= depends on takenOver being set already.
+	// Probe for spectator state asynchronously: blocking here adds an SSH
+	// round-trip to EVERY session entry. The 99% case (normal resume)
+	// pays the latency for nothing. For spectator sessions, the probe
+	// result arrives after ready — the frontend briefly hydrates with the
+	// foreground view, then takenOver flips and re-renders with ?session=.
 	if entered {
-		a.markRemoteTabSpectatorIfLocalOwned(ctx, tabID, client, base, gen)
+		go func() {
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer probeCancel()
+			a.markRemoteTabSpectatorIfLocalOwned(probeCtx, tabID, client, base, gen)
+		}()
 	}
 	// A 200 response is only the stream-open barrier. The stream can still die
 	// while /new or /resume is in flight; publish readiness only if its pump has
@@ -163,6 +174,8 @@ func (a *App) attachRemoteTabServe(ctx context.Context, tabID, base, token, inst
 	if !a.markRemoteTabAttached(tabID, gen) {
 		return false, fmt.Errorf("remote tab %q event stream closed during session attach", tabID)
 	}
+	log.Printf("[remote] attach COMPLETE tab=%s entered=%v handshake=%v total=%v",
+		tabID, entered, handshakeDur.Round(time.Millisecond), time.Since(attachStart).Round(time.Millisecond))
 	return entered, nil
 }
 
@@ -187,17 +200,21 @@ func (a *App) markRemoteTabSpectatorIfLocalOwned(ctx context.Context, tabID stri
 	view, probeErr := takeoverOwnership(probeCtx, client, base, path)
 	probeCancel()
 	if probeErr != nil || !(view.Mirrored || view.Holder == "external") {
+		// The probed session is not locally owned (e.g. a fresh /new or a
+		// free session). Clear any stale spectator pin left over from the
+		// previous session so the banner and read-only composer go away.
+		a.clearRemoteTabSpectator(tabID, gen)
 		return
 	}
 	a.remoteTabMu.Lock()
 	if current := a.remoteTabs[tabID]; current != nil && current.gen == gen {
 		current.session.takenOver = true
-		meta := remoteTabMetaLocked(current)
-		a.remoteTabMu.Unlock()
-		a.emitRemoteEvent("remote-tab:updated", meta)
-	} else {
-		a.remoteTabMu.Unlock()
 	}
+	a.remoteTabMu.Unlock()
+	// No remote-tab:updated emit: the async probe racing with hydration
+	// causes the frontend to re-render mid-fetch, appearing as a retry
+	// loop. The periodic /status poll (recordRemoteTabSessionStatus)
+	// naturally picks up takenOver and emits a meta update.
 	slog.Info("desktop: remote tab switched to spectator on local-owned session",
 		"tab", tabID, "session", path, "holder", view.Holder)
 }
@@ -219,9 +236,8 @@ func (a *App) clearRemoteTabSpectator(tabID string, gen uint64) {
 		return
 	}
 	current.session.takenOver = false
-	meta := remoteTabMetaLocked(current)
 	a.remoteTabMu.Unlock()
-	a.emitRemoteEvent("remote-tab:updated", meta)
+	// No emit: let the /status poll propagate the change.
 }
 
 // commitRemoteTabAttachResponse applies an attach response only while it still
@@ -462,6 +478,7 @@ func (a *App) remoteTabPump(ctx context.Context, tabID string, gen uint64, opene
 	// Reattach now; the host status hook also retries on connection recovery.
 	if ctx.Err() == nil {
 		if startRetry := a.reconnectRemoteTabGeneration(tabID, gen); startRetry {
+			log.Printf("[remote] remoteTabPump: DIED tab=%s gen=%d — reattaching", tabID, gen)
 			a.goRemoteTabSafe("remoteTabReattach", func() { a.reattachRemoteTab(tabID) })
 		}
 	}
@@ -719,17 +736,27 @@ func remoteSessionTakenOver(err error) bool {
 }
 
 func (a *App) SubmitRemoteTab(tabID, text string) error {
+	start := time.Now()
 	client, base, expectedPath, err := a.remoteTabCommandTarget(tabID)
 	if err != nil {
 		return err
 	}
+	targetDur := time.Since(start)
+
 	ctx, cancel := commandContext(a)
 	defer cancel()
 	body, _ := json.Marshal(map[string]string{"input": text})
+	buildDur := time.Since(start)
+
 	started := time.Now()
 	err = servePostForSession(ctx, client, serveURL(base, "/submit"), body, expectedPath)
+	postDur := time.Since(started)
 	if err != nil {
-		log.Printf("[remote] submit failed tab=%s dur=%s err=%v", tabID, time.Since(started).Round(time.Millisecond), err)
+		log.Printf("[remote] submit FAILED tab=%s target=%v build=%v post=%v err=%v",
+			tabID, targetDur.Round(time.Millisecond), buildDur.Round(time.Millisecond), postDur.Round(time.Millisecond), err)
+	} else {
+		log.Printf("[remote] submit OK tab=%s target=%v post=%v total=%v",
+			tabID, targetDur.Round(time.Millisecond), postDur.Round(time.Millisecond), time.Since(start).Round(time.Millisecond))
 	}
 	return err
 }

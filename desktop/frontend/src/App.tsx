@@ -36,7 +36,6 @@ import { useActiveRemoteSession } from "./lib/useRemoteSession";
 import { useRemoteTabOpened } from "./lib/useRemoteTabOpened";
 import { renameCurrentRemoteSession } from "./lib/remoteSessionActions";
 import { localizedNoticeText, useController, type HistoryLoadTrigger, type Item } from "./lib/useController";
-import { onTabMeta } from "./lib/bridge";
 import { app, onEvent, onProjectTreeChanged, onReady, onRemoteForwards, onRemoteServer, onRemoteStatus, onRuntimeRebuilt, openExternal } from "./lib/bridge";
 import { useConfigLoadWarnings } from "./lib/useConfigLoadWarnings";
 import { generativeMusic, isGenerativeMusicEnabled } from "./lib/generative-music";
@@ -1189,14 +1188,10 @@ export default function App() {
     // The backend pushes authoritative per-tab meta after state changes that
     // produce no agent events (e.g. a lease-blocked startup). Refresh the list
     // so the takeover banner/button render even when the active tab differs.
-    const unsubTabMeta = onTabMeta(() => {
-      void refreshTabMetas();
-    });
     return () => {
       unsub();
       unsubReady();
       unsubRebuilt();
-      unsubTabMeta();
     };
   }, []);
 
@@ -2429,17 +2424,6 @@ export default function App() {
     }
     return tabs;
   }, []);
-  // Remote tab became ready: refresh the tab list so the spectator banner
-  // (takenOver) renders. The agent:ready event only fires for local tabs;
-  // remote tabs publish readiness via remote-tab:<id>:state, which
-  // useRemoteSession consumes internally without notifying the tabMetas list.
-  useEffect(() => {
-    if (remoteSession?.state !== "ready") return;
-    void refreshTabMetas();
-    const late = setTimeout(() => void refreshTabMetas(), 500);
-    return () => clearTimeout(late);
-  }, [remoteSession?.state, refreshTabMetas]);
-
   const seedActiveTabMeta = useCallback((tab: TabMeta): void => {
     setTabMetas((current) => seedActiveTabMetaList(current, tab));
     setTabOrderIds((current) => current.includes(tab.id) ? current : [...current, tab.id]);

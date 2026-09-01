@@ -1140,9 +1140,6 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 	// Covers both mirrored sessions (adopted/handed off) and sessions merely
 	// held by another local process (e.g. a .9 desktop tab without adopt).
 	if s.sessionMirrored(realPath) || leaseHeldByForeignRuntime(realPath) {
-		slog.Info("serve: spectator mount on local-owned session",
-			"session", agent.CanonicalSessionPath(realPath),
-			"mirrored", s.sessionMirrored(realPath))
 		w.Header().Set(sessionPathHeader, agent.CanonicalSessionPath(realPath))
 		w.WriteHeader(http.StatusNoContent)
 		return
