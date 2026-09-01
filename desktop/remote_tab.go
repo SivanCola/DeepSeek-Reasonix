@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"reasonix/internal/agent"
+	"reasonix/internal/event"
 )
 
 // The remote-tab bridge exchanges its pre-shared token for an HttpOnly
@@ -218,6 +221,24 @@ func (a *App) markRemoteTabSpectatorIfLocalOwned(ctx context.Context, tabID stri
 	// naturally picks up takenOver and emits a meta update.
 	slog.Info("desktop: remote tab switched to spectator on local-owned session",
 		"tab", tabID, "session", path, "holder", view.Holder)
+}
+
+// probeSpectatorAfterNotice re-probes spectator state when Serve broadcasts a
+// takeover or reclaim notice for a session. The entry-time probe cannot see
+// mid-view transitions, so without this the banner and the composer lock
+// drift from the real ownership until the next session switch.
+func (a *App) probeSpectatorAfterNotice(tabID string, gen uint64, client *http.Client, base, framePath string) {
+	a.remoteTabMu.Lock()
+	tab := a.remoteTabs[tabID]
+	viewing := tab != nil && tab.gen == gen && tab.routing.currentPath != "" &&
+		agent.CanonicalSessionPath(tab.routing.currentPath) == agent.CanonicalSessionPath(framePath)
+	a.remoteTabMu.Unlock()
+	if !viewing {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	a.markRemoteTabSpectatorIfLocalOwned(ctx, tabID, client, base, gen)
 }
 
 // clearRemoteTabSpectator drops the read-only spectator pin when the route it
@@ -464,6 +485,17 @@ func (a *App) remoteTabPump(ctx context.Context, tabID string, gen uint64, opene
 			return
 		}
 		kind, framePath, current, reset := probeRemoteTabFrame(frame)
+		// A takeover notice for the session this tab is viewing flips the
+		// spectator pin live: the entry-time probe only runs when the tab
+		// enters a session, so a mid-view takeover (or its reversal) would
+		// otherwise leave the banner and the composer locked to stale state.
+		if kind == "notice" && framePath != "" &&
+			(strings.Contains(frame, event.NoticeCodeSessionTakenOver) ||
+				strings.Contains(frame, event.NoticeCodeSessionReclaimed)) {
+			a.goRemoteTabSafe("remoteTabTakeoverNoticeProbe", func() {
+				a.probeSpectatorAfterNotice(tabID, gen, client, base, framePath)
+			})
+		}
 		if !a.routeRemoteTabWireFrame(tabID, gen, framePath, kind, current, reset) {
 			continue
 		}
