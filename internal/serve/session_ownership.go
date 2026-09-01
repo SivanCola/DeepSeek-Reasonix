@@ -815,7 +815,7 @@ func (s *Server) mirrorEnd(w http.ResponseWriter, r *http.Request) {
 // session back to the remote side.
 func (s *Server) maybeAutoReclaimMirrored(path string) {
 	m := s.mirroredEntry(path)
-	if m == nil || m.reclaimRequested {
+	if m == nil {
 		return
 	}
 	if time.Since(m.lastContact) < mirrorStaleAfter {
@@ -827,6 +827,15 @@ func (s *Server) maybeAutoReclaimMirrored(path string) {
 		// gets reclaimed under itself.
 		s.touchMirrored(path)
 		return
+	}
+	if m.reclaimRequested {
+		// The writer vanished AFTER a reclaim was requested: its OS lock died
+		// with it, so the outstanding reclaim can finally complete. Skipping
+		// here (as this function used to) left the entry mirrored with the
+		// flag set forever — the remote tab stayed a read-only spectator with
+		// every retry 409ing after the wait timeout.
+		slog.Info("serve: completing outstanding reclaim for vanished writer",
+			"session", agent.CanonicalSessionPath(path))
 	}
 	go func() {
 		s.bindMu.Lock()

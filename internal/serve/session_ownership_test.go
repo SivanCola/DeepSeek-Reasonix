@@ -692,3 +692,66 @@ func TestSpectatorSwitchCommandsPassTheFence(t *testing.T) {
 		t.Fatalf("post-/new ownership = %+v, want external mirror", view)
 	}
 }
+
+// TestAutoReclaimCompletesOutstandingReclaim proves a writer that vanished
+// after a reclaim was requested cannot leave the session mirrored forever:
+// once the entry goes stale and the lease is free, the outstanding reclaim
+// completes on the recovery sweep instead of being skipped by the flag.
+func TestAutoReclaimCompletesOutstandingReclaim(t *testing.T) {
+	f := newOwnershipFixture(t)
+	other := filepath.Join(f.dir, "vanished.jsonl")
+	saveServeTestSession(t, other)
+
+	writerLease, err := agent.TryAcquireSessionLease(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := &atomic.Bool{}
+	held.Store(true)
+	withForeignWriterLease(t, other, held)
+
+	if status, body := f.post(t, "/adopt", map[string]any{"sessionPath": other}); status != http.StatusOK {
+		t.Fatalf("adopt = %d %q", status, body)
+	}
+	// The writer ignores the reclaim: the wait times out, the flag stays set.
+	status, body := f.post(t, "/reclaim", map[string]any{"sessionPath": other, "timeoutMs": 200})
+	if status != http.StatusConflict {
+		t.Fatalf("reclaim against silent writer = %d %q, want 409", status, body)
+	}
+	if view := f.ownershipView(t, other); !view.Mirrored || !view.ReclaimRequested {
+		t.Fatalf("post-timeout ownership = %+v, want mirrored with reclaim requested", view)
+	}
+
+	canonical := agent.CanonicalSessionPath(other)
+	backdate := func() {
+		f.server.mirrorMu.Lock()
+		defer f.server.mirrorMu.Unlock()
+		if m := f.server.mirrored[canonical]; m != nil {
+			m.lastContact = time.Now().Add(-2 * mirrorStaleAfter)
+		}
+	}
+
+	// Stale but still leased: the recovery sweep must stand down.
+	backdate()
+	f.server.maybeAutoReclaimMirrored(other)
+	if view := f.ownershipView(t, other); !view.Mirrored {
+		t.Fatal("auto-reclaim cleared a mirror whose lease is still held")
+	}
+
+	// The writer dies silently: lease gone, no mirror-end, no heartbeats. The
+	// outstanding reclaim completes and the remote side can own the session.
+	held.Store(false)
+	writerLease.Release()
+	backdate()
+	f.server.maybeAutoReclaimMirrored(other)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if view := f.ownershipView(t, other); !view.Mirrored {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stale mirror with outstanding reclaim was never cleared: %+v", f.ownershipView(t, other))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

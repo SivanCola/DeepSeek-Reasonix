@@ -765,6 +765,39 @@ func (a *App) takeoverTabLive(sessionPath string) bool {
 	return a.sessionParentLive(sessionPath)
 }
 
+// tabHoldingSession returns the live tab currently owning the session path,
+// using the same liveness notion as sessionParentLive. Mirrors outlive tab
+// rebuilds, so lease-affecting actions must resolve the tab through the
+// session rather than a snapshotted tab ID.
+func (a *App) tabHoldingSession(sessionPath string) *WorkspaceTab {
+	key := sessionRuntimeKey(sessionPath)
+	if a == nil || key == "" {
+		return nil
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	holding := func(tab *WorkspaceTab) bool {
+		if tab == nil {
+			return false
+		}
+		if sessionRuntimeKey(tab.SessionPath) == key {
+			return true
+		}
+		return tab.Ctrl != nil && sessionRuntimeKey(tab.Ctrl.SessionPath()) == key
+	}
+	for _, tab := range a.tabs {
+		if holding(tab) {
+			return tab
+		}
+	}
+	for _, tab := range a.detachedSessions {
+		if holding(tab) {
+			return tab
+		}
+	}
+	return nil
+}
+
 // requestDemote reacts to a remote reclaim: this tab loses speaking rights.
 // The demotion itself is passive — flip the tab read-only, release the lease,
 // tell the user, and let Serve resume ownership.
@@ -782,6 +815,14 @@ const handoffModeInterruptLocal = "interrupt"
 func (m *takeoverMirror) demote(interrupt bool) {
 	a := m.app
 	tab := a.tabByID(m.tabIDSnapshot())
+	if tab == nil {
+		// Tab IDs rotate on rebuilds and app restarts while a reclaim is in
+		// flight; the session path is the stable handle. Without this
+		// fallback the demote skipped the read-only flip and the lease
+		// release, and the remote reclaim waited on a writer that had
+		// already forgotten it was one.
+		tab = a.tabHoldingSession(m.sessionPath)
+	}
 	var sink *tabEventSink
 	if tab != nil {
 		a.mu.RLock()
