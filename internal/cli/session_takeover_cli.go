@@ -386,6 +386,8 @@ func (m *cliTakeoverManager) Activate(binding *cliTakeoverBinding) {
 	if m == nil || binding == nil {
 		return
 	}
+	m.returnMu.Lock()
+	defer m.returnMu.Unlock()
 	m.sendMu.Lock()
 	defer m.sendMu.Unlock()
 	m.mu.Lock()
@@ -727,41 +729,10 @@ func (m *cliTakeoverManager) RebindAway(path string) (bool, error) {
 	if binding == nil || m.returned.Load() || agent.CanonicalSessionPath(binding.path) == agent.CanonicalSessionPath(path) {
 		return false, nil
 	}
-	m.returnMu.Lock()
-	defer m.returnMu.Unlock()
-	if m.reclaiming.Load() {
-		return true, fmt.Errorf("the remote side is reclaiming this session")
-	}
-	_ = m.push(false)
-	if m.reclaiming.Load() {
-		return true, fmt.Errorf("the remote side is reclaiming this session")
-	}
-	if err := m.leases.RebindReturningCurrent(path, binding.grant.SourceWriterID, binding.grant.ReturnHandoffID); err != nil {
-		return true, err
-	}
-	m.returned.Store(true)
-	m.mu.Lock()
-	started, stop, done := m.started, m.stop, m.done
-	m.mu.Unlock()
-	if started {
-		m.stopOnce.Do(func() { close(stop) })
-		<-done
-	}
-	m.mirrorEnd(binding)
-	m.mu.Lock()
-	m.binding = nil
-	m.queue.Reset()
-	m.revision++
-	m.failures = 0
-	m.started = false
-	m.wake = nil
-	m.stop = nil
-	m.done = nil
-	m.stopOnce = sync.Once{}
-	m.reclaiming.Store(false)
-	m.returned.Store(false)
-	m.mu.Unlock()
-	return true, nil
+	err := m.returnCurrentMirror(binding.path, func(current *cliTakeoverBinding) error {
+		return m.leases.RebindReturningCurrent(path, current.grant.SourceWriterID, current.grant.ReturnHandoffID)
+	})
+	return true, err
 }
 
 // cliAcquireFreeSession starts an ordinary failure-atomic switch. The newly
@@ -831,41 +802,62 @@ func (m *cliTakeoverManager) commitPriorMirror(next *cliTakeoverBinding) error {
 	if m == nil || next == nil || next.previous == nil || next.priorMirror == nil {
 		return nil
 	}
+	err := m.returnCurrentMirror(next.priorMirror.path, func(current *cliTakeoverBinding) error {
+		return next.previous.RetireDetachedForHandoff(current.grant.SourceWriterID, current.grant.ReturnHandoffID)
+	})
+	if err == nil {
+		next.previous = nil
+	}
+	return err
+}
+
+// returnCurrentMirror refreshes the binding after pushLocked while sendMu
+// fences the generation used by both the reverse reservation and mirror-end.
+func (m *cliTakeoverManager) returnCurrentMirror(expectedPath string, retire func(*cliTakeoverBinding) error) error {
+	if m == nil || retire == nil {
+		return fmt.Errorf("takeover return transaction unavailable")
+	}
+	expectedPath = agent.CanonicalSessionPath(expectedPath)
 	m.returnMu.Lock()
 	defer m.returnMu.Unlock()
+	if m.reclaiming.Load() {
+		return fmt.Errorf("the remote side is reclaiming the current session")
+	}
+	m.sendMu.Lock()
+	unlockError := func(err error) error { m.sendMu.Unlock(); return err }
 	current, _, _, _ := m.snapshot()
-	if current != next.priorMirror || m.returned.Load() {
-		return fmt.Errorf("current takeover mirror changed during session switch")
+	if current == nil || m.returned.Load() || agent.CanonicalSessionPath(current.path) != expectedPath {
+		return unlockError(fmt.Errorf("current takeover mirror changed during session switch"))
+	}
+	if !m.pushLocked(false) {
+		return unlockError(fmt.Errorf("current takeover mirror stopped during session switch"))
+	}
+	current, _, _, _ = m.snapshot()
+	if current == nil || m.returned.Load() || agent.CanonicalSessionPath(current.path) != expectedPath {
+		return unlockError(fmt.Errorf("current takeover mirror changed during session switch"))
 	}
 	if m.reclaiming.Load() {
-		return fmt.Errorf("the remote side is reclaiming the current session")
+		return unlockError(fmt.Errorf("the remote side is reclaiming the current session"))
 	}
-	_ = m.push(false)
-	if m.reclaiming.Load() {
-		return fmt.Errorf("the remote side is reclaiming the current session")
+	if err := retire(current); err != nil {
+		return unlockError(err)
 	}
-	if err := next.previous.RetireDetachedForHandoff(current.grant.SourceWriterID, current.grant.ReturnHandoffID); err != nil {
-		return err
-	}
-	next.previous = nil
 	m.returned.Store(true)
+	m.mirrorEndLocked(current)
 	m.mu.Lock()
 	started, stop, done := m.started, m.stop, m.done
-	m.mu.Unlock()
-	if started {
-		m.stopOnce.Do(func() { close(stop) })
-		<-done
-	}
-	m.mirrorEnd(current)
-	m.mu.Lock()
 	m.binding = nil
 	m.queue.Reset()
 	m.revision++
 	m.failures = 0
-	m.started = false
-	m.wake = nil
-	m.stop = nil
-	m.done = nil
+	m.mu.Unlock()
+	m.sendMu.Unlock()
+	if started {
+		m.stopOnce.Do(func() { close(stop) })
+		<-done
+	}
+	m.mu.Lock()
+	m.started, m.wake, m.stop, m.done = false, nil, nil, nil
 	m.stopOnce = sync.Once{}
 	m.reclaiming.Store(false)
 	m.returned.Store(false)
@@ -924,7 +916,14 @@ func (m *cliTakeoverManager) retryPendingReturns(force bool) {
 	if m == nil {
 		return
 	}
-	m.returnMu.Lock()
+	if force {
+		m.returnMu.Lock()
+	} else if !m.returnMu.TryLock() {
+		// The active mirror return transaction owns the forwarding loop. Do not
+		// strand that transaction while it joins this loop; the next retry tick
+		// will pick these detached keepers up.
+		return
+	}
 	defer m.returnMu.Unlock()
 	now := time.Now()
 	m.mu.Lock()
