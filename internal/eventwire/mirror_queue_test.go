@@ -82,3 +82,71 @@ func TestMarshalMirrorBatchUsesActualEnvelopeSize(t *testing.T) {
 		t.Fatalf("batch=%d remainder=%d bytes=%d", len(one), len(remainder), len(payload))
 	}
 }
+
+func TestMarshalMirrorBatchRejectsOversizedFirstFrameInTwoMarshals(t *testing.T) {
+	frames := make([]Event, MirrorBatchMaxFrames)
+	for i := range frames {
+		frames[i] = Event{Kind: "text", Sequence: uint64(i + 1)}
+	}
+	calls := 0
+	marshal := func(batch []Event) ([]byte, error) {
+		calls++
+		if len(batch) == 0 {
+			return []byte(`{"frames":[]}`), nil
+		}
+		return make([]byte, MirrorBatchMaxBytes+1), nil
+	}
+	batch, remainder, payload, err := MarshalMirrorBatch(frames, MirrorBatchMaxBytes, marshal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("marshal calls = %d, want 2", calls)
+	}
+	if len(batch) != 0 || len(remainder) != len(frames) || len(payload) > MirrorBatchMaxBytes {
+		t.Fatalf("batch=%d remainder=%d payload=%d", len(batch), len(remainder), len(payload))
+	}
+	for i, frame := range remainder {
+		if frame.Sequence != uint64(i+1) {
+			t.Fatalf("remainder[%d].sequence = %d", i, frame.Sequence)
+		}
+	}
+}
+
+func TestMarshalMirrorBatchBinarySearchesLargestOrderedPrefix(t *testing.T) {
+	frames := make([]Event, MirrorBatchMaxFrames)
+	for i := range frames {
+		frames[i] = Event{Kind: "text", Sequence: uint64(i + 1)}
+	}
+	const (
+		envelopeBytes = 37
+		frameBytes    = 101
+		wantFrames    = 173
+	)
+	maxBytes := envelopeBytes + wantFrames*frameBytes
+	calls := 0
+	marshal := func(batch []Event) ([]byte, error) {
+		calls++
+		return make([]byte, envelopeBytes+len(batch)*frameBytes), nil
+	}
+	batch, remainder, payload, err := MarshalMirrorBatch(frames, maxBytes, marshal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls > 11 {
+		t.Fatalf("marshal calls = %d, want at most 11", calls)
+	}
+	if len(batch) != wantFrames || len(remainder) != len(frames)-wantFrames || len(payload) != maxBytes {
+		t.Fatalf("batch=%d remainder=%d payload=%d calls=%d", len(batch), len(remainder), len(payload), calls)
+	}
+	for i, frame := range batch {
+		if frame.Sequence != uint64(i+1) {
+			t.Fatalf("batch[%d].sequence = %d", i, frame.Sequence)
+		}
+	}
+	for i, frame := range remainder {
+		if frame.Sequence != uint64(wantFrames+i+1) {
+			t.Fatalf("remainder[%d].sequence = %d", i, frame.Sequence)
+		}
+	}
+}

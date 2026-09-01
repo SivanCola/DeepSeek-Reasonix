@@ -232,26 +232,46 @@ func (q *MirrorQueue) evictAt(index int) bool {
 	return true
 }
 
-// MarshalMirrorBatch shrinks frames until marshal produces an HTTP request no
-// larger than maxBytes. The returned remainder must be prepended immediately;
-// it contains frames removed from the tail and therefore still follows the
-// returned batch in wire order.
+// MarshalMirrorBatch finds the largest prefix whose marshaled HTTP request is
+// no larger than maxBytes. The returned remainder must be prepended
+// immediately; it still follows the returned batch in wire order.
 func MarshalMirrorBatch(frames []Event, maxBytes int, marshal func([]Event) ([]byte, error)) (batch, remainder []Event, payload []byte, err error) {
 	if maxBytes <= 0 || marshal == nil {
 		return nil, append([]Event(nil), frames...), nil, nil
 	}
-	limit := len(frames)
-	for {
-		payload, err = marshal(frames[:limit])
-		if err != nil {
-			return nil, append([]Event(nil), frames...), nil, err
-		}
-		if len(payload) <= maxBytes {
-			return append([]Event(nil), frames[:limit]...), append([]Event(nil), frames[limit:]...), payload, nil
-		}
-		if limit == 0 {
-			return nil, append([]Event(nil), frames...), nil, nil
-		}
-		limit--
+	emptyPayload, err := marshal(frames[:0])
+	if err != nil {
+		return nil, append([]Event(nil), frames...), nil, err
 	}
+	if len(emptyPayload) > maxBytes {
+		return nil, append([]Event(nil), frames...), nil, nil
+	}
+	if len(frames) == 0 {
+		return nil, nil, emptyPayload, nil
+	}
+
+	firstPayload, err := marshal(frames[:1])
+	if err != nil {
+		return nil, append([]Event(nil), frames...), nil, err
+	}
+	if len(firstPayload) > maxBytes {
+		return nil, append([]Event(nil), frames...), emptyPayload, nil
+	}
+
+	low, high := 1, len(frames)
+	payload = firstPayload
+	for low < high {
+		mid := low + (high-low+1)/2
+		candidate, marshalErr := marshal(frames[:mid])
+		if marshalErr != nil {
+			return nil, append([]Event(nil), frames...), nil, marshalErr
+		}
+		if len(candidate) <= maxBytes {
+			low = mid
+			payload = candidate
+		} else {
+			high = mid - 1
+		}
+	}
+	return append([]Event(nil), frames[:low]...), append([]Event(nil), frames[low:]...), payload, nil
 }
