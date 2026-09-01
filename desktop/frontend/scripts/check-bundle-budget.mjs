@@ -168,11 +168,14 @@ console.log("\nbundle budgets");
 // the combined tree to 458.158 KiB; completion uncertainty adds a terminal
 // outcome and notice without exposing evaluator audits to the frontend,
 // measuring 458.287 KiB gzip.
+// Transactional Ask resolution and authoritative rejected-submit recovery add
+// 0.3 KiB gzip to the initial controller path. Retain the exact turn fence,
+// bounded ListTabs retry, and stale-prompt guard.
 // Session takeover banners (lease-blocked local tab + read-only remote tab)
 // and their armed-button confirm add ~0.6 KiB on that merged path; the
 // takeover dialog stays lazy.
-// The merged tree measures 459.0 KiB gzip; retain 0.1 KiB headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 459.1 : 459.1;
+// The combined tree measures 459.4 KiB gzip; retain 0.1 KiB headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 459.5 : 459.5;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -303,9 +306,11 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // 2452.773 KiB; isolated conversation forks bring the combined tree to
 // 2454.719 KiB on the release toolchain. Completion uncertainty brings the
 // final merged payload to 2455.154 KiB.
+// Ask turn fencing, rejection reconciliation, and the localized submit-failure
+// notice add 0.890 KiB raw.
 // Session takeover banners and their startup wiring add ~2.4 KiB raw on that
 // merged path (locale copy plus armed-button state); the dialog stays lazy.
-// The merged tree measures 2458.0 KiB; retain 0.2 KiB of bounded headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_458.2 : 2_458.2;
+// The combined tree is expected near 2459.0 KiB; retain 0.1 KiB headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_459.1 : 2_459.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
