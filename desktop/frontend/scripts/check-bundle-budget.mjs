@@ -162,14 +162,17 @@ console.log("\nbundle budgets");
 // one-decimal ratchet.
 // The generation-bound history-prepend lease adds stable-key reader anchoring,
 // full mounted coverage, and one final arbiter-owned correction. The measured
-// path is 457.406 KiB after extracting the lease owner to satisfy repolint;
-// retain 0.094 KiB with the same one-decimal ratchet.
-// Latest-base transcript settle ownership measures 457.523 KiB with this UX;
-// retain the smallest one-decimal ratchet without widening other chunk gates.
+// path is 457.406 KiB after extracting the lease owner to satisfy repolint.
+// Latest-base transcript settle ownership measures 457.523 KiB with this UX.
+// Isolated conversation forks and their extracted browser mock adapter bring
+// the combined tree to 458.158 KiB; completion uncertainty adds a terminal
+// outcome and notice without exposing evaluator audits to the frontend,
+// measuring 458.287 KiB gzip.
 // Session takeover banners (lease-blocked local tab + read-only remote tab)
-// and their armed-button confirm add ~0.6 KiB to the upstream #9630 path; the
-// takeover dialog stays lazy. Measured 458.3 KiB gzip; keep 0.2 KiB headroom.
-const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 458.5 : 458.5;
+// and their armed-button confirm add ~0.6 KiB on that merged path; the
+// takeover dialog stays lazy.
+// The merged tree measures 459.0 KiB gzip; retain 0.1 KiB headroom.
+const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 459.1 : 459.1;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -222,12 +225,12 @@ for (const path of localeChunks) {
   // retain roughly 0.13 KiB of platform headroom for each.
   // Stream-failure diagnostics add five strings per dialect. Together with the
   // reachable-tail recovery copy, the merged chunks measure 58.923 KiB zh and
-  // 59.710 KiB zh-TW. Retain the complete copy with the smallest one-decimal
-  // ratchet for each dialect.
+  // 59.710 KiB zh-TW. The isolated-fork guidance brings the measured chunks
+  // to 59.1 KiB zh and 59.9 KiB zh-TW.
   // Session takeover adds ~20 locale keys per dialect (banners, dialog,
-  // reclaim); Chinese compresses poorly (3-byte UTF-8). Measured 59.2 KiB zh
-  // on the #9630 base; retain 0.2 KiB headroom.
-  const budget = name.startsWith("zh-TW-") ? 60.0 * 1024 : 59.4 * 1024;
+  // reclaim); Chinese compresses poorly (3-byte UTF-8). The merged chunks
+  // measure 59.5 KiB zh and 60.3 KiB zh-TW; retain one decimal of headroom.
+  const budget = name.startsWith("zh-TW-") ? 60.4 * 1024 : 59.6 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
@@ -291,14 +294,18 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The stranded-tail recovery transition plus the WebView2 reachable-tail clamp
 // bring the measured initial payload to 2447.953 KiB. Retain 0.047 KiB with
 // the smallest one-decimal ratchet.
-// The extracted history-prepend owner and compact session-version host measure
-// 2452.7 KiB together; the recovery coordinator and dialog remain lazy. Retain
-// the smallest one-decimal headroom without widening unrelated chunk ceilings.
+// The extracted history-prepend owner adds 3.953 KiB of bounded transaction
+// state and stable-key coverage checks. Together with the compact
+// session-version host, they measure 2452.7 KiB; the recovery coordinator and
+// dialog remain lazy. Completion uncertainty adds a distinct terminal notice
+// and localized startup copy without collapsing into recovery-paused UX.
 // Latest-base transcript settle ownership brings the measured path to
-// 2452.821 KiB; retain the smallest one-decimal ratchet.
-// Session takeover banners and their startup wiring add ~2.4 KiB raw on the
-// #9630 base (locale copy plus armed-button state); the dialog stays lazy.
-// Measured 2455.5 KiB; retain 0.4 KiB of bounded toolchain headroom.
-const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_456.6 : 2_456.6;
+// 2452.773 KiB; isolated conversation forks bring the combined tree to
+// 2454.719 KiB on the release toolchain. Completion uncertainty brings the
+// final merged payload to 2455.154 KiB.
+// Session takeover banners and their startup wiring add ~2.4 KiB raw on that
+// merged path (locale copy plus armed-button state); the dialog stays lazy.
+// The merged tree measures 2458.0 KiB; retain 0.2 KiB of bounded headroom.
+const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_458.2 : 2_458.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
