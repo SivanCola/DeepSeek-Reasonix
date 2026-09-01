@@ -47,6 +47,10 @@ func (a *App) shutdownBody() {
 		_ = flushDesktopDerivedCatalogs(flushCtx)
 	}()
 	a.stopDeferredRebuildRetry()
+	// End every takeover mirror before controller teardown releases the leases:
+	// Serve's mirror-end then hands those sessions straight back to their
+	// remote tabs instead of waiting out the stale-mirror timeout.
+	a.stopTakeoverMirrors()
 	a.stopHistoryIndexMigration()
 	a.stopMainThreadWatchdog()
 	if a.heartbeat != nil {
@@ -101,6 +105,9 @@ func (a *App) shutdownBody() {
 		a.releaseSessionRuntimeLocked(it.tab)
 		a.mu.Unlock()
 	}
+	// Every lease is released; taken-over sessions can go straight back to
+	// their remote tabs.
+	a.endTakeoverMirrors()
 	if a.startupReady.Load() {
 		// A stable React + Wails heartbeat is sufficient health evidence even if
 		// the user closes before the delayed commit task runs.

@@ -289,6 +289,16 @@ type App struct {
 	// It is process-local by design: shutdown closes every detached controller.
 	detachedSessions map[string]*WorkspaceTab
 
+	// takeoverMirrors tracks sessions this desktop took over from a local
+	// serve: the tab writes locally while its events mirror to the remote tab.
+	// Keyed by sessionRuntimeKey; guarded by takeoverMu.
+	takeoverMirrors map[string]*takeoverMirror
+	takeoverMu      sync.Mutex
+	// serveProbeUntil suppresses serve probing after a failed handshake
+	// (rotated token file); guarded by serveProbeMu.
+	serveProbeUntil map[string]time.Time
+	serveProbeMu    sync.Mutex
+
 	// sharedHosts holds one *plugin.Host per workspace root, shared by all
 	// controllers/tabs in that root so MCP subprocesses (CodeGraph, etc.) are
 	// spawned once instead of N times. Lifecycle: first Acquire creates the
@@ -4030,6 +4040,14 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	if tab.sink != nil {
 		tab.sink.setBinding(tab.ID, a)
 		tab.sink.setContext(a.ctx)
+	}
+	// A session taken over from a local serve mirrors its frames; rewire the
+	// fresh sink so the rebuild keeps the mirror alive.
+	a.attachTakeoverMirror(tab.ID, sessionPath)
+	// A session opened directly (no serve lease involved) still announces
+	// itself to a resident serve so the remote tab can watch and reclaim it.
+	if !tab.ReadOnly {
+		go a.adoptSessionFromLocalServe(tab.ID, sessionPath)
 	}
 	if detachSource {
 		a.newSessionRuntimeLocked(tab, transition.targetKey)
