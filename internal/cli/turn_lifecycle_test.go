@@ -19,7 +19,7 @@ type runningQueueController struct {
 
 func (c *runningQueueController) Running() bool { return true }
 
-func (c *runningQueueController) EnqueueInbox(req control.InboxRequest) (sessioninbox.InboxReceipt, error) {
+func (c *runningQueueController) TryEnqueueFollowup(req control.InboxRequest) (sessioninbox.InboxReceipt, error) {
 	c.req = req
 	return sessioninbox.InboxReceipt{ItemID: "queued-item"}, c.err
 }

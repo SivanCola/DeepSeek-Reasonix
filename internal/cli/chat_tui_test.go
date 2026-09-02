@@ -2905,7 +2905,7 @@ func TestQueuedFoldedPasteExpandsBeforeInterjectSend(t *testing.T) {
 	defer ctrl.Close()
 	ctrl.EnsureSessionPath()
 	m := newTestChatTUI()
-	m.ctrl = ctrl
+	m.ctrl = &busyInboxController{SessionAPI: ctrl}
 	m.eventCh = make(chan event.Event, 8)
 	m.state = tuiRunning
 	pasted := strings.Repeat("queued pasted content\n", 10)
@@ -2939,7 +2939,7 @@ func TestQueuedFoldedPasteExpandsBeforeInterjectSend(t *testing.T) {
 	}
 
 	// Resume inbox so controller can dispatch after TurnDone.
-	_ = m.ctrl.SetInboxPaused(false)
+	_ = ctrl.SetInboxPaused(false)
 	model, _ = m.Update(agentEventMsg(event.Event{Kind: event.TurnDone}))
 	m = model.(chatTUI)
 	// Controller dispatches asynchronously via maybeDispatch; wait briefly.
