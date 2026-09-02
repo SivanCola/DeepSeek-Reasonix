@@ -36,6 +36,7 @@ type ArgData struct {
 	DisconnectedMCP []string
 	ModelRefs       []string
 	CurrentModel    string
+	EffortLevels    []string
 	ProviderNames   []string
 	CurrentProvider string
 	PluginNames     []string
@@ -215,10 +216,8 @@ func presetArgItems(prior []string) []SlashItem {
 
 func effortArgItems(prior []string, d ArgData) []SlashItem {
 	if len(prior) <= 1 {
-		entry := currentEffortEntry(d)
-		cap := config.EffortCapabilityForEntry(entry)
 		var out []SlashItem
-		for _, level := range cap.Levels {
+		for _, level := range d.EffortLevels {
 			hint := ""
 			switch level {
 			case "auto":
@@ -239,18 +238,6 @@ func effortArgItems(prior []string, d ArgData) []SlashItem {
 		return out
 	}
 	return nil
-}
-
-func currentEffortEntry(d ArgData) *config.ProviderEntry {
-	if strings.TrimSpace(d.CurrentModel) == "" {
-		return nil
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return nil
-	}
-	entry, _ := cfg.ResolveModel(d.CurrentModel)
-	return entry
 }
 
 func mcpArgItems(prior []string, cur string, d ArgData) []SlashItem {

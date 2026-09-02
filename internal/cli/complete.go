@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	rw "github.com/mattn/go-runewidth"
 
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/fileref"
 	"reasonix/internal/i18n"
@@ -144,6 +145,7 @@ func removeSlashItems(items []compItem, label string) []compItem {
 // while the line is a single "/word" token, or an @-reference menu while the
 // token under the cursor is "@…".
 func (m *chatTUI) updateCompletion() {
+	m.prepareSlashArgSnapshot()
 	val := m.input.Value()
 	cursor := m.inputCursorByteOffset()
 
@@ -280,6 +282,11 @@ func (m *chatTUI) slashArgData() control.ArgData {
 		ProviderNames:   providerNames(),
 		CurrentProvider: curProvider,
 		PluginNames:     pluginArgNames(),
+	}
+	if strings.TrimSpace(m.modelRef) != "" {
+		if entry, _, err := m.currentConfigProvider(); err == nil {
+			data.EffortLevels = slices.Clone(config.EffortCapabilityForEntry(entry).Levels)
+		}
 	}
 	if m.ctrl != nil {
 		data.DisabledSkills = m.ctrl.DisabledSkills()

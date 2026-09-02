@@ -11,6 +11,7 @@ import (
 	"reasonix/internal/command"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/memory"
 	"reasonix/internal/skill"
 )
 
@@ -280,6 +281,33 @@ func TestSlashArgDataSnapshotsAcrossKeystrokes(t *testing.T) {
 	}
 }
 
+func TestSlashArgDataRebuildsWhenPopupReopens(t *testing.T) {
+	isolateUserConfig(t)
+	store := memory.Store{Dir: t.TempDir()}
+	if _, err := store.Save(memory.Memory{Name: "warm", Title: "Warm", Body: "first", Type: memory.TypeProject}); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := control.New(control.Options{Memory: &memory.Set{Store: store}})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.input.SetValue("/memory revisions war")
+	m.updateCompletion()
+	if !m.completion.active || m.completion.kind != compSlashArg {
+		t.Fatal("expected first memory argument popup")
+	}
+
+	// Closing the popup ends its snapshot generation. A later popup must see
+	// memory saved while no popup was open.
+	m.completion = completion{}
+	if _, err := store.Save(memory.Memory{Name: "changed", Title: "Changed", Body: "second", Type: memory.TypeProject}); err != nil {
+		t.Fatal(err)
+	}
+	m.input.SetValue("/memory revisions chang")
+	m.updateCompletion()
+	if !m.completion.active || m.completion.kind != compSlashArg || m.completion.items[0].label != "changed" {
+		t.Fatalf("reopened popup did not refresh memory refs: %+v", m.completion)
+	}
+}
+
 func BenchmarkSlashArgCompletionKeystroke(b *testing.B) {
 	root := b.TempDir()
 	b.Setenv("HOME", root)
@@ -297,7 +325,8 @@ func BenchmarkSlashArgCompletionKeystroke(b *testing.B) {
 		})
 	}
 	_ = m.slashItems()
-	_ = m.slashArgDataSnapshot() // warm snapshots once
+	m.input.SetValue("/language ")
+	m.updateCompletion() // open the popup and warm its snapshot
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
@@ -305,6 +334,31 @@ func BenchmarkSlashArgCompletionKeystroke(b *testing.B) {
 		m.updateCompletion()
 		if !m.completion.active {
 			b.Fatal("expected completion menu")
+		}
+	}
+}
+
+func BenchmarkSlashEffortArgCompletionKeystroke(b *testing.B) {
+	root := b.TempDir()
+	b.Setenv("HOME", root)
+	b.Setenv("REASONIX_CREDENTIALS_STORE", "file")
+	b.Setenv("XDG_CONFIG_HOME", root+"/config")
+	b.Chdir(root)
+	ctrl := control.New(control.Options{})
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.modelRef = "deepseek-flash/deepseek-v4-flash"
+	m.input.SetValue("/effort ")
+	m.updateCompletion() // resolve config once for this popup generation
+	if !m.completion.active {
+		b.Fatal("expected initial effort completion menu")
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		m.input.SetValue("/effort h")
+		m.updateCompletion()
+		if !m.completion.active {
+			b.Fatal("expected effort completion menu")
 		}
 	}
 }

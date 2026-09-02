@@ -7,7 +7,7 @@ import (
 // slashCompletionCache memoizes the two expensive completion snapshots: the
 // slash catalog (commands, skills, prompts) and the arg-completion data
 // (config models/providers, plugin state, MCP names, memory refs). Assembling
-// the arg data runs five config loads plus a plugin-state read per keystroke
+// the arg data runs several config loads plus a plugin-state read per keystroke
 // otherwise, which reads as visible input lag on cold Linux caches (#9503).
 type slashCompletionCache struct {
 	items []compItem
@@ -51,6 +51,20 @@ func (m *chatTUI) slashArgDataSnapshot() control.ArgData {
 	c.argModel = m.modelRef
 	c.argBuilt = true
 	return c.argData
+}
+
+// prepareSlashArgSnapshot keeps one stable snapshot while an argument popup is
+// open. A closed or different menu starts a new popup generation, so dynamic
+// memory, MCP, plugin, skill, and effort data are refreshed before filtering.
+func (m *chatTUI) prepareSlashArgSnapshot() {
+	if m.completion.active && m.completion.kind == compSlashArg {
+		return
+	}
+	if c := m.slashCache; c != nil {
+		c.argData = control.ArgData{}
+		c.argModel = ""
+		c.argBuilt = false
+	}
 }
 
 // invalidateSlashCatalog drops the cached catalog and arg data so the next
