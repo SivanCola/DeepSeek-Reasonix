@@ -20,7 +20,7 @@ func (m *chatTUI) startTurn(sent, displayed, restore string) tea.Cmd {
 // keeps reference-expanded model input separate from the text shown/restored by
 // the frontend.
 func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd {
-	return m.startControllerTurn(displayed, restore, func() { m.ctrl.SendWithRaw(sent, raw) })
+	return m.startControllerTurnWithQueue(displayed, restore, raw, func() { m.ctrl.SendWithRaw(sent, raw) })
 }
 
 // startControllerTurn owns the TUI-side turn setup for controller entry points.
@@ -28,21 +28,25 @@ func (m *chatTUI) startTurnWithRaw(sent, displayed, restore, raw string) tea.Cmd
 // controller can choose inline vs isolated subagent execution from the live
 // skill's RunAs metadata without the TUI reimplementing that policy.
 func (m *chatTUI) startControllerTurn(displayed, restore string, start func()) tea.Cmd {
+	return m.startControllerTurnWithQueue(displayed, restore, displayed, start)
+}
+
+func (m *chatTUI) startControllerTurnWithQueue(displayed, restore, queued string, start func()) tea.Cmd {
 	// The composer can read idle while the controller already runs a
 	// dispatched queued follow-up (TurnStarted not yet ingested): queue rather
 	// than race the admission guard's silent drop (#9575).
 	if m.ctrl != nil && m.ctrl.Running() {
-		receipt, err := m.enqueueFollowup(displayed, displayed)
+		receipt, err := m.enqueueFollowup(displayed, queued)
 		if err != nil {
 			m.notice("queue: " + err.Error())
-			m.input.SetValue(restore)
-			m.growInputToFit()
+			if m.input.Value() == "" {
+				m.input.SetValue(restore)
+				m.growInputToFit()
+			}
 			return nil
 		}
 		m.notice("durable follow-up queued #" + shortID(receipt.ItemID) + " — will run when idle")
-		m.input.Reset()
-		m.pastedBlocks = nil
-		m.resetQueueNavigation()
+		m.clearQueuedPastes(restore)
 		return nil
 	}
 	// Flush any half-streamed leftover before the new turn (defensive).
@@ -139,4 +143,22 @@ func (m *chatTUI) noteControllerTurnStarted() tea.Cmd {
 func (m *chatTUI) startRunningTicks() tea.Cmd {
 	m.elapsedTickGeneration++
 	return tea.Batch(m.spinner.Tick, elapsedTick(m.elapsedTickGeneration))
+}
+
+func (m *chatTUI) clearQueuedPastes(restore string) {
+	labels := m.pasteLabelsIn(restore)
+	if len(labels) == 0 {
+		return
+	}
+	queued := make(map[string]struct{}, len(labels))
+	for _, label := range labels {
+		queued[label] = struct{}{}
+	}
+	kept := m.pastedBlocks[:0]
+	for _, block := range m.pastedBlocks {
+		if _, ok := queued[block.label]; !ok {
+			kept = append(kept, block)
+		}
+	}
+	m.pastedBlocks = kept
 }

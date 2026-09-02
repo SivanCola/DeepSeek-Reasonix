@@ -123,18 +123,32 @@ func TestElapsedTickRejectsPriorTurnGeneration(t *testing.T) {
 func TestStartControllerTurnQueuesThroughSessionPort(t *testing.T) {
 	ctrl := &runningQueueController{SessionAPI: control.New(control.Options{})}
 	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
-	m.input.SetValue("draft")
+	m.input.SetValue("next draft")
+	m.pastedBlocks = []pastedBlock{{label: "old paste"}, {label: "next paste"}}
 	started := false
 
-	cmd := m.startControllerTurn("expanded", "draft", func() { started = true })
+	cmd := m.startControllerTurn("expanded", "old paste", func() { started = true })
 	if cmd != nil || started {
 		t.Fatalf("running controller started a competing turn: cmd=%v started=%v", cmd != nil, started)
 	}
 	if ctrl.req.Display != "expanded" || ctrl.req.Raw != "expanded" || ctrl.req.Submit != "expanded" {
 		t.Fatalf("queued request = %+v, want expanded display/raw/submit", ctrl.req)
 	}
-	if got := m.input.Value(); got != "" {
-		t.Fatalf("successful queue left composer = %q", got)
+	if got := m.input.Value(); got != "next draft" {
+		t.Fatalf("successful queue changed the next draft to %q", got)
+	}
+	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].label != "next paste" {
+		t.Fatalf("successful queue cleared unrelated paste state: %+v", m.pastedBlocks)
+	}
+}
+
+func TestStartTurnWithRawQueuesMaterializablePrompt(t *testing.T) {
+	ctrl := &runningQueueController{SessionAPI: control.New(control.Options{})}
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+
+	m.startTurnWithRaw("resolved context", "typed @file", "typed @file", "typed @file")
+	if ctrl.req.Display != "typed @file" || ctrl.req.Raw != "typed @file" || ctrl.req.Submit != "typed @file" {
+		t.Fatalf("queued request = %+v, want unresolved prompt for durable reference capture", ctrl.req)
 	}
 }
 
@@ -150,5 +164,16 @@ func TestStartControllerTurnRestoresComposerOnQueueFailure(t *testing.T) {
 	}
 	if got := m.input.Value(); got != "draft" {
 		t.Fatalf("failed queue restored composer = %q, want draft", got)
+	}
+}
+
+func TestStartControllerTurnQueueFailurePreservesNextDraft(t *testing.T) {
+	ctrl := &runningQueueController{SessionAPI: control.New(control.Options{}), err: errors.New("queue unavailable")}
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.input.SetValue("next draft")
+
+	m.startControllerTurn("expanded", "failed submission", func() {})
+	if got := m.input.Value(); got != "next draft" {
+		t.Fatalf("failed async queue overwrote the next draft with %q", got)
 	}
 }
