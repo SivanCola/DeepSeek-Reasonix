@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"strings"
+
 	"reasonix/internal/control"
 )
 
@@ -15,7 +17,11 @@ type slashCompletionCache struct {
 	// snapshot taken while modelRef was still "".
 	argData  control.ArgData
 	argModel string
-	argBuilt bool
+	// argContext identifies the structured command whose editing session owns
+	// argData. It survives an empty filter result but is cleared by an explicit
+	// dismissal, input reset, invalidation, or a different command.
+	argContext string
+	argBuilt   bool
 }
 
 func (m *chatTUI) ensureSlashCache() *slashCompletionCache {
@@ -53,18 +59,51 @@ func (m *chatTUI) slashArgDataSnapshot() control.ArgData {
 	return c.argData
 }
 
-// prepareSlashArgSnapshot keeps one stable snapshot while an argument popup is
-// open. A closed or different menu starts a new popup generation, so dynamic
-// memory, MCP, plugin, skill, and effort data are refreshed before filtering.
-func (m *chatTUI) prepareSlashArgSnapshot() {
-	if m.completion.active && m.completion.kind == compSlashArg {
+func (m *chatTUI) cachedSlashArgItems(line string) ([]control.SlashItem, int, bool) {
+	context := ""
+	if end := strings.IndexAny(line, " \t"); end >= 0 {
+		context = line[:end]
+	}
+	usedData := false
+	items, from, applies := control.SlashArgItemsLazy(line, func() control.ArgData {
+		usedData = true
+		m.prepareSlashArgSnapshot(context)
+		return m.slashArgDataSnapshot()
+	})
+	if !usedData {
+		m.endSlashArgSnapshot()
+	}
+	return items, from, applies
+}
+
+// prepareSlashArgSnapshot keeps one stable snapshot for a structured argument
+// editing session. Candidate filtering may temporarily hide the popup, so the
+// command context—not menu visibility—owns the generation boundary.
+func (m *chatTUI) prepareSlashArgSnapshot(context string) {
+	c := m.ensureSlashCache()
+	if context != "" && c.argContext == context {
 		return
 	}
+	c.clearArgData()
+	c.argContext = context
+}
+
+func (c *slashCompletionCache) clearArgData() {
+	c.argData = control.ArgData{}
+	c.argModel = ""
+	c.argBuilt = false
+}
+
+func (m *chatTUI) endSlashArgSnapshot() {
 	if c := m.slashCache; c != nil {
-		c.argData = control.ArgData{}
-		c.argModel = ""
-		c.argBuilt = false
+		c.clearArgData()
+		c.argContext = ""
 	}
+}
+
+func (m *chatTUI) resetComposerInput() {
+	m.input.Reset()
+	m.endSlashArgSnapshot()
 }
 
 // invalidateSlashCatalog drops the cached catalog and arg data so the next

@@ -1341,7 +1341,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch msg.String() {
 				case "enter":
 					val := strings.TrimSpace(m.input.Value())
-					m.input.Reset()
+					m.resetComposerInput()
 					m.chooser.typing = false
 					m.refreshInputPlaceholder()
 					if val == "" {
@@ -1352,7 +1352,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m.chooserAdvance()
 				case "esc":
 					m.chooser.typing = false
-					m.input.Reset()
+					m.resetComposerInput()
 					m.refreshInputPlaceholder()
 					return m, finalize(m, cmds)
 				}
@@ -1418,20 +1418,20 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "tab", "enter":
 				if msg.String() == "enter" && (m.completionExactLabel() || m.completionBareOverlayCommand()) {
-					m.completion = completion{}
+					m.dismissCompletion()
 					break // fall through to regular Enter and submit the command
 				}
 				// When Enter is pressed and the selected completion is already fully
 				// present in the input, close the menu and submit instead of accepting
 				// the same item again (/resume 1 still has /resume 10 as a prefix match).
 				if msg.String() == "enter" && m.completionSelectedInsertPresent() {
-					m.completion = completion{}
+					m.dismissCompletion()
 					break // fall through to regular Enter
 				}
 				m.acceptCompletion()
 				return m, nil
 			case "esc":
-				m.completion = completion{}
+				m.dismissCompletion()
 				if m.state == tuiRunning {
 					break // a turn is running — also cancel it via the main Esc handler
 				}
@@ -1537,6 +1537,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "esc":
+			m.endSlashArgSnapshot()
 			// "Back out" of the most specific in-progress state: un-send a just-sent
 			// turn (server not yet replied), cancel a streaming turn, or clear
 			// typed-but-unsent input. Mode switches (normal/plan/YOLO) are
@@ -1570,7 +1571,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.lastEsc = time.Now()
 					}
 				} else {
-					m.input.Reset()
+					m.resetComposerInput()
 					m.pastedBlocks = nil
 				}
 			}
@@ -1591,6 +1592,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+c", "super+c", "meta+c":
+			m.endSlashArgSnapshot()
 			if m.state == tuiRunning {
 				// Selection takes precedence: copy instead of cancel, same as idle.
 				if sel.active && !sel.empty() {
@@ -1628,7 +1630,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// No selection: if the composer has text, a single press clears it
 			// (like Esc); on an empty composer a double-press within 1.5s quits.
 			if strings.TrimSpace(m.input.Value()) != "" {
-				m.input.Reset()
+				m.resetComposerInput()
 				m.pastedBlocks = nil
 				m.lastCtrlCAt = time.Time{}
 				return m, nil
@@ -1679,6 +1681,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleShellOutput()
 			return m, finalize(m, cmds)
 		case "ctrl+enter":
+			m.endSlashArgSnapshot()
 			// Durable mid-turn steer (terminals without modified Enter use /steer).
 			if m.state == tuiRunning {
 				line := strings.TrimSpace(m.input.Value())
@@ -1688,7 +1691,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Local /queue always, even while running.
 				if handled, msg := m.handleQueueSlash(line); handled {
 					m.notice(msg)
-					m.input.Reset()
+					m.resetComposerInput()
 					m.pastedBlocks = nil
 					return m, finalize(m, cmds)
 				}
@@ -1707,12 +1710,13 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				default:
 					m.notice(fmt.Sprintf("queued #%s", shortID(rec.ItemID)))
 				}
-				m.input.Reset()
+				m.resetComposerInput()
 				m.pastedBlocks = nil
 				m.resetQueueNavigation()
 				return m, finalize(m, cmds)
 			}
 		case "enter":
+			m.endSlashArgSnapshot()
 			if m.state == tuiRunning {
 				line := strings.TrimSpace(m.input.Value())
 				if line == "" {
@@ -1723,7 +1727,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// /queue and /steer are local commands even mid-turn.
 				if handled, msg := m.handleQueueSlash(line); handled {
 					m.notice(msg)
-					m.input.Reset()
+					m.resetComposerInput()
 					m.pastedBlocks = nil
 					return m, finalize(m, cmds)
 				}
@@ -1747,7 +1751,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notice(fmt.Sprintf("durable follow-up queued #%s — will run when idle", shortID(rec.ItemID)))
 					m.resetQueueNavigation()
 				}
-				m.input.Reset()
+				m.resetComposerInput()
 				m.pastedBlocks = nil
 				return m, finalize(m, cmds)
 			}
@@ -1767,7 +1771,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// /queue and /steer are local even when idle (never model-prompted).
 			if handled, msg := m.handleQueueSlash(line); handled {
 				m.notice(msg)
-				m.input.Reset()
+				m.resetComposerInput()
 				m.pastedBlocks = nil
 				return m, finalize(m, cmds)
 			}
@@ -1776,7 +1780,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// "# <note>" quick-adds a memory line locally, no model turn. The
 			// space keeps "#7" / "#issue" prompts from being swallowed.
 			if note, ok := control.MemoryQuickAddNote(line); ok {
-				m.input.Reset()
+				m.resetComposerInput()
 				m.pastedBlocks = nil
 				if note == "" {
 					m.notice(i18n.M.QuickRememberEmpty)
@@ -1792,12 +1796,12 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if after, ok := strings.CutPrefix(line, "!"); ok {
 				cmd := after
 				if strings.TrimSpace(cmd) == "" {
-					m.input.Reset()
+					m.resetComposerInput()
 					m.pastedBlocks = nil
 					m.notice(i18n.M.ShellExecEmpty)
 					return m, finalize(m, cmds)
 				}
-				m.input.Reset()
+				m.resetComposerInput()
 				m.pastedBlocks = nil
 				m.state = tuiRunning
 				m.runStart = time.Now()
@@ -1827,7 +1831,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if ref, ok := control.FileRefLine(line); ok {
 					line = ref
 				} else {
-					m.input.Reset()
+					m.resetComposerInput()
 					m.pastedBlocks = nil
 					cmds = append(cmds, m.runSlashCommand(line))
 					return m, finalize(m, cmds)
@@ -1835,7 +1839,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			sentLine := m.expandPastedBlocks(line)
-			m.input.Reset()
+			m.resetComposerInput()
 
 			// @references (local files / MCP resources, including inline image
 			// attachments) are resolved off the event loop by the controller; the turn

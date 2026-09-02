@@ -145,7 +145,6 @@ func removeSlashItems(items []compItem, label string) []compItem {
 // while the line is a single "/word" token, or an @-reference menu while the
 // token under the cursor is "@…".
 func (m *chatTUI) updateCompletion() {
-	m.prepareSlashArgSnapshot()
 	val := m.input.Value()
 	cursor := m.inputCursorByteOffset()
 
@@ -173,6 +172,7 @@ func (m *chatTUI) updateCompletion() {
 				return
 			}
 		} else if m.bareSubcommandSpace(val) {
+			m.endSlashArgSnapshot()
 			m.completion = completion{}
 			return
 		} else if items, from, ok := m.slashArgItems(val); ok && len(items) > 0 {
@@ -251,20 +251,23 @@ func runeOffsetToByte(val string, runeOff int) int {
 // so they yield nothing.
 func (m *chatTUI) slashArgItems(val string) ([]compItem, int, bool) {
 	if items, from, ok := m.branchArgItems(val); ok {
+		m.endSlashArgSnapshot()
 		return items, from, len(items) > 0
 	}
 	if items, from, ok := m.resumeArgItems(val); ok {
+		m.endSlashArgSnapshot()
 		return items, from, len(items) > 0
 	}
 	if items, from, ok := m.themeArgItems(val); ok {
+		m.endSlashArgSnapshot()
 		return items, from, len(items) > 0
 	}
 	// Delegate to the shared completion logic so the chat TUI and the desktop
 	// offer identical sub-command hints. We supply the data from the TUI's own
 	// cached lists (no live controller needed), build the items, and adapt them
 	// to compItem.
-	items, from := control.SlashArgItems(val, m.slashArgDataSnapshot())
-	if len(items) == 0 {
+	items, from, applies := m.cachedSlashArgItems(val)
+	if !applies || len(items) == 0 {
 		return nil, 0, false
 	}
 	return slashItemsToComps(items), from, true
@@ -310,7 +313,9 @@ func (m *chatTUI) explicitSubcommandItems(val string) ([]compItem, int, bool) {
 	default:
 		return nil, 0, false
 	}
-	items, _ := control.SlashArgItems(cmd+" ", m.slashArgDataSnapshot())
+	// These question-mark overlays only list static root subcommands. Dynamic
+	// data is resolved after the user descends into an argument that needs it.
+	items, _ := control.SlashArgItems(cmd+" ", control.ArgData{})
 	if len(items) == 0 {
 		return nil, 0, false
 	}
@@ -397,6 +402,11 @@ func (m *chatTUI) setCompletion(kind compKind, items []compItem, replaceFrom, re
 		active: true, kind: kind, items: items, sel: sel,
 		replaceFrom: replaceFrom, replaceTo: replaceTo,
 	}
+}
+
+func (m *chatTUI) dismissCompletion() {
+	m.completion = completion{}
+	m.endSlashArgSnapshot()
 }
 
 // fuzzyFilterSlash returns the slash-menu items that match query as a
@@ -721,7 +731,7 @@ func (m *chatTUI) completionSelectedInsertPresent() bool {
 // keystrokes never call this path, so mid-line typing keeps its caret.
 func (m *chatTUI) acceptCompletion() {
 	if m.completion.sel >= len(m.completion.items) {
-		m.completion = completion{}
+		m.dismissCompletion()
 		return
 	}
 	it := m.completion.items[m.completion.sel]
@@ -757,6 +767,10 @@ func (m *chatTUI) acceptCompletion() {
 		return
 	}
 	m.updateCompletion() // re-filter for arg completion (e.g. /resume → numbered sessions)
+	if !m.completion.active {
+		m.endSlashArgSnapshot()
+		return
+	}
 	// If the completion re-opened with the same single item the user just
 	// selected (i.e. the token was already typed), close it so the next Enter
 	// submits the command rather than being captured again by acceptCompletion.
@@ -765,7 +779,7 @@ func (m *chatTUI) acceptCompletion() {
 		val := m.input.Value()
 		if rf >= 0 && rf <= len(val) && rt >= rf && rt <= len(val) {
 			if val[rf:rt] == m.completion.items[0].insert {
-				m.completion = completion{}
+				m.dismissCompletion()
 			}
 		}
 	}

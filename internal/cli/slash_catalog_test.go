@@ -297,7 +297,7 @@ func TestSlashArgDataRebuildsWhenPopupReopens(t *testing.T) {
 
 	// Closing the popup ends its snapshot generation. A later popup must see
 	// memory saved while no popup was open.
-	m.completion = completion{}
+	m.dismissCompletion()
 	if _, err := store.Save(memory.Memory{Name: "changed", Title: "Changed", Body: "second", Type: memory.TypeProject}); err != nil {
 		t.Fatal(err)
 	}
