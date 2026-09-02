@@ -4,7 +4,7 @@
     "commented-code": 0,
     "complexity": 1996,
     "essay": 2007,
-    "file-size": 109089,
+    "file-size": 109087,
     "function-size": 8619,
     "layering": 1,
     "marker": 0,
@@ -253,7 +253,7 @@
     "desktop/session_takeover.go": {
       "complexity": 14,
       "essay": 20,
-      "file-size": 516,
+      "file-size": 514,
       "function-size": 23
     },
     "desktop/sessions.go": {

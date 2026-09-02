@@ -414,14 +414,12 @@ type takeoverMirror struct {
 	grant           takeoverGrant
 	bindingRevision uint64
 	queue           eventwire.MirrorQueue
-	lastFlush       time.Time
 	pendingReturn   *agent.SessionLease
 	returnNextTry   time.Time
 	returnBackoff   time.Duration
 	releaseHandoff  func(*agent.SessionLease, string, string) error
 
 	reclaimRequested    atomic.Bool
-	demoted             atomic.Bool
 	returned            atomic.Bool
 	stopping            atomic.Bool
 	consecutiveFailures int32

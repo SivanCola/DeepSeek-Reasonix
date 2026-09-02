@@ -317,7 +317,10 @@ func TestTakeoverMirrorRetriesSameDrainedFramesInOrder(t *testing.T) {
 	}
 	m.forwardEvent(event.Event{Kind: event.Text, Text: "first"})
 	m.forwardEvent(event.Event{Kind: event.Text, Text: "second"})
-	if !m.pushOnce(false) || !m.pushOnce(false) {
+	if !m.pushOnce(false) {
+		t.Fatal("forwarder stopped unexpectedly")
+	}
+	if !m.pushOnce(false) {
 		t.Fatal("forwarder stopped unexpectedly")
 	}
 
@@ -376,7 +379,13 @@ func TestTakeoverMirrorReadoptsAfterServeMoves(t *testing.T) {
 	}
 	m.bindingRevision = 1
 	m.forwardEvent(event.Event{Kind: event.Text, Text: "recover"})
-	if !m.pushOnce(false) || !m.pushOnce(false) || !delivered.Load() {
+	if !m.pushOnce(false) {
+		t.Fatal("desktop mirror stopped during re-adoption")
+	}
+	if !m.pushOnce(false) {
+		t.Fatal("desktop mirror stopped after re-adoption")
+	}
+	if !delivered.Load() {
 		t.Fatal("desktop mirror did not re-adopt and deliver through the new serve")
 	}
 	_, record, _, grant, revision := m.snapshotBinding()
@@ -504,10 +513,13 @@ func TestTakeoverMirrorChunksWithoutDroppingFrames(t *testing.T) {
 		sessionPath: "session.jsonl", client: srv.Client(), record: takeoverServeRecord{base: srv.URL},
 		grant: takeoverGrant{MirrorID: "mirror-1"}, wake: make(chan struct{}, 1),
 	}
-	for i := 0; i < takeoverMirrorMaxQueue+37; i++ {
+	for i := range takeoverMirrorMaxQueue + 37 {
 		m.forwardEvent(event.Event{Kind: event.Text, Text: strconv.Itoa(i)})
 	}
-	if !m.pushOnce(false) || !m.pushOnce(false) {
+	if !m.pushOnce(false) {
+		t.Fatal("chunked frame push stopped unexpectedly")
+	}
+	if !m.pushOnce(false) {
 		t.Fatal("chunked frame push stopped unexpectedly")
 	}
 	if len(got) != takeoverMirrorMaxQueue+37 {
