@@ -3,7 +3,6 @@ package cli
 import (
 	"time"
 
-	"reasonix/internal/control"
 	"reasonix/internal/event"
 
 	tea "charm.land/bubbletea/v2"
@@ -32,10 +31,18 @@ func (m *chatTUI) startControllerTurn(displayed, restore string, start func()) t
 	// The composer can read idle while the controller already runs a
 	// dispatched queued follow-up (TurnStarted not yet ingested): queue rather
 	// than race the admission guard's silent drop (#9575).
-	if c, ok := m.ctrl.(*control.Controller); ok && c.Running() {
-		if _, err := m.enqueueFollowup(displayed, displayed); err != nil {
+	if m.ctrl != nil && m.ctrl.Running() {
+		receipt, err := m.enqueueFollowup(displayed, displayed)
+		if err != nil {
 			m.notice("queue: " + err.Error())
+			m.input.SetValue(restore)
+			m.growInputToFit()
+			return nil
 		}
+		m.notice("durable follow-up queued #" + shortID(receipt.ItemID) + " — will run when idle")
+		m.input.Reset()
+		m.pastedBlocks = nil
+		m.resetQueueNavigation()
 		return nil
 	}
 	// Flush any half-streamed leftover before the new turn (defensive).
@@ -63,7 +70,7 @@ func (m *chatTUI) startControllerTurn(displayed, restore string, start func()) t
 	// streams events to eventCh and emits TurnDone when the turn settles.
 	m.noteWatchdogRunning()
 	start()
-	return tea.Batch(m.spinner.Tick, elapsedTick())
+	return m.startRunningTicks()
 }
 
 // confirmBubbleSent marks the already-echoed user bubble as really sent once a
@@ -80,28 +87,35 @@ func (m *chatTUI) confirmBubbleSent() {
 // drainAgentEvents ingests the events already buffered behind the first one:
 // the producing goroutine has exited (a Cmd reads the channel once), so one
 // re-wrap covers the whole batch instead of one per event.
-func (m *chatTUI) drainAgentEvents(first event.Event) (turnDone, turnStarted, gitMaybeChanged bool) {
-	turnDone = first.Kind == event.TurnDone
-	turnStarted = first.Kind == event.TurnStarted
-	gitMaybeChanged = first.Kind == event.ToolResult && !first.Tool.ReadOnly
+type agentEventDrain struct {
+	turnDone, gitMaybeChanged bool
+	lastTurnLifecycle         event.Kind
+	hasTurnLifecycle          bool
+}
+
+func (d *agentEventDrain) record(e event.Event) {
+	if e.Kind == event.TurnStarted || e.Kind == event.TurnDone {
+		d.lastTurnLifecycle = e.Kind
+		d.hasTurnLifecycle = true
+	}
+	d.turnDone = d.turnDone || e.Kind == event.TurnDone
+	d.gitMaybeChanged = d.gitMaybeChanged || e.Kind == event.ToolResult && !e.Tool.ReadOnly
+}
+
+func (m *chatTUI) drainAgentEvents(first event.Event) agentEventDrain {
+	var drained agentEventDrain
+	drained.record(first)
 	for range maxEventDrain {
 		select {
 		case e2 := <-m.eventCh:
 			m.noteWatchdogHeartbeat(watchdogAgentSource(e2.Kind))
 			m.ingestEvent(e2)
-			switch {
-			case e2.Kind == event.TurnDone:
-				turnDone = true
-			case e2.Kind == event.TurnStarted:
-				turnStarted = true
-			case e2.Kind == event.ToolResult && !e2.Tool.ReadOnly:
-				gitMaybeChanged = true
-			}
+			drained.record(e2)
 		default:
-			return turnDone, turnStarted, gitMaybeChanged
+			return drained
 		}
 	}
-	return turnDone, turnStarted, gitMaybeChanged
+	return drained
 }
 
 // noteControllerTurnStarted enters running state for a turn the TUI did not
@@ -118,5 +132,10 @@ func (m *chatTUI) noteControllerTurnStarted() tea.Cmd {
 	m.elapsed = 0
 	m.turnTokens = 0
 	m.noteWatchdogRunning()
-	return tea.Batch(m.spinner.Tick, elapsedTick())
+	return m.startRunningTicks()
+}
+
+func (m *chatTUI) startRunningTicks() tea.Cmd {
+	m.elapsedTickGeneration++
+	return tea.Batch(m.spinner.Tick, elapsedTick(m.elapsedTickGeneration))
 }

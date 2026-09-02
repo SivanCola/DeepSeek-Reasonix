@@ -92,9 +92,10 @@ type chatTUI struct {
 	nextPasteID          int
 	usedPasteIDs         map[int]struct{}
 
-	state    tuiState
-	runStart time.Time
-	elapsed  int
+	state                 tuiState
+	runStart              time.Time
+	elapsed               int
+	elapsedTickGeneration uint64
 	// retryAttempt/retryMax drive the transient "retrying (n/m)" indicator while
 	// the provider re-attempts the connection; cleared by the next stream event.
 	retryAttempt int
@@ -495,8 +496,8 @@ type tuiShutdownMsg struct{}
 func shutdownNow() tea.Msg { return tuiShutdownMsg{} }
 
 // elapsedTickMsg fires once a second while a turn runs, driving the "thinking
-// Ns" counter in the status line.
-type elapsedTickMsg struct{}
+// Ns" counter in the status line. generation rejects a prior turn's timer.
+type elapsedTickMsg struct{ generation uint64 }
 
 // balanceMsg carries the result of an async wallet-balance fetch; text is the
 // formatted readout ("" when none/failed).
@@ -1822,7 +1823,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirmBubbleSent() // shell events arrive instantly
 				m.noteWatchdogRunning()
 				m.ctrl.RunShell(cmd)
-				return m, tea.Batch(m.spinner.Tick, elapsedTick())
+				return m, m.startRunningTicks()
 			}
 
 			// Slash commands run locally without going through the model. A
@@ -1865,16 +1866,16 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the active turn. Record before ingest so TurnDone still counts.
 		m.noteWatchdogHeartbeat(watchdogAgentSource(e.Kind))
 		m.ingestEvent(e)
-		turnDone, turnStarted, gitMaybeChanged := m.drainAgentEvents(e)
+		drained := m.drainAgentEvents(e)
 		cmds = append(cmds, waitForAgentEvent(m.eventCh))
-		if turnStarted {
+		if drained.hasTurnLifecycle && drained.lastTurnLifecycle == event.TurnStarted {
 			if c := m.noteControllerTurnStarted(); c != nil {
 				cmds = append(cmds, c)
 			}
 		}
 		// A turn just spent tokens (and money) — refresh the balance readout and
 		// the custom status line (its context/cost inputs just changed).
-		if turnDone {
+		if drained.turnDone {
 			cmds = append(cmds, fetchBalance(m.ctrl))
 			if c := m.runStatusline(); c != nil {
 				cmds = append(cmds, c)
@@ -1889,7 +1890,7 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, c)
 			}
 		}
-		if turnDone || gitMaybeChanged {
+		if drained.turnDone || drained.gitMaybeChanged {
 			if c := m.refreshGitStatus(); c != nil {
 				cmds = append(cmds, c)
 			}
@@ -2091,14 +2092,14 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case elapsedTickMsg:
-		if m.state == tuiRunning {
+		if m.state == tuiRunning && msg.generation == m.elapsedTickGeneration {
 			// elapsedTick is the primary active-turn heartbeat: long turns that
 			// emit no agent events still prove the Bubble Tea loop is alive.
 			m.noteWatchdogHeartbeat("elapsed_tick")
 			m.elapsed = int(time.Since(m.runStart).Seconds())
 			m.tickToolRunning()
 			m.tickSubagentProgress()
-			cmds = append(cmds, elapsedTick())
+			cmds = append(cmds, elapsedTick(msg.generation))
 		}
 
 	case spinner.TickMsg:
@@ -4586,8 +4587,10 @@ func waitForAgentEvent(ch chan event.Event) tea.Cmd {
 	return func() tea.Msg { return agentEventMsg(<-ch) }
 }
 
-func elapsedTick() tea.Cmd {
-	return tea.Tick(time.Second, func(_ time.Time) tea.Msg { return elapsedTickMsg{} })
+func elapsedTick(generation uint64) tea.Cmd {
+	return tea.Tick(time.Second, func(_ time.Time) tea.Msg {
+		return elapsedTickMsg{generation: generation}
+	})
 }
 
 // runSlashCommand handles "/<cmd> <args>" input. Local commands queue their
