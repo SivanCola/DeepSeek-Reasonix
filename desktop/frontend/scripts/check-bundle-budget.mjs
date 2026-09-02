@@ -171,10 +171,13 @@ console.log("\nbundle budgets");
 // Transactional Ask resolution and authoritative rejected-submit recovery add
 // 0.3 KiB gzip to the initial controller path. Retain the exact turn fence,
 // bounded ListTabs retry, and stale-prompt guard.
+// Session-catalog repair presentation stays in the lazy project-tree chunk;
+// compact shared helpers keep the combined initial path within the same gate.
 // Session takeover banners (lease-blocked local tab + read-only remote tab)
 // and their armed-button confirm add ~0.6 KiB on that merged path; the
 // takeover dialog stays lazy.
-// The combined tree measures 459.4 KiB gzip; retain 0.1 KiB headroom.
+// The exact main-v2 merge measures 459.456 KiB gzip; retain 0.044 KiB
+// headroom with the smallest existing decimal ratchet.
 const initialJSBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 459.5 : 459.5;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
@@ -310,7 +313,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // notice add 0.890 KiB raw.
 // Session takeover banners and their startup wiring add ~2.4 KiB raw on that
 // merged path (locale copy plus armed-button state); the dialog stays lazy.
-// The combined tree is expected near 2459.0 KiB; retain 0.1 KiB headroom.
+// The exact main-v2 merge measures 2459.027 KiB; retain 0.073 KiB headroom
+// with the smallest existing decimal ratchet.
 const rawInitialBudgetKiB = process.env.REASONIX_CHANNEL === "test" ? 2_459.1 : 2_459.1;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
