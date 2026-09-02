@@ -100,14 +100,15 @@ type tuiDiagnostics struct {
 	// statusFn optionally returns Controller RuntimeStatus text for dumps.
 	statusFn func() string
 
-	// tickLastSeen is the previous onTick time: consecutive ~1s ticks more
-	// than a stall apart mean suspend/starvation, not a wedged loop, so the
+	// tickLastSeen is the previous onTick time: consecutive ~1s ticks at least
+	// a stall apart mean suspend/starvation, not a wedged loop, so the
 	// first such tick refreshes instead of escalating (#9233).
 	tickLastSeen time.Time
 
 	// Injectable seams for deterministic tests (nil = production defaults).
 	nowFn      func() time.Time
 	newTicker  func(d time.Duration) watchdogTicker
+	afterFunc  func(delay time.Duration, fn func())
 	dumpFn     func(reason string)
 	killFn     func()
 	logFn      func(format string, args ...any)
@@ -303,8 +304,10 @@ func (d *tuiDiagnostics) StartWatchdog(p *tea.Program) {
 			d.shutdownFn = func() { p.Send(tuiShutdownMsg{}) }
 		}
 		d.mu.Lock()
+		armedAt := d.now()
+		d.tickLastSeen = armedAt
 		if d.phase == watchdogBooting {
-			d.lastHeartbeat = d.now()
+			d.lastHeartbeat = armedAt
 			d.lastHeartbeatSource = "watchdog_armed"
 		}
 		d.mu.Unlock()
@@ -339,12 +342,12 @@ func (d *tuiDiagnostics) logHeartbeatLocked(now time.Time, phase tuiWatchdogPhas
 		now.UTC().Format(time.RFC3339Nano), phase, gen, age.Round(time.Millisecond), source, escalated, hardKilled)
 }
 
-// absorbClockJumpLocked treats a >stall gap between consecutive ~1s ticks as
+// absorbClockJumpLocked treats a >=stall gap between consecutive ~1s ticks as
 // suspend/resume or scheduler starvation: the loop is alive on this tick, so
 // the stale age must not dump/cancel/kill a healthy turn (#9233).
 func (d *tuiDiagnostics) absorbClockJumpLocked(now time.Time) {
 	gap := now.Sub(d.tickLastSeen)
-	if d.tickLastSeen.IsZero() || gap <= tuiWatchdogStall {
+	if d.tickLastSeen.IsZero() || gap < tuiWatchdogStall {
 		d.tickLastSeen = now
 		return
 	}
@@ -533,15 +536,21 @@ func (d *tuiDiagnostics) doKill() {
 	}
 	if d.shutdownFn != nil {
 		// Graceful first — the SIGHUP path snapshots and quits cleanly; a
-		// wedged loop never services it, so the fallback timer still delivers
-		// the hard kill (#9233).
-		d.shutdownFn()
+		// wedged loop can block Program.Send, so register the fallback before
+		// making the graceful request (#9233).
 		kill := d.killFn
-		time.AfterFunc(watchdogKillFallbackDelay, func() {
+		afterFunc := d.afterFunc
+		if afterFunc == nil {
+			afterFunc = func(delay time.Duration, fn func()) {
+				time.AfterFunc(delay, fn)
+			}
+		}
+		afterFunc(watchdogKillFallbackDelay, func() {
 			if kill != nil {
 				kill()
 			}
 		})
+		d.shutdownFn()
 		return
 	}
 	if d.killFn != nil {

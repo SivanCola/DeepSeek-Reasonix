@@ -174,6 +174,13 @@ type fakeWatchClock struct {
 	now time.Time
 }
 
+type fakeWatchTicker struct {
+	ticks chan time.Time
+}
+
+func (t *fakeWatchTicker) C() <-chan time.Time { return t.ticks }
+func (t *fakeWatchTicker) Stop()               {}
+
 func newWatchdogForTest(t *testing.T, clock *fakeWatchClock) *tuiDiagnostics {
 	t.Helper()
 	d := &tuiDiagnostics{
@@ -497,7 +504,7 @@ func TestChatTUIWatchdogLifecycleHelpers(t *testing.T) {
 
 // TestWatchdogClockJumpAfterSuspendDoesNotKill pins the #9233 path: after a
 // suspend/resume (or scheduler starvation) the first ticks see a stale
-// heartbeat age, but the >stall gap between consecutive ~1s ticks proves the
+// heartbeat age, but the >=stall gap between consecutive ~1s ticks proves the
 // process slept rather than the event loop wedging — refresh instead of
 // dumping, canceling, and killing a healthy turn.
 func TestWatchdogClockJumpAfterSuspendDoesNotKill(t *testing.T) {
@@ -533,18 +540,51 @@ func TestWatchdogClockJumpAfterSuspendDoesNotKill(t *testing.T) {
 	}
 }
 
+func TestWatchdogFirstTickAfterSuspendDoesNotEscalate(t *testing.T) {
+	for _, gap := range []time.Duration{tuiWatchdogStall, time.Minute} {
+		t.Run(gap.String(), func(t *testing.T) {
+			clock := &fakeWatchClock{now: time.Unix(1_700_000_000, 0)}
+			d := newWatchdogForTest(t, clock)
+			ticker := &fakeWatchTicker{ticks: make(chan time.Time)}
+			d.newTicker = func(time.Duration) watchdogTicker { return ticker }
+			d.StartWatchdog(nil)
+			d.NoteBooted()
+			d.NoteRunning(func() {})
+
+			// Suspend before the watch goroutine receives its first ticker event.
+			clock.now = clock.now.Add(gap)
+			d.onTick(clock.now)
+
+			if got := d.dumpCalls.Load(); got != 0 {
+				t.Fatalf("first post-resume tick dumped a healthy turn: dumpCalls=%d", got)
+			}
+			if got := d.cancelCalls.Load(); got != 0 {
+				t.Fatalf("first post-resume tick canceled a healthy turn: cancelCalls=%d", got)
+			}
+			if got := d.killCalls.Load(); got != 0 {
+				t.Fatalf("first post-resume tick killed a healthy turn: killCalls=%d", got)
+			}
+		})
+	}
+}
+
 // TestWatchdogKillRequestsGracefulShutdownFirst verifies the hard kill asks
 // the program to snapshot and quit cleanly (the SIGHUP path) and only falls
 // back to Kill when the graceful request goes nowhere (#9233).
 func TestWatchdogKillRequestsGracefulShutdownFirst(t *testing.T) {
-	prevDelay := watchdogKillFallbackDelay
-	watchdogKillFallbackDelay = 5 * time.Millisecond
-	t.Cleanup(func() { watchdogKillFallbackDelay = prevDelay })
-
 	clock := &fakeWatchClock{now: time.Unix(1_700_000_000, 0)}
 	d := newWatchdogForTest(t, clock)
 	shutdowns := 0
+	kills := 0
+	var fallback func()
+	d.afterFunc = func(delay time.Duration, fn func()) {
+		if delay != watchdogKillFallbackDelay {
+			t.Fatalf("fallback delay = %s, want %s", delay, watchdogKillFallbackDelay)
+		}
+		fallback = fn
+	}
 	d.shutdownFn = func() { shutdowns++ }
+	d.killFn = func() { kills++ }
 	d.NoteBooted()
 	d.NoteRunning(func() {})
 
@@ -559,11 +599,68 @@ func TestWatchdogKillRequestsGracefulShutdownFirst(t *testing.T) {
 	if shutdowns != 1 {
 		t.Fatalf("graceful shutdown requests = %d, want 1", shutdowns)
 	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && d.killCalls.Load() == 0 {
-		time.Sleep(time.Millisecond)
+	if fallback == nil {
+		t.Fatal("hard-kill fallback was not scheduled")
 	}
-	if got := d.killCalls.Load(); got != 1 {
-		t.Fatalf("fallback killCalls = %d, want 1 after the fallback window", got)
+	if kills != 0 {
+		t.Fatalf("hard kill ran before fallback callback: kills=%d", kills)
+	}
+	fallback()
+	if kills != 1 {
+		t.Fatalf("fallback killFn calls = %d, want 1", kills)
+	}
+}
+
+func TestWatchdogKillFallbackRunsWhileGracefulShutdownIsBlocked(t *testing.T) {
+	clock := &fakeWatchClock{now: time.Unix(1_700_000_000, 0)}
+	d := newWatchdogForTest(t, clock)
+	scheduled := make(chan func(), 1)
+	shutdownStarted := make(chan struct{})
+	releaseShutdown := make(chan struct{})
+	killed := make(chan struct{}, 1)
+	d.afterFunc = func(_ time.Duration, fn func()) { scheduled <- fn }
+	d.shutdownFn = func() {
+		close(shutdownStarted)
+		<-releaseShutdown
+	}
+	d.killFn = func() {
+		close(releaseShutdown)
+		killed <- struct{}{}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		d.doKill()
+		close(done)
+	}()
+	defer func() {
+		select {
+		case <-releaseShutdown:
+		default:
+			close(releaseShutdown)
+		}
+	}()
+
+	var fallback func()
+	select {
+	case fallback = <-scheduled:
+	case <-time.After(time.Second):
+		t.Fatal("fallback was not scheduled before graceful shutdown blocked")
+	}
+	select {
+	case <-shutdownStarted:
+	case <-time.After(time.Second):
+		t.Fatal("graceful shutdown did not start")
+	}
+	fallback()
+	select {
+	case <-killed:
+	case <-time.After(time.Second):
+		t.Fatal("scheduled hard-kill fallback did not invoke killFn")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("doKill did not return after graceful shutdown unblocked")
 	}
 }
