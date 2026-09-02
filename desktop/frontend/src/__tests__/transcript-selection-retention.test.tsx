@@ -135,14 +135,38 @@ console.log("\ntranscript selection retention");
 const root = createRoot(document.getElementById("root")!);
 let api: RetentionApi | null = null;
 let mode: TranscriptScrollMode = "tail-follow";
+const modeTransitions: TranscriptScrollMode[] = [];
 const onReady = (next: RetentionApi) => { api = next; };
-const setMode = (next: TranscriptScrollMode) => { mode = next; };
+const setMode = (next: TranscriptScrollMode) => {
+  mode = next;
+  modeTransitions.push(next);
+};
 
 await act(async () => {
   root.render(<Harness tabId="tab-a" onReady={onReady} setMode={setMode} />);
 });
+modeTransitions.length = 0;
+const plainClickTarget = document.querySelector<HTMLElement>("[data-row-key='row-a'] [data-transcript-selectable]")!;
+await act(async () => {
+  plainClickTarget.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  document.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, button: 0 }));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "none", "plain click clears its provisional native selection");
+eq(modeTransitions, [], "plain click never acquires or releases selection scroll ownership");
+
+modeTransitions.length = 0;
 await selectAcrossRows();
 eq(mode, "manual", "settled native selection releases scroll ownership without delayed anchor reconciliation");
+eq(modeTransitions, ["selection", "manual"], "a real native selection acquires ownership before releasing it");
+modeTransitions.length = 0;
+await act(async () => {
+  plainClickTarget.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+  document.getSelection()?.removeAllRanges();
+  document.dispatchEvent(new window.Event("selectionchange"));
+  document.dispatchEvent(new window.MouseEvent("pointerup", { bubbles: true, button: 0 }));
+});
+eq(transcriptSelectionStore.getSnapshot().mode, "none", "plain click dismisses a previously settled native selection");
+eq(modeTransitions, [], "plain click after a settled selection does not release reader ownership again");
 
 await act(async () => {
   root.render(<Harness tabId="tab-b" onReady={onReady} setMode={setMode} />);
@@ -206,6 +230,9 @@ await act(async () => {
 eq(transcriptSelectionStore.getSnapshot().mode, "logical-settled", "cross-row selection settles in logical mode when caret APIs are available");
 eq(transcriptSelectionStore.getSnapshot().focus?.textOffset, 5, "pointerup applies its exact final focus before settling");
 eq(mode, "manual", "settled logical selection releases scroll ownership");
+modeTransitions.length = 0;
+await act(async () => transcriptSelectionStore.clear("logical-action-complete"));
+eq(modeTransitions, [], "clearing a settled logical selection does not release reader ownership again");
 
 await act(async () => {
   first.dispatchEvent(new window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 0, clientY: 10 }));
