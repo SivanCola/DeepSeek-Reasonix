@@ -168,6 +168,12 @@ async function runPlainClickHandoff(page, transcript, label) {
     return element?.dataset.scrollMode === "manual"
       && element.dataset.transcriptReaderLayoutLease === "true";
   }, undefined, { timeout: 2_000 });
+  await page.waitForFunction(() => {
+    const element = document.querySelector(".transcript");
+    return element?.dataset.scrollMode === "manual"
+      && element.dataset.transcriptReaderIntent === "false"
+      && element.dataset.transcriptReaderLayoutLease === "true";
+  }, undefined, { timeout: 10_000 });
   await waitStable(page);
 
   const before = await page.evaluate(() => {
@@ -212,6 +218,8 @@ async function runPlainClickHandoff(page, transcript, label) {
       rowKey: row.dataset.rowKey,
       rowTop: rowRect.top - viewport.top,
       scrollTop: element.scrollTop,
+      readerIntent: element.dataset.transcriptReaderIntent,
+      lease: element.dataset.transcriptReaderLayoutLease,
       click,
     };
   });
@@ -229,18 +237,22 @@ async function runPlainClickHandoff(page, transcript, label) {
       rowTop: null,
       scrollTop: element.scrollTop,
       mounted: element.querySelectorAll(".transcript__row[data-row-key]").length,
+      readerIntent: element.dataset.transcriptReaderIntent,
       lease: element.dataset.transcriptReaderLayoutLease,
     };
     return {
       rowTop: row.getBoundingClientRect().top - viewport.top,
       scrollTop: element.scrollTop,
       mounted: element.querySelectorAll(".transcript__row[data-row-key]").length,
+      readerIntent: element.dataset.transcriptReaderIntent,
       lease: element.dataset.transcriptReaderLayoutLease,
     };
   }, before.rowKey);
   const visualDelta = after?.rowTop == null ? Number.POSITIVE_INFINITY : Math.abs(after.rowTop - before.rowTop);
   const scrollDelta = after == null ? Number.POSITIVE_INFINITY : Math.abs(after.scrollTop - before.scrollTop);
-  const detail = JSON.stringify({ before: { rowKey: before.rowKey, rowTop: before.rowTop, scrollTop: before.scrollTop }, after });
+  const detail = JSON.stringify({ before: { rowKey: before.rowKey, rowTop: before.rowTop, scrollTop: before.scrollTop, readerIntent: before.readerIntent, lease: before.lease }, after });
+  assert(before.readerIntent === "false" && before.lease === "true", `${label}: plain-click handoff starts after reader intent settles with its layout lease retained${before.readerIntent === "false" && before.lease === "true" ? "" : ` ${detail}`}`);
+  assert(after?.readerIntent === "false", `${label}: plain transcript click does not recreate reader intent${after?.readerIntent === "false" ? "" : ` ${detail}`}`);
   assert(after?.lease === "true", `${label}: plain transcript click keeps the reader layout lease${after?.lease === "true" ? "" : ` ${detail}`}`);
   assert(scrollDelta <= 2, `${label}: plain transcript click preserves scrollTop (${scrollDelta.toFixed(1)}px)${scrollDelta <= 2 ? "" : ` ${detail}`}`);
   assert(visualDelta <= 2, `${label}: plain transcript click preserves the visible row anchor (${visualDelta.toFixed(1)}px)${visualDelta <= 2 ? "" : ` ${detail}`}`);

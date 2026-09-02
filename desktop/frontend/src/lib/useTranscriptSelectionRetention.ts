@@ -119,9 +119,10 @@ export function useTranscriptSelectionRetention({
 
   const claimScrollOwnership = useCallback((tracked: TrackedSelection, reason: string) => {
     if (tracked.ownsScroll) return;
+    cancelStreamingScroll();
     tracked.ownsScroll = true;
     setScrollMode("selection", reason);
-  }, [setScrollMode]);
+  }, [cancelStreamingScroll, setScrollMode]);
 
   // A fresh user gesture (e.g. the jump-to-bottom click) while a gesture is
   // still marked dragging means the original pointerup was lost (released
@@ -253,7 +254,6 @@ export function useTranscriptSelectionRetention({
       : null;
     clear("new-pointer-selection");
     lifecycleGenerationRef.current += 1;
-    cancelStreamingScroll();
     selectionRef.current = {
       anchorKey,
       anchorPoint: anchorPoint?.rowKey === anchorKey ? anchorPoint : null,
@@ -267,7 +267,7 @@ export function useTranscriptSelectionRetention({
     lastPointerRef.current = { x: event.clientX, y: event.clientY };
     transcriptSelectionStore.beginNative(tabId ?? "");
     publish();
-  }, [cancelStreamingScroll, clear, publish, tabId]);
+  }, [clear, publish, tabId]);
 
   useEffect(() => {
     const onSelectionChange = () => {
