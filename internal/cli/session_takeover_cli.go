@@ -144,19 +144,6 @@ func cliServeClient(ctx context.Context, record cliServeRecord) (*http.Client, e
 	return client, nil
 }
 
-func cliServeRequest(ctx context.Context, record cliServeRecord, method, path string, body []byte) (*http.Response, error) {
-	client, err := cliServeClient(ctx, record)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, method, record.base+path, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	return client.Do(req)
-}
-
 // cliTakeoverHeldSession requests a target-writer reservation and consumes it
 // through leases. The previous keeper binding is retained if either step
 // fails; callers commit their controller only after this returns a binding.
@@ -319,7 +306,7 @@ func (m *cliTakeoverManager) SetInner(inner event.Sink) {
 	}
 	m.mu.Lock()
 	m.inner = inner
-	m.AuditForwarder.Inner = inner
+	m.Inner = inner
 	m.mu.Unlock()
 }
 

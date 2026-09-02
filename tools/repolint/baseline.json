@@ -4,7 +4,7 @@
     "commented-code": 0,
     "complexity": 1996,
     "essay": 2007,
-    "file-size": 109102,
+    "file-size": 109089,
     "function-size": 8619,
     "layering": 1,
     "marker": 0,
@@ -794,7 +794,7 @@
     "internal/cli/session_takeover_cli.go": {
       "complexity": 1,
       "essay": 2,
-      "file-size": 208
+      "file-size": 195
     },
     "internal/cli/setup_manager.go": {
       "essay": 1,

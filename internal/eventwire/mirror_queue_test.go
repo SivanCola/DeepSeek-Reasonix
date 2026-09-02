@@ -8,13 +8,13 @@ import (
 
 func TestMirrorQueueBoundsDeltasAndRetainsLifecycleTruth(t *testing.T) {
 	var q MirrorQueue
-	for i := 0; i < MirrorQueueMaxFrames; i++ {
+	for i := range MirrorQueueMaxFrames {
 		q.Push(Event{Kind: "text", Sequence: uint64(i + 1), Text: "delta"})
 	}
 	if got, want := q.Len(), MirrorQueueMaxFrames-MirrorQueuePriorityReserve; got != want {
 		t.Fatalf("delta queue len = %d, want %d", got, want)
 	}
-	for i := 0; i < MirrorQueuePriorityReserve; i++ {
+	for i := range MirrorQueuePriorityReserve {
 		if !q.Push(Event{Kind: "notice", Code: "ordinary", Sequence: uint64(i + 1)}) {
 			t.Fatalf("priority frame %d was not admitted", i)
 		}
@@ -34,7 +34,7 @@ func TestMirrorQueueBoundsDeltasAndRetainsLifecycleTruth(t *testing.T) {
 func TestMirrorQueueByteBoundAndFailedBatchOrdering(t *testing.T) {
 	var q MirrorQueue
 	chunk := strings.Repeat("x", 1<<20)
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		q.Push(Event{Kind: "text", Sequence: uint64(i + 10), Text: chunk})
 	}
 	if q.Bytes() > MirrorQueueMaxBytes || q.Len() == 0 {
@@ -49,7 +49,7 @@ func TestMirrorQueueByteBoundAndFailedBatchOrdering(t *testing.T) {
 
 func TestMirrorQueueRetainsNewestOwnershipNoticeAtSaturation(t *testing.T) {
 	var q MirrorQueue
-	for i := 0; i < MirrorQueueMaxFrames; i++ {
+	for i := range MirrorQueueMaxFrames {
 		q.Push(Event{Kind: "turn_done", TurnID: strings.Repeat("x", 8), Sequence: uint64(i + 1)})
 	}
 	if !q.Push(Event{Kind: "notice", Code: "session_reclaim_requested", Sequence: 9999}) {

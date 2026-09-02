@@ -22,14 +22,6 @@ type resumePicker struct {
 	quick   *quickPicker
 }
 
-func (r *resumePicker) sessions() []agent.SessionInfo {
-	out := make([]agent.SessionInfo, 0, len(r.entries))
-	for _, entry := range r.entries {
-		out = append(out, entry.session)
-	}
-	return out
-}
-
 // openResumePicker populates the picker from the session directory and opens it.
 // A no-op (with a notice) when there are no saved sessions.
 func (m *chatTUI) openResumePicker() {

@@ -63,7 +63,10 @@ func TestCLITakeoverManagerRetriesSameFrameBatchInOrder(t *testing.T) {
 	}
 	m.Emit(event.Event{Kind: event.Text, Text: "first"})
 	m.Emit(event.Event{Kind: event.Text, Text: "second"})
-	if !m.push(false) || !m.push(false) {
+	if !m.push(false) {
+		t.Fatal("frame push stopped unexpectedly")
+	}
+	if !m.push(false) {
 		t.Fatal("frame push stopped unexpectedly")
 	}
 
@@ -102,10 +105,13 @@ func TestCLITakeoverManagerChunksWithoutDroppingFrames(t *testing.T) {
 		path: "session.jsonl", record: cliServeRecord{base: srv.URL}, client: srv.Client(),
 		grant: cliTakeoverGrant{MirrorID: "mirror-1"},
 	}
-	for i := 0; i < cliTakeoverMaxFrames+37; i++ {
+	for i := range cliTakeoverMaxFrames + 37 {
 		m.Emit(event.Event{Kind: event.Text, Text: strconv.Itoa(i)})
 	}
-	if !m.push(false) || !m.push(false) {
+	if !m.push(false) {
+		t.Fatal("chunked frame push stopped unexpectedly")
+	}
+	if !m.push(false) {
 		t.Fatal("chunked frame push stopped unexpectedly")
 	}
 	if len(got) != cliTakeoverMaxFrames+37 {
@@ -447,7 +453,10 @@ func TestCLITakeoverManagerReadoptsOnAuthFailureAndServerMove(t *testing.T) {
 	}
 	m.revision = 1
 	m.Emit(event.Event{Kind: event.Text, Text: "recover me"})
-	if !m.push(false) || !m.push(false) {
+	if !m.push(false) {
+		t.Fatal("manager stopped during re-adopt")
+	}
+	if !m.push(false) {
 		t.Fatal("manager stopped during re-adopt")
 	}
 	if delivered.Load() != 1 {
@@ -488,7 +497,13 @@ func TestCLITakeoverManagerReadoptsAfterConnectionRefused(t *testing.T) {
 	m.binding = &cliTakeoverBinding{path: "session.jsonl", record: cliServeRecord{base: deadURL}, client: deadClient, grant: cliTakeoverGrant{MirrorID: "old"}}
 	m.revision = 1
 	m.Emit(event.Event{Kind: event.Text, Text: "recover"})
-	if !m.push(false) || !m.push(false) || !delivered.Load() {
+	if !m.push(false) {
+		t.Fatal("connection refusal stopped the manager during rediscovery")
+	}
+	if !m.push(false) {
+		t.Fatal("connection refusal stopped the manager after rediscovery")
+	}
+	if !delivered.Load() {
 		t.Fatal("connection refusal did not rediscover and deliver through the new serve")
 	}
 }
@@ -526,7 +541,7 @@ func TestCLITakeoverManagerKeepsActualRequestBelowEightMiB(t *testing.T) {
 	m.binding = &cliTakeoverBinding{path: "session.jsonl", record: cliServeRecord{base: srv.URL}, client: srv.Client(), grant: cliTakeoverGrant{MirrorID: "mirror"}}
 	m.revision = 1
 	chunk := strings.Repeat("x", 1<<20)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		m.Emit(event.Event{Kind: event.Text, Text: chunk})
 	}
 	for delivered.Load() < 10 {
@@ -567,7 +582,7 @@ func TestCLITakeoverManagerRediscoverAfterThreeServerErrors(t *testing.T) {
 	m.binding = &cliTakeoverBinding{path: "session.jsonl", record: cliServeRecord{base: oldServe.URL}, client: oldServe.Client(), grant: cliTakeoverGrant{MirrorID: "old"}}
 	m.revision = 1
 	m.Emit(event.Event{Kind: event.Text, Text: "retry"})
-	for i := 0; i < cliTakeoverRediscoverFailures; i++ {
+	for range cliTakeoverRediscoverFailures {
 		if !m.push(false) {
 			t.Fatal("manager stopped before rediscovery")
 		}

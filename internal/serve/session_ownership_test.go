@@ -644,9 +644,9 @@ func subscribeServeEvents(t *testing.T, url string) *serveEventStream {
 			default:
 			}
 			line := scanner.Text()
-			if strings.HasPrefix(line, "data: ") {
+			if data, ok := strings.CutPrefix(line, "data: "); ok {
 				select {
-				case stream.lines <- strings.TrimPrefix(line, "data: "):
+				case stream.lines <- data:
 				case <-stream.stop:
 					return
 				}
