@@ -72,7 +72,7 @@ type shutdownOnlyProgramModel struct{ chatTUI }
 func (shutdownOnlyProgramModel) Init() tea.Cmd { return nil }
 
 func (m shutdownOnlyProgramModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	next, cmd := m.chatTUI.update(msg)
+	next, cmd := m.update(msg)
 	return shutdownOnlyProgramModel{chatTUI: next.(chatTUI)}, cmd
 }
 
