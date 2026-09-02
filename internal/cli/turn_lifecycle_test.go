@@ -13,13 +13,15 @@ import (
 
 type runningQueueController struct {
 	control.SessionAPI
-	req control.InboxRequest
-	err error
+	req   control.InboxRequest
+	err   error
+	calls int
 }
 
 func (c *runningQueueController) Running() bool { return true }
 
 func (c *runningQueueController) TryEnqueueFollowup(req control.InboxRequest) (sessioninbox.InboxReceipt, error) {
+	c.calls++
 	c.req = req
 	return sessioninbox.InboxReceipt{ItemID: "queued-item"}, c.err
 }
@@ -139,6 +141,26 @@ func TestStartControllerTurnQueuesThroughSessionPort(t *testing.T) {
 	}
 	if len(m.pastedBlocks) != 1 || m.pastedBlocks[0].label != "next paste" {
 		t.Fatalf("successful queue cleared unrelated paste state: %+v", m.pastedBlocks)
+	}
+}
+
+func TestStartControllerTurnRejectsInputDuringRemoteReclaim(t *testing.T) {
+	ctrl := &runningQueueController{SessionAPI: control.New(control.Options{})}
+	takeover := newCLITakeoverManager(nil, nil)
+	takeover.reclaiming.Store(true)
+	m := newChatTUI(ctrl, "", make(chan event.Event, 1), 80)
+	m.takeover = takeover
+	started := false
+
+	cmd := m.startControllerTurn("expanded", "draft", func() { started = true })
+	if cmd != nil || started {
+		t.Fatalf("remote reclaim started a turn: cmd=%v started=%v", cmd != nil, started)
+	}
+	if ctrl.calls != 0 {
+		t.Fatalf("remote reclaim queued input %d time(s): %+v", ctrl.calls, ctrl.req)
+	}
+	if m.state != tuiIdle || m.bubblePending {
+		t.Fatalf("remote reclaim changed turn state: state=%v bubblePending=%v", m.state, m.bubblePending)
 	}
 }
 

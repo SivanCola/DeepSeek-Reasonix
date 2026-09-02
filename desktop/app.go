@@ -302,6 +302,16 @@ type App struct {
 	// It is process-local by design: shutdown closes every detached controller.
 	detachedSessions map[string]*WorkspaceTab
 
+	// takeoverMirrors tracks sessions this desktop took over from a local
+	// serve: the tab writes locally while its events mirror to the remote tab.
+	takeoverMirrors        map[string]*takeoverMirror
+	takeoverAdoptRevisions map[string]uint64
+	takeoverMu             sync.Mutex
+	// serveProbeUntil suppresses serve probing after a failed handshake
+	// (rotated token file); guarded by serveProbeMu.
+	serveProbeUntil map[string]time.Time
+	serveProbeMu    sync.Mutex
+
 	// sharedHosts holds one *plugin.Host per workspace root, shared by all
 	// controllers/tabs in that root so MCP subprocesses (CodeGraph, etc.) are
 	// spawned once instead of N times. Lifecycle: first Acquire creates the
@@ -801,6 +811,7 @@ func (a *App) restoreOrBuildTabs() {
 			}
 			tab.SessionPath = strings.TrimSpace(entry.SessionPath)
 			tab.ReadOnly = entry.ReadOnly
+			tab.Takeover.Spectator = entry.TakeoverSpectator
 			tab.sink = &tabEventSink{tabID: tab.ID, app: a, ctx: ctx}
 			a.publishRestoredTab(tab, releaseAdmission)
 			toBuild = append(toBuild, tab)
@@ -3661,20 +3672,32 @@ func (a *App) ResumeSessionForTab(tabID, path string) ([]HistoryMessage, error) 
 	if err != nil {
 		return nil, err
 	}
+	if sessionRuntimeKey(tab.currentSessionPath()) == sessionRuntimeKey(sessionPath) {
+		a.mu.RLock()
+		takeoverSpectator := a.tabs[tab.ID] == tab && tab.Takeover.Spectator
+		a.mu.RUnlock()
+		if takeoverSpectator {
+			return nil, fmt.Errorf("session is held by the remote side; use TakeoverSession to reclaim it")
+		}
+		a.setTabReadOnly(tab.ID, false)
+		// A read-only transcript explicitly reopened for writing re-announces
+		// itself so a resident Serve can mirror and later reclaim it.
+		a.attachTakeoverMirror(tab.ID, sessionPath)
+		go a.adoptSessionFromLocalServe(tab.ID, sessionPath)
+		return a.HistoryForTab(tabID), nil
+	}
 	loaded, err := loadResumableSession(sessionPath)
 	if err != nil {
 		return nil, err
-	}
-	if sessionRuntimeKey(tab.currentSessionPath()) == sessionRuntimeKey(sessionPath) {
-		a.setTabReadOnly(tab.ID, false)
-		return a.HistoryForTab(tabID), nil
 	}
 
 	if err := a.rebindTabToLoadedSessionPath(tab, sessionPath, loaded); err != nil {
 		return nil, err
 	}
 	a.setTabReadOnly(tab.ID, false)
-	return a.HistoryForTab(tab.ID), nil
+	a.attachTakeoverMirror(tab.ID, sessionPath)
+	go a.adoptSessionFromLocalServe(tab.ID, sessionPath)
+	return a.HistoryForTab(tabID), nil
 }
 
 // validateChannelSessionPath 校验 bot/channel 会话路径：channel 会话可能位于
@@ -3734,38 +3757,6 @@ func (a *App) OpenChannelSessionPageForTab(tabID, path string, limit int) (Histo
 	}
 	a.setTabReadOnly(tab.ID, true)
 	return a.HistoryPageForTab(tab.ID, 0, limit), nil
-}
-
-func (a *App) setTabReadOnly(tabID string, readOnly bool) {
-	var terminalSessions []*terminalSession
-	a.mu.Lock()
-	tab := a.tabs[tabID]
-	if tab == nil || tab.ReadOnly == readOnly {
-		a.mu.Unlock()
-		return
-	}
-	if a.terminals != nil {
-		if readOnly {
-			// Close the creation gate and detach existing sessions before
-			// exposing the tab as read-only. The process I/O cleanup happens
-			// after App.mu is released.
-			terminalSessions = a.terminals.detachForTab(tabID)
-		} else {
-			// Reopen the terminal gate before exposing the tab as writable. A
-			// concurrent create must never observe writable App state while
-			// the terminal manager still treats this tab as closed.
-			a.terminals.reopenForTab(tabID)
-		}
-	}
-	tab.ReadOnly = readOnly
-	a.saveTabsLocked()
-	a.mu.Unlock()
-	if len(terminalSessions) > 0 {
-		// Existing shells can keep modifying the workspace without renderer
-		// input, so entering a read-only channel must terminate them as part of
-		// the same capability transition.
-		a.terminals.closeSessions(terminalSessions)
-	}
 }
 
 func (a *App) rebindTabToSessionPath(tab *WorkspaceTab, sessionPath string) error {
@@ -4023,6 +4014,11 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 		tab.sink.setBinding(tab.ID, a)
 		tab.sink.setContext(a.ctx)
 	}
+	// Wiring a mirror inspects App state under a read lock, so defer it until
+	// after this transaction releases App.mu. The same applies to asynchronous
+	// adoption: publishing the committed identity first lets its stale-result
+	// fence observe one coherent runtime generation.
+	shouldAdopt := !tab.ReadOnly
 	if detachSource {
 		a.newSessionRuntimeLocked(tab, transition.targetKey)
 	}
@@ -4032,6 +4028,10 @@ func (a *App) rebindTabToLoadedSessionPath(tab *WorkspaceTab, sessionPath string
 	candidate.sink = nil
 	committed = true
 	a.mu.Unlock()
+	a.attachTakeoverMirror(tab.ID, sessionPath)
+	if shouldAdopt {
+		go a.adoptSessionFromLocalServe(tab.ID, sessionPath)
+	}
 	// Test-only observation point: the replacement is committed but the retired
 	// sink still carries its old epoch. Production has no hook and immediately
 	// fences that sink below.

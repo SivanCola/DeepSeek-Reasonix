@@ -321,6 +321,10 @@ type chatTUI struct {
 	// resumePick is the interactive "/resume" session picker overlay. Non-nil
 	// while the user browses saved sessions with ↑/↓ and confirms with Enter.
 	resumePick *resumePicker
+	// pendingTakeoverPath remembers the last /resume target refused because a
+	// resident serve on this machine holds its lease; "/takeover" force-takes
+	// that session back.
+	pendingTakeoverPath string
 	// quickPick owns searchable single-choice overlays such as /model and
 	// /provider. It never invokes a raw-mode prompt inside Bubble Tea.
 	quickPick *quickPicker
@@ -397,6 +401,9 @@ type chatTUI struct {
 	// operation that rebinds the controller to another session file must move
 	// the lease first — see rebindSessionLease / followSessionLease.
 	leases *control.SessionLeaseKeeper
+	// takeover mirrors a session acquired from a resident Serve and blocks
+	// admission while that Serve is reclaiming it.
+	takeover *cliTakeoverManager
 
 	// outputStyle is the active output-style name (config agent.output_style),
 	// shown as the current entry in the /output-style listing. "" = default.
@@ -1536,9 +1543,8 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cycleMode()
 			return m, nil
 		}
-		switch msg.String() {
+		switch m.endSlashArgSnapshotForKey(msg.String()) {
 		case "esc":
-			m.endSlashArgSnapshot()
 			// "Back out" of the most specific in-progress state: un-send a just-sent
 			// turn (server not yet replied), cancel a streaming turn, or clear
 			// typed-but-unsent input. Mode switches (normal/plan/YOLO) are
@@ -1593,7 +1599,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "ctrl+c", "super+c", "meta+c":
-			m.endSlashArgSnapshot()
 			if m.state == tuiRunning {
 				// Selection takes precedence: copy instead of cancel, same as idle.
 				if sel.active && !sel.empty() {
@@ -1682,7 +1687,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleShellOutput()
 			return m, finalize(m, cmds)
 		case "ctrl+enter":
-			m.endSlashArgSnapshot()
 			// Durable mid-turn steer (terminals without modified Enter use /steer).
 			if m.state == tuiRunning {
 				line := strings.TrimSpace(m.input.Value())
@@ -1717,7 +1721,6 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, finalize(m, cmds)
 			}
 		case "enter":
-			m.endSlashArgSnapshot()
 			if m.state == tuiRunning {
 				line := strings.TrimSpace(m.input.Value())
 				if line == "" {
@@ -1919,6 +1922,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.followSessionLease()
 		} else {
 			m.ctrl = msg.ctrl
+			if m.takeover != nil {
+				m.takeover.AttachController(msg.ctrl)
+			}
 			m.updateWatchdogStatusProvider()
 			m.label = msg.label
 			m.commands = msg.commands
@@ -4557,6 +4563,10 @@ func elapsedTick(generation uint64) tea.Cmd {
 // output to scrollback; MCP prompt / custom commands resolve to a model turn.
 func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 	typedCmd := strings.TrimSpace(strings.SplitN(input, " ", 2)[0])
+	if m.takeover != nil && m.takeover.Reclaiming() && typedCmd != "/quit" && typedCmd != "/exit" {
+		m.notice("the remote side is taking this session back; new input is disabled")
+		return nil
+	}
 
 	if strings.HasPrefix(typedCmd, "/mcp__") {
 		return m.runMCPPrompt(input)
@@ -4610,6 +4620,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.notice(i18n.M.SlashClsDone)
 	case "/resume":
 		m.runResumeCommand(input)
+	case "/takeover":
+		m.runTakeoverCommand(input)
 	case "/status":
 		m.echoLocalCommand(input)
 		m.showStatusDetails()

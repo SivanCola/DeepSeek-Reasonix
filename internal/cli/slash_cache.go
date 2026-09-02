@@ -101,6 +101,14 @@ func (m *chatTUI) endSlashArgSnapshot() {
 	}
 }
 
+func (m *chatTUI) endSlashArgSnapshotForKey(key string) string {
+	switch key {
+	case "esc", "ctrl+c", "super+c", "meta+c", "ctrl+enter", "enter":
+		m.endSlashArgSnapshot()
+	}
+	return key
+}
+
 func (m *chatTUI) resetComposerInput() {
 	m.input.Reset()
 	m.endSlashArgSnapshot()
