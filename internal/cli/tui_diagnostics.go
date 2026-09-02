@@ -24,8 +24,11 @@ const (
 )
 
 // watchdogKillFallbackDelay bounds how long a watchdog kill waits after
-// requesting a graceful shutdown before the hard kill fires. Tests shorten it.
-var watchdogKillFallbackDelay = 3 * time.Second
+// requesting a graceful shutdown before the hard kill fires. The final
+// snapshot may legitimately spend five seconds waiting for a compatibility
+// file lock before writing a recovery branch, so this grace must exceed that
+// bounded recovery path rather than turning a successful save into Kill.
+const watchdogKillFallbackDelay = 12 * time.Second
 
 // Watchdog lifecycle phases. Only booting (no first Update) and running
 // (active turn / shell with no event-loop heartbeat) can escalate to kill.
@@ -112,7 +115,7 @@ type tuiDiagnostics struct {
 	dumpFn     func(reason string)
 	killFn     func()
 	logFn      func(format string, args ...any)
-	shutdownFn func()
+	shutdownFn func(*tuiShutdownCompletion)
 
 	// Test observation counters (safe under mu).
 	cancelCalls atomic.Int32
@@ -301,7 +304,9 @@ func (d *tuiDiagnostics) StartWatchdog(p *tea.Program) {
 			d.killFn = p.Kill
 		}
 		if d.shutdownFn == nil && p != nil {
-			d.shutdownFn = func() { p.Send(tuiShutdownMsg{}) }
+			d.shutdownFn = func(completion *tuiShutdownCompletion) {
+				p.Send(tuiShutdownMsg{completion: completion})
+			}
 		}
 		d.mu.Lock()
 		armedAt := d.now()
@@ -545,12 +550,13 @@ func (d *tuiDiagnostics) doKill() {
 				time.AfterFunc(delay, fn)
 			}
 		}
+		completion := newTUIShutdownCompletion()
 		afterFunc(watchdogKillFallbackDelay, func() {
-			if kill != nil {
+			if completion.claimFallback() && kill != nil {
 				kill()
 			}
 		})
-		d.shutdownFn()
+		d.shutdownFn(completion)
 		return
 	}
 	if d.killFn != nil {

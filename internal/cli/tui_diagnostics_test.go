@@ -583,7 +583,10 @@ func TestWatchdogKillRequestsGracefulShutdownFirst(t *testing.T) {
 		}
 		fallback = fn
 	}
-	d.shutdownFn = func() { shutdowns++ }
+	d.shutdownFn = func(completion *tuiShutdownCompletion) {
+		shutdowns++
+		completion.complete()
+	}
 	d.killFn = func() { kills++ }
 	d.NoteBooted()
 	d.NoteRunning(func() {})
@@ -606,8 +609,8 @@ func TestWatchdogKillRequestsGracefulShutdownFirst(t *testing.T) {
 		t.Fatalf("hard kill ran before fallback callback: kills=%d", kills)
 	}
 	fallback()
-	if kills != 1 {
-		t.Fatalf("fallback killFn calls = %d, want 1", kills)
+	if kills != 0 {
+		t.Fatalf("fallback killed a completed graceful shutdown: kills=%d", kills)
 	}
 }
 
@@ -619,7 +622,7 @@ func TestWatchdogKillFallbackRunsWhileGracefulShutdownIsBlocked(t *testing.T) {
 	releaseShutdown := make(chan struct{})
 	killed := make(chan struct{}, 1)
 	d.afterFunc = func(_ time.Duration, fn func()) { scheduled <- fn }
-	d.shutdownFn = func() {
+	d.shutdownFn = func(_ *tuiShutdownCompletion) {
 		close(shutdownStarted)
 		<-releaseShutdown
 	}
