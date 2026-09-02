@@ -1858,17 +1858,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentEventMsg:
 		e := event.Event(msg)
-		// Agent/shell/controller work events prove the event loop is servicing
-		// the active turn. Record before ingest so TurnDone still counts.
-		m.noteWatchdogHeartbeat(watchdogAgentSource(e.Kind))
-		m.ingestEvent(e)
 		drained := m.drainAgentEvents(e)
 		cmds = append(cmds, waitForAgentEvent(m.eventCh))
-		if drained.hasTurnLifecycle && drained.lastTurnLifecycle == event.TurnStarted {
-			if c := m.noteControllerTurnStarted(); c != nil {
-				cmds = append(cmds, c)
-			}
-		}
+		cmds = append(cmds, drained.cmds...)
 		// A turn just spent tokens (and money) — refresh the balance readout and
 		// the custom status line (its context/cost inputs just changed).
 		if drained.turnDone {

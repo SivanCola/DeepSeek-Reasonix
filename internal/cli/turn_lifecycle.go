@@ -89,28 +89,29 @@ func (m *chatTUI) confirmBubbleSent() {
 // re-wrap covers the whole batch instead of one per event.
 type agentEventDrain struct {
 	turnDone, gitMaybeChanged bool
-	lastTurnLifecycle         event.Kind
-	hasTurnLifecycle          bool
+	cmds                      []tea.Cmd
 }
 
-func (d *agentEventDrain) record(e event.Event) {
-	if e.Kind == event.TurnStarted || e.Kind == event.TurnDone {
-		d.lastTurnLifecycle = e.Kind
-		d.hasTurnLifecycle = true
+func (m *chatTUI) consumeAgentEvent(e event.Event, drained *agentEventDrain) {
+	// Record before ingest so TurnDone still counts as an active heartbeat.
+	m.noteWatchdogHeartbeat(watchdogAgentSource(e.Kind))
+	if e.Kind == event.TurnStarted {
+		if cmd := m.noteControllerTurnStarted(); cmd != nil {
+			drained.cmds = append(drained.cmds, cmd)
+		}
 	}
-	d.turnDone = d.turnDone || e.Kind == event.TurnDone
-	d.gitMaybeChanged = d.gitMaybeChanged || e.Kind == event.ToolResult && !e.Tool.ReadOnly
+	m.ingestEvent(e)
+	drained.turnDone = drained.turnDone || e.Kind == event.TurnDone
+	drained.gitMaybeChanged = drained.gitMaybeChanged || e.Kind == event.ToolResult && !e.Tool.ReadOnly
 }
 
 func (m *chatTUI) drainAgentEvents(first event.Event) agentEventDrain {
 	var drained agentEventDrain
-	drained.record(first)
+	m.consumeAgentEvent(first, &drained)
 	for range maxEventDrain {
 		select {
 		case e2 := <-m.eventCh:
-			m.noteWatchdogHeartbeat(watchdogAgentSource(e2.Kind))
-			m.ingestEvent(e2)
-			drained.record(e2)
+			m.consumeAgentEvent(e2, &drained)
 		default:
 			return drained
 		}

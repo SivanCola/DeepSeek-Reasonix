@@ -7,6 +7,7 @@ import (
 
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/provider"
 	"reasonix/internal/sessioninbox"
 )
 
@@ -54,7 +55,7 @@ func TestControllerDispatchedTurnStartedEntersRunning(t *testing.T) {
 	}
 }
 
-func TestDrainedLifecycleUsesLastBoundary(t *testing.T) {
+func TestDrainedLifecyclePreservesOrder(t *testing.T) {
 	tests := []struct {
 		name     string
 		initial  tuiState
@@ -77,6 +78,24 @@ func TestDrainedLifecycleUsesLastBoundary(t *testing.T) {
 				t.Fatalf("final state = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDrainedTurnStartResetsBeforeNewUsage(t *testing.T) {
+	events := make(chan event.Event, 2)
+	events <- event.Event{Kind: event.TurnStarted}
+	events <- event.Event{Kind: event.Usage, Usage: &provider.Usage{CompletionTokens: 3}}
+	m := newChatTUI(control.New(control.Options{}), "", events, 80)
+	m.state = tuiRunning
+	m.turnTokens = 100
+
+	next, _ := m.Update(agentEventMsg(event.Event{Kind: event.TurnDone}))
+	m2 := next.(chatTUI)
+	if m2.state != tuiRunning {
+		t.Fatalf("queued turn state = %v, want running", m2.state)
+	}
+	if m2.turnTokens != 3 {
+		t.Fatalf("queued turn tokens = %d, want 3", m2.turnTokens)
 	}
 }
 
