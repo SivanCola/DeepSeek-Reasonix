@@ -66,7 +66,9 @@ New official entries use this native Messages API path and enable provider-side
 `web_search`; existing explicit providers, including legacy
 `deepseek-anthropic` entries, keep their configured protocol. Reasonix emits
 `thinking.type=enabled|disabled` with `output_config.effort`, replays unsigned
-DeepSeek thinking blocks from historical tool-call turns, omits unsupported
+DeepSeek thinking blocks from every historical assistant turn that carries
+reasoning (tool-call turn or not, as DeepSeek's thinking mode requires when the
+request declares tools), omits unsupported
 images, and relies on DeepSeek's automatic prefix cache instead of ignored
 `cache_control` markers.
 

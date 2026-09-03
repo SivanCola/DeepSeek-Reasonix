@@ -702,7 +702,7 @@ func TestMissingToolCallReasoningWarningFingerprintTracksAnthropicConfiguration(
 	}
 }
 
-func TestBuildRequestDeepSeekReplaysOnlyToolCallReasoningFromHistory(t *testing.T) {
+func TestBuildRequestDeepSeekReplaysReasoningFromHistory(t *testing.T) {
 	toolTurn := []provider.Message{
 		{Role: provider.RoleUser, Content: "weather?"},
 		{Role: provider.RoleAssistant, ReasoningContent: "I should call the tool.",
@@ -733,17 +733,21 @@ func TestBuildRequestDeepSeekReplaysOnlyToolCallReasoningFromHistory(t *testing.
 		})
 	}
 
-	t.Run("reasoning without a tool call stays omitted", func(t *testing.T) {
+	t.Run("reasoning without a tool call is replayed", func(t *testing.T) {
+		// DeepSeek's thinking mode requires every historical assistant turn's
+		// thinking block back when the request declares tools, even for plain
+		// question-answer turns (api-docs.deepseek.com/guides/thinking_mode).
 		c := &client{model: "deepseek-v4-flash", deepseek: true, thinking: "enabled", effort: "high"}
 		r := c.buildRequest(context.Background(), provider.Request{
 			Messages: []provider.Message{
 				{Role: provider.RoleUser, Content: "hello"},
-				{Role: provider.RoleAssistant, Content: "hi", ReasoningContent: "private scratchpad"},
+				{Role: provider.RoleAssistant, Content: "hi", ReasoningContent: "scratchpad"},
 			},
 			Tools: []provider.ToolSchema{{Name: "get_weather"}},
 		})
-		if len(r.Messages) != 2 || len(r.Messages[1].Content) != 1 || r.Messages[1].Content[0].Type != "text" {
-			t.Fatalf("non-tool assistant blocks = %+v, want visible text only", r.Messages)
+		blocks := r.Messages[1].Content
+		if len(r.Messages) != 2 || len(blocks) != 2 || blocks[0].Type != "thinking" || blocks[0].Thinking != "scratchpad" || blocks[1].Type != "text" {
+			t.Fatalf("non-tool assistant blocks = %+v, want thinking before text", r.Messages)
 		}
 	})
 }
@@ -779,7 +783,7 @@ func TestBuildRequestDeepSeekThinkingModes(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
 		c := &client{model: "deepseek-v4-flash", deepseek: true, thinking: "enabled", effort: "disabled"}
 		r := c.buildRequest(context.Background(), provider.Request{
-			Messages: []provider.Message{{Role: provider.RoleAssistant, ReasoningContent: "do not replay"}},
+			Messages: []provider.Message{{Role: provider.RoleAssistant, ReasoningContent: "replay anyway"}},
 			Tools:    []provider.ToolSchema{{Name: "tool"}},
 		})
 		if r.Thinking == nil || r.Thinking.Type != "disabled" || r.OutputConfig != nil {
@@ -788,8 +792,11 @@ func TestBuildRequestDeepSeekThinkingModes(t *testing.T) {
 		if provider.RequiresToolCallReasoning(c) || provider.RequiresReasoningRoundTrip(c) {
 			t.Fatal("disabled DeepSeek thinking must not retain reasoning for replay")
 		}
-		if len(r.Messages) != 0 {
-			t.Fatalf("reasoning-only assistant should be omitted when thinking is disabled: %+v", r.Messages)
+		// Historical thinking blocks are replayed even when the current request
+		// disables thinking, the same rule tool-call turns already follow.
+		if len(r.Messages) != 1 || len(r.Messages[0].Content) != 1 || r.Messages[0].Content[0].Type != "thinking" ||
+			r.Messages[0].Content[0].Thinking != "replay anyway" {
+			t.Fatalf("reasoning-only assistant under disabled thinking = %+v, want the thinking block replayed", r.Messages)
 		}
 	})
 }

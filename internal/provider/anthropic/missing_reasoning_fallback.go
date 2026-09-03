@@ -25,8 +25,10 @@ func (c *client) replayMessages(messages []provider.Message, recoveryWithoutThin
 }
 
 func (c *client) replayReasoningBlock(m provider.Message, recoveryWithoutThinking bool) (contentBlock, bool) {
-	activity := len(m.ToolCalls) > 0 || len(m.ServerSearch) > 0
-	if c.deepseek && !recoveryWithoutThinking && activity && m.ReasoningContent != "" {
+	// DeepSeek's thinking mode requires every historical assistant turn's
+	// thinking block to be passed back whenever the request declares tools —
+	// including plain question-answer turns with no tool activity.
+	if c.deepseek && !recoveryWithoutThinking && m.ReasoningContent != "" {
 		return contentBlock{Type: "thinking", Thinking: m.ReasoningContent}, true
 	}
 	if !c.deepseek && c.thinking == "adaptive" && m.ReasoningContent != "" && m.ReasoningSignature != "" {
