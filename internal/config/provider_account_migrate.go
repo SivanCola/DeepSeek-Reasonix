@@ -1,10 +1,6 @@
 package config
 
-import (
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
-)
+import "strings"
 
 func ensureProviderAccounts(c *Config) {
 	if c == nil {
@@ -77,6 +73,24 @@ func inferProviderAccounts(c *Config) bool {
 			APIKeyEnv:  g.keyEnv,
 			Default:    id == MainProviderAccountID,
 		}
+		// A legacy config may intentionally contain only a subset of a curated
+		// family's routes. Mark absent routes disabled so reconciliation does not
+		// resurrect providers the user never configured; RestoreProviderAccount
+		// can explicitly opt back into the complete route bundle.
+		routePresent := map[string]bool{}
+		for _, idx := range g.index {
+			if _, route, _, ok := curatedProviderIdentity(c.Providers[idx]); ok && route != "" {
+				routePresent[route] = true
+			} else {
+				routePresent[strings.TrimSpace(c.Providers[idx].Name)] = true
+			}
+		}
+		for _, tmpl := range accountRouteTemplates(g.family) {
+			if !routePresent[tmpl.RouteID] {
+				account.DisabledRoutes = append(account.DisabledRoutes, tmpl.RouteID)
+			}
+		}
+		account.DisabledRoutes = normalizeProviderAccountRoutes(account.DisabledRoutes)
 		if account.APIKeyEnv == "" {
 			account.APIKeyEnv = baseAPIKeyEnvForGroup(g.family)
 		}
@@ -142,7 +156,6 @@ func attachOrphanCuratedProviders(c *Config) bool {
 			c.ProviderAccounts = append(c.ProviderAccounts, account)
 			usedIDs[account.key()] = true
 			idx = len(c.ProviderAccounts) - 1
-			changed = true
 		}
 		if routeID == "" {
 			routeID = p.Name
@@ -166,7 +179,6 @@ func inferAccountPresetID(c *Config, indexes []int) string {
 }
 
 func legacyAccountID(keyEnv, family string, used map[providerAccountKey]bool) string {
-	sum := sha256.Sum256([]byte(family + "\x00" + keyEnv))
-	id := legacyAccountIDPrefix + hex.EncodeToString(sum[:3])
+	id := legacyAccountIDPrefix + providerIdentityHash(family + "\x00" + keyEnv)[:6]
 	return uniqueProviderAccountID(family, id, used)
 }

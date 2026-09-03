@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -87,6 +88,21 @@ func TestProviderAccountTOMLOmitsSecrets(t *testing.T) {
 	}
 	if !strings.Contains(raw, "api_key_env = \"DEEPSEEK_API_KEY_TEAM\"") {
 		t.Fatalf("missing account env in TOML:\n%s", raw)
+	}
+}
+
+func TestProviderAccountDisabledRoutesRenderNormalized(t *testing.T) {
+	cfg := &Config{ProviderAccounts: []ProviderAccount{{
+		ProviderID: "opencode-go", ID: "team", Label: "Team", APIKeyEnv: "TEAM_KEY",
+		DisabledRoutes: []string{" opencode-go-responses ", "opencode-go-responses", "opencode-go-anthropic"},
+	}}}
+	normalizeProviderAccountList(cfg)
+	if got, want := cfg.ProviderAccounts[0].DisabledRoutes, []string{"opencode-go-anthropic", "opencode-go-responses"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("disabled routes = %v, want %v", got, want)
+	}
+	raw := RenderTOML(cfg)
+	if !strings.Contains(raw, `disabled_routes = ["opencode-go-anthropic", "opencode-go-responses"]`) {
+		t.Fatalf("render missing normalized disabled routes:\n%s", raw)
 	}
 }
 
@@ -365,5 +381,76 @@ func TestResolveFamilyAndExplicitAccountModel(t *testing.T) {
 	}
 	if strings.Contains(ref, "--team") {
 		t.Fatalf("disabled account leaked into new session candidates: %s", ref)
+	}
+}
+
+func TestCuratedIdentityDoesNotInferCustomEndpointByURL(t *testing.T) {
+	cfg := &Config{Providers: []ProviderEntry{{
+		Name:      "my-gateway",
+		Kind:      "openai",
+		BaseURL:   "https://api.deepseek.com",
+		Model:     "custom-model",
+		APIKeyEnv: "CUSTOM_KEY",
+	}}}
+	if inferProviderAccounts(cfg) {
+		t.Fatal("custom endpoint was inferred as a curated account")
+	}
+	if len(cfg.ProviderAccounts) != 0 {
+		t.Fatalf("provider accounts = %+v, want none", cfg.ProviderAccounts)
+	}
+	if _, _, _, ok := curatedProviderIdentity(cfg.Providers[0]); ok {
+		t.Fatal("custom provider was classified as a curated family")
+	}
+}
+
+func TestProviderAccountDisabledRoutesSurviveReconcileAndRestore(t *testing.T) {
+	cfg := Default()
+	if _, err := cfg.AddProviderAccount("opencode-go", "opencode-go-recommended", "Main", "OPENCODE_MAIN_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	account, err := cfg.AddProviderAccount("opencode-go", "opencode-go-recommended", "Team", "OPENCODE_TEAM_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetProviderAccountRouteEnabled(account.ProviderID, account.ID, "opencode-go-responses", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Provider("opencode-go-responses--team"); !ok {
+		t.Fatal("disabled route provider entry disappeared")
+	}
+	_, stored, ok := cfg.lookupProviderAccount(account.ProviderID, account.ID)
+	if !ok || len(stored.DisabledRoutes) != 1 || stored.DisabledRoutes[0] != "opencode-go-responses" {
+		t.Fatalf("disabled routes = %v accounts=%+v", stored.DisabledRoutes, cfg.ProviderAccounts)
+	}
+	if changed, _, err := ReconcileProviderAccounts(cfg); err != nil || changed {
+		t.Fatalf("reconcile changed=%v err=%v", changed, err)
+	}
+	if _, ok := cfg.ResolveModel("opencode-go--team/glm-5.2"); !ok {
+		t.Fatal("explicit account model should remain resolvable")
+	}
+	if err := cfg.RestoreProviderAccount(account.ProviderID, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, stored, _ = cfg.lookupProviderAccount(account.ProviderID, account.ID)
+	if len(stored.DisabledRoutes) != 0 {
+		t.Fatalf("restore left disabled routes: %v", stored.DisabledRoutes)
+	}
+}
+
+func TestSetDefaultAccountUpdatesFamilyDefaultModel(t *testing.T) {
+	cfg := Default()
+	ensureProviderAccounts(cfg)
+	if _, err := cfg.AddProviderAccount("deepseek", "", "Team", "DEEPSEEK_TEAM_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetProviderAccountDefault("deepseek", "team"); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := cfg.ResolveModel(cfg.DefaultModel)
+	if !ok || entry.AccountID != "team" {
+		t.Fatalf("default model = %q, resolved entry = %+v", cfg.DefaultModel, entry)
+	}
+	if got, _, ok := cfg.ResolveNewSessionChatModel(); !ok || !strings.Contains(got, "--team/") {
+		t.Fatalf("new session model = %q, want team account", got)
 	}
 }

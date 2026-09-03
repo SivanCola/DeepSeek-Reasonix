@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -26,6 +27,9 @@ func ExpandProviderAccount(c *Config, account ProviderAccount) ([]ProviderEntry,
 	}
 	out := make([]ProviderEntry, 0, len(templates))
 	for _, tmpl := range templates {
+		if providerAccountRouteDisabled(account, tmpl.RouteID) {
+			continue
+		}
 		if tmpl.MainOnly && account.ID != MainProviderAccountID {
 			continue
 		}
@@ -90,7 +94,6 @@ func ReconcileProviderAccounts(c *Config) (changed bool, warnings []string, err 
 			warnings = append(warnings, expandErr.Error())
 			continue
 		}
-		seeded := countAccountRoutes(c, account) > 0
 		for _, generated := range entries {
 			if !c.userOwnedProvider(generated.Name) && providerIndexByName(c, generated.Name) >= 0 {
 				continue
@@ -105,9 +108,6 @@ func ReconcileProviderAccounts(c *Config) (changed bool, warnings []string, err 
 					c.Providers[idx] = merged
 					changed = true
 				}
-				continue
-			}
-			if seeded {
 				continue
 			}
 			if err := c.UpsertProvider(generated); err != nil {
@@ -279,6 +279,7 @@ func normalizeProviderAccountList(c *Config) []string {
 		account.Label = strings.TrimSpace(account.Label)
 		account.APIKeyEnv = strings.TrimSpace(account.APIKeyEnv)
 		account.PresetID = strings.TrimSpace(account.PresetID)
+		account.DisabledRoutes = normalizeProviderAccountRoutes(account.DisabledRoutes)
 		if err := validateProviderAccount(account); err != nil {
 			warnings = append(warnings, err.Error())
 			continue
@@ -306,4 +307,38 @@ func normalizeProviderAccountList(c *Config) []string {
 		c.ProviderAccounts = out
 	}
 	return warnings
+}
+
+func normalizeProviderAccountRoutes(routes []string) []string {
+	if len(routes) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(routes))
+	out := make([]string, 0, len(routes))
+	for _, route := range routes {
+		route = strings.TrimSpace(route)
+		if route == "" {
+			continue
+		}
+		if _, ok := seen[route]; ok {
+			continue
+		}
+		seen[route] = struct{}{}
+		out = append(out, route)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
+func providerAccountRouteDisabled(account ProviderAccount, routeID string) bool {
+	routeID = strings.TrimSpace(routeID)
+	for _, disabled := range account.DisabledRoutes {
+		if strings.TrimSpace(disabled) == routeID {
+			return true
+		}
+	}
+	return false
 }

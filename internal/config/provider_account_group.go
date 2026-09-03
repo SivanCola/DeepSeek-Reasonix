@@ -116,24 +116,7 @@ func curatedProviderIdentity(e ProviderEntry) (groupID, routeID, baseName string
 			}
 		}
 	}
-	if isOfficialDeepSeekProviderEntry(e) {
-		route := strings.TrimSpace(e.Name)
-		if route == "deepseek-anthropic" {
-			route = "deepseek"
-		}
-		return "deepseek", route, e.Name, true
-	}
 	return "", "", "", false
-}
-
-func isOfficialDeepSeekProviderEntry(e ProviderEntry) bool {
-	if officialProviderKindFromName(e.Name) == "deepseek" {
-		return true
-	}
-	base := strings.TrimRight(strings.TrimSpace(e.BaseURL), "/")
-	return strings.EqualFold(base, strings.TrimRight(deepSeekAnthropicBaseURL, "/")) ||
-		strings.EqualFold(base, "https://api.deepseek.com") ||
-		strings.EqualFold(base, "https://api.deepseek.com/v1")
 }
 
 func officialProviderKindFromName(name string) string {

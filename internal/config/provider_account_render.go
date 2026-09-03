@@ -31,6 +31,9 @@ func renderProviderAccounts(b *strings.Builder, c *Config, scope RenderScope) {
 		if a.Retired {
 			b.WriteString("retired     = true\n")
 		}
+		if routes := normalizeProviderAccountRoutes(a.DisabledRoutes); len(routes) > 0 {
+			fmt.Fprintf(b, "disabled_routes = %s\n", renderStringArray(routes))
+		}
 		b.WriteString("\n")
 	}
 }

@@ -1,9 +1,8 @@
 package config
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"strings"
 	"unicode"
@@ -21,14 +20,15 @@ var providerAccountIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 // ProviderAccount is one independently credentialed account for a curated
 // provider family. Secrets stay in Reasonix home .env under APIKeyEnv.
 type ProviderAccount struct {
-	ProviderID string `toml:"provider_id"`
-	PresetID   string `toml:"preset_id,omitempty"`
-	ID         string `toml:"id"`
-	Label      string `toml:"label"`
-	APIKeyEnv  string `toml:"api_key_env"`
-	Enabled    *bool  `toml:"enabled,omitempty"`
-	Default    bool   `toml:"default,omitempty"`
-	Retired    bool   `toml:"retired,omitempty"`
+	ProviderID     string   `toml:"provider_id"`
+	PresetID       string   `toml:"preset_id,omitempty"`
+	ID             string   `toml:"id"`
+	Label          string   `toml:"label"`
+	APIKeyEnv      string   `toml:"api_key_env"`
+	Enabled        *bool    `toml:"enabled,omitempty"`
+	Default        bool     `toml:"default,omitempty"`
+	Retired        bool     `toml:"retired,omitempty"`
+	DisabledRoutes []string `toml:"disabled_routes,omitempty"`
 }
 
 func (a ProviderAccount) IsEnabled() bool {
@@ -79,8 +79,7 @@ func SuggestProviderAccountID(providerID, label string) string {
 	if slug := slugifyProviderAccountID(label); slug != "" {
 		return slug
 	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(providerID) + "\x00" + label))
-	return "a" + hex.EncodeToString(sum[:4])[:7]
+	return "a" + providerIdentityHash(strings.TrimSpace(providerID) + "\x00" + label)[:7]
 }
 
 func slugifyProviderAccountID(label string) string {
@@ -135,8 +134,20 @@ func uniqueProviderAccountID(providerID, suggested string, used map[providerAcco
 			return candidate
 		}
 	}
-	sum := sha256.Sum256([]byte(providerID + "\x00" + suggested))
-	return "a" + hex.EncodeToString(sum[:4])[:7]
+	base := "a" + providerIdentityHash(providerID + "\x00" + suggested)[:7]
+	if !used[providerAccountKey{ProviderID: providerID, ID: base}] {
+		return base
+	}
+	for i := 2; i < 100; i++ {
+		candidate := fmt.Sprintf("%s-%d", strings.TrimSuffix(base, "-"), i)
+		if len(candidate) > maxProviderAccountIDLen {
+			candidate = candidate[:maxProviderAccountIDLen]
+		}
+		if IsProviderAccountID(candidate) && !used[providerAccountKey{ProviderID: providerID, ID: candidate}] {
+			return candidate
+		}
+	}
+	return base
 }
 
 func SuggestAccountAPIKeyEnv(baseEnv, accountID string, used map[string]bool) string {
@@ -161,8 +172,7 @@ func SuggestAccountAPIKeyEnv(baseEnv, accountID string, used map[string]bool) st
 	if IsValidCredentialKey(candidate) && !used[candidate] {
 		return candidate
 	}
-	sum := sha256.Sum256([]byte(candidate))
-	hashed := candidate + "_" + strings.ToUpper(hex.EncodeToString(sum[:3]))
+	hashed := candidate + "_" + strings.ToUpper(providerIdentityHash(candidate)[:6])
 	if IsValidCredentialKey(hashed) && !used[hashed] {
 		return hashed
 	}
@@ -177,8 +187,7 @@ func uniqueProviderName(base string, taken map[string]bool) string {
 	if !taken[base] {
 		return base
 	}
-	sum := sha256.Sum256([]byte(base))
-	short := hex.EncodeToString(sum[:3])
+	short := providerIdentityHash(base)[:6]
 	candidate := base + "-" + short
 	if !taken[candidate] {
 		return candidate
@@ -189,7 +198,16 @@ func uniqueProviderName(base string, taken map[string]bool) string {
 			return candidate
 		}
 	}
-	return base + "-" + hex.EncodeToString(sum[:8])
+	return base + "-" + providerIdentityHash(base)
+}
+
+// providerIdentityHash creates a deterministic, non-cryptographic identity
+// suffix for generated account/provider names. It must never be used for
+// credential hashing or security decisions.
+func providerIdentityHash(value string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(value))
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 func validateProviderAccount(a ProviderAccount) error {
@@ -212,6 +230,9 @@ func cloneProviderAccount(a ProviderAccount) ProviderAccount {
 	if a.Enabled != nil {
 		value := *a.Enabled
 		a.Enabled = &value
+	}
+	if a.DisabledRoutes != nil {
+		a.DisabledRoutes = append([]string(nil), a.DisabledRoutes...)
 	}
 	return a
 }

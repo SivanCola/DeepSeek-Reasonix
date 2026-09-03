@@ -24,6 +24,9 @@ func (c *Config) AddProviderAccount(providerID, presetID, label, apiKeyEnv strin
 	if providerID == "" {
 		return ProviderAccount{}, fmt.Errorf("provider account: provider_id is required")
 	}
+	if len(accountRouteTemplates(providerID)) == 0 {
+		return ProviderAccount{}, fmt.Errorf("unknown provider family %q", providerID)
+	}
 	if label == "" {
 		label = defaultAccountLabel(MainProviderAccountID)
 	}
@@ -68,6 +71,7 @@ func (c *Config) SetProviderAccountDefault(providerID, accountID string) error {
 			c.ProviderAccounts[i].Default = i == idx
 		}
 	}
+	c.syncFamilyDefaultModel(account.ProviderID, account.ID)
 	return nil
 }
 
@@ -83,6 +87,90 @@ func (c *Config) SetProviderAccountEnabled(providerID, accountID string, enabled
 	if !enabled && account.Default {
 		c.ProviderAccounts[idx].Default = false
 		c.ensureFamilyDefault(account.ProviderID)
+		if replacement, ok := c.DefaultAccount(account.ProviderID); ok {
+			c.syncFamilyDefaultModel(account.ProviderID, replacement.ID)
+		}
+	}
+	return nil
+}
+
+// SetProviderAccountRouteEnabled controls whether a generated route is
+// available for new model selection. Disabled routes remain materialized in
+// Providers so existing sessions and explicit references can still resolve.
+func (c *Config) SetProviderAccountRouteEnabled(providerID, accountID, routeID string, enabled bool) error {
+	if c == nil {
+		return fmt.Errorf("set account route: nil config")
+	}
+	idx, account, ok := c.lookupProviderAccount(providerID, accountID)
+	if !ok {
+		return fmt.Errorf("set account route: no account %s/%s", providerID, accountID)
+	}
+	if account.Retired {
+		return fmt.Errorf("set account route: %s/%s is retired", providerID, accountID)
+	}
+	routeID = strings.TrimSpace(routeID)
+	if routeID == "" {
+		return fmt.Errorf("set account route: route_id is required")
+	}
+	known := false
+	for _, tmpl := range accountRouteTemplates(account.ProviderID) {
+		if tmpl.RouteID == routeID {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return fmt.Errorf("set account route: unknown route %q for provider %s", routeID, providerID)
+	}
+	disabled := normalizeProviderAccountRoutes(account.DisabledRoutes)
+	filtered := disabled[:0]
+	for _, route := range disabled {
+		if route != routeID {
+			filtered = append(filtered, route)
+		}
+	}
+	if !enabled {
+		filtered = append(filtered, routeID)
+	}
+	c.ProviderAccounts[idx].DisabledRoutes = normalizeProviderAccountRoutes(filtered)
+	if _, _, err := ReconcileProviderAccounts(c); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RestoreProviderAccount re-enables an account, clears disabled routes and
+// recreates any missing generated provider entries. Existing provider names
+// and user customizations are preserved by reconciliation.
+func (c *Config) RestoreProviderAccount(providerID, accountID string) error {
+	if c == nil {
+		return fmt.Errorf("restore account: nil config")
+	}
+	idx, account, ok := c.lookupProviderAccount(providerID, accountID)
+	if !ok {
+		return fmt.Errorf("restore account: no account %s/%s", providerID, accountID)
+	}
+	c.ProviderAccounts[idx].Retired = false
+	c.ProviderAccounts[idx].Enabled = boolPointer(true)
+	c.ProviderAccounts[idx].DisabledRoutes = nil
+	if !c.hasProviderFamilyDefault(providerID) {
+		c.ProviderAccounts[idx].Default = true
+	}
+	entries, err := ExpandProviderAccount(c, c.ProviderAccounts[idx])
+	if err != nil {
+		c.ProviderAccounts[idx] = account
+		return err
+	}
+	for _, generated := range entries {
+		if err := c.UpsertProvider(generated); err != nil {
+			c.ProviderAccounts[idx] = account
+			return err
+		}
+		c.markUserProvider(generated.Name)
+	}
+	if _, _, err := ReconcileProviderAccounts(c); err != nil {
+		c.ProviderAccounts[idx] = account
+		return err
 	}
 	return nil
 }
@@ -202,6 +290,54 @@ func (c *Config) ensureFamilyDefault(providerID string) {
 			c.ProviderAccounts[i].Default = true
 			return
 		}
+	}
+}
+
+func (c *Config) syncFamilyDefaultModel(providerID, accountID string) {
+	if c == nil {
+		return
+	}
+	current := strings.TrimSpace(c.DefaultModel)
+	if current == "" {
+		return
+	}
+	entry, ok := c.ResolveModel(current)
+	if !ok {
+		return
+	}
+	family, _, ok := ProviderAccountIdentity(*entry)
+	if !ok || family != providerID {
+		return
+	}
+	_, target, ok := c.lookupProviderAccount(providerID, accountID)
+	if !ok || !target.IsEnabled() {
+		return
+	}
+	entries, ok := c.ResolveAccountProvider(providerID, accountID)
+	if !ok {
+		return
+	}
+	model := entry.Model
+	for _, candidate := range entries {
+		if candidate.HasModel(model) && c.accountSelectable(candidate) {
+			c.DefaultModel = candidate.Name + "/" + model
+			return
+		}
+	}
+	for _, candidate := range entries {
+		if !c.accountSelectable(candidate) {
+			continue
+		}
+		models := candidate.ChatModelList()
+		if len(models) == 0 {
+			continue
+		}
+		selected := candidate.DefaultModel()
+		if !candidate.HasModel(selected) {
+			selected = models[0]
+		}
+		c.DefaultModel = candidate.Name + "/" + selected
+		return
 	}
 }
 

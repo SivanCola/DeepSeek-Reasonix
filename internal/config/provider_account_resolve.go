@@ -10,7 +10,7 @@ func (c *Config) DefaultAccount(providerID string) (ProviderAccount, bool) {
 	var first ProviderAccount
 	found := false
 	for _, account := range c.ProviderAccounts {
-		if account.ProviderID != providerID || account.Retired {
+		if account.ProviderID != providerID || !account.IsEnabled() {
 			continue
 		}
 		if !found {
@@ -186,7 +186,7 @@ func (c *Config) resolveNewSessionChatModel(providerAllowed func(string) bool, p
 	keylessDefault := ""
 	if def != "" {
 		if entry, found := c.ResolveModel(def); found {
-			if providerAllowed(entry.Name) && IsLikelyChatModel(entry.Model) {
+			if providerAllowed(entry.Name) && c.accountSelectable(*entry) && IsLikelyChatModel(entry.Model) {
 				if entry.Configured() {
 					return def, false, true
 				}
