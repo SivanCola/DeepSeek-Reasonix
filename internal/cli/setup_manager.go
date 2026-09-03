@@ -1119,13 +1119,30 @@ func replayProviderAccountOperation(cfg *config.Config, operation providerSetupO
 		for _, account := range before {
 			beforeKeys[providerSetupAccountKey(account.ProviderID, account.ID)] = true
 		}
-		for i := len(cfg.ProviderAccounts) - 1; i >= 0; i-- {
-			account := cfg.ProviderAccounts[i]
-			if account.ProviderID == operation.providerID && beforeKeys[providerSetupAccountKey(account.ProviderID, account.ID)] {
-				cfg.ProviderAccounts = append(cfg.ProviderAccounts[:i], cfg.ProviderAccounts[i+1:]...)
+		afterByKey := make(map[string]config.ProviderAccount, len(after))
+		for _, account := range after {
+			afterByKey[providerSetupAccountKey(account.ProviderID, account.ID)] = cloneProviderSetupAccount(account)
+		}
+		seenAfter := make(map[string]bool, len(after))
+		out := cfg.ProviderAccounts[:0]
+		for _, account := range cfg.ProviderAccounts {
+			key := providerSetupAccountKey(account.ProviderID, account.ID)
+			if account.ProviderID == operation.providerID && beforeKeys[key] {
+				if replacement, exists := afterByKey[key]; exists {
+					out = append(out, replacement)
+					seenAfter[key] = true
+				}
+				continue
+			}
+			out = append(out, account)
+		}
+		for _, account := range after {
+			key := providerSetupAccountKey(account.ProviderID, account.ID)
+			if !seenAfter[key] {
+				out = append(out, cloneProviderSetupAccount(account))
 			}
 		}
-		cfg.ProviderAccounts = append(cfg.ProviderAccounts, cloneProviderSetupAccounts(after)...)
+		cfg.ProviderAccounts = out
 	}
 	if _, _, reconcileErr := config.ReconcileProviderAccounts(cfg); reconcileErr != nil {
 		return fmt.Errorf("replay %s: %w", field, reconcileErr)
