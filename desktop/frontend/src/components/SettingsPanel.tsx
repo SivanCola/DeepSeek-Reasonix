@@ -5976,7 +5976,7 @@ export function ProviderAccessCard({
   );
   return (
     <article className={`provider-access-card${group.builtIn ? " provider-access-card--builtin" : ""}`}>
-      <ProviderAccountManager group={group} accounts={accounts} providerPresets={providerPresets ?? []} busy={busy} apply={apply} />
+      <ProviderAccountManager group={group} accounts={accounts} providerPresets={providerPresets ?? []} availableRoutes={providerPresets?.find((p) => p.accountGroupId === group.providerGroup)?.availableRoutes ?? []} busy={busy} apply={apply} />
       <div className="provider-access-card__head">
         <div className="provider-access-card__identity">
           <div className="provider-access-card__title">

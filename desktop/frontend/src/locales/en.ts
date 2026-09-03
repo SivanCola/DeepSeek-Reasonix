@@ -2028,6 +2028,7 @@ export const en = {
   "settings.accountRetired": "retired",
   "settings.accountRestore": "Restore",
   "settings.accountRoutesDisabled": "routes disabled",
+  "settings.accountRoutes": "Account routes",
   "settings.accountRetireConfirm": "Retire this account? Existing sessions will keep their provider entry.",
   "settings.addProviderAccess": "Add access",
   "settings.removeProviderAccess": "Remove access",

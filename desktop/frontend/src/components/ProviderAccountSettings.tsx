@@ -50,12 +50,14 @@ export function ProviderAccountManager({
   group,
   accounts,
   providerPresets,
+  availableRoutes = [],
   busy,
   apply,
 }: {
   group: { id: string; providerGroup?: string; providers: { providerId?: string }[] };
   accounts: AccountView[];
   providerPresets: ProviderPresetRef[];
+  availableRoutes?: string[];
   busy: boolean;
   apply: (fn: () => Promise<unknown>) => Promise<unknown>;
 }) {
@@ -99,6 +101,15 @@ export function ProviderAccountManager({
               <span>{account.enabled ? t("settings.accountEnabled") : t("settings.accountDisabled")}</span>
               <span>{account.keySet ? t("settings.keySet") : t("settings.noKey")}</span>
               {asArray(account.disabledRoutes).length > 0 ? <span>{asArray(account.disabledRoutes).length} {t("settings.accountRoutesDisabled")}</span> : null}
+              {availableRoutes.length > 1 && !account.retired ? (
+                <span className="provider-account-routes" role="group" aria-label={t("settings.accountRoutes")}>
+                  {availableRoutes.map((route) => {
+                    const disabled = asArray(account.disabledRoutes).includes(route);
+                    return <button key={route} type="button" className="btn btn--small" disabled={busy} aria-pressed={!disabled}
+                      onClick={() => apply(() => app.SetProviderAccountRouteEnabled(account.providerId, account.accountId, route, disabled))}>{route}</button>;
+                  })}
+                </span>
+              ) : null}
               {account.retired ? (
                 <button type="button" className="btn btn--small" disabled={busy} onClick={() => apply(() => app.RestoreProviderAccount(account.providerId, account.accountId))}>
                   {t("settings.accountRestore")}

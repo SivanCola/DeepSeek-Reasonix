@@ -17938,6 +17938,11 @@ body > .mermaid-diagram--fullscreen {
   min-width: 10rem;
   flex: 1 1 12rem;
 }
+.provider-account-routes {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
 @media (max-width: 620px) {
   .provider-account-row > strong { flex-basis: 100%; max-width: 100%; }
   .provider-account-row .btn, .provider-account-add .btn { min-height: 28px; }

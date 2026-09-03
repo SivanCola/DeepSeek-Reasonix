@@ -1566,6 +1566,7 @@ export const zhTW: Record<DictKey, string> = {
   "settings.accountRetired": "已退休",
   "settings.accountRestore": "恢復",
   "settings.accountRoutesDisabled": "個路由已停用",
+  "settings.accountRoutes": "帳號路由",
   "settings.accountRetireConfirm": "確定退休此帳號嗎？已有工作階段仍會保留其供應商項目。",
   "settings.addProviderAccess": "新增接入",
   "settings.removeProviderAccess": "移除接入",

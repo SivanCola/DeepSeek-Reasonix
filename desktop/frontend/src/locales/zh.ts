@@ -2030,6 +2030,7 @@ export const zh: Record<DictKey, string> = {
   "settings.accountRetired": "已退休",
   "settings.accountRestore": "恢复",
   "settings.accountRoutesDisabled": "个路由已停用",
+  "settings.accountRoutes": "账号路由",
   "settings.accountRetireConfirm": "确定退休此账号吗？已有会话仍会保留其供应商条目。",
   "settings.addProviderAccess": "添加接入",
   "settings.removeProviderAccess": "移除接入",
