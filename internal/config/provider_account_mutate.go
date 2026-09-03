@@ -261,6 +261,10 @@ func (c *Config) RetireProviderAccount(providerID, accountID string) error {
 	c.ProviderAccounts[idx].Retired = true
 	c.ProviderAccounts[idx].Enabled = boolPointer(false)
 	c.ProviderAccounts[idx].Default = false
+	for _, tmpl := range accountRouteTemplates(account.ProviderID) {
+		c.ProviderAccounts[idx].DisabledRoutes = append(c.ProviderAccounts[idx].DisabledRoutes, tmpl.RouteID)
+	}
+	c.ProviderAccounts[idx].DisabledRoutes = normalizeProviderAccountRoutes(c.ProviderAccounts[idx].DisabledRoutes)
 	c.ensureFamilyDefault(account.ProviderID)
 	return nil
 }

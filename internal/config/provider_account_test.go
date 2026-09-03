@@ -485,3 +485,24 @@ func TestSetDefaultAccountUpdatesFamilyDefaultModel(t *testing.T) {
 		t.Fatalf("new session model = %q, want team account", got)
 	}
 }
+
+func TestRetireProviderAccountDisablesAllRoutes(t *testing.T) {
+	cfg := Default()
+	if _, err := cfg.AddProviderAccount("opencode-go", "opencode-go-recommended", "Main", "OPENCODE_MAIN_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	account, err := cfg.AddProviderAccount("opencode-go", "opencode-go-recommended", "Team", "OPENCODE_TEAM_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.RetireProviderAccount(account.ProviderID, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, retired, _ := cfg.lookupProviderAccount(account.ProviderID, account.ID)
+	if !retired.Retired || retired.IsEnabled() || len(retired.DisabledRoutes) == 0 {
+		t.Fatalf("retired account = %+v", retired)
+	}
+	if _, ok := cfg.DefaultAccount(account.ProviderID); !ok {
+		t.Fatal("main account should remain family default after team retirement")
+	}
+}
