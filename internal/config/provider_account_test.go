@@ -121,6 +121,15 @@ func TestProviderAccountDisabledRoutesRoundTripWithoutResurrection(t *testing.T)
 	if err := cfg.SetProviderAccountRouteEnabled(account.ProviderID, account.ID, "opencode-go-responses", false); err != nil {
 		t.Fatal(err)
 	}
+	if err := cfg.SetProviderAccountRouteEnabled(account.ProviderID, account.ID, "opencode-go-responses", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Provider("opencode-go-responses--team"); !ok {
+		t.Fatal("restored route provider entry missing")
+	}
+	if err := cfg.SetProviderAccountRouteEnabled(account.ProviderID, account.ID, "opencode-go-responses", false); err != nil {
+		t.Fatal(err)
+	}
 	if err := cfg.SaveTo(path); err != nil {
 		t.Fatal(err)
 	}

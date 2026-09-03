@@ -123,6 +123,7 @@ func (c *Config) SetProviderAccountRouteEnabled(providerID, accountID, routeID s
 		return fmt.Errorf("set account route: unknown route %q for provider %s", routeID, providerID)
 	}
 	disabled := normalizeProviderAccountRoutes(account.DisabledRoutes)
+	oldDisabled := append([]string(nil), disabled...)
 	filtered := disabled[:0]
 	for _, route := range disabled {
 		if route != routeID {
@@ -136,12 +137,63 @@ func (c *Config) SetProviderAccountRouteEnabled(providerID, accountID, routeID s
 	if _, _, err := ReconcileProviderAccounts(c); err != nil {
 		return err
 	}
+	if enabled && indexAccountRouteEntry(c, account, routeID) < 0 {
+		// Optional routes are normally gated by the selected preset. An explicit
+		// enable request is an opt-in, so locate the curated preset that owns this
+		// route and expand that one route even when the account's base preset does
+		// not include it.
+		if err := ensureProviderAccountRoute(c, c.ProviderAccounts[idx], routeID); err != nil {
+			c.ProviderAccounts[idx].DisabledRoutes = oldDisabled
+			return err
+		}
+	}
 	if !enabled {
 		c.removeProviderAccountRouteAccess(account.ProviderID, account.ID, routeID)
 	} else {
 		c.restoreProviderAccountRouteAccess(account.ProviderID, account.ID, routeID)
 	}
 	return nil
+}
+
+func ensureProviderAccountRoute(c *Config, account ProviderAccount, routeID string) error {
+	for _, tmpl := range accountRouteTemplates(account.ProviderID) {
+		if tmpl.RouteID != routeID {
+			continue
+		}
+		candidate := account
+		if tmpl.Optional && strings.TrimSpace(candidate.PresetID) == "" {
+			for _, preset := range curatedProviderPresets {
+				if accountGroupIDForPresetID(preset.ID) != account.ProviderID {
+					continue
+				}
+				for _, entry := range preset.Entries {
+					if strings.TrimSpace(entry.Name) == tmpl.BaseName || strings.TrimSpace(entry.Name) == tmpl.RouteID {
+						candidate.PresetID = preset.ID
+						break
+					}
+				}
+				if candidate.PresetID != "" {
+					break
+				}
+			}
+		}
+		entries, err := ExpandProviderAccount(c, candidate)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.AccountRouteID != routeID {
+				continue
+			}
+			if err := c.UpsertProvider(entry); err != nil {
+				return err
+			}
+			c.markUserProvider(entry.Name)
+			return nil
+		}
+		return fmt.Errorf("set account route: route %q is unavailable in preset %q", routeID, candidate.PresetID)
+	}
+	return fmt.Errorf("set account route: unknown route %q for provider %s", routeID, account.ProviderID)
 }
 
 // RestoreProviderAccount re-enables an account, clears disabled routes and
