@@ -1029,6 +1029,9 @@ func appendLegacyAccountFamilyViews(views *[]ProviderView, cfg *config.Config, a
 	if views == nil || cfg == nil {
 		return
 	}
+	if len(cfg.Desktop.ProviderAccess) == 0 && configDeclaresProviderAccess(config.UserConfigPath()) {
+		return
+	}
 	for _, family := range []string{"deepseek"} {
 		if _, exists := cfg.Provider(family); exists {
 			continue
