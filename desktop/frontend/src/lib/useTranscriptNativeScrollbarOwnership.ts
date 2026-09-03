@@ -37,12 +37,15 @@ export function useTranscriptNativeScrollbarOwnership({
     const transaction = transactionRef.current;
     if (transaction?.element !== element) return;
     if (transaction.generation !== generationRef.current) {
-      cancel();
+      transactionRef.current = null;
+      delete element.dataset.nativeScrollbarDrag;
+      setDragging(false);
+      dispatch({ type: "NATIVE_SCROLLBAR_END", claimTail: false });
       return;
     }
     if (element.scrollTop > transaction.lastTop + 1) transaction.observedForwardProgress = true;
     transaction.lastTop = element.scrollTop;
-  }, [generationRef]);
+  }, [dispatch, generationRef]);
 
   const begin = useCallback((pointerId: number, element: HTMLDivElement) => {
     const displaced = transactionRef.current;
