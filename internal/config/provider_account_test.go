@@ -106,6 +106,37 @@ func TestProviderAccountDisabledRoutesRenderNormalized(t *testing.T) {
 	}
 }
 
+func TestProviderAccountDisabledRoutesRoundTripWithoutResurrection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("REASONIX_HOME", home)
+	path := filepath.Join(home, "config.toml")
+	cfg := Default()
+	if _, err := cfg.AddProviderAccount("opencode-go", "opencode-go-recommended", "Main", "OPENCODE_MAIN_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	account, err := cfg.AddProviderAccount("opencode-go", "opencode-go-recommended", "Team", "OPENCODE_TEAM_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetProviderAccountRouteEnabled(account.ProviderID, account.ID, "opencode-go-responses", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := LoadForEditWithoutCredentials(path)
+	_, team, ok := reloaded.lookupProviderAccount("opencode-go", "team")
+	if !ok || !providerAccountRouteDisabled(team, "opencode-go-responses") {
+		t.Fatalf("reloaded team account = %+v", team)
+	}
+	if _, ok := reloaded.Provider("opencode-go-responses--team"); !ok {
+		t.Fatal("reloaded config lost retained disabled route entry")
+	}
+	if _, ok := reloaded.ResolveModel("opencode-go--team/glm-5.2"); !ok {
+		t.Fatal("reloaded config lost explicit account model")
+	}
+}
+
 func TestExpandOpenCodeGoAndDeepSeekAccounts(t *testing.T) {
 	cfg := Default()
 	main, err := cfg.AddProviderAccount("opencode-go", "opencode-go-recommended", "主账号", "OPENCODE_GO_API_KEY")
