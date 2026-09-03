@@ -73,3 +73,55 @@ func TestProviderSelectionResolvesFamilyAccountModel(t *testing.T) {
 		t.Fatalf("invalid route = %+v", route)
 	}
 }
+
+func TestProviderSelectionKeepsModelPathAndRejectsCustomFamily(t *testing.T) {
+	cfg := Default()
+	if _, err := cfg.AddProviderAccount("deepseek", "", "Team", "DEEPSEEK_TEAM_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	selection, err := ParseProviderSelection(cfg, "deepseek/team/vendor/model-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Model != "vendor/model-v1" {
+		t.Fatalf("model path = %q, want vendor/model-v1", selection.Model)
+	}
+	custom := &Config{Providers: []ProviderEntry{{Name: "my-gateway", Kind: "openai", Model: "model"}}}
+	if _, err := ParseProviderSelection(custom, "my-gateway/model"); err == nil {
+		t.Fatal("custom provider unexpectedly parsed as curated selection")
+	}
+}
+
+func TestProviderSelectionSkipsDisabledRoute(t *testing.T) {
+	cfg := Default()
+	account, err := cfg.AddProviderAccount("opencode-go", "opencode-go-recommended", "Team", "OPENCODE_TEAM_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetProviderAccountRouteEnabled(account.ProviderID, account.ID, "opencode-go-responses", false); err != nil {
+		t.Fatal(err)
+	}
+	selection := ProviderSelection{FamilyID: account.ProviderID, AccountID: account.ID, Model: "grok-4.5"}
+	if _, err := cfg.ResolveSelection(selection); err == nil {
+		t.Fatal("disabled route unexpectedly resolved")
+	}
+}
+
+func TestApplyProviderAccountChangeRollsBackOnInvalidPatch(t *testing.T) {
+	cfg := Default()
+	account, err := cfg.AddProviderAccount("deepseek", "", "Team", "DEEPSEEK_TEAM_KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := cloneProviderAccounts(cfg.ProviderAccounts)
+	bad := account
+	bad.Label = ""
+	if err := cfg.ApplyProviderAccountChange(ProviderAccountChange{
+		FamilyID: account.ProviderID, AccountID: account.ID, Before: &account, After: &bad,
+	}); err == nil {
+		t.Fatal("invalid account patch unexpectedly succeeded")
+	}
+	if !reflect.DeepEqual(cfg.ProviderAccounts, before) {
+		t.Fatalf("account patch was not rolled back: before=%+v after=%+v", before, cfg.ProviderAccounts)
+	}
+}

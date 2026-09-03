@@ -51,7 +51,9 @@ func (c *Config) AddProviderAccount(providerID, presetID, label, apiKeyEnv strin
 	if err := validateProviderAccount(account); err != nil {
 		return ProviderAccount{}, err
 	}
+	c.ProviderAccounts = append(c.ProviderAccounts, account)
 	change := ProviderAccountChange{FamilyID: providerID, AccountID: account.ID, After: &account}
+	c.ProviderAccounts = c.ProviderAccounts[:len(c.ProviderAccounts)-1]
 	if err := c.ApplyProviderAccountChange(change); err != nil {
 		return ProviderAccount{}, err
 	}
@@ -59,32 +61,48 @@ func (c *Config) AddProviderAccount(providerID, presetID, label, apiKeyEnv strin
 }
 
 func (c *Config) SetProviderAccountDefault(providerID, accountID string) error {
-	_, account, ok := c.lookupProviderAccount(providerID, accountID)
+	idx, account, ok := c.lookupProviderAccount(providerID, accountID)
 	if !ok {
 		return fmt.Errorf("set default account: no account %s/%s", providerID, accountID)
 	}
 	if account.Retired || !account.IsEnabled() {
 		return fmt.Errorf("set default account: %s/%s is not available", providerID, accountID)
 	}
-	after := cloneProviderAccount(account)
-	after.Default = true
-	return c.ApplyProviderAccountChange(ProviderAccountChange{FamilyID: account.ProviderID, AccountID: account.ID, Before: &account, After: &after, syncDefaultModel: true})
+	for i := range c.ProviderAccounts {
+		if c.ProviderAccounts[i].ProviderID == account.ProviderID {
+			c.ProviderAccounts[i].Default = i == idx
+		}
+	}
+	c.syncFamilyDefaultModel(account.ProviderID, account.ID)
+	return nil
 }
 
 func (c *Config) SetProviderAccountEnabled(providerID, accountID string, enabled bool) error {
-	_, account, ok := c.lookupProviderAccount(providerID, accountID)
+	idx, account, ok := c.lookupProviderAccount(providerID, accountID)
 	if !ok {
 		return fmt.Errorf("set account enabled: no account %s/%s", providerID, accountID)
 	}
 	if account.Retired {
 		return fmt.Errorf("set account enabled: %s/%s is retired", providerID, accountID)
 	}
-	after := cloneProviderAccount(account)
-	after.Enabled = boolPointer(enabled)
-	if !enabled {
-		after.Default = false
+	c.ProviderAccounts[idx].Enabled = boolPointer(enabled)
+	if !enabled && (account.Default || c.defaultModelUsesAccount(account)) {
+		c.ProviderAccounts[idx].Default = false
+		c.ensureFamilyDefault(account.ProviderID)
+		if replacement, ok := c.DefaultAccount(account.ProviderID); ok {
+			c.syncFamilyDefaultModel(account.ProviderID, replacement.ID)
+		}
 	}
-	return c.ApplyProviderAccountChange(ProviderAccountChange{FamilyID: account.ProviderID, AccountID: account.ID, Before: &account, After: &after, syncDefaultModel: true})
+	return nil
+}
+
+func (c *Config) defaultModelUsesAccount(account ProviderAccount) bool {
+	entry, ok := c.ResolveModel(c.DefaultModel)
+	if !ok {
+		return false
+	}
+	providerID, accountID, ok := ProviderAccountIdentity(*entry)
+	return ok && providerID == account.ProviderID && accountID == account.ID
 }
 
 // SetProviderAccountRouteEnabled toggles a generated route for new selection;
@@ -270,7 +288,7 @@ func (c *Config) restoreProviderAccountRouteAccess(providerID, accountID, routeI
 }
 
 func (c *Config) RenameProviderAccount(providerID, accountID, label string) error {
-	_, account, ok := c.lookupProviderAccount(providerID, accountID)
+	idx, account, ok := c.lookupProviderAccount(providerID, accountID)
 	if !ok {
 		return fmt.Errorf("rename account: no account %s/%s", providerID, accountID)
 	}
@@ -278,28 +296,32 @@ func (c *Config) RenameProviderAccount(providerID, accountID, label string) erro
 	if label == "" {
 		return fmt.Errorf("rename account: label is required")
 	}
-	after := cloneProviderAccount(account)
-	after.Label = label
-	return c.ApplyProviderAccountChange(ProviderAccountChange{FamilyID: account.ProviderID, AccountID: account.ID, Before: &account, After: &after})
+	c.ProviderAccounts[idx].Label = label
+	for i := range c.Providers {
+		if c.Providers[i].AccountProviderID == account.ProviderID && c.Providers[i].AccountID == account.ID {
+			c.Providers[i].AccountLabel = label
+		}
+	}
+	return nil
 }
 
 func (c *Config) RetireProviderAccount(providerID, accountID string) error {
-	_, account, ok := c.lookupProviderAccount(providerID, accountID)
+	idx, account, ok := c.lookupProviderAccount(providerID, accountID)
 	if !ok {
 		return fmt.Errorf("retire account: no account %s/%s", providerID, accountID)
 	}
 	if refs := c.ProviderAccountConfigRefs(providerID, accountID); len(refs) > 0 {
 		return fmt.Errorf("retire account %s/%s: still referenced by %s", providerID, accountID, strings.Join(refs, ", "))
 	}
-	after := cloneProviderAccount(account)
-	after.Retired = true
-	after.Enabled = boolPointer(false)
-	after.Default = false
+	c.ProviderAccounts[idx].Retired = true
+	c.ProviderAccounts[idx].Enabled = boolPointer(false)
+	c.ProviderAccounts[idx].Default = false
 	for _, tmpl := range accountRouteTemplates(account.ProviderID) {
-		after.DisabledRoutes = append(after.DisabledRoutes, tmpl.RouteID)
+		c.ProviderAccounts[idx].DisabledRoutes = append(c.ProviderAccounts[idx].DisabledRoutes, tmpl.RouteID)
 	}
-	after.DisabledRoutes = normalizeProviderAccountRoutes(after.DisabledRoutes)
-	return c.ApplyProviderAccountChange(ProviderAccountChange{FamilyID: account.ProviderID, AccountID: account.ID, Before: &account, After: &after, syncDefaultModel: true})
+	c.ProviderAccounts[idx].DisabledRoutes = normalizeProviderAccountRoutes(c.ProviderAccounts[idx].DisabledRoutes)
+	c.ensureFamilyDefault(account.ProviderID)
+	return nil
 }
 
 func (c *Config) SetProviderAccountKeyEnv(providerID, accountID, apiKeyEnv string) error {

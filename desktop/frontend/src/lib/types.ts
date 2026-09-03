@@ -1421,6 +1421,7 @@ export interface MCPMarketplaceView {
 
 export interface ModelInfo {
   ref: string; // "provider/model" — pass to SetModel
+  selectionRef?: string; // canonical "family/account/model" for curated providers
   provider: string;
   model: string;
   current: boolean; providerGroup?: string; accountId?: string; accountLabel?: string; accountDefault?: boolean;

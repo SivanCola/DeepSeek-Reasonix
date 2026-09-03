@@ -33,6 +33,27 @@ type ProviderSelection struct {
 	Model     string
 }
 
+// SelectionForProviderModel projects a materialized provider entry into the
+// canonical family/account/model identity. It returns false for ordinary
+// custom providers, which continue using their provider/model reference.
+func (c *Config) SelectionForProviderModel(entry ProviderEntry, model string) (ProviderSelection, bool) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ProviderSelection{}, false
+	}
+	if family, account, ok := ProviderAccountIdentity(entry); ok {
+		if _, _, found := c.lookupProviderAccount(family, account); found {
+			return ProviderSelection{FamilyID: family, AccountID: account, Model: model}, true
+		}
+	}
+	if family, _, _, ok := curatedProviderIdentity(entry); ok {
+		if _, _, found := c.lookupProviderAccount(family, MainProviderAccountID); found {
+			return ProviderSelection{FamilyID: family, AccountID: MainProviderAccountID, Model: model}, true
+		}
+	}
+	return ProviderSelection{}, false
+}
+
 func (s ProviderSelection) Ref() string {
 	return strings.TrimSpace(s.FamilyID) + "/" + strings.TrimSpace(s.AccountID) + "/" + strings.TrimSpace(s.Model)
 }
@@ -41,7 +62,7 @@ func (s ProviderSelection) Ref() string {
 // curated preset registry. No provider name or endpoint is used as identity.
 func CuratedProviderFamilies() []ProviderFamilyDefinition {
 	byID := map[string]*ProviderFamilyDefinition{}
-	for _, preset := range curatedProviderPresets {
+	for _, preset := range CuratedProviderPresets() {
 		familyID := preset.resolvedAccountGroupID()
 		if familyID == "" {
 			continue
@@ -83,6 +104,25 @@ func CuratedProviderFamilies() []ProviderFamilyDefinition {
 	}
 	families := make([]ProviderFamilyDefinition, 0, len(byID))
 	for _, family := range byID {
+		// DeepSeek's legacy Flash/Pro routes are built-in defaults rather than
+		// standalone curated presets. Include them in the family catalog so the
+		// canonical selection API can resolve migrated accounts without a provider
+		// specific branch in callers.
+		for _, template := range accountRouteTemplates(family.ID) {
+			found := false
+			for _, route := range family.Routes {
+				if route.ID == template.RouteID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				family.Routes = append(family.Routes, ProviderRouteDefinition{
+					ID: template.RouteID, PresetID: template.Entry.PresetID,
+					Kind: strings.TrimSpace(template.Entry.Kind), Models: append([]string(nil), template.Entry.ModelList()...),
+				})
+			}
+		}
 		if family.RecommendedPresetID == "" {
 			for _, presetID := range family.PresetIDs {
 				if family.RecommendedPresetID == "" || presetRankByID(presetID) < presetRankByID(family.RecommendedPresetID) {
