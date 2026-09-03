@@ -327,10 +327,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // path 2465.105 KiB raw; the merged test channel measures 2464.979 KiB.
 // Session takeover banners and #9703/#9711's provisional-selection handoff
 // combine with Sticky Context's pinned-file state at 2469.125 KiB raw on the
-// merged stable path. Retain only the next one-decimal ceiling.
-// The passive reader-anchor lease for delayed WebView2 range commits measures
-// 2469.347 KiB raw (+0.222 KiB, +0.009%). Retain only the next one-decimal
-// ceiling; gzip and largest-chunk budgets remain unchanged.
-const rawInitialBudgetKiB = 2_469.4;
+// merged stable path. Account route controls add 4.12 KiB raw to the initial
+// graph; retain only the measured one-decimal ceiling.
+const rawInitialBudgetKiB = 2_473.3;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
