@@ -367,6 +367,9 @@ func (c *Config) syncFamilyDefaultModel(providerID, accountID string) {
 		return
 	}
 	family, _, ok := ProviderAccountIdentity(*entry)
+	if !ok {
+		family, _, _, ok = curatedProviderIdentity(*entry)
+	}
 	if !ok || family != providerID {
 		return
 	}
