@@ -78,6 +78,9 @@ app.get("/categories", async (c) => {
 });
 
 const TopicList = z.object({ category: z.string().optional(), sort: z.enum(["latest", "top"]).optional() });
+// Topic detail responses are keyset-paginated. `after` and `afterId` together
+// identify the last row returned, so equal timestamps cannot duplicate or skip
+// posts when a topic receives concurrent replies.
 const TopicPostsQuery = z
   .object({
     limit: z.coerce.number().int().min(1).max(100).default(50),

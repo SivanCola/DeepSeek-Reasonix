@@ -85,3 +85,8 @@ CREATE TABLE IF NOT EXISTS package_install_daily (
   count      INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (date, package_id)
 );
+
+CREATE TABLE IF NOT EXISTS registry_migration_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
