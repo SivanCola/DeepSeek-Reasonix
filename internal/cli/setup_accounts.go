@@ -211,7 +211,7 @@ func addProviderAccountToSession(s *providerSetupSession) bool {
 	if label == "" {
 		return false
 	}
-	key := strings.TrimSpace(askCredentialLine(fmt.Sprintf(i18n.M.SetupPromptAPIKeyFmt, preset.KeyEnv)))
+	key := strings.TrimSpace(askCredentialLine())
 	account, err := s.cfg.AddProviderAccount(preset.AccountGroupID, preset.ID, label, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -272,7 +272,7 @@ func updateAccountKey(s *providerSetupSession, account config.ProviderAccount) {
 	if strings.TrimSpace(account.APIKeyEnv) == "" {
 		return
 	}
-	value := strings.TrimSpace(askCredentialLine(fmt.Sprintf(i18n.M.SetupPromptAPIKeyFmt, account.APIKeyEnv)))
+	value := strings.TrimSpace(askCredentialLine())
 	if value == "" {
 		return
 	}
@@ -315,11 +315,9 @@ func askLine(label, def string) string {
 	return line
 }
 
-func askCredentialLine(label string) string {
-	// Never echo a credential value or pass it through the generic prompt's
-	// default argument. This keeps API key input out of logging sinks while
-	// still showing the environment variable name to the user.
-	fmt.Printf("%s: ", label)
+func askCredentialLine() string {
+	// Keep the credential prompt constant so tainted input cannot reach logging.
+	fmt.Print("API key: ")
 	var line string
 	_, _ = fmt.Scanln(&line)
 	return strings.TrimSpace(line)
