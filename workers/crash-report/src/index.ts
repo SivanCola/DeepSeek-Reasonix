@@ -42,9 +42,9 @@ import {
   groupDiagnosticSummary,
   isDevelopmentGroup,
   reportAggregateStatements,
-  type DiagnosticsQueryObserver,
   type DiagnosticFacets,
 } from "./diagnostics_v2";
+import { statsQueryObserver } from "./stats_timing";
 import { Report, WebRuntimeDiagnostic, type ReportPayload } from "./report_schema";
 import { statsFilters, type StatsFilters } from "./stats_filters";
 import {
@@ -1032,21 +1032,6 @@ async function metricRows(env: Env, days: 7 | 30, surface: ClientSurfaceName, pr
 
 type Bar = { label: string; users: number };
 type MetricTotals = { signal: string; bucket: string; total: number }[];
-
-const STATS_SLOW_QUERY_MS = 250;
-const STATS_QUERY_SAMPLE_RATE = 0.02;
-
-function observeStatsQuery(route: string, label: string, durationMs: number, rows: number): void {
-  if (durationMs < STATS_SLOW_QUERY_MS && Math.random() >= STATS_QUERY_SAMPLE_RATE) return;
-  console.log(JSON.stringify({
-    event: "d1_query_timing",
-    route,
-    label,
-    durationMs: Math.round(durationMs),
-    rows,
-  }));
-}
-
 // Each stats module renders only its own section, so a page load queries only
 // what that section shows.
 async function handleStats(request: Request, env: Env, user: User, activeModule: StatsModule): Promise<Response> {
@@ -1106,12 +1091,10 @@ async function handleStats(request: Request, env: Env, user: User, activeModule:
     overview = overviewR;
   } else if (activeModule === "diagnostics") {
     latestVersion = await latestObservedVersion(env, "desktop");
-    const observe: DiagnosticsQueryObserver = (label, durationMs, rows) =>
-      observeStatsQuery("/stats/diagnostics", label, durationMs, rows);
     const [crashesR, sourcesR, facets, linkedSince] = await Promise.all([
-      crashGroups(env, filters, latestVersion, observe),
+      crashGroups(env, filters, latestVersion, statsQueryObserver("/stats/diagnostics")),
       bars(`SELECT source AS label, COUNT(*) AS users FROM groups WHERE ${diagnosticWindowWhere(days)} GROUP BY source ORDER BY users DESC`),
-      loadDiagnosticFacets(env, days, observe),
+      loadDiagnosticFacets(env, days, statsQueryObserver("/stats/diagnostics")),
       env.DB.prepare("SELECT value FROM diagnostics_meta WHERE key = 'installation_linked_since'").first<{ value: string }>(),
     ]);
     crashes = crashesR.results;
@@ -1167,10 +1150,8 @@ async function handleGroup(env: Env, fingerprint: string, user: User): Promise<R
     ).bind(fingerprint).all<ReportSample>();
     reports = stored.results;
   }
-  const observe: DiagnosticsQueryObserver = (label, durationMs, rows) =>
-    observeStatsQuery("/stats/group", label, durationMs, rows);
   return html(renderGroup(
-    group, reports, user, await groupDiagnosticSummary(env, fingerprint, observe),
+    group, reports, user, await groupDiagnosticSummary(env, fingerprint, statsQueryObserver("/stats/group")),
     state ? { state: state.sample_state, epoch: Number(state.sample_epoch) } : undefined,
   ));
 }
