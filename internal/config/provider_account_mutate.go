@@ -135,6 +135,7 @@ func (c *Config) SetProviderAccountRouteEnabled(providerID, accountID, routeID s
 	}
 	c.ProviderAccounts[idx].DisabledRoutes = normalizeProviderAccountRoutes(filtered)
 	if _, _, err := ReconcileProviderAccounts(c); err != nil {
+		c.ProviderAccounts[idx].DisabledRoutes = oldDisabled
 		return err
 	}
 	if enabled && indexAccountRouteEntry(c, account, routeID) < 0 {
