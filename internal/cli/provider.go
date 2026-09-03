@@ -63,9 +63,17 @@ func (m *chatTUI) openProviderPicker() {
 				selected = len(items)
 			}
 		}
+		modelNames := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			models := entry.ChatModelList()
+			if len(models) == 0 {
+				models = entry.ModelList()
+			}
+			modelNames = append(modelNames, models...)
+		}
 		items = append(items, quickPickerItem{
 			ID: entries[0].Name, Label: account.Label,
-			Description: fmt.Sprintf("%s · %d route(s)", account.ProviderID, len(entries)), Status: status,
+			Description: fmt.Sprintf("%s · %d route(s) · %s", account.ProviderID, len(entries), strings.Join(modelNames, ", ")), Status: status,
 		})
 	}
 	for i := range cfg.Providers {
