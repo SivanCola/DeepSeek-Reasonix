@@ -90,15 +90,7 @@ func (a *App) remoteProxyModelCatalog(curModel string) []ModelInfo {
 		}
 		for _, model := range entry.ChatModelList() {
 			ref := entry.Name + "/" + model
-			providerName := entry.Name
-			if selection, ok := cfg.SelectionForProviderModel(*entry, model); ok {
-				providerName = selection.FamilyID
-				account, _ := config.ProviderAccountForEntry(cfg, *entry)
-				out = append(out, ModelInfo{Ref: ref, SelectionRef: selection.Ref(), Provider: providerName, Model: model, Current: ref == canonical || entry.Name+"/"+model == canonical,
-					ProviderGroup: selection.FamilyID, AccountID: selection.AccountID, AccountLabel: account.Label, AccountDefault: account.Default})
-				continue
-			}
-			out = append(out, ModelInfo{Ref: ref, Provider: providerName, Model: model, Current: ref == canonical || entry.Name+"/"+model == canonical})
+			out = append(out, ModelInfo{Ref: ref, Provider: entry.Name, Model: model, Current: ref == canonical})
 		}
 	}
 	return out
@@ -135,15 +127,8 @@ func (a *App) desktopModelCatalog(curModel, workspaceRoot string, ctrl control.S
 		}
 		for _, m := range p.ChatModelList() {
 			ref := p.Name + "/" + m
-			providerName := p.Name
-			if selection, ok := cfg.SelectionForProviderModel(*p, m); ok {
-				providerName = selection.FamilyID
-				out = append(out, ModelInfo{Ref: ref, SelectionRef: selection.Ref(), Provider: providerName, Model: m, Current: ref == curModel || p.Name+"/"+m == curModel,
-					ProviderGroup: account.ProviderID, AccountID: account.ID, AccountLabel: account.Label, AccountDefault: account.Default})
-				continue
-			}
 			out = append(out, ModelInfo{
-				Ref: ref, Provider: providerName, Model: m, Current: ref == curModel || p.Name+"/"+m == curModel,
+				Ref: ref, Provider: p.Name, Model: m, Current: ref == curModel,
 				ProviderGroup: account.ProviderID, AccountID: account.ID, AccountLabel: account.Label, AccountDefault: account.Default,
 			})
 		}
