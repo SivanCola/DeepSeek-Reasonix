@@ -19,10 +19,13 @@ var sessionReset = map[string]bool{
 	"cacheHit":         true,
 	"cacheMiss":        true,
 	"missingReasoning": true,
-	"compactionMu":     true,
-	"compactionState":  true,
-	"cacheState":       true,
-	"compaction":       true,
+	// A strong-projection repair belongs to the corrupted conversation; a new
+	// conversation starts without it.
+	"reasoningReplayStrongProjection": true,
+	"compactionMu":                    true,
+	"compactionState":                 true,
+	"cacheState":                      true,
+	"compaction":                      true,
 }
 
 // sessionCarryOver names the fields reset deliberately leaves alone, each with

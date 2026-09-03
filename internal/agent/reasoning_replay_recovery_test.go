@@ -290,3 +290,143 @@ func TestStrictNoWarningReplayDoesNotLeakSpeculativeEvents(t *testing.T) {
 		}
 	}
 }
+
+func thinkingReplay400Error() error {
+	return provider.ParseReasoningReplayError(&provider.APIError{
+		Provider: "strict-replay", Status: 400,
+		Body: `{"error":{"message":"The ` + "`content[].thinking`" + ` in the thinking mode must be passed back to the API"}}`,
+	})
+}
+
+func reasoningReplaySeededSession() *Session {
+	session := NewSession("system")
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "earlier"})
+	session.Add(provider.Message{Role: provider.RoleAssistant, Content: "old answer", ReasoningContent: "stale thinking"})
+	return session
+}
+
+func TestReasoningReplay400RepairsProjectionAndRetriesOnce(t *testing.T) {
+	mp := testutil.NewMock("strict-replay",
+		testutil.ErrorTurn(thinkingReplay400Error()),
+		testutil.Turn{Text: "done"},
+		testutil.Turn{Text: "again done"},
+	)
+	sink := &recordSink{}
+	session := reasoningReplaySeededSession()
+	a := New(strictAssistantReasoningProvider{mp}, echoRegistry(), session, Options{}, sink)
+
+	if err := a.Run(withNoClosedLoop(context.Background()), "next"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := mp.CallCount(); got != 2 {
+		t.Fatalf("provider calls = %d, want rejected attempt plus one repair retry", got)
+	}
+	requests := mp.Requests()
+	var firstReasoning, secondReasoning int
+	for _, m := range requests[0].Messages {
+		if m.ReasoningContent != "" {
+			firstReasoning++
+		}
+	}
+	for _, m := range requests[1].Messages {
+		if m.ReasoningContent != "" {
+			secondReasoning++
+		}
+	}
+	if firstReasoning != 1 || secondReasoning != 0 {
+		t.Fatalf("reasoning in attempts = %d then %d, want the repair retry stripped", firstReasoning, secondReasoning)
+	}
+	// The frozen request may change only in Messages; everything else is
+	// byte-identical to the rejected attempt.
+	strippedTools := requests[1]
+	strippedTools.Messages = requests[0].Messages
+	if !reflect.DeepEqual(requests[0], strippedTools) {
+		t.Fatalf("repair retry changed more than Messages:\nfirst=%+v\nretry=%+v", requests[0], requests[1])
+	}
+	// Canonical history is never modified by the provider-visible projection.
+	for _, m := range session.Snapshot() {
+		if m.Role == provider.RoleAssistant && m.Content == "old answer" && m.ReasoningContent != "stale thinking" {
+			t.Fatalf("canonical history lost its reasoning: %+v", m)
+		}
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryReasoningReplay400Detected); got != 1 {
+		t.Fatalf("reasoning_replay_400_detected audits = %d, want 1", got)
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryReasoningReplay400Recovered); got != 1 {
+		t.Fatalf("reasoning_replay_400_recovered audits = %d, want 1", got)
+	}
+	var repairNotices int
+	for _, e := range sink.kinds(event.Notice) {
+		if e.Code == event.NoticeCodeReasoningReplayRepair {
+			repairNotices++
+			if e.Level != event.LevelWarn {
+				t.Fatalf("repair notice level = %v, want warn", e.Level)
+			}
+		}
+	}
+	if repairNotices != 1 {
+		t.Fatalf("repair notices = %d, want 1", repairNotices)
+	}
+
+	// The strong projection stays active for the rest of the conversation.
+	if err := a.Run(withNoClosedLoop(context.Background()), "again"); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if got := mp.CallCount(); got != 3 {
+		t.Fatalf("provider calls = %d, want no fresh 400 on the next run", got)
+	}
+	for _, m := range mp.Requests()[2].Messages {
+		if m.ReasoningContent != "" {
+			t.Fatalf("later request still carries reasoning under strong projection: %+v", m)
+		}
+	}
+}
+
+func TestReasoningReplay400RepairExhaustionStaysTerminal(t *testing.T) {
+	mp := testutil.NewMock("strict-replay",
+		testutil.ErrorTurn(thinkingReplay400Error()),
+		testutil.ErrorTurn(thinkingReplay400Error()),
+		testutil.Turn{Text: "unreachable"},
+	)
+	sink := &recordSink{}
+	a := New(strictAssistantReasoningProvider{mp}, echoRegistry(), reasoningReplaySeededSession(), Options{}, sink)
+
+	err := a.Run(withNoClosedLoop(context.Background()), "next")
+	var replayErr *provider.ReasoningReplayError
+	if !errors.As(err, &replayErr) {
+		t.Fatalf("Run error = %v, want ReasoningReplayError", err)
+	}
+	if got := mp.CallCount(); got != 2 {
+		t.Fatalf("provider calls = %d, want exactly one repair retry", got)
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryReasoningReplay400Detected); got != 1 {
+		t.Fatalf("reasoning_replay_400_detected audits = %d, want 1", got)
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryReasoningReplay400Recovered); got != 0 {
+		t.Fatalf("reasoning_replay_400_recovered audits = %d, want 0 after a failed repair", got)
+	}
+}
+
+func TestNonReplay400DoesNotTriggerReasoningRepair(t *testing.T) {
+	mp := testutil.NewMock("strict-replay",
+		testutil.ErrorTurn(&provider.APIError{Provider: "strict-replay", Status: 400, Body: `{"error":{"message":"invalid request: unknown tool"}}`}),
+		testutil.Turn{Text: "unreachable"},
+	)
+	sink := &recordSink{}
+	a := New(strictAssistantReasoningProvider{mp}, echoRegistry(), reasoningReplaySeededSession(), Options{}, sink)
+
+	err := a.Run(withNoClosedLoop(context.Background()), "next")
+	var apiErr *provider.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("Run error = %v, want the raw APIError", err)
+	}
+	if replayErr := provider.AsReasoningReplayError(err); replayErr != nil {
+		t.Fatalf("unrelated 400 misclassified as reasoning replay: %v", replayErr)
+	}
+	if got := mp.CallCount(); got != 1 {
+		t.Fatalf("provider calls = %d, want no retry for an unrelated 400", got)
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryReasoningReplay400Detected); got != 0 {
+		t.Fatalf("reasoning_replay_400_detected audits = %d, want 0", got)
+	}
+}

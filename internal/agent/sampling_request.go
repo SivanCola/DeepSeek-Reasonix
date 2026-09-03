@@ -165,7 +165,13 @@ func (a *Agent) providerProjectionMessages(msgs []provider.Message) []provider.M
 		// The provider-declared fallback owns this tool loop. Strict projection
 		// here would erase its completed tool round before adapter serialization.
 		if !a.sess.missingReasoning.fallbackActive || !provider.SupportsMissingReasoningFallback(a.svc.prov) {
-			if repaired, changed := provider.ProjectReplaySafeMessages(a.svc.prov, msgs); changed {
+			if a.sess.reasoningReplayStrongProjection {
+				// A repaired thinking-400 conversation keeps the stripped
+				// projection: its canonical reasoning is stale for this provider.
+				if repaired, changed := provider.ProjectReasoningStrippedMessages(a.svc.prov, msgs); changed {
+					msgs = repaired
+				}
+			} else if repaired, changed := provider.ProjectReplaySafeMessages(a.svc.prov, msgs); changed {
 				msgs = repaired
 			}
 		}

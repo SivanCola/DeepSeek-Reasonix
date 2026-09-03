@@ -363,6 +363,8 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 	// its delta so RequestCount equals real HTTP POSTs (no triangular growth).
 	ctx = provider.WithRequestAttemptCounter(ctx)
 	var contextRecovery contextRecoveryBudget
+	var replayRecovery reasoningReplayRecoveryBudget
+	reasoningReplayRepaired := false
 
 	var billable *provider.Usage
 	var last streamedTurn
@@ -387,6 +389,20 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 				}
 				a.emitStreamAttempt(attemptID, event.StreamAttemptDiscard, attempt, "context_limit", result.err)
 				frozen = next
+				attempt = 0
+				continue
+			}
+			// A thinking-400 means the frozen history's replayed reasoning is
+			// stale for this provider. Repair the projection once and retry;
+			// every other 400 keeps falling through to the terminal path.
+			if next, retryReplay := a.recoverReasoningReplay400(frozen, result.err, &replayRecovery); retryReplay {
+				if streamSink != nil {
+					streamSink.Discard()
+				}
+				a.emitStreamAttempt(attemptID, event.StreamAttemptDiscard, attempt, "reasoning_replay_400", result.err)
+				event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryReasoningReplay400Detected})
+				frozen = next
+				reasoningReplayRepaired = true
 				attempt = 0
 				continue
 			}
@@ -474,6 +490,12 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 		streamSink.Flush()
 		a.emitStreamAttempt(attemptID, event.StreamAttemptCommit, attempt, "", nil)
 		result.usage = finalizeSamplingUsage(billable, result.usage)
+		if reasoningReplayRepaired {
+			// The repair retry proved the canonical history's stored reasoning is
+			// stale for this provider; keep the strong projection for the rest of
+			// the conversation so later rounds do not pay another 400.
+			a.activateReasoningReplayStrongProjection()
+		}
 		return result
 	}
 	return last

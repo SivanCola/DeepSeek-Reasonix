@@ -25,6 +25,12 @@ type sessionRuntime struct {
 
 	missingReasoning missingReasoningWatch
 
+	// reasoningReplayStrongProjection is set once a thinking-400 catch-and-repair
+	// retry succeeds: the canonical history carries reasoning this provider
+	// rejects, so every later provider request in this conversation keeps using
+	// the stripped projection instead of paying another 400 per round.
+	reasoningReplayStrongProjection bool
+
 	// compactionMu guards projection snapshots/install and the in-memory sidecar
 	// generation. Network summarization never runs while this lock is held.
 	compactionMu sync.Mutex
@@ -65,6 +71,7 @@ func (r *sessionRuntime) reset(s *Session) {
 	r.cacheMiss.Store(0)
 	r.output.reset()
 	r.missingReasoning = missingReasoningWatch{}
+	r.reasoningReplayStrongProjection = false
 	r.compactionMu.Lock()
 	r.compactionState = CompactionState{} // lineage change; disk reloaded on Resume
 	r.cacheState = CacheStateUnknown

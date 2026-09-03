@@ -673,6 +673,8 @@ const (
 	ProtocolRecoveryClientToolRejected              ProtocolRecoveryKind = "client_tool_rejected_unreplayable_reasoning"
 	ProtocolRecoveryServerSearchSalvaged            ProtocolRecoveryKind = "server_search_history_salvaged"
 	ProtocolRecoveryHistoryRepaired                 ProtocolRecoveryKind = "unreplayable_history_repaired"
+	ProtocolRecoveryReasoningReplay400Detected      ProtocolRecoveryKind = "reasoning_replay_400_detected"
+	ProtocolRecoveryReasoningReplay400Recovered     ProtocolRecoveryKind = "reasoning_replay_400_recovered"
 )
 
 type ProtocolRecoveryAudit struct {

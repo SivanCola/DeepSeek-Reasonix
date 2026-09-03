@@ -82,6 +82,36 @@ func AllowsEmptyReasoningFallback(p Provider) bool {
 	return ok && policy.AllowsEmptyReasoningFallback()
 }
 
+// ProjectReasoningStrippedMessages is the catch-and-repair projection for a
+// provider that rejected replayed thinking/reasoning history with
+// ReasoningReplayError. It follows the vendor-documented self-heal recipe:
+// strip every assistant message's reasoning/thinking metadata from the
+// provider-visible projection, then drop the tool activity that can no longer
+// be paired with its thinking block. Canonical session messages are never
+// modified; a history with nothing to strip keeps its backing slice.
+func ProjectReasoningStrippedMessages(p Provider, msgs []Message) ([]Message, bool) {
+	work := msgs
+	stripped := false
+	for i, m := range msgs {
+		if m.Role != RoleAssistant {
+			continue
+		}
+		if m.ReasoningContent == "" && m.ReasoningSignature == "" && m.ReasoningID == "" && m.ReasoningStatus == "" {
+			continue
+		}
+		if !stripped {
+			work = append([]Message(nil), msgs...)
+			stripped = true
+		}
+		work[i].ReasoningContent = ""
+		work[i].ReasoningSignature = ""
+		work[i].ReasoningID = ""
+		work[i].ReasoningStatus = ""
+	}
+	projected, projectedChanged := ProjectReplaySafeMessages(p, work)
+	return projected, stripped || projectedChanged
+}
+
 // ProjectReplaySafeMessages returns the provider-visible projection for
 // histories that contain assistant activity without the reasoning required to
 // replay it. Canonical session messages are never modified. Healthy histories
