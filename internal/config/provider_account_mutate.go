@@ -94,9 +94,8 @@ func (c *Config) SetProviderAccountEnabled(providerID, accountID string, enabled
 	return nil
 }
 
-// SetProviderAccountRouteEnabled controls whether a generated route is
-// available for new model selection. Disabled routes remain materialized in
-// Providers so existing sessions and explicit references can still resolve.
+// SetProviderAccountRouteEnabled toggles a generated route for new selection;
+// retained entries keep old sessions resolvable.
 func (c *Config) SetProviderAccountRouteEnabled(providerID, accountID, routeID string, enabled bool) error {
 	if c == nil {
 		return fmt.Errorf("set account route: nil config")
@@ -139,10 +138,7 @@ func (c *Config) SetProviderAccountRouteEnabled(providerID, accountID, routeID s
 		return err
 	}
 	if enabled && indexAccountRouteEntry(c, account, routeID) < 0 {
-		// Optional routes are normally gated by the selected preset. An explicit
-		// enable request is an opt-in, so locate the curated preset that owns this
-		// route and expand that one route even when the account's base preset does
-		// not include it.
+		// Explicitly enabling an optional route opts into its curated preset route.
 		if err := ensureProviderAccountRoute(c, c.ProviderAccounts[idx], routeID); err != nil {
 			c.ProviderAccounts[idx].DisabledRoutes = oldDisabled
 			return err

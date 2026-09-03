@@ -64,10 +64,7 @@ func (a *App) RemoveProviderAccesses(rawNames []string) error {
 	for _, name := range names {
 		p, ok := cfg.Provider(name)
 		if !ok {
-			// A family access card can refer to generated official routes even
-			// when its canonical provider alias is absent from the loaded config.
-			// Keep validating the family so runtime-reference guards run before
-			// reporting a missing provider.
+			// Family cards may be represented by generated official routes.
 			kind := officialProviderKindFromName(name)
 			if kind == "" {
 				return fmt.Errorf("remove provider access: provider %q not found", name)
@@ -142,11 +139,7 @@ func validateOfficialProviderRemoval(c *config.Config, names []string) error {
 	for _, name := range names {
 		p, ok := c.Provider(name)
 		if !ok {
-			// Canonical family cards (for example "deepseek") may be represented
-			// by generated legacy routes such as deepseek-flash/deepseek-pro.
-			// Treat the family as present when one of its official routes exists;
-			// this keeps removal validation and detached-runtime guards reachable
-			// after a config has not yet materialized the canonical alias.
+			// Accept generated legacy routes when the canonical family alias is absent.
 			kind := officialProviderKindFromName(name)
 			if kind == "" {
 				return fmt.Errorf("remove provider access: provider %q not found", name)
@@ -593,12 +586,7 @@ func (a *App) commitCustomProviderRemovals(plan providerRemovalPlan) (string, er
 		return "", err
 	}
 	fallbackRef := providerAccessFallbackRef(fresh, plan.targets)
-	// Config.RemoveProvider has a compatibility fallback across every configured
-	// provider. Settings access removal is narrower: hidden providers must not
-	// silently become the new default after restart. Retarget first so the
-	// persisted config and every rebuilt tab use the same visible provider. Keep
-	// the historical provider-only persisted form while the runtime uses the
-	// exact provider/model reference returned below.
+	// Persist a provider-only fallback while runtimes use the exact model ref.
 	persistedFallback := fallbackRef
 	if providerName, _, ok := strings.Cut(fallbackRef, "/"); ok {
 		persistedFallback = providerName
@@ -641,10 +629,7 @@ func (a *App) applyProviderRemovalRuntime(affected []providerRemovalTab, fallbac
 				reset = append(reset, item)
 				continue
 			}
-			// lockRuntimeTurnGates already holds this tab's turnStartMu, and the
-			// outer runtime mutation owns runtimeRebuildMu plus admission. Reuse
-			// the settings build-and-swap core without reacquiring either lock so
-			// the old controller remains usable if replacement construction fails.
+			// Reuse the locked settings build-and-swap core without reacquiring locks.
 			modelOverride := ""
 			if item.retargetModel {
 				modelOverride = fallbackRef

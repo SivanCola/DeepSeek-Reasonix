@@ -73,10 +73,7 @@ func inferProviderAccounts(c *Config) bool {
 			APIKeyEnv:  g.keyEnv,
 			Default:    id == MainProviderAccountID,
 		}
-		// A legacy config may intentionally contain only a subset of a curated
-		// family's routes. Mark absent routes disabled so reconciliation does not
-		// resurrect providers the user never configured; RestoreProviderAccount
-		// can explicitly opt back into the complete route bundle.
+		// Preserve sparse legacy route declarations; restore can opt into the full bundle.
 		routePresent := map[string]bool{}
 		for _, idx := range g.index {
 			if _, route, _, ok := curatedProviderIdentity(c.Providers[idx]); ok && route != "" {
