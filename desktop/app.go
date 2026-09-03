@@ -9209,7 +9209,6 @@ func removeServerOrder(order []string, name string) []string {
 // model") is what SetModel takes; Provider/Model are for display.
 type ModelInfo struct {
 	Ref            string `json:"ref"`
-	SelectionRef   string `json:"selectionRef,omitempty"`
 	Provider       string `json:"provider"`
 	Model          string `json:"model"`
 	Current        bool   `json:"current"`
