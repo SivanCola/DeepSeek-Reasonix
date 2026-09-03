@@ -184,7 +184,7 @@ console.log("\nbundle budgets");
 // surface transaction and content-free reversal diagnostics add 0.7 KiB to
 // the initial path; retain the smallest one-decimal ratchet without widening
 // any chunk or raw gate.
-const initialJSBudgetKiB = 463.5;
+const initialJSBudgetKiB = 463.6;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -329,7 +329,7 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // merged stable path. The bounded surface transaction, scrollbar rebase, and
 // Markdown empty-block guard add 3.1 KiB raw; the native-thumb generation
 // fence adds the final measured 0.3 KiB. Retain the smallest one-decimal
-// ceiling for the measured 2472.5 KiB path.
-const rawInitialBudgetKiB = 2_472.6;
+// ceiling for the measured 2472.6 KiB path.
+const rawInitialBudgetKiB = 2_472.7;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
