@@ -233,15 +233,16 @@ func curatedAccountSetupPresets() []config.ProviderPreset {
 			byGroup[group] = preset
 		}
 	}
-	groups := make([]string, 0, len(byGroup))
-	for group := range byGroup {
-		groups = append(groups, group)
+	out := make([]config.ProviderPreset, 0, len(byGroup))
+	for _, preset := range byGroup {
+		out = append(out, preset)
 	}
-	sort.Strings(groups)
-	out := make([]config.ProviderPreset, 0, len(groups))
-	for _, group := range groups {
-		out = append(out, byGroup[group])
-	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ID != out[j].ID {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].AccountGroupID < out[j].AccountGroupID
+	})
 	return out
 }
 

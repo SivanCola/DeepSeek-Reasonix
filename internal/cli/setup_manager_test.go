@@ -853,6 +853,11 @@ func TestCuratedAccountSetupPresetsCoverEveryGroupDeterministically(t *testing.T
 			t.Fatalf("group %q selected %q, want %q", preset.AccountGroupID, preset.ID, want[preset.AccountGroupID].ID)
 		}
 	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1].ID > got[i].ID {
+			t.Fatalf("setup presets not sorted by ID: %q before %q", got[i-1].ID, got[i].ID)
+		}
+	}
 }
 
 func entriesForAccount(t *testing.T, cfg *config.Config, account config.ProviderAccount) []config.ProviderEntry {
