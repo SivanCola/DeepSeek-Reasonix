@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +18,7 @@ import (
 	"reasonix/internal/agent/testutil"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
+	"reasonix/internal/provider/anthropic"
 )
 
 type strictNoWarningReasoningProvider struct{ *testutil.MockProvider }
@@ -428,5 +432,100 @@ func TestNonReplay400DoesNotTriggerReasoningRepair(t *testing.T) {
 	}
 	if got := sink.recoveryCount(event.ProtocolRecoveryReasoningReplay400Detected); got != 0 {
 		t.Fatalf("reasoning_replay_400_detected audits = %d, want 0", got)
+	}
+}
+
+// TestStrictMissingReasoningFallbackStreamsTextLive drives the real
+// Anthropic-adapter wire shape for #9750: once the disabled-thinking fallback
+// owns the session its responses contain no reasoning event, so a
+// reasoning-aware buffer could only release at commit time. The server holds
+// the final answer's stream open after the first text delta; the text must
+// reach the sink while the response is still in flight.
+func TestStrictMissingReasoningFallbackStreamsTextLive(t *testing.T) {
+	held := make(chan struct{})
+	release := make(chan struct{})
+	var heldOnce, releaseOnce sync.Once
+
+	var mu sync.Mutex
+	var bodies [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		mu.Lock()
+		bodies = append(bodies, body)
+		i := len(bodies) - 1
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		if i < 3 {
+			_, _ = io.WriteString(w, missingReasoningToolSSE)
+			return
+		}
+		_, _ = io.WriteString(w, `data: {"type":"message_start","message":{"usage":{"input_tokens":20}}}`+"\n\n")
+		_, _ = io.WriteString(w, `data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}`+"\n\n")
+		_, _ = io.WriteString(w, `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"streamed live"}}`+"\n\n")
+		w.(http.Flusher).Flush()
+		heldOnce.Do(func() { close(held) })
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = io.WriteString(w, `data: {"type":"content_block_stop","index":0}`+"\n\n")
+		_, _ = io.WriteString(w, `data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`+"\n\n")
+		_, _ = io.WriteString(w, `data: {"type":"message_stop"}`+"\n\n")
+	}))
+	t.Cleanup(srv.Close)
+	// Runs before srv.Close (LIFO) so a failed test never parks server close
+	// behind the held final response.
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+
+	prov, err := anthropic.New(provider.Config{
+		Name: "deepseek-anthropic", BaseURL: srv.URL, Model: "deepseek-v4-flash", APIKey: "k",
+		Extra: map[string]any{"reasoning_protocol": "deepseek", "thinking": "enabled"},
+	})
+	if err != nil {
+		t.Fatalf("New provider: %v", err)
+	}
+	sink := &textSignalSink{recordSink: &recordSink{}, textSeen: make(chan struct{})}
+	a := New(prov, echoRegistry(), NewSession(""), Options{MissingReasoningWarnStateDir: t.TempDir()}, sink)
+	done := make(chan error, 1)
+	go func() { done <- a.Run(withNoClosedLoop(context.Background()), "go") }()
+
+	select {
+	case <-held:
+	case err := <-done:
+		t.Fatalf("Run finished before the fallback final answer was held: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("provider never reached the held final answer")
+	}
+	select {
+	case <-sink.textSeen:
+	case err := <-done:
+		t.Fatalf("Run completed before the held fallback response was released: %v", err)
+	case <-time.After(2 * time.Second):
+		releaseOnce.Do(func() { close(release) })
+		if err := <-done; err != nil {
+			t.Logf("Run after release: %v", err)
+		}
+		t.Fatal("fallback text stayed buffered until the response completed")
+	}
+	releaseOnce.Do(func() { close(release) })
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 4 {
+		t.Fatalf("HTTP requests = %d, want malformed, exact replay, fallback, final", len(bodies))
+	}
+	for _, i := range []int{2, 3} {
+		if !bytes.Contains(bodies[i], []byte(`"thinking":{"type":"disabled"}`)) {
+			t.Fatalf("request %d did not run under the disabled-thinking fallback: %s", i+1, bodies[i])
+		}
 	}
 }

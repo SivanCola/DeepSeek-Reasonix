@@ -26,6 +26,12 @@ func (a *Agent) runSamplingAttempt(ctx context.Context, turn int, sink event.Sin
 }
 
 func (a *Agent) samplingAttemptSinks() (*deferredStreamSink, event.Sink) {
+	// The disabled-thinking fallback never emits a reasoning event, so buffering
+	// here could only release at commit time (#9750). Fallback requests replay
+	// without reasoning, so there is nothing for the buffer to protect.
+	if a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov) {
+		return nil, a.svc.sink
+	}
 	// Buffer when missing reasoning can reject or replace the attempt. Protocols
 	// that adopt an empty fallback without retry must keep streaming live because
 	// their first response always wins.
