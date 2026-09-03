@@ -285,6 +285,17 @@ export function useTranscriptReaderExtentStability({
         transaction.visualOffset = -physicalAnchorDrift;
         element.dataset.transcriptReaderVisualGuard = "true";
         element.style.setProperty("--transcript-reader-visual-offset", `${transaction.visualOffset}px`);
+      } else if (transcriptElementViewportIsBlank(element)) {
+        // A WebKit range replacement can briefly unmount the logical anchor
+        // before the corridor remounts it. Keep the last accepted viewport
+        // visually fixed from the native scroll delta instead of allowing a
+        // blank frame while there is no row rect from which to derive drift.
+        const fallbackOffset = element.scrollTop - transaction.lastAcceptedTop;
+        if (Math.abs(fallbackOffset) > GEOMETRY_EPSILON_PX) {
+          transaction.visualOffset = fallbackOffset;
+          element.dataset.transcriptReaderVisualGuard = "true";
+          element.style.setProperty("--transcript-reader-visual-offset", `${transaction.visualOffset}px`);
+        }
       }
       recordTranscriptScrollDiagnostic("scroll-anomaly", {
         transactionId: transaction.id,

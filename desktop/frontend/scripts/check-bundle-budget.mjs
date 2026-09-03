@@ -184,7 +184,7 @@ console.log("\nbundle budgets");
 // surface transaction and content-free reversal diagnostics add 0.7 KiB to
 // the initial path; retain the smallest one-decimal ratchet without widening
 // any chunk or raw gate.
-const initialJSBudgetKiB = 463.6;
+const initialJSBudgetKiB = 463.7;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
