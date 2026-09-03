@@ -83,3 +83,20 @@ func providerNames(cfg *config.Config) []string {
 	}
 	return names
 }
+
+func TestAccountKeyEnvSharedScansRetainedAndCustomProviders(t *testing.T) {
+	account := config.ProviderAccount{ProviderID: "deepseek", ID: "team", APIKeyEnv: "SHARED_KEY", Retired: true}
+	cfg := &config.Config{
+		ProviderAccounts: []config.ProviderAccount{account},
+		Providers: []config.ProviderEntry{
+			{Name: "deepseek--team", APIKeyEnv: "SHARED_KEY", AccountProviderID: "deepseek", AccountID: "team"},
+		},
+	}
+	if accountKeyEnvShared(cfg, account) {
+		t.Fatal("retained entries belonging to the same retired account should not keep its key live")
+	}
+	cfg.Providers = append(cfg.Providers, config.ProviderEntry{Name: "custom", APIKeyEnv: "SHARED_KEY"})
+	if !accountKeyEnvShared(cfg, account) {
+		t.Fatal("custom provider sharing the key env must prevent key deletion")
+	}
+}

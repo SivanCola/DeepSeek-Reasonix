@@ -333,9 +333,13 @@ func accountKeyEnvShared(c *config.Config, account config.ProviderAccount) bool 
 	// Provider entries can outlive an account (retired routes are retained for
 	// old sessions), and custom providers may intentionally share the same key.
 	for _, entry := range c.Providers {
-		if strings.TrimSpace(entry.APIKeyEnv) == env {
-			return true
+		if strings.TrimSpace(entry.APIKeyEnv) != env {
+			continue
 		}
+		if entry.AccountProviderID == account.ProviderID && entry.AccountID == account.ID {
+			continue
+		}
+		return true
 	}
 	return false
 }
