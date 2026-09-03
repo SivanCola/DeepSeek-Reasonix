@@ -243,9 +243,13 @@ func (s *providerSetupSession) setProviderAccountRouteEnabled(providerID, accoun
 	}
 	after, _ := s.snapshotAccount(providerID, accountID)
 	if !reflect.DeepEqual(before, after) || defaultBefore != s.cfg.DefaultModel {
+		beforeEnabled := accountRouteEnabled(*before, routeID)
+		afterEnabled := accountRouteEnabled(*after, routeID)
 		s.recordProviderAccountFamilyMutation(providerID, accountID, familyBefore, s.accountFamilySnapshots(providerID), routeID)
 		if len(s.operations) > 0 {
 			op := &s.operations[len(s.operations)-1]
+			op.beforeRoute = &beforeEnabled
+			op.afterRoute = &afterEnabled
 			op.accountDefaultModelChanged = defaultBefore != s.cfg.DefaultModel
 			op.beforeString = defaultBefore
 			op.afterString = s.cfg.DefaultModel
@@ -1134,7 +1138,37 @@ func replayProviderAccountOperation(cfg *config.Config, operation providerSetupO
 			return fmt.Errorf("replay account default_model: %w", err)
 		}
 	}
+	if operation.routeID != "" && operation.afterRoute != nil && len(operation.beforeAccounts) == 0 && len(operation.afterAccounts) == 0 {
+		_, account, found := cfgAccountByIdentity(cfg, operation.providerID, operation.accountID)
+		if !found {
+			return &providerSetupConflictError{field: field}
+		}
+		if operation.beforeRoute != nil && accountRouteEnabled(account, operation.routeID) != *operation.beforeRoute {
+			return &providerSetupConflictError{field: field + ".route"}
+		}
+		if err := cfg.SetProviderAccountRouteEnabled(operation.providerID, operation.accountID, operation.routeID, *operation.afterRoute); err != nil {
+			return fmt.Errorf("replay %s route: %w", field, err)
+		}
+	}
 	return nil
+}
+
+func cfgAccountByIdentity(cfg *config.Config, providerID, accountID string) (int, config.ProviderAccount, bool) {
+	for i, account := range cfg.ProviderAccounts {
+		if account.ProviderID == providerID && account.ID == accountID {
+			return i, account, true
+		}
+	}
+	return -1, config.ProviderAccount{}, false
+}
+
+func accountRouteEnabled(account config.ProviderAccount, routeID string) bool {
+	for _, disabled := range account.DisabledRoutes {
+		if strings.TrimSpace(disabled) == strings.TrimSpace(routeID) {
+			return false
+		}
+	}
+	return true
 }
 
 func providerSetupAccessContains(names []string, want string) bool {
