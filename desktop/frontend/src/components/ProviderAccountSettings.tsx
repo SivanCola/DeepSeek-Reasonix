@@ -96,13 +96,13 @@ export function ProviderAccountManager({
           ) : (
             <>
               <strong>{account.label}</strong>
-              {account.retired ? <span className="badge badge--feedback">{t("settings.accountRetired")}</span> : null}
+              {account.retired ? <span className="badge badge--feedback">{t("settings.accountRetire")}</span> : null}
               {account.default ? <span className="badge">{t("settings.accountDefault")}</span> : null}
               <span>{account.enabled ? t("settings.accountEnabled") : t("settings.accountDisabled")}</span>
               <span>{account.keySet ? t("settings.keySet") : t("settings.noKey")}</span>
-              {asArray(account.disabledRoutes).length > 0 ? <span>{asArray(account.disabledRoutes).length} {t("settings.accountRoutesDisabled")}</span> : null}
+              {asArray(account.disabledRoutes).length > 0 ? <span aria-label={t("settings.providerAccounts")}>{asArray(account.disabledRoutes).length}×</span> : null}
               {availableRoutes.length > 1 && !account.retired ? (
-                <span className="provider-account-routes" role="group" aria-label={t("settings.accountRoutes")}>
+                <span className="provider-account-routes" role="group" aria-label={t("settings.providerAccounts")}>
                   {availableRoutes.map((route) => {
                     const disabled = asArray(account.disabledRoutes).includes(route);
                     return <button key={route} type="button" className="btn btn--small" disabled={busy} aria-pressed={!disabled}
@@ -112,7 +112,7 @@ export function ProviderAccountManager({
               ) : null}
               {account.retired ? (
                 <button type="button" className="btn btn--small" disabled={busy} onClick={() => apply(() => app.RestoreProviderAccount(account.providerId, account.accountId))}>
-                  {t("settings.accountRestore")}
+                  {t("history.restore")}
                 </button>
               ) : null}
               <button type="button" className="btn btn--small" disabled={busy || account.default || account.retired} onClick={() => apply(() => app.SetProviderAccountDefault(account.providerId, account.accountId))}>

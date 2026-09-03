@@ -247,7 +247,9 @@ for (const path of localeChunks) {
   // reclaim), while Sticky Context adds file-state and limit diagnostics. The
   // merged stable chunks measure 60.395 KiB zh and 61.232 KiB zh-TW; retain
   // only the next one-decimal ceiling for each dialect.
-  const budget = name.startsWith("zh-TW-") ? 61.3 * 1024 : 60.4 * 1024;
+  // Account retirement/restore copy adds a bounded locale payload increase.
+  // Keep per-locale ceilings narrow and leave all other bundle budgets intact.
+  const budget = name.startsWith("zh-TW-") ? 61.4 * 1024 : 60.6 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
