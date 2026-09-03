@@ -102,6 +102,33 @@ func (a *Agent) finishReasoningReplayRetry(retry streamedTurn, sink *deferredStr
 	return retry
 }
 
+// finishReasoningReplayOverflow terminates an attempt whose required reasoning
+// was truncated by the client limit: audit, finalize usage, and hand the turn
+// to the unreplayable-reasoning policy.
+func (a *Agent) finishReasoningReplayOverflow(result streamedTurn, sink *deferredStreamSink, issue ReasoningReplayFailure, billable *provider.Usage, attemptID string, attempt int) streamedTurn {
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryReasoningOverflowDetected})
+	result.usage = finalizeSamplingUsage(billable, result.usage)
+	terminal := a.finishUnreplayableReasoning(result, sink, issue)
+	a.emitReasoningReplayAttemptOutcome(attemptID, attempt, terminal.err)
+	return terminal
+}
+
+// suppressMissingReasoningRetry handles a missing-reasoning turn whose one
+// exact replay was already spent (or claimed cross-process): try the
+// provider-declared fallback, otherwise terminate through the
+// unreplayable-reasoning policy.
+func (a *Agent) suppressMissingReasoningRetry(ctx context.Context, turn int, frozen *samplingRequest, attemptID string, attempt int, sink *deferredStreamSink, result streamedTurn, issue ReasoningReplayFailure, billable *provider.Usage) streamedTurn {
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetrySuppressed})
+	if fallback, ok := a.runMissingReasoningFallback(ctx, turn, frozen, attemptID, attempt, billable, sink); ok {
+		return fallback
+	}
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
+	result.usage = finalizeSamplingUsage(billable, result.usage)
+	terminal := a.finishUnreplayableReasoning(result, sink, issue)
+	a.emitReasoningReplayAttemptOutcome(attemptID, attempt, terminal.err)
+	return terminal
+}
+
 func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredStreamSink, issue ReasoningReplayFailure) streamedTurn {
 	if issue == "" {
 		sink.Flush()

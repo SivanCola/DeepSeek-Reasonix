@@ -420,12 +420,12 @@ func TestDeepSeekAnthropicThinking400CatchAndRepair(t *testing.T) {
 	}
 	// The adopted answer streamed through and the canonical history keeps both
 	// turns' reasoning untouched by the provider-visible repair.
-	var answer string
+	var answer strings.Builder
 	for _, e := range sink.kinds(event.Text) {
-		answer += e.Text
+		answer.WriteString(e.Text)
 	}
-	if answer != "repaired answer" {
-		t.Fatalf("streamed answer = %q, want the repaired response", answer)
+	if answer.String() != "repaired answer" {
+		t.Fatalf("streamed answer = %q, want the repaired response", answer.String())
 	}
 
 	// The next run keeps the strong projection: no reasoning reaches the wire.

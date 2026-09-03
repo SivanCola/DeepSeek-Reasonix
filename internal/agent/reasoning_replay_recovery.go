@@ -36,6 +36,24 @@ func (a *Agent) recoverReasoningReplay400(frozen samplingRequest, err error, bud
 	return samplingRequest{req: next}, true
 }
 
+// tryRecoverReasoningReplay400 is the streamWithSamplingRecovery branch for a
+// thinking-400: the frozen history's replayed reasoning is stale for this
+// provider, so repair the projection once and retry; every other 400 falls
+// through to the terminal path. On a repair the speculative attempt's buffered
+// events are discarded and the attempt is audited before the caller replays.
+func (a *Agent) tryRecoverReasoningReplay400(streamSink *deferredStreamSink, frozen samplingRequest, attemptID string, attempt int, err error, budget *reasoningReplayRecoveryBudget) (samplingRequest, bool) {
+	next, ok := a.recoverReasoningReplay400(frozen, err, budget)
+	if !ok {
+		return samplingRequest{}, false
+	}
+	if streamSink != nil {
+		streamSink.Discard()
+	}
+	a.emitStreamAttempt(attemptID, event.StreamAttemptDiscard, attempt, "reasoning_replay_400", err)
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryReasoningReplay400Detected})
+	return next, true
+}
+
 // activateReasoningReplayStrongProjection records that this conversation's
 // canonical history carries reasoning the provider rejects. Later rounds and
 // turns keep projecting through the strong projection instead of paying

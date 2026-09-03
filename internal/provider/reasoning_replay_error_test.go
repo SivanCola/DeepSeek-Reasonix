@@ -102,8 +102,7 @@ func TestAsReasoningReplayError(t *testing.T) {
 	if got := AsReasoningReplayError(nil); got != nil {
 		t.Fatal("nil error must not match")
 	}
-	var base error = replay
-	if unwrapped := errors.Unwrap(base); unwrapped != apiErr {
-		t.Fatalf("Unwrap = %v, want the APIError", unwrapped)
+	if !errors.Is(replay, apiErr) {
+		t.Fatal("ReasoningReplayError must unwrap to the APIError")
 	}
 }

@@ -25,10 +25,9 @@ type sessionRuntime struct {
 
 	missingReasoning missingReasoningWatch
 
-	// reasoningReplayStrongProjection is set once a thinking-400 catch-and-repair
-	// retry succeeds: the canonical history carries reasoning this provider
-	// rejects, so every later provider request in this conversation keeps using
-	// the stripped projection instead of paying another 400 per round.
+	// reasoningReplayStrongProjection is set once a thinking-400 repair retry
+	// succeeds: this conversation's stored reasoning is stale for the provider,
+	// so later requests keep using the stripped projection.
 	reasoningReplayStrongProjection bool
 
 	// compactionMu guards projection snapshots/install and the in-memory sidecar
