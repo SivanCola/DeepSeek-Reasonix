@@ -637,7 +637,7 @@ func (s *providerSetupSession) summary() []string {
 	for _, account := range s.cfg.ProviderAccounts {
 		key := providerSetupAccountKey(account.ProviderID, account.ID)
 		old, existed := s.originalAccounts[key]
-		label := fmt.Sprintf("%s/%s", account.ProviderID, account.Label)
+		label := providerSetupAccountSummary(account)
 		if !existed {
 			addedAccounts = append(addedAccounts, label)
 		} else if !reflect.DeepEqual(old, account) {
@@ -670,6 +670,26 @@ func (s *providerSetupSession) summary() []string {
 		out = append(out, i18n.M.SetupSummaryNoChanges)
 	}
 	return out
+}
+
+func providerSetupAccountSummary(account config.ProviderAccount) string {
+	label := fmt.Sprintf("%s/%s", account.ProviderID, account.Label)
+	var states []string
+	if account.Default {
+		states = append(states, "default")
+	}
+	if account.Retired {
+		states = append(states, "retired")
+	} else if !account.IsEnabled() {
+		states = append(states, "disabled")
+	}
+	if len(account.DisabledRoutes) > 0 {
+		states = append(states, fmt.Sprintf("routes disabled: %s", strings.Join(account.DisabledRoutes, ", ")))
+	}
+	if len(states) > 0 {
+		label += " (" + strings.Join(states, "; ") + ")"
+	}
+	return label
 }
 
 func providerSetupEqual(a, b config.ProviderEntry) bool {
