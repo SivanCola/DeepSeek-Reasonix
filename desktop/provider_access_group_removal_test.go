@@ -173,8 +173,15 @@ func TestRemoveProviderAccessesKeepsCoreRoutesWhenRemovingOpenCodeGoSearchSubset
 		}
 	}
 	for _, name := range searchNames {
-		if _, ok := got.Provider(name); ok {
-			t.Fatalf("search provider %q still exists", name)
+		entry, ok := got.Provider(name)
+		if !ok {
+			t.Fatalf("search provider %q missing; retained account routes are needed for old sessions", name)
+		}
+		if entry.AccountProviderID == "" || entry.AccountID == "" {
+			t.Fatalf("search provider %q lost account metadata: %+v", name, entry)
+		}
+		if providerAccessSet(got.Desktop.ProviderAccess)[name] {
+			t.Fatalf("search provider %q remains in provider access", name)
 		}
 	}
 	if got.DefaultModel != cfg.DefaultModel {
