@@ -100,13 +100,17 @@ type Config struct {
   one vendor expose several models without re-declaring the endpoint/key.
   Curated families can also declare multiple `[[provider_accounts]]` in the
   user-global config. Each account has its own `api_key_env`, enable/default
-  flags, and generated `provider/model` identity such as `deepseek--team/deepseek-v4-flash`.
+  flags, and generated compatibility identities such as `deepseek--team/deepseek-v4-flash`.
+  New selectors use the stable `family/account/model` form, for example
+  `deepseek/team/deepseek-v4-flash`; generated provider names remain accepted
+  for existing sessions and project references.
   A bare family name such as `deepseek` resolves to that family's default account.
   Account switching is manual; Reasonix does not poll, load-balance, or fail over
   across keys. A
   **model reference** (`default_model`, the `--model` flag, the desktop switcher)
   resolves via `Config.ResolveModel`, which accepts a provider name (→ its default
-  model), a bare model name, or an explicit `provider/model`. `context_window` is
+  model), a bare model name, an explicit `provider/model`, or a curated
+  `family/account/model` selection. `context_window` is
   the provider-wide fallback; `model_overrides.<model>.context_window` can replace
   it for one model. Per-model `prices` use model IDs as keys.
 - Streaming tool-call deltas are accumulated by index inside the provider; only

@@ -45,8 +45,10 @@ account expands Chat, Anthropic, and Responses routes that share a key. Old
 provider names stay valid after migration to a `main` account. Account switching
 is manual, not polling; a disabled account leaves the new-model picker while
 existing sessions keep their bound provider. Different keys may split vendor-side
-prefix cache. Project
-`.env`, home `.env`, inherited shell environment variables, legacy credentials,
+prefix cache. New model selections use `family/account/model` (for example,
+`deepseek/team/deepseek-v4-flash`); older `provider/model` and generated provider
+names remain valid for compatibility. Project `.env`, home `.env`, inherited shell
+environment variables, legacy credentials,
 and the OS keyring are not provider-key runtime fallbacks; legacy credentials are
 only migration sources. Project `.env` still feeds workspace-scoped,
 non-provider `${VAR}` expansion for MCP/plugin settings without importing

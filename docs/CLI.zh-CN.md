@@ -23,7 +23,7 @@ reasonix --dir /path/to/project
 
 | 参数 | 用途 |
 | --- | --- |
-| `--model NAME` | 选择已配置的 provider 或 `provider/model` 引用。 |
+| `--model NAME` | 选择已配置的 provider、`provider/model`，或精选供应商的 `family/account/model` 引用。 |
 | `--effort LEVEL` | 覆盖当前会话的 reasoning effort。 |
 | `--max-steps N` | 为本次运行设置工具调用轮数上限；`0` 使用自动执行。 |
 | `--dir PATH` | 加载配置和工具前切换 workspace 根目录。 |
@@ -388,7 +388,7 @@ SSH 下远端进程无法读取本机剪贴板，请使用终端粘贴快捷键�
 | --- | --- |
 | `/continue-checks [补充要求]` | 继续紧邻上一轮、已暂停的任务收尾检查，并保留其工具证据。该操作仅可消费一次；出现新的用户消息后，旧卡片会被拒绝。 |
 | `/model` | 搜索已配置模型并切换当前模型。 |
-| `/provider` | 选择供应商族/账号，再选择模型。`/provider <name>` 仍接受生成后的 provider 名。 |
+| `/provider` | 选择供应商族/账号，再选择模型。`/provider <family>/<account>` 可直接选择账号，也继续接受生成后的 provider 名。 |
 | `/resume` | 搜索最近会话并切换。 |
 | `/status` | 显示模型、effort、cache、Git、后台任务和余额信息。 |
 | `/theme [auto\|light\|dark\|style]` | 查看或切换 CLI 背景模式和强调色。 |
