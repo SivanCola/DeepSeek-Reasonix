@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"reasonix/internal/config"
@@ -33,9 +34,6 @@ func providerManagerMenu(s *providerSetupSession) ([]menuItem, []setupMenuAction
 	actions := make([]setupMenuAction, 0, len(s.cfg.Providers)+8)
 	seen := map[string]bool{}
 	for _, account := range s.cfg.ProviderAccounts {
-		if account.Retired {
-			continue
-		}
 		entries, _ := s.cfg.ResolveAccountProvider(account.ProviderID, account.ID)
 		keyStatus := i18n.M.SetupKeyMissing
 		if account.APIKeyEnv == "" || config.CredentialIsSet(account.APIKeyEnv) || s.pendingCredentials[account.APIKeyEnv] != "" {
@@ -47,6 +45,9 @@ func providerManagerMenu(s *providerSetupSession) ([]menuItem, []setupMenuAction
 		}
 		if !account.IsEnabled() {
 			desc += " · disabled"
+		}
+		if account.Retired {
+			desc += " · retired"
 		}
 		items = append(items, menuItem{name: account.Label, desc: desc})
 		actions = append(actions, setupMenuAction{kind: setupMenuAccount, providerID: account.ProviderID, accountID: account.ID})
@@ -94,29 +95,82 @@ func manageProviderAccount(s *providerSetupSession, providerID, accountID string
 	if !ok {
 		return
 	}
-	idx, err := selectOne(fmt.Sprintf("%s / %s", account.ProviderID, account.Label), []menuItem{
-		{name: i18n.M.SetupUpdateKey},
-		{name: i18n.M.SetupSetDefault},
-		{name: i18n.M.SetupAccountRename},
-		{name: i18n.M.SetupAccountToggle},
-		{name: i18n.M.SetupAccountRetire},
-		{name: i18n.M.SetupBack},
-	})
-	if err != nil || idx == 5 {
+	items := []menuItem{{name: i18n.M.SetupUpdateKey}}
+	var routeIDs []string
+	if !account.Retired {
+		items = append(items,
+			menuItem{name: i18n.M.SetupSetDefault},
+			menuItem{name: i18n.M.SetupAccountRename},
+			menuItem{name: i18n.M.SetupAccountToggle},
+			menuItem{name: i18n.M.SetupAccountRetire},
+		)
+		seenRoutes := map[string]bool{}
+		for _, entry := range s.cfg.Providers {
+			if entry.AccountProviderID != account.ProviderID || entry.AccountID != account.ID {
+				continue
+			}
+			routeID := strings.TrimSpace(entry.AccountRouteID)
+			if routeID == "" || seenRoutes[routeID] {
+				continue
+			}
+			seenRoutes[routeID] = true
+			routeIDs = append(routeIDs, routeID)
+			disabled := containsString(account.DisabledRoutes, routeID)
+			action := "Enable route"
+			if !disabled {
+				action = "Disable route"
+			}
+			items = append(items, menuItem{name: fmt.Sprintf("%s: %s", action, routeID)})
+		}
+		sort.Strings(routeIDs)
+	} else {
+		items = append(items, menuItem{name: "Restore account"})
+	}
+	items = append(items, menuItem{name: i18n.M.SetupBack})
+	idx, err := selectOne(fmt.Sprintf("%s / %s", account.ProviderID, account.Label), items)
+	if err != nil || idx == len(items)-1 {
 		return
 	}
 	switch idx {
 	case 0:
 		updateAccountKey(s, account)
 	case 1:
-		_ = s.cfg.SetProviderAccountDefault(account.ProviderID, account.ID)
+		if account.Retired {
+			if err := s.restoreProviderAccount(account.ProviderID, account.ID); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			return
+		}
+		if err := s.mutateProviderAccount(account.ProviderID, account.ID, func() error {
+			return s.cfg.SetProviderAccountDefault(account.ProviderID, account.ID)
+		}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	case 2:
 		renameSessionAccount(s, account)
 	case 3:
-		_ = s.cfg.SetProviderAccountEnabled(account.ProviderID, account.ID, !account.IsEnabled())
-	case 4:
-		if err := s.cfg.RetireProviderAccount(account.ProviderID, account.ID); err != nil {
+		if err := s.mutateProviderAccount(account.ProviderID, account.ID, func() error {
+			return s.cfg.SetProviderAccountEnabled(account.ProviderID, account.ID, !account.IsEnabled())
+		}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
+		}
+	case 4:
+		if err := s.mutateProviderAccount(account.ProviderID, account.ID, func() error {
+			return s.cfg.RetireProviderAccount(account.ProviderID, account.ID)
+		}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	default:
+		// Account actions occupy slots 0..4. Route toggles follow them.
+		if account.Retired {
+			return
+		}
+		if routeIndex := idx - 5; routeIndex >= 0 && routeIndex < len(routeIDs) {
+			routeID := routeIDs[routeIndex]
+			disabled := containsString(account.DisabledRoutes, routeID)
+			if err := s.setProviderAccountRouteEnabled(account.ProviderID, account.ID, routeID, disabled); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
 		}
 	}
 }
@@ -126,12 +180,7 @@ func addProviderAccountToSession(s *providerSetupSession) bool {
 		fmt.Fprintln(os.Stderr, i18n.M.SetupProjectNoAccounts)
 		return false
 	}
-	presets := []config.ProviderPreset{}
-	for _, preset := range config.CuratedProviderPresets() {
-		if preset.ID == "opencode-go-recommended" || preset.AccountGroupID == "deepseek" && preset.ID == "deepseek-responses" {
-			presets = append(presets, preset)
-		}
-	}
+	presets := curatedAccountSetupPresets()
 	if len(presets) == 0 {
 		return false
 	}
@@ -148,12 +197,13 @@ func addProviderAccountToSession(s *providerSetupSession) bool {
 	if label == "" {
 		return false
 	}
-	key := strings.TrimSpace(askLine(fmt.Sprintf(i18n.M.SetupPromptAPIKeyFmt, preset.KeyEnv), ""))
+	key := strings.TrimSpace(askCredentialLine(fmt.Sprintf(i18n.M.SetupPromptAPIKeyFmt, preset.KeyEnv)))
 	account, err := s.cfg.AddProviderAccount(preset.AccountGroupID, preset.ID, label, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return false
 	}
+	s.recordProviderAccountMutation(account.ProviderID, account.ID, nil, providerSetupAccountPtr(account), "", nil, nil)
 	if key != "" {
 		if err := s.setCredential(account.APIKeyEnv, key); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -166,11 +216,48 @@ func addProviderAccountToSession(s *providerSetupSession) bool {
 	return true
 }
 
+// curatedAccountSetupPresets returns one deterministic preset per curated
+// provider account group. Recommended presets win; ties use display order and
+// then ID so adding a new curated route cannot make setup nondeterministic.
+func curatedAccountSetupPresets() []config.ProviderPreset {
+	byGroup := map[string]config.ProviderPreset{}
+	for _, preset := range config.CuratedProviderPresets() {
+		group := strings.TrimSpace(preset.AccountGroupID)
+		if group == "" {
+			continue
+		}
+		current, ok := byGroup[group]
+		if !ok || accountSetupPresetLess(preset, current) {
+			byGroup[group] = preset
+		}
+	}
+	groups := make([]string, 0, len(byGroup))
+	for group := range byGroup {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+	out := make([]config.ProviderPreset, 0, len(groups))
+	for _, group := range groups {
+		out = append(out, byGroup[group])
+	}
+	return out
+}
+
+func accountSetupPresetLess(a, b config.ProviderPreset) bool {
+	if a.Recommended != b.Recommended {
+		return a.Recommended
+	}
+	if a.DisplayOrder != b.DisplayOrder {
+		return a.DisplayOrder < b.DisplayOrder
+	}
+	return a.ID < b.ID
+}
+
 func updateAccountKey(s *providerSetupSession, account config.ProviderAccount) {
 	if strings.TrimSpace(account.APIKeyEnv) == "" {
 		return
 	}
-	value := strings.TrimSpace(askLine(fmt.Sprintf(i18n.M.SetupPromptAPIKeyFmt, account.APIKeyEnv), ""))
+	value := strings.TrimSpace(askCredentialLine(fmt.Sprintf(i18n.M.SetupPromptAPIKeyFmt, account.APIKeyEnv)))
 	if value == "" {
 		return
 	}
@@ -184,7 +271,11 @@ func renameSessionAccount(s *providerSetupSession, account config.ProviderAccoun
 	if label == "" {
 		return
 	}
-	_ = s.cfg.RenameProviderAccount(account.ProviderID, account.ID, label)
+	if err := s.mutateProviderAccount(account.ProviderID, account.ID, func() error {
+		return s.cfg.RenameProviderAccount(account.ProviderID, account.ID, label)
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 }
 
 func lookupSessionAccount(s *providerSetupSession, providerID, accountID string) (int, config.ProviderAccount, bool) {
@@ -197,7 +288,10 @@ func lookupSessionAccount(s *providerSetupSession, providerID, accountID string)
 }
 
 func askLine(label, def string) string {
-	fmt.Printf("%s [%s]: ", label, def)
+	// Keep the default value in control flow only. Printing arbitrary defaults
+	// from this generic helper can accidentally expose a secret if a caller is
+	// added later with a credential as its fallback.
+	fmt.Printf("%s: ", label)
 	var line string
 	_, _ = fmt.Scanln(&line)
 	line = strings.TrimSpace(line)
@@ -205,4 +299,14 @@ func askLine(label, def string) string {
 		return def
 	}
 	return line
+}
+
+func askCredentialLine(label string) string {
+	// Never echo a credential value or pass it through the generic prompt's
+	// default argument. This keeps API key input out of logging sinks while
+	// still showing the environment variable name to the user.
+	fmt.Printf("%s: ", label)
+	var line string
+	_, _ = fmt.Scanln(&line)
+	return strings.TrimSpace(line)
 }
