@@ -8,3 +8,7 @@ CREATE INDEX IF NOT EXISTS groups_source ON groups (source);
 CREATE INDEX IF NOT EXISTS groups_last_version ON groups (last_version);
 CREATE INDEX IF NOT EXISTS groups_last_os ON groups (last_os);
 CREATE INDEX IF NOT EXISTS groups_first_version ON groups (first_version);
+CREATE INDEX IF NOT EXISTS report_daily_fingerprint_date
+  ON report_daily (fingerprint, date);
+CREATE INDEX IF NOT EXISTS firebase_crash_outbox_fingerprint
+  ON firebase_crash_outbox (fingerprint);
