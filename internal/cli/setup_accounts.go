@@ -116,6 +116,13 @@ func manageProviderAccount(s *providerSetupSession, providerID, accountID string
 			seenRoutes[routeID] = true
 			routeIDs = append(routeIDs, routeID)
 		}
+		for _, routeID := range account.DisabledRoutes {
+			routeID = strings.TrimSpace(routeID)
+			if routeID != "" && !seenRoutes[routeID] {
+				seenRoutes[routeID] = true
+				routeIDs = append(routeIDs, routeID)
+			}
+		}
 		sort.Strings(routeIDs)
 		for _, routeID := range routeIDs {
 			disabled := containsString(account.DisabledRoutes, routeID)
