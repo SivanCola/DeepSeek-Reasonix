@@ -42,6 +42,10 @@ func (m *chatTUI) openProviderPicker() {
 		if !ok {
 			continue
 		}
+		entries = selectableAccountEntries(account, entries)
+		if len(entries) == 0 {
+			continue
+		}
 		usable := false
 		for i := range entries {
 			if entries[i].Configured() {
@@ -103,9 +107,20 @@ func (m *chatTUI) switchToProvider(name string) {
 	var entry *config.ProviderEntry
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
-		if p.Name == name && p.Configured() {
+		if p.Name == name && p.Configured() && providerEntrySelectable(cfg, *p) {
 			entry = p
 			break
+		}
+	}
+	if entry == nil {
+		if account, ok := cfg.DefaultAccount(name); ok {
+			for _, candidate := range selectableAccountEntries(account, mustResolveAccountProvider(cfg, account.ProviderID, account.ID)) {
+				if candidate.Configured() && len(candidate.ChatModelList()) > 0 {
+					copy := candidate
+					entry = &copy
+					break
+				}
+			}
 		}
 	}
 	if entry == nil {
@@ -154,6 +169,34 @@ func (m *chatTUI) switchToProvider(name string) {
 		kind: quickPickerProviderModel, title: fmt.Sprintf(i18n.M.ProviderPickLabel, name),
 		items: items, selected: selected,
 	}
+}
+
+func mustResolveAccountProvider(cfg *config.Config, providerID, accountID string) []config.ProviderEntry {
+	entries, _ := cfg.ResolveAccountProvider(providerID, accountID)
+	return entries
+}
+
+func selectableAccountEntries(account config.ProviderAccount, entries []config.ProviderEntry) []config.ProviderEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	disabled := make(map[string]bool, len(account.DisabledRoutes))
+	for _, route := range account.DisabledRoutes {
+		disabled[strings.TrimSpace(route)] = true
+	}
+	out := make([]config.ProviderEntry, 0, len(entries))
+	for _, entry := range entries {
+		if disabled[strings.TrimSpace(entry.AccountRouteID)] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func providerEntrySelectable(cfg *config.Config, entry config.ProviderEntry) bool {
+	account, ok := config.ProviderAccountForEntry(cfg, entry)
+	return !ok || account.IsEnabled()
 }
 
 func (m chatTUI) handleQuickPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
