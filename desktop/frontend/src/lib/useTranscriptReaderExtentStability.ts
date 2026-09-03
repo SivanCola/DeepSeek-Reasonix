@@ -163,6 +163,7 @@ export function useTranscriptReaderExtentStability({
   // cancel(). A new reader epoch must inherit the same lease without toggling
   // the Virtuoso range in between.
   const [readerLayoutLease, setReaderLayoutLease] = useState(false);
+  const readerLayoutLeaseRef = useRef(false);
   const callbacksRef = useRef({ onStart, onIdleDeadline, onStabilitySample, onTailHandoff, onGeometryCommitReady, onEnd });
   callbacksRef.current = { onStart, onIdleDeadline, onStabilitySample, onTailHandoff, onGeometryCommitReady, onEnd };
   const finish = useCallback((transaction: ActiveReaderTransaction, reason: "stable-manual" | "timeout" | "cancelled", notify = true) => {
@@ -185,6 +186,7 @@ export function useTranscriptReaderExtentStability({
   }, [stableAnchorRequiredRef]);
 
   const cancel = useCallback((notify = true) => {
+    readerLayoutLeaseRef.current = false;
     setReaderLayoutLease(false);
     const transaction = transactionRef.current;
     if (transaction) finish(transaction, "cancelled", notify);
@@ -198,6 +200,7 @@ export function useTranscriptReaderExtentStability({
   const currentAnchor = useCallback((): TranscriptReaderTransaction["anchor"] => (
     transactionRef.current?.anchor
   ), []);
+  const layoutLeaseIsActive = useCallback(() => readerLayoutLeaseRef.current, []);
 
   const observe = useCallback((element = scrollRef.current) => {
     const transaction = transactionRef.current;
@@ -608,6 +611,7 @@ export function useTranscriptReaderExtentStability({
     if (!element || !Number.isFinite(deltaY) || deltaY === 0) return { started: false as const };
     const direction = transcriptReaderDirection(deltaY);
     if (direction === undefined) return { started: false as const };
+    readerLayoutLeaseRef.current = true;
     setReaderLayoutLease(true);
     const current = transactionRef.current;
     const now = Date.now();
@@ -715,7 +719,8 @@ export function useTranscriptReaderExtentStability({
     holdGeometryCommit,
     anchorIsMounted,
     currentAnchor,
+    layoutLeaseIsActive,
     isActive,
     active: active || readerLayoutLease,
-  }), [active, anchorIsMounted, arm, cancel, currentAnchor, holdGeometryCommit, readerLayoutLease, observe, isActive]);
+  }), [active, anchorIsMounted, arm, cancel, currentAnchor, holdGeometryCommit, layoutLeaseIsActive, readerLayoutLease, observe, isActive]);
 }
