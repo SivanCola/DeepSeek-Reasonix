@@ -52,8 +52,9 @@ func (c *Config) AddProviderAccount(providerID, presetID, label, apiKeyEnv strin
 		return ProviderAccount{}, err
 	}
 	c.ProviderAccounts = append(c.ProviderAccounts, account)
-	if _, _, err := ReconcileProviderAccounts(c); err != nil {
-		c.ProviderAccounts = c.ProviderAccounts[:len(c.ProviderAccounts)-1]
+	change := ProviderAccountChange{FamilyID: providerID, AccountID: account.ID, After: &account}
+	c.ProviderAccounts = c.ProviderAccounts[:len(c.ProviderAccounts)-1]
+	if err := c.ApplyProviderAccountChange(change); err != nil {
 		return ProviderAccount{}, err
 	}
 	return account, nil
@@ -184,7 +185,7 @@ func ensureProviderAccountRoute(c *Config, account ProviderAccount, routeID stri
 				}
 			}
 		}
-		entries, err := ExpandProviderAccount(c, candidate)
+		entries, err := MaterializeProviderAccount(c, candidate)
 		if err != nil {
 			return err
 		}
@@ -220,7 +221,7 @@ func (c *Config) RestoreProviderAccount(providerID, accountID string) error {
 	if !c.hasProviderFamilyDefault(providerID) {
 		c.ProviderAccounts[idx].Default = true
 	}
-	entries, err := ExpandProviderAccount(c, c.ProviderAccounts[idx])
+	entries, err := MaterializeProviderAccount(c, c.ProviderAccounts[idx])
 	if err != nil {
 		c.ProviderAccounts[idx] = account
 		return err

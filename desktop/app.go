@@ -9209,6 +9209,7 @@ func removeServerOrder(order []string, name string) []string {
 // model") is what SetModel takes; Provider/Model are for display.
 type ModelInfo struct {
 	Ref            string `json:"ref"`
+	SelectionRef   string `json:"selectionRef,omitempty"`
 	Provider       string `json:"provider"`
 	Model          string `json:"model"`
 	Current        bool   `json:"current"`
@@ -9629,6 +9630,12 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		return err
 	}
 	entry, ok := cfg.ResolveModel(name)
+	if selection, selectionErr := config.ParseProviderSelection(cfg, name); selectionErr == nil {
+		if resolved, resolveErr := cfg.ResolveSelection(selection); resolveErr == nil {
+			entry, ok = resolved, true
+			name = selection.Ref()
+		}
+	}
 	pluginRef := false
 	if !ok {
 		// Plugin-namespaced refs belong to extension sidecars: validate them

@@ -78,6 +78,15 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 	if c == nil || ref == "" {
 		return nil, false
 	}
+	// New curated references use family/account/model. Resolve them through the
+	// account selection layer before consulting compatibility provider names.
+	if strings.Count(strings.TrimSpace(ref), "/") >= 2 {
+		if selection, err := ParseProviderSelection(c, ref); err == nil {
+			if entry, resolveErr := c.ResolveSelection(selection); resolveErr == nil {
+				return entry, true
+			}
+		}
+	}
 	if access := desktopProviderAccessMap(c.Desktop.ProviderAccess); len(access) > 0 {
 		if access["deepseek"] && !canCanonicalizeLegacyDeepSeekProviders(c) {
 			delete(access, "deepseek")

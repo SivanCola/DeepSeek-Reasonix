@@ -31,6 +31,7 @@ func (m *chatTUI) openProviderPicker() {
 		return
 	}
 	curProvider := strings.SplitN(m.modelRef, "/", 2)[0]
+	curSelection, _ := config.ParseProviderSelection(cfg, m.modelRef)
 	var items []quickPickerItem
 	selected := 0
 	seen := map[string]bool{}
@@ -58,7 +59,7 @@ func (m *chatTUI) openProviderPicker() {
 		}
 		status := ""
 		for i := range entries {
-			if entries[i].Name == curProvider {
+			if entries[i].Name == curProvider || (curSelection.FamilyID == account.ProviderID && curSelection.AccountID == account.ID) {
 				status = "active"
 				selected = len(items)
 			}
@@ -72,7 +73,7 @@ func (m *chatTUI) openProviderPicker() {
 			modelNames = append(modelNames, models...)
 		}
 		items = append(items, quickPickerItem{
-			ID: entries[0].Name, Label: account.Label,
+			ID: account.ProviderID + "/" + account.ID, Label: account.Label,
 			Description: fmt.Sprintf("%s · %d route(s) · %s", account.ProviderID, len(entries), strings.Join(modelNames, ", ")), Status: status,
 		})
 	}
@@ -113,6 +114,21 @@ func (m *chatTUI) switchToProvider(name string) {
 		return
 	}
 	var entry *config.ProviderEntry
+	if family, accountID, ok := strings.Cut(strings.TrimSpace(name), "/"); ok && config.IsProviderAccountID(accountID) {
+		for _, account := range cfg.ProviderAccounts {
+			if account.ProviderID != family || account.ID != accountID || !account.IsEnabled() {
+				continue
+			}
+			for _, candidate := range selectableAccountEntries(account, mustResolveAccountProvider(cfg, family, accountID)) {
+				if candidate.Configured() && len(candidate.ChatModelList()) > 0 {
+					copy := candidate
+					entry = &copy
+					break
+				}
+			}
+			break
+		}
+	}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		if p.Name == name && p.Configured() && providerEntrySelectable(cfg, *p) {
@@ -154,6 +170,9 @@ func (m *chatTUI) switchToProvider(name string) {
 	// If only one model, switch directly.
 	if len(models) == 1 {
 		ref := entry.Name + "/" + models[0]
+		if selection, ok := cfg.SelectionForProviderModel(*entry, models[0]); ok {
+			ref = selection.Ref()
+		}
 		if entry.Name == curProvider && models[0] == "" {
 			m.notice(fmt.Sprintf(i18n.M.ProviderAlreadyOnFmt, name))
 			return
@@ -166,6 +185,9 @@ func (m *chatTUI) switchToProvider(name string) {
 	selected := 0
 	for _, model := range models {
 		ref := entry.Name + "/" + model
+		if selection, ok := cfg.SelectionForProviderModel(*entry, model); ok {
+			ref = selection.Ref()
+		}
 		status := ""
 		if ref == m.modelRef {
 			status = "active"

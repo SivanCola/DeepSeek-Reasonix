@@ -74,6 +74,12 @@ func ExpandProviderAccount(c *Config, account ProviderAccount) ([]ProviderEntry,
 	return out, nil
 }
 
+// MaterializeProviderAccount is the stable account-to-runtime projection used
+// by new callers. ExpandProviderAccount remains as a compatibility alias.
+func MaterializeProviderAccount(c *Config, account ProviderAccount) ([]ProviderEntry, error) {
+	return ExpandProviderAccount(c, account)
+}
+
 func ReconcileProviderAccounts(c *Config) (changed bool, warnings []string, err error) {
 	if c == nil {
 		return false, nil, nil
@@ -89,7 +95,7 @@ func ReconcileProviderAccounts(c *Config) (changed bool, warnings []string, err 
 		if account.Retired {
 			continue
 		}
-		entries, expandErr := ExpandProviderAccount(c, account)
+		entries, expandErr := MaterializeProviderAccount(c, account)
 		if expandErr != nil {
 			warnings = append(warnings, expandErr.Error())
 			continue
