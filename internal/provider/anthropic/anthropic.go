@@ -349,12 +349,25 @@ func (c *client) buildRequest(ctx context.Context, req provider.Request) anthReq
 	recoveryWithoutThinking := c.missingReasoningFallback(ctx)
 
 	// appendBlocks adds blocks under role, merging into the previous message when
-	// it shares the role (keeps user/assistant strictly alternating).
+	// it shares the role (keeps user/assistant strictly alternating). A thinking
+	// block must lead its message, so when the appended blocks open with thinking
+	// and the merge target already has content, the thinking run moves to the
+	// front: after projection degrades a reasoning-less turn to plain text, a
+	// following healthy assistant turn merges into it and must stay
+	// [thinking, text, ...], never [text, thinking, ...].
 	appendBlocks := func(role string, blocks ...contentBlock) {
 		if len(blocks) == 0 {
 			return
 		}
 		if n := len(msgs); n > 0 && msgs[n-1].Role == role {
+			if head := leadingThinkingBlocks(blocks); head > 0 && len(msgs[n-1].Content) > 0 {
+				merged := make([]contentBlock, 0, len(msgs[n-1].Content)+len(blocks))
+				merged = append(merged, blocks[:head]...)
+				merged = append(merged, msgs[n-1].Content...)
+				merged = append(merged, blocks[head:]...)
+				msgs[n-1].Content = merged
+				return
+			}
 			msgs[n-1].Content = append(msgs[n-1].Content, blocks...)
 			return
 		}
@@ -459,6 +472,16 @@ func (c *client) buildRequest(ctx context.Context, req provider.Request) anthReq
 		}
 	}
 	return r
+}
+
+// leadingThinkingBlocks counts the thinking blocks at the head of blocks.
+// replayReasoningBlock emits at most one, so the run is normally 0 or 1.
+func leadingThinkingBlocks(blocks []contentBlock) int {
+	head := 0
+	for head < len(blocks) && blocks[head].Type == "thinking" {
+		head++
+	}
+	return head
 }
 
 // readStream parses the Messages API SSE stream into Chunks. Text deltas emit live;

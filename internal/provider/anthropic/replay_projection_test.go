@@ -46,6 +46,38 @@ func TestDeepSeekReplayProjectionKeepsHealthyHistoryBacking(t *testing.T) {
 	}
 }
 
+func TestBuildRequestDeepSeekMergedAssistantTurnKeepsThinkingFirst(t *testing.T) {
+	c := &client{model: "deepseek-v4-flash", deepseek: true, thinking: "enabled"}
+	r := c.buildRequest(context.Background(), provider.Request{Messages: []provider.Message{
+		{Role: provider.RoleUser, Content: "start"},
+		{
+			Role: provider.RoleAssistant, Content: "first answer",
+			ToolCalls: []provider.ToolCall{{ID: "t1", Name: "read_file", Arguments: `{}`}},
+		}, // reasoning lost: projection degrades this turn to plain text
+		{Role: provider.RoleTool, ToolCallID: "t1", Name: "read_file", Content: "data"},
+		{
+			Role: provider.RoleAssistant, Content: "second answer", ReasoningContent: "fresh thinking",
+			ToolCalls: []provider.ToolCall{{ID: "t2", Name: "read_file", Arguments: `{}`}},
+		},
+		{Role: provider.RoleTool, ToolCallID: "t2", Name: "read_file", Content: "more data"},
+		{Role: provider.RoleUser, Content: "continue"},
+	}})
+
+	// The degraded first turn and the healthy second turn merge into one
+	// assistant message; its thinking block must lead.
+	if len(r.Messages) != 3 {
+		t.Fatalf("messages = %#v, want user/merged-assistant/user", r.Messages)
+	}
+	blocks := r.Messages[1].Content
+	if len(blocks) != 4 ||
+		blocks[0].Type != "thinking" || blocks[0].Thinking != "fresh thinking" ||
+		blocks[1].Type != "text" || blocks[1].Text != "first answer" ||
+		blocks[2].Type != "text" || blocks[2].Text != "second answer" ||
+		blocks[3].Type != "tool_use" || blocks[3].ID != "t2" {
+		t.Fatalf("merged assistant blocks = %#v, want [thinking, text, text, tool_use]", blocks)
+	}
+}
+
 func TestBuildRequestNativeAnthropicKeepsItsExistingValidationPath(t *testing.T) {
 	c := &client{model: "claude-sonnet", thinking: "adaptive"}
 	r := c.buildRequest(context.Background(), provider.Request{Messages: []provider.Message{{
