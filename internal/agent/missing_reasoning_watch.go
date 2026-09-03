@@ -2,9 +2,12 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"reasonix/internal/event"
+	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
 )
 
@@ -141,6 +144,7 @@ func (a *Agent) recordHealthyAssistantReasoning(fingerprint string, observedAt t
 	if a.sess.missingReasoning.stateRecorded && !a.sess.missingReasoning.active {
 		return
 	}
+	probing := !a.sess.missingReasoning.probeClaimedAt.IsZero()
 	result := a.resolveHealthyAssistantReasoning(fingerprint, observedAt)
 	if !result.ProbeClaimedAt.IsZero() {
 		a.sess.missingReasoning.probeClaimedAt = result.ProbeClaimedAt
@@ -161,6 +165,9 @@ func (a *Agent) recordHealthyAssistantReasoning(fingerprint string, observedAt t
 		a.sess.missingReasoning.active = false
 		a.sess.missingReasoning.stateRecorded = true
 		a.sess.missingReasoning.probeClaimedAt = time.Time{}
+		if probing {
+			a.emitMissingReasoningRecoveredNotice()
+		}
 		return
 	}
 	a.sess.missingReasoning.active = true
@@ -226,12 +233,37 @@ func (a *Agent) beginMissingReasoningRecovery() bool {
 	return true
 }
 
+// refreshMissingReasoningProbe gives a conversation already parked in fallback
+// its half-open probe without waiting for a new Run. The persisted circuit
+// answers fallback throughout its quiet period and nothing changes; once due,
+// a durable lease claim returns this session to thinking mode, and the probe
+// resolves or fails through the ordinary watcher paths. Clearing fallbackActive
+// for the probe round is the single switch every consumer already reads: the
+// request loses its disabled-thinking marker, the sink regains its
+// reasoning-aware buffer, and the replay watcher re-arms.
+func (a *Agent) refreshMissingReasoningProbe() {
+	if a == nil || !a.sess.missingReasoning.fallbackActive || a.svc.warnState == nil ||
+		!provider.SupportsMissingReasoningFallback(a.svc.prov) {
+		return
+	}
+	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
+	decision := a.svc.warnState.claimRecoveryModeAt(fingerprint, time.Now())
+	if decision.Mode != missingReasoningRecoveryProbe {
+		return
+	}
+	a.sess.missingReasoning.active = true
+	a.sess.missingReasoning.stateRecorded = true
+	a.sess.missingReasoning.fallbackActive = false
+	a.sess.missingReasoning.probeClaimedAt = decision.ProbeClaimedAt
+}
+
 func (a *Agent) activateMissingReasoningFallback() bool {
 	if a == nil || !provider.SupportsMissingReasoningFallback(a.svc.prov) {
 		return false
 	}
 	a.sess.missingReasoning.active = true
 	a.sess.missingReasoning.fallbackActive = true
+	retryDelay, scheduled := time.Duration(0), false
 	if a.svc.warnState != nil {
 		fingerprint := provider.MissingToolCallReasoningWarningFingerprint(a.svc.prov)
 		observedAt := time.Now()
@@ -240,7 +272,56 @@ func (a *Agent) activateMissingReasoningFallback() bool {
 		} else {
 			a.sess.missingReasoning.stateRecorded = a.svc.warnState.openFallbackAt(fingerprint, observedAt)
 		}
+		if delay, ok := a.svc.warnState.nextProbeDelayAt(fingerprint, observedAt); ok {
+			retryDelay, scheduled = delay, true
+		}
 	}
 	a.sess.missingReasoning.probeClaimedAt = time.Time{}
+	a.emitMissingReasoningFallbackNotice(retryDelay, scheduled)
 	return true
+}
+
+func (a *Agent) emitMissingReasoningFallbackNotice(retryDelay time.Duration, scheduled bool) {
+	if a == nil || a.svc.sink == nil {
+		return
+	}
+	text := i18n.M.MissingReasoningFallback
+	detail := "no shared recovery state is configured; thinking stays off until this conversation ends"
+	if scheduled {
+		text = fmt.Sprintf(i18n.M.MissingReasoningFallbackFmt, missingReasoningBackoffText(retryDelay))
+		detail = fmt.Sprintf("thinking.type=disabled until the half-open probe in %s", retryDelay.Round(time.Second))
+	}
+	a.svc.sink.Emit(event.Event{
+		Kind:   event.Notice,
+		Level:  event.LevelWarn,
+		Code:   event.NoticeCodeMissingReasoningFallback,
+		Text:   text,
+		Detail: detail,
+	})
+}
+
+func (a *Agent) emitMissingReasoningRecoveredNotice() {
+	if a == nil || a.svc.sink == nil {
+		return
+	}
+	a.svc.sink.Emit(event.Event{
+		Kind:   event.Notice,
+		Level:  event.LevelInfo,
+		Code:   event.NoticeCodeMissingReasoningRecovered,
+		Text:   i18n.M.MissingReasoningRecovered,
+		Detail: "healthy thinking responses closed the adaptive fallback circuit",
+	})
+}
+
+// missingReasoningBackoffText renders a probe delay the way the rest of the
+// CLI renders user-facing durations: whole minutes, then whole hours.
+func missingReasoningBackoffText(d time.Duration) string {
+	minutes := max(int((d+time.Minute/2)/time.Minute), 1)
+	if minutes < 60 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	if minutes%60 == 0 {
+		return fmt.Sprintf("%dh", minutes/60)
+	}
+	return fmt.Sprintf("%dh %dm", minutes/60, minutes%60)
 }

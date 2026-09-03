@@ -177,6 +177,9 @@ func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) (runErr err
 	}()
 	ctx = a.withAgentContext(ctx)
 	for step := 0; state.runMaxSteps <= 0 || step < state.runMaxSteps || state.graceRound || state.recoveryGraceRound || state.incompleteReads.hasPending(); step++ {
+		// A conversation parked in disabled-thinking fallback reclaims thinking
+		// mid-run once the persisted circuit admits its half-open probe.
+		a.refreshMissingReasoningProbe()
 		// Consume a queued steer and persist it to the session so it
 		// survives tab switches and history replay. The model sees it as
 		// guidance (with a prefix), not a new task. One cache miss per

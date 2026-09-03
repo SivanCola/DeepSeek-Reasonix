@@ -48,9 +48,9 @@ const (
 )
 
 var missingReasoningFallbackBackoffs = [...]time.Duration{
+	2 * time.Minute,
 	10 * time.Minute,
-	30 * time.Minute,
-	2 * time.Hour,
+	time.Hour,
 	6 * time.Hour,
 	24 * time.Hour,
 }
@@ -207,8 +207,8 @@ func normalizeMissingReasoningFallbackFields(incident missingReasoningIncident) 
 	}
 	if incident.FallbackLevel == 0 {
 		// FallbackAtUnixNano predates adaptive recovery. Treat it as the first
-		// strike so an upgrade heals after ten minutes instead of inheriting the
-		// old fixed 24-hour downgrade.
+		// strike so an upgrade heals after the shortest adaptive backoff instead
+		// of inheriting the old fixed 24-hour downgrade.
 		incident.FallbackLevel = 1
 	}
 	if incident.NextProbeAtUnixNano == 0 {

@@ -40,10 +40,14 @@ type Messages struct {
 	RecoveryPaused         string // controlled Auto retry pause; user can continue in the next message
 	CompletionUncertain    string // completion validator could not confirm the result; work is kept
 	ReasoningReplayRepair  string // provider rejected replayed thinking blocks; history repaired and retried once
-	ReceiptVerified        string // end-of-turn receipt, nothing unproven
-	ReceiptGapsHeader      string // end-of-turn receipt, header above the unproven list
-	ReceiptRisksHeader     string // end-of-turn receipt, header above declared risks
-	ReceiptMore            string // end-of-turn receipt, "and N more" tail
+	// MissingReasoningFallbackFmt flags the disabled-thinking fallback, one %s = delay until the automatic retry.
+	MissingReasoningFallbackFmt string
+	MissingReasoningFallback    string // disabled-thinking fallback without a persisted retry schedule
+	MissingReasoningRecovered   string // thinking re-enabled after healthy probe responses
+	ReceiptVerified             string // end-of-turn receipt, nothing unproven
+	ReceiptGapsHeader           string // end-of-turn receipt, header above the unproven list
+	ReceiptRisksHeader          string // end-of-turn receipt, header above declared risks
+	ReceiptMore                 string // end-of-turn receipt, "and N more" tail
 	// ReceiptGapKinds maps a completion gap kind to its short human phrase.
 	ReceiptGapKinds   map[string]string
 	NoSessionToResume string // shown when --continue / --resume finds nothing

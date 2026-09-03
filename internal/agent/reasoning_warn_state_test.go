@@ -780,3 +780,10 @@ func TestMissingReasoningWarnStateConcurrentFallbackOpenKeepsNewestObservation(t
 		t.Fatalf("concurrent fallback watermark = missing:%d fallback:%d, want %d", incident.LastMissingUnixNano, incident.FallbackAtUnixNano, latest.UnixNano())
 	}
 }
+
+func TestMissingReasoningFallbackBackoffLadder(t *testing.T) {
+	want := [...]time.Duration{2 * time.Minute, 10 * time.Minute, time.Hour, 6 * time.Hour, 24 * time.Hour}
+	if missingReasoningFallbackBackoffs != want {
+		t.Fatalf("fallback backoff ladder = %v, want %v", missingReasoningFallbackBackoffs, want)
+	}
+}

@@ -48,6 +48,17 @@ func (s *missingReasoningWarnState) claimRecoveryModeAt(fingerprint string, obse
 	return missingReasoningRecoveryDecision{Mode: missingReasoningRecoveryProbe, ProbeClaimedAt: observedAt}
 }
 
+// nextProbeDelayAt reports the remaining quiet period before the persisted
+// circuit admits its next half-open probe, for user-facing fallback notices.
+// An unreadable or unscheduled circuit reports false.
+func (s *missingReasoningWarnState) nextProbeDelayAt(fingerprint string, observedAt time.Time) (time.Duration, bool) {
+	incident, exists := s.incidentAt(fingerprint, observedAt)
+	if !exists || incident.NextProbeAtUnixNano == 0 {
+		return 0, false
+	}
+	return max(time.Until(time.Unix(0, incident.NextProbeAtUnixNano)), 0), true
+}
+
 // failProbeAt reopens a circuit only for the current half-open owner. The token
 // prevents a slow failure from overwriting a newer lease or healthy resolution.
 func (s *missingReasoningWarnState) failProbeAt(fingerprint string, probeClaimedAt, observedAt time.Time) bool {

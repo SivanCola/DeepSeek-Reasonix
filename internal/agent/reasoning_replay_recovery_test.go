@@ -143,6 +143,22 @@ func TestStrictMissingReasoningUsesProviderFallbackBeforeToolExecution(t *testin
 	if len(retries) != 2 || retries[0].RetryScope != event.RetryScopeProtocol || retries[1].RetryScope != event.RetryScopeProtocol {
 		t.Fatalf("protocol retry events = %+v, want exact retry and fallback", retries)
 	}
+	wantTier := missingReasoningBackoffText(missingReasoningFallbackBackoffs[0])
+	var fallbackNotices int
+	for _, e := range sink.kinds(event.Notice) {
+		if e.Code == event.NoticeCodeMissingReasoningFallback {
+			fallbackNotices++
+			if e.Level != event.LevelWarn {
+				t.Fatalf("fallback notice level = %v, want warn", e.Level)
+			}
+			if !strings.Contains(e.Text, wantTier) {
+				t.Fatalf("fallback notice text = %q, want the current %s backoff tier", e.Text, wantTier)
+			}
+		}
+	}
+	if fallbackNotices != 1 {
+		t.Fatalf("fallback notices = %d, want 1", fallbackNotices)
+	}
 }
 
 func TestStrictMissingReasoningOpenCircuitStartsNextSessionInFallback(t *testing.T) {
@@ -527,5 +543,172 @@ func TestStrictMissingReasoningFallbackStreamsTextLive(t *testing.T) {
 		if !bytes.Contains(bodies[i], []byte(`"thinking":{"type":"disabled"}`)) {
 			t.Fatalf("request %d did not run under the disabled-thinking fallback: %s", i+1, bodies[i])
 		}
+	}
+}
+
+// primeFallbackSession parks the conversation in the disabled-thinking
+// fallback as if one of its own earlier rounds had opened the circuit, while
+// the persisted state decides when thinking may be probed again.
+func primeFallbackSession(a *Agent) {
+	a.sess.missingReasoning.fallbackActive = true
+}
+
+func TestStrictMissingReasoningInSessionProbeRecoversWithoutNewRun(t *testing.T) {
+	stateDir := t.TempDir()
+	seed := &strictFallbackReasoningProvider{MockProvider: testutil.NewMock("strict-fallback")}
+	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(seed)
+	state := newMissingReasoningWarnState(stateDir)
+	openedAt := time.Now().Add(-missingReasoningFallbackBackoffs[0] - 2*time.Second)
+	if !state.claimAt(fingerprint, openedAt) || !state.openFallbackAt(fingerprint, openedAt.Add(time.Second)) {
+		t.Fatal("failed to seed due half-open circuit")
+	}
+	call := func(id string) provider.ToolCall {
+		return provider.ToolCall{ID: id, Name: "echo", Arguments: `{"text":"hi"}`}
+	}
+	mock := testutil.NewMock("strict-fallback",
+		testutil.Turn{Reasoning: "healthy one", ToolCalls: []provider.ToolCall{call("h1")}},
+		testutil.Turn{Reasoning: "healthy two", ToolCalls: []provider.ToolCall{call("h2")}},
+		testutil.Turn{Reasoning: "healthy three", ToolCalls: []provider.ToolCall{call("h3")}},
+		testutil.Turn{Text: "done"},
+	)
+	prov := &strictFallbackReasoningProvider{MockProvider: mock}
+	sink := &recordSink{}
+	agent := New(prov, echoRegistry(), NewSession(""), Options{MissingReasoningWarnStateDir: stateDir}, sink)
+	primeFallbackSession(agent)
+
+	if err := agent.Run(withNoClosedLoop(context.Background()), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := prov.fallbackCalls(), []bool{false, false, false, false}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("in-session probe calls = %v, want thinking restored for every request %v", got, want)
+	}
+	if state.fallbackActiveAt(fingerprint, time.Now()) {
+		t.Fatal("three healthy in-session probe rounds did not close the circuit")
+	}
+	if got := state.claimRecoveryModeAt(fingerprint, time.Now()).Mode; got != missingReasoningRecoveryNormal {
+		t.Fatalf("post-recovery mode = %v, want normal", got)
+	}
+	var recovered int
+	for _, e := range sink.kinds(event.Notice) {
+		if e.Code == event.NoticeCodeMissingReasoningRecovered {
+			recovered++
+			if e.Level != event.LevelInfo {
+				t.Fatalf("recovered notice level = %v, want info", e.Level)
+			}
+		}
+	}
+	if recovered != 1 {
+		t.Fatalf("recovered notices = %d, want 1", recovered)
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryMissingReasoningRetryAttempted); got != 0 {
+		t.Fatalf("exact retries = %d, want 0 in a clean probe", got)
+	}
+}
+
+func TestStrictMissingReasoningInSessionProbeWaitsForDueBackoff(t *testing.T) {
+	stateDir := t.TempDir()
+	seed := &strictFallbackReasoningProvider{MockProvider: testutil.NewMock("strict-fallback")}
+	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(seed)
+	state := newMissingReasoningWarnState(stateDir)
+	openedAt := time.Now()
+	if !state.claimAt(fingerprint, openedAt) || !state.openFallbackAt(fingerprint, openedAt.Add(time.Second)) {
+		t.Fatal("failed to seed active fallback circuit")
+	}
+	statePath := filepath.Join(stateDir, missingReasoningWarnStateFilename)
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "safe", Name: "echo", Arguments: `{"text":"hi"}`}
+	mock := testutil.NewMock("strict-fallback",
+		testutil.Turn{ToolCalls: []provider.ToolCall{call}},
+		testutil.Turn{Text: "done"},
+	)
+	prov := &strictFallbackReasoningProvider{MockProvider: mock}
+	sink := &recordSink{}
+	agent := New(prov, echoRegistry(), NewSession(""), Options{MissingReasoningWarnStateDir: stateDir}, sink)
+	primeFallbackSession(agent)
+
+	if err := agent.Run(withNoClosedLoop(context.Background()), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := prov.fallbackCalls(), []bool{true, true}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls = %v, want the session to stay in fallback until the probe is due %v", got, want)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("an early in-session probe mutated the persisted incident")
+	}
+	for _, e := range sink.kinds(event.Notice) {
+		if e.Code == event.NoticeCodeMissingReasoningFallback || e.Code == event.NoticeCodeMissingReasoningRecovered {
+			t.Fatalf("unexpected fallback-transition notice: %+v", e)
+		}
+	}
+}
+
+func TestStrictMissingReasoningInSessionProbeFailureBacksOff(t *testing.T) {
+	stateDir := t.TempDir()
+	seed := &strictFallbackReasoningProvider{MockProvider: testutil.NewMock("strict-fallback")}
+	fingerprint := provider.MissingToolCallReasoningWarningFingerprint(seed)
+	state := newMissingReasoningWarnState(stateDir)
+	openedAt := time.Now().Add(-missingReasoningFallbackBackoffs[0] - 2*time.Second)
+	if !state.claimAt(fingerprint, openedAt) || !state.openFallbackAt(fingerprint, openedAt.Add(time.Second)) {
+		t.Fatal("failed to seed due half-open circuit")
+	}
+	call := func(id string) provider.ToolCall {
+		return provider.ToolCall{ID: id, Name: "echo", Arguments: `{"text":"hi"}`}
+	}
+	mock := testutil.NewMock("strict-fallback",
+		testutil.Turn{ToolCalls: []provider.ToolCall{call("probe-bad")}},
+		testutil.Turn{ToolCalls: []provider.ToolCall{call("fallback-safe")}},
+		testutil.Turn{Text: "done"},
+	)
+	prov := &strictFallbackReasoningProvider{MockProvider: mock}
+	sink := &recordSink{}
+	agent := New(prov, echoRegistry(), NewSession(""), Options{MissingReasoningWarnStateDir: stateDir}, sink)
+	primeFallbackSession(agent)
+
+	if err := agent.Run(withNoClosedLoop(context.Background()), "go"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, want := prov.fallbackCalls(), []bool{false, true, true}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("probe failure calls = %v, want normal probe then direct fallback %v", got, want)
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryMissingReasoningRetryAttempted); got != 0 {
+		t.Fatalf("in-session probe exact retries = %d, want 0", got)
+	}
+	results := sink.kinds(event.ToolResult)
+	if len(results) != 1 || results[0].Tool.ID != "fallback-safe" {
+		t.Fatalf("tool results = %+v, want only fallback-safe", results)
+	}
+	incidents, err := state.load(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	incident := incidents[fingerprint]
+	if incident.FallbackLevel != 2 {
+		t.Fatalf("fallback level = %d, want 2 after failed in-session probe", incident.FallbackLevel)
+	}
+	if got := time.Unix(0, incident.NextProbeAtUnixNano).Sub(time.Unix(0, incident.FallbackAtUnixNano)); got != missingReasoningFallbackBackoffs[1] {
+		t.Fatalf("next probe delay = %v, want %v", got, missingReasoningFallbackBackoffs[1])
+	}
+	wantTier := missingReasoningBackoffText(missingReasoningFallbackBackoffs[1])
+	var fallbackNotices int
+	for _, e := range sink.kinds(event.Notice) {
+		if e.Code == event.NoticeCodeMissingReasoningFallback {
+			fallbackNotices++
+			if e.Level != event.LevelWarn {
+				t.Fatalf("fallback notice level = %v, want warn", e.Level)
+			}
+			if !strings.Contains(e.Text, wantTier) {
+				t.Fatalf("fallback notice text = %q, want the escalated %s tier", e.Text, wantTier)
+			}
+		}
+	}
+	if fallbackNotices != 1 {
+		t.Fatalf("fallback notices = %d, want 1", fallbackNotices)
 	}
 }
