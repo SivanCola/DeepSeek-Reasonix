@@ -1436,6 +1436,7 @@ function normalizeProviderPresetView(p: ProviderPresetView): ProviderPresetView 
     accountGroupId: String(p.accountGroupId ?? ""),
     accounts: asArray(p.accounts).map(normalizeProviderAccountView),
     canAddAccount: Boolean(p.canAddAccount),
+    availableRoutes: asArray(p.availableRoutes),
   };
 }
 

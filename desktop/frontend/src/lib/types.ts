@@ -1749,7 +1749,7 @@ export interface ProviderPresetView {
   requiresKey?: boolean;
   configured?: boolean;
   keySource?: string;
-  keySourcePath?: string; accountGroupId?: string; accounts?: ProviderAccountView[]; canAddAccount?: boolean;
+  keySourcePath?: string; accountGroupId?: string; accounts?: ProviderAccountView[]; canAddAccount?: boolean; availableRoutes?: string[];
 }
 
 export interface ProviderModelOverrideView {
