@@ -520,7 +520,7 @@ export function useTranscriptScrollArbiter({
 
   const cancelReaderTransactionSilently = useCallback(() => cancelReaderTransaction(false), [cancelReaderTransaction]);
   const nativeScrollbarOwnership = useTranscriptNativeScrollbarOwnership({
-    scrollRef, modeRef, cancelReaderTransaction: cancelReaderTransactionSilently, deliverScroll, dispatch, tailSettle,
+    scrollRef, modeRef, cancelReaderTransaction: cancelReaderTransactionSilently, deliverScroll, dispatch, tailSettle, generationRef,
   });
   nativeScrollbarOwnershipRef.current = nativeScrollbarOwnership;
   const { begin: beginNativeScrollbarDrag, cancel: cancelNativeScrollbarDrag,
