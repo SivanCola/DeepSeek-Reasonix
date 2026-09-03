@@ -767,6 +767,35 @@ check(scrollElement.dataset.nativeScrollbarDrag === undefined,
 check(String(arbiter?.modeRef.current) === "tail-follow",
   "a generation reset cannot retain native-thumb ownership");
 
+// A delayed WebView2 range replacement can unmount the logical anchor for a
+// paint while the native extent is collapsed. Keep the accepted viewport
+// visually held from the native scroll delta even though there is no anchor
+// rect to measure yet; otherwise the replacement flashes stale/duplicate
+// transcript pixels until the task settles.
+await act(async () => arbiter?.reset());
+scrollExtent = 5_000;
+scrollElement.scrollTop = 2_000;
+rowElement.getBoundingClientRect = () => rectAt(20);
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: 24,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollExtent = 4_000;
+scrollElement.scrollTop = 1_000;
+rowElement.remove();
+reboundCoverageRow.getBoundingClientRect = () => rectAt(2_000);
+scrollElement.append(reboundCoverageRow);
+await act(async () => arbiter?.deliverScroll());
+check(scrollElement.dataset.transcriptReaderVisualGuard === "true",
+  "a blank range replacement keeps a visual hold while the logical anchor is unmounted");
+reboundCoverageRow.remove();
+scrollElement.append(rowElement);
+
 await act(async () => root.unmount());
 dom.window.close();
 
