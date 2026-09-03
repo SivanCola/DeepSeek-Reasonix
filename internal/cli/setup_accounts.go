@@ -115,6 +115,9 @@ func manageProviderAccount(s *providerSetupSession, providerID, accountID string
 			}
 			seenRoutes[routeID] = true
 			routeIDs = append(routeIDs, routeID)
+		}
+		sort.Strings(routeIDs)
+		for _, routeID := range routeIDs {
 			disabled := containsString(account.DisabledRoutes, routeID)
 			action := "Enable route"
 			if !disabled {
@@ -122,7 +125,6 @@ func manageProviderAccount(s *providerSetupSession, providerID, accountID string
 			}
 			items = append(items, menuItem{name: fmt.Sprintf("%s: %s", action, routeID)})
 		}
-		sort.Strings(routeIDs)
 	} else {
 		items = append(items, menuItem{name: "Restore account"})
 	}

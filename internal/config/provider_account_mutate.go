@@ -136,6 +136,11 @@ func (c *Config) SetProviderAccountRouteEnabled(providerID, accountID, routeID s
 	if _, _, err := ReconcileProviderAccounts(c); err != nil {
 		return err
 	}
+	if !enabled {
+		c.removeProviderAccountRouteAccess(account.ProviderID, account.ID, routeID)
+	} else {
+		c.restoreProviderAccountRouteAccess(account.ProviderID, account.ID, routeID)
+	}
 	return nil
 }
 
@@ -172,7 +177,59 @@ func (c *Config) RestoreProviderAccount(providerID, accountID string) error {
 		c.ProviderAccounts[idx] = account
 		return err
 	}
+	if c.Desktop.ProviderAccess != nil {
+		for _, entry := range c.Providers {
+			if entry.AccountProviderID == providerID && entry.AccountID == accountID {
+				c.restoreProviderAccountRouteAccess(providerID, accountID, entry.AccountRouteID)
+			}
+		}
+	}
 	return nil
+}
+
+func (c *Config) removeProviderAccountRouteAccess(providerID, accountID, routeID string) {
+	if c == nil || c.Desktop.ProviderAccess == nil {
+		return
+	}
+	names := map[string]bool{}
+	for _, entry := range c.Providers {
+		if entry.AccountProviderID == providerID && entry.AccountID == accountID && strings.TrimSpace(entry.AccountRouteID) == routeID {
+			names[entry.Name] = true
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	out := c.Desktop.ProviderAccess[:0]
+	for _, name := range c.Desktop.ProviderAccess {
+		if !names[strings.TrimSpace(name)] {
+			out = append(out, name)
+		}
+	}
+	c.Desktop.ProviderAccess = out
+}
+
+func (c *Config) restoreProviderAccountRouteAccess(providerID, accountID, routeID string) {
+	if c == nil || c.Desktop.ProviderAccess == nil {
+		return
+	}
+	for _, entry := range c.Providers {
+		if entry.AccountProviderID != providerID || entry.AccountID != accountID || strings.TrimSpace(entry.AccountRouteID) != strings.TrimSpace(routeID) {
+			continue
+		}
+		present := false
+		for _, name := range c.Desktop.ProviderAccess {
+			if name == entry.Name {
+				present = true
+				break
+			}
+		}
+		if present {
+			continue
+		}
+		c.Desktop.ProviderAccess = append(c.Desktop.ProviderAccess, entry.Name)
+		break
+	}
 }
 
 func (c *Config) RenameProviderAccount(providerID, accountID, label string) error {
