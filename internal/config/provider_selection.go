@@ -74,7 +74,7 @@ func CuratedProviderFamilies() []ProviderFamilyDefinition {
 			byID[familyID] = family
 		}
 		family.PresetIDs = appendUniqueString(family.PresetIDs, preset.ID)
-		if preset.Recommended && (family.RecommendedPresetID == "" || presetRank(preset) < presetRankByID(family.RecommendedPresetID)) {
+		if preset.Recommended && preferredPreset(preset.ID, family.RecommendedPresetID) {
 			family.RecommendedPresetID = preset.ID
 		}
 		for _, entry := range preset.Entries {
@@ -123,7 +123,7 @@ func CuratedProviderFamilies() []ProviderFamilyDefinition {
 		}
 		if family.RecommendedPresetID == "" {
 			for _, presetID := range family.PresetIDs {
-				if family.RecommendedPresetID == "" || presetRankByID(presetID) < presetRankByID(family.RecommendedPresetID) {
+				if preferredPreset(presetID, family.RecommendedPresetID) {
 					family.RecommendedPresetID = presetID
 				}
 			}
@@ -146,6 +146,14 @@ func presetRank(p ProviderPreset) int {
 		return -1
 	}
 	return p.DisplayOrder
+}
+
+func preferredPreset(candidate, current string) bool {
+	if current == "" {
+		return true
+	}
+	candidateRank, currentRank := presetRankByID(candidate), presetRankByID(current)
+	return candidateRank < currentRank || candidateRank == currentRank && candidate < current
 }
 
 func presetRankByID(id string) int {
@@ -313,8 +321,10 @@ func (c *Config) RouteForSelection(selection ProviderSelection) (ProviderRouteDe
 	if !ok {
 		return ProviderRouteDefinition{}, fmt.Errorf("provider account %s/%s not found", selection.FamilyID, selection.AccountID)
 	}
+	disabledRoutes := make([]string, 0, len(account.DisabledRoutes))
 	for _, route := range family.Routes {
 		if providerAccountRouteDisabled(account, route.ID) {
+			disabledRoutes = append(disabledRoutes, route.ID)
 			continue
 		}
 		for _, entry := range c.Providers {
@@ -322,6 +332,9 @@ func (c *Config) RouteForSelection(selection ProviderSelection) (ProviderRouteDe
 				return route, nil
 			}
 		}
+	}
+	if len(disabledRoutes) > 0 {
+		return ProviderRouteDefinition{}, fmt.Errorf("model %q has no enabled route for %s/%s (disabled routes: %s)", selection.Model, selection.FamilyID, selection.AccountID, strings.Join(disabledRoutes, ", "))
 	}
 	return ProviderRouteDefinition{}, fmt.Errorf("model %q has no enabled route for %s/%s", selection.Model, selection.FamilyID, selection.AccountID)
 }
@@ -375,6 +388,9 @@ func (c *Config) ResolveNewSessionSelection() (ProviderSelection, bool) {
 		if selection, err := ParseProviderSelection(c, ref); err == nil {
 			return selection, true
 		}
+		// A valid custom provider/model remains outside the curated selection
+		// schema; do not silently replace it with the first curated family.
+		return ProviderSelection{}, false
 	}
 	for _, family := range CuratedProviderFamilies() {
 		if selection, ok := c.DefaultSelection(family.ID); ok {

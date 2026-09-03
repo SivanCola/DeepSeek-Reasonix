@@ -169,13 +169,14 @@ func (m *chatTUI) switchToProvider(name string) {
 
 	items := make([]quickPickerItem, 0, len(models))
 	selected := 0
+	currentSelection, _ := config.ParseProviderSelection(cfg, m.modelRef)
 	for _, model := range models {
 		ref := entry.Name + "/" + model
 		if selection, ok := cfg.SelectionForProviderModel(*entry, model); ok {
 			ref = selection.Ref()
 		}
 		status := ""
-		if ref == m.modelRef {
+		if ref == m.modelRef || (currentSelection.Model == model && currentSelection.FamilyID == entry.AccountProviderID && currentSelection.AccountID == entry.AccountID) {
 			status = "active"
 			selected = len(items)
 		}
