@@ -201,21 +201,31 @@ func (a *App) RenameProviderAccount(providerID, accountID, label string) error {
 }
 
 func (a *App) RetireProviderAccount(providerID, accountID string) error {
+	var retiredEnv string
 	_, err := a.applyConfigChangeWithRuntimeMutation("retire provider account", func(c *config.Config) error {
 		if refs := a.providerAccountLiveRefsFromConfig(c, providerID, accountID); len(refs) > 0 {
 			return fmt.Errorf("cannot retire account %s/%s while it is referenced by %s", providerID, accountID, strings.Join(refs, ", "))
 		}
+		if _, account, ok := accountByID(c, providerID, accountID); ok {
+			retiredEnv = strings.TrimSpace(account.APIKeyEnv)
+		}
 		if err := c.RetireProviderAccount(providerID, accountID); err != nil {
 			return err
 		}
-		_, account, ok := accountByID(c, providerID, accountID)
-		if ok && strings.TrimSpace(account.APIKeyEnv) != "" && !accountKeyEnvShared(c, account) {
-			if err := config.RemoveCredential(account.APIKeyEnv); err != nil {
-				return err
-			}
-		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if retiredEnv != "" {
+		if cfg, _, loadErr := a.loadDesktopUserConfigForView(); loadErr == nil {
+			if _, account, ok := accountByID(cfg, providerID, accountID); ok && !accountKeyEnvShared(cfg, account) {
+				if removeErr := config.RemoveCredential(retiredEnv); removeErr != nil {
+					return fmt.Errorf("account retired but credential cleanup failed; retry cleanup: %w", removeErr)
+				}
+			}
+		}
+	}
 	return err
 }
 

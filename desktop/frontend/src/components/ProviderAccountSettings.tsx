@@ -23,18 +23,27 @@ type ProviderPresetRef = { id: string; accountGroupId?: string; recommended?: bo
 
 export function accountsForProviderGroup(group: { id: string; providerGroup?: string; providers: { providerId?: string }[] }, accounts: AccountView[]): AccountView[] {
   const ids = new Set(group.providers.map((p) => p.providerId).filter(Boolean) as string[]);
-  if (group.providerGroup) ids.add(group.providerGroup);
+  const groupID = accountGroupID(group);
+  if (groupID) ids.add(groupID);
   return accounts.filter((account) => ids.has(account.providerId));
 }
 
 export function addAccountPresetID(group: { id: string; providerGroup?: string; providers: { providerId?: string }[] }, presets: ProviderPresetRef[]): string {
-  const groupID = group.providerGroup || group.providers.map((p) => p.providerId).find(Boolean) || "";
+  const groupID = accountGroupID(group);
   if (!groupID) return "";
   const candidates = presets.filter((preset) => String(preset.accountGroupId ?? "").trim() === groupID);
   candidates.sort((a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended))
     || Number(a.displayOrder ?? 0) - Number(b.displayOrder ?? 0)
     || a.id.localeCompare(b.id));
   return candidates[0]?.id ?? "";
+}
+
+function accountGroupID(group: { id: string; providerGroup?: string; providers: { providerId?: string }[] }): string {
+  if (group.providerGroup) return group.providerGroup.trim();
+  const providerID = group.providers.map((p) => p.providerId).find(Boolean);
+  if (providerID) return providerID.trim();
+  const [, suffix] = String(group.id ?? "").split(":", 2);
+  return suffix?.trim() ?? "";
 }
 
 export function ProviderAccountManager({
