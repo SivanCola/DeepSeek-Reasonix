@@ -81,7 +81,15 @@ func TestAccountSwitchKeepsPromptBytesStable(t *testing.T) {
 	if _, err := cfg.AddProviderAccount("deepseek", "", "团队账号", "DEEPSEEK_API_KEY_TEAM"); err != nil {
 		t.Fatal(err)
 	}
-	req := provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}}}
+	req := provider.Request{
+		Messages: []provider.Message{
+			{Role: provider.RoleSystem, Content: "stable system prompt"},
+			{Role: provider.RoleUser, Content: "hi"},
+		},
+		Tools: []provider.ToolSchema{{
+			Name: "stable_tool", Description: "stable tool", Parameters: json.RawMessage(`{"type":"object","properties":{"value":{"type":"string"}}}`),
+		}},
+	}
 	for _, account := range cfg.ProviderAccounts {
 		if account.ProviderID != "deepseek" {
 			continue
@@ -112,9 +120,21 @@ func TestAccountSwitchKeepsPromptBytesStable(t *testing.T) {
 	if len(bodies) < 2 {
 		t.Fatalf("got %d bodies", len(bodies))
 	}
-	msg0, _ := json.Marshal(bodies[0]["messages"])
-	msg1, _ := json.Marshal(bodies[1]["messages"])
-	if string(msg0) != string(msg1) {
-		t.Fatalf("prompt bytes changed across accounts:\n%s\n%s", msg0, msg1)
+	for _, field := range []string{"messages", "tools"} {
+		v0, _ := json.Marshal(bodies[0][field])
+		v1, _ := json.Marshal(bodies[1][field])
+		if string(v0) != string(v1) {
+			t.Fatalf("provider-visible %s changed across accounts:\n%s\n%s", field, v0, v1)
+		}
+	}
+	// Account labels, IDs, timestamps, and route paths must never leak into the
+	// provider-visible prompt surface. Authentication is intentionally the only
+	// per-account request difference.
+	for _, field := range []string{"messages", "tools", "model", "temperature", "max_tokens", "stream"} {
+		v0, _ := json.Marshal(bodies[0][field])
+		v1, _ := json.Marshal(bodies[1][field])
+		if string(v0) != string(v1) {
+			t.Fatalf("stable request field %s changed across accounts: %s vs %s", field, v0, v1)
+		}
 	}
 }
