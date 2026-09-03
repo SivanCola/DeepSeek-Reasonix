@@ -404,4 +404,41 @@ describe("diagnostics v2 storage consistency", () => {
     expect(querySQL.indexOf("affected_installs DESC")).toBeLessThan(querySQL.indexOf("CASE WHEN status = 'open'"));
     expect(result.results.map((group) => group.fingerprint)).toEqual(["a".repeat(64), "b".repeat(64)]);
   });
+
+  it("qualifies the development fingerprint in the joined diagnostics query", async () => {
+    const sqlite = new DatabaseSync(":memory:");
+    try {
+      sqlite.exec(freshSchemaSQL);
+      const db = {
+        prepare(sql: string) {
+          const statement = sqlite.prepare(sql);
+          return { async all() { return { results: statement.all() }; } };
+        },
+      } as unknown as D1Database;
+      await expect(crashGroups({ DB: db } as unknown as Env, {
+        status: "", source: "", version: "", os: "", platform: "", osBuild: "", arch: "", channel: "",
+        runtimeVersion: "", failureKind: "", failureReason: "", recovery: "", gpu: "",
+        newLatest: false, regressed: false, windowDays: 30,
+      }, "")).resolves.toMatchObject({ results: [] });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("shares the unfiltered ping denominator across diagnostics metrics", async () => {
+    let querySQL = "";
+    const db = {
+      prepare(sql: string) {
+        querySQL = sql;
+        return { async all() { return { results: [] }; } };
+      },
+    } as unknown as D1Database;
+    await crashGroups({ DB: db } as unknown as Env, {
+      status: "", source: "", version: "", os: "", platform: "", osBuild: "", arch: "", channel: "",
+      runtimeVersion: "", failureKind: "", failureReason: "", recovery: "", gpu: "",
+      newLatest: false, regressed: false, windowDays: 30,
+    }, "");
+    expect(querySQL.match(/FROM pings WHERE/g)).toHaveLength(1);
+    expect(querySQL).toContain("CROSS JOIN (SELECT COUNT(DISTINCT install_id) AS installs FROM pings");
+  });
 });

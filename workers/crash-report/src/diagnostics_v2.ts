@@ -1,7 +1,7 @@
 import type { Env } from "./env";
 
 export const DEVELOPMENT_FINGERPRINT_PREFIX = "dev:";
-export const developmentGroupSQL = `fingerprint LIKE 'dev:%'`;
+export const developmentGroupSQL = `groups.fingerprint LIKE 'dev:%'`;
 
 type GroupPriorityRow = {
   fingerprint: string;
@@ -212,14 +212,21 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
   const activeInstalls = `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE ${pingWhere.join(" AND ")})`;
   const baseInstalls = `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE ${pingBaseWhere.join(" AND ")})`;
   const coveredInstalls = `(SELECT COUNT(DISTINCT install_id) FROM pings WHERE ${[...pingBaseWhere, ...dimensionKnown].join(" AND ")})`;
+  const samePingWindow = pingWhere.length === 1 && pingBaseWhere.length === 1 && dimensionKnown.length === 0;
+  const pingStatsJoin = samePingWindow
+    ? `CROSS JOIN (SELECT COUNT(DISTINCT install_id) AS installs FROM pings WHERE ${pingWhere.join(" AND ")}) ping_stats`
+    : "";
+  const activeInstallExpr = samePingWindow ? "ping_stats.installs" : activeInstalls;
+  const baseInstallExpr = samePingWindow ? "ping_stats.installs" : baseInstalls;
+  const coveredInstallExpr = samePingWindow ? "ping_stats.installs" : coveredInstalls;
   const sql = `SELECT groups.fingerprint, kind, count, first_version, last_version, substr(last_seen, 1, 10) AS seen,
       status, title, source, label, error_type, top_frame, severity, last_os, last_arch, last_channel, regressed_at,
       COALESCE(diagnostics.affected_installs, 0) AS affected_installs,
       COALESCE(diagnostics.window_events, 0) AS window_events,
       COALESCE(diagnostics.identified_events, 0) AS identified_events,
-      ${activeInstalls} AS active_build_installs,
-      ${baseInstalls} AS dimension_base_installs,
-      ${coveredInstalls} AS dimension_covered_installs
+      ${activeInstallExpr} AS active_build_installs,
+      ${baseInstallExpr} AS dimension_base_installs,
+      ${coveredInstallExpr} AS dimension_covered_installs
     FROM groups
     LEFT JOIN (
       SELECT fingerprint,
@@ -228,6 +235,7 @@ export async function crashGroups(env: Env, filters: DiagnosticsGroupFilters, la
         SUM(CASE WHEN install_id <> '' THEN events ELSE 0 END) AS identified_events
       FROM report_event_dimensions WHERE ${installWhere.join(" AND ")} GROUP BY fingerprint
     ) diagnostics ON diagnostics.fingerprint = groups.fingerprint
+    ${pingStatsJoin}
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY
       affected_installs DESC,
