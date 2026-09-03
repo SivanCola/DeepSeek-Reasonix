@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -38,7 +39,7 @@ type ProviderSelection struct {
 // custom providers, which continue using their provider/model reference.
 func (c *Config) SelectionForProviderModel(entry ProviderEntry, model string) (ProviderSelection, bool) {
 	model = strings.TrimSpace(model)
-	if model == "" {
+	if c == nil || model == "" {
 		return ProviderSelection{}, false
 	}
 	if family, account, ok := ProviderAccountIdentity(entry); ok {
@@ -104,10 +105,7 @@ func CuratedProviderFamilies() []ProviderFamilyDefinition {
 	}
 	families := make([]ProviderFamilyDefinition, 0, len(byID))
 	for _, family := range byID {
-		// DeepSeek's legacy Flash/Pro routes are built-in defaults rather than
-		// standalone curated presets. Include them in the family catalog so the
-		// canonical selection API can resolve migrated accounts without a provider
-		// specific branch in callers.
+		// Include migrated DeepSeek default routes in the family catalog.
 		for _, template := range accountRouteTemplates(family.ID) {
 			found := false
 			for _, route := range family.Routes {
@@ -158,10 +156,8 @@ func presetRankByID(id string) int {
 }
 
 func appendUniqueString(values []string, value string) []string {
-	for _, current := range values {
-		if current == value {
-			return values
-		}
+	if slices.Contains(values, value) {
+		return values
 	}
 	return append(values, value)
 }
@@ -261,6 +257,9 @@ func splitGeneratedProviderName(provider string) (family, accountID string, ok b
 }
 
 func (c *Config) ResolveSelection(selection ProviderSelection) (*ProviderEntry, error) {
+	if c == nil {
+		return nil, fmt.Errorf("resolve provider selection: nil config")
+	}
 	selection.FamilyID = strings.TrimSpace(selection.FamilyID)
 	selection.AccountID = strings.TrimSpace(selection.AccountID)
 	selection.Model = strings.TrimSpace(selection.Model)
@@ -296,6 +295,9 @@ func (c *Config) ResolveSelectionRef(ref string) (*ProviderEntry, ProviderSelect
 }
 
 func (c *Config) RouteForSelection(selection ProviderSelection) (ProviderRouteDefinition, error) {
+	if c == nil {
+		return ProviderRouteDefinition{}, fmt.Errorf("resolve provider route: nil config")
+	}
 	families := CuratedProviderFamilies()
 	var family *ProviderFamilyDefinition
 	for i := range families {
@@ -325,6 +327,9 @@ func (c *Config) RouteForSelection(selection ProviderSelection) (ProviderRouteDe
 }
 
 func (c *Config) DefaultSelection(familyID string) (ProviderSelection, bool) {
+	if c == nil {
+		return ProviderSelection{}, false
+	}
 	account, ok := c.DefaultAccount(strings.TrimSpace(familyID))
 	if !ok {
 		return ProviderSelection{}, false

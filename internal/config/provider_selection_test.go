@@ -125,3 +125,17 @@ func TestApplyProviderAccountChangeRollsBackOnInvalidPatch(t *testing.T) {
 		t.Fatalf("account patch was not rolled back: before=%+v after=%+v", before, cfg.ProviderAccounts)
 	}
 }
+
+func TestSetDefaultModelAcceptsCanonicalSelection(t *testing.T) {
+	cfg := Default()
+	if _, err := cfg.AddProviderAccount("deepseek", "", "Team", "DEEPSEEK_TEAM_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	ref := "deepseek/team/deepseek-v4-flash"
+	if err := cfg.SetDefaultModel(ref); err != nil {
+		t.Fatalf("SetDefaultModel(%q): %v", ref, err)
+	}
+	if cfg.DefaultModel != ref {
+		t.Fatalf("default model = %q, want %q", cfg.DefaultModel, ref)
+	}
+}

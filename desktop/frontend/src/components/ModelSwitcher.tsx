@@ -134,7 +134,7 @@ export function ModelSwitcher({
   const pick = (model: ModelInfo) => {
     setOpen(false);
     const pendingKey = tabId ?? "";
-    const selectionRef = model.selectionRef || model.ref;
+    const selectionRef = (model as ModelInfo & { selectionRef?: string }).selectionRef || model.ref;
     const pendingPickCount = pendingPickCountByTabRef.current.get(pendingKey) ?? 0;
     // A catalog refresh can still report the outgoing model as current while
     // an earlier switch is rebuilding. In that window, selecting it again is
