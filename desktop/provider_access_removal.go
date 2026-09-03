@@ -28,6 +28,15 @@ type providerRemovalTab struct {
 	retargetModel bool
 }
 
+func officialProviderKindFromName(name string) string {
+	switch strings.TrimSpace(name) {
+	case "deepseek", "deepseek-flash", "deepseek-pro", "deepseek-anthropic", "deepseek-responses":
+		return "deepseek"
+	default:
+		return ""
+	}
+}
+
 // DeleteProvider removes a provider and retargets open idle tabs that used it.
 func (a *App) DeleteProvider(name string) error {
 	return a.deleteProviderAndRetargetTabs(name)
@@ -55,7 +64,29 @@ func (a *App) RemoveProviderAccesses(rawNames []string) error {
 	for _, name := range names {
 		p, ok := cfg.Provider(name)
 		if !ok {
-			return fmt.Errorf("remove provider access: provider %q not found", name)
+			// A family access card can refer to generated official routes even
+			// when its canonical provider alias is absent from the loaded config.
+			// Keep validating the family so runtime-reference guards run before
+			// reporting a missing provider.
+			kind := officialProviderKindFromName(name)
+			if kind == "" {
+				return fmt.Errorf("remove provider access: provider %q not found", name)
+			}
+			found := false
+			for _, candidate := range cfg.Providers {
+				if officialProviderKindFromEntry(candidate) == kind {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("remove provider access: provider %q not found", name)
+			}
+			if officialKind != "" && officialKind != kind {
+				return fmt.Errorf("remove provider access: providers do not belong to one official group")
+			}
+			officialKind = kind
+			continue
 		}
 		kind := officialProviderKindFromEntry(*p)
 		if kind == "" {
@@ -111,7 +142,30 @@ func validateOfficialProviderRemoval(c *config.Config, names []string) error {
 	for _, name := range names {
 		p, ok := c.Provider(name)
 		if !ok {
-			return fmt.Errorf("remove provider access: provider %q not found", name)
+			// Canonical family cards (for example "deepseek") may be represented
+			// by generated legacy routes such as deepseek-flash/deepseek-pro.
+			// Treat the family as present when one of its official routes exists;
+			// this keeps removal validation and detached-runtime guards reachable
+			// after a config has not yet materialized the canonical alias.
+			kind := officialProviderKindFromName(name)
+			if kind == "" {
+				return fmt.Errorf("remove provider access: provider %q not found", name)
+			}
+			found := false
+			for _, candidate := range c.Providers {
+				if officialProviderKindFromEntry(candidate) == kind {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("remove provider access: provider %q not found", name)
+			}
+			if officialKind != "" && officialKind != kind {
+				return fmt.Errorf("remove provider access: providers do not belong to one official group")
+			}
+			officialKind = kind
+			continue
 		}
 		kind := officialProviderKindFromEntry(*p)
 		if kind == "" {
