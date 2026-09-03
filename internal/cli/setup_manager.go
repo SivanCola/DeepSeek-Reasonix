@@ -1091,6 +1091,9 @@ func replayProviderAccountOperation(cfg *config.Config, operation providerSetupO
 	if after == nil && operation.afterAccount != nil {
 		after = []config.ProviderAccount{*operation.afterAccount}
 	}
+	if len(before) == 0 && len(after) == 0 {
+		return fmt.Errorf("replay %s: empty account change", field)
+	}
 	current := make(map[string]config.ProviderAccount)
 	for _, account := range cfg.ProviderAccounts {
 		if account.ProviderID == operation.providerID {
