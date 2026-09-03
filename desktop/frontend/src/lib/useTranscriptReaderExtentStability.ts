@@ -195,6 +195,9 @@ export function useTranscriptReaderExtentStability({
     const transaction = transactionRef.current;
     return !transaction || Boolean(rowForAnchor(transaction.element, transaction.anchor, true));
   }, []);
+  const currentAnchor = useCallback((): TranscriptReaderTransaction["anchor"] => (
+    transactionRef.current?.anchor
+  ), []);
 
   const observe = useCallback((element = scrollRef.current) => {
     const transaction = transactionRef.current;
@@ -227,6 +230,10 @@ export function useTranscriptReaderExtentStability({
     const renderedAnchorDrift = anchorRow && transaction.anchor
       ? anchorRow.getBoundingClientRect().top - viewport.top - transaction.anchor.offset
       : 0;
+    const anchorOutsideViewport = Boolean(anchorRow && (
+      anchorRow.getBoundingClientRect().bottom <= viewport.top
+      || anchorRow.getBoundingClientRect().top >= viewport.top + element.clientHeight
+    ));
     // The row rect includes the current visual guard. Remove it so a stable
     // guard does not look like a fresh displacement on every observation.
     const physicalAnchorDrift = renderedAnchorDrift - transaction.visualOffset;
@@ -238,7 +245,12 @@ export function useTranscriptReaderExtentStability({
       Math.abs(element.scrollHeight - transaction.lastHeight) > GEOMETRY_EPSILON_PX || anchorDisplaced
     ) geometryCommitReadyRef.current = false;
     if (anchorRow) transaction.anchorDisplacementObserved = anchorDisplaced;
-    const rejected = (extentCollapsed && reverse >= threshold) || anchorDisplaced;
+    // A bounded Virtuoso range can collapse the native extent while the
+    // logical anchor is temporarily outside the mounted viewport. Treat that
+    // as the same transient geometry fault as a physical rebound; otherwise
+    // the guard is cleared for a downward gesture and the next paint exposes
+    // an empty range (the field #9711 failure shape).
+    const rejected = (extentCollapsed && (reverse >= threshold || anchorOutsideViewport)) || anchorDisplaced;
     const remainsCollapsed = extentCollapsed
       && element.scrollHeight < transaction.baselineHeight - Math.max(8, element.clientHeight * 0.5);
     if (remainsCollapsed) {
@@ -702,7 +714,8 @@ export function useTranscriptReaderExtentStability({
     observe,
     holdGeometryCommit,
     anchorIsMounted,
+    currentAnchor,
     isActive,
     active: active || readerLayoutLease,
-  }), [active, anchorIsMounted, arm, cancel, holdGeometryCommit, readerLayoutLease, observe, isActive]);
+  }), [active, anchorIsMounted, arm, cancel, currentAnchor, holdGeometryCommit, readerLayoutLease, observe, isActive]);
 }

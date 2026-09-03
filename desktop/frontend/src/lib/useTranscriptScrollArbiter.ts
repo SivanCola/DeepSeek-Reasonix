@@ -118,6 +118,7 @@ export function useTranscriptScrollArbiter({
     observe: observeReaderTransaction,
     holdGeometryCommit: holdReaderGeometryCommit,
     anchorIsMounted: readerAnchorIsMounted,
+    currentAnchor: readerCurrentAnchor,
     isActive: readerTransactionIsActive,
     active: readerTransactionActive,
   } = useTranscriptReaderExtentStability({
@@ -172,6 +173,17 @@ export function useTranscriptScrollArbiter({
     publishPending: (pending) => { if (scrollRef.current) scrollRef.current.dataset.transcriptHistoryPrependPending = String(pending); },
     holdReaderGeometryCommit, readerAnchorIsMounted, readerTransactionIsActive,
     commitGeometry: () => geometryController.note("items-rendered"),
+    transactionContext: () => ({
+      surfaceGeneration: generationRef.current,
+      ownershipEpoch: ownershipEpochRef.current,
+      geometryRevision: geometryRevisionRef.current,
+    }),
+    captureAnchor: () => {
+      const anchor = readerCurrentAnchor();
+      return anchor?.key
+        ? { rowKey: anchor.key, logicalIndex: anchor.index, viewportOffset: anchor.offset }
+        : undefined;
+    },
   });
   const historyPrependLease = historyPrependCoordinator.lease;
 
