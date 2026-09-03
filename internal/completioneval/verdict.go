@@ -15,6 +15,12 @@ const MaxReasonBytes = 500
 // matching error strings.
 var ErrInvalidOutput = errors.New("invalid completion evaluator output")
 
+// ErrEmptyOutput marks the empty-response case: the stream ended without any
+// text, the signature of a thinking-enabled endpoint burning the whole
+// completion budget on reasoning. It wraps ErrInvalidOutput so existing
+// classifiers keep matching while hosts can bucket it apart.
+var ErrEmptyOutput = fmt.Errorf("%w: empty response", ErrInvalidOutput)
+
 // Outcome is the validator's structured verdict disposition.
 type Outcome string
 
@@ -48,7 +54,7 @@ type Verdict struct {
 func parseVerdict(text string) (Verdict, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return Verdict{}, fmt.Errorf("%w: empty response", ErrInvalidOutput)
+		return Verdict{}, ErrEmptyOutput
 	}
 	if i := strings.Index(text, "{"); i >= 0 {
 		if j := strings.LastIndex(text, "}"); j > i {

@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"strings"
 
 	"reasonix/internal/provider"
 )
@@ -75,11 +76,26 @@ func (c *client) applyDeepSeekThinking(r *anthRequest, req provider.Request, rec
 	if c.effort == "disabled" {
 		t = "disabled"
 	}
+	effort := normalizeDeepSeekAnthropicEffort(c.model, c.effort)
+	// A per-request override scopes to this call: "disabled" turns thinking
+	// off (bounded reviewers replay no history), a depth level replaces the
+	// configured effort. Recovery keeps its forced-off thinking either way.
+	if !recoveryWithoutThinking {
+		switch override := strings.ToLower(strings.TrimSpace(req.EffortOverride)); override {
+		case "":
+		case "disabled":
+			t = "disabled"
+		default:
+			if normalized := normalizeDeepSeekAnthropicEffort(c.model, override); normalized != "" {
+				effort = normalized
+			}
+		}
+	}
 	r.Thinking = &thinkingConfig{Type: t}
 	if t == "disabled" {
 		return
 	}
-	switch effort := normalizeDeepSeekAnthropicEffort(c.model, c.effort); effort {
+	switch effort {
 	case "low", "high", "max":
 		r.OutputConfig = &outputConfig{Effort: effort}
 	}

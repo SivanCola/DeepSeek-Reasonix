@@ -204,7 +204,7 @@ func completionValidationCounters(info event.CompletionValidationInfo) map[strin
 	}
 	add(counts, "completion_validation_attempt", attempt, 1)
 	if strings.TrimSpace(info.ErrorClass) != "" {
-		add(counts, "completion_validation_error", enumBucket(info.ErrorClass, "timeout", "invalid_output", "unavailable", "over_budget", "error"), 1)
+		add(counts, "completion_validation_error", enumBucket(info.ErrorClass, "timeout", "empty_output", "invalid_output", "unavailable", "over_budget", "error"), 1)
 	}
 	return counts
 }

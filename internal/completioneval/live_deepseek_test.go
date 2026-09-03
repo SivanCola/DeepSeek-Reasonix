@@ -23,7 +23,7 @@ type liveCompletionScenario struct {
 }
 
 type liveCompletionResult struct {
-	model    string
+	variant  string
 	scenario string
 	outcome  Outcome
 	errClass string
@@ -36,24 +36,33 @@ func TestLiveDeepSeekCompletionValidationMatrix(t *testing.T) {
 	}
 	runs := completionLiveRuns
 	models := []string{"deepseek-v4-flash", "deepseek-v4-flash-vision-exp"}
+	// thinking=enabled mirrors the production desktop preset. The evaluator's
+	// per-request EffortOverride=disabled must neutralize it on the wire, so
+	// both thinking rows must score identically.
+	thinkings := []string{"disabled", "enabled"}
 	scenarios := liveCompletionScenarios()
 	providers := map[string]provider.Provider{}
+	var variants []string
 	for _, model := range models {
-		providers[model] = newLiveCompletionProvider(t, key, model)
+		for _, thinking := range thinkings {
+			variant := model + "/thinking-" + thinking
+			variants = append(variants, variant)
+			providers[variant] = newLiveCompletionProvider(t, key, model, thinking)
+		}
 	}
 
 	type job struct {
-		model    string
+		variant  string
 		scenario liveCompletionScenario
 	}
 	jobs := make(chan job)
-	results := make(chan liveCompletionResult, len(models)*len(scenarios)*runs)
+	results := make(chan liveCompletionResult, len(variants)*len(scenarios)*runs)
 	for range 4 {
 		go func() {
 			for job := range jobs {
-				session := NewSession(providers[job.model], nil, "deepseek/"+job.model, event.Discard)
+				session := NewSession(providers[job.variant], nil, "deepseek/"+job.variant, event.Discard)
 				verdict, err := session.Evaluate(context.Background(), job.scenario.evidence)
-				result := liveCompletionResult{model: job.model, scenario: job.scenario.name, outcome: verdict.Outcome}
+				result := liveCompletionResult{variant: job.variant, scenario: job.scenario.name, outcome: verdict.Outcome}
 				if err != nil {
 					result.errClass = liveCompletionErrorClass(err)
 				}
@@ -62,10 +71,10 @@ func TestLiveDeepSeekCompletionValidationMatrix(t *testing.T) {
 		}()
 	}
 	go func() {
-		for _, model := range models {
+		for _, variant := range variants {
 			for _, scenario := range scenarios {
 				for range runs {
-					jobs <- job{model: model, scenario: scenario}
+					jobs <- job{variant: variant, scenario: scenario}
 				}
 			}
 		}
@@ -77,9 +86,9 @@ func TestLiveDeepSeekCompletionValidationMatrix(t *testing.T) {
 		errors   map[string]int
 	}
 	all := map[string]*counts{}
-	for range len(models) * len(scenarios) * runs {
+	for range len(variants) * len(scenarios) * runs {
 		result := <-results
-		key := result.model + "/" + result.scenario
+		key := result.variant + "/" + result.scenario
 		if all[key] == nil {
 			all[key] = &counts{outcomes: map[Outcome]int{}, errors: map[string]int{}}
 		}
@@ -90,9 +99,9 @@ func TestLiveDeepSeekCompletionValidationMatrix(t *testing.T) {
 		}
 	}
 
-	for _, model := range models {
+	for _, variant := range variants {
 		for _, scenario := range scenarios {
-			key := model + "/" + scenario.name
+			key := variant + "/" + scenario.name
 			got := all[key]
 			t.Logf("%s outcomes=%v errors=%v", key, got.outcomes, got.errors)
 			if len(got.errors) != 0 {
@@ -117,14 +126,14 @@ func TestLiveDeepSeekCompletionValidationMatrix(t *testing.T) {
 	}
 }
 
-func newLiveCompletionProvider(t *testing.T, key, model string) provider.Provider {
+func newLiveCompletionProvider(t *testing.T, key, model, thinking string) provider.Provider {
 	t.Helper()
 	prov, err := anthropic.New(provider.Config{
-		Name: "deepseek-completion-live", BaseURL: "https://api.deepseek.com/anthropic", Model: model, APIKey: key,
-		Extra: map[string]any{"api_key_env": "DEEPSEEK_API_KEY", "thinking": "disabled", "effort": "high"},
+		Name: "deepseek-completion-live-" + thinking, BaseURL: "https://api.deepseek.com/anthropic", Model: model, APIKey: key,
+		Extra: map[string]any{"api_key_env": "DEEPSEEK_API_KEY", "thinking": thinking, "effort": "high"},
 	})
 	if err != nil {
-		t.Fatalf("build live provider for %s: %v", model, err)
+		t.Fatalf("build live provider for %s (thinking=%s): %v", model, thinking, err)
 	}
 	if closer, ok := prov.(interface{ CloseIdleConnections() }); ok {
 		t.Cleanup(closer.CloseIdleConnections)
@@ -194,6 +203,8 @@ func liveCompletionErrorClass(err error) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
+	case errors.Is(err, ErrEmptyOutput):
+		return "empty_output"
 	case errors.Is(err, ErrInvalidOutput):
 		return "invalid_output"
 	case strings.Contains(err.Error(), "exceed"):

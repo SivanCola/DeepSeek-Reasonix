@@ -142,6 +142,12 @@ func TestCompletionValidatorFailureAndUncertainPause(t *testing.T) {
 			class: "invalid_output",
 		},
 		{
+			name:  "empty evaluator output",
+			eval:  &scriptedEvaluator{errs: []error{completioneval.ErrEmptyOutput}},
+			cause: CompletionUncertainValidatorFailed,
+			class: "empty_output",
+		},
+		{
 			name:  "evaluator timeout",
 			eval:  &scriptedEvaluator{errs: []error{context.DeadlineExceeded}},
 			cause: CompletionUncertainValidatorFailed,

@@ -797,13 +797,13 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		out.MaxCompletionTokens = maxOutputTokens
 	case c.deepseek:
 		// DeepSeek's CoT is controlled by `thinking` plus `reasoning_effort` for
-		// depth. Thinking is on by default but can be turned off via
-		// effort=disabled / thinking=disabled (credit @eghrhegpe, #5063).
-		if c.thinkingType == "disabled" {
-			out.Thinking = &thinkingMode{Type: "disabled"}
-		} else {
-			out.Thinking = &thinkingMode{Type: "enabled"}
+		// depth. Thinking is on by default; config (effort/thinking=disabled,
+		// #5063) or an explicit per-request override turns it off for one call.
+		t := c.deepSeekRequestThinking(req)
+		if t == "disabled" {
+			out.ReasoningEffort = ""
 		}
+		out.Thinking = &thinkingMode{Type: t}
 	case c.minimax:
 		// M3 uses a single `thinking.type` field with two valid values:
 		// "adaptive" (default, thinking on) and "disabled" (off). Reasoning

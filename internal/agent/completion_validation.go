@@ -175,6 +175,8 @@ func validatorErrorClass(err error) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
+	case errors.Is(err, completioneval.ErrEmptyOutput):
+		return "empty_output"
 	case errors.Is(err, completioneval.ErrInvalidOutput):
 		return "invalid_output"
 	case strings.Contains(err.Error(), "unavailable"):

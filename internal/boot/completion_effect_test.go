@@ -122,6 +122,9 @@ func TestEffectCompletionValidatorEnforceDefaultReachesProvider(t *testing.T) {
 	if v.MaxTokens != completioneval.MaxTokens {
 		t.Fatalf("validator MaxTokens = %d, want %d", v.MaxTokens, completioneval.MaxTokens)
 	}
+	if v.EffortOverride != completioneval.EffortDisabled {
+		t.Fatalf("validator EffortOverride = %q, want %q so thinking cannot eat the verdict budget", v.EffortOverride, completioneval.EffortDisabled)
+	}
 	if !strings.Contains(v.Messages[1].Content, `"candidate_answer"`) {
 		t.Fatalf("validator evidence missing candidate answer: %s", v.Messages[1].Content)
 	}

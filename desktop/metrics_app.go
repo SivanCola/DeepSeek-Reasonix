@@ -361,7 +361,7 @@ func (m *metricsAggregator) observeCompletionValidation(info event.CompletionVal
 		m.inc("completion_validation_attempt", "first")
 	}
 	if strings.TrimSpace(info.ErrorClass) != "" {
-		m.inc("completion_validation_error", knownBucket(info.ErrorClass, "timeout", "invalid_output", "unavailable", "over_budget", "error"))
+		m.inc("completion_validation_error", knownBucket(info.ErrorClass, "timeout", "empty_output", "invalid_output", "unavailable", "over_budget", "error"))
 	}
 }
 

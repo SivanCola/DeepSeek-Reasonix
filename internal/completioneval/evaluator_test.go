@@ -14,19 +14,21 @@ import (
 )
 
 type scriptedProvider struct {
-	turns   []string // one response per call, recycled
-	err     error    // stream-open error
-	timeout bool     // hang until ctx deadline
-	usage   *provider.Usage
-	mu      sync.Mutex
-	calls   int
+	turns    []string // one response per call, recycled
+	err      error    // stream-open error
+	timeout  bool     // hang until ctx deadline
+	usage    *provider.Usage
+	mu       sync.Mutex
+	calls    int
+	requests []provider.Request
 }
 
 func (s *scriptedProvider) Name() string { return "scripted" }
 
-func (s *scriptedProvider) Stream(ctx context.Context, _ provider.Request) (<-chan provider.Chunk, error) {
+func (s *scriptedProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	s.mu.Lock()
 	s.calls++
+	s.requests = append(s.requests, req)
 	i := s.calls - 1
 	if i >= len(s.turns) {
 		i = len(s.turns) - 1
@@ -115,6 +117,34 @@ func TestEvaluateFailClosedOnBadResponses(t *testing.T) {
 				t.Fatalf("Evaluate() error = nil, want fail-closed error for %q", tc.body)
 			}
 		})
+	}
+}
+
+func TestEvaluateDisablesThinkingPerRequest(t *testing.T) {
+	prov := &scriptedProvider{turns: []string{`{"outcome":"complete","reason":"done"}`}}
+	if _, err := evaluate(t, prov, Evidence{TaskText: "fix the parser"}); err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if len(prov.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(prov.requests))
+	}
+	req := prov.requests[0]
+	if req.EffortOverride != EffortDisabled {
+		t.Fatalf("EffortOverride = %q, want %q so a thinking endpoint cannot burn the verdict budget on reasoning", req.EffortOverride, EffortDisabled)
+	}
+	if len(req.Tools) != 0 || len(req.Messages) != 2 {
+		t.Fatalf("request shape = %d tools/%d messages, want the stateless two-message call", len(req.Tools), len(req.Messages))
+	}
+}
+
+func TestEmptyResponseIsClassifiableApartFromInvalidOutput(t *testing.T) {
+	prov := &scriptedProvider{turns: []string{""}}
+	_, err := evaluate(t, prov, Evidence{})
+	if !errors.Is(err, ErrEmptyOutput) {
+		t.Fatalf("empty response error = %v, want ErrEmptyOutput", err)
+	}
+	if !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("empty response error = %v, want it to keep matching ErrInvalidOutput", err)
 	}
 }
 

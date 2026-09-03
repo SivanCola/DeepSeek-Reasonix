@@ -18,7 +18,7 @@ type CompletionValidationInfo struct {
 	Outcome    string // complete | continue | needs_user | blocked | uncertain | error
 	Attempt    int    // 1-based evaluation attempt within the run
 	DurationMs int64
-	ErrorClass string // timeout | invalid_output | unavailable | over_budget | error | ""; empty when Outcome is a verdict
+	ErrorClass string // timeout | empty_output | invalid_output | unavailable | over_budget | error | ""; empty when Outcome is a verdict
 }
 
 // CompletionValidationAuditSink receives host-only completion validation
