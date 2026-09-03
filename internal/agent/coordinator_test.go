@@ -679,7 +679,7 @@ func TestCoordinatorPlannerMaxStepsUsesExplicitRuntimeKey(t *testing.T) {
 		t.Fatalf("planner session messages = %d, want the incomplete turn rolled back", got)
 	}
 	notices := sink.kinds(event.Notice)
-	if len(notices) == 0 || notices[len(notices)-1].Text != plannerSafetyFallbackNotice {
+	if len(notices) == 0 || !strings.Contains(notices[len(notices)-1].Text, "safety boundary") {
 		t.Fatalf("notices = %+v, want planner safety fallback notice", notices)
 	}
 	if detail := notices[len(notices)-1].Detail; !strings.Contains(detail, "planner max_steps") ||

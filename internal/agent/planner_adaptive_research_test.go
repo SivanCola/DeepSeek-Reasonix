@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"reasonix/internal/event"
+	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
@@ -78,7 +79,7 @@ func TestCoordinatorEmergencyBoundedPlannerCanSubmitPlanInFinalizationRound(t *t
 	sawTruncation := false
 	for _, notice := range notices {
 		sawTruncation = sawTruncation || strings.HasPrefix(notice.Text, "tool output truncated:")
-		if notice.Text == plannerSafetyFallbackNotice {
+		if notice.Text == i18n.M.PlannerSafetyFallback {
 			t.Fatalf("valid terminal plan incorrectly fell back: %+v", notice)
 		}
 	}
@@ -129,7 +130,7 @@ func TestCoordinatorTaskBudgetLetsPlannerSubmitTerminalPlan(t *testing.T) {
 		t.Fatalf("task-budget finalization did not request terminal plan: %q", got)
 	}
 	for _, notice := range notices {
-		if notice.Text == plannerSafetyFallbackNotice {
+		if notice.Text == i18n.M.PlannerSafetyFallback {
 			t.Fatalf("successful terminal plan incorrectly triggered fallback: %+v", notice)
 		}
 	}

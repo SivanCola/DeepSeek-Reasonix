@@ -9,9 +9,9 @@
 // fails CI instead of surfacing as a blank line at runtime.
 //
 // Scope (v1): CLI surface only — welcome, init wizard, chat REPL banner, usage,
-// user-facing CLI errors. System prompts, internal error wrappers, and agent
-// runtime telemetry stay English so model behaviour and developer logs are
-// language-stable.
+// user-facing CLI errors, host guard/recovery notices. System prompts, internal
+// error wrappers, and agent runtime telemetry stay English so model behaviour
+// and developer logs are language-stable.
 package i18n
 
 import (
@@ -44,10 +44,54 @@ type Messages struct {
 	MissingReasoningFallbackFmt string
 	MissingReasoningFallback    string // disabled-thinking fallback without a persisted retry schedule
 	MissingReasoningRecovered   string // thinking re-enabled after healthy probe responses
-	ReceiptVerified             string // end-of-turn receipt, nothing unproven
-	ReceiptGapsHeader           string // end-of-turn receipt, header above the unproven list
-	ReceiptRisksHeader          string // end-of-turn receipt, header above declared risks
-	ReceiptMore                 string // end-of-turn receipt, "and N more" tail
+	// Host guard/recovery notices (event.Notice texts the fronts render verbatim).
+	EmptyFinal                 string // empty_final: no visible answer; retrying
+	ExecutorHandoff            string // executor_handoff: answered without using tools
+	ToolBudget                 string // tool_budget: tool-call round limit reached
+	TaskBudget                 string // tool_budget variant: task spend budget reached
+	LoopGuard                  string // loop_guard: no-progress tool loop
+	ProgressGuard              string // progress_guard: repeated work without new evidence
+	SoftBudgetConverge         string // loop_guard: converging a long read-only investigation
+	EvidenceNudge              string // evidence_nudge: unverified mutations
+	ReasoningGovernor          string // reasoning_governor engaged
+	UnappliedSteerFmt          string // unapplied_steer — %s = the dropped guidance
+	DeprecatedContextRetention string // agent.keep / agent.recent_keep deprecation warning
+	// FinishReason* map abnormal provider finish_reason values to one-liners.
+	FinishReasonLength        string
+	FinishReasonContentFilter string
+	FinishReasonRepetition    string
+	// StreamInterrupted* explain a broken provider stream (notice code selects one).
+	StreamInterruptedIdleTimeout     string
+	StreamInterruptedPrematureEOF    string
+	StreamInterruptedConnectionReset string
+	// ToolOutputTruncatedFmt — %d = elided bytes, %d = original bytes.
+	ToolOutputTruncatedFmt string
+	// Incomplete-read / read-strategy recovery notices.
+	IncompleteReadFinishBlocked string // final answer refused while a read is incomplete
+	ReadContinuationRequired    string
+	IncompleteReadDetected      string
+	ReadStrategyRequired        string
+	ReadStrategyProgress        string
+	ReadStrategyResolved        string
+	ReadLocalSafetyPaged        string
+	ReadCompleted               string
+	// ReadRestrictedStrategyFmt — %d = estimated tokens, %d = token budget.
+	ReadRestrictedStrategyFmt string
+	// Context-window overflow recovery.
+	ContextRecoveryAdjustBudget string
+	ContextRecoveryCompacted    string
+	// Planner/executor coordination.
+	PlannerFallback             string
+	PlannerSafetyFallback       string
+	PlannerPlanAwaitingApproval string
+	PlannerPlanNotApproved      string
+	PlannerPlanOnly             string
+	// CapabilityProxyFmt — %s = display name, %s = resolved target.
+	CapabilityProxyFmt string
+	ReceiptVerified    string // end-of-turn receipt, nothing unproven
+	ReceiptGapsHeader  string // end-of-turn receipt, header above the unproven list
+	ReceiptRisksHeader string // end-of-turn receipt, header above declared risks
+	ReceiptMore        string // end-of-turn receipt, "and N more" tail
 	// ReceiptGapKinds maps a completion gap kind to its short human phrase.
 	ReceiptGapKinds   map[string]string
 	NoSessionToResume string // shown when --continue / --resume finds nothing

@@ -5,6 +5,7 @@ import (
 
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
+	"reasonix/internal/i18n"
 )
 
 // ebmBlindThreshold is the Evidence-Before-More-Mutation trigger: three
@@ -49,7 +50,7 @@ func (a *Agent) applyEBM(sample *evidence.OutcomeSample, outcomes []toolOutcome)
 		verdict:  verdictAdvise,
 		guidance: ebmNudge,
 		notice: noticeFor(event.NoticeCodeEvidenceNudge, event.LevelInfo,
-			"Several mutations are unverified; asking for the cheapest discriminating check.",
+			i18n.M.EvidenceNudge,
 			"evidence nudge: verification debt open with blind mutations at threshold"),
 	}
 }

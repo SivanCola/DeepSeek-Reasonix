@@ -35,7 +35,7 @@ func TestObserveClassifiesEvents(t *testing.T) {
 		{Kind: event.Usage, UsageSource: event.UsageSourceCompletionEvaluator, Usage: &provider.Usage{FinishReason: "stop", CacheHitTokens: 90, CacheMissTokens: 10}},
 		{Kind: event.ToolResult, Tool: event.Tool{Name: "bash", Err: "blocked by permission policy"}},
 		{Kind: event.CompactionDone},
-		{Kind: event.Notice, Text: "No visible answer was produced; asking the assistant to respond again.", Detail: "empty final answer blocked: model returned no visible answer text; retrying"},
+		{Kind: event.Notice, Code: event.NoticeCodeEmptyFinal, Text: "No visible answer was produced; asking the assistant to respond again.", Detail: "empty final answer blocked: model returned no visible answer text; retrying"},
 		{Kind: event.TurnDone, Err: errors.New("deepseek-flash: status 429: rate limited")},
 		{Kind: event.TurnDone, Err: errors.New("automatic recovery paused"), Outcome: event.TurnOutcomeRecoveryPaused},
 		{Kind: event.TurnDone},
