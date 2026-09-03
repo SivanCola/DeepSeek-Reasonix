@@ -51,9 +51,7 @@ func (c *Config) AddProviderAccount(providerID, presetID, label, apiKeyEnv strin
 	if err := validateProviderAccount(account); err != nil {
 		return ProviderAccount{}, err
 	}
-	c.ProviderAccounts = append(c.ProviderAccounts, account)
 	change := ProviderAccountChange{FamilyID: providerID, AccountID: account.ID, After: &account}
-	c.ProviderAccounts = c.ProviderAccounts[:len(c.ProviderAccounts)-1]
 	if err := c.ApplyProviderAccountChange(change); err != nil {
 		return ProviderAccount{}, err
 	}
