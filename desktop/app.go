@@ -9629,13 +9629,7 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	if err != nil {
 		return err
 	}
-	entry, ok := cfg.ResolveModel(name)
-	if selection, selectionErr := config.ParseProviderSelection(cfg, name); selectionErr == nil {
-		if resolved, resolveErr := cfg.ResolveSelection(selection); resolveErr == nil {
-			entry, ok = resolved, true
-			name = selection.Ref()
-		}
-	}
+	entry, ok, name := resolveDesktopModelSelection(cfg, name)
 	pluginRef := false
 	if !ok {
 		// Plugin-namespaced refs belong to extension sidecars: validate them

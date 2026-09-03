@@ -40,6 +40,18 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 		c.Desktop.ProviderAccess = accessBefore
 		c.DefaultModel = defaultBefore
 	}()
+	familyID, accountID, err := providerAccountChangeIdentity(change)
+	if err != nil {
+		return err
+	}
+	if err := c.applyProviderAccountChangePatch(change, familyID, accountID); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func providerAccountChangeIdentity(change ProviderAccountChange) (string, string, error) {
 	familyID := strings.TrimSpace(change.FamilyID)
 	accountID := strings.TrimSpace(change.AccountID)
 	if change.After != nil {
@@ -51,16 +63,18 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 		}
 	}
 	if familyID == "" || accountID == "" {
-		return fmt.Errorf("apply provider account change: family and account are required")
+		return "", "", fmt.Errorf("apply provider account change: family and account are required")
 	}
 	if _, ok := curatedFamilyByID(familyID); !ok {
-		return fmt.Errorf("apply provider account change: provider family %q is not curated", familyID)
+		return "", "", fmt.Errorf("apply provider account change: provider family %q is not curated", familyID)
 	}
+	return familyID, accountID, nil
+}
+
+func (c *Config) applyProviderAccountChangePatch(change ProviderAccountChange, familyID, accountID string) error {
 	idx, current, exists := c.lookupProviderAccount(familyID, accountID)
-	if change.Before != nil {
-		if !exists || !reflect.DeepEqual(current, *change.Before) {
-			return fmt.Errorf("provider account %s/%s changed concurrently", familyID, accountID)
-		}
+	if change.Before != nil && (!exists || !reflect.DeepEqual(current, *change.Before)) {
+		return fmt.Errorf("provider account %s/%s changed concurrently", familyID, accountID)
 	}
 	if change.Before == nil && exists {
 		return fmt.Errorf("provider account %s/%s already exists", familyID, accountID)
@@ -68,20 +82,8 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 	if change.After == nil && !exists {
 		return fmt.Errorf("provider account %s/%s does not exist", familyID, accountID)
 	}
-	if change.After != nil {
-		after := cloneProviderAccount(*change.After)
-		after.ProviderID, after.ID = familyID, accountID
-		if err := validateProviderAccount(after); err != nil {
-			return err
-		}
-		if !after.Retired && !after.IsEnabled() && after.Default {
-			return fmt.Errorf("provider account %s/%s cannot be default while disabled", familyID, accountID)
-		}
-		if exists {
-			c.ProviderAccounts[idx] = after
-		} else {
-			c.ProviderAccounts = append(c.ProviderAccounts, after)
-		}
+	if err := c.applyProviderAccountValue(change.After, familyID, accountID, idx, exists); err != nil {
+		return err
 	}
 	if change.After == nil {
 		c.ProviderAccounts = append(c.ProviderAccounts[:idx], c.ProviderAccounts[idx+1:]...)
@@ -90,7 +92,9 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 		if change.BeforeDefaultModel != "" && c.DefaultModel != change.BeforeDefaultModel {
 			return fmt.Errorf("default_model changed concurrently")
 		}
-		c.DefaultModel = strings.TrimSpace(change.AfterDefaultModel)
+		if err := c.SetDefaultModel(strings.TrimSpace(change.AfterDefaultModel)); err != nil {
+			return err
+		}
 	}
 	if change.AfterProviderAccess != nil {
 		if change.BeforeProviderAccess != nil && !reflect.DeepEqual(c.Desktop.ProviderAccess, change.BeforeProviderAccess) {
@@ -101,7 +105,26 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 	if _, _, err := ReconcileProviderAccounts(c); err != nil {
 		return err
 	}
-	committed = true
+	return nil
+}
+
+func (c *Config) applyProviderAccountValue(value *ProviderAccount, familyID, accountID string, idx int, exists bool) error {
+	if value == nil {
+		return nil
+	}
+	after := cloneProviderAccount(*value)
+	after.ProviderID, after.ID = familyID, accountID
+	if err := validateProviderAccount(after); err != nil {
+		return err
+	}
+	if !after.Retired && !after.IsEnabled() && after.Default {
+		return fmt.Errorf("provider account %s/%s cannot be default while disabled", familyID, accountID)
+	}
+	if exists {
+		c.ProviderAccounts[idx] = after
+	} else {
+		c.ProviderAccounts = append(c.ProviderAccounts, after)
+	}
 	return nil
 }
 

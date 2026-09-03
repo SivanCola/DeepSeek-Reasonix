@@ -114,21 +114,7 @@ func (m *chatTUI) switchToProvider(name string) {
 		return
 	}
 	var entry *config.ProviderEntry
-	if family, accountID, ok := strings.Cut(strings.TrimSpace(name), "/"); ok && config.IsProviderAccountID(accountID) {
-		for _, account := range cfg.ProviderAccounts {
-			if account.ProviderID != family || account.ID != accountID || !account.IsEnabled() {
-				continue
-			}
-			for _, candidate := range selectableAccountEntries(account, mustResolveAccountProvider(cfg, family, accountID)) {
-				if candidate.Configured() && len(candidate.ChatModelList()) > 0 {
-					copy := candidate
-					entry = &copy
-					break
-				}
-			}
-			break
-		}
-	}
+	entry = providerEntryForAccountSelection(cfg, name)
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
 		if p.Name == name && p.Configured() && providerEntrySelectable(cfg, *p) {
@@ -204,6 +190,25 @@ func (m *chatTUI) switchToProvider(name string) {
 func mustResolveAccountProvider(cfg *config.Config, providerID, accountID string) []config.ProviderEntry {
 	entries, _ := cfg.ResolveAccountProvider(providerID, accountID)
 	return entries
+}
+
+func providerEntryForAccountSelection(cfg *config.Config, name string) *config.ProviderEntry {
+	family, accountID, ok := strings.Cut(strings.TrimSpace(name), "/")
+	if !ok || !config.IsProviderAccountID(accountID) {
+		return nil
+	}
+	for _, account := range cfg.ProviderAccounts {
+		if account.ProviderID != family || account.ID != accountID || !account.IsEnabled() {
+			continue
+		}
+		for _, candidate := range selectableAccountEntries(account, mustResolveAccountProvider(cfg, family, accountID)) {
+			if candidate.Configured() && len(candidate.ChatModelList()) > 0 {
+				copy := candidate
+				return &copy
+			}
+		}
+	}
+	return nil
 }
 
 func selectableAccountEntries(account config.ProviderAccount, entries []config.ProviderEntry) []config.ProviderEntry {

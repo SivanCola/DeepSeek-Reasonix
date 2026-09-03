@@ -2,6 +2,16 @@ package main
 
 import "reasonix/internal/config"
 
+func resolveDesktopModelSelection(cfg *config.Config, ref string) (*config.ProviderEntry, bool, string) {
+	entry, ok := cfg.ResolveModel(ref)
+	if selection, selectionErr := config.ParseProviderSelection(cfg, ref); selectionErr == nil {
+		if resolved, resolveErr := cfg.ResolveSelection(selection); resolveErr == nil {
+			return resolved, true, selection.Ref()
+		}
+	}
+	return entry, ok, ref
+}
+
 // appendLegacyAccountFamilyViews keeps the historical family provider name
 // visible while account routes remain the canonical persisted entries.
 func appendLegacyAccountFamilyViews(views *[]ProviderView, cfg *config.Config, added map[string]bool, root string, resolver *config.CredentialResolver, credentialsRevision string) {
