@@ -80,37 +80,54 @@ export function ModelSwitcher({
   const keyword = query.trim().toLowerCase();
   const filtered = useMemo(
     () => keyword
-      ? models.filter((m) => m.model.toLowerCase().includes(keyword) || m.provider.toLowerCase().includes(keyword))
+      ? models.filter((m) => m.model.toLowerCase().includes(keyword) || m.provider.toLowerCase().includes(keyword) || (m.accountLabel ?? "").toLowerCase().includes(keyword))
       : models,
     [models, keyword],
   );
 
-  // Group by provider, with the current model's group first
   const groups = useMemo(() => {
-    const map = new Map<string, ModelInfo[]>();
-    let currentProvider = "";
+    const map = new Map<string, { label: string; accounts: Map<string, { label: string; items: ModelInfo[] }> }>();
+    let currentGroup = "";
     for (const m of filtered) {
-      if (m.current) currentProvider = m.provider;
-      const list = map.get(m.provider);
-      if (list) list.push(m);
-      else map.set(m.provider, [m]);
+      const groupID = m.providerGroup || m.provider;
+      const groupLabel = providerLabel(groupID, t);
+      const accountID = m.accountId || m.provider;
+      const accountLabel = m.accountLabel || m.provider;
+      if (m.current) currentGroup = groupID;
+      let group = map.get(groupID);
+      if (!group) {
+        group = { label: groupLabel, accounts: new Map() };
+        map.set(groupID, group);
+      }
+      let account = group.accounts.get(accountID);
+      if (!account) {
+        account = { label: accountLabel, items: [] };
+        group.accounts.set(accountID, account);
+      }
+      account.items.push(m);
     }
     return [...map.entries()]
       .sort(([a], [b]) => {
-        if (a === currentProvider) return -1;
-        if (b === currentProvider) return 1;
-        return providerLabel(a, t).localeCompare(providerLabel(b, t));
+        if (a === currentGroup) return -1;
+        if (b === currentGroup) return 1;
+        return (map.get(a)?.label ?? a).localeCompare(map.get(b)?.label ?? b);
       })
-      .map(([provider, items]) => ({
-        provider,
-        label: providerLabel(provider, t),
-        items,
+      .map(([id, group]) => ({
+        id,
+        label: group.label,
+        accounts: [...group.accounts.entries()].map(([accountId, account]) => ({
+          id: accountId,
+          label: account.label,
+          items: account.items,
+        })),
       }));
   }, [filtered, t]);
 
   const currentProvider = useMemo(() => {
     const cur = models.find((m) => m.current) ?? models.find((m) => m.model === label || m.ref === label);
-    return cur ? providerLabel(cur.provider, t) : null;
+    if (!cur) return null;
+    const group = providerLabel(cur.providerGroup || cur.provider, t);
+    return cur.accountLabel ? `${group} · ${cur.accountLabel}` : group;
   }, [label, models, t]);
   const triggerLabel = currentProvider ? `${label} · ${currentProvider}` : label;
 
@@ -202,22 +219,29 @@ export function ModelSwitcher({
           {models.length === 0 && <div className="modelsw__empty">{t("status.noModels")}</div>}
           {models.length > 0 && filtered.length === 0 && query && <div className="modelsw__empty">{t("modelSwitcher.noMatches")}</div>}
           {groups.map((g) => (
-            <div key={g.provider} role="group" aria-label={g.label} className="modelsw__group">
+            <div key={g.id} role="group" aria-label={g.label} className="modelsw__group">
               <div className="modelsw__group-label" role="presentation"><Brain size={11} />{g.label}</div>
-              {g.items.map((m) => (
-                <button
-                  key={m.ref}
-                  type="button"
-                  role="option"
-                  aria-selected={m.current}
-                  className={`modelsw__item ${m.current ? "modelsw__item--current" : ""}`}
-                  onClick={() => pick(m)}
-                >
-                  <span className="modelsw__copy">
-                    <span className="modelsw__model">{m.model}</span>
-                  </span>
-                  {m.current && <Check size={13} className="modelsw__check" />}
-                </button>
+              {g.accounts.map((account) => (
+                <div key={account.id} role="group" aria-label={account.label}>
+                  {account.label && account.label !== g.label && (
+                    <div className="modelsw__group-label" role="presentation">{account.label}</div>
+                  )}
+                  {account.items.map((m) => (
+                    <button
+                      key={m.ref}
+                      type="button"
+                      role="option"
+                      aria-selected={m.current}
+                      className={`modelsw__item ${m.current ? "modelsw__item--current" : ""}`}
+                      onClick={() => pick(m)}
+                    >
+                      <span className="modelsw__copy">
+                        <span className="modelsw__model">{m.model}</span>
+                      </span>
+                      {m.current && <Check size={13} className="modelsw__check" />}
+                    </button>
+                  ))}
+                </div>
               ))}
             </div>
           ))}
@@ -232,6 +256,10 @@ export function normalizeModelInfo(model: ModelInfo): ModelInfo {
     ...model,
     provider: String(model.provider ?? ""),
     model: String(model.model ?? ""),
+    providerGroup: String(model.providerGroup ?? ""),
+    accountId: String(model.accountId ?? ""),
+    accountLabel: String(model.accountLabel ?? ""),
+    accountDefault: Boolean(model.accountDefault),
   };
 }
 
@@ -241,6 +269,8 @@ function providerLabel(provider: string, t: ReturnType<typeof useT>): string {
     case "deepseek-flash":
     case "deepseek-pro":
       return t("settings.providerLabel.deepseek");
+    case "opencode-go":
+      return t("settings.providerLabel.opencodeGo");
     default:
       return provider;
   }

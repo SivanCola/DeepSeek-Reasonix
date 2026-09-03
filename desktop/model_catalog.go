@@ -110,9 +110,16 @@ func (a *App) desktopModelCatalog(curModel, workspaceRoot string, ctrl control.S
 		if !modelProviderAccessAllowed(cfg.Desktop.ProviderAccess, p.Name) || !p.Configured() {
 			continue
 		}
+		if !cfg.AccountEnabled(p.AccountProviderID, p.AccountID) && strings.TrimSpace(p.AccountID) != "" && !strings.HasPrefix(curModel, p.Name+"/") {
+			continue
+		}
+		account, _ := config.ProviderAccountForEntry(cfg, *p)
 		for _, m := range p.ChatModelList() {
 			ref := p.Name + "/" + m
-			out = append(out, ModelInfo{Ref: ref, Provider: p.Name, Model: m, Current: ref == curModel})
+			out = append(out, ModelInfo{
+				Ref: ref, Provider: p.Name, Model: m, Current: ref == curModel,
+				ProviderGroup: account.ProviderID, AccountID: account.ID, AccountLabel: account.Label, AccountDefault: account.Default,
+			})
 		}
 	}
 	return mergeExtensionModelInfos(out, extensionCatalog, curModel)

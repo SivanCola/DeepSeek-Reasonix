@@ -33,9 +33,40 @@ func (m *chatTUI) openProviderPicker() {
 	curProvider := strings.SplitN(m.modelRef, "/", 2)[0]
 	var items []quickPickerItem
 	selected := 0
+	seen := map[string]bool{}
+	for _, account := range cfg.ProviderAccounts {
+		if !account.IsEnabled() {
+			continue
+		}
+		entries, ok := cfg.ResolveAccountProvider(account.ProviderID, account.ID)
+		if !ok {
+			continue
+		}
+		usable := false
+		for i := range entries {
+			if entries[i].Configured() {
+				usable = true
+			}
+			seen[entries[i].Name] = true
+		}
+		if !usable {
+			continue
+		}
+		status := ""
+		for i := range entries {
+			if entries[i].Name == curProvider {
+				status = "active"
+				selected = len(items)
+			}
+		}
+		items = append(items, quickPickerItem{
+			ID: entries[0].Name, Label: account.Label,
+			Description: fmt.Sprintf("%s · %d route(s)", account.ProviderID, len(entries)), Status: status,
+		})
+	}
 	for i := range cfg.Providers {
 		p := &cfg.Providers[i]
-		if !p.Configured() {
+		if seen[p.Name] || !p.Configured() {
 			continue
 		}
 		models := p.ChatModelList()

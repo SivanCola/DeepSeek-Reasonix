@@ -477,58 +477,46 @@ func runProviderSetupManager(s *providerSetupSession, configPath, envPath string
 		fmt.Fprintf(os.Stderr, "  %s\n", dim(fmt.Sprintf(i18n.M.RepairedAPIKeyEnvFmt, repair.provider, repair.old, repair.new)))
 	}
 	for {
-		items := providerManagerItems(s)
+		items, actions := providerManagerMenu(s)
 		idx, err := selectOne(i18n.M.SetupManagerTitle, items)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "\n"+i18n.M.SetupCancelled)
 			return 1
 		}
-		providerCount := len(cfg.Providers)
-		switch idx {
-		case providerCount:
+		if idx < 0 || idx >= len(actions) {
+			continue
+		}
+		switch actions[idx].kind {
+		case setupMenuAddOpenAI:
 			if !addProviderToSession(s, false) {
 				continue
 			}
-		case providerCount + 1:
+		case setupMenuAddAnthropic:
 			if !addProviderToSession(s, true) {
 				continue
 			}
-		case providerCount + 2:
+		case setupMenuAddAccount:
+			_ = addProviderAccountToSession(s)
+		case setupMenuSave:
 			rc := saveProviderSetupSession(s, configPath, envPath)
 			if rc == setupManagerContinue {
 				continue
 			}
 			return rc
-		case providerCount + 3:
+		case setupMenuCancel:
 			fmt.Println(i18n.M.SetupCancelled)
 			return 1
+		case setupMenuAccount:
+			manageProviderAccount(s, actions[idx].providerID, actions[idx].accountID)
 		default:
-			manageProvider(s, idx)
+			manageProvider(s, actions[idx].provider)
 		}
 	}
 }
 
 func providerManagerItems(s *providerSetupSession) []menuItem {
-	cfg := s.cfg
-	items := make([]menuItem, 0, len(cfg.Providers)+4)
-	for _, p := range cfg.Providers {
-		models := p.ModelList()
-		keyStatus := i18n.M.SetupKeyMissing
-		if p.APIKeyEnv == "" || config.CredentialIsSet(p.APIKeyEnv) || s.pendingCredentials[p.APIKeyEnv] != "" {
-			keyStatus = i18n.M.SetupKeySet
-		}
-		desc := fmt.Sprintf("%s · %d %s · %s", p.Kind, len(models), i18n.M.SetupModelsUnit, keyStatus)
-		if cfg.DefaultModel == p.Name || config.ModelRefsProvider(cfg.DefaultModel, p.Name) {
-			desc += " · " + i18n.M.SetupDefaultBadge
-		}
-		items = append(items, menuItem{name: p.Name, desc: desc})
-	}
-	return append(items,
-		menuItem{name: i18n.M.SetupAddOpenAI, desc: i18n.M.CustomProviderDesc},
-		menuItem{name: i18n.M.SetupAddAnthropic, desc: i18n.M.AnthropicProviderDesc},
-		menuItem{name: i18n.M.SetupSaveExit, desc: i18n.M.SetupSaveExitDesc},
-		menuItem{name: i18n.M.SetupCancel, desc: i18n.M.SetupCancelDesc},
-	)
+	items, _ := providerManagerMenu(s)
+	return items
 }
 
 func addProviderToSession(s *providerSetupSession, anthropic bool) bool {
