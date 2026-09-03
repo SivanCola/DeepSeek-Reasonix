@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 )
@@ -17,6 +18,7 @@ type ProviderAccountChange struct {
 	AfterDefaultModel    string
 	BeforeProviderAccess []string
 	AfterProviderAccess  []string
+	syncDefaultModel     bool
 }
 
 // ApplyProviderAccountChange validates and applies an account patch, then
@@ -28,6 +30,7 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 	}
 	accountsBefore := cloneProviderAccounts(c.ProviderAccounts)
 	providersBefore := cloneProviderEntries(c.Providers)
+	sourcesBefore := maps.Clone(c.providerSources)
 	accessBefore := append([]string(nil), c.Desktop.ProviderAccess...)
 	defaultBefore := c.DefaultModel
 	committed := false
@@ -37,6 +40,7 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 		}
 		c.ProviderAccounts = accountsBefore
 		c.Providers = providersBefore
+		c.providerSources = sourcesBefore
 		c.Desktop.ProviderAccess = accessBefore
 		c.DefaultModel = defaultBefore
 	}()
@@ -87,6 +91,7 @@ func (c *Config) applyProviderAccountChangePatch(change ProviderAccountChange, f
 	}
 	if change.After == nil {
 		c.ProviderAccounts = append(c.ProviderAccounts[:idx], c.ProviderAccounts[idx+1:]...)
+		return nil
 	}
 	if change.AfterDefaultModel != "" {
 		if change.BeforeDefaultModel != "" && c.DefaultModel != change.BeforeDefaultModel {
@@ -101,6 +106,13 @@ func (c *Config) applyProviderAccountChangePatch(change ProviderAccountChange, f
 			return fmt.Errorf("desktop.provider_access changed concurrently")
 		}
 		c.Desktop.ProviderAccess = append([]string(nil), change.AfterProviderAccess...)
+	}
+	if change.syncDefaultModel {
+		if change.After.IsEnabled() && change.After.Default {
+			c.syncFamilyDefaultModel(familyID, accountID)
+		} else if replacement, ok := c.DefaultAccount(familyID); ok {
+			c.syncFamilyDefaultModel(familyID, replacement.ID)
+		}
 	}
 	if _, _, err := ReconcileProviderAccounts(c); err != nil {
 		return err
@@ -117,13 +129,21 @@ func (c *Config) applyProviderAccountValue(value *ProviderAccount, familyID, acc
 	if err := validateProviderAccount(after); err != nil {
 		return err
 	}
-	if !after.Retired && !after.IsEnabled() && after.Default {
+	if !after.IsEnabled() && after.Default {
 		return fmt.Errorf("provider account %s/%s cannot be default while disabled", familyID, accountID)
 	}
 	if exists {
 		c.ProviderAccounts[idx] = after
 	} else {
 		c.ProviderAccounts = append(c.ProviderAccounts, after)
+		idx = len(c.ProviderAccounts) - 1
+	}
+	if after.Default {
+		for i := range c.ProviderAccounts {
+			if i != idx && c.ProviderAccounts[i].ProviderID == familyID {
+				c.ProviderAccounts[i].Default = false
+			}
+		}
 	}
 	return nil
 }
