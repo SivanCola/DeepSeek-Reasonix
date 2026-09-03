@@ -80,9 +80,16 @@ func TestRemoveProviderAccessesRemovesGroupedOpenCodeGoRoutesAtomically(t *testi
 		t.Fatalf("provider_access = %+v, want only mimo-pro", got.Desktop.ProviderAccess)
 	}
 	for _, name := range []string{"opencode-go", "opencode-go-anthropic", "opencode-go-responses", "opencode-go-deepseek-responses"} {
-		if _, ok := got.Provider(name); ok {
-			t.Fatalf("provider %q still exists after grouped removal", name)
+		entry, ok := got.Provider(name)
+		if !ok {
+			t.Fatalf("provider %q missing after grouped removal; retained entries are required for old sessions", name)
 		}
+		if len(entry.AccountID) == 0 || entry.AccountProviderID == "" {
+			t.Fatalf("provider %q lost account metadata: %+v", name, entry)
+		}
+	}
+	if len(got.ProviderAccounts) == 0 || !got.ProviderAccounts[0].Retired {
+		t.Fatalf("account was not retired after all routes were removed: %+v", got.ProviderAccounts)
 	}
 	wantFallback := "mimo-pro"
 	if got.DefaultModel != wantFallback || got.Agent.PlannerModel != wantFallback || got.Agent.RecoveryModel != wantFallback || got.Agent.SubagentModel != wantFallback || got.Agent.SubagentModels["review"] != wantFallback {
