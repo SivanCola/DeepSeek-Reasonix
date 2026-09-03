@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 )
@@ -28,6 +29,7 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 	}
 	accountsBefore := cloneProviderAccounts(c.ProviderAccounts)
 	providersBefore := cloneProviderEntries(c.Providers)
+	sourcesBefore := maps.Clone(c.providerSources)
 	accessBefore := append([]string(nil), c.Desktop.ProviderAccess...)
 	defaultBefore := c.DefaultModel
 	committed := false
@@ -37,6 +39,7 @@ func (c *Config) ApplyProviderAccountChange(change ProviderAccountChange) (err e
 		}
 		c.ProviderAccounts = accountsBefore
 		c.Providers = providersBefore
+		c.providerSources = sourcesBefore
 		c.Desktop.ProviderAccess = accessBefore
 		c.DefaultModel = defaultBefore
 	}()
@@ -87,6 +90,7 @@ func (c *Config) applyProviderAccountChangePatch(change ProviderAccountChange, f
 	}
 	if change.After == nil {
 		c.ProviderAccounts = append(c.ProviderAccounts[:idx], c.ProviderAccounts[idx+1:]...)
+		return nil
 	}
 	if change.AfterDefaultModel != "" {
 		if change.BeforeDefaultModel != "" && c.DefaultModel != change.BeforeDefaultModel {
@@ -117,7 +121,7 @@ func (c *Config) applyProviderAccountValue(value *ProviderAccount, familyID, acc
 	if err := validateProviderAccount(after); err != nil {
 		return err
 	}
-	if !after.Retired && !after.IsEnabled() && after.Default {
+	if !after.IsEnabled() && after.Default {
 		return fmt.Errorf("provider account %s/%s cannot be default while disabled", familyID, accountID)
 	}
 	if exists {
