@@ -219,7 +219,7 @@ func (s *providerSetupSession) mutateProviderAccount(providerID, accountID strin
 	if !ok {
 		return fmt.Errorf("provider account %s/%s disappeared after mutation", providerID, accountID)
 	}
-	if !reflect.DeepEqual(before, after) {
+	if !reflect.DeepEqual(before, after) || defaultBefore != s.cfg.DefaultModel {
 		s.recordProviderAccountFamilyMutation(providerID, accountID, familyBefore, s.accountFamilySnapshots(providerID), "")
 		if len(s.operations) > 0 {
 			op := &s.operations[len(s.operations)-1]
@@ -242,7 +242,7 @@ func (s *providerSetupSession) setProviderAccountRouteEnabled(providerID, accoun
 		return err
 	}
 	after, _ := s.snapshotAccount(providerID, accountID)
-	if !reflect.DeepEqual(before, after) {
+	if !reflect.DeepEqual(before, after) || defaultBefore != s.cfg.DefaultModel {
 		s.recordProviderAccountFamilyMutation(providerID, accountID, familyBefore, s.accountFamilySnapshots(providerID), routeID)
 		if len(s.operations) > 0 {
 			op := &s.operations[len(s.operations)-1]
@@ -265,7 +265,7 @@ func (s *providerSetupSession) restoreProviderAccount(providerID, accountID stri
 		return err
 	}
 	after, _ := s.snapshotAccount(providerID, accountID)
-	if !reflect.DeepEqual(before, after) {
+	if !reflect.DeepEqual(before, after) || defaultBefore != s.cfg.DefaultModel {
 		s.recordProviderAccountFamilyMutation(providerID, accountID, familyBefore, s.accountFamilySnapshots(providerID), "")
 		if len(s.operations) > 0 {
 			op := &s.operations[len(s.operations)-1]
