@@ -18,6 +18,7 @@ type ProviderAccountChange struct {
 	AfterDefaultModel    string
 	BeforeProviderAccess []string
 	AfterProviderAccess  []string
+	syncDefaultModel     bool
 }
 
 // ApplyProviderAccountChange validates and applies an account patch, then
@@ -106,6 +107,13 @@ func (c *Config) applyProviderAccountChangePatch(change ProviderAccountChange, f
 		}
 		c.Desktop.ProviderAccess = append([]string(nil), change.AfterProviderAccess...)
 	}
+	if change.syncDefaultModel {
+		if change.After != nil && change.After.IsEnabled() && change.After.Default {
+			c.syncFamilyDefaultModel(familyID, accountID)
+		} else if replacement, ok := c.DefaultAccount(familyID); ok {
+			c.syncFamilyDefaultModel(familyID, replacement.ID)
+		}
+	}
 	if _, _, err := ReconcileProviderAccounts(c); err != nil {
 		return err
 	}
@@ -128,6 +136,16 @@ func (c *Config) applyProviderAccountValue(value *ProviderAccount, familyID, acc
 		c.ProviderAccounts[idx] = after
 	} else {
 		c.ProviderAccounts = append(c.ProviderAccounts, after)
+		idx = len(c.ProviderAccounts) - 1
+	}
+	if after.Default {
+		for i := range c.ProviderAccounts {
+			if i != idx && c.ProviderAccounts[i].ProviderID == familyID {
+				c.ProviderAccounts[i].Default = false
+			}
+		}
+	} else if !after.IsEnabled() {
+		c.ensureFamilyDefault(familyID)
 	}
 	return nil
 }
