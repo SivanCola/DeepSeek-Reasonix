@@ -234,6 +234,7 @@ func (s *providerSetupSession) mutateProviderAccount(providerID, accountID strin
 func (s *providerSetupSession) setProviderAccountRouteEnabled(providerID, accountID, routeID string, enabled bool) error {
 	familyBefore := s.accountFamilySnapshots(providerID)
 	defaultBefore := s.cfg.DefaultModel
+	accessBefore := append([]string(nil), s.cfg.Desktop.ProviderAccess...)
 	before, ok := s.snapshotAccount(providerID, accountID)
 	if !ok {
 		return fmt.Errorf("provider account %s/%s not found", providerID, accountID)
@@ -255,12 +256,14 @@ func (s *providerSetupSession) setProviderAccountRouteEnabled(providerID, accoun
 			op.afterString = s.cfg.DefaultModel
 		}
 	}
+	s.recordAccessTransition(accessBefore)
 	return nil
 }
 
 func (s *providerSetupSession) restoreProviderAccount(providerID, accountID string) error {
 	familyBefore := s.accountFamilySnapshots(providerID)
 	defaultBefore := s.cfg.DefaultModel
+	accessBefore := append([]string(nil), s.cfg.Desktop.ProviderAccess...)
 	before, ok := s.snapshotAccount(providerID, accountID)
 	if !ok {
 		return fmt.Errorf("provider account %s/%s not found", providerID, accountID)
@@ -278,6 +281,7 @@ func (s *providerSetupSession) restoreProviderAccount(providerID, accountID stri
 			op.afterString = s.cfg.DefaultModel
 		}
 	}
+	s.recordAccessTransition(accessBefore)
 	return nil
 }
 

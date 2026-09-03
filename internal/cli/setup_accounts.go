@@ -168,6 +168,11 @@ func manageProviderAccount(s *providerSetupSession, providerID, accountID string
 			return s.cfg.RetireProviderAccount(account.ProviderID, account.ID)
 		}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
+		} else {
+			entries, _ := s.cfg.ResolveAccountProvider(account.ProviderID, account.ID)
+			for _, entry := range entries {
+				s.removeProviderAccess(entry.Name)
+			}
 		}
 	default:
 		// Account actions occupy slots 0..4. Route toggles follow them.

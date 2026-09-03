@@ -811,6 +811,11 @@ func TestProviderAccountSetupOperationReplayPersistsRenameDefaultAndRoute(t *tes
 	if !ok || got.Label != "Renamed" || !got.Default || len(got.DisabledRoutes) != 1 || got.DisabledRoutes[0] != "deepseek-responses" {
 		t.Fatalf("reloaded team account = %+v", got)
 	}
+	for _, entry := range reloaded.Providers {
+		if entry.AccountProviderID == team.ProviderID && entry.AccountID == team.ID && entry.AccountRouteID == "deepseek-responses" && containsString(reloaded.Desktop.ProviderAccess, entry.Name) {
+			t.Fatalf("disabled route %q remains in provider access", entry.Name)
+		}
+	}
 	if !strings.Contains(reloaded.DefaultModel, "--team/") {
 		t.Fatalf("default model did not follow account default: %q", reloaded.DefaultModel)
 	}
