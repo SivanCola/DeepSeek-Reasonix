@@ -84,7 +84,7 @@ func (c *Config) SetProviderAccountEnabled(providerID, accountID string, enabled
 		return fmt.Errorf("set account enabled: %s/%s is retired", providerID, accountID)
 	}
 	c.ProviderAccounts[idx].Enabled = boolPointer(enabled)
-	if !enabled && account.Default {
+	if !enabled && (account.Default || c.defaultModelUsesAccount(account)) {
 		c.ProviderAccounts[idx].Default = false
 		c.ensureFamilyDefault(account.ProviderID)
 		if replacement, ok := c.DefaultAccount(account.ProviderID); ok {
@@ -92,6 +92,15 @@ func (c *Config) SetProviderAccountEnabled(providerID, accountID string, enabled
 		}
 	}
 	return nil
+}
+
+func (c *Config) defaultModelUsesAccount(account ProviderAccount) bool {
+	entry, ok := c.ResolveModel(c.DefaultModel)
+	if !ok {
+		return false
+	}
+	providerID, accountID, ok := ProviderAccountIdentity(*entry)
+	return ok && providerID == account.ProviderID && accountID == account.ID
 }
 
 // SetProviderAccountRouteEnabled toggles a generated route for new selection;
