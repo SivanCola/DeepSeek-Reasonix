@@ -231,27 +231,6 @@ func indexAccountRouteEntry(c *Config, account ProviderAccount, routeID string) 
 	return -1
 }
 
-func countAccountRoutes(c *Config, account ProviderAccount) int {
-	if c == nil {
-		return 0
-	}
-	n := 0
-	for i := range c.Providers {
-		p := c.Providers[i]
-		if p.AccountProviderID == account.ProviderID && p.AccountID == account.ID {
-			n++
-			continue
-		}
-		if strings.TrimSpace(p.AccountProviderID) != "" {
-			continue
-		}
-		if group, _, _, ok := curatedProviderIdentity(p); ok && group == account.ProviderID && account.ID == MainProviderAccountID {
-			n++
-		}
-	}
-	return n
-}
-
 func providerIndexByName(c *Config, name string) int {
 	if c == nil {
 		return -1

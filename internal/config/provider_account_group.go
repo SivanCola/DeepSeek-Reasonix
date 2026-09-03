@@ -119,15 +119,6 @@ func curatedProviderIdentity(e ProviderEntry) (groupID, routeID, baseName string
 	return "", "", "", false
 }
 
-func officialProviderKindFromName(name string) string {
-	switch strings.TrimSpace(name) {
-	case "deepseek", "deepseek-flash", "deepseek-pro", "deepseek-anthropic", "deepseek-responses":
-		return "deepseek"
-	default:
-		return ""
-	}
-}
-
 func accountRouteTemplates(groupID string) []accountRouteTemplate {
 	groupID = strings.TrimSpace(groupID)
 	if groupID == "" {

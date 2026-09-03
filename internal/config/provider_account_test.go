@@ -243,9 +243,7 @@ func TestReconcilePreservesUserEditsAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed && again {
-		// first reconcile may stamp metadata; second must not keep changing
-	}
+	_ = changed // first reconcile may stamp metadata; the second must be stable.
 	if again {
 		t.Fatal("reconcile is not idempotent")
 	}

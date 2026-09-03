@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -276,12 +277,7 @@ func (c *Config) restoreProviderAccountRouteAccess(providerID, accountID, routeI
 			continue
 		}
 		present := false
-		for _, name := range c.Desktop.ProviderAccess {
-			if name == entry.Name {
-				present = true
-				break
-			}
-		}
+		present = slices.Contains(c.Desktop.ProviderAccess, entry.Name)
 		if present {
 			continue
 		}
