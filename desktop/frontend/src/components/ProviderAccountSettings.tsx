@@ -15,30 +15,38 @@ export function normalizeProviderAccountView(p: AccountView): AccountView {
     default: Boolean(p.default),
     keySet: Boolean(p.keySet),
     providerNames: asArray(p.providerNames),
+    disabledRoutes: asArray(p.disabledRoutes),
   };
 }
 
-export function accountsForProviderGroup(group: { id: string; providers: { providerId?: string }[] }, accounts: AccountView[]): AccountView[] {
+type ProviderPresetRef = { id: string; accountGroupId?: string; recommended?: boolean; displayOrder?: number };
+
+export function accountsForProviderGroup(group: { id: string; providerGroup?: string; providers: { providerId?: string }[] }, accounts: AccountView[]): AccountView[] {
   const ids = new Set(group.providers.map((p) => p.providerId).filter(Boolean) as string[]);
-  if (group.id === "builtin:deepseek") ids.add("deepseek");
-  if (group.id === "custom:opencode-go") ids.add("opencode-go");
-  return accounts.filter((account) => ids.has(account.providerId) && !account.retired);
+  if (group.providerGroup) ids.add(group.providerGroup);
+  return accounts.filter((account) => ids.has(account.providerId));
 }
 
-export function addAccountPresetID(group: { id: string }): string {
-  if (group.id === "builtin:deepseek" || group.id.endsWith(":deepseek")) return "deepseek-anthropic";
-  if (group.id === "custom:opencode-go") return "opencode-go-recommended";
-  return "";
+export function addAccountPresetID(group: { id: string; providerGroup?: string; providers: { providerId?: string }[] }, presets: ProviderPresetRef[]): string {
+  const groupID = group.providerGroup || group.providers.map((p) => p.providerId).find(Boolean) || "";
+  if (!groupID) return "";
+  const candidates = presets.filter((preset) => String(preset.accountGroupId ?? "").trim() === groupID);
+  candidates.sort((a, b) => Number(Boolean(b.recommended)) - Number(Boolean(a.recommended))
+    || Number(a.displayOrder ?? 0) - Number(b.displayOrder ?? 0)
+    || a.id.localeCompare(b.id));
+  return candidates[0]?.id ?? "";
 }
 
 export function ProviderAccountManager({
   group,
   accounts,
+  providerPresets,
   busy,
   apply,
 }: {
-  group: { id: string };
+  group: { id: string; providerGroup?: string; providers: { providerId?: string }[] };
   accounts: AccountView[];
+  providerPresets: ProviderPresetRef[];
   busy: boolean;
   apply: (fn: () => Promise<unknown>) => Promise<unknown>;
 }) {
@@ -48,7 +56,7 @@ export function ProviderAccountManager({
   const [key, setKey] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameLabel, setRenameLabel] = useState("");
-  const presetID = addAccountPresetID(group);
+  const presetID = addAccountPresetID(group, providerPresets);
   if (accounts.length === 0 && !presetID) return null;
 
   return (
@@ -77,19 +85,26 @@ export function ProviderAccountManager({
           ) : (
             <>
               <strong>{account.label}</strong>
+              {account.retired ? <span className="badge badge--feedback">{t("settings.accountRetired")}</span> : null}
               {account.default ? <span className="badge">{t("settings.accountDefault")}</span> : null}
               <span>{account.enabled ? t("settings.accountEnabled") : t("settings.accountDisabled")}</span>
               <span>{account.keySet ? t("settings.keySet") : t("settings.noKey")}</span>
-              <button type="button" className="btn btn--small" disabled={busy || account.default} onClick={() => apply(() => app.SetProviderAccountDefault(account.providerId, account.accountId))}>
+              {asArray(account.disabledRoutes).length > 0 ? <span>{asArray(account.disabledRoutes).length} {t("settings.accountRoutesDisabled")}</span> : null}
+              {account.retired ? (
+                <button type="button" className="btn btn--small" disabled={busy} onClick={() => apply(() => app.RestoreProviderAccount(account.providerId, account.accountId))}>
+                  {t("settings.accountRestore")}
+                </button>
+              ) : null}
+              <button type="button" className="btn btn--small" disabled={busy || account.default || account.retired} onClick={() => apply(() => app.SetProviderAccountDefault(account.providerId, account.accountId))}>
                 {t("settings.accountSetDefault")}
               </button>
-              <button type="button" className="btn btn--small" disabled={busy} onClick={() => apply(() => app.SetProviderAccountEnabled(account.providerId, account.accountId, !account.enabled))}>
+              <button type="button" className="btn btn--small" disabled={busy || account.retired} onClick={() => apply(() => app.SetProviderAccountEnabled(account.providerId, account.accountId, !account.enabled))}>
                 {account.enabled ? t("settings.accountDisable") : t("settings.accountEnable")}
               </button>
               <button
                 type="button"
                 className="btn btn--small"
-                disabled={busy}
+                disabled={busy || account.retired}
                 onClick={() => {
                   setRenaming(account.accountId);
                   setRenameLabel(account.label);
@@ -97,7 +112,10 @@ export function ProviderAccountManager({
               >
                 {t("common.edit")}
               </button>
-              <button type="button" className="btn btn--small" disabled={busy} onClick={() => apply(() => app.RetireProviderAccount(account.providerId, account.accountId))}>
+              <button type="button" className="btn btn--small" disabled={busy || account.retired} onClick={() => {
+                if (typeof window !== "undefined" && !window.confirm(t("settings.accountRetireConfirm"))) return;
+                void apply(() => app.RetireProviderAccount(account.providerId, account.accountId));
+              }}>
                 {t("settings.accountRetire")}
               </button>
             </>
@@ -129,5 +147,5 @@ export function ProviderAccountManager({
         </button>
       )}
     </div>
-  );
+    );
 }

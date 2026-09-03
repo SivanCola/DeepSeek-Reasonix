@@ -5269,6 +5269,7 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
             key={group.id}
             group={group}
             accounts={accountsForProviderGroup(group, asArray(s.providerAccounts))}
+            providerPresets={s.providerPresets}
             apply={apply}
             busy={busy}
             fetching={fetchingProviders.has(group.id)}
@@ -5345,6 +5346,7 @@ function ProvidersSection({ s, busy, apply }: SectionProps) {
 
 export type ProviderAccessGroup = {
   id: string;
+  providerGroup: string;
   label: string;
   description: string;
   builtIn: boolean;
@@ -5880,6 +5882,7 @@ export function AddProviderPanel({
 export function ProviderAccessCard({
   group,
   accounts = [],
+  providerPresets,
   apply,
   busy,
   fetching,
@@ -5905,6 +5908,7 @@ export function ProviderAccessCard({
 }: {
   group: ProviderAccessGroup;
   accounts?: ProviderAccountView[];
+  providerPresets?: ProviderPresetView[];
   apply: (fn: () => Promise<unknown>) => Promise<unknown>;
   busy: boolean;
   fetching: boolean;
@@ -5971,7 +5975,7 @@ export function ProviderAccessCard({
   );
   return (
     <article className={`provider-access-card${group.builtIn ? " provider-access-card--builtin" : ""}`}>
-      <ProviderAccountManager group={group} accounts={accounts} busy={busy} apply={apply} />
+      <ProviderAccountManager group={group} accounts={accounts} providerPresets={providerPresets ?? []} busy={busy} apply={apply} />
       <div className="provider-access-card__head">
         <div className="provider-access-card__identity">
           <div className="provider-access-card__title">
@@ -6430,10 +6434,12 @@ export function providerAccessGroups(providers: ProviderView[], t: ReturnType<ty
       if (!existing.keySource && p.keySource) existing.keySource = p.keySource;
       if (!existing.keySourcePath && p.keySourcePath) existing.keySourcePath = p.keySourcePath;
       existing.models = uniqueStrings([...existing.models, ...p.models]);
+      if (!existing.providerGroup && p.providerId) existing.providerGroup = p.providerId;
       continue;
     }
     groups.set(id, {
       id,
+      providerGroup: String(p.providerId ?? "").trim(),
       label: providerGroupLabel(p, t),
       description: providerGroupDescription(p, t),
       builtIn,

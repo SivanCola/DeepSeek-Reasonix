@@ -8,18 +8,19 @@ import (
 )
 
 type ProviderAccountView struct {
-	ProviderID    string   `json:"providerId"`
-	AccountID     string   `json:"accountId"`
-	PresetID      string   `json:"presetId,omitempty"`
-	Label         string   `json:"label"`
-	APIKeyEnv     string   `json:"apiKeyEnv"`
-	Enabled       bool     `json:"enabled"`
-	Default       bool     `json:"default"`
-	Retired       bool     `json:"retired,omitempty"`
-	KeySet        bool     `json:"keySet"`
-	KeySource     string   `json:"keySource,omitempty"`
-	KeySourcePath string   `json:"keySourcePath,omitempty"`
-	ProviderNames []string `json:"providerNames"`
+	ProviderID     string   `json:"providerId"`
+	AccountID      string   `json:"accountId"`
+	PresetID       string   `json:"presetId,omitempty"`
+	Label          string   `json:"label"`
+	APIKeyEnv      string   `json:"apiKeyEnv"`
+	Enabled        bool     `json:"enabled"`
+	Default        bool     `json:"default"`
+	Retired        bool     `json:"retired,omitempty"`
+	KeySet         bool     `json:"keySet"`
+	KeySource      string   `json:"keySource,omitempty"`
+	KeySourcePath  string   `json:"keySourcePath,omitempty"`
+	ProviderNames  []string `json:"providerNames"`
+	DisabledRoutes []string `json:"disabledRoutes,omitempty"`
 }
 
 func providerPresetViewsForRootWithResolver(cfg *config.Config, root string, resolver *config.CredentialResolver) []ProviderPresetView {
@@ -34,6 +35,7 @@ func providerPresetViewsForRootWithResolver(cfg *config.Config, root string, res
 		models := make([]string, 0)
 		modelSeen := map[string]bool{}
 		requiresKey := false
+		routes := make([]string, 0, len(preset.Entries))
 		for _, entry := range preset.Entries {
 			if keyEnv == "" {
 				keyEnv = strings.TrimSpace(entry.APIKeyEnv)
@@ -44,6 +46,7 @@ func providerPresetViewsForRootWithResolver(cfg *config.Config, root string, res
 			name := strings.TrimSpace(entry.Name)
 			if name != "" {
 				names = append(names, name)
+				routes = append(routes, name)
 			}
 			for _, model := range chatProviderModels(entry.ChatModelList()) {
 				if modelSeen[model] {
@@ -68,6 +71,7 @@ func providerPresetViewsForRootWithResolver(cfg *config.Config, root string, res
 			MissingProviderNames: nonNil(missingNames), KeySet: key.Set, RequiresKey: requiresKey,
 			Configured: !requiresKey || key.Set, KeySource: key.Source.Label, KeySourcePath: key.Source.Path,
 			AccountGroupID: preset.AccountGroupID, Accounts: accountViewsForGroup(cfg, preset.AccountGroupID, root, resolver), CanAddAccount: true,
+			AvailableRoutes: nonNil(routes),
 		})
 	}
 	return out
@@ -93,18 +97,16 @@ func providerAccountViewsForRoot(cfg *config.Config, root string, resolver *conf
 		resolver = config.NewCredentialResolverForRoot(root)
 	}
 	for _, account := range cfg.ProviderAccounts {
-		if account.Retired {
-			continue
-		}
 		view := ProviderAccountView{
-			ProviderID:    account.ProviderID,
-			AccountID:     account.ID,
-			PresetID:      account.PresetID,
-			Label:         account.Label,
-			APIKeyEnv:     account.APIKeyEnv,
-			Enabled:       account.IsEnabled(),
-			Default:       account.Default,
-			ProviderNames: []string{},
+			ProviderID:     account.ProviderID,
+			AccountID:      account.ID,
+			PresetID:       account.PresetID,
+			Label:          account.Label,
+			APIKeyEnv:      account.APIKeyEnv,
+			Enabled:        account.IsEnabled(),
+			Default:        account.Default,
+			ProviderNames:  []string{},
+			DisabledRoutes: nonNil(account.DisabledRoutes),
 		}
 		if env := strings.TrimSpace(account.APIKeyEnv); env != "" {
 			key := resolver.ResolveGlobalFirst(env)
@@ -154,30 +156,30 @@ func (a *App) AddProviderPresetAccount(presetID, label, key string) (string, err
 	}
 	keyWarning := ""
 	var created config.ProviderAccount
-	rebuildWarning, err := a.applyConfigChangeWithWarning("provider account", func(c *config.Config) error {
+	change, err := a.applyConfigChangeResult("provider account", func(c *config.Config) error {
 		env := ""
 		account, err := c.AddProviderAccount(groupID, preset.ID, label, env)
 		if err != nil {
 			return err
 		}
 		created = account
-		if strings.TrimSpace(key) != "" && strings.TrimSpace(account.APIKeyEnv) != "" {
-			keyWarning, err = a.saveProviderCredential(account.APIKeyEnv, key)
-			if err != nil {
-				return err
-			}
-		}
 		entries, _ := c.ResolveAccountProvider(account.ProviderID, account.ID)
 		addProviderAccess(c, providerEntryNames(entries)...)
 		return nil
 	})
 	if err != nil {
-		if strings.TrimSpace(created.APIKeyEnv) != "" && strings.TrimSpace(key) != "" {
+		if !change.Committed && strings.TrimSpace(created.APIKeyEnv) != "" && strings.TrimSpace(key) != "" {
 			_ = config.RemoveCredential(created.APIKeyEnv)
 		}
 		return "", err
 	}
-	return appendSettingsWarning(keyWarning, rebuildWarning), nil
+	if strings.TrimSpace(key) != "" && strings.TrimSpace(created.APIKeyEnv) != "" {
+		keyWarning, err = a.saveProviderCredential(created.APIKeyEnv, key)
+		if err != nil {
+			return "", fmt.Errorf("configuration saved but credential write failed; retry from account settings: %w", err)
+		}
+	}
+	return appendSettingsWarning(keyWarning, change.Warning), nil
 }
 
 func (a *App) SetProviderAccountDefault(providerID, accountID string) error {
@@ -199,10 +201,10 @@ func (a *App) RenameProviderAccount(providerID, accountID, label string) error {
 }
 
 func (a *App) RetireProviderAccount(providerID, accountID string) error {
-	if refs := a.providerAccountLiveRefs(providerID, accountID); len(refs) > 0 {
-		return fmt.Errorf("cannot retire account %s/%s while it is referenced by %s", providerID, accountID, strings.Join(refs, ", "))
-	}
-	return a.applyConfigChange(func(c *config.Config) error {
+	_, err := a.applyConfigChangeWithRuntimeMutation("retire provider account", func(c *config.Config) error {
+		if refs := a.providerAccountLiveRefsFromConfig(c, providerID, accountID); len(refs) > 0 {
+			return fmt.Errorf("cannot retire account %s/%s while it is referenced by %s", providerID, accountID, strings.Join(refs, ", "))
+		}
 		if err := c.RetireProviderAccount(providerID, accountID); err != nil {
 			return err
 		}
@@ -214,6 +216,24 @@ func (a *App) RetireProviderAccount(providerID, accountID string) error {
 		}
 		return nil
 	})
+	return err
+}
+
+// RestoreProviderAccount re-enables a retired account and all of its routes.
+func (a *App) RestoreProviderAccount(providerID, accountID string) error {
+	_, err := a.applyConfigChangeWithRuntimeMutation("restore provider account", func(c *config.Config) error {
+		return c.RestoreProviderAccount(providerID, accountID)
+	})
+	return err
+}
+
+// SetProviderAccountRouteEnabled persists a single route toggle while keeping
+// account-owned provider entries available for old session references.
+func (a *App) SetProviderAccountRouteEnabled(providerID, accountID, routeID string, enabled bool) error {
+	_, err := a.applyConfigChangeWithRuntimeMutation("provider account route", func(c *config.Config) error {
+		return c.SetProviderAccountRouteEnabled(providerID, accountID, routeID, enabled)
+	})
+	return err
 }
 
 func (a *App) SetProviderAccountKey(providerID, accountID, value string) (string, error) {
@@ -248,6 +268,10 @@ func (a *App) providerAccountLiveRefs(providerID, accountID string) []string {
 	if err != nil {
 		return nil
 	}
+	return a.providerAccountLiveRefsFromConfig(cfg, providerID, accountID)
+}
+
+func (a *App) providerAccountLiveRefsFromConfig(cfg *config.Config, providerID, accountID string) []string {
 	refs := cfg.ProviderAccountConfigRefs(providerID, accountID)
 	entries, ok := cfg.ResolveAccountProvider(providerID, accountID)
 	if !ok {
@@ -292,7 +316,14 @@ func accountKeyEnvShared(c *config.Config, account config.ProviderAccount) bool 
 		if other.ProviderID == account.ProviderID && other.ID == account.ID {
 			continue
 		}
-		if !other.Retired && strings.TrimSpace(other.APIKeyEnv) == env {
+		if strings.TrimSpace(other.APIKeyEnv) == env {
+			return true
+		}
+	}
+	// Provider entries can outlive an account (retired routes are retained for
+	// old sessions), and custom providers may intentionally share the same key.
+	for _, entry := range c.Providers {
+		if strings.TrimSpace(entry.APIKeyEnv) == env {
 			return true
 		}
 	}

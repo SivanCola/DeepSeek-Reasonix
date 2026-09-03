@@ -121,6 +121,7 @@ type ProviderPresetView struct {
 	AccountGroupID       string                `json:"accountGroupId,omitempty"`
 	Accounts             []ProviderAccountView `json:"accounts"`
 	CanAddAccount        bool                  `json:"canAddAccount,omitempty"`
+	AvailableRoutes      []string              `json:"availableRoutes"`
 }
 
 const (
@@ -1272,8 +1273,32 @@ func (a *App) applySkillConfigChangeForFields(fields []string, setting string, m
 }
 
 func (a *App) applyConfigChangeWithWarning(setting string, mutate func(*config.Config) error) (string, error) {
+	result, err := a.applyConfigChangeResult(setting, mutate)
+	return result.Warning, err
+}
+
+func (a *App) applyConfigChangeWithRuntimeMutation(setting string, mutate func(*config.Config) error) (configChangeResult, error) {
+	defer a.lockRuntimeMutation(setting)()
+	result, err := a.applyConfigChangeResultInternal(setting, mutate, true)
+	return result, err
+}
+
+// configChangeResult records whether the user config reached disk before a
+// runtime rebuild or subsequent credential operation failed. Callers that
+// create credentials must only roll them back while Committed is false.
+type configChangeResult struct {
+	Warning   string
+	Committed bool
+}
+
+func (a *App) applyConfigChangeResult(setting string, mutate func(*config.Config) error) (configChangeResult, error) {
+	return a.applyConfigChangeResultInternal(setting, mutate, false)
+}
+
+func (a *App) applyConfigChangeResultInternal(setting string, mutate func(*config.Config) error, runtimeHeld bool) (configChangeResult, error) {
+	var result configChangeResult
 	if err := a.ensureActiveTabRebuildAllowed(setting); err != nil {
-		return "", err
+		return result, err
 	}
 	if err := func() error {
 		// Serialize the load-modify-save against other in-process config editors
@@ -1291,17 +1316,25 @@ func (a *App) applyConfigChangeWithWarning(setting string, mutate func(*config.C
 		}
 		return cfg.SaveTo(path)
 	}(); err != nil {
-		return "", err
+		return result, err
 	}
-	if err := a.rebuildSetting(setting); err != nil {
+	result.Committed = true
+	var rebuildErr error
+	if runtimeHeld {
+		rebuildErr = a.rebuildSettingLocked(setting)
+	} else {
+		rebuildErr = a.rebuildSetting(setting)
+	}
+	if err := rebuildErr; err != nil {
 		if warning, ok := a.deferredRebuildWarning(setting, err); ok {
 			a.refreshActiveTabMetaExtras()
-			return warning, nil
+			result.Warning = warning
+			return result, nil
 		}
-		return "", err
+		return result, err
 	}
 	a.refreshActiveTabMetaExtras()
-	return "", nil
+	return result, nil
 }
 
 // refreshActiveTabMetaExtras invalidates the cached model capability snapshot

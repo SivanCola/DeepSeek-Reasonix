@@ -82,6 +82,12 @@ func (a *App) remoteProxyModelCatalog(curModel string) []ModelInfo {
 		if !strings.EqualFold(entryKind, kind) || !modelProviderAccessAllowed(cfg.Desktop.ProviderAccess, entry.Name) || !entry.Configured() {
 			continue
 		}
+		if strings.TrimSpace(entry.AccountID) != "" {
+			account, ok := config.ProviderAccountForEntry(cfg, *entry)
+			if ok && (account.Retired || !account.IsEnabled()) && !strings.HasPrefix(curModel, entry.Name+"/") {
+				continue
+			}
+		}
 		for _, model := range entry.ChatModelList() {
 			ref := entry.Name + "/" + model
 			out = append(out, ModelInfo{Ref: ref, Provider: entry.Name, Model: model, Current: ref == canonical})
@@ -110,10 +116,10 @@ func (a *App) desktopModelCatalog(curModel, workspaceRoot string, ctrl control.S
 		if !modelProviderAccessAllowed(cfg.Desktop.ProviderAccess, p.Name) || !p.Configured() {
 			continue
 		}
-		if !cfg.AccountEnabled(p.AccountProviderID, p.AccountID) && strings.TrimSpace(p.AccountID) != "" && !strings.HasPrefix(curModel, p.Name+"/") {
+		account, accountKnown := config.ProviderAccountForEntry(cfg, *p)
+		if accountKnown && (account.Retired || !account.IsEnabled()) && !strings.HasPrefix(curModel, p.Name+"/") {
 			continue
 		}
-		account, _ := config.ProviderAccountForEntry(cfg, *p)
 		for _, m := range p.ChatModelList() {
 			ref := p.Name + "/" + m
 			out = append(out, ModelInfo{
