@@ -291,9 +291,8 @@ func lookupSessionAccount(s *providerSetupSession, providerID, accountID string)
 }
 
 func askLine(label, def string) string {
-	// Keep the default value in control flow only. Printing arbitrary defaults
-	// from this generic helper can accidentally expose a secret if a caller is
-	// added later with a credential as its fallback.
+	// Defaults are kept out of the rendered prompt so a future caller cannot
+	// accidentally send a credential value to a logging/output sink.
 	fmt.Printf("%s: ", label)
 	var line string
 	_, _ = fmt.Scanln(&line)
