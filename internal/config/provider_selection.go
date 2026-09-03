@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -34,27 +33,6 @@ type ProviderSelection struct {
 	Model     string
 }
 
-// SelectionForProviderModel projects a materialized provider entry into the
-// canonical family/account/model identity. It returns false for ordinary
-// custom providers, which continue using their provider/model reference.
-func (c *Config) SelectionForProviderModel(entry ProviderEntry, model string) (ProviderSelection, bool) {
-	model = strings.TrimSpace(model)
-	if c == nil || model == "" {
-		return ProviderSelection{}, false
-	}
-	if family, account, ok := ProviderAccountIdentity(entry); ok {
-		if _, _, found := c.lookupProviderAccount(family, account); found {
-			return ProviderSelection{FamilyID: family, AccountID: account, Model: model}, true
-		}
-	}
-	if family, _, _, ok := curatedProviderIdentity(entry); ok {
-		if _, _, found := c.lookupProviderAccount(family, MainProviderAccountID); found {
-			return ProviderSelection{FamilyID: family, AccountID: MainProviderAccountID, Model: model}, true
-		}
-	}
-	return ProviderSelection{}, false
-}
-
 func (s ProviderSelection) Ref() string {
 	return strings.TrimSpace(s.FamilyID) + "/" + strings.TrimSpace(s.AccountID) + "/" + strings.TrimSpace(s.Model)
 }
@@ -63,7 +41,7 @@ func (s ProviderSelection) Ref() string {
 // curated preset registry. No provider name or endpoint is used as identity.
 func CuratedProviderFamilies() []ProviderFamilyDefinition {
 	byID := map[string]*ProviderFamilyDefinition{}
-	for _, preset := range CuratedProviderPresets() {
+	for _, preset := range curatedProviderPresets {
 		familyID := preset.resolvedAccountGroupID()
 		if familyID == "" {
 			continue
@@ -74,7 +52,7 @@ func CuratedProviderFamilies() []ProviderFamilyDefinition {
 			byID[familyID] = family
 		}
 		family.PresetIDs = appendUniqueString(family.PresetIDs, preset.ID)
-		if preset.Recommended && preferredPreset(preset.ID, family.RecommendedPresetID) {
+		if preset.Recommended && (family.RecommendedPresetID == "" || presetRank(preset) < presetRankByID(family.RecommendedPresetID)) {
 			family.RecommendedPresetID = preset.ID
 		}
 		for _, entry := range preset.Entries {
@@ -105,25 +83,9 @@ func CuratedProviderFamilies() []ProviderFamilyDefinition {
 	}
 	families := make([]ProviderFamilyDefinition, 0, len(byID))
 	for _, family := range byID {
-		// Include migrated DeepSeek default routes in the family catalog.
-		for _, template := range accountRouteTemplates(family.ID) {
-			found := false
-			for _, route := range family.Routes {
-				if route.ID == template.RouteID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				family.Routes = append(family.Routes, ProviderRouteDefinition{
-					ID: template.RouteID, PresetID: template.Entry.PresetID,
-					Kind: strings.TrimSpace(template.Entry.Kind), Models: append([]string(nil), template.Entry.ModelList()...),
-				})
-			}
-		}
 		if family.RecommendedPresetID == "" {
 			for _, presetID := range family.PresetIDs {
-				if preferredPreset(presetID, family.RecommendedPresetID) {
+				if family.RecommendedPresetID == "" || presetRankByID(presetID) < presetRankByID(family.RecommendedPresetID) {
 					family.RecommendedPresetID = presetID
 				}
 			}
@@ -148,14 +110,6 @@ func presetRank(p ProviderPreset) int {
 	return p.DisplayOrder
 }
 
-func preferredPreset(candidate, current string) bool {
-	if current == "" {
-		return true
-	}
-	candidateRank, currentRank := presetRankByID(candidate), presetRankByID(current)
-	return candidateRank < currentRank || candidateRank == currentRank && candidate < current
-}
-
 func presetRankByID(id string) int {
 	if preset, ok := CuratedProviderPreset(id); ok {
 		return presetRank(preset)
@@ -164,8 +118,10 @@ func presetRankByID(id string) int {
 }
 
 func appendUniqueString(values []string, value string) []string {
-	if slices.Contains(values, value) {
-		return values
+	for _, current := range values {
+		if current == value {
+			return values
+		}
 	}
 	return append(values, value)
 }
@@ -265,9 +221,6 @@ func splitGeneratedProviderName(provider string) (family, accountID string, ok b
 }
 
 func (c *Config) ResolveSelection(selection ProviderSelection) (*ProviderEntry, error) {
-	if c == nil {
-		return nil, fmt.Errorf("resolve provider selection: nil config")
-	}
 	selection.FamilyID = strings.TrimSpace(selection.FamilyID)
 	selection.AccountID = strings.TrimSpace(selection.AccountID)
 	selection.Model = strings.TrimSpace(selection.Model)
@@ -303,9 +256,6 @@ func (c *Config) ResolveSelectionRef(ref string) (*ProviderEntry, ProviderSelect
 }
 
 func (c *Config) RouteForSelection(selection ProviderSelection) (ProviderRouteDefinition, error) {
-	if c == nil {
-		return ProviderRouteDefinition{}, fmt.Errorf("resolve provider route: nil config")
-	}
 	families := CuratedProviderFamilies()
 	var family *ProviderFamilyDefinition
 	for i := range families {
@@ -321,10 +271,8 @@ func (c *Config) RouteForSelection(selection ProviderSelection) (ProviderRouteDe
 	if !ok {
 		return ProviderRouteDefinition{}, fmt.Errorf("provider account %s/%s not found", selection.FamilyID, selection.AccountID)
 	}
-	disabledRoutes := make([]string, 0, len(account.DisabledRoutes))
 	for _, route := range family.Routes {
 		if providerAccountRouteDisabled(account, route.ID) {
-			disabledRoutes = append(disabledRoutes, route.ID)
 			continue
 		}
 		for _, entry := range c.Providers {
@@ -333,16 +281,10 @@ func (c *Config) RouteForSelection(selection ProviderSelection) (ProviderRouteDe
 			}
 		}
 	}
-	if len(disabledRoutes) > 0 {
-		return ProviderRouteDefinition{}, fmt.Errorf("model %q has no enabled route for %s/%s (disabled routes: %s)", selection.Model, selection.FamilyID, selection.AccountID, strings.Join(disabledRoutes, ", "))
-	}
 	return ProviderRouteDefinition{}, fmt.Errorf("model %q has no enabled route for %s/%s", selection.Model, selection.FamilyID, selection.AccountID)
 }
 
 func (c *Config) DefaultSelection(familyID string) (ProviderSelection, bool) {
-	if c == nil {
-		return ProviderSelection{}, false
-	}
 	account, ok := c.DefaultAccount(strings.TrimSpace(familyID))
 	if !ok {
 		return ProviderSelection{}, false
@@ -388,9 +330,6 @@ func (c *Config) ResolveNewSessionSelection() (ProviderSelection, bool) {
 		if selection, err := ParseProviderSelection(c, ref); err == nil {
 			return selection, true
 		}
-		// A valid custom provider/model remains outside the curated selection
-		// schema; do not silently replace it with the first curated family.
-		return ProviderSelection{}, false
 	}
 	for _, family := range CuratedProviderFamilies() {
 		if selection, ok := c.DefaultSelection(family.ID); ok {
