@@ -107,6 +107,11 @@ func (a *App) desktopModelCatalog(curModel, workspaceRoot string, ctrl control.S
 	if err != nil {
 		return []ModelInfo{}
 	}
+	requestedRef := strings.TrimSpace(curModel)
+	if requestedRef == "" {
+		requestedRef = strings.TrimSpace(cfg.DefaultModel)
+		curModel = requestedRef
+	}
 	if entry, ok := cfg.ResolveModel(curModel); ok {
 		curModel = entry.Name + "/" + entry.Model
 	}
@@ -128,5 +133,34 @@ func (a *App) desktopModelCatalog(curModel, workspaceRoot string, ctrl control.S
 			})
 		}
 	}
+	appendLegacyAccountFamilyModels(&out, cfg, requestedRef)
 	return mergeExtensionModelInfos(out, extensionCatalog, curModel)
+}
+
+func appendLegacyAccountFamilyModels(out *[]ModelInfo, cfg *config.Config, requestedRef string) {
+	if out == nil || cfg == nil {
+		return
+	}
+	family, model, ok := strings.Cut(strings.TrimSpace(requestedRef), "/")
+	if !ok || family == "" {
+		return
+	}
+	entry, found := cfg.ResolveModel(requestedRef)
+	if !found {
+		return
+	}
+	account, ok := config.ProviderAccountForEntry(cfg, *entry)
+	if !ok || account.ProviderID == family || !modelProviderAccessAllowed(cfg.Desktop.ProviderAccess, entry.Name) {
+		return
+	}
+	family = account.ProviderID
+	for _, item := range *out {
+		if item.Ref == family+"/"+model {
+			return
+		}
+	}
+	if model == "" {
+		return
+	}
+	*out = append(*out, ModelInfo{Ref: family + "/" + model, Provider: family, Model: model, Current: strings.TrimSpace(requestedRef) == family+"/"+model, ProviderGroup: account.ProviderID, AccountID: account.ID, AccountLabel: account.Label, AccountDefault: account.Default})
 }
