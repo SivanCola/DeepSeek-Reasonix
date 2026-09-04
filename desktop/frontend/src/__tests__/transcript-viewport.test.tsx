@@ -81,6 +81,11 @@ ok(
     && windowSource.includes("clientHeight: nativeViewport.clientHeight"),
   "range commits use a tear-free native viewport snapshot instead of mutable render-time geometry",
 );
+ok(
+  windowSource.includes("top: virtualItem.start - scrollMargin")
+    && !windowSource.includes("transform: `translateY(${virtualItem.start - scrollMargin}px)`"),
+  "window items use layout coordinates so delayed compositor layers cannot replay an old scroll offset",
+);
 const reconstructed = commitTranscriptWindowRange({
   candidate: staleCandidate,
   measurements,

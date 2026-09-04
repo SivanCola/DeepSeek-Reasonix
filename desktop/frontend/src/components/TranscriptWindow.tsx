@@ -278,7 +278,7 @@ export default function TranscriptWindow({
         <div ref={coldContainerRef} className="transcript__window" style={{ height: totalSize, position: "relative" }}>
           {virtualItems.map((virtualItem) => {
             const block = split.cold[virtualItem.index];
-            return <div key={block.key} data-index={virtualItem.index} className="transcript__window-item" style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualItem.start - scrollMargin}px)` }}>
+            return <div key={block.key} data-index={virtualItem.index} className="transcript__window-item" style={{ position: "absolute", top: virtualItem.start - scrollMargin, left: 0, width: "100%" }}>
               {renderBlock(block)}
             </div>;
           })}

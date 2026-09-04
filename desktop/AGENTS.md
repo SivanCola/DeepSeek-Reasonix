@@ -35,6 +35,9 @@ contracts when touching anything that can move the transcript viewport.
   native input owns an unchanged viewport. Native viewport geometry is an
   external store: range renders must use its immutable snapshot so React
   cannot commit a range calculated before a newer compositor scroll offset.
+  Window items use absolute layout `top`, not transforms that can put range
+  position and native scroll state into independently committed compositor
+  transactions.
 - **Anchor-safe measurement commit**: DOM measurements enter a block-keyed
   staging ledger before they can change TanStack's prefix sizes. In reader
   intent, only the anchor block and blocks after it may publish; sizes before
