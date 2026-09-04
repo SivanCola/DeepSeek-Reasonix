@@ -72,13 +72,18 @@ async function anchorSnapshot(page) {
     });
     const first = visible[0];
     const projection = element.querySelector(".transcript__projection");
+    const item = first?.closest(".transcript__window-item");
     return {
       key: first?.getAttribute("data-transcript-block-key"),
       top: first ? first.getBoundingClientRect().top - viewport.top : null,
+      index: item?.getAttribute("data-index"),
+      itemTop: item instanceof HTMLElement ? item.style.top : null,
+      scrollTop: element.scrollTop,
       visible: visible.length,
       intent: element.dataset.transcriptIntent,
       distance: element.scrollHeight - element.scrollTop - element.clientHeight,
       mounted: Number(projection?.getAttribute("data-transcript-mounted-blocks")),
+      rangeSource: projection?.getAttribute("data-transcript-range-source"),
     };
   });
 }
@@ -131,15 +136,32 @@ async function runIteration(page, transcript, label, iteration) {
     requestAnimationFrame(sample);
   });
   await page.mouse.down();
-  await transcript.evaluate((element, iterationIndex) => {
+  const mutation = await transcript.evaluate((element, iterationIndex) => {
     const viewport = element.getBoundingClientRect();
     const items = [...element.querySelectorAll(".transcript__window-item")];
     const firstVisibleIndex = items.findIndex((item) => item.getBoundingClientRect().bottom > viewport.top);
     const earlier = firstVisibleIndex > 0 ? items[firstVisibleIndex - 1] : items[firstVisibleIndex];
     const block = earlier?.querySelector("[data-transcript-block-key]");
-    if (block instanceof HTMLElement) block.style.paddingBottom = `${120 + iterationIndex * 3}px`;
+    if (!(block instanceof HTMLElement)) return null;
+    block.style.paddingBottom = `${120 + iterationIndex * 3}px`;
+    return { key: block.dataset.transcriptBlockKey, index: earlier?.dataset.index };
   }, iteration);
   await frames(page, 6);
+  const held = await anchorSnapshot(page);
+  const heldOriginal = await page.evaluate((key) => {
+    const element = document.querySelector(".transcript");
+    const block = [...document.querySelectorAll("[data-transcript-block-key]")]
+      .find((candidate) => candidate.getAttribute("data-transcript-block-key") === key);
+    const item = block?.closest(".transcript__window-item");
+    return element instanceof HTMLElement && block instanceof HTMLElement
+      ? {
+          top: block.getBoundingClientRect().top - element.getBoundingClientRect().top,
+          index: item?.getAttribute("data-index"),
+          itemTop: item instanceof HTMLElement ? item.style.top : null,
+          height: item instanceof HTMLElement ? item.getBoundingClientRect().height : null,
+        }
+      : null;
+  }, before.key);
   await page.mouse.up();
   await page.waitForFunction(({ key, top }) => {
     const element = document.querySelector(".transcript");
@@ -164,6 +186,7 @@ async function runIteration(page, transcript, label, iteration) {
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
     return {
       top,
+      scrollTop: element instanceof HTMLElement ? element.scrollTop : null,
       intent: element?.getAttribute("data-transcript-intent"),
       mounted: Number(projection?.getAttribute("data-transcript-mounted-blocks")),
       blankFrames: probe?.blankFrames ?? -1,
@@ -173,8 +196,12 @@ async function runIteration(page, transcript, label, iteration) {
   assert(result.heldAccepted.length === 0,
     `${label} ${iteration + 1}/${iterations}: user-held transaction accepts zero programmatic writes`);
   assert(result.blankFrames === 0, `${label} ${iteration + 1}/${iterations}: geometry churn produces zero blank frames`);
-  assert(result.top != null && Math.abs(result.top - before.top) <= 4,
-    `${label} ${iteration + 1}/${iterations}: logical anchor drift is at most 4px (${result.top == null ? "missing" : Math.abs(result.top - before.top).toFixed(1)}px)`);
+  assert(heldOriginal?.top != null && Math.abs(heldOriginal.top - before.top) <= 4,
+    `${label} ${iteration + 1}/${iterations}: staged prefix geometry cannot move the held reader anchor`);
+  const drift = result.top == null ? null : Math.abs(result.top - before.top);
+  const driftDiagnostic = drift == null || drift > 4 ? `; ${JSON.stringify({ before, mutation, held, heldOriginal, result })}` : "";
+  assert(drift != null && drift <= 4,
+    `${label} ${iteration + 1}/${iterations}: logical anchor drift is at most 4px (${drift == null ? "missing" : drift.toFixed(1)}px${driftDiagnostic})`);
   assert(result.intent === "reader", `${label} ${iteration + 1}/${iterations}: reader retains viewport ownership`);
   assert(result.mounted <= 40, `${label} ${iteration + 1}/${iterations}: mounted completed blocks remain bounded (${result.mounted})`);
 }

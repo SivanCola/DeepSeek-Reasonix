@@ -3,6 +3,15 @@ export type TranscriptMeasurementChange = {
   size: number;
 };
 
+export function resolveTranscriptMeasurementBoundary(
+  paintedAnchorIndex: number | undefined,
+  logicalAnchorIndex: number | undefined,
+): number | undefined {
+  if (paintedAnchorIndex == null) return logicalAnchorIndex;
+  if (logicalAnchorIndex == null) return paintedAnchorIndex;
+  return Math.max(paintedAnchorIndex, logicalAnchorIndex);
+}
+
 /**
  * Immutable, block-keyed DOM measurement snapshots for the Transcript window.
  * A render can observe either the old snapshot or the complete new snapshot,

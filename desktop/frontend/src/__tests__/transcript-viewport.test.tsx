@@ -77,17 +77,19 @@ const windowSource = await import("node:fs/promises").then((fs) => fs.readFile(n
 ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publish ResizeObserver sizes outside the viewport commit protocol");
 ok(windowSource.includes("measurementLedger.stage(changes)"), "DOM measurements enter the block-keyed staging ledger before publication");
 ok(
-  windowSource.includes("rect.bottom > viewportTop + 0.5")
-    && windowSource.includes("index >= anchorIndex")
+  windowSource.includes("item.end > nativeViewport.scrollTop + 0.5")
+    && windowSource.includes("resolveTranscriptMeasurementBoundary(paintedAnchorIndex, logicalAnchorIndex)")
+    && windowSource.includes("index >= measurementBoundaryIndex")
     && windowSource.includes("virtualizer.measure();"),
-  "reader measurements publish from the committed native viewport boundary",
+  "reader measurements publish after both logical and pre-measurement painted boundaries",
 );
 ok(!windowSource.includes(".resizeItem("), "the window adapter cannot expose partially updated per-item prefix sizes");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");
 ok(
   windowSource.includes("useSyncExternalStore(subscribe, getSnapshot, getSnapshot)")
     && windowSource.includes("scrollTop: nativeViewport.scrollTop")
-    && windowSource.includes("clientHeight: nativeViewport.clientHeight"),
+    && windowSource.includes("clientHeight: nativeViewport.clientHeight")
+    && windowSource.includes("getBoundingClientRect().top - scrollElement.getBoundingClientRect().top + nativeViewport.scrollTop"),
   "range commits use a tear-free native viewport snapshot instead of mutable render-time geometry",
 );
 ok(

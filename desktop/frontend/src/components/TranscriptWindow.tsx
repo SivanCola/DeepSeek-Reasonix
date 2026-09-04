@@ -1,7 +1,7 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { TranscriptKernel } from "../lib/transcriptKernel";
-import { TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
+import { resolveTranscriptMeasurementBoundary, TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
 import { commitTranscriptWindowRange, type TranscriptWindowRange } from "../lib/transcriptWindowRange";
 
@@ -105,7 +105,10 @@ export default function TranscriptWindow({
   // snapshot immediately before commit, so a concurrent render calculated at
   // an old compositor offset cannot replace the currently covering range.
   const nativeViewport = useNativeViewportSnapshot(scrollElement);
-  const scrollMargin = coldContainerRef.current?.offsetTop ?? 0;
+  const coldContainer = coldContainerRef.current;
+  const scrollMargin = coldContainer && scrollElement
+    ? coldContainer.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top + nativeViewport.scrollTop
+    : 0;
   const virtualizer = useVirtualizer({
     count: split.cold.length,
     getScrollElement: () => scrollElement,
@@ -148,6 +151,11 @@ export default function TranscriptWindow({
     gestureActive: kernel.userGestureActive,
   });
   const virtualItems = committedRange.items;
+  const paintedAnchorIndex = virtualItems.find((item) => item.end > nativeViewport.scrollTop + 0.5)?.index;
+  const logicalAnchorIndex = kernel.anchor.kind === "block"
+    ? coldIndexByKey.get(kernel.anchor.blockKey)
+    : undefined;
+  const measurementBoundaryIndex = resolveTranscriptMeasurementBoundary(paintedAnchorIndex, logicalAnchorIndex);
   const rangeRevision = `${committedRange.scrollMargin}:${committedRange.totalSize}|${virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|")}`;
 
   useLayoutEffect(() => {
@@ -198,22 +206,20 @@ export default function TranscriptWindow({
   useLayoutEffect(() => {
     const container = coldContainerRef.current;
     const changes: Array<{ key: string; size: number }> = [];
-    const viewportTop = scrollElement?.getBoundingClientRect().top;
-    let viewportAnchorIndex: number | undefined;
     if (container) {
       for (const item of virtualItems) {
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
         const rect = element.getBoundingClientRect();
-        if (viewportAnchorIndex == null && viewportTop != null && rect.bottom > viewportTop + 0.5) viewportAnchorIndex = item.index;
         const size = Math.max(64, rect.height || element.offsetHeight);
         if (Math.abs(size - item.size) > 0.5) changes.push({ key: String(item.key), size });
       }
     }
     measurementLedger.stage(changes);
-    const anchorIndex = viewportAnchorIndex ?? (kernel.anchor.kind === "block"
-      ? coldIndexByKey.get(kernel.anchor.blockKey)
-      : undefined);
+    // Resolve the reader boundary from the geometry that produced the
+    // current paint, before applying newly observed DOM sizes. A lazy block
+    // growing just above the viewport must not become its own anchor and
+    // displace everything the reader was already looking at.
     const published = measurementLedger.commitStaged((key) => {
       const index = coldIndexByKey.get(key);
       // A size at or after the logical reader anchor cannot change the
@@ -223,7 +229,7 @@ export default function TranscriptWindow({
       // the exact resident tail. This makes publication independent of
       // platform wheel-event timing and prevents cold refinement from adding
       // extra tail writes.
-      return kernel.intent === "reader" && anchorIndex != null && index != null && index >= anchorIndex;
+      return kernel.intent === "reader" && measurementBoundaryIndex != null && index != null && index >= measurementBoundaryIndex;
     });
     if (published) {
       // `measure()` invalidates TanStack exactly once. Its estimate callback
@@ -234,7 +240,7 @@ export default function TranscriptWindow({
       return;
     }
     onGeometryChange();
-  }, [coldIndexByKey, kernel.anchor, kernel.intent, measurementLedger, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, kernel.intent, measurementBoundaryIndex, measurementLedger, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
