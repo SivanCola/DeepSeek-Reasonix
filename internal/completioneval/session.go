@@ -39,7 +39,8 @@ type Session struct {
 }
 
 // NewSession creates a completion validator with temperature 0 and MaxTokens
-// 256. prov is normally the same provider/model the working agent uses, so
+// 256. Thinking is disabled per request because this stateless exchange must
+// spend its small budget on the verdict JSON. prov is normally the same provider/model the working agent uses, so
 // evidence never implicitly crosses to another model; modelRef labels emitted
 // usage. sink may be nil.
 func NewSession(prov provider.Provider, pricing *provider.Pricing, modelRef string, sink event.Sink) *Session {
@@ -75,6 +76,7 @@ func (s *Session) Evaluate(ctx context.Context, evidence Evidence) (Verdict, err
 		UsageSource:    event.UsageSourceCompletionEvaluator,
 		Timeout:        s.timeout,
 		MaxTokens:      MaxTokens,
+		EffortOverride: EffortDisabled,
 		MaxOutputBytes: MaxOutputBytes,
 		MaxSystemBytes: boundedllm.DefaultMaxSystemBytes,
 		MaxTotalBytes:  boundedllm.DefaultMaxTotalBytes,

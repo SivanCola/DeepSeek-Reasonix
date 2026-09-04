@@ -260,3 +260,7 @@ func (s *frontendEventSink) RecordRunBudget(sample event.RunBudgetSample) {
 func (s *frontendEventSink) RecordCompletionValidation(info event.CompletionValidationInfo) {
 	event.RecordCompletionValidation(s.inner, info)
 }
+
+func (s *frontendEventSink) RecordSubagentLifecycle(info event.SubagentLifecycleInfo) {
+	event.RecordSubagentLifecycle(s.inner, info)
+}

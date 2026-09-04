@@ -14,19 +14,21 @@ import (
 )
 
 type scriptedProvider struct {
-	turns   []string // one response per call, recycled
-	err     error    // stream-open error
-	timeout bool     // hang until ctx deadline
-	usage   *provider.Usage
-	mu      sync.Mutex
-	calls   int
+	turns    []string // one response per call, recycled
+	err      error    // stream-open error
+	timeout  bool     // hang until ctx deadline
+	usage    *provider.Usage
+	mu       sync.Mutex
+	calls    int
+	requests []provider.Request
 }
 
 func (s *scriptedProvider) Name() string { return "scripted" }
 
-func (s *scriptedProvider) Stream(ctx context.Context, _ provider.Request) (<-chan provider.Chunk, error) {
+func (s *scriptedProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	s.mu.Lock()
 	s.calls++
+	s.requests = append(s.requests, req)
 	i := s.calls - 1
 	if i >= len(s.turns) {
 		i = len(s.turns) - 1
@@ -52,6 +54,21 @@ func (s *scriptedProvider) Stream(ctx context.Context, _ provider.Request) (<-ch
 	}
 	close(ch)
 	return ch, nil
+}
+
+func TestEvaluateDisablesThinkingPerRequest(t *testing.T) {
+	prov := &scriptedProvider{turns: []string{`{"outcome":"complete"}`}}
+	if _, err := evaluate(t, prov, Evidence{TaskText: "inspect the repository"}); err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	prov.mu.Lock()
+	defer prov.mu.Unlock()
+	if len(prov.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(prov.requests))
+	}
+	if got := prov.requests[0].EffortOverride; got != EffortDisabled {
+		t.Fatalf("EffortOverride = %q, want %q", got, EffortDisabled)
+	}
 }
 
 func evaluate(t *testing.T, prov provider.Provider, evidence Evidence) (Verdict, error) {

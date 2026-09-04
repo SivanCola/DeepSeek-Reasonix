@@ -10,6 +10,8 @@ import { app } from "../lib/bridge";
 import type { MCPAppInstanceView, MCPAppPresentation } from "../lib/types";
 
 const MCPAppCard = lazy(() => import("./MCPAppCard").then((m) => ({ default: m.MCPAppCard })));
+const SubagentOutcomeCard = lazy(() => import("./SubagentOutcomeCard").then((m) => ({ default: m.SubagentOutcomeCard })));
+const SubagentPreview = lazy(() => import("./SubagentPreview").then((m) => ({ default: m.SubagentPreview })));
 
 function MCPAppCardLazy({
   instance,
@@ -40,8 +42,6 @@ import { useCollapseAnimation } from "../lib/useCollapseAnimation";
 import { isBatchedReadOnlyTool, isTerminalSubagentPhase, type Item, type SubagentPhase } from "../lib/useController";
 import type { Translator } from "../lib/i18n";
 import { ReadOnlyBatch } from "./ReadOnlyBatch";
-import { Markdown } from "./Markdown";
-import { ReasoningSummary } from "./ReasoningSummary";
 import { useWorkProcessPresentation } from "../lib/sessionExperience";
 import { useTranscriptUserResizeIntent } from "./TranscriptLayoutIntentContext";
 import { resolveToolCardDefaultOpen } from "../lib/transcriptRowGeometry";
@@ -60,6 +60,7 @@ function subagentPhaseLabel(t: Translator, phase: SubagentPhase): string {
     case "tool": return t("subagent.phase.tool");
     case "retrying": return t("subagent.phase.retrying");
     case "completed": return t("subagent.phase.completed");
+    case "partial": return t("subagent.phase.partial");
     case "failed": return t("subagent.phase.failed");
     case "cancelled": return t("subagent.phase.cancelled");
   }
@@ -341,7 +342,8 @@ export const ToolCard = memo(function ToolCard({ item, subcalls, tabId, displayN
   const shellOutput = isShellCard && displayOutput ? displayOutput : null;
   const shellPreview = shellOutput ? splitPreview(shellOutput, SHELL_PREVIEW_LINES) : null;
   const hasStderrDetails = Boolean(execution?.outputTail && execution.outputTail.trim());
-  const hasBody = Boolean(previewDiff || diffs.length || hasNested || shellPreview || (!shellPreview && hasArgsOrOutput) || item.error || hasSubagentPreview || hasStderrDetails || riskLabel || verificationLabel);
+  const hasSubagentOutcome = Boolean(item.subagentOutcome || effectiveOutput?.includes("Subagent outcome:"));
+  const hasBody = Boolean(previewDiff || diffs.length || hasNested || shellPreview || (!shellPreview && hasArgsOrOutput) || item.error || hasSubagentPreview || hasSubagentOutcome || hasStderrDetails || riskLabel || verificationLabel);
   const errorText = item.error ? normalizeErrorText(item.error) : "";
   const errorSummary = errorText ? summarizeToolError(errorText, t("tool.errorReceiptMismatch")) : "";
   const hasErrorDetails = errorText ? errorNeedsDetails(errorText, errorSummary) : false;
@@ -457,55 +459,35 @@ export const ToolCard = memo(function ToolCard({ item, subcalls, tabId, displayN
         )}
 
         {open && hasSubagentPreview && sp && (
-          <div className="tool__subagent-preview">
-            {sp.reasoning && presentation.showWhileRunning && (
-              <div className="tool__subagent-preview-section">
-                <button
-                  type="button"
-                  className="tool__subagent-preview-label tool__subagent-preview-label--toggle"
-                  onClick={() => {
-                    beginUserResize();
-                    subagentReasoningUserOverridden.current = true;
-                    const next = !subagentReasoningOpen;
-                    if (next) setUserOpen(true);
-                    setSubagentReasoningOpen(next);
-                  }}
-                  aria-expanded={subagentReasoningOpen}
-                >
-                  {t("subagent.preview.reasoning")}
-                </button>
-                {subagentReasoningOpen ? (
-                  <div className="tool__subagent-preview-text tool__subagent-preview-text--markdown">
-                    <Markdown text={sp.reasoning} streaming={sp.phase === "reasoning"} />
-                  </div>
-                ) : (
-                  <ReasoningSummary
-                    text={sp.reasoning}
-                    streaming={sp.phase === "reasoning"}
-                    onOpen={() => {
-                      beginUserResize();
-                      subagentReasoningUserOverridden.current = true;
-                      setUserOpen(true);
-                      setSubagentReasoningOpen(true);
-                    }}
-                  />
-                )}
-              </div>
-            )}
-            {sp.text && (
-              <div className="tool__subagent-preview-section">
-                <div className="tool__subagent-preview-label">{t("subagent.preview.text")}</div>
-                <pre className="tool__subagent-preview-text">{sp.text}</pre>
-              </div>
-            )}
-            {sp.notice && (
-              <div className="tool__subagent-preview-section">
-                <div className="tool__subagent-preview-label">{t("subagent.preview.notice")}</div>
-                <pre className="tool__subagent-preview-text">{sp.notice}</pre>
-              </div>
-            )}
-            {sp.truncated && <div className="tool__note">{t("subagent.preview.truncated")}</div>}
-          </div>
+          <Suspense fallback={null}>
+            <SubagentPreview
+              progress={sp}
+              showReasoning={presentation.showWhileRunning}
+              reasoningOpen={subagentReasoningOpen}
+              onReasoningToggle={() => {
+                beginUserResize();
+                subagentReasoningUserOverridden.current = true;
+                const next = !subagentReasoningOpen;
+                if (next) setUserOpen(true);
+                setSubagentReasoningOpen(next);
+              }}
+              onReasoningOpen={() => {
+                beginUserResize();
+                subagentReasoningUserOverridden.current = true;
+                setUserOpen(true);
+                setSubagentReasoningOpen(true);
+              }}
+            />
+          </Suspense>
+        )}
+
+        {open && hasSubagentOutcome && (
+          <Suspense fallback={null}>
+            <SubagentOutcomeCard
+              text={effectiveOutput}
+              outcome={item.subagentOutcome}
+            />
+          </Suspense>
         )}
 
         {hasNested && (

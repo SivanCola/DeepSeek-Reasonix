@@ -10,6 +10,9 @@ import (
 const (
 	// MaxTokens caps the validator's completion.
 	MaxTokens = 256
+	// EffortDisabled turns thinking off for the bounded verdict request. The
+	// evaluator is stateless and should spend its small output budget on JSON.
+	EffortDisabled = "disabled"
 	// Timeout bounds one evaluation call.
 	Timeout = 30 * time.Second
 	// MaxOutputBytes aborts the stream if the provider ignores MaxTokens.

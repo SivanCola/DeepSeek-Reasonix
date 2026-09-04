@@ -556,6 +556,10 @@ func (s *metricsSink) RecordCompletionValidation(info event.CompletionValidation
 	event.RecordCompletionValidation(s.inner, info)
 }
 
+func (s *metricsSink) RecordSubagentLifecycle(info event.SubagentLifecycleInfo) {
+	event.RecordSubagentLifecycle(s.inner, info)
+}
+
 // MergeCapabilityAudit copies a capability audit snapshot plus process-local
 // MCP tools/list stats into RunMetrics.
 func (m *RunMetrics) MergeCapabilityAudit(snap *capability.Audit) {

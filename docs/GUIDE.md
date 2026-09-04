@@ -1385,6 +1385,11 @@ are scoped to the current conversation lineage and workspace. Headless runs
 without a persisted parent session remain ephemeral and receive fair bounded
 previews, but cannot mint durable references.
 
+Persisted child results include `status` (`completed`, `partial`, `failed`, or
+`cancelled`) and `retryable`. Partial or retryable failed runs retain a visible
+answer and reference so the parent can inspect them with `read_subagent_result`
+or continue the same `task`/`run_skill` transcript with `continue_from`.
+
 The interactive two-model Planner uses a dedicated construction path
 (`NewPlannerAgent`): it still blocks bash, file writers, and ordinary writers,
 but may call authorized, non-destructive MCP through the fixed

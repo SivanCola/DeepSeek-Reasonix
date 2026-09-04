@@ -15,6 +15,7 @@ var English = Messages{
 	ReadinessContinuing:    "Reasonix is finishing the remaining task work or checks automatically.",
 	RecoveryPaused:         "Automatic retries paused. Reasonix stopped repeated attempts and kept completed work. Send “Continue” to start a fresh attempt, or add instructions to change direction.",
 	CompletionUncertain:    "Completion could not be confirmed. The current result and completed work are kept. Send \"continue\" to resume, or restate what should change.",
+	ReasoningReplayRepair:  "The model provider rejected this conversation's stored thinking blocks. Reasonix removed them from the provider-visible history and retried once.",
 	ReceiptVerified:        "nothing left unverified",
 	ReceiptGapsHeader:      "not verified:",
 	ReceiptRisksHeader:     "declared risks:",

@@ -171,3 +171,10 @@ func (s *inboxEventSink) RecordCompletionValidation(info event.CompletionValidat
 	}
 	event.RecordCompletionValidation(s.inner, info)
 }
+
+func (s *inboxEventSink) RecordSubagentLifecycle(info event.SubagentLifecycleInfo) {
+	if s == nil {
+		return
+	}
+	event.RecordSubagentLifecycle(s.inner, info)
+}

@@ -16,6 +16,7 @@ var ChineseTraditional = Messages{
 	ReadinessContinuing:    "Reasonix 正在自動完成剩餘任務或檢查。",
 	RecoveryPaused:         "已暫停自動重試。Reasonix 已停止重複嘗試，並保留已完成的工作。傳送「繼續」即可開始新一輪，也可以補充要求來調整方向。",
 	CompletionUncertain:    "完成狀態未確認。目前結果與已完成工作均已保留。傳送「繼續」可接著完成，也可以補充說明需要調整的內容。",
+	ReasoningReplayRepair:  "模型服務拒絕了本會話歷史中的 thinking 區塊。Reasonix 已從傳送給模型的歷史中移除這些內容，並重試了一次。",
 	ReceiptVerified:        "沒有未經驗證的部分",
 	ReceiptGapsHeader:      "未驗證:",
 	ReceiptRisksHeader:     "已申報的風險:",

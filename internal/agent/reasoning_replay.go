@@ -44,13 +44,41 @@ func (a *Agent) runMissingReasoningFallback(
 	return fallback, true
 }
 
-func (a *Agent) preserveRawReasoning(signature, reasoningID, reasoningStatus string, calls []provider.ToolCall, searches []provider.ServerSearchCall) bool {
+func (a *Agent) preserveRawReasoning(reasoning, signature, reasoningID, reasoningStatus string, calls []provider.ToolCall, searches []provider.ServerSearchCall) bool {
 	if signature != "" || reasoningID != "" || reasoningStatus != "" {
 		return true
 	}
 	return provider.RequiresAssistantReasoningReplay(a.svc.prov, provider.Message{
-		Role: provider.RoleAssistant, ToolCalls: calls, ServerSearch: searches,
+		Role: provider.RoleAssistant, ReasoningContent: reasoning, ToolCalls: calls, ServerSearch: searches,
 	})
+}
+
+// reasoningReplayMessageFingerprint identifies the last provider-visible
+// message in the repaired request. It deliberately ignores durable UI fields,
+// matching the same wire-visible fields used by the context projection hash.
+func reasoningReplayMessageFingerprint(message provider.Message) string {
+	return providerVisibleFingerprint(provider.ModelMessages([]provider.Message{message}))
+}
+
+// resolveReasoningReplayPrefix maps the repaired provider prefix back onto a
+// later canonical snapshot. Strong repair can remove old assistant/tool
+// messages, so a raw message count alone can point into a different old turn.
+func resolveReasoningReplayPrefix(msgs []provider.Message, hint int, anchor string) int {
+	if hint <= 0 || hint > len(msgs) {
+		return 0
+	}
+	if anchor == "" {
+		return hint
+	}
+	// Removed messages only make the canonical location move forward. Prefer
+	// the first matching anchor at/after the old provider-visible count; this
+	// also avoids selecting an earlier duplicate user message.
+	for i, message := range msgs {
+		if i+1 >= hint && reasoningReplayMessageFingerprint(message) == anchor {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 func (a *Agent) emitReasoningReplayAttemptOutcome(id string, attempt int, err error) {
@@ -100,6 +128,33 @@ func (a *Agent) finishReasoningReplayRetry(retry streamedTurn, sink *deferredStr
 	sink.Flush()
 	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetryRecovered})
 	return retry
+}
+
+// finishReasoningReplayOverflow terminates an attempt whose required reasoning
+// was truncated by the client limit: audit, finalize usage, and hand the turn
+// to the unreplayable-reasoning policy.
+func (a *Agent) finishReasoningReplayOverflow(result streamedTurn, sink *deferredStreamSink, issue ReasoningReplayFailure, billable *provider.Usage, attemptID string, attempt int) streamedTurn {
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryReasoningOverflowDetected})
+	result.usage = finalizeSamplingUsage(billable, result.usage)
+	terminal := a.finishUnreplayableReasoning(result, sink, issue)
+	a.emitReasoningReplayAttemptOutcome(attemptID, attempt, terminal.err)
+	return terminal
+}
+
+// suppressMissingReasoningRetry handles a missing-reasoning turn whose one
+// exact replay was already spent (or claimed cross-process): try the
+// provider-declared fallback, otherwise terminate through the
+// unreplayable-reasoning policy.
+func (a *Agent) suppressMissingReasoningRetry(ctx context.Context, turn int, frozen *samplingRequest, attemptID string, attempt int, sink *deferredStreamSink, result streamedTurn, issue ReasoningReplayFailure, billable *provider.Usage) streamedTurn {
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetrySuppressed})
+	if fallback, ok := a.runMissingReasoningFallback(ctx, turn, frozen, attemptID, attempt, billable, sink); ok {
+		return fallback
+	}
+	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
+	result.usage = finalizeSamplingUsage(billable, result.usage)
+	terminal := a.finishUnreplayableReasoning(result, sink, issue)
+	a.emitReasoningReplayAttemptOutcome(attemptID, attempt, terminal.err)
+	return terminal
 }
 
 func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredStreamSink, issue ReasoningReplayFailure) streamedTurn {

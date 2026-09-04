@@ -217,8 +217,18 @@ func (c *client) RequiresToolCallReasoning() bool {
 }
 
 func (c *client) RequiresAssistantReasoningReplay(m provider.Message) bool {
+	if c == nil || !c.deepseek {
+		return false
+	}
+	// A turn carrying provider-issued reasoning must replay it, tools or not:
+	// DeepSeek's thinking mode 400s when a stored thinking block is not passed
+	// back. Without stored reasoning there is nothing to replay — plain text
+	// turns stay out of projection so healthy histories keep their backing.
+	if strings.TrimSpace(m.ReasoningContent) != "" {
+		return true
+	}
 	activity := len(m.ToolCalls) > 0 || len(m.ServerSearch) > 0
-	return c != nil && c.deepseek && activity && (c.deepSeekThinkingEnabled() || strings.TrimSpace(m.ReasoningContent) != "")
+	return activity && c.deepSeekThinkingEnabled()
 }
 
 func (c *client) AllowsEmptyReasoningFallback() bool { return false }
@@ -345,7 +355,7 @@ func (c *client) buildRequest(ctx context.Context, req provider.Request) anthReq
 			return
 		}
 		if n := len(msgs); n > 0 && msgs[n-1].Role == role {
-			msgs[n-1].Content = append(msgs[n-1].Content, blocks...)
+			msgs[n-1].Content = mergeThinkingFirst(msgs[n-1].Content, blocks)
 			return
 		}
 		msgs = append(msgs, anthMessage{Role: role, Content: blocks})
@@ -383,11 +393,12 @@ func (c *client) buildRequest(ctx context.Context, req provider.Request) anthReq
 			appendBlocks("user", block)
 		case provider.RoleAssistant:
 			var blocks []contentBlock
-			// Replay provider reasoning before the tool_use it led to. DeepSeek uses
-			// unsigned thinking blocks and requires the reasoning from a tool-call
-			// turn in every subsequent request, even if the current request no longer
-			// declares tools or has since disabled thinking. Anthropic proper requires
-			// a signature, so reasoning without one cannot be replayed on that endpoint.
+			// Replay provider reasoning ahead of the content it led to. DeepSeek's
+			// thinking mode requires every historical assistant turn's thinking
+			// block back whenever the request declares tools — tool-call turn or
+			// not — even if the current request no longer declares tools or has
+			// since disabled thinking. Anthropic proper requires a signature, so
+			// reasoning without one cannot be replayed on that endpoint.
 			if block, ok := c.replayReasoningBlock(m, recoveryWithoutThinking); ok {
 				blocks = append(blocks, block)
 			}

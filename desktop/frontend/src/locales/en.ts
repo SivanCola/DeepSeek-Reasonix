@@ -3324,6 +3324,7 @@ export const en = {
   "subagent.phase.tool": "using tools",
   "subagent.phase.retrying": "retrying",
   "subagent.phase.completed": "completed",
+  "subagent.phase.partial": "partially complete",
   "subagent.phase.failed": "failed",
   "subagent.phase.cancelled": "cancelled",
   "subagent.phase.elapsed": "{n}s",
@@ -3332,6 +3333,7 @@ export const en = {
   "subagent.preview.text": "Response preview",
   "subagent.preview.notice": "Notices",
   "subagent.preview.truncated": "preview truncated",
+  "subagent.outcome.retryable": "retryable",
 
   // software update
   "config.loadWarning": "Configuration issue: {msg}",

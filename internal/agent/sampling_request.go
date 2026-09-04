@@ -165,11 +165,34 @@ func (a *Agent) providerProjectionMessages(msgs []provider.Message) []provider.M
 		// The provider-declared fallback owns this tool loop. Strict projection
 		// here would erase its completed tool round before adapter serialization.
 		if !a.sess.missingReasoning.fallbackActive || !provider.SupportsMissingReasoningFallback(a.svc.prov) {
-			if repaired, changed := provider.ProjectReplaySafeMessages(a.svc.prov, msgs); changed {
+			strongCutoff := a.sess.reasoningReplayStrongProjection
+			if strongCutoff > 0 && a.strictAlternatingRoles {
+				// The cutoff is measured after role coalescing on the repaired
+				// request, so apply the same outbound shape before slicing it.
+				msgs = coalesceProjectionUserRuns(msgs)
+			}
+			if strongCutoff > 0 {
+				// A repaired thinking-400 conversation keeps the stripped
+				// projection only for the history that caused the rejection.
+				resolvedCutoff := resolveReasoningReplayPrefix(msgs, strongCutoff, a.sess.reasoningReplayStrongProjectionAnchor)
+				if resolvedCutoff > 0 {
+					if repaired, changed := provider.ProjectReasoningStrippedMessagesPrefix(a.svc.prov, msgs, resolvedCutoff); changed {
+						msgs = repaired
+					}
+				} else {
+					// The canonical shape no longer contains the repair anchor
+					// (for example after rewind). Do not silently disable all
+					// provider projection; re-arm from the current history.
+					a.sess.clearReasoningReplayStrongProjection()
+					if repaired, changed := provider.ProjectReplaySafeMessages(a.svc.prov, msgs); changed {
+						msgs = repaired
+					}
+				}
+			} else if repaired, changed := provider.ProjectReplaySafeMessages(a.svc.prov, msgs); changed {
 				msgs = repaired
 			}
 		}
-		if a.strictAlternatingRoles {
+		if a.strictAlternatingRoles && a.sess.reasoningReplayStrongProjection <= 0 {
 			return coalesceProjectionUserRuns(msgs)
 		}
 	}

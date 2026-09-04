@@ -300,6 +300,22 @@ func TestCompletionValidatorSkipsDeterministicBoundaries(t *testing.T) {
 	})
 }
 
+func TestCompletionValidatorSkipsNormalSubagentPath(t *testing.T) {
+	eval := &scriptedEvaluator{verdicts: []completioneval.Verdict{{Outcome: completioneval.OutcomeContinue}}}
+	prov := &scriptedProvider{name: "subagent", turns: [][]provider.Chunk{textTurn("findings")}}
+	a := New(prov, tool.NewRegistry(), NewSession("sys"), Options{
+		SubagentDepth:        1,
+		CompletionValidation: CompletionValidationEnforce,
+	}, event.Discard)
+	a.completionEvaluator = eval
+	if err := a.Run(context.Background(), "inspect the repository"); err != nil {
+		t.Fatalf("subagent Run: %v", err)
+	}
+	if eval.calls != 0 {
+		t.Fatalf("evaluator calls = %d, want 0 on the normal subagent path", eval.calls)
+	}
+}
+
 func TestCompletionValidatorEvidenceShape(t *testing.T) {
 	eval := &scriptedEvaluator{verdicts: []completioneval.Verdict{{Outcome: completioneval.OutcomeComplete}}}
 	_, err := runWithValidator(t, CompletionValidationEnforce, eval, [][]provider.Chunk{textTurn("the answer")}, event.Discard)

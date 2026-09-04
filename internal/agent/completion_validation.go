@@ -97,6 +97,12 @@ func (a *Agent) validatorApplies(ctx context.Context) bool {
 	if a.completionValidation == CompletionValidationOff {
 		return false
 	}
+	// Child runs already enforce local final/readiness/report boundaries. Do not
+	// add a second model call to every child; ambiguous outcomes become resumable
+	// partial results at the parent boundary.
+	if a.subagentDepth > 0 {
+		return false
+	}
 	if _, goalScoped := tool.GoalTurnRecorderFromContext(ctx); goalScoped {
 		return false
 	}

@@ -127,3 +127,9 @@ func (s *syncSink) RecordCompletionValidation(info CompletionValidationInfo) {
 	defer s.mu.Unlock()
 	RecordCompletionValidation(s.inner, info)
 }
+
+func (s *syncSink) RecordSubagentLifecycle(info SubagentLifecycleInfo) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	RecordSubagentLifecycle(s.inner, info)
+}

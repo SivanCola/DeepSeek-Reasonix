@@ -302,5 +302,56 @@ console.log("\nsubagent progress card");
   dom.window.close();
 }
 
+{
+  const dom = installDom();
+  const rootEl = document.getElementById("root");
+  if (!rootEl) throw new Error("missing root");
+  const root = createRoot(rootEl);
+  const live = makeItem("partial");
+  live.status = "error";
+  live.subagentOutcome = ["sa_live", "partial", "completion_uncertain", true];
+
+  await act(async () => {
+    root.render(React.createElement(LocaleProvider, null, React.createElement(ToolCard, { item: live })));
+    await flushTimers();
+  });
+  await act(async () => {
+    document.querySelector<HTMLButtonElement>(".tool__head")?.click();
+    for (let i = 0; i < 50; i += 1) {
+      await flushTimers();
+      if (document.querySelector(".tool__subagent-outcome")) break;
+    }
+  });
+  ok(document.querySelector(".tool__subagent-outcome")?.textContent?.includes("partially complete"), "live outcome tuple renders through the lazy card boundary");
+  ok(document.querySelector(".tool__subagent-outcome")?.textContent?.includes("sa_live"), "live outcome keeps the stable subagent reference");
+  ok(document.querySelector(".tool__subagent-outcome")?.textContent?.includes("completion_uncertain"), "live outcome exposes the bounded error code");
+
+  const history: ToolItem = {
+    kind: "tool",
+    id: "task-history-outcome",
+    name: "task",
+    args: "{}",
+    readOnly: true,
+    status: "error",
+    output: "Subagent reference (failed): sa_history\nSubagent outcome: status=failed retryable=false error_code=provider_error",
+  };
+  await act(async () => {
+    root.render(React.createElement(LocaleProvider, null, React.createElement(ToolCard, { key: history.id, item: history })));
+    await flushTimers();
+  });
+  await act(async () => {
+    document.querySelector<HTMLButtonElement>(".tool__head")?.click();
+    for (let i = 0; i < 50; i += 1) {
+      await flushTimers();
+      if (document.querySelector(".tool__subagent-outcome code")?.textContent === "sa_history") break;
+    }
+  });
+  ok(document.querySelector(".tool__subagent-outcome code")?.textContent === "sa_history", "history outcome is parsed only when the card is opened");
+  ok(document.querySelector(".tool__subagent-outcome")?.textContent?.includes("failed"), "history outcome uses the same localized status projection");
+
+  await act(async () => root.unmount());
+  dom.window.close();
+}
+
 console.log(`\nsubagent progress card: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

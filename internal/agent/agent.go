@@ -1814,7 +1814,7 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 			}
 		}
 		stored = display
-		if a.preserveRawReasoning(signature, reasoningID, reasoningStatus, calls, search.calls) {
+		if a.preserveRawReasoning(original, signature, reasoningID, reasoningStatus, calls, search.calls) {
 			stored = original
 		}
 		return stored, display

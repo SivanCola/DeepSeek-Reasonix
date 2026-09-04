@@ -274,6 +274,10 @@ func (s *turnEventDurableSink) RecordCompletionValidation(a event.CompletionVali
 	event.RecordCompletionValidation(s.inner(), a)
 }
 
+func (s *turnEventDurableSink) RecordSubagentLifecycle(a event.SubagentLifecycleInfo) {
+	event.RecordSubagentLifecycle(s.inner(), a)
+}
+
 func terminalTurnStatus(e event.Event) event.TurnStatus {
 	if e.Cancelled || errors.Is(e.Err, context.Canceled) {
 		return event.TurnInterrupted

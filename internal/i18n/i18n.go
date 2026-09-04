@@ -39,6 +39,7 @@ type Messages struct {
 	ReadinessContinuing    string // host is automatically finishing known readiness gaps
 	RecoveryPaused         string // controlled Auto retry pause; user can continue in the next message
 	CompletionUncertain    string // completion validator could not confirm the result; work is kept
+	ReasoningReplayRepair  string // provider rejected replayed thinking blocks; history repaired and retried once
 	ReceiptVerified        string // end-of-turn receipt, nothing unproven
 	ReceiptGapsHeader      string // end-of-turn receipt, header above the unproven list
 	ReceiptRisksHeader     string // end-of-turn receipt, header above declared risks
