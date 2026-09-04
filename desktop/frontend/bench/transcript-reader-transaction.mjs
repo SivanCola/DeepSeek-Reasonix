@@ -105,6 +105,56 @@ async function jumpToTail(page) {
   }, undefined, { timeout: 15_000 });
 }
 
+async function runSustainedWheelTraversal(page, transcript, label) {
+  const box = await transcript.boundingBox();
+  if (!box) throw new Error(`${label}: transcript viewport unavailable for sustained traversal`);
+  await transcript.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await frames(page, 4);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.evaluate(() => {
+    window.__readerProbe = { active: true, blankFrames: 0, maxMounted: 0 };
+    const sample = () => {
+      const probe = window.__readerProbe;
+      const element = document.querySelector(".transcript");
+      if (!probe?.active || !(element instanceof HTMLElement)) return;
+      const viewport = element.getBoundingClientRect();
+      const occupied = [...element.querySelectorAll("[data-transcript-block-key]")].some((block) => {
+        const rect = block.getBoundingClientRect();
+        return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
+      });
+      if (!occupied) probe.blankFrames += 1;
+      probe.maxMounted = Math.max(probe.maxMounted, Number(
+        element.querySelector(".transcript__projection")?.getAttribute("data-transcript-mounted-blocks") ?? "0",
+      ));
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  for (let step = 0; step < 80; step += 1) {
+    const atTail = await transcript.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight <= 4);
+    if (atTail) break;
+    // Match the largest coalesced WKWebView delta observed by the native gate.
+    await page.mouse.wheel(0, 2_880);
+    await frames(page, 1);
+  }
+  const result = await transcript.evaluate((element) => {
+    const probe = window.__readerProbe;
+    if (probe) probe.active = false;
+    window.__readerProbe = undefined;
+    return {
+      blankFrames: probe?.blankFrames ?? -1,
+      maxMounted: probe?.maxMounted ?? Number.POSITIVE_INFINITY,
+      scrollTop: element.scrollTop,
+    };
+  });
+  assert(result.scrollTop > 10_000, `${label}: coalesced native-size wheel steps traverse deep history`);
+  assert(result.blankFrames === 0, `${label}: sustained forward wheel traversal produces zero blank frames`);
+  assert(result.maxMounted <= 40, `${label}: sustained traversal keeps the completed-block mount cap (${result.maxMounted})`);
+}
+
 async function runIteration(page, transcript, label, iteration) {
   const box = await transcript.boundingBox();
   if (!box) throw new Error(`${label}: transcript viewport unavailable`);
@@ -255,6 +305,7 @@ async function runBrowser(browserType, label) {
     for (let iteration = 0; iteration < iterations; iteration += 1) {
       await runIteration(page, transcript, label, iteration);
     }
+    await runSustainedWheelTraversal(page, transcript, label);
     await jumpToTail(page);
     const final = await anchorSnapshot(page);
     assert(final.visible > 0 && final.distance <= 4, `${label}: final viewport is visibly covered at the native tail`);

@@ -1,7 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { TranscriptKernel } from "../lib/transcriptKernel";
-import { canPublishTranscriptMeasurement, resolveTranscriptMeasurementBoundary, TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
+import { TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
 import { commitTranscriptWindowRange, extractTranscriptWindowIndexes, type TranscriptWindowDirection, type TranscriptWindowRange } from "../lib/transcriptWindowRange";
 
@@ -64,7 +64,7 @@ export default function TranscriptWindow({
   onAnomaly: (outcome: "blank-viewport" | "invalid-geometry") => void;
   onGeometryHealthy: () => void;
   protectedBlockKeys: ReadonlySet<string>;
-  kernel: Pick<TranscriptKernel, "anchor" | "intent" | "userGestureActive">;
+  kernel: Pick<TranscriptKernel, "anchor" | "generation" | "intent" | "userGestureActive">;
   pinnedJumpBlockKey?: string;
   onPinnedJumpVisible: () => void;
   prefix: ReactNode;
@@ -150,7 +150,12 @@ export default function TranscriptWindow({
     gestureActive: kernel.userGestureActive,
   });
   const virtualItems = committedRange.items;
-  const paintedSafeIndex = virtualItems.find((item) => item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight - 0.5)?.index;
+  // A bounded wheel lease may refine only the runway that the compositor
+  // cannot reach with its largest observed native step plus one viewport.
+  // Unbounded touch/selection/thumb/key gestures pass Infinity and therefore
+  // keep every cold measurement staged until ownership ends.
+  const publicationLeadPx = measurementLedger.publicationLead(kernel.userGestureActive);
+  const paintedSafeIndex = virtualItems.find((item) => item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight + publicationLeadPx - 0.5)?.index;
   const logicalAnchorIndex = kernel.anchor.kind === "block"
     ? coldIndexByKey.get(kernel.anchor.blockKey)
     : undefined;
@@ -159,6 +164,27 @@ export default function TranscriptWindow({
   useLayoutEffect(() => {
     committedRangeRef.current = committedRange;
   }, [committedRange]);
+  useLayoutEffect(() => {
+    if (!kernel.userGestureActive) measurementLedger.endGesture();
+  }, [kernel.generation, kernel.userGestureActive, measurementLedger]);
+  useEffect(() => {
+    if (!scrollElement) return;
+    const observeWheel = (event: WheelEvent) => measurementLedger.observeWheel(event.deltaY, event.deltaMode, scrollElement.clientHeight);
+    const beginUnbounded = () => measurementLedger.beginUnboundedGesture();
+    const observeKey = (event: KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) beginUnbounded();
+    };
+    scrollElement.addEventListener("wheel", observeWheel, { capture: true, passive: true });
+    scrollElement.addEventListener("pointerdown", beginUnbounded, true);
+    scrollElement.addEventListener("touchstart", beginUnbounded, { capture: true, passive: true });
+    scrollElement.addEventListener("keydown", observeKey, true);
+    return () => {
+      scrollElement.removeEventListener("wheel", observeWheel, true);
+      scrollElement.removeEventListener("pointerdown", beginUnbounded, true);
+      scrollElement.removeEventListener("touchstart", beginUnbounded, true);
+      scrollElement.removeEventListener("keydown", observeKey, true);
+    };
+  }, [measurementLedger, scrollElement]);
   useLayoutEffect(() => {
     if (!minimumResidentKey || currentResidentIndex >= 0) return;
     setResidentStartKey(minimumResidentKey);
@@ -211,7 +237,7 @@ export default function TranscriptWindow({
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
         const rect = element.getBoundingClientRect();
-        if (domSafeIndex == null && viewportBottom != null && rect.top >= viewportBottom - 0.5) domSafeIndex = item.index;
+        if (domSafeIndex == null && viewportBottom != null && rect.top >= viewportBottom + publicationLeadPx - 0.5) domSafeIndex = item.index;
         const size = Math.max(64, rect.height || element.offsetHeight);
         if (Math.abs(size - item.size) > 0.5) changes.push({ key: String(item.key), size });
       }
@@ -227,7 +253,7 @@ export default function TranscriptWindow({
       : Math.max(paintedSafeIndex, domSafeIndex);
     const measurementBoundaryIndex = postViewportIndex == null
       ? undefined
-      : resolveTranscriptMeasurementBoundary(postViewportIndex, logicalAnchorIndex);
+      : Math.max(postViewportIndex, logicalAnchorIndex ?? postViewportIndex);
     const published = measurementLedger.publishStaged((key) => {
       const index = coldIndexByKey.get(key);
       // Only a size after the whole painted viewport can publish without
@@ -237,12 +263,10 @@ export default function TranscriptWindow({
       // geometry comes from the exact resident tail. This makes publication
       // independent of platform wheel-event timing and prevents cold
       // refinement from adding extra tail writes.
-      return canPublishTranscriptMeasurement({
-        intent: kernel.intent,
-        userGestureActive: kernel.userGestureActive,
-        boundaryIndex: measurementBoundaryIndex,
-        itemIndex: index,
-      });
+      return kernel.intent === "reader"
+        && measurementBoundaryIndex != null
+        && index != null
+        && index >= measurementBoundaryIndex;
     });
     if (published.length > 0) {
       // Feed only the atomically published suffix into TanStack's keyed size
@@ -258,7 +282,7 @@ export default function TranscriptWindow({
       return;
     }
     onGeometryChange();
-  }, [coldIndexByKey, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measurementLedger, onGeometryChange, paintedSafeIndex, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measurementLedger, onGeometryChange, paintedSafeIndex, projection.activeBlock?.measurementRevision, publicationLeadPx, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;

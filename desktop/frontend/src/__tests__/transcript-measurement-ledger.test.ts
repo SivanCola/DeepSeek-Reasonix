@@ -1,4 +1,4 @@
-import { canPublishTranscriptMeasurement, resolveTranscriptMeasurementBoundary, TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
+import { TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 
 let passed = 0;
 let failed = 0;
@@ -9,20 +9,22 @@ function ok(condition: unknown, label: string) {
 
 console.log("\nTranscript immutable measurement ledger");
 
-ok(resolveTranscriptMeasurementBoundary(12, 14) === 14, "a later logical identity makes a safe boundary more conservative");
-ok(resolveTranscriptMeasurementBoundary(14, 12) === 14, "the post-viewport boundary cannot move back to a stale logical anchor");
-ok(resolveTranscriptMeasurementBoundary(undefined, 8) === 8, "a single valid boundary remains authoritative");
-ok(resolveTranscriptMeasurementBoundary(undefined, undefined) == null, "missing boundaries publish no cold measurements");
-ok(canPublishTranscriptMeasurement({ intent: "reader", userGestureActive: false, boundaryIndex: 12, itemIndex: 12 }),
-  "a settled reader may publish at the safe post-viewport boundary");
-ok(!canPublishTranscriptMeasurement({ intent: "reader", userGestureActive: true, boundaryIndex: 12, itemIndex: 20 }),
-  "native gesture ownership stages even otherwise safe post-viewport measurements");
-ok(!canPublishTranscriptMeasurement({ intent: "reader", userGestureActive: false, boundaryIndex: 12, itemIndex: 11 }),
-  "a settled reader still stages measurements before the safe boundary");
-ok(!canPublishTranscriptMeasurement({ intent: "tail", userGestureActive: false, boundaryIndex: 12, itemIndex: 20 }),
-  "tail intent does not refine cold-history measurements");
-
 const ledger = new TranscriptMeasurementLedger();
+ok(ledger.publicationLead(false) === 0, "an idle adapter has no measurement publication lead");
+ok(ledger.publicationLead(true) === Number.POSITIVE_INFINITY, "an unclassified native gesture freezes every cold measurement");
+ledger.observeWheel(2_880, 0, 596);
+ok(ledger.publicationLead(true) === 3_476, "pixel wheel input reserves one native step plus one viewport");
+ledger.observeWheel(120, 0, 596);
+ok(ledger.publicationLead(true) === 3_476, "a wheel lease retains its largest observed compositor lead");
+ledger.beginUnboundedGesture();
+ok(ledger.publicationLead(true) === Number.POSITIVE_INFINITY, "touch, selection, thumb, or keyboard takeover upgrades a bounded lease to unbounded");
+ledger.endGesture();
+ledger.observeWheel(80, 0, 596);
+ok(ledger.publicationLead(true) === 676, "gesture completion resets the prior publication lead");
+ledger.endGesture();
+ledger.observeWheel(18, 1, 596);
+ok(ledger.publicationLead(true) === Number.POSITIVE_INFINITY, "non-pixel wheel input remains unbounded");
+ledger.endGesture();
 ok(!ledger.commit([]), "an empty measurement batch is a no-op");
 ledger.stage([{ key: "post-viewport", size: 144 }]);
 const published = ledger.publishStaged((key) => key === "post-viewport");

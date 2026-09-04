@@ -80,14 +80,19 @@ const windowSource = await import("node:fs/promises").then((fs) => fs.readFile(n
 ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publish ResizeObserver sizes outside the viewport commit protocol");
 ok(windowSource.includes("measurementLedger.stage(changes)"), "DOM measurements enter the block-keyed staging ledger before publication");
 ok(
-  windowSource.includes("item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight - 0.5")
+  windowSource.includes("nativeViewport.clientHeight + publicationLeadPx")
     && windowSource.includes("domSafeIndex")
     && windowSource.includes("paintedSafeIndex == null || domSafeIndex == null")
-    && windowSource.includes("canPublishTranscriptMeasurement({")
-    && windowSource.includes("userGestureActive: kernel.userGestureActive")
+    && windowSource.includes('kernel.intent === "reader"')
+    && windowSource.includes("measurementLedger.publicationLead(kernel.userGestureActive)")
+    && windowSource.includes('addEventListener("wheel", observeWheel')
+    && windowSource.includes('addEventListener("pointerdown", beginUnbounded')
+    && windowSource.includes('addEventListener("touchstart", beginUnbounded')
+    && windowSource.includes("measurementLedger.endGesture()")
+    && windowSource.includes("[kernel.generation, kernel.userGestureActive, measurementLedger]")
     && windowSource.includes("measurementLedger.publishStaged(")
     && windowSource.includes("virtualizer.resizeItem(index, change.size);"),
-  "reader measurements publish only after native ownership ends and both prefix and DOM place a block beyond the painted viewport",
+  "reader measurements publish only beyond the prefix-and-DOM compositor frontier",
 );
 ok(!windowSource.includes("virtualizer.measure();"), "a safe suffix publish cannot invalidate and rebuild the protected prefix");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");

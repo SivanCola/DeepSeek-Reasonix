@@ -3,31 +3,6 @@ export type TranscriptMeasurementChange = {
   size: number;
 };
 
-export function resolveTranscriptMeasurementBoundary(
-  ...anchorIndexes: Array<number | undefined>
-): number | undefined {
-  const resolved = anchorIndexes.filter((index): index is number => index != null);
-  return resolved.length > 0 ? Math.max(...resolved) : undefined;
-}
-
-export function canPublishTranscriptMeasurement({
-  intent,
-  userGestureActive,
-  boundaryIndex,
-  itemIndex,
-}: {
-  intent: "tail" | "reader";
-  userGestureActive: boolean;
-  boundaryIndex: number | undefined;
-  itemIndex: number | undefined;
-}): boolean {
-  return intent === "reader"
-    && !userGestureActive
-    && boundaryIndex != null
-    && itemIndex != null
-    && itemIndex >= boundaryIndex;
-}
-
 /**
  * Immutable, block-keyed DOM measurement snapshots for the Transcript window.
  * A render can observe either the old snapshot or the complete new snapshot,
@@ -36,6 +11,25 @@ export function canPublishTranscriptMeasurement({
 export class TranscriptMeasurementLedger {
   private sizes: ReadonlyMap<string, number> = new Map();
   private staged = new Map<string, number>();
+  private wheelLeadPx = 0;
+
+  observeWheel(deltaY: number, deltaMode: number, clientHeight: number): void {
+    this.wheelLeadPx = deltaMode === 0
+      ? Math.max(this.wheelLeadPx, Math.abs(deltaY) + clientHeight)
+      : Number.POSITIVE_INFINITY;
+  }
+
+  beginUnboundedGesture(): void {
+    this.wheelLeadPx = Number.POSITIVE_INFINITY;
+  }
+
+  publicationLead(gestureActive: boolean): number {
+    return gestureActive ? this.wheelLeadPx || Number.POSITIVE_INFINITY : 0;
+  }
+
+  endGesture(): void {
+    this.wheelLeadPx = 0;
+  }
 
   sizeFor(key: string, fallback: number): number {
     return this.sizes.get(key) ?? fallback;
