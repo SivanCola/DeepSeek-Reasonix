@@ -167,6 +167,39 @@
       projection?.getAttribute("data-transcript-mounted-blocks") ?? "0",
       10,
     );
+    const visible = [...element.querySelectorAll("[data-transcript-block-key]")]
+      .filter((block) => {
+        const rect = block.getBoundingClientRect();
+        return rect.bottom > viewport.top && rect.top < viewport.bottom;
+      }).map((block) => {
+        const item = block.closest(".transcript__window-item[data-index]");
+        return {
+          index: block.dataset.transcriptBlockKey ?? "",
+          itemIndex: Number.parseInt(item?.dataset.index ?? "", 10),
+          top: block.getBoundingClientRect().top - viewport.top,
+        };
+      });
+    const blankGeometry = rows.length === 0 ? {
+      viewportTop: viewport.top,
+      viewportBottom: viewport.bottom,
+      coldTop: element.querySelector(".transcript__window")?.getBoundingClientRect().top ?? null,
+      coldBottom: element.querySelector(".transcript__window")?.getBoundingClientRect().bottom ?? null,
+      items: [...element.querySelectorAll(".transcript__window-item[data-index]")].map((item) => {
+        const rect = item.getBoundingClientRect();
+        const block = item.querySelector("[data-transcript-block-key]");
+        const blockRect = block?.getBoundingClientRect();
+        return {
+          index: Number.parseInt(item.dataset.index ?? "", 10),
+          modelTop: Number.parseFloat(item.style.top || "0"),
+          top: rect.top - viewport.top,
+          bottom: rect.bottom - viewport.top,
+          height: rect.height,
+          blockTop: blockRect ? blockRect.top - viewport.top : null,
+          blockBottom: blockRect ? blockRect.bottom - viewport.top : null,
+          blockHeight: blockRect?.height ?? null,
+        };
+      }),
+    } : undefined;
     state.frames.push({
       top: element.scrollTop,
       height: element.scrollHeight,
@@ -177,18 +210,8 @@
       mountedFirst: mounted.length > 0 ? Math.min(...mounted) : null,
       mountedLast: mounted.length > 0 ? Math.max(...mounted) : null,
       mountedCount,
-      visible: [...element.querySelectorAll("[data-transcript-block-key]")]
-        .filter((block) => {
-          const rect = block.getBoundingClientRect();
-          return rect.bottom > viewport.top && rect.top < viewport.bottom;
-        }).map((block) => {
-          const item = block.closest(".transcript__window-item[data-index]");
-          return {
-            index: block.dataset.transcriptBlockKey ?? "",
-            itemIndex: Number.parseInt(item?.dataset.index ?? "", 10),
-            top: block.getBoundingClientRect().top - viewport.top,
-          };
-        }),
+      visible,
+      blankGeometry,
     });
     // ResizeObserver is delivered after rAF layout work but before paint.
     // Sample from the following task so the contract measures the geometry a
