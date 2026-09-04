@@ -181,10 +181,14 @@
         .filter((block) => {
           const rect = block.getBoundingClientRect();
           return rect.bottom > viewport.top && rect.top < viewport.bottom;
-        }).map((block) => ({
-          index: block.dataset.transcriptBlockKey ?? "",
-          top: block.getBoundingClientRect().top - viewport.top,
-        })),
+        }).map((block) => {
+          const item = block.closest(".transcript__window-item[data-index]");
+          return {
+            index: block.dataset.transcriptBlockKey ?? "",
+            itemIndex: Number.parseInt(item?.dataset.index ?? "", 10),
+            top: block.getBoundingClientRect().top - viewport.top,
+          };
+        }),
     });
     // ResizeObserver is delivered after rAF layout work but before paint.
     // Sample from the following task so the contract measures the geometry a

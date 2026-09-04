@@ -155,7 +155,6 @@ export default function TranscriptWindow({
   const logicalAnchorIndex = kernel.anchor.kind === "block"
     ? coldIndexByKey.get(kernel.anchor.blockKey)
     : undefined;
-  const measurementBoundaryIndex = resolveTranscriptMeasurementBoundary(paintedAnchorIndex, logicalAnchorIndex);
   const rangeRevision = `${committedRange.scrollMargin}:${committedRange.totalSize}|${virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|")}`;
 
   useLayoutEffect(() => {
@@ -206,20 +205,28 @@ export default function TranscriptWindow({
   useLayoutEffect(() => {
     const container = coldContainerRef.current;
     const changes: Array<{ key: string; size: number }> = [];
+    const viewportTop = scrollElement?.getBoundingClientRect().top;
+    let domAnchorIndex: number | undefined;
     if (container) {
       for (const item of virtualItems) {
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
         const rect = element.getBoundingClientRect();
+        if (domAnchorIndex == null && viewportTop != null && rect.bottom > viewportTop + 0.5) domAnchorIndex = item.index;
         const size = Math.max(64, rect.height || element.offsetHeight);
         if (Math.abs(size - item.size) > 0.5) changes.push({ key: String(item.key), size });
       }
     }
     measurementLedger.stage(changes);
-    // Resolve the reader boundary from the geometry that produced the
-    // current paint, before applying newly observed DOM sizes. A lazy block
-    // growing just above the viewport must not become its own anchor and
-    // displace everything the reader was already looking at.
+    // Each source can lag in a different direction: native listeners can
+    // leave the logical anchor behind, estimates can end before the mounted
+    // DOM, and lazy growth can make an earlier DOM block intrude into view.
+    // The latest identity is the only boundary safe against all three.
+    const measurementBoundaryIndex = resolveTranscriptMeasurementBoundary(
+      paintedAnchorIndex,
+      logicalAnchorIndex,
+      domAnchorIndex,
+    );
     const published = measurementLedger.commitStaged((key) => {
       const index = coldIndexByKey.get(key);
       // A size at or after the logical reader anchor cannot change the
@@ -240,7 +247,7 @@ export default function TranscriptWindow({
       return;
     }
     onGeometryChange();
-  }, [coldIndexByKey, kernel.intent, measurementBoundaryIndex, measurementLedger, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, kernel.intent, logicalAnchorIndex, measurementLedger, onGeometryChange, paintedAnchorIndex, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;

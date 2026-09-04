@@ -78,7 +78,8 @@ ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publis
 ok(windowSource.includes("measurementLedger.stage(changes)"), "DOM measurements enter the block-keyed staging ledger before publication");
 ok(
   windowSource.includes("item.end > nativeViewport.scrollTop + 0.5")
-    && windowSource.includes("resolveTranscriptMeasurementBoundary(paintedAnchorIndex, logicalAnchorIndex)")
+    && windowSource.includes("domAnchorIndex")
+    && windowSource.includes("resolveTranscriptMeasurementBoundary(")
     && windowSource.includes("index >= measurementBoundaryIndex")
     && windowSource.includes("virtualizer.measure();"),
   "reader measurements publish after both logical and pre-measurement painted boundaries",

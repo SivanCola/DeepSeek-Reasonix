@@ -4,12 +4,10 @@ export type TranscriptMeasurementChange = {
 };
 
 export function resolveTranscriptMeasurementBoundary(
-  paintedAnchorIndex: number | undefined,
-  logicalAnchorIndex: number | undefined,
+  ...anchorIndexes: Array<number | undefined>
 ): number | undefined {
-  if (paintedAnchorIndex == null) return logicalAnchorIndex;
-  if (logicalAnchorIndex == null) return paintedAnchorIndex;
-  return Math.max(paintedAnchorIndex, logicalAnchorIndex);
+  const resolved = anchorIndexes.filter((index): index is number => index != null);
+  return resolved.length > 0 ? Math.max(...resolved) : undefined;
 }
 
 /**

@@ -11,6 +11,8 @@ console.log("\nTranscript immutable measurement ledger");
 
 ok(resolveTranscriptMeasurementBoundary(12, 14) === 14, "a later logical anchor fences stale painted geometry");
 ok(resolveTranscriptMeasurementBoundary(14, 12) === 14, "a later painted anchor fences stale logical geometry");
+ok(resolveTranscriptMeasurementBoundary(12, 14, 16) === 16, "later mounted DOM fences an underestimated prefix range");
+ok(resolveTranscriptMeasurementBoundary(16, 14, 12) === 16, "prefix geometry fences an earlier block that grew into the viewport");
 ok(resolveTranscriptMeasurementBoundary(undefined, 8) === 8, "the logical anchor remains authoritative before a range mounts");
 ok(resolveTranscriptMeasurementBoundary(8, undefined) === 8, "the painted anchor covers sessions without a cold logical anchor");
 ok(resolveTranscriptMeasurementBoundary(undefined, undefined) == null, "no reader anchor publishes no cold measurements");

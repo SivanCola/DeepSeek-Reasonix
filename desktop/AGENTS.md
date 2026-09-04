@@ -47,14 +47,15 @@ contracts when touching anything that can move the transcript viewport.
   transactions.
 - **Anchor-safe measurement commit**: DOM measurements enter a block-keyed
   staging ledger before they can change TanStack's prefix sizes. In reader
-  intent, the safe publish boundary is the later of the logical Kernel anchor
-  and the pre-measurement committed range at the current native `scrollTop`.
-  This boundary must not depend on listener order or DOM already changed by
-  lazy content. TanStack's `scrollMargin` is measured in the native scroller's
-  coordinate space, including Transcript padding and any prefix. Only the safe
-  boundary and blocks after it may publish; earlier sizes remain staged. Tail
-  intent does not refine invisible cold history; its exact geometry belongs
-  to resident DOM.
+  intent, the safe publish boundary is the latest block identity reported by
+  the logical Kernel anchor, the pre-measurement committed range at the current
+  native `scrollTop`, and the mounted DOM. Taking the latest prevents stale
+  listeners, underestimated ranges, or an earlier lazy block growing into view
+  from moving the reader. TanStack's `scrollMargin` is measured in the native
+  scroller's coordinate space, including Transcript padding and any prefix.
+  Only the safe boundary and blocks after it may publish; earlier sizes remain
+  staged. Tail intent does not refine invisible cold history; its exact geometry
+  belongs to resident DOM.
   Publish one immutable Reasonix snapshot and one TanStack `measure()`
   invalidation. Never base correctness on an idle timeout, reintroduce per-item
   `resizeItem`, TanStack-owned ResizeObserver publication, or platform-specific
