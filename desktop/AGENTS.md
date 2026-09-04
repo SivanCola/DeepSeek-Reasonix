@@ -40,7 +40,9 @@ contracts when touching anything that can move the transcript viewport.
 - **Resident active tail**: the active turn and at least the two newest
   completed turns stay in ordinary DOM. A resident block may enter windowed
   history only after it is a viewport away and owns no anchor, focus, or
-  selection endpoint. Stream growth in reader intent performs zero writes.
+  selection endpoint. Measure every contiguous leaving prefix into one ledger
+  snapshot before changing the resident boundary; estimated-size migration is
+  forbidden. Stream growth in reader intent performs zero writes.
 - **Bounded safe mode**: two blank/invalid/correction anomalies without an
   intervening healthy frame in one generation switch that session to full DOM
   until the next surface generation. Do not add a second rendering stack or a

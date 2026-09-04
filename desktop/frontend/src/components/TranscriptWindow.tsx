@@ -132,15 +132,29 @@ export default function TranscriptWindow({
   }, [measurementLedger, projection.completedBlocks]);
   useLayoutEffect(() => {
     if (residentStartIndex >= minimumResidentIndex || !scrollElement) return;
-    const block = projection.completedBlocks[residentStartIndex];
-    const element = block
-      ? Array.from(scrollElement.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
-        .find((candidate) => candidate.dataset.transcriptBlockKey === block.key)
-      : undefined;
     const viewport = scrollElement.getBoundingClientRect();
-    if (!element || element.contains(document.activeElement) || protectedBlockKeys.has(block.key) || element.getBoundingClientRect().bottom >= viewport.top - scrollElement.clientHeight) return;
-    setResidentStartKey(projection.completedBlocks[residentStartIndex + 1]?.key ?? minimumResidentKey);
-  }, [minimumResidentIndex, minimumResidentKey, projection.completedBlocks, protectedBlockKeys, residentStartIndex, scrollElement]);
+    const elements = new Map(Array.from(scrollElement.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
+      .map((element) => [element.dataset.transcriptBlockKey ?? "", element]));
+    const residentChanges: Array<{ key: string; size: number }> = [];
+    let nextResidentIndex = residentStartIndex;
+    while (nextResidentIndex < minimumResidentIndex) {
+      const block = projection.completedBlocks[nextResidentIndex];
+      const element = elements.get(block.key);
+      const ownsAnchor = kernel.anchor.kind === "block" && kernel.anchor.blockKey === block.key;
+      if (!element || ownsAnchor || element.contains(document.activeElement) || protectedBlockKeys.has(block.key)) break;
+      const rect = element.getBoundingClientRect();
+      if (rect.bottom >= viewport.top - scrollElement.clientHeight) break;
+      residentChanges.push({ key: block.key, size: Math.max(64, rect.height || element.offsetHeight) });
+      nextResidentIndex += 1;
+    }
+    if (nextResidentIndex === residentStartIndex) return;
+    // Resident-to-cold transfer is one identity-preserving geometry commit.
+    // Every leaving block has an exact size before React removes its in-flow
+    // DOM, so the virtual prefix replaces the resident prefix without a
+    // transient extent change for the native scroller.
+    measurementLedger.commit(residentChanges);
+    setResidentStartKey(projection.completedBlocks[nextResidentIndex]?.key ?? minimumResidentKey);
+  }, [kernel.anchor, measurementLedger, minimumResidentIndex, minimumResidentKey, projection.completedBlocks, protectedBlockKeys, residentStartIndex, scrollElement]);
   useEffect(() => {
     if (!pinnedJumpBlockKey || !scrollElement) return;
     const target = Array.from(scrollElement.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))

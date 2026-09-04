@@ -72,6 +72,7 @@ ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publis
 ok(windowSource.includes("if (kernel.userGestureActive) return;"), "native gestures defer DOM-to-ledger measurement commits");
 ok(windowSource.includes("measurementLedger.commit(changes)") && windowSource.includes("virtualizer.measure();"), "released measurements publish one immutable ledger snapshot and one range invalidation");
 ok(!windowSource.includes(".resizeItem("), "the window adapter cannot expose partially updated per-item prefix sizes");
+ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");
 const reconstructed = commitTranscriptWindowRange({
   candidate: staleCandidate,
   measurements,
