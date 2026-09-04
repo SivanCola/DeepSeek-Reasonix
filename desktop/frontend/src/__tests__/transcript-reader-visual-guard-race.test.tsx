@@ -12,7 +12,7 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import type { VirtuosoHandle } from "react-virtuoso";
-import type { TranscriptScrollWriteRecord } from "../lib/transcriptScrollProbe";
+import { setTranscriptScrollDiagnosticSink, type TranscriptScrollWriteRecord } from "../lib/transcriptScrollProbe";
 import { useTranscriptScrollArbiter } from "../lib/useTranscriptScrollArbiter";
 
 let passed = 0;
@@ -188,6 +188,75 @@ await flushFrames();
 syncItemListTransform();
 check(scrollElement.dataset.transcriptReaderVisualGuard === undefined,
   "the applied guard releases once the correction lands");
+itemList.style.transform = "none";
+
+// Field #9711 (d9cd713, Windows, all rows mounted): the reader scrolls up
+// inside a long Markdown answer whose row starts above the viewport. The
+// answer's block window prepends 7,252px of older blocks inside that row and
+// compensates scrollTop by the same amount, so visible content does not move.
+// The anchor row's top edge is now 7,252px higher relative to the viewport
+// and scrollTop moved against the reader. Neither is a displacement of what
+// the reader sees: the transaction must absorb the compensation instead of
+// restoring the pre-prepend scrollTop and skipping the reader into the new
+// blocks.
+await act(async () => arbiter?.reset());
+scrollExtent = 27_812;
+scrollElement.scrollTop = 19_267;
+// The long answer row starts 1,450px above the viewport and spans it.
+const tallRowAt = (top: number) => ({ ...rectAt(top), bottom: top + 9_000, height: 9_000 });
+rowElement.getBoundingClientRect = () => tallRowAt(-1_450 - (scrollElement.scrollTop - 19_267));
+await act(async () => arbiter?.deliverScroll());
+await act(async () => arbiter?.releaseTailFollow());
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: -63.49,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+scrollElement.scrollTop = 19_204;
+await act(async () => arbiter?.deliverScroll());
+scrollByCalls = 0;
+scrollWrites.length = 0;
+const anomalies: Array<Record<string, unknown>> = [];
+setTranscriptScrollDiagnosticSink((type, fields) => {
+  if (type === "scroll-anomaly") anomalies.push(fields);
+});
+// In-row prepend: extent grows above the visible blocks, the block window
+// compensates scrollTop, the row's top edge moves up by the same amount.
+scrollExtent += 7_252;
+let compensated = false;
+await act(async () => { compensated = Boolean(arbiter?.writeOffset("block-window-prepend", scrollElement.scrollTop + 7_252)); });
+check(compensated && scrollElement.scrollTop === 19_204 + 7_252,
+  `the block-window prepend compensation is written through the arbiter (${scrollElement.scrollTop})`);
+await act(async () => arbiter?.deliverScroll());
+check(anomalies.length === 0,
+  `an in-row prepend with exact compensation is not a reader anomaly (${anomalies.length} recorded)`);
+check(scrollElement.dataset.transcriptReaderVisualGuard === undefined,
+  "an in-row prepend with exact compensation raises no visual guard");
+for (let frame = 0; frame < 4; frame += 1) await flushFrames();
+check(scrollByCalls === 0 && scrollWrites.filter((write) => write.owner === "reader-stability").length === 0,
+  `the reader guard does not restore the pre-prepend scrollTop (${scrollByCalls} corrections)`);
+check(scrollElement.scrollTop === 19_204 + 7_252,
+  `the compensated scrollTop survives (${scrollElement.scrollTop})`);
+// The next wheel step continues from the compensated position.
+scrollElement.scrollTop -= 190;
+await act(async () => arbiter?.onWheelIntent({
+  ctrlKey: false,
+  deltaMode: 0,
+  deltaX: 0,
+  deltaY: -190.48,
+  target: scrollElement,
+} as React.WheelEvent<HTMLElement>));
+await act(async () => arbiter?.deliverScroll());
+check(anomalies.length === 0, "continuing to scroll after the absorbed prepend stays anomaly-free");
+// A genuine reverse jump after the absorbed prepend is still caught: the
+// row moves up on screen by 700px without any scrollTop change.
+rowElement.getBoundingClientRect = () => tallRowAt(-1_450 - 7_252 - (scrollElement.scrollTop - 19_267) - 700);
+await act(async () => arbiter?.deliverScroll());
+check(anomalies.length === 1 && Number(anomalies[0].reverseDisplacement) >= 96,
+  `a real displacement after the absorbed prepend is still detected (${anomalies.length})`);
+setTranscriptScrollDiagnosticSink(() => {});
 
 await act(async () => root.unmount());
 dom.window.close();

@@ -704,24 +704,18 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 			name := m.Name
 			cm.Name = &name
 		}
-		// DeepSeek thinking mode 400s an assistant tool_calls turn whose
-		// reasoning_content KEY is absent from the request JSON ("reasoning_content
-		// … must be passed back"). The API accepts an empty string, and only
-		// validates turns after the last user message, but emitting the field on
-		// every tool_calls turn is uniform and verified accepted — so always send
-		// it (empty included) rather than fail the request when reasoning was lost
-		// upstream (e.g. a gateway renamed the field). With thinking disabled the
-		// API tolerates every shape, so keep the exact pre-fix bytes there: send
-		// the key only when a thinking-mode round left reasoning in the history
-		// (dropping it would invalidate the prompt-cache prefix of mixed
-		// thinking-on→off sessions for no gain).
+		// DeepSeek thinking mode requires provider reasoning to survive every
+		// assistant history turn when tools are in use, including plain turns.
+		// Tool turns with lost reasoning still get an explicit empty key: the API
+		// accepts it, while omitting the key produces a 400. Preserve non-empty
+		// reasoning even when the current round has since disabled thinking.
 		if m.Role == provider.RoleAssistant {
 			switch {
 			case c.kimiK3 && (m.ReasoningContent != "" || len(m.ToolCalls) > 0):
 				// Kimi K3 requires the complete assistant message on multi-turn
 				// and tool-call requests, including provider-issued reasoning.
 				cm.ReasoningContent = &m.ReasoningContent
-			case (c.deepseek || c.RequiresToolCallReasoning()) && len(m.ToolCalls) > 0:
+			case (c.deepseek || c.RequiresToolCallReasoning()) && hasReasoningOrToolCall(m):
 				if c.RequiresToolCallReasoning() || m.ReasoningContent != "" {
 					cm.ReasoningContent = &m.ReasoningContent
 				}
@@ -797,13 +791,12 @@ func (c *client) buildRequest(req provider.Request) chatRequest {
 		out.MaxCompletionTokens = maxOutputTokens
 	case c.deepseek:
 		// DeepSeek's CoT is controlled by `thinking` plus `reasoning_effort` for
-		// depth. Thinking is on by default; config (effort/thinking=disabled,
-		// #5063) or an explicit per-request override turns it off for one call.
-		t := c.deepSeekRequestThinking(req)
-		if t == "disabled" {
+		// depth. Thinking is on by default but can be turned off for one
+		// stateless request through EffortOverride=disabled.
+		out.Thinking = &thinkingMode{Type: c.deepSeekRequestThinking(req)}
+		if out.Thinking.Type == "disabled" {
 			out.ReasoningEffort = ""
 		}
-		out.Thinking = &thinkingMode{Type: t}
 	case c.minimax:
 		// M3 uses a single `thinking.type` field with two valid values:
 		// "adaptive" (default, thinking on) and "disabled" (off). Reasoning
@@ -1217,10 +1210,8 @@ type chatMessage struct {
 	// Prefix is wire-only and is set exclusively on an automatically recovered
 	// DeepSeek assistant tail. omitempty keeps every ordinary request byte-stable.
 	Prefix bool `json:"prefix,omitempty"`
-	// A pointer so the field can serialize as an empty string: DeepSeek thinking
-	// mode requires the reasoning_content key to be PRESENT on assistant
-	// tool_calls turns (an empty value passes; a missing key 400s), while every
-	// other message must keep omitting it.
+	// A pointer so the field can serialize as an empty string for a malformed
+	// tool turn while preserving non-empty reasoning on every assistant turn.
 	ReasoningContent *string        `json:"reasoning_content,omitempty"`
 	ToolCalls        []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string         `json:"tool_call_id,omitempty"`

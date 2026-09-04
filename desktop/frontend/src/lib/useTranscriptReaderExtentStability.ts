@@ -590,6 +590,37 @@ export function useTranscriptReaderExtentStability({
     schedule(transaction);
   }, [geometryCommitReadyRef, schedule]);
 
+  /**
+   * A content-preserving offset write (an in-row block-window prepend that
+   * grows the row above the reader's view and compensates scrollTop by the
+   * same amount) moves the native scrollTop and the anchor row's top edge
+   * without moving anything the reader sees. Re-baseline the transaction to
+   * the compensated position so neither shows up as a reverse displacement.
+   */
+  const absorbOffsetWrite = useCallback((element: HTMLDivElement, delta: number) => {
+    const transaction = transactionRef.current;
+    if (!transaction || transaction.element !== element || delta === 0) return;
+    transaction.baselineTop += delta;
+    transaction.lastAcceptedTop += delta;
+    transaction.expectedTop = Math.max(0, Math.min(nativeTranscriptBottomTop(element), transaction.expectedTop + delta));
+    if (transaction.anchor) transaction.anchor.offset -= delta;
+    transaction.baselineHeight = element.scrollHeight;
+    transaction.minimumHeight = element.scrollHeight;
+    transaction.lastHeight = element.scrollHeight;
+    transaction.correctionHeight = element.scrollHeight;
+    transaction.transientCandidateHeight = element.scrollHeight;
+    transaction.transientStableFrames = 0;
+    transaction.lastBottomDistance = nativeTranscriptDistanceFromBottom(element);
+    recordTranscriptScrollDiagnostic("reader-transaction", {
+      transactionId: transaction.id,
+      ownershipEpoch: transaction.ownershipEpoch,
+      direction: transaction.direction,
+      phase: transaction.phase,
+      result: "absorbed-offset",
+      extentDelta: delta,
+    });
+  }, []);
+
   const arm = useCallback((deltaY: number, canClaimTail: boolean) => {
     const element = scrollRef.current;
     if (!element || !Number.isFinite(deltaY) || deltaY === 0) return { started: false as const };
@@ -700,8 +731,9 @@ export function useTranscriptReaderExtentStability({
     cancel,
     observe,
     holdGeometryCommit,
+    absorbOffsetWrite,
     anchorIsMounted,
     isActive,
     active: active || readerLayoutLease,
-  }), [active, anchorIsMounted, arm, cancel, holdGeometryCommit, readerLayoutLease, observe, isActive]);
+  }), [absorbOffsetWrite, active, anchorIsMounted, arm, cancel, holdGeometryCommit, readerLayoutLease, observe, isActive]);
 }

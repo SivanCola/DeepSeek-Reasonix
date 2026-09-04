@@ -198,6 +198,144 @@ func TestDeepSeekFlashMissingReasoningRecoveryWithRealSSE(t *testing.T) {
 	}
 }
 
+// TestDeepSeekOpenAIReasoningReplay400RepairsOldHistory drives the OpenAI
+// adapter through the shared stale-history recovery path. The first request
+// replays an old assistant reasoning turn and is rejected; the repair retry
+// strips only provider-visible reasoning while preserving canonical history.
+func TestDeepSeekOpenAIReasoningReplay400RepairsOldHistory(t *testing.T) {
+	var mu sync.Mutex
+	var bodies [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, append([]byte(nil), body...))
+		requestNo := len(bodies)
+		mu.Unlock()
+
+		if requestNo == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"The reasoning_content in the thinking mode must be passed back to the API"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"recovered"},"finish_reason":"stop"}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	prov, err := openai.New(provider.Config{
+		Name: "deepseek-openai", BaseURL: srv.URL, Model: "deepseek-v4-pro", APIKey: "k",
+		Extra: map[string]any{"reasoning_protocol": "deepseek", "thinking": "enabled"},
+	})
+	if err != nil {
+		t.Fatalf("New provider: %v", err)
+	}
+	session := NewSession("system")
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "earlier"})
+	session.Add(provider.Message{Role: provider.RoleAssistant, Content: "old answer", ReasoningContent: "stale thinking"})
+	sink := &recordSink{}
+	a := New(prov, echoRegistry(), session, Options{}, sink)
+
+	if err := a.Run(withNoClosedLoop(context.Background()), "next"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	gotBodies := append([][]byte(nil), bodies...)
+	mu.Unlock()
+	if len(gotBodies) != 2 {
+		t.Fatalf("HTTP requests = %d, want rejected attempt plus one repair retry", len(gotBodies))
+	}
+	if !bytes.Contains(gotBodies[0], []byte(`"reasoning_content":"stale thinking"`)) {
+		t.Fatalf("first request did not replay old reasoning: %s", gotBodies[0])
+	}
+	if bytes.Contains(gotBodies[1], []byte("stale thinking")) || bytes.Contains(gotBodies[1], []byte("reasoning_content")) {
+		t.Fatalf("repair retry still carries old reasoning: %s", gotBodies[1])
+	}
+	if !bytes.Contains(gotBodies[1], []byte("old answer")) {
+		t.Fatalf("repair retry lost visible assistant text: %s", gotBodies[1])
+	}
+	var first, second map[string]json.RawMessage
+	if err := json.Unmarshal(gotBodies[0], &first); err != nil {
+		t.Fatalf("decode first request: %v", err)
+	}
+	if err := json.Unmarshal(gotBodies[1], &second); err != nil {
+		t.Fatalf("decode repair request: %v", err)
+	}
+	delete(first, "messages")
+	delete(second, "messages")
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("repair retry changed non-message fields:\nfirst=%s\nretry=%s", gotBodies[0], gotBodies[1])
+	}
+	for _, message := range session.Snapshot() {
+		if message.Role == provider.RoleAssistant && message.Content == "old answer" && message.ReasoningContent != "stale thinking" {
+			t.Fatalf("canonical history lost old reasoning: %+v", message)
+		}
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryReasoningReplay400Detected); got != 1 {
+		t.Fatalf("reasoning_replay_400_detected audits = %d, want 1", got)
+	}
+	if got := sink.recoveryCount(event.ProtocolRecoveryReasoningReplay400Recovered); got != 1 {
+		t.Fatalf("reasoning_replay_400_recovered audits = %d, want 1", got)
+	}
+}
+
+func TestDeepSeekOpenAIReasoningReplay400StripsOldToolHistory(t *testing.T) {
+	var mu sync.Mutex
+	var bodies [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, append([]byte(nil), body...))
+		requestNo := len(bodies)
+		mu.Unlock()
+		if requestNo == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"The reasoning_content in the thinking mode must be passed back to the API"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"recovered"},"finish_reason":"stop"}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	prov, err := openai.New(provider.Config{
+		Name: "deepseek-openai", BaseURL: srv.URL, Model: "deepseek-v4-pro", APIKey: "k",
+		Extra: map[string]any{"reasoning_protocol": "deepseek", "thinking": "enabled"},
+	})
+	if err != nil {
+		t.Fatalf("New provider: %v", err)
+	}
+	session := NewSession("system")
+	session.Add(provider.Message{Role: provider.RoleUser, Content: "earlier"})
+	session.Add(provider.Message{
+		Role: provider.RoleAssistant, Content: "I will inspect the file", ReasoningContent: "stale thinking",
+		ToolCalls: []provider.ToolCall{{ID: "old-call", Name: "read_file", Arguments: `{"path":"old.go"}`}},
+	})
+	session.Add(provider.Message{Role: provider.RoleTool, ToolCallID: "old-call", Name: "read_file", Content: "old result"})
+	a := New(prov, echoRegistry(), session, Options{}, &recordSink{})
+	if err := a.Run(withNoClosedLoop(context.Background()), "next"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	mu.Lock()
+	gotBodies := append([][]byte(nil), bodies...)
+	mu.Unlock()
+	if len(gotBodies) != 2 {
+		t.Fatalf("HTTP requests = %d, want rejected attempt plus one repair retry", len(gotBodies))
+	}
+	if !bytes.Contains(gotBodies[0], []byte("old-call")) || !bytes.Contains(gotBodies[0], []byte("stale thinking")) {
+		t.Fatalf("first request did not contain old tool history: %s", gotBodies[0])
+	}
+	if bytes.Contains(gotBodies[1], []byte("old-call")) || bytes.Contains(gotBodies[1], []byte("old result")) || bytes.Contains(gotBodies[1], []byte("stale thinking")) {
+		t.Fatalf("repair retry retained stale tool history: %s", gotBodies[1])
+	}
+	if !bytes.Contains(gotBodies[1], []byte("I will inspect the file")) {
+		t.Fatalf("repair retry lost visible old assistant text: %s", gotBodies[1])
+	}
+}
+
 func TestGLMToolTurnWithoutReasoningContinuesWithoutRecovery(t *testing.T) {
 	var mu sync.Mutex
 	var bodies [][]byte
@@ -428,7 +566,8 @@ func TestDeepSeekAnthropicThinking400CatchAndRepair(t *testing.T) {
 		t.Fatalf("streamed answer = %q, want the repaired response", answer.String())
 	}
 
-	// The next run keeps the strong projection: no reasoning reaches the wire.
+	// The next run keeps the repaired prefix stripped while replaying reasoning
+	// from the newly committed assistant turn normally.
 	if err := a.Run(withNoClosedLoop(context.Background()), "again"); err != nil {
 		t.Fatalf("second Run: %v", err)
 	}
@@ -439,8 +578,11 @@ func TestDeepSeekAnthropicThinking400CatchAndRepair(t *testing.T) {
 	if total != 3 {
 		t.Fatalf("HTTP requests = %d, want one more for the follow-up run", total)
 	}
-	if bytes.Contains(third, []byte(`"type":"thinking"`)) || bytes.Contains(third, []byte("stale thinking")) || bytes.Contains(third, []byte("fresh thinking")) {
-		t.Fatalf("strong projection did not persist into the next run: %s", third)
+	if bytes.Contains(third, []byte("stale thinking")) {
+		t.Fatalf("strong projection retained stale reasoning in the next run: %s", third)
+	}
+	if !bytes.Contains(third, []byte("fresh thinking")) {
+		t.Fatalf("strong projection dropped new-turn reasoning in the next run: %s", third)
 	}
 	for _, m := range session.Snapshot() {
 		if m.Role == provider.RoleAssistant && m.Content == "old answer" && m.ReasoningContent != "stale thinking" {

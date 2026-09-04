@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
@@ -13,6 +14,9 @@ import (
 func (a *Agent) runSamplingAttempt(ctx context.Context, turn int, sink event.Sink, frozen *samplingRequest, attemptID string) streamedTurn {
 	before := provider.RequestAttemptCount(ctx)
 	result := a.streamWithFrozen(ctx, turn, sink, frozen, attemptID)
+	if result.err == nil && isEmptyStreamResult(result.text, result.reasoning, result.calls, result.responsesItems, result.serverSearch) {
+		result.err = fmt.Errorf("%w: model returned a completed response with no content", provider.ErrEmptyResponse)
+	}
 	delta := max(provider.RequestAttemptCount(ctx)-before, 0)
 	result.usage = estimateFailedAttemptUsage(result.usage, *frozen, result, delta)
 	if result.usage != nil {
@@ -26,12 +30,6 @@ func (a *Agent) runSamplingAttempt(ctx context.Context, turn int, sink event.Sin
 }
 
 func (a *Agent) samplingAttemptSinks() (*deferredStreamSink, event.Sink) {
-	// The disabled-thinking fallback never emits a reasoning event, so buffering
-	// here could only release at commit time (#9750). Fallback requests replay
-	// without reasoning, so there is nothing for the buffer to protect.
-	if a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov) {
-		return nil, a.svc.sink
-	}
 	// Buffer when missing reasoning can reject or replace the attempt. Protocols
 	// that adopt an empty fallback without retry must keep streaming live because
 	// their first response always wins.

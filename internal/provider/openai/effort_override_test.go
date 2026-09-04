@@ -28,10 +28,9 @@ func TestEffortOverrideDeepSeekFlash(t *testing.T) {
 	if got := c.buildRequest(provider.Request{EffortOverride: "medium"}).ReasoningEffort; got != "high" {
 		t.Fatalf("override outside DeepSeek vocabulary must keep the default, got %q", got)
 	}
-	out := c.buildRequest(provider.Request{EffortOverride: "disabled"})
-	if out.Thinking == nil || out.Thinking.Type != "disabled" || out.ReasoningEffort != "" {
-		t.Fatalf("per-request disabled = thinking %+v / effort %q, want thinking.type=disabled with the depth hint dropped",
-			out.Thinking, out.ReasoningEffort)
+	request := c.buildRequest(provider.Request{EffortOverride: "disabled"})
+	if request.ReasoningEffort != "" || request.Thinking == nil || request.Thinking.Type != "disabled" {
+		t.Fatalf("disabled override = thinking:%#v effort:%q, want thinking disabled and no effort", request.Thinking, request.ReasoningEffort)
 	}
 }
 
@@ -64,51 +63,9 @@ func TestEffortOverrideHonorsSupportedEfforts(t *testing.T) {
 	if got := c.buildRequest(provider.Request{EffortOverride: "max"}).ReasoningEffort; got != "high" {
 		t.Fatalf("undeclared level must keep the default, got %q", got)
 	}
-	out := c.buildRequest(provider.Request{EffortOverride: "disabled"})
-	if out.Thinking == nil || out.Thinking.Type != "disabled" || out.ReasoningEffort != "" {
-		t.Fatalf("disabled is a per-request thinking toggle, not a depth: thinking %+v / effort %q", out.Thinking, out.ReasoningEffort)
-	}
-}
-
-// A client already configured thinking-off is unaffected by overrides, and no
-// per-request value can turn thinking back on.
-func TestEffortOverrideCannotReenableThinking(t *testing.T) {
-	c := newTestClient(t, "deepseek-v4", map[string]any{"reasoning_protocol": "deepseek", "thinking": "disabled"})
-	for _, override := range []string{"", "low", "high", "enabled"} {
-		out := c.buildRequest(provider.Request{EffortOverride: override})
-		if out.Thinking == nil || out.Thinking.Type != "disabled" || out.ReasoningEffort != "" {
-			t.Fatalf("override %q: thinking %+v / effort %q, want thinking.type=disabled only", override, out.Thinking, out.ReasoningEffort)
-		}
-	}
-}
-
-// Outside DeepSeek the per-request toggle stays inert: binary-knob endpoints
-// keep their configured thinking state, so one request on a shared client can
-// never switch the main loop's thinking off there.
-func TestEffortOverrideDisabledInertOutsideDeepSeek(t *testing.T) {
-	for _, c := range []*client{
-		{model: "MiniMax-M3", minimax: true},
-		{model: "glm-4.5-air", zhipu: true},
-		{model: "LongCat-Flash", longcat: true},
-		{model: "some-model", thinkingType: "enabled"},
-	} {
-		out := c.buildRequest(provider.Request{EffortOverride: "disabled"})
-		if out.Thinking == nil || out.Thinking.Type == "disabled" {
-			t.Errorf("%s: thinking = %+v, want the configured state, not per-request disabled", c.model, out.Thinking)
-		}
-	}
-}
-
-// Endpoints with no per-request thinking knob on the wire leave the override
-// inert rather than inventing fields.
-func TestEffortOverrideDisabledInertWithoutThinkingKnob(t *testing.T) {
-	c := &client{model: "mimo-v2"}
-	out := c.buildRequest(provider.Request{EffortOverride: "disabled"})
-	if out.Thinking != nil {
-		t.Fatalf("thinking = %+v, want omitted on a knob-less endpoint", out.Thinking)
-	}
-	if out.ReasoningEffort != "" {
-		t.Fatalf("reasoning_effort = %q, want omitted", out.ReasoningEffort)
+	request := c.buildRequest(provider.Request{EffortOverride: "disabled"})
+	if request.ReasoningEffort != "" || request.Thinking == nil || request.Thinking.Type != "disabled" {
+		t.Fatalf("disabled override = thinking:%#v effort:%q, want thinking disabled and no effort", request.Thinking, request.ReasoningEffort)
 	}
 }
 

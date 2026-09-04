@@ -1045,7 +1045,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		}
 		return ""
 	}
-	bashSandboxEnforced, completionEval := bashSpec.Enforce, newCompletionEval(cfg, effectiveResolver, proxySpec)
+	bashSandboxEnforced := bashSpec.Enforce
 	taskToolAdded := false
 	readOnlyTaskToolAdded := false
 	var taskTool *agent.TaskTool
@@ -1053,7 +1053,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// so task tools created later still receive the session-shared substrate.
 	var capRuntime *agent.MCPCapabilityRuntime
 	newTaskTool := func() *agent.TaskTool {
-		return agent.NewTaskToolWithOptions(completionEval.taskOptions(agent.TaskToolOptions{
+		return agent.NewTaskToolWithOptions(agent.TaskToolOptions{
 			Provider:            execProv,
 			Pricing:             entry.Price,
 			QuoteContext:        quoteCtx,
@@ -1074,7 +1074,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			SubagentModel:       taskModel,
 			SubagentEffort:      taskEffort,
 			ResolveProvider:     resolveSubagentProvider,
-		})).
+		}).
 			WithTranscripts(subagentStore, root, modelName, entry.Effort).
 			WithTranscriptIdentityResolver(subagentIdentity).
 			WithMaxSubagentDepth(maxSubagentDepth).
@@ -1188,7 +1188,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// read_only_task, so they cannot write, install, mutate memory, resume/fork
 	// transcripts, or delegate further.
 	//
-	subagentSkillOptions := newSubagentSkillOptionsFactory(cfg.Agent, quoteCtx, headlessGate, keepPolicy, maxSubagentDepth, opts.Ablation, workspaceLease, writeRootSet, completionEval)
+	subagentSkillOptions := newSubagentSkillOptionsFactory(cfg.Agent, quoteCtx, headlessGate, keepPolicy, maxSubagentDepth, opts.Ablation, workspaceLease, writeRootSet)
 	readOnlySkillRunner := func(sctx context.Context, sk skill.Skill, task string, runOpts skill.SubagentRunOptions) (string, error) {
 		if strings.TrimSpace(runOpts.ContinueFrom) != "" || strings.TrimSpace(runOpts.ForkFrom) != "" {
 			return "", fmt.Errorf("read_only_skill does not support continue_from/fork_from")
@@ -1248,8 +1248,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		// the child model's own vision capability. Text-only children retain the
 		// attachment metadata locally but never receive image parts on the wire.
 		childCtx := agent.WithUserImages(sctx, agent.SubagentImageCandidates(sctx))
-		return agent.RunReadOnlySubAgentWithSession(childCtx, prov, subReg, agent.NewSession(sysPrompt), task,
-			runOptions, agent.NestedSink(sctx, event.Discard))
+		return runReadOnlySkillSession(childCtx, prov, subReg, task, runOptions, agent.NestedSink(sctx, event.Discard), sysPrompt, agent.RunReadOnlySubAgentWithSession)
 	}
 	// Writer-capable subagent skills reuse the sub-agent machinery via this
 	// runner: an isolated loop with the skill body as system prompt, a tool set
@@ -1309,7 +1308,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		if continueFrom != "" && legacyForkFrom != "" {
 			return "", fmt.Errorf("continue_from and fork_from are mutually exclusive; pass only continue_from")
 		}
-		parentID, _, _, _ := agent.CallContext(sctx)
+		parentID, parentSink, _, _ := agent.CallContext(sctx)
 		if runOpts.HostInitiated {
 			parentID = ""
 		}
@@ -1360,14 +1359,15 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		runOptions.WriteRoots = childWriteRoots
 		usageModelRef, _ := subagentIdentity(modelRef, effortRef)
 		runOptions.ModelRef = usageModelRef
+		announceSkillSubagentStart(parentSink, parentID, sk.Name, usageModelRef, effortRef, run, continueFrom != "" || legacyForkFrom != "")
 		// Review gates consume typed, host-verifiable reports so a review
 		// cannot end in unverifiable prose. Review skills run only for
 		// mid/high-risk work under the standard policy.
 		runOptions.RequireReviewReportKind = agent.ReviewReportKindForSkill(sk.Name)
 		var answer string
-		// See the read-only runner above: the child provider, not the parent
-		// model, owns the final vision decision.
+		// The child provider owns the final vision decision, as in read-only runs.
 		childCtx := agent.WithUserImages(sctx, agent.SubagentImageCandidates(sctx))
+		agent.EmitSubagentLifecycle(parentSink, "child_running", parentID, sk.Name, usageModelRef, effortRef, run, nil)
 		if sk.ReadOnly {
 			answer, err = agent.RunReadOnlySubAgentWithSession(childCtx, prov, subReg, run.Session, task,
 				runOptions, agent.NestedSink(sctx, event.Discard))
@@ -1376,11 +1376,12 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 				runOptions, agent.NestedSink(sctx, event.Discard))
 		}
 		if err != nil {
-			return "", errors.Join(err, subagentStore.SaveFailed(run))
+			return finishSkillSubagentFailure(sctx, taskTool, subagentStore, parentSink, parentID, sk.Name, usageModelRef, effortRef, task, run, err)
 		}
-		if err := subagentStore.SaveCompleted(run); err != nil {
-			return "", errors.Join(err, subagentStore.SaveFailed(run))
+		if err := saveSubagentCompleted(subagentStore, run); err != nil {
+			return finishSkillSubagentFailure(sctx, taskTool, subagentStore, parentSink, parentID, sk.Name, usageModelRef, effortRef, task, run, err)
 		}
+		agent.EmitSubagentLifecycle(parentSink, "child_completed", parentID, sk.Name, usageModelRef, effortRef, run, &agent.SubagentOutcome{Status: agent.SubagentOutcomeCompleted, FinalAnswer: answer})
 		return agent.FormatSubagentRunResult(answer, run, false), nil
 	}
 	skillProfile := func(sk skill.Skill) *event.Profile {
@@ -1611,7 +1612,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	})
 
 	execSess := newObservedSession(sysPrompt)
-	executor := agent.New(execProv, reg, execSess, completionEval.options(agent.Options{
+	executor := agent.New(execProv, reg, execSess, agent.Options{
 		MaxSteps:     maxSteps,
 		MaxStepsKey:  opts.MaxStepsKey,
 		Temperature:  cfg.Agent.Temperature,
@@ -1651,7 +1652,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		SubagentDepth:                0,
 		MaxSubagentDepth:             maxSubagentDepth,
 		MissingReasoningWarnStateDir: config.MissingReasoningWarnStateDir(),
-	}), sink)
+	}, sink)
 	reg.Add(sessiontool.NewSetSessionTitleTool(sessionDir, executor.SessionPath, opts.OnSessionTitleChanged))
 
 	var runner agent.Runner = executor
@@ -1694,7 +1695,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 				}
 				plannerTools.Add(capRuntime.NewFrontend(plannerLedger, plannerAudit))
 			}
-			plannerOpts := completionEval.options(agent.Options{
+			plannerOpts := agent.Options{
 				MaxSteps:                     0,
 				Gate:                         headlessGate,
 				ModelRef:                     modelRefFromEntry(pe),
@@ -1716,7 +1717,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 				WriteRoots:                   writeRootSet,
 				HomeDir:                      userHomeDir(),
 				StateRoot:                    config.MemoryUserDir(),
-			})
+			}
 			runner = agent.NewCoordinatorWithPlannerPolicy(plannerProv, plannerSess, pe.Price, plannerTools, plannerOpts, executor, cfg.Agent.Temperature, sink, control.NewPlannerPolicy())
 			label = entry.Model + " + planner " + pe.Model
 		}

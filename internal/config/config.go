@@ -1356,8 +1356,8 @@ type AgentConfig struct {
 	// Plan bash calls now use the ordinary Permissions classifier and Sandbox.
 	PlanModeReadOnlyCommands []string `toml:"plan_mode_read_only_commands"`
 	LegacyAnchorSafetyGate   bool     `toml:"legacy_anchor_safety_gate"`  // user-global rollback to the full-read guard
-	CompletionValidation     string   `toml:"completion_validation"`      // off|shadow|enforce; empty defaults to enforce
-	CompletionEvaluatorModel string   `toml:"completion_evaluator_model"` // empty follows the working model
+	CompletionValidation     string   `toml:"completion_validation"`      // retired; retained for old config reads
+	CompletionEvaluatorModel string   `toml:"completion_evaluator_model"` // retired; ignored
 }
 
 // ProviderEntry declares a model provider instance. ContextWindow is the model's

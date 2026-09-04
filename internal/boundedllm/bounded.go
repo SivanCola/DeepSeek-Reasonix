@@ -48,9 +48,8 @@ type Config struct {
 	Timeout time.Duration
 	// MaxTokens caps the completion. Zero uses DefaultMaxTokens.
 	MaxTokens int
-	// EffortOverride optionally requests a different reasoning depth for this
-	// independent call, or "disabled" to skip thinking — bounded reviewers
-	// replay no history. Provider adapters ignore unsupported values.
+	// EffortOverride optionally requests a lower or higher reasoning depth for
+	// this independent call. Provider adapters ignore unsupported values.
 	EffortOverride string
 	// MaxOutputBytes aborts the stream once exceeded. Zero uses DefaultMaxOutputBytes.
 	MaxOutputBytes int

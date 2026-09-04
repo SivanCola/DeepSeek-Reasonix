@@ -277,6 +277,11 @@ type Tool struct {
 	AttemptID string
 	FileDiff
 	Profile *Profile // ToolDispatch: subagent model/effort (set for task/skill calls)
+	// Subagent outcome metadata is host/UI-only and never enters provider requests.
+	SubagentRef       string
+	SubagentStatus    string
+	SubagentErrorCode string
+	SubagentRetryable bool
 	// Execution is optional local shell metadata (ToolResult). Never sent to
 	// model providers; omitempty keeps old wire readers compatible.
 	Execution *ShellExecution

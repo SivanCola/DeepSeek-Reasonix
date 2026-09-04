@@ -2374,6 +2374,7 @@ export const zhTW: Record<DictKey, string> = {
   "subagent.phase.tool": "使用工具",
   "subagent.phase.retrying": "重試中",
   "subagent.phase.completed": "已完成",
+  "subagent.phase.partial": "部分完成",
   "subagent.phase.failed": "失敗",
   "subagent.phase.cancelled": "已取消",
   "subagent.phase.elapsed": "{n} 秒",
@@ -2382,6 +2383,12 @@ export const zhTW: Record<DictKey, string> = {
   "subagent.preview.text": "回答預覽",
   "subagent.preview.notice": "提示",
   "subagent.preview.truncated": "預覽已截斷",
+  "subagent.outcome.label": "子代理",
+  "subagent.outcome.completed": "已完成",
+  "subagent.outcome.partial": "部分完成",
+  "subagent.outcome.failed": "失敗",
+  "subagent.outcome.cancelled": "已取消",
+  "subagent.outcome.retryable": "可重試",
 
   // 軟體更新
   "config.loadWarning": "設定問題：{msg}",

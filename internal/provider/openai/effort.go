@@ -84,11 +84,6 @@ func (c *client) requestEffort(req provider.Request) string {
 	return want
 }
 
-// deepSeekRequestThinking resolves the thinking toggle for one DeepSeek Chat
-// request: the configured knob, unless an explicit per-request override asks
-// to skip thinking. "disabled" is a toggle, not a depth, so vocabularies
-// strip it (depthOnly) and only this path may apply it — a stateless bounded
-// reviewer has no replay contract to protect, unlike the main loop.
 func (c *client) deepSeekRequestThinking(req provider.Request) string {
 	if c.thinkingType == "disabled" || strings.EqualFold(strings.TrimSpace(req.EffortOverride), "disabled") {
 		return "disabled"

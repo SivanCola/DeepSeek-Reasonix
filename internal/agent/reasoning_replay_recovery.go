@@ -7,18 +7,18 @@ import (
 )
 
 // reasoningReplayRecoveryBudget bounds the thinking-400 catch-and-repair to one
-// retry per model round. It is independent from the context-recovery budget so
-// one overflow repair and one reasoning repair can never multiply requests.
+// retry per model round and records the repaired provider-message prefix.
 type reasoningReplayRecoveryBudget struct {
 	retries int
+	cutoff  int
+	anchor  string
 }
 
 // recoverReasoningReplay400 applies the vendor-documented self-heal for a
 // provider that rejected replayed thinking history with HTTP 400: rebuild the
-// frozen request's messages through the strong projection (all assistant
-// reasoning stripped, unpaired tool activity dropped) and retry exactly once.
-// Everything except Messages stays byte-identical to the rejected request. A
-// history the projection cannot change is not worth a blind retry.
+// frozen request's messages through the strong projection and retry exactly
+// once. Everything except Messages stays byte-identical to the rejected
+// request; the repaired message count bounds future projection.
 func (a *Agent) recoverReasoningReplay400(frozen samplingRequest, err error, budget *reasoningReplayRecoveryBudget) (samplingRequest, bool) {
 	if a == nil || budget == nil || budget.retries > 0 {
 		return samplingRequest{}, false
@@ -31,6 +31,10 @@ func (a *Agent) recoverReasoningReplay400(frozen samplingRequest, err error, bud
 		return samplingRequest{}, false
 	}
 	budget.retries++
+	budget.cutoff = len(repaired)
+	if budget.cutoff > 0 {
+		budget.anchor = reasoningReplayMessageFingerprint(repaired[budget.cutoff-1])
+	}
 	next := frozen.req
 	next.Messages = repaired
 	return samplingRequest{req: next}, true
@@ -54,15 +58,14 @@ func (a *Agent) tryRecoverReasoningReplay400(streamSink *deferredStreamSink, fro
 	return next, true
 }
 
-// activateReasoningReplayStrongProjection records that this conversation's
-// canonical history carries reasoning the provider rejects. Later rounds and
-// turns keep projecting through the strong projection instead of paying
-// another 400 plus repair retry per round.
-func (a *Agent) activateReasoningReplayStrongProjection() {
+// activateReasoningReplayStrongProjection records the repaired history prefix.
+// Messages appended after it keep their normal reasoning/tool replay.
+func (a *Agent) activateReasoningReplayStrongProjection(cutoff int, anchor string) {
 	if a == nil {
 		return
 	}
-	a.sess.reasoningReplayStrongProjection = true
+	a.sess.reasoningReplayStrongProjection = cutoff
+	a.sess.reasoningReplayStrongProjectionAnchor = anchor
 	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryReasoningReplay400Recovered})
 	a.emitReasoningReplayRepairNotice()
 }

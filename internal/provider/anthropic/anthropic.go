@@ -346,8 +346,6 @@ func (c *client) Stream(ctx context.Context, req provider.Request) (<-chan provi
 func (c *client) buildRequest(ctx context.Context, req provider.Request) anthRequest {
 	var system []textBlock
 	var msgs []anthMessage
-	recoveryWithoutThinking := c.missingReasoningFallback(ctx)
-
 	// appendBlocks adds blocks under role, merging into the previous message when
 	// it shares the role (keeps user/assistant strictly alternating).
 	appendBlocks := func(role string, blocks ...contentBlock) {
@@ -361,7 +359,7 @@ func (c *client) buildRequest(ctx context.Context, req provider.Request) anthReq
 		msgs = append(msgs, anthMessage{Role: role, Content: blocks})
 	}
 
-	messages := c.replayMessages(req.Messages, recoveryWithoutThinking)
+	messages := c.replayMessages(req.Messages)
 	for _, m := range provider.SanitizeToolPairing(messages) {
 		switch m.Role {
 		case provider.RoleSystem:
@@ -399,7 +397,7 @@ func (c *client) buildRequest(ctx context.Context, req provider.Request) anthReq
 			// not — even if the current request no longer declares tools or has
 			// since disabled thinking. Anthropic proper requires a signature, so
 			// reasoning without one cannot be replayed on that endpoint.
-			if block, ok := c.replayReasoningBlock(m, recoveryWithoutThinking); ok {
+			if block, ok := c.replayReasoningBlock(m); ok {
 				blocks = append(blocks, block)
 			}
 			blocks = appendServerSearchBlocks(blocks, m.ServerSearch)
@@ -442,7 +440,7 @@ func (c *client) buildRequest(ctx context.Context, req provider.Request) anthReq
 	// uses type=adaptive plus display/output_config. LongCat-style compatible
 	// gateways use the simpler enabled|disabled knob and reject output_config.
 	if c.deepseek {
-		c.applyDeepSeekThinking(&r, req, recoveryWithoutThinking)
+		c.applyDeepSeekThinking(&r, req)
 	} else {
 		switch c.thinking {
 		case "adaptive":

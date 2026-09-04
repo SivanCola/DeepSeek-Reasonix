@@ -237,7 +237,7 @@ type Request struct {
 	// text.format.type=json_object). Nil omits the fieldentirely —
 	// thecommonpathmuststaybyte-stableforpromptcaching.
 	ResponseFormat *ResponseFormat `json:"ResponseFormat,omitempty"`
-	EffortOverride string          `json:"EffortOverride,omitempty"` // per-call reasoning-depth override, or "disabled" to skip thinking for one stateless call; adapters apply only values the endpoint can express
+	EffortOverride string          `json:"EffortOverride,omitempty"` // per-call reasoning-depth override; adapters apply it only when the endpoint's effort vocabulary accepts it
 	ToolSearch     *ToolSearch     `json:"-"`
 }
 

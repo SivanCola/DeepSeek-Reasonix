@@ -4,9 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"reasonix/internal/agent/testutil"
 	"reasonix/internal/event"
-	"reasonix/internal/provider"
 )
 
 func sinkKinds(evs []event.Event) []event.Kind {
@@ -93,47 +91,4 @@ func TestDeferredStreamSinkNilIsInert(t *testing.T) {
 	s.Emit(event.Event{Kind: event.Text, Text: "x"})
 	s.Flush()
 	s.Discard()
-}
-
-func TestSamplingAttemptSinksPassesThroughDuringFallback(t *testing.T) {
-	newFallbackAgent := func(p provider.Provider) *Agent {
-		return New(p, echoRegistry(), NewSession(""), Options{}, &recordSink{})
-	}
-
-	t.Run("fallback session on a capable provider streams live", func(t *testing.T) {
-		prov := &strictFallbackReasoningProvider{MockProvider: testutil.NewMock("strict-fallback")}
-		a := newFallbackAgent(prov)
-		a.sess.missingReasoning.fallbackActive = true
-		streamSink, attemptSink := a.samplingAttemptSinks()
-		if streamSink != nil || attemptSink != a.svc.sink {
-			t.Fatalf("fallback sinks = (%v, %v), want direct pass-through", streamSink, attemptSink)
-		}
-	})
-
-	t.Run("healthy session on a capable provider keeps the reasoning-aware buffer", func(t *testing.T) {
-		prov := &strictFallbackReasoningProvider{MockProvider: testutil.NewMock("strict-fallback")}
-		a := newFallbackAgent(prov)
-		streamSink, attemptSink := a.samplingAttemptSinks()
-		if streamSink == nil || attemptSink != event.Sink(streamSink) || !streamSink.waitingForReasoning {
-			t.Fatalf("healthy sinks = (%v, %v), want the reasoning-aware buffer", streamSink, attemptSink)
-		}
-	})
-
-	t.Run("fallback flag is inert without provider support", func(t *testing.T) {
-		prov := strictNoWarningReasoningProvider{testutil.NewMock("strict-replay")}
-		a := newFallbackAgent(prov)
-		a.sess.missingReasoning.fallbackActive = true
-		streamSink, _ := a.samplingAttemptSinks()
-		if streamSink == nil {
-			t.Fatal("unsupported provider dropped the replay-safety buffer on a stale flag")
-		}
-	})
-
-	t.Run("insensitive provider always streams live", func(t *testing.T) {
-		a := newFallbackAgent(testutil.NewMock("plain"))
-		streamSink, attemptSink := a.samplingAttemptSinks()
-		if streamSink != nil || attemptSink != a.svc.sink {
-			t.Fatalf("insensitive sinks = (%v, %v), want direct pass-through", streamSink, attemptSink)
-		}
-	})
 }

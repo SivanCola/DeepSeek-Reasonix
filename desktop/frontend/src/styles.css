@@ -6616,6 +6616,20 @@ body > .mermaid-diagram--fullscreen {
   overflow-y: auto;
   color: inherit;
 }
+.tool__subagent-outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  font-family: var(--font-code-family);
+  font-size: var(--font-caption);
+}
+.tool__subagent-outcome-status { color: var(--fg-dim); }
+.tool__subagent-outcome code { overflow-wrap: anywhere; }
 .tool__nested-count {
   display: inline-flex;
   align-items: center;
