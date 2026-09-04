@@ -295,10 +295,11 @@ type DesktopConfig struct {
 	// UpdateChannel is a legacy compatibility field. It is accepted on read but
 	// ignored and omitted from future canonical writes.
 	UpdateChannel        string   `toml:"update_channel"`
-	Telemetry            *bool    `toml:"telemetry"`       // anonymous launch ping plus scrubbed next-launch native crash diagnostics; nil keeps the default enabled
-	Metrics              *bool    `toml:"metrics"`         // aggregate desktop metrics (anonymous signal/bucket counts, including lifecycle health; no content); nil keeps the default enabled
-	ProviderAccess       []string `toml:"provider_access"` // desktop-only list of provider entries shown in Settings > Model > Access
-	ExpandThinking       bool     `toml:"expand_thinking"` // deprecated compatibility alias: true maps to auto
+	Telemetry            *bool    `toml:"telemetry"`          // anonymous launch ping plus scrubbed next-launch native crash diagnostics; nil keeps the default enabled
+	Metrics              *bool    `toml:"metrics"`            // aggregate desktop metrics (anonymous signal/bucket counts, including lifecycle health; no content); nil keeps the default enabled
+	ProviderAccess       []string `toml:"provider_access"`    // desktop-only list of provider entries shown in Settings > Model > Access
+	SessionExperience    string   `toml:"session_experience"` // standard|deep; canonical desktop transcript experience
+	ExpandThinking       bool     `toml:"expand_thinking"`    // deprecated compatibility alias: true maps to auto
 	ReasoningDisplayMode string   `toml:"reasoning_display_mode"`
 	ConversationWidth    string   `toml:"conversation_width"` // standard|full; max transcript width; empty = standard
 }
@@ -494,6 +495,9 @@ func (c *Config) UICloseBehavior() string {
 // DesktopDisplayMode normalizes the transcript display mode. Default is
 // "standard" (flat rendering, no folding).
 func (c *Config) DesktopDisplayMode() string {
+	if c != nil && strings.TrimSpace(c.Desktop.SessionExperience) != "" {
+		return "standard"
+	}
 	switch strings.ToLower(strings.TrimSpace(c.Desktop.DisplayMode)) {
 	case "standard":
 		return "standard"

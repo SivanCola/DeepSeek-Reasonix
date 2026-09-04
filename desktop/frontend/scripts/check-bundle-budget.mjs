@@ -189,8 +189,10 @@ console.log("\nbundle budgets");
 // drag add 0.3 KiB gzip; the merged path measures 463.102 KiB.
 // Absorbing content-preserving block-window prepends into the active reader
 // transaction adds 0.2 KiB gzip on top; the merged path measures 463.292 KiB,
-// 8 bytes under the next decimal. Retain one cross-platform decimal step.
-const initialJSBudgetKiB = 463.4;
+// 8 bytes under the next decimal. The rebased release build rounds to the
+// boundary at 463.4 KiB; retain one additional 0.1 KiB step rather than
+// making the gate dependent on toolchain rounding.
+const initialJSBudgetKiB = 463.5;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -252,9 +254,11 @@ for (const path of localeChunks) {
   // 60.757 KiB; retain only its exact one-decimal ceiling.
   // Session takeover adds ~20 locale keys per dialect (banners, dialog,
   // reclaim), while Sticky Context adds file-state and limit diagnostics. The
-  // merged stable chunks measure 60.395 KiB zh and 61.232 KiB zh-TW; retain
-  // only the next one-decimal ceiling for each dialect.
-  const budget = name.startsWith("zh-TW-") ? 61.3 * 1024 : 60.4 * 1024;
+  // merged stable chunks measure 60.395 KiB zh and 61.232 KiB zh-TW; the
+  // canonical session-experience labels add a small, measured gzip delta.
+  // Keep the ratchet narrow at the next 0.1 KiB boundary rather than hiding
+  // the new setting copy or widening the general startup budget.
+  const budget = name.startsWith("zh-TW-") ? 61.4 * 1024 : 60.5 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
@@ -341,7 +345,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The scrollbar generation fence and drag rebase add 1.1 KiB raw; the merged
 // path measures 2470.932 KiB.
 // The reader-transaction offset absorption adds 0.8 KiB raw on top; the merged
-// path measures 2471.741 KiB.
-const rawInitialBudgetKiB = 2_471.8;
+// path measures 2471.741 KiB. The rebased build's canonical session-experience
+// startup wiring, settings labels, and transcript transaction integration
+// measure 2473.8 KiB raw; retain only 0.1 KiB of bounded headroom.
+const rawInitialBudgetKiB = 2_473.9;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

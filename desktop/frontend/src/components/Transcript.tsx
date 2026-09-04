@@ -11,7 +11,6 @@ import { ArrowDown, Loader2 } from "lucide-react";
 import { Welcome } from "./Welcome";
 import { ReadOnlyBatch } from "./ReadOnlyBatch";
 import { ToolGroup } from "./ToolGroup";
-import { getProcessFoldPreference, onProcessFoldPreferenceChange, type ProcessFoldPreference } from "../lib/processFoldPreference";
 import { isSteerNoticeText } from "../lib/useController";
 import { useTranscriptEntranceAnimation } from "../lib/useEntranceAnimation";
 import { useTranscriptSelectionRetention } from "../lib/useTranscriptSelectionRetention";
@@ -46,7 +45,7 @@ import { readTranscriptGeometryEnvironment } from "../lib/transcriptGeometryEnvi
 import { onTypographyPreferencesChange } from "../lib/typographyPreferences";
 import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib/markdownWorkerClient";
 import { noteTranscriptRecoveryTerminal } from "../lib/sessionDiagnostics";
-import { useReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
+import { onSessionExperienceWillChange, useSessionExperience } from "../lib/sessionExperience";
 import { InlineAssistantReasoning } from "./InlineAssistantReasoning";
 import { ProcessFoldHeader } from "./ProcessFoldHeader";
 import { CompactionCard, NoticeCard, PhaseCard, SteerCard } from "./TranscriptCards";
@@ -244,7 +243,7 @@ export function Transcript({
     pinLiveTailBeforePaint,
     followGrowingTail,
     revalidateTail,
-    beginUserResize, userResizeRevision,
+    beginUserResize, beginDisplayPreferenceTransaction, userResizeRevision,
     scrollToDataIndex, beginQuestionJump, finishQuestionJump,
     releaseTailFollow,
     setMode: setScrollMode,
@@ -378,8 +377,8 @@ export function Transcript({
   const liveHasAnswerText = Boolean(live?.text.trim());
   const liveHasReasoning = Boolean(live?.reasoning);
   const liveReasoningComplete = live?.reasoningComplete;
-  const reasoningDisplayMode = useReasoningDisplayMode();
-  const hideReasoning = reasoningDisplayMode === "hidden" || reasoningDisplayMode === "pending";
+  const sessionExperience = useSessionExperience();
+  const hideReasoning = false;
   const liveFlags = useMemo<TranscriptLiveFlags>(
     () => (liveId
       ? { id: liveId, hasAnswerText: liveHasAnswerText, hasReasoning: liveHasReasoning, reasoningComplete: liveReasoningComplete }
@@ -387,20 +386,30 @@ export function Transcript({
     [liveId, liveHasAnswerText, liveHasReasoning, liveReasoningComplete],
   );
   const turnModels = useMemo(() => buildTurnModels(items, liveFlags, running, hideReasoning), [items, liveFlags, running, hideReasoning]);
-  const segmentStates = useMemo(() => foldSegmentStates(turnModels, reasoningDisplayMode === "expanded"), [reasoningDisplayMode, turnModels]);
+  const segmentStates = useMemo(() => foldSegmentStates(turnModels, sessionExperience === "deep"), [sessionExperience, turnModels]);
 
-  const [foldPreference, setFoldPreference] = useState<ProcessFoldPreference>(getProcessFoldPreference);
-  useEffect(() => onProcessFoldPreferenceChange(setFoldPreference), []);
-  const foldPreferenceRef = useRef(foldPreference);
   const [folds, setFolds] = useState<FoldMap>(EMPTY_FOLDS);
+  const experienceRef = useRef(sessionExperience);
+
+  useEffect(() => onSessionExperienceWillChange(() => {
+    beginDisplayPreferenceTransaction();
+  }), [beginDisplayPreferenceTransaction]);
 
   // Hoisted TurnCollapse effects: auto-open while running, auto-close on
   // completion, preference switches apply to folds already on screen.
   useEffect(() => {
-    const preferenceChanged = foldPreferenceRef.current !== foldPreference;
-    foldPreferenceRef.current = foldPreference;
-    setFolds((prev) => reconcileFoldEntries(prev, segmentStates, foldPreference, preferenceChanged) ?? prev);
-  }, [segmentStates, foldPreference]);
+    const preferenceChanged = experienceRef.current !== sessionExperience;
+    experienceRef.current = sessionExperience;
+    setFolds((prev) => reconcileFoldEntries(prev, segmentStates, sessionExperience, preferenceChanged) ?? prev);
+  }, [segmentStates, sessionExperience]);
+
+  // The mode update changes disclosure geometry in one React commit. The
+  // shared geometry controller waits for mounted rows before correcting the
+  // captured anchor or tail; this effect never writes a physical scroll offset.
+  useLayoutEffect(() => {
+    if (experienceRef.current === sessionExperience) return;
+    followGrowingTail("fold-change");
+  }, [followGrowingTail, sessionExperience]);
 
   const handleFoldToggle = useCallback((segmentKey: string, currentlyOpen: boolean) => {
     beginUserResize();
@@ -430,15 +439,14 @@ export function Transcript({
   const rows = useMemo(
     () => buildTranscriptRows(turnModels, {
       folds,
-      foldPreference,
+      sessionExperience,
       hasOlderHistory,
       creationMode,
       turnForUser,
       hasCheckpointForTurn,
-      reasoningDisplayMode,
       subcallsByParent,
     }),
-    [turnModels, folds, foldPreference, hasOlderHistory, creationMode, turnForUser, hasCheckpointForTurn, reasoningDisplayMode, subcallsByParent],
+    [turnModels, folds, sessionExperience, hasOlderHistory, creationMode, turnForUser, hasCheckpointForTurn, subcallsByParent],
   );
   const { liveSplit, liveMinHeight } = useTranscriptLiveTurnStability({
     turnModels, rows, liveId, running, stabilityKey: `${layoutSurfaceKey}:${userResizeRevision}`,

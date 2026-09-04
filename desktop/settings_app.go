@@ -323,6 +323,7 @@ type SettingsView struct {
 	DesktopThemeStyle            string               `json:"desktopThemeStyle"`
 	DesktopTerminalTheme         string               `json:"desktopTerminalTheme,omitempty"`
 	CloseBehavior                string               `json:"closeBehavior"`
+	SessionExperience            string               `json:"sessionExperience"`
 	DisplayMode                  string               `json:"displayMode"`
 	ReasoningDisplayMode         string               `json:"reasoningDisplayMode"`
 	ReasoningDisplayModeExplicit bool                 `json:"reasoningDisplayModeExplicit"`
@@ -364,6 +365,7 @@ type DesktopStartupSettingsView struct {
 	DesktopThemeStyle            string          `json:"desktopThemeStyle"`
 	DesktopTerminalTheme         string          `json:"desktopTerminalTheme,omitempty"`
 	DisplayMode                  string          `json:"displayMode"`
+	SessionExperience            string          `json:"sessionExperience"`
 	ReasoningDisplayMode         string          `json:"reasoningDisplayMode"`
 	ReasoningDisplayModeExplicit bool            `json:"reasoningDisplayModeExplicit"`
 	StatusBarStyle               string          `json:"statusBarStyle"`
@@ -1045,6 +1047,7 @@ func (a *App) Settings() SettingsView {
 		DesktopTerminalTheme:         cfg.DesktopTerminalTheme(),
 		CloseBehavior:                cfg.DesktopCloseBehavior(),
 		DisplayMode:                  cfg.DesktopDisplayMode(),
+		SessionExperience:            cfg.DesktopSessionExperience(),
 		ReasoningDisplayMode:         cfg.DesktopReasoningDisplayMode(),
 		ReasoningDisplayModeExplicit: cfg.DesktopReasoningDisplayModeExplicit(),
 		StatusBarStyle:               cfg.DesktopStatusBarStyle(),
@@ -3440,7 +3443,14 @@ func (a *App) SetCloseBehavior(mode string) error {
 
 // SetDisplayMode updates the transcript display mode. UI-only, no rebuild needed.
 func (a *App) SetDisplayMode(mode string) error {
-	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopDisplayMode(mode) })
+	return a.applyConfigOnly(func(c *config.Config) error {
+		if err := c.SetDesktopDisplayMode(mode); err != nil {
+			return err
+		}
+		// Legacy Wails callers are normalized into the canonical experience
+		// model instead of creating a new density state.
+		return c.SetDesktopSessionExperience("standard")
+	})
 }
 
 // SetStatusBarStyle updates the desktop status bar metric label style. UI-only,
@@ -3604,7 +3614,13 @@ func (a *App) SetDesktopMetrics(enabled bool) error {
 // SetExpandThinking sets whether reasoning text is expanded by default on
 // the desktop. It is desktop-only and does not rebuild the controller.
 func (a *App) SetExpandThinking(on bool) error {
-	return a.applyConfigOnly(func(c *config.Config) error { return c.SetExpandThinking(on) })
+	return a.applyConfigOnly(func(c *config.Config) error {
+		if err := c.SetExpandThinking(on); err != nil {
+			return err
+		}
+		// The legacy boolean no longer represents an independent setting.
+		return c.SetDesktopSessionExperience("standard")
+	})
 }
 
 // SetDesktopConversationWidth sets the max transcript width preference.

@@ -130,6 +130,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 		if c.Desktop.ProviderAccess != nil {
 			fmt.Fprintf(&b, "provider_access = %s   # desktop settings: providers shown on Settings > Model > Access\n", renderStringArray(c.Desktop.ProviderAccess))
 		}
+		if strings.TrimSpace(c.Desktop.SessionExperience) != "" {
+			fmt.Fprintf(&b, "session_experience = %q   # desktop: standard|deep transcript experience\n", c.DesktopSessionExperience())
+		}
 		renderDesktopReasoningDisplayMode(&b, c)
 		fmt.Fprintf(&b, "display_mode = %q   # desktop: standard|compact transcript display mode\n", c.DesktopDisplayMode())
 		if width := c.DesktopConversationWidth(); width == "full" {

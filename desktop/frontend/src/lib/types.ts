@@ -2204,6 +2204,7 @@ export interface SettingsView {
   desktopThemeStyle: string;
   desktopTerminalTheme: string; // "auto" follows app | "dark" | "light"
   closeBehavior: string; // "background" | "quit"
+  sessionExperience?: "standard" | "deep";
   displayMode: string; reasoningDisplayMode: string; reasoningDisplayModeExplicit?: boolean;
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
@@ -2228,6 +2229,7 @@ export interface DesktopStartupSettingsView {
   desktopThemeStyle: string;
   desktopTerminalTheme: string; // "auto" follows app | "dark" | "light"
   displayMode: string; reasoningDisplayMode: string; reasoningDisplayModeExplicit?: boolean;
+  sessionExperience?: "standard" | "deep";
   statusBarStyle: string; // "icon" | "text"
   statusBarItems: string[]; // ordered visible status bar item ids
   checkUpdates: boolean; // check for new versions on startup

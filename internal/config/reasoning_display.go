@@ -7,6 +7,12 @@ import (
 
 // DesktopReasoningDisplayMode normalizes the desktop-only presentation mode.
 func (c *Config) DesktopReasoningDisplayMode() string {
+	if c != nil && strings.EqualFold(strings.TrimSpace(c.Desktop.SessionExperience), string(SessionExperienceDeep)) {
+		return "expanded"
+	}
+	if c != nil && strings.EqualFold(strings.TrimSpace(c.Desktop.SessionExperience), string(SessionExperienceStandard)) {
+		return "auto"
+	}
 	raw := strings.ToLower(strings.TrimSpace(c.Desktop.ReasoningDisplayMode))
 	switch raw {
 	case "hidden", "summary", "auto", "expanded":
@@ -19,6 +25,12 @@ func (c *Config) DesktopReasoningDisplayMode() string {
 
 // DesktopReasoningDisplayModeExplicit reports whether a valid new enum was stored.
 func (c *Config) DesktopReasoningDisplayModeExplicit() bool {
+	if c != nil && strings.EqualFold(strings.TrimSpace(c.Desktop.SessionExperience), string(SessionExperienceDeep)) {
+		return true
+	}
+	if c != nil && strings.EqualFold(strings.TrimSpace(c.Desktop.SessionExperience), string(SessionExperienceStandard)) {
+		return false
+	}
 	switch strings.ToLower(strings.TrimSpace(c.Desktop.ReasoningDisplayMode)) {
 	case "hidden", "summary", "auto", "expanded":
 		return true

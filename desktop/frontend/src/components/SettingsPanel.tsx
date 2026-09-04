@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, startTransition, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { ArrowRight, BrainCircuit, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clipboard, ExternalLink, KeyRound, Languages, ListChecks, Loader2, Monitor, MoreHorizontal, PanelBottom, Play, Power, QrCode, RefreshCw, Send, ShieldCheck, SlidersHorizontal, Trash2, Volume2 } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clipboard, ExternalLink, KeyRound, Languages, ListChecks, Loader2, Monitor, MoreHorizontal, PanelBottom, Play, Power, QrCode, RefreshCw, Send, ShieldCheck, Trash2, Volume2 } from "lucide-react";
 import { asArray } from "../lib/array";
 import { ShellInterpreterFields } from "./SettingsShellSupport";
 import { CHANNEL_ICONS } from "./channelIcons";
@@ -48,9 +48,8 @@ import {
   type FontFamily,
   type MonoFontFamily,
 } from "../lib/fontFamily";
-import { getDisplayMode, onDisplayModeChange, setDisplayMode as setLocalDisplayMode } from "../lib/displayMode";
-import { getProcessFoldPreference, onProcessFoldPreferenceChange, setProcessFoldPreference, type ProcessFoldPreference } from "../lib/processFoldPreference";
-import { applyReasoningDisplayMode, useReasoningDisplayMode, type ReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
+import { applySessionExperience, getSessionExperience, type SessionExperience } from "../lib/sessionExperience";
+import { hydrateReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
 import { normalizeStatusBarItems, type StatusBarItemId } from "../lib/statusBarItems";
 import { normalizeToolApprovalMode } from "../lib/types";
 import {
@@ -315,8 +314,8 @@ export function SettingsPanel({
     label: settingsTabLabel(id, t),
     meta: s ? settingsTabMeta(id, s, t) : "",
     searchTerms: id === "general" ? [
-      "settings.desktopLayoutStyle", "settings.language", "settings.currency", "settings.displayMode",
-      "settings.reasoningDisplay", "settings.processFold", "settings.closeBehavior",
+      "settings.desktopLayoutStyle", "settings.language", "settings.currency", "settings.sessionExperience",
+      "settings.closeBehavior",
       "settings.defaultToolApprovalMode", "settings.sound", "settings.statusBarStyle", "settings.statusBarItems",
     ].map((key) => t(key as DictKey)).join(" ") : "",
   })), [s, t]);
@@ -622,7 +621,7 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
     case "models":
       return settingsModelMeta(s, t);
     case "general":
-      return `${desktopLayoutStyleLabel(normalizeDesktopLayoutStyle(s.desktopLayoutStyle), t)} · ${closeBehaviorLabel(normalizeCloseBehavior(s.closeBehavior), t)}`;
+      return `${s.sessionExperience === "deep" ? t("settings.sessionExperience.deep") : t("settings.sessionExperience.standard")} · ${desktopLayoutStyleLabel(normalizeDesktopLayoutStyle(s.desktopLayoutStyle), t)}`;
     case "providers":
       return t("settings.providerCount", { n: s.providers.length });
     case "bots":
@@ -1485,7 +1484,8 @@ function normalizeSettingsView(view: SettingsView | null | undefined): SettingsV
     desktopThemeStyle: normalizeThemeStyleForTheme(view.desktopThemeStyle, normalizeThemePreference(view.desktopTheme)),
     desktopTerminalTheme: normalizeTerminalThemePreference(view.desktopTerminalTheme),
     closeBehavior: normalizeCloseBehavior(view.closeBehavior),
-    displayMode: normalizeDisplayMode(view.displayMode),
+    sessionExperience: view.sessionExperience === "deep" ? "deep" : "standard",
+    displayMode: "standard",
     statusBarStyle: normalizeStatusBarStyle(view.statusBarStyle),
     statusBarItems: normalizeStatusBarItems(view.statusBarItems),
     conversationWidth: normalizeConversationWidth(view.conversationWidth),
@@ -1504,12 +1504,6 @@ type CloseBehavior = "background" | "quit";
 
 function normalizeCloseBehavior(mode: string | undefined): CloseBehavior {
   return mode === "quit" ? "quit" : "background";
-}
-
-type DisplayMode = "standard" | "compact";
-
-function normalizeDisplayMode(mode: string | undefined): DisplayMode {
-  return mode === "standard" || mode === "compact" ? mode : "standard";
 }
 
 type DesktopLayoutStyle = "classic" | "workbench" | "creation";
@@ -1630,17 +1624,32 @@ function thinkingModeLabel(mode: string, t: ReturnType<typeof useT>): string {
 function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agentRunning: boolean }) {
   const { t, setPref } = useI18n();
   const closeBehavior = normalizeCloseBehavior(s.closeBehavior);
-  const [displayMode, setDisplayMode] = useState<DisplayMode>(() => normalizeDisplayMode(getDisplayMode()));
-  const [processFold, setProcessFold] = useState<ProcessFoldPreference>(getProcessFoldPreference);
-  const reasoningDisplayMode = useReasoningDisplayMode();
+  const [sessionExperience, setSessionExperience] = useState<SessionExperience>(
+    () => getSessionExperience(),
+  );
   const soundPanelId = useId();
-  useEffect(() => onDisplayModeChange((mode) => setDisplayMode(mode)), []);
-  useEffect(() => onProcessFoldPreferenceChange((pref) => setProcessFold(pref)), []);
+  useEffect(() => {
+    const authoritative = s.sessionExperience === "deep" ? "deep" : "standard";
+    setSessionExperience(authoritative);
+    // Settings reloads are authoritative. This also repairs an optimistic
+    // local value when an older backend or a failed persistence operation
+    // returns a different snapshot.
+    applySessionExperience(authoritative);
+    hydrateReasoningDisplayMode(authoritative === "deep" ? "expanded" : "auto", authoritative === "deep");
+  }, [s.sessionExperience]);
   const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
-  const saveReasoningDisplayMode = useCallback(async (mode: ReasoningDisplayMode) => {
-    const ok = await apply(() => app.SetReasoningDisplayMode(mode));
-    if (ok) applyReasoningDisplayMode(mode);
-  }, [apply]);
+  const saveSessionExperience = useCallback(async (mode: SessionExperience) => {
+    const previous = sessionExperience;
+    setSessionExperience(mode);
+    applySessionExperience(mode);
+    hydrateReasoningDisplayMode(mode === "deep" ? "expanded" : "auto", mode === "deep");
+    const ok = await apply(() => app.SetSessionExperience(mode));
+    if (!ok) {
+      setSessionExperience(previous);
+      applySessionExperience(previous);
+      hydrateReasoningDisplayMode(previous === "deep" ? "expanded" : "auto", previous === "deep");
+    }
+  }, [apply, sessionExperience]);
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const desktopCurrency = normalizeDesktopCurrency(s.desktopCurrency);
   const desktopLayoutStyle = normalizeDesktopLayoutStyle(s.desktopLayoutStyle);
@@ -1719,54 +1728,19 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
       </SettingsField>
       </SettingsSection>
 
-      <SettingsSection title={t("settings.general.sectionConversation")} description={t("settings.sessionContentDisplayHint")}>
-        <SettingsField label={t("settings.displayMode")} hint={t("settings.displayModeHint")} icon={<SlidersHorizontal size={18} />}>
-          <div className="set-seg" role="radiogroup" aria-label={t("settings.displayMode")}>
-            {(["standard", "compact"] as const).map((mode) => (
-              <button key={mode} type="button"
-                className={`set-seg__btn${displayMode === mode ? " set-seg__btn--on" : ""}`}
-                aria-pressed={displayMode === mode}
-                disabled={busy}
-                onClick={() => {
-                  setLocalDisplayMode(mode);
-                  void apply(() => app.SetDisplayMode(mode));
-                }}
-              >
-                {t(`settings.displayMode.${mode}`)}
-              </button>
-            ))}
-          </div>
-        </SettingsField>
-        <SettingsField label={t("settings.reasoningDisplay")} hint={t("settings.reasoningDisplayHint")} icon={<BrainCircuit size={18} />}>
-          <div>
-            <div className="set-seg" role="radiogroup" aria-label={t("settings.reasoningDisplay")}>
-              {(["hidden", "summary", "auto", "expanded"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={`set-seg__btn${reasoningDisplayMode === mode ? " set-seg__btn--on" : ""}`}
-                  aria-pressed={reasoningDisplayMode === mode}
-                  disabled={busy}
-                  onClick={() => void saveReasoningDisplayMode(mode)}
-                >
-                  {t(`settings.reasoningDisplay.${mode}`)}
-                </button>
-              ))}
-            </div>
-            {reasoningDisplayMode === "legacy-collapsed" && <div className="settings-inline-hint" role="status">{t("settings.reasoningDisplay.legacy")}</div>}
-          </div>
-        </SettingsField>
-        <SettingsField label={t("settings.processFold")} hint={t("settings.processFoldHint")} icon={<ListChecks size={18} />}>
-          <div className="set-seg" role="radiogroup" aria-label={t("settings.processFold")}>
-            {(["auto", "expanded"] as const).map((pref) => (
+      <SettingsSection title={t("settings.general.sectionConversation")} description={t("settings.sessionExperienceHint")}>
+        <SettingsField label={t("settings.sessionExperience")} hint={sessionExperience === "deep" ? t("settings.sessionExperience.deepHint") : t("settings.sessionExperience.standardHint")} icon={<PanelBottom size={18} />}>
+          <div className="set-seg" role="radiogroup" aria-label={t("settings.sessionExperience")}>
+            {(["standard", "deep"] as const).map((mode) => (
               <button
-                key={pref}
+                key={mode}
                 type="button"
-                className={`set-seg__btn${processFold === pref ? " set-seg__btn--on" : ""}`}
-                aria-pressed={processFold === pref}
-                onClick={() => setProcessFoldPreference(pref)}
+                className={`set-seg__btn${sessionExperience === mode ? " set-seg__btn--on" : ""}`}
+                aria-pressed={sessionExperience === mode}
+                disabled={busy}
+                onClick={() => void saveSessionExperience(mode)}
               >
-                {t(`settings.processFold.${pref}`)}
+                {t(`settings.sessionExperience.${mode}`)}
               </button>
             ))}
           </div>

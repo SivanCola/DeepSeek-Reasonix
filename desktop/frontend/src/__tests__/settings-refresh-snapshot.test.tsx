@@ -148,9 +148,10 @@ regionalTypography.code = {
 applyTypographyPreferences(regionalTypography);
 const regionalCodeFont = document.documentElement.style.getPropertyValue("--typography-code-font");
 
-const settingsSnapshots = [baseSettings("standard"), baseSettings("compact")];
+const settingsSnapshots = [baseSettings("standard"), { ...baseSettings("standard"), sessionExperience: "deep" as const }];
 let settingsCalls = 0;
 let setDisplayModeCalls = 0;
+let setSessionExperienceCalls = 0;
 let onChangedSettings: SettingsView | undefined;
 
 window.go = {
@@ -159,6 +160,9 @@ window.go = {
       Settings: async () => settingsSnapshots[Math.min(settingsCalls++, settingsSnapshots.length - 1)],
       SetDisplayMode: async () => {
         setDisplayModeCalls += 1;
+      },
+      SetSessionExperience: async () => {
+        setSessionExperienceCalls += 1;
       },
     } as Partial<AppBindings> as AppBindings,
   },
@@ -184,24 +188,30 @@ await act(async () => {
   await flushPromises();
 });
 
-const compactButton = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Compact") as HTMLButtonElement | undefined;
-if (!compactButton) throw new Error("compact display mode button did not render");
+const deepButton = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Deep") as HTMLButtonElement | undefined;
+if (!deepButton) throw new Error("deep session experience button did not render");
 const generalFieldLabels = Array.from(rootEl.querySelectorAll(".settings-section__body > .settings-field .settings-field__label"))
   .map((label) => label.textContent?.trim());
 eq(generalFieldLabels[0], "Desktop style", "general settings place desktop style first");
 eq(document.querySelectorAll(".step-limit-control").length, 0, "general settings hide executor and planner step-limit controls");
+eq(rootEl.querySelectorAll('[role="radiogroup"]').length > 0, true, "session experience exposes an accessible choice group");
+ok(rootEl.textContent?.includes("Session experience") === true, "general settings render the canonical session experience field");
+ok(!rootEl.textContent?.includes("Conversation density"), "general settings do not render the retired density field");
+ok(!rootEl.textContent?.includes("Thinking content"), "general settings do not render the retired reasoning field");
+ok(!rootEl.textContent?.includes("After the turn"), "general settings do not render the retired fold field");
 ok(!document.body.textContent?.includes("step limit"), "general settings keep automatic progress free of step-limit copy");
 ok(!document.body.textContent?.includes("Automatic plan mode"), "general settings omit the retired automatic Plan Mode control");
 ok(!document.body.textContent?.includes("planning defaults"), "general settings omit retired automatic Plan Mode copy");
 
 await act(async () => {
-  compactButton.click();
+  deepButton.click();
   await flushPromises();
 });
 
-eq(setDisplayModeCalls, 1, "display mode mutation is invoked once");
+eq(setSessionExperienceCalls, 1, "session experience mutation is invoked once");
+eq(setDisplayModeCalls, 0, "legacy display mode mutation is not invoked");
 eq(settingsCalls, 2, "settings panel reads Settings only for initial load and post-save reload");
-ok(onChangedSettings?.displayMode === "compact", "onChanged receives the post-save SettingsView snapshot");
+ok(onChangedSettings?.sessionExperience === "deep", "onChanged receives the post-save SettingsView snapshot");
 
 await act(async () => {
   root.unmount();
@@ -400,7 +410,7 @@ await act(async () => {
   retryButton.click();
   await flushPromises();
 });
-await waitFor("settings retry success", () => Boolean(Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Compact")));
+await waitFor("settings retry success", () => Boolean(Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Deep")));
 
 eq(failingSettingsCalls, 2, "settings retry calls Settings again");
 ok(document.body.textContent?.includes("Settings could not be loaded.") === false, "settings retry clears the load error");

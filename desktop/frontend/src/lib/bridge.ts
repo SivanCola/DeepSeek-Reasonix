@@ -582,6 +582,7 @@ export interface AppBindings extends SessionCatalogBindings, ProjectTreeOrganiza
   TestBotConnection(id: string, target?: string): Promise<BotConnectionDiagnostic>;
   TestDingtalkBot(): Promise<BotConnectionDiagnostic>;
   SetCloseBehavior(mode: string): Promise<void>;
+  SetSessionExperience(mode: "standard" | "deep"): Promise<void>;
   SetDisplayMode(mode: string): Promise<void>;
   SetStatusBarStyle(style: string): Promise<void>;
   SetStatusBarItems(items: string[]): Promise<void>; SetReasoningDisplayMode(mode: "hidden" | "summary" | "auto" | "expanded"): Promise<void>;
@@ -1888,7 +1889,7 @@ function makeMockApp(): AppBindings {
     desktopTerminalTheme: "auto",
     conversationWidth: "standard",
     closeBehavior: "background",
-    displayMode: "standard", reasoningDisplayMode: "auto", reasoningDisplayModeExplicit: false,
+    displayMode: "standard", sessionExperience: "standard", reasoningDisplayMode: "auto", reasoningDisplayModeExplicit: false,
     statusBarStyle: "text",
     statusBarItems: [...DEFAULT_STATUS_BAR_ITEMS],
     defaultToolApprovalMode: "auto",
@@ -4471,7 +4472,7 @@ function makeMockApp(): AppBindings {
       return this.SaveDoc(path, body);
     },
     async DesktopStartupSettings() {
-      const { bot, desktopLanguage, desktopLayoutStyle, desktopTheme, desktopThemeStyle, desktopTerminalTheme, displayMode, reasoningDisplayMode, reasoningDisplayModeExplicit, statusBarStyle, statusBarItems, checkUpdates, conversationWidth } = settings;
+      const { bot, desktopLanguage, desktopLayoutStyle, desktopTheme, desktopThemeStyle, desktopTerminalTheme, displayMode, sessionExperience, reasoningDisplayMode, reasoningDisplayModeExplicit, statusBarStyle, statusBarItems, checkUpdates, conversationWidth } = settings;
       return JSON.parse(JSON.stringify({
         bot,
         desktopLanguage,
@@ -4479,7 +4480,7 @@ function makeMockApp(): AppBindings {
         desktopTheme,
         desktopThemeStyle,
         desktopTerminalTheme,
-        displayMode, reasoningDisplayMode, reasoningDisplayModeExplicit,
+        displayMode, sessionExperience, reasoningDisplayMode, reasoningDisplayModeExplicit,
         statusBarStyle,
         statusBarItems,
         checkUpdates,
@@ -5030,6 +5031,13 @@ function makeMockApp(): AppBindings {
         },
     async SetDesktopConversationWidth(width: string) { settings.conversationWidth = width; },
     async SetReasoningDisplayMode(mode: "hidden" | "summary" | "auto" | "expanded") { if (!(["hidden", "summary", "auto", "expanded"] as string[]).includes(mode)) throw new Error("invalid reasoning display mode"); settings.reasoningDisplayMode = mode; settings.reasoningDisplayModeExplicit = true; },
+    async SetSessionExperience(mode: "standard" | "deep") {
+      if (mode !== "standard" && mode !== "deep") throw new Error("invalid session experience");
+      settings.sessionExperience = mode;
+      settings.displayMode = "standard";
+      settings.reasoningDisplayMode = mode === "deep" ? "expanded" : "auto";
+      settings.reasoningDisplayModeExplicit = mode === "deep";
+    },
         async SetExpandThinking(on: boolean) { settings.reasoningDisplayMode = on ? "auto" : "summary"; settings.reasoningDisplayModeExplicit = true; },
         async MigrateDesktopPreferences(language: string, theme: string, style: string) {
           if (!settings.desktopLanguage) settings.desktopLanguage = language === "en" || language === "zh" || language === "zh-TW" ? language : "";

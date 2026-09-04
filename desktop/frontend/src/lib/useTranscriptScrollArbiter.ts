@@ -46,6 +46,20 @@ const ANCHOR_RESTORE_BUDGET_MS = 1_000;
 const RECOVERY_MAX_RETRIES = 2;
 const RECOVERY_CORRECTION_TOLERANCE_PX = 1;
 const RECOVERY_STABLE_FRAMES = 2;
+
+export function canBeginDisplayPreferenceTransaction({
+  hasScroller,
+  nativeScrollbarDragging,
+  readerIntent,
+  selectionActive,
+}: {
+  hasScroller: boolean;
+  nativeScrollbarDragging: boolean;
+  readerIntent: boolean;
+  selectionActive: boolean;
+}): boolean {
+  return hasScroller && !nativeScrollbarDragging && !readerIntent && !selectionActive;
+}
 /** Single Virtuoso writer for tail-follow, jumps, selection, and recovery.
  * The reducer arbitrates selection > user > programmatic > recovery > tail. */
 export function useTranscriptScrollArbiter({
@@ -683,6 +697,27 @@ export function useTranscriptScrollArbiter({
     return true;
   }, [dispatch]);
 
+  const beginDisplayPreferenceTransaction = useCallback(() => {
+    const element = scrollRef.current;
+    // User-owned scrolling always wins over a display preference update.
+    if (!canBeginDisplayPreferenceTransaction({
+      hasScroller: Boolean(element),
+      nativeScrollbarDragging,
+      readerIntent: stateRef.current.readerIntent,
+      selectionActive: isTranscriptSelectionMode(modeRef.current),
+    })) {
+      return false;
+    }
+    if (modeRef.current === "manual") {
+      const anchor = captureTranscriptLayoutAnchor(element!, false);
+      if (anchor?.mode === "manual") {
+        anchorCompensationRef.current?.adoptReaderAnchor(anchor);
+        lastGoodAnchorRef.current = anchor;
+      }
+    }
+    return true;
+  }, [nativeScrollbarDragging]);
+
   const scrollToDataIndex = useCallback((dataIndex: number, behavior: "auto" | "smooth" = "auto") => {
     if (isTranscriptSelectionMode(modeRef.current)) return;
     dispatch({ type: "JUMP_TO_INDEX", index: dataIndex, behavior });
@@ -790,7 +825,7 @@ export function useTranscriptScrollArbiter({
     scrollToBottom, pinLiveTailBeforePaint, followGrowingTail, revalidateTail, scrollToDataIndex,
     beginQuestionJump: questionJumpOwnership.begin,
     finishQuestionJump: questionJumpOwnership.finish,
-    finishProgrammaticScroll, releaseTailFollow, beginUserResize, userResizeRevision,
+    finishProgrammaticScroll, releaseTailFollow, beginUserResize, beginDisplayPreferenceTransaction, userResizeRevision,
     atBottomStateChange, deliverScroll, onWheelIntent,
     onTouchStartIntent, onTouchMoveIntent, onTouchEndIntent,
     onKeyScrollIntent, onPointerDownIntent, onNestedScrollIntent,

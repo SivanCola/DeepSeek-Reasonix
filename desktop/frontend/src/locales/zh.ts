@@ -1876,6 +1876,14 @@ export const zh: Record<DictKey, string> = {
   "settings.desktopLayoutStyle.classic": "经典",
   "settings.desktopLayoutStyle.workbench": "工作台",
   "settings.desktopLayoutStyle.creation": "创作",
+  "settings.sessionExperience": "会话体验",
+  "settings.sessionExperienceHint": "选择任务运行时和完成后的工作过程展示方式。",
+  "settings.sessionExperience.standard": "标准",
+  "settings.sessionExperience.deep": "深入",
+  "settings.sessionExperience.standardHint": "运行时显示工作过程，完成后自动收起。",
+  "settings.sessionExperience.deepHint": "实时展示完整工作过程，完成后保持展开。",
+  // Legacy keys remain for older extensions and translation-shape compatibility;
+  // the settings UI no longer renders these independent controls.
   "settings.displayMode": "会话密度",
   "settings.displayModeHint": "调整消息和工作过程在界面中占用的空间。",
   "settings.displayMode.standard": "标准",
@@ -1887,7 +1895,7 @@ export const zh: Record<DictKey, string> = {
   "settings.processFold.auto": "自动收起",
   "settings.processFold.expanded": "保持展开",
   "settings.reasoningDisplay": "思考内容",
-  "settings.reasoningDisplayHint": "控制模型返回的思考内容如何展示。隐藏不影响工具，也不改变推理强度、费用或保存数据。",
+  "settings.reasoningDisplayHint": "控制模型返回的思考内容如何展示。",
   "settings.reasoningDisplay.hidden": "隐藏",
   "settings.reasoningDisplay.summary": "摘要",
   "settings.reasoningDisplay.auto": "实时跟随",
