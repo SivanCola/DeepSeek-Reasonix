@@ -229,7 +229,7 @@ export default function TranscriptWindow({
     const measurementBoundaryIndex = postViewportIndex == null
       ? undefined
       : resolveTranscriptMeasurementBoundary(postViewportIndex, logicalAnchorIndex);
-    const published = measurementLedger.commitStaged((key) => {
+    const published = measurementLedger.publishStaged((key) => {
       const index = coldIndexByKey.get(key);
       // Only a size after the whole painted viewport can publish without
       // changing geometry the reader already sees. Earlier sizes remain
@@ -240,12 +240,17 @@ export default function TranscriptWindow({
       // refinement from adding extra tail writes.
       return kernel.intent === "reader" && measurementBoundaryIndex != null && index != null && index >= measurementBoundaryIndex;
     });
-    if (published) {
-      // `measure()` invalidates TanStack exactly once. Its estimate callback
-      // reads the complete immutable ledger snapshot on the next render, so
-      // no partially-updated prefix tree can reach the native viewport. The
-      // published subset is anchor-safe and needs no corrective scroll write.
-      virtualizer.measure();
+    if (published.length > 0) {
+      // Feed only the atomically published suffix into TanStack's keyed size
+      // cache. `measure()` is intentionally forbidden here: it clears that
+      // cache and rebuilds the entire prefix, allowing previously committed
+      // off-screen measurements to reflow the current native viewport. These
+      // synchronous resize notifications complete in one browser task, so
+      // React can expose only the final prefix snapshot to paint.
+      for (const change of published) {
+        const index = coldIndexByKey.get(change.key);
+        if (index != null) virtualizer.resizeItem(index, change.size);
+      }
       return;
     }
     onGeometryChange();

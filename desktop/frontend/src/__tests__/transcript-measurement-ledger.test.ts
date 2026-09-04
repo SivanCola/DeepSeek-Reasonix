@@ -16,6 +16,11 @@ ok(resolveTranscriptMeasurementBoundary(undefined, undefined) == null, "missing 
 
 const ledger = new TranscriptMeasurementLedger();
 ok(!ledger.commit([]), "an empty measurement batch is a no-op");
+ledger.stage([{ key: "post-viewport", size: 144 }]);
+const published = ledger.publishStaged((key) => key === "post-viewport");
+ok(published.length === 1 && published[0]?.key === "post-viewport" && published[0]?.size === 144,
+  "publication returns the exact immutable suffix snapshot for the range adapter");
+ok(ledger.publishStaged().length === 0, "an already published snapshot is not replayed into TanStack");
 
 ok(ledger.commit([
   { key: "turn:1", size: 120 },
@@ -43,10 +48,10 @@ ok(ledger.stage([
   { key: "turn:before-anchor", size: 180 },
   { key: "turn:after-anchor", size: 220 },
 ]), "DOM measurements can be staged before publication");
-ok(ledger.commitStaged((key) => key === "turn:after-anchor"), "an anchor-safe subset publishes atomically");
+ok(ledger.publishStaged((key) => key === "turn:after-anchor").length === 1, "an anchor-safe subset publishes atomically");
 ok(ledger.sizeFor("turn:before-anchor", 64) === 64, "a measurement before the reader anchor remains deferred");
 ok(ledger.sizeFor("turn:after-anchor", 64) === 220, "a measurement after the reader anchor becomes authoritative");
-ok(ledger.commitStaged(), "an explicit safe boundary publishes the deferred prefix measurement");
+ok(ledger.publishStaged().length === 1, "an explicit safe boundary publishes the deferred prefix measurement");
 ok(ledger.sizeFor("turn:before-anchor", 64) === 180, "the deferred prefix survives window recycling until publication");
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -54,12 +54,13 @@ export class TranscriptMeasurementLedger {
     return changed;
   }
 
-  commitStaged(canPublish: (key: string) => boolean = () => true): boolean {
+  publishStaged(canPublish: (key: string) => boolean = () => true): readonly TranscriptMeasurementChange[] {
     const publishable: TranscriptMeasurementChange[] = [];
     for (const [key, size] of this.staged) {
       if (canPublish(key)) publishable.push({ key, size });
     }
-    return this.commit(publishable);
+    if (!this.commit(publishable)) return [];
+    return publishable;
   }
 
   retain(keys: ReadonlySet<string>): boolean {

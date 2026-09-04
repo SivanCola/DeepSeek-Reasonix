@@ -56,9 +56,11 @@ contracts when touching anything that can move the transcript viewport.
   including Transcript padding and any prefix. Earlier and visible sizes remain
   staged; only post-viewport overscan may publish. Tail intent does not refine
   invisible cold history; its exact geometry belongs to resident DOM.
-  Publish one immutable Reasonix snapshot and one TanStack `measure()`
-  invalidation. Never base correctness on an idle timeout, reintroduce per-item
-  `resizeItem`, TanStack-owned ResizeObserver publication, or platform-specific
+  Publish one immutable Reasonix snapshot, then transfer only that safe suffix
+  into TanStack's keyed size cache in the same browser task. Never call
+  TanStack `measure()` for a measurement publish: it clears the keyed cache and
+  rebuilds the protected prefix. Never base correctness on an idle timeout,
+  enable TanStack-owned ResizeObserver publication, or add platform-specific
   scroll compensation.
 - **Resident active tail**: the active turn and at least the two newest
   completed turns stay in ordinary DOM. A resident block may enter windowed

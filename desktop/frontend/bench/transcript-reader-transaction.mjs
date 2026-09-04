@@ -145,16 +145,23 @@ async function runIteration(page, transcript, label, iteration) {
     const items = [...element.querySelectorAll(".transcript__window-item")];
     const firstVisibleIndex = items.findIndex((item) => item.getBoundingClientRect().bottom > viewport.top);
     const earlier = firstVisibleIndex > 0 ? items[firstVisibleIndex - 1] : items[firstVisibleIndex];
+    const postViewport = items.find((item) => item.getBoundingClientRect().top >= viewport.bottom);
     const earlierBlock = earlier?.querySelector("[data-transcript-block-key]");
     const visibleBlock = items[firstVisibleIndex]?.querySelector("[data-transcript-block-key]");
-    if (!(earlierBlock instanceof HTMLElement) || !(visibleBlock instanceof HTMLElement)) return null;
+    const postViewportBlock = postViewport?.querySelector("[data-transcript-block-key]");
+    if (!(earlierBlock instanceof HTMLElement)
+      || !(visibleBlock instanceof HTMLElement)
+      || !(postViewportBlock instanceof HTMLElement)) return null;
     earlierBlock.style.paddingBottom = `${120 + iterationIndex * 3}px`;
     visibleBlock.style.paddingBottom = "24px";
+    postViewportBlock.style.paddingBottom = "32px";
     return {
       earlierKey: earlierBlock.dataset.transcriptBlockKey,
       earlierIndex: earlier?.dataset.index,
       visibleKey: visibleBlock.dataset.transcriptBlockKey,
       visibleIndex: items[firstVisibleIndex]?.dataset.index,
+      postViewportKey: postViewportBlock.dataset.transcriptBlockKey,
+      postViewportIndex: postViewport?.dataset.index,
     };
   }, iteration);
   await frames(page, 6);

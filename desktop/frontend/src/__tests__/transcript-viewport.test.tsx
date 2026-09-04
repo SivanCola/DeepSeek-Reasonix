@@ -81,10 +81,11 @@ ok(
     && windowSource.includes("domSafeIndex")
     && windowSource.includes("paintedSafeIndex == null || domSafeIndex == null")
     && windowSource.includes("index >= measurementBoundaryIndex")
-    && windowSource.includes("virtualizer.measure();"),
+    && windowSource.includes("measurementLedger.publishStaged(")
+    && windowSource.includes("virtualizer.resizeItem(index, change.size);"),
   "reader measurements publish only after both prefix and DOM place a block beyond the painted viewport",
 );
-ok(!windowSource.includes(".resizeItem("), "the window adapter cannot expose partially updated per-item prefix sizes");
+ok(!windowSource.includes("virtualizer.measure();"), "a safe suffix publish cannot invalidate and rebuild the protected prefix");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");
 ok(
   windowSource.includes("useSyncExternalStore(subscribe, getSnapshot, getSnapshot)")
