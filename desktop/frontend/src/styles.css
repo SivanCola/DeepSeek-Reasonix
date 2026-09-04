@@ -3622,7 +3622,7 @@ a[href] {
   content-visibility: visible;
   contain-intrinsic-size: none;
 }
-.transcript__jump-bottom {
+.transcript__jump-bottom:not([hidden]) {
   --wails-draggable: no-drag;
   position: absolute;
   left: 50%;

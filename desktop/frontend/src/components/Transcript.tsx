@@ -384,6 +384,11 @@ export function Transcript(props: TranscriptProps) {
     }
     return keys;
   }, [blocks, kernel.kernel.anchor, selectionSnapshot]);
+  const jumpBottomVisible = Boolean(
+    !kernel.isAtBottom
+      && kernel.scrollElement
+      && hasTranscriptScrollableRange(kernel.scrollElement),
+  );
 
   return (
     <InvocationMetadataContext.Provider value={invocationMetadata}>
@@ -449,7 +454,7 @@ export function Transcript(props: TranscriptProps) {
           <div className="transcript__scrollbar-thumb" style={{ top: creationScrollbar.thumbTop, height: creationScrollbar.thumbHeight } as CSSProperties} onPointerDown={handleCreationScrollbarThumbPointerDown} />
         </div>}
         {!empty && showQuestionNav && <Suspense fallback={null}><QuestionJumpBar loadedQuestions={questions} totalQuestions={totalQuestions} activeTurn={activeQuestion} onJump={handleJumpToQuestion} /></Suspense>}
-        {!empty && !kernel.isAtBottom && kernel.scrollElement && hasTranscriptScrollableRange(kernel.scrollElement) && <button type="button" className="transcript__jump-bottom" onClick={() => { selectionRetention.endStaleGesture(); kernel.scrollToBottom(); }} aria-label={t("transcript.jumpToBottom")} title={t("transcript.jumpToBottom")}><ArrowDown size={18} strokeWidth={2.2} aria-hidden="true" /></button>}
+        {!empty && <button type="button" className="transcript__jump-bottom" hidden={!jumpBottomVisible} onClick={() => { selectionRetention.endStaleGesture(); kernel.scrollToBottom(); }} aria-label={t("transcript.jumpToBottom")} title={t("transcript.jumpToBottom")}><ArrowDown size={18} strokeWidth={2.2} aria-hidden="true" /></button>}
         {pendingQuestion && <div className="transcript-navigation-overlay transcript-question-jump-overlay" data-question-jump-mask="true" data-question-jump-phase="loading" role="status" aria-live="polite"><span className="transcript-navigation-overlay__spinner" aria-hidden="true" /><span>{t("common.loading")}</span></div>}
         {FrontendDiagnosticsPanel && <Suspense fallback={null}><FrontendDiagnosticsPanel scrollElement={kernel.scrollElement} totalRows={allRows.length} /></Suspense>}
       </div>

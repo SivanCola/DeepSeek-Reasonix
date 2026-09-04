@@ -1,5 +1,5 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { TranscriptKernel } from "../lib/transcriptKernel";
 import { TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
@@ -10,6 +10,35 @@ const ANCHOR_MEASUREMENT_RADIUS = 4;
 // ahead of TanStack's next range calculation. The browser fixtures enforce the
 // corresponding 40-block upper bound.
 const NATIVE_SCROLL_RUNWAY_BLOCKS = 12;
+
+type NativeViewportSnapshot = {
+  scrollTop: number;
+  clientHeight: number;
+};
+
+function useNativeViewportSnapshot(element: HTMLElement | null): NativeViewportSnapshot {
+  const cachedRef = useRef<NativeViewportSnapshot>({ scrollTop: 0, clientHeight: 0 });
+  const getSnapshot = useCallback(() => {
+    const scrollTop = element?.scrollTop ?? 0;
+    const clientHeight = element?.clientHeight ?? 0;
+    const cached = cachedRef.current;
+    if (cached.scrollTop === scrollTop && cached.clientHeight === clientHeight) return cached;
+    cachedRef.current = { scrollTop, clientHeight };
+    return cachedRef.current;
+  }, [element]);
+  const subscribe = useCallback((notify: () => void) => {
+    if (!element) return () => {};
+    const handleChange = () => notify();
+    element.addEventListener("scroll", handleChange, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(handleChange);
+    observer?.observe(element);
+    return () => {
+      element.removeEventListener("scroll", handleChange);
+      observer?.disconnect();
+    };
+  }, [element]);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
 
 export default function TranscriptWindow({
   projection,
@@ -72,6 +101,10 @@ export default function TranscriptWindow({
   const measurementLedgerRef = useRef<TranscriptMeasurementLedger | null>(null);
   if (!measurementLedgerRef.current) measurementLedgerRef.current = new TranscriptMeasurementLedger();
   const measurementLedger = measurementLedgerRef.current;
+  // Native scrolling is an external store. React verifies this immutable
+  // snapshot immediately before commit, so a concurrent render calculated at
+  // an old compositor offset cannot replace the currently covering range.
+  const nativeViewport = useNativeViewportSnapshot(scrollElement);
   const scrollMargin = coldContainerRef.current?.offsetTop ?? 0;
   const virtualizer = useVirtualizer({
     count: split.cold.length,
@@ -107,8 +140,8 @@ export default function TranscriptWindow({
     retainedIndexes,
     previous: committedRangeRef.current,
     structureRevision,
-    scrollTop: scrollElement?.scrollTop ?? 0,
-    clientHeight: scrollElement?.clientHeight ?? 0,
+    scrollTop: nativeViewport.scrollTop,
+    clientHeight: nativeViewport.clientHeight,
     coldStart: scrollMargin,
     coldEnd: scrollMargin + totalSize,
     overscan: NATIVE_SCROLL_RUNWAY_BLOCKS,

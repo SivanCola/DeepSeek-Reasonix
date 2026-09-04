@@ -9,6 +9,9 @@ contracts when touching anything that can move the transcript viewport.
 - **Stable identity**: one complete turn is the projection, anchor, and
   virtualization unit. Block keys come from backend entry/user identity, never
   array position. Prepend and content patches must not rename mounted blocks.
+- **Stable viewport actions**: controls that can be activated while range or
+  geometry state changes keep the same DOM identity. Visibility is state on a
+  mounted action host; do not conditionally remount it across viewport commits.
 - **Generation fence**: session/surface replacement increments the kernel
   generation. Every delayed measurement, timer, animation-frame callback, and
   write request carries that generation; stale work performs zero writes.
@@ -29,7 +32,9 @@ contracts when touching anything that can move the transcript viewport.
   range when a candidate is stale; if a native jump invalidates both, rebuild
   once from the prefix-size ledger while preserving every protected block.
   Measurement-only notifications cannot replace the painted range while
-  native input owns an unchanged viewport.
+  native input owns an unchanged viewport. Native viewport geometry is an
+  external store: range renders must use its immutable snapshot so React
+  cannot commit a range calculated before a newer compositor scroll offset.
 - **Anchor-safe measurement commit**: DOM measurements enter a block-keyed
   staging ledger before they can change TanStack's prefix sizes. In reader
   intent, only the anchor block and blocks after it may publish; sizes before
@@ -52,6 +57,8 @@ contracts when touching anything that can move the transcript viewport.
 - **Deterministic clocks**: new scroll logic must go through the same
   injectable clock used by `TranscriptKernel` (`requestAnimationFrame`,
   `Date.now`, timer functions). No real sleeps or hidden retry clocks.
+- **No redundant physical writes**: a transaction whose requested offset has
+  already landed may commit as a no-op, but must not assign `scrollTop` again.
 - **Race tests are mandatory**: any scroll-behavior change ships with a
   deterministic event sequence in `frontend/src/__tests__/transcript-kernel.test.ts`
   and, when relevant, a viewport/projection case. Run `pnpm test:transcript`

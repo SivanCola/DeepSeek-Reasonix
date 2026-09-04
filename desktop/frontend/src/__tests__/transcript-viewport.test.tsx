@@ -1,6 +1,8 @@
 import { createTranscriptHarness } from "./transcript-dom-harness";
 import type { Item } from "../lib/useController";
 import { commitTranscriptWindowRange } from "../lib/transcriptWindowRange";
+import { TranscriptViewportWriter } from "../lib/transcriptViewportWriter";
+import { act } from "react";
 
 let passed = 0;
 let failed = 0;
@@ -73,6 +75,12 @@ ok(windowSource.includes("measurementLedger.stage(changes)"), "DOM measurements 
 ok(windowSource.includes("index >= anchorIndex") && windowSource.includes("virtualizer.measure();"), "reader measurements publish only when they cannot change the logical anchor prefix");
 ok(!windowSource.includes(".resizeItem("), "the window adapter cannot expose partially updated per-item prefix sizes");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");
+ok(
+  windowSource.includes("useSyncExternalStore(subscribe, getSnapshot, getSnapshot)")
+    && windowSource.includes("scrollTop: nativeViewport.scrollTop")
+    && windowSource.includes("clientHeight: nativeViewport.clientHeight"),
+  "range commits use a tear-free native viewport snapshot instead of mutable render-time geometry",
+);
 const reconstructed = commitTranscriptWindowRange({
   candidate: staleCandidate,
   measurements,
@@ -110,6 +118,31 @@ ok(largeRange.items.some((item) => item.start <= 720_000 && item.end >= 720_096)
 ok(largeRange.items.some((item) => item.index === 9_999), "10,000-turn reconstruction preserves protected block identity");
 const harness = await createTranscriptHarness({ viewportHeight: 800, rowHeight: 24 });
 try {
+  const writerTarget = document.createElement("div");
+  let writerTop = 400;
+  let physicalAssignments = 0;
+  Object.defineProperties(writerTarget, {
+    scrollTop: {
+      configurable: true,
+      get: () => writerTop,
+      set: (value: number) => { physicalAssignments += 1; writerTop = value; },
+    },
+    scrollHeight: { configurable: true, get: () => 1_000 },
+    clientHeight: { configurable: true, get: () => 600 },
+  });
+  const writer = new TranscriptViewportWriter();
+  writer.attach(writerTarget, 7);
+  const noOpWrite = writer.write({
+    session: "writer-no-op",
+    generation: 7,
+    transactionId: 1,
+    geometryRevision: 1,
+    owner: "tail-follow",
+    intent: "tail",
+    offset: Number.POSITIVE_INFINITY,
+  });
+  ok(noOpWrite.accepted && noOpWrite.changed === false && physicalAssignments === 0, "writer commits an already-landed tail transaction without a redundant DOM assignment");
+
   await harness.render(turns(100), { geometrySessionKey: "threshold-100" });
   ok(harness.container.querySelector('[data-transcript-render-mode="full"]') != null, "100 completed turns render in full-DOM mode");
   ok(harness.container.querySelectorAll("[data-transcript-block-key]").length === 100, "full-DOM mode mounts every complete turn block");
@@ -121,6 +154,29 @@ try {
   ok(Boolean(projection), "101 completed turns switch to the TanStack window adapter");
   ok(mounted <= 40, `800px viewport mounts at most 40 completed blocks (${mounted})`);
   ok(harness.container.querySelectorAll('[data-transcript-resident-tail="true"] [data-transcript-block-key]').length >= 2, "the two latest completed turns remain resident ordinary DOM");
+
+  const tailAction = harness.container.querySelector<HTMLButtonElement>(".transcript__jump-bottom");
+  ok(Boolean(tailAction), "the jump-to-bottom action keeps a stable DOM host while hidden at the tail");
+  const transcript = harness.scrollElement();
+  await act(async () => {
+    transcript.scrollTop = 0;
+    transcript.dispatchEvent(new Event("scroll"));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+  await harness.waitFor(() => tailAction?.hidden === false, "jump-to-bottom visibility after reader takeover");
+  ok(
+    harness.container.querySelector(".transcript__jump-bottom") === tailAction,
+    "reader takeover changes jump-to-bottom visibility without replacing its DOM identity",
+  );
+  await act(async () => {
+    tailAction?.click();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  });
+  await harness.waitFor(() => tailAction?.hidden === true, "jump-to-bottom visibility after tail restore");
+  ok(
+    transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 4,
+    "the identity-stable jump-to-bottom action restores native tail geometry through the kernel",
+  );
 
   const activeItems = [...turns(101), { kind: "user", id: "active-user", text: "active question", historyTurn: 102 } as Item];
   await harness.render(activeItems, { geometrySessionKey: "active", running: true, turnStartAt: Date.now() - 1_000 });

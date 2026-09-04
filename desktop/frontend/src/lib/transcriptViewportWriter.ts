@@ -30,8 +30,10 @@ export class TranscriptViewportWriter {
       ? Math.max(0, Math.min(maximum, request.offset))
       : maximum;
     const before = element.scrollTop;
-    element.scrollTop = accepted;
+    const noOp = Math.abs(before - accepted) <= 0.5;
+    if (!noOp) element.scrollTop = accepted;
     const landed = element.scrollTop;
+    const acceptedByNative = Math.abs(landed - accepted) <= 4;
     noteTranscriptScrollWrite({
       session: request.session,
       transaction: request.transactionId,
@@ -39,7 +41,7 @@ export class TranscriptViewportWriter {
       intent: request.intent,
       requestedOffset: request.offset,
       acceptedOffset: landed,
-      outcome: Math.abs(landed - accepted) <= 4 ? "accepted" : "native-clamp",
+      outcome: noOp ? "no-op" : acceptedByNative ? "accepted" : "native-clamp",
       kind: request.owner === "tail-follow" ? "pinTail" : "scrollTo",
       top: request.offset,
       scrollTop: landed,
@@ -51,7 +53,7 @@ export class TranscriptViewportWriter {
       geometryRevision: request.geometryRevision,
       transactionId: request.transactionId,
     });
-    return { accepted: Math.abs(landed - accepted) <= 4, offset: landed, changed: Math.abs(landed - before) > 0.5, reason: Math.abs(landed - accepted) <= 4 ? undefined : "native-clamp" };
+    return { accepted: acceptedByNative, offset: landed, changed: Math.abs(landed - before) > 0.5, reason: acceptedByNative ? undefined : "native-clamp" };
   };
 
   private reject(request: TranscriptWriteRequest, reason: string): TranscriptWriteResult {
