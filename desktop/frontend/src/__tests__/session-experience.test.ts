@@ -27,6 +27,8 @@ function check(value: boolean, message: string): void {
 
 console.log("\nsession experience");
 localStorage.clear();
+localStorage.setItem("reasonix-session-experience", "deep");
+check(getSessionExperience() === "standard", "startup ignores stale localStorage before the backend snapshot");
 hydrateSessionExperience("invalid");
 check(getSessionExperience() === "standard", "invalid startup values normalize to standard");
 check(resolveWorkProcessPresentation("standard").keepExpandedAfterCompletion === false, "standard collapses completed work");
@@ -36,6 +38,8 @@ check(resolveWorkProcessPresentation("deep").keepExpandedAfterCompletion === tru
 applySessionExperience("deep");
 check(getSessionExperience() === "deep", "apply persists deep");
 check(localStorage.getItem("reasonix-session-experience") === "deep", "canonical localStorage key stores deep");
+check(localStorage.getItem("reasonix-display-mode") === "standard", "compatibility density mirror stays standard");
+check(localStorage.getItem("reasonix-process-fold") === "expanded", "deep mirrors the old expanded fold value");
 
 // An authoritative startup snapshot must win over a stale local optimistic value.
 hydrateSessionExperience("standard");

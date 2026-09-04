@@ -32,6 +32,19 @@ func (c *Config) DesktopSessionExperience() string {
 	}
 }
 
+// DesktopDisplayMode keeps the old density snapshot coherent for one release.
+func (c *Config) DesktopDisplayMode() string {
+	if c != nil && strings.TrimSpace(c.Desktop.SessionExperience) != "" {
+		return "standard"
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Desktop.DisplayMode)) {
+	case "compact", "minimal":
+		return "compact"
+	default:
+		return "standard"
+	}
+}
+
 // SetDesktopSessionExperience persists the canonical desktop presentation
 // preference and keeps the deprecated fields coherent for older clients.
 func (c *Config) SetDesktopSessionExperience(mode string) error {

@@ -64,17 +64,24 @@ func (a *App) defaultSettingsView() SettingsView {
 // SetReasoningDisplayMode persists presentation only; no controller rebuild is needed.
 func (a *App) SetReasoningDisplayMode(mode string) error {
 	return a.applyConfigOnly(func(c *config.Config) error {
-		if err := c.SetDesktopReasoningDisplayMode(mode); err != nil {
-			return err
-		}
 		if mode == "expanded" {
-			return c.SetDesktopSessionExperience("deep")
+			return c.SetDesktopSessionExperience(string(config.SessionExperienceDeep))
 		}
-		return c.SetDesktopSessionExperience("standard")
+		return c.SetDesktopSessionExperience(string(config.SessionExperienceStandard))
 	})
 }
 
 // SetSessionExperience persists the canonical two-state desktop presentation.
 func (a *App) SetSessionExperience(mode string) error {
 	return a.applyConfigOnly(func(c *config.Config) error { return c.SetDesktopSessionExperience(mode) })
+}
+
+// SetDisplayMode preserves the legacy density setter for one release.
+func (a *App) SetDisplayMode(string) error {
+	return a.SetSessionExperience(string(config.SessionExperienceStandard))
+}
+
+// SetExpandThinking preserves the legacy reasoning boolean for one release.
+func (a *App) SetExpandThinking(bool) error {
+	return a.SetSessionExperience(string(config.SessionExperienceStandard))
 }

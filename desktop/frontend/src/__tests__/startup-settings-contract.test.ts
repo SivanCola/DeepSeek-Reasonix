@@ -62,8 +62,8 @@ ok(
   "startup failure preserves legacy reasoning-display migration precedence",
 );
 ok(
-  bridgeSource.includes('displayMode: "standard", reasoningDisplayMode: "auto", reasoningDisplayModeExplicit: false'),
-  "browser startup defaults match the classic standard/live-follow experience",
+  bridgeSource.includes('displayMode: "standard", sessionExperience: "standard", reasoningDisplayMode: "auto", reasoningDisplayModeExplicit: false'),
+  "browser startup defaults include the canonical standard session experience",
 );
 ok(
   !/const\s+reloadSidebarImConnections[\s\S]*?app\.Settings\(\)[\s\S]*?\}, \[t\]\);/.test(appSource),
@@ -152,29 +152,20 @@ ok(
 );
 ok(
   settingsSource.includes('settings.general.sectionConversation') &&
-    settingsSource.includes('settings.displayMode') &&
-    settingsSource.includes('["standard", "compact"]') &&
-    settingsSource.includes('settings.reasoningDisplay') &&
-    settingsSource.includes('["hidden", "summary", "auto", "expanded"]') &&
-    settingsSource.includes('settings.processFold') &&
-    settingsSource.includes('["auto", "expanded"]') &&
-    settingsSource.includes('setProcessFoldPreference(pref)') &&
-    settingsSource.includes('app.SetReasoningDisplayMode(mode)'),
-  "General settings presents transcript density, reasoning display, and completed-work folding in one conversation section",
+    settingsSource.includes('settings.sessionExperience') &&
+    settingsSource.includes('["standard", "deep"]') &&
+    settingsSource.includes('app.SetSessionExperience(mode)') &&
+    !settingsSource.includes('app.SetReasoningDisplayMode(mode)'),
+  "General settings presents one canonical standard/deep session experience control",
 );
 ok(
   [enLocaleSource, zhLocaleSource, zhTWLocaleSource].every((source) =>
-    source.includes('"settings.sessionContentDisplay"') &&
-    source.includes('"settings.sessionContentDisplayHint"') &&
-    source.includes('"settings.displayMode"') &&
-    source.includes('"settings.reasoningDisplay"') &&
-    source.includes('"settings.reasoningDisplay.hidden"') &&
-    source.includes('"settings.reasoningDisplay.summary"') &&
-    source.includes('"settings.reasoningDisplay.auto"') &&
-    source.includes('"settings.reasoningDisplay.expanded"') &&
-    source.includes('"settings.processFold"'),
+    source.includes('"settings.sessionExperience"') &&
+    source.includes('"settings.sessionExperienceHint"') &&
+    source.includes('"settings.sessionExperience.standard"') &&
+    source.includes('"settings.sessionExperience.deep"'),
   ),
-  "conversation-content display group labels are localized in every supported locale",
+  "session experience labels are localized in every supported locale",
 );
 ok(
   stylesSource.includes(".settings-page--general .settings-section") &&

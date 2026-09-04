@@ -1636,20 +1636,20 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
     // returns a different snapshot.
     applySessionExperience(authoritative);
     hydrateReasoningDisplayMode(authoritative === "deep" ? "expanded" : "auto", authoritative === "deep");
-  }, [s.sessionExperience]);
+  // Depend on the authoritative snapshot identity as well as its value: a
+  // failed save can reload the same backend value that was present before the
+  // optimistic click, and that reload must still repair local presentation.
+  }, [s]);
   const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
   const saveSessionExperience = useCallback(async (mode: SessionExperience) => {
-    const previous = sessionExperience;
     setSessionExperience(mode);
     applySessionExperience(mode);
     hydrateReasoningDisplayMode(mode === "deep" ? "expanded" : "auto", mode === "deep");
-    const ok = await apply(() => app.SetSessionExperience(mode));
-    if (!ok) {
-      setSessionExperience(previous);
-      applySessionExperience(previous);
-      hydrateReasoningDisplayMode(previous === "deep" ? "expanded" : "auto", previous === "deep");
-    }
-  }, [apply, sessionExperience]);
+    // apply always reloads Settings on both success and failure. The effect
+    // above reconciles this optimistic presentation to that authoritative
+    // snapshot; never guess a rollback from the pre-save frontend value.
+    await apply(() => app.SetSessionExperience(mode));
+  }, [apply]);
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const desktopCurrency = normalizeDesktopCurrency(s.desktopCurrency);
   const desktopLayoutStyle = normalizeDesktopLayoutStyle(s.desktopLayoutStyle);
@@ -1736,7 +1736,8 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
                 key={mode}
                 type="button"
                 className={`set-seg__btn${sessionExperience === mode ? " set-seg__btn--on" : ""}`}
-                aria-pressed={sessionExperience === mode}
+                role="radio"
+                aria-checked={sessionExperience === mode}
                 disabled={busy}
                 onClick={() => void saveSessionExperience(mode)}
               >

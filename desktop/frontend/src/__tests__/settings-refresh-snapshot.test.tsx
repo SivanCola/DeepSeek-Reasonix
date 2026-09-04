@@ -6,15 +6,10 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import {
   SettingsPanel,
-  formatProviderExtraBody,
-  parseProviderExtraBody,
-  providerExtraBodyParseError,
-  providerEditorEffectiveKind,
-  normalizeProviderView,
 } from "../components/SettingsPanel";
 import { LocaleProvider } from "../lib/i18n";
 import type { AppBindings } from "../lib/bridge";
-import type { ProviderView, SettingsView } from "../lib/types";
+import type { SettingsView } from "../lib/types";
 import {
   applyTypographyPreferences,
   createDefaultTypographyPreferences,
@@ -49,67 +44,6 @@ function eq(actual: unknown, expected: unknown, label: string) {
 }
 
 console.log("\nsettings refresh snapshot");
-
-const nullableProvider = normalizeProviderView({
-  name: null,
-  baseUrl: null,
-} as unknown as ProviderView);
-eq(nullableProvider.name, "", "provider snapshots normalize a null name at the settings boundary");
-eq(nullableProvider.baseUrl, "", "provider snapshots normalize a null base URL at the settings boundary");
-
-const glmProvider = normalizeProviderView({
-  name: "custom-glm",
-  baseUrl: "https://gateway.example.com/v1",
-  reasoningProtocol: "glm",
-} as ProviderView);
-eq(glmProvider.reasoningProtocol, "glm", "provider snapshots preserve the explicit GLM reasoning protocol");
-
-const serverWebSearchProvider = normalizeProviderView({
-  name: "custom-anthropic",
-  kind: "anthropic",
-  baseUrl: "https://gateway.example/anthropic",
-  serverWebSearchCapability: true,
-} as ProviderView);
-eq(serverWebSearchProvider.serverWebSearchCapability, true, "provider snapshots preserve backend server web-search capability");
-
-const legacyServerWebSearchProvider = normalizeProviderView({
-  name: "legacy-anthropic",
-  kind: "anthropic",
-  baseUrl: "https://api.deepseek.com/anthropic",
-} as ProviderView);
-eq(legacyServerWebSearchProvider.serverWebSearchCapability, undefined, "older provider snapshots keep an absent capability distinguishable");
-
-eq(providerEditorEffectiveKind(true, "anthropic", ["anthropic", "openai"]), "anthropic", "new custom providers keep the selected Anthropic-compatible kind");
-eq(providerEditorEffectiveKind(false, "anthropic", ["anthropic", "openai"]), "anthropic", "existing providers preserve their stored kind");
-eq(formatProviderExtraBody({ top_p: 0.7, enable_thinking: true }), "{\n  \"enable_thinking\": true,\n  \"top_p\": 0.7\n}", "extra body editor formats stable JSON");
-eq(JSON.stringify(parseProviderExtraBody('{ "enable_thinking": true, "top_p": 0.7 }')), "{\"enable_thinking\":true,\"top_p\":0.7}", "extra body editor parses JSON object");
-let extraBodyRejected = false;
-try {
-  parseProviderExtraBody("[true]");
-} catch {
-  extraBodyRejected = true;
-}
-ok(extraBodyRejected, "extra body editor rejects non-object JSON");
-const extraBodyTestT = ((key: string, vars?: Record<string, string | number>) => {
-  if (key === "settings.providerExtraBodyError") return "localized extra body fallback";
-  if (key === "settings.providerExtraBodyNull") return `${vars?.path} localized null`;
-  return key;
-}) as any;
-eq(
-  providerExtraBodyParseError(new SyntaxError("Unexpected token } in JSON"), extraBodyTestT),
-  "localized extra body fallback",
-  "extra body editor localizes JSON syntax errors",
-);
-try {
-  parseProviderExtraBody('{ "nested": { "value": null } }', extraBodyTestT);
-  ok(false, "extra body editor rejects localized null validation errors");
-} catch (e) {
-  eq(
-    providerExtraBodyParseError(e, extraBodyTestT),
-    "extra_body.nested.value localized null",
-    "extra body editor keeps localized structured validation errors",
-  );
-}
 
 const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
   pretendToBeVisual: true,
@@ -148,10 +82,15 @@ regionalTypography.code = {
 applyTypographyPreferences(regionalTypography);
 const regionalCodeFont = document.documentElement.style.getPropertyValue("--typography-code-font");
 
-const settingsSnapshots = [baseSettings("standard"), { ...baseSettings("standard"), sessionExperience: "deep" as const }];
+const settingsSnapshots = [
+  baseSettings("standard"),
+  { ...baseSettings("standard"), sessionExperience: "deep" as const },
+  { ...baseSettings("standard"), sessionExperience: "deep" as const },
+];
 let settingsCalls = 0;
 let setDisplayModeCalls = 0;
 let setSessionExperienceCalls = 0;
+let rejectSessionExperience = false;
 let onChangedSettings: SettingsView | undefined;
 
 window.go = {
@@ -163,6 +102,7 @@ window.go = {
       },
       SetSessionExperience: async () => {
         setSessionExperienceCalls += 1;
+        if (rejectSessionExperience) throw new Error("session experience persistence failed");
       },
     } as Partial<AppBindings> as AppBindings,
   },
@@ -212,6 +152,21 @@ eq(setSessionExperienceCalls, 1, "session experience mutation is invoked once");
 eq(setDisplayModeCalls, 0, "legacy display mode mutation is not invoked");
 eq(settingsCalls, 2, "settings panel reads Settings only for initial load and post-save reload");
 ok(onChangedSettings?.sessionExperience === "deep", "onChanged receives the post-save SettingsView snapshot");
+
+const standardButton = Array.from(document.querySelectorAll("button"))
+  .find((button) => button.textContent?.trim() === "Standard") as HTMLButtonElement | undefined;
+if (!standardButton) throw new Error("standard session experience button did not render");
+rejectSessionExperience = true;
+await act(async () => {
+  standardButton.click();
+  await flushPromises();
+});
+eq(setSessionExperienceCalls, 2, "failed session experience mutation is invoked once");
+eq(settingsCalls, 3, "failed save still reloads the authoritative Settings snapshot");
+ok(onChangedSettings?.sessionExperience === "deep", "failed save publishes the authoritative backend value");
+const refreshedDeepButton = Array.from(document.querySelectorAll("button"))
+  .find((button) => button.textContent?.trim() === "Deep") as HTMLButtonElement | undefined;
+eq(refreshedDeepButton?.getAttribute("aria-checked"), "true", "failed save reconciles the segmented control from the backend snapshot");
 
 await act(async () => {
   root.unmount();

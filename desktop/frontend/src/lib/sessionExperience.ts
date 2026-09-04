@@ -38,10 +38,20 @@ function emitCompatibilitySignals(next: SessionExperience): void {
   }
 }
 
+function writeCompatibilityMirrors(next: SessionExperience): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(SESSION_EXPERIENCE_KEY, next);
+  localStorage.setItem("reasonix-display-mode", "standard");
+  localStorage.setItem("reasonix-process-fold", next === "deep" ? "expanded" : "auto");
+  // The oldest boolean summary key cannot represent Deep. Let the mirrored
+  // backend reasoning field win instead of reviving a contradictory value.
+  localStorage.removeItem("reasonix-reasoning-summary");
+}
+
 export function getSessionExperience(): SessionExperience {
-  if (!hydrated && typeof localStorage !== "undefined") {
-    return normalize(localStorage.getItem(SESSION_EXPERIENCE_KEY));
-  }
+  // The backend snapshot is authoritative. Before it arrives, use the safe
+  // default instead of reviving a stale value written by an older frontend.
+  if (!hydrated) return "standard";
   return current;
 }
 
@@ -49,7 +59,7 @@ export function hydrateSessionExperience(value: unknown): void {
   const next = normalize(value);
   hydrated = true;
   current = next;
-  if (typeof localStorage !== "undefined") localStorage.setItem(SESSION_EXPERIENCE_KEY, next);
+  writeCompatibilityMirrors(next);
   emit();
   emitCompatibilitySignals(next);
 }
@@ -57,12 +67,7 @@ export function hydrateSessionExperience(value: unknown): void {
 export function applySessionExperience(value: SessionExperience): void {
   const next = normalize(value);
   hydrated = true;
-  if (typeof localStorage !== "undefined") localStorage.setItem(SESSION_EXPERIENCE_KEY, next);
-  // Keep the old fold listener alive while transcript consumers migrate to
-  // useWorkProcessPresentation. The old key is a compatibility signal only.
-  if (typeof localStorage !== "undefined") {
-    localStorage.setItem("reasonix-process-fold", next === "deep" ? "expanded" : "auto");
-  }
+  writeCompatibilityMirrors(next);
   if (next === current) {
     emitCompatibilitySignals(next);
     return;
