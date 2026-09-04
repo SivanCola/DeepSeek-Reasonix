@@ -1,6 +1,6 @@
 import { createTranscriptHarness } from "./transcript-dom-harness";
 import type { Item } from "../lib/useController";
-import { commitTranscriptWindowRange } from "../lib/transcriptWindowRange";
+import { commitTranscriptWindowRange, extractTranscriptWindowIndexes } from "../lib/transcriptWindowRange";
 import { TranscriptViewportWriter } from "../lib/transcriptViewportWriter";
 import { act } from "react";
 
@@ -38,7 +38,8 @@ const retained = commitTranscriptWindowRange({
   clientHeight: 600,
   scrollMargin: 0,
   totalSize: 20_000,
-  overscan: 2,
+  maxItems: 8,
+  direction: "forward",
   gestureActive: true,
 });
 ok(retained.items === previousRange.items, "a stale late range cannot replace native viewport coverage");
@@ -53,7 +54,8 @@ const measurementOnly = commitTranscriptWindowRange({
   clientHeight: 600,
   scrollMargin: 0,
   totalSize: 20_120,
-  overscan: 2,
+  maxItems: 8,
+  direction: "forward",
   gestureActive: true,
 });
 ok(measurementOnly.items === previousRange.items, "a measurement-only range commit stays frozen during native ownership");
@@ -68,7 +70,8 @@ const released = commitTranscriptWindowRange({
   clientHeight: 600,
   scrollMargin: 0,
   totalSize: 20_120,
-  overscan: 2,
+  maxItems: 8,
+  direction: "forward",
   gestureActive: false,
 });
 ok(released.items !== previousRange.items, "gesture release commits the latest covering measurements");
@@ -88,6 +91,12 @@ ok(
 );
 ok(!windowSource.includes("virtualizer.measure();"), "a safe suffix publish cannot invalidate and rebuild the protected prefix");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");
+const forwardIndexes = extractTranscriptWindowIndexes({ startIndex: 100, endIndex: 104, count: 1_000 }, new Set(), 36, "forward");
+ok(forwardIndexes.length === 36 && forwardIndexes[0] === 96 && forwardIndexes.at(-1) === 131,
+  "forward scrolling spends the bounded mount budget on compositor runway while retaining a reverse cushion");
+const backwardIndexes = extractTranscriptWindowIndexes({ startIndex: 100, endIndex: 104, count: 1_000 }, new Set(), 36, "backward");
+ok(backwardIndexes.length === 36 && backwardIndexes[0] === 73 && backwardIndexes.at(-1) === 108,
+  "backward scrolling mirrors the bounded compositor runway");
 ok(
   windowSource.includes("useSyncExternalStore(subscribe, getSnapshot, getSnapshot)")
     && windowSource.includes("scrollTop: nativeViewport.scrollTop")
@@ -109,7 +118,8 @@ const reconstructed = commitTranscriptWindowRange({
   clientHeight: 600,
   scrollMargin: 0,
   totalSize: 20_000,
-  overscan: 2,
+  maxItems: 8,
+  direction: "forward",
   gestureActive: true,
 });
 ok(reconstructed.source === "reconstructed", "an uncovered native jump reconstructs from the prefix-size ledger");
@@ -127,7 +137,8 @@ const largeRange = commitTranscriptWindowRange({
   clientHeight: 800,
   scrollMargin: 0,
   totalSize: 960_000,
-  overscan: 12,
+  maxItems: 38,
+  direction: "forward",
   gestureActive: true,
 });
 const rangeElapsedMs = performance.now() - rangeStartedAt;

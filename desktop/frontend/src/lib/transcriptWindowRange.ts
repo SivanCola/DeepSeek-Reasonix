@@ -5,6 +5,53 @@ export type TranscriptWindowItem = {
 };
 
 export type TranscriptWindowRangeSource = "candidate" | "retained" | "reconstructed";
+export type TranscriptWindowDirection = "forward" | "backward" | null;
+
+export function extractTranscriptWindowIndexes(
+  range: { startIndex: number; endIndex: number; count: number },
+  retainedIndexes: ReadonlySet<number>,
+  maxItems: number,
+  direction: TranscriptWindowDirection,
+): number[] {
+  const indexes = new Set<number>();
+  for (let index = range.startIndex; index <= range.endIndex; index += 1) indexes.add(index);
+  retainedIndexes.forEach((index) => {
+    if (index >= 0 && index < range.count) indexes.add(index);
+  });
+  const limit = Math.max(maxItems, indexes.size);
+  const addBefore = (count = Number.POSITIVE_INFINITY) => {
+    let added = 0;
+    for (let index = range.startIndex - 1; index >= 0 && indexes.size < limit && added < count; index -= 1) {
+      const size = indexes.size;
+      indexes.add(index);
+      if (indexes.size > size) added += 1;
+    }
+  };
+  const addAfter = (count = Number.POSITIVE_INFINITY) => {
+    let added = 0;
+    for (let index = range.endIndex + 1; index < range.count && indexes.size < limit && added < count; index += 1) {
+      const size = indexes.size;
+      indexes.add(index);
+      if (indexes.size > size) added += 1;
+    }
+  };
+  const reverseRunway = 4;
+  if (direction === "forward") {
+    addBefore(reverseRunway);
+    addAfter();
+    addBefore();
+  } else if (direction === "backward") {
+    addAfter(reverseRunway);
+    addBefore();
+    addAfter();
+  } else {
+    for (let offset = 1; indexes.size < limit && (range.startIndex - offset >= 0 || range.endIndex + offset < range.count); offset += 1) {
+      if (range.startIndex - offset >= 0) indexes.add(range.startIndex - offset);
+      if (indexes.size < limit && range.endIndex + offset < range.count) indexes.add(range.endIndex + offset);
+    }
+  }
+  return Array.from(indexes).sort((left, right) => left - right);
+}
 
 export type TranscriptWindowRange<T extends TranscriptWindowItem> = {
   structureRevision: string;
@@ -42,7 +89,8 @@ function reconstructRange<T extends TranscriptWindowItem>(
   clientHeight: number,
   coldStart: number,
   coldEnd: number,
-  overscan: number,
+  maxItems: number,
+  direction: TranscriptWindowDirection,
 ): readonly T[] {
   const start = Math.max(scrollTop, coldStart);
   const end = Math.min(scrollTop + clientHeight, coldEnd);
@@ -51,13 +99,7 @@ function reconstructRange<T extends TranscriptWindowItem>(
   if (first < 0) return [];
   let last = first;
   while (last + 1 < measurements.length && measurements[last + 1].start < end) last += 1;
-  const indexes = new Set<number>();
-  for (let index = Math.max(0, first - overscan); index <= Math.min(measurements.length - 1, last + overscan); index += 1) {
-    indexes.add(index);
-  }
-  retainedIndexes.forEach((index) => indexes.add(index));
-  return Array.from(indexes)
-    .sort((left, right) => left - right)
+  return extractTranscriptWindowIndexes({ startIndex: first, endIndex: last, count: measurements.length }, retainedIndexes, maxItems, direction)
     .map((index) => measurements[index])
     .filter((item): item is T => Boolean(item));
 }
@@ -72,7 +114,8 @@ export function commitTranscriptWindowRange<T extends TranscriptWindowItem>({
   clientHeight,
   scrollMargin,
   totalSize,
-  overscan,
+  maxItems,
+  direction,
   gestureActive,
 }: {
   candidate: readonly T[];
@@ -84,7 +127,8 @@ export function commitTranscriptWindowRange<T extends TranscriptWindowItem>({
   clientHeight: number;
   scrollMargin: number;
   totalSize: number;
-  overscan: number;
+  maxItems: number;
+  direction: TranscriptWindowDirection;
   gestureActive: boolean;
 }): TranscriptWindowRange<T> {
   const coldStart = scrollMargin;
@@ -119,7 +163,7 @@ export function commitTranscriptWindowRange<T extends TranscriptWindowItem>({
   // painted range. Rebuild synchronously from TanStack's prefix-size ledger so
   // the adapter never commits an uncovered viewport while waiting for its next
   // asynchronous range notification.
-  const reconstructed = reconstructRange(measurements, retainedIndexes, scrollTop, clientHeight, coldStart, coldEnd, overscan);
+  const reconstructed = reconstructRange(measurements, retainedIndexes, scrollTop, clientHeight, coldStart, coldEnd, maxItems, direction);
   if (coversColdViewport(reconstructed, scrollTop, clientHeight, coldStart, coldEnd)) {
     return { structureRevision, scrollTop, scrollMargin, totalSize, items: reconstructed, source: "reconstructed" };
   }

@@ -1,29 +1,31 @@
-import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { TranscriptKernel } from "../lib/transcriptKernel";
 import { canPublishTranscriptMeasurement, resolveTranscriptMeasurementBoundary, TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
-import { commitTranscriptWindowRange, type TranscriptWindowRange } from "../lib/transcriptWindowRange";
+import { commitTranscriptWindowRange, extractTranscriptWindowIndexes, type TranscriptWindowDirection, type TranscriptWindowRange } from "../lib/transcriptWindowRange";
 
 const ANCHOR_MEASUREMENT_RADIUS = 4;
 // Keep enough mounted runway for native engines whose scroll event can arrive
 // ahead of TanStack's next range calculation. The browser fixtures enforce the
 // corresponding 40-block upper bound.
-const NATIVE_SCROLL_RUNWAY_BLOCKS = 12;
+const MAX_COLD_WINDOW_BLOCKS = 36;
 
 type NativeViewportSnapshot = {
   scrollTop: number;
   clientHeight: number;
+  direction: TranscriptWindowDirection;
 };
 
 function useNativeViewportSnapshot(element: HTMLElement | null): NativeViewportSnapshot {
-  const cachedRef = useRef<NativeViewportSnapshot>({ scrollTop: 0, clientHeight: 0 });
+  const cachedRef = useRef<NativeViewportSnapshot>({ scrollTop: 0, clientHeight: 0, direction: null });
   const getSnapshot = useCallback(() => {
     const scrollTop = element?.scrollTop ?? 0;
     const clientHeight = element?.clientHeight ?? 0;
     const cached = cachedRef.current;
     if (cached.scrollTop === scrollTop && cached.clientHeight === clientHeight) return cached;
-    cachedRef.current = { scrollTop, clientHeight };
+    const direction = scrollTop > cached.scrollTop ? "forward" : scrollTop < cached.scrollTop ? "backward" : cached.direction;
+    cachedRef.current = { scrollTop, clientHeight, direction };
     return cachedRef.current;
   }, [element]);
   const subscribe = useCallback((notify: () => void) => {
@@ -117,16 +119,12 @@ export default function TranscriptWindow({
       return measurementLedger.sizeFor(block.key, estimateBlock(block));
     },
     getItemKey: (index) => split.cold[index].key,
-    overscan: NATIVE_SCROLL_RUNWAY_BLOCKS,
+    overscan: 0,
     // The window adapter owns the DOM-to-ledger commit below. TanStack still
     // observes stable item identities, but cannot publish ResizeObserver
     // measurements independently of the kernel's native-gesture boundary.
     useCachedMeasurements: true,
-    rangeExtractor: (range) => {
-      const indexes = new Set(defaultRangeExtractor(range));
-      retainedIndexes.forEach((index) => indexes.add(index));
-      return Array.from(indexes).sort((left, right) => left - right);
-    },
+    rangeExtractor: (range) => extractTranscriptWindowIndexes(range, retainedIndexes, MAX_COLD_WINDOW_BLOCKS, nativeViewport.direction),
     scrollMargin,
     scrollToFn: () => {},
   });
@@ -147,7 +145,8 @@ export default function TranscriptWindow({
     clientHeight: nativeViewport.clientHeight,
     scrollMargin,
     totalSize,
-    overscan: NATIVE_SCROLL_RUNWAY_BLOCKS,
+    maxItems: MAX_COLD_WINDOW_BLOCKS,
+    direction: nativeViewport.direction,
     gestureActive: kernel.userGestureActive,
   });
   const virtualItems = committedRange.items;

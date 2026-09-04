@@ -38,6 +38,10 @@ contracts when touching anything that can move the transcript viewport.
   and scroll margin are one atomic value and must never come from different
   measurement generations. If a native jump invalidates both, rebuild once
   from the prefix-size ledger while preserving every protected block.
+  Spend the bounded mount budget directionally: keep a reverse cushion, then
+  allocate the remaining runway ahead of current native motion so asynchronous
+  WebView scrolling cannot outrun the mounted range. Never exceed the completed
+  block mount cap to hide coverage races.
   Measurement-only notifications cannot replace the painted range while
   native input owns an unchanged viewport. Native viewport geometry is an
   external store: range renders must use its immutable snapshot so React
