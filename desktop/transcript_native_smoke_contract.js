@@ -804,7 +804,16 @@
     return result;
   };
 
-  window.__reasonixNativeTranscriptSmoke = { start, finish, finishMicro, finishComposer };
+  const reportTail = () => {
+    const element = state.transcript;
+    post({
+      type: "tail-status",
+      distance: element instanceof HTMLElement ? tailDistance(element) : Number.MAX_SAFE_INTEGER,
+      mode: element?.dataset.scrollMode ?? "missing",
+    });
+  };
+
+  window.__reasonixNativeTranscriptSmoke = { start, finish, finishMicro, finishComposer, reportTail };
   start().catch((error) => {
     const message = String(error?.message ?? error);
     post({ type: "error", message: `${message} (${state.phase})`, phase: state.phase });
