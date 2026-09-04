@@ -151,7 +151,7 @@ export default function TranscriptWindow({
     gestureActive: kernel.userGestureActive,
   });
   const virtualItems = committedRange.items;
-  const paintedAnchorIndex = virtualItems.find((item) => item.end > nativeViewport.scrollTop + 0.5)?.index;
+  const paintedSafeIndex = virtualItems.find((item) => item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight - 0.5)?.index;
   const logicalAnchorIndex = kernel.anchor.kind === "block"
     ? coldIndexByKey.get(kernel.anchor.blockKey)
     : undefined;
@@ -205,37 +205,39 @@ export default function TranscriptWindow({
   useLayoutEffect(() => {
     const container = coldContainerRef.current;
     const changes: Array<{ key: string; size: number }> = [];
-    const viewportTop = scrollElement?.getBoundingClientRect().top;
-    let domAnchorIndex: number | undefined;
+    const viewportBottom = scrollElement?.getBoundingClientRect().bottom;
+    let domSafeIndex: number | undefined;
     if (container) {
       for (const item of virtualItems) {
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
         const rect = element.getBoundingClientRect();
-        if (domAnchorIndex == null && viewportTop != null && rect.bottom > viewportTop + 0.5) domAnchorIndex = item.index;
+        if (domSafeIndex == null && viewportBottom != null && rect.top >= viewportBottom - 0.5) domSafeIndex = item.index;
         const size = Math.max(64, rect.height || element.offsetHeight);
         if (Math.abs(size - item.size) > 0.5) changes.push({ key: String(item.key), size });
       }
     }
     measurementLedger.stage(changes);
-    // Each source can lag in a different direction: native listeners can
-    // leave the logical anchor behind, estimates can end before the mounted
-    // DOM, and lazy growth can make an earlier DOM block intrude into view.
-    // The latest identity is the only boundary safe against all three.
-    const measurementBoundaryIndex = resolveTranscriptMeasurementBoundary(
-      paintedAnchorIndex,
-      logicalAnchorIndex,
-      domAnchorIndex,
-    );
+    // Freeze every block in the reader's painted viewport, not only its first
+    // anchor. Prefix estimates and mounted DOM can disagree in either
+    // direction, so both must identify a post-viewport block before any
+    // measurement may publish. The logical anchor can only make that boundary
+    // more conservative when native listeners lag behind the compositor.
+    const postViewportIndex = paintedSafeIndex == null || domSafeIndex == null
+      ? undefined
+      : Math.max(paintedSafeIndex, domSafeIndex);
+    const measurementBoundaryIndex = postViewportIndex == null
+      ? undefined
+      : resolveTranscriptMeasurementBoundary(postViewportIndex, logicalAnchorIndex);
     const published = measurementLedger.commitStaged((key) => {
       const index = coldIndexByKey.get(key);
-      // A size at or after the logical reader anchor cannot change the
-      // anchor's prefix position. Earlier sizes remain staged until the
-      // reader reaches them. Tail intent has no cold-history anchor and does
-      // not need invisible prefix refinement; its native geometry comes from
-      // the exact resident tail. This makes publication independent of
-      // platform wheel-event timing and prevents cold refinement from adding
-      // extra tail writes.
+      // Only a size after the whole painted viewport can publish without
+      // changing geometry the reader already sees. Earlier sizes remain
+      // staged until the reader passes them. Tail intent has no cold-history
+      // boundary and does not need invisible prefix refinement; its native
+      // geometry comes from the exact resident tail. This makes publication
+      // independent of platform wheel-event timing and prevents cold
+      // refinement from adding extra tail writes.
       return kernel.intent === "reader" && measurementBoundaryIndex != null && index != null && index >= measurementBoundaryIndex;
     });
     if (published) {
@@ -247,7 +249,7 @@ export default function TranscriptWindow({
       return;
     }
     onGeometryChange();
-  }, [coldIndexByKey, kernel.intent, logicalAnchorIndex, measurementLedger, onGeometryChange, paintedAnchorIndex, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, kernel.intent, logicalAnchorIndex, measurementLedger, onGeometryChange, paintedSafeIndex, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;

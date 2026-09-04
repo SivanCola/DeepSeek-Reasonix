@@ -80,6 +80,10 @@ async function anchorSnapshot(page) {
       itemTop: item instanceof HTMLElement ? item.style.top : null,
       scrollTop: element.scrollTop,
       visible: visible.length,
+      visibleBlocks: visible.map((block) => ({
+        key: block.getAttribute("data-transcript-block-key"),
+        top: block.getBoundingClientRect().top - viewport.top,
+      })),
       intent: element.dataset.transcriptIntent,
       distance: element.scrollHeight - element.scrollTop - element.clientHeight,
       mounted: Number(projection?.getAttribute("data-transcript-mounted-blocks")),
@@ -141,10 +145,17 @@ async function runIteration(page, transcript, label, iteration) {
     const items = [...element.querySelectorAll(".transcript__window-item")];
     const firstVisibleIndex = items.findIndex((item) => item.getBoundingClientRect().bottom > viewport.top);
     const earlier = firstVisibleIndex > 0 ? items[firstVisibleIndex - 1] : items[firstVisibleIndex];
-    const block = earlier?.querySelector("[data-transcript-block-key]");
-    if (!(block instanceof HTMLElement)) return null;
-    block.style.paddingBottom = `${120 + iterationIndex * 3}px`;
-    return { key: block.dataset.transcriptBlockKey, index: earlier?.dataset.index };
+    const earlierBlock = earlier?.querySelector("[data-transcript-block-key]");
+    const visibleBlock = items[firstVisibleIndex]?.querySelector("[data-transcript-block-key]");
+    if (!(earlierBlock instanceof HTMLElement) || !(visibleBlock instanceof HTMLElement)) return null;
+    earlierBlock.style.paddingBottom = `${120 + iterationIndex * 3}px`;
+    visibleBlock.style.paddingBottom = "24px";
+    return {
+      earlierKey: earlierBlock.dataset.transcriptBlockKey,
+      earlierIndex: earlier?.dataset.index,
+      visibleKey: visibleBlock.dataset.transcriptBlockKey,
+      visibleIndex: items[firstVisibleIndex]?.dataset.index,
+    };
   }, iteration);
   await frames(page, 6);
   const held = await anchorSnapshot(page);
@@ -182,6 +193,7 @@ async function runIteration(page, transcript, label, iteration) {
       ? block.getBoundingClientRect().top - element.getBoundingClientRect().top
       : null;
     const projection = element?.querySelector(".transcript__projection");
+    const viewport = element?.getBoundingClientRect();
     window.__readerProbe = undefined;
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
     return {
@@ -191,6 +203,17 @@ async function runIteration(page, transcript, label, iteration) {
       mounted: Number(projection?.getAttribute("data-transcript-mounted-blocks")),
       blankFrames: probe?.blankFrames ?? -1,
       heldAccepted: probe?.heldAccepted ?? [],
+      visibleBlocks: element instanceof HTMLElement && viewport
+        ? [...element.querySelectorAll("[data-transcript-block-key]")]
+            .filter((candidate) => {
+              const rect = candidate.getBoundingClientRect();
+              return rect.bottom > viewport.top && rect.top < viewport.bottom;
+            })
+            .map((candidate) => ({
+              key: candidate.getAttribute("data-transcript-block-key"),
+              top: candidate.getBoundingClientRect().top - viewport.top,
+            }))
+        : [],
     };
   }, before.key);
   assert(result.heldAccepted.length === 0,
@@ -198,6 +221,12 @@ async function runIteration(page, transcript, label, iteration) {
   assert(result.blankFrames === 0, `${label} ${iteration + 1}/${iterations}: geometry churn produces zero blank frames`);
   assert(heldOriginal?.top != null && Math.abs(heldOriginal.top - before.top) <= 4,
     `${label} ${iteration + 1}/${iterations}: staged prefix geometry cannot move the held reader anchor`);
+  const finalTops = new Map(result.visibleBlocks.map((block) => [block.key, block.top]));
+  const visibleDrift = Math.max(0, ...before.visibleBlocks
+    .filter((block) => finalTops.has(block.key))
+    .map((block) => Math.abs(finalTops.get(block.key) - block.top)));
+  assert(visibleDrift <= 4,
+    `${label} ${iteration + 1}/${iterations}: staged measurements cannot reflow the painted viewport (${visibleDrift.toFixed(1)}px)`);
   const drift = result.top == null ? null : Math.abs(result.top - before.top);
   const driftDiagnostic = drift == null || drift > 4 ? `; ${JSON.stringify({ before, mutation, held, heldOriginal, result })}` : "";
   assert(drift != null && drift <= 4,

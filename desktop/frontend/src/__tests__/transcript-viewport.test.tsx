@@ -77,12 +77,12 @@ const windowSource = await import("node:fs/promises").then((fs) => fs.readFile(n
 ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publish ResizeObserver sizes outside the viewport commit protocol");
 ok(windowSource.includes("measurementLedger.stage(changes)"), "DOM measurements enter the block-keyed staging ledger before publication");
 ok(
-  windowSource.includes("item.end > nativeViewport.scrollTop + 0.5")
-    && windowSource.includes("domAnchorIndex")
-    && windowSource.includes("resolveTranscriptMeasurementBoundary(")
+  windowSource.includes("item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight - 0.5")
+    && windowSource.includes("domSafeIndex")
+    && windowSource.includes("paintedSafeIndex == null || domSafeIndex == null")
     && windowSource.includes("index >= measurementBoundaryIndex")
     && windowSource.includes("virtualizer.measure();"),
-  "reader measurements publish after both logical and pre-measurement painted boundaries",
+  "reader measurements publish only after both prefix and DOM place a block beyond the painted viewport",
 );
 ok(!windowSource.includes(".resizeItem("), "the window adapter cannot expose partially updated per-item prefix sizes");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");
