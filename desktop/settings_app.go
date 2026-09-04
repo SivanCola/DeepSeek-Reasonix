@@ -27,7 +27,6 @@ import (
 	"reasonix/internal/botruntime"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
-	"reasonix/internal/i18n"
 	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
@@ -89,7 +88,6 @@ type ProviderModelCatalogUpdate struct {
 	Default             string   `json:"default"`
 	VisionModels        []string `json:"visionModels"`
 }
-
 type ProviderPresetView struct {
 	ID                   string   `json:"id"`
 	Label                string   `json:"label"`
@@ -3474,13 +3472,10 @@ func (a *App) SetDesktopLanguage(lang string) error {
 	if err != nil {
 		return err
 	}
-	// Keep backend-generated host notices aligned with the live desktop locale.
-	// The catalog is process-local, so update it alongside the frontend/tray
-	// language rather than waiting for the next desktop restart.
-	i18n.DetectLanguage(lang)
 	if strings.TrimSpace(lang) != "" && !strings.EqualFold(strings.TrimSpace(lang), "auto") {
 		a.setDesktopLocale(lang)
 	}
+	refreshBackendNoticeLocale(lang)
 	a.updateTrayLocale(lang)
 	a.applyResponseLanguageToLiveControllers(responseLanguage)
 	return nil
