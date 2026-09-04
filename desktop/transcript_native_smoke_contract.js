@@ -468,6 +468,9 @@
       if (rowCount() >= minimumRows) return;
       const beforeRows = rowCount();
       const beforeTurn = earliestLoadedTurn();
+      const beforeJumpTransaction = Math.max(0, ...state.writes
+        .filter((write) => write.owner === "question-jump")
+        .map((write) => Number(write.transactionId ?? write.transaction ?? 0)));
       const rect = rail.getBoundingClientRect();
       rail.dispatchEvent(new MouseEvent("mousedown", {
         button: 0,
@@ -476,10 +479,18 @@
         bubbles: true,
         cancelable: true,
       }));
-      // The combined signal-then-mask budget of the original contract gave a
-      // native WebView up to 45s to finish a targeted history jump; keep the
-      // mask gate itself just as forgiving instead of failing a slow landing.
-      await waitFor(() => !document.querySelector(".transcript-navigation-overlay"), 30000)
+      // Data may commit before React paints the loading mask, so absence of
+      // the mask is not a completion signal. Wait for the kernel's physical
+      // landing transaction, then require the UI mask to be gone.
+      await waitFor(() => state.writes.some((write) => (
+        write.owner === "question-jump"
+          && Number(write.transactionId ?? write.transaction ?? 0) > beforeJumpTransaction
+          && ["accepted", "native-clamp", "no-op"].includes(write.outcome)
+      )), 30000)
+        .catch(() => {
+          throw new Error(`native transcript fixture question jump did not land at ratio ${ratio}: ${describeTranscriptState(element)}`);
+        });
+      await waitFor(() => !document.querySelector(".transcript-navigation-overlay"), 15000)
         .catch(() => {
           throw new Error(`native transcript fixture question jump surface stuck at ratio ${ratio}: ${describeTranscriptState(element)}`);
         });
