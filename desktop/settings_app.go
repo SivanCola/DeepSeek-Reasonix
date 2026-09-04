@@ -27,6 +27,7 @@ import (
 	"reasonix/internal/botruntime"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/i18n"
 	"reasonix/internal/netclient"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
@@ -3473,6 +3474,10 @@ func (a *App) SetDesktopLanguage(lang string) error {
 	if err != nil {
 		return err
 	}
+	// Keep backend-generated host notices aligned with the live desktop locale.
+	// The catalog is process-local, so update it alongside the frontend/tray
+	// language rather than waiting for the next desktop restart.
+	i18n.DetectLanguage(lang)
 	if strings.TrimSpace(lang) != "" && !strings.EqualFold(strings.TrimSpace(lang), "auto") {
 		a.setDesktopLocale(lang)
 	}

@@ -18,6 +18,7 @@ import (
 	"reasonix/internal/event"
 	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/hook"
+	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
 	"reasonix/internal/provider/openai"
 	"reasonix/internal/sandbox"
@@ -1996,6 +1997,8 @@ func TestSetCompactRatioRejectsActiveWorkBeforeSaving(t *testing.T) {
 
 func TestSetDesktopLanguagePersistsResponseLanguageAndUpdatesLiveTabs(t *testing.T) {
 	isolateDesktopUserDirs(t)
+	i18n.DetectLanguage("zh")
+	t.Cleanup(func() { i18n.DetectLanguage("en") })
 	projectRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(projectRoot, "reasonix.toml"), []byte("language = \"zh\"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -2025,6 +2028,9 @@ func TestSetDesktopLanguagePersistsResponseLanguageAndUpdatesLiveTabs(t *testing
 
 	if err := app.SetDesktopLanguage("en"); err != nil {
 		t.Fatalf("SetDesktopLanguage: %v", err)
+	}
+	if got := i18n.CurrentLanguage(); got != "en" {
+		t.Fatalf("backend catalog language = %q, want en", got)
 	}
 
 	cfg := config.LoadForEdit(config.UserConfigPath())
