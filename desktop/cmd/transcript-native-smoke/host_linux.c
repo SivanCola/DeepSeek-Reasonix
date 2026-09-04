@@ -1,6 +1,7 @@
 #ifdef REASONIX_TRANSCRIPT_SMOKE
 
 #include <gtk/gtk.h>
+#include <math.h>
 #include <string.h>
 #include <webkit2/webkit2.h>
 
@@ -17,6 +18,9 @@ typedef struct {
   guint finish_wheel_tick;
   guint finish_batch_remaining;
   guint tail_stable_checks;
+  gdouble wheel_x;
+  gdouble wheel_y;
+  gboolean wheel_point_ready;
   gboolean finishing;
   gboolean done;
 } ReasonixTranscriptSmokeHost;
@@ -78,6 +82,32 @@ static void reasonix_transcript_schedule_tail_probe(ReasonixTranscriptSmokeHost 
   host->probe_source = g_timeout_add(delay_ms, reasonix_transcript_request_tail_status, host);
 }
 
+static gboolean reasonix_transcript_number_field(const char *message,
+                                                  const char *field,
+                                                  gdouble *value) {
+  const char *field_start = strstr(message, field);
+  if (field_start == NULL) return FALSE;
+  const char *number_start = field_start + strlen(field);
+  char *number_end = NULL;
+  const gdouble parsed = g_ascii_strtod(number_start, &number_end);
+  if (number_end == number_start || !isfinite(parsed)) return FALSE;
+  *value = parsed;
+  return TRUE;
+}
+
+static void reasonix_transcript_capture_wheel_point(ReasonixTranscriptSmokeHost *host,
+                                                     const char *message) {
+  gdouble x = 0;
+  gdouble y = 0;
+  host->wheel_point_ready =
+    reasonix_transcript_number_field(message, "\"x\":", &x) &&
+    reasonix_transcript_number_field(message, "\"y\":", &y) &&
+    x >= 0 && y >= 0;
+  if (!host->wheel_point_ready) return;
+  host->wheel_x = x;
+  host->wheel_y = y;
+}
+
 static void reasonix_transcript_dispatch_wheel(ReasonixTranscriptSmokeHost *host) {
   GdkWindow *window = gtk_widget_get_window(GTK_WIDGET(host->web_view));
   if (window == NULL) return;
@@ -90,8 +120,12 @@ static void reasonix_transcript_dispatch_wheel(ReasonixTranscriptSmokeHost *host
   event->scroll.window = g_object_ref(window);
   event->scroll.send_event = TRUE;
   event->scroll.time = GDK_CURRENT_TIME;
-  event->scroll.x = allocation.width / 2.0;
-  event->scroll.y = allocation.height / 2.0;
+  event->scroll.x = host->wheel_point_ready
+    ? CLAMP(host->wheel_x, 0.0, MAX(0.0, allocation.width - 1.0))
+    : allocation.width / 2.0;
+  event->scroll.y = host->wheel_point_ready
+    ? CLAMP(host->wheel_y, 0.0, MAX(0.0, allocation.height - 1.0))
+    : allocation.height / 2.0;
   event->scroll.x_root = root_x + event->scroll.x;
   event->scroll.y_root = root_y + event->scroll.y;
   event->scroll.state = 0;
@@ -165,6 +199,7 @@ static void reasonix_transcript_message(WebKitUserContentManager *manager,
   char *message = jsc_value_to_string(value);
   if (message == NULL) return;
   if (strstr(message, "\"type\":\"ready\"") != NULL && host->wheel_source == 0) {
+    reasonix_transcript_capture_wheel_point(host, message);
     host->wheel_tick = 0;
     host->finish_wheel_tick = 0;
     host->finish_batch_remaining = 0;

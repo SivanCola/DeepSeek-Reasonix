@@ -19,6 +19,10 @@ func TestLinuxTranscriptNativeSmokeFinishesFromNativeGeometry(t *testing.T) {
 		`REASONIX_FINISH_WHEEL_BATCH`,
 		`host->tail_stable_checks >= 2`,
 		`reasonix_transcript_start_finish_batch(host)`,
+		`reasonix_transcript_capture_wheel_point(host, message)`,
+		`host->wheel_point_ready`,
+		`CLAMP(host->wheel_x`,
+		`CLAMP(host->wheel_y`,
 	} {
 		if !strings.Contains(source, contract) {
 			t.Errorf("Linux native Transcript smoke is missing geometry-driven finish contract %q", contract)
