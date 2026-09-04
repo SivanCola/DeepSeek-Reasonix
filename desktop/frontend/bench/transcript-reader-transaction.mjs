@@ -156,6 +156,10 @@ async function runSustainedWheelTraversal(page, transcript, label) {
 }
 
 async function runIteration(page, transcript, label, iteration) {
+  // Each measurement transaction owns an independent reader baseline. Without
+  // this reset, repeated upward wheel input eventually crosses the history
+  // boundary and a valid prepend transaction replaces the anchor under test.
+  await jumpToTail(page);
   const box = await transcript.boundingBox();
   if (!box) throw new Error(`${label}: transcript viewport unavailable`);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -316,7 +320,6 @@ async function runBrowser(browserType, label) {
     await page.goto(url, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !document.querySelector(".startup-splash"), undefined, { timeout: 30_000 });
     const transcript = await loadLongFixture(page);
-    await jumpToTail(page);
     for (let iteration = 0; iteration < iterations; iteration += 1) {
       await runIteration(page, transcript, label, iteration);
     }
