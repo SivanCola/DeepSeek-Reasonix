@@ -135,7 +135,7 @@ async function runTableRepaint(page) {
 async function runWindowedSelection(page) {
   const transcript = await loadFixture(page, "bench:windowed-1000t", "Windowed turn 1000");
   await page.evaluate(() => {
-    const button = document.querySelector(".transcript__jump-bottom");
+    const button = document.querySelector(".transcript__jump-bottom:not([hidden])");
     if (button instanceof HTMLElement) button.click();
   });
   await page.waitForFunction(() => {

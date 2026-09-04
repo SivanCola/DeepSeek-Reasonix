@@ -533,9 +533,9 @@
     // jump-bottom control. When the initial window already has enough rows,
     // the control is correctly absent and the product must preserve its
     // physical tail without a fixture-owned scroll write.
-    let jumpBottom = document.querySelector(".transcript__jump-bottom");
+    let jumpBottom = document.querySelector(".transcript__jump-bottom:not([hidden])");
     if (!jumpBottom && element.dataset.scrollMode !== "tail-follow") {
-      jumpBottom = await waitFor(() => document.querySelector(".transcript__jump-bottom"), 10000)
+      jumpBottom = await waitFor(() => document.querySelector(".transcript__jump-bottom:not([hidden])"), 10000)
         .catch(() => null);
     }
     if (jumpBottom instanceof HTMLElement) {
