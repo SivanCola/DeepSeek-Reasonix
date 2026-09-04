@@ -115,7 +115,7 @@ type composerKeyboardState struct {
 const (
 	sustainedWheelTicks = 2500
 	// Controller wheel messages can be coalesced while WebView2 commits a new
-	// Virtuoso range. Keep the finishing burst bounded, but leave enough native
+	// block range. Keep the finishing burst bounded, but leave enough native
 	// input to cross the final measured-row correction after stream growth.
 	finishWheelTicks = 64
 	// The injected contract has its own 80 second startup watchdog. Keep the

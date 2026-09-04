@@ -159,7 +159,7 @@
     self.transcriptPoint = NSMakePoint(x, self.webView.isFlipped ? y : NSHeight(self.webView.bounds) - y);
     [self.window makeFirstResponder:self.webView];
     [self ensureInteractionFocus];
-    // The contract waits for settled Virtuoso geometry before posting ready.
+    // The contract waits for settled block-window geometry before posting ready.
     // Re-establish native focus at that boundary instead of relying on the
     // workflow's earlier best-effort app activation.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
@@ -289,7 +289,7 @@
 
 - (void)sendWheel:(NSTimer *)timer {
   // Sustain small high-resolution trackpad deltas without outrunning
-  // Virtuoso's mount window on a loaded hosted WebView.
+  // the block mount window on a loaded hosted WebView.
   const NSInteger totalTicks = self.localMicro ? 40 : 1200;
   if (self.wheelTick >= totalTicks) {
     [timer invalidate];
@@ -300,7 +300,7 @@
       });
       return;
     }
-    // Hosted WebKit can coalesce events while Virtuoso commits its last range.
+    // Hosted WebKit can coalesce events while the block window commits its last range.
     // After an idle boundary, keep sending bounded ordinary wheel events until
     // the native extent is stably at the tail. This remains native input; the
     // JavaScript probe only decides when the platform-specific fixture stops.
