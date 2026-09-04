@@ -83,6 +83,19 @@ async function anchorSnapshot(page) {
   });
 }
 
+async function jumpToTail(page) {
+  await page.evaluate(() => {
+    const button = document.querySelector(".transcript__jump-bottom");
+    if (button instanceof HTMLElement) button.click();
+  });
+  await page.waitForFunction(() => {
+    const element = document.querySelector(".transcript");
+    return element instanceof HTMLElement
+      && element.dataset.transcriptIntent === "tail"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+  }, undefined, { timeout: 15_000 });
+}
+
 async function runIteration(page, transcript, label, iteration) {
   const box = await transcript.boundingBox();
   if (!box) throw new Error(`${label}: transcript viewport unavailable`);
@@ -126,7 +139,14 @@ async function runIteration(page, transcript, label, iteration) {
   await frames(page, 6);
   await page.mouse.up();
   await page.evaluate(() => { if (window.__readerProbe) window.__readerProbe.held = false; });
-  await frames(page, 8);
+  await page.waitForFunction(({ key, top }) => {
+    const element = document.querySelector(".transcript");
+    const block = [...document.querySelectorAll("[data-transcript-block-key]")]
+      .find((candidate) => candidate.getAttribute("data-transcript-block-key") === key);
+    return element instanceof HTMLElement && block instanceof HTMLElement
+      && Math.abs(block.getBoundingClientRect().top - element.getBoundingClientRect().top - top) <= 4;
+  }, { key: before.key, top: before.top }, { timeout: 5_000 });
+  await frames(page, 2);
 
   const result = await page.evaluate((key) => {
     const probe = window.__readerProbe;
@@ -166,18 +186,11 @@ async function runBrowser(browserType, label) {
     await page.goto(url, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => !document.querySelector(".startup-splash"), undefined, { timeout: 30_000 });
     const transcript = await loadLongFixture(page);
-    const jump = page.locator(".transcript__jump-bottom");
-    if (await jump.count() && await jump.first().isVisible()) await jump.first().click();
+    await jumpToTail(page);
     for (let iteration = 0; iteration < iterations; iteration += 1) {
       await runIteration(page, transcript, label, iteration);
     }
-    if (await jump.count() && await jump.first().isVisible()) await jump.first().click();
-    await page.waitForFunction(() => {
-      const element = document.querySelector(".transcript");
-      return element instanceof HTMLElement
-        && element.dataset.transcriptIntent === "tail"
-        && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
-    }, undefined, { timeout: 15_000 });
+    await jumpToTail(page);
     const final = await anchorSnapshot(page);
     assert(final.visible > 0 && final.distance <= 4, `${label}: final viewport is visibly covered at the native tail`);
     assert(errors.length === 0, `${label}: replay emits no page errors (${errors.length})`);

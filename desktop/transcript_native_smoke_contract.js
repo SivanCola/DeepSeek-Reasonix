@@ -40,6 +40,7 @@
     phase: "waiting-topic",
     writes: [],
     wheelEvents: 0,
+    lastWheelAt: Number.NEGATIVE_INFINITY,
     wheelDelta: 0,
     wheelInsideTranscript: 0,
     wheelMaxDelta: 0,
@@ -67,7 +68,7 @@
     if (state.writes.length > 80) state.writes.shift();
     const accepted = !write.rejectedReason && (write.outcome === "accepted" || write.outcome === "native-clamp");
     const surfaceGeneration = Number.parseInt(state.transcript?.dataset.transcriptGeneration ?? "0", 10);
-    if (accepted && state.active && state.transcript?.dataset.transcriptIntent === "reader") {
+    if (accepted && state.active && performance.now() - state.lastWheelAt <= 250) {
       state.programmaticReaderWrites += 1;
     }
     if (accepted && Number.isFinite(surfaceGeneration) && surfaceGeneration > 0 && write.generation !== surfaceGeneration) {
@@ -104,6 +105,7 @@
   };
   window.addEventListener("wheel", (event) => {
     if (!state.active) return;
+    state.lastWheelAt = performance.now();
     state.wheelEvents += 1;
     state.wheelDelta += event.deltaY;
     if (event.target instanceof Node && state.transcript?.contains(event.target)) state.wheelInsideTranscript += 1;
@@ -600,6 +602,7 @@
     state.transcript = element;
     state.frames = [];
     state.active = true;
+    state.lastWheelAt = Number.NEGATIVE_INFINITY;
     state.growthTicks = 0;
     state.growthSurface = growthSurface;
     state.wheelEvents = 0;

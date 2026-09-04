@@ -96,8 +96,10 @@ async function snapshot(page) {
 }
 
 async function jumpToTail(page) {
-  const button = page.locator(".transcript__jump-bottom");
-  if (await button.count() && await button.first().isVisible()) await button.first().click();
+  await page.evaluate(() => {
+    const button = document.querySelector(".transcript__jump-bottom");
+    if (button instanceof HTMLElement) button.click();
+  });
   await page.waitForFunction(() => {
     const element = document.querySelector(".transcript");
     return element instanceof HTMLElement

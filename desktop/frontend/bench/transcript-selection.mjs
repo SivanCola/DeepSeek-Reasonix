@@ -134,8 +134,16 @@ async function runTableRepaint(page) {
 
 async function runWindowedSelection(page) {
   const transcript = await loadFixture(page, "bench:windowed-1000t", "Windowed turn 1000");
-  const jump = page.locator(".transcript__jump-bottom");
-  if (await jump.count() && await jump.first().isVisible()) await jump.first().click();
+  await page.evaluate(() => {
+    const button = document.querySelector(".transcript__jump-bottom");
+    if (button instanceof HTMLElement) button.click();
+  });
+  await page.waitForFunction(() => {
+    const element = document.querySelector(".transcript");
+    return element instanceof HTMLElement
+      && element.dataset.transcriptIntent === "tail"
+      && element.scrollHeight - element.scrollTop - element.clientHeight <= 4;
+  }, undefined, { timeout: 15_000 });
   const box = await transcript.boundingBox();
   if (!box) throw new Error("windowed transcript viewport missing");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);

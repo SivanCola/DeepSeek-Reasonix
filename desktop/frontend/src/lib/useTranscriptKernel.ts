@@ -10,6 +10,7 @@ import {
 import { TranscriptViewportWriter } from "./transcriptViewportWriter";
 
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+const NATIVE_GESTURE_IDLE_MS = 160;
 function blockTop(element: HTMLElement, key: string): number | undefined {
   const node = Array.from(element.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
     .find((candidate) => candidate.dataset.transcriptBlockKey === key);
@@ -150,17 +151,21 @@ export function useTranscriptKernel({
     refresh();
   }, [kernel, refresh, settleGeometry, snapshot, writer]);
 
-  const beginTransientGesture = useCallback(() => {
+  const renewGestureLease = useCallback(() => {
     beginGesture();
-    transientGestureTimerRef.current = setTimeout(endGesture, 100) as unknown as number;
+    transientGestureTimerRef.current = setTimeout(endGesture, NATIVE_GESTURE_IDLE_MS) as unknown as number;
   }, [beginGesture, endGesture]);
 
   const onScroll = useCallback(() => {
     const current = snapshot();
     if (!current) return;
     kernel.observeNativeScroll(current);
+    // Wheel delivery and native scrolling are not synchronous on every Wails
+    // engine. Renew the same lease until the final native scroll event so the
+    // browser's final position remains authoritative.
+    if (transientGestureTimerRef.current) renewGestureLease();
     refresh();
-  }, [kernel, refresh, snapshot]);
+  }, [kernel, refresh, renewGestureLease, snapshot]);
 
   const onPointerDownCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const element = scrollRef.current;
@@ -180,8 +185,8 @@ export function useTranscriptKernel({
   }, [beginGesture, endGesture, writer]);
 
   const onKeyDownCapture = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (SCROLL_KEYS.has(event.key)) beginTransientGesture();
-  }, [beginTransientGesture]);
+    if (SCROLL_KEYS.has(event.key)) renewGestureLease();
+  }, [renewGestureLease]);
 
   const reportAnomaly = useCallback((outcome: "blank-viewport" | "invalid-geometry" | "missing-anchor") => {
     kernel.reportAnomaly(outcome);
@@ -251,7 +256,7 @@ export function useTranscriptKernel({
     onScroll,
     reportAnomaly,
     onPointerDownCapture,
-    onWheelCapture: beginTransientGesture,
+    onWheelCapture: renewGestureLease,
     onTouchStartCapture: beginGesture,
     onTouchEndCapture: endGesture,
     onKeyDownCapture,

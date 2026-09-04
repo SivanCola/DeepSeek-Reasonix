@@ -3,6 +3,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
 
 const ANCHOR_MEASUREMENT_RADIUS = 4;
+// Keep enough mounted runway for native engines whose scroll event can arrive
+// ahead of TanStack's next range calculation. The browser fixtures enforce the
+// corresponding 40-block upper bound.
+const NATIVE_SCROLL_RUNWAY_BLOCKS = 12;
 
 export default function TranscriptWindow({
   projection,
@@ -52,8 +56,8 @@ export default function TranscriptWindow({
     count: split.cold.length,
     getScrollElement: () => scrollElement,
     estimateSize: (index) => estimateBlock(split.cold[index]),
-    getItemKey: (index) => split.cold[index]?.key ?? index,
-    overscan: 4,
+    getItemKey: (index) => split.cold[index].key,
+    overscan: NATIVE_SCROLL_RUNWAY_BLOCKS,
     measureElement: (element) => Math.max(64, element.getBoundingClientRect().height || (element as HTMLElement).offsetHeight),
     rangeExtractor: (range) => {
       const indexes = new Set(defaultRangeExtractor(range));
