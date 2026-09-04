@@ -393,7 +393,7 @@
     "internal/agent/agent.go": {
       "complexity": 31,
       "essay": 25,
-      "file-size": 2014,
+      "file-size": 2024,
       "function-size": 103,
       "struct-state": 2
     },
@@ -550,7 +550,7 @@
     "internal/agent/task.go": {
       "complexity": 3,
       "essay": 12,
-      "file-size": 1203,
+      "file-size": 1204,
       "function-size": 18
     },
     "internal/agent/task_test.go": {
