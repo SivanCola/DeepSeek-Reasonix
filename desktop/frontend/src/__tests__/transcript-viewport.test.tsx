@@ -76,7 +76,12 @@ ok(released.totalSize === 20_120, "gesture release commits range and extent atom
 const windowSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../components/TranscriptWindow.tsx", import.meta.url), "utf8"));
 ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publish ResizeObserver sizes outside the viewport commit protocol");
 ok(windowSource.includes("measurementLedger.stage(changes)"), "DOM measurements enter the block-keyed staging ledger before publication");
-ok(windowSource.includes("index >= anchorIndex") && windowSource.includes("virtualizer.measure();"), "reader measurements publish only when they cannot change the logical anchor prefix");
+ok(
+  windowSource.includes("rect.bottom > viewportTop + 0.5")
+    && windowSource.includes("index >= anchorIndex")
+    && windowSource.includes("virtualizer.measure();"),
+  "reader measurements publish from the committed native viewport boundary",
+);
 ok(!windowSource.includes(".resizeItem("), "the window adapter cannot expose partially updated per-item prefix sizes");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");
 ok(

@@ -198,18 +198,22 @@ export default function TranscriptWindow({
   useLayoutEffect(() => {
     const container = coldContainerRef.current;
     const changes: Array<{ key: string; size: number }> = [];
+    const viewportTop = scrollElement?.getBoundingClientRect().top;
+    let viewportAnchorIndex: number | undefined;
     if (container) {
       for (const item of virtualItems) {
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
-        const size = Math.max(64, element.getBoundingClientRect().height || element.offsetHeight);
+        const rect = element.getBoundingClientRect();
+        if (viewportAnchorIndex == null && viewportTop != null && rect.bottom > viewportTop + 0.5) viewportAnchorIndex = item.index;
+        const size = Math.max(64, rect.height || element.offsetHeight);
         if (Math.abs(size - item.size) > 0.5) changes.push({ key: String(item.key), size });
       }
     }
     measurementLedger.stage(changes);
-    const anchorIndex = kernel.anchor.kind === "block"
+    const anchorIndex = viewportAnchorIndex ?? (kernel.anchor.kind === "block"
       ? coldIndexByKey.get(kernel.anchor.blockKey)
-      : undefined;
+      : undefined);
     const published = measurementLedger.commitStaged((key) => {
       const index = coldIndexByKey.get(key);
       // A size at or after the logical reader anchor cannot change the
@@ -230,7 +234,7 @@ export default function TranscriptWindow({
       return;
     }
     onGeometryChange();
-  }, [coldIndexByKey, kernel.anchor, kernel.intent, measurementLedger, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, kernel.anchor, kernel.intent, measurementLedger, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
