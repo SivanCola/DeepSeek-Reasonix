@@ -20,6 +20,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/extension/dispatch"
+	"reasonix/internal/i18n"
 	"reasonix/internal/instruction"
 	"reasonix/internal/jobs"
 	"reasonix/internal/mcpinteraction"
@@ -790,8 +791,10 @@ func (a *Agent) flushSteerQueue() {
 
 // UnappliedSteerNotice returns the durable warning shown for guidance that was
 // accepted during an abnormal turn exit but never reached a provider request.
+// The user's guidance rides the format's trailing %s so fronts can split it
+// back out at the first newline.
 func UnappliedSteerNotice(text string) string {
-	return "Guidance was not applied because the turn ended before it could be processed. Send it again if it is still needed:\n" + text
+	return fmt.Sprintf(i18n.M.UnappliedSteerFmt, text)
 }
 
 // RecordUnappliedSteer stores guidance that could not affect its intended
@@ -1129,7 +1132,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if warnDeprecatedRetention {
 		deprecatedContextRetentionWarning.Do(func() {
 			a.svc.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
-				Text:   "agent.keep and agent.recent_keep are deprecated.",
+				Text:   i18n.M.DeprecatedContextRetention,
 				Detail: "Harness-style compaction now retains only the newest 16% of the context window; legacy retention fields are preserved in configuration but ignored at runtime."})
 		})
 	}
@@ -1684,7 +1687,7 @@ func emptyFinalRetryMessage() string {
 }
 
 func emptyFinalNotice() string {
-	return "No visible answer was produced; asking the assistant to respond again."
+	return i18n.M.EmptyFinal
 }
 
 func emptyFinalNoticeDetail(prov string, u *provider.Usage, reasoningLen int) string {
@@ -1696,11 +1699,11 @@ func emptyFinalNoticeDetail(prov string, u *provider.Usage, reasoningLen int) st
 }
 
 func executorHandoffNoticeText() string {
-	return "The assistant answered before taking action; asking it to use the required tools."
+	return i18n.M.ExecutorHandoff
 }
 
 func toolBudgetNoticeText() string {
-	return "Tool round limit reached; asking the assistant to summarize progress."
+	return i18n.M.ToolBudget
 }
 
 // stream runs one completion, emitting reasoning and text deltas as typed
@@ -2770,7 +2773,7 @@ func truncateToolOutputFor(s, toolName, toolCallID string) (string, string) {
 		}
 		marker = toolOutputRecoveryMarker(toolName, toolCallID, resultRef, len(s), len(head)+len(tail))
 	}
-	notice := fmt.Sprintf("tool output truncated: %d of %d bytes elided", len(s)-len(head)-len(tail), len(s))
+	notice := fmt.Sprintf(i18n.M.ToolOutputTruncatedFmt, len(s)-len(head)-len(tail), len(s))
 	return head + marker + tail, notice
 }
 
@@ -2783,11 +2786,11 @@ func finishReasonMessage(u *provider.Usage) (string, bool) {
 	}
 	switch u.FinishReason {
 	case "length":
-		return "response truncated: hit max output tokens", true
+		return i18n.M.FinishReasonLength, true
 	case "content_filter":
-		return "response blocked by content filter", true
+		return i18n.M.FinishReasonContentFilter, true
 	case "repetition_truncation":
-		return "response truncated: model repetition detected", true
+		return i18n.M.FinishReasonRepetition, true
 	default:
 		return "", false
 	}
@@ -2800,11 +2803,11 @@ func finishReasonMessage(u *provider.Usage) (string, bool) {
 func streamInterruptNotice(err error) (code, text string) {
 	switch provider.StreamInterruptReason(err) {
 	case provider.StreamInterruptIdleTimeout:
-		return event.NoticeCodeStreamInterruptedIdleTimeout, "model stream stalled: no data arrived before the idle timeout; check the provider gateway or network proxy"
+		return event.NoticeCodeStreamInterruptedIdleTimeout, i18n.M.StreamInterruptedIdleTimeout
 	case provider.StreamInterruptPrematureEOF:
-		return event.NoticeCodeStreamInterruptedPrematureEOF, "model stream ended before completion; the provider gateway or network proxy dropped the connection"
+		return event.NoticeCodeStreamInterruptedPrematureEOF, i18n.M.StreamInterruptedPrematureEOF
 	case provider.StreamInterruptConnectionReset:
-		return event.NoticeCodeStreamInterruptedConnectionReset, "model connection was reset; check the provider gateway or network proxy"
+		return event.NoticeCodeStreamInterruptedConnectionReset, i18n.M.StreamInterruptedConnectionReset
 	default:
 		return "", ""
 	}

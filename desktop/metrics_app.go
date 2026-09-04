@@ -339,7 +339,7 @@ func (m *metricsAggregator) observe(e event.Event) {
 	case event.CompactionDone:
 		m.inc("compaction", "total")
 	case event.Notice:
-		if e.Text == "No visible answer was produced; asking the assistant to respond again." || strings.HasPrefix(e.Detail, "empty final answer blocked") {
+		if e.Code == event.NoticeCodeEmptyFinal || strings.HasPrefix(e.Detail, "empty final answer blocked") {
 			m.inc("empty_final", "total")
 		}
 	}

@@ -88,7 +88,6 @@ type ProviderModelCatalogUpdate struct {
 	Default             string   `json:"default"`
 	VisionModels        []string `json:"visionModels"`
 }
-
 type ProviderPresetView struct {
 	ID                   string   `json:"id"`
 	Label                string   `json:"label"`
@@ -3474,6 +3473,7 @@ func (a *App) SetDesktopLanguage(lang string) error {
 	if strings.TrimSpace(lang) != "" && !strings.EqualFold(strings.TrimSpace(lang), "auto") {
 		a.setDesktopLocale(lang)
 	}
+	refreshBackendNoticeLocale(lang)
 	a.updateTrayLocale(lang)
 	a.applyResponseLanguageToLiveControllers(responseLanguage)
 	return nil

@@ -8,11 +8,9 @@ import (
 // A host-owned emergency or task budget must not strand an ordinary task. If
 // the planner ignores its finalization nudge, the executor still owns the task
 // and can inspect the workspace directly. Explicit no-execution and approval
-// boundaries remain fail-closed.
-const (
-	plannerSafetyFallbackNotice = "Planner stopped at a safety boundary without a final plan; continuing this turn with the executor."
-	plannerSafetyBoundaryError  = "planner could not finalize before a safety boundary; no execution was started"
-)
+// boundaries remain fail-closed. The matching user-visible notice text lives in
+// i18n (M.PlannerSafetyFallback).
+const plannerSafetyBoundaryError = "planner could not finalize before a safety boundary; no execution was started"
 
 func plannerSafetyPauseDetail(err error) string {
 	var maxPause *maxStepsPause

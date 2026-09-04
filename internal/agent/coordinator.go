@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"reasonix/internal/event"
+	"reasonix/internal/i18n"
 	"reasonix/internal/nilutil"
 	"reasonix/internal/plancontract"
 	"reasonix/internal/provider"
@@ -83,10 +84,6 @@ Never emit that marker when any workspace change, command, verification, or
 follow-up action remains.`
 
 const executorHandoffMarker = "Reasonix executor handoff"
-
-// plannerFallbackNotice is shown when the planner fails and the turn degrades
-// to executor-only instead of failing outright.
-const plannerFallbackNotice = "Planner failed; continuing this turn with the executor only."
 
 // noChangesMarker is the explicit no-op conclusion the planner is asked to emit
 // on its final line (see DefaultPlannerPrompt). isNoOpPlan trusts it over the
@@ -363,7 +360,7 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 			c.sink.Emit(event.Event{
 				Kind:   event.Notice,
 				Level:  event.LevelWarn,
-				Text:   plannerSafetyFallbackNotice,
+				Text:   i18n.M.PlannerSafetyFallback,
 				Detail: plannerSafetyPauseDetail(err),
 				Source: event.UsageSourcePlanner,
 			})
@@ -380,7 +377,7 @@ func (c *Coordinator) Run(ctx context.Context, input string) error {
 		// A planner failure must not take down the turn: the executor is
 		// healthy and owns the full tool set, so degrade to single-model for
 		// this turn.
-		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: plannerFallbackNotice, Detail: "planner failed; running the executor without a plan: " + err.Error(), Source: event.UsageSourcePlanner})
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: i18n.M.PlannerFallback, Detail: "planner failed; running the executor without a plan: " + err.Error(), Source: event.UsageSourcePlanner})
 		c.sink.Emit(event.Event{Kind: event.Phase, Text: c.executor.svc.prov.Name() + " · executing", Source: event.UsageSourceExecutor})
 		return c.executor.Run(ctx, input)
 	}
@@ -412,7 +409,7 @@ func (c *Coordinator) deliverPlan(ctx context.Context, input string, outcome pla
 	runWithPlanApproval := func() error {
 		if c.plannerPlanApprover == nil {
 			c.persistExecutorNoOp(ctx, input, plan+"\n\n"+plannerPlanAwaitingApprovalNote)
-			c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: plannerPlanAwaitingApprovalNotice, Source: event.UsageSourcePlanner})
+			c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: i18n.M.PlannerPlanAwaitingApproval, Source: event.UsageSourcePlanner})
 			return nil
 		}
 		executed := false
@@ -425,13 +422,13 @@ func (c *Coordinator) deliverPlan(ctx context.Context, input string, outcome pla
 			// path does — a denied turn must survive session save/reload, and
 			// the note tells the next executor turn that nothing ran.
 			c.persistExecutorNoOp(ctx, input, plan+"\n\n"+plannerPlanNotApprovedNote)
-			c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: plannerPlanNotApprovedNotice, Source: event.UsageSourcePlanner})
+			c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: i18n.M.PlannerPlanNotApproved, Source: event.UsageSourcePlanner})
 		}
 		return err
 	}
 	if decision.Route == PlannerRoutePlanOnly {
 		c.persistExecutorNoOp(ctx, input, plan+"\n\n"+plannerPlanOnlyNote)
-		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: plannerPlanOnlyNotice, Source: event.UsageSourcePlanner})
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: i18n.M.PlannerPlanOnly, Source: event.UsageSourcePlanner})
 		return nil
 	}
 	if decision.Route == PlannerRoutePlanForApproval {
@@ -443,19 +440,17 @@ func (c *Coordinator) deliverPlan(ctx context.Context, input string, outcome pla
 	return runExecutorWithPlan(ctx, plan)
 }
 
-// Persisted-session notes and user-facing notices for planner turns that ended
-// without an executor run. The notes become the turn's assistant message in the
-// executor session, so the next turn's executor knows nothing was executed.
+// Persisted-session notes for planner turns that ended without an executor
+// run. The notes become the turn's assistant message in the executor session,
+// so the next turn's executor knows nothing was executed; they stay
+// model-visible English while the matching notices live in i18n.
 const (
-	plannerPlanNotApprovedNote        = "(The user did not approve this plan; execution was not started.)"
-	plannerPlanNotApprovedNotice      = "Plan not approved; nothing was executed. Reply to continue."
-	plannerPlanAwaitingApprovalNote   = "(The user requested planning before execution; no action was started without host approval.)"
-	plannerPlanAwaitingApprovalNotice = "Plan ready; execution was not started without approval."
-	plannerPlanOnlyNote               = "(The user explicitly requested a plan without execution; no action was started.)"
-	plannerPlanOnlyNotice             = "Plan ready; the request explicitly excluded execution."
-	plannerDecisionUnansweredNote     = "(The user did not provide the requested decision; execution was not started.)"
-	plannerDecisionUnansweredNotice   = "Waiting for your decision; nothing was executed. Reply to continue."
-	plannerPlanSubmittedClosure       = "Plan submitted to the host."
+	plannerPlanNotApprovedNote      = "(The user did not approve this plan; execution was not started.)"
+	plannerPlanAwaitingApprovalNote = "(The user requested planning before execution; no action was started without host approval.)"
+	plannerPlanOnlyNote             = "(The user explicitly requested a plan without execution; no action was started.)"
+	plannerDecisionUnansweredNote   = "(The user did not provide the requested decision; execution was not started.)"
+	plannerDecisionUnansweredNotice = "Waiting for your decision; nothing was executed. Reply to continue."
+	plannerPlanSubmittedClosure     = "Plan submitted to the host."
 )
 
 // isNoOpPlan reports whether the plan explicitly concludes that nothing needs

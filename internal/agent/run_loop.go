@@ -10,6 +10,7 @@ import (
 
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
+	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
 	"reasonix/internal/runtimepolicy"
 	"reasonix/internal/tool"
@@ -457,7 +458,7 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 		a.sess.conversation.Add(HostGeneratedUserMessage(a.withTurnPreferences(instruction)))
 		a.emitIncompleteReadNotice(
 			event.NoticeCodeReadContinuationRequired,
-			"Reasonix refused to finish because a file read still has unread content.",
+			i18n.M.IncompleteReadFinishBlocked,
 			"final answer blocked pending read continuation",
 		)
 		a.contextManager().ObserveUsage(usage)
