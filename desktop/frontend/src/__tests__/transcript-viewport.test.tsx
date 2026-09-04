@@ -80,10 +80,11 @@ ok(
   windowSource.includes("item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight - 0.5")
     && windowSource.includes("domSafeIndex")
     && windowSource.includes("paintedSafeIndex == null || domSafeIndex == null")
-    && windowSource.includes("index >= measurementBoundaryIndex")
+    && windowSource.includes("canPublishTranscriptMeasurement({")
+    && windowSource.includes("userGestureActive: kernel.userGestureActive")
     && windowSource.includes("measurementLedger.publishStaged(")
     && windowSource.includes("virtualizer.resizeItem(index, change.size);"),
-  "reader measurements publish only after both prefix and DOM place a block beyond the painted viewport",
+  "reader measurements publish only after native ownership ends and both prefix and DOM place a block beyond the painted viewport",
 );
 ok(!windowSource.includes("virtualizer.measure();"), "a safe suffix publish cannot invalidate and rebuild the protected prefix");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");

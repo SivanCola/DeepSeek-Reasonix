@@ -1,7 +1,7 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { TranscriptKernel } from "../lib/transcriptKernel";
-import { resolveTranscriptMeasurementBoundary, TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
+import { canPublishTranscriptMeasurement, resolveTranscriptMeasurementBoundary, TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
 import { commitTranscriptWindowRange, type TranscriptWindowRange } from "../lib/transcriptWindowRange";
 
@@ -238,7 +238,12 @@ export default function TranscriptWindow({
       // geometry comes from the exact resident tail. This makes publication
       // independent of platform wheel-event timing and prevents cold
       // refinement from adding extra tail writes.
-      return kernel.intent === "reader" && measurementBoundaryIndex != null && index != null && index >= measurementBoundaryIndex;
+      return canPublishTranscriptMeasurement({
+        intent: kernel.intent,
+        userGestureActive: kernel.userGestureActive,
+        boundaryIndex: measurementBoundaryIndex,
+        itemIndex: index,
+      });
     });
     if (published.length > 0) {
       // Feed only the atomically published suffix into TanStack's keyed size
@@ -254,7 +259,7 @@ export default function TranscriptWindow({
       return;
     }
     onGeometryChange();
-  }, [coldIndexByKey, kernel.intent, logicalAnchorIndex, measurementLedger, onGeometryChange, paintedSafeIndex, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measurementLedger, onGeometryChange, paintedSafeIndex, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;

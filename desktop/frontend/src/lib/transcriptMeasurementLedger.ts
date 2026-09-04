@@ -10,6 +10,24 @@ export function resolveTranscriptMeasurementBoundary(
   return resolved.length > 0 ? Math.max(...resolved) : undefined;
 }
 
+export function canPublishTranscriptMeasurement({
+  intent,
+  userGestureActive,
+  boundaryIndex,
+  itemIndex,
+}: {
+  intent: "tail" | "reader";
+  userGestureActive: boolean;
+  boundaryIndex: number | undefined;
+  itemIndex: number | undefined;
+}): boolean {
+  return intent === "reader"
+    && !userGestureActive
+    && boundaryIndex != null
+    && itemIndex != null
+    && itemIndex >= boundaryIndex;
+}
+
 /**
  * Immutable, block-keyed DOM measurement snapshots for the Transcript window.
  * A render can observe either the old snapshot or the complete new snapshot,

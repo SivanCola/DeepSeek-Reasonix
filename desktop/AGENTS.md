@@ -55,7 +55,10 @@ contracts when touching anything that can move the transcript viewport.
   `scrollMargin` is measured in the native scroller's coordinate space,
   including Transcript padding and any prefix. Earlier and visible sizes remain
   staged; only post-viewport overscan may publish. Tail intent does not refine
-  invisible cold history; its exact geometry belongs to resident DOM.
+  invisible cold history; its exact geometry belongs to resident DOM. While a
+  native gesture owns the viewport, every cold measurement remains staged:
+  even a post-viewport boundary from an earlier render can become visible
+  before React commits under sustained wheel, touch, or thumb input.
   Publish one immutable Reasonix snapshot, then transfer only that safe suffix
   into TanStack's keyed size cache in the same browser task. Never call
   TanStack `measure()` for a measurement publish: it clears the keyed cache and
