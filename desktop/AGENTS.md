@@ -20,6 +20,10 @@ contracts when touching anything that can move the transcript viewport.
   Markdown, selection, question navigation, prepend, composer resize, and tail
   follow all submit transactions to `TranscriptKernel`. The static gate in
   `frontend/scripts/check-single-scroll-writer.mjs` must reject any bypass.
+- **Scroll provenance**: a physical writer offset remains pending until its
+  matching native `scroll` event is consumed or a different offset proves
+  user movement. Starting a gesture must not relabel a delayed writer event as
+  native input, and pagination reacts only to native-owned scroll events.
 - **Explicit terminal state**: every transaction ends committed, cancelled, or
   expired. User input and selection preempt lower-priority work; question jumps
   outrank display/prepend/restore/resize, which outrank tail follow.

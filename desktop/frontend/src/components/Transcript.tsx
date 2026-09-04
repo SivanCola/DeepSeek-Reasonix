@@ -291,7 +291,7 @@ export function Transcript(props: TranscriptProps) {
   }, [jumpToLoadedQuestion, questions, rewindSignal]);
 
   const handleScroll = useCallback(() => {
-    kernel.onScroll();
+    if (!kernel.onScroll()) return;
     scheduleActiveQuestionSync();
     const element = kernel.scrollRef.current;
     if (element && element.scrollTop <= 64 && kernel.kernel.userGestureActive) void requestOlder(undefined, "viewport-user");

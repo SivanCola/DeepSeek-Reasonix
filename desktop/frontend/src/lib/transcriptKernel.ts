@@ -144,7 +144,7 @@ export class TranscriptKernel {
   private tailFrame: number | null = null;
   private anomalyCount = 0;
   private safeModeValue = false;
-  private writerScrollPending = false;
+  private writeTop: number | null = null;
   private nativeGestureTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: { clock?: TranscriptKernelClock; emit?: (event: TranscriptKernelEvent) => void } = {}) {
@@ -176,7 +176,7 @@ export class TranscriptKernel {
     this.tailFrame = null;
     this.generationValue += 1;
     this.userGesture = false;
-    this.writerScrollPending = false;
+    this.writeTop = null;
   }
 
   replaceSurface(session: string): { generation: number; anchor: LogicalAnchor } {
@@ -190,7 +190,7 @@ export class TranscriptKernel {
     this.generationValue += 1;
     this.geometryRevisionValue = 0;
     this.userGesture = false;
-    this.writerScrollPending = false;
+    this.writeTop = null;
     this.anomalyCount = 0;
     this.safeModeValue = false;
     this.anchorValue = this.anchors.get(session) ?? { kind: "tail" };
@@ -211,21 +211,26 @@ export class TranscriptKernel {
     return { kind: "block", blockKey: first.key, offsetPx: snapshot.scrollTop - first.top };
   }
 
-  observeNativeScroll(snapshot: TranscriptViewportSnapshot, source: "native" | "writer" = "native"): void {
-    if (source === "native" && this.writerScrollPending && !this.userGesture) {
-      return;
+  observeNativeScroll(
+    snapshot: TranscriptViewportSnapshot,
+    nativeEvent = true,
+  ): boolean {
+    if (nativeEvent) {
+      const writerTop = this.writeTop;
+      this.writeTop = null;
+      if (writerTop !== null && Math.abs(snapshot.scrollTop - writerTop) <= BOTTOM_THRESHOLD_PX) return false;
     }
-    if (source === "native" && !this.userGesture && this.active) return;
+    if (nativeEvent && !this.userGesture && this.active) return false;
     const atBottom = snapshot.scrollHeight - snapshot.clientHeight - snapshot.scrollTop <= BOTTOM_THRESHOLD_PX;
     this.intentValue = atBottom ? "tail" : "reader";
     this.anchorValue = this.intentValue === "tail" ? { kind: "tail" } : this.capture(snapshot);
     this.anchors.set(this.session, this.anchorValue);
+    return nativeEvent;
   }
 
   beginUserGesture(snapshot: TranscriptViewportSnapshot, owner: "selection" | "native" = "native"): void {
     this.clearNativeGestureLease();
     this.cancelTailFrame();
-    this.writerScrollPending = false;
     this.userGesture = true;
     this.intentValue = "reader";
     this.anchorValue = this.capture(snapshot);
@@ -397,7 +402,7 @@ export class TranscriptKernel {
     });
     this.emitEvent(transaction, owner, offset, result.offset, result.accepted ? "accepted" : result.reason ?? "rejected");
     if (result.accepted) {
-      this.writerScrollPending = result.changed !== false;
+      this.writeTop = result.changed ? result.offset : null;
       this.finish(transaction.id, "committed", "committed");
     }
     return result.accepted;
@@ -436,7 +441,7 @@ export class TranscriptKernel {
     });
     this.emitEvent(active.transaction, owner, requested, result.offset, result.accepted ? "accepted" : result.reason ?? "rejected");
     if (result.accepted) {
-      this.writerScrollPending = result.changed !== false;
+      this.writeTop = result.changed ? result.offset : null;
       this.finish(active.transaction.id, "committed", "committed");
     }
     return result.accepted;

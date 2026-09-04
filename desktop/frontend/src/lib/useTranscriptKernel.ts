@@ -122,7 +122,7 @@ export function useTranscriptKernel({
     // Composer geometry is reported after React has already resized the
     // viewport. Preserve the pre-resize logical intent instead of mistaking
     // the newly exposed bottom gap for a user-owned reader position.
-    if (current && kind !== "composer-resize") kernel.observeNativeScroll(current);
+    if (current && kind !== "composer-resize") kernel.observeNativeScroll(current, false);
     const anchor = kind === "composer-resize" ? kernel.anchor : current ? kernel.capture(current) : kernel.anchor;
     if (kind === "prepend") prependAwaitingGeometryRef.current = true;
     const transaction = kernel.begin(kind, anchor);
@@ -157,13 +157,15 @@ export function useTranscriptKernel({
 
   const onScroll = useCallback(() => {
     const current = snapshot();
-    if (!current) return;
-    kernel.observeNativeScroll(current);
+    if (!current) return false;
+    const nativeOwned = kernel.observeNativeScroll(current);
+    if (!nativeOwned) return false;
     // Wheel delivery and native scrolling are not synchronous on every Wails
     // engine. Renew the same lease until the final native scroll event so the
     // browser's final position remains authoritative.
     if (kernel.nativeGestureLeaseActive) renewGestureLease();
     refresh();
+    return true;
   }, [kernel, refresh, renewGestureLease, snapshot]);
 
   const onPointerDownCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {

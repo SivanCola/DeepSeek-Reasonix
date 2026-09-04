@@ -32,7 +32,7 @@ const writes: Array<{ generation: number; transactionId: number; offset: number;
 const kernel = new TranscriptKernel({ clock, emit: (event) => events.push(event) });
 kernel.connectWriter((request) => {
   writes.push(request);
-  return { accepted: true, offset: Number.isFinite(request.offset) ? request.offset : 900 };
+  return { accepted: true, offset: Number.isFinite(request.offset) ? request.offset : 900, changed: true };
 });
 
 kernel.replaceSurface("one");
@@ -113,6 +113,26 @@ ok(painted === 0, "surface replacement cancels stale paint callbacks");
 kernel.afterCurrentGenerationPaint(() => { painted += 1; });
 clock.flushFrames();
 ok(painted === 1, "the current generation accepts its paint callback");
+
+kernel.scrollToTail();
+const delayedWriterOffset = 900;
+kernel.beginUserGesture({
+  ...snapshot,
+  scrollTop: delayedWriterOffset,
+  visibleBlocks: [{ key: "turn:writer-target", top: delayedWriterOffset, bottom: delayedWriterOffset + 120 }],
+});
+const delayedWriterIsNative = kernel.observeNativeScroll({
+  ...snapshot,
+  scrollTop: delayedWriterOffset,
+  visibleBlocks: [{ key: "turn:writer-target", top: delayedWriterOffset, bottom: delayedWriterOffset + 120 }],
+});
+ok(!delayedWriterIsNative, "a delayed writer scroll keeps its provenance after user ownership begins");
+const movedNativeIsNative = kernel.observeNativeScroll({
+  ...snapshot,
+  scrollTop: delayedWriterOffset - 80,
+  visibleBlocks: [{ key: "turn:user-position", top: delayedWriterOffset - 90, bottom: delayedWriterOffset + 30 }],
+});
+ok(movedNativeIsNative, "a physical offset that diverges from the writer target belongs to the user");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -60,7 +60,7 @@ function setup(session = "race") {
   const kernel = new TranscriptKernel({ clock, emit: (event) => events.push(event) });
   kernel.connectWriter((request) => {
     writes.push(request);
-    return { accepted: true, offset: Number.isFinite(request.offset) ? request.offset : 3_200 };
+    return { accepted: true, offset: Number.isFinite(request.offset) ? request.offset : 3_200, changed: true };
   });
   kernel.replaceSurface(session);
   return { clock, events, kernel, writes };

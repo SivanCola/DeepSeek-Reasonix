@@ -19,7 +19,7 @@ const clock: TranscriptKernelClock = {
 console.log("\nTranscript question jump transaction");
 const writes: number[] = [];
 const kernel = new TranscriptKernel({ clock });
-kernel.connectWriter((request) => { writes.push(request.offset); return { accepted: true, offset: request.offset }; });
+kernel.connectWriter((request) => { writes.push(request.offset); return { accepted: true, offset: request.offset, changed: true }; });
 kernel.replaceSurface("one");
 const jump = kernel.stageJumpToBlock("turn:500");
 ok(jump?.status === "active", "an unmounted question starts a transaction while its block is pinned");
