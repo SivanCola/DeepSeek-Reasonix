@@ -59,7 +59,7 @@ const countBeforeGesture = writes.length;
 kernel.scheduleTailSync();
 clock.flushFrames();
 ok(writes.length === countBeforeGesture, "reader gesture accepts zero tail writes");
-kernel.endUserGesture(snapshot);
+kernel.endUserGesture();
 
 kernel.scrollToTail();
 const writesBeforeStaleFrame = writes.length;

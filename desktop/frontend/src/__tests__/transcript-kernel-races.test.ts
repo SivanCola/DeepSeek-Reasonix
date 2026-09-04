@@ -96,7 +96,7 @@ console.log("\nTranscriptKernel deterministic race matrix");
   ok(prepend?.status === "cancelled" && !kernel.correctAnchor(prepend!, () => 900), "prepend × selection cancels the structural correction");
   kernel.writeUserControlled("selection-edge-scroll", 520);
   ok(writes.length === 1 && writes[0]?.owner === "selection-edge-scroll", "selection keeps only its explicit edge-scroll write");
-  kernel.endUserGesture(readerSnapshot("turn:visible", 520));
+  kernel.endUserGesture();
   ok(kernel.activeTransaction === null, "selection reaches a terminal state when the gesture ends");
 }
 
@@ -106,7 +106,7 @@ console.log("\nTranscriptKernel deterministic race matrix");
   kernel.beginUserGesture(snapshot, "selection");
   const deferred = kernel.begin("prepend", kernel.anchor);
   ok(deferred === null && writes.length === 0, "prepend requested during a gesture captures intent without writing");
-  const resumed = kernel.endUserGesture(snapshot);
+  const resumed = kernel.endUserGesture();
   kernel.advanceGeometry();
   kernel.correctAnchor(resumed!, () => 1_400);
   ok(resumed?.status === "committed" && writes[0]?.offset === 1_412, "gesture release resumes prepend from the pre-mutation logical anchor");
@@ -163,8 +163,20 @@ console.log("\nTranscriptKernel deterministic race matrix");
   kernel.observeNativeScroll(readerSnapshot("turn:wrong", 922));
   ok(kernel.anchor.kind === "block" && kernel.anchor.blockKey === "turn:markdown", "writer scroll events cannot replace the structural logical anchor");
   kernel.beginUserGesture(readerSnapshot("turn:user", 940));
-  kernel.endUserGesture(readerSnapshot("turn:user", 940));
+  kernel.endUserGesture();
   ok(kernel.anchor.kind === "block" && kernel.anchor.blockKey === "turn:user", "the next native scroll records the user's actual reader anchor");
+}
+
+{
+  const { kernel } = setup("gesture-anchor-ownership");
+  kernel.observeNativeScroll(readerSnapshot("turn:reader", 500));
+  kernel.beginUserGesture(readerSnapshot("turn:reader", 500));
+  kernel.endUserGesture();
+  ok(kernel.anchor.kind === "block" && kernel.anchor.blockKey === "turn:reader", "measurement-only gesture completion preserves the pre-measurement logical anchor");
+  kernel.beginUserGesture(readerSnapshot("turn:reader", 500));
+  kernel.observeNativeScroll(readerSnapshot("turn:moved", 620));
+  kernel.endUserGesture();
+  ok(kernel.anchor.kind === "block" && kernel.anchor.blockKey === "turn:moved", "a changed native position commits the gesture's final logical anchor");
 }
 
 {

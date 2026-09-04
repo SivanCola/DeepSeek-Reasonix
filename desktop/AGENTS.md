@@ -24,6 +24,12 @@ contracts when touching anything that can move the transcript viewport.
   `scrollHeight - scrollTop - clientHeight <= 4`. TanStack computes prefix
   sizes and mounted ranges only; its measurement compensation is disabled and
   its scroll callback must never bypass the writer.
+- **Covered-range commit**: the Window Adapter may paint a TanStack candidate
+  only when it covers the current native viewport. Retain the last covering
+  range when a candidate is stale; if a native jump invalidates both, rebuild
+  once from the prefix-size ledger while preserving every protected block.
+  Measurement-only notifications cannot replace the painted range while
+  native input owns an unchanged viewport.
 - **Resident active tail**: the active turn and at least the two newest
   completed turns stay in ordinary DOM. A resident block may enter windowed
   history only after it is a viewport away and owns no anchor, focus, or

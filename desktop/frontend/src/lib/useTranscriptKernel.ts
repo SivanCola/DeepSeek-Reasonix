@@ -143,18 +143,18 @@ export function useTranscriptKernel({
   const endGesture = useCallback(() => {
     clearTimeout(transientGestureTimerRef.current);
     transientGestureTimerRef.current = 0;
-    const current = snapshot();
-    const resumed = current ? kernel.endUserGesture(current) : null;
+    const resumed = kernel.endUserGesture();
     writer.freeze(false);
     nativeThumbRef.current = false;
     if (resumed) requestAnimationFrame(settleGeometry);
     refresh();
-  }, [kernel, refresh, settleGeometry, snapshot, writer]);
+  }, [kernel, refresh, settleGeometry, writer]);
 
   const renewGestureLease = useCallback(() => {
-    beginGesture();
+    clearTimeout(transientGestureTimerRef.current);
+    if (!kernel.userGestureActive) beginGesture();
     transientGestureTimerRef.current = setTimeout(endGesture, NATIVE_GESTURE_IDLE_MS) as unknown as number;
-  }, [beginGesture, endGesture]);
+  }, [beginGesture, endGesture, kernel]);
 
   const onScroll = useCallback(() => {
     const current = snapshot();

@@ -1,5 +1,6 @@
 import { createTranscriptHarness } from "./transcript-dom-harness";
 import type { Item } from "../lib/useController";
+import { commitTranscriptWindowRange } from "../lib/transcriptWindowRange";
 
 let passed = 0;
 let failed = 0;
@@ -15,6 +16,72 @@ function turns(count: number): Item[] {
 }
 
 console.log("\nTranscript viewport adapters");
+const previousRange = {
+  structureRevision: "stable",
+  scrollTop: 100,
+  items: [{ index: 0, start: 50, end: 900 }],
+  source: "candidate" as const,
+};
+const staleCandidate = [{ index: 50, start: 5_000, end: 5_800 }];
+const measurements = Array.from({ length: 200 }, (_, index) => ({ index, start: index * 100, end: (index + 1) * 100 }));
+const retained = commitTranscriptWindowRange({
+  candidate: staleCandidate,
+  measurements,
+  retainedIndexes: new Set(),
+  previous: previousRange,
+  structureRevision: "stable",
+  scrollTop: 180,
+  clientHeight: 600,
+  coldStart: 0,
+  coldEnd: 20_000,
+  overscan: 2,
+  gestureActive: true,
+});
+ok(retained.items === previousRange.items, "a stale late range cannot replace native viewport coverage");
+const measuredCandidate = [{ index: 0, start: 40, end: 940 }];
+const measurementOnly = commitTranscriptWindowRange({
+  candidate: measuredCandidate,
+  measurements,
+  retainedIndexes: new Set(),
+  previous: previousRange,
+  structureRevision: "stable",
+  scrollTop: 100,
+  clientHeight: 600,
+  coldStart: 0,
+  coldEnd: 20_000,
+  overscan: 2,
+  gestureActive: true,
+});
+ok(measurementOnly.items === previousRange.items, "a measurement-only range commit stays frozen during native ownership");
+const released = commitTranscriptWindowRange({
+  candidate: measuredCandidate,
+  measurements,
+  retainedIndexes: new Set(),
+  previous: measurementOnly,
+  structureRevision: "stable",
+  scrollTop: 100,
+  clientHeight: 600,
+  coldStart: 0,
+  coldEnd: 20_000,
+  overscan: 2,
+  gestureActive: false,
+});
+ok(released.items !== previousRange.items, "gesture release commits the latest covering measurements");
+const reconstructed = commitTranscriptWindowRange({
+  candidate: staleCandidate,
+  measurements,
+  retainedIndexes: new Set([80]),
+  structureRevision: "stable",
+  scrollTop: 1_200,
+  clientHeight: 600,
+  coldStart: 0,
+  coldEnd: 20_000,
+  overscan: 2,
+  gestureActive: true,
+});
+ok(reconstructed.source === "reconstructed", "an uncovered native jump reconstructs from the prefix-size ledger");
+ok(reconstructed.items.some((item) => item.start <= 1_200 && item.end >= 1_300), "the reconstructed range covers the native viewport");
+ok(reconstructed.items.some((item) => item.index === 80), "reconstruction retains protected blocks");
 const harness = await createTranscriptHarness({ viewportHeight: 800, rowHeight: 24 });
 try {
   await harness.render(turns(100), { geometrySessionKey: "threshold-100" });

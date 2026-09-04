@@ -436,8 +436,8 @@ export function Transcript(props: TranscriptProps) {
                 }}
                 onGeometryChange={kernel.settleGeometry}
                 onAnomaly={kernel.reportAnomaly}
+                kernel={kernel.kernel}
                 protectedBlockKeys={protectedBlockKeys}
-                anchorBlockKey={kernel.kernel.anchor.kind === "block" ? kernel.kernel.anchor.blockKey : undefined}
                 running={running}
                 turnStartAt={turnStartAt}
               />

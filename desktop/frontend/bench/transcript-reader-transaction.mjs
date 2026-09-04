@@ -113,6 +113,9 @@ async function runIteration(page, transcript, label, iteration) {
       window.__readerProbe?.writes.push(write);
       if (window.__readerProbe?.held && write.outcome === "accepted") window.__readerProbe.heldAccepted.push(write);
     };
+    window.addEventListener("pointerup", () => {
+      if (window.__readerProbe) window.__readerProbe.held = false;
+    }, { capture: true, once: true });
     const sample = () => {
       const probe = window.__readerProbe;
       const element = document.querySelector(".transcript");
@@ -138,7 +141,6 @@ async function runIteration(page, transcript, label, iteration) {
   }, iteration);
   await frames(page, 6);
   await page.mouse.up();
-  await page.evaluate(() => { if (window.__readerProbe) window.__readerProbe.held = false; });
   await page.waitForFunction(({ key, top }) => {
     const element = document.querySelector(".transcript");
     const block = [...document.querySelectorAll("[data-transcript-block-key]")]

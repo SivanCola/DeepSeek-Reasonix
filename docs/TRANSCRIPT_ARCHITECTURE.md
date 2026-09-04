@@ -22,6 +22,8 @@ TranscriptStore / ControllerLiveStore
 
 Up to 100 completed turns use full DOM. At 101 turns the adapter windows cold completed history with `@tanstack/react-virtual`; the active turn and at least the two most recent completed turns remain ordinary DOM. A former resident turn is eligible for the cold window only after it is at least one viewport above view and contains no logical anchor, selection endpoint, or focused element. TanStack supplies prefix sizes and mounted ranges only: stable `getItemKey` is mandatory, automatic size-change scroll correction is disabled, and its scroll callback performs no native write.
 
+The Window Adapter applies a range commit protocol instead of painting every asynchronous TanStack candidate. A committed range must cover the current native viewport. A stale candidate cannot replace a previously covering range; a native jump that invalidates both ranges is reconstructed synchronously from TanStack's prefix-size ledger, including every protected anchor, selection, focus, and jump block. While native input owns an unchanged viewport, measurement-only notifications retain the painted range. The adapter records whether the range came from a candidate, retention, or reconstruction, but none of these paths may write scroll position.
+
 Development, test, preview, and canary builds may use the non-persistent `?transcriptRenderMode=full|windowed` diagnostic override. Stable builds ignore it.
 
 ## Kernel state machine
@@ -43,7 +45,7 @@ That order is also the preemption order. Every transaction terminates as committ
 
 `TranscriptViewportWriter` is the only production module that may assign the native Transcript `scrollTop`. Question navigation, history prepend, Markdown block-window compensation, selection edge scrolling, the Creation scrollbar, and nested-scroll handoff all route through the kernel and writer. The static `check:scroll-writer` gate rejects bypasses, while runtime diagnostics record only session identity, generation, transaction, owner, intent, geometry revision, numeric offsets, and terminal outcome—never message content.
 
-Wheel, touch, scrolling keys, pointer selection, and native scrollbar drag immediately take reader ownership and cancel lower-priority work. Native thumb drag freezes program writes but never browser scrolling. When it ends, the final native position determines reader or tail intent. Reduced motion affects decorative animation only.
+Wheel, touch, scrolling keys, pointer selection, and native scrollbar drag immediately take reader ownership and cancel lower-priority work. Native thumb drag freezes program writes but never browser scrolling. Only native scroll events update the gesture's logical anchor; measurement-only layout changes and gesture completion cannot invent a new reader position. When native ownership ends, deferred structural work may resume from that observed anchor. Reduced motion affects decorative animation only.
 
 ## Geometry and safe mode
 

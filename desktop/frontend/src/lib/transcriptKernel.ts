@@ -229,10 +229,9 @@ export class TranscriptKernel {
     else this.cancelActive("user-gesture");
   }
 
-  endUserGesture(snapshot: TranscriptViewportSnapshot): ScrollTransaction | null {
+  endUserGesture(): ScrollTransaction | null {
     this.userGesture = false;
     if (this.active?.transaction.kind === "selection") this.finish(this.active.transaction.id, "committed", "selection-ended");
-    this.observeNativeScroll(snapshot, "native");
     const deferred = this.deferredStructural;
     this.deferredStructural = null;
     if (!deferred || deferred.generation !== this.generationValue) return null;

@@ -159,11 +159,12 @@
     const element = state.transcript;
     const viewport = element.getBoundingClientRect();
     const rows = visibleRows(element);
+    const projection = element.querySelector(".transcript__projection");
     const mounted = [...element.querySelectorAll(".transcript__window-item[data-index]")]
       .map((block) => Number.parseInt(block.dataset.index ?? "", 10))
       .filter(Number.isFinite);
     const mountedCount = Number.parseInt(
-      element.querySelector(".transcript__projection")?.getAttribute("data-transcript-mounted-blocks") ?? "0",
+      projection?.getAttribute("data-transcript-mounted-blocks") ?? "0",
       10,
     );
     state.frames.push({
@@ -172,6 +173,7 @@
       occupied: rows.length > 0,
       mode: element.dataset.scrollMode ?? "missing",
       readerIntent: element.dataset.transcriptIntent ?? "missing",
+      rangeSource: projection?.getAttribute("data-transcript-range-source") ?? "none",
       mountedFirst: mounted.length > 0 ? Math.min(...mounted) : null,
       mountedLast: mounted.length > 0 ? Math.max(...mounted) : null,
       mountedCount,

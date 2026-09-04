@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { estimateTranscriptRowSize, type TranscriptRow } from "../lib/transcriptRows";
+import type { TranscriptKernel } from "../lib/transcriptKernel";
 import type { TimelineBlock, TimelineProjection, TranscriptRenderMode } from "../lib/transcriptTimeline";
 import { useT } from "../lib/i18n";
 import { TranscriptSelectionOverlay } from "./TranscriptSelectionOverlay";
@@ -117,8 +118,8 @@ export const TranscriptViewport = forwardRef<TranscriptViewportHandle, SharedPro
   loadingOlderHistory: boolean;
   olderHistoryError?: string;
   onRetryOlderHistory: () => void;
+  kernel: Pick<TranscriptKernel, "anchor" | "userGestureActive">;
   protectedBlockKeys?: ReadonlySet<string>;
-  anchorBlockKey?: string;
 }>(function TranscriptViewport({
   projection,
   mode,
@@ -130,8 +131,8 @@ export const TranscriptViewport = forwardRef<TranscriptViewportHandle, SharedPro
   onRetryOlderHistory,
   onGeometryChange,
   onAnomaly,
+  kernel,
   protectedBlockKeys = new Set(),
-  anchorBlockKey,
   running = false,
   turnStartAt,
 }, ref) {
@@ -159,7 +160,7 @@ export const TranscriptViewport = forwardRef<TranscriptViewportHandle, SharedPro
       {...shared}
       prefix={prefix}
       protectedBlockKeys={protectedBlockKeys}
-      anchorBlockKey={anchorBlockKey}
+      kernel={kernel}
       pinnedJumpBlockKey={pinnedJumpBlockKey}
       onPinnedJumpVisible={() => setPinnedJumpBlockKey(undefined)}
       activeStatus={activeStatus}

@@ -1,6 +1,8 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { TranscriptKernel } from "../lib/transcriptKernel";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
+import { commitTranscriptWindowRange, type TranscriptWindowRange } from "../lib/transcriptWindowRange";
 
 const ANCHOR_MEASUREMENT_RADIUS = 4;
 // Keep enough mounted runway for native engines whose scroll event can arrive
@@ -14,7 +16,7 @@ export default function TranscriptWindow({
   onGeometryChange,
   onAnomaly,
   protectedBlockKeys,
-  anchorBlockKey,
+  kernel,
   pinnedJumpBlockKey,
   onPinnedJumpVisible,
   prefix,
@@ -28,7 +30,7 @@ export default function TranscriptWindow({
   onGeometryChange: () => void;
   onAnomaly: (outcome: "blank-viewport" | "invalid-geometry") => void;
   protectedBlockKeys: ReadonlySet<string>;
-  anchorBlockKey?: string;
+  kernel: Pick<TranscriptKernel, "anchor" | "userGestureActive">;
   pinnedJumpBlockKey?: string;
   onPinnedJumpVisible: () => void;
   prefix: ReactNode;
@@ -49,6 +51,19 @@ export default function TranscriptWindow({
     resident: projection.completedBlocks.slice(residentStartIndex),
   }), [projection.completedBlocks, residentStartIndex]);
   const coldIndexByKey = useMemo(() => new Map(split.cold.map((block, index) => [block.key, index])), [split.cold]);
+  const retainedIndexes = new Set<number>();
+  const retainKey = (key: string | undefined, radius = 0) => {
+    const index = key ? coldIndexByKey.get(key) : undefined;
+    if (index == null) return;
+    for (let candidate = Math.max(0, index - radius); candidate <= Math.min(split.cold.length - 1, index + radius); candidate += 1) retainedIndexes.add(candidate);
+  };
+  protectedBlockKeys.forEach((key) => retainKey(key));
+  const focusedBlock = document.activeElement instanceof Element
+    ? document.activeElement.closest<HTMLElement>("[data-transcript-block-key]")?.dataset.transcriptBlockKey
+    : undefined;
+  retainKey(focusedBlock);
+  retainKey(kernel.anchor.kind === "block" ? kernel.anchor.blockKey : undefined, ANCHOR_MEASUREMENT_RADIUS);
+  retainKey(pinnedJumpBlockKey, ANCHOR_MEASUREMENT_RADIUS);
   const coldContainerRef = useRef<HTMLDivElement>(null);
   const residentTailRef = useRef<HTMLDivElement>(null);
   const scrollMargin = coldContainerRef.current?.offsetTop ?? 0;
@@ -61,27 +76,38 @@ export default function TranscriptWindow({
     measureElement: (element) => Math.max(64, element.getBoundingClientRect().height || (element as HTMLElement).offsetHeight),
     rangeExtractor: (range) => {
       const indexes = new Set(defaultRangeExtractor(range));
-      const addKey = (key: string | undefined, radius = 0) => {
-        const index = key ? coldIndexByKey.get(key) : undefined;
-        if (index == null) return;
-        for (let candidate = Math.max(0, index - radius); candidate <= Math.min(split.cold.length - 1, index + radius); candidate += 1) indexes.add(candidate);
-      };
-      protectedBlockKeys.forEach((key) => addKey(key));
-      const focusedBlock = document.activeElement instanceof Element
-        ? document.activeElement.closest<HTMLElement>("[data-transcript-block-key]")?.dataset.transcriptBlockKey
-        : undefined;
-      addKey(focusedBlock);
-      addKey(anchorBlockKey, ANCHOR_MEASUREMENT_RADIUS);
-      addKey(pinnedJumpBlockKey, ANCHOR_MEASUREMENT_RADIUS);
+      retainedIndexes.forEach((index) => indexes.add(index));
       return Array.from(indexes).sort((left, right) => left - right);
     },
     scrollMargin,
     scrollToFn: () => {},
   });
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
-  const virtualItems = virtualizer.getVirtualItems();
+  // Materialize TanStack's prefix-size ledger before reading either its
+  // asynchronous candidate range or the synchronous recovery input.
+  const totalSize = virtualizer.getTotalSize();
+  const candidateItems = virtualizer.getVirtualItems();
+  const committedRangeRef = useRef<TranscriptWindowRange<(typeof candidateItems)[number]> | undefined>(undefined);
+  const structureRevision = `${split.cold.length}:${split.cold[0]?.key ?? ""}:${split.cold[split.cold.length - 1]?.key ?? ""}`;
+  const committedRange = commitTranscriptWindowRange({
+    candidate: candidateItems,
+    measurements: virtualizer.measurementsCache,
+    retainedIndexes,
+    previous: committedRangeRef.current,
+    structureRevision,
+    scrollTop: scrollElement?.scrollTop ?? 0,
+    clientHeight: scrollElement?.clientHeight ?? 0,
+    coldStart: scrollMargin,
+    coldEnd: scrollMargin + totalSize,
+    overscan: NATIVE_SCROLL_RUNWAY_BLOCKS,
+    gestureActive: kernel.userGestureActive,
+  });
+  const virtualItems = committedRange.items;
   const rangeRevision = virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|");
 
+  useLayoutEffect(() => {
+    committedRangeRef.current = committedRange;
+  }, [committedRange]);
   useLayoutEffect(() => {
     if (!minimumResidentKey || currentResidentIndex >= 0) return;
     setResidentStartKey(minimumResidentKey);
@@ -132,6 +158,9 @@ export default function TranscriptWindow({
         return;
       }
       const viewport = scrollElement.getBoundingClientRect();
+      // A detached/hidden surface has no paintable native viewport yet, so it
+      // cannot provide evidence of a blank committed range.
+      if (viewport.height <= 0) return;
       const visible = Array.from(scrollElement.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
         .some((element) => {
           const rect = element.getBoundingClientRect();
@@ -143,11 +172,11 @@ export default function TranscriptWindow({
   }, [onAnomaly, projection.activeBlock, projection.completedBlocks.length, rangeRevision, scrollElement]);
 
   return (
-    <div className="transcript__projection" data-transcript-render-mode="windowed" data-transcript-completed-blocks={projection.completedBlocks.length} data-transcript-mounted-blocks={virtualItems.length + split.resident.length + (projection.activeBlock ? 1 : 0)}>
+    <div className="transcript__projection" data-transcript-render-mode="windowed" data-transcript-range-source={committedRange.source} data-transcript-completed-blocks={projection.completedBlocks.length} data-transcript-mounted-blocks={virtualItems.length + split.resident.length + (projection.activeBlock ? 1 : 0)}>
       {prefix}
       {renderSelectionOverlay(`windowed:${rangeRevision}`)}
       {split.cold.length > 0 && (
-        <div ref={coldContainerRef} className="transcript__window" style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        <div ref={coldContainerRef} className="transcript__window" style={{ height: totalSize, position: "relative" }}>
           {virtualItems.map((virtualItem) => {
             const block = split.cold[virtualItem.index];
             return <div key={block.key} ref={virtualizer.measureElement} data-index={virtualItem.index} className="transcript__window-item" style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualItem.start - scrollMargin}px)` }}>
