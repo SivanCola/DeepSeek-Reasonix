@@ -1,5 +1,4 @@
 import type { ComponentProps } from "react";
-import { VirtuosoMockContext } from "react-virtuoso";
 import { Transcript } from "../components/Transcript";
 
 export function TranscriptTestSurface({
@@ -7,9 +6,7 @@ export function TranscriptTestSurface({
   rowHeight,
   ...props
 }: ComponentProps<typeof Transcript> & { viewportHeight: number; rowHeight: number }) {
-  return (
-    <VirtuosoMockContext.Provider value={{ viewportHeight, itemHeight: rowHeight }}>
-      <Transcript {...props} />
-    </VirtuosoMockContext.Provider>
-  );
+  void viewportHeight;
+  void rowHeight;
+  return <Transcript {...props} />;
 }

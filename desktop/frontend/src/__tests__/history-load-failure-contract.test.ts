@@ -18,13 +18,13 @@ assert.match(controller, /throw new Error\(t\("history\.failedLoadHistory"\)\)/,
 assert.match(controller, /retrySessionHistory/, "retry path is exported");
 assert.match(
   transcript,
-  /useLayoutEffect\(\(\) => \{\n    if \(!virtuosoReadyRef\.current \|\| !stick\.current\) return;\n    scrollToBottom\(\);\n  \}, \[footerHeight, scrollToBottom, stick\]\);/,
-  "a tail-owned footer resize uses the immediate and bounded bottom transaction before paint without moving a manual reader",
+  /kernel\.beginStructural\("composer-resize"\);\n    kernel\.settleGeometry\(\);/,
+  "a composer resize enters one kernel transaction before its geometry commit",
 );
 assert.match(
-  transcript,
-  /if \(!hydrating \|\| scrollModeRef\.current === "tail-follow"\) followGrowingTail\("viewport-resize"\);/,
-  "a hydrating transcript still repairs a restored-draft viewport resize when it owns tail-follow without moving a manual reader",
+  readFileSync(join(root, "lib/useTranscriptKernel.ts"), "utf8"),
+  /kernel\.intent === "reader" && kernel\.anchor\.kind === "block"/,
+  "reader geometry restoration is gated by the kernel's logical reader anchor",
 );
 assert.match(controller, /shouldPreferResidentHistory\(resetSurface, options\.preserveCachedHistory\)/, "retry hydrates fetch instead of serving the resident snapshot");
 assert.match(

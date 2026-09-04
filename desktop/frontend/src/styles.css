@@ -3438,15 +3438,12 @@ a[href] {
   }
 }
 .transcript {
-  /* Virtuoso sizes rows from the scroller clientWidth (padding included) but
-     lays them out in the content box. Horizontal padding here therefore makes
-     right-aligned bubbles extend under the workspace dock. Keep only vertical
-     inset on the scroller; rows own --transcript-inline-pad. */
+  /* Keep horizontal inset on blocks so the native scroller's geometry is
+     independent of readable content width. */
   --transcript-inline-pad: 32px;
   position: relative;
-  /* Virtuoso owns the logical anchor. Browser scroll anchoring reacts to
-     asynchronous Markdown boxes before Virtuoso receives their size and can
-     move the scroller in the opposite direction during an upward gesture. */
+  /* TranscriptKernel owns logical anchors and applies at most one structural
+     correction per geometry revision. */
   overflow-anchor: none;
   height: 100%;
   overflow-y: auto;
@@ -3505,29 +3502,6 @@ a[href] {
 @media (prefers-reduced-motion: reduce) {
   .transcript-navigation-overlay__spinner { animation: none; }
 }
-/* The active turn streams as the virtual list's in-flow Footer: inside the
-   scroller, right after the last history row, but outside Virtuoso's
-   measured size tree — unbounded growth never reaches the list's anchors or
-   recovery machinery (#8657/#8688). */
-.transcript__live-region {
-  position: relative;
-  width: 100%;
-}
-.transcript__live-region--overlay {
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  z-index: var(--z-local-raised);
-  pointer-events: none;
-}
-.transcript__live-content {
-  position: relative;
-  width: 100%;
-}
-.transcript[data-transcript-reader-visual-guard="true"] [data-testid="virtuoso-item-list"] {
-  transform: translateY(var(--transcript-reader-visual-offset, 0));
-  will-change: transform;
-}
 .transcript__live-status {
   display: flex;
   align-items: center;
@@ -3547,36 +3521,25 @@ a[href] {
   margin-right: auto;
 }
 
-/* ── Virtual transcript rows ─────────────────────────────────────── */
-/* React Virtuoso owns list offsets and row measurement. Rows stay in normal
-/* React Virtuoso owns list offsets and row measurement. Rows stay in normal
-   flow; flow-root contains child margins so ResizeObserver sees the complete
-   dynamic height instead of a collapsed margin outside the measured item. */
-.transcript__virtual-sizer {
+/* ── Transcript projection and window adapter ───────────────────── */
+.transcript__projection,
+.transcript__block,
+.transcript__resident-tail {
   position: relative;
   width: 100%;
 }
-.transcript > .transcript__virtual-sizer {
+.transcript > .transcript__projection {
   max-width: none;
   margin-left: 0;
   margin-right: 0;
 }
-.transcript > [data-viewport-type="element"] {
-  max-width: none;
-  margin-left: 0;
-  margin-right: 0;
-  /* Virtuoso's inline style pins only top (position:absolute; top:0;
-     width:100%). With the scroller's horizontal padding, width:100%
-     resolves against the padding box and starts at padding-left, so the
-     right edge overflows past the content box and gets clipped by
-     overflow-x:hidden. Pin left/right to the content box edges instead
-     (following --transcript-pad-x) so rows keep the scroller's padding
-     on both sides and never overflow. */
-  left: var(--transcript-pad-x, 32px);
-  right: var(--transcript-pad-x, 32px);
-  /* Virtuoso sets width:100% inline; without !important the inline width
-     wins over left/right and right-edge clipping returns. */
-  width: auto !important;
+.transcript__block {
+  display: flow-root;
+}
+.transcript__window,
+.transcript__window-item {
+  box-sizing: border-box;
+  width: 100%;
 }
 .transcript__row {
   position: relative;
@@ -3638,7 +3601,7 @@ a[href] {
 .history-preview__body .transcript__row > * {
   max-width: none;
 }
-/* Keep the lazy Markdown source readable while Virtuoso waits for the real
+/* Keep the lazy Markdown source readable while the parser resolves the real
    parser result. The row itself remains free to measure once the marker is
    removed; no manual-scroll path writes a forced row height. */
 .transcript__row .msg--assistant .msg__body > .md[data-transcript-geometry-pending] {
@@ -3646,8 +3609,7 @@ a[href] {
   height: max(0px, calc(var(--transcript-row-estimate) - 32px));
   overflow: hidden;
 }
-/* Offscreen rows are unmounted by the virtualizer, so content-visibility
-/* Offscreen rows are unmounted by the virtualizer, so content-visibility
+/* Offscreen blocks are unmounted by the window adapter, so content-visibility
    culling is redundant inside rows — and skipping it keeps offsetHeight
    measurements exact instead of contain-intrinsic-size placeholders. */
 .transcript__row .msg,
@@ -4295,13 +4257,9 @@ a[href] {
   content-visibility: auto;
   contain-intrinsic-size: 1px 60px;
 }
-/* Virtuoso already owns transcript virtualization. A second content-visibility
-/* Virtuoso already owns transcript virtualization. A second content-visibility
- * viewport inside each mounted row gives the browser a 60px intrinsic box and
- * then expands it when the row crosses the viewport, which makes Virtuoso's
- * upward compensation write a large reverse frame during manual reading. Keep
- * content-visibility for non-transcript message lists, but let the transcript
- * size tree see the real row geometry from its first mount. */
+/* The transcript window adapter already bounds mounted blocks. A second
+ * content-visibility viewport would replace real measurements with an
+ * intrinsic placeholder, so keep it only for non-transcript message lists. */
 .transcript__row .msg {
   content-visibility: visible;
   contain-intrinsic-size: auto;

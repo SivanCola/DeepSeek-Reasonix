@@ -1,9 +1,5 @@
-// Shared jsdom harness for Transcript rendering tests. The transcript is a
-// virtual list, so tests need controllable layout metrics: the scroll
-// container reports `viewportHeight`, each mounted row reports `rowHeight`,
-// and scrollHeight follows the sizer's total height (written by the
-// virtualizer's direct DOM updates). Not a test file itself — the runner only
-// discovers *.test.*.
+// Shared jsdom harness for Transcript rendering tests. The scroll container,
+// block measurements, and window extent use deterministic layout metrics.
 
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
@@ -66,7 +62,9 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
       const element = target as HTMLElement;
       const height = element.classList.contains("transcript__row")
         ? rowHeight
-        : element.dataset.viewportType === "element" || element.classList.contains("transcript")
+        : element.classList.contains("transcript__block")
+          ? Math.max(rowHeight, element.querySelectorAll(".transcript__row").length * rowHeight)
+        : element.classList.contains("transcript")
           ? viewportHeight
           : element.classList.contains("transcript__header")
             ? rowHeight
@@ -118,6 +116,7 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
     get(this: HTMLElement) {
       if (this.classList.contains("transcript")) return viewportHeight;
       if (this.classList.contains("transcript__row")) return rowHeight;
+      if (this.classList.contains("transcript__block")) return Math.max(rowHeight, this.querySelectorAll(".transcript__row").length * rowHeight);
       return 0;
     },
   });
@@ -145,22 +144,16 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
     configurable: true,
     get(this: HTMLElement) {
       if (this.classList.contains("transcript")) {
-        const list = this.querySelector<HTMLElement>("[data-testid='virtuoso-item-list']");
-        if (list) {
-          const paddingTop = Number.parseFloat(list.style.paddingTop || "0");
-          const paddingBottom = Number.parseFloat(list.style.paddingBottom || "0");
-          const rendered = Array.from(list.querySelectorAll<HTMLElement>("[data-known-size]"))
-            .reduce((sum, item) => sum + Number.parseFloat(item.dataset.knownSize || "0"), 0);
-          const total = paddingTop + rendered + paddingBottom;
-          if (Number.isFinite(total) && total > 0) return total;
-        }
-        const count = Number.parseInt(this.dataset.transcriptRowCount ?? "0", 10);
-        return Number.isFinite(count) ? count * rowHeight : 0;
+        const window = this.querySelector<HTMLElement>(".transcript__window");
+        const windowHeight = Number.parseFloat(window?.style.height || "0");
+        const residentRows = this.querySelectorAll(".transcript__resident-tail .transcript__row").length;
+        return Math.max(0, windowHeight + residentRows * rowHeight);
       }
       return 0;
     },
   });
-  // jsdom does not implement Element.scrollTo; the virtualizer scrolls through it.
+  // Keep generic element scroll methods available to nested controls. The
+  // transcript itself writes through TranscriptViewportWriter.
   (proto as unknown as { scrollTo: (arg?: number | ScrollToOptions) => void }).scrollTo = function (
     this: HTMLElement,
     arg?: number | ScrollToOptions,
@@ -209,11 +202,8 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
     });
   };
 
-  // Initial mount schedules several bottom-pin animation frames
-  // (scrollToBottomAfterLayout snaps once per frame for five frames); flush
-  // generously so tests can take manual control of the scroll position
-  // afterwards. Stability alone is not a drain signal — pending frames re-snap
-  // to the same value.
+  // Drain lazy Markdown work, ResizeObserver delivery, and the kernel's
+  // coalesced tail frame before a test takes manual control of the viewport.
   const settle = async () => {
     for (let i = 0; i < 8; i += 1) {
       await flush();
@@ -258,10 +248,7 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
           ),
         );
       });
-      // Virtuoso and the lazy Markdown/live-region surfaces can schedule a
-      // second commit after the initial act (especially on a loaded CI
-      // runner). Drain one extra frame so render() promises a settled DOM to
-      // callers that intentionally assert immediately after rendering.
+      // Lazy Markdown and window measurement can schedule a second commit.
       await flush();
       await flush();
     },
