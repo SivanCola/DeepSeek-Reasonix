@@ -46,6 +46,37 @@ async function frames(page, count = 4) {
   }), count);
 }
 
+async function waitForNativeViewportSettlement(page, requiredStableFrames = 6) {
+  await page.evaluate((stableFrameTarget) => new Promise((resolve, reject) => {
+    let previous = null;
+    let stableFrames = 0;
+    let sampledFrames = 0;
+    const sample = () => {
+      const transcript = document.querySelector(".transcript");
+      if (!(transcript instanceof HTMLElement)) {
+        reject(new Error("transcript viewport disappeared while native scrolling settled"));
+        return;
+      }
+      const current = [transcript.scrollTop, transcript.scrollHeight, transcript.clientHeight];
+      const unchanged = previous != null
+        && current.every((value, index) => Math.abs(value - previous[index]) <= 0.5);
+      stableFrames = unchanged ? stableFrames + 1 : 0;
+      sampledFrames += 1;
+      previous = current;
+      if (stableFrames >= stableFrameTarget) {
+        resolve();
+        return;
+      }
+      if (sampledFrames >= 240) {
+        reject(new Error(`native viewport did not settle: ${JSON.stringify(current)}`));
+        return;
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }), requiredStableFrames);
+}
+
 async function loadLongFixture(page) {
   await page.click('.project-tree__topic-main:has-text("bench:windowed-1000t")');
   await page.waitForFunction(() => {
@@ -166,7 +197,11 @@ async function runIteration(page, transcript, label, iteration) {
   await page.mouse.wheel(0, -(520 + iteration * 13));
   await page.waitForFunction(() => document.querySelector(".transcript")?.getAttribute("data-transcript-intent") === "reader",
     undefined, { timeout: 5_000 });
-  await frames(page, 3);
+  // WebKit may deliver one native wheel delta across several compositor
+  // frames. Establish the transaction baseline only after native geometry is
+  // stable; otherwise the remainder of the user's own wheel movement is
+  // indistinguishable from a product-induced anchor drift.
+  await waitForNativeViewportSettlement(page);
   const before = await anchorSnapshot(page);
   assert(before?.key && before.visible > 0, `${label} ${iteration + 1}/${iterations}: reader has a visible logical anchor`);
 
