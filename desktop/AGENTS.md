@@ -31,18 +31,20 @@ contracts when touching anything that can move the transcript viewport.
   Measurement-only notifications cannot replace the painted range while
   native input owns an unchanged viewport.
 - **Atomic measurement commit**: DOM measurements cannot mutate TanStack's
-  prefix-size ledger independently. While native input owns the viewport,
-  measurements remain unpublished. After ownership ends, the Window Adapter
-  opens one anchor transaction, publishes all changed item sizes as one batch,
-  and settles that geometry once. Never reintroduce per-item ResizeObserver
-  publication or platform-specific scroll compensation.
+  prefix-size ledger while native input owns the viewport. After ownership
+  ends, the Window Adapter commits all changed block-keyed sizes to one
+  immutable Reasonix ledger snapshot, then issues exactly one TanStack
+  `measure()` invalidation and settles that geometry once. Never reintroduce
+  per-item `resizeItem`, TanStack-owned ResizeObserver publication, or
+  platform-specific scroll compensation.
 - **Resident active tail**: the active turn and at least the two newest
   completed turns stay in ordinary DOM. A resident block may enter windowed
   history only after it is a viewport away and owns no anchor, focus, or
   selection endpoint. Stream growth in reader intent performs zero writes.
-- **Bounded safe mode**: two consecutive blank/invalid/correction anomalies in
-  one generation switch that session to full DOM until the next surface
-  generation. Do not add a second rendering stack or a persistent user flag.
+- **Bounded safe mode**: two blank/invalid/correction anomalies without an
+  intervening healthy frame in one generation switch that session to full DOM
+  until the next surface generation. Do not add a second rendering stack or a
+  persistent user flag.
 - **Deterministic clocks**: new scroll logic must go through the same
   injectable clock used by `TranscriptKernel` (`requestAnimationFrame`,
   `Date.now`, timer functions). No real sleeps or hidden retry clocks.

@@ -37,6 +37,7 @@ type SharedProps = {
   onGeometryWillChange: () => unknown;
   onGeometryChange: () => void;
   onAnomaly: (outcome: "blank-viewport" | "invalid-geometry") => void;
+  onGeometryHealthy: () => void;
   running: boolean;
   turnStartAt?: number;
 };
@@ -77,7 +78,7 @@ function ResidentTail({ blocks, activeBlock, tabId, renderRow, running, turnStar
 }
 
 function FullProjection(props: SharedProps) {
-  const { projection, tabId, scrollElement, renderRow, onGeometryWillChange, onGeometryChange, onAnomaly, running, turnStartAt } = props;
+  const { projection, tabId, scrollElement, renderRow, onGeometryWillChange, onGeometryChange, onAnomaly, onGeometryHealthy, running, turnStartAt } = props;
   const rootRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(onGeometryChange, [onGeometryChange, projection]);
@@ -104,9 +105,10 @@ function FullProjection(props: SharedProps) {
     const frame = requestAnimationFrame(() => {
       if (!Number.isFinite(scrollElement.scrollHeight) || !Number.isFinite(scrollElement.scrollTop)) onAnomaly("invalid-geometry");
       else if (!scrollElement.querySelector("[data-transcript-block-key]")) onAnomaly("blank-viewport");
+      else onGeometryHealthy();
     });
     return () => cancelAnimationFrame(frame);
-  }, [onAnomaly, projection, scrollElement]);
+  }, [onAnomaly, onGeometryHealthy, projection, scrollElement]);
 
   return (
     <div ref={rootRef} className="transcript__projection" data-transcript-render-mode="full" data-transcript-completed-blocks={projection.completedBlocks.length} data-transcript-mounted-blocks={projection.completedBlocks.length + (projection.activeBlock ? 1 : 0)}>
@@ -134,6 +136,7 @@ export const TranscriptViewport = forwardRef<TranscriptViewportHandle, SharedPro
   onGeometryWillChange,
   onGeometryChange,
   onAnomaly,
+  onGeometryHealthy,
   kernel,
   protectedBlockKeys = new Set(),
   running = false,
@@ -151,7 +154,7 @@ export const TranscriptViewport = forwardRef<TranscriptViewportHandle, SharedPro
       </div></div>
     )}
   </>;
-  const shared = { projection, tabId, scrollElement, renderRow, onGeometryWillChange, onGeometryChange, onAnomaly, running, turnStartAt };
+  const shared = { projection, tabId, scrollElement, renderRow, onGeometryWillChange, onGeometryChange, onAnomaly, onGeometryHealthy, running, turnStartAt };
 
   if (mode === "full") return <>{prefix}<TranscriptSelectionOverlay tabId={tabId ?? ""} scrollElement={scrollElement} virtualRevision="full" /><FullProjection {...shared} /></>;
   const fallbackBlocks = projection.completedBlocks.slice(-2);

@@ -81,10 +81,38 @@ ok(events.some((event) => event.transaction === expiring?.id && event.outcome ==
 
 kernel.reportAnomaly("blank-viewport");
 ok(!kernel.safeMode, "one anomalous frame does not downgrade the session");
+kernel.reportHealthyGeometry();
 kernel.reportAnomaly("invalid-geometry");
+ok(!kernel.safeMode, "a healthy frame resets the consecutive anomaly streak");
+kernel.reportAnomaly("blank-viewport");
 ok(kernel.safeMode, "two consecutive anomalies downgrade only the current generation");
 kernel.replaceSurface("three");
 ok(!kernel.safeMode, "surface generation replacement clears safe mode");
+
+let leaseEnded = 0;
+kernel.renewNativeGesture(snapshot, 320, () => { leaseEnded += 1; });
+ok(kernel.userGestureActive && kernel.nativeGestureLeaseActive, "native input starts one kernel-owned gesture lease");
+clock.advance(319);
+ok(leaseEnded === 0 && kernel.userGestureActive, "the injected clock keeps native ownership until the lease expires");
+kernel.renewNativeGesture({ ...snapshot, scrollTop: 260 }, 320, () => { leaseEnded += 1; });
+clock.advance(319);
+ok(leaseEnded === 0, "renewing native input replaces rather than stacks lease timers");
+clock.advance(1);
+ok(leaseEnded === 1 && !kernel.userGestureActive && !kernel.nativeGestureLeaseActive, "the current generation ends the gesture exactly once");
+
+kernel.renewNativeGesture(snapshot, 320, () => { leaseEnded += 1; });
+kernel.replaceSurface("four");
+clock.advance(320);
+ok(leaseEnded === 1 && !kernel.userGestureActive, "surface replacement cancels stale gesture callbacks");
+
+let painted = 0;
+kernel.afterCurrentGenerationPaint(() => { painted += 1; });
+kernel.replaceSurface("five");
+clock.flushFrames();
+ok(painted === 0, "surface replacement cancels stale paint callbacks");
+kernel.afterCurrentGenerationPaint(() => { painted += 1; });
+clock.flushFrames();
+ok(painted === 1, "the current generation accepts its paint callback");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

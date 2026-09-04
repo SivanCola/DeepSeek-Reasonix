@@ -145,6 +145,7 @@ export class TranscriptKernel {
   private anomalyCount = 0;
   private safeModeValue = false;
   private writerScrollPending = false;
+  private nativeGestureTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: { clock?: TranscriptKernelClock; emit?: (event: TranscriptKernelEvent) => void } = {}) {
     this.clock = options.clock ?? defaultClock();
@@ -157,6 +158,7 @@ export class TranscriptKernel {
   get anchor(): LogicalAnchor { return this.anchorValue; }
   get safeMode(): boolean { return this.safeModeValue; }
   get userGestureActive(): boolean { return this.userGesture; }
+  get nativeGestureLeaseActive(): boolean { return this.nativeGestureTimer !== null; }
   get activeTransaction(): ScrollTransaction | null { return this.active?.transaction ?? null; }
 
   connectWriter(writer: (request: TranscriptWriteRequest) => TranscriptWriteResult): () => void {
@@ -167,6 +169,7 @@ export class TranscriptKernel {
   }
 
   detachSurface(): void {
+    this.clearNativeGestureLease();
     this.cancelActive("surface-detached");
     this.deferredStructural = null;
     if (this.tailFrame !== null) this.clock.cancelAnimationFrame(this.tailFrame);
@@ -178,6 +181,7 @@ export class TranscriptKernel {
 
   replaceSurface(session: string): { generation: number; anchor: LogicalAnchor } {
     if (this.session) this.anchors.set(this.session, this.anchorValue);
+    this.clearNativeGestureLease();
     this.cancelActive("surface-replaced");
     this.deferredStructural = null;
     if (this.tailFrame !== null) this.clock.cancelAnimationFrame(this.tailFrame);
@@ -219,6 +223,7 @@ export class TranscriptKernel {
   }
 
   beginUserGesture(snapshot: TranscriptViewportSnapshot, owner: "selection" | "native" = "native"): void {
+    this.clearNativeGestureLease();
     this.cancelTailFrame();
     this.writerScrollPending = false;
     this.userGesture = true;
@@ -230,12 +235,36 @@ export class TranscriptKernel {
   }
 
   endUserGesture(): ScrollTransaction | null {
+    this.clearNativeGestureLease();
     this.userGesture = false;
     if (this.active?.transaction.kind === "selection") this.finish(this.active.transaction.id, "committed", "selection-ended");
     const deferred = this.deferredStructural;
     this.deferredStructural = null;
     if (!deferred || deferred.generation !== this.generationValue) return null;
     return this.begin(deferred.kind, deferred.anchor);
+  }
+
+  renewNativeGesture(
+    snapshot: TranscriptViewportSnapshot,
+    idleMs: number,
+    onEnd: (resumed: ScrollTransaction | null) => void,
+  ): void {
+    this.clearNativeGestureLease();
+    if (this.userGesture) this.observeNativeScroll(snapshot);
+    else this.beginUserGesture(snapshot, "native");
+    const generation = this.generationValue;
+    this.nativeGestureTimer = this.clock.setTimeout(() => {
+      this.nativeGestureTimer = null;
+      if (generation !== this.generationValue) return;
+      onEnd(this.endUserGesture());
+    }, Math.max(0, idleMs));
+  }
+
+  afterCurrentGenerationPaint(callback: () => void): void {
+    const generation = this.generationValue;
+    this.clock.requestAnimationFrame(() => {
+      if (generation === this.generationValue) callback();
+    });
   }
 
   begin(kind: ScrollTransactionKind, anchor = this.anchorValue): ScrollTransaction | null {
@@ -390,6 +419,10 @@ export class TranscriptKernel {
     }
   }
 
+  reportHealthyGeometry(): void {
+    this.anomalyCount = 0;
+  }
+
   private writeAndFinish(active: ActiveTransaction, owner: TranscriptScrollOwner, requested: number): boolean {
     if (!this.write || active.transaction.generation !== this.generationValue || this.userGesture) return false;
     const result = this.write({
@@ -413,6 +446,11 @@ export class TranscriptKernel {
     if (this.tailFrame === null) return;
     this.clock.cancelAnimationFrame(this.tailFrame);
     this.tailFrame = null;
+  }
+
+  private clearNativeGestureLease(): void {
+    if (this.nativeGestureTimer !== null) this.clock.clearTimeout(this.nativeGestureTimer);
+    this.nativeGestureTimer = null;
   }
 
   private emitEvent(

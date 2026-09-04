@@ -1,6 +1,7 @@
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { TranscriptKernel } from "../lib/transcriptKernel";
+import { TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
 import { commitTranscriptWindowRange, type TranscriptWindowRange } from "../lib/transcriptWindowRange";
 
@@ -16,6 +17,7 @@ export default function TranscriptWindow({
   onGeometryWillChange,
   onGeometryChange,
   onAnomaly,
+  onGeometryHealthy,
   protectedBlockKeys,
   kernel,
   pinnedJumpBlockKey,
@@ -31,6 +33,7 @@ export default function TranscriptWindow({
   onGeometryWillChange: () => unknown;
   onGeometryChange: () => void;
   onAnomaly: (outcome: "blank-viewport" | "invalid-geometry") => void;
+  onGeometryHealthy: () => void;
   protectedBlockKeys: ReadonlySet<string>;
   kernel: Pick<TranscriptKernel, "anchor" | "userGestureActive">;
   pinnedJumpBlockKey?: string;
@@ -68,11 +71,17 @@ export default function TranscriptWindow({
   retainKey(pinnedJumpBlockKey, ANCHOR_MEASUREMENT_RADIUS);
   const coldContainerRef = useRef<HTMLDivElement>(null);
   const residentTailRef = useRef<HTMLDivElement>(null);
+  const measurementLedgerRef = useRef<TranscriptMeasurementLedger | null>(null);
+  if (!measurementLedgerRef.current) measurementLedgerRef.current = new TranscriptMeasurementLedger();
+  const measurementLedger = measurementLedgerRef.current;
   const scrollMargin = coldContainerRef.current?.offsetTop ?? 0;
   const virtualizer = useVirtualizer({
     count: split.cold.length,
     getScrollElement: () => scrollElement,
-    estimateSize: (index) => estimateBlock(split.cold[index]),
+    estimateSize: (index) => {
+      const block = split.cold[index];
+      return measurementLedger.sizeFor(block.key, estimateBlock(block));
+    },
     getItemKey: (index) => split.cold[index].key,
     overscan: NATIVE_SCROLL_RUNWAY_BLOCKS,
     // The window adapter owns the DOM-to-ledger commit below. TanStack still
@@ -118,6 +127,10 @@ export default function TranscriptWindow({
     setResidentStartKey(minimumResidentKey);
   }, [currentResidentIndex, minimumResidentKey]);
   useLayoutEffect(() => {
+    const validKeys = new Set(projection.completedBlocks.map((block) => block.key));
+    measurementLedger.retain(validKeys);
+  }, [measurementLedger, projection.completedBlocks]);
+  useLayoutEffect(() => {
     if (residentStartIndex >= minimumResidentIndex || !scrollElement) return;
     const block = projection.completedBlocks[residentStartIndex];
     const element = block
@@ -140,22 +153,25 @@ export default function TranscriptWindow({
   useLayoutEffect(() => {
     if (kernel.userGestureActive) return;
     const container = coldContainerRef.current;
-    const changes: Array<{ index: number; size: number }> = [];
+    const changes: Array<{ key: string; size: number }> = [];
     if (container) {
       for (const item of virtualItems) {
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
         const size = Math.max(64, element.getBoundingClientRect().height || element.offsetHeight);
-        if (Math.abs(size - item.size) > 0.5) changes.push({ index: item.index, size });
+        if (Math.abs(size - item.size) > 0.5) changes.push({ key: String(item.key), size });
       }
     }
-    if (changes.length > 0) {
+    if (changes.length > 0 && measurementLedger.commit(changes)) {
       onGeometryWillChange();
-      changes.forEach(({ index, size }) => virtualizer.resizeItem(index, size));
+      // `measure()` invalidates TanStack exactly once. Its estimate callback
+      // reads the complete immutable ledger snapshot on the next render, so
+      // no partially-updated prefix tree can reach the native viewport.
+      virtualizer.measure();
       return;
     }
     onGeometryChange();
-  }, [kernel.userGestureActive, onGeometryChange, onGeometryWillChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident, virtualItems, virtualizer]);
+  }, [kernel.userGestureActive, measurementLedger, onGeometryChange, onGeometryWillChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
@@ -190,9 +206,10 @@ export default function TranscriptWindow({
           return rect.height > 0 && rect.bottom >= viewport.top && rect.top <= viewport.bottom;
         });
       if (!visible && (projection.completedBlocks.length > 0 || projection.activeBlock)) onAnomaly("blank-viewport");
+      else onGeometryHealthy();
     });
     return () => cancelAnimationFrame(frame);
-  }, [onAnomaly, projection.activeBlock, projection.completedBlocks.length, rangeRevision, scrollElement]);
+  }, [onAnomaly, onGeometryHealthy, projection.activeBlock, projection.completedBlocks.length, rangeRevision, scrollElement]);
 
   return (
     <div className="transcript__projection" data-transcript-render-mode="windowed" data-transcript-range-source={committedRange.source} data-transcript-completed-blocks={projection.completedBlocks.length} data-transcript-mounted-blocks={virtualItems.length + split.resident.length + (projection.activeBlock ? 1 : 0)}>
@@ -202,7 +219,7 @@ export default function TranscriptWindow({
         <div ref={coldContainerRef} className="transcript__window" style={{ height: totalSize, position: "relative" }}>
           {virtualItems.map((virtualItem) => {
             const block = split.cold[virtualItem.index];
-            return <div key={block.key} ref={virtualizer.measureElement} data-index={virtualItem.index} className="transcript__window-item" style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualItem.start - scrollMargin}px)` }}>
+            return <div key={block.key} data-index={virtualItem.index} className="transcript__window-item" style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualItem.start - scrollMargin}px)` }}>
               {renderBlock(block)}
             </div>;
           })}

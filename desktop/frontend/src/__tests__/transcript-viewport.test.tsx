@@ -70,7 +70,8 @@ ok(released.items !== previousRange.items, "gesture release commits the latest c
 const windowSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../components/TranscriptWindow.tsx", import.meta.url), "utf8"));
 ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publish ResizeObserver sizes outside the viewport commit protocol");
 ok(windowSource.includes("if (kernel.userGestureActive) return;"), "native gestures defer DOM-to-ledger measurement commits");
-ok(windowSource.includes("onGeometryWillChange();") && windowSource.includes("virtualizer.resizeItem(index, size)"), "released measurements enter one anchor transaction before their batched ledger commit");
+ok(windowSource.includes("measurementLedger.commit(changes)") && windowSource.includes("virtualizer.measure();"), "released measurements publish one immutable ledger snapshot and one range invalidation");
+ok(!windowSource.includes(".resizeItem("), "the window adapter cannot expose partially updated per-item prefix sizes");
 const reconstructed = commitTranscriptWindowRange({
   candidate: staleCandidate,
   measurements,
@@ -86,6 +87,26 @@ const reconstructed = commitTranscriptWindowRange({
 ok(reconstructed.source === "reconstructed", "an uncovered native jump reconstructs from the prefix-size ledger");
 ok(reconstructed.items.some((item) => item.start <= 1_200 && item.end >= 1_300), "the reconstructed range covers the native viewport");
 ok(reconstructed.items.some((item) => item.index === 80), "reconstruction retains protected blocks");
+
+const largeMeasurements = Array.from({ length: 10_000 }, (_, index) => ({ index, start: index * 96, end: (index + 1) * 96 }));
+const rangeStartedAt = performance.now();
+const largeRange = commitTranscriptWindowRange({
+  candidate: [{ index: 2, start: 192, end: 288 }],
+  measurements: largeMeasurements,
+  retainedIndexes: new Set([9_999]),
+  structureRevision: "10k",
+  scrollTop: 720_000,
+  clientHeight: 800,
+  coldStart: 0,
+  coldEnd: 960_000,
+  overscan: 12,
+  gestureActive: true,
+});
+const rangeElapsedMs = performance.now() - rangeStartedAt;
+ok(rangeElapsedMs < 1_000, `10,000-turn range reconstruction completes within 1s (${rangeElapsedMs.toFixed(1)}ms)`);
+ok(largeRange.source === "reconstructed" && largeRange.items.length <= 40, "10,000-turn reconstruction keeps a bounded mounted range");
+ok(largeRange.items.some((item) => item.start <= 720_000 && item.end >= 720_096), "10,000-turn reconstruction covers the authoritative viewport");
+ok(largeRange.items.some((item) => item.index === 9_999), "10,000-turn reconstruction preserves protected block identity");
 const harness = await createTranscriptHarness({ viewportHeight: 800, rowHeight: 24 });
 try {
   await harness.render(turns(100), { geometrySessionKey: "threshold-100" });

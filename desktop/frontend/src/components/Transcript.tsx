@@ -436,6 +436,7 @@ export function Transcript(props: TranscriptProps) {
                 onGeometryWillChange={kernel.beginAnchorRestore}
                 onGeometryChange={kernel.commitViewportGeometry}
                 onAnomaly={kernel.reportAnomaly}
+                onGeometryHealthy={kernel.reportHealthyGeometry}
                 kernel={kernel.kernel}
                 protectedBlockKeys={protectedBlockKeys}
                 running={running}

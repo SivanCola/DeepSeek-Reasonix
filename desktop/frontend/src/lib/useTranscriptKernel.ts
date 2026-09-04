@@ -61,7 +61,6 @@ export function useTranscriptKernel({
   const kernel = kernelRef.current;
   const writer = writerRef.current!;
   const nativeThumbRef = useRef(false);
-  const transientGestureTimerRef = useRef(0);
   const prependAwaitingGeometryRef = useRef(false);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
@@ -73,7 +72,6 @@ export function useTranscriptKernel({
   useLayoutEffect(() => {
     const disconnect = kernel.connectWriter(writer.write);
     return () => {
-      clearTimeout(transientGestureTimerRef.current);
       kernel.detachSurface();
       writer.attach(null, kernel.generation);
       disconnect();
@@ -133,29 +131,29 @@ export function useTranscriptKernel({
   }, [kernel, refresh, snapshot]);
 
   const beginGesture = useCallback((owner: "selection" | "native" = "native") => {
-    clearTimeout(transientGestureTimerRef.current);
-    transientGestureTimerRef.current = 0;
     const current = snapshot();
     if (!current) return;
     kernel.beginUserGesture(current, owner);
     refresh();
   }, [kernel, refresh, snapshot]);
 
-  const endGesture = useCallback(() => {
-    clearTimeout(transientGestureTimerRef.current);
-    transientGestureTimerRef.current = 0;
-    const resumed = kernel.endUserGesture();
+  const finishGesture = useCallback((resumed: ReturnType<TranscriptKernel["endUserGesture"]>) => {
     writer.freeze(false);
     nativeThumbRef.current = false;
-    if (resumed) requestAnimationFrame(settleGeometry);
+    if (resumed) kernel.afterCurrentGenerationPaint(settleGeometry);
     refresh();
   }, [kernel, refresh, settleGeometry, writer]);
 
+  const endGesture = useCallback(() => {
+    finishGesture(kernel.endUserGesture());
+  }, [finishGesture, kernel]);
+
   const renewGestureLease = useCallback(() => {
-    clearTimeout(transientGestureTimerRef.current);
-    if (!kernel.userGestureActive) beginGesture();
-    transientGestureTimerRef.current = setTimeout(endGesture, NATIVE_GESTURE_IDLE_MS) as unknown as number;
-  }, [beginGesture, endGesture, kernel]);
+    const current = snapshot();
+    if (!current) return;
+    kernel.renewNativeGesture(current, NATIVE_GESTURE_IDLE_MS, finishGesture);
+    refresh();
+  }, [finishGesture, kernel, refresh, snapshot]);
 
   const onScroll = useCallback(() => {
     const current = snapshot();
@@ -164,7 +162,7 @@ export function useTranscriptKernel({
     // Wheel delivery and native scrolling are not synchronous on every Wails
     // engine. Renew the same lease until the final native scroll event so the
     // browser's final position remains authoritative.
-    if (transientGestureTimerRef.current) renewGestureLease();
+    if (kernel.nativeGestureLeaseActive) renewGestureLease();
     refresh();
   }, [kernel, refresh, renewGestureLease, snapshot]);
 
@@ -179,11 +177,11 @@ export function useTranscriptKernel({
     const finish = () => {
       window.removeEventListener("pointerup", finish, true);
       window.removeEventListener("pointercancel", finish, true);
-      requestAnimationFrame(endGesture);
+      kernel.afterCurrentGenerationPaint(endGesture);
     };
     window.addEventListener("pointerup", finish, true);
     window.addEventListener("pointercancel", finish, true);
-  }, [beginGesture, endGesture, writer]);
+  }, [beginGesture, endGesture, kernel, writer]);
 
   const onKeyDownCapture = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (SCROLL_KEYS.has(event.key)) renewGestureLease();
@@ -193,6 +191,10 @@ export function useTranscriptKernel({
     kernel.reportAnomaly(outcome);
     refresh();
   }, [kernel, refresh]);
+
+  const reportHealthyGeometry = useCallback(() => {
+    kernel.reportHealthyGeometry();
+  }, [kernel]);
 
   const scrollToBottom = useCallback(() => {
     kernel.cancelActive("jump-to-bottom");
@@ -258,6 +260,7 @@ export function useTranscriptKernel({
     writeOffset,
     onScroll,
     reportAnomaly,
+    reportHealthyGeometry,
     onPointerDownCapture,
     onWheelCapture: renewGestureLease,
     onTouchStartCapture: beginGesture,
