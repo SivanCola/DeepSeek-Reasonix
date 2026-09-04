@@ -14,7 +14,6 @@ const NATIVE_SCROLL_RUNWAY_BLOCKS = 12;
 export default function TranscriptWindow({
   projection,
   scrollElement,
-  onGeometryWillChange,
   onGeometryChange,
   onAnomaly,
   onGeometryHealthy,
@@ -30,12 +29,11 @@ export default function TranscriptWindow({
 }: {
   projection: TimelineProjection;
   scrollElement: HTMLDivElement | null;
-  onGeometryWillChange: () => unknown;
   onGeometryChange: () => void;
   onAnomaly: (outcome: "blank-viewport" | "invalid-geometry") => void;
   onGeometryHealthy: () => void;
   protectedBlockKeys: ReadonlySet<string>;
-  kernel: Pick<TranscriptKernel, "anchor" | "userGestureActive">;
+  kernel: Pick<TranscriptKernel, "anchor" | "intent" | "userGestureActive">;
   pinnedJumpBlockKey?: string;
   onPinnedJumpVisible: () => void;
   prefix: ReactNode;
@@ -165,7 +163,6 @@ export default function TranscriptWindow({
     if (rect.bottom >= viewport.top && rect.top <= viewport.bottom) onPinnedJumpVisible();
   }, [onPinnedJumpVisible, pinnedJumpBlockKey, rangeRevision, scrollElement]);
   useLayoutEffect(() => {
-    if (kernel.userGestureActive) return;
     const container = coldContainerRef.current;
     const changes: Array<{ key: string; size: number }> = [];
     if (container) {
@@ -176,16 +173,31 @@ export default function TranscriptWindow({
         if (Math.abs(size - item.size) > 0.5) changes.push({ key: String(item.key), size });
       }
     }
-    if (changes.length > 0 && measurementLedger.commit(changes)) {
-      onGeometryWillChange();
+    measurementLedger.stage(changes);
+    const anchorIndex = kernel.anchor.kind === "block"
+      ? coldIndexByKey.get(kernel.anchor.blockKey)
+      : undefined;
+    const published = measurementLedger.commitStaged((key) => {
+      const index = coldIndexByKey.get(key);
+      // A size at or after the logical reader anchor cannot change the
+      // anchor's prefix position. Earlier sizes remain staged until the
+      // reader reaches them. Tail intent has no cold-history anchor and does
+      // not need invisible prefix refinement; its native geometry comes from
+      // the exact resident tail. This makes publication independent of
+      // platform wheel-event timing and prevents cold refinement from adding
+      // extra tail writes.
+      return kernel.intent === "reader" && anchorIndex != null && index != null && index >= anchorIndex;
+    });
+    if (published) {
       // `measure()` invalidates TanStack exactly once. Its estimate callback
       // reads the complete immutable ledger snapshot on the next render, so
-      // no partially-updated prefix tree can reach the native viewport.
+      // no partially-updated prefix tree can reach the native viewport. The
+      // published subset is anchor-safe and needs no corrective scroll write.
       virtualizer.measure();
       return;
     }
     onGeometryChange();
-  }, [kernel.userGestureActive, measurementLedger, onGeometryChange, onGeometryWillChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, kernel.anchor, kernel.intent, measurementLedger, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;

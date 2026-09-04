@@ -34,5 +34,15 @@ ok(ledger.retain(new Set(["turn:1", "turn:3"])), "retaining live block identitie
 ok(ledger.sizeFor("turn:2", 64) === 64, "retention publishes one pruned snapshot");
 ok(!ledger.retain(new Set(["turn:1", "turn:3"])), "retaining an unchanged identity set is a no-op");
 
+ok(ledger.stage([
+  { key: "turn:before-anchor", size: 180 },
+  { key: "turn:after-anchor", size: 220 },
+]), "DOM measurements can be staged before publication");
+ok(ledger.commitStaged((key) => key === "turn:after-anchor"), "an anchor-safe subset publishes atomically");
+ok(ledger.sizeFor("turn:before-anchor", 64) === 64, "a measurement before the reader anchor remains deferred");
+ok(ledger.sizeFor("turn:after-anchor", 64) === 220, "a measurement after the reader anchor becomes authoritative");
+ok(ledger.commitStaged(), "an explicit safe boundary publishes the deferred prefix measurement");
+ok(ledger.sizeFor("turn:before-anchor", 64) === 180, "the deferred prefix survives window recycling until publication");
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

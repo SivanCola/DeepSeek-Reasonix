@@ -69,8 +69,8 @@ const released = commitTranscriptWindowRange({
 ok(released.items !== previousRange.items, "gesture release commits the latest covering measurements");
 const windowSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../components/TranscriptWindow.tsx", import.meta.url), "utf8"));
 ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publish ResizeObserver sizes outside the viewport commit protocol");
-ok(windowSource.includes("if (kernel.userGestureActive) return;"), "native gestures defer DOM-to-ledger measurement commits");
-ok(windowSource.includes("measurementLedger.commit(changes)") && windowSource.includes("virtualizer.measure();"), "released measurements publish one immutable ledger snapshot and one range invalidation");
+ok(windowSource.includes("measurementLedger.stage(changes)"), "DOM measurements enter the block-keyed staging ledger before publication");
+ok(windowSource.includes("index >= anchorIndex") && windowSource.includes("virtualizer.measure();"), "reader measurements publish only when they cannot change the logical anchor prefix");
 ok(!windowSource.includes(".resizeItem("), "the window adapter cannot expose partially updated per-item prefix sizes");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");
 const reconstructed = commitTranscriptWindowRange({

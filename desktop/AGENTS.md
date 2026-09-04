@@ -30,13 +30,15 @@ contracts when touching anything that can move the transcript viewport.
   once from the prefix-size ledger while preserving every protected block.
   Measurement-only notifications cannot replace the painted range while
   native input owns an unchanged viewport.
-- **Atomic measurement commit**: DOM measurements cannot mutate TanStack's
-  prefix-size ledger while native input owns the viewport. After ownership
-  ends, the Window Adapter commits all changed block-keyed sizes to one
-  immutable Reasonix ledger snapshot, then issues exactly one TanStack
-  `measure()` invalidation and settles that geometry once. Never reintroduce
-  per-item `resizeItem`, TanStack-owned ResizeObserver publication, or
-  platform-specific scroll compensation.
+- **Anchor-safe measurement commit**: DOM measurements enter a block-keyed
+  staging ledger before they can change TanStack's prefix sizes. In reader
+  intent, only the anchor block and blocks after it may publish; sizes before
+  the anchor remain staged until the reader reaches them. Tail intent does not
+  refine invisible cold history; its exact geometry belongs to resident DOM.
+  Publish one immutable Reasonix snapshot and one TanStack `measure()`
+  invalidation. Never base correctness on an idle timeout, reintroduce per-item
+  `resizeItem`, TanStack-owned ResizeObserver publication, or platform-specific
+  scroll compensation.
 - **Resident active tail**: the active turn and at least the two newest
   completed turns stay in ordinary DOM. A resident block may enter windowed
   history only after it is a viewport away and owns no anchor, focus, or

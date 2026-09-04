@@ -10,6 +10,7 @@ export type TranscriptMeasurementChange = {
  */
 export class TranscriptMeasurementLedger {
   private sizes: ReadonlyMap<string, number> = new Map();
+  private staged = new Map<string, number>();
 
   sizeFor(key: string, fallback: number): number {
     return this.sizes.get(key) ?? fallback;
@@ -21,8 +22,12 @@ export class TranscriptMeasurementLedger {
     let changed = false;
     for (const change of changes) {
       if (!change.key || !Number.isFinite(change.size) || change.size <= 0) continue;
-      if (Math.abs((next.get(change.key) ?? 0) - change.size) <= 0.5) continue;
+      if (Math.abs((next.get(change.key) ?? 0) - change.size) <= 0.5) {
+        this.staged.delete(change.key);
+        continue;
+      }
       next.set(change.key, change.size);
+      this.staged.delete(change.key);
       changed = true;
     }
     if (!changed) return false;
@@ -30,7 +35,30 @@ export class TranscriptMeasurementLedger {
     return true;
   }
 
+  stage(changes: readonly TranscriptMeasurementChange[]): boolean {
+    let changed = false;
+    for (const change of changes) {
+      if (!change.key || !Number.isFinite(change.size) || change.size <= 0) continue;
+      const current = this.staged.get(change.key) ?? this.sizes.get(change.key) ?? 0;
+      if (Math.abs(current - change.size) <= 0.5) continue;
+      this.staged.set(change.key, change.size);
+      changed = true;
+    }
+    return changed;
+  }
+
+  commitStaged(canPublish: (key: string) => boolean = () => true): boolean {
+    const publishable: TranscriptMeasurementChange[] = [];
+    for (const [key, size] of this.staged) {
+      if (canPublish(key)) publishable.push({ key, size });
+    }
+    return this.commit(publishable);
+  }
+
   retain(keys: ReadonlySet<string>): boolean {
+    for (const key of this.staged.keys()) {
+      if (!keys.has(key)) this.staged.delete(key);
+    }
     if (this.sizes.size === 0) return false;
     const next = new Map<string, number>();
     for (const [key, size] of this.sizes) {

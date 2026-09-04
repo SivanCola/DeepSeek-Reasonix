@@ -122,7 +122,7 @@ export const TranscriptViewport = forwardRef<TranscriptViewportHandle, SharedPro
   loadingOlderHistory: boolean;
   olderHistoryError?: string;
   onRetryOlderHistory: () => void;
-  kernel: Pick<TranscriptKernel, "anchor" | "userGestureActive">;
+  kernel: Pick<TranscriptKernel, "anchor" | "intent" | "userGestureActive">;
   protectedBlockKeys?: ReadonlySet<string>;
 }>(function TranscriptViewport({
   projection,
