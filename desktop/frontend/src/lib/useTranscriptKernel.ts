@@ -2,7 +2,6 @@ import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as R
 import { recordTranscriptScrollDiagnostic } from "./transcriptScrollProbe";
 import {
   TranscriptKernel,
-  type LogicalAnchor,
   type ScrollTransactionKind,
   type TranscriptScrollMode,
   type TranscriptScrollOwner,
@@ -11,7 +10,6 @@ import {
 import { TranscriptViewportWriter } from "./transcriptViewportWriter";
 
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
-
 function blockTop(element: HTMLElement, key: string): number | undefined {
   const node = Array.from(element.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
     .find((candidate) => candidate.dataset.transcriptBlockKey === key);
@@ -40,9 +38,11 @@ function readSnapshot(element: HTMLElement): TranscriptViewportSnapshot {
 export function useTranscriptKernel({
   sessionKey,
   geometryRevision,
+  prependRevision,
 }: {
   sessionKey: string;
   geometryRevision: string | number;
+  prependRevision?: string | number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
@@ -57,9 +57,9 @@ export function useTranscriptKernel({
   }
   const kernel = kernelRef.current;
   const writer = writerRef.current!;
-  const restoredAnchorRef = useRef<LogicalAnchor>({ kind: "tail" });
   const nativeThumbRef = useRef(false);
-  const transientGestureRef = useRef(0);
+  const transientGestureTimerRef = useRef(0);
+  const prependAwaitingGeometryRef = useRef(false);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const snapshot = useCallback(() => {
@@ -70,6 +70,7 @@ export function useTranscriptKernel({
   useLayoutEffect(() => {
     const disconnect = kernel.connectWriter(writer.write);
     return () => {
+      clearTimeout(transientGestureTimerRef.current);
       kernel.detachSurface();
       writer.attach(null, kernel.generation);
       disconnect();
@@ -77,8 +78,8 @@ export function useTranscriptKernel({
   }, [kernel, writer]);
 
   useLayoutEffect(() => {
+    prependAwaitingGeometryRef.current = false;
     const restored = kernel.replaceSurface(sessionKey);
-    restoredAnchorRef.current = restored.anchor;
     writer.attach(scrollRef.current, restored.generation);
     if (restored.anchor.kind === "block") kernel.begin("restore", restored.anchor);
     refresh();
@@ -94,21 +95,27 @@ export function useTranscriptKernel({
     kernel.advanceGeometry();
     const element = scrollRef.current;
     let transaction = kernel.activeTransaction;
-    if (!transaction && element && kernel.intent === "reader" && kernel.anchor.kind === "block") {
+    if (!transaction && element && (!kernel.userGestureActive || !transientGestureTimerRef.current) && kernel.intent === "reader" && kernel.anchor.kind === "block") {
       const top = blockTop(element, kernel.anchor.blockKey);
       const desired = top == null ? undefined : top + kernel.anchor.offsetPx;
       if (desired != null && Math.abs(desired - element.scrollTop) > 0.5) {
         transaction = kernel.begin("restore", kernel.anchor);
       }
     }
-    if (transaction && element) kernel.correctAnchor(transaction, (key) => blockTop(element, key));
-    else if (kernel.intent === "tail") kernel.scheduleTailSync();
+    if (transaction && element && (transaction.kind !== "prepend" || !prependAwaitingGeometryRef.current)) {
+      kernel.correctAnchor(transaction, (key) => blockTop(element, key));
+    } else if (!transaction && kernel.intent === "tail") kernel.scheduleTailSync();
     refresh();
   }, [kernel, refresh]);
 
   useLayoutEffect(() => {
     settleGeometry();
   }, [geometryRevision, settleGeometry]);
+
+  useLayoutEffect(() => {
+    prependAwaitingGeometryRef.current = false;
+    settleGeometry();
+  }, [prependRevision, settleGeometry]);
 
   const beginStructural = useCallback((kind: Exclude<ScrollTransactionKind, "jump" | "selection" | "tail-sync">) => {
     const current = snapshot();
@@ -117,12 +124,15 @@ export function useTranscriptKernel({
     // the newly exposed bottom gap for a user-owned reader position.
     if (current && kind !== "composer-resize") kernel.observeNativeScroll(current);
     const anchor = kind === "composer-resize" ? kernel.anchor : current ? kernel.capture(current) : kernel.anchor;
+    if (kind === "prepend") prependAwaitingGeometryRef.current = true;
     const transaction = kernel.begin(kind, anchor);
     refresh();
     return transaction;
   }, [kernel, refresh, snapshot]);
 
   const beginGesture = useCallback((owner: "selection" | "native" = "native") => {
+    clearTimeout(transientGestureTimerRef.current);
+    transientGestureTimerRef.current = 0;
     const current = snapshot();
     if (!current) return;
     kernel.beginUserGesture(current, owner);
@@ -130,6 +140,8 @@ export function useTranscriptKernel({
   }, [kernel, refresh, snapshot]);
 
   const endGesture = useCallback(() => {
+    clearTimeout(transientGestureTimerRef.current);
+    transientGestureTimerRef.current = 0;
     const current = snapshot();
     const resumed = current ? kernel.endUserGesture(current) : null;
     writer.freeze(false);
@@ -139,12 +151,8 @@ export function useTranscriptKernel({
   }, [kernel, refresh, settleGeometry, snapshot, writer]);
 
   const beginTransientGesture = useCallback(() => {
-    const token = transientGestureRef.current + 1;
-    transientGestureRef.current = token;
     beginGesture();
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (transientGestureRef.current === token) endGesture();
-    }));
+    transientGestureTimerRef.current = setTimeout(endGesture, 100) as unknown as number;
   }, [beginGesture, endGesture]);
 
   const onScroll = useCallback(() => {

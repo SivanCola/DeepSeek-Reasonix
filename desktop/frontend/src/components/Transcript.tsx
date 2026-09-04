@@ -142,6 +142,7 @@ export function Transcript(props: TranscriptProps) {
   const kernel = useTranscriptKernel({
     sessionKey: surfaceKey,
     geometryRevision: `${contentRevision}:${footerHeight}:${experience}:${historyMutation?.seq ?? 0}`,
+    prependRevision: historyMutation?.kind === "prepend" ? historyMutation.seq : 0,
   });
   const [
     questions, loadedByTurn, totalQuestions, activeQuestion, setActiveQuestion,

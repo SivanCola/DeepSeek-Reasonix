@@ -169,6 +169,12 @@ async function runWindowedFixture(page) {
     await page.mouse.wheel(0, 360);
     await settleFrames(page, 2);
   }
+  // End the input-ownership window explicitly before injecting a layout
+  // mutation. The assertion below then tests reader-anchor correction rather
+  // than racing the wheel quiet-period policy.
+  await page.mouse.down();
+  await page.mouse.up();
+  await settleFrames(page, 2);
   const anchorBefore = await page.evaluate(() => {
     const element = document.querySelector(".transcript");
     if (!(element instanceof HTMLElement)) return null;
@@ -249,7 +255,14 @@ async function runWindowedFixture(page) {
   }
   await page.waitForFunction((count) => Number(document.querySelector(".transcript")?.getAttribute("data-transcript-block-count")) > count,
     beforePrepend.blocks, { timeout: 15_000 });
-  await settleFrames(page, 8);
+  await page.waitForFunction((anchor) => {
+    const transcript = document.querySelector(".transcript");
+    const block = [...document.querySelectorAll("[data-transcript-block-key]")]
+      .find((candidate) => candidate.getAttribute("data-transcript-block-key") === anchor.key);
+    return transcript instanceof HTMLElement && block instanceof HTMLElement
+      && Math.abs(block.getBoundingClientRect().top - transcript.getBoundingClientRect().top - anchor.top) <= 4;
+  }, prependAnchor, { timeout: 15_000 });
+  await settleFrames(page, 2);
   const prepend = await page.evaluate(() => {
     const probe = window.__prependProbe;
     if (probe) probe.active = false;
