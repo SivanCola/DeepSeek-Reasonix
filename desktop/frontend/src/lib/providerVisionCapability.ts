@@ -24,12 +24,13 @@ export function providerVisionModelsForView(
 
 /** Returns a conservative read-only capability label for one model. */
 export function providerModelVisionCapability(
-  provider: Pick<ProviderView, "visionModelsConfigured" | "modelCapabilities">,
+  provider: Pick<ProviderView, "visionModelsConfigured" | "modelCapabilities" | "visionCapability">,
   model: string,
   visionModels: string[],
 ): ProviderModelVisionCapability {
   const metadata = provider.modelCapabilities?.find((item) => item.model.trim().toLowerCase() === model.trim().toLowerCase());
   if (metadata) return metadata.state === "supported" ? "supported" : metadata.state === "unknown" ? "unknown" : "unsupported";
   if (visionModels.includes(model)) return "supported";
-  return provider.visionModelsConfigured ? "unsupported" : "unknown";
+  if (provider.visionModelsConfigured || provider.visionCapability === "unsupported") return "unsupported";
+  return "unknown";
 }

@@ -67,6 +67,19 @@ const metadata = provider({
 const adapterMetadataVision = providerVisionModelsForView(metadata);
 ok(adapterMetadataVision.length === 1 && adapterMetadataVision[0] === "vision-model", "adapter metadata enables native vision without VisionModels");
 ok(providerModelVisionCapability(metadata, "text-model", adapterMetadataVision) === "unsupported", "adapter text-only metadata stays read-only");
+ok(
+  providerModelVisionCapability(
+    provider({
+      visionModels: [],
+      visionModelsConfigured: false,
+      visionCapability: "unsupported",
+      modelCapabilities: [],
+    }),
+    "opaque-model",
+    [],
+  ) === "unsupported",
+  "legacy provider-level unsupported capability remains a read-only fallback",
+);
 
 const overrideMetadata = provider({
   visionModels: [],
