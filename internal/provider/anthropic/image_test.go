@@ -28,6 +28,24 @@ func TestBuildRequestEmbedsImageBlockForVisionModel(t *testing.T) {
 	}
 }
 
+func TestModelInfoEnablesImageWireSerialization(t *testing.T) {
+	p, err := New(provider.Config{
+		Name: "catalog", BaseURL: "https://example.test", Model: "vision",
+		ModelInfo: &provider.ModelInfo{ID: "vision", InputModalities: []provider.ModelModality{provider.ModalityText, provider.ModalityImage}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if !c.vision {
+		t.Fatal("model metadata should enable image wire serialization")
+	}
+	req := c.buildRequest(context.Background(), provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "describe", Images: []string{"data:image/png;base64,AAAA"}}}})
+	if len(req.Messages[0].Content) != 2 || req.Messages[0].Content[1].Type != "image" {
+		t.Fatalf("content = %#v, want text + image blocks", req.Messages[0].Content)
+	}
+}
+
 func TestBuildRequestSkipsImageBlockWithoutVision(t *testing.T) {
 	c := &client{model: "claude-opus-4-8"} // vision unset
 	req := c.buildRequest(context.Background(), provider.Request{

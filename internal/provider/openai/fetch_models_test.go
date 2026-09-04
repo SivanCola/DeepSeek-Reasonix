@@ -44,6 +44,64 @@ func TestFetchModels(t *testing.T) {
 	}
 }
 
+func TestFetchModelCatalogParsesInputModalitiesAndAliases(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{
+			map[string]any{"id": "canonical", "input_modalities": []string{"text", "image"}},
+			map[string]any{"id": "nested", "modalities": map[string]any{"input": []string{"text", "image"}}},
+			map[string]any{"id": "vision-bool", "supports_vision": true},
+			map[string]any{"id": "text-only", "capabilities": map[string]any{"vision": false}},
+			map[string]any{"id": "missing"},
+		}})
+	}))
+	defer srv.Close()
+
+	got, err := FetchModelCatalog(context.Background(), srv.URL, "key", nil)
+	if err != nil {
+		t.Fatalf("FetchModelCatalog: %v", err)
+	}
+	byID := map[string][]string{}
+	for _, model := range got {
+		modalities := make([]string, len(model.InputModalities))
+		for i, modality := range model.InputModalities {
+			modalities[i] = string(modality)
+		}
+		byID[model.ID] = modalities
+	}
+	if got := byID["canonical"]; len(got) != 2 || got[1] != "image" {
+		t.Fatalf("canonical modalities = %v", got)
+	}
+	if got := byID["nested"]; len(got) != 2 || got[1] != "image" {
+		t.Fatalf("nested modalities = %v", got)
+	}
+	if got := byID["vision-bool"]; len(got) != 2 || got[1] != "image" {
+		t.Fatalf("vision bool modalities = %v", got)
+	}
+	if got := byID["text-only"]; len(got) != 1 || got[0] != "text" {
+		t.Fatalf("text-only modalities = %v", got)
+	}
+	if got := byID["missing"]; len(got) != 1 || got[0] != "text" {
+		t.Fatalf("missing modalities = %v, want explicit safe text default", got)
+	}
+}
+
+func TestFetchModelCatalogCanonicalFieldWinsOverAlias(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{
+			map[string]any{"id": "model", "input_modalities": []string{"text"}, "supports_vision": true},
+		}})
+	}))
+	defer srv.Close()
+
+	got, err := FetchModelCatalog(context.Background(), srv.URL, "key", nil)
+	if err != nil {
+		t.Fatalf("FetchModelCatalog: %v", err)
+	}
+	if len(got) != 1 || len(got[0].InputModalities) != 1 || got[0].InputModalities[0] != "text" {
+		t.Fatalf("catalog = %+v, canonical field should win", got)
+	}
+}
+
 func TestFetchModelsSendsCustomHeaders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("HTTP-Referer") != "https://app.example" || r.Header.Get("X-Title") != "Reasonix" {

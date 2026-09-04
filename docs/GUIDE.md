@@ -1,5 +1,8 @@
 # Reasonix Guide
 
+Provider model capability metadata is documented in
+[`MODEL_CAPABILITIES.md`](./MODEL_CAPABILITIES.md).
+
 <a href="../README.md">README</a>
 &nbsp;·&nbsp;
 <a href="./GUIDE.zh-CN.md">简体中文</a>
@@ -409,24 +412,25 @@ DeepSeek Anthropic, OpenCode Go DeepSeek Responses, OpenCode Zen
 Anthropic, Qwen/DashScope CN/Global, Qwen Coding Plan CN/Global
 OpenAI-compatible and Anthropic-compatible endpoints, StepFun OpenAI-compatible
 and Anthropic-compatible endpoints, NovitaAI, GMI Cloud, Vercel AI Gateway,
-HuggingFace Router, NVIDIA NIM, KiloCode, and Ollama Cloud. Plan names describe
+HuggingFace Router, ModelScope, NVIDIA NIM, KiloCode, and Ollama Cloud. Plan names describe
 the access/payment route; they include CN/Global only when the provider exposes
 distinct regional endpoints. Kimi Coding Plan is therefore a dedicated plan
 endpoint, while Kimi direct API is split into CN and Global. The preset path
 usually needs only the provider API key: the key value is stored in Reasonix home
 `.env`, while `config.toml` stores the endpoint, model list, key
-environment-variable name, context window, vision model metadata, proxy bypass
+environment-variable name, context window, model capability metadata, proxy bypass
 for China-only endpoints, MiniMax `reasoning_split`, GLM/MiniMax thinking
 heuristics, Anthropic-compatible Bearer auth where needed, Ollama Cloud
 max-effort support, and OpenCode Go per-model reasoning overrides. Official DeepSeek Anthropic, Responses, and Chat Completions catalogs also
-include `deepseek-v4-flash-vision-exp`. In Settings, mark that SKU for image
-input with the same checkbox used by other providers, then select it. Composer
+include `deepseek-v4-flash-vision-exp`. Settings derives image support from
+model capability metadata; no per-provider vision-model checkbox is needed.
+Composer
 and `@` user images are sent as official visual input using the three documented
 shapes: inline base64 `data:` URLs for local files, `http(s)` image URLs as-is,
 and Files API `file-api-` ids (local images over 32 MiB on official DeepSeek are
 uploaded automatically). Chat Completions uses `image_url` or `file`, Anthropic
 uses `image`+`source.base64|url|file`, and Responses uses `input_image`.
-Flash and Pro stay text-only on the wire even if checked, and tool screenshots
+Flash and Pro stay text-only on the wire even when legacy configuration lists them, and tool screenshots
 are not forwarded as image parts. The vision SKU uses the Flash rate card. The dedicated
 OpenCode Go DeepSeek Anthropic and DeepSeek Responses presets expose the verified
 Flash routes and enable provider-side `web_search` by default; the Responses

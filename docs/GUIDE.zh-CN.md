@@ -1,5 +1,8 @@
 # Reasonix 使用指南
 
+Provider 模型能力元数据见
+[`MODEL_CAPABILITIES.zh-CN.md`](./MODEL_CAPABILITIES.zh-CN.md)。
+
 <a href="../README.zh-CN.md">README</a>
 &nbsp;·&nbsp;
 <a href="./GUIDE.md">English</a>
@@ -351,20 +354,20 @@ OpenCode Zen Anthropic、Qwen/DashScope CN/Global、
 Qwen Coding Plan
 CN/Global 的 OpenAI-compatible 与 Anthropic-compatible 端点、StepFun
 OpenAI-compatible 与 Anthropic-compatible 端点、NovitaAI、GMI Cloud、Vercel AI
-Gateway、HuggingFace Router、NVIDIA NIM、KiloCode 和 Ollama Cloud。Plan 表示
+Gateway、HuggingFace Router、ModelScope、NVIDIA NIM、KiloCode 和 Ollama Cloud。Plan 表示
 访问/付费形态；只有服务商确实提供不同区域端点时，预设名才同时带 CN/Global。
 因此 Kimi Coding Plan 是独立 plan 端点，Kimi 直连 API 才拆成 CN 和 Global。
 预设路径通常只需要填写服务商 API Key：真实 key 会写入 Reasonix home `.env`，
-`config.toml` 只保存端点、模型列表、key 环境变量名、上下文窗口、视觉模型元数据、
+`config.toml` 只保存端点、模型列表、key 环境变量名、上下文窗口、模型能力元数据、
 中国区端点直连、MiniMax `reasoning_split`、GLM/MiniMax thinking heuristic、
 Anthropic-compatible 网关需要的 Bearer 认证、Ollama Cloud max-effort 支持，
 以及 OpenCode Go 的每模型 reasoning 覆盖。官方 DeepSeek 的 Anthropic、Responses 与
-Chat Completions 目录还会带上 `deepseek-v4-flash-vision-exp`。在设置里和其他供应商
-一样勾选该模型的「图片输入」，再选中这一枚 SKU。composer/`@` 用户图片会按官方文档的三种方式发出：本地小图走内联 base64 `data:` URL；
+Chat Completions 目录还会带上 `deepseek-v4-flash-vision-exp`。设置页会按模型能力元数据
+展示支持图片的模型，不再要求逐个勾选。composer/`@` 用户图片会按官方文档的三种方式发出：本地小图走内联 base64 `data:` URL；
 `http(s)` 图片链接原样作为 URL 传入；`file-api-` 引用走 Files API（官方 DeepSeek 上
 超过 32 MiB 的本地图会自动上传）。Chat Completions 用 `image_url` 或 `file`，Anthropic
-用 `image`+`source.base64|url|file`，Responses 用 `input_image`。Flash/Pro 即使勾了
-「图片输入」线上仍是纯文本，工具截图也不会作为图片块转发。
+用 `image`+`source.base64|url|file`，Responses 用 `input_image`。Flash/Pro 即使旧配置列出
+为视觉模型，线上仍是纯文本，工具截图也不会作为图片块转发。
 视觉 SKU 使用 Flash 价卡。专用的 OpenCode Go DeepSeek Anthropic 与
 DeepSeek Responses 预设接入已验证的 Flash 线路，并默认启用 provider 侧 `web_search`；
 Responses 变体使用无状态上下文回放。原有混合 OpenCode Go Anthropic 预设仍只包含 Qwen

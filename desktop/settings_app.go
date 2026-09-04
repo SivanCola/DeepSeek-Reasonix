@@ -42,51 +42,65 @@ import (
 // read
 
 type ProviderView struct {
-	Name                        string                      `json:"name"`
-	BuiltIn                     bool                        `json:"builtIn"`
-	Added                       bool                        `json:"added"`
-	Kind                        string                      `json:"kind"`
-	BaseURL                     string                      `json:"baseUrl"`
-	ChatURL                     string                      `json:"chatUrl"`
-	RequestURL                  string                      `json:"requestUrl"`
-	Models                      []string                    `json:"models"`
-	VisionModels                []string                    `json:"visionModels"`
-	VisionModelsSet             bool                        `json:"visionModelsConfigured"`
-	VisionCapability            string                      `json:"visionCapability,omitempty"`
-	ModelsURL                   string                      `json:"modelsUrl"`
-	Default                     string                      `json:"default"`
-	APIKeyEnv                   string                      `json:"apiKeyEnv"`
-	Headers                     map[string]string           `json:"headers"`
-	ExtraBody                   map[string]any              `json:"extraBody"`
-	AuthHeader                  bool                        `json:"authHeader"`
-	NoProxy                     bool                        `json:"noProxy"`
-	KeySet                      bool                        `json:"keySet"` // the env var currently resolves to a non-empty value
-	RequiresKey                 bool                        `json:"requiresKey"`
-	Configured                  bool                        `json:"configured"` // selectable: either key is present or no key is required
-	KeySource                   string                      `json:"keySource,omitempty"`
-	KeySourcePath               string                      `json:"keySourcePath,omitempty"`
-	BalanceURL                  string                      `json:"balanceUrl"`
-	ContextWindow               int                         `json:"contextWindow"`
-	ReasoningProtocol           string                      `json:"reasoningProtocol"`
-	Thinking                    string                      `json:"thinking"`
-	WebSearch                   bool                        `json:"webSearch"`
-	ServerWebSearchCapability   bool                        `json:"serverWebSearchCapability"`
-	SupportedEfforts            []string                    `json:"supportedEfforts"`
-	DefaultEffort               string                      `json:"defaultEffort"`
-	ModelOverrides              []ProviderModelOverrideView `json:"modelOverrides"`
-	RecommendedUpgradeAvailable bool                        `json:"recommendedUpgradeAvailable,omitempty"`
+	Name                        string                        `json:"name"`
+	BuiltIn                     bool                          `json:"builtIn"`
+	Added                       bool                          `json:"added"`
+	Kind                        string                        `json:"kind"`
+	BaseURL                     string                        `json:"baseUrl"`
+	ChatURL                     string                        `json:"chatUrl"`
+	RequestURL                  string                        `json:"requestUrl"`
+	Models                      []string                      `json:"models"`
+	VisionModels                []string                      `json:"visionModels"`           // legacy capability projection for old frontends
+	VisionModelsSet             bool                          `json:"visionModelsConfigured"` // legacy explicit-list marker
+	VisionCapability            string                        `json:"visionCapability,omitempty"`
+	ModelsURL                   string                        `json:"modelsUrl"`
+	Default                     string                        `json:"default"`
+	APIKeyEnv                   string                        `json:"apiKeyEnv"`
+	Headers                     map[string]string             `json:"headers"`
+	ExtraBody                   map[string]any                `json:"extraBody"`
+	AuthHeader                  bool                          `json:"authHeader"`
+	NoProxy                     bool                          `json:"noProxy"`
+	KeySet                      bool                          `json:"keySet"` // the env var currently resolves to a non-empty value
+	RequiresKey                 bool                          `json:"requiresKey"`
+	Configured                  bool                          `json:"configured"` // selectable: either key is present or no key is required
+	KeySource                   string                        `json:"keySource,omitempty"`
+	KeySourcePath               string                        `json:"keySourcePath,omitempty"`
+	BalanceURL                  string                        `json:"balanceUrl"`
+	ContextWindow               int                           `json:"contextWindow"`
+	ReasoningProtocol           string                        `json:"reasoningProtocol"`
+	Thinking                    string                        `json:"thinking"`
+	WebSearch                   bool                          `json:"webSearch"`
+	ServerWebSearchCapability   bool                          `json:"serverWebSearchCapability"`
+	SupportedEfforts            []string                      `json:"supportedEfforts"`
+	DefaultEffort               string                        `json:"defaultEffort"`
+	ModelOverrides              []ProviderModelOverrideView   `json:"modelOverrides"`
+	ModelCapabilities           []ProviderModelCapabilityView `json:"modelCapabilities"`
+	RecommendedUpgradeAvailable bool                          `json:"recommendedUpgradeAvailable,omitempty"`
 	// ModelCatalogFingerprint is an opaque digest of the provider identity and
 	// current model selection. Background discovery must compare it while holding
 	// the config edit lock before applying a narrow catalog-only update.
 	ModelCatalogFingerprint string `json:"modelCatalogFingerprint"`
 }
 
+type ProviderModelCapabilityView struct {
+	Model           string   `json:"model"`
+	InputModalities []string `json:"inputModalities"`
+	State           string   `json:"state"`
+	Source          string   `json:"source"`
+}
+
 type ProviderModelCatalogUpdate struct {
-	Name                string   `json:"name"`
-	ExpectedFingerprint string   `json:"expectedFingerprint"`
-	Models              []string `json:"models"`
-	Default             string   `json:"default"`
-	VisionModels        []string `json:"visionModels"`
+	Name                string                          `json:"name"`
+	ExpectedFingerprint string                          `json:"expectedFingerprint"`
+	Models              []string                        `json:"models"`
+	Default             string                          `json:"default"`
+	VisionModels        []string                        `json:"visionModels"`
+	ModelCapabilities   []ProviderModelCapabilityUpdate `json:"modelCapabilities,omitempty"`
+}
+
+type ProviderModelCapabilityUpdate struct {
+	Model           string   `json:"model"`
+	InputModalities []string `json:"inputModalities"`
 }
 type ProviderPresetView struct {
 	ID                   string   `json:"id"`
@@ -662,6 +676,7 @@ func providerViewFromEntryForRootWithResolverAndCredentials(p config.ProviderEnt
 	if !config.CanConfigureVision(&p) {
 		visionCapability = "unsupported"
 	}
+	modelCapabilities := providerModelCapabilitiesForView(p, models)
 	return ProviderView{
 		Name: p.Name, BuiltIn: builtIn, Added: added, Kind: p.Kind, BaseURL: p.BaseURL, ChatURL: p.ChatURL, RequestURL: p.RequestURL,
 		Models: nonNil(models), VisionModels: nonNil(providerVisionModels(models, visionModels)), VisionModelsSet: visionModelsSet, VisionCapability: visionCapability, ModelsURL: p.ModelsURL, Default: p.DefaultModel(),
@@ -684,9 +699,29 @@ func providerViewFromEntryForRootWithResolverAndCredentials(p config.ProviderEnt
 		SupportedEfforts:            nonNil(p.SupportedEfforts),
 		DefaultEffort:               p.DefaultEffort,
 		ModelOverrides:              providerModelOverridesForView(p.ModelOverrides, models),
+		ModelCapabilities:           modelCapabilities,
 		RecommendedUpgradeAvailable: config.CanUpgradeDeepSeekProviderProtocol(&p),
 		ModelCatalogFingerprint:     providerModelCatalogFingerprintForCredentials(p, credentialsRevision),
 	}
+}
+
+func providerModelCapabilitiesForView(p config.ProviderEntry, models []string) []ProviderModelCapabilityView {
+	resolver := config.NewModelCapabilityResolver()
+	out := make([]ProviderModelCapabilityView, 0, len(models))
+	for _, model := range models {
+		entry := p
+		entry.Model = model
+		capability := resolver.Resolve(&entry)
+		modalities := make([]string, len(capability.InputModalities))
+		for i, modality := range capability.InputModalities {
+			modalities[i] = string(modality)
+		}
+		out = append(out, ProviderModelCapabilityView{
+			Model: model, InputModalities: modalities,
+			State: string(capability.State), Source: string(capability.Source),
+		})
+	}
+	return out
 }
 
 func providerThinkingForSettings(thinking string) string {
@@ -2983,7 +3018,7 @@ func providerPresetNoExistingProviderError(id string) error {
 // it never touches chat request serialization or provider-visible prompt data.
 // The probe rides the configured network proxy so a broken proxy path fails
 // here, at setup time, instead of succeeding and stalling chat later (#9560).
-func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
+func (a *App) FetchProviderModelCatalog(p ProviderView) ([]ProviderModelCapabilityView, error) {
 	root := a.activeWorkspaceRoot()
 	e := config.ProviderEntry{
 		Name:       p.Name,
@@ -2997,9 +3032,39 @@ func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
 	e.ResolveAPIKeyForRoot(root)
 	ctx, cancel := context.WithTimeout(a.reqCtx(), 15*time.Second)
 	defer cancel()
-	models, err := e.FetchModelsWithProxy(ctx, withProbeDirectHost(a.networkProxySpecForRoot(root), e.BaseURL, p.NoProxy))
+	models, err := e.FetchModelCatalogWithProxy(ctx, withProbeDirectHost(a.networkProxySpecForRoot(root), e.BaseURL, p.NoProxy))
+	if err != nil {
+		return []ProviderModelCapabilityView{}, err
+	}
+	capabilities := config.NewModelCapabilityResolver()
+	capabilities.PutCatalog(e, models)
+	result := make([]ProviderModelCapabilityView, 0, len(models))
+	for _, model := range models {
+		entry := e
+		entry.Model = model.ID
+		resolved := capabilities.Resolve(&entry)
+		modalities := make([]string, len(resolved.InputModalities))
+		for i, modality := range resolved.InputModalities {
+			modalities[i] = string(modality)
+		}
+		result = append(result, ProviderModelCapabilityView{
+			Model: model.ID, InputModalities: modalities,
+			State: string(resolved.State), Source: string(resolved.Source),
+		})
+	}
+	return result, nil
+}
+
+// FetchProviderModels is the legacy ID-only wrapper retained for older
+// frontends and callers.
+func (a *App) FetchProviderModels(p ProviderView) ([]string, error) {
+	catalog, err := a.FetchProviderModelCatalog(p)
 	if err != nil {
 		return []string{}, err
+	}
+	models := make([]string, 0, len(catalog))
+	for _, model := range catalog {
+		models = append(models, model.Model)
 	}
 	return nonNil(chatProviderModels(models)), nil
 }
@@ -3072,6 +3137,39 @@ func (a *App) FetchAllProviderModels(providers []ProviderView) map[string][]stri
 			mu.Lock()
 			defer mu.Unlock()
 			results[p.Name] = nonNil(chatProviderModels(models))
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return results
+}
+
+// FetchAllProviderModelCatalogs is the metadata-preserving batch companion to
+// FetchAllProviderModels. Individual provider failures are omitted so callers
+// can retry them through the single-provider path.
+func (a *App) FetchAllProviderModelCatalogs(providers []ProviderView) map[string][]ProviderModelCapabilityView {
+	results := make(map[string][]ProviderModelCapabilityView, len(providers))
+	var mu sync.Mutex
+	g, ctx := errgroup.WithContext(a.reqCtx())
+	sem := make(chan struct{}, 4)
+	for _, p := range providers {
+		g.Go(func() error {
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			defer func() { <-sem }()
+			catalog, err := a.FetchProviderModelCatalog(p)
+			if err != nil {
+				return nil
+			}
+			mu.Lock()
+			if catalog == nil {
+				catalog = []ProviderModelCapabilityView{}
+			}
+			results[p.Name] = catalog
+			mu.Unlock()
 			return nil
 		})
 	}

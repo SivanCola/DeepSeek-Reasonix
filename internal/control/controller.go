@@ -121,16 +121,17 @@ type Controller struct {
 	// one — sub-agents then keep whatever gate they were constructed with.
 	subagentGate *SharedHeadlessGate
 
-	label                  string
-	modelRef               string
-	visionModel            string
-	visionProviderResolver func(string) (provider.Provider, error)
-	visionModelSelector    func(string, string) (string, bool)
-	prompt                 controllerPromptState
-	pinnedContextLoader    PinnedContextLoader
-	sessionContextStatic   sessioncontext.Sections
-	sessionDir             string
-	commands               atomic.Pointer[[]command.Command]
+	label                   string
+	modelRef                string
+	visionModel             string
+	visionProviderResolver  func(string) (provider.Provider, error)
+	visionModelSelector     func(string, string) (string, bool)
+	modelCapabilityResolver func(*config.ProviderEntry) config.ResolvedModelCapability
+	prompt                  controllerPromptState
+	pinnedContextLoader     PinnedContextLoader
+	sessionContextStatic    sessioncontext.Sections
+	sessionDir              string
+	commands                atomic.Pointer[[]command.Command]
 	// skills owns the session's discovered skills (enabled subset, full set, and
 	// the reloadable stores) — the skills slice of the Capabilities concern. See
 	// skill.go.
@@ -483,7 +484,10 @@ type Options struct {
 	VisionModel            string
 	VisionProviderResolver func(string) (provider.Provider, error)
 	VisionModelSelector    func(string, string) (string, bool)
-	SystemPrompt           string
+	// ModelCapabilityResolver returns the adapter/config-resolved metadata for
+	// the exact active model. Nil keeps the legacy config-only behavior.
+	ModelCapabilityResolver func(*config.ProviderEntry) config.ResolvedModelCapability
+	SystemPrompt            string
 	// PinnedContextLoader snapshots the current session sidecar at turn
 	// admission. The Agent persists changes as append-only user-role revisions.
 	PinnedContextLoader PinnedContextLoader
@@ -666,6 +670,7 @@ func New(opts Options) *Controller {
 		visionModel:                       strings.TrimSpace(opts.VisionModel),
 		visionProviderResolver:            opts.VisionProviderResolver,
 		visionModelSelector:               opts.VisionModelSelector,
+		modelCapabilityResolver:           opts.ModelCapabilityResolver,
 		prompt:                            newControllerPromptState(opts.SystemPrompt, opts.Executor),
 		pinnedContextLoader:               opts.PinnedContextLoader,
 		sessionContextStatic:              opts.SessionContextStatic,
@@ -5384,7 +5389,13 @@ func (c *Controller) imageInputEnabled() bool {
 		return false
 	}
 	entry, ok := cfg.ResolveModel(ref)
-	return ok && config.EffectiveVision(entry)
+	if !ok {
+		return false
+	}
+	if c.modelCapabilityResolver != nil {
+		return c.modelCapabilityResolver(entry).State == config.CapabilitySupported
+	}
+	return config.EffectiveVision(entry)
 }
 
 // ImageInputEnabled reports whether the current model accepts direct image

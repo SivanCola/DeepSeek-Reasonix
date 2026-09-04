@@ -1410,9 +1410,8 @@ type ProviderEntry struct {
 	// and image tokens are heavy — gating keeps text-only flows cheap (the prompt
 	// prefix is byte-identical with no image, so the cache is unaffected either way).
 	Vision bool `toml:"vision"`
-	// VisionModels narrows image input support to specific models in a multi-model
-	// provider. This lets one provider expose both text-only and multimodal chat
-	// models without enabling image payloads for every model.
+	// VisionModels is legacy; new settings use model-level ModelOverrides.Vision.
+	// Keep this field readable for existing configurations.
 	VisionModels []string `toml:"vision_models"`
 	// VisionDetail sets the openai image_url detail hint (low|high); empty = auto
 	// (the field is omitted). "low" caps an image to a fixed ~85 tokens for cheap

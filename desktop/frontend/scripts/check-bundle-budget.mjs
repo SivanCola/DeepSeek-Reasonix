@@ -190,10 +190,10 @@ console.log("\nbundle budgets");
 // 8 bytes under the next decimal. The rebased release build rounds to the
 // boundary at 463.4 KiB. Replacing that stack with TranscriptKernel and the
 // calculation-only block window reduces the measured stable path to 426.0
-// KiB. The subagent outcome envelope and recovery UI from current main-v2 are
-// absorbed by the same reduced startup graph; retain the existing 0.6 KiB
-// cross-platform metadata/toolchain allowance and let the build gate enforce
-// that the recovered capacity is not spent again.
+// KiB. The outcome envelope, recovery UI, and model-capability resolver from
+// current main-v2 are absorbed by the same reduced startup graph; retain the
+// existing bounded cross-platform metadata/toolchain allowance and let the
+// build gate enforce that the recovered capacity is not spent again.
 const initialJSBudgetKiB = 426.6;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
@@ -258,10 +258,10 @@ for (const path of localeChunks) {
   // reclaim), while Sticky Context adds file-state and limit diagnostics. The
   // merged stable chunks measure 60.395 KiB zh and 61.232 KiB zh-TW; the
   // canonical session-experience labels and the current main-v2 outcome status
-  // labels share the existing locale dictionaries. Keep the session-experience
-  // ratchet; the build must recover any chunk-layout drift instead of widening
-  // the locale allowance.
-  const budget = name.startsWith("zh-TW-") ? 61.4 * 1024 : 60.5 * 1024;
+  // labels share the existing locale dictionaries. Current main-v2 adds the
+  // capability-status explanation; retain its measured 0.1 KiB while keeping
+  // the session-experience ratchet below the pre-kernel budget.
+  const budget = name.startsWith("zh-TW-") ? 61.5 * 1024 : 60.6 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
@@ -352,8 +352,9 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // optimistic management settlement add 0.6 KiB raw. The rebased canonical
 // session-experience startup wiring and old transcript stack measured roughly
 // 2474 KiB; replacing it with the single-writer kernel measures below 2347.4
-// KiB. The current main-v2 outcome envelope must fit inside that recovered
-// capacity; retain only the bounded kernel ceiling.
-const rawInitialBudgetKiB = 2_347.4;
+// KiB. The model-capability helper and localized status copy from current
+// main-v2 add a measured 0.9 KiB to that reduced graph; retain only the next
+// one-decimal ceiling rather than restoring any of the removed capacity.
+const rawInitialBudgetKiB = 2_348.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

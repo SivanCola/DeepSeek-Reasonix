@@ -377,11 +377,15 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// conflict with the base catalog that lacks the plugin's claim is fatal,
 	// the same class as a required runtime that cannot start: booting without
 	// the declared provider would silently change what the session is.
+	modelCapabilities := config.NewModelCapabilityResolver()
 	baseResolver := opts.ProviderResolver
 	if baseResolver == nil {
-		baseResolver = NewLocalProviderResolver(cfg, proxySpec)
+		baseResolver = NewLocalProviderResolverWithCapabilities(cfg, proxySpec, modelCapabilities)
 	}
 	effectiveResolver := opts.ProviderResolver
+	if effectiveResolver == nil {
+		effectiveResolver = baseResolver
+	}
 	var extensionResolver provider.Resolver
 	if extensionMgr != nil {
 		declares := false
@@ -1751,7 +1755,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			}
 			for _, model := range ordered {
 				candidate, found := cfg.ResolveModel(p.Name + "/" + model)
-				if found && candidate.Configured() && config.EffectiveVision(candidate) {
+				if found && candidate.Configured() && modelCapabilities.Resolve(candidate).State == config.CapabilitySupported {
 					return candidate.Name + "/" + candidate.Model, true
 				}
 			}
@@ -1771,6 +1775,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		VisionModel:                    cfg.Agent.VisionModel,
 		VisionProviderResolver:         visionProviderResolver,
 		VisionModelSelector:            visionModelSelector,
+		ModelCapabilityResolver:        modelCapabilities.Resolve,
 		SystemPrompt:                   sysPrompt,
 		PinnedContextLoader:            opts.PinnedContextLoader,
 		SessionDir:                     sessionDir,
@@ -2510,11 +2515,18 @@ func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
 // NewProviderWithProxy builds a provider.Provider with the configured ordinary
 // network proxy settings.
 func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (provider.Provider, error) {
+	return NewProviderWithProxyAndModelInfo(e, proxy, nil)
+}
+
+// NewProviderWithProxyAndModelInfo builds a provider while preserving the
+// adapter-resolved metadata for the exact model instance.
+func NewProviderWithProxyAndModelInfo(e *config.ProviderEntry, proxy netclient.ProxySpec, modelInfo *provider.ModelInfo) (provider.Provider, error) {
 	return provider.New(e.Kind, provider.Config{
-		Name:    e.Name,
-		BaseURL: e.BaseURL,
-		Model:   e.Model,
-		APIKey:  e.APIKey(),
+		Name:      e.Name,
+		BaseURL:   e.BaseURL,
+		Model:     e.Model,
+		APIKey:    e.APIKey(),
+		ModelInfo: modelInfo,
 		// Pass the key's env var so auth failures can name where to fix it, plus
 		// provider-kind-specific knobs. EffectiveEffort applies a configured
 		// default_effort when the user has not explicitly selected /effort.

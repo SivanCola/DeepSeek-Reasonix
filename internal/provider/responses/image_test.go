@@ -33,6 +33,22 @@ func TestOfficialDeepSeekVisionSKUEmbedsUserImages(t *testing.T) {
 	}
 }
 
+func TestModelInfoEnablesImageWireSerialization(t *testing.T) {
+	c := New(Config{
+		Name: "catalog", BaseURL: "https://example.test/v1", Model: "vision",
+		ModelInfo: &provider.ModelInfo{ID: "vision", InputModalities: []provider.ModelModality{provider.ModalityText, provider.ModalityImage}},
+	}).(*client)
+	if !c.vision {
+		t.Fatal("model metadata should enable image wire serialization")
+	}
+	body, _, _ := c.buildRequestBody(provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "describe", Images: []string{"data:image/png;base64,AAAA"}}}})
+	items := body["input"].([]map[string]any)
+	parts := items[0]["content"].([]map[string]string)
+	if len(parts) != 2 || parts[1]["type"] != "input_image" {
+		t.Fatalf("content = %#v, want text + input_image parts", parts)
+	}
+}
+
 func TestOfficialDeepSeekVisionSKUEmbedsURLAndFileID(t *testing.T) {
 	c := New(Config{
 		Name: "deepseek", BaseURL: "https://api.deepseek.com", Model: "deepseek-v4-flash-vision-exp",

@@ -32,6 +32,24 @@ func TestBuildRequestEmbedsImagesForVisionModel(t *testing.T) {
 	}
 }
 
+func TestModelInfoEnablesImageWireSerialization(t *testing.T) {
+	p, err := New(provider.Config{
+		Name: "catalog", BaseURL: "https://example.test/v1", Model: "kimi-k3",
+		ModelInfo: &provider.ModelInfo{ID: "kimi-k3", InputModalities: []provider.ModelModality{provider.ModalityText, provider.ModalityImage}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := p.(*client)
+	if !c.vision {
+		t.Fatal("model metadata should enable image wire serialization")
+	}
+	req := c.buildRequest(provider.Request{Messages: []provider.Message{{Role: provider.RoleUser, Content: "describe", Images: []string{"data:image/png;base64,AAAA"}}}})
+	if _, ok := req.Messages[0].Content.([]chatContentPart); !ok {
+		t.Fatalf("content = %#v, want image content parts", req.Messages[0].Content)
+	}
+}
+
 func TestBuildRequestEmbedsOfficialDeepSeekImageURLAndFileID(t *testing.T) {
 	c := &client{model: OfficialDeepSeekVisionModel, vision: true, deepseek: true}
 	req := c.buildRequest(provider.Request{
