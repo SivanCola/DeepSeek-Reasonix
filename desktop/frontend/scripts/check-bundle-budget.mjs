@@ -344,10 +344,11 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The scrollbar generation fence and drag rebase add 1.1 KiB raw; the merged
 // path measures 2470.932 KiB.
 // The reader-transaction offset absorption adds 0.8 KiB raw on top; the merged
-// path measures 2471.741 KiB. The rebased build's canonical session-experience
-// startup wiring, settings labels, and transcript transaction integration
-// previously measured 2473.8 KiB raw. The new single-writer stack measures
-// 2346.3 KiB; retain only 0.5 KiB of bounded headroom.
-const rawInitialBudgetKiB = 2_346.8;
+// path measures 2471.741 KiB. Controller-owned management dispositions and
+// optimistic management settlement add 0.6 KiB raw. The rebased canonical
+// session-experience startup wiring and old transcript stack measured roughly
+// 2474 KiB; replacing it with the single-writer kernel measures below 2347.4
+// KiB on the merged release path. Retain only that bounded ceiling.
+const rawInitialBudgetKiB = 2_347.4;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
