@@ -57,13 +57,11 @@ const localeChunks = readdirSync(resolve(distDir, "assets"))
   .map((name) => resolve(distDir, "assets", name));
 
 console.log("\nbundle budgets");
-// React Virtuoso replaces the transcript's custom measurement/anchor engine.
-// Its production runtime adds 16.9 KiB gzip (4.2%) over the 402 KiB baseline.
-// This exceptional overrun is locally attributable and trades ~1400 lines of
-// competing state machines for a maintained library. Native-tail finish helpers
+// The historical transcript windowing runtime added 16.9 KiB gzip (4.2%) over
+// the 402 KiB baseline. Native-tail finish helpers
 // then sat on the 423.5 KiB gate (Windows CI: 423.5 / 423.5); this 0.5 KiB
 // raise (0.12%) absorbs that leave-cancel / remasure-once code without
-// widening the original Virtuoso exception. The project-tree archive race
+// widening that historical exception. The project-tree archive race
 // guards add 611 bytes gzip over main-v2's 423.988 KiB startup path after the
 // blank-project flow landed; project-topic sort invalidation and request
 // ordering add another bounded 0.2 KiB. Retain both owner boundaries with a
@@ -190,9 +188,10 @@ console.log("\nbundle budgets");
 // Absorbing content-preserving block-window prepends into the active reader
 // transaction adds 0.2 KiB gzip on top; the merged path measures 463.292 KiB,
 // 8 bytes under the next decimal. The rebased release build rounds to the
-// boundary at 463.4 KiB; retain one additional 0.1 KiB step rather than
-// making the gate dependent on toolchain rounding.
-const initialJSBudgetKiB = 463.5;
+// boundary at 463.4 KiB. Replacing that stack with TranscriptKernel and the
+// calculation-only block window reduces the measured stable path to 426.0
+// KiB; retain 0.6 KiB for cross-platform metadata/toolchain drift.
+const initialJSBudgetKiB = 426.6;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -264,8 +263,8 @@ for (const path of localeChunks) {
 
 const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
   .reduce((total, path) => total + statSync(path).size, 0);
-// The maintained Virtuoso engine adds 49.1 KiB raw (2.2%) over the previous
-// 2268.7 KiB gate. Navigation remains inside the 2341 KiB production ceiling;
+// The historical transcript engine added 49.1 KiB raw (2.2%) over the previous
+// 2268.7 KiB gate. Navigation remained inside the 2341 KiB production ceiling;
 // its combined diagnostic wiring adds 2.2 KiB (0.094%) to the test channel.
 // DingTalk startup wiring moves current-base production from 2341.0 to 2343.6
 // KiB and test from 2346.2 to 2348.8 KiB; the pinned heading adds 0.5 KiB raw
@@ -347,7 +346,8 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // The reader-transaction offset absorption adds 0.8 KiB raw on top; the merged
 // path measures 2471.741 KiB. The rebased build's canonical session-experience
 // startup wiring, settings labels, and transcript transaction integration
-// measure 2473.8 KiB raw; retain only 0.1 KiB of bounded headroom.
-const rawInitialBudgetKiB = 2_473.9;
+// previously measured 2473.8 KiB raw. The new single-writer stack measures
+// 2346.3 KiB; retain only 0.5 KiB of bounded headroom.
+const rawInitialBudgetKiB = 2_346.8;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

@@ -2,42 +2,39 @@
 
 ## Transcript scroll discipline
 
-The transcript (`frontend/src/components/Transcript.tsx`, react-virtuoso) has
-one structural rule set, earned across #8657/#8688 and the follow-up refactors.
-Keep to it when touching anything that can move the transcript viewport.
+The transcript (`frontend/src/components/Transcript.tsx`) is governed by
+`TimelineProjection` and the generation-aware `TranscriptKernel`. Keep these
+contracts when touching anything that can move the transcript viewport.
 
-- **Single writer**: only the scroll arbiter — `frontend/src/lib/useTranscriptScrollArbiter.ts`
-  and its extracted controllers (`transcriptTailSettle.ts`,
-  `transcriptAnchorCompensation.ts`) — may call
-  `virtuosoRef.current.scrollTo/scrollBy/scrollToIndex`, and raw
-  `scroller.scrollTop` assignments on transcript surfaces are equally
-  off-limits (route through the arbiter's `SCROLL_TO_OFFSET` channel, e.g.
-  owner `"anchor-compensation"` / `"block-window-prepend"`). Everything else
-  (jumps, tail-follow, selection edge scrolls, layout recovery) submits
-  requests to the arbiter. `frontend/scripts/check-single-scroll-writer.mjs`
-  enforces it statically; `lib/transcriptScrollProbe.ts` observes it at
-  runtime. Never add a second writer — extend the arbiter's reducer
-  (`lib/transcriptScrollArbiter.ts`) with an explicit transition instead.
-- **Preemption is explicit**: user intent (wheel/touch/key/pointer), selection,
-  and programmatic writers preempt an in-flight recovery through reducer
-  events that end it in a terminal state (done / cancelled / expired), each
-  reported to `noteTranscriptRecoveryTerminal`. No silent exits.
-- **Native geometry is authoritative**: Virtuoso's `atBottomStateChange` is a
-  delivery signal, not the bottom truth. Derive bottom ownership from the live
-  scroller's `scrollHeight - scrollTop - clientHeight`. Browser clamps may not
-  leave manual reading; only a delivered scroll with explicit reader intent
-  may re-enter tail-follow. Tail-follow persists across later measurements and
-  layout growth until explicit user intent releases it.
-- **No keyed remounts on content patches**: patches flow through `data` only;
-  Virtuoso re-measures mounted rows itself. Remounts happen only on surface
-  switches and blank-watchdog rebuilds, and restore from the measured-size
-  cache (`lib/transcriptMeasuredSizes.ts`) plus a state snapshot
-  (`lib/transcriptStateSnapshot.ts`) instead of static estimates.
+- **Stable identity**: one complete turn is the projection, anchor, and
+  virtualization unit. Block keys come from backend entry/user identity, never
+  array position. Prepend and content patches must not rename mounted blocks.
+- **Generation fence**: session/surface replacement increments the kernel
+  generation. Every delayed measurement, timer, animation-frame callback, and
+  write request carries that generation; stale work performs zero writes.
+- **Single writer**: only `frontend/src/lib/transcriptViewportWriter.ts` may
+  mutate the transcript's native scroll position. Full-DOM, TanStack window,
+  Markdown, selection, question navigation, prepend, composer resize, and tail
+  follow all submit transactions to `TranscriptKernel`. The static gate in
+  `frontend/scripts/check-single-scroll-writer.mjs` must reject any bypass.
+- **Explicit terminal state**: every transaction ends committed, cancelled, or
+  expired. User input and selection preempt lower-priority work; question jumps
+  outrank display/prepend/restore/resize, which outrank tail follow.
+- **Native geometry is authoritative**: bottom means
+  `scrollHeight - scrollTop - clientHeight <= 4`. TanStack computes prefix
+  sizes and mounted ranges only; its measurement compensation is disabled and
+  its scroll callback must never bypass the writer.
+- **Resident active tail**: the active turn and at least the two newest
+  completed turns stay in ordinary DOM. A resident block may enter windowed
+  history only after it is a viewport away and owns no anchor, focus, or
+  selection endpoint. Stream growth in reader intent performs zero writes.
+- **Bounded safe mode**: two consecutive blank/invalid/correction anomalies in
+  one generation switch that session to full DOM until the next surface
+  generation. Do not add a second rendering stack or a persistent user flag.
 - **Deterministic clocks**: new scroll logic must go through the same
-  injectable patterns as the existing code (global `requestAnimationFrame`,
-  `Date.now`, `window.setTimeout`) so the fake-clock harness can drive it —
-  no `performance.now`-only budgets or ad-hoc timers.
+  injectable clock used by `TranscriptKernel` (`requestAnimationFrame`,
+  `Date.now`, timer functions). No real sleeps or hidden retry clocks.
 - **Race tests are mandatory**: any scroll-behavior change ships with a
-  deterministic case in `frontend/src/__tests__/transcript-recovery-race.test.tsx`
-  (JSDOM + fake rAF/clock harness, stubbed `VirtuosoHandle`). Run
-  `pnpm test:transcript` before committing transcript changes.
+  deterministic event sequence in `frontend/src/__tests__/transcript-kernel.test.ts`
+  and, when relevant, a viewport/projection case. Run `pnpm test:transcript`
+  before committing transcript changes.
