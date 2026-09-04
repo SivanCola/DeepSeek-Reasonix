@@ -167,10 +167,16 @@ async function runIteration(page, transcript, label, iteration) {
   assert(before?.key && before.visible > 0, `${label} ${iteration + 1}/${iterations}: reader has a visible logical anchor`);
 
   await page.evaluate(() => {
-    window.__readerProbe = { active: true, held: true, blankFrames: 0, heldAccepted: [], writes: [] };
+    window.__readerProbe = { active: true, held: true, blankFrames: 0, heldAccepted: [], writes: [], diagnostics: [] };
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
       window.__readerProbe?.writes.push(write);
       if (window.__readerProbe?.held && write.outcome === "accepted") window.__readerProbe.heldAccepted.push(write);
+    };
+    window.__REASONIX_TRANSCRIPT_SCROLL_DIAGNOSTIC__ = (type, fields) => {
+      const diagnostics = window.__readerProbe?.diagnostics;
+      if (!diagnostics) return;
+      diagnostics.push({ type, fields });
+      if (diagnostics.length > 40) diagnostics.shift();
     };
     window.addEventListener("pointerup", () => {
       if (window.__readerProbe) window.__readerProbe.held = false;
@@ -231,13 +237,18 @@ async function runIteration(page, transcript, label, iteration) {
       : null;
   }, before.key);
   await page.mouse.up();
-  await page.waitForFunction(({ key, top }) => {
-    const element = document.querySelector(".transcript");
-    const block = [...document.querySelectorAll("[data-transcript-block-key]")]
-      .find((candidate) => candidate.getAttribute("data-transcript-block-key") === key);
-    return element instanceof HTMLElement && block instanceof HTMLElement
-      && Math.abs(block.getBoundingClientRect().top - element.getBoundingClientRect().top - top) <= 4;
-  }, { key: before.key, top: before.top }, { timeout: 5_000 });
+  let settlementError;
+  try {
+    await page.waitForFunction(({ key, top }) => {
+      const element = document.querySelector(".transcript");
+      const block = [...document.querySelectorAll("[data-transcript-block-key]")]
+        .find((candidate) => candidate.getAttribute("data-transcript-block-key") === key);
+      return element instanceof HTMLElement && block instanceof HTMLElement
+        && Math.abs(block.getBoundingClientRect().top - element.getBoundingClientRect().top - top) <= 4;
+    }, { key: before.key, top: before.top }, { timeout: 5_000 });
+  } catch (error) {
+    settlementError = String(error?.message ?? error);
+  }
   await frames(page, 2);
 
   const result = await page.evaluate((key) => {
@@ -253,6 +264,7 @@ async function runIteration(page, transcript, label, iteration) {
     const viewport = element?.getBoundingClientRect();
     window.__readerProbe = undefined;
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = undefined;
+    window.__REASONIX_TRANSCRIPT_SCROLL_DIAGNOSTIC__ = undefined;
     return {
       top,
       scrollTop: element instanceof HTMLElement ? element.scrollTop : null,
@@ -260,6 +272,7 @@ async function runIteration(page, transcript, label, iteration) {
       mounted: Number(projection?.getAttribute("data-transcript-mounted-blocks")),
       blankFrames: probe?.blankFrames ?? -1,
       heldAccepted: probe?.heldAccepted ?? [],
+      diagnostics: probe?.diagnostics ?? [],
       visibleBlocks: element instanceof HTMLElement && viewport
         ? [...element.querySelectorAll("[data-transcript-block-key]")]
             .filter((candidate) => {
@@ -285,8 +298,10 @@ async function runIteration(page, transcript, label, iteration) {
   assert(visibleDrift <= 4,
     `${label} ${iteration + 1}/${iterations}: staged measurements cannot reflow the painted viewport (${visibleDrift.toFixed(1)}px)`);
   const drift = result.top == null ? null : Math.abs(result.top - before.top);
-  const driftDiagnostic = drift == null || drift > 4 ? `; ${JSON.stringify({ before, mutation, held, heldOriginal, result })}` : "";
-  assert(drift != null && drift <= 4,
+  const driftDiagnostic = settlementError || drift == null || drift > 4
+    ? `; ${JSON.stringify({ settlementError, before, mutation, held, heldOriginal, result })}`
+    : "";
+  assert(!settlementError && drift != null && drift <= 4,
     `${label} ${iteration + 1}/${iterations}: logical anchor drift is at most 4px (${drift == null ? "missing" : drift.toFixed(1)}px${driftDiagnostic})`);
   assert(result.intent === "reader", `${label} ${iteration + 1}/${iterations}: reader retains viewport ownership`);
   assert(result.mounted <= 40, `${label} ${iteration + 1}/${iterations}: mounted completed blocks remain bounded (${result.mounted})`);
