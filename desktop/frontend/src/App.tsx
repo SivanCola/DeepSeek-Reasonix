@@ -1438,7 +1438,6 @@ export default function App() {
     },
     [setLocalePref],
   );
-
   useEffect(() => {
     setReasoningDisplayPending();
     let cancelled = false;
@@ -1457,9 +1456,6 @@ export default function App() {
       if (cancelled) return;
       applyDesktopPreferences(settings);
       applyConfigWarningSnapshot(settings.configWarnings, settings.configWarningsRevision);
-      // Session experience is the canonical user-facing preference. Legacy
-      // display mode is intentionally not hydrated, so an old compact value
-      // cannot override the two-state experience during startup.
       setSidebarImConnections(sidebarImConnectionsFromBot(settings.bot, t, runtimeStatus));
       setImTopicSources(sidebarImTopicSourcesFromBot(settings.bot, t));
       // Load unified theme experience after base appearance so pack tokens win.
