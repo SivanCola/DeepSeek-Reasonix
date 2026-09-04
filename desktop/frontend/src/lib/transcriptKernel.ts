@@ -133,7 +133,7 @@ export class TranscriptKernel {
   private write: ((request: TranscriptWriteRequest) => TranscriptWriteResult) | null = null;
   private session = "";
   private generationValue = 0;
-  private geometryRevisionValue = 0;
+  private geometryVersion = 0;
   private transactionSequence = 0;
   private active: ActiveTransaction | null = null;
   private deferredStructural: DeferredStructuralTransaction | null = null;
@@ -153,7 +153,7 @@ export class TranscriptKernel {
   }
 
   get generation(): number { return this.generationValue; }
-  get geometryRevision(): number { return this.geometryRevisionValue; }
+  get geometryRevision(): number { return this.geometryVersion; }
   get intent(): ViewportIntent { return this.intentValue; }
   get anchor(): LogicalAnchor { return this.anchorValue; }
   get safeMode(): boolean { return this.safeModeValue; }
@@ -188,7 +188,7 @@ export class TranscriptKernel {
     this.tailFrame = null;
     this.session = session;
     this.generationValue += 1;
-    this.geometryRevisionValue = 0;
+    this.geometryVersion = 0;
     this.userGesture = false;
     this.writeTop = null;
     this.anomalyCount = 0;
@@ -199,9 +199,9 @@ export class TranscriptKernel {
   }
 
   advanceGeometry(generation = this.generationValue): number {
-    if (generation !== this.generationValue) return this.geometryRevisionValue;
-    this.geometryRevisionValue += 1;
-    return this.geometryRevisionValue;
+    if (generation !== this.generationValue) return this.geometryVersion;
+    this.geometryVersion += 1;
+    return this.geometryVersion;
   }
 
   capture(snapshot: TranscriptViewportSnapshot): LogicalAnchor {
@@ -285,7 +285,7 @@ export class TranscriptKernel {
     const transaction: ScrollTransaction = {
       id: ++this.transactionSequence,
       generation: this.generationValue,
-      geometryRevision: this.geometryRevisionValue,
+      geometryRevision: this.geometryVersion,
       kind,
       status: "active",
     };
@@ -316,8 +316,8 @@ export class TranscriptKernel {
     const active = this.active;
     if (!active || active.transaction.id !== transaction.id || transaction.generation !== this.generationValue) return false;
     if (this.userGesture || active.transaction.kind === "selection") return false;
-    if (active.correctionRevision === this.geometryRevisionValue) return false;
-    active.correctionRevision = this.geometryRevisionValue;
+    if (active.correctionRevision === this.geometryVersion) return false;
+    active.correctionRevision = this.geometryVersion;
     if (active.anchor.kind === "tail") return this.writeAndFinish(active, "tail-follow", Number.POSITIVE_INFINITY);
     const top = blockTop(active.anchor.blockKey);
     if (top == null || !Number.isFinite(top)) {
@@ -378,7 +378,7 @@ export class TranscriptKernel {
       session: this.session,
       generation: this.generationValue,
       transactionId: active.transaction.id,
-      geometryRevision: this.geometryRevisionValue,
+      geometryRevision: this.geometryVersion,
       owner,
       intent: "reader",
       offset,
@@ -395,7 +395,7 @@ export class TranscriptKernel {
       session: this.session,
       generation: this.generationValue,
       transactionId: transaction.id,
-      geometryRevision: this.geometryRevisionValue,
+      geometryRevision: this.geometryVersion,
       owner,
       intent: this.intentValue,
       offset,
@@ -415,7 +415,7 @@ export class TranscriptKernel {
       generation: this.generationValue,
       transaction: this.active?.transaction.id ?? 0,
       intent: this.intentValue,
-      geometryRevision: this.geometryRevisionValue,
+      geometryRevision: this.geometryVersion,
       outcome,
     });
     if (this.anomalyCount >= 2) {
@@ -434,7 +434,7 @@ export class TranscriptKernel {
       session: this.session,
       generation: this.generationValue,
       transactionId: active.transaction.id,
-      geometryRevision: this.geometryRevisionValue,
+      geometryRevision: this.geometryVersion,
       owner,
       intent: this.intentValue,
       offset: requested,
@@ -471,7 +471,7 @@ export class TranscriptKernel {
       transaction: transaction.id,
       owner,
       intent: this.intentValue,
-      geometryRevision: this.geometryRevisionValue,
+      geometryRevision: this.geometryVersion,
       requestedOffset,
       acceptedOffset,
       outcome,

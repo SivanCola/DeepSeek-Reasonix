@@ -291,10 +291,11 @@ export function Transcript(props: TranscriptProps) {
   }, [jumpToLoadedQuestion, questions, rewindSignal]);
 
   const handleScroll = useCallback(() => {
-    if (!kernel.onScroll()) return;
+    const delta = kernel.onScroll();
+    if (delta === null) return;
     scheduleActiveQuestionSync();
     const element = kernel.scrollRef.current;
-    if (element && element.scrollTop <= 64 && kernel.kernel.userGestureActive) void requestOlder(undefined, "viewport-user");
+    if (delta < 0 && element && element.scrollTop <= 64 && kernel.kernel.userGestureActive) void requestOlder(undefined, "viewport-user");
   }, [kernel.kernel, kernel.onScroll, kernel.scrollRef, requestOlder, scheduleActiveQuestionSync]);
   const {
     state: creationScrollbar,

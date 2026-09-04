@@ -61,6 +61,7 @@ export function useTranscriptKernel({
   const kernel = kernelRef.current;
   const writer = writerRef.current!;
   const nativeThumbRef = useRef(false);
+  const observedTopRef = useRef(0);
   const prependAwaitingGeometryRef = useRef(false);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
@@ -88,6 +89,7 @@ export function useTranscriptKernel({
 
   const setScroller = useCallback((element: HTMLDivElement | null) => {
     scrollRef.current = element;
+    observedTopRef.current = element?.scrollTop ?? 0;
     setScrollElement(element);
     writer.attach(element, kernel.generation);
   }, [kernel, writer]);
@@ -157,15 +159,17 @@ export function useTranscriptKernel({
 
   const onScroll = useCallback(() => {
     const current = snapshot();
-    if (!current) return false;
+    if (!current) return null;
+    const delta = current.scrollTop - observedTopRef.current;
+    observedTopRef.current = current.scrollTop;
     const nativeOwned = kernel.observeNativeScroll(current);
-    if (!nativeOwned) return false;
+    if (!nativeOwned) return null;
     // Wheel delivery and native scrolling are not synchronous on every Wails
     // engine. Renew the same lease until the final native scroll event so the
     // browser's final position remains authoritative.
     if (kernel.nativeGestureLeaseActive) renewGestureLease();
     refresh();
-    return true;
+    return delta;
   }, [kernel, refresh, renewGestureLease, snapshot]);
 
   const onPointerDownCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {

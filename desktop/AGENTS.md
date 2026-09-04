@@ -23,7 +23,8 @@ contracts when touching anything that can move the transcript viewport.
 - **Scroll provenance**: a physical writer offset remains pending until its
   matching native `scroll` event is consumed or a different offset proves
   user movement. Starting a gesture must not relabel a delayed writer event as
-  native input, and pagination reacts only to native-owned scroll events.
+  native input, and top-edge pagination reacts only to native-owned upward
+  movement, never a writer event or a reader moving away from the boundary.
 - **Explicit terminal state**: every transaction ends committed, cancelled, or
   expired. User input and selection preempt lower-priority work; question jumps
   outrank display/prepend/restore/resize, which outrank tail follow.
