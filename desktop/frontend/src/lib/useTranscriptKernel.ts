@@ -1,0 +1,251 @@
+import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { recordTranscriptScrollDiagnostic } from "./transcriptScrollProbe";
+import {
+  TranscriptKernel,
+  type LogicalAnchor,
+  type ScrollTransactionKind,
+  type TranscriptScrollMode,
+  type TranscriptScrollOwner,
+  type TranscriptViewportSnapshot,
+} from "./transcriptKernel";
+import { TranscriptViewportWriter } from "./transcriptViewportWriter";
+
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+function blockTop(element: HTMLElement, key: string): number | undefined {
+  const node = Array.from(element.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
+    .find((candidate) => candidate.dataset.transcriptBlockKey === key);
+  if (!node) return undefined;
+  return node.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop;
+}
+
+function readSnapshot(element: HTMLElement): TranscriptViewportSnapshot {
+  const viewport = element.getBoundingClientRect();
+  const top = element.scrollTop;
+  return {
+    scrollTop: top,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+    visibleBlocks: Array.from(element.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
+      .map((node) => {
+        const rect = node.getBoundingClientRect();
+        const contentTop = rect.top - viewport.top + top;
+        return { key: node.dataset.transcriptBlockKey ?? "", top: contentTop, bottom: contentTop + rect.height };
+      })
+      .filter((block) => block.key && block.bottom >= top && block.top <= top + element.clientHeight)
+      .sort((left, right) => left.top - right.top),
+  };
+}
+
+export function useTranscriptKernel({
+  sessionKey,
+  geometryRevision,
+}: {
+  sessionKey: string;
+  geometryRevision: string | number;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
+  const kernelRef = useRef<TranscriptKernel | null>(null);
+  const writerRef = useRef<TranscriptViewportWriter | null>(null);
+  const [, setRevision] = useState(0);
+  if (!kernelRef.current) {
+    kernelRef.current = new TranscriptKernel({
+      emit: (event) => recordTranscriptScrollDiagnostic("kernel", event),
+    });
+    writerRef.current = new TranscriptViewportWriter();
+  }
+  const kernel = kernelRef.current;
+  const writer = writerRef.current!;
+  const restoredAnchorRef = useRef<LogicalAnchor>({ kind: "tail" });
+  const nativeThumbRef = useRef(false);
+  const transientGestureRef = useRef(0);
+
+  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const snapshot = useCallback(() => {
+    const element = scrollRef.current;
+    return element ? readSnapshot(element) : null;
+  }, []);
+
+  useLayoutEffect(() => {
+    const disconnect = kernel.connectWriter(writer.write);
+    return () => {
+      kernel.detachSurface();
+      writer.attach(null, kernel.generation);
+      disconnect();
+    };
+  }, [kernel, writer]);
+
+  useLayoutEffect(() => {
+    const restored = kernel.replaceSurface(sessionKey);
+    restoredAnchorRef.current = restored.anchor;
+    writer.attach(scrollRef.current, restored.generation);
+    if (restored.anchor.kind === "block") kernel.begin("restore", restored.anchor);
+    refresh();
+  }, [kernel, refresh, sessionKey, writer]);
+
+  const setScroller = useCallback((element: HTMLDivElement | null) => {
+    scrollRef.current = element;
+    setScrollElement(element);
+    writer.attach(element, kernel.generation);
+  }, [kernel, writer]);
+
+  const settleGeometry = useCallback(() => {
+    kernel.advanceGeometry();
+    const element = scrollRef.current;
+    let transaction = kernel.activeTransaction;
+    if (!transaction && element && kernel.intent === "reader" && kernel.anchor.kind === "block") {
+      const top = blockTop(element, kernel.anchor.blockKey);
+      const desired = top == null ? undefined : top + kernel.anchor.offsetPx;
+      if (desired != null && Math.abs(desired - element.scrollTop) > 0.5) {
+        transaction = kernel.begin("restore", kernel.anchor);
+      }
+    }
+    if (transaction && element) kernel.correctAnchor(transaction, (key) => blockTop(element, key));
+    else if (kernel.intent === "tail") kernel.scheduleTailSync();
+    refresh();
+  }, [kernel, refresh]);
+
+  useLayoutEffect(() => {
+    settleGeometry();
+  }, [geometryRevision, settleGeometry]);
+
+  const beginStructural = useCallback((kind: Exclude<ScrollTransactionKind, "jump" | "selection" | "tail-sync">) => {
+    const current = snapshot();
+    // Composer geometry is reported after React has already resized the
+    // viewport. Preserve the pre-resize logical intent instead of mistaking
+    // the newly exposed bottom gap for a user-owned reader position.
+    if (current && kind !== "composer-resize") kernel.observeNativeScroll(current);
+    const anchor = kind === "composer-resize" ? kernel.anchor : current ? kernel.capture(current) : kernel.anchor;
+    const transaction = kernel.begin(kind, anchor);
+    refresh();
+    return transaction;
+  }, [kernel, refresh, snapshot]);
+
+  const beginGesture = useCallback((owner: "selection" | "native" = "native") => {
+    const current = snapshot();
+    if (!current) return;
+    kernel.beginUserGesture(current, owner);
+    refresh();
+  }, [kernel, refresh, snapshot]);
+
+  const endGesture = useCallback(() => {
+    const current = snapshot();
+    const resumed = current ? kernel.endUserGesture(current) : null;
+    writer.freeze(false);
+    nativeThumbRef.current = false;
+    if (resumed) requestAnimationFrame(settleGeometry);
+    refresh();
+  }, [kernel, refresh, settleGeometry, snapshot, writer]);
+
+  const beginTransientGesture = useCallback(() => {
+    const token = transientGestureRef.current + 1;
+    transientGestureRef.current = token;
+    beginGesture();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (transientGestureRef.current === token) endGesture();
+    }));
+  }, [beginGesture, endGesture]);
+
+  const onScroll = useCallback(() => {
+    const current = snapshot();
+    if (!current) return;
+    kernel.observeNativeScroll(current);
+    refresh();
+  }, [kernel, refresh, snapshot]);
+
+  const onPointerDownCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const rect = element.getBoundingClientRect();
+    const nativeThumb = event.clientX >= rect.right - 18;
+    nativeThumbRef.current = nativeThumb;
+    writer.freeze(nativeThumb);
+    beginGesture();
+    const finish = () => {
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("pointercancel", finish, true);
+      requestAnimationFrame(endGesture);
+    };
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("pointercancel", finish, true);
+  }, [beginGesture, endGesture, writer]);
+
+  const onKeyDownCapture = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (SCROLL_KEYS.has(event.key)) beginTransientGesture();
+  }, [beginTransientGesture]);
+
+  const reportAnomaly = useCallback((outcome: "blank-viewport" | "invalid-geometry" | "missing-anchor") => {
+    kernel.reportAnomaly(outcome);
+    refresh();
+  }, [kernel, refresh]);
+
+  const scrollToBottom = useCallback(() => {
+    kernel.cancelActive("jump-to-bottom");
+    kernel.scrollToTail();
+    refresh();
+  }, [kernel, refresh]);
+
+  const jumpToBlock = useCallback((key: string) => {
+    const element = scrollRef.current;
+    if (!element) return false;
+    const mountedTop = blockTop(element, key);
+    const accepted = mountedTop == null
+      ? Boolean(kernel.stageJumpToBlock(key))
+      : kernel.jumpToBlock(key, (blockKey) => blockTop(element, blockKey));
+    refresh();
+    return accepted;
+  }, [kernel, refresh]);
+
+  const setScrollMode = useCallback((mode: TranscriptScrollMode) => {
+    if (mode === "selection") beginGesture("selection");
+    else if (mode === "manual") endGesture();
+    else if (mode === "tail-follow") scrollToBottom();
+    else beginStructural("restore");
+  }, [beginGesture, beginStructural, endGesture, scrollToBottom]);
+
+  const writeOffset = useCallback((owner: TranscriptScrollOwner, top: number) => {
+    if (owner === "block-window-prepend") {
+      const accepted = kernel.writeStructuralOffset(owner, top);
+      refresh();
+      return accepted;
+    }
+    if (owner !== "selection-edge-scroll" && owner !== "custom-scrollbar" && owner !== "nested-scroll") return false;
+    const accepted = kernel.writeUserControlled(owner, top);
+    refresh();
+    return accepted;
+  }, [kernel, refresh]);
+
+  const geometry = snapshot();
+  const isAtBottom = geometry
+    ? geometry.scrollHeight - geometry.clientHeight - geometry.scrollTop <= 4
+    : kernel.intent === "tail";
+
+  return {
+    scrollRef: scrollRef as RefObject<HTMLDivElement | null>,
+    scrollElement,
+    setScroller,
+    kernel,
+    writer,
+    intent: kernel.intent,
+    isAtBottom,
+    safeMode: kernel.safeMode,
+    nativeScrollbarDragging: nativeThumbRef.current,
+    snapshot,
+    beginStructural,
+    beginGesture,
+    endGesture,
+    settleGeometry,
+    scrollToBottom,
+    jumpToBlock,
+    setScrollMode,
+    writeOffset,
+    onScroll,
+    reportAnomaly,
+    onPointerDownCapture,
+    onWheelCapture: beginTransientGesture,
+    onTouchStartCapture: beginGesture,
+    onTouchEndCapture: endGesture,
+    onKeyDownCapture,
+  };
+}
