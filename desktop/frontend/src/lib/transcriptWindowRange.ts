@@ -9,6 +9,8 @@ export type TranscriptWindowRangeSource = "candidate" | "retained" | "reconstruc
 export type TranscriptWindowRange<T extends TranscriptWindowItem> = {
   structureRevision: string;
   scrollTop: number;
+  scrollMargin: number;
+  totalSize: number;
   items: readonly T[];
   source: TranscriptWindowRangeSource;
 };
@@ -68,8 +70,8 @@ export function commitTranscriptWindowRange<T extends TranscriptWindowItem>({
   structureRevision,
   scrollTop,
   clientHeight,
-  coldStart,
-  coldEnd,
+  scrollMargin,
+  totalSize,
   overscan,
   gestureActive,
 }: {
@@ -80,14 +82,23 @@ export function commitTranscriptWindowRange<T extends TranscriptWindowItem>({
   structureRevision: string;
   scrollTop: number;
   clientHeight: number;
-  coldStart: number;
-  coldEnd: number;
+  scrollMargin: number;
+  totalSize: number;
   overscan: number;
   gestureActive: boolean;
 }): TranscriptWindowRange<T> {
-  const next: TranscriptWindowRange<T> = { structureRevision, scrollTop, items: candidate, source: "candidate" };
+  const coldStart = scrollMargin;
+  const coldEnd = scrollMargin + totalSize;
+  const next: TranscriptWindowRange<T> = { structureRevision, scrollTop, scrollMargin, totalSize, items: candidate, source: "candidate" };
   const sameStructure = previous?.structureRevision === structureRevision;
-  const previousCovers = Boolean(sameStructure && coversColdViewport(previous.items, scrollTop, clientHeight, coldStart, coldEnd));
+  const sameMargin = previous != null && Math.abs(previous.scrollMargin - scrollMargin) <= 0.5;
+  const previousCovers = Boolean(sameStructure && sameMargin && coversColdViewport(
+    previous.items,
+    scrollTop,
+    clientHeight,
+    previous.scrollMargin,
+    previous.scrollMargin + previous.totalSize,
+  ));
   const candidateCovers = coversColdViewport(candidate, scrollTop, clientHeight, coldStart, coldEnd);
 
   // A measurement-only notification must not move the painted reader range
@@ -110,7 +121,7 @@ export function commitTranscriptWindowRange<T extends TranscriptWindowItem>({
   // asynchronous range notification.
   const reconstructed = reconstructRange(measurements, retainedIndexes, scrollTop, clientHeight, coldStart, coldEnd, overscan);
   if (coversColdViewport(reconstructed, scrollTop, clientHeight, coldStart, coldEnd)) {
-    return { structureRevision, scrollTop, items: reconstructed, source: "reconstructed" };
+    return { structureRevision, scrollTop, scrollMargin, totalSize, items: reconstructed, source: "reconstructed" };
   }
   return next;
 }

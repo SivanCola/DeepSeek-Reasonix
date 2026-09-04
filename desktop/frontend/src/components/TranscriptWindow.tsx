@@ -142,13 +142,13 @@ export default function TranscriptWindow({
     structureRevision,
     scrollTop: nativeViewport.scrollTop,
     clientHeight: nativeViewport.clientHeight,
-    coldStart: scrollMargin,
-    coldEnd: scrollMargin + totalSize,
+    scrollMargin,
+    totalSize,
     overscan: NATIVE_SCROLL_RUNWAY_BLOCKS,
     gestureActive: kernel.userGestureActive,
   });
   const virtualItems = committedRange.items;
-  const rangeRevision = virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|");
+  const rangeRevision = `${committedRange.scrollMargin}:${committedRange.totalSize}|${virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|")}`;
 
   useLayoutEffect(() => {
     committedRangeRef.current = committedRange;
@@ -275,10 +275,10 @@ export default function TranscriptWindow({
       {prefix}
       {renderSelectionOverlay(`windowed:${rangeRevision}`)}
       {split.cold.length > 0 && (
-        <div ref={coldContainerRef} className="transcript__window" style={{ height: totalSize, position: "relative" }}>
+        <div ref={coldContainerRef} className="transcript__window" style={{ height: committedRange.totalSize, position: "relative" }}>
           {virtualItems.map((virtualItem) => {
             const block = split.cold[virtualItem.index];
-            return <div key={block.key} data-index={virtualItem.index} className="transcript__window-item" style={{ position: "absolute", top: virtualItem.start - scrollMargin, left: 0, width: "100%" }}>
+            return <div key={block.key} data-index={virtualItem.index} className="transcript__window-item" style={{ position: "absolute", top: virtualItem.start - committedRange.scrollMargin, left: 0, width: "100%" }}>
               {renderBlock(block)}
             </div>;
           })}

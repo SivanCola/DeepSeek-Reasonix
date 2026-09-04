@@ -160,7 +160,7 @@ export function useTranscriptKernel({
   const onScroll = useCallback(() => {
     const current = snapshot();
     if (!current) return null;
-    const delta = current.scrollTop - observedTopRef.current;
+    const towardHistory = current.scrollTop < observedTopRef.current;
     observedTopRef.current = current.scrollTop;
     const nativeOwned = kernel.observeNativeScroll(current);
     if (!nativeOwned) return null;
@@ -169,7 +169,7 @@ export function useTranscriptKernel({
     // browser's final position remains authoritative.
     if (kernel.nativeGestureLeaseActive) renewGestureLease();
     refresh();
-    return delta;
+    return towardHistory && kernel.userGestureActive;
   }, [kernel, refresh, renewGestureLease, snapshot]);
 
   const onPointerDownCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {

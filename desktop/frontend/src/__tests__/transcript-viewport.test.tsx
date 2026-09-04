@@ -21,6 +21,8 @@ console.log("\nTranscript viewport adapters");
 const previousRange = {
   structureRevision: "stable",
   scrollTop: 100,
+  scrollMargin: 0,
+  totalSize: 20_000,
   items: [{ index: 0, start: 50, end: 900 }],
   source: "candidate" as const,
 };
@@ -34,8 +36,8 @@ const retained = commitTranscriptWindowRange({
   structureRevision: "stable",
   scrollTop: 180,
   clientHeight: 600,
-  coldStart: 0,
-  coldEnd: 20_000,
+  scrollMargin: 0,
+  totalSize: 20_000,
   overscan: 2,
   gestureActive: true,
 });
@@ -49,12 +51,13 @@ const measurementOnly = commitTranscriptWindowRange({
   structureRevision: "stable",
   scrollTop: 100,
   clientHeight: 600,
-  coldStart: 0,
-  coldEnd: 20_000,
+  scrollMargin: 0,
+  totalSize: 20_120,
   overscan: 2,
   gestureActive: true,
 });
 ok(measurementOnly.items === previousRange.items, "a measurement-only range commit stays frozen during native ownership");
+ok(measurementOnly.totalSize === previousRange.totalSize, "a retained range keeps its matching extent snapshot");
 const released = commitTranscriptWindowRange({
   candidate: measuredCandidate,
   measurements,
@@ -63,12 +66,13 @@ const released = commitTranscriptWindowRange({
   structureRevision: "stable",
   scrollTop: 100,
   clientHeight: 600,
-  coldStart: 0,
-  coldEnd: 20_000,
+  scrollMargin: 0,
+  totalSize: 20_120,
   overscan: 2,
   gestureActive: false,
 });
 ok(released.items !== previousRange.items, "gesture release commits the latest covering measurements");
+ok(released.totalSize === 20_120, "gesture release commits range and extent atomically");
 const windowSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../components/TranscriptWindow.tsx", import.meta.url), "utf8"));
 ok(windowSource.includes("useCachedMeasurements: true"), "TanStack cannot publish ResizeObserver sizes outside the viewport commit protocol");
 ok(windowSource.includes("measurementLedger.stage(changes)"), "DOM measurements enter the block-keyed staging ledger before publication");
@@ -82,7 +86,7 @@ ok(
   "range commits use a tear-free native viewport snapshot instead of mutable render-time geometry",
 );
 ok(
-  windowSource.includes("top: virtualItem.start - scrollMargin")
+  windowSource.includes("top: virtualItem.start - committedRange.scrollMargin")
     && !windowSource.includes("transform: `translateY(${virtualItem.start - scrollMargin}px)`"),
   "window items use layout coordinates so delayed compositor layers cannot replay an old scroll offset",
 );
@@ -93,8 +97,8 @@ const reconstructed = commitTranscriptWindowRange({
   structureRevision: "stable",
   scrollTop: 1_200,
   clientHeight: 600,
-  coldStart: 0,
-  coldEnd: 20_000,
+  scrollMargin: 0,
+  totalSize: 20_000,
   overscan: 2,
   gestureActive: true,
 });
@@ -111,8 +115,8 @@ const largeRange = commitTranscriptWindowRange({
   structureRevision: "10k",
   scrollTop: 720_000,
   clientHeight: 800,
-  coldStart: 0,
-  coldEnd: 960_000,
+  scrollMargin: 0,
+  totalSize: 960_000,
   overscan: 12,
   gestureActive: true,
 });

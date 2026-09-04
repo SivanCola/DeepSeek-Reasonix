@@ -34,8 +34,10 @@ contracts when touching anything that can move the transcript viewport.
   its scroll callback must never bypass the writer.
 - **Covered-range commit**: the Window Adapter may paint a TanStack candidate
   only when it covers the current native viewport. Retain the last covering
-  range when a candidate is stale; if a native jump invalidates both, rebuild
-  once from the prefix-size ledger while preserving every protected block.
+  geometry snapshot when a candidate is stale: mounted items, total extent,
+  and scroll margin are one atomic value and must never come from different
+  measurement generations. If a native jump invalidates both, rebuild once
+  from the prefix-size ledger while preserving every protected block.
   Measurement-only notifications cannot replace the painted range while
   native input owns an unchanged viewport. Native viewport geometry is an
   external store: range renders must use its immutable snapshot so React

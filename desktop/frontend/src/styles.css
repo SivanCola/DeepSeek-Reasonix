@@ -3526,7 +3526,6 @@ a[href] {
 .transcript__block,
 .transcript__resident-tail {
   position: relative;
-  width: 100%;
 }
 .transcript > .transcript__projection {
   max-width: none;
@@ -3536,7 +3535,6 @@ a[href] {
 .transcript__block {
   display: flow-root;
 }
-.transcript__window,
 .transcript__window-item {
   box-sizing: border-box;
   width: 100%;
@@ -3545,7 +3543,6 @@ a[href] {
   position: relative;
   display: flow-root;
   box-sizing: border-box;
-  width: 100%;
   padding-left: var(--transcript-inline-pad, 32px);
   padding-right: var(--transcript-inline-pad, 32px);
 }
