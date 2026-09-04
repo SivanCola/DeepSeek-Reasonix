@@ -150,8 +150,9 @@ export default function TranscriptWindow({
     gestureActive: kernel.userGestureActive,
   });
   const virtualItems = committedRange.items;
-  // A bounded wheel lease may refine only the runway that the compositor
-  // cannot reach with its largest observed native step plus one viewport.
+  // A bounded wheel lease may refine only beyond the accumulated native
+  // compositor travel plus one viewport. A single-step maximum is unsafe on
+  // WKWebView, where several native wheel batches can outrun React commits.
   // Unbounded touch/selection/thumb/key gestures pass Infinity and therefore
   // keep every cold measurement staged until ownership ends.
   const publicationLeadPx = measurementLedger.publicationLead(kernel.userGestureActive);
@@ -174,18 +175,23 @@ export default function TranscriptWindow({
     const observeKey = (event: KeyboardEvent) => {
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) beginUnbounded();
     };
+    const endUnownedMouse = () => {
+      if (!kernel.userGestureActive) measurementLedger.endGesture();
+    };
     const pointerStartEvents = ["pointerdown", "mousedown"] as const;
     scrollElement.addEventListener("wheel", observeWheel, { capture: true, passive: true });
     pointerStartEvents.forEach((type) => scrollElement.addEventListener(type, beginUnbounded, true));
     scrollElement.addEventListener("touchstart", beginUnbounded, { capture: true, passive: true });
     scrollElement.addEventListener("keydown", observeKey, true);
+    window.addEventListener("mouseup", endUnownedMouse, true);
     return () => {
       scrollElement.removeEventListener("wheel", observeWheel, true);
       pointerStartEvents.forEach((type) => scrollElement.removeEventListener(type, beginUnbounded, true));
       scrollElement.removeEventListener("touchstart", beginUnbounded, true);
       scrollElement.removeEventListener("keydown", observeKey, true);
+      window.removeEventListener("mouseup", endUnownedMouse, true);
     };
-  }, [measurementLedger, scrollElement]);
+  }, [kernel, measurementLedger, scrollElement]);
   useLayoutEffect(() => {
     if (!minimumResidentKey || currentResidentIndex >= 0) return;
     setResidentStartKey(minimumResidentKey);

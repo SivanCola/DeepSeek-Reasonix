@@ -88,6 +88,7 @@ ok(
     && windowSource.includes('addEventListener("wheel", observeWheel')
     && windowSource.includes('["pointerdown", "mousedown"]')
     && windowSource.includes("addEventListener(type, beginUnbounded")
+    && windowSource.includes('addEventListener("mouseup", endUnownedMouse')
     && windowSource.includes('addEventListener("touchstart", beginUnbounded')
     && windowSource.includes("measurementLedger.endGesture()")
     && windowSource.includes("[kernel.generation, kernel.userGestureActive, measurementLedger]")

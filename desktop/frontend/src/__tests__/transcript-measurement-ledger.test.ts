@@ -15,9 +15,10 @@ ok(ledger.publicationLead(true) === Number.POSITIVE_INFINITY, "an unclassified n
 ledger.observeWheel(2_880, 0, 596);
 ok(ledger.publicationLead(true) === 3_476, "pixel wheel input reserves one native step plus one viewport");
 ledger.observeWheel(120, 0, 596);
-ok(ledger.publicationLead(true) === 3_476, "a wheel lease retains its largest observed compositor lead");
+ok(ledger.publicationLead(true) === 3_596, "a wheel lease accumulates every unsettled native compositor step");
 ledger.beginUnboundedGesture();
 ok(ledger.publicationLead(true) === Number.POSITIVE_INFINITY, "touch, selection, thumb, or keyboard takeover upgrades a bounded lease to unbounded");
+ok(ledger.publicationLead(false) === Number.POSITIVE_INFINITY, "native ownership freezes publication before React commits the kernel snapshot");
 ledger.endGesture();
 ledger.observeWheel(80, 0, 596);
 ok(ledger.publicationLead(true) === 676, "gesture completion resets the prior publication lead");

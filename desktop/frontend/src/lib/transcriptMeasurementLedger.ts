@@ -15,7 +15,7 @@ export class TranscriptMeasurementLedger {
 
   observeWheel(deltaY: number, deltaMode: number, clientHeight: number): void {
     this.wheelLeadPx = deltaMode === 0
-      ? Math.max(this.wheelLeadPx, Math.abs(deltaY) + clientHeight)
+      ? this.wheelLeadPx + Math.abs(deltaY) + (this.wheelLeadPx === 0 ? clientHeight : 0)
       : Number.POSITIVE_INFINITY;
   }
 
@@ -24,7 +24,12 @@ export class TranscriptMeasurementLedger {
   }
 
   publicationLead(gestureActive: boolean): number {
-    return gestureActive ? this.wheelLeadPx || Number.POSITIVE_INFINITY : 0;
+    // Native capture is the immediate authority. React may publish the
+    // kernel's gesture snapshot one commit later (notably on WebKitGTK), so an
+    // unbounded native lease must freeze measurements on its own.
+    return gestureActive || this.wheelLeadPx === Number.POSITIVE_INFINITY
+      ? this.wheelLeadPx || Number.POSITIVE_INFINITY
+      : 0;
   }
 
   endGesture(): void {
