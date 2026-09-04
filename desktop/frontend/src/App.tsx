@@ -328,9 +328,9 @@ function isThemeMode(value: string): value is Theme {
 type DesktopLayoutStyle = "classic" | "workbench" | "creation";
 
 function normalizeDesktopLayoutStyle(style: string | undefined): DesktopLayoutStyle {
-  if (style === "workbench") return "workbench";
   if (style === "creation") return "creation";
-  return "classic";
+  if (style === "classic") return "classic";
+  return "workbench";
 }
 const SHOW_CONTEXT_DOCK = true;
 const DISMISSED_TODO_STORAGE_KEY = "todoPanel:dismissedKeys";

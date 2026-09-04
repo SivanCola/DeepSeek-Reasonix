@@ -993,13 +993,14 @@ Reasonix 会用确定性规则路由每一轮，不再调用额外的 classifier
 Planner 使用同一个稳定的 system prompt，单轮只追加很小的 `<planner-turn>` 标明
 显式路由，因此除本次 prompt 升级的一次缓存未命中外，不会持续破坏 Planner prefix
 cache。计划应区分已验证与候选触点，并在证据支持时补充非目标、风险、验收标准和
-命令级验证。若 Planner 在有界调研和最终总结轮后仍未给出最终计划，普通
-plan-and-execute 会用原始任务直接交给 Executor 继续；plan-only 与等待批准请求仍
-保持 fail-closed，并回滚不完整的 Planner 回合，避免留下无法继续的会话尾部。
+命令级验证。Planner 必须调用 `submit_plan`，没有提交计划的普通文本视为协议错误。
+若 Planner 在有界调研和最终总结轮后仍未给出最终计划，所有路由都 fail-closed，
+不会降级到 Executor，并回滚不完整的 Planner 回合，避免留下无法继续的会话尾部。
 
-Reasonix 会自动管理正常执行：活跃 Todo 连续 8 个工具调用轮次没有新的完成项、唯一读取、
-命令或修改时，宿主会要求执行器重新评估；Goal 到达后续阈值时会强制重新规划并继续，而不会因
-计数暂停。完全重复的操作不算进展，新的宿主可观测工作会自动续期。两级任务
+普通 clean final 即结束回合。Goal、review、guardian 仍保留各自的 continuation
+约束。Goal 中活跃 Todo 超过停滞阈值仍没有新的完成项、唯一读取、命令或修改时，
+宿主会强制缩小步骤、换工具/方法、聚焦委派或报告真实阻塞，然后继续执行。完全重复
+的操作不算进展，新的宿主可观测工作会自动续期。两级任务
 列表保持同一"唯一当前项"契约：唯一的 `in_progress` 是活跃的 level-1 子步骤，其 level-0
 阶段保持 `pending`；子步骤按顺序推进并签核，全部完成后阶段本身转为 `in_progress` 做
 最后签核。

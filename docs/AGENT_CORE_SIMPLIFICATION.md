@@ -79,6 +79,13 @@ New consolidated suite: `internal/agent/agent_contract_test.go`.
 | cancellation | `cancel_test.go` |
 | task/token/cost budgets | `run_budget_test.go` |
 | tool permission/malformed args | `argument_validation_test.go`, gate tests |
+| ordinary request skips planner | `TestCoordinatorOrdinaryRequestDoesNotCallPlanner`, `TestDecidePlannerRouteExplicitOnly` |
+| planner prose without `submit_plan` fails | `TestCoordinatorPlanAndExecuteRequiresSubmittedPlan` |
+| planner failure does not run executor | `TestCoordinatorFailsClosedWhenPlannerFails` |
+| unusable `planner_model` is a config error | `TestBuildFailsWhenPlannerModelIsUnresolvable` |
+| ordinary Agent adds no todo continuation | `TestStandardTodoContinuationDisabledByDefault` |
+| pressure compaction stays single-summary | `TestPressureCompactionDoesNotCallChunkedFold` |
+| missing guardian/recovery models fail closed | `TestBuildFailsWhenGuardianModelIsUnresolvable`, `TestBuildFailsWhenRecoveryModelIsUnresolvable` |
 
 ## Gates
 

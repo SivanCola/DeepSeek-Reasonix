@@ -40,7 +40,7 @@ func (a *Agent) applyEBM(sample *evidence.OutcomeSample, outcomes []toolOutcome)
 	}
 	sample.EBMEligible = true
 	a.armForkCapture(*sample)
-	if !ebmEnabled || a.task.ebm.fired || len(outcomes) == 0 {
+	if !ebmEnabled || a.continuationPolicy != ContinuationExplicitFlow || a.task.ebm.fired || len(outcomes) == 0 {
 		return intervention{}
 	}
 	a.task.ebm.fired = true

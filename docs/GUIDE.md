@@ -1284,19 +1284,19 @@ The planner uses one stable system prompt. A small host-authored
 `<planner-turn>` block names the explicit route and preserves the planner
 prefix cache after the one-time prompt upgrade. The plan should separate
 verified from candidate touchpoints and include non-goals, risks, acceptance
-criteria, and command-level verification when evidence supports them. If a
-planner still does not finalize after its bounded research and finalization
-round, ordinary plan-and-execute work continues with the executor using the
-original task. Plan-only and approval-gated requests remain fail-closed, and
-the incomplete planner turn is rolled back instead of leaving an unusable
-continuation tail.
+criteria, and command-level verification when evidence supports them. The
+planner must call `submit_plan`; a prose reply without a submitted plan is a
+protocol error. If a planner still does not finalize after its bounded
+research and finalization round, the turn fails closed on every route and the
+executor is not started. The incomplete planner turn is rolled back instead of
+leaving an unusable continuation tail.
 
-Reasonix manages normal execution automatically: if an active todo produces no
-new completion, unique read, command, or mutation for 8 tool-call rounds, the
-host asks the executor to reassess. In Goal mode, the later threshold forces a
-smaller step, different tool/approach, focused delegation, or a real blocker
-report, then execution continues. Exact repeats do not count as progress; new
-host-observed work renews the lease. Two-level task lists keep
+Ordinary clean finals end the turn. Goal, review, and guardian flows keep
+their own continuation constraints. In Goal mode, if an active todo produces
+no new completion, unique read, command, or mutation past the stall threshold,
+the host forces a smaller step, different tool/approach, focused delegation,
+or a real blocker report, then execution continues. Exact repeats do not count
+as progress; new host-observed work renews the lease. Two-level task lists keep
 the same single-current contract: the active level-1 sub-step is the one
 `in_progress` item while its level-0 phase stays `pending`; sub-steps are worked
 and signed off in order, and once every sub-step has completed the phase itself

@@ -39,7 +39,6 @@ import (
 	"reasonix/internal/extension/providerext"
 	"reasonix/internal/extension/sidecar"
 	"reasonix/internal/extension/uihub"
-	"reasonix/internal/goaleval"
 	"reasonix/internal/guardian"
 	"reasonix/internal/history"
 	"reasonix/internal/hook"
@@ -1668,63 +1667,56 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	pm := effectivePlannerModel(cfg, opts)
 	pe, plannerResolved := resolveOptionalEntry(effectiveResolver, cfg, pm)
 	if pm != "" && !plannerResolved {
-		// An unusable optional planner must not take the session down with it —
-		// the executor is what the user talks to. Degrades like the guardian
-		// model below (#4615).
-		slog.Warn("planner model is not a configured provider — planning disabled", "model", pm)
-		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn,
-			Text: fmt.Sprintf("planner_model %q is not a configured provider — continuing with the executor alone", pm)})
+		return nil, fmt.Errorf("planner_model %q is not a configured provider", pm)
 	}
 	if pm != "" && plannerResolved {
-		if pe.Model != entry.Model {
-			plannerProv, err := resolveProvider(effectiveResolver, cfg, proxySpec, provider.Selection{Ref: modelRefFromEntry(pe)})
-			if err != nil {
-				return nil, fmt.Errorf("planner %q: %w", pm, err)
-			}
-			plannerContext := mem.SystemBlock()
-			if implicitSkillInvocation {
-				plannerContext = strings.TrimSpace(plannerContext + "\n\n" + skill.ReadOnlyInvocationPolicyBlock())
-			}
-			plannerSess := agent.NewSession(agent.PlannerPromptWithContext(plannerContext))
-			// Planner owns an independent ledger/audit and use_capability frontend
-			// so its MCP calls cannot satisfy or poison Executor Delivery gates.
-			plannerLedger := capability.NewLedger()
-			plannerAudit := &capability.Audit{}
-			plannerTools := agent.PlannerToolRegistry(reg)
-			if capRuntime != nil {
-				// Replace any cloned parent frontend with one bound to the
-				// planner ledger (PlannerToolRegistry clones with nil ledger).
-				if _, ok := plannerTools.Get("use_capability"); ok {
-					plannerTools.RemovePrefix("use_capability")
-				}
-				plannerTools.Add(capRuntime.NewFrontend(plannerLedger, plannerAudit))
-			}
-			plannerOpts := agent.Options{
-				MaxSteps:                     0,
-				Gate:                         headlessGate,
-				ModelRef:                     modelRefFromEntry(pe),
-				QuoteContext:                 quoteCtx,
-				ContextWindow:                pe.ContextWindow,
-				SoftCompactRatio:             cfg.Agent.SoftCompactRatio,
-				ToolResultSnipRatio:          cfg.Agent.ToolResultSnipRatio,
-				CompactRatio:                 cfg.Agent.CompactRatio,
-				CompactForceRatio:            cfg.Agent.CompactForceRatio,
-				ContextEditing:               cfg.Agent.ContextEditing,
-				RecentKeep:                   cfg.Agent.RecentKeep,
-				ArchiveDir:                   config.ArchiveDir(),
-				KeepPolicy:                   keepPolicy,
-				ReasoningLanguage:            config.ReasoningLanguageForEntry(pe, cfg.ReasoningLanguage()),
-				PlanModeReadOnlyCommands:     cfg.Agent.PlanModeReadOnlyCommands,
-				CapabilityLedger:             plannerLedger,
-				CapabilityAudit:              plannerAudit,
-				MissingReasoningWarnStateDir: config.MissingReasoningWarnStateDir(),
-				WriteRoots:                   writeRootSet,
-				HomeDir:                      userHomeDir(),
-				StateRoot:                    config.MemoryUserDir(),
-			}
-			runner = agent.NewCoordinatorWithPlannerPolicy(plannerProv, plannerSess, pe.Price, plannerTools, plannerOpts, executor, cfg.Agent.Temperature, sink, control.NewPlannerPolicy())
-			label = entry.Model + " + planner " + pe.Model
+		plannerProv, err := resolveProvider(effectiveResolver, cfg, proxySpec, provider.Selection{Ref: modelRefFromEntry(pe)})
+		if err != nil {
+			return nil, fmt.Errorf("planner_model %q: %w", pm, err)
 		}
+		plannerContext := mem.SystemBlock()
+		if implicitSkillInvocation {
+			plannerContext = strings.TrimSpace(plannerContext + "\n\n" + skill.ReadOnlyInvocationPolicyBlock())
+		}
+		plannerSess := agent.NewSession(agent.PlannerPromptWithContext(plannerContext))
+		// Planner owns an independent ledger/audit and use_capability frontend
+		// so its MCP calls cannot satisfy or poison Executor Delivery gates.
+		plannerLedger := capability.NewLedger()
+		plannerAudit := &capability.Audit{}
+		plannerTools := agent.PlannerToolRegistry(reg)
+		if capRuntime != nil {
+			// Replace any cloned parent frontend with one bound to the
+			// planner ledger (PlannerToolRegistry clones with nil ledger).
+			if _, ok := plannerTools.Get("use_capability"); ok {
+				plannerTools.RemovePrefix("use_capability")
+			}
+			plannerTools.Add(capRuntime.NewFrontend(plannerLedger, plannerAudit))
+		}
+		plannerOpts := agent.Options{
+			MaxSteps:                     0,
+			Gate:                         headlessGate,
+			ModelRef:                     modelRefFromEntry(pe),
+			QuoteContext:                 quoteCtx,
+			ContextWindow:                pe.ContextWindow,
+			SoftCompactRatio:             cfg.Agent.SoftCompactRatio,
+			ToolResultSnipRatio:          cfg.Agent.ToolResultSnipRatio,
+			CompactRatio:                 cfg.Agent.CompactRatio,
+			CompactForceRatio:            cfg.Agent.CompactForceRatio,
+			ContextEditing:               cfg.Agent.ContextEditing,
+			RecentKeep:                   cfg.Agent.RecentKeep,
+			ArchiveDir:                   config.ArchiveDir(),
+			KeepPolicy:                   keepPolicy,
+			ReasoningLanguage:            config.ReasoningLanguageForEntry(pe, cfg.ReasoningLanguage()),
+			PlanModeReadOnlyCommands:     cfg.Agent.PlanModeReadOnlyCommands,
+			CapabilityLedger:             plannerLedger,
+			CapabilityAudit:              plannerAudit,
+			MissingReasoningWarnStateDir: config.MissingReasoningWarnStateDir(),
+			WriteRoots:                   writeRootSet,
+			HomeDir:                      userHomeDir(),
+			StateRoot:                    config.MemoryUserDir(),
+		}
+		runner = agent.NewCoordinatorWithPlannerPolicy(plannerProv, plannerSess, pe.Price, plannerTools, plannerOpts, executor, cfg.Agent.Temperature, sink, control.NewPlannerPolicy())
+		label = entry.Model + " + planner " + pe.Model
 	}
 	visionProviderResolver := func(ref string) (provider.Provider, error) {
 		ve, ok := resolveOptionalEntry(effectiveResolver, cfg, strings.TrimSpace(ref))
@@ -1853,76 +1845,48 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if guardianModel := cfg.Agent.GuardianModel; guardianModel != "" {
 		ge, ok := resolveOptionalEntry(effectiveResolver, cfg, guardianModel)
 		if !ok {
-			slog.Warn("guardian model is not a configured provider — guardian disabled", "model", guardianModel)
-			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Guardian was disabled because its model was not found.", Detail: fmt.Sprintf("guardian_model %q not found — guardian disabled", guardianModel)})
-		} else {
-			pProv, err := resolveProvider(effectiveResolver, cfg, proxySpec, provider.Selection{Ref: modelRefFromEntry(ge)})
+			return nil, fmt.Errorf("guardian_model %q is not a configured provider", guardianModel)
+		}
+		pProv, err := resolveProvider(effectiveResolver, cfg, proxySpec, provider.Selection{Ref: modelRefFromEntry(ge)})
+		if err != nil {
+			return nil, fmt.Errorf("guardian_model %q: %w", guardianModel, err)
+		}
+		guardianReg := agent.FilterReadOnlyRegistry(reg, agent.SubagentMetaTools()...)
+		ctrlOpts.Guardian = guardian.NewSession(pProv, guardianReg, guardian.PolicyPrompt(), modelRefFromEntry(ge), cfg.Agent.GuardianTemperature, ge.Price, sink)
+		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("guardian enabled · model=%s", ge.Model)})
+	}
+	// Recovery reviewer is explicit: empty recovery_model leaves rule-only
+	// recovery. A configured but unusable model is a configuration error.
+	if recoveryModel := strings.TrimSpace(cfg.Agent.RecoveryModel); recoveryModel != "" {
+		if extensionResolver != nil && providerext.PluginRefOwner(recoveryModel) != "" {
+			re, ok := resolveOptionalEntry(extensionResolver, cfg, recoveryModel)
+			if !ok {
+				return nil, fmt.Errorf("recovery_model %q is not a configured provider", recoveryModel)
+			}
+			rProv, err := extensionResolver.Resolve(provider.Selection{Ref: modelRefFromEntry(re)})
 			if err != nil {
-				slog.Warn("guardian provider construction failed — guardian disabled", "model", guardianModel, "err", err)
-				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Guardian was disabled because it could not start.", Detail: fmt.Sprintf("guardian construction failed: %v — guardian disabled", err)})
-			} else {
-				guardianReg := agent.FilterReadOnlyRegistry(reg, agent.SubagentMetaTools()...)
-				ctrlOpts.Guardian = guardian.NewSession(pProv, guardianReg, guardian.PolicyPrompt(), modelRefFromEntry(ge), cfg.Agent.GuardianTemperature, ge.Price, sink)
-				sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("guardian enabled · model=%s", ge.Model)})
+				return nil, fmt.Errorf("recovery_model %q: %w", recoveryModel, err)
 			}
+			ctrlOpts.RecoveryReviewer = recovery.NewSessionWithSink(rProv, re.Price, modelRefFromEntry(re), sink)
+		} else {
+			re, ok := cfg.ResolveModel(recoveryModel)
+			if !ok {
+				return nil, fmt.Errorf("recovery_model %q is not a configured provider", recoveryModel)
+			}
+			rProv, err := NewProviderWithProxy(re, proxySpec)
+			if err != nil {
+				return nil, fmt.Errorf("recovery_model %q: %w", recoveryModel, err)
+			}
+			ctrlOpts.RecoveryReviewer = recovery.NewSessionWithSink(rProv, re.Price, modelRefFromEntry(re), sink)
 		}
 	}
-	// Recovery reviewer: prefer recovery_model, then guardian_model, then the
-	// active main model with an isolated session/policy.
-	{
-		recoveryModel := strings.TrimSpace(cfg.Agent.RecoveryModel)
-		if recoveryModel == "" {
-			recoveryModel = strings.TrimSpace(cfg.Agent.GuardianModel)
-		}
-		if recoveryModel == "" {
-			recoveryModel = modelRef
-		}
-		if recoveryModel != "" {
-			if extensionResolver != nil && providerext.PluginRefOwner(recoveryModel) != "" {
-				// A plugin-namespaced recovery reviewer resolves through the
-				// merged resolver; the config path cannot see extension refs.
-				if re, ok := resolveOptionalEntry(extensionResolver, cfg, recoveryModel); ok {
-					if rProv, err := extensionResolver.Resolve(provider.Selection{Ref: modelRefFromEntry(re)}); err == nil {
-						ctrlOpts.RecoveryReviewer = recovery.NewSessionWithSink(rProv, re.Price, modelRefFromEntry(re), sink)
-					} else {
-						slog.Warn("recovery reviewer provider construction failed — rule-only recovery", "model", recoveryModel, "err", err)
-					}
-				}
-			} else if re, ok := cfg.ResolveModel(recoveryModel); ok {
-				if rProv, err := NewProviderWithProxy(re, proxySpec); err == nil {
-					ctrlOpts.RecoveryReviewer = recovery.NewSessionWithSink(rProv, re.Price, modelRefFromEntry(re), sink)
-				} else {
-					slog.Warn("recovery reviewer provider construction failed — rule-only recovery", "model", recoveryModel, "err", err)
-				}
-			}
-		}
-		// HeadlessApprovalMode is an explicit declaration that this frontend has
-		// no decision channel (`reasonix run`). ApprovalTimeout is not a proxy for
-		// that capability: bots have a bounded timeout and can still answer cards.
-		ctrlOpts.RecoveryHeadless = recoveryHeadlessMode(opts)
-	}
-	// Goal evaluator: the same zero-config model fallback as the recovery
-	// reviewer (recovery_model → guardian_model → main model), isolated session
-	// and policy. When unavailable, Goal turns without an update_goal report
-	// fail closed and pause instead of defaulting to continue.
-	{
-		evalModel := strings.TrimSpace(cfg.Agent.RecoveryModel)
-		if evalModel == "" {
-			evalModel = strings.TrimSpace(cfg.Agent.GuardianModel)
-		}
-		if evalModel == "" {
-			evalModel = modelRef
-		}
-		if evalModel != "" {
-			if re, ok := cfg.ResolveModel(evalModel); ok {
-				if eProv, err := NewProviderWithProxy(re, proxySpec); err == nil {
-					ctrlOpts.GoalEvaluator = goaleval.NewSessionWithSink(eProv, re.Price, modelRefFromEntry(re), sink)
-				} else {
-					slog.Warn("goal evaluator provider construction failed — goals without an update_goal report will pause", "model", evalModel, "err", err)
-				}
-			}
-		}
-	}
+	// HeadlessApprovalMode is an explicit declaration that this frontend has
+	// no decision channel (`reasonix run`). ApprovalTimeout is not a proxy for
+	// that capability: bots have a bounded timeout and can still answer cards.
+	ctrlOpts.RecoveryHeadless = recoveryHeadlessMode(opts)
+	// Goal evaluator is not implied by the main model, guardian, or recovery
+	// reviewer. Controllers that want one inject it explicitly; otherwise Goal
+	// uses the deterministic host policy.
 	ctrl := control.New(ctrlOpts)
 	// The role inputs set the session quality floor: delivery/deliver/quality
 	// raise it, light and its aliases fold to standard, unknown stays default.

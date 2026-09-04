@@ -74,6 +74,13 @@
 | 取消 | `cancel_test.go` |
 | task/token/cost 预算 | `run_budget_test.go` |
 | 工具权限/畸形参数 | `argument_validation_test.go`、gate 相关测试 |
+| 普通请求不调用 planner | `TestCoordinatorOrdinaryRequestDoesNotCallPlanner`、`TestDecidePlannerRouteExplicitOnly` |
+| planner 无 `submit_plan` 的散文失败 | `TestCoordinatorPlanAndExecuteRequiresSubmittedPlan` |
+| planner 失败不跑 executor | `TestCoordinatorFailsClosedWhenPlannerFails` |
+| 不可用的 `planner_model` 是配置错误 | `TestBuildFailsWhenPlannerModelIsUnresolvable` |
+| 普通 Agent 不追加 todo continuation | `TestStandardTodoContinuationDisabledByDefault` |
+| 普通 compaction 保持单次摘要 | `TestPressureCompactionDoesNotCallChunkedFold` |
+| 缺失的 guardian/recovery 模型 fail-closed | `TestBuildFailsWhenGuardianModelIsUnresolvable`、`TestBuildFailsWhenRecoveryModelIsUnresolvable` |
 
 ## 门禁
 

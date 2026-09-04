@@ -39,7 +39,7 @@ func renderRecoveryAndCompletionValidation(b *strings.Builder, c *Config) {
 	if strings.TrimSpace(c.Agent.RecoveryModel) != "" {
 		fmt.Fprintf(b, "recovery_model = %q   # optional independent reviewer for low-risk automatic recovery\n", c.Agent.RecoveryModel)
 	} else {
-		b.WriteString("# recovery_model = \"deepseek-pro\"   # optional; falls back to guardian then main model\n")
+		b.WriteString("# recovery_model = \"deepseek-pro\"   # optional; empty leaves rule-only recovery\n")
 	}
 }
 

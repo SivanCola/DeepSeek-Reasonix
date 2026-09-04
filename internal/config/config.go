@@ -281,7 +281,7 @@ type CLIConfig struct {
 type DesktopConfig struct {
 	Language                string   `toml:"language"`                   // auto|en|zh; empty/auto = browser/OS auto-detect
 	Currency                string   `toml:"currency"`                   // legacy display currency; migrated to [billing].display_currency
-	LayoutStyle             string   `toml:"layout_style"`               // classic|workbench|creation; desktop layout style
+	LayoutStyle             string   `toml:"layout_style"`               // workbench|creation; legacy classic is migrated on startup
 	Theme                   string   `toml:"theme"`                      // auto|dark|light; empty resolves to auto
 	ThemeStyle              string   `toml:"theme_style"`                // graphite|aurora|slate|carbon|nocturne|amber and legacy aliases
 	TerminalTheme           string   `toml:"terminal_theme"`             // auto|dark|light; auto follows the desktop app theme
@@ -468,8 +468,7 @@ func (c *Config) DesktopTerminalTheme() string {
 	}
 }
 
-// DesktopLayoutStyle normalizes the desktop layout style. New installs default
-// to workbench; explicit classic remains respected.
+// DesktopLayoutStyle defaults to workbench; retired classic stays readable until startup migration persists its replacement.
 func (c *Config) DesktopLayoutStyle() string {
 	if strings.EqualFold(strings.TrimSpace(c.Desktop.ThemeStyle), "workbench") && strings.TrimSpace(c.Desktop.LayoutStyle) == "" {
 		return "workbench"
@@ -1284,8 +1283,8 @@ type AgentConfig struct {
 	VisionModel         string  `toml:"vision_model"`
 	GuardianModel       string  `toml:"guardian_model"`
 	GuardianTemperature float64 `toml:"guardian_temperature"`
-	// RecoveryModel optionally names a dedicated model for the independent
-	// recovery reviewer. Empty falls back to GuardianModel, then the main model.
+	// RecoveryModel names the optional recovery reviewer. Empty leaves
+	// rule-only recovery; it is not implied by guardian or the main model.
 	RecoveryModel string `toml:"recovery_model"`
 	// RecoveryTemperature is accepted from older configs but ignored. Auto
 	// Guard review is deterministic at temperature zero.
