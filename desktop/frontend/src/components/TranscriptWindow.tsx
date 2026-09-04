@@ -150,13 +150,6 @@ export default function TranscriptWindow({
     gestureActive: kernel.userGestureActive,
   });
   const virtualItems = committedRange.items;
-  // A bounded wheel lease may refine only beyond the accumulated native
-  // compositor travel plus one viewport. A single-step maximum is unsafe on
-  // WKWebView, where several native wheel batches can outrun React commits.
-  // Unbounded touch/selection/thumb/key gestures pass Infinity and therefore
-  // keep every cold measurement staged until ownership ends.
-  const publicationLeadPx = measurementLedger.publicationLead(kernel.userGestureActive);
-  const paintedSafeIndex = virtualItems.find((item) => item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight + publicationLeadPx - 0.5)?.index;
   const logicalAnchorIndex = kernel.anchor.kind === "block"
     ? coldIndexByKey.get(kernel.anchor.blockKey)
     : undefined;
@@ -238,6 +231,16 @@ export default function TranscriptWindow({
     const container = coldContainerRef.current;
     const changes: Array<{ key: string; size: number }> = [];
     const viewportBottom = scrollElement?.getBoundingClientRect().bottom;
+    // Read the native lease at the publication boundary, not from the render
+    // that scheduled this effect. A native capture listener can claim scroll
+    // ownership before React commits its kernel snapshot, especially on
+    // WebKitGTK. A bounded wheel lease protects the accumulated compositor
+    // travel plus one viewport; unbounded gestures keep every measurement
+    // staged until ownership ends.
+    const publicationLeadPx = measurementLedger.publicationLead(kernel.userGestureActive);
+    const paintedSafeIndex = virtualItems.find((item) => (
+      item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight + publicationLeadPx - 0.5
+    ))?.index;
     let domSafeIndex: number | undefined;
     if (container) {
       for (const item of virtualItems) {
@@ -289,7 +292,7 @@ export default function TranscriptWindow({
       return;
     }
     onGeometryChange();
-  }, [coldIndexByKey, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measurementLedger, onGeometryChange, paintedSafeIndex, projection.activeBlock?.measurementRevision, publicationLeadPx, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measurementLedger, nativeViewport.clientHeight, nativeViewport.scrollTop, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;

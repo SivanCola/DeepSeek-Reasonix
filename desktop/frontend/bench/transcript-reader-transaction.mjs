@@ -293,8 +293,12 @@ async function runIteration(page, transcript, label, iteration) {
   assert(result.heldAccepted.length === 0,
     `${label} ${iteration + 1}/${iterations}: user-held transaction accepts zero programmatic writes`);
   assert(result.blankFrames === 0, `${label} ${iteration + 1}/${iterations}: geometry churn produces zero blank frames`);
-  assert(heldOriginal?.top != null && Math.abs(heldOriginal.top - before.top) <= 4,
-    `${label} ${iteration + 1}/${iterations}: staged prefix geometry cannot move the held reader anchor`);
+  const heldDrift = heldOriginal?.top == null ? null : Math.abs(heldOriginal.top - before.top);
+  const heldDiagnostic = heldDrift == null || heldDrift > 4
+    ? `; ${JSON.stringify({ before, mutation, held, heldOriginal })}`
+    : "";
+  assert(heldDrift != null && heldDrift <= 4,
+    `${label} ${iteration + 1}/${iterations}: staged prefix geometry cannot move the held reader anchor${heldDiagnostic}`);
   const finalTops = new Map(result.visibleBlocks.map((block) => [block.key, block.top]));
   const visibleDrift = Math.max(0, ...before.visibleBlocks
     .filter((block) => finalTops.has(block.key))

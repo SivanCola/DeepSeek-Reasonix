@@ -91,6 +91,7 @@ ok(
     && windowSource.includes('addEventListener("mouseup", endUnownedMouse')
     && windowSource.includes('addEventListener("touchstart", beginUnbounded')
     && windowSource.includes("measurementLedger.endGesture()")
+    && windowSource.indexOf("measurementLedger.publicationLead(kernel.userGestureActive)") > windowSource.indexOf("const container = coldContainerRef.current")
     && windowSource.includes("[kernel.generation, kernel.userGestureActive, measurementLedger]")
     && windowSource.includes("measurementLedger.publishStaged(")
     && windowSource.includes("virtualizer.resizeItem(index, change.size);"),
