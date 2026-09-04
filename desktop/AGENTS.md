@@ -30,6 +30,12 @@ contracts when touching anything that can move the transcript viewport.
   once from the prefix-size ledger while preserving every protected block.
   Measurement-only notifications cannot replace the painted range while
   native input owns an unchanged viewport.
+- **Atomic measurement commit**: DOM measurements cannot mutate TanStack's
+  prefix-size ledger independently. While native input owns the viewport,
+  measurements remain unpublished. After ownership ends, the Window Adapter
+  opens one anchor transaction, publishes all changed item sizes as one batch,
+  and settles that geometry once. Never reintroduce per-item ResizeObserver
+  publication or platform-specific scroll compensation.
 - **Resident active tail**: the active turn and at least the two newest
   completed turns stay in ordinary DOM. A resident block may enter windowed
   history only after it is a viewport away and owns no anchor, focus, or

@@ -10,7 +10,11 @@ import {
 import { TranscriptViewportWriter } from "./transcriptViewportWriter";
 
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
-const NATIVE_GESTURE_IDLE_MS = 160;
+// Native WebViews can leave a short gap between coalesced wheel batches while
+// the platform compositor is still the authoritative scroll owner. Keep the
+// lease beyond that boundary so deferred geometry is committed only after the
+// native stream has actually gone idle.
+const NATIVE_GESTURE_IDLE_MS = 320;
 function blockTop(element: HTMLElement, key: string): number | undefined {
   const node = Array.from(element.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
     .find((candidate) => candidate.dataset.transcriptBlockKey === key);
@@ -39,11 +43,9 @@ function readSnapshot(element: HTMLElement): TranscriptViewportSnapshot {
 export function useTranscriptKernel({
   sessionKey,
   geometryRevision,
-  prependRevision,
 }: {
   sessionKey: string;
   geometryRevision: string | number;
-  prependRevision?: string | number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
@@ -95,28 +97,27 @@ export function useTranscriptKernel({
   const settleGeometry = useCallback(() => {
     kernel.advanceGeometry();
     const element = scrollRef.current;
-    let transaction = kernel.activeTransaction;
-    if (!transaction && element && (!kernel.userGestureActive || !transientGestureTimerRef.current) && kernel.intent === "reader" && kernel.anchor.kind === "block") {
-      const top = blockTop(element, kernel.anchor.blockKey);
-      const desired = top == null ? undefined : top + kernel.anchor.offsetPx;
-      if (desired != null && Math.abs(desired - element.scrollTop) > 0.5) {
-        transaction = kernel.begin("restore", kernel.anchor);
-      }
-    }
+    const transaction = kernel.activeTransaction;
     if (transaction && element && (transaction.kind !== "prepend" || !prependAwaitingGeometryRef.current)) {
       kernel.correctAnchor(transaction, (key) => blockTop(element, key));
     } else if (!transaction && kernel.intent === "tail") kernel.scheduleTailSync();
-    refresh();
+  }, [kernel]);
+
+  const commitViewportGeometry = useCallback(() => {
+    prependAwaitingGeometryRef.current = false;
+    settleGeometry();
+  }, [settleGeometry]);
+
+  const beginAnchorRestore = useCallback(() => {
+    if (kernel.userGestureActive || kernel.intent !== "reader" || kernel.anchor.kind !== "block") return null;
+    const transaction = kernel.activeTransaction ?? kernel.begin("restore", kernel.anchor);
+    if (transaction) refresh();
+    return transaction;
   }, [kernel, refresh]);
 
   useLayoutEffect(() => {
     settleGeometry();
   }, [geometryRevision, settleGeometry]);
-
-  useLayoutEffect(() => {
-    prependAwaitingGeometryRef.current = false;
-    settleGeometry();
-  }, [prependRevision, settleGeometry]);
 
   const beginStructural = useCallback((kind: Exclude<ScrollTransactionKind, "jump" | "selection" | "tail-sync">) => {
     const current = snapshot();
@@ -246,6 +247,8 @@ export function useTranscriptKernel({
     nativeScrollbarDragging: nativeThumbRef.current,
     snapshot,
     beginStructural,
+    beginAnchorRestore,
+    commitViewportGeometry,
     beginGesture,
     endGesture,
     settleGeometry,

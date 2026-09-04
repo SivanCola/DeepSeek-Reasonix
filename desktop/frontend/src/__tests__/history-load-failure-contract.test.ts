@@ -18,13 +18,13 @@ assert.match(controller, /throw new Error\(t\("history\.failedLoadHistory"\)\)/,
 assert.match(controller, /retrySessionHistory/, "retry path is exported");
 assert.match(
   transcript,
-  /kernel\.beginStructural\("composer-resize"\);\n    kernel\.settleGeometry\(\);/,
-  "a composer resize enters one kernel transaction before its geometry commit",
+  /kernel\.beginStructural\("composer-resize"\);\n    kernel\.commitViewportGeometry\(\);/,
+  "a composer resize enters one kernel transaction before the viewport commits its geometry",
 );
 assert.match(
   readFileSync(join(root, "lib/useTranscriptKernel.ts"), "utf8"),
-  /kernel\.intent === "reader" && kernel\.anchor\.kind === "block"/,
-  "reader geometry restoration is gated by the kernel's logical reader anchor",
+  /kernel\.intent !== "reader" \|\| kernel\.anchor\.kind !== "block"/,
+  "reader geometry restoration starts only from the kernel's existing logical anchor",
 );
 assert.match(controller, /shouldPreferResidentHistory\(resetSurface, options\.preserveCachedHistory\)/, "retry hydrates fetch instead of serving the resident snapshot");
 assert.match(

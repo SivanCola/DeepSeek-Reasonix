@@ -24,6 +24,8 @@ Up to 100 completed turns use full DOM. At 101 turns the adapter windows cold co
 
 The Window Adapter applies a range commit protocol instead of painting every asynchronous TanStack candidate. A committed range must cover the current native viewport. A stale candidate cannot replace a previously covering range; a native jump that invalidates both ranges is reconstructed synchronously from TanStack's prefix-size ledger, including every protected anchor, selection, focus, and jump block. While native input owns an unchanged viewport, measurement-only notifications retain the painted range. The adapter records whether the range came from a candidate, retention, or reconstruction, but none of these paths may write scroll position.
 
+DOM measurement uses the same commit boundary. TanStack may observe mounted identities, but it cannot publish per-item ResizeObserver sizes into the prefix ledger. Native wheel, touch, selection, or scrollbar ownership defers every DOM-to-ledger change. Once that ownership ends, the adapter captures the existing logical anchor, batches all changed mounted sizes into the ledger, and settles the resulting geometry once. The full-DOM adapter follows the same will-change/commit handshake. This keeps rendering, prefix sums, and native scroll ownership on one ordered state transition instead of allowing asynchronous measurements to move visible content behind the kernel.
+
 Development, test, preview, and canary builds may use the non-persistent `?transcriptRenderMode=full|windowed` diagnostic override. Stable builds ignore it.
 
 ## Kernel state machine

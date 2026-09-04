@@ -13,6 +13,7 @@ const NATIVE_SCROLL_RUNWAY_BLOCKS = 12;
 export default function TranscriptWindow({
   projection,
   scrollElement,
+  onGeometryWillChange,
   onGeometryChange,
   onAnomaly,
   protectedBlockKeys,
@@ -27,6 +28,7 @@ export default function TranscriptWindow({
 }: {
   projection: TimelineProjection;
   scrollElement: HTMLDivElement | null;
+  onGeometryWillChange: () => unknown;
   onGeometryChange: () => void;
   onAnomaly: (outcome: "blank-viewport" | "invalid-geometry") => void;
   protectedBlockKeys: ReadonlySet<string>;
@@ -73,7 +75,10 @@ export default function TranscriptWindow({
     estimateSize: (index) => estimateBlock(split.cold[index]),
     getItemKey: (index) => split.cold[index].key,
     overscan: NATIVE_SCROLL_RUNWAY_BLOCKS,
-    measureElement: (element) => Math.max(64, element.getBoundingClientRect().height || (element as HTMLElement).offsetHeight),
+    // The window adapter owns the DOM-to-ledger commit below. TanStack still
+    // observes stable item identities, but cannot publish ResizeObserver
+    // measurements independently of the kernel's native-gesture boundary.
+    useCachedMeasurements: true,
     rangeExtractor: (range) => {
       const indexes = new Set(defaultRangeExtractor(range));
       retainedIndexes.forEach((index) => indexes.add(index));
@@ -132,7 +137,25 @@ export default function TranscriptWindow({
     const rect = target.getBoundingClientRect();
     if (rect.bottom >= viewport.top && rect.top <= viewport.bottom) onPinnedJumpVisible();
   }, [onPinnedJumpVisible, pinnedJumpBlockKey, rangeRevision, scrollElement]);
-  useLayoutEffect(onGeometryChange, [onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident]);
+  useLayoutEffect(() => {
+    if (kernel.userGestureActive) return;
+    const container = coldContainerRef.current;
+    const changes: Array<{ index: number; size: number }> = [];
+    if (container) {
+      for (const item of virtualItems) {
+        const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
+        if (!element) continue;
+        const size = Math.max(64, element.getBoundingClientRect().height || element.offsetHeight);
+        if (Math.abs(size - item.size) > 0.5) changes.push({ index: item.index, size });
+      }
+    }
+    if (changes.length > 0) {
+      onGeometryWillChange();
+      changes.forEach(({ index, size }) => virtualizer.resizeItem(index, size));
+      return;
+    }
+    onGeometryChange();
+  }, [kernel.userGestureActive, onGeometryChange, onGeometryWillChange, projection.activeBlock?.measurementRevision, rangeRevision, split.resident, virtualItems, virtualizer]);
   useEffect(() => {
     const element = residentTailRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;

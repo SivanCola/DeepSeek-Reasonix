@@ -142,7 +142,6 @@ export function Transcript(props: TranscriptProps) {
   const kernel = useTranscriptKernel({
     sessionKey: surfaceKey,
     geometryRevision: `${contentRevision}:${footerHeight}:${experience}:${historyMutation?.seq ?? 0}`,
-    prependRevision: historyMutation?.kind === "prepend" ? historyMutation.seq : 0,
   });
   const [
     questions, loadedByTurn, totalQuestions, activeQuestion, setActiveQuestion,
@@ -321,8 +320,8 @@ export function Transcript(props: TranscriptProps) {
     if (previousFooterHeight.current === footerHeight) return;
     previousFooterHeight.current = footerHeight;
     kernel.beginStructural("composer-resize");
-    kernel.settleGeometry();
-  }, [footerHeight, kernel.beginStructural, kernel.settleGeometry]);
+    kernel.commitViewportGeometry();
+  }, [footerHeight, kernel.beginStructural, kernel.commitViewportGeometry]);
 
   useEffect(() => {
     acquireMarkdownWorkerClient();
@@ -434,7 +433,8 @@ export function Transcript(props: TranscriptProps) {
                   if (question) setPendingQuestion(question);
                   void requestOlder(question ? question.turn + 1 : undefined, "retry");
                 }}
-                onGeometryChange={kernel.settleGeometry}
+                onGeometryWillChange={kernel.beginAnchorRestore}
+                onGeometryChange={kernel.commitViewportGeometry}
                 onAnomaly={kernel.reportAnomaly}
                 kernel={kernel.kernel}
                 protectedBlockKeys={protectedBlockKeys}
