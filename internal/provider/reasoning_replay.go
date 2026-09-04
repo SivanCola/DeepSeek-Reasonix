@@ -1,45 +1,11 @@
 package provider
 
 import (
-	"context"
 	"slices"
 	"strings"
 
 	"reasonix/internal/nilutil"
 )
-
-// MissingReasoningFallbackPolicy is implemented only by adapters that can
-// safely regenerate a tool turn without their ordinary reasoning replay
-// contract. The agent never guesses this capability for unknown providers.
-type MissingReasoningFallbackPolicy interface {
-	SupportsMissingReasoningFallback() bool
-}
-
-// SupportsMissingReasoningFallback reports whether p owns a verified
-// request-local recovery mode for repeated missing required reasoning.
-func SupportsMissingReasoningFallback(p Provider) bool {
-	if nilutil.IsNil(p) {
-		return false
-	}
-	policy, ok := p.(MissingReasoningFallbackPolicy)
-	return ok && policy.SupportsMissingReasoningFallback()
-}
-
-type missingReasoningFallbackContextKey struct{}
-
-// WithMissingReasoningFallback asks a capable provider to use its safe
-// request-local recovery mode. Providers without the capability ignore it.
-// The marker is host-local and never becomes prompt content.
-func WithMissingReasoningFallback(ctx context.Context) context.Context {
-	return context.WithValue(ctx, missingReasoningFallbackContextKey{}, true)
-}
-
-// MissingReasoningFallbackFromContext is for provider adapters. Callers must
-// still check their own capability before changing a wire request.
-func MissingReasoningFallbackFromContext(ctx context.Context) bool {
-	enabled, _ := ctx.Value(missingReasoningFallbackContextKey{}).(bool)
-	return enabled
-}
 
 // AssistantReasoningReplayPolicy is optionally implemented by providers whose
 // replay contract depends on the concrete assistant message. It extends the

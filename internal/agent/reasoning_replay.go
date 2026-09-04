@@ -9,41 +9,6 @@ import (
 	"reasonix/internal/provider"
 )
 
-func (a *Agent) runMissingReasoningFallback(
-	ctx context.Context,
-	turn int,
-	frozen *samplingRequest,
-	attemptID string,
-	attempt int,
-	billable *provider.Usage,
-	discarded ...*deferredStreamSink,
-) (streamedTurn, bool) {
-	if !a.activateMissingReasoningFallback() {
-		return streamedTurn{}, false
-	}
-	for _, sink := range discarded {
-		if sink != nil {
-			sink.Discard()
-		}
-	}
-	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
-	a.emitProtocolRetry(2, true)
-	fallbackSink := newDeferredStreamSink(a.svc.sink)
-	fallback := a.runSamplingAttempt(ctx, turn, fallbackSink, frozen, attemptID)
-	billable = mergeSamplingUsage(billable, fallback.usage)
-	a.storeLatestRequestUsage(fallback.usage)
-	fallback.usage = finalizeSamplingUsage(billable, fallback.usage)
-	if fallback.err != nil {
-		fallbackSink.Discard()
-		a.emitReasoningReplayAttemptOutcome(attemptID, attempt, fallback.err)
-		return fallback, true
-	}
-	fallbackSink.Flush()
-	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetryRecovered})
-	a.emitReasoningReplayAttemptOutcome(attemptID, attempt, nil)
-	return fallback, true
-}
-
 func (a *Agent) preserveRawReasoning(reasoning, signature, reasoningID, reasoningStatus string, calls []provider.ToolCall, searches []provider.ServerSearchCall) bool {
 	if signature != "" || reasoningID != "" || reasoningStatus != "" {
 		return true
@@ -90,9 +55,6 @@ func (a *Agent) emitReasoningReplayAttemptOutcome(id string, attempt int, err er
 }
 
 func (a *Agent) reasoningReplayIssue(result streamedTurn) ReasoningReplayFailure {
-	if a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov) {
-		return ""
-	}
 	if !provider.RequiresAssistantReasoningReplay(a.svc.prov, result.assistantMessage()) {
 		return ""
 	}
@@ -116,7 +78,6 @@ func (a *Agent) finishReasoningReplayRetry(retry streamedTurn, sink *deferredStr
 			event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryReasoningOverflowDetected})
 		}
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningDetected})
-		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
 		return a.finishUnreplayableReasoning(retry, sink, issue)
 	}
 	if len(retry.calls) == 0 && len(retry.serverSearch) == 0 {
@@ -145,12 +106,8 @@ func (a *Agent) finishReasoningReplayOverflow(result streamedTurn, sink *deferre
 // exact replay was already spent (or claimed cross-process): try the
 // provider-declared fallback, otherwise terminate through the
 // unreplayable-reasoning policy.
-func (a *Agent) suppressMissingReasoningRetry(ctx context.Context, turn int, frozen *samplingRequest, attemptID string, attempt int, sink *deferredStreamSink, result streamedTurn, issue ReasoningReplayFailure, billable *provider.Usage) streamedTurn {
+func (a *Agent) suppressMissingReasoningRetry(_ context.Context, _ int, _ *samplingRequest, attemptID string, attempt int, sink *deferredStreamSink, result streamedTurn, issue ReasoningReplayFailure, billable *provider.Usage) streamedTurn {
 	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetrySuppressed})
-	if fallback, ok := a.runMissingReasoningFallback(ctx, turn, frozen, attemptID, attempt, billable, sink); ok {
-		return fallback
-	}
-	event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
 	result.usage = finalizeSamplingUsage(billable, result.usage)
 	terminal := a.finishUnreplayableReasoning(result, sink, issue)
 	a.emitReasoningReplayAttemptOutcome(attemptID, attempt, terminal.err)
@@ -165,14 +122,14 @@ func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredS
 	// Empty can replace reasoning the provider never emitted, never reasoning
 	// truncated by the client limit: preserved-thinking protocols require the
 	// returned content to remain complete and unchanged.
-	allowsFallback := issue == ReasoningReplayMissing && provider.AllowsEmptyReasoningFallback(a.svc.prov)
-	if len(result.calls) > 0 && !allowsFallback {
+	allowsEmptyReasoning := issue == ReasoningReplayMissing && provider.AllowsEmptyReasoningFallback(a.svc.prov)
+	if len(result.calls) > 0 && !allowsEmptyReasoning {
 		sink.Discard()
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryClientToolRejected})
 		result.err = &ReasoningReplayError{Kind: issue}
 		return result
 	}
-	if len(result.serverSearch) > 0 && !allowsFallback {
+	if len(result.serverSearch) > 0 && !allowsEmptyReasoning {
 		if strings.TrimSpace(result.text) == "" {
 			sink.Discard()
 			result.err = &ReasoningReplayError{Kind: issue}
@@ -189,7 +146,7 @@ func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredS
 		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryServerSearchSalvaged})
 		return result
 	}
-	if provider.RequiresReasoningRoundTrip(a.svc.prov) && !allowsFallback {
+	if provider.RequiresReasoningRoundTrip(a.svc.prov) && !allowsEmptyReasoning {
 		sink.Discard()
 		result.err = &ReasoningReplayError{Kind: issue}
 		return result
@@ -204,7 +161,6 @@ func (a *Agent) finishUnreplayableReasoning(result streamedTurn, sink *deferredS
 // half of interrupted-turn validation without exposing the provider itself.
 func (a *Agent) CanReplayAssistantMessage(m provider.Message) bool {
 	if a == nil || provider.AllowsEmptyReasoningFallback(a.svc.prov) ||
-		(a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov)) ||
 		!provider.RequiresAssistantReasoningReplay(a.svc.prov, m) {
 		return true
 	}
@@ -219,8 +175,7 @@ func (a *Agent) ensureUnreplayableHistoryRecovery() {
 	if a == nil || a.sess.conversation == nil {
 		return
 	}
-	if provider.AllowsEmptyReasoningFallback(a.svc.prov) ||
-		(a.sess.missingReasoning.fallbackActive && provider.SupportsMissingReasoningFallback(a.svc.prov)) {
+	if provider.AllowsEmptyReasoningFallback(a.svc.prov) {
 		return
 	}
 	msgs := a.sess.conversation.Snapshot()

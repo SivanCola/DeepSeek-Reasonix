@@ -28,7 +28,6 @@ type OptionalSinkCapabilities interface {
 	TurnCompletionSink
 	WorkspaceMutationSink
 	RunBudgetSink
-	CompletionValidationAuditSink
 	SubagentLifecycleAuditSink
 }
 
@@ -78,10 +77,6 @@ func (f AuditForwarder) RecordWorkspaceMutation(m WorkspaceMutation) {
 
 func (f AuditForwarder) RecordRunBudget(s RunBudgetSample) {
 	RecordRunBudget(f.Inner, s)
-}
-
-func (f AuditForwarder) RecordCompletionValidation(info CompletionValidationInfo) {
-	RecordCompletionValidation(f.Inner, info)
 }
 
 func (f AuditForwarder) RecordSubagentLifecycle(info SubagentLifecycleInfo) {

@@ -122,12 +122,6 @@ func (s *syncSink) RecordRunBudget(sample RunBudgetSample) {
 	RecordRunBudget(s.inner, sample)
 }
 
-func (s *syncSink) RecordCompletionValidation(info CompletionValidationInfo) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	RecordCompletionValidation(s.inner, info)
-}
-
 func (s *syncSink) RecordSubagentLifecycle(info SubagentLifecycleInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

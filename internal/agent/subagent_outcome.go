@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/completioneval"
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 	"reasonix/internal/skill"
@@ -93,32 +92,12 @@ func (t *TaskTool) failedSubagentResult(run *SubagentRun, cause error) (string, 
 	return subErr.SubagentOutput(), errors.Join(subErr, saveErr)
 }
 
-// resolveAmbiguousSubagentFailure applies the child-only completion policy.
-// Known partial causes are deterministic and never call a model. Only the
-// ambiguous completion boundary may use the existing bounded evaluator, at
-// most once, with no tools or history; all non-complete verdicts remain partial.
+// resolveAmbiguousSubagentFailure preserves the child result envelope for
+// callers that still use the historical method name. Completion is decided by
+// the child Agent's deterministic stream/tool state; no second model opinion is
+// requested here.
 func (t *TaskTool) resolveAmbiguousSubagentFailure(ctx context.Context, run *SubagentRun, taskText, modelRef string, sink event.Sink, cause error) (string, error) {
 	subErr := NewSubagentRunError(run, cause)
-	if subErr.Outcome.ErrorCode == "completion_uncertain" && strings.TrimSpace(subErr.Outcome.FinalAnswer) != "" && t != nil && t.completion.factory != nil && (ctx == nil || ctx.Err() == nil) {
-		evaluator := t.completion.factory(modelRef, sink)
-		if evaluator != nil {
-			verdict, evalErr := evaluator.Evaluate(ctx, completioneval.Evidence{
-				TaskText: taskText, CandidateAnswer: subErr.Outcome.FinalAnswer,
-				Mode: completioneval.ModeSubagent, HostSummary: "child completion status is ambiguous",
-			})
-			if evalErr == nil && verdict.Outcome == completioneval.OutcomeComplete {
-				subErr.Outcome.Status = SubagentOutcomeCompleted
-				subErr.Outcome.ErrorCode = ""
-				subErr.Outcome.Retryable = false
-				if t.transcripts != nil {
-					if saveErr := t.transcripts.SaveOutcome(run, subErr.Outcome); saveErr != nil {
-						return subErr.SubagentOutput(), errors.Join(subErr, saveErr)
-					}
-				}
-				return FormatSubagentRunResult(subErr.Outcome.FinalAnswer, run, false), nil
-			}
-		}
-	}
 	var saveErr error
 	if t != nil && t.transcripts != nil {
 		saveErr = t.transcripts.SaveOutcome(run, subErr.Outcome)

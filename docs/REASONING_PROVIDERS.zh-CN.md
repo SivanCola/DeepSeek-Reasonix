@@ -78,6 +78,14 @@ reasoning 回传 HTTP 400 失败，Reasonix 只重建旧历史的 provider-visib
 重试一次；后续新增轮次继续走正常 reasoning/tool replay，而 canonical session history
 不会被修改。
 
+## 缺失 reasoning 时的恢复
+
+如果 provider 要求工具轮次回放 reasoning，但模型返回了没有 reasoning 的完整工具
+调用，Reasonix 会在执行工具前，对同一份 frozen request 做一次精确重试。它不会在
+整个会话中关闭 thinking，也不会运行长期 provider fallback 熔断器。如果重试后仍然
+无法产生可回放的 reasoning，provider-specific 恢复策略会返回明确的协议错误；如果
+问题来自旧会话中已经持久化的历史，现有的一次性 reasoning 400 自愈仍然有效。
+
 ## 其他所有后端（标准 `reasoning_effort`）
 
 任何其他 OpenAI-compatible 后端都会回退到标准的 `reasoning_effort` 档位

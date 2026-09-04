@@ -1,35 +1,23 @@
 package anthropic
 
 import (
-	"context"
 	"strings"
 
 	"reasonix/internal/provider"
 )
 
-// SupportsMissingReasoningFallback is deliberately narrower than the generic
-// Anthropic adapter. DeepSeek's compatibility endpoint has an explicit
-// thinking.type=disabled request mode; native Anthropic tool loops do not.
-func (c *client) SupportsMissingReasoningFallback() bool {
-	return c.deepSeekThinkingEnabled()
-}
-
-func (c *client) missingReasoningFallback(ctx context.Context) bool {
-	return c.SupportsMissingReasoningFallback() && provider.MissingReasoningFallbackFromContext(ctx)
-}
-
-func (c *client) replayMessages(messages []provider.Message, recoveryWithoutThinking bool) []provider.Message {
-	if c.deepseek && !recoveryWithoutThinking {
+func (c *client) replayMessages(messages []provider.Message) []provider.Message {
+	if c.deepseek {
 		messages, _ = provider.ProjectReplaySafeMessages(c, messages)
 	}
 	return messages
 }
 
-func (c *client) replayReasoningBlock(m provider.Message, recoveryWithoutThinking bool) (contentBlock, bool) {
+func (c *client) replayReasoningBlock(m provider.Message) (contentBlock, bool) {
 	// DeepSeek's thinking mode requires every historical assistant turn's
 	// thinking block to be passed back whenever the request declares tools —
 	// including plain question-answer turns with no tool activity.
-	if c.deepseek && !recoveryWithoutThinking && m.ReasoningContent != "" {
+	if c.deepseek && m.ReasoningContent != "" {
 		return contentBlock{Type: "thinking", Thinking: m.ReasoningContent}, true
 	}
 	if !c.deepseek && c.thinking == "adaptive" && m.ReasoningContent != "" && m.ReasoningSignature != "" {
@@ -65,27 +53,23 @@ func leadingThinkingBlocks(blocks []contentBlock) int {
 	return head
 }
 
-func (c *client) applyDeepSeekThinking(r *anthRequest, req provider.Request, recoveryWithoutThinking bool) {
+func (c *client) applyDeepSeekThinking(r *anthRequest, req provider.Request) {
 	r.Temperature = req.Temperature
 	t := c.thinking
-	if recoveryWithoutThinking {
-		t = "disabled"
-	} else if t != "disabled" {
+	if t != "disabled" {
 		t = "enabled"
 	}
 	if c.effort == "disabled" {
 		t = "disabled"
 	}
 	effort := normalizeDeepSeekAnthropicEffort(c.model, c.effort)
-	if !recoveryWithoutThinking {
-		switch override := strings.ToLower(strings.TrimSpace(req.EffortOverride)); override {
-		case "disabled":
-			t = "disabled"
-		case "":
-		default:
-			if normalized := normalizeDeepSeekAnthropicEffort(c.model, override); normalized != "" {
-				effort = normalized
-			}
+	switch override := strings.ToLower(strings.TrimSpace(req.EffortOverride)); override {
+	case "disabled":
+		t = "disabled"
+	case "":
+	default:
+		if normalized := normalizeDeepSeekAnthropicEffort(c.model, override); normalized != "" {
+			effort = normalized
 		}
 	}
 	r.Thinking = &thinkingConfig{Type: t}

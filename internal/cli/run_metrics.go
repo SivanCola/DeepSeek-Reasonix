@@ -552,10 +552,6 @@ func (s *metricsSink) RecordRunBudget(sample event.RunBudgetSample) {
 	event.RecordRunBudget(s.inner, sample)
 }
 
-func (s *metricsSink) RecordCompletionValidation(info event.CompletionValidationInfo) {
-	event.RecordCompletionValidation(s.inner, info)
-}
-
 func (s *metricsSink) RecordSubagentLifecycle(info event.SubagentLifecycleInfo) {
 	event.RecordSubagentLifecycle(s.inner, info)
 }

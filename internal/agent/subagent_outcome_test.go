@@ -6,15 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"reasonix/internal/completioneval"
-	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
 
 func TestSubagentRunErrorPreservesPartialAnswerAndReference(t *testing.T) {
 	run := &SubagentRun{Ref: "sa_partial", Session: NewSession("sys")}
 	run.Session.Add(provider.Message{Role: provider.RoleAssistant, Content: "partial findings"})
-	base := &CompletionUncertainError{Cause: CompletionUncertainValidatorFailed}
+	base := &CompletionUncertainError{Cause: CompletionUncertainContextTool}
 	err := NewSubagentRunError(run, base)
 	if !errors.Is(err, base) {
 		t.Fatal("subagent error did not preserve its cause")
@@ -64,20 +62,5 @@ func TestParseSubagentOutcomeRejectsSpoofedStatus(t *testing.T) {
 	}
 	if !isSubagentToolCall(provider.ToolCall{Name: "use_capability", CapabilityID: "skill:research"}) {
 		t.Fatal("skill capability call was not classified as a subagent")
-	}
-}
-
-func TestAmbiguousSubagentFailureUsesAtMostOneEvaluator(t *testing.T) {
-	eval := &scriptedEvaluator{verdicts: []completioneval.Verdict{{Outcome: completioneval.OutcomeContinue, Reason: "more work"}}}
-	task := &TaskTool{completion: taskCompletionConfig{factory: func(string, event.Sink) completioneval.Evaluator { return eval }}}
-	run := &SubagentRun{Ref: "sa_ambiguous", Session: NewSession("sys")}
-	run.Session.Add(provider.Message{Role: provider.RoleAssistant, Content: "candidate"})
-	_, err := task.resolveAmbiguousSubagentFailure(context.Background(), run, "inspect", "model", event.Discard, &CompletionUncertainError{Cause: CompletionUncertainValidatorUncertain})
-	if err == nil || eval.calls != 1 {
-		t.Fatalf("ambiguous evaluation calls=%d err=%v, want one evaluator and retained error", eval.calls, err)
-	}
-	var subErr *SubagentRunError
-	if !errors.As(err, &subErr) || subErr.Outcome.Status != SubagentOutcomePartial {
-		t.Fatalf("ambiguous outcome = %v, want partial typed error", err)
 	}
 }

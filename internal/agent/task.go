@@ -290,7 +290,6 @@ type TaskTool struct {
 	// sub-agent gets its own use_capability frontend so ledger state stays
 	// isolated while connections reuse the parent Host.
 	capabilityRuntime *MCPCapabilityRuntime
-	completion        taskCompletionConfig
 }
 
 // TaskToolOptions holds the construction parameters for a TaskTool.
@@ -315,8 +314,6 @@ type TaskToolOptions struct {
 	SubagentModel                         string
 	SubagentEffort                        string
 	ResolveProvider                       func(string, string) (provider.Provider, *provider.Pricing, int, error)
-	CompletionEvaluatorFactory            CompletionEvaluatorFactory
-	CompletionValidation                  string
 }
 
 // NewTaskToolWithOptions is the internal standard constructor for TaskTool.
@@ -346,7 +343,6 @@ func NewTaskToolWithOptions(opts TaskToolOptions) *TaskTool {
 		subagentEffort:   opts.SubagentEffort,
 		resolveProvider:  opts.ResolveProvider,
 		maxSubagentDepth: DefaultMaxSubagentDepth,
-		completion:       newTaskCompletionConfig(opts),
 	}
 }
 

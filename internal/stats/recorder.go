@@ -242,10 +242,6 @@ func (r *Recorder) RecordRunBudget(sample event.RunBudgetSample) {
 	event.RecordRunBudget(r.inner, sample)
 }
 
-func (r *Recorder) RecordCompletionValidation(info event.CompletionValidationInfo) {
-	event.RecordCompletionValidation(r.inner, info)
-}
-
 func (r *Recorder) RecordSubagentLifecycle(info event.SubagentLifecycleInfo) {
 	event.RecordSubagentLifecycle(r.inner, info)
 }

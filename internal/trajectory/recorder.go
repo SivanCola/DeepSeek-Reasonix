@@ -360,10 +360,6 @@ func (r *Recorder) RecordRunBudget(sample event.RunBudgetSample) {
 	event.RecordRunBudget(r.inner, sample)
 }
 
-func (r *Recorder) RecordCompletionValidation(info event.CompletionValidationInfo) {
-	event.RecordCompletionValidation(r.inner, info)
-}
-
 func (r *Recorder) RecordSubagentLifecycle(info event.SubagentLifecycleInfo) {
 	r.append(Record{SubagentLifecycle: &SubagentLifecycle{
 		Phase: info.Phase, Ref: info.Ref, ParentToolCallID: info.ParentToolCallID,

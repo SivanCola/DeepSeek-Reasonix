@@ -1019,10 +1019,6 @@ type Options struct {
 	// delete_range to the pre-fingerprint full-file fresh-read requirement.
 	// It never enters provider-visible prompts or tool schemas.
 	LegacyAnchorSafetyGate bool
-
-	CompletionEvaluator        CompletionEvaluator
-	CompletionEvaluatorFactory CompletionEvaluatorFactory
-	CompletionValidation       string
 }
 
 // New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
@@ -1096,7 +1092,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 			recentKeep:             opts.RecentKeep,
 			archiveDir:             opts.ArchiveDir,
 			legacyAnchorSafetyGate: opts.LegacyAnchorSafetyGate,
-			completionAgentConfig:  newCompletionAgentConfig(opts, sink),
 		},
 		sess: sessionRuntime{
 			conversation: session,
@@ -1684,28 +1679,6 @@ func hasVisibleFinalAnswer(text string) bool {
 	return strings.TrimSpace(text) != ""
 }
 
-// reasoningOnlyFinishHonoured reports whether the model finished with a stop
-// signal but placed its answer in the reasoning stream rather than the content
-// block. DeepSeek thinking mode does this occasionally: it streams a long
-// reasoning_content, then returns finish_reason="stop" with an empty content.
-// The model has signalled completion, so the host accepts the turn instead of
-// retrying and forcing another expensive thinking round.
-//
-// The accept is scoped to DeepSeek thinking mode (ToolCallReasoningPolicy):
-// for other providers a reasoning-only turn keeps the empty-final retry
-// safety net — local <think>-tag models often recover a visible answer on
-// the second attempt, and a gateway that mislabels truncation as "stop"
-// must not have a degenerate turn committed as the final answer.
-func reasoningOnlyFinishHonoured(p provider.Provider, u *provider.Usage, reasoning string) bool {
-	if !provider.RequiresToolCallReasoning(p) {
-		return false
-	}
-	if u == nil || u.FinishReason != "stop" {
-		return false
-	}
-	return strings.TrimSpace(reasoning) != ""
-}
-
 func emptyFinalRetryMessage() string {
 	return "The previous assistant response finished without any visible answer text. Continue the same task now and provide a concise visible answer to the user. Do not send reasoning only."
 }
@@ -1749,7 +1722,6 @@ func (a *Agent) streamWithFrozen(ctx context.Context, turn int, sink event.Sink,
 	// Reuse a parent attempt counter when present so stream retries accumulate
 	// into one RequestCount; otherwise install a fresh counter for this call.
 	ctx = provider.WithRequestAttemptCounter(ctx)
-	ctx = a.withMissingReasoningFallback(ctx)
 	// A stream can terminate locally before the provider channel closes (for
 	// example when the client-side reasoning guard fires). Own a child context
 	// here so every return path aborts the HTTP request and releases the provider

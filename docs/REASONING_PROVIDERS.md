@@ -85,6 +85,16 @@ an old session still fails with the provider's specific reasoning pass-back HTTP
 retries once, and leaves later turns on the normal replay path; canonical
 session history remains unchanged.
 
+## Missing-reasoning recovery
+
+When a provider requires reasoning to be replayed for a tool turn but returns a
+completed tool call without reasoning, Reasonix performs one exact retry of the
+frozen request before executing the tool. It does not disable thinking for the
+session or run a long-lived provider fallback circuit. If the retry still
+cannot produce replayable reasoning, the provider-specific recovery policy
+returns a clear protocol error; the existing one-shot stale-history 400 repair
+remains available for failures caused by earlier persisted history.
+
 ## Everything else (standard `reasoning_effort`)
 
 Any other OpenAI-compatible backend falls through to the standard

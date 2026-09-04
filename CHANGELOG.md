@@ -44,18 +44,13 @@ branch.
 
 ### Fixed
 
-- **Premature natural-turn completion:** completion validation now defaults to
-  `enforce`, so a candidate that only promises future work is continued once
-  and then paused recoverably if it remains incomplete. The isolated evaluator
-  adds one bounded model request per candidate final (up to 30 seconds); users
-  can explicitly select synchronous `shadow` (same call cost and latency) or
-  `off`, including through `REASONIX_COMPLETION_VALIDATION_MODE`. One-shot CLI
-  runs exit `1` when validation remains uncertain while retaining the
-  structured `completion_uncertain` outcome and the recoverable session.
-  Persisted user/host message provenance replaces text-prefix classification
-  for current sessions while retaining a narrow legacy replay fallback;
-  provider request bytes remain unchanged. Content-free validation audits stay
-  host-only and never enter frontend or persisted event-wire payloads.
+- **Deterministic natural-turn completion:** removed the extra completion
+  validator model request. Clean model stops now finish from provider/tool state;
+  true zero-content responses retry the frozen request at the Agent step
+  boundary, while explicit host-owned readiness and safety gates remain active.
+  Legacy completion-validator configuration and `completion_uncertain` event
+  values remain readable for compatibility but are no longer produced by the
+  validator path.
 
 - **serve Host-header allowlist:** `reasonix serve` now rejects requests whose
   `Host` is neither loopback nor the actual listen address (HTTP 421), closing

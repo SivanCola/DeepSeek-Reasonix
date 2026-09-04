@@ -123,12 +123,6 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string, pinned pinnedRev
 	}
 	a.turn.engine = runtimepolicy.NewEngine(a.turn.constraints)
 	a.rebuildTurnContract()
-	// Reuse an open provider/configuration circuit before projecting history or
-	// spending another pair of normal thinking-mode requests.
-	if a.beginMissingReasoningRecovery() {
-		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetrySuppressed})
-		event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
-	}
 	// A cancelled/error turn leaves a provider-excluded recovery record at the
 	// transcript tail. Fold its bounded facts into this new user turn exactly
 	// once; the user's raw text remains the source above.
@@ -357,7 +351,7 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 			event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningDetected})
 			if shouldRetry {
 				event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningRetryAttempted})
-				a.emitProtocolRetry(1, provider.SupportsMissingReasoningFallback(a.svc.prov))
+				a.emitProtocolRetry(1, false)
 				retrySink := newDeferredStreamSink(a.svc.sink)
 				retry := runAttempt(attemptID, retrySink)
 				billable = mergeSamplingUsage(billable, retry.usage)
@@ -374,18 +368,11 @@ func (a *Agent) streamWithSamplingRecovery(ctx context.Context, turn int) stream
 					// unreplayable client tool.
 					a.storeLatestRequestUsage(result.usage)
 					result.usage = finalizeSamplingUsage(billable, result.usage)
-					event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningFallback})
 					terminal := a.finishUnreplayableReasoning(result, streamSink, issue)
 					a.emitReasoningReplayAttemptOutcome(attemptID, attempt, terminal.err)
 					return terminal
 				}
 				streamSink.Discard()
-				if a.reasoningReplayIssue(retry) == ReasoningReplayMissing {
-					event.RecordProtocolRecovery(a.svc.sink, event.ProtocolRecoveryAudit{Kind: event.ProtocolRecoveryMissingReasoningDetected})
-					if fallback, ok := a.runMissingReasoningFallback(ctx, turn, &frozen, attemptID, attempt, billable, retrySink); ok {
-						return fallback
-					}
-				}
 				retry = a.finishReasoningReplayRetry(retry, retrySink, billable)
 				a.emitReasoningReplayAttemptOutcome(attemptID, attempt, retry.err)
 				return retry
@@ -521,15 +508,11 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 		event.RecordReadinessAudit(a.svc.sink, readiness.audit(evidence.ReadinessAllowed, a.turn.readinessRecovered))
 	}
 	if !hasVisibleFinalAnswer(text) {
-		// DeepSeek thinking mode can stream a long reasoning_content and
-		// then finish with finish_reason="stop" but an empty content
-		// block: the model has explicitly signalled completion and its
-		// reasoning was already streamed to the user. Retrying here overrides
-		// that stop signal and forces another expensive thinking round (the
-		// "still thinking after the task is done" symptom), so honour the
-		// stop when reasoning carried the substance of the answer and treat
-		// the turn as a final answer instead of retrying.
-		if a.requireVisibleFinal || a.completionEnforced() || !reasoningOnlyFinishHonoured(a.svc.prov, usage, reasoning) { // enforce: recover visible text first
+		// Harness-style termination accepts a reasoning-only clean stop. Only
+		// explicit internal callers that require visible output retain the
+		// bounded synthetic retry below. A truly empty response is classified
+		// before this function and retried with the frozen provider request.
+		if a.requireVisibleFinal {
 			state.terminal.emptyFinalBlocks++
 			if state.terminal.emptyFinalBlocks >= maxEmptyFinalBlocks {
 				return false, fmt.Errorf("model finished without a visible final answer %d times", state.terminal.emptyFinalBlocks)
@@ -558,17 +541,7 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 	if !a.closeSteerIntakeIfIdle() {
 		return true, nil
 	}
-	// Host repairs are done. The validator now judges the already-streamed
-	// answer; only this decision gates TurnDone.
-	switch decision, pause := a.validateCandidateCompletion(ctx, state, text); decision {
-	case completionResume:
-		a.contextManager().ObserveUsage(usage)
-		return true, nil
-	case completionStop:
-		a.contextManager().ObserveUsage(usage)
-		return false, pause
-	}
-	// A final-answer turn otherwise skips compaction, so a large context
+	// A final-answer turn skips compaction, so a large context
 	// carries into the next turn un-folded and can overflow the model window.
 	// No-op below the trigger, so normal turns keep their warm cache.
 	a.contextManager().ObserveUsage(usage)
