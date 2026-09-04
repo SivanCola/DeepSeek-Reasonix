@@ -1,9 +1,5 @@
-// transcriptRows — the block-level virtual row model behind the transcript
-// (Phase D of the session-switch/history refactor). The transcript renders as
-// a flat list of virtual rows (user message, process-fold header, tool batch,
-// answer, notice, turn actions, …) instead of the old hot/warm/cold turn
-// layers. Everything here is pure: Transcript.tsx feeds items + fold state in
-// and gets rows out, which keeps the model testable without a DOM.
+// Pure presentation rows grouped into stable semantic-turn blocks for
+// windowing and logical anchoring.
 //
 // Fold semantics are hoisted out of the old per-instance TurnCollapse state
 // into an explicit FoldMap keyed by segment: auto-open while running,
@@ -18,6 +14,7 @@ import { isCreationGroupableTool, toolGroupKind, type ToolGroupKind } from "../c
 import type { SessionExperience } from "./sessionExperience";
 import type { ProcessFoldPreference } from "./processFoldPreference";
 import type { ResolvedReasoningDisplayMode } from "./reasoningDisplayPreference";
+import type { TimelineBlock } from "./transcriptTimeline";
 import {
   estimateTranscriptRowGeometry,
   resolveReasoningLayoutVariant,
@@ -33,7 +30,6 @@ export type NoticeItem = Extract<Item, { kind: "notice" }>;
 export type PhaseItem = Extract<Item, { kind: "phase" }>;
 export type CompactionItem = Extract<Item, { kind: "compaction" }>;
 
-// ── Live presence flags ───────────────────────────────────────────────────────
 // The model only depends on PRESENCE of live text/reasoning (which rows exist
 // and whether folds auto-open), never on the streaming content itself — the
 // row components read the stream through LiveStreamContext. That keeps token
@@ -178,10 +174,13 @@ export interface TurnModel {
   actionText: string;
 }
 
-function turnStableIdentity(model: TurnModel): string {
+export function turnStableIdentity(model: TurnModel): string {
   if (model.user) {
     const user = model.user;
-    return JSON.stringify([user.id, user.submissionId ?? "", user.createdAt ?? null, user.text, user.submitText ?? "", user.historyTurn ?? null, user.checkpointTurn ?? null]);
+    // A block's identity must survive streaming patches, prompt edits, history
+    // renumbering, and checkpoint hydration. The backend user id is the
+    // durable turn identity; every other field is mutable presentation data.
+    return JSON.stringify(["user", user.id]);
   }
   const first = model.turnItems[0];
   return JSON.stringify(["prelude", first?.kind ?? "", first?.id ?? ""]);
@@ -685,9 +684,11 @@ export interface BuildRowsOptions {
   subcallsByParent?: ReadonlyMap<string, readonly ToolItem[]>;
 }
 
-export function buildTranscriptRows(models: readonly TurnModel[], options: BuildRowsOptions): TranscriptRowWithLayout[] {
-  const rows: TranscriptRowWithLayout[] = [];
-  const rowGroups: TranscriptRowWithLayout[][] = [];
+function numericRevision(value: string): number { return Number.parseInt(stableStringHash(value), 36) >>> 0; }
+
+/** Builds stable complete-turn units for windowing and logical anchoring. */
+export function buildTranscriptRowBlocks(models: readonly TurnModel[], options: BuildRowsOptions): TimelineBlock[] {
+  const reversedBlocks: TimelineBlock[] = [];
   const usedKeys = new Set<string>();
   const foldExperience = options.sessionExperience
     ?? (options.foldPreference === "expanded" ? "deep" : "standard");
@@ -738,16 +739,31 @@ export function buildTranscriptRows(models: readonly TurnModel[], options: Build
       if (usedKeys.has(row.key)) modelRows[index] = { ...row, key: `${row.key}@${stableStringHash(`${turnStableIdentity(model)}|${row.kind}|${row.key}`)}` };
       usedKeys.add(modelRows[index].key);
     }
-    rowGroups.push(modelRows);
+    const identity = turnStableIdentity(model);
+    const revisions = modelRows.map((row) => transcriptRowMeasurementVersion(row));
+    reversedBlocks.push({
+      key: `turn:${model.user?.id ?? "prelude"}@${stableStringHash(identity)}`,
+      turn,
+      phase: model.isActive ? "active" : "completed",
+      rows: modelRows,
+      contentRevision: numericRevision(modelRows.map((row, index) => `${row.key}:${revisions[index]}`).join("\u0001")),
+      measurementRevision: hashGeometryParts(revisions),
+      questionAnchor: user ? userRowKey(user.id) : undefined,
+    });
   }
-  for (let index = rowGroups.length - 1; index >= 0; index -= 1) rows.push(...rowGroups[index]);
+  reversedBlocks.reverse();
+  return reversedBlocks;
+}
+
+export function buildTranscriptRows(models: readonly TurnModel[], options: BuildRowsOptions): TranscriptRowWithLayout[] {
+  const rows = buildTranscriptRowBlocks(models, options).flatMap((block) => block.rows);
   if (options.hasOlderHistory) rows.unshift({ kind: "older-history", key: OLDER_HISTORY_ROW_KEY, layoutVariant: "static" });
   return rows;
 }
 
 // ── Measurement / identity helpers ────────────────────────────────────────────
 
-/** Ballpark row heights; Virtuoso replaces them with real measurements on mount. */
+/** Ballpark row heights; the window adapter replaces them with measurements on mount. */
 export function estimateTranscriptRowSize(row: TranscriptRow | undefined, contentWidth?: number): number {
   const environment: TranscriptGeometryEnvironment = { contentWidth, typographySignature: "default" };
   return estimateTranscriptRowGeometry(row, environment);
