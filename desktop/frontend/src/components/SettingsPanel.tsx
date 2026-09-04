@@ -7260,7 +7260,19 @@ function KeyField({
 }) {
   const t = useT();
   const [val, setVal] = useState("");
+  const [saving, setSaving] = useState(false);
   if (!apiKeyEnv) return null;
+  const save = async () => {
+    const next = val.trim();
+    if (!next || saving) return;
+    setSaving(true);
+    try {
+      await onSet(apiKeyEnv, next);
+      setVal("");
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="set-key">
       <input
@@ -7269,14 +7281,12 @@ function KeyField({
         placeholder={t(keySet ? "settings.updateKey" : "settings.setKey", { env: apiKeyEnv })}
         value={val}
         onChange={(e) => setVal(e.target.value)}
+        disabled={busy || saving}
       />
       <button
         className="btn btn--small"
-        disabled={busy || !val.trim()}
-        onClick={() => {
-          void onSet(apiKeyEnv, val.trim());
-          setVal("");
-        }}
+        disabled={busy || saving || !val.trim()}
+        onClick={() => void save()}
       >
         {t(keySet ? "settings.updateKeyAction" : "settings.saveKey")}
       </button>

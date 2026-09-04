@@ -18478,6 +18478,9 @@ body > .mermaid-diagram--fullscreen {
   align-items: center;
   gap: 6px;
 }
+.set-key .btn {
+  flex: 0 0 auto;
+}
 .set-rules {
   margin-bottom: 10px;
 }
