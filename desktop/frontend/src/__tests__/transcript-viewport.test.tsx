@@ -86,13 +86,22 @@ ok(
     && windowSource.includes('kernel.intent === "reader"')
     && windowSource.includes("measurementLedger.publicationLead(kernel.userGestureActive)")
     && windowSource.includes('addEventListener("wheel", observeWheel')
-    && windowSource.includes('addEventListener("pointerdown", beginUnbounded')
+    && windowSource.includes('["pointerdown", "mousedown"]')
+    && windowSource.includes("addEventListener(type, beginUnbounded")
     && windowSource.includes('addEventListener("touchstart", beginUnbounded')
     && windowSource.includes("measurementLedger.endGesture()")
     && windowSource.includes("[kernel.generation, kernel.userGestureActive, measurementLedger]")
     && windowSource.includes("measurementLedger.publishStaged(")
     && windowSource.includes("virtualizer.resizeItem(index, change.size);"),
   "reader measurements publish only beyond the prefix-and-DOM compositor frontier",
+);
+const kernelHookSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../lib/useTranscriptKernel.ts", import.meta.url), "utf8"));
+const transcriptSource = await import("node:fs/promises").then((fs) => fs.readFile(new URL("../components/Transcript.tsx", import.meta.url), "utf8"));
+ok(
+  kernelHookSource.includes("if (pointerGestureRef.current) return")
+    && kernelHookSource.includes('["pointerup", "pointercancel", "mouseup"]')
+    && transcriptSource.includes("onMouseDownCapture={kernel.onPointerDownCapture}"),
+  "mouse-only WebKit gestures enter the same deduplicated kernel ownership boundary",
 );
 ok(!windowSource.includes("virtualizer.measure();"), "a safe suffix publish cannot invalidate and rebuild the protected prefix");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");

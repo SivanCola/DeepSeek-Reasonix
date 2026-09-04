@@ -423,6 +423,7 @@ export function Transcript(props: TranscriptProps) {
                 kernel.onPointerDownCapture(event);
                 selectionRetention.onPointerDownCapture(event);
               }}
+              onMouseDownCapture={kernel.onPointerDownCapture}
             >
               <TranscriptViewport
                 key={surfaceKey}

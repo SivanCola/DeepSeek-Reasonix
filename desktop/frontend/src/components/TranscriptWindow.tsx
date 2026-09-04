@@ -174,13 +174,14 @@ export default function TranscriptWindow({
     const observeKey = (event: KeyboardEvent) => {
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) beginUnbounded();
     };
+    const pointerStartEvents = ["pointerdown", "mousedown"] as const;
     scrollElement.addEventListener("wheel", observeWheel, { capture: true, passive: true });
-    scrollElement.addEventListener("pointerdown", beginUnbounded, true);
+    pointerStartEvents.forEach((type) => scrollElement.addEventListener(type, beginUnbounded, true));
     scrollElement.addEventListener("touchstart", beginUnbounded, { capture: true, passive: true });
     scrollElement.addEventListener("keydown", observeKey, true);
     return () => {
       scrollElement.removeEventListener("wheel", observeWheel, true);
-      scrollElement.removeEventListener("pointerdown", beginUnbounded, true);
+      pointerStartEvents.forEach((type) => scrollElement.removeEventListener(type, beginUnbounded, true));
       scrollElement.removeEventListener("touchstart", beginUnbounded, true);
       scrollElement.removeEventListener("keydown", observeKey, true);
     };

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { recordTranscriptScrollDiagnostic } from "./transcriptScrollProbe";
 import {
   TranscriptKernel,
@@ -60,7 +60,9 @@ export function useTranscriptKernel({
   }
   const kernel = kernelRef.current;
   const writer = writerRef.current!;
-  const nativeThumbRef = useRef(false);
+  // 0 = idle, 1 = content pointer, 2 = native scrollbar thumb. The shared
+  // state deduplicates PointerEvent + compatibility MouseEvent delivery.
+  const pointerGestureRef = useRef(0);
   const observedTopRef = useRef(0);
   const prependAwaitingGeometryRef = useRef(false);
 
@@ -141,7 +143,7 @@ export function useTranscriptKernel({
 
   const finishGesture = useCallback((resumed: ReturnType<TranscriptKernel["endUserGesture"]>) => {
     writer.freeze(false);
-    nativeThumbRef.current = false;
+    pointerGestureRef.current = 0;
     if (resumed) kernel.afterCurrentGenerationPaint(settleGeometry);
     refresh();
   }, [kernel, refresh, settleGeometry, writer]);
@@ -172,21 +174,21 @@ export function useTranscriptKernel({
     return towardHistory && kernel.userGestureActive;
   }, [kernel, refresh, renewGestureLease, snapshot]);
 
-  const onPointerDownCapture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  const onPointerDownCapture = useCallback((event: { clientX: number }) => {
+    if (pointerGestureRef.current) return;
     const element = scrollRef.current;
     if (!element) return;
     const rect = element.getBoundingClientRect();
     const nativeThumb = event.clientX >= rect.right - 18;
-    nativeThumbRef.current = nativeThumb;
+    pointerGestureRef.current = nativeThumb ? 2 : 1;
     writer.freeze(nativeThumb);
     beginGesture();
+    const terminalEvents = ["pointerup", "pointercancel", "mouseup"] as const;
     const finish = () => {
-      window.removeEventListener("pointerup", finish, true);
-      window.removeEventListener("pointercancel", finish, true);
+      terminalEvents.forEach((type) => window.removeEventListener(type, finish, true));
       kernel.afterCurrentGenerationPaint(endGesture);
     };
-    window.addEventListener("pointerup", finish, true);
-    window.addEventListener("pointercancel", finish, true);
+    terminalEvents.forEach((type) => window.addEventListener(type, finish, true));
   }, [beginGesture, endGesture, kernel, writer]);
 
   const onKeyDownCapture = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -252,7 +254,7 @@ export function useTranscriptKernel({
     intent: kernel.intent,
     isAtBottom,
     safeMode: kernel.safeMode,
-    nativeScrollbarDragging: nativeThumbRef.current,
+    nativeScrollbarDragging: pointerGestureRef.current === 2,
     snapshot,
     beginStructural,
     beginAnchorRestore,
