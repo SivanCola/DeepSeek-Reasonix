@@ -116,8 +116,11 @@ const (
 	sustainedWheelTicks = 2500
 	// Controller wheel messages can be coalesced while WebView2 commits a new
 	// block range. Keep the finishing burst bounded, but leave enough native
-	// input to cross the final measured-row correction after stream growth.
+	// input to cross the complete turn-block ledger after stream growth. The
+	// larger native delta preserves the existing event/time bound without a JS
+	// scroll shortcut.
 	finishWheelTicks = 64
+	finishWheelDelta = -1440
 	// The injected contract has its own 80 second startup watchdog. Keep the
 	// native host startup bound just above that, then grant a fresh interaction
 	// budget after the contract reports the controller target. The sustained
@@ -139,7 +142,7 @@ func (state *transcriptWheelState) advance(now time.Time) error {
 			state.next = now.Add(300 * time.Millisecond)
 		}
 	} else if state.sustained >= sustainedWheelTicks && state.finish < finishWheelTicks && !now.Before(state.next) {
-		if err := sendControllerWheelInput(-120); err != nil {
+		if err := sendControllerWheelInput(finishWheelDelta); err != nil {
 			return err
 		}
 		state.finish++

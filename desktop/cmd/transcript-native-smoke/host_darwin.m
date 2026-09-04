@@ -8,6 +8,8 @@
 #include <math.h>
 #include <unistd.h>
 
+static const int32_t ReasonixFinishWheelDelta = -1440;
+
 @interface ReasonixTranscriptSmokeHost : NSObject <WKNavigationDelegate, WKScriptMessageHandler>
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSWindow *window;
@@ -277,7 +279,10 @@
 - (void)finishWheelBurst:(NSInteger)remaining {
   if (self.done) return;
   if (remaining > 0) {
-    [self dispatchWheelDelta:-120];
+    // The block ledger is taller than the retired row surface. Keep the same
+    // native event/time bound while giving the finishing phase enough physical
+    // wheel travel to reach the measured tail without a JavaScript scroll.
+    [self dispatchWheelDelta:ReasonixFinishWheelDelta];
     self.finishWheelEvents += 1;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 50 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
       [self finishWheelBurst:remaining - 1];

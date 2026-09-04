@@ -92,6 +92,24 @@ async function textDragPoints(page) {
   });
 }
 
+async function beginNativeSelection(page, initialPoints) {
+  let points = initialPoints;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.mouse.move(points.first.x, points.first.y);
+    await page.mouse.down();
+    await page.mouse.move(points.last.x, points.last.y, { steps: 16 + attempt * 8 });
+    await frames(page, 4);
+    const active = await page.evaluate(() =>
+      document.querySelector(".transcript")?.getAttribute("data-scroll-mode") === "selection");
+    if (active) return points;
+    await page.mouse.up();
+    await page.evaluate(() => document.getSelection()?.removeAllRanges());
+    await frames(page, 2);
+    points = await textDragPoints(page) ?? points;
+  }
+  throw new Error("native text drag did not transfer transcript ownership to selection");
+}
+
 async function runTableRepaint(page) {
   const transcript = await loadFixture(page, "bench:selection-table", "SELECTION REPAINT TARGET");
   const target = page.locator("strong", { hasText: "SELECTION REPAINT TARGET" });
@@ -144,11 +162,7 @@ async function runWindowedSelection(page) {
       value: { writeText: async (text) => { window.__selectionClipboard = text; } },
     });
   });
-  await page.mouse.move(points.first.x, points.first.y);
-  await page.mouse.down();
-  await page.mouse.move(points.last.x, points.last.y, { steps: 16 });
-  await page.waitForFunction(() => document.querySelector(".transcript")?.getAttribute("data-scroll-mode") === "selection",
-    undefined, { timeout: 5_000 });
+  points = await beginNativeSelection(page, points);
   await frames(page, 3);
   const active = await page.evaluate((endpointKeys) => {
     const transcript = document.querySelector(".transcript");
