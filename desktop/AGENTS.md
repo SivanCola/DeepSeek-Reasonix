@@ -15,6 +15,10 @@ contracts when touching anything that can move the transcript viewport.
 - **Generation fence**: session/surface replacement increments the kernel
   generation. Every delayed measurement, timer, animation-frame callback, and
   write request carries that generation; stale work performs zero writes.
+  Async paging owns a source-session request identity; question navigation owns
+  generation plus interaction revision from request through positioned terminal
+  state. Native takeover cancels navigation, not a valid source data load. Old
+  completion/finally callbacks may release only their identical request.
 - **Single writer**: only `frontend/src/lib/transcriptViewportWriter.ts` may
   mutate the transcript's native scroll position. Full-DOM, TanStack window,
   Markdown, selection, question navigation, prepend, composer resize, and tail
@@ -34,14 +38,21 @@ contracts when touching anything that can move the transcript viewport.
   its scroll callback must never bypass the writer.
 - **Covered-range commit**: the Window Adapter may paint a TanStack candidate
   only when it covers the current native viewport. Retain the last covering
-  geometry snapshot when a candidate is stale: mounted items, total extent,
+  geometry snapshot when a candidate is stale: mounted items, complete prefix, total extent,
   and scroll margin are one atomic value and must never come from different
   measurement generations. If a native jump invalidates both, rebuild once
   from the prefix-size ledger while preserving every protected block.
   Spend the bounded mount budget directionally: keep a reverse cushion, then
   allocate the remaining runway ahead of current native motion so asynchronous
   WebView scrolling cannot outrun the mounted range. Never exceed the completed
-  block mount cap to hide coverage races.
+  block mount cap to hide coverage races. The cap belongs to the whole adapter,
+  not only cold history: resident and protected blocks consume the same budget.
+  Retire measured resident prefixes and trim optional overscan before declaring
+  budget failure. Materialize third-party lazy cache views with `Array.from`;
+  a Proxy over mutable typed-array sizes is not an immutable prefix snapshot.
+  If no candidate, retained snapshot, or ledger reconstruction covers the
+  viewport, fail closed through the shared full-DOM safety renderer before
+  paint; never commit an uncovered range and detect the blank afterward.
   Measurement-only notifications cannot replace the painted range while
   native input owns an unchanged viewport. Native viewport geometry is an
   external store: range renders must use its immutable snapshot so React
@@ -61,8 +72,8 @@ contracts when touching anything that can move the transcript viewport.
   staged; only post-viewport overscan may publish. Tail intent does not refine
   invisible cold history; its exact geometry belongs to resident DOM. During
   bounded wheel input, the lazy measurement ledger owns a publish boundary at
-  least the largest pixel-mode native step plus one viewport ahead of the
-  painted viewport in both prefix and DOM geometry. Keep the largest lead for
+  least the accumulated absolute pixel-mode native steps plus one viewport ahead
+  of the painted viewport in both prefix and DOM geometry. Keep that lead for
   the whole gesture lease. Touch, selection, keyboard jumps, nested handoff
   without a bounded delta, and native thumb drag are unbounded: every cold
   measurement remains staged until ownership ends.
@@ -81,7 +92,19 @@ contracts when touching anything that can move the transcript viewport.
 - **Bounded safe mode**: two blank/invalid/correction anomalies without an
   intervening healthy frame in one generation switch that session to full DOM
   until the next surface generation. Do not add a second rendering stack or a
-  persistent user flag.
+  persistent user flag. Normal full, windowed, and safety use one presentation
+  and observer lifecycle. Immediate safety mounts all currently paged blocks
+  with the last trusted cold prefix coordinates, retaining native keyed hosts,
+  focus, selection, and reader offset without a structural write. It stops
+  window eviction; it does not force offscreen history or large bodies to load.
+- **One geometry scheduler**: full/windowed layout, ResizeObserver, surface
+  paint, and auto-fill use cancellable Kernel frames. Observers bind generation
+  at registration and reject queued notifications even after disconnection.
+  Coalesce health validation and correction at one geometry entry; only one
+  clock-owned re-observation may precede the second-fault safety latch.
+- **Systemic fixes**: repair ownership, projection, measurement, or presentation
+  invariants in their common layer. Do not accumulate scenario-specific retry
+  branches, platform compensation, or progressively relaxed acceptance gates.
 - **Deterministic clocks**: new scroll logic must go through the same
   injectable clock used by `TranscriptKernel` (`requestAnimationFrame`,
   `Date.now`, timer functions). No real sleeps or hidden retry clocks.

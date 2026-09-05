@@ -68,9 +68,9 @@ function renderPicker(
   } = options;
   return (
     <LocaleProvider>
-        <ProviderEditorModelPicker
-          candidates={candidates}
-          selectedModels={[]}
+      <ProviderEditorModelPicker
+        candidates={candidates}
+        selectedModels={[]}
         visionModels={visionModels}
         visionModelsConfigured={visionModelsConfigured}
         visionCapability={visionCapability}
@@ -196,11 +196,11 @@ ok(
 );
 ok(
   providerVisionCapabilityForView({ kind: "openai", baseUrl: "https://api.deepseek.com" }) === "configurable",
-  "official DeepSeek Settings keeps the legacy provider capability fallback configurable",
+  "official DeepSeek Settings uses the same image-input checkboxes as other providers",
 );
 ok(
   providerVisionCapabilityForView({ kind: "anthropic", baseUrl: "https://eu.deepseek.com/anthropic" }) === "configurable",
-  "regional DeepSeek Settings keeps the legacy provider capability fallback configurable",
+  "regional DeepSeek Settings also expose per-model image-input checkboxes",
 );
 ok(
   providerVisionCapabilityForView({ kind: "responses", baseUrl: "https://deepseek.com" }) === "configurable",
