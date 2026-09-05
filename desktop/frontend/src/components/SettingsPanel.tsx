@@ -1,3 +1,5 @@
+import { providerSupportsServerWebSearch } from "../lib/providerSearch";
+export { providerSupportsServerWebSearch } from "../lib/providerSearch";
 import { lazy, memo, Suspense, startTransition, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { ArrowRight, BrainCircuit, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clipboard, ExternalLink, KeyRound, Languages, ListChecks, Loader2, Monitor, MoreHorizontal, PanelBottom, Play, Power, QrCode, RefreshCw, Send, ShieldCheck, SlidersHorizontal, Trash2, Volume2 } from "lucide-react";
 import { asArray } from "../lib/array";
@@ -6435,32 +6437,6 @@ function providerBaseHost(baseUrl: string): string {
 }
 
 type ProviderVisionCapability = "configurable" | "unsupported";
-
-export function providerSupportsServerWebSearch(kind: string, baseUrl: string): boolean {
-  try {
-    const endpoint = new URL(baseUrl.trim());
-    if (
-      endpoint.protocol !== "https:" ||
-      endpoint.hostname.toLowerCase() !== "api.deepseek.com" ||
-      endpoint.port ||
-      endpoint.username ||
-      endpoint.password ||
-      endpoint.search ||
-      endpoint.hash
-    ) return false;
-    const path = endpoint.pathname.replace(/\/+$/, "");
-    switch (kind.trim().toLowerCase()) {
-      case "responses":
-        return path === "";
-      case "anthropic":
-        return path === "/anthropic";
-      default:
-        return false;
-    }
-  } catch {
-    return false;
-  }
-}
 
 export function providerSupportsServerWebSearchForView(
   provider: Pick<ProviderView, "kind" | "baseUrl" | "serverWebSearchCapability">,
