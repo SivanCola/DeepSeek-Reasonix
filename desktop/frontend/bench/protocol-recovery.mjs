@@ -14,7 +14,7 @@ try {
  page.setDefaultTimeout(15000);
  await page.goto(url+'?mock=fresh',{waitUntil:'domcontentloaded'});
  const later=page.getByRole('button',{name:/稍后设置|Set up later/});
- try { await later.waitFor({state:'visible',timeout:3000}); await later.click(); } catch {} 
+ try { await later.waitFor({state:'visible',timeout:3000}); await later.click(); } catch {}
  const composer=page.locator('#composer-input');await composer.waitFor({state:'visible',timeout:60000});
  const send=async text=>{await composer.fill(text);await page.locator('.composer__btn--send').click();};
  await send('/mock-protocol-recovery'); console.log('sent mock failure');

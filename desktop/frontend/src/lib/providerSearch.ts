@@ -25,4 +25,3 @@ export function providerSupportsServerWebSearch(kind: string, baseUrl: string): 
     return false;
   }
 }
-
