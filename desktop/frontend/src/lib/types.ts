@@ -1427,6 +1427,8 @@ export interface ModelInfo {
   provider: string;
   model: string;
   current: boolean;
+  contextWindow?: number;
+  vision?: boolean;
 }
 
 export interface EffortInfo {
@@ -1732,6 +1734,10 @@ export interface ProviderModelCatalogUpdate {
 }
 
 export interface ProviderModelCapabilityView {
+	automaticState?: string;
+	automaticSource?: string;
+	imageInputEnableAllowed?: boolean;
+	imageInputBlockReason?: string;
   model: string;
   inputModalities: string[];
   state: "supported" | "unsupported" | "unknown" | string;

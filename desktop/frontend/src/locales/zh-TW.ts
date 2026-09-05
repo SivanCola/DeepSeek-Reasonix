@@ -5,6 +5,18 @@
 import type { DictKey } from "./en";
 
 export const zhTW: Record<DictKey, string> = {
+  "settings.imageInputLabel": "圖片輸入",
+  "settings.imageInputModeAria": "{model} 的圖片輸入模式",
+  "settings.imageInputAuto": "自動",
+  "settings.imageInputOn": "開啟",
+  "settings.imageInputOff": "關閉",
+  "settings.imageInputManualOn": "已手動開啟",
+  "settings.imageInputManualOff": "已手動關閉",
+  "settings.imageInputLegacy": "自動 · 沿用舊設定",
+  "settings.imageInputSupported": "支援圖片",
+  "settings.imageInputProtocolBadge": "協議限制",
+  "settings.imageInputProtocolBlocked": "此官方連線不允許該模型接收圖片。",
+  "settings.imageInputUnknownHint": "此連線未提供圖片能力資訊。如果服務商確認此模型支援圖片，可選擇「開啟」。",
   // 通用動詞 / 框架
   "common.close": "關閉",
   "common.moreActions": "更多操作",
@@ -710,6 +722,8 @@ export const zhTW: Record<DictKey, string> = {
   "status.hydrateSync": "正在同步…",
   "status.plan": "計畫",
   "status.switchModel": "切換模型",
+  "providerUI.image": "圖片",
+  "providerUI.manageModels": "管理模型",
   "modelSwitcher.searchPlaceholder": "搜尋模型…",
   "modelSwitcher.noMatches": "沒有匹配的模型",
   "status.noModels": "沒有可切換模型",
@@ -1266,6 +1280,7 @@ export const zhTW: Record<DictKey, string> = {
 
 
   // 設定抽屜
+  "settings.backToWorkspace": "返回工作區",
   "settings.title": "設定",
   "settings.loading": "載入中…",
   "settings.loadFailed": "設定載入失敗。",
@@ -2034,9 +2049,9 @@ export const zhTW: Record<DictKey, string> = {
   "settings.testFetchModels": "測試並取得模型",
   "settings.testFetchModelsHint": "會使用上方 API 位址與金鑰確認連線，並用返回結果填充模型列表。",
   "settings.manualModels": "模型列表",
-  "settings.manualModelsHint": "介面不支援模型發現時，可手動填寫多個模型；圖片能力由模型中繼資料自動判斷。",
+  "settings.manualModelsHint": "介面不支援模型發現時，可手動填寫多個模型；每個模型均可選擇圖片輸入自動、開啟或關閉。",
   "settings.visionModels": "支援圖片輸入的模型",
-  "settings.visionModelsHint": "圖片能力由模型中繼資料自動判斷；未知模型使用安全的純文字路徑。",
+  "settings.visionModelsHint": "候選模型依據最終圖片能力篩選。未識別時，可在接入設定中為確認支援的模型開啟圖片輸入。",
   "settings.providerAdvancedSettings": "相容設定（通常不用改）",
   "settings.providerAdvancedExpandHint": "點擊展開詳細設定",
   "settings.providerAdvancedCollapseHint": "點擊收起",

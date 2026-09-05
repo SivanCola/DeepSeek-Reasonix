@@ -1755,7 +1755,17 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		}
 		return "", false
 	}
+	imageEnabled := modelCapabilities.Resolve(entry).State == config.CapabilitySupported
+	if infoProvider, ok := execProv.(provider.ModelInfoProvider); ok {
+		imageEnabled = infoProvider.ModelInfo().SupportsInput(provider.ModalityImage)
+	}
+	imageSnapshot := config.ModelCapabilitySnapshot(cfg, modelCapabilities)
 	ctrlOpts := control.Options{
+		FrozenImageInput: &imageEnabled,
+		ImageCapabilityChanged: func() bool {
+			current, err := config.LoadForRootReadOnly(root)
+			return err == nil && config.ModelCapabilitySnapshot(current, config.NewModelCapabilityResolver()) != imageSnapshot
+		},
 		TaskBudget:                     taskBudgetFromConfig(cfg),
 		GoalTokenBudget:                cfg.Agent.GoalTokenBudget,
 		Runner:                         runner,
@@ -2492,6 +2502,10 @@ func NewProviderWithProxyAndModelInfo(e *config.ProviderEntry, proxy netclient.P
 // clientSearch suppresses new native searches while retaining the adapter's
 // ability to read and replay existing native search history.
 func newProviderWithSearchMode(e *config.ProviderEntry, proxy netclient.ProxySpec, modelInfo *provider.ModelInfo, clientSearch bool) (provider.Provider, error) {
+	if modelInfo == nil {
+		resolved := config.NewModelCapabilityResolver().Resolve(e)
+		modelInfo = &resolved.ModelInfo
+	}
 	return provider.New(e.Kind, provider.Config{
 		Name:      e.Name,
 		BaseURL:   e.BaseURL,

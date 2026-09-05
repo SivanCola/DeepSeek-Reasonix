@@ -99,23 +99,7 @@ func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (string, error
 			return "", ctx.Err()
 		case chunk, ok := <-stream:
 			if !ok {
-				if err := ctx.Err(); err != nil {
-					return "", err
-				}
-				if !completed {
-					return "", errors.New("web_search: search response was interrupted")
-				}
-				if !searched {
-					return "", errors.New("web_search: provider returned no native search results; verify that this endpoint and model support web search")
-				}
-				result.SourcesStatus = provider.SourcesNotProvided
-				if provider.HasUsableSearchSources(result.Sources) {
-					result.SourcesStatus = provider.SourcesAvailable
-				}
-				if t.ReportSourcesStatus != nil {
-					t.ReportSourcesStatus(result.SourcesStatus)
-				}
-				return encodeResult(result)
+				return t.finishSearch(ctx, result, completed, searched)
 			}
 			switch chunk.Type {
 			case provider.ChunkText:
@@ -149,6 +133,26 @@ func (t *Tool) Execute(ctx context.Context, args json.RawMessage) (string, error
 			}
 		}
 	}
+}
+
+func (t *Tool) finishSearch(ctx context.Context, result Result, completed, searched bool) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if !completed {
+		return "", errors.New("web_search: search response was interrupted")
+	}
+	if !searched {
+		return "", errors.New("web_search: provider returned no native search results; verify that this endpoint and model support web search")
+	}
+	result.SourcesStatus = provider.SourcesNotProvided
+	if provider.HasUsableSearchSources(result.Sources) {
+		result.SourcesStatus = provider.SourcesAvailable
+	}
+	if t.ReportSourcesStatus != nil {
+		t.ReportSourcesStatus(result.SourcesStatus)
+	}
+	return encodeResult(result)
 }
 
 // Bound the encoded output too: JSON escaping must not push the result over

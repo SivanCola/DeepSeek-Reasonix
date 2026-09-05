@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"reasonix/internal/event"
@@ -225,15 +226,13 @@ func (a *Agent) consumeManualProtocolRecovery(ctx context.Context, s *samplingRe
 func (s *Session) storeProtocolRecord(id string, raw json.RawMessage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i := len(s.Messages) - 1; i >= 0; i-- {
+	for i := range slices.Backward(s.Messages) {
 		if record, ok := provider.DecodeProtocolRecovery(s.Messages[i].ProtocolRecovery); ok && record.ID == id {
 			var fields map[string]json.RawMessage
 			_ = json.Unmarshal(s.Messages[i].ProtocolRecovery, &fields)
 			var changes map[string]json.RawMessage
 			_ = json.Unmarshal(raw, &changes)
-			for k, v := range changes {
-				fields[k] = v
-			}
+			maps.Copy(fields, changes)
 			merged, _ := json.Marshal(fields)
 			s.Messages[i].ProtocolRecovery = merged
 			s.version++
@@ -251,7 +250,7 @@ func (s *Session) expireProtocolRecoveryLocked(added []provider.Message) {
 	if !slices.ContainsFunc(added, IsUserAuthoredTurnMessage) {
 		return
 	}
-	for i := len(s.Messages) - 1; i >= 0; i-- {
+	for i := range slices.Backward(s.Messages) {
 		raw := s.Messages[i].ProtocolRecovery
 		if len(raw) == 0 {
 			continue

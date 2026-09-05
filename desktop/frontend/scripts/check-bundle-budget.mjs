@@ -193,12 +193,10 @@ console.log("\nbundle budgets");
 // The subagent outcome envelope, partial-state card, and history hydration add
 // 0.5 KiB gzip on the initial path. The model-capability resolver and its
 // read-only provider badges add a measured 0.2 KiB including gzip/toolchain
-// rounding; keep this narrow ratchet
-// explicit rather than restoring manual capability controls.
-// Direct topic-bar actions replace the overflow trigger: the same-toolchain
-// base measures 464.073 KiB and the restored buttons measure 464.259 KiB
-// (+0.186 KiB). Export formats remain lazy; retain the next decimal ceiling.
-const initialJSBudgetKiB = 464.3;
+// rounding. The integrated management shell, image capability controls, and
+// upstream updater refresh measure 465.4 KiB gzip (base: 464.7 KiB).
+// Keep the next decimal ceiling and leave feature editors lazy.
+const initialJSBudgetKiB = 465.5;
 assertBudget("initial JavaScript gzip", initialJSGzip, initialJSBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk gzip", largestInitialJS, 280 * 1024);
 // Render-blocking CSS is intentionally absent: styles.css loads deferred via
@@ -217,7 +215,10 @@ if (initialCSS.length > 0) {
 // the retained-transcript navigation allowance; keep the ratchet explicit.
 // The navigation mask's stable composer footprint and remote tab/surface
 // states bring the merged shell to roughly 115.7 KiB gzip.
-assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 116.0 * 1024);
+// The one-row model configuration list, responsive stacking, and Automation's
+// shared title-safe shell measure 116.423 KiB gzip while reusing existing
+// layout primitives. Retain only the next one-decimal ceiling.
+assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 116.5 * 1024);
 if (localeChunks.length !== 2) {
   throw new Error(`expected 2 on-demand Chinese locale chunks, found ${localeChunks.length}`);
 }
@@ -266,7 +267,9 @@ for (const path of localeChunks) {
   // Windows zlib measured zh at 60.4 KiB exactly; capability-status copy adds
   // a small 0.1 KiB ratchet, so retain the next decimal ceiling rather than
   // dropping the unknown-state explanation.
-  const budget = name.startsWith("zh-TW-") ? 61.4 * 1024 : 60.6 * 1024;
+  // Image input mode, provenance and unknown-state guidance measure 60.724 KiB
+  // zh and 61.570 KiB zh-TW. Keep the next decimal ceiling per locale.
+  const budget = name.startsWith("zh-TW-") ? 61.7 * 1024 : 60.8 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
@@ -362,10 +365,7 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // On the current main-v2 base, the combined measured path is 2474.6 KiB;
 // the model-capability helper and localized status copy add 0.9 KiB; retain
 // the smallest bounded cross-platform ceiling.
-// Direct topic-bar actions plus the macOS single-row dock tabs measure
-// 2476.5 KiB raw versus 2475.554 KiB on the same-toolchain base. The extra
-// CSS reserves the workspace-toggle hit area and lets all four tabs shrink;
-// retain only the next one-decimal ceiling.
-const rawInitialBudgetKiB = 2_476.6;
+// Retain the upstream updater ceiling and independent chunk gates.
+const rawInitialBudgetKiB = 2_481.7;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);
