@@ -72,3 +72,5 @@ PR analysis 1729619378 reported 20 `go/path-injection` alerts: 248, 250, 251, 25
 `TestRawInputCannotReplacePathOwningContextValues` exercises traversal/absolute-path payloads, both context layering orders, response format, policy strings, and missing owners. It verifies exact manager identity and unchanged session ownership. This evidence scopes false-positive triage to these existing alerts; it neither disables CodeQL nor exempts path injection elsewhere.
 
 Integration with main-v2 `e5cf58daa` preserves the rich-link menu and keyboard fixes. The combined build measures 466.905 KiB initial gzip, 2485.715 KiB raw, and 61.027/61.881 KiB locale chunks; the corresponding bounded ceilings are 467.0, 2485.9, and 61.1/62.0 KiB.
+
+Windows CI additionally exposed a topic-state timing bug: the mutation deadline started before cold SQLite open/reconciliation, which used a different context. The unchanged five-second mutation budget now starts after preparation. Deterministic regressions verify phase ordering, context cleanup and rejection of cancelled writes.
