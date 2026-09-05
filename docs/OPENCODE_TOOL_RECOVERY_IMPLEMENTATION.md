@@ -58,3 +58,15 @@ These results do not close every custom-endpoint scenario in issue #9808, and th
 - Run the browser scenario with `node desktop/frontend/bench/protocol-recovery.mjs` (Chrome installed). Live tests use `-tags live` and environment credentials: `TestLiveKimiActionComparison`, `TestLiveManualProtocolRecovery`, `TestLiveMultiProviderNativeSearch`. Test binaries and captured outputs must not contain credentials.
 
 The new local sentinel uses raw JSON to preserve unknown versions/fields on round-trip; unknown versions are not actionable. Older clients can read ordinary history but cannot enforce the new repair accounting. Do not depend on a downgrade to continue an unresolved incident safely. Requests without search or recovery keep their provider prefixes and tool schemas. Deliberate fault-history projection can invalidate the affected cached prefix. The new independent-search JSON field changes that tool result and its subsequent prefix, without changing the preceding system text or tool schemas. Source status is not native replay proof.
+
+## Tool checkpoint persistence and CI budgets
+
+Tool receipts still commit the canonical transcript, revision and event index before execution continues. Append checkpoints defer derived display/listing projections to normal snapshots; rewrites refresh them immediately and publish a history invalidation. Restarted sessions rebuild pending projections from canonical history. This avoids rebuilding large display indexes for every tool result without weakening the write-before-execution boundary.
+
+The 121-round regression uses the same writer authority as production; it retains a five-second no-progress watchdog and a thirty-second total test bound, since full-suite/race disk contention can exceed the old five-second whole-turn allowance. The 121-request assertion is unchanged. Same-environment frontend builds measure initial gzip 465.4 to 466.6 KiB and raw payload 2480.9 to 2484.5 KiB. Recovery/source-status locale copy measures 60.927/61.789 KiB (zh/zh-TW). Only these measured budgets receive bounded headroom; CSS and individual chunk budgets remain unchanged.
+
+### CodeQL context-flow triage
+
+PR analysis 1729619378 reported 20 `go/path-injection` alerts: 248, 250, 251, 254–259, and 316–326. All have the same alert IDs and sink fingerprints in base analysis 1729489499 (`e47ff8cb63916616b05086caadb3d7e10fd6b442`). Reviewing all 80 reported flows shows user input/format crossing `context.WithValue` into a different private key: parent session, job session, job manager, or temporary-directory manager. The string cannot replace those values; manager getters additionally assert distinct pointer types. Runtime-policy values use another private key and cannot mutate these owners either.
+
+`TestRawInputCannotReplacePathOwningContextValues` exercises traversal/absolute-path payloads, both context layering orders, response format, policy strings, and missing owners. It verifies exact manager identity and unchanged session ownership. This evidence scopes false-positive triage to these existing alerts; it neither disables CodeQL nor exempts path injection elsewhere.

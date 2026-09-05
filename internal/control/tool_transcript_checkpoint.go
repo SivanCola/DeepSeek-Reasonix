@@ -23,6 +23,6 @@ func (c *Controller) checkpointToolTranscript() error {
 	if err != nil {
 		return err
 	}
-	err, _ = persistSessionSnapshot(session, path, false)
+	err, _ = persistSessionSnapshotMode(session, path, false, true)
 	return err
 }
