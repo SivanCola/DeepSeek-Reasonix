@@ -1,5 +1,6 @@
 import { TranscriptKernel, type TranscriptKernelClock } from "../lib/transcriptKernel";
 import { TranscriptNavigation } from "../lib/transcriptNavigation";
+import { TranscriptHistoryRequest } from "../lib/transcriptHistoryRequest";
 
 let passed = 0;
 let failed = 0;
@@ -41,6 +42,7 @@ function deferred() {
   return { promise, resolve };
 }
 const navigation = new TranscriptNavigation(kernel);
+const history = new TranscriptHistoryRequest(kernel);
 const question = { id: "unloaded", text: "", turn: 4 };
 const positioning = navigation.start(question);
 const staged = kernel.stageJumpToBlock("turn:unmounted")!;
@@ -53,7 +55,7 @@ const snapshot = { scrollTop: 50, scrollHeight: 1000, clientHeight: 500, visible
 for (const gesture of ["wheel", "touch", "thumb", "selection"] as const) {
   const request = navigation.start(question);
   const data = deferred();
-  const loading = navigation.load(() => data.promise);
+  const loading = history.load(() => data.promise);
   kernel.beginUserGesture(snapshot, gesture === "selection" ? "selection" : "native");
   kernel.endUserGesture();
   data.resolve(true);
@@ -65,18 +67,18 @@ for (const gesture of ["wheel", "touch", "thumb", "selection"] as const) {
 kernel.replaceSurface("A");
 const a = navigation.start(question);
 const aData = deferred();
-const aLoad = navigation.load(() => aData.promise);
+const aLoad = history.load(() => aData.promise);
 await Promise.resolve();
 kernel.replaceSurface("B");
 const b = navigation.start({ ...question, id: "B" });
 const bData = deferred();
 let bCalls = 0;
-const bLoad = navigation.load(() => { bCalls += 1; return bData.promise; });
+const bLoad = history.load(() => { bCalls += 1; return bData.promise; });
 aData.resolve(false);
 await aLoad;
 navigation.fail(a);
 ok(navigation.current === b && b.status === "pending", "A failure does not alter B UI");
-const sameBLoad = navigation.load(() => { bCalls += 1; return false; });
+const sameBLoad = history.load(() => { bCalls += 1; return false; });
 ok(sameBLoad === bLoad && bCalls === 1, "A finally cannot release B's request");
 kernel.replaceSurface("A");
 ok(!navigation.owns(a) && !navigation.owns(b), "A→B→A rejects both old owners");

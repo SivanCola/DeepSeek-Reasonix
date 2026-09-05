@@ -41,14 +41,18 @@ export const TranscriptBlockView = memo(function TranscriptBlockView({
   block,
   tabId,
   renderRow,
+  placement,
 }: {
   block: TimelineBlock;
   tabId?: string;
   renderRow: (row: TranscriptRow) => ReactNode;
+  placement?: { index: number; top: number };
 }) {
   return (
     <div
-      className="transcript__block"
+      className={`transcript__block${placement ? " transcript__window-item" : ""}`}
+      data-index={placement?.index}
+      style={placement ? { position: "absolute", top: placement.top, left: 0, width: "100%" } : undefined}
       data-transcript-block-key={block.key}
       data-transcript-block-phase={block.phase}
       data-transcript-content-revision={block.contentRevision}

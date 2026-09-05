@@ -196,7 +196,7 @@ async function runWindowedSelection(page) {
     const viewport = element.getBoundingClientRect();
     const first = [...element.querySelectorAll(".transcript__window-item")]
       .find((item) => item.getBoundingClientRect().bottom > viewport.top);
-    const block = first?.querySelector("[data-transcript-block-key]");
+    const block = first;
     if (block instanceof HTMLElement) block.style.paddingBottom = "180px";
   });
   await frames(page, 8);

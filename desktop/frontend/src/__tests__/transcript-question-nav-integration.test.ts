@@ -115,6 +115,20 @@ try {
     ok(writes.length === count && !race.container.querySelector("[data-question-jump-mask]"),
       `${gesture} during paging accepts zero program writes after loaded target arrives`);
   }
+  const painted: string[] = [];
+  const onSurfacePaintReady = (token: string) => { painted.push(token); };
+  const flushFrames = race.clock.flushFrames.bind(race.clock);
+  race.clock.flushFrames = () => {};
+  await race.render(turns(8), { geometrySessionKey: "paint-A", surfaceCommitToken: "paint-A", onSurfacePaintReady });
+  const oldFrames = [...race.clock.frames.values()];
+  const oldObservers = race.observers.map((observer) => observer.notify);
+  await race.render(turns(8), { geometrySessionKey: "paint-B", surfaceCommitToken: "paint-B", onSurfacePaintReady });
+  const beforeStale = writes.length;
+  await act(async () => { oldFrames.forEach((callback) => callback(0)); oldObservers.forEach((notify) => notify()); });
+  ok(!painted.includes("paint-A") && writes.length === beforeStale, "queued A paint and disconnected observers cannot commit A's surface or write B");
+  race.clock.flushFrames = flushFrames;
+  await race.settle();
+  ok(painted.join() === "paint-B", "only the correctly painted current generation confirms its surface token");
 } finally {
   await race.unmount();
   await race.close();

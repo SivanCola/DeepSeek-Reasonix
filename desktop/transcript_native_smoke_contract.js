@@ -186,7 +186,7 @@
       coldBottom: element.querySelector(".transcript__window")?.getBoundingClientRect().bottom ?? null,
       items: [...element.querySelectorAll(".transcript__window-item[data-index]")].map((item) => {
         const rect = item.getBoundingClientRect();
-        const block = item.querySelector("[data-transcript-block-key]");
+        const block = item;
         const blockRect = block?.getBoundingClientRect();
         return {
           index: Number.parseInt(item.dataset.index ?? "", 10),

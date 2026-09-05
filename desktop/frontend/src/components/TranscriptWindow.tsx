@@ -1,44 +1,50 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { TranscriptKernel } from "../lib/transcriptKernel";
+import type { ProjectionViewProps } from "./TranscriptProjectionView";
 import { TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
-import { commitTranscriptWindowRange, extractTranscriptWindowIndexes, type TranscriptWindowDirection, type TranscriptWindowRange } from "../lib/transcriptWindowRange";
+import { extractTranscriptWindowIndexes, type TranscriptWindowDirection } from "../lib/transcriptWindowRange";
+import { commitTranscriptWindowGeometry, MAX_MOUNTED_COMPLETED_BLOCKS, type TranscriptWindowGeometry } from "../lib/transcriptWindowGeometry";
 
 const ANCHOR_MEASUREMENT_RADIUS = 4;
 // Keep enough mounted runway for native engines whose scroll event can arrive
 // ahead of TanStack's next range calculation. The browser fixtures enforce the
 // corresponding 40-block upper bound.
-const MAX_COLD_WINDOW_BLOCKS = 36;
 
 type NativeViewportSnapshot = {
   scrollTop: number;
   clientHeight: number;
+  scrollHeight: number;
   direction: TranscriptWindowDirection;
 };
 
-function useNativeViewportSnapshot(element: HTMLElement | null): NativeViewportSnapshot {
-  const cachedRef = useRef<NativeViewportSnapshot>({ scrollTop: 0, clientHeight: 0, direction: null });
+function useNativeViewportSnapshot(element: HTMLElement | null, kernel: Pick<TranscriptKernel, "generation">): NativeViewportSnapshot {
+  const cachedRef = useRef<NativeViewportSnapshot>({ scrollTop: 0, clientHeight: 0, scrollHeight: 0, direction: null });
   const getSnapshot = useCallback(() => {
     const scrollTop = element?.scrollTop ?? 0;
     const clientHeight = element?.clientHeight ?? 0;
+    const scrollHeight = element?.scrollHeight ?? 0;
     const cached = cachedRef.current;
-    if (cached.scrollTop === scrollTop && cached.clientHeight === clientHeight) return cached;
+    if (Object.is(cached.scrollTop, scrollTop) && Object.is(cached.clientHeight, clientHeight) && Object.is(cached.scrollHeight, scrollHeight)) return cached;
     const direction = scrollTop > cached.scrollTop ? "forward" : scrollTop < cached.scrollTop ? "backward" : cached.direction;
-    cachedRef.current = { scrollTop, clientHeight, direction };
+    cachedRef.current = { scrollTop, clientHeight, scrollHeight, direction };
     return cachedRef.current;
   }, [element]);
   const subscribe = useCallback((notify: () => void) => {
     if (!element) return () => {};
-    const handleChange = () => notify();
+    const generation = kernel.generation;
+    let active = true;
+    const handleChange = () => { if (active && generation === kernel.generation) notify(); };
     element.addEventListener("scroll", handleChange, { passive: true });
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(handleChange);
     observer?.observe(element);
     return () => {
+      active = false;
       element.removeEventListener("scroll", handleChange);
       observer?.disconnect();
     };
-  }, [element]);
+  }, [element, kernel]);
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
@@ -46,32 +52,24 @@ export default function TranscriptWindow({
   projection,
   scrollElement,
   onGeometryChange,
-  onAnomaly,
-  onGeometryHealthy,
   protectedBlockKeys,
   kernel,
   pinnedJumpBlockKey,
   onPinnedJumpVisible,
-  prefix,
-  activeStatus,
   estimateBlock,
-  renderBlock,
-  renderSelectionOverlay,
+  renderProjection,
+  forceFull,
 }: {
   projection: TimelineProjection;
   scrollElement: HTMLDivElement | null;
-  onGeometryChange: () => void;
-  onAnomaly: (outcome: "blank-viewport" | "invalid-geometry") => void;
-  onGeometryHealthy: () => void;
+  onGeometryChange: (covered?: boolean) => void;
   protectedBlockKeys: ReadonlySet<string>;
-  kernel: Pick<TranscriptKernel, "anchor" | "generation" | "intent" | "userGestureActive">;
+  kernel: Pick<TranscriptKernel, "anchor" | "generation" | "intent" | "userGestureActive" | "afterCurrentGenerationPaint">;
   pinnedJumpBlockKey?: string;
   onPinnedJumpVisible: () => void;
-  prefix: ReactNode;
-  activeStatus?: ReactNode;
   estimateBlock: (block: TimelineBlock) => number;
-  renderBlock: (block: TimelineBlock) => ReactNode;
-  renderSelectionOverlay: (revision: string) => ReactNode;
+  renderProjection: (layout: Pick<ProjectionViewProps, "blocks" | "placements" | "extent" | "spacerRef" | "tailRef" | "mode" | "safety" | "completedCount" | "revision">) => ReactNode;
+  forceFull: boolean;
 }) {
   const minimumResidentIndex = Math.max(0, projection.completedBlocks.length - 2);
   const minimumResidentKey = projection.completedBlocks[minimumResidentIndex]?.key;
@@ -84,6 +82,7 @@ export default function TranscriptWindow({
     cold: projection.completedBlocks.slice(0, residentStartIndex),
     resident: projection.completedBlocks.slice(residentStartIndex),
   }), [projection.completedBlocks, residentStartIndex]);
+  const coldMountBudget = Math.max(0, MAX_MOUNTED_COMPLETED_BLOCKS - split.resident.length);
   const coldIndexByKey = useMemo(() => new Map(split.cold.map((block, index) => [block.key, index])), [split.cold]);
   const retainedIndexes = new Set<number>();
   const retainKey = (key: string | undefined, radius = 0) => {
@@ -106,7 +105,7 @@ export default function TranscriptWindow({
   // Native scrolling is an external store. React verifies this immutable
   // snapshot immediately before commit, so a concurrent render calculated at
   // an old compositor offset cannot replace the currently covering range.
-  const nativeViewport = useNativeViewportSnapshot(scrollElement);
+  const nativeViewport = useNativeViewportSnapshot(scrollElement, kernel);
   const coldContainer = coldContainerRef.current;
   const scrollMargin = coldContainer && scrollElement
     ? coldContainer.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top + nativeViewport.scrollTop
@@ -124,7 +123,7 @@ export default function TranscriptWindow({
     // observes stable item identities, but cannot publish ResizeObserver
     // measurements independently of the kernel's native-gesture boundary.
     useCachedMeasurements: true,
-    rangeExtractor: (range) => extractTranscriptWindowIndexes(range, retainedIndexes, MAX_COLD_WINDOW_BLOCKS, nativeViewport.direction),
+    rangeExtractor: (range) => extractTranscriptWindowIndexes(range, retainedIndexes, coldMountBudget, nativeViewport.direction),
     scrollMargin,
     scrollToFn: () => {},
   });
@@ -133,31 +132,37 @@ export default function TranscriptWindow({
   // asynchronous candidate range or the synchronous recovery input.
   const totalSize = virtualizer.getTotalSize();
   const candidateItems = virtualizer.getVirtualItems();
-  const committedRangeRef = useRef<TranscriptWindowRange<(typeof candidateItems)[number]> | undefined>(undefined);
+  const committedGeometryRef = useRef<TranscriptWindowGeometry<(typeof candidateItems)[number]> | undefined>(undefined);
   const structureRevision = `${split.cold.length}:${split.cold[0]?.key ?? ""}:${split.cold[split.cold.length - 1]?.key ?? ""}`;
-  const committedRange = commitTranscriptWindowRange({
+  const geometry = commitTranscriptWindowGeometry({
     candidate: candidateItems,
     measurements: virtualizer.measurementsCache,
     retainedIndexes,
-    previous: committedRangeRef.current,
+    previous: committedGeometryRef.current,
+    residentCount: split.resident.length,
+    forceFull,
     structureRevision,
     scrollTop: nativeViewport.scrollTop,
     clientHeight: nativeViewport.clientHeight,
+    scrollHeight: nativeViewport.scrollHeight,
     scrollMargin,
     totalSize,
-    maxItems: MAX_COLD_WINDOW_BLOCKS,
+    maxItems: coldMountBudget,
     direction: nativeViewport.direction,
     gestureActive: kernel.userGestureActive,
   });
+  const committedRange = geometry.range;
   const virtualItems = committedRange.items;
+  const fullDOMFallback = geometry.mode === "full";
   const logicalAnchorIndex = kernel.anchor.kind === "block"
     ? coldIndexByKey.get(kernel.anchor.blockKey)
     : undefined;
   const rangeRevision = `${committedRange.scrollMargin}:${committedRange.totalSize}|${virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|")}`;
 
   useLayoutEffect(() => {
-    committedRangeRef.current = committedRange;
-  }, [committedRange]);
+    committedGeometryRef.current = geometry;
+    onGeometryChange(geometry.covered);
+  }, [geometry, onGeometryChange]);
   useLayoutEffect(() => {
     if (!kernel.userGestureActive) measurementLedger.endGesture();
   }, [kernel.generation, kernel.userGestureActive, measurementLedger]);
@@ -217,7 +222,7 @@ export default function TranscriptWindow({
     // transient extent change for the native scroller.
     measurementLedger.commit(residentChanges);
     setResidentStartKey(projection.completedBlocks[nextResidentIndex]?.key ?? minimumResidentKey);
-  }, [kernel.anchor, measurementLedger, minimumResidentIndex, minimumResidentKey, projection.completedBlocks, protectedBlockKeys, residentStartIndex, scrollElement]);
+  }, [kernel.anchor, measurementLedger, minimumResidentIndex, minimumResidentKey, nativeViewport.scrollTop, projection.completedBlocks, protectedBlockKeys, residentStartIndex, scrollElement]);
   useEffect(() => {
     if (!pinnedJumpBlockKey || !scrollElement) return;
     const target = Array.from(scrollElement.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
@@ -228,7 +233,8 @@ export default function TranscriptWindow({
     if (rect.bottom >= viewport.top && rect.top <= viewport.bottom) onPinnedJumpVisible();
   }, [onPinnedJumpVisible, pinnedJumpBlockKey, rangeRevision, scrollElement]);
   useLayoutEffect(() => {
-    const container = coldContainerRef.current;
+    if (fullDOMFallback) return;
+    const container = residentTailRef.current;
     const changes: Array<{ key: string; size: number }> = [];
     const viewportBottom = scrollElement?.getBoundingClientRect().bottom;
     // Read the native lease at the publication boundary, not from the render
@@ -291,66 +297,20 @@ export default function TranscriptWindow({
       }
       return;
     }
-    onGeometryChange();
-  }, [coldIndexByKey, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measurementLedger, nativeViewport.clientHeight, nativeViewport.scrollTop, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
-  useEffect(() => {
-    const element = residentTailRef.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    let frame: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (frame !== null) return;
-      frame = requestAnimationFrame(() => {
-        frame = null;
-        onGeometryChange();
-      });
-    });
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-      if (frame !== null) cancelAnimationFrame(frame);
-    };
-  }, [onGeometryChange]);
-  useEffect(() => {
-    if (!scrollElement || scrollElement.clientHeight <= 0) return;
-    const frame = requestAnimationFrame(() => {
-      if (!Number.isFinite(scrollElement.scrollHeight) || !Number.isFinite(scrollElement.scrollTop)) {
-        onAnomaly("invalid-geometry");
-        return;
-      }
-      const viewport = scrollElement.getBoundingClientRect();
-      // A detached/hidden surface has no paintable native viewport yet, so it
-      // cannot provide evidence of a blank committed range.
-      if (viewport.height <= 0) return;
-      const visible = Array.from(scrollElement.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
-        .some((element) => {
-          const rect = element.getBoundingClientRect();
-          return rect.height > 0 && rect.bottom >= viewport.top && rect.top <= viewport.bottom;
-        });
-      if (!visible && (projection.completedBlocks.length > 0 || projection.activeBlock)) onAnomaly("blank-viewport");
-      else onGeometryHealthy();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [onAnomaly, onGeometryHealthy, projection.activeBlock, projection.completedBlocks.length, rangeRevision, scrollElement]);
+  }, [coldIndexByKey, fullDOMFallback, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measurementLedger, nativeViewport.clientHeight, nativeViewport.scrollTop, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
 
-  return (
-    <div className="transcript__projection" data-transcript-render-mode="windowed" data-transcript-range-source={committedRange.source} data-transcript-completed-blocks={projection.completedBlocks.length} data-transcript-mounted-blocks={virtualItems.length + split.resident.length + (projection.activeBlock ? 1 : 0)}>
-      {prefix}
-      {renderSelectionOverlay(`windowed:${rangeRevision}`)}
-      {split.cold.length > 0 && (
-        <div ref={coldContainerRef} className="transcript__window" style={{ height: committedRange.totalSize, position: "relative" }}>
-          {virtualItems.map((virtualItem) => {
-            const block = split.cold[virtualItem.index];
-            return <div key={block.key} data-index={virtualItem.index} className="transcript__window-item" style={{ position: "absolute", top: virtualItem.start - committedRange.scrollMargin, left: 0, width: "100%" }}>
-              {renderBlock(block)}
-            </div>;
-          })}
-        </div>
-      )}
-      <div ref={residentTailRef} className="transcript__resident-tail" data-transcript-resident-tail="true">
-        {split.resident.map(renderBlock)}
-        {projection.activeBlock && renderBlock(projection.activeBlock)}
-        {activeStatus}
-      </div>
-    </div>
-  );
+  // Safety disables range eviction, not the last trustworthy prefix. Reflowing
+  // every cold estimate into natural DOM would move a held reader without any
+  // writer command. Keep those coordinates and mount ALL cold blocks instead.
+  const prefix = fullDOMFallback ? geometry.prefix
+    : { items: virtualItems, extent: committedRange.totalSize, margin: committedRange.scrollMargin };
+  const mounted = fullDOMFallback ? projection.completedBlocks
+    : [...virtualItems.map((item) => split.cold[item.index]), ...split.resident];
+  const placements = new Map(prefix.items.map((item) => [String(item.key),
+    { index: item.index, top: item.start - prefix.margin }]));
+  return renderProjection({ blocks: [...mounted, ...(projection.activeBlock ? [projection.activeBlock] : [])],
+    placements, extent: prefix.extent,
+    spacerRef: coldContainerRef, tailRef: residentTailRef, mode: fullDOMFallback ? "full" : "windowed",
+    safety: fullDOMFallback, completedCount: projection.completedBlocks.length,
+    revision: `${fullDOMFallback}:${rangeRevision}:${projection.activeBlock?.measurementRevision}` });
 }

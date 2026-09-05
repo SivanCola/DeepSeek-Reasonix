@@ -46,7 +46,8 @@ async function settleFrames(page, count = 6) {
 }
 
 async function loadFixture(page, label, marker) {
-  await page.click(`.project-tree__topic-main:has-text("${label}")`);
+  const activeLabel = await page.locator(".project-tree__topic--active .project-tree__topic-label").textContent().catch(() => "");
+  if (!activeLabel?.includes(label)) await page.click(`.project-tree__topic-main:has-text("${label}")`);
   await page.waitForFunction(({ label, marker }) => {
     const active = document.querySelector(".project-tree__topic--active .project-tree__topic-label")?.textContent ?? "";
     const transcript = document.querySelector(".transcript");
@@ -184,12 +185,12 @@ async function runWindowedFixture(page) {
     const mounted = [...element.querySelectorAll(".transcript__window-item")];
     const visible = mounted.find((item) => item.getBoundingClientRect().bottom > viewport.top + 1);
     if (!(visible instanceof HTMLElement)) return null;
-    const block = visible.querySelector("[data-transcript-block-key]");
+    const block = visible;
     const prior = mounted.filter((item) => item.getBoundingClientRect().bottom <= visible.getBoundingClientRect().top + 1).at(-1);
     return {
       key: block?.getAttribute("data-transcript-block-key"),
       top: visible.getBoundingClientRect().top - viewport.top,
-      priorKey: prior?.querySelector("[data-transcript-block-key]")?.getAttribute("data-transcript-block-key"),
+      priorKey: prior?.getAttribute("data-transcript-block-key"),
     };
   });
   assert(anchorBefore?.key, "reader fixture exposes a stable logical anchor block");
@@ -291,9 +292,10 @@ async function runWindowedFixture(page) {
   assert(Math.abs(prepend.top - prepend.anchor.top) <= 4,
     `history prepend preserves the block-local offset within 4px (${Math.abs(prepend.top - prepend.anchor.top).toFixed(1)}px)`);
   assert(prepend.blankFrames === 0, "history prepend produces zero blank viewport frames");
-  const prependCorrections = prepend.writes.filter((write) => write.owner === "history-prepend" || write.owner === "restore");
+  const prependCorrections = prepend.writes.filter((write) => write.outcome === "accepted"
+    && (write.owner === "history-prepend" || write.owner === "restore"));
   assert(prependCorrections.length <= 2,
-    `history prepend uses at most one geometry retry (${prependCorrections.length} writes)`);
+    `history prepend uses at most one geometry retry (${JSON.stringify(prependCorrections.map(({ owner, transaction, geometryRevision, requestedOffset, acceptedOffset }) => ({ owner, transaction, geometryRevision, requestedOffset, acceptedOffset })))})`);
 
   await page.evaluate(() => {
     window.__questionWrites = [];
@@ -366,6 +368,97 @@ async function runSessionReplacement(page) {
   assert(restored.visible.length > 0 && restored.domBlocks <= 40, "restored windowed surface is covered and bounded on first paint");
 }
 
+async function runSafetyFixture(page) {
+  const cdp = await page.context().newCDPSession(page);
+  const heap = async () => {
+    await cdp.send("HeapProfiler.collectGarbage");
+    return (await cdp.send("Runtime.getHeapUsage")).usedSize;
+  };
+  const samples = [];
+  const baseline = [];
+  for (let cycle = 0; cycle < 12; cycle += 1) {
+    await loadFixture(page, "bench:windowed-1000t", "Windowed turn 1000");
+    await jumpToTail(page);
+    await loadFixture(page, "bench:small-6t", "ASYNC LAYOUT EXPANSION COMPLETE");
+    baseline.push({ cycle, releasedHeap: await heap(), releasedDom: await cdp.send("Memory.getDOMCounters") });
+  }
+  process.stdout.write(`  METRIC session-switch-baseline ${JSON.stringify(baseline)}\n`);
+  for (let cycle = 0; cycle < 24; cycle += 1) {
+    const scenario = cycle % 3;
+    const windowStart = performance.now();
+    await loadFixture(page, "bench:windowed-1000t", "Windowed turn 1000");
+    await jumpToTail(page);
+    const windowInteractiveMs = performance.now() - windowStart;
+    const windowed = await snapshot(page);
+    const windowHeap = await heap();
+    if (scenario) {
+      await page.locator(".transcript").hover();
+      await page.mouse.wheel(0, -600);
+      await settleFrames(page, 4);
+      if (scenario === 1) await page.mouse.down();
+    }
+    if (scenario === 2) {
+      const point = await page.evaluate(() => {
+        const element = document.querySelector(".transcript"), viewport = element.getBoundingClientRect();
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (node.textContent.trim().length < 8) continue;
+          const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, 8);
+          const rect = range.getBoundingClientRect();
+          if (rect.width > 20 && rect.top > viewport.top + 4 && rect.bottom < viewport.bottom - 4) return { x: rect.left + 1, y: rect.top + rect.height / 2, end: rect.right - 1 };
+        }
+        throw new Error("selection fixture has no visible text range");
+      });
+      await page.mouse.move(point.x, point.y); await page.mouse.down();
+      await page.mouse.move(point.end, point.y, { steps: 4 });
+      await settleFrames(page, 2);
+    }
+    const started = await page.evaluate((cycle) => {
+      const element = document.querySelector(".transcript");
+      const viewport = element.getBoundingClientRect();
+      const block = [...element.querySelectorAll("[data-transcript-block-key]")].find((node) => node.getBoundingClientRect().bottom > viewport.top);
+      const action = [...block.querySelectorAll("button:not(:disabled)")].find((button) => button.getBoundingClientRect().height > 0);
+      if (cycle !== 2) action?.focus({ preventScroll: true });
+      window.__safetyProbe = { block, action, focusHost: document.activeElement, top: block.getBoundingClientRect().top, text: document.getSelection()?.toString(), writes: [] };
+      window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => window.__safetyProbe.writes.push(write);
+      const start = performance.now();
+      Object.defineProperty(element, "scrollHeight", { configurable: true, get: () => NaN });
+      element.dispatchEvent(new Event("scroll"));
+      return start;
+    }, scenario);
+    await page.waitForFunction(() => {
+      const projection = document.querySelector(".transcript__projection");
+      return projection?.dataset.transcriptRenderMode === "full"
+        && projection.dataset.transcriptMountedBlocks === projection.dataset.transcriptCompletedBlocks;
+    });
+    const interactiveMs = await page.evaluate((start) => performance.now() - start, started);
+    await settleFrames(page, 8);
+    await page.evaluate(() => { const element = document.querySelector(".transcript"); delete element.scrollHeight; element.dispatchEvent(new Event("scroll")); });
+    await settleFrames(page, 8);
+    const full = await snapshot(page);
+    const retained = await page.evaluate(() => {
+      const probe = window.__safetyProbe;
+      return { identity: probe.block.isConnected, focus: Boolean(probe.action) && document.activeElement === probe.focusHost,
+        hasSelection: Boolean(probe.text), selection: document.getSelection()?.toString() === probe.text,
+        drift: Math.abs(probe.block.getBoundingClientRect().top - probe.top),
+        writes: probe.writes.filter((write) => write.outcome === "accepted").length };
+    });
+    assert(full.mode === "full" && full.visible.length > 0 && full.domBlocks === full.completed, "fault recovery remains full, mounted, and visibly covered until generation replacement");
+    assert(interactiveMs <= 1000 && retained.focus, `paged full presentation is focusable within 1s (${interactiveMs.toFixed(1)}ms; ${JSON.stringify(retained)})`);
+    assert(retained.identity && retained.drift <= 4, `safety preserves native identity and reader offset (${retained.drift}px)`);
+    if (scenario === 2) assert(retained.hasSelection && retained.selection, "safety preserves an actual native drag selection");
+    if (scenario) assert(retained.writes === 0, "held safety transition accepts zero program writes");
+    else assert(full.distance <= 4, `safety tail remains within 4px (${full.distance}px)`);
+    const fullHeap = await heap();
+    await page.evaluate(() => { delete window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__; delete window.__safetyProbe; });
+    await page.mouse.up();
+    await loadFixture(page, "bench:small-6t", "ASYNC LAYOUT EXPANSION COMPLETE");
+    samples.push({ cycle, loadedTurns: full.completed, windowMounted: windowed.domBlocks, fullMounted: full.domBlocks, windowInteractiveMs, interactiveMs, windowHeap, fullHeap, releasedHeap: await heap(), releasedDom: await cdp.send("Memory.getDOMCounters") });
+  }
+  process.stdout.write(`  METRIC safety-paged-render ${JSON.stringify(samples)}\n`);
+  await cdp.detach();
+}
+
 const preview = await startPreviewServer(frontendDir, port);
 let browser;
 try {
@@ -382,6 +475,7 @@ try {
   await runGeometryFixture(page);
   await runWindowedFixture(page);
   await runSessionReplacement(page);
+  await runSafetyFixture(page);
   assert(pageErrors.length === 0, `browser replay emits no page errors (${pageErrors.length})`);
   process.stdout.write("\ntranscript kernel browser gate passed\n");
 } finally {

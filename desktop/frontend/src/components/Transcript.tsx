@@ -36,8 +36,10 @@ import {
   replaceTranscriptFoldOverrides,
   writeTranscriptFoldOverride,
 } from "../lib/transcriptFoldOverrides";
+import { useTranscriptCommand } from "../lib/useTranscriptCommand";
 import { useTranscriptKernel } from "../lib/useTranscriptKernel";
-import { useTranscriptHistoryNavigation } from "../lib/useTranscriptHistoryNavigation";
+import { TranscriptHistoryRequest } from "../lib/transcriptHistoryRequest";
+import type { TranscriptQuestionNavigatorHandle } from "./TranscriptQuestionNavigator";
 import { useTranscriptQuestions } from "../lib/useTranscriptQuestionNavigation";
 import { useTranscriptSelectableRows } from "../lib/useTranscriptSelectableRows";
 import { useTranscriptSelectionRetention } from "../lib/useTranscriptSelectionRetention";
@@ -61,7 +63,7 @@ export { NoticeCard } from "./TranscriptCards";
 const EMPTY_CHECKPOINTS: CheckpointMeta[] = [];
 const EMPTY_INVOCATION_METADATA: InvocationMetadataMap = {};
 const QUESTION_NAV_MIN_COUNT = 2;
-const QuestionJumpBar = lazy(() => import("./QuestionJumpBar"));
+const TranscriptQuestionNavigator = lazy(() => import("./TranscriptQuestionNavigator"));
 const SHOW_FRONTEND_DIAGNOSTICS = typeof __BUILD_CHANNEL__ === "undefined"
   || __BUILD_CHANNEL__ === "test"
   || __BUILD_CHANNEL__ === "preview"
@@ -140,15 +142,18 @@ export function Transcript(props: TranscriptProps) {
     reasoningComplete: live.reasoningComplete,
   } : NO_LIVE, [live?.id, live?.reasoning, live?.reasoningComplete, live?.text]);
   const turnModels = useMemo(() => buildTurnModels(items, liveFlags, running, false), [items, liveFlags, running]);
-  const kernel = useTranscriptKernel({
+  // Capture stable commands, never the per-render hook result: a memoized
+  // callback holding that result can chain older render/selection contexts.
+  const { kernel: transcriptKernel, setScroller: setKernelScroller, snapshot,
+    beginGesture, beginStructural, scrollElement, scrollToBottom, safeMode, scrollRef, setScrollMode, writeOffset, jumpToBlock, onScroll, endGesture, commitViewportGeometry, onWheelCapture, isAtBottom, intent, onTouchStartCapture, onTouchEndCapture, onKeyDownCapture, onPointerDownCapture, beginAnchorRestore,
+  } = useTranscriptKernel({
     sessionKey: surfaceKey,
     geometryRevision: `${contentRevision}:${footerHeight}:${experience}:${historyMutation?.seq ?? 0}`,
   });
-  const transcriptKernel = kernel.kernel;
   const [
     questions, loadedByTurn, totalQuestions, activeQuestion, setActiveQuestion,
     scheduleActiveQuestionSync, turnForUser, lastTurn,
-  ] = useTranscriptQuestions(items, historyStartTurn, historyTotalTurns, kernel.scrollElement, kernel.scrollToBottom);
+  ] = useTranscriptQuestions(items, historyStartTurn, historyTotalTurns, scrollElement, scrollToBottom);
 
   const segmentStates = useMemo(() => foldSegmentStates(turnModels, experience === "deep"), [experience, turnModels]);
   const [folds, setFolds] = useState<FoldMap>(EMPTY_FOLDS);
@@ -160,8 +165,8 @@ export function Transcript(props: TranscriptProps) {
     setFolds(readTranscriptFoldOverrides(resolvedSessionKey, segmentStates));
   }, [resolvedSessionKey, segmentStates]);
   useEffect(() => onSessionExperienceWillChange(() => {
-    kernel.beginStructural("display-change");
-  }), [kernel.beginStructural]);
+    beginStructural("display-change");
+  }), [beginStructural]);
   useEffect(() => {
     const preferenceChanged = experienceRef.current !== experience;
     experienceRef.current = experience;
@@ -193,34 +198,35 @@ export function Transcript(props: TranscriptProps) {
     subcallsByParent,
   }), [checkpointsByTurn, creationMode, experience, folds, subcallsByParent, turnForUser, turnModels]);
   const projection = useMemo(() => projectTranscriptTimeline(blocks, hasOlderHistory), [blocks, hasOlderHistory]);
-  const renderMode = transcriptRenderMode(projection.completedBlocks.length, kernel.safeMode);
+  const renderMode = transcriptRenderMode(projection.completedBlocks.length, safeMode);
   const allRows = useMemo(() => blocks.flatMap((block) => block.rows), [blocks]);
   const empty = items.length === 0;
   const rowIndexByKey = useMemo(() => new Map(allRows.map((row, index) => [String(row.key), index])), [allRows]);
   const [selectableRows, liveSelectableRows] = useTranscriptSelectableRows(allRows, live);
-  const selectionRetention = useTranscriptSelectionRetention({
+  const cancelStreamingScroll = useCallback(() => beginGesture("selection"), [beginGesture]);
+  const { clear: clearSelection, onPointerDownCapture: onSelectionPointerDown, endStaleGesture } = useTranscriptSelectionRetention({
     tabId,
     revealSignal,
     rowIndexByKey,
     selectableRows,
     selectableRowOverrides: liveSelectableRows,
-    scrollRef: kernel.scrollRef,
-    setScrollMode: kernel.setScrollMode,
-    writeOffset: kernel.writeOffset,
-    cancelStreamingScroll: () => kernel.beginGesture("selection"),
+    scrollRef: scrollRef,
+    setScrollMode: setScrollMode,
+    writeOffset: writeOffset,
+    cancelStreamingScroll,
   });
 
-  const handleFoldToggle = useCallback((segmentKey: string, open: boolean) => {
-    kernel.beginStructural("display-change");
+  const handleFoldToggle = useTranscriptCommand((segmentKey: string, open: boolean) => {
+    beginStructural("display-change");
     setFolds((previous) => {
       const next = foldMapWithToggle(previous, segmentKey, open);
       const entry = next.get(segmentKey);
       if (entry) writeTranscriptFoldOverride(resolvedSessionKey, segmentKey, entry);
       return next;
     });
-  }, [kernel.beginStructural, resolvedSessionKey]);
-  const handleReasoningManualOpen = useCallback((segmentKey: string) => {
-    kernel.beginStructural("display-change");
+  });
+  const handleReasoningManualOpen = useTranscriptCommand((segmentKey: string) => {
+    beginStructural("display-change");
     const active = segmentStates.find((segment) => segment.key === segmentKey)?.hasRunningWork ?? false;
     setFolds((previous) => {
       const next = foldMapWithReasoningOpen(previous, segmentKey, active);
@@ -228,7 +234,7 @@ export function Transcript(props: TranscriptProps) {
       if (entry) writeTranscriptFoldOverride(resolvedSessionKey, segmentKey, entry);
       return next;
     });
-  }, [kernel.beginStructural, resolvedSessionKey, segmentStates]);
+  });
   const renderRow = useTranscriptRowRenderer({
     tabId, checkpoints, subcallsByParent, creationMode, running, actionPending,
     rewindDisabled, actionHoverMenus, turnStartAt, lastTurn,
@@ -237,19 +243,25 @@ export function Transcript(props: TranscriptProps) {
     onEditPrompt, onRewind,
   });
 
-  const jumpToLoadedQuestion = useCallback((question: QuestionAnchor) => {
+  const jumpToLoadedQuestion = useTranscriptCommand((question: QuestionAnchor) => {
     const block = blocks.find((candidate) => candidate.questionAnchor === `u:${question.id}`);
     if (!block) return false;
     document.getSelection()?.removeAllRanges();
-    selectionRetention.clear("question-navigation");
+    clearSelection("question-navigation");
     setActiveQuestion(question.turn);
     viewportRef.current?.mountBlock(block.key);
-    return kernel.jumpToBlock(block.key);
-  }, [blocks, kernel.jumpToBlock, selectionRetention.clear, setActiveQuestion]);
-  const beginPrepend = useCallback(() => { kernel.beginStructural("prepend"); }, [kernel.beginStructural]);
-  const { pendingQuestion, navigate: handleJumpToQuestion, requestOlder, retry } = useTranscriptHistoryNavigation({
-    kernel: transcriptKernel, loadOlder: onLoadOlderHistory, hasOlderHistory,
-    loadingOlderHistory, running, loadedByTurn, jump: jumpToLoadedQuestion, beginPrepend,
+    return jumpToBlock(block.key);
+  });
+  const questionNavigatorRef = useRef<TranscriptQuestionNavigatorHandle>(null);
+  const history = useMemo(() => new TranscriptHistoryRequest(transcriptKernel), [transcriptKernel]);
+  const requestOlder = useTranscriptCommand((turn?: number, trigger: HistoryLoadTrigger = "viewport-user") => {
+    if (!onLoadOlderHistory || !hasOlderHistory || loadingOlderHistory || running) return Promise.resolve(false);
+    if (trigger !== "question-jump" && trigger !== "retry") beginStructural("prepend");
+    return history.load(() => onLoadOlderHistory(turn, trigger));
+  });
+  const retry = useTranscriptCommand(() => {
+    if (questionNavigatorRef.current) questionNavigatorRef.current.retry();
+    else void requestOlder(undefined, "retry");
   });
   useEffect(() => {
     if (rewindSignal <= 0) return;
@@ -257,13 +269,13 @@ export function Transcript(props: TranscriptProps) {
     if (last) jumpToLoadedQuestion(last);
   }, [jumpToLoadedQuestion, questions, rewindSignal]);
 
-  const handleScroll = useCallback(() => {
-    const towardHistory = kernel.onScroll();
+  const handleScroll = useTranscriptCommand(() => {
+    const towardHistory = onScroll();
     if (towardHistory === null) return;
     scheduleActiveQuestionSync();
-    const element = kernel.scrollRef.current;
+    const element = scrollRef.current;
     if (towardHistory && element && element.scrollTop <= 64) void requestOlder(undefined, "viewport-user");
-  }, [kernel.onScroll, kernel.scrollRef, requestOlder, scheduleActiveQuestionSync]);
+  });
   const {
     state: creationScrollbar,
     handleScroll: handleCreationScroll,
@@ -272,38 +284,38 @@ export function Transcript(props: TranscriptProps) {
   } = useCreationTranscriptScrollbar({
     enabled: creationMode,
     contentRevision,
-    scrollRef: kernel.scrollRef,
+    scrollRef: scrollRef,
     onScroll: handleScroll,
-    setScrollMode: kernel.setScrollMode,
-    writeOffset: kernel.writeOffset,
-    finishProgrammaticScroll: kernel.endGesture,
+    setScrollMode: setScrollMode,
+    writeOffset: writeOffset,
+    finishProgrammaticScroll: endGesture,
   });
 
-  const setScroller = useCallback((node: HTMLDivElement | null) => {
-    kernel.setScroller(node);
+  const setScroller = useTranscriptCommand((node: HTMLDivElement | null) => {
+    setKernelScroller(node);
     entranceRef.current = node;
-  }, [entranceRef, kernel.setScroller]);
+  });
   const previousFooterHeight = useRef(footerHeight);
   useLayoutEffect(() => {
     if (previousFooterHeight.current === footerHeight) return;
     previousFooterHeight.current = footerHeight;
-    kernel.beginStructural("composer-resize");
-    kernel.commitViewportGeometry();
-  }, [footerHeight, kernel.beginStructural, kernel.commitViewportGeometry]);
+    beginStructural("composer-resize");
+    commitViewportGeometry();
+  }, [footerHeight, beginStructural, commitViewportGeometry]);
 
   useEffect(() => {
     acquireMarkdownWorkerClient();
     return () => releaseMarkdownWorkerClient();
   }, []);
   useEffect(() => {
-    const parent = kernel.scrollElement;
+    const parent = scrollElement;
     if (!parent) return;
     return attachNestedScrollHandoff({
       parent,
-      onParentScrollIntent: () => kernel.onWheelCapture(),
-      writeParentOffset: (top) => kernel.writeOffset("nested-scroll", top),
+      onParentScrollIntent: () => onWheelCapture(),
+      writeParentOffset: (top) => writeOffset("nested-scroll", top),
     }).detach;
-  }, [kernel.onWheelCapture, kernel.scrollElement, kernel.writeOffset]);
+  }, [onWheelCapture, scrollElement, writeOffset]);
   useEffect(() => {
     recordFrontendDiagnostic("transcript", "transcript.surface", {
       generation: transcriptKernel.generation,
@@ -316,25 +328,24 @@ export function Transcript(props: TranscriptProps) {
     const commitKey = `${transcriptKernel.generation}:${surfaceCommitToken}`;
     if (committedSurfaceRef.current === commitKey) return;
     return transcriptKernel.afterCurrentGenerationPaint(() => {
-      const element = kernel.scrollRef.current;
-      if (!element) return;
-      if (!empty && !element.querySelector("[data-transcript-block-key]")) return;
+      const geometry = snapshot();
+      if (!geometry || (!empty && geometry.visibleBlocks.length === 0)) return;
       if (committedSurfaceRef.current === commitKey) return;
       committedSurfaceRef.current = commitKey;
-      onSurfacePaintReady(surfaceCommitToken, kernel.safeMode ? "degraded" : "ready");
+      onSurfacePaintReady(surfaceCommitToken, safeMode ? "degraded" : "ready");
     });
-  }, [empty, hydrating, kernel.safeMode, kernel.scrollRef, onSurfacePaintReady, projection, surfaceCommitToken, transcriptKernel]);
+  }, [empty, hydrating, safeMode, snapshot, onSurfacePaintReady, projection, surfaceCommitToken, transcriptKernel]);
   const autoFillRef = useRef({ surface: "", pages: 0 });
   useEffect(() => {
     if (autoFillRef.current.surface !== surfaceKey) autoFillRef.current = { surface: surfaceKey, pages: 0 };
     if (hydrating || !hasOlderHistory || loadingOlderHistory || olderHistoryError || running || autoFillRef.current.pages >= 3) return;
     return transcriptKernel.afterCurrentGenerationPaint(() => {
-      const element = kernel.scrollRef.current;
-      if (!element || element.clientHeight <= 0 || element.scrollHeight > element.clientHeight + 4) return;
+      const geometry = snapshot();
+      if (!geometry || geometry.clientHeight <= 0 || geometry.scrollHeight > geometry.clientHeight + 4) return;
       autoFillRef.current.pages += 1;
       void requestOlder(undefined, "auto-fill");
     });
-  }, [hasOlderHistory, hydrating, kernel.scrollRef, loadingOlderHistory, olderHistoryError, projection.completedBlocks.length, requestOlder, running, surfaceKey]);
+  }, [hasOlderHistory, hydrating, snapshot, loadingOlderHistory, olderHistoryError, projection.completedBlocks.length, requestOlder, running, surfaceKey, transcriptKernel]);
 
   const showQuestionNav = questionNavigator && totalQuestions >= QUESTION_NAV_MIN_COUNT;
   const selectionSnapshot = useSyncExternalStore(transcriptSelectionStore.subscribe, transcriptSelectionStore.getSnapshot, transcriptSelectionStore.getSnapshot);
@@ -350,17 +361,17 @@ export function Transcript(props: TranscriptProps) {
     return keys;
   }, [blocks, selectionSnapshot, transcriptKernel.anchor]);
   const jumpBottomVisible = Boolean(
-    !kernel.isAtBottom
-      && kernel.scrollElement
-      && hasTranscriptScrollableRange(kernel.scrollElement),
+    !isAtBottom
+      && scrollElement
+      && hasTranscriptScrollableRange(scrollElement),
   );
 
   return (
     <InvocationMetadataContext.Provider value={invocationMetadata}>
     <MarkdownImageTabContext.Provider value={tabId ?? ""}>
-    <TranscriptLayoutIntentProvider value={() => { kernel.beginStructural("display-change"); }}>
-    <TranscriptScrollWriteProvider value={kernel.writeOffset}>
-      <div className="transcript-shell" aria-busy={Boolean(pendingQuestion) || undefined} data-protected-blocks={protectedBlockKeys.size}>
+    <TranscriptLayoutIntentProvider value={() => { beginStructural("display-change"); }}>
+    <TranscriptScrollWriteProvider value={writeOffset}>
+      <div className="transcript-shell" aria-busy={loadingOlderHistory || undefined} data-protected-blocks={protectedBlockKeys.size}>
         {empty ? (
           <div className={`transcript transcript--empty${creationMode ? " transcript--creation-scrollbar" : ""}`} ref={setScroller} aria-busy={hydrating || undefined}>
             {hydrating ? <div className="transcript__loading" role="status" aria-live="polite"><Loader2 className="transcript__loading-icon" aria-hidden="true" /><span>{t("common.loading")}</span></div>
@@ -373,21 +384,21 @@ export function Transcript(props: TranscriptProps) {
               className={`transcript${creationMode ? " transcript--creation-scrollbar" : ""}${creationMode && creationScrollbar.hot ? " transcript--scrollbar-hot" : ""}`}
               data-transcript-hydrating={hydrating ? "true" : "false"}
               data-transcript-generation={transcriptKernel.generation}
-              data-transcript-intent={kernel.intent}
+              data-transcript-intent={intent}
               data-transcript-row-count={allRows.length}
               data-transcript-block-count={blocks.length}
-              data-scroll-mode={selectionSnapshot.mode !== "none" ? "selection" : kernel.intent === "tail" ? "tail-follow" : "manual"}
+              data-scroll-mode={selectionSnapshot.mode !== "none" ? "selection" : intent === "tail" ? "tail-follow" : "manual"}
               onScroll={creationMode ? handleCreationScroll : handleScroll}
-              onWheelCapture={() => kernel.onWheelCapture()}
-              onTouchStartCapture={() => kernel.onTouchStartCapture()}
-              onTouchEndCapture={() => kernel.onTouchEndCapture()}
-              onTouchCancelCapture={() => kernel.onTouchEndCapture()}
-              onKeyDownCapture={kernel.onKeyDownCapture}
+              onWheelCapture={() => onWheelCapture()}
+              onTouchStartCapture={() => onTouchStartCapture()}
+              onTouchEndCapture={() => onTouchEndCapture()}
+              onTouchCancelCapture={() => onTouchEndCapture()}
+              onKeyDownCapture={onKeyDownCapture}
               onPointerDownCapture={(event) => {
-                kernel.onPointerDownCapture(event);
-                selectionRetention.onPointerDownCapture(event);
+                onPointerDownCapture(event);
+                onSelectionPointerDown(event);
               }}
-              onMouseDownCapture={kernel.onPointerDownCapture}
+              onMouseDownCapture={onPointerDownCapture}
             >
               <TranscriptViewport
                 key={surfaceKey}
@@ -395,15 +406,13 @@ export function Transcript(props: TranscriptProps) {
                 projection={projection}
                 mode={renderMode}
                 tabId={tabId}
-                scrollElement={kernel.scrollElement}
+                scrollElement={scrollElement}
                 renderRow={renderRow}
                 loadingOlderHistory={loadingOlderHistory}
                 olderHistoryError={olderHistoryError}
                 onRetryOlderHistory={retry}
-                onGeometryWillChange={kernel.beginAnchorRestore}
-                onGeometryChange={kernel.commitViewportGeometry}
-                onAnomaly={kernel.reportAnomaly}
-                onGeometryHealthy={kernel.reportHealthyGeometry}
+                onGeometryWillChange={beginAnchorRestore}
+                onGeometryChange={commitViewportGeometry}
                 kernel={transcriptKernel}
                 protectedBlockKeys={protectedBlockKeys}
                 running={running}
@@ -415,10 +424,11 @@ export function Transcript(props: TranscriptProps) {
         {creationMode && creationScrollbar.visible && <div className={`transcript__scrollbar${creationScrollbar.hot ? " transcript__scrollbar--hot" : ""}`} onPointerDown={handleCreationScrollbarRailPointerDown} aria-hidden="true">
           <div className="transcript__scrollbar-thumb" style={{ top: creationScrollbar.thumbTop, height: creationScrollbar.thumbHeight } as CSSProperties} onPointerDown={handleCreationScrollbarThumbPointerDown} />
         </div>}
-        {!empty && showQuestionNav && <Suspense fallback={null}><QuestionJumpBar loadedQuestions={questions} totalQuestions={totalQuestions} activeTurn={activeQuestion} onJump={handleJumpToQuestion} /></Suspense>}
-        {!empty && <button type="button" className="transcript__jump-bottom" hidden={!jumpBottomVisible} onClick={() => { selectionRetention.endStaleGesture(); kernel.scrollToBottom(); }} aria-label={t("transcript.jumpToBottom")} title={t("transcript.jumpToBottom")}><ArrowDown size={18} strokeWidth={2.2} aria-hidden="true" /></button>}
-        {pendingQuestion && <div className="transcript-navigation-overlay transcript-question-jump-overlay" data-question-jump-mask="true" data-question-jump-phase="loading" role="status" aria-live="polite"><span className="transcript-navigation-overlay__spinner" aria-hidden="true" /><span>{t("common.loading")}</span></div>}
-        {FrontendDiagnosticsPanel && <Suspense fallback={null}><FrontendDiagnosticsPanel scrollElement={kernel.scrollElement} totalRows={allRows.length} /></Suspense>}
+        {!empty && showQuestionNav && <Suspense fallback={null}><TranscriptQuestionNavigator ref={questionNavigatorRef} kernel={transcriptKernel}
+          requestOlder={requestOlder} loadingOlderHistory={loadingOlderHistory} running={running} loadedByTurn={loadedByTurn}
+          jump={jumpToLoadedQuestion} questions={questions} totalQuestions={totalQuestions} activeTurn={activeQuestion} /></Suspense>}
+        {!empty && <button type="button" className="transcript__jump-bottom" hidden={!jumpBottomVisible} onClick={() => { endStaleGesture(); scrollToBottom(); }} aria-label={t("transcript.jumpToBottom")} title={t("transcript.jumpToBottom")}><ArrowDown size={18} strokeWidth={2.2} aria-hidden="true" /></button>}
+        {FrontendDiagnosticsPanel && <Suspense fallback={null}><FrontendDiagnosticsPanel scrollElement={scrollElement} totalRows={allRows.length} /></Suspense>}
       </div>
     </TranscriptScrollWriteProvider>
     </TranscriptLayoutIntentProvider>

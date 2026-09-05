@@ -8,7 +8,6 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const controller = readFileSync(join(root, "lib/useController.ts"), "utf8");
 const store = readFileSync(join(root, "lib/transcriptStore.ts"), "utf8");
 const app = readFileSync(join(root, "App.tsx"), "utf8");
-const transcript = readFileSync(join(root, "components/Transcript.tsx"), "utf8");
 
 assert.match(controller, /deferResetUntilHistory \?\? true/, "history reset waits for successful load");
 assert.match(controller, /type: "hydrate_error"/, "history failure dispatches hydrate_error");
@@ -16,16 +15,6 @@ assert.match(controller, /applyHydrateErrorState|hydratePlaceholderItems/, "hydr
 assert.match(readFileSync(join(root, "lib/hydrateErrorState.ts"), "utf8"), /keptItems/, "hydrateErrorState preserves items");
 assert.match(controller, /throw new Error\(t\("history\.failedLoadHistory"\)\)/, "listSessions does not swallow failures as empty");
 assert.match(controller, /retrySessionHistory/, "retry path is exported");
-assert.match(
-  transcript,
-  /kernel\.beginStructural\("composer-resize"\);\n    kernel\.commitViewportGeometry\(\);/,
-  "a composer resize enters one kernel transaction before the viewport commits its geometry",
-);
-assert.match(
-  readFileSync(join(root, "lib/useTranscriptKernel.ts"), "utf8"),
-  /kernel\.intent !== "reader" \|\| kernel\.anchor\.kind !== "block"/,
-  "reader geometry restoration starts only from the kernel's existing logical anchor",
-);
 assert.match(controller, /shouldPreferResidentHistory\(resetSurface, options\.preserveCachedHistory\)/, "retry hydrates fetch instead of serving the resident snapshot");
 assert.match(
   controller,

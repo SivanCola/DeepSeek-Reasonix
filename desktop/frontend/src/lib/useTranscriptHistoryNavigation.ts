@@ -4,26 +4,25 @@ import type { TranscriptKernel } from "./transcriptKernel";
 import { TranscriptNavigation } from "./transcriptNavigation";
 import type { HistoryLoadTrigger } from "./useController";
 
-export function useTranscriptHistoryNavigation({ kernel, loadOlder, hasOlderHistory,
-  loadingOlderHistory, running, loadedByTurn, jump, beginPrepend,
+export function useTranscriptHistoryNavigation({ kernel, requestOlder,
+  loadingOlderHistory, running, loadedByTurn, jump,
 }: {
   kernel: TranscriptKernel;
-  loadOlder?: (turn?: number, trigger?: HistoryLoadTrigger) => boolean | Promise<boolean>;
-  hasOlderHistory: boolean;
+  requestOlder: (turn?: number, trigger?: HistoryLoadTrigger) => Promise<boolean>;
   loadingOlderHistory: boolean;
   running: boolean;
   loadedByTurn: ReadonlyMap<number, QuestionAnchor>;
   jump: (question: QuestionAnchor) => boolean;
-  beginPrepend: () => void;
 }) {
   const navigation = useMemo(() => new TranscriptNavigation(kernel), [kernel]);
   const [, refresh] = useReducer((value: number) => value + 1, 0);
   const current = navigation.current;
-  const requestOlder = useCallback((turn?: number, trigger: HistoryLoadTrigger = "viewport-user") => {
-    if (!loadOlder || !hasOlderHistory || loadingOlderHistory || running) return Promise.resolve(false);
-    if (trigger !== "question-jump" && trigger !== "retry") beginPrepend();
-    return navigation.load(() => loadOlder(turn, trigger));
-  }, [beginPrepend, hasOlderHistory, loadOlder, loadingOlderHistory, navigation, running]);
+  useEffect(() => () => {
+    const request = navigation.current;
+    if (!request) return;
+    navigation.complete(request);
+    kernel.cancelActive("question-navigation-unmounted");
+  }, [kernel, navigation]);
   const navigate = useCallback((question: QuestionAnchor) => {
     const request = navigation.start(question);
     if (jump(question)) navigation.locate(request, refresh);

@@ -24,6 +24,7 @@ export interface TranscriptHarnessOptions {
 export interface TranscriptHarness {
   clock: TranscriptTestClock;
   resizeNotifications: Array<() => void>;
+  observers: Array<{ target: Element; notify: () => void }>;
   dom: JSDOM;
   container: HTMLElement;
   server: ViteDevServer;
@@ -42,6 +43,7 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
   const rowHeight = options.rowHeight ?? 10;
   const clock = new TranscriptTestClock();
   const resizeNotifications: Array<() => void> = [];
+  const observers: Array<{ target: Element; notify: () => void }> = [];
 
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     pretendToBeVisual: true,
@@ -86,6 +88,7 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
         contentBoxSize: [{ inlineSize: 800, blockSize: height }],
         devicePixelContentBoxSize: [{ inlineSize: 800, blockSize: height }],
       } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver);
+      observers.push({ target, notify });
       if (options.deterministic) resizeNotifications.push(notify);
       else queueMicrotask(notify);
     }
@@ -265,6 +268,7 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
   return {
     clock,
     resizeNotifications,
+    observers,
     dom,
     container,
     server,

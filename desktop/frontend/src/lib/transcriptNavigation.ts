@@ -9,10 +9,9 @@ export type QuestionNavigation = {
   attemptedPage?: unknown;
 };
 
-/** Paging owns data; navigation separately owns permission to change the viewport. */
+/** An interaction owns permission to navigate, never the source session's data work. */
 export class TranscriptNavigation {
   private navigation: QuestionNavigation | null = null;
-  private history: { generation: number; result: Promise<boolean> } | null = null;
 
   constructor(private readonly kernel: TranscriptKernel) {}
 
@@ -52,17 +51,4 @@ export class TranscriptNavigation {
     });
   }
 
-  load(load: () => boolean | Promise<boolean>): Promise<boolean> {
-    const generation = this.kernel.generation;
-    if (this.history?.generation === generation) return this.history.result;
-    const request = { generation, result: Promise.resolve(false) };
-    this.history = request;
-    request.result = Promise.resolve().then(() => generation === this.kernel.generation && load()).then(
-      (loaded) => loaded && generation === this.kernel.generation,
-      () => false,
-    ).finally(() => {
-      if (this.history === request) this.history = null;
-    });
-    return request.result;
-  }
 }

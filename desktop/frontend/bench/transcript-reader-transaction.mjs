@@ -241,9 +241,9 @@ async function runIteration(page, transcript, label, iteration) {
     const firstVisibleIndex = items.findIndex((item) => item.getBoundingClientRect().bottom > viewport.top);
     const earlier = firstVisibleIndex > 0 ? items[firstVisibleIndex - 1] : items[firstVisibleIndex];
     const postViewport = items.find((item) => item.getBoundingClientRect().top >= viewport.bottom);
-    const earlierBlock = earlier?.querySelector("[data-transcript-block-key]");
-    const visibleBlock = items[firstVisibleIndex]?.querySelector("[data-transcript-block-key]");
-    const postViewportBlock = postViewport?.querySelector("[data-transcript-block-key]");
+    const earlierBlock = earlier;
+    const visibleBlock = items[firstVisibleIndex];
+    const postViewportBlock = postViewport;
     if (!(earlierBlock instanceof HTMLElement)
       || !(visibleBlock instanceof HTMLElement)
       || !(postViewportBlock instanceof HTMLElement)) return null;

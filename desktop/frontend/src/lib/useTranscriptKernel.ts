@@ -69,17 +69,21 @@ export function useTranscriptKernel({
   const pointerGestureRef = useRef(0);
   const observedTopRef = useRef(0);
   const prependAwaitingGeometryRef = useRef(false);
+  const geometryWork = useRef<{ generation: number; cancel: () => void } | null>(null);
+  const coverageRef = useRef(true);
 
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const snapshot = useCallback(() => {
     const element = scrollRef.current;
-    return element ? readSnapshot(element) : null;
+    if (!element || ![element.scrollTop, element.scrollHeight, element.clientHeight].every(Number.isFinite)) return null;
+    return readSnapshot(element);
   }, []);
 
   useLayoutEffect(() => {
     const disconnect = kernel.connectWriter(writer.write);
     return () => {
       kernel.detachSurface();
+      geometryWork.current?.cancel();
       writer.attach(null, kernel.generation);
       disconnect();
     };
@@ -87,6 +91,9 @@ export function useTranscriptKernel({
 
   useLayoutEffect(() => {
     prependAwaitingGeometryRef.current = false;
+    coverageRef.current = true;
+    pointerGestureRef.current = 0;
+    writer.freeze(false);
     const restored = kernel.replaceSurface(sessionKey);
     writer.attach(scrollRef.current, restored.generation);
     if (restored.anchor.kind === "block") kernel.begin("restore", restored.anchor);
@@ -100,16 +107,37 @@ export function useTranscriptKernel({
     writer.attach(element, kernel.generation);
   }, [kernel, writer]);
 
-  const settleGeometry = useCallback(() => {
-    kernel.advanceGeometry();
-    const element = scrollRef.current;
-    const transaction = kernel.activeTransaction;
-    if (transaction && element && (transaction.kind !== "prepend" || !prependAwaitingGeometryRef.current)) {
-      kernel.correctAnchor(transaction, (key) => blockTop(element, key));
-    } else if (!transaction && kernel.intent === "tail") kernel.scheduleTailSync();
-  }, [kernel]);
+  const settleGeometry = useCallback(function settleGeometry() {
+    if (geometryWork.current?.generation === kernel.generation) return;
+    geometryWork.current?.cancel();
+    const cancel = kernel.afterCurrentGenerationPaint(() => {
+      geometryWork.current = null;
+      const element = scrollRef.current;
+      if (!element) return;
+      const geometry = snapshot();
+      const invalid = !geometry;
+      const blank = !coverageRef.current || (element.getBoundingClientRect().height > 0
+        && Number(element.dataset.transcriptBlockCount) > 0 && geometry?.visibleBlocks.length === 0);
+      if (invalid || blank) {
+        kernel.reportAnomaly(invalid ? "invalid-geometry" : "blank-viewport");
+        // One clock-owned re-observation, not a scroll retry loop. The second
+        // consecutive fault latches safety until replaceSurface resets it.
+        if (!kernel.safeMode) kernel.afterCurrentGenerationPaint(settleGeometry);
+        refresh();
+        return;
+      }
+      kernel.reportHealthyGeometry();
+      kernel.advanceGeometry();
+      const transaction = kernel.activeTransaction ?? (kernel.intent === "tail" ? kernel.begin("tail-sync", { kind: "tail" }) : null);
+      if (transaction && element && (transaction.kind !== "prepend" || !prependAwaitingGeometryRef.current)) {
+        kernel.correctAnchor(transaction, (key) => blockTop(element, key));
+      }
+    });
+    geometryWork.current = { generation: kernel.generation, cancel };
+  }, [kernel, refresh, snapshot]);
 
-  const commitViewportGeometry = useCallback(() => {
+  const commitViewportGeometry = useCallback((covered?: boolean) => {
+    if (covered !== undefined) coverageRef.current = covered;
     prependAwaitingGeometryRef.current = false;
     settleGeometry();
   }, [settleGeometry]);
@@ -188,9 +216,10 @@ export function useTranscriptKernel({
     writer.freeze(nativeThumb);
     beginGesture();
     const terminalEvents = ["pointerup", "pointercancel", "mouseup"] as const;
+    const generation = kernel.generation;
     const finish = () => {
       terminalEvents.forEach((type) => window.removeEventListener(type, finish, true));
-      kernel.afterCurrentGenerationPaint(endGesture);
+      if (generation === kernel.generation) kernel.afterCurrentGenerationPaint(endGesture);
     };
     terminalEvents.forEach((type) => window.addEventListener(type, finish, true));
   }, [beginGesture, endGesture, kernel, writer]);
@@ -199,14 +228,6 @@ export function useTranscriptKernel({
     if (SCROLL_KEYS.has(event.key)) renewGestureLease();
   }, [renewGestureLease]);
 
-  const reportAnomaly = useCallback((outcome: "blank-viewport" | "invalid-geometry" | "missing-anchor") => {
-    kernel.reportAnomaly(outcome);
-    refresh();
-  }, [kernel, refresh]);
-
-  const reportHealthyGeometry = useCallback(() => {
-    kernel.reportHealthyGeometry();
-  }, [kernel]);
 
   const scrollToBottom = useCallback(() => {
     kernel.cancelActive("jump-to-bottom");
@@ -271,8 +292,6 @@ export function useTranscriptKernel({
     setScrollMode,
     writeOffset,
     onScroll,
-    reportAnomaly,
-    reportHealthyGeometry,
     onPointerDownCapture,
     onWheelCapture: renewGestureLease,
     onTouchStartCapture: beginGesture,
