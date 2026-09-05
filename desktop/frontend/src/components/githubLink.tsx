@@ -133,8 +133,17 @@ function richLinkMenuItems(
   closeMenu: () => void,
   copyText: (text: string) => void,
 ): ContextMenuItem[] {
-  const isMail = href.startsWith("mailto:");
-  const copyTarget = isMail ? href.replace(/^mailto:/, "") : href;
+  const isMail = classifyLinkIcon(href) === "mail";
+  let copyTarget = href;
+  if (isMail) {
+    const address = new URL(href).pathname;
+    try {
+      copyTarget = decodeURIComponent(address);
+    } catch {
+      // Keep malformed escapes readable without breaking the menu.
+      copyTarget = address;
+    }
+  }
   const reference = github === null
     ? null
     : github.kind === "commit"

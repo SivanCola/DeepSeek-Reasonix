@@ -168,16 +168,37 @@ console.log("\nrich link context menu");
   await closeWithEscape();
 }
 
+// Copy only the decoded recipient address, not compose parameters.
+for (const [href, expected] of [
+  ["mailto:support@example.com?subject=Help&body=Hello", "support@example.com"],
+  ["MAILTO:support@example.com", "support@example.com"],
+  ["mailto:hello%2Btag@example.com", "hello+tag@example.com"],
+  ["mailto:one@example.com,two@example.com?cc=other@example.com", "one@example.com,two@example.com"],
+  ["mailto:bad%ZZ@example.com?subject=Help", "bad%ZZ@example.com"],
+  ["mailto:?subject=Help", ""],
+]) {
+  const { anchor } = await renderLink(href);
+  await openContextMenu(anchor);
+  ok(menuItemLabels().some((text) => text.includes("Compose email")), "mail protocol classification is consistent");
+  await clickMenuItem("Copy email address");
+  ok(clipboardWrites.at(-1) === expected, `address copy for ${href}`);
+  await closeWithEscape();
+}
+clipboardWrites.splice(4);
+
 // 5. Keyboard gesture: ContextMenu key and Shift+F10 open the menu, Escape closes.
 {
   const href = "https://github.com/esengine/DeepSeek-Reasonix/issues/6856";
   const { anchor } = await renderLink(href);
+  anchor.focus();
   await act(async () => {
     anchor.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true }));
   });
   ok(window.document.querySelector('[role="menu"]') !== null, "ContextMenu key opens the menu");
+  ok(window.document.activeElement?.textContent?.includes("Open in browser"), "keyboard menu focuses first action");
   await closeWithEscape();
   ok(window.document.querySelector('[role="menu"]') === null, "Escape closes the menu");
+  ok(window.document.activeElement === anchor, "Escape returns focus to link");
   await act(async () => {
     anchor.dispatchEvent(new window.KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }));
   });
