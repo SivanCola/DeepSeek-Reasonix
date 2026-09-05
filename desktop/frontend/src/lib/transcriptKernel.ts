@@ -89,6 +89,7 @@ export type TranscriptKernelEvent = {
 };
 
 type ActiveTransaction = {
+  listeners?: Set<() => void>;
   transaction: ScrollTransaction;
   anchor: LogicalAnchor;
   correctionRevision: number;
@@ -135,6 +136,7 @@ export class TranscriptKernel {
   private generationValue = 0;
   private geometryVersion = 0;
   private transactionSequence = 0;
+  private interactionVersion = 0;
   private active: ActiveTransaction | null = null;
   private deferredStructural: DeferredStructuralTransaction | null = null;
   private intentValue: ViewportIntent = "tail";
@@ -153,6 +155,7 @@ export class TranscriptKernel {
   }
 
   get generation(): number { return this.generationValue; }
+  get interactionRevision(): number { return this.interactionVersion; }
   get geometryRevision(): number { return this.geometryVersion; }
   get intent(): ViewportIntent { return this.intentValue; }
   get anchor(): LogicalAnchor { return this.anchorValue; }
@@ -229,6 +232,7 @@ export class TranscriptKernel {
   }
 
   beginUserGesture(snapshot: TranscriptViewportSnapshot, owner: "selection" | "native" = "native"): void {
+    this.interactionVersion += 1;
     this.clearNativeGestureLease();
     this.cancelTailFrame();
     this.userGesture = true;
@@ -258,18 +262,21 @@ export class TranscriptKernel {
     if (this.userGesture) this.observeNativeScroll(snapshot);
     else this.beginUserGesture(snapshot, "native");
     const generation = this.generationValue;
-    this.nativeGestureTimer = this.clock.setTimeout(() => {
+    const timer = this.clock.setTimeout(() => {
+      if (generation !== this.generationValue || this.nativeGestureTimer !== timer) return;
       this.nativeGestureTimer = null;
-      if (generation !== this.generationValue) return;
       onEnd(this.endUserGesture());
     }, Math.max(0, idleMs));
+    this.nativeGestureTimer = timer;
   }
 
-  afterCurrentGenerationPaint(callback: () => void): void {
+  afterCurrentGenerationPaint(callback: () => void): () => void {
     const generation = this.generationValue;
-    this.clock.requestAnimationFrame(() => {
-      if (generation === this.generationValue) callback();
+    let cancelled = false;
+    const handle = this.clock.requestAnimationFrame(() => {
+      if (!cancelled && generation === this.generationValue) callback();
     });
+    return () => { cancelled = true; this.clock.cancelAnimationFrame(handle); };
   }
 
   begin(kind: ScrollTransactionKind, anchor = this.anchorValue): ScrollTransaction | null {
@@ -302,6 +309,11 @@ export class TranscriptKernel {
     if (this.active) this.finish(this.active.transaction.id, "cancelled", outcome);
   }
 
+  onTransactionEnd(transaction: ScrollTransaction, listener: () => void): void {
+    if (this.active?.transaction !== transaction) { listener(); return; }
+    (this.active.listeners ??= new Set()).add(listener);
+  }
+
   finish(id: number, status: Exclude<ScrollTransaction["status"], "active">, outcome: string = status): boolean {
     const active = this.active;
     if (!active || active.transaction.id !== id) return false;
@@ -309,6 +321,7 @@ export class TranscriptKernel {
     active.transaction.status = status;
     this.emitEvent(active.transaction, undefined, undefined, undefined, outcome);
     this.active = null;
+    active.listeners?.forEach((listener) => listener());
     return true;
   }
 
@@ -347,6 +360,7 @@ export class TranscriptKernel {
   }
 
   scrollToTail(): boolean {
+    this.interactionVersion += 1;
     this.intentValue = "tail";
     this.anchorValue = { kind: "tail" };
     this.anchors.set(this.session, this.anchorValue);

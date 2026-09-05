@@ -5,6 +5,7 @@ import {
   type TranscriptViewportSnapshot,
   type TranscriptWriteRequest,
 } from "../lib/transcriptKernel";
+import { observeTranscriptGeometry } from "../lib/transcriptGeometryObserver";
 
 let passed = 0;
 let failed = 0;
@@ -67,6 +68,37 @@ function setup(session = "race") {
 }
 
 console.log("\nTranscriptKernel deterministic race matrix");
+
+{
+  const { clock, kernel, writes } = setup("observer-A");
+  let notify!: () => void;
+  let before = 0, commits = 0;
+  const disconnect = observeTranscriptGeometry(kernel, {} as Element,
+    () => { before += 1; }, () => { commits += 1; kernel.advanceGeometry(); },
+    (callback) => { notify = callback; return { observe() {}, disconnect() {} }; });
+  notify();
+  const queued = [...clock.frames.values()];
+  disconnect();
+  kernel.replaceSurface("observer-B");
+  notify(); // A platform can deliver notifications even after disconnect.
+  queued.forEach((callback) => callback(0));
+  clock.flushFrames();
+  ok(before === 1 && commits === 0 && kernel.geometryRevision === 0 && writes.length === 0,
+    "detached observer and already queued frame cannot mutate replacement geometry");
+  let painted = false;
+  const cancel = kernel.afterCurrentGenerationPaint(() => { painted = true; });
+  const cancelledFrame = [...clock.frames.values()][0];
+  cancel();
+  cancelledFrame(0);
+  ok(!painted, "a cancelled surface-paint callback is inert even when delivered in the same generation");
+  kernel.renewNativeGesture(readerSnapshot(), 320, () => {});
+  const staleTimer = [...clock.timers.values()][0].callback;
+  kernel.replaceSurface("observer-C");
+  kernel.renewNativeGesture(readerSnapshot(), 320, () => {});
+  staleTimer();
+  ok(kernel.nativeGestureLeaseActive && kernel.userGestureActive,
+    "an old native timer cannot release the new generation's lease");
+}
 
 {
   const { clock, kernel, writes } = setup("stream-display");

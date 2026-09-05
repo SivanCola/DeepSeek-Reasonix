@@ -7,8 +7,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { createServer, type ViteDevServer } from "vite";
 import type { ReasoningDisplayMode } from "../lib/reasoningDisplayPreference";
 import type { Item } from "../lib/useController";
+import { TranscriptTestClock } from "./transcript-test-clock";
 
 export interface TranscriptHarnessOptions {
+  deterministic?: boolean;
   /** Viewport height of the scroll container. Default huge: every row mounts. */
   viewportHeight?: number;
   /** Fixed measured height for every transcript row. */
@@ -20,6 +22,8 @@ export interface TranscriptHarnessOptions {
 }
 
 export interface TranscriptHarness {
+  clock: TranscriptTestClock;
+  resizeNotifications: Array<() => void>;
   dom: JSDOM;
   container: HTMLElement;
   server: ViteDevServer;
@@ -36,6 +40,8 @@ export interface TranscriptHarness {
 export async function createTranscriptHarness(options: TranscriptHarnessOptions = {}): Promise<TranscriptHarness> {
   const viewportHeight = options.viewportHeight ?? 100_000;
   const rowHeight = options.rowHeight ?? 10;
+  const clock = new TranscriptTestClock();
+  const resizeNotifications: Array<() => void> = [];
 
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     pretendToBeVisual: true,
@@ -55,6 +61,10 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
   globalThis.WheelEvent = dom.window.WheelEvent;
   globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.window);
   globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
+  if (options.deterministic) {
+    globalThis.requestAnimationFrame = dom.window.requestAnimationFrame = clock.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame = clock.cancelAnimationFrame;
+  }
   globalThis.getComputedStyle = dom.window.getComputedStyle.bind(dom.window) as typeof getComputedStyle;
   class TranscriptResizeObserver {
     constructor(private readonly callback: ResizeObserverCallback) {}
@@ -69,13 +79,15 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
           : element.classList.contains("transcript__header")
             ? rowHeight
             : 0;
-      queueMicrotask(() => this.callback([{
+      const notify = () => this.callback([{
         target,
         contentRect: { width: 800, height, top: 0, right: 800, bottom: height, left: 0, x: 0, y: 0, toJSON: () => ({}) },
         borderBoxSize: [{ inlineSize: 800, blockSize: height }],
         contentBoxSize: [{ inlineSize: 800, blockSize: height }],
         devicePixelContentBoxSize: [{ inlineSize: 800, blockSize: height }],
-      } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver));
+      } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver);
+      if (options.deterministic) resizeNotifications.push(notify);
+      else queueMicrotask(notify);
     }
     unobserve() {}
     disconnect() {}
@@ -109,6 +121,29 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
   });
 
   const proto = dom.window.HTMLElement.prototype;
+  const heightOf = (element: HTMLElement): number => {
+    if (element.classList.contains("transcript")) return viewportHeight;
+    if (element.classList.contains("transcript__window")) return Number.parseFloat(element.style.height) || 0;
+    if (element.classList.contains("transcript__block")) return Math.max(rowHeight, element.querySelectorAll(".transcript__row").length * rowHeight);
+    if (element.classList.contains("transcript__row")) return rowHeight;
+    return Array.from(element.children).reduce((height, child) => height + ((child as HTMLElement).style.position === "absolute" ? 0 : heightOf(child as HTMLElement)), 0);
+  };
+  const topOf = (element: HTMLElement): number => {
+    if (element.classList.contains("transcript") || !element.parentElement) return 0;
+    const parent = element.parentElement;
+    const parentTop = topOf(parent) - (parent.classList.contains("transcript") ? parent.scrollTop : 0);
+    if (element.style.position === "absolute") return parentTop + (Number.parseFloat(element.style.top) || 0);
+    let top = parentTop;
+    for (const sibling of parent.children) {
+      if (sibling === element) break;
+      if ((sibling as HTMLElement).style.position !== "absolute") top += heightOf(sibling as HTMLElement);
+    }
+    return top;
+  };
+  proto.getBoundingClientRect = function () {
+    const top = topOf(this), height = heightOf(this);
+    return { top, bottom: top + height, left: 0, right: 800, width: 800, height, x: 0, y: top, toJSON: () => ({}) };
+  };
   Object.defineProperty(proto, "attachEvent", { configurable: true, value: () => {} });
   Object.defineProperty(proto, "detachEvent", { configurable: true, value: () => {} });
   Object.defineProperty(proto, "offsetHeight", {
@@ -146,7 +181,8 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
       if (this.classList.contains("transcript")) {
         const window = this.querySelector<HTMLElement>(".transcript__window");
         const windowHeight = Number.parseFloat(window?.style.height || "0");
-        const residentRows = this.querySelectorAll(".transcript__resident-tail .transcript__row").length;
+        const residentRows = Array.from(this.querySelectorAll(".transcript__resident-tail .transcript__row"))
+          .filter((row) => !row.closest(".transcript__window-item")).length;
         return Math.max(0, windowHeight + residentRows * rowHeight);
       }
       return 0;
@@ -198,7 +234,11 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
 
   const flush = async () => {
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      if (options.deterministic) {
+        resizeNotifications.splice(0).forEach((notify) => notify());
+        clock.flushFrames();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      } else await new Promise((resolve) => setTimeout(resolve, 30));
     });
   };
 
@@ -223,6 +263,8 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
   };
 
   return {
+    clock,
+    resizeNotifications,
     dom,
     container,
     server,
@@ -243,6 +285,7 @@ export async function createTranscriptHarness(options: TranscriptHarnessOptions 
               questionNavigator: false,
               viewportHeight,
               rowHeight,
+              kernelClock: options.deterministic ? clock : undefined,
               ...props,
             }),
           ),

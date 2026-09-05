@@ -1,7 +1,8 @@
-import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { createContext, useContext, useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { recordTranscriptScrollDiagnostic } from "./transcriptScrollProbe";
 import {
   TranscriptKernel,
+  type TranscriptKernelClock,
   type ScrollTransactionKind,
   type TranscriptScrollMode,
   type TranscriptScrollOwner,
@@ -15,6 +16,7 @@ const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home
 // lease beyond that boundary so deferred geometry is committed only after the
 // native stream has actually gone idle.
 const NATIVE_GESTURE_IDLE_MS = 320;
+export const TranscriptKernelClockContext = createContext<TranscriptKernelClock | undefined>(undefined);
 function blockTop(element: HTMLElement, key: string): number | undefined {
   const node = Array.from(element.querySelectorAll<HTMLElement>("[data-transcript-block-key]"))
     .find((candidate) => candidate.dataset.transcriptBlockKey === key);
@@ -47,6 +49,7 @@ export function useTranscriptKernel({
   sessionKey: string;
   geometryRevision: string | number;
 }) {
+  const clock = useContext(TranscriptKernelClockContext);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null);
   const kernelRef = useRef<TranscriptKernel | null>(null);
@@ -54,6 +57,7 @@ export function useTranscriptKernel({
   const [, setRevision] = useState(0);
   if (!kernelRef.current) {
     kernelRef.current = new TranscriptKernel({
+      clock,
       emit: (event) => recordTranscriptScrollDiagnostic("kernel", event),
     });
     writerRef.current = new TranscriptViewportWriter();
