@@ -1,15 +1,19 @@
 import { Loader2, RotateCcw } from "lucide-react";
 import { forwardRef, lazy, Suspense, useImperativeHandle, useLayoutEffect, useState, type ReactNode } from "react";
 import { estimateTranscriptRowSize, type TranscriptRow } from "../lib/transcriptRows";
-import type { TranscriptKernel } from "../lib/transcriptKernel";
+import type { LogicalAnchor, TranscriptKernel } from "../lib/transcriptKernel";
 import type { TimelineBlock, TimelineProjection, TranscriptRenderMode } from "../lib/transcriptTimeline";
 import { useT } from "../lib/i18n";
 import { TranscriptSelectionOverlay } from "./TranscriptSelectionOverlay";
 import { TranscriptProjectionView } from "./TranscriptProjectionView";
+import { preloadMarkdownHistory } from "./Markdown";
 import { ProcessBrainIcon } from "./ProcessCard";
 import { useTick, workStatusLabel } from "../lib/workStatus";
 
-const TranscriptWindow = lazy(() => import("./TranscriptWindow"));
+const TranscriptWindow = lazy(async () => {
+  const [window] = await Promise.all([import("./TranscriptWindow"), preloadMarkdownHistory()]);
+  return window;
+});
 function estimateBlock(block: TimelineBlock): number {
   return Math.max(64, block.rows.reduce((height, row) => height + estimateTranscriptRowSize(row), 0));
 }
@@ -31,7 +35,7 @@ export const TranscriptViewport = forwardRef<TranscriptViewportHandle, {
   loadingOlderHistory: boolean;
   olderHistoryError?: string;
   onRetryOlderHistory: () => void;
-  onGeometryWillChange: () => unknown;
+  onGeometryWillChange: (anchor?: LogicalAnchor) => unknown;
   onGeometryChange: (covered?: boolean, beforePaint?: boolean) => void;
   kernel: TranscriptKernel;
   protectedBlockKeys?: ReadonlySet<string>;

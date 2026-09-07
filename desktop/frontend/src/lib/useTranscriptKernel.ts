@@ -4,6 +4,7 @@ import {
   TranscriptKernel,
   type TranscriptKernelClock,
   type ScrollTransactionKind,
+  type LogicalAnchor,
   type TranscriptScrollMode,
   type TranscriptScrollOwner,
   type TranscriptViewportSnapshot,
@@ -149,9 +150,10 @@ export function useTranscriptKernel({
     settleGeometry(beforePaint);
   }, [settleGeometry]);
 
-  const beginAnchorRestore = useCallback(() => {
-    if (kernel.userGestureActive || kernel.intent !== "reader" || kernel.anchor.kind !== "block") return null;
-    const transaction = kernel.activeTransaction ?? kernel.begin("restore", kernel.anchor);
+  const beginAnchorRestore = useCallback((anchor?: LogicalAnchor) => {
+    const restoreAnchor = anchor ?? kernel.anchor;
+    if (kernel.userGestureActive || kernel.intent !== "reader" || restoreAnchor.kind !== "block") return null;
+    const transaction = kernel.activeTransaction ?? kernel.begin("restore", restoreAnchor);
     if (transaction) refresh();
     return transaction;
   }, [kernel, refresh]);
