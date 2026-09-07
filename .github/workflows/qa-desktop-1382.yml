@@ -82,7 +82,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p "$RUNNER_TEMP/qa-macos"
-          ditto -x -k dist/Reasonix-darwin-universal.zip "$RUNNER_TEMP/qa-macos"
+          ditto -x -k dist/Reasonix-darwin-arm64.zip "$RUNNER_TEMP/qa-macos"
+          cmp dist/Reasonix-darwin-arm64.zip dist/Reasonix-darwin-amd64.zip
           app="$RUNNER_TEMP/qa-macos/Reasonix.app"
           codesign --verify --deep --strict "$app"
           lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/reasonix-desktop"
@@ -96,7 +97,10 @@ jobs:
           import fs from 'node:fs';
           import crypto from 'node:crypto';
           const files = fs.readdirSync('dist').filter(n => /\.(zip|dmg|exe)$/.test(n)).sort();
-          if (files.length !== 2) throw new Error(`Expected two packages, found ${files.length}`);
+          const expected = (process.env.PACKAGE_PLATFORM === 'darwin/universal'
+            ? ['Reasonix-darwin-amd64.zip', 'Reasonix-darwin-arm64.zip', 'Reasonix-darwin-universal.dmg']
+            : ['Reasonix-windows-amd64-installer.exe', 'Reasonix-windows-amd64.zip']).sort();
+          if (JSON.stringify(files) !== JSON.stringify(expected)) throw new Error(`Unexpected package set: ${files}`);
           const artifacts = files.map(name => {
             const bytes = fs.readFileSync(`dist/${name}`);
             return {name, size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex')};
