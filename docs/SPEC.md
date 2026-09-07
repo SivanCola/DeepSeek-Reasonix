@@ -287,13 +287,26 @@ when the sole automatic threshold is crossed.
 - The summary request replays the original system message, the selected message
   prefix, and the ordinary request's tool schemas, then appends one final user
   compaction instruction. This shape can reuse provider KV cache. Output is capped
-  at **8192 tokens**. A pressure run may make one additional convergence summary
-  (at most two successful summaries total); overflow makes at most one summary and
-  retries the original request at most once after projection-version progress.
+  at **8192 tokens**, and prefix planning keeps **5%** of the window (at least 256
+  tokens) below that cap as estimator headroom. A pressure run may make one
+  additional convergence summary (at most two successful summaries total);
+  overflow makes at most one summary and retries the original request at most
+  once after projection-version progress. An overflow rescue may also fold the
+  active turn's completed rounds, keeping its newest two rounds verbatim.
+- Every summary reply, success or provider overflow, feeds its real prompt count
+  back into the estimator. When the provider rejects the summary request itself,
+  the fold is re-planned on the corrected estimate (at most twice), then sent once
+  as a bounded transcript (tool results cut to 2000 characters, no tool schemas);
+  a manual compact may then take the fragment path. A failed automatic attempt
+  backs off further attempts on the same turn until the view has grown by 5% of
+  the window since that attempt, which bounds the retries one turn can pay.
 - A checkpoint must be strictly smaller than the replaced full request. Summary
   timeout/error/empty/max-token results never produce a mechanical digest. Below
-  the hard ceiling the latest durable projection continues; at overflow or the
-  hard ceiling an insufficient prune returns `ErrCompactionRequired`.
+  the hard ceiling the latest durable projection continues. At overflow or the
+  hard ceiling, when no summary can form, a lossy `truncate` projection elides the
+  oldest tool results and then drops the oldest replay units behind an explicit
+  marker until the view fits under the trigger; `ErrCompactionRequired` is
+  returned only when even that cannot reclaim enough.
 - Users inspect or change the threshold with
   `reasonix config compact-ratio [--local] [VALUE]`. Project config overrides the
   user-global value used by desktop and new CLI sessions. UI always shows the

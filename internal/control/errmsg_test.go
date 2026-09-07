@@ -94,6 +94,16 @@ func TestExplainError(t *testing.T) {
 		t.Errorf("context overflow should name numbers and recovery, got %q", limit.Error())
 	}
 
+	unnumbered := explainError(&provider.ContextLimitError{
+		APIError: &provider.APIError{Provider: "glm", Status: 400, Body: `{"error":{"code":"1261","message":"Prompt exceeds max length"}}`},
+	})
+	if strings.Contains(unnumbered.Error(), fmt.Sprintf(i18n.M.ProviderErrContextOverflowFmt, 0, 0, 0, 0)) {
+		t.Errorf("an overflow without token numbers must not quote zeros, got %q", unnumbered.Error())
+	}
+	if !strings.Contains(unnumbered.Error(), i18n.M.ProviderErrBadRequest) || !strings.Contains(unnumbered.Error(), "Prompt exceeds max length") {
+		t.Errorf("an overflow without token numbers should keep the provider reason, got %q", unnumbered.Error())
+	}
+
 	toolSchema := explainError(&provider.APIError{
 		Provider:    "mimo",
 		Status:      400,

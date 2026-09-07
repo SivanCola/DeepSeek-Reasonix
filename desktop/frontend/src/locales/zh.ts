@@ -3455,6 +3455,7 @@ export const zh: Record<DictKey, string> = {
   "context.maintenanceAppliedSummary": "已生成短视图",
   "context.maintenanceBlockedSummary": "摘要未形成短视图 · 已停重试",
   "context.maintenanceFailedSummary": "摘要失败 · 已停重试",
+  "context.maintenanceTruncatedSummary": "已裁剪上下文视图 · 移除最旧的工具结果与轮次以适配窗口",
   "context.maintenanceActionSnip": "裁短",
   "context.maintenanceActionPrune": "裁剪",
   "context.maintenanceActionNative": "原生清理",

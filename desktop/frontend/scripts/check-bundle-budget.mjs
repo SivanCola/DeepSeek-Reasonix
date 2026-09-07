@@ -393,8 +393,10 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // rich-link menus (2485.715 KiB), and the shared harness decision surface
 // with exact prompt identity and stale-card recovery (2496.4 KiB measured on
 // the pre-kernel graph). The merged graph combines the kernel-reduced stack,
-// the layering split, and that main-v2 feature chain; it measures 2380.9 KiB
-// raw here — retain only the next one-decimal ceiling.
-const rawInitialBudgetKiB = 2_381.1;
+// the layering split, and that main-v2 feature chain. The context truncation
+// rescue notice adds 186 bytes to the repaired kernel graph: 2,438,339 bytes
+// (2381.190 KiB). Retain the next decimal ceiling on this graph, not the
+// pre-kernel main-v2 ceiling of 2496.7 KiB.
+const rawInitialBudgetKiB = 2_381.2;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

@@ -3538,6 +3538,7 @@ export const zhTW: Record<DictKey, string> = {
   "context.maintenanceAppliedSummary": "已生成短視圖",
   "context.maintenanceBlockedSummary": "摘要未形成短視圖 · 已停重試",
   "context.maintenanceFailedSummary": "摘要失敗 · 已停重試",
+  "context.maintenanceTruncatedSummary": "已裁剪上下文視圖 · 移除最舊的工具結果與輪次以適配視窗",
   "context.maintenanceActionSnip": "裁短",
   "context.maintenanceActionPrune": "裁剪",
   "context.maintenanceActionNative": "原生清理",

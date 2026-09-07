@@ -32,7 +32,9 @@ func explainError(err error) error {
 	if provider.IsConnReset(err) {
 		return fmt.Errorf("model stream disconnected before completion after retry attempts: %s. Check the provider/proxy connection, then retry or ask Reasonix to continue", err.Error())
 	}
-	if limit := provider.AsContextLimitError(err); limit != nil {
+	// An overflow without token numbers has nothing to quote; the generic 400
+	// branch below keeps the provider's own reason instead of zeros.
+	if limit := provider.AsContextLimitError(err); limit != nil && limit.WindowTokens > 0 {
 		msg := fmt.Sprintf(i18n.M.ProviderErrContextOverflowFmt, limit.PromptTokens, limit.CompletionTokens, limit.RequestedTokens, limit.WindowTokens)
 		if reason := apiErrorReason(limit.APIError); reason != "" {
 			return fmt.Errorf("%s\n%s", msg, reason)
