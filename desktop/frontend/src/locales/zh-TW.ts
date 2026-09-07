@@ -5,6 +5,7 @@
 import type { DictKey } from "./en";
 
 export const zhTW: Record<DictKey, string> = {
+  "settings.providerProtocolMismatch": "API 位址的請求路徑與所選協定不一致，請檢查後再儲存。",
   "settings.imageInputLabel": "圖片輸入",
   "settings.imageInputModeAria": "{model} 的圖片輸入模式",
   "settings.imageInputAuto": "自動",

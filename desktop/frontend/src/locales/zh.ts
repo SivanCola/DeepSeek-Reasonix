@@ -7,6 +7,7 @@ import type { DictKey } from "./en";
 export const zh: Record<DictKey, string> = {
   // 通用动词 / 框架
   "common.close": "关闭",
+  "settings.providerProtocolMismatch": "API 地址的请求路径与所选协议不一致，请检查后再保存。",
   "settings.imageInputLabel": "图片输入",
   "settings.imageInputModeAria": "{model} 的图片输入模式",
   "settings.imageInputAuto": "自动",

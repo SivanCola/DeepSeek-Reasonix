@@ -1,3 +1,4 @@
+import { providerProtocolLabel, providerEndpointMismatch } from "../lib/providerProtocol";
 import { providerSupportsServerWebSearch } from "../lib/providerSearch";
 export { providerSupportsServerWebSearch } from "../lib/providerSearch";
 import { ManagementPageShell } from "./ManagementPageShell";
@@ -1595,20 +1596,12 @@ function sandboxModeLabel(mode: string, t: ReturnType<typeof useT>): string {
   return mode === "off" ? t("settings.bashOffShort") : t("settings.bashEnforceShort");
 }
 
-function providerKindLabel(kind: string, t: ReturnType<typeof useT>): string {
-  switch (kind) {
-    case "anthropic":
-      return t("settings.providerProtocolAnthropic");
-    case "openai":
-      return t("settings.providerProtocolOpenAI");
-    case "responses":
-      return "OpenAI Responses (/responses)";
-    default:
-      return kind;
-  }
+function providerKindLabel(kind: string, _t: ReturnType<typeof useT>): string {
+  return providerProtocolLabel(kind);
 }
 
 function providerKindHint(kind: string, t: ReturnType<typeof useT>): string {
+  if (kind === "responses" || kind === "dashscope-responses") return providerProtocolLabel(kind);
   return kind === "anthropic" ? t("settings.providerProtocolAnthropicHint") : t("settings.providerProtocolOpenAIHint");
 }
 
@@ -5939,7 +5932,7 @@ export function ProviderAccessCard({
           )}
         </div>
       </div>
-      {group.description && <div className="provider-access-card__desc">{group.description}</div>}
+      {group.description && !editingProvider && <div className="provider-access-card__desc">{group.description}</div>}
 
       {upgradeProvider && (
         <div className="provider-protocol-upgrade">
@@ -6102,16 +6095,7 @@ function ProviderTechnicalDetails({ group }: { group: ProviderAccessGroup }) {
 }
 
 function providerProtocolDisplayName(kind: string): string {
-  switch (kind.trim().toLowerCase()) {
-    case "anthropic":
-      return "Anthropic Messages";
-    case "responses":
-      return "Responses API";
-    case "openai":
-      return "OpenAI Chat Completions";
-    default:
-      return kind;
-  }
+  return providerProtocolLabel(kind);
 }
 
 function ProviderAccessMoreMenu({
@@ -6435,7 +6419,7 @@ function providerGroupLabel(p: ProviderView, t?: ReturnType<typeof useT>): strin
 function providerGroupDescription(p: ProviderView, t: ReturnType<typeof useT>): string {
   const id = providerGroupID(p);
   if (id === "builtin:deepseek") {
-    return p.recommendedUpgradeAvailable ? "" : t("settings.providerDesc.deepseek");
+    return p.recommendedUpgradeAvailable ? "" : providerProtocolLabel(p.kind);
   }
   if (id === "custom:opencode-go") return t("settings.providerDesc.opencodeGo");
   if (id === "custom:opencode-zen") return t("settings.providerDesc.opencodeZen");
@@ -6927,6 +6911,7 @@ export function ProviderEditor({
           </option>
         ))}
       </select>
+      {providerEndpointMismatch(effectiveKind, effectiveRequestUrl) && <div role="alert" className="banner banner--warning">{t("settings.providerProtocolMismatch")}</div>}
       <div className="mem-hint">{providerKindHint(effectiveKind, t)}</div>
       <label className="set-label" htmlFor={providerUrlInputId}>
         {t("providerUI.baseURL")}
