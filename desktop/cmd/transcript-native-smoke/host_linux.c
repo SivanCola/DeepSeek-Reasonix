@@ -15,7 +15,6 @@ typedef struct {
   guint probe_source;
   guint finish_source;
   guint wheel_tick;
-  guint finish_wheel_tick;
   guint finish_batch_remaining;
   guint tail_stable_checks;
   gdouble wheel_x;
@@ -26,7 +25,6 @@ typedef struct {
 } ReasonixTranscriptSmokeHost;
 
 static const guint REASONIX_SUSTAINED_WHEEL_TICKS = 1200;
-static const guint REASONIX_FINISH_WHEEL_TICKS = 240;
 static const guint REASONIX_FINISH_WHEEL_BATCH = 8;
 
 static void reasonix_transcript_finish(ReasonixTranscriptSmokeHost *host, const char *result) {
@@ -157,7 +155,6 @@ static gboolean reasonix_transcript_send_wheel(gpointer data) {
   }
   reasonix_transcript_dispatch_wheel(host);
   if (host->finishing) {
-    host->finish_wheel_tick += 1;
     host->finish_batch_remaining -= 1;
   } else {
     host->wheel_tick += 1;
@@ -167,14 +164,9 @@ static gboolean reasonix_transcript_send_wheel(gpointer data) {
 
 static void reasonix_transcript_start_finish_batch(ReasonixTranscriptSmokeHost *host) {
   if (host->done || host->wheel_source != 0) return;
-  const guint remaining = host->finish_wheel_tick < REASONIX_FINISH_WHEEL_TICKS
-    ? REASONIX_FINISH_WHEEL_TICKS - host->finish_wheel_tick
-    : 0;
-  host->finish_batch_remaining = MIN(REASONIX_FINISH_WHEEL_BATCH, remaining);
-  if (host->finish_batch_remaining == 0) {
-    reasonix_transcript_schedule_result(host, 700);
-    return;
-  }
+  // Probe after each bounded batch. Only physical tail geometry completes
+  // this phase; the unchanged host watchdog bounds stalled native progress.
+  host->finish_batch_remaining = REASONIX_FINISH_WHEEL_BATCH;
   host->wheel_source = g_timeout_add(16, reasonix_transcript_send_wheel, host);
 }
 
@@ -201,7 +193,6 @@ static void reasonix_transcript_message(WebKitUserContentManager *manager,
   if (strstr(message, "\"type\":\"ready\"") != NULL && host->wheel_source == 0) {
     reasonix_transcript_capture_wheel_point(host, message);
     host->wheel_tick = 0;
-    host->finish_wheel_tick = 0;
     host->finish_batch_remaining = 0;
     host->tail_stable_checks = 0;
     host->finishing = FALSE;

@@ -101,8 +101,8 @@ static const int32_t ReasonixFinishWheelDelta = -1440;
     });
     return;
   }
-  // The deterministic native workload is about 62 seconds at ideal timer
-  // cadence (1200 * 40ms, a 2s drain, and the bounded 240 * 50ms tail phase).
+  // The sustained workload takes at least 48 seconds, followed by a drain
+  // and geometry-driven batches until the native tail is stably reached.
   // The measured hosted-runner path is already about 149 seconds. Retaining
   // the reader handoff mount window adds WebContent work, so keep the complete
   // native workload and leave bounded room below the workflow's 5-minute cap.
@@ -266,13 +266,9 @@ static const int32_t ReasonixFinishWheelDelta = -1440;
       return;
     }
     self.finishTailStableChecks = 0;
-    if (self.finishWheelEvents >= 240) {
-      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 700 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-        [self.webView evaluateJavaScript:@"window.__reasonixNativeTranscriptSmoke.finish()" completionHandler:nil];
-      });
-      return;
-    }
-    [self finishWheelBurst:MIN(8, 240 - self.finishWheelEvents)];
+    // Native geometry determines completion; the interaction watchdog keeps
+    // a stalled tail bounded without assuming a platform-specific distance.
+    [self finishWheelBurst:8];
   }];
 }
 

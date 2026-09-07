@@ -122,7 +122,6 @@ const (
 	// Controller wheel messages can be coalesced while WebView2 commits a new
 	// block range. Probe native geometry between bounded batches instead of
 	// assuming a fixed pixel budget can cross every platform-specific ledger.
-	finishWheelTicks = 240
 	finishWheelBatch = 8
 	finishWheelDelta = -1440
 	// The injected contract has its own 80 second startup watchdog. Keep the
@@ -145,7 +144,7 @@ func (state *transcriptWheelState) advance(now time.Time) error {
 			// ordinary controller input can transfer to the physical tail.
 			state.next = now.Add(300 * time.Millisecond)
 		}
-	} else if state.sustained >= sustainedWheelTicks && state.finish < finishWheelTicks &&
+	} else if state.sustained >= sustainedWheelTicks &&
 		!state.probeDue && !state.probePending && state.finishAt.IsZero() && !now.Before(state.next) {
 		if err := sendControllerWheelInput(finishWheelDelta); err != nil {
 			return err
@@ -183,10 +182,6 @@ func (state *transcriptWheelState) observeTail(distance float64, mode string, no
 		return
 	}
 	state.tailStableChecks = 0
-	if state.finish >= finishWheelTicks {
-		state.finishAt = now.Add(700 * time.Millisecond)
-		return
-	}
 	state.next = now
 }
 
@@ -261,11 +256,11 @@ func transcriptSmokeTimeoutError(navigationCompleted bool, ready *smokeMessage, 
 		phase = "result"
 	}
 	return fmt.Errorf(
-		"WebView2 smoke timed out: phase=%s navigationCompleted=%t ready=%t composer=%t composerKeys=%d/12 composerFinishSent=%t sustained=%d/%d finish=%d/%d tailStable=%d probePending=%t finishSent=%t",
+		"WebView2 smoke timed out: phase=%s navigationCompleted=%t ready=%t composer=%t composerKeys=%d/12 composerFinishSent=%t sustained=%d/%d finish=%d tailStable=%d probePending=%t finishSent=%t",
 		phase, navigationCompleted, ready != nil,
 		composerState.active, composerState.index, composerState.finishSent,
 		wheelState.sustained, sustainedWheelTicks,
-		wheelState.finish, finishWheelTicks, wheelState.tailStableChecks, wheelState.probePending, wheelState.finishSent,
+		wheelState.finish, wheelState.tailStableChecks, wheelState.probePending, wheelState.finishSent,
 	)
 }
 
