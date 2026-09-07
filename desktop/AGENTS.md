@@ -71,15 +71,19 @@ contracts when touching anything that can move the transcript viewport.
   including Transcript padding and any prefix. Earlier and visible sizes remain
   staged during native ownership; only post-viewport overscan may publish.
   After ownership ends, publish staged DOM sizes under a Kernel logical-anchor
-  restore transaction. Preserve the first reading anchor, while allowing later
+  restore transaction. Prefix layout and anchor correction must complete in
+  one before-paint commit, cancelling any queued older geometry work.
+  Preserve the first reading anchor, while allowing later
   blocks to move with actual content growth; freezing every old top would
   overlap expanded content. Observe mounted absolute blocks as well as the
   projection root, since local folds do not change the root extent. Tail intent
   does not refine invisible cold history; its exact geometry belongs to resident DOM. During
   bounded wheel input, the lazy measurement ledger owns a publish boundary at
-  least the accumulated absolute pixel-mode native steps plus one viewport ahead
-  of the painted viewport in both prefix and DOM geometry. Keep that lead for
-  the whole gesture lease. Touch, selection, keyboard jumps, nested handoff
+  least the unconsumed pixel-mode native steps plus one viewport ahead
+  of the painted viewport in both prefix and DOM geometry. Retire travel only
+  after physical viewport progress is observed; counting already-consumed
+  travel indefinitely freezes future measurements and builds a release-time
+  geometry debt. Keep the one-viewport reserve throughout the gesture lease. Touch, selection, keyboard jumps, nested handoff
   without a bounded delta, and native thumb drag are unbounded: every cold
   measurement remains staged until ownership ends.
   Publish one immutable Reasonix snapshot, then transfer that exact published

@@ -63,7 +63,7 @@ export default function TranscriptWindow({
 }: {
   projection: TimelineProjection;
   scrollElement: HTMLDivElement | null;
-  onGeometryChange: (covered?: boolean) => void;
+  onGeometryChange: (covered?: boolean, beforePaint?: boolean) => void;
   onGeometryWillChange: () => unknown;
   protectedBlockKeys: ReadonlySet<string>;
   kernel: Pick<TranscriptKernel, "anchor" | "generation" | "intent" | "userGestureActive" | "afterCurrentGenerationPaint">;
@@ -161,16 +161,22 @@ export default function TranscriptWindow({
     : undefined;
   const rangeRevision = `${committedRange.scrollMargin}:${committedRange.totalSize}|${virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|")}`;
 
+  const pendingMeasurementCommit = useRef(false);
   useLayoutEffect(() => {
     committedGeometryRef.current = geometry;
-    onGeometryChange(geometry.covered);
+    const beforePaint = pendingMeasurementCommit.current;
+    pendingMeasurementCommit.current = false;
+    onGeometryChange(geometry.covered, beforePaint);
   }, [geometry, onGeometryChange]);
   useLayoutEffect(() => {
     if (!kernel.userGestureActive) measurementLedger.endGesture();
   }, [kernel.generation, kernel.userGestureActive, measurementLedger]);
   useEffect(() => {
     if (!scrollElement) return;
-    const observeWheel = (event: WheelEvent) => measurementLedger.observeWheel(event.deltaY, event.deltaMode, scrollElement.clientHeight);
+    const observeWheel = (event: WheelEvent) => {
+      measurementLedger.observeViewport(scrollElement.scrollTop);
+      measurementLedger.observeWheel(event.deltaY, event.deltaMode, scrollElement.clientHeight);
+    };
     const beginUnbounded = () => measurementLedger.beginUnboundedGesture();
     const observeKey = (event: KeyboardEvent) => {
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) beginUnbounded();
@@ -260,10 +266,10 @@ export default function TranscriptWindow({
     const viewportBottom = scrollElement?.getBoundingClientRect().bottom;
     // Read the native lease at the publication boundary, not from the render
     // that scheduled this effect. A native capture listener can claim scroll
-    // ownership before React commits its kernel snapshot, especially on
-    // WebKitGTK. A bounded wheel lease protects the accumulated compositor
-    // travel plus one viewport; unbounded gestures keep every measurement
+    // ownership before React commits its kernel snapshot. A bounded wheel
+    // lease protects unconsumed compositor travel plus one viewport; unbounded gestures keep every measurement
     // staged until ownership ends.
+    measurementLedger.observeViewport(nativeViewport.scrollTop);
     const publicationLeadPx = measurementLedger.publicationLead(kernel.userGestureActive);
     const paintedSafeIndex = measuredItems.find((item) => (
       item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight + publicationLeadPx - 0.5
@@ -298,6 +304,7 @@ export default function TranscriptWindow({
     });
     if (published.length > 0) {
       if (publicationLeadPx === 0) onGeometryWillChange();
+      pendingMeasurementCommit.current = true;
       // Feed only the atomically published batch into TanStack's keyed size
       // cache. `measure()` is intentionally forbidden here: it clears that
       // cache and rebuilds the entire prefix, allowing previously committed

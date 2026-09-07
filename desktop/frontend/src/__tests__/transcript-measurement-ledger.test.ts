@@ -16,6 +16,16 @@ ledger.observeWheel(2_880, 0, 596);
 ok(ledger.publicationLead(true) === 3_476, "pixel wheel input reserves one native step plus one viewport");
 ledger.observeWheel(120, 0, 596);
 ok(ledger.publicationLead(true) === 3_596, "a wheel lease accumulates every unsettled native compositor step");
+ledger.observeViewport(1000);
+ledger.observeViewport(3880);
+ok(ledger.publicationLead(true) === 716, "observed native progress retires only consumed travel and retains one viewport plus the pending step");
+ledger.observeViewport(4000);
+ok(ledger.publicationLead(true) === 596, "fully consumed wheel input still protects one viewport of compositor runway");
+for (let step = 0; step < 100; step += 1) {
+  ledger.observeWheel(120, 0, 596);
+  ledger.observeViewport(4000 + (step + 1) * 120);
+}
+ok(ledger.publicationLead(true) === 596, "sustained native input cannot accumulate already-consumed distance into permanent measurement debt");
 ledger.beginUnboundedGesture();
 ok(ledger.publicationLead(true) === Number.POSITIVE_INFINITY, "touch, selection, thumb, or keyboard takeover upgrades a bounded lease to unbounded");
 ok(ledger.publicationLead(false) === Number.POSITIVE_INFINITY, "native ownership freezes publication before React commits the kernel snapshot");

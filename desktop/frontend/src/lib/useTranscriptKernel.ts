@@ -107,10 +107,11 @@ export function useTranscriptKernel({
     writer.attach(element, kernel.generation);
   }, [kernel, writer]);
 
-  const settleGeometry = useCallback(function settleGeometry() {
-    if (geometryWork.current?.generation === kernel.generation) return;
+  const settleGeometry = useCallback(function settleGeometry(beforePaint = false) {
+    if (!beforePaint && geometryWork.current?.generation === kernel.generation) return;
     geometryWork.current?.cancel();
-    const cancel = kernel.afterCurrentGenerationPaint(() => {
+    geometryWork.current = null;
+    const commit = () => {
       geometryWork.current = null;
       const element = scrollRef.current;
       if (!element) return;
@@ -132,14 +133,18 @@ export function useTranscriptKernel({
       if (transaction && element && (transaction.kind !== "prepend" || !prependAwaitingGeometryRef.current)) {
         kernel.correctAnchor(transaction, (key) => blockTop(element, key));
       }
-    });
-    geometryWork.current = { generation: kernel.generation, cancel };
+    };
+    if (beforePaint) commit();
+    else {
+      const cancel = kernel.afterCurrentGenerationPaint(commit);
+      geometryWork.current = { generation: kernel.generation, cancel };
+    }
   }, [kernel, refresh, snapshot]);
 
-  const commitViewportGeometry = useCallback((covered?: boolean) => {
+  const commitViewportGeometry = useCallback((covered?: boolean, beforePaint = false) => {
     if (covered !== undefined) coverageRef.current = covered;
     prependAwaitingGeometryRef.current = false;
-    settleGeometry();
+    settleGeometry(beforePaint);
   }, [settleGeometry]);
 
   const beginAnchorRestore = useCallback(() => {

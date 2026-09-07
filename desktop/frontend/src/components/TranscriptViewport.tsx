@@ -32,7 +32,7 @@ export const TranscriptViewport = forwardRef<TranscriptViewportHandle, {
   olderHistoryError?: string;
   onRetryOlderHistory: () => void;
   onGeometryWillChange: () => unknown;
-  onGeometryChange: (covered?: boolean) => void;
+  onGeometryChange: (covered?: boolean, beforePaint?: boolean) => void;
   kernel: TranscriptKernel;
   protectedBlockKeys?: ReadonlySet<string>;
   running: boolean;

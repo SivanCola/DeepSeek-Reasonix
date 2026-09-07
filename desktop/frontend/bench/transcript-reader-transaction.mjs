@@ -205,8 +205,8 @@ async function runIteration(page, transcript, label, iteration) {
   const before = await anchorSnapshot(page);
   assert(before?.key && before.visible > 0, `${label} ${iteration + 1}/${iterations}: reader has a visible logical anchor`);
 
-  await page.evaluate(() => {
-    window.__readerProbe = { active: true, held: true, blankFrames: 0, heldAccepted: [], writes: [], diagnostics: [] };
+  await page.evaluate((anchor) => {
+    window.__readerProbe = { active: true, held: true, blankFrames: 0, anchorMaxDrift: 0, heldAccepted: [], writes: [], diagnostics: [] };
     window.__REASONIX_TRANSCRIPT_SCROLL_WRITE__ = (write) => {
       window.__readerProbe?.writes.push(write);
       if (window.__readerProbe?.held && write.outcome === "accepted") window.__readerProbe.heldAccepted.push(write);
@@ -230,10 +230,14 @@ async function runIteration(page, transcript, label, iteration) {
         return rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom;
       });
       if (!occupied) probe.blankFrames += 1;
+      const anchoredBlock = [...element.querySelectorAll("[data-transcript-block-key]")]
+        .find(block => block.getAttribute("data-transcript-block-key") === anchor.key);
+      if (anchoredBlock) probe.anchorMaxDrift = Math.max(probe.anchorMaxDrift,
+        Math.abs(anchoredBlock.getBoundingClientRect().top - viewport.top - anchor.top));
       requestAnimationFrame(sample);
     };
     requestAnimationFrame(sample);
-  });
+  }, before);
   await page.mouse.down();
   const mutation = await transcript.evaluate((element, iterationIndex) => {
     const viewport = element.getBoundingClientRect();
@@ -311,6 +315,7 @@ async function runIteration(page, transcript, label, iteration) {
       mounted: Number(projection?.getAttribute("data-transcript-mounted-blocks")),
       blankFrames: probe?.blankFrames ?? -1,
       heldAccepted: probe?.heldAccepted ?? [],
+      anchorMaxDrift: probe?.anchorMaxDrift ?? Infinity,
       diagnostics: probe?.diagnostics ?? [],
       visibleBlocks: element instanceof HTMLElement && viewport
         ? [...element.querySelectorAll("[data-transcript-block-key]")]
@@ -344,6 +349,7 @@ async function runIteration(page, transcript, label, iteration) {
       && block.top < viewport.bottom && block.bottom > blocks[index + 1].top + 1).length;
   });
   assert(overlaps === 0, `${label} ${iteration + 1}/${iterations}: released content growth leaves no overlapping visible blocks`);
+  assert(result.anchorMaxDrift <= 4, `${label} ${iteration + 1}/${iterations}: every painted measurement frame preserves the anchor (${result.anchorMaxDrift.toFixed(1)}px)`);
   const drift = result.top == null ? null : Math.abs(result.top - before.top);
   const driftDiagnostic = settlementError || drift == null || drift > 4
     ? `; ${JSON.stringify({ settlementError, before, mutation, held, heldOriginal, result })}`
@@ -389,6 +395,58 @@ async function runColdExpansion(page, transcript, label) {
   assert(Math.abs(gap) <= 1, `${label}: collapsing reasoning also removes the stale measured gap`);
 }
 
+async function runNativeMeasurementCommit(browser, label) {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    await page.addScriptTag({ path: path.join(frontendDir, "..", "transcript_native_smoke_contract.js") });
+    await page.waitForFunction(() => window.__reasonixNativeTranscriptSmokeState?.phase === "ready",
+      undefined, { timeout: 90_000 });
+    await page.evaluate(() => {
+      const probe = { active: true, frames: 0, maxReverse: 0, maxOverlap: 0, previous: [] };
+      window.__measurementCommitProbe = probe;
+      const sample = () => {
+        if (!probe.active) return;
+        const element = document.querySelector(".transcript");
+        const viewport = element.getBoundingClientRect();
+        const current = [...element.querySelectorAll("[data-transcript-block-key]")]
+          .map(block => ({ key: block.dataset.transcriptBlockKey, rect: block.getBoundingClientRect() }))
+          .filter(block => block.rect.bottom > viewport.top && block.rect.top < viewport.bottom)
+          .sort((a, b) => a.rect.top - b.rect.top);
+        const deltas = probe.previous.flatMap(before => {
+          const after = current.find(block => block.key === before.key);
+          return after ? [after.rect.top - before.rect.top] : [];
+        }).sort((a, b) => a - b);
+        probe.maxReverse = Math.max(probe.maxReverse, deltas[Math.floor(deltas.length / 2)] ?? 0);
+        for (let index = 1; index < current.length; index += 1) {
+          probe.maxOverlap = Math.max(probe.maxOverlap, current[index - 1].rect.bottom - current[index].rect.top);
+        }
+        probe.previous = current;
+        probe.frames += 1;
+        requestAnimationFrame(() => setTimeout(sample, 0));
+      };
+      requestAnimationFrame(() => setTimeout(sample, 0));
+    });
+    const box = await page.locator(".transcript").boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    for (let step = 0; step < 230; step += 1) {
+      await page.mouse.wheel(0, 120);
+      await frames(page, 1);
+    }
+    // Include lease release and its geometry commit, not just active scrolling.
+    await frames(page, 40);
+    const result = await page.evaluate(() => {
+      const probe = window.__measurementCommitProbe;
+      probe.active = false;
+      return { frames: probe.frames, maxReverse: probe.maxReverse, maxOverlap: probe.maxOverlap,
+        rows: document.querySelector(".transcript")?.dataset.transcriptRowCount };
+    });
+    assert(Number(result.rows) >= 400 && result.frames > 200, `${label}: native fixture measures a sustained loaded-history traversal`);
+    assert(result.maxReverse <= 4, `${label}: sustained traversal and release retain the native reverse-displacement gate (${result.maxReverse.toFixed(1)}px)`);
+    assert(result.maxOverlap <= 1, `${label}: measured blocks never overlap in a painted traversal frame (${result.maxOverlap.toFixed(1)}px)`);
+  } finally { await page.close(); }
+}
+
 async function runBrowser(browserType, label) {
   const browser = await browserType.launch({ headless: true });
   try {
@@ -407,6 +465,7 @@ async function runBrowser(browserType, label) {
     const final = await anchorSnapshot(page);
     assert(final.visible > 0 && final.distance <= 4, `${label}: final viewport is visibly covered at the native tail`);
     assert(errors.length === 0, `${label}: replay emits no page errors (${errors.length})`);
+    await runNativeMeasurementCommit(browser, label);
   } finally {
     await browser.close();
   }
