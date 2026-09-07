@@ -765,6 +765,7 @@
       composerFinalDistance: state.composer.result?.finalDistance ?? 0,
       composerInputHeight: state.composer.result?.inputHeight ?? 0,
       composerFinalValueMatches: state.composer.result?.finalValueMatches ?? false,
+      measurementAudit: window.__GTK_RELEASE_AUDIT,
       writes: state.writes.slice(-20),
     };
     post(result);

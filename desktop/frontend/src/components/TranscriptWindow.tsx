@@ -264,6 +264,21 @@ export default function TranscriptWindow({
         || (measurementBoundaryIndex != null && index >= measurementBoundaryIndex)
       );
     });
+    if (publicationTop > 100000 && publicationTop < 106000) {
+      const log = ((window as any).__GTK_RELEASE_AUDIT ??= []);
+      log.push({ at: performance.now(), top: publicationTop, gesture: kernel.userGestureActive,
+        anchor: kernel.anchor, transaction: kernel.activeTransaction, boundary: measurementBoundaryIndex,
+        published, items: measuredItems.map(item => {
+          const el = container?.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
+          return { index: item.index, key: item.key, paintedTop: item.start, paintedSize: item.size,
+            actualHeight: el?.getBoundingClientRect().height, actualTop: el?.getBoundingClientRect().top,
+            pending: el?.querySelectorAll('[data-transcript-geometry-pending]').length,
+            parsed: el?.querySelectorAll('[data-markdown-blocks]').length,
+            table: el?.querySelectorAll('table').length,
+          };
+        }) });
+      if (log.length > 900) log.shift();
+    }
     if (published.length > 0) {
       if (!kernel.userGestureActive) onGeometryWillChange();
       pendingMeasurementCommit.current = true;
