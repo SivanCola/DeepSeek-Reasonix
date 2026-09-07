@@ -285,7 +285,7 @@ export default function TranscriptWindow({
     // lease protects unconsumed compositor travel plus one viewport; unbounded gestures keep every measurement
     // staged until ownership ends.
     measurementLedger.observeViewport(nativeViewport.scrollTop);
-    const publicationLeadPx = measurementLedger.publicationLead(kernel.userGestureActive);
+    const publicationLeadPx = kernel.userGestureActive ? nativeViewport.clientHeight : 0;
     const paintedSafeIndex = measuredItems.find((item) => (
       item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight + publicationLeadPx - 0.5
     ))?.index;
@@ -318,7 +318,7 @@ export default function TranscriptWindow({
       );
     });
     audit({type: "measurement", top: nativeViewport.scrollTop, actualTop: scrollElement?.scrollTop,
-      gesture: kernel.userGestureActive, lead: String(publicationLeadPx), boundary: measurementBoundaryIndex,
+      gesture: kernel.userGestureActive, lead: String(publicationLeadPx), queuedLead: String(measurementLedger.publicationLead(kernel.userGestureActive)), boundary: measurementBoundaryIndex,
       paintedSafeIndex, domSafeIndex, logicalAnchorIndex,
       sizes: changes.map(item => ({index:coldIndexByKey.get(item.key),size:item.size})),
       published: published.map(item => ({index:coldIndexByKey.get(item.key),size:item.size}))});
