@@ -47,3 +47,23 @@ export function commitTranscriptWindowGeometry<T extends PrefixItem>(
   return { range, prefix, covered, mode: input.forceFull || !covered ? "full" : "windowed",
     measurementCommitted: Boolean(input.measurementCommit && valid) };
 }
+
+/** Future publication is a geometry decision, independent of queued input units. */
+export function findTranscriptMeasurementPublicationBoundary({
+  paintedItems, domItems, scrollTop, clientHeight, anchorIndex,
+}: {
+  paintedItems: readonly { index: number; start: number }[];
+  domItems: readonly { index: number; top: number }[];
+  scrollTop: number;
+  clientHeight: number;
+  anchorIndex?: number;
+}): number | undefined {
+  if (!Number.isFinite(scrollTop) || !Number.isFinite(clientHeight) || clientHeight <= 0) return undefined;
+  // One viewport of measured runway protects the current visible blocks. It
+  // is not an estimate or limit for future compositor travel: the adapter
+  // re-observes native geometry and commits each approved prefix before paint.
+  const afterRunway = clientHeight * 2;
+  const painted = paintedItems.find(item => item.start >= scrollTop + afterRunway - 0.5)?.index;
+  const measured = domItems.find(item => item.top >= afterRunway - 0.5)?.index;
+  return painted == null || measured == null ? undefined : Math.max(painted, measured, anchorIndex ?? 0);
+}

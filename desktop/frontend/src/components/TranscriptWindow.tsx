@@ -5,15 +5,8 @@ import type { ProjectionViewProps } from "./TranscriptProjectionView";
 import { TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimeline";
 import { extractTranscriptWindowIndexes, type TranscriptWindowDirection } from "../lib/transcriptWindowRange";
-import { commitTranscriptWindowGeometry, MAX_MOUNTED_COMPLETED_BLOCKS, type TranscriptWindowGeometry } from "../lib/transcriptWindowGeometry";
+import { commitTranscriptWindowGeometry, findTranscriptMeasurementPublicationBoundary, MAX_MOUNTED_COMPLETED_BLOCKS, type TranscriptWindowGeometry } from "../lib/transcriptWindowGeometry";
 
-const audit = (value: Record<string, unknown>) => {
-  const target = window as unknown as { __GTK_AUDIT?: Array<Record<string, unknown>> };
-  const records = target.__GTK_AUDIT;
-  if (!records) return;
-  records.push({ time: performance.now(), ...value });
-  if (records.length > 16000) records.shift();
-};
 const ANCHOR_MEASUREMENT_RADIUS = 4;
 // Keep enough mounted runway for native engines whose scroll event can arrive
 // ahead of TanStack's next range calculation. The browser fixtures enforce the
@@ -171,48 +164,11 @@ export default function TranscriptWindow({
   const rangeRevision = `${committedRange.scrollMargin}:${committedRange.totalSize}|${virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|")}`;
 
   useLayoutEffect(() => {
-    audit({ type: "commit", top: nativeViewport.scrollTop, actualTop: scrollElement?.scrollTop,
-      gesture: kernel.userGestureActive, lead: String(measurementLedger.publicationLead(kernel.userGestureActive)),
-      committed: geometry.measurementCommitted,
-      rows: virtualItems.filter(item => item.end > nativeViewport.scrollTop && item.start < nativeViewport.scrollTop + nativeViewport.clientHeight)
-        .map(item => ({ index: item.index, start: item.start, size: item.size })) });
     committedGeometryRef.current = geometry;
     const beforePaint = geometry.measurementCommitted;
     if (beforePaint) pendingMeasurementCommit.current = false;
     onGeometryChange(geometry.covered, beforePaint);
   }, [geometry, onGeometryChange]);
-  useLayoutEffect(() => {
-    if (!kernel.userGestureActive) measurementLedger.endGesture();
-  }, [kernel.generation, kernel.userGestureActive, measurementLedger]);
-  useEffect(() => {
-    if (!scrollElement) return;
-    const observeWheel = (event: WheelEvent) => {
-      measurementLedger.observeViewport(scrollElement.scrollTop);
-      measurementLedger.observeWheel(event.deltaY, event.deltaMode, scrollElement.clientHeight);
-      audit({type: "wheel", top: scrollElement.scrollTop, delta: event.deltaY, mode: event.deltaMode,
-        gesture: kernel.userGestureActive, lead: String(measurementLedger.publicationLead(kernel.userGestureActive))});
-    };
-    const beginUnbounded = (event?: Event) => { audit({type:"unbounded", input:event?.type, top:scrollElement.scrollTop}); measurementLedger.beginUnboundedGesture(); };
-    const observeKey = (event: KeyboardEvent) => {
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) beginUnbounded();
-    };
-    const endUnownedMouse = () => {
-      if (!kernel.userGestureActive) measurementLedger.endGesture();
-    };
-    const pointerStartEvents = ["pointerdown", "mousedown"] as const;
-    scrollElement.addEventListener("wheel", observeWheel, { capture: true, passive: true });
-    pointerStartEvents.forEach((type) => scrollElement.addEventListener(type, beginUnbounded, true));
-    scrollElement.addEventListener("touchstart", beginUnbounded, { capture: true, passive: true });
-    scrollElement.addEventListener("keydown", observeKey, true);
-    window.addEventListener("mouseup", endUnownedMouse, true);
-    return () => {
-      scrollElement.removeEventListener("wheel", observeWheel, true);
-      pointerStartEvents.forEach((type) => scrollElement.removeEventListener(type, beginUnbounded, true));
-      scrollElement.removeEventListener("touchstart", beginUnbounded, true);
-      scrollElement.removeEventListener("keydown", observeKey, true);
-      window.removeEventListener("mouseup", endUnownedMouse, true);
-    };
-  }, [kernel, measurementLedger, scrollElement]);
   useLayoutEffect(() => {
     if (!minimumResidentKey || currentResidentIndex >= 0) return;
     setResidentStartKey(minimumResidentKey);
@@ -278,52 +234,38 @@ export default function TranscriptWindow({
   useLayoutEffect(() => {
     const container = residentTailRef.current;
     const changes: Array<{ key: string; size: number }> = [];
-    const viewportBottom = scrollElement?.getBoundingClientRect().bottom;
-    // Read the native lease at the publication boundary, not from the render
-    // that scheduled this effect. A native capture listener can claim scroll
-    // ownership before React commits its kernel snapshot. A bounded wheel
-    // lease protects unconsumed compositor travel plus one viewport; unbounded gestures keep every measurement
-    // staged until ownership ends.
-    measurementLedger.observeViewport(nativeViewport.scrollTop);
-    const publicationLeadPx = kernel.userGestureActive ? nativeViewport.clientHeight : 0;
-    const paintedSafeIndex = measuredItems.find((item) => (
-      item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight + publicationLeadPx - 0.5
-    ))?.index;
-    let domSafeIndex: number | undefined;
+    const viewport = scrollElement?.getBoundingClientRect();
+    const observedTop = scrollElement?.scrollTop ?? nativeViewport.scrollTop;
+    const clientHeight = scrollElement?.clientHeight ?? nativeViewport.clientHeight;
+    const domItems: Array<{ index: number; top: number }> = [];
     if (container) {
       for (const item of measuredItems) {
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
         const rect = element.getBoundingClientRect();
-        if (domSafeIndex == null && viewportBottom != null && rect.top >= viewportBottom + publicationLeadPx - 0.5) domSafeIndex = item.index;
+        if (viewport) domItems.push({ index: item.index, top: rect.top - viewport.top });
         const size = Math.max(64, rect.height || element.offsetHeight);
         changes.push({ key: String(item.key), size });
       }
     }
     measurementLedger.stage(changes);
-    // Native input retains the conservative publication boundary. After it
-    // releases, reconcile mounted sizes under the kernel's logical anchor;
-    // otherwise expanded cold content overlaps the next absolute block.
-    const postViewportIndex = paintedSafeIndex == null || domSafeIndex == null
-      ? undefined
-      : Math.max(paintedSafeIndex, domSafeIndex);
-    const measurementBoundaryIndex = postViewportIndex == null
-      ? undefined
-      : Math.max(postViewportIndex, logicalAnchorIndex ?? postViewportIndex);
+    // Input leases own intent and writer exclusion, not a second size queue.
+    // Only current painted/DOM geometry can decide which future rows are safe.
+    // Re-read native progress at publication; a render's snapshot can be older.
+    const publicationTop = Math.max(observedTop, scrollElement?.scrollTop ?? observedTop);
+    const measurementBoundaryIndex = findTranscriptMeasurementPublicationBoundary({
+      paintedItems: measuredItems, domItems, scrollTop: publicationTop, clientHeight,
+      anchorIndex: logicalAnchorIndex,
+    });
     const published = measurementLedger.publishStaged((key) => {
       const index = coldIndexByKey.get(key);
       return kernel.intent === "reader" && index != null && (
-        publicationLeadPx === 0
+        !kernel.userGestureActive
         || (measurementBoundaryIndex != null && index >= measurementBoundaryIndex)
       );
     });
-    audit({type: "measurement", top: nativeViewport.scrollTop, actualTop: scrollElement?.scrollTop,
-      gesture: kernel.userGestureActive, lead: String(publicationLeadPx), queuedLead: String(measurementLedger.publicationLead(kernel.userGestureActive)), boundary: measurementBoundaryIndex,
-      paintedSafeIndex, domSafeIndex, logicalAnchorIndex,
-      sizes: changes.map(item => ({index:coldIndexByKey.get(item.key),size:item.size})),
-      published: published.map(item => ({index:coldIndexByKey.get(item.key),size:item.size}))});
     if (published.length > 0) {
-      if (publicationLeadPx === 0) onGeometryWillChange();
+      if (!kernel.userGestureActive) onGeometryWillChange();
       pendingMeasurementCommit.current = true;
       // Feed only the atomically published batch into TanStack's keyed size
       // cache. `measure()` is intentionally forbidden here: it clears that

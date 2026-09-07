@@ -11,46 +11,6 @@ export type TranscriptMeasurementChange = {
 export class TranscriptMeasurementLedger {
   private sizes: ReadonlyMap<string, number> = new Map();
   private staged = new Map<string, number>();
-  private wheelLeadPx = 0;
-  private viewportReservePx = 0;
-  private observedScrollTop: number | undefined;
-
-  observeWheel(deltaY: number, deltaMode: number, clientHeight: number): void {
-    if (this.wheelLeadPx === 0) this.viewportReservePx = clientHeight;
-    this.wheelLeadPx = deltaMode === 0
-      ? this.wheelLeadPx + Math.abs(deltaY) + (this.wheelLeadPx === 0 ? this.viewportReservePx : 0)
-      : Number.POSITIVE_INFINITY;
-  }
-
-  observeViewport(scrollTop: number): void {
-    if (!Number.isFinite(scrollTop)) return;
-    if (this.observedScrollTop != null && this.wheelLeadPx > 0 && Number.isFinite(this.wheelLeadPx)) {
-      // Only physical progress retires queued compositor travel. Keep one
-      // viewport of runway; a long gesture must not freeze all future rows.
-      this.wheelLeadPx = Math.max(this.viewportReservePx,
-        this.wheelLeadPx - Math.abs(scrollTop - this.observedScrollTop));
-    }
-    this.observedScrollTop = scrollTop;
-  }
-
-  beginUnboundedGesture(): void {
-    this.wheelLeadPx = Number.POSITIVE_INFINITY;
-  }
-
-  publicationLead(gestureActive: boolean): number {
-    // Native capture is the immediate authority. React may publish the
-    // kernel's gesture snapshot one commit later (notably on WebKitGTK), so a
-    // native lease must protect its boundary before React commits it.
-    return gestureActive || this.wheelLeadPx > 0
-      ? this.wheelLeadPx || Number.POSITIVE_INFINITY
-      : 0;
-  }
-
-  endGesture(): void {
-    this.wheelLeadPx = 0;
-    this.viewportReservePx = 0;
-  }
-
   sizeFor(key: string, fallback: number): number {
     return this.sizes.get(key) ?? fallback;
   }
