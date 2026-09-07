@@ -230,10 +230,12 @@ export default function TranscriptWindow({
     container.querySelectorAll(".transcript__window-item").forEach(element => observer.observe(element));
     return () => { disposed = true; observer.disconnect(); cancelFrame?.(); };
   }, [fullDOMFallback, kernel, rangeRevision]);
+  const materializedElements = useRef(new WeakSet<Element>());
   const measuredItems = fullDOMFallback ? geometry.prefix.items : virtualItems;
   useLayoutEffect(() => {
     const container = residentTailRef.current;
     const changes: Array<{ key: string; size: number }> = [];
+    const firstMeasurements = new Set<string>();
     const viewport = scrollElement?.getBoundingClientRect();
     const observedTop = scrollElement?.scrollTop ?? nativeViewport.scrollTop;
     const clientHeight = scrollElement?.clientHeight ?? nativeViewport.clientHeight;
@@ -242,6 +244,10 @@ export default function TranscriptWindow({
       for (const item of measuredItems) {
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
+        if (!materializedElements.current.has(element)) {
+          firstMeasurements.add(String(item.key));
+          materializedElements.current.add(element);
+        }
         const rect = element.getBoundingClientRect();
         if (viewport) domItems.push({ index: item.index, top: rect.top - viewport.top });
         const size = Math.max(64, rect.height || element.offsetHeight);
@@ -260,7 +266,7 @@ export default function TranscriptWindow({
     const published = measurementLedger.publishStaged((key) => {
       const index = coldIndexByKey.get(key);
       return kernel.intent === "reader" && index != null && (
-        !kernel.userGestureActive
+        firstMeasurements.has(key) || !kernel.userGestureActive
         || (measurementBoundaryIndex != null && index >= measurementBoundaryIndex)
       );
     });
