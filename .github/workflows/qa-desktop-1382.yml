@@ -1,0 +1,124 @@
+name: QA desktop 1.38.2 packages
+run-name: Desktop 1.38.2-test.1 from main-v2 401fca405756
+
+on:
+  push:
+    branches: [test/desktop-1.38.2-packages]
+    paths: [.github/workflows/qa-desktop-1382.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qa-desktop-1382-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PRODUCT_SHA: 401fca405756fbe9c191977e27f00e3a9ffdf1ef
+  TEST_VERSION: v1.38.2-test.1
+
+jobs:
+  package:
+    name: Package ${{ matrix.name }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: windows-latest, platform: windows/amd64, name: windows-x64}
+          - {runner: macos-14, platform: darwin/universal, name: macos-universal}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout immutable upstream product
+        uses: actions/checkout@v7
+        with:
+          repository: esengine/DeepSeek-Reasonix
+          ref: ${{ env.PRODUCT_SHA }}
+          persist-credentials: false
+      - name: Verify source identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
+          test -z "$(git status --porcelain)"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            desktop/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          version: 10
+          run_install: false
+      - name: Install pinned Wails and frontend dependencies
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install "github.com/wailsapp/wails/v2/cmd/wails@$(cat .wails-version)"
+          pnpm --dir desktop/frontend install --frozen-lockfile
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        run: pwsh -NoProfile -File scripts/install-nsis.ps1
+      - name: Install create-dmg
+        if: runner.os == 'macOS'
+        run: brew install create-dmg
+      - name: Build test packages using upstream packaging
+        env:
+          HAS_APPLE_CERT: 'false'
+          HAS_SIGNPATH: 'false'
+        run: scripts/desktop-build.sh '${{ matrix.platform }}' "$TEST_VERSION" canary
+      - name: Smoke-test Windows native startup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/test-webview2-native-smoke.ps1 -ExecutablePath 'desktop/build/bin/reasonix-desktop.exe' -TimeoutSeconds 60 -HealthySeconds 5
+      - name: Verify macOS archive, architectures and ad-hoc signature
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$RUNNER_TEMP/qa-macos"
+          ditto -x -k dist/Reasonix-darwin-universal.zip "$RUNNER_TEMP/qa-macos"
+          app="$RUNNER_TEMP/qa-macos/Reasonix.app"
+          codesign --verify --deep --strict "$app"
+          lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/reasonix-desktop"
+          lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/reasonix"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = '1.38.2'
+      - name: Record package provenance and checksums
+        env:
+          PACKAGE_PLATFORM: ${{ matrix.platform }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          const files = fs.readdirSync('dist').filter(n => /\.(zip|dmg|exe)$/.test(n)).sort();
+          if (files.length !== 2) throw new Error(`Expected two packages, found ${files.length}`);
+          const artifacts = files.map(name => {
+            const bytes = fs.readFileSync(`dist/${name}`);
+            return {name, size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex')};
+          });
+          const manifest = {version: process.env.TEST_VERSION, sourceRepository: 'esengine/DeepSeek-Reasonix', sourceRevision: process.env.PRODUCT_SHA, platform: process.env.PACKAGE_PLATFORM, testingOnly: true, productionSigned: false, workflowRun: `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`, artifacts};
+          fs.writeFileSync('dist/BUILD-INFO.json', JSON.stringify(manifest, null, 2) + '\n');
+          fs.writeFileSync('dist/SHA256SUMS', artifacts.map(a => `${a.sha256}  ${a.name}\n`).join(''));
+          fs.writeFileSync('dist/README-TEST.txt', `${manifest.version} desktop test packages\nSource: ${manifest.sourceRepository}@${manifest.sourceRevision}\nFor testing only; not an official stable release.\nWindows executables are unsigned. macOS packages are ad-hoc signed, not notarized.\nBack up your existing Reasonix data before testing with historical sessions.\nBUILD-INFO.json records source identity and SHA256SUMS verifies package bytes.\n`);
+          console.log(JSON.stringify(manifest, null, 2));
+          NODE
+      - name: Upload downloadable test packages
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: Reasonix-1.38.2-test.1-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Write download summary
+        run: |
+          echo '### ${{ matrix.name }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Download: ${{ steps.upload.outputs.artifact-url }}' >> "$GITHUB_STEP_SUMMARY"
+          echo "Source: $PRODUCT_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version: $TEST_VERSION (testing only)" >> "$GITHUB_STEP_SUMMARY"
