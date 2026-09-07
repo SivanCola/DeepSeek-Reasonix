@@ -7,6 +7,13 @@ import type { TimelineBlock, TimelineProjection } from "../lib/transcriptTimelin
 import { extractTranscriptWindowIndexes, type TranscriptWindowDirection } from "../lib/transcriptWindowRange";
 import { commitTranscriptWindowGeometry, MAX_MOUNTED_COMPLETED_BLOCKS, type TranscriptWindowGeometry } from "../lib/transcriptWindowGeometry";
 
+const audit = (value: Record<string, unknown>) => {
+  const target = window as unknown as { __GTK_AUDIT?: Array<Record<string, unknown>> };
+  const records = target.__GTK_AUDIT;
+  if (!records) return;
+  records.push({ time: performance.now(), ...value });
+  if (records.length > 16000) records.shift();
+};
 const ANCHOR_MEASUREMENT_RADIUS = 4;
 // Keep enough mounted runway for native engines whose scroll event can arrive
 // ahead of TanStack's next range calculation. The browser fixtures enforce the
@@ -164,6 +171,11 @@ export default function TranscriptWindow({
   const rangeRevision = `${committedRange.scrollMargin}:${committedRange.totalSize}|${virtualItems.map((item) => `${String(item.key)}:${item.start}:${item.size}`).join("|")}`;
 
   useLayoutEffect(() => {
+    audit({ type: "commit", top: nativeViewport.scrollTop, actualTop: scrollElement?.scrollTop,
+      gesture: kernel.userGestureActive, lead: String(measurementLedger.publicationLead(kernel.userGestureActive)),
+      committed: geometry.measurementCommitted,
+      rows: virtualItems.filter(item => item.end > nativeViewport.scrollTop && item.start < nativeViewport.scrollTop + nativeViewport.clientHeight)
+        .map(item => ({ index: item.index, start: item.start, size: item.size })) });
     committedGeometryRef.current = geometry;
     const beforePaint = geometry.measurementCommitted;
     if (beforePaint) pendingMeasurementCommit.current = false;
@@ -177,8 +189,10 @@ export default function TranscriptWindow({
     const observeWheel = (event: WheelEvent) => {
       measurementLedger.observeViewport(scrollElement.scrollTop);
       measurementLedger.observeWheel(event.deltaY, event.deltaMode, scrollElement.clientHeight);
+      audit({type: "wheel", top: scrollElement.scrollTop, delta: event.deltaY, mode: event.deltaMode,
+        gesture: kernel.userGestureActive, lead: String(measurementLedger.publicationLead(kernel.userGestureActive))});
     };
-    const beginUnbounded = () => measurementLedger.beginUnboundedGesture();
+    const beginUnbounded = (event?: Event) => { audit({type:"unbounded", input:event?.type, top:scrollElement.scrollTop}); measurementLedger.beginUnboundedGesture(); };
     const observeKey = (event: KeyboardEvent) => {
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) beginUnbounded();
     };
@@ -303,6 +317,11 @@ export default function TranscriptWindow({
         || (measurementBoundaryIndex != null && index >= measurementBoundaryIndex)
       );
     });
+    audit({type: "measurement", top: nativeViewport.scrollTop, actualTop: scrollElement?.scrollTop,
+      gesture: kernel.userGestureActive, lead: String(publicationLeadPx), boundary: measurementBoundaryIndex,
+      paintedSafeIndex, domSafeIndex, logicalAnchorIndex,
+      sizes: changes.map(item => ({index:coldIndexByKey.get(item.key),size:item.size})),
+      published: published.map(item => ({index:coldIndexByKey.get(item.key),size:item.size}))});
     if (published.length > 0) {
       if (publicationLeadPx === 0) onGeometryWillChange();
       pendingMeasurementCommit.current = true;

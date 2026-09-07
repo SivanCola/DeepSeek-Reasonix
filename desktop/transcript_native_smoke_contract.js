@@ -1,5 +1,6 @@
 (() => {
   "use strict";
+  window.__GTK_AUDIT = [];
 
   const post = (payload) => {
     const message = JSON.stringify(payload);
@@ -201,6 +202,7 @@
       }),
     } : undefined;
     state.frames.push({
+      time: performance.now(),
       top: element.scrollTop,
       height: element.scrollHeight,
       occupied: rows.length > 0,
@@ -712,6 +714,7 @@
     const mountedCoverage = frames.length > 0 ? (frames.length - blankFrames.length) / frames.length : 0;
     const result = {
       type: "result",
+      geometryAudit: window.__GTK_AUDIT,
       passed: frames.length >= 20
         && lastTop > firstTop + 96
         && maxReverse <= 4
