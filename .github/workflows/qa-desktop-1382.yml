@@ -78,20 +78,6 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/test-webview2-native-smoke.ps1 -ExecutablePath 'desktop/build/bin/reasonix-desktop.exe' -TimeoutSeconds 60 -HealthySeconds 5
-      - name: Verify macOS archive, architectures and ad-hoc signature
-        if: runner.os == 'macOS'
-        run: |
-          mkdir -p "$RUNNER_TEMP/qa-macos"
-          ditto -x -k dist/Reasonix-darwin-arm64.zip "$RUNNER_TEMP/qa-macos"
-          mkdir -p "$RUNNER_TEMP/qa-macos-alias"
-          ditto -x -k dist/Reasonix-darwin-amd64.zip "$RUNNER_TEMP/qa-macos-alias"
-          diff -qr "$RUNNER_TEMP/qa-macos/Reasonix.app" "$RUNNER_TEMP/qa-macos-alias/Reasonix.app"
-          app="$RUNNER_TEMP/qa-macos/Reasonix.app"
-          codesign --verify --deep --strict "$app"
-          lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/reasonix-desktop"
-          lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/reasonix"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = '1.38.2'
-          codesign --verify --deep --strict "$RUNNER_TEMP/qa-macos-alias/Reasonix.app"
       - name: Record package provenance and checksums
         env:
           PACKAGE_PLATFORM: ${{ matrix.platform }}
@@ -123,6 +109,20 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+      - name: Verify macOS archive, architectures and ad-hoc signature
+        if: runner.os == 'macOS'
+        run: |
+          set -x
+          mkdir -p "$RUNNER_TEMP/qa-macos" "$RUNNER_TEMP/qa-macos-alias"
+          ditto -x -k dist/Reasonix-darwin-arm64.zip "$RUNNER_TEMP/qa-macos"
+          ditto -x -k dist/Reasonix-darwin-amd64.zip "$RUNNER_TEMP/qa-macos-alias"
+          diff -qr "$RUNNER_TEMP/qa-macos/Reasonix.app" "$RUNNER_TEMP/qa-macos-alias/Reasonix.app"
+          app="$RUNNER_TEMP/qa-macos/Reasonix.app"
+          codesign --verify --deep --strict "$app"
+          lipo "$app/Contents/MacOS/reasonix-desktop" -verify_arch x86_64 arm64
+          lipo "$app/Contents/MacOS/reasonix" -verify_arch x86_64 arm64
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = '1.38.2'
+          codesign --verify --deep --strict "$RUNNER_TEMP/qa-macos-alias/Reasonix.app"
       - name: Write download summary
         run: |
           echo '### ${{ matrix.name }}' >> "$GITHUB_STEP_SUMMARY"
