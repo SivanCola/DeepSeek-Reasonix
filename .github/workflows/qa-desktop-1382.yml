@@ -26,7 +26,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {runner: windows-latest, platform: windows/amd64, name: windows-x64}
+          # Windows is retained from run 34148209485; recover only macOS.
           - {runner: macos-14, platform: darwin/universal, name: macos-universal}
     runs-on: ${{ matrix.runner }}
     defaults:
@@ -83,12 +83,15 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/qa-macos"
           ditto -x -k dist/Reasonix-darwin-arm64.zip "$RUNNER_TEMP/qa-macos"
-          cmp dist/Reasonix-darwin-arm64.zip dist/Reasonix-darwin-amd64.zip
+          mkdir -p "$RUNNER_TEMP/qa-macos-alias"
+          ditto -x -k dist/Reasonix-darwin-amd64.zip "$RUNNER_TEMP/qa-macos-alias"
+          diff -qr "$RUNNER_TEMP/qa-macos/Reasonix.app" "$RUNNER_TEMP/qa-macos-alias/Reasonix.app"
           app="$RUNNER_TEMP/qa-macos/Reasonix.app"
           codesign --verify --deep --strict "$app"
           lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/reasonix-desktop"
           lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/reasonix"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = '1.38.2'
+          codesign --verify --deep --strict "$RUNNER_TEMP/qa-macos-alias/Reasonix.app"
       - name: Record package provenance and checksums
         env:
           PACKAGE_PLATFORM: ${{ matrix.platform }}
