@@ -1,10 +1,10 @@
 import { useCommittedCommand } from "../lib/useCommittedCommand";
 import type { CancelOutcome } from "../lib/inboxCancel";
-import type { useSessionOperations } from "./useSessionOperations";
+import type { SessionResource, useSessionOperations } from "./useSessionOperations";
 
 export type SessionControlCommandsInput = {
   activeTabId: string | undefined;
-  sessionKey: string;
+  resources: readonly SessionResource[];
   operations: ReturnType<typeof useSessionOperations>;
   showToast: (message: string, level: "error") => void;
   clearWorkspaceConflict: () => void;
@@ -26,10 +26,11 @@ export type SessionControlCommandsInput = {
  * operations authority.
  */
 export function useSessionControlCommands(input: SessionControlCommandsInput) {
-  const { activeTabId, sessionKey, operations, showToast, ports } = input;
+  const { activeTabId, resources, operations, showToast, ports } = input;
 
   const cancelRuntimeJob = useCommittedCommand(async (tabId: string, jobId: string): Promise<boolean> => {
-    const target = { tabId, sessionKey: tabId === activeTabId ? sessionKey : `tab:${tabId}` };
+    const target = resources.find(resource => resource.tabId === tabId);
+    if (!target) return false;
     const outcome = await operations(target, `runtime-cancel:${jobId}`, {}, async (_operationInput, authority) =>
       (await import("./sessionRuntimeOwner")).executeCancelRuntimeJob(target, jobId, {
         cancelForTab: (sourceTabId, sourceJobId) => ports.cancelJobForTab(sourceTabId, sourceJobId),

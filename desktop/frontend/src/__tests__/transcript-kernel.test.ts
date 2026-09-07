@@ -1,3 +1,4 @@
+import { TranscriptMeasurementLedger } from "../lib/transcriptMeasurementLedger";
 import { TranscriptKernel, type TranscriptKernelClock, type TranscriptKernelEvent } from "../lib/transcriptKernel";
 
 let passed = 0;
@@ -60,6 +61,29 @@ kernel.scheduleTailSync();
 clock.flushFrames();
 ok(writes.length === countBeforeGesture, "reader gesture accepts zero tail writes");
 kernel.endUserGesture();
+
+// Deferred DOM growth is reconciled after native release, preserving the
+// original logical anchor while allowing the following block to move.
+const measured = new TranscriptMeasurementLedger();
+measured.commit([{ key: "before", size: 100 }, { key: "turn:4", size: 100 }]);
+kernel.beginUserGesture(snapshot);
+measured.beginUnboundedGesture();
+measured.stage([{ key: "before", size: 180 }, { key: "turn:4", size: 340 }]);
+const heldWrites = writes.length;
+measured.publishStaged(() => measured.publicationLead(kernel.userGestureActive) === 0);
+ok(measured.sizeFor("turn:4", 0) === 100 && writes.length === heldWrites, "held growth remains staged with zero correction writes");
+kernel.endUserGesture();
+measured.endGesture();
+const reconciliation = kernel.begin("restore", kernel.anchor);
+measured.publishStaged();
+kernel.advanceGeometry();
+const newAnchorTop = snapshot.visibleBlocks[0].top + measured.sizeFor("before", 0) - 100;
+if (reconciliation) kernel.correctAnchor(reconciliation, () => newAnchorTop);
+ok(writes[writes.length - 1]?.offset === 280, "release corrects only the changed prefix and retains the reader's 20px in-block offset");
+ok(newAnchorTop + measured.sizeFor("turn:4", 0) === 600, "the following block advances past all expanded content");
+const settledWrites = writes.length;
+if (reconciliation) kernel.correctAnchor(reconciliation, () => newAnchorTop);
+ok(writes.length === settledWrites, "one geometry reconciliation cannot emit duplicate corrections");
 
 kernel.scrollToTail();
 const writesBeforeStaleFrame = writes.length;

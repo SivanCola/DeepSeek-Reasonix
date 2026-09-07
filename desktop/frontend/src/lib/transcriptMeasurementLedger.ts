@@ -25,9 +25,9 @@ export class TranscriptMeasurementLedger {
 
   publicationLead(gestureActive: boolean): number {
     // Native capture is the immediate authority. React may publish the
-    // kernel's gesture snapshot one commit later (notably on WebKitGTK), so an
-    // unbounded native lease must freeze measurements on its own.
-    return gestureActive || this.wheelLeadPx === Number.POSITIVE_INFINITY
+    // kernel's gesture snapshot one commit later (notably on WebKitGTK), so a
+    // native lease must protect its boundary before React commits it.
+    return gestureActive || this.wheelLeadPx > 0
       ? this.wheelLeadPx || Number.POSITIVE_INFINITY
       : 0;
   }

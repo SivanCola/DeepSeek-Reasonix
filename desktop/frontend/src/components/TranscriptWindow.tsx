@@ -52,6 +52,7 @@ export default function TranscriptWindow({
   projection,
   scrollElement,
   onGeometryChange,
+  onGeometryWillChange,
   protectedBlockKeys,
   kernel,
   pinnedJumpBlockKey,
@@ -63,6 +64,7 @@ export default function TranscriptWindow({
   projection: TimelineProjection;
   scrollElement: HTMLDivElement | null;
   onGeometryChange: (covered?: boolean) => void;
+  onGeometryWillChange: () => unknown;
   protectedBlockKeys: ReadonlySet<string>;
   kernel: Pick<TranscriptKernel, "anchor" | "generation" | "intent" | "userGestureActive" | "afterCurrentGenerationPaint">;
   pinnedJumpBlockKey?: string;
@@ -232,8 +234,27 @@ export default function TranscriptWindow({
     const rect = target.getBoundingClientRect();
     if (rect.bottom >= viewport.top && rect.top <= viewport.bottom) onPinnedJumpVisible();
   }, [onPinnedJumpVisible, pinnedJumpBlockKey, rangeRevision, scrollElement]);
+  const [measurementRevision, setMeasurementRevision] = useState(0);
   useLayoutEffect(() => {
-    if (fullDOMFallback) return;
+    const container = residentTailRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const generation = kernel.generation;
+    let disposed = false;
+    let cancelFrame: (() => void) | undefined;
+    const observer = new ResizeObserver(() => {
+      if (disposed || generation !== kernel.generation || cancelFrame) return;
+      cancelFrame = kernel.afterCurrentGenerationPaint(() => {
+        cancelFrame = undefined;
+        if (!disposed && generation === kernel.generation) setMeasurementRevision(revision => revision + 1);
+      });
+    });
+    // Absolute children do not resize the projection root. Observe the actual
+    // mounted blocks so local folds and deferred Markdown invalidate geometry.
+    container.querySelectorAll(".transcript__window-item").forEach(element => observer.observe(element));
+    return () => { disposed = true; observer.disconnect(); cancelFrame?.(); };
+  }, [fullDOMFallback, kernel, rangeRevision]);
+  const measuredItems = fullDOMFallback ? geometry.prefix.items : virtualItems;
+  useLayoutEffect(() => {
     const container = residentTailRef.current;
     const changes: Array<{ key: string; size: number }> = [];
     const viewportBottom = scrollElement?.getBoundingClientRect().bottom;
@@ -244,26 +265,24 @@ export default function TranscriptWindow({
     // travel plus one viewport; unbounded gestures keep every measurement
     // staged until ownership ends.
     const publicationLeadPx = measurementLedger.publicationLead(kernel.userGestureActive);
-    const paintedSafeIndex = virtualItems.find((item) => (
+    const paintedSafeIndex = measuredItems.find((item) => (
       item.start >= nativeViewport.scrollTop + nativeViewport.clientHeight + publicationLeadPx - 0.5
     ))?.index;
     let domSafeIndex: number | undefined;
     if (container) {
-      for (const item of virtualItems) {
+      for (const item of measuredItems) {
         const element = container.querySelector<HTMLElement>(`.transcript__window-item[data-index="${item.index}"]`);
         if (!element) continue;
         const rect = element.getBoundingClientRect();
         if (domSafeIndex == null && viewportBottom != null && rect.top >= viewportBottom + publicationLeadPx - 0.5) domSafeIndex = item.index;
         const size = Math.max(64, rect.height || element.offsetHeight);
-        if (Math.abs(size - item.size) > 0.5) changes.push({ key: String(item.key), size });
+        changes.push({ key: String(item.key), size });
       }
     }
     measurementLedger.stage(changes);
-    // Freeze every block in the reader's painted viewport, not only its first
-    // anchor. Prefix estimates and mounted DOM can disagree in either
-    // direction, so both must identify a post-viewport block before any
-    // measurement may publish. The logical anchor can only make that boundary
-    // more conservative when native listeners lag behind the compositor.
+    // Native input retains the conservative publication boundary. After it
+    // releases, reconcile mounted sizes under the kernel's logical anchor;
+    // otherwise expanded cold content overlaps the next absolute block.
     const postViewportIndex = paintedSafeIndex == null || domSafeIndex == null
       ? undefined
       : Math.max(paintedSafeIndex, domSafeIndex);
@@ -272,20 +291,14 @@ export default function TranscriptWindow({
       : Math.max(postViewportIndex, logicalAnchorIndex ?? postViewportIndex);
     const published = measurementLedger.publishStaged((key) => {
       const index = coldIndexByKey.get(key);
-      // Only a size after the whole painted viewport can publish without
-      // changing geometry the reader already sees. Earlier sizes remain
-      // staged until the reader passes them. Tail intent has no cold-history
-      // boundary and does not need invisible prefix refinement; its native
-      // geometry comes from the exact resident tail. This makes publication
-      // independent of platform wheel-event timing and prevents cold
-      // refinement from adding extra tail writes.
-      return kernel.intent === "reader"
-        && measurementBoundaryIndex != null
-        && index != null
-        && index >= measurementBoundaryIndex;
+      return kernel.intent === "reader" && index != null && (
+        publicationLeadPx === 0
+        || (measurementBoundaryIndex != null && index >= measurementBoundaryIndex)
+      );
     });
     if (published.length > 0) {
-      // Feed only the atomically published suffix into TanStack's keyed size
+      if (publicationLeadPx === 0) onGeometryWillChange();
+      // Feed only the atomically published batch into TanStack's keyed size
       // cache. `measure()` is intentionally forbidden here: it clears that
       // cache and rebuilds the entire prefix, allowing previously committed
       // off-screen measurements to reflow the current native viewport. These
@@ -297,7 +310,7 @@ export default function TranscriptWindow({
       }
       return;
     }
-  }, [coldIndexByKey, fullDOMFallback, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measurementLedger, nativeViewport.clientHeight, nativeViewport.scrollTop, onGeometryChange, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
+  }, [coldIndexByKey, fullDOMFallback, kernel.intent, kernel.userGestureActive, logicalAnchorIndex, measuredItems, measurementLedger, measurementRevision, nativeViewport.clientHeight, nativeViewport.scrollTop, onGeometryChange, onGeometryWillChange, projection.activeBlock?.measurementRevision, rangeRevision, scrollElement, split.resident, virtualItems, virtualizer]);
 
   // Safety disables range eviction, not the last trustworthy prefix. Reflowing
   // every cold estimate into natural DOM would move a held reader without any

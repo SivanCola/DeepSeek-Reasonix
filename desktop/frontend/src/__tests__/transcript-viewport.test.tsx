@@ -121,7 +121,7 @@ ok(
     && windowSource.includes("[kernel.generation, kernel.userGestureActive, measurementLedger]")
     && windowSource.includes("measurementLedger.publishStaged(")
     && windowSource.includes("virtualizer.resizeItem(index, change.size);"),
-  "reader measurements publish only beyond the prefix-and-DOM compositor frontier",
+  "native-owned reader measurements retain the prefix-and-DOM compositor frontier",
 );
 ok(!windowSource.includes("virtualizer.measure();"), "a safe suffix publish cannot invalidate and rebuild the protected prefix");
 ok(windowSource.includes("measurementLedger.commit(residentChanges)"), "resident blocks publish exact sizes before leaving ordinary DOM");

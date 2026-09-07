@@ -137,6 +137,7 @@ const benchWindowedHistory = (): HistoryMessage[] => {
       { role: "user", content: `windowed turn ${turn}: verify the stable block anchor.` },
       {
         role: "assistant",
+        reasoning: turn === 950 ? Array.from({ length: 40 }, (_, line) => `Reasoning paragraph ${line + 1}: verify expanded cold history geometry.`).join("\n\n") : undefined,
         content: turn % 25 === 0
           ? `## Windowed turn ${turn}\n\n中文 English emoji ✅\n\n| turn | status |\n| ---: | --- |\n| ${turn} | stable |\n\n\`\`\`ts\nconst turn = ${turn};\n\`\`\``
           : `Windowed result ${turn}: the block identity and native viewport geometry remain stable.`,

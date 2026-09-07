@@ -61,24 +61,29 @@ contracts when touching anything that can move the transcript viewport.
   position and native scroll state into independently committed compositor
   transactions.
 - **Anchor-safe measurement commit**: DOM measurements enter a block-keyed
-  staging ledger before they can change TanStack's prefix sizes. In reader
-  intent, the entire painted viewport is immutable: both the pre-measurement
+  staging ledger before they can change TanStack's prefix sizes. While native
+  input owns reader intent, the entire painted viewport is immutable: both the pre-measurement
   prefix range and mounted DOM must place a block after the viewport before it
   becomes a publish boundary. The logical Kernel anchor may only move that
   boundary later. This prevents stale listeners, underestimated ranges, or
   lazy blocks from reflowing any content the reader can see. TanStack's
   `scrollMargin` is measured in the native scroller's coordinate space,
   including Transcript padding and any prefix. Earlier and visible sizes remain
-  staged; only post-viewport overscan may publish. Tail intent does not refine
-  invisible cold history; its exact geometry belongs to resident DOM. During
+  staged during native ownership; only post-viewport overscan may publish.
+  After ownership ends, publish staged DOM sizes under a Kernel logical-anchor
+  restore transaction. Preserve the first reading anchor, while allowing later
+  blocks to move with actual content growth; freezing every old top would
+  overlap expanded content. Observe mounted absolute blocks as well as the
+  projection root, since local folds do not change the root extent. Tail intent
+  does not refine invisible cold history; its exact geometry belongs to resident DOM. During
   bounded wheel input, the lazy measurement ledger owns a publish boundary at
   least the accumulated absolute pixel-mode native steps plus one viewport ahead
   of the painted viewport in both prefix and DOM geometry. Keep that lead for
   the whole gesture lease. Touch, selection, keyboard jumps, nested handoff
   without a bounded delta, and native thumb drag are unbounded: every cold
   measurement remains staged until ownership ends.
-  Publish one immutable Reasonix snapshot, then transfer only that safe suffix
-  into TanStack's keyed size cache in the same browser task. Never call
+  Publish one immutable Reasonix snapshot, then transfer that exact published
+  batch into TanStack's keyed size cache in the same browser task. Never call
   TanStack `measure()` for a measurement publish: it clears the keyed cache and
   rebuilds the protected prefix. Never base correctness on an idle timeout,
   enable TanStack-owned ResizeObserver publication, or add platform-specific

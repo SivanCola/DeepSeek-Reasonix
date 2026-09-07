@@ -334,12 +334,16 @@ async function runIteration(page, transcript, label, iteration) {
     : "";
   assert(heldDrift != null && heldDrift <= 4,
     `${label} ${iteration + 1}/${iterations}: staged prefix geometry cannot move the held reader anchor${heldDiagnostic}`);
-  const finalTops = new Map(result.visibleBlocks.map((block) => [block.key, block.top]));
-  const visibleDrift = Math.max(0, ...before.visibleBlocks
-    .filter((block) => finalTops.has(block.key))
-    .map((block) => Math.abs(finalTops.get(block.key) - block.top)));
-  assert(visibleDrift <= 4,
-    `${label} ${iteration + 1}/${iterations}: staged measurements cannot reflow the painted viewport (${visibleDrift.toFixed(1)}px)`);
+  // Content growth must reposition subsequent blocks after release. Keeping
+  // every old top would preserve the anchor by allowing overlapping content.
+  const overlaps = await transcript.evaluate(element => {
+    const viewport = element.getBoundingClientRect();
+    const blocks = [...element.querySelectorAll("[data-transcript-block-key]")]
+      .map(block => block.getBoundingClientRect()).sort((a, b) => a.top - b.top);
+    return blocks.slice(0, -1).filter((block, index) => block.bottom > viewport.top
+      && block.top < viewport.bottom && block.bottom > blocks[index + 1].top + 1).length;
+  });
+  assert(overlaps === 0, `${label} ${iteration + 1}/${iterations}: released content growth leaves no overlapping visible blocks`);
   const drift = result.top == null ? null : Math.abs(result.top - before.top);
   const driftDiagnostic = settlementError || drift == null || drift > 4
     ? `; ${JSON.stringify({ settlementError, before, mutation, held, heldOriginal, result })}`
@@ -348,6 +352,41 @@ async function runIteration(page, transcript, label, iteration) {
     `${label} ${iteration + 1}/${iterations}: logical anchor drift is at most 4px (${drift == null ? "missing" : drift.toFixed(1)}px${driftDiagnostic})`);
   assert(result.intent === "reader", `${label} ${iteration + 1}/${iterations}: reader retains viewport ownership`);
   assert(result.mounted <= 40, `${label} ${iteration + 1}/${iterations}: mounted completed blocks remain bounded (${result.mounted})`);
+}
+
+async function runColdExpansion(page, transcript, label) {
+  const rail = await page.locator(".jump-scroll").boundingBox();
+  if (!rail) throw new Error("question navigator unavailable");
+  await page.mouse.click(rail.x + rail.width / 2, rail.y + rail.height * (949.5 / 1000));
+  const block = page.locator("[data-transcript-block-key]").filter({ hasText: "windowed turn 950:" });
+  await block.locator(".reasoning__head").click();
+  await waitForNativeViewportSettlement(page);
+  const before = await block.evaluate(element => ({ key: element.dataset.transcriptBlockKey,
+    top: element.getBoundingClientRect().top, height: element.getBoundingClientRect().height }));
+  await block.locator(".turn-collapse__reasoning-head").click();
+  await page.waitForFunction(({ key, height }) => {
+    const blocks = [...document.querySelectorAll("[data-transcript-block-key]")];
+    const element = blocks.find(block => block.getAttribute("data-transcript-block-key") === key);
+    const rect = element?.getBoundingClientRect();
+    const next = blocks[blocks.indexOf(element) + 1]?.getBoundingClientRect();
+    return rect && next && rect.height > height + 100 && Math.abs(next.top - rect.bottom) <= 1;
+  }, before);
+  const expanded = await block.evaluate(element => ({ top: element.getBoundingClientRect().top,
+    height: element.getBoundingClientRect().height }));
+  assert(Math.abs(expanded.top - before.top) <= 4, `${label}: cold reasoning expansion preserves its reading anchor`);
+  assert(expanded.height > before.height + 100, `${label}: real reasoning expansion repositions the next block without overlap`);
+  await block.locator(".turn-collapse__reasoning-head").click();
+  await page.waitForFunction(({ key, height }) => {
+    const element = [...document.querySelectorAll("[data-transcript-block-key]")]
+      .find(block => block.getAttribute("data-transcript-block-key") === key);
+    return element && Math.abs(element.getBoundingClientRect().height - height) <= 1;
+  }, before);
+  await waitForNativeViewportSettlement(page);
+  const gap = await block.evaluate(element => {
+    const next = element.nextElementSibling;
+    return next ? next.getBoundingClientRect().top - element.getBoundingClientRect().bottom : Infinity;
+  });
+  assert(Math.abs(gap) <= 1, `${label}: collapsing reasoning also removes the stale measured gap`);
 }
 
 async function runBrowser(browserType, label) {
@@ -362,6 +401,7 @@ async function runBrowser(browserType, label) {
     for (let iteration = 0; iteration < iterations; iteration += 1) {
       await runIteration(page, transcript, label, iteration);
     }
+    await runColdExpansion(page, transcript, label);
     await runSustainedWheelTraversal(page, transcript, label);
     await jumpToTail(page);
     const final = await anchorSnapshot(page);

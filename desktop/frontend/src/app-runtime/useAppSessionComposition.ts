@@ -472,7 +472,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
       navigateRemote: useCommittedCommand<RemoteNavigationCommand>((remote, options) => openRemoteProject(remote, options)) });
   const controlCommands = useSessionControlCommands({
     activeTabId,
-    sessionKey: activeSessionIdentity,
+    resources: controllerProfiles.map(resource => resource.target),
     operations: sessionOperations,
     showToast,
     clearWorkspaceConflict: () => setWorkspaceConflict(null),

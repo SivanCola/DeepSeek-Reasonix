@@ -22,6 +22,7 @@ ok(ledger.publicationLead(false) === Number.POSITIVE_INFINITY, "native ownership
 ledger.endGesture();
 ledger.observeWheel(80, 0, 596);
 ok(ledger.publicationLead(true) === 676, "gesture completion resets the prior publication lead");
+ok(ledger.publicationLead(false) === 676, "bounded native input protects publication before React commits its gesture snapshot");
 ledger.endGesture();
 ledger.observeWheel(18, 1, 596);
 ok(ledger.publicationLead(true) === Number.POSITIVE_INFINITY, "non-pixel wheel input remains unbounded");
@@ -64,6 +65,11 @@ ok(ledger.sizeFor("turn:before-anchor", 64) === 64, "a measurement before the re
 ok(ledger.sizeFor("turn:after-anchor", 64) === 220, "a measurement after the reader anchor becomes authoritative");
 ok(ledger.publishStaged().length === 1, "an explicit safe boundary publishes the deferred prefix measurement");
 ok(ledger.sizeFor("turn:before-anchor", 64) === 180, "the deferred prefix survives window recycling until publication");
+
+ledger.stage([{ key: "turn:before-anchor", size: 400 }]);
+ledger.stage([{ key: "turn:before-anchor", size: 180 }]);
+ok(ledger.publishStaged().length === 0, "expand then collapse before release discards the superseded staged size");
+ok(ledger.sizeFor("turn:before-anchor", 0) === 180, "collapsed content retains its original measured extent");
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
