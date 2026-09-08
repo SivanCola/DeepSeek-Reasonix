@@ -19,6 +19,7 @@ export type SessionNavigationCommandsInput = {
   showToast: (message: string, level: "error") => void;
   closeTransientOverlays: () => void;
   clearImDetail: () => void;
+  prepareBlankWorkspace: (workspaceRoot?: string) => void;
   navigation: Pick<ReturnType<typeof useDesktopNavigation>, "enqueueNavigation" | "enqueueNavigationWithIntent" | "openRemoteProject">;
   noteNavigationIntent: () => number;
   beginNavigationSurface: (seq: number) => void;
@@ -47,18 +48,23 @@ export function useSessionNavigationCommands(input: SessionNavigationCommandsInp
   const { activeTab, running, singleSurface, t, showToast, navigation, ports } = input;
 
   const blankSessionTarget = useCommittedCommand(() => {
-    const activeWorkspaceRoot = activeTab?.scope === "project" ? activeTab.workspaceRoot || "" : "";
-    const scope = activeWorkspaceRoot ? "project" : "global";
-    return { scope, workspaceRoot: activeWorkspaceRoot };
+    const workspaceRoot = activeTab?.workspaceRoot || "";
+    const scope = activeTab?.scope === "project" && workspaceRoot ? "project" : "global";
+    return { scope, workspaceRoot };
   });
 
-  const openBlankSession = useCommittedCommand((scope: string, workspaceRoot: string): Promise<void> =>
-    navigation.enqueueNavigation({ kind: "blank", scope, workspaceRoot: scope === "project" ? workspaceRoot : "" }));
+  const openBlankSession = useCommittedCommand((scope: string, workspaceRoot: string): Promise<void> => {
+    const targetRoot = scope === "project" ? workspaceRoot : "";
+    // UI preferences use the actual directory; global navigation uses an empty wire root.
+    input.prepareBlankWorkspace(workspaceRoot);
+    return navigation.enqueueNavigation({ kind: "blank", scope, workspaceRoot: targetRoot });
+  });
 
   const handleNewTab = useCommittedCommand(async () => {
     input.closeTransientOverlays();
     input.clearImDetail();
     if (activeTab?.remote) {
+      input.prepareBlankWorkspace();
       const outcome = await navigation.openRemoteProject(activeTab.remote, { newSession: true });
       if (outcome.status === "failed") showToast(outcome.error instanceof Error ? outcome.error.message : String(outcome.error), "error");
       return;

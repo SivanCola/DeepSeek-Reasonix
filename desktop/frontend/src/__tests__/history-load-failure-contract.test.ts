@@ -24,6 +24,6 @@ assert.match(
 );
 assert.match(store, /slice\.error/, "transcript store rejects slice.error as failure");
 assert.match(appView, /retrySessionHistory/, "App wires history retry control");
-assert.match(chatPane, /history-load-error/, "App surfaces hydrate error banner");
+assert.match(chatPane, /SessionRecoveryBanner/, "App surfaces persistent history recovery above the transcript");
 
 console.log("  PASS  history load failure contract");

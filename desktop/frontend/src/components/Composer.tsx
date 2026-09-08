@@ -576,6 +576,7 @@ export function Composer({
   selectedTextRequest,
   disabled,
   submitDisabled = false,
+  submitDisabledReason,
   readOnly = false,
   decisionPending = false,
   ready,
@@ -660,6 +661,7 @@ export function Composer({
   selectedTextRequest?: SelectedTextInsertRequest | null;
   disabled?: boolean;
   submitDisabled?: boolean;
+  submitDisabledReason?: string;
   readOnly?: boolean;
   decisionPending?: boolean;
   // ready/cwd/running/workspaceScopeKey re-trigger the command fetch: Commands() returns only
@@ -3774,6 +3776,7 @@ export function Composer({
   const submitEmpty = !text.trim() && attachments.length === 0 && workspaceRefs.length === 0 &&
     !invocations.some((invocation) => invocation.command.kind === "skill");
   const submitBlocked = submitting || pendingPaste > 0 || (submitEmpty && !(goalModeOn && !activeGoal)) || disabled || (!running && submitDisabled) || readOnly;
+  const submitUnavailableHint = !running && submitDisabled ? submitDisabledReason : undefined;
   const submitTooltip = running
     ? t("composer.queueGuidance", { combo: sendComboLabel })
     : t("composer.send", { combo: sendComboLabel });
@@ -4569,7 +4572,7 @@ export function Composer({
                   options={effortLevels.map(level => ({ value: level, label: effortLabel(level) }))} />
               </div>}
             </div>
-            <div className="composer-toolbar-send">
+            <div className={`composer-toolbar-send${submitUnavailableHint ? " composer-toolbar-send--unavailable" : ""}`}>
               {running && (
                 <Tooltip label={t("composer.stop")}>
                   <button
@@ -4583,7 +4586,7 @@ export function Composer({
                   </button>
                 </Tooltip>
               )}
-              <Tooltip label={submitTooltip}>
+              <Tooltip label={submitUnavailableHint || submitTooltip}>
                 <button
                   className={`composer__btn composer__btn--send${running ? " composer__btn--steer" : ""}`}
                   onClick={submit}
@@ -4593,6 +4596,7 @@ export function Composer({
                   {running ? <CornerDownRight size={16} /> : <ArrowUp size={16} />}
                 </button>
               </Tooltip>
+              {submitUnavailableHint && <span className="composer-toolbar-send__hint">{submitUnavailableHint}</span>}
             </div>
           </div>
         </div>

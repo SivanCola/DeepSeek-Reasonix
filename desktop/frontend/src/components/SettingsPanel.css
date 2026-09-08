@@ -21,6 +21,10 @@
 }
 
 .settings-center__nav {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   padding: 14px 12px 18px;
 }
 
@@ -56,9 +60,7 @@
 
 .settings-center__search {
   --wails-draggable: no-drag;
-  position: sticky;
-  top: 0;
-  z-index: var(--z-local-raised);
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -124,10 +126,16 @@
 }
 
 .settings-center__navgroups {
+  /* Keep scrolling navigation below the search field, never behind it. */
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   gap: 14px;
 }
 
 .settings-center__navgroup {
+  flex-shrink: 0;
   gap: 4px;
 }
 
@@ -531,7 +539,9 @@
   }
 
   .settings-center__navgroups {
+    flex: 0 0 auto;
     flex-direction: row;
+    overflow: visible;
     gap: 4px;
     width: max-content;
     min-width: 100%;
@@ -781,10 +791,9 @@
 :root .settings-center .settings-page[data-layout] .settings-toolbar :is(.btn, .chip) { flex-shrink: 0; }
 :root .settings-center .settings-page[data-layout] .settings-icon-button { width: 36px; height: 36px; padding: 0; display: inline-flex; justify-content: center; align-items: center; }
 :root .settings-center .settings-page[data-layout] .settings-save-bar {
-  position: sticky;
-  bottom: -20px;
-  z-index: var(--z-local-raised);
+  /* Keep actions after the form so they cannot cover editable content. */
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 0;

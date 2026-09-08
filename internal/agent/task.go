@@ -442,7 +442,7 @@ func (t *TaskTool) WithCapabilityRuntime(rt *MCPCapabilityRuntime) *TaskTool {
 	return t
 }
 
-func (t *TaskTool) Name() string { return "task" }
+func (t *TaskTool) Name() string { return tool.HostTask }
 
 func (t *TaskTool) Description() string {
 	return "Spawn a sub-agent for a focused sub-task. Optional profile selects a runAs=subagent Skill whose body becomes the full system prompt (no implicit concise default). Optional write_paths declare non-overlapping write targets so background writers may run in parallel; omitting write_paths on a writer claims the whole workspace and serializes writers. The sub-agent runs in its own session with a filtered tool list (defaults to every parent tool, then applies the subagent boundary: " + subagentToolBoundarySummary + "). Only its final answer is returned."
@@ -520,7 +520,7 @@ func NewReadOnlyTaskTool(task *TaskTool) *ReadOnlyTaskTool {
 	return &ReadOnlyTaskTool{task: task}
 }
 
-func (*ReadOnlyTaskTool) Name() string { return "read_only_task" }
+func (*ReadOnlyTaskTool) Name() string { return tool.HostReadOnlyTask }
 
 func (*ReadOnlyTaskTool) Description() string {
 	return "Spawn a read-only research sub-agent for a focused investigation. The sub-agent runs in an isolated, ephemeral session with read-only tools only; bash is wrapped to allow only permission-classified foreground read-only commands. It cannot write files, install capabilities, mutate memory, run background jobs, continue/fork transcripts, or delegate to writer-capable agents. Read-only nested delegation may be available until max_subagent_depth is reached. Only its final answer is returned."
@@ -1221,24 +1221,12 @@ func (t *restrictedCapabilityProxy) Execute(ctx context.Context, args json.RawMe
 
 // validMCPServerCapabilityID accepts mcp-server:<non-empty-name> only.
 func validMCPServerCapabilityID(id string) (server string, ok bool) {
-	if !strings.HasPrefix(id, "mcp-server:") {
-		return "", false
-	}
-	server = strings.TrimSpace(strings.TrimPrefix(id, "mcp-server:"))
-	// Reject empty and path-like fragments that are not bare server names.
-	return server, server != "" && !strings.Contains(server, "/")
+	return tool.ParseMCPServerReference(id)
 }
 
 // validMCPToolCapabilityID accepts mcp-tool:<server>/<tool> with both parts non-empty.
 func validMCPToolCapabilityID(id string) (server, raw string, ok bool) {
-	if !strings.HasPrefix(id, "mcp-tool:") {
-		return "", "", false
-	}
-	rest := strings.TrimPrefix(id, "mcp-tool:")
-	server, raw, cut := strings.Cut(rest, "/")
-	server = strings.TrimSpace(server)
-	raw = strings.TrimSpace(raw)
-	return server, raw, cut && server != "" && raw != ""
+	return tool.ParseMCPToolReference(id)
 }
 
 func serversFromCapabilityAllowlist(allowed map[string]bool) map[string]bool {

@@ -12,6 +12,12 @@ export function createMockRemoteProjects(tabs: MockRemoteTabCatalog): {
   bindings: RemoteProjectBindings;
   appendToTree: (tree: ProjectNode[]) => ProjectNode[];
 } {
+  // Browser-only fault fixtures exercise the real remote hook and recovery commands.
+  const recoveryScenario = typeof window !== "undefined" && !window.runtime
+    ? new URLSearchParams(window.location.search).get("session-recovery") : null;
+  let recoveryInjected = false;
+  let disconnectedTab = "";
+  let historyFailures = 0;
   let projects: RemoteProjectView[] = [{ hostId: "demo", workspace: "~/app" }];
   const sessions: Record<string, RemoteSessionView[]> = {
     "demo\u0000~/app": [
@@ -41,6 +47,11 @@ export function createMockRemoteProjects(tabs: MockRemoteTabCatalog): {
     },
     async OpenRemoteProjectTab(hostId, workspace, opts) {
       const id = tabIdFor(hostId, workspace);
+      if (!recoveryInjected && (recoveryScenario === "connection" || recoveryScenario === "history")) {
+        recoveryInjected = true;
+        if (recoveryScenario === "connection") disconnectedTab = id;
+        else historyFailures = 3;
+      } else if (disconnectedTab === id) disconnectedTab = "";
       let tab = tabs.get(id);
       if (!tab) {
         const workspaceName = workspace.split("/").filter(Boolean).pop() || workspace;
@@ -120,6 +131,11 @@ export function createMockRemoteProjects(tabs: MockRemoteTabCatalog): {
     async RewindRemoteTab() {},
     async SetRemoteTabGoal() {},
     async RemoteTabSnapshot(tabId) {
+      if (disconnectedTab === tabId) {
+        __emitMockRemoteTab(tabId, "state", { state: "serve_down", error: "Mock remote tunnel closed" });
+        throw new Error("Mock remote tunnel closed");
+      }
+      if (historyFailures > 0) { historyFailures--; throw new Error("Mock remote history unavailable"); }
       return { history: [], status: status(tabId) };
     },
     async RemoteTabStatus(tabId) { return status(tabId); },

@@ -20,6 +20,44 @@ async function settle(page) {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
+async function verifySaveBars(page, context) {
+  for (const [tab, fields] of [["Hooks", ".hooks-json-panel__textarea"], ["Network", ".settings-page--network input"]]) {
+    await page.getByRole("navigation", { name: "Settings", exact: true }).getByRole("button", { name: tab, exact: true }).click();
+    if (tab === "Network") await page.getByRole("button", { name: "custom", exact: true }).click();
+    await page.locator(fields).first().waitFor();
+    for (const zoom of [1, 1.5]) {
+      await page.evaluate(zoom => { document.documentElement.style.zoom = String(zoom); }, zoom);
+      for (const [width, height] of [[1100, 700], [900, 600], [400, 600]]) {
+        await page.setViewportSize({ width, height });
+        for (const fraction of [0, 0.5, 1]) {
+          await page.locator(".settings-center__content").evaluate((el, fraction) => {
+            el.scrollTop = (el.scrollHeight - el.clientHeight) * fraction;
+          }, fraction);
+          await settle(page);
+          const overlap = await page.evaluate(fields => {
+            const bar = document.querySelector(".settings-save-bar").getBoundingClientRect();
+            return [...document.querySelectorAll(fields)].some(el => {
+              const field = el.getBoundingClientRect();
+              return field.top < bar.bottom && field.bottom > bar.top;
+            });
+          }, fields);
+          assert.equal(overlap, false, `${context}/${tab}/${width}x${height}/${zoom}x/${fraction}: save bar never covers form fields`);
+        }
+        const cancel = page.locator(".settings-save-bar").getByRole("button", { name: "Cancel", exact: true });
+        await cancel.focus();
+        const reachable = await cancel.evaluate(el => {
+          const r = el.getBoundingClientRect();
+          return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+        });
+        assert.ok(reachable, `${context}/${tab}/${width}x${height}/${zoom}x: save bar remains reachable by keyboard`);
+      }
+    }
+    await page.evaluate(() => { document.documentElement.style.zoom = "1"; });
+    await page.setViewportSize({ width: 1600, height: 1100 });
+  }
+  console.log(`PASS ${context} Hooks and Network save bars`);
+}
+
 function geometry() {
   const rect = el => {
     const r = el.getBoundingClientRect();
@@ -28,7 +66,17 @@ function geometry() {
   const group = document.querySelector(".model-preferences");
   const head = group?.querySelector(".model-assignment-head");
   const general = document.querySelector(".settings-page--general");
+  const nav = document.querySelector(".settings-center__nav");
+  const search = nav.querySelector(".settings-center__search");
+  const navgroups = nav.querySelector(".settings-center__navgroups");
   return {
+    navigation: {
+      searchVisible: getComputedStyle(search).display !== "none",
+      search: rect(search),
+      list: rect(navgroups),
+      listOverflowY: getComputedStyle(navgroups).overflowY,
+      outerScroll: nav.scrollTop,
+    },
     pageWidth: general?.clientWidth,
     generalContainer: general && getComputedStyle(general).containerName,
     soundColumns: general && [...general.querySelectorAll(".settings-sound-row")].map(row => getComputedStyle(row).gridTemplateColumns.split(" ").length),
@@ -47,13 +95,15 @@ function geometry() {
 }
 
 try {
-  for (const engineName of (process.env.REASONIX_SETTINGS_BROWSERS ?? "chromium").split(",")) {
+  const targets = (process.env.REASONIX_SETTINGS_BROWSERS ?? "chromium").split(",")
+    .flatMap(engine => ["windows", "darwin", "linux"].map(platform => [engine, platform]));
+  for (const [engineName, platform] of targets) {
     const browser = await engines[engineName].launch({ headless: true });
     try {
       const page = await browser.newPage({ locale: "en-US", viewport: { width: 1600, height: 1100 } });
       const errors = [];
       page.on("pageerror", error => errors.push(error.message));
-      await page.goto(`http://127.0.0.1:${port}/?mock=deepseek_upgrade&bench=1`, { waitUntil: "domcontentloaded" });
+      await page.goto(`http://127.0.0.1:${port}/?mock=deepseek_upgrade&bench=1&platform=${platform}`, { waitUntil: "domcontentloaded" });
       await page.locator("textarea.composer__input:not([aria-hidden=true])").waitFor();
       for (const layout of [["Creation", "app--creation"], ["Workbench", "app--workbench"]]) {
         await page.setViewportSize({ width: 1600, height: 1100 });
@@ -73,8 +123,9 @@ try {
           }
           assert.equal(g.statusColumns, 1, `status bar editor owns one full-width column at ${width}px`);
         }
-        console.log(`PASS ${engineName}/${layout[0]} general settings`);
+        console.log(`PASS ${engineName}/${platform}/${layout[0]} general settings`);
         await page.setViewportSize({ width: 1600, height: 1100 });
+        await verifySaveBars(page, `${engineName}/${platform}/${layout[0]}`);
         await page.getByRole("button", { name: "Model preferences", exact: true }).click();
         await page.locator(".model-assignment-row").first().waitFor();
         for (const theme of themes) {
@@ -87,7 +138,12 @@ try {
               await page.setViewportSize({ width, height: 1100 });
               await settle(page);
               const g = await page.evaluate(geometry);
-              const context = `${engineName}/${layout[0]}/${theme}/${width}px/${zoom}x`;
+              const context = `${engineName}/${platform}/${layout[0]}/${theme}/${width}px/${zoom}x`;
+              if (g.navigation.searchVisible) {
+                assert.ok(g.navigation.list.top >= g.navigation.search.bottom, `${context}: navigation viewport stays below search`);
+                assert.equal(g.navigation.listOverflowY, "auto", `${context}: navigation list owns vertical scrolling`);
+                assert.equal(g.navigation.outerScroll, 0, `${context}: search container never scrolls with navigation`);
+              }
               assert.equal(g.rows.length, assignmentRows, `${context}: all assignments remain visible`);
               const columns = g.width > 780 ? 3 : g.width > 440 ? 2 : 1;
               assert.equal(g.headVisible, columns === 3, `${context}: header follows content width`);
@@ -110,15 +166,27 @@ try {
         }
         await page.evaluate(() => { document.documentElement.style.zoom = "1"; });
         await page.setViewportSize({ width: 1600, height: 1100 });
+        const search = page.getByRole("textbox", { name: "Search settings", exact: true });
+        const searchBefore = await search.boundingBox();
+        await page.locator(".settings-center__navitem").last().scrollIntoViewIfNeeded();
+        await settle(page);
+        const scrolled = await page.evaluate(geometry);
+        assert.ok(scrolled.navigation.list.top >= scrolled.navigation.search.bottom, "scrolled navigation stays below search");
+        assert.equal(scrolled.navigation.outerScroll, 0, "revealing the last tab does not scroll search");
+        assert.deepEqual(await search.boundingBox(), searchBefore, "search stays fixed when revealing the last tab");
+        await search.fill("no-such-setting-regression");
+        await page.locator(".settings-center__navempty").waitFor();
+        await page.getByRole("button", { name: "Clear settings search", exact: true }).click();
+        assert.equal(await page.locator(".settings-center__navitem").count(), 20, "clearing search restores every navigation item");
         const picker = page.getByRole("button", { name: "Default model", exact: true });
         await picker.click();
         await page.getByRole("listbox", { name: "Default model", exact: true }).waitFor();
         await page.keyboard.press("Escape");
         await page.getByRole("listbox", { name: "Default model", exact: true }).waitFor({ state: "detached" });
-        console.log(`PASS ${engineName}/${layout[0]} assignments and picker`);
+        console.log(`PASS ${engineName}/${platform}/${layout[0]} navigation, assignments and picker`);
         await page.locator(".settings-screen .management-screen__back").click();
       }
-      assert.deepEqual(errors, [], `${engineName}: no runtime errors`);
+      assert.deepEqual(errors, [], `${engineName}/${platform}: no runtime errors`);
     } finally { await browser.close(); }
   }
   console.log(`PASS settings layout: ${cases} real-page theme/layout/width/zoom cases plus general settings and picker interaction`);

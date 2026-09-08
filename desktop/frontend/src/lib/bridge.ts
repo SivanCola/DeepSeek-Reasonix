@@ -2430,9 +2430,9 @@ function makeMockApp(): AppBindings {
     {
       id: "tab_global",
       scope: "global",
-      workspaceRoot: "",
+      workspaceRoot: globalWorkspaceRoot,
       workspaceName: "Global",
-      workspacePath: "~/projects/joyquant-db",
+      workspacePath: globalWorkspaceRoot,
       topicId: "topic_global",
       topicTitle: "Global",
       label: "DeepSeek-R1",
@@ -2443,7 +2443,7 @@ function makeMockApp(): AppBindings {
       toolApprovalMode: "ask",
       tokenMode: "full",
       active: false,
-      cwd: "~/projects/joyquant-db",
+      cwd: globalWorkspaceRoot,
     },
   ];
   if (sandboxEscapeMock) {
@@ -5297,9 +5297,9 @@ function makeMockApp(): AppBindings {
       const tab: TabMeta = {
         id: "tab_" + Date.now(),
         scope: "global",
-        workspaceRoot: "",
+        workspaceRoot: globalWorkspaceRoot,
         workspaceName: "Global",
-        workspacePath: cwd,
+        workspacePath: globalWorkspaceRoot,
         topicId: _topicID,
         topicTitle: topicLabel(_topicID, "Global"),
         sessionPath: `/mock/sessions/${_topicID}.jsonl`,
@@ -5311,7 +5311,7 @@ function makeMockApp(): AppBindings {
         toolApprovalMode: defaultToolApprovalMode,
         tokenMode: "full",
         active: true,
-        cwd: "",
+        cwd: globalWorkspaceRoot,
       };
       mockTabs = [...mockTabs.map((item) => ({ ...item, active: false })), tab];
       return { ...tab };

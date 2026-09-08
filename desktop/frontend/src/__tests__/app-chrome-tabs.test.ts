@@ -478,7 +478,8 @@ const navigationBlock = appSource.match(/const runNavigationRequest = useCallbac
 
 ok(
   /return navigation\.enqueueNavigation\(\{ kind: "topic", scope, workspaceRoot, topicId, sessionPath \}\);/.test(sessionNavigationSource) &&
-    /enqueueNavigation\(\{ kind: "blank", scope, workspaceRoot: scope === "project" \? workspaceRoot : "" \}\)/.test(sessionNavigationSource) &&
+    /const targetRoot = scope === "project" \? workspaceRoot : ""/.test(sessionNavigationSource) &&
+    /enqueueNavigation\(\{ kind: "blank", scope, workspaceRoot: targetRoot \}\)/.test(sessionNavigationSource) &&
     /return navigation\.enqueueNavigation\(\{ kind: "sidebar-im", connection \}\);/.test(sessionNavigationSource) &&
     /return navigation\.enqueueNavigation\(\{ kind: "resume-session", session \}\);/.test(sessionNavigationSource),
   "topic, blank, IM, and history navigation all use the shared coalescing path",

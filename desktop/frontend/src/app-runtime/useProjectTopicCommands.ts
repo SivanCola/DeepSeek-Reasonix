@@ -51,7 +51,7 @@ export function useProjectTopicCommands(input: Input) {
     await rename(draft.target, draft.title);
   });
   const setTopicTitleDraft = useCommittedCommand((title: string) => setDraft(current => current ? { ...current, title } : current));
-  const onCreateTopic = useCommittedCommand((scope: string, workspace: string) => input.navigation.openBlank(scope, scope === "project" ? workspace : ""));
+  const onCreateTopic = useCommittedCommand((scope: string, workspace: string) => input.navigation.openBlank(scope, workspace));
   const onCreateIsolatedWorktree = useCommittedCommand((workspaceRoot: string) => input.navigation.enqueue({ kind: "isolated-worktree", workspaceRoot }));
   const onAddProject = useCommittedCommand(async (path?: string) => { await input.navigation.switchFolder(path); });
   return {

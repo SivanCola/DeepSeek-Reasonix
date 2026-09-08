@@ -2714,10 +2714,8 @@ func skillMCPBindings(sk skill.Skill, reg *tool.Registry, specs []plugin.Spec, c
 		out = make([]tool.MCPBinding, 0, len(bindings))
 		for _, binding := range bindings {
 			liveServers[binding.Server] = true
-			if binding.Package == sk.Plugin {
-				out = append(out, binding)
-			}
 		}
+		out = append(out, skill.ToolBindingsForSkill(sk, bindings)...)
 	}
 	// A valid cached schema also supplies stable bindings for an on-demand
 	// package server before it is connected. The skill can then route through

@@ -57,10 +57,11 @@ try {
   assert.equal(commands.onCreateTopic, first.onCreateTopic);
   assert.equal(commands.onCreateIsolatedWorktree, first.onCreateIsolatedWorktree);
   assert.equal(commands.onAddProject, first.onAddProject);
-  await commands.onCreateTopic("global", "ignored");
+  await commands.onCreateTopic("global", "/fixture/global-workspace");
   await commands.onCreateIsolatedWorktree("worktree");
   await commands.onAddProject("project");
-  assert.deepEqual(effects, ["blank:global:", "worktree:worktree", "project:project"]);
+  assert.deepEqual(effects, ["blank:global:/fixture/global-workspace", "worktree:worktree", "project:project"],
+    "global creation retains the actual directory for workspace preferences until navigation serialization");
 
   effects.length = 0;
   navigationGate = deferred<void>();

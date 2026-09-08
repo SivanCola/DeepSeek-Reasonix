@@ -1,7 +1,6 @@
-import React from "react";
+import React, { act } from "react";
 import { RemoteNavigationHarness } from "./helpers/RemoteNavigationHarness";
 import { JSDOM } from "jsdom";
-import { act } from "react";
 
 import type { AppBindings } from "../lib/bridge";
 import type { TabMeta } from "../lib/types";
@@ -58,8 +57,6 @@ Object.defineProperty(elementProto, "clientWidth", { configurable: true, get: ()
 globalThis.requestAnimationFrame = dom.window.requestAnimationFrame?.bind(dom.window) ?? ((cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 16) as unknown as number);
 globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame?.bind(dom.window) ?? ((handle: number) => clearTimeout(handle));
 Object.defineProperty(elementProto, "detachEvent", { configurable: true, value: () => {} });
-
-globalThis.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
 
 const tape: string[] = [];
 let failApproval = false;
@@ -448,8 +445,11 @@ await act(async () => {
   await flush();
 });
 {
-  const warning = document.querySelector(".remote-surface--warning");
+  const warning = document.querySelector(".session-recovery[role=alert]");
   ok(Boolean(warning), "serve_down renders the warning state");
+  ok(!warning?.closest("main"), "recovery controls are outside the collapsible transcript main");
+  ok(Boolean(document.querySelector("main .transcript")), "disconnect retains the already loaded transcript");
+  await act(async () => { warning?.querySelector<HTMLButtonElement>("button[aria-controls]")?.click(); });
   ok(warning?.textContent?.includes("tunnel closed") === true, "serve error detail renders");
   await act(async () => {
     warning?.querySelector<HTMLButtonElement>("button")?.click();
@@ -469,7 +469,7 @@ await act(async () => {
 await act(async () => { __emitMockRemoteTab("tab-remote-1", "state", { state: "disconnected" }); await flush(); });
 {
   ok(!document.querySelector(".remote-surface--disconnected"), "live disconnected events do not render the placeholder");
-  ok(Boolean(document.querySelector(".remote-surface--waiting")), "live disconnected events show connecting instead");
+  ok(Boolean(document.querySelector(".session-recovery[role=status]")), "live disconnected events show connecting instead");
   ok(tape.includes("setActive:tab-remote-1"), "live disconnected events trigger backend revival");
 }
 

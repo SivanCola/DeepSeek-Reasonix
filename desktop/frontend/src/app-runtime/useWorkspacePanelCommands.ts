@@ -39,6 +39,15 @@ export function useWorkspacePanelCommands(input: Input) {
     layout.setWorkspacePanelOpen(false);
     saveWorkspacePanelOpen(false, input.workspaceRoot);
   });
+  const prepareBlankWorkspace = useCommittedCommand((workspaceRoot = input.workspaceRoot) => {
+    input.closeOverlays();
+    input.clearLiveWidth(null);
+    const layout = useLayoutStore.getState();
+    layout.setWorkspacePanelMaximized(false);
+    layout.setWorkspacePanelOpen(false);
+    // Seed the destination preference before project restoration can run.
+    saveWorkspacePanelOpen(false, workspaceRoot);
+  });
   const toggleWorkspacePanel = useCommittedCommand(() => {
     if (input.visible) { closeWorkspacePanel(); return; }
     const current = useLayoutStore.getState().rightDockMode;
@@ -81,5 +90,5 @@ export function useWorkspacePanelCommands(input: Input) {
   useEffect(() => {
     if (hostCount === 0 && mode === "remote") useLayoutStore.getState().setRightDockMode("files");
   }, [hostCount, mode]);
-  return { openRightDockMode, closeWorkspacePanel, toggleWorkspacePanel, toggleWorkspaceMaximized, handleWorkspacePreviewModeChange, openRemoteDock, restoreWorkspaceDockWidths };
+  return { openRightDockMode, closeWorkspacePanel, prepareBlankWorkspace, toggleWorkspacePanel, toggleWorkspaceMaximized, handleWorkspacePreviewModeChange, openRemoteDock, restoreWorkspaceDockWidths };
 }

@@ -3,6 +3,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { useWorkspacePanelCommands } from "../app-runtime/useWorkspacePanelCommands";
+import { useSessionNavigationCommands, type SessionNavigationCommandsInput } from "../app-runtime/useSessionNavigationCommands";
 import { loadWorkspacePanelOpen, saveWorkspacePanelOpen, useLayoutStore } from "../store/layout";
 import { useRemoteStore } from "../store/remote";
 import type { RemoteHostView } from "../lib/types";
@@ -16,10 +17,18 @@ let closes = 0; let widthClears = 0;
 const closeOverlays = () => { closes++; };
 const clearLiveWidth = () => { widthClears++; };
 let restoredWidth = 0;
+const globalRoot = "/fixture/global-workspace";
+let navigation!: ReturnType<typeof useSessionNavigationCommands>;
+let navigationRequest: unknown;
 const setTreeWidth = (width: number) => { restoredWidth = width; };
 function Probe({ workspace, creation, visible }: { workspace: string; creation: boolean; visible: boolean }) {
   commands = useWorkspacePanelCommands({ workspaceRoot: workspace, creation, visible, closeOverlays, clearLiveWidth,
     availableWidth: 800, clampTreeWidth: (width) => width, setTreeWidth });
+  navigation = useSessionNavigationCommands({
+    activeTab: { id: "fixture", scope: workspace === globalRoot ? "global" : "project", workspaceRoot: workspace },
+    closeTransientOverlays: closeOverlays, clearImDetail: () => {}, prepareBlankWorkspace: commands.prepareBlankWorkspace,
+    navigation: { enqueueNavigation: async request => { navigationRequest = request; } },
+  } as SessionNavigationCommandsInput);
   return null;
 }
 const paint = (workspace: string, creation = false, visible = false) => act(async () => root.render(<Probe workspace={workspace} creation={creation} visible={visible} />));
@@ -61,6 +70,39 @@ try {
   assert.equal(restoredWidth, 640, "dock width restore clamps through the owner and writes the layout store port");
   await act(async () => useRemoteStore.getState().setHosts([]));
   assert.equal(useLayoutStore.getState().rightDockMode, "files");
+  await paint("A");
+  await act(async () => commands.openRightDockMode("changed"));
+  saveWorkspacePanelOpen(true, "B");
+  await act(async () => {
+    commands.toggleWorkspaceMaximized();
+    commands.prepareBlankWorkspace("B");
+  });
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, false, "new-session intent collapses the dock immediately");
+  assert.equal(useLayoutStore.getState().workspacePanelMaximized, false);
+  assert.equal(loadWorkspacePanelOpen("A"), true, "another project's preference is untouched");
+  await paint("B");
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, false, "destination restoration cannot reopen the blank-session dock");
+  await act(async () => commands.openRightDockMode("files"));
+  await paint("B");
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, true, "manual open stays open on subsequent renders");
+  await paint("A");
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, true, "ordinary project navigation retains restoration behavior");
+  saveWorkspacePanelOpen(true, "");
+  saveWorkspacePanelOpen(true, globalRoot);
+  await act(async () => navigation.openBlankSession("global", globalRoot));
+  assert.deepEqual(navigationRequest, { kind: "blank", scope: "global", workspaceRoot: "" }, "global bridge requests retain the empty root contract");
+  assert.equal(loadWorkspacePanelOpen(""), true, "global creation does not overwrite the legacy fallback for other projects");
+  await paint(globalRoot);
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, false, "global destination restoration cannot reopen the new-session dock");
+  await act(async () => commands.openRightDockMode("files"));
+  await paint("A");
+  await paint(globalRoot);
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, true, "manual global preference still restores on ordinary navigation");
+  await act(async () => navigation.handleNewTab());
+  assert.equal(loadWorkspacePanelOpen(globalRoot), false, "new-session toolbar uses the active global directory");
+  assert.deepEqual(navigationRequest, { kind: "blank", scope: "global", workspaceRoot: "" });
+  await paint("A");
+  assert.equal(useLayoutStore.getState().workspacePanelOpen, true, "global creation preserves the source project's preference");
   await act(async () => root.unmount());
   const before = { closes, widthClears, layout: useLayoutStore.getState() };
   first.openRightDockMode("changed"); first.toggleWorkspaceMaximized(); first.closeWorkspacePanel();

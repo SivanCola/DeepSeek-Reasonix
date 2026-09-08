@@ -708,7 +708,6 @@ export function ProjectTree({
     setMenuPoint(contextMenuPointFromEvent(event));
     setWorkbenchHeaderMenu((value) => (value === menu ? null : menu));
   };
-
   const handleCreateTopic = async (scope: string, workspaceRoot: string, key: string) => {
     if (creatingRef.current) return;
     creatingRef.current = true;
@@ -733,10 +732,11 @@ export function ProjectTree({
         await onTopicsChanged?.();
         return;
       }
-      const topic = await app.CreateTopic(scope, workspaceRoot, "");
+      const targetRoot = scope === "project" ? workspaceRoot : "";
+      const topic = await app.CreateTopic(scope, targetRoot, "");
       await refresh();
       await onTopicsChanged?.();
-      await onOpenTopic(scope, workspaceRoot, topic.id);
+      await onOpenTopic(scope, targetRoot, topic.id);
     } catch {
       /* ignore */
     } finally {
@@ -1489,7 +1489,7 @@ export function ProjectTree({
         icon: <Plus size={13} />,
         label: t("projectTree.newTopic"),
         onSelect: () => {
-          void handleCreateTopic(scope, projectRoot, key);
+          void handleCreateTopic(scope, projectPath, key);
         },
       },
       ...isolatedWorkspaceItems,
@@ -1774,7 +1774,7 @@ export function ProjectTree({
               disabled={creatingProject !== null}
               onClick={(e) => {
                 e.stopPropagation();
-                void handleCreateTopic(scope, projectRoot, key);
+                void handleCreateTopic(scope, projectPath, key);
               }}
             >
               {compactTopics ? <Plus size={15} aria-hidden="true" /> : <Plus size={12} aria-hidden="true" />}

@@ -1,6 +1,7 @@
 import type { State } from "../lib/useController";
 import type { RemoteSessionApi } from "../lib/useRemoteSession";
 import type { BackgroundRuntimeView, TabMeta } from "../lib/types";
+import { projectSessionAvailability } from "../lib/sessionAvailability";
 
 type Input = {
   local: State;
@@ -18,14 +19,14 @@ export function projectNavigationSurfaceTarget(input: {
   remote?: Pick<RemoteSessionApi, "state" | "hydrated" | "error" | "surfaceGeneration">;
 }) {
   const { remote, local } = input;
-  const terminal = remote && ["error", "serve_down", "disconnected"].includes(remote.state);
+  const availability = projectSessionAvailability(input);
   return {
     activeTabId: input.activeTabId,
     sessionKey: remote ? JSON.stringify([input.sessionKey, remote.surfaceGeneration]) : input.sessionKey,
-    ready: remote ? remote.state === "ready" && remote.hydrated : local.meta?.ready === true,
+    ready: availability.kind === "ready",
     backendActivationPending: remote ? false : Boolean(local.backendActivationPending),
-    hydrating: remote ? !remote.hydrated && !terminal : Boolean(local.hydrating),
-    hydrateError: remote ? terminal ? remote.error || remote.state : undefined : local.hydrateError,
+    hydrating: availability.kind === "loading",
+    hydrateError: availability.kind === "error" ? availability.detail || availability.source : undefined,
     startupError: remote ? undefined : local.meta?.startupErr,
   };
 }

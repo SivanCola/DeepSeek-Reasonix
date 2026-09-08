@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo } from "react";
 import { useCommittedCommand } from "../lib/useCommittedCommand";
 import type { useNavigationSurface } from "../lib/useNavigationSurface";
 import type { HistoryLoadTrigger, Item } from "../lib/useController";
+import type { SessionAvailability } from "../lib/sessionAvailability";
 
 type NavigationSurfaceApi = ReturnType<typeof useNavigationSurface>;
 
@@ -20,7 +21,9 @@ export type TranscriptSurfaceProjectionInput = {
   preserved: NavigationSurfaceApi["preserved"];
   singleSurface: boolean;
   controllerReady: boolean;
-  creationLayout: boolean;
+  heroLayout: boolean;
+  availability: SessionAvailability;
+  sessionActivity: boolean;
   imDetailActive: boolean;
   sessionHasContent: boolean;
   commitRendered: NavigationSurfaceApi["commitRendered"];
@@ -34,7 +37,7 @@ export type TranscriptSurfaceProjectionInput = {
 
 /**
  * Owns the transcript surface projection: hydration placeholders, the
- * creation empty hero gate, the committed-surface commit effect (only
+ * empty-session hero gate, the committed-surface commit effect (only
  * committed presentation may become a retained source), the visible
  * source-retained surface selection, surface paint receipts, the latest
  * consumed guidance entry and the transcript prompt/load-older commands.
@@ -42,11 +45,13 @@ export type TranscriptSurfaceProjectionInput = {
 export function useTranscriptSurfaceProjection(input: TranscriptSurfaceProjectionInput) {
   const { activeTabId, transitioning, ports } = input;
   const transcriptHydrating = input.hydrating && !input.hydrateHistoryLoaded;
-  // Creation hero only after history hydration settles on a truly empty session.
+  // Show the hero only after history hydration settles on a truly empty session.
   // Avoid flash while switching tabs: items may be empty while placeholders show.
   // Exclude IM/Bot detail: hero CSS collapses .main, which also hosts that panel.
-  const creationEmptyHero =
-    input.creationLayout &&
+  const emptyHero =
+    input.heroLayout &&
+    input.availability.kind === "ready" &&
+    !input.sessionActivity &&
     !transitioning &&
     !input.imDetailActive &&
     !input.sessionHasContent &&
@@ -102,7 +107,7 @@ export function useTranscriptSurfaceProjection(input: TranscriptSurfaceProjectio
 
   return {
     transcriptHydrating,
-    creationEmptyHero,
+    emptyHero,
     visibleTranscriptItems,
     visibleTranscriptTabId,
     visibleTranscriptGeometryKey,
