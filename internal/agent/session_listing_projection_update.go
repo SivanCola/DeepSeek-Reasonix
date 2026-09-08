@@ -10,6 +10,16 @@ import (
 // its sidecar identity while holding the save lock, so an autosave that landed
 // after the caller's decode cannot receive the stale projection.
 func UpdateSessionListingProjectionIfCurrent(sessionPath, model, preview string, turns int, markActivity bool, expected PersistedState) (bool, error) {
+	return updateSessionListingProjectionIfCurrent(sessionPath, model, nil, preview, turns, markActivity, expected)
+}
+
+// UpdateSessionModelProjectionIfCurrent publishes a runtime's acknowledged
+// model identity in the same guarded write as its model and listing fields.
+func UpdateSessionModelProjectionIfCurrent(sessionPath, model, identity, preview string, turns int, markActivity bool, expected PersistedState) (bool, error) {
+	return updateSessionListingProjectionIfCurrent(sessionPath, model, &identity, preview, turns, markActivity, expected)
+}
+
+func updateSessionListingProjectionIfCurrent(sessionPath, model string, identity *string, preview string, turns int, markActivity bool, expected PersistedState) (bool, error) {
 	if strings.TrimSpace(sessionPath) == "" {
 		return false, fmt.Errorf("empty session path")
 	}
@@ -47,7 +57,7 @@ func UpdateSessionListingProjectionIfCurrent(sessionPath, model, preview string,
 		return false, nil
 	}
 	if strings.TrimSpace(model) != "" {
-		meta.Model = strings.TrimSpace(model)
+		setMetaModelSelection(&meta, model, identity)
 	}
 	meta.Preview = preview
 	meta.Turns = turns

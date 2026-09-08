@@ -332,7 +332,7 @@ try {
 
 ok(!editorThrew, "provider editor can switch from built-in to custom without changing hook order");
 ok(rootEl.textContent?.includes("Chat Completions (/chat/completions)") === true, "provider editor renders the custom provider fields after the switch");
-ok((await settingsOptionValues(rootEl.querySelector<HTMLButtonElement>('button[aria-label="Model capability mode"]')!)).includes("kimi-k3"), "custom provider editor exposes the explicit Kimi K3 reasoning protocol");
+ok((await settingsOptionValues(rootEl.querySelector<HTMLButtonElement>('button[aria-label="Model reasoning protocol"]')!)).includes("kimi-k3"), "custom provider editor exposes the explicit Kimi K3 reasoning protocol");
 const providerUrlInput = rootEl.querySelector<HTMLInputElement>(".provider-url-input");
 ok(rootEl.querySelectorAll('input[type="radio"]:not(.sr-only)').length === 0, "custom provider editor exposes only one API address input");
 ok(providerUrlInput?.value === "", "new custom providers start with an empty exact request address");

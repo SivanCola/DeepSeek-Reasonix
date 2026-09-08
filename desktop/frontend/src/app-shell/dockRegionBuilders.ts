@@ -42,7 +42,7 @@ export function buildWorkspaceDockProps(input: {
   geometry: ShellGeometry;
   panels: WorkspacePanelApi;
   inserts: InsertCommands;
-  verification: { verificationRevealRequest: WorkspaceVerificationRevealRequest | null };
+  verification: { verificationRevealRequest: WorkspaceVerificationRevealRequest | null; closeTurnResult?: () => void };
   qualityFloor: ComposerProfile["qualityFloor"];
   onFileTreeRefresh: () => void;
   onSessionRevertCommitted: WorkspaceDockRegionProps["workspace"]["onSessionRevertCommitted"];
@@ -82,6 +82,7 @@ export function buildWorkspaceDockProps(input: {
       onOpenInTerminal: input.onOpenInTerminal,
       initialViewMode: input.mode === "changed" ? "changed" : "files",
       completionSummary: input.completionSummary, turnStartAt: input.turnStartAt,
+      sessionPath: input.meta?.sessionPath, onDismissTurnResult: input.verification.closeTurnResult,
       verificationRevealRequest: input.verification.verificationRevealRequest, qualityFloor: input.qualityFloor,
       showViewTabs: false, creationMode: input.creation,
     },

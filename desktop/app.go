@@ -38,6 +38,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/event"
+	"reasonix/internal/eventwire"
 	"reasonix/internal/evidence"
 	"reasonix/internal/extension/providerext"
 	"reasonix/internal/fileref"
@@ -4120,10 +4121,14 @@ func (a *App) buildSessionRebindCandidate(
 	}
 
 	model := strings.TrimSpace(source.model)
-	if sessionModel, ok := agent.LoadSessionModel(sessionPath); ok {
+	if sessionModel, identity, ok := agent.LoadSessionModelSelection(sessionPath); ok {
 		config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, sessionModel)
-		if _, ok := cfg.ResolveModel(sessionModel); ok {
-			model = sessionModel
+		resolved, err := cfg.ResolveSavedModel(sessionModel, identity)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := cfg.ResolveModel(resolved); ok {
+			model = resolved
 		}
 	}
 	if model == "" {
@@ -4151,6 +4156,7 @@ func (a *App) buildSessionRebindCandidate(
 	}
 	ctrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    model,
+		ConfigSnapshot:           cfg,
 		RequireKey:               false,
 		StatsSource:              "desktop",
 		TaskStore:                a.taskStore(),
@@ -5077,22 +5083,25 @@ func (a *App) singleSurfaceLayoutEnabled() bool {
 // HistoryMessage is one prior turn, for the frontend to repopulate its transcript
 // after a reload.
 type HistoryMessage struct {
-	Role               string                    `json:"role"`
-	Content            string                    `json:"content"`
-	Detail             string                    `json:"detail,omitempty"`
-	Code               string                    `json:"code,omitempty"`
-	SubmitText         string                    `json:"submitText,omitempty"`
-	CheckpointTurn     *int                      `json:"checkpointTurn,omitempty"`
-	CreatedAt          int64                     `json:"createdAt,omitempty"`
-	Reasoning          string                    `json:"reasoning,omitempty"`
-	MemoryCitations    []provider.MemoryCitation `json:"memoryCitations,omitempty"`
-	WorkDurationMs     int64                     `json:"workDurationMs,omitempty"`
-	Level              string                    `json:"level,omitempty"`
-	ToolCalls          []HistoryToolCall         `json:"toolCalls,omitempty"`
-	ToolCallID         string                    `json:"toolCallId,omitempty"`
-	ToolName           string                    `json:"toolName,omitempty"`
-	ToolResultArchived bool                      `json:"toolResultArchived,omitempty"`
-	ToolResultError    string                    `json:"toolResultError,omitempty"`
+	CompletionReceipt  *eventwire.CompletionReceipt `json:"completionReceipt,omitempty"`
+	CompletionSummary  *eventwire.CompletionSummary `json:"completionSummary,omitempty"`
+	TurnID             string                       `json:"turnId,omitempty"`
+	Role               string                       `json:"role"`
+	Content            string                       `json:"content"`
+	Detail             string                       `json:"detail,omitempty"`
+	Code               string                       `json:"code,omitempty"`
+	SubmitText         string                       `json:"submitText,omitempty"`
+	CheckpointTurn     *int                         `json:"checkpointTurn,omitempty"`
+	CreatedAt          int64                        `json:"createdAt,omitempty"`
+	Reasoning          string                       `json:"reasoning,omitempty"`
+	MemoryCitations    []provider.MemoryCitation    `json:"memoryCitations,omitempty"`
+	WorkDurationMs     int64                        `json:"workDurationMs,omitempty"`
+	Level              string                       `json:"level,omitempty"`
+	ToolCalls          []HistoryToolCall            `json:"toolCalls,omitempty"`
+	ToolCallID         string                       `json:"toolCallId,omitempty"`
+	ToolName           string                       `json:"toolName,omitempty"`
+	ToolResultArchived bool                         `json:"toolResultArchived,omitempty"`
+	ToolResultError    string                       `json:"toolResultError,omitempty"`
 	// Execution is local shell metadata restored onto ToolCards after history
 	// reload. Omitted when absent so older frontends ignore it safely.
 	Execution        *provider.ToolExecution          `json:"execution,omitempty"`
@@ -9543,13 +9552,14 @@ func (a *App) persistTabModelIfCurrent(tab *WorkspaceTab, model string) error {
 		a.mu.RUnlock()
 		return nil
 	}
+	ctrl := tab.Ctrl
 	a.mu.RUnlock()
 
 	path := a.currentSessionPathFor(tab)
 	if path == "" {
 		return nil
 	}
-	if err := agent.SetBranchModelPreserveUpdated(path, model); err != nil {
+	if err := agent.SetBranchModelSelectionPreserveUpdated(path, model, controllerModelSelectionIdentity(ctrl)); err != nil {
 		return fmt.Errorf("persist selected model: %w", err)
 	}
 	return nil
@@ -9583,9 +9593,17 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	}
 	a.mu.RLock()
 	currentModel := tab.model
+	currentRoot := tab.WorkspaceRoot
+	currentCtrl := tab.Ctrl
 	a.mu.RUnlock()
-	if name == currentModel {
-		return nil
+	if name == currentModel && currentCtrl != nil {
+		cfg, err := config.LoadForRoot(currentRoot)
+		if err != nil {
+			return err
+		}
+		if cfg.ModelSelectionIdentity(name) == controllerModelSelectionIdentity(currentCtrl) {
+			return nil
+		}
 	}
 	timing := modelSwitchTiming{}
 	totalStarted := time.Now()
@@ -9670,6 +9688,7 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 
 	stageStarted = time.Now()
 	var carried []provider.Message
+	var carriedSession *agent.Session
 	oldCtrl := a.controllerForTab(tab)
 	if oldCtrl != nil {
 		if prevPath == "" {
@@ -9683,6 +9702,14 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		}
 		prevPath = sessionPathAfterSnapshot(oldCtrl, prevPath)
 		carried = oldCtrl.History()
+	} else if prevPath != "" {
+		if err := a.ensureTabSessionLeaseForRebuild(tab, prevPath, "model"); err != nil {
+			return err
+		}
+		carriedSession, err = agent.LoadSession(prevPath)
+		if err != nil {
+			return err
+		}
 	}
 	timing.Snapshot = time.Since(stageStarted)
 
@@ -9693,6 +9720,7 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	stageStarted = time.Now()
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    name,
+		ConfigSnapshot:           cfg,
 		RequireKey:               false,
 		StatsSource:              "desktop",
 		TaskStore:                a.taskStore(),
@@ -9726,7 +9754,12 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		newCtrl.Close()
 		return err
 	}
-	restoredRuntime, err := resumeControllerRuntimeWithMessages(newCtrl, carried, path, runtime)
+	var restoredRuntime normalizedTabRuntime
+	if carriedSession != nil {
+		restoredRuntime, err = resumeControllerRuntimeWithSession(newCtrl, carriedSession, path, runtime)
+	} else {
+		restoredRuntime, err = resumeControllerRuntimeWithMessages(newCtrl, carried, path, runtime)
+	}
 	if err != nil {
 		newCtrl.Close()
 		return err
@@ -9745,6 +9778,8 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	}
 	tab.Ctrl = newCtrl
 	tab.model = name
+	tab.Ready = true
+	clearTabStartupError(tab)
 	tab.effort = cloneStringPtr(effortOverride)
 	tab.Label = newCtrl.Label()
 	applyNormalizedRuntimeToTabLocked(tab, restoredRuntime)
@@ -9766,7 +9801,7 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	// last-click-wins when a new-session default switch overlaps an explicit
 	// model selection.
 	if path != "" {
-		if err := agent.SetBranchModelPreserveUpdated(path, name); err != nil {
+		if err := agent.SetBranchModelSelectionPreserveUpdated(path, name, newCtrl.ModelSelectionIdentity()); err != nil {
 			return fmt.Errorf("persist selected model: %w", err)
 		}
 	}

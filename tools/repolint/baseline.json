@@ -135,13 +135,13 @@
       "file-size": 277
     },
     "desktop/frontend/src/components/WorkspacePanel.tsx": {
-      "file-size": 1346
+      "file-size": 1353
     },
     "desktop/frontend/src/custom/features/heartbeat/HeartbeatPanel.tsx": {
       "file-size": 180
     },
     "desktop/frontend/src/lib/bridge.ts": {
-      "file-size": 4997
+      "file-size": 4999
     },
     "desktop/frontend/src/lib/crash.ts": {
       "file-size": 225
@@ -150,7 +150,7 @@
       "file-size": 264
     },
     "desktop/frontend/src/lib/types.ts": {
-      "file-size": 1620
+      "file-size": 1628
     },
     "desktop/frontend/src/lib/useController.ts": {
       "file-size": 4263

@@ -42,6 +42,19 @@ separate journal without rewriting messages, tool results, reasoning, or usage.
 Deleted or changed targets produce `MIGRATED_MODEL_UNAVAILABLE` instead of
 silently using another account.
 
+Current selections use the current connection and its current default model
+before considering an old alias. Editing proxy settings, headers, or the
+credential environment-variable reference does not block a new selection.
+Saved sessions still validate their original connection. To use an edited
+connection with an old session, explicitly select the model again, including
+when its displayed name has not changed. This preserves the transcript and
+stores an optional `model_identity` digest beside the saved model; subsequent
+restarts validate that acknowledged connection. The digest contains no resolved
+API key. Session copies and branches retain it. Older sidecars without the
+field use the original migration journal; an older writer that drops the field
+causes the next new-version resume to require acknowledgement again, rather
+than silently adopting a changed connection.
+
 Explicitly enabled native DeepSeek search on Anthropic/Responses is preserved
 as a separate connection on its original API and credential reference. Explicit
 search assignments follow it; automatic search prefers that account and reports

@@ -11,6 +11,9 @@ This document describes rewind snapshots. For the autonomous-run rule about when
 the agent should pause and ask the user, see
 [`TASK_CONTRACT.md`](TASK_CONTRACT.md).
 
+For the read-only per-turn diff and check results built on these snapshots, see
+[Turn results](TURN_RESULTS.md).
+
 ## Goal
 
 Let a user rewind a session to a previous point and restore **code**,

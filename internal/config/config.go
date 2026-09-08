@@ -1914,12 +1914,18 @@ func (c *Config) Provider(name string) (*ProviderEntry, bool) {
 // without duplicating base_url/api_key_env. Single-`model` entries still resolve
 // by provider name, keeping older configs working unchanged.
 func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
-	if ref == "" {
+	if entry, ok := c.resolveCurrentModel(ref); ok {
+		return entry, true
+	}
+	target, err := c.resolveOpenCodeGoAlias(ref, false)
+	if err != nil || target == ref {
 		return nil, false
 	}
-	var aliasErr error
-	ref, aliasErr = c.resolveOpenCodeGoAlias(ref, false)
-	if aliasErr != nil {
+	return c.resolveCurrentModel(target)
+}
+
+func (c *Config) resolveCurrentModel(ref string) (*ProviderEntry, bool) {
+	if ref == "" {
 		return nil, false
 	}
 	if access := desktopProviderAccessMap(c.Desktop.ProviderAccess); len(access) > 0 {

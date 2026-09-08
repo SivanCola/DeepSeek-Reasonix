@@ -158,6 +158,7 @@ type CompletionSummaryInfo struct {
 	Preset             string // deprecated wire-compat label; pinned to "balanced"
 	Verdict            string // complete | partial | blocked | continue
 	Mutations          int
+	ChangedFiles       int
 	ChecksPassed       int
 	ChecksFailed       int
 	ChecksSuppressed   int
@@ -225,9 +226,11 @@ type Profile struct {
 // Output/Err/Truncated are filled in. Args is the raw JSON arguments — a sink
 // compacts it for display.
 type Tool struct {
-	ID   string
-	Name string
-	Args string
+	// Verifying is emitted only once an authorized check actually enters execution.
+	Verifying bool
+	ID        string
+	Name      string
+	Args      string
 	// ResolvedName/CapabilityID describe the real target behind a stable proxy
 	// while Name/Args remain the provider-visible call. They are optional local
 	// display metadata and never enter provider requests.

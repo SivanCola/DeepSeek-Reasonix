@@ -76,17 +76,17 @@ func TestModelForResumePathUsesStoredModelWhenAvailable(t *testing.T) {
 		},
 	}
 
-	if got := modelForResumePath("", path, cfg); got != "saved/model" {
+	if got, err := modelForResumePath("", path, cfg); err != nil || got != "saved/model" {
 		t.Fatalf("modelForResumePath = %q, want saved/model", got)
 	}
-	if got := modelForResumePath("explicit/model", path, cfg); got != "explicit/model" {
+	if got, err := modelForResumePath("explicit/model", path, cfg); err != nil || got != "explicit/model" {
 		t.Fatalf("explicit model was overwritten: %q", got)
 	}
-	if got := modelForResumePath("", filepath.Join(dir, "missing.jsonl"), cfg); got != "" {
+	if got, err := modelForResumePath("", filepath.Join(dir, "missing.jsonl"), cfg); err != nil || got != "" {
 		t.Fatalf("missing session model = %q, want empty fallback", got)
 	}
 	cfg.Providers = cfg.Providers[:1]
-	if got := modelForResumePath("", path, cfg); got != "" {
+	if got, err := modelForResumePath("", path, cfg); err != nil || got != "" {
 		t.Fatalf("unknown stored model = %q, want empty fallback", got)
 	}
 }

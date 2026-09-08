@@ -611,6 +611,9 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	}
 	plan.cctx = cctx
 	var execution *tool.ShellExecution
+	if plan.verification && a.svc.sink != nil {
+		a.svc.sink.Emit(event.Event{Kind: event.ToolProgress, Tool: event.Tool{ID: call.ID, Verifying: true}})
+	}
 	result, images, execution, err = a.dispatchResolvedTool(cctx, plan)
 	// tool.after: extensions rule on the executed result (success or error)
 	// before evidence, hooks, and recovery observation, so every downstreamconsumer sees the final

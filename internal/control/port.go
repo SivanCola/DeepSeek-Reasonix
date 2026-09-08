@@ -139,6 +139,7 @@ type Goals interface {
 type SessionHistory interface {
 	Checkpoints() []checkpoint.Meta
 	CheckpointFileState(path string) (checkpoint.FileState, bool)
+	CheckpointTurnChanges(turn int) *checkpoint.TurnChanges
 	CheckpointTurnsByMessageIndex() map[int]int
 	CheckpointHasBoundary(turn int) bool
 	Rewind(turn int, scope RewindScope) error

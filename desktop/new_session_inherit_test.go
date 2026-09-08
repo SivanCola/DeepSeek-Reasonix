@@ -625,6 +625,9 @@ func TestSetDefaultModelPersistsSessionSidecar(t *testing.T) {
 
 	app := NewApp()
 	tab := testTab("default-sidecar", globalRoot)
+	// Exercise the real model-switch transaction, including its session lease,
+	// instead of only updating a tab before the application has started.
+	app.ctx = context.Background()
 	tab.Scope = "global"
 	tab.WorkspaceRoot = globalRoot
 	tab.SessionPath = path
@@ -635,6 +638,7 @@ func TestSetDefaultModelPersistsSessionSidecar(t *testing.T) {
 	app.tabOrder = []string{tab.ID}
 	app.activeTabID = tab.ID
 	t.Cleanup(func() {
+		tab.releaseSessionLease()
 		if tab.Ctrl != nil {
 			tab.Ctrl.Close()
 		}

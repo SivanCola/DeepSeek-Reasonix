@@ -128,6 +128,8 @@ type Controller struct {
 
 	label                   string
 	modelRef                string
+	modelIdentity           string
+	resolveSessionModel     func(string, string) (string, error)
 	visionModel             string
 	visionProviderResolver  func(string) (provider.Provider, error)
 	visionModelSelector     func(string, string) (string, bool)
@@ -494,9 +496,11 @@ type Options struct {
 	// SetToolApprovalMode and ApplyHeadlessApprovalMode call Update on it so a
 	// runtime approval-mode switch reaches sub-agents, not just the parent
 	// executor's own gate.
-	SubagentGate *SharedHeadlessGate
-	Label        string
-	ModelRef     string
+	SubagentGate        *SharedHeadlessGate
+	Label               string
+	ModelRef            string
+	ModelIdentity       string
+	ResolveSessionModel func(string, string) (string, error)
 	// VisionModel is empty (off), "auto", or a canonical provider/model ref.
 	// The resolver and selector are assembled by boot so the controller remains
 	// transport-agnostic and tests can inject deterministic fake providers.
@@ -693,6 +697,8 @@ func New(opts Options) *Controller {
 		subagentGate:                      opts.SubagentGate,
 		label:                             opts.Label,
 		modelRef:                          opts.ModelRef,
+		modelIdentity:                     opts.ModelIdentity,
+		resolveSessionModel:               opts.ResolveSessionModel,
 		visionModel:                       strings.TrimSpace(opts.VisionModel),
 		visionProviderResolver:            opts.VisionProviderResolver,
 		visionModelSelector:               opts.VisionModelSelector,
@@ -1110,6 +1116,20 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		Receipt:        c.executor.CompletionReceipt(),
 		ItemID:         activeInboxID,
 	}
+	if done.CheckpointTurn != nil {
+		changes := completion.checkpoint.store.FreezeTurnChanges(*done.CheckpointTurn)
+		if done.Receipt == nil && (len(changes.Files) > 0 || len(changes.Reasons) > 0) {
+			done.Receipt = &event.CompletionReceipt{Verdict: "unknown"}
+		}
+		if done.Receipt != nil {
+			// Detach the executor's receipt before adding host-owned file facts.
+			receipt := *done.Receipt
+			receipt.Diff = changes.Summary()
+			receipt.Interrupted = cancelRequested
+			done.Receipt = &receipt
+		}
+	}
+	done.Receipt = bindCompletionLogSources(done.Receipt, c.History())
 	done = c.applyTurnDoneProtocol(done, cancelRequested)
 	done.Diagnostic = provider.DiagnoseFailure(err)
 	done.Detail = provider.FailureDiagnosticDetail(done.Diagnostic)
@@ -3621,19 +3641,19 @@ func (c *Controller) snapshotWithDurability(markActivity, forceRewrite, shutdown
 	// like SetBranchModelPreserveUpdated. The single write subsumes the old
 	// EnsureBranchMeta / SetBranchModel / TouchBranchMeta sequence.
 	preview, turns := agent.SessionPreviewFromMessages(s.Snapshot())
-	if err := updateSessionListingProjection(s, path, modelRef, preview, turns, markActivity); err != nil && !listingDeferredAfterUnlockedAppend(s, path, err) {
+	if err := updateSessionModelProjection(s, path, modelRef, c.modelIdentity, preview, turns, markActivity); err != nil && !listingDeferredAfterUnlockedAppend(s, path, err) {
 		return transcriptDurable, err
 	}
 	c.extensionSessionPayloadEvent(extension.PointSessionSave, savePayload)
 	return transcriptDurable, nil
 }
 
-func updateSessionListingProjection(s *agent.Session, path, modelRef, preview string, turns int, markActivity bool) error {
+func updateSessionModelProjection(s *agent.Session, path, modelRef, identity, preview string, turns int, markActivity bool) error {
 	persisted, ok := s.PersistedState(path)
 	if !ok {
 		return fmt.Errorf("session persistence baseline missing after save")
 	}
-	_, err := agent.UpdateSessionListingProjectionIfCurrent(path, modelRef, preview, turns, markActivity, persisted)
+	_, err := agent.UpdateSessionModelProjectionIfCurrent(path, modelRef, identity, preview, turns, markActivity, persisted)
 	return err
 }
 
@@ -4878,6 +4898,9 @@ func (c *Controller) Label() string { return c.label }
 
 // ModelRef returns the canonical provider/model reference for the session.
 func (c *Controller) ModelRef() string { return c.modelRef }
+
+// ModelSelectionIdentity is frozen with the provider assembled for this runtime.
+func (c *Controller) ModelSelectionIdentity() string { return c.modelIdentity }
 
 // WorkspaceRoot returns the workspace root for this controller's session
 // (the directory that file-writers and @-references are scoped to).

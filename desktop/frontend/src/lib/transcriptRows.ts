@@ -73,6 +73,7 @@ export function partitionTurnItems(items: readonly Item[], live: TranscriptLiveF
   const segments: TurnDisplayParts[] = [];
   let current: TurnDisplayParts = { processItems: [], outsideItems: [] };
   let currentHasConversation = false;
+  const results: NoticeItem[] = [];
   const flushSegment = () => {
     if (current.processItems.length === 0 && current.outsideItems.length === 0) return;
     segments.push(current);
@@ -86,6 +87,10 @@ export function partitionTurnItems(items: readonly Item[], live: TranscriptLiveF
   for (const item of items) {
     if (item.kind === "user") continue;
     if (item.kind === "notice") {
+      if (item.variant === "completion") {
+        results.push(item);
+        continue;
+      }
       if (isHostRecoveryGuidance(item.text)) {
         continue;
       }
@@ -119,6 +124,9 @@ export function partitionTurnItems(items: readonly Item[], live: TranscriptLiveF
     }
     if (hasReasoning) pushProcess(item);
   }
+  // Display-side history attaches metadata to the user turn. Its result stays
+  // after that turn's answer in both full and windowed presentation.
+  current.outsideItems.push(...results);
   flushSegment();
   return segments;
 }
@@ -769,32 +777,4 @@ export function estimateTranscriptRowSize(row: TranscriptRow | undefined, conten
   return estimateTranscriptRowGeometry(row, environment);
 }
 
-/**
- * History-backed items carry ids derived from their backend entry
- * (`he:<entryId>`, tool calls `he:<entryId>:tc<index>`, or a bare toolCallId).
- * Returns the entryId for rows that may carry unresolved lazy-content refs.
- */
-export function historyEntryIdForItemId(id: string | undefined): string | undefined {
-  if (!id || !id.startsWith("he:")) return undefined;
-  return id.slice(3).replace(/:tc\d+$/, "");
-}
-
-/** The entry a row can trigger lazy full-content resolution for, if any. */
-export function historyEntryIdForRow(row: TranscriptRow): string | undefined {
-  switch (row.kind) {
-    case "user":
-    case "reasoning":
-    case "tool":
-    case "phase":
-    case "process-notice":
-    case "compaction":
-    case "answer":
-    case "notice":
-      return historyEntryIdForItemId(row.item.id);
-    case "tool-batch":
-    case "tool-group":
-      return historyEntryIdForItemId(row.items[0]?.id);
-    default:
-      return undefined;
-  }
-}
+export { historyEntryIdForItemId, historyEntryIdForRow } from "./transcriptHistoryEntry";

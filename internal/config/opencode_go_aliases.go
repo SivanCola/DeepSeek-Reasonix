@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -40,12 +42,8 @@ func normalizeOpenCodeGoRuntimeCompatibility(c *Config) {
 		return c.ConfigVersion < openCodeGoUpgradeVersion || c.providerSources[providerMergeKey(p)] == providerSourceProject
 	})
 	if previous != nil {
-		for ref, alias := range previous.Aliases {
-			j.Aliases[ref] = alias
-		}
-		for ref, alias := range previous.SearchAliases {
-			j.SearchAliases[ref] = alias
-		}
+		maps.Copy(j.Aliases, previous.Aliases)
+		maps.Copy(j.SearchAliases, previous.SearchAliases)
 		j.Connections = append(j.Connections, previous.Connections...)
 		j.Skipped = append(j.Skipped, previous.Skipped...)
 	}
@@ -77,11 +75,73 @@ func (c *Config) resolveOpenCodeGoAlias(ref string, search bool) (string, error)
 	return alias.Target, nil
 }
 
-// ModelReferenceError distinguishes an unavailable migrated identity from an
-// ordinary stale selection. Callers must not substitute a default in this case.
+// ModelReferenceError checks alias fallback only when the reference is absent
+// from the current catalog. Historical callers must use ResolveHistoricalModel.
 func (c *Config) ModelReferenceError(ref string) error {
+	if _, ok := c.resolveCurrentModel(ref); ok {
+		return nil
+	}
 	_, err := c.resolveOpenCodeGoAlias(ref, false)
 	return err
+}
+
+// ResolveHistoricalModel validates the original migration identity before
+// resolving a saved selection. Unknown non-migrated refs are retained so the
+// owning runtime can apply its existing plugin and stale-selection policy.
+func (c *Config) ResolveHistoricalModel(ref string) (string, error) {
+	target, err := c.resolveOpenCodeGoAlias(ref, false)
+	if err != nil {
+		return "", err
+	}
+	if entry, ok := c.resolveCurrentModel(target); ok {
+		return entry.Name + "/" + entry.Model, nil
+	}
+	return target, nil
+}
+
+// ModelSelectionIdentity records only a digest, never resolved credentials.
+// Current selections capture endpoint and model as well as the transport
+// identity, so a later resume cannot silently adopt a different connection.
+func (c *Config) ModelSelectionIdentity(ref string) string {
+	entry, ok := c.resolveCurrentModel(ref)
+	if !ok {
+		return ""
+	}
+	tracked := isOpenCodeGoEntry(entry)
+	if c.openCodeGoJournal != nil {
+		for _, alias := range c.openCodeGoJournal.Aliases {
+			if alias.Target == entry.Name+"/"+entry.Model {
+				tracked = true
+				break
+			}
+		}
+	}
+	if !tracked {
+		return ""
+	}
+	b, _ := json.Marshal([]string{entry.Name, entry.Model, entry.Kind, entry.BaseURL, entry.RequestURL, entry.ChatURL, openCodeGoIdentity(*entry)})
+	return openCodeGoDigest(b)
+}
+
+// ResolveSavedModel uses an explicitly persisted choice when present; legacy
+// sidecars without that choice retain the original migration protection.
+func (c *Config) ResolveSavedModel(ref, identity string) (string, error) {
+	if identity == "" {
+		return c.ResolveHistoricalModel(ref)
+	}
+	if current := c.ModelSelectionIdentity(ref); current == "" || current != identity {
+		return "", fmt.Errorf("MIGRATED_MODEL_UNAVAILABLE: saved connection for %q has changed; explicitly select a model to use the current connection", ref)
+	}
+	entry, _ := c.resolveCurrentModel(ref)
+	return entry.Name + "/" + entry.Model, nil
+}
+
+func (c *Config) resolveHistoricalWebSearchModel(ref string) (*ProviderEntry, error) {
+	target, err := c.resolveOpenCodeGoAlias(ref, true)
+	if err != nil {
+		return nil, err
+	}
+	return c.ResolveWebSearchModel(target)
 }
 
 // OpenCodeGoUpgradeSummary is consumed by the existing startup notice channel.
@@ -117,7 +177,7 @@ func (c *Config) resolveOpenCodeGoAutomaticSearch(current *ProviderEntry, resolv
 					if alias.Identity != openCodeGoIdentity(*current) || (modelSpecific && model != current.Model) {
 						continue
 					}
-					if entry, err := c.ResolveWebSearchModel(ref); err == nil {
+					if entry, err := c.resolveHistoricalWebSearchModel(ref); err == nil {
 						if selected := resolve(entry); selected != nil {
 							return selected
 						}

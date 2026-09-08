@@ -1781,6 +1781,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		SubagentGate:                   headlessGate,
 		Label:                          label,
 		ModelRef:                       modelRef,
+		ModelIdentity:                  cfg.ModelSelectionIdentity(modelRef),
+		ResolveSessionModel:            cfg.ResolveSavedModel,
 		VisionModel:                    cfg.Agent.VisionModel,
 		VisionProviderResolver:         visionProviderResolver,
 		VisionModelSelector:            visionModelSelector,

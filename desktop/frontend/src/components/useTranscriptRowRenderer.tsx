@@ -53,7 +53,7 @@ export function useTranscriptRowRenderer({
   onPrompt: (text: string) => void;
   onDeliveryContinue?: () => void;
   onAcceptDelivery?: () => void;
-  onOpenChanges?: () => void;
+  onOpenChanges?: (summary?: WireCompletionSummary) => void;
   onOpenVerification?: (summary: WireCompletionSummary) => void;
   onEditPrompt?: (turn: number, displayText: string, submitText?: string) => boolean | void | Promise<boolean | void>;
   onRewind?: (turn: number, scope: string) => void;
@@ -103,9 +103,9 @@ export function useTranscriptRowRenderer({
         if (isSteerNoticeText(row.item.text)) return <SteerCard id={row.item.id} text={row.item.text} />;
         const action = row.item.action === "continue_delivery"
           ? (onDeliveryContinue ?? (() => onPrompt(t("notice.deliveryIncompleteContinuePrompt"))))
-          : row.item.action === "open_changes" ? onOpenChanges : undefined;
+          : row.item.action === "open_changes" && onOpenChanges ? () => onOpenChanges(row.item.completionSummary) : undefined;
         return <NoticeCard
-          item={row.item} actionDisabled={running} onAction={action}
+          item={row.item} actionDisabled={running && row.item.action !== "open_changes"} onAction={action}
           onOpenVerification={row.item.variant === "completion" ? onOpenVerification : undefined}
           onAccept={row.item.action === "continue_delivery" ? onAcceptDelivery : undefined}
         />;

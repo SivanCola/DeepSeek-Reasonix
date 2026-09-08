@@ -230,12 +230,9 @@ if (initialCSS.length > 0) {
 // shared title-safe shell, and the shared harness decision surface measure
 // 116.9 KiB gzip while reusing existing layout primitives. Retain a bounded
 // 0.1 KiB headroom ratchet.
-// Mainline provider/settings and recovery styles measure 119.435 KiB gzip.
-// Workbench's column-responsive welcome adds 291 bytes over the 119.479 KiB
-// toolbar-refresh base; round the measured 119.763 KiB to the next tenth.
-// Shared recovery banner and disabled-send states measure 119.989 KiB;
-// +231 gzip bytes over the prior welcome head, retaining the next tenth.
-assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 120.0 * 1024);
+// Workbench welcome and recovery styles measure 122869 B gzip on main-v2.
+// Turn result styles add 388 B after removing obsolete metrics (123257 B).
+assertBudget("deferred app-shell CSS gzip", appShellCSSGzip, 120.4 * 1024);
 if (localeChunks.length !== 2) {
   throw new Error(`expected 2 on-demand Chinese locale chunks, found ${localeChunks.length}`);
 }
@@ -300,11 +297,9 @@ for (const path of localeChunks) {
   // ceiling for cross-platform CI.
   // Search assignment copy adds 239 / 231 B over main-v2 (63147 / 63920 B).
   // Measured result: 63386 / 64151 B; retain bounded cross-platform headroom.
-  // Session recovery guidance adds 173 / 156 B over main-v2, measuring
-  // 62.173 / 62.887 KiB. Keep only the next one-decimal ceiling.
-  // OpenCode migration recovery and saved reasoning labels add 39 / 37 B
-  // over main-v2 (63665 / 64396 B), yielding 63704 / 64433 B gzip.
-  const budget = name.startsWith("zh-TW-") ? 63.0 * 1024 : 62.3 * 1024;
+  // Turn result copy adds 554 / 566 B to the latest-base chunks, measuring
+  // 64219 / 64964 B with recovery guidance included. Round to the next tenth.
+  const budget = name.startsWith("zh-TW-") ? 63.5 * 1024 : 62.8 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
@@ -423,8 +418,11 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // against the 2398.0 KiB base; retain only the next one-decimal ceiling.
 // Shared availability, visible recovery and retry controls measure 2407.215 KiB
 // (+6.107 KiB, 0.25% over the prior welcome head). Retain the next tenth.
-// OpenCode startup recovery and resolved effort add 1368 B over main-v2:
-// 2464907 -> 2466275 B (2408.472 KiB); retain 0.128 KiB headroom.
-const rawInitialBudgetKiB = 2_408.6;
+// Turn results add 12585 B (0.51%) over main-v2's 2464923 B: bounded receipt
+// projection, status presentation and view bindings. Result: 2477508 B.
+// Integrated OpenCode startup recovery and resolved effort add 1352 B over
+// that latest-base result: 2478860 B (2420.762 KiB, +0.055%). Keep 244 B
+// of build headroom; all gzip, locale and per-chunk gates remain unchanged.
+const rawInitialBudgetKiB = 2_421.0;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

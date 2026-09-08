@@ -58,9 +58,10 @@ export function useActiveTabUiReset(input: {
 export function useVerificationRevealReset(input: {
   activeTabId?: string | null;
   completionSummary: unknown;
+  sessionPath?: string;
   turnStartAt?: number | null;
   reset: (value: null) => void;
 }) {
-  const { activeTabId, completionSummary, turnStartAt, reset } = input;
-  useEffect(() => { reset(null); }, [activeTabId, completionSummary, reset, turnStartAt]);
+  const { activeTabId, sessionPath, turnStartAt, reset } = input;
+  useEffect(() => { reset(null); }, [activeTabId, sessionPath, reset, turnStartAt]);
 }

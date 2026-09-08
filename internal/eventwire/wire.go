@@ -73,6 +73,7 @@ type CompletionSummary struct {
 	Preset             string   `json:"preset"` // deprecated; pinned compat value
 	Verdict            string   `json:"verdict"`
 	Mutations          int      `json:"mutations"`
+	ChangedFiles       int      `json:"changed_files,omitempty"`
 	ChecksPassed       int      `json:"checks_passed"`
 	ChecksFailed       int      `json:"checks_failed"`
 	ChecksSuppressed   int      `json:"checks_suppressed"`
@@ -91,6 +92,7 @@ func toWireCompletionSummary(c *event.CompletionSummaryInfo) *CompletionSummary 
 		Preset:             c.Preset,
 		Verdict:            c.Verdict,
 		Mutations:          c.Mutations,
+		ChangedFiles:       c.ChangedFiles,
 		ChecksPassed:       c.ChecksPassed,
 		ChecksFailed:       c.ChecksFailed,
 		ChecksSuppressed:   c.ChecksSuppressed,
@@ -166,26 +168,7 @@ func ToWire(e event.Event) Event {
 	case event.Notice:
 		w.applyNotice(e)
 	case event.ToolDispatch, event.ToolResult, event.ToolProgress, event.ToolResultPreview:
-		wt := &Tool{
-			ID: e.Tool.ID, Name: e.Tool.Name, Args: e.Tool.Args,
-			ResolvedName: e.Tool.ResolvedName, CapabilityID: e.Tool.CapabilityID,
-			Output: e.Tool.Output, Err: e.Tool.Err,
-			ReadOnly: e.Tool.ReadOnly, Truncated: e.Tool.Truncated,
-			DurationMs: e.Tool.DurationMs, Partial: e.Tool.Partial,
-			StartedAt: e.Tool.StartedAt, EndedAt: e.Tool.EndedAt,
-			ArgChars: e.Tool.ArgChars, Refreshed: e.Tool.Refreshed,
-			ParentID: e.Tool.ParentID, AttemptID: e.Tool.AttemptID,
-			Diff: e.Tool.Diff, Added: e.Tool.Added, Removed: e.Tool.Removed,
-			SubagentRef: e.Tool.SubagentRef, SubagentStatus: e.Tool.SubagentStatus,
-			SubagentErrorCode: e.Tool.SubagentErrorCode, SubagentRetryable: e.Tool.SubagentRetryable,
-		}
-		if e.Tool.Profile != nil {
-			wt.Profile = &Profile{Model: e.Tool.Profile.Model, Effort: e.Tool.Profile.Effort}
-		}
-		if e.Tool.Execution != nil {
-			wt.Execution = toWireShellExecution(e.Tool.Execution)
-		}
-		w.Tool = wt
+		w.Tool = toWireTool(e.Tool)
 	case event.WorkspaceChanged:
 		ws := e.Workspace
 		if ws == nil {
@@ -427,36 +410,6 @@ func ToWireMCPInteraction(i event.MCPInteraction) *MCPInteraction {
 type Profile struct {
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
-}
-
-// Tool is the JSON form of an event.Tool.
-type Tool struct {
-	ID                string          `json:"id,omitempty"`
-	Name              string          `json:"name"`
-	Args              string          `json:"args,omitempty" externalizable:"true"`
-	ResolvedName      string          `json:"resolvedName,omitempty"`
-	CapabilityID      string          `json:"capabilityId,omitempty"`
-	Output            string          `json:"output,omitempty" externalizable:"true"`
-	Err               string          `json:"err,omitempty" externalizable:"true"`
-	ReadOnly          bool            `json:"readOnly"`
-	Truncated         bool            `json:"truncated,omitempty"`
-	DurationMs        int64           `json:"durationMs,omitempty"`
-	StartedAt         int64           `json:"startedAt,omitempty"` // unix ms; zero when the call never ran
-	EndedAt           int64           `json:"endedAt,omitempty"`
-	Partial           bool            `json:"partial,omitempty"`
-	ArgChars          int             `json:"argChars,omitempty"`
-	Refreshed         bool            `json:"refreshed,omitempty"`
-	ParentID          string          `json:"parentId,omitempty"`
-	AttemptID         string          `json:"attemptId,omitempty"` // host-local stream_attempt id for speculative partials
-	SubagentRef       string          `json:"subagentRef,omitempty"`
-	SubagentStatus    string          `json:"subagentStatus,omitempty"`
-	SubagentErrorCode string          `json:"subagentErrorCode,omitempty"`
-	SubagentRetryable bool            `json:"subagentRetryable,omitempty"`
-	Diff              string          `json:"diff,omitempty" externalizable:"true"`
-	Added             int             `json:"added,omitempty"`
-	Removed           int             `json:"removed,omitempty"`
-	Profile           *Profile        `json:"profile,omitempty"`
-	Execution         *ShellExecution `json:"execution,omitempty"`
 }
 
 // ShellExecution is the JSON form of event.ShellExecution (local UI metadata).

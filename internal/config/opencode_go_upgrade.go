@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"slices"
@@ -100,7 +101,7 @@ func planOpenCodeGoUpgradeFiltered(c *Config, eligible func(ProviderEntry) bool)
 			}
 		}
 	}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		original := cloneProviderEntry(c.Providers[i])
 		if eligible != nil && !eligible(original) {
 			continue
@@ -248,12 +249,8 @@ func upgradeOpenCodeGoFileWithWriterLocked(path string, write func(string, []byt
 	}
 	// A committed older journal survives a downgrade/save/upgrade round trip.
 	if previous := readOpenCodeGoJournal(resolved, raw); previous != nil {
-		for ref, alias := range previous.Aliases {
-			j.Aliases[ref] = alias
-		}
-		for ref, alias := range previous.SearchAliases {
-			j.SearchAliases[ref] = alias
-		}
+		maps.Copy(j.Aliases, previous.Aliases)
+		maps.Copy(j.SearchAliases, previous.SearchAliases)
 		previous.Previous = nil
 		previous.Committed = true
 		j.Previous = previous

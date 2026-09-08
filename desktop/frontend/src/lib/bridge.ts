@@ -31,6 +31,8 @@ import { makeMockMCPAppBindings, type MCPAppBindings } from "./mcpAppBridge";
 import { makeMockPinnedContextBindings, type PinnedContextBindings } from "./pinnedContextBridge";
 import { createDesktopPreferencesMock } from "./desktopPreferencesMock";
 import type {
+  TurnChanges,
+  TurnFileChange,
   RemoteHostView,
   RemoteHostInput,
   RemoteConnectionStatus,
@@ -490,6 +492,9 @@ export interface AppBindings extends SessionCatalogBindings, ProjectTreeOrganiza
   WorkspaceRevisionForTab(tabID: string): Promise<{ revisions: WorkspaceRevisions; watchState: "active" | "degraded" | "unavailable" }>;
   WorkspaceChanges(tabID: string): Promise<WorkspaceChangesView>;
   WorkspaceChangeDetail(tabID: string, path: string): Promise<WorkspaceChangeDetailView>;
+  WorkspaceTurnChanges(tabID: string, sessionPath: string, turn: number, resultID: string): Promise<TurnChanges>;
+  WorkspaceTurnChangeDetail(tabID: string, sessionPath: string, turn: number, resultID: string, path: string): Promise<TurnFileChange | null>;
+  TurnCheckLog(tabID: string, sessionPath: string, toolID: string, resultID: string): Promise<{ output: string; truncated: boolean } | null>;
   GitBranches(): Promise<string[]>;
   GitCheckout(branch: string): Promise<void>;
   WorkspaceGitHistory(tabID: string, path: string): Promise<GitCommitView[]>;
@@ -4178,6 +4183,11 @@ function makeMockApp(): AppBindings {
         ],
       };
     },
+    async WorkspaceTurnChanges(_tabID: string, _sessionPath: string, turn: number, _resultID: string) {
+      return { turn, coverage: "unknown" as const, files: [], reasons: [], added: 0, removed: 0 };
+    },
+    async WorkspaceTurnChangeDetail() { return null; },
+    async TurnCheckLog() { return null; },
     async WorkspaceChangeDetail(_tabID: string, path: string) {
       return {
         source: "git" as const,

@@ -32,7 +32,7 @@ func (a *Agent) invokeResolvedTool(ctx context.Context, plan *toolCallPlan) (res
 		result, images, execution = detailed.Output, detailed.Images, detailed.Execution
 		if execution != nil && plan.verification {
 			switch {
-			case err != nil:
+			case err != nil || (execution.ExitCode != nil && *execution.ExitCode != 0):
 				execution.Verification = tool.ShellVerificationFailed
 			default:
 				execution.Verification = tool.ShellVerificationPassed

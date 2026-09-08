@@ -45,7 +45,7 @@ try {
   await act(async () => { states.openTurnVerification(historical); });
   assert.deepEqual(dockCalls, ["changed"], "opening verification reveals the changed-files dock");
   assert.deepEqual(states.verificationRevealRequest, {
-    id: 1, summary: historical, tabId: "A", turnStartAt: 100, currentSummary: summary(1),
+    id: 1, summary: historical, tabId: "A", turnStartAt: 100, currentSummary: summary(1), sessionPath: undefined, view: "checks",
   }, "the reveal request binds the clicked summary to the tab and turn that published it");
 
   const second = summary(9);
@@ -63,8 +63,12 @@ try {
   assert.equal(states.verificationRevealRequest, null, "switching tabs clears the historical reveal");
 
   await act(async () => { states.openTurnVerification(summary(4)); });
-  await paint({ completionSummary: summary(2) });
-  assert.equal(states.verificationRevealRequest, null, "a new completion summary clears the historical reveal");
+  await paint({ activeTabId: "B", completionSummary: summary(2) });
+  assert.equal(states.verificationRevealRequest?.summary.mutations, 4, "a summary refresh preserves the historical reveal");
+  await act(async () => { states.openTurnChanges(historical); });
+  assert.equal(states.verificationRevealRequest?.view, "changes");
+  await act(async () => { states.closeTurnResult(); });
+  assert.equal(states.verificationRevealRequest, null);
 
   await paint({ activeTabId: undefined });
   await act(async () => { states.openTurnVerification(summary(5)); });

@@ -105,7 +105,11 @@ func TestOpenCodeGoV10MigrationPreservesAccountsHistorySearchAndRawFields(t *tes
 		t.Fatal(cfg.DefaultModel)
 	}
 	for _, ref := range []string{"go/deepseek-v4-pro", "go", "deepseek-v4-pro"} {
-		e, ok := cfg.ResolveModel(ref)
+		target, err := cfg.ResolveHistoricalModel(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, ok := cfg.ResolveModel(target)
 		if !ok || e.Name != "go-chat-2" || e.APIKeyEnv != "ACCOUNT_A_KEY" || e.Kind != "openai" || e.Effort != "max" {
 			t.Fatalf("alias %s: %+v, %v", ref, e, ok)
 		}
@@ -359,15 +363,15 @@ func TestOpenCodeGoV10DowngradeRetryKeepsOriginalProviderAlias(t *testing.T) {
 	}
 	// The prepared second generation cannot erase the first committed aliases.
 	c = LoadForEdit(path)
-	if e, ok := c.ResolveModel("go"); !ok || e.Model != "deepseek-v4-pro" || e.Name != "go-chat-2" {
-		t.Fatalf("interruption changed historical provider alias: %+v", e)
+	if ref, err := c.ResolveHistoricalModel("go"); err != nil || ref != "go-chat-2/deepseek-v4-pro" {
+		t.Fatalf("interruption changed historical provider alias: %q, %v", ref, err)
 	}
 	if _, err := ApplyUserConfigUpgradesOnStartup(path); err != nil {
 		t.Fatal(err)
 	}
 	c = LoadForEdit(path)
-	if e, ok := c.ResolveModel("go"); !ok || e.Model != "deepseek-v4-pro" || e.Name != "go-chat-2" {
-		t.Fatalf("retry changed historical provider alias to the remaining Anthropic group: %+v", e)
+	if ref, err := c.ResolveHistoricalModel("go"); err != nil || ref != "go-chat-2/deepseek-v4-pro" {
+		t.Fatalf("retry changed historical provider alias to the remaining Anthropic group: %q, %v", ref, err)
 	}
 }
 

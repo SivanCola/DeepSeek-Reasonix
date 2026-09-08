@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -142,7 +143,7 @@ func rawTOMLValue(v any) (string, error) {
 		return strconv.FormatFloat(rv.Float(), 'g', -1, 64), nil
 	case reflect.Slice, reflect.Array:
 		var parts []string
-		for i := 0; i < rv.Len(); i++ {
+		for i := range rv.Len() {
 			s, err := rawTOMLValue(rv.Index(i).Interface())
 			if err != nil {
 				return "", err
@@ -198,7 +199,7 @@ func rewriteOpenCodeGoConfig(body string, before, after *Config, additions []ope
 		originals = append(originals, strings.Join(lines[b.start+1:b.end], "\n"))
 	}
 
-	for i := len(blocks) - 1; i >= 0; i-- {
+	for i := range slices.Backward(blocks) {
 		next, err := patchOpenCodeGoProvider(originals[i], before.Providers[i], after.Providers[i])
 		if err != nil {
 			return body, err
@@ -243,19 +244,21 @@ func expandOpenCodeGoInlineProviders(body string) (string, error) {
 		return body, err
 	}
 	blocks, err := providerTOMLInlineBlocks(body)
-	if err != nil || len(blocks) == 0 {
-		return body, fmt.Errorf("cannot safely map inline providers: %v", err)
+	if err != nil {
+		return body, fmt.Errorf("cannot safely map inline providers: %w", err)
+	}
+	if len(blocks) == 0 {
+		return body, fmt.Errorf("cannot safely map inline providers: no provider blocks")
 	}
 	assignment := strings.LastIndex(body[:start], "\n") + 1
 	var tables strings.Builder
 	outside := body[start+1 : end]
-	for i := len(blocks) - 1; i >= 0; i-- {
-		b := blocks[i]
+	for _, b := range slices.Backward(blocks) {
 		a, z := b.start-start-1, b.end-start
 		outside = outside[:a] + outside[z:]
 	}
 	var comments []string
-	for _, line := range strings.Split(outside, "\n") {
+	for line := range strings.SplitSeq(outside, "\n") {
 		if at := tomlInlineCommentIndex(line); at >= 0 {
 			comments = append(comments, line[at:])
 		}

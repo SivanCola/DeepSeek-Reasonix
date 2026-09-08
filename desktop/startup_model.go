@@ -11,13 +11,14 @@ import (
 // Resolve historical identity before selecting any fallback for a new runtime.
 func (a *App) resolveStartupModel(cfg *config.Config, tabModel, startupSessionPath, tabID string) (string, error) {
 	model := strings.TrimSpace(tabModel)
-	if sessionModel, ok := agent.LoadSessionModel(startupSessionPath); ok {
+	if sessionModel, identity, ok := agent.LoadSessionModelSelection(startupSessionPath); ok {
 		config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, sessionModel)
-		if err := cfg.ModelReferenceError(sessionModel); err != nil {
+		resolved, err := cfg.ResolveSavedModel(sessionModel, identity)
+		if err != nil {
 			return "", err
 		}
-		if _, ok := cfg.ResolveModel(sessionModel); ok {
-			model = sessionModel
+		if _, ok := cfg.ResolveModel(resolved); ok {
+			model = resolved
 		}
 	}
 	if model == "" {

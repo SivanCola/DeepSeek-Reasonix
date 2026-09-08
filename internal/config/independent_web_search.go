@@ -71,8 +71,10 @@ func (c *Config) resolveAutomaticWebSearchProvider(current *ProviderEntry) *Prov
 	if selected := resolve(current); selected != nil {
 		return selected
 	}
-	if selected := c.resolveOpenCodeGoAutomaticSearch(current, resolve); selected != nil {
-		return selected
+	if isOpenCodeGoEntry(current) {
+		// OpenCode auto search is account-bound, including when the migrated
+		// connection has since been edited. Never fall through to another account.
+		return c.resolveOpenCodeGoAutomaticSearch(current, resolve)
 	}
 	for i := range c.Providers {
 		entry, ok := c.ResolveModel(c.Providers[i].Name)
@@ -96,10 +98,14 @@ type WebSearchResolution struct {
 // ResolveWebSearchModel resolves an exact account/model without legacy account
 // retargeting: an explicit search assignment must never silently change accounts.
 func (c *Config) ResolveWebSearchModel(ref string) (*ProviderEntry, error) {
-	var aliasErr error
-	ref, aliasErr = c.resolveOpenCodeGoAlias(ref, true)
-	if aliasErr != nil {
-		return nil, aliasErr
+	name, model, exact := strings.Cut(strings.TrimSpace(ref), "/")
+	entry, exists := c.Provider(name)
+	if !exact || !exists || !entry.HasModel(model) {
+		var aliasErr error
+		ref, aliasErr = c.resolveOpenCodeGoAlias(ref, true)
+		if aliasErr != nil {
+			return nil, aliasErr
+		}
 	}
 	name, model, ok := strings.Cut(strings.TrimSpace(ref), "/")
 	if !ok {
@@ -172,7 +178,7 @@ func (c *Config) ResolveWebSearch(current *ProviderEntry) WebSearchResolution {
 		}
 		slices.Sort(refs)
 		for _, old := range refs {
-			if _, err := c.ResolveWebSearchModel(old); err != nil {
+			if _, err := c.resolveHistoricalWebSearchModel(old); err != nil {
 				return WebSearchResolution{Status: "invalid", Reason: err.Error()}
 			}
 		}

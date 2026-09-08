@@ -1979,7 +1979,26 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 	}
 
 	var carried []provider.Message
+	var savedModel string
 	oldCtrl := a.controllerForTab(tab)
+	selection := a.tabRuntimeSnapshot(tab)
+	cfg, err := config.LoadForRoot(selection.workspaceRoot)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(modelOverride) == "" {
+		if oldCtrl != nil {
+			savedModel, err = cfg.ResolveSavedModel(selection.model, controllerModelSelectionIdentity(oldCtrl))
+			if err != nil {
+				return err
+			}
+		} else if model, identity, ok := agent.LoadSessionModelSelection(prevPath); ok {
+			savedModel, err = cfg.ResolveSavedModel(model, identity)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	if oldCtrl != nil {
 		if prevPath == "" {
 			prevPath = oldCtrl.SessionPath()
@@ -1996,18 +2015,19 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 	snap := a.tabRuntimeSnapshot(tab)
 	runtime := snap.normalizedRuntime()
 	model := snap.model
+	if savedModel != "" {
+		model = savedModel
+	}
 	if override := strings.TrimSpace(modelOverride); override != "" {
 		model = override
 	}
-	if cfg, err := config.LoadForRoot(snap.workspaceRoot); err == nil {
-		if resolved, fallback, ok := cfg.ResolveModelWithFallback(model); ok {
-			if fallback && strings.TrimSpace(model) != "" {
-				a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", model, resolved))
-			}
-			model = resolved
+	if resolved, fallback, ok := cfg.ResolveModelWithFallback(model); ok {
+		if fallback && strings.TrimSpace(model) != "" {
+			a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", model, resolved))
 		}
+		model = resolved
 	}
-	ctrl, restoredRuntime, path, err := a.buildSettingReplacementController(tab, snap, runtime, model, prevPath, setting, oldCtrl, carried, reload)
+	ctrl, restoredRuntime, path, err := a.buildSettingReplacementController(tab, snap, runtime, model, prevPath, setting, oldCtrl, carried, reload, cfg)
 	if err != nil {
 		if oldCtrl == nil {
 			a.mu.Lock()
@@ -2057,9 +2077,10 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 // and grants, plan/goal state, and lifecycle move inside the boot layer. The
 // caller owns the swap, closing the old controller after the swap, and the
 // post-swap persistence.
-func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRuntimeSnapshot, runtime normalizedTabRuntime, model, prevPath, setting string, oldCtrl control.SessionAPI, carried []provider.Message, reload bool) (control.SessionAPI, normalizedTabRuntime, string, error) {
+func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRuntimeSnapshot, runtime normalizedTabRuntime, model, prevPath, setting string, oldCtrl control.SessionAPI, carried []provider.Message, reload bool, cfg *config.Config) (control.SessionAPI, normalizedTabRuntime, string, error) {
 	opts := boot.Options{
 		Model: model, RequireKey: false,
+		ConfigSnapshot:           cfg,
 		RuntimeReload:            boot.RuntimeReload{ForceFullRebuild: reload},
 		StatsSource:              "desktop",
 		TaskStore:                a.taskStore(),
@@ -2189,27 +2210,23 @@ func (a *App) SetDefaultModel(ref string) error {
 	if tab == nil {
 		return fmt.Errorf("no active tab")
 	}
-	// applyConfigChange ends in rebuild(), which reads tab.model to pick the
-	// runtime model — the new ref must be visible on the tab before that runs.
-	a.mu.Lock()
-	prev := tab.model
-	tab.model = ref
-	a.mu.Unlock()
-	if err := a.applyConfigChange(func(c *config.Config) error {
+	if err := a.ensureActiveTabRebuildAllowed("default model"); err != nil {
+		return err
+	}
+	if err := a.applyConfigOnly(func(c *config.Config) error {
 		resolved, err := selectableDesktopModelRef(c, ref)
 		if err != nil {
 			return err
 		}
 		ref = resolved
 		c.DefaultModel = ref
-		a.mu.Lock()
-		tab.model = ref
-		a.mu.Unlock()
 		return nil
 	}); err != nil {
-		a.mu.Lock()
-		tab.model = prev
-		a.mu.Unlock()
+		return err
+	}
+	// This is an explicit selection, so it uses the model-switch transaction
+	// rather than the historical identity guard on implicit settings rebuilds.
+	if err := a.SetModelForTab(tab.ID, ref); err != nil {
 		return err
 	}
 	return a.persistTabModelIfCurrent(tab, ref)
