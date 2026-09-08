@@ -52,6 +52,8 @@ export const zhTW: Record<DictKey, string> = {
   "topbar.customize": "自訂",
   "topbar.newSession": "新建會話",
   "topbar.startupError": "啟動錯誤：{msg}",
+  "topbar.openModelSettings": "開啟模型設定",
+  "settings.resolvedReasoning": "已儲存設定的推理能力",
 
   // 側邊欄
   "sidebar.conversations": "會話",
@@ -2158,7 +2160,7 @@ export const zhTW: Record<DictKey, string> = {
   "settings.fetchModelsAfterKeyFailed": "金鑰已儲存，但暫時無法自動重新整理可用模型：{err}",
   "settings.fetchModelsAfterKeyFailedForProvider": "金鑰已儲存，但暫時無法重新整理 {provider} 的可用模型：{err}",
   "settings.newProviderDraftName": "新供應商",
-	  "settings.reasoningProtocol": "模型能力模式",
+	  "settings.reasoningProtocol": "模型推理協定",
 	  "settings.reasoningProtocol.auto": "自動識別（推薦）",
 	  "settings.reasoningProtocol.deepseek": "DeepSeek 思考（thinking + 深度）",
 	  "settings.reasoningProtocol.glm": "GLM 思考（開啟 / 關閉）",

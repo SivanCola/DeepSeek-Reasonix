@@ -416,8 +416,9 @@ type App struct {
 	healthyUpdateTransactionID string
 	// startupReady records that React rendered and the Wails bridge heartbeat
 	// succeeded. DOM navigation alone is not application health.
-	startupReady     atomic.Bool
-	webView2Recovery *webView2RecoveryCoordinator
+	startupReady        atomic.Bool
+	webView2Recovery    *webView2RecoveryCoordinator
+	startupConfigNotice *event.Event // protected by mu; delivered once after active-tab restoration
 }
 
 type desktopShellRuntimeState struct {
@@ -734,13 +735,13 @@ func (a *App) restoreOrBuildTabs() {
 	}
 	f := loadTabsFile()
 	_, _ = recoverLegacyProjectSidebarRoots(f)
-	_, _ = config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath())
+	configUpgraded, configUpgradeErr := config.ApplyUserConfigUpgradesOnStartup(config.UserConfigPath())
 	_, _ = config.MigrateMCPToUserConfigOnUpgrade(desktopMCPMigrationRoots(f))
 
 	// Load i18n from the first available config.
 	// Prefer DesktopLanguage (desktop UI setting) over Language (CLI setting),
 	// so the user's language choice in desktop settings takes effect.
-	startupCfg, cfgErr := config.Load()
+	startupCfg, cfgErr := a.loadStartupConfigWithUpgradeNotice(configUpgraded, configUpgradeErr)
 	if cfgErr == nil {
 		cfg := startupCfg
 		lang := cfg.DesktopLanguage()
@@ -1022,6 +1023,7 @@ func (a *App) ReportDesktopWebViewReady() {
 			a.completeFrontendStartup()
 		}
 	}
+	a.deliverStartupConfigNoticeAfterFrontendReady()
 }
 
 func (a *App) commitPendingUpdateHealth() error {
@@ -1586,7 +1588,7 @@ func (a *App) ensureTabControllerWorkspace(tab *WorkspaceTab) error {
 	if rootMatches && dirMatches && sessionMatches {
 		return nil
 	}
-	if err := ctrl.Snapshot(); err != nil {
+	if err := a.snapshotTabWorkspaceForRebuild(tab, ctrl, desiredRoot); err != nil {
 		return err
 	}
 	ctrl.Close()
@@ -9224,11 +9226,12 @@ type ModelInfo struct {
 }
 
 type EffortInfo struct {
-	Options   []provider.ReasoningOption `json:"options,omitempty"`
-	Supported bool                       `json:"supported"`
-	Current   string                     `json:"current"`
-	Default   string                     `json:"default"`
-	Levels    []string                   `json:"levels"`
+	Resolved  *config.ResolvedReasoningView `json:"resolved,omitempty"`
+	Options   []provider.ReasoningOption    `json:"options,omitempty"`
+	Supported bool                          `json:"supported"`
+	Current   string                        `json:"current"`
+	Default   string                        `json:"default"`
+	Levels    []string                      `json:"levels"`
 }
 
 // Models flattens the configured providers into their (provider, model) pairs —
@@ -9792,7 +9795,7 @@ func (a *App) EffortForTab(tabID string) EffortInfo {
 	if levels == nil {
 		levels = []string{}
 	}
-	return EffortInfo{Supported: true, Current: config.EffortDisplay(entry), Default: cap.Default, Levels: levels, Options: config.ReasoningCapabilityForEntry(entry).Options}
+	return EffortInfo{Supported: true, Current: config.EffortDisplay(entry), Default: cap.Default, Levels: levels, Options: config.ReasoningCapabilityForEntry(entry).Options, Resolved: config.ResolveReasoningView(entry)}
 }
 
 func (a *App) SetEffort(level string) error {
@@ -9852,12 +9855,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	}
 	snap := a.tabRuntimeSnapshot(tab)
 	runtime := snap.normalizedRuntime()
-	entry, err := a.currentProviderEntryForTab(tabID)
-	if err != nil {
-		return err
-	}
-	modelRef := entry.Name + "/" + entry.Model
-	effort, err := config.NormalizeEffort(entry, level)
+	modelRef, effort, cfg, err := a.resolveTabEffortChange(tabID, level)
 	if err != nil {
 		return err
 	}
@@ -9879,6 +9877,7 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 	sharedHost := a.lookupSharedHost(snap.sharedHostKey)
 	newCtrl, err := boot.Build(a.bootContext(), boot.Options{
 		Model:                    modelRef,
+		ConfigSnapshot:           cfg,
 		RequireKey:               false,
 		StatsSource:              "desktop",
 		TaskStore:                a.taskStore(),
@@ -10531,6 +10530,11 @@ func (a *App) runEffortCommandForTab(tabID, input string) {
 }
 
 func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, error) {
+	entry, _, err := a.currentProviderEntryAndConfigForTab(tabID)
+	return entry, err
+}
+
+func (a *App) currentProviderEntryAndConfigForTab(tabID string) (*config.ProviderEntry, *config.Config, error) {
 	if tab := a.tabByID(tabID); tab != nil {
 		a.reconcileTabWithPinnedSessionMeta(tab)
 	}
@@ -10546,7 +10550,7 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 	a.mu.RUnlock()
 	cfg, err := config.LoadForRoot(workspaceRoot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if strings.TrimSpace(ref) == "" {
 		ref = cfg.DefaultModel
@@ -10554,16 +10558,19 @@ func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, e
 	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, ref)
 	resolved, _, ok := cfg.ResolveModelWithFallback(ref)
 	if !ok {
-		return nil, fmt.Errorf("unknown model %q", ref)
+		if err := cfg.ModelReferenceError(ref); err != nil {
+			return nil, cfg, err
+		}
+		return nil, cfg, fmt.Errorf("unknown model %q", ref)
 	}
 	entry, ok := cfg.ResolveModel(resolved)
 	if !ok {
-		return nil, fmt.Errorf("unknown model %q", resolved)
+		return nil, cfg, fmt.Errorf("unknown model %q", resolved)
 	}
 	if effortOverride != nil {
 		entry.Effort = *effortOverride
 	}
-	return entry, nil
+	return entry, cfg, nil
 }
 
 func (a *App) withActiveWorkspace(fn func() (string, error)) (string, error) {

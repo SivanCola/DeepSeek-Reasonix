@@ -85,7 +85,8 @@ type Config struct {
 	// loadWarnings are non-fatal issues observed while loading config (corrupt
 	// user/project files recovered via last-known-good or defaults). They never
 	// rewrite the original file; the UI may surface them for doctor repair.
-	loadWarnings []string
+	loadWarnings      []string
+	openCodeGoJournal *openCodeGoJournal
 }
 
 // KeepProjectSkillKey marks a skill field as an intentional project override.
@@ -1803,7 +1804,7 @@ const LanguagePolicy = `Reply in the same language the user is using in their mo
 // Default returns the built-in default configuration.
 func Default() *Config {
 	return &Config{
-		ConfigVersion:    9,
+		ConfigVersion:    10,
 		DefaultModel:     "deepseek-flash",
 		CredentialsStore: CredentialsStoreAuto,
 		UI:               UIConfig{Theme: "auto", ShowTurnUsage: true},
@@ -1916,6 +1917,11 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 	if ref == "" {
 		return nil, false
 	}
+	var aliasErr error
+	ref, aliasErr = c.resolveOpenCodeGoAlias(ref, false)
+	if aliasErr != nil {
+		return nil, false
+	}
 	if access := desktopProviderAccessMap(c.Desktop.ProviderAccess); len(access) > 0 {
 		if access["deepseek"] && !canCanonicalizeLegacyDeepSeekProviders(c) {
 			delete(access, "deepseek")
@@ -1959,6 +1965,9 @@ func (c *Config) ResolveModel(ref string) (*ProviderEntry, bool) {
 // configured provider — so preference isn't overwritten by iteration order.
 func (c *Config) ResolveModelWithFallback(ref string) (resolvedRef string, fallback bool, ok bool) {
 	ref = strings.TrimSpace(ref)
+	if c.ModelReferenceError(ref) != nil {
+		return "", false, false
+	}
 	if ref != "" {
 		if e, found := c.ResolveModel(ref); found {
 			return e.Name + "/" + e.Model, false, true

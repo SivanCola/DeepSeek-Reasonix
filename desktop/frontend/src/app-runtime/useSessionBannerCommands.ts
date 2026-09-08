@@ -1,6 +1,8 @@
 import { app, openExternal } from "../lib/bridge";
 import { useCommittedCommand } from "../lib/useCommittedCommand";
 import { useOverlayStore } from "../store/overlays";
+import { useAppNavigationStore } from "../store/appNavigation";
+import { useRef, useState } from "react";
 export type ConfigWarningsReload = (warnings: string[], revision: number) => void;
 
 /**
@@ -10,6 +12,26 @@ export type ConfigWarningsReload = (warnings: string[], revision: number) => voi
  * the overlay store.
  */
 export function useSessionBannerCommands(options: { remote: boolean; reloadConfigWarnings: ConfigWarningsReload }) {
+  const [startupRetry, setStartupRetry] = useState<{ tabId: string; busy: boolean; error?: string } | null>(null);
+  const retryPending = useRef(false);
+  const retryStartup = useCommittedCommand(async (tabId: string) => {
+    if (!tabId || retryPending.current) return;
+    retryPending.current = true;
+    setStartupRetry({ tabId, busy: true });
+    try {
+      await app.ReloadRuntime(tabId);
+      setStartupRetry(null);
+    } catch (error) {
+      setStartupRetry({ tabId, busy: false, error: String(error) });
+    } finally {
+      retryPending.current = false;
+    }
+  });
+  const openModelSettings = useCommittedCommand(() => {
+    const navigation = useAppNavigationStore.getState();
+    navigation.setSettingsFocus({ target: "model-access" });
+    navigation.setSettingsTarget("providers");
+  });
   const reclaimBusyTab = useOverlayStore((state) => state.reclaimBusyTab);
   const setReclaimBusyTab = useOverlayStore((state) => state.setReclaimBusyTab);
   const setTakeoverDialogTab = useOverlayStore((state) => state.setTakeoverDialogTab);
@@ -45,5 +67,5 @@ export function useSessionBannerCommands(options: { remote: boolean; reloadConfi
     void openExternal(`https://reasonix.io/changelog/v${version}/`);
   });
 
-  return { reclaimSession, openTakeoverDialog, closeTakeoverDialog, openConfigFile, reloadConfigFile, showReleaseNotes };
+  return { reclaimSession, openTakeoverDialog, closeTakeoverDialog, openConfigFile, reloadConfigFile, showReleaseNotes, retryStartup, startupRetry, openModelSettings };
 }

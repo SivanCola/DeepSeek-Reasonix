@@ -1303,6 +1303,7 @@ export function normalizeProviderView(p: ProviderView): ProviderView {
     return [{
       automaticState: raw.automaticState,
       automaticSource: raw.automaticSource,
+      resolvedReasoning: raw.resolvedReasoning,
       imageInputEnableAllowed: raw.imageInputEnableAllowed,
       imageInputBlockReason: raw.imageInputBlockReason,
       model,
@@ -6334,6 +6335,20 @@ export function ProviderEditor({
           ))}
         </SettingsSelect>
         <div className="mem-hint">{t("settings.thinkingModeHint")}</div>
+        {modelCapabilities.some((item) => item.resolvedReasoning) && (
+          <div className="mem-hint" aria-label={t("settings.resolvedReasoning")}>
+            <strong>{t("settings.resolvedReasoning")}</strong>
+            {modelCapabilities.filter((item) => item.resolvedReasoning).map((item) => {
+              const resolved = item.resolvedReasoning!;
+              return <div key={item.model}>
+                <code>{item.model}</code>{" · "}{resolved.apiFormat}{" · "}
+                {resolved.selected === "auto" ? `auto → ${resolved.effective || "auto"}` : resolved.selected}
+                {" · "}{resolved.options.map((option) => option.id).join(" / ")}
+                {resolved.error && <div className="mem-hint--error" role="alert">{resolved.error}</div>}
+              </div>;
+            })}
+          </div>
+        )}
         <label className="set-label">{t("settings.providerBalanceUrl")}</label>
         <input
           className="mem-input"

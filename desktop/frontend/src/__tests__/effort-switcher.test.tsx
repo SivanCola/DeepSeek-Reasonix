@@ -14,7 +14,7 @@ await act(async () => root.render(<EffortSwitcher disabled={false} onPick={id =>
 assert.match(rootEl.textContent!, /Deliberate/);
 await act(async () => rootEl.querySelector("button")!.click());
 const options = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]'));
-assert.deepEqual(options.map(option=>option.textContent),["auto","Deliberate","Brief"]);
+assert.deepEqual(options.map(option=>option.textContent),["auto → Deliberate","Deliberate","Brief"]);
 await act(async () => { options[2].click(); await new Promise(resolve=>setTimeout(resolve,5)); });
 assert.equal(selected,"brief","UI submits adapter ID, not display label or global alias");
 await act(async () => root.unmount());

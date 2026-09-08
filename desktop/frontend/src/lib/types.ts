@@ -1,6 +1,8 @@
 import type { ProviderCatalog, ProviderPresetView } from "./providerCatalogTypes";
 export type { ProviderProtocolEndpoint, ProviderCatalog, ProviderPresetView } from "./providerCatalogTypes";
 import type { RecoveryEventFields } from "./recoveryStatus";
+import type { ResolvedReasoningView } from "./reasoningTypes";
+export type { ResolvedReasoningView } from "./reasoningTypes";
 // Wire contract — mirrors desktop/wire.go (itself mirroring internal/serve/wire.go).
 // One event channel carries every kind; `kind` discriminates the payload.
 import type { HistoryServerSearch } from "./searchSources";
@@ -1491,6 +1493,7 @@ export interface ModelInfo {
 }
 
 export interface EffortInfo {
+  resolved?: ResolvedReasoningView;
   options?: { id: string; name: string; description?: string }[];
   supported: boolean;
   current: string; // adapter-owned ID; "auto" inherits the configured default
@@ -1797,6 +1800,7 @@ export interface ProviderModelCatalogUpdate {
 }
 
 export interface ProviderModelCapabilityView {
+  resolvedReasoning?: ResolvedReasoningView;
 	automaticState?: string;
 	automaticSource?: string;
 	imageInputEnableAllowed?: boolean;

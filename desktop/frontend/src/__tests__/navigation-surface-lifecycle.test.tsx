@@ -11,11 +11,11 @@ const dom = new JSDOM("<div id='root'></div>");
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
 const root = createRoot(document.getElementById("root")!);
 let surface!: ReturnType<typeof useNavigationSurface>;
-function Probe({ tab, session, remote }: { tab: string; session: string;
+function Probe({ tab, session, remote, startupError }: { tab: string; session: string; startupError?: string;
   remote?: Pick<RemoteSessionApi, "state" | "hydrated" | "surfaceGeneration" | "error"> }) {
   const next = useNavigationSurface(projectNavigationSurfaceTarget({ activeTabId: tab, sessionKey: session,
-    local: { ...initialState, meta: { ...initialState.meta, ready: !remote } as typeof initialState.meta,
-      backendActivationPending: Boolean(remote), hydrating: Boolean(remote) }, remote }));
+    local: { ...initialState, meta: { ...initialState.meta, ready: !remote && !startupError, startupErr: startupError } as typeof initialState.meta,
+      backendActivationPending: Boolean(remote), hydrating: Boolean(remote || startupError) }, remote }));
   useLayoutEffect(() => { surface = next; });
   return null;
 }
@@ -46,6 +46,15 @@ try {
   await act(async () => root.render(<Probe tab="remote" session="workspace" remote={{ ...remote, state: "error", hydrated: false, error: "offline" }} />));
   act(() => { surface.begin(3); surface.maskTarget(3); });
   assert.equal(surface.transitioning, false, "remote hydration failure terminates the masked navigation, leaving recovery reachable");
+  await act(async () => root.render(<Probe tab="failed-local" session="new" startupError="UNSUPPORTED_REASONING_EFFORT: planner max" />));
+  act(() => { surface.begin(4); surface.maskTarget(4); });
+  assert.equal(surface.transitioning, false, "startup failure terminates navigation even when history hydration never started");
+  assert.equal(surface.surfaceCommitToken, undefined, "a failed construction cannot issue a paint receipt");
+  await act(async () => root.render(<Probe tab="retry" session="retry:1" />));
+  act(() => { surface.begin(5); surface.maskTarget(5); });
+  act(() => { assert.equal(surface.commitPaint(remoteToken, "ready"), null); });
+  assert.equal(surface.transitioning, true, "an old completion cannot reveal the retry generation");
+  act(() => { surface.commitPaint(surface.surfaceCommitToken!, "ready"); });
   const retained = surface.begin;
   act(() => { root.unmount(); retained(2); });
   console.log("PASS navigation receipts are unique, source-bound, and consumed exactly once");

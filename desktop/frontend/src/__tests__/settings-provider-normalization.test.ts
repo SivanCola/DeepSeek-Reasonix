@@ -18,6 +18,15 @@ function eq(actual: unknown, expected: unknown, label: string) {
 }
 
 console.log("\nsettings provider normalization");
+const resolvedReasoning = {
+  apiFormat: "openai", protocol: "deepseek", selected: "auto", effective: "high", default: "high",
+  options: ["disabled", "low", "high", "max"].map(id => ({ id, name: id })),
+};
+const withReasoning = normalizeProviderView({
+  name: "go", baseUrl: "https://gateway.example/v1",
+  modelCapabilities: [{ model: "deepseek-v4-flash", state: "unsupported", source: "builtin", resolvedReasoning }],
+} as ProviderView);
+eq(withReasoning.modelCapabilities?.[0]?.resolvedReasoning, resolvedReasoning, "settings normalization retains resolved reasoning for the capability summary");
 const nullable = normalizeProviderView({ name: null, baseUrl: null } as unknown as ProviderView);
 eq(nullable.name, "", "provider snapshots normalize a null name at the settings boundary");
 eq(nullable.baseUrl, "", "provider snapshots normalize a null base URL at the settings boundary");

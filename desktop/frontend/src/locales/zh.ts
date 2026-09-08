@@ -52,6 +52,8 @@ export const zh: Record<DictKey, string> = {
   "topbar.customize": "自定义",
   "topbar.newSession": "新建会话",
   "topbar.startupError": "启动错误：{msg}",
+  "topbar.openModelSettings": "打开模型设置",
+  "settings.resolvedReasoning": "已保存配置的推理能力",
 
   // 顶部应用栏
   "tabBar.closeTab": "关闭标签页",
@@ -3040,7 +3042,7 @@ export const zh: Record<DictKey, string> = {
   "settings.fetchModelsAfterKeyFailed": "密钥已保存，但暂时无法自动刷新可用模型：{err}",
   "settings.fetchModelsAfterKeyFailedForProvider": "密钥已保存，但暂时无法刷新 {provider} 的可用模型：{err}",
   "settings.newProviderDraftName": "新供应商",
-	  "settings.reasoningProtocol": "模型能力模式",
+	  "settings.reasoningProtocol": "模型推理协议",
 	  "settings.reasoningProtocol.auto": "自动识别（推荐）",
 	  "settings.reasoningProtocol.deepseek": "DeepSeek 思考（thinking + 深度）",
 	  "settings.reasoningProtocol.glm": "GLM 思考（开启 / 关闭）",

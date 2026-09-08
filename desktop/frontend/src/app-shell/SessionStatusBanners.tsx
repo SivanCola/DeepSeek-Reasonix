@@ -13,6 +13,9 @@ export type SessionStatusBannersProps = {
   onReclaim: (tabId: string) => void;
   leaseBlocked: { tabId: string; message: string } | null;
   startupError: string | undefined;
+  startupRetryBusy?: boolean;
+  onRetryStartup?: () => void;
+  onOpenModelSettings?: () => void;
   takeoverDialogTabId: string | null;
   onOpenTakeover: (tabId: string) => void;
   onCloseTakeover: () => void;
@@ -48,8 +51,15 @@ export function SessionStatusBanners(props: SessionStatusBannersProps) {
           </button>
         </div>
       ) : props.startupError ? (
-        <div className="banner banner--error">
+        <div className="banner banner--error banner--actionable" role="alert">
           <span className="banner__msg">{t("topbar.startupError", { msg: props.startupError })}</span>
+          <span className="banner__spacer" />
+          <button type="button" className="btn btn--small" onClick={props.onOpenModelSettings ?? props.onConfigureProvider}>
+            {t("topbar.openModelSettings")}
+          </button>
+          <button type="button" className="btn btn--small" disabled={props.startupRetryBusy} onClick={props.onRetryStartup}>
+            {props.startupRetryBusy ? t("common.loading") : t("common.retry")}
+          </button>
         </div>
       ) : null}
       {props.takeoverDialogTabId ? (

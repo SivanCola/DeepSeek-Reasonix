@@ -3652,7 +3652,12 @@ export function Composer({
   const taskModeTriggerLabel = `${t("common.close")} ${t(taskModeShortKey)}`;
   const taskModeTooltipLabel = taskModeTriggerLabel;
   const effortOptions = asArray(effort?.options);
-  const effortLabel = (id: string) => id === "auto" ? t("common.auto") : effortOptions.find((option) => option.id === id)?.name || id;
+  const effortLabel = (id: string) => {
+    const name = (value: string) => effortOptions.find((option) => option.id === value)?.name || value;
+    if (id !== "auto") return name(id);
+    const inherited = effort?.resolved?.default;
+    return inherited ? `${t("common.auto")} → ${name(inherited)}` : t("common.auto");
+  };
   const effortLevels = effort?.options ? ["auto", ...effortOptions.map((option) => option.id)] : asArray(effort?.levels);
   const currentEffort = effort?.current || "auto";
   const hasEffort = Boolean(effort?.supported && effortLevels.length > 0);

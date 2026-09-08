@@ -18,7 +18,11 @@ export function EffortSwitcher({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeTimerRef = useRef<number | null>(null);
   const options = asArray(effort?.options);
-  const label = (id: string) => options.find((option) => option.id === id)?.name || id;
+  const label = (id: string) => {
+    const inherited = effort?.resolved?.default || effort?.default;
+    if (id === "auto" && inherited && inherited !== "auto") return `auto → ${options.find((option) => option.id === inherited)?.name || inherited}`;
+    return options.find((option) => option.id === id)?.name || id;
+  };
   const levels = effort?.options ? ["auto", ...options.map((option) => option.id)] : asArray(effort?.levels);
   const current = effort?.current || "auto";
 

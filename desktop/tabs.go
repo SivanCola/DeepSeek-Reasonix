@@ -20,7 +20,6 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/eventwire"
-	"reasonix/internal/extension/providerext"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/notify"
 	"reasonix/internal/provider"
@@ -3839,6 +3838,11 @@ func (a *App) recordTabStartupFailure(tab *WorkspaceTab, buildGeneration uint64,
 			}
 			a.emitRuntimeEvent(tabMetaRefreshEventChannel, TabMetaRefreshEvent{TabID: tabID, Meta: a.MetaForTab(tabID)})
 		})
+	} else {
+		// Ordinary construction failures also have no agent event stream.
+		// Publish their terminal metadata so the new-session loading surface
+		// can end and expose settings/retry without waiting for another action.
+		a.emitRuntimeEvent(tabMetaRefreshEventChannel, TabMetaRefreshEvent{TabID: tab.ID, Meta: a.MetaForTab(tab.ID)})
 	}
 	a.emitReady(wailsCtx, tab.ID)
 }
@@ -3870,6 +3874,7 @@ func (a *App) buildTabControllerWithContext(tab *WorkspaceTab, loadedSession loa
 // lifecycle barrier.
 func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession loadedTabSession, buildCtx context.Context, buildGeneration uint64, buildCancel context.CancelFunc) {
 	defer a.recoverToPending("buildTabController")
+	defer a.deliverStartupConfigNotice(tab, buildGeneration)
 	keepBuildContext := false
 	defer func() {
 		a.clearTabBuildCancel(tab, buildGeneration, buildCancel, keepBuildContext)
@@ -3970,42 +3975,11 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 		startupSessionPath = catalogTopicPath
 	}
 	prepareStartupPinnedContext(tab, startupSessionPath, tabSessionPath)
-	model := strings.TrimSpace(tabModel)
-	if sessionModel, ok := agent.LoadSessionModel(startupSessionPath); ok {
-		config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, sessionModel)
-		if _, ok := cfg.ResolveModel(sessionModel); ok {
-			model = sessionModel
-		}
+	model, err := a.resolveStartupModel(cfg, tabModel, startupSessionPath, tab.ID)
+	if err != nil {
+		a.recordTabStartupFailure(tab, buildGeneration, wailsCtx, err)
+		return
 	}
-	if model == "" {
-		if def := strings.TrimSpace(cfg.DefaultModel); providerext.PluginRefOwner(def) != "" {
-			// A plugin-namespaced default_model belongs to an extension
-			// sidecar: the config catalog can never resolve it, but boot's
-			// merged resolver can. Pass it through untouched.
-			model = def
-		} else {
-			resolved, _, ok := cfg.ResolveDesktopNewSessionModel()
-			if !ok {
-				a.recordTabStartupFailure(tab, buildGeneration, wailsCtx, errNoDesktopChatModel)
-				return
-			}
-			model = resolved
-		}
-	}
-	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, model)
-	requestedModel := model
-	if providerext.PluginRefOwner(model) == "" {
-		// Plugin refs skip the config fallback: rerouting an unavailable
-		// extension model onto a config provider would silently change the
-		// session; boot's unknown-model error is the honest failure.
-		if resolved, fallback, ok := cfg.ResolveModelWithFallback(model); ok {
-			if fallback && strings.TrimSpace(tabModel) != "" {
-				a.noticeForTab(tab.ID, fmt.Sprintf("model %q is no longer available; switched to %s", requestedModel, resolved))
-			}
-			model = resolved
-		}
-	}
-
 	// Acquire a shared plugin host for this workspace root so MCP processes
 	// are launched once per root, not once per tab. SharedHostKey is an a.mu-
 	// guarded field (takeTabSharedHostKey reads it under the lock during
@@ -4044,11 +4018,16 @@ func (a *App) buildTabControllerWithContextCore(tab *WorkspaceTab, loadedSession
 	// if it moves before publication we abandon this controller rather than
 	// resurrecting removed tools on the shared host.
 	extensionGen := a.currentExtensionGeneration()
+	if err := boot.ValidateReasoningSnapshot(cfg, boot.Options{Model: model, EffortOverride: buildEffort}); err != nil {
+		a.recordTabStartupFailure(tab, buildGeneration, wailsCtx, err)
+		return
+	}
 	sharedHost := a.acquireSharedHost(rootKey)
 	sink := a.desktopControllerSink(buildSink, cfg.Notifications)
 	buildCtx, registration := beginSharedHostMCPRegistration(buildCtx, sharedHost)
 	defer registration.rollback()
 	ctrl, err := a.buildTabControllerBootFenced(buildCtx, extensionGen, boot.Options{
+		ConfigSnapshot:           cfg,
 		Model:                    model,
 		RequireKey:               false,
 		StatsSource:              "desktop",

@@ -86,14 +86,15 @@ type ProviderView struct {
 }
 
 type ProviderModelCapabilityView struct {
-	Model                   string   `json:"model"`
-	InputModalities         []string `json:"inputModalities"`
-	State                   string   `json:"state"`
-	Source                  string   `json:"source"`
-	AutomaticState          string   `json:"automaticState"`
-	AutomaticSource         string   `json:"automaticSource"`
-	ImageInputEnableAllowed bool     `json:"imageInputEnableAllowed"`
-	ImageInputBlockReason   string   `json:"imageInputBlockReason,omitempty"`
+	ResolvedReasoning       *config.ResolvedReasoningView `json:"resolvedReasoning,omitempty"`
+	Model                   string                        `json:"model"`
+	InputModalities         []string                      `json:"inputModalities"`
+	State                   string                        `json:"state"`
+	Source                  string                        `json:"source"`
+	AutomaticState          string                        `json:"automaticState"`
+	AutomaticSource         string                        `json:"automaticSource"`
+	ImageInputEnableAllowed bool                          `json:"imageInputEnableAllowed"`
+	ImageInputBlockReason   string                        `json:"imageInputBlockReason,omitempty"`
 }
 
 type ProviderModelCatalogUpdate struct {
@@ -734,7 +735,12 @@ func providerModelCapabilitiesForView(p config.ProviderEntry, models []string) [
 		entry := p
 		entry.Model = model
 		capability := resolver.Resolve(&entry)
-		out = append(out, modelCapabilityView(capability))
+		view := modelCapabilityView(capability)
+		cfg := config.Config{Providers: []config.ProviderEntry{p}}
+		if resolved, ok := cfg.ResolveModel(p.Name + "/" + model); ok {
+			view.ResolvedReasoning = config.ResolveReasoningView(resolved)
+		}
+		out = append(out, view)
 	}
 	return out
 }

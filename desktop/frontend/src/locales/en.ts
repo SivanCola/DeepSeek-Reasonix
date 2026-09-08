@@ -51,6 +51,8 @@ export const en = {
   "topbar.customize": "Customize",
   "topbar.newSession": "New session",
   "topbar.startupError": "startup error: {msg}",
+  "topbar.openModelSettings": "Open model settings",
+  "settings.resolvedReasoning": "Reasoning capability of the saved configuration",
 
   // app chrome
   "tabBar.closeTab": "Close tab",
@@ -3037,7 +3039,7 @@ export const en = {
   "settings.fetchModelsAfterKeyFailed": "Key saved, but available models could not be refreshed automatically: {err}",
   "settings.fetchModelsAfterKeyFailedForProvider": "Key saved, but available models for {provider} could not be refreshed: {err}",
   "settings.newProviderDraftName": "new provider",
-	  "settings.reasoningProtocol": "Model capability mode",
+	  "settings.reasoningProtocol": "Model reasoning protocol",
 	  "settings.reasoningProtocol.auto": "Auto-detect (recommended)",
 	  "settings.reasoningProtocol.deepseek": "DeepSeek thinking (thinking + depth)",
 	  "settings.reasoningProtocol.glm": "GLM thinking (enabled / disabled)",

@@ -26,6 +26,7 @@ export function projectNavigationSurfaceTarget(input: {
     backendActivationPending: remote ? false : Boolean(local.backendActivationPending),
     hydrating: remote ? !remote.hydrated && !terminal : Boolean(local.hydrating),
     hydrateError: remote ? terminal ? remote.error || remote.state : undefined : local.hydrateError,
+    startupError: remote ? undefined : local.meta?.startupErr,
   };
 }
 

@@ -26,6 +26,7 @@ export function useNavigationSurface(target: {
   backendActivationPending: boolean;
   hydrating: boolean;
   hydrateError?: string;
+  startupError?: string;
 }) {
   const [surface, setSurface] = useState<NavigationSurfaceState>(null);
   const [preserved, setPreserved] = useState<PreservedTranscriptSurface | null>(null);
@@ -34,11 +35,11 @@ export function useNavigationSurface(target: {
   const transitioning = intent !== null;
   const dataReady = Boolean(
     surface?.phase === "target-masked" && target.activeTabId && target.ready &&
-    !target.backendActivationPending && !target.hydrating && !target.hydrateError,
+    !target.backendActivationPending && !target.hydrating && !target.hydrateError && !target.startupError,
   );
   const failed = Boolean(
     surface?.phase === "target-masked" && target.activeTabId &&
-    !target.backendActivationPending && !target.hydrating && target.hydrateError,
+    !target.backendActivationPending && (target.startupError || (!target.hydrating && target.hydrateError)),
   );
 
   const begin = useCommittedCommand((nextIntent: number) => {

@@ -1,5 +1,11 @@
 # Releasing Reasonix
 
+The next stable release must complete the [OpenCode Go schema-10 acceptance
+matrix](OPENCODE_GO_VALIDATION.md), including migration, old-reader round trips,
+planner effort switching, independent search, and Windows native validation.
+Ship the [English](OPENCODE_GO_UPGRADE.md) and
+[Chinese](OPENCODE_GO_UPGRADE.zh-CN.md) upgrade notes with that release.
+
 Reasonix has one user-facing release line: the official `X.Y.Z` version. The
 release engine keeps the proven Stable publication topology: three immutable
 Git tags on one `main-v2` commit and one protected orchestrator.
