@@ -1,3 +1,4 @@
+import { saveModelSettings, isModelSettingsResult } from "../lib/modelSettings";
 import { ModelSettingHelp } from "./ModelSettingHelp";
 import { SettingsOptions } from "./SettingsOptions";
 import { SettingsSelect } from "./SettingsSelect";
@@ -18,7 +19,7 @@ import { asArray } from "../lib/array";
 import { ShellInterpreterFields } from "./SettingsShellSupport";
 import { CHANNEL_ICONS } from "./channelIcons";
 import { botAccessEntryCount, botAccessReady, botConnectionCredentialSummary, botConnectionLabel, botConnectionScopeLabel, botConnectionSecretEnv, botConnectionSecretPatch, botInstallTargetForConnection, botInstallTargetMatchesConnection, botTargetHint, botTargetLabel, diagnosticMessage, diagnosticReportDetail, firstConnectionRemote, formatInstallTimeLeft, formatInstallUserCode, qqBotAdded, type BotInstallTarget, type BotOfficialInstallTarget } from "./botConnectionSettings";
-import { app, COMPACT_RATIO_MAX_PERCENT, COMPACT_RATIO_MIN_PERCENT, openExternal } from "../lib/bridge";
+import { app, COMPACT_RATIO_MAX_PERCENT, COMPACT_RATIO_MIN_PERCENT, onRuntimeRebuilt, openExternal } from "../lib/bridge";
 import { normalizeLangPref, useI18n, type DictKey, type LangPref } from "../lib/i18n";
 import { createLatestRequestGate, mergedFetchedProviderModels, mergeProviderModelContextWindows, providerApiKeyEnvForSave, providerDefaultModel, providerIsConfigured, providerModelCandidates, providerModelContextWindowDrafts, providerRequiresKey } from "../lib/providerModels";
 import { cachedFetchProviderModelCatalog, cachedFetchProviderModels, invalidateProviderCacheByAPIKeyEnv, shouldSkipAutoRefresh } from "../lib/providerModelCache";
@@ -139,6 +140,10 @@ export function SettingsPanel({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [modelApplication, setModelApplication] = useState<import("../lib/types").ModelSettingsResult | null>(null);
+  const modelApplicationSeq = useRef(0);
+  const settingsLoadSeq = useRef(0);
+  const settingsApplySeq = useRef(0);
   const [theme, setThemeState] = useState<Theme>(getTheme());
   const [themeStyle, setThemeStyleState] = useState<ThemeStyle>(() => getThemeStyle(getTheme()));
   const [terminalTheme, setTerminalThemeState] = useState<TerminalThemePreference>(getTerminalThemePreference());
@@ -167,23 +172,53 @@ export function SettingsPanel({
   }
 
   const reload = useCallback(async () => {
+    const seq = ++settingsLoadSeq.current;
+    const applicationSeq = ++modelApplicationSeq.current;
     setLoadingSettings(true);
     setSettingsLoadFailed(false);
     try {
-      const next = normalizeSettingsView(await app.Settings());
+      const [view, application] = await Promise.all([
+        app.Settings(),
+        Promise.resolve().then(() => app.GetModelSettingsApplication()).catch(() => null),
+      ]);
+      const next = normalizeSettingsView(view);
+      if (seq !== settingsLoadSeq.current) return next;
       setS(next);
+      if (application && applicationSeq === modelApplicationSeq.current) setModelApplication(application);
       return next;
     } catch {
-      setS(null);
+      if (seq !== settingsLoadSeq.current) return null;
       setSettingsLoadFailed(true);
       return null;
     } finally {
-      setLoadingSettings(false);
+      if (seq === settingsLoadSeq.current) setLoadingSettings(false);
     }
   }, []);
   useEffect(() => {
     void reload();
   }, [reload]);
+  const refreshModelApplication = useCallback(async () => {
+    const seq = ++modelApplicationSeq.current;
+    try {
+      const result = await app.GetModelSettingsApplication();
+      if (seq === modelApplicationSeq.current) setModelApplication(result);
+    } catch { /* Keep the last confirmed status until the next read. */ }
+  }, []);
+  useEffect(() => {
+    const refresh = () => { void refreshModelApplication(); };
+    const unsubscribe = onRuntimeRebuilt(refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", refresh);
+      modelApplicationSeq.current += 1;
+    };
+  }, [refreshModelApplication]);
+  useEffect(() => {
+    if (modelApplication?.application !== "pending" && modelApplication?.application !== "failed") return;
+    const timer = window.setInterval(() => { void refreshModelApplication(); }, 2000);
+    return () => window.clearInterval(timer);
+  }, [modelApplication?.application, refreshModelApplication]);
   useEffect(() => {
     if (initialTab) setTab(initialTab);
   }, [initialTab]);
@@ -228,47 +263,71 @@ export function SettingsPanel({
   }, [desktopPlatform]);
 
   // apply runs a mutation, re-reads settings, and refreshes the topbar/model.
+  const pendingSettingsApplies = useRef(0);
   const apply = useCallback(async (fn: () => Promise<unknown>) => {
+    const seq = ++settingsApplySeq.current;
+    pendingSettingsApplies.current += 1;
     setBusy(true);
     setErr(null);
     setWarning(null);
     try {
       const result = await fn();
+      if (seq !== settingsApplySeq.current) return isModelSettingsResult(result) ? result.persisted : true;
+      if (isModelSettingsResult(result)) {
+        modelApplicationSeq.current += 1;
+        setModelApplication(result);
+      }
       const next = await reload();
+      if (seq !== settingsApplySeq.current) return isModelSettingsResult(result) ? result.persisted : true;
       onChanged(next);
       window.dispatchEvent(new Event("reasonix:model-catalog-changed"));
+      if (isModelSettingsResult(result)) {
+        if (!result.persisted) throw new Error(result.issues.map(issue => issue.message).join("\n"));
+      }
       if (typeof result === "string" && result.trim()) {
         setWarning(result.trim());
       }
       return true;
     } catch (e) {
+      if (seq !== settingsApplySeq.current) return false;
       // Settings writes can be two-phase: persistence may succeed before a
       // runtime refresh reports a real boot error. Re-read the authoritative
       // state even on failure so the UI never offers an action that already
       // committed (for example, a DeepSeek protocol upgrade).
       try {
         const next = await reload();
+        if (seq !== settingsApplySeq.current) return false;
         onChanged(next);
         window.dispatchEvent(new Event("reasonix:model-catalog-changed"));
       } catch {
         // Keep the original mutation error; it is the actionable failure.
       }
+      if (seq !== settingsApplySeq.current) return false;
       setErr(formatSettingsError(e, t));
       return false;
     } finally {
-      setBusy(false);
+      pendingSettingsApplies.current -= 1;
+      setBusy(pendingSettingsApplies.current > 0);
     }
   }, [reload, onChanged, t]);
   const backgroundApply = useCallback(async (fn: () => Promise<void>) => {
+    const seq = ++settingsApplySeq.current;
     setErr(null);
     setWarning(null);
     try {
       await fn();
+      if (seq !== settingsApplySeq.current) return;
       const next = await reload();
+      if (seq !== settingsApplySeq.current) return;
       onChanged(next);
       window.dispatchEvent(new Event("reasonix:model-catalog-changed"));
     } catch (e) {
+      if (seq !== settingsApplySeq.current) return;
       setErr(formatSettingsError(e, t));
+      try {
+        const current = await reload();
+        if (seq === settingsApplySeq.current) onChanged(current);
+      } catch { /* Keep the original save issue if readback is unavailable. */ }
     }
   }, [reload, onChanged, t]);
   const setTerminalThemePreference = useCallback((next: TerminalThemePreference) => {
@@ -344,6 +403,15 @@ export function SettingsPanel({
             )}
             {needsSettings && err && <div className="banner banner--error">{err}</div>}
             {needsSettings && warning && <div className="banner banner--warning">{warning}</div>}
+            {needsSettings && (tab === "models" || tab === "providers") && modelApplication && (modelApplication.application === "pending" || modelApplication.application === "failed") && (
+              <div className="banner banner--warning" role="status">
+                <span>{t(modelApplication.application === "pending" ? "settings.models.savedPending" : "settings.models.savedApplyFailed")}</span>
+                {modelApplication.issues.map((issue, index) => <span key={`${issue.code}:${index}`}>{issue.message}</span>)}
+                {modelApplication.targets.filter(target => target.application === "failed").map(target => (
+                  <button className="btn btn--small" key={target.tabId} type="button" disabled={busy} onClick={() => void apply(() => app.RetryModelSettingsApplication(target.tabId))}>{t("settings.models.applyRetry")}{target.title ? ` · ${target.title}` : ""}</button>
+                ))}
+              </div>
+            )}
             {needsSettings && !s ? (
               loadingSettings ? <div className="empty">{t("settings.loading")}</div> : null
             ) : (
@@ -4229,7 +4297,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
         try {
           if (stale()) return;
           // Compare and apply narrow catalog updates in one transaction.
-          await app.SaveProviderModelCatalogs(updates);
+          await saveModelSettings(s, {kind: "catalogs", catalogs: updates});
         } catch {
           // Background discovery is opportunistic; explicit edits show errors.
         }
@@ -4245,7 +4313,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
     <>
       {subtab === "usage" ? (
         <div className="model-preferences">
-          <SettingsSection className="model-assignment-section" title={t("settings.models.preferences")} description={t("settings.defaultModelHint")}>
+          <SettingsSection className="model-assignment-section" title={t("settings.models.preferences")} description={t("settings.models.preferencesApplyHint")}>
             <div className="model-assignment-head"><span>{t("settings.modelPurpose")}</span><span>{t("settings.modelUsage")}</span><span>{t("settings.modelConnection")}</span></div>
             <SettingsField className="model-assignment-row" label={<ModelSettingHelp label={t("settings.defaultModel")} text={t("providerUI.defaultModelHelp")} />}>
               <ModelPicker
@@ -4254,7 +4322,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
                 value={toRef(s.defaultModel, s)}
                 disabled={busy}
                 ariaLabel={t("settings.defaultModel")}
-                onPick={(ref) => void apply(() => app.SetDefaultModel(ref))}
+                onPick={(ref) => void apply(() => saveModelSettings(s, {kind: "preference", field: "default", ref: ref}))}
               />
             <span className="model-assignment-connection">{toRef(s.defaultModel, s) && toRef(s.defaultModel, s) !== "auto" ? modelOptionMeta(modelOptionFromRef(toRef(s.defaultModel, s), s)!, t) : t("settings.connectionAutomatic")}</span>
             </SettingsField>
@@ -4267,7 +4335,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
                 disabled={busy}
                 ariaLabel={t("settings.plannerModel")}
                 includeSameDefault
-                onPick={(ref) => void apply(() => app.SetPlannerModel(ref))}
+                onPick={(ref) => void apply(() => saveModelSettings(s, {kind: "preference", field: "planner", ref: ref}))}
               />
             <span className="model-assignment-connection">{plannerSelectRef && plannerSelectRef !== "auto" ? modelOptionMeta(modelOptionFromRef(plannerSelectRef, s)!, t) : t("settings.connectionFollowSession")}</span>
             </SettingsField>
@@ -4281,7 +4349,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
                 ariaLabel={t("settings.imageUnderstandingModel")}
                 emptyOptionLabel={t("common.none")}
                 autoOptionLabel={t("common.auto")}
-                onPick={(ref) => void apply(() => app.SetVisionModel(ref))}
+                onPick={(ref) => void apply(() => saveModelSettings(s, {kind: "preference", field: "vision", ref: ref}))}
               />
             <span className="model-assignment-connection">{visionRef && visionRef !== "auto" ? modelOptionMeta(modelOptionFromRef(visionRef, s)!, t) : (visionRef === "auto" ? t("settings.connectionAutomatic") : t("common.none"))}</span>
             </SettingsField>
@@ -4291,7 +4359,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
               <div className="web-search-assignment-control">
                 <ModelPicker s={s} refs={s.webSearchModels ?? []} value={s.webSearchModel || "auto"}
                   disabled={busy} ariaLabel={t("settings.webSearchModel")} autoOptionLabel={t("common.auto")}
-                  onPick={(ref) => void apply(() => app.SetWebSearchModel(ref))} />
+                  onPick={(ref) => void apply(() => saveModelSettings(s, {kind: "preference", field: "search", ref: ref}))} />
                 {(s.webSearchModelStatus === "invalid" || Boolean(s.webSearchModel && s.webSearchModel !== "auto" && !(s.webSearchModels ?? []).includes(s.webSearchModel))) && <p role="status" className="web-search-assignment-hint">{t("settings.webSearchModelUnavailable")} {s.webSearchModelReason}</p>}
                 {s.webSearchModelOverridden && <p className="web-search-assignment-hint">{t("settings.webSearchModelOverride", { model: s.effectiveWebSearchModel || t("common.auto") })}</p>}
                 {(s.webSearchModels ?? []).length === 0 && <p className="web-search-assignment-hint">{t("settings.webSearchModelEmpty")} {onOpenProviders && <button type="button" className="btn btn--small" onClick={onOpenProviders}>{t("settings.webSearchModelConnections")}</button>}</p>}
@@ -4308,7 +4376,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
                 ariaLabel={t("settings.subagentModel")}
                 emptyOptionLabel={t("settings.subagentModelDefault")}
                 emptyOptionHint={t("settings.subagentModelFollowHint")}
-                onPick={(ref) => void apply(() => app.SetSubagentModel(ref))}
+                onPick={(ref) => void apply(() => saveModelSettings(s, {kind: "preference", field: "subagent", ref: ref}))}
               />
             <span className="model-assignment-connection">{subagentRef && subagentRef !== "auto" ? modelOptionMeta(modelOptionFromRef(subagentRef, s)!, t) : t("settings.connectionFollowParent")}</span>
             </SettingsField>
@@ -4319,7 +4387,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
                 aria-label={t("settings.subagentReasoning")}
                 value={s.subagentEffort || ""}
                 disabled={busy}
-                onValueChange={(value) => void apply(() => app.SetSubagentEffort(value))}
+                onValueChange={(value) => void apply(() => saveModelSettings(s, {kind: "preference", field: "subagent_effort", ref: value}))}
               >
                 <option value="">{t("settings.subagentEffortDefault")}</option>
                 {s.subagentEffort && !subagentLevels.includes(s.subagentEffort) && <option value={s.subagentEffort} disabled>{s.subagentEffort}</option>}
@@ -4341,7 +4409,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
                     className={subagentDepth === depth ? "provider-add-segmented__item provider-add-segmented__item--active" : "provider-add-segmented__item"}
                     disabled={busy}
                     aria-pressed={subagentDepth === depth}
-                    onClick={() => void apply(() => app.SetMaxSubagentDepth(depth))}
+                    onClick={() => void apply(() => saveModelSettings(s, {kind: "preference", field: "depth", number: depth}))}
                   >
                     {depth === 1 ? t("settings.subagentDepthOne") : t("settings.subagentDepthTwo")}
                   </button>
@@ -4360,7 +4428,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
                 onChange={(e) => {
                   const n = Number(e.target.value);
                   if (!Number.isFinite(n)) return;
-                  void apply(() => app.SetMaxSubagentConcurrency(n));
+                  void apply(() => saveModelSettings(s, {kind: "preference", field: "concurrency", number: n}));
                 }}
               />
             </SettingsField>
@@ -4376,7 +4444,7 @@ export function ModelsSection({ s, busy, apply, backgroundApply, subtab, onboard
                 onChange={(e) => {
                   const n = Number(e.target.value);
                   if (!Number.isFinite(n)) return;
-                  void apply(() => app.SetMaxParallelWriters(n));
+                  void apply(() => saveModelSettings(s, {kind: "preference", field: "writers", number: n}));
                 }}
               />
             </SettingsField>
@@ -4706,7 +4774,7 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
   const startUsing = async () => {
     if (!readyConnection) return;
     const model = providerDefaultModel(readyConnection.default, readyConnection.models);
-    if (await apply(() => app.SetDefaultModel(`${readyConnection.name}/${model}`))) onOnboardingComplete?.();
+    if (await apply(() => saveModelSettings(s, {kind: "preference", field: "default", ref: `${readyConnection.name}/${model}`}))) onOnboardingComplete?.();
   };
   const [fetchingProviders, setFetchingProviders] = useState<Set<string>>(() => new Set());
   const fetchGate = useMemo(createLatestRequestGate, []);
@@ -4850,7 +4918,7 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
     setGroupFetchResult(group.id, null);
     setGroupModelDraft(group.id, null);
     const saved = await apply(async () => {
-      const warning = await app.SetConnectionKey(group.providers[0].name, value);
+      const warning = await saveModelSettings(s, {kind: "credential", names: group.providers.filter(p => p.apiKeyEnv === apiKeyEnv).map(p => p.name), key: value});
       invalidateProviderCacheByAPIKeyEnv(apiKeyEnv);
       return warning;
     });
@@ -4861,7 +4929,7 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
     if (!apiKeyEnv) return;
     cancelGroupFetch(group.id);
     await apply(async () => {
-      await app.SetConnectionKey(group.providers[0].name, "");
+      await saveModelSettings(s, {kind: "credential", names: group.providers.filter(p => p.apiKeyEnv === apiKeyEnv).map(p => p.name), key: ""});
       invalidateProviderCacheByAPIKeyEnv(apiKeyEnv);
     });
   };
@@ -4873,11 +4941,11 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
     }
     if (key) {
       provider = {...provider, apiKeyEnv: `REASONIX_CONNECTION_${crypto.randomUUID().replaceAll("-", "").toUpperCase()}_KEY`};
-      const warning = await app.SaveProviderWithKey(provider, key);
+      const warning = await saveModelSettings(s, {kind: "provider_save", provider, key});
       invalidateProviderCacheByAPIKeyEnv(provider.apiKeyEnv);
       return warning;
     }
-    await app.SaveProvider(provider);
+    return saveModelSettings(s, {kind: "provider_save", provider});
   };
 
   const saveModelDraft = async (group: ProviderAccessGroup) => {
@@ -4887,14 +4955,15 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
     if (!draft || !provider || models.length === 0) return;
     let saved = false;
     await apply(async () => {
-      await app.SaveProvider({
+      const result = await saveModelSettings(s, {kind: "provider_save", provider: {
         ...provider,
         models,
         // Vision capability is derived from model metadata. Keep legacy
         // fields untouched so old configurations remain readable.
         default: providerDefaultModel(provider.default, models),
-      });
+      }});
       saved = true;
+      return result;
     });
     if (!saved) return;
     setGroupModelDraft(group.id, null);
@@ -4942,14 +5011,14 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
             busy={busy}
             onMode={setAdding}
             onCancel={() => onboarding ? onOnboardingComplete?.() : setAdding(null)}
-            onAddOfficial={(kind, key, baseURL, format) => apply(() => app.AddProviderConnectionWithOptions("", s.providers.find(p => officialProviderKind(p) === kind)?.name ?? "deepseek-flash", key, baseURL ?? "", format ?? "")).then(saved => { if (saved) setAdding(null); })}
-            onAddPreset={(id, key, baseURL, format) => apply(() => app.AddProviderConnectionWithOptions(id, "", key, baseURL ?? "", format ?? "")).then(saved => { if (saved) setAdding(null); })}
+            onAddOfficial={(kind, key, baseURL, format) => apply(() => saveModelSettings(s, {kind: "connection_add", name: s.providers.find(p => officialProviderKind(p) === kind)?.name ?? "deepseek-flash", key, baseURL, protocol: format})).then(saved => { if (saved) setAdding(null); })}
+            onAddPreset={(id, key, baseURL, format) => apply(() => saveModelSettings(s, {kind: "connection_add", presetId: id, key, baseURL, protocol: format})).then(saved => { if (saved) setAdding(null); })}
             onViewPresetConflict={(providerName) => {
               setRevealedProvider(providerName);
               setEditing(providerName);
               setAdding(null);
             }}
-            onResetPreset={(id) => apply(() => app.ResetProviderPresetAccess(id)).then(saved => { if (saved) setAdding(null); })}
+            onResetPreset={(id) => apply(() => saveModelSettings(s, {kind: "preset_reset", presetId: id})).then(saved => { if (saved) setAdding(null); })}
             onAddCustom={(pv, key) => apply(() => saveProvider(pv, key ?? "", true)).then(saved => { if (saved) setAdding(null); })}
           />
         )}
@@ -4957,10 +5026,10 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
           <ProviderAccessCard
             key={group.id}
             detail
-            onCopy={() => void apply(() => app.AddProviderConnection("", group.providers[0].name, ""))}
+            onCopy={() => void apply(() => saveModelSettings(s, {kind: "connection_add", name: group.providers[0].name, key: ""}))}
             onRename={(label) => apply(() => {
               if (typeof app.RenameProviderConnections !== "function") throw new Error(t("settings.connections.restartRequired"));
-              return app.RenameProviderConnections(group.providers.map(p => p.name), label);
+              return saveModelSettings(s, {kind: "rename", names: group.providers.map(p => p.name), ref: label});
             })}
             group={group}
             providerPresets={s.providerPresets}
@@ -4976,7 +5045,6 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
               cancelGroupFetch(group.id);
               return apply(() => saveProvider(pv, key ?? "")).then((saved) => {
                 if (!saved) throw new Error(t("settings.connections.renameFailed"));
-                setEditing(null);
                 setGroupModelDraft(group.id, null);
               });
             }}
@@ -4999,19 +5067,19 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
                   .map((provider) => provider.name)
                   .filter((name) => name.startsWith("opencode-go-deepseek-"));
                 if (enabled) {
-                  void apply(() => app.AddProviderPresetAccess("opencode-go-deepseek-responses", ""));
+                  void apply(() => saveModelSettings(s, {kind: "preset_add", presetId: "opencode-go-deepseek-responses", key: ""}));
                 } else if (searchProviderNames.length > 0) {
-                  void apply(() => app.RemoveProviderAccesses(searchProviderNames));
+                  void apply(() => saveModelSettings(s, {kind: "access_remove", names: searchProviderNames}));
                 }
                 return;
               }
               const providerNames = group.providers.map((provider) => provider.name);
               if (providerNames.length === 0) return;
-              void apply(() => app.SetProviderWebSearch(providerNames, enabled));
+              void apply(() => saveModelSettings(s, {kind: "web_search_capability", names: providerNames, enabled}));
             }}
             onUpgradeRecommended={(name) => {
               cancelGroupFetch(group.id);
-              return apply(() => app.UpgradeDeepSeekProviderAccess(name)).then((upgraded) => {
+              return apply(() => saveModelSettings(s, {kind: "protocol_upgrade", name})).then((upgraded) => {
                 if (upgraded) {
                   setEditing(null);
                   setGroupModelDraft(group.id, null);
@@ -5023,7 +5091,7 @@ export function ProvidersSection({ s, busy, apply, onboarding, onOnboardingCompl
             onDelete={(providers) => {
               cancelGroupFetch(group.id);
               const providerNames = providers.map(({ name }) => name);
-              return apply(() => app.RemoveProviderAccesses(providerNames)).then(() => {
+              return apply(() => saveModelSettings(s, {kind: "access_remove", names: providerNames})).then(() => {
                 if (revealedProvider && providerNames.includes(revealedProvider)) {
                   setRevealedProvider(null);
                   setEditing(null);
@@ -6038,8 +6106,11 @@ export function ProviderEditor({
   const [fetchStatus, setFetchStatus] = useState<string | null>(null);
   const [fetchFallback, setFetchFallback] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const draftSnapshot = JSON.stringify([name, hideConnectionName ? "" : displayName, kind, requestUrl, models, modelsUrl, apiKeyEnv, headersDraft, extraBodyDraft, authHeader, noProxy, keyDraft, balanceUrl, ctx, modelContextWindows, modelOverrides, modelCapabilities, legacyVisionModels, reasoningProtocol, thinking, webSearch]);
+  const draftSnapshot = JSON.stringify([name, hideConnectionName ? "" : displayName, kind, requestUrl, models, modelsUrl, headersDraft, extraBodyDraft, authHeader, noProxy, keyDraft, balanceUrl, ctx, modelContextWindows, modelOverrides, modelCapabilities, legacyVisionModels, reasoningProtocol, thinking, webSearch]);
   const [savedSnapshot, setSavedSnapshot] = useState(draftSnapshot);
+  const latestDraftSnapshot = useRef(draftSnapshot);
+  const saveGeneration = useRef(0);
+  latestDraftSnapshot.current = draftSnapshot;
   const dirty = draftSnapshot !== savedSnapshot;
   const isNewCustomProvider = !initial;
   const editorCatalog = useMemo(() => {
@@ -6110,14 +6181,16 @@ export function ProviderEditor({
 
   const fetchModels = async () => {
     if (extraBodyInvalid) return;
-    if (keyDraft.trim()) { setFetchFallback(t("settings.models.saveKeyFirst")); return; }
     setFetchingModels(true);
     setFetchStatus(null);
     setFetchFallback(null);
     try {
       const effectiveApiKeyEnv = providerApiKeyEnvForSave(name, apiKeyEnv, keyDraft);
       if (!apiKeyEnv.trim()) setApiKeyEnv(effectiveApiKeyEnv);
-      const fetchedCapabilities = await cachedFetchProviderModelCatalog((provider) => app.FetchProviderModelCatalog(provider), {
+      const fetchCatalog = (provider: ProviderView) => keyDraft.trim()
+        ? app.FetchProviderModelCatalogDraft(provider, keyDraft.trim())
+        : cachedFetchProviderModelCatalog(p => app.FetchProviderModelCatalog(p), provider, true);
+      const fetchedCapabilities = await fetchCatalog({
         name: name.trim() || t("settings.newProviderDraftName"),
         builtIn: initial?.builtIn ?? false,
         added: initial?.added ?? true,
@@ -6145,7 +6218,7 @@ export function ProviderEditor({
         supportedEfforts: cleanedSupportedEfforts,
         defaultEffort: cleanDefaultEffort,
         modelOverrides: mergeProviderModelContextWindows(modelOverrides, parseProviderListInput(models), modelContextWindows),
-      }, true);
+      });
       const fetched = fetchedCapabilities.map((item) => item.model);
       if (fetched.length === 0) {
         setFetchFallback(t("settings.fetchModelsManualFallbackEmpty"));
@@ -6153,7 +6226,6 @@ export function ProviderEditor({
       }
       setModelCandidates(current => uniqueStrings([...current, ...fetched]));
       setModelCapabilities(current => [...current.filter(item => !fetched.includes(item.model)), ...fetchedCapabilities]);
-      if (keyDraft.trim()) setKeyDraft("");
       setFetchStatus(t("settings.fetchModelsSuccess", { n: fetched.length }));
     } catch (e) {
       setFetchFallback(providerModelFetchFallbackMessage(e, t));
@@ -6164,6 +6236,7 @@ export function ProviderEditor({
 
   const save = async () => {
     if (extraBodyInvalid) return;
+    const generation = ++saveGeneration.current;
     setFetchStatus(null);
     setFetchFallback(null);
     const ms = parseProviderListInput(models);
@@ -6206,10 +6279,20 @@ export function ProviderEditor({
     };
     try {
       await onSave(provider, keyDraft.trim() || undefined);
+      if (generation !== saveGeneration.current) return;
       setShowKey(false);
-      setSavedSnapshot(draftSnapshot);
+      if (latestDraftSnapshot.current === draftSnapshot) {
+        const committed = JSON.parse(draftSnapshot) as unknown[];
+        committed[10] = ""; // The key draft is cleared only if no newer edit exists.
+        setKeyDraft("");
+        setSavedSnapshot(JSON.stringify(committed));
+      } else {
+        setSavedSnapshot(draftSnapshot);
+      }
     } catch (e) {
-      setFetchFallback(String((e as Error)?.message ?? e));
+      if (generation === saveGeneration.current && latestDraftSnapshot.current === draftSnapshot) {
+        setFetchFallback(String((e as Error)?.message ?? e));
+      }
     }
   };
 

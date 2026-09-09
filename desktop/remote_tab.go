@@ -390,6 +390,10 @@ func (a *App) remoteTabPump(ctx context.Context, tabID string, gen uint64, opene
 			return
 		}
 		kind, framePath, current, reset := probeRemoteTabFrame(frame)
+		if kind == "runtime_state" {
+			a.acceptRemoteRuntimeFrame(tabID, gen, framePath, json.RawMessage(frame))
+			continue
+		}
 		// A takeover notice for the session this tab is viewing flips the
 		// spectator pin live: the entry-time probe only runs when the tab
 		// enters a session, so a mid-view takeover (or its reversal) would
@@ -691,6 +695,10 @@ func remoteSessionTakenOver(err error) bool {
 }
 
 func (a *App) SubmitRemoteTab(tabID, text string) error {
+	revision, err := a.ensureRemoteModelSettings(tabID)
+	if err != nil {
+		return err
+	}
 	client, base, expectedPath, err := a.remoteTabCommandTarget(tabID)
 	if err != nil {
 		return err
@@ -698,7 +706,7 @@ func (a *App) SubmitRemoteTab(tabID, text string) error {
 	ctx, cancel := commandContext(a)
 	defer cancel()
 	body, _ := json.Marshal(map[string]string{"input": text})
-	return servePostForSession(ctx, client, serveURL(base, "/submit"), body, expectedPath)
+	return servePostForSession(ctx, client, serveURL(base, "/submit"), body, expectedPath, revision)
 }
 
 func (a *App) CancelRemoteTab(tabID string) error {

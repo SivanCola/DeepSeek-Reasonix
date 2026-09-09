@@ -44,7 +44,8 @@ var logoWordmarkSVG []byte
 // Server wires a controller to its HTTP surface. The Broadcaster must be the
 // same sink the controller was constructed with, so events reach SSE clients.
 type Server struct {
-	mu sync.RWMutex // guards ctrl, which rebuild paths swap at runtime
+	runtimeProjection serveRuntimeProjection
+	mu                sync.RWMutex // guards ctrl, which rebuild paths swap at runtime
 	// bindMu serializes every entry point that changes the active session
 	// path or controller generation — /resume, /new, /fork, switchModel, and
 	// extension reload. net/http runs handlers
@@ -66,7 +67,10 @@ type Server struct {
 	buildControllerWithOptions func(ctx context.Context, ref string, opts boot.Options) (*control.Controller, error)
 	// buildOptions preserves process-local CLI knobs when multi-session Serve
 	// creates a foreground replacement after detaching a busy controller.
-	buildOptions boot.Options
+	buildOptions           boot.Options
+	managedModels          *config.ModelRuntimeSettings  // bindMu; immutable once accepted
+	modelSettingsOfferID   string                        // bindMu; unacknowledged source route reservation
+	modelSettingsOwnership config.ModelSettingsOwnership // bindMu; all foreground and detached owners
 	// rebuildController rebuilds the same model/runtime generation for an
 	// extension reload. Tests inject it to exercise publication and failure
 	// paths without starting real providers or sidecars.
@@ -104,6 +108,9 @@ type Server struct {
 // that necessarily change with their session tag and active model.
 func (s *Server) SetControllerBuildOptions(opts boot.Options) {
 	s.buildOptions = opts
+	if opts.ModelSettings != nil {
+		s.managedModels = opts.ModelSettings
+	}
 }
 
 // New builds a Server. bc must be the controller's event sink.
@@ -127,6 +134,9 @@ func New(ctrl control.SessionAPI, bc *Broadcaster, serveCfg config.ServeConfig) 
 		bc.SetDisplayCurrency(cfg.ExplicitDisplayCurrency())
 	}
 	s.initTitleProvider()
+	if concrete, ok := ctrl.(*control.Controller); ok {
+		concrete.SetBeforeInboxDispatch(s.beforeInboxDispatch)
+	}
 	return s
 }
 
@@ -274,6 +284,7 @@ func (s *Server) switchModelLocked(ctx context.Context, ref string) error {
 	// this session.
 	if prev, ok := cur.(*control.Controller); ok {
 		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
+		newCtrl.InheritLifecycleFrom(prev)
 	}
 	// Persist before publishing the replacement. A failed write leaves cur and
 	// the on-disk transcript coherent and lets the caller retry; publishing first
@@ -400,15 +411,18 @@ func (s *Server) reloadExtensions(ctx context.Context) error {
 func (s *Server) rebuild(ctx context.Context, old *control.Controller, ref string) (*control.Controller, error) {
 	tag := newSessionTagSink(s.bc)
 	tag.PrimePath(old.SessionPath())
-	opts := boot.Options{
-		Model:          ref,
-		Sink:           tag,
-		Stderr:         os.Stderr,
-		StatsSource:    "serve",
-		SessionDir:     old.SessionDir(),
-		WorkspaceRoot:  old.WorkspaceRoot(),
-		MCPHostProfile: plugin.HostProfileInteractive,
+	opts := s.buildOptions
+	opts.Model, opts.Sink, opts.Stderr = ref, tag, os.Stderr
+	opts.StatsSource, opts.SessionDir, opts.WorkspaceRoot = "serve", old.SessionDir(), old.WorkspaceRoot()
+	opts.MCPHostProfile = plugin.HostProfileInteractive
+	opts.BeforeInboxDispatch = s.beforeInboxDispatch
+	if s.managedModels != nil {
+		opts.ModelSettings = s.managedModels
 	}
+	return s.rebuildWithOptions(ctx, old, ref, opts, tag)
+}
+
+func (s *Server) rebuildWithOptions(ctx context.Context, old *control.Controller, ref string, opts boot.Options, tag *sessionTagSink) (*control.Controller, error) {
 	if s.rebuildControllerWithOptions != nil {
 		ctrl, err := s.rebuildControllerWithOptions(ctx, old, ref, opts)
 		if err == nil {
@@ -423,15 +437,7 @@ func (s *Server) rebuild(ctx context.Context, old *control.Controller, ref strin
 		}
 		return ctrl, err
 	}
-	res, err := boot.Rebuild(ctx, old, boot.Options{
-		Model:          ref,
-		Sink:           tag,
-		Stderr:         os.Stderr,
-		StatsSource:    "serve",
-		SessionDir:     old.SessionDir(),
-		WorkspaceRoot:  old.WorkspaceRoot(),
-		MCPHostProfile: plugin.HostProfileInteractive,
-	})
+	res, err := boot.Rebuild(ctx, old, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -459,6 +465,11 @@ func (s *Server) switchEffortExpected(ctx context.Context, level, expectedPath s
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if s.managedModels != nil {
+		if err := s.managedModels.Apply(cfg, cur.WorkspaceRoot()); err != nil {
+			return err
+		}
+	}
 	ref := currentModelRef(cur)
 	entry, ok := cfg.ResolveModel(ref)
 	if !ok {
@@ -470,6 +481,17 @@ func (s *Server) switchEffortExpected(ctx context.Context, level, expectedPath s
 	effort, err := config.NormalizeEffort(entry, level)
 	if err != nil {
 		return err
+	}
+	if s.managedModels != nil {
+		// Managed providers are transient tunnel identities. Keep an explicit
+		// session effort override in memory instead of persisting virtual keys.
+		previous := s.buildOptions.EffortOverride
+		s.buildOptions.EffortOverride = &effort
+		if err := s.switchModelLocked(ctx, ref); err != nil {
+			s.buildOptions.EffortOverride = previous
+			return err
+		}
+		return nil
 	}
 	editPath := config.UserConfigPath()
 	if editPath == "" {
@@ -541,6 +563,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /provider-setup", s.providerSetupStatus)
 	mux.HandleFunc("POST /provider-setup", s.providerSetupSave)
 	mux.HandleFunc("GET /events", s.events)
+	mux.HandleFunc("GET /runtime-states", s.runtimeStates)
 	mux.HandleFunc("GET /history", s.history)
 	mux.HandleFunc("GET /context", s.context)
 	mux.HandleFunc("POST /submit", s.submit)
@@ -572,6 +595,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /branches", s.branches)
 	mux.HandleFunc("GET /models", s.models)
 	mux.HandleFunc("POST /model", s.modelSwitch)
+	mux.HandleFunc("GET /model-settings", s.modelSettingsStatus)
+	mux.HandleFunc("POST /model-settings", s.applyModelSettings)
 	mux.HandleFunc("POST /effort", s.effortSwitch)
 	mux.HandleFunc("POST /quality-floor", s.qualityFloorSwitch)
 	mux.HandleFunc("POST /extensions/reload", s.reloadExtensionsHTTP)
@@ -755,11 +780,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	// published replacement. This closes the check/build/swap race where a
 	// request could otherwise start on cur after reload's initial busy check.
 	s.bindMu.Lock()
-	if !s.validateExpectedSessionLocked(w, r) {
-		s.bindMu.Unlock()
-		return
-	}
-	if s.rejectMirroredForegroundLocked(w) {
+	if !s.admitModelSettingsRunLocked(w, r) {
 		s.bindMu.Unlock()
 		return
 	}
@@ -1300,14 +1321,6 @@ func (s *Server) models(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"current": current, "label": label, "default": cfg.DefaultModel, "models": out})
 }
 
-func currentModelRef(c control.SessionAPI) string {
-	ref := strings.TrimSpace(c.ModelRef())
-	if ref != "" {
-		return ref
-	}
-	return strings.TrimSpace(c.Label())
-}
-
 // status returns a combined status snapshot. The desktop's runtime-only path
 // skips provider balance IO while retaining all reconciliation fields.
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
@@ -1317,6 +1330,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("session"); raw != "" {
 		if path, err := s.resolveSessionPath(raw); err == nil {
 			held := s.sessionMirrored(path) || leaseHeldByForeignRuntime(path)
+			if !held {
+				if view, ok := s.ownedRuntimeStatusView(path); ok {
+					writeJSON(w, view)
+					return
+				}
+			}
 			writeJSON(w, s.statusViewForPath(path, held))
 			if s.sessionMirrored(path) {
 				s.maybeAutoReclaimMirrored(path)
@@ -1332,8 +1351,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	ctrl := s.ctl()
 	used, window := ctrl.ContextSnapshot()
 	hit, miss := ctrl.SessionCache()
-	rs := ctrl.RuntimeStatus()
+	state, rs := runtimeStateAndStatus(ctrl)
 	sess := map[string]any{
+		"runtimeState":     state,
 		"label":            ctrl.Label(),
 		"running":          rs.Running,
 		"plan":             ctrl.PlanMode(),

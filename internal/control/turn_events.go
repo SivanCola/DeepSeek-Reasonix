@@ -158,6 +158,7 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	}
 	ledger := s.c.turnEventLedger()
 	if ledger == nil {
+		s.c.refreshRuntimeState(e)
 		s.publishInner(e)
 		return nil
 	}
@@ -167,6 +168,7 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	// Outside-turn notices are not lifecycle records and must pass through after
 	// bootstrap or a terminal event.
 	if ledger.ActiveTurnID() == "" {
+		s.c.refreshRuntimeState(e)
 		s.publishInner(e)
 		return nil
 	}
@@ -216,6 +218,7 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	if !ok {
 		return nil
 	}
+	s.c.refreshRuntimeState(stamped)
 	s.publishInner(stamped)
 	if e.Kind == event.TurnDone && !ledger.ProjectionAckRequired() {
 		if err := ledger.AcknowledgeProjection(stamped.TurnID); err != nil {
@@ -363,6 +366,7 @@ func (c *Controller) turnEventRuntimeStatus() (string, event.TurnStatus, uint64,
 }
 
 func (c *Controller) rebindTurnEvents(sessionPath string) {
+	defer c.refreshRuntimeState(event.Event{})
 	if c == nil {
 		return
 	}
@@ -392,6 +396,7 @@ func (c *Controller) rebindTurnEvents(sessionPath string) {
 }
 
 func (c *Controller) failTurnEventLedger(err error) {
+	defer c.refreshRuntimeState(event.Event{})
 	if c == nil || err == nil {
 		return
 	}

@@ -97,7 +97,7 @@ export function partitionTurnItems(items: readonly Item[], live: TranscriptLiveF
       if (isSteerNoticeText(item.text)) {
         current.outsideItems.push(item);
         currentHasConversation = true;
-      } else if (item.level === "warn" || item.variant === "delivery" || Boolean(item.action) || item.code === "search_sources_not_provided") {
+      } else if (item.level === "warn" || item.variant === "delivery" || Boolean(item.action) || item.code === "search_sources_not_provided" || item.code === "incomplete_read") {
         current.outsideItems.push(item);
       } else {
         pushProcess(item);

@@ -12,6 +12,7 @@
 import { createTranscriptHarness, type TranscriptHarness } from "./transcript-dom-harness";
 import type { Item } from "../lib/useController";
 import { act } from "react";
+import { readPauseItem } from "../lib/readPause";
 
 let passed = 0;
 let failed = 0;
@@ -93,6 +94,19 @@ const warningTurn: Item[] = [
       const deliveryCard = container.querySelector(".notice-line--delivery");
       ok(deliveryCard && !deliveryCard.closest(".turn-collapse__body"), "delivery status card renders outside the work fold");
       ok(Boolean(deliveryCard?.querySelector("button")), "delivery status card keeps its continue action reachable");
+    }
+
+    await render(harness, [
+      { kind: "user", id: "u-read-pause", text: "read all" },
+      { kind: "assistant", id: "a-read-pause", text: "candidate answer", reasoning: "worked", streaming: false },
+      readPauseItem({ id: "pause", reads: [{ readId: "read", path: "fixture.txt", reason: "no_progress" }] }, "fallback"),
+    ]);
+    {
+      const pauseCard = container.querySelector('.notice-line[role="status"]');
+      const candidate = container.querySelector(".msg--assistant");
+      ok(pauseCard && !pauseCard.closest(".turn-collapse__body"), "read pause stays visible when the process fold closes");
+      ok(inOrder(candidate, pauseCard), "host pause follows the preserved candidate answer");
+      ok(!pauseCard?.querySelector("button"), "read pause does not offer an implicit budget-reset action");
     }
 
     const originalNow = Date.now;

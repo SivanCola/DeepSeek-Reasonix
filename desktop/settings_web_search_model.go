@@ -10,18 +10,8 @@ import (
 // SetWebSearchModel uses the same admission, locking and rebuild lifecycle as
 // other model assignments. A running controller is never mutated in place.
 func (a *App) SetWebSearchModel(ref string) error {
-	_, err := a.applyConfigChangeWithSave("web search model", func(c *config.Config) error {
-		ref = strings.TrimSpace(ref)
-		if ref != "" && !strings.EqualFold(ref, "auto") {
-			entry, err := c.ResolveWebSearchModel(ref)
-			if err != nil {
-				return err
-			}
-			if !modelProviderAccessAllowed(c.Desktop.ProviderAccess, entry.Name) {
-				return fmt.Errorf("search connection is not added")
-			}
-		}
-		return c.SetWebSearchModel(ref)
+	_, err := a.applyModelConfigChangeWithSave("web search model", func(c *config.Config) error {
+		return setWebSearchModelConfig(c, ref)
 	}, func(c *config.Config, path string) error { return c.SaveWebSearchModelTo(path) })
 	return err
 }
@@ -58,4 +48,18 @@ func (a *App) populateWebSearchSettings(v *SettingsView, cfg *config.Config, roo
 			v.WebSearchModelReason = "Search connection is not added"
 		}
 	}
+}
+
+func setWebSearchModelConfig(c *config.Config, ref string) error {
+	ref = strings.TrimSpace(ref)
+	if ref != "" && !strings.EqualFold(ref, "auto") {
+		entry, err := c.ResolveWebSearchModel(ref)
+		if err != nil {
+			return err
+		}
+		if !modelProviderAccessAllowed(c.Desktop.ProviderAccess, entry.Name) {
+			return fmt.Errorf("search connection is not added")
+		}
+	}
+	return c.SetWebSearchModel(ref)
 }

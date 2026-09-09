@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from "react";
 import { Plus, Server, Square, XCircle } from "lucide-react";
 
 import { app, onRemoteTabOpened, onRemoteTabUpdated } from "../lib/bridge";
+import { runtimeStateStore, selectRuntime, type RuntimeProjection } from "../lib/runtimeStateStore";
 import type { Translator } from "../lib/i18n";
 import type { ProjectNode, RemoteServerView, RemoteSessionView, RemoteTabRefView } from "../lib/types";
 import type { ToastContextValue } from "../lib/toast";
@@ -13,6 +14,12 @@ import type { ContextMenuItem } from "./ContextMenu";
 
 export function remoteProjectKey(ref: RemoteTabRefView): string {
   return `${ref.hostId}\u0000${ref.workspace}`;
+}
+
+export function useRemoteRuntimeTree(tree: ProjectNode[], sessions: Record<string, RemoteSessionView[]>, t: Translator) {
+  const runtime = useSyncExternalStore(runtimeStateStore.subscribe, runtimeStateStore.getSnapshot);
+  const failed = useSyncExternalStore(runtimeStateStore.subscribe, runtimeStateStore.getFailed);
+  return useMemo(() => mergeRemoteSessionsIntoTree(tree, sessions, t, runtime, failed), [tree, sessions, t, runtime, failed]);
 }
 
 export function activeRemoteProjectAncestorKeys(
@@ -36,11 +43,17 @@ export function mergeRemoteSessionsIntoTree(
   tree: ProjectNode[],
   sessions: Record<string, RemoteSessionView[]>,
   t: Translator,
+  runtime?: RuntimeProjection,
+  failed = false,
 ): ProjectNode[] {
   return tree.map((node) => {
     if (!node.remote) return node;
     const rows = sessions[remoteProjectKey(node.remote)] ?? [];
-    const remoteChildren = rows.map((row): ProjectNode => ({
+    const remoteChildren = rows.map((row): ProjectNode => {
+      const session = runtime?.sessions.find(session => session.hostId === node.remote!.hostId && session.workspaceRoot === node.remote!.workspace && session.sessionPath === row.path);
+      const state = selectRuntime(session, failed);
+      const status = state.unknown ? "unknown" : state.known && state.kind !== "idle" && state.kind !== "legacy" ? state.kind : undefined;
+      return ({
       key: `remote-session-${node.remote!.hostId}-${node.remote!.workspace}-${row.name}`,
       kind: "topic",
       label: row.title || row.name || t("projectTree.newTopic"),
@@ -48,12 +61,13 @@ export function mergeRemoteSessionsIntoTree(
       topicId: `${node.remote!.hostId}\u0000${node.remote!.workspace}\u0000${row.name}`,
       sessionPath: row.path,
       turns: row.turns,
-      running: row.running,
+      running: state.known ? state.unknown ? false : Boolean(state.running || session!.state.pendingPrompt || session!.state.backgroundJobs) : row.running,
+      status: status as ProjectNode["status"],
       lastActivityAt: row.lastActivityAt,
       pinned: row.pinned,
       remoteSession: { hostId: node.remote!.hostId, workspace: node.remote!.workspace, name: row.name, path: row.path, title: row.title },
       children: [],
-    }));
+    }); });
     return { ...node, children: [...remoteChildren, ...(node.children ?? [])] };
   });
 }
@@ -227,6 +241,7 @@ export function useRemoteProjectGroups(
 
   useEffect(() => onRemoteTabUpdated((meta) => {
     if (!meta.remote) return;
+    if (runtimeStateStore.getSnapshot()?.sessions.some(session => session.tabId === meta.id && session.state.schemaVersion === 1)) return;
     const key = remoteProjectKey(meta.remote);
     if (!groupKeys.includes(key) || !eligibleSessionKeys.current.has(key)) return;
     const load = ++nextLoad.current;

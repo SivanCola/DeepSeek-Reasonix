@@ -187,10 +187,10 @@ func TestCancelJobCannotCrossSessionBoundary(t *testing.T) {
 	t.Cleanup(manager.Close)
 	pathA := filepath.Join(t.TempDir(), "session-a.jsonl")
 	pathB := filepath.Join(t.TempDir(), "session-b.jsonl")
-	controllerA := New(Options{Jobs: manager})
-	controllerB := New(Options{Jobs: manager})
-	controllerA.sessionPath = pathA
-	controllerB.sessionPath = pathB
+	controllerA := New(Options{Jobs: manager, SessionPath: pathA})
+	controllerB := New(Options{Jobs: manager, SessionPath: pathB})
+	t.Cleanup(controllerA.Close)
+	t.Cleanup(controllerB.Close)
 
 	jobA := manager.StartForSession(agent.BranchID(pathA), "bash", "a", func(ctx context.Context, _ io.Writer) (string, error) {
 		<-ctx.Done()
@@ -5421,7 +5421,7 @@ func TestCacheColdAfterFailureFallsBackTo24h(t *testing.T) {
 	}
 	// 未知模型同样 24h
 	c2 := New(Options{})
-	c2.modelRef = "definitely-not-a-real-model-xyz"
+	c2.selection.ref = "definitely-not-a-real-model-xyz"
 	if got := c2.cacheColdAfter(); got != 24*time.Hour {
 		t.Fatalf("ResolveModel failure must fall back to 24h, got %v", got)
 	}

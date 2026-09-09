@@ -7,6 +7,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.window.document, l
 try {
   const local = (await app.ListTabs())[0];
   const remote = await app.OpenRemoteProjectTab("demo", "~/app", { sessionName: "intro" });
+  assert.equal(remote.sessionPath, "~/app/sessions/intro.jsonl");
   assert.ok((await app.ListTabs()).some(tab => tab.id === remote.id), "remote open and ListTabs share the backend catalog");
   await app.SetActiveTab(remote.id);
   assert.deepEqual((await app.ListTabs()).filter(tab => tab.active).map(tab => tab.id), [remote.id]);
@@ -14,9 +15,11 @@ try {
   assert.equal((await app.ListTabs()).find(tab => tab.id === remote.id)?.label, "fixture/model");
   const renewed = await app.OpenRemoteProjectTab("demo", "~/app", { newSession: true });
   assert.equal(renewed.id, remote.id, "remote new session reuses its workspace surface");
+  assert.ok(renewed.sessionPath && renewed.sessionPath !== remote.sessionPath, "new session replaces the durable session identity");
   assert.equal((await app.ListTabs()).filter(tab => tab.id === remote.id).length, 1);
   assert.equal((await app.ListTabs()).find(tab => tab.id === remote.id)?.topicTitle, "New session");
   const status = await app.RemoteTabStatus(remote.id) as Record<string, unknown>;
+  assert.equal(status.sessionPath, renewed.sessionPath);
   assert.equal(status.plan, false);
   assert.equal(status.toolApprovalMode, "ask");
   assert.equal(status.goal, "");

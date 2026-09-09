@@ -81,6 +81,7 @@ type Config struct {
 	// settings UI intentionally owns even when their value equals the built-in
 	// default. It is transient edit metadata and is never serialized directly.
 	explicitProjectSkillKeys map[string]bool
+	stagedModelCredentials   []string
 	editLoadErr              error
 	// loadWarnings are non-fatal issues observed while loading config (corrupt
 	// user/project files recovered via last-known-good or defaults). They never
@@ -1340,11 +1341,13 @@ type ProviderEntry struct {
 	ResponsesMode string `toml:"responses_mode"`
 	// ResponsesStateful is the legacy boolean form retained for config
 	// compatibility. ResponsesMode wins when both are present.
-	ResponsesStateful *bool `toml:"responses_stateful"`
-	resolvedAPIKey    string
-	resolvedSource    CredentialSource
-	BalanceURL        string `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
-	ContextWindow     int    `toml:"context_window"`
+	ResponsesStateful  *bool `toml:"responses_stateful"`
+	resolvedAPIKey     string
+	credentialsFrozen  bool
+	credentialProxyURL string // runtime-only loopback transport, never persisted
+	resolvedSource     CredentialSource
+	BalanceURL         string `toml:"balance_url"` // optional; a provider-specific wallet-balance endpoint (DeepSeek: https://api.deepseek.com/user/balance). Empty = no balance readout.
+	ContextWindow      int    `toml:"context_window"`
 	// MaxOutputTokens is a protocol-neutral total output budget for one turn.
 	// Zero means official DeepSeek omits the field (server 384K ceiling) and
 	// other vendors keep their own defaults. Effort selects thinking depth only.
@@ -2088,7 +2091,7 @@ func (e *ProviderEntry) APIKey() string {
 	if e == nil {
 		return ""
 	}
-	if e.resolvedAPIKey != "" {
+	if e.credentialsFrozen || e.resolvedAPIKey != "" {
 		return e.resolvedAPIKey
 	}
 	if e.APIKeyEnv == "" {

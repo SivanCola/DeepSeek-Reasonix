@@ -83,6 +83,7 @@ func (a *Agent) streamWithSamplingRecovery(parent context.Context, turn int) (te
 		id := newStreamAttemptID(attempt)
 		a.emitStreamAttempt(id, event.StreamAttemptBegin, attempt, "", nil)
 		sink, attemptSink := a.samplingAttemptSinks()
+		a.freezeVisibleReads(state.frozen.req.Messages)
 		result := a.runSamplingAttempt(ctx, turn, attemptSink, &state.frozen, id)
 		state.billable, _ = a.recordSamplingAttempt(state.billable, result)
 		if ctx.Err() != nil {

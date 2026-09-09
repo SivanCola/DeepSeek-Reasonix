@@ -30,11 +30,11 @@ func ValidateReasoningSnapshot(cfg *config.Config, opts Options) error {
 	return preflightRoleReasoning(cfg, opts, opts.ProviderResolver, false)
 }
 
-func resolveBuildConfiguration(root string, snapshot *config.Config) (*config.Config, error) {
+func resolveBuildConfiguration(root, modelRef string, snapshot *config.Config) (*config.Config, error) {
 	if snapshot != nil {
 		return snapshot, nil
 	}
-	return config.LoadForRoot(root)
+	return config.LoadModelRuntimeSnapshot(root, modelRef)
 }
 
 // preflightRoleReasoning uses the same immutable config snapshot as assembly.

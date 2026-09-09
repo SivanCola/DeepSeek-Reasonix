@@ -91,8 +91,8 @@ func (c *Controller) forkNamedReady(turn int, name string, switchToFork bool, ki
 		Preview:          forkPreview,
 		Turns:            forkTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,
-		Model:            c.modelRef,
-		ModelIdentity:    c.modelIdentity,
+		Model:            c.selection.ref,
+		ModelIdentity:    c.selection.identity,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}
@@ -185,8 +185,8 @@ func (c *Controller) Branch(name string) (string, error) {
 		Preview:          branchPreview,
 		Turns:            branchTurns,
 		SchemaVersion:    agent.BranchMetaCountsVersion,
-		Model:            c.modelRef,
-		ModelIdentity:    c.modelIdentity,
+		Model:            c.selection.ref,
+		ModelIdentity:    c.selection.identity,
 	}); err != nil {
 		return "", c.rewindFail(err)
 	}

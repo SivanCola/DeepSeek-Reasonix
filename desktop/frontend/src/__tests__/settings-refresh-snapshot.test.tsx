@@ -896,9 +896,8 @@ await act(async () => {
   providerRefreshCancelRoot.unmount();
 });
 
-// A settings mutation may persist before a workspace-specific runtime rebuild
-// fails. The panel must re-read the authoritative snapshot on that error so an
-// already-completed protocol upgrade is not offered again.
+// A persisted protocol upgrade with a failed runtime refresh must be read back
+// so the panel offers application retry without repeating the saved upgrade.
 const upgradeFailureRootEl = document.createElement("div");
 document.body.appendChild(upgradeFailureRootEl);
 const upgradeFailureRoot = createRoot(upgradeFailureRootEl);
@@ -942,7 +941,8 @@ window.go = {
         return upgradeFailureSettings;
       },
       FetchAllProviderModelCatalogs: async () => ({}),
-      UpgradeDeepSeekProviderAccess: async () => {
+      ApplyModelSettings: async (change) => {
+        eq(change.kind, "protocol_upgrade", "protocol upgrade uses the structured settings service");
         upgradeFailureMutationCalls += 1;
         upgradeFailureSettings = {
           ...upgradeFailureSettings,
@@ -955,7 +955,7 @@ window.go = {
             recommendedUpgradeAvailable: false,
           })),
         };
-        throw new Error("workspace runtime boot failed after protocol upgrade");
+        return { requestId: change.requestId, persisted: true, revision: "upgraded", application: "failed", targets: [{tabId: "session-one", application: "failed", appliedRevision: "old", desiredRevision: "upgraded"}], issues: [{code: "apply_failed", message: "workspace runtime boot failed after protocol upgrade"}], appliedCatalogs: [] };
       },
     } as Partial<AppBindings> as AppBindings,
   },

@@ -297,9 +297,23 @@ for (const path of localeChunks) {
   // ceiling for cross-platform CI.
   // Search assignment copy adds 239 / 231 B over main-v2 (63147 / 63920 B).
   // Measured result: 63386 / 64151 B; retain bounded cross-platform headroom.
+  // Saved/pending/apply-failure guidance adds 233 / 245 B: 63619 / 64396 B
+  // with gzip level 9. Keep the next decimal ceiling for these four keys.
+  // Session recovery guidance adds 173 / 156 B over main-v2, measuring
+  // 62.173 / 62.887 KiB. Keep only the next one-decimal ceiling.
+  // Combined recovery and model-application copy measures 63791 / 64557 B.
   // Turn result copy adds 554 / 566 B to the latest-base chunks, measuring
   // 64219 / 64964 B with recovery guidance included. Round to the next tenth.
-  const budget = name.startsWith("zh-TW-") ? 63.5 * 1024 : 62.8 * 1024;
+  // Combined turn-result and model-application copy measures 64342 / 65119 B.
+  // Runtime/receipt confirmation copy adds 89 / 99 B to the integrated
+  // turn-result base (64219 / 64964 B). Measured: 64308 / 65063 B.
+  // Read-pause copy merges on top of that base: the combined chunks measure
+  // 64606 / 65349 B, so both dialect ceilings ratchet to the next tenth.
+  // Model-application copy on the read-pause base measures 64734 / 65499 B,
+  // adding 128 / 150 B. Retain only the next one-decimal ceiling.
+  // OpenCode recovery and capability copy merges on that base and measures
+  // 64775 / 65537 B (+41 / +38 B); only zh-TW needs the next tenth.
+  const budget = name.startsWith("zh-TW-") ? 64.1 * 1024 : 63.3 * 1024;
   assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
@@ -418,11 +432,24 @@ const rawInitialBytes = [...initialJS, ...initialCSS, ...appShellCSS]
 // against the 2398.0 KiB base; retain only the next one-decimal ceiling.
 // Shared availability, visible recovery and retry controls measure 2407.215 KiB
 // (+6.107 KiB, 0.25% over the prior welcome head). Retain the next tenth.
+// Integrated model settings and bounded receipt mock measure 2468523 B
+// (2410.667 KiB); retain 0.2 KiB headroom on the combined startup payload.
 // Turn results add 12585 B (0.51%) over main-v2's 2464923 B: bounded receipt
 // projection, status presentation and view bindings. Result: 2477508 B.
-// Integrated OpenCode startup recovery and resolved effort add 1352 B over
-// that latest-base result: 2478860 B (2420.762 KiB, +0.055%). Keep 244 B
-// of build headroom; all gzip, locale and per-chunk gates remain unchanged.
-const rawInitialBudgetKiB = 2_421.0;
+// Combined turn-result and model-settings startup payload is 2481108 B
+// (2422.957 KiB), retaining the same bounded 0.2 KiB build headroom.
+// The integrated turn-result base measures 2477492 B. Runtime state and
+// session-bound receipt confirmation and its mock session contract add
+// 5944 B (0.240%): 2483436 B total.
+// Durable session isolation and missed-completion reconciliation add 1232 B
+// (0.050% over that head), measuring 2484668 B total.
+// The read-status line, read-pause card and their host wiring merge on top and
+// measure 2488853 B. Keep the next tenth; gzip, CSS, and chunk limits unchanged.
+// Combined model-settings and read-evidence integration measures 2492541 B,
+// adding 3688 B (0.148%) over the base. Retain the next one-decimal ceiling.
+// OpenCode startup recovery and resolved effort merge on top of that 2492541 B
+// base and measure 2493911 B, adding 1370 B (0.055%). Retain only the next
+// one-decimal ceiling; gzip, CSS and per-chunk gates remain unchanged.
+const rawInitialBudgetKiB = 2_435.5;
 assertBudget("initial raw JavaScript and CSS", rawInitialBytes, rawInitialBudgetKiB * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_000 * 1024);

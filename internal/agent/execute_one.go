@@ -28,6 +28,9 @@ func (a *Agent) executeOne(ctx context.Context, turn *turnRuntime, call provider
 	ctx = withTurnState(a.withAgentContext(ctx), turn)
 	plan := &toolCallPlan{call: call}
 	defer func() {
+		out.readTaskID = plan.readTaskID
+		out.readEnvelope = plan.readEnvelope
+		out.readActiveMillis = plan.readActiveMillis
 		if plan.mutationObserved && !plan.mutationAfterDone {
 			a.observeAfterMutation(plan)
 		}
@@ -43,6 +46,7 @@ func (a *Agent) executeOne(ctx context.Context, turn *turnRuntime, call provider
 		if plan.resolvedMeta == nil {
 			return
 		}
+		out.readTaskID = plan.readTaskID
 		out.resolved = true
 		out.resolvedName = plan.resolvedMeta.TargetName
 		out.capabilityID = plan.resolvedMeta.CapabilityID
@@ -100,7 +104,10 @@ func (a *Agent) resolveToolPolicy(ctx context.Context, turn *turnRuntime, plan *
 	if blocked, early := a.applyExecutionPreflight(turn, plan); early {
 		return blocked, true
 	}
-	if msg, blocked := turn.incompleteReads.gate(plan); blocked {
+	if blocked, early := a.applyEvidenceGates(ctx, plan); early {
+		return blocked, true
+	}
+	if msg, blocked := a.gateReadOperation(ctx, plan); blocked {
 		return toolOutcome{output: msg, blocked: true, errMsg: firstLine(msg)}, true
 	}
 	if blocked, early := a.applyDeliveryPolicyGates(turn, plan); early {
@@ -581,6 +588,9 @@ func (a *Agent) prepareToolExecution(ctx context.Context, plan *toolCallPlan) (t
 func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) toolOutcome {
 	plan.executed = true
 	cctx := a.withWriteRecovery(plan.cctx, plan.call)
+	if plan.expectedWriteSource.Path != "" {
+		cctx = tool.WithExpectedWriteSource(cctx, plan.expectedWriteSource)
+	}
 	runTool := plan.runTool
 	call := plan.call
 	t := plan.tool

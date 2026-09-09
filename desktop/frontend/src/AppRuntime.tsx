@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRuntimeStateSync } from "./lib/useRuntimeState";
 import { useCommittedCommand } from "./lib/useCommittedCommand";
 import { openExternal } from "./lib/bridge";
 import { useT, useI18n } from "./lib/i18n";
@@ -34,6 +35,7 @@ setReasoningDisplayPending();
  * shell view. Wiring only — no domain logic lives here.
  */
 export function AppRuntime() {
+  useRuntimeStateSync();
   const appRenderToken = createAppRenderToken();
   useLayoutEffect(() => commitAppRenderToken(appRenderToken));
   const runtime = useAppRuntimeAdapter();

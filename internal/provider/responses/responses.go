@@ -39,6 +39,7 @@ func init() {
 
 // Config holds Responses API provider settings.
 type Config struct {
+	HTTPClient  *http.Client
 	Name        string
 	DisplayName string
 	Protocol    string
@@ -152,6 +153,9 @@ func New(cfg Config) provider.Provider {
 		TLSHandshakeTimeout: 15 * time.Second, ResponseHeaderTimeout: 300 * time.Second,
 	}); err == nil {
 		httpClient = built
+	}
+	if cfg.HTTPClient != nil {
+		httpClient = cfg.HTTPClient
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	requestURL := strings.TrimSpace(cfg.RequestURL)

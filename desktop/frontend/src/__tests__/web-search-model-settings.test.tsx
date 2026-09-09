@@ -37,7 +37,11 @@ localStorage.clear();
 
 
 let selected = "";
-window.go = {main:{App:{SetWebSearchModel:async(ref:string)=>{selected=ref;}} as Partial<AppBindings> as AppBindings}};
+window.go = {main:{App:{ApplyModelSettings:async(change)=>{
+  assert.equal(change.kind,"preference");
+  if(change.kind === "preference" && change.field === "search") selected=change.ref;
+  return {requestId:change.requestId,persisted:true,revision:"saved",application:"not_required",targets:[],issues:[],appliedCatalogs:[]};
+}} as Partial<AppBindings> as AppBindings}};
 const host=document.getElementById("root")!;
 const root=createRoot(host);
 const settings=baseSettings();

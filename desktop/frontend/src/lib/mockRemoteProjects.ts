@@ -27,6 +27,7 @@ export function createMockRemoteProjects(tabs: MockRemoteTabCatalog): {
   const key = (hostId: string, workspace: string) => `${hostId}\u0000${workspace}`;
   const tabIdFor = (hostId: string, workspace: string) => `remote-mock-${hostId}-${workspace}`.replace(/[^a-z0-9-]/gi, "_");
   const status = (tabId: string) => ({
+    sessionPath: tabs.get(tabId)?.sessionPath,
     label: tabs.get(tabId)?.label ?? "", running: false, pendingPrompt: false,
     backgroundJobs: 0, plan: false, toolApprovalMode: "ask", goal: "",
   });
@@ -59,6 +60,7 @@ export function createMockRemoteProjects(tabs: MockRemoteTabCatalog): {
           id,
           scope: "project",
           workspaceRoot: workspace,
+          sessionPath: `${workspace}/sessions/${opts?.sessionName || "intro"}.jsonl`,
           workspaceName,
           topicId: "",
           topicTitle: workspaceName,
@@ -72,8 +74,12 @@ export function createMockRemoteProjects(tabs: MockRemoteTabCatalog): {
           remoteState: "ready",
         };
       }
-      if (opts?.newSession) tab.topicTitle = "New session";
+      if (opts?.newSession) {
+        tab.topicTitle = "New session";
+        tab.sessionPath = `${workspace}/sessions/${crypto.randomUUID()}.jsonl`;
+      }
       if (opts?.sessionName) {
+        tab.sessionPath = `${workspace}/sessions/${opts.sessionName}.jsonl`;
         const rows = sessions[key(hostId, workspace)] ?? [];
         tab.topicTitle = rows.find((row) => row.name === opts.sessionName)?.title || tab.workspaceName;
         for (const row of rows) row.current = row.name === opts.sessionName;

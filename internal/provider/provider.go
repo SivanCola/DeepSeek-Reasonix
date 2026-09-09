@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -100,11 +101,15 @@ type Message struct {
 	// ModelMessages removes it before provider serialization.
 	FinalReadinessRecovery *FinalReadinessRecovery `json:"final_readiness_recovery,omitempty"`
 	ProtocolRecovery       json.RawMessage         `json:"protocol_recovery,omitempty"`
+	ReadPause              *ReadPause              `json:"read_pause,omitempty"`
 	// ToolExecution is local shell UI metadata on tool-result messages. It ispersisted for
 	// Desktop/CLI/Servecards and stripped by
 	// ModelMessagesbeforeanyproviderrequestsotoolschemasandprompt-cacheprefixes stay stable.
 	ToolExecution *ToolExecution `json:"tool_execution,omitempty"`
 	ToolRunState  ToolRunState   `json:"tool_run_state,omitempty"`
+	// ReadResult is a persisted, host-only reader delivery envelope for diagnostics.
+	// ModelMessages strips it; provider serializers must never emit it on the wire.
+	ReadResult json.RawMessage `json:"read_result,omitempty"`
 	// MCPApp is the local MCP Apps presentation for results from App-capableservers. Persisted for
 	// Desktopcardsand stripped by ModelMessages;
 	// provider serializers must never emit it on the wire.
@@ -1022,6 +1027,8 @@ func MissingToolCallReasoningWarningFingerprint(p Provider) string {
 
 // Config is a resolved provider instance configuration.
 type Config struct {
+	// HTTPClient supplies immutable credential-proxy transport without changing serialization or vendor identity.
+	HTTPClient  *http.Client
 	Name        string         // stable instance id, e.g. "deepseek-anthropic"
 	DisplayName string         // user-editable label; empty falls back to Name
 	Protocol    string         // configured wire adapter id

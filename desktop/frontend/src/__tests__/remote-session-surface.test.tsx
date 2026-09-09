@@ -1,23 +1,16 @@
 import React, { act } from "react";
 import { RemoteNavigationHarness } from "./helpers/RemoteNavigationHarness";
 import { JSDOM } from "jsdom";
-
 import type { AppBindings } from "../lib/bridge";
 import type { TabMeta } from "../lib/types";
 import type { RemoteSessionApi } from "../lib/useRemoteSession";
-
 let passed = 0;
 let failed = 0;
 function ok(value: boolean, label: string) {
-  if (value) {
-    process.stdout.write(`  PASS  ${label}\n`);
-    passed += 1;
-  } else {
-    process.stdout.write(`  FAIL  ${label}\n`);
-    failed += 1;
-  }
+  process.stdout.write(`  ${value ? "PASS" : "FAIL"}  ${label}\n`);
+  if (value) passed += 1;
+  else failed += 1;
 }
-
 console.log("\nRemote session surface + hook");
 const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
   pretendToBeVisual: true,
@@ -441,6 +434,12 @@ await act(async () => {
 }
 
 await act(async () => {
+  __emitMockRemoteTab("tab-remote-1", "event", { kind: "text", text: "retain this partial answer across disconnect" });
+  await flush();
+});
+ok(document.querySelector("main .transcript")?.textContent?.includes("retain this partial answer across disconnect") === true,
+  "disconnect fixture has visible transcript content before connection loss");
+await act(async () => {
   __emitMockRemoteTab("tab-remote-1", "state", { state: "serve_down", error: "tunnel closed" });
   await flush();
 });
@@ -448,7 +447,8 @@ await act(async () => {
   const warning = document.querySelector(".session-recovery[role=alert]");
   ok(Boolean(warning), "serve_down renders the warning state");
   ok(!warning?.closest("main"), "recovery controls are outside the collapsible transcript main");
-  ok(Boolean(document.querySelector("main .transcript")), "disconnect retains the already loaded transcript");
+  ok(document.querySelector("main .transcript")?.textContent?.includes("retain this partial answer across disconnect") === true,
+    "disconnect retains the already loaded transcript");
   await act(async () => { warning?.querySelector<HTMLButtonElement>("button[aria-controls]")?.click(); });
   ok(warning?.textContent?.includes("tunnel closed") === true, "serve error detail renders");
   await act(async () => {
@@ -794,6 +794,7 @@ ok(replayProbe?.transcript.approval?.id === "replayed-approval", "a remote mode 
 await act(async () => { replayProbe?.drainApprovals(["replayed-approval"]); await flush(); });
 ok(replayProbe?.transcript.approval === undefined, "a remote mode transaction clears the exact approval it auto-allowed");
 await act(async () => replayRoot.unmount());
+await (await import("./helpers/remoteRuntimeReconciliationCases")).runRemoteRuntimeCases({ remoteTab, ok, tape, flush, setSnapshotHistory: value => { snapshotHistory = value; } });
 dom.window.close();
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

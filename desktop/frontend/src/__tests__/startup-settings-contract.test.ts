@@ -160,7 +160,7 @@ ok(
   "official templates allow separate connections while preserving credential status",
 );
 ok(
-  /onUpgradeRecommended=\{\(name\) => \{[\s\S]*?cancelGroupFetch\(group\.id\);[\s\S]*?return apply\(\(\) => app\.UpgradeDeepSeekProviderAccess\(name\)\)/.test(settingsSource) &&
+  /onUpgradeRecommended=\{\(name\) => \{[\s\S]*?cancelGroupFetch\(group\.id\);[\s\S]*?return apply\(\(\) => saveModelSettings\(s, \{kind: "protocol_upgrade", name\}\)\)/.test(settingsSource) &&
     settingsSource.includes("onConfirm={() => onUpgradeRecommended(canonicalOfficialProviderName(upgradeProvider.name))}") &&
     settingsSource.includes('className="provider-protocol-upgrade"') &&
     settingsSource.includes('t("settings.providerProtocol")}: OpenAI Chat Completions') &&
@@ -169,7 +169,7 @@ ok(
 );
 ok(
   settingsSource.includes("const providerNames = group.providers.map((provider) => provider.name)") &&
-    settingsSource.includes("app.SetProviderWebSearch(providerNames, enabled)") &&
+    settingsSource.includes('kind: "web_search_capability", names: providerNames, enabled') &&
     !settingsSource.includes("app.SaveProvider({ ...provider, webSearch: enabled })"),
   "grouped DeepSeek profiles update server-side web search through one atomic backend call",
 );

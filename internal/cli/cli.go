@@ -434,27 +434,6 @@ func workspaceRootForDir(dir string) (string, error) {
 	return wd, nil
 }
 
-func modelForResumePath(modelName, resumePath string, cfg *config.Config) (string, error) {
-	if strings.TrimSpace(modelName) != "" || strings.TrimSpace(resumePath) == "" {
-		return modelName, nil
-	}
-	sessionModel, identity, ok := agent.LoadSessionModelSelection(resumePath)
-	if !ok {
-		return modelName, nil
-	}
-	if cfg == nil {
-		return sessionModel, nil
-	}
-	resolved, err := cfg.ResolveSavedModel(sessionModel, identity)
-	if err != nil {
-		return "", err
-	}
-	if _, ok := cfg.ResolveModel(resolved); !ok {
-		return modelName, nil
-	}
-	return resolved, nil
-}
-
 func loadResumableSession(path string) (*agent.Session, error) {
 	if agent.IsCleanupPending(path) {
 		return nil, fmt.Errorf("session is pending cleanup")
@@ -612,11 +591,7 @@ func runAgent(args []string, version string) int {
 		return 2
 	}
 	if *copySession {
-		if _, err := modelForResumePath(*model, resumePath, cfg); err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		copied, err := copySessionForWriting(resumePath)
+		copied, err := copyResumableSession(*model, resumePath, cfg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
@@ -689,13 +664,8 @@ func runAgent(args []string, version string) int {
 	takeoverManager.SetInner(chain.sink)
 	chain.sink = takeoverManager
 	sink, resultOutput, metrics := chain.sink, chain.resultOutput, chain.metrics
-	if resumePath != "" {
-		*model, err = modelForResumePath(*model, resumePath, cfg)
-		if err != nil {
-			_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
+	if err := applyResumeModel(model, resumePath, cfg); err != nil {
+		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
 	var effortOverride *string
 	if strings.TrimSpace(*effort) != "" {
@@ -742,18 +712,8 @@ func runAgent(args []string, version string) int {
 	// MCP/API callers that manage their own per-project session). Takes
 	// precedence over --continue.
 	// --continue: resume the most recent saved session.
-	if resumePath != "" {
-		if err := takeoverBinding.commitPrevious(takeoverManager); err != nil {
-			_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		ctrl.Resume(resumeSession, resumePath)
-		if err := persistCLIModelSelection(ctrl); err != nil {
-			_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
+	if err := commitResumedSession(takeoverBinding, takeoverManager, ctrl, resumeSession, resumePath); err != nil {
+		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
 	if ctrl.SessionPath() == "" && ctrl.SessionDir() != "" {
 		ctrl.SetFreshSessionPath(agent.NewSessionPath(ctrl.SessionDir(), ctrl.Label()))
@@ -957,12 +917,9 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 			return 1
 		}
 	}
-	resolvedModel, modelErr := modelForResumePath(*model, *resume, cfg)
-	if modelErr != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, modelErr)
-		return 1
+	if err := applyResumeModel(model, *resume, cfg); err != nil {
+		return cliFailure(err)
 	}
-	*model = resolvedModel
 	// Serve always resolves an implicit model from the user-global config,
 	// ignoring project-level default_model overrides. Explicit flags and
 	// resumable session models remain strict and are preserved verbatim.
@@ -979,19 +936,8 @@ func runServeWithOptions(args []string, opts serveRunOptions) int {
 	SetTaskJobKiller(ctrlKillerAdapter{ctrl})
 
 	// Auto-save target: reuse the resumed file, else a fresh one — same as chat.
-	if *resume != "" {
-		ctrl.Resume(resumeSession, *resume)
-		if err := persistCLIModelSelection(ctrl); err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-	} else if *sessionID != "" {
-		freshPath, err := freshWebSessionPath(ctrl.SessionDir(), *sessionID)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		ctrl.SetFreshSessionPath(freshPath)
+	if err := prepareServeSessionPath(ctrl, resumeSession, *resume, *sessionID); err != nil {
+		return cliFailure(err)
 	}
 	ctrl.EnsureSessionPath()
 	// Fresh sessions take the lease too (defensive: the path is brand new); a
@@ -1116,11 +1062,7 @@ func chatREPL(args []string, version string) int {
 		return 2
 	}
 	if *copySession {
-		if _, err := modelForResumePath(*model, resumePath, cfg); err != nil {
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		copied, err := copySessionForWriting(resumePath)
+		copied, err := copyResumableSession(*model, resumePath, cfg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
@@ -1174,12 +1116,9 @@ func chatREPL(args []string, version string) int {
 	}
 
 	ctx := context.Background()
-	resolvedModel, modelErr := modelForResumePath(*model, resumePath, cfg)
-	if modelErr != nil {
-		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, modelErr)
-		return 1
+	if err := applyResumeModel(model, resumePath, cfg); err != nil {
+		return cliFailure(err)
 	}
-	*model = resolvedModel
 
 	// Plumb the controller's typed event stream through a channel so each event
 	// can become a tea.Msg inside the TUI's update loop. Buffered generously:
@@ -1229,18 +1168,8 @@ func chatREPL(args []string, version string) int {
 	// Decide where this conversation's auto-save lands. A resume reuses the
 	// file so closing/reopening keeps appending to the same history; a fresh
 	// session lands in a new file stamped with the model name.
-	if resumePath != "" {
-		if err := takeoverBinding.commitPrevious(takeoverManager); err != nil {
-			_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
-		ctrl.Resume(startupResumeSession, resumePath)
-		if err := persistCLIModelSelection(ctrl); err != nil {
-			_ = cliReturnFailedTakeover(takeoverBinding, leases, takeoverManager)
-			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
-			return 1
-		}
+	if err := commitResumedSession(takeoverBinding, takeoverManager, ctrl, startupResumeSession, resumePath); err != nil {
+		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
 	ctrl.EnsureSessionPath()
 	// Fresh sessions take the lease too (defensive: the path is brand new); a

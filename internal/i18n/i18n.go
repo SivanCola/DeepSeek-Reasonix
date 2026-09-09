@@ -104,6 +104,11 @@ type Messages struct {
 	ChatThoughtForFmt                      string // collapsed reasoning summary, "%d" = elapsed s
 	ChatStatusThinkingFmt                  string // "%s thinking… (%ds · <cancel hint>)" — %s = spinner, %d = elapsed s
 	TurnPhaseWorking                       string // host turn_phase label: working
+	ReadStatusReadingFmt                   string // read status: reading a file
+	ReadStatusCoveredFmt                   string // read status: covered lines
+	ReadStatusDoneFmt                      string // read status: finished a window
+	ReadStatusPausedFmt                    string // read status: paused, needs attention
+	ReadStatusRecovery                     string // next step after a bounded read stops
 	TurnPhaseChecking                      string // host turn_phase label: checking
 	TurnPhaseVerifying                     string // host turn_phase label: verifying
 	TurnPhaseReviewing                     string // host turn_phase label: reviewing

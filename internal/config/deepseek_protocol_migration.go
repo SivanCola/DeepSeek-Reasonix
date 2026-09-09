@@ -114,7 +114,16 @@ func editLegacyDeepSeekProtocolFile(path, target string, automatic bool) (bool, 
 		return false, err
 	}
 	defer unlock()
+	return editLegacyDeepSeekProtocolFileLocked(path, target, automatic)
+}
 
+// UpgradeDeepSeekProviderProtocolLocked is the narrow edit for a caller that
+// already owns LockUserConfigEdits, including a compare-and-save transaction.
+func UpgradeDeepSeekProviderProtocolLocked(path, name string) (bool, error) {
+	return editLegacyDeepSeekProtocolFileLocked(path, name, false)
+}
+
+func editLegacyDeepSeekProtocolFileLocked(path, target string, automatic bool) (bool, error) {
 	resolved, exists, err := statConfigPath(path)
 	if err != nil || !exists {
 		return false, err

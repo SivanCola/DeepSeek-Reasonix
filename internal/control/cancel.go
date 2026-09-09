@@ -41,6 +41,7 @@ func (c *Controller) cancelTurnLocked() (string, bool) {
 }
 
 func (c *Controller) finishCancel(turnID string, cancelled bool) {
+	defer c.refreshRuntimeState(event.Event{})
 	if cancelled {
 		c.emitTurnStatus(event.TurnCancelling, turnID)
 		return

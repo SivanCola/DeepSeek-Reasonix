@@ -2,6 +2,349 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "1.38.3",
+      "date": "2026-09-09",
+      "channel": "stable",
+      "targetingVersion": 1,
+      "title": {
+        "en": "Reasonix 1.38.3",
+        "zh": "Reasonix 1.38.3"
+      },
+      "summary": {
+        "en": "This release improves model settings persistence, runtime state consistency, read evidence handling, and desktop UI polish, along with several fixes for shutdown, settings layout, and skill diagnostics.",
+        "zh": "此版本改进了模型设置持久化、运行时状态一致性、读取证据处理以及桌面界面优化，并修复了关闭、设置布局和技能诊断等问题。"
+      },
+      "surfaces": [
+        "desktop",
+        "cli"
+      ],
+      "guides": [
+        {
+          "title": {
+            "en": "Model Settings",
+            "zh": "模型设置"
+          },
+          "body": {
+            "en": "Learn how model preferences and provider connections are saved and applied.",
+            "zh": "了解模型偏好和供应商连接的保存与生效时机。"
+          },
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/27a409937d7431ffb2b5760feeef46ccf35eecab/docs/MODEL_SETTINGS.md"
+        },
+        {
+          "title": {
+            "en": "Runtime State",
+            "zh": "运行时状态"
+          },
+          "body": {
+            "en": "Understand how local and remote session state is unified.",
+            "zh": "了解本地和远程会话状态如何统一。"
+          },
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/27a409937d7431ffb2b5760feeef46ccf35eecab/docs/RUNTIME_STATE.md"
+        },
+        {
+          "title": {
+            "en": "Turn Results",
+            "zh": "本轮结果"
+          },
+          "body": {
+            "en": "Inspect recorded file changes, check outcomes and their evidence for each turn.",
+            "zh": "查看每轮记录的文件改动、检查结果及其证据。"
+          },
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/27a409937d7431ffb2b5760feeef46ccf35eecab/docs/TURN_RESULTS.md"
+        },
+        {
+          "title": {
+            "en": "Composer Controls",
+            "zh": "输入栏控件"
+          },
+          "body": {
+            "en": "Explore the refined composer controls and feedback.",
+            "zh": "探索优化后的输入栏控件和反馈。"
+          },
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/27a409937d7431ffb2b5760feeef46ccf35eecab/docs/COMPOSER_CONTROLS.md"
+        },
+        {
+          "title": {
+            "en": "Capability Diagnostics",
+            "zh": "能力诊断"
+          },
+          "body": {
+            "en": "Learn about skill tool reference diagnostics.",
+            "zh": "了解技能工具引用诊断。"
+          },
+          "href": "https://github.com/esengine/DeepSeek-Reasonix/blob/27a409937d7431ffb2b5760feeef46ccf35eecab/docs/CAPABILITY_DIAGNOSTICS.md"
+        }
+      ],
+      "highlights": [
+        {
+          "kind": "improved",
+          "targets": [
+            "desktop"
+          ],
+          "title": {
+            "en": "Save model settings without an active session",
+            "zh": "无需活动会话即可保存模型设置"
+          },
+          "body": {
+            "en": "Save model preferences and provider connections even before a session starts. The default model applies to new sessions; existing sessions retain their selection. Accepted work keeps its original connection through tools, retries, approvals and children, while affected settings apply before the next run.",
+            "zh": "会话尚未启动时也能保存模型偏好和供应商连接。默认模型用于新会话，已有会话保留自己的选择。已经开始的任务及其工具、重试、审批和子任务继续使用原连接，相关设置在下一次运行前生效。"
+          },
+          "refs": [
+            9973
+          ]
+        },
+        {
+          "kind": "improved",
+          "targets": [
+            "desktop",
+            "cli"
+          ],
+          "title": {
+            "en": "Keep local and remote activity indicators in sync",
+            "zh": "同步本地与远程任务状态"
+          },
+          "body": {
+            "en": "Fix activity indicators that kept spinning after completion. Local Desktop and remote Serve sessions share committed runtime state, resynchronize after reconnect, and retain known content while a connection is uncertain. Follow-up messages remain queued while a turn finishes.",
+            "zh": "修复任务结束后仍持续转圈的问题。本地桌面与远程 Serve 会话使用一致的运行状态，重连后重新同步；连接状态不确定时保留已知内容。任务收尾期间发送的后续消息会保留在队列中。"
+          },
+          "refs": [
+            9971
+          ]
+        },
+        {
+          "kind": "new",
+          "targets": [
+            "desktop"
+          ],
+          "title": {
+            "en": "Inspect the changes and checks from each turn",
+            "zh": "查看每轮实际改动与检查结果"
+          },
+          "body": {
+            "en": "Turn results show confirmed net file changes and recorded commands, exit codes and logs. Open the frozen diff for that turn without mixing in later edits. Missing or partial evidence is labelled explicitly and is never presented as a successful check.",
+            "zh": "本轮结果展示确认的净文件改动，以及实际执行的命令、退出码和日志。可以查看该轮固定的差异，不混入后续编辑；缺失或不完整的证据会明确标注，不会被显示为检查通过。"
+          },
+          "refs": [
+            9869
+          ]
+        }
+      ],
+      "changes": {
+        "new": [
+          {
+            "targets": [
+              "desktop"
+            ],
+            "title": {
+              "en": "Workbench welcome and session recovery",
+              "zh": "工作台欢迎页与会话恢复"
+            },
+            "body": {
+              "en": "Empty Workbench sessions center the welcome and composer, then return to the conversation layout after the first message. Persistent retry controls expose history-load or remote-connection failures while preserving existing messages and drafts.",
+              "zh": "空工作台会话居中展示欢迎内容和输入栏，发送首条消息后回到对话布局。历史加载或远程连接失败时持续显示重试入口，并保留已有消息和草稿。"
+            },
+            "refs": [
+              9961
+            ]
+          }
+        ],
+        "improved": [
+          {
+            "targets": [
+              "desktop"
+            ],
+            "title": {
+              "en": "Clearer composer controls and running feedback",
+              "zh": "更清晰的输入栏操作与运行反馈"
+            },
+            "body": {
+              "en": "Plan, goal and delivery options move into the add menu with removable mode chips. Model and reasoning controls are separate, menus adapt to narrow windows, and a theme-aware border animation shows running activity. Runtime metrics remain available in the context popover.",
+              "zh": "计划、目标和交付选项移入添加菜单，启用后可通过模式标签移除。模型与思考强度分开选择，菜单适配窄窗口；输入栏边框动画显示运行状态，耗时等指标可在上下文浮层中查看。"
+            },
+            "refs": [
+              9958
+            ]
+          }
+        ],
+        "fixed": [
+          {
+            "targets": [
+              "desktop",
+              "cli"
+            ],
+            "title": {
+              "en": "Finish inbox scans before retiring a session runtime",
+              "zh": "会话运行时退出前完成收件箱扫描"
+            },
+            "body": {
+              "en": "Closing or replacing a session runtime waits for its autonomous inbox scan to finish. Model refresh can still retire its own runtime safely before the next queued request starts.",
+              "zh": "关闭或替换会话运行时时，会先等待自动收件箱扫描结束。模型刷新仍可在下一条排队请求启动前安全替换当前运行时。"
+            },
+            "refs": [
+              9978
+            ]
+          },
+          {
+            "targets": [
+              "desktop",
+              "cli"
+            ],
+            "title": {
+              "en": "Reliable file-read progress and pause reporting",
+              "zh": "准确记录文件读取进度与暂停原因"
+            },
+            "body": {
+              "en": "A large-file preview no longer creates an unintended obligation to read the entire file. Completed reads remain complete after output deduplication, edits still require current source evidence, and an incomplete-read pause stays visible alongside the model reply in live and restored history.",
+              "zh": "大文件预览不再意外触发全文读取要求；已完成的读取不会因输出去重重新变为未完成，编辑仍须满足当前文件版本的读取条件。读取未完成导致暂停时，实时与恢复后的历史都会在模型回复旁显示暂停原因。"
+            },
+            "refs": [
+              9966
+            ]
+          },
+          {
+            "targets": [
+              "desktop",
+              "cli"
+            ],
+            "title": {
+              "en": "Consistent skill tool diagnostics",
+              "zh": "一致的技能工具诊断"
+            },
+            "body": {
+              "en": "Remove false use_capability warnings from built-in review skills. Both doctor entrypoints recognize the same effective tools and plugin-scoped MCP aliases while retaining warnings for unknown names and malformed references. Static diagnosis does not start MCP servers.",
+              "zh": "消除内置评审技能的 use_capability 误报。两个 doctor 入口识别一致的实际工具和插件范围内的 MCP 别名，同时保留未知名称及格式错误提示。静态诊断不会启动 MCP 服务。"
+            },
+            "refs": [
+              9962
+            ]
+          },
+          {
+            "targets": [
+              "desktop"
+            ],
+            "title": {
+              "en": "Keep settings search and save actions visible",
+              "zh": "避免设置搜索框和保存操作被遮挡"
+            },
+            "body": {
+              "en": "Keep the search field outside the scrolling settings navigation. Hooks and Network save actions no longer cover the editor or proxy inputs, and their buttons wrap on narrow windows.",
+              "zh": "设置搜索框与滚动导航分离。Hooks 和网络设置的保存操作不再覆盖编辑器或代理输入框，窄窗口下按钮可自动换行。"
+            },
+            "refs": [
+              9969
+            ]
+          },
+          {
+            "targets": [
+              "desktop",
+              "cli"
+            ],
+            "title": {
+              "en": "More reliable Windows sessions and update recovery",
+              "zh": "提升 Windows 会话与更新恢复可靠性"
+            },
+            "body": {
+              "en": "Use consistent identities for detached-session status. Concurrent legacy-update recovery and task snapshot saves tolerate brief Windows readers without losing transaction checks or exposing a partially written snapshot.",
+              "zh": "分离会话状态使用一致的会话标识。旧版更新的并发恢复和任务快照保存能够处理 Windows 短暂文件占用，同时保留事务校验，避免暴露部分写入的快照。"
+            },
+            "refs": [
+              9974
+            ]
+          },
+          {
+            "targets": [
+              "desktop",
+              "cli"
+            ],
+            "title": {
+              "en": "Let MCP processes finish graceful shutdown",
+              "zh": "让 MCP 进程正常完成关闭"
+            },
+            "body": {
+              "en": "Close MCP transports before cancelling their process context. On Windows, release the process job before making its instance slot available, improving reconnect and shutdown reliability.",
+              "zh": "先关闭 MCP 传输，再取消进程上下文。Windows 上在释放实例名额前清理进程作业，提升重连与关闭的可靠性。"
+            },
+            "refs": [
+              9973
+            ]
+          },
+          {
+            "targets": [
+              "desktop"
+            ],
+            "title": {
+              "en": "Preserve connection labels and prompt-history identity",
+              "zh": "保留正确的连接显示与提示词历史标识"
+            },
+            "body": {
+              "en": "Restored sessions show the selected connection without opening the model menu. Display-only metadata reads no longer replace process credentials, and separate prompt-history directories cannot share a cache identity merely because they were opened within one clock tick.",
+              "zh": "恢复会话后，无需打开模型菜单即可显示选中的连接。仅用于显示的元数据读取不再改写进程凭据；不同提示词历史目录也不会因在同一时钟刻度打开而误用缓存。"
+            },
+            "refs": [
+              9973
+            ]
+          }
+        ]
+      },
+      "upgrade": [
+        {
+          "level": "info",
+          "targets": [
+            "desktop",
+            "cli"
+          ],
+          "title": {
+            "en": "Upgrade older Desktop-managed Serve connections",
+            "zh": "升级由 Desktop 管理的旧版 Serve"
+          },
+          "body": {
+            "en": "Saved configuration and history remain readable without manual migration. For Desktop-managed remote sessions, an older Serve without settings-snapshot support must be upgraded or safely reconnected after its current work finishes. Saving a setting does not forcibly stop that work.",
+            "zh": "保存的配置与历史无需手动迁移。对于由 Desktop 管理的远程会话，不支持设置快照的旧版 Serve 需要在当前任务结束后升级或安全重连；保存设置不会强制终止当前任务。"
+          },
+          "refs": [
+            9973
+          ]
+        },
+        {
+          "level": "info",
+          "targets": [
+            "desktop"
+          ],
+          "title": {
+            "en": "Status bar initially uses icon labels",
+            "zh": "状态栏首次采用图标样式"
+          },
+          "body": {
+            "en": "New and existing configurations initially adopt icon labels. You can select text labels in settings; choices made after this migration are preserved.",
+            "zh": "新配置和已有配置首次采用图标标签。可在设置中切换回文字样式，此次迁移后的手动选择会被保留。"
+          },
+          "refs": [
+            9958
+          ]
+        }
+      ],
+      "risks": [],
+      "contributors": [
+        "SivanCola",
+        "dadgrand",
+        "esengine"
+      ],
+      "links": {
+        "github": "https://github.com/esengine/DeepSeek-Reasonix/releases/tag/desktop-v1.38.3",
+        "compare": "https://github.com/esengine/DeepSeek-Reasonix/compare/desktop-v1.38.2...desktop-v1.38.3",
+        "download": "https://reasonix.io/?download=desktop&channel=stable#start"
+      },
+      "releaseId": "1.38.3",
+      "baseVersion": "1.38.3",
+      "status": "reviewed",
+      "previousRelease": "1.38.2",
+      "builds": {
+        "cli": "v1.38.3",
+        "desktop": "v1.38.3",
+        "npm": "1.38.3"
+      }
+    },
+    {
       "version": "1.38.2",
       "date": "2026-09-08",
       "channel": "stable",

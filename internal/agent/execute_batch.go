@@ -74,6 +74,11 @@ type toolOutcome struct {
 	// recoveryStopTurn is set when Auto Episode budgets are exhausted.
 	recoveryStopTurn   bool
 	recoveryStopReason string
+	readTaskID         string
+	readEnvelope       *tool.ReadResultEnvelope
+	finalReadEnvelope  *tool.ReadResultEnvelope
+	readReference      *readDelivery
+	readActiveMillis   int64
 	incompleteRead     *incompleteReadDeferred
 	subagentOutcome    *SubagentOutcome
 }
@@ -107,6 +112,10 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 	}
 
 	slots := newBatchSlots(calls)
+	// Evidence is evaluated once for the whole batch, before anything runs: a
+	// call whose writer cannot prove what it replaces never starts, and a read
+	// from this same batch can never satisfy it.
+	evidenceBlocked := a.preflightEvidenceBatch(ctx, calls)
 	results, outcomes, durations, startedAt := slots.results, slots.outcomes, slots.durations, slots.startedAt
 	ranParallel := make([]bool, len(calls))
 	batchStart := time.Now()
@@ -125,6 +134,11 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 	var batchErr error
 	var batchErrOnce sync.Once
 	run := func(s *batchSlots, i int) {
+		if pre, blocked := evidenceBlocked[i]; blocked {
+			s.outcomes[i] = pre
+			s.results[i] = pre.output
+			return
+		}
 		t, _, ambiguous := a.svc.tools.ResolveCall(s.calls[i].Name)
 		known := t != nil && len(ambiguous) == 0
 		writer := known && !t.ReadOnly()
@@ -165,10 +179,11 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 			return
 		}
 		committed[i] = true
-		a.finalizeIncompleteReadOutcome(outcomes[i].incompleteRead, &outcomes[i])
+		a.finalizeIncompleteReadOutcome(ctx, outcomes[i].incompleteRead, &outcomes[i])
+		a.finalizeReadDelivery(ctx, calls[i], &outcomes[i])
 		results[i] = outcomes[i].output
 		a.commitBatchCallResolution(calls[i])
-		a.storeBatchToolResult(calls[i], outcomes[i])
+		a.storeBatchToolResult(ctx, calls[i], outcomes[i])
 		if err := a.emitBatchToolResult(calls[i], outcomes[i], durations[i], startedAt[i], ranParallel[i], batchStart); err != nil {
 			batchErrOnce.Do(func() { batchErr = fmt.Errorf("persist tool result %s: %w", calls[i].ID, err) })
 		}
@@ -237,7 +252,11 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 		if batch.parallel && batch.end-batch.start > 1 {
 			// Parallel segments are read-only by construction; no mutation barrier.
 			private := slots.fork()
-			ranUntil, finished := runParallel(ctx, batch.start, batch.end, func(i int) { run(private, i) })
+			ranUntil, finished := runParallel(ctx, batch.start, batch.end, func(i int) {
+				a.stragglers.enter()
+				defer a.stragglers.leave()
+				run(private, i)
+			})
 			for i := batch.start; i < ranUntil; i++ {
 				if finished[i] {
 					slots.adopt(private, i)

@@ -45,6 +45,7 @@ export function projectConversation({ local, remote, tab, activeTabId, backgroun
     turnOutputCharsAtUsage: runtime.turnOutputCharsAtUsage,
     turnModelActiveAt: runtime.turnModelActiveAt, turnModelActiveMs: runtime.turnModelActiveMs,
     turnArgChars: runtime.turnArgChars, retry: runtime.retry,
+    readStatuses: runtime.readStatuses,
   };
   return {
     runtime,

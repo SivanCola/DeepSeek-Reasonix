@@ -150,10 +150,10 @@
       "file-size": 264
     },
     "desktop/frontend/src/lib/types.ts": {
-      "file-size": 1628
+      "file-size": 1634
     },
     "desktop/frontend/src/lib/useController.ts": {
-      "file-size": 4263
+      "file-size": 4267
     },
     "desktop/heartbeat.go": {
       "essay": 7
@@ -393,7 +393,7 @@
     "internal/agent/agent.go": {
       "complexity": 31,
       "essay": 25,
-      "file-size": 2039,
+      "file-size": 2040,
       "function-size": 104,
       "struct-state": 2
     },

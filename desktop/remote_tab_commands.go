@@ -251,6 +251,14 @@ func (a *App) DeleteRemoteProjectSession(hostID, workspace, name string) error {
 }
 
 func (a *App) remoteTabPost(tabID, path string, body map[string]any) error {
+	revision := ""
+	if path == "/goal/resume" || path == "/compact" || path == "/summarize" {
+		var err error
+		revision, err = a.ensureRemoteModelSettings(tabID)
+		if err != nil {
+			return err
+		}
+	}
 	client, base, expectedPath, err := a.remoteTabCommandTarget(tabID)
 	if err != nil {
 		return err
@@ -261,7 +269,7 @@ func (a *App) remoteTabPost(tabID, path string, body map[string]any) error {
 	if body != nil {
 		payload, _ = json.Marshal(body)
 	}
-	return servePostForSession(ctx, client, serveURL(base, path), payload, expectedPath)
+	return servePostForSession(ctx, client, serveURL(base, path), payload, expectedPath, revision)
 }
 
 func (a *App) remoteTabGet(tabID, path string) (json.RawMessage, error) {
@@ -312,18 +320,6 @@ func (a *App) SetRemoteTabModel(tabID, ref string) error {
 		}
 		if !modelProviderAccessAllowed(cfg.Desktop.ProviderAccess, entry.Name) {
 			return fmt.Errorf("model %q is not available", ref)
-		}
-		currentEntry, currentOK := cfg.ResolveModel(currentModel)
-		currentKind := "openai"
-		if currentOK && strings.TrimSpace(currentEntry.Kind) != "" {
-			currentKind = strings.TrimSpace(currentEntry.Kind)
-		}
-		nextKind := strings.TrimSpace(entry.Kind)
-		if nextKind == "" {
-			nextKind = "openai"
-		}
-		if !strings.EqualFold(currentKind, nextKind) {
-			return fmt.Errorf("model %q uses %s protocol; this remote session is running %s and must be restarted to change protocol", ref, nextKind, currentKind)
 		}
 		canonical := entry.Name + "/" + entry.Model
 		if _, err := resolveProxyProvider(cfg, canonical); err != nil {

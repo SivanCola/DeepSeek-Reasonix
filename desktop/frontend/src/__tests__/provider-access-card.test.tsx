@@ -290,9 +290,12 @@ window.go = {
   main: {
     App: {
       Settings: async () => defaultCustomSettings,
-      RemoveProviderAccesses: async (names: string[]) => {
+      ApplyModelSettings: async (change) => {
+        if (change.kind !== "access_remove") throw new Error("unexpected settings operation");
+        const names = change.names;
         removedDefaultCustomProviders = [...names];
         defaultCustomSettings.providers = defaultCustomSettings.providers.filter((provider) => !names.includes(provider.name));
+        return {requestId: change.requestId, persisted: true, revision: "removed", application: "not_required", targets: [], issues: [], appliedCatalogs: []};
       },
     } as Partial<AppBindings> as AppBindings,
   },

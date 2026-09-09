@@ -1,5 +1,8 @@
-import type { ProviderCatalog, ProviderPresetView } from "./providerCatalogTypes";
+import type { ProviderCatalog } from "./providerCatalogTypes";
+export type { SettingsView } from "./settingsViewTypes";
 export type { ProviderProtocolEndpoint, ProviderCatalog, ProviderPresetView } from "./providerCatalogTypes";
+import type { WireReadStatus } from "./readStatus";
+export type { WireReadStatus } from "./readStatus";
 import type { RecoveryEventFields } from "./recoveryStatus";
 import type { ResolvedReasoningView } from "./reasoningTypes";
 export type { ResolvedReasoningView } from "./reasoningTypes";
@@ -46,6 +49,7 @@ export type EventKind =
   | "workspace_changed"
   | "turn_phase"
   | "completion_summary"
+  | "read_status"
   | "provider_unreachable";
 export type StreamAttemptAction = "begin" | "discard" | "commit";
 export type TurnStatus = "queued" | "in_progress" | "waiting_user" | "cancelling" | "completed" | "interrupted" | "failed" | "protocol_failed";
@@ -387,7 +391,9 @@ export interface MemoryCitation {
 
 export interface WireEvent extends RecoveryEventFields {
 	receipt?: WireCompletionReceipt;
+	readPause?: import("./readPause").WireReadPause;
   kind: EventKind;
+  readStatus?: WireReadStatus;
   /** session_changed: the transcript was replaced under the same path (head switch, clear). */
   sessionReset?: boolean;
   promptId?: string;
@@ -416,7 +422,7 @@ export interface WireEvent extends RecoveryEventFields {
   err?: string;
   checkpointTurn?: number; // Authoritative TurnDone rewind target; zero is valid.
   submissionId?: string; // Opaque correlation for the exact optimistic user submission.
-  outcome?: "completed" | "partial" | "blocked" | "final_readiness" | "recovery_paused" | "completion_uncertain";
+  outcome?: "completed" | "partial" | "blocked" | "final_readiness" | "recovery_paused" | "completion_uncertain" | "incomplete_read";
   readiness?: WireFinalReadiness;
   protocolRecovery?: { id: string };
   diagnostic?: { kind: string; status?: number; traceId?: string; providerId?: string; providerDisplayName?: string; protocol?: string; requestPath?: string };
@@ -697,7 +703,7 @@ export interface DeliveryWorktreeOpenResult {
 
 export * from "./worktreeMergeTypes";
 
-export type ProjectTopicStatus = "thinking" | "streaming" | "waiting_confirmation" | "background_job" | "paused" | "awaiting_delivery" | "error" | "diverged_recovery";
+export type ProjectTopicStatus = "thinking" | "streaming" | "finishing" | "cancelling" | "unknown" | "waiting_confirmation" | "background_job" | "paused" | "awaiting_delivery" | "error" | "diverged_recovery";
 
 export interface TopicMeta {
   id: string;
@@ -814,6 +820,7 @@ export interface HistoryMessage {
 	completionReceipt?: WireCompletionReceipt;
 	completionSummary?: WireCompletionSummary;
 	turnId?: string;
+	readPause?: import("./readPause").WireReadPause;
   role: string;
   content: string;
   detail?: string;
@@ -2263,49 +2270,7 @@ export interface BotConnectionDiagnostic {
   occurredAt: string;
 }
 
-export interface SettingsView {
-  defaultModel: string;
-  plannerModel: string;
-  visionModel: string;
-  webSearchModel?: string;
-  webSearchModels?: string[];
-  webSearchModelStatus?: string;
-  webSearchModelReason?: string;
-  effectiveWebSearchModel?: string;
-  webSearchModelOverridden?: boolean;
-  subagentModel: string;
-  subagentEffort: string;
-  autoPlan: string;
-  providers: ProviderView[];
-  officialProviders: ProviderView[];
-  providerPresets: ProviderPresetView[];
-  permissions: PermissionsView;
-  sandbox: SandboxView;
-  network: NetworkView;
-  agent: AgentView;
-  bot: BotSettingsView;
-  desktopLanguage: string; // "" | "en" | "zh"; empty = auto
-  desktopCurrency?: string; // "" | "CNY" | "USD"; absent/empty = follow language
-  desktopLayoutStyle: string; // "classic" | "workbench" | "creation"
-  desktopTheme: string; // "auto" | "dark" | "light"
-  desktopThemeStyle: string;
-  desktopTerminalTheme: string; // "auto" follows app | "dark" | "light"
-  closeBehavior: string; // "background" | "quit"
-  displayMode: string; sessionExperience?: "standard" | "deep"; reasoningDisplayMode: string; reasoningDisplayModeExplicit?: boolean;
-  statusBarStyle: string; // "icon" | "text"
-  statusBarItems: string[]; // ordered visible status bar item ids
-  defaultToolApprovalMode: ToolApprovalMode | string; // default for newly-created sessions
-  checkUpdates: boolean; // check for new versions on startup
-  updateChannel: string; // compatibility field; always "stable"
-  telemetry: boolean; // anonymous launch ping + scrubbed next-launch native crash diagnostics
-  metrics: boolean; // aggregate quality/lifecycle metrics (anonymous signal/bucket counts)
-  configPath: string;
-  shadowedByPath?: string; // workspace reasonix.toml that outranks configPath, when one exists
-  providerKinds: string[]; // provider implementations the kernel registered (for the kind picker)
-  autoApproveTools: boolean;
-  bypass: boolean; // legacy JSON key for live YOLO/full-access tool auto-approval
-  conversationWidth?: string; // "standard" | "full"; absent from older Wails payloads
-}
+export type { ModelSettingsChange, ModelSettingsResult } from "./modelSettingsTypes";
 
 export interface DesktopStartupSettingsView {
   bot: BotSettingsView;

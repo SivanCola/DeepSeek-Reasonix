@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"reasonix/internal/evidence"
 	"reasonix/internal/tool"
@@ -26,6 +28,29 @@ func (a *Agent) dispatchResolvedTool(ctx context.Context, plan *toolCallPlan) (r
 
 func (a *Agent) invokeResolvedTool(ctx context.Context, plan *toolCallPlan) (result string, images []string, execution *tool.ShellExecution, err error) {
 	runTool, runArgs := plan.runTool, plan.runArgs
+	if reader, ok := runTool.(tool.ReadExecutor); ok {
+		start := time.Now()
+		readCtx, cancel := context.WithTimeout(ctx, a.readTimeRemaining(plan.readTaskID))
+		defer cancel()
+		if a.readPipelineActive() && plan.readTaskID != "" {
+			if ob, ok := a.turn.readShadow.coord.Get(plan.readTaskID); ok && ob.Requirement.WholeFile {
+				readCtx = tool.WithFullReadSnapshot(readCtx)
+			}
+		}
+		var env tool.ReadResultEnvelope
+		result, env, err = reader.ExecuteRead(readCtx, runArgs)
+		if err == nil {
+			err = readCtx.Err()
+		}
+		plan.readActiveMillis += max(1, time.Since(start).Milliseconds())
+		if err == nil && plan.readSnapshot != "" && env.Source.Snapshot != plan.readSnapshot {
+			return "", nil, nil, fmt.Errorf("read source changed; restart the read with a fresh snapshot")
+		}
+		if err == nil {
+			plan.readEnvelope = &env
+		}
+		return result, nil, nil, err
+	}
 	if de, ok := runTool.(tool.DetailedExecutor); ok {
 		var detailed tool.DetailedResult
 		detailed, err = de.ExecuteDetailed(ctx, runArgs)

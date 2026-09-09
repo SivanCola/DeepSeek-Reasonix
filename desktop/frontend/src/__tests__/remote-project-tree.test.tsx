@@ -52,7 +52,7 @@ ok(
   "session rows open the matching in-app remote session",
 );
 ok(
-  /rows\.map\(\(row\): ProjectNode =>/.test(remoteSource) && /mergeRemoteSessionsIntoTree\(tree, remoteSessions, t\)/.test(source) &&
+  /rows\.map\(\(row\): ProjectNode =>/.test(remoteSource) && /useRemoteRuntimeTree\(tree, remoteSessions, t\)/.test(source) &&
     /root: node\.remote!\.workspace/.test(remoteSource) && /sessionPath: row\.path/.test(remoteSource),
   "remote group children render with the active workspace and session identity",
 );

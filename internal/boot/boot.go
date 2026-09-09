@@ -95,11 +95,14 @@ func agentKeepPolicy(keep []string) agent.KeepPolicy {
 // read from configuration. Model "" falls back to default_model; MaxSteps 0
 // uses automatic execution; RequireKey fails fast on a missing key.
 type Options struct {
-	Model       string
-	MaxSteps    int
-	MaxStepsKey string
-	RequireKey  bool
-	Sink        event.Sink
+	// ModelSettings supplies an immutable desktop credential-proxy resolver.
+	// The bundle contains virtual tunnel credentials only and stays in memory.
+	ModelSettings *config.ModelRuntimeSettings
+	Model         string
+	MaxSteps      int
+	MaxStepsKey   string
+	RequireKey    bool
+	Sink          event.Sink
 	// EffortOverride is a session-local reasoning effort override. Nil means use
 	// the resolved provider config; a non-nil empty string means provider default.
 	EffortOverride *string
@@ -177,6 +180,7 @@ type Options struct {
 	SessionRecoveryMeta func(control.SessionRecoveryRequest) agent.BranchMeta
 	OnSessionRecovered  func(control.SessionRecoveryInfo) error
 	OnSessionTransition func(control.SessionTransitionInfo) error
+	BeforeInboxDispatch func(*control.Controller) (func(), error)
 	// OnSessionTitleChanged lets a host project the canonical BranchMeta title
 	// into compatibility indexes and refresh notifications after the current
 	// conversation renames itself through set_session_title.
@@ -241,8 +245,12 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	redactToolOutputMigrated, redactToolOutputMigErr := config.MigrateLegacyRedactToolOutputForRoot(root)
 	memoryCompilerMigrated, memoryCompilerMigErr := config.MigrateLegacyMemoryCompilerForRoot(root)
 	multiThresholdMigrated, multiThresholdMigErr := config.MigrateLegacyMultiThresholdCompactionForRoot(root)
-	cfg, err := resolveBuildConfiguration(root, opts.ConfigSnapshot)
+	config.MigrateLegacyMCPTiersForRoot(root)
+	cfg, err := resolveBuildConfiguration(root, opts.Model, opts.ConfigSnapshot)
 	if err != nil {
+		return nil, err
+	}
+	if err := opts.ModelSettings.Apply(cfg, root); err != nil {
 		return nil, err
 	}
 	deepSeekProtocolMigErr = deepSeekProtocolMigrationNoticeError(handleConfigLoadWarnings(opts, cfg), deepSeekProtocolMigErr)
@@ -434,7 +442,6 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			modelName = resolved
 		}
 	}
-	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, modelName)
 	// opts.AgentPreset/opts.TokenMode now seed the session quality floor (see
 	// the SetQualityFloor call after control.New); light folds to standard.
 	keepPolicy := agentKeepPolicy(cfg.Agent.Keep)
@@ -1767,11 +1774,10 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	}
 	imageSnapshot := config.ModelCapabilitySnapshot(cfg, modelCapabilities)
 	ctrlOpts := control.Options{
-		FrozenImageInput: &imageEnabled,
-		ImageCapabilityChanged: func() bool {
-			current, err := config.LoadForRootReadOnly(root)
-			return err == nil && config.ModelCapabilitySnapshot(current, config.NewModelCapabilityResolver()) != imageSnapshot
-		},
+		ModelSettingsRevision:          cfg.ModelRuntimeFingerprint(modelRef),
+		ModelSettingsCurrent:           runtimeModelSettingsReader(root, modelName, modelRef, opts.ModelSettings),
+		FrozenImageInput:               &imageEnabled,
+		ImageCapabilityChanged:         runtimeImageCapabilityReader(root, modelName, imageSnapshot, opts.ModelSettings),
 		TaskBudget:                     taskBudgetFromConfig(cfg),
 		GoalTokenBudget:                cfg.Agent.GoalTokenBudget,
 		Runner:                         runner,
@@ -1851,6 +1857,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		SessionRecoveryMeta: opts.SessionRecoveryMeta,
 		OnSessionRecovered:  opts.OnSessionRecovered,
 		OnSessionTransition: opts.OnSessionTransition,
+		BeforeInboxDispatch: opts.BeforeInboxDispatch,
 		// The merged catalog lets frontends enumerate sidecar providers.
 		ProviderResolver:  extensionResolver,
 		RuntimeGeneration: generation,
@@ -1858,6 +1865,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		// Share the Manager already bound into bash/grep so tools and the
 		// Controller observe the same temporary generation across rebuilds.
 		SessionTemp: sessionTemp,
+	}
+	if opts.ModelSettings != nil {
+		ctrlOpts.ModelSettingsSourceRevision = opts.ModelSettings.Revision
 	}
 	// Guardian: when guardian_model is configured, spawn an LLM safety reviewer
 	// that can auto-allow safe Ask decisions and annotate risky ones before
@@ -2487,73 +2497,6 @@ func subagentEffectiveIdentity(cfg *config.Config, resolver provider.Resolver, b
 		modelID = ref
 	}
 	return modelID, strings.TrimSpace(config.EffectiveEffort(&entry))
-}
-
-// NewProvider builds a provider.Provider from a configured entry. Exported so
-// custom assemblers (e.g. the ACP per-session factory) can reuse it without
-// going through the full Build.
-func NewProvider(e *config.ProviderEntry) (provider.Provider, error) {
-	return NewProviderWithProxy(e, netclient.ProxySpec{Mode: netclient.ModeAuto})
-}
-
-// NewProviderWithProxy builds a provider.Provider with the configured ordinary
-// network proxy settings.
-func NewProviderWithProxy(e *config.ProviderEntry, proxy netclient.ProxySpec) (provider.Provider, error) {
-	return NewProviderWithProxyAndModelInfo(e, proxy, nil)
-}
-
-// NewProviderWithProxyAndModelInfo builds a provider while preserving the
-// adapter-resolved metadata for the exact model instance.
-func NewProviderWithProxyAndModelInfo(e *config.ProviderEntry, proxy netclient.ProxySpec, modelInfo *provider.ModelInfo) (provider.Provider, error) {
-	return newProviderWithSearchMode(e, proxy, modelInfo, true)
-}
-
-// clientSearch suppresses new native searches while retaining the adapter's
-// ability to read and replay existing native search history.
-func newProviderWithSearchMode(e *config.ProviderEntry, proxy netclient.ProxySpec, modelInfo *provider.ModelInfo, clientSearch bool) (provider.Provider, error) {
-	if err := config.ValidateProviderEndpoint(e); err != nil {
-		return nil, err
-	}
-	reasoning := config.ReasoningCapabilityForEntry(e)
-	if err := reasoning.Validate(e.Model, config.EffectiveEffort(e)); err != nil {
-		return nil, err
-	}
-	if modelInfo == nil {
-		resolved := config.NewModelCapabilityResolver().Resolve(e)
-		modelInfo = &resolved.ModelInfo
-	}
-	return provider.New(e.Kind, provider.Config{
-		Name: e.Name, DisplayName: e.DisplayName, Protocol: e.Kind,
-		BaseURL: e.BaseURL, Model: e.Model, APIKey: e.APIKey(), ModelInfo: modelInfo,
-		// Pass the key's env var so auth failures can name where to fix it, plus
-		// provider-kind-specific knobs. EffectiveEffort applies a configured
-		// default_effort when the user has not explicitly selected /effort.
-		Extra: map[string]any{
-			"api_key_env":        e.APIKeyEnv,
-			"api_key_source":     e.APIKeySourceLabel(),
-			"thinking":           e.Thinking,
-			"effort":             config.EffectiveEffort(e),
-			"supported_efforts":  e.SupportedEfforts,
-			"default_effort":     reasoning.Default,
-			"reasoning_protocol": config.ReasoningProtocolForEntry(e),
-			"max_output_tokens":  e.MaxOutputTokens,
-			"chat_url":           e.ChatURL,
-			"request_url":        e.RequestURL,
-			"headers":            e.Headers,
-			"extra_body":         e.ExtraBody,
-			"auth_header":        e.AuthHeader,
-			"proxy_spec":         proxy,
-			"vision":             config.EffectiveVision(e),
-			"vision_detail":      e.VisionDetail,
-			"web_search":         config.EffectiveWebSearch(e),
-			"client_web_search":  clientSearch,
-			"reject_redirects":   !clientSearch,
-			"mode":               e.ResponsesMode,
-			// Keep nil as nil so the responses provider can vendor-detect its
-			// default instead of accidentally treating every endpoint as stateful.
-			"stateful": e.ResponsesStateful,
-		},
-	})
 }
 
 // addBuiltins adds enabled built-in tools to reg. An empty list means all of

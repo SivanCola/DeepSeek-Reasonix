@@ -42,7 +42,7 @@ import {
   isReadOnlyTool,
   type Item,
 } from "./useController";
-import { localizedNoticeText, quietTranscriptNoticeKey } from "./controllerNotices";
+import { historyNoticeItems } from "./controllerNotices";
 import type {
   HistoryContentChunk,
   HistoryContentRef,
@@ -221,23 +221,7 @@ function convertRecord(
       if (result) items.push(result);
       return { items, claims, unresolvedIds, pendingPositional, matches };
     }
-    if (m.content.trim() !== "" || m.decisionReceipt) {
-      if (!quietTranscriptNoticeKey(m.content, m.code)) {
-        const text = localizedNoticeText(m.content, m.code);
-        if (!quietTranscriptNoticeKey(text, m.code)) {
-          const trimmedDetail = m.detail?.trim();
-          items.push({
-            kind: "notice",
-            id,
-            level: m.level === "warn" ? "warn" : "info",
-            text,
-            ...(trimmedDetail ? { detail: trimmedDetail } : {}),
-            ...(m.decisionReceipt ? { decisionReceipt: m.decisionReceipt } : {}),
-          });
-        }
-      }
-    }
-    return { items, claims, unresolvedIds, pendingPositional, matches };
+    return { items: historyNoticeItems(m, id), claims, unresolvedIds, pendingPositional, matches };
   }
   if (m.role === "compaction") {
     items.push({

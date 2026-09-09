@@ -13,6 +13,8 @@ import { Tooltip } from "./Tooltip";
 export function ModelSwitcher({
   label,
   tabId,
+  ready = true,
+  sessionKey,
   onPick,
   onManage,
   detailLabel,
@@ -24,6 +26,8 @@ export function ModelSwitcher({
   details?: ReactNode;
   composerMenu?: boolean;
   tabId?: string;
+  ready?: boolean;
+  sessionKey?: string;
   onPick: (name: string) => boolean | Promise<boolean>;
   onManage?: () => void;
 }) {
@@ -70,7 +74,7 @@ export function ModelSwitcher({
 
   useEffect(() => {
     void loadModels();
-  }, [loadModels]);
+  }, [loadModels, ready, sessionKey, label]);
 
   useEffect(() => {
     const refresh = () => void loadModels();

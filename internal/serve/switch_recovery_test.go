@@ -53,6 +53,7 @@ func TestSwitchModelKeepsAskInteractive(t *testing.T) {
 
 	askCh := make(chan event.Ask, 1)
 	s := &Server{ctrl: old, bc: bc}
+	defer s.Close()
 	s.buildController = func(_ context.Context, _ string) (*control.Controller, error) {
 		reg := tool.NewRegistry()
 		reg.Add(agent.NewAskTool())
@@ -147,6 +148,7 @@ func TestSwitchModelContinuesRecoveryPathAfterSnapshotConflict(t *testing.T) {
 		Sink:        bc,
 	})
 	s := &Server{ctrl: old, bc: bc}
+	defer s.Close()
 	leases := control.NewSessionLeaseKeeper()
 	t.Cleanup(leases.Release)
 	if err := leases.Rebind(originalPath); err != nil {
@@ -249,6 +251,7 @@ func TestSwitchModelRefreshesLeadingSystemPrompt(t *testing.T) {
 		Sink:       bc,
 	})
 	s := &Server{ctrl: old, bc: bc}
+	defer s.Close()
 	s.buildController = func(_ context.Context, _ string) (*control.Controller, error) {
 		return control.New(control.Options{
 			Executor:   agent.New(nil, nil, agent.NewSession("new system prompt"), agent.Options{}, event.Discard),
@@ -295,6 +298,7 @@ func TestSwitchModelRestoresSessionAuthorizations(t *testing.T) {
 	})
 
 	s := &Server{ctrl: old, bc: bc}
+	defer s.Close()
 	s.buildController = func(_ context.Context, _ string) (*control.Controller, error) {
 		return control.New(control.Options{
 			Executor:   agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard),
@@ -347,6 +351,7 @@ func TestSwitchModelPersistsRefreshedSystemPromptToDisk(t *testing.T) {
 		Sink:        bc,
 	})
 	s := &Server{ctrl: old, bc: bc}
+	defer s.Close()
 	s.buildController = func(_ context.Context, _ string) (*control.Controller, error) {
 		return control.New(control.Options{
 			Executor:   agent.New(nil, nil, agent.NewSession("new system prompt"), agent.Options{}, event.Discard),
@@ -390,6 +395,7 @@ func TestSwitchModelSnapshotFailureKeepsOldController(t *testing.T) {
 	})
 	t.Cleanup(old.Close)
 	s := &Server{ctrl: old, bc: bc}
+	defer s.Close()
 	s.buildController = func(_ context.Context, _ string) (*control.Controller, error) {
 		return control.New(control.Options{
 			Executor:   agent.New(nil, nil, agent.NewSession("new system prompt"), agent.Options{}, event.Discard),

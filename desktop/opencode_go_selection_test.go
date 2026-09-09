@@ -101,20 +101,25 @@ func TestOpenCodeGoExplicitReselectionSurvivesRestart(t *testing.T) {
 	if !found {
 		t.Fatal("reselection lost the historical transcript")
 	}
-	// Choosing a default model is also an explicit selection; it must not be
-	// mistaken for an implicit settings reload of the old identity.
+	// Choosing a default model writes persisted configuration only, so a changed
+	// connection must not make it fail, and it must leave the session's already
+	// acknowledged selection exactly as the explicit switch recorded it.
+	acknowledged := identity
 	cfg.Providers[0].Headers = map[string]string{"X-User": "updated"}
 	if err := cfg.SaveTo(config.UserConfigPath()); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.SetDefaultModel(ref); err != nil {
-		t.Fatalf("explicit default selection was treated as historical: %v", err)
+		t.Fatalf("default selection was treated as historical: %v", err)
 	}
 	latest, err := config.LoadUserConfigReadOnly()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, identity, ok := agent.LoadSessionModelSelection(path); !ok || identity != latest.ModelSelectionIdentity(ref) {
-		t.Fatal("default selection did not acknowledge the current connection")
+	if latest.DefaultModel != ref {
+		t.Fatalf("default_model = %q, want %q", latest.DefaultModel, ref)
+	}
+	if model, identity, ok := agent.LoadSessionModelSelection(path); !ok || model != ref || identity != acknowledged {
+		t.Fatal("default selection rewrote the session's acknowledged selection")
 	}
 }
