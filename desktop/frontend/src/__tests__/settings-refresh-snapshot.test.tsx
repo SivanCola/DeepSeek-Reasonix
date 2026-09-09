@@ -95,6 +95,10 @@ let setDisplayModeCalls = 0;
 let setSessionExperienceCalls = 0;
 let rejectSessionExperience = false;
 let onChangedSettings: SettingsView | undefined;
+// App zoom is Electron-owned now: the panel reads it from the native host, not
+// from a host command.
+let persistedZoom = 0.5;
+const savedZoomFactors: number[] = [];
 
 const desktopStub = installDesktopHostStub(({
   main: {
@@ -108,7 +112,10 @@ const desktopStub = installDesktopHostStub(({
         if (rejectSessionExperience) throw new Error("session experience persistence failed");
       },
     } as Partial<AppBindings> as AppBindings,
-  }}).main.App);
+  }}).main.App, {
+  appZoom: () => persistedZoom,
+  appZoomWrites: savedZoomFactors,
+});
 
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("missing root");
@@ -476,17 +483,10 @@ await act(async () => {
 const zoomRootEl = document.createElement("div");
 document.body.appendChild(zoomRootEl);
 const zoomRoot = createRoot(zoomRootEl);
-let persistedZoom = 0.5;
-const savedZoomFactors: number[] = [];
 desktopStub.replaceCommands(({
   main: {
     App: {
       Settings: async () => baseSettings("standard"),
-      GetDesktopZoomFactor: async () => persistedZoom,
-      SetDesktopZoomFactor: async (factor: number) => {
-        persistedZoom = factor;
-        savedZoomFactors.push(factor);
-      },
     } as Partial<AppBindings> as AppBindings,
   },
 }).main.App);

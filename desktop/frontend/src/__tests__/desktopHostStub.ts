@@ -17,6 +17,10 @@ export interface DesktopHostStubOptions {
   clipboardReadText?: string;
   /** Records native openExternal calls. */
   externalOpens?: string[];
+  /** Value returned by native app-zoom reads. */
+  appZoom?: () => number;
+  /** Records native app-zoom writes. */
+  appZoomWrites?: number[];
 }
 
 export interface DesktopHostStub {
@@ -79,8 +83,11 @@ export function installDesktopHostStub(commands: object, options: DesktopHostStu
         minimise: () => {},
         toggleMaximise: () => {},
       close: () => {},
-      getAppZoom: async () => 1,
-      setAppZoom: async () => 1,
+      getAppZoom: async () => options.appZoom?.() ?? 1,
+      setAppZoom: async (factor: number) => {
+        options.appZoomWrites?.push(factor);
+        return factor;
+      },
       resetAppZoom: async () => 1,
       },
       getPathForFile: options.getPathForFile ?? (() => ""),
