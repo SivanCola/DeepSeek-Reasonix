@@ -86,17 +86,17 @@ type Buffer struct {
 	userTurns   int
 }
 
-func (b *Buffer) Reset() {
-	b.messages = nil
-	b.byMessageID = nil
-	b.tools = nil
-	b.completion = nil
-	b.userTurns = 0
+func (buffer *Buffer) Reset() {
+	buffer.messages = nil
+	buffer.byMessageID = nil
+	buffer.tools = nil
+	buffer.completion = nil
+	buffer.userTurns = 0
 }
 
-func (b *Buffer) ResultMessages() []Message {
+func (buffer *Buffer) ResultMessages() []Message {
 	var out []Message
-	for _, m := range b.messages {
+	for _, m := range buffer.messages {
 		if m.message.Code == "turn_result" {
 			out = append(out, m.materialize())
 		}
@@ -104,12 +104,12 @@ func (b *Buffer) ResultMessages() []Message {
 	return out
 }
 
-func (b *Buffer) Messages() []Message {
-	if len(b.messages) == 0 {
+func (buffer *Buffer) Messages() []Message {
+	if len(buffer.messages) == 0 {
 		return nil
 	}
-	out := make([]Message, 0, len(b.messages))
-	for _, message := range b.messages {
+	out := make([]Message, 0, len(buffer.messages))
+	for _, message := range buffer.messages {
 		out = append(out, message.materialize())
 	}
 	return out
@@ -434,9 +434,9 @@ func (f Formatter) result(content string, failed bool) (string, string) {
 	}
 	return content, ""
 }
-func (b *Buffer) ResetToolsIfEmpty() {
-	if len(b.messages) == 0 {
-		b.tools = nil
+func (buffer *Buffer) ResetToolsIfEmpty() {
+	if len(buffer.messages) == 0 {
+		buffer.tools = nil
 	}
 }
 func firstNonEmpty(values ...string) string {

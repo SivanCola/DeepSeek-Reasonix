@@ -27,7 +27,6 @@ func TestSnapshotLargeSessionAndNestedContent(t *testing.T) {
 	}
 	var arguments *ContentRef
 	for _, ref := range snapshot.Records[1].Refs {
-		ref := ref
 		if strings.Join(ref.Path, "/") == "toolCalls/0/arguments" {
 			arguments = &ref
 		}
@@ -62,7 +61,7 @@ func BenchmarkSnapshotLargeContentChunk(b *testing.B) {
 	request := ContentRequest{ContentRef: snapshot.Records[0].Refs[0], Offset: 1234}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		chunk, err := projection.Content(request)
 		if err != nil || len(chunk.Data) != contentChunkBytes {
 			b.Fatal(err)

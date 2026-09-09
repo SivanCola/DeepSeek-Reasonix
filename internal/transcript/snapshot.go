@@ -140,7 +140,7 @@ func (p *Projection) snapshotCurrent(req PageRequest) (Snapshot, error) {
 	// every still-mutable owner in the same snapshot cut so a later delta can
 	// never be appended to an unloaded prefix.
 	{
-		for i := 0; i < out.Before; i++ {
+		for i := range out.Before {
 			m := p.buffer.messages[i].materialize()
 			active := (!runtime.Status.Terminal() && m.Pending) || (m.Role == "user" && m.TurnID == runtime.TurnID && runtime.TurnID != "")
 			for _, call := range m.ToolCalls {

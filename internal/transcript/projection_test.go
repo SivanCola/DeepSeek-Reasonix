@@ -179,13 +179,11 @@ func TestProjectionPagingContentAndImmutability(t *testing.T) {
 func TestProjectionConcurrentSnapshotNeverClaimsUnappliedText(t *testing.T) {
 	p, _ := NewProjection(testIdentity, nil, 0)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for seq := uint64(1); seq <= 100; seq++ {
 			projectEvent(t, p, seq, event.Event{Kind: event.Text, MessageID: "a", Text: "x"})
 		}
-	}()
+	})
 	for range 100 {
 		s := snapshot(t, p)
 		if len(s.Records) > 0 && len(s.Records[0].Message.Content) != int(s.CoveredThroughSeq) {
