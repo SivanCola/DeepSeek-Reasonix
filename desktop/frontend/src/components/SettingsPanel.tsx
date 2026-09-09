@@ -6425,7 +6425,7 @@ export function ProviderEditor({
               const resolved = item.resolvedReasoning!;
               return <div key={item.model}>
                 <code>{item.model}</code>{" · "}{resolved.apiFormat}{" · "}
-                {resolved.selected === "auto" ? `auto → ${resolved.effective || "auto"}` : resolved.selected}
+                {resolved.selected === "auto" ? `${t("common.auto")} → ${resolved.effective || t("common.auto")}` : resolved.selected}
                 {" · "}{resolved.options.map((option) => option.id).join(" / ")}
                 {resolved.error && <div className="mem-hint--error" role="alert">{resolved.error}</div>}
               </div>;

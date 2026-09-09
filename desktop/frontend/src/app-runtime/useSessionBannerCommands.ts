@@ -11,20 +11,26 @@ export type ConfigWarningsReload = (warnings: string[], revision: number) => voi
  * release-notes link. Banner state (busy tab, dialog, provider gate) lives on
  * the overlay store.
  */
+type StartupRetryState = { busy: boolean; error?: string };
+
 export function useSessionBannerCommands(options: { remote: boolean; reloadConfigWarnings: ConfigWarningsReload }) {
-  const [startupRetry, setStartupRetry] = useState<{ tabId: string; busy: boolean; error?: string } | null>(null);
-  const retryPending = useRef(false);
+  // Keyed by tab: one tab's in-flight retry must not swallow another tab's click.
+  const [startupRetry, setStartupRetry] = useState<Record<string, StartupRetryState>>({});
+  const retryPending = useRef(new Set<string>());
   const retryStartup = useCommittedCommand(async (tabId: string) => {
-    if (!tabId || retryPending.current) return;
-    retryPending.current = true;
-    setStartupRetry({ tabId, busy: true });
+    if (!tabId || retryPending.current.has(tabId)) return;
+    retryPending.current.add(tabId);
+    setStartupRetry((state) => ({ ...state, [tabId]: { busy: true } }));
     try {
       await app.ReloadRuntime(tabId);
-      setStartupRetry(null);
+      setStartupRetry((state) => {
+        const { [tabId]: _done, ...rest } = state;
+        return rest;
+      });
     } catch (error) {
-      setStartupRetry({ tabId, busy: false, error: String(error) });
+      setStartupRetry((state) => ({ ...state, [tabId]: { busy: false, error: String(error) } }));
     } finally {
-      retryPending.current = false;
+      retryPending.current.delete(tabId);
     }
   });
   const openModelSettings = useCommittedCommand(() => {

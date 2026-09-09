@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"reflect"
@@ -26,7 +27,8 @@ type openCodeGoAlias struct {
 }
 
 // The journal is deliberately separate from TOML: older releases may save the
-// configuration without understanding migration metadata. It contains no keys.
+// configuration without understanding migration metadata. It stores identity
+// digests, never a resolved API key.
 type openCodeGoJournal struct {
 	Version       int                        `json:"version"`
 	Committed     bool                       `json:"committed"`
@@ -163,6 +165,7 @@ func planOpenCodeGoUpgradeFiltered(c *Config, eligible func(ProviderEntry) bool)
 			j.Connections = append(j.Connections, original.Name)
 		}
 	}
+	placeOpenCodeGoSiblings(c, count, additions)
 	rewrite := func(ref string) string {
 		if a, ok := j.Aliases[ref]; ok {
 			return a.Target
@@ -183,6 +186,25 @@ func planOpenCodeGoUpgradeFiltered(c *Config, eligible func(ProviderEntry) bool)
 		c.Bot.Connections[i].Model = rewrite(c.Bot.Connections[i].Model)
 	}
 	return j, additions
+}
+
+// placeOpenCodeGoSiblings moves each split group directly after the connection
+// it came from. Bare model names resolve to their first owner, so a later
+// account must not overtake a model the earlier account only moved routes for.
+func placeOpenCodeGoSiblings(c *Config, count int, additions []openCodeGoGroup) {
+	if len(additions) == 0 {
+		return
+	}
+	ordered := make([]ProviderEntry, 0, len(c.Providers))
+	for i := range count {
+		ordered = append(ordered, c.Providers[i])
+		for k, add := range additions {
+			if add.source == i {
+				ordered = append(ordered, c.Providers[count+k])
+			}
+		}
+	}
+	c.Providers = ordered
 }
 
 func allOpenCodeGoDeepSeek(models []string) bool {
@@ -217,6 +239,12 @@ func upgradeOpenCodeGoFileWithWriterLocked(path string, write func(string, []byt
 	}
 	encoding, detected := fileencoding.Detect(raw)
 	body := string(fileencoding.Decode(detected, encoding))
+	// The lexical rewriters split on "\n" and re-parse value extents; a
+	// trailing "\r" never parses alone, so edit LF text and restore CRLF after.
+	crlf := strings.Contains(body, "\r\n")
+	if crlf {
+		body = strings.ReplaceAll(body, "\r\n", "\n")
+	}
 	var before Config
 	if _, err := toml.Decode(body, &before); err != nil {
 		return false, err
@@ -262,6 +290,12 @@ func upgradeOpenCodeGoFileWithWriterLocked(path string, write func(string, []byt
 			return false, err
 		}
 	}
+	if err := verifyOpenCodeGoRewrite(next, &after); err != nil {
+		return false, fmt.Errorf("OpenCode Go upgrade: %w; original configuration retained", err)
+	}
+	if crlf {
+		next = strings.ReplaceAll(next, "\n", "\r\n")
+	}
 	encoded := fileencoding.Encode(next, encoding)
 	j.ConfigHash = openCodeGoDigest(encoded)
 	backup := resolved + ".opencode-go-v10.backup"
@@ -285,7 +319,9 @@ func upgradeOpenCodeGoFileWithWriterLocked(path string, write func(string, []byt
 	data, _ = json.MarshalIndent(j, "", "  ")
 	// If this last write fails, the exact committed config hash still activates
 	// the prepared journal. No rollback can lose an already committed config.
-	_ = write(journalPath, data, 0600)
+	if err := write(journalPath, data, 0600); err != nil {
+		slog.Warn("config: OpenCode Go migration journal acknowledgement deferred to next startup", "path", journalPath, "err", err)
+	}
 	return true, nil
 }
 

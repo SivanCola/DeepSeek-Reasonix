@@ -198,42 +198,77 @@ func rewriteOpenCodeGoConfig(body string, before, after *Config, additions []ope
 	for _, b := range blocks {
 		originals = append(originals, strings.Join(lines[b.start+1:b.end], "\n"))
 	}
-
+	// after.Providers holds each split group right behind its source, so the
+	// original index i maps to i plus the groups split from earlier sources.
+	afterIndex := make([]int, len(blocks))
+	for i := range blocks {
+		if i > 0 {
+			afterIndex[i] = afterIndex[i-1] + 1
+			for _, addition := range additions {
+				if addition.source == i-1 {
+					afterIndex[i]++
+				}
+			}
+		}
+	}
 	for i := range slices.Backward(blocks) {
-		next, err := patchOpenCodeGoProvider(originals[i], before.Providers[i], after.Providers[i])
+		next, err := patchOpenCodeGoProvider(originals[i], before.Providers[i], after.Providers[afterIndex[i]])
 		if err != nil {
 			return body, err
+		}
+		var siblings []string
+		for _, addition := range additions {
+			if addition.source != i {
+				continue
+			}
+			raw, err := patchOpenCodeGoProvider(originals[i], before.Providers[i], addition.entry)
+			if err != nil {
+				return body, err
+			}
+			siblings = append(siblings, "", "[[providers]]")
+			siblings = append(siblings, strings.Split(strings.TrimRight(raw, "\n"), "\n")...)
 		}
 		b := blocks[i]
-		lines = append(lines[:b.start+1], append(strings.Split(next, "\n"), lines[b.end:]...)...)
+		replacement := strings.Split(next, "\n")
+		if len(siblings) > 0 {
+			replacement = append(append(trimTrailingBlankLines(replacement), siblings...), "")
+		}
+		lines = append(lines[:b.start+1], append(replacement, lines[b.end:]...)...)
 	}
 	body = strings.Join(lines, "\n")
-	var err error
-	body, err = rewriteOpenCodeGoReferences(body, before, after)
-	if err != nil {
-		return body, err
+	return rewriteOpenCodeGoReferences(body, before, after)
+}
+
+func trimTrailingBlankLines(lines []string) []string {
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
 	}
-	for _, addition := range additions {
-		raw, err := patchOpenCodeGoProvider(originals[addition.source], before.Providers[addition.source], addition.entry)
-		if err != nil {
-			return body, err
-		}
-		body = strings.TrimRight(body, "\n") + "\n\n[[providers]]\n" + raw + "\n"
-	}
+	return lines
+}
+
+// verifyOpenCodeGoRewrite proves the lexical edit still describes the planned
+// configuration before any byte reaches disk. Every rewrite path ends here.
+func verifyOpenCodeGoRewrite(body string, after *Config) error {
 	var check Config
 	if _, err := toml.Decode(body, &check); err != nil {
-		return body, err
+		return fmt.Errorf("migration readback: %w", err)
+	}
+	if check.ConfigVersion != openCodeGoUpgradeVersion {
+		return fmt.Errorf("migration readback: config_version %d", check.ConfigVersion)
+	}
+	if check.DefaultModel != after.DefaultModel {
+		return fmt.Errorf("migration readback: default_model %q", check.DefaultModel)
 	}
 	if len(check.Providers) != len(after.Providers) {
-		return body, fmt.Errorf("provider count changed during lexical rewrite")
+		return fmt.Errorf("provider count changed during lexical rewrite")
 	}
 	for i, p := range check.Providers {
 		want := after.Providers[i]
 		if p.Name != want.Name || p.Kind != want.Kind || p.BaseURL != want.BaseURL || !reflect.DeepEqual(p.ModelList(), want.ModelList()) {
-			return body, fmt.Errorf("provider %q failed migration readback", want.Name)
+			return fmt.Errorf("provider %q failed migration readback", want.Name)
 		}
 	}
-	return body, nil
+	return nil
 }
 
 // Expand the uncommon inline-array form lexically. Only structural separators

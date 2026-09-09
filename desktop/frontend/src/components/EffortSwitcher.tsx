@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ChevronsUpDown, Gauge } from "lucide-react";
 import { asArray } from "../lib/array";
+import { useI18n } from "../lib/i18n";
 import type { EffortInfo } from "../lib/types";
 import { ANCHORED_POPOVER_CLOSE_MS, AnchoredPopover } from "./AnchoredPopover";
 
@@ -13,6 +14,7 @@ export function EffortSwitcher({
   disabled: boolean;
   onPick: (level: string) => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -20,7 +22,7 @@ export function EffortSwitcher({
   const options = asArray(effort?.options);
   const label = (id: string) => {
     const inherited = effort?.resolved?.default || effort?.default;
-    if (id === "auto" && inherited && inherited !== "auto") return `auto → ${options.find((option) => option.id === inherited)?.name || inherited}`;
+    if (id === "auto" && inherited && inherited !== "auto") return `${t("common.auto")} → ${options.find((option) => option.id === inherited)?.name || inherited}`;
     return options.find((option) => option.id === id)?.name || id;
   };
   const levels = effort?.options ? ["auto", ...options.map((option) => option.id)] : asArray(effort?.levels);

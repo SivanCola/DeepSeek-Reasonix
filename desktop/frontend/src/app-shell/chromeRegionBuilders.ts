@@ -101,6 +101,7 @@ export function buildSessionStatusBannerProps(input: {
   onboarding: OnboardingCommands;
 }): SessionStatusBannersProps {
   const { banners, shell, onboarding } = input;
+  const retry = banners.startupRetry[input.activeTab?.id ?? ""];
   return {
     t: input.t,
     takenOver: Boolean(input.activeTab?.takenOver),
@@ -108,8 +109,10 @@ export function buildSessionStatusBannerProps(input: {
     reclaimBusyTabId: shell.reclaimBusyTab,
     onReclaim: banners.reclaimSession,
     leaseBlocked: input.leaseBlocked,
-    startupError: (banners.startupRetry?.tabId === input.activeTab?.id ? banners.startupRetry?.error : undefined) || input.meta?.startupErr,
-    startupRetryBusy: banners.startupRetry?.tabId === input.activeTab?.id && banners.startupRetry?.busy,
+    // The retry error only refines a failure the backend still reports; once
+    // another path recovers the tab, meta.startupErr clears and so must the banner.
+    startupError: input.meta?.startupErr ? retry?.error || input.meta.startupErr : undefined,
+    startupRetryBusy: Boolean(retry?.busy),
     onRetryStartup: () => void banners.retryStartup(input.activeTab?.id ?? ""),
     onOpenModelSettings: banners.openModelSettings,
     takeoverDialogTabId: shell.takeoverDialogTab,

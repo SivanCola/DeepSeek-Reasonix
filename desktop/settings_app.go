@@ -1941,10 +1941,10 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 		return err
 	}
 
-	var carried []provider.Message
+	carried := carriedTabHistory{prevPath: prevPath}
 	oldCtrl := a.controllerForTab(tab)
 	selection := a.tabRuntimeSnapshot(tab)
-	cfg, err := config.LoadForRoot(selection.workspaceRoot)
+	cfg, err := loadBuildConfigSnapshot(selection.workspaceRoot, selection.model, modelOverride)
 	if err != nil {
 		return err
 	}
@@ -1953,15 +1953,24 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 		return err
 	}
 	if oldCtrl != nil {
-		if prevPath == "" {
-			prevPath = oldCtrl.SessionPath()
+		if carried.prevPath == "" {
+			carried.prevPath = oldCtrl.SessionPath()
 		}
-		if err := a.snapshotSettingsRebuildSource(tab, oldCtrl, prevPath, setting); err != nil {
+		if err := a.snapshotSettingsRebuildSource(tab, oldCtrl, carried.prevPath, setting); err != nil {
 			return err
 		}
-		prevPath = sessionPathAfterSnapshot(oldCtrl, prevPath)
-		carried = oldCtrl.History()
+		carried.prevPath = sessionPathAfterSnapshot(oldCtrl, carried.prevPath)
+		carried.messages = oldCtrl.History()
+	} else if carried.prevPath != "" {
+		// A tab whose startup failed still owns its transcript on disk; the
+		// replacement must resume it rather than bind an empty history to it.
+		session, err := agent.LoadSession(carried.prevPath)
+		if err != nil {
+			return err
+		}
+		carried.session = session
 	}
+	prevPath = carried.prevPath
 	snap := a.tabRuntimeSnapshot(tab)
 	runtime := snap.normalizedRuntime()
 	model := snap.model
@@ -2033,7 +2042,7 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 // and grants, plan/goal state, and lifecycle move inside the boot layer. The
 // caller owns the swap, closing the old controller after the swap, and the
 // post-swap persistence.
-func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRuntimeSnapshot, runtime normalizedTabRuntime, model, prevPath, setting string, oldCtrl control.SessionAPI, carried []provider.Message, reload bool, cfg *config.Config) (control.SessionAPI, normalizedTabRuntime, string, error) {
+func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRuntimeSnapshot, runtime normalizedTabRuntime, model, prevPath, setting string, oldCtrl control.SessionAPI, carried carriedTabHistory, reload bool, cfg *config.Config) (control.SessionAPI, normalizedTabRuntime, string, error) {
 	opts := boot.Options{
 		Model: model, RequireKey: false,
 		ConfigSnapshot:           cfg,
@@ -2103,7 +2112,7 @@ func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRunti
 		ctrl.Close()
 		return nil, normalizedTabRuntime{}, "", err
 	}
-	restoredRuntime, err := resumeControllerRuntimeWithMessages(ctrl, carried, path, runtime)
+	restoredRuntime, err := carried.resume(ctrl, path, runtime)
 	if err != nil {
 		ctrl.Close()
 		return nil, normalizedTabRuntime{}, "", err

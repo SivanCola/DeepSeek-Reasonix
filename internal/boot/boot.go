@@ -254,7 +254,6 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		return nil, err
 	}
 	deepSeekProtocolMigErr = deepSeekProtocolMigrationNoticeError(handleConfigLoadWarnings(opts, cfg), deepSeekProtocolMigErr)
-	config.NormalizeLegacyMimoCustomProvidersForRefs(cfg, opts.Model)
 	if err := preflightRoleReasoning(cfg, opts, opts.ProviderResolver, false); err != nil {
 		return nil, err
 	}

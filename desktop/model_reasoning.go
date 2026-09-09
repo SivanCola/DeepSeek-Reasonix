@@ -7,6 +7,14 @@ import (
 	"reasonix/internal/control"
 )
 
+// loadBuildConfigSnapshot reads the configuration a controller build resolves
+// against. Reading under the writer locks keeps one connection transaction
+// atomic, and the frozen credentials become the runtime's for its lifetime.
+// Callers must not hold config.LockUserConfigEdits.
+func loadBuildConfigSnapshot(root string, sessionRefs ...string) (*config.Config, error) {
+	return config.LoadModelRuntimeSnapshot(root, sessionRefs...)
+}
+
 // Reject an invalid role before correcting a restored workspace binding retires
 // its working runtime. Return the typed cause instead of StartupErr text.
 func (a *App) snapshotTabWorkspaceForRebuild(tab *WorkspaceTab, ctrl control.SessionAPI, root string) error {
@@ -36,7 +44,7 @@ func controllerModelSelectionIdentity(ctrl control.SessionAPI) string {
 }
 
 func (a *App) resolveTabEffortChange(tabID, level string) (string, string, *config.Config, error) {
-	entry, cfg, err := a.currentProviderEntryAndConfigForTab(tabID)
+	entry, cfg, err := a.currentProviderEntryAndConfigForTab(tabID, func(root string) (*config.Config, error) { return loadBuildConfigSnapshot(root) })
 	if err != nil {
 		return "", "", cfg, err
 	}

@@ -30,11 +30,26 @@ func ValidateReasoningSnapshot(cfg *config.Config, opts Options) error {
 	return preflightRoleReasoning(cfg, opts, opts.ProviderResolver, false)
 }
 
+// resolveBuildConfiguration gives a caller-owned snapshot the runtime contract
+// LoadModelRuntimeSnapshot provides: legacy refs expanded, then credentials
+// frozen so no lazy resolver rereads the store during the runtime's lifetime.
 func resolveBuildConfiguration(root, modelRef string, snapshot *config.Config) (*config.Config, error) {
 	if snapshot != nil {
+		config.NormalizeLegacyMimoCustomProvidersForRefs(snapshot, modelRef)
+		snapshot.FreezeProviderCredentials()
 		return snapshot, nil
 	}
 	return config.LoadModelRuntimeSnapshot(root, modelRef)
+}
+
+// explicitVisionModel returns the configured vision reference, or "" when the
+// runtime selects one within the active provider ("auto" or unset).
+func explicitVisionModel(cfg *config.Config) string {
+	ref := strings.TrimSpace(cfg.Agent.VisionModel)
+	if strings.EqualFold(ref, "auto") {
+		return ""
+	}
+	return ref
 }
 
 // preflightRoleReasoning uses the same immutable config snapshot as assembly.
@@ -49,13 +64,16 @@ func preflightRoleReasoning(cfg *config.Config, opts Options, resolver provider.
 	type roleSelection struct {
 		role, ref, source string
 		effort            *string
+		// optional roles are constructed lazily at use time, so an unresolvable
+		// reference keeps that fallback; only a resolvable one is validated.
+		optional bool
 	}
 	roles := []roleSelection{
-		{"execution", model, "session effort override", opts.EffortOverride},
-		{"planner", effectivePlannerModel(cfg, opts), "", nil},
-		{"vision", cfg.Agent.VisionModel, "", nil},
-		{"guardian", cfg.Agent.GuardianModel, "", nil},
-		{"recovery", cfg.Agent.RecoveryModel, "", nil},
+		{role: "execution", ref: model, source: "session effort override", effort: opts.EffortOverride},
+		{role: "planner", ref: effectivePlannerModel(cfg, opts)},
+		{role: "vision", ref: explicitVisionModel(cfg), optional: true},
+		{role: "guardian", ref: cfg.Agent.GuardianModel},
+		{role: "recovery", ref: cfg.Agent.RecoveryModel},
 	}
 	subagentModel := strings.TrimSpace(cfg.Agent.SubagentModel)
 	if subagentModel == "" {
@@ -67,7 +85,7 @@ func preflightRoleReasoning(cfg *config.Config, opts Options, resolver provider.
 		subagentEffort = &value
 	}
 	if cfg.Agent.SubagentModel != "" || subagentEffort != nil {
-		roles = append(roles, roleSelection{"subagent", subagentModel, "agent.subagent_effort", subagentEffort})
+		roles = append(roles, roleSelection{role: "subagent", ref: subagentModel, source: "agent.subagent_effort", effort: subagentEffort, optional: true})
 	}
 	keys := make([]string, 0, len(cfg.Agent.SubagentModels)+len(cfg.Agent.SubagentEfforts))
 	for key := range cfg.Agent.SubagentModels {
@@ -88,7 +106,7 @@ func preflightRoleReasoning(cfg *config.Config, opts Options, resolver provider.
 		if value := cfg.Agent.SubagentEfforts[key]; value != "" {
 			effort, source = &value, "agent.subagent_efforts."+key
 		}
-		roles = append(roles, roleSelection{"subagent[" + key + "]", ref, source, effort})
+		roles = append(roles, roleSelection{role: "subagent[" + key + "]", ref: ref, source: source, effort: effort, optional: true})
 	}
 	for _, selection := range roles {
 		ref := strings.TrimSpace(selection.ref)
@@ -97,10 +115,9 @@ func preflightRoleReasoning(cfg *config.Config, opts Options, resolver provider.
 		}
 		entry, resolved, err := resolveModelEntry(resolver, cfg, ref)
 		if err != nil {
-			// Optional subagents resolve lazily and retain their existing fallback
-			// for removed project-owned references. A migrated account identity
-			// must still fail closed, and configured invalid efforts are checked.
-			if strings.HasPrefix(selection.role, "subagent") && cfg.ModelReferenceError(ref) == nil && !extensionsOnly {
+			// A migrated account identity must still fail closed, and a
+			// configured invalid effort is checked whenever the model resolves.
+			if selection.optional && cfg.ModelReferenceError(ref) == nil && !extensionsOnly {
 				continue
 			}
 			return fmt.Errorf("%s_model %q: %w", selection.role, ref, err)

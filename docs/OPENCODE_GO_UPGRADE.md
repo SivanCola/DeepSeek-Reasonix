@@ -83,7 +83,10 @@ For `config.toml`, the upgrade creates private-permission sidecars:
 | `config.toml.opencode-go-v10.json` | Aliases and hashed credential-reference/transport identity; no resolved API key. |
 
 The edit lock covers reread, planning, backup, journal preparation, and atomic
-config replacement. Encoding, comments, and unknown fields are preserved.
+config replacement. Encoding, line endings, comments, and unknown fields are
+preserved, and the rewritten document is decoded again before it replaces the
+original. When `config.toml` is a symbolic link, both sidecars are created
+beside its target, so a linked dotfiles directory receives new untracked files.
 Prepared aliases activate only after a matching config commit. A commit marker
 recovers an interrupted final acknowledgement; a previous committed generation
 remains usable during a later interrupted upgrade. Ordinary saves finalize a

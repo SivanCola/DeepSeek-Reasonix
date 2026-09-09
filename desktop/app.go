@@ -4122,7 +4122,7 @@ func (a *App) buildSessionRebindCandidate(
 		}
 	}
 	_ = config.MigrateLegacyCredentialsForRoot(root)
-	cfg, err := config.LoadForRoot(root)
+	cfg, err := loadBuildConfigSnapshot(root)
 	if err != nil {
 		return nil, err
 	}
@@ -9649,7 +9649,7 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	stageStarted = time.Now()
 	snap := a.tabRuntimeSnapshot(tab)
 	runtime := snap.normalizedRuntime()
-	cfg, err := config.LoadForRoot(snap.workspaceRoot)
+	cfg, err := loadBuildConfigSnapshot(snap.workspaceRoot, name)
 	if err != nil {
 		return err
 	}
@@ -9690,6 +9690,11 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if retErr != nil {
+			carried.releaseOnFailure(tab)
+		}
+	}()
 	prevPath = carried.prevPath
 	timing.Snapshot = time.Since(stageStarted)
 
@@ -10542,11 +10547,14 @@ func (a *App) runEffortCommandForTab(tabID, input string) {
 }
 
 func (a *App) currentProviderEntryForTab(tabID string) (*config.ProviderEntry, error) {
-	entry, _, err := a.currentProviderEntryAndConfigForTab(tabID)
+	entry, _, err := a.currentProviderEntryAndConfigForTab(tabID, config.LoadForRoot)
 	return entry, err
 }
 
-func (a *App) currentProviderEntryAndConfigForTab(tabID string) (*config.ProviderEntry, *config.Config, error) {
+// currentProviderEntryAndConfigForTab resolves the tab's selection against a
+// configuration read by load. Read-only views pass config.LoadForRoot; a
+// caller that will build a runtime from cfg passes loadBuildConfigSnapshot.
+func (a *App) currentProviderEntryAndConfigForTab(tabID string, load func(string) (*config.Config, error)) (*config.ProviderEntry, *config.Config, error) {
 	if tab := a.tabByID(tabID); tab != nil {
 		a.reconcileTabWithPinnedSessionMeta(tab)
 	}
@@ -10560,7 +10568,7 @@ func (a *App) currentProviderEntryAndConfigForTab(tabID string) (*config.Provide
 		effortOverride = cloneStringPtr(tab.effort)
 	}
 	a.mu.RUnlock()
-	cfg, err := config.LoadForRoot(workspaceRoot)
+	cfg, err := load(workspaceRoot)
 	if err != nil {
 		return nil, nil, err
 	}

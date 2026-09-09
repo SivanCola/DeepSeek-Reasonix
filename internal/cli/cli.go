@@ -1117,7 +1117,7 @@ func chatREPL(args []string, version string) int {
 
 	ctx := context.Background()
 	if err := applyResumeModel(model, resumePath, cfg); err != nil {
-		return cliFailure(err)
+		return cliTakeoverFailure(takeoverBinding, leases, takeoverManager, err)
 	}
 
 	// Plumb the controller's typed event stream through a channel so each event

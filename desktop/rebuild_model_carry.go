@@ -17,6 +17,9 @@ type carriedTabHistory struct {
 	messages []provider.Message
 	session  *agent.Session
 	prevPath string
+	// acquiredLease is set when the carry took the session lease for a tab
+	// that held none, so a failed switch can return it (see releaseOnFailure).
+	acquiredLease bool
 }
 
 // carryTabHistoryForModelSwitch takes the session lease before reading either
@@ -33,9 +36,14 @@ func (a *App) carryTabHistoryForModelSwitch(tab *WorkspaceTab, oldCtrl control.S
 		return carried, err
 	}
 	if oldCtrl == nil {
+		carried.acquiredLease = true
 		session, err := agent.LoadSession(carried.prevPath)
+		if err != nil {
+			carried.releaseOnFailure(tab)
+			return carried, err
+		}
 		carried.session = session
-		return carried, err
+		return carried, nil
 	}
 	if err := a.snapshotTabForAction(tab, "changing model"); err != nil {
 		return carried, err
@@ -43,6 +51,14 @@ func (a *App) carryTabHistoryForModelSwitch(tab *WorkspaceTab, oldCtrl control.S
 	carried.prevPath = sessionPathAfterSnapshot(oldCtrl, carried.prevPath)
 	carried.messages = oldCtrl.History()
 	return carried, nil
+}
+
+// releaseOnFailure returns a lease the carry acquired for a controller-less
+// tab, restoring the failed-startup state where another process may open it.
+func (c carriedTabHistory) releaseOnFailure(tab *WorkspaceTab) {
+	if c.acquiredLease && c.prevPath != "" {
+		tab.releaseSessionLeaseForKey(sessionRuntimeKey(c.prevPath))
+	}
 }
 
 func (c carriedTabHistory) resume(ctrl *control.Controller, path string, runtime normalizedTabRuntime) (normalizedTabRuntime, error) {
@@ -80,7 +96,16 @@ func (a *App) savedModelForSettingsRebuild(cfg *config.Config, selection tabRunt
 	if !ok {
 		return "", nil
 	}
-	return cfg.ResolveSavedModel(model, identity)
+	resolved, err := cfg.ResolveSavedModel(model, identity)
+	if err != nil {
+		return "", err
+	}
+	// An unaliased sidecar ref outside the catalog keeps the tab's own model
+	// and its existing stale-selection policy (same gate as startup).
+	if _, ok := cfg.ResolveModel(resolved); !ok {
+		return "", nil
+	}
+	return resolved, nil
 }
 
 func (a *App) settingsRebuildModel(tab *WorkspaceTab, cfg *config.Config, setting, model string) (string, error) {

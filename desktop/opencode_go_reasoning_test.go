@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"reasonix/internal/agent"
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
 	"reasonix/internal/event"
@@ -146,5 +148,37 @@ func TestReloadRuntimeRetriesFailedNewSession(t *testing.T) {
 	}
 	if tab.Ctrl == nil || !tab.Ready || tab.StartupErr != "" {
 		t.Fatal("retry did not reach ready state")
+	}
+}
+
+// A failed startup leaves the transcript on disk only. Retrying through the
+// runtime reload must resume that transcript, not bind an empty history to it.
+func TestReloadRuntimeRetryResumesSavedTranscript(t *testing.T) {
+	dir := reloadRuntimeFixture(t)
+	path := filepath.Join(dir, "historical.jsonl")
+	s := agent.NewSession("fixture system")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "preserve this history"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "kept"})
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.ctx, app.readyHook = context.Background(), func() {}
+	tab := reloadRuntimeTab(t, app, dir, nil)
+	tab.Ctrl = nil
+	tab.SessionPath = path
+	tab.Ready, tab.StartupErr = false, "previous provider construction failure"
+	if err := app.ReloadRuntime(tab.ID); err != nil {
+		t.Fatal(err)
+	}
+	if tab.Ctrl == nil || tab.Ctrl.SessionPath() != path {
+		t.Fatalf("retry did not bind the saved session: %v", tab.Ctrl)
+	}
+	var contents []string
+	for _, m := range tab.Ctrl.History() {
+		contents = append(contents, m.Content)
+	}
+	if !strings.Contains(strings.Join(contents, "\n"), "preserve this history") {
+		t.Fatalf("retry discarded the saved transcript: %q", contents)
 	}
 }

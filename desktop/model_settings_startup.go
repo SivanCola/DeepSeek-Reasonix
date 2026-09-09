@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reasonix/internal/agent"
 	"reasonix/internal/boot"
+	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"strings"
 )
@@ -32,8 +33,16 @@ func setTabStartupError(tab *WorkspaceTab, err error) bool {
 	}
 	tab.StartupErr = userFacingSessionLeaseError("", err).Error()
 	tab.StartupErrLeaseHeld = errors.Is(err, agent.ErrSessionLeaseHeld)
-	tab.modelApplication.startupRetry = errors.Is(err, errNoDesktopChatModel) || errors.Is(err, boot.ErrUnknownModel) || errors.Is(err, errModelSettingsSuperseded)
+	tab.modelApplication.startupRetry = startupErrorRetriesAfterModelSettings(err)
 	return tab.StartupErrLeaseHeld
+}
+
+// A configuration the user can correct in model settings retries through the
+// startup build, which reloads the session; other failures wait for a reload.
+func startupErrorRetriesAfterModelSettings(err error) bool {
+	var role *boot.RoleReasoningError
+	return errors.Is(err, errNoDesktopChatModel) || errors.Is(err, boot.ErrUnknownModel) || errors.Is(err, errModelSettingsSuperseded) ||
+		errors.Is(err, config.ErrMigratedModelUnavailable) || errors.As(err, &role)
 }
 
 func clearTabStartupError(tab *WorkspaceTab) {

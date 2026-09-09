@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -10,6 +11,10 @@ import (
 
 	"reasonix/internal/provider"
 )
+
+// ErrMigratedModelUnavailable marks a saved selection whose migrated OpenCode
+// Go connection no longer matches; a new explicit selection resolves it.
+var ErrMigratedModelUnavailable = errors.New("MIGRATED_MODEL_UNAVAILABLE")
 
 func normalizeRuntimeConfigWithMigrationJournal(cfg *Config) error {
 	cfg.loadOpenCodeGoJournal(userConfigLoadPath())
@@ -67,10 +72,10 @@ func (c *Config) resolveOpenCodeGoAlias(ref string, search bool) (string, error)
 	name, model, ok := strings.Cut(alias.Target, "/")
 	p, found := c.Provider(name)
 	if !ok || !found || !p.HasModel(model) {
-		return "", fmt.Errorf("MIGRATED_MODEL_UNAVAILABLE: %q moved to %q; restore that OpenCode Go connection in model settings", ref, alias.Target)
+		return "", fmt.Errorf("%w: %q moved to %q; restore that OpenCode Go connection in model settings", ErrMigratedModelUnavailable, ref, alias.Target)
 	}
 	if _, official := provider.OpenCodeGoRequestRoute(p.Kind, p.BaseURL, p.RequestURL, p.ChatURL); !official || openCodeGoIdentity(*p) != alias.Identity {
-		return "", fmt.Errorf("MIGRATED_MODEL_UNAVAILABLE: account or endpoint for %q has changed; restore the original connection for %q", alias.Target, ref)
+		return "", fmt.Errorf("%w: account or endpoint for %q has changed; restore the original connection for %q", ErrMigratedModelUnavailable, alias.Target, ref)
 	}
 	return alias.Target, nil
 }
@@ -130,7 +135,7 @@ func (c *Config) ResolveSavedModel(ref, identity string) (string, error) {
 		return c.ResolveHistoricalModel(ref)
 	}
 	if current := c.ModelSelectionIdentity(ref); current == "" || current != identity {
-		return "", fmt.Errorf("MIGRATED_MODEL_UNAVAILABLE: saved connection for %q has changed; explicitly select a model to use the current connection", ref)
+		return "", fmt.Errorf("%w: saved connection for %q has changed; explicitly select a model to use the current connection", ErrMigratedModelUnavailable, ref)
 	}
 	entry, _ := c.resolveCurrentModel(ref)
 	return entry.Name + "/" + entry.Model, nil

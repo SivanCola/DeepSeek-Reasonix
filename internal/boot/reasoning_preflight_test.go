@@ -101,3 +101,64 @@ effort="max"
 		t.Fatal("execution override mutated the planner snapshot")
 	}
 }
+
+func TestRoleReasoningPreflightKeepsRuntimeSelectedVision(t *testing.T) {
+	isolateConfigHome(t)
+	root := robustTempDir(t)
+	t.Setenv("CUSTOM_KEY", "sk-test")
+	writeFile(t, root, "reasonix.toml", `default_model="custom/text"
+[agent]
+vision_model="auto"
+[[providers]]
+name="custom"
+kind="openai"
+base_url="https://example.invalid/v1"
+api_key_env="CUSTOM_KEY"
+models=["text","vision-pro"]
+vision_models=["vision-pro"]
+`)
+	ctrl, err := Build(context.Background(), Options{WorkspaceRoot: root, Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("vision_model=auto must not fail assembly: %v", err)
+	}
+	ctrl.Close()
+	// A removed explicit vision reference keeps the executor usable, exactly as
+	// the lazy image-input path did; an unsupported effort on a resolvable
+	// vision reference is still rejected before any session exists.
+	cfg := config.Default()
+	cfg.DefaultModel = "custom/text"
+	cfg.Agent.VisionModel = "gone/vision"
+	cfg.Providers = []config.ProviderEntry{{Name: "custom", Kind: "openai", BaseURL: "https://example.invalid/v1", Models: []string{"text"}}}
+	if err := preflightRoleReasoning(cfg, Options{}, nil, false); err != nil {
+		t.Fatalf("removed vision reference blocked assembly: %v", err)
+	}
+	cfg.Agent.VisionModel = "vision/deepseek-v4-flash-vision-exp"
+	cfg.Providers = append(cfg.Providers, config.ProviderEntry{Name: "vision", Kind: "anthropic", BaseURL: "https://custom.example", Model: "deepseek-v4-flash-vision-exp", Thinking: "enabled", Effort: "max"})
+	var role *RoleReasoningError
+	if err := preflightRoleReasoning(cfg, Options{}, nil, false); !errors.As(err, &role) || role.Role != "vision" {
+		t.Fatalf("invalid vision effort not reported: %v", err)
+	}
+}
+
+func TestBuildFreezesCallerConfigurationSnapshot(t *testing.T) {
+	isolateConfigHome(t)
+	root := robustTempDir(t)
+	if _, err := config.SetCredential("SNAPSHOT_KEY", "sk-first"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DefaultModel = "custom/text"
+	cfg.Providers = []config.ProviderEntry{{Name: "custom", Kind: "openai", BaseURL: "https://example.invalid/v1", APIKeyEnv: "SNAPSHOT_KEY", Model: "text"}}
+	ctrl, err := Build(context.Background(), Options{WorkspaceRoot: root, ConfigSnapshot: cfg, Sink: event.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctrl.Close()
+	// A credential rotation after assembly must not reach the running runtime.
+	if _, err := config.SetCredential("SNAPSHOT_KEY", "sk-rotated"); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Providers[0].APIKey(); got != "sk-first" {
+		t.Fatalf("caller snapshot rereads credentials: %q", got)
+	}
+}
