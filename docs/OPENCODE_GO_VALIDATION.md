@@ -30,7 +30,7 @@ execution. Focused API reruns after fixture corrections are valid evidence when
 the record identifies every case and counts failed requests.
 
 Implementation probes on 2026-09-08 covered all three DeepSeek Chat models at
-`max`, MiniMax M3 Anthropic, Grok 4.5 Responses, three-turn tool replay, actual
+`max`, MiniMax M3 Anthropic, Grok 4.6 Responses, three-turn tool replay, actual
 image recognition, and structured native search sources through both search
 adapters. Supported alternate Qwen3.8 Max Anthropic also succeeded. Initial image
 and search fixtures failed; corrected focused reruns passed. The 15 logical

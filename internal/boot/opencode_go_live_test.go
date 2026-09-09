@@ -107,12 +107,16 @@ func TestLiveOpenCodeGoV10Acceptance(t *testing.T) {
 	}
 	for _, test := range []struct{ kind, model string }{
 		{"openai", "deepseek-v4-flash"}, {"openai", "deepseek-v4-pro"}, {"openai", "deepseek-v4-flash-vision-exp"},
-		{"anthropic", "minimax-m3"}, {"responses", "grok-4.5"},
+		{"anthropic", "minimax-m3"}, {"responses", "grok-4.6"},
 	} {
-		t.Run(test.kind+"/"+test.model, func(t *testing.T) {
+		 t.Run(test.kind+"/"+test.model, func(t *testing.T) {
 			effort := "high"
 			if provider.OpenCodeGoDeepSeekModel(test.model) {
 				effort = "max"
+			} else if test.model == "grok-4.6" {
+				// The current Responses route does not expose a local reasoning
+				// effort contract for Grok 4.6; leave it unset for the wire probe.
+				effort = ""
 			}
 			p := newModel(t, test.kind, test.model, effort, false)
 			collect(t, p, provider.Request{Messages: []provider.Message{{Role: provider.RoleSystem, Content: "You are Reasonix, a coding assistant running a small protocol integration test."}, {Role: provider.RoleUser, Content: "Reply with just OK."}}, MaxTokens: 128})
