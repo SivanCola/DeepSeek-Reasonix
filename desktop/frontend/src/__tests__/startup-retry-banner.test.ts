@@ -17,9 +17,9 @@ const banners = {
   openModelSettings: () => undefined,
   startupRetry: retries,
 } as unknown as Input["banners"];
-const base = {
+const base: Omit<Input, "activeTab" | "meta"> = {
   t: ((key: string) => key) as Input["t"],
-  leaseBlocked: undefined,
+  leaseBlocked: null,
   configWarnings: [],
   dismissConfigWarnings: () => undefined,
   updateChecksEnabled: false,
