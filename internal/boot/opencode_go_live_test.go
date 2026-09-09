@@ -109,7 +109,7 @@ func TestLiveOpenCodeGoV10Acceptance(t *testing.T) {
 		{"openai", "deepseek-v4-flash"}, {"openai", "deepseek-v4-pro"}, {"openai", "deepseek-v4-flash-vision-exp"},
 		{"anthropic", "minimax-m3"}, {"responses", "grok-4.6"},
 	} {
-		 t.Run(test.kind+"/"+test.model, func(t *testing.T) {
+		t.Run(test.kind+"/"+test.model, func(t *testing.T) {
 			effort := "high"
 			if provider.OpenCodeGoDeepSeekModel(test.model) {
 				effort = "max"
