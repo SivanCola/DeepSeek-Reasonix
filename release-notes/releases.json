@@ -3,7 +3,7 @@
   "releases": [
     {
       "version": "1.38.5",
-      "date": "2026-09-10",
+      "date": "2026-09-11",
       "channel": "stable",
       "targetingVersion": 1,
       "title": {
@@ -345,6 +345,17 @@
           }
         ],
         "fixed": [
+          {
+            "targets": ["desktop", "cli"],
+            "title": {
+              "en": "Windows extension shutdown stability",
+              "zh": "Windows 扩展关闭稳定性"
+            },
+            "body": {
+              "en": "Forced extension shutdown and normal process cleanup now release the Windows process-tracking handle exactly once, preventing later cleanup from closing an unrelated reused handle.",
+              "zh": "强制关闭扩展与正常进程回收现在只释放一次 Windows 进程跟踪句柄，避免后续清理误关已被其他对象复用的句柄。"
+            }
+          },
           {
             "targets": [
               "desktop"
