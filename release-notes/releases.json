@@ -497,7 +497,26 @@
           ]
         }
       ],
-      "risks": [],
+      "risks": [
+        {
+          "targets": [
+            "desktop",
+            "cli"
+          ],
+          "title": {
+            "en": "OpenCode Go Responses search limitation",
+            "zh": "OpenCode Go Responses 搜索限制"
+          },
+          "body": {
+            "en": "Release checks could not obtain completed native search evidence from the OpenCode Go DeepSeek Responses route. Use the verified OpenCode Go Anthropic search route for web search. Ordinary model calls, tool replay, and image input passed; the Responses search path is not claimed as verified for this release.",
+            "zh": "发布实测未能从 OpenCode Go DeepSeek Responses 路径取得已完成的原生搜索证据。联网搜索请使用已验证的 OpenCode Go Anthropic 路径。普通模型调用、工具回放和图片输入已通过；本版本不将 Responses 搜索标记为已验证。"
+          },
+          "refs": [
+            10015,
+            10081
+          ]
+        }
+      ],
       "contributors": [
         "SivanCola",
         "XTLine",
