@@ -10,6 +10,7 @@ import { GrantRegistry } from "./browser/grants.js";
 import { buildBrowserHostCalls } from "./browser/hostCalls.js";
 import { browserLayoutInDIP } from "./browser/layout.js";
 import { BrowserSurfaceManager } from "./browser/surfaceManager.js";
+import { loadBuildIdentity } from "./buildIdentity.js";
 import { emptyContract, loadContract, type LoadedContract } from "./contract.js";
 import { DialogHost } from "./dialogs.js";
 import { renderFailurePage, type ShellAction } from "./failurePage.js";
@@ -236,9 +237,7 @@ function bootstrap(dataHome: string): void {
     {
       hello: async (client) => validateHelloResult(await client.request("desktop/hello", buildHelloParams({
         contractDigest: contract.digest,
-        version: app.isPackaged ? app.getVersion() : "dev",
-        channel: process.env.REASONIX_CHANNEL || "dev",
-        commit: process.env.REASONIX_COMMIT || "dev",
+        ...loadBuildIdentity(app.isPackaged, process.resourcesPath, process.env),
         hostVersion: process.versions.electron,
         chromeVersion: process.versions.chrome,
         platform: process.platform,

@@ -84,12 +84,12 @@ test("only the shell bundle and its package.json enter the asar", () => {
   }
 });
 
-test("the bundled package.json carries the release tag app.getVersion() reports", () => {
+test("package.json uses the numeric native version; build.json owns the full release identity", () => {
   const pkg = sanitizeShellPackageJson(
     { name: "reasonix-desktop-shell", private: true, version: "0.0.0", type: "module", main: "dist/main.cjs", description: "shell", scripts: { build: "x" }, devDependencies: { electron: "44.2.0" }, engines: { node: ">=24" } },
     { version: "v1.2.3-rc.1", productName: "Reasonix" },
   );
-  assert.deepEqual(pkg, { name: "reasonix-desktop-shell", description: "shell", main: "dist/main.cjs", type: "module", productName: "Reasonix", version: "v1.2.3-rc.1" });
+  assert.deepEqual(pkg, { name: "reasonix-desktop-shell", description: "shell", main: "dist/main.cjs", type: "module", productName: "Reasonix", version: "1.2.3" });
 });
 
 test("packager options pin the product identity and layout for every target", () => {

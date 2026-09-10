@@ -109,9 +109,13 @@ grep -Eq '^  resolve:$' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Eq 'sha:.*steps\.candidate\.outputs\.sha' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'bash scripts/resolve-desktop-candidate.sh' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'name: Smoke-test packaged Electron startup' "$repo_root/.github/workflows/release-desktop.yml"
-grep -Fq "if: matrix.platform == 'windows/amd64'" "$repo_root/.github/workflows/release-desktop.yml"
+sed -n '/name: Smoke-test packaged Electron startup/,/name: Upload unsigned Windows payload/p' \
+	"$repo_root/.github/workflows/release-desktop.yml" | grep -Fq "if: runner.os == 'Windows'"
+grep -Fq 'desktop/build/electron/${{ matrix.name }}/app' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq 'node desktop/packaging/smoke.mjs' "$repo_root/.github/workflows/release-desktop.yml"
 grep -Fq -- '--service desktop/build/bin/reasonix-desktop.exe' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq 'node desktop/packaging/smoke.mjs "$RUNNER_TEMP/desktop-startup/Reasonix.app"' "$repo_root/.github/workflows/release-desktop.yml"
+grep -Fq 'xvfb-run -a node desktop/packaging/smoke.mjs' "$repo_root/.github/workflows/release-desktop.yml"
 test ! -e "$repo_root/scripts/test-webview2-approval-smoke.ps1"
 # The Wails-era WebView2/WebKitGTK native smoke harnesses are retired with the
 # old shell; the packaged Electron startup smoke replaces them.
@@ -122,6 +126,7 @@ grep -Fq 'name: Package Electron shell for native startup smoke' "$repo_root/.gi
 grep -Fq 'name: Smoke-test Electron native startup' "$repo_root/.github/workflows/ci.yml"
 grep -Fq 'node packaging/package.mjs windows/amd64 v0.0.0-ci canary' \
 	"$repo_root/.github/workflows/ci.yml"
+grep -Fq -- '-X main.version=v0.0.0-ci -X main.channel=canary' "$repo_root/.github/workflows/ci.yml"
 grep -Fq 'node packaging/smoke.mjs build/electron/windows-amd64/app --service build/bin/reasonix-desktop.exe' \
 	"$repo_root/.github/workflows/ci.yml"
 grep -Fq 'node packaging/verify.mjs ../dist/Reasonix-darwin-arm64.zip' \
