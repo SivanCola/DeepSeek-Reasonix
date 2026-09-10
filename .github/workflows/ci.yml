@@ -804,6 +804,7 @@ jobs:
             .github/workflows/release-npm.yml \
             .github/workflows/release-desktop.yml \
             .github/workflows/apple-notary-log.yml \
+            .github/workflows/macos-signing-check.yml \
             .github/workflows/release-verify-issues.yml \
             .github/workflows/docs-impact.yml \
             .github/workflows/ci.yml
