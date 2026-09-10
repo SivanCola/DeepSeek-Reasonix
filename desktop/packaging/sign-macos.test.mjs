@@ -62,6 +62,12 @@ test("signs both architectures of resource sidecars and framework binaries befor
     execFileSync("codesign", ["--verify", "--deep", "--strict", app]);
     assert.notEqual(spawnSync("codesign", ["--verify", join(app, binaries[2])]).status, 0);
 
+    // The control above signs MacOS siblings. Start the new signer from fully
+    // unsigned code so it must order those siblings before the main app seal.
+    for (const relative of binaries) {
+      execFileSync("codesign", ["--remove-signature", join(app, relative)]);
+    }
+
     await signMacOS(app, "-");
     for (const relative of binaries) {
       for (const arch of ["arm64", "x86_64"]) {
