@@ -32,11 +32,13 @@ its readings to the right: the turn clock, the running token total, and
 throughput. Colour and position do the separating, not punctuation. The clock
 reads first, so the strip answers "is this stuck?"; only the token reading
 carries the estimate cue, since the clock is exact and throughput derives from
-the reading. A narrow strip spends the state word's width first, never cuts a
-reading mid-number, and drops the rate whole below its threshold. Throughput
-also appears only while the model is emitting, so a rate frozen by a wait is
-never shown as a current speed. The strip's live region still announces the
-stable state text alone. Approval, answer, and retry notices remain visible.
+the reading. A narrow strip spends the state word's width first, then drops the
+throughput whole below one threshold and the readings themselves below a lower
+one, so a reading is never the thing that gets cut; at the narrowest the strip
+is the dot and the state word alone. Throughput also appears only while the
+model is emitting, so a rate frozen by a wait is never shown as a current
+speed. The strip's live region still announces the stable state text alone.
+Approval, answer, and retry notices remain visible.
 
 The bottom status bar combines workspace and branch into one item: it shows
 the branch name, with both workspace path and branch in the tooltip. Non-Git

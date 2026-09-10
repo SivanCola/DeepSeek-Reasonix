@@ -663,6 +663,13 @@ console.log("\ncomposer run strip");
     stylesSource.includes("calc(var(--composer-height) + var(--composer-run-strip-reserved, 0px))"),
     "resized card height combines logical height and strip reservation in CSS",
   );
+  // The readings never shrink, so width pressure cannot cut a number; the only
+  // way they leave the line is these two width thresholds, and the lower one has
+  // to exist or an overflowing reading would be hard-clipped mid-number.
+  ok(
+    stylesSource.includes("@container (max-width: 350px)") && stylesSource.includes("@container (max-width: 300px)"),
+    "the strip drops the rate and then the readings by width rather than truncating either",
+  );
 
   const dom = installDom();
   const { root, rerender } = await renderComposer({ running: true, turnStartAt: Date.now() });

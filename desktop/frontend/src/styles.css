@@ -6916,6 +6916,16 @@ body > .mermaid-diagram--fullscreen {
     display: none;
   }
 }
+/* The backstop. Below this the readings could no longer be guaranteed to fit
+   even at the widest they get (a long clock plus a long token count under a
+   raised font scale), and an overflowing reading is hard-clipped without an
+   ellipsis, so a truncated number would read as a complete one. Dropping them
+   leaves the strip saying why it is on screen, which is what it is for. */
+@container (max-width: 300px) {
+  .composer-run-strip__metrics {
+    display: none;
+  }
+}
 .composer-run-strip--waiting {
   color: color-mix(in srgb, var(--warn) 74%, var(--fg));
 }
