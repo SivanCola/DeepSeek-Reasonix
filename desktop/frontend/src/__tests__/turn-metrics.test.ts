@@ -90,23 +90,26 @@ for (const fixture of [
 ]) {
   const next = turnMetrics(fixture);
   const legacy = legacyRunMetrics(fixture);
-  ok(next && legacy, "both derivations produce a reading for the ASCII fixture");
-  eq(next!.tokens, legacy!.tokens, "token reading matches the inline expression");
-  eq(next!.outputTokens, legacy!.outTok, "output reading matches the inline expression");
-  eq(next!.elapsedMs, legacy!.elapsedMs, "elapsed reading matches the inline expression");
-  eq(next!.tps, legacy!.tps, "throughput reading matches the inline expression");
+  // assert.ok carries an assertion signature, so it narrows where the local ok()
+  // wrapper cannot; a `!` here would typecheck but would not be checked.
+  assert.ok(next, "the consolidated derivation produces a reading for the ASCII fixture");
+  assert.ok(legacy, "the inline derivation produces a reading for the ASCII fixture");
+  eq(next.tokens, legacy.tokens, "token reading matches the inline expression");
+  eq(next.outputTokens, legacy.outTok, "output reading matches the inline expression");
+  eq(next.elapsedMs, legacy.elapsedMs, "elapsed reading matches the inline expression");
+  eq(next.tps, legacy.tps, "throughput reading matches the inline expression");
 }
 eq(turnMetrics({ ...base, turnStartAt: 0 }), null, "a turn without a start anchor has no reading");
 eq(turnMetrics({ ...base, running: false, turnDoneAt: undefined }), null,
   "neither running nor completed yields no reading");
-eq(turnMetrics({ ...base, running: false, turnDoneAt: 20_000 }).tps, 5,
+eq(turnMetrics({ ...base, running: false, turnDoneAt: 20_000 })?.tps, 5,
   "a settled turn divides its billed output by the model-active window");
-eq(turnMetrics(base).tps, 10, "a streaming turn adds the in-flight estimate to the numerator");
-eq(turnMetrics({ ...base, turnModelActiveMs: 400 }).tps, null, "sub-500ms windows report no throughput");
-eq(turnMetrics({ ...base, running: false, turnDoneAt: 20_000, lastTurnOutputEstimated: true }).estimated,
+eq(turnMetrics(base)?.tps, 10, "a streaming turn adds the in-flight estimate to the numerator");
+eq(turnMetrics({ ...base, turnModelActiveMs: 400 })?.tps, null, "sub-500ms windows report no throughput");
+eq(turnMetrics({ ...base, running: false, turnDoneAt: 20_000, lastTurnOutputEstimated: true })?.estimated,
   true, "a settled estimate is flagged");
-eq(turnMetrics(base).estimated, true, "a streaming estimate is flagged");
-eq(turnMetrics({ ...base, turnOutputEstimated: false, live: buf("") }).estimated, false,
+eq(turnMetrics(base)?.estimated, true, "a streaming estimate is flagged");
+eq(turnMetrics({ ...base, turnOutputEstimated: false, live: buf("") })?.estimated, false,
   "a stream with nothing estimated is not flagged");
 
 // --- Elapsed label ----------------------------------------------------------
