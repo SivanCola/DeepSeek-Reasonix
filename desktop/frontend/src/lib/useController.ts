@@ -33,7 +33,7 @@ import { aliasActivationRequest, noteActivationRequested, noteActivationSettled,
 import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type StreamDeltaEntry, type StreamSegment } from "./streamDeltaBatch";
 import { assistantHasContent, ensureActiveAssistant, ensureAssistant, removeEmptyAssistantItems } from "./assistantItems";
 import { getTranscriptStore } from "./transcriptStore";
-import { useTrajectoryStore } from "../store/trajectory";
+import { bindTrajectoryLedger, forgetTrajectory, observeTrajectoryEvent, recordTrajectoryUserTurn, resetTrajectory, type TurnEventMeta } from "./trajectoryLedger";
 import { recordFrontendDiagnostic } from "./frontendDiagnosticBridge";
 import { uiPerfTracker } from "./uiPerf";
 import { getLocale, t } from "./i18n";
@@ -83,7 +83,6 @@ import type {
   TabMeta,
   ToolApprovalMode,
   TopicActivationEvent,
-  TurnEventMeta,
   TurnEventReplayView,
   WireApproval,
   WireAsk,
@@ -2599,13 +2598,7 @@ export function useController() {
     // Activity timestamps belong to one submitted turn. A new optimistic turn
     // must age from its own turnStartAt if turn_started is lost, not inherit an
     // old turn's already-stale wire timestamp and probe immediately.
-    if (action.type === "user") {
-      lastTurnActivityAtByTab.current.delete(tabId);
-      // The trajectory's first row is the user's own turn: the kernel emits no
-      // event for it, so a ledger built only from the wire would start at the
-      // first turn_started and lose the request that caused it.
-      useTrajectoryStore.getState().ingestUser(tabId, action.text);
-    }
+    if (action.type === "user") { lastTurnActivityAtByTab.current.delete(tabId); recordTrajectoryUserTurn(tabId, action.text); }
     const next = reducer(prev, action);
     if (prev !== next) {
       states.set(tabId, next);
@@ -2763,10 +2756,7 @@ export function useController() {
     historyOlderSeq.current.set(tabId, (historyOlderSeq.current.get(tabId) ?? 0) + 1);
     transcriptSubscriptions.current.get(tabId)?.();
     transcriptSubscriptions.current.delete(tabId);
-    turnEventProjector.release(tabId);
-    // A closed tab's rows are unreachable; keeping them would outlive the only
-    // surface that could show them.
-    useTrajectoryStore.getState().release(tabId);
+    turnEventProjector.release(tabId); forgetTrajectory(tabId);
     getTranscriptStore().evictTab(tabId);
   }, [turnEventProjector]);
   const sessionLoadCurrent = useCallback((tabId: string, seq: number): boolean => {
@@ -3522,12 +3512,6 @@ export function useController() {
       uiPerfTracker.onStreamDispatch();
       for (const b of coalesceStreamDeltas(batch)) dispatchTo(b.tabId, { type: "stream_batch", segments: b.segments });
     });
-    // A host with no durable ledger can never answer the coverage question, so
-    // it is answered once per event instead of leaving the panel reading as
-    // "not read yet" forever. Read once here: the bindings do not appear
-    // mid-session, observeCoverage is idempotent, and this stays off the
-    // per-token stream path.
-    const hasTurnEventLedger = typeof app.TurnEventsForTab === "function";
     const handleWireEvent = (e: WireEvent, meta?: TurnEventMeta) => {
       // Untagged compatibility events belong to the tab that the backend has
       // actually activated, not the frontend's optimistic selection. During a
@@ -3543,11 +3527,7 @@ export function useController() {
       const currentMeta = statesRef.current.get(targetTabId)?.meta;
       if (e.sessionGeneration !== undefined && (!currentMeta || currentMeta.sessionGeneration === undefined || e.sessionGeneration !== currentMeta.sessionGeneration)) return;
       if (!turnEventProjector.acceptLive(targetTabId, e, acceptedEpoch)) return;
-      // One ledger per tab, fed from this single handler so replayed and live
-      // frames take the same path and inherit the gap/epoch gating above.
-      useTrajectoryStore.getState().ingest(targetTabId, e, meta);
-      if (!hasTurnEventLedger) useTrajectoryStore.getState().observeCoverage(targetTabId, null);
-      uiPerfTracker.onWireEvent(targetTabId, e.kind);
+      observeTrajectoryEvent(targetTabId, e, meta); uiPerfTracker.onWireEvent(targetTabId, e.kind);
       if (TURN_ACTIVITY_KINDS.has(e.kind)) lastTurnActivityAtByTab.current.set(targetTabId, Date.now());
       if (e.kind === "text" || e.kind === "reasoning") {
         if (e.submissionId) dispatchTo(targetTabId, { type: "send_confirmed", submissionId: e.submissionId });
@@ -3573,17 +3553,10 @@ export function useController() {
       if (e.kind === "session_changed" && e.sessionReset) {
         // The controller replaced the transcript under the same path (a head
         // switch from /switch, /branch, or /rewind); reload rather than patch.
-        // The trajectory's rows describe the surface that just went away.
-        useTrajectoryStore.getState().reset(targetTabId);
-        void loadSessionDataForTab(targetTabId, true, "session-changed");
+        resetTrajectory(targetTabId); void loadSessionDataForTab(targetTabId, true, "session-changed");
       }
     };
-    // Coverage arrives with each replay page. The ledger states what the
-    // durable record covers instead of letting the last row read as the end.
-    const observeTrajectoryCoverage = (tabId: string, replay: TurnEventReplayView) =>
-      useTrajectoryStore.getState().observeCoverage(tabId, replay);
-    turnEventProjector.bind(handleWireEvent);
-    turnEventProjector.bindReplayObserver(observeTrajectoryCoverage);
+    turnEventProjector.bind(handleWireEvent); const unbindTrajectoryLedger = bindTrajectoryLedger(turnEventProjector);
     const off = onEvent(handleWireEvent);
 
     const offReady = onReady((readyTabId) => {
@@ -3648,7 +3621,7 @@ export function useController() {
         dispatchTo(tab.id, { type: "optimistic_meta", meta: metaFromTab(tab, statesRef.current.get(tab.id)?.meta) });
       },
       runtime: (tab, snapshotAt) => { dispatchRuntimeStatusForTab(tab.id, tab, snapshotAt); },
-      reset: id => { turnEventProjector.release(id); useTrajectoryStore.getState().release(id); },
+      reset: id => { turnEventProjector.release(id); forgetTrajectory(id); },
       hydrate: (tab, recoveryCurrent) => loadSessionDataForTab(tab.id, true, "startup", {
         sessionPath: tab.sessionPath, sessionRevision: tab.sessionRevision,
         sessionDigest: tab.sessionDigest, sessionGeneration: tab.sessionGeneration, recoveryCurrent,
@@ -3662,8 +3635,7 @@ export function useController() {
     // and no way to stop (#3844).
     void app.ReplayPendingPrompts().catch(() => {});
     return () => {
-      turnEventProjector.unbind(handleWireEvent);
-      turnEventProjector.unbindReplayObserver(observeTrajectoryCoverage);
+      turnEventProjector.unbind(handleWireEvent); unbindTrajectoryLedger();
       textBatch.drain();
       for (const timer of cancelReconcileTimers.current.values()) {
         window.clearTimeout(timer);
