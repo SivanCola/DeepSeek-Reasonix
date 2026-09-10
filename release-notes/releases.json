@@ -477,7 +477,26 @@
           }
         ]
       },
-      "upgrade": [],
+      "upgrade": [
+        {
+          "level": "warning",
+          "targets": [
+            "desktop",
+            "cli"
+          ],
+          "title": {
+            "en": "Resolve interrupted tools before downgrading",
+            "zh": "降级前先完成中断工具恢复"
+          },
+          "body": {
+            "en": "Inspect and confirm unresolved tool effects before downgrading the owning runtime. Older executables do not enforce the new recovery guarantees; new recovery metadata remains additive and safe retry is disabled by default.",
+            "zh": "降级运行时前，请先检查并确认未决的工具执行结果。旧版程序不会执行新增的恢复保护；恢复元数据以增量方式保存，安全重试默认关闭。"
+          },
+          "refs": [
+            10039
+          ]
+        }
+      ],
       "risks": [],
       "contributors": [
         "SivanCola",
