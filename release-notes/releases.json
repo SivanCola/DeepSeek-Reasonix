@@ -11,8 +11,8 @@
         "zh": "Reasonix v1.38.5"
       },
       "summary": {
-        "en": "Reasonix moves Desktop to Electron and adds DeepSeek V4.1 Flash image input, OpenCode Go provider presets, durable tool recovery, and independent dock tabs. This release includes the changes since v1.38.3 plus the macOS signing and notarization fixes; v1.38.4 was not published.",
-        "zh": "Reasonix 桌面端迁移至 Electron，新增 DeepSeek V4.1 Flash 图片输入、OpenCode Go 提供商预设、持久工具恢复和独立 dock 标签。本版本包含 v1.38.3 以来的改动及 macOS 签名、公证修复；v1.38.4 未公开发布。"
+        "en": "Reasonix moves Desktop to Electron and adds DeepSeek V4.1 Flash image input, OpenCode Go provider presets, durable tool recovery, and independent dock tabs. This release includes the changes since v1.38.3, macOS signing and notarization fixes, and more reliable Windows extension shutdown; v1.38.4 was not published.",
+        "zh": "Reasonix 桌面端迁移至 Electron，新增 DeepSeek V4.1 Flash 图片输入、OpenCode Go 提供商预设、持久工具恢复和独立 dock 标签。本版本包含 v1.38.3 以来的改动、macOS 签名与公证修复，以及 Windows 扩展关闭稳定性修复；v1.38.4 未公开发布。"
       },
       "surfaces": [
         "desktop",
