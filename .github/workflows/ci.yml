@@ -800,10 +800,11 @@ jobs:
             .github/workflows/release.yml \
             .github/workflows/release-npm.yml \
             .github/workflows/release-desktop.yml \
+            .github/workflows/apple-notary-log.yml \
             .github/workflows/release-verify-issues.yml \
             .github/workflows/docs-impact.yml \
             .github/workflows/ci.yml
-          node --test scripts/desktop-release-artifacts.test.mjs scripts/ci-workflow.test.mjs
+          node --test scripts/desktop-release-artifacts.test.mjs scripts/ci-workflow.test.mjs scripts/notarize-desktop.test.mjs
           bash scripts/release-workflows.test.sh
           node scripts/check-single-release-public-contract.mjs
 

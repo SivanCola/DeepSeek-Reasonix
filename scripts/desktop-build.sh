@@ -226,11 +226,8 @@ darwin)
 		# notarytool wants an archive, not a bare bundle: zip the .app, submit, wait,
 		# then staple the ticket back onto the bundle so it verifies offline.
 		ditto -c -k --keepParent "$app" "$staging/notarize.zip"
-		echo "==> notarytool submit (app)"
-		xcrun notarytool submit "$staging/notarize.zip" \
-			--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" \
-			--issuer "$APPLE_API_ISSUER_ID" --wait
-		xcrun stapler staple "$app"
+		notary_diagnostics="${APPLE_NOTARIZATION_LOG_DIR:-$ROOT/desktop/build/notarization}"
+		node "$ROOT/scripts/notarize-desktop.mjs" "$staging/notarize.zip" "$app" app "$notary_diagnostics"
 	else
 		# Ad-hoc cuts the "is damaged" error somewhat but is NOT notarized; users may
 		# still need `xattr -dr com.apple.quarantine` (see desktop/README.md).
@@ -269,11 +266,7 @@ darwin)
 		# disk image itself too — the stapled .app inside isn't enough for the image.
 		if [ "${HAS_APPLE_CERT:-}" = "true" ]; then
 			codesign --force --timestamp -s "$identity" "$dmg"
-			echo "==> notarytool submit (dmg)"
-			xcrun notarytool submit "$dmg" \
-				--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" \
-				--issuer "$APPLE_API_ISSUER_ID" --wait
-			xcrun stapler staple "$dmg"
+			node "$ROOT/scripts/notarize-desktop.mjs" "$dmg" "$dmg" dmg "$notary_diagnostics"
 		fi
 		rm -rf "$dmgsrc"
 	fi
