@@ -591,6 +591,9 @@ jobs:
       - name: Test integrated terminal, PTY, and FSEvents lifecycle
         run: go test -race -run 'Test(DarwinWorkspaceWatcher|WorkspaceChangeHub|ResolveTerminal|Terminal|EmptyTerminal|UnixTerminalProcess)' .
 
+      - name: Test native macOS signing coverage
+        run: node --test packaging/sign-macos.test.mjs
+
       # The production desktop build uses CGO. Keep the explicit unavailable
       # backend buildable as a fail-closed portability contract instead of
       # silently falling back to kqueue's per-file descriptor usage.

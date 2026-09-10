@@ -220,9 +220,7 @@ darwin)
 		identity="$(security find-identity -v -p codesigning | awk -F'"' '/Developer ID Application/{print $2; exit}')"
 		[ -n "$identity" ] || { echo "HAS_APPLE_CERT=true but no 'Developer ID Application' identity found in the keychain" >&2; exit 1; }
 		echo "==> codesign (Developer ID): $identity"
-		codesign --force --deep --timestamp --options runtime \
-			--entitlements "$ROOT/desktop/build/darwin/entitlements.plist" \
-			-s "$identity" "$app"
+		node "$ROOT/desktop/packaging/sign-macos.mjs" "$app" "$identity"
 		# notarytool wants an archive, not a bare bundle: zip the .app, submit, wait,
 		# then staple the ticket back onto the bundle so it verifies offline.
 		ditto -c -k --keepParent "$app" "$staging/notarize.zip"
@@ -231,7 +229,7 @@ darwin)
 	else
 		# Ad-hoc cuts the "is damaged" error somewhat but is NOT notarized; users may
 		# still need `xattr -dr com.apple.quarantine` (see desktop/README.md).
-		codesign --force --deep -s - "$app"
+		node "$ROOT/desktop/packaging/sign-macos.mjs" "$app" -
 	fi
 
 	if [ "$arch" = universal ]; then
