@@ -71,8 +71,11 @@ func openProcess(pid, parent uint32) (*process, error) {
 		}
 	}()
 	own, err := sameUser(h)
-	if err != nil || !own {
-		return nil, fmt.Errorf("cannot verify process user: %v", err)
+	if err != nil {
+		return nil, fmt.Errorf("cannot verify process user: %w", err)
+	}
+	if !own {
+		return nil, errors.New("cannot verify process user")
 	}
 	buffer := make([]uint16, 32768)
 	size := uint32(len(buffer))
@@ -183,14 +186,11 @@ func readStatus(p *process) (Status, error) {
 		ov := windows.Overlapped{HEvent: event}
 		err = windows.ReadFile(pipe, buffer, &n, &ov)
 		if errors.Is(err, windows.ERROR_IO_PENDING) {
-			remaining := time.Until(deadline)
-			if remaining < 0 {
-				remaining = 0
-			}
+			remaining := max(time.Until(deadline), 0)
 			wait, waitErr := windows.WaitForSingleObject(event, uint32(remaining.Milliseconds()))
 			if waitErr != nil || wait != windows.WAIT_OBJECT_0 {
-				windows.CancelIoEx(pipe, &ov)
-				windows.WaitForSingleObject(event, windows.INFINITE)
+				_ = windows.CancelIoEx(pipe, &ov)
+				_, _ = windows.WaitForSingleObject(event, windows.INFINITE)
 				return zero, errors.New("shell status read timeout")
 			}
 			err = windows.GetOverlappedResult(pipe, &ov, &n, false)
@@ -306,7 +306,7 @@ func lockInstall(root string) (func(), error) {
 		runtime.UnlockOSThread()
 		return nil, outcome(ExitTimeout, "another install or recovery is still running")
 	}
-	return func() { windows.ReleaseMutex(h); windows.CloseHandle(h); runtime.UnlockOSThread() }, nil
+	return func() { _ = windows.ReleaseMutex(h); windows.CloseHandle(h); runtime.UnlockOSThread() }, nil
 }
 
 func Notify(err error) {
@@ -316,12 +316,13 @@ func Notify(err error) {
 }
 
 func confirmProcesses(list []*process) bool {
-	text := "旧版 Reasonix 尚未退出。结束进程可能丢失未保存内容。\n\nEnd these old Reasonix processes and continue? Unsaved work may be lost.\n"
+	var text strings.Builder
+	text.WriteString("旧版 Reasonix 尚未退出。结束进程可能丢失未保存内容。\n\nEnd these old Reasonix processes and continue? Unsaved work may be lost.\n")
 	for _, p := range list {
-		text += fmt.Sprintf("\nPID %d: %s", p.pid, p.image)
+		fmt.Fprintf(&text, "\nPID %d: %s", p.pid, p.image)
 	}
 	title, _ := windows.UTF16PtrFromString("Reasonix 恢复 / Recovery")
-	body, _ := windows.UTF16PtrFromString(text)
+	body, _ := windows.UTF16PtrFromString(text.String())
 	// Label the standard dialog's buttons explicitly; the negative action is
 	// still IDNO and remains the default even on non-Chinese Windows systems.
 	runtime.LockOSThread()

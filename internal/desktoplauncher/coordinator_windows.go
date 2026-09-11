@@ -30,7 +30,7 @@ func coordinatedLaunch(root string, args []string) (bool, int) {
 		if err := cmd.Start(); err != nil {
 			return err
 		}
-		go cmd.Wait()
+		go func() { _ = cmd.Wait() }()
 		return nil
 	}, StripLegacyLaunchArgs(args)...)
 	if err != nil {

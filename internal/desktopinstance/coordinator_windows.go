@@ -53,7 +53,7 @@ func requestQuit(p *process, home string) {
 	cmd := proc.Command(p.image, QuitRequest)
 	cmd.Env = withHome(os.Environ(), home)
 	if cmd.Start() == nil {
-		go cmd.Wait()
+		go func() { _ = cmd.Wait() }()
 	}
 }
 
@@ -310,7 +310,7 @@ func LaunchAndVerify(root, home string, interactive bool, start func() error, ar
 			cmd.Env = withHome(os.Environ(), home)
 			err := cmd.Start()
 			if err == nil {
-				go cmd.Wait()
+				go func() { _ = cmd.Wait() }()
 			}
 			closeProcesses(list)
 			writeRecoveryLog(home, "existing recovery window requested; health remains unverified")
@@ -322,7 +322,7 @@ func LaunchAndVerify(root, home string, interactive bool, start func() error, ar
 			cmd.Env = withHome(os.Environ(), home)
 			err := cmd.Start()
 			if err == nil {
-				go cmd.Wait()
+				go func() { _ = cmd.Wait() }()
 			}
 			closeProcesses(list)
 			if err != nil {
