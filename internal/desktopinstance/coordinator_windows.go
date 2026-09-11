@@ -5,12 +5,12 @@ package desktopinstance
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"reasonix/internal/installlayout"
+	"reasonix/internal/proc"
 )
 
 const gracefulTimeout = 20 * time.Second
@@ -50,7 +50,7 @@ func requestQuit(p *process, home string) {
 		closeWindows(p)
 		return
 	}
-	cmd := exec.Command(p.image, QuitRequest)
+	cmd := proc.Command(p.image, QuitRequest)
 	cmd.Env = withHome(os.Environ(), home)
 	if cmd.Start() == nil {
 		go cmd.Wait()
@@ -306,7 +306,7 @@ func LaunchAndVerify(root, home string, interactive bool, start func() error, ar
 		if p.status != nil && p.status.Lifecycle == "failed" {
 			// A responsive failed shell owns its recovery UI and may still hold
 			// an unsaved renderer. Let the user choose retry/exit there.
-			cmd := exec.Command(p.image, args...)
+			cmd := proc.Command(p.image, args...)
 			cmd.Env = withHome(os.Environ(), home)
 			err := cmd.Start()
 			if err == nil {
@@ -318,7 +318,7 @@ func LaunchAndVerify(root, home string, interactive bool, start func() error, ar
 		}
 		if p.status != nil && p.status.Lifecycle == "ready" && p.status.Service == "ready" {
 			// Launch the running shell itself, preserving its existing service and drafts.
-			cmd := exec.Command(p.image, args...)
+			cmd := proc.Command(p.image, args...)
 			cmd.Env = withHome(os.Environ(), home)
 			err := cmd.Start()
 			if err == nil {
