@@ -398,37 +398,65 @@ FunctionEnd
 # these files open; treating that as an installable state recreates the
 # "installed but does not open" failure.  Silent installs fail closed.
 Function reasonix.waitForExecutableUnlock
+   StrCpy $3 40
 reasonix_unlock_check:
+   StrCpy $2 0
    ClearErrors
    FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a
-   IfErrors reasonix_unlock_versioned
+   IfErrors reasonix_unlock_stable_locked
    FileClose $1
-   ClearErrors
+   Goto reasonix_unlock_versioned
+reasonix_unlock_stable_locked:
+   StrCpy $2 1
 reasonix_unlock_versioned:
    FileOpen $1 "$INSTDIR\versions\v${INFO_PRODUCTVERSION}\${PRODUCT_EXECUTABLE}" a
-   IfErrors reasonix_unlock_guard
+   IfErrors reasonix_unlock_versioned_locked
    FileClose $1
-   ClearErrors
+   Goto reasonix_unlock_guard
+reasonix_unlock_versioned_locked:
+   StrCpy $2 1
 reasonix_unlock_guard:
    FileOpen $1 "$INSTDIR\${REASONIX_GUARD}" a
-   IfErrors reasonix_unlock_launcher
+   IfErrors reasonix_unlock_guard_locked
    FileClose $1
-   ClearErrors
+   Goto reasonix_unlock_launcher
+reasonix_unlock_guard_locked:
+   StrCpy $2 1
 reasonix_unlock_launcher:
    FileOpen $1 "$INSTDIR\${REASONIX_LAUNCHER}" a
-   IfErrors reasonix_unlock_cli
+   IfErrors reasonix_unlock_launcher_locked
    FileClose $1
-   ClearErrors
+   Goto reasonix_unlock_cli
+reasonix_unlock_launcher_locked:
+   StrCpy $2 1
 reasonix_unlock_cli:
    FileOpen $1 "$INSTDIR\${REASONIX_CLI}" a
-   IfErrors reasonix_unlock_portable
+   IfErrors reasonix_unlock_cli_locked
    FileClose $1
-   ClearErrors
+   Goto reasonix_unlock_portable
+reasonix_unlock_cli_locked:
+   StrCpy $2 1
 reasonix_unlock_portable:
    FileOpen $1 "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" a
-   IfErrors reasonix_unlock_ok
+   IfErrors reasonix_unlock_portable_locked
    FileClose $1
-   ClearErrors
+   Goto reasonix_unlock_result
+reasonix_unlock_portable_locked:
+   StrCpy $2 1
+reasonix_unlock_result:
+   StrCmp $2 0 reasonix_unlock_ok
+   IntOp $3 $3 - 1
+   IntCmp $3 0 reasonix_unlock_failed reasonix_unlock_retry reasonix_unlock_retry
+reasonix_unlock_retry:
+   Sleep 500
+   Goto reasonix_unlock_check
+reasonix_unlock_failed:
+   SetErrorLevel 1618
+   IfSilent reasonix_unlock_abort reasonix_unlock_prompt
+reasonix_unlock_prompt:
+   MessageBox MB_ICONEXCLAMATION|MB_RETRYCANCEL "Reasonix is still running. Close it and click Retry, or cancel this installation." IDRETRY reasonix_unlock_check
+reasonix_unlock_abort:
+   Abort
 reasonix_unlock_ok:
 FunctionEnd
 
