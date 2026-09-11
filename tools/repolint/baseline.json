@@ -4,13 +4,13 @@
     "commented-code": 0,
     "complexity": 1862,
     "essay": 1883,
-    "file-size": 100093,
+    "file-size": 100044,
     "function-size": 8060,
     "layering": 1,
     "marker": 0,
     "narrative": 64,
     "struct-state": 108,
-    "test-file-size": 68414
+    "test-file-size": 68368
   },
   "files": {
     "cmd/e2ebench/main.go": {
@@ -114,7 +114,7 @@
       "file-size": 141
     },
     "desktop/frontend/src/components/SettingsPanel.tsx": {
-      "file-size": 6533
+      "file-size": 6534
     },
     "desktop/frontend/src/components/StatusBar.tsx": {
       "file-size": 20
@@ -845,10 +845,10 @@
       "essay": 7
     },
     "internal/config/provider_presets.go": {
-      "file-size": 375
+      "file-size": 325
     },
     "internal/config/provider_presets_test.go": {
-      "test-file-size": 158
+      "test-file-size": 112
     },
     "internal/config/render.go": {
       "complexity": 229,
