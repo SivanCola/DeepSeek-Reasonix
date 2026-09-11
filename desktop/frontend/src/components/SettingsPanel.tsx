@@ -6331,7 +6331,7 @@ export function ProviderEditor({
     setModelContextWindows(current => ({...current, [draft.model]:draft.contextWindow}));
     setModelOverrides(current => {
       const previous = current.find(item => item.model === draft.model);
-      return [...current.filter(item => item.model !== draft.model), {...previous, model:draft.model, reasoningProtocol:previous?.reasoningProtocol ?? "", supportedEfforts:previous?.supportedEfforts ?? [], defaultEffort:previous?.defaultEffort ?? "", vision:draft.vision, maxOutputTokens:draft.maxOutputTokens}];
+      return [...current.filter(item => item.model !== draft.model), {...previous, model:draft.model, reasoningProtocol:previous?.reasoningProtocol ?? "", supportedEfforts:draft.supportedEfforts, defaultEffort:draft.defaultEffort, vision:draft.vision, maxOutputTokens:draft.maxOutputTokens}];
     });
     setModelDialog(null);
   };
@@ -6521,7 +6521,8 @@ export function ProviderEditor({
       {fetchFallback && <div role="alert" className="provider-fetch-status provider-fetch-status--warn">{fetchFallback}</div>}
       {modelDialog !== null && <Suspense fallback={null}><ProviderModelDialog
         baseURL={effectiveRequestUrl} candidates={modelCandidateNames} contextDefault={Number(ctx) || undefined}
-        initial={modelDialog ? {model:modelDialog, contextWindow:modelContextWindows[modelDialog] ?? "", maxOutputTokens:modelOverrides.find(item=>item.model === modelDialog)?.maxOutputTokens ?? 0, vision:modelOverrides.find(item=>item.model === modelDialog)?.vision ?? null} : undefined}
+        effortOptions={(modelDialog && modelOverrides.find(item=>item.model === modelDialog)?.supportedEfforts?.length ? (modelOverrides.find(item=>item.model === modelDialog)?.supportedEfforts ?? []) : (supportedEfforts ?? [])).filter(Boolean)}
+        initial={modelDialog ? (() => { const override = modelOverrides.find(item=>item.model === modelDialog); return {model:modelDialog, contextWindow:modelContextWindows[modelDialog] ?? "", maxOutputTokens:override?.maxOutputTokens ?? 0, vision:override?.vision ?? null, supportedEfforts:override?.supportedEfforts ?? supportedEfforts, defaultEffort:override?.defaultEffort ?? ""}; })() : undefined}
         capability={modelCapabilities.find(item=>item.model === modelDialog)} busy={busy || fetchingModels}
         onClose={()=>setModelDialog(null)} onApply={applyModelDetails} onDelete={deleteModel}/></Suspense>}
       <ProviderEditorModelPicker
