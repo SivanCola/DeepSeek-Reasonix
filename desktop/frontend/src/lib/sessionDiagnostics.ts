@@ -29,7 +29,37 @@ export interface HistoryPageDiagnostic {
   inlineBytes: number;
   durationMs: number;
   stale: boolean;
-  source: string; // index|scan|live-index|live-fallback|"" (unknown)
+  source: string; // index|scan|live-index|live-fallback|resume-loaded|"" (unknown)
+}
+
+/** Backend cost breakdown for one session switch (desktop HistorySwitchPhases).
+ *  Durations, counts, and byte sizes only — never session paths or message text. */
+export interface HistorySwitchPhases {
+  resolveMs: number;
+  loadMs: number;
+  rebindMs: number;
+  historyMs: number;
+  totalMs: number;
+  loadedMessages: number;
+  loadedBytes: number;
+  historyEntries: number;
+  /** Full durable reads of the target session. One is correct; a switch that
+   *  rebuilt its first screen from the log instead of the loaded transcript
+   *  reports two, which is the duplicate load the benchmark fails on. */
+  durableReads: number;
+  outcome: string;
+}
+
+/** The message fields the inline byte total counts. */
+interface HistoryInlineMessage {
+  content: string;
+  reasoning?: string;
+  detail?: string;
+  code?: string;
+  submitText?: string;
+  summary?: string;
+  archive?: string;
+  toolResultError?: string;
 }
 
 export interface MarkdownWorkerDiagnostic {
@@ -84,6 +114,8 @@ const activationOrder: string[] = [];
 let lastActivationKey: string | null = null;
 
 let lastHistoryPage: HistoryPageDiagnostic | null = null;
+let lastResumeHistory: HistoryPageDiagnostic | null = null;
+let resumeSwitchPhases: HistorySwitchPhases | null = null;
 let historyPages = 0;
 let historyStalePages = 0;
 let historyIndexHits = 0;
@@ -160,6 +192,29 @@ export function noteHistoryPage(page: HistoryPageDiagnostic): void {
   lastHistoryPage = page;
 }
 
+/** One ResumeSessionPage response built from the transcript the switch already
+ *  loaded, plus the backend's phase breakdown for that switch. */
+export function noteResumeHistoryPage(
+  page: { messages: readonly HistoryInlineMessage[]; switch?: HistorySwitchPhases | null },
+  durationMs: number,
+): void {
+  let inlineBytes = 0;
+  for (const message of page.messages) {
+    inlineBytes += message.content.length + (message.reasoning?.length ?? 0)
+      + (message.detail?.length ?? 0) + (message.code?.length ?? 0)
+      + (message.submitText?.length ?? 0) + (message.summary?.length ?? 0)
+      + (message.archive?.length ?? 0) + (message.toolResultError?.length ?? 0);
+  }
+  lastResumeHistory = { entries: page.messages.length, inlineBytes, durationMs, stale: false, source: "resume-loaded" };
+  if (page.switch) resumeSwitchPhases = { ...page.switch };
+}
+
+/** Durable reads a switch made beyond the one that produced its first screen. */
+export function resumeSwitchDashboard(): { phases: HistorySwitchPhases | null; duplicateLoadCount: number } {
+  if (!resumeSwitchPhases) return { phases: null, duplicateLoadCount: 0 };
+  return { phases: { ...resumeSwitchPhases }, duplicateLoadCount: Math.max(0, resumeSwitchPhases.durableReads - 1) };
+}
+
 /** Current virtual-mounted vs total transcript row counts (Transcript.tsx). */
 export function noteTranscriptRowCounts(mounted: number, total: number): void {
   mountedRows = { mounted, total };
@@ -196,6 +251,9 @@ export interface SessionPipelineDiagnostics {
     indexHits: number;
     indexMisses: number;
   };
+  resumeHistory?: HistoryPageDiagnostic;
+  resumeSwitch?: HistorySwitchPhases;
+  duplicateLoadCount: number;
   mountedRows?: MountedRowsDiagnostic;
   transcriptRecovery?: TranscriptRecoveryDiagnostic;
   markdownWorker?: MarkdownWorkerDiagnostic;
@@ -216,18 +274,25 @@ function deriveActivation(entry: ActivationDiagnostic): SessionPipelineDiagnosti
 
 /** Point-in-time snapshot for the crash/performance report context. */
 export function sessionPipelineDiagnostics(): SessionPipelineDiagnostics {
-  const out: SessionPipelineDiagnostics = {};
+  const out: SessionPipelineDiagnostics = { duplicateLoadCount: 0 };
   const activation = lastActivationKey ? activations.get(lastActivationKey) : undefined;
   if (activation) out.activation = deriveActivation(activation);
-  if (lastHistoryPage) {
+  // A switch reports its first screen before any slice runs, so fall back to it
+  // instead of reporting no history at all.
+  const historyPage = lastHistoryPage ?? lastResumeHistory;
+  if (historyPage) {
     out.history = {
-      ...lastHistoryPage,
+      ...historyPage,
       pages: historyPages,
       staleCount: historyStalePages,
       indexHits: historyIndexHits,
       indexMisses: historyIndexMisses,
     };
   }
+  if (lastResumeHistory) out.resumeHistory = { ...lastResumeHistory };
+  const { phases, duplicateLoadCount } = resumeSwitchDashboard();
+  if (phases) out.resumeSwitch = phases;
+  out.duplicateLoadCount = duplicateLoadCount;
   if (mountedRows.mounted > 0 || mountedRows.total > 0) out.mountedRows = { ...mountedRows };
   if (transcriptRecoverySeen) out.transcriptRecovery = { ...transcriptRecovery };
   if (markdownWorkerProvider) {
@@ -263,6 +328,8 @@ export function resetSessionDiagnostics(): void {
   activationOrder.length = 0;
   lastActivationKey = null;
   lastHistoryPage = null;
+  lastResumeHistory = null;
+  resumeSwitchPhases = null;
   historyPages = 0;
   historyStalePages = 0;
   historyIndexHits = 0;

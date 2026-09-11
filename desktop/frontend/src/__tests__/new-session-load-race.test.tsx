@@ -3,12 +3,13 @@
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { initialState, reducer, useController, type Item } from "../lib/useController";
+import { initialState, reducer, runtimeReadyForSubmit, useController, type Item } from "../lib/useController";
 import type { NavigationResult } from "../lib/navigationSurfaceTransition";
 import { historySliceFromMessages } from "./mockHistorySlice";
 import type { AppBindings } from "../lib/bridge";
 import type { BalanceInfo, CheckpointMeta, ContextInfo, EffortInfo, HistoryMessage, HistorySliceRequest, JobView, Meta, TabMeta, WireEvent } from "../lib/types";
 import { installDesktopHostStub } from "./desktopHostStub";
+import { resetSessionDiagnostics, sessionPipelineDiagnostics } from "../lib/sessionDiagnostics";
 
 let passed = 0;
 let failed = 0;
@@ -583,6 +584,108 @@ eq(controller?.state.meta?.workspaceRoot, targetProjectB, "guarded startup sync 
 
 await act(async () => {
   guardRoot.unmount();
+});
+
+// ── session switch: one history commit, composer bound to the new runtime ────
+// The switch shows the restored transcript as soon as its page lands, but the
+// tab is only submittable once the runtime reconcile confirms which session the
+// controller now owns. A superseded switch must not paint over the newer one.
+const switchMetaGate = deferred<Meta>();
+const slowSwitchGate = deferred<void>();
+let switchMetaHeld = false;
+let switchMetaPath = "/sessions/one.jsonl";
+let switchResumeCalls = 0;
+let switchHistoryPageCalls = 0;
+const switchTab = tabMeta({ id: "tab-switch", sessionPath: "/sessions/one.jsonl" });
+const switchPage = (text: string, durableReads = 1) => ({
+  messages: [{ role: "user", content: text } as HistoryMessage],
+  startTurn: 0,
+  endTurn: 1,
+  totalTurns: 1,
+  hasOlder: false,
+  switch: {
+    resolveMs: 0, loadMs: 1, rebindMs: 2, historyMs: 1, totalMs: 4,
+    loadedMessages: 1, loadedBytes: 64, historyEntries: 1, durableReads, outcome: "ok",
+  },
+});
+desktopStub.replaceCommands({
+  RegisterNavigationIntent: async () => {},
+  ListTabs: async () => [switchTab],
+  MetaForTab: async () => {
+    if (switchMetaHeld) return switchMetaGate.promise;
+    return meta({ sessionPath: switchMetaPath });
+  },
+  ContextUsageForTab: async () => context,
+  EffortForTab: async () => effort,
+  BalanceForTab: async () => balance,
+  JobsForTab: async () => jobs,
+  CheckpointsForTab: async () => checkpoints,
+  HistoryPageForTab: async () => {
+    switchHistoryPageCalls += 1;
+    return switchPage("full-history-refetch");
+  },
+  HistorySliceForTab: async (tabID: string, req: HistorySliceRequest) => historySliceFromMessages(tabID, [], req),
+  HistoryCheckpointTurnsForTab: async () => [],
+  ReplayPendingPrompts: async () => {},
+  ReplayPendingPromptsForTab: async () => {},
+  ResumeSessionPageForTab: async (_tabID: string, path: string) => {
+    switchResumeCalls += 1;
+    if (path.includes("slow")) await slowSwitchGate.promise;
+    return switchPage(path);
+  },
+});
+
+resetSessionDiagnostics();
+const switchRoot = createRoot(document.createElement("div"));
+await act(async () => {
+  switchRoot.render(<Probe />);
+  await flushPromises();
+});
+await waitFor("switch tab active", () => controller?.activeTabId === "tab-switch");
+
+switchMetaHeld = true;
+let switchNav: NavigationResult<void> | undefined;
+await act(async () => {
+  switchNav = controller?.resumeSession("/sessions/two.jsonl", "tab-switch");
+  await flushPromises();
+});
+await waitFor("switched transcript", () => (controller?.state.items.length ?? 0) > 0);
+eq(controller?.state.items[0]?.text, "/sessions/two.jsonl", "switch commits the restored transcript before ancillary work finishes");
+eq(runtimeReadyForSubmit(controller?.state.meta), false, "composer stays disabled until the switched runtime is reconciled");
+
+await act(async () => {
+  switchMetaHeld = false;
+  switchMetaPath = "/sessions/two.jsonl";
+  switchMetaGate.resolve(meta({ sessionPath: switchMetaPath }));
+  await switchNav?.surfaceReady;
+  await flushPromises();
+});
+eq(runtimeReadyForSubmit(controller?.state.meta), true, "composer re-enables once the switched runtime is reconciled");
+eq(switchResumeCalls, 1, "a switch issues exactly one resume page request");
+eq(switchHistoryPageCalls, 0, "a switch does not refetch the full history page from the frontend");
+eq(sessionPipelineDiagnostics().duplicateLoadCount, 0, "switch reports no duplicate durable load");
+eq(sessionPipelineDiagnostics().resumeHistory?.source, "resume-loaded", "the switch's first screen is attributed to the resume page");
+
+let slowNav: NavigationResult<void> | undefined;
+let fastNav: NavigationResult<void> | undefined;
+await act(async () => {
+  slowNav = controller?.resumeSession("/sessions/slow.jsonl", "tab-switch");
+  await flushPromises();
+});
+await act(async () => {
+  fastNav = controller?.resumeSession("/sessions/fast.jsonl", "tab-switch");
+  await fastNav?.surfaceReady;
+  await flushPromises();
+});
+await act(async () => {
+  slowSwitchGate.resolve();
+  await slowNav?.surfaceReady;
+  await flushPromises();
+});
+eq(controller?.state.items[0]?.text, "/sessions/fast.jsonl", "a superseded switch cannot paint over the newer transcript");
+
+await act(async () => {
+  switchRoot.unmount();
 });
 dom.window.close();
 

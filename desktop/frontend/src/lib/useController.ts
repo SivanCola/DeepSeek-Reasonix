@@ -29,7 +29,7 @@ import { invalidateSharedQuery } from "./queryCoalesce";
 import { replayPendingPromptsForActiveTab } from "./promptReplay";
 import { createRafBatch } from "./rafBatch";
 import { foregroundRunningFromRuntimeMeta, type RuntimeMetaSnapshot } from "./runtimeMeta";
-import { aliasActivationRequest, noteActivationRequested, noteActivationSettled, noteActivationStarted } from "./sessionDiagnostics";
+import { aliasActivationRequest, noteActivationRequested, noteActivationSettled, noteActivationStarted, noteResumeHistoryPage } from "./sessionDiagnostics";
 import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type StreamDeltaEntry, type StreamSegment } from "./streamDeltaBatch";
 import { assistantHasContent, ensureActiveAssistant, ensureAssistant, removeEmptyAssistantItems } from "./assistantItems";
 import { getTranscriptStore } from "./transcriptStore";
@@ -4332,7 +4332,8 @@ export function useController() {
     const terminal = (outcome: SurfaceDataOutcome, error?: string): SurfaceDataCommit => ({ intent: navigationSeq, outcome, tabId: targetTabId, error });
     const existingState = statesRef.current.get(targetTabId);
     const sameSession = sameSessionHydrateIdentity({ sessionPath: path }, existingState?.meta); const placeholderItems = sameSessionPlaceholderItems({ sessionPath: path }, existingState);
-    if (existingState?.meta) dispatchTo(targetTabId, { type: "optimistic_meta", meta: { ...existingState.meta, sessionPath: path } });
+    // Withholding readiness is what keeps a switch from submitting into the runtime it is leaving: the composer reopens once the reconcile confirms the new session.
+    if (existingState?.meta) dispatchTo(targetTabId, { type: "optimistic_meta", meta: { ...existingState.meta, sessionPath: path, ready: sameSession ? existingState.meta.ready : false } });
     dispatchTo(targetTabId, { type: "hydrate_start", reason: "resume-session", placeholderItems });
     if (!sameSession) dispatchTo(targetTabId, { type: "reset" });
     const surfaceReady = (async (): Promise<SurfaceDataCommit> => {
@@ -4345,6 +4346,7 @@ export function useController() {
       const seq = bumpSessionLoadSeq(targetTabId);
       dispatchTo(targetTabId, { type: "hydrate_start", reason: "resume-session", placeholderItems });
       let page: HistoryPage;
+      const resumeStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
       try {
         page = tabId
           ? await app.ResumeSessionPageForTab(tabId, path, HISTORY_PAGE_TURNS)
@@ -4353,6 +4355,7 @@ export function useController() {
         if (!isNavigationIntentCurrent(navigationSeq) || !sessionLoadCurrent(targetTabId, seq)) return terminal("superseded");
         return failSessionNavigation(navigationSeq, targetTabId);
       }
+      noteResumeHistoryPage(page, (typeof performance !== "undefined" ? performance.now() : Date.now()) - resumeStartedAt);
       if (!navigationCompletionCurrent(navigationSeq, "session.resume", targetTabId) || !sessionLoadCurrent(targetTabId, seq)) return terminal("superseded");
       dispatchTo(targetTabId, { type: "reset" });
       dispatchTo(targetTabId, { type: "history_page", page, mode: "replace" });
@@ -4370,7 +4373,8 @@ export function useController() {
     const navigationSeq = navigationIntentSeq ?? beginActiveNavigation();
     snapshotNavigationSourceTab(navigationSeq);
     const existingState = statesRef.current.get(tabId); const sameSession = sameSessionHydrateIdentity({ sessionPath: path }, existingState?.meta);
-    if (existingState?.meta) dispatchTo(tabId, { type: "optimistic_meta", meta: { ...existingState.meta, sessionPath: path } });
+    // Same withholding as resumeSession: a channel switch must not submit into the runtime it is leaving.
+    if (existingState?.meta) dispatchTo(tabId, { type: "optimistic_meta", meta: { ...existingState.meta, sessionPath: path, ready: sameSession ? existingState.meta.ready : false } });
     dispatchTo(tabId, { type: "hydrate_start", reason: "resume-session", placeholderItems: sameSessionPlaceholderItems({ sessionPath: path }, existingState) });
     if (!sameSession) dispatchTo(tabId, { type: "reset" });
     const terminal = (outcome: SurfaceDataOutcome, error?: string): SurfaceDataCommit => ({ intent: navigationSeq, outcome, tabId, error });
