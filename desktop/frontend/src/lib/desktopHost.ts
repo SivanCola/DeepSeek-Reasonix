@@ -3,6 +3,7 @@
 // enforces that boundary.
 import type { AppBindings } from "./bridge";
 import type { DesktopBrowserHost } from "./browserHost";
+import type { ProcessDiagnosticsSnapshot } from "./processDiagnostics";
 
 export type DesktopHostKind = "electron" | "none";
 export type WindowTheme = "system" | "light" | "dark";
@@ -62,6 +63,7 @@ export interface ReasonixDesktopHost {
   invoke(method: string, args: unknown[]): Promise<unknown>;
   on(name: string, cb: (...args: unknown[]) => void): () => void;
   native: {
+    processDiagnostics?(): Promise<ProcessDiagnosticsSnapshot | null>;
     openExternal(url: string): Promise<void>;
     clipboard: { writeText(text: string): Promise<boolean>; readText(): Promise<string> };
     window: {
@@ -95,6 +97,7 @@ export interface DesktopHost {
   app: AppBindings | undefined;
   events: { on(name: string, cb: (...args: unknown[]) => void): () => void };
   native: {
+    processDiagnostics?(): Promise<ProcessDiagnosticsSnapshot | null>;
     openExternal(url: string): void;
     clipboardWriteText(text: string): Promise<boolean>;
     clipboardReadText(): Promise<string>;
@@ -213,6 +216,7 @@ const electronHostFrom = (host: ReasonixDesktopHost): DesktopHost => {
       setAppZoom: (factor) => host.native.window.setAppZoom(factor),
     resetAppZoom: () => host.native.window.resetAppZoom(),
       graphics: host.native.graphics,
+      ...(host.native.processDiagnostics ? { processDiagnostics: () => host.native.processDiagnostics!() } : {}),
       browserControl: host.native.browserControl,
       onFilesDropped: (cb) => {
         installElectronDropHandlers();

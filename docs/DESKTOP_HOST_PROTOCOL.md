@@ -297,6 +297,30 @@ and `ChromeImportOutcome` is either `{ ok: true, profile, cookies, skipped }` or
 
 ## Security boundaries
 
+### Performance diagnostics
+
+The optional `native.processDiagnostics()` preload call returns `{scope: "electron", samples}`.
+Each sample includes `ageMs`, nullable CPU `intervalMs`, and process rows with
+`pid`, allowlisted `type`, nullable `cpuPercent`, `workingSetMb`, and `privateMb`.
+The shell samples every 5 seconds and retains at most 12 samples for 60 seconds.
+CPU values average the measurement interval; the first sample has no CPU baseline.
+Memory is MiB converted from Electron's KiB values; working sets can share pages.
+Coverage excludes the Go service. No titles, URLs, paths or process names are collected.
+The call uses the trusted-main-frame IPC gate. Older shells may omit it; report
+enrichment times out after 750 ms without preventing the performance prompt.
+No persisted user-data format changes or migrations are required.
+
+Local app documents enable `Document-Policy: js-profiling`. The frontend pauses
+the rolling profiler while hidden or unfocused and explicitly reports unavailable
+sampling. Run `node scripts/performance-smoke.mjs` from `desktop/electron` to
+verify real Electron profiling and preload IPC using disposable data.
+
+For Windows field comparisons, collect reports after startup, extended use,
+returning to the window, and closing conversation/browser tabs. Compare identical
+workloads across versions; these diagnostics alone do not prove a resource reduction.
+
+### Access control
+
 - The application window: sandbox on, context isolation on, Node integration
   off, `reasonix://app` only, preload above.
 - Website views, remote Serve windows and MCP App frames: separate sessions,

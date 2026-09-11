@@ -4,6 +4,7 @@ export const IPC = {
   event: "reasonix:event",
   serviceState: "reasonix:service-state",
   serviceStateGet: "reasonix:service-state:get",
+  processDiagnostics: "reasonix:native:process-diagnostics",
   openExternal: "reasonix:native:open-external",
   clipboardWrite: "reasonix:native:clipboard-write",
   clipboardRead: "reasonix:native:clipboard-read",

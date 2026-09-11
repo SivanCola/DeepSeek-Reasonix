@@ -141,6 +141,6 @@ export function registerAppProtocol(deps: AppProtocolDeps): void {
       }
     }
     const body = Readable.toWeb(createReadStream(route.path)) as unknown as ReadableStream;
-    return new Response(body, { status: 200, headers: { "content-type": route.mime, "cache-control": "no-cache" } });
+    return new Response(body, { status: 200, headers: { "content-type": route.mime, "cache-control": "no-cache", "Document-Policy": "js-profiling" } });
   });
 }

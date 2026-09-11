@@ -265,3 +265,21 @@ warning: "invalid-config" | "unreadable-config" | "unsupported-version" | null }
   `reasonix://`，不能触达 `host/*`。
 - IPC 处理器只接受来自应用窗口 `webContents` 的请求，其他发送者被拒绝并记录。
 - 内嵌契约之外的 `desktop/invoke` 名称在到达 Go 之前失败。
+
+## 性能诊断补充
+
+可选 preload 调用 `native.processDiagnostics()` 返回 `{scope: "electron", samples}`。
+每个样本包含 `ageMs`、可空的 CPU 测量区间 `intervalMs`，以及进程的 `pid`、
+白名单 `type`、可空的 `cpuPercent`、`workingSetMb`、`privateMb`。
+主进程每 5 秒采样，最多保留最近 60 秒内的 12 条记录。CPU 是区间平均值，首次采样
+没有 CPU 基线。内存从 Electron 的 KiB 转为 MiB，工作集可能包含共享页。
+范围仅包含 Electron 管理的进程，不包含 Go 服务；不采集标题、URL、路径或进程名称。
+调用受可信主框架 IPC 校验保护。旧 shell 可缺少该接口；报告补充最多等待 750ms，
+失败不阻止卡顿提示。不涉及持久化用户数据格式变更或迁移。
+
+本地应用文档启用 `Document-Policy: js-profiling`；窗口隐藏或失焦时暂停滚动采样，
+报告明确标记采样不可用。在 `desktop/electron` 运行
+`node scripts/performance-smoke.mjs` 可使用隔离数据验证原生采样与 preload IPC。
+
+Windows 实测应分别收集刚启动、长时间使用、切回窗口及关闭会话/浏览器标签后的报告，
+并用相同负载对比版本。诊断增强本身不代表资源占用已经降低。

@@ -189,6 +189,12 @@ const perf: PerformanceSnapshot = {
   connection: { effectiveType: "4g", rttMs: 50, downlinkMbps: 20, saveData: false },
 };
 const perfPayload = buildPerformancePayload(perf);
+const processReport = formatPerformanceContext({ ...perf, profilerStatus: "unavailable", processes: {
+  scope: "electron", samples: [{ ageMs: 10, intervalMs: null, processes: [{ pid: 42, type: "Tab", cpuPercent: null, workingSetMb: 200, privateMb: null }] }],
+} });
+eq(processReport.includes("Go service excluded"), true, "report identifies incomplete process coverage");
+eq(processReport.includes("PID 42 Tab: CPU unavailable"), true, "missing CPU is not reported as zero");
+eq(processReport.includes("JS profiler: unavailable"), true, "missing profiler is explicit");
 eq(perfPayload.kind, "performance", "performance pressure reports use performance kind");
 eq(perfPayload.source, "frontend.performance", "performance pressure reports identify source");
 eq(perfPayload.label, "performance.lag", "performance pressure reports partition by stable pressure label");

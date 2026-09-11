@@ -23,6 +23,7 @@ import { reasonixHome } from "./home.js";
 import { buildHostCallTable, dispatchHostCall, type ScreenInfo } from "./hostCalls.js";
 import { firstExisting, iconCandidates } from "./icons.js";
 import { registerRendererIpc } from "./ipc.js";
+import { ProcessDiagnostics } from "./processDiagnostics.js";
 import { QuitSequencer } from "./lifecycle.js";
 import { createLogger, errorText, RotatingFile } from "./log.js";
 import { installApplicationMenu } from "./menu.js";
@@ -338,7 +339,13 @@ function bootstrap(dataHome: string): void {
     session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => {
       callback(mainWindow.isTrustedSender(contents, contents.mainFrame) && MAIN_WINDOW_PERMISSIONS.has(permission));
     });
+    const diagnostics = new ProcessDiagnostics(() => app.getAppMetrics());
+    diagnostics.sample();
+    const diagnosticsTimer = setInterval(() => diagnostics.sample(), 5000);
+    diagnosticsTimer.unref();
+    app.once("will-quit", () => clearInterval(diagnosticsTimer));
     registerRendererIpc({
+      processDiagnostics: () => diagnostics.snapshot(),
       ipcMain,
       contract,
       window: mainWindow,

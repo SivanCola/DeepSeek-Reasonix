@@ -4,6 +4,7 @@
 import { addBreadcrumb, dumpBreadcrumbs, snapshotBreadcrumbs, type Breadcrumb } from "./breadcrumbs";
 import { writeClipboardText } from "./clipboard";
 import { desktopHost } from "./desktopHost";
+import { boundedDiagnostics, type ProcessDiagnosticsSnapshot } from "./processDiagnostics";
 import { t } from "./i18n";
 import { sessionPipelineDiagnostics, type SessionPipelineDiagnostics } from "./sessionDiagnostics";
 declare const __BUILD_COMMIT__: string;
@@ -38,6 +39,8 @@ export type PerformanceSnapshot = {
     recent: { startMs: number; durationMs: number; attribution?: string }[];
   };
   longTaskFrames?: { label: string; samples: number }[];
+  profilerStatus?: "active" | "unavailable";
+  processes?: ProcessDiagnosticsSnapshot;
   connection?: {
     effectiveType?: string;
     downlinkMbps?: number;
@@ -143,6 +146,8 @@ const PROFILER_MAX_BUFFER_SAMPLES = LONG_TASK_WINDOW_MS / PROFILER_SAMPLE_INTERV
 let activeProfiler: ProfilerLike | null = null;
 
 function startLongTaskProfiler(): void {
+  if (activeProfiler) return;
+  if (typeof document !== "undefined" && (document.visibilityState === "hidden" || document.hasFocus?.() === false)) return;
   const ProfilerCtor = (globalThis as { Profiler?: ProfilerConstructor }).Profiler;
   if (!ProfilerCtor) return;
   try {
@@ -425,6 +430,23 @@ export function formatPerformanceContext(snapshot: PerformanceSnapshot): string 
   if (snapshot.longTaskFrames?.length) {
     lines.push("long task top frames (sampled):");
     for (const frame of snapshot.longTaskFrames) lines.push(`  ${frame.samples}x ${frame.label}`);
+  }
+  if (snapshot.profilerStatus) lines.push(`JS profiler: ${snapshot.profilerStatus}`);
+  if (snapshot.processes) {
+    lines.push("process samples: Electron only (Go service excluded); working sets may share pages; CPU is interval average");
+    const samples = snapshot.processes.samples;
+    for (const sample of samples) {
+      const total = sample.processes.every((p) => p.workingSetMb !== null)
+        ? fmtMb(sample.processes.reduce((sum, p) => sum + (p.workingSetMb ?? 0), 0)) : "unavailable";
+      lines.push(`  ${fmtNumber(sample.ageMs)}ms ago: ${sample.processes.length} processes, summed working set ${total}`);
+    }
+    const latest = samples[samples.length - 1];
+    if (latest) {
+      lines.push(`latest process CPU interval: ${latest.intervalMs === null ? "baseline unavailable" : `${fmtNumber(latest.intervalMs)}ms`}`);
+      for (const p of latest.processes) {
+        lines.push(`  PID ${p.pid} ${p.type}: CPU ${p.cpuPercent === null ? "unavailable" : `${fmtNumber(p.cpuPercent, 1)}%`}, working set ${p.workingSetMb === null ? "unavailable" : fmtMb(p.workingSetMb)}, private ${p.privateMb === null ? "unavailable" : fmtMb(p.privateMb)}`);
+      }
+    }
   }
   if (snapshot.connection) {
     const parts = [
@@ -877,7 +899,8 @@ function promptPerformanceReport(reason: string, currentLagMs = 0): void {
   lastPerformancePromptAt = now;
   addBreadcrumb("performance", reason);
   const snapshot = performanceSnapshot(reason, currentLagMs);
-  if (!activeProfiler) {
+  snapshot.profilerStatus = activeProfiler ? "active" : "unavailable";
+  if (!activeProfiler && !desktopHost().native.processDiagnostics) {
     paintPerformancePrompt(buildPerformancePayload(snapshot), snapshot);
     return;
   }
@@ -888,8 +911,12 @@ function promptPerformanceReport(reason: string, currentLagMs = 0): void {
     const nowMs = performance.now();
     windows.push({ startMs: Math.max(0, nowMs - currentLagMs), durationMs: currentLagMs });
   }
-  void collectLongTaskFrames(windows).then((frames) => {
-    if (frames.length) snapshot.longTaskFrames = frames;
+  void Promise.all([
+    boundedDiagnostics(() => collectLongTaskFrames(windows)),
+    boundedDiagnostics(() => desktopHost().native.processDiagnostics?.() ?? Promise.resolve(null)),
+  ]).then(([frames, processes]) => {
+    if (frames?.length) snapshot.longTaskFrames = frames;
+    if (processes) snapshot.processes = processes;
     paintPerformancePrompt(buildPerformancePayload(snapshot), snapshot);
   });
 }
@@ -944,6 +971,13 @@ export function installPerformancePressureMonitor() {
     visibleSince = isHidden() ? Number.POSITIVE_INFINITY : now;
     focusedSince = isFocused() ? now : Number.POSITIVE_INFINITY;
     pendingResume = isHidden() || !isFocused();
+    if (pendingResume) {
+      const profiler = activeProfiler;
+      activeProfiler = null;
+      void profiler?.stop().catch(() => {});
+    } else {
+      startLongTaskProfiler();
+    }
   };
 
   if (typeof document !== "undefined") {

@@ -53,6 +53,7 @@ export interface RendererIpcDeps {
   window: RendererWindowApi;
   invoke(method: string, args: unknown[]): Promise<unknown>;
   serviceState(): ServiceState;
+  processDiagnostics?(): unknown;
   clipboard: { writeText(text: string): Promise<void> | void; readText(): Promise<string> | string };
   graphics?: GraphicsSettingsStore;
   browserControl?: BrowserControlApi;
@@ -117,6 +118,7 @@ export function registerRendererIpc(deps: RendererIpcDeps): void {
     return deps.invoke(method, Array.isArray(args) ? args : []);
   });
   handle(IPC.serviceStateGet, () => deps.serviceState());
+  handle(IPC.processDiagnostics, () => deps.processDiagnostics?.() ?? null);
   handle(IPC.openExternal, (url) => {
     if (!isOpenableExternalURL(url)) throw new Error(`refusing to open ${typeof url === "string" ? url : typeof url}`);
     return deps.openExternal(url);
