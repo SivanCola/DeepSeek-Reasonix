@@ -436,11 +436,23 @@ jobs:
       # the packaged shell and require the shell -> Go service handshake before
       # signing or publication.
       - name: Smoke-test packaged Electron startup
-        if: matrix.platform == 'windows/amd64'
+        if: runner.os == 'Windows'
         run: |
           node desktop/packaging/smoke.mjs \
-            desktop/build/electron/windows-amd64/app \
+            desktop/build/electron/${{ matrix.name }}/app \
             --service desktop/build/bin/reasonix-desktop.exe
+
+      - name: Smoke-test macOS archive startup
+        if: runner.os == 'macOS'
+        run: |
+          ditto -xk dist/Reasonix-darwin-arm64.zip "$RUNNER_TEMP/desktop-startup"
+          node desktop/packaging/smoke.mjs "$RUNNER_TEMP/desktop-startup/Reasonix.app"
+
+      - name: Smoke-test packaged Linux startup
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a node desktop/packaging/smoke.mjs \
+            desktop/build/bin/app --service desktop/build/bin/reasonix-desktop
 
       # Sign every executable that users actually run before rebuilding the
       # portable archive and NSIS installer. Signing only the finished NSIS

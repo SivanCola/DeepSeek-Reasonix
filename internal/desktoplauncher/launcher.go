@@ -13,6 +13,7 @@ import (
 
 	"reasonix/internal/appidentity"
 	"reasonix/internal/installlayout"
+	"reasonix/internal/proc"
 )
 
 // Run resolves the active desktop, performs the one-time legacy handoff when
@@ -52,6 +53,7 @@ func Run(args []string, buildVersion string) int {
 	}
 
 	cmd := exec.Command(desktopPath, StripLegacyLaunchArgs(args)...)
+	proc.HideConsole(cmd)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Dir = installRoot
 	if DetachByDefault() {
@@ -130,6 +132,7 @@ func runLegacyMigratorIfNeeded(installRoot string) error {
 	}
 
 	cmd := exec.Command(migratorPath, "--install-root", installRoot, "--no-relaunch")
+	proc.HideConsole(cmd)
 	cmd.Dir = installRoot
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
