@@ -49,7 +49,7 @@ export default function ProviderModelDialog({ initial, candidates, contextDefaul
             <input id={`${titleId}-output`} className="mem-input" type="number" min={-1} value={output} disabled={busy} placeholder={t("settings.models.inherit")} onChange={e=>setOutput(e.target.value)}/>
           </label>
           <p>{t("settings.modelDialog.outputHint")}</p>
-          {effortOptions && effortOptions.length > 0 && <>
+          {effortOptions && effortOptions.length > 0 && <div className="provider-model-dialog__effort-card">
             <label>{t("settings.modelDialog.reasoningEffortOptions")}
               <button type="button" className="btn provider-icon-action" title={t("settings.modelDialog.reset")} aria-label={t("settings.modelDialog.resetReasoningEffort")} disabled={busy} onClick={()=>setEffort("")}><RotateCcw size={16}/></button>
             </label>
@@ -62,7 +62,7 @@ export default function ProviderModelDialog({ initial, candidates, contextDefaul
               {selectedEfforts.map(option => <option key={option} value={option}>{option}</option>)}
             </select>
             <p>{t("settings.modelDialog.reasoningEffortHint")}</p>
-          </>}
+          </div>}
         </section>
         <aside><h3>{t("settings.modelDialog.capabilities")}</h3>
           <div className="provider-model-dialog__capability-title">{t("settings.modelDialog.input")}</div>
