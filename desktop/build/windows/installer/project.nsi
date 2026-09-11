@@ -205,7 +205,6 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the inst
 !define REASONIX_PAYLOAD_SIGNATURE "reasonix-payload.json.minisig"
 !define REASONIX_LEGACY_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Reasonix"
 !define REASONIX_LEGACY_PRODUCT_KEY "Software\reasonix\Reasonix"
-!define REASONIX_UNLOCK_RETRIES 60
 Var ReasonixUpdateMode
 Var ReasonixStageMode
 InstallDirRegKey HKCU "${UNINST_KEY}" "InstallLocation" # Reuse the previous install path on update; .onInit falls back to the default on first install.
@@ -394,83 +393,6 @@ Function reasonix.skipFinishPageForUpdate
 reasonix_show_finish_page:
 FunctionEnd
 
-Function reasonix.waitForExecutableUnlock
-   StrCpy $0 0
-
-retry:
-   IfFileExists "$INSTDIR\${PRODUCT_EXECUTABLE}" 0 check_versioned_target
-   ClearErrors
-   FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a
-   IfErrors locked
-   FileClose $1
-
-check_versioned_target:
-   ; A same-version recovery install replaces this directory transactionally.
-   ; Detect the running active binary before asking the Go activator to rename it.
-   IfFileExists "$INSTDIR\versions\v${INFO_PRODUCTVERSION}\${PRODUCT_EXECUTABLE}" 0 check_electron_shell
-   ClearErrors
-   FileOpen $1 "$INSTDIR\versions\v${INFO_PRODUCTVERSION}\${PRODUCT_EXECUTABLE}" a
-   IfErrors locked
-   FileClose $1
-
-check_electron_shell:
-   ; The Electron shell executable inside the app tree stays locked while running.
-   IfFileExists "$INSTDIR\versions\v${INFO_PRODUCTVERSION}\app\${REASONIX_ELECTRON_EXECUTABLE}" 0 check_guard
-   ClearErrors
-   FileOpen $1 "$INSTDIR\versions\v${INFO_PRODUCTVERSION}\app\${REASONIX_ELECTRON_EXECUTABLE}" a
-   IfErrors locked
-   FileClose $1
-
-check_guard:
-   IfFileExists "$INSTDIR\${REASONIX_GUARD}" 0 check_launcher
-   ClearErrors
-   FileOpen $1 "$INSTDIR\${REASONIX_GUARD}" a
-   IfErrors locked
-   FileClose $1
-
-check_launcher:
-	IfFileExists "$INSTDIR\${REASONIX_LAUNCHER}" 0 check_cli
-	ClearErrors
-	FileOpen $1 "$INSTDIR\${REASONIX_LAUNCHER}" a
-	IfErrors locked
-	FileClose $1
-
-check_cli:
-	IfFileExists "$INSTDIR\${REASONIX_CLI}" 0 check_portable_entry
-	ClearErrors
-	FileOpen $1 "$INSTDIR\${REASONIX_CLI}" a
-	IfErrors locked
-	FileClose $1
-
-check_portable_entry:
-   IfFileExists "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" 0 done
-   ClearErrors
-   FileOpen $1 "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" a
-   IfErrors locked
-   FileClose $1
-   Goto done
-
-locked:
-   IntOp $0 $0 + 1
-   IntCmp $0 ${REASONIX_UNLOCK_RETRIES} failed 0 0
-   Sleep 1000
-   Goto retry
-
-failed:
-   IfSilent silent interactive
-
-interactive:
-   MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Reasonix is still running. Close Reasonix, then click Retry to continue the installation." IDRETRY retry IDCANCEL abort
-   Goto retry
-
-silent:
-   SetErrorLevel 1618
-
-abort:
-   Abort "Reasonix is still running. Close Reasonix and run the installer again."
-
-done:
-FunctionEnd
 
 Section
     !insertmacro reasonix.setShellContext
@@ -483,7 +405,7 @@ Section
     ; STAGE payloads (as the one-shot legacy migrator) and is not persisted on
     ; a normal install.
     StrCmp $ReasonixStageMode "1" reasonix_stage_payload
-    Call reasonix.waitForExecutableUnlock
+    ; The signed activator coordinates all installed versions before committing.
     Goto reasonix_normal_install
 
 reasonix_stage_payload:
@@ -543,12 +465,22 @@ reasonix_normal_install:
     !error "${REASONIX_GUARD} was not found; normal installs require the signed layout activator."
     !endif
     DetailPrint "Reasonix layout activator output:"
-    nsExec::ExecToLog /OEM '"$PLUGINSDIR\${REASONIX_LAYOUT_INSTALLER}" --install-root "$INSTDIR" --version "v${INFO_PRODUCTVERSION}" --activate-staging "$R9" --no-relaunch'
+    StrCpy $R7 ""
+    IfSilent +2 0
+    StrCpy $R7 "--interactive-recovery"
+    nsExec::ExecToLog /OEM '"$PLUGINSDIR\${REASONIX_LAYOUT_INSTALLER}" --install-root "$INSTDIR" --version "v${INFO_PRODUCTVERSION}" --activate-staging "$R9" --no-relaunch $R7'
     Pop $0
     StrCmp $0 "0" reasonix_layout_activated
     DetailPrint "Reasonix layout activation failed with exit code $0; the previous version remains active."
     RMDir /r "$R9"
+    StrCmp $0 "1618" 0 +3
+    SetErrorLevel 1618
+    Goto reasonix_activation_abort
+    StrCmp $0 "1602" 0 +3
+    SetErrorLevel 1602
+    Goto reasonix_activation_abort
     SetErrorLevel 1
+reasonix_activation_abort:
     Abort "Reasonix could not activate the verified release. The previous version was left unchanged."
 
 reasonix_layout_activated:
