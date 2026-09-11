@@ -2,9 +2,23 @@ package desktopinstance
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
+
+func TestExitCodesPreserveWrappedBlockers(t *testing.T) {
+	for _, tc := range []struct {
+		code Code
+		exit int
+	}{
+		{ConfirmationRequired, 1618}, {Cancelled, 1602}, {UnknownOwner, 1618}, {OtherInstallation, 1618}, {ExitTimeout, 1618}, {StartupFailed, 1603},
+	} {
+		if got := ExitCode(fmt.Errorf("activation: %w", outcome(tc.code, "test"))); got != tc.exit {
+			t.Errorf("%s: got %d", tc.code, got)
+		}
+	}
+}
 
 func TestStatusRequiresRendererAndHealthyVisibleWindow(t *testing.T) {
 	s := Status{SchemaVersion: 1, Product: "com.reasonix.desktop", PID: 10, Version: "v1.38.7", Generation: "g", HomeKey: ProfileKey(`C:\Users\Test\reasonix\desktop-shell`), Lifecycle: "ready", Service: "ready", ServicePID: 11, Visible: true, RendererVersion: "v1.38.7", Healthy: true}

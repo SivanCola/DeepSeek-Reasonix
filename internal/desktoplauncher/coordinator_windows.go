@@ -34,7 +34,7 @@ func coordinatedLaunch(root string, args []string) (bool, int) {
 		if os.Getenv("REASONIX_NONINTERACTIVE") != "1" {
 			desktopinstance.Notify(err)
 		}
-		return true, 1
+		return true, desktopinstance.ExitCode(err)
 	}
 	return true, 0
 }
