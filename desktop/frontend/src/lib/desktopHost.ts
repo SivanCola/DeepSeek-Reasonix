@@ -217,8 +217,8 @@ const electronHostFrom = (host: ReasonixDesktopHost): DesktopHost => {
     resetAppZoom: () => host.native.window.resetAppZoom(),
       graphics: host.native.graphics,
       ...(host.native.processDiagnostics ? { processDiagnostics: () => host.native.processDiagnostics!() } : {}),
-      ...(host.native.captureRendererProfile ? { captureRendererProfile: () => host.native.captureRendererProfile!() } : {}),
-      ...(host.native.cancelRendererProfile ? { cancelRendererProfile: () => host.native.cancelRendererProfile!() } : {}),
+      ...(host.native.captureRendererProfile ? { captureRendererProfile: (id?: string) => host.native.captureRendererProfile!(id) } : {}),
+      ...(host.native.cancelRendererProfile ? { cancelRendererProfile: (id?: string) => host.native.cancelRendererProfile!(id) } : {}),
       ...(host.native.exportHeapSnapshot ? { exportHeapSnapshot: () => host.native.exportHeapSnapshot!() } : {}),
       browserControl: host.native.browserControl,
       onFilesDropped: (cb) => {

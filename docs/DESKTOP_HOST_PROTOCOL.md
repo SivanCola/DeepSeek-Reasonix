@@ -308,14 +308,16 @@ are required.
   and once per 60 seconds otherwise. Retention is at most 12 snapshots and five
   minutes, with at most 128 processes per snapshot. No titles, URLs or process
   names are collected. Electron-managed processes only; Go is excluded.
-- `captureRendererProfile()` records the current renderer through CDP for
+- `captureRendererProfile(requestId?)` records the current renderer through CDP for
   five seconds at a requested 10 ms sample interval. It returns a status,
   duration and at most eight app-script self-time summaries. Normal documents
   do not enable JS self-profiling. Capture is single-flight, requires the
   foreground window, observes a ten-minute cooldown, and allows at most three
   attempts per shell lifetime. Existing debugger/DevTools sessions are not
   taken over. Blur, hide, navigation, renderer loss or cancellation stops it.
-- `cancelRendererProfile()` cancels the owned capture. Each CDP command has a
+- `cancelRendererProfile(requestId)` cancels only the matching capture; unscoped
+  renderer cancellation is ignored. This also fences delayed requests across
+  long suspension/resume gaps. Each CDP command has a
   1.5 second deadline and the owned debugger is released on every terminal path.
   Analysis runs in a disposable Worker with a 32 MiB old-generation limit,
   1.5 second deadline, and input limits of 20,000 nodes / 100,000 samples.
@@ -344,6 +346,10 @@ From `desktop/electron`, run `node scripts/performance-smoke.mjs` to verify the
 production owner, Worker, report enrichment and local heap snapshot with an
 isolated native fixture. `node scripts/performance-benchmark.mjs` compares off,
 lightweight monitoring and short capture in three fresh-process trials each.
+All modes use the same renderer bundle and runtime mode selection. Activity
+signals are pinned and background throttling disabled for unattended native
+measurement. Host event tests separately cover the production focus and
+navigation cancellation policy; the smoke verifies actual CDP and ASAR paths.
 It records CPU time where available, frame timings, working sets and metric
 collection cost in `artifacts/performance/overhead.json`. This synthetic
 benchmark is not a reproduction of the Windows user workload. Field comparison

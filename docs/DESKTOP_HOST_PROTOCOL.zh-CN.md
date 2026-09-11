@@ -276,12 +276,13 @@ warning: "invalid-config" | "unreadable-config" | "unsupported-version" | null }
   工作集及私有内存（MiB）、截断标记。前台最多每 30 秒采集一次，后台每 60 秒一次；
   最多保留五分钟内的 12 条记录，每条最多 128 个进程。不采集标题、URL 或进程名称。
   范围仅含 Electron 管理的进程，不含 Go 服务。
-- `captureRendererProfile()` 通过 CDP 录制当前 renderer 五秒，
+- `captureRendererProfile(requestId?)` 通过 CDP 录制当前 renderer 五秒，
   请求的采样间隔为 10ms，返回状态、时长和最多八个应用脚本的自身耗时摘要。
   普通页面不启用 JS Self-Profiling。最多一个进行中的采样，要求窗口在前台，
   冷却十分钟，每次启动 shell 最多尝试三次。不接管已有 debugger/DevTools。
   失焦、隐藏、导航、renderer 退出或取消会停止采样。
-- `cancelRendererProfile()` 取消当前拥有的采样。每条 CDP 命令最多等待 1.5 秒，
+- `cancelRendererProfile(requestId)` 仅取消身份匹配的采样；忽略 renderer 不带身份的取消请求，
+  防止长时间挂起后迟到的旧请求干扰新采样。每条 CDP 命令最多等待 1.5 秒，
   所有终态均释放自己的 debugger。分析在临时 Worker 中运行，老生代限制 32 MiB，
   超时 1.5 秒，输入最多 20,000 个节点及 100,000 个样本。
   原始 profile 不进入 UI 报告。
@@ -304,5 +305,8 @@ warning: "invalid-config" | "unreadable-config" | "unsupported-version" | null }
 可用隔离原生测试验证采样 owner、Worker、报告更新及本地堆快照。
 `node scripts/performance-benchmark.mjs` 分别以关闭监测、基础监测、短时采样运行
 三次独立进程对照，记录可用的 CPU 时间、帧时序、工作集及指标采集耗时，
+各模式使用同一 renderer bundle，通过运行时开关选择；固定活动信号并关闭后台节流，
+用于无人值守比较成本。宿主事件测试独立覆盖生产焦点和导航取消策略，
+原生 smoke 验证实际 CDP 与 ASAR 路径。
 输出至 `artifacts/performance/overhead.json`。该合成测试不等同于 Windows 用户场景复现；
 仍需对比刚启动、长时间使用、切回窗口和关闭标签等阶段。

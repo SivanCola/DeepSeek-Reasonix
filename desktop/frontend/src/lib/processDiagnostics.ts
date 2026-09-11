@@ -15,8 +15,8 @@ export interface RendererProfileResult {
   frames?: { label: string; samples: number; selfMs: number }[];
 }
 export interface NativePerformanceActions {
-  captureRendererProfile?(): Promise<RendererProfileResult>;
-  cancelRendererProfile?(): Promise<unknown>;
+  captureRendererProfile?(requestId?: string): Promise<RendererProfileResult>;
+  cancelRendererProfile?(requestId?: string): Promise<unknown>;
   exportHeapSnapshot?(): Promise<{ status: "saved" | "cancelled" | "busy" | "unavailable" | "failed" }>;
 }
 

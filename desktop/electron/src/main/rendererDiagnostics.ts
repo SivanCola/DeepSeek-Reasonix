@@ -39,17 +39,20 @@ interface Dependencies {
 // connection from DevTools or another caller; cancellation retains ownership
 // until stop/detach has completed, so a late reply cannot affect a new capture.
 export class RendererDiagnostics {
-  private active: { cancel(): void } | undefined;
+  private active: { requestId?: string; cancel(): void } | undefined;
   private lastAttempt = -Infinity;
   private captures = 0;
   private disposed = false;
   constructor(private readonly deps: Dependencies) {}
   get busy(): boolean { return this.active !== undefined; }
 
-  cancel(): void { this.active?.cancel(); }
+  cancel(requestId?: string): void {
+    if (requestId !== undefined && this.active?.requestId !== requestId) return;
+    this.active?.cancel();
+  }
   dispose(): void { this.disposed = true; this.cancel(); }
 
-  async capture(): Promise<RendererProfileResult> {
+  async capture(requestId?: string): Promise<RendererProfileResult> {
     if (this.disposed) return { status: "unavailable" };
     if (this.active) return { status: "busy" };
     if (!this.deps.isForeground()) return { status: "inactive" };
@@ -64,7 +67,7 @@ export class RendererDiagnostics {
     let ownsConnection = false;
     let wake!: () => void;
     const interrupted = new Promise<void>((resolve) => { wake = resolve; });
-    const owner = { cancel: () => { cancelled = true; wake(); } };
+    const owner = { requestId, cancel: () => { cancelled = true; wake(); } };
     this.active = owner;
     const onDetach = () => { ownsConnection = false; owner.cancel(); };
     let removeInvalidated = () => {};

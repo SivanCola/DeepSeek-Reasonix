@@ -39,3 +39,31 @@ test("navigation while the consent dialog is open cancels export", async () => {
   assert.deepEqual(await host.exportHeapSnapshot(), { status: "cancelled" });
   assert.equal(contents.listenerCount("did-start-navigation"), 0);
 });
+
+test("production activity policy requires native focus and cancels on blur", async () => {
+  let focused = false;
+  let attached = false;
+  const debuggerApi = Object.assign(new EventEmitter(), {
+    isAttached: () => attached,
+    attach: () => { attached = true; },
+    detach: () => { attached = false; },
+    sendCommand: async () => ({ profile: { nodes: [], startTime: 0, endTime: 0 } }),
+  });
+  const contents = Object.assign(new EventEmitter(), { debugger: debuggerApi, isDestroyed: () => false, isDevToolsOpened: () => false });
+  const win = Object.assign(new EventEmitter(), { webContents: contents, isVisible: () => true, isFocused: () => focused });
+  const host = createPerformanceHost({ window: () => win as unknown as BrowserWindow, workerPath: "must-not-run", locale: () => "en", dialog: {
+    showMessageBox: async () => { throw Error("must not prompt"); }, showSaveDialog: async () => { throw Error("must not save"); },
+  } });
+  assert.deepEqual(await host.captureRendererProfile("inactive"), { status: "inactive" });
+  assert.deepEqual(await host.exportHeapSnapshot(), { status: "unavailable" });
+  assert.equal(attached, false);
+  focused = true;
+  const capture = host.captureRendererProfile("active");
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.equal(attached, true);
+  focused = false;
+  win.emit("blur");
+  assert.deepEqual(await capture, { status: "cancelled" });
+  assert.equal(attached, false);
+  assert.equal(win.listenerCount("blur"), 0);
+});

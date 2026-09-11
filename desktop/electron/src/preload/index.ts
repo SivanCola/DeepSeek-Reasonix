@@ -191,8 +191,8 @@ contextBridge.exposeInMainWorld("reasonixDesktop", {
   on,
   native: {
     processDiagnostics: () => call(IPC.processDiagnostics),
-    captureRendererProfile: () => call(IPC.captureRendererProfile),
-    cancelRendererProfile: () => call(IPC.cancelRendererProfile),
+    captureRendererProfile: (requestId?: string) => call(IPC.captureRendererProfile, requestId),
+    cancelRendererProfile: (requestId?: string) => call(IPC.cancelRendererProfile, requestId),
     exportHeapSnapshot: () => call(IPC.exportHeapSnapshot),
     openExternal: (url: string) => call(IPC.openExternal, url).then(() => undefined),
     clipboard: {

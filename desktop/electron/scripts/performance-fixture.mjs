@@ -63,8 +63,6 @@ export async function performanceFixture(monitor = true, { archiveWorker = false
       import { registerRendererIpc } from './src/main/ipc.ts';
       import { ProcessDiagnostics } from './src/main/processDiagnostics.ts';
       import { createPerformanceHost } from './src/main/performanceHost.ts';
-      import { RendererDiagnostics } from './src/main/rendererDiagnostics.ts';
-      import { analyseInWorker } from './src/main/profileAnalysisHost.ts';
       app.setPath('userData', ${JSON.stringify(join(temp, "profile"))});
       protocol.registerSchemesAsPrivileged([{scheme:'reasonix', privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:false,stream:true}}]);
       app.whenReady().then(async () => {
@@ -74,21 +72,13 @@ export async function performanceFixture(monitor = true, { archiveWorker = false
         const win = new BrowserWindow({show:true,focusable:${!benchmark},width:1000,height:750,webPreferences:{backgroundThrottling:${!benchmark},preload:${JSON.stringify(join(temp, "preload.cjs"))},sandbox:true,contextIsolation:true,nodeIntegration:false}});
         const diagnostics = new ProcessDiagnostics(()=>app.getAppMetrics(), undefined, ()=>${benchmark}||(win.isVisible()&&win.isFocused()));
         if (${monitor}) { diagnostics.sample(); setInterval(()=>diagnostics.sample(),30000).unref(); }
-        const performanceHost = createPerformanceHost({window:()=>win.isDestroyed()?null:win,workerPath:${JSON.stringify(workerPath)},locale:()=>'en',dialog:{
+        const performanceHost = createPerformanceHost({window:()=>win.isDestroyed()?null:win,workerPath:${JSON.stringify(workerPath)},locale:()=>'en',isForeground:${benchmark} ? ()=>true : undefined,dialog:{
           showMessageBox:async()=>({response:1}),showSaveDialog:async()=>({canceled:false,filePath:${JSON.stringify(join(temp, "fixture.heapsnapshot"))}})
         }});
-        // Pin activity only for cost measurement. The separate smoke exercises
-        // the production focus/navigation adapter without these overrides.
-        const benchmarkCpu = ${benchmark} ? new RendererDiagnostics({
-          target:()=>win.webContents,isForeground:()=>true,
-          onInvalidated:(cancel)=>{win.webContents.on('destroyed',cancel);return ()=>win.webContents.removeListener('destroyed',cancel);},
-          analyse:(profile)=>analyseInWorker(profile,${JSON.stringify(workerPath)})
-        }) : null;
-        const actions = benchmarkCpu ? {...performanceHost,captureRendererProfile:()=>benchmarkCpu.capture(),cancelRendererProfile:()=>benchmarkCpu.cancel()} : performanceHost;
         registerRendererIpc({ipcMain,contract:{protocolVersion:1,digest:'test',commands:[],commandSet:new Set()},
           window:{isTrustedSender:(sender,frame)=>sender===win.webContents && frame===sender.mainFrame},clipboard,
-          serviceState:()=>({phase:'ready',generation:'test'}),processDiagnostics:()=>diagnostics.snapshot(),performance:actions,log});
-        app.once('will-quit',()=>{performanceHost.dispose();benchmarkCpu?.dispose();});
+          serviceState:()=>({phase:'ready',generation:'test'}),processDiagnostics:()=>diagnostics.snapshot(),performance:performanceHost,log});
+        app.once('will-quit',()=>performanceHost.dispose());
         await win.loadURL('reasonix://app/index.html?monitor=${monitor ? "1" : "0"}'); if (!${benchmark}) win.focus();
       });
     ` }, outfile: join(temp, "main.cjs") });

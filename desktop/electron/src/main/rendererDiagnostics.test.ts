@@ -292,3 +292,36 @@ test('listener cleanup failure cannot skip debugger cleanup or replace the captu
   assert.equal(fixture.debug.detaches, 1);
   assert.equal((await fixture.owner.capture()).status, 'cooldown');
 });
+
+test('a late cancellation for an old request cannot interrupt a newer capture', async t => {
+  const fixture = setup(t, { durationMs: 100, cooldownMs: 1000 });
+  const old = fixture.owner.capture('old');
+  await flush();
+  await fixture.advance(100);
+  assert.equal((await old).status, 'captured');
+  await fixture.advance(1001);
+
+  const current = fixture.owner.capture('new');
+  await flush();
+  fixture.owner.cancel('old');
+  await flush();
+  assert.equal(fixture.debug.attached, true);
+  assert.equal((await fixture.owner.capture('another')).status, 'busy');
+  await fixture.advance(99);
+  assert.equal(fixture.debug.attached, true);
+  await fixture.advance(1);
+  assert.equal((await current).status, 'captured');
+  assert.equal(fixture.analysed(), 2);
+  assert.equal(fixture.debug.attached, false);
+});
+
+test('a cancellation with the active request identity ends its own capture', async t => {
+  const fixture = setup(t);
+  const result = fixture.owner.capture('new');
+  await flush();
+  fixture.owner.cancel('new');
+  await flush();
+  assert.equal((await result).status, 'cancelled');
+  assert.equal(fixture.analysed(), 0);
+  assert.equal(fixture.debug.attached, false);
+});

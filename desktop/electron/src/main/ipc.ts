@@ -66,6 +66,12 @@ export interface RendererIpcDeps {
 
 const NAVIGATE_ACTIONS = new Set(["back", "forward", "reload", "stop"]);
 
+function diagnosticRequestId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^[a-zA-Z0-9-]{1,96}$/.test(value)) throw new Error("invalid diagnostic request identity");
+  return value;
+}
+
 export function parseNavigateTarget(value: unknown): BrowserNavigateTarget {
   const target = record(value);
   const action = str(target, "action");
@@ -121,8 +127,11 @@ export function registerRendererIpc(deps: RendererIpcDeps): void {
   });
   handle(IPC.serviceStateGet, () => deps.serviceState());
   handle(IPC.processDiagnostics, () => deps.processDiagnostics?.() ?? null);
-  handle(IPC.captureRendererProfile, () => deps.performance?.captureRendererProfile() ?? { status: "unavailable" });
-  handle(IPC.cancelRendererProfile, () => deps.performance?.cancelRendererProfile());
+  handle(IPC.captureRendererProfile, (id) => deps.performance?.captureRendererProfile(diagnosticRequestId(id)) ?? { status: "unavailable" });
+  handle(IPC.cancelRendererProfile, (id) => {
+    const requestId = diagnosticRequestId(id);
+    if (requestId) deps.performance?.cancelRendererProfile(requestId);
+  });
   handle(IPC.exportHeapSnapshot, () => deps.performance?.exportHeapSnapshot() ?? { status: "unavailable" });
   handle(IPC.openExternal, (url) => {
     if (!isOpenableExternalURL(url)) throw new Error(`refusing to open ${typeof url === "string" ? url : typeof url}`);

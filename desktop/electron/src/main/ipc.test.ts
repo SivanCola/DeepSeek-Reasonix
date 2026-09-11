@@ -80,7 +80,9 @@ test("renderer invokes are gated by sender identity and the contract allowlist",
     assert.deepEqual(await handlers.get(channel)!({ sender: trustedSender, senderFrame: {} }), { ok: false, message: "untrusted sender" });
   }
   assert.deepEqual(performanceCalls, []);
-  for (const channel of [IPC.captureRendererProfile, IPC.cancelRendererProfile, IPC.exportHeapSnapshot]) await handlers.get(channel)!(trusted);
+  await handlers.get(IPC.cancelRendererProfile)!(trusted);
+  assert.deepEqual(performanceCalls, [], "unscoped IPC cancellation is ignored");
+  for (const channel of [IPC.captureRendererProfile, IPC.cancelRendererProfile, IPC.exportHeapSnapshot]) await handlers.get(channel)!(trusted, "test-request");
   assert.deepEqual(performanceCalls, ["capture", "cancel", "heap"]);
   assert.deepEqual(await invoke({ sender: { id: 9 }, senderFrame: trustedFrame }, "OpenProjectTab", ["/p"]), { ok: false, message: "untrusted sender" });
   assert.deepEqual(await invoke({ sender: trustedSender, senderFrame: {} }, "OpenProjectTab", ["/p"]), { ok: false, message: "untrusted sender" });

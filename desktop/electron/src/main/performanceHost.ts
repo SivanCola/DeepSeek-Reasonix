@@ -8,10 +8,13 @@ export function createPerformanceHost(deps: {
   dialog: Pick<Dialog, "showMessageBox" | "showSaveDialog">;
   workerPath: string;
   locale(): string;
+  /** Controlled native fixtures can pin activity without changing production policy. */
+  isForeground?(): boolean;
 }) {
+  const isForeground = deps.isForeground ?? (() => Boolean(deps.window()?.isVisible() && deps.window()?.isFocused()));
   const cpu = new RendererDiagnostics({
     target: () => deps.window()?.webContents ?? null,
-    isForeground: () => Boolean(deps.window()?.isVisible() && deps.window()?.isFocused()),
+    isForeground,
     onInvalidated: (cancel) => {
       const win = deps.window();
       if (!win) { cancel(); return () => {}; }
@@ -43,14 +46,14 @@ export function createPerformanceHost(deps: {
   let heapBusy = false;
   let disposed = false;
   return {
-    captureRendererProfile: () => heapBusy ? Promise.resolve({ status: "busy" as const }) : cpu.capture(),
-    cancelRendererProfile: () => cpu.cancel(),
+    captureRendererProfile: (requestId?: string) => heapBusy ? Promise.resolve({ status: "busy" as const }) : cpu.capture(requestId),
+    cancelRendererProfile: (requestId?: string) => { if (requestId) cpu.cancel(requestId); },
     dispose: () => { disposed = true; cpu.dispose(); },
     async exportHeapSnapshot(): Promise<HeapResult> {
       if (disposed) return { status: "unavailable" };
       if (heapBusy || cpu.busy) return { status: "busy" };
       const win = deps.window();
-      if (!win || !win.isVisible() || !win.isFocused()) return { status: "unavailable" };
+      if (!win || !isForeground()) return { status: "unavailable" };
       heapBusy = true;
       let invalidated = false;
       const contents = win.webContents;

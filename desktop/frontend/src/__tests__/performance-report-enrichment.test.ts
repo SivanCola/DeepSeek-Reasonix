@@ -47,7 +47,7 @@ assert.match(copies[0], /render \(app.js:10\)/);
 assert.match(reports[0], /CPU profile after trigger: captured/);
 assert.equal(heapRequests, 0, "heap capture never happens automatically");
 host.querySelector<HTMLButtonElement>(".performance-report__dismiss")!.click();
-assert.equal(cancelled, 1);
+assert.equal(cancelled, 0, "closing a completed report cannot cancel a later capture");
 completeProcesses({ scope: "electron", samples: [] });
 await flush();
 assert.equal(document.getElementById("performance-report-prompt"), null, "late diagnostics never recreate a dismissed prompt");

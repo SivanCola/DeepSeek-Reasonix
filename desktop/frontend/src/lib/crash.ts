@@ -126,6 +126,12 @@ let performanceMonitorInstalled = false;
 let lastPerformancePromptAt = 0;
 let heapSnapshotInProgress = false;
 let diagnosticQuietUntil = 0;
+let activeCaptureId: string | undefined;
+
+function cancelCapture(requestId = activeCaptureId): void {
+  if (!requestId || activeCaptureId !== requestId) return;
+  void desktopHost().native.cancelRendererProfile?.(requestId).catch(() => {});
+}
 
 
 const PERF_REPORTED_STORAGE_KEY = "reasonix:perf-reported";
@@ -547,7 +553,7 @@ function copyButton(text: string | (() => string), className: string): HTMLButto
 }
 
 let performancePromptGeneration = 0;
-function paintPerformancePrompt(payload: CrashPayload, snapshot: PerformanceSnapshot) {
+function paintPerformancePrompt(payload: CrashPayload, snapshot: PerformanceSnapshot, captureId?: string) {
   if (typeof document === "undefined") return;
   const generation = ++performancePromptGeneration;
   let currentPayload = payload;
@@ -571,9 +577,10 @@ function paintPerformancePrompt(payload: CrashPayload, snapshot: PerformanceSnap
   dismiss.className = "performance-report__dismiss";
   dismiss.textContent = t("performanceReport.dismiss");
   dismiss.onclick = () => {
+    if (generation !== performancePromptGeneration) return;
     dismissedPerfLabels.add(payload.label);
     performancePromptGeneration++;
-    void desktopHost().native.cancelRendererProfile?.().catch(() => {});
+    if (captureId) cancelCapture(captureId);
     host?.remove();
   };
   if (send) actions.append(send);
@@ -584,6 +591,7 @@ function paintPerformancePrompt(payload: CrashPayload, snapshot: PerformanceSnap
     heap.className = "performance-report__copy";
     heap.textContent = t("performanceReport.saveHeap");
     heap.onclick = async () => {
+      if (generation !== performancePromptGeneration || !host?.isConnected) return;
       heap.disabled = true;
       heapSnapshotInProgress = true;
       try {
@@ -733,19 +741,23 @@ function promptPerformanceReport(reason: string, currentLagMs = 0, processes?: P
   snapshot.processes = processes;
   const native = desktopHost().native;
   const capture = label === "performance.longtask" || label === "performance.lag";
+  const requestId = capture && native.captureRendererProfile
+    ? globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
+  if (requestId) activeCaptureId = requestId;
   if (capture) snapshot.cpuProfile = { status: native.captureRendererProfile ? "recording" : "unavailable" };
   // Show the original evidence immediately. Slow diagnostics only enrich this
   // same prompt; they cannot recreate a dismissed/replaced report.
-  const update = paintPerformancePrompt(buildPerformancePayload(snapshot), snapshot);
+  const update = paintPerformancePrompt(buildPerformancePayload(snapshot), snapshot, requestId);
   if (!processes && native.processDiagnostics) {
     void boundedDiagnostics(() => native.processDiagnostics!()).then((sample) => {
       if (sample) { snapshot.processes = sample; update?.(); }
     });
   }
-  if (capture && native.captureRendererProfile) {
-    void boundedDiagnostics(() => native.captureRendererProfile!(), 12_000).then((result) => {
+  if (requestId && native.captureRendererProfile) {
+    void boundedDiagnostics(() => native.captureRendererProfile!(requestId), 12_000).then((result) => {
       snapshot.cpuProfile = result ?? { status: "failed" };
-      if (!result) void native.cancelRendererProfile?.().catch(() => {});
+      if (!result) cancelCapture(requestId);
+      if (activeCaptureId === requestId) activeCaptureId = undefined;
       update?.();
     });
   }
@@ -799,7 +811,7 @@ export function installPerformancePressureMonitor() {
     visibleSince = isHidden() ? Number.POSITIVE_INFINITY : now;
     focusedSince = isFocused() ? now : Number.POSITIVE_INFINITY;
     pendingResume = isHidden() || !isFocused();
-    if (pendingResume) void desktopHost().native.cancelRendererProfile?.().catch(() => {});
+    if (pendingResume) cancelCapture();
   };
 
   if (typeof document !== "undefined") {

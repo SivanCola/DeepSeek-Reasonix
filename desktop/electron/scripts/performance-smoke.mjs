@@ -4,7 +4,7 @@ import { readFileSync, statSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { performanceFixture } from "./performance-fixture.mjs";
 
-const fixture = await performanceFixture(true, { archiveWorker: true });
+const fixture = await performanceFixture(true, { archiveWorker: true, benchmark: true });
 try {
   const { page, app, temp } = fixture;
   assert.equal(await page.evaluate(async () => (await fetch(location.href)).headers.get("Document-Policy")), null);
@@ -13,10 +13,18 @@ try {
   // Exercise the production startup/visibility grace period before a deliberate
   // long task in the disposable document.
   await page.waitForTimeout(16000);
-  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
-  await page.waitForFunction(() => document.hasFocus());
-  await page.locator("#work").click();
-  await page.locator("#performance-report-prompt").waitFor();
+  await page.evaluate(() => {
+    window.fixtureLongTasks = [];
+    new PerformanceObserver((entries) => { window.fixtureLongTasks.push(...entries.getEntries().map((entry) => entry.duration)); }).observe({ entryTypes: ["longtask"] });
+    // A DevTools Runtime.evaluate call is not a normal renderer task. Schedule
+    // work through the event loop so the browser's long-task observer sees it.
+    setTimeout(() => window.diagnosticFixture.burn(950), 0);
+  });
+  try { await page.locator("#performance-report-prompt").waitFor(); }
+  catch (error) {
+    console.error(await page.evaluate(() => ({ focused: document.hasFocus(), visibility: document.visibilityState, longTasks: window.fixtureLongTasks })));
+    throw error;
+  }
   const copy = page.locator(".performance-report__copy").first();
   await page.evaluate(() => window.diagnosticFixture.run(5500));
   try {
