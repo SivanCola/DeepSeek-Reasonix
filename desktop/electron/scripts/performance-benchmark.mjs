@@ -66,8 +66,8 @@ const summary = modes.map((mode) => {
 writeFileSync(join(artifactDir, "overhead.json"), JSON.stringify({
   status: "completed",
   platform: process.platform, arch: process.arch,
-  sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-  sourceStatus: execFileSync("git", ["status", "--short", "--", "src", "scripts", "../frontend/src"], { encoding: "utf8" }).trim(),
+  sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", cwd: resolve(import.meta.dirname, "..") }).trim(),
+  sourceStatus: execFileSync("git", ["status", "--short", "--", "src", "scripts", "../frontend/src"], { encoding: "utf8", cwd: resolve(import.meta.dirname, "..") }).trim(),
   scope: "Synthetic Electron workload with controlled foreground signals and background throttling disabled; three fresh-process trials per mode; heap snapshots excluded; production activity lifecycle separately tested by native smoke", rows, summary,
 }, null, 2));
 console.log(JSON.stringify({ summary }));
