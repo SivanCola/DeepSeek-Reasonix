@@ -393,6 +393,45 @@ Function reasonix.skipFinishPageForUpdate
 reasonix_show_finish_page:
 FunctionEnd
 
+# Check every stable entry point before extracting a replacement.  A running
+# shell may have already exited its Go service while still holding one of
+# these files open; treating that as an installable state recreates the
+# "installed but does not open" failure.  Silent installs fail closed.
+Function reasonix.waitForExecutableUnlock
+reasonix_unlock_check:
+   ClearErrors
+   FileOpen $1 "$INSTDIR\${PRODUCT_EXECUTABLE}" a
+   IfErrors reasonix_unlock_versioned
+   FileClose $1
+   ClearErrors
+reasonix_unlock_versioned:
+   FileOpen $1 "$INSTDIR\versions\v${INFO_PRODUCTVERSION}\${PRODUCT_EXECUTABLE}" a
+   IfErrors reasonix_unlock_guard
+   FileClose $1
+   ClearErrors
+reasonix_unlock_guard:
+   FileOpen $1 "$INSTDIR\${REASONIX_GUARD}" a
+   IfErrors reasonix_unlock_launcher
+   FileClose $1
+   ClearErrors
+reasonix_unlock_launcher:
+   FileOpen $1 "$INSTDIR\${REASONIX_LAUNCHER}" a
+   IfErrors reasonix_unlock_cli
+   FileClose $1
+   ClearErrors
+reasonix_unlock_cli:
+   FileOpen $1 "$INSTDIR\${REASONIX_CLI}" a
+   IfErrors reasonix_unlock_portable
+   FileClose $1
+   ClearErrors
+reasonix_unlock_portable:
+   FileOpen $1 "$INSTDIR\${REASONIX_PORTABLE_ENTRY}" a
+   IfErrors reasonix_unlock_ok
+   FileClose $1
+   ClearErrors
+reasonix_unlock_ok:
+FunctionEnd
+
 
 Section
     !insertmacro reasonix.setShellContext
@@ -406,6 +445,7 @@ Section
     ; a normal install.
     StrCmp $ReasonixStageMode "1" reasonix_stage_payload
     ; The signed activator coordinates all installed versions before committing.
+    Call reasonix.waitForExecutableUnlock
     Goto reasonix_normal_install
 
 reasonix_stage_payload:
