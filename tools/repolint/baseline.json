@@ -4,7 +4,7 @@
     "commented-code": 0,
     "complexity": 1862,
     "essay": 1883,
-    "file-size": 100086,
+    "file-size": 100093,
     "function-size": 8060,
     "layering": 1,
     "marker": 0,
@@ -25,7 +25,7 @@
     "desktop/app.go": {
       "complexity": 55,
       "essay": 60,
-      "file-size": 10809,
+      "file-size": 10812,
       "function-size": 353,
       "struct-state": 10
     },
@@ -114,7 +114,7 @@
       "file-size": 141
     },
     "desktop/frontend/src/components/SettingsPanel.tsx": {
-      "file-size": 6529
+      "file-size": 6533
     },
     "desktop/frontend/src/components/StatusBar.tsx": {
       "file-size": 20
