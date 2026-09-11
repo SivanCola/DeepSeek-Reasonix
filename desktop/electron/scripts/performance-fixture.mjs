@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { build } from "esbuild";
 import { _electron } from "playwright";
 
@@ -8,7 +9,7 @@ const root = resolve(import.meta.dirname, "..");
 
 // An isolated native fixture, using production protocol, preload, diagnostic
 // owner, Worker and frontend pressure monitor. No Go service or user data.
-export async function performanceFixture(monitor = true) {
+export async function performanceFixture(monitor = true, { archiveWorker = false, benchmark = false } = {}) {
   const temp = mkdtempSync(join(tmpdir(), "reasonix-perf-"));
   let app;
   try {
@@ -18,7 +19,11 @@ export async function performanceFixture(monitor = true) {
       define: { __BUILD_COMMIT__: '"diagnostic-fixture"', __BUILD_CHANNEL__: '"dev"', "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' },
       stdin: { resolveDir: root, loader: "ts", contents: `
         import { installPerformancePressureMonitor } from '../frontend/src/lib/crash.ts';
-        if (${monitor}) installPerformancePressureMonitor();
+        if (${benchmark}) {
+          document.hasFocus = () => true;
+          Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
+        }
+        if (new URLSearchParams(location.search).get('monitor') === '1') installPerformancePressureMonitor();
         function burn(ms) { const end = performance.now() + ms; while (performance.now() < end) Math.sqrt(Math.random()); }
         async function run(ms) {
           const times = []; let frames = 0; let last = performance.now(); const start = last;
@@ -41,35 +46,56 @@ export async function performanceFixture(monitor = true) {
     const common = { bundle: true, platform: "node", format: "cjs", external: ["electron"] };
     await build({ ...common, entryPoints: [join(root, "src/preload/index.ts")], outfile: join(temp, "preload.cjs") });
     await build({ ...common, entryPoints: [join(root, "src/main/profileAnalysisWorker.ts")], outfile: join(temp, "profile-analysis.cjs") });
+    let workerPath = join(temp, "profile-analysis.cjs");
+    if (archiveWorker) {
+      const desktopRequire = createRequire(join(root, "../package.json"));
+      const packagerRequire = createRequire(desktopRequire.resolve("@electron/packager"));
+      const { createPackage } = packagerRequire("@electron/asar");
+      const bundle = join(temp, "worker-bundle");
+      mkdirSync(bundle);
+      await build({ ...common, entryPoints: [join(root, "src/main/profileAnalysisWorker.ts")], outfile: join(bundle, "profile-analysis.cjs") });
+      await createPackage(bundle, join(temp, "worker.asar"));
+      workerPath = join(temp, "worker.asar/profile-analysis.cjs");
+    }
     await build({ ...common, stdin: { resolveDir: root, contents: `
       import { app, BrowserWindow, protocol, ipcMain, net } from 'electron';
       import { registerAppProtocol } from './src/main/protocol.ts';
       import { registerRendererIpc } from './src/main/ipc.ts';
       import { ProcessDiagnostics } from './src/main/processDiagnostics.ts';
       import { createPerformanceHost } from './src/main/performanceHost.ts';
+      import { RendererDiagnostics } from './src/main/rendererDiagnostics.ts';
+      import { analyseInWorker } from './src/main/profileAnalysisHost.ts';
       app.setPath('userData', ${JSON.stringify(join(temp, "profile"))});
       protocol.registerSchemesAsPrivileged([{scheme:'reasonix', privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:false,stream:true}}]);
       app.whenReady().then(async () => {
         const log = {info(){},warn(){},error(){}};
         let copied = ''; const clipboard = {writeText:(text)=>{copied=text;},readText:()=>copied};
         registerAppProtocol({protocol,fetch:net.fetch,distRoot:${JSON.stringify(temp)},resources:()=>null,log});
-        const win = new BrowserWindow({show:true,width:1000,height:750,webPreferences:{preload:${JSON.stringify(join(temp, "preload.cjs"))},sandbox:true,contextIsolation:true,nodeIntegration:false}});
-        const diagnostics = new ProcessDiagnostics(()=>app.getAppMetrics(), undefined, ()=>win.isVisible()&&win.isFocused());
+        const win = new BrowserWindow({show:true,focusable:${!benchmark},width:1000,height:750,webPreferences:{backgroundThrottling:${!benchmark},preload:${JSON.stringify(join(temp, "preload.cjs"))},sandbox:true,contextIsolation:true,nodeIntegration:false}});
+        const diagnostics = new ProcessDiagnostics(()=>app.getAppMetrics(), undefined, ()=>${benchmark}||(win.isVisible()&&win.isFocused()));
         if (${monitor}) { diagnostics.sample(); setInterval(()=>diagnostics.sample(),30000).unref(); }
-        const performanceHost = createPerformanceHost({window:()=>win.isDestroyed()?null:win,workerPath:${JSON.stringify(join(temp, "profile-analysis.cjs"))},locale:()=>'en',dialog:{
+        const performanceHost = createPerformanceHost({window:()=>win.isDestroyed()?null:win,workerPath:${JSON.stringify(workerPath)},locale:()=>'en',dialog:{
           showMessageBox:async()=>({response:1}),showSaveDialog:async()=>({canceled:false,filePath:${JSON.stringify(join(temp, "fixture.heapsnapshot"))}})
         }});
+        // Pin activity only for cost measurement. The separate smoke exercises
+        // the production focus/navigation adapter without these overrides.
+        const benchmarkCpu = ${benchmark} ? new RendererDiagnostics({
+          target:()=>win.webContents,isForeground:()=>true,
+          onInvalidated:(cancel)=>{win.webContents.on('destroyed',cancel);return ()=>win.webContents.removeListener('destroyed',cancel);},
+          analyse:(profile)=>analyseInWorker(profile,${JSON.stringify(workerPath)})
+        }) : null;
+        const actions = benchmarkCpu ? {...performanceHost,captureRendererProfile:()=>benchmarkCpu.capture(),cancelRendererProfile:()=>benchmarkCpu.cancel()} : performanceHost;
         registerRendererIpc({ipcMain,contract:{protocolVersion:1,digest:'test',commands:[],commandSet:new Set()},
           window:{isTrustedSender:(sender,frame)=>sender===win.webContents && frame===sender.mainFrame},clipboard,
-          serviceState:()=>({phase:'ready',generation:'test'}),processDiagnostics:()=>diagnostics.snapshot(),performance:performanceHost,log});
-        app.once('will-quit',()=>performanceHost.dispose());
-        await win.loadURL('reasonix://app/index.html'); win.focus();
+          serviceState:()=>({phase:'ready',generation:'test'}),processDiagnostics:()=>diagnostics.snapshot(),performance:actions,log});
+        app.once('will-quit',()=>{performanceHost.dispose();benchmarkCpu?.dispose();});
+        await win.loadURL('reasonix://app/index.html?monitor=${monitor ? "1" : "0"}'); if (!${benchmark}) win.focus();
       });
     ` }, outfile: join(temp, "main.cjs") });
     app = await _electron.launch({ args: [join(temp, "main.cjs")] });
     const page = await app.firstWindow();
     await page.waitForFunction(() => Boolean(window.diagnosticFixture && window.reasonixDesktop));
-    await page.bringToFront();
+    if (!benchmark) await page.bringToFront();
     return { app, page, temp, async close() { await app.close(); rmSync(temp, { recursive: true, force: true }); } };
   } catch (error) {
     await app?.close();

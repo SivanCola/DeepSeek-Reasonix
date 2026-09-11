@@ -1,12 +1,16 @@
 // Synthetic native A/B: identical renderer work in fresh Electron processes.
 // This measures diagnostic overhead, not the original Windows user workload.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { performanceFixture } from "./performance-fixture.mjs";
 
 const rows = [];
 const modes = ["off", "monitor", "capture"];
+const artifactDir = resolve(import.meta.dirname, "../artifacts/performance");
+mkdirSync(artifactDir, { recursive: true });
+writeFileSync(join(artifactDir, "overhead.json"), JSON.stringify({ status: "running", rows }));
 const metricSnapshot = (app) => app.evaluate(({ app }) => app.getAppMetrics().map((m) => ({
   pid: m.pid, creationTime: m.creationTime, type: m.type,
   cpuSeconds: m.cpu.cumulativeCPUUsage ?? null,
@@ -14,14 +18,14 @@ const metricSnapshot = (app) => app.evaluate(({ app }) => app.getAppMetrics().ma
   workingSetMb: m.memory?.workingSetSize === undefined ? null : m.memory.workingSetSize / 1024,
 })));
 const sumMemory = (metrics) => metrics.every((m) => m.workingSetMb !== null) ? metrics.reduce((sum, m) => sum + m.workingSetMb, 0) : null;
+try {
 for (let trial = 0; trial < 3; trial++) {
   for (let index = 0; index < modes.length; index++) {
     const mode = modes[(index + trial) % modes.length];
-    const fixture = await performanceFixture(mode !== "off");
+    const fixture = await performanceFixture(mode !== "off", { benchmark: true });
     try {
-      const { app, page } = fixture;
-      await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
-      await page.waitForFunction(() => document.hasFocus());
+      const { app, page, temp } = fixture;
+      const rendererBuildSha256 = createHash("sha256").update(readFileSync(join(temp, "assets/workload.js"))).digest("hex");
       await page.evaluate(() => window.diagnosticFixture.run(1000));
       // Measure after the real monitor's 15s startup grace, and across the
       // native sampler's 30s tick. Short startup-only trials miss both costs.
@@ -43,23 +47,27 @@ for (let trial = 0; trial < 3; trial++) {
         samples.sort((a, b) => a - b);
         return { p95Ms: samples[Math.floor(samples.length * .95)], maxMs: samples[samples.length - 1] };
       });
-      const row = { trial, mode, ...work, elapsedMs, cpuSeconds, workingSetBeforeMb: sumMemory(before), workingSetAfterMb: sumMemory(after), metricCost, profileStatus: profile?.status ?? "off" };
+      const row = { trial, mode, rendererBuildSha256, ...work, elapsedMs, cpuSeconds, workingSetBeforeMb: sumMemory(before), workingSetAfterMb: sumMemory(after), metricCost, profileStatus: profile?.status ?? "off" };
       rows.push(row);
       console.log(JSON.stringify(row));
     } finally { await fixture.close(); }
   }
+}
+if (new Set(rows.map((row) => row.rendererBuildSha256)).size !== 1) throw new Error("renderer bundles differ between benchmark modes");
+} catch (error) {
+  writeFileSync(join(artifactDir, "overhead.json"), JSON.stringify({ status: "failed", rows, failure: String(error) }, null, 2));
+  throw error;
 }
 const median = (values) => values.filter((v) => v !== null).sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? null;
 const summary = modes.map((mode) => {
   const subset = rows.filter((r) => r.mode === mode);
   return { mode, frames: median(subset.map((r) => r.frames)), frameP95Ms: median(subset.map((r) => r.frameP95Ms)), cpuSeconds: median(subset.map((r) => r.cpuSeconds)), workingSetAfterMb: median(subset.map((r) => r.workingSetAfterMb)), metricP95Ms: median(subset.map((r) => r.metricCost.p95Ms)) };
 });
-const artifactDir = resolve(import.meta.dirname, "../artifacts/performance");
-mkdirSync(artifactDir, { recursive: true });
 writeFileSync(join(artifactDir, "overhead.json"), JSON.stringify({
+  status: "completed",
   platform: process.platform, arch: process.arch,
   sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   sourceStatus: execFileSync("git", ["status", "--short", "--", "src", "scripts", "../frontend/src"], { encoding: "utf8" }).trim(),
-  scope: "Synthetic Electron renderer workload; three fresh-process trials per mode; heap snapshot capture excluded", rows, summary,
+  scope: "Synthetic Electron workload with controlled foreground signals and background throttling disabled; three fresh-process trials per mode; heap snapshots excluded; production activity lifecycle separately tested by native smoke", rows, summary,
 }, null, 2));
 console.log(JSON.stringify({ summary }));

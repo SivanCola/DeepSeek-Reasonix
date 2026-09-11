@@ -4,7 +4,7 @@ import { readFileSync, statSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { performanceFixture } from "./performance-fixture.mjs";
 
-const fixture = await performanceFixture();
+const fixture = await performanceFixture(true, { archiveWorker: true });
 try {
   const { page, app, temp } = fixture;
   assert.equal(await page.evaluate(async () => (await fetch(location.href)).headers.get("Document-Policy")), null);
@@ -39,5 +39,5 @@ try {
   const artifacts = resolve(import.meta.dirname, "../artifacts/performance");
   mkdirSync(artifacts, { recursive: true });
   await page.screenshot({ path: join(artifacts, "diagnostic-report.png") });
-  console.log("PASS: no eager profiling; automatic bounded capture; Worker frames; live copy; debugger released; local heap snapshot");
+  console.log("PASS: no eager profiling; automatic bounded capture; ASAR Worker frames; live copy; debugger released; local heap snapshot");
 } finally { await fixture.close(); }
