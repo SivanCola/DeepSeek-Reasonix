@@ -97,7 +97,7 @@ func TestLauncherDoesNotCreateConsoleWindow(t *testing.T) {
 					t.Fatalf("launcher: %v\n%s", err, output)
 				}
 				seen := make(map[string]bool)
-				for _, line := range bytes.Split(output, []byte{'\n'}) {
+				for line := range bytes.SplitSeq(output, []byte{'\n'}) {
 					if !bytes.HasPrefix(line, []byte("console-state ")) {
 						continue
 					}
