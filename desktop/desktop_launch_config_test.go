@@ -29,29 +29,34 @@ func TestInitialDesktopWindowSizeRestoresSavedGeometry(t *testing.T) {
 		t.Fatalf("SaveWindowState: %v", err)
 	}
 
-	w, h := initialDesktopWindowSize()
+	geometry := initialDesktopWindowGeometry()
+	w, h := geometry.Width, geometry.Height
+	if geometry.Position == nil || geometry.Position.X != saved.X || geometry.Position.Y != saved.Y {
+		t.Fatalf("saved position lost: %+v", geometry.Position)
+	}
 	if w != saved.Width || h != saved.Height {
 		t.Fatalf("main window size = %dx%d, want %dx%d", w, h, saved.Width, saved.Height)
 	}
 }
 
-func TestInitialDesktopWindowSizeIgnoresMaximisedGeometry(t *testing.T) {
+func TestInitialDesktopWindowSizePreservesMaximisedGeometry(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	resetLastKnownWindowStateForTest()
 	t.Cleanup(resetLastKnownWindowStateForTest)
 
 	app := NewApp()
-	// Legacy shells persisted the maximized frame (wider than the work area)
-	// as the restore rectangle; the saved size must not be trusted.
-	saved := DesktopWindowState{Width: 1722, Height: 1034, X: -7, Y: -7, Maximised: true}
+	saved := DesktopWindowState{Width: 1100, Height: 700, X: 40, Y: 50, Maximised: true}
 	if err := app.SaveWindowState(saved); err != nil {
 		t.Fatalf("SaveWindowState: %v", err)
 	}
 
-	w, h := initialDesktopWindowSize()
-	if w != defaultDesktopWindowWidth || h != defaultDesktopWindowHeight {
-		t.Fatalf("maximised saved state = %dx%d, want default %dx%d",
-			w, h, defaultDesktopWindowWidth, defaultDesktopWindowHeight)
+	geometry := initialDesktopWindowGeometry()
+	w, h := geometry.Width, geometry.Height
+	if geometry.Position == nil || geometry.Position.X != saved.X || geometry.Position.Y != saved.Y {
+		t.Fatalf("saved position lost: %+v", geometry.Position)
+	}
+	if w != saved.Width || h != saved.Height {
+		t.Fatalf("maximised saved state = %dx%d, want %dx%d", w, h, saved.Width, saved.Height)
 	}
 }
 
@@ -60,7 +65,11 @@ func TestInitialDesktopWindowSizeFallsBackToDefaults(t *testing.T) {
 	resetLastKnownWindowStateForTest()
 	t.Cleanup(resetLastKnownWindowStateForTest)
 
-	w, h := initialDesktopWindowSize()
+	geometry := initialDesktopWindowGeometry()
+	w, h := geometry.Width, geometry.Height
+	if geometry.Position != nil {
+		t.Fatal("missing state must request centering")
+	}
 	if w != defaultDesktopWindowWidth || h != defaultDesktopWindowHeight {
 		t.Fatalf("no saved state = %dx%d, want default %dx%d",
 			w, h, defaultDesktopWindowWidth, defaultDesktopWindowHeight)
