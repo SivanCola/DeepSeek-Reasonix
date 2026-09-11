@@ -9,7 +9,7 @@ import { ElectronGuestViewFactory } from "./browser/electronGuestViews.js";
 import { GrantRegistry } from "./browser/grants.js";
 import { buildBrowserHostCalls } from "./browser/hostCalls.js";
 import { browserLayoutInDIP } from "./browser/layout.js";
-import { BrowserSurfaceManager } from "./browser/surfaceManager.js";
+import { BrowserSurfaceManager, type BrowserTab } from "./browser/surfaceManager.js";
 import { loadBuildIdentity } from "./buildIdentity.js";
 import { emptyContract, loadContract, type LoadedContract } from "./contract.js";
 import { DialogHost } from "./dialogs.js";
@@ -102,7 +102,11 @@ function bootstrap(dataHome: string): void {
 
   let domReadyGeneration = "";
 
-  const mainWindow = new MainWindow({
+  let mainWindow: MainWindow;
+  let browser: BrowserSurfaceManager;
+  let lifecycle: QuitSequencer;
+  let guestViews: ElectronGuestViewFactory;
+  mainWindow = new MainWindow({
     isQuitting: () => lifecycle.isQuitting,
     preloadPath: join(__dirname, "preload.cjs"),
     appURL,
@@ -148,14 +152,14 @@ function bootstrap(dataHome: string): void {
 
   const downloads = new DownloadTracker({
     tabForWebContents: (id) => {
-      const tab = browser.all().find((entry) => entry.view.page.id === id);
+      const tab = browser.all().find((entry: BrowserTab) => entry.view.page.id === id);
       return tab ? { id: tab.id, taskId: tab.taskId } : undefined;
     },
     defaultDirectory: (taskId) => join(app.getPath("userData"), "downloads", safeDirName(taskId)),
     onUpdate: (download) => mainWindow.send(IPC.browserDownload, download),
     log,
   });
-  const guestViews = new ElectronGuestViewFactory({
+  guestViews = new ElectronGuestViewFactory({
     window: () => mainWindow.browserWindow,
     preloadPath: join(__dirname, "guest-preload.cjs"),
     log,
@@ -163,7 +167,7 @@ function bootstrap(dataHome: string): void {
       guestSession.on("will-download", (_event, item, contents) => downloads.handleWillDownload(item, contents.id));
     },
   });
-  const browser = new BrowserSurfaceManager({
+  browser = new BrowserSurfaceManager({
     views: guestViews,
     contentSize: () => mainWindow.contentSize(),
     onTakeover: (tab, reason) => void service.hostEvent("browser.takeover", { tabId: tab.id, epoch: tab.epoch, reason }),
@@ -193,7 +197,7 @@ function bootstrap(dataHome: string): void {
   });
   const dialogs = new DialogHost(dialog, () => mainWindow.browserWindow ?? undefined);
 
-  const lifecycle = new QuitSequencer({
+  lifecycle = new QuitSequencer({
     service: {
       beforeClose: async (reason) => record(await service.request("desktop/beforeClose", { reason })).prevent === true,
       shutdown: () => service.shutdown(),
