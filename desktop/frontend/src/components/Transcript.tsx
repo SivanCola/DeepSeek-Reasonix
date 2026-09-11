@@ -82,7 +82,7 @@ export type TranscriptProps = {
   tabId?: string;
   geometrySessionKey?: string;
   footerHeight?: number;
-  onPrompt: (text: string) => void;
+  onPrompt: (displayText: string, submitText?: string) => void;
   onDeliveryContinue?: () => void;
   onAcceptDelivery?: () => void;
   onOpenChanges?: (summary?: WireCompletionSummary) => void;

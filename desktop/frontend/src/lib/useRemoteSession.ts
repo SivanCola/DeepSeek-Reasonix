@@ -43,7 +43,7 @@ export interface RemoteSessionApi {
   /** Changes whenever the tab adopts a new/reconnected Serve session snapshot. */
   surfaceGeneration: number;
   promptError: string;
-  submit: (text: string) => Promise<void>;
+  submit: (text: string, displayText?: string) => Promise<void>;
   runManagementCommand: (text: string, rehydrate?: boolean) => Promise<void>;
   compact: (instructions: string) => Promise<void>;
   cancelTurn: () => Promise<void>;
@@ -543,7 +543,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     };
   }, [tabId, hydrated, state, transcript.running, runtimeState.known]);
 
-  const submit = useCallback(async (text: string) => {
+  const submit = useCallback(async (text: string, displayText = text) => {
     if (!tabId) return;
     const trimmed = text.trim();
     if (!trimmed) return;
@@ -553,7 +553,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     activityRevisionRef.current += 1;
     runtimeAtActivityRef.current = runtimeState.state;
     pendingTurnRef.current = { previousTurnId: runtimeState.state?.turnId };
-    setTranscript((s) => reducer(s, { type: "user", text: trimmed, seq: s.seq, submissionId }));
+    setTranscript((s) => reducer(s, { type: "user", text: displayText.trim(), seq: s.seq, submissionId }));
     try {
       if (app.SubmitRemoteTabWithSubmission) await app.SubmitRemoteTabWithSubmission(tabId, trimmed, submissionId);
       else await app.SubmitRemoteTab(tabId, trimmed);

@@ -82,7 +82,7 @@ export function RemoteSessionSurface({ tab, session, surfaceCommitToken, onSurfa
         contentRevision={session.transcript.historyLayoutRevision}
         historyMutation={session.transcript.historyMutation}
         checkpoints={session.transcript.checkpoints}
-        onPrompt={(prompt) => runAction(() => session.submit(prompt))}
+        onPrompt={(display, submit = display) => runAction(() => session.submit(submit, display))}
         onRewind={(turn, scope) => runAction(() => session.rewind(turn, scope))}
         rewindDisabled={session.running || !ready}
       />}

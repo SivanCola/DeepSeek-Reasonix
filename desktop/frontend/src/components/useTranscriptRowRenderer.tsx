@@ -50,7 +50,7 @@ export function useTranscriptRowRenderer({
   lastTurn: number | undefined;
   onFoldToggle: (segmentKey: string, open: boolean) => void;
   onReasoningManualOpen: (segmentKey: string) => void;
-  onPrompt: (text: string) => void;
+  onPrompt: (displayText: string, submitText?: string) => void;
   onDeliveryContinue?: () => void;
   onAcceptDelivery?: () => void;
   onOpenChanges?: (summary?: WireCompletionSummary) => void;
@@ -104,7 +104,7 @@ export function useTranscriptRowRenderer({
         const action = row.item.action === "continue_delivery"
           ? (onDeliveryContinue ?? (() => onPrompt(t("notice.deliveryIncompleteContinuePrompt"))))
           : row.item.action === "recover_context" && row.item.recoveryId
-            ? () => onPrompt(`/recover-context ${row.item.recoveryId}`)
+            ? () => onPrompt(t("notice.protocolRecoveryAction"), `/recover-context ${row.item.recoveryId}`)
           : row.item.action === "open_changes" && onOpenChanges ? () => onOpenChanges(row.item.completionSummary) : undefined;
         return <NoticeCard
           item={row.item} actionDisabled={running && row.item.action !== "open_changes"} onAction={action}
