@@ -215,14 +215,16 @@ func TestRestoreWindowGeometryMaximisedFollowsPlatformOrdering(t *testing.T) {
 	app, host := newRecordingHostApp(t)
 	host.screens = []nativeScreen{{Width: 1920, Height: 1080}}
 	app.restoreWindowGeometry()
+	// A maximised entry's origin is untrusted (legacy shells persisted the
+	// maximized frame), so the window is centered rather than positioned.
 	if goruntime.GOOS == "windows" {
-		assertHostCalls(t, host, "Screens", "SetWindowPosition(40,50)")
+		assertHostCalls(t, host, "CenterWindow")
 		if !app.backgroundMaximised.Load() {
 			t.Fatal("Windows must defer maximise to the presentation plan")
 		}
 		return
 	}
-	assertHostCalls(t, host, "Screens", "SetWindowPosition(40,50)", "MaximiseWindow")
+	assertHostCalls(t, host, "CenterWindow", "MaximiseWindow")
 }
 
 func TestDOMReadyRestoresGeometryBeforePresenting(t *testing.T) {

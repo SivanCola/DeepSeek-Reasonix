@@ -18,10 +18,13 @@ func desktopWindowFrameless(goos string) bool {
 }
 
 // initialDesktopWindowSize returns the startup size for the main window,
-// restoring the saved geometry when present.
+// restoring the saved geometry when present. A maximised entry's size is never
+// trusted: shells used to persist the maximized frame (which overflows the
+// work area) as the restore rectangle, and that corrupt restore rect can only
+// heal by falling back to the default size.
 func initialDesktopWindowSize() (int, int) {
 	width, height := defaultDesktopWindowWidth, defaultDesktopWindowHeight
-	if saved, ok := loadWindowState(); ok {
+	if saved, ok := loadWindowState(); ok && !saved.Maximised {
 		if saved.Width > 0 {
 			width = saved.Width
 		}

@@ -35,6 +35,26 @@ func TestInitialDesktopWindowSizeRestoresSavedGeometry(t *testing.T) {
 	}
 }
 
+func TestInitialDesktopWindowSizeIgnoresMaximisedGeometry(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	resetLastKnownWindowStateForTest()
+	t.Cleanup(resetLastKnownWindowStateForTest)
+
+	app := NewApp()
+	// Legacy shells persisted the maximized frame (wider than the work area)
+	// as the restore rectangle; the saved size must not be trusted.
+	saved := DesktopWindowState{Width: 1722, Height: 1034, X: -7, Y: -7, Maximised: true}
+	if err := app.SaveWindowState(saved); err != nil {
+		t.Fatalf("SaveWindowState: %v", err)
+	}
+
+	w, h := initialDesktopWindowSize()
+	if w != defaultDesktopWindowWidth || h != defaultDesktopWindowHeight {
+		t.Fatalf("maximised saved state = %dx%d, want default %dx%d",
+			w, h, defaultDesktopWindowWidth, defaultDesktopWindowHeight)
+	}
+}
+
 func TestInitialDesktopWindowSizeFallsBackToDefaults(t *testing.T) {
 	isolateDesktopUserDirs(t)
 	resetLastKnownWindowStateForTest()

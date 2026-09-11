@@ -7,7 +7,7 @@ import goruntime "runtime"
 func (a *App) restoreWindowGeometry() {
 	host := a.nativeHost()
 	state, ok := loadWindowState()
-	if ok {
+	if ok && !state.Maximised {
 		// The host screen list carries sizes but no per-screen origin, so only a
 		// basic sanity check is possible. Windows border insets (commonly x=-8,
 		// y=-8) are legal; off-screen positions (unplugged display) re-center.
@@ -29,6 +29,10 @@ func (a *App) restoreWindowGeometry() {
 			host.CenterWindow(a.ctx)
 		}
 	} else {
+		// A maximised entry's origin is as untrusted as its size: legacy shells
+		// persisted the maximized frame (x/y included) in place of the restore
+		// rectangle. Center the default-sized window so the restore rect is
+		// always a sane on-screen geometry before maximise applies.
 		host.CenterWindow(a.ctx)
 	}
 

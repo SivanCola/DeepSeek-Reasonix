@@ -6,6 +6,7 @@ import type { HelloWindow } from "./handshake.js";
 import { errorText, type Logger } from "./log.js";
 import { APP_ORIGIN } from "./protocol.js";
 import { AppZoomStore } from "./zoomStore.js";
+import { persistedWindowRect } from "./windowBounds.js";
 
 export const DEFAULT_GEOMETRY: HelloWindow = { width: 1280, height: 820, minWidth: 760, minHeight: 480, frameless: false, zoomFactor: 1 };
 
@@ -252,9 +253,8 @@ export class MainWindow {
   bounds(): WindowBounds {
     const win = this.browserWindow;
     if (!win) return { x: 0, y: 0, width: 0, height: 0, maximised: false };
-    const [x, y] = win.getPosition();
-    const [width, height] = win.getSize();
-    return { x, y, width, height, maximised: win.isMaximized() };
+    const rect = persistedWindowRect(win);
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, maximised: win.isMaximized() };
   }
 
   setTheme(theme: WindowTheme): void {
