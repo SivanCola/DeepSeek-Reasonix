@@ -2595,6 +2595,8 @@ export const zh: Record<DictKey, string> = {
   "settings.modelDialog.outputLimit": "输出上限（Token）",
   "settings.modelDialog.outputHint": "留空继承；-1 不发送可选输出限制，仍受模型实际限制。",
   "settings.modelDialog.reasoningEffort": "思考强度",
+  "settings.modelDialog.reasoningEffortOptions": "可用思考档位",
+  "settings.modelDialog.reasoningEffortDefault": "默认思考档位",
   "settings.modelDialog.resetReasoningEffort": "恢复自动思考强度",
   "settings.modelDialog.automatic": "自动",
   "settings.modelDialog.reasoningEffortHint": "自动继承服务商默认值。更高档位可能消耗更多时间和 token。",
