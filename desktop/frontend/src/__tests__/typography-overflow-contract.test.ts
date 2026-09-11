@@ -85,6 +85,9 @@ eq(finalDeclaration(".turn-collapse__inline-reasoning", "overflow-wrap"), "anywh
 for (const selector of [".md pre", ".md pre code", ".md table", ".md .katex"]) {
   eq(finalDeclaration(selector, "overflow-wrap"), "normal", selector + " retains its own wrapping contract");
 }
+eq(finalDeclaration(".tool__command .code", "white-space"), "pre-wrap", "only complete commands opt into code wrapping");
+eq(finalDeclaration(".tool__command .code", "overflow-wrap"), "anywhere", "commands wrap continuous tokens");
+eq(finalDeclaration(".tool__command .code", "max-height"), "240px", "command loading and loaded views share the height cap");
 
 eq(
   JSON.stringify(TEXT_SIZES),

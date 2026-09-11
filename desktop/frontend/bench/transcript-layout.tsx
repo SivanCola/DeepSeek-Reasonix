@@ -18,12 +18,15 @@ type Options = {
   turns: number;
   text: string | null;
   streaming: boolean;
+  shell: boolean;
 };
 declare global {
   interface Window {
     transcriptLayoutFixture: {
       configure: (next: Partial<Options>) => void;
       revision: number;
+      copied: string[];
+      command: string;
     };
   }
 }
@@ -37,6 +40,11 @@ installDesktopHostStub({
   ToolResultForTab: async () => null,
 });
 const noAction = () => {};
+const copied: string[] = [];
+const command = "printf '%s\\n' \"C:\\中文\\file.txt\"\r\n  echo " + "long-command-".repeat(120) + "END_OF_COMMAND";
+Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+  writeText: async (text: string) => { copied.push(text); },
+} });
 const commands = {
   onPrompt: noAction, onDeliveryContinue: undefined, onAcceptDelivery: undefined,
   onOpenChanges: undefined, onOpenVerification: undefined, onEditPrompt: undefined,
@@ -45,13 +53,16 @@ const commands = {
 function Fixture() {
   const t = useT();
   const [options, setOptions] = useState<Options>({
-    layout: "creation", width: "full", sidebar: true, dock: false, launcher: false, long: true, turns: 2, text: null, streaming: false,
+    layout: "creation", width: "full", sidebar: true, dock: false, launcher: false, long: true, turns: 2, text: null, streaming: false, shell: false,
   });
   const [revision, setRevision] = useState(0);
   const items = useMemo(() => Array.from({ length: options.turns }, (_, index): Item[] => [
     { kind: "user", id: "user-" + index, text: "USER MESSAGE MUST REMAIN VISIBLE " + index },
-    { kind: "assistant", id: "answer-" + index, text: options.text ?? ("\`\`\`text\n" + (options.long ? "abcdefghij".repeat(60) : "short") + "\n\`\`\`"), reasoning: "", streaming: options.streaming },
-  ]).flat(), [options.long, options.turns, options.text, options.streaming]);
+    options.shell
+      ? { kind: "tool", id: "tool-" + index, name: "bash", status: "done", readOnly: false,
+        args: JSON.stringify({ command }), output: "OUTPUT_STAYS_VISIBLE\n" + "abcdefghij".repeat(60) }
+      : { kind: "assistant", id: "answer-" + index, text: options.text ?? ("\`\`\`text\n" + (options.long && (options.turns < 100 || index === 10) ? "abcdefghij".repeat(60) : "short") + "\n\`\`\`"), reasoning: "", streaming: options.streaming },
+  ]).flat(), [options.long, options.turns, options.text, options.streaming, options.shell]);
   useLayoutEffect(() => {
     document.documentElement.dataset.themeStyle = "graphite";
     document.documentElement.dataset.theme = "light";
@@ -60,6 +71,8 @@ function Fixture() {
     window.transcriptLayoutFixture = {
       configure: next => { setOptions(current => ({ ...current, ...next })); setRevision(value => value + 1); },
       revision,
+      copied,
+      command,
     };
   }, [options.width, revision]);
   const transcript: ChatPaneTranscriptInput = {

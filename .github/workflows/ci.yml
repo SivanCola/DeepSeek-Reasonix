@@ -826,6 +826,21 @@ jobs:
         timeout-minutes: 2
         run: node electron/scripts/window-geometry-smoke.mjs
 
+      - name: Test transcript content bounds in native Electron
+        timeout-minutes: 5
+        env:
+          REASONIX_LAYOUT_ARTIFACTS: ${{ runner.temp }}/transcript-layout-electron
+        run: pnpm --dir frontend test:transcript-electron
+
+      - name: Upload native transcript layout evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: transcript-layout-electron-windows
+          if-no-files-found: ignore
+          retention-days: 7
+          path: ${{ runner.temp }}/transcript-layout-electron
+
       - name: Test bounded Electron diagnostics
         timeout-minutes: 3
         run: node electron/scripts/performance-smoke.mjs

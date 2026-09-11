@@ -4936,6 +4936,35 @@ button.reasoning-summary:focus-visible {
   font-size: var(--text-sm);
   line-height: 1.4;
 }
+
+.tool__command {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.tool__command-label,
+.tool__data-status {
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+}
+.tool__data-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Commands opt into wrapping; output and ordinary code preserve their lines.
+   This also covers CodeViewer's plain loading fallback. */
+.tool__command .code,
+.tool__command .code code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.tool__command .code {
+  max-height: 240px;
+}
 .tool__search-query {
   color: var(--fg);
   overflow-wrap: anywhere;
