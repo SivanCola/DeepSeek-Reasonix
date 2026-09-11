@@ -5,30 +5,25 @@ import { installDesktopHostStub } from "./desktopHostStub";
 const events = new Map<string, () => void>();
 let focused = true;
 let starts = 0;
-let stops = 0;
-const staleCallbacks: (() => void)[] = [];
+let cancellations = 0;
 Object.assign(globalThis, {
   window: { addEventListener: (name: string, cb: () => void) => events.set(name, cb), setInterval: () => 1 },
   document: { visibilityState: "visible", hasFocus: () => focused, addEventListener: (name: string, cb: () => void) => events.set(name, cb) },
   Profiler: class {
     constructor() { starts++; }
-    async stop() { stops++; return {}; }
-    addEventListener(_name: string, cb: () => void) { staleCallbacks.push(cb); }
   },
 });
-installDesktopHostStub({});
+installDesktopHostStub({}, { performance: { cancelRendererProfile: async () => { cancellations++; } } });
 installPerformancePressureMonitor();
-assert.equal(starts, 1);
+assert.equal(starts, 0, "lightweight monitoring never starts a JS profiler");
 focused = false;
 events.get("blur")!();
-assert.equal(stops, 1);
-staleCallbacks[0]();
-assert.equal(starts, 1, "stale full-buffer callback cannot restart a paused sampler");
+assert.equal(cancellations, 1);
 focused = true;
 events.get("focus")!();
 events.get("focus")!();
-assert.equal(starts, 2, "focus resumes exactly one profiler");
+assert.equal(starts, 0, "refocusing does not start a profiler");
 Object.assign(document, { visibilityState: "hidden" });
 events.get("visibilitychange")!();
-assert.equal(stops, 2);
+assert.equal(cancellations, 2);
 console.log("profiler lifecycle tests passed");

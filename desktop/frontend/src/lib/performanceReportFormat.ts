@@ -46,14 +46,21 @@ export function formatPerformanceContext(snapshot: PerformanceSnapshot): string 
     lines.push("long task top frames (sampled):");
     for (const frame of snapshot.longTaskFrames) lines.push(`  ${frame.samples}x ${frame.label}`);
   }
-  if (snapshot.profilerStatus) lines.push(`JS profiler: ${snapshot.profilerStatus}`);
+  if (snapshot.cpuProfile) {
+    const profile = snapshot.cpuProfile;
+    lines.push(`CPU profile after trigger: ${profile.status}${profile.durationMs === undefined ? "" : `, ${fmtNumber(profile.durationMs)}ms`}; does not reconstruct the original long task`);
+    for (const frame of profile.frames ?? []) lines.push(`  ${fmtNumber(frame.selfMs, 1)}ms / ${frame.samples} samples: ${frame.label}`);
+  }
   if (snapshot.processes) {
     lines.push("process samples: Electron only (Go service excluded); working sets may share pages; CPU is interval average");
     const samples = snapshot.processes.samples;
     for (const sample of samples) {
       const total = sample.processes.every((p) => p.workingSetMb !== null)
         ? fmtMb(sample.processes.reduce((sum, p) => sum + (p.workingSetMb ?? 0), 0)) : "unavailable";
-      lines.push(`  ${fmtNumber(sample.ageMs)}ms ago: ${sample.processes.length} processes, summed working set ${total}`);
+      lines.push(`  ${fmtNumber(sample.ageMs)}ms ago: ${sample.processes.length} processes${sample.truncated ? " (truncated)" : ""}, summed working set ${total}`);
+    }
+    for (const growth of snapshot.processes.growth ?? []) {
+      lines.push(`sustained memory growth (not proof of a leak): PID ${growth.pid} ${growth.type}, ${growth.metric} ${fmtMb(growth.baselineMb)} → ${fmtMb(growth.currentMb)} over ${fmtNumber(growth.durationMs / 1000)}s`);
     }
     const latest = samples[samples.length - 1];
     if (latest) {

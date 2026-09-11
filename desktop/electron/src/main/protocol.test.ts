@@ -15,7 +15,7 @@ const isFile = (path: string) => {
 };
 const route = (url: string) => routeAppRequest(url, dist, isFile);
 
-test("trusted app HTML enables self profiling", async () => {
+test("normal app documents do not pre-enable a profiling engine", async () => {
   let handler!: (request: Request) => Promise<Response> | Response;
   registerAppProtocol({
     protocol: { handle: (_scheme, callback) => { handler = callback; } },
@@ -23,7 +23,7 @@ test("trusted app HTML enables self profiling", async () => {
     log: { info() {}, warn() {}, error() {} },
   });
   const response = await handler(new Request("reasonix://app/"));
-  assert.equal(response.headers.get("Document-Policy"), "js-profiling");
+  assert.equal(response.headers.get("Document-Policy"), null);
   await response.text();
 });
 

@@ -6,7 +6,7 @@ import { writeClipboardText } from "./clipboard";
 import { desktopHost } from "./desktopHost";
 import { fmtNumber, formatPerformanceContext } from "./performanceReportFormat";
 export { formatPerformanceContext } from "./performanceReportFormat";
-import { boundedDiagnostics, type ProcessDiagnosticsSnapshot } from "./processDiagnostics";
+import { boundedDiagnostics, type ProcessDiagnosticsSnapshot, type RendererProfileResult } from "./processDiagnostics";
 import { t } from "./i18n";
 import { sessionPipelineDiagnostics, type SessionPipelineDiagnostics } from "./sessionDiagnostics";
 declare const __BUILD_COMMIT__: string;
@@ -41,7 +41,7 @@ export type PerformanceSnapshot = {
     recent: { startMs: number; durationMs: number; attribution?: string }[];
   };
   longTaskFrames?: { label: string; samples: number }[];
-  profilerStatus?: "active" | "unavailable";
+  cpuProfile?: RendererProfileResult;
   processes?: ProcessDiagnosticsSnapshot;
   connection?: {
     effectiveType?: string;
@@ -91,21 +91,6 @@ type LongTaskSample = {
   attribution?: string;
 };
 
-// WICG JS Self-Profiling API (https://wicg.github.io/js-self-profiling/), available
-// in Chromium WebViews when the document is served with `Document-Policy: js-profiling`.
-export type ProfilerTrace = {
-  resources?: string[];
-  frames?: { name?: string; resourceId?: number; line?: number; column?: number }[];
-  stacks?: { frameId: number; parentId?: number }[];
-  samples?: { timestamp: number; stackId?: number }[];
-};
-
-type ProfilerLike = {
-  stop(): Promise<ProfilerTrace>;
-  addEventListener?: (type: string, listener: () => void) => void;
-};
-
-type ProfilerConstructor = new (options: { sampleInterval: number; maxBufferSize: number }) => ProfilerLike;
 
 type BrowserPerformanceMemory = {
   usedJSHeapSize?: number;
@@ -139,53 +124,9 @@ const longTasks: LongTaskSample[] = [];
 const lagSamples: number[] = [];
 let performanceMonitorInstalled = false;
 let lastPerformancePromptAt = 0;
+let heapSnapshotInProgress = false;
+let diagnosticQuietUntil = 0;
 
-// Rolling self-profiling sampler (Chromium WebViews only; requires the asset server
-// to send `Document-Policy: js-profiling`, see jsProfilingMiddleware on the Go side).
-// ~10ms native sampling; the buffer covers the same 60s window as longTasks.
-const PROFILER_SAMPLE_INTERVAL_MS = 10;
-const PROFILER_MAX_BUFFER_SAMPLES = LONG_TASK_WINDOW_MS / PROFILER_SAMPLE_INTERVAL_MS;
-let activeProfiler: ProfilerLike | null = null;
-
-function startLongTaskProfiler(): void {
-  if (activeProfiler) return;
-  if (typeof document !== "undefined" && (document.visibilityState === "hidden" || document.hasFocus?.() === false)) return;
-  const ProfilerCtor = (globalThis as { Profiler?: ProfilerConstructor }).Profiler;
-  if (!ProfilerCtor) return;
-  try {
-    const profiler = new ProfilerCtor({
-      sampleInterval: PROFILER_SAMPLE_INTERVAL_MS,
-      maxBufferSize: PROFILER_MAX_BUFFER_SAMPLES,
-    });
-    // A full buffer stops sampling silently; drop the stale trace and roll over.
-    profiler.addEventListener?.("samplebufferfull", () => {
-      if (activeProfiler !== profiler) return;
-      activeProfiler = null;
-      void profiler.stop().catch(() => {});
-      startLongTaskProfiler();
-    });
-    activeProfiler = profiler;
-  } catch {
-    // Document policy missing or the API is disabled in this WebView.
-    activeProfiler = null;
-  }
-}
-
-async function collectLongTaskFrames(
-  windows: { startMs: number; durationMs: number }[],
-): Promise<{ label: string; samples: number }[]> {
-  const profiler = activeProfiler;
-  if (!profiler) return [];
-  activeProfiler = null;
-  try {
-    const trace = await profiler.stop();
-    return aggregateLongTaskProfile(trace, windows);
-  } catch {
-    return [];
-  } finally {
-    startLongTaskProfiler();
-  }
-}
 
 const PERF_REPORTED_STORAGE_KEY = "reasonix:perf-reported";
 
@@ -393,6 +334,7 @@ export function performanceLabelForReason(reason: string): string {
   if (normalized.startsWith("event loop lag")) return "performance.lag";
   if (normalized.startsWith("long task")) return "performance.longtask";
   if (normalized.startsWith("js heap")) return "performance.heap";
+  if (normalized.startsWith("process memory")) return "performance.memory";
   return "performance.pressure";
 }
 
@@ -460,41 +402,6 @@ export function formatLongTaskAttribution(entryName?: string, attribution?: Task
   return parts.join(" ");
 }
 
-// Self-time view of a self-profiling trace: count each sample that landed inside a
-// long-task window against its leaf frame, so the report names the code that was
-// actually on-CPU while the UI was blocked.
-export function aggregateLongTaskProfile(
-  trace: ProfilerTrace,
-  windows: { startMs: number; durationMs: number }[],
-  maxFrames = 8,
-): { label: string; samples: number }[] {
-  if (!windows.length) return [];
-  const counts = new Map<number, number>();
-  for (const sample of trace.samples ?? []) {
-    if (sample.stackId === undefined) continue;
-    const inWindow = windows.some(
-      (w) => sample.timestamp >= w.startMs && sample.timestamp <= w.startMs + w.durationMs,
-    );
-    if (!inWindow) continue;
-    const stack = trace.stacks?.[sample.stackId];
-    if (!stack) continue;
-    counts.set(stack.frameId, (counts.get(stack.frameId) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, maxFrames)
-    .map(([frameId, samples]) => ({ label: formatProfilerFrame(trace, frameId), samples }));
-}
-
-function formatProfilerFrame(trace: ProfilerTrace, frameId: number): string {
-  const frame = trace.frames?.[frameId];
-  if (!frame) return `frame#${frameId}`;
-  const name = frame.name || "(anonymous)";
-  const resource = frame.resourceId !== undefined ? trace.resources?.[frame.resourceId] : undefined;
-  if (!resource) return name;
-  const line = frame.line !== undefined ? `:${frame.line}${frame.column !== undefined ? `:${frame.column}` : ""}` : "";
-  return `${name} (${resource}${line})`;
-}
 
 export function shouldRecordEventLoopLagSample(
   visibilityHidden: boolean,
@@ -512,7 +419,9 @@ export function buildPerformancePayload(snapshot: PerformanceSnapshot): CrashPay
   const context = formatPerformanceContext(snapshot);
   const crumbs = dumpBreadcrumbs();
   const label = performanceLabelForReason(snapshot.reason);
-  const errorMessage = "UI responsiveness degraded because the app observed long tasks, event-loop lag, or high JS heap pressure.";
+  const errorMessage = label === "performance.memory"
+    ? "App process memory remained elevated across multiple samples; this does not establish a leak."
+    : "UI responsiveness degraded because the app observed long tasks, event-loop lag, or high JS heap pressure.";
   return {
     schemaVersion: 2,
     source: "frontend.performance",
@@ -581,7 +490,7 @@ export function opaqueScriptFingerprintHint(
 }
 
 function sendButton(
-  payload: CrashPayload,
+  payload: CrashPayload | (() => CrashPayload),
   className = "crash-overlay__send",
   onSent?: () => void,
 ): HTMLButtonElement | null {
@@ -596,7 +505,8 @@ function sendButton(
     send.disabled = true;
     send.textContent = t("crash.sending");
     try {
-      await report(payload.kind, JSON.stringify(payload));
+      const current = typeof payload === "function" ? payload() : payload;
+      await report(current.kind, JSON.stringify(current));
       send.textContent = t("crash.sent");
       onSent?.();
     } catch (err) {
@@ -610,7 +520,7 @@ function sendButton(
 
 const COPY_FEEDBACK_MS = 2_000;
 
-function copyButton(text: string, className: string): HTMLButtonElement {
+function copyButton(text: string | (() => string), className: string): HTMLButtonElement {
   const copy = document.createElement("button");
   copy.className = className;
   copy.textContent = t("crash.copy");
@@ -622,7 +532,7 @@ function copyButton(text: string, className: string): HTMLButtonElement {
     // exactly the #6388 unresponsive symptom. Catch so a rejection can't escape as
     // an unhandledrejection into the global crash handler either.
     try {
-      copied = await writeClipboardText(text);
+      copied = await writeClipboardText(typeof text === "function" ? text() : text);
     } catch {
       copied = false;
     } finally {
@@ -636,8 +546,11 @@ function copyButton(text: string, className: string): HTMLButtonElement {
   return copy;
 }
 
+let performancePromptGeneration = 0;
 function paintPerformancePrompt(payload: CrashPayload, snapshot: PerformanceSnapshot) {
   if (typeof document === "undefined") return;
+  const generation = ++performancePromptGeneration;
+  let currentPayload = payload;
   let host = document.getElementById("performance-report-prompt");
   if (!host) {
     host = document.createElement("div");
@@ -646,27 +559,54 @@ function paintPerformancePrompt(payload: CrashPayload, snapshot: PerformanceSnap
   }
   const title = document.createElement("div");
   title.className = "performance-report__title";
-  title.textContent = t("performanceReport.title");
+  title.textContent = t(payload.label === "performance.memory" ? "performanceReport.memoryTitle" : "performanceReport.title");
   const body = document.createElement("pre");
   body.className = "performance-report__body";
   body.textContent = formatPerformanceContext(snapshot);
   const actions = document.createElement("div");
   actions.className = "performance-report__actions";
-  const send = sendButton(payload, "performance-report__send", () => markPerfReported(payload.label));
-  const copy = copyButton(payload.message, "performance-report__copy");
+  const send = sendButton(() => currentPayload, "performance-report__send", () => markPerfReported(payload.label));
+  const copy = copyButton(() => currentPayload.message, "performance-report__copy");
   const dismiss = document.createElement("button");
   dismiss.className = "performance-report__dismiss";
   dismiss.textContent = t("performanceReport.dismiss");
   dismiss.onclick = () => {
     dismissedPerfLabels.add(payload.label);
+    performancePromptGeneration++;
+    void desktopHost().native.cancelRendererProfile?.().catch(() => {});
     host?.remove();
   };
   if (send) actions.append(send);
   actions.append(copy, dismiss);
+  const exportHeap = desktopHost().native.exportHeapSnapshot;
+  if (exportHeap) {
+    const heap = document.createElement("button");
+    heap.className = "performance-report__copy";
+    heap.textContent = t("performanceReport.saveHeap");
+    heap.onclick = async () => {
+      heap.disabled = true;
+      heapSnapshotInProgress = true;
+      try {
+        const result = await exportHeap();
+        heap.textContent = result.status === "saved" ? t("performanceReport.heapSaved") : result.status === "busy" ? t("performanceReport.diagnosticBusy") : result.status === "failed" ? t("performanceReport.heapFailed") : t("performanceReport.saveHeap");
+      } catch { heap.textContent = t("performanceReport.heapFailed"); }
+      finally {
+        heap.disabled = false;
+        heapSnapshotInProgress = false;
+        diagnosticQuietUntil = performance.now() + VISIBILITY_RESUME_GRACE_MS;
+      }
+    };
+    actions.append(heap);
+  }
   const note = document.createElement("div");
   note.className = "performance-report__note";
   note.textContent = t("performanceReport.privacyNote");
   host.replaceChildren(title, body, actions, note);
+  return () => {
+    if (generation !== performancePromptGeneration || !host?.isConnected) return;
+    currentPayload = buildPerformancePayload(snapshot);
+    body.textContent = formatPerformanceContext(snapshot);
+  };
 }
 
 export function paintCrashOverlay(payload: CrashPayload) {
@@ -782,33 +722,33 @@ function shouldPromptForPerformance(now: number, label: string): boolean {
   return shouldPromptForPerformanceLabel(isPerfLabelHandled(label), now - lastPerformancePromptAt, hidden, focused);
 }
 
-function promptPerformanceReport(reason: string, currentLagMs = 0): void {
+function promptPerformanceReport(reason: string, currentLagMs = 0, processes?: ProcessDiagnosticsSnapshot): void {
+  if (heapSnapshotInProgress || performance.now() < diagnosticQuietUntil) return;
   const now = Date.now();
   const label = performanceLabelForReason(reason);
   if (!shouldPromptForPerformance(now, label)) return;
   lastPerformancePromptAt = now;
   addBreadcrumb("performance", reason);
   const snapshot = performanceSnapshot(reason, currentLagMs);
-  snapshot.profilerStatus = activeProfiler ? "active" : "unavailable";
-  if (!activeProfiler && !desktopHost().native.processDiagnostics) {
-    paintPerformancePrompt(buildPerformancePayload(snapshot), snapshot);
-    return;
+  snapshot.processes = processes;
+  const native = desktopHost().native;
+  const capture = label === "performance.longtask" || label === "performance.lag";
+  if (capture) snapshot.cpuProfile = { status: native.captureRendererProfile ? "recording" : "unavailable" };
+  // Show the original evidence immediately. Slow diagnostics only enrich this
+  // same prompt; they cannot recreate a dismissed/replaced report.
+  const update = paintPerformancePrompt(buildPerformancePayload(snapshot), snapshot);
+  if (!processes && native.processDiagnostics) {
+    void boundedDiagnostics(() => native.processDiagnostics!()).then((sample) => {
+      if (sample) { snapshot.processes = sample; update?.(); }
+    });
   }
-  // Attribute samples to the blocked spans: every recorded long task, plus the lag
-  // spike itself for event-loop reports (profiler timestamps share performance.now()'s origin).
-  const windows = [...longTasks];
-  if (currentLagMs > 0) {
-    const nowMs = performance.now();
-    windows.push({ startMs: Math.max(0, nowMs - currentLagMs), durationMs: currentLagMs });
+  if (capture && native.captureRendererProfile) {
+    void boundedDiagnostics(() => native.captureRendererProfile!(), 12_000).then((result) => {
+      snapshot.cpuProfile = result ?? { status: "failed" };
+      if (!result) void native.cancelRendererProfile?.().catch(() => {});
+      update?.();
+    });
   }
-  void Promise.all([
-    boundedDiagnostics(() => collectLongTaskFrames(windows)),
-    boundedDiagnostics(() => desktopHost().native.processDiagnostics?.() ?? Promise.resolve(null)),
-  ]).then(([frames, processes]) => {
-    if (frames?.length) snapshot.longTaskFrames = frames;
-    if (processes) snapshot.processes = processes;
-    paintPerformancePrompt(buildPerformancePayload(snapshot), snapshot);
-  });
 }
 
 function maybePromptForHeapPressure(): void {
@@ -848,8 +788,6 @@ export function installPerformancePressureMonitor() {
     }
   };
 
-  startLongTaskProfiler();
-
   // Blur/hide park the timestamps at +Infinity so a stale read before the matching
   // resume listener has run can never satisfy the grace windows.
   const resetSamples = () => {
@@ -861,13 +799,7 @@ export function installPerformancePressureMonitor() {
     visibleSince = isHidden() ? Number.POSITIVE_INFINITY : now;
     focusedSince = isFocused() ? now : Number.POSITIVE_INFINITY;
     pendingResume = isHidden() || !isFocused();
-    if (pendingResume) {
-      const profiler = activeProfiler;
-      activeProfiler = null;
-      void profiler?.stop().catch(() => {});
-    } else {
-      startLongTaskProfiler();
-    }
+    if (pendingResume) void desktopHost().native.cancelRendererProfile?.().catch(() => {});
   };
 
   if (typeof document !== "undefined") {
@@ -880,6 +812,7 @@ export function installPerformancePressureMonitor() {
     try {
       const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
+          if (heapSnapshotInProgress || entry.startTime < diagnosticQuietUntil) continue;
           if (!shouldRecordLongTaskSample(entry.startTime, entry.duration, graceUntil, isHidden(), visibleSince, isFocused())) continue;
           const attribution = formatLongTaskAttribution(
             entry.name,
@@ -900,8 +833,17 @@ export function installPerformancePressureMonitor() {
     }
   }
 
+  let processSampleAt = performance.now();
+  let processSamplePending = false;
   window.setInterval(() => {
     const now = performance.now();
+    if (heapSnapshotInProgress || now < diagnosticQuietUntil) {
+      longTasks.length = 0;
+      lagSamples.length = 0;
+      expected = now + 1000;
+      eventLoopLagPrimed = false;
+      return;
+    }
     if (isHidden() || !isFocused()) {
       pendingResume = true;
     } else if (pendingResume) {
@@ -932,5 +874,13 @@ export function installPerformancePressureMonitor() {
       promptPerformanceReport(`event loop lag ${fmtNumber(lagMs)}ms`, lagMs);
     }
     maybePromptForHeapPressure();
+    const readProcesses = desktopHost().native.processDiagnostics;
+    if (readProcesses && !processSamplePending && now - processSampleAt >= 30_000) {
+      processSampleAt = now;
+      processSamplePending = true;
+      void boundedDiagnostics(readProcesses).then((sample) => {
+        if (sample?.growth?.length && !isHidden() && isFocused()) promptPerformanceReport("process memory growth", 0, sample);
+      }).finally(() => { processSamplePending = false; });
+    }
   }, 1000);
 }

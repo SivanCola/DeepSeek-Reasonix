@@ -16,6 +16,7 @@ import { bool, finite, record, str } from "./params.js";
 import { RpcError } from "./rpc.js";
 import type { GraphicsSettingsStore } from "./graphics.js";
 import type { BrowserControlApi } from "./browserControlHost.js";
+import type { PerformanceHost } from "./performanceHost.js";
 
 export interface RendererWindowApi {
   isTrustedSender(sender: IpcMainEvent["sender"], frame: IpcMainEvent["senderFrame"]): boolean;
@@ -54,6 +55,7 @@ export interface RendererIpcDeps {
   invoke(method: string, args: unknown[]): Promise<unknown>;
   serviceState(): ServiceState;
   processDiagnostics?(): unknown;
+  performance?: PerformanceHost;
   clipboard: { writeText(text: string): Promise<void> | void; readText(): Promise<string> | string };
   graphics?: GraphicsSettingsStore;
   browserControl?: BrowserControlApi;
@@ -119,6 +121,9 @@ export function registerRendererIpc(deps: RendererIpcDeps): void {
   });
   handle(IPC.serviceStateGet, () => deps.serviceState());
   handle(IPC.processDiagnostics, () => deps.processDiagnostics?.() ?? null);
+  handle(IPC.captureRendererProfile, () => deps.performance?.captureRendererProfile() ?? { status: "unavailable" });
+  handle(IPC.cancelRendererProfile, () => deps.performance?.cancelRendererProfile());
+  handle(IPC.exportHeapSnapshot, () => deps.performance?.exportHeapSnapshot() ?? { status: "unavailable" });
   handle(IPC.openExternal, (url) => {
     if (!isOpenableExternalURL(url)) throw new Error(`refusing to open ${typeof url === "string" ? url : typeof url}`);
     return deps.openExternal(url);

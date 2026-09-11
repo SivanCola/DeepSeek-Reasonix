@@ -1,57 +1,43 @@
-// Native diagnostic contract smoke; uses a disposable document and no Go service/user data.
+// Real Electron verification of bounded diagnostic capture and report enrichment.
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, statSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { build } from "esbuild";
-import { _electron } from "playwright";
+import { performanceFixture } from "./performance-fixture.mjs";
 
-const root = resolve(import.meta.dirname, "..");
-const temp = mkdtempSync(join(tmpdir(), "reasonix-perf-smoke-"));
-let app;
+const fixture = await performanceFixture();
 try {
-  writeFileSync(join(temp, "index.html"), "<!doctype html><title>Diagnostic smoke</title>");
-  const common = { bundle: true, platform: "node", format: "cjs", external: ["electron"] };
-  await build({ ...common, entryPoints: [join(root, "src/preload/index.ts")], outfile: join(temp, "preload.cjs") });
-  await build({ ...common, stdin: { resolveDir: root, contents: `
-    import { app, BrowserWindow, protocol, ipcMain, net } from 'electron';
-    import { registerAppProtocol } from './src/main/protocol.ts';
-    import { registerRendererIpc } from './src/main/ipc.ts';
-    import { ProcessDiagnostics } from './src/main/processDiagnostics.ts';
-    app.setPath('userData', ${JSON.stringify(join(temp, "profile"))});
-    protocol.registerSchemesAsPrivileged([{scheme:'reasonix', privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
-    app.whenReady().then(async () => {
-      const log = {info(){},warn(){},error(){}};
-      registerAppProtocol({protocol,fetch:net.fetch,distRoot:${JSON.stringify(temp)},resources:()=>null,log});
-      const win = new BrowserWindow({show:false,webPreferences:{preload:${JSON.stringify(join(temp, "preload.cjs"))},sandbox:true,contextIsolation:true,nodeIntegration:false}});
-      const diagnostics = new ProcessDiagnostics(()=>app.getAppMetrics());
-      diagnostics.sample();
-      registerRendererIpc({ipcMain,contract:{protocolVersion:1,digest:'test',commands:[]},
-        window:{isTrustedSender:(sender,frame)=>sender===win.webContents && frame===sender.mainFrame},
-        serviceState:()=>({phase:'ready',generation:'test'}),processDiagnostics:()=>diagnostics.snapshot(),log});
-      await win.loadURL('reasonix://app/index.html');
-    });
-  ` }, outfile: join(temp, "main.cjs") });
-  app = await _electron.launch({ args: [join(temp, "main.cjs")] });
-  const page = await app.firstWindow();
-  await page.waitForFunction(() => Boolean(window.reasonixDesktop));
-  const result = await page.evaluate(async () => {
-    const profiler = new Profiler({ sampleInterval: 10, maxBufferSize: 1000 });
-    const end = performance.now() + 150;
-    while (performance.now() < end) Math.sqrt(Math.random());
-    const trace = await profiler.stop();
-    return {
-      samples: trace.samples.length,
-      policy: (await fetch(location.href)).headers.get('Document-Policy'),
-      processes: await window.reasonixDesktop.native.processDiagnostics(),
-    };
-  });
-  assert.equal(result.policy, "js-profiling");
-  assert.ok(result.samples > 0, "native profiler collected samples");
-  assert.equal(result.processes.scope, "electron");
-  assert.ok(result.processes.samples[0].processes.some((p) => p.type === "Browser" && p.pid > 0));
-  console.log(`PASS native profiler (${result.samples} samples), policy and process IPC`);
-} finally {
-  await app?.close();
-  rmSync(temp, { recursive: true, force: true });
-}
+  const { page, app, temp } = fixture;
+  assert.equal(await page.evaluate(async () => (await fetch(location.href)).headers.get("Document-Policy")), null);
+  const initial = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.debugger.isAttached());
+  assert.equal(initial, false, "ordinary monitoring does not attach a profiler");
+  // Exercise the production startup/visibility grace period before a deliberate
+  // long task in the disposable document.
+  await page.waitForTimeout(16000);
+  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
+  await page.waitForFunction(() => document.hasFocus());
+  await page.locator("#work").click();
+  await page.locator("#performance-report-prompt").waitFor();
+  const copy = page.locator(".performance-report__copy").first();
+  await page.evaluate(() => window.diagnosticFixture.run(5500));
+  try {
+    await page.waitForFunction(() => document.querySelector(".performance-report__body")?.textContent.includes("CPU profile after trigger: captured"), null, { timeout: 12000 });
+  } catch (error) {
+    console.error(await page.evaluate(() => ({ focused: document.hasFocus(), status: document.querySelector(".performance-report__body")?.textContent.match(/CPU profile after trigger:[^\n]*/)?.[0] })));
+    throw error;
+  }
+  const report = await page.locator(".performance-report__body").innerText();
+  assert.match(report, /samples: .*workload\.js/);
+  assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.debugger.isAttached()), false);
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text) => { window.fixtureCopiedText = text; } }, configurable: true }));
+  await copy.click();
+  await page.waitForFunction(() => window.fixtureCopiedText?.includes("CPU profile after trigger: captured"));
+  const result = await page.evaluate(() => window.reasonixDesktop.native.exportHeapSnapshot());
+  assert.equal(result.status, "saved");
+  const heap = join(temp, "fixture.heapsnapshot");
+  assert.ok(statSync(heap).size > 1000);
+  assert.ok(JSON.parse(readFileSync(heap, "utf8")).snapshot);
+  const artifacts = resolve(import.meta.dirname, "../artifacts/performance");
+  mkdirSync(artifacts, { recursive: true });
+  await page.screenshot({ path: join(artifacts, "diagnostic-report.png") });
+  console.log("PASS: no eager profiling; automatic bounded capture; Worker frames; live copy; debugger released; local heap snapshot");
+} finally { await fixture.close(); }

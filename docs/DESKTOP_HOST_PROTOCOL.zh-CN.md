@@ -268,18 +268,41 @@ warning: "invalid-config" | "unreadable-config" | "unsupported-version" | null }
 
 ## 性能诊断补充
 
-可选 preload 调用 `native.processDiagnostics()` 返回 `{scope: "electron", samples}`。
-每个样本包含 `ageMs`、可空的 CPU 测量区间 `intervalMs`，以及进程的 `pid`、
-白名单 `type`、可空的 `cpuPercent`、`workingSetMb`、`privateMb`。
-主进程每 5 秒采样，最多保留最近 60 秒内的 12 条记录。CPU 是区间平均值，首次采样
-没有 CPU 基线。内存从 Electron 的 KiB 转为 MiB，工作集可能包含共享页。
-范围仅包含 Electron 管理的进程，不包含 Go 服务；不采集标题、URL、路径或进程名称。
-调用受可信主框架 IPC 校验保护。旧 shell 可缺少该接口；报告补充最多等待 750ms，
-失败不阻止卡顿提示。不涉及持久化用户数据格式变更或迁移。
+以下可选 native 接口仅允许可信应用主框架调用。旧 shell 可缺少这些接口；
+不涉及持久化用户数据格式变更或迁移。
 
-本地应用文档启用 `Document-Policy: js-profiling`；窗口隐藏或失焦时暂停滚动采样，
-报告明确标记采样不可用。在 `desktop/electron` 运行
-`node scripts/performance-smoke.mjs` 可使用隔离数据验证原生采样与 preload IPC。
+- `processDiagnostics()` 返回 `{scope: "electron", samples, growth}`。
+  样本包含年龄、可空 CPU 区间、PID/类型/创建时间、可空 CPU 百分比、
+  工作集及私有内存（MiB）、截断标记。前台最多每 30 秒采集一次，后台每 60 秒一次；
+  最多保留五分钟内的 12 条记录，每条最多 128 个进程。不采集标题、URL 或进程名称。
+  范围仅含 Electron 管理的进程，不含 Go 服务。
+- `captureRendererProfile()` 通过 CDP 录制当前 renderer 五秒，
+  请求的采样间隔为 10ms，返回状态、时长和最多八个应用脚本的自身耗时摘要。
+  普通页面不启用 JS Self-Profiling。最多一个进行中的采样，要求窗口在前台，
+  冷却十分钟，每次启动 shell 最多尝试三次。不接管已有 debugger/DevTools。
+  失焦、隐藏、导航、renderer 退出或取消会停止采样。
+- `cancelRendererProfile()` 取消当前拥有的采样。每条 CDP 命令最多等待 1.5 秒，
+  所有终态均释放自己的 debugger。分析在临时 Worker 中运行，老生代限制 32 MiB，
+  超时 1.5 秒，输入最多 20,000 个节点及 100,000 个样本。
+  原始 profile 不进入 UI 报告。
+- `exportHeapSnapshot()` 先显示原生风险提示并要求用户确认，再选择保存路径，
+  仅保存本地、不上传，也不接受 renderer 提供的路径。快照可能包含代码、聊天、
+  密钥，会暂停界面并可能占用较多磁盘。Electron 无法中断已开始的快照，
+  因而忙碌状态保持到操作实际结束，不用超时伪装取消成功。
 
-Windows 实测应分别收集刚启动、长时间使用、切回窗口及关闭会话/浏览器标签后的报告，
-并用相同负载对比版本。诊断增强本身不代表资源占用已经降低。
+内存增长信号要求 PID 与创建时间连续一致，至少五次读数跨越两分钟，
+最近三次读数均超过前两次的较高基线至少 256 MiB 且至少 50%。
+全程可用时采用私有内存，否则使用工作集。这表示观察到持续增长，
+不代表确认泄漏，也不代表独占的物理内存。
+
+报告立即显示已有证据。进程补充最多等待 750ms；短时 CPU 采样结束后更新同一报告。
+前端 12 秒后放弃采样补充并请求取消。这些是异步等待期限，不是同步工作可被抢占的保证。
+迟到结果不会重建已经关闭的报告，采样结果明确标注为触发后的数据。
+用户主动生成堆快照期间及结束后五秒内，暂停压力报警，避免诊断触发自身报警。
+
+在 `desktop/electron` 运行 `node scripts/performance-smoke.mjs`，
+可用隔离原生测试验证采样 owner、Worker、报告更新及本地堆快照。
+`node scripts/performance-benchmark.mjs` 分别以关闭监测、基础监测、短时采样运行
+三次独立进程对照，记录可用的 CPU 时间、帧时序、工作集及指标采集耗时，
+输出至 `artifacts/performance/overhead.json`。该合成测试不等同于 Windows 用户场景复现；
+仍需对比刚启动、长时间使用、切回窗口和关闭标签等阶段。
