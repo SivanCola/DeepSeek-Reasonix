@@ -4,6 +4,7 @@
 // it at compile time), so adding a key here makes the build fail until zh has it.
 
 export const en = {
+  "remote.legacyTranscriptSync": "This older remote version has limited sync. Reconnecting may leave missing or repeated content.",
   "toolRecovery.title": "Interrupted tool needs review",
   "toolRecovery.unknown": "Outcome not confirmed",
   "toolRecovery.details": "View action details",

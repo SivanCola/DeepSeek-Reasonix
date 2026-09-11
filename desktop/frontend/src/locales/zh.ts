@@ -5,6 +5,7 @@
 import type { DictKey } from "./en";
 
 export const zh: Record<DictKey, string> = {
+  "remote.legacyTranscriptSync": "旧版远程服务同步受限，重连可能导致内容缺失或重复。",
   "toolRecovery.title": "中断的工具需要核实",
   "toolRecovery.unknown": "结果尚未确认",
   "toolRecovery.details": "查看操作详情",

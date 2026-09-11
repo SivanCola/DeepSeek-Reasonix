@@ -5,6 +5,7 @@
 import type { DictKey } from "./en";
 
 export const zhTW: Record<DictKey, string> = {
+  "remote.legacyTranscriptSync": "舊版同步受限，重連可能遺漏或重複內容。",
   "toolRecovery.title": "中斷的工具需要核實",
   "toolRecovery.unknown": "結果尚未確認",
   "toolRecovery.details": "查看操作詳情",

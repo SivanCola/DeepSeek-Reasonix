@@ -81,7 +81,7 @@ export function installDesktopHostStub(commands: object, options: DesktopHostStu
       digest: "sha256:test",
       // Live view: tests mutating the command table between calls must be seen.
       get commands() {
-        return Object.keys(ref.current);
+        return Object.keys(ref.current).filter((name) => typeof ref.current[name] === "function");
       },
     },
     platform: { os: "darwin", arch: "arm64", versions: {} },
