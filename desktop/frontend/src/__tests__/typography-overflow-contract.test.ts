@@ -78,6 +78,8 @@ function clipsSingleLine(selector: string) {
 
 console.log("\ntypography overflow contract");
 
+eq(finalDeclaration(".transcript-navigation-content", "min-width"), "0", "chat content can shrink beside the dock launcher");
+
 eq(
   JSON.stringify(TEXT_SIZES),
   JSON.stringify(["small", "default", "large", "xlarge", "xxlarge"]),

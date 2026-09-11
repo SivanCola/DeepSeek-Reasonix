@@ -3389,6 +3389,9 @@ a[href] {
 .transcript-navigation-content {
   position: relative;
   flex: 1 1 auto;
+  /* Content may contain unbroken code lines. Its intrinsic width must not
+     become the minimum width of this horizontal flex item. */
+  min-width: 0;
   min-height: 0;
   height: 100%;
 }
