@@ -100,6 +100,34 @@ func (p *process) alive() bool {
 }
 func (p *process) close() { windows.CloseHandle(p.handle) }
 
+func ordinaryProduct(image string) bool {
+	size, err := windows.GetFileVersionInfoSize(image, nil)
+	if err != nil || size == 0 || size > 1024*1024 {
+		return false
+	}
+	data := make([]byte, size)
+	if windows.GetFileVersionInfo(image, 0, size, unsafe.Pointer(&data[0])) != nil {
+		return false
+	}
+	var translations *uint16
+	var count uint32
+	if windows.VerQueryValue(unsafe.Pointer(&data[0]), `\VarFileInfo\Translation`, unsafe.Pointer(&translations), &count) != nil || count < 4 {
+		return false
+	}
+	values := unsafe.Slice(translations, int(count/2))
+	for i := 0; i+1 < len(values); i += 2 {
+		var value *uint16
+		var length uint32
+		key := fmt.Sprintf(`\StringFileInfo\%04x%04x\ProductName`, values[i], values[i+1])
+		if windows.VerQueryValue(unsafe.Pointer(&data[0]), key, unsafe.Pointer(&value), &length) == nil && value != nil && length > 0 {
+			name := windows.UTF16ToString(unsafe.Slice(value, int(length)))
+			runtime.KeepAlive(data)
+			return name == "Reasonix"
+		}
+	}
+	return false
+}
+
 func (p *process) terminate() error {
 	if !p.alive() {
 		return nil
@@ -342,6 +370,10 @@ func inspect(root, profile string, all bool) ([]*process, error) {
 			continue
 		}
 		role := ImageRole(root, p.image)
+		if role != "" && !ordinaryProduct(p.image) {
+			p.close()
+			return fail(outcome(UnknownOwner, "product identity could not be verified for PID %d", e.ProcessID))
+		}
 		if name == "reasonix.exe" {
 			status, statusErr := readStatus(p)
 			if statusErr == nil {
