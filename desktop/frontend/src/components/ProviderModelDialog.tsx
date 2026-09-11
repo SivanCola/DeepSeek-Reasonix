@@ -32,9 +32,16 @@ export default function ProviderModelDialog({ initial, candidates, contextDefaul
   const validation = modelDraftError({model, context, output, vision: "auto"}, candidates, initial?.model);
   const imageBlocked = imageInputHardBlocked(baseURL, model, capability);
   const imageState = imageBlocked ? "unsupported" : imageInputState(vision === "auto" ? "auto" : vision === "true" ? "on" : "off", capability);
+  const toggleEffort = (option: string, checked: boolean) => {
+    setSelectedEfforts(current => {
+      const next = checked ? [...current, option] : current.filter(item => item !== option);
+      if (!checked && effort === option) setEffort("");
+      return next;
+    });
+  };
   return createPortal(<dialog ref={dialog} className="provider-model-dialog" data-app-overlay="" aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); if (!busy) onClose(); }}>
-    <form onSubmit={event => { event.preventDefault(); if (validation) { setError(true); return; } onApply({ model:model.trim(), contextWindow:context.trim(), maxOutputTokens:Number(output) || 0, vision:vision === "auto" ? null : !imageBlocked && vision === "true", supportedEfforts: effort ? selectedEfforts : [], defaultEffort: effort }); }}>
+    <form onSubmit={event => { event.preventDefault(); if (validation) { setError(true); return; } const defaultEffort = effort && selectedEfforts.includes(effort) ? effort : ""; onApply({ model:model.trim(), contextWindow:context.trim(), maxOutputTokens:Number(output) || 0, vision:vision === "auto" ? null : !imageBlocked && vision === "true", supportedEfforts: selectedEfforts, defaultEffort }); }}>
       <header><h2 id={titleId}>{t(initial ? "settings.modelDialog.edit" : "settings.models.add")}</h2><ModalCloseButton label={t("common.close")} disabled={busy} onClick={onClose}/></header>
       <label className="provider-model-dialog__id">{t("settings.modelDialog.id")}
         {initial ? <span><LockKeyhole size={16}/>{model}</span> : <input autoFocus className="mem-input" value={model} disabled={busy} onChange={e=>setModel(e.target.value)} placeholder="deepseek-v4-flash"/>}
@@ -51,10 +58,10 @@ export default function ProviderModelDialog({ initial, candidates, contextDefaul
           <p>{t("settings.modelDialog.outputHint")}</p>
           {effortOptions && effortOptions.length > 0 && <div className="provider-model-dialog__effort-card">
             <label>{t("settings.modelDialog.reasoningEffortOptions")}
-              <button type="button" className="btn provider-icon-action" title={t("settings.modelDialog.reset")} aria-label={t("settings.modelDialog.resetReasoningEffort")} disabled={busy} onClick={()=>setEffort("")}><RotateCcw size={16}/></button>
+              <button type="button" className="btn provider-icon-action" title={t("settings.modelDialog.reset")} aria-label={t("settings.modelDialog.resetReasoningEffort")} disabled={busy} onClick={()=>{setEffort("");setSelectedEfforts([]);}}><RotateCcw size={16}/></button>
             </label>
             <div className="provider-model-dialog__chips">
-              {effortOptions.map(option => <label key={option}><input type="checkbox" checked={selectedEfforts.includes(option)} disabled={busy} onChange={event=>setSelectedEfforts(current => event.target.checked ? [...current, option] : current.filter(item=>item !== option))}/>{option}</label>)}
+              {effortOptions.map(option => <label key={option}><input type="checkbox" checked={selectedEfforts.includes(option)} disabled={busy} onChange={event=>toggleEffort(option, event.target.checked)}/>{option}</label>)}
             </div>
             <label htmlFor={`${titleId}-effort`}>{t("settings.modelDialog.reasoningEffortDefault")}</label>
             <select id={`${titleId}-effort`} className="mem-select" value={effort} disabled={busy || selectedEfforts.length === 0} onChange={event=>setEffort(event.target.value)}>
