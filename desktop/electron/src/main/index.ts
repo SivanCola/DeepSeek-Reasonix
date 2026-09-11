@@ -1,4 +1,5 @@
 import { app, clipboard, dialog, ipcMain, net, protocol, screen, session, shell } from "electron";
+import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { IPC, type BrowserTakeoverKind } from "../shared/ipc.js";
@@ -9,8 +10,11 @@ import { ElectronGuestViewFactory } from "./browser/electronGuestViews.js";
 import { GrantRegistry } from "./browser/grants.js";
 import { buildBrowserHostCalls } from "./browser/hostCalls.js";
 import { browserLayoutInDIP } from "./browser/layout.js";
-import { BrowserSurfaceManager, type BrowserTab } from "./browser/surfaceManager.js";
+import { BrowserSurfaceManager, SHARED_PARTITION, type BrowserTab } from "./browser/surfaceManager.js";
+import { BrowserControlStore, loadBrowserControlBootstrap, type BrowserSession } from "./browserControl.js";
+import { BrowserControlHost } from "./browserControlHost.js";
 import { loadBuildIdentity } from "./buildIdentity.js";
+import type { CookieSink } from "./chromeImport.js";
 import { emptyContract, loadContract, type LoadedContract } from "./contract.js";
 import { DialogHost } from "./dialogs.js";
 import { renderFailurePage, type ShellAction } from "./failurePage.js";
@@ -150,6 +154,26 @@ function bootstrap(dataHome: string): void {
     zoomStore,
   });
 
+  const browserControlBootstrap = loadBrowserControlBootstrap(app.getPath("userData"));
+  const browserControlStore = new BrowserControlStore(browserControlBootstrap.configPath, browserControlBootstrap);
+  const browserControl = new BrowserControlHost({
+    store: browserControlStore,
+    sharedSession: () => session.fromPartition(SHARED_PARTITION) as unknown as BrowserSession & { cookies: CookieSink },
+    log,
+    platform: process.platform,
+    home: homedir(),
+    env: process.env,
+    list: (path) => readdirSync(path),
+    onControlEnabled: (enabled) => {
+      // The Go host reads this when it builds a session's tool set, so the new
+      // value reaches new sessions without disturbing a running turn.
+      void service.request("desktop/browserControl", { enabled }).catch((error: unknown) => {
+        log.warn(`browser control push failed: ${errorText(error)}`);
+      });
+    },
+  });
+  log.info(`browser control: enabled=${browserControlBootstrap.state.controlEnabled} ignoreCertificateErrors=${browserControlBootstrap.state.ignoreCertificateErrors} warning=${browserControlBootstrap.state.warning ?? "none"}`);
+
   const downloads = new DownloadTracker({
     tabForWebContents: (id) => {
       const tab = browser.all().find((entry: BrowserTab) => entry.view.page.id === id);
@@ -163,7 +187,8 @@ function bootstrap(dataHome: string): void {
     window: () => mainWindow.browserWindow,
     preloadPath: join(__dirname, "guest-preload.cjs"),
     log,
-    onSession: (_partition, guestSession) => {
+    onSession: (partition, guestSession) => {
+      browserControl.trackSession(partition, guestSession);
       guestSession.on("will-download", (_event, item, contents) => downloads.handleWillDownload(item, contents.id));
     },
   });
@@ -312,6 +337,19 @@ function bootstrap(dataHome: string): void {
         try { await zoomStore.load(); } catch (error) { log.warn(`app zoom initialization failed: ${errorText(error)}`); }
         if (lifecycle.isQuitting || service.generation !== hello.runtimeGeneration) return;
         mainWindow.prepareApp(hello.window);
+        // A restarted service starts with the capability on, so the persisted
+        // switch is replayed before any session can be built.
+        void service.request("desktop/browserControl", { enabled: browserControl.state().controlEnabled })
+          .catch((error: unknown) => log.warn(`browser control push failed: ${errorText(error)}`));
+        if (!mainWindow.browserWindow) {
+          try {
+            await zoomStore.load();
+            mainWindow.create(hello.window);
+          } catch (error) {
+            log.warn(`app zoom initialization failed: ${errorText(error)}`);
+            mainWindow.create(DEFAULT_GEOMETRY);
+          }
+        }
         // Reattach the surviving renderer after a service restart. Reloading
         // would destroy unsent composer drafts; desktop:resync repairs reads.
         if (!mainWindow.reattachApp()) void mainWindow.loadApp();
@@ -397,6 +435,7 @@ function bootstrap(dataHome: string): void {
       serviceState: () => service.current,
       clipboard,
       graphics,
+      browserControl,
       openExternal: (url) => shell.openExternal(url),
       browser: {
         list: () => browser.list(),
