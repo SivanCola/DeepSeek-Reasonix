@@ -116,6 +116,7 @@ let lastActivationKey: string | null = null;
 let lastHistoryPage: HistoryPageDiagnostic | null = null;
 let lastResumeHistory: HistoryPageDiagnostic | null = null;
 let resumeSwitchPhases: HistorySwitchPhases | null = null;
+let resumeSnapshotMs: number | undefined;
 let historyPages = 0;
 let historyStalePages = 0;
 let historyIndexHits = 0;
@@ -192,11 +193,18 @@ export function noteHistoryPage(page: HistoryPageDiagnostic): void {
   lastHistoryPage = page;
 }
 
+export function beginResumeHistory(): void {
+  lastResumeHistory = null;
+  resumeSwitchPhases = null;
+  resumeSnapshotMs = undefined;
+}
+
 /** One ResumeSessionPage response built from the transcript the switch already
  *  loaded, plus the backend's phase breakdown for that switch. */
 export function noteResumeHistoryPage(
   page: { messages: readonly HistoryInlineMessage[]; switch?: HistorySwitchPhases | null },
   durationMs: number,
+  snapshotMs?: number,
 ): void {
   let inlineBytes = 0;
   for (const message of page.messages) {
@@ -205,13 +213,14 @@ export function noteResumeHistoryPage(
       + (message.submitText?.length ?? 0) + (message.summary?.length ?? 0)
       + (message.archive?.length ?? 0) + (message.toolResultError?.length ?? 0);
   }
-  lastResumeHistory = { entries: page.messages.length, inlineBytes, durationMs, stale: false, source: "resume-loaded" };
-  if (page.switch) resumeSwitchPhases = { ...page.switch };
+  lastResumeHistory = { entries: page.messages.length, inlineBytes, durationMs, stale: false, source: snapshotMs === undefined ? "resume-loaded" : "transcript-snapshot" };
+  resumeSwitchPhases = page.switch && Number.isSafeInteger(page.switch.durableReads) && page.switch.durableReads >= 0 ? { ...page.switch } : null;
+  resumeSnapshotMs = snapshotMs;
 }
 
 /** Durable reads a switch made beyond the one that produced its first screen. */
-export function resumeSwitchDashboard(): { phases: HistorySwitchPhases | null; duplicateLoadCount: number } {
-  if (!resumeSwitchPhases) return { phases: null, duplicateLoadCount: 0 };
+export function resumeSwitchDashboard(): { phases: HistorySwitchPhases | null; duplicateLoadCount: number | null } {
+  if (!resumeSwitchPhases) return { phases: null, duplicateLoadCount: null };
   return { phases: { ...resumeSwitchPhases }, duplicateLoadCount: Math.max(0, resumeSwitchPhases.durableReads - 1) };
 }
 
@@ -253,7 +262,8 @@ export interface SessionPipelineDiagnostics {
   };
   resumeHistory?: HistoryPageDiagnostic;
   resumeSwitch?: HistorySwitchPhases;
-  duplicateLoadCount: number;
+  duplicateLoadCount: number | null;
+  resumeSnapshotMs?: number;
   mountedRows?: MountedRowsDiagnostic;
   transcriptRecovery?: TranscriptRecoveryDiagnostic;
   markdownWorker?: MarkdownWorkerDiagnostic;
@@ -274,7 +284,7 @@ function deriveActivation(entry: ActivationDiagnostic): SessionPipelineDiagnosti
 
 /** Point-in-time snapshot for the crash/performance report context. */
 export function sessionPipelineDiagnostics(): SessionPipelineDiagnostics {
-  const out: SessionPipelineDiagnostics = { duplicateLoadCount: 0 };
+  const out: SessionPipelineDiagnostics = { duplicateLoadCount: null };
   const activation = lastActivationKey ? activations.get(lastActivationKey) : undefined;
   if (activation) out.activation = deriveActivation(activation);
   // A switch reports its first screen before any slice runs, so fall back to it
@@ -290,6 +300,7 @@ export function sessionPipelineDiagnostics(): SessionPipelineDiagnostics {
     };
   }
   if (lastResumeHistory) out.resumeHistory = { ...lastResumeHistory };
+  if (resumeSnapshotMs !== undefined) out.resumeSnapshotMs = resumeSnapshotMs;
   const { phases, duplicateLoadCount } = resumeSwitchDashboard();
   if (phases) out.resumeSwitch = phases;
   out.duplicateLoadCount = duplicateLoadCount;
@@ -330,6 +341,7 @@ export function resetSessionDiagnostics(): void {
   lastHistoryPage = null;
   lastResumeHistory = null;
   resumeSwitchPhases = null;
+  resumeSnapshotMs = undefined;
   historyPages = 0;
   historyStalePages = 0;
   historyIndexHits = 0;

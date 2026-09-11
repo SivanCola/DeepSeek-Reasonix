@@ -778,6 +778,9 @@ func New(opts Options) *Controller {
 	// Must wrap both the controller sink and the executor sink: agent.Steer
 	// emits on the executor path, TurnDone on the controller path.
 	c.sink = &inboxEventSink{inner: newTurnEventSink(c.sink, c), c: c}
+	if runner, ok := c.runner.(interface{ SetSink(event.Sink) }); ok {
+		runner.SetSink(c.sink)
+	}
 	if c.executor != nil {
 		c.executor.SetSink(c.sink)
 	}
@@ -877,6 +880,9 @@ func (c *Controller) installExtensionsLocked(d *dispatch.Dispatcher) {
 	if c.executor != nil {
 		c.executor.SetExtensions(d)
 		c.executor.SetSink(c.sink)
+	}
+	if runner, ok := c.runner.(interface{ SetSink(event.Sink) }); ok {
+		runner.SetSink(c.sink)
 	}
 }
 
@@ -1024,7 +1030,7 @@ func ckptDir(sessionPath string) string {
 // Also re-wires the mutation observer so capture targets the new store.
 func (c *Controller) rebindCheckpoints(sessionPath string) {
 	c.goals.setStatePath(goalStatePath(sessionPath))
-	c.checkpoints.rebind(ckptDir(sessionPath), c.workspaceRoot)
+	c.checkpoints.rebind(ckptDir(sessionPath), c.workspaceRoot, c.checkpointOptions()...)
 	c.rebindTurnEvents(sessionPath)
 	if c.executor != nil {
 		c.wireMutationObserver()

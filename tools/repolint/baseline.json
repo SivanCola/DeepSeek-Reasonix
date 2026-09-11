@@ -9,7 +9,7 @@
     "layering": 1,
     "marker": 0,
     "narrative": 64,
-    "struct-state": 109,
+    "struct-state": 103,
     "test-file-size": 68583
   },
   "files": {
@@ -641,7 +641,7 @@
     },
     "internal/checkpoint/checkpoint.go": {
       "essay": 5,
-      "file-size": 174
+      "file-size": 158
     },
     "internal/checkpoint/transaction.go": {
       "complexity": 32,
@@ -853,8 +853,8 @@
     "internal/config/render.go": {
       "complexity": 229,
       "essay": 2,
-      "file-size": 962,
-      "function-size": 913
+      "file-size": 964,
+      "function-size": 915
     },
     "internal/config/render_test.go": {
       "test-file-size": 761
@@ -1113,8 +1113,7 @@
     "internal/jobs/jobs.go": {
       "essay": 21,
       "file-size": 1271,
-      "function-size": 12,
-      "struct-state": 6
+      "function-size": 12
     },
     "internal/jobs/jobs_extra_test.go": {
       "essay": 1

@@ -214,12 +214,9 @@ if (!archived10KB || archived10KB.itemStringBytes * 5 >= archived10KB.jsonBytes)
 }
 
 // ── Session-switch diagnostics ───────────────────────────────────────────────
-// The hard gate for the switch refactor is that a switch reads the durable
-// session once: it loads the target to build the replacement controller and
-// builds the first screen from that same transcript. The backend reports the
-// breakdown on the returned page, so the harness reads the gate from
-// `duplicateLoadCount` instead of trusting timing. The payload below mirrors
-// what desktop.ResumeSessionPageForTab attaches to a real page.
+// These fixtures verify diagnostic interpretation, not physical disk reads.
+// The desktop switch tests exercise the real load and snapshot entry points.
+// Missing evidence must remain unknown instead of passing a zero-repeat gate.
 const switchMessages = syntheticHistory(cases[1]);
 const switchPhases = {
   resolveMs: 1, loadMs: 12, rebindMs: 30, historyMs: 9, totalMs: 52,
@@ -263,9 +260,13 @@ if (sessionPipelineDiagnostics().duplicateLoadCount !== 1) {
   failures.push("duplicate-load gate did not observe a second durable read");
 }
 resetSessionDiagnostics();
-if (sessionPipelineDiagnostics().duplicateLoadCount !== 0) {
-  failures.push("reset did not clear the switch diagnostics");
+if (sessionPipelineDiagnostics().duplicateLoadCount !== null) {
+  failures.push("missing switch evidence must remain unknown");
 }
+noteResumeHistoryPage({ messages: switchMessages, switch: switchPhases }, 60, 8);
+if (sessionPipelineDiagnostics().resumeHistory?.source !== "transcript-snapshot" || sessionPipelineDiagnostics().resumeSnapshotMs !== 8) failures.push("modern snapshot timing is missing");
+noteResumeHistoryPage({ messages: [] }, 1, 1);
+if (sessionPipelineDiagnostics().duplicateLoadCount !== null || sessionPipelineDiagnostics().resumeSwitch) failures.push("an uninstrumented response retained old switch evidence");
 
 if (failures.length > 0) {
   for (const failure of failures) process.stderr.write(`FAIL ${failure}\n`);

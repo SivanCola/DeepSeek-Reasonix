@@ -105,10 +105,13 @@ func (a *App) continuePathForMissingParent(ctx context.Context, catalog *session
 }
 
 func (a *App) resumeSessionPageForTab(tabID, path string, limit int) (HistoryPage, error) {
-	started := time.Now()
-	phases := HistorySwitchPhases{Outcome: "ok", DurableReads: 1}
-	defer func() { logSessionSwitchPhases(phases, started) }()
+	return a.resumeSessionForTranscript(tabID, path, limit, true)
+}
 
+func (a *App) resumeSessionForTranscript(tabID, path string, limit int, includeHistory bool) (HistoryPage, error) {
+	started := time.Now()
+	phases := HistorySwitchPhases{Outcome: "ok"}
+	defer func() { logSessionSwitchPhases(phases, started) }()
 	tab, ctrl := a.tabAndCtrlByID(tabID)
 	if tab == nil || ctrl == nil {
 		phases.Outcome = "tab_not_ready"
@@ -131,6 +134,7 @@ func (a *App) resumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 	phases.ResolveMs = elapsedMs(resolveStarted)
 
 	loadStarted := time.Now()
+	phases.DurableReads++
 	loaded, err := loadResumableSession(sessionPath)
 	if err != nil {
 		phases.Outcome = "load_failed"
@@ -140,7 +144,7 @@ func (a *App) resumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 	phases.LoadedCount = loaded.Len()
 	phases.LoadedBytes = sessionFileBytes(sessionPath)
 
-	page, err := a.switchToLoadedSessionPage(tab, loaded, sessionPath, false, limit, &phases)
+	page, err := a.switchToLoadedSessionPage(tab, loaded, sessionPath, false, includeHistory, limit, &phases)
 	if err != nil {
 		return HistoryPage{}, err
 	}
@@ -150,11 +154,9 @@ func (a *App) resumeSessionPageForTab(tabID, path string, limit int) (HistoryPag
 }
 
 // switchToLoadedSessionPage commits tab onto a session that is already loaded
-// and returns its first visible page. Handing the loaded session to the page
-// builder is what keeps a switch to one durable read: asking the controller for
-// the page instead would re-read and re-convert the transcript the rebind just
-// loaded for itself.
-func (a *App) switchToLoadedSessionPage(tab *WorkspaceTab, loaded *agent.Session, sessionPath string, readOnly bool, limit int, phases *HistorySwitchPhases) (HistoryPage, error) {
+// and optionally builds a legacy page from a matching preload. Modern callers
+// take their first screen from the authoritative transcript snapshot instead.
+func (a *App) switchToLoadedSessionPage(tab *WorkspaceTab, loaded *agent.Session, sessionPath string, readOnly, includeHistory bool, limit int, phases *HistorySwitchPhases) (HistoryPage, error) {
 	rebindStarted := time.Now()
 	if sessionRuntimeKey(tab.currentSessionPath()) != sessionRuntimeKey(sessionPath) {
 		if err := a.rebindTabToLoadedSessionPath(tab, sessionPath, loaded); err != nil {
@@ -171,6 +173,9 @@ func (a *App) switchToLoadedSessionPage(tab *WorkspaceTab, loaded *agent.Session
 		return HistoryPage{}, fmt.Errorf("tab is not ready after session rebind")
 	}
 	phases.RebindMs = elapsedMs(rebindStarted)
+	if !includeHistory {
+		return HistoryPage{Messages: []HistoryMessage{}}, nil
+	}
 
 	buildStarted := time.Now()
 	page, durableRead := historyPageForController(tab, reboundCtrl, loaded, sessionPath, 0, limit)
