@@ -462,6 +462,14 @@ func TestTokenRhythmPresetMatchesPublicAPIIntegration(t *testing.T) {
 	if !ok || deepseek.ContextWindow != 1_000_000 || ReasoningProtocolForEntry(deepseek) != ReasoningProtocolDeepSeek {
 		t.Fatalf("Token Rhythm DeepSeek capability mismatch: %+v", deepseek)
 	}
+	shortFlash, ok := cfg.ResolveModel("token-rhythm/deepseek-flash")
+	if !ok || ReasoningProtocolForEntry(shortFlash) != ReasoningProtocolDeepSeek {
+		t.Fatalf("Token Rhythm DeepSeek short alias capability mismatch: %+v", shortFlash)
+	}
+	shortFlashCap := EffortCapabilityForEntry(shortFlash)
+	if !shortFlashCap.Supported || shortFlashCap.Default != "high" || !stringSlicesEqual(shortFlashCap.Levels, []string{"auto", "disabled", "low", "high", "max"}) {
+		t.Fatalf("Token Rhythm DeepSeek short alias effort mismatch: %+v", shortFlashCap)
+	}
 	kimi, ok := cfg.ResolveModel("token-rhythm/kimi-k2.7-code")
 	if !ok || kimi.ContextWindow != 256_000 || !EffectiveVision(kimi) {
 		t.Fatalf("Token Rhythm Kimi capability mismatch: %+v", kimi)

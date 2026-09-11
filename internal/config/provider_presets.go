@@ -104,7 +104,7 @@ var (
 	deepSeekOfficialModels       = []string{"deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro", openai.OfficialDeepSeekVisionModel}
 	deepSeekOfficialVisionModels = []string{openai.OfficialDeepSeekVisionModel}
 	tokenRhythmModels            = []string{
-		"deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1",
+		"deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro", "glm-5", "glm-5.1",
 		"minimax-m2.7", "kimi-k2.5", "kimi-k2.6", "minimax-m2.5",
 		"mimo-v2.5-pro", "qwen3.7-max", "kimi-k2.7-code", "glm-5.2",
 		"qwen3.8-max", "deepseek-v4-flash-0731",
@@ -167,6 +167,11 @@ func qwenModelContextOverrides() map[string]ProviderModelOverride {
 
 func tokenRhythmModelOverrides() map[string]ProviderModelOverride {
 	return map[string]ProviderModelOverride{
+		"deepseek-flash": {
+			ReasoningProtocol: ReasoningProtocolDeepSeek,
+			SupportedEfforts:  []string{"disabled", "low", "high", "max"},
+			DefaultEffort:     "high",
+		},
 		"deepseek-v4-flash": {
 			ReasoningProtocol: ReasoningProtocolDeepSeek,
 			SupportedEfforts:  []string{"disabled", "low", "high", "max"},
