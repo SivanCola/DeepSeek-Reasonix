@@ -140,7 +140,11 @@ func (p *Projection) snapshotCurrent(req PageRequest) (Snapshot, error) {
 	// every still-mutable owner in the same snapshot cut so a later delta can
 	// never be appended to an unloaded prefix.
 	{
-		for i := range out.Before {
+		present := make(map[string]struct{}, len(out.Records))
+		for _, record := range out.Records {
+			present[record.ID] = struct{}{}
+		}
+		for _, i := range activeRecordIndexes(p.buffer.messages, out.Before, runtime) {
 			m := p.buffer.messages[i].materialize()
 			active := (!runtime.Status.Terminal() && m.Pending) || (m.Role == "user" && m.TurnID == runtime.TurnID && runtime.TurnID != "")
 			for _, call := range m.ToolCalls {
@@ -154,6 +158,10 @@ func (p *Projection) snapshotCurrent(req PageRequest) (Snapshot, error) {
 				return Snapshot{}, err
 			}
 			row.Order = i
+			if _, alreadyPresent := present[row.ID]; alreadyPresent {
+				continue
+			}
+			present[row.ID] = struct{}{}
 			out.ActiveRecords = append(out.ActiveRecords, row)
 		}
 	}
@@ -165,6 +173,45 @@ func (p *Projection) snapshotCurrent(req PageRequest) (Snapshot, error) {
 		return Snapshot{}, errors.New("transcript snapshot metadata exceeds the page limit")
 	}
 	return out, nil
+}
+
+// activeRecordIndexes walks only the current mutable turn. Older settled
+// history cannot gain a streamed suffix, so scanning it on every page request
+// only extends the projection mutex hold time with the total transcript size.
+// A missing runtime turn ID keeps the conservative full-prefix behavior for
+// legacy baselines that do not carry turn identity.
+func activeRecordIndexes(messages []*bufferedMessage, before int, runtime Runtime) []int {
+	if runtime.Status.Terminal() {
+		return nil
+	}
+	if runtime.TurnID == "" {
+		indexes := make([]int, 0, before)
+		for i := range before {
+			indexes = append(indexes, i)
+		}
+		return indexes
+	}
+	indexes := make([]int, 0, 8)
+	seenCurrentTurn := false
+	for i := before - 1; i >= 0; i-- {
+		m := messages[i].materialize()
+		isCurrentTurn := m.TurnID == runtime.TurnID
+		active := (!runtime.Status.Terminal() && m.Pending) || (m.Role == "user" && isCurrentTurn)
+		for _, call := range m.ToolCalls {
+			active = active || (!runtime.Status.Terminal() && call.Pending)
+		}
+		if active {
+			indexes = append(indexes, i)
+		}
+		if isCurrentTurn {
+			seenCurrentTurn = true
+			continue
+		}
+		if seenCurrentTurn {
+			break
+		}
+	}
+	return indexes
 }
 
 func (p *Projection) Content(req ContentRequest) (ContentChunk, error) {

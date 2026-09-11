@@ -3,13 +3,22 @@ import type { Item, State } from "./useController";
 import type { TranscriptRecord, TranscriptSnapshot } from "./transcriptProtocol";
 
 export function snapshotRecords(snapshot: TranscriptSnapshot): TranscriptRecord[] {
-  const records = [...(snapshot.records ?? []), ...(snapshot.activeRecords ?? [])];
+  const records: TranscriptRecord[] = [];
   const ids = new Set<string>();
-  for (const record of records) {
-    if (!record.id || ids.has(record.id) || !Number.isSafeInteger(record.order) || record.order < 0 || record.order >= snapshot.totalRecords) {
+  for (const record of [...(snapshot.records ?? []), ...(snapshot.activeRecords ?? [])]) {
+    if (!record.id || !Number.isSafeInteger(record.order) || record.order < 0 || record.order >= snapshot.totalRecords) {
       throw new Error("invalid transcript snapshot record identity");
     }
+    // A mutable owner may also fall inside the requested page. The backend
+    // omits that duplicate, but tolerate older/remote implementations that
+    // return it in both arrays and keep the active copy authoritative.
+    if (ids.has(record.id)) {
+      const index = records.findIndex((existing) => existing.id === record.id);
+      if (index >= 0) records[index] = record;
+      continue;
+    }
     ids.add(record.id);
+    records.push(record);
   }
   return records.sort((a, b) => a.order - b.order);
 }

@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -173,6 +174,40 @@ func TestProjectionPagingContentAndImmutability(t *testing.T) {
 	chunk, err := p.Content(ContentRequest{ContentRef: s.Records[0].Refs[0]})
 	if err != nil || !chunk.Stale {
 		t.Fatal("old content ref did not become stale")
+	}
+}
+
+func TestProjectionSnapshotDoesNotDuplicateActiveRecordInPage(t *testing.T) {
+	p, err := NewProjection(testIdentity, []Message{{
+		RecordID: "m:assistant", MessageID: "assistant", Role: "assistant", Content: "partial", Pending: true,
+	}}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := p.Snapshot(PageRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Records) != 1 || len(snapshot.ActiveRecords) != 0 {
+		t.Fatalf("active record duplicated across snapshot arrays: records=%d active=%d", len(snapshot.Records), len(snapshot.ActiveRecords))
+	}
+	if _, err := json.Marshal(snapshot); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActiveRecordIndexesDoNotScanSettledTurns(t *testing.T) {
+	messages := make([]*bufferedMessage, 0, 10000)
+	for i := 0; i < 9990; i++ {
+		messages = append(messages, &bufferedMessage{message: Message{RecordID: fmt.Sprintf("m:%d", i), Role: "assistant", TurnID: "old"}})
+	}
+	messages = append(messages,
+		&bufferedMessage{message: Message{RecordID: "m:user", Role: "user", TurnID: "current"}},
+		&bufferedMessage{message: Message{RecordID: "m:assistant", Role: "assistant", TurnID: "current", Pending: true}},
+	)
+	indexes := activeRecordIndexes(messages, len(messages), Runtime{TurnID: "current", Status: event.TurnInProgress})
+	if len(indexes) != 2 || indexes[0] != len(messages)-1 || indexes[1] != len(messages)-2 {
+		t.Fatalf("active indexes = %v, want only current turn owners", indexes)
 	}
 }
 
