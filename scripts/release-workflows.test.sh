@@ -223,6 +223,14 @@ for recovery_script in npm/publish.mjs scripts/finalize-npm-official-release.mjs
 	sed -n '/^  npm:/,$p' "$repo_root/.github/workflows/release-npm.yml" |
 		grep -Fq "$recovery_script"
 done
+# Orchestrated Stable recovery needs the same protected publisher repair as a
+# standalone run; the immutable product checkout must not select the old helper.
+npm_control_step="$(sed -n '/      - name: Load approved npm publication control plane/,/      - uses: actions\/setup-go@v7/p' "$repo_root/.github/workflows/release-npm.yml")"
+[ -n "$npm_control_step" ]
+if printf '%s\n' "$npm_control_step" | grep -q 'if:'; then
+	echo "npm publication control plane must load for orchestrated recovery too" >&2
+	exit 1
+fi
 grep -Fq 'publishPackages' "$repo_root/npm/build.mjs"
 grep -Eq 'signing-policy-slug: release-signing' "$repo_root/.github/workflows/release-desktop.yml"
 if grep -Eq 'signing-policy-slug:.*test-signing' "$repo_root/.github/workflows/release-desktop.yml"; then
