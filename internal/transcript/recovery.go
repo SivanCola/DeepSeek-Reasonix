@@ -23,10 +23,11 @@ func PendingDisplayMessages(projection turnevent.PendingProjection, format Forma
 		buffer.Apply(e)
 	}
 	out := LegacyDisplayMessages(planner.Messages())
-	if projection.Status != event.TurnInterrupted {
+	interrupted := projection.Status == event.TurnInterrupted || projection.Status == event.TurnRecoveryRequired
+	if !interrupted {
 		out = append(out, executor.ResultMessages()...)
 	}
-	if projection.Status == event.TurnInterrupted {
+	if interrupted {
 		out = append(out, LegacyDisplayMessages(executor.Messages())...)
 		if len(out) > 0 {
 			out = append(out, Message{Role: "notice", Level: "info", Code: event.NoticeCodeCancelledTurn,

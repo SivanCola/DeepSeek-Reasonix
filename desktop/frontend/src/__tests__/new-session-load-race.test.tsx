@@ -8,6 +8,7 @@ import type { NavigationResult } from "../lib/navigationSurfaceTransition";
 import { historySliceFromMessages } from "./mockHistorySlice";
 import type { AppBindings } from "../lib/bridge";
 import type { BalanceInfo, CheckpointMeta, ContextInfo, EffortInfo, HistoryMessage, HistorySliceRequest, JobView, Meta, TabMeta, WireEvent } from "../lib/types";
+import { installDesktopHostStub } from "./desktopHostStub";
 
 let passed = 0;
 let failed = 0;
@@ -146,8 +147,6 @@ let newSessionCalls = 0;
 let backendCanonicalTodos = [{ content: "Old task", status: "in_progress" }];
 let holdNextMeta = false;
 let staleMetaStarted = false;
-const eventHandlers: Array<(event: WireEvent) => void> = [];
-const rebuiltHandlers: Array<(tabId?: string, runtimeEpoch?: string) => void> = [];
 let backendRuntimeEpoch = "runtime-old";
 let backendPendingPrompt = false;
 let promptReplayCalls = 0;
@@ -159,22 +158,7 @@ const balance: BalanceInfo = { available: false, display: "" };
 const jobs: JobView[] = [];
 const checkpoints: CheckpointMeta[] = [];
 
-window.runtime = {
-  EventsOn: (name: string, cb: (...data: unknown[]) => void) => {
-    if (name === "agent:event") eventHandlers.push(cb as (event: WireEvent) => void);
-    if (name === "runtime:rebuilt") rebuiltHandlers.push(cb as (tabId?: string, runtimeEpoch?: string) => void);
-    return () => {
-      const events = eventHandlers.indexOf(cb as (event: WireEvent) => void);
-      if (events >= 0) eventHandlers.splice(events, 1);
-      const rebuilt = rebuiltHandlers.indexOf(cb as (tabId?: string, runtimeEpoch?: string) => void);
-      if (rebuilt >= 0) rebuiltHandlers.splice(rebuilt, 1);
-    };
-  },
-  BrowserOpenURL: () => {},
-};
-window.go = {
-  main: {
-    App: {
+const appStubTable = {
       RegisterNavigationIntent: async () => {},
       ListTabs: async () => {
         return [tabMeta({
@@ -209,14 +193,12 @@ window.go = {
       ReplayPendingPromptsForTab: async (tabID: string) => {
         promptReplayCalls += 1;
         if (tabID !== "tab-a" || !backendPendingPrompt) return;
-        for (const handler of eventHandlers) {
-          handler({
+        desktopStub.emit("agent:event", {
             kind: "ask_request",
             tabId: tabID,
             runtimeEpoch: backendRuntimeEpoch,
             ask: { id: `replayed-${backendRuntimeEpoch}`, questions: [{ id: "choice", prompt: "Recovered after hydration", options: [] }] },
           });
-        }
       },
       NewSession: async () => {
         newSessionCalls += 1;
@@ -232,21 +214,19 @@ window.go = {
         const oldEpoch = backendRuntimeEpoch;
         backendRuntimeEpoch = "runtime-resumed";
         backendPendingPrompt = true;
-        for (const handler of rebuiltHandlers) handler("tab-a", backendRuntimeEpoch);
-        for (const handler of eventHandlers) {
-          handler({
+        desktopStub.emit("runtime:rebuilt", "tab-a", backendRuntimeEpoch);
+        desktopStub.emit("agent:event", {
             kind: "ask_request",
             tabId: "tab-a",
             runtimeEpoch: oldEpoch,
             ask: { id: "stale-old-epoch", questions: [{ id: "choice", prompt: "Stale", options: [] }] },
           });
-          handler({
+desktopStub.emit("agent:event", {
             kind: "ask_request",
             tabId: "tab-a",
             runtimeEpoch: backendRuntimeEpoch,
             ask: { id: "pre-response-resume", questions: [{ id: "choice", prompt: "Before Resume RPC returns", options: [] }] },
           });
-        }
         await resumeRPCGate.promise;
         return {
           messages: [{ role: "user", content: "restore" }, { role: "assistant", content: "done" }],
@@ -260,21 +240,19 @@ window.go = {
         const oldEpoch = backendRuntimeEpoch;
         backendRuntimeEpoch = "runtime-channel";
         backendPendingPrompt = true;
-        for (const handler of rebuiltHandlers) handler("tab-a", backendRuntimeEpoch);
-        for (const handler of eventHandlers) {
-          handler({
+        desktopStub.emit("runtime:rebuilt", "tab-a", backendRuntimeEpoch);
+        desktopStub.emit("agent:event", {
             kind: "ask_request",
             tabId: "tab-a",
             runtimeEpoch: oldEpoch,
             ask: { id: "stale-channel-old-epoch", questions: [{ id: "choice", prompt: "Stale channel", options: [] }] },
           });
-          handler({
+desktopStub.emit("agent:event", {
             kind: "ask_request",
             tabId: "tab-a",
             runtimeEpoch: backendRuntimeEpoch,
             ask: { id: "pre-response-channel", questions: [{ id: "choice", prompt: "Before channel RPC returns", options: [] }] },
           });
-        }
         await channelRPCGate.promise;
         return {
           messages: [{ role: "user", content: "channel" }, { role: "assistant", content: "waiting" }],
@@ -284,9 +262,8 @@ window.go = {
           hasOlder: false,
         };
       },
-    } as Partial<AppBindings> as AppBindings,
-  },
-};
+    } as Partial<AppBindings> as AppBindings;
+const desktopStub = installDesktopHostStub(appStubTable);
 
 type Controller = ReturnType<typeof useController>;
 let controller: Controller | undefined;
@@ -314,7 +291,7 @@ eq(controller?.state.meta?.canonicalTodos?.[0]?.content, "Old task", "pre-reset 
 
 holdNextMeta = true;
 await act(async () => {
-  for (const handler of eventHandlers) handler({ kind: "turn_done", tabId: "tab-a" });
+  desktopStub.emit("agent:event", { kind: "turn_done", tabId: "tab-a" });
   await flushPromises();
 });
 await waitFor("stale metadata request", () => staleMetaStarted);
@@ -363,7 +340,7 @@ ok(promptReplayCalls > 0, "Resume completion performs a tab-scoped pending-promp
 
 backendPendingPrompt = false;
 await act(async () => {
-  for (const handler of eventHandlers) handler({ kind: "turn_done", tabId: "tab-a", runtimeEpoch: backendRuntimeEpoch });
+  desktopStub.emit("agent:event", { kind: "turn_done", tabId: "tab-a", runtimeEpoch: backendRuntimeEpoch });
   await flushPromises();
 });
 const replayCallsBeforeChannelOpen = promptReplayCalls;
@@ -408,7 +385,7 @@ const reusedTabPage = {
   hasOlder: false,
 };
 const reusedEmptyPage = { messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false };
-window.go.main.App = {
+desktopStub.replaceCommands({
   RegisterNavigationIntent: async () => {},
   ListTabs: async () => [reusedTab],
   MetaForTab: async () => meta({ sessionPath: "/sessions/new.jsonl" }),
@@ -429,7 +406,7 @@ window.go.main.App = {
   HistoryCheckpointTurnsForTab: async () => [],
   ReplayPendingPrompts: async () => {},
   EnsureBlankTab: async () => ({ ...reusedTab, sessionPath: "/sessions/new.jsonl", active: true }),
-} as Partial<AppBindings> as AppBindings;
+} as Partial<AppBindings> as AppBindings);
 
 controller = undefined;
 const reuseRoot = createRoot(rootEl);
@@ -467,7 +444,7 @@ const raceBlank = tabMeta({ id: "race-blank", active: false, sessionPath: "/sess
 let raceBackendActiveId = raceTabA.id;
 const raceHistoryCalls: string[] = [];
 const raceSetActiveCalls: string[] = [];
-window.go.main.App = {
+desktopStub.replaceCommands({
   RegisterNavigationIntent: async () => {},
   ListTabs: async () => [raceTabA, raceTabB, raceBlank].map((tab) => ({ ...tab, active: tab.id === raceBackendActiveId })),
   MetaForTab: async (tabID: string) => meta({ sessionPath: `/sessions/${tabID}.jsonl` }),
@@ -495,7 +472,7 @@ window.go.main.App = {
     raceSetActiveCalls.push(tabID);
     raceBackendActiveId = tabID;
   },
-} as Partial<AppBindings> as AppBindings;
+} as Partial<AppBindings> as AppBindings);
 
 controller = undefined;
 const queuedRaceRoot = createRoot(rootEl);
@@ -540,7 +517,7 @@ const guardedStartupTabs = deferred<TabMeta[]>();
 const staleProjectA = "/repo/project-a";
 const targetProjectB = "/repo/project-b";
 const ensureBlankSurfaceCalls: Array<{ scope: string; workspaceRoot: string }> = [];
-window.go.main.App = {
+desktopStub.replaceCommands({
   RegisterNavigationIntent: async () => {},
   ListTabs: async () => guardedStartupTabs.promise,
   MetaForTab: async (tabID: string) => tabID === "tab-new"
@@ -567,7 +544,7 @@ window.go.main.App = {
       cwd: targetProjectB,
     });
   },
-} as Partial<AppBindings> as AppBindings;
+} as Partial<AppBindings> as AppBindings);
 
 controller = undefined;
 const guardRoot = createRoot(rootEl);
@@ -618,10 +595,10 @@ let modernAdoptions = 0;
 const modernReplace = (name: string) => {
   modernEpoch = name;
   modernPath = `/sessions/${name}.jsonl`;
-  for (const handler of rebuiltHandlers) handler("tab-a", modernEpoch);
+  desktopStub.emit("runtime:rebuilt", "tab-a", modernEpoch);
 };
 const legacyRead = async () => { legacyReads++; throw new Error("modern hydration read legacy history"); };
-window.go.main.App = {
+desktopStub.replaceCommands({
   RegisterNavigationIntent: async () => {},
   ListTabs: async () => [tabMeta({ runtime: { phase: "ready", epoch: modernEpoch } })],
   MetaForTab: async () => meta({ sessionPath: modernPath, runtime: { phase: "ready", epoch: modernEpoch } }),
@@ -645,16 +622,16 @@ window.go.main.App = {
   ClearSessionForTab: async () => { modernReplace("modern-clear"); return { sessionPath: modernPath, sessionGeneration: 2 }; },
   ResumeTranscriptSessionForTab: async () => { modernAdoptions++; modernReplace("modern-resume"); },
   OpenChannelTranscriptSessionForTab: async () => { modernAdoptions++; modernReplace("modern-channel"); },
-} as Partial<AppBindings> as AppBindings;
+} as Partial<AppBindings>);
 controller = undefined;
 const modernRoot = createRoot(rootEl);
 await act(async () => { modernRoot.render(<Probe />); await flushPromises(); });
 await waitFor("modern startup snapshot", () => controller?.state.transcriptProtocol === 1);
 const verifyModernSuffix = async (label: string) => {
   await act(async () => {
-    for (const handler of eventHandlers) handler({ kind: "user_message", tabId: "tab-a", runtimeEpoch: modernEpoch,
+    desktopStub.emit("agent:event", { kind: "user_message", tabId: "tab-a", runtimeEpoch: modernEpoch,
       sessionId: modernEpoch, seq: 1, messageId: `${modernEpoch}-user`, text: label });
-    for (const handler of eventHandlers) handler({ kind: "text", tabId: "tab-a", runtimeEpoch: modernEpoch,
+    desktopStub.emit("agent:event", { kind: "text", tabId: "tab-a", runtimeEpoch: modernEpoch,
       sessionId: modernEpoch, seq: 2, messageId: `${modernEpoch}-assistant`, text: "suffix" });
     await flushPromises();
   });

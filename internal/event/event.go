@@ -139,6 +139,7 @@ const (
 	SessionChanged
 	// ReadStatus upserts one logical read's delivery state instead of per page.
 	ReadStatus
+	ToolStarted // Persisted after policy/validation and before execution.
 	// UserMessage binds an admitted user bubble to its persisted message ID.
 	// Text is display text; provider-only framing must never be emitted here.
 	UserMessage
@@ -225,6 +226,8 @@ type Profile struct {
 // Output/Err/Truncated are filled in. Args is the raw JSON arguments — a sink
 // compacts it for display.
 type Tool struct {
+	RunState   provider.ToolRunState
+	Diagnostic json.RawMessage `json:"diagnostic,omitempty"`
 	// Verifying is emitted only once an authorized check actually enters execution.
 	Verifying bool
 	ID        string
@@ -568,6 +571,24 @@ func RecordTurnCompletion(s Sink) {
 	}
 }
 
+// OperationAuditSink is an optional sink capability for operation-lifecycle
+// counters. Implementations must keep it content-free: the audit carries host
+// identifiers only, never paths, arguments, or tool output.
+type OperationAuditSink interface {
+	RecordOperationAudit(evidence.OperationAudit)
+}
+
+// RecordOperationAudit reports one operation transition to a sink that wants
+// the counters; every other sink ignores it.
+func RecordOperationAudit(s Sink, a evidence.OperationAudit) {
+	if nilutil.IsNil(s) || a.Metric == "" {
+		return
+	}
+	if os, ok := s.(OperationAuditSink); ok {
+		os.RecordOperationAudit(a)
+	}
+}
+
 // RecordReadinessAudit forwards a readiness audit receipt to sinks that opt in.
 func RecordReadinessAudit(s Sink, a evidence.ReadinessAudit) {
 	if nilutil.IsNil(s) {
@@ -773,50 +794,3 @@ func RecordProtocolRecovery(s Sink, a ProtocolRecoveryAudit) {
 		rs.RecordProtocolRecovery(a)
 	}
 }
-
-// Sink consumes a turn's events. The agent calls Emit serially from its run
-// loop (tool execution may fan out across goroutines, but emission does not),
-// so an implementation need not be safe for concurrent Emit. Emit must not
-// block indefinitely — a channel-backed sink should be buffered or drained by
-// a live reader.
-type Sink interface {
-	Emit(Event)
-}
-
-// CheckedSink is an optional durability-aware sink capability. Callers use it
-// at side-effect boundaries (tool dispatch, user prompts, terminal commits)
-// where continuing after a local journal failure would make runtime state
-// impossible to recover safely. Ordinary display-only sinks keep implementing
-// Sink; EmitChecked falls back to Emit for compatibility.
-type CheckedSink interface {
-	EmitChecked(Event) error
-}
-
-// EmitChecked emits e and returns a durability failure when the sink exposes
-// CheckedSink. It deliberately does not make every Sink fallible: most event
-// consumers are renderers, while the session lifecycle decorator is the one
-// owner that can provide a durable acknowledgement.
-func EmitChecked(s Sink, e Event) error {
-	if nilutil.IsNil(s) {
-		return nil
-	}
-	if checked, ok := s.(CheckedSink); ok {
-		return checked.EmitChecked(e)
-	}
-	s.Emit(e)
-	return nil
-}
-
-// FuncSink adapts a plain function to a Sink.
-type FuncSink func(Event)
-
-// Emit calls the wrapped function.
-func (f FuncSink) Emit(e Event) {
-	if f != nil {
-		f(e)
-	}
-}
-
-// Discard is a Sink that drops every event. Useful in tests and for runs that
-// only care about the final session state.
-var Discard Sink = FuncSink(func(Event) {})

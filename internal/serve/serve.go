@@ -133,6 +133,7 @@ func New(ctrl control.SessionAPI, bc *Broadcaster, serveCfg config.ServeConfig) 
 	if cfg, err := config.Load(); err == nil {
 		bc.SetDisplayCurrency(cfg.ExplicitDisplayCurrency())
 	}
+	s.auth.capabilities = s.capabilities
 	s.initTitleProvider()
 	if concrete, ok := ctrl.(*control.Controller); ok {
 		concrete.SetBeforeInboxDispatch(s.beforeInboxDispatch)
@@ -415,6 +416,7 @@ func (s *Server) rebuild(ctx context.Context, old *control.Controller, ref strin
 	opts.Model, opts.Sink, opts.Stderr = ref, tag, os.Stderr
 	opts.StatsSource, opts.SessionDir, opts.WorkspaceRoot = "serve", old.SessionDir(), old.WorkspaceRoot()
 	opts.MCPHostProfile = plugin.HostProfileInteractive
+	opts.BrowserExecutor = s.sessionBrowserExecutor(tag)
 	opts.BeforeInboxDispatch = s.beforeInboxDispatch
 	if s.managedModels != nil {
 		opts.ModelSettings = s.managedModels
@@ -582,6 +584,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /summarize", s.foregroundMutation(s.summarize))
 	mux.HandleFunc("POST /tool-approval-mode", s.foregroundMutation(s.toolApprovalMode))
 	mux.HandleFunc("POST /providers/reload", s.providersReload)
+	mux.HandleFunc("POST /browser/broker", s.browserBrokerRebind)
 	mux.HandleFunc("POST /auto-approve-tools", s.foregroundMutation(s.autoApproveTools))
 	mux.HandleFunc("POST /bypass", s.foregroundMutation(s.bypass))
 	mux.HandleFunc("POST /goal", s.foregroundMutation(s.goal))
@@ -602,7 +605,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /quality-floor", s.qualityFloorSwitch)
 	mux.HandleFunc("POST /extensions/reload", s.reloadExtensionsHTTP)
 	mux.HandleFunc("POST /extension-form", s.foregroundMutation(s.submitExtensionForm))
-	mux.HandleFunc("GET /status", s.status)
+	s.registerRuntimeRecoveryRoutes(mux)
 	mux.HandleFunc("GET /sessions", s.sessions)
 	mux.HandleFunc("GET /ownership", s.ownership)
 	mux.HandleFunc("POST /handoff", s.handoff)
@@ -1492,7 +1495,10 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
-	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+	// Validate the untrusted name before constructing any transcript or sidecar
+	// path. IsLocal also rejects Windows drive-relative and reserved names;
+	// the separator check keeps this endpoint restricted to one basename.
+	if !filepath.IsLocal(name) || name == "." || strings.ContainsAny(name, `/\`) {
 		http.Error(w, "invalid session name", http.StatusBadRequest)
 		return
 	}

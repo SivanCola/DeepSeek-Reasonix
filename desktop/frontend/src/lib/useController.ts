@@ -9,9 +9,12 @@ import { createControllerModelCommands } from "./controllerModelCommands";
 import { compactArchivedToolItems } from "./archivedToolItems";
 import { addBreadcrumb } from "./breadcrumbs";
 import { app, onEvent, onReady, onRuntimeRebuilt, onTabMeta, onTopicActivation } from "./bridge";
+import { startControllerEventRecovery } from "./controllerEventRecovery";
+import { metaFromTab } from "./controllerTabMeta";
+import { tokensFromQuarters, unbilledOutputTokens } from "./turnMetrics";
+export { metaFromTab } from "./controllerTabMeta";
 import { invalidateCache } from "./composerHistory";
 import { formatInboxCancelError } from "./inboxError";
-import { settleForkConversationForTab } from "./forkWorktree";
 import type { MessageActionScope, MessageActionState } from "./messageActions";
 import { mergeRateBand, type AggregatedRateBand } from "./costRateBand";
 import { requestSessionCancel, type CancelOutcome } from "./inboxCancel";
@@ -61,7 +64,7 @@ import { useNavigationIntentFence } from "./useNavigationIntentFence";
 import type { SearchSource } from "./searchSources";
 import { attachWebSearchOutput } from "./searchTranscript";
 import { fileDiffFromWire, parseTodos, summarize, summarizeFileDiff, type ToolFileDiff } from "./tools";
-import { modeHasAutoApproveTools, normalizeMode, normalizeToolApprovalMode, type QualityFloor } from "./types";
+import type { QualityFloor } from "./types";
 import type {
   BalanceInfo,
   CheckpointMeta,
@@ -642,45 +645,6 @@ function updatesContextGauge(usage?: WireUsage): boolean {
   const source = usage?.source?.trim();
   return !source || source === "executor";
 }
-export function metaFromTab(tab: TabMeta, existing?: Meta): Meta {
-  const cwd = tab.cwd || tab.workspaceRoot || existing?.cwd || "";
-  const toolApprovalMode = normalizeToolApprovalMode(
-    tab.toolApprovalMode,
-    normalizeMode(tab.mode),
-    modeHasAutoApproveTools(tab.mode),
-    (tab.toolApprovalMode ?? "").trim() === "" ? existing?.toolApprovalMode : undefined,
-  );
-  const autoApproveTools = toolApprovalMode === "yolo";
-  return {
-    label: tab.label || existing?.label || "",
-    ready: tab.ready,
-    runtime: tab.runtime,
-    startupErr: tab.startupErr,
-    eventChannel: existing?.eventChannel ?? "agent:event",
-    cwd,
-    workspaceRoot: tab.workspaceRoot || existing?.workspaceRoot || cwd,
-    workspaceName: tab.workspaceName || existing?.workspaceName,
-    workspacePath: tab.workspacePath || tab.workspaceRoot || existing?.workspacePath,
-    sessionPath: tab.sessionPath !== undefined ? tab.sessionPath : existing?.sessionPath,
-    sessionRevision: tab.sessionRevision !== undefined ? tab.sessionRevision : existing?.sessionRevision,
-    sessionDigest: tab.sessionDigest !== undefined ? tab.sessionDigest : existing?.sessionDigest,
-    sessionGeneration: tab.sessionGeneration !== undefined ? tab.sessionGeneration : existing?.sessionGeneration,
-    gitBranch: tab.gitBranch || existing?.gitBranch,
-    imageInputEnabled: existing?.imageInputEnabled,
-    visionFallbackEnabled: existing?.visionFallbackEnabled,
-    autoApproveTools,
-    bypass: autoApproveTools,
-    collaborationMode: tab.collaborationMode ?? existing?.collaborationMode ?? "normal",
-    toolApprovalMode,
-    tokenMode: tab.tokenMode ?? existing?.tokenMode ?? "full",
-    agentPreset: tab.agentPreset ?? existing?.agentPreset,
-    qualityFloor: tab.qualityFloor ?? existing?.qualityFloor,
-    floorInferred: tab.floorInferred ?? existing?.floorInferred,
-    goal: tab.goal ?? existing?.goal,
-    goalStatus: tab.goalStatus ?? existing?.goalStatus,
-    canonicalTodos: existing?.canonicalTodos, dismissedTodoBatches: (tab.sessionPath !== undefined ? tab.sessionPath : existing?.sessionPath) === existing?.sessionPath ? existing?.dismissedTodoBatches : undefined,
-  };
-}
 function countsTowardCurrentTurn(state: State): boolean {
   return state.turnActive || state.running;
 }
@@ -853,6 +817,7 @@ function backendStatusFromRuntimeMeta(meta: RuntimeMetaSnapshot): Extract<Action
 
 // ---- reducer helpers (unchanged logic) ----
 
+
 /** End the compatibility-path segment before a committed tool dispatch. */
 function settleCurrentAssistant(s: State, now = Date.now()): State {
   const settled = endTurnModelActivity(s, now, true);
@@ -936,8 +901,11 @@ function endPromptWait(s: State, now = Date.now()): State {
   };
 }
 
+// An MCP interaction is a user wait like any other prompt: closing the interval
+// while one is outstanding would drop that wait from turnWaitAccumMs entirely,
+// because the later answer's endPromptWait finds no open interval to close.
 function endPromptWaitIfIdle(s: State, now = Date.now()): State {
-  if (s.approval || s.ask) return s;
+  if (s.approval || s.ask || s.mcpInteraction) return s;
   return endPromptWait(s, now);
 }
 
@@ -998,11 +966,11 @@ function endTurnModelActivity(s: State, now = Date.now(), stashForUsage = false)
 function snapshotCompletedTurnTelemetry(s: State, now = Date.now()): State {
   if (!s.turnStartAt || s.turnDoneAt > 0) return s;
   const settled = endPromptWait(endTurnModelActivity(s, now), now);
-  const liveChars = (settled.live?.text.length ?? 0) + (settled.live?.reasoning.length ?? 0);
-  const inFlightChars = settled.turnOutputTokens > 0
-    ? Math.max(0, liveChars - settled.turnOutputCharsAtUsage) + settled.turnArgChars
-    : settled.turnOutputChars + settled.turnArgChars;
-  const estimatedInFlightTokens = Math.round(inFlightChars / 4);
+  // `turnOutputChars` is a bare count with no buffer to weight, so the rolled
+  // back-attempt branch stays ASCII-priced.
+  const estimatedInFlightTokens = settled.turnOutputTokens > 0
+    ? unbilledOutputTokens(settled.live, settled.turnOutputCharsAtUsage, settled.turnArgChars)
+    : tokensFromQuarters(settled.turnOutputChars + settled.turnArgChars);
   return {
     ...settled,
     turnDoneAt: now,
@@ -1808,7 +1776,7 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
         }];
       } else if (e.outcome === "completion_uncertain") {
         items = [...finalized, { kind: "notice", id: `e${s.seq}`, level: "info", title: t("notice.completionUncertainTitle"), text: t("notice.completionUncertainBody") }];
-      } else if (e.status === "interrupted") {
+      } else if (e.status === "interrupted" || e.status === "recovery_required") {
         const interruptItems: Item[] = [{
           kind: "notice",
           id: `e${s.seq}`,
@@ -1833,7 +1801,7 @@ function applyEvent(s: State, e: WireEvent, preserveToolPayloads = false): State
         items = items.map(item => item.kind==="notice" && item.action==="recover_context" ? {...item,action:undefined} : item);
         items.push({kind:"notice",id:`e${s.seq}-protocol`,level:"info",code:"protocol_recovery",text:t("notice.protocolRecoveryBody"),action:"recover_context",recoveryId:e.protocolRecovery.id});
       }
-      // Plan approval can arrive before turn_done on some Wails event paths.
+      // Plan approval can arrive before turn_done on some bridge event paths.
       // Keep that gate visible instead of clearing the only UI that can answer it.
       const keepPlanApproval = s.approval?.tool === "exit_plan_mode";
       let next: State = {
@@ -2197,7 +2165,7 @@ export function reducer(s: State, a: Action): State {
     }
     case "local_notice": return { ...s, running: a.preserveRuntime ? s.running : false, turnActive: a.preserveRuntime ? s.turnActive : false, seq: s.seq + 1, items: [...s.items, { kind: "notice", id: `n${s.seq}`, level: a.level, text: a.text }] };
     case "clearApproval": {
-      const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask), resolvedPromptId: s.approval?.id ?? s.resolvedPromptId };
+      const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask || s.mcpInteraction), resolvedPromptId: s.approval?.id ?? s.resolvedPromptId };
       return endPromptWaitIfIdle(next);
     }
     case "clearAsk": {
@@ -2233,12 +2201,12 @@ export function reducer(s: State, a: Action): State {
     // drain result must also belong to this controller's prompt-id epoch.
     case "approval_drained": {
       if (s.promptEpoch !== a.epoch || !s.approval || !a.ids.includes(s.approval.id)) return s;
-      const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask), resolvedPromptId: s.approval.id };
+      const next = { ...s, approval: undefined, pendingPrompt: Boolean(s.ask || s.mcpInteraction), resolvedPromptId: s.approval.id };
       return endPromptWaitIfIdle(next);
     }
     case "ask_submit_succeeded": {
       if (s.promptEpoch !== a.epoch || s.ask?.id !== a.id) return s;
-      const next = { ...s, ask: undefined, pendingPrompt: Boolean(s.approval), resolvedPromptId: a.id };
+      const next = { ...s, ask: undefined, pendingPrompt: Boolean(s.approval || s.mcpInteraction), resolvedPromptId: a.id };
       return endPromptWaitIfIdle(next);
     }
     // The optimistic clearApproval/clearAsk tombstone was wrong: the backend
@@ -2626,7 +2594,7 @@ export function useController() {
     transcriptSubscriptions.current.set(tabId, () => { unsubscribe(); unsubscribeContent(); });
   }, [dispatchTo, snapshotClient]);
   const releaseTranscriptState = useCallback((tabId: string) => {
-    // A released tab can still have an older-page request awaiting Wails. Keep
+    // A released tab can still have an older-page request awaiting the bridge. Keep
     // a tombstone generation so a later tab reusing the same id cannot make
     // that completion current again.
     historyOlderSeq.current.set(tabId, (historyOlderSeq.current.get(tabId) ?? 0) + 1);
@@ -2697,6 +2665,7 @@ export function useController() {
       sessionGeneration?: number;
       cancelHydrateGeneration?: number;
       deferResetUntilHistory?: boolean; surfacePolicy?: HydrateSurfacePolicy;
+      recoveryCurrent?: () => boolean;
     } = {},
   ) => {
     const surfacePolicy = options.surfacePolicy ?? "preserve-current"; const resetSurface = reset || surfacePolicy === "replace-surface";
@@ -2705,7 +2674,7 @@ export function useController() {
     const sessionRevision = "sessionRevision" in options ? options.sessionRevision : stateMeta?.sessionRevision;
     const sessionDigest = "sessionDigest" in options ? options.sessionDigest : stateMeta?.sessionDigest;
     const sessionGeneration = "sessionGeneration" in options ? options.sessionGeneration : stateMeta?.sessionGeneration;
-    const canJoinInFlight = !resetSurface && !options.skipHistory;
+    const canJoinInFlight = !resetSurface && !options.skipHistory && !options.recoveryCurrent;
     const shouldTrackInFlight = !options.skipHistory;
     if (canJoinInFlight) {
       const existing = sessionLoadInFlight.current.get(tabId);
@@ -2728,6 +2697,7 @@ export function useController() {
       // Request seq alone cannot stop clear→mode-switch races: a load started
       // after clear with stale meta.sessionPath must also be rejected.
       const stillCurrent = () => {
+        if (options.recoveryCurrent && !options.recoveryCurrent()) return false;
         if (!sessionLoadCurrent(tabId, seq)) return false;
         if (cancelHydrateGeneration !== undefined && !cancelHydrateCurrent(tabId, cancelHydrateGeneration)) return false;
         const meta = statesRef.current.get(tabId)?.meta;
@@ -2828,7 +2798,7 @@ export function useController() {
 
       // Phase 2: local ancillary data. It stays inside the same in-flight
       // promise so duplicate ready/startup hydrations coalesce, but it runs
-      // after hydrate_done so slow Wails calls don't keep the visible transcript
+      // after hydrate_done so slow bridge calls don't keep the visible transcript
       // in a loading state.
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       if (!stillCurrent()) return;
@@ -3521,6 +3491,25 @@ export function useController() {
       dispatchTo(tabId, { type: "meta", meta });
     });
 
+    const offRecovery = startControllerEventRecovery({
+      navigation: () => activeNavigationSeqRef.current,
+      bindings: () => new Map(Array.from(statesRef.current, ([id, state]) => [id, JSON.stringify([state.meta?.sessionPath, state.meta?.sessionGeneration, sessionLoadSeq.current.get(id)])])),
+      meta: id => statesRef.current.get(id)?.meta,
+      now: promptEventClock,
+      flush: () => textBatch.drain(),
+      prepare: tab => {
+        if (tab.runtime?.epoch) runtimeEpochByTabRef.current.set(tab.id, tab.runtime.epoch);
+        invalidateSharedQuery("MetaForTab", [tab.id]);
+        dispatchTo(tab.id, { type: "optimistic_meta", meta: metaFromTab(tab, statesRef.current.get(tab.id)?.meta) });
+      },
+      runtime: (tab, snapshotAt) => { dispatchRuntimeStatusForTab(tab.id, tab, snapshotAt); },
+      reset: id => turnEventProjector.release(id),
+      hydrate: (tab, recoveryCurrent) => loadSessionDataForTab(tab.id, true, "startup", {
+        sessionPath: tab.sessionPath, sessionRevision: tab.sessionRevision,
+        sessionDigest: tab.sessionDigest, sessionGeneration: tab.sessionGeneration, recoveryCurrent,
+      }),
+    });
+
     void syncActiveTabFromBackend(false, true);
     // The event subscription is live now, so ask the backend to re-emit any
     // approval/ask prompt that was already blocking a tab before this load —
@@ -3543,8 +3532,9 @@ export function useController() {
       offRebuilt();
       offTopicActivation();
       offTabMeta();
+      offRecovery();
     };
-  }, [dispatchTo, handleTopicActivationEvent, loadSessionDataForTab, refreshBalanceForTab, refreshCheckpoints, refreshMetaForTab, syncActiveTabFromBackend, turnEventProjector, snapshotClient]);
+  }, [dispatchRuntimeStatusForTab, dispatchTo, handleTopicActivationEvent, loadSessionDataForTab, refreshBalanceForTab, refreshCheckpoints, refreshMetaForTab, syncActiveTabFromBackend, turnEventProjector, snapshotClient]);
 
   // Track the visible tab in the transcript store: the active tab is pinned
   // out of LRU eviction. (In-flight loads of background tabs still complete
@@ -3631,7 +3621,7 @@ export function useController() {
 
   // Stale-turn watchdog: keep reconciling while the frontend thinks the agent
   // is running but the event stream is quiet. The optimistic submit timestamp
-  // is evidence too: if Wails drops the entire turn stream (including
+  // is evidence too: if the bridge drops the entire turn stream (including
   // turn_started), waiting for a live event would leave the blank assistant
   // placeholder spinning forever. Re-arm after a still-running snapshot so a
   // later missed message + turn_done converges without a tab switch.
@@ -4467,7 +4457,7 @@ export function useController() {
     const forkNavigationSeq = activeNavigationSeqRef.current;
     await waitForTabReady(sourceTabId);
     const actionScope = (["fork", "fork-worktree", "summ-from", "summ-upto", "conversation", "code", "both"].includes(scope) ? scope : "both") as MessageActionScope;
-    const { messageActionBusyText } = await import("./controllerSwitchNotices");
+    const { messageActionBusyText, settleForkConversationForTab } = await import("./controllerSwitchNotices");
     dispatchTo(sourceTabId, { type: "message_action_start", action: { turn, scope: actionScope } });
     dispatchTo(sourceTabId, { type: "local_notice", level: "info", text: messageActionBusyText(actionScope) });
     try {

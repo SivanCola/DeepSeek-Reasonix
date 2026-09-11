@@ -1,5 +1,6 @@
 import { saveModelSettings, isModelSettingsResult } from "../lib/modelSettings";
 import { ModelSettingHelp } from "./ModelSettingHelp";
+import { desktopHost } from "../lib/desktopHost";
 import { SettingsOptions } from "./SettingsOptions";
 import { SettingsSelect } from "./SettingsSelect";
 import { providerProtocolLabel, providerProtocolChoices } from "../lib/providerProtocol";
@@ -14,7 +15,7 @@ import { catalogForPreset } from "../lib/providerCatalog";
 import { ProviderCatalogPicker, type CatalogChoice } from "./ProviderCatalogPicker";
 import { Eye, EyeOff, Files } from "lucide-react";
 import { lazy, memo, Suspense, startTransition, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import { ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clipboard, ExternalLink, KeyRound, Languages, ListChecks, Loader2, Monitor, MoreHorizontal, PanelBottom, Play, Power, QrCode, RefreshCw, Send, ShieldCheck, SlidersHorizontal, Trash2, Volume2 } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDollarSign, Clipboard, ExternalLink, KeyRound, Languages, ListChecks, Loader2, Monitor, MoreHorizontal, PanelBottom, Play, Power, QrCode, RefreshCw, Send, SlidersHorizontal, Trash2, Volume2 } from "lucide-react";
 import { asArray } from "../lib/array";
 import { ShellInterpreterFields } from "./SettingsShellSupport";
 import { CHANNEL_ICONS } from "./channelIcons";
@@ -107,6 +108,7 @@ const MemorySettingsPage = lazy(() => import("./MemoryPanel").then((module) => (
 const SubagentsSettingsPage = lazy(() => import("./SubagentsPanel").then((module) => ({ default: module.SubagentsSettingsPage })));
 const DiagnosticsSettingsPage = lazy(() => import("./DiagnosticsSettingsPage").then((module) => ({ default: module.DiagnosticsSettingsPage })));
 const StorageSettingsPage = lazy(() => import("./StorageSettingsPage").then((module) => ({ default: module.StorageSettingsPage })));
+const BrowserControlSettingsPage = lazy(() => import("./BrowserControlSettingsPage").then((module) => ({ default: module.BrowserControlSettingsPage })));
 const UsageStatsPanel = lazy(() => import("./UsageStatsPanel").then((module) => ({ default: module.UsageStatsPanel })));
 const QRCodeSVG = lazy(() => import("qrcode.react").then((module) => ({ default: module.QRCodeSVG })));
 
@@ -244,11 +246,14 @@ export function SettingsPanel({
     setConversationWidth(applyConversationWidth(s.conversationWidth));
   }, [s?.conversationWidth, s?.desktopTheme, s?.desktopThemeStyle, s?.desktopTerminalTheme]);
   useEffect(() => {
-    if (desktopPlatform !== "windows") return;
+    const host = desktopHost();
+    if (host.kind === "none" && desktopPlatform !== "windows") return;
     let cancelled = false;
     void (async () => {
       try {
-        const persisted = await app.GetDesktopZoomFactor();
+        const persisted = host.kind === "electron"
+          ? await host.native.getAppZoom()
+          : await app.GetDesktopZoomFactor();
         if (cancelled || typeof persisted !== "number" || !Number.isFinite(persisted)) return;
         const snapped = snapZoom(persisted);
         saveRestartZoom(snapped);
@@ -366,7 +371,9 @@ export function SettingsPanel({
     setWarning(null);
     setZoomPct(zoomToPercent(snapped));
     try {
-      await app.SetDesktopZoomFactor(snapped);
+      const host = desktopHost();
+      if (host.kind === "electron") await host.native.setAppZoom(snapped);
+      else await app.SetDesktopZoomFactor(snapped);
       if (seq === zoomSaveSeq.current) saveRestartZoom(snapped);
     } catch (e) {
       if (seq !== zoomSaveSeq.current) return;
@@ -388,6 +395,7 @@ export function SettingsPanel({
       "settings.desktopLayoutStyle", "settings.language", "settings.currency", "settings.sessionExperience",
       "settings.closeBehavior",
       "settings.defaultToolApprovalMode", "settings.sound", "settings.statusBarStyle", "settings.statusBarItems",
+      "settings.hardwareAcceleration", "GPU", "白屏", "闪烁", "渲染",
     ].map((key) => t(key as DictKey)).join(" ") : "",
   })), [s, t]);
 
@@ -442,7 +450,7 @@ export function SettingsPanel({
                       terminalTheme={terminalTheme}
                       conversationWidth={conversationWidth}
                       textSize={textSize}
-                      showDisplayZoom={desktopPlatform === "windows"}
+                      showDisplayZoom={desktopHost().kind !== "none" || desktopPlatform === "windows"}
                       zoomPct={zoomPct}
                       fontFamily={fontFamily}
                       monoFontFamily={monoFontFamily}
@@ -493,6 +501,7 @@ export function SettingsPanel({
                   </SettingsPageShell>
                 )}
                 {tab === "storage" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><StorageSettingsPage /></Suspense></SettingsPageShell>}
+                {tab === "browser" && <SettingsPageShell key={tab} s={s} tab={tab} busy={false} apply={apply}><Suspense fallback={lazySettingsPageFallback}><BrowserControlSettingsPage /></Suspense></SettingsPageShell>}
                 {tab === "updates" && s && (
                   <SettingsPageShell key={tab} s={s} tab={tab} busy={busy} apply={apply}>
                     <UpdatesSection
@@ -613,6 +622,7 @@ function settingsTabLabel(id: SettingsTab, t: ReturnType<typeof useT>): string {
       return t("settings.tab.sandbox");
     case "appearance": return t("settings.tab.appearance");
     case "storage": return t("settings.tab.storage");
+    case "browser": return t("settings.tab.browser");
     case "updates":
       return t("settings.tab.updates");
   }
@@ -655,6 +665,7 @@ function settingsTabMeta(id: SettingsTab, s: SettingsView, t: ReturnType<typeof 
       return sandboxModeLabel(s.sandbox.bash, t);
     case "appearance": return t("settings.appearanceMeta");
     case "storage": return t("settings.storageMeta");
+    case "browser": return t("settings.browserMeta");
     case "updates":
       return t("settings.updatesMeta");
   }
@@ -1528,12 +1539,11 @@ function normalizeCloseBehavior(mode: string | undefined): CloseBehavior {
   return mode === "quit" ? "quit" : "background";
 }
 
-type DesktopLayoutStyle = "classic" | "workbench" | "creation";
+type DesktopLayoutStyle = "workbench" | "creation";
 
+// A stored "classic" predates the style's removal; those installs land on workbench.
 function normalizeDesktopLayoutStyle(style: string | undefined): DesktopLayoutStyle {
-  if (style === "classic") return "classic";
-  if (style === "creation") return "creation";
-  return "workbench";
+  return style === "creation" ? "creation" : "workbench";
 }
 
 function desktopLayoutStyleLabel(style: DesktopLayoutStyle, t: ReturnType<typeof useT>): string {
@@ -1638,7 +1648,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   const t = useT();
   const closeBehavior = normalizeCloseBehavior(s.closeBehavior);
   const soundPanelId = useId();
-  const defaultToolApprovalMode = normalizeToolApprovalMode(s.defaultToolApprovalMode);
   const languagePref = normalizeLangPref(s.desktopLanguage);
   const desktopCurrency = normalizeDesktopCurrency(s.desktopCurrency);
   const desktopLayoutStyle = normalizeDesktopLayoutStyle(s.desktopLayoutStyle);
@@ -1647,6 +1656,21 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
   const [attentionPref, setAttentionPref] = useState<SoundWavPref>(getAttentionPreference());
   const [notificationVolume, setNotificationVolume] = useState(getNotificationVolume);
   const [soundExpanded, setSoundExpanded] = useState(false);
+  const [graphics, setGraphics] = useState<import("../lib/desktopHost").GraphicsSettingsState | null>(null);
+  const [graphicsBusy, setGraphicsBusy] = useState(false);
+  const [graphicsError, setGraphicsError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    const host = desktopHost();
+    if (host.kind === "electron") void host.native.graphics.get().then((value) => { if (active) setGraphics(value); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  const updateGraphics = (enabled: boolean) => {
+    const host = desktopHost();
+    if (host.kind !== "electron" || graphicsBusy) return;
+    setGraphicsBusy(true); setGraphicsError(null);
+    void host.native.graphics.setHardwareAcceleration(enabled).then((value) => { setGraphics(value); }).catch((error: unknown) => { setGraphicsError(error instanceof Error ? error.message : String(error)); }).finally(() => setGraphicsBusy(false));
+  };
   const statusBarStyle = normalizeStatusBarStyle(s.statusBarStyle);
   const statusBarItems = normalizeStatusBarItems(s.statusBarItems);
   const soundStatus = summarizeSoundStatus(genMusicPreset, soundPref, attentionPref, notificationVolume);
@@ -1720,6 +1744,11 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
       <SessionExperienceSettings snapshot={s} busy={busy} apply={apply} />
 
       <SettingsSection title={t("settings.general.sectionSystem")} description={t("settings.general.sectionSystemHint")}>
+      {graphics && <SettingsField label={<span className="settings-graphics-label"><span>{t("settings.hardwareAcceleration")}</span>{graphics.restartRequired && graphics.override === "none" && <span className="settings-graphics-status">{t("settings.hardwareAccelerationRestartShort")}</span>}{graphics.override !== "none" && <span className="settings-graphics-status settings-graphics-status--warning">{t("settings.hardwareAccelerationOverride")}</span>}{graphicsError && <span className="settings-graphics-status settings-graphics-status--error" role="alert">{graphicsError}</span>}</span>} hint={t("settings.hardwareAccelerationHint")} icon={<Monitor size={18} />}>
+        <div className="settings-graphics-control">
+          <ToggleSegment value={graphics.hardwareAcceleration} disabled={graphicsBusy || !graphics.writable || graphics.override !== "none"} onChange={updateGraphics} />
+        </div>
+      </SettingsField>}
       <SettingsField label={t("settings.closeBehavior")} hint={<DesktopCloseBehaviorHint backgroundSelected={closeBehavior === "background"} hint={t("settings.closeBehaviorHint")} unavailableHint={t("settings.closeBehaviorUnavailable")} />} icon={<Power size={18} />}>
         <SettingsOptions layout="field" className="set-seg">
           {(["background", "quit"] as const).map((mode) => (
@@ -1730,20 +1759,6 @@ function GeneralSection({ s, busy, apply, agentRunning }: SectionProps & { agent
               onClick={() => void apply(() => app.SetCloseBehavior(mode))}
             >
               {closeBehaviorLabel(mode, t)}
-            </button>
-          ))}
-        </SettingsOptions>
-      </SettingsField>
-      <SettingsField label={t("settings.defaultToolApprovalMode")} hint={t("settings.defaultToolApprovalModeHint")} icon={<ShieldCheck size={18} />}>
-        <SettingsOptions layout="field" className="set-seg">
-          {TOOL_APPROVAL_MODES.map((mode) => (
-            <button
-              key={mode}
-              className={`set-seg__btn${defaultToolApprovalMode === mode ? " set-seg__btn--on" : ""}`}
-              disabled={busy}
-              onClick={() => void apply(() => app.SetDefaultToolApprovalMode(mode))}
-            >
-              {t(`settings.defaultToolApprovalMode.${mode}`)}
             </button>
           ))}
         </SettingsOptions>
@@ -2289,7 +2304,7 @@ function BotsSection({ s, busy, apply, initialFocus }: BotsSectionProps) {
   const qqCanEnableAccess = botAccessReady(draft.qq.access);
   const qqCanSaveAndEnable = Boolean(draft.qq.appId.trim() && qqSecretEnv && (draft.qq.secretSet || qqSecretValue.trim()) && qqCanEnableAccess);
   const qqAdded = qqBotAdded(draft.qq);
-  const nativeRuntimeAvailable = typeof window !== "undefined" && Boolean(window.runtime);
+  const nativeRuntimeAvailable = desktopHost().kind !== "none";
   const browserPreviewBotConfigured = !nativeRuntimeAvailable && (qqAdded || draft.connections.length > 0);
   const qqOnline = qqConfigured && nativeRuntimeAvailable;
   const dingtalkSecretEnv = draft.dingtalk.clientSecretEnv.trim() || "DINGTALK_CLIENT_SECRET";
@@ -6316,7 +6331,7 @@ export function ProviderEditor({
     setModelContextWindows(current => ({...current, [draft.model]:draft.contextWindow}));
     setModelOverrides(current => {
       const previous = current.find(item => item.model === draft.model);
-      return [...current.filter(item => item.model !== draft.model), {...previous, model:draft.model, reasoningProtocol:previous?.reasoningProtocol ?? "", supportedEfforts:previous?.supportedEfforts ?? [], defaultEffort:previous?.defaultEffort ?? "", vision:draft.vision, maxOutputTokens:draft.maxOutputTokens}];
+      return [...current.filter(item => item.model !== draft.model), {...previous, model:draft.model, reasoningProtocol:previous?.reasoningProtocol ?? "", supportedEfforts:draft.supportedEfforts, defaultEffort:draft.defaultEffort, vision:draft.vision, maxOutputTokens:draft.maxOutputTokens}];
     });
     setModelDialog(null);
   };
@@ -6506,7 +6521,8 @@ export function ProviderEditor({
       {fetchFallback && <div role="alert" className="provider-fetch-status provider-fetch-status--warn">{fetchFallback}</div>}
       {modelDialog !== null && <Suspense fallback={null}><ProviderModelDialog
         baseURL={effectiveRequestUrl} candidates={modelCandidateNames} contextDefault={Number(ctx) || undefined}
-        initial={modelDialog ? {model:modelDialog, contextWindow:modelContextWindows[modelDialog] ?? "", maxOutputTokens:modelOverrides.find(item=>item.model === modelDialog)?.maxOutputTokens ?? 0, vision:modelOverrides.find(item=>item.model === modelDialog)?.vision ?? null} : undefined}
+        effortOptions={(modelDialog && modelOverrides.find(item=>item.model === modelDialog)?.supportedEfforts?.length ? (modelOverrides.find(item=>item.model === modelDialog)?.supportedEfforts ?? []) : (supportedEfforts ?? [])).filter(Boolean)}
+        initial={modelDialog ? (() => { const override = modelOverrides.find(item=>item.model === modelDialog); return {model:modelDialog, contextWindow:modelContextWindows[modelDialog] ?? "", maxOutputTokens:override?.maxOutputTokens ?? 0, vision:override?.vision ?? null, supportedEfforts:override?.supportedEfforts ?? supportedEfforts, defaultEffort:override?.defaultEffort ?? ""}; })() : undefined}
         capability={modelCapabilities.find(item=>item.model === modelDialog)} busy={busy || fetchingModels}
         onClose={()=>setModelDialog(null)} onApply={applyModelDetails} onDelete={deleteModel}/></Suspense>}
       <ProviderEditorModelPicker

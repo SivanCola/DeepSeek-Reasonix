@@ -91,7 +91,7 @@ func (s *turnEventSink) observe(e event.Event) {
 
 func turnEventSynchronousBarrier(kind event.Kind) bool {
 	switch kind {
-	case event.ToolDispatch, event.ToolResult, event.AskRequest, event.ApprovalRequest,
+	case event.ToolDispatch, event.ToolStarted, event.ToolResult, event.AskRequest, event.ApprovalRequest,
 		event.MCPInteractionRequest, event.PromptAnswered, event.TurnStatusChanged,
 		event.TurnStarted, event.TurnDone:
 		return true
@@ -165,6 +165,9 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	if e.RecoveryCheckpoint {
 		return s.c.checkpointToolTranscript()
 	}
+	if err := s.c.stampToolRecoveryEvent(e); err != nil {
+		return err
+	}
 	ledger := s.c.turnEventLedger()
 	if ledger == nil {
 		s.c.refreshRuntimeState(e)
@@ -195,7 +198,7 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 		status = event.TurnWaitingUser
 	case event.TurnDone:
 		status = terminalTurnStatus(e)
-		s.captureTerminalTranscriptSnapshot(ledger)
+		s.c.updateTurnLedgerTranscript(ledger)
 	case event.TurnStatusChanged:
 		// The emitter supplied the exact transition in e.Status.
 	}
@@ -232,26 +235,6 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 		}
 	}
 	return nil
-}
-
-func (s *turnEventSink) captureTerminalTranscriptSnapshot(ledger *turnevent.Ledger) {
-	if s.c.executor == nil || s.c.executor.Session() == nil {
-		return
-	}
-	session := s.c.executor.Session()
-	_, _, rewrite := session.DisplayBaseline()
-	ledger.SetTranscriptRewriteEpoch(rewrite)
-	digest, digestErr := session.ContentDigest()
-	if digestErr != nil {
-		slog.Warn("controller: compute terminal transcript digest", "err", digestErr)
-	} else {
-		ledger.SetTranscriptSnapshot(int64(session.TranscriptVersion()), digest)
-	}
-	if ref, ok := session.Head(); ok {
-		ledger.SetTranscriptHead(ref.HeadID, session.LeafID())
-	} else {
-		ledger.SetTranscriptHead("", "")
-	}
 }
 
 func (s *turnEventSink) commitEnvelope(ledger *turnevent.Ledger, e event.Event, status event.TurnStatus) (event.Event, turnevent.Envelope, bool, error) {
@@ -347,6 +330,9 @@ func (s *turnEventDurableSink) RecordSubagentLifecycle(a event.SubagentLifecycle
 }
 
 func terminalTurnStatus(e event.Event) event.TurnStatus {
+	if e.Recovery != nil && e.Recovery.State == "recovery_required" {
+		return event.TurnRecoveryRequired
+	}
 	if e.Cancelled || errors.Is(e.Err, context.Canceled) {
 		return event.TurnInterrupted
 	}
@@ -584,7 +570,7 @@ func (c *Controller) DrainTurnEventMetrics() turnevent.MetricsSnapshot {
 }
 
 // TurnIDForSubmission exposes the synchronous admission receipt without
-// depending on whether the provider is still running when Wails returns.
+// depending on whether the provider is still running when the desktop call returns.
 func (c *Controller) TurnIDForSubmission(submissionID string) string {
 	ledger := c.turnEventLedger()
 	if ledger == nil {

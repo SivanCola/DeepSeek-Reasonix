@@ -71,7 +71,7 @@ func modelTokenSeparator(r rune) bool {
 	return r == '-' || r == '_' || r == '.' || r == '/' || r == ':'
 }
 
-// CanConfigureVision is retained for the Wails payload contract. Capability
+// CanConfigureVision is retained for the desktop payload contract. Capability
 // choices are now derived from model metadata; the wire layer still refuses
 // unsupported official DeepSeek Flash/Pro image payloads.
 func CanConfigureVision(e *ProviderEntry) bool {
@@ -147,13 +147,19 @@ func officialDeepSeekEffectiveVision(e *ProviderEntry) bool {
 	if enabled, explicit := explicitModelVision(e); explicit {
 		return enabled
 	}
-	if !openai.IsOfficialDeepSeekVisionModel(e.Model) {
+	if !openai.IsOfficialDeepSeekImageModel(e.Model) {
 		return false
 	}
 	if e.Vision {
 		return true
 	}
-	return e.VisionModels == nil
+	// An explicitly emptied list means the user turned image input off for the
+	// provider. A list curated before the V4.1 SKUs still omits them, so a
+	// non-empty list must not veto a model the vendor reports as capable.
+	if e.VisionModels != nil && len(e.VisionModels) == 0 {
+		return false
+	}
+	return true
 }
 
 func explicitModelVision(e *ProviderEntry) (enabled, explicit bool) {
