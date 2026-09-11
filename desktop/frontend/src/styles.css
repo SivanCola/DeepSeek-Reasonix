@@ -5202,6 +5202,7 @@ button.reasoning-summary:focus-visible {
 }
 .reasoning__body,
 .turn-collapse__inline-reasoning {
+  overflow-wrap: anywhere;
   max-height: min(40vh, 480px);
   overflow-x: hidden;
   overflow-y: auto;
@@ -5248,6 +5249,16 @@ button.reasoning-summary:focus-visible {
 .md {
   font-family: var(--font-content-family);
   font-weight: var(--font-weight-regular);
+  overflow-wrap: anywhere;
+}
+/* Prose wraps long tokens; preformatted code, tables and mathematical layout
+   keep their own line/scroll contracts instead of inheriting prose wrapping. */
+.md pre,
+.md pre code,
+.md table,
+.md .katex {
+  overflow-wrap: normal;
+  word-break: normal;
 }
 /* KaTeX \boxed draws its frame as an empty .fbox span that relies on
    width:100% resolving against an inline-table + table-layout:fixed row.

@@ -16,6 +16,8 @@ type Options = {
   launcher: boolean;
   long: boolean;
   turns: number;
+  text: string | null;
+  streaming: boolean;
 };
 declare global {
   interface Window {
@@ -43,13 +45,13 @@ const commands = {
 function Fixture() {
   const t = useT();
   const [options, setOptions] = useState<Options>({
-    layout: "creation", width: "full", sidebar: true, dock: false, launcher: false, long: true, turns: 2,
+    layout: "creation", width: "full", sidebar: true, dock: false, launcher: false, long: true, turns: 2, text: null, streaming: false,
   });
   const [revision, setRevision] = useState(0);
   const items = useMemo(() => Array.from({ length: options.turns }, (_, index): Item[] => [
     { kind: "user", id: "user-" + index, text: "USER MESSAGE MUST REMAIN VISIBLE " + index },
-    { kind: "assistant", id: "answer-" + index, text: "\`\`\`text\n" + (options.long ? "abcdefghij".repeat(60) : "short") + "\n\`\`\`", reasoning: "", streaming: false },
-  ]).flat(), [options.long, options.turns]);
+    { kind: "assistant", id: "answer-" + index, text: options.text ?? ("\`\`\`text\n" + (options.long ? "abcdefghij".repeat(60) : "short") + "\n\`\`\`"), reasoning: "", streaming: options.streaming },
+  ]).flat(), [options.long, options.turns, options.text, options.streaming]);
   useLayoutEffect(() => {
     document.documentElement.dataset.themeStyle = "graphite";
     document.documentElement.dataset.theme = "light";
@@ -61,7 +63,7 @@ function Fixture() {
     };
   }, [options.width, revision]);
   const transcript: ChatPaneTranscriptInput = {
-    state: { ...initialState, items }, items, tabId: "layout-fixture", geometrySessionKey: "layout-fixture",
+    state: { ...initialState, items, running: options.streaming }, items, tabId: "layout-fixture", geometrySessionKey: "layout-fixture",
     footerHeight: 100, revealSignal: undefined, invocationMetadata: undefined, surfaceCommitToken: undefined,
     liveStore: undefined, transcriptHydrating: false, navigationDataReady: true, readOnly: false,
     controllerReady: true, hydratePlaceholderActive: false, clearContextPending: false,

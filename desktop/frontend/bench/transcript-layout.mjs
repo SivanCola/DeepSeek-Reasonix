@@ -98,6 +98,34 @@ try {
   await configure({ turns: 120, long: true });
   await page.waitForSelector('[data-transcript-render-mode="windowed"]');
   await measure("windowed long session");
+  await configure({ turns: 1, text: "prefix ", streaming: true });
+  await page.waitForSelector(".msg--assistant .md");
+  const prose = "prefix " + "abcdefghij".repeat(60);
+  await configure({ text: prose });
+  await page.waitForSelector(".md--stream-tail");
+  await measure("streaming long prose");
+  await configure({ streaming: false });
+  await page.waitForSelector(".md[data-markdown-blocks] p");
+  await measure("completed long prose");
+  const paragraph = await page.locator(".msg--assistant .md p").evaluate(element => ({
+    width: element.clientWidth, scrollWidth: element.scrollWidth, text: element.textContent,
+  }));
+  assert.ok(paragraph.scrollWidth <= paragraph.width + 1, "completed prose wraps inside its own column");
+  assert.equal(paragraph.text, prose, "wrapping never changes source text");
+  await page.reload();
+  await page.waitForSelector(".transcript__row .code");
+  await configure({ turns: 1, text: prose });
+  await page.waitForSelector(".md[data-markdown-blocks] p");
+  await measure("fresh history long prose");
+  await configure({ text: "| Key | Value |\n|---|---|\n| " + "abcdefghij".repeat(60) + " | data |\n\n$$\\sum_{n=1}^{10}n$$\n\n\`\`\`text\n" + "abcdefghij".repeat(60) + "\n\`\`\`" });
+  await page.waitForSelector(".md .katex");
+  await measure("wide table and math");
+  const code = await page.locator(".md pre").first().evaluate(element => ({
+    width: element.clientWidth, scrollWidth: element.scrollWidth, whitespace: getComputedStyle(element).whiteSpace,
+  }));
+  assert.equal(code.whitespace, "pre", "ordinary code retains its original lines");
+  assert.ok(code.scrollWidth > code.width, "long code remains locally scrollable");
+  assert.equal(await page.locator(".katex").first().evaluate(element => getComputedStyle(element).overflowWrap), "normal");
   assert.deepEqual(errors, []);
   console.log(`PASS transcript width: ${samples.length} geometry scenarios`);
   if (evidence) { await mkdir(evidence, { recursive: true }); await page.screenshot({ path: path.join(evidence, "layout.png") }); }
