@@ -736,8 +736,9 @@ jobs:
     if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
     runs-on: windows-latest
     # A hung native step must not hold the workflow's concurrency group for the
-    # six-hour default. Normal runs finish in ~25 minutes.
-    timeout-minutes: 45
+    # six-hour default. main-v2 push runs measured 34-47 minutes on 2026-09-11,
+    # so 45 sat inside the job's own spread; every step keeps its own cap.
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
