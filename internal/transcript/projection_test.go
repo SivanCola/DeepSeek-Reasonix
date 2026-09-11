@@ -198,7 +198,7 @@ func TestProjectionSnapshotDoesNotDuplicateActiveRecordInPage(t *testing.T) {
 
 func TestActiveRecordIndexesDoNotScanSettledTurns(t *testing.T) {
 	messages := make([]*bufferedMessage, 0, 10000)
-	for i := 0; i < 9990; i++ {
+	for i := range 9990 {
 		messages = append(messages, &bufferedMessage{message: Message{RecordID: fmt.Sprintf("m:%d", i), Role: "assistant", TurnID: "old"}})
 	}
 	messages = append(messages,
