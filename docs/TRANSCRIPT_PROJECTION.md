@@ -8,6 +8,10 @@ publishes the event outside the commit lock. Planner output, executor output,
 prompts and terminal events use this boundary. Provider history remains the
 input to model requests; display records never enter those requests.
 
+The Desktop surface uses the Electron host contract. New transcript methods
+and ownership metadata are generated together; DTO names cannot shadow the
+TypeScript helpers used by that contract.
+
 ## Identity and recovery
 
 The controller reserves a user message ID before planning. Optimistic user
@@ -24,6 +28,12 @@ pending. Recovery restores a matching checkpoint and replays its retained
 suffix without executing tools. It does not seed an autosaved in-flight tail
 and then append that same tail again. Existing display sidecars remain readable;
 only their legacy migration path may use the old user-hash/occurrence mapping.
+
+Terminal records retain protocol-recovery tokens, incomplete-read/readiness
+details, accepted partial-read receipts, cancellation and failure diagnostics.
+Starting a new turn retires earlier recovery actions. Checkpoint capture copies
+mutable metadata while sharing immutable body strings; disk encoding stays
+outside the projection lock.
 
 ## Snapshot protocol
 
@@ -49,11 +59,19 @@ Older pages merge by record/item identity and backend order, including an active
 user retained before the newest page. Delayed content patches check both the cut
 and intervening item mutations. A page cannot resurrect a discarded attempt.
 
+Content resolution uses message identity even when a user bubble retains its
+optimistic mounted key. Delayed patches resolve that identity back to the current
+item and reject intervening mutations before replacing its preview.
+
 ## Bounds and compatibility
 
 Pages default to 120 records and 512 KiB, with a 2 MiB response ceiling. Large
 string fields use 4 KiB previews and UTF-8-safe 64 KiB content chunks. Chunk reads
 traverse typed fields directly instead of serializing the entire payload.
+The same 2 MiB limit covers complete replay responses, including JSON escaping
+and envelope overhead. Oversized replay pages request a fresh snapshot; the
+covered data remains accessible through content chunks without advancing an
+unreceived event cursor.
 Snapshots retain at most three cuts under a 64 MiB estimated budget. The current
 cut is pinned: a larger session remains readable and evicts older cuts. Settled
 strings are shared, while immutable metadata and active prefixes are retained.
@@ -80,6 +98,6 @@ discard tombstones, and stale content writes through the real reducer.
 
 Run the root and Desktop Go suites separately. Run frontend `test:typecheck`,
 `test:transcript`, `test:remote`, `test:stream`, and the production build. Browser
-transcript and app-memory checks, together with native Windows/WebView2 replay,
+transcript and app-memory checks, together with native Electron replay,
 remain separate acceptance gates; unit tests or cross-compilation do not replace
 native evidence.

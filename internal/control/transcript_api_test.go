@@ -1,9 +1,11 @@
 package control
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"reasonix/internal/agent"
@@ -13,6 +15,54 @@ import (
 	"reasonix/internal/tool"
 	"reasonix/internal/transcript"
 )
+
+func TestTranscriptReplayResetsOversizedWirePage(t *testing.T) {
+	for _, body := range []string{strings.Repeat("x", 2<<20), strings.Repeat("<", 400000)} {
+		c := New(Options{SessionPath: filepath.Join(t.TempDir(), "session.jsonl"), Sink: event.Discard})
+		t.Cleanup(c.Close)
+		before, err := c.TranscriptSnapshot(transcript.PageRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.turnEventLedger().Begin(); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.emitTurnEventChecked(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "read", Name: "read_file", Output: body}}); err != nil {
+			t.Fatal(err)
+		}
+		replay, err := c.TranscriptReplay(TranscriptReplayRequest{Identity: before.Identity})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(replay)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(encoded)+1 > 2<<20 || !replay.ResetRequired || len(replay.Events) != 0 {
+			t.Fatalf("oversized replay did not reset: bytes=%d reset=%v", len(encoded), replay.ResetRequired)
+		}
+		cut, err := c.TranscriptSnapshot(transcript.PageRequest{})
+		if err != nil || cut.CoveredThroughSeq != replay.LatestSequence || len(cut.Records) != 1 {
+			t.Fatalf("replacement cut: %v", err)
+		}
+		ref := cut.Records[0].Refs[0]
+		var full strings.Builder
+		for offset := 0; ; {
+			chunk, err := c.TranscriptContent(transcript.ContentRequest{ContentRef: ref, Offset: offset})
+			if err != nil || chunk.Stale {
+				t.Fatalf("content: %v", err)
+			}
+			full.WriteString(chunk.Data)
+			offset = chunk.NextOffset
+			if chunk.Done {
+				break
+			}
+		}
+		if full.String() != body {
+			t.Fatal("fallback snapshot lost the oversized event body")
+		}
+	}
+}
 
 func TestTranscriptProjectionCommitsBeforePublicationAndAllowsReentry(t *testing.T) {
 	var c *Controller
@@ -175,7 +225,7 @@ func TestTranscriptCheckpointRestoreDoesNotReplayAutosavedTextTwice(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recovered.Records) != 4 || recovered.Records[3].Message.Content != "autosaved tail" || recovered.Runtime.Status != event.TurnInterrupted {
+	if len(recovered.Records) != 5 || recovered.Records[3].Message.Content != "autosaved tail" || recovered.Records[4].Message.Code != event.NoticeCodeCancelledTurn || recovered.Runtime.Status != event.TurnInterrupted {
 		t.Fatalf("recovered suffix duplicated or lost: %+v", recovered)
 	}
 }

@@ -18261,6 +18261,17 @@
           }
         },
         {
+          "name": "readCompletion",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "provider.ReadCompletion"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
           "name": "usage",
           "optional": true,
           "type": {

@@ -103,6 +103,8 @@ export function useTranscriptRowRenderer({
         if (isSteerNoticeText(row.item.text)) return <SteerCard id={row.item.id} text={row.item.text} />;
         const action = row.item.action === "continue_delivery"
           ? (onDeliveryContinue ?? (() => onPrompt(t("notice.deliveryIncompleteContinuePrompt"))))
+          : row.item.action === "recover_context" && row.item.recoveryId
+            ? () => onPrompt(`/recover-context ${row.item.recoveryId}`)
           : row.item.action === "open_changes" && onOpenChanges ? () => onOpenChanges(row.item.completionSummary) : undefined;
         return <NoticeCard
           item={row.item} actionDisabled={running && row.item.action !== "open_changes"} onAction={action}

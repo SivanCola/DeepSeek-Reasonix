@@ -32,6 +32,7 @@ type Event struct {
 	Tool             *Tool                            `json:"tool,omitempty"`
 	ReadStatus       *ReadStatus                      `json:"readStatus,omitempty"`
 	ReadPause        *provider.ReadPause              `json:"readPause,omitempty"`
+	ReadCompletion   *provider.ReadCompletion         `json:"readCompletion,omitempty"`
 	Usage            *Usage                           `json:"usage,omitempty"`
 	Approval         *Approval                        `json:"approval,omitempty"`
 	Ask              *Ask                             `json:"ask,omitempty"`

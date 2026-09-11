@@ -1,5 +1,5 @@
 import type { TranscriptContentChunk, TranscriptContentRef, TranscriptPageRequest, TranscriptRecord, TranscriptSnapshot } from "./transcriptProtocol";
-import { snapshotRecords } from "./transcriptSnapshotState";
+import { matchingSnapshotItem, snapshotRecords } from "./transcriptSnapshotState";
 import { TurnEventProjector } from "./turnEventProjection";
 import type { HistoryMessage, WireEvent } from "./types";
 import type { Item, State } from "./useController";
@@ -10,15 +10,17 @@ export async function resolveSnapshotItems(client: TranscriptSnapshotClient, tab
   let resolved: TranscriptRecord | undefined;
   for (let attempt = 0; attempt < 8; attempt++) {
   const before = new Map(getState()?.items.map((item) => [item.id, item]));
-  const record = await client.content(tabId, entryId);
+  const requested = before.get(entryId);
+  const canonicalId = requested?.kind === "user" && requested.messageId ? `m:${requested.messageId}` : entryId;
+  const record = await client.content(tabId, canonicalId);
   if (!record) return resolved;
   const converted = convert([{ ...record.message, recordId: record.id }], "snapshot:");
   const current = getState();
   const patches: Record<string, Item> = {};
   for (const item of converted.items) {
-    const existing = current?.items.find((candidate) => candidate.id === item.id);
-    if (existing && existing === before.get(item.id)) patches[item.id] = item.kind === "tool" && existing.kind === "tool"
-      ? { ...existing, ...(record.message.role === "tool" ? { output: item.output } : { args: item.args }) } : item;
+    const existing = current && matchingSnapshotItem(current.items, item);
+    if (existing && existing === before.get(existing.id)) patches[existing.id] = item.kind === "tool" && existing.kind === "tool"
+      ? { ...existing, ...(record.message.role === "tool" ? { output: item.output } : { args: item.args }) } : { ...item, id: existing.id };
   }
   commit(patches);
   if (Object.keys(patches).length === 0) return resolved;

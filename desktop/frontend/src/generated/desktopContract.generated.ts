@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 1;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:31aaf607af5cfa5cf1bd7b97a2bd4baa8bef42c49442fdce8fd1ebdfdab3549d";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:e57d611f7394f55fbf2905d219877029eb3a5e1cfde77693c386bf1eb67ef36f";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -1095,6 +1095,7 @@ export interface Event {
   tool?: Tool | null;
   readStatus?: ReadStatus | null;
   readPause?: ReadPause | null;
+  readCompletion?: ReadCompletion | null;
   usage?: Usage | null;
   approval?: Approval | null;
   ask?: Ask | null;

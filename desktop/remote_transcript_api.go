@@ -48,7 +48,7 @@ func (a *App) remoteTranscriptRead(tabID, route string, request any, destination
 		return false, err
 	}
 	defer response.Body.Close()
-	const maxResponseBytes = 2 << 20
+	const maxResponseBytes = transcript.MaxResponseBytes
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
 		return false, err

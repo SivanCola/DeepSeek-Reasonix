@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/json"
 	"errors"
 
 	"reasonix/internal/transcript"
@@ -84,6 +85,26 @@ func (c *Controller) TranscriptContent(req transcript.ContentRequest) (transcrip
 }
 
 func (c *Controller) TranscriptReplay(req TranscriptReplayRequest) (TranscriptReplay, error) {
+	replay, err := c.transcriptReplay(req)
+	if err != nil {
+		return replay, err
+	}
+	// The ledger's soft budget permits an oversized first event for progress.
+	// Modern clients can obtain that data from the bounded snapshot/content
+	// protocol instead. Never acknowledge a suffix the client cannot receive.
+	encoded, err := json.Marshal(replay)
+	if err != nil {
+		return TranscriptReplay{}, err
+	}
+	if len(encoded)+1 > transcript.MaxResponseBytes {
+		replay.Events = []turnevent.Envelope{}
+		replay.ResetRequired, replay.HasMore = true, false
+		replay.NextAfterSequence = req.After
+	}
+	return replay, nil
+}
+
+func (c *Controller) transcriptReplay(req TranscriptReplayRequest) (TranscriptReplay, error) {
 	c.turnEvents.commitMu.Lock()
 	defer c.turnEvents.commitMu.Unlock()
 	p, err := c.transcriptProjection()

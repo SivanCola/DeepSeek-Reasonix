@@ -198,7 +198,7 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 		status = event.TurnWaitingUser
 	case event.TurnDone:
 		status = terminalTurnStatus(e)
-		s.c.updateTurnLedgerTranscript(ledger)
+		e.ReadCompletion = s.c.updateTurnLedgerTranscript(ledger)
 	case event.TurnStatusChanged:
 		// The emitter supplied the exact transition in e.Status.
 	}

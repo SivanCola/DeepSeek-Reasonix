@@ -158,6 +158,7 @@ func ToWire(e event.Event) Event {
 		w.Recovery = e.Recovery
 		w.Outcome = e.Outcome
 		w.ReadPause = e.ReadPause
+		w.ReadCompletion = e.ReadCompletion
 		w.CheckpointTurn = e.CheckpointTurn
 		w.Receipt = completionReceiptWire(e.Receipt)
 		w.ProtocolRecovery = e.ProtocolRecovery

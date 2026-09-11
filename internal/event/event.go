@@ -479,6 +479,7 @@ type Event struct {
 	StreamAttempt      StreamAttemptInfo         // StreamAttempt lifecycle
 	ReadStatus         *ReadStatusPayload        // ReadStatus: one logical read's delivery state
 	ReadPause          *provider.ReadPause       // TurnDone: durable display-only pause receipt
+	ReadCompletion     *provider.ReadCompletion  // TurnDone: accepted partial coverage, display-only
 	ItemID             string                    // correlates durable inbox events
 	SessionPath        string                    // routes Serve frames
 	SessionReset       bool                      // SessionChanged came from /new or /clear, not resume/recovery

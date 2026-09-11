@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 
 	"reasonix/internal/eventwire"
 	"reasonix/internal/fileutil"
@@ -30,14 +31,11 @@ func (p *Projection) Checkpoint(digest string) (Checkpoint, error) {
 	runtime, attempts := p.runtimeLocked()
 	state := Checkpoint{Version: ProtocolVersion, Identity: p.identity, CoveredThroughSeq: p.covered,
 		TranscriptDigest: digest, Records: p.buffer.Messages(), Runtime: runtime, ActiveAttempts: attempts, Completion: p.buffer.completion}
-	// Detach retained pointers before returning to persistence outside the lock.
-	b, err := json.Marshal(state)
-	if err != nil {
-		return Checkpoint{}, err
-	}
-	var owned Checkpoint
-	err = json.Unmarshal(b, &owned)
-	return owned, err
+	// Detach mutable metadata while sharing immutable strings. Encoding and
+	// decoding the full transcript here duplicates large bodies under p.mu;
+	// SaveCheckpoint already owns the required encoding outside that lock.
+	owned := mapContentStrings(reflect.ValueOf(state), nil, func(text string, _ []string) string { return text }).Interface().(Checkpoint)
+	return owned, nil
 }
 
 func RestoreCheckpoint(state Checkpoint, identity Identity) (*Projection, error) {

@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"errors"
 	"reasonix/internal/event"
 	"reasonix/internal/eventwire"
 	"reasonix/internal/provider"
@@ -46,6 +47,14 @@ func EventFromEnvelope(envelope turnevent.Envelope) (event.Event, bool) {
 		e.Kind = event.TurnDone
 		e.Receipt = eventwire.CompletionReceiptEvent(w.Receipt)
 		e.CheckpointTurn = w.CheckpointTurn
+		e.Outcome, e.ReadPause, e.ProtocolRecovery, e.Diagnostic, e.Recovery = w.Outcome, w.ReadPause, w.ProtocolRecovery, w.Diagnostic, w.Recovery
+		e.ReadCompletion = w.ReadCompletion
+		if w.Err != "" {
+			e.Err = errors.New(w.Err)
+		}
+		if w.Readiness != nil {
+			e.Readiness = &event.FinalReadiness{Attempts: w.Readiness.Attempts, Missing: w.Readiness.Missing}
+		}
 	default:
 		return event.Event{}, false
 	}

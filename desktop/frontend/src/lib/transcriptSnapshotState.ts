@@ -26,6 +26,13 @@ export function snapshotRecords(snapshot: TranscriptSnapshot): TranscriptRecord[
 type Convert = (messages: HistoryMessage[], prefix: string) => { items: Item[]; seq: number };
 type ApplyEvent = (state: State, event: WireEvent) => State;
 
+// Message identity survives optimistic keys, hydration and older-page merges.
+// Keep one matching rule for installation and delayed content patches.
+export function matchingSnapshotItem(items: Item[], item: Item): Item | undefined {
+  return items.find((candidate) => candidate.id === item.id || (item.kind === "user" && candidate.kind === "user" &&
+    ((item.messageId && candidate.messageId === item.messageId) || (item.submissionId && candidate.submissionId === item.submissionId))));
+}
+
 function recordItemOrder(records: TranscriptRecord[], convert: Convert): Record<string, number> {
   const order: Record<string, number> = {};
   for (const record of records) {
@@ -43,8 +50,7 @@ export function transcriptPageState(state: State, page: TranscriptSnapshot, conv
   for (const [id, position] of Object.entries(recordItemOrder(records, convert))) order[id] = Math.min(order[id] ?? Infinity, position);
   const prefix: Item[] = [];
   for (const item of converted.items) {
-    const prior = existing.get(item.id) ?? (item.kind === "user" ? state.items.find((candidate) => candidate.kind === "user" &&
-      ((item.messageId && candidate.messageId === item.messageId) || (item.submissionId && candidate.submissionId === item.submissionId))) : undefined);
+    const prior = existing.get(item.id) ?? matchingSnapshotItem(state.items, item);
     if (!prior) { prefix.push(item); continue; }
     if (prior.kind === "tool" && item.kind === "tool") {
       prefix.push({ ...prior, args: prior.args || item.args, messageId: prior.messageId || item.messageId,
@@ -77,9 +83,7 @@ export function transcriptSnapshotState(state: State, snapshot: TranscriptSnapsh
   const users = state.items.filter((item): item is Extract<Item, { kind: "user" }> => item.kind === "user");
   const items = converted.items.map((item) => {
     if (item.kind !== "user") return item;
-    const mounted = users.find((user) =>
-      (item.messageId && (user.messageId === item.messageId || user.id === `m:${item.messageId}`)) ||
-      (item.submissionId && user.submissionId === item.submissionId));
+    const mounted = matchingSnapshotItem(users, item);
     if (mounted && mounted.id !== item.id) { order[mounted.id] = order[item.id]; delete order[item.id]; }
     return mounted ? { ...item, id: mounted.id } : item;
   });

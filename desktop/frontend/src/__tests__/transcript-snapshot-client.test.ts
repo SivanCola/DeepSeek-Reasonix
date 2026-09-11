@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import type { TranscriptSnapshot } from "../lib/transcriptProtocol";
 import type { SnapshotTransport } from "../lib/transcriptSnapshotClient";
+import { installDesktopHostStub } from "./desktopHostStub";
 
-Object.defineProperty(globalThis, "window", { configurable: true, value: { go: { main: { App: {} } } } });
+Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
+installDesktopHostStub({});
 const [{ TurnEventProjector }, { TranscriptSnapshotClient, resolveSnapshotItems }, { initialState, reducer, historyMessagesToItems }] = await Promise.all([
   import("../lib/turnEventProjection"), import("../lib/transcriptSnapshotClient"), import("../lib/useController"),
 ]);
@@ -137,4 +139,49 @@ const transport: SnapshotTransport = { snapshot: async () => cut(), page: async 
   await client.older("tab", (snapshot) => { state = reducer(state, { type: "transcript_page", snapshot }); });
   assert.equal(state.items.some((item) => item.id === "m:assistant"), false);
 }
+// Preserving an optimistic bubble's mounted key must not orphan its content
+// reference, including when callers still hold that original key.
+{
+  const full = "q".repeat(70000);
+  let state = reducer(initialState, { type: "user", text: full, seq: 0, submissionId: "submit" });
+  const mounted = state.items[0].id;
+  const snapshot = cut({ records: [{ id: "m:user", order: 0,
+    message: { role: "user", messageId: "user", submissionId: "submit", content: full.slice(0, 4096) },
+    refs: [{ snapshotId: "cut-1", recordId: "m:user", path: ["content"], bytes: full.length }] }],
+    activeAttempts: [], runtime: { status: "completed", pendingEvents: [] } });
+  const projector = new TurnEventProjector(quietTransport);
+  const client = new TranscriptSnapshotClient({ ...transport, snapshot: async () => snapshot,
+    content: async (_, req) => ({ data: full.slice(req.offset, req.offset + 65536), nextOffset: Math.min(full.length, req.offset + 65536),
+      done: req.offset + 65536 >= full.length, stale: false }) }, projector);
+  await client.load("tab", (snapshot) => { state = reducer(state, { type: "transcript_snapshot", snapshot }); });
+  assert.equal(state.items[0].id, mounted);
+  await resolveSnapshotItems(client, "tab", mounted, () => state, historyMessagesToItems,
+    (patches) => { state = reducer(state, { type: "history_items_patch", patches }); });
+  assert.ok(state.items[0].kind === "user" && state.items[0].text === full, "complete user body replaces preview");
+  assert.equal(state.items[0].id, mounted);
+}
+
+// A replay too large for the wire is recovered by an authoritative cut. The
+// old replay must not reset the cursor installed by its own reset handler.
+{
+  let loads = 0;
+  let state = initialState;
+  const resetDone = deferred<void>();
+  const projector = new TurnEventProjector({ replay: async () => ({ events: [], floorSeq: 1, latestSeq: 5,
+    nextAfterSeq: 4, hasMore: false, resetRequired: true, runtimeEpoch: "epoch" }) });
+  const client = new TranscriptSnapshotClient({ ...transport, snapshot: async () => {
+    loads++;
+    return loads === 1 ? cut() : cut({ snapshotId: "cut-2", coveredThroughSeq: 5, projectionRevision: 5 });
+  } }, projector);
+  const commit = (snapshot: TranscriptSnapshot) => { state = reducer(state, { type: "transcript_snapshot", snapshot }); };
+  projector.bind(event => { state = reducer(state, { type: "event", e: event }); });
+  projector.bindReset(async () => { const loaded = await client.load("tab", commit); resetDone.resolve(); return loaded; });
+  await client.load("tab", commit);
+  projector.refresh("tab");
+  await resetDone.promise;
+  projector.receiveLive("tab", { kind: "text", seq: 6, runtimeEpoch: "epoch", sessionId: "session", messageId: "assistant", text: " suffix" });
+  assert.equal(loads, 2);
+  assert.equal(state.live?.text, "prefix suffix");
+}
+
 console.log("transcript snapshot client races: ok");

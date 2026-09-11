@@ -139,6 +139,9 @@ func (p *Projection) Apply(envelope turnevent.Envelope) error {
 	}
 	if e, ok := EventFromEnvelope(owned); ok {
 		p.buffer.Apply(e)
+		if e.Kind == event.TurnDone {
+			p.applyTerminalNotices(e)
+		}
 		if m := p.buffer.byMessageID[e.MessageID]; m != nil {
 			if m.message.CreatedAt == 0 {
 				m.message.CreatedAt = owned.CreatedAt
@@ -154,6 +157,7 @@ func (p *Projection) Apply(envelope turnevent.Envelope) error {
 	p.runtime.SubmissionID = owned.SubmissionID
 	switch owned.Kind {
 	case "turn_started":
+		p.retireRecoveryNotices()
 		if previousTurn != owned.TurnID || p.runtime.StartedAt == 0 {
 			p.runtime.StartedAt = owned.CreatedAt
 		}

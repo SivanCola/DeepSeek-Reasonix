@@ -2,13 +2,15 @@ package control
 
 import (
 	"log/slog"
+	"reasonix/internal/agent"
+	"reasonix/internal/provider"
 	"reasonix/internal/turnevent"
 )
 
-func (c *Controller) updateTurnLedgerTranscript(ledger *turnevent.Ledger) {
+func (c *Controller) updateTurnLedgerTranscript(ledger *turnevent.Ledger) *provider.ReadCompletion {
 	if c.executor != nil && c.executor.Session() != nil {
 		session := c.executor.Session()
-		_, _, rewrite := session.DisplayBaseline()
+		messages, _, rewrite := session.DisplayBaseline()
 		ledger.SetTranscriptRewriteEpoch(rewrite)
 		digest, digestErr := session.ContentDigest()
 		if digestErr != nil {
@@ -21,5 +23,14 @@ func (c *Controller) updateTurnLedgerTranscript(ledger *turnevent.Ledger) {
 		} else {
 			ledger.SetTranscriptHead("", "")
 		}
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].ReadCompletion != nil {
+				return messages[i].ReadCompletion
+			}
+			if agent.IsUserAuthoredTurnMessage(messages[i]) {
+				break
+			}
+		}
 	}
+	return nil
 }

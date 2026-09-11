@@ -15,6 +15,7 @@ export function historyEntryIdForItemId(id: string | undefined): string | undefi
 export function historyEntryIdForRow(row: TranscriptRow): string | undefined {
   switch (row.kind) {
     case "user":
+      return row.item.messageId ? `m:${row.item.messageId}` : historyEntryIdForItemId(row.item.id);
     case "reasoning":
     case "phase":
     case "process-notice":

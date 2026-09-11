@@ -8,10 +8,12 @@ import (
 )
 
 const (
+	// MaxResponseBytes includes the complete encoded response and its newline.
+	MaxResponseBytes   = 2 << 20
 	defaultPageRecords = 120
 	maxPageRecords     = 1000
 	defaultPageBytes   = 512 << 10
-	maxPageBytes       = 2 << 20
+	maxPageBytes       = MaxResponseBytes
 	inlineFieldBytes   = 64 << 10
 	previewBytes       = 4 << 10
 	contentChunkBytes  = 64 << 10
@@ -169,7 +171,7 @@ func (p *Projection) snapshotCurrent(req PageRequest) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if len(encoded) > maxPageBytes {
+	if len(encoded)+1 > maxPageBytes {
 		return Snapshot{}, errors.New("transcript snapshot metadata exceeds the page limit")
 	}
 	return out, nil

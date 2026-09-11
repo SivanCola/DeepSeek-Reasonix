@@ -399,6 +399,7 @@ export interface WireEvent extends RecoveryEventFields {
 	attemptId?: string;
 	receipt?: WireCompletionReceipt;
 	readPause?: import("./readPause").WireReadPause;
+	readCompletion?: import("../generated/desktopContract.generated").ReadCompletion;
   kind: EventKind;
   readStatus?: WireReadStatus;
   /** session_changed: the transcript was replaced under the same path (head switch, clear). */

@@ -70,7 +70,7 @@ func legacyTurnsByUser(turns []LegacyDisplayTurn) map[string][]LegacyDisplayTurn
 
 func independentLocalMessage(m provider.Message) bool {
 	_, steer := agent.ReplaySteerText(m.Content)
-	return m.LocalOnly && (len(m.ProtocolRecovery) > 0 || (m.FinalReadinessRecovery != nil && m.FinalReadinessRecovery.Pending) || steer)
+	return m.LocalOnly && (m.ReadPause != nil || m.ReadCompletion != nil || len(m.ProtocolRecovery) > 0 || (m.FinalReadinessRecovery != nil && m.FinalReadinessRecovery.Pending) || steer)
 }
 
 func historyRows(m provider.Message, messageIndex int, opts HistoryOptions, todoArgs map[string]string) []Message {
@@ -79,6 +79,10 @@ func historyRows(m provider.Message, messageIndex int, opts HistoryOptions, todo
 		return nil
 	case m.DecisionReceipt != nil:
 		return []Message{{Role: "notice", Code: event.NoticeCodeDecisionReceipt, Level: "info", DecisionReceipt: m.DecisionReceipt}}
+	case m.LocalOnly && m.ReadPause != nil:
+		return []Message{{Role: "notice", Code: event.TurnOutcomeIncompleteRead, Level: "info", ReadPause: m.ReadPause}}
+	case m.LocalOnly && m.ReadCompletion != nil:
+		return []Message{readCompletionMessage(m.ReadCompletion)}
 	case m.LocalOnly && len(m.ProtocolRecovery) > 0:
 		if recovery, ok := provider.DecodeProtocolRecovery(m.ProtocolRecovery); ok && recovery.State == "pending" {
 			return []Message{{Role: "notice", Code: "protocol_recovery", Level: "info", Pending: true, ProtocolRecovery: &provider.ProtocolRecoveryAction{ID: recovery.ID}}}
