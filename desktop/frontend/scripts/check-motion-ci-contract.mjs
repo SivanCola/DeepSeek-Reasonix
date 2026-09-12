@@ -23,11 +23,14 @@ function jobBody(name) {
 
 for (const [job, body, command] of [
   ["desktop-frontend", jobBody("desktop-frontend"), "node frontend/scripts/run-ci-tests.mjs"],
-  ["required lint", jobBody("lint", "site"), "pnpm --dir desktop/frontend test:motion"],
+  ["required lint", jobBody("lint"), "FRONTEND_RESULT: ${{ needs.desktop-frontend.result }}"],
 ]) {
   if (!body.includes(command)) {
     throw new Error(`motion-ci-contract: ${job} must run test:motion`);
   }
+}
+if (jobBody("lint-code").includes("test:motion") || jobBody("lint").includes("test:motion")) {
+  throw new Error("motion-ci-contract: test:motion must run only through the deduplicated frontend plan");
 }
 
 const windowsJob = jobBody("desktop-windows", "lint");

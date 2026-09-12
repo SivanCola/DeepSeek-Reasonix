@@ -52,6 +52,21 @@ test("required desktop aggregate rejects every failed, cancelled or unexpectedly
   assert.notEqual(run({ ...success, SHOULD_RUN: "false" }), 0);
 });
 
+test("required lint aggregates code lint and the deduplicated frontend suite", () => {
+  const body = job(ci, "lint");
+  const script = shellStep(body, "Verify lint and frontend validation jobs");
+  const success = { CHANGES_RESULT: "success", LINT_CODE_RESULT: "success", LINT_CODE_REQUIRED: "true",
+    PREPARE_RESULT: "success", FRONTEND_RESULT: "success", FRONTEND_REQUIRED: "true" };
+  const run = env => spawnSync("bash", ["-e", "-c", script], { env: { ...process.env, ...env } }).status;
+  assert.equal(run(success), 0);
+  for (const key of ["CHANGES_RESULT", "LINT_CODE_RESULT", "PREPARE_RESULT", "FRONTEND_RESULT"])
+    for (const value of ["failure", "cancelled", "skipped", ""]) assert.notEqual(run({ ...success, [key]: value }), 0, `${key}=${value}`);
+  assert.equal(run({ ...success, LINT_CODE_REQUIRED: "false", LINT_CODE_RESULT: "skipped",
+    FRONTEND_REQUIRED: "false", PREPARE_RESULT: "skipped", FRONTEND_RESULT: "skipped" }), 0);
+  assert.doesNotMatch(job(ci, "lint-code"), /test:motion/);
+  assert.match(body, /needs: \[changes, lint-code, desktop-prepare, desktop-frontend\]/);
+});
+
 test("reuse skips only build work and still gates every publisher on validation", () => {
   const context = {
     inputs: { preflight_artifact_prefix: "desktop-123-1-preflight", orchestrated: true, signing_preflight_verified: true, signing_preflight: false, production_signing_smoke: false },
