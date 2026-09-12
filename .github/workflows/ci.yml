@@ -28,6 +28,13 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       desktop: ${{ steps.filter.outputs.desktop }}
+      desktop_go: ${{ steps.filter.outputs.desktop_go }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      browser: ${{ steps.filter.outputs.browser }}
+      memory: ${{ steps.filter.outputs.memory }}
+      electron: ${{ steps.filter.outputs.electron }}
+      native: ${{ steps.filter.outputs.native }}
+      packaging: ${{ steps.filter.outputs.packaging }}
       site: ${{ steps.filter.outputs.site }}
       sdk: ${{ steps.filter.outputs.sdk }}
       notes_only: ${{ steps.filter.outputs.notes_only }}
@@ -35,37 +42,24 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
       - id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          code=true; desktop=true; site=true; sdk=true; notes_only=false
-          base=""
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="${{ github.event.pull_request.base.sha }}"
-          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            base="${{ github.event.before }}"
+          args=(--head "$HEAD_SHA" --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY")
+          if [ "$EVENT_NAME" = pull_request ]; then
+            args+=(--base "$BASE_SHA" --mode pull_request)
+          else
+            # Main pushes retain the complete qualification matrix after the
+            # existing release-notes-only exception is evaluated.
+            args+=(--base "$BASE_SHA" --mode push --full)
           fi
-          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-            files=$(git diff --name-only "$base" HEAD)
-            if [ -n "$files" ]; then
-              code=false; desktop=false; site=false; sdk=false
-              # Root-module CI: desktop/ is a separate module, so only the
-              # clearly unrelated paths below can skip it.
-              if echo "$files" | grep -qvE '^(docs/|site/|release-notes/|desktop/|workers/|[^/]+\.md$)'; then code=true; fi
-              # desktop/ imports the root kernel via `replace reasonix => ../`,
-              # so only this clearly-unrelated set is safe to skip.
-              if echo "$files" | grep -qvE '^(docs/|site/|release-notes/|workers/|benchmarks/|npm/|[^/]+\.md$)'; then desktop=true; fi
-              if echo "$files" | grep -q '^site/'; then site=true; fi
-              # sdk/go is a nested module invisible to root `go test ./...`;
-              # its DTOs are generated from internal/extension/protocol, so
-              # both paths must trigger the sdk job.
-              if echo "$files" | grep -qE '^(sdk/|internal/extension/)'; then sdk=true; fi
-              # A push that touches only release-notes/ carries the parent's code
-              # byte for byte. Its heavy jobs skip; scripts/verify-release-push-ci.sh
-              # then requires the nearest ancestor that changed code to be green.
-              if ! echo "$files" | grep -qvE '^release-notes/'; then notes_only=true; fi
-            fi
-          fi
-          { echo "code=$code"; echo "desktop=$desktop"; echo "site=$site"; echo "sdk=$sdk"; echo "notes_only=$notes_only"; } >> "$GITHUB_OUTPUT"
+          node scripts/ci-paths.mjs "${args[@]}"
 
   # The ruleset requires the per-OS check names (test (ubuntu-latest) etc.).
   # A matrix job skipped at job level reports no per-leg checks at all, so
