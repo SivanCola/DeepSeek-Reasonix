@@ -857,10 +857,70 @@ jobs:
         timeout-minutes: 3
         run: node electron/scripts/performance-smoke.mjs
 
+  # The desktop Go suite shares nothing with the Electron and browser steps
+  # beyond a built frontend for go:embed, and it is the leg's longest step by
+  # far: the module that tests in 1.8 minutes on ubuntu takes ~17 on Windows,
+  # ~11 of them compiling and linking the cgo-heavy root package before a
+  # single test runs (GOCACHE restored, Defender excluded). Running it beside
+  # the Electron steps makes the leg's wall time the longer half rather than
+  # the sum, and a Go flake reruns only this job.
+  desktop-windows-go:
+    needs: changes
+    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
+    runs-on: windows-latest
+    # Measured 17.1-17.3 minutes on three consecutive main-v2 runs; bound
+    # hangs, not duration.
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      # Same Defender hazard as the Electron leg: exclusions keep Go test
+      # binaries from crashing mid-syscall and freshly written files readable.
+      - name: Exclude build dirs from Defender scanning
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, (go env GOCACHE)) |
+            Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          foreach ($p in $paths) {
+            try {
+              Add-MpPreference -ExclusionPath $p -ErrorAction Stop
+              Write-Host "Defender exclusion added: $p"
+            } catch {
+              Write-Host "::warning::Defender exclusion failed for ${p}: $($_.Exception.Message)"
+            }
+          }
+
+      # go:embed of frontend/dist needs a built frontend before the package
+      # compiles; the electron flavour is what the shell ships.
+      - name: Build frontend
+        run: |
+          pnpm --dir frontend install --frozen-lockfile
+          pnpm --dir frontend build:electron
+
       - name: test (Windows desktop and update helper)
-        # Normal wall time is 6-7 minutes; a loaded runner has exceeded 15 with
-        # every package still passing. Keep the budget above that load spike so
-        # the job-level timeout, not this step, ends a real hang.
+        # 17 minutes measured, ~11 of them before the first test runs; the
+        # budget stays above that so the job cap, not this step, ends a hang.
         timeout-minutes: 25
         run: go test ./...
 
