@@ -6,8 +6,8 @@
 #
 # Output lands in <repo>/dist/ with stable, platform-keyed names that
 # desktop/cmd/sign's `manifest` subcommand maps back to update.PlatformKey:
-#   macOS:   Reasonix-darwin-<arch>.zip                  (ditto archive; updater channel)
-#            Reasonix-darwin-universal.dmg               (drag-to-install; human download)
+#   macOS:   Reasonix-darwin-<arm64|amd64>.zip           (ditto archive; updater channel)
+#            Reasonix-darwin-<arch>.dmg                  (drag-to-install; human download)
 #   Windows: Reasonix-windows-<arch>-installer.exe       (NSIS per-user installer; updater channel)
 #            Reasonix-windows-<arch>.zip                 (portable human download)
 #   Linux:   Reasonix-linux-<arch>.tar.gz                (desktop + guard + CLI + app/ tree; portable updater)
@@ -236,25 +236,26 @@ darwin)
 		node "$ROOT/desktop/packaging/sign-macos.mjs" "$app" -
 	fi
 
-	if [ "$arch" = universal ]; then
-		# One universal .app covers Intel + Apple Silicon; publish it under both
-		# manifest keys so the updater's darwin-arm64/darwin-amd64 lookup finds it
-		# (avoids a scarce macos-13 Intel runner).
-		ditto -c -k --keepParent "$app" "$ROOT/dist/${APPNAME}-darwin-arm64.zip"
-		ditto -c -k --keepParent "$app" "$ROOT/dist/${APPNAME}-darwin-amd64.zip"
-	else
-		ditto -c -k --keepParent "$app" "$ROOT/dist/${APPNAME}-darwin-${arch}.zip"
+	# Updaters receive a native-architecture app. Universal remains a human
+	# download only, so a fat bundle is never copied under architecture names.
+	if [ "$arch" != universal ]; then
+		ditto -c -k --zlibCompressionLevel 9 --keepParent "$app" "$ROOT/dist/${APPNAME}-darwin-${arch}.zip"
 	fi
+	candidate_dir="$ROOT/desktop/build/candidate/darwin-${arch}"
+	rm -rf "$candidate_dir"
+	mkdir -p "$candidate_dir"
+	cp -R "$app" "$candidate_dir/${APPNAME}.app"
+	node "$ROOT/desktop/packaging/verify.mjs" "$candidate_dir/${APPNAME}.app" --kind darwin-app-dir
 	if [ "${DESKTOP_BUILD_SKIP_DMG:-0}" = "1" ]; then
 		echo "==> skip DMG packaging (DESKTOP_BUILD_SKIP_DMG=1)"
 	else
-		# A drag-to-Applications .dmg for first-time human download. Named -universal so
-		# cmd/sign's substring match (darwin-arm64/darwin-amd64) skips it: the .zip stays
-		# the updater channel, the .dmg is release-page only. create-dmg can exit nonzero
+		# A drag-to-Applications .dmg for first-time human download. cmd/sign uses an
+		# exact filename table, so the .zip stays the updater channel and the .dmg is
+		# release-page only. create-dmg can exit nonzero
 		# while still writing the image, so gate on the file existing, not the exit code.
 		dmgsrc=$(mktemp -d)
 		cp -R "$app" "$dmgsrc/${APPNAME}.app"
-		dmg="$ROOT/dist/${APPNAME}-darwin-universal.dmg"
+		dmg="$ROOT/dist/${APPNAME}-darwin-${arch}.dmg"
 		create-dmg \
 			--volname "$APPNAME" \
 			--window-size 540 380 \
