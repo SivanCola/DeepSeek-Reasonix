@@ -140,6 +140,8 @@ test("browser matrix preserves five entry points and fails closed through deskto
   const groups = job(ci, "desktop-browser-group");
   assert.match(groups, /max-parallel: 2/);
   assert.match(groups, /fail-fast: false/);
+  assert.match(groups, /group: \[app-settings-motion, transcript\]/);
+  assert.doesNotMatch(groups, /group: \[app-settings, motion, transcript\]/);
   for (const command of ["test:app-browser", "test:settings-browser", "test:motion-browser", "test:transcript-browser", "test:transcript-reader-browser"])
     assert.equal(ci.match(new RegExp(`pnpm --dir frontend ${command}(?:\\s|$)`, "g"))?.length, 1, command);
   const summary = job(ci, "desktop-browser");
