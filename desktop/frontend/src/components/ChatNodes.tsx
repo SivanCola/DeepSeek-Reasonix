@@ -41,7 +41,13 @@ export const ChatNodeList = memo(function ChatNodeList(props: Omit<SeatProps, "n
   const order = useSyncExternalStore(props.source.subscribeOrder, props.source.getOrderSnapshot, props.source.getOrderSnapshot);
   const [visibleOrder, setVisibleOrder] = useState(order);
   const visibleRef = useRef(visibleOrder);
-  visibleRef.current = visibleOrder;
+  const prependStart = visibleOrder.length ? order.indexOf(visibleOrder[0]) : -1;
+  const progressivePrepend = prependStart > 0
+    && visibleOrder.every((key, index) => order[prependStart + index] === key);
+  // Initial hydration, replacement and tail growth remain synchronous. Only a
+  // leading history addition is eligible for the bounded reveal below.
+  const renderedOrder = progressivePrepend ? visibleOrder : order;
+  visibleRef.current = renderedOrder;
   useEffect(() => {
     let frame = requestAnimationFrame(function revealPrepend() {
       const current = visibleRef.current;
@@ -62,7 +68,7 @@ export const ChatNodeList = memo(function ChatNodeList(props: Omit<SeatProps, "n
     });
     return () => cancelAnimationFrame(frame);
   }, [order]);
-  return visibleOrder.map(key => <ChatNodeSeat key={key} {...props} nodeKey={key} />);
+  return renderedOrder.map(key => <ChatNodeSeat key={key} {...props} nodeKey={key} />);
 });
 
 const ChatNodeSeat = memo(function ChatNodeSeat({ source, nodeKey, loader, scroll, actions, tabId, hostId }: SeatProps) {
