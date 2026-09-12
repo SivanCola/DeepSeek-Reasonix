@@ -1,10 +1,20 @@
+export type StartupLifecycle = "starting" | "ready" | "failed";
+export type StartupPresentation = "none" | "focus" | "diagnostic";
 export type StartupPresentReason = "boot" | "second-instance" | "activate";
 
-// A healthy handshake replaces the provisional window in ~0.5s, so first boot
-// must stay hidden. Second clicks still need the diagnostic page.
-export function shouldShowStartupDiagnostic(reason: StartupPresentReason, serviceReady: boolean, hasWindow: boolean): boolean {
-  if (serviceReady) return false;
-  if (reason === "second-instance") return true;
-  if (reason === "activate") return hasWindow;
-  return false;
+// Starting stays hidden, including a second icon click. Failed startups still
+// need the recovery page; an existing window is focused, not replaced.
+export function startupPresentation(input: {
+  serviceReady: boolean;
+  hasWindow: boolean;
+  lifecycle: StartupLifecycle;
+}): StartupPresentation {
+  if (input.serviceReady || input.lifecycle === "ready") return "focus";
+  if (input.lifecycle === "failed") return "diagnostic";
+  return input.hasWindow ? "focus" : "none";
+}
+
+export function startupLifecycle(lifecycle: string): StartupLifecycle {
+  if (lifecycle === "failed" || lifecycle === "ready") return lifecycle;
+  return "starting";
 }

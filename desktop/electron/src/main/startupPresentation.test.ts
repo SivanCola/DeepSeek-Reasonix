@@ -2,24 +2,24 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { shouldShowStartupDiagnostic } from "./startupPresentation.js";
+import { startupPresentation } from "./startupPresentation.js";
 
-test("a healthy first boot does not flash the diagnostic wait page", () => {
-  assert.equal(shouldShowStartupDiagnostic("boot", false, false), false);
-  assert.equal(shouldShowStartupDiagnostic("boot", false, true), false);
-  assert.equal(shouldShowStartupDiagnostic("boot", true, true), false);
+test("a healthy first boot stays hidden", () => {
+  assert.equal(startupPresentation({ serviceReady: false, hasWindow: false, lifecycle: "starting" }), "none");
 });
 
-test("a second launch while starting still shows the wait or recovery page", () => {
-  assert.equal(shouldShowStartupDiagnostic("second-instance", false, false), true);
-  assert.equal(shouldShowStartupDiagnostic("second-instance", false, true), true);
-  assert.equal(shouldShowStartupDiagnostic("second-instance", true, true), false);
+test("a second click while starting does not open the wait page", () => {
+  assert.equal(startupPresentation({ serviceReady: false, hasWindow: false, lifecycle: "starting" }), "none");
 });
 
-test("dock activate during first boot stays quiet until a window already exists", () => {
-  assert.equal(shouldShowStartupDiagnostic("activate", false, false), false);
-  assert.equal(shouldShowStartupDiagnostic("activate", false, true), true);
-  assert.equal(shouldShowStartupDiagnostic("activate", true, true), false);
+test("a second click focuses an existing window instead of replacing it", () => {
+  assert.equal(startupPresentation({ serviceReady: false, hasWindow: true, lifecycle: "starting" }), "focus");
+  assert.equal(startupPresentation({ serviceReady: true, hasWindow: true, lifecycle: "ready" }), "focus");
+});
+
+test("a failed or timed-out startup still shows the recovery page", () => {
+  assert.equal(startupPresentation({ serviceReady: false, hasWindow: false, lifecycle: "failed" }), "diagnostic");
+  assert.equal(startupPresentation({ serviceReady: false, hasWindow: true, lifecycle: "failed" }), "diagnostic");
 });
 
 test("whenReady does not create or show a provisional diagnostic window", () => {
@@ -30,4 +30,5 @@ test("whenReady does not create or show a provisional diagnostic window", () => 
   const boot = source.slice(start, end);
   assert.equal(boot.includes("showFailure"), false, "first boot must not show the diagnostic wait page");
   assert.equal(boot.includes("mainWindow.create("), false, "first boot must not create a window just to flash a wait page");
+  assert.equal(source.includes('status.lifecycle === "starting" ? startingPage'), false, "second clicks must not load the wait page while still starting");
 });
