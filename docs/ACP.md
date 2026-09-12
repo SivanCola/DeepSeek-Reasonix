@@ -201,10 +201,8 @@ Hosts should keep the `session/prompt` request open until Reasonix returns its
 stop reason, while continuing to process requests and notifications in both
 directions.
 
-Reasonix emits only ACP v1 stop reasons. A completed turn that still needs a
-final-readiness check sends a `[warning]` message chunk and returns `end_turn`;
-its vendor status remains `readiness_paused` so the host can offer recovery.
-An explicit model-round limit (`max_steps`) sends a `[warning]`, returns
+Reasonix emits only ACP v1 stop reasons. Model completion ends the ordinary
+turn without a host readiness check or recovery action. An explicit model-round limit (`max_steps`) sends a `[warning]`, returns
 `max_turn_requests`, and records a paused vendor outcome. A host task-time,
 token, or cost budget also sends a `[warning]` and records a paused outcome,
 but returns `end_turn` because ACP v1 has no task-budget-specific stop reason.

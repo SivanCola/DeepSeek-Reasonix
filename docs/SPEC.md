@@ -4,6 +4,9 @@
 > capabilities supplied by configuration and plugins**. This document is the
 > contract — code follows it. Change the contract first, then the code.
 
+The current file-operation, scheduling, and interruption contract is specified
+in [Harness-style execution migration](DSH_EXECUTION_MIGRATION.md).
+
 ## 1. Design Principles
 
 1. **Config- and plugin-driven core.** The core knows only interfaces. Concrete
@@ -494,9 +497,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   identity; a same-name client on a shared Host is never sufficient authority.
 - **Relationship to plan mode.** Plan mode (§3.4) is a plan-first collaboration
   workflow, not an all-tools read-only mode. Before Permissions/Sandbox, the
-  host enforces explicit phase opt-outs (`complete_step` is read-only but
-  belongs to the post-approval execution phase, so it self-reports plan-unsafe
-  and is refused). The dedicated two-model Planner may call authorized,
+  host enforces explicit phase opt-outs. The dedicated two-model Planner may call authorized,
   non-destructive MCP even when `readOnlyHint` is absent; it hard-blocks
   destructive targets and readers from unauthorized servers for the entire
   planning phase. A single-model Plan without the dedicated Planner continues
@@ -556,15 +557,14 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   constraints, and relevant verification expectations to be satisfied or
   explicitly reported as unverified.
   Goal has no default model-round, cross-Run turn, wall-clock, or numeric
-  no-progress boundary. Goal-scoped novelty accepts new read/search results and state changes
-  but rejects exact tool/argument/result repeats. All classes use the same Goal
-  FSM, host receipts, readiness evaluation, and bounded evaluator; there is no second research
+  no-progress boundary. Exact consecutive tool calls receive bounded reminders
+  and still execute. All classes use the same Goal FSM and model-authored
+  `update_goal` report; there is no host readiness evaluator or second research
   protocol or writable sidecar runtime. Legacy `.reasonix/autoresearch/...`
   archives remain read-only and explicit old paths recover as ordinary Goals.
   Outside goal mode, ordinary prompts never change collaboration mode; the user
   must choose Goal or use `/goal` explicitly.
-  Repeated host failures, zero-evidence rounds, and Todo stalls trigger bounded
-  strategy redirects and intervention-epoch resets, never a Goal pause. Turns,
+  Turns,
   tokens, provider requests, and active work duration remain observational when
   the corresponding budget is not configured. Positive user-selected
   `[agent].goal_token_budget`, `max_steps`, time, and cost budgets remain

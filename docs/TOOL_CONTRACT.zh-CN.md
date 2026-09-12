@@ -1,8 +1,8 @@
 # 工具合约
 
-读取覆盖、源版本观察和操作级写入守卫各自独立。普通 `inspect`/`range` 部分读取
-不阻塞终答；显式 `intent=full` 和 host Stop 仍保留有界完成约束。恢复及兼容说明见
-[读取证据生命周期](READ_EVIDENCE_LIFECYCLE.zh-CN.md)。
+结构化文件修改要求宿主观察过目标的当前版本。读取任意文本窗口即可建立观察；
+读取覆盖率和全文完成度不再构成宿主门禁。详见
+[文件观察生命周期](READ_EVIDENCE_LIFECYCLE.zh-CN.md)。
 
 <a href="./TOOL_CONTRACT.md">English</a>
 
@@ -13,7 +13,6 @@
 | `bash` | false | 执行 shell 命令并返回 stdout/stderr。构建、测试、git、包管理器等使用它；读写查找文件优先使用专用工具。 |
 | `bash_output` | true | 读取后台 `bash` 或 `task` job 自上次读取后的新增输出和状态。 |
 | `code_index` | true | 轻量内置代码符号索引；优先使用 `lsp_*` 或代码图 MCP，缺失时用它兜底。 |
-| `complete_step` | true | 仅兼容旧调用，不在默认发现中展示。为一个明确匹配的现有待办记录模型完成声明；可选证据是说明，不是强制证明，只更新该项而不推进下一项。 |
 | `compress` | true | 压缩当前模型可见对话中选定的范围，不删除可见历史。仅在用户明确要求压缩上下文时使用；锚点必须是某条真实用户消息中唯一、精确的原文片段。 |
 | `delete_range` | false | 用精确 start/end 文本锚点删除文件中的连续范围。 |
 | `delete_symbol` | false | 用 Go AST 删除 Go 源文件中的命名符号。 |
@@ -25,13 +24,13 @@
 | `move_file` | false | 移动或重命名文件。 |
 | `multi_edit` | false | 对单个文件原子应用多个编辑。 |
 | `notebook_edit` | false | 编辑 Jupyter notebook 的单个 cell。 |
-| `read_file` | true | 按可分页的行号格式读取文本文件。`intent` 声明意图：`inspect`（无范围时的默认，有界预览）、`range`（有 offset/limit 时的默认，指定窗口）、`full`（扫描全文并分页到结尾）。续页时把结果里的 `cursor` 原样传回，由宿主定位到确切的下一位，无需自行计算 offset。无依赖的读取应同轮下发。 |
+| `read_file` | true | 读取一个有界文本窗口，可指定行 offset/limit。成功窗口会观察当前文件版本，供后续结构化修改使用。旧 intent 和 cursor 仅作导航兼容，不会产生全文完成要求。 |
 | `todo_write` | true | 替换由模型维护的任务列表，状态描述实际进度，不要求串行执行或宿主签收。 |
 | `update_goal` | true | 报告活动 Goal 的模型判断：continue、complete 或 blocked。completion 是模型声明；正常结束和身份校验仍生效，真实检查独立保留，无 evaluator 或质量门禁。 |
 | `view_image` | true | 按路径读取本地 PNG、JPEG、GIF 或 WebP，通过结构化图片通道交给视觉模型。最大 3 MiB、4000 万像素，沿用读取权限。 |
 | `wait` | true | 等待后台 job 完成并返回最终输出。 |
 | `web_fetch` | true | 通过 HTTP/HTTPS 获取 URL 文本内容。 |
-| `write_file` | false | 写入文件内容，必要时创建父目录。 |
+| `write_file` | false | 创建或替换文本文件。缺失目标以不可覆盖方式创建；替换现有目标要求 read_file 或上一次成功结构化修改留下当前版本观察。 |
 
 ## Schema 快照
 

@@ -1123,17 +1123,12 @@ The default is `0` (off). Reaching a positive token budget produces one summary
 and a resumable `budget_spend` pause. `/goal resume` grants a fresh configured
 slice while cumulative Goal statistics remain intact. Explicit positive
 `max_steps`, task time, and task cost budgets remain available as well.
-Progress is goal-scoped and novelty based:
-new read/search results, mutations, verification, todo/signoff changes, and
-reviews advance the goal; an exact tool/argument/result repeat does not.
 Cumulative turns, tokens, real provider requests, and active work time are
 tracked and shown as statistics; a token limit appears only when explicitly
-configured. A paused goal keeps its todos, evidence
-checkpoint, and runtime history — use `/goal resume` to continue, or `/goal
+configured. A paused goal keeps its todos and runtime history — use `/goal resume` to continue, or `/goal
 pause` to pause a running goal manually. `/goal status` shows turns, requests,
-tokens, and work time. Repeated host failures, zero-evidence rounds, and Todo
-stall thresholds inject a strategy redirect and reset their intervention epoch;
-they do not pause the Goal. At the end of every goal turn
+tokens, and work time. Exact consecutive tool calls receive reminders at the
+third, fifth, and eighth occurrence; the calls still execute. At the end of every goal turn
 the model reports its judgment through `update_goal`: `complete` commits its completion declaration at normal turn end, `blocked` stops continuation, and `continue` or no report keeps the Goal active. No evaluator or host quality check decides completion. Failed checks and unfinished todos remain unchanged. Restoring or forking loads the Goal without activating it; start or resume explicitly.
 
 For complex work, write the objective as a
@@ -1149,7 +1144,9 @@ separate research runtime to configure. Goal state and actual usage stay in the 
 
 ### Model task progress
 
-`todo_write` updates task progress. The host does not finish todos when a turn or Goal ends. `complete_step` is hidden from default discovery but accepts old calls for one unambiguous existing todo; it records a declaration without demanding proof or advancing the next item.
+`todo_write` updates task progress. The host does not finish todos when a turn
+or Goal ends. `complete_step` is absent from discovery; an old call returns a
+normal `tool_retired` result and never changes task state.
 
 ## @ references
 

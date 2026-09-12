@@ -877,11 +877,8 @@ goal_token_budget = 20000000
 
 默认值 `0` 表示关闭。达到正数阈值后，Goal 会先生成一次总结再进入可恢复的 `budget_spend` 暂停；
 `/goal resume` 会授予新的完整预算切片，但累计 turn、token、请求数和实际工作时间不会清零。
-进展按 Goal 范围的新颖性计算：新的读取/搜索
-结果、mutation、verification、todo/签收变化和 review 会推进目标；完全相同的工具、参数与
-结果重复不会推进。相同宿主失败、零新增证据和 Todo 停滞的数字阈值只会注入纠偏提示、重置干预周期
-并要求缩小步骤、切换策略或说明真实 blocker，不会暂停 Goal。未配置对应预算时，累计 turn、token、
-真实 provider 请求数与实际工作时间只做统计展示。暂停会保留 Goal、todo、readiness checkpoint 与运行历史——用
+未配置对应预算时，累计 turn、token、真实 provider 请求数与实际工作时间只做统计展示。
+完全相同的连续工具调用只会在第 3、5、8 次给出提醒，调用仍会执行。暂停会保留 Goal、todo 与运行历史——用
 `/goal resume` 继续，`/goal pause` 可手动暂停运行中的目标；`/goal status` 只显示轮次、请求数、
 token、可选的显式 token 阈值和工作时间。每个目标 turn 结束时，模型通过结构化的 `update_goal` 工具报告
 `complete` 在正常结束边界提交模型完成声明，`blocked` 停止续跑，`continue` 或漏报保持活动并继续。没有独立 evaluator 或宿主质量验收。失败检查和未完成待办不被改写；恢复和分叉只加载目标，显式启动或恢复后才激活续跑。
@@ -894,7 +891,8 @@ Output format、Constraints 和 Pause policy。Goal 模式会把这些部分当�
 
 ### 模型更新任务进度
 
-`todo_write` 更新任务进度，回合或 Goal 结束不会自动完成待办。`complete_step` 从默认发现中退役；旧调用仍可声明一个明确匹配的现有待办完成，不要求证明、不推进下一项，也不生成验证通过记录。
+`todo_write` 更新任务进度，回合或 Goal 结束不会自动完成待办。`complete_step`
+不再出现在工具发现中；旧调用只返回普通 `tool_retired`，不会改变任务状态。
 
 ## @ 引用
 

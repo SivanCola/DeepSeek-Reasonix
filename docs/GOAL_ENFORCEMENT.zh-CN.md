@@ -140,10 +140,11 @@ Prometheus 会逐个问澄清问题：
 
 不再生成风险评分、验收比例或总体质量判定。新结果用 `assessmentKind: "facts"` 和
 `verdict: "unknown"` 区分历史评估；unknown 不表示失败。旧回执和缺项不被清空或改写通过。
-历史检查点不再阻塞当前任务，`/continue-checks` 保留一次性显式消费和启动失败回滚。
+历史检查点不再阻塞当前任务；旧 `/continue-checks` 恢复动作返回稳定的退役错误，
+不会消费检查点或重放操作。
 
-待办由 `todo_write` 更新。退役的 `complete_step` 兼容调用仅声明一个明确匹配的待办完成，
-不要求证据、不推进下一项。Goal 或 Plan 结束均不会批量完成待办。
+待办由 `todo_write` 更新。退役的 `complete_step` 兼容调用只返回
+`tool_retired`，不会修改待办。Goal 或 Plan 结束均不会批量完成待办。
 
 ### 并行调度架构
 
