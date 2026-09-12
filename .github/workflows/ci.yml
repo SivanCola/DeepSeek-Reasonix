@@ -1169,7 +1169,10 @@ jobs:
         # 17 minutes measured, ~11 of them before the first test runs; the
         # budget stays above that so the job cap, not this step, ends a hang.
         timeout-minutes: 25
-        run: go test ./...
+        run: |
+          started_ms="$(node -e 'process.stdout.write(String(Date.now()))')"
+          go test -json ./... | node ../scripts/go-test-timing.mjs \
+            --label "Windows desktop" --started-ms "$started_ms"
 
       - name: test (vendored systray identity)
         timeout-minutes: 2

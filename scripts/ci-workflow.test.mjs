@@ -153,3 +153,10 @@ test("browser matrix preserves five entry points and fails closed through deskto
     assert.notEqual(run({ CHANGES_RESULT: "success", SHOULD_RUN: "true", PREPARE_RESULT: "success", GROUP_RESULT: result }), 0);
   assert.equal(run({ CHANGES_RESULT: "success", SHOULD_RUN: "false", PREPARE_RESULT: "success", GROUP_RESULT: "skipped" }), 0);
 });
+
+test("Windows desktop Go reports compile-launch and package timing without a second test pass", () => {
+  const windowsGo = job(ci, "desktop-windows-go");
+  assert.equal(windowsGo.match(/go test -json \.\/\.\.\./g)?.length, 1);
+  assert.match(windowsGo, /node \.\.\/scripts\/go-test-timing\.mjs/);
+  assert.doesNotMatch(windowsGo, /go test -run ['"]?\^\$/);
+});
