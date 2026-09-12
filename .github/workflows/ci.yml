@@ -474,7 +474,7 @@ jobs:
         run: go test -race ./...
 
   desktop:
-    needs: [changes, desktop-prepare, desktop-go, desktop-frontend, desktop-browser]
+    needs: [changes, desktop-prepare, desktop-go, desktop-go-race, desktop-frontend, desktop-browser]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -484,6 +484,7 @@ jobs:
           SHOULD_RUN: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false' }}
           PREPARE_RESULT: ${{ needs.desktop-prepare.result }}
           GO_RESULT: ${{ needs.desktop-go.result }}
+          GO_RACE_RESULT: ${{ needs.desktop-go-race.result }}
           FRONTEND_RESULT: ${{ needs.desktop-frontend.result }}
           BROWSER_RESULT: ${{ needs.desktop-browser.result }}
         run: |
@@ -492,6 +493,7 @@ jobs:
           if [ "$SHOULD_RUN" = true ]; then expected=success; fi
           test "$PREPARE_RESULT" = "$expected"
           test "$GO_RESULT" = "$expected"
+          test "$GO_RACE_RESULT" = "$expected"
           test "$FRONTEND_RESULT" = "$expected"
           test "$BROWSER_RESULT" = "$expected"
 
@@ -696,6 +698,57 @@ jobs:
 
       - name: test
         run: go test ./...
+
+      # Only main-v2 pushes save, one job per OS and module, so the cache
+      # stays a few pushes deep instead of churning on every pull request.
+      - uses: actions/cache/save@v4
+        if: always() && github.event_name == 'push' && steps.gocache.outputs.key != ''
+        with:
+          path: ${{ steps.gocache.outputs.paths }}
+          key: ${{ steps.gocache.outputs.key }}
+
+  # `go test -race ./...` is ~7 of desktop-go's ~11 minutes and shares nothing
+  # with vet, lint, build and the plain test run beyond the frontend artifact.
+  # Running it beside them makes the job's wall time the longer half without
+  # changing what is race-checked.
+  desktop-go-race:
+    needs: [changes, desktop-prepare]
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: false
+
+      - uses: ./.github/actions/go-build-cache
+        id: gocache
+        with:
+          module: desktop-race
+
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.desktop-prepare.outputs.artifact_name }}
+          path: desktop/frontend/dist
+      - name: Verify frontend artifact layout
+        run: test -f frontend/dist/index.html
+      - run: pnpm --dir frontend install --frozen-lockfile
 
       # The extension work added new shared-state paths to the desktop
       # runtime (tab/rebuild fences, extension UI). Race-sweep the module so

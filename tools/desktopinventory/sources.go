@@ -17,6 +17,7 @@ var ciJobs = map[string]struct {
 	"ci.yml/desktop-browser":                      {classKeepBusiness, "Playwright browser gates unchanged"},
 	"ci.yml/desktop-prepare":                      {classKeepBusiness, "go run . -emit-contract drift gate; pnpm workspace root"},
 	"ci.yml/desktop-go":                           {classKeepBusiness, "hostrpc + module tests; no WebKitGTK toolchain"},
+	"ci.yml/desktop-go-race":                      {classKeepBusiness, "desktop module race sweep, split from desktop-go"},
 	"ci.yml/desktop-macos":                        {classKeepBusiness, "Electron packaging smoke"},
 	"ci.yml/desktop-windows":                      {classKeepBusiness, "Electron packaging smoke"},
 	"ci.yml/desktop-windows-package":              {classKeepBusiness, "Electron installer build, split from the test leg"},

@@ -5421,6 +5421,13 @@
     },
     {
       "kind": "ci-job",
+      "name": "ci.yml/desktop-go-race",
+      "location": ".github/workflows/ci.yml",
+      "class": "keep-business",
+      "owner": "desktop module race sweep, split from desktop-go"
+    },
+    {
+      "kind": "ci-job",
       "name": "ci.yml/desktop-macos",
       "location": ".github/workflows/ci.yml",
       "class": "keep-business",
