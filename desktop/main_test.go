@@ -3,9 +3,26 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func cleanupDesktopTestHome(dir string) {
+	// GitHub empties RUNNER_TEMP after each job. Synchronous Windows cleanup of
+	// this large test state has taken 3-10 minutes after PASS. Only defer cleanup
+	// when the directory belongs to that runner; local paths still clean here.
+	if runtime.GOOS == "windows" && os.Getenv("GITHUB_ACTIONS") == "true" {
+		runnerTemp := os.Getenv("RUNNER_TEMP")
+		if relative, err := filepath.Rel(runnerTemp, dir); runnerTemp != "" && err == nil &&
+			relative != "." && relative != ".." && !filepath.IsAbs(relative) &&
+			!strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			return
+		}
+	}
+	_ = os.RemoveAll(dir)
+}
 
 // TestLifecycleDiagnosticsUsePreShellOwnershipGate pins the ordering that keeps
 // a superseded process from consuming lifecycle evidence: the host RPC service
@@ -57,13 +74,11 @@ func TestMain(m *testing.M) {
 	crashEndpoint = "http://127.0.0.1:0/v1/report"
 	pingEndpoint = "http://127.0.0.1:0/v1/ping"
 	metricsEndpoint = "http://127.0.0.1:0/v1/metrics"
-	// Neutralize the host event bridge for the whole test binary: there is no
-	// shell to emit to here. Tests that assert on runtime events install their
-	// own capture through the per-instance runtimeEvents.emit hook, which takes
-	// precedence.
+	// Neutralize the host event bridge because there is no shell here. Tests
+	// asserting runtime events install a higher-priority per-instance capture.
 	runtimeEventsEmitFallback = func(context.Context, string, ...any) {}
 	code := m.Run()
-	os.RemoveAll(dir)
+	cleanupDesktopTestHome(dir)
 	os.Exit(code)
 }
 

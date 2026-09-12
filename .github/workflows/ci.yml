@@ -1172,8 +1172,7 @@ jobs:
         run: |
           started_ms="$(node -e 'process.stdout.write(String(Date.now()))')"
           go test -json ./... | node ../scripts/go-test-timing.mjs \
-            --label "Windows desktop" --started-ms "$started_ms" \
-            --diagnose-idle-seconds "30"
+            --label "Windows desktop" --started-ms "$started_ms"
 
       - name: test (vendored systray identity)
         timeout-minutes: 2
