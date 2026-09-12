@@ -15,8 +15,8 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | persistence | 11 | 0 | 0 | 11 |
 | shell-file | 1 | 39 | 4 | 44 |
 | artifact | 5 | 0 | 0 | 5 |
-| ci-job | 24 | 0 | 0 | 24 |
-| **all** | | | | **711** |
+| ci-job | 25 | 0 | 0 | 25 |
+| **all** | | | | **712** |
 
 ## Desktop commands (Go `App` methods bound to the UI)
 
