@@ -58,7 +58,11 @@ func TestLifecycleDiagnosticsUsePreShellOwnershipGate(t *testing.T) {
 // this, tests that persist desktop state, sessions, cache, or CLI-style config
 // can leak into the developer's real Reasonix directories.
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "reasonix-desktop-test")
+	tempRoot := ""
+	if runtime.GOOS == "windows" && os.Getenv("GITHUB_ACTIONS") == "true" {
+		tempRoot = os.Getenv("RUNNER_TEMP")
+	}
+	dir, err := os.MkdirTemp(tempRoot, "reasonix-desktop-test")
 	if err != nil {
 		os.Exit(1)
 	}
