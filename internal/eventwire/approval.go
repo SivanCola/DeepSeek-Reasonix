@@ -13,6 +13,8 @@ type Approval struct {
 	Recovery    *RecoveryApproval    `json:"recovery,omitempty"`
 	WriteAccess *WriteAccessApproval `json:"write_access,omitempty"`
 	TurnID      string               `json:"turnId,omitempty"`
+	Generation         uint64               `json:"generation,omitempty"`
+	PermissionRevision uint64               `json:"permissionRevision,omitempty"`
 }
 
 type WriteAccessApproval struct {
@@ -41,7 +43,7 @@ type RecoveryApproval struct {
 }
 
 func toWireApproval(a event.Approval) *Approval {
-	w := &Approval{ID: a.ID, Tool: a.Tool, Subject: a.Subject, Reason: a.Reason, Fresh: a.Fresh, Kind: a.Kind, TurnID: a.TurnID}
+	w := &Approval{ID: a.ID, Tool: a.Tool, Subject: a.Subject, Reason: a.Reason, Fresh: a.Fresh, Kind: a.Kind, TurnID: a.TurnID, Generation: a.Generation, PermissionRevision: a.PermissionRevision}
 	if wa := event.NormalizeWriteAccessApproval(a.WriteAccess); wa != nil {
 		w.WriteAccess = &WriteAccessApproval{
 			Directories: append([]string{}, wa.Directories...), DisplayDirectories: append([]string{}, wa.DisplayDirectories...),
