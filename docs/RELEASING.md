@@ -59,7 +59,10 @@ Do not rerun Notes generation merely because PR creation was denied.
 - the version is canonical `MAJOR.MINOR.PATCH`;
 - remote `main-v2` is the commit that introduces or updates the complete,
   reviewed Stable catalog record;
-- exact-commit `main-v2` CI completed successfully;
+- exact-commit `main-v2` CI completed successfully. A commit that changes
+  only `release-notes/` skips the code matrix by design, so for such a
+  candidate the helper also requires green push CI on the nearest
+  first-parent ancestor that changed anything else (at most five hops);
 - `vX.Y.Z`, `npm-vX.Y.Z`, and `desktop-vX.Y.Z` are all absent.
 
 It then pushes a no-op guard for that exact `main-v2` SHA and all three

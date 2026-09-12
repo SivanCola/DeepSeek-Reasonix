@@ -30,13 +30,14 @@ jobs:
       desktop: ${{ steps.filter.outputs.desktop }}
       site: ${{ steps.filter.outputs.site }}
       sdk: ${{ steps.filter.outputs.sdk }}
+      notes_only: ${{ steps.filter.outputs.notes_only }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
         run: |
-          code=true; desktop=true; site=true; sdk=true
+          code=true; desktop=true; site=true; sdk=true; notes_only=false
           base=""
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
@@ -58,9 +59,13 @@ jobs:
               # its DTOs are generated from internal/extension/protocol, so
               # both paths must trigger the sdk job.
               if echo "$files" | grep -qE '^(sdk/|internal/extension/)'; then sdk=true; fi
+              # A push that touches only release-notes/ carries the parent's code
+              # byte for byte. Its heavy jobs skip; scripts/verify-release-push-ci.sh
+              # then requires the nearest ancestor that changed code to be green.
+              if ! echo "$files" | grep -qvE '^release-notes/'; then notes_only=true; fi
             fi
           fi
-          { echo "code=$code"; echo "desktop=$desktop"; echo "site=$site"; echo "sdk=$sdk"; } >> "$GITHUB_OUTPUT"
+          { echo "code=$code"; echo "desktop=$desktop"; echo "site=$site"; echo "sdk=$sdk"; echo "notes_only=$notes_only"; } >> "$GITHUB_OUTPUT"
 
   # The ruleset requires the per-OS check names (test (ubuntu-latest) etc.).
   # A matrix job skipped at job level reports no per-leg checks at all, so
@@ -82,7 +87,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
-      RUN_STEPS: ${{ github.event_name != 'pull_request' || needs.changes.outputs.code != 'false' }}
+      RUN_STEPS: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.code != 'false' }}
     steps:
       - if: env.RUN_STEPS == 'true'
         uses: actions/checkout@v7
@@ -223,7 +228,7 @@ jobs:
     if: always()
     runs-on: windows-latest
     env:
-      RUN_STEPS: ${{ github.event_name != 'pull_request' || needs.changes.outputs.code != 'false' }}
+      RUN_STEPS: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.code != 'false' }}
     steps:
       - if: env.RUN_STEPS == 'true'
         uses: actions/checkout@v7
@@ -268,7 +273,7 @@ jobs:
 
   windows-isolated:
     needs: changes
-    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false')
+    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.code != 'false')
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -311,7 +316,7 @@ jobs:
 
   race:
     needs: changes
-    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false')
+    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.code != 'false')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -364,7 +369,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
-      RUN_STEPS: ${{ github.event_name != 'pull_request' || needs.changes.outputs.sdk != 'false' }}
+      RUN_STEPS: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.sdk != 'false' }}
     defaults:
       run:
         working-directory: sdk/go
@@ -438,7 +443,7 @@ jobs:
       - name: Verify desktop validation jobs
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          SHOULD_RUN: ${{ github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false' }}
+          SHOULD_RUN: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false' }}
           PREPARE_RESULT: ${{ needs.desktop-prepare.result }}
           GO_RESULT: ${{ needs.desktop-go.result }}
           FRONTEND_RESULT: ${{ needs.desktop-frontend.result }}
@@ -454,7 +459,7 @@ jobs:
 
   desktop-frontend:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -492,7 +497,7 @@ jobs:
 
   desktop-browser:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -527,7 +532,7 @@ jobs:
 
   desktop-prepare:
     needs: changes
-    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
+    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     outputs:
       artifact_name: desktop-frontend-${{ github.run_id }}-${{ github.run_attempt }}
     runs-on: ubuntu-22.04
@@ -597,7 +602,7 @@ jobs:
 
   desktop-go:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -656,7 +661,7 @@ jobs:
   # compile or exercise the native PTY and FSEvents implementations.
   desktop-macos:
     needs: changes
-    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
+    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: macos-latest
     defaults:
       run:
@@ -743,7 +748,7 @@ jobs:
   # run on the ubuntu leg above.
   desktop-windows:
     needs: changes
-    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
+    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: windows-latest
     # A hung native step must not hold the workflow's concurrency group for the
     # six-hour default. This bounds hangs, not duration: the leg's own spread on
@@ -851,7 +856,7 @@ jobs:
   # the sum, and a Go flake reruns only this job.
   desktop-windows-go:
     needs: changes
-    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
+    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: windows-latest
     # Measured 17.1-17.3 minutes on three consecutive main-v2 runs; bound
     # hangs, not duration.
@@ -920,7 +925,7 @@ jobs:
   # Pushes to main-v2 only: the release pipeline builds installers again anyway.
   desktop-windows-package:
     needs: changes
-    if: always() && github.event_name != 'pull_request'
+    if: always() && (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true')
     runs-on: windows-latest
     # Packaging measured 13m55s; the overhead benchmark and its workspace
     # install add about six more. Bound hangs, not duration.
@@ -1011,7 +1016,7 @@ jobs:
   # `code` filter would otherwise skip.
   lint:
     needs: changes
-    if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.code != 'false' || needs.changes.outputs.desktop != 'false' || needs.changes.outputs.sdk != 'false')
+    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.code != 'false' || needs.changes.outputs.desktop != 'false' || needs.changes.outputs.sdk != 'false')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1112,7 +1117,7 @@ jobs:
 
   govulncheck:
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true')
     runs-on: ubuntu-latest
     continue-on-error: true # informational — stdlib vulns need a Go patch release
     steps:
@@ -1131,7 +1136,7 @@ jobs:
 
   coverage:
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
