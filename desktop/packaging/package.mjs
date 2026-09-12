@@ -89,15 +89,6 @@ try {
   });
   mkdirSync(join(staging, "icons"), { recursive: true });
   cpSync(join(desktop, "build", "appicon.png"), join(staging, "icons", "appicon.png"));
-  if (target.os !== "darwin") {
-    for (const size of [32, 256]) {
-      const source = join(desktop, "build", "linux", "icons", "hicolor", `${size}x${size}`, "apps", "reasonix.png");
-      const destination = join(staging, "icons", "linux", "icons", "hicolor", `${size}x${size}`, "apps", "reasonix.png");
-      require(source, `${size}px runtime icon`);
-      mkdirSync(dirname(destination), { recursive: true });
-      cpSync(source, destination);
-    }
-  }
   // Packaged launches always read this identity, including the full version
   // tag. Environment overrides belong only to the unpackaged development shell.
   writeFileSync(join(staging, "build.json"), JSON.stringify(buildInfo({ version, channel, commit, electronVersion, target, buildTime }), null, 2) + "\n");
