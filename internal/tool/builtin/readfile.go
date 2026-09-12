@@ -123,9 +123,8 @@ func readIntentFor(explicit string, windowGiven bool) (tool.ReadIntent, error) {
 		}
 		return tool.ReadIntentRange, nil
 	case tool.ReadIntentFull:
-		if windowGiven {
-			return "", fmt.Errorf("intent=full cannot be combined with offset or limit; omit them to scan the whole file, or use intent=range for one window")
-		}
+		// Kept as a compatibility hint. Every call remains one bounded window;
+		// the host no longer creates a whole-file debt or completion gate.
 		return tool.ReadIntentFull, nil
 	default:
 		return "", fmt.Errorf("intent must be inspect, range, or full (got %q)", explicit)
@@ -135,7 +134,7 @@ func readIntentFor(explicit string, windowGiven bool) (tool.ReadIntent, error) {
 func (readFile) Name() string { return "read_file" }
 
 func (readFile) Description() string {
-	return "Read a text file with optional line offset/limit. Output prefixes each line with its 1-based number (e.g. `   42→...`) so subsequent edit_file calls can target exact lines. Use `offset` and `limit` to page through large files; the tool reports total length and pagination hints in a trailer. Set `intent` to state why you are reading: inspect (default, a bounded preview), range (an explicit window), or full (scan the whole file). Independent reads with no data dependency should be issued in the same round."
+	return "Read one bounded text window with optional line offset/limit. Output prefixes each line with its 1-based number. Any successful window observes the current file version for later structured edits. Use the next-window hint to page only when more content is useful. Legacy intent and cursor fields are accepted as navigation hints and never create a whole-file completion requirement."
 }
 
 func (readFile) Schema() json.RawMessage {
@@ -143,8 +142,8 @@ func (readFile) Schema() json.RawMessage {
 "type":"object",
 "properties":{
   "path":{"type":"string","description":"File path"},
-  "intent":{"type":"string","enum":["inspect","range","full"],"description":"Why you are reading. inspect (default): a bounded preview; one page is a complete answer. range (default when offset or limit is given): an explicit window. full: scan the whole file, paging until every line has been delivered."},
-  "cursor":{"type":"string","description":"Continuation cursor returned by a previous read_file result. It names the exact next position; pass it back unchanged instead of computing an offset."},
+	"intent":{"type":"string","enum":["inspect","range","full"],"description":"Compatibility hint. Every value reads only this bounded window and creates no whole-file obligation."},
+	"cursor":{"type":"string","description":"Optional continuation cursor from a prior result. Invalid legacy cursors should be replaced with an explicit offset and limit."},
   "offset":{"type":"integer","description":"0-based line offset to start reading from (default 0)","minimum":0},
   "limit":{"type":"integer","description":"Maximum lines to return (default 2000)","minimum":1}
 },

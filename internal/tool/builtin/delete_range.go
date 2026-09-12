@@ -51,6 +51,15 @@ func (d deleteRange) DeclareWriteAccess(args json.RawMessage) (tool.WriteAccessD
 }
 
 func (d deleteRange) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var target struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &target); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	path := resolveIn(d.workDir, target.Path)
+	unlock := lockMutationPath(path)
+	defer unlock()
 	change, src, err := d.preview(ctx, args)
 	if err != nil {
 		return "", err
@@ -58,6 +67,9 @@ func (d deleteRange) Execute(ctx context.Context, args json.RawMessage) (string,
 	// preview ran the non-approving boundary check; the actual write needs the
 	// full one, which can gate a Reasonix-managed config target on user approval.
 	if err := confineWrite(ctx, effectiveWriteRoots(ctx, d.rootSet, d.roots), d.guard, d.managed, change.Path); err != nil {
+		return "", err
+	}
+	if err := src.requireObserved(ctx, d.overlay, change.Path); err != nil {
 		return "", err
 	}
 	// src carries the route and encoding the read came from, so the rewrite

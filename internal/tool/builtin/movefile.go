@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"reasonix/internal/fileops"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
 )
@@ -76,9 +77,15 @@ func (m moveFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	if err := confineWrite(ctx, roots, m.guard, m.managed, dst); err != nil {
 		return "", err
 	}
+	initialInfo, _ := os.Stat(src)
+	sourceLock := fileops.DiskTarget(src, initialInfo)
+	destinationLock := fileops.DiskTarget(dst, nil)
+	sourceLock.Route, destinationLock.Route = "mutation", "mutation"
+	unlock := fileops.LockMany(sourceLock, destinationLock)
+	defer unlock()
 	info, err := os.Stat(src)
 	if err != nil {
-		return "", fmt.Errorf("stat %s: %w", src, err)
+		return "", &tool.OperationError{Diagnostic: tool.OperationDiagnostic{Code: tool.FSNotFound, Path: src, Recovery: "inspect the current source path before retrying the move"}, Cause: err}
 	}
 	if info.IsDir() {
 		return "", fmt.Errorf("%s is a directory; move_file only moves files", src)
@@ -89,7 +96,7 @@ func (m moveFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 	sameFileDestination := false
 	if dstInfo, err := os.Stat(dst); err == nil {
 		if !os.SameFile(info, dstInfo) {
-			return "", fmt.Errorf("destination %s already exists", dst)
+			return "", &tool.OperationError{Diagnostic: tool.OperationDiagnostic{Code: tool.FSAlreadyExists, Path: dst, Recovery: "choose a different destination or inspect the existing target"}, Cause: os.ErrExist}
 		}
 		sameFileDestination = true
 	} else if !os.IsNotExist(err) {
@@ -100,14 +107,12 @@ func (m moveFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 			return "", fmt.Errorf("mkdir %s: %w", dir, err)
 		}
 	}
-	if expected, ok := tool.ExpectedWriteSource(ctx); ok && expected.Path == src && expected.Snapshot != "" {
-		id, err := diskIdentity(src)
-		if err != nil {
-			return "", err
-		}
-		actual := tool.SourceSnapshot(tool.ReadSourceDisk, src, fmt.Sprintf("raw-sha256:%x", id.sum))
-		if !id.existed || actual != expected.Snapshot {
-			return "", &tool.OperationError{Diagnostic: tool.OperationDiagnostic{Code: tool.WriteEvidenceStale, Path: src, ExpectedSnapshot: expected.Snapshot, ActualSnapshot: actual, Recovery: "the move source changed; inspect it before retrying"}, Cause: ErrFileChanged}
+	commit := func() {
+		store := fileops.FromContext(ctx)
+		store.ObserveAbsent(fileops.DiskTarget(src, nil))
+		if moved, statErr := os.Stat(dst); statErr == nil {
+			target, version := fileops.DiskSnapshot(dst, moved)
+			store.ObservePresent(target, version)
 		}
 	}
 	if err := renameFile(src, dst); err != nil {
@@ -115,16 +120,19 @@ func (m moveFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 			if rerr := renameSameFileDestination(src, dst); rerr != nil {
 				return "", fmt.Errorf("move %s to %s: %w", src, dst, rerr)
 			}
+			commit()
 			return fmt.Sprintf("moved %s to %s", src, dst), nil
 		}
 		if isCrossDeviceMove(err) {
 			if cerr := copyRegularFileAndRemoveSource(src, dst, info); cerr != nil {
 				return "", fmt.Errorf("move %s to %s: %w", src, dst, cerr)
 			}
+			commit()
 			return fmt.Sprintf("moved %s to %s", src, dst), nil
 		}
 		return "", fmt.Errorf("move %s to %s: %w", src, dst, err)
 	}
+	commit()
 	return fmt.Sprintf("moved %s to %s", src, dst), nil
 }
 
