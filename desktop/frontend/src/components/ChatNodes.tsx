@@ -35,10 +35,34 @@ export type ChatActions = {
   checkpoints: readonly CheckpointMeta[];
 };
 type SeatProps = { source: ChatSource; nodeKey: string; loader: ChatContentLoader; scroll: ChatScrollController; actions: ChatActions; tabId?: string; hostId?: string };
+const HISTORY_PREPEND_CHUNK = 96;
 
 export const ChatNodeList = memo(function ChatNodeList(props: Omit<SeatProps, "nodeKey">) {
   const order = useSyncExternalStore(props.source.subscribeOrder, props.source.getOrderSnapshot, props.source.getOrderSnapshot);
-  return order.map(key => <ChatNodeSeat key={key} {...props} nodeKey={key} />);
+  const [visibleOrder, setVisibleOrder] = useState(order);
+  const visibleRef = useRef(visibleOrder);
+  visibleRef.current = visibleOrder;
+  useEffect(() => {
+    let frame = requestAnimationFrame(function revealPrepend() {
+      const current = visibleRef.current;
+      if (!current.length) { setVisibleOrder(order); return; }
+      const start = order.indexOf(current[0]);
+      const contiguous = start >= 0 && current.every((key, index) => order[start + index] === key);
+      if (!contiguous) { setVisibleOrder(order); return; }
+      // A history page still becomes one natural-flow document, but committing
+      // its leading nodes over adjacent frames prevents a large page from
+      // monopolising the main thread. Existing rows never unmount.
+      const chunkStart = Math.max(0, start - HISTORY_PREPEND_CHUNK);
+      const suffix = order.slice(start + current.length);
+      if (chunkStart === start && !suffix.length) return;
+      const next = [...order.slice(chunkStart, start), ...current, ...suffix];
+      visibleRef.current = next;
+      setVisibleOrder(next);
+      if (chunkStart > 0) frame = requestAnimationFrame(revealPrepend);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [order]);
+  return visibleOrder.map(key => <ChatNodeSeat key={key} {...props} nodeKey={key} />);
 });
 
 const ChatNodeSeat = memo(function ChatNodeSeat({ source, nodeKey, loader, scroll, actions, tabId, hostId }: SeatProps) {

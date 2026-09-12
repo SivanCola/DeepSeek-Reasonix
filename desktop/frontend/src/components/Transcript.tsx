@@ -132,7 +132,7 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
               {hasOlderHistory && <button className="btn chat-older" disabled={loadingOlderHistory} onClick={() => void loadOlder()}>{t(loadingOlderHistory ? "chat.loading" : "chat.loadOlder")}</button>}
               {(olderHistoryError || pagingError) && <button className="btn" onClick={() => void loadOlder()}>{t("chat.loadFailed")}</button>}
               {!hydrating && items.length === 0 && !running && <Welcome onPrompt={onPrompt} />}
-              <ChatNodeList source={source} loader={loader} scroll={scroll} actions={actions} tabId={tabId} hostId={props.hostId} />
+              <ChatNodeList key={source.sessionKey} source={source} loader={loader} scroll={scroll} actions={actions} tabId={tabId} hostId={props.hostId} />
               <ChatRunning source={source} />
             </div>
           </div>

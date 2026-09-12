@@ -10,6 +10,7 @@ export class ChatScrollController {
   readonly generation = ++generation;
   private writer = new TranscriptViewportWriter();
   private element?: HTMLElement;
+  private content?: HTMLElement;
   private observer?: ResizeObserver;
   private mutations?: MutationObserver;
   private observedRows = new Set<HTMLElement>();
@@ -38,6 +39,7 @@ export class ChatScrollController {
     const attachment = ++this.attachment;
     this.disposed = false;
     this.element = element;
+    this.content = content;
     this.writer.attach(element, this.generation);
     element.addEventListener("scroll", this.onScroll, { passive: true });
     element.addEventListener("wheel", this.onWheel, { passive: true });
@@ -58,7 +60,11 @@ export class ChatScrollController {
         this.observedRows = rows;
         this.scheduleLayout();
       });
-      this.mutations.observe(content, { childList: true, subtree: true, characterData: true });
+      // Chat nodes are direct children of the column. Internal Markdown and
+      // tool-body mutations are already covered by the row ResizeObserver;
+      // observing the full subtree would rescan every loaded row for each
+      // worker parse and turns cumulative history loading into quadratic work.
+      this.mutations.observe(content, { childList: true });
     }
   }
   private scheduleLayout() {
@@ -77,7 +83,12 @@ export class ChatScrollController {
     this.anchor = saved?.anchor;
     this.layout();
   }
-  private rows() { return Array.from(this.element?.querySelectorAll<HTMLElement>("[data-chat-anchor-key]") ?? []).filter(row => row.childNodes.length > 0); }
+  private rows() {
+    const content = this.content;
+    if (!content) return [];
+    return Array.from(content.children).filter((row): row is HTMLElement =>
+      row instanceof HTMLElement && row.hasAttribute("data-chat-anchor-key") && row.childNodes.length > 0);
+  }
   private capture() {
     const el = this.element;
     if (!el) return;
@@ -167,6 +178,6 @@ export class ChatScrollController {
     cancelAnimationFrame(this.frame); this.frame = 0;
     cancelAnimationFrame(this.layoutFrame); this.layoutFrame = 0;
     this.writer.attach(null, ++generation);
-    this.element = undefined; this.opened = false; this.listeners.clear();
+    this.element = undefined; this.content = undefined; this.opened = false; this.listeners.clear();
   }
 }
