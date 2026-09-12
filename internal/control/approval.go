@@ -300,12 +300,6 @@ func (a *approvalManager) preApprovedForDecisionOptions(tool, subject string, ar
 	return a.bypassAllowsLocked(tool, subject, args) || a.sessionGrantAllowsLocked(tool, subject)
 }
 
-func (a *approvalManager) preApprovedForRequiredHuman(tool, subject string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.toolApprovalMode == ToolApprovalYolo || a.sessionGrantAllowsLocked(tool, subject)
-}
-
 // preApprovedForExactSession is used for a retry that crosses the active
 // sandbox boundary. It deliberately avoids the normal Bash prefix expansion:
 // authorizing one failed command must not authorize a different invocation.
@@ -707,9 +701,8 @@ func (a *approvalManager) mode() string {
 	return normalizeToolApprovalMode(a.toolApprovalMode)
 }
 
-// setMode applies a (pre-normalized) posture and drains any pending approvals
-// the new posture should auto-allow, returning them for the caller to signal
-// {allow:true} after unlocking.
+// setMode applies a pre-normalized posture. Existing prompts remain tied to
+// the revision that created them and are invalidated by the controller.
 func (a *approvalManager) setMode(mode string) []drainedApproval {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -818,31 +811,6 @@ func (a *approvalManager) sessionGrantAllowsLocked(tool, subject string) bool {
 type drainedApproval struct {
 	id    string
 	reply chan approvalReply
-}
-
-// drainLocked removes every pending approval the new posture should auto-allow
-// and returns them; caller holds a.mu and sends {allow:true} after unlocking.
-func (a *approvalManager) drainLocked(includeExplicitAsk bool) []drainedApproval {
-	pending := make([]drainedApproval, 0, len(a.approvals))
-	for id, approval := range a.approvals {
-		memoryBypass := isMemoryApprovalTool(approval.tool) && (a.toolApprovalMode == ToolApprovalYolo ||
-			a.toolApprovalMode == ToolApprovalAuto && approval.autoDrain)
-		if approval.kind == writeAccessKind {
-			continue
-		}
-		if (approval.fresh || requiresFreshApprovalTool(approval.tool)) && !memoryBypass {
-			continue
-		}
-		if approval.requireHuman && !includeExplicitAsk {
-			continue
-		}
-		if !includeExplicitAsk && !approval.autoDrain {
-			continue
-		}
-		delete(a.approvals, id)
-		pending = append(pending, drainedApproval{id: id, reply: approval.reply})
-	}
-	return pending
 }
 
 // pure approval helpers

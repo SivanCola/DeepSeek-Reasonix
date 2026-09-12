@@ -27,9 +27,6 @@ func (f *fakeSandboxEscapeApprover) SandboxEscapeSessionAllowed(ctx context.Cont
 }
 
 func TestBashSandboxUnavailableFailsClosedEvenWithLegacyApprover(t *testing.T) {
-	restore := forceWindowsSandboxEscapeTestMode(t)
-	defer restore()
-
 	sh := sandbox.ResolveShell("", "", nil)
 	oldCommand := bashSandboxCommand
 	bashSandboxCommand = func(spec sandbox.Spec, sh sandbox.Shell, command string) ([]string, bool) {
@@ -50,9 +47,6 @@ func TestBashSandboxUnavailableFailsClosedEvenWithLegacyApprover(t *testing.T) {
 }
 
 func TestBashSandboxUnavailableStaysClosedWithoutApprover(t *testing.T) {
-	restore := forceWindowsSandboxEscapeTestMode(t)
-	defer restore()
-
 	sh := sandbox.ResolveShell("", "", nil)
 	oldCommand := bashSandboxCommand
 	bashSandboxCommand = func(spec sandbox.Spec, sh sandbox.Shell, command string) ([]string, bool) {
@@ -70,9 +64,6 @@ func TestBashSandboxUnavailableStaysClosedWithoutApprover(t *testing.T) {
 }
 
 func TestBashSandboxUnavailableDoesNotOpenLegacyDenialPrompt(t *testing.T) {
-	restore := forceWindowsSandboxEscapeTestMode(t)
-	defer restore()
-
 	sh := sandbox.ResolveShell("", "", nil)
 	oldCommand := bashSandboxCommand
 	bashSandboxCommand = func(spec sandbox.Spec, sh sandbox.Shell, command string) ([]string, bool) {
@@ -95,9 +86,6 @@ func TestBashSandboxUnavailableDoesNotOpenLegacyDenialPrompt(t *testing.T) {
 }
 
 func TestBashLegacySessionEscapeCannotBypassForegroundSandbox(t *testing.T) {
-	restore := forceWindowsSandboxEscapeTestMode(t)
-	defer restore()
-
 	sh := sandbox.ResolveShell("", "", nil)
 	oldCommand := bashSandboxCommand
 	bashSandboxCommand = func(spec sandbox.Spec, sh sandbox.Shell, command string) ([]string, bool) {
@@ -119,13 +107,6 @@ func TestBashLegacySessionEscapeCannotBypassForegroundSandbox(t *testing.T) {
 	if len(approver.sessionChecks) != 0 {
 		t.Fatalf("legacy session grant was consulted %d times", len(approver.sessionChecks))
 	}
-}
-
-func forceWindowsSandboxEscapeTestMode(t *testing.T) func() {
-	t.Helper()
-	old := bashSandboxEscapePromptEnabled
-	bashSandboxEscapePromptEnabled = func() bool { return true }
-	return func() { bashSandboxEscapePromptEnabled = old }
 }
 
 func echoForShell(sh sandbox.Shell, text string) string {

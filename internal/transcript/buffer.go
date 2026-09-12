@@ -116,8 +116,7 @@ func (buffer *Buffer) Messages() []Message {
 }
 
 func (buffer *Buffer) attachTurnStats(turnID string, usage *TurnUsage, durationMs, completedAt int64) {
-	for i := len(buffer.messages) - 1; i >= 0; i-- {
-		row := buffer.messages[i]
+	for _, row := range slices.Backward(buffer.messages) {
 		if row.message.TurnID != turnID || row.message.Role != "assistant" {
 			continue
 		}

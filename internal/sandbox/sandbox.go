@@ -122,7 +122,7 @@ func UnavailableRemediation() string {
 	case "darwin":
 		return "Ensure `sandbox-exec` is installed and usable (the host must allow `sandbox_apply`), or explicitly select Full access for an unconfined session."
 	case "windows":
-		return "The native Windows restricted-token/AppContainer sandbox is unavailable. Restricted permission modes refuse to run unconfined."
+		return "The native Windows restricted-token/AppContainer sandbox is unavailable. Restricted permission modes refuse to run unconfined; explicitly select Full access only when unconfined execution is intended."
 	default:
 		return "Restricted permission presets are unavailable on this platform; explicitly select Full access only when unconfined execution is intended."
 	}

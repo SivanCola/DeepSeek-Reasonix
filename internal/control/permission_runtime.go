@@ -3,6 +3,7 @@ package control
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 
 	"reasonix/internal/agent"
@@ -116,14 +117,7 @@ func (c *Controller) SetPermissionPreset(preset string, expectedRevision uint64)
 		return c.PermissionSnapshot(), nil, fmt.Errorf("permission preset must be read-only, workspace-write, or danger-full-access")
 	}
 	capabilities := platformPermissionCapabilities()
-	supported := false
-	for _, candidate := range capabilities.SupportedPresets {
-		if candidate == raw {
-			supported = true
-			break
-		}
-	}
-	if !supported {
+	if !slices.Contains(capabilities.SupportedPresets, raw) {
 		return c.PermissionSnapshot(), nil, fmt.Errorf("permission preset %q is unavailable: %s", raw, capabilities.UnavailableReason)
 	}
 	drained := c.applyToolApprovalModeLocked(raw)

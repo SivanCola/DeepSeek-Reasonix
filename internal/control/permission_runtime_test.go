@@ -32,7 +32,7 @@ func TestPermissionPresetChangePublishesRevisionBeforeOldApprovalCanResolve(t *t
 	c := New(Options{Policy: permission.New("ask", nil, nil, nil)})
 	id, reply := c.approval.registerWriteAccess("bash", "outside", "test", json.RawMessage(`{}`), &event.WriteAccessApproval{})
 	before := c.PermissionSnapshot()
-	after, _, err := c.SetPermissionPreset("workspace-write", before.Revision)
+	after, _, err := c.SetPermissionPreset(ToolApprovalDangerFullAccess, before.Revision)
 	if err != nil {
 		t.Fatalf("SetPermissionPreset: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestPermissionPresetChangePublishesRevisionBeforeOldApprovalCanResolve(t *t
 
 func TestSettingSamePermissionPresetKeepsRevisionStable(t *testing.T) {
 	c := New(Options{Policy: permission.New("allow", nil, nil, nil)})
-	c.SetToolApprovalMode(ToolApprovalWorkspaceWrite)
+	c.SetToolApprovalMode(ToolApprovalDangerFullAccess)
 	before := c.PermissionSnapshot()
 	after, _, err := c.SetPermissionPreset(before.Preset, before.Revision)
 	if err != nil {

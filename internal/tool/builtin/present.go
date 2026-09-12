@@ -83,7 +83,7 @@ func (p present) Execute(ctx context.Context, args json.RawMessage) (string, err
 		if !info.Mode().IsRegular() {
 			return "", fmt.Errorf("present %s: path is not a regular file", rp.DisplayPath)
 		}
-		recordedPath := path
+		var recordedPath string
 		if filepath.IsAbs(path) {
 			recordedPath = filepath.Clean(path)
 		} else {

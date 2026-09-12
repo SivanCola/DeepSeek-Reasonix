@@ -5447,16 +5447,6 @@ func (g gateApprover) ApproveWithPolicyReason(ctx context.Context, tool, subject
 	return g.approveWithPolicyReason(ctx, tool, subject, args, policyReason)
 }
 
-func combineApprovalReasons(reasons ...string) string {
-	var kept []string
-	for _, reason := range reasons {
-		if reason = strings.TrimSpace(reason); reason != "" {
-			kept = append(kept, reason)
-		}
-	}
-	return strings.Join(kept, "\n")
-}
-
 func (g gateApprover) approveWithPolicyReason(ctx context.Context, tool, subject string, args json.RawMessage, policyReason string) (bool, bool, string, error) {
 	if tool == memoryRememberTool && g.c.allowLowRiskRemember(args) {
 		return true, false, "", nil

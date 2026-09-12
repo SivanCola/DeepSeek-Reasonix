@@ -599,8 +599,8 @@ func TestWindowsCapabilityRecordsExactWorkspaceGrantInProtectedState(t *testing.
 	if record.Version != capabilityRecordVersion || record.Status != "active" || record.Purpose != capabilityWorkspace {
 		t.Fatalf("capability record = %+v", record)
 	}
-	if !strings.EqualFold(record.CanonicalPath, workspace) || record.SID == "" || record.AccessMask != uint32(capabilityWriteGrantMask) {
-		t.Fatalf("capability record identity = %+v", record)
+	if wantPath, pathErr := canonicalWindowsDirectory(workspace); pathErr != nil || !strings.EqualFold(record.CanonicalPath, wantPath) || record.SID == "" || record.AccessMask != uint32(capabilityWriteGrantMask) {
+		t.Fatalf("capability record identity = %+v (canonicalize error: %v)", record, pathErr)
 	}
 	wantIdentity, err := windowsDirectoryIdentity(record.CanonicalPath)
 	if err != nil {

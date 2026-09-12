@@ -125,7 +125,8 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
       <section className="chat-transcript">
         <div className="chat-surface" inert={Boolean(activeDetails)}>
           <Suspense fallback={null}><ChatTurnNavigator source={source} scroll={scroll} /></Suspense>
-          <div ref={scroller} className="transcript chat-flow-scroll" tabIndex={0} data-transcript-render-mode="full" data-scroll-mode={position.following ? "tail" : "reader"}>
+          <div ref={scroller} className="transcript chat-flow-scroll" tabIndex={0} data-transcript-render-mode="full"
+            data-transcript-hydrating={hydrating} data-scroll-mode={position.following ? "tail" : "reader"}>
             <div ref={column} className="chat-column">
               {hydrating && <p role="status">{t("chat.loading")}</p>}
               {hasOlderHistory && <button className="btn chat-older" disabled={loadingOlderHistory} onClick={() => void loadOlder()}>{t(loadingOlderHistory ? "chat.loading" : "chat.loadOlder")}</button>}

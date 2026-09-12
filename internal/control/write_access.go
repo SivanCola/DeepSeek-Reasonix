@@ -396,17 +396,6 @@ func approvalRequestsFullAccess(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &payload) == nil && strings.TrimSpace(payload.SandboxPermissions) == "danger-full-access"
 }
 
-func (c *Controller) persistWriteAccess(toolName, subject string, dirs []string, mergePerm bool) error {
-	if c.writeAccess.persist == nil {
-		return fmt.Errorf("project persistence is not available")
-	}
-	rule := ""
-	if mergePerm {
-		rule = permission.RememberRuleForScope(toolName, subject)
-	}
-	return c.writeAccess.persist(dirs, rule)
-}
-
 func (c *Controller) clearSessionWriteAccess() {
 	if c.writeAccess.roots != nil {
 		c.writeAccess.roots.ClearSession()

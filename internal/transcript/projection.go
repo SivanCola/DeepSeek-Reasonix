@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 
@@ -232,14 +233,7 @@ func mergeTurnUsage(current *TurnUsage, usage *eventwire.Usage) *TurnUsage {
 	reasoning := valueOrZero(current.ReasoningTokens) + usage.ReasoningTokens
 	current.ReasoningTokens = &reasoning
 	if usage.CostQuote != nil && usage.CostQuote.ModelRef != "" {
-		seen := false
-		for _, route := range current.Routes {
-			if route == usage.CostQuote.ModelRef {
-				seen = true
-				break
-			}
-		}
-		if !seen {
+		if !slices.Contains(current.Routes, usage.CostQuote.ModelRef) {
 			current.Routes = append(current.Routes, usage.CostQuote.ModelRef)
 		}
 	}

@@ -17,7 +17,6 @@ import (
 
 	"mvdan.cc/sh/v3/syntax"
 
-	"reasonix/internal/i18n"
 	"reasonix/internal/jobs"
 	"reasonix/internal/proc"
 	"reasonix/internal/sandbox"
@@ -36,10 +35,7 @@ func init() { tool.RegisterBuiltin(bash{}) }
 
 var bashShellPATH = cachedBashShellPATH
 
-var (
-	bashSandboxCommand             = sandbox.Command
-	bashSandboxEscapePromptEnabled = func() bool { return runtime.GOOS == "windows" }
-)
+var bashSandboxCommand = sandbox.Command
 
 // cachedBashShellPATH memoizes the login-shell PATH probe per login shell so a
 // shell isn't spawned on every bash tool call (the probe runs up to three
@@ -418,40 +414,6 @@ func appendSessionDataHint(out, hint string) string {
 func unconfinedShellArgv(sh sandbox.Shell, command string) []string {
 	argv, _ := sandbox.Command(sandbox.Spec{}, sh, command)
 	return argv
-}
-
-func approveBashSandboxEscape(ctx context.Context, command string, args json.RawMessage, reason string) (bool, string, error) {
-	if !bashSandboxEscapePromptEnabled() {
-		return false, "", nil
-	}
-	approver, ok := sandbox.EscapeApproverFrom(ctx)
-	if !ok {
-		return false, "", nil
-	}
-	return approver.ApproveSandboxEscape(ctx, sandbox.EscapeRequest{
-		Command: command,
-		Args:    append(json.RawMessage(nil), args...),
-		Reason:  reason,
-	})
-}
-
-func bashSandboxEscapeSessionAllowed(ctx context.Context, command string, args json.RawMessage) bool {
-	if !bashSandboxEscapePromptEnabled() {
-		return false
-	}
-	approver, ok := sandbox.EscapeApproverFrom(ctx)
-	if !ok {
-		return false
-	}
-	checker, ok := approver.(sandbox.EscapeSessionChecker)
-	if !ok {
-		return false
-	}
-	return checker.SandboxEscapeSessionAllowed(ctx, sandbox.EscapeRequest{
-		Command: command,
-		Args:    append(json.RawMessage(nil), args...),
-		Reason:  i18n.M.SandboxEscapeRuntimeReason,
-	})
 }
 
 // runForegroundDetailed uses the shared shellrun collector so model bash and

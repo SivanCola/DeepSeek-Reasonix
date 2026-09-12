@@ -4,15 +4,15 @@ import "reasonix/internal/event"
 
 // Approval is the JSON form of an event.Approval.
 type Approval struct {
-	ID          string               `json:"id"`
-	Tool        string               `json:"tool"`
-	Subject     string               `json:"subject" externalizable:"true"`
-	Reason      string               `json:"reason,omitempty" externalizable:"true"`
-	Fresh       bool                 `json:"fresh,omitempty"`
-	Kind        string               `json:"kind,omitempty"` // tool | plan | recovery | write_access
-	Recovery    *RecoveryApproval    `json:"recovery,omitempty"`
-	WriteAccess *WriteAccessApproval `json:"write_access,omitempty"`
-	TurnID      string               `json:"turnId,omitempty"`
+	ID                 string               `json:"id"`
+	Tool               string               `json:"tool"`
+	Subject            string               `json:"subject" externalizable:"true"`
+	Reason             string               `json:"reason,omitempty" externalizable:"true"`
+	Fresh              bool                 `json:"fresh,omitempty"`
+	Kind               string               `json:"kind,omitempty"` // tool | plan | recovery | write_access
+	Recovery           *RecoveryApproval    `json:"recovery,omitempty"`
+	WriteAccess        *WriteAccessApproval `json:"write_access,omitempty"`
+	TurnID             string               `json:"turnId,omitempty"`
 	Generation         uint64               `json:"generation,omitempty"`
 	PermissionRevision uint64               `json:"permissionRevision,omitempty"`
 }
