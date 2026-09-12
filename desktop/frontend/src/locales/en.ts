@@ -13,6 +13,8 @@ export const en = {
   "remote.legacyDeliveryPolicy": "This remote service still applies the retired Delivery policy. Upgrade the service to remove it; its current checks and recovery state remain available.",
   "toolRecovery.title": "Interrupted tool needs review",
   "toolRecovery.unknown": "Outcome not confirmed",
+	"toolRecovery.retired": "Historical record from the retired recovery mechanism. It does not block new tools; check external state before repeating an operation with side effects.",
+	"toolRecovery.historicalTitle": "Historical recovery record",
   "toolRecovery.details": "View action details",
   "toolRecovery.inspect": "Inspect current state",
   "toolRecovery.confirm": "I verified the effect happened",

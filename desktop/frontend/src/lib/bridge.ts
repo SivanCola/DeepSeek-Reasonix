@@ -4405,7 +4405,7 @@ function makeMockApp(): AppBindings {
       settings.defaultToolApprovalMode = normalizeToolApprovalMode(mode);
     },
     async SetDefaultAutoRecoveryCheckpoint(_enabled: boolean) {
-      // Legacy no-op; Auto Guard is always built into Auto.
+      // Legacy no-op; Auto Guard is retired.
     },
     async SetConnectionKey(name: string, value: string) {
       const p = settings.providers.find(p => p.name === name);

@@ -14,6 +14,8 @@ export const zh: Record<DictKey, string> = {
   "remote.legacyDeliveryPolicy": "此远端服务仍执行已退役的“交付”策略。升级服务后可移除该策略；当前检查和恢复状态会继续保留。",
   "toolRecovery.title": "中断的工具需要核实",
   "toolRecovery.unknown": "结果尚未确认",
+	"toolRecovery.retired": "这是已退役恢复机制留下的历史记录，不会阻止新工具。重新执行有副作用的操作前请先检查外部状态。",
+	"toolRecovery.historicalTitle": "历史恢复记录",
   "toolRecovery.details": "查看操作详情",
   "toolRecovery.inspect": "检查当前状态",
   "toolRecovery.confirm": "我已核实操作生效",
