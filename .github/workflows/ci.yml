@@ -736,8 +736,9 @@ jobs:
     if: always() && (github.event_name != 'pull_request' || needs.changes.outputs.desktop != 'false')
     runs-on: windows-latest
     # A hung native step must not hold the workflow's concurrency group for the
-    # six-hour default. main-v2 push runs measured 34-47 minutes on 2026-09-11,
-    # so 45 sat inside the job's own spread; every step keeps its own cap.
+    # six-hour default. This bounds hangs, not duration: the leg's own spread on
+    # 2026-09-11 was 34-47 minutes, so a cap near the mean cancels healthy runs.
+    # Every step keeps its own tighter budget.
     timeout-minutes: 60
     defaults:
       run:
@@ -872,20 +873,71 @@ jobs:
         timeout-minutes: 2
         run: go test -timeout=60s fyne.io/systray
 
-      # Installer packaging is packaging validation, not a code gate: run it
-      # on pushes to main-v2 (the release pipeline builds installers again
-      # anyway), but let pull requests stop after the test step.
+  # Installer packaging is packaging validation, not a code gate, and it shares
+  # no state with the test steps above. It runs beside them instead of after
+  # them so the Windows leg's wall time is the longer half rather than the sum,
+  # and so a packaging failure costs a short rerun instead of the whole leg.
+  # Pushes to main-v2 only: the release pipeline builds installers again anyway.
+  desktop-windows-package:
+    needs: changes
+    if: always() && github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: desktop/go.mod
+          cache: true
+          cache-dependency-path: desktop/go.sum
+
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          version: 10
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      # Same Defender hazard as the test leg: exclusions keep packaging from
+      # tripping over freshly written files that are still held open.
+      - name: Exclude build dirs from Defender scanning
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, (go env GOCACHE)) |
+            Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          foreach ($p in $paths) {
+            try {
+              Add-MpPreference -ExclusionPath $p -ErrorAction Stop
+              Write-Host "Defender exclusion added: $p"
+            } catch {
+              Write-Host "::warning::Defender exclusion failed for ${p}: $($_.Exception.Message)"
+            }
+          }
+
+      # go:embed of frontend/dist needs a built frontend before the package
+      # compiles, same as the test leg.
+      - name: Build frontend
+        run: |
+          pnpm --dir frontend install --frozen-lockfile
+          pnpm --dir frontend build
+
       - name: Install NSIS
-        if: github.event_name != 'pull_request'
         run: pwsh -NoProfile -File ../scripts/install-nsis.ps1
 
       - name: Build Windows installer and portable archive
-        if: github.event_name != 'pull_request'
         timeout-minutes: 20
         run: ../scripts/desktop-build.sh windows/amd64 v0.0.0-ci canary
 
       - name: Verify packaged Windows artifacts
-        if: github.event_name != 'pull_request'
         run: |
           node packaging/verify.mjs ../dist/Reasonix-windows-amd64.zip
           node packaging/signing-files.mjs build/windows/signing-payload --check

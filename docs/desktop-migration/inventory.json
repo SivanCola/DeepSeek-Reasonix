@@ -5442,6 +5442,13 @@
     },
     {
       "kind": "ci-job",
+      "name": "ci.yml/desktop-windows-package",
+      "location": ".github/workflows/ci.yml",
+      "class": "keep-business",
+      "owner": "Electron installer build, split from the test leg"
+    },
+    {
+      "kind": "ci-job",
       "name": "release-desktop.yml/attest-signing-contract",
       "location": ".github/workflows/release-desktop.yml",
       "class": "keep-business",
