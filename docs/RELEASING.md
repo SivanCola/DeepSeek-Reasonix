@@ -25,7 +25,12 @@ The normal developer path has one version input, one reviewed Notes PR, one
 terminal command, and one environment approval:
 
 1. Open Actions → **Prepare release** and enter `X.Y.Z`.
-2. Review and merge the generated bilingual release-notes PR.
+2. Review and merge the generated bilingual release-notes PR. If its checks
+   show `action_required` with no jobs, the Actions bot opened it and events
+   raised with `GITHUB_TOKEN` never start workflows; run
+   `./scripts/release-notes-pr-kick.sh X.Y.Z` to close and reopen it with
+   your own credentials so CI starts. The script refuses any other
+   zero-check shape.
 3. From an authenticated maintainer checkout, run:
 
    ```sh
