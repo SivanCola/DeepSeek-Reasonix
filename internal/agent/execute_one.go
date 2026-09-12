@@ -10,6 +10,7 @@ import (
 	"reasonix/internal/checkpoint"
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
+	"reasonix/internal/fileops"
 	"reasonix/internal/jobs"
 	"reasonix/internal/mcpinteraction"
 	"reasonix/internal/memory"
@@ -24,7 +25,7 @@ import (
 // parse → policy → prepare → finish.
 func (a *Agent) executeOne(ctx context.Context, turn *turnRuntime, call provider.ToolCall) (out toolOutcome) {
 	defer func() { out.runState = outcomeRunState(out) }()
-	ctx = withTurnState(a.withAgentContext(ctx), turn)
+	ctx = fileops.WithStore(withTurnState(a.withAgentContext(ctx), turn), a.fileObservations)
 	plan := &toolCallPlan{call: call}
 	defer func() {
 		out.evidenceSource = cloneEvidenceTarget(plan.expectedWriteSource)
@@ -107,24 +108,6 @@ func (a *Agent) resolveToolPolicy(ctx context.Context, turn *turnRuntime, plan *
 	if blocked, early := a.applyExecutionPreflight(turn, plan); early {
 		return blocked, true
 	}
-	if blocked, early := a.applyOperationGate(plan); early {
-		return blocked, true
-	}
-	if blocked, early := a.applyEvidenceGates(ctx, plan); early {
-		return blocked, true
-	}
-	if msg, blocked := a.gateReadOperation(ctx, plan); blocked {
-		return toolOutcome{output: msg, blocked: true, errMsg: firstLine(msg)}, true
-	}
-	if blocked, early := a.applyDeliveryPolicyGates(turn, plan); early {
-		return blocked, true
-	}
-	// After proxy resolution, re-apply the batch mutation barrier using thereal target classification.
-	// Provider-visible proxies such asuse_capability advertise
-	// ReadOnly()==truebeforeresolutionandwouldotherwiseslip past the pre-run skippass.
-	if blocked, early := a.applyMutationDependencyBarrier(plan); early {
-		return blocked, true
-	}
 	if blocked, early := a.applyRecoveryAndPermission(ctx, plan); early {
 		return blocked, true
 	}
@@ -147,11 +130,6 @@ func (a *Agent) applyContextualToolGate(ctx context.Context, plan *toolCallPlan)
 }
 
 func contextualToolGateOutcome(ctx context.Context, target tool.Tool, name string) (toolOutcome, bool) {
-	// Hidden legacy calls remain executable; the independent Plan/permission
-	// gates still apply before execution.
-	if target.Name() == "complete_step" {
-		return toolOutcome{}, false
-	}
 	contextual, ok := target.(tool.ContextualTool)
 	if !ok || contextual.ProviderVisible(ctx) {
 		return toolOutcome{}, false
@@ -160,52 +138,10 @@ func contextualToolGateOutcome(ctx context.Context, target tool.Tool, name strin
 	switch name {
 	case "update_goal":
 		msg = "update_goal is only available while an active goal turn is running — no goal state was changed"
-	case "complete_step":
-		msg = "blocked: complete_step is only available after plan approval. While planning, keep task state with todo_write and present the plan for user approval."
 	case "bash_output", "wait", "kill_shell":
 		msg = "background jobs are not available in this context"
 	}
 	return toolOutcome{output: msg, blocked: true, errMsg: firstLine(msg)}, true
-}
-
-// applyMutationDependencyBarrierblockslatermutationsandverificationsinthesameproviderbatchafteranearliermodificationfailed.
-// Host-provenread-only diagnosis (resolved ReadOnly with no verification classification)
-// still runs.
-func (a *Agent) applyMutationDependencyBarrier(plan *toolCallPlan) (toolOutcome, bool) {
-	if a == nil || plan == nil {
-		return toolOutcome{}, false
-	}
-	cause := a.mutationDependencyBarrier.Load()
-	if cause == nil {
-		return toolOutcome{}, false
-	}
-	if cause.evidenceOnly && a.independentEvidenceWriter(plan.call) {
-		return toolOutcome{}, false
-	}
-	verification := plan.evidenceName == "bash" && evidence.IsVerificationCommand(bashCommandFromArgs(plan.evidenceArgs))
-	if !plan.effects.StateMutation && !verification {
-		return toolOutcome{}, false
-	}
-	msg := cause.message()
-	var ex *tool.ShellExecution
-	// Structured shell metadata only for bash cards; other tools keep plain text.
-	if plan.evidenceName == "bash" || plan.call.Name == "bash" {
-		ex = shellPreflightExecution(plan, verification)
-		if ex != nil {
-			ex.FailurePhase = tool.ShellPhaseDependency
-			ex.State = tool.ShellStateNotRun
-			ex.MutationRisk = tool.ShellMutationNotStarted
-			if verification {
-				ex.Verification = tool.ShellVerificationNotRun
-			}
-		}
-	}
-	return toolOutcome{
-		output:    msg,
-		blocked:   true,
-		errMsg:    firstLine(msg),
-		execution: ex,
-	}, true
 }
 
 // applyPlanModeAndProxy handles initial Plan mode, proxy resolution / skip path,
@@ -321,50 +257,6 @@ func (a *Agent) commitResolvedSkip(plan *toolCallPlan) (toolOutcome, bool) {
 	return toolOutcome{}, false
 }
 
-// applyDeliveryPolicyGates enforces global deterministic shell contracts plusclosed-loop-only criteriarules,
-// and classifies mutation/verification.
-func (a *Agent) applyDeliveryPolicyGates(turn *turnRuntime, plan *toolCallPlan) (toolOutcome, bool) {
-	// Global deterministic shell contract (ordinary + closed loop). PowerShell
-	// 5.1 &&/|| is enforced inside the bash tool itself so descriptor and error text stay shell-accurate;
-	// theagentlayers apply command-shape protections.
-	// Closed-loopturnskeepthebroaderclassifierbecauseamutationinvalidatestheverificationreceiptevenwhentheexitstatusishonest.
-	// Ordinary turnsblockonly shapes where a
-	if plan.evidenceName == "bash" {
-		if evidence.BashToolCallMasksVerificationExit(plan.evidenceArgs) {
-			msg := evidence.ShellContractPreflightMessage("mask_exit")
-			return toolOutcome{
-				output:    msg,
-				blocked:   true,
-				errMsg:    "blocked: verification exit status masked",
-				execution: shellPreflightExecution(plan, true),
-			}, true
-		}
-		mixed := evidence.BashToolCallMixesMutationAndMaskableVerification
-
-		if mixed(plan.evidenceArgs) {
-			msg := evidence.ShellContractPreflightMessage("mixed")
-
-			return toolOutcome{
-				output:    msg,
-				blocked:   true,
-				errMsg:    "blocked: mixed mutation and verification command",
-				execution: shellPreflightExecution(plan, true),
-			}, true
-		}
-		if evidence.BashToolCallUsesNonTerminalInlineInterpreter(plan.evidenceArgs) {
-			msg := evidence.ShellContractPreflightMessage("inline_nonterminal")
-			return toolOutcome{
-				output:    msg,
-				blocked:   true,
-				errMsg:    "blocked: non-terminal inline interpreter command",
-				execution: shellPreflightExecution(plan, false),
-			}, true
-		}
-	}
-
-	return toolOutcome{}, false
-}
-
 // proxyResolutionError preserves non-input resolver failures while diagnosing
 // only the private, repairable envelope errors marked by the resolver.
 func (a *Agent) proxyResolutionError(plan *toolCallPlan, err error) toolOutcome {
@@ -375,70 +267,10 @@ func (a *Agent) proxyResolutionError(plan *toolCallPlan, err error) toolOutcome 
 	return toolOutcome{output: fmt.Sprintf("error: %v", err), errMsg: firstLine(err.Error())}
 }
 
-// applyRecoveryAndPermission runs Auto Guard then ordinary permission. Neitheracquires a write lease;
-// thathappens only after permission in prepare.
+// applyRecoveryAndPermission applies write-scope and ordinary permission
+// policy. Recovery review is informational and never participates in tool
+// availability or execution decisions.
 func (a *Agent) applyRecoveryAndPermission(ctx context.Context, plan *toolCallPlan) (toolOutcome, bool) {
-	// Auto Guard: after resolution/mutation classification,
-	// beforepermissionapprovalandworkspacewrite-lockacquisition, so a waitingrecovery cardneverholdsawritelease.
-	// Consult on mutations,
-	// verification, plan transitions, and again for every tool once an
-	// Episodeisexhaustedsohost-provenread-onlydiagnosis can remain available whilefurtherexecutionisquarantined.
-	// Ask/Yolo still bypass inside the gate.
-	plan.verification = plan.evidenceName == "bash" && evidence.IsVerificationCommand(bashCommandFromArgs(plan.evidenceArgs))
-	plan.planTransition, plan.planBefore, plan.planAfter, plan.planDiff = a.recoveryPlanTransition(plan.evidenceName, plan.evidenceArgs)
-	episodeStopped := false
-	if ctrl := a.recoveryEpisodeControl(); ctrl != nil {
-		plan.recoveryGen = ctrl.Generation()
-		episodeStopped = ctrl.EpisodeStopped(a.recovery.taskID)
-	}
-	if a.svc.recoveryGate != nil && (plan.effects.StateMutation || plan.verification || plan.planTransition || episodeStopped) {
-		subject := recoverySubject(plan.evidenceName, plan.evidenceArgs)
-		if plan.planTransition {
-			subject = "Update the active execution plan"
-		}
-		preview := strings.TrimSpace(plan.call.Diff)
-		if preview == "" {
-			preview = subject
-		}
-		if plan.planTransition {
-			preview = plan.planAfter
-		}
-		episodeID := ""
-		if ctrl := a.recoveryEpisodeControl(); ctrl != nil {
-			episodeID = ctrl.EpisodeID()
-		}
-		dec, rerr := a.svc.recoveryGate.BeforeMutation(ctx, a.recoveryProposal(plan, episodeID, subject, preview))
-		if dec.Generation != 0 {
-			plan.recoveryGen = dec.Generation
-		}
-		if rerr != nil && !dec.Blocked {
-			return toolOutcome{
-				output:             fmt.Sprintf("blocked: Auto Guard error: %v", rerr),
-				blocked:            true,
-				errMsg:             "blocked: Auto Guard error",
-				recoveryGeneration: plan.recoveryGen,
-			}, true
-		}
-		if dec.Blocked || !dec.Allow {
-			msg := strings.TrimSpace(dec.Message)
-			if msg == "" {
-				msg = "blocked: Auto Guard declined this mutation"
-			}
-			if !strings.HasPrefix(msg, "blocked:") {
-				msg = "blocked: " + msg
-			}
-			return toolOutcome{
-				output:  msg,
-				blocked: true,
-				// Surface theconcretestoppedoperationandnextstepinthefailedtoolcardinsteadofexposingonlyaninternalguardname.
-				errMsg:             firstLine(msg),
-				recoveryGeneration: plan.recoveryGen,
-				recoveryStopTurn:   dec.StopTurn,
-				recoveryStopReason: dec.StopReason,
-			}, true
-		}
-		plan.planReplacementAuthorized = plan.planTransition && dec.AuthorizePlanReplacement
-	}
 	if blocked, early := a.applyWriteAccess(ctx, plan); early {
 		return blocked, true
 	}
@@ -588,11 +420,6 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	readOnly := plan.readOnly
 	permName := plan.permName
 	permArgs := plan.permArgs
-	evidenceName := plan.evidenceName
-	evidenceArgs := plan.evidenceArgs
-	mutates := plan.effects.StateMutation
-	recoveryGen := plan.recoveryGen
-
 	var result string
 	var images []string
 	var err error
@@ -637,8 +464,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	}
 	// Always re-read after post hooks —
 	// partialwritesandhooksideeffectscanchangethepreviewedpathevenwhentheconcrete tool returned an error.
-	receipt := a.finalizeObservedToolReceipts(plan, result, execution, err)
-	result = a.withRecoveryObservation(ctx, evidenceName, evidenceArgs, readOnly, mutates, result, err, recoveryGen)
+	a.finalizeObservedToolReceipts(plan, result, execution, err)
 	if err != nil {
 		detail := result
 		// Malformed-args failures are a transient model JSON glitch (e.g. optionswritten as ["a":"b"] →
@@ -647,13 +473,12 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		if !json.Valid([]byte(call.Arguments)) {
 			detail = strings.TrimRight(detail, "\n") + "\nThe arguments were not valid JSON. Re-emit them exactly per this schema:\n" + string(t.Schema())
 		}
-		a.recordRepeatFailure(call, t, err)
 		rawErr := fmt.Sprintf("error: %v\n%s", err, detail)
 		body, truncMsg, original := a.boundProviderVisibleResult(rawErr, call.Name, call.ID)
 		out := toolOutcome{
 			runState: recoveryFailureState(err),
 			output:   body, errMsg: firstLine(err.Error()), truncated: truncMsg != "" || original != "", truncMsg: truncMsg,
-			execution: execution, mcpApp: toProviderMCPApp(plan.mcpApp), recoveryGeneration: recoveryGen, subagentOutcome: subagentOutcomeFromError(err),
+			execution: execution, mcpApp: toProviderMCPApp(plan.mcpApp), subagentOutcome: subagentOutcomeFromError(err),
 		}
 		var operationErr *tool.OperationError
 		if errors.As(err, &operationErr) {
@@ -666,10 +491,6 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		}
 		return out
 	}
-	if mutates {
-		a.clearRepeatFailuresAfterMutation(evidenceName, evidenceArgs, readOnly)
-	}
-	a.recordRepeatSuccess(call, t)
 	// A foreground `task` sub-agent just finished — its result is the final answer.
 	// (A backgrounded one returns a "Started…" string and stops later in a job, soit doesn't fire here.)
 	// SubagentStop lets a hook react to delegated work.
@@ -682,16 +503,14 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		processed := a.processToolImages(cctx, result, images)
 		result, visionSummary = processed.text, processed.summary
 	}
-	body, truncMsg, original, readObserver := a.boundIncompleteReadAwareResult(plan, result)
-	body = appendReceiptCitation(body, receipt)
+	body, truncMsg, original := a.boundProviderVisibleResult(result, call.Name, call.ID)
 	out := toolOutcome{
 		runState: runState, output: body, images: images, visionSummary: visionSummary, truncated: truncMsg != "" || original != "", truncMsg: truncMsg,
-		execution: execution, mcpApp: toProviderMCPApp(plan.mcpApp), recoveryGeneration: recoveryGen,
+		execution: execution, mcpApp: toProviderMCPApp(plan.mcpApp),
 	}
 	if original != "" {
 		out.rawOutput = original
 	}
-	out.incompleteRead = deferredIncompleteReadOutcome(plan, result, readObserver, original == "" && truncMsg == "")
 	return out
 }
 

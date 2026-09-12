@@ -12,7 +12,7 @@ import (
 
 // SeedTodoState initializes the canonical task list from a host-generated
 // starter list, such as an approved plan. A new host seed replaces stale state
-// from earlier work so complete_step matches the plan the UI just displayed.
+// from earlier work so the model can update the plan it just displayed.
 func (a *Agent) SeedTodoState(todos []evidence.TodoItem) {
 	if len(todos) == 0 {
 		return

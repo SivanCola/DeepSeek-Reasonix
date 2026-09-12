@@ -44,9 +44,6 @@ type agentServices struct {
 	// controller generation; nil means every intercept point passes through
 	// byte-identically. See extensions.go.
 	extensions *dispatch.Dispatcher
-	// recoveryGate is the Auto Guard boundary, shared by root and sub-agents for
-	// one controller task. nil disables recovery checks.
-	recoveryGate RecoveryGate
 	// planTrust is retained for legacy controller wiring. The main Plan
 	// execution path no longer consults it.
 	planTrust PlanModeReadOnlyTrustGate
@@ -128,7 +125,6 @@ func newAgentServices(
 		sink:                  sink,
 		gate:                  gate,
 		extensions:            opts.Extensions,
-		recoveryGate:          opts.RecoveryGate,
 		planTrust:             planTrust,
 		sandboxEscape:         sandboxEscape,
 		configWrite:           configWrite,

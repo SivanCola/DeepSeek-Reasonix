@@ -2,7 +2,6 @@ package agent
 
 import (
 	"reasonix/internal/completion"
-	"reasonix/internal/provider"
 	"reasonix/internal/runtimepolicy"
 )
 
@@ -11,22 +10,15 @@ import (
 // State an external caller arms before a Run lives in pendingTurn; state that
 // outlives the Run lives in taskRuntime or sessionRuntime.
 type turnRuntime struct {
-	writeRecovery   map[string]provider.ToolCall // unresolved prior effects; reverified before reuse
-	unknownRecovery map[string]provider.ToolCall // every unresolved side-effecting call, not only file writes
-	runMaxSteps     int
-	runMaxStepsKey  string
+	runMaxSteps    int
+	runMaxStepsKey string
 
-	terminal           terminalProtocolState
-	usedAnyTool        bool
-	graceRound         bool
-	recoveryGraceRound bool
+	terminal    terminalProtocolState
+	usedAnyTool bool
+	graceRound  bool
 
-	todoProgress         int
-	trackingTodoProgress bool
-	todoStallRounds      int
-	seenTodoProgress     map[string]struct{}
-	input                string
-	workDurationMs       func() int64
+	input          string
+	workDurationMs func() int64
 
 	// budget is the turn's spend axis: tokens, money, wall clock.
 	budget runBudget
@@ -40,32 +32,14 @@ type turnRuntime struct {
 	// emitting TurnDone, before the next turn resets this state.
 	completion          *completion.Report
 	deliveryScopeActive bool
-	// readinessRecovered marks a run that started with evidence preserved from
-	// (or a pending recovery of) a prior readiness failure, so the final
-	// allowed audit can report Recovered=true.
-	readinessRecovered bool
-
 	// recoveryTaskSummary is the bounded task text for this Agent.Run. It lets
 	// a shared recovery gate review sub-agent mutations against the child
 	// task, rather than the root controller transcript.
 	recoveryTaskSummary string
 
-	// blockedTurnStreak counts consecutive rounds the host blocked outright.
-	// stormSig catches fixation on one call shape; this catches rotation
-	// between blocked shapes, which is zero progress all the same.
-	blockedTurnStreak int
-
-	// loopGuardArmed stands final readiness down after a loop guard fired:
-	// demanding receipts the blocker prevents would restart the loop. The mark
-	// is the pre-batch ledger count, so later progress revokes the pass.
-	loopGuardArmed       bool
-	loopGuardReceiptMark int
-
-	// repeatSuccessCounts catches the shape stormSig cannot see: the same write
-	// succeeding over and over leaves no error for a failure-only breaker.
-	repeatSuccessCounts map[string]int
-	loop                turnLoopState
-	softBudgetMutation  bool
+	repeatKey   string
+	repeatCount int
+	loop        turnLoopState
 
 	// constraints and engine are frozen at the start of the Run.
 	constraints runtimepolicy.Constraints
@@ -74,32 +48,9 @@ type turnRuntime struct {
 	// reviewWarnings are warn-level findings to surface in the final summary.
 	reviewWarnings []string
 
-	// stormSig keys on (tool, error/blocker), NOT (tool, args): a stuck model
-	// reworks arguments cosmetically while the host returns the same refusal,
-	// so keying on args misses the loop entirely. See applyStormBreaker.
-	stormSig   string
-	stormCount int
-
-	// progress escalates adaptively on consecutive zero-evidence-gain rounds;
-	// see progress_guard.go.
-	progress progressGuard
-
 	// lastReasoning is the previous executor round's reasoning-token spend,
 	// read by the governor trigger (live policy and fork capture alike).
 	lastReasoning int
-
-	// incompleteReads tracks unread read_file results within one Agent.Run; a
-	// fresh user turn may choose a different strategy, but this run cannot write
-	// or finish from a silent partial read.
-	incompleteReads incompleteReadState
-
-	// readShadow owns read obligations unless the legacy rollback is selected.
-	readShadow readShadowState
-
-	// evidenceBlocked records paths whose writer was blocked for missing
-	// evidence this turn. While it is non-empty an unknown-scope writer may not
-	// route around the block. Parallel tool calls write it, so it is guarded.
-	evidenceBlocked evidenceBlockState
 
 	phase phaseClock
 
@@ -113,9 +64,6 @@ type terminalProtocolState struct {
 	// emptyFinalBlocks counts consecutive reasoning-only stops retried for a
 	// visible final answer.
 	emptyFinalBlocks int
-	// contextToolRepairs counts contextual-tool repair rounds; a second
-	// violation after a repair ends the run in a recoverable pause.
-	contextToolRepairs int
 }
 
 // pendingTurn is what someone outside the Run arms for the next one: a
@@ -124,16 +72,6 @@ type terminalProtocolState struct {
 // state armed before it exists would be wiped by the same assignment that makes
 // turnRuntime safe.
 type pendingTurn struct {
-	// preserveEvidence makes the next Run keep the turn evidence ledger instead
-	// of resetting it, so a review_report completion nudge can cite the read
-	// receipts the subagent already earned. Consumed by that Run.
-	preserveEvidence bool
-	// finalReadinessRecovery is armed after final readiness fails. An explicit
-	// host action preserves receipts once; an ordinary turn resets evidence.
-	finalReadinessRecovery bool
-	// finalReadinessRecoveryPrepared prevents the durable marker fallback from
-	// being consumed twice before the prepared Run starts.
-	finalReadinessRecoveryPrepared bool
 	// forkRestore, when armed, swaps the frozen fork-bundle conversation in
 	// right after beginRunTurn — the counterfactual-continuation seam.
 	forkRestore func(*turnRuntime)

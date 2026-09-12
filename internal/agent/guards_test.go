@@ -246,20 +246,16 @@ func TestPartitionToolCallsUnknownToolSerial(t *testing.T) {
 	}
 }
 
-// TestPartitionToolCallsCompleteStepSerial verifies complete_step never joins a
-// parallel read-only run: it reads the turn's receipts, so the prior reads must
-// finish (and record) in an earlier batch before it runs in its own serial one.
-func TestPartitionToolCallsCompleteStepSerial(t *testing.T) {
+// A retired tool accidentally present in an embedding registry carries no
+// active receipt semantics and does not change read-only partitioning.
+func TestPartitionToolCallsRetiredToolHasNoBarrier(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "read_file", readOnly: true})
 	reg.Add(fakeTool{name: "complete_step", readOnly: true})
 
 	calls := []provider.ToolCall{{Name: "read_file"}, {Name: "complete_step"}}
 	got := partitionToolCalls(reg, calls)
-	want := []toolCallBatch{
-		{start: 0, end: 1, parallel: true},
-		{start: 1, end: 2},
-	}
+	want := []toolCallBatch{{start: 0, end: 2, parallel: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("partitionToolCalls = %+v, want %+v", got, want)
 	}
@@ -557,14 +553,9 @@ func TestExecuteBatchSegmentsAroundWrites(t *testing.T) {
 	}
 }
 
-func TestExecuteBatchFeedsReceiptsToCompleteStep(t *testing.T) {
-	completeStep, ok := tool.LookupBuiltin("complete_step")
-	if !ok {
-		t.Fatal("complete_step builtin not registered")
-	}
+func TestExecuteBatchPairsRetiredCompleteStepWithoutBlockingPeers(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(fakeTool{name: "bash", readOnly: false})
-	reg.Add(completeStep)
 	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
 
 	a.SeedTodoState([]evidence.TodoItem{{Content: "Run checks", Status: "pending"}})
@@ -581,8 +572,8 @@ func TestExecuteBatchFeedsReceiptsToCompleteStep(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
-	if !strings.Contains(results[1], evidence.ModelCompletionDeclarationPrefix) {
-		t.Fatalf("complete_step did not see bash receipt: %q", results[1])
+	if !strings.Contains(results[1], "tool_retired") || !a.task.ledger.HasSuccessfulCommand("go test ./internal/...") {
+		t.Fatalf("retired result=%q bash receipt missing=%v", results[1], !a.task.ledger.HasSuccessfulCommand("go test ./internal/..."))
 	}
 }
 

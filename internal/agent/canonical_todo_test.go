@@ -33,39 +33,6 @@ func TestFinalReadinessFallsBackToCanonicalTodos(t *testing.T) {
 	}
 }
 
-func TestAdvanceCanonicalTodoCompletesAndPromotes(t *testing.T) {
-	a := &Agent{
-		svc: agentServices{sink: event.Discard},
-		sess: sessionRuntime{todoState: []evidence.TodoItem{
-			{Content: "sync branch", Status: "in_progress"},
-			{Content: "push to origin", Status: "pending"},
-			{Content: "rebase", Status: "pending"},
-		}},
-	}
-	a.advanceCanonicalTodo("sync branch")
-
-	if a.sess.todoState[0].Status != "completed" {
-		t.Fatalf("signed-off item not completed: %+v", a.sess.todoState[0])
-	}
-	if a.sess.todoState[1].Status != "pending" {
-		t.Fatalf("next pending item not promoted: %+v", a.sess.todoState[1])
-	}
-	if a.sess.todoState[2].Status != "pending" {
-		t.Fatalf("a later item was promoted out of order: %+v", a.sess.todoState[2])
-	}
-}
-
-func TestAdvanceCanonicalTodoRejectsPendingMatchByNumber(t *testing.T) {
-	a := &Agent{svc: agentServices{sink: event.Discard}, sess: sessionRuntime{todoState: []evidence.TodoItem{
-		{Content: "first", Status: "in_progress"},
-		{Content: "second", Status: "pending"},
-	}}}
-	a.advanceCanonicalTodo("2")
-	if a.sess.todoState[1].Status != "completed" || a.sess.todoState[0].Status != "in_progress" {
-		t.Fatalf("pending numeric step advanced out of order: %+v", a.sess.todoState)
-	}
-}
-
 func TestRebuildTodoStateIgnoresHistoricalPendingSignoff(t *testing.T) {
 	msgs := []provider.Message{
 		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
@@ -96,7 +63,7 @@ func TestSetTodoStateNormalizesLegacyOutOfOrderSnapshot(t *testing.T) {
 	}
 }
 
-func TestRebuildTodoStateReplaysCompleteSteps(t *testing.T) {
+func TestRebuildTodoStateDoesNotReplayRetiredCompleteSteps(t *testing.T) {
 	msgs := []provider.Message{
 		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
 			ID: "t1", Name: "todo_write",
@@ -114,11 +81,11 @@ func TestRebuildTodoStateReplaysCompleteSteps(t *testing.T) {
 	if len(a.sess.todoState) != 2 {
 		t.Fatalf("rebuilt %d todos, want 2", len(a.sess.todoState))
 	}
-	if a.sess.todoState[0].Status != "completed" {
-		t.Fatalf("complete_step not replayed onto canonical state: %+v", a.sess.todoState[0])
+	if a.sess.todoState[0].Status != "in_progress" {
+		t.Fatalf("retired complete_step changed canonical state: %+v", a.sess.todoState[0])
 	}
-	if a.sess.todoState[1].Status != "in_progress" {
-		t.Fatalf("next item not promoted on replay: %+v", a.sess.todoState[1])
+	if a.sess.todoState[1].Status != "pending" {
+		t.Fatalf("retired complete_step promoted another item: %+v", a.sess.todoState[1])
 	}
 }
 
@@ -217,20 +184,5 @@ func TestSeedTodoStateReplacesExisting(t *testing.T) {
 	})
 	if len(a.sess.todoState) != 1 || a.sess.todoState[0].Content != "new" {
 		t.Fatalf("SeedTodoState did not replace existing state: %+v", a.sess.todoState)
-	}
-}
-
-func TestSeedTodoStateAllowsAdvanceAfterSeed(t *testing.T) {
-	a := &Agent{svc: agentServices{sink: event.Discard}}
-	a.SeedTodoState([]evidence.TodoItem{
-		{Content: "step 1", Status: "in_progress"},
-		{Content: "step 2", Status: "pending"},
-	})
-	a.advanceCanonicalTodo("step 1")
-	if a.sess.todoState[0].Status != "completed" {
-		t.Fatalf("advance after seed: item 0 status = %q, want completed", a.sess.todoState[0].Status)
-	}
-	if a.sess.todoState[1].Status != "pending" {
-		t.Fatalf("advance after seed: item 1 status = %q, want in_progress", a.sess.todoState[1].Status)
 	}
 }

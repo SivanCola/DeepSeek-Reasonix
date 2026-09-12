@@ -282,8 +282,6 @@ func (a *Agent) maybeArmForkFromEnv() {
 	}
 	nudge := ""
 	switch os.Getenv("REASONIX_EXPERIMENT_FORK_ARM") {
-	case "treatment":
-		nudge = ebmNudge
 	case "actfirst":
 		nudge = actFirstNudge
 	}

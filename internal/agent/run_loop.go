@@ -9,10 +9,8 @@ import (
 
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
-	"reasonix/internal/i18n"
 	"reasonix/internal/provider"
 	"reasonix/internal/runtimepolicy"
-	"reasonix/internal/tool"
 )
 
 // streamedTurn is one provider completion collected by stream. Keeping the
@@ -63,20 +61,13 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string, pinned pinnedRev
 	// budgets) lives in taskRuntime and is reconciled there.
 	a.stragglers.drain(ctx, parallelStragglerGrace)
 	a.turn = turnRuntime{}
-	a.turn.readShadow = newReadShadowState(a.readCoordinatorShadow)
-	a.turn.incompleteReads.legacyImplicitFullReads = a.legacyImplicitFullReads
 	a.reads.runGen++
 	a.reads.tasks = newReadTasks(a.sess.path, a.reads.runGen)
 	a.reads.deliveries = make(map[string]readDelivery)
 	a.reads.visible = nil
-	a.resetStructuralRunGuards()
 	scope, scoped := DeliveryExecutionScopeFromContext(ctx)
-	preserveEvidence, readinessRecovered := a.beginFinalReadinessRecovery()
-	a.turn.readinessRecovered = readinessRecovered
 	if a.task.ledger != nil {
 		switch {
-		case preserveEvidence:
-			a.task.ledger.ResetBackgroundLeases()
 		case scoped && a.task.scopeID == scope.ID:
 			a.task.ledger.ResetBackgroundLeases()
 		default:
@@ -85,7 +76,7 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string, pinned pinnedRev
 	}
 	if scoped {
 		a.task.scopeID = scope.ID
-	} else if !preserveEvidence {
+	} else {
 		a.task.scopeID = ""
 	}
 	a.turn.deliveryScopeActive = scoped
@@ -124,7 +115,6 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string, pinned pinnedRev
 			a.turn.constraints.ForbidMutation = true
 		}
 	}
-	a.recordRebuildAuthorization()
 	a.turn.engine = runtimepolicy.NewEngine(a.turn.constraints)
 	// A cancelled/error turn leaves a provider-excluded recovery record at the
 	// transcript tail. Fold its bounded facts into this new user turn exactly
@@ -153,30 +143,19 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string, pinned pinnedRev
 	// opening a second object: one turn, one turnRuntime. The zero values the
 	// old literal spelled out are already there from the reset at the top.
 	state = &a.turn
-	state.seenTodoProgress = make(map[string]struct{})
 	state.input = input
 	state.budget = runBudget{started: time.Now()}
-	state.todoProgress, state.trackingTodoProgress = a.canonicalTodoProgress()
-	if a.task.ledger != nil {
-		for _, sig := range a.task.ledger.SuccessfulProgressSignaturesSince(0) {
-			state.seenTodoProgress[sig] = struct{}{}
-		}
-	}
 	return rawInput, state
 }
 
 // runToolLoop owns the main tool-round budget and dispatches each streamed
 // assistant turn into final-response or tool-round handling.
 func (a *Agent) runToolLoop(ctx context.Context, state *turnRuntime) (runErr error) {
-	defer func() { a.finishReadRun(runErr) }()
 	releaseMCPListObserver := a.activateMCPListObserver()
-	defer func() {
-		a.recordReadonlySoftBudgetSample(state, runErr)
-		releaseMCPListObserver()
-	}()
+	defer releaseMCPListObserver()
 	ctx = a.withAgentContext(ctx)
 	truncatedRounds := 0
-	for step := 0; state.runMaxSteps <= 0 || step < state.runMaxSteps || state.graceRound || state.recoveryGraceRound || state.incompleteReads.hasPending(); step++ {
+	for step := 0; state.runMaxSteps <= 0 || step < state.runMaxSteps || state.graceRound; step++ {
 		// Consume a queued steer and persist it to the session so it
 		// survives tab switches and history replay. The model sees it as
 		// guidance (with a prefix), not a new task. One cache miss per
@@ -340,49 +319,6 @@ func sleepRecovery(ctx context.Context, delay time.Duration) bool {
 // and final compaction. cont=true continues the tool loop; cont=false returns
 // err from Run (err may be nil for a clean final answer).
 func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, text, reasoning string, usage *provider.Usage) (cont bool, err error) {
-	if a.readPipelineActive() {
-		instruction, pause := a.readContinuation(true)
-		if pause != nil {
-			// The legacy twin observes the same usage before returning its
-			// pause; skipping it here would drop the final round's accounting.
-			a.contextManager().ObserveUsage(usage)
-			return false, pause
-		}
-		if instruction != "" {
-			a.sess.conversation.Add(HostGeneratedUserMessage(a.withTurnPreferences(instruction)))
-			return true, nil
-		}
-	}
-	// A partial read is a host-owned protocol state, not advisory prose. Refuse
-	// a candidate final before every ordinary readiness/validator path so a
-	// model cannot silently answer from the visible prefix alone.
-	if instruction, pause := a.legacyReadFinal(state); pause != nil {
-		a.contextManager().ObserveUsage(usage)
-		return false, pause
-	} else if instruction != "" {
-		a.sess.conversation.Add(HostGeneratedUserMessage(a.withTurnPreferences(instruction)))
-		a.emitIncompleteReadNotice(
-			event.NoticeCodeReadContinuationRequired,
-			i18n.M.IncompleteReadFinishBlocked,
-			"final answer blocked pending read continuation",
-		)
-		a.contextManager().ObserveUsage(usage)
-		return true, nil
-	}
-	// Recovery finalization produced a summary. Keep it in the session,
-	// but still pause so Goal auto-continue cannot open another Run with
-	// a fresh finalization round. turn_done reports recovery_paused.
-	if state.recoveryGraceRound {
-		a.contextManager().ObserveUsage(usage)
-		reason := ""
-		if ctrl := a.recoveryEpisodeControl(); ctrl != nil {
-			_, _ = ctrl.ConsumeFinalization(a.recovery.taskID)
-		}
-		return false, &RecoveryPauseError{
-			Message:    "Automatic retries paused. Reasonix stopped repeated attempts and kept completed work. Send \"continue\" to start a fresh attempt, or add instructions to change direction.",
-			StopReason: reason,
-		}
-	}
 	if state.graceRound {
 		// Explicit max_steps and spend budgets are user-selected boundaries.
 		// Preserve the summary, then return a resumable pause so Goal does not
@@ -425,28 +361,12 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *turnRuntime, tex
 func (a *Agent) handleToolRound(ctx context.Context, state *turnRuntime, step int, text, reasoning string, calls []provider.ToolCall, usage *provider.Usage) (cont bool, err error) {
 	state.terminal.emptyFinalBlocks = 0
 	state.usedAnyTool = true
-	unavailableContextTools := a.unavailableContextualToolCalls(ctx, calls)
-	if len(unavailableContextTools) > 0 && state.terminal.contextToolRepairs > 0 {
-		// Second violation ends the batch: every call is paired, none executes,
-		// and same-turn answer text cannot bypass — it predates the host error.
-		msg := fmt.Sprintf("blocked: context-unavailable tools were called again after the repair instruction: %s", strings.Join(unavailableContextTools, ", "))
-		a.pairUnexecutedGraceCalls(calls, msg)
-		a.contextManager().ObserveUsage(usage)
-		return false, &CompletionUncertainError{
-			Cause:  CompletionUncertainContextTool,
-			Detail: strings.Join(unavailableContextTools, ", "),
-		}
-	}
 
 	boundaryFinalizer := a.allowsBoundaryTurnFinalizer(ctx, state, calls)
 	if boundaryErr, stop := a.stopUnexecutedBoundaryCalls(ctx, state, calls, usage); stop {
 		return false, boundaryErr
 	}
 
-	receiptMark := 0
-	if a.task.ledger != nil {
-		receiptMark = a.task.ledger.Len()
-	}
 	// The phase pair around the batch is what makes the accounting mean its
 	// names: it bills this round's wait to the provider and the batch to tools.
 	a.emitTurnPhase(event.TurnPhaseChecking)
@@ -456,9 +376,6 @@ func (a *Agent) handleToolRound(ctx context.Context, state *turnRuntime, step in
 		// Any completed results are already stored; a failed durability barrier
 		// prevents starting the next tool.
 		return false, batch.err
-	}
-	if cont, boundaryErr, handled := a.resolveIncompleteReadToolRoundBoundary(ctx, state, usage); handled {
-		return cont, boundaryErr
 	}
 	if a.successfulTurnFinalizer(ctx, calls, batch) {
 		// submit_plan is the planner's data-bearing final answer. Its paired tool
@@ -475,44 +392,14 @@ func (a *Agent) handleToolRound(ctx context.Context, state *turnRuntime, step in
 		a.contextManager().ObserveUsage(usage)
 		return false, a.gracePause(state)
 	}
-	if len(unavailableContextTools) > 0 {
-		// First violation: legal tools already ran once. Co-streamed answer
-		// text cannot skip repair; only a later clean round may validate.
-		state.terminal.contextToolRepairs++
-		nudge := fmt.Sprintf("The following tools are unavailable in the current workflow phase: %s. Do not call them again. Respond to the user's request with visible answer text now; call a different tool only if it is still needed to complete the request.", strings.Join(unavailableContextTools, ", "))
-		a.sess.conversation.Add(HostGeneratedUserMessage(a.withTurnPreferences(nudge)))
-	}
-	a.trackTodoProgress(ctx, state, receiptMark)
-
 	// The prompt only grows from here; compact before the next turn so it
 	// stays within the model's window.
 	a.contextManager().ObserveUsage(usage)
 
-	// When Auto recovery exhausts its Episode budget, offer exactly one
-	// summarize-only finalization round. Successful summary ends cleanly;
-	// further tool calls surface RecoveryPauseError.
-	if batch.recoveryStopTurn && !state.recoveryGraceRound {
-		state.recoveryGraceRound = true
-		if ctrl := a.recoveryEpisodeControl(); ctrl != nil {
-			ctrl.MarkFinalizationOffered(a.recovery.taskID)
-		}
-		nudge := "Auto recovery has reached its limit for this turn. Do not call any more tools. Summarize what was completed, what failed, and what the user should do next. The user can continue in the next message."
-		a.sess.conversation.Add(HostGeneratedUserMessage(a.withTurnPreferences(nudge)))
-		return true, nil
-	}
-
 	// Spend is checked before rounds: it is the axis a runaway is actually
 	// reported in, so on the turns both would catch it should be the one named.
 	if axis, detail := a.task.budget.exceeded(a.taskBudgetLimit(ctx)); axis != "" {
-		if state.incompleteReads.hasPending() {
-			return false, &IncompleteReadError{Reason: fmt.Sprintf("the %s budget ended while a required read_file continuation was still pending: %s", axis, detail)}
-		}
 		a.armFinalizationRound(ctx, state, landCause{kind: "task_budget", axis: axis, detail: detail})
-		return true, nil
-	}
-	// A bounded read-recovery sequence is a correctness repair, so it may use
-	// extra tool rounds beyond max_steps. Hard spend budgets above still win.
-	if state.incompleteReads.hasPending() {
 		return true, nil
 	}
 	if state.runMaxSteps > 0 && step+1 >= state.runMaxSteps {
@@ -526,31 +413,4 @@ func (a *Agent) pairUnexecutedGraceCalls(calls []provider.ToolCall, msg string) 
 	for _, call := range calls {
 		a.sess.conversation.Add(provider.Message{Role: provider.RoleTool, Content: msg, ToolCallID: call.ID, Name: call.Name})
 	}
-}
-
-func (a *Agent) unavailableContextualToolCalls(ctx context.Context, calls []provider.ToolCall) []string {
-	if len(calls) == 0 {
-		return nil
-	}
-	if a == nil || a.svc.tools == nil {
-		return nil
-	}
-	names := make([]string, 0, len(calls))
-	seen := make(map[string]struct{}, len(calls))
-	for _, call := range calls {
-		t, canonical, ambiguous := a.svc.tools.ResolveCall(call.Name)
-		if t == nil || len(ambiguous) > 0 || t.Name() == "complete_step" {
-			continue
-		}
-		contextual, ok := t.(tool.ContextualTool)
-		if !ok || contextual.ProviderVisible(ctx) {
-			continue
-		}
-		if _, ok := seen[canonical]; ok {
-			continue
-		}
-		seen[canonical] = struct{}{}
-		names = append(names, canonical)
-	}
-	return names
 }

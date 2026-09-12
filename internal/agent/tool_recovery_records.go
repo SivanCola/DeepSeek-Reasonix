@@ -62,14 +62,6 @@ func (a *Agent) beginToolRecovery(ctx context.Context, p *toolCallPlan) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// An unresolved external effect survives subsequent user turns. Read-only
-	// diagnosis remains available; new call IDs cannot bypass this barrier.
-	prior, _ := ctx.Value(recoveryRetryKey{}).(*provider.ToolCallRecord)
-	if !p.readOnly && slices.ContainsFunc(a.PendingToolRecovery(), func(r provider.ToolCallRecord) bool {
-		return !r.ReadOnly && (prior == nil || prior.Identity.AttemptID != r.Identity.AttemptID)
-	}) {
-		return fmt.Errorf("recovery_required: inspect and resolve the previous uncertain tool effect before another write")
-	}
 	var params any
 	decoder := json.NewDecoder(bytes.NewReader(p.permArgs))
 	decoder.UseNumber()
@@ -108,18 +100,9 @@ func (a *Agent) beginToolRecovery(ctx context.Context, p *toolCallPlan) error {
 		}
 	}
 	keyInput := identity
-	if !p.readOnly && confirmedRecoveryEffect(msgs, identity) {
-		return fmt.Errorf("the user confirmed this exact effect already happened; no write was repeated")
-	}
 	keyInput.AttemptID = ""
 	keyJSON, _ := json.Marshal(keyInput)
 	r := provider.ToolCallRecord{Identity: identity, State: provider.ToolRunStarted, ReadOnly: p.readOnly, Arguments: append(json.RawMessage(nil), p.permArgs...), IdempotencyKey: recoveryDigest(keyJSON), StartedAt: time.Now().UnixMilli()}
-	if prior != nil {
-		if prior.Identity.CanonicalTool != identity.CanonicalTool || prior.Identity.ArgumentDigest != identity.ArgumentDigest || prior.Identity.ResourceScope != identity.ResourceScope {
-			return fmt.Errorf("retry target changed during policy resolution")
-		}
-		r.IdempotencyKey = prior.IdempotencyKey
-	}
 	p.cctx = tool.WithRecoveryIdempotencyKey(p.cctx, r.IdempotencyKey)
 	p.call.Recovery = &r
 	if a.sess.conversation.setToolRecoveryRecord(p.call.ID, r) {
@@ -133,17 +116,6 @@ func (a *Agent) beginToolRecovery(ctx context.Context, p *toolCallPlan) error {
 		r.State = provider.ToolRunNotStarted
 		a.sess.conversation.setToolRecoveryRecord(p.call.ID, r)
 		return err
-	}
-	if prior != nil {
-		old := *prior
-		old.SupersededBy = r.Identity.AttemptID
-		if !a.Session().setToolRecoveryRecord(old.Identity.CallID, old) {
-			return fmt.Errorf("original retry attempt changed")
-		}
-		if err := event.EmitChecked(a.svc.sink, event.Event{Kind: event.Notice, RecoveryCheckpoint: true}); err != nil {
-			a.Session().setToolRecoveryRecord(prior.Identity.CallID, *prior)
-			return err
-		}
 	}
 	return nil
 }

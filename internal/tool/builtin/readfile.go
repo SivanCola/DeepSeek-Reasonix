@@ -153,35 +153,6 @@ func (readFile) Schema() json.RawMessage {
 
 func (readFile) ReadOnly() bool { return true }
 
-// ObserveModelText extracts the exact numbered window returned by read_file.
-// It intentionally parses the already-produced output instead of rereading
-// the file, so overlay and encoding routing remain identical to what the model
-// saw and truncated results can still be promoted through RawContent.
-func (r readFile) ObserveModelText(args json.RawMessage, output string) (tool.ModelTextObservation, bool) {
-	var p struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil || strings.TrimSpace(p.Path) == "" {
-		return tool.ModelTextObservation{}, false
-	}
-	window, ok := tool.ParseReadWindow(output)
-	if !ok {
-		return tool.ModelTextObservation{}, false
-	}
-	hashes := make([]string, len(window.Lines))
-	for i, line := range window.Lines {
-		sum := sha256.Sum256([]byte(line))
-		hashes[i] = hex.EncodeToString(sum[:])
-	}
-	rp := resolveReadablePath(r.workDir, p.Path, r.paths)
-	return tool.ModelTextObservation{
-		Path:       rp.Path,
-		StartLine:  window.StartLine,
-		LineHashes: hashes,
-		Version:    tool.WindowDigest(rp.Path, window),
-	}, true
-}
-
 // ReadEnvelope reports what one read_file call delivered. The source identity
 // comes from the store that actually served the content, the snapshot stays
 // constant across the pages of one logical read, and the window digest covers

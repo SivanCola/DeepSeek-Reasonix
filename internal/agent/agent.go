@@ -20,6 +20,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/extension/dispatch"
+	"reasonix/internal/fileops"
 	"reasonix/internal/i18n"
 	"reasonix/internal/imageinput"
 	"reasonix/internal/instruction"
@@ -61,11 +62,10 @@ const defaultReasoningByteLimit = 8 << 20
 // its text is cache-frozen — changing it breaks steer replay matching and the
 // prefix stability of every live delivery session.
 const DeliveryRuntimeMarker = `<delivery-runtime>
-This session is in delivery-first mode. Before any state-changing tool call,
-establish concrete, verifiable acceptance criteria with todo_write. After the
-change, inspect the result, run relevant verification, and sign off each step
-with complete_step citing the successful verification command. The host enforces
-these gates and will reject mutation or finalization when evidence is missing.
+This session is in delivery-first mode. Use todo_write when a task benefits from
+an explicit task list, update it from your own assessment, and finish when the
+user's request is handled. Structured file tools require a current host-observed
+file version; reading any useful window establishes that observation.
 </delivery-runtime>`
 
 // Renderer redraws the assistant's final-answer text as styled output. It is
@@ -280,12 +280,20 @@ type ToolHooks interface {
 // Agent drives a single task: a Provider, a tool Registry, and a Session wired
 // into the main loop.
 type Agent struct {
+	// protocolRunSeq scopes provider-protocol recovery records across runs. It
+	// is unrelated to the retired Auto Guard execution gate.
+	protocolRunSeq atomic.Uint64
+
 	imageInput agentImageInput
 	agentConfig
 	// reads groups the run-scoped read registry and its generation: both are
 	// replaced at each run start so cursors from an earlier run never continue.
-	reads      readState
-	stragglers runStragglers
+	reads readState
+	// fileObservations is the non-persisted, per-agent observation table used by
+	// structured file tools. A new Agent (resume, fork, rollback, or sub-agent)
+	// always starts with an empty table.
+	fileObservations *fileops.Store
+	stragglers       runStragglers
 	// svc are the collaborators this agent talks to; see services.go.
 	svc agentServices
 	// sess is the state one conversation owns; SetSession restarts it. See
@@ -311,22 +319,12 @@ type Agent struct {
 	// for the agent's lifetime and validates proxy calls after resolution.
 	readOnlyExecution bool
 
-	// mutationDependencyBarrier records the first durable-state write that
-	// failed or was blocked in the current provider tool batch. executeOne
-	// re-checks it after proxy resolution so use_capability cannot bypass the
-	// barrier by advertising schema-level ReadOnly()==true. The pointed-to
-	// cause is immutable and contains no arguments, paths, or remote addresses.
-	mutationDependencyBarrier atomic.Pointer[mutationBarrierCause]
-
 	// plannerMCPExecution relaxes the strict read-only MCP boundary for the
 	// two-model Planner only: authorized, non-destructive MCP targets may run
 	// through use_capability even without readOnlyHint. Ordinary writers, bash,
 	// and destructive MCP stay blocked. Strict read-only sub-agents leave this
 	// false and still require readOnlyHint.
 	plannerMCPExecution bool
-
-	// recovery is who this agent is to the shared gate above.
-	recovery recoveryIdentity
 
 	// writeWorkspaceRoot is the workspace used to normalize parent write
 	// reservations when writeScheduler is set.
@@ -352,11 +350,6 @@ type Agent struct {
 	task taskRuntime
 
 	planContract *plancontract.Plan // approved plan this turn executes, if any
-
-	// hostAdvanceSeq guarantees unique tool IDs across turns: every
-	// emitTodoState call increments it so the frontend always sees a fresh
-	// dispatch even when the same panel index is signed off in different turns.
-	hostAdvanceSeq atomic.Int64
 
 	// inheritedExec is the writer parent's host execution context.
 	inheritedExec *runtimepolicy.InheritedExecutionContext
@@ -395,13 +388,6 @@ type Agent struct {
 	activeTurnCreatedAt atomic.Int64
 	// Pinned revisions are staged after admission and appended with the user turn.
 	pinned pinnedContextRuntime
-}
-
-type repeatFailureRecord struct {
-	count        int
-	errClass     string
-	paths        []string
-	stateRecheck bool
 }
 
 // KeepPolicy is a bitmask controlling which messages are preserved beyond the
@@ -468,33 +454,18 @@ func (a *Agent) SetExtensions(d *dispatch.Dispatcher) {
 	a.svc.extensions = d
 }
 
-// SetRecoveryGate installs Auto Guard. Safe to call before the run loop starts;
-// nil disables its checks.
+// SetRecoveryGate is retained for source compatibility. Auto Guard is retired,
+// so no caller can reinstall its execution gates.
 func (a *Agent) SetRecoveryGate(g RecoveryGate) {
-	if a == nil {
-		return
-	}
-	if nilutil.IsNil(g) {
-		g = nil
-	}
-	a.svc.recoveryGate = g
 }
 
 // SetRecoveryIdentity sets the agent/task labels used on recovery cards.
 func (a *Agent) SetRecoveryIdentity(agentID, taskID string) {
-	if a == nil {
-		return
-	}
-	a.recovery.agentID = strings.TrimSpace(agentID)
-	a.recovery.taskID = strings.TrimSpace(taskID)
 }
 
 // RecoveryGate returns the attached Auto Guard (may be nil).
 func (a *Agent) RecoveryGate() RecoveryGate {
-	if a == nil {
-		return nil
-	}
-	return a.svc.recoveryGate
+	return nil
 }
 
 // SetPlanModeReadOnlyTrustGate retains the legacy confirmation bridge for old
@@ -982,9 +953,8 @@ type Options struct {
 	// CapabilityAudit is the optional non-persisted metrics sink for routing.
 	CapabilityAudit *capability.Audit
 
-	// RequireReviewReportKind, when non-empty, makes RunSubAgentWithSession fail
-	// unless the subagent recorded a successful review_report of this kind —
-	// review/security subagents must return typed, host-verifiable reports.
+	// RequireReviewReportKind is a retired compatibility field. Subagents return
+	// their ordinary final answer without a proof tool.
 	RequireReviewReportKind evidence.ReviewKind
 
 	// ReasoningLanguage controls visible reasoning language preference as transient
@@ -999,9 +969,8 @@ type Options struct {
 	// Plan execution classifies bash through Permissions instead.
 	PlanModeReadOnlyCommands []string
 
-	// RecoveryGate is the optional Auto Guard boundary. It checks deterministic
-	// high-risk mutations and failure recovery before permission approval and
-	// write-lock acquisition.
+	// RecoveryGate and the identity fields are retired compatibility inputs.
+	// Agent construction ignores them.
 	RecoveryGate RecoveryGate
 	// RecoveryAgentID labels this agent on recovery cards (empty = root).
 	RecoveryAgentID string
@@ -1087,7 +1056,8 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		imageInput: newImageInput(opts.ImageInput, prov),
 		svc: newAgentServices(prov, tools, sink, gate, planModeReadOnlyTrust,
 			sandboxEscapeApprover, configWriteApprover, hooks, opts),
-		reads: readState{gates: !opts.ReadPipeline.LegacyEvidenceGates},
+		reads:            readState{gates: !opts.ReadPipeline.LegacyEvidenceGates},
+		fileObservations: fileops.NewStore(),
 		agentConfig: agentConfig{
 			maxSteps:                opts.MaxSteps,
 			maxStepsKey:             maxStepsKey,
@@ -1118,12 +1088,8 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 			ledger: evidence.NewLedger(),
 			budget: runBudget{limit: normalizeTaskBudget(opts.TaskBudget)},
 		},
-		requireVisibleFinal: opts.RequireVisibleFinal,
-		continuationPolicy:  opts.ContinuationPolicy,
-		recovery: recoveryIdentity{
-			agentID: strings.TrimSpace(opts.RecoveryAgentID),
-			taskID:  strings.TrimSpace(opts.RecoveryTaskID),
-		},
+		requireVisibleFinal:    opts.RequireVisibleFinal,
+		continuationPolicy:     opts.ContinuationPolicy,
 		readOnlyExecution:      opts.ReadOnlyExecution,
 		plannerMCPExecution:    opts.PlannerMCPExecution,
 		inheritedExec:          opts.InheritedExecution,
@@ -1218,7 +1184,7 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	ctx = a.withProviderCacheSession(ctx)
 	runMaxSteps := a.maxSteps
 	runMaxStepsKey := a.maxStepsKey
-	a.recovery.runSeq.Add(1)
+	a.protocolRunSeq.Add(1)
 	// Participate in the run lease; per-tool write leases end with execution.
 	if a.svc.workspaceLease != nil {
 		a.svc.workspaceLease.BeginRun()
@@ -1260,10 +1226,6 @@ func (a *Agent) Run(ctx context.Context, input string) (runErr error) {
 	// agent.before_start: an extension may abort the run before the user turn
 	// is appended. The redacted reason surfaces like a normal run error.
 	if err := a.interceptAgentStart(ctx); err != nil {
-		// Explicit readiness recovery is consumed only once beginRunTurn starts.
-		// If an extension blocks earlier, release the in-memory reservation so
-		// the still-pending durable marker can authorize a later retry.
-		a.RestoreFinalReadinessRecoveryPreparation()
 		a.discardStagedPinnedContext()
 		return err
 	}
@@ -1387,42 +1349,6 @@ func registryHasWriterTools(reg *tool.Registry) bool {
 	return false
 }
 
-// advanceCanonicalTodo flips the canonical todo matching a signed-off step to
-// completed (promoting the next pending item to in_progress) and emits a
-// synthetic todo_write so the task panel reflects it without the model
-// re-sending the whole list. No-op when nothing matches or it is already done.
-func (a *Agent) advanceCanonicalTodo(step string) {
-	a.sess.todoMu.Lock()
-	if len(a.sess.todoState) == 0 {
-		a.sess.todoMu.Unlock()
-		return
-	}
-	m, ok := evidence.MatchStep(step, a.sess.todoState)
-	if !ok || !evidence.CompleteDeclaredTodo(a.sess.todoState, m.Index-1) {
-		a.sess.todoMu.Unlock()
-		return
-	}
-	snapshot := append([]evidence.TodoItem(nil), a.sess.todoState...)
-	a.sess.todoMu.Unlock()
-	a.recordTodoState(snapshot)
-	a.emitTodoState(snapshot, m.Index)
-}
-
-// emitTodoState emits a synthetic todo_write event so the frontend task panel
-// reflects a host-advanced completion without the model re-sending the list.
-// itemIndex is the 1-based position of the completed todo in the panel.
-func (a *Agent) emitTodoState(todos []evidence.TodoItem, itemIndex int) {
-	args, err := json.Marshal(map[string]any{"todos": todos})
-	if err != nil {
-		return
-	}
-	id := fmt.Sprintf("host-advance-%d-%d", a.hostAdvanceSeq.Add(1), itemIndex)
-	t := event.Tool{ID: id, Name: "todo_write", Args: string(args), ReadOnly: true}
-	a.svc.sink.Emit(event.Event{Kind: event.ToolDispatch, Tool: t})
-	t.Output = "todo updated from model completion declaration"
-	a.svc.sink.Emit(event.Event{Kind: event.ToolResult, Tool: t})
-}
-
 // RebuildTodoState re-derives canonical task state from the current session
 // transcript. Call after externally truncating the session (e.g. after a
 // user-cancel strip) so Agent.todoState stays consistent with the messages.
@@ -1430,10 +1356,9 @@ func (a *Agent) RebuildTodoState() {
 	a.rebuildTodoState(a.Session().Snapshot())
 }
 
-// rebuildTodoState reconstructs the canonical task list from a transcript: the
-// latest successful todo_write is the base, then every complete_step after it
-// advances an item. Deterministic from persisted messages, so it survives a
-// fresh load or a rewind (the truncated history yields the historical state).
+// rebuildTodoState reconstructs the canonical task list from the latest
+// successful todo_write. Retired completion tools are historical facts only and
+// never mutate the current todo projection.
 // Empty after compaction drops the todo_write — no worse than no canonical list.
 func (a *Agent) rebuildTodoState(msgs []provider.Message) {
 	successful := successfulToolCallIDs(msgs)
@@ -1460,17 +1385,6 @@ func (a *Agent) rebuildTodoState(msgs []provider.Message) {
 	if baseIdx < 0 {
 		a.setTodoState(nil)
 		return
-	}
-	for i := baseIdx; i < len(msgs); i++ {
-		for _, tc := range msgs[i].ToolCalls {
-			if tc.Name != "complete_step" || !successful[tc.ID] {
-				continue
-			}
-			rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
-			if m, ok := evidence.MatchStep(rec.Step, todos); ok {
-				evidence.ReplayTodoCompletion(todos, m.Index-1, outputs[tc.ID])
-			}
-		}
 	}
 	a.setTodoState(todos)
 }
@@ -2041,74 +1955,6 @@ func completedMCPConnect(reg *tool.Registry, name string) (string, bool) {
 	return "", false
 }
 
-// recoveryPlanTransition detects structural rewrites of an active canonical
-// task list. Initial plans and progress-only status updates stay on the fast
-// path; changing step identity, order, or hierarchy while work remains is a
-// semantic transition for the independent Auto reviewer.
-func (a *Agent) recoveryPlanTransition(toolName string, args json.RawMessage) (bool, string, string, string) {
-	if a == nil || toolName != "todo_write" || a.planMode.Load() {
-		return false, "", "", ""
-	}
-	before := a.CanonicalTodoState()
-	if len(before) == 0 || len(evidence.IncompleteTodos(before)) == 0 {
-		return false, "", "", ""
-	}
-	after := evidence.ReceiptFromToolCall("todo_write", args, true, true).Todos
-	if evidence.ValidateSerialTodos(after) != nil {
-		return false, "", "", ""
-	}
-	if len(after) == 0 {
-		return true, planReviewText(before), planReviewText(after), planTransitionDiff(before, after)
-	}
-	if !evidence.PreservesCompletedTodoPositions(before, after) {
-		// Let todo_write report malformed or invalid state directly; an invalid
-		// task list is not a meaningful plan proposal for the reviewer.
-		return false, "", "", ""
-	}
-	if samePlanStructure(before, after) {
-		return false, "", "", ""
-	}
-	return true, planReviewText(before), planReviewText(after), planTransitionDiff(before, after)
-}
-
-func samePlanStructure(a, b []evidence.TodoItem) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Level != b[i].Level || normalizePlanStep(a[i].Content) != normalizePlanStep(b[i].Content) {
-			return false
-		}
-	}
-	return true
-}
-
-func normalizePlanStep(s string) string {
-	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
-}
-
-func planReviewText(todos []evidence.TodoItem) string {
-	var b strings.Builder
-	for i, todo := range todos {
-		indent := ""
-		if todo.Level == 1 {
-			indent = "  "
-		}
-		fmt.Fprintf(&b, "%s%d. %s [%s]", indent, i+1, normalizePlanStep(todo.Content), canonicalTodoStatus(todo.Status))
-		if i+1 < len(todos) {
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
-}
-
-func recoveryTaskScopeID(deliveryScopeID string, runSeq uint64) string {
-	if scope := strings.TrimSpace(deliveryScopeID); scope != "" {
-		return "goal:" + scope
-	}
-	return fmt.Sprintf("turn:%d", runSeq)
-}
-
 func (a *Agent) readOnlyExecutionBlock(visible tool.Tool, resolved *tool.ResolvedCall) (toolOutcome, bool) {
 	if a == nil || !a.readOnlyExecution {
 		return toolOutcome{}, false
@@ -2297,55 +2143,6 @@ func (a *Agent) planModeDecision(toolName string, readOnly bool, safety planmode
 		Safety:   safety,
 		Args:     args,
 	})
-}
-
-func (a *Agent) repeatedSuccessBlock(call provider.ToolCall, t tool.Tool) (string, bool) {
-	sig, ok := repeatSuccessSignature(call, t)
-	if !ok || a.turn.repeatSuccessCounts == nil {
-		return "", false
-	}
-	count := a.turn.repeatSuccessCounts[sig]
-	if count < repeatSuccessBreakThreshold {
-		return "", false
-	}
-	return fmt.Sprintf(
-		"blocked: [loop guard] %q has already succeeded %d times with the same write-like arguments in this user turn. Re-running it is unlikely to help and may burn tokens or repeat file writes. Change approach: use edit_file or multi_edit for file changes, verify with a read/test command, or explain the blocker in your final answer.",
-		call.Name, count), true
-}
-
-func (a *Agent) recordRepeatSuccess(call provider.ToolCall, t tool.Tool) {
-	sig, ok := repeatSuccessSignature(call, t)
-	if !ok {
-		return
-	}
-	if a.turn.repeatSuccessCounts == nil {
-		a.turn.repeatSuccessCounts = make(map[string]int)
-	}
-	a.turn.repeatSuccessCounts[sig]++
-}
-
-func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) (string, bool) {
-	if t.ReadOnly() {
-		return "", false
-	}
-	switch call.Name {
-	case "write_file", "edit_file", "multi_edit", "move_file", "notebook_edit":
-		return call.Name + "\x00" + canonicalToolArgs(call.Arguments), true
-	case "bash":
-		var p struct {
-			Command         string `json:"command"`
-			RunInBackground bool   `json:"run_in_background"`
-		}
-		if err := json.Unmarshal([]byte(call.Arguments), &p); err != nil {
-			return "", false
-		}
-		if p.RunInBackground || !isShellFileWriteCommand(p.Command) {
-			return "", false
-		}
-		return "bash\x00" + normalizeShellCommand(p.Command), true
-	default:
-		return "", false
-	}
 }
 
 func canonicalToolArgs(raw string) string {

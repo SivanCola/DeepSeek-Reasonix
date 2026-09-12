@@ -284,10 +284,7 @@ type TaskTool struct {
 	bashSandboxEnforced func() bool
 	// mutationObserver is shared with spawned sub-agents for checkpoint capture.
 	mutationObserver *checkpoint.MutationObserver
-	// recoveryGate is the shared Auto Guard boundary for
-	// this session (root + sub-agents). nil disables recovery in children.
-	recoveryGate RecoveryGate
-	writeRoots   *sandbox.WritableRootSet
+	writeRoots       *sandbox.WritableRootSet
 	// capabilityRuntime is the session-shared MCP Host/specs substrate. Each
 	// sub-agent gets its own use_capability frontend so ledger state stays
 	// isolated while connections reuse the parent Host.
@@ -1086,7 +1083,7 @@ func FilterRegistry(parent *tool.Registry, names []string, exclude ...string) *t
 		src = expandToolPatterns(parent, src)
 	}
 	for _, name := range src {
-		if ex[name] {
+		if ex[name] || retiredTool(name) {
 			continue
 		}
 		// MCP never enters through the generic filter when named as capability
@@ -1166,7 +1163,7 @@ func (t *restrictedCapabilityProxy) check(args json.RawMessage) error {
 	if id == "" {
 		return fmt.Errorf("capability_id is required")
 	}
-	if id == sessionToolResultCapabilityID || id == sessionReadStrategyReceiptCapabilityID {
+	if id == sessionToolResultCapabilityID {
 		return nil
 	}
 	if !t.allowed[id] {
@@ -1413,7 +1410,7 @@ func ReadOnlySubagentToolRegistryForDepthWithRuntime(parent *tool.Registry, name
 		src = expandToolPatterns(parent, src)
 	}
 	for _, name := range src {
-		if ex[name] {
+		if ex[name] || retiredTool(name) {
 			continue
 		}
 		if strings.HasPrefix(name, "mcp-tool:") || strings.HasPrefix(name, "mcp-server:") {
@@ -1483,7 +1480,7 @@ func FilterReadOnlyRegistry(parent *tool.Registry, exclude ...string) *tool.Regi
 		return sub
 	}
 	for _, name := range parent.Names() {
-		if ex[name] {
+		if ex[name] || retiredTool(name) {
 			continue
 		}
 		tl, ok := parent.Get(name)
@@ -1557,10 +1554,6 @@ func (t *TaskTool) WithWriteRoots(set *sandbox.WritableRootSet) *TaskTool {
 }
 
 func (t *TaskTool) WithRecoveryGate(g RecoveryGate) *TaskTool {
-	if t == nil {
-		return nil
-	}
-	t.recoveryGate = g
 	return t
 }
 
@@ -1631,22 +1624,13 @@ func GuardSubagentHostDecisionText(answer string) string {
 // cheaper than discarding the run and re-reviewing from scratch.
 // maxReviewReportNudges is the single in-session retry after the first failed
 // review run (plan: fail once, retry once). A second failure becomes Partial.
-const maxReviewReportNudges = 1
 
 // reviewReportTaskContract is appended to the task prompt of a review subagent
 // whose run must end with a typed report. The skill body describes how to
 // review; this states the non-negotiable submission protocol.
-func reviewReportTaskContract(kind evidence.ReviewKind) string {
-	return fmt.Sprintf(`<review-report-contract event="SubagentReviewReport">
-Before your final answer you MUST call the review_report tool exactly once with kind=%q, your verdict (pass | warn | block), reviewed_paths listing only files you actually read this run, and your findings. The host discards a review run that ends without a successful review_report call — your prose summary alone does not count.
-</review-report-contract>`, string(kind))
-}
 
 // reviewReportNudgePrompt asks an already-finished review subagent to submit
 // the missing typed report without redoing the review.
-func reviewReportNudgePrompt(kind evidence.ReviewKind) string {
-	return fmt.Sprintf("You finished the review without calling the review_report tool, so the host cannot accept the run yet. Do not redo the review. Call review_report now with kind=%q, your verdict (pass | warn | block), reviewed_paths listing only the files you actually read in this conversation, and the findings you already reported. Then restate your final verdict in one sentence.", string(kind))
-}
 
 // RunSubAgentWithSession continues an existing sub-agent session with prompt and
 // returns the latest final assistant answer. Fresh sub-agents pass a newly-created
@@ -1689,10 +1673,7 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 	if planWorkflow && !strings.Contains(prompt, planmode.Marker) {
 		prompt = planmode.Marker + "\n\n" + prompt
 	}
-	if kind := opts.RequireReviewReportKind; kind != "" {
-		prompt = prompt + "\n\n" + reviewReportTaskContract(kind)
-		opts.ContinuationPolicy = ContinuationExplicitFlow
-	}
+	opts.RequireReviewReportKind = ""
 	// Nested reasoning stays isolated; the parent consumes only final Content.
 	// Require it so a reasoning-only stop cannot fall back to older tool text.
 	opts.RequireVisibleFinal = true
@@ -1702,34 +1683,6 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 		// Preserve actual partial child execution even when the child fails.
 		mergeChildEvidence(ctx, sub)
 		return "", fmt.Errorf("sub-agent: %w", err)
-	}
-	// Explicit review calls require the structured report they requested. A run that
-	// finished without the report gets bounded completion nudges on the same
-	// session (evidence preserved, so review_report can still cite the reads it
-	// already earned) before the whole run is declared failed.
-	if kind := opts.RequireReviewReportKind; kind != "" {
-		nudges := 0
-		for !sub.HasSuccessfulReviewReport(kind) && nudges < maxReviewReportNudges {
-			nudges++
-			sub.pending.preserveEvidence = true
-			if err := sub.Run(ctx, reviewReportNudgePrompt(kind)); err != nil {
-				mergeChildEvidence(ctx, sub)
-				// A retry that fails still keeps local parent mutations; the
-				// parent turns this into Partial/Unverified rather than rolling back.
-				return "", fmt.Errorf("sub-agent: %w", err)
-			}
-		}
-		if !sub.HasSuccessfulReviewReport(kind) {
-			mergeChildEvidence(ctx, sub)
-			dumpRef := dumpFailedSubagentSession(opts.ArchiveDir, string(kind), sess)
-			// Partial path: local changes are retained; the parent readiness
-			// layer treats missing review as Partial/Unverified (not rollback).
-			return "", &ReviewUnavailableError{
-				Kind:   string(kind),
-				Nudges: nudges,
-				Dump:   dumpRef,
-			}
-		}
 	}
 	mergeChildEvidence(ctx, sub)
 	if answer := latestAssistantAnswer(sess); answer != "" {
@@ -1830,7 +1783,7 @@ func strictReadOnlyExecutionRegistry(reg *tool.Registry) *tool.Registry {
 	}
 	for _, name := range reg.Names() {
 		target, ok := reg.Get(name)
-		if !ok || !target.ReadOnly() || mcpDestructiveHint(target) {
+		if retiredTool(name) || !ok || !target.ReadOnly() || mcpDestructiveHint(target) {
 			continue
 		}
 		if isInstalledMCPTool(target) && !mcpServerAuthorized(target) {
