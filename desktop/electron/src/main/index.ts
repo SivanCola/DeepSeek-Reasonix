@@ -40,6 +40,7 @@ import { AppZoomStore } from "./zoomStore.js";
 import { GraphicsSettingsStore, loadGraphicsBootstrap } from "./graphics.js";
 import { initialShellStatus, listenShellStatus, QUIT_REQUEST } from "./shellStatus.js";
 import { supersededLauncher } from "./recovery.js";
+import { shouldShowStartupDiagnostic, type StartupPresentReason } from "./startupPresentation.js";
 
 const MAIN_WINDOW_PERMISSIONS = new Set(["clipboard-read", "clipboard-sanitized-write", "fullscreen", "notifications"]);
 const TAKEOVER_KINDS = new Set<string>(["mousedown", "keydown", "wheel", "touchstart", "pointerdown"]);
@@ -377,17 +378,22 @@ function bootstrap(dataHome: string): void {
   process.on("SIGTERM", () => lifecycle.requestQuit());
   app.on("second-instance", (_event, argv) => {
     if (argv.includes(QUIT_REQUEST)) { lifecycle.requestQuit(); return; }
-    presentInstance(argv);
+    presentInstance(argv, "second-instance");
   });
-  function presentInstance(argv: string[] = []): void {
+  function presentInstance(argv: string[] = [], reason: StartupPresentReason = "second-instance"): void {
     if (lifecycle.isQuitting) return;
-    if (!app.isReady()) { void app.whenReady().then(() => presentInstance(argv)); return; }
+    if (!app.isReady()) { void app.whenReady().then(() => presentInstance(argv, reason)); return; }
+    if (service.ready) {
+      mainWindow.focusForSecondInstance();
+      void service.hostEvent("secondInstance", { argv });
+      return;
+    }
+    if (!shouldShowStartupDiagnostic(reason, service.ready, Boolean(mainWindow.browserWindow))) return;
     if (!mainWindow.browserWindow) mainWindow.create(DEFAULT_GEOMETRY);
-    if (!service.ready) void mainWindow.showFailure(renderFailurePage(status.lifecycle === "starting" ? startingPage : lastFailure, logsDir));
+    void mainWindow.showFailure(renderFailurePage(status.lifecycle === "starting" ? startingPage : lastFailure, logsDir));
     mainWindow.focusForSecondInstance();
-    if (service.ready) void service.hostEvent("secondInstance", { argv });
   }
-  app.on("activate", () => presentInstance());
+  app.on("activate", () => presentInstance([], "activate"));
   app.on("before-quit", (event) => {
     if (!lifecycle.onBeforeQuit()) event.preventDefault();
   });
@@ -403,8 +409,6 @@ function bootstrap(dataHome: string): void {
 
   void app.whenReady().then(() => {
     if (lifecycle.isQuitting) return;
-    mainWindow.create(DEFAULT_GEOMETRY);
-    void mainWindow.showFailure(renderFailurePage(lastFailure, logsDir));
     if (process.platform === "darwin") {
       const dockIcon = firstExisting(icons.window);
       if (dockIcon && app.dock) app.dock.setIcon(dockIcon);
