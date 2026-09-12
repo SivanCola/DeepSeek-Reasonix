@@ -5013,7 +5013,7 @@
     {
       "kind": "persistence",
       "name": "downloaded.json",
-      "location": "desktop/updater.go:566",
+      "location": "desktop/updater.go:541",
       "class": "keep-business",
       "owner": "format unchanged; read by both shells"
     },
