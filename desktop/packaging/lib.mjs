@@ -227,6 +227,7 @@ const MEMBERS = {
       new RegExp(`^${VERSION_DIR}/reasonix-update-helper\\.exe$`),
       new RegExp(`^${VERSION_DIR}/reasonix-cli\\.exe$`),
       new RegExp(`^${VERSION_DIR}/app/${PRODUCT.executable}\\.exe$`),
+      new RegExp(`^${VERSION_DIR}/app/resources/bin/reasonix-cli-launcher\\.exe$`),
       new RegExp(`^${VERSION_DIR}/app/resources/app\\.asar$`),
       new RegExp(`^${VERSION_DIR}/app/resources/app/index\\.html$`),
       new RegExp(`^${VERSION_DIR}/app/resources/build\\.json$`),

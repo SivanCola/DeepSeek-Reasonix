@@ -39,6 +39,7 @@ APPNAME="Reasonix"            # Electron productName -> Reasonix.app / Reasonix.
 BINNAME="reasonix-desktop"    # Go desktop service (and the active version entry the launcher starts)
 CLINAME="reasonix"            # bundled CLI sidecar used for remote serve upload
 WINDOWS_CLINAME="reasonix-cli" # Windows cannot store Reasonix.exe and reasonix.exe separately
+WINDOWS_CLI_ENTRY="reasonix-cli-launcher.exe"
 GUARDNAME="reasonix-guard"
 LAUNCHERNAME="reasonix-launcher"
 windows_resource_tool_dir=""
@@ -307,6 +308,11 @@ windows)
 	cli_out="$installer_dir/$WINDOWS_CLINAME.exe"
 	build_cli
 	stamp_windows_executable "$cli_out" "Reasonix CLI" "$WINDOWS_CLINAME" "$WINDOWS_CLINAME.exe"
+	cli_entry_out="$ROOT/desktop/build/bin/$WINDOWS_CLI_ENTRY"
+	echo "==> go build Windows CLI entry"
+	(cd "$ROOT" && GOOS=windows GOARCH="$arch" CGO_ENABLED=0 go build -trimpath \
+		-ldflags="-s -w" -o "$cli_entry_out" ./cmd/reasonix-cli-launcher)
+	stamp_windows_executable "$cli_entry_out" "Reasonix CLI Launcher" "reasonix-cli-launcher" "$WINDOWS_CLI_ENTRY"
 
 	service_out="$ROOT/desktop/build/bin/$BINNAME.exe"
 	build_service
@@ -317,6 +323,8 @@ windows)
 	cp "$service_out" "$installer_dir/$BINNAME.exe"
 
 	package_shell
+	mkdir -p "build/electron/${os}-${arch}/app/resources/bin"
+	cp "$cli_entry_out" "build/electron/${os}-${arch}/app/resources/bin/$WINDOWS_CLI_ENTRY"
 	# The Electron bundle becomes versions/v<ver>/app/ at install time; NSIS
 	# consumes it as the "app" directory next to project.nsi.
 	rm -rf "$installer_dir/app"
@@ -349,6 +357,7 @@ windows)
 	# SignPath artifact configuration and the Authenticode verifier consume it.
 	node "$ROOT/desktop/packaging/signing-files.mjs" "$payload_dir"
 	VERSION="$VERSION" "$ROOT/scripts/package-windows-desktop.sh" "$arch" "$payload_dir"
+	node "$ROOT/desktop/packaging/verify.mjs" "$ROOT/dist/${APPNAME}-windows-${arch}.zip" --kind windows-portable-zip
 	;;
 linux)
 	service_out="$ROOT/desktop/build/bin/$BINNAME"
