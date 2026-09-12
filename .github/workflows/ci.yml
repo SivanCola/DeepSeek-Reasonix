@@ -800,25 +800,10 @@ jobs:
           pnpm --dir frontend install --frozen-lockfile
           pnpm --dir frontend build:electron
 
-      - name: Test native motion contracts
-        run: pnpm --dir frontend test:motion
-
-      # Chromium is the deterministic browser replay on the Windows runner; the
-      # shell-level Electron startup smoke below separately exercises the real
-      # packaged runtime.
-      - name: Test transcript browser replay on Windows
-        timeout-minutes: 10
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/desktop/frontend/.pw-browsers
-        run: |
-          pnpm --dir frontend exec playwright install chromium
-          pnpm --dir frontend test:transcript-browser
-
-      - name: Test settings layout on Windows
-        timeout-minutes: 5
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/desktop/frontend/.pw-browsers
-        run: pnpm --dir frontend test:settings-browser
+      # test:motion, test:transcript-browser and test:settings-browser run on
+      # ubuntu (desktop-frontend and desktop-browser). They were repeated here
+      # when each OS shipped its own engine; Electron ships one Chromium, so the
+      # Windows-specific renderer evidence is the native Electron step below.
 
       # Package the real Electron shell on every desktop PR and exercise the
       # production startup path (shell -> Go service handshake) in the packaged
