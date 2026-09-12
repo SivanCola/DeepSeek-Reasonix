@@ -3513,6 +3513,79 @@ a[href] {
   margin-left: auto;
   margin-right: auto;
 }
+.transcript__row { --transcript-content-width: min(100%, 860px); }
+.transcript__row > .msg,
+.transcript__row > .steer-line,
+.transcript__row > .notice-line,
+.transcript__row > .turn-collapse,
+.transcript__row > .compaction {
+  width: var(--transcript-content-width);
+  max-width: calc(100% - 32px);
+}
+.transcript-row--user > .msg { margin-top: 20px; margin-bottom: 20px; }
+.transcript-row--assistant > .msg { margin-top: 24px; margin-bottom: 14px; color: var(--fg); }
+.transcript-row--assistant > .msg .msg__body { max-width: 100%; }
+.transcript-row--execution > .turn-collapse,
+.transcript-row--execution > .compaction,
+.transcript-row--execution > .phase,
+.transcript-row--execution > .notice-line { margin-top: 4px; margin-bottom: 4px; }
+.transcript-row--execution .turn-collapse,
+.transcript-row--execution .tool-group,
+.transcript-row--execution .compaction {
+  border-color: color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-soft) 72%, transparent);
+}
+.transcript-row--execution .turn-collapse__head,
+.transcript-row--execution .tool-group__head,
+.transcript-row--execution .compaction__head { min-height: 34px; color: var(--fg-dim); }
+.transcript-row--notice > .notice-line { opacity: 0.82; margin-top: 8px; margin-bottom: 8px; }
+.transcript-row--assistant .msg-meta { opacity: 0; transition: opacity 120ms ease; }
+.transcript-row--assistant:hover .msg-meta,
+.transcript-row--assistant:focus-within .msg-meta { opacity: 1; }
+.transcript-row--actions { margin-top: -8px; }
+.transcript-row--actions .turn-actions { opacity: 0; transition: opacity 120ms ease; }
+.transcript-row--assistant:hover + .transcript-row--actions .turn-actions,
+.transcript-row--actions:hover .turn-actions,
+.transcript-row--actions:focus-within .turn-actions { opacity: 1; }
+
+/* Harness-style transcript hierarchy: answer first, execution as quiet
+   disclosure rows.  Keep these rules late so theme overrides cannot restore
+   the old card-heavy emphasis. */
+.transcript-row--execution > .turn-collapse,
+.transcript-row--execution > .tool-group,
+.transcript-row--execution > .readonly-batch,
+.transcript-row--execution > .compaction,
+.transcript-row--execution > .process-card {
+  max-width: min(100%, 760px);
+  border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
+}
+.transcript-row--execution .process-card__head,
+.transcript-row--execution .tool-group__head,
+.transcript-row--execution .compaction__head {
+  min-height: 32px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  color: var(--fg-dim);
+  font-size: var(--font-control);
+}
+.transcript-row--execution .process-card__meta,
+.transcript-row--execution .tool-group__summary,
+.transcript-row--execution .compaction__meta { color: var(--fg-faint); }
+.transcript-row--execution .process-card__body,
+.transcript-row--execution .tool-group__body,
+.transcript-row--execution .turn-collapse__body { border-color: color-mix(in srgb, var(--border) 70%, transparent); }
+.transcript-row--assistant > .msg .msg__body > .md { color: var(--fg); }
+
+@media (max-width: 720px) {
+  .transcript__row > .msg,
+  .transcript__row > .steer-line,
+  .transcript__row > .notice-line,
+  .transcript__row > .turn-collapse,
+  .transcript__row > .compaction { max-width: calc(100% - 20px); }
+  .transcript-row--assistant > .msg { margin-top: 18px; }
+}
 .transcript__row > *:first-child {
   margin-top: 0;
 }

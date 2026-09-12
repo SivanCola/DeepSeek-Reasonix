@@ -25,7 +25,7 @@ const TranscriptRowView = memo(function TranscriptRowView({
   }, [entryId, tabId]);
   return (
     <div
-      className="transcript__row"
+      className={`transcript__row transcript-row--${row.kind === "user" ? "user" : row.kind === "answer" ? "assistant" : row.kind === "notice" ? "notice" : row.kind === "turn-actions" ? "actions" : "execution"}`}
       data-row-key={String(row.key)}
       data-row-kind={row.kind}
       data-layout-version={transcriptRowMeasurementVersion(row)}
