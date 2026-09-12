@@ -20,6 +20,7 @@ var ciJobs = map[string]struct {
 	"ci.yml/desktop-macos":                        {classKeepBusiness, "Electron packaging smoke"},
 	"ci.yml/desktop-windows":                      {classKeepBusiness, "Electron packaging smoke"},
 	"ci.yml/desktop-windows-package":              {classKeepBusiness, "Electron installer build, split from the test leg"},
+	"ci.yml/desktop-windows-go":                   {classKeepBusiness, "desktop Go suite, split from the Electron leg"},
 	"app-memory.yml/app-memory":                   {classKeepBusiness, "browser memory screening unchanged"},
 	"app-memory.yml/prepare":                      {classKeepBusiness, "browser memory screening unchanged"},
 	"app-memory.yml/shard":                        {classKeepBusiness, "browser memory screening unchanged"},

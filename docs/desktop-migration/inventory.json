@@ -5442,6 +5442,13 @@
     },
     {
       "kind": "ci-job",
+      "name": "ci.yml/desktop-windows-go",
+      "location": ".github/workflows/ci.yml",
+      "class": "keep-business",
+      "owner": "desktop Go suite, split from the Electron leg"
+    },
+    {
+      "kind": "ci-job",
       "name": "ci.yml/desktop-windows-package",
       "location": ".github/workflows/ci.yml",
       "class": "keep-business",
