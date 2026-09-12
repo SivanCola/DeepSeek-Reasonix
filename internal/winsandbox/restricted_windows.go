@@ -356,7 +356,7 @@ func hasExactWriteCapability(root string, sid *windows.SID) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read DACL %q: %w", root, err)
 	}
-	for index := uint32(0); index < uint32(acl.AceCount); index++ {
+	for index := range uint32(acl.AceCount) {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(acl, index, &ace); err != nil {
 			return false, fmt.Errorf("read DACL ACE %d for %q: %w", index, root, err)
@@ -417,7 +417,7 @@ func createWriteRestrictedPrimaryToken(readOnly bool, capabilities []restrictedC
 	runtime.KeepAlive(restricting)
 	runtime.KeepAlive(capabilities)
 	if r1 == 0 {
-		if callErr == windows.ERROR_SUCCESS {
+		if errors.Is(callErr, windows.ERROR_SUCCESS) {
 			return 0, fmt.Errorf("CreateRestrictedToken failed without a Windows error code")
 		}
 		return 0, fmt.Errorf("CreateRestrictedToken: %w", callErr)

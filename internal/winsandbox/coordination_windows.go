@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,8 +98,8 @@ func (l *windowsRootLock) release() {
 	if l == nil {
 		return
 	}
-	for i := len(l.handles) - 1; i >= 0; i-- {
-		h := l.handles[i]
+	for i, v := range slices.Backward(l.handles) {
+		h := v
 		if h == 0 {
 			continue
 		}
@@ -355,7 +356,7 @@ func windowsDenyMarkerPath() string {
 
 func windowsNewDenyMarkerPath() string {
 	pid := strconv.Itoa(os.Getpid())
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		if nonce, ok := windowsResidueNonce(); ok {
 			marker := filepath.Join(windowsDenyMarkerDir(), pid+"-"+nonce+".txt")
 			if !pathExists(marker) {

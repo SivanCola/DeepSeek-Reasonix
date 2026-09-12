@@ -3,10 +3,15 @@ import { mkdir, mkdtemp, writeFile, copyFile, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { build, preview, loadConfigFromFile } from "vite";
-import { chromium, webkit, _electron } from "playwright";
 
-const root = process.cwd();
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
+  ? path.join(root, ".pw-browsers")
+  : process.env.PLAYWRIGHT_BROWSERS_PATH;
+// Playwright reads PLAYWRIGHT_BROWSERS_PATH at module evaluation.
+const { chromium, webkit, _electron } = await import("playwright");
 const outDir = await mkdtemp(path.join(tmpdir(), "reasonix-chat-build-"));
 const evidence = process.env.REASONIX_CHAT_EVIDENCE ?? path.join(tmpdir(), "reasonix-chat-evidence");
 await mkdir(evidence, { recursive: true });

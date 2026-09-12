@@ -3,7 +3,6 @@
 package winsandbox
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -118,26 +117,25 @@ func TestWindowsRestrictedProcessCreationFlagsInheritConsole(t *testing.T) {
 func TestWindowsSandboxStartupInfoHidesWindowAndKeepsStdHandles(t *testing.T) {
 	handles := [3]windows.Handle{11, 12, 13}
 	si := windowsSandboxStartupInfo(handles, nil)
-	if si.StartupInfo.Cb == 0 {
+	if si.Cb == 0 {
 		t.Fatal("startup info size was not initialized")
 	}
-	if si.StartupInfo.Flags&windows.STARTF_USESTDHANDLES == 0 {
-		t.Fatalf("startup flags %#x missing STARTF_USESTDHANDLES", si.StartupInfo.Flags)
+	if si.Flags&windows.STARTF_USESTDHANDLES == 0 {
+		t.Fatalf("startup flags %#x missing STARTF_USESTDHANDLES", si.Flags)
 	}
-	if si.StartupInfo.Flags&windows.STARTF_USESHOWWINDOW == 0 {
-		t.Fatalf("startup flags %#x missing STARTF_USESHOWWINDOW", si.StartupInfo.Flags)
+	if si.Flags&windows.STARTF_USESHOWWINDOW == 0 {
+		t.Fatalf("startup flags %#x missing STARTF_USESHOWWINDOW", si.Flags)
 	}
-	if si.StartupInfo.ShowWindow != windows.SW_HIDE {
-		t.Fatalf("ShowWindow = %d, want SW_HIDE", si.StartupInfo.ShowWindow)
+	if si.ShowWindow != windows.SW_HIDE {
+		t.Fatalf("ShowWindow = %d, want SW_HIDE", si.ShowWindow)
 	}
-	if si.StartupInfo.StdInput != handles[0] || si.StartupInfo.StdOutput != handles[1] || si.StartupInfo.StdErr != handles[2] {
-		t.Fatalf("std handles = (%v,%v,%v), want %v", si.StartupInfo.StdInput, si.StartupInfo.StdOutput, si.StartupInfo.StdErr, handles)
+	if si.StdInput != handles[0] || si.StdOutput != handles[1] || si.StdErr != handles[2] {
+		t.Fatalf("std handles = (%v,%v,%v), want %v", si.StdInput, si.StdOutput, si.StdErr, handles)
 	}
 }
 
 func TestWindowsSandboxSystemCommandsAreHidden(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	for _, cmd := range []*exec.Cmd{
 		hiddenWindowsSystemCommandContext(ctx, "icacls.exe", `C:\work`, "/C"),
 		hiddenWindowsSystemCommand("taskkill.exe", "/?"),
@@ -940,7 +938,7 @@ func BenchmarkWindowsRestrictedWorkspaceWrite(b *testing.B) {
 	opts := RunOptions{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
 
 	b.Run("first-capability-materialization", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			b.StopTimer()
 			workspace := b.TempDir()
 			tempRoot := b.TempDir()
@@ -965,7 +963,7 @@ func BenchmarkWindowsRestrictedWorkspaceWrite(b *testing.B) {
 			b.Fatalf("warmup launch: code=%d err=%v", result.ExitCode, err)
 		}
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			result, err := Run(spec, sh, localOpts)
 			if err != nil || result.ExitCode != 0 {
 				b.Fatalf("warm launch: code=%d err=%v", result.ExitCode, err)

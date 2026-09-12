@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -705,7 +706,7 @@ func TestWindowsSandboxConcurrentWritesToSharedWorkspace(t *testing.T) {
 	const n = 4
 	var wg sync.WaitGroup
 	errs := make([]error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -727,7 +728,7 @@ func TestWindowsSandboxConcurrentWritesToSharedWorkspace(t *testing.T) {
 	}
 	wg.Wait()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] != nil {
 			t.Fatalf("concurrent command %d failed: %v", i, errs[i])
 		}
@@ -770,7 +771,7 @@ func TestWindowsSandboxConcurrentDistinctWorkspacesSharedToolDir(t *testing.T) {
 	const n = 4
 	var wg sync.WaitGroup
 	errs := make([]error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -795,7 +796,7 @@ func TestWindowsSandboxConcurrentDistinctWorkspacesSharedToolDir(t *testing.T) {
 	}
 	wg.Wait()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if errs[i] != nil {
 			t.Fatalf("concurrent run %d sharing tool dir failed: %v", i, errs[i])
 		}
@@ -814,12 +815,7 @@ func copyFileForTest(t *testing.T, src, dst string) error {
 }
 
 func contains(haystack []string, needle string) bool {
-	for _, h := range haystack {
-		if h == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, needle)
 }
 
 func containsWindowsPath(haystack []string, needle string) bool {

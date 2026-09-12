@@ -129,7 +129,7 @@ model = "x"
 		t.Fatalf("Build: %v", err)
 	}
 	defer ctrl.Close()
-	ctrl.SetToolApprovalMode(control.ToolApprovalDangerFullAccess)
+	ctrl.ApplyHeadlessApprovalMode(control.ToolApprovalDangerFullAccess)
 
 	if err := ctrl.Run(context.Background(), "read big.txt then commit"); err != nil {
 		t.Fatalf("Run: %v", err)

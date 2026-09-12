@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -471,12 +472,12 @@ func startAppContainerProcess(ac *appContainerLaunch, argv []string, env []strin
 
 func windowsSandboxStartupInfo(handles [3]windows.Handle, attrList *windows.ProcThreadAttributeListContainer) windows.StartupInfoEx {
 	si := windows.StartupInfoEx{}
-	si.StartupInfo.Cb = uint32(unsafe.Sizeof(si))
-	si.StartupInfo.Flags = startupFlagsHiddenWindow
-	si.StartupInfo.ShowWindow = uint16(windows.SW_HIDE)
-	si.StartupInfo.StdInput = handles[0]
-	si.StartupInfo.StdOutput = handles[1]
-	si.StartupInfo.StdErr = handles[2]
+	si.Cb = uint32(unsafe.Sizeof(si))
+	si.Flags = startupFlagsHiddenWindow
+	si.ShowWindow = uint16(windows.SW_HIDE)
+	si.StdInput = handles[0]
+	si.StdOutput = handles[1]
+	si.StdErr = handles[2]
 	if attrList != nil {
 		si.ProcThreadAttributeList = attrList.List()
 	}
@@ -836,11 +837,7 @@ func currentProcessUserSIDString() (string, error) {
 }
 
 func currentProcessUserSID() (*windows.SID, error) {
-	token, err := windows.OpenCurrentProcessToken()
-	if err != nil {
-		return nil, err
-	}
-	defer token.Close()
+	token := windows.GetCurrentProcessToken()
 	user, err := token.GetTokenUser()
 	if err != nil {
 		return nil, err
@@ -984,8 +981,8 @@ func restorePathSecurity(path, sddl string, info windows.SECURITY_INFORMATION) e
 
 func runCleanup(cleanup []func()) func() {
 	return func() {
-		for i := len(cleanup) - 1; i >= 0; i-- {
-			cleanup[i]()
+		for _, v := range slices.Backward(cleanup) {
+			v()
 		}
 	}
 }
@@ -1105,10 +1102,6 @@ func grantAppContainerSIDs(root string, sidStrs []string, perm string) error {
 		return err
 	}
 	return applyWindowsACLEntries(root, sidStrs, windows.GRANT_ACCESS, mask, true)
-}
-
-func denyAppContainerSIDs(root string, sidStrs []string, perm string) error {
-	return denyAppContainerSIDsWithInheritance(root, sidStrs, perm, true)
 }
 
 func denyAppContainerSIDsWithInheritance(root string, sidStrs []string, perm string, includeInheritance bool) error {
