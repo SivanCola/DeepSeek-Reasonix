@@ -106,17 +106,28 @@ test("reuse never moves artifact verification past public mutation or trusts can
   for (const name of ["desktop", "cli", "npm"]) assert.ok(job(stable, name).includes("needs: [authorize, signpath-preflight]"));
 });
 
-test("all Linux consumers use the prepared build and reject a failed preparation", () => {
+test("all desktop consumers verify the prepared build and reject a failed preparation", () => {
   const context = { github: { event_name: "pull_request" },
     needs: { changes: { outputs: { desktop: "true" } }, "desktop-prepare": { result: "success" } } };
   const aggregate = job(ci, "desktop");
-  for (const name of ["desktop-go", "desktop-frontend", "desktop-browser"]) {
+  for (const [name, variant] of [
+    ["desktop-go", "stable"], ["desktop-frontend", "stable"], ["desktop-browser", "stable"],
+    ["desktop-macos", "stable"], ["desktop-windows", "canary"], ["desktop-windows-go", "stable"],
+  ]) {
     const body = job(ci, name);
-    assert.ok(aggregate.includes(name));
+    if (["desktop-go", "desktop-frontend", "desktop-browser"].includes(name)) assert.ok(aggregate.includes(name));
     assert.ok(body.includes("needs: [changes, desktop-prepare]"));
-    assert.ok(body.includes("name: ${{ needs.desktop-prepare.outputs.artifact_name }}"));
+    assert.ok(body.includes(`name: \${{ needs.desktop-prepare.outputs.${variant}_artifact_name }}`));
+    assert.ok(body.includes(`--shell electron --channel ${variant}`));
     assert.ok(!body.includes("pnpm --dir frontend build"));
     assert.equal(condition(body, context), true);
     assert.equal(condition(body, { ...context, needs: { ...context.needs, "desktop-prepare": { result: "failure" } } }), false);
   }
+  for (const name of ["desktop-windows", "desktop-windows-package"]) {
+    const body = job(ci, name);
+    assert.match(body, /REASONIX_PACKAGE_REUSE_FRONTEND: "1"/);
+    assert.match(body, /REASONIX_FRONTEND_PNPM_VERSION="\$\(pnpm --version\)"\n\s+export REASONIX_FRONTEND_PNPM_VERSION/);
+    assert.match(body, /canary_artifact_name/);
+  }
+  assert.match(job(ci, "desktop-macos"), /REASONIX_FRONTEND_PNPM_VERSION="\$\(pnpm --version\)"\n\s+export REASONIX_FRONTEND_PNPM_VERSION/);
 });

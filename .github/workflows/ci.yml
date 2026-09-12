@@ -504,10 +504,14 @@ jobs:
       - run: pnpm --dir frontend install --frozen-lockfile
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.desktop-prepare.outputs.artifact_name }}
-          path: desktop/frontend/dist
-      - name: Verify frontend artifact layout
-        run: test -f frontend/dist/index.html
+          name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
+          path: desktop/frontend
+      - name: Verify stable frontend artifact
+        run: |
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel stable \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
       - name: Verify CI test coverage and runner
         run: node --test frontend/scripts/ci-test-plan.test.mjs
       - name: Check the Electron shell
@@ -542,10 +546,14 @@ jobs:
       - run: pnpm --dir frontend install --frozen-lockfile
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.desktop-prepare.outputs.artifact_name }}
-          path: desktop/frontend/dist
-      - name: Verify frontend artifact layout
-        run: test -f frontend/dist/index.html
+          name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
+          path: desktop/frontend
+      - name: Verify stable frontend artifact
+        run: |
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel stable \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
       - name: Install browser runtimes
         run: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend exec playwright install --with-deps chromium
       - name: Test desktop browser contracts
@@ -560,7 +568,8 @@ jobs:
     needs: changes
     if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     outputs:
-      artifact_name: desktop-frontend-${{ github.run_id }}-${{ github.run_attempt }}
+      stable_artifact_name: desktop-frontend-stable-${{ github.run_id }}-${{ github.run_attempt }}
+      canary_artifact_name: desktop-frontend-canary-${{ github.run_id }}-${{ github.run_attempt }}
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -617,16 +626,56 @@ jobs:
             exit 1
           fi
 
-      - name: Build frontend
+      - name: Build stable frontend
         run: |
           pnpm --dir frontend install --frozen-lockfile
           pnpm --dir frontend build:electron
 
+      - name: Record stable frontend artifact identity
+        run: |
+          node frontend/scripts/artifact-identity.mjs create \
+            --shell electron \
+            --channel stable \
+            --source-sha "$(git rev-parse HEAD)" \
+            --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
+
       - uses: actions/upload-artifact@v7
         with:
-          name: desktop-frontend-${{ github.run_id }}-${{ github.run_attempt }}
+          name: desktop-frontend-stable-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             desktop/frontend/dist
+            desktop/frontend/.reasonix-frontend-artifact.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+      # Static checks ran in the stable build. The canary variant still gets a
+      # fresh Vite build and bundle-budget validation because its embedded
+      # channel is part of the shipped bytes.
+      - name: Build canary frontend
+        env:
+          REASONIX_CHANNEL: canary
+        run: node frontend/scripts/build-for-shell.mjs electron --bundle-only
+
+      - name: Record canary frontend artifact identity
+        run: |
+          node frontend/scripts/artifact-identity.mjs create \
+            --shell electron \
+            --channel canary \
+            --source-sha "$(git rev-parse HEAD)" \
+            --run-id "$GITHUB_RUN_ID" \
+            --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-frontend-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            desktop/frontend/dist
+            desktop/frontend/.reasonix-frontend-artifact.json
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 3
 
@@ -663,10 +712,14 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.desktop-prepare.outputs.artifact_name }}
-          path: desktop/frontend/dist
-      - name: Verify frontend artifact layout
-        run: test -f frontend/dist/index.html
+          name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
+          path: desktop/frontend
+      - name: Verify stable frontend artifact
+        run: |
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel stable \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
       - run: pnpm --dir frontend install --frozen-lockfile
 
       - name: vet
@@ -730,10 +783,14 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ needs.desktop-prepare.outputs.artifact_name }}
-          path: desktop/frontend/dist
-      - name: Verify frontend artifact layout
-        run: test -f frontend/dist/index.html
+          name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
+          path: desktop/frontend
+      - name: Verify stable frontend artifact
+        run: |
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel stable \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
       - run: pnpm --dir frontend install --frozen-lockfile
 
       # The extension work added new shared-state paths to the desktop
@@ -753,8 +810,8 @@ jobs:
   # desktop/ is a separate module, so the root macOS matrix above does not
   # compile or exercise the native PTY and FSEvents implementations.
   desktop-macos:
-    needs: changes
-    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    needs: [changes, desktop-prepare]
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: macos-latest
     defaults:
       run:
@@ -783,10 +840,17 @@ jobs:
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
-      - name: Build frontend
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
+          path: desktop/frontend
+      - name: Verify stable frontend artifact
         run: |
-          pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build:electron
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel stable \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
 
       - name: Test integrated terminal, PTY, and FSEvents lifecycle
         run: go test -race -run 'Test(DarwinWorkspaceWatcher|WorkspaceChangeHub|ResolveTerminal|Terminal|EmptyTerminal|UnixTerminalProcess)' .
@@ -820,12 +884,33 @@ jobs:
       # release pipeline packages again anyway), and let pull requests stop
       # after the lint step. Ad-hoc signs (no Apple secrets in CI) and skips
       # the DMG.
+      - name: Remove stable frontend before canary packaging
+        if: github.event_name != 'pull_request'
+        run: rm -rf frontend/dist frontend/.reasonix-frontend-artifact.json
+
+      - uses: actions/download-artifact@v8
+        if: github.event_name != 'pull_request'
+        with:
+          name: ${{ needs.desktop-prepare.outputs.canary_artifact_name }}
+          path: desktop/frontend
+
+      - name: Verify canary frontend artifact
+        if: github.event_name != 'pull_request'
+        run: |
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel canary \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
+
       - name: Package Electron app and verify bundle members
         if: github.event_name != 'pull_request'
         timeout-minutes: 25
         env:
           DESKTOP_BUILD_SKIP_DMG: "1"
+          REASONIX_PACKAGE_REUSE_FRONTEND: "1"
         run: |
+          REASONIX_FRONTEND_PNPM_VERSION="$(pnpm --version)"
+          export REASONIX_FRONTEND_PNPM_VERSION
           ../scripts/desktop-build.sh darwin/arm64 v0.0.0-ci canary
           node packaging/verify.mjs ../dist/Reasonix-darwin-arm64.zip
 
@@ -852,8 +937,8 @@ jobs:
   # regression tests for that contract are named *OnWindows and can never
   # run on the ubuntu leg above.
   desktop-windows:
-    needs: changes
-    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    needs: [changes, desktop-prepare]
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: windows-latest
     # A hung native step must not hold the workflow's concurrency group for the
     # six-hour default. This bounds hangs, not duration: the leg's own spread on
@@ -903,12 +988,16 @@ jobs:
             }
           }
 
-      # go:embed of frontend/dist needs a built frontend before the package
-      # compiles, same as the ubuntu desktop leg.
-      - name: Build frontend
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.desktop-prepare.outputs.canary_artifact_name }}
+          path: desktop/frontend
+      - name: Verify canary frontend artifact
         run: |
-          pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build:electron
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel canary \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
 
       # test:motion, test:transcript-browser and test:settings-browser run on
       # ubuntu (desktop-frontend and desktop-browser). They were repeated here
@@ -920,7 +1009,11 @@ jobs:
       # layout. package.mjs builds the frontend itself (build:electron flavor).
       - name: Package Electron shell for native startup smoke
         timeout-minutes: 15
+        env:
+          REASONIX_PACKAGE_REUSE_FRONTEND: "1"
         run: |
+          REASONIX_FRONTEND_PNPM_VERSION="$(pnpm --version)"
+          export REASONIX_FRONTEND_PNPM_VERSION
           pnpm install --frozen-lockfile
           go build -trimpath -ldflags "-s -w -X main.version=v0.0.0-ci -X main.channel=canary" -o build/bin/reasonix-desktop.exe .
           node packaging/package.mjs windows/amd64 v0.0.0-ci canary
@@ -960,8 +1053,8 @@ jobs:
   # the Electron steps makes the leg's wall time the longer half rather than
   # the sum, and a Go flake reruns only this job.
   desktop-windows-go:
-    needs: changes
-    if: always() && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    needs: [changes, desktop-prepare]
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
     runs-on: windows-latest
     # Measured 17.1-17.3 minutes on three consecutive main-v2 runs; bound
     # hangs, not duration.
@@ -1006,12 +1099,16 @@ jobs:
             }
           }
 
-      # go:embed of frontend/dist needs a built frontend before the package
-      # compiles; the electron flavour is what the shell ships.
-      - name: Build frontend
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
+          path: desktop/frontend
+      - name: Verify stable frontend artifact
         run: |
-          pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build:electron
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel stable \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
 
       - name: test (Windows desktop and update helper)
         # 17 minutes measured, ~11 of them before the first test runs; the
@@ -1029,8 +1126,8 @@ jobs:
   # and so a packaging failure costs a short rerun instead of the whole leg.
   # Pushes to main-v2 only: the release pipeline builds installers again anyway.
   desktop-windows-package:
-    needs: changes
-    if: always() && (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true')
+    needs: [changes, desktop-prepare]
+    if: always() && needs.desktop-prepare.result == 'success' && (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true')
     runs-on: windows-latest
     # Packaging measured 13m55s; the overhead benchmark and its workspace
     # install add about six more. Bound hangs, not duration.
@@ -1075,19 +1172,28 @@ jobs:
             }
           }
 
-      # go:embed of frontend/dist needs a built frontend before the package
-      # compiles, same as the test leg.
-      - name: Build frontend
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.desktop-prepare.outputs.canary_artifact_name }}
+          path: desktop/frontend
+      - name: Verify canary frontend artifact
         run: |
-          pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build:electron
+          node frontend/scripts/artifact-identity.mjs verify \
+            --shell electron --channel canary \
+            --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --pnpm-version "$(pnpm --version)"
 
       - name: Install NSIS
         run: pwsh -NoProfile -File ../scripts/install-nsis.ps1
 
       - name: Build Windows installer and portable archive
         timeout-minutes: 20
-        run: ../scripts/desktop-build.sh windows/amd64 v0.0.0-ci canary
+        env:
+          REASONIX_PACKAGE_REUSE_FRONTEND: "1"
+        run: |
+          REASONIX_FRONTEND_PNPM_VERSION="$(pnpm --version)"
+          export REASONIX_FRONTEND_PNPM_VERSION
+          ../scripts/desktop-build.sh windows/amd64 v0.0.0-ci canary
 
       - name: Verify packaged Windows artifacts
         run: |
