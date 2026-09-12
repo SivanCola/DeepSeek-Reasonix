@@ -467,7 +467,10 @@ jobs:
       - name: Verify desktop validation jobs
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          SHOULD_RUN: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false' }}
+          PREPARE_REQUIRED: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false' }}
+          NATIVE_REQUIRED: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false' }}
+          FRONTEND_REQUIRED: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.frontend != 'false' || needs.changes.outputs.electron != 'false' }}
+          BROWSER_REQUIRED: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.browser != 'false' }}
           PREPARE_RESULT: ${{ needs.desktop-prepare.result }}
           GO_RESULT: ${{ needs.desktop-go.result }}
           GO_RACE_RESULT: ${{ needs.desktop-go-race.result }}
@@ -475,17 +478,16 @@ jobs:
           BROWSER_RESULT: ${{ needs.desktop-browser.result }}
         run: |
           test "$CHANGES_RESULT" = success
-          expected=skipped
-          if [ "$SHOULD_RUN" = true ]; then expected=success; fi
-          test "$PREPARE_RESULT" = "$expected"
-          test "$GO_RESULT" = "$expected"
-          test "$GO_RACE_RESULT" = "$expected"
-          test "$FRONTEND_RESULT" = "$expected"
-          test "$BROWSER_RESULT" = "$expected"
+          expected() { if [ "$1" = true ]; then echo success; else echo skipped; fi; }
+          test "$PREPARE_RESULT" = "$(expected "$PREPARE_REQUIRED")"
+          test "$GO_RESULT" = "$(expected "$NATIVE_REQUIRED")"
+          test "$GO_RACE_RESULT" = "$(expected "$NATIVE_REQUIRED")"
+          test "$FRONTEND_RESULT" = "$(expected "$FRONTEND_REQUIRED")"
+          test "$BROWSER_RESULT" = "$(expected "$BROWSER_REQUIRED")"
 
   desktop-frontend:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.frontend != 'false' || needs.changes.outputs.electron != 'false')
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -525,10 +527,15 @@ jobs:
           REASONIX_TEST_CONCURRENCY: "2"
         run: node frontend/scripts/run-ci-tests.mjs
 
-  desktop-browser:
+  desktop-browser-group:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.browser != 'false')
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        group: [app-settings, motion, transcript]
     defaults:
       run:
         working-directory: desktop
@@ -556,13 +563,57 @@ jobs:
             --pnpm-version "$(pnpm --version)"
       - name: Install browser runtimes
         run: PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend exec playwright install --with-deps chromium
-      - name: Test desktop browser contracts
+      - name: Test desktop browser group
+        env:
+          BROWSER_GROUP: ${{ matrix.group }}
+          REASONIX_LAYOUT_ARTIFACTS: ${{ runner.temp }}/desktop-browser/${{ matrix.group }}/layout
         run: |
-          pnpm --dir frontend test:motion-browser
-          PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend test:app-browser
-          PLAYWRIGHT_BROWSERS_PATH=.pw-browsers REASONIX_SETTINGS_BROWSERS=chromium pnpm --dir frontend test:settings-browser
-          xvfb-run -a env REASONIX_TRANSCRIPT_NATIVE_THUMB=1 pnpm --dir frontend test:transcript-browser
-          REASONIX_TRANSCRIPT_READER_BROWSERS=chromium PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend test:transcript-reader-browser
+          set -o pipefail
+          evidence="$RUNNER_TEMP/desktop-browser/$BROWSER_GROUP"
+          mkdir -p "$evidence"
+          case "$BROWSER_GROUP" in
+            app-settings)
+              PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend test:app-browser
+              PLAYWRIGHT_BROWSERS_PATH=.pw-browsers REASONIX_SETTINGS_BROWSERS=chromium pnpm --dir frontend test:settings-browser
+              ;;
+            motion)
+              pnpm --dir frontend test:motion-browser
+              ;;
+            transcript)
+              xvfb-run -a env PLAYWRIGHT_BROWSERS_PATH=.pw-browsers REASONIX_TRANSCRIPT_NATIVE_THUMB=1 pnpm --dir frontend test:transcript-browser
+              REASONIX_TRANSCRIPT_READER_BROWSERS=chromium PLAYWRIGHT_BROWSERS_PATH=.pw-browsers pnpm --dir frontend test:transcript-reader-browser
+              ;;
+            *) exit 2 ;;
+          esac 2>&1 | tee "$evidence/run.log"
+
+      - name: Upload browser group evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-browser-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/desktop-browser/${{ matrix.group }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  desktop-browser:
+    needs: [changes, desktop-prepare, desktop-browser-group]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify desktop browser groups
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHOULD_RUN: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.browser != 'false' }}
+          PREPARE_RESULT: ${{ needs.desktop-prepare.result }}
+          GROUP_RESULT: ${{ needs.desktop-browser-group.result }}
+        run: |
+          test "$CHANGES_RESULT" = success
+          if [ "$SHOULD_RUN" = true ]; then
+            test "$PREPARE_RESULT" = success
+            test "$GROUP_RESULT" = success
+          else
+            test "$GROUP_RESULT" = skipped
+          fi
 
   desktop-prepare:
     needs: changes
@@ -681,7 +732,7 @@ jobs:
 
   desktop-go:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false')
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -752,7 +803,7 @@ jobs:
   # changing what is race-checked.
   desktop-go-race:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false')
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -811,7 +862,7 @@ jobs:
   # compile or exercise the native PTY and FSEvents implementations.
   desktop-macos:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false')
     runs-on: macos-latest
     defaults:
       run:
@@ -938,7 +989,7 @@ jobs:
   # run on the ubuntu leg above.
   desktop-windows:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false')
     runs-on: windows-latest
     # A hung native step must not hold the workflow's concurrency group for the
     # six-hour default. This bounds hangs, not duration: the leg's own spread on
@@ -1054,7 +1105,7 @@ jobs:
   # the sum, and a Go flake reruns only this job.
   desktop-windows-go:
     needs: [changes, desktop-prepare]
-    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.desktop != 'false')
+    if: always() && needs.desktop-prepare.result == 'success' && ((github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.native != 'false')
     runs-on: windows-latest
     # Measured 17.1-17.3 minutes on three consecutive main-v2 runs; bound
     # hangs, not duration.
@@ -1338,16 +1389,18 @@ jobs:
           LINT_CODE_REQUIRED: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.code != 'false' || needs.changes.outputs.desktop != 'false' || needs.changes.outputs.sdk != 'false' }}
           FRONTEND_RESULT: ${{ needs.desktop-frontend.result }}
           PREPARE_RESULT: ${{ needs.desktop-prepare.result }}
-          FRONTEND_REQUIRED: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.frontend != 'false' }}
+          FRONTEND_REQUIRED: ${{ (github.event_name != 'pull_request' && needs.changes.outputs.notes_only != 'true') || needs.changes.outputs.frontend != 'false' || needs.changes.outputs.electron != 'false' }}
         run: |
           test "$CHANGES_RESULT" = success
           lint_expected=skipped
           if [ "$LINT_CODE_REQUIRED" = true ]; then lint_expected=success; fi
           test "$LINT_CODE_RESULT" = "$lint_expected"
-          frontend_expected=skipped
-          if [ "$FRONTEND_REQUIRED" = true ]; then frontend_expected=success; fi
-          test "$PREPARE_RESULT" = "$frontend_expected"
-          test "$FRONTEND_RESULT" = "$frontend_expected"
+          if [ "$FRONTEND_REQUIRED" = true ]; then
+            test "$PREPARE_RESULT" = success
+            test "$FRONTEND_RESULT" = success
+          else
+            test "$FRONTEND_RESULT" = skipped
+          fi
 
   # The site/ auth client has security-sensitive redirect-validation logic
   # (safeNext) covered by node:test unit tests. Those tests use only Node

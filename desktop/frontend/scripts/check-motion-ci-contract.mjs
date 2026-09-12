@@ -136,7 +136,7 @@ if (motionScript.includes("transcript-virtualization.test.tsx")) {
 
 const motionBrowserCommand = "pnpm --dir frontend test:motion-browser";
 const motionBrowserRuns = workflow.match(/pnpm --dir frontend test:motion-browser(?:\s|$)/g)?.length ?? 0;
-if (!jobBody("desktop-browser").includes(motionBrowserCommand) || motionBrowserRuns !== 1) {
+if (!jobBody("desktop-browser-group").includes(motionBrowserCommand) || motionBrowserRuns !== 1) {
   throw new Error("motion-ci-contract: the Linux browser job must run test:motion-browser exactly once");
 }
 if (!packageJSON.scripts?.["test:motion-browser"]?.includes("approval-animation.mjs")) {
@@ -195,7 +195,7 @@ if (/transition-duration/.test(globalReducedMotion[1])) {
 if (!ciUnitScripts.includes("test:motion") || !ciUnitScripts.includes("test:transcript")) {
   throw new Error("motion-ci-contract: Linux CI must include all dedicated motion and transcript suites");
 }
-const desktopLinuxJob = jobBody("desktop-browser");
+const desktopLinuxJob = jobBody("desktop-browser-group");
 
 const transcriptBrowserCommand = "pnpm --dir frontend test:transcript-browser";
 const transcriptBrowserRuns = desktopLinuxJob.match(/pnpm --dir frontend test:transcript-browser(?:\s|$)/g)?.length ?? 0;
