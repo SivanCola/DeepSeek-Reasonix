@@ -587,6 +587,38 @@ jobs:
             -PortableArchivePath "dist/Reasonix-windows-$arch.zip" `
             -RequireTrusted:$true
 
+      - name: Refresh final signed Windows size report
+        if: runner.os == 'Windows' && env.HAS_SIGNPATH == 'true'
+        env:
+          REASONIX_COMMIT: ${{ needs.resolve.outputs.sha }}
+        run: >-
+          node desktop/packaging/size-report.mjs
+          --platform "${{ matrix.platform }}"
+          --version "${{ needs.resolve.outputs.version }}"
+          --bundle signed-payload
+          --dist dist
+          --output "desktop/build/reports/${{ matrix.name }}"
+
+      - name: Upload package size report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-size-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.name }}
+          path: desktop/build/reports/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload desktop source maps
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-sourcemaps-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.name }}
+          path: |
+            desktop/build/sourcemaps/${{ matrix.name }}
+            desktop/frontend/sourcemaps
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Sign artifacts (minisign)
         working-directory: desktop
         env:

@@ -387,8 +387,8 @@ linux)
 	# Portable Linux tarball: service + thin launcher + one-shot migrator
 	# (compat name reasonix-guard) + CLI + the Electron app/ tree. After the
 	# migrator runs, Guard self-deletes.
-	tar -czf "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" -C build/bin \
-		"$BINNAME" "$LAUNCHERNAME" "$GUARDNAME" "$CLINAME" app
+	tar -cf - -C build/bin "$BINNAME" "$LAUNCHERNAME" "$GUARDNAME" "$CLINAME" app | \
+		gzip -9 >"$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz"
 	# Build the privileged update helper shipped inside the .deb. Portable tarball
 	# installs do not need it; only the dpkg package installs helper + Polkit policy.
 	echo "==> go build reasonix-update-helper"
@@ -419,6 +419,8 @@ linux)
 	dpkg-deb --contents "$deb_path" | grep -E 'usr/share/polkit-1/actions/io.reasonix.desktop.update.policy' >/dev/null
 	dpkg-deb --contents "$deb_path" | grep -E "usr/lib/reasonix/app/${APPNAME}" >/dev/null
 	dpkg-deb --contents "$deb_path" | grep -E 'usr/lib/reasonix/app/chrome-sandbox' >/dev/null
+	node "$ROOT/desktop/packaging/verify.mjs" "$ROOT/dist/${APPNAME}-linux-${arch}.tar.gz" --kind linux-tar
+	node "$ROOT/desktop/packaging/verify.mjs" "$deb_path" --kind linux-deb
 	;;
 *)
 	echo "unsupported os: $os" >&2
