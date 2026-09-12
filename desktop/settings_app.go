@@ -2287,7 +2287,7 @@ func (a *App) SetDefaultToolApprovalMode(mode string) error {
 }
 
 // SetDefaultAutoRecoveryCheckpoint is retained as a no-op bridge surface for
-// older generated frontends. Auto Guard is always built into Auto.
+// older generated frontends. Auto Guard is retired.
 func (a *App) SetDefaultAutoRecoveryCheckpoint(_ bool) error { return nil }
 
 func officialProviderTemplate(kind, pricingLanguage string) ([]config.ProviderEntry, string, error) {

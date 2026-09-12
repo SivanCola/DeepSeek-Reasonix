@@ -17169,6 +17169,12 @@
           "type": {
             "kind": "boolean"
           }
+        },
+        {
+          "name": "retired",
+          "type": {
+            "kind": "boolean"
+          }
         }
       ]
     },

@@ -1587,9 +1587,8 @@ func (a *App) ResolvePlanDecisionTab(tabID, id, action string) error {
 	return ctrl.ResolvePlanDecision(id, control.PlanDecisionAction(action))
 }
 
-// ResolveRecovery answers an Auto Guard card. action is continue|revise. For
-// revise, feedback is steered into the
-// agent and the pending mutation is refused in the same operation.
+// ResolveRecovery retains the old bridge signature. The controller returns a
+// stable recovery_retired error and never confirms or replays an operation.
 func (a *App) ResolveRecovery(id, action, feedback string) error {
 	return a.ResolveRecoveryTab("", id, action, feedback)
 }
@@ -1604,21 +1603,21 @@ func (a *App) ResolveRecoveryTab(tabID, id, action, feedback string) error {
 }
 
 // SetRecoveryCheckpointEnabled is retained as a no-op Wails surface for older
-// generated frontends. Auto Guard is always built into Auto.
+// generated frontends. Auto Guard is retired.
 func (a *App) SetRecoveryCheckpointEnabled(_ bool) {}
 
 // SetRecoveryCheckpointEnabledTab is retained as a no-op Wails surface.
 func (a *App) SetRecoveryCheckpointEnabledTab(_ string, _ bool) {}
 
-// RecoveryCheckpointEnabled is retained for older generated frontends. Auto
-// Guard is always built into Auto, so it always reports true.
+// RecoveryCheckpointEnabled is retained for older generated frontends and
+// reports false because no runtime recovery checkpoint can be enabled.
 func (a *App) RecoveryCheckpointEnabled() bool {
-	return true
+	return false
 }
 
 // RecoveryCheckpointEnabledTab is the tab-scoped compatibility alias.
 func (a *App) RecoveryCheckpointEnabledTab(_ string) bool {
-	return true
+	return false
 }
 
 // ReplayPendingPrompts asks every tab's controller to re-emit any approval/ask
@@ -2136,8 +2135,7 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 	newCtrl.EnableInteractiveApproval()
 	applyTabModeToController(newCtrl, snap.mode)
 	applyTabToolApprovalModeToController(newCtrl, snap.toolApprovalMode)
-	// Keep the replacement controller's merged Auto Guard default. Clearing also
-	// drops the active goal, which must not seed the replacement conversation.
+	// Clearing drops the active goal, which must not seed the replacement conversation.
 	path := agent.NewSessionPath(newCtrl.SessionDir(), newCtrl.Label())
 	if err := a.ensureTabSessionLeaseForRebuild(tab, path, ""); err != nil {
 		newCtrl.Close()
@@ -5380,7 +5378,7 @@ func historyCheckpointTurns(msgs []provider.Message, resolveUserContent func(str
 }
 
 func historyMessagesWithPlannerDisplays(msgs []provider.Message, resolveUserContent func(string) string, plannerTurns []plannerDisplayTurn, checkpointTurns map[int]int) []HistoryMessage {
-	replayedTodoArgs := historyTodoArgsWithCompleteSteps(msgs)
+	replayedTodoArgs := historyTodoArgsFromWrites(msgs)
 	toolResults := historyToolResultsByID(msgs)
 	return historyMessagesWithPlannerDisplaysAndLookups(msgs, resolveUserContent, plannerTurns, checkpointTurns, replayedTodoArgs, toolResults)
 }
@@ -5619,7 +5617,7 @@ func historyPageFromProviderMessages(
 		resolveUserContent,
 		plannerTurns,
 		checkpointTurnsForProviderWindow(checkpointTurns, originalIndexes),
-		historyTodoArgsWithCompleteSteps(msgs),
+		historyTodoArgsFromWrites(msgs),
 		historyToolResultsByID(msgs),
 	)
 	return page
@@ -5913,7 +5911,7 @@ func clipStringBytes(s string, max int) string {
 	return s[:max]
 }
 
-func historyTodoArgsWithCompleteSteps(msgs []provider.Message) map[string]string {
+func historyTodoArgsFromWrites(msgs []provider.Message) map[string]string {
 	successful := successfulHistoryToolCallIDs(msgs)
 	state := newHistoryTodoArgsState(successful)
 	for _, m := range msgs {
@@ -5947,20 +5945,11 @@ func (state *historyTodoArgsState) consume(m provider.Message) {
 			if len(rec.Todos) == 0 {
 				continue
 			}
-			state.todos = evidence.NormalizeSerialTodos(rec.Todos)
+			// todo_write is the model's explicit status report. Preserve it as
+			// written; the retired complete_step proof tool no longer advances or
+			// normalizes task state during history projection.
+			state.todos = append([]evidence.TodoItem(nil), rec.Todos...)
 			state.latestTodoID = tc.ID
-			if args, ok := todoArgsJSON(state.todos); ok {
-				state.out[state.latestTodoID] = args
-			}
-		case "complete_step":
-			if state.latestTodoID == "" || len(state.todos) == 0 {
-				continue
-			}
-			rec := evidence.ReceiptFromToolCall(tc.Name, json.RawMessage(tc.Arguments), true, true)
-			match, ok := evidence.MatchStep(rec.Step, state.todos)
-			if !ok || !evidence.AdvanceSerialTodo(state.todos, match.Index-1) {
-				continue
-			}
 			if args, ok := todoArgsJSON(state.todos); ok {
 				state.out[state.latestTodoID] = args
 			}

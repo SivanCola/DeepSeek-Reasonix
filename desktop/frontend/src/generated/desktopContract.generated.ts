@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 1;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:5b6da1634f5b430b5d5f00ff2b1abb5c8fd95ffc84de839bd1541a997d194e78";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:5ad71f5f7bd2fb266fd5bb75e742b53ecb715fb748a285fbaaf245d55d9879df";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -897,6 +897,7 @@ export interface ToolRecoverySnapshot {
   revision: string;
   calls: ToolCallRecord[];
   retryEnabled: boolean;
+  retired: boolean;
 }
 
 export interface ToolResultData {
