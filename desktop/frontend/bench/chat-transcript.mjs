@@ -13,7 +13,7 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || 
 // Playwright reads PLAYWRIGHT_BROWSERS_PATH at module evaluation.
 const { chromium, webkit, _electron } = await import("playwright");
 const outDir = await mkdtemp(path.join(tmpdir(), "reasonix-chat-build-"));
-const evidence = process.env.REASONIX_CHAT_EVIDENCE ?? path.join(tmpdir(), "reasonix-chat-evidence");
+const evidence = process.env.REASONIX_CHAT_EVIDENCE ?? process.env.REASONIX_LAYOUT_ARTIFACTS ?? path.join(tmpdir(), "reasonix-chat-evidence");
 await mkdir(evidence, { recursive: true });
 const loaded = await loadConfigFromFile({ command: "build", mode: "production" }, path.join(root, "vite.config.ts"));
 const config = loaded.config;
@@ -96,13 +96,28 @@ try {
           for (const type of ["pointerdown", "pointerup", "scroll"]) el.addEventListener(type, event => window.chatThumbEvents.push({ type, top: el.scrollTop, target: event.target === el }));
         });
         const track = await scroll.evaluate(el => { const box = el.getBoundingClientRect();
-          return { x: box.right - Math.max(3, (el.offsetWidth - el.clientWidth) / 4), top: box.top, bottom: box.bottom, before: el.scrollTop, gutter: el.offsetWidth - el.clientWidth }; });
+          const gutter = el.offsetWidth - el.clientWidth;
+          const arrow = gutter;
+          const trackHeight = Math.max(1, box.height - 2 * arrow);
+          const thumbHeight = Math.max(gutter, trackHeight * el.clientHeight / el.scrollHeight);
+          return {
+            x: box.right - gutter / 2,
+            top: box.top,
+            bottom: box.bottom,
+            before: el.scrollTop,
+            gutter,
+            thumbHeight,
+            thumbCenter: box.bottom - arrow - thumbHeight / 2,
+          }; });
         report.nativeThumb = { track };
         // This coordinate-based variant requires an exposed native gutter (for
         // example headed Linux/Xvfb). A hidden macOS overlay can select text
         // instead; that must never count as a successful scrollbar drag.
         assert.ok(track.gutter > 0, "native scrollbar gutter unavailable; run the native-thumb variant in an isolated host with visible scrollbars");
-        await page.mouse.move(track.x, track.bottom - 10); await page.mouse.down();
+        // Chromium's Linux scrollbar reserves an arrow-button-sized region at
+        // each end. Start in the computed thumb center instead of the bottom
+        // arrow, then drag toward the middle of the track.
+        await page.mouse.move(track.x, track.thumbCenter); await page.mouse.down();
         await page.mouse.move(track.x, (track.top + track.bottom) / 2, { steps: 20 }); await page.mouse.up();
         report.nativeThumb = { track, after: await scroll.evaluate(el => ({ top: el.scrollTop, mode: el.dataset.scrollMode, events: window.chatThumbEvents })) };
         await page.screenshot({ path: path.join(evidence, `${name}-native-thumb.png`) });
