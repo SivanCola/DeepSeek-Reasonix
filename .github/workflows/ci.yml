@@ -684,7 +684,7 @@ jobs:
       - name: Build frontend
         run: |
           pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build
+          pnpm --dir frontend build:electron
 
       - name: Test integrated terminal, PTY, and FSEvents lifecycle
         run: go test -race -run 'Test(DarwinWorkspaceWatcher|WorkspaceChangeHub|ResolveTerminal|Terminal|EmptyTerminal|UnixTerminalProcess)' .
@@ -726,6 +726,16 @@ jobs:
         run: |
           ../scripts/desktop-build.sh darwin/arm64 v0.0.0-ci canary
           node packaging/verify.mjs ../dist/Reasonix-darwin-arm64.zip
+
+      # Signing and bundle members do not prove the app starts. Until now the
+      # packaged macOS renderer path ran only in the release build, so a
+      # regression there surfaced at publication time instead of on main-v2.
+      - name: Smoke-test the packaged macOS startup
+        if: github.event_name != 'pull_request'
+        timeout-minutes: 5
+        run: |
+          ditto -xk ../dist/Reasonix-darwin-arm64.zip "$RUNNER_TEMP/desktop-startup"
+          node packaging/smoke.mjs "$RUNNER_TEMP/desktop-startup/Reasonix.app"
 
   # Desktop project-root matching is case-insensitive only on Windows
   # (sameDesktopPath folds case when os.PathSeparator is '\'), so the
@@ -788,7 +798,7 @@ jobs:
       - name: Build frontend
         run: |
           pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build
+          pnpm --dir frontend build:electron
 
       - name: Test native motion contracts
         run: pnpm --dir frontend test:motion
@@ -847,21 +857,6 @@ jobs:
         timeout-minutes: 3
         run: node electron/scripts/performance-smoke.mjs
 
-      - name: Measure Electron diagnostic overhead
-        timeout-minutes: 10
-        run: node electron/scripts/performance-benchmark.mjs
-
-      - name: Upload diagnostic benchmark evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: diagnostic-overhead-windows
-          if-no-files-found: ignore
-          retention-days: 7
-          path: |
-            desktop/electron/artifacts/performance/overhead.json
-            desktop/electron/artifacts/performance/diagnostic-report.png
-
       - name: test (Windows desktop and update helper)
         # Normal wall time is 6-7 minutes; a loaded runner has exceeded 15 with
         # every package still passing. Keep the budget above that load spike so
@@ -882,7 +877,9 @@ jobs:
     needs: changes
     if: always() && github.event_name != 'pull_request'
     runs-on: windows-latest
-    timeout-minutes: 30
+    # Packaging measured 13m55s; the overhead benchmark and its workspace
+    # install add about six more. Bound hangs, not duration.
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -928,7 +925,7 @@ jobs:
       - name: Build frontend
         run: |
           pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build
+          pnpm --dir frontend build:electron
 
       - name: Install NSIS
         run: pwsh -NoProfile -File ../scripts/install-nsis.ps1
@@ -941,6 +938,29 @@ jobs:
         run: |
           node packaging/verify.mjs ../dist/Reasonix-windows-amd64.zip
           node packaging/signing-files.mjs build/windows/signing-payload --check
+
+      # The overhead benchmark asserts no threshold: it only records
+      # overhead.json as 7-day evidence. It ran on the test leg, where its ~5
+      # minutes sat on the critical path and its numbers came from the runner
+      # with the widest spread. Keep it on Windows for comparable history, but
+      # on the push-only leg that has the headroom.
+      - name: Install the Electron workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Measure Electron diagnostic overhead
+        timeout-minutes: 10
+        run: node electron/scripts/performance-benchmark.mjs
+
+      - name: Upload diagnostic benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: diagnostic-overhead-windows
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            desktop/electron/artifacts/performance/overhead.json
+            desktop/electron/artifacts/performance/diagnostic-report.png
 
   # repolint scans desktop/ and sdk/ too, so this job also runs for diffs the
   # `code` filter would otherwise skip.
