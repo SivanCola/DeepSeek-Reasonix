@@ -25,6 +25,8 @@
 #     `pnpm --dir desktop install --frozen-lockfile` when node_modules is absent)
 set -euo pipefail
 
+build_started_seconds=$SECONDS
+
 PLATFORM="${1:?usage: desktop-build.sh <os/arch> <version> [channel]}"
 VERSION="${2:?usage: desktop-build.sh <os/arch> <version> [channel]}"
 CHANNEL="${3:-stable}"
@@ -46,6 +48,7 @@ windows_host_include=""
 # repository VCS revision for the service binary. Link the same source identity
 # into both Desktop and its CLI sidecar.
 SOURCE_REVISION="$(git -C "$ROOT" rev-parse --verify HEAD)"
+SOURCE_SHA="$SOURCE_REVISION"
 if ! git -C "$ROOT" diff-index --quiet HEAD --; then
 	SOURCE_REVISION="$SOURCE_REVISION+dirty"
 fi
@@ -184,15 +187,16 @@ darwin)
 	staging=$(mktemp -d)
 	app="$staging/${APPNAME}.app"
 	cp -R "build/electron/${os}-${arch}/${APPNAME}.app" "$app"
-	# The bundle's main executable is Electron; the Go service lives next to it
-	# in Contents/MacOS and is also copied to Contents/Resources/service/ because
-	# the shell's default service lookup is process.resourcesPath/service/…
-	# (launchers that do not set REASONIX_DESKTOP_SERVICE still find it there).
+	# The bundle's main executable is Electron. Keep one Go service payload under
+	# Resources and a relative compatibility symlink in MacOS for older launchers.
 	bundle_executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
 	[ "$bundle_executable" = "$APPNAME" ] || { echo "macOS bundle executable is $bundle_executable, want $APPNAME" >&2; exit 1; }
 	mkdir -p "$app/Contents/Resources/service"
-	cp "$service_out" "$app/Contents/MacOS/$BINNAME"
 	cp "$service_out" "$app/Contents/Resources/service/$BINNAME"
+	rm -f "$app/Contents/MacOS/$BINNAME"
+	ln -s "../Resources/service/$BINNAME" "$app/Contents/MacOS/$BINNAME"
+	[ "$(readlink "$app/Contents/MacOS/$BINNAME")" = "../Resources/service/$BINNAME" ] || { echo "macOS service compatibility link is invalid" >&2; exit 1; }
+	[ -x "$app/Contents/MacOS/$BINNAME" ] || { echo "macOS service compatibility link is broken" >&2; exit 1; }
 	# Contents/MacOS already holds the Electron executable "Reasonix"; on
 	# case-insensitive APFS a "reasonix" sibling would overwrite it, so the
 	# CLI sidecar ships next to the service copy the shell actually launches
@@ -411,6 +415,19 @@ linux)
 	exit 1
 	;;
 esac
+
+case "$os" in
+darwin) report_bundle="$app" ;;
+windows) report_bundle="$ROOT/desktop/build/windows/signing-payload" ;;
+linux) report_bundle="$ROOT/desktop/build/bin" ;;
+esac
+REASONIX_COMMIT="$SOURCE_SHA" REASONIX_BUILD_SECONDS="$((SECONDS - build_started_seconds))" \
+	node "$ROOT/desktop/packaging/size-report.mjs" \
+		--platform "$PLATFORM" \
+		--version "$VERSION" \
+		--bundle "$report_bundle" \
+		--dist "$ROOT/dist" \
+		--output "$ROOT/desktop/build/reports/${os}-${arch}"
 
 echo "==> packaged into dist/:"
 ls -la "$ROOT/dist"

@@ -81,6 +81,7 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 		`./cmd/reasonix-legacy-migrator`,
 		`./cmd/reasonix-launcher`,
 		`cp "$cli_out" "$app/Contents/Resources/service/$CLINAME"`,
+		`ln -s "../Resources/service/$BINNAME" "$app/Contents/MacOS/$BINNAME"`,
 		`macOS bundle must not include $GUARDNAME`,
 		`[ "$bundle_executable" = "$APPNAME" ]`,
 		`Print :CFBundleIconFile`,
@@ -121,8 +122,8 @@ func TestDesktopPackagesPreserveNativePlatformLaunchers(t *testing.T) {
 		t.Fatalf("macOS bundle icon must be verified before signing (icon=%d sign=%d)", darwinIconCheck, developerIDSign)
 	}
 	for _, copyCommand := range []string{
-		`cp "$service_out" "$app/Contents/MacOS/$BINNAME"`,
 		`cp "$service_out" "$app/Contents/Resources/service/$BINNAME"`,
+		`ln -s "../Resources/service/$BINNAME" "$app/Contents/MacOS/$BINNAME"`,
 		`cp "$cli_out" "$app/Contents/Resources/service/$CLINAME"`,
 	} {
 		if index := strings.Index(build, copyCommand); index < 0 || index > developerIDSign {
