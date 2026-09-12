@@ -41,6 +41,7 @@ import { GraphicsSettingsStore, loadGraphicsBootstrap } from "./graphics.js";
 import { initialShellStatus, listenShellStatus, QUIT_REQUEST } from "./shellStatus.js";
 import { supersededLauncher } from "./recovery.js";
 import { startupLifecycle, startupPresentation, type StartupPresentReason } from "./startupPresentation.js";
+import { StartupDelay, renderStartupPage } from "./startupDelay.js";
 
 const MAIN_WINDOW_PERMISSIONS = new Set(["clipboard-read", "clipboard-sanitized-write", "fullscreen", "notifications"]);
 const TAKEOVER_KINDS = new Set<string>(["mousedown", "keydown", "wheel", "touchstart", "pointerdown"]);
@@ -86,6 +87,7 @@ function bootstrap(dataHome: string): void {
   const startingPage = { code: null, name: "starting", title: "Reasonix is starting / 正在启动", detail: "Please wait. / 请稍候。" };
   let lastFailure: HandshakeFailure = startingPage;
   let startupTimer: ReturnType<typeof setTimeout> | undefined;
+  const startupDelay = new StartupDelay();
   log.info(`startup ${status.generation}: shell pid=${process.pid} version=${buildVersion}`);
   process.on("uncaughtException", (error) => log.error(`uncaught exception: ${errorText(error)}`));
   process.on("unhandledRejection", (reason) => log.error(`unhandled rejection: ${errorText(reason)}`));
@@ -251,6 +253,7 @@ function bootstrap(dataHome: string): void {
       { name: "main window", run: () => mainWindow.close() },
       { name: "tray", run: () => tray.destroy() },
       { name: "startup deadline", run: () => clearTimeout(startupTimer) },
+      { name: "startup presentation", run: () => startupDelay.cancel() },
     ],
     log,
   });
@@ -318,11 +321,17 @@ function bootstrap(dataHome: string): void {
         firstHeartbeat = 0;
         if (state.phase === "starting" || state.phase === "restarting") {
           status.lifecycle = "starting";
+          startupDelay.start(() => {
+            if (lifecycle.isQuitting || status.lifecycle !== "starting" || mainWindow.browserWindow) return;
+            mainWindow.create(DEFAULT_GEOMETRY);
+            void mainWindow.showStartup(renderStartupPage());
+          });
           clearTimeout(startupTimer);
           startupTimer = setTimeout(() => {
             if (lifecycle.isQuitting || status.healthy || status.lifecycle === "failed") return;
             lastFailure = { code: null, name: "startup_timeout", title: "Startup incomplete / 启动未完成", detail: "Reasonix did not become ready within 30 seconds. Open logs or retry. / 30 秒内未完成启动，请打开日志或重试。" };
             status.lifecycle = "failed";
+            startupDelay.cancel();
             log.error(`startup ${status.generation}: readiness timeout`);
             if (!mainWindow.browserWindow) mainWindow.create(DEFAULT_GEOMETRY);
             void mainWindow.showFailure(renderFailurePage(lastFailure, logsDir));
@@ -337,6 +346,7 @@ function bootstrap(dataHome: string): void {
         }
       },
       onReady: async (hello: HelloResult) => {
+        startupDelay.cancel();
         if (lifecycle.isQuitting) return;
         status.lifecycle = "ready";
         status.servicePID = hello.service.pid;
@@ -362,6 +372,7 @@ function bootstrap(dataHome: string): void {
         if (!mainWindow.reattachApp()) void mainWindow.loadApp();
       },
       onFailed: (error) => {
+        startupDelay.cancel();
         if (lifecycle.isQuitting) return;
         const failure = describeHandshakeFailure(error);
         lastFailure = failure;
@@ -397,6 +408,7 @@ function bootstrap(dataHome: string): void {
   }
   app.on("activate", () => presentInstance([], "activate"));
   app.on("before-quit", (event) => {
+    startupDelay.cancel();
     if (!lifecycle.onBeforeQuit()) event.preventDefault();
   });
   app.on("window-all-closed", () => {
