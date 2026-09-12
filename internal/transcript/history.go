@@ -90,7 +90,7 @@ func historyRows(m provider.Message, messageIndex int, opts HistoryOptions, todo
 		return nil
 	case m.LocalOnly && m.FinalReadinessRecovery != nil && m.FinalReadinessRecovery.Pending:
 		return []Message{{Role: "notice", Code: agent.HistoricalChecksNoticeCode, Level: "info",
-			Content: agent.HistoricalChecksNoticeText,
+			Content:   agent.HistoricalChecksNoticeText,
 			Readiness: agent.HistoricalChecks(m.FinalReadinessRecovery)}}
 	default:
 		return defaultHistoryRows(m, messageIndex, opts, todoArgs)
