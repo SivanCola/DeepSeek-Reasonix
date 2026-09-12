@@ -503,7 +503,8 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
-      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
       - uses: actions/download-artifact@v8
         with:
           name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
@@ -550,7 +551,8 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
-      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
       - uses: actions/download-artifact@v8
         with:
           name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
@@ -677,10 +679,11 @@ jobs:
             exit 1
           fi
 
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+
       - name: Build stable frontend
-        run: |
-          pnpm --dir frontend install --frozen-lockfile
-          pnpm --dir frontend build:electron
+        run: pnpm --dir frontend build:electron
 
       - name: Record stable frontend artifact identity
         run: |
@@ -771,7 +774,8 @@ jobs:
             --shell electron --channel stable \
             --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
             --pnpm-version "$(pnpm --version)"
-      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
 
       - name: vet
         run: go vet ./...
@@ -842,7 +846,8 @@ jobs:
             --shell electron --channel stable \
             --source-sha "$(git rev-parse HEAD)" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
             --pnpm-version "$(pnpm --version)"
-      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
 
       # The extension work added new shared-state paths to the desktop
       # runtime (tab/rebuild fences, extension UI). Race-sweep the module so
@@ -891,7 +896,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
 
-      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
       - uses: actions/download-artifact@v8
         with:
           name: ${{ needs.desktop-prepare.outputs.stable_artifact_name }}
@@ -1273,6 +1279,27 @@ jobs:
           path: |
             desktop/electron/artifacts/performance/overhead.json
             desktop/electron/artifacts/performance/diagnostic-report.png
+
+  ci-metrics:
+    needs: [desktop, desktop-macos, desktop-windows, desktop-windows-go, desktop-windows-package]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Summarize queue, execution and stage timing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/ci-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" > "$RUNNER_TEMP/ci-jobs.json"
+          node scripts/ci-timings.mjs \
+            --run "$RUNNER_TEMP/ci-run.json" \
+            --jobs "$RUNNER_TEMP/ci-jobs.json" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --title "Frontend CI timing"
 
   # Every main-v2 push saves one Go cache per Unix OS and module (~2.6 GiB
   # measured) against a 10 GiB repository limit shared with pnpm, CodeQL and

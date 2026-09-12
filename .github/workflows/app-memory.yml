@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -66,9 +67,11 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - name: Install memory dependencies
+        run: pnpm install --frozen-lockfile
       - run: node --test bench/app-memory-shards.test.mjs bench/app-memory-paths.test.mjs bench/app-memory-timing.test.mjs
-      - run: pnpm build
+      - name: Build memory frontend
+        run: pnpm build
       - run: node bench/app-memory-prepare.mjs "$RUNNER_TEMP/app-memory-build"
       - uses: actions/upload-artifact@v7
         with:
@@ -102,8 +105,10 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
+      - name: Install memory dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install browser runtimes
+        run: pnpm exec playwright install --with-deps chromium
       - uses: actions/download-artifact@v8
         with:
           name: app-memory-build-${{ github.run_id }}-${{ github.run_attempt }}
@@ -176,3 +181,20 @@ jobs:
           path: ${{ runner.temp }}/app-memory-report.json
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/checkout@v7
+        if: always() && needs.changes.outputs.memory == 'true'
+        with:
+          ref: ${{ env.EXPECTED_SOURCE_SHA }}
+          path: .ci-metrics-source
+      - name: Summarize memory timing
+        if: always() && needs.changes.outputs.memory == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/memory-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" > "$RUNNER_TEMP/memory-jobs.json"
+          node .ci-metrics-source/scripts/ci-timings.mjs \
+            --run "$RUNNER_TEMP/memory-run.json" \
+            --jobs "$RUNNER_TEMP/memory-jobs.json" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --title "App memory timing"
