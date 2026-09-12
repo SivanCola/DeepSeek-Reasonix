@@ -154,9 +154,10 @@ test("browser matrix preserves five entry points and fails closed through deskto
   assert.equal(run({ CHANGES_RESULT: "success", SHOULD_RUN: "false", PREPARE_RESULT: "success", GROUP_RESULT: "skipped" }), 0);
 });
 
-test("Windows desktop Go reports compile-launch and package timing without a second test pass", () => {
+test("Windows desktop Go runs once without verbose JSON cache overhead", () => {
   const windowsGo = job(ci, "desktop-windows-go");
-  assert.equal(windowsGo.match(/go test -json \.\/\.\.\./g)?.length, 1);
-  assert.match(windowsGo, /node \.\.\/scripts\/go-test-timing\.mjs/);
+  assert.equal(windowsGo.match(/go test \.\/\.\.\./g)?.length, 1);
+  assert.doesNotMatch(windowsGo, /go test -json/);
+  assert.doesNotMatch(windowsGo, /go-test-timing/);
   assert.doesNotMatch(windowsGo, /go test -run ['"]?\^\$/);
 });

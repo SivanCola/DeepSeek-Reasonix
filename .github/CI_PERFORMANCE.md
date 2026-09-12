@@ -44,9 +44,10 @@ workflow wall time, recorded job queue time and the sum of runner execution.
 Frontend builds, dependency and browser installation, each browser group and
 each memory shard are listed separately. These measurements describe a single
 run; comparisons should use the same candidate and report the median and range
-of three runs so runner variance is visible. The Windows Desktop Go step also
-reports wall time, first and last package launch, aggregate package time and the
-five slowest packages from the same test pass.
+of three runs so runner variance is visible. The Windows Desktop Go step keeps
+native non-verbose output because Go's JSON mode made Windows spend several
+minutes finalizing verbose test-cache output; the central report records its
+step execution time from the Actions API without wrapping the test process.
 
 ## Memory screening
 
