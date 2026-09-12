@@ -228,16 +228,6 @@ func (c *Controller) resolveApprovalLocked(id string, allow bool, scope sandbox.
 	if id == "" {
 		return fmt.Errorf("empty approval id")
 	}
-	c.mu.Lock()
-	gate := c.recoveryGate
-	c.mu.Unlock()
-	if gate != nil && gate.HasApproval(id) {
-		action := agent.RecoveryActionRevise
-		if allow {
-			action = agent.RecoveryActionContinue
-		}
-		return c.resolveRecoveryLocked(id, action, "")
-	}
 	pending := c.approval.peek(id)
 	if pending.reply == nil {
 		return nil

@@ -12,7 +12,7 @@ import (
 func init() { tool.RegisterBuiltin(updateGoal{}) }
 
 // updateGoal records the model's structured per-turn goal disposition for the
-// active goal turn. Like complete_step it has no host side effects: the call
+// active goal turn. It has no host side effects: the call
 // only records candidate state, and the real FSM transition happens after the
 // turn ends, once cancellation and resource boundaries are checked. It is a host
 // workflow operation — it never requires write approval and grants no

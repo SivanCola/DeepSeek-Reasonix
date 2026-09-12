@@ -1297,7 +1297,7 @@ func TestSaveToRoundTrips(t *testing.T) {
 	}
 }
 
-func TestRecoveryReviewerSettingsRoundTripThroughUserSave(t *testing.T) {
+func TestRetiredRecoveryReviewerSettingsAreNotWrittenOnSave(t *testing.T) {
 	isolateUserConfigHome(t)
 	c := Default()
 	c.Agent.RecoveryModel = "deepseek-pro"
@@ -1308,8 +1308,8 @@ func TestRecoveryReviewerSettingsRoundTripThroughUserSave(t *testing.T) {
 		t.Fatalf("SaveTo: %v", err)
 	}
 	got := LoadForEdit(path)
-	if got.Agent.RecoveryModel != "deepseek-pro" || got.Agent.RecoveryTemperature != 0 {
-		t.Fatalf("agent recovery settings not preserved: %+v", got.Agent)
+	if got.Agent.RecoveryModel != "" || got.Agent.RecoveryTemperature != 0 {
+		t.Fatalf("retired recovery settings survived save: %+v", got.Agent)
 	}
 }
 
@@ -1333,8 +1333,8 @@ func TestRetiredAutoGuardKeysAreIgnoredAndRemovedOnSave(t *testing.T) {
 	if strings.Contains(text, "default_auto_recovery_checkpoint") || strings.Contains(text, "auto_recovery_checkpoint") {
 		t.Fatalf("retired Auto Guard keys survived save:\n%s", text)
 	}
-	if !strings.Contains(text, `recovery_model = "deepseek-pro"`) {
-		t.Fatalf("save removed unrelated recovery model:\n%s", text)
+	if strings.Contains(text, "recovery_model") {
+		t.Fatalf("retired recovery model survived save:\n%s", text)
 	}
 }
 

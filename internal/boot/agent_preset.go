@@ -56,7 +56,7 @@ func TokenModeFromAgentPreset(preset string) string {
 
 // CoreProviderToolNames is the stable top-level tool surface shared by every
 // Agent role setting under identical configuration. Host-control tools
-// (ask, update_goal, todo_write, complete_step) are appended when enabled.
+// (ask, update_goal, todo_write) are appended when enabled.
 func CoreProviderToolNames() []string {
 	return []string{
 		"bash",

@@ -33,17 +33,15 @@ type TodoItem struct {
 	StepID     string `json:"step_id,omitempty"`
 }
 
-// ValidateSerialTodos enforces the task-list state machine promised by
-// todo_write: at most one item in the whole list is in_progress, completed
-// work forms a serial prefix, and pending work follows the current item. The
-// rule is segment-aware for two-level lists: a level-0 phase owns the level-1
-// sub-steps after it, sub-steps complete in order while their phase stays
-// pending, and the phase becomes the single in_progress item only after every
-// sub-step has completed — the phase signs off last. A fully completed or
-// empty list is also valid.
+// ValidateSerialTodos validates only the public todo shape. Todo statuses are
+// model reports rather than host proof, so completed items need not form a
+// prefix and a non-empty list need not have a current item.
 func ValidateSerialTodos(todos []TodoItem) error {
 	ipSeen := false
 	for i, todo := range todos {
+		if todo.Level < 0 || todo.Level > 1 {
+			return fmt.Errorf("todo %d %q has invalid level %d", i+1, todo.Content, todo.Level)
+		}
 		switch todoStatus(todo.Status) {
 		case "completed", "pending":
 		case "in_progress":
@@ -57,49 +55,6 @@ func ValidateSerialTodos(todos []TodoItem) error {
 	}
 	if len(todos) > 0 && todos[0].Level == 1 {
 		return fmt.Errorf("todo 1 %q is a level-1 sub-step with no phase above it; add a level-0 phase header or use level 0", todos[0].Content)
-	}
-	seenCurrent := false
-	seenPending := false
-	for _, seg := range serialTodoSegments(todos) {
-		state, err := validateSerialSegment(todos, seg)
-		if err != nil {
-			return err
-		}
-		switch state {
-		case "completed":
-			if seenCurrent || seenPending {
-				return fmt.Errorf("todo %d %q is completed after unfinished work; serial task lists require completed items to form a prefix", seg.head+1, todos[seg.head].Content)
-			}
-		case "in_progress":
-			if seenPending {
-				ip := seg.head
-				for i := seg.head; i < seg.end; i++ {
-					if todoStatus(todos[i].Status) == "in_progress" {
-						ip = i
-						break
-					}
-				}
-				return fmt.Errorf("todo %d %q is in_progress after pending work; the current item must be the first unfinished item", ip+1, todos[ip].Content)
-			}
-			seenCurrent = true
-		case "pending":
-			seenPending = true
-		default: // stale: partially completed with no current item
-			if seenCurrent {
-				first := seg.head
-				for i := seg.head; i < seg.end; i++ {
-					if todoStatus(todos[i].Status) == "completed" {
-						first = i
-						break
-					}
-				}
-				return fmt.Errorf("todo %d %q is completed after unfinished work; serial task lists require completed items to form a prefix", first+1, todos[first].Content)
-			}
-			seenPending = true
-		}
-	}
-	if len(todos) > 0 && seenPending && !seenCurrent {
-		return fmt.Errorf("serial task list has pending work but no in_progress item")
 	}
 	return nil
 }
@@ -357,13 +312,12 @@ type DeliveryCheckpoint struct {
 	PendingMutation     bool   `json:"pendingMutation,omitempty"`
 }
 
-// Ledger stores the receipts available to complete_step for the current turn.
+// Ledger stores bounded execution facts for the current turn.
 type Ledger struct {
 	mu               sync.Mutex
 	receipts         []Receipt
 	nextSequence     uint64
 	backgroundLeases []BackgroundLease
-	ops              *OperationLedger
 }
 
 func NewLedger() *Ledger { return &Ledger{} }
@@ -378,7 +332,6 @@ func (l *Ledger) Reset() {
 	l.receipts = nil
 	l.nextSequence = 0
 	l.backgroundLeases = nil
-	l.ops.Reset()
 }
 
 // ResetBackgroundLeases starts a new run inside the same delivery scope. The

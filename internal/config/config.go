@@ -1263,8 +1263,8 @@ type AgentConfig struct {
 	VisionModel         string  `toml:"vision_model"`
 	GuardianModel       string  `toml:"guardian_model"`
 	GuardianTemperature float64 `toml:"guardian_temperature"`
-	// RecoveryModel names the optional recovery reviewer. Empty leaves
-	// rule-only recovery; it is not implied by guardian or the main model.
+	// RecoveryModel is decoded from old configurations for compatibility. The
+	// Auto Guard reviewer is retired, so runtime and renderers ignore it.
 	RecoveryModel string `toml:"recovery_model"`
 	// RecoveryTemperature is accepted from older configs but ignored. Auto
 	// Guard review is deterministic at temperature zero.

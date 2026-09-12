@@ -203,10 +203,6 @@
           "path": {
             "description": "File path",
             "type": "string"
-          },
-          "source_token": {
-            "description": "Optional: the source_token printed by the read_file that showed you this file. Citing it names the exact version you are editing, so a change made outside this session is caught instead of silently overwritten.",
-            "type": "string"
           }
         },
         "required": [
@@ -235,15 +231,15 @@
     },
     {
       "name": "read_file",
-      "description": "Read a text file with optional line offset/limit. Output prefixes each line with its 1-based number (e.g. `   42→...`) so subsequent edit_file calls can target exact lines. Use `offset` and `limit` to page through large files; the tool reports total length and pagination hints in a trailer. Set `intent` to state why you are reading: inspect (default, a bounded preview), range (an explicit window), or full (scan the whole file). Independent reads with no data dependency should be issued in the same round.",
+      "description": "Read one bounded text window with optional line offset/limit. Output prefixes each line with its 1-based number. Any successful window observes the current file version for later structured edits. Use the next-window hint to page only when more content is useful. Legacy intent and cursor fields are accepted as navigation hints and never create a whole-file completion requirement.",
       "parameters": {
         "properties": {
           "cursor": {
-            "description": "Continuation cursor returned by a previous read_file result. It names the exact next position; pass it back unchanged instead of computing an offset.",
+            "description": "Optional continuation cursor from a prior result. Invalid legacy cursors should be replaced with an explicit offset and limit.",
             "type": "string"
           },
           "intent": {
-            "description": "Why you are reading. inspect (default): a bounded preview; one page is a complete answer. range (default when offset or limit is given): an explicit window. full: scan the whole file, paging until every line has been delivered.",
+            "description": "Compatibility hint. Every value reads only this bounded window and creates no whole-file obligation.",
             "enum": [
               "inspect",
               "range",
@@ -274,7 +270,7 @@
     },
     {
       "name": "todo_write",
-      "description": "Record and update a structured task list for the current work. Send the COMPLETE list every call — it replaces the previous one. Use it to plan multi-step work and show progress: update item states to reflect actual progress. Skip it for trivial single-step tasks. The list is two-level: a `level` 0 item is a PHASE (a milestone) and the `level` 1 items after it are its concrete sub-steps; omit `level` (0) for a flat list. Each item has `content` (imperative, e.g. \"Add the parser\"), `status` (pending|in_progress|completed), `activeForm` (present-continuous shown while in progress, e.g. \"Adding the parser\"), optional `level` (0 phase | 1 sub-step), and `step_id` — an item's stable identity. COPY `step_id` VERBATIM for every item that already has one: it is how a completion stays attached to its step when you retitle it, insert a step above it, or reorder the list. Give a new item a fresh unique id (e.g. \"plan_step_07\"); never reuse or renumber an existing one.",
+      "description": "Record and update the model's structured task list. Send the complete list every call; it replaces the previous one. Status is model-reported and may be pending, in_progress, or completed. At most one item may be in progress. Optional level 0/1 preserves a two-level display hierarchy, and step_id remains the stable item identity across edits.",
       "parameters": {
         "properties": {
           "todos": {
@@ -477,10 +473,6 @@
           },
           "path": {
             "description": "File path",
-            "type": "string"
-          },
-          "source_token": {
-            "description": "Optional: the source_token printed by the read_file that showed you this file. Citing it names the exact version you are editing, so a change made outside this session is caught instead of silently overwritten.",
             "type": "string"
           }
         },

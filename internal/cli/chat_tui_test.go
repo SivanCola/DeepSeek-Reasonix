@@ -1134,30 +1134,23 @@ func TestApprovalChoicesPreserveDecisionSemantics(t *testing.T) {
 		})
 	}
 
-	grantable := approvalChoices(&event.Approval{
+	retired := approvalChoices(&event.Approval{
 		Kind: "recovery", Recovery: &event.RecoveryApproval{CanGrantTask: true},
 	})
-	wantGrantable := []approvalChoice{{allow: true}, {allow: true, allowForSession: true}, {}}
-	if len(grantable) != len(wantGrantable) {
-		t.Fatalf("grantable recovery choices = %d, want %d", len(grantable), len(wantGrantable))
-	}
-	for i := range grantable {
-		grantable[i].label = ""
-		if grantable[i] != wantGrantable[i] {
-			t.Fatalf("grantable recovery choice %d = %+v, want %+v", i, grantable[i], wantGrantable[i])
-		}
+	if len(retired) != 0 {
+		t.Fatalf("retired recovery choices = %+v, want none", retired)
 	}
 	labels := approvalChoiceLabels(&event.Approval{Kind: "recovery", Recovery: &event.RecoveryApproval{
 		CanGrantTask: true, TaskGrantScope: "git push origin → feature",
 	}})
-	if len(labels) != 3 || !strings.Contains(labels[1], "git push origin → feature") {
-		t.Fatalf("grantable recovery labels = %v", labels)
+	if len(labels) != 0 {
+		t.Fatalf("retired recovery labels = %v, want none", labels)
 	}
 	planLabels := approvalChoiceLabels(&event.Approval{Kind: "recovery", Recovery: &event.RecoveryApproval{
 		ChangeKind: "strategy",
 	}})
-	if len(planLabels) != 2 || planLabels[0] != "Adopt the new plan and continue" || planLabels[1] != "Do not adopt; let Auto adjust" {
-		t.Fatalf("plan-change recovery labels = %v", planLabels)
+	if len(planLabels) != 0 {
+		t.Fatalf("retired plan-change recovery labels = %v, want none", planLabels)
 	}
 	planApprovalLabels := approvalChoiceLabels(&event.Approval{Tool: planApprovalTool})
 	if len(planApprovalLabels) != 3 || planApprovalLabels[0] != "Start execution" ||
@@ -1212,7 +1205,7 @@ func TestPlanApprovalBannerShowsThreeExplicitActions(t *testing.T) {
 	}
 }
 
-func TestPlanChangeApprovalBannerUsesNeutralCopyAndShowsPlans(t *testing.T) {
+func TestRetiredRecoveryApprovalBannerHasNoActions(t *testing.T) {
 	m := newTestChatTUI()
 	m.width = 120
 	m.pendingApproval = &event.Approval{
@@ -1222,14 +1215,19 @@ func TestPlanChangeApprovalBannerUsesNeutralCopyAndShowsPlans(t *testing.T) {
 		},
 	}
 	banner := ansi.Strip(m.renderApprovalBanner())
-	for _, want := range []string{"The execution plan needs your decision", "Previous plan: 1. Keep API", "Proposed plan: 1. Replace API"} {
+	for _, want := range []string{"Historical recovery record (retired)", "cannot confirm or replay", "Esc/n dismiss"} {
 		if !strings.Contains(banner, want) {
-			t.Fatalf("plan-change banner missing %q:\n%s", want, banner)
+			t.Fatalf("retired recovery banner missing %q:\n%s", want, banner)
+		}
+	}
+	for _, forbidden := range []string{"Adopt", "continue", "retry", "grant"} {
+		if strings.Contains(strings.ToLower(banner), strings.ToLower(forbidden)) {
+			t.Fatalf("retired recovery banner exposes %q action:\n%s", forbidden, banner)
 		}
 	}
 }
 
-func TestPlanChangeApprovalStartsWithoutSelection(t *testing.T) {
+func TestRetiredRecoveryApprovalOnlyDismissesLocally(t *testing.T) {
 	m := newTestChatTUI()
 	m.ingestEvent(event.Event{
 		Kind: event.ApprovalRequest,
@@ -1238,23 +1236,20 @@ func TestPlanChangeApprovalStartsWithoutSelection(t *testing.T) {
 			Recovery: &event.RecoveryApproval{ChangeKind: "strategy"},
 		},
 	})
-	if m.approvalSelection != -1 {
-		t.Fatalf("plan approval selection = %d, want no default", m.approvalSelection)
-	}
 	banner := ansi.Strip(m.renderApprovalBanner())
-	if strings.Contains(banner, "❯ 1.") || strings.Contains(banner, "❯ 2.") {
-		t.Fatalf("plan approval banner preselected a choice:\n%s", banner)
+	if strings.Contains(banner, "1.") || strings.Contains(banner, "2.") {
+		t.Fatalf("retired recovery banner exposes choices:\n%s", banner)
 	}
 
 	next, _ := m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(chatTUI)
 	if m.pendingApproval == nil {
-		t.Fatal("Enter without a selection resolved the plan decision")
+		t.Fatal("Enter dismissed a retired recovery record")
 	}
-	next, _ = m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyDown})
+	next, _ = m.handleApprovalKey(tea.KeyPressMsg{Code: tea.KeyEscape})
 	m = next.(chatTUI)
-	if m.approvalSelection != 0 {
-		t.Fatalf("first navigation selected %d, want first choice", m.approvalSelection)
+	if m.pendingApproval != nil {
+		t.Fatal("Escape did not dismiss the retired recovery record")
 	}
 }
 

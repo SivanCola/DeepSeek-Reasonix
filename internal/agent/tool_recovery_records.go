@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -16,8 +15,6 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
-
-var ErrToolRecoveryRequired = errors.New("recovery_required: an external tool effect has not been confirmed")
 
 func recoveryDigest(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
 
@@ -90,8 +87,8 @@ func (a *Agent) beginToolRecovery(ctx context.Context, p *toolCallPlan) error {
 	if open, ok := a.sess.conversation.OpenTurn(); ok {
 		identity.TurnID = open.TurnID
 	}
-	// Unknown resource scopes intentionally cover the session. No guessed path
-	// or model-provided scope may weaken the unresolved-effect barrier.
+	// Keep a stable scope for historical display and idempotency diagnostics.
+	// Resource scopes do not restrict later tool admission.
 	identity.ResourceScope = "session:" + identity.SessionID
 	if verifier, ok := p.runTool.(tool.EffectVerifier); ok {
 		identity.ResourceScope = verifier.RecoveryScope()
@@ -142,8 +139,9 @@ func unresolvedToolRecord(r provider.ToolCallRecord) bool {
 	return r.State == provider.ToolRunStarted || r.State == provider.ToolRunRunning || r.State == provider.ToolRunUnknown || (r.State == provider.ToolRunFailed && !r.ReadOnly && r.EffectSummary == "effect_unknown")
 }
 
-// Rewriting model history cannot erase evidence of an unresolved external
-// effect. A local-only receipt survives compaction/rewind on the same session.
+// Rewriting model history cannot erase an unresolved external-effect fact. A
+// local-only record survives compaction/rewind on the same session, but does
+// not restrict later tool admission.
 func retainUnresolvedToolRecords(previous, next []provider.Message) []provider.Message {
 	seen := map[string]bool{}
 	for _, m := range next {

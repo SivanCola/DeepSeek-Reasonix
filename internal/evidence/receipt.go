@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+// Receipt kinds classify observed execution facts for display and reporting.
+// They do not authorize, settle, or block later operations.
+const (
+	ReceiptKindRead         = "read"
+	ReceiptKindMutation     = "mutation"
+	ReceiptKindVerification = "verification"
+	ReceiptKindReview       = "review"
+	ReceiptKindCommand      = "command"
+)
+
 // Receipt is the host-runtime record of one tool call. It stays in memory for
 // the current agent turn and is not serialized into prompts or session state.
 type Receipt struct {

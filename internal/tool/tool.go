@@ -103,9 +103,7 @@ type ImageTool interface {
 
 // PlanModeClassifier is an optional capability a Tool may implement to declare
 // its stance on running during the planning phase. It is deliberately distinct
-// from ReadOnly(): a tool can be side-effect-free yet belong only to the
-// post-approval execution phase (complete_step reports ReadOnly()==true but must
-// not run while planning), or be a delegation that is safe only in a read-only
+// from ReadOnly(): a tool can be a delegation that is safe only in a read-only
 // variant (read_only_task). A false result is an explicit phase opt-out; tools
 // without this interface continue to the ordinary Permissions/Sandbox path.
 type PlanModeClassifier interface {
@@ -277,6 +275,9 @@ func RegisterBuiltin(t Tool) {
 func Builtins() []Tool {
 	names := make([]string, 0, len(builtins))
 	for n := range builtins {
+		if n == "complete_step" || n == "session_read_strategy_receipt" {
+			continue
+		}
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -289,6 +290,9 @@ func Builtins() []Tool {
 
 // LookupBuiltin returns a registered built-in by name.
 func LookupBuiltin(name string) (Tool, bool) {
+	if name == "complete_step" || name == "session_read_strategy_receipt" {
+		return nil, false
+	}
 	t, ok := builtins[name]
 	return t, ok
 }

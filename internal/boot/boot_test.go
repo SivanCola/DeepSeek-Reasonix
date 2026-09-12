@@ -2623,7 +2623,6 @@ func TestAddBuiltinsWithWorkspaceRootKeepsSessionTools(t *testing.T) {
 	addBuiltins(reg, nil, []string{robustTempDir(t)}, nil, sandbox.Spec{}, 120*time.Second, builtin.SearchSpec{}, &stderr, robustTempDir(t), netclient.ProxySpec{}, nil, nil, builtin.SessionDataGuard{}, builtin.ManagedConfigPaths{}, nil, nil, nil, nil)
 	for _, name := range []string{
 		"todo_write",
-		"complete_step",
 		"bash_output",
 		"kill_shell",
 		"wait",

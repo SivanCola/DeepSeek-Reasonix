@@ -73,7 +73,6 @@ func preflightRoleReasoning(cfg *config.Config, opts Options, resolver provider.
 		{role: "planner", ref: effectivePlannerModel(cfg, opts)},
 		{role: "vision", ref: explicitVisionModel(cfg), optional: true},
 		{role: "guardian", ref: cfg.Agent.GuardianModel},
-		{role: "recovery", ref: cfg.Agent.RecoveryModel},
 	}
 	subagentModel := strings.TrimSpace(cfg.Agent.SubagentModel)
 	if subagentModel == "" {

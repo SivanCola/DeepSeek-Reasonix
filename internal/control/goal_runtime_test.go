@@ -554,16 +554,13 @@ func (f minimalFakeTool) Execute(context.Context, json.RawMessage) (string, erro
 	return f.name + " done", nil
 }
 
-// TestGoalDeliveryWorkflowCompletesAfterVerifiedSignoff covers the
-// Goal + closed-loop evidence combination: the model works (edit → verify →
-// review → complete_step), reports complete via update_goal, and the goal
-// completes — no user-facing recovery card.
-func TestGoalDeliveryWorkflowCompletesAfterVerifiedSignoff(t *testing.T) {
+// TestGoalDeliveryWorkflowCompletesFromModelReport covers the simplified Goal
+// contract: tools provide execution facts and update_goal carries the model's
+// structured completion report. No proof tool or recovery card is required.
+func TestGoalDeliveryWorkflowCompletesFromModelReport(t *testing.T) {
 	todoWrite, _ := tool.LookupBuiltin("todo_write")
-	completeStep, _ := tool.LookupBuiltin("complete_step")
 	reg := goalRegistry()
 	reg.Add(todoWrite)
-	reg.Add(completeStep)
 	reg.Add(minimalFakeTool{name: "write_file"})
 	reg.Add(minimalFakeTool{name: "read_file", readOnly: true})
 	reg.Add(minimalFakeTool{name: "bash"})
@@ -574,7 +571,6 @@ func TestGoalDeliveryWorkflowCompletesAfterVerifiedSignoff(t *testing.T) {
 			{toolCallChunk("w1", "write_file", `{"path":"main.go"}`), {Type: provider.ChunkDone}},
 			{toolCallChunk("rv", "read_file", `{"path":"main.go"}`), {Type: provider.ChunkDone}},
 			{toolCallChunk("vf", "bash", `{"command":"go test ./..."}`), {Type: provider.ChunkDone}},
-			{toolCallChunk("sg", "complete_step", `{"step":"Ship main","result":"implemented","evidence":[{"kind":"verification","summary":"tests pass","command":"go test ./..."}]}`), {Type: provider.ChunkDone}},
 			{toolCallChunk("ug", "update_goal", `{"status":"complete","reason":""}`), {Type: provider.ChunkDone}},
 			textTurn("Ship main delivered."),
 		},

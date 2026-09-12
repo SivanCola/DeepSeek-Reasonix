@@ -135,7 +135,4 @@ func TestRetiredDeliverySettingEndsOrdinaryTurnWithoutRecoveryPause(t *testing.T
 	if got := syntheticUserTurnCount(c.executor.Session().Snapshot()); got != 0 {
 		t.Fatalf("synthetic user turns = %d, want zero before explicit recovery", got)
 	}
-	if c.executor.PrepareFinalReadinessRecovery() {
-		t.Fatal("retired delivery setting created recovery state")
-	}
 }

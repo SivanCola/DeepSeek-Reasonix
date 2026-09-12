@@ -14,9 +14,8 @@ func init() { tool.RegisterBuiltin(todoWrite{}) }
 
 // todoWrite records the agent's running task list. It has no host side effects —
 // the full list lives in the call's args (the model re-sends it whole on every
-// update), which a frontend renders as a checklist. Execute validates serial
-// shape and stable identities, then acks with a count. Progress is not a
-// delivery receipt: complete_step remains the optional evidence sign-off.
+// update), which a frontend renders as a checklist. Execute validates the
+// public shape and stable identities, then acks with a count.
 type todoWrite struct{}
 
 type todoItem struct {
@@ -30,7 +29,7 @@ type todoItem struct {
 func (todoWrite) Name() string { return "todo_write" }
 
 func (todoWrite) Description() string {
-	return "Record and update a structured task list for the current work. Send the COMPLETE list every call — it replaces the previous one. Use it to plan multi-step work and show progress: update item states to reflect actual progress. Skip it for trivial single-step tasks. The list is two-level: a `level` 0 item is a PHASE (a milestone) and the `level` 1 items after it are its concrete sub-steps; omit `level` (0) for a flat list. Each item has `content` (imperative, e.g. \"Add the parser\"), `status` (pending|in_progress|completed), `activeForm` (present-continuous shown while in progress, e.g. \"Adding the parser\"), optional `level` (0 phase | 1 sub-step), and `step_id` — an item's stable identity. COPY `step_id` VERBATIM for every item that already has one: it is how a completion stays attached to its step when you retitle it, insert a step above it, or reorder the list. Give a new item a fresh unique id (e.g. \"plan_step_07\"); never reuse or renumber an existing one."
+	return "Record and update the model's structured task list. Send the complete list every call; it replaces the previous one. Status is model-reported and may be pending, in_progress, or completed. At most one item may be in progress. Optional level 0/1 preserves a two-level display hierarchy, and step_id remains the stable item identity across edits."
 }
 
 func (todoWrite) Schema() json.RawMessage {

@@ -33,32 +33,17 @@ func (c *Controller) RunFinalReadinessRecovery(ctx context.Context, input string
 	return c.RunFinalReadinessRecoveryWithAdmission(ctx, input, nil)
 }
 
-// RunFinalReadinessRecoveryWithAdmission runs the recovery after the controller
-// has admitted the request and consumed a valid one-shot checkpoint. Hosts that
-// publish turn lifecycle state use the callback to avoid announcing a turn for
-// a stale recovery request.
+// RunFinalReadinessRecoveryWithAdmission is a retired compatibility action. Old
+// history stays readable, but no checkpoint can authorize or replay work.
 func (c *Controller) RunFinalReadinessRecoveryWithAdmission(ctx context.Context, input string, onAdmitted func()) error {
-	return c.runSynchronousTurn(ctx, nil, func(runCtx context.Context) error {
-		if c.executor == nil {
-			return ErrNoFinalReadinessRecovery
-		}
-		c.executor.PrepareFinalReadinessRecovery()
-		if onAdmitted != nil {
-			onAdmitted()
-		}
-		return c.runTurn(runCtx, input)
-	})
+	return ErrNoFinalReadinessRecovery
 }
 
-// SubmitFinalReadinessRecovery preserves the immediately preceding exhausted
-// ledger for one explicit asynchronous continuation.
+// SubmitFinalReadinessRecovery retains the asynchronous symbol for old clients
+// and emits the stable retirement error through the ordinary turn path.
 func (c *Controller) SubmitFinalReadinessRecovery(display, input string) {
 	c.runGuarded(func(ctx context.Context) error {
-		if c.executor == nil {
-			return ErrNoFinalReadinessRecovery
-		}
-		c.executor.PrepareFinalReadinessRecovery()
-		return c.runGoalLoopWithRawDisplay(ctx, input, input, display)
+		return ErrNoFinalReadinessRecovery
 	})
 }
 

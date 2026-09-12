@@ -1626,11 +1626,9 @@ func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string
 
 	body := string(raw)
 	isNew := body == ""
-
 	if isNew {
 		return writeConfigFileResolved(resolvedPath, RenderTOMLForScope(c, RenderScopeProject), configFilePerm(logicalPath))
 	}
-
 	delta := RenderTOMLProjectDelta(c)
 	if tomlBodyHasTopLevelKey(body, "config_version") && !tomlBodyHasTopLevelKey(delta, "config_version") {
 		delta = fmt.Sprintf("config_version = %d\n", configVersion(c)) + delta
@@ -1640,12 +1638,13 @@ func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string
 	removeSkills := projectSkillsKeysToRemove(body, c)
 	_, hasLegacyDesktopAutoGuard := tomlSectionKeyValue(body, "desktop", "default_auto_recovery_checkpoint")
 	_, hasRetiredAgentAutoGuard := tomlSectionKeyValue(body, "agent", "auto_recovery_checkpoint")
-	removeRetiredAutoGuard := hasLegacyDesktopAutoGuard || hasRetiredAgentAutoGuard
+	_, hasRetiredRecoveryModel := tomlSectionKeyValue(body, "agent", "recovery_model")
+	_, hasRetiredRecoveryTemperature := tomlSectionKeyValue(body, "agent", "recovery_temperature")
+	removeRetiredAutoGuard := hasLegacyDesktopAutoGuard || hasRetiredAgentAutoGuard || hasRetiredRecoveryModel || hasRetiredRecoveryTemperature
 	writeProviderAccess := c.Desktop.ProviderAccess != nil
 	if strings.TrimSpace(delta) == "" && !removePlugins && !removeSandboxBash && !removeSkills && !removeRetiredAutoGuard && !writeProviderAccess {
 		return nil // no changes to write
 	}
-
 	// Parse delta into section blocks and merge each into body
 	if strings.TrimSpace(delta) != "" {
 		body = mergeTOMLDelta(body, delta)
@@ -1662,6 +1661,7 @@ func (c *Config) saveProjectIncrementalResolved(logicalPath, resolvedPath string
 	if removeRetiredAutoGuard {
 		body = removeTOMLSectionKey(body, "desktop", "default_auto_recovery_checkpoint")
 		body = removeTOMLSectionKey(body, "agent", "auto_recovery_checkpoint")
+		body = removeTOMLSectionKey(removeTOMLSectionKey(body, "agent", "recovery_model"), "agent", "recovery_temperature")
 	}
 	if writeProviderAccess {
 		body = upsertTOMLSectionKey(body, "desktop", "provider_access", "provider_access = "+renderStringArray(c.Desktop.ProviderAccess))

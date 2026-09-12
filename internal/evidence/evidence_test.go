@@ -591,49 +591,21 @@ func TestLedgerNoBaselineDoesNotConstrainCompletedTodos(t *testing.T) {
 	}
 }
 
-func TestValidateSerialTodosRejectsInvalidOrdering(t *testing.T) {
-	tests := []struct {
-		name  string
-		todos []TodoItem
-		want  string
-	}{
-		{
-			name: "completed after current",
-			todos: []TodoItem{
-				{Content: "first", Status: "in_progress"},
-				{Content: "second", Status: "completed"},
-			},
-			want: "completed after unfinished",
-		},
-		{
-			name: "multiple current items",
-			todos: []TodoItem{
-				{Content: "first", Status: "in_progress"},
-				{Content: "second", Status: "in_progress"},
-			},
-			want: "second in_progress",
-		},
-		{
-			name:  "pending without current",
-			todos: []TodoItem{{Content: "first", Status: "pending"}},
-			want:  "no in_progress",
-		},
+func TestValidateSerialTodosAllowsModelReportedOrdering(t *testing.T) {
+	for _, todos := range [][]TodoItem{
+		{{Content: "first", Status: "in_progress"}, {Content: "second", Status: "completed"}},
+		{{Content: "first", Status: "pending"}},
+		{{Content: "done", Status: "completed"}, {Content: "current", Status: "in_progress"}, {Content: "later", Status: "pending"}},
+	} {
+		if err := ValidateSerialTodos(todos); err != nil {
+			t.Fatalf("model-reported todo ordering rejected: %v", err)
+		}
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := ValidateSerialTodos(tc.todos); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("ValidateSerialTodos() error = %v, want %q", err, tc.want)
-			}
-		})
-	}
-
-	valid := []TodoItem{
-		{Content: "done", Status: "completed"},
-		{Content: "current", Status: "in_progress"},
-		{Content: "later", Status: "pending"},
-	}
-	if err := ValidateSerialTodos(valid); err != nil {
-		t.Fatalf("valid serial list rejected: %v", err)
+	if err := ValidateSerialTodos([]TodoItem{
+		{Content: "first", Status: "in_progress"},
+		{Content: "second", Status: "in_progress"},
+	}); err == nil || !strings.Contains(err.Error(), "second in_progress") {
+		t.Fatalf("multiple current items error = %v", err)
 	}
 }
 
@@ -702,28 +674,21 @@ func TestValidateSerialTodosAcceptsPhaseChains(t *testing.T) {
 	}
 }
 
-func TestValidateSerialTodosRejectsInvalidPhaseChains(t *testing.T) {
+func TestValidateSerialTodosOnlyRejectsInvalidPhaseShape(t *testing.T) {
+	for _, todos := range [][]TodoItem{
+		{{Content: "Phase", Status: "completed"}, {Content: "sub one", Status: "in_progress", Level: 1}},
+		{{Content: "Phase", Status: "in_progress"}, {Content: "sub one", Status: "pending", Level: 1}},
+		{{Content: "Phase", Status: "pending"}, {Content: "sub one", Status: "in_progress", Level: 1}, {Content: "Second", Status: "completed"}},
+	} {
+		if err := ValidateSerialTodos(todos); err != nil {
+			t.Fatalf("model-reported phase status rejected: %v", err)
+		}
+	}
 	tests := []struct {
 		name  string
 		todos []TodoItem
 		want  string
 	}{
-		{
-			name: "phase completed before its sub-steps",
-			todos: []TodoItem{
-				{Content: "Phase", Status: "completed"},
-				{Content: "sub one", Status: "in_progress", Level: 1},
-			},
-			want: "sub-step 2 \"sub one\" is unfinished",
-		},
-		{
-			name: "phase in_progress while sub-steps are unfinished",
-			todos: []TodoItem{
-				{Content: "Phase", Status: "in_progress"},
-				{Content: "sub one", Status: "pending", Level: 1},
-			},
-			want: "cannot be in_progress while sub-step 2",
-		},
 		{
 			name: "phase and sub-step both in_progress",
 			todos: []TodoItem{
@@ -739,27 +704,6 @@ func TestValidateSerialTodosRejectsInvalidPhaseChains(t *testing.T) {
 				{Content: "Next", Status: "pending"},
 			},
 			want: "no phase above it",
-		},
-		{
-			name: "completed segment after the current chain",
-			todos: []TodoItem{
-				{Content: "Phase", Status: "pending"},
-				{Content: "sub one", Status: "in_progress", Level: 1},
-				{Content: "Second phase", Status: "completed"},
-				{Content: "sub two", Status: "completed", Level: 1},
-			},
-			want: "completed after unfinished",
-		},
-		{
-			name: "stale sub-step progress before the current item",
-			todos: []TodoItem{
-				{Content: "Phase", Status: "pending"},
-				{Content: "sub one", Status: "completed", Level: 1},
-				{Content: "sub two", Status: "pending", Level: 1},
-				{Content: "Second phase", Status: "pending"},
-				{Content: "sub three", Status: "in_progress", Level: 1},
-			},
-			want: "in_progress after pending work",
 		},
 	}
 	for _, tc := range tests {

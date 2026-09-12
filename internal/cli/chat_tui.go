@@ -3135,21 +3135,17 @@ const planApprovalTool = "exit_plan_mode"
 // (planApprovalTool), starting execution or explicitly exiting without execution
 // drops the local [plan] tag and turns plan mode off on the controller.
 func (m chatTUI) handleApprovalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if isRecoveryApprovalEvent(m.pendingApproval) {
+		// Historical recovery requests are display-only. Escape and n dismiss the
+		// compatibility record locally; no recovery RPC or tool replay is issued.
+		if msg.String() == "esc" || strings.EqualFold(msg.String(), "n") {
+			m.pendingApproval = nil
+		}
+		return m, nil
+	}
 	choices := approvalChoices(m.pendingApproval)
 	answer := func(choice approvalChoice) (tea.Model, tea.Cmd) {
 		allow, session, persist := choice.allow, choice.allowForSession, choice.persistToConfig
-		if isRecoveryApprovalEvent(m.pendingApproval) {
-			action := agent.RecoveryActionRevise
-			if allow {
-				action = agent.RecoveryActionContinue
-				if session {
-					action = agent.RecoveryActionContinueTask
-				}
-			}
-			_ = m.ctrl.ResolveRecovery(m.pendingApproval.ID, action, "")
-			m.pendingApproval = nil
-			return m, nil
-		}
 		if m.pendingApproval.Tool == planApprovalTool && (allow || choice.exitPlan) {
 			m.planMode = false
 			m.ctrl.SetPlanMode(false)
@@ -3719,6 +3715,9 @@ func (m chatTUI) renderApprovalBanner() string {
 	w := max(m.width, 10)
 	if m.pendingApproval == nil {
 		return ""
+	}
+	if isRecoveryApprovalEvent(m.pendingApproval) {
+		return choicePanelStyle.Width(w).Render("ℹ Historical recovery record (retired). It cannot confirm or replay an operation.\n" + dim("Esc/n dismiss"))
 	}
 	var text string
 	var planDetails []string

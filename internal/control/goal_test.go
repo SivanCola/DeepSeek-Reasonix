@@ -581,24 +581,13 @@ func TestGoalCompletesWithoutChangingIncompleteTodos(t *testing.T) {
 	if !ok {
 		t.Fatal("todo_write builtin not registered")
 	}
-	completeStep, ok := tool.LookupBuiltin("complete_step")
-	if !ok {
-		t.Fatal("complete_step builtin not registered")
-	}
 	reg := goalRegistry()
 	reg.Add(todoWrite)
-	reg.Add(completeStep)
 	completeTurn := [][]provider.Chunk{
 		{toolCallChunk("ug1", "update_goal", `{"status":"complete","reason":""}`), {Type: provider.ChunkDone}},
 		textTurn("All done."),
 	}
-	fixedTurn := [][]provider.Chunk{
-		{toolCallChunk("cs1", "complete_step", `{"step":"Fix the parser","result":"fixed","evidence":[{"kind":"manual","summary":"verified by inspection"}]}`), {Type: provider.ChunkDone}},
-		{toolCallChunk("t1", "todo_write", `{"todos":[{"content":"Fix the parser","status":"completed"}]}`), {Type: provider.ChunkDone}},
-		{toolCallChunk("ug2", "update_goal", `{"status":"complete","reason":""}`), {Type: provider.ChunkDone}},
-		textTurn("All done now."),
-	}
-	prov := &scriptedTurns{turns: flattenTurns(completeTurn, fixedTurn)}
+	prov := &scriptedTurns{turns: flattenTurns(completeTurn)}
 	ag := agent.New(prov, reg, agent.NewSession(""), agent.Options{}, event.Discard)
 	// Seed incomplete todos before starting.
 	ag.SeedTodoState([]evidence.TodoItem{
@@ -701,26 +690,17 @@ func TestGoalAdvanceResultCannotCrossGoalLifecycle(t *testing.T) {
 	})
 }
 
-// TestGoalCompletionRequiresAllTodosDone verifies that a goal with seeded
-// incomplete canonical todos cannot complete until the model marks them done;
-// the completing turn force-completes any stragglers via a synthetic todo_write
-// so the frontend panel reflects the final state.
-func TestGoalCompletionRequiresAllTodosDone(t *testing.T) {
+// TestGoalCompletionPreservesExplicitTodoUpdates verifies that the model may
+// update todo presentation before submitting its independent Goal report.
+func TestGoalCompletionPreservesExplicitTodoUpdates(t *testing.T) {
 	todoWrite, ok := tool.LookupBuiltin("todo_write")
 	if !ok {
 		t.Fatal("todo_write builtin not registered")
 	}
-	completeStep, ok := tool.LookupBuiltin("complete_step")
-	if !ok {
-		t.Fatal("complete_step builtin not registered")
-	}
 	reg := goalRegistry()
 	reg.Add(todoWrite)
-	reg.Add(completeStep)
 	prov := &scriptedTurns{turns: flattenTurns(
 		[][]provider.Chunk{
-			{toolCallChunk("cs1", "complete_step", `{"step":"Step 1","result":"done","evidence":[{"kind":"manual","summary":"verified"}]}`), {Type: provider.ChunkDone}},
-			{toolCallChunk("cs2", "complete_step", `{"step":"Step 2","result":"done","evidence":[{"kind":"manual","summary":"verified"}]}`), {Type: provider.ChunkDone}},
 			{toolCallChunk("t1", "todo_write", `{"todos":[{"content":"Step 1","status":"completed"},{"content":"Step 2","status":"completed"}]}`), {Type: provider.ChunkDone}},
 			{toolCallChunk("ug1", "update_goal", `{"status":"complete","reason":""}`), {Type: provider.ChunkDone}},
 			textTurn("All done."),
