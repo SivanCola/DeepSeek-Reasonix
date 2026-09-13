@@ -226,13 +226,12 @@ func (p *FilesystemPersistence) sessionDir(id string, mustExist bool) (string, e
 		return "", err
 	}
 	defer root.Close()
-	dir := filepath.Join(p.Root, id)
 	// Root.Lstat rejects traversal and follows the platform's reparse-point
 	// boundary rules. The single-segment validation above also keeps lock and
 	// cache names portable on Windows.
 	info, err := root.Lstat(id)
 	if os.IsNotExist(err) && !mustExist {
-		return dir, nil
+		return filepath.Join(p.Root, id), nil
 	}
 	if os.IsNotExist(err) {
 		return "", fmt.Errorf("%w: %s", ErrSessionNotFound, id)
@@ -242,6 +241,18 @@ func (p *FilesystemPersistence) sessionDir(id string, mustExist bool) (string, e
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return "", fmt.Errorf("sessionv3: session identity %q is not a confined directory", id)
+	}
+	// Resolve the physical path through the rooted handle instead of returning
+	// a path assembled from the protocol value. Besides keeping the capability
+	// boundary explicit, this prevents a validated identifier from remaining a
+	// tainted path throughout the storage stack.
+	child, err := root.OpenRoot(id)
+	if err != nil {
+		return "", err
+	}
+	dir := child.Name()
+	if err := child.Close(); err != nil {
+		return "", err
 	}
 	return dir, nil
 }
