@@ -161,6 +161,11 @@ func (c *Controller) compose(text, source string, includeHookContext bool) strin
 			} else {
 				goalStatus = GoalStatusStopped
 			}
+			if includeHookContext {
+				if recovery, recoveryErr := goaldomain.RecoveryPrompt(*view); recoveryErr == nil {
+					text = recovery + "\n\n" + text
+				}
+			}
 		} else {
 			goal, goalStatus = "", GoalStatusStopped
 		}

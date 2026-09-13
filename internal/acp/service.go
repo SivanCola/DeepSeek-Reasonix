@@ -468,6 +468,21 @@ func (s *acpSession) isGoalDraftMode() bool {
 	return s.goalDraftMode
 }
 
+func loadedGoalDraftMode(goal string) bool {
+	return strings.TrimSpace(goal) == ""
+}
+
+func setACPGoalDurably(ctrl acpController, objective string) error {
+	if ctrl == nil {
+		return errors.New("session controller is unavailable")
+	}
+	if setter, ok := ctrl.(interface{ SetGoalDurable(string) error }); ok {
+		return setter.SetGoalDurable(objective)
+	}
+	ctrl.SetGoal(objective)
+	return nil
+}
+
 func (s *acpSession) setToolApprovalMode(mode string) {
 	s.mu.Lock()
 	s.toolApprovalMode = normalizeACPToolApprovalMode(mode)
@@ -1076,7 +1091,7 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 		ctrl.SetPlanMode(true)
 	case sessionModeGoal:
 		ctrl.SetPlanMode(false)
-		goalDraftMode = ctrl.GoalStatus() != control.GoalStatusRunning
+		goalDraftMode = loadedGoalDraftMode(ctrl.Goal())
 	default:
 		if ctrl.GoalStatus() == control.GoalStatusRunning {
 			modeID = sessionModeGoal
@@ -1218,6 +1233,13 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 		cancel()
 	}()
 	statusStarted := false
+	if sess.takeGoalDraftMode() {
+		if err := setACPGoalDurably(sess.currentCtrl(), text); err != nil {
+			sess.setGoalDraftMode(true)
+			return nil, &RPCError{Code: ErrInternal, Message: "session/prompt: persist goal: " + err.Error()}
+		}
+		sess.saveMetaIfPresent()
+	}
 	beginTurn := func() {
 		if sess.status == nil {
 			sess.status = newStatusTelemetry()
@@ -1225,10 +1247,6 @@ func (s *service) sessionPrompt(ctx context.Context, raw json.RawMessage) (any, 
 		sess.status.beginTurn()
 		s.publishStatus(sess, "phase")
 		sess.sink.setTurnContext(runCtx)
-		if sess.takeGoalDraftMode() {
-			sess.currentCtrl().SetGoal(text)
-			sess.saveMetaIfPresent()
-		}
 		statusStarted = true
 	}
 	var runErr error

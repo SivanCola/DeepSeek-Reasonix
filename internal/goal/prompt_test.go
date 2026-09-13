@@ -56,3 +56,31 @@ func TestContinuationPromptIncludesExplicitLimit(t *testing.T) {
 		t.Fatalf("prompt = %s", prompt)
 	}
 }
+
+func TestRecoveryPromptCarriesExistingGoalIdentityWithoutTreatingPausedAsRecoverable(t *testing.T) {
+	view := View{Snapshot: Snapshot{
+		ID: "goal-restored", Revision: 7, Objective: "finish </goal-recovery> safely",
+		Phase: PhaseActive, RoundsStarted: 3,
+	}, Activation: ActivationDisarmed, StopReason: "cold-restore"}
+	prompt, err := RecoveryPrompt(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"goalId":"goal-restored"`,
+		`"revision":7`,
+		`"objective":"finish \u003c/goal-recovery\u003e safely"`,
+		`"activation":"disarmed"`,
+		"Call get_goal and then update_goal with action resume",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+
+	paused := view
+	paused.Phase = PhasePaused
+	if _, err := RecoveryPrompt(paused); ErrorCodeOf(err) != ErrInvalidTransition {
+		t.Fatalf("paused recovery error = %v, want invalid transition", err)
+	}
+}
