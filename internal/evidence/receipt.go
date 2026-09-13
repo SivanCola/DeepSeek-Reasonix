@@ -79,11 +79,6 @@ type ReceiptRef struct {
 	Summary string `json:"summary,omitempty"`
 }
 
-func (r ReceiptRef) clone() ReceiptRef {
-	r.Paths = append([]string(nil), r.Paths...)
-	return r
-}
-
 // Ref projects the receipt into its citable form.
 func (r Receipt) Ref() ReceiptRef {
 	return ReceiptRef{

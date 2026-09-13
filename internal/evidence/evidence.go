@@ -85,66 +85,6 @@ func serialTodoSegments(todos []TodoItem) []todoSegment {
 	return segs
 }
 
-// validateSerialSegment checks one segment's internal shape and returns its
-// serial state: "completed" (every item completed), "in_progress" (the
-// segment holds the current item), "pending" (untouched), or "stale"
-// (partially completed with no current item). Item statuses and the global
-// single-in_progress rule are already validated by the caller.
-func validateSerialSegment(todos []TodoItem, seg todoSegment) (string, error) {
-	head := todos[seg.head]
-	headStatus := todoStatus(head.Status)
-	if seg.end == seg.head+1 {
-		return headStatus, nil
-	}
-	seenSubCurrent := false
-	seenSubPending := false
-	completedSubs := 0
-	unfinished := -1
-	for i := seg.head + 1; i < seg.end; i++ {
-		sub := todos[i]
-		switch todoStatus(sub.Status) {
-		case "completed":
-			if seenSubCurrent || seenSubPending {
-				return "", fmt.Errorf("todo %d %q is completed after unfinished work; serial task lists require completed items to form a prefix", i+1, sub.Content)
-			}
-			completedSubs++
-		case "in_progress":
-			if seenSubPending {
-				return "", fmt.Errorf("todo %d %q is in_progress after pending work; the current item must be the first unfinished item", i+1, sub.Content)
-			}
-			seenSubCurrent = true
-			if unfinished < 0 {
-				unfinished = i
-			}
-		default: // pending
-			seenSubPending = true
-			if unfinished < 0 {
-				unfinished = i
-			}
-		}
-	}
-	switch headStatus {
-	case "completed":
-		if unfinished >= 0 {
-			return "", fmt.Errorf("phase %d %q is completed but sub-step %d %q is unfinished; complete every sub-step, then sign the phase off with complete_step", seg.head+1, head.Content, unfinished+1, todos[unfinished].Content)
-		}
-		return "completed", nil
-	case "in_progress":
-		if unfinished >= 0 {
-			return "", fmt.Errorf("phase %d %q cannot be in_progress while sub-step %d %q is unfinished; keep the phase pending, finish its sub-steps in order, then mark the phase in_progress to sign it off", seg.head+1, head.Content, unfinished+1, todos[unfinished].Content)
-		}
-		return "in_progress", nil
-	default: // pending head: its sub-steps carry the segment's progress
-		if seenSubCurrent {
-			return "in_progress", nil
-		}
-		if completedSubs == 0 {
-			return "pending", nil
-		}
-		return "stale", nil
-	}
-}
-
 // NormalizeSerialTodos repairs legacy host state that predates
 // ValidateSerialTodos. It preserves the leading run of fully completed
 // segments and makes the first unfinished segment current: its completed
@@ -1464,23 +1404,6 @@ func bashSegmentUsesOpaqueInlineInterpreter(segment string) bool {
 		return hasCommandArg(args, "-r")
 	case "deno":
 		return len(args) > 0 && strings.EqualFold(args[0], "eval")
-	}
-	return false
-}
-
-func bashContainsVerificationSegment(command string) bool {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return false
-	}
-	segments, _, ok := shellparse.SplitTopLevel(command)
-	if !ok {
-		return false
-	}
-	for _, segment := range segments {
-		if fields, ok := bashStaticArgv(segment); ok && bashSegmentIsVerification(fields) {
-			return true
-		}
 	}
 	return false
 }

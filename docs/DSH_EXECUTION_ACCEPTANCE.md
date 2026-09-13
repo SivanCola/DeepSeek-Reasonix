@@ -36,6 +36,11 @@ The harness-style execution model is the default and has no legacy behavior swit
 
 ## Platform and product validation
 
+The table below records the initial acceptance run at `3f7350f6e`. It did not
+establish correctness of every publication interleaving. The PR review found
+and corrected the additional defects listed in the next section; those findings
+supersede the earlier unconditional freshness/publication claims.
+
 | Environment | Validation | Result |
 | --- | --- | --- |
 | macOS | Full root Go tests and vet; independent Desktop and SDK Go modules; contract, golden, cache, and repository checks | Passed |
@@ -45,6 +50,40 @@ The harness-style execution model is the default and has no legacy behavior swit
 | Desktop compatibility | Legacy recovery cards are read-only with no actions; current cards retain not-started/failed/interrupted/unknown facts; normal input remains available | Passed |
 
 Windows validation ran natively in the local Parallels Windows 11 VM rather than through cross-compilation. The test copy and temporary artifacts were removed afterward.
+
+## PR #10223 review corrections
+
+Review baseline: head `3f7350f6e`, current base and merge-base `104792af2`.
+The implementation follows DSH `fs-observation-policy` (session-owned observations,
+presence-based write intent) and `fs-local/src/fsio.ts` (staging before no-overwrite
+publication). Reasonix retains its Go execution, encoding, and buffer adapters.
+
+| Defect in the reviewed head | Correction and regression evidence |
+| --- | --- |
+| Generic `read_file.Execute` bypassed observation registration | Delegate to the same bounded read implementation as `ExecuteRead`; preserve external-root display redaction |
+| Deleting an observed file changed an overwrite into a blind create | Preserve the observed-present intent and return stale-version; normalize absent paths through existing symlink ancestors |
+| Disk observation could authorize a buffer write | Commit existing sources only through the route that supplied the observed content |
+| Same-content file replacement escaped checksum-only publication checks | Capture bytes and native metadata from one handle; compare identity, version, mode, and digest before writing |
+| Linux `Ctim` was omitted because metadata matching recognized only `ctime` | Recognize both Unix field spellings; a platform-independent nanosecond regression supplements the native Linux stale-edit test |
+| Creating directly at the destination exposed incomplete content; strict overwrite could copy on Windows EXDEV | Stage and fsync before atomic no-overwrite creation; use strict replacement without copy fallback |
+| Replacing an inode changed the mutation-lock key | Hold both native identity and stable path locks in a globally sorted order; test a replacement while the first mutation holds its lock |
+| Check-then-rename could overwrite a concurrent move destination | Use native no-replace rename on macOS/Linux/Windows; stage cross-device copies and publish with a no-overwrite link |
+| Same-session runtime rebuild discarded observations | Clone live observations during controller lifecycle transfer; a real `git --version` call between consecutive edits remains usable |
+| `complete_subtask` still applied host proof adjudication | Remove adjudication; keep an optional model report and label it separately from execution facts; plain final answers also finish |
+| Retired guards left unused runtime functions and state | Delete unused shell-write classifiers, completion salvage, batch-result rewrites, review dumps, and budget/governor helpers; retain historical data fields; golangci-lint reports zero issues |
+
+Regression owners: `internal/tool/builtin/harness_review_test.go`,
+`internal/fileops/observation_review_test.go`, `internal/fileutil/atomicwrite_test.go`,
+`internal/agent/harness_review_test.go`, and `internal/agent/complete_subtask_test.go`.
+Native Windows reruns cover identity/ACL change detection, publication, moves,
+observation isolation, real shell continuation, and optional subtask completion.
+The new subtask descriptions change child-prefix bytes once; serialized request
+and stable-extension cache guards pass. No live observation is serialized.
+
+These changes do not supply universal external-process CAS, remote ACP CAS, or
+exactly-once side effects. The review does not reclassify the initial frontend
+and native-shell runs as new UI evidence, and does not claim a latency benchmark.
+GitHub merge readiness still requires terminal checks on the pushed head.
 
 ## Removed and retained systems
 

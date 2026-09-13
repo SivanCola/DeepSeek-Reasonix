@@ -111,8 +111,3 @@ func (a *Agent) storeBatchToolResult(ctx context.Context, call provider.ToolCall
 	}
 	a.sess.conversation.Add(msg)
 }
-
-// Guard interventions revise only results that have not yet reached a model.
-func (a *Agent) storeBatchGuardResults(calls []provider.ToolCall, results []string) {
-	a.sess.conversation.updateBatchGuardResults(calls, results)
-}

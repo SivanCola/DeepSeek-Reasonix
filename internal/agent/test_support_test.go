@@ -10,7 +10,6 @@ import (
 
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
-	"reasonix/internal/fileops"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
 )
@@ -93,10 +92,6 @@ func (fakeWriterTool) Execute(context.Context, json.RawMessage) (string, error) 
 	return "wrote", nil
 }
 
-func executeBatchOutputs(a *Agent, ctx context.Context, calls []provider.ToolCall) []string {
-	return a.executeBatch(ctx, &a.turn, calls).results
-}
-
 type scriptedProvider struct {
 	name     string
 	turns    [][]provider.Chunk
@@ -153,16 +148,6 @@ func toolResultByID(s *Session, id string) string {
 	return ""
 }
 
-func toolResults(s *Session, name string) []string {
-	var results []string
-	for _, message := range s.Messages {
-		if message.Role == provider.RoleTool && message.Name == name {
-			results = append(results, message.Content)
-		}
-	}
-	return results
-}
-
 func sessionHasUserMessageContaining(s *Session, needle string) bool {
 	for _, message := range s.Messages {
 		if message.Role == provider.RoleUser && strings.Contains(message.Content, needle) {
@@ -187,18 +172,6 @@ func mustBuiltinTool(t *testing.T, name string) tool.Tool {
 		t.Fatalf("missing builtin %q", name)
 	}
 	return value
-}
-
-func incompleteReadBuiltin(t *testing.T) tool.Tool { return mustBuiltinTool(t, "read_file") }
-
-func seedPriorRead(t *testing.T, a *Agent, path string) {
-	t.Helper()
-	reader := incompleteReadBuiltin(t).(tool.ReadExecutor)
-	args, _ := json.Marshal(map[string]any{"path": path, "limit": 1})
-	ctx := fileops.WithStore(context.Background(), a.fileObservations)
-	if _, _, err := reader.ExecuteRead(ctx, args); err != nil {
-		t.Fatal(err)
-	}
 }
 
 type stubBash struct{}

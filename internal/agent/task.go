@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"reasonix/internal/ablation"
 	"reasonix/internal/checkpoint"
@@ -1618,20 +1616,6 @@ func GuardSubagentHostDecisionText(answer string) string {
 	return tool.GuardSubagentHostDecisionText(answer)
 }
 
-// maxReviewReportNudges bounds the in-session completion nudges sent to a
-// review subagent that finished without submitting review_report. Each nudge is
-// one cheap continuation request on the same (cached) subagent session — far
-// cheaper than discarding the run and re-reviewing from scratch.
-// maxReviewReportNudges is the single in-session retry after the first failed
-// review run (plan: fail once, retry once). A second failure becomes Partial.
-
-// reviewReportTaskContract is appended to the task prompt of a review subagent
-// whose run must end with a typed report. The skill body describes how to
-// review; this states the non-negotiable submission protocol.
-
-// reviewReportNudgePrompt asks an already-finished review subagent to submit
-// the missing typed report without redoing the review.
-
 // RunSubAgentWithSession continues an existing sub-agent session with prompt and
 // returns the latest final assistant answer. Fresh sub-agents pass a newly-created
 // session; continued sub-agents pass a loaded transcript session.
@@ -1811,33 +1795,6 @@ func latestAssistantAnswer(sess *Session) string {
 		}
 	}
 	return ""
-}
-
-// dumpFailedSubagentSession best-effort persists a failed report-required
-// subagent transcript for post-hoc diagnosis (read-only skill subagents are
-// otherwise ephemeral, so a protocol failure leaves no trace). Returns a
-// human-readable suffix naming the dump, or "" when disabled/failed.
-func dumpFailedSubagentSession(archiveDir, kind string, sess *Session) string {
-	if strings.TrimSpace(archiveDir) == "" || sess == nil {
-		return ""
-	}
-	dir := filepath.Join(archiveDir, "subagent-report-failures")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return ""
-	}
-	path := filepath.Join(dir, fmt.Sprintf("%s-%d.jsonl", kind, time.Now().UnixNano()))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	enc := json.NewEncoder(f)
-	for _, m := range sess.Messages {
-		if err := enc.Encode(m); err != nil {
-			return ""
-		}
-	}
-	return "; transcript dumped to " + path
 }
 
 // mergeChildEvidence folds a sub-agent's real receipts into the parent ledger

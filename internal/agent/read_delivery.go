@@ -11,11 +11,7 @@ import (
 // readDelivery contains no source text. References always name an original
 // delivery, never another reference. Both maps are owned by the run loop.
 type readDelivery struct {
-	callID    string
-	resultRef string
-	source    tool.ReadResultSource
-	digest    [32]byte
-	ranges    []tool.ReadRange
+	digest [32]byte
 }
 
 // freezeVisibleReads is called for the exact request used by a sampling

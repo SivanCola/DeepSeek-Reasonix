@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,8 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"mvdan.cc/sh/v3/syntax"
 
 	"reasonix/internal/ablation"
 	"reasonix/internal/capability"
@@ -34,7 +31,6 @@ import (
 	"reasonix/internal/runtimepolicy"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/sessiontemp"
-	"reasonix/internal/shellparse"
 	"reasonix/internal/tool"
 	"reasonix/internal/workspacelease"
 )
@@ -1317,38 +1313,6 @@ func (a *Agent) setTodoState(todos []evidence.TodoItem) {
 	a.sess.todoMu.Unlock()
 }
 
-func (a *Agent) canonicalTodoProgress() (int, bool) {
-	a.sess.todoMu.Lock()
-	defer a.sess.todoMu.Unlock()
-	completed := 0
-	incomplete := false
-	for _, todo := range a.sess.todoState {
-		status := canonicalTodoStatus(todo.Status)
-		if status == "completed" {
-			completed++
-		} else {
-			incomplete = true
-		}
-	}
-	return completed, incomplete
-}
-
-// registryHasWriterTools reports whether any registered tool can mutate state.
-// A strictly read-only registry (read_only_task / read_only_skill subagents)
-// can never satisfy a "state change required" delivery expectation, so that
-// expectation must not be armed for it.
-func registryHasWriterTools(reg *tool.Registry) bool {
-	if reg == nil {
-		return false
-	}
-	for _, name := range reg.Names() {
-		if t, ok := reg.Get(name); ok && !t.ReadOnly() {
-			return true
-		}
-	}
-	return false
-}
-
 // RebuildTodoState re-derives canonical task state from the current session
 // transcript. Call after externally truncating the session (e.g. after a
 // user-cancel strip) so Agent.todoState stays consistent with the messages.
@@ -2143,160 +2107,6 @@ func (a *Agent) planModeDecision(toolName string, readOnly bool, safety planmode
 		Safety:   safety,
 		Args:     args,
 	})
-}
-
-func canonicalToolArgs(raw string) string {
-	var v any
-	if err := json.Unmarshal([]byte(raw), &v); err != nil {
-		return strings.TrimSpace(raw)
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return strings.TrimSpace(raw)
-	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, b); err != nil {
-		return string(b)
-	}
-	return compact.String()
-}
-
-func normalizeShellCommand(command string) string {
-	if fields, malformed := shellparse.StaticFields(command); malformed == "" && len(fields) > 0 {
-		return strings.Join(fields, " ")
-	}
-	return strings.Join(strings.Fields(command), " ")
-}
-
-func isShellFileWriteCommand(command string) bool {
-	lower := strings.ToLower(command)
-	switch {
-	case shellPythonOpenWrites(lower):
-		return true
-	case strings.Contains(lower, "set-content") || strings.Contains(lower, "add-content") || strings.Contains(lower, "out-file"):
-		return true
-	case strings.Contains(lower, "sed -i") || strings.Contains(lower, "perl -pi"):
-		return true
-	case hasShellWriteRedirect(command):
-		return true
-	default:
-		return false
-	}
-}
-
-func shellPythonOpenWrites(lower string) bool {
-	if !strings.Contains(lower, "open(") {
-		return false
-	}
-	if strings.Contains(lower, ".write(") {
-		return true
-	}
-	for _, marker := range []string{", 'w", `, "w`, ", 'a", `, "a`, ", 'x", `, "x`, "mode='w", `mode="w`, "mode='a", `mode="a`, "mode='x", `mode="x`} {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func hasShellWriteRedirect(command string) bool {
-	file, err := shellparse.ParseBash(command)
-	if err == nil {
-		hasWrite := false
-		syntax.Walk(file, func(node syntax.Node) bool {
-			redir, ok := node.(*syntax.Redirect)
-			if !ok {
-				return true
-			}
-			if bashRedirectWritesFile(command, redir) {
-				hasWrite = true
-				return false
-			}
-			return true
-		})
-		return hasWrite
-	}
-	return hasShellWriteRedirectFallback(command)
-}
-
-func bashRedirectWritesFile(source string, redir *syntax.Redirect) bool {
-	if redir == nil {
-		return false
-	}
-	switch redir.Op {
-	case syntax.RdrOut, syntax.AppOut, syntax.RdrClob, syntax.AppClob,
-		syntax.RdrAll, syntax.RdrAllClob, syntax.AppAll, syntax.AppAllClob,
-		syntax.RdrInOut:
-		return !redirectWordIsNullSink(source, redir.Word)
-	default:
-		return false
-	}
-}
-
-func redirectWordIsNullSink(source string, word *syntax.Word) bool {
-	if word == nil {
-		return false
-	}
-	if value, ok := shellparse.StaticWord(word); ok {
-		if isNullSinkWord(strings.TrimSpace(value)) {
-			return true
-		}
-	}
-	value := strings.TrimSpace(redirectWordSource(source, word))
-	if isNullSinkWord(value) {
-		return true
-	}
-	if len(value) >= 2 && ((value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"')) {
-		return isNullSinkWord(value[1 : len(value)-1])
-	}
-	return false
-}
-
-func isNullSinkWord(value string) bool {
-	if value == "/dev/null" {
-		return true
-	}
-	return strings.EqualFold(value, "$null") || strings.EqualFold(value, "nul")
-}
-
-func redirectWordSource(source string, word *syntax.Word) string {
-	if word == nil || !word.Pos().IsValid() || !word.End().IsValid() {
-		return ""
-	}
-	start := int(word.Pos().Offset())
-	end := int(word.End().Offset())
-	if start < 0 || end < start || end > len(source) {
-		return ""
-	}
-	return source[start:end]
-}
-
-func hasShellWriteRedirectFallback(command string) bool {
-	var quote rune
-	var prev rune
-	for _, r := range command {
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			}
-			prev = r
-			continue
-		}
-		if r == '\'' || r == '"' {
-			quote = r
-			prev = r
-			continue
-		}
-		if r == '>' {
-			if prev == '2' {
-				prev = r
-				continue
-			}
-			return true
-		}
-		prev = r
-	}
-	return false
 }
 
 // isBackgroundTaskCall reports whether a `task` call set run_in_background, so a

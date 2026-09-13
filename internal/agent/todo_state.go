@@ -5,7 +5,6 @@ package agent
 
 import (
 	"encoding/json"
-	"strings"
 
 	"reasonix/internal/evidence"
 )
@@ -62,12 +61,4 @@ func (a *Agent) recordTodoState(todos []evidence.TodoItem) {
 		return
 	}
 	a.task.ledger.Record(evidence.ReceiptFromToolCall("todo_write", json.RawMessage(args), true, true))
-}
-
-func canonicalTodoStatus(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "pending"
-	}
-	return s
 }
