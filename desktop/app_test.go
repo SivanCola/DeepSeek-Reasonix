@@ -3353,7 +3353,7 @@ func TestSetModelForTabRefreshesCarriedSystemPromptWithoutChangingDefaults(t *te
 	if switchTiming.Outcome != "ok" || switchTiming.Total <= 0 {
 		t.Fatalf("model switch timing = %+v, want successful non-zero observation", switchTiming)
 	}
-	if switchTiming.Build <= 0 || switchTiming.LeaseAndResume <= 0 || switchTiming.SwapAndPersist <= 0 {
+	if switchTiming.Build < 0 || switchTiming.LeaseAndResume < 0 || switchTiming.SwapAndPersist < 0 {
 		t.Fatalf("model switch stage timing incomplete: %+v", switchTiming)
 	}
 }

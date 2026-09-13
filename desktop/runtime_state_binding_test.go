@@ -33,6 +33,22 @@ func (r *bindingRuntimeReader) RuntimeStateSnapshot() event.RuntimeStateSnapshot
 	return r.state
 }
 
+func TestLocalBindingUsesControllerIdentityNotMutableContents(t *testing.T) {
+	first, second := &bindingRuntimeReader{}, &bindingRuntimeReader{}
+	tab := &WorkspaceTab{ID: "identity"}
+	sampled := localRuntimeBinding{tab: tab, ctrl: first}
+	current := sampled
+	current.ctrl = second
+	if sameLocalRuntimeBinding(current, sampled) {
+		t.Fatal("different controller instances were treated as the same binding")
+	}
+	first.mu.Lock()
+	defer first.mu.Unlock()
+	if !sameLocalRuntimeBinding(sampled, sampled) {
+		t.Fatal("controller's mutable lock state changed its binding identity")
+	}
+}
+
 func TestRuntimeStateProjectionRevalidatesLocalBindingAfterSampling(t *testing.T) {
 	for _, mutation := range []string{"controller", "generation", "path", "scope", "tab", "detach", "close"} {
 		t.Run(mutation, func(t *testing.T) {

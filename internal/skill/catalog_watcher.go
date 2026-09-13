@@ -19,26 +19,27 @@ func (s *Store) Close() error {
 	}
 	s.watcherMu.Lock()
 	if s.closed {
+		done := s.watcherDone
 		s.watcherMu.Unlock()
+		if done != nil {
+			<-done
+		}
 		return nil
 	}
 	s.closed = true
 	s.watcherGeneration++
-	watcher, done, cancel := s.watcher, s.watcherDone, s.watcherLifecycle.cancel
-	s.watcher, s.watcherDone, s.watcherLifecycle.cancel = nil, nil, nil
+	done, cancel := s.watcherDone, s.watcherLifecycle.cancel
+	s.watcher, s.watcherLifecycle.cancel = nil, nil
 	s.watcherLifecycle.active = false
 	s.watcherMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	s.catalogMu.Lock()
 	if s.catalogFlight != nil && s.catalogFlight.cancel != nil {
 		s.catalogFlight.cancel()
 	}
 	s.catalogMu.Unlock()
-	if watcher != nil {
-		_ = watcher.Close()
-	}
-	if cancel != nil {
-		cancel()
-	}
 	if done != nil {
 		<-done
 	}
@@ -72,14 +73,17 @@ func (s *Store) ensureWatcher() {
 	s.watcherGeneration++
 	generation := s.watcherGeneration
 	done := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
 	s.watcher, s.watcherDone, s.watcherLifecycle.active = watcher, done, true
+	s.watcherLifecycle.cancel = cancel
 	s.watcherMu.Unlock()
 
-	s.refreshWatcherPaths(watcher, generation)
-	go s.watchCatalog(watcher, generation, done)
+	ready := make(chan struct{})
+	go s.watchCatalog(ctx, watcher, generation, done, ready)
+	<-ready
 }
 
-func (s *Store) watchCatalog(watcher *fsnotify.Watcher, generation uint64, done chan struct{}) {
+func (s *Store) watchCatalog(ctx context.Context, watcher *fsnotify.Watcher, generation uint64, done, ready chan struct{}) {
 	defer close(done)
 	defer func() {
 		s.watcherMu.Lock()
@@ -90,26 +94,64 @@ func (s *Store) watchCatalog(watcher *fsnotify.Watcher, generation uint64, done 
 		}
 		s.watcherMu.Unlock()
 	}()
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok || !s.watcherCurrent(watcher, generation) {
+	runCatalogWatch(ctx, watcher.Events, watcher.Errors, ready,
+		func() { s.refreshWatcherPaths(ctx, watcher, generation) }, watcher.Close,
+		func(reason string) {
+			if s.watcherCurrent(watcher, generation) {
+				s.Invalidate(reason)
+			}
+		})
+}
+
+func runCatalogWatch(ctx context.Context, events <-chan fsnotify.Event, errors <-chan error, ready chan struct{}, register func(), closeWatcher func() error, invalidate func(string)) {
+	ctx, cancel := context.WithCancel(ctx)
+	refresh := make(chan struct{}, 1)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		register()
+		close(ready)
+		for {
+			select {
+			case <-ctx.Done():
+				_ = closeWatcher()
 				return
+			case <-refresh:
+				register()
+			}
+		}
+	}()
+	defer func() { cancel(); <-workerDone }()
+	// Add and Close may wait for fsnotify's error sender. Keep both channels
+	// draining while the registration worker mutates or closes the watcher.
+	for events != nil || errors != nil {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if ctx.Err() != nil {
+				continue
 			}
 			if event.Op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Write|fsnotify.Chmod) == 0 {
 				continue
 			}
-			s.Invalidate("filesystem changed")
+			invalidate("filesystem changed")
 			// A create/rename can introduce a directory, symlink target, or a
 			// previously missing root. Rebuild the subscriptions from the roots.
-			s.refreshWatcherPaths(watcher, generation)
-		case _, ok := <-watcher.Errors:
-			if !ok || !s.watcherCurrent(watcher, generation) {
-				return
+			select {
+			case refresh <- struct{}{}:
+			default:
 			}
-			s.Invalidate("filesystem watcher failed")
-			_ = watcher.Close()
-			return
+		case _, ok := <-errors:
+			if !ok {
+				errors = nil
+				continue
+			}
+			if ctx.Err() == nil {
+				invalidate("filesystem watcher failed")
+			}
 		}
 	}
 }
@@ -130,7 +172,10 @@ func (s *Store) pollCatalog(ctx context.Context, generation uint64, done chan st
 		}
 		s.watcherMu.Unlock()
 	}()
-	previous := s.catalogWatchSignature()
+	previous, ok := s.catalogWatchSignature(ctx)
+	if !ok {
+		return
+	}
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -138,7 +183,10 @@ func (s *Store) pollCatalog(ctx context.Context, generation uint64, done chan st
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			current := s.catalogWatchSignature()
+			current, ok := s.catalogWatchSignature(ctx)
+			if !ok {
+				return
+			}
 			if current != previous {
 				previous = current
 				s.Invalidate("filesystem changed")
@@ -147,13 +195,29 @@ func (s *Store) pollCatalog(ctx context.Context, generation uint64, done chan st
 	}
 }
 
-func (s *Store) catalogWatchSignature() [sha256.Size]byte {
+func (s *Store) catalogWatchSignature(ctx context.Context) ([sha256.Size]byte, bool) {
+	if ctx.Err() != nil {
+		return [sha256.Size]byte{}, false
+	}
 	hash := sha256.New()
 	for _, root := range s.roots() {
-		for _, dir := range watchDirectories(root.Dir, s.maxDepth) {
+		if ctx.Err() != nil {
+			return [sha256.Size]byte{}, false
+		}
+		directories, ok := watchDirectoriesContext(ctx, root.Dir, s.maxDepth)
+		if !ok {
+			return [sha256.Size]byte{}, false
+		}
+		for _, dir := range directories {
+			if ctx.Err() != nil {
+				return [sha256.Size]byte{}, false
+			}
 			entries, err := os.ReadDir(dir)
 			_, _ = fmt.Fprintf(hash, "%s\x00%v\x00", dir, err)
 			for _, entry := range entries {
+				if ctx.Err() != nil {
+					return [sha256.Size]byte{}, false
+				}
 				info, statErr := entry.Info()
 				if statErr != nil {
 					_, _ = fmt.Fprintf(hash, "%s\x00%v\x00", entry.Name(), statErr)
@@ -165,7 +229,7 @@ func (s *Store) catalogWatchSignature() [sha256.Size]byte {
 	}
 	var signature [sha256.Size]byte
 	copy(signature[:], hash.Sum(nil))
-	return signature
+	return signature, true
 }
 
 func (s *Store) watcherCurrent(watcher *fsnotify.Watcher, generation uint64) bool {
@@ -174,12 +238,16 @@ func (s *Store) watcherCurrent(watcher *fsnotify.Watcher, generation uint64) boo
 	return !s.closed && s.watcher == watcher && s.watcherGeneration == generation
 }
 
-func (s *Store) refreshWatcherPaths(watcher *fsnotify.Watcher, generation uint64) {
+func (s *Store) refreshWatcherPaths(ctx context.Context, watcher *fsnotify.Watcher, generation uint64) {
 	if !s.watcherCurrent(watcher, generation) {
 		return
 	}
 	for _, root := range s.roots() {
-		for _, dir := range watchDirectories(root.Dir, s.maxDepth) {
+		directories, _ := watchDirectoriesContext(ctx, root.Dir, s.maxDepth)
+		for _, dir := range directories {
+			if ctx.Err() != nil {
+				return
+			}
 			_ = watcher.Add(dir)
 		}
 	}
@@ -188,22 +256,25 @@ func (s *Store) refreshWatcherPaths(watcher *fsnotify.Watcher, generation uint64
 // watchDirectories includes every existing directory that discovery can visit.
 // For a missing root it subscribes to the nearest existing ancestor, allowing
 // later creation to invalidate the snapshot. Symlink targets are traversed once.
-func watchDirectories(root string, maxDepth int) []string {
+func watchDirectoriesContext(ctx context.Context, root string, maxDepth int) ([]string, bool) {
 	root = filepath.Clean(root)
 	probe := root
 	for {
+		if ctx.Err() != nil {
+			return nil, false
+		}
 		info, err := os.Stat(probe)
 		if err == nil && info.IsDir() {
 			break
 		}
 		parent := filepath.Dir(probe)
 		if parent == probe {
-			return nil
+			return nil, true
 		}
 		probe = parent
 	}
 	if probe != root {
-		return []string{probe}
+		return []string{probe}, true
 	}
 	type pendingDir struct {
 		path  string
@@ -213,6 +284,9 @@ func watchDirectories(root string, maxDepth int) []string {
 	seen := map[string]bool{}
 	var out []string
 	for len(pending) > 0 {
+		if ctx.Err() != nil {
+			return nil, false
+		}
 		current := pending[0]
 		pending = pending[1:]
 		resolved := current.path
@@ -239,6 +313,9 @@ func watchDirectories(root string, maxDepth int) []string {
 			continue
 		}
 		for _, entry := range entries {
+			if ctx.Err() != nil {
+				return nil, false
+			}
 			child := filepath.Join(current.path, entry.Name())
 			if entry.IsDir() {
 				pending = append(pending, pendingDir{path: child, depth: current.depth + 1})
@@ -252,7 +329,7 @@ func watchDirectories(root string, maxDepth int) []string {
 		}
 	}
 	sort.Strings(out)
-	return out
+	return out, true
 }
 
 // Invalidate advances the catalog generation. The last complete snapshot stays

@@ -88,7 +88,7 @@ func (a *App) sampleLocalRuntimeBindings() []localRuntimeBinding {
 		current := a.localRuntimeBindingsLocked()
 		valid := len(current) == len(bindings)
 		for key, binding := range bindings {
-			if !reflect.DeepEqual(current[key], binding) {
+			if !sameLocalRuntimeBinding(current[key], binding) {
 				valid = false
 				break
 			}
@@ -104,6 +104,48 @@ func (a *App) sampleLocalRuntimeBindings() []localRuntimeBinding {
 		}
 		return result
 	}
+}
+
+// sameLocalRuntimeBinding compares the immutable identity and display fields
+// copied while App.mu was held. reflect.DeepEqual is deliberately unsuitable
+// here: following tab or controller pointers recursively reads their live
+// mutex/atomic state and races the controller's runtime-state publisher.
+func sameLocalRuntimeBinding(current, sampled localRuntimeBinding) bool {
+	return current.tab == sampled.tab &&
+		sameSessionAPI(current.ctrl, sampled.ctrl) &&
+		current.view.TabID == sampled.view.TabID &&
+		current.view.Scope == sampled.view.Scope &&
+		current.view.WorkspaceRoot == sampled.view.WorkspaceRoot &&
+		current.view.TopicID == sampled.view.TopicID &&
+		current.view.SessionID == sampled.view.SessionID &&
+		current.view.SessionPath == sampled.view.SessionPath &&
+		current.view.SessionGeneration == sampled.view.SessionGeneration &&
+		current.view.Open == sampled.view.Open &&
+		current.view.Remote == sampled.view.Remote &&
+		current.view.HostID == sampled.view.HostID &&
+		current.view.Freshness == sampled.view.Freshness &&
+		current.catalog.scope == sampled.catalog.scope &&
+		current.catalog.workspaceRoot == sampled.catalog.workspaceRoot &&
+		current.catalog.topicID == sampled.catalog.topicID &&
+		current.catalog.sessionPath == sampled.catalog.sessionPath &&
+		current.catalog.activity == sampled.catalog.activity &&
+		current.catalog.topicTitle == sampled.catalog.topicTitle &&
+		current.catalog.topicTitleSource == sampled.catalog.topicTitleSource &&
+		current.catalog.open == sampled.catalog.open
+}
+
+func sameSessionAPI(current, sampled control.SessionAPI) bool {
+	if current == nil || sampled == nil {
+		return current == nil && sampled == nil
+	}
+	currentValue, sampledValue := reflect.ValueOf(current), reflect.ValueOf(sampled)
+	if currentValue.Type() != sampledValue.Type() {
+		return false
+	}
+	if currentValue.Type().Comparable() {
+		return currentValue.Interface() == sampledValue.Interface()
+	}
+	return false
 }
 
 func controllerRuntimeState(ctrl control.SessionAPI) event.RuntimeStateSnapshot {

@@ -661,6 +661,7 @@ func TestNewSessionNoopsWhenCurrentTabIsBlank(t *testing.T) {
 	dir := t.TempDir()
 	path := agent.NewSessionPath(dir, "model-a")
 	ctrl := carryingController([]provider.Message{{Role: provider.RoleSystem, Content: "sys"}}, path)
+	t.Cleanup(ctrl.Close)
 	app := NewApp()
 	app.setTestCtrl(ctrl, "model-a")
 

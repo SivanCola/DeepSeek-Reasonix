@@ -92,6 +92,14 @@ func TestLoadHonorsCancelledTurnBeforeDiscovery(t *testing.T) {
 	}
 }
 
+func TestWatchDirectoryScanHonorsCancellationBeforeFilesystemWork(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if directories, complete := watchDirectoriesContext(ctx, t.TempDir(), 3); complete || directories != nil {
+		t.Fatalf("cancelled watch scan = (%v, %v), want (nil, false)", directories, complete)
+	}
+}
+
 func TestCatalogWatcherInvalidatesCreateRenameAndDelete(t *testing.T) {
 	root := t.TempDir()
 	store := New(Options{HomeDir: t.TempDir(), CustomPaths: []string{root}, DisableBuiltins: true, Watch: true})

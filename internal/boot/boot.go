@@ -662,13 +662,16 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	// without exercising host teardown; starting one kqueue/inotify instance per
 	// fixture would exhaust process descriptors before the suite completes.
 	// Store-level watcher tests opt in directly and still cover invalidation.
-	watchSkills := !strings.HasSuffix(os.Args[0], ".test")
+	watchSkills := !strings.HasSuffix(strings.TrimSuffix(os.Args[0], ".exe"), ".test")
 	// Skills: rediscovery skipped on no-op/interceptor/UI rebuilds when
 	// ReuseAssembly is retained from the previous BuildResult.
 	var skillStore *skill.Store
 	var skills []skill.Skill
 	var allSkillStore *skill.Store
 	var allSkills []skill.Skill
+	skillCleanup := func() { closeSkillStores(skillStore, allSkillStore) }
+	skillsOwned := false
+	defer closeUnownedSkills(&skillsOwned, skillCleanup)
 	canReuseSkills := opts.ReuseAssembly != nil && shouldReuseDiscovery(opts.PreviousPlan) &&
 		opts.ReuseAssembly.ImplicitSkillInvocation == implicitSkillInvocation
 	if canReuseSkills {
@@ -934,22 +937,14 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	}
 
 	cleanup := func() {
-		_ = skillStore.Close()
-		if allSkillStore != skillStore {
-			_ = allSkillStore.Close()
-		}
+		skillCleanup()
 		pluginHost.Close()
 	}
 	if opts.SharedHost != nil {
 		// The caller owns the shared host's lifecycle; the controller must not
 		// close it. A no-op cleanup keeps Controller.Close happy without
 		// shutting down MCP processes that other controllers still use.
-		cleanup = func() {
-			_ = skillStore.Close()
-			if allSkillStore != skillStore {
-				_ = allSkillStore.Close()
-			}
-		}
+		cleanup = skillCleanup
 	}
 
 	// addTools registers tools on reg and returns the names that were added.
@@ -2041,6 +2036,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if extensionResolver != nil {
 		providerResolver = extensionResolver
 	}
+	if runtimeSet != nil && runtimeSet.Len() > 0 {
+		_ = extension.TrackWatcher(runtimeSet.Scope(), "skill-catalogs", func() error { skillCleanup(); return nil })
+	}
 	cleanup = wireRuntimeScopeCleanup(runtimeSet, cleanup, opts.SharedHost, pluginHost, lspMgr, opts.SessionTemp)
 	ctrl.SetExtensions(extensionDispatcher)
 	if extensionMgr == nil {
@@ -2069,6 +2067,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		Registry:                reg,
 		ImplicitSkillInvocation: implicitSkillInvocation,
 	}
+	skillsOwned = true
 	return finalizeBuildResult(&BuildResult{Controller: ctrl, Snapshot: snap, Runtime: runtimeSet, Owner: owner, Extensions: extensionMgr, Dispatcher: extensionDispatcher, ExtensionUI: extUIHub, ProviderResolver: providerResolver, BaseProviderResolver: baseResolver, Assembly: assembly}, !opts.deferPublish), nil
 }
 

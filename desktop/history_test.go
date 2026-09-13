@@ -424,6 +424,7 @@ func TestHistoryForTabRestoresPlannerDisplayAfterReload(t *testing.T) {
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "executor kept working"})
 	ag := agent.New(stubProvider{}, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	ctrl := control.New(control.Options{Executor: ag, SessionDir: dir, SessionPath: path, Sink: event.Discard})
+	t.Cleanup(ctrl.Close)
 	if err := recordSessionDisplay(dir, path, handoff, "fix the sandbox reload bug"); err != nil {
 		t.Fatalf("recordSessionDisplay: %v", err)
 	}
@@ -511,6 +512,7 @@ func TestHistoryForTabRestoresCancelledExecutorDisplayAfterReload(t *testing.T) 
 	runner := &cancelledDisplayRunner{session: sess, sink: tab.sink, started: make(chan struct{})}
 	ag := agent.New(stubProvider{}, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	ctrl := control.New(control.Options{Runner: runner, Executor: ag, SessionDir: dir, SessionPath: path, Sink: tab.sink})
+	t.Cleanup(ctrl.Close)
 	tab.Ctrl = ctrl
 	app.tabs[tab.ID] = tab
 
