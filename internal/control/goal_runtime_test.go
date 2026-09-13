@@ -40,17 +40,6 @@ func goalRuntimeControllerWithTokenBudget(t *testing.T, prov provider.Provider, 
 	return c, ag, events
 }
 
-// waitGoalTurnDone drains notices until the goal loop's TurnDone.
-func waitGoalTurnDone(t *testing.T, events <-chan event.Event) {
-	t.Helper()
-	for e := range events {
-		if e.Kind == event.TurnDone {
-			return
-		}
-	}
-	t.Fatal("goal loop ended without TurnDone")
-}
-
 func TestBudgetClassForBareFaultIsWrite(t *testing.T) {
 	// User-reported Chinese bare fault keeps its legacy compatibility class.
 	class := budgetClassForLegacyMode("数据模型管理器又出现历史 BUG 了……", GoalResearchAuto)

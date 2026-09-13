@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func TestGoalDiagnosticsHTTPExportsAuthoritativeSession(t *testing.T) {
 	t.Cleanup(ctrl.Close)
 	server := &Server{ctrl: ctrl}
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest("GET", "/goal-diagnostics", nil)
+	request := httptest.NewRequest(http.MethodGet, "/goal-diagnostics", nil)
 	server.goalDiagnostics(recorder, request)
 	if recorder.Code != 200 {
 		t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())

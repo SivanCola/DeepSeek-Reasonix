@@ -409,20 +409,21 @@ func (c *Controller) applyHostGoalMutation(ctx context.Context, reason string, m
 	snapshot := runtime.Snapshot()
 	var activity *sessionv3.Activity
 	owned := false
-	if snapshot.Phase == sessionv3.RuntimeIdle {
+	switch snapshot.Phase {
+	case sessionv3.RuntimeIdle:
 		_, activity, err = runtime.BeginOwnedActivity(ctx, "goal-control")
 		if err != nil {
 			return nil, err
 		}
 		owned = true
-	} else if snapshot.Phase == sessionv3.RuntimeRunning {
+	case sessionv3.RuntimeRunning:
 		c.v3ActivityMu.Lock()
 		activity = c.v3Activity
 		c.v3ActivityMu.Unlock()
 		if activity == nil {
 			return nil, sessionv3.ErrStaleActivity
 		}
-	} else {
+	default:
 		return nil, sessionv3.ErrRuntimeBusy
 	}
 	if owned {

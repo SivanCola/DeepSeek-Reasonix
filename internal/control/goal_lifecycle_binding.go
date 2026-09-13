@@ -54,7 +54,7 @@ func importLegacyGoalProjection(machine *goaldomain.Machine, raw json.RawMessage
 	if legacy.TurnsUsed < 0 {
 		return machine, fmt.Errorf("legacy goal has negative admitted rounds")
 	}
-	phase := goaldomain.PhasePaused
+	var phase goaldomain.Phase
 	var blockedReason *goaldomain.BlockReason
 	switch strings.TrimSpace(legacy.Status) {
 	case GoalStatusRunning:

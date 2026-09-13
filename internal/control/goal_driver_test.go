@@ -264,11 +264,9 @@ func TestConcurrentIdleKicksCannotAdmitParallelGoalRounds(t *testing.T) {
 	}
 	var kicks sync.WaitGroup
 	for range 32 {
-		kicks.Add(1)
-		go func() {
-			defer kicks.Done()
+		kicks.Go(func() {
 			c.kickGoalDriver()
-		}()
+		})
 	}
 	kicks.Wait()
 	runner.mu.Lock()

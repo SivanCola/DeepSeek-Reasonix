@@ -582,10 +582,6 @@ func clipGoalReason(reason string) string {
 	return reason
 }
 
-func cleanGoalBlockReason(reason string) string {
-	return strings.Trim(strings.TrimSpace(reason), " \t\r\n:：,，.。;；!！?？-—_[]()（）")
-}
-
 // ShortGoalForNotice collapses whitespace and truncates a goal for one-line UI.
 func ShortGoalForNotice(goal string) string {
 	goal = strings.Join(strings.Fields(goal), " ")
