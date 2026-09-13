@@ -238,9 +238,6 @@ func Open(dir, sessionID string) (*Session, error) {
 // old controller adapter is removed. Production callers use
 // FilesystemPersistence, whose Open is strict and never creates a session.
 func OpenWithOptions(dir, sessionID string, opts OpenOptions) (*Session, error) {
-	// This low-level adapter accepts an already-authorized store directory;
-	// production identity input is confined by FilesystemPersistence.
-	// codeql[go/path-injection]
 	if _, err := os.Stat(filepath.Clean(strings.TrimSpace(dir))); os.IsNotExist(err) {
 		return CreateWithOptions(dir, sessionID, opts)
 	}
@@ -264,13 +261,9 @@ func CreateWithOptions(dir, sessionID string, opts OpenOptions) (*Session, error
 	if err := validateSessionID(sessionID); err != nil {
 		return nil, err
 	}
-	// dir is an authorized physical-store path; sessionID is separately
-	// validated and is never appended here.
-	// codeql[go/path-injection]
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return nil, err
 	}
-	// codeql[go/path-injection]
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		if os.IsExist(err) {
 			return nil, fmt.Errorf("%w: %s", ErrSessionExists, sessionID)
@@ -280,7 +273,6 @@ func CreateWithOptions(dir, sessionID string, opts OpenOptions) (*Session, error
 	created := true
 	defer func() {
 		if created {
-			// codeql[go/path-injection]
 			_ = os.RemoveAll(dir)
 		}
 	}()
@@ -304,9 +296,6 @@ func openExistingHandle(dir, sessionID string, opts OpenOptions) (*Store, error)
 	if err := validateSessionID(sessionID); err != nil {
 		return nil, err
 	}
-	// dir is an authorized physical-store path selected by the persistence
-	// adapter or an explicit test/import boundary.
-	// codeql[go/path-injection]
 	info, err := os.Stat(dir)
 	if os.IsNotExist(err) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
@@ -357,8 +346,6 @@ func openExistingHandle(dir, sessionID string, opts OpenOptions) (*Store, error)
 	if err := writeManifestFile(manifestPath, manifest); err != nil {
 		return fail(err)
 	}
-	// eventsPath appends a constant filename to the authorized store directory.
-	// codeql[go/path-injection]
 	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return fail(err)
@@ -584,8 +571,6 @@ func scanDurableCommits(dir string, knownKinds map[string]bool, visit func(Commi
 	if knownKinds == nil {
 		knownKinds = ProjectionKinds
 	}
-	// dir is the authorized physical session directory held by the reader.
-	// codeql[go/path-injection]
 	file, err := os.Open(filepath.Join(dir, "events.jsonl"))
 	if os.IsNotExist(err) {
 		return nil
@@ -668,8 +653,6 @@ func scanCommitFileCodec(file *os.File, startOffset int64, nextSequence uint64, 
 }
 
 func hasTornTail(path string) (bool, error) {
-	// path is the constant events filename of an exclusively owned store.
-	// codeql[go/path-injection]
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -693,8 +676,6 @@ func hasTornTail(path string) (bool, error) {
 }
 
 func preserveAndTruncateTornTail(path string) (string, error) {
-	// path is the constant events filename of an exclusively owned store.
-	// codeql[go/path-injection]
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -708,7 +689,6 @@ func preserveAndTruncateTornTail(path string) (string, error) {
 	if err := fileutil.AtomicWriteFileStrict(backup, tail, 0o600); err != nil {
 		return "", fmt.Errorf("preserve original tail: %w", err)
 	}
-	// codeql[go/path-injection]
 	file, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {
 		return "", err

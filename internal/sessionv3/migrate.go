@@ -384,9 +384,6 @@ func migrationTargetID(path, digest, legacyHeadID string) string {
 }
 
 func readManifest(path string) (Manifest, error) {
-	// path is an exact manifest path inside a frozen or confined session
-	// directory selected by the migration/storage layer.
-	// codeql[go/path-injection]
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Manifest{}, err

@@ -137,9 +137,6 @@ func (p *FilesystemPersistence) Open(sessionID string, mode AccessMode) (*Sessio
 	if mode != ReadWrite {
 		return nil, fmt.Errorf("sessionv3: unsupported access mode %q", mode)
 	}
-	// dir was produced by sessionDir from a validated single-component id and
-	// checked through os.Root; it is the authorized store path.
-	// codeql[go/path-injection]
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	} else if err != nil {
@@ -242,10 +239,8 @@ func (p *FilesystemPersistence) sessionDir(id string, mustExist bool) (string, e
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return "", fmt.Errorf("sessionv3: session identity %q is not a confined directory", id)
 	}
-	// Resolve the physical path through the rooted handle instead of returning
-	// a path assembled from the protocol value. Besides keeping the capability
-	// boundary explicit, this prevents a validated identifier from remaining a
-	// tainted path throughout the storage stack.
+	// Resolve the physical path through the rooted handle. This keeps protocol
+	// input out of the path propagated through the storage stack.
 	child, err := root.OpenRoot(id)
 	if err != nil {
 		return "", err

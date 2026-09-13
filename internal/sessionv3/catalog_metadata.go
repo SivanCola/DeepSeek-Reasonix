@@ -77,8 +77,6 @@ type logRevision struct {
 
 // revisionOfLog inspects one events.jsonl without reading its body.
 func revisionOfLog(dir string) (logRevision, error) {
-	// dir is the confined physical session directory returned by persistence.
-	// codeql[go/path-injection]
 	info, err := os.Stat(filepath.Join(dir, "events.jsonl"))
 	if os.IsNotExist(err) {
 		return logRevision{}, nil
@@ -111,8 +109,6 @@ func writeCatalogMetadata(cacheDir string, metadata catalogMetadata) error {
 	if err != nil {
 		return err
 	}
-	// cacheDir is derived from the persistence root and validated session id.
-	// codeql[go/path-injection]
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return err
 	}

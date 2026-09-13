@@ -326,8 +326,6 @@ func (b *PersistenceBinding) reconcileUncertain(ctx context.Context, handle Sess
 	}
 	if tailLen < int64(len(uncertain.data)) && bytes.Equal(tail, uncertain.data[:len(tail)]) {
 		backup := filepath.Join(b.dir, fmt.Sprintf("events.uncertain-%d.tail", time.Now().UTC().UnixNano()))
-		// b.dir belongs to the leased physical handle and the filename is local.
-		// codeql[go/path-injection]
 		if err := os.WriteFile(backup, tail, 0o600); err != nil {
 			return false, fmt.Errorf("%w: preserve partial tail: %w", ErrPersistenceUncertain, err)
 		}
