@@ -184,6 +184,27 @@ func (m *Machine) Clone() *Machine {
 	}
 }
 
+// InheritRuntimeFrom copies only process-local activation state when both
+// machines describe the exact same durable goal version. It never changes the
+// persisted snapshot or lifecycle revision.
+func (m *Machine) InheritRuntimeFrom(previous *Machine) error {
+	if m == nil || previous == nil {
+		return nil
+	}
+	prior := previous.Get()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if prior == nil && m.current == nil {
+		return nil
+	}
+	if prior == nil || m.current == nil || prior.ID != m.current.ID || prior.Revision != m.current.Revision || prior.RoundsStarted != m.current.RoundsStarted || prior.Phase != m.current.Phase {
+		return goalError(ErrStaleRevision, "cannot inherit activation across different goal snapshots")
+	}
+	m.activation = prior.Activation
+	m.stopReason = prior.StopReason
+	return nil
+}
+
 func (m *Machine) Create(request CreateRequest) (View, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -1913,6 +1913,9 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.followSessionLease()
 		} else {
 			m.ctrl = msg.ctrl
+			if concrete, ok := msg.ctrl.(*control.Controller); ok {
+				concrete.ActivateGoalDriverAfterRebuild()
+			}
 			if m.takeover != nil {
 				m.takeover.AttachController(msg.ctrl)
 			}

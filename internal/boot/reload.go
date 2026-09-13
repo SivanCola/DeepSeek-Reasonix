@@ -239,7 +239,9 @@ func migrateRuntimeState(ctrl, old *control.Controller, m runtimeMigration) erro
 		ctrl.CarryRecoveryFrom(old)
 	}
 
-	ctrl.InheritLifecycleFrom(old)
+	if err := ctrl.InheritLifecycleFrom(old); err != nil {
+		return fmt.Errorf("inherit controller lifecycle: %w", err)
+	}
 	ctrl.RestoreSessionAuthorizations(m.authorizations)
 	return nil
 }

@@ -259,10 +259,13 @@ type Controller struct {
 	// goalDriver is a level-triggered, process-local scheduler. It never owns a
 	// cross-turn Activity: each accepted continuation enters through the normal
 	// guarded top-level turn path.
-	goalDriverMu      sync.Mutex
-	goalDriverWG      sync.WaitGroup
-	goalDriverPending bool
-	goalDriverActive  *goalRoundReservation
+	goalDriverMu        sync.Mutex
+	goalDriverWG        sync.WaitGroup
+	goalDriverPending   bool
+	goalDriverActive    *goalRoundReservation
+	goalDriverInherited atomic.Bool
+	goalDriverCtx       context.Context
+	goalDriverCancel    context.CancelFunc
 	// legacyResearchArchive reads explicit pre-unification task paths. It never
 	// creates or mutates archive state. See
 	// autoresearch_manager.go.
@@ -749,6 +752,7 @@ func New(opts Options) *Controller {
 	}
 	runtimeOwner := runtimeOwnerOrDefault(opts.RuntimeOwner)
 	pluginCtx = extension.ContextWithRuntimeOwner(pluginCtx, runtimeOwner)
+	goalDriverCtx, goalDriverCancel := context.WithCancel(context.Background())
 	if opts.Hooks != nil {
 		opts.Hooks.SetSessionID(agent.BranchID(opts.SessionPath))
 	}
@@ -817,6 +821,8 @@ func New(opts Options) *Controller {
 		providerResolver:                  opts.ProviderResolver,
 		runtimeGeneration:                 opts.RuntimeGeneration,
 		runtimeOwner:                      runtimeOwner,
+		goalDriverCtx:                     goalDriverCtx,
+		goalDriverCancel:                  goalDriverCancel,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
 	c.initializeOwnedResources(opts)
@@ -5269,9 +5275,9 @@ func (c *Controller) ModelSettingsSourceRevision() string { return c.modelSettin
 
 // InheritLifecycleFrom carries same-session lifecycle state across controller
 // rebuilds, such as model switches that preserve the conversation.
-func (c *Controller) InheritLifecycleFrom(prev *Controller) {
+func (c *Controller) InheritLifecycleFrom(prev *Controller) error {
 	if prev == nil {
-		return
+		return nil
 	}
 	if c.workspaceRoot == prev.workspaceRoot && c.executor != nil {
 		c.executor.InheritFileObservationsFrom(prev.executor)
@@ -5287,6 +5293,67 @@ func (c *Controller) InheritLifecycleFrom(prev *Controller) {
 		c.turn = turn
 	}
 	c.mu.Unlock()
+
+	_, currentRuntime, currentExclusive := c.v3Binding()
+	_, previousRuntime, previousExclusive := prev.v3Binding()
+	if !currentExclusive || !previousExclusive || currentRuntime == nil || currentRuntime != previousRuntime {
+		return nil
+	}
+	prev.goalDriverMu.Lock()
+	defer prev.goalDriverMu.Unlock()
+	if prev.goalDriverPending || prev.goalDriverActive != nil {
+		return sessionv3.ErrRuntimeBusy
+	}
+	prev.goalLifecycleMu.RLock()
+	previousMachine, previousLoadErr := prev.goalLifecycle, prev.goalLifecycleLoadErr
+	prev.goalLifecycleMu.RUnlock()
+	if previousLoadErr != nil {
+		return previousLoadErr
+	}
+	c.goalLifecycleMu.Lock()
+	if c.goalLifecycleLoadErr != nil {
+		err := c.goalLifecycleLoadErr
+		c.goalLifecycleMu.Unlock()
+		return err
+	}
+	candidate := c.goalLifecycle.Clone()
+	if err := candidate.InheritRuntimeFrom(previousMachine); err != nil {
+		c.goalLifecycleMu.Unlock()
+		return err
+	}
+	c.goalLifecycle = candidate
+	c.goalLifecycleMu.Unlock()
+
+	prev.goalResourceMu.Lock()
+	tokensUsed, requestsUsed := prev.goalTokensUsed, prev.goalRequestsUsed
+	tokenLimit, extensions := prev.goalTokenLimit, prev.goalBudgetExtensions
+	previousBudget := prev.goalTokenBudget
+	prev.goalResourceMu.Unlock()
+	c.goalResourceMu.Lock()
+	c.goalTokensUsed = tokensUsed
+	c.goalRequestsUsed = requestsUsed
+	c.goalBudgetExtensions = extensions
+	if c.goalTokenBudget == previousBudget {
+		c.goalTokenLimit = tokenLimit
+	} else if c.goalTokenBudget <= 0 {
+		c.goalTokenLimit = 0
+	} else {
+		c.goalTokenLimit = c.goalTokenBudget * (extensions + 1)
+	}
+	c.goalResourceMu.Unlock()
+	if view := candidate.Get(); view != nil && view.Phase == goaldomain.PhaseActive && view.Activation == goaldomain.ActivationArmed {
+		c.goalDriverInherited.Store(true)
+	}
+	return nil
+}
+
+// ActivateGoalDriverAfterRebuild is called only after a host has published the
+// replacement controller. It keeps an unpublished build from racing the old
+// controller for the shared SessionRuntime.
+func (c *Controller) ActivateGoalDriverAfterRebuild() {
+	if c != nil && c.goalDriverInherited.Swap(false) {
+		c.kickGoalDriver()
+	}
 }
 
 // SessionAuthorizations snapshots this controller's same-session tool
@@ -5366,6 +5433,9 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 			c.approval.clearAll()
 		} else {
 			c.promptOwner.Clear()
+		}
+		if c.goalDriverCancel != nil {
+			c.goalDriverCancel()
 		}
 		// Goal-driver workers may be inside the pre-admission durability
 		// checkpoint. Join them before closing the v3 writer so teardown cannot

@@ -287,7 +287,10 @@ func (s *Server) switchModelLocked(ctx context.Context, ref string) error {
 	// this session.
 	if prev, ok := cur.(*control.Controller); ok {
 		newCtrl.RestoreSessionAuthorizations(prev.SessionAuthorizations())
-		newCtrl.InheritLifecycleFrom(prev)
+		if err := newCtrl.InheritLifecycleFrom(prev); err != nil {
+			s.closeTaggedController(newCtrl)
+			return fmt.Errorf("switch model: active Goal continuation must finish before rebuilding: %w", err)
+		}
 	}
 	// Persist before publishing the replacement. A failed write leaves cur and
 	// the on-disk transcript coherent and lets the caller retry; publishing first
@@ -335,6 +338,7 @@ func (s *Server) switchModelLocked(ctx context.Context, ref string) error {
 		s.closeTaggedController(newCtrl)
 		return fmt.Errorf("switch model: session changed during switch")
 	}
+	newCtrl.ActivateGoalDriverAfterRebuild()
 	tag.Activate()
 	s.refreshProviderSetup(currentModelRef(newCtrl))
 
@@ -401,6 +405,7 @@ func (s *Server) reloadExtensions(ctx context.Context) error {
 		s.closeTaggedController(newCtrl)
 		return fmt.Errorf("reload extensions: session changed during reload")
 	}
+	newCtrl.ActivateGoalDriverAfterRebuild()
 	if tag := s.tagFor(newCtrl); tag != nil {
 		tag.Activate()
 	}

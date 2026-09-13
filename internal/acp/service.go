@@ -1517,6 +1517,7 @@ func (s *service) reloadSessionExtensionsLocked(ctx context.Context, sess *acpSe
 		_ = saveACPMeta(sess.transcript, sess.metaLocked())
 	}
 	sess.mu.Unlock()
+	newCtrl.ActivateGoalDriverAfterRebuild()
 	sink.bindControllerPrompts(newCtrl, rebuildParams.MCPInteractions)
 
 	// Release the outgoing controller only after the swap published the
@@ -1981,7 +1982,10 @@ func (s *service) rebuildSessionLocked(ctx context.Context, sess *acpSession, cf
 	// construction concern, not part of the driving port. cur is always the
 	// *control.Controller the factory built for this session, so this is safe.
 	if prev, ok := cur.(*control.Controller); ok {
-		newCtrl.InheritLifecycleFrom(prev)
+		if err := newCtrl.InheritLifecycleFrom(prev); err != nil {
+			newCtrl.ReleaseResources()
+			return &RPCError{Code: ErrInvalidRequest, Message: "session config: active Goal continuation must finish before switching config"}
+		}
 		// A rebuild must not force the user to re-approve tools already granted
 		// for this session, or re-trust Plan-mode read-only commands already
 		// trusted this session.
@@ -2020,6 +2024,7 @@ func (s *service) rebuildSessionLocked(ctx context.Context, sess *acpSession, cf
 		_ = saveACPMeta(sess.transcript, sess.metaLocked())
 	}
 	sess.mu.Unlock()
+	newCtrl.ActivateGoalDriverAfterRebuild()
 	sink.bindControllerPrompts(newCtrl, rebuildParams.MCPInteractions)
 
 	cur.ReleaseResources()
