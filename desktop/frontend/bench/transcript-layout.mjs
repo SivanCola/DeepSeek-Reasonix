@@ -141,6 +141,15 @@ try {
   await page.locator('[data-nav-turn="user-10"]').focus();
   await page.locator('[data-nav-turn="user-10"]').press("Enter");
   await page.waitForFunction(() => [...document.querySelectorAll(".transcript code")].some(element => element.textContent.includes("abcdefghij".repeat(60))));
+  // Harness keeps only the visible navigation marks mounted. Move the rail to
+  // its loaded tail before addressing the last turn by keyboard.
+  const turnRail = page.locator('[data-nav-turn="user-10"]').locator("xpath=ancestor::nav");
+  await turnRail.evaluate(nav => {
+    const scroller = nav.firstElementChild;
+    scroller.scrollTop = scroller.scrollHeight;
+    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await page.locator('[data-nav-turn="user-119"]').waitFor();
   await page.locator('[data-nav-turn="user-119"]').focus();
   await page.locator('[data-nav-turn="user-119"]').press("Enter");
   assert.equal(await page.locator('[data-chat-kind="user"]').count(), 120, "reading never unmounts loaded history");

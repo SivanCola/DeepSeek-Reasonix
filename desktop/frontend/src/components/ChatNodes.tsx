@@ -1,8 +1,9 @@
-import { lazy, Suspense, memo, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, memo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FileText, Globe, GitBranch, PackageOpen, Search, Terminal, Users, Wrench, X } from "lucide-react";
 import { ChatSource, type ChatNode } from "../lib/chatViewSource";
 import type { ChatContentLoader } from "../lib/chatContentLoader";
 import type { ChatScrollController } from "../lib/chatScrollController";
+import { reconcileMountedOrder, revealEarlierMountedOrder, type ChatMountedOrder } from "../lib/chatMountedOrder";
 import type { CheckpointMeta } from "../lib/types";
 import { useT } from "../lib/i18n";
 import { AssistantMessage, UserMessage } from "./Message";
@@ -35,81 +36,42 @@ export type ChatActions = {
   checkpoints: readonly CheckpointMeta[];
 };
 type SeatProps = { source: ChatSource; nodeKey: string; loader: ChatContentLoader; scroll: ChatScrollController; actions: ChatActions; tabId?: string; hostId?: string };
-const HISTORY_PREPEND_CHUNK = 24;
-type SeatChunk = { key: string; order: readonly string[] };
-type RenderedOrder = { order: readonly string[]; chunks: readonly SeatChunk[] };
 
-function splitOrder(order: readonly string[]): RenderedOrder {
-  const chunks: SeatChunk[] = [];
-  for (let start = 0; start < order.length; start += HISTORY_PREPEND_CHUNK) {
-    const keys = order.slice(start, start + HISTORY_PREPEND_CHUNK);
-    chunks.push({ key: keys[0], order: keys });
-  }
-  return { order, chunks };
-}
-
-function appendOrder(current: RenderedOrder, suffix: readonly string[]): RenderedOrder {
-  if (!suffix.length) return current;
-  const chunks = [...current.chunks];
-  let offset = 0;
-  const last = chunks[chunks.length - 1];
-  if (last && last.order.length < HISTORY_PREPEND_CHUNK) {
-    const take = Math.min(HISTORY_PREPEND_CHUNK - last.order.length, suffix.length);
-    chunks[chunks.length - 1] = { key: last.key, order: [...last.order, ...suffix.slice(0, take)] };
-    offset = take;
-  }
-  for (; offset < suffix.length; offset += HISTORY_PREPEND_CHUNK) {
-    const keys = suffix.slice(offset, offset + HISTORY_PREPEND_CHUNK);
-    chunks.push({ key: keys[0], order: keys });
-  }
-  return { order: [...current.order, ...suffix], chunks };
-}
-
-export const ChatNodeList = memo(function ChatNodeList(props: Omit<SeatProps, "nodeKey">) {
+export const ChatNodeList = memo(function ChatNodeList(props: Omit<SeatProps, "nodeKey"> & { mounts: ChatMountedOrder }) {
   const order = useSyncExternalStore(props.source.subscribeOrder, props.source.getOrderSnapshot, props.source.getOrderSnapshot);
-  const [visible, setVisible] = useState(() => splitOrder(order));
+  const [visible, setVisible] = useState<readonly string[]>(order);
+  const committedVisibleRef = useRef(visible);
+  committedVisibleRef.current = visible;
   const visibleRef = useRef(visible);
-  const prependStart = visible.order.length ? order.indexOf(visible.order[0]) : -1;
-  const progressivePrepend = prependStart > 0
-    && visible.order.every((key, index) => order[prependStart + index] === key);
-  // Initial hydration, replacement and tail growth remain synchronous. Only a
-  // leading history addition is eligible for the bounded reveal below.
-  let rendered = progressivePrepend ? visible : splitOrder(order);
-  if (progressivePrepend) rendered = appendOrder(rendered, order.slice(prependStart + visible.order.length));
+  // Harness keeps every business node under one keyed parent. Tail growth and
+  // replacements are synchronous; a leading history page alone is revealed in
+  // bounded frames without ever regrouping the nodes already in the document.
+  const rendered = reconcileMountedOrder(visible, order);
   visibleRef.current = rendered;
+  useLayoutEffect(() => props.mounts.publish(rendered), [props.mounts, rendered]);
   useEffect(() => {
     let frame = requestAnimationFrame(function revealPrepend() {
       const current = visibleRef.current;
-      if (!current.order.length) { const next = splitOrder(order); visibleRef.current = next; setVisible(next); return; }
-      const start = order.indexOf(current.order[0]);
-      const contiguous = start >= 0 && current.order.every((key, index) => order[start + index] === key);
-      if (!contiguous) { const next = splitOrder(order); visibleRef.current = next; setVisible(next); return; }
-      // A history page still becomes one natural-flow document, but committing
-      // its leading nodes over adjacent frames prevents a large page from
-      // monopolising the main thread. Immutable chunks keep existing rows out
-      // of React's reconciliation path while the new prefix is mounted.
-      const chunkStart = Math.max(0, start - HISTORY_PREPEND_CHUNK);
-      const suffix = order.slice(start + current.order.length);
-      if (chunkStart === start && !suffix.length) return;
-      const withSuffix = appendOrder(current, suffix);
-      const prefix = order.slice(chunkStart, start);
-      const prefixChunk = prefix.length ? [{ key: prefix[0], order: prefix }] : [];
-      const next = { order: [...prefix, ...withSuffix.order], chunks: [...prefixChunk, ...withSuffix.chunks] };
+      if (!current.length) { visibleRef.current = order; committedVisibleRef.current = order; setVisible(order); return; }
+      const next = revealEarlierMountedOrder(current, order);
+      if (next === current) {
+        // Tail growth is visible immediately. Commit the reconciled order so a
+        // later history prepend starts from the actual mounted suffix.
+        if (committedVisibleRef.current !== current) {
+          committedVisibleRef.current = current;
+          setVisible(current);
+        }
+        return;
+      }
       visibleRef.current = next;
+      committedVisibleRef.current = next;
       setVisible(next);
-      if (chunkStart > 0) frame = requestAnimationFrame(revealPrepend);
+      if (next.length < order.length) frame = requestAnimationFrame(revealPrepend);
     });
     return () => cancelAnimationFrame(frame);
   }, [order]);
-  return <ChatNodeSeats {...props} chunks={rendered.chunks} />;
-});
-
-const ChatNodeSeats = memo(function ChatNodeSeats({ chunks, ...props }: Omit<SeatProps, "nodeKey"> & { chunks: readonly SeatChunk[] }) {
-  return chunks.map(chunk => <ChatNodeSeatChunk key={chunk.key} {...props} order={chunk.order} />);
-});
-
-const ChatNodeSeatChunk = memo(function ChatNodeSeatChunk({ order, ...props }: Omit<SeatProps, "nodeKey"> & { order: readonly string[] }) {
-  return order.map(key => <ChatNodeSeat key={key} {...props} nodeKey={key} />);
+  return rendered.map(key => <ChatNodeSeat key={key} source={props.source} loader={props.loader} scroll={props.scroll}
+    actions={props.actions} tabId={props.tabId} hostId={props.hostId} nodeKey={key} />);
 });
 
 const ChatNodeSeat = memo(function ChatNodeSeat({ source, nodeKey, loader, scroll, actions, tabId, hostId }: SeatProps) {

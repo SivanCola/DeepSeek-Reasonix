@@ -7,6 +7,7 @@ import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib
 import { ChatSource } from "../lib/chatViewSource";
 import { ChatScrollController } from "../lib/chatScrollController";
 import { ChatContentLoader } from "../lib/chatContentLoader";
+import { ChatMountedOrder } from "../lib/chatMountedOrder";
 import { useT } from "../lib/i18n";
 import { InvocationMetadataContext } from "./Message";
 import { MarkdownImageTabContext } from "./MarkdownImageContext";
@@ -55,6 +56,7 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
     onLoadOlderHistory, onPrompt, onFork, onSurfacePaintReady, surfaceCommitToken } = props;
   const t = useT();
   const [source] = useState(() => new ChatSource(sessionKey));
+  const [mounts] = useState(() => new ChatMountedOrder());
   const order = useSyncExternalStore(source.subscribeOrder, source.getOrderSnapshot, source.getOrderSnapshot);
   const [scroll] = useState(() => new ChatScrollController(sessionKey));
   const loader = useMemo(() => new ChatContentLoader(tabId), [tabId]);
@@ -82,8 +84,8 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
   useEffect(() => {
     loader.activate();
     acquireMarkdownWorkerClient();
-    return () => { lifetime.current++; source.dispose(); loader.dispose(); releaseMarkdownWorkerClient(); };
-  }, [source, loader]);
+    return () => { lifetime.current++; source.dispose(); mounts.dispose(); loader.dispose(); releaseMarkdownWorkerClient(); };
+  }, [source, mounts, loader]);
   useLayoutEffect(() => {
     if (!hydrating) scroll.ready();
     scroll.layout();
@@ -124,7 +126,7 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
     <MarkdownImageTabContext.Provider value={tabId ?? ""}>
       <section className="chat-transcript">
         <div className="chat-surface" inert={Boolean(activeDetails)}>
-          <Suspense fallback={null}><ChatTurnNavigator source={source} scroll={scroll} /></Suspense>
+          <Suspense fallback={null}><ChatTurnNavigator source={source} scroll={scroll} mounts={mounts} /></Suspense>
           <div ref={scroller} className="transcript chat-flow-scroll" tabIndex={0} data-transcript-render-mode="full"
             data-transcript-hydrating={hydrating} data-scroll-mode={position.following ? "tail" : "reader"}>
             <div ref={column} className="chat-column">
@@ -132,7 +134,7 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
               {hasOlderHistory && <button className="btn chat-older" disabled={loadingOlderHistory} onClick={() => void loadOlder()}>{t(loadingOlderHistory ? "chat.loading" : "chat.loadOlder")}</button>}
               {(olderHistoryError || pagingError) && <button className="btn" onClick={() => void loadOlder()}>{t("chat.loadFailed")}</button>}
               {!hydrating && items.length === 0 && !running && <Welcome onPrompt={onPrompt} />}
-              <ChatNodeList key={source.sessionKey} source={source} loader={loader} scroll={scroll} actions={actions} tabId={tabId} hostId={props.hostId} />
+              <ChatNodeList key={source.sessionKey} source={source} mounts={mounts} loader={loader} scroll={scroll} actions={actions} tabId={tabId} hostId={props.hostId} />
               <ChatRunning source={source} />
             </div>
           </div>

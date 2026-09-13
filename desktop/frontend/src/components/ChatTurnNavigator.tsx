@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { ChatSource } from "../lib/chatViewSource";
 import type { ChatScrollController } from "../lib/chatScrollController";
+import type { ChatMountedOrder } from "../lib/chatMountedOrder";
 import { useT } from "../lib/i18n";
 import { TurnNavigator, type TurnRailItem } from "./harness-chat/TurnNavigator";
 import css from "./harness-chat/TurnNavigator.styles";
@@ -21,9 +22,9 @@ function Preview({ source, item }: { source: ChatSource; item: TurnRailItem }) {
   return <><div className={css.previewPrompt}>{prompt || item.ordinal}</div><div className={css.previewResponse}>{response}</div></>;
 }
 
-export default function ChatTurnNavigator({ source, scroll }: { source: ChatSource; scroll: ChatScrollController }) {
+export default function ChatTurnNavigator({ source, scroll, mounts }: { source: ChatSource; scroll: ChatScrollController; mounts: ChatMountedOrder }) {
   const t = useT();
-  const order = useSyncExternalStore(source.subscribeOrder, source.getOrderSnapshot, source.getOrderSnapshot);
+  const order = useSyncExternalStore(mounts.subscribe, mounts.getSnapshot, mounts.getSnapshot);
   const position = useSyncExternalStore(scroll.subscribe, scroll.getSnapshot, scroll.getSnapshot);
   const items = useMemo(() => {
     const turns: TurnRailItem[] = [];
