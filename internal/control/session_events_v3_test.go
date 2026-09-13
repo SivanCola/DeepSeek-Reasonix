@@ -35,7 +35,7 @@ func loadDurableV3Projection(t *testing.T, legacyPath string) sessionv3.Projecti
 func TestRuntimeSnapshotRecoversRecoveryRequiredFromV3Alone(t *testing.T) {
 	legacyPath := filepath.Join(t.TempDir(), "sessions", "chat.jsonl")
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
 	t.Cleanup(func() { c.Close() })
 	recovery := event.RecoveryStatus{State: "recovery_required", Reason: "uncooperative_tool", Phase: "tool"}
 	payload, err := json.Marshal(recovery)
@@ -66,7 +66,7 @@ func TestExclusiveControllerUsesBoundSessionIdentityAndWritesNoLegacyTranscript(
 	legacyPath := filepath.Join(root, "sessions", "legacy-name.jsonl")
 	providerMock := testutil.NewMock("test", testutil.Turn{Text: "answer"})
 	exec := agent.New(providerMock, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner: exec, Executor: exec, Sink: event.Discard,
 		SessionPath: legacyPath, SessionDir: filepath.Dir(legacyPath),
 		SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true,
@@ -107,7 +107,7 @@ func TestExclusiveControllerRuntimeSnapshotAndCancelUseExactV3Instance(t *testin
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
 	t.Cleanup(c.Close)
 
 	initial := c.RuntimeStateSnapshot()
@@ -153,7 +153,7 @@ func TestExclusiveSessionSwitchRestoresPlanAndGoalWithoutTodo(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: first, ExclusiveSessionV3: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: first, ExclusiveSessionV3: true})
 	t.Cleanup(c.Close)
 	c.SetPlanMode(true)
 	c.SetGoal("finish the migration")
@@ -201,7 +201,7 @@ func TestExclusiveControllerNewPublishesFreshIdentityAndKeepsOldHistory(t *testi
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionDir: filepath.Join(root, "sessions"), SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionDir: filepath.Join(root, "sessions"), SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
 	if err := c.NewSession(); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestExclusiveControllerOpenMissingKeepsCurrentExactRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
 	if _, err := c.OpenV3(t.Context(), sessionv3.SessionRef{HostID: "desktop", SessionID: "missing"}); !errors.Is(err, sessionv3.ErrSessionNotFound) {
 		t.Fatalf("OpenV3 missing error = %v", err)
 	}
@@ -258,7 +258,7 @@ func TestExclusiveControllerClearDeletesClosedSourceAfterPublishingFreshIdentity
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionDir: filepath.Join(root, "sessions"), SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionDir: filepath.Join(root, "sessions"), SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
 	if err := c.ClearSession(); err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestExclusiveControllerForkUsesTypedTurnBoundaryAndNoLegacyTranscript(t *te
 	}
 	prov := testutil.NewMock("fork", testutil.Turn{Text: "answer one"}, testutil.Turn{Text: "answer two"})
 	exec := agent.New(prov, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Runner: exec, Executor: exec, Sink: event.Discard, SessionDir: filepath.Join(root, "legacy"), SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
+	c := newOwnedTestController(t, Options{Runner: exec, Executor: exec, Sink: event.Discard, SessionDir: filepath.Join(root, "legacy"), SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
 	if err := c.RunTurn(t.Context(), "one"); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestSessionPathBindingSeedsTranscriptBeforeLaterStateEvents(t *testing.T) {
 	session.Add(provider.Message{Role: provider.RoleUser, Content: "question"})
 	session.Add(provider.Message{Role: provider.RoleAssistant, Content: "answer"})
 	exec := agent.New(nil, tool.NewRegistry(), session, agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard})
 	t.Cleanup(func() { c.Close() })
 
 	c.SetSessionPath(legacyPath)
@@ -362,7 +362,7 @@ func TestLateManagedHostBindingFencesCandidateUntilLeaseActivation(t *testing.T)
 	initial := agent.NewSession("system")
 	initial.Add(provider.Message{Role: provider.RoleUser, Content: "old"})
 	exec := agent.New(nil, tool.NewRegistry(), initial, agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
 	t.Cleanup(func() { c.Close() })
 
 	// Serve and other embedders may install their transition owner after the
@@ -399,7 +399,7 @@ func TestLateManagedHostBindingFencesCandidateUntilLeaseActivation(t *testing.T)
 func TestControllerUsesV3AsBusinessEventStore(t *testing.T) {
 	legacyPath := filepath.Join(t.TempDir(), "sessions", "chat.jsonl")
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
 	t.Cleanup(func() { c.Close() })
 
 	admitted := c.prepareTurnAdmission(func(context.Context) error { return nil })
@@ -465,7 +465,7 @@ func TestCheckpointDoesNotInferMessagesFromLegacyTranscript(t *testing.T) {
 	legacyPath := filepath.Join(t.TempDir(), "sessions", "chat.jsonl")
 	session := agent.NewSession("system")
 	exec := agent.New(nil, tool.NewRegistry(), session, agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
 	t.Cleanup(func() { c.Close() })
 	recorded := provider.Message{ID: "recorded", Role: provider.RoleUser, Content: "recorded"}
 	if err := c.RecordSessionMessages(context.Background(), "test", []provider.Message{recorded}); err != nil {
@@ -490,7 +490,7 @@ func TestTurnEndUsesExplicitFinalMessageCommit(t *testing.T) {
 	legacyPath := filepath.Join(t.TempDir(), "sessions", "chat.jsonl")
 	session := agent.NewSession("system")
 	exec := agent.New(nil, tool.NewRegistry(), session, agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
 	t.Cleanup(func() { c.Close() })
 	if err := c.prepareTurnAdmission(func(context.Context) error { return nil })(context.Background()); err != nil {
 		t.Fatal(err)
@@ -512,7 +512,7 @@ func TestTurnEndUsesExplicitFinalMessageCommit(t *testing.T) {
 func TestTurnEndClosesPendingInteractionsInTheSameBatch(t *testing.T) {
 	legacyPath := filepath.Join(t.TempDir(), "sessions", "chat.jsonl")
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
 	t.Cleanup(func() { c.Close() })
 	if err := c.prepareTurnAdmission(func(context.Context) error { return nil })(context.Background()); err != nil {
 		t.Fatal(err)
@@ -549,7 +549,7 @@ func TestTurnEndClosesPendingInteractionsInTheSameBatch(t *testing.T) {
 func TestPromptResolutionAndPlanStateShareOneAtomicBatch(t *testing.T) {
 	legacyPath := filepath.Join(t.TempDir(), "sessions", "chat.jsonl")
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionPath: legacyPath, Sink: event.Discard})
 	t.Cleanup(func() { c.Close() })
 	if err := c.prepareTurnAdmission(func(context.Context) error { return nil })(context.Background()); err != nil {
 		t.Fatal(err)

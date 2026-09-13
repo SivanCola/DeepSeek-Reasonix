@@ -107,7 +107,7 @@ func (p *FilesystemPersistence) Create(options CreateOptions) (SessionHandle, er
 	if err := validateSessionID(id); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(p.Root, id)
+	dir := filepath.Join(p.Root, filepath.Base(id))
 	return CreateStore(dir, id)
 }
 
@@ -116,9 +116,9 @@ func (p *FilesystemPersistence) Open(sessionID string, mode AccessMode) (Session
 	if err := validateSessionID(id); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(p.Root, id)
+	dir := filepath.Join(p.Root, filepath.Base(id))
 	if mode == ReadOnly {
-		return openReadHandle(dir, id, filepath.Join(p.Root, ".query-cache", id))
+		return openReadHandle(dir, id, filepath.Join(p.Root, ".query-cache", filepath.Base(id)))
 	}
 	if mode != ReadWrite {
 		return nil, fmt.Errorf("sessionv3: unsupported access mode %q", mode)
@@ -136,7 +136,7 @@ func (p *FilesystemPersistence) Stat(sessionID string) (SessionInfo, error) {
 	if err := validateSessionID(id); err != nil {
 		return SessionInfo{}, err
 	}
-	dir := filepath.Join(p.Root, id)
+	dir := filepath.Join(p.Root, filepath.Base(id))
 	manifest, err := readManifest(filepath.Join(dir, "manifest.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -144,7 +144,7 @@ func (p *FilesystemPersistence) Stat(sessionID string) (SessionInfo, error) {
 		}
 		return SessionInfo{}, err
 	}
-	sequence, err := lastDurableSequenceWithCache(dir, filepath.Join(p.Root, ".query-cache", id))
+	sequence, err := lastDurableSequenceWithCache(dir, filepath.Join(p.Root, ".query-cache", filepath.Base(id)))
 	if err != nil {
 		return SessionInfo{}, err
 	}
@@ -193,7 +193,7 @@ func (p *FilesystemPersistence) List(cursor string, limit int) (SessionPage, err
 
 func validateSessionID(id string) error {
 	id = strings.TrimSpace(id)
-	if id == "" || id == "." || id == ".." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
+	if !filepath.IsLocal(id) || id == "." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
 		return fmt.Errorf("sessionv3: invalid session id %q", id)
 	}
 	return nil
@@ -226,6 +226,15 @@ func (s *Session) Snapshot() Snapshot {
 
 func (s *Session) DeriveMessages() []provider.Message {
 	return append([]provider.Message(nil), s.Snapshot().Projection.ModelMessages...)
+}
+
+func (s *Session) StateSnapshot() Snapshot {
+	if s != nil && s.Handle != nil {
+		if handle, ok := s.Handle.(interface{ StateSnapshot() Snapshot }); ok {
+			return handle.StateSnapshot()
+		}
+	}
+	return s.Snapshot()
 }
 
 // AcceptedPage returns the live accepted prefix, including events that have

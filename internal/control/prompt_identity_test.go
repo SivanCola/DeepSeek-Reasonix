@@ -12,7 +12,7 @@ import (
 )
 
 func TestResolvePromptExactRejectsStaleTurnBeforeDispatch(t *testing.T) {
-	c := New(Options{})
+	c := newOwnedTestController(t, Options{})
 	t.Cleanup(c.Close)
 	err := c.ResolvePromptExact(PromptIdentity{
 		PromptID: "prompt-1", TurnID: "turn-stale", Kind: PromptAsk,
@@ -23,7 +23,7 @@ func TestResolvePromptExactRejectsStaleTurnBeforeDispatch(t *testing.T) {
 }
 
 func TestResolvePromptExactRejectsIncompleteIdentity(t *testing.T) {
-	c := New(Options{})
+	c := newOwnedTestController(t, Options{})
 	t.Cleanup(c.Close)
 	err := c.ResolvePromptExact(PromptIdentity{PromptID: "prompt-1", Kind: PromptAsk}, PromptAnswer{})
 	if !errors.Is(err, ErrPromptNotPending) {
@@ -32,7 +32,7 @@ func TestResolvePromptExactRejectsIncompleteIdentity(t *testing.T) {
 }
 
 func TestResolvePromptExactRejectsStaleRuntime(t *testing.T) {
-	c := New(Options{})
+	c := newOwnedTestController(t, Options{})
 	t.Cleanup(c.Close)
 	c.SetTurnEventRoutingMetadata("runtime-current", "")
 	err := c.ResolvePromptExact(PromptIdentity{
@@ -44,7 +44,7 @@ func TestResolvePromptExactRejectsStaleRuntime(t *testing.T) {
 }
 
 func TestResolvePromptExactRejectsLegacyIdentityAfterRuntimeEpochIsSet(t *testing.T) {
-	c := New(Options{})
+	c := newOwnedTestController(t, Options{})
 	t.Cleanup(c.Close)
 	c.SetTurnEventRoutingMetadata("runtime-current", "")
 	err := c.ResolvePromptExact(PromptIdentity{PromptID: "legacy", TurnID: "turn-any", Kind: PromptAsk}, PromptAnswer{})
@@ -54,7 +54,7 @@ func TestResolvePromptExactRejectsLegacyIdentityAfterRuntimeEpochIsSet(t *testin
 }
 
 func TestResolvePromptExactRejectsClosedController(t *testing.T) {
-	c := New(Options{})
+	c := newOwnedTestController(t, Options{})
 	c.Close()
 	err := c.ResolvePromptExact(PromptIdentity{PromptID: "p", TurnID: "t", Kind: PromptAsk}, PromptAnswer{})
 	if !errors.Is(err, ErrPromptNotPending) {
@@ -212,7 +212,7 @@ func TestPendingPromptOwnerCancellationDoesNotWaitForCancelCallback(t *testing.T
 }
 
 func TestControllerCancelSignalsTurnWhilePromptAnswererIsBlocked(t *testing.T) {
-	c := New(Options{})
+	c := newOwnedTestController(t, Options{})
 	t.Cleanup(c.Close)
 
 	turnCtx, cancelTurn := context.WithCancel(context.Background())
@@ -277,7 +277,7 @@ func TestPendingPromptOwnerBindsMissingRoutingOnce(t *testing.T) {
 
 func TestPromptAnsweredEventInheritsOwnerTurnID(t *testing.T) {
 	var got event.Event
-	c := New(Options{Sink: event.FuncSink(func(e event.Event) { got = e })})
+	c := newOwnedTestController(t, Options{Sink: event.FuncSink(func(e event.Event) { got = e })})
 	t.Cleanup(c.Close)
 	c.promptOwner.Register(PromptIdentity{PromptID: "p-event", TurnID: "turn-event", Kind: PromptAsk})
 	if err := c.emitTurnEventChecked(event.Event{Kind: event.PromptAnswered, ItemID: "p-event"}); err != nil {

@@ -304,6 +304,14 @@ func (c *Controller) sessionEventSnapshot() (sessionv3.Snapshot, bool) {
 	return store.Snapshot(), true
 }
 
+func (c *Controller) sessionStateSnapshot() (sessionv3.Snapshot, bool) {
+	store := c.sessionEventStore()
+	if store == nil {
+		return sessionv3.Snapshot{}, false
+	}
+	return (&sessionv3.Session{Handle: store}).StateSnapshot(), true
+}
+
 // appendSessionEventLocked mirrors the existing event.Sink lifecycle into the
 // single typed business log. turnEvents.commitMu must be held, which preserves
 // the exact order assigned by the compatibility envelope adapter.

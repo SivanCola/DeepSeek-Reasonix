@@ -35,7 +35,7 @@ func TestProtocolRecoveryControllerDurabilityAndConcurrentAdmission(t *testing.T
 	a := agent.New(p, tool.NewRegistry(), session, agent.Options{}, event.Discard)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
-	c := New(Options{Runner: a, Executor: a, SessionDir: dir, SessionPath: path, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Runner: a, Executor: a, SessionDir: dir, SessionPath: path, Sink: event.Discard})
 	defer c.Close()
 	if err := c.RunTurn(context.Background(), "next"); err == nil {
 		t.Fatal("expected opaque failure")
@@ -94,7 +94,7 @@ func TestProtocolRecoveryCancelledBeforeAdmissionKeepsToken(t *testing.T) {
 	session := agent.NewSession("system")
 	session.Add(provider.Message{Role: provider.RoleAssistant, Content: "earlier", ReasoningContent: "proof"})
 	a := agent.New(p, tool.NewRegistry(), session, agent.Options{}, event.Discard)
-	c := New(Options{Runner: a, Executor: a, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Runner: a, Executor: a, Sink: event.Discard})
 	defer c.Close()
 	_ = c.RunTurn(context.Background(), "next")
 	action := c.PendingProtocolRecovery()

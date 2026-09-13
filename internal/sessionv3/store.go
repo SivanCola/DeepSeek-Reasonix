@@ -22,10 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"reasonix/internal/event"
 	"reasonix/internal/filelock"
 	"reasonix/internal/fileutil"
-	"reasonix/internal/provider"
 )
 
 const (
@@ -306,6 +304,16 @@ func openExistingWithOptions(dir, sessionID string, opts OpenOptions) (*Store, e
 	if manifest.SessionID != sessionID {
 		return fail(fmt.Errorf("sessionv3: manifest belongs to %q", manifest.SessionID))
 	}
+	// Validate the complete prefix before repairing anything. A newer required
+	// event or a damaged complete batch must leave the original tail untouched.
+	commits, err := Replay(dir, nil)
+	if err != nil {
+		return fail(err)
+	}
+	projection, err := Project(commits)
+	if err != nil {
+		return fail(err)
+	}
 	if torn, err := hasTornTail(eventsPath); err != nil {
 		return fail(err)
 	} else if torn {
@@ -316,14 +324,6 @@ func openExistingWithOptions(dir, sessionID string, opts OpenOptions) (*Store, e
 		if _, err := preserveAndTruncateTornTail(eventsPath); err != nil {
 			return fail(fmt.Errorf("recover torn v3 tail: %w", err))
 		}
-	}
-	commits, err := Replay(dir, nil)
-	if err != nil {
-		return fail(err)
-	}
-	projection, err := Project(commits)
-	if err != nil {
-		return fail(err)
 	}
 	manifest.WriterGeneration++
 	if err := writeManifestFile(manifestPath, manifest); err != nil {
@@ -447,257 +447,21 @@ func (s *Store) Append(ctx context.Context, batch Batch) (Commit, error) {
 	return cloneCommit(commit), nil
 }
 
-func (s *Store) scheduleDrainLocked() {
-	s.timer = s.afterFunc(LiveBatchDelay, func() { _ = s.drain(context.Background(), false) })
-}
-
-func (s *Store) Flush(ctx context.Context) (DurableReceipt, error) {
-	if s == nil {
-		return DurableReceipt{}, fmt.Errorf("sessionv3: nil store")
-	}
-	if err := ctx.Err(); err != nil {
-		return DurableReceipt{}, err
-	}
-	// Once a physical append has begun, one caller abandoning its wait cannot
-	// safely cancel that write or make another waiter guess whether bytes reached
-	// disk. drainMu merges concurrent callers onto the same ordered write chain;
-	// each caller may still stop waiting through its own context.
-	done := make(chan error, 1)
-	go func() { done <- s.drain(context.Background(), true) }()
-	select {
-	case err := <-done:
-		s.mu.Lock()
-		receipt := DurableReceipt{DurableSequence: s.durable}
-		s.mu.Unlock()
-		return receipt, err
-	case <-ctx.Done():
-		s.mu.Lock()
-		receipt := DurableReceipt{DurableSequence: s.durable}
-		s.mu.Unlock()
-		return receipt, ctx.Err()
-	}
-}
-
-func (s *Store) drain(ctx context.Context, explicit bool) error {
-	s.drainMu.Lock()
-	defer s.drainMu.Unlock()
-	for {
-		s.mu.Lock()
-		if s.closed || s.file == nil {
-			s.mu.Unlock()
-			return os.ErrClosed
-		}
-		if s.timer != nil {
-			s.timer.Stop()
-			s.timer = nil
-		}
-		if len(s.pending) == 0 {
-			s.draining = false
-			s.mu.Unlock()
-			return nil
-		}
-		uncertain := cloneUncertainWrite(s.uncertain)
-		if uncertain != nil && !explicit {
-			err := s.writeErr
-			s.draining = false
-			s.mu.Unlock()
-			return err
-		}
-		s.draining = true
-		pending := cloneCommits(s.pending)
-		file := s.file
-		s.mu.Unlock()
-
-		alreadyPersisted := false
-		var err error
-		if uncertain != nil {
-			alreadyPersisted, err = s.reconcileUncertain(ctx, file, *uncertain)
-		}
-		if err == nil && alreadyPersisted {
-			if indexErr := s.rebuildWriterIndex(file); indexErr != nil {
-				err = indexErr
-			}
-			confirmed := uncertain.commitCount
-			if confirmed <= 0 || confirmed > len(pending) {
-				err = fmt.Errorf("%w: uncertain batch commit count %d exceeds pending prefix %d", ErrDamagedStore, confirmed, len(pending))
-			} else {
-				s.mu.Lock()
-				if len(s.pending) < confirmed || !sameCommitPrefix(s.pending, pending[:confirmed]) {
-					err = fmt.Errorf("%w: uncertain batch no longer matches pending prefix", ErrDamagedStore)
-					s.writeErr = err
-					s.autoPaused = true
-					s.draining = false
-					s.mu.Unlock()
-					return err
-				}
-				s.pending = s.pending[confirmed:]
-				s.durable = pending[confirmed-1].LastSequence()
-				s.writeErr = nil
-				s.uncertain = nil
-				s.autoPaused = false
-				if len(s.pending) == 0 {
-					s.draining = false
-					s.mu.Unlock()
-					return nil
-				}
-				s.mu.Unlock()
-				continue
-			}
-		}
-		if err == nil && !alreadyPersisted {
-			err = s.persist(ctx, file, pending)
-		}
-		s.mu.Lock()
-		if err != nil {
-			s.draining = false
-			s.writeErr = err
-			var uncertainErr *uncertainAppendError
-			if errors.As(err, &uncertainErr) {
-				copy := uncertainErr.write
-				copy.data = append([]byte(nil), copy.data...)
-				s.uncertain = &copy
-			}
-			s.autoPaused = true
-			s.mu.Unlock()
-			return err
-		}
-		if len(s.pending) < len(pending) || !sameCommitPrefix(s.pending, pending) {
-			s.draining = false
-			s.writeErr = fmt.Errorf("%w: pending batch order changed", ErrDamagedStore)
-			s.autoPaused = true
-			err := s.writeErr
-			s.mu.Unlock()
-			return err
-		}
-		s.pending = s.pending[len(pending):]
-		s.durable = pending[len(pending)-1].LastSequence()
-		s.writeErr = nil
-		s.uncertain = nil
-		s.autoPaused = false
-		if len(s.pending) == 0 {
-			s.draining = false
-			s.mu.Unlock()
-			return nil
-		}
-		// Match DSH's drain chain: once a batch starts writing, events accepted
-		// during that write are drained immediately in the next physical batch.
-		// The fixed 200ms window applies only to the first pending batch.
-		s.mu.Unlock()
-	}
-}
-
-func (s *Store) persist(ctx context.Context, file *os.File, commits []Commit) error {
-	written, lengths, err := encodeCommitLines(commits)
-	if err != nil {
-		return err
-	}
-	start, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		return err
-	}
-	if err := s.writeFn(ctx, file, written); err != nil {
-		end, statErr := file.Seek(0, io.SeekEnd)
-		if statErr == nil && end == start {
-			return err
-		}
-		if statErr == nil && end == start+int64(len(written)) {
-			if syncErr := s.syncFn(file); syncErr == nil {
-				s.recordPersistedIndex(file, start, commits, lengths)
-				return nil
-			}
-		}
-		return &uncertainAppendError{cause: err, write: uncertainWrite{start: start, data: append([]byte(nil), written...), commitCount: len(commits)}}
-	}
-	if err := s.syncFn(file); err != nil {
-		return &uncertainAppendError{cause: fmt.Errorf("fsync: %w", err), write: uncertainWrite{start: start, data: append([]byte(nil), written...), commitCount: len(commits)}}
-	}
-	s.recordPersistedIndex(file, start, commits, lengths)
-	return nil
-}
-
-func encodeCommits(commits []Commit) ([]byte, error) {
-	written, _, err := encodeCommitLines(commits)
-	return written, err
-}
-
-func encodeCommitLines(commits []Commit) ([]byte, []int, error) {
-	var data bytes.Buffer
-	lengths := make([]int, 0, len(commits))
-	for _, commit := range commits {
-		line, err := json.Marshal(commit)
-		if err != nil {
-			return nil, nil, err
-		}
-		data.Write(line)
-		data.WriteByte('\n')
-		lengths = append(lengths, len(line)+1)
-	}
-	return data.Bytes(), lengths, nil
-}
-
-// reconcileUncertain proves whether the prior append completed before retrying.
-// The writer lease and drainMu make this a single-owner repair operation. A
-// partial tail is preserved byte-for-byte before truncation; a mismatching or
-// unexpectedly extended tail remains recovery-required rather than guessed.
-func (s *Store) reconcileUncertain(ctx context.Context, file *os.File, uncertain uncertainWrite) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return false, err
-	}
-	if info.Size() < uncertain.start {
-		return false, fmt.Errorf("%w: log shrank below uncertain offset %d", ErrPersistenceUncertain, uncertain.start)
-	}
-	tailLen := info.Size() - uncertain.start
-	if tailLen == 0 {
-		return false, nil
-	}
-	tail := make([]byte, tailLen)
-	if _, err := file.ReadAt(tail, uncertain.start); err != nil {
-		return false, fmt.Errorf("%w: inspect uncertain tail: %v", ErrPersistenceUncertain, err)
-	}
-	if int64(len(uncertain.data)) == tailLen && bytes.Equal(tail, uncertain.data) {
-		if err := s.syncFn(file); err != nil {
-			return false, &uncertainAppendError{cause: fmt.Errorf("fsync verified append: %w", err), write: uncertain}
-		}
-		return true, nil
-	}
-	if tailLen < int64(len(uncertain.data)) && bytes.Equal(tail, uncertain.data[:len(tail)]) {
-		backup := filepath.Join(s.dir, fmt.Sprintf("events.uncertain-%d.tail", time.Now().UTC().UnixNano()))
-		if err := os.WriteFile(backup, tail, 0o600); err != nil {
-			return false, fmt.Errorf("%w: preserve partial tail: %v", ErrPersistenceUncertain, err)
-		}
-		if err := file.Truncate(uncertain.start); err != nil {
-			return false, fmt.Errorf("%w: truncate preserved partial tail: %v", ErrPersistenceUncertain, err)
-		}
-		if _, err := file.Seek(0, io.SeekEnd); err != nil {
-			return false, fmt.Errorf("%w: seek repaired log: %v", ErrPersistenceUncertain, err)
-		}
-		if err := s.syncFn(file); err != nil {
-			return false, fmt.Errorf("%w: sync repaired log: %v", ErrPersistenceUncertain, err)
-		}
-		return false, nil
-	}
-	return false, fmt.Errorf("%w: on-disk tail does not match batch at offset %d", ErrPersistenceUncertain, uncertain.start)
-}
-
-func cloneUncertainWrite(in *uncertainWrite) *uncertainWrite {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	out.data = append([]byte(nil), in.data...)
-	return &out
-}
-
 func (s *Store) Snapshot() Snapshot {
+	return s.snapshot(true)
+}
+
+// StateSnapshot omits history so progress notifications do not copy every
+// message and completed turn on each activity update.
+func (s *Store) StateSnapshot() Snapshot {
+	return s.snapshot(false)
+}
+
+func (s *Store) snapshot(includeHistory bool) Snapshot {
 	if s == nil {
 		return Snapshot{PersistenceStatus: PersistenceFailed, PersistenceError: "nil session store"}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	status := PersistenceReady
 	if s.writeErr != nil {
 		status = PersistenceFailed
@@ -707,11 +471,21 @@ func (s *Store) Snapshot() Snapshot {
 	} else if len(s.pending) > 0 || s.draining {
 		status = PersistencePending
 	}
-	return Snapshot{
+	projection := s.projection
+	if !includeHistory {
+		projection.Messages, projection.ModelMessages, projection.Turns = nil, nil, nil
+	}
+	snapshot := Snapshot{
 		EventSequence: s.next - 1, DurableSequence: s.durable,
 		PersistenceStatus: status, PersistenceError: errorString(s.writeErr),
-		Projection: cloneProjection(s.projection),
+		Projection: cloneProjection(projection),
 	}
+	s.mu.Unlock()
+	// Nested provider metadata is immutable internally but Go cannot freeze
+	// returned slices. Detach it outside the commit lock before exposing it.
+	snapshot.Projection.Messages = detachMessages(snapshot.Projection.Messages)
+	snapshot.Projection.ModelMessages = detachMessages(snapshot.Projection.ModelMessages)
+	return snapshot
 }
 
 func (s *Store) Close(_ context.Context) error {
@@ -725,6 +499,8 @@ func (s *Store) Close(_ context.Context) error {
 		// Teardown is deliberately uncancellable: once closing begins, every
 		// caller observes the same completed drain/release result.
 		_, flushErr := s.Flush(context.Background())
+		s.drainMu.Lock()
+		defer s.drainMu.Unlock()
 		s.mu.Lock()
 		if s.timer != nil {
 			s.timer.Stop()
@@ -836,7 +612,7 @@ func scanCommitFileCodec(file *os.File, startOffset int64, nextSequence uint64, 
 		}
 		var commit Commit
 		if err := json.Unmarshal(bytes.TrimSuffix(line, []byte{'\n'}), &commit); err != nil {
-			return fmt.Errorf("%w: decode complete commit: %v", ErrDamagedStore, err)
+			return fmt.Errorf("%w: decode complete commit: %w", ErrDamagedStore, err)
 		}
 		if commit.SchemaVersion != SchemaVersion || commit.Codec != codec {
 			return fmt.Errorf("%w: event codec", ErrUnsupportedVersion)
@@ -996,465 +772,6 @@ func randomID() string {
 	}
 	return hex.EncodeToString(b[:])
 }
-
-type Projection struct {
-	CommittedSequence uint64
-	TurnID            string
-	TurnStatus        event.TurnStatus
-	CurrentTurnStart  uint64
-	Turns             []TurnBoundary
-	Messages          []provider.Message
-	// ModelMessages is the exact provider-visible projection. Canonical Messages
-	// remains the complete UI/history transcript; compaction replaces only this
-	// view and never deletes the underlying business history.
-	ModelMessages []provider.Message
-	Todos         []event.Todo
-	TodoWritten   bool
-	Interactions  map[string]string
-	ActiveTools   map[string]string
-	Recovery      *event.RecoveryStatus
-	PlanState     json.RawMessage
-	GoalState     json.RawMessage
-	Title         string
-	ModelRef      string
-	ModelIdentity string
-}
-
-type TurnBoundary struct {
-	TurnID        string           `json:"turnId"`
-	StartSequence uint64           `json:"startSequence"`
-	EndSequence   uint64           `json:"endSequence"`
-	Status        event.TurnStatus `json:"status"`
-}
-
-var ProjectionKinds = map[string]bool{
-	"message/complete": true, "message/upsert": true, "assistant/attempt": true,
-	"tool/call": true, "tool/start": true, "tool/result": true,
-	"turn/start": true, "turn/end": true, "step/start": true, "step/end": true,
-	"todo/write": true, "interaction/created": true, "interaction/resolved": true,
-	"plan/state": true, "goal/state": true, "session/title": true, "session/config": true,
-	"model/context-replace": true, "history/replace": true,
-	"compaction": true, "runtime/recovery": true, "legacy/import": true,
-	"diagnostic": true,
-}
-
-var PrototypeProjectionKinds = func() map[string]bool {
-	kinds := make(map[string]bool, len(ProjectionKinds)+1)
-	for kind, supported := range ProjectionKinds {
-		kinds[kind] = supported
-	}
-	kinds["context/replace"] = true
-	return kinds
-}()
-
-func Project(commits []Commit) (Projection, error) {
-	projection := Projection{Todos: []event.Todo{}, Interactions: map[string]string{}, ActiveTools: map[string]string{}}
-	for _, commit := range commits {
-		if err := applyProjectionCommit(&projection, commit); err != nil {
-			return Projection{}, err
-		}
-	}
-	return projection, nil
-}
-
-func applyProjectionCommit(projection *Projection, commit Commit) error {
-	if projection.Interactions == nil {
-		projection.Interactions = map[string]string{}
-	}
-	if projection.ActiveTools == nil {
-		projection.ActiveTools = map[string]string{}
-	}
-	for _, ev := range commit.Events {
-		projection.CommittedSequence = ev.Sequence
-		switch ev.Kind {
-		case "legacy/import":
-			var body struct {
-				Source        Source             `json:"source"`
-				Messages      []provider.Message `json:"messages"`
-				Goal          json.RawMessage    `json:"goal,omitempty"`
-				ModelRef      string             `json:"modelRef,omitempty"`
-				ModelIdentity string             `json:"modelIdentity,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.Messages == nil {
-				return damagedPayload(ev, err)
-			}
-			projection.Messages = append([]provider.Message{}, body.Messages...)
-			projection.ModelMessages = append([]provider.Message{}, provider.ModelMessages(body.Messages)...)
-			projection.GoalState = cloneRaw(body.Goal)
-			projection.ModelRef = strings.TrimSpace(body.ModelRef)
-			projection.ModelIdentity = strings.TrimSpace(body.ModelIdentity)
-		case "message/complete":
-			var body struct {
-				Message *provider.Message `json:"message"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.Message == nil || body.Message.ID == "" {
-				return damagedPayload(ev, err)
-			}
-			if projectionMessageIndex(projection.Messages, body.Message.ID) >= 0 {
-				return damagedPayload(ev, fmt.Errorf("duplicate stable message id %q", body.Message.ID))
-			}
-			projection.Messages = append(projection.Messages, *body.Message)
-			projection.ModelMessages = append(projection.ModelMessages, provider.ModelMessages([]provider.Message{*body.Message})...)
-		case "message/upsert":
-			var body struct {
-				Message *provider.Message `json:"message"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.Message == nil || body.Message.ID == "" {
-				return damagedPayload(ev, err)
-			}
-			if !replaceProjectionMessage(projection.Messages, *body.Message) {
-				projection.Messages = append(projection.Messages, *body.Message)
-			}
-			visible := provider.ModelMessages([]provider.Message{*body.Message})
-			modelIndex := projectionMessageIndex(projection.ModelMessages, body.Message.ID)
-			if modelIndex >= 0 {
-				if len(visible) == 0 {
-					projection.ModelMessages = append(projection.ModelMessages[:modelIndex], projection.ModelMessages[modelIndex+1:]...)
-				} else {
-					projection.ModelMessages[modelIndex] = visible[0]
-				}
-			} else if len(visible) > 0 {
-				// Upserts are normally metadata changes to an existing message. The
-				// append case is retained for explicitly-created records.
-				projection.ModelMessages = append(projection.ModelMessages, visible[0])
-			}
-		case "assistant/attempt":
-			var body struct {
-				ID        string `json:"id"`
-				MessageID string `json:"messageId,omitempty"`
-				Action    string `json:"action"`
-				Attempt   int    `json:"attempt,omitempty"`
-				Max       int    `json:"max,omitempty"`
-				Reason    string `json:"reason,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.ID == "" || (body.Action != "begin" && body.Action != "discard" && body.Action != "commit") {
-				return damagedPayload(ev, err)
-			}
-		case "history/replace":
-			var body struct {
-				Messages []provider.Message `json:"messages"`
-				Reason   string             `json:"reason,omitempty"`
-				Sources  []uint64           `json:"sourceSequences,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.Messages == nil {
-				return damagedPayload(ev, err)
-			}
-			projection.Messages = append([]provider.Message(nil), body.Messages...)
-			projection.ModelMessages = append([]provider.Message(nil), provider.ModelMessages(body.Messages)...)
-		case "model/context-replace":
-			var body struct {
-				Messages []provider.Message `json:"messages"`
-				Reason   string             `json:"reason,omitempty"`
-				Sources  []uint64           `json:"sourceSequences,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.Messages == nil {
-				return damagedPayload(ev, err)
-			}
-			projection.ModelMessages = append([]provider.Message(nil), body.Messages...)
-		case "session/title":
-			var body struct {
-				Title string `json:"title"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil {
-				return damagedPayload(ev, err)
-			}
-			projection.Title = body.Title
-		case "session/config":
-			var body struct {
-				ModelRef      string `json:"modelRef"`
-				ModelIdentity string `json:"modelIdentity,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || strings.TrimSpace(body.ModelRef) == "" {
-				return damagedPayload(ev, err)
-			}
-			projection.ModelRef = strings.TrimSpace(body.ModelRef)
-			projection.ModelIdentity = strings.TrimSpace(body.ModelIdentity)
-		case "compaction":
-			var body struct {
-				Messages []provider.Message `json:"messages"`
-				Trigger  string             `json:"trigger,omitempty"`
-				Sources  []uint64           `json:"sourceSequences,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.Messages == nil {
-				return damagedPayload(ev, err)
-			}
-			projection.ModelMessages = append([]provider.Message(nil), body.Messages...)
-		case "turn/start":
-			projection.TurnID = commit.TurnID
-			projection.TurnStatus = event.TurnInProgress
-			projection.CurrentTurnStart = ev.Sequence
-			projection.Todos, projection.TodoWritten = []event.Todo{}, false
-			projection.Recovery = nil
-		case "step/start", "step/end":
-			var body struct {
-				ID     string `json:"id"`
-				Status string `json:"status,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.ID == "" {
-				return damagedPayload(ev, err)
-			}
-		case "tool/call":
-			var body struct {
-				ID                string                   `json:"id"`
-				Name              string                   `json:"name"`
-				Args              string                   `json:"args,omitempty"`
-				RunState          provider.ToolRunState    `json:"runState,omitempty"`
-				Diagnostic        json.RawMessage          `json:"diagnostic,omitempty"`
-				ResolvedName      string                   `json:"resolvedName,omitempty"`
-				CapabilityID      string                   `json:"capabilityId,omitempty"`
-				ReadOnly          bool                     `json:"readOnly,omitempty"`
-				Truncated         bool                     `json:"truncated,omitempty"`
-				DurationMs        int64                    `json:"durationMs,omitempty"`
-				StartedAt         int64                    `json:"startedAt,omitempty"`
-				EndedAt           int64                    `json:"endedAt,omitempty"`
-				Partial           bool                     `json:"partial,omitempty"`
-				ArgChars          int                      `json:"argChars,omitempty"`
-				Refreshed         bool                     `json:"refreshed,omitempty"`
-				ParentID          string                   `json:"parentId,omitempty"`
-				AttemptID         string                   `json:"attemptId,omitempty"`
-				SubagentRef       string                   `json:"subagentRef,omitempty"`
-				SubagentStatus    string                   `json:"subagentStatus,omitempty"`
-				SubagentErrorCode string                   `json:"subagentErrorCode,omitempty"`
-				SubagentRetryable bool                     `json:"subagentRetryable,omitempty"`
-				Diff              string                   `json:"diff,omitempty"`
-				Added             int                      `json:"added,omitempty"`
-				Removed           int                      `json:"removed,omitempty"`
-				Profile           json.RawMessage          `json:"profile,omitempty"`
-				Execution         json.RawMessage          `json:"execution,omitempty"`
-				PresentedFiles    []provider.PresentedFile `json:"presentedFiles,omitempty"`
-				WorkspaceMutation bool                     `json:"workspaceMutation,omitempty"`
-				WorkspacePaths    []string                 `json:"workspacePaths,omitempty"`
-				WorkspaceAllPaths bool                     `json:"workspaceAllPaths,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.ID == "" || body.Name == "" {
-				return damagedPayload(ev, err)
-			}
-		case "tool/start":
-			var body struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.ID == "" || body.Name == "" {
-				return damagedPayload(ev, err)
-			}
-			projection.ActiveTools[body.ID] = body.Name
-		case "tool/result":
-			var body struct {
-				ID                string                   `json:"id"`
-				Name              string                   `json:"name"`
-				Args              string                   `json:"args,omitempty"`
-				Error             string                   `json:"error,omitempty"`
-				Output            string                   `json:"output,omitempty"`
-				State             string                   `json:"state,omitempty"`
-				RunState          provider.ToolRunState    `json:"runState,omitempty"`
-				Diagnostic        json.RawMessage          `json:"diagnostic,omitempty"`
-				ResolvedName      string                   `json:"resolvedName,omitempty"`
-				CapabilityID      string                   `json:"capabilityId,omitempty"`
-				ReadOnly          bool                     `json:"readOnly,omitempty"`
-				Truncated         bool                     `json:"truncated,omitempty"`
-				DurationMs        int64                    `json:"durationMs,omitempty"`
-				StartedAt         int64                    `json:"startedAt,omitempty"`
-				EndedAt           int64                    `json:"endedAt,omitempty"`
-				Partial           bool                     `json:"partial,omitempty"`
-				ArgChars          int                      `json:"argChars,omitempty"`
-				Refreshed         bool                     `json:"refreshed,omitempty"`
-				ParentID          string                   `json:"parentId,omitempty"`
-				AttemptID         string                   `json:"attemptId,omitempty"`
-				SubagentRef       string                   `json:"subagentRef,omitempty"`
-				SubagentStatus    string                   `json:"subagentStatus,omitempty"`
-				SubagentErrorCode string                   `json:"subagentErrorCode,omitempty"`
-				SubagentRetryable bool                     `json:"subagentRetryable,omitempty"`
-				Diff              string                   `json:"diff,omitempty"`
-				Added             int                      `json:"added,omitempty"`
-				Removed           int                      `json:"removed,omitempty"`
-				Profile           json.RawMessage          `json:"profile,omitempty"`
-				Execution         json.RawMessage          `json:"execution,omitempty"`
-				PresentedFiles    []provider.PresentedFile `json:"presentedFiles,omitempty"`
-				Todos             []event.Todo             `json:"todos,omitempty"`
-				TodoWritten       bool                     `json:"todoWritten,omitempty"`
-				WorkspaceMutation bool                     `json:"workspaceMutation,omitempty"`
-				WorkspacePaths    []string                 `json:"workspacePaths,omitempty"`
-				WorkspaceAllPaths bool                     `json:"workspaceAllPaths,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.ID == "" || body.Name == "" {
-				return damagedPayload(ev, err)
-			}
-			delete(projection.ActiveTools, body.ID)
-		case "todo/write":
-			var body struct {
-				Todos []event.Todo `json:"todos"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || validateTodos(body.Todos) != nil {
-				return damagedPayload(ev, err)
-			}
-			projection.Todos, projection.TodoWritten = append([]event.Todo(nil), body.Todos...), true
-		case "interaction/created":
-			var body struct {
-				ID           string `json:"id"`
-				ToolCallID   string `json:"toolCallId,omitempty"`
-				Kind         string `json:"kind,omitempty"`
-				State        string `json:"state,omitempty"`
-				SessionID    string `json:"sessionId,omitempty"`
-				HeadID       string `json:"headId,omitempty"`
-				TurnID       string `json:"turnId,omitempty"`
-				RuntimeEpoch string `json:"runtimeEpoch,omitempty"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.ID == "" || (body.State != "" && body.State != "pending") {
-				return damagedPayload(ev, err)
-			}
-			projection.Interactions[body.ID] = "pending"
-		case "interaction/resolved":
-			var body struct {
-				ID    string `json:"id"`
-				State string `json:"state"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || body.ID == "" || !terminalInteractionState(body.State) {
-				return damagedPayload(ev, err)
-			}
-			delete(projection.Interactions, body.ID)
-		case "runtime/recovery":
-			var body event.RecoveryStatus
-			if err := strictPayload(ev.Payload, &body); err != nil {
-				return damagedPayload(ev, err)
-			}
-			projection.Recovery = &body
-		case "plan/state":
-			if !validJSONObject(ev.Payload) {
-				return damagedPayload(ev, nil)
-			}
-			projection.PlanState = cloneRaw(ev.Payload)
-		case "goal/state":
-			if !validJSONObject(ev.Payload) {
-				return damagedPayload(ev, nil)
-			}
-			projection.GoalState = cloneRaw(ev.Payload)
-		case "diagnostic":
-			if len(ev.Payload) > 0 && !json.Valid(ev.Payload) {
-				return damagedPayload(ev, nil)
-			}
-		case "turn/end":
-			var body struct {
-				Status event.TurnStatus `json:"status"`
-			}
-			if err := strictPayload(ev.Payload, &body); err != nil || !body.Status.Terminal() {
-				return damagedPayload(ev, err)
-			}
-			if projection.TurnID != "" && projection.CurrentTurnStart != 0 {
-				projection.Turns = append(projection.Turns, TurnBoundary{
-					TurnID: projection.TurnID, StartSequence: projection.CurrentTurnStart,
-					EndSequence: ev.Sequence, Status: body.Status,
-				})
-			}
-			projection.TurnID = ""
-			projection.CurrentTurnStart = 0
-			projection.TurnStatus = body.Status
-		}
-	}
-	return nil
-}
-
-func replaceProjectionMessage(messages []provider.Message, replacement provider.Message) bool {
-	if index := projectionMessageIndex(messages, replacement.ID); index >= 0 {
-		messages[index] = replacement
-		return true
-	}
-	return false
-}
-
-func projectionMessageIndex(messages []provider.Message, id string) int {
-	for i := range messages {
-		if messages[i].ID == id {
-			return i
-		}
-	}
-	return -1
-}
-
-func cloneProjection(projection Projection) Projection {
-	projection.Messages = append([]provider.Message(nil), projection.Messages...)
-	projection.ModelMessages = append([]provider.Message(nil), projection.ModelMessages...)
-	projection.Turns = append([]TurnBoundary(nil), projection.Turns...)
-	projection.Todos = append([]event.Todo(nil), projection.Todos...)
-	interactions := make(map[string]string, len(projection.Interactions))
-	for key, value := range projection.Interactions {
-		interactions[key] = value
-	}
-	projection.Interactions = interactions
-	tools := make(map[string]string, len(projection.ActiveTools))
-	for key, value := range projection.ActiveTools {
-		tools[key] = value
-	}
-	projection.ActiveTools = tools
-	if projection.Recovery != nil {
-		recovery := *projection.Recovery
-		projection.Recovery = &recovery
-	}
-	projection.PlanState = cloneRaw(projection.PlanState)
-	projection.GoalState = cloneRaw(projection.GoalState)
-	return projection
-}
-
-func strictPayload(payload json.RawMessage, target any) error {
-	if len(payload) == 0 {
-		return io.ErrUnexpectedEOF
-	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("multiple JSON values")
-		}
-		return err
-	}
-	return nil
-}
-
-func validateTodos(todos []event.Todo) error {
-	if todos == nil {
-		return fmt.Errorf("todos must be an array")
-	}
-	seen := make(map[string]bool, len(todos))
-	for i, todo := range todos {
-		content := strings.TrimSpace(todo.Content)
-		if content == "" || content != todo.Content || seen[content] {
-			return fmt.Errorf("todos[%d].content is invalid", i)
-		}
-		seen[content] = true
-		switch todo.Status {
-		case "pending", "in_progress", "completed":
-		default:
-			return fmt.Errorf("todos[%d].status is invalid", i)
-		}
-	}
-	return nil
-}
-
-func terminalInteractionState(state string) bool {
-	switch state {
-	case "answered", "rejected", "cancelled", "unavailable":
-		return true
-	default:
-		return false
-	}
-}
-
-func validJSONObject(raw json.RawMessage) bool {
-	var object map[string]json.RawMessage
-	return len(raw) > 0 && json.Unmarshal(raw, &object) == nil && object != nil
-}
-
-func damagedPayload(event Event, cause error) error {
-	if cause != nil {
-		return fmt.Errorf("%w: invalid %s payload at %d: %v", ErrDamagedStore, event.Kind, event.Sequence, cause)
-	}
-	return fmt.Errorf("%w: invalid %s payload at %d", ErrDamagedStore, event.Kind, event.Sequence)
-}
-
-func cloneRaw(raw json.RawMessage) json.RawMessage { return append(json.RawMessage(nil), raw...) }
 
 func errorString(err error) string {
 	if err == nil {

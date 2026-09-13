@@ -59,7 +59,7 @@ func TestRuntimeStateSnapshotFinishingAndFinalPublication(t *testing.T) {
 	entered, release := make(chan struct{}, 1), make(chan struct{})
 	releaseDone := sync.OnceFunc(func() { close(release) })
 	sink := &runtimeStateTestSink{Sink: holdFinishingWindow(release, entered, nil), states: make(chan event.RuntimeStateSnapshot, 32)}
-	c := New(Options{SessionDir: t.TempDir(), Sink: sink})
+	c := newOwnedTestController(t, Options{SessionDir: t.TempDir(), Sink: sink})
 	defer c.Close()
 	defer releaseDone()
 	initial := c.RuntimeStateSnapshot()
@@ -104,7 +104,7 @@ func TestRuntimeStateQueuedTurnNeverPublishesPreviousIdleOverNext(t *testing.T) 
 	entered, release := make(chan struct{}, 1), make(chan struct{})
 	releaseDone := sync.OnceFunc(func() { close(release) })
 	sink := &runtimeStateTestSink{Sink: holdFinishingWindow(release, entered, nil), states: make(chan event.RuntimeStateSnapshot, 64)}
-	c := New(Options{SessionDir: t.TempDir(), Sink: sink})
+	c := newOwnedTestController(t, Options{SessionDir: t.TempDir(), Sink: sink})
 	defer c.Close()
 	defer releaseDone()
 	c.runGuarded(func(context.Context) error { return nil })
@@ -145,7 +145,7 @@ func TestRuntimeStatePromptCancellationAndClosed(t *testing.T) {
 					requests <- struct{}{}
 				}
 			}), states: make(chan event.RuntimeStateSnapshot, 64)}
-			c := New(Options{SessionDir: t.TempDir(), Sink: sink})
+			c := newOwnedTestController(t, Options{SessionDir: t.TempDir(), Sink: sink})
 			defer c.Close()
 			if kind == "ask" {
 				c.runner = &askBlockingRunner{c: c}
@@ -179,7 +179,7 @@ func TestRuntimeStateCloseDuringFinishingCannotResurrectActivity(t *testing.T) {
 	entered, release := make(chan struct{}, 1), make(chan struct{})
 	releaseDone := sync.OnceFunc(func() { close(release) })
 	sink := &runtimeStateTestSink{Sink: holdFinishingWindow(release, entered, nil), states: make(chan event.RuntimeStateSnapshot, 32)}
-	c := New(Options{SessionDir: t.TempDir(), Sink: sink})
+	c := newOwnedTestController(t, Options{SessionDir: t.TempDir(), Sink: sink})
 	defer c.Close()
 	defer releaseDone()
 	c.runGuarded(func(context.Context) error { return nil })
@@ -205,7 +205,7 @@ func TestRuntimeStateCloseDuringFinishingCannotResurrectActivity(t *testing.T) {
 func TestRuntimeStateStreamingActivityClearsOnCompletion(t *testing.T) {
 	isolateControlConfigHome(t)
 	sink := &runtimeStateTestSink{Sink: event.Discard, states: make(chan event.RuntimeStateSnapshot, 32)}
-	c := New(Options{SessionDir: t.TempDir(), Sink: sink})
+	c := newOwnedTestController(t, Options{SessionDir: t.TempDir(), Sink: sink})
 	defer c.Close()
 	release := make(chan struct{})
 	releaseBody := sync.OnceFunc(func() { close(release) })
@@ -249,7 +249,7 @@ func TestRuntimeStateSlowObserverDoesNotBlockTurnAndRetainsFinalSnapshot(t *test
 	isolateControlConfigHome(t)
 	sink := &runtimeStateSlowTestSink{entered: make(chan struct{}), release: make(chan struct{}), done: make(chan struct{}, 1), states: make(chan event.RuntimeStateSnapshot, 32)}
 	releaseObserver := sync.OnceFunc(func() { close(sink.release) })
-	c := New(Options{SessionDir: t.TempDir(), Sink: sink})
+	c := newOwnedTestController(t, Options{SessionDir: t.TempDir(), Sink: sink})
 	defer c.Close()
 	defer releaseObserver()
 	bodyRelease := make(chan struct{})
@@ -296,7 +296,7 @@ func TestRuntimeStateRunnerFailuresPublishIdleAndPreserveFailure(t *testing.T) {
 				}
 				return errors.New(message)
 			})
-			c := New(Options{SessionDir: t.TempDir(), Sink: sink, Runner: runner})
+			c := newOwnedTestController(t, Options{SessionDir: t.TempDir(), Sink: sink, Runner: runner})
 			defer c.Close()
 			defer releaseRunner()
 			c.Send("exercise isolated runner failure")

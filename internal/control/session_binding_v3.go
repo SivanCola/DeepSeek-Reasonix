@@ -45,11 +45,11 @@ func (c *Controller) BindFreshV3(ctx context.Context, sessionID string) (session
 	}
 	old, err := c.publishV3Runtime(candidate, fresh, true)
 	if err != nil {
-		_ = service.Close(context.Background(), candidate.Ref())
+		_ = service.CloseRuntime(context.Background(), candidate)
 		return sessionv3.SessionRef{}, err
 	}
 	if old != nil && old != candidate {
-		if closeErr := service.Close(context.Background(), old.Ref()); closeErr != nil {
+		if closeErr := service.CloseRuntime(context.Background(), old); closeErr != nil {
 			return candidate.Ref(), fmt.Errorf("new v3 session published; close previous runtime: %w", closeErr)
 		}
 	}
@@ -81,18 +81,18 @@ func (c *Controller) continueLegacyV3(ctx context.Context, sourcePath, headID st
 		return sessionv3.SessionRef{}, err
 	}
 	if err := seedRuntimeConfig(ctx, candidate, "legacy-import-config", c.ModelRef(), c.ModelSelectionIdentity()); err != nil {
-		_ = service.Close(context.Background(), candidate.Ref())
+		_ = service.CloseRuntime(context.Background(), candidate)
 		return sessionv3.SessionRef{}, err
 	}
 	messages := candidate.Session().Snapshot().Projection.ModelMessages
 	prepared := agent.NewSession("").CloneWithMessages(messages)
 	old, err := c.publishV3Runtime(candidate, prepared, rotateSessionTemp)
 	if err != nil {
-		_ = service.Close(context.Background(), candidate.Ref())
+		_ = service.CloseRuntime(context.Background(), candidate)
 		return sessionv3.SessionRef{}, err
 	}
 	if old != nil && old != candidate {
-		if closeErr := service.Close(context.Background(), old.Ref()); closeErr != nil {
+		if closeErr := service.CloseRuntime(context.Background(), old); closeErr != nil {
 			return candidate.Ref(), fmt.Errorf("migrated v3 session published; close previous runtime: %w", closeErr)
 		}
 	}
@@ -111,17 +111,17 @@ func (c *Controller) ContinuePrototypeV3(ctx context.Context, sourceDir string) 
 		return sessionv3.SessionRef{}, err
 	}
 	if err := seedRuntimeConfig(ctx, candidate, "prototype-import-config", c.ModelRef(), c.ModelSelectionIdentity()); err != nil {
-		_ = service.Close(context.Background(), candidate.Ref())
+		_ = service.CloseRuntime(context.Background(), candidate)
 		return sessionv3.SessionRef{}, err
 	}
 	prepared := agent.NewSession("").CloneWithMessages(candidate.Session().Snapshot().Projection.ModelMessages)
 	old, err := c.publishV3Runtime(candidate, prepared, true)
 	if err != nil {
-		_ = service.Close(context.Background(), candidate.Ref())
+		_ = service.CloseRuntime(context.Background(), candidate)
 		return sessionv3.SessionRef{}, err
 	}
 	if old != nil && old != candidate {
-		if closeErr := service.Close(context.Background(), old.Ref()); closeErr != nil {
+		if closeErr := service.CloseRuntime(context.Background(), old); closeErr != nil {
 			return candidate.Ref(), fmt.Errorf("imported v3 session published; close previous runtime: %w", closeErr)
 		}
 	}
@@ -149,12 +149,12 @@ func (c *Controller) OpenV3(ctx context.Context, ref sessionv3.SessionRef) (sess
 		// A newly opened candidate is safe to close only when it was not the
 		// currently published controller runtime.
 		if current == nil || candidate != current {
-			_ = service.Close(context.Background(), candidate.Ref())
+			_ = service.CloseRuntime(context.Background(), candidate)
 		}
 		return sessionv3.SessionRef{}, err
 	}
 	if old != nil && old != candidate {
-		if closeErr := service.Close(context.Background(), old.Ref()); closeErr != nil {
+		if closeErr := service.CloseRuntime(context.Background(), old); closeErr != nil {
 			return candidate.Ref(), fmt.Errorf("v3 session published; close previous runtime: %w", closeErr)
 		}
 	}
@@ -172,9 +172,8 @@ func (c *Controller) SetSessionTitleV3(ctx context.Context, title string) error 
 		return err
 	}
 	snapshot := runtime.Session().Snapshot()
-	hash := sha256.Sum256(payload)
 	_, err = c.appendV3Batch(ctx, runtime.Session().Handle, sessionv3.Batch{
-		OperationID: fmt.Sprintf("session-title:%s:%x", runtime.Ref().SessionID, hash),
+		OperationID: "session-title:" + agent.NewMessageID(),
 		TurnID:      snapshot.Projection.TurnID,
 		Events:      []sessionv3.Event{{Kind: "session/title", Payload: payload}},
 	})

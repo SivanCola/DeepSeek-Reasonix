@@ -15,7 +15,7 @@ func TestTurnOrchestratorCheckpointBoundaryPrecedesUserMessage(t *testing.T) {
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
 	runner := &recordingSessionRunner{session: sess}
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:      runner,
 		Executor:    exec,
 		SessionDir:  dir,

@@ -87,7 +87,7 @@ func TestGoalCommandAutoContinuesUntilComplete(t *testing.T) {
 	)}
 	ag := agent.New(prov, goalRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 8)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -159,7 +159,7 @@ func TestPlainInputWithStrongResearchSignalStaysNormal(t *testing.T) {
 	}}
 	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 8)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -197,7 +197,7 @@ func TestPlainInputWithStrongResearchSignalPreservesRefsWithoutStartingGoal(t *t
 	}}
 	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 8)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		WorkspaceRoot: root,
 		Runner:        ag,
 		Executor:      ag,
@@ -235,7 +235,7 @@ func TestResearchGoalUsesContinuousRuntimeWithoutArchive(t *testing.T) {
 	sessionPath := filepath.Join(root, "sessions", "s.jsonl")
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 	c.Resume(sess, sessionPath)
 	c.SetGoalWithResearchMode("fix the typo and add a test", GoalResearchOn)
 	defer c.Close()
@@ -266,7 +266,7 @@ func TestLegacyGoalSidecarMigratesToContinuousRuntimeWithoutTaskID(t *testing.T)
 	}
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 	c.Resume(sess, sessionPath)
 	defer c.Close()
 	if got := c.GoalRuntime().TurnsLimit; got != 0 {
@@ -293,7 +293,7 @@ func TestLegacyGoalSidecarMigratesToContinuousRuntimeWithoutTaskID(t *testing.T)
 
 func TestMissingExplicitLegacyTaskBlocksWithoutCreatingArchive(t *testing.T) {
 	root := t.TempDir()
-	c := New(Options{WorkspaceRoot: root})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root})
 	defer c.Close()
 	c.SetGoalWithResearchMode("resume .reasonix/autoresearch/missing-task/", GoalResearchOn)
 	if got := c.GoalStatus(); got != GoalStatusBlocked {
@@ -320,7 +320,7 @@ func TestAssistantEvidenceBlockIsIgnoredByUnifiedGoal(t *testing.T) {
 	turns[len(turns)-1] = textTurn("worked on the goal\n" + evidenceBlock)
 	prov := &scriptedTurns{turns: flattenTurns(turns)}
 	ag := agent.New(prov, goalRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionPath: sessionPath, Runner: ag, Executor: ag})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionPath: sessionPath, Runner: ag, Executor: ag})
 	defer c.Close()
 	c.SetGoalWithResearchMode("verify the fix", GoalResearchOn)
 	_ = newTurnOrchestrator(c).runGoalLoopWithRawDisplay(context.Background(), "start", "start", "start")
@@ -366,7 +366,7 @@ func TestExplicitLegacyTaskPathRestoresOriginalGoal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := New(Options{WorkspaceRoot: root})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root})
 	defer c.Close()
 	c.SetGoalWithResearchMode("resume .reasonix/autoresearch/"+taskID+"/", GoalResearchAuto)
 	if got := c.Goal(); got != "find the original root cause" {
@@ -424,7 +424,7 @@ func TestLegacySidecarEmptyGoalFilledFromArchive(t *testing.T) {
 	}
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 	c.Resume(sess, sessionPath)
 	defer c.Close()
 	if got := c.Goal(); got != "recover me from archive" {
@@ -448,7 +448,7 @@ func TestPlainInputWithWeakResearchSignalStaysNormal(t *testing.T) {
 	}}
 	ag := agent.New(prov, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 4)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -473,7 +473,7 @@ func TestPlainInputWithWeakResearchSignalStaysNormal(t *testing.T) {
 func TestCancelStopsIdleGoalWithIncompleteTodos(t *testing.T) {
 	ag := agent.New(nil, nil, agent.NewSession(""), agent.Options{}, event.Discard)
 	ag.SeedTodoState([]evidence.TodoItem{{Content: "finish the migration", Status: "in_progress"}})
-	c := New(Options{Executor: ag, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: ag, Sink: event.Discard})
 	c.SetGoalWithResearchMode("finish the migration", GoalResearchOn)
 
 	c.Cancel()
@@ -495,7 +495,7 @@ func TestGoalRepeatedBlockedStopsAfterThreeTurns(t *testing.T) {
 	)}
 	ag := agent.New(prov, goalRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 8)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -549,7 +549,7 @@ func TestGoalRestartClearsBlockedAndCompletesOnRetry(t *testing.T) {
 	)}
 	ag := agent.New(prov, goalRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 12)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -596,7 +596,7 @@ func TestGoalCompletesWithoutChangingIncompleteTodos(t *testing.T) {
 
 	notices := make(chan string, 64)
 	done := make(chan event.Event, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -721,7 +721,7 @@ func TestSessionRotationClearsActiveGoal(t *testing.T) {
 	dir := t.TempDir()
 	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
 	oldPath := filepath.Join(dir, "session.jsonl")
-	c := New(Options{Executor: exec, SystemPrompt: "sys", SessionDir: dir, SessionPath: oldPath, Label: "test"})
+	c := newOwnedTestController(t, Options{Executor: exec, SystemPrompt: "sys", SessionDir: dir, SessionPath: oldPath, Label: "test"})
 
 	c.SetGoal("ship the release checklist")
 	if got := c.Goal(); got != "ship the release checklist" {
@@ -775,7 +775,7 @@ func TestGoalSidecarRoundTripPreservesBlockedDeliveryCheckpoint(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
 	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
 	c.SetGoal("finish the delivery")
 	scopeID, _, ok := c.goals.deliveryScope()
 	if !ok || scopeID == "" {
@@ -793,7 +793,7 @@ func TestGoalSidecarRoundTripPreservesBlockedDeliveryCheckpoint(t *testing.T) {
 	c.stopGoal(GoalStatusBlocked)
 
 	freshExec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
-	fresh := New(Options{Executor: freshExec, SessionDir: dir, Label: "fresh"})
+	fresh := newOwnedTestController(t, Options{Executor: freshExec, SessionDir: dir, Label: "fresh"})
 	fresh.Resume(agent.NewSession("sys"), path)
 	if fresh.Goal() != "finish the delivery" || fresh.GoalStatus() != GoalStatusBlocked {
 		t.Fatalf("restored Goal = (%q, %q), want blocked Goal", fresh.Goal(), fresh.GoalStatus())
@@ -818,7 +818,7 @@ func TestLegacyRunningGoalSidecarAllocatesScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionDir: dir, Label: "test"})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, Label: "test"})
 	c.Resume(agent.NewSession("sys"), path)
 	if c.goals.active() {
 		t.Fatal("restored goal automatically active")

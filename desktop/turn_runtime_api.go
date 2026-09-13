@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -102,10 +101,6 @@ func (a *App) StartTurnForTab(tabID, input, submissionID string) (TurnStartView,
 	// completed before the Wails Promise was delivered.
 	return TurnStartView{TurnID: turnID, Status: event.TurnQueued, Disposition: control.SubmitTurnStarted, RuntimeEpoch: epoch, SubmissionID: submissionID}, nil
 }
-
-// errTurnNotRunning tells the frontend the tab is already idle so it can
-// reconcile its runtime view instead of reporting a failed Stop.
-var errTurnNotRunning = &inboxCodedError{code: "turn_not_running", cause: errors.New("no turn is running")}
 
 // InterruptTurnForTab stops the tab's active work. Stop is a session-level
 // request: a turn id from a stale button still interrupts whatever is running

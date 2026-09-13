@@ -48,7 +48,7 @@ func TestControllerInputImagesResolvesAttachment(t *testing.T) {
 
 func TestControllerInputImagesIgnoresNonAttachmentRefs(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if urls := New(Options{}).inputImages("plain text with @missing.png"); len(urls) != 0 {
+	if urls := newOwnedTestController(t, Options{}).inputImages("plain text with @missing.png"); len(urls) != 0 {
 		t.Errorf("inputImages = %v, want none for a non-existent / non-attachment ref", urls)
 	}
 }
@@ -97,7 +97,7 @@ func TestControllerInputImagesRequiresWorkspaceForFileImageRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	urls := New(Options{}).inputImages("look at @" + path)
+	urls := newOwnedTestController(t, Options{}).inputImages("look at @" + path)
 	if len(urls) != 0 {
 		t.Fatalf("inputImages without a workspace = %v, want no file image refs", urls)
 	}

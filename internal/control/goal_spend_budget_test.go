@@ -72,7 +72,7 @@ func TestGoalTokenBudgetPausesAndResumes(t *testing.T) {
 func TestGoalReadinessFailurePausesOnExplicitSpendBudget(t *testing.T) {
 	runner := &deliveryScopeErrorRunner{}
 	executor := agent.New(nil, tool.NewRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
-	c := New(Options{Runner: runner, Executor: executor, GoalTokenBudget: 200})
+	c := newOwnedTestController(t, Options{Runner: runner, Executor: executor, GoalTokenBudget: 200})
 	runner.usage = c.goalUsageTee
 	c.SetGoal("ship the integration")
 

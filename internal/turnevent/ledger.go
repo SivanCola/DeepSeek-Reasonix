@@ -155,18 +155,14 @@ type Ledger struct {
 	damaged   string
 	sessionID string
 
-	nextSeq      uint64
-	turnStartSeq uint64
-	turnStarted  int64
-	active       string
-	status       event.TurnStatus
-	terminal     bool
-	routing      routingMetadata
-	nextRouting  routingMetadata
-	transcript   transcriptSnapshot
-	todos        []event.Todo
-	todoWritten  bool
-	recovery     *event.RecoveryStatus
+	nextSeq uint64
+	ledgerTurnState
+	routing     routingMetadata
+	nextRouting routingMetadata
+	transcript  transcriptSnapshot
+	todos       []event.Todo
+	todoWritten bool
+	recovery    *event.RecoveryStatus
 
 	submissionTurns            map[string]string
 	records                    []Envelope
@@ -184,6 +180,14 @@ type Ledger struct {
 	compactBytes  int64
 	compactEvents int
 	metrics       MetricsSnapshot
+}
+
+type ledgerTurnState struct {
+	turnStartSeq uint64
+	turnStarted  int64
+	active       string
+	status       event.TurnStatus
+	terminal     bool
 }
 
 // NewMemory creates the compatibility runtime projection used by execution-v2.

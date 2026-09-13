@@ -149,11 +149,6 @@ func servePostSessionPath(ctx context.Context, client *http.Client, url string, 
 	return identity.Path, err
 }
 
-func servePostSessionPathForSession(ctx context.Context, client *http.Client, url string, body []byte, expectedPath string) (string, error) {
-	identity, err := servePostSessionIdentityForSession(ctx, client, url, body, expectedPath)
-	return identity.Path, err
-}
-
 type serveSessionIdentity struct {
 	Path      string
 	SessionID string
@@ -207,15 +202,6 @@ const serveCapabilitiesHeader = "X-Reasonix-Serve-Capabilities"
 const serveCapabilityExecutionV2 = "execution-v2"
 const serveCapabilitySessionsV3 = "session-events-v3"
 const serveCapabilitySessionIdentityV1 = "session-identity-v1"
-
-func hasServeCapability(caps []string, want string) bool {
-	for _, capability := range caps {
-		if capability == want {
-			return true
-		}
-	}
-	return false
-}
 
 // serveHandshakeCapabilities exchanges the pre-shared token for the session
 // cookie and returns the serve's advertised capabilities; older serves omit

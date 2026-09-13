@@ -170,7 +170,7 @@ func TestLegacySidecarArchiveFailureBlocksWithRetryableTaskID(t *testing.T) {
 
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 	c.Resume(sess, sessionPath)
 	defer c.Close()
 	if got := c.GoalStatus(); got != GoalStatusBlocked {
@@ -263,7 +263,7 @@ func TestLegacySidecarPendingTaskRetriesAfterRestart(t *testing.T) {
 	}
 
 	firstSession := agent.NewSession("sys")
-	first := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: agent.New(nil, nil, firstSession, agent.Options{}, event.Discard)})
+	first := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: agent.New(nil, nil, firstSession, agent.Options{}, event.Discard)})
 	first.Resume(firstSession, sessionPath)
 	if first.GoalStatus() != GoalStatusBlocked {
 		t.Fatalf("first restore status = %q, want blocked", first.GoalStatus())
@@ -272,7 +272,7 @@ func TestLegacySidecarPendingTaskRetriesAfterRestart(t *testing.T) {
 
 	writeLegacyGoalArchive(t, root, taskID, "recover after process restart")
 	secondSession := agent.NewSession("sys")
-	second := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: agent.New(nil, nil, secondSession, agent.Options{}, event.Discard)})
+	second := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: agent.New(nil, nil, secondSession, agent.Options{}, event.Discard)})
 	defer second.Close()
 	second.Resume(secondSession, sessionPath)
 	if second.GoalStatus() != GoalStatusStopped || second.Goal() != "recover after process restart" {
@@ -335,7 +335,7 @@ func TestLegacySidecarInvalidArchivesRemainRetryableAndReadOnly(t *testing.T) {
 
 			sess := agent.NewSession("sys")
 			exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-			c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+			c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 			c.Resume(sess, sessionPath)
 			defer c.Close()
 			if c.GoalStatus() != GoalStatusBlocked || c.ResumeGoal() {
@@ -384,7 +384,7 @@ func TestLegacySidecarArchiveCanRetryInSameController(t *testing.T) {
 
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 	c.Resume(sess, sessionPath)
 	defer c.Close()
 	if c.GoalStatus() != GoalStatusBlocked || c.ResumeGoal() {
@@ -417,7 +417,7 @@ func TestLegacyArchiveMigrationWriteFailureRemainsBlockedAndRetryable(t *testing
 
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 	defer c.Close()
 
 	blockedParent := filepath.Join(root, "not-a-directory")
@@ -542,7 +542,7 @@ func TestLegacySidecarWithGoalMigratesWithoutArchive(t *testing.T) {
 
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 	c.Resume(sess, sessionPath)
 	defer c.Close()
 	if got := c.Goal(); got != legacy.Goal {
@@ -572,7 +572,7 @@ func TestExplicitLegacyGoalRetryNeverRunsArchivePathAsGoal(t *testing.T) {
 	sessionPath := filepath.Join(root, "sessions", "s.jsonl")
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec})
 	c.Resume(sess, sessionPath)
 	defer c.Close()
 
@@ -613,7 +613,7 @@ func TestExplicitLegacyGoalRetryNeverRunsArchivePathAsGoal(t *testing.T) {
 }
 
 func TestMalformedLegacyArchivePathCannotResumeAsGoalText(t *testing.T) {
-	c := New(Options{WorkspaceRoot: t.TempDir()})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: t.TempDir()})
 	defer c.Close()
 
 	c.SetGoal("resume .reasonix/autoresearch/../escape")
@@ -634,7 +634,7 @@ func TestMalformedExplicitLegacyGoalStaysBlockedAfterRestart(t *testing.T) {
 	rawGoal := "resume .reasonix/autoresearch/bad-task/../../escape"
 
 	exec1 := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
-	c1 := New(Options{WorkspaceRoot: root, SessionDir: root, Executor: exec1})
+	c1 := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root, Executor: exec1})
 	c1.Resume(agent.NewSession("sys"), sessionPath)
 	c1.SetGoal(rawGoal)
 	if got := c1.GoalStatus(); got != GoalStatusBlocked {
@@ -642,7 +642,7 @@ func TestMalformedExplicitLegacyGoalStaysBlockedAfterRestart(t *testing.T) {
 	}
 	c1.Close()
 
-	c2 := New(Options{WorkspaceRoot: root, SessionDir: root})
+	c2 := newOwnedTestController(t, Options{WorkspaceRoot: root, SessionDir: root})
 	c2.Resume(agent.NewSession("sys"), sessionPath)
 	defer c2.Close()
 	if got := c2.GoalStatus(); got != GoalStatusBlocked {
@@ -658,7 +658,7 @@ func TestMalformedExplicitLegacyGoalStaysBlockedAfterRestart(t *testing.T) {
 
 func TestMissingLegacyGoalCommandDoesNotStartProviderTurn(t *testing.T) {
 	runner := &gatedTurnRunner{started: make(chan struct{}), release: make(chan struct{})}
-	c := New(Options{WorkspaceRoot: t.TempDir(), Runner: runner})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: t.TempDir(), Runner: runner})
 	t.Cleanup(c.Close)
 
 	if !c.applyGoalCommand("/goal resume .reasonix/autoresearch/missing-task/", "") {
@@ -683,7 +683,7 @@ func TestUnreadableExplicitLegacyArchiveBlocks(t *testing.T) {
 	if err := os.Mkdir(specPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c := New(Options{WorkspaceRoot: root})
+	c := newOwnedTestController(t, Options{WorkspaceRoot: root})
 	t.Cleanup(c.Close)
 
 	c.SetGoal("resume .reasonix/autoresearch/" + taskID + "/")

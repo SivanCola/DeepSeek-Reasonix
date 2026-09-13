@@ -25,7 +25,7 @@ func TestConcurrentControllersShareOneLogWithoutRecoveryCopies(t *testing.T) {
 
 	provA := &recordingProvider{streams: reply}
 	execA := agent.New(provA, tool.NewRegistry(), agent.NewSession(systemPrompt), agent.Options{}, event.Discard)
-	ctrlA := New(Options{Runner: execA, Executor: execA, SystemPrompt: systemPrompt, SessionDir: dir, SessionPath: path, Label: "a", Sink: event.Discard})
+	ctrlA := newOwnedTestController(t, Options{Runner: execA, Executor: execA, SystemPrompt: systemPrompt, SessionDir: dir, SessionPath: path, Label: "a", Sink: event.Discard})
 	if err := ctrlA.RunTurn(context.Background(), "first from A"); err != nil {
 		t.Fatalf("A first turn: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestConcurrentControllersShareOneLogWithoutRecoveryCopies(t *testing.T) {
 	}
 	provB := &recordingProvider{streams: reply}
 	execB := agent.New(provB, tool.NewRegistry(), agent.NewSession(systemPrompt), agent.Options{}, event.Discard)
-	ctrlB := New(Options{Runner: execB, Executor: execB, SystemPrompt: systemPrompt, SessionDir: dir, SessionPath: path, Label: "b", Sink: event.Discard})
+	ctrlB := newOwnedTestController(t, Options{Runner: execB, Executor: execB, SystemPrompt: systemPrompt, SessionDir: dir, SessionPath: path, Label: "b", Sink: event.Discard})
 	ctrlB.Resume(loaded, path)
 
 	if err := ctrlA.RunTurn(context.Background(), "second from A"); err != nil {

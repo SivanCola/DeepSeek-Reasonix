@@ -83,7 +83,6 @@ func (a *App) resumeV3SessionForTranscript(tab *WorkspaceTab, ctrl control.Sessi
 			if err != nil {
 				return HistoryPage{}, err
 			}
-			identity = current.(control.IdentityLifecycle)
 		} else if _, err := identity.OpenV3(a.bootContext(), ref); err != nil {
 			return HistoryPage{}, err
 		}

@@ -24,7 +24,7 @@ func TestTurnContextUsesLiveSkillCatalogAcrossAddEditDelete(t *testing.T) {
 	store := skill.New(skill.Options{HomeDir: home, ProjectRoot: project, DisableBuiltins: true})
 	sess := agent.NewSession("stable system")
 	executor := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Executor: executor, SkillStore: store, Skills: store.List(),
 		SessionContextStatic: sessioncontext.Sections{Workspace: "workspace"},
 	})
@@ -86,7 +86,7 @@ func TestTurnContextPublishesBackgroundMemoryReplacementWithoutLegacyUpdate(t *t
 	mem := memory.Load(memory.Options{CWD: project, UserDir: userDir})
 	sess := agent.NewSession("stable system")
 	executor := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
-	c := New(Options{Executor: executor, Memory: mem, SessionContextStatic: sessioncontext.Sections{Workspace: "workspace"}})
+	c := newOwnedTestController(t, Options{Executor: executor, Memory: mem, SessionContextStatic: sessioncontext.Sections{Workspace: "workspace"}})
 	if !executor.AppendTurnContext(c.withTurnContext(context.Background(), true)) {
 		t.Fatal("initial runtime snapshot was not published")
 	}

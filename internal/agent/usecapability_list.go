@@ -21,14 +21,6 @@ type listServerInfo struct {
 	Connected    bool   `json:"connected"`
 }
 
-// listCapabilities returns non-MCP catalog entries plus compact MCP server
-// summaries. Concrete MCP directories stay behind action=inspect so one global
-// list cannot grow with every cached tool description. The top-level "servers"
-// key stays compatible with restricted subagent list filtering.
-func (t *UseCapabilityTool) listCapabilities() (string, error) {
-	return t.listCapabilitiesPage(0, "")
-}
-
 func (t *UseCapabilityTool) listCapabilitiesPage(limit int, cursor string) (string, error) {
 	if limit == 0 {
 		limit = 50
@@ -93,10 +85,7 @@ func (t *UseCapabilityTool) listCapabilitiesPage(limit int, cursor string) (stri
 		}
 		offset = parsed
 	}
-	end := offset + limit
-	if end > total {
-		end = total
-	}
+	end := min(offset+limit, total)
 	capStart, capEnd := min(offset, len(caps)), min(end, len(caps))
 	page := caps[capStart:capEnd]
 	serverStart := max(0, offset-len(caps))

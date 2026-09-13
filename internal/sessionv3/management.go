@@ -2,7 +2,6 @@ package sessionv3
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,8 +43,7 @@ func (s *Service) SetTitle(ctx context.Context, ref SessionRef, title string) er
 	if err != nil {
 		return err
 	}
-	digest := sha256.Sum256(payload)
-	if _, err = session.AppendBatch(ctx, fmt.Sprintf("session-title:%s:%x", ref.SessionID, digest), []Event{{Kind: "session/title", Payload: payload}}); err != nil {
+	if _, err = session.AppendBatch(ctx, "session-title:"+randomID(), []Event{{Kind: "session/title", Payload: payload}}); err != nil {
 		return err
 	}
 	_, err = session.Flush(ctx)
@@ -70,14 +68,11 @@ func (s *Store) Export(ctx context.Context, destination string) error {
 		s.drainMu.Unlock()
 		return os.ErrClosed
 	}
-	if len(s.pending) != 0 || s.draining {
-		s.mu.Unlock()
-		s.drainMu.Unlock()
-		return fmt.Errorf("sessionv3: export raced a new accepted batch")
-	}
 	source := s.dir
-	err := exportDirectory(ctx, source, destination)
 	s.mu.Unlock()
+	// drainMu freezes physical files; accepted in-memory updates and Stop do
+	// not need to wait for the export's disk I/O.
+	err := exportDirectory(ctx, source, destination)
 	s.drainMu.Unlock()
 	return err
 }

@@ -17,7 +17,7 @@ import (
 
 func TestTranscriptReplayResetsOversizedWirePage(t *testing.T) {
 	for _, body := range []string{strings.Repeat("x", 2<<20), strings.Repeat("<", 400000)} {
-		c := New(Options{SessionPath: filepath.Join(t.TempDir(), "session.jsonl"), Sink: event.Discard})
+		c := newOwnedTestController(t, Options{SessionPath: filepath.Join(t.TempDir(), "session.jsonl"), Sink: event.Discard})
 		t.Cleanup(c.Close)
 		before, err := c.TranscriptSnapshot(transcript.PageRequest{})
 		if err != nil {
@@ -66,7 +66,7 @@ func TestTranscriptReplayResetsOversizedWirePage(t *testing.T) {
 func TestTranscriptProjectionCommitsBeforePublicationAndAllowsReentry(t *testing.T) {
 	var c *Controller
 	publications := 0
-	c = New(Options{SessionPath: filepath.Join(t.TempDir(), "session.jsonl"), Sink: event.FuncSink(func(e event.Event) {
+	c = newOwnedTestController(t, Options{SessionPath: filepath.Join(t.TempDir(), "session.jsonl"), Sink: event.FuncSink(func(e event.Event) {
 		if e.Sequence == 0 {
 			return
 		}
@@ -124,7 +124,7 @@ func TestTranscriptProjectionCommitsBeforePublicationAndAllowsReentry(t *testing
 
 func TestTranscriptCheckpointFailureRetainsWALWithoutFailingCompletedTurn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	c := New(Options{SessionPath: path, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{SessionPath: path, Sink: event.Discard})
 	t.Cleanup(c.Close)
 	if err := os.Mkdir(store.SessionTranscriptProjection(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestTranscriptCheckpointRestoreDoesNotReplayAutosavedTextTwice(t *testing.T
 	}
 	newController := func(session *agent.Session) *Controller {
 		executor := agent.New(nil, tool.NewRegistry(), session, agent.Options{}, event.Discard)
-		return New(Options{Executor: executor, SessionPath: path, Sink: event.Discard})
+		return newOwnedTestController(t, Options{Executor: executor, SessionPath: path, Sink: event.Discard})
 	}
 	c := newController(session)
 	emit := func(c *Controller, e event.Event) {

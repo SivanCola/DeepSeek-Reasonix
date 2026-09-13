@@ -15,7 +15,7 @@ func TestPagedReadBuildsAndUsesSparseCommitIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 600; i++ {
+	for i := range 600 {
 		payload, _ := json.Marshal(map[string]int{"number": i})
 		if _, err := store.Append(t.Context(), Batch{
 			OperationID: "diagnostic-" + strconv.Itoa(i),

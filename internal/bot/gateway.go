@@ -2592,10 +2592,6 @@ func (gw *BotGateway) sessionMappingTargetForMessage(msg InboundMessage) string 
 	return path
 }
 
-func (gw *BotGateway) sessionMappingPathForMessage(msg InboundMessage) string {
-	return botSessionPathFromTarget(gw.sessionMappingTargetForMessage(msg))
-}
-
 func sessionStateMatchesRuntime(state *sessionState, profile sessionRuntimeProfile) bool {
 	if state == nil || state.ctrl == nil {
 		return false

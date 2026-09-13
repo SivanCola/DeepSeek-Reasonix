@@ -19,7 +19,7 @@ func newSchemaTwoChatTUI(t *testing.T) (chatTUI, *control.Controller, *agent.Ses
 	sess.Add(provider.Message{Role: provider.RoleUser, Content: "root prompt"})
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "root answer"})
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	ctrl := control.New(control.Options{Executor: exec, SessionDir: dir, Label: "test", Sink: event.Discard})
+	ctrl := newOwnedTestController(t, control.Options{Executor: exec, SessionDir: dir, Label: "test", Sink: event.Discard})
 	path := filepath.Join(dir, "root.jsonl")
 	ctrl.SetSessionPath(path)
 	if err := ctrl.Snapshot(); err != nil {

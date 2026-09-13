@@ -71,7 +71,7 @@ type Runtime struct {
 	revision   uint64
 	activityID uint64
 	cancel     context.CancelFunc
-	closeOnce  sync.Once
+	closeDone  chan struct{}
 	closeErr   error
 }
 
@@ -93,10 +93,21 @@ func (r *Runtime) Ref() SessionRef { return r.ref }
 func (r *Runtime) Session() *Session { return r.session }
 
 func (r *Runtime) Snapshot() RuntimeSnapshot {
+	state := r.activitySnapshot()
+	state.Session = r.session.Snapshot()
+	return state
+}
+
+func (r *Runtime) StateSnapshot() RuntimeSnapshot {
+	state := r.activitySnapshot()
+	state.Session = r.session.StateSnapshot()
+	return state
+}
+
+func (r *Runtime) activitySnapshot() RuntimeSnapshot {
 	r.mu.Lock()
 	state := RuntimeSnapshot{Ref: r.ref, Epoch: r.epoch, ActivityRevision: r.revision, Phase: r.phase, Activity: r.activity}
 	r.mu.Unlock()
-	state.Session = r.session.Snapshot()
 	return state
 }
 
@@ -182,6 +193,7 @@ func (a *Activity) Finish(_ error) {
 	if runtime.activityID != a.id || (runtime.phase != RuntimeRunning && runtime.phase != RuntimeCancelling) {
 		return
 	}
+	runtime.cancel()
 	runtime.cancel = nil
 	runtime.activity = ""
 	runtime.phase = RuntimeIdle
@@ -254,23 +266,25 @@ func recoveryClosureBatch(batch Batch) bool {
 
 func (r *Runtime) close(ctx context.Context) error {
 	r.mu.Lock()
+	if r.closeDone != nil {
+		done := r.closeDone
+		r.mu.Unlock()
+		<-done
+		return r.closeErr
+	}
 	if r.phase == RuntimeRunning || r.phase == RuntimeCancelling || r.phase == RuntimeRecoveryRequired {
 		r.mu.Unlock()
 		return ErrRuntimeBusy
 	}
+	// Seal admission in the same critical section as the idle check. The
+	// irreversible close has one uncancellable result for every caller.
+	r.closeDone = make(chan struct{})
+	r.phase = RuntimeClosed
+	r.activity = ""
+	r.revision++
 	r.mu.Unlock()
-	r.closeOnce.Do(func() {
-		r.mu.Lock()
-		if r.cancel != nil {
-			r.cancel()
-		}
-		r.cancel = nil
-		r.phase = RuntimeClosed
-		r.activity = ""
-		r.revision++
-		r.mu.Unlock()
-		r.closeErr = r.session.Handle.Close(ctx)
-	})
+	r.closeErr = r.session.Handle.Close(context.Background())
+	close(r.closeDone)
 	return r.closeErr
 }
 
@@ -285,7 +299,7 @@ type Service struct {
 
 	mu        sync.Mutex
 	active    map[SessionRef]*Runtime
-	closed    map[SessionRef]*Runtime
+	closed    map[SessionRef]error
 	preparing map[SessionRef]*prepareRuntime
 	revision  atomic.Uint64
 }
@@ -324,7 +338,7 @@ func NewService(hostID string, persistence SessionPersistence) (*Service, error)
 	if hostID == "" || persistence == nil {
 		return nil, errors.New("sessionv3: host id and persistence are required")
 	}
-	return &Service{hostID: hostID, persistence: persistence, active: map[SessionRef]*Runtime{}, closed: map[SessionRef]*Runtime{}, preparing: map[SessionRef]*prepareRuntime{}}, nil
+	return &Service{hostID: hostID, persistence: persistence, active: map[SessionRef]*Runtime{}, closed: map[SessionRef]error{}, preparing: map[SessionRef]*prepareRuntime{}}, nil
 }
 
 func (s *Service) Create(ctx context.Context, options CreateOptions) (*Runtime, error) {
@@ -403,7 +417,7 @@ func (s *Service) Discard(ctx context.Context, prepared *PreparedRuntime) error 
 		return errors.New("sessionv3: published runtime cannot be discarded")
 	}
 	if prepared.discarded {
-		return prepared.runtime.closeErr
+		return prepared.runtime.close(ctx)
 	}
 	prepared.discarded = true
 	return prepared.runtime.close(ctx)
@@ -446,13 +460,10 @@ func (s *Service) Open(ctx context.Context, ref SessionRef) (*Runtime, error) {
 		s.finishPrepare(ref)
 		return nil, errors.New("sessionv3: writable persistence did not return a live store")
 	}
-	if _, recovered, recoverErr := store.RecoverInterrupted(ctx); recoverErr != nil {
+	if _, _, recoverErr := store.RecoverInterrupted(ctx); recoverErr != nil {
 		_ = handle.Close(context.Background())
 		s.finishPrepare(ref)
 		return nil, fmt.Errorf("sessionv3: close interrupted runtime: %w", recoverErr)
-	} else if recovered {
-		// Recovery is a persisted fact. The fresh runtime begins idle and never
-		// resurrects the prior process's activity or pending authorization.
 	}
 	candidate := newRuntime(ref, &Session{Handle: store})
 	s.mu.Lock()
@@ -516,7 +527,7 @@ func (s *Service) CancelSession(ref SessionRef) (CancelReceipt, error) {
 		return CancelReceipt{Ref: ref, Accepted: true, Phase: RuntimeIdle}, nil
 	}
 	runtime.Cancel()
-	snapshot := runtime.Snapshot()
+	snapshot := runtime.activitySnapshot()
 	return CancelReceipt{Ref: ref, Accepted: true, RuntimeEpoch: snapshot.Epoch, ActivityRevision: snapshot.ActivityRevision, Phase: snapshot.Phase}, nil
 }
 
@@ -620,25 +631,38 @@ func (s *Service) Close(ctx context.Context, ref SessionRef) error {
 	}
 	s.mu.Lock()
 	runtime := s.active[ref]
-	if runtime == nil {
-		runtime = s.closed[ref]
-	}
+	closedErr, closed := s.closed[ref]
 	s.mu.Unlock()
+	if runtime == nil {
+		if closed {
+			return closedErr
+		}
+		return ErrSessionNotRunning
+	}
+	return s.CloseRuntime(ctx, runtime)
+}
+
+// CloseRuntime is the teardown entry point for owners holding an exact
+// instance. A delayed old disposer must never close its same-ID successor.
+func (s *Service) CloseRuntime(ctx context.Context, runtime *Runtime) error {
 	if runtime == nil {
 		return ErrSessionNotRunning
 	}
+	if err := runtime.ref.validate(s.hostID); err != nil {
+		return err
+	}
 	err := runtime.close(ctx)
-	if err != nil {
+	if errors.Is(err, ErrRuntimeBusy) {
 		return err
 	}
 	s.mu.Lock()
-	if s.active[ref] == runtime {
-		delete(s.active, ref)
-		s.closed[ref] = runtime
+	if s.active[runtime.ref] == runtime {
+		delete(s.active, runtime.ref)
+		s.closed[runtime.ref] = err
 		s.revision.Add(1)
 	}
 	s.mu.Unlock()
-	return nil
+	return err
 }
 
 // Detach removes a runtime only if it is still the exact published instance.
@@ -653,7 +677,6 @@ func (s *Service) Detach(runtime *Runtime) bool {
 		return false
 	}
 	delete(s.active, runtime.ref)
-	s.closed[runtime.ref] = runtime
 	s.revision.Add(1)
 	return true
 }

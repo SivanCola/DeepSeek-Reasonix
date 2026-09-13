@@ -2088,6 +2088,10 @@ func (a *App) clearActiveSessionRuntime(tab *WorkspaceTab, oldCtrl control.Sessi
 		return a.bumpAndSnapshotSessionClear(tab), nil
 	}
 
+	return a.clearLegacySessionRuntimeLocked(tab, oldCtrl)
+}
+
+func (a *App) clearLegacySessionRuntimeLocked(tab *WorkspaceTab, oldCtrl control.SessionAPI) (SessionClearResult, error) {
 	a.reconciledSessionPathForTab(tab)
 	oldPath := oldCtrl.SessionPath()
 	// Snapshot the tab profile under a.mu: bound methods write these fields

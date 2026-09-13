@@ -13,12 +13,12 @@ import (
 
 func TestCatalogSnapshotColdCallersShareOneScanAndWarmReadsDoNotScan(t *testing.T) {
 	root := t.TempDir()
-	for i := 0; i < 1154; i++ {
+	for i := range 1154 {
 		path := filepath.Join(root, fmt.Sprintf("skill-%04d", i), SkillFile)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(fmt.Sprintf("---\ndescription: skill %d\n---\nbody", i)), 0o644); err != nil {
+		if err := os.WriteFile(path, fmt.Appendf(nil, "---\ndescription: skill %d\n---\nbody", i), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -44,7 +44,7 @@ func TestCatalogSnapshotColdCallersShareOneScanAndWarmReadsDoNotScan(t *testing.
 	if scans := store.DiscoveryScans(); scans != 1 {
 		t.Fatalf("cold shared scans = %d, want 1", scans)
 	}
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		if _, ok := store.Read(fmt.Sprintf("skill-%04d", i%1154)); !ok {
 			t.Fatalf("warm indexed read %d failed", i)
 		}

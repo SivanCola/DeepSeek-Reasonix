@@ -85,9 +85,7 @@ func TestServiceConcurrentOpenPublishesOneExactRuntime(t *testing.T) {
 	start := make(chan struct{})
 	var group sync.WaitGroup
 	for range callers {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			<-start
 			runtime, openErr := service.Open(context.Background(), ref)
 			if openErr != nil {
@@ -95,7 +93,7 @@ func TestServiceConcurrentOpenPublishesOneExactRuntime(t *testing.T) {
 				return
 			}
 			results <- runtime
-		}()
+		})
 	}
 	close(start)
 	group.Wait()

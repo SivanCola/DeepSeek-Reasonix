@@ -45,7 +45,7 @@ func TestToolRecoveryCrashAfterEffect(t *testing.T) {
 		reg.Add(crashAfterEffectTool{path: filepath.Join(root, "effects")})
 		p := &recordingProvider{streams: [][]provider.Chunk{{{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: "crash", Name: "crash_after_effect", Arguments: `{}`}}, {Type: provider.ChunkDone}}}}
 		a := agent.New(p, reg, agent.NewSession("sys"), agent.Options{}, event.Discard)
-		c := New(Options{Executor: a, Runner: a, SessionPath: filepath.Join(root, "session.jsonl"), SessionDir: root, Sink: event.Discard})
+		c := newOwnedTestController(t, Options{Executor: a, Runner: a, SessionPath: filepath.Join(root, "session.jsonl"), SessionDir: root, Sink: event.Discard})
 		if err := c.RunTurn(context.Background(), "perform effect"); err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func TestToolRecoveryCrashAfterEffect(t *testing.T) {
 	}
 	path := filepath.Join(root, "session.jsonl")
 	a := agent.New(nil, tool.NewRegistry(), agent.NewSession("sys"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: a, SessionPath: path, SessionDir: root, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: a, SessionPath: path, SessionDir: root, Sink: event.Discard})
 	defer c.Close()
 	c.recoverInterruptedTurn(path)
 	view := c.ToolRecoverySnapshot()

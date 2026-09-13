@@ -44,7 +44,7 @@ func newCheckpointEventController(t *testing.T, runner *checkpointEventRunner) (
 	events := make(chan event.Event, 8)
 	executor := agent.New(nil, tool.NewRegistry(), runner.session, agent.Options{}, event.Discard)
 	dir := t.TempDir()
-	controller := New(Options{
+	controller := newOwnedTestController(t, Options{
 		Runner: runner, Executor: executor,
 		SessionDir: dir, SessionPath: dir + "/session.jsonl",
 		Sink: event.FuncSink(func(e event.Event) {
@@ -223,7 +223,7 @@ func TestParkedTurnsKeepIndependentCheckpointCandidates(t *testing.T) {
 	var deliveries atomic.Int32
 	executor := agent.New(nil, tool.NewRegistry(), session, agent.Options{}, event.Discard)
 	dir := t.TempDir()
-	controller := New(Options{
+	controller := newOwnedTestController(t, Options{
 		Runner: runner, Executor: executor,
 		SessionDir: dir, SessionPath: dir + "/session.jsonl",
 		Sink: event.FuncSink(func(e event.Event) {

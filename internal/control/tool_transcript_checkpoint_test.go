@@ -44,7 +44,7 @@ func TestToolCheckpointSurvivesReloadWhileNextWriterRuns(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
 	sink, done, _ := collectSink()
-	c := New(Options{Runner: exec, Executor: exec, Sink: sink, SessionDir: dir, SessionPath: path})
+	c := newOwnedTestController(t, Options{Runner: exec, Executor: exec, Sink: sink, SessionDir: dir, SessionPath: path})
 	t.Cleanup(c.Close)
 	c.Submit("run both")
 	select {

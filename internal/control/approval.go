@@ -573,19 +573,6 @@ func (a *approvalManager) markAskEmitted(id string) {
 	}
 }
 
-// queuedAsks reports asks registered but not yet shown.
-func (a *approvalManager) queuedAsks() int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	n := 0
-	for _, p := range a.asks {
-		if p.queued {
-			n++
-		}
-	}
-	return n
-}
-
 // cancelAsk drops a pending ask (timeout/abort path).
 func (a *approvalManager) cancelAsk(id string) {
 	a.mu.Lock()

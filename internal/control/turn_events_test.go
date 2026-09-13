@@ -30,7 +30,7 @@ func TestTurnAdmissionIsDurableBeforeRunnerStarts(t *testing.T) {
 	dir := t.TempDir()
 	runner := &turnEventGateRunner{started: make(chan struct{}), release: make(chan struct{})}
 	done := make(chan event.Event, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.TurnDone {
@@ -83,7 +83,7 @@ func TestTurnAdmissionLedgerFailureDoesNotRunProvider(t *testing.T) {
 	}
 	runner := &turnEventGateRunner{started: make(chan struct{}), release: make(chan struct{})}
 	done := make(chan event.Event, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner: runner,
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.TurnDone {
@@ -118,7 +118,7 @@ func TestAsyncStreamLedgerFailureCancelsTurnWithoutPublishingChunk(t *testing.T)
 	cancelled := make(chan struct{})
 	done := make(chan event.Event, 1)
 	var publishedText atomic.Int32
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.Text {
 				publishedText.Add(1)

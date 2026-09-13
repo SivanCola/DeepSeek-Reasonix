@@ -39,7 +39,7 @@ func TestCancelLedgerFailureReturnsAndCancelsTurn(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "session-dir")
 	started := make(chan context.Context, 1)
 	finished := make(chan error, 1)
-	c := New(Options{SessionDir: root, SessionPath: filepath.Join(root, "session.jsonl")})
+	c := newOwnedTestController(t, Options{SessionDir: root, SessionPath: filepath.Join(root, "session.jsonl")})
 	t.Cleanup(c.Close)
 	c.runGuarded(func(ctx context.Context) error {
 		started <- ctx
@@ -105,7 +105,7 @@ func TestResolvePromptExactLedgerFailureCancelsWithoutAnswer(t *testing.T) {
 				err      error
 			}
 			finished := make(chan outcome, 1)
-			c := New(Options{
+			c := newOwnedTestController(t, Options{
 				SessionDir: root, SessionPath: filepath.Join(root, "session.jsonl"),
 				Sink: event.FuncSink(func(e event.Event) {
 					switch e.Kind {

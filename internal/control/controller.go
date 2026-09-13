@@ -100,20 +100,11 @@ var errNoSessionPath = errors.New("session has content but no session path; conv
 // methods; observe through the Sink passed in Options.
 type Controller struct {
 	runtimeState controllerRuntimeState
-	// promptEpochMu protects only the routing epoch. One-shot resolution is
-	// owned by PendingPromptOwner and the typed registries; cancellation must
-	// never wait behind an answer callback.
-	promptEpochMu      sync.RWMutex
-	promptRuntimeEpoch string
-	promptOwner        PendingPromptOwner
-	// promptResolveMu serializes permission-generation changes with legacy
-	// resolver entry points while they transition onto PendingPromptOwner.
-	// It is never held while waiting for a user answer.
-	promptResolveMu sync.Mutex
-	runner          agent.Runner
-	executor        *agent.Agent
-	guardianSess    *guardian.Session // nil when guardian is disabled
-	guardianPath    string            // persisted guardian session file ("" when disabled)
+	controllerPromptRouting
+	runner       agent.Runner
+	executor     *agent.Agent
+	guardianSess *guardian.Session // nil when guardian is disabled
+	guardianPath string            // persisted guardian session file ("" when disabled)
 	// taskBudget is the configured spend gate, as passed at construction.
 	taskBudget agent.TaskBudget
 	// goalTokenBudget bounds an unattended Goal loop; 0 leaves it unbounded.
@@ -143,15 +134,7 @@ type Controller struct {
 	pinnedContextLoader     PinnedContextLoader
 	sessionContextStatic    sessioncontext.Sections
 	sessionDir              string
-	// sessionRuntime is the final identity-bound v3 owner. When v3Exclusive is
-	// set, SessionPath is a legacy import/display locator only and no production
-	// transcript or business sidecar may be written through it.
-	sessionService *sessionv3.Service
-	sessionRuntime *sessionv3.Runtime
-	v3Exclusive    bool
-	v3BindingMu    sync.RWMutex
-	v3ActivityMu   sync.Mutex
-	v3Activity     *sessionv3.Activity
+	controllerSessionBinding
 	// managedSessionEvents is set for hosts that publish controllers only after
 	// a session-lease handoff. An unpublished replacement may read the shared
 	// v3 projection, but it must not mutate that projection before its final
@@ -394,6 +377,31 @@ type pendingAsk struct {
 
 type plannerSessionResetter interface {
 	ResetPlannerSession()
+}
+
+type controllerSessionBinding struct {
+	// sessionRuntime is the final identity-bound v3 owner. When v3Exclusive is
+	// set, SessionPath is a legacy import/display locator only and no production
+	// transcript or business sidecar may be written through it.
+	sessionService *sessionv3.Service
+	sessionRuntime *sessionv3.Runtime
+	v3Exclusive    bool
+	v3BindingMu    sync.RWMutex
+	v3ActivityMu   sync.Mutex
+	v3Activity     *sessionv3.Activity
+}
+
+type controllerPromptRouting struct {
+	// promptEpochMu protects only the routing epoch. One-shot resolution is
+	// owned by PendingPromptOwner and the typed registries; cancellation must
+	// never wait behind an answer callback.
+	promptEpochMu      sync.RWMutex
+	promptRuntimeEpoch string
+	promptOwner        PendingPromptOwner
+	// promptResolveMu serializes permission-generation changes with legacy
+	// resolver entry points while they transition onto PendingPromptOwner.
+	// It is never held while waiting for a user answer.
+	promptResolveMu sync.Mutex
 }
 
 // RuntimeStatus is the frontend-facing snapshot of foreground turn state. It is
@@ -750,9 +758,7 @@ func New(opts Options) *Controller {
 		sessionContextStatic:              opts.SessionContextStatic,
 		sessionDir:                        opts.SessionDir,
 		sessionPath:                       opts.SessionPath,
-		sessionService:                    opts.SessionService,
-		sessionRuntime:                    opts.SessionRuntime,
-		v3Exclusive:                       opts.ExclusiveSessionV3,
+		controllerSessionBinding:          controllerSessionBinding{sessionService: opts.SessionService, sessionRuntime: opts.SessionRuntime, v3Exclusive: opts.ExclusiveSessionV3},
 		commands:                          atomic.Pointer[[]command.Command]{},
 		skills:                            newSkillSet(opts.Skills, opts.AllSkills, opts.SkillStore, opts.AllSkillStore),
 		disableImplicitSkillInvocation:    opts.DisableImplicitSkillInvocation,
@@ -790,6 +796,11 @@ func New(opts Options) *Controller {
 		runtimeOwner:                      runtimeOwner,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
 	}
+	c.initializeOwnedResources(opts)
+	return c
+}
+
+func (c *Controller) initializeOwnedResources(opts Options) {
 	c.managedSessionEvents.Store(opts.OnSessionTransition != nil)
 	c.permissionRevision.Store(1)
 	// Session-private temporary directory: reuse a shared Manager on hot
@@ -845,7 +856,6 @@ func New(opts Options) *Controller {
 	// because the session path is only fixed once the first turn begins.
 	c.initializeTaskRecorder(opts.TaskStore)
 	c.initializeRuntimeState()
-	return c
 }
 
 func (c *Controller) initializeTaskRecorder(store taskmonitor.WriteStore) {
@@ -5231,7 +5241,7 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 			if fireSessionEnd {
 				var err error
 				if service != nil {
-					err = service.Close(context.Background(), runtime.Ref())
+					err = service.CloseRuntime(context.Background(), runtime)
 				} else {
 					err = runtime.Session().Handle.Close(context.Background())
 				}

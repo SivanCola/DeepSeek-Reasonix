@@ -107,7 +107,7 @@ func TestPlanGateEndToEnd(t *testing.T) {
 	ag := newPlanTestAgent(prov)
 
 	approvalID := make(chan string, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -152,7 +152,7 @@ func TestApprovedPlanDoesNotSeedTodosWithoutModelTodoWrite(t *testing.T) {
 	ag := newPlanTestAgent(prov)
 
 	approvalID := make(chan string, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -186,7 +186,7 @@ func TestPlanGateRejectionStaysInPlan(t *testing.T) {
 
 	approvalID := make(chan string, 1)
 	var seeded bool
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {

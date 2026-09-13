@@ -18,7 +18,7 @@ func TestCancelSessionTreatsIndependentBackgroundJobAsIdle(t *testing.T) {
 	manager := jobs.NewManager(event.Discard)
 	t.Cleanup(manager.Close)
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	c := New(Options{Jobs: manager, SessionPath: path})
+	c := newOwnedTestController(t, Options{Jobs: manager, SessionPath: path})
 	t.Cleanup(c.Close)
 	started := make(chan struct{})
 	manager.StartForSession(agent.BranchID(path), "bash", "background", func(ctx context.Context, _ io.Writer) (string, error) {
@@ -42,7 +42,7 @@ func TestCancelSessionTreatsIndependentBackgroundJobAsIdle(t *testing.T) {
 func TestCancelSessionAcknowledgesBeforeStatusBarrier(t *testing.T) {
 	releaseStatus := make(chan struct{})
 	statusEntered := make(chan struct{}, 1)
-	c := New(Options{Sink: event.FuncSink(func(e event.Event) {
+	c := newOwnedTestController(t, Options{Sink: event.FuncSink(func(e event.Event) {
 		if e.Kind == event.TurnStatusChanged && e.Status == event.TurnCancelling {
 			statusEntered <- struct{}{}
 			<-releaseStatus
@@ -96,7 +96,7 @@ func TestCancelSessionAcknowledgesBeforeStatusBarrier(t *testing.T) {
 func TestStaleCancellingStatusDoesNotStickToNextTurn(t *testing.T) {
 	dir := t.TempDir()
 	done := make(chan event.Event, 4)
-	c := New(Options{SessionDir: dir, SessionPath: dir + "/session.jsonl", Sink: event.FuncSink(func(e event.Event) {
+	c := newOwnedTestController(t, Options{SessionDir: dir, SessionPath: dir + "/session.jsonl", Sink: event.FuncSink(func(e event.Event) {
 		if e.Kind == event.TurnDone {
 			done <- e
 		}
@@ -131,7 +131,7 @@ func TestCancellationGraceSealsUncooperativeTurnAndPreservesQueue(t *testing.T) 
 	states := make(chan event.RuntimeStateSnapshot, 32)
 	sink := &runtimeStateTestSink{Sink: event.Discard, states: states}
 	exec := agent.New(nil, nil, agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: dir + "/session.jsonl", Sink: sink})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, SessionPath: dir + "/session.jsonl", Sink: sink})
 	c.testCancelGrace = 20 * time.Millisecond
 	release := make(chan struct{})
 	var releaseOnce sync.Once
@@ -211,7 +211,7 @@ func TestRecoverySealDropsLateTranscriptOutput(t *testing.T) {
 	session.Add(provider.Message{Role: provider.RoleUser, ID: "user", Content: "do work"})
 	session.Add(provider.Message{Role: provider.RoleAssistant, ID: "late-message", Content: "must stay diagnostic-only"})
 	exec := agent.New(nil, nil, session, agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, SessionPath: path, Sink: event.Discard})
 	t.Cleanup(c.Close)
 
 	ledger := c.turnEventLedger()

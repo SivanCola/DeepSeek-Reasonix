@@ -17,7 +17,7 @@ func TestAskExactResolutionDeliversOnceAfterReplay(t *testing.T) {
 	asks := make(chan event.Event, 1)
 	answers := make(chan []event.AskAnswer, 1)
 	release := make(chan struct{})
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		SessionDir: dir, SessionPath: filepath.Join(dir, "session.jsonl"),
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.AskRequest {
@@ -77,8 +77,8 @@ func TestAskExactResolutionDeliversOnceAfterReplay(t *testing.T) {
 	close(results)
 	var succeeded int
 	for err := range results {
-		switch {
-		case err == nil:
+		switch err {
+		case nil:
 			succeeded++
 		default:
 			t.Fatalf("current Ask answer rejected: %v", err)
@@ -123,7 +123,7 @@ func TestAskExactSkipCancelsTurn(t *testing.T) {
 	dir := t.TempDir()
 	asks := make(chan event.Event, 1)
 	done := make(chan event.Event, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		SessionDir: dir, SessionPath: filepath.Join(dir, "session.jsonl"),
 		Sink: event.FuncSink(func(e event.Event) {
 			switch e.Kind {

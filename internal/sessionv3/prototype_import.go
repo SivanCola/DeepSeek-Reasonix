@@ -51,7 +51,7 @@ func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (Prototy
 	}
 	var prototype Manifest
 	if err := json.Unmarshal(manifestBytes, &prototype); err != nil {
-		return PrototypeImportResult{}, fmt.Errorf("%w: prototype manifest: %v", ErrDamagedStore, err)
+		return PrototypeImportResult{}, fmt.Errorf("%w: prototype manifest: %w", ErrDamagedStore, err)
 	}
 	if prototype.SchemaVersion != SchemaVersion || prototype.Codec != PrototypeCodec || strings.TrimSpace(prototype.SessionID) == "" {
 		return PrototypeImportResult{}, fmt.Errorf("%w: expected %s", ErrUnsupportedVersion, PrototypeCodec)
@@ -119,38 +119,9 @@ func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (Prototy
 		return PrototypeImportResult{}, err
 	}
 
-	finalCommits := make([]Commit, len(prototypeCommits))
-	var lastSequence uint64
-	for i, original := range prototypeCommits {
-		commit := cloneCommit(original)
-		commit.Codec = Codec
-		commit.ID = deterministicID("prototype-commit\x00" + targetID + "\x00" + original.ID)
-		commit.OperationID = "prototype:" + prototype.SessionID + ":" + original.ID
-		commit.WriterGeneration = 1
-		for eventIndex := range commit.Events {
-			if commit.Events[eventIndex].Kind == "context/replace" {
-				commit.Events[eventIndex].Kind = "history/replace"
-			}
-		}
-		operationHash, hashErr := hashOperation(targetID, commit.TurnID, commit.Events)
-		if hashErr != nil {
-			return PrototypeImportResult{}, hashErr
-		}
-		commit.OperationHash = operationHash
-		finalCommits[i] = commit
-		lastSequence = commit.LastSequence()
-	}
-	if _, err := Project(finalCommits); err != nil {
-		return PrototypeImportResult{}, fmt.Errorf("validate imported prototype projection: %w", err)
-	}
-	var finalLog bytes.Buffer
-	for _, commit := range finalCommits {
-		line, marshalErr := json.Marshal(commit)
-		if marshalErr != nil {
-			return PrototypeImportResult{}, marshalErr
-		}
-		finalLog.Write(line)
-		finalLog.WriteByte('\n')
+	finalLog, lastSequence, err := convertPrototypeCommits(prototypeCommits, prototype.SessionID, targetID)
+	if err != nil {
+		return PrototypeImportResult{}, err
 	}
 	finalManifest := Manifest{
 		SchemaVersion: SchemaVersion, Codec: Codec, SessionID: targetID,
@@ -159,12 +130,12 @@ func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (Prototy
 	if err := writeManifestFile(filepath.Join(tmp, "manifest.json"), finalManifest); err != nil {
 		return PrototypeImportResult{}, err
 	}
-	if err := fileutil.AtomicWriteFileStrict(filepath.Join(tmp, "events.jsonl"), finalLog.Bytes(), 0o600); err != nil {
+	if err := fileutil.AtomicWriteFileStrict(filepath.Join(tmp, "events.jsonl"), finalLog, 0o600); err != nil {
 		return PrototypeImportResult{}, err
 	}
-	if replayed, replayErr := Replay(tmp, nil); replayErr != nil || len(replayed) != len(finalCommits) {
+	if replayed, replayErr := Replay(tmp, nil); replayErr != nil || len(replayed) != len(prototypeCommits) {
 		if replayErr == nil {
-			replayErr = fmt.Errorf("replayed %d of %d commits", len(replayed), len(finalCommits))
+			replayErr = fmt.Errorf("replayed %d of %d commits", len(replayed), len(prototypeCommits))
 		}
 		return PrototypeImportResult{}, fmt.Errorf("validate prototype target: %w", replayErr)
 	}
@@ -174,4 +145,41 @@ func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (Prototy
 	published = true
 	result.ImportedEvents = lastSequence
 	return result, nil
+}
+
+func convertPrototypeCommits(prototypeCommits []Commit, sourceID, targetID string) ([]byte, uint64, error) {
+	finalCommits := make([]Commit, len(prototypeCommits))
+	var lastSequence uint64
+	for i, original := range prototypeCommits {
+		commit := cloneCommit(original)
+		commit.Codec = Codec
+		commit.ID = deterministicID("prototype-commit\x00" + targetID + "\x00" + original.ID)
+		commit.OperationID = "prototype:" + sourceID + ":" + original.ID
+		commit.WriterGeneration = 1
+		for eventIndex := range commit.Events {
+			if commit.Events[eventIndex].Kind == "context/replace" {
+				commit.Events[eventIndex].Kind = "history/replace"
+			}
+		}
+		operationHash, hashErr := hashOperation(targetID, commit.TurnID, commit.Events)
+		if hashErr != nil {
+			return nil, 0, hashErr
+		}
+		commit.OperationHash = operationHash
+		finalCommits[i] = commit
+		lastSequence = commit.LastSequence()
+	}
+	if _, err := Project(finalCommits); err != nil {
+		return nil, 0, fmt.Errorf("validate imported prototype projection: %w", err)
+	}
+	var finalLog bytes.Buffer
+	for _, commit := range finalCommits {
+		line, marshalErr := json.Marshal(commit)
+		if marshalErr != nil {
+			return nil, 0, marshalErr
+		}
+		finalLog.Write(line)
+		finalLog.WriteByte('\n')
+	}
+	return finalLog.Bytes(), lastSequence, nil
 }

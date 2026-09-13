@@ -59,14 +59,6 @@ func TestReasonixGuideIndexLineOnly(t *testing.T) {
 	}
 }
 
-func skBodySnippet(sk skill.Skill) string {
-	body := strings.TrimSpace(sk.Body)
-	if len(body) > 40 {
-		return body[:40]
-	}
-	return body
-}
-
 func TestReasonixGuideOverriddenByProject(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()

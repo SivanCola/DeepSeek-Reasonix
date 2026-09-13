@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"reasonix/internal/agent"
@@ -441,56 +442,6 @@ func branchDisplayName(b agent.BranchInfo) string {
 	return b.ID
 }
 
-// forkHeadReady is the schema-2 fork: a new head starts at the message before
-// boundary and this controller moves onto it without changing session path;
-// checkpoint turns past the boundary stay hidden by CheckpointHasBoundary.
-func (c *Controller) forkHeadReady(sess *agent.Session, turn, boundary int, name, kind string) (string, error) {
-	if err := c.Snapshot(); err != nil {
-		slog.Warn("controller: pre-fork snapshot", "err", err)
-	}
-	path := c.SessionPath()
-	src := sess.Snapshot()
-	if boundary > len(src) {
-		boundary = len(src)
-	}
-	from := ""
-	if boundary > 0 {
-		from = src[boundary-1].ID
-	}
-	c.snapshotMu.Lock()
-	head, err := sess.ForkHead(path, from, kind, name)
-	if err != nil {
-		c.snapshotMu.Unlock()
-		return "", c.rewindFail(fmt.Errorf("fork head: %w", err))
-	}
-	c.afterHeadSwitch(path)
-	c.snapshotMu.Unlock()
-	if turn >= 0 {
-		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-			Text: fmt.Sprintf("forked conversation at turn %d into a new version", turn)})
-	} else {
-		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-			Text: fmt.Sprintf("created branch %s", head)})
-	}
-	return head, nil
-}
-
-// switchHeadInPlace moves the live session onto another head of its own log.
-func (c *Controller) switchHeadInPlace(match agent.BranchInfo) (agent.BranchInfo, error) {
-	sess := c.executor.Session()
-	path := c.SessionPath()
-	c.snapshotMu.Lock()
-	if err := sess.SwitchHead(path, match.HeadID); err != nil {
-		c.snapshotMu.Unlock()
-		return agent.BranchInfo{}, c.rewindFail(err)
-	}
-	c.afterHeadSwitch(path)
-	c.snapshotMu.Unlock()
-	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
-		Text: fmt.Sprintf("switched to branch %s", branchDisplayName(match))})
-	return match, nil
-}
-
 // afterHeadSwitch re-derives the per-transcript runtime state after the
 // session moved to another head of the same log. Callers hold snapshotMu.
 func (c *Controller) afterHeadSwitch(path string) {
@@ -591,8 +542,8 @@ func (c *Controller) publishV3Child(newPath string, messages []provider.Message)
 		if err != nil {
 			return err
 		}
-		for i := len(commits) - 1; i >= 0; i-- {
-			commit := commits[i]
+		for i, v := range slices.Backward(commits) {
+			commit := v
 			if len(commit.Events) == 0 || commit.Events[len(commit.Events)-1].Kind != "turn/end" {
 				continue
 			}

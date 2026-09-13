@@ -5,8 +5,6 @@ package agent
 // ledger; this mirror only gives a running executor immediate semantic access.
 
 import (
-	"strings"
-
 	"reasonix/internal/evidence"
 )
 
@@ -63,12 +61,4 @@ func (a *Agent) CurrentTaskTodoState() []evidence.TodoItem {
 		return nil
 	}
 	return append([]evidence.TodoItem(nil), todos...)
-}
-
-func canonicalTodoStatus(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "pending"
-	}
-	return s
 }

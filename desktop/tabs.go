@@ -2608,23 +2608,12 @@ func (a *App) ensureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 		a.tabOrder = append(a.tabOrder, tabID)
 		a.activeTabID = tabID
 		a.saveTabsLocked()
-		meta := a.tabMeta(created, true)
 		a.mu.Unlock()
 
 		// A new-session command returns an executable immutable identity. Build
 		// and publish it before returning instead of exposing a pathless tab whose
 		// eventual asynchronous startup could race a second create/delete action.
-		a.buildTabController(created)
-		a.mu.RLock()
-		meta = a.tabMeta(created, true)
-		startupErr := created.StartupErr
-		ready := created.Ctrl != nil && created.SessionID != ""
-		a.mu.RUnlock()
-		if !ready {
-			return TabMeta{}, fmt.Errorf("create session runtime: %s", startupErr)
-		}
-		a.emitProjectTreeChangedForSessionDirs(desktopSessionDir(actualRoot))
-		return enrichTabMeta(meta), nil
+		return a.startCreatedSessionTab(created, actualRoot)
 	}
 
 	topicID := newTopicID()
@@ -2657,12 +2646,15 @@ func (a *App) ensureBlankTab(scope, workspaceRoot string) (TabMeta, error) {
 	a.tabOrder = append(a.tabOrder, tabID)
 	a.activeTabID = tabID
 	a.saveTabsLocked()
-	meta := a.tabMeta(created, true)
 	a.mu.Unlock()
 
+	return a.startCreatedSessionTab(created, actualRoot)
+}
+
+func (a *App) startCreatedSessionTab(created *WorkspaceTab, actualRoot string) (TabMeta, error) {
 	a.buildTabController(created)
 	a.mu.RLock()
-	meta = a.tabMeta(created, true)
+	meta := a.tabMeta(created, true)
 	startupErr := created.StartupErr
 	ready := created.Ctrl != nil && created.SessionID != ""
 	a.mu.RUnlock()

@@ -548,16 +548,6 @@ func writeZeroByteSession(t *testing.T, path string) {
 	}
 }
 
-func writeEmptyNamedSession(t *testing.T, dir, name, topicID, topicTitle, workspaceRoot string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	writeZeroByteSession(t, path)
-	if err := pinNewEmptySessionBranchMeta(path, "project", workspaceRoot, topicID, topicTitle); err != nil {
-		t.Fatalf("pin empty session: %v", err)
-	}
-	return path
-}
-
 func TestTrashTopicArchivesFailedRuntimeWithStaleWriteAuthority(t *testing.T) {
 	isolateDesktopUserDirs(t)
 

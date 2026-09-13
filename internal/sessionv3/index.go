@@ -178,10 +178,7 @@ func (idx sparseIndex) checkpoint(offset uint64) sparseIndexEntry {
 		return sparseIndexEntry{FirstSequence: 1}
 	}
 	target := offset + 1
-	position := sort.Search(len(idx.Entries), func(i int) bool { return idx.Entries[i].FirstSequence > target }) - 1
-	if position < 0 {
-		position = 0
-	}
+	position := max(sort.Search(len(idx.Entries), func(i int) bool { return idx.Entries[i].FirstSequence > target })-1, 0)
 	return idx.Entries[position]
 }
 

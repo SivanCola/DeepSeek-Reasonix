@@ -190,9 +190,10 @@ func (c *Controller) answerMCPInteractionCheckedLocked(id, action string, conten
 	}
 	pending, ok, err := c.approval.resolveMCPInteractionAfter(id, func(p pendingMCPInteraction) error {
 		state := PromptAnswered
-		if action == mcpinteraction.ActionDecline {
+		switch action {
+		case mcpinteraction.ActionDecline:
 			state = PromptRejected
-		} else if action == mcpinteraction.ActionCancel {
+		case mcpinteraction.ActionCancel:
 			state = PromptCancelled
 		}
 		return c.emitTurnEventChecked(event.Event{Kind: event.PromptAnswered, ItemID: id, InteractionState: string(state), Status: event.TurnInProgress})
@@ -202,9 +203,10 @@ func (c *Controller) answerMCPInteractionCheckedLocked(id, action string, conten
 	}
 	if ok {
 		terminal := PromptAnswered
-		if action == mcpinteraction.ActionDecline {
+		switch action {
+		case mcpinteraction.ActionDecline:
 			terminal = PromptRejected
-		} else if action == mcpinteraction.ActionCancel {
+		case mcpinteraction.ActionCancel:
 			terminal = PromptCancelled
 		}
 		c.promptOwner.MarkIDTerminal(id, terminal)

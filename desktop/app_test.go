@@ -41,7 +41,6 @@ import (
 	"reasonix/internal/sandbox"
 	"reasonix/internal/skill"
 	"reasonix/internal/stats"
-	"reasonix/internal/store"
 	"reasonix/internal/taskcatalog"
 	"reasonix/internal/tool"
 )
@@ -247,29 +246,6 @@ func isolateDesktopUserDirs(t *testing.T) string {
 		_ = taskcatalog.ShutdownShared(ctx)
 	})
 	return home
-}
-
-func primarySessionFiles(paths []string) []string {
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if store.IsSessionTranscriptName(filepath.Base(path)) {
-			out = append(out, path)
-		}
-	}
-	return out
-}
-
-func readConflictLogLines(t *testing.T, path string) []string {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read conflict log: %v", err)
-	}
-	text := strings.TrimSpace(string(data))
-	if text == "" {
-		return nil
-	}
-	return strings.Split(text, "\n")
 }
 
 func setDesktopTestCredential(t *testing.T, key, value string) {
@@ -3896,28 +3872,6 @@ func newStaleWorkspaceBindingFixtureWithLayout(t *testing.T, suffix, layoutStyle
 	}
 }
 
-func assertTabRebuiltToPinnedWorkspace(t *testing.T, f staleWorkspaceBindingFixture) {
-	t.Helper()
-	if f.tab.Ctrl == nil {
-		t.Fatal("controller was not rebuilt")
-	}
-	if f.tab.Ctrl == f.oldCtrl {
-		t.Fatal("stale controller was reused")
-	}
-	if got := normalizeProjectRoot(f.tab.WorkspaceRoot); got != normalizeProjectRoot(f.projectA) {
-		t.Fatalf("tab workspace root = %q, want project A %q", got, normalizeProjectRoot(f.projectA))
-	}
-	if got := normalizeProjectRoot(f.tab.Ctrl.WorkspaceRoot()); got != normalizeProjectRoot(f.projectA) {
-		t.Fatalf("controller workspace root = %q, want project A %q", got, normalizeProjectRoot(f.projectA))
-	}
-	if !sameDesktopPath(f.tab.Ctrl.SessionDir(), f.sessionDirA) {
-		t.Fatalf("controller session dir = %q, want %q", f.tab.Ctrl.SessionDir(), f.sessionDirA)
-	}
-	if !sameDesktopPath(f.tab.Ctrl.SessionPath(), f.sessionPathA) {
-		t.Fatalf("controller session path = %q, want %q", f.tab.Ctrl.SessionPath(), f.sessionPathA)
-	}
-}
-
 type blockingSnapshotCtrl struct {
 	control.SessionAPI
 
@@ -3959,13 +3913,6 @@ func (c *blockingSnapshotCtrl) Close() {
 	if c.SessionAPI != nil {
 		c.SessionAPI.Close()
 	}
-}
-
-func (f *staleWorkspaceBindingFixture) installBlockingSnapshotController() *blockingSnapshotCtrl {
-	ctrl := newBlockingSnapshotCtrl(f.tab.Ctrl)
-	f.tab.Ctrl = ctrl
-	f.oldCtrl = ctrl
-	return ctrl
 }
 
 func TestDescribeSessionBindingWorkspaceKeepsWindowsPathReadable(t *testing.T) {
@@ -4089,77 +4036,6 @@ func TestRetiredClassicLayoutReadsAsWorkbench(t *testing.T) {
 	if got := cfg.DesktopLayoutStyle(); got != "workbench" {
 		t.Fatalf("retired classic reads as %q, want workbench", got)
 	}
-}
-
-func runQuickClickWorkspaceReconcileTest(t *testing.T, layoutStyle string) {
-	t.Helper()
-	f := newStaleWorkspaceBindingFixtureWithLayout(t, "quick_click_"+layoutStyle, layoutStyle)
-	blockingCtrl := f.installBlockingSnapshotController()
-
-	type quickAction struct {
-		name string
-		run  func() error
-	}
-	actions := []quickAction{
-		{name: "submit", run: func() error { return f.app.SubmitToTab(f.tab.ID, "/unknown-command") }},
-		{name: "steer", run: func() error { return f.app.SteerForTab(f.tab.ID, "steer guidance") }},
-		{name: "compact", run: func() error { return f.app.Compact() }},
-		{name: "submit-display", run: func() error { return f.app.SubmitDisplayToTab(f.tab.ID, "/unknown display", "/unknown-command") }},
-	}
-
-	start := make(chan struct{})
-	ready := make(chan struct{}, len(actions))
-	errs := make(chan error, len(actions))
-	var wg sync.WaitGroup
-	for _, action := range actions {
-		wg.Go(func() {
-			ready <- struct{}{}
-			<-start
-			if err := action.run(); err != nil {
-				errs <- fmt.Errorf("%s: %w", action.name, err)
-			}
-		})
-	}
-	for range actions {
-		<-ready
-	}
-	close(start)
-
-	select {
-	case <-blockingCtrl.firstSnapshotStarted:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for first stale controller snapshot")
-	}
-	select {
-	case <-blockingCtrl.secondSnapshotStarted:
-		t.Fatal("workspace rebuild was not serialized: second stale snapshot started before the first rebuild finished")
-	case <-time.After(75 * time.Millisecond):
-	}
-	close(blockingCtrl.releaseSnapshot)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		// Racing quick clicks may legitimately observe a busy controller or an
-		// already-ended steer target. This test asserts workspace-rebuild
-		// serialization, not that every concurrent action wins admission.
-		if strings.Contains(err.Error(), "turn already running") ||
-			strings.Contains(err.Error(), "cannot compact while a turn is running") ||
-			strings.Contains(err.Error(), "remain queued") {
-			continue
-		}
-		t.Error(err)
-	}
-	if t.Failed() {
-		return
-	}
-	if got := blockingCtrl.snapshotCount.Load(); got != 1 {
-		t.Fatalf("stale snapshot count = %d, want 1", got)
-	}
-	if got := blockingCtrl.closeCount.Load(); got != 1 {
-		t.Fatalf("stale close count = %d, want 1", got)
-	}
-	waitNotRunning(t, f.tab.Ctrl)
-	assertTabRebuiltToPinnedWorkspace(t, f)
 }
 
 func TestListSessionsUsesPinnedSessionOwnerBeforeStaleRuntimeDir(t *testing.T) {

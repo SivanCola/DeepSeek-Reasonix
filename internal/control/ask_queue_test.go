@@ -41,10 +41,9 @@ func (s *askProbeSink) snapshot() []event.Ask {
 // retains every pending request and each waiter has its own reply channel.
 func TestConcurrentAsksArePublishedAndResolvedIndependently(t *testing.T) {
 	sink := &askProbeSink{}
-	c := New(Options{Sink: sink, SessionDir: t.TempDir()})
+	c := newOwnedTestController(t, Options{Sink: sink, SessionDir: t.TempDir()})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	type result struct {
 		answers []event.AskAnswer
 		err     error
@@ -92,7 +91,7 @@ func TestConcurrentAsksArePublishedAndResolvedIndependently(t *testing.T) {
 // Ask has no timeout of its own: approvalTimeout defaults to zero, so a
 // question nobody answers blocks its turn until the user cancels.
 func TestAskWithoutTimeoutBlocksUntilCancelled(t *testing.T) {
-	c := New(Options{Sink: event.Discard, SessionDir: t.TempDir()})
+	c := newOwnedTestController(t, Options{Sink: event.Discard, SessionDir: t.TempDir()})
 	if c.approval.approvalTimeout != 0 {
 		t.Skipf("approvalTimeout is %v; this test pins the unbounded default", c.approval.approvalTimeout)
 	}

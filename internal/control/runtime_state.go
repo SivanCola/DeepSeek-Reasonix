@@ -108,7 +108,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	_, v3Runtime, v3Exclusive := c.v3Binding()
 	var v3RuntimeSnapshot sessionv3.RuntimeSnapshot
 	if v3Exclusive && v3Runtime != nil {
-		v3RuntimeSnapshot = v3Runtime.Snapshot()
+		v3RuntimeSnapshot = v3Runtime.StateSnapshot()
 	}
 	ledger := c.turnEventLedger()
 	initialized := r.snapshot.SchemaVersion == 1
@@ -133,27 +133,8 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	if ledger != nil {
 		next.TurnID, next.TurnStatus, next.TurnEventSeq = ledger.RuntimeIdentity()
 	}
-	v3Snapshot, hasV3Snapshot := c.sessionEventSnapshot()
-	if hasV3Snapshot {
-		snapshot := v3Snapshot
-		next.CommittedSeq = snapshot.EventSequence
-		next.DurableSeq = snapshot.DurableSequence
-		next.Persistence = string(snapshot.PersistenceStatus)
-		next.PersistenceErr = snapshot.PersistenceError
-		next.Todos = append([]event.Todo(nil), snapshot.Projection.Todos...)
-		next.TodoWritten = snapshot.Projection.TodoWritten
-		if snapshot.Projection.TurnID != "" {
-			next.TurnID = snapshot.Projection.TurnID
-			next.TurnStatus = snapshot.Projection.TurnStatus
-		}
-		if snapshot.Projection.Recovery != nil && snapshot.Projection.Recovery.State == "recovery_required" {
-			next.TurnStatus = event.TurnRecoveryRequired
-		}
-	} else {
-		next.CommittedSeq = next.TurnEventSeq
-		next.DurableSeq = next.TurnEventSeq
-		next.Persistence = "unavailable"
-	}
+	v3Snapshot, hasV3Snapshot := c.sessionStateSnapshot()
+	applyRuntimeSessionState(&next, v3Snapshot, hasV3Snapshot)
 	next.HeadID = agent.BranchID(path)
 	if v3Exclusive {
 		next.HeadID = ""
@@ -172,32 +153,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	if next.Todos == nil {
 		next.Todos = []event.Todo{}
 	}
-	next.Phase = "idle"
-	if v3Exclusive && v3Runtime != nil {
-		switch v3RuntimeSnapshot.Phase {
-		case sessionv3.RuntimeRunning:
-			next.Phase = "executing"
-		case sessionv3.RuntimeCancelling:
-			next.Phase = "cancelling"
-		case sessionv3.RuntimeRecoveryRequired:
-			next.Phase = "recovery_required"
-		case sessionv3.RuntimeClosed:
-			next.Phase = "closed"
-		}
-	} else {
-		switch {
-		case next.TurnStatus == event.TurnRecoveryRequired:
-			next.Phase = "recovery_required"
-		case cancelling:
-			next.Phase = "cancelling"
-		case running:
-			next.Phase = "executing"
-		case finishing:
-			next.Phase = "finishing"
-		case closed:
-			next.Phase = "closed"
-		}
-	}
+	setRuntimePhase(&next, v3Exclusive, v3Runtime, v3RuntimeSnapshot, running, finishing, closed, cancelling)
 	next.Running = running || finishing
 	next.CancelRequested = cancelling
 	identities, promptRevision := c.promptOwner.IdentitiesRevision()
@@ -217,12 +173,10 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	}
 	// Sampling owners is off their locks. Do not commit a mixture if the
 	// admission/close/binding boundary advanced while another owner was read.
-	c.mu.Lock()
-	stable := running == c.running && finishing == c.finishing && closed == c.closed && cancelling == c.canceling && path == c.sessionPath
-	c.mu.Unlock()
+	stable := c.runtimeBoundaryStable(running, finishing, closed, cancelling, path)
 	if v3Exclusive && v3Runtime != nil {
 		_, currentRuntime, currentExclusive := c.v3Binding()
-		stable = stable && currentExclusive && currentRuntime == v3Runtime && currentRuntime.Snapshot().ActivityRevision == v3RuntimeSnapshot.ActivityRevision
+		stable = stable && currentExclusive && currentRuntime == v3Runtime && currentRuntime.StateSnapshot().ActivityRevision == v3RuntimeSnapshot.ActivityRevision
 	}
 	if !stable || ledger != c.turnEventLedger() || promptRevision != c.promptOwner.Revision() {
 		r.mu.Unlock()
@@ -238,20 +192,7 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	}
 	activity = runtimeActivity(next, e, activity)
 	next.Activity = activity
-	next.Recovery = nil
-	if next.Phase == "recovery_required" {
-		if hasV3Snapshot && v3Snapshot.Projection.Recovery != nil {
-			recovery := *v3Snapshot.Projection.Recovery
-			next.Recovery = &recovery
-		} else if ledger != nil {
-			next.Recovery = ledger.RecoveryStatus()
-		}
-		if next.Recovery == nil {
-			next.Recovery = &event.RecoveryStatus{State: "recovery_required", Phase: activity, Reason: "runtime state requires recovery"}
-		} else if next.Recovery.Phase == "" {
-			next.Recovery.Phase = activity
-		}
-	}
+	setRuntimeRecovery(&next, v3Snapshot, hasV3Snapshot, ledger, activity)
 	// Token deltas do not need runtime notifications. Keep the last published
 	// watermark until a semantic state changes, avoiding a second token stream.
 	compare := next
@@ -321,4 +262,79 @@ func runtimeActivity(state event.RuntimeStateSnapshot, e event.Event, activity s
 		activity = ""
 	}
 	return activity
+}
+
+func setRuntimePhase(next *event.RuntimeStateSnapshot, v3Exclusive bool, v3Runtime *sessionv3.Runtime, v3RuntimeSnapshot sessionv3.RuntimeSnapshot, running, finishing, closed, cancelling bool) {
+	next.Phase = "idle"
+	if v3Exclusive && v3Runtime != nil {
+		switch v3RuntimeSnapshot.Phase {
+		case sessionv3.RuntimeRunning:
+			next.Phase = "executing"
+		case sessionv3.RuntimeCancelling:
+			next.Phase = "cancelling"
+		case sessionv3.RuntimeRecoveryRequired:
+			next.Phase = "recovery_required"
+		case sessionv3.RuntimeClosed:
+			next.Phase = "closed"
+		}
+	} else {
+		switch {
+		case next.TurnStatus == event.TurnRecoveryRequired:
+			next.Phase = "recovery_required"
+		case cancelling:
+			next.Phase = "cancelling"
+		case running:
+			next.Phase = "executing"
+		case finishing:
+			next.Phase = "finishing"
+		case closed:
+			next.Phase = "closed"
+		}
+	}
+}
+
+func applyRuntimeSessionState(next *event.RuntimeStateSnapshot, v3Snapshot sessionv3.Snapshot, hasV3Snapshot bool) {
+	if hasV3Snapshot {
+		snapshot := v3Snapshot
+		next.CommittedSeq = snapshot.EventSequence
+		next.DurableSeq = snapshot.DurableSequence
+		next.Persistence = string(snapshot.PersistenceStatus)
+		next.PersistenceErr = snapshot.PersistenceError
+		next.Todos = append([]event.Todo(nil), snapshot.Projection.Todos...)
+		next.TodoWritten = snapshot.Projection.TodoWritten
+		if snapshot.Projection.TurnID != "" {
+			next.TurnID = snapshot.Projection.TurnID
+			next.TurnStatus = snapshot.Projection.TurnStatus
+		}
+		if snapshot.Projection.Recovery != nil && snapshot.Projection.Recovery.State == "recovery_required" {
+			next.TurnStatus = event.TurnRecoveryRequired
+		}
+	} else {
+		next.CommittedSeq = next.TurnEventSeq
+		next.DurableSeq = next.TurnEventSeq
+		next.Persistence = "unavailable"
+	}
+}
+
+func setRuntimeRecovery(next *event.RuntimeStateSnapshot, v3Snapshot sessionv3.Snapshot, hasV3Snapshot bool, ledger *turnevent.Ledger, activity string) {
+	next.Recovery = nil
+	if next.Phase == "recovery_required" {
+		if hasV3Snapshot && v3Snapshot.Projection.Recovery != nil {
+			recovery := *v3Snapshot.Projection.Recovery
+			next.Recovery = &recovery
+		} else if ledger != nil {
+			next.Recovery = ledger.RecoveryStatus()
+		}
+		if next.Recovery == nil {
+			next.Recovery = &event.RecoveryStatus{State: "recovery_required", Phase: activity, Reason: "runtime state requires recovery"}
+		} else if next.Recovery.Phase == "" {
+			next.Recovery.Phase = activity
+		}
+	}
+}
+
+func (c *Controller) runtimeBoundaryStable(running, finishing, closed, cancelling bool, path string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return running == c.running && finishing == c.finishing && closed == c.closed && cancelling == c.canceling && path == c.sessionPath
 }

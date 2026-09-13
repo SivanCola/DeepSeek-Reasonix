@@ -18,7 +18,7 @@ func newSchemaTwoBranchController(t *testing.T) (*Controller, *agent.Session, st
 	sess := exec.Session()
 	sess.Add(provider.Message{Role: provider.RoleUser, Content: "root prompt"})
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "root answer"})
-	c := New(Options{Executor: exec, SessionDir: dir, Label: "test", Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, Label: "test", Sink: event.Discard})
 	path := filepath.Join(dir, "root.jsonl")
 	c.SetSessionPath(path)
 	if err := c.Snapshot(); err != nil {
@@ -145,7 +145,7 @@ func TestFileBranchesOnlyKeepsFileBranchesForSchemaTwo(t *testing.T) {
 	dir := t.TempDir()
 	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
 	exec.Session().Add(provider.Message{Role: provider.RoleUser, Content: "root prompt"})
-	c := New(Options{Executor: exec, SessionDir: dir, Label: "test", Sink: event.Discard, FileBranchesOnly: true})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, Label: "test", Sink: event.Discard, FileBranchesOnly: true})
 	path := filepath.Join(dir, "root.jsonl")
 	c.SetSessionPath(path)
 	if err := c.Snapshot(); err != nil {

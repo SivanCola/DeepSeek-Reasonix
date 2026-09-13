@@ -25,7 +25,7 @@ func TestAutoApproveToolsStillRequiresExplicitPlanApproval(t *testing.T) {
 	ag := newPlanTestAgent(prov)
 
 	approvalRequests := make(chan event.Approval, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -87,7 +87,7 @@ func TestAutoApproveToolsStillRequiresExplicitPlanApproval(t *testing.T) {
 // tool auto-approval.
 func TestRequestApprovalHonorsAutoApproveTools(t *testing.T) {
 	var approvalRequested bool
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest {
 				approvalRequested = true
@@ -120,7 +120,7 @@ func TestRequestApprovalHonorsAutoApproveTools(t *testing.T) {
 }
 
 func TestToolApprovalModeAutoKeepsAskRules(t *testing.T) {
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Policy: permission.New("ask", nil, []string{"bash(git commit*)"}, []string{"bash(rm*)"}),
 	})
 	c.SetToolApprovalMode(ToolApprovalAuto)
@@ -142,7 +142,7 @@ func TestToolApprovalModeAutoKeepsAskRules(t *testing.T) {
 
 func TestToolApprovalModeDontAskDeniesWithoutPrompt(t *testing.T) {
 	requests := 0
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Policy: permission.New("ask", nil, []string{"bash(git commit*)"}, nil).
 			WithSessionAllow([]string{"bash(go test*)"}),
 		Sink: event.FuncSink(func(e event.Event) {
@@ -173,7 +173,7 @@ func TestToolApprovalModeDontAskDeniesWithoutPrompt(t *testing.T) {
 
 func TestLegacyAutoMigrationDoesNotApprovePendingFallback(t *testing.T) {
 	approvalRequests := make(chan event.Approval, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Policy: permission.New("ask", nil, nil, nil),
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest {
@@ -227,7 +227,7 @@ func TestLegacyAutoMigrationDoesNotApprovePendingFallback(t *testing.T) {
 
 func TestToolApprovalModeAutoDoesNotDrainPendingExplicitAsk(t *testing.T) {
 	approvalRequests := make(chan event.Approval, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Policy: permission.New("ask", nil, []string{"bash(git commit*)"}, nil),
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest {
@@ -279,7 +279,7 @@ func TestToolApprovalModeAutoDoesNotDrainPendingExplicitAsk(t *testing.T) {
 }
 
 func TestToolApprovalModeYoloBypassesApprovalPrompts(t *testing.T) {
-	c := New(Options{})
+	c := newOwnedTestController(t, Options{})
 	c.SetToolApprovalMode(ToolApprovalYolo)
 	if !c.AutoApproveTools() {
 		t.Fatal("YOLO mode should satisfy legacy AutoApproveTools")
@@ -292,7 +292,7 @@ func TestToolApprovalModeYoloBypassesApprovalPrompts(t *testing.T) {
 
 func TestPlanApprovalIgnoresAutoApproveTools(t *testing.T) {
 	approvalRequests := make(chan event.Approval, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest {
 				approvalRequests <- e.Approval
@@ -346,7 +346,7 @@ func TestPlanApprovalIgnoresAutoApproveTools(t *testing.T) {
 // Legacy SetAutoApproveTools conservatively maps to workspace access and must
 // not answer an approval created under an older permission revision.
 func TestSetAutoApproveToolsDoesNotResolvePendingApproval(t *testing.T) {
-	c, ids, _ := approvalIDs()
+	c, ids, _ := approvalIDs(t)
 
 	done := make(chan bool, 1)
 	errs := make(chan error, 1)
@@ -386,7 +386,7 @@ func TestSetAutoApproveToolsDoesNotResolvePendingApproval(t *testing.T) {
 
 func TestSandboxEscapeApprovalIgnoresAutoApproveTools(t *testing.T) {
 	approvalRequests := make(chan event.Approval, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest {
 				approvalRequests <- e.Approval
@@ -455,7 +455,7 @@ func TestSandboxEscapeApprovalIgnoresAutoApproveTools(t *testing.T) {
 
 func TestSetAutoApproveToolsDoesNotDrainPendingPlanApproval(t *testing.T) {
 	approvalRequests := make(chan event.Approval, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest {
 				approvalRequests <- e.Approval
@@ -510,7 +510,7 @@ func TestSetAutoApproveToolsDoesNotDrainPendingPlanApproval(t *testing.T) {
 
 func TestSetAutoApproveToolsDoesNotDrainPendingPlanModeReadOnlyCommandTrust(t *testing.T) {
 	approvalRequests := make(chan event.Approval, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.ApprovalRequest {
 				approvalRequests <- e.Approval
@@ -569,7 +569,7 @@ func TestSetAutoApproveToolsDoesNotDrainPendingPlanModeReadOnlyCommandTrust(t *t
 // The legacy combined mode API no longer grants full access and cannot answer
 // an approval already waiting under another snapshot.
 func TestSetModeLegacyPermissionDoesNotResolvePendingApproval(t *testing.T) {
-	c, ids, _ := approvalIDs()
+	c, ids, _ := approvalIDs(t)
 
 	done := make(chan bool, 1)
 	go func() {
@@ -598,7 +598,7 @@ func TestSetModeLegacyPermissionDoesNotResolvePendingApproval(t *testing.T) {
 }
 
 func TestSetModeLegacyAppliesPlanAndWorkspacePermission(t *testing.T) {
-	c, _, _ := approvalIDs()
+	c, _, _ := approvalIDs(t)
 
 	c.SetMode(true, false)
 	if !c.PlanMode() || c.AutoApproveTools() {
@@ -634,7 +634,7 @@ func (r *planModeCountingRunner) SetPlanMode(v bool) {
 
 func TestApplyModeUsesRunnerPlanPropagationOnce(t *testing.T) {
 	runner := &planModeCountingRunner{}
-	c := New(Options{Runner: runner})
+	c := newOwnedTestController(t, Options{Runner: runner})
 	c.ApplyMode(true, true)
 	if runner.calls != 1 || !runner.last {
 		t.Fatalf("runner SetPlanMode calls=%d last=%v, want 1/true", runner.calls, runner.last)
@@ -668,7 +668,7 @@ func TestApplyModePlanPropagationRunnerFallbacks(t *testing.T) {
 				textTurn("done"),
 			}}
 			executor := agent.New(prov, reg, agent.NewSession("executor"), agent.Options{}, event.Discard)
-			c := New(Options{Runner: tc.runner(executor), Executor: executor})
+			c := newOwnedTestController(t, Options{Runner: tc.runner(executor), Executor: executor})
 			c.ApplyMode(true, true)
 			if err := executor.Run(context.Background(), "try the execution-phase tool"); err != nil {
 				t.Fatalf("executor Run: %v", err)
@@ -705,7 +705,7 @@ func TestApplyModePropagatesPlanToCoordinatorPlannerAndMigratesLegacyYolo(t *tes
 	execProvider := &scriptedTurns{turns: [][]provider.Chunk{textTurn("executor done")}}
 	executor := agent.New(execProvider, tool.NewRegistry(), agent.NewSession("exec"), agent.Options{}, event.Discard)
 	coordinator := agent.NewCoordinator(planner, agent.NewSession("planner"), nil, plannerTools, agent.Options{}, executor, 0, event.Discard, nil)
-	c := New(Options{Runner: coordinator, Executor: executor})
+	c := newOwnedTestController(t, Options{Runner: coordinator, Executor: executor})
 
 	c.ApplyMode(true, true)
 	if err := c.Run(context.Background(), "prepare the change"); err != nil {
@@ -806,7 +806,7 @@ func TestBypassDoesNotAutoAnswerAsk(t *testing.T) {
 		{QuestionID: "scope", Selected: []string{"Broad"}},
 	}
 	askCh := make(chan event.Ask, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.AskRequest {
 				askCh <- e.Ask
@@ -841,7 +841,7 @@ func TestAskPromptsAcrossInteractiveModes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			askCh := make(chan event.Ask, 1)
-			c := New(Options{
+			c := newOwnedTestController(t, Options{
 				Sink: event.FuncSink(func(e event.Event) {
 					if e.Kind == event.AskRequest {
 						askCh <- e.Ask
@@ -866,7 +866,7 @@ func TestAskPromptsAcrossInteractiveModes(t *testing.T) {
 
 func TestSetAutoApproveToolsDoesNotDrainPendingAsk(t *testing.T) {
 	askCh := make(chan event.Ask, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			if e.Kind == event.AskRequest {
 				askCh <- e.Ask
@@ -897,7 +897,7 @@ func TestSetAutoApproveToolsDoesNotDrainPendingAsk(t *testing.T) {
 func TestDismissedAskCancelsTurnWithoutModelContinuation(t *testing.T) {
 	askCh := make(chan event.Ask, 1)
 	turnDone := make(chan event.Event, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Sink: event.FuncSink(func(e event.Event) {
 			switch e.Kind {
 			case event.AskRequest:
@@ -938,7 +938,7 @@ func TestDismissedAskCancelsTurnWithoutModelContinuation(t *testing.T) {
 // revision contract: changing the boundary never turns an older prompt into
 // an authorization. New calls evaluate the new preset from a fresh snapshot.
 func TestApplyToolApprovalModeDoesNotAuthorizePendingApprovals(t *testing.T) {
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Policy: permission.New("ask", nil, []string{"bash(git commit*)"}, nil),
 	})
 

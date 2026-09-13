@@ -47,9 +47,6 @@ func (s *Store) Fork(ctx context.Context, childDir, childID string, throughSeque
 	if throughSequence > 0 && (len(prefix) == 0 || prefix[len(prefix)-1].LastSequence() != throughSequence) {
 		return Manifest{}, fmt.Errorf("sessionv3: fork cut %d is not an atomic batch boundary", throughSequence)
 	}
-	if throughSequence > 0 && prefix[len(prefix)-1].Events[len(prefix[len(prefix)-1].Events)-1].Kind != "turn/end" {
-		return Manifest{}, fmt.Errorf("sessionv3: fork cut %d is not a completed turn boundary", throughSequence)
-	}
 	projection, err := Project(prefix)
 	if err != nil {
 		return Manifest{}, err
@@ -114,6 +111,9 @@ func (s *Store) Fork(ctx context.Context, childDir, childID string, throughSeque
 	}
 	if err := fileutil.AtomicWriteFileStrict(filepath.Join(tmp, "events.jsonl"), log.Bytes(), 0o600); err != nil {
 		return Manifest{}, err
+	}
+	if err := copyOwnedSessionFiles(ctx, parentDir, tmp); err != nil {
+		return Manifest{}, fmt.Errorf("copy fork attachments: %w", err)
 	}
 	if replayed, err := Replay(tmp, nil); err != nil || len(replayed) != len(inherited) {
 		if err == nil {
