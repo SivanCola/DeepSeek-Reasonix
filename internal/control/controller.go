@@ -1870,12 +1870,26 @@ func (c *Controller) applyGoalCommand(input, display string) bool {
 	}
 	switch cmd.Action {
 	case GoalCommandSet:
+		if c.exclusiveV3Enabled() {
+			if err := c.SetGoalDurable(cmd.Text); err != nil {
+				c.notice("goal: " + err.Error())
+				break
+			}
+		} else {
+			c.SetGoalWithResearchMode(cmd.Text, cmd.ResearchMode)
+		}
 		c.SetPlanMode(false)
-		c.SetGoalWithResearchMode(cmd.Text, cmd.ResearchMode)
 		c.GoalStrict(cmd.Strict)
 		c.startGoalCommandTurn(cmd, display)
 	case GoalCommandClear:
-		c.ClearGoal()
+		if c.exclusiveV3Enabled() {
+			if err := c.SetGoalDurable(""); err != nil {
+				c.notice("goal: " + err.Error())
+				break
+			}
+		} else {
+			c.ClearGoal()
+		}
 		c.notice(i18n.M.GoalCleared)
 	case GoalCommandPause:
 		if !c.PauseGoal() {
@@ -2954,6 +2968,33 @@ func (c *Controller) SetGoalDurable(goal string) error {
 		c.notice("legacy research archive resume failed: " + setup.blockReason)
 	}
 	return nil
+}
+
+// EditGoalDurable edits the current v3 Goal without replacing its identity or
+// resetting admitted rounds. A nil limit explicitly selects unlimited rounds.
+func (c *Controller) EditGoalDurable(objective string, maxGoalRounds *uint64) error {
+	if !c.exclusiveV3Enabled() {
+		return errors.New("editing a goal in place requires a linear v3 session")
+	}
+	current, err := c.goalLifecycleView()
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		return errors.New("no goal is available to edit")
+	}
+	objective = strings.TrimSpace(objective)
+	_, err = c.applyHostGoalMutation(context.Background(), "edit", func(machine *goaldomain.Machine) (*goaldomain.View, error) {
+		edited, editErr := machine.Edit(current.Ref(), goaldomain.EditRequest{
+			Objective:     &objective,
+			MaxGoalRounds: goaldomain.RoundLimitChange{Set: true, Value: maxGoalRounds},
+		})
+		return &edited, editErr
+	})
+	if err == nil && current.Phase == goaldomain.PhaseActive && current.Activation == goaldomain.ActivationArmed {
+		c.kickGoalDriver()
+	}
+	return err
 }
 
 func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {

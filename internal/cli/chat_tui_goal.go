@@ -16,9 +16,18 @@ func (m *chatTUI) noticeDeprecatedGoalBudget(cmd control.GoalCommand) {
 }
 
 func (m *chatTUI) setGoalCommand(cmd control.GoalCommand, input string) tea.Cmd {
+	v3, exclusive := m.ctrl.(interface{ UsesExclusiveSessionV3() bool })
+	if exclusive && v3.UsesExclusiveSessionV3() {
+		if err := m.ctrl.SetGoalDurable(cmd.Text); err != nil {
+			m.echoLocalCommand(input)
+			m.notice("goal: " + err.Error())
+			return nil
+		}
+	} else {
+		m.ctrl.SetGoalWithResearchMode(cmd.Text, cmd.ResearchMode)
+	}
 	m.planMode = false
 	m.ctrl.SetPlanMode(false)
-	m.ctrl.SetGoalWithResearchMode(cmd.Text, cmd.ResearchMode)
 	m.ctrl.GoalStrict(cmd.Strict)
 	if m.ctrl.GoalStatus() != control.GoalStatusRunning {
 		m.echoLocalCommand(input)

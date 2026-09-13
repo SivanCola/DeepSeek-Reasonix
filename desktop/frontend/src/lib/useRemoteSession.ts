@@ -60,6 +60,7 @@ export interface RemoteSessionApi {
   setQualityFloor: (floor: QualityFloor) => Promise<void>;
   pauseGoal: () => Promise<void>;
   resumeGoal: () => Promise<void>;
+  editGoal: (objective: string, maxGoalRounds: number | null) => Promise<void>;
   steer: (input: string) => Promise<void>;
   cancelJob: (jobId: string) => Promise<boolean>;
   drainApprovals: (ids: string[]) => void;
@@ -742,6 +743,12 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     await refreshStatus();
   }, [refreshStatus, tabId]);
 
+  const editGoal = useCallback(async (objective: string, maxGoalRounds: number | null) => {
+    if (!tabId) return;
+    await app.EditRemoteTabGoal(tabId, objective, maxGoalRounds);
+    await refreshStatus();
+  }, [refreshStatus, tabId]);
+
   const steer = useCallback(async (input: string) => {
     if (!tabId) return;
     await app.SteerRemoteTab(tabId, input);
@@ -754,7 +761,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
   return {
     state, error, transcript, liveStore, hydrated, syncMode, loadOlderHistory: () => olderRef.current?.() ?? Promise.resolve(false), running: transcript.running, modelLabel, commands,
     composerProfile, goalRuntime, goalView, effort, surfaceGeneration, promptError, submit, runManagementCommand, compact, cancelTurn,
-    approve, resolvePlanDecision, answer, clearExtensionForm, rewind, setModel, setEffort, setQualityFloor, pauseGoal, resumeGoal, steer, cancelJob,
+    approve, resolvePlanDecision, answer, clearExtensionForm, rewind, setModel, setEffort, setQualityFloor, pauseGoal, resumeGoal, editGoal, steer, cancelJob,
     drainApprovals, retryHydration,
   };
 }

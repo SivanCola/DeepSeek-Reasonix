@@ -56,6 +56,10 @@ func TestRemoteTabCommandsForwardedToServe(t *testing.T) {
 			return
 		}, `POST /composer-profile {"collaborationMode":"plan","expectedPermissionRevision":7,"goal":"","toolApprovalMode":"workspace-write"}`},
 		{"goal", func() error { return a.SetRemoteTabGoal(meta.ID, "ship it") }, `POST /goal {"goal":"ship it"}`},
+		{"edit-goal", func() error {
+			limit := uint64(12)
+			return a.EditRemoteTabGoal(meta.ID, "ship it safely", &limit)
+		}, `POST /goal/edit {"maxGoalRounds":12,"objective":"ship it safely"}`},
 		{"effort", func() error { return a.SetRemoteTabEffort(meta.ID, "high") }, `POST /effort {"level":"high"}`},
 		{"pause-goal", func() error { return a.PauseRemoteTabGoal(meta.ID) }, "POST /goal/pause {}"},
 		{"resume-goal", func() error { return a.ResumeRemoteTabGoal(meta.ID) }, "POST /goal/resume {}"},

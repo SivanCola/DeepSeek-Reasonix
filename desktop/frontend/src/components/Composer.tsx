@@ -568,6 +568,7 @@ export function Composer({
   onSetCollaborationMode,
   onSetToolApprovalMode,
   onClearGoal,
+  onEditGoal,
   onPauseGoal,
   onResumeGoal,
   onSwitchModel,
@@ -657,6 +658,7 @@ export function Composer({
   onSetCollaborationMode: (mode: CollaborationMode) => void;
   onSetToolApprovalMode: (mode: ToolApprovalMode) => void;
   onClearGoal: () => void;
+  onEditGoal: (objective: string, maxGoalRounds: number | null) => void;
   onPauseGoal: () => void;
   onResumeGoal: () => void;
   onSwitchModel: (name: string) => boolean | Promise<boolean>;
@@ -3953,7 +3955,7 @@ export function Composer({
         }}
       />
       {!heroMode && <AnchoredPopover
-        open={(contentMenuOpen || intentMenuOpen) && !disabled && !readOnly && !running}
+        open={(contentMenuOpen || intentMenuOpen) && !disabled && !readOnly && (!running || (goalModeOn && Boolean(activeGoal)))}
         anchorRef={contentMenuOpen ? contentMenuAnchorRef : intentMenuAnchorRef}
         onClose={() => { setContentMenuOpen(false); closeIntentMenu(); }}
         className="composer-access-menu composer-content-menu composer-intent-menu composer-menu-surface"
@@ -4041,6 +4043,28 @@ export function Composer({
                   </span>
                 )}
               </div>
+              {goalView && (
+                <button
+                  type="button"
+                  className="composer-intent-menu__stop"
+                  onClick={() => {
+                    const objective = window.prompt(t("composer.goalEditObjective"), goalView.objective);
+                    if (objective === null) return;
+                    const rawLimit = window.prompt(t("composer.goalEditMaxRounds"), goalView.maxGoalRounds?.toString() ?? "");
+                    if (rawLimit === null) return;
+                    const trimmedLimit = rawLimit.trim();
+                    const parsedLimit = trimmedLimit === "" ? null : Number(trimmedLimit);
+                    if (parsedLimit !== null && (!Number.isSafeInteger(parsedLimit) || parsedLimit <= 0)) {
+                      window.alert(t("composer.goalEditInvalidRounds"));
+                      return;
+                    }
+                    onEditGoal(objective, parsedLimit);
+                  }}
+                  disabled={disabled}
+                >
+                  {t("composer.taskModeEditGoal")}
+                </button>
+              )}
               {goalView?.phase === "paused" || goalView?.phase === "blocked" || (goalView?.phase === "active" && goalView.activation === "disarmed") || (!goalView && goalStatus === "blocked") ? (
                 <button
                   type="button"
@@ -4055,7 +4079,7 @@ export function Composer({
                   type="button"
                   className="composer-intent-menu__stop"
                   onClick={onPauseGoal}
-                  disabled={disabled || running}
+                  disabled={disabled}
                 >
                   {t("composer.taskModePauseGoal")}
                 </button>
@@ -4574,7 +4598,7 @@ export function Composer({
                     type="button"
                     className={`composer-content-trigger${contentMenuOpen ? " composer-content-trigger--open" : ""}`}
                     onClick={() => (contentMenuOpen ? setContentMenuOpen(false) : openContentMenu())}
-                    disabled={disabled || readOnly || running}
+                    disabled={disabled || readOnly || (running && !(goalModeOn && activeGoal))}
                     aria-haspopup="menu"
                     aria-expanded={contentMenuOpen}
                     aria-label={t("composer.contentMenuTitle")}

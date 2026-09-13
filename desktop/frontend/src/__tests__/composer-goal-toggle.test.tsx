@@ -96,6 +96,7 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
     structured: (StructuredInvocationSubmit | undefined)[];
     cancel: number;
     clearGoal: number;
+    editGoal: Array<{ objective: string; maxGoalRounds: number | null }>;
     setCollaborationMode: CollaborationMode[];
   } = {
     send: [],
@@ -103,6 +104,7 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
     structured: [],
     cancel: 0,
     clearGoal: 0,
+    editGoal: [],
     setCollaborationMode: [],
   };
   let currentProps: Parameters<typeof Composer>[0] = {
@@ -127,9 +129,12 @@ async function renderComposer(props: Partial<Parameters<typeof Composer>[0]> = {
     onSetMode: () => {},
     onSetCollaborationMode: (mode) => calls.setCollaborationMode.push(mode),
     onSetToolApprovalMode: () => {},
-        onClearGoal: () => {
+    onClearGoal: () => {
       calls.clearGoal += 1;
     },
+    onEditGoal: (objective, maxGoalRounds) => calls.editGoal.push({ objective, maxGoalRounds }),
+    onPauseGoal: () => {},
+    onResumeGoal: () => {},
     onSwitchModel: () => {},
     onSetEffort: () => {},
 
@@ -692,6 +697,11 @@ console.log("\ncomposer goal toggle");
   const { root, calls } = await renderComposer({
     collaborationMode: "goal",
     goal: "finish the migration",
+    goalView: {
+      id: "goal-1", revision: 3, objective: "finish the migration", phase: "active",
+      maxGoalRounds: null, roundsStarted: 2, createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z", activation: "armed",
+    },
   });
 
   const intentButton = document.querySelector(".composer-task-mode-trigger") as HTMLButtonElement | null;
@@ -707,6 +717,17 @@ console.log("\ncomposer goal toggle");
   const stopGoal = goalActions.find((b) => b.textContent === "End goal");
   if (!stopGoal) throw new Error("explicit end-goal action did not render");
   ok(goalActions.some((b) => b.textContent === "Pause goal"), "running goal offers a pause action");
+  const editGoal = goalActions.find((b) => b.textContent === "Edit goal");
+  if (!editGoal) throw new Error("explicit edit-goal action did not render");
+  const prompts = ["finish the migration safely", "12"];
+  window.prompt = () => prompts.shift() ?? null;
+  await act(async () => {
+    editGoal.click();
+    await flushTimers();
+  });
+  eq(calls.editGoal.length, 1, "edit action reaches the Goal lifecycle bridge");
+  eq(calls.editGoal[0]?.objective, "finish the migration safely", "edit action keeps the complete objective");
+  eq(calls.editGoal[0]?.maxGoalRounds, 12, "edit action parses an explicit round limit");
   await act(async () => {
     stopGoal.click();
     await flushTimers();
@@ -731,8 +752,21 @@ console.log("\ncomposer goal toggle");
     running: true,
     collaborationMode: "goal",
     goal: "finish the migration",
+    goalView: {
+      id: "goal-1", revision: 3, objective: "finish the migration", phase: "active",
+      maxGoalRounds: null, roundsStarted: 2, createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z", activation: "armed",
+    },
     turnStartAt: Date.now(),
   });
+
+  await act(async () => {
+    (document.querySelector(".composer-content-trigger") as HTMLButtonElement).click();
+    await flushTimers();
+  });
+  const pauseGoal = Array.from(document.querySelectorAll<HTMLButtonElement>(".composer-intent-menu__stop"))
+    .find((button) => button.textContent === "Pause goal");
+  ok(Boolean(pauseGoal) && pauseGoal?.disabled === false, "running automatic Goal round remains pausable");
 
   const stopButton = document.querySelector(".composer__btn--stop") as HTMLButtonElement | null;
   if (!stopButton) throw new Error("composer stop button did not render");

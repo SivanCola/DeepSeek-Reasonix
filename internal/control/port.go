@@ -127,6 +127,9 @@ type Goals interface {
 	// the lifecycle mutation. Hosts must use this method before publishing UI
 	// metadata or starting a provider turn.
 	SetGoalDurable(goal string) error
+	// EditGoalDurable changes an existing Goal in place. It preserves the Goal
+	// identity and admitted round count while advancing its CAS revision.
+	EditGoalDurable(objective string, maxGoalRounds *uint64) error
 	// SetGoalWithResearchMode is retained for deprecated CLI budget flags. The
 	// mode is translated at the boundary and is not stored in the Goal runtime.
 	SetGoalWithResearchMode(goal string, researchMode GoalResearchMode)

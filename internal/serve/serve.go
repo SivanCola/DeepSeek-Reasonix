@@ -599,6 +599,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /auto-approve-tools", s.foregroundMutation(s.autoApproveTools))
 	mux.HandleFunc("POST /bypass", s.foregroundMutation(s.bypass))
 	mux.HandleFunc("POST /goal", s.foregroundMutation(s.goal))
+	mux.HandleFunc("POST /goal/edit", s.foregroundMutation(s.goalEdit))
 	mux.HandleFunc("POST /goal/pause", s.foregroundMutation(s.goalPause))
 	mux.HandleFunc("POST /goal/resume", s.foregroundMutation(s.goalResume))
 	mux.HandleFunc("GET /goal-diagnostics", s.goalDiagnostics)
@@ -1217,6 +1218,22 @@ func (s *Server) goal(w http.ResponseWriter, r *http.Request) {
 	if goal != "" {
 		// Disable plan mode only after the goal mutation has been accepted.
 		ctrl.SetPlanMode(false)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) goalEdit(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Objective     string  `json:"objective"`
+		MaxGoalRounds *uint64 `json:"maxGoalRounds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	if err := s.ctl().EditGoalDurable(body.Objective, body.MaxGoalRounds); err != nil {
+		http.Error(w, "edit goal: "+err.Error(), http.StatusConflict)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

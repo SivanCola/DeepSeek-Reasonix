@@ -338,6 +338,7 @@ export interface AppBindings extends ToolRecoveryBindings, ModelSettingsBindings
   SetComposerProfileForTab(tabID: string, collaborationMode: string, toolApprovalMode: string, goal: string): Promise<string[] | void>;
   SetGoal(goal: string): Promise<void>;
   SetGoalForTab(tabID: string, goal: string): Promise<void>;
+  EditGoalForTab(tabID: string, objective: string, maxGoalRounds: number | null): Promise<void>;
   ResumeGoalForTab(tabID: string): Promise<boolean>;
   PauseGoalForTab(tabID: string): Promise<boolean>;
   ClearGoalForTab(tabID: string): Promise<void>;
@@ -3137,6 +3138,17 @@ function makeMockApp(): AppBindings {
                 }
               : tab,
           );
+        },
+        async EditGoalForTab(tabID, objective, maxGoalRounds) {
+          mockTabs = mockTabs.map((tab) => {
+            if (tab.id !== tabID) return tab;
+            const current = tab.goalView;
+            return {
+              ...tab,
+              goal: objective.trim(),
+              goalView: current ? { ...current, objective: objective.trim(), maxGoalRounds, revision: current.revision + 1 } : current,
+            };
+          });
         },
         async ResumeGoalForTab(tabID) {
           let resumed = false;

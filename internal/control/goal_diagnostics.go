@@ -75,7 +75,7 @@ func (c *Controller) ExportGoalDiagnostics(ctx context.Context, metadata GoalDia
 	}
 	fillGoalDiagnosticBuildMetadata(&metadata)
 	unavailable := []string{
-		"activation transitions are inferred from durable Goal events; process-local activation history before export is unavailable",
+		"activation transitions are inferred from recorded Goal events; process-local activation history before export is unavailable",
 	}
 	if flushErr != nil {
 		unavailable = append(unavailable, "durability checkpoint failed: "+secrets.RedactError(flushErr))

@@ -3155,6 +3155,72 @@
     {
       "cancellation": "before-dispatch",
       "domain": "desktop/app.go",
+      "name": "EditGoalForTab",
+      "owner": "App.EditGoalForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "elem": {
+            "kind": "integer"
+          },
+          "kind": "nullable"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "objective",
+          "maxGoalRounds"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.EditGoalForTab"
+      },
+      "sources": [
+        "desktop/app.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_tab.go",
+      "name": "EditRemoteTabGoal",
+      "owner": "App.EditRemoteTabGoal",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "elem": {
+            "kind": "integer"
+          },
+          "kind": "nullable"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "objective",
+          "maxGoalRounds"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.EditRemoteTabGoal"
+      },
+      "sources": [
+        "desktop/remote_tab.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/app.go",
       "name": "Effort",
       "owner": "App.Effort",
       "params": [],
@@ -12034,6 +12100,7 @@
           "kind": "string"
         }
       ],
+      "returnsError": true,
       "scope": {
         "inputs": [
           "tabID",

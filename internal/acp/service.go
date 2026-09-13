@@ -814,28 +814,30 @@ func (s *service) sessionSetMode(ctx context.Context, raw json.RawMessage) (any,
 	ctrl := sess.currentCtrl()
 	nextMode := p.ModeID
 	legacyApproval := ""
+	clearGoal := false
 	switch p.ModeID {
 	case sessionModeNormal:
-		ctrl.SetPlanMode(false)
-		ctrl.ClearGoal()
+		clearGoal = true
 	case sessionModePlan:
-		ctrl.ClearGoal()
-		ctrl.SetPlanMode(true)
+		clearGoal = true
 	case sessionModeGoal:
-		ctrl.SetPlanMode(false)
 	case sessionModeLegacyDefault:
 		nextMode = sessionModeNormal
 		legacyApproval = control.ToolApprovalReadOnly
-		ctrl.SetPlanMode(false)
-		ctrl.ClearGoal()
+		clearGoal = true
 	case sessionModeLegacyAuto:
 		nextMode = sessionModeNormal
 		legacyApproval = control.ToolApprovalWorkspaceWrite
-		ctrl.SetPlanMode(false)
-		ctrl.ClearGoal()
+		clearGoal = true
 	default:
 		return nil, &RPCError{Code: ErrInvalidParams, Message: "session/set_mode: unknown modeId " + p.ModeID}
 	}
+	if clearGoal {
+		if err := setACPGoalDurably(ctrl, ""); err != nil {
+			return nil, &RPCError{Code: ErrInternal, Message: "session/set_mode: persist goal: " + err.Error()}
+		}
+	}
+	ctrl.SetPlanMode(nextMode == sessionModePlan)
 	sess.setGoalDraftMode(nextMode == sessionModeGoal && ctrl.GoalStatus() != control.GoalStatusRunning)
 	if legacyApproval != "" {
 		ctrl.SetToolApprovalMode(legacyApproval)

@@ -153,6 +153,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     setCollaborationModeForTab: setControllerCollaborationModeForTab,
     setToolApprovalModeForTab,
     setComposerProfileForTab: setControllerComposerProfileForTab, setGoalForTab: setControllerGoalForTab,
+    editGoalForTab: editControllerGoalForTab,
     resumeGoalForTab: resumeControllerGoalForTab, pauseGoalForTab: pauseControllerGoalForTab,
     clearGoalForTab: clearControllerGoalForTab,
     setModelForTab, setEffortForTab,
@@ -545,7 +546,12 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     },
   });
 
-  const goalCommands = useComposerGoalCommands({ applyCollaborationMode, applyGoal });
+  const editGoal = async (objective: string, maxGoalRounds: number | null) => {
+    if (!activeTabId) return;
+    if (remoteSurfaceActive) await remoteSession.editGoal(objective, maxGoalRounds);
+    else await editControllerGoalForTab(activeTabId, objective, maxGoalRounds);
+  };
+  const goalCommands = useComposerGoalCommands({ applyCollaborationMode, applyGoal, editGoal });
   const remoteGoalActions = useRemoteComposerRuntimeActions({
     target: { tabId: activeTabId ?? "", sessionKey: activeSessionIdentity }, operations: sessionOperations,
     remote: remoteSurfaceActive, session: remoteSession, runGoalAction,

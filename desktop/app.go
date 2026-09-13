@@ -6735,6 +6735,39 @@ func (a *App) ClearGoalForTab(tabID string) error {
 	return a.SetGoalForTab(tabID, "")
 }
 
+// EditGoalForTab updates the current Goal without replacing its lifecycle or
+// resetting its admitted round count. A nil maxGoalRounds means unlimited.
+func (a *App) EditGoalForTab(tabID, objective string, maxGoalRounds *uint64) error {
+	tab := a.tabByID(tabID)
+	if tab == nil {
+		return a.workspaceNotReadyErr(nil)
+	}
+	tab.turnStartMu.Lock()
+	defer tab.turnStartMu.Unlock()
+	objective = strings.TrimSpace(objective)
+	a.mu.Lock()
+	if a.tabs[tab.ID] != tab {
+		a.mu.Unlock()
+		return a.workspaceNotReadyErr(nil)
+	}
+	ctrl := tab.Ctrl
+	tabIDForSave := tab.ID
+	a.mu.Unlock()
+	if ctrl == nil {
+		return a.workspaceNotReadyErr(nil)
+	}
+	if err := ctrl.EditGoalDurable(objective, maxGoalRounds); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	if a.tabs[tabIDForSave] == tab {
+		tab.goal = objective
+		a.saveTabsLocked()
+	}
+	a.mu.Unlock()
+	return nil
+}
+
 // ResumeGoalForTab re-enters a blocked or stopped Goal while preserving its
 // delivery scope, runtime history, and persisted verification checkpoint.
 func (a *App) ResumeGoalForTab(tabID string) bool {

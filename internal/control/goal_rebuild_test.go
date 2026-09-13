@@ -84,3 +84,48 @@ func TestInheritLifecycleRejectsActiveGoalDriverReservation(t *testing.T) {
 		t.Fatalf("inherit error = %v, want runtime busy", err)
 	}
 }
+
+func TestEditGoalDurablePreservesIdentityAndAdmittedRounds(t *testing.T) {
+	service, err := sessionv3.NewService("desktop", sessionv3.NewFilesystemPersistence(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), sessionv3.CreateOptions{SessionID: "goal-edit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
+	t.Cleanup(c.ReleaseResources)
+	if err := c.SetGoalDurable("original objective"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := c.GetGoal(t.Context())
+	if err != nil || before == nil {
+		t.Fatalf("GetGoal before edit = %+v, %v", before, err)
+	}
+	if _, err := c.applyHostGoalMutation(t.Context(), "test-admit", func(machine *goaldomain.Machine) (*goaldomain.View, error) {
+		admitted, admitErr := machine.AdmitRound(before.Ref())
+		return &admitted, admitErr
+	}); err != nil {
+		t.Fatal(err)
+	}
+	limit := uint64(8)
+	if err := c.EditGoalDurable("revised objective", &limit); err != nil {
+		t.Fatal(err)
+	}
+	after, err := c.GetGoal(t.Context())
+	if err != nil || after == nil {
+		t.Fatalf("GetGoal after edit = %+v, %v", after, err)
+	}
+	if after.ID != before.ID || after.Revision != before.Revision+1 || after.RoundsStarted != 1 || after.Objective != "revised objective" || after.MaxGoalRounds == nil || *after.MaxGoalRounds != limit {
+		t.Fatalf("edited goal = %+v, before = %+v", after, before)
+	}
+	if err := c.EditGoalDurable("invalid lower limit", new(uint64)); err == nil {
+		t.Fatal("zero round limit unexpectedly accepted")
+	}
+	unchanged, _ := c.GetGoal(t.Context())
+	if unchanged.Objective != after.Objective || unchanged.Revision != after.Revision || unchanged.RoundsStarted != after.RoundsStarted {
+		t.Fatalf("failed edit changed goal: got %+v want %+v", unchanged, after)
+	}
+}

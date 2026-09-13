@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/config"
 	"reasonix/internal/control"
 	"reasonix/internal/jobs"
+	"reasonix/internal/sessionv3"
 )
 
 type rejectingGoalAPI struct {
@@ -71,6 +72,39 @@ func TestGoalRouteReportsPersistenceFailureBeforeChangingPlanMode(t *testing.T) 
 	}
 	if !base.PlanMode() || base.Goal() != "" {
 		t.Fatalf("failed goal mutation changed runtime: plan=%v goal=%q", base.PlanMode(), base.Goal())
+	}
+}
+
+func TestGoalEditRoutePreservesGoalIdentity(t *testing.T) {
+	bc := NewBroadcaster()
+	service, err := sessionv3.NewService("serve", sessionv3.NewFilesystemPersistence(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), sessionv3.CreateOptions{SessionID: "goal-edit-route"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctrl := control.New(control.Options{Sink: bc, SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
+	defer ctrl.ReleaseResources()
+	if err := ctrl.SetGoalDurable("original"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := ctrl.GetGoal(t.Context())
+	if err != nil || before == nil {
+		t.Fatalf("goal before edit = %+v, %v", before, err)
+	}
+	srv := httptest.NewServer(New(ctrl, bc, config.ServeConfig{}).Handler())
+	defer srv.Close()
+
+	resp := postRuntimeJSON(t, srv.URL+"/goal/edit", `{"objective":"revised","maxGoalRounds":12}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("edit status = %d", resp.StatusCode)
+	}
+	after, _ := ctrl.GetGoal(t.Context())
+	if after == nil || after.ID != before.ID || after.Revision != before.Revision+1 || after.Objective != "revised" || after.MaxGoalRounds == nil || *after.MaxGoalRounds != 12 {
+		t.Fatalf("goal after edit = %+v, before = %+v", after, before)
 	}
 }
 

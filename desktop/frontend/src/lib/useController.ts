@@ -4084,6 +4084,15 @@ export function useController() {
     await setGoalForTab(activeTabId, goal);
   }, [activeTabId, setGoalForTab]);
 
+  const editGoalForTab = useCallback(async (tabId: string, objective: string, maxGoalRounds: number | null): Promise<void> => {
+    if (!tabId) return;
+    try {
+      await app.EditGoalForTab(tabId, objective, maxGoalRounds);
+    } finally {
+      await refreshMetaForTab(tabId);
+    }
+  }, [refreshMetaForTab]);
+
   const clearGoalForTab = useCallback(async (tabId: string): Promise<void> => {
     if (!tabId) return;
     try {
@@ -5006,7 +5015,7 @@ export function useController() {
     resolveRecovery, resolveRecoveryForTab, answerQuestion, answerQuestionForTab,
     answerMCPInteraction, answerMCPInteractionForTab, setControllerMode, setControllerModeForTab,
     dismissExtensionForm, drainExtensionNotifications,
-    setCollaborationMode, setCollaborationModeForTab, setToolApprovalMode, setToolApprovalModeForTab, setQualityFloor, setComposerProfileForTab, setGoal, setGoalForTab, clearGoal, clearGoalForTab, resumeGoal, resumeGoalForTab, pauseGoal, pauseGoalForTab,
+    setCollaborationMode, setCollaborationModeForTab, setToolApprovalMode, setToolApprovalModeForTab, setQualityFloor, setComposerProfileForTab, setGoal, setGoalForTab, editGoalForTab, clearGoal, clearGoalForTab, resumeGoal, resumeGoalForTab, pauseGoal, pauseGoalForTab,
     newSession, clearSession, listSessions, listTrashedSessions, retrySessionHistory, resumeSession, openChannelSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
     loadOlderHistory,
     requestHistoryFullContent,

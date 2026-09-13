@@ -4528,7 +4528,15 @@ func (m *chatTUI) runGoalSubcommand(input string) tea.Cmd {
 		return m.setGoalCommand(cmd, input)
 	case control.GoalCommandClear:
 		m.echoLocalCommand(input)
-		m.ctrl.ClearGoal()
+		v3, exclusive := m.ctrl.(interface{ UsesExclusiveSessionV3() bool })
+		if exclusive && v3.UsesExclusiveSessionV3() {
+			if err := m.ctrl.SetGoalDurable(""); err != nil {
+				m.notice("goal: " + err.Error())
+				break
+			}
+		} else {
+			m.ctrl.ClearGoal()
+		}
 		m.notice(i18n.M.GoalCleared)
 	case control.GoalCommandPause:
 		m.echoLocalCommand(input)

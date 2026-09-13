@@ -1722,6 +1722,38 @@
       ]
     }
   },
+  "EditGoalForTab": {
+    "domain": "desktop/app.go",
+    "owner": "App.EditGoalForTab",
+    "sources": [
+      "desktop/app.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.EditGoalForTab",
+      "inputs": [
+        "tabID",
+        "objective",
+        "maxGoalRounds"
+      ]
+    }
+  },
+  "EditRemoteTabGoal": {
+    "domain": "desktop/remote_tab.go",
+    "owner": "App.EditRemoteTabGoal",
+    "sources": [
+      "desktop/remote_tab.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.EditRemoteTabGoal",
+      "inputs": [
+        "tabID",
+        "objective",
+        "maxGoalRounds"
+      ]
+    }
+  },
   "Effort": {
     "domain": "desktop/app.go",
     "owner": "App.Effort",
