@@ -3,13 +3,99 @@ package control
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"reasonix/internal/event"
 	"reasonix/internal/permission"
 	"reasonix/internal/permissionpreset"
 	"reasonix/internal/sandbox"
 )
+
+func TestPermissionPresetChangeWaitsForApprovalCommit(t *testing.T) {
+	previousProcs := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previousProcs) })
+
+	workspace := t.TempDir()
+	extra, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := sandbox.NewWritableRootSet([]string{workspace})
+	c := New(Options{WriteRoots: roots, WorkspaceRoot: workspace})
+	c.SetToolApprovalMode(ToolApprovalWorkspaceWrite)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	c.sink = event.FuncSink(func(e event.Event) {
+		if e.Kind == event.PromptAnswered {
+			close(entered)
+			<-release
+		}
+	})
+	id, reply := c.approval.registerWriteAccess("bash", "outside", "test", json.RawMessage(`{}`), &event.WriteAccessApproval{
+		Directories: []string{extra},
+	})
+	before := c.PermissionSnapshot()
+
+	resolved := make(chan error, 1)
+	go func() {
+		resolved <- c.ResolveApprovalAt(id, true, sandbox.ApprovalScopeSession, before.Generation, before.Revision)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("approval did not reach its commit barrier")
+	}
+
+	switched := make(chan error, 1)
+	go func() {
+		_, _, err := c.SetPermissionPreset(ToolApprovalReadOnly, before.Revision)
+		switched <- err
+	}()
+	// With one scheduler P, Gosched lets the preset goroutine run until it is
+	// blocked behind the approval transaction. Publishing a revision before
+	// that lock is acquired exposes a mixed permission snapshot.
+	runtime.Gosched()
+	if got := c.permissionRevision.Load(); got != before.Revision {
+		close(release)
+		t.Fatalf("permission revision became visible during approval commit: got %d, want %d", got, before.Revision)
+	}
+	during := c.PermissionSnapshot()
+	if during.Revision != before.Revision || during.Preset != before.Preset {
+		close(release)
+		t.Fatalf("permission snapshot changed during approval commit: before=%+v during=%+v", before, during)
+	}
+
+	close(release)
+	if err := <-resolved; err != nil {
+		t.Fatalf("approval that committed first was rejected: %v", err)
+	}
+	if got := <-reply; !got.allow || !got.session {
+		t.Fatalf("approval reply = %+v, want session allow", got)
+	}
+	if err := <-switched; err != nil {
+		t.Fatalf("preset switch after approval commit: %v", err)
+	}
+	after := c.PermissionSnapshot()
+	if after.Preset != ToolApprovalReadOnly || after.Revision <= before.Revision {
+		t.Fatalf("permission snapshot after switch = %+v", after)
+	}
+	if !roots.Covers(extra) {
+		t.Fatal("session grant committed before the preset switch was lost")
+	}
+	found := false
+	for _, grant := range after.Grants {
+		if grant.Scope == "directory" && grant.Target == extra {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("committed session grant missing from permission snapshot: %+v", after.Grants)
+	}
+}
 
 func TestResolveApprovalAtRejectsStalePermissionRevision(t *testing.T) {
 	c := New(Options{Policy: permission.New("ask", nil, nil, nil)})

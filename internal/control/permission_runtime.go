@@ -84,6 +84,8 @@ func permissionCapabilitiesForPlatform(goos string, available bool, unavailableR
 }
 
 func (c *Controller) PermissionSnapshot() PermissionSnapshot {
+	c.permissionStateMu.RLock()
+	defer c.permissionStateMu.RUnlock()
 	auth := c.SessionAuthorizations()
 	grants := make([]SessionGrantSummary, 0, len(auth.Grants)+len(auth.WriteRoots)+len(auth.PlanModeReadOnlyCommands))
 	for _, target := range auth.Grants {
@@ -100,6 +102,17 @@ func (c *Controller) PermissionSnapshot() PermissionSnapshot {
 		Revision: c.permissionRevision.Load(), Preset: c.ToolApprovalMode(),
 		WorkspaceRoot: strings.TrimSpace(c.workspaceRoot), Grants: grants,
 		Capabilities: platformPermissionCapabilities(),
+	}
+}
+
+// RestoreSessionAuthorizations re-applies grants captured from a prior
+// controller when the same logical session is rebuilt.
+func (c *Controller) RestoreSessionAuthorizations(auth SessionAuthorizations) {
+	c.permissionStateMu.Lock()
+	defer c.permissionStateMu.Unlock()
+	c.approval.restoreSessionAuthorizations(auth)
+	if c.writeAccess.roots != nil && len(auth.WriteRoots) > 0 {
+		c.writeAccess.roots.GrantVerifiedSession(auth.WriteRoots)
 	}
 }
 
@@ -138,6 +151,7 @@ func (c *Controller) RevokeSessionGrant(scope, target string, expectedRevision u
 		return c.PermissionSnapshot(), fmt.Errorf("permission revision changed: have %d, expected %d", current, expectedRevision)
 	}
 	c.promptResolveMu.Lock()
+	c.permissionStateMu.Lock()
 	removed := false
 	switch strings.TrimSpace(scope) {
 	case "directory":
@@ -147,17 +161,24 @@ func (c *Controller) RevokeSessionGrant(scope, target string, expectedRevision u
 	case "tool", "command-prefix":
 		removed = c.approval.revokeSessionAuthorization(scope, target)
 	default:
+		c.permissionStateMu.Unlock()
 		c.promptResolveMu.Unlock()
 		return c.PermissionSnapshot(), fmt.Errorf("unknown session grant scope %q", scope)
 	}
 	if !removed {
+		c.permissionStateMu.Unlock()
 		c.promptResolveMu.Unlock()
 		return c.PermissionSnapshot(), fmt.Errorf("session grant was not found")
 	}
 	c.permissionRevision.Add(1)
-	c.promptResolveMu.Unlock()
+	c.permissionStateMu.Unlock()
+	turnID, cancelled := "", false
 	if c.Running() {
-		c.Cancel()
+		turnID, cancelled = c.cancelTurnLocked()
+	}
+	c.promptResolveMu.Unlock()
+	if cancelled {
+		c.finishCancel(turnID, true)
 	}
 	for _, job := range c.Jobs() {
 		c.CancelJob(job.ID)

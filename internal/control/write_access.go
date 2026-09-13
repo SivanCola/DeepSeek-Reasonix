@@ -370,6 +370,7 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 	outcome := "allow_once"
 	reply := approvalReply{allow: true, onceDirs: verifiedDirs}
 	if scope == sandbox.ApprovalScopeSession {
+		c.permissionStateMu.Lock()
 		if c.writeAccess.roots != nil {
 			c.writeAccess.roots.GrantVerifiedSession(verifiedDirs)
 		}
@@ -380,6 +381,7 @@ func (c *Controller) resolveWriteAccess(pending pendingApproval, allow bool, sco
 				c.approval.grantSession(pending.tool, pending.subject)
 			}
 		}
+		c.permissionStateMu.Unlock()
 		reply.session = true
 		reply.onceDirs = nil
 		outcome = "allow_session"

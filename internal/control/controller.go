@@ -199,6 +199,7 @@ type Controller struct {
 
 	runtimeGeneration  uint64 // PublishGate gen; 0 disables
 	permissionMu       sync.Mutex
+	permissionStateMu  sync.RWMutex
 	permissionRevision atomic.Uint64
 	runtimeOwner       *extension.RuntimeOwner
 	lastResumeDecision extension.ResumeDecision
@@ -2466,6 +2467,8 @@ func rulesWithoutFreshHumanApproval(rules []permission.Rule) []permission.Rule {
 // create-only project/reference memory; every other memory write remains denied.
 func (c *Controller) ApplyHeadlessApprovalMode(mode string) {
 	mode = normalizeToolApprovalMode(mode)
+	c.permissionStateMu.Lock()
+	defer c.permissionStateMu.Unlock()
 	c.approval.setMode(mode)
 	if c.subagentGate != nil {
 		c.subagentGate.Update(mode)
@@ -5011,17 +5014,6 @@ func (c *Controller) SessionAuthorizations() SessionAuthorizations {
 	return auth
 }
 
-// RestoreSessionAuthorizations re-applies session authorizations captured
-// from a prior controller in the same session (see SessionAuthorizations). A
-// model/effort/profile switch rebuilds the controller, and without this the
-// replacement forgets every grant the user already made this session.
-func (c *Controller) RestoreSessionAuthorizations(auth SessionAuthorizations) {
-	c.approval.restoreSessionAuthorizations(auth)
-	if c.writeAccess.roots != nil && len(auth.WriteRoots) > 0 {
-		c.writeAccess.roots.GrantVerifiedSession(auth.WriteRoots)
-	}
-}
-
 // ReleaseResources stops plugin subprocesses and releases resources without
 // firing SessionEnd. Use it only when replacing the controller for the same
 // logical session.
@@ -5203,17 +5195,13 @@ func (c *Controller) ApplyToolApprovalMode(mode string) []string {
 }
 
 func (c *Controller) applyToolApprovalModeLocked(mode string) []string {
-	defer c.refreshRuntimeState(event.Event{})
 	mode = normalizeToolApprovalMode(mode)
+	c.promptResolveMu.Lock()
 	previousMode := c.approval.mode()
 	if previousMode == mode {
+		c.promptResolveMu.Unlock()
 		return nil
 	}
-	// Publish the new revision before changing any enforcement state. Approval
-	// replies are serialized against this atomic value, so a reply captured by
-	// the previous UI snapshot either commits before this permission change or
-	// is rejected as stale; it can never authorize work under the new preset.
-	c.permissionRevision.Add(1)
 	// Capture mode-change recovery dismissals before approval drain so a
 	// same-value hydrate/reconcile never rotates Episode state, while a real
 	// preset switch clears temporary failure/reviewer locks and waiters
@@ -5228,11 +5216,16 @@ func (c *Controller) applyToolApprovalModeLocked(mode string) []string {
 			recoveryDismissed = ctrl.OnModeChange(mode)
 		}
 	}
+	c.permissionStateMu.Lock()
 	pending := c.approval.setMode(mode)
 	if c.subagentGate != nil {
 		c.subagentGate.Update(mode)
 	}
 	c.refreshInteractiveGate()
+	// Publish the revision only after every enforcement owner has adopted the
+	// new mode. promptResolveMu makes this one transaction with approval commit.
+	c.permissionRevision.Add(1)
+	c.permissionStateMu.Unlock()
 	// Clear recovery cards dismissed by the mode switch outside the gate lock.
 	for _, id := range recoveryDismissed {
 		p := c.approval.resolve(id)
@@ -5254,8 +5247,13 @@ func (c *Controller) applyToolApprovalModeLocked(mode string) []string {
 	// approval can never authorize work under the new snapshot. Avoid the idle
 	// Cancel path: it intentionally stops an active Goal and permission
 	// selection is an independent composer axis.
+	turnID, cancelled := "", false
 	if c.Running() {
-		c.Cancel()
+		turnID, cancelled = c.cancelTurnLocked()
+	}
+	c.promptResolveMu.Unlock()
+	if cancelled {
+		c.finishCancel(turnID, true)
 	}
 	// Processes admitted under a broader preset may outlive their spawning
 	// turn. Only a downgrade must terminate them; an upgrade does not revoke
@@ -5265,6 +5263,7 @@ func (c *Controller) applyToolApprovalModeLocked(mode string) []string {
 			c.CancelJob(job.ID)
 		}
 	}
+	c.refreshRuntimeState(event.Event{})
 	return drained
 }
 
@@ -5477,7 +5476,9 @@ func (s sandboxEscapeApprover) ApproveSandboxEscape(ctx context.Context, req san
 		return false, i18n.M.SandboxEscapeDeclined, nil
 	}
 	if reply.session {
+		s.c.permissionStateMu.Lock()
 		s.c.approval.grantSession(SandboxEscapeApprovalTool, subject)
+		s.c.permissionStateMu.Unlock()
 	}
 	return true, "", nil
 }
@@ -5520,7 +5521,9 @@ func (m managedConfigWriteApprover) ApproveManagedConfigWrite(ctx context.Contex
 		return false, i18n.M.ConfigWriteDeclined, nil
 	}
 	if reply.session {
+		m.c.permissionStateMu.Lock()
 		m.c.approval.grantSession(ManagedConfigWriteApprovalTool, subject)
+		m.c.permissionStateMu.Unlock()
 	}
 	return true, "", nil
 }
@@ -5559,11 +5562,15 @@ func (p planModeReadOnlyTrustApprover) checkBashReadOnlyCommandTrust(ctx context
 		return false, i18n.M.PlanModeBashTrustDeclined, nil
 	}
 	if reply.session {
+		p.c.permissionStateMu.Lock()
 		p.c.approval.grantPlanModeReadOnlyCommand(prefix)
+		p.c.permissionStateMu.Unlock()
 	}
 	if reply.persist && p.c.onRememberPlanModeReadOnlyCommand != nil {
 		p.c.emitPlanModeReadOnlyCommandTrustResult(p.c.onRememberPlanModeReadOnlyCommand(prefix))
+		p.c.permissionStateMu.Lock()
 		p.c.approval.grantPlanModeReadOnlyCommand(prefix)
+		p.c.permissionStateMu.Unlock()
 	}
 	return true, "", nil
 }
@@ -5750,7 +5757,9 @@ func (c *Controller) requestApprovalWithReasonOptions(ctx context.Context, tool,
 	// Plan approvals are one-shot — never persist a session grant for them, or
 	// every future plan would auto-approve.
 	if r.allow && r.session && !requiresFreshApprovalTool(tool) {
+		c.permissionStateMu.Lock()
 		c.approval.grantSession(tool, subject)
+		c.permissionStateMu.Unlock()
 	}
 	if r.allow && r.persist && !requiresFreshApprovalTool(tool) && c.onRemember != nil {
 		c.emitRememberResult(c.onRemember(permission.RememberRuleForScope(tool, subject)))
