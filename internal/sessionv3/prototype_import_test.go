@@ -194,7 +194,7 @@ func projectedMessagesForTest(t *testing.T, targetRoot, sessionID string) ([]pro
 	}
 }
 
-func TestPreviewFreezeWaitsForExactWriterOwnership(t *testing.T) {
+func TestPreviewFreezeRefusesExactWriterOwnership(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "preview")
 	writePrototypeStore(t, dir, nil, "")
 	release, err := filelock.Acquire(t.Context(), filepath.Join(dir, "writer.lock"))
@@ -202,20 +202,8 @@ func TestPreviewFreezeWaitsForExactWriterOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		_, freezeErr := freezePreview(ctx, dir)
-		done <- freezeErr
-	}()
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("freeze error = %v, want cancellation while writer is owned", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("preview freeze ignored writer ownership")
+	if _, err := freezePreview(t.Context(), dir); !errors.Is(err, ErrWriterOwned) {
+		t.Fatalf("freeze error = %v, want ErrWriterOwned", err)
 	}
 }
 

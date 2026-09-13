@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,8 +80,15 @@ func freezePreviewCodec(ctx context.Context, sourceDir string, allowCurrent bool
 		// that callers cannot classify as "no paired source".
 		return frozenPreview{}, err
 	}
-	releaseDirectory, err := filelock.AcquireMode(ctx, directoryOwnershipPath(sourceDir), filelock.ModeShared)
+	// Migration is a prepare operation, so it must never wait behind a live
+	// writer while the current runtime remains published. The host first
+	// suspends the producer it owns; any remaining owner belongs to another
+	// runtime and makes this import ineligible.
+	releaseDirectory, err := filelock.TryAcquireMode(directoryOwnershipPath(sourceDir), filelock.ModeShared)
 	if err != nil {
+		if errors.Is(err, filelock.ErrHeld) {
+			return frozenPreview{}, fmt.Errorf("%w: freeze preview ownership", ErrWriterOwned)
+		}
 		return frozenPreview{}, fmt.Errorf("freeze preview ownership: %w", err)
 	}
 	defer releaseDirectory()
@@ -91,8 +99,11 @@ func freezePreviewCodec(ctx context.Context, sourceDir string, allowCurrent bool
 	if !info.IsDir() {
 		return frozenPreview{}, fmt.Errorf("sessionv3: preview path is not a directory: %s", sourceDir)
 	}
-	releaseWriter, err := filelock.AcquireMode(ctx, filepath.Join(sourceDir, "writer.lock"), filelock.ModeShared)
+	releaseWriter, err := filelock.TryAcquireMode(filepath.Join(sourceDir, "writer.lock"), filelock.ModeShared)
 	if err != nil {
+		if errors.Is(err, filelock.ErrHeld) {
+			return frozenPreview{}, fmt.Errorf("%w: freeze preview writer", ErrWriterOwned)
+		}
 		return frozenPreview{}, fmt.Errorf("freeze preview writer: %w", err)
 	}
 	defer releaseWriter()

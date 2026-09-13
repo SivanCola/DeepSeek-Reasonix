@@ -307,6 +307,9 @@ func TestResumeSessionPageFollowsCanonicalContinuation(t *testing.T) {
 		SessionDir: dir, Label: "parent", Sink: event.Discard,
 		SessionService: service, ExclusiveSessionV3: true,
 	})
+	// A unified import refuses to wait behind a live retired sidecar writer.
+	// The host retires its legacy producer before preparing the replacement.
+	ctrl.Close()
 	ref, err := v3Ctrl.ContinueLegacyV3(t.Context(), parentPath, "")
 	if err != nil {
 		t.Fatalf("migrate parent: %v", err)
@@ -319,7 +322,6 @@ func TestResumeSessionPageFollowsCanonicalContinuation(t *testing.T) {
 	tab.SessionPath = ""
 	app.newSessionRuntimeLocked(tab, sessionRuntimeKey(tab.currentSessionIdentity()))
 	app.mu.Unlock()
-	ctrl.Close()
 	installSessionCatalogForTest(t, app, dir, "global", "")
 	if got := app.continuePathForOpen(parentPath); got != leafPath {
 		t.Fatalf("continuePathForOpen = %q, want covering leaf %q", got, leafPath)
