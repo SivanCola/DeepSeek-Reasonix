@@ -55,7 +55,7 @@ func TestTurnOrchestratorAttachesTrustedPlannerMetadata(t *testing.T) {
 	sess.Add(provider.Message{Role: provider.RoleAssistant, Content: "the bug is in parser.go"})
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	runner := &plannerMetadataRunner{}
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   runner,
 		Executor: exec,
 	})
@@ -83,7 +83,7 @@ func TestTurnOrchestratorAttachesTrustedPlannerMetadata(t *testing.T) {
 
 func TestTurnOrchestratorRunsForegroundUnit(t *testing.T) {
 	runner := &fakeTurnRunner{}
-	c := New(Options{Runner: runner})
+	c := newOwnedTestController(t, Options{Runner: runner})
 	c.SetPlanMode(true)
 
 	o := newTurnOrchestrator(c)
@@ -121,7 +121,7 @@ func TestNonGoalTurnDoesNotInvokeGoalEvaluator(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := &fakeTurnRunner{}
 			evaluator := &fakeGoalEvaluator{}
-			c := New(Options{Runner: runner, GoalEvaluator: evaluator})
+			c := newOwnedTestController(t, Options{Runner: runner, GoalEvaluator: evaluator})
 
 			if err := tt.run(newTurnOrchestrator(c)); err != nil {
 				t.Fatal(err)
@@ -138,7 +138,7 @@ func TestNonGoalTurnDoesNotInvokeGoalEvaluator(t *testing.T) {
 
 func TestTurnOrchestratorTypedSyntheticTurnDoesNotDependOnPrefix(t *testing.T) {
 	runner := &fakeTurnRunner{}
-	c := New(Options{Runner: runner})
+	c := newOwnedTestController(t, Options{Runner: runner})
 	o := newTurnOrchestrator(c)
 
 	turn := "Controller-created follow-up with a brand-new synthetic wording:\n- inspect\n- edit\n- verify"
@@ -161,7 +161,7 @@ func TestGoalTurnOutputCannotAdvanceReplacementGoal(t *testing.T) {
 	executor := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
 	runner := &goalReplacingRunner{executor: executor}
 	evaluator := &fakeGoalEvaluator{}
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:        runner,
 		Executor:      executor,
 		GoalEvaluator: evaluator,
@@ -205,7 +205,7 @@ func TestTurnOrchestratorStopHookIgnoresCanceledTurnContext(t *testing.T) {
 		stopErr = ctx.Err()
 		return hook.SpawnResult{ExitCode: 0}
 	}, nil)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner: cancelingRunner{cancel: cancel},
 		Hooks:  hooks,
 	})
@@ -260,7 +260,7 @@ func TestTurnOrchestratorRunsOneGoalTurnPerAdmission(t *testing.T) {
 		}
 		return hook.SpawnResult{ExitCode: 0}
 	}, nil)
-	c := New(Options{Runner: ag, Executor: ag, Hooks: hooks})
+	c := newOwnedTestController(t, Options{Runner: ag, Executor: ag, Hooks: hooks})
 	c.SetGoal("ship the refactor")
 
 	o := newTurnOrchestrator(c)
@@ -308,7 +308,7 @@ func TestTurnOrchestratorApprovedPlanSharesOneStopHook(t *testing.T) {
 		}
 		return hook.SpawnResult{ExitCode: 0}
 	}, nil)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Hooks:    hooks,
@@ -346,7 +346,7 @@ func TestTurnOrchestratorRefTurnRecordsVisibleDisplay(t *testing.T) {
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
 	runner := &recordingSessionRunner{session: sess}
 	events := make(chan event.Event, 4)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		WorkspaceRoot: root,
 		Runner:        runner,
 		Executor:      exec,
@@ -388,7 +388,7 @@ func TestTurnOrchestratorRefTurnPreservesExpandedPasteForRouting(t *testing.T) {
 	runner := &recordingSessionRunner{session: sess}
 	reg := tool.NewRegistry()
 	reg.Add(capabilityTestTool{name: "run_skill"})
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   runner,
 		Executor: exec,
 		Registry: reg,
@@ -424,7 +424,7 @@ func TestTurnOrchestratorAutoReasoningLanguageUsesRawPromptForRefTurns(t *testin
 	}
 	runner := &fakeTurnRunner{}
 	events := make(chan event.Event, 4)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		WorkspaceRoot: root,
 		Runner:        runner,
 		Sink: event.FuncSink(func(e event.Event) {
@@ -463,7 +463,7 @@ func TestTurnOrchestratorCheckpointPromptIsRawUserInput(t *testing.T) {
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
 	runner := &recordingSessionRunner{session: sess}
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:            runner,
 		Executor:          exec,
 		SessionDir:        dir,
@@ -497,7 +497,7 @@ func TestTurnOrchestratorSyntheticTurnDoesNotCreateCheckpoint(t *testing.T) {
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
 	runner := &recordingSessionRunner{session: sess}
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:      runner,
 		Executor:    exec,
 		SessionDir:  dir,
@@ -547,7 +547,7 @@ func TestTurnOrchestratorStopFailureHookCancelledContext(t *testing.T) {
 		}
 		return hook.SpawnResult{ExitCode: 0}
 	}, nil)
-	c := New(Options{Runner: ag, Executor: ag, Hooks: hooks})
+	c := newOwnedTestController(t, Options{Runner: ag, Executor: ag, Hooks: hooks})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	o := newTurnOrchestrator(c)
@@ -585,7 +585,7 @@ func TestTurnOrchestratorCancelPreservesVisibleUserPrompt(t *testing.T) {
 	}
 
 	ex := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{Runner: runner, Executor: ex})
+	c := newOwnedTestController(t, Options{Runner: runner, Executor: ex})
 	c.SetPlanMode(true)
 	// Simulate a user-initiated cancel: set the cancelling flag.
 	c.mu.Lock()
@@ -644,7 +644,7 @@ func TestTurnOrchestratorProviderErrorPreservesCompletedPairAndLocalPartial(t *t
 		err: apiErr,
 	}
 	ex := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{Runner: runner, Executor: ex})
+	c := newOwnedTestController(t, Options{Runner: runner, Executor: ex})
 
 	err := newTurnOrchestrator(c).runTurnWithRawDisplay(context.Background(), "update a.txt", "update a.txt", "")
 	if !errors.Is(err, apiErr) {
@@ -680,7 +680,7 @@ func TestTurnOrchestratorInterruptedAfterCompactionRelocatesVisibleTurn(t *testi
 			}
 			start := sess.Len()
 			runner := &compactingErrorRunner{session: sess, err: tc.err}
-			c := New(Options{Runner: runner, Executor: agent.New(nil, nil, sess, agent.Options{}, event.Discard)})
+			c := newOwnedTestController(t, Options{Runner: runner, Executor: agent.New(nil, nil, sess, agent.Options{}, event.Discard)})
 			if tc.cancel {
 				c.mu.Lock()
 				c.canceling = true
@@ -725,7 +725,7 @@ func TestTurnOrchestratorCancelClassifiesCancelledToolResultAsInterrupted(t *tes
 		},
 		err: context.Canceled,
 	}
-	c := New(Options{Runner: runner, Executor: agent.New(nil, nil, sess, agent.Options{}, event.Discard)})
+	c := newOwnedTestController(t, Options{Runner: runner, Executor: agent.New(nil, nil, sess, agent.Options{}, event.Discard)})
 	c.mu.Lock()
 	c.canceling = true
 	c.mu.Unlock()
@@ -753,7 +753,7 @@ func TestTurnOrchestratorCancelBeforeRunnerAddsUserPreservesVisiblePrompt(t *tes
 	}
 	sess := agent.NewSession("system")
 	ex := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:        cancelBeforeUserRunner{},
 		Executor:      ex,
 		WorkspaceRoot: workspace,
@@ -807,7 +807,7 @@ func TestTurnOrchestratorCancelFlushesCleanTranscriptToDisk(t *testing.T) {
 	}
 
 	sessionPath := agent.NewSessionPath(t.TempDir(), "test-model")
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:      runner,
 		Executor:    agent.New(nil, nil, sess, agent.Options{}, event.Discard),
 		SessionPath: sessionPath,
@@ -868,7 +868,7 @@ func TestResumeRecoversStaleVisibleInFlightTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, nil, agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, SessionPath: path})
 	c.Resume(loaded, path)
 
 	msgs := exec.Session().Snapshot()
@@ -921,7 +921,7 @@ func TestResumeClearsStaleSyntheticInFlightTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, nil, agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path})
+	c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, SessionPath: path})
 	c.Resume(loaded, path)
 
 	msgs := exec.Session().Snapshot()

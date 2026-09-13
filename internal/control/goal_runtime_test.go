@@ -26,7 +26,7 @@ func goalRuntimeControllerWithTokenBudget(t *testing.T, prov provider.Provider, 
 	t.Helper()
 	ag := agent.New(prov, goalRegistry(), agent.NewSession(""), agent.Options{}, event.Discard)
 	events := make(chan event.Event, 8)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:          ag,
 		Executor:        ag,
 		GoalEvaluator:   eval,
@@ -158,7 +158,7 @@ func TestGoalSidecarCompatRestoresOldAndNewFields(t *testing.T) {
 			t.Fatal(err)
 		}
 		exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
-		c := New(Options{Executor: exec, SessionDir: dir, Label: "test"})
+		c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, Label: "test"})
 		c.Resume(agent.NewSession("sys"), path)
 		rt := c.GoalRuntime()
 		if rt.TurnsUsed != 3 {
@@ -179,7 +179,7 @@ func TestGoalSidecarCompatRestoresOldAndNewFields(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "session.jsonl")
 		exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
-		c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+		c := newOwnedTestController(t, Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
 		c.SetGoal("ship the release")
 		c.goals.pauseFor(stopCauseBudgetTurns, "turn budget exhausted")
 		statePath, data, ok := c.goals.buildStateLocked()
@@ -191,7 +191,7 @@ func TestGoalSidecarCompatRestoresOldAndNewFields(t *testing.T) {
 		}
 
 		freshExec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
-		fresh := New(Options{Executor: freshExec, SessionDir: dir, Label: "fresh"})
+		fresh := newOwnedTestController(t, Options{Executor: freshExec, SessionDir: dir, Label: "fresh"})
 		fresh.Resume(agent.NewSession("sys"), path)
 		if fresh.GoalStatus() != GoalStatusStopped {
 			t.Fatalf("restored status = %q, want running after numeric pause migration", fresh.GoalStatus())
@@ -218,7 +218,7 @@ func TestGoalPauseResumeCommands(t *testing.T) {
 		t.Fatalf("ParseGoalCommand(/goal) = %+v", cmd)
 	}
 
-	c := New(Options{Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Sink: event.Discard})
 	if c.PauseGoal() {
 		t.Fatal("PauseGoal without a goal must return false")
 	}
@@ -250,7 +250,7 @@ func TestGoalPauseResumeCommands(t *testing.T) {
 // TestGoalRuntimeViewPopulatesFromController covers the runtime view surface
 // the CLI and desktop read.
 func TestGoalRuntimeViewPopulatesFromController(t *testing.T) {
-	c := New(Options{Sink: event.Discard})
+	c := newOwnedTestController(t, Options{Sink: event.Discard})
 	c.SetGoal("finish the migration")
 	rt := c.GoalRuntime()
 	if rt.TurnsUsed != 0 || rt.TurnsLimit != 0 || rt.NoProgressLimit != 0 {
@@ -292,7 +292,7 @@ func TestRetiredDeliverySettingDoesNotCreateRecoveryCard(t *testing.T) {
 	// must not turn its evidence gap into a current pause.
 	ag := agent.New(prov, reg, agent.NewSession(""), agent.Options{}, event.Discard)
 	done := make(chan event.Event, 1)
-	c := New(Options{
+	c := newOwnedTestController(t, Options{
 		Runner:   ag,
 		Executor: ag,
 		Sink: event.FuncSink(func(e event.Event) {
