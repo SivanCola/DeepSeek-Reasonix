@@ -138,12 +138,20 @@ try {
   await configure({ turns: 120, long: true });
   await page.waitForFunction(() => document.querySelectorAll('[data-chat-kind="user"]').length === 120);
   await measure("accumulated long session");
+  // The active turn may have already moved the virtual rail to its tail.
+  // Put the rail at the loaded start before exercising an early keyboard jump.
+  const turnRail = page.locator('.dsh-TurnNavigator-frame');
+  await turnRail.evaluate(nav => {
+    const scroller = nav.firstElementChild;
+    scroller.scrollTop = 0;
+    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await page.locator('[data-nav-turn="user-10"]').waitFor();
   await page.locator('[data-nav-turn="user-10"]').focus();
   await page.locator('[data-nav-turn="user-10"]').press("Enter");
   await page.waitForFunction(() => [...document.querySelectorAll(".transcript code")].some(element => element.textContent.includes("abcdefghij".repeat(60))));
   // Harness keeps only the visible navigation marks mounted. Move the rail to
   // its loaded tail before addressing the last turn by keyboard.
-  const turnRail = page.locator('[data-nav-turn="user-10"]').locator("xpath=ancestor::nav");
   await turnRail.evaluate(nav => {
     const scroller = nav.firstElementChild;
     scroller.scrollTop = scroller.scrollHeight;
