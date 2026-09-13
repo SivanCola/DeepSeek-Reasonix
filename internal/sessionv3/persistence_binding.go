@@ -90,19 +90,6 @@ func (b *PersistenceBinding) accept(commit Commit, accepted func()) error {
 	return nil
 }
 
-// acknowledge advances the durable watermark for bytes the physical layer
-// already persisted outside the normal append path.
-func (b *PersistenceBinding) acknowledge(sequence uint64) {
-	if b == nil {
-		return
-	}
-	b.mu.Lock()
-	if sequence > b.durable {
-		b.durable = sequence
-	}
-	b.mu.Unlock()
-}
-
 func (b *PersistenceBinding) stopAccepting() {
 	if b == nil {
 		return
@@ -333,7 +320,7 @@ func (b *PersistenceBinding) reconcileUncertain(ctx context.Context, handle Sess
 		// durable cursor before validating a queued successor, or the successor
 		// would appear to start after a gap.
 		if err := physical.rebuildWriterIndex(file); err != nil {
-			return false, fmt.Errorf("%w: rebuild index after verified append: %v", ErrPersistenceUncertain, err)
+				return false, fmt.Errorf("%w: rebuild index after verified append: %w", ErrPersistenceUncertain, err)
 		}
 		return true, nil
 	}
