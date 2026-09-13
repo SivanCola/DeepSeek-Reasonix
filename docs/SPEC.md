@@ -496,7 +496,8 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
   three presets: `read-only`, `workspace-write`, and `danger-full-access`.
   Workspace write is the default and confines local mutations to the workspace
   and private session temporary directory. Full access skips ordinary prompts
-  and filesystem confinement while explicit deny and protected state remain.
+  and Reasonix filesystem/network confinement. Explicit host deny rules still
+  run before launch, but Reasonix does not constrain the launched process.
   Shell syntax does not alter the selected preset.
   Neither posture answers `ask` questions or approves `exit_plan_mode` plans.
   Plan Mode is entered only through an explicit user choice and remains
@@ -551,7 +552,7 @@ func (p Policy) Decide(toolName string, readOnly bool, args json.RawMessage) Dec
 | --- | --- | --- | --- |
 | Read only / `read-only` | Reads are allowed; writes and external side effects require a scoped authorization | Waits for user | Waits for user |
 | Workspace access / `workspace-write` | Workspace and private session temp writes run inside the OS sandbox; boundary crossings require authorization | Waits for user | Waits for user |
-| Full access / `danger-full-access` | Ordinary prompts are skipped; explicit deny rules and protected-state constraints remain | Waits for user | Waits for user |
+| Full access / `danger-full-access` | Ordinary prompts and Reasonix process sandboxing are skipped; explicit host deny rules still run before launch | Waits for user | Waits for user |
 | Approved-plan execution window | The approved plan may execute only within the active preset; explicit `ask` / `deny` rules remain | Future plans still wait | Waits for user |
 
 Out of the box, new sessions use `workspace-write`: workspace and private

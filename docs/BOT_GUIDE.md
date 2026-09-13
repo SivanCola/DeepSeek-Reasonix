@@ -421,8 +421,9 @@ Permission boundaries:
 
 - Read only never grants a write merely because a command uses shell syntax.
 - Workspace write trusts the connected bot identity inside its selected workspace.
-- Full access does not bypass hard `deny` rules, protected application state,
-  model questions, or plan approvals.
+- Full access runs commands as the current OS user without Reasonix filesystem
+  or network sandboxing. Host `deny` rules still apply before launch; model
+  questions and plan approvals remain separate user decisions.
 - Session authorizations are scoped to the named directory, server capability,
   or operation; approving one command never grants arbitrary shell access.
 

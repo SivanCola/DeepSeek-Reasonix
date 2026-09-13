@@ -330,7 +330,7 @@ reasonix -p "运行指定测试" --allowed-tools "Bash(go test ./...)"
 | --- | --- |
 | `read-only` | 可读取工作区；写入和外部副作用需要范围明确的授权。 |
 | `workspace-write` | 可写工作区和会话私有临时目录；这是默认模式。 |
-| `danger-full-access` | 取消普通文件围栏和常规询问，但显式 deny 与受保护应用状态仍生效。 |
+| `danger-full-access` | 以当前系统账户运行，不使用 Reasonix 文件和网络沙箱；宿主仍在启动前执行显式 deny。 |
 
 内联脚本、管道、命令替换和 shell `-c` 与普通命令使用同一权限及沙箱边界，不能仅因
 语法形式产生审批。

@@ -372,7 +372,7 @@ reasonix -p "run the focused tests" --allowed-tools "Bash(go test ./...)"
 | --- | --- |
 | `read-only` | Read the workspace; writes and external side effects require a scoped authorization. |
 | `workspace-write` | Write inside the workspace and private session temporary directory. This is the default. |
-| `danger-full-access` | Remove ordinary filesystem confinement and prompts while keeping explicit deny rules and protected application state. |
+| `danger-full-access` | Run as the current OS user without Reasonix filesystem or network sandboxing. Explicit host deny rules still apply before launch. |
 
 Inline scripts, pipes, substitutions, and shell `-c` forms follow the same
 preset and sandbox boundary as other commands. Syntax alone never creates an

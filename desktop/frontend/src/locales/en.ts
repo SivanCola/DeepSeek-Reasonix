@@ -874,10 +874,10 @@ export const en = {
   "composer.permissionWorkspaceWriteDesc": "Read and write this workspace; access outside it requires your approval",
   "composer.permissionRecommended": "Recommended",
   "composer.permissionFullAccess": "Full access",
-  "composer.permissionFullAccessDesc": "Access other locations on this computer; ordinary actions do not ask",
+  "composer.permissionFullAccessDesc": "Run as the current OS user without filesystem or network sandboxing",
   "permission.fullAccessConfirm.title": "Enable Full access?",
-  "permission.fullAccessConfirm.currentDescription": "Once enabled, Reasonix can skip routine permission prompts, access files outside the workspace, and run commands that may affect this computer or external services. Explicit deny rules still apply. Enable it only when you trust this task and its contents.",
-  "permission.fullAccessConfirm.futureDescription": "Once enabled, new sessions will skip routine permission prompts by default and can access files outside the workspace or run commands that may affect this computer or external services. Explicit deny rules still apply. Enable it only when you trust future tasks.",
+  "permission.fullAccessConfirm.currentDescription": "Once enabled, Reasonix skips routine permission prompts and runs commands as the current OS user without filesystem or network sandboxing. Explicit host deny rules still apply before launch, but Reasonix no longer limits the locations or network available to the launched process. Enable it only when you trust this task and its contents.",
+  "permission.fullAccessConfirm.futureDescription": "Once enabled, new sessions skip routine permission prompts by default and run commands as the current OS user without filesystem or network sandboxing. Explicit host deny rules still apply before launch, but Reasonix no longer limits the locations or network available to the launched process. Enable it only when you trust future tasks.",
   "permission.fullAccessConfirm.currentAcknowledge": "I understand the risks and trust this task",
   "permission.fullAccessConfirm.futureAcknowledge": "I understand the risks and accept Full access as the default for new sessions",
   "permission.fullAccessConfirm.enable": "Enable Full access",
@@ -1169,7 +1169,7 @@ export const en = {
   "status.workspaceTitle": "Current workspace",
   "status.gitBranchTitle": "Current Git branch",
   "status.yolo": "Full access",
-  "status.yoloTitle": "Full access — ordinary operations run without prompts; explicit deny rules and protected application state remain enforced",
+  "status.yoloTitle": "Full access — runs as the current OS user without Reasonix filesystem or network sandboxing",
 
   // approval modal
   "approval.planReady": "Plan ready",

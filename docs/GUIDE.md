@@ -642,7 +642,7 @@ Mode meanings:
 | --- | --- |
 | Read only | Reads the workspace; writes and external side effects require a scoped authorization. |
 | Workspace write | Writes inside the workspace and private session temporary directory. This is the default. |
-| Full access | Removes ordinary filesystem confinement and prompts; explicit deny rules and protected application state still apply. |
+| Full access | Runs as the current OS user without Reasonix filesystem or network sandboxing. Explicit host deny rules still apply before launch. |
 | Plan | Plans before implementation. State-changing actions are blocked until approval, including Full access, proxy tools, and subagents. After approval, ordinary permissions and sandbox rules still apply. |
 | Goal | Pursues a saved objective until complete, blocked, or cleared. |
 

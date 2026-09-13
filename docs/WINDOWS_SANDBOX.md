@@ -10,7 +10,7 @@ native Go port; it does not load Harness code at runtime.
 | --- | --- |
 | Read only | A `WRITE_RESTRICTED` primary token with no directory capability SID. Direct read-only tools may use AppContainer. |
 | Workspace write | A `WRITE_RESTRICTED` token containing only the capability SIDs for the canonical workspace, approved extra directories, and the session-private temp directory. |
-| Full access | The normal host execution path. Explicit deny rules and protected application state still apply above the process sandbox. |
+| Full access | The normal host execution path as the current OS user. The Windows sandbox, including its protected-root and network constraints, is not applied. Explicit host deny rules still apply before launch. |
 
 The backend is reported as `windows-write-restricted+appcontainer` with
 `partial` enforcement. Capability snapshots also report the write, read, and

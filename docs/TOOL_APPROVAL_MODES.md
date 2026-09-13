@@ -9,7 +9,7 @@ filesystem and process boundary.
 | --- | --- | --- |
 | **Read only** (`read-only`) | Workspace and session files are mounted read only. | Reads run directly. Writes and unknown external side effects require an exact one-time or session grant. |
 | **Workspace write** (`workspace-write`) | The workspace and session-private temporary directory are writable. | Default. Ordinary commands, pipes, command substitution, inline Python/Node, builds, and tests run without syntax-based prompts while they remain inside the boundary. |
-| **Full access** (`danger-full-access`) | Ordinary filesystem fencing is removed. | Ordinary `ask` fallbacks are skipped. Explicit `deny`, protected application state, and task-enforced restrictions still apply. |
+| **Full access** (`danger-full-access`) | Commands use the normal host path as the current OS user; Reasonix filesystem and network sandboxing are disabled. | Ordinary `ask` fallbacks are skipped. Explicit host `deny` rules still apply before launch, but Reasonix does not constrain the launched process. |
 
 - **Collaboration mode** (Normal / Plan / Goal) decides how Reasonix advances the task. There is no automatic task mode or selectable quality floor. Verification obligations come from real tool actions, project rules, task risk, and explicit user requirements.
 - **Permission preset** decides the enforced filesystem and process boundary and when exact grants are requested.
@@ -31,8 +31,9 @@ An approval card offers at most three decisions:
 
 There is no permanent approval action. Session grants are held in memory, do not
 cross restarts or forks, and can be inspected and revoked. Changing presets or
-revoking a grant advances the permission revision; replies created by an older
-generation or revision are rejected.
+revoking a grant advances the permission revision. Preset changes and approval
+commits are serialized, so an approval that commits first remains valid while a
+reply from an older committed revision is rejected.
 
 Ordinary command failures, HTTP errors, timeouts, and application exceptions are
 tool errors. They do not create permission prompts. A retry may request

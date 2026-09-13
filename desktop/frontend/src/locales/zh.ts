@@ -875,10 +875,10 @@ export const zh: Record<DictKey, string> = {
   "composer.permissionWorkspaceWriteDesc": "可读写当前工作区；越界操作需要你授权",
   "composer.permissionRecommended": "推荐",
   "composer.permissionFullAccess": "完全权限",
-  "composer.permissionFullAccessDesc": "可访问本机其他位置；普通操作不再询问",
+  "composer.permissionFullAccessDesc": "以当前系统账户运行；不使用文件和网络沙箱",
   "permission.fullAccessConfirm.title": "确认启用完全权限？",
-  "permission.fullAccessConfirm.currentDescription": "启用后，Reasonix 可跳过常规权限确认，直接访问工作区外的文件，并执行可能影响本机或外部服务的命令。显式禁止规则仍然有效。仅在你信任当前任务及其内容时启用。",
-  "permission.fullAccessConfirm.futureDescription": "启用后，之后新建的会话将默认跳过常规权限确认，可直接访问工作区外的文件，并执行可能影响本机或外部服务的命令。显式禁止规则仍然有效。仅在你信任后续任务时启用。",
+  "permission.fullAccessConfirm.currentDescription": "启用后，Reasonix 将跳过常规权限确认，并以当前系统账户在不受文件和网络沙箱限制的情况下执行命令。命令启动前的显式禁止规则仍有效，但 Reasonix 不再限制已启动进程可访问的位置或网络。仅在你信任当前任务及其内容时启用。",
+  "permission.fullAccessConfirm.futureDescription": "启用后，新会话将默认跳过常规权限确认，并以当前系统账户在不受文件和网络沙箱限制的情况下执行命令。命令启动前的显式禁止规则仍有效，但 Reasonix 不再限制已启动进程可访问的位置或网络。仅在你信任后续任务时启用。",
   "permission.fullAccessConfirm.currentAcknowledge": "我已了解风险，并确认信任当前任务",
   "permission.fullAccessConfirm.futureAcknowledge": "我已了解风险，并接受新会话默认使用完全权限",
   "permission.fullAccessConfirm.enable": "启用完全权限",
@@ -1170,7 +1170,7 @@ export const zh: Record<DictKey, string> = {
   "status.workspaceTitle": "当前工作区",
   "status.gitBranchTitle": "当前 Git 分支",
   "status.yolo": "完全权限",
-  "status.yoloTitle": "完全权限——普通操作无需询问；显式禁止规则和受保护的应用状态仍然生效",
+  "status.yoloTitle": "完全权限——以当前系统账户运行，不使用 Reasonix 文件和网络沙箱",
 
   // 审批弹窗
   "approval.planReady": "计划已就绪",

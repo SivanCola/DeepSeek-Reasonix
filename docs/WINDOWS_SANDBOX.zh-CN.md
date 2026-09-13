@@ -10,7 +10,7 @@ Harness 代码。
 | --- | --- |
 | 仅可查看 | 使用不携带目录能力 SID 的 `WRITE_RESTRICTED` 主令牌；直接只读工具仍可使用 AppContainer。 |
 | 工作区内修改 | `WRITE_RESTRICTED` 令牌只携带当前工作区、已授权额外目录和会话私有临时目录的能力 SID。 |
-| 完全权限 | 走宿主正常执行路径；上层的显式禁止和 Reasonix 状态保护仍然生效。 |
+| 完全权限 | 以当前系统账户走宿主正常执行路径，不启用 Windows 沙箱及其中的受保护目录和网络约束；宿主仍在启动前执行显式禁止规则。 |
 
 后端对外报告为 `windows-write-restricted+appcontainer`，强制等级为
 `partial`。权限快照还分别说明写入、读取和网络隔离方式，桌面端和远程端

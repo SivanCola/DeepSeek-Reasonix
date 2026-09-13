@@ -969,7 +969,7 @@ export const zhTW: Record<DictKey, string> = {
   "status.workspaceTitle": "當前工作區",
   "status.gitBranchTitle": "當前 Git 分支",
   "status.yolo": "完全權限",
-  "status.yoloTitle": "完全權限——普通操作無需詢問；明確禁止規則和受保護的應用程式狀態仍然生效",
+  "status.yoloTitle": "完全權限——以目前系統帳戶執行，不使用 Reasonix 檔案與網路沙箱",
 
   // 核准彈窗
   "approval.planReady": "計畫已就緒",
@@ -2674,10 +2674,10 @@ export const zhTW: Record<DictKey, string> = {
   "composer.permissionWorkspaceWriteDesc": "可讀寫目前工作區；越界操作需要你授權",
   "composer.permissionRecommended": "推薦",
   "composer.permissionFullAccess": "完全權限",
-  "composer.permissionFullAccessDesc": "可存取本機其他位置；一般操作不再詢問",
+  "composer.permissionFullAccessDesc": "以目前系統帳戶執行；不使用檔案與網路沙箱",
   "permission.fullAccessConfirm.title": "確認啟用完全權限？",
-  "permission.fullAccessConfirm.currentDescription": "啟用後，Reasonix 可略過一般權限確認，直接存取工作區外的檔案，並執行可能影響本機或外部服務的命令。明確禁止規則仍然有效。僅在你信任目前任務及其內容時啟用。",
-  "permission.fullAccessConfirm.futureDescription": "啟用後，之後新建的會話將預設略過一般權限確認，可直接存取工作區外的檔案，並執行可能影響本機或外部服務的命令。明確禁止規則仍然有效。僅在你信任後續任務時啟用。",
+  "permission.fullAccessConfirm.currentDescription": "啟用後，Reasonix 將略過一般權限確認，並以目前系統帳戶在不受檔案與網路沙箱限制的情況下執行命令。命令啟動前的明確禁止規則仍有效，但 Reasonix 不再限制已啟動程序可存取的位置或網路。僅在你信任目前任務及其內容時啟用。",
+  "permission.fullAccessConfirm.futureDescription": "啟用後，新會話將預設略過一般權限確認，並以目前系統帳戶在不受檔案與網路沙箱限制的情況下執行命令。命令啟動前的明確禁止規則仍有效，但 Reasonix 不再限制已啟動程序可存取的位置或網路。僅在你信任後續任務時啟用。",
   "permission.fullAccessConfirm.currentAcknowledge": "我已瞭解風險，並確認信任目前任務",
   "permission.fullAccessConfirm.futureAcknowledge": "我已瞭解風險，並接受新會話預設使用完全權限",
   "permission.fullAccessConfirm.enable": "啟用完全權限",
