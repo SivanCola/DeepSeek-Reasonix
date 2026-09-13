@@ -82,6 +82,11 @@ func (p *FilesystemPersistence) exportCold(ctx context.Context, sessionID, desti
 		return err
 	}
 	source := filepath.Join(p.Root, sessionID)
+	releaseDirectory, err := filelock.AcquireMode(ctx, directoryOwnershipPath(source), filelock.ModeShared)
+	if err != nil {
+		return err
+	}
+	defer releaseDirectory()
 	if _, err := readManifest(filepath.Join(source, "manifest.json")); err != nil {
 		return err
 	}
@@ -202,14 +207,19 @@ func (r *contextReader) Read(buffer []byte) (int, error) {
 	return r.reader.Read(buffer)
 }
 
-// Delete removes a cold session from the visible root while holding its
-// cross-process writer lock. Rename makes the catalog change atomic; cleanup of
-// the private tombstone may then fail visibly without reviving the session.
+// Delete holds directory ownership across rename. The inner writer lock must
+// be closed before moving its directory on Windows; the outer lock keeps a
+// competing opener from entering that interval.
 func (p *FilesystemPersistence) Delete(ctx context.Context, sessionID string) error {
 	if err := validateSessionID(sessionID); err != nil {
 		return err
 	}
 	source := filepath.Join(p.Root, sessionID)
+	releaseDirectory, err := filelock.Acquire(ctx, directoryOwnershipPath(source))
+	if err != nil {
+		return err
+	}
+	defer releaseDirectory()
 	if _, err := readManifest(filepath.Join(source, "manifest.json")); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
@@ -220,17 +230,15 @@ func (p *FilesystemPersistence) Delete(ctx context.Context, sessionID string) er
 	if err != nil {
 		return fmt.Errorf("sessionv3: delete ownership: %w", err)
 	}
+	release()
 	trashRoot := filepath.Join(p.Root, ".trash")
 	if err := os.MkdirAll(trashRoot, 0o700); err != nil {
-		release()
 		return err
 	}
 	tombstone := filepath.Join(trashRoot, sessionID+"-"+randomID())
 	if err := os.Rename(source, tombstone); err != nil {
-		release()
 		return err
 	}
-	release()
 	_ = os.RemoveAll(filepath.Join(p.Root, ".query-cache", sessionID))
 	return os.RemoveAll(tombstone)
 }

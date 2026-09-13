@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/filelock"
 	"reasonix/internal/provider"
 )
 
@@ -46,8 +47,6 @@ func TestStateSnapshotOmitsHistory(t *testing.T) {
 	}
 }
 
-
-
 func TestSessionIdentityRejectsPathsWithoutCreatingFiles(t *testing.T) {
 	persistence := NewFilesystemPersistence(t.TempDir())
 	for _, id := range []string{"..", "../escape", "a/b", `a\b`, "/absolute", ".", ""} {
@@ -58,6 +57,29 @@ func TestSessionIdentityRejectsPathsWithoutCreatingFiles(t *testing.T) {
 	entries, err := os.ReadDir(persistence.Root)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("invalid opens changed the root: %v, %v", entries, err)
+	}
+}
+
+func TestDirectoryOwnershipExcludesWriterDuringRename(t *testing.T) {
+	_, runtime := reviewRuntime(t)
+	store := runtime.Session().Handle.(*Store)
+	if err := runtime.close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	release, err := filelock.Acquire(t.Context(), directoryOwnershipPath(store.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if reopened, err := Open(store.dir, store.SessionID()); !errors.Is(err, ErrWriterOwned) {
+		if reopened != nil {
+			_ = reopened.Close(t.Context())
+		}
+		t.Fatalf("writer entered the directory transition: %v", err)
+	}
+	// The ownership file stays outside the moved tree, including on Windows.
+	if err := os.Rename(store.dir, store.dir+"-removed"); err != nil {
+		t.Fatalf("directory ownership prevents rename: %v", err)
 	}
 }
 

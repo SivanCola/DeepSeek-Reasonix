@@ -285,7 +285,7 @@ func openExistingWithOptions(dir, sessionID string, opts OpenOptions) (*Store, e
 		return nil, fmt.Errorf("sessionv3: session path is not a directory: %s", dir)
 	}
 	eventsPath := filepath.Join(dir, "events.jsonl")
-	releaseLease, err := filelock.TryAcquire(filepath.Join(dir, "writer.lock"))
+	releaseLease, err := acquireSessionWriter(dir)
 	if err != nil {
 		if errors.Is(err, filelock.ErrHeld) {
 			return nil, fmt.Errorf("%w: %s", ErrWriterOwned, sessionID)

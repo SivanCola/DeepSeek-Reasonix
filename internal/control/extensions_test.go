@@ -287,7 +287,7 @@ func newSessionController(t *testing.T, d *dispatch.Dispatcher, sink event.Sink)
 	if sink != nil {
 		opts.Sink = sink
 	}
-	return New(opts), path
+	return newOwnedTestController(t, opts), path
 }
 
 func TestSessionEventsFireAtLifecyclePoints(t *testing.T) {
