@@ -53,7 +53,8 @@ Windows validation ran natively in the local Parallels Windows 11 VM rather than
 
 ## PR #10223 review corrections
 
-Review baseline: head `3f7350f6e`, current base and merge-base `104792af2`.
+Initial review baseline: head `3f7350f6e`, then-current merge-base `104792af2`.
+The conflict integration was validated against `main-v2@4daa815be` (#10209).
 The implementation follows DSH `fs-observation-policy` (session-owned observations,
 presence-based write intent) and `fs-local/src/fsio.ts` (staging before no-overwrite
 publication). Reasonix retains its Go execution, encoding, and buffer adapters.
@@ -77,8 +78,10 @@ Regression owners: `internal/tool/builtin/harness_review_test.go`,
 `internal/agent/harness_review_test.go`, and `internal/agent/complete_subtask_test.go`.
 Native Windows reruns cover identity/ACL change detection, publication, moves,
 observation isolation, real shell continuation, and optional subtask completion.
-The new subtask descriptions change child-prefix bytes once; serialized request
-and stable-extension cache guards pass. No live observation is serialized.
+Retiring the old proof/read-policy schemas and adding the current delivery
+projection change provider tool-prefix bytes once on upgrade. The regenerated
+baseline and stable-extension cache guards pass, and subsequent boots are
+stable. No live observation is serialized.
 
 These changes do not supply universal external-process CAS, remote ACP CAS, or
 exactly-once side effects. The review does not reclassify the initial frontend
@@ -87,7 +90,7 @@ GitHub merge readiness still requires terminal checks on the pushed head.
 
 ## Removed and retained systems
 
-Removed code includes whole-file read debt, frozen batch evidence, source-token authorization, anchor-range shadow evidence, operation prepared/applied/settled state, completion proof gates, the Auto Guard reviewer, recovery confirmation actions, repeated/no-progress rejection, and the unused shell proof preflight.
+Removed code includes whole-file read debt, frozen batch evidence, source-token authorization, anchor-range shadow evidence, operation prepared/applied/settled state, completion proof gates, the Auto Guard reviewer, recovery confirmation actions, repeated/no-progress rejection, the unused shell proof preflight, and legacy runtime switches that could reactivate those guards.
 
 Goal, Plan approval, ordinary permissions, sandboxing, checkpoints, multi-agent execution, tool-call pairing, and factual execution display remain. Legacy provider/session fields, the `recovery_required` enum, and frontend recognition exist only to read old history; current execution does not write or activate them.
 

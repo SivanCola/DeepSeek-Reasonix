@@ -48,9 +48,7 @@ func TestLegacyDependentSameBatchEditRefreshesPreviewBeforeExecution(t *testing.
 		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
 	}}
 	var events []event.Event
-	// Rollback retains historical chained-edit behavior. The default evidence
-	// pipeline requires prior source evidence and uses multi_edit for a chain.
-	a := New(prov, reg, NewSession(""), Options{ReadPipeline: ReadPipelineOptions{LegacyEvidenceGates: true}}, event.FuncSink(func(e event.Event) {
+	a := New(prov, reg, NewSession(""), Options{}, event.FuncSink(func(e event.Event) {
 		events = append(events, e)
 	}))
 	if err := a.Run(withNoClosedLoop(context.Background()), "advance status twice"); err != nil {

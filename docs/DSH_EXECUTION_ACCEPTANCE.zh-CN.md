@@ -55,7 +55,8 @@ Windows 验证在本机 Parallels Windows 11 中原生执行，不以交叉编�
 
 ## PR #10223 评审修正
 
-评审基线：head `3f7350f6e`，当前 base 与 merge-base 为 `104792af2`。
+初次评审基线：head `3f7350f6e`，当时的 merge-base 为 `104792af2`。
+本次冲突整合以 `main-v2@4daa815be`（#10209）为验证基线。
 实现参考 DSH 的 `fs-observation-policy`（会话持有观察、按观察存在状态确定写入意图）
 和 `fs-local/src/fsio.ts`（先暂存、再不可覆盖发布），保留 Reasonix 的 Go、编码和缓冲区适配。
 
@@ -77,8 +78,9 @@ Windows 验证在本机 Parallels Windows 11 中原生执行，不以交叉编�
 `internal/fileops/observation_review_test.go`、`internal/fileutil/atomicwrite_test.go`、
 `internal/agent/harness_review_test.go` 和 `internal/agent/complete_subtask_test.go`。
 Windows 原生复跑覆盖文件身份/ACL 变化检测、发布、移动、观察隔离、真实 shell 连续执行
-及可选子任务报告。子任务描述会使子代理前缀在升级后变化一次；请求序列化与稳定扩展
-缓存守卫通过。实时观察不进入持久化数据。
+及可选子任务报告。退役旧证明/读取策略 schema 并加入当前交付投影，会使 provider 工具
+前缀在升级后变化一次；重生成基线与稳定扩展缓存守卫通过，后续启动保持稳定。实时观察
+不进入持久化数据。
 
 上述修复不提供通用外部进程 CAS、ACP 原子条件写或 exactly-once 副作用保证。
 本轮没有把初始前端与实际壳测试重新标为新 UI 证据，也没有声称完成延迟基准测试。
@@ -86,7 +88,7 @@ Windows 原生复跑覆盖文件身份/ACL 变化检测、发布、移动、观�
 
 ## 删除与保留边界
 
-已删除全文读取债务、批次证据冻结、source-token 授权、锚点阅读范围影子状态、操作 prepared/applied/settled 状态机、完成证明门禁、Auto Guard reviewer、恢复确认动作、重复/无进展拒绝器，以及其不再被调用的 shell 证明预检代码。
+已删除全文读取债务、批次证据冻结、source-token 授权、锚点阅读范围影子状态、操作 prepared/applied/settled 状态机、完成证明门禁、Auto Guard reviewer、恢复确认动作、重复/无进展拒绝器、不再被调用的 shell 证明预检代码，以及可能重新激活这些门禁的旧运行时开关。
 
 保留 Goal、Plan 审批、普通权限策略、沙箱、检查点、多代理、工具调用配对和执行事实展示。旧 provider/session 字段、`recovery_required` 枚举及前端识别只承担旧历史兼容，当前运行路径不写入或激活它们。
 

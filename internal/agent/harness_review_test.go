@@ -23,6 +23,10 @@ func TestRebuiltAgentKeepsLiveFileObservationsAndRealShellWorks(t *testing.T) {
 		reg.Add(target)
 	}
 	a := New(nil, reg, NewSession(""), Options{}, event.Discard)
+	// This test exercises observation transfer and call ordering. Test binaries
+	// do not register the production Windows sandbox helper entry point, so run
+	// the diagnostic shell call under an explicit unconfined test preset.
+	a.SetPermissionPresetProvider(func() string { return "danger-full-access" })
 	run := func(a *Agent, calls []provider.ToolCall) {
 		t.Helper()
 		a.Session().Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: calls})
@@ -38,6 +42,7 @@ func TestRebuiltAgentKeepsLiveFileObservationsAndRealShellWorks(t *testing.T) {
 	}
 	run(a, []provider.ToolCall{{ID: "read", Name: "read_file", Arguments: `{"path":"file","limit":1}`}})
 	b := New(nil, reg, NewSession(""), Options{}, event.Discard)
+	b.SetPermissionPresetProvider(func() string { return "danger-full-access" })
 	b.InheritFileObservationsFrom(a)
 	run(b, []provider.ToolCall{
 		{ID: "edit", Name: "edit_file", Arguments: `{"path":"file","old_string":"old","new_string":"new"}`},

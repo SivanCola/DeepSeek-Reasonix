@@ -24,6 +24,7 @@
 | `move_file` | false | 移动或重命名文件。 |
 | `multi_edit` | false | 对单个文件原子应用多个编辑。 |
 | `notebook_edit` | false | 编辑 Jupyter notebook 的单个 cell。 |
+| `present` | true | 在写入完成后、最终回答前声明 1 到 8 个现有文件为面向用户的交付物。宿主原子校验路径，只记录路径和可选说明；不会复制、执行、上传文件，也不会把文件字节暴露给模型结果。 |
 | `read_file` | true | 读取一个有界文本窗口，可指定行 offset/limit。成功窗口会观察当前文件版本，供后续结构化修改使用。旧 intent 和 cursor 仅作导航兼容，不会产生全文完成要求。 |
 | `todo_write` | true | 替换由模型维护的任务列表，状态描述实际进度，不要求串行执行或宿主签收。 |
 | `update_goal` | true | 报告活动 Goal 的模型判断：continue、complete 或 blocked。completion 是模型声明；正常结束和身份校验仍生效，真实检查独立保留，无 evaluator 或质量门禁。 |
@@ -48,7 +49,7 @@ go test ./internal/tool -run TestBuiltinToolContractDocumentation
 
 每个会话都使用这套 Executor 工具面，并额外提供稳定代理 `use_capability`
 （list/inspect/call/decline），用于在不改变 provider 可见 Schema 的前提下发现和调用按需
-MCP（含 `auto_start=false`）。模型根据任务上下文选择验证与审查；宿主保留动作权限、Plan 批准前写入限制、租约、覆盖保护和失败批次阻断，不从路径推导验收义务，也不要求写入前建立待办。结构化审查工具仍可按需调用。
+MCP（含 `auto_start=false`）。模型根据任务上下文选择验证、审查与完成；宿主保留动作权限、Plan 批准前写入限制、沙箱、租约和结构化文件的过期版本保护，不从路径推导验收义务，也不要求写入前建立待办。普通工具失败不会跳过同批后续的独立调用；审查由模型按需执行，不依赖专用证明工具。
 
 ## 统一 Boot 工具面
 

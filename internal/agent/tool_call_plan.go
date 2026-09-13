@@ -39,12 +39,14 @@ type toolCallPlan struct {
 	cctx                context.Context
 	// mcpApp collects the call's Apps presentation from the executing tool.
 	mcpApp                                                 *tool.MCPAppResult
+	presentedFiles                                         func() []tool.PresentedFile
 	releaseParentWrite, releaseMutationWrite, releaseLease func()
 	mutationPath                                           string
 	mutationObserved, mutationAfterDone, executed          bool
 	hooksMayMutateWorkspace                                bool
 	perCallWriteRoots                                      []string
 	skipOrdinaryGate                                       bool
+	permissionPreset                                       string
 }
 
 func cloneEvidenceTarget(target tool.EvidenceTargetInfo) tool.EvidenceTargetInfo {

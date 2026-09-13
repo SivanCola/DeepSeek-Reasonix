@@ -36,7 +36,10 @@ type toolOutcome struct {
 	execution *tool.ShellExecution
 	// mcpApp is the optional MCP Apps presentation; provider-excluded like
 	// execution, persisted for Desktop cards.
-	mcpApp           *provider.MCPAppPresentation
+	mcpApp *provider.MCPAppPresentation
+	// presentedFiles is trusted host metadata from a successful built-in
+	// present call. It shares the persisted tool-result commit boundary.
+	presentedFiles   []provider.PresentedFile
 	readTaskID       string
 	readEnvelope     *tool.ReadResultEnvelope
 	diagnostic       *tool.OperationDiagnostic

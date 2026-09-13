@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useT, type Translator } from "../lib/i18n";
-import type { DirEntry, ToolApprovalMode } from "../lib/types";
+import { normalizeToolApprovalMode, type DirEntry } from "../lib/types";
 import {
   DecisionConfirmBar,
   PromptAction,
@@ -25,7 +25,7 @@ function requiresFreshHumanApproval(tool: string): boolean {
   return tool === "remember" || tool === "forget" || tool === "exit_plan_mode" || tool === "sandbox_escape" || tool === "config_write";
 }
 
-const APPROVAL_MODE_RANK: Record<ToolApprovalMode, number> = { ask: 0, auto: 1, yolo: 2 };
+const APPROVAL_MODE_RANK = { "read-only": 0, "workspace-write": 1, "danger-full-access": 2 } as const;
 
 export function approvalToolLabel(tool: string, t: Translator): string {
   switch (tool) {
@@ -109,7 +109,10 @@ function localizeApprovalReason(tool: string, reason: string | undefined, t: Tra
     trimmed = remainingLines.join("\n").trim();
   }
   let localized = trimmed;
-  if (tool === "bash" && trimmed.includes("nested or indirect shell execution")) {
+  if (
+    tool === "bash" &&
+    (trimmed.includes("nested or indirect shell execution") || trimmed.includes("requests access outside the active permission preset"))
+  ) {
     localized = t("approval.dynamicBashReason");
   }
   if (tool === "config_write") {
@@ -255,7 +258,7 @@ function InteractiveApprovalModal({
     !isPlanApproval &&
     toolApprovalMode !== undefined &&
     initialToolApprovalModeRef.current !== undefined &&
-    APPROVAL_MODE_RANK[toolApprovalMode] > APPROVAL_MODE_RANK[initialToolApprovalModeRef.current];
+    APPROVAL_MODE_RANK[normalizeToolApprovalMode(toolApprovalMode)] > APPROVAL_MODE_RANK[normalizeToolApprovalMode(initialToolApprovalModeRef.current)];
   const subject = localizeApprovalSubject(approval.tool, approval.subject, t);
   const reason = localizePlanModeApprovalReason(approval.tool, localizeApprovalReason(approval.tool, approval.reason, t), t);
   const subjectSummary = subject.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
@@ -438,13 +441,6 @@ function InteractiveApprovalModal({
               },
               {
                 key: "3",
-                label: t("approval.allowRulePersistent"),
-                desc: t("approval.allowRulePersistentDesc"),
-                kind: "submit" as const,
-                run: () => onAnswer(true, true, true),
-              },
-              {
-                key: "4",
                 label: t("approval.deny"),
                 desc: t("approval.denyDesc"),
                 tone: "danger" as const,
@@ -464,7 +460,10 @@ function InteractiveApprovalModal({
   const descriptionExpanded = selectedDescriptionId !== undefined && expandedDescriptionId === selectedDescriptionId;
 
   useEffect(() => {
-    cardRef.current?.focus();
+    // Ordinary permission cards must not steal focus from the composer or an
+    // active IME composition. Plan and recovery decisions retain focus because
+    // they replace the composer interaction rather than supplement it.
+    if (isPlanApproval || isRecoveryApproval) cardRef.current?.focus();
     setRevisionOpen(false);
     setRevisionText("");
     setRecoveryGuidanceOpen(false);

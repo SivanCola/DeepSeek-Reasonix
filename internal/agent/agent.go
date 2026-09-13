@@ -340,9 +340,8 @@ type Agent struct {
 	steerRunActive bool
 
 	// task is the state shared by every Run continuing one delivery scope: the
-	// receipt ledger complete_step validates citations against, the spend that
-	// outlives a single Run, and the guards keyed to the task rather than the
-	// turn. See taskstate.go.
+	// spend that outlives a single Run and resource limits keyed to the task
+	// rather than the turn. See taskstate.go.
 	task taskRuntime
 
 	planContract *plancontract.Plan // approved plan this turn executes, if any
@@ -459,7 +458,7 @@ func (a *Agent) SetRecoveryGate(g RecoveryGate) {
 func (a *Agent) SetRecoveryIdentity(agentID, taskID string) {
 }
 
-// RecoveryGate returns the attached Auto Guard (may be nil).
+// RecoveryGate is retained for source compatibility and always returns nil.
 func (a *Agent) RecoveryGate() RecoveryGate {
 	return nil
 }
@@ -989,13 +988,6 @@ type Options struct {
 	// (or cloned for) sub-agents. nil disables v2 capture. Does not affect
 	// provider-visible tool schemas or prompts.
 	MutationObserver *checkpoint.MutationObserver
-	// LegacyAnchorSafetyGate is an internal kill switch for reverting
-	// delete_range to the pre-fingerprint full-file fresh-read requirement.
-	// It never enters provider-visible prompts or tool schemas.
-	LegacyAnchorSafetyGate bool
-	// ReadPipeline carries the internal read-pipeline rollout switches; both are
-	// off by default, fixed per run, and never enter provider bytes.
-	ReadPipeline ReadPipelineOptions
 }
 
 // New constructs an Agent. MaxSteps <= 0 means no cap — the run loop continues
@@ -1052,28 +1044,25 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		imageInput: newImageInput(opts.ImageInput, prov),
 		svc: newAgentServices(prov, tools, sink, gate, planModeReadOnlyTrust,
 			sandboxEscapeApprover, configWriteApprover, hooks, opts),
-		reads:            readState{gates: !opts.ReadPipeline.LegacyEvidenceGates},
+		reads:            readState{},
 		fileObservations: fileops.NewStore(),
 		agentConfig: agentConfig{
-			maxSteps:                opts.MaxSteps,
-			maxStepsKey:             maxStepsKey,
-			reasoningByteLimit:      reasoningByteLimit,
-			maxOutputTokens:         opts.MaxOutputTokens,
-			temperature:             opts.Temperature,
-			usageSource:             usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
-			modelRef:                strings.TrimSpace(opts.ModelRef),
-			workspaceID:             strings.TrimSpace(opts.WorkspaceID),
-			classifierTaskText:      opts.ClassifierTaskText,
-			writeWorkspaceRoot:      strings.TrimSpace(opts.WriteWorkspaceRoot),
-			subagentDepth:           subagentDepth,
-			maxSubagentDepth:        maxSubagentDepth,
-			contextWindow:           opts.ContextWindow,
-			compactRatio:            opts.CompactRatio,
-			recentKeep:              opts.RecentKeep,
-			archiveDir:              opts.ArchiveDir,
-			legacyAnchorSafetyGate:  opts.LegacyAnchorSafetyGate,
-			readCoordinatorShadow:   !opts.ReadPipeline.LegacyCoordinator,
-			legacyImplicitFullReads: opts.ReadPipeline.LegacyImplicitFullReads,
+			maxSteps:           opts.MaxSteps,
+			maxStepsKey:        maxStepsKey,
+			reasoningByteLimit: reasoningByteLimit,
+			maxOutputTokens:    opts.MaxOutputTokens,
+			temperature:        opts.Temperature,
+			usageSource:        usageSourceOrDefault(opts.UsageSource, event.UsageSourceExecutor),
+			modelRef:           strings.TrimSpace(opts.ModelRef),
+			workspaceID:        strings.TrimSpace(opts.WorkspaceID),
+			classifierTaskText: opts.ClassifierTaskText,
+			writeWorkspaceRoot: strings.TrimSpace(opts.WriteWorkspaceRoot),
+			subagentDepth:      subagentDepth,
+			maxSubagentDepth:   maxSubagentDepth,
+			contextWindow:      opts.ContextWindow,
+			compactRatio:       opts.CompactRatio,
+			recentKeep:         opts.RecentKeep,
+			archiveDir:         opts.ArchiveDir,
 		},
 		sess: sessionRuntime{
 			conversation: session,

@@ -19,18 +19,19 @@ func (a *Agent) emitBatchToolResult(ctx context.Context, c provider.ToolCall, o 
 		readOnly = *c.ResolvedReadOnly
 	}
 	tr := event.Tool{
-		RunState:     outcomeRunState(o),
-		ID:           c.ID,
-		Name:         c.Name,
-		Args:         c.Arguments,
-		ResolvedName: c.ResolvedName,
-		CapabilityID: c.CapabilityID,
-		Output:       o.output,
-		Err:          o.errMsg,
-		ReadOnly:     readOnly,
-		Truncated:    o.truncated,
-		DurationMs:   duration,
-		Execution:    toEventShellExecution(o.execution, duration),
+		RunState:       outcomeRunState(o),
+		ID:             c.ID,
+		Name:           c.Name,
+		Args:           c.Arguments,
+		ResolvedName:   c.ResolvedName,
+		CapabilityID:   c.CapabilityID,
+		Output:         o.output,
+		Err:            o.errMsg,
+		ReadOnly:       readOnly,
+		Truncated:      o.truncated,
+		DurationMs:     duration,
+		Execution:      toEventShellExecution(o.execution, duration),
+		PresentedFiles: append([]provider.PresentedFile(nil), o.presentedFiles...),
 	}
 	if o.diagnostic != nil {
 		tr.Diagnostic, _ = json.Marshal(o.diagnostic)
@@ -94,7 +95,7 @@ func (a *Agent) recordToolExecutionAudit(readOnly, parallel bool, startedAt, dur
 
 func (a *Agent) storeBatchToolResult(ctx context.Context, call provider.ToolCall, o toolOutcome) {
 	state := outcomeRunState(o)
-	msg := provider.Message{Role: provider.RoleTool, Content: o.output, Images: o.images, VisionSummary: o.visionSummary, ToolCallID: call.ID, Name: call.Name, ToolRunState: state, ToolExecution: toProviderToolExecution(o.execution)}
+	msg := provider.Message{Role: provider.RoleTool, Content: o.output, Images: o.images, VisionSummary: o.visionSummary, ToolCallID: call.ID, Name: call.Name, ToolRunState: state, ToolExecution: toProviderToolExecution(o.execution), PresentedFiles: provider.NewPresentedFilesMetadata(o.presentedFiles)}
 	if o.diagnostic != nil {
 		msg.ToolDiagnostic, _ = json.Marshal(o.diagnostic)
 	}

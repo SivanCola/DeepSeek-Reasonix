@@ -1542,7 +1542,6 @@ func subagentRecoveryTaskID(ctx context.Context, ref string) string {
 	return "subagent"
 }
 
-// WithRecoveryGate shares Auto Guard with spawned sub-agents.
 func (t *TaskTool) WithWriteRoots(set *sandbox.WritableRootSet) *TaskTool {
 	if t == nil {
 		return nil
@@ -1552,6 +1551,8 @@ func (t *TaskTool) WithWriteRoots(set *sandbox.WritableRootSet) *TaskTool {
 }
 
 func (t *TaskTool) WithRecoveryGate(g RecoveryGate) *TaskTool {
+	// Retired source-compatible option. Sub-agents inherit execution facts but
+	// never an Auto Guard admission policy.
 	return t
 }
 
