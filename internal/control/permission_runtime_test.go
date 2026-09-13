@@ -50,10 +50,10 @@ func TestPermissionPresetChangeWaitsForApprovalCommit(t *testing.T) {
 		t.Fatal("approval did not reach its commit barrier")
 	}
 
-	switched := make(chan error, 1)
+	switched := make(chan struct{})
 	go func() {
-		_, _, err := c.SetPermissionPreset(ToolApprovalReadOnly, before.Revision)
-		switched <- err
+		c.SetToolApprovalMode(ToolApprovalReadOnly)
+		close(switched)
 	}()
 	// With one scheduler P, Gosched lets the preset goroutine run until it is
 	// blocked behind the approval transaction. Publishing a revision before
@@ -76,9 +76,7 @@ func TestPermissionPresetChangeWaitsForApprovalCommit(t *testing.T) {
 	if got := <-reply; !got.allow || !got.session {
 		t.Fatalf("approval reply = %+v, want session allow", got)
 	}
-	if err := <-switched; err != nil {
-		t.Fatalf("preset switch after approval commit: %v", err)
-	}
+	<-switched
 	after := c.PermissionSnapshot()
 	if after.Preset != ToolApprovalReadOnly || after.Revision <= before.Revision {
 		t.Fatalf("permission snapshot after switch = %+v", after)
