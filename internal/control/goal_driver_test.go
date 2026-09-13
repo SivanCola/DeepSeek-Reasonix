@@ -439,7 +439,9 @@ func TestUnlimitedGoalDriverRunsBeyondHarnessDefaultCeiling(t *testing.T) {
 	c.Send("exercise the unlimited goal driver")
 	select {
 	case <-runner.done:
-	case <-time.After(15 * time.Second):
+	// The race detector instruments all 257 Flush/admission cycles and is
+	// intentionally much slower than the ordinary suite on CI runners.
+	case <-time.After(45 * time.Second):
 		t.Fatal("unlimited goal did not cross 256 admitted automatic rounds")
 	}
 	view, err := c.goalLifecycleView()

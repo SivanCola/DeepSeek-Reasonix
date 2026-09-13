@@ -472,6 +472,10 @@ func loadedGoalDraftMode(goal string) bool {
 	return strings.TrimSpace(goal) == ""
 }
 
+func selectedGoalDraftMode(modeID, goal string) bool {
+	return modeID == sessionModeGoal && loadedGoalDraftMode(goal)
+}
+
 func setACPGoalDurably(ctrl acpController, objective string) error {
 	if ctrl == nil {
 		return errors.New("session controller is unavailable")
@@ -838,7 +842,10 @@ func (s *service) sessionSetMode(ctx context.Context, raw json.RawMessage) (any,
 		}
 	}
 	ctrl.SetPlanMode(nextMode == sessionModePlan)
-	sess.setGoalDraftMode(nextMode == sessionModeGoal && ctrl.GoalStatus() != control.GoalStatusRunning)
+	// Entering Goal mode only arms a draft when no lifecycle exists. A restored,
+	// blocked, paused, or disarmed Goal must retain its complete objective so the
+	// user's next prompt can authorize recovery instead of replacing it.
+	sess.setGoalDraftMode(selectedGoalDraftMode(nextMode, ctrl.Goal()))
 	if legacyApproval != "" {
 		ctrl.SetToolApprovalMode(legacyApproval)
 		sess.setToolApprovalMode(legacyApproval)
