@@ -24,6 +24,7 @@ export interface ChatViewSource {
 }
 
 const sameKeys = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((key, i) => key === b[i]);
+const sameItems = (a: readonly Item[], b: readonly Item[]) => a.length === b.length && a.every((item, i) => item === b[i]);
 const shallowSame = (a: object, b: object) => Object.keys(a).length === Object.keys(b).length
   && Object.entries(a).every(([key, value]) => value === (b as Record<string, unknown>)[key]);
 const foldViews = new Map<string, Set<string>>();
@@ -37,6 +38,14 @@ export class ChatSource implements ChatViewSource {
   private orderListeners = new Set<Listener>();
   private statusListeners = new Set<Listener>();
   private nodeListeners = new Map<string, Set<Listener>>();
+  private projectedGroups = new Map<string, {
+    user?: Extract<Item, { kind: "user" }>;
+    items: readonly Item[];
+    active: boolean;
+    latest: boolean;
+    present: readonly string[];
+    order: readonly string[];
+  }>();
   private dirty = new Set<string>();
   private orderDirty = false;
   private statusDirty = false;
@@ -85,12 +94,24 @@ export class ChatSource implements ChatViewSource {
         groups.push(group);
       } else group.items.push(item);
     }
-    const add = (node: ChatNode, visible = true) => { this.put(node); present.add(node.key); if (visible) order.push(node.key); };
+    const groupKeys = new Set(groups.map(current => current.key));
     for (const current of groups) {
       if (!current.user && !current.items.length) continue;
       const turnKey = current.key;
-      if (current.user) add({ kind: "user", key: current.user.id, turnKey, item: current.user });
       const active = current === groups[groups.length - 1] && input.running;
+      const latest = current === groups[groups.length - 1];
+      const cached = this.projectedGroups.get(turnKey);
+      if (cached && cached.user === current.user && cached.active === active && cached.latest === latest && sameItems(cached.items, current.items)) {
+        cached.present.forEach(key => present.add(key));
+        order.push(...cached.order);
+        continue;
+      }
+      const groupPresent: string[] = [];
+      const groupOrderStart = order.length;
+      const add = (node: ChatNode, visible = true) => {
+        this.put(node); present.add(node.key); groupPresent.push(node.key); if (visible) order.push(node.key);
+      };
+      if (current.user) add({ kind: "user", key: current.user.id, turnKey, item: current.user });
       const answer = [...current.items].reverse().find(item => item.kind === "assistant" && item.text.trim()) as Extract<Item, { kind: "assistant" }> | undefined;
       const answerIndex = answer ? current.items.indexOf(answer) : -1;
       // Harness folds the completed process range, including recovered call errors.
@@ -140,9 +161,13 @@ export class ChatSource implements ChatViewSource {
         && oldTail.modifiedFiles.every((file, index) => file.path === nextModified[index]?.path && file.operation === nextModified[index]?.operation && file.toolCallId === nextModified[index]?.toolCallId)
         ? oldTail.modifiedFiles : nextModified;
       add({ kind: "tail", key: tailKey, turnKey, answerKey: answer?.id, turn: current.turn,
-        latest: current === groups[groups.length - 1], presentedFiles: stablePresented, modifiedFiles: stableModified });
+        latest, presentedFiles: stablePresented, modifiedFiles: stableModified });
+      this.projectedGroups.set(turnKey, {
+        user: current.user, items: current.items, active, latest, present: groupPresent, order: order.slice(groupOrderStart),
+      });
     }
     for (const key of this.nodes.keys()) if (!present.has(key)) { this.nodes.delete(key); this.dirty.add(key); }
+    for (const key of this.projectedGroups.keys()) if (!groupKeys.has(key)) this.projectedGroups.delete(key);
     const children = new Map<string, Extract<ChatNode, { kind: "tool" }>[]>();
     for (const node of this.nodes.values()) if (node.kind === "tool" && node.item.parentId) {
       const list = children.get(node.item.parentId) ?? [];
@@ -155,7 +180,7 @@ export class ChatSource implements ChatViewSource {
         this.children.set(key, next); this.dirty.add(`${key}:children`);
       }
     }
-    for (const key of this.opened) if (!groups.some(group => group.key === key)) this.opened.delete(key);
+    for (const key of this.opened) if (!groupKeys.has(key)) this.opened.delete(key);
     if (!sameKeys(this.order, order)) { this.order = order; this.orderDirty = true; }
   }
   /** Already frame-batched by the controller; no additional frame queue. */
@@ -201,6 +226,6 @@ export class ChatSource implements ChatViewSource {
   dispose() {
     this.epoch++; this.scheduled = false; this.dirty.clear();
     this.orderListeners.clear(); this.statusListeners.clear(); this.nodeListeners.clear();
-    this.nodes.clear(); this.children.clear(); this.order = []; this.input = undefined;
+    this.nodes.clear(); this.children.clear(); this.projectedGroups.clear(); this.order = []; this.input = undefined;
   }
 }

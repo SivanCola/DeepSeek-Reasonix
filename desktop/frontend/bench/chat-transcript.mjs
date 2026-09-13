@@ -181,12 +181,13 @@ try {
       for (const turns of [240, 1000]) {
         const started = Date.now();
         await page.evaluate(count => { window.chatMetrics.inputs = []; window.chatMetrics.tasks = []; window.chatFixture.reset(count); }, turns);
-        await page.waitForFunction(() => document.querySelectorAll('[data-chat-kind="user"]').length === 60);
+        await page.locator(`[data-chat-anchor-key="u${Math.max(0, turns - 60)}"][data-chat-kind="user"]`).waitFor();
         const pages = [];
         for (let loaded = 60; loaded < turns; loaded += 60) {
           const pageStart = Date.now();
           await page.evaluate(() => window.chatFixture.older());
-          await page.waitForFunction(count => document.querySelectorAll('[data-chat-kind="user"]').length === count, Math.min(turns, loaded + 60));
+          const nextLoaded = Math.min(turns, loaded + 60);
+          await page.locator(`[data-chat-anchor-key="u${turns - nextLoaded}"][data-chat-kind="user"]`).waitFor();
           await frame(); pages.push(Date.now() - pageStart);
         }
         await frame();
@@ -203,6 +204,7 @@ try {
         samples.push({ turns, mountedMs, pages, inputP95, longTaskMax: metrics.longTaskSupported ? longTaskMax : null, ...metrics, dom: await page.locator("*").count() });
         assert.ok(inputP95 <= 200, `${turns} turns input P95 ${inputP95}`);
         assert.ok(longTaskMax <= 500, `${turns} turns longest task ${longTaskMax}`);
+        assert.equal(await page.locator('[data-chat-kind="user"]').count(), turns, `${turns} turns fully mounted`);
         await page.evaluate(() => window.chatFixture.settle());
       }
       await frame();

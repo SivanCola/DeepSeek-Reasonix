@@ -55,7 +55,7 @@
 /* Harness ChatView: only nonempty seats contribute the 16px flow rhythm. */
 .chat-column > :not(.chat-node:empty) ~ :not(.chat-node:empty) { margin-top: var(--dsh-chat-flow-gap, 16px); }
 .chat-node[data-turn-process-answer] { --dsh-chat-flow-gap: 8px; }
-.chat-node { min-width: 0; overflow-anchor: none; }
+.chat-node { min-width: 0; overflow-anchor: none; contain: layout style; }
 .chat-transcript .msg, .chat-transcript .md > * { content-visibility: visible; contain-intrinsic-size: none; }
 .chat-node:empty { display: none; }
 .chat-transcript .chat-node > .msg { width: 100%; max-width: none; margin: 0; animation: none; }

@@ -62,25 +62,18 @@ function itemAtPointer(
 /** Scroll state the mask fades and follow logic read together. */
 interface RailScrollState {
   readonly top: number
-  readonly canScrollUp: boolean
-  readonly canScrollDown: boolean
+  readonly viewportHeight: number
 }
 
-const RAIL_AT_REST: RailScrollState = { top: 0, canScrollUp: false, canScrollDown: false }
+const RAIL_AT_REST: RailScrollState = { top: 0, viewportHeight: 0 }
 
-function railScrollState(scroller: HTMLElement): RailScrollState {
-  const top = scroller.scrollTop
-  return {
-    top,
-    canScrollUp: top > 1,
-    canScrollDown: top < scroller.scrollHeight - scroller.clientHeight - 1,
-  }
+function railScrollState(scroller: HTMLElement, viewportHeight: number): RailScrollState {
+  return { top: scroller.scrollTop, viewportHeight }
 }
 
 function sameRailScrollState(left: RailScrollState, right: RailScrollState): boolean {
   return left.top === right.top
-    && left.canScrollUp === right.canScrollUp
-    && left.canScrollDown === right.canScrollDown
+    && left.viewportHeight === right.viewportHeight
 }
 
 function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, renderPreview, t }: TurnNavigatorProps) {
@@ -92,11 +85,13 @@ function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, renderPrev
   const previewId = useId()
   const hasItems = items.length > 1
 
-  const syncScrollState = (): void => {
+  const syncScrollState = (viewportHeight?: number): void => {
     const scroller = scrollerRef.current
     if (scroller === null) return
-    const next = railScrollState(scroller)
-    setScrollState(current => sameRailScrollState(current, next) ? current : next)
+    setScrollState(current => {
+      const next = railScrollState(scroller, viewportHeight ?? current.viewportHeight)
+      return sameRailScrollState(current, next) ? current : next
+    })
   }
 
   // Frame resizes (band/composer changes) move the overflow edges without a
@@ -104,11 +99,10 @@ function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, renderPrev
   useEffect(() => {
     const scroller = scrollerRef.current
     if (scroller === null || typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(syncScrollState)
+    const observer = new ResizeObserver(entries => { syncScrollState(entries[0]?.contentRect.height ?? 0) })
     observer.observe(scroller)
     return () => { observer.disconnect() }
   }, [hasItems])
-  useEffect(syncScrollState, [items.length])
 
   // Keep the active mark visible: centre it whenever it leaves the scrollport,
   // unless the reader's pointer is working the rail.
@@ -117,8 +111,8 @@ function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, renderPrev
     const index = items.findIndex(item => item.turn === activeTurn)
     if (scroller === null || index < 0 || pointerInsideRef.current) return
     const markTop = index * TURN_SPACING_PX + RAIL_INSET_PX
-    const viewTop = scroller.scrollTop
-    const viewHeight = scroller.clientHeight
+    const viewTop = scrollState.top
+    const viewHeight = scrollState.viewportHeight
     if (viewHeight <= 0 || (markTop >= viewTop + FADE_PX && markTop <= viewTop + viewHeight - FADE_PX)) return
     const target = Math.max(0, markTop - viewHeight / 2)
     const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -127,8 +121,7 @@ function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, renderPrev
     } else {
       scroller.scroll?.({ top: target })
     }
-    syncScrollState()
-  }, [activeTurn, items])
+  }, [activeTurn, items, scrollState.top, scrollState.viewportHeight])
 
   if (items.length < 2) return null
   const previewIndex = items.findIndex(item => item.turn === previewTurn)
@@ -144,8 +137,12 @@ function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, renderPrev
     if (item !== undefined) onNavigate(item)
   }
   const fadeClasses = [css.scroller]
-  if (scrollState.canScrollUp) fadeClasses.push(css.fadeTop)
-  if (scrollState.canScrollDown) fadeClasses.push(css.fadeBottom)
+  const naturalHeight = (items.length - 1) * TURN_SPACING_PX + 2 * RAIL_INSET_PX
+  const viewportHeight = scrollState.viewportHeight || Math.min(naturalHeight, 420)
+  const firstVisible = Math.max(0, Math.floor((scrollState.top - RAIL_INSET_PX) / TURN_SPACING_PX) - 4)
+  const lastVisible = Math.min(items.length, Math.ceil((scrollState.top + viewportHeight) / TURN_SPACING_PX) + 4)
+  if (scrollState.top > 1) fadeClasses.push(css.fadeTop)
+  if (scrollState.top < naturalHeight - viewportHeight - 1) fadeClasses.push(css.fadeBottom)
   return (
     <div className={css.slot}>
       <nav
@@ -166,7 +163,8 @@ function TurnNavigatorRail({ items, activeTurn, busyTurn, onNavigate, renderPrev
           onScroll={() => { syncScrollState() }}
         >
           <div className={css.marks}>
-            {items.map((item, index) => {
+            {items.slice(firstVisible, lastVisible).map((item, visibleIndex) => {
+              const index = firstVisible + visibleIndex
               const active = item.turn === activeTurn
               const showingPreview = item.turn === previewTurn
               const previewDistance = previewIndex < 0 ? -1 : Math.abs(index - previewIndex)
