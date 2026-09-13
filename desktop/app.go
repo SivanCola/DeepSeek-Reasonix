@@ -41,6 +41,7 @@ import (
 	"reasonix/internal/extension/providerext"
 	"reasonix/internal/fileref"
 	fileenc "reasonix/internal/fileutil/encoding"
+	goaldomain "reasonix/internal/goal"
 	"reasonix/internal/i18n"
 	"reasonix/internal/mcpdiag"
 	"reasonix/internal/mcpregistry"
@@ -6501,6 +6502,7 @@ type Meta struct {
 	AgentPreset string           `json:"agentPreset,omitempty"`
 	Goal        string           `json:"goal,omitempty"`
 	GoalStatus  string           `json:"goalStatus,omitempty"`
+	GoalView    *goaldomain.View `json:"goalView,omitempty"`
 	GoalRuntime *GoalRuntimeView `json:"goalRuntime,omitempty"`
 	// Nil means no authoritative snapshot; non-nil empty means clear the panel.
 	CanonicalTodos *[]evidence.TodoItem `json:"canonicalTodos,omitempty"`
@@ -6602,6 +6604,10 @@ func (a *App) MetaForTab(tabID string) Meta {
 	agentPreset := boot.AgentPresetBalanced
 	goal := snap.currentGoal()
 	goalStatus := snap.currentGoalStatus()
+	var goalView *goaldomain.View
+	if reader, ok := snap.ctrl.(control.RuntimeStateReader); ok {
+		goalView = reader.RuntimeStateSnapshot().Goal
+	}
 	sessionPath := strings.TrimSpace(snap.sessionPath)
 	var sessionRevision int64
 	var sessionDigest string
@@ -6634,6 +6640,7 @@ func (a *App) MetaForTab(tabID string) Meta {
 		ToolApprovalMode:      toolApprovalMode,
 		Goal:                  goal,
 		GoalStatus:            goalStatus,
+		GoalView:              goalView,
 		GoalRuntime:           goalRuntimeViewFromController(snap.ctrl),
 		CanonicalTodos:        ctrlTodos(snap.ctrl),
 		PinnedFiles:           buildPinnedContext(snap.workspaceRoot, tab.GetPinnedFiles()).Infos,

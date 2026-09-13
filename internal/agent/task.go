@@ -996,7 +996,7 @@ func (t *TaskTool) prepareTranscriptRunWithPrompt(ctx context.Context, subReg *t
 }
 
 func childToolIdentityContext(ctx context.Context) context.Context {
-	ctx = tool.WithoutGoalTurnRecorder(ctx)
+	ctx = tool.WithoutGoalLifecycle(ctx)
 	ctx = memory.WithoutQueue(ctx)
 	ctx = jobs.WithoutManager(ctx)
 	return planmode.WithActive(ctx, PlanModeFromContext(ctx))
@@ -1633,7 +1633,7 @@ func RunSubAgentWithSession(ctx context.Context, prov provider.Provider, reg *to
 	}
 	ctx = WithoutTurnContextBundle(ctx)
 	// Isolate temporary files for this run before any tool execution.
-	ctx = tool.WithoutGoalTurnRecorder(ctx)
+	ctx = tool.WithoutGoalLifecycle(ctx)
 	if opts.MemoryQueue != nil {
 		ctx = memory.WithQueue(ctx, opts.MemoryQueue)
 	} else {

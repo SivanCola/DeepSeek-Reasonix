@@ -13,6 +13,7 @@ import (
 
 	"reasonix/internal/browser"
 	"reasonix/internal/control"
+	"reasonix/internal/servecontract"
 )
 
 // Capability tokens advertised on the /auth/token handshake reply so a
@@ -26,6 +27,7 @@ const (
 	capabilitySessionEventsV3    = "session-events-v3"
 	capabilitySessionIdentityV1  = "session-identity-v1"
 	capabilitySessionOwnershipV1 = "session-ownership-v1"
+	capabilityGoalLifecycleV2    = servecontract.GoalLifecycleV2
 )
 
 // BrowserBroker is Serve's end of the desktop browser broker: one HTTP
@@ -233,7 +235,7 @@ func (s *Server) capabilities() []string {
 		capabilitySessionEventsV3,
 	}
 	if identity, ok := s.ctl().(control.IdentityLifecycle); ok && identity.UsesExclusiveSessionV3() {
-		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1)
+		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1, capabilityGoalLifecycleV2)
 	}
 	if s.buildOptions.BrowserExecutor != nil {
 		caps = append(caps, capabilityBrowser)

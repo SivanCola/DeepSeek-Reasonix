@@ -42,6 +42,7 @@ import (
 	"reasonix/internal/extension"
 	"reasonix/internal/extension/dispatch"
 	"reasonix/internal/extension/uihub"
+	goaldomain "reasonix/internal/goal"
 	"reasonix/internal/guardian"
 	"reasonix/internal/hook"
 	"reasonix/internal/i18n"
@@ -108,7 +109,12 @@ type Controller struct {
 	// taskBudget is the configured spend gate, as passed at construction.
 	taskBudget agent.TaskBudget
 	// goalTokenBudget bounds an unattended Goal loop; 0 leaves it unbounded.
-	goalTokenBudget int
+	goalTokenBudget      int
+	goalResourceMu       sync.Mutex
+	goalTokensUsed       int
+	goalRequestsUsed     int
+	goalTokenLimit       int
+	goalBudgetExtensions int
 
 	// goalUsageTee accounts billable usage events into the active goal turn's
 	// observational token total. It wraps the public sink when the caller didn't provide one.
@@ -243,6 +249,20 @@ type Controller struct {
 	// and its persistence, behind its own mutex so a per-turn goal save never
 	// stalls an approval or status poll on c.mu. See goal.go.
 	goals goalMachine
+	// goalLifecycle is the versioned session-v3 goal authority. The legacy
+	// goalMachine remains only while old sidecars are imported and must not be
+	// used as the execution source once the v3 lifecycle cutover is complete.
+	goalLifecycleMu         sync.RWMutex
+	goalLifecycleMutationMu sync.Mutex
+	goalLifecycle           *goaldomain.Machine
+	goalLifecycleLoadErr    error
+	// goalDriver is a level-triggered, process-local scheduler. It never owns a
+	// cross-turn Activity: each accepted continuation enters through the normal
+	// guarded top-level turn path.
+	goalDriverMu      sync.Mutex
+	goalDriverWG      sync.WaitGroup
+	goalDriverPending bool
+	goalDriverActive  *goalRoundReservation
 	// legacyResearchArchive reads explicit pre-unification task paths. It never
 	// creates or mutates archive state. See
 	// autoresearch_manager.go.
@@ -736,6 +756,7 @@ func New(opts Options) *Controller {
 	c := &Controller{
 		taskBudget:                        opts.TaskBudget,
 		goalTokenBudget:                   opts.GoalTokenBudget,
+		goalTokenLimit:                    opts.GoalTokenBudget,
 		goals:                             goalMachine{tokenBudget: opts.GoalTokenBudget},
 		runner:                            opts.Runner,
 		executor:                          opts.Executor,
@@ -803,6 +824,8 @@ func New(opts Options) *Controller {
 }
 
 func (c *Controller) initializeOwnedResources(opts Options) {
+	c.goalUsageTee.setLifecycleUsageRecorder(c.recordGoalLifecycleUsage)
+	c.installGoalLifecycle(opts.SessionRuntime)
 	c.managedSessionEvents.Store(opts.OnSessionTransition != nil)
 	c.permissionRevision.Store(1)
 	// Session-private temporary directory: reuse a shared Manager on hot
@@ -1109,31 +1132,41 @@ func (c *Controller) rebindCheckpoints(sessionPath string) {
 
 // spawnGuardedTurn launches an admitted turn body plus its autosave companion.
 // The caller must already have claimed admission (running=true) under c.mu.
-func (c *Controller) spawnGuardedTurn(ctx context.Context, cancel context.CancelFunc, body func(ctx context.Context) error) {
+func (c *Controller) spawnGuardedTurn(ctx context.Context, cancel context.CancelFunc, body func(ctx context.Context) error, goalRound *goalRoundReservation) {
 	ctx, completion := withGuardedTurnCompletion(ctx)
 	runtimeCtx, runtimeActivity, runtimeErr := c.beginV3RuntimeActivity(ctx, "turn")
 	if runtimeErr != nil {
 		go func() {
 			defer cancel()
 			c.finishGuardedTurn(runtimeErr, completion)
+			c.finishGoalRoundActivity(goalRound)
 		}()
 		return
 	}
 	ctx = runtimeCtx
-	body = c.prepareTurnAdmission(body)
+	body = c.prepareTurnAdmissionWithGoalRound(body, goalRound)
 	c.liveness.reset(time.Now())
 	c.autosaveWG.Go(func() {
 		c.autosaveWhileRunning(ctx)
 	})
 	go func() {
 		defer cancel()
-		defer c.finishV3RuntimeActivity(runtimeActivity)
+		defer func() {
+			c.finishV3RuntimeActivity(runtimeActivity)
+			c.finishGoalRoundActivity(goalRound)
+			c.kickGoalDriver()
+		}()
 		defer func() {
 			if r := recover(); r != nil {
-				c.finishGuardedTurn(fmt.Errorf("internal error: %v", r), completion)
+				err := fmt.Errorf("internal error: %v", r)
+				goalRound.setResult(err, false)
+				c.finishGuardedTurn(err, completion)
 			}
 		}()
 		err := body(ctx)
+		if goalRound != nil {
+			goalRound.setResult(err, errors.Is(ctx.Err(), context.Canceled) && c.CancelRequested())
+		}
 		c.finishGuardedTurn(explainError(err), completion)
 	}()
 }
@@ -1213,7 +1246,7 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		c.running = true
 		c.canceling = false
 		c.mu.Unlock()
-		c.spawnGuardedTurn(ctx, cancel, next)
+		c.spawnGuardedTurn(ctx, cancel, next, nil)
 		c.refreshRuntimeState(event.Event{})
 	}()
 	c.inbox.mu.Lock()
@@ -1332,9 +1365,13 @@ func (c *Controller) runTurn(ctx context.Context, input string) error {
 // composition, checkpoints, hooks, and plan approval. It is for transports that
 // need a blocking request/response boundary, such as ACP session/prompt.
 func (c *Controller) RunTurn(ctx context.Context, input string) error {
-	return c.runSynchronousTurn(ctx, nil, func(runCtx context.Context) error {
+	err := c.runSynchronousTurn(ctx, nil, func(runCtx context.Context) error {
 		return c.runTurn(runCtx, input)
 	})
+	if err != nil {
+		return err
+	}
+	return c.waitForGoalTerminal(ctx)
 }
 
 func (c *Controller) runTurnWithRaw(ctx context.Context, input, raw string) error {
@@ -1870,7 +1907,7 @@ func (c *Controller) applyPlanExec(_, _ string) {
 }
 
 // prometheusPrompt is the strategic planner system prompt.
-const prometheusPrompt = "You are Prometheus, a strategic planner. Interview the user one question at a time. Cover: scope, modules, files, constraints, tests. When ready, output a numbered plan with each step tagged by module. End by calling update_goal with status complete. Do not implement.\n\nFor independent research directions, use parallel_tasks before planning."
+const prometheusPrompt = "You are Prometheus, a strategic planner. Interview the user one question at a time. Cover: scope, modules, files, constraints, tests. When ready, output a numbered plan with each step tagged by module. Read the current goal with get_goal, then call update_goal with its exact ID/revision and action complete. Do not implement.\n\nFor independent research directions, use parallel_tasks before planning."
 
 // applyPrometheus starts an interactive planning interview, inspired by OMO's
 // Prometheus agent. It enters goal mode with a structured interview prompt.
@@ -2820,6 +2857,9 @@ func (c *Controller) PlanMode() bool {
 // incomplete-todo intercept can never be overridden, so the flag is persisted
 // for compatibility with older frontends but no longer changes FSM behavior.
 func (c *Controller) GoalStrict(strict bool) {
+	if c.exclusiveV3Enabled() {
+		return
+	}
 	path, data, ok := c.goals.setStrict(strict)
 	c.persistGoalState(path, data, ok)
 }
@@ -2843,6 +2883,39 @@ func (c *Controller) LoadInactiveGoal(goal string) {
 // SetGoalDurable updates the Goal only when its sidecar can be replaced
 // atomically.
 func (c *Controller) SetGoalDurable(goal string) error {
+	if c.exclusiveV3Enabled() {
+		goal = strings.TrimSpace(goal)
+		current, err := c.goalLifecycleView()
+		if err != nil {
+			return err
+		}
+		if goal == "" {
+			if current == nil {
+				return nil
+			}
+			_, err = c.applyHostGoalMutation(context.Background(), "clear", func(machine *goaldomain.Machine) (*goaldomain.View, error) {
+				if clearErr := machine.Clear(current.Ref()); clearErr != nil {
+					return nil, clearErr
+				}
+				return nil, nil
+			})
+			if err == nil {
+				c.resetGoalResourceBudget()
+			}
+			return err
+		}
+		if current != nil && current.Objective == goal && current.Phase == goaldomain.PhaseActive && current.Activation == goaldomain.ActivationArmed {
+			return nil
+		}
+		_, err = c.applyHostGoalMutation(context.Background(), "set", func(machine *goaldomain.Machine) (*goaldomain.View, error) {
+			created, createErr := machine.Replace(goaldomain.CreateRequest{Objective: goal})
+			return &created, createErr
+		})
+		if err == nil {
+			c.resetGoalResourceBudget()
+		}
+		return err
+	}
 	snapshot := c.goals.capture()
 	legacySnapshot, hadLegacySnapshot := c.legacyRestoreSnapshot()
 	resolved, setup := c.resolveGoalText(goal, GoalResearchAuto)
@@ -2878,6 +2951,12 @@ func (c *Controller) SetGoalDurable(goal string) error {
 }
 
 func (c *Controller) SetGoalWithResearchMode(goal string, researchMode GoalResearchMode) {
+	if c.exclusiveV3Enabled() {
+		if err := c.SetGoalDurable(goal); err != nil {
+			c.notice("goal: " + err.Error())
+		}
+		return
+	}
 	resolved, setup := c.resolveGoalText(goal, researchMode)
 	if setup.notice != "" {
 		c.notice(setup.notice)
@@ -2922,6 +3001,27 @@ func (c *Controller) resolveGoalText(goal string, researchMode GoalResearchMode)
 // ResumeGoal re-enters a recoverable blocked/stopped Goal without resetting its
 // delivery evidence scope or accumulated usage statistics.
 func (c *Controller) ResumeGoal() bool {
+	if c.exclusiveV3Enabled() {
+		current, err := c.goalLifecycleView()
+		if err != nil || current == nil {
+			return false
+		}
+		_, err = c.applyHostGoalMutation(context.Background(), "resume", func(machine *goaldomain.Machine) (*goaldomain.View, error) {
+			resumed, resumeErr := machine.Resume(current.Ref(), true)
+			return &resumed, resumeErr
+		})
+		if err != nil {
+			return false
+		}
+		if current.BlockedReason != nil && current.BlockedReason.Code == "resource-budget" && c.goalTokenBudget > 0 {
+			c.goalResourceMu.Lock()
+			c.goalTokenLimit += c.goalTokenBudget
+			c.goalBudgetExtensions++
+			c.goalResourceMu.Unlock()
+		}
+		c.kickGoalDriver()
+		return true
+	}
 	if handled, resumed := c.retryBlockedLegacyGoal(); handled {
 		return resumed
 	}
@@ -2944,6 +3044,29 @@ func (c *Controller) ResumeGoal() bool {
 // runtime history; ResumeGoal restores it. Returns false when no
 // running Goal exists.
 func (c *Controller) PauseGoal() bool {
+	if c.exclusiveV3Enabled() {
+		current, err := c.goalLifecycleView()
+		if err != nil || current == nil || current.Phase != goaldomain.PhaseActive {
+			return false
+		}
+		// Revoke automatic execution before persistence or cancellation can block.
+		c.disarmGoalLifecycle("user-paused")
+		_, err = c.applyHostGoalMutation(context.Background(), "pause", func(machine *goaldomain.Machine) (*goaldomain.View, error) {
+			paused, pauseErr := machine.Pause(current.Ref())
+			return &paused, pauseErr
+		})
+		if err != nil {
+			return false
+		}
+		c.goalDriverMu.Lock()
+		activeGoalRound := c.goalDriverActive != nil
+		c.goalDriverMu.Unlock()
+		if activeGoalRound {
+			c.Cancel()
+		}
+		c.notice(i18n.M.GoalPaused)
+		return true
+	}
 	if !c.goals.active() {
 		return false
 	}
@@ -2955,27 +3078,68 @@ func (c *Controller) PauseGoal() bool {
 
 // GoalRuntime returns the active Goal's usage/runtime summary for frontends.
 func (c *Controller) GoalRuntime() GoalRuntimeView {
+	if c.exclusiveV3Enabled() {
+		view, _ := c.goalLifecycleView()
+		if view == nil {
+			return GoalRuntimeView{}
+		}
+		limit := 0
+		if view.MaxGoalRounds != nil {
+			limit = int(*view.MaxGoalRounds)
+		}
+		c.goalResourceMu.Lock()
+		used, requests, tokenLimit, extensions := c.goalTokensUsed, c.goalRequestsUsed, c.goalTokenLimit, c.goalBudgetExtensions
+		c.goalResourceMu.Unlock()
+		return GoalRuntimeView{TurnsUsed: int(view.RoundsStarted), TurnsLimit: limit, TokensUsed: used,
+			RequestsUsed: requests, TokensLimit: tokenLimit, StopCause: view.StopReason, BudgetExtensions: extensions}
+	}
 	return c.goals.runtimeView()
 }
 
-func (c *Controller) persistGoalDeliveryCheckpoint() {
-	if c.executor == nil {
+func (c *Controller) ClearGoal() {
+	if c.exclusiveV3Enabled() {
+		c.disarmGoalLifecycle("cleared")
+		_ = c.SetGoalDurable("")
+		c.goalDriverMu.Lock()
+		activeGoalRound := c.goalDriverActive != nil
+		c.goalDriverMu.Unlock()
+		if activeGoalRound {
+			c.Cancel()
+		}
 		return
 	}
-	checkpoint := c.executor.DeliveryCheckpoint()
-	path, data, ok := c.goals.setDeliveryCheckpoint(checkpoint)
-	c.persistGoalState(path, data, ok)
-}
-
-func (c *Controller) ClearGoal() {
 	c.SetGoal("")
 }
 
 func (c *Controller) Goal() string {
+	if c.exclusiveV3Enabled() {
+		view, _ := c.goalLifecycleView()
+		if view == nil {
+			return ""
+		}
+		return view.Objective
+	}
 	return c.goals.goalText()
 }
 
 func (c *Controller) GoalStatus() string {
+	if c.exclusiveV3Enabled() {
+		view, err := c.goalLifecycleView()
+		if err != nil || view == nil {
+			return GoalStatusStopped
+		}
+		switch view.Phase {
+		case goaldomain.PhaseComplete:
+			return GoalStatusComplete
+		case goaldomain.PhaseBlocked:
+			return GoalStatusBlocked
+		case goaldomain.PhaseActive:
+			if view.Activation == goaldomain.ActivationArmed {
+				return GoalStatusRunning
+			}
+		}
+		return GoalStatusStopped
+	}
 	return c.goals.statusForDisplay()
 }
 
@@ -5203,6 +5367,10 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 		} else {
 			c.promptOwner.Clear()
 		}
+		// Goal-driver workers may be inside the pre-admission durability
+		// checkpoint. Join them before closing the v3 writer so teardown cannot
+		// race a late Flush or recreate files under a test/session directory.
+		c.goalDriverWG.Wait()
 		// Join sidecar creation and queue scans without waiting for the
 		// dispatcher itself: host admission may retire its own controller.
 		c.inbox.scanMu.Lock()

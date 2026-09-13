@@ -61,6 +61,18 @@ func cloneRuntimeState(in event.RuntimeStateSnapshot) event.RuntimeStateSnapshot
 		recovery := *in.Recovery
 		out.Recovery = &recovery
 	}
+	if in.Goal != nil {
+		goal := *in.Goal
+		if in.Goal.MaxGoalRounds != nil {
+			limit := *in.Goal.MaxGoalRounds
+			goal.MaxGoalRounds = &limit
+		}
+		if in.Goal.BlockedReason != nil {
+			reason := *in.Goal.BlockedReason
+			goal.BlockedReason = &reason
+		}
+		out.Goal = &goal
+	}
 	return out
 }
 
@@ -119,6 +131,12 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	}
 	next := base
 	next.SchemaVersion = 1
+	goalView, goalErr := c.goalLifecycleView()
+	next.Goal = goalView
+	next.GoalError = ""
+	if goalErr != nil {
+		next.GoalError = goalErr.Error()
+	}
 	if ref, ok := c.SessionRef(); ok {
 		next.HostID = ref.HostID
 		next.SessionID = ref.SessionID
@@ -174,6 +192,9 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	// Sampling owners is off their locks. Do not commit a mixture if the
 	// admission/close/binding boundary advanced while another owner was read.
 	stable := c.runtimeBoundaryStable(running, finishing, closed, cancelling, path)
+	currentGoal, currentGoalErr := c.goalLifecycleView()
+	stable = stable && reflect.DeepEqual(goalView, currentGoal)
+	stable = stable && ((goalErr == nil && currentGoalErr == nil) || (goalErr != nil && currentGoalErr != nil && goalErr.Error() == currentGoalErr.Error()))
 	if v3Exclusive && v3Runtime != nil {
 		_, currentRuntime, currentExclusive := c.v3Binding()
 		stable = stable && currentExclusive && currentRuntime == v3Runtime && currentRuntime.StateSnapshot().ActivityRevision == v3RuntimeSnapshot.ActivityRevision

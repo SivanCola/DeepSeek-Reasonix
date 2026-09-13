@@ -36,6 +36,7 @@ export function metaFromTab(tab: TabMeta, existing?: Meta): Meta {
     floorInferred: tab.floorInferred ?? existing?.floorInferred,
     goal: tab.goal ?? existing?.goal,
     goalStatus: tab.goalStatus ?? existing?.goalStatus,
+    goalView: tab.goalView ?? existing?.goalView,
     canonicalTodos: existing?.canonicalTodos,
   };
 }

@@ -1881,6 +1881,18 @@
       ]
     }
   },
+  "ExportGoalDiagnostics": {
+    "domain": "desktop/goal_diagnostics_export.go",
+    "owner": "App.ExportGoalDiagnostics",
+    "sources": [
+      "desktop/goal_diagnostics_export.go"
+    ],
+    "scope": {
+      "kind": "owner-state",
+      "resolver": "App.ExportGoalDiagnostics",
+      "inputs": []
+    }
+  },
   "ExportScrollDiagnostics": {
     "domain": "desktop/scroll_diagnostics_export.go",
     "owner": "App.ExportScrollDiagnostics",

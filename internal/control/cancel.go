@@ -137,6 +137,9 @@ func (c *Controller) finishCancel(turnID string, cancelled bool) {
 	if c.goals.active() {
 		c.stopGoal(GoalStatusStopped)
 	}
+	if c.exclusiveV3Enabled() {
+		c.disarmGoalLifecycle("cancelled")
+	}
 }
 
 // startCancellationWatchdog seals a turn whose activity ignored cancellation.

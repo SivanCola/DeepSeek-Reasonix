@@ -442,10 +442,16 @@ func (a *App) SetRemoteTabEffort(tabID, level string) error {
 }
 
 func (a *App) PauseRemoteTabGoal(tabID string) error {
+	if err := a.requireRemoteGoalLifecycle(tabID); err != nil {
+		return err
+	}
 	return a.remoteTabPost(tabID, "/goal/pause", nil)
 }
 
 func (a *App) ResumeRemoteTabGoal(tabID string) error {
+	if err := a.requireRemoteGoalLifecycle(tabID); err != nil {
+		return err
+	}
 	return a.remoteTabPost(tabID, "/goal/resume", nil)
 }
 

@@ -343,6 +343,10 @@ func (c *Controller) publishV3Runtime(candidate *sessionv3.Runtime, prepared *ag
 	c.sessionPath = ""
 	c.mu.Unlock()
 	c.executor.SetSession(prepared)
+	// The immutable session projection is the only Goal restore source. A true
+	// session switch installs a fresh, disarmed lifecycle; OpenV3's exact-runtime
+	// fast path returns before this point and therefore preserves live activation.
+	c.installGoalLifecycle(candidate)
 	// Transcript pages are a derived cache. A session switch invalidates the
 	// prior identity immediately; the next query rebuilds from the exact v3
 	// projection without reading or writing a legacy sidecar.

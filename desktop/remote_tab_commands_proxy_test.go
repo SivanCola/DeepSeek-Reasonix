@@ -20,6 +20,9 @@ func TestRemoteTabCommandsForwardedToServe(t *testing.T) {
 	a := &App{remoteRuntime: kernel}
 	cleanupRemoteTabPumps(t, a)
 	meta := openReadyRemoteTab(t, a, RemoteTabOpenOptions{NewSession: true})
+	a.remoteTabMu.Lock()
+	a.remoteTabs[meta.ID].capabilities[serveCapabilityGoalLifecycleV2] = true
+	a.remoteTabMu.Unlock()
 	var profileDrained []string
 	beforeRetiredFloorCall := len(fs.recorded())
 	if err := a.SetRemoteTabQualityFloor(meta.ID, "delivery"); err != nil {

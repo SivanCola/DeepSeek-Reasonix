@@ -23,7 +23,7 @@ const (
 // runGuarded runs body under a fresh context, guarding concurrent turns.
 // Finishing-window arrivals park instead of dropping (see admissionResult).
 func (c *Controller) runGuarded(body func(ctx context.Context) error) admissionResult {
-	return c.admitGuardedTurn(body, false, true, nil)
+	return c.admitGuardedTurn(body, false, true, nil, nil)
 }
 
 // runGuardedOrPark admits like runGuarded but parks the body while another
@@ -32,16 +32,20 @@ func (c *Controller) runGuarded(body func(ctx context.Context) error) admissionR
 // the FIFO drain in finishGuardedTurn delivers them the moment the current
 // turn finishes.
 func (c *Controller) runGuardedOrPark(body func(ctx context.Context) error) admissionResult {
-	return c.admitGuardedTurn(body, true, true, nil)
+	return c.admitGuardedTurn(body, true, true, nil, nil)
 }
 
 // runGuardedInbox admits a durable item without parking it in volatile memory.
 // onStart runs after admission is reserved and before its goroutine can finish.
 func (c *Controller) runGuardedInbox(body func(ctx context.Context) error, onStart func()) admissionResult {
-	return c.admitGuardedTurn(body, false, false, onStart)
+	return c.admitGuardedTurn(body, false, false, onStart, nil)
 }
 
-func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, parkWhileRunning, parkWhileFinishing bool, onStart func()) admissionResult {
+func (c *Controller) runGuardedGoalRound(reservation *goalRoundReservation, body func(ctx context.Context) error) admissionResult {
+	return c.admitGuardedTurn(body, false, false, nil, reservation)
+}
+
+func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, parkWhileRunning, parkWhileFinishing bool, onStart func(), goalRound *goalRoundReservation) admissionResult {
 	if err := c.ensureWriteAuthorityReady(); err != nil {
 		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "input was not accepted: this session is no longer writable — reopen it and try again"})
 		return turnDroppedWriteAuthority
@@ -93,6 +97,6 @@ func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, park
 		onStart()
 	}
 	c.refreshRuntimeState(event.Event{})
-	c.spawnGuardedTurn(ctx, cancel, body)
+	c.spawnGuardedTurn(ctx, cancel, body, goalRound)
 	return turnStarted
 }

@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 5;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:baf6c92486946a569efa472cbe64093785cba864ff7e4cc9c7b85801513ebb3b";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:ee7af0ebd1aa172c2e4a905797012ad04a0e91f5f69214811748675fe5c712e3";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -135,6 +135,7 @@ export const DESKTOP_COMMANDS = [
   "EnsureBlankSurface",
   "EnsureBlankTab",
   "EnsureRemoteProjectSessions",
+  "ExportGoalDiagnostics",
   "ExportScrollDiagnostics",
   "ExportThemePack",
   "ExtensionActions",
@@ -1041,6 +1042,8 @@ export interface RuntimeStateSnapshot {
   backgroundJobs: number;
   activity: string;
   recovery?: RecoveryStatus | null;
+  goal?: View | null;
+  goalError?: string;
 }
 
 export interface Todo {
@@ -1506,6 +1509,25 @@ export interface TodoItem {
   activeForm?: string;
   level?: number;
   step_id?: string;
+}
+
+export interface BlockReason {
+  code: string;
+  message: string;
+}
+
+export interface View {
+  id: string;
+  revision: number;
+  objective: string;
+  phase: string;
+  maxGoalRounds?: number | null;
+  roundsStarted: number;
+  blockedReason?: BlockReason | null;
+  createdAt: string;
+  updatedAt: string;
+  activation: string;
+  stopReason?: string;
 }
 
 export interface historycatalog_Status {
@@ -2564,6 +2586,7 @@ export interface Meta {
   agentPreset?: string;
   goal?: string;
   goalStatus?: string;
+  goalView?: View | null;
   goalRuntime?: GoalRuntimeView | null;
   canonicalTodos?: TodoItem[] | null;
   pinnedFiles?: PinnedFileInfo[];
@@ -3671,6 +3694,7 @@ export interface TabMeta {
   floorInferred?: boolean;
   goal?: string;
   goalStatus?: string;
+  goalView?: View | null;
   recovered?: boolean;
   recoveryReason?: string;
   recoveryDigest?: string;
@@ -4660,6 +4684,7 @@ export interface GeneratedDesktopCommands {
   EnsureBlankSurface(arg0: string, arg1: string): Promise<TabMeta>;
   EnsureBlankTab(arg0: string, arg1: string): Promise<TabMeta>;
   EnsureRemoteProjectSessions(arg0: string, arg1: string): Promise<RemoteSessionView[]>;
+  ExportGoalDiagnostics(): Promise<string>;
   ExportScrollDiagnostics(arg0: string): Promise<string>;
   ExportThemePack(arg0: string, arg1: string): Promise<string>;
   ExtensionActions(arg0: string): Promise<ExtensionActionView[]>;

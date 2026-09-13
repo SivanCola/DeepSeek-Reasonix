@@ -1,5 +1,7 @@
 package main
 
+import goaldomain "reasonix/internal/goal"
+
 // TabMeta is the frontend-facing shape of one tab.
 type TabMeta struct {
 	ID               string        `json:"id"`
@@ -47,6 +49,7 @@ type TabMeta struct {
 	FloorInferred     bool               `json:"floorInferred,omitempty"`
 	Goal              string             `json:"goal,omitempty"`
 	GoalStatus        string             `json:"goalStatus,omitempty"`
+	GoalView          *goaldomain.View   `json:"goalView,omitempty"`
 	Recovered         bool               `json:"recovered,omitempty"`
 	RecoveryReason    string             `json:"recoveryReason,omitempty"`
 	RecoveryDigest    string             `json:"recoveryDigest,omitempty"`

@@ -535,6 +535,7 @@ export interface AppBindings extends ToolRecoveryBindings, ModelSettingsBindings
   SaveClipboardImage(): Promise<string>;
   SavePastedFile(name: string, dataUrl: string): Promise<string>;
   PickExportFile(defaultFilename: string, mimeType: string): Promise<string>;
+  ExportGoalDiagnostics(): Promise<string>;
   SaveExportFile(path: string, payload: string, base64Encoded: boolean): Promise<void>;
   SaveExportImageFiles(path: string, payloads: string[]): Promise<void>;
   AttachDropped(path: string): Promise<DroppedItem>;
@@ -4180,6 +4181,9 @@ function makeMockApp(): AppBindings {
     },
     async PickExportFile(defaultFilename: string, _mimeType: string) {
       return defaultFilename;
+    },
+    async ExportGoalDiagnostics() {
+      return "goal-diagnostics.json";
     },
     async SaveExportFile(path: string, payload: string, base64Encoded: boolean) {
       const a = document.createElement("a");

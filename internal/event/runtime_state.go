@@ -1,6 +1,9 @@
 package event
 
-import "reasonix/internal/nilutil"
+import (
+	goaldomain "reasonix/internal/goal"
+	"reasonix/internal/nilutil"
+)
 
 // Todo is the v2 execution protocol's complete current-turn todo item. It is
 // intentionally flat; legacy hierarchy and sign-off fields never enter this
@@ -51,6 +54,8 @@ type RuntimeStateSnapshot struct {
 	BackgroundJobs   int                  `json:"backgroundJobs"`
 	Activity         string               `json:"activity"`
 	Recovery         *RecoveryStatus      `json:"recovery,omitempty"`
+	Goal             *goaldomain.View     `json:"goal,omitempty"`
+	GoalError        string               `json:"goalError,omitempty"`
 }
 
 func (s RuntimeStateSnapshot) ActiveWork() bool {

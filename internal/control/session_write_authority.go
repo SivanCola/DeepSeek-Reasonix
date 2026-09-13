@@ -98,9 +98,13 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 
 // Run verifies the live write generation before synchronous headless turns.
 func (c *Controller) Run(ctx context.Context, input string) error {
-	return c.runSynchronousTurn(ctx, nil, func(runCtx context.Context) error {
+	err := c.runSynchronousTurn(ctx, nil, func(runCtx context.Context) error {
 		return c.runReady(runCtx, input)
 	})
+	if err != nil {
+		return err
+	}
+	return c.waitForGoalTerminal(ctx)
 }
 
 // RebindSessionWriteAuthority is a convenience for keepers that already hold a

@@ -954,6 +954,11 @@ func (a *App) SetRemoteTabComposerProfile(tabID, collaborationMode, toolApproval
 	if err := a.requireRemotePermissionPresets(tabID); err != nil {
 		return nil, err
 	}
+	if strings.EqualFold(strings.TrimSpace(collaborationMode), "goal") || strings.TrimSpace(goal) != "" {
+		if err := a.requireRemoteGoalLifecycle(tabID); err != nil {
+			return nil, err
+		}
+	}
 	client, base, expectedPath, err := a.remoteTabCommandTarget(tabID)
 	if err != nil {
 		return nil, err
@@ -1064,6 +1069,9 @@ func (a *App) SetRemoteTabGoal(tabID, goal string) error {
 	if err := a.requireRemoteExecutionProtocol(tabID); err != nil {
 		return err
 	}
+	if err := a.requireRemoteGoalLifecycle(tabID); err != nil {
+		return err
+	}
 	client, base, expectedPath, err := a.remoteTabCommandTarget(tabID)
 	if err != nil {
 		return err
@@ -1072,6 +1080,20 @@ func (a *App) SetRemoteTabGoal(tabID, goal string) error {
 	defer cancel()
 	body, _ := json.Marshal(map[string]string{"goal": goal})
 	return servePostForSession(ctx, client, serveURL(base, "/goal"), body, expectedPath)
+}
+
+func (a *App) requireRemoteGoalLifecycle(tabID string) error {
+	a.remoteTabMu.Lock()
+	tab := a.remoteTabs[tabID]
+	supported := tab != nil && tab.capabilities[serveCapabilityGoalLifecycleV2]
+	a.remoteTabMu.Unlock()
+	if tab == nil {
+		return fmt.Errorf("remote tab %q is not open", tabID)
+	}
+	if !supported {
+		return fmt.Errorf("this remote Reasonix Serve does not support %s; upgrade it before creating or controlling goals", serveCapabilityGoalLifecycleV2)
+	}
+	return nil
 }
 
 func (a *App) SetRemoteTabQualityFloor(tabID, floor string) error {

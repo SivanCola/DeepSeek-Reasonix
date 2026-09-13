@@ -437,8 +437,8 @@ type Event struct {
 	SubmissionID     string                    // exact optimistic submit correlation
 	PromptKind       string                    // interactive prompt kind for lifecycle events
 	InteractionState string                    // PromptAnswered: answered | rejected | cancelled | unavailable
-	DomainKind       string                    // PromptAnswered: optional state event committed in the same batch
-	DomainPayload    json.RawMessage           // PromptAnswered: payload for DomainKind
+	DomainKind       string                    // host-internal state event committed atomically with this lifecycle event
+	DomainPayload    json.RawMessage           // host-internal payload for DomainKind
 	TurnID           string                    // stable id of the owning top-level turn
 	Sequence         uint64                    // monotonic session-local event sequence
 	Status           TurnStatus                // lifecycle state after this event

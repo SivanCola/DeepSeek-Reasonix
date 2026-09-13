@@ -3502,6 +3502,25 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/goal_diagnostics_export.go",
+      "name": "ExportGoalDiagnostics",
+      "owner": "App.ExportGoalDiagnostics",
+      "params": [],
+      "result": {
+        "kind": "string"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [],
+        "kind": "owner-state",
+        "resolver": "App.ExportGoalDiagnostics"
+      },
+      "sources": [
+        "desktop/goal_diagnostics_export.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/scroll_diagnostics_export.go",
       "name": "ExportScrollDiagnostics",
       "owner": "App.ExportScrollDiagnostics",
@@ -18442,6 +18461,24 @@
             },
             "kind": "nullable"
           }
+        },
+        {
+          "name": "goal",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "goal.View"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "goalError",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
         }
       ]
     },
@@ -21128,6 +21165,102 @@
         },
         {
           "name": "step_id",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "goal.BlockReason": {
+      "fields": [
+        {
+          "name": "code",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "message",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "goal.View": {
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "revision",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "objective",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "phase",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "maxGoalRounds",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "integer"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "roundsStarted",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "blockedReason",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "goal.BlockReason"
+            },
+            "kind": "nullable"
+          }
+        },
+        {
+          "name": "createdAt",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "updatedAt",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "activation",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "stopReason",
           "optional": true,
           "type": {
             "kind": "string"
@@ -26693,6 +26826,17 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "goalView",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "goal.View"
+            },
+            "kind": "nullable"
           }
         },
         {
@@ -32773,6 +32917,17 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "goalView",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "goal.View"
+            },
+            "kind": "nullable"
           }
         },
         {

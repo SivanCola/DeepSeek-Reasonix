@@ -76,6 +76,7 @@ func (c *Controller) runSynchronousTurn(
 		c.mu.Unlock()
 		c.refreshRuntimeState(event.Event{})
 		c.finishV3RuntimeActivity(runtimeActivity)
+		c.kickGoalDriver()
 		cancel()
 	}
 	if onAdmitted != nil {

@@ -2150,6 +2150,9 @@ func (a *App) tabMeta(tab *WorkspaceTab, active bool) TabMeta {
 	}
 	if tab.Ctrl != nil {
 		status := tab.Ctrl.RuntimeStatus()
+		if reader, ok := tab.Ctrl.(control.RuntimeStateReader); ok {
+			m.GoalView = reader.RuntimeStateSnapshot().Goal
+		}
 		m.Running = status.Running || status.PendingPrompt || status.BackgroundJobs > 0
 		m.PendingPrompt = status.PendingPrompt
 		m.BackgroundJobs = status.BackgroundJobs

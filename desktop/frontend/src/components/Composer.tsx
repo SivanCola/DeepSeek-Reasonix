@@ -45,7 +45,7 @@ import { resolveComposerContentSizing } from "../lib/composerSizing";
 import { useToast } from "../lib/toast";
 import { readStatusLabel, turnPhaseStatusLabel } from "../lib/readStatus";
 import { fullAccessProjectConfirmationKey } from "../lib/fullAccessConfirmation";
-import { normalizeToolApprovalMode, type CollaborationMode, type CommandInfo, type ComposerInsertRequest, type ContextInfo, type DirEntry, type EffortInfo, type GoalRuntime, type HistoryMessage, type Mode, type PromptHistoryEntry, type SessionMeta, type SessionReference, type SlashArgItem, type SlashArgsResult, type ToolApprovalMode, type BalanceInfo, type WireReadStatus } from "../lib/types";
+import { normalizeToolApprovalMode, type CollaborationMode, type CommandInfo, type ComposerInsertRequest, type ContextInfo, type DirEntry, type EffortInfo, type GoalLifecycleView, type GoalRuntime, type HistoryMessage, type Mode, type PromptHistoryEntry, type SessionMeta, type SessionReference, type SlashArgItem, type SlashArgsResult, type ToolApprovalMode, type BalanceInfo, type WireReadStatus } from "../lib/types";
 import { ComposerPinnedFilesShelf } from "./ComposerPinnedFilesShelf";
 import {
   formatWorkspaceReference,
@@ -548,6 +548,7 @@ export function Composer({
   readStatuses,
   goal,
   goalStatus,
+  goalView,
   goalRuntime,
   cwd,
   workspaceRoot,
@@ -630,6 +631,7 @@ export function Composer({
   readStatuses?: Record<string, WireReadStatus>;
   goal?: string;
   goalStatus?: string;
+  goalView?: GoalLifecycleView;
   goalRuntime?: GoalRuntime;
   cwd?: string;
   workspaceRoot?: string;
@@ -4003,6 +4005,20 @@ export function Composer({
             {goalModeOn && activeGoal && (
             <div className="composer-intent-menu__goal-actions">
               <div className="composer-intent-menu__goal-runtime">
+                {goalView && (
+                  <span className="composer-intent-menu__goal-runtime-line">
+                    {goalView.phase === "active" && goalView.activation === "armed"
+                      ? running ? t("composer.goalRunning") : t("composer.goalWaitingNext")
+                      : goalView.phase === "active"
+                        ? t("composer.goalWaitingResume")
+                        : goalView.phase === "paused"
+                          ? t("composer.goalPaused")
+                          : goalView.phase === "blocked"
+                            ? t("composer.goalBlocked")
+                            : t("composer.goalComplete")}
+                    {goalView.blockedReason?.message ? ` — ${goalView.blockedReason.message}` : ""}
+                  </span>
+                )}
                 {goalRuntime && (
                   <span className="composer-intent-menu__goal-runtime-line">
                     {t("composer.goalRuntimeLine", {
@@ -4013,19 +4029,19 @@ export function Composer({
                     })}
                   </span>
                 )}
-                {goalStatus === "blocked" && !goalRuntime?.stopCause && (
+                {!goalView && goalStatus === "blocked" && !goalRuntime?.stopCause && (
                   <span className="composer-intent-menu__goal-runtime-line composer-intent-menu__goal-runtime-line--blocked">
                     {t("composer.goalBlocked")}
                   </span>
                 )}
-                {goalStatus === "blocked" && goalRuntime?.stopCause && (
+                {!goalView && goalStatus === "blocked" && goalRuntime?.stopCause && (
                   <span className="composer-intent-menu__goal-runtime-line composer-intent-menu__goal-runtime-line--paused">
                     {t("composer.goalPaused")}
                     {goalRuntime.lastReason ? ` — ${goalRuntime.lastReason}` : ""}
                   </span>
                 )}
               </div>
-              {goalStatus === "blocked" ? (
+              {goalView?.phase === "paused" || goalView?.phase === "blocked" || (goalView?.phase === "active" && goalView.activation === "disarmed") || (!goalView && goalStatus === "blocked") ? (
                 <button
                   type="button"
                   className="composer-intent-menu__stop"

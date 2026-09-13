@@ -403,6 +403,12 @@ func (c *Controller) v3EventsFor(e event.Event, projection sessionv3.Projection)
 			return nil, err
 		}
 		out = append(out, sessionv3.Event{Kind: "turn/start", Payload: payload})
+		if e.DomainKind != "" {
+			if e.DomainKind != "goal/state" || len(e.DomainPayload) == 0 {
+				return nil, fmt.Errorf("unsupported turn admission domain event %q", e.DomainKind)
+			}
+			out = append(out, sessionv3.Event{Kind: e.DomainKind, Payload: append(json.RawMessage(nil), e.DomainPayload...)})
+		}
 	case event.ToolDispatch:
 		payload, err := makePayload(v3ToolPayload(e.Tool, false))
 		if err != nil {

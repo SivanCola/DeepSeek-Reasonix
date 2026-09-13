@@ -16,8 +16,6 @@ import (
 )
 
 const (
-	goalContinueTurn   = "Continue pursuing the active goal. Do the next useful work and report your judgment with update_goal: continue (give the next concrete step), complete (you judge the goal finished), or blocked (explain why you cannot continue). Keep execution results and any verification limitations accurate."
-	goalCompleteNotice = "Model reported the goal complete."
 	unlimitedGoalTurns = -1
 
 	// Bound the persisted novelty window. Signatures are compact hashes, and
@@ -147,40 +145,6 @@ type goalState struct {
 	ProgressEvidence       []string `json:"progressEvidence,omitempty"`
 }
 
-// goalAdvanceInput carries everything the FSM needs for one continuation step,
-// gathered by the caller off the machine's lock. It commits model reports
-// while honoring execution pauses and the current lifecycle identity.
-type goalAdvanceInput struct {
-	report           *goalTurnReport // validated update_goal report; nil when none
-	progressEvidence []string        // host evidence identities visible after this turn
-	pauseCause       string          // explicit spend boundary reported by the Agent
-	pauseReason      string
-	expectedEpoch    *uint64
-}
-
-// goalAdvanceResult reports the FSM step's outcome. data/path/ok describe the
-// state to persist (built under mu when something changed); notice is surfaced
-// to the user; cont reports whether the goal loop should continue; intercept
-// (with interceptNotice) is the next synthetic turn's prompt.
-type goalAdvanceResult struct {
-	notice            string
-	intercept         string
-	interceptNotice   string
-	cont              bool
-	continuationEpoch uint64
-	path              string
-	data              []byte
-	ok                bool
-}
-
-// goalContinuationSnapshot binds a continuation to the exact Goal lifecycle
-// state admitted for its synthetic turn. The orchestrator uses these captured
-// fields throughout the turn instead of re-reading a possibly replaced Goal.
-type goalContinuationSnapshot struct {
-	goal    string
-	scopeID string
-}
-
 // goalStatePath derives a session's persisted goal-state sidecar.
 func goalStatePath(sessionPath string) string {
 	return store.SessionGoalState(sessionPath)
@@ -227,17 +191,6 @@ func (g *goalMachine) deliveryScope() (id, task string, ok bool) {
 		g.scopeID = newGoalScopeID()
 	}
 	return g.scopeID, g.goal, true
-}
-
-// goalScopeIDForTurn resolves the active goal scope for an outgoing turn: the
-// continuation snapshot's scope, or the running goal's (assigning one when
-// needed). ok=false means no active goal.
-func (g *goalMachine) goalScopeIDForTurn(continuation *goalContinuationSnapshot) (string, bool) {
-	if continuation != nil {
-		return continuation.scopeID, true
-	}
-	id, _, ok := g.deliveryScope()
-	return id, ok
 }
 
 func newGoalScopeID() string {
@@ -434,136 +387,6 @@ func (g *goalMachine) deliveryState() evidence.DeliveryCheckpoint {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.deliveryCheckpoint
-}
-
-// acceptContinuation checks an advance result before the orchestrator surfaces
-// its notice. admitContinuation revalidates after synchronous notice callbacks
-// and captures the Goal state at the synthetic-turn admission boundary.
-func (g *goalMachine) acceptContinuation(res goalAdvanceResult) (string, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if !res.cont ||
-		res.continuationEpoch != g.continuationEpoch ||
-		strings.TrimSpace(g.goal) == "" ||
-		g.status != GoalStatusRunning || g.disarmed {
-		return "", false
-	}
-	return res.intercept, true
-}
-
-// admitContinuation atomically validates an advance result and captures the
-// Goal state used to compose and scope its synthetic turn. Keeping validation
-// and capture in one critical section prevents a stale intercept from being
-// paired with a replacement Goal between those operations.
-func (g *goalMachine) admitContinuation(res goalAdvanceResult) (goalContinuationSnapshot, bool) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if !res.cont ||
-		res.continuationEpoch != g.continuationEpoch ||
-		strings.TrimSpace(g.goal) == "" ||
-		g.status != GoalStatusRunning || g.disarmed {
-		return goalContinuationSnapshot{}, false
-	}
-	if g.scopeID == "" {
-		g.scopeID = newGoalScopeID()
-	}
-	return goalContinuationSnapshot{
-		goal:    g.goal,
-		scopeID: g.scopeID,
-	}, true
-}
-
-// advance commits a model report only at the owning normal turn boundary.
-// Execution pauses and configured budgets take precedence over completion.
-func (g *goalMachine) advance(in goalAdvanceInput) goalAdvanceResult {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if in.expectedEpoch != nil && *in.expectedEpoch != g.continuationEpoch {
-		return goalAdvanceResult{cont: false}
-	}
-	if g.disarmed || strings.TrimSpace(g.goal) == "" || g.status != GoalStatusRunning {
-		return goalAdvanceResult{cont: false}
-	}
-	g.continuationEpoch++
-	// A top-level goal turn (the first turn or a synthetic continuation) counts
-	// as an observational statistic; the in-Run model/tool loop is not re-counted.
-	g.turnsUsed++
-	var notice string
-	var intercept string
-	var interceptNotice string
-	reportBlocked := in.report != nil && in.report.status == GoalStatusBlocked
-	reportComplete := in.report != nil && in.report.status == GoalStatusComplete
-	g.observeGoalProgress(in, reportBlocked || reportComplete)
-	switch {
-	case in.pauseCause != "":
-		g.status = GoalStatusBlocked
-		g.stopCause = in.pauseCause
-		g.block = clipGoalReason(in.pauseReason)
-		notice = "goal paused: " + g.block
-	case g.tokensLimit > 0 && g.tokensUsed >= g.tokensLimit:
-		g.status = GoalStatusBlocked
-		g.stopCause = stopCauseBudgetSpend
-		g.block = fmt.Sprintf("token budget reached (%d/%d tokens used)", g.tokensUsed, g.tokensLimit)
-		notice = "goal paused: " + g.block
-	case reportBlocked:
-		g.status = GoalStatusBlocked
-		g.block = cleanGoalBlockReason(in.report.reason)
-		g.stopCause = ""
-		g.lastContinuationReason = clipGoalReason(in.report.reason)
-		notice = "goal blocked: " + g.block
-	case reportComplete:
-		g.goal = ""
-		g.status = GoalStatusComplete
-		g.block, g.stopCause = "", ""
-		g.progressEvidence = nil
-		g.lastContinuationReason, g.lastEvaluatorReason = "", ""
-		notice = goalCompleteNotice
-	default:
-		if in.report != nil {
-			g.lastContinuationReason = clipGoalReason(in.report.reason)
-			intercept = in.report.nextAction
-		}
-	}
-	res := goalAdvanceResult{
-		notice:            notice,
-		intercept:         intercept,
-		interceptNotice:   interceptNotice,
-		cont:              notice == "",
-		continuationEpoch: g.continuationEpoch,
-	}
-	res.path, res.data, res.ok = g.buildStateLocked()
-	return res
-}
-
-// foldUsage attributes a turn's billable tokens to the goal, but only while the
-// goal lifecycle still matches the recorder's scope+epoch; stale or replaced
-// goals reject late usage.
-func (g *goalMachine) foldUsage(scopeID string, epoch uint64, tokens, requests int) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if (tokens <= 0 && requests <= 0) || g.scopeID != scopeID || g.continuationEpoch != epoch {
-		return false
-	}
-	if tokens > 0 {
-		g.tokensUsed += tokens
-	}
-	if requests > 0 {
-		g.requestsUsed += requests
-	}
-	return true
-}
-
-// foldWorkDuration attributes one Run's cumulative assistant work duration to
-// the Goal. The caller supplies the maximum WorkDurationMs among messages
-// created by that Run, so multi-round cumulative values are not double-counted.
-func (g *goalMachine) foldWorkDuration(scopeID string, epoch uint64, durationMs int64) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if durationMs <= 0 || g.scopeID != scopeID || g.continuationEpoch != epoch {
-		return false
-	}
-	g.workDurationMs += durationMs
-	return true
 }
 
 // buildStateLocked marshals the current goal state for persistence. The caller

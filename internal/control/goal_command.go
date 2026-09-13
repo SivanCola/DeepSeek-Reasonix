@@ -8,10 +8,12 @@ import (
 )
 
 func (c *Controller) startGoalCommandTurn(cmd GoalCommand, display string) {
-	if !c.goals.active() {
+	if c.GoalStatus() != GoalStatusRunning {
 		return
 	}
-	c.goals.markExplicitStart()
+	if !c.exclusiveV3Enabled() {
+		c.goals.markExplicitStart()
+	}
 	c.notice(fmt.Sprintf(i18n.M.GoalSetFmt, ShortGoalForNotice(c.Goal())))
 	if c.runner != nil {
 		c.runGuarded(func(ctx context.Context) error {

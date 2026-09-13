@@ -9,6 +9,7 @@ import (
 	"reasonix/internal/ablation"
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
+	goaldomain "reasonix/internal/goal"
 	"reasonix/internal/memory"
 	"reasonix/internal/planmode"
 	"reasonix/internal/skill"
@@ -152,6 +153,18 @@ func (c *Controller) Compose(text string) string {
 
 func (c *Controller) compose(text, source string, includeHookContext bool) string {
 	goal, goalStatus := c.goals.snapshot()
+	if c.exclusiveV3Enabled() {
+		if view, err := c.goalLifecycleView(); err == nil && view != nil {
+			goal = view.Objective
+			if view.Phase == goaldomain.PhaseActive && view.Activation == goaldomain.ActivationArmed {
+				goalStatus = GoalStatusRunning
+			} else {
+				goalStatus = GoalStatusStopped
+			}
+		} else {
+			goal, goalStatus = "", GoalStatusStopped
+		}
+	}
 	return c.composeWithGoal(
 		text,
 		source,
@@ -331,7 +344,7 @@ const goalTaskContractInstructions = `Goal mode: pursue this goal autonomously. 
 - Pause only when the next step involves an irreversible or externally visible operation, the requested scope has changed, or progress requires information only the user can provide. Otherwise keep working and report assumptions at the end.
 - Complete only when the concrete request is done, the output format and constraints are satisfied, and relevant verification was attempted or reported unavailable.
 
-Do not stop after describing a plan; execute the next useful step. End every goal-mode turn by calling the update_goal tool with your disposition: continue (work is ongoing — give the next concrete step in next_action), complete (when the request is done and verification was attempted or reported unavailable), or blocked (only when the user can unblock). The host validates your claim and decides whether to continue automatically.`
+Do not stop after describing a plan; execute the next useful step. Use get_goal before a lifecycle change and pass its exact ID and revision to update_goal. Mark complete only when the whole objective is done. If useful work remains, leave an active goal unchanged: the host automatically schedules the next round without a continue action. Mark blocked only for a concrete persistent blocker.`
 
 // MemoryQuickAddNote parses the "# <note>" memory shortcut. The space after
 // "#" is intentional: "#7", "#issue", and "#标题" are ordinary user prompts,

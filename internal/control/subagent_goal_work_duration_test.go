@@ -13,7 +13,7 @@ import (
 	"reasonix/internal/tool"
 )
 
-func TestSubagentSkillGoalRecordsWorkDuration(t *testing.T) {
+func TestSubagentSkillRecordsWorkDurationOnChildMessage(t *testing.T) {
 	sess := agent.NewSession("")
 	prov := &scriptedTurns{turns: goalToolTurn(GoalStatusComplete, "reviewed", "")}
 	exec := agent.New(prov, goalRegistry(), sess, agent.Options{}, event.Discard)
@@ -41,9 +41,6 @@ func TestSubagentSkillGoalRecordsWorkDuration(t *testing.T) {
 	)
 	waitForTurnDone(t, events)
 
-	if got := c.GoalRuntime().WorkDurationMs; got <= 0 {
-		t.Fatalf("active Goal subagent work duration = %d, want positive", got)
-	}
 	var childDuration int64
 	for _, message := range c.History() {
 		if message.Role == provider.RoleAssistant && strings.Contains(message.Content, "Notes listed") {

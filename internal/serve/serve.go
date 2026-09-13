@@ -596,6 +596,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /goal", s.foregroundMutation(s.goal))
 	mux.HandleFunc("POST /goal/pause", s.foregroundMutation(s.goalPause))
 	mux.HandleFunc("POST /goal/resume", s.foregroundMutation(s.goalResume))
+	mux.HandleFunc("GET /goal-diagnostics", s.goalDiagnostics)
 	mux.HandleFunc("POST /jobs/cancel", s.foregroundMutation(s.jobsCancel))
 	mux.HandleFunc("POST /answer", s.foregroundMutation(s.answer))
 	mux.HandleFunc("POST /mcp-interaction", s.foregroundMutation(s.mcpInteraction))
@@ -1516,6 +1517,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"window":           window,
 		"cacheHit":         hit,
 		"cacheMiss":        miss,
+	}
+	if reader, ok := ctrl.(control.RuntimeStateReader); ok {
+		sess["goalView"] = reader.RuntimeStateSnapshot().Goal
 	}
 	if ctrl.Goal() != "" {
 		sess["goalRuntime"] = ctrl.GoalRuntime()

@@ -136,8 +136,8 @@ func contextualToolGateOutcome(ctx context.Context, target tool.Tool, name strin
 	}
 	msg := fmt.Sprintf("blocked: tool %q is unavailable in the current workflow context", name)
 	switch name {
-	case "update_goal":
-		msg = "update_goal is only available while an active goal turn is running — no goal state was changed"
+	case "get_goal", "create_goal", "update_goal":
+		msg = "goal tools require the current top-level host-attested goal context — no goal state was changed"
 	case "bash_output", "wait", "kill_shell":
 		msg = "background jobs are not available in this context"
 	}
