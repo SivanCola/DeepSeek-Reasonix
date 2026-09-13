@@ -1,9 +1,19 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"reasonix/internal/control"
 )
+
+type rejectingGoalSession struct {
+	control.SessionAPI
+	err error
+}
+
+func (s *rejectingGoalSession) SetGoalDurable(string) error { return s.err }
 
 func TestSetGoalForTabReturnsErrorWhenTabMissing(t *testing.T) {
 	isolateDesktopUserDirs(t)
@@ -67,5 +77,30 @@ func TestSetGoalForTabSucceedsAndPersistsLocalGoal(t *testing.T) {
 	}
 	if tab.Ctrl.Goal() != "" {
 		t.Fatalf("cleared controller goal = %q, want empty", tab.Ctrl.Goal())
+	}
+}
+
+func TestSetGoalForTabDoesNotPublishMetadataWhenPersistenceFails(t *testing.T) {
+	isolateDesktopUserDirs(t)
+
+	app := NewApp()
+	tab := testTab("a", t.TempDir())
+	base := tab.Ctrl
+	tab.Ctrl = &rejectingGoalSession{SessionAPI: base, err: errors.New("disk full")}
+	tab.goal = "existing goal"
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+	defer base.Close()
+
+	err := app.SetGoalForTab(tab.ID, "replacement goal")
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("SetGoalForTab error = %v, want persistence failure", err)
+	}
+	if tab.goal != "existing goal" {
+		t.Fatalf("tab goal = %q, want unchanged metadata", tab.goal)
+	}
+	if base.Goal() != "" {
+		t.Fatalf("controller goal = %q, want no accepted mutation", base.Goal())
 	}
 }

@@ -1209,14 +1209,15 @@ func (s *Server) goal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	goal := strings.TrimSpace(body.Goal)
-	if goal == "" {
-		s.ctl().ClearGoal()
-		w.WriteHeader(http.StatusNoContent)
+	ctrl := s.ctl()
+	if err := ctrl.SetGoalDurable(goal); err != nil {
+		http.Error(w, "persist goal: "+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	// Disable plan mode before setting the goal, mirroring the desktop.
-	s.ctl().SetPlanMode(false)
-	s.ctl().SetGoal(goal)
+	if goal != "" {
+		// Disable plan mode only after the goal mutation has been accepted.
+		ctrl.SetPlanMode(false)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

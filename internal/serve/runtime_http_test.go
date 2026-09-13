@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,13 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/jobs"
 )
+
+type rejectingGoalAPI struct {
+	control.SessionAPI
+	err error
+}
+
+func (a *rejectingGoalAPI) SetGoalDurable(string) error { return a.err }
 
 func postRuntimeJSON(t *testing.T, url, body string) *http.Response {
 	t.Helper()
@@ -44,6 +52,25 @@ func TestGoalPauseAndResumeRoutes(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent || ctrl.GoalStatus() != control.GoalStatusRunning {
 		t.Fatalf("resume status/goal = %d/%q", resp.StatusCode, ctrl.GoalStatus())
+	}
+}
+
+func TestGoalRouteReportsPersistenceFailureBeforeChangingPlanMode(t *testing.T) {
+	bc := NewBroadcaster()
+	base := control.New(control.Options{Sink: bc})
+	base.SetPlanMode(true)
+	api := &rejectingGoalAPI{SessionAPI: base, err: errors.New("disk full")}
+	srv := httptest.NewServer(New(api, bc, config.ServeConfig{}).Handler())
+	defer srv.Close()
+	defer base.Close()
+
+	resp := postRuntimeJSON(t, srv.URL+"/goal", `{"goal":"ship it"}`)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("goal status = %d, want %d", resp.StatusCode, http.StatusServiceUnavailable)
+	}
+	if !base.PlanMode() || base.Goal() != "" {
+		t.Fatalf("failed goal mutation changed runtime: plan=%v goal=%q", base.PlanMode(), base.Goal())
 	}
 }
 

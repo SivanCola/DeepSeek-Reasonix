@@ -1179,6 +1179,9 @@ func (a *App) submitInitialGoalToLocalTab(
 	if goal == "" {
 		return []string{}, fmt.Errorf("goal is required")
 	}
+	if err := syncTabGoalToController(ctrl, goal); err != nil {
+		return []string{}, fmt.Errorf("activate goal: %w", err)
+	}
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
@@ -1192,7 +1195,6 @@ func (a *App) submitInitialGoalToLocalTab(
 
 	ctrl.SetPlanMode(false)
 	drained := applyTabToolApprovalModeToController(ctrl, toolApprovalMode)
-	syncTabGoalToController(ctrl, goal)
 	a.ensureTabTopicIndexedForUserTurn(tab)
 	if len(invocations) > 0 {
 		ctrl.SubmitInvocationDisplay(display, input, controlInvocationRequests(invocations))
@@ -1817,7 +1819,9 @@ func (a *App) SetComposerProfileForTab(tabID, collaborationMode, toolApprovalMod
 			ctrl.SetPlanMode(plan)
 		}
 		drained = applyTabToolApprovalModeToController(ctrl, toolApprovalMode)
-		syncTabGoalToController(ctrl, goal)
+		if err := syncTabGoalToController(ctrl, goal); err != nil {
+			return []string{}, err
+		}
 	}
 
 	a.mu.Lock()
@@ -1834,10 +1838,10 @@ func (a *App) SetComposerProfileForTab(tabID, collaborationMode, toolApprovalMod
 	return drained, nil
 }
 
-func (a *App) SetCollaborationModeForTab(tabID, mode string) {
+func (a *App) SetCollaborationModeForTab(tabID, mode string) error {
 	tab := a.tabByID(tabID)
 	if tab == nil {
-		return
+		return a.workspaceNotReadyErr(nil)
 	}
 	tab.turnStartMu.Lock()
 	defer tab.turnStartMu.Unlock()
@@ -1846,32 +1850,38 @@ func (a *App) SetCollaborationModeForTab(tabID, mode string) {
 	a.mu.Lock()
 	if a.tabs[tab.ID] != tab {
 		a.mu.Unlock()
-		return
+		return a.workspaceNotReadyErr(nil)
 	}
+	nextGoal := tab.goal
+	nextMode := tab.mode
 	switch mode {
 	case "plan":
-		tab.mode = tabModeFromAxes(true, approvalMode == control.ToolApprovalYolo)
-		tab.goal = ""
+		nextMode = tabModeFromAxes(true, approvalMode == control.ToolApprovalYolo)
+		nextGoal = ""
 	case "goal":
-		tab.mode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
+		nextMode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
 	default:
-		tab.mode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
-		tab.goal = ""
+		nextMode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
+		nextGoal = ""
 	}
 	ctrl := tab.Ctrl
-	goal := tab.goal
-	plan := tabModeHasPlan(tab.mode)
+	plan := tabModeHasPlan(nextMode)
 	tabIDForSave := tab.ID
 	a.mu.Unlock()
 	if ctrl != nil {
+		if err := syncTabGoalToController(ctrl, nextGoal); err != nil {
+			return err
+		}
 		ctrl.SetPlanMode(plan)
-		syncTabGoalToController(ctrl, goal)
 	}
 	a.mu.Lock()
 	if a.tabs[tabIDForSave] == tab {
+		tab.mode = nextMode
+		tab.goal = nextGoal
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
+	return nil
 }
 
 // QuestionAnswer is the frontend's reply to one question in an ask_request.
@@ -6684,20 +6694,22 @@ func (a *App) SetGoalForTab(tabID, goal string) error {
 		a.mu.Unlock()
 		return a.workspaceNotReadyErr(nil)
 	}
-	tab.goal = goal
-	if goal != "" {
-		tab.mode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
-	}
 	ctrl := tab.Ctrl
-	plan := tabModeHasPlan(tab.mode)
+	plan := tabModeHasPlan(tab.mode) && goal == ""
 	tabIDForSave := tab.ID
 	a.mu.Unlock()
 	if ctrl != nil {
+		if err := syncTabGoalToController(ctrl, goal); err != nil {
+			return err
+		}
 		ctrl.SetPlanMode(plan)
-		syncTabGoalToController(ctrl, goal)
 	}
 	a.mu.Lock()
 	if a.tabs[tabIDForSave] == tab {
+		tab.goal = goal
+		if goal != "" {
+			tab.mode = tabModeFromAxes(false, approvalMode == control.ToolApprovalYolo)
+		}
 		a.saveTabsLocked()
 	}
 	a.mu.Unlock()
@@ -6708,15 +6720,15 @@ func (a *App) SetGoalForTab(tabID, goal string) error {
 // send. Keep those acknowledgements idempotent so one multi-turn Goal retains
 // its delivery scope; a terminal Goal with the same text still starts a fresh
 // scope when the user explicitly enters it again.
-func syncTabGoalToController(ctrl control.SessionAPI, goal string) {
+func syncTabGoalToController(ctrl control.SessionAPI, goal string) error {
 	if ctrl == nil {
-		return
+		return nil
 	}
 	goal = strings.TrimSpace(goal)
 	if goal != "" && strings.TrimSpace(ctrl.Goal()) == goal && ctrl.GoalStatus() == control.GoalStatusRunning {
-		return
+		return nil
 	}
-	ctrl.SetGoal(goal)
+	return ctrl.SetGoalDurable(goal)
 }
 
 func (a *App) ClearGoalForTab(tabID string) error {
