@@ -12,9 +12,15 @@ import (
 // RecoverInterrupted closes persisted runtime authority that cannot survive a
 // process restart. It never reruns a tool or restores an approval. Callers must
 // hold the exclusive write handle returned by Open.
-func (s *Store) RecoverInterrupted(ctx context.Context) (Commit, bool, error) {
+//
+// This is a Session operation because it derives a closure batch from the
+// projection; the physical handle only writes the resulting commit.
+func (s *Session) RecoverInterrupted(ctx context.Context) (Commit, bool, error) {
 	if s == nil {
-		return Commit{}, false, fmt.Errorf("sessionv3: nil store")
+		return Commit{}, false, fmt.Errorf("sessionv3: nil session")
+	}
+	if s.readOnly {
+		return Commit{}, false, ErrReadOnly
 	}
 	snapshot := s.Snapshot()
 	turnID := snapshot.Projection.TurnID
@@ -44,7 +50,8 @@ func (s *Store) RecoverInterrupted(ctx context.Context) (Commit, bool, error) {
 	// the required event until the codec explicitly versions that field.
 	terminal, _ := json.Marshal(map[string]any{"status": event.TurnInterrupted})
 	events = append(events, Event{Kind: "turn/end", Payload: terminal})
-	operationID := fmt.Sprintf("restart-recovery:%d:%s", s.manifest.WriterGeneration, turnID)
+	manifest := s.Manifest()
+	operationID := fmt.Sprintf("restart-recovery:%d:%s", manifest.WriterGeneration, turnID)
 	commit, err := s.Append(ctx, Batch{OperationID: operationID, TurnID: turnID, Events: events})
 	if err != nil {
 		return Commit{}, false, err

@@ -1,6 +1,7 @@
 package sessionv3
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"reasonix/internal/agent"
+	"reasonix/internal/filelock"
 	"reasonix/internal/fileutil"
 	"reasonix/internal/provider"
 )
@@ -40,6 +43,230 @@ func writePrototypeStore(t *testing.T, dir string, events []Event, torn string) 
 	log = append(log, torn...)
 	if err := fileutil.AtomicWriteFileStrict(filepath.Join(dir, "events.jsonl"), log, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestContinueImportedResolvesPairedHistoryStructurally(t *testing.T) {
+	root := t.TempDir()
+	legacyDir := filepath.Join(root, "sessions")
+	legacyPath := filepath.Join(legacyDir, "paired.jsonl")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := agent.NewSession("system")
+	legacy.Add(provider.Message{ID: "user-1", Role: provider.RoleUser, Content: "hello"})
+	if err := legacy.Save(legacyPath); err != nil {
+		t.Fatal(err)
+	}
+	messages := legacy.Snapshot()
+	payload, err := json.Marshal(map[string]any{"messages": messages})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetRoot := filepath.Join(root, "sessions-v3")
+	previewDir := filepath.Join(targetRoot, agent.BranchID(legacyPath))
+	writePrototypeStore(t, previewDir, []Event{{Kind: "context/replace", Payload: payload}}, "")
+
+	result, err := importSourceForLegacy(t.Context(), legacyPath, targetRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind != "events" || result.TargetID == agent.BranchID(legacyPath) {
+		t.Fatalf("resolved import = %+v", result)
+	}
+}
+
+func TestContinueImportedRefusesDivergentPairedHistory(t *testing.T) {
+	root := t.TempDir()
+	legacyDir := filepath.Join(root, "sessions")
+	legacyPath := filepath.Join(legacyDir, "conflict.jsonl")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := agent.NewSession("system")
+	legacy.Add(provider.Message{ID: "legacy-user", Role: provider.RoleUser, Content: "legacy"})
+	if err := legacy.Save(legacyPath); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]any{"messages": []provider.Message{{ID: "event-user", Role: provider.RoleUser, Content: "events"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetRoot := filepath.Join(root, "sessions-v3")
+	writePrototypeStore(t, filepath.Join(targetRoot, agent.BranchID(legacyPath)), []Event{{Kind: "context/replace", Payload: payload}}, "")
+	if _, err := importSourceForLegacy(t.Context(), legacyPath, targetRoot, ""); !errors.Is(err, ErrImportConflict) {
+		t.Fatalf("conflicting import = %v", err)
+	}
+	// Classification happens before publication: a refused import must not have
+	// adopted the transcript as an executable target. The event sidecar source
+	// directory is the only pre-existing entry under the target root.
+	assertNoMigrationTarget(t, targetRoot, legacyPath, legacyDir)
+}
+
+// assertNoMigrationTarget proves the frozen legacy head was never published.
+// The paired sidecar source is an input, not a target, so it is expected.
+func assertNoMigrationTarget(t *testing.T, targetRoot, legacyPath, legacyDir string) {
+	t.Helper()
+	sourceSHA, err := sourceDigestForTest(legacyPath, legacyDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetID := migrationTargetID(legacyPath, sourceSHA, "")
+	if _, statErr := os.Stat(filepath.Join(targetRoot, targetID)); statErr == nil {
+		t.Fatalf("legacy target %q was published before classification", targetID)
+	}
+}
+
+// sourceDigestForTest recomputes the frozen source digest the same way the
+// migration path does.
+func sourceDigestForTest(sourcePath, sourceDir string) (string, error) {
+	artifacts, source, err := freezeLegacyArtifacts(context.Background(), sourcePath)
+	if err != nil {
+		return "", err
+	}
+	_ = artifacts
+	_ = sourceDir
+	return source.SHA256, nil
+}
+
+func TestContinueImportedPublishesOnlyTheSelectedSource(t *testing.T) {
+	root := t.TempDir()
+	legacyDir := filepath.Join(root, "sessions")
+	legacyPath := filepath.Join(legacyDir, "paired.jsonl")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := agent.NewSession("system")
+	legacy.Add(provider.Message{ID: "shared", Role: provider.RoleUser, Content: "first"})
+	if err := legacy.Save(legacyPath); err != nil {
+		t.Fatal(err)
+	}
+	// The sidecar holds the transcript's own prefix plus one newer message, so
+	// it is the only source that can be resumed without losing work.
+	previewMessages := append(legacy.Snapshot(), provider.Message{ID: "newer", Role: provider.RoleAssistant, Content: "second"})
+	payload, err := json.Marshal(map[string]any{"messages": previewMessages})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetRoot := filepath.Join(root, "sessions-v3")
+	writePrototypeStore(t, filepath.Join(targetRoot, agent.BranchID(legacyPath)), []Event{{Kind: "context/replace", Payload: payload}}, "")
+	result, err := importSourceForLegacy(t.Context(), legacyPath, targetRoot, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Kind != "events" {
+		t.Fatalf("selected kind = %q, want events", result.Kind)
+	}
+	// The transcript target must not exist: only the selected source is built.
+	assertNoMigrationTarget(t, targetRoot, legacyPath, legacyDir)
+	messages, err := projectedMessagesForTest(t, targetRoot, result.TargetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != len(previewMessages) || messages[len(messages)-1].ID != "newer" {
+		t.Fatalf("selected projection has %d messages, want the newer sidecar history", len(messages))
+	}
+}
+
+func projectedMessagesForTest(t *testing.T, targetRoot, sessionID string) ([]provider.Message, error) {
+	t.Helper()
+	handle, err := NewFilesystemPersistence(targetRoot).Open(sessionID, ReadOnly)
+	if err != nil {
+		return nil, err
+	}
+	defer handle.Close(context.Background())
+	projection := Projection{}
+	var cursor uint64
+	for {
+		page, readErr := handle.Read(t.Context(), cursor, 1000)
+		if readErr != nil {
+			return nil, readErr
+		}
+		for _, commit := range page.Commits {
+			if applyErr := applyProjectionCommit(&projection, commit); applyErr != nil {
+				return nil, applyErr
+			}
+		}
+		if !page.Truncated {
+			return projection.Messages, nil
+		}
+		cursor = page.Next
+	}
+}
+
+func TestPreviewFreezeWaitsForExactWriterOwnership(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "preview")
+	writePrototypeStore(t, dir, nil, "")
+	release, err := filelock.Acquire(t.Context(), filepath.Join(dir, "writer.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, freezeErr := freezePreview(ctx, dir)
+		done <- freezeErr
+	}()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("freeze error = %v, want cancellation while writer is owned", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("preview freeze ignored writer ownership")
+	}
+}
+
+func TestContinueStoredPreviewUpgradesLinearV3ToFinalCodec(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions-v3")
+	oldDir := filepath.Join(root, "old-linear")
+	store, err := CreateStore(oldDir, "old-linear")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]any{"message": provider.Message{ID: "user", Role: provider.RoleUser, Content: "hello"}})
+	if _, err := store.Append(t.Context(), Batch{OperationID: "message", Events: []Event{{Kind: "message/complete", Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	commits, err := Replay(oldDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{SchemaVersion: SchemaVersion, Codec: LegacyLinearCodec, SessionID: "old-linear", CreatedAt: time.Now().UTC(), WriterGeneration: 1}
+	manifestBytes, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(oldDir, "manifest.json"), append(manifestBytes, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	for _, commit := range commits {
+		commit.Codec = LegacyLinearCodec
+		line, _ := json.Marshal(commit)
+		log.Write(line)
+		log.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(oldDir, "events.jsonl"), log.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	service, err := NewService("local", NewFilesystemPersistence(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, result, err := service.ContinueStoredPreview(t.Context(), "old-linear")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close(context.Background(), runtime.Ref()) })
+	if result.Source.Version != LegacyLinearCodec || runtime.Ref().SessionID == "old-linear" {
+		t.Fatalf("upgrade = %+v, ref = %+v", result, runtime.Ref())
+	}
+	if got := runtime.Session().Snapshot().Projection.Messages; len(got) != 1 || got[0].ID != "user" {
+		t.Fatalf("upgraded messages = %+v", got)
 	}
 }
 
@@ -99,5 +326,26 @@ func TestPrototypeImportRejectsUnknownRequiredEvent(t *testing.T) {
 		if !entry.IsDir() || entry.Name()[0] != '.' {
 			t.Fatalf("failed import published %q", entry.Name())
 		}
+	}
+}
+
+func TestImportMessageComparisonIgnoresNonAuthoritativeToolRecovery(t *testing.T) {
+	base := []provider.Message{{
+		Role: provider.RoleAssistant,
+		ID:   "assistant-tool",
+		ToolCalls: []provider.ToolCall{{
+			ID: "call-1", Name: "read_file", Arguments: `{"path":"input.txt"}`,
+		}},
+	}}
+	legacy := append([]provider.Message(nil), base...)
+	legacy[0].ToolCalls = append([]provider.ToolCall(nil), base[0].ToolCalls...)
+	legacy[0].ToolCalls[0].Recovery = &provider.ToolCallRecord{}
+	legacy[0].WorkDurationMs = 41
+
+	if !messagesEqual(legacy, base) || !messagesPrefix(legacy, base) {
+		t.Fatal("process-local recovery metadata created a false import conflict")
+	}
+	if !messagesPrefix([]provider.Message{}, base) {
+		t.Fatal("an empty legacy transcript was not recognized as an event-history prefix")
 	}
 }

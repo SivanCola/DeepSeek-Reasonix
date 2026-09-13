@@ -38,15 +38,19 @@ func (c *Controller) CancelSession() CancelReceipt {
 	epoch := c.runtimeState.snapshot.RuntimeEpoch
 	recoveryRequired := c.runtimeState.snapshot.Phase == "recovery_required"
 	c.runtimeState.mu.Unlock()
-	if _, runtime, exclusive := c.v3Binding(); exclusive && runtime != nil {
-		snapshot := runtime.Snapshot()
-		sessionRef = snapshot.Ref.SessionID
+	service, runtime, exclusive := c.v3Binding()
+	if exclusive && runtime != nil {
+		sessionRef = runtime.Ref().SessionID
 		headID = ""
-		epoch = snapshot.Epoch
-		alreadyIdle = snapshot.Phase == sessionv3.RuntimeIdle
-		recoveryRequired = snapshot.Phase == sessionv3.RuntimeRecoveryRequired
 	}
 	cancelled := c.signalCancellation()
+	if exclusive && runtime != nil && service != nil {
+		if v3Receipt, err := service.CancelSession(runtime.Ref()); err == nil {
+			epoch = v3Receipt.RuntimeEpoch
+			alreadyIdle = v3Receipt.Phase == sessionv3.RuntimeIdle
+			recoveryRequired = v3Receipt.Phase == sessionv3.RuntimeRecoveryRequired
+		}
+	}
 	// Interaction teardown, status persistence, and Goal bookkeeping are
 	// deliberately outside the receipt path. They may cross user callbacks or a
 	// blocked event sink; the cancellation signal and watchdog are already live.

@@ -1,9 +1,14 @@
 package skill
 
 import (
+	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -19,8 +24,9 @@ func (s *Store) Close() error {
 	}
 	s.closed = true
 	s.watcherGeneration++
-	watcher, done := s.watcher, s.watcherDone
-	s.watcher, s.watcherDone = nil, nil
+	watcher, done, cancel := s.watcher, s.watcherDone, s.watcherLifecycle.cancel
+	s.watcher, s.watcherDone, s.watcherLifecycle.cancel = nil, nil, nil
+	s.watcherLifecycle.active = false
 	s.watcherMu.Unlock()
 	s.catalogMu.Lock()
 	if s.catalogFlight != nil && s.catalogFlight.cancel != nil {
@@ -29,6 +35,9 @@ func (s *Store) Close() error {
 	s.catalogMu.Unlock()
 	if watcher != nil {
 		_ = watcher.Close()
+	}
+	if cancel != nil {
+		cancel()
 	}
 	if done != nil {
 		<-done
@@ -41,8 +50,18 @@ func (s *Store) ensureWatcher() {
 		return
 	}
 	s.watcherMu.Lock()
-	if s.closed || s.watcher != nil {
+	if s.closed || s.watcherLifecycle.active {
 		s.watcherMu.Unlock()
+		return
+	}
+	if runtime.GOOS == "windows" {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.watcherGeneration++
+		generation := s.watcherGeneration
+		done := make(chan struct{})
+		s.watcherDone, s.watcherLifecycle.cancel, s.watcherLifecycle.active = done, cancel, true
+		s.watcherMu.Unlock()
+		go s.pollCatalog(ctx, generation, done)
 		return
 	}
 	watcher, err := fsnotify.NewWatcher()
@@ -53,7 +72,7 @@ func (s *Store) ensureWatcher() {
 	s.watcherGeneration++
 	generation := s.watcherGeneration
 	done := make(chan struct{})
-	s.watcher, s.watcherDone = watcher, done
+	s.watcher, s.watcherDone, s.watcherLifecycle.active = watcher, done, true
 	s.watcherMu.Unlock()
 
 	s.refreshWatcherPaths(watcher, generation)
@@ -67,6 +86,7 @@ func (s *Store) watchCatalog(watcher *fsnotify.Watcher, generation uint64, done 
 		if s.watcher == watcher && s.watcherGeneration == generation {
 			s.watcher = nil
 			s.watcherDone = nil
+			s.watcherLifecycle.active = false
 		}
 		s.watcherMu.Unlock()
 	}()
@@ -92,6 +112,60 @@ func (s *Store) watchCatalog(watcher *fsnotify.Watcher, generation uint64, done 
 			return
 		}
 	}
+}
+
+// Windows fsnotify Add can block inside ReadDirectoryChangesW while another
+// goroutine closes the watcher. A session teardown must never wait on that
+// uninterruptible registration path, so Windows uses a cancellable, bounded
+// polling generation instead. Host install/config operations still invalidate
+// synchronously; polling covers external edits and missing-root creation.
+func (s *Store) pollCatalog(ctx context.Context, generation uint64, done chan struct{}) {
+	defer close(done)
+	defer func() {
+		s.watcherMu.Lock()
+		if s.watcherGeneration == generation {
+			s.watcherDone = nil
+			s.watcherLifecycle.cancel = nil
+			s.watcherLifecycle.active = false
+		}
+		s.watcherMu.Unlock()
+	}()
+	previous := s.catalogWatchSignature()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current := s.catalogWatchSignature()
+			if current != previous {
+				previous = current
+				s.Invalidate("filesystem changed")
+			}
+		}
+	}
+}
+
+func (s *Store) catalogWatchSignature() [sha256.Size]byte {
+	hash := sha256.New()
+	for _, root := range s.roots() {
+		for _, dir := range watchDirectories(root.Dir, s.maxDepth) {
+			entries, err := os.ReadDir(dir)
+			_, _ = fmt.Fprintf(hash, "%s\x00%v\x00", dir, err)
+			for _, entry := range entries {
+				info, statErr := entry.Info()
+				if statErr != nil {
+					_, _ = fmt.Fprintf(hash, "%s\x00%v\x00", entry.Name(), statErr)
+					continue
+				}
+				_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%d\x00%d\x00", entry.Name(), info.Size(), info.ModTime().UnixNano(), info.Mode())
+			}
+		}
+	}
+	var signature [sha256.Size]byte
+	copy(signature[:], hash.Sum(nil))
+	return signature
 }
 
 func (s *Store) watcherCurrent(watcher *fsnotify.Watcher, generation uint64) bool {

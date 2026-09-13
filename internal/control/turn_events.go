@@ -36,7 +36,7 @@ type turnEventState struct {
 	mu                         sync.RWMutex
 	ledger                     *turnevent.Ledger
 	err                        error
-	v3                         sessionv3.WritableSessionHandle
+	v3                         *sessionv3.Session
 	v3Path                     string
 	v3Release                  func(context.Context) error
 	v3Err                      error

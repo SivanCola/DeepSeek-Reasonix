@@ -25,7 +25,7 @@ func TestServiceForkAndRewindUsePersistedTurnBoundaries(t *testing.T) {
 	}
 	appendTurn := func(operation, turnID, messageID string) {
 		payload, _ := json.Marshal(map[string]any{"message": provider.Message{ID: messageID, Role: provider.RoleUser, Content: messageID}})
-		_, appendErr := parent.Session().Handle.Append(t.Context(), Batch{OperationID: operation, TurnID: turnID, Events: []Event{
+		_, appendErr := parent.Session().Append(t.Context(), Batch{OperationID: operation, TurnID: turnID, Events: []Event{
 			{Kind: "turn/start"}, {Kind: "message/complete", Payload: payload}, {Kind: "turn/end", Payload: json.RawMessage(`{"status":"completed"}`)},
 		}})
 		if appendErr != nil {
@@ -43,7 +43,7 @@ func TestServiceForkAndRewindUsePersistedTurnBoundaries(t *testing.T) {
 	if len(childMessages) != 1 || childMessages[0].ID != "message-a" {
 		t.Fatalf("fork messages = %#v", childMessages)
 	}
-	if got := child.Session().Handle.Manifest().InheritedEvents; got != 3 {
+	if got := child.Session().Manifest().InheritedEvents; got != 3 {
 		t.Fatalf("inherited event count = %d", got)
 	}
 
@@ -92,7 +92,7 @@ func TestServiceConcurrentOpenPublishesOneExactRuntime(t *testing.T) {
 				errorsFound <- openErr
 				return
 			}
-			results <- runtime
+			results <- runtime.Runtime()
 		})
 	}
 	close(start)
@@ -148,7 +148,7 @@ func TestServicePrepareCreateIsInvisibleUntilExactPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current, ok := service.Runtime(ref); !ok || current != published {
+	if current, ok := service.Runtime(ref); !ok || current != published.Runtime() {
 		t.Fatal("exact prepared runtime was not published")
 	}
 	if err := service.Discard(t.Context(), prepared); err == nil {
@@ -173,7 +173,7 @@ func TestQueryListProjectsEventBackedTitleAndCompletedTurns(t *testing.T) {
 	if _, err := runtime.Session().AppendBatch(t.Context(), "title", []Event{{Kind: "session/title", Payload: title}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Session().Handle.Append(t.Context(), Batch{OperationID: "turn", TurnID: "turn-1", Events: []Event{
+	if _, err := runtime.Session().Append(t.Context(), Batch{OperationID: "turn", TurnID: "turn-1", Events: []Event{
 		{Kind: "turn/start"}, {Kind: "turn/end", Payload: json.RawMessage(`{"status":"completed"}`)},
 	}}); err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestQueryListProjectsEventBackedTitleAndCompletedTurns(t *testing.T) {
 	if err := service.Close(t.Context(), runtime.Ref()); err != nil {
 		t.Fatal(err)
 	}
-	page, err := service.Query().List("", 50)
+	page, err := service.Query().List(t.Context(), "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestServiceOpenClosesPersistedRuntimeWithoutRestoringAuthority(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := handle.(WritableSessionHandle)
+	store := handle
 	if _, err := store.Append(t.Context(), Batch{OperationID: "interrupted", TurnID: "turn", Events: []Event{
 		{Kind: "turn/start"},
 		{Kind: "tool/start", Payload: json.RawMessage(`{"id":"call","name":"bash"}`)},
@@ -343,16 +343,20 @@ func TestServiceOpenClosesPersistedRuntimeWithoutRestoringAuthority(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := service.Open(t.Context(), SessionRef{HostID: "local", SessionID: "restart"})
+	binding, err := service.Open(t.Context(), SessionRef{HostID: "local", SessionID: "restart"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	runtime := binding.Runtime()
 	snapshot := runtime.Snapshot()
 	if snapshot.Phase != RuntimeIdle || snapshot.Session.Projection.TurnID != "" || len(snapshot.Session.Projection.ActiveTools) != 0 || len(snapshot.Session.Projection.Interactions) != 0 {
 		t.Fatalf("restored stale runtime authority: %+v", snapshot)
 	}
 	if snapshot.Session.Projection.TurnStatus != "interrupted" {
 		t.Fatalf("turn status = %q", snapshot.Session.Projection.TurnStatus)
+	}
+	if err := binding.Release(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	if err := service.Close(t.Context(), runtime.Ref()); err != nil {
 		t.Fatal(err)
@@ -383,11 +387,14 @@ func TestSessionQueryColdReadDoesNotAcquireWriter(t *testing.T) {
 		t.Fatalf("cold history = %#v, %v", history, err)
 	}
 	// A query did not retain the writer lease; the execution runtime can attach.
-	runtime, err := service.Open(t.Context(), ref)
+	binding, err := service.Open(t.Context(), ref)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Close(t.Context(), runtime.Ref()); err != nil {
+	if err := binding.Release(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Close(t.Context(), ref); err != nil {
 		t.Fatal(err)
 	}
 }

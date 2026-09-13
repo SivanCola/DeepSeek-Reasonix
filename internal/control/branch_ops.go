@@ -277,16 +277,11 @@ func (c *Controller) forkNamedV3(turn int, name string, switchToFork bool) (stri
 		return child.Ref().SessionID, nil
 	}
 	prepared := agent.NewSession("").CloneWithMessages(child.Session().Snapshot().Projection.ModelMessages)
-	old, err := c.publishV3Runtime(child, prepared, true)
+	_, err = c.publishV3Runtime(child, prepared, true)
 	if err != nil {
 		return "", err
 	}
 	closeChild = false
-	if old != nil && old != child {
-		if err := service.Close(context.Background(), old.Ref()); err != nil {
-			return child.Ref().SessionID, fmt.Errorf("v3 child published; close parent: %w", err)
-		}
-	}
 	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo,
 		Text: fmt.Sprintf("forked conversation at completed turn %d into session %s", turn, child.Ref().SessionID)})
 	return child.Ref().SessionID, nil

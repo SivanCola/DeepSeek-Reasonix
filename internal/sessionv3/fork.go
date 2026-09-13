@@ -18,22 +18,22 @@ import (
 // Fork publishes an independent child session containing the exact durable
 // prefix through a completed turn. The cut must also be a logical batch
 // boundary, so a child can never inherit half of an atomic operation.
-func (s *Store) Fork(ctx context.Context, childDir, childID string, throughSequence uint64) (Manifest, error) {
+//
+// Fork is a Session operation because the inherited prefix is business state:
+// the physical layer only writes the child bytes.
+func (s *Session) Fork(ctx context.Context, childDir, childID string, throughSequence uint64) (Manifest, error) {
 	if s == nil {
-		return Manifest{}, fmt.Errorf("sessionv3: nil parent store")
+		return Manifest{}, fmt.Errorf("sessionv3: nil parent session")
 	}
 	if err := ctx.Err(); err != nil {
 		return Manifest{}, err
 	}
-	childDir = filepath.Clean(strings.TrimSpace(childDir))
-	childID = strings.TrimSpace(childID)
-	if childDir == "." || childID == "" {
-		return Manifest{}, fmt.Errorf("sessionv3: child directory and id are required")
+	if s.readOnly {
+		return Manifest{}, ErrReadOnly
 	}
 	if _, err := s.Flush(ctx); err != nil {
 		return Manifest{}, fmt.Errorf("flush parent before fork: %w", err)
 	}
-
 	s.mu.Lock()
 	var prefix []Commit
 	for _, commit := range s.commits {
@@ -42,10 +42,30 @@ func (s *Store) Fork(ctx context.Context, childDir, childID string, throughSeque
 		}
 		prefix = append(prefix, cloneCommit(commit))
 	}
-	parentDir := s.dir
+	parentDir, parentID := s.dir(), s.id
 	s.mu.Unlock()
 	if throughSequence > 0 && (len(prefix) == 0 || prefix[len(prefix)-1].LastSequence() != throughSequence) {
 		return Manifest{}, fmt.Errorf("sessionv3: fork cut %d is not an atomic batch boundary", throughSequence)
+	}
+	return writeForkChild(ctx, parentDir, parentID, prefix, childDir, childID, throughSequence)
+}
+
+// dir reports the physical directory backing this session, if any.
+func (s *Session) dir() string {
+	if s == nil || s.binding == nil {
+		return ""
+	}
+	if store, ok := s.binding.handle.(*Store); ok {
+		return store.Dir()
+	}
+	return ""
+}
+
+func writeForkChild(ctx context.Context, parentDir, parentID string, prefix []Commit, childDir, childID string, throughSequence uint64) (Manifest, error) {
+	childDir = filepath.Clean(strings.TrimSpace(childDir))
+	childID = strings.TrimSpace(childID)
+	if childDir == "." || childID == "" {
+		return Manifest{}, fmt.Errorf("sessionv3: child directory and id are required")
 	}
 	projection, err := Project(prefix)
 	if err != nil {
@@ -63,7 +83,7 @@ func (s *Store) Fork(ctx context.Context, childDir, childID string, throughSeque
 		commit := cloneCommit(original)
 		commit.Codec = Codec
 		commit.ID = deterministicID("fork\x00" + childID + "\x00" + original.ID)
-		commit.OperationID = "inherit:" + s.manifest.SessionID + ":" + original.ID
+		commit.OperationID = "inherit:" + parentID + ":" + original.ID
 		commit.WriterGeneration = 1
 		hash, hashErr := hashOperation(childID, commit.TurnID, commit.Events)
 		if hashErr != nil {

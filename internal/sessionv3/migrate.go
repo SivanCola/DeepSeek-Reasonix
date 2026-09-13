@@ -72,52 +72,152 @@ func migrateLegacyHeadForHost(ctx context.Context, sourcePath, targetRoot, legac
 }
 
 func migrateLegacyHead(ctx context.Context, sourcePath, targetRoot, legacyHeadID string, allowCurrentOwner bool) (MigrationResult, error) {
-	if err := ctx.Err(); err != nil {
-		return MigrationResult{}, err
-	}
-	sourcePath = agent.CanonicalSessionPath(sourcePath)
 	targetRoot = filepath.Clean(strings.TrimSpace(targetRoot))
-	legacyHeadID = strings.TrimSpace(legacyHeadID)
-	if sourcePath == "" || targetRoot == "." {
+	if targetRoot == "." {
 		return MigrationResult{}, fmt.Errorf("sessionv3: source and target root are required")
 	}
-	var lease *agent.SessionLease
-	if !allowCurrentOwner || !agent.SessionLeaseHeldByCurrentRuntime(sourcePath) {
-		var acquireErr error
-		lease, acquireErr = agent.TryAcquireSessionLease(sourcePath)
-		if acquireErr != nil {
-			return MigrationResult{}, fmt.Errorf("freeze legacy session: %w", acquireErr)
-		}
-		defer lease.Release()
-	}
-
-	artifacts, source, err := freezeLegacyArtifacts(ctx, sourcePath)
+	frozen, err := freezeLegacyHead(ctx, sourcePath, legacyHeadID, allowCurrentOwner)
 	if err != nil {
 		return MigrationResult{}, err
 	}
+	return frozen.publish(ctx, targetRoot)
+}
+
+// frozenLegacyHead is one legacy head reduced to an immutable, already-parsed
+// migration input. Nothing is published while it is being built, so a caller
+// that must compare it against a paired event sidecar can still refuse the
+// import without leaving a partially-adopted target behind.
+type frozenLegacyHead struct {
+	sourcePath    string
+	headID        string
+	source        Source
+	artifacts     []frozenArtifact
+	targetID      string
+	messages      []provider.Message
+	modelRef      string
+	modelIdentity string
+	goal          map[string]any
+}
+
+// freezeLegacyHead acquires the source lease, copies every durable artifact
+// byte-for-byte, then parses only the frozen copy. The lease is released before
+// parsing, which is safe precisely because the parse never reads the original.
+func freezeLegacyHead(ctx context.Context, sourcePath, legacyHeadID string, allowCurrentOwner bool) (*frozenLegacyHead, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sourcePath = agent.CanonicalSessionPath(sourcePath)
+	legacyHeadID = strings.TrimSpace(legacyHeadID)
+	if sourcePath == "" {
+		return nil, fmt.Errorf("sessionv3: source is required")
+	}
+	var lease *agent.SessionLease
+	if !allowCurrentOwner || !agent.SessionLeaseHeldByCurrentRuntime(sourcePath) {
+		acquired, acquireErr := agent.TryAcquireSessionLease(sourcePath)
+		if acquireErr != nil {
+			return nil, fmt.Errorf("freeze legacy session: %w", acquireErr)
+		}
+		lease = acquired
+	}
+	artifacts, source, err := freezeLegacyArtifacts(ctx, sourcePath)
+	if lease != nil {
+		lease.Release()
+	}
+	if err != nil {
+		return nil, err
+	}
 	source.LegacyHeadID = legacyHeadID
-	targetID := migrationTargetID(sourcePath, source.SHA256, legacyHeadID)
-	targetDir := filepath.Join(targetRoot, targetID)
-	result := MigrationResult{TargetID: targetID, TargetDir: targetDir, Source: source}
+	parsed, err := parseFrozenLegacy(ctx, artifacts, sourcePath, legacyHeadID)
+	if err != nil {
+		return nil, err
+	}
+	return &frozenLegacyHead{
+		sourcePath: sourcePath, headID: legacyHeadID, source: source, artifacts: artifacts,
+		targetID: migrationTargetID(sourcePath, source.SHA256, legacyHeadID),
+		messages: parsed.messages, modelRef: parsed.modelRef, modelIdentity: parsed.modelIdentity,
+		goal: parsed.goal,
+	}, nil
+}
+
+type frozenLegacyParse struct {
+	messages      []provider.Message
+	modelRef      string
+	modelIdentity string
+	goal          map[string]any
+}
+
+// parseFrozenLegacy reads the frozen artifacts from a private directory so the
+// published target can never depend on bytes outside the frozen input.
+func parseFrozenLegacy(ctx context.Context, artifacts []frozenArtifact, sourcePath, legacyHeadID string) (frozenLegacyParse, error) {
+	dir, err := os.MkdirTemp("", "reasonix-legacy-freeze-")
+	if err != nil {
+		return frozenLegacyParse{}, err
+	}
+	defer os.RemoveAll(dir)
+	for _, artifact := range artifacts {
+		if err := ctx.Err(); err != nil {
+			return frozenLegacyParse{}, err
+		}
+		if err := saveFrozenArtifact(ctx, artifact.data, filepath.Join(dir, filepath.Base(artifact.path)), artifact.mode); err != nil {
+			return frozenLegacyParse{}, err
+		}
+	}
+	frozenSourcePath := filepath.Join(dir, filepath.Base(sourcePath))
+	var session *agent.Session
+	if legacyHeadID == "" {
+		session, err = agent.LoadSession(frozenSourcePath)
+	} else {
+		session, err = agent.LoadSessionHeadReadOnly(frozenSourcePath, legacyHeadID)
+	}
+	if err != nil {
+		return frozenLegacyParse{}, fmt.Errorf("read legacy transcript: %w", err)
+	}
+	messages := session.Snapshot()
+	if messages == nil {
+		// An empty legacy transcript is valid. Encode an explicit empty list so
+		// strict replay can distinguish it from a damaged import missing the
+		// required messages field.
+		messages = []provider.Message{}
+	}
+	parsed := frozenLegacyParse{messages: messages}
+	if modelRef, modelIdentity, ok := agent.LoadSessionModelSelection(frozenSourcePath); ok && strings.TrimSpace(modelRef) != "" {
+		parsed.modelRef, parsed.modelIdentity = strings.TrimSpace(modelRef), strings.TrimSpace(modelIdentity)
+	}
+	parsed.goal = sanitizedLegacyGoal(frozenSourcePath)
+	return parsed, nil
+}
+
+// publish materializes the frozen input as the deterministic final target. The
+// directory is built in a sibling temporary path and atomically renamed, so a
+// reader never observes a partial session.
+func (f *frozenLegacyHead) publish(ctx context.Context, targetRoot string) (MigrationResult, error) {
+	if f == nil {
+		return MigrationResult{}, fmt.Errorf("sessionv3: nil frozen legacy head")
+	}
+	targetDir := filepath.Join(targetRoot, f.targetID)
+	result := MigrationResult{TargetID: f.targetID, TargetDir: targetDir, Source: f.source, MessageNum: len(f.messages)}
 
 	migrationMu.Lock()
 	defer migrationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return MigrationResult{}, err
+	}
 	if m, err := readManifest(filepath.Join(targetDir, "manifest.json")); err == nil {
-		if m.Source != nil && m.Source.Path == sourcePath && m.Source.SHA256 == source.SHA256 && m.Source.LegacyHeadID == legacyHeadID {
-			if err := appendMigrationMapping(ctx, targetRoot, MigrationEntry{SourcePath: sourcePath, SourceSize: source.Size, SourceSHA256: source.SHA256, LegacyHeadID: legacyHeadID, TargetCodec: Codec, TargetID: targetID, CreatedAt: m.CreatedAt}); err != nil {
+		if m.Source != nil && m.Source.Path == f.sourcePath && m.Source.SHA256 == f.source.SHA256 && m.Source.LegacyHeadID == f.headID {
+			if err := appendMigrationMapping(ctx, targetRoot, MigrationEntry{SourcePath: f.sourcePath, SourceSize: f.source.Size, SourceSHA256: f.source.SHA256, LegacyHeadID: f.headID, TargetCodec: Codec, TargetID: f.targetID, CreatedAt: m.CreatedAt}); err != nil {
 				return MigrationResult{}, fmt.Errorf("repair migration mapping: %w", err)
 			}
 			result.Reused = true
 			return result, nil
 		}
-		return MigrationResult{}, fmt.Errorf("sessionv3: target %s already exists for different input", targetID)
+		return MigrationResult{}, fmt.Errorf("sessionv3: target %s already exists for different input", f.targetID)
 	} else if !os.IsNotExist(err) {
 		return MigrationResult{}, err
 	}
 	if err := os.MkdirAll(targetRoot, 0o700); err != nil {
 		return MigrationResult{}, err
 	}
-	tmp, err := os.MkdirTemp(targetRoot, "."+targetID+".tmp-")
+	tmp, err := os.MkdirTemp(targetRoot, "."+f.targetID+".tmp-")
 	if err != nil {
 		return MigrationResult{}, err
 	}
@@ -128,62 +228,40 @@ func migrateLegacyHead(ctx context.Context, sourcePath, targetRoot, legacyHeadID
 		}
 	}()
 
-	manifest := Manifest{SchemaVersion: SchemaVersion, Codec: Codec, SessionID: targetID, CreatedAt: time.Now().UTC(), Source: &source}
+	manifest := Manifest{SchemaVersion: SchemaVersion, Codec: Codec, SessionID: f.targetID, CreatedAt: time.Now().UTC(), Source: &f.source}
 	if err := writeManifest(filepath.Join(tmp, "manifest.json"), manifest); err != nil {
 		return MigrationResult{}, err
 	}
 	legacyDir := filepath.Join(tmp, "legacy")
-	for _, artifact := range artifacts {
+	for _, artifact := range f.artifacts {
 		if err := ctx.Err(); err != nil {
 			return MigrationResult{}, err
 		}
-		rel := filepath.Base(artifact.path)
-		if err := copyFrozenArtifact(ctx, artifact.data, filepath.Join(legacyDir, rel), artifact.mode); err != nil {
+		if err := copyFrozenArtifact(ctx, artifact.data, filepath.Join(legacyDir, filepath.Base(artifact.path)), artifact.mode); err != nil {
 			return MigrationResult{}, err
 		}
 	}
 
-	// Parse only the frozen copy. The source lease prevents cooperating writers,
-	// but reading the original again would still make the published target depend
-	// on bytes outside the frozen migration input.
-	frozenSourcePath := filepath.Join(legacyDir, filepath.Base(sourcePath))
-	var session *agent.Session
-	if legacyHeadID == "" {
-		session, err = agent.LoadSession(frozenSourcePath)
-	} else {
-		session, err = agent.LoadSessionHeadReadOnly(frozenSourcePath, legacyHeadID)
-	}
-	if err != nil {
-		return MigrationResult{}, fmt.Errorf("read legacy transcript: %w", err)
-	}
-	messages := session.Snapshot()
-	if messages == nil {
-		// An empty legacy transcript is valid. Encode an explicit empty list so
-		// strict replay can distinguish it from a damaged import missing the
-		// required messages field.
-		messages = []provider.Message{}
-	}
-	result.MessageNum = len(messages)
 	payload := map[string]any{
-		"source":   source,
-		"messages": messages,
+		"source":   f.source,
+		"messages": f.messages,
 	}
-	if modelRef, modelIdentity, ok := agent.LoadSessionModelSelection(frozenSourcePath); ok && strings.TrimSpace(modelRef) != "" {
-		payload["modelRef"] = strings.TrimSpace(modelRef)
-		payload["modelIdentity"] = strings.TrimSpace(modelIdentity)
+	if f.modelRef != "" {
+		payload["modelRef"] = f.modelRef
+		payload["modelIdentity"] = f.modelIdentity
 	}
-	if goal := sanitizedLegacyGoal(frozenSourcePath); goal != nil {
-		payload["goal"] = goal
+	if f.goal != nil {
+		payload["goal"] = f.goal
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return MigrationResult{}, err
 	}
-	v3, err := Open(tmp, targetID)
+	v3, err := Open(tmp, f.targetID)
 	if err != nil {
 		return MigrationResult{}, err
 	}
-	_, appendErr := v3.Append(ctx, Batch{OperationID: "legacy-import:" + source.SHA256, Events: []Event{{Kind: "legacy/import", Payload: raw}}})
+	_, appendErr := v3.Append(ctx, Batch{OperationID: "legacy-import:" + f.source.SHA256, Events: []Event{{Kind: "legacy/import", Payload: raw}}})
 	if appendErr == nil {
 		_, appendErr = v3.Flush(ctx)
 	}
@@ -198,12 +276,24 @@ func migrateLegacyHead(ctx context.Context, sourcePath, targetRoot, legacyHeadID
 		return MigrationResult{}, fmt.Errorf("publish v3 session: %w", err)
 	}
 	published = true
-	if err := appendMigrationMapping(ctx, targetRoot, MigrationEntry{SourcePath: sourcePath, SourceSize: source.Size, SourceSHA256: source.SHA256, LegacyHeadID: legacyHeadID, TargetCodec: Codec, TargetID: targetID, CreatedAt: time.Now().UTC()}); err != nil {
+	if err := appendMigrationMapping(ctx, targetRoot, MigrationEntry{SourcePath: f.sourcePath, SourceSize: f.source.Size, SourceSHA256: f.source.SHA256, LegacyHeadID: f.headID, TargetCodec: Codec, TargetID: f.targetID, CreatedAt: time.Now().UTC()}); err != nil {
 		// The target is already complete and deterministically discoverable. A
 		// later retry repairs the mapping without rebuilding or resending work.
 		return result, fmt.Errorf("publish migration mapping: %w", err)
 	}
 	return result, nil
+}
+
+// saveFrozenArtifact writes one frozen artifact without following a symlink
+// that may have replaced the destination.
+func saveFrozenArtifact(ctx context.Context, data []byte, target string, mode fs.FileMode) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	return fileutil.AtomicWriteFileStrict(target, data, mode)
 }
 
 type frozenArtifact struct {

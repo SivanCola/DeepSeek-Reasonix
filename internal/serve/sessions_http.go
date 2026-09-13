@@ -83,7 +83,7 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 	if concrete, ok := ctrl.(*control.Controller); ok {
 		if service := concrete.SessionV3Service(); service != nil {
 			_, runtime, bound := concrete.SessionV3Binding()
-			page, listErr := service.Query().List("", 100)
+			page, listErr := service.Query().List(r.Context(), "", 100)
 			if listErr == nil {
 				for _, info := range page.Sessions {
 					row := sessionListEntry{

@@ -2087,28 +2087,7 @@ func (a *App) buildSettingReplacementController(tab *WorkspaceTab, snap tabRunti
 		}
 		return ctrl, restoredRuntime, path, nil
 	}
-	// Same-session rebuild without the full boot.Rebuild path still must keep
-	// the private temporary directory (Issue #7575).
-	if old, ok := oldCtrl.(*control.Controller); ok && old != nil && opts.SessionTemp == nil {
-		opts.SessionTemp = old.SessionTemp()
-	}
-	ctrl, err := boot.Build(a.bootContext(), opts)
-	if err != nil {
-		return nil, normalizedTabRuntime{}, "", err
-	}
-	a.bindControllerDisplayRecorder(ctrl)
-	configureControllerRuntime(ctrl, oldCtrl, runtime)
-	path := agent.ContinueSessionPath(prevPath, ctrl.SessionDir(), ctrl.Label())
-	if err := a.ensureTabSessionLeaseForRebuild(tab, path, setting); err != nil {
-		ctrl.Close()
-		return nil, normalizedTabRuntime{}, "", err
-	}
-	restoredRuntime, err := resumeControllerRuntimeWithMessages(ctrl, carried, path, runtime)
-	if err != nil {
-		ctrl.Close()
-		return nil, normalizedTabRuntime{}, "", err
-	}
-	return ctrl, restoredRuntime, path, nil
+	return a.buildLegacySettingReplacement(tab, runtime, opts, oldCtrl, carried, prevPath, setting)
 }
 
 // runtimeReloadSettingLabel is the settings-style label used in busy/lease

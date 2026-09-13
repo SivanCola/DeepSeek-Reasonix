@@ -23,21 +23,15 @@ func (s *Service) SetTitle(ctx context.Context, ref SessionRef, title string) er
 	}
 	runtime, alreadyOpen := s.Runtime(ref)
 	var session *Session
-	var cold SessionHandle
 	var err error
 	if alreadyOpen {
 		session = runtime.Session()
 	} else {
-		cold, err = s.persistence.Open(ref.SessionID, ReadWrite)
+		session, err = s.persistence.Open(ref.SessionID, ReadWrite)
 		if err != nil {
 			return err
 		}
-		defer cold.Close(context.Background())
-		writable, ok := cold.(WritableSessionHandle)
-		if !ok {
-			return errors.New("sessionv3: persistence returned a non-writable title handle")
-		}
-		session = &Session{Handle: writable}
+		defer session.Close(context.Background())
 	}
 	payload, err := json.Marshal(map[string]string{"title": title})
 	if err != nil {
@@ -51,37 +45,40 @@ func (s *Service) SetTitle(ctx context.Context, ref SessionRef, title string) er
 }
 
 // Export writes a self-contained immutable copy of the session directory. It
-// first establishes a durability checkpoint, then holds the Store commit and
-// drain boundaries while copying, so the exported manifest and event prefix
-// cannot describe different moments.
-func (s *Store) Export(ctx context.Context, destination string) error {
+// first establishes a durability checkpoint, then freezes the physical write
+// boundary while copying, so the exported manifest and event prefix cannot
+// describe different moments.
+func (s *Session) Export(ctx context.Context, destination string) error {
 	if s == nil {
 		return os.ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if _, err := s.Flush(ctx); err != nil {
 		return err
 	}
-	s.drainMu.Lock()
-	s.mu.Lock()
-	if s.closed || s.file == nil {
-		s.mu.Unlock()
-		s.drainMu.Unlock()
+	if s.binding == nil {
+		return ErrReadOnly
+	}
+	source := s.dir()
+	if source == "" {
 		return os.ErrClosed
 	}
-	source := s.dir
-	s.mu.Unlock()
-	// drainMu freezes physical files; accepted in-memory updates and Stop do
-	// not need to wait for the export's disk I/O.
-	err := exportDirectory(ctx, source, destination)
-	s.drainMu.Unlock()
-	return err
+	// The drain chain is the physical write boundary: holding it freezes the
+	// bytes on disk. Accepted in-memory updates and Stop do not wait for the
+	// export's disk I/O.
+	return s.binding.freezePhysical(func() error { return exportDirectory(ctx, source, destination) })
 }
 
 func (p *FilesystemPersistence) exportCold(ctx context.Context, sessionID, destination string) error {
 	if err := validateSessionID(sessionID); err != nil {
 		return err
 	}
-	source := filepath.Join(p.Root, sessionID)
+	source, err := p.sessionDir(sessionID, true)
+	if err != nil {
+		return err
+	}
 	releaseDirectory, err := filelock.AcquireMode(ctx, directoryOwnershipPath(source), filelock.ModeShared)
 	if err != nil {
 		return err
@@ -214,7 +211,10 @@ func (p *FilesystemPersistence) Delete(ctx context.Context, sessionID string) er
 	if err := validateSessionID(sessionID); err != nil {
 		return err
 	}
-	source := filepath.Join(p.Root, sessionID)
+	source, err := p.sessionDir(sessionID, true)
+	if err != nil {
+		return err
+	}
 	releaseDirectory, err := filelock.Acquire(ctx, directoryOwnershipPath(source))
 	if err != nil {
 		return err
@@ -248,7 +248,7 @@ func (s *Service) Export(ctx context.Context, ref SessionRef, destination string
 		return err
 	}
 	if runtime, ok := s.Runtime(ref); ok {
-		return runtime.session.Handle.Export(ctx, destination)
+		return runtime.session.Export(ctx, destination)
 	}
 	filesystem, ok := s.persistence.(*FilesystemPersistence)
 	if !ok {
@@ -273,5 +273,6 @@ func (s *Service) Delete(ctx context.Context, ref SessionRef) error {
 	if !ok {
 		return errors.New("sessionv3: persistence does not support delete")
 	}
+	s.query.invalidateCatalog(ref.SessionID)
 	return filesystem.Delete(ctx, ref.SessionID)
 }

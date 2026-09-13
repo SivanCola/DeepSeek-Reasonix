@@ -1049,13 +1049,13 @@ func (a *App) requireRemotePermissionPresets(tabID string) error {
 func (a *App) requireRemoteExecutionProtocol(tabID string) error {
 	a.remoteTabMu.Lock()
 	tab := a.remoteTabs[tabID]
-	supported := tab != nil && tab.capabilities[serveCapabilityExecutionV2] && tab.capabilities[serveCapabilitySessionsV3] && tab.capabilities[serveCapabilitySessionIdentityV1]
+	supported := tab != nil && tab.capabilities[serveCapabilityExecutionV2] && tab.capabilities[serveCapabilitySessionsV3] && tab.capabilities[serveCapabilitySessionIdentityV1] && tab.capabilities[serveCapabilitySessionOwnershipV1]
 	a.remoteTabMu.Unlock()
 	if tab == nil {
 		return fmt.Errorf("remote tab %q is not open", tabID)
 	}
 	if !supported {
-		return fmt.Errorf("this remote Reasonix Serve is read-only because it does not support %s, %s, and %s; upgrade the remote service to execute or control a session", serveCapabilityExecutionV2, serveCapabilitySessionsV3, serveCapabilitySessionIdentityV1)
+		return fmt.Errorf("this remote Reasonix Serve is read-only because it does not support %s, %s, %s, and %s; upgrade the remote service to execute or control a session", serveCapabilityExecutionV2, serveCapabilitySessionsV3, serveCapabilitySessionIdentityV1, serveCapabilitySessionOwnershipV1)
 	}
 	return nil
 }

@@ -12,9 +12,17 @@ import (
 	"strings"
 	"time"
 
-	"reasonix/internal/agent"
+	"reasonix/internal/filelock"
 	"reasonix/internal/fileutil"
 )
+
+type frozenPreview struct {
+	dir           string
+	manifestBytes []byte
+	eventBytes    []byte
+	manifest      Manifest
+	source        Source
+}
 
 type PrototypeImportResult struct {
 	TargetID       string
@@ -29,6 +37,13 @@ type PrototypeImportResult struct {
 // validated event prefix. Unknown required events and damaged complete records
 // fail closed; an unterminated tail is preserved with the frozen source.
 func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (PrototypeImportResult, error) {
+	return importPreview(ctx, sourceDir, targetRoot)
+}
+
+// importPreview accepts both retired prototype codecs produced before the
+// identity cutover. Callers must resolve it together with the paired legacy
+// transcript; opening either source in isolation can silently drop newer work.
+func importPreview(ctx context.Context, sourceDir, targetRoot string) (PrototypeImportResult, error) {
 	if err := ctx.Err(); err != nil {
 		return PrototypeImportResult{}, err
 	}
@@ -37,42 +52,85 @@ func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (Prototy
 	if sourceDir == "." || targetRoot == "." {
 		return PrototypeImportResult{}, fmt.Errorf("sessionv3: prototype source and target root are required")
 	}
-	manifestPath := filepath.Join(sourceDir, "manifest.json")
-	eventsPath := filepath.Join(sourceDir, "events.jsonl")
-	lease, err := agent.TryAcquireSessionLease(eventsPath)
-	if err != nil {
-		return PrototypeImportResult{}, fmt.Errorf("freeze prototype session: %w", err)
-	}
-	defer lease.Release()
-
-	manifestBytes, err := os.ReadFile(manifestPath)
+	frozen, err := freezePreview(ctx, sourceDir)
 	if err != nil {
 		return PrototypeImportResult{}, err
 	}
-	var prototype Manifest
-	if err := json.Unmarshal(manifestBytes, &prototype); err != nil {
-		return PrototypeImportResult{}, fmt.Errorf("%w: prototype manifest: %w", ErrDamagedStore, err)
+	return importFrozenPreview(ctx, frozen, targetRoot)
+}
+
+func freezePreview(ctx context.Context, sourceDir string) (frozenPreview, error) {
+	return freezePreviewCodec(ctx, sourceDir, false)
+}
+
+// freezePairedPreview also accepts a current-codec directory because early
+// v3 integrations derived that directory from a legacy transcript path while
+// using whatever codec the binary considered current. Only the paired import
+// resolver may treat such a store as an import source; normal current-codec
+// sessions must continue to open by immutable session ID.
+func freezePairedPreview(ctx context.Context, sourceDir string) (frozenPreview, error) {
+	return freezePreviewCodec(ctx, sourceDir, true)
+}
+
+func freezePreviewCodec(ctx context.Context, sourceDir string, allowCurrent bool) (frozenPreview, error) {
+	if _, err := os.Stat(sourceDir); err != nil {
+		// Report absence before taking any lock. The ownership lock lives beside
+		// the directory, so a missing candidate must not surface as a lock error
+		// that callers cannot classify as "no paired source".
+		return frozenPreview{}, err
 	}
-	if prototype.SchemaVersion != SchemaVersion || prototype.Codec != PrototypeCodec || strings.TrimSpace(prototype.SessionID) == "" {
-		return PrototypeImportResult{}, fmt.Errorf("%w: expected %s", ErrUnsupportedVersion, PrototypeCodec)
+	releaseDirectory, err := filelock.AcquireMode(ctx, directoryOwnershipPath(sourceDir), filelock.ModeShared)
+	if err != nil {
+		return frozenPreview{}, fmt.Errorf("freeze preview ownership: %w", err)
 	}
-	eventBytes, err := os.ReadFile(eventsPath)
+	defer releaseDirectory()
+	info, err := os.Stat(sourceDir)
+	if err != nil {
+		return frozenPreview{}, err
+	}
+	if !info.IsDir() {
+		return frozenPreview{}, fmt.Errorf("sessionv3: preview path is not a directory: %s", sourceDir)
+	}
+	releaseWriter, err := filelock.AcquireMode(ctx, filepath.Join(sourceDir, "writer.lock"), filelock.ModeShared)
+	if err != nil {
+		return frozenPreview{}, fmt.Errorf("freeze preview writer: %w", err)
+	}
+	defer releaseWriter()
+	manifestBytes, err := os.ReadFile(filepath.Join(sourceDir, "manifest.json"))
+	if err != nil {
+		return frozenPreview{}, err
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return frozenPreview{}, fmt.Errorf("%w: prototype manifest: %w", ErrDamagedStore, err)
+	}
+	knownCodec := manifest.Codec == PrototypeCodec || manifest.Codec == LegacyLinearCodec || allowCurrent && manifest.Codec == Codec
+	if manifest.SchemaVersion != SchemaVersion || !knownCodec || strings.TrimSpace(manifest.SessionID) == "" {
+		return frozenPreview{}, fmt.Errorf("%w: unsupported preview codec %q", ErrUnsupportedVersion, manifest.Codec)
+	}
+	eventBytes, err := os.ReadFile(filepath.Join(sourceDir, "events.jsonl"))
 	if os.IsNotExist(err) {
 		eventBytes = nil
 	} else if err != nil {
-		return PrototypeImportResult{}, err
+		return frozenPreview{}, err
 	}
 	digest := sha256.New()
 	digest.Write(manifestBytes)
 	digest.Write([]byte{0})
 	digest.Write(eventBytes)
 	sourceDigest := hex.EncodeToString(digest.Sum(nil))
-	source := Source{Path: sourceDir, Size: int64(len(manifestBytes) + len(eventBytes)), SHA256: sourceDigest, Version: PrototypeCodec}
-	targetID := deterministicID("prototype-import\x00" + sourceDir + "\x00" + sourceDigest)
+	source := Source{Path: sourceDir, Size: int64(len(manifestBytes) + len(eventBytes)), SHA256: sourceDigest, Version: manifest.Codec}
+	return frozenPreview{dir: sourceDir, manifestBytes: manifestBytes, eventBytes: eventBytes, manifest: manifest, source: source}, nil
+}
+
+func importFrozenPreview(ctx context.Context, frozen frozenPreview, targetRoot string) (PrototypeImportResult, error) {
+	prototype, source := frozen.manifest, frozen.source
+	manifestBytes, eventBytes, sourceDir := frozen.manifestBytes, frozen.eventBytes, frozen.dir
+	targetID := deterministicID("prototype-import\x00" + prototype.Codec + "\x00" + sourceDir + "\x00" + source.SHA256)
 	targetDir := filepath.Join(targetRoot, targetID)
 	result := PrototypeImportResult{TargetID: targetID, TargetDir: targetDir, Source: source}
 	if existing, readErr := readManifest(filepath.Join(targetDir, "manifest.json")); readErr == nil {
-		if existing.Source != nil && existing.Source.Path == source.Path && existing.Source.SHA256 == source.SHA256 && existing.Source.Version == PrototypeCodec {
+		if existing.Source != nil && existing.Source.Path == source.Path && existing.Source.SHA256 == source.SHA256 && existing.Source.Version == prototype.Codec {
 			result.Reused = true
 			result.ImportedEvents = existing.InheritedEvents
 			return result, nil
@@ -105,21 +163,25 @@ func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (Prototy
 		return PrototypeImportResult{}, err
 	}
 
-	frozen, err := os.Open(filepath.Join(legacyDir, "events.jsonl"))
+	frozenLog, err := os.Open(filepath.Join(legacyDir, "events.jsonl"))
 	if err != nil {
 		return PrototypeImportResult{}, err
 	}
 	prototypeCommits := []Commit{}
-	err = scanCommitFileCodec(frozen, 0, 1, PrototypeCodec, PrototypeProjectionKinds, func(_ int64, commit Commit) bool {
+	knownKinds := ProjectionKinds
+	if prototype.Codec == PrototypeCodec {
+		knownKinds = PrototypeProjectionKinds
+	}
+	err = scanCommitFileCodec(frozenLog, 0, 1, prototype.Codec, knownKinds, func(_ int64, commit Commit) bool {
 		prototypeCommits = append(prototypeCommits, cloneCommit(commit))
 		return true
 	})
-	_ = frozen.Close()
+	_ = frozenLog.Close()
 	if err != nil {
 		return PrototypeImportResult{}, err
 	}
 
-	finalLog, lastSequence, err := convertPrototypeCommits(prototypeCommits, prototype.SessionID, targetID)
+	finalLog, lastSequence, err := convertPrototypeCommits(prototypeCommits, prototype.SessionID, targetID, prototype.Codec)
 	if err != nil {
 		return PrototypeImportResult{}, err
 	}
@@ -147,7 +209,7 @@ func ImportPrototype(ctx context.Context, sourceDir, targetRoot string) (Prototy
 	return result, nil
 }
 
-func convertPrototypeCommits(prototypeCommits []Commit, sourceID, targetID string) ([]byte, uint64, error) {
+func convertPrototypeCommits(prototypeCommits []Commit, sourceID, targetID, sourceCodec string) ([]byte, uint64, error) {
 	finalCommits := make([]Commit, len(prototypeCommits))
 	var lastSequence uint64
 	for i, original := range prototypeCommits {
@@ -157,7 +219,7 @@ func convertPrototypeCommits(prototypeCommits []Commit, sourceID, targetID strin
 		commit.OperationID = "prototype:" + sourceID + ":" + original.ID
 		commit.WriterGeneration = 1
 		for eventIndex := range commit.Events {
-			if commit.Events[eventIndex].Kind == "context/replace" {
+			if sourceCodec == PrototypeCodec && commit.Events[eventIndex].Kind == "context/replace" {
 				commit.Events[eventIndex].Kind = "history/replace"
 			}
 		}

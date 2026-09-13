@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 
-	"reasonix/internal/provider"
 	"reasonix/internal/sessionv3"
 )
 
@@ -33,7 +32,7 @@ func (a *App) listV3SessionsFromDir(dir, active string) []SessionMeta {
 	result := make([]SessionMeta, 0)
 	cursor := ""
 	for {
-		page, err := query.List(cursor, 100)
+		page, err := query.List(context.Background(), cursor, 100)
 		if err != nil {
 			return result
 		}
@@ -47,13 +46,8 @@ func (a *App) listV3SessionsFromDir(dir, active string) []SessionMeta {
 			}
 			if info.Error != "" {
 				meta.TurnsState = "corrupt"
-			} else if history, historyErr := query.History(context.Background(), info.Ref); historyErr == nil {
-				for _, message := range history {
-					if message.Role == provider.RoleUser && strings.TrimSpace(message.Content) != "" {
-						meta.Preview = strings.TrimSpace(message.Content)
-						break
-					}
-				}
+			} else {
+				meta.Preview = info.Preview
 			}
 			a.mu.RLock()
 			_, meta.Open = a.runtimeBySessionKey[sessionRuntimeKey(meta.Path)]

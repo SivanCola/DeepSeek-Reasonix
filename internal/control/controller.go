@@ -385,6 +385,7 @@ type controllerSessionBinding struct {
 	// transcript or business sidecar may be written through it.
 	sessionService *sessionv3.Service
 	sessionRuntime *sessionv3.Runtime
+	sessionBinding *sessionv3.ClientBinding
 	v3Exclusive    bool
 	v3BindingMu    sync.RWMutex
 	v3ActivityMu   sync.Mutex
@@ -731,6 +732,7 @@ func New(opts Options) *Controller {
 	if opts.Hooks != nil {
 		opts.Hooks.SetSessionID(agent.BranchID(opts.SessionPath))
 	}
+	sessionRuntime, sessionBinding := bindInitialSessionRuntime(opts)
 	c := &Controller{
 		taskBudget:                        opts.TaskBudget,
 		goalTokenBudget:                   opts.GoalTokenBudget,
@@ -758,7 +760,7 @@ func New(opts Options) *Controller {
 		sessionContextStatic:              opts.SessionContextStatic,
 		sessionDir:                        opts.SessionDir,
 		sessionPath:                       opts.SessionPath,
-		controllerSessionBinding:          controllerSessionBinding{sessionService: opts.SessionService, sessionRuntime: opts.SessionRuntime, v3Exclusive: opts.ExclusiveSessionV3},
+		controllerSessionBinding:          controllerSessionBinding{sessionService: opts.SessionService, sessionRuntime: sessionRuntime, sessionBinding: sessionBinding, v3Exclusive: opts.ExclusiveSessionV3},
 		commands:                          atomic.Pointer[[]command.Command]{},
 		skills:                            newSkillSet(opts.Skills, opts.AllSkills, opts.SkillStore, opts.AllSkillStore),
 		disableImplicitSkillInvocation:    opts.DisableImplicitSkillInvocation,
@@ -5235,20 +5237,7 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 		}
 		service, runtime, exclusive := c.v3Binding()
 		if exclusive && runtime != nil {
-			// ReleaseResources is an Agent/configuration replacement for the same
-			// logical session. The SessionRuntime and writer survive that swap.
-			// Terminal close unregisters and closes the exact published runtime.
-			if fireSessionEnd {
-				var err error
-				if service != nil {
-					err = service.CloseRuntime(context.Background(), runtime)
-				} else {
-					err = runtime.Session().Handle.Close(context.Background())
-				}
-				if err != nil {
-					slog.Warn("controller: close exclusive v3 runtime", "err", err)
-				}
-			}
+			c.releaseSessionRuntimeBinding(service)
 		} else if v3 := c.sessionEventStore(); v3 != nil {
 			c.turnEvents.mu.RLock()
 			release := c.turnEvents.v3Release

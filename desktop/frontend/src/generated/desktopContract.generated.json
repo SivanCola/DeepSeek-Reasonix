@@ -16384,7 +16384,7 @@
     "topic:activation",
     "updater:progress"
   ],
-  "protocolVersion": 4,
+  "protocolVersion": 5,
   "types": {
     "agent.ToolRecoveryStatistics": {
       "fields": [

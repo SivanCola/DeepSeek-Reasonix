@@ -2,6 +2,7 @@ package sessionv3
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,8 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"reasonix/internal/provider"
 )
 
 // AccessMode separates cold readers from the single leased writer. Read-only
@@ -25,18 +24,20 @@ const (
 type CreateOptions struct{ SessionID string }
 
 type SessionInfo struct {
-	SessionID     string
-	Ref           SessionRef
-	Codec         string
-	Title         string
-	ModelRef      string
-	ModelIdentity string
-	Turns         int
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	EventSequence uint64
-	Path          string
-	Error         string
+	SessionID      string
+	Ref            SessionRef
+	Codec          string
+	Title          string
+	ModelRef       string
+	ModelIdentity  string
+	Turns          int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	EventSequence  uint64
+	Preview        string
+	MetadataStatus string
+	Path           string
+	Error          string
 }
 
 type SessionPage struct {
@@ -50,32 +51,39 @@ type EventPage struct {
 	Truncated bool
 }
 
-type SessionHandle interface {
+// eventPageReader is the paged durable read surface shared by the physical
+// handle and a cold Session, so catalog rebuilds never depend on replaying a
+// whole in-memory log.
+type eventPageReader interface {
 	Read(context.Context, uint64, int) (EventPage, error)
-	Append(context.Context, Batch) (Commit, error)
-	Flush(context.Context) (DurableReceipt, error)
+}
+
+// SessionHandle is the physical persistence contract. It reads and writes
+// bytes for one session identity and owns the writer lease; it holds no
+// projection, operation table, or accepted commit list.
+type SessionHandle interface {
+	ID() string
+	Manifest() Manifest
+	Read(context.Context, uint64, int) (EventPage, error)
+	Append(context.Context, []Commit) error
+	Sync(context.Context) (DurableReceipt, error)
 	Close(context.Context) error
 }
 
-// WritableSessionHandle is the live binding consumed by Session. Keeping this
-// contract independent of the JSONL Store prevents the in-memory session and
-// runtime registry from depending on a concrete persistence backend.
+// WritableSessionHandle is the leased physical handle. Byte-level maintenance
+// operations such as fork, export, and interrupted-turn recovery are Session
+// operations because they read or extend the in-memory log; this contract only
+// distinguishes a leased writer from a cold reader.
 type WritableSessionHandle interface {
 	SessionHandle
 	SessionID() string
-	Manifest() Manifest
-	Snapshot() Snapshot
-	AcceptedPage(context.Context, uint64, int) (EventPage, error)
-	RecoverInterrupted(context.Context) (Commit, bool, error)
-	Fork(context.Context, string, string, uint64) (Manifest, error)
-	Export(context.Context, string) error
 }
 
 type SessionPersistence interface {
-	Create(CreateOptions) (SessionHandle, error)
-	Open(sessionID string, mode AccessMode) (SessionHandle, error)
-	Stat(sessionID string) (SessionInfo, error)
-	List(cursor string, limit int) (SessionPage, error)
+	Create(CreateOptions) (*Session, error)
+	Open(sessionID string, mode AccessMode) (*Session, error)
+	Stat(context.Context, string) (SessionInfo, error)
+	List(context.Context, string, int) (SessionPage, error)
 }
 
 // FilesystemPersistence owns a versioned sessions-v3 root.
@@ -99,7 +107,7 @@ func RootForLegacyDir(sessionDir string) string {
 	return filepath.Join(dir, "sessions-v3")
 }
 
-func (p *FilesystemPersistence) Create(options CreateOptions) (SessionHandle, error) {
+func (p *FilesystemPersistence) Create(options CreateOptions) (*Session, error) {
 	id := strings.TrimSpace(options.SessionID)
 	if id == "" {
 		id = randomID()
@@ -107,18 +115,24 @@ func (p *FilesystemPersistence) Create(options CreateOptions) (SessionHandle, er
 	if err := validateSessionID(id); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(p.Root, filepath.Base(id))
+	dir, err := p.sessionDir(id, false)
+	if err != nil {
+		return nil, err
+	}
 	return CreateStore(dir, id)
 }
 
-func (p *FilesystemPersistence) Open(sessionID string, mode AccessMode) (SessionHandle, error) {
+func (p *FilesystemPersistence) Open(sessionID string, mode AccessMode) (*Session, error) {
 	id := strings.TrimSpace(sessionID)
 	if err := validateSessionID(id); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(p.Root, filepath.Base(id))
+	dir, err := p.sessionDir(id, true)
+	if err != nil {
+		return nil, err
+	}
 	if mode == ReadOnly {
-		return openReadHandle(dir, id, filepath.Join(p.Root, ".query-cache", filepath.Base(id)))
+		return openReadSession(dir, id, filepath.Join(p.Root, ".query-cache", filepath.Base(id)))
 	}
 	if mode != ReadWrite {
 		return nil, fmt.Errorf("sessionv3: unsupported access mode %q", mode)
@@ -131,31 +145,108 @@ func (p *FilesystemPersistence) Open(sessionID string, mode AccessMode) (Session
 	return Open(dir, id)
 }
 
-func (p *FilesystemPersistence) Stat(sessionID string) (SessionInfo, error) {
+func (p *FilesystemPersistence) Stat(ctx context.Context, sessionID string) (SessionInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return SessionInfo{}, err
+	}
 	id := strings.TrimSpace(sessionID)
 	if err := validateSessionID(id); err != nil {
 		return SessionInfo{}, err
 	}
-	dir := filepath.Join(p.Root, filepath.Base(id))
-	manifest, err := readManifest(filepath.Join(dir, "manifest.json"))
+	dir, err := p.sessionDir(id, true)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	manifest, err := readCatalogManifest(filepath.Join(dir, "manifest.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return SessionInfo{}, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 		}
 		return SessionInfo{}, err
 	}
-	sequence, err := lastDurableSequenceWithCache(dir, filepath.Join(p.Root, ".query-cache", filepath.Base(id)))
+	if manifest.SessionID != id {
+		return SessionInfo{}, fmt.Errorf("%w: manifest belongs to %q", ErrDamagedStore, manifest.SessionID)
+	}
+	// Listing reads the manifest, log metadata, and rebuildable catalog cache.
+	// It never opens event bodies; Query refreshes missing display metadata in
+	// the background.
+	revision, err := revisionOfLog(dir)
 	if err != nil {
 		return SessionInfo{}, err
 	}
 	updatedAt := manifest.CreatedAt
-	if stat, statErr := os.Stat(filepath.Join(dir, "events.jsonl")); statErr == nil && stat.ModTime().After(updatedAt) {
-		updatedAt = stat.ModTime()
+	if revision.Exists {
+		if stat, statErr := os.Stat(filepath.Join(dir, "events.jsonl")); statErr == nil && stat.ModTime().After(updatedAt) {
+			updatedAt = stat.ModTime()
+		}
 	}
-	return SessionInfo{SessionID: manifest.SessionID, Codec: manifest.Codec, CreatedAt: manifest.CreatedAt, UpdatedAt: updatedAt, EventSequence: sequence, Path: dir}, nil
+	info := SessionInfo{SessionID: manifest.SessionID, Codec: manifest.Codec, CreatedAt: manifest.CreatedAt, UpdatedAt: updatedAt, MetadataStatus: MetadataPending, Path: dir}
+	cacheDir := filepath.Join(p.Root, ".query-cache", filepath.Base(id))
+	if metadata, metadataErr := readCatalogMetadata(cacheDir, manifest, revision); metadataErr == nil {
+		info.Title, info.ModelRef, info.ModelIdentity = metadata.Title, metadata.ModelRef, metadata.ModelIdentity
+		info.Turns, info.Preview, info.MetadataStatus = metadata.Turns, metadata.Preview, MetadataReady
+		info.EventSequence = metadata.Sequence
+	}
+	return info, nil
 }
 
-func (p *FilesystemPersistence) List(cursor string, limit int) (SessionPage, error) {
+func readCatalogManifest(path string) (Manifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Manifest{}, err
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return Manifest{}, err
+	}
+	if manifest.SchemaVersion != SchemaVersion ||
+		(manifest.Codec != Codec && manifest.Codec != LegacyLinearCodec && manifest.Codec != PrototypeCodec) {
+		return Manifest{}, fmt.Errorf("%w: manifest schema or codec", ErrUnsupportedVersion)
+	}
+	return manifest, nil
+}
+
+func (p *FilesystemPersistence) sessionDir(id string, mustExist bool) (string, error) {
+	if err := validateSessionID(id); err != nil {
+		return "", err
+	}
+	if !mustExist {
+		if err := os.MkdirAll(p.Root, 0o700); err != nil {
+			return "", err
+		}
+	}
+	root, err := os.OpenRoot(p.Root)
+	if os.IsNotExist(err) {
+		return "", fmt.Errorf("%w: %s", ErrSessionNotFound, id)
+	}
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	dir := filepath.Join(p.Root, id)
+	// Root.Lstat rejects traversal and follows the platform's reparse-point
+	// boundary rules. The single-segment validation above also keeps lock and
+	// cache names portable on Windows.
+	info, err := root.Lstat(id)
+	if os.IsNotExist(err) && !mustExist {
+		return dir, nil
+	}
+	if os.IsNotExist(err) {
+		return "", fmt.Errorf("%w: %s", ErrSessionNotFound, id)
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", fmt.Errorf("sessionv3: session identity %q is not a confined directory", id)
+	}
+	return dir, nil
+}
+
+func (p *FilesystemPersistence) List(ctx context.Context, cursor string, limit int) (SessionPage, error) {
+	if err := ctx.Err(); err != nil {
+		return SessionPage{}, err
+	}
 	if limit == 0 {
 		limit = 50
 	}
@@ -171,6 +262,9 @@ func (p *FilesystemPersistence) List(cursor string, limit int) (SessionPage, err
 	}
 	ids := make([]string, 0, len(entries))
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return SessionPage{}, err
+		}
 		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && entry.Name() > cursor {
 			ids = append(ids, entry.Name())
 		}
@@ -178,7 +272,7 @@ func (p *FilesystemPersistence) List(cursor string, limit int) (SessionPage, err
 	sort.Strings(ids)
 	page := SessionPage{Sessions: []SessionInfo{}}
 	for _, id := range ids {
-		info, statErr := p.Stat(id)
+		info, statErr := p.Stat(ctx, id)
 		if statErr != nil {
 			info = SessionInfo{SessionID: id, Path: filepath.Join(p.Root, id), Error: statErr.Error()}
 		}
@@ -193,85 +287,41 @@ func (p *FilesystemPersistence) List(cursor string, limit int) (SessionPage, err
 
 func validateSessionID(id string) error {
 	id = strings.TrimSpace(id)
-	if !filepath.IsLocal(id) || id == "." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\`) {
+	if len(id) == 0 || len(id) > 255 || strings.HasPrefix(id, ".") || strings.HasSuffix(id, ".") ||
+		!filepath.IsLocal(id) || id == "." || filepath.Base(id) != id || strings.ContainsAny(id, `/\\<>:"|?*`) {
 		return fmt.Errorf("sessionv3: invalid session id %q", id)
+	}
+	for _, char := range id {
+		if char < 0x20 {
+			return fmt.Errorf("sessionv3: invalid session id %q", id)
+		}
+	}
+	base := strings.ToUpper(strings.SplitN(id, ".", 2)[0])
+	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
+		(len(base) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && base[3] >= '1' && base[3] <= '9') {
+		return fmt.Errorf("sessionv3: reserved session id %q", id)
 	}
 	return nil
 }
 
-// Session is the live typed event log and its three projections. The
-// persistence handle remains the only owner of physical durability.
-type Session struct{ Handle WritableSessionHandle }
-
-func (s *Session) AppendBatch(ctx context.Context, operationID string, events []Event) (Commit, error) {
-	if s == nil || s.Handle == nil {
-		return Commit{}, fmt.Errorf("sessionv3: nil session")
-	}
-	return s.Handle.Append(ctx, Batch{OperationID: operationID, Events: events})
-}
-
-func (s *Session) Flush(ctx context.Context) (DurableReceipt, error) {
-	if s == nil || s.Handle == nil {
-		return DurableReceipt{}, fmt.Errorf("sessionv3: nil session")
-	}
-	return s.Handle.Flush(ctx)
-}
-
-func (s *Session) Snapshot() Snapshot {
-	if s == nil || s.Handle == nil {
-		return Snapshot{PersistenceStatus: PersistenceFailed, PersistenceError: "nil session"}
-	}
-	return s.Handle.Snapshot()
-}
-
-func (s *Session) DeriveMessages() []provider.Message {
-	return append([]provider.Message(nil), s.Snapshot().Projection.ModelMessages...)
-}
-
-func (s *Session) StateSnapshot() Snapshot {
-	if s != nil && s.Handle != nil {
-		if handle, ok := s.Handle.(interface{ StateSnapshot() Snapshot }); ok {
-			return handle.StateSnapshot()
-		}
-	}
-	return s.Snapshot()
-}
-
-// AcceptedPage returns the live accepted prefix, including events that have
-// not crossed a durability checkpoint yet. Cold SessionHandle.Read continues
-// to expose only durable records.
-func (s *Store) AcceptedPage(ctx context.Context, offset uint64, limit int) (EventPage, error) {
-	if err := ctx.Err(); err != nil {
-		return EventPage{}, err
-	}
-	if limit == 0 {
-		limit = 100
-	}
-	if limit < 1 || limit > 1000 {
-		return EventPage{}, fmt.Errorf("sessionv3: read limit must be 1..1000 commits")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	page := EventPage{Commits: []Commit{}}
-	for _, commit := range s.commits {
-		if commit.LastSequence() <= offset {
-			continue
-		}
-		if len(page.Commits) == limit {
-			page.Truncated = true
-			break
-		}
-		page.Commits = append(page.Commits, cloneCommit(commit))
-		page.Next = commit.LastSequence()
-	}
-	return page, nil
-}
-
 type readHandle struct {
+	id       string
 	dir      string
 	cacheDir string
+	manifest Manifest
 	mu       sync.Mutex
 	closed   bool
+}
+
+// openReadSession returns a cold Session backed only by the durable prefix. It
+// performs no replay and takes no writer lease: paged reads remain the only way
+// to consume it, which is what keeps catalog and history queries cheap.
+func openReadSession(dir, id string, cacheDirs ...string) (*Session, error) {
+	handle, err := openReadHandle(dir, id, cacheDirs...)
+	if err != nil {
+		return nil, err
+	}
+	return newReadSession(handle), nil
 }
 
 func openReadHandle(dir, id string, cacheDirs ...string) (*readHandle, error) {
@@ -289,8 +339,12 @@ func openReadHandle(dir, id string, cacheDirs ...string) (*readHandle, error) {
 	if manifest.SessionID != id {
 		return nil, fmt.Errorf("sessionv3: manifest belongs to %q", manifest.SessionID)
 	}
-	return &readHandle{dir: dir, cacheDir: cacheDir}, nil
+	return &readHandle{id: id, dir: dir, cacheDir: cacheDir, manifest: manifest}, nil
 }
+
+func (h *readHandle) ID() string { return h.id }
+
+func (h *readHandle) Manifest() Manifest { return h.manifest }
 
 func (h *readHandle) Read(ctx context.Context, offset uint64, limit int) (EventPage, error) {
 	if h == nil {
@@ -306,10 +360,11 @@ func (h *readHandle) Read(ctx context.Context, offset uint64, limit int) (EventP
 	return readCommitPageWithCache(ctx, dir, cacheDir, offset, limit)
 }
 
-func (h *readHandle) Append(context.Context, Batch) (Commit, error) {
-	return Commit{}, ErrReadOnly
+func (h *readHandle) Append(context.Context, []Commit) error {
+	return ErrReadOnly
 }
-func (h *readHandle) Flush(context.Context) (DurableReceipt, error) {
+
+func (h *readHandle) Sync(context.Context) (DurableReceipt, error) {
 	if h == nil {
 		return DurableReceipt{}, os.ErrClosed
 	}
@@ -323,6 +378,7 @@ func (h *readHandle) Flush(context.Context) (DurableReceipt, error) {
 	sequence, err := lastDurableSequence(dir)
 	return DurableReceipt{DurableSequence: sequence}, err
 }
+
 func (h *readHandle) Close(context.Context) error {
 	if h == nil {
 		return nil

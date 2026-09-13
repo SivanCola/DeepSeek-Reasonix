@@ -662,7 +662,7 @@ func TestSubmitRemoteTabRejectsLegacyServeWithoutExecutionProtocol(t *testing.T)
 	app.remoteMu.Unlock()
 
 	err := app.SubmitRemoteTab(tab.id, "first turn")
-	if err == nil || !strings.Contains(err.Error(), "execution-v2") || !strings.Contains(err.Error(), "session-events-v3") || !strings.Contains(err.Error(), "session-identity-v1") {
+	if err == nil || !strings.Contains(err.Error(), "execution-v2") || !strings.Contains(err.Error(), "session-events-v3") || !strings.Contains(err.Error(), "session-identity-v1") || !strings.Contains(err.Error(), "session-ownership-v1") {
 		t.Fatalf("legacy submit error = %v, want runtime protocol upgrade requirement", err)
 	}
 	if kernel.switches != 0 {

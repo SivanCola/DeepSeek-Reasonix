@@ -97,6 +97,45 @@ func TestExclusiveControllerUsesBoundSessionIdentityAndWritesNoLegacyTranscript(
 	}
 }
 
+func TestOpenFailureDoesNotCloseAnotherControllersRuntime(t *testing.T) {
+	service, err := sessionv3.NewService("desktop", sessionv3.NewFilesystemPersistence(filepath.Join(t.TempDir(), "sessions-v3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.Create(t.Context(), sessionv3.CreateOptions{SessionID: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Create(t.Context(), sessionv3.CreateOptions{SessionID: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newController := func(runtime *sessionv3.Runtime) *Controller {
+		exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
+		return newOwnedTestController(t, Options{
+			Executor: exec, Sink: event.Discard, SessionService: service,
+			SessionRuntime: runtime, ExclusiveSessionV3: true,
+		})
+	}
+	owner := newController(second)
+	t.Cleanup(owner.Close)
+	caller := newController(first)
+	t.Cleanup(caller.Close)
+
+	if _, err := second.Session().AppendBatch(t.Context(), "bad-plan", []sessionv3.Event{{Kind: "plan/state", Payload: []byte(`{"enabled":"invalid"}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := caller.OpenV3(t.Context(), second.Ref()); err == nil {
+		t.Fatal("OpenV3 accepted an invalid domain projection")
+	}
+	if got, ok := service.Runtime(second.Ref()); !ok || got != second {
+		t.Fatal("failed client publication disposed another controller's runtime")
+	}
+	if _, err := second.Session().AppendBatch(t.Context(), "still-owned", []sessionv3.Event{{Kind: "diagnostic", Optional: true}}); err != nil {
+		t.Fatalf("shared runtime is unusable after another controller failed to bind: %v", err)
+	}
+}
+
 func TestExclusiveControllerRuntimeSnapshotAndCancelUseExactV3Instance(t *testing.T) {
 	service, err := sessionv3.NewService("desktop", sessionv3.NewFilesystemPersistence(filepath.Join(t.TempDir(), "sessions-v3")))
 	if err != nil {
@@ -240,7 +279,7 @@ func TestExclusiveControllerOpenMissingKeepsCurrentExactRuntime(t *testing.T) {
 	if !ok || ref != runtime.Ref() {
 		t.Fatalf("failed open changed binding to %+v", ref)
 	}
-	if _, err := persistence.Stat("missing"); !errors.Is(err, sessionv3.ErrSessionNotFound) {
+	if _, err := persistence.Stat(t.Context(), "missing"); !errors.Is(err, sessionv3.ErrSessionNotFound) {
 		t.Fatalf("failed open created missing session: %v", err)
 	}
 	c.Close()
@@ -266,7 +305,7 @@ func TestExclusiveControllerClearDeletesClosedSourceAfterPublishingFreshIdentity
 	if !ok || ref.SessionID == "clear-source" {
 		t.Fatalf("clear identity = %+v, ok=%v", ref, ok)
 	}
-	if _, err := persistence.Stat("clear-source"); !errors.Is(err, sessionv3.ErrSessionNotFound) {
+	if _, err := persistence.Stat(t.Context(), "clear-source"); !errors.Is(err, sessionv3.ErrSessionNotFound) {
 		t.Fatalf("cleared source remains in catalog: %v", err)
 	}
 	c.Close()

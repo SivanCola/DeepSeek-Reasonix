@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // SessionRef is the only execution identity used by the linear session
@@ -26,6 +27,8 @@ func (r SessionRef) validate(hostID string) error {
 var (
 	ErrSessionNotRunning = errors.New("session runtime is not attached")
 	ErrRuntimeBusy       = errors.New("session runtime already has an activity")
+	ErrRuntimeBound      = errors.New("session runtime still has client bindings")
+	ErrRuntimeRetiring   = errors.New("session runtime is retiring")
 	ErrRecoveryRequired  = errors.New("session runtime requires recovery")
 	ErrStaleActivity     = errors.New("session activity no longer owns commit authority")
 )
@@ -64,13 +67,17 @@ type Runtime struct {
 	ref     SessionRef
 	epoch   string
 	session *Session
+	owner   *Service
+	// instance stamps the publish grant so a delayed owner can prove it still
+	// refers to the exact instance it published.
+	instance string
 
 	mu         sync.Mutex
 	phase      RuntimePhase
 	activity   string
-	revision   uint64
+	revision   atomic.Uint64
 	activityID uint64
-	cancel     context.CancelFunc
+	current    atomic.Pointer[Activity]
 	closeDone  chan struct{}
 	closeErr   error
 }
@@ -80,12 +87,23 @@ type Runtime struct {
 // result into the session. Diagnostic logging uses a separate non-business
 // channel and does not regain this permit.
 type Activity struct {
-	runtime *Runtime
-	id      uint64
+	runtime       *Runtime
+	id            uint64
+	name          string
+	cancel        context.CancelFunc
+	stopped       atomic.Bool
+	done          chan struct{}
+	doneOnce      sync.Once
+	superviseOnce sync.Once
+	// commitGate fences the final eligibility check and the in-memory commit
+	// against cancellation without making Cancel wait for a storage lock.
+	commitGate sync.RWMutex
 }
 
 func newRuntime(ref SessionRef, session *Session) *Runtime {
-	return &Runtime{ref: ref, epoch: randomID(), session: session, phase: RuntimeIdle, revision: 1}
+	runtime := &Runtime{ref: ref, epoch: randomID(), session: session, phase: RuntimeIdle}
+	runtime.revision.Store(1)
+	return runtime
 }
 
 func (r *Runtime) Ref() SessionRef { return r.ref }
@@ -106,7 +124,11 @@ func (r *Runtime) StateSnapshot() RuntimeSnapshot {
 
 func (r *Runtime) activitySnapshot() RuntimeSnapshot {
 	r.mu.Lock()
-	state := RuntimeSnapshot{Ref: r.ref, Epoch: r.epoch, ActivityRevision: r.revision, Phase: r.phase, Activity: r.activity}
+	phase := r.phase
+	if current := r.current.Load(); current != nil && current.stopped.Load() && phase == RuntimeRunning {
+		phase = RuntimeCancelling
+	}
+	state := RuntimeSnapshot{Ref: r.ref, Epoch: r.epoch, ActivityRevision: r.revision.Load(), Phase: phase, Activity: r.activity}
 	r.mu.Unlock()
 	return state
 }
@@ -137,11 +159,12 @@ func (r *Runtime) BeginOwnedActivity(parent context.Context, name string) (conte
 		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
-	r.phase, r.activity, r.cancel = RuntimeRunning, name, cancel
+	r.phase, r.activity = RuntimeRunning, name
 	r.activityID++
-	r.revision++
-	activityID := r.activityID
-	return ctx, &Activity{runtime: r, id: activityID}, nil
+	r.revision.Add(1)
+	activity := &Activity{runtime: r, id: r.activityID, name: name, cancel: cancel, done: make(chan struct{})}
+	r.current.Store(activity)
+	return ctx, activity, nil
 }
 
 func (a *Activity) AppendBatch(ctx context.Context, operationID string, events []Event) (Commit, error) {
@@ -150,23 +173,42 @@ func (a *Activity) AppendBatch(ctx context.Context, operationID string, events [
 
 // Append preserves the complete logical batch, including its turn identity,
 // while fencing the commit against the exact activity generation.
+//
+// Validation and hashing run outside the runtime lock so they can never delay
+// cancellation. Only the final eligibility check and the in-memory commit hold
+// the activity commit gate; the physical write-behind is asynchronous.
 func (a *Activity) Append(ctx context.Context, batch Batch) (Commit, error) {
 	if a == nil || a.runtime == nil {
 		return Commit{}, ErrStaleActivity
 	}
-	runtime := a.runtime
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	if runtime.activityID != a.id || runtime.cancel == nil {
-		return Commit{}, ErrStaleActivity
-	}
-	if runtime.phase != RuntimeRunning && (runtime.phase != RuntimeCancelling || !activityClosureBatch(batch)) {
+	if a.stopped.Load() {
 		return Commit{}, ErrStaleActivity
 	}
 	if err := ctx.Err(); err != nil {
 		return Commit{}, err
 	}
-	return runtime.session.Handle.Append(ctx, batch)
+	runtime := a.runtime
+	prepared, err := runtime.session.PrepareBatch(batch.OperationID, batch)
+	if err != nil {
+		return Commit{}, err
+	}
+	a.commitGate.RLock()
+	defer a.commitGate.RUnlock()
+	runtime.mu.Lock()
+	if runtime.current.Load() != a || runtime.activityID != a.id {
+		runtime.mu.Unlock()
+		return Commit{}, ErrStaleActivity
+	}
+	if a.stopped.Load() && !activityClosureBatch(batch) {
+		runtime.mu.Unlock()
+		return Commit{}, ErrStaleActivity
+	}
+	if runtime.phase != RuntimeRunning && runtime.phase != RuntimeCancelling {
+		runtime.mu.Unlock()
+		return Commit{}, ErrStaleActivity
+	}
+	runtime.mu.Unlock()
+	return runtime.session.CommitPrepared(prepared)
 }
 
 func activityClosureBatch(batch Batch) bool {
@@ -187,38 +229,85 @@ func (a *Activity) Finish(_ error) {
 	if a == nil || a.runtime == nil {
 		return
 	}
+	a.doneOnce.Do(func() { close(a.done) })
 	runtime := a.runtime
+	a.stop()
 	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	if runtime.activityID != a.id || (runtime.phase != RuntimeRunning && runtime.phase != RuntimeCancelling) {
+	if runtime.current.Load() != a || runtime.activityID != a.id || (runtime.phase != RuntimeRunning && runtime.phase != RuntimeCancelling) {
+		runtime.mu.Unlock()
 		return
 	}
-	runtime.cancel()
-	runtime.cancel = nil
+	runtime.current.Store(nil)
 	runtime.activity = ""
 	runtime.phase = RuntimeIdle
-	runtime.revision++
+	runtime.revision.Add(1)
+	owner := runtime.owner
+	runtime.mu.Unlock()
+	if owner != nil {
+		_ = owner.closeIfUnbound(context.Background(), runtime)
+	}
 }
 
-// Cancel sends the signal while holding only the small runtime mutex. It does
-// not flush, publish UI state, or wait for a callback.
+func (a *Activity) stop() bool {
+	if a == nil || !a.stopped.CompareAndSwap(false, true) {
+		return false
+	}
+	a.cancel()
+	a.runtime.revision.Add(1)
+	return true
+}
+
+// superviseCancellation belongs to the activity rather than any client. This
+// preserves recovery isolation when Stop arrives through Serve or another
+// host entry point without a live UI controller.
+func (a *Activity) superviseCancellation() {
+	if a == nil || a.runtime == nil {
+		return
+	}
+	a.superviseOnce.Do(func() {
+		go func() {
+			timer := time.NewTimer(15 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-a.done:
+				return
+			case <-timer.C:
+			}
+			a.runtime.requireRecoveryFor(a)
+		}()
+	})
+}
+
+// Cancel reaches the immutable activity permit without acquiring the runtime
+// mutex. A commit may be blocked below that mutex or in a persistence adapter;
+// neither is allowed to delay delivery of the cancellation signal.
 func (r *Runtime) Cancel() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.phase == RuntimeIdle {
+	activity := r.current.Load()
+	if activity == nil {
 		return false
 	}
-	if r.phase != RuntimeRunning && r.phase != RuntimeCancelling {
-		return false
-	}
-	if r.phase == RuntimeRunning {
-		r.phase = RuntimeCancelling
-		r.revision++
-	}
-	if r.cancel != nil {
-		r.cancel()
+	activity.stop()
+	activity.superviseCancellation()
+	if r.mu.TryLock() {
+		defer r.mu.Unlock()
+		if r.current.Load() == activity && r.phase == RuntimeRunning {
+			r.phase = RuntimeCancelling
+		}
 	}
 	return true
+}
+
+func (r *Runtime) requireRecoveryFor(activity *Activity) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.current.Load() != activity || r.activityID != activity.id || !activity.stopped.Load() {
+		return
+	}
+	r.current.Store(nil)
+	r.activityID++
+	r.phase = RuntimeRecoveryRequired
+	r.activity = activity.name
+	r.revision.Add(1)
 }
 
 func (r *Runtime) RequireRecovery(activity string) {
@@ -227,14 +316,13 @@ func (r *Runtime) RequireRecovery(activity string) {
 	if r.phase == RuntimeClosed {
 		return
 	}
-	if r.cancel != nil {
-		r.cancel()
+	if current := r.current.Swap(nil); current != nil {
+		current.stop()
 	}
-	r.cancel = nil
 	r.activityID++
 	r.phase = RuntimeRecoveryRequired
 	r.activity = activity
-	r.revision++
+	r.revision.Add(1)
 }
 
 // RecordRecovery appends terminal recovery facts after RequireRecovery has
@@ -249,7 +337,11 @@ func (r *Runtime) RecordRecovery(ctx context.Context, batch Batch) (Commit, erro
 	if err := ctx.Err(); err != nil {
 		return Commit{}, err
 	}
-	return r.session.Handle.Append(ctx, batch)
+	prepared, err := r.session.PrepareBatch(batch.OperationID, batch)
+	if err != nil {
+		return Commit{}, err
+	}
+	return r.session.CommitPrepared(prepared)
 }
 
 func recoveryClosureBatch(batch Batch) bool {
@@ -279,11 +371,12 @@ func (r *Runtime) close(ctx context.Context) error {
 	// Seal admission in the same critical section as the idle check. The
 	// irreversible close has one uncancellable result for every caller.
 	r.closeDone = make(chan struct{})
+	r.current.Store(nil)
 	r.phase = RuntimeClosed
 	r.activity = ""
-	r.revision++
+	r.revision.Add(1)
 	r.mu.Unlock()
-	r.closeErr = r.session.Handle.Close(context.Background())
+	r.closeErr = r.session.close(context.Background())
 	close(r.closeDone)
 	return r.closeErr
 }
@@ -297,213 +390,15 @@ type Service struct {
 	hostID      string
 	persistence SessionPersistence
 
-	mu        sync.Mutex
-	active    map[SessionRef]*Runtime
-	closed    map[SessionRef]error
-	preparing map[SessionRef]*prepareRuntime
-	revision  atomic.Uint64
-}
-
-// HostID returns the immutable host namespace used to validate SessionRef.
-func (s *Service) HostID() string {
-	if s == nil {
-		return ""
-	}
-	return s.hostID
-}
-
-type prepareRuntime struct{ done chan struct{} }
-
-// PreparedRuntime owns a write handle that has been fully opened but is not
-// yet visible through the host registry. Callers may build projections, seed
-// initial events, and flush before atomically publishing the exact instance.
-// A candidate must be either published or discarded.
-type PreparedRuntime struct {
-	service *Service
-	runtime *Runtime
-
-	mu        sync.Mutex
-	published bool
-	discarded bool
-}
-
-func (p *PreparedRuntime) Runtime() *Runtime {
-	if p == nil {
-		return nil
-	}
-	return p.runtime
-}
-
-func NewService(hostID string, persistence SessionPersistence) (*Service, error) {
-	if hostID == "" || persistence == nil {
-		return nil, errors.New("sessionv3: host id and persistence are required")
-	}
-	return &Service{hostID: hostID, persistence: persistence, active: map[SessionRef]*Runtime{}, closed: map[SessionRef]error{}, preparing: map[SessionRef]*prepareRuntime{}}, nil
-}
-
-func (s *Service) Create(ctx context.Context, options CreateOptions) (*Runtime, error) {
-	prepared, err := s.PrepareCreate(ctx, options)
-	if err != nil {
-		return nil, err
-	}
-	runtime, err := s.Publish(prepared)
-	if err != nil {
-		_ = s.Discard(context.Background(), prepared)
-	}
-	return runtime, err
-}
-
-// PrepareCreate reserves the immutable session identity and its writer lease
-// without publishing an attachable runtime. This is the DSH prepare phase:
-// host/controller state remains untouched until Publish succeeds.
-func (s *Service) PrepareCreate(ctx context.Context, options CreateOptions) (*PreparedRuntime, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	handle, err := s.persistence.Create(options)
-	if err != nil {
-		return nil, err
-	}
-	store, ok := handle.(WritableSessionHandle)
-	if !ok {
-		_ = handle.Close(context.Background())
-		return nil, errors.New("sessionv3: writable persistence did not return a live store")
-	}
-	ref := SessionRef{HostID: s.hostID, SessionID: store.SessionID()}
-	candidate := newRuntime(ref, &Session{Handle: store})
-	return &PreparedRuntime{service: s, runtime: candidate}, nil
-}
-
-// Publish makes the exact prepared runtime visible. It never replaces an
-// existing instance with the same identity; the caller must resolve that
-// ownership conflict explicitly.
-func (s *Service) Publish(prepared *PreparedRuntime) (*Runtime, error) {
-	if prepared == nil || prepared.service != s || prepared.runtime == nil {
-		return nil, errors.New("sessionv3: invalid prepared runtime")
-	}
-	prepared.mu.Lock()
-	defer prepared.mu.Unlock()
-	if prepared.discarded {
-		return nil, errors.New("sessionv3: prepared runtime was discarded")
-	}
-	if prepared.published {
-		return prepared.runtime, nil
-	}
-	candidate := prepared.runtime
-	ref := candidate.ref
-	s.mu.Lock()
-	if current := s.active[ref]; current != nil {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("%w: %s", ErrSessionExists, ref.SessionID)
-	}
-	delete(s.closed, ref)
-	s.active[ref] = candidate
-	s.revision.Add(1)
-	s.mu.Unlock()
-	prepared.published = true
-	return candidate, nil
-}
-
-// Discard closes an unpublished candidate and releases its writer lease.
-// Published runtimes must be closed through Service.Close so exact-instance
-// unregistering cannot be bypassed.
-func (s *Service) Discard(ctx context.Context, prepared *PreparedRuntime) error {
-	if prepared == nil || prepared.service != s || prepared.runtime == nil {
-		return nil
-	}
-	prepared.mu.Lock()
-	defer prepared.mu.Unlock()
-	if prepared.published {
-		return errors.New("sessionv3: published runtime cannot be discarded")
-	}
-	if prepared.discarded {
-		return prepared.runtime.close(ctx)
-	}
-	prepared.discarded = true
-	return prepared.runtime.close(ctx)
-}
-
-func (s *Service) Open(ctx context.Context, ref SessionRef) (*Runtime, error) {
-	if err := ref.validate(s.hostID); err != nil {
-		return nil, err
-	}
-	for {
-		s.mu.Lock()
-		if current := s.active[ref]; current != nil {
-			s.mu.Unlock()
-			return current, nil
-		}
-		if pending := s.preparing[ref]; pending != nil {
-			done := pending.done
-			s.mu.Unlock()
-			select {
-			case <-done:
-				continue
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
-		pending := &prepareRuntime{done: make(chan struct{})}
-		s.preparing[ref] = pending
-		s.mu.Unlock()
-		break
-	}
-
-	handle, err := s.persistence.Open(ref.SessionID, ReadWrite)
-	if err != nil {
-		s.finishPrepare(ref)
-		return nil, err
-	}
-	store, ok := handle.(WritableSessionHandle)
-	if !ok {
-		_ = handle.Close(context.Background())
-		s.finishPrepare(ref)
-		return nil, errors.New("sessionv3: writable persistence did not return a live store")
-	}
-	if _, _, recoverErr := store.RecoverInterrupted(ctx); recoverErr != nil {
-		_ = handle.Close(context.Background())
-		s.finishPrepare(ref)
-		return nil, fmt.Errorf("sessionv3: close interrupted runtime: %w", recoverErr)
-	}
-	candidate := newRuntime(ref, &Session{Handle: store})
-	s.mu.Lock()
-	pending := s.preparing[ref]
-	delete(s.preparing, ref)
-	if current := s.active[ref]; current != nil {
-		if pending != nil {
-			close(pending.done)
-		}
-		s.mu.Unlock()
-		_ = candidate.close(context.Background())
-		return current, nil
-	}
-	delete(s.closed, ref)
-	s.active[ref] = candidate
-	s.revision.Add(1)
-	if pending != nil {
-		close(pending.done)
-	}
-	s.mu.Unlock()
-	return candidate, nil
-}
-
-func (s *Service) finishPrepare(ref SessionRef) {
-	s.mu.Lock()
-	if pending := s.preparing[ref]; pending != nil {
-		delete(s.preparing, ref)
-		close(pending.done)
-	}
-	s.mu.Unlock()
-}
-
-func (s *Service) Runtime(ref SessionRef) (*Runtime, bool) {
-	if ref.validate(s.hostID) != nil {
-		return nil, false
-	}
-	s.mu.Lock()
-	runtime := s.active[ref]
-	s.mu.Unlock()
-	return runtime, runtime != nil
+	mu         sync.Mutex
+	active     map[SessionRef]*Runtime
+	closed     map[SessionRef]error
+	preparing  map[SessionRef]*prepareRuntime
+	bindings   map[*Runtime]int
+	retiring   map[*Runtime]chan struct{}
+	retireIdle map[*Runtime]bool
+	query      *Query
+	revision   atomic.Uint64
 }
 
 func (s *Service) Cancel(ref SessionRef) (RuntimeSnapshot, error) {
@@ -526,7 +421,15 @@ func (s *Service) CancelSession(ref SessionRef) (CancelReceipt, error) {
 	if !ok {
 		return CancelReceipt{Ref: ref, Accepted: true, Phase: RuntimeIdle}, nil
 	}
-	runtime.Cancel()
+	if runtime.Cancel() {
+		return CancelReceipt{
+			Ref:              ref,
+			Accepted:         true,
+			RuntimeEpoch:     runtime.epoch,
+			ActivityRevision: runtime.revision.Load(),
+			Phase:            RuntimeCancelling,
+		}, nil
+	}
 	snapshot := runtime.activitySnapshot()
 	return CancelReceipt{Ref: ref, Accepted: true, RuntimeEpoch: snapshot.Epoch, ActivityRevision: snapshot.ActivityRevision, Phase: snapshot.Phase}, nil
 }
@@ -552,7 +455,24 @@ func (s *Service) ContinueLegacy(ctx context.Context, sourcePath, headID string)
 	if err != nil {
 		return nil, result, err
 	}
-	runtime, err := s.Open(ctx, SessionRef{HostID: s.hostID, SessionID: result.TargetID})
+	runtime, err := s.openRuntime(ctx, SessionRef{HostID: s.hostID, SessionID: result.TargetID})
+	return runtime, result, err
+}
+
+// ContinueImported resolves the paired legacy transcript and retired event
+// sidecar as one frozen migration decision. It refuses divergent histories
+// instead of letting a caller accidentally resume whichever source it opened
+// first.
+func (s *Service) ContinueImported(ctx context.Context, sourcePath, headID string) (*Runtime, ImportResult, error) {
+	filesystem, ok := s.persistence.(*FilesystemPersistence)
+	if !ok {
+		return nil, ImportResult{}, errors.New("sessionv3: persistence does not support imported sessions")
+	}
+	result, err := importSourceForLegacy(ctx, sourcePath, filesystem.Root, headID)
+	if err != nil {
+		return nil, result, err
+	}
+	runtime, err := s.openRuntime(ctx, SessionRef{HostID: s.hostID, SessionID: result.TargetID})
 	return runtime, result, err
 }
 
@@ -567,7 +487,30 @@ func (s *Service) ContinuePrototype(ctx context.Context, sourceDir string) (*Run
 	if err != nil {
 		return nil, result, err
 	}
-	runtime, err := s.Open(ctx, SessionRef{HostID: s.hostID, SessionID: result.TargetID})
+	runtime, err := s.openRuntime(ctx, SessionRef{HostID: s.hostID, SessionID: result.TargetID})
+	return runtime, result, err
+}
+
+// ContinueStoredPreview upgrades a pre-ownership linear store selected by its
+// former session id. The old directory remains read-only; execution resumes on
+// the deterministic final-codec identity returned here.
+func (s *Service) ContinueStoredPreview(ctx context.Context, sessionID string) (*Runtime, PrototypeImportResult, error) {
+	filesystem, ok := s.persistence.(*FilesystemPersistence)
+	if !ok {
+		return nil, PrototypeImportResult{}, errors.New("sessionv3: persistence does not support preview import")
+	}
+	if err := validateSessionID(sessionID); err != nil {
+		return nil, PrototypeImportResult{}, err
+	}
+	sourceDir, err := filesystem.sessionDir(sessionID, true)
+	if err != nil {
+		return nil, PrototypeImportResult{}, err
+	}
+	result, err := importPreview(ctx, sourceDir, filesystem.Root)
+	if err != nil {
+		return nil, result, err
+	}
+	runtime, err := s.openRuntime(ctx, SessionRef{HostID: s.hostID, SessionID: result.TargetID})
 	return runtime, result, err
 }
 
@@ -619,10 +562,10 @@ func (s *Service) forkAt(ctx context.Context, parent *Runtime, sequence uint64, 
 		return nil, err
 	}
 	childDir := filepath.Join(filesystem.Root, childID)
-	if _, err := parent.session.Handle.Fork(ctx, childDir, childID, sequence); err != nil {
+	if _, err := parent.session.Fork(ctx, childDir, childID, sequence); err != nil {
 		return nil, err
 	}
-	return s.Open(ctx, SessionRef{HostID: s.hostID, SessionID: childID})
+	return s.openRuntime(ctx, SessionRef{HostID: s.hostID, SessionID: childID})
 }
 
 func (s *Service) Close(ctx context.Context, ref SessionRef) error {
@@ -639,28 +582,53 @@ func (s *Service) Close(ctx context.Context, ref SessionRef) error {
 		}
 		return ErrSessionNotRunning
 	}
-	return s.CloseRuntime(ctx, runtime)
+	return s.closeOwned(ctx, runtime, "")
 }
 
-// CloseRuntime is the teardown entry point for owners holding an exact
-// instance. A delayed old disposer must never close its same-ID successor.
-func (s *Service) CloseRuntime(ctx context.Context, runtime *Runtime) error {
+// closeOwned is the teardown entry point for a RuntimeOwner holding one exact
+// instance grant. A delayed old disposer must never close its same-ID
+// successor, and a client-bound runtime is never torn down underneath it.
+func (s *Service) closeOwned(ctx context.Context, runtime *Runtime, instance string) error {
 	if runtime == nil {
 		return ErrSessionNotRunning
 	}
 	if err := runtime.ref.validate(s.hostID); err != nil {
 		return err
 	}
-	err := runtime.close(ctx)
-	if errors.Is(err, ErrRuntimeBusy) {
-		return err
+	if instance != "" && runtime.instance != instance {
+		return ErrSessionNotRunning
 	}
 	s.mu.Lock()
-	if s.active[runtime.ref] == runtime {
+	if s.bindings[runtime] != 0 {
+		s.mu.Unlock()
+		return ErrRuntimeBound
+	}
+	if s.active[runtime.ref] != runtime {
+		s.mu.Unlock()
+		return runtime.close(ctx)
+	}
+	if done := s.retiring[runtime]; done != nil {
+		s.mu.Unlock()
+		select {
+		case <-done:
+			return runtime.close(ctx)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	done := make(chan struct{})
+	s.retiring[runtime] = done
+	s.mu.Unlock()
+	err := runtime.close(ctx)
+	s.mu.Lock()
+	delete(s.retiring, runtime)
+	if !errors.Is(err, ErrRuntimeBusy) && s.active[runtime.ref] == runtime {
 		delete(s.active, runtime.ref)
+		delete(s.retireIdle, runtime)
 		s.closed[runtime.ref] = err
 		s.revision.Add(1)
 	}
+	close(done)
 	s.mu.Unlock()
 	return err
 }
@@ -692,7 +660,7 @@ func (s *Service) Observe(ctx context.Context, ref SessionRef, cursor uint64, li
 	}
 	if runtime, ok := s.Runtime(ref); ok {
 		snapshot := runtime.Snapshot()
-		page, err := runtime.session.Handle.AcceptedPage(ctx, cursor, limit)
+		page, err := runtime.session.AcceptedPage(ctx, cursor, limit)
 		return ObserveResult{Runtime: &snapshot, Events: page}, err
 	}
 	handle, err := s.persistence.Open(ref.SessionID, ReadOnly)

@@ -1,8 +1,10 @@
 // Package sessionv3 owns Reasonix's linear, append-only session event log.
 //
-// Append accepts a logical batch into the live session immediately. Durability
-// is deliberately separate: a fixed write-behind window batches accepted
-// events, while Flush establishes an explicit semantic checkpoint.
+// The package separates three concerns. Session owns the in-memory typed event
+// log and its projections. PersistenceBinding owns the write-behind queue and
+// durability progress. Store owns the physical JSONL bytes and the writer
+// lease. A commit is accepted into Session and the binding's queue before it is
+// durable; Flush establishes an explicit semantic checkpoint.
 package sessionv3
 
 import (
@@ -30,9 +32,10 @@ const (
 	SchemaVersion = 3
 	// Codec identifies the final linear session format. Prototype stores used a
 	// different codec and must go through the explicit importer.
-	Codec          = "reasonix.session.linear/v3"
-	PrototypeCodec = "reasonix.session.events/v3"
-	LiveBatchDelay = 200 * time.Millisecond
+	Codec             = "reasonix.session.linear/v3.1"
+	LegacyLinearCodec = "reasonix.session.linear/v3"
+	PrototypeCodec    = "reasonix.session.events/v3"
+	LiveBatchDelay    = 200 * time.Millisecond
 )
 
 var (
@@ -153,9 +156,12 @@ func (e *uncertainAppendError) Error() string {
 
 func (e *uncertainAppendError) Unwrap() error { return ErrPersistenceUncertain }
 
+// Store is the physical JSONL handle for one session directory. It owns the
+// writer lease, the open file, and the rebuildable sparse offset index. It
+// deliberately holds no projection, operation table, or accepted commit list:
+// those belong to Session.
 type Store struct {
 	mu           sync.Mutex
-	drainMu      sync.Mutex
 	indexMu      sync.Mutex
 	closeOnce    sync.Once
 	closeErr     error
@@ -163,26 +169,16 @@ type Store struct {
 	manifest     Manifest
 	file         *os.File
 	releaseLease func()
+	closed       bool
+	index        sparseIndex
 
-	next       uint64
-	durable    uint64
-	commits    []Commit
-	pending    []Commit
-	projection Projection
-	operations map[string]operationRecord
+	writeFn func(context.Context, io.Writer, []byte) error
+	syncFn  func(*os.File) error
+}
 
-	timer      timerHandle
-	draining   bool
-	autoPaused bool
-	accepting  bool
-	closed     bool
-	writeErr   error
-	uncertain  *uncertainWrite
-	index      sparseIndex
-
-	afterFunc func(time.Duration, func()) timerHandle
-	writeFn   func(context.Context, io.Writer, []byte) error
-	syncFn    func(*os.File) error
+// ID returns the immutable session identity of the physical store.
+func (s *Store) ID() string {
+	return s.SessionID()
 }
 
 func (s *Store) SessionID() string {
@@ -208,25 +204,55 @@ func (s *Store) Manifest() Manifest {
 	return manifest
 }
 
-func Open(dir, sessionID string) (*Store, error) {
+// Dir reports the confined directory that backs this handle.
+func (s *Store) Dir() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dir
+}
+
+// writableFile returns the open append file for durability repair. The caller
+// must already hold the writer lease, which the handle acquired at open.
+func (s *Store) writableFile() (*os.File, error) {
+	if s == nil {
+		return nil, os.ErrClosed
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.file == nil {
+		return nil, os.ErrClosed
+	}
+	return s.file, nil
+}
+
+// Open opens an existing legacy-compatible path, creating it when absent. It
+// returns a live Session: the in-memory log is the caller's business state.
+func Open(dir, sessionID string) (*Session, error) {
 	return OpenWithOptions(dir, sessionID, OpenOptions{})
 }
 
 // OpenWithOptions is the low-level test/import constructor retained while the
 // old controller adapter is removed. Production callers use
 // FilesystemPersistence, whose Open is strict and never creates a session.
-func OpenWithOptions(dir, sessionID string, opts OpenOptions) (*Store, error) {
+func OpenWithOptions(dir, sessionID string, opts OpenOptions) (*Session, error) {
 	if _, err := os.Stat(filepath.Clean(strings.TrimSpace(dir))); os.IsNotExist(err) {
 		return CreateWithOptions(dir, sessionID, opts)
 	}
-	return openExistingWithOptions(dir, sessionID, opts)
+	handle, err := openExistingHandle(dir, sessionID, opts)
+	if err != nil {
+		return nil, err
+	}
+	return bindSession(handle, opts)
 }
 
-func CreateStore(dir, sessionID string) (*Store, error) {
+func CreateStore(dir, sessionID string) (*Session, error) {
 	return CreateWithOptions(dir, sessionID, OpenOptions{})
 }
 
-func CreateWithOptions(dir, sessionID string, opts OpenOptions) (*Store, error) {
+func CreateWithOptions(dir, sessionID string, opts OpenOptions) (*Session, error) {
 	dir = filepath.Clean(strings.TrimSpace(dir))
 	sessionID = strings.TrimSpace(sessionID)
 	if dir == "." || sessionID == "" {
@@ -257,15 +283,11 @@ func CreateWithOptions(dir, sessionID string, opts OpenOptions) (*Store, error) 
 	if err := fileutil.AtomicWriteFileStrict(filepath.Join(dir, "events.jsonl"), nil, 0o600); err != nil {
 		return nil, err
 	}
-	store, err := openExistingWithOptions(dir, sessionID, opts)
-	if err != nil {
-		return nil, err
-	}
 	created = false
-	return store, nil
+	return OpenWithOptions(dir, sessionID, opts)
 }
 
-func openExistingWithOptions(dir, sessionID string, opts OpenOptions) (*Store, error) {
+func openExistingHandle(dir, sessionID string, opts OpenOptions) (*Store, error) {
 	dir = filepath.Clean(strings.TrimSpace(dir))
 	sessionID = strings.TrimSpace(sessionID)
 	if dir == "." || sessionID == "" {
@@ -306,12 +328,7 @@ func openExistingWithOptions(dir, sessionID string, opts OpenOptions) (*Store, e
 	}
 	// Validate the complete prefix before repairing anything. A newer required
 	// event or a damaged complete batch must leave the original tail untouched.
-	commits, err := Replay(dir, nil)
-	if err != nil {
-		return fail(err)
-	}
-	projection, err := Project(commits)
-	if err != nil {
+	if _, err := Replay(dir, nil); err != nil {
 		return fail(err)
 	}
 	if torn, err := hasTornTail(eventsPath); err != nil {
@@ -337,10 +354,6 @@ func openExistingWithOptions(dir, sessionID string, opts OpenOptions) (*Store, e
 		_ = f.Close()
 		return fail(err)
 	}
-	after := opts.AfterFunc
-	if after == nil {
-		after = func(delay time.Duration, fire func()) timerHandle { return time.AfterFunc(delay, fire) }
-	}
 	writeFn := opts.Write
 	if writeFn == nil {
 		writeFn = writeAllContext
@@ -349,29 +362,52 @@ func openExistingWithOptions(dir, sessionID string, opts OpenOptions) (*Store, e
 	if syncFn == nil {
 		syncFn = func(file *os.File) error { return file.Sync() }
 	}
-	operations := make(map[string]operationRecord, len(commits))
-	for _, commit := range commits {
-		if prior, ok := operations[commit.OperationID]; ok && prior.hash != commit.OperationHash {
-			return closeAndFail(fmt.Errorf("%w: conflicting persisted operation %q", ErrDamagedStore, commit.OperationID))
-		}
-		operations[commit.OperationID] = operationRecord{hash: commit.OperationHash, commit: commit}
-	}
-	next := uint64(1)
-	durable := uint64(0)
-	if len(commits) > 0 {
-		durable = commits[len(commits)-1].LastSequence()
-		next = durable + 1
-	}
 	index, err := loadOrBuildSparseIndex(context.Background(), dir, dir)
 	if err != nil {
 		return closeAndFail(err)
 	}
 	return &Store{
 		dir: dir, manifest: manifest, file: f, releaseLease: releaseLease,
-		next: next, durable: durable, commits: commits, projection: projection,
-		operations: operations, accepting: true, index: index,
-		afterFunc: after, writeFn: writeFn, syncFn: syncFn,
+		index: index, writeFn: writeFn, syncFn: syncFn,
 	}, nil
+}
+
+// bindSession replays the durable prefix and constructs the in-memory Session
+// over a binding for the exact handle.
+func bindSession(handle *Store, opts OpenOptions) (*Session, error) {
+	dir := handle.Dir()
+	commits, err := Replay(dir, nil)
+	if err != nil {
+		_ = handle.Close(context.Background())
+		return nil, err
+	}
+	projection, err := Project(commits)
+	if err != nil {
+		_ = handle.Close(context.Background())
+		return nil, err
+	}
+	durable := uint64(0)
+	if len(commits) > 0 {
+		durable = commits[len(commits)-1].LastSequence()
+	}
+	binding := newPersistenceBinding(handle, dir, durable, opts)
+	session := newSession(handle.Manifest().SessionID, handle.Manifest(), commits, projection, binding)
+	binding.metadataSource = session.metadataForDurable
+	return session, nil
+}
+
+// metadataForDurable rebuilds the list projection for the catalog cache once
+// the accepted prefix is fully durable.
+func (s *Session) metadataForDurable(durable uint64) (catalogMetadata, bool) {
+	if s == nil {
+		return catalogMetadata{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if durable+1 != s.next {
+		return catalogMetadata{}, false
+	}
+	return metadataFromProjection(s.manifest, durable, s.projection), true
 }
 
 func writeManifestFile(path string, manifest Manifest) error {
@@ -382,110 +418,96 @@ func writeManifestFile(path string, manifest Manifest) error {
 	return fileutil.AtomicWriteFileStrict(path, append(b, '\n'), 0o600)
 }
 
-func (s *Store) Append(ctx context.Context, batch Batch) (Commit, error) {
+// Append writes already-committed batches in order. Sequence allocation,
+// validation, and idempotency belong to Session; this method is only the
+// physical hand-off and reports uncertainty rather than guessing.
+func (s *Store) Append(ctx context.Context, commits []Commit) error {
 	if s == nil {
-		return Commit{}, fmt.Errorf("sessionv3: nil store")
+		return fmt.Errorf("sessionv3: nil store")
 	}
 	if err := ctx.Err(); err != nil {
-		return Commit{}, err
+		return err
 	}
-	batch.OperationID = strings.TrimSpace(batch.OperationID)
-	if batch.OperationID == "" || len(batch.Events) == 0 {
-		return Commit{}, fmt.Errorf("sessionv3: operation id and events are required")
-	}
-	turnID := strings.TrimSpace(batch.TurnID)
-	if turnID == "" && batchContains(batch.Events, "turn/start") {
-		turnID = deterministicID("turn\x00" + s.manifest.SessionID + "\x00" + batch.OperationID)
-	}
-	hash, err := hashOperation(s.manifest.SessionID, turnID, batch.Events)
-	if err != nil {
-		return Commit{}, err
+	if len(commits) == 0 {
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.accepting || s.closed || s.file == nil {
-		return Commit{}, os.ErrClosed
+	if s.closed || s.file == nil {
+		return os.ErrClosed
 	}
-	if prior, ok := s.operations[batch.OperationID]; ok {
-		if prior.hash != hash {
-			return Commit{}, fmt.Errorf("%w: %q", ErrOperationConflict, batch.OperationID)
+	s.indexMu.Lock()
+	next := s.index.LastSequence + 1
+	s.indexMu.Unlock()
+	for i, commit := range commits {
+		if commit.SchemaVersion != SchemaVersion || commit.Codec != Codec || commit.RecordType != "commit" ||
+			commit.ID == "" || commit.OperationID == "" || commit.OperationHash == "" ||
+			commit.WriterGeneration != s.manifest.WriterGeneration || commit.FirstSequence != next ||
+			commit.EventCount == 0 || commit.EventCount != len(commit.Events) {
+			return fmt.Errorf("%w: invalid physical commit %d at sequence %d", ErrDamagedStore, i, next)
 		}
-		return cloneCommit(prior.commit), nil
-	}
-	commit := Commit{
-		SchemaVersion: SchemaVersion, Codec: Codec, RecordType: "commit", ID: randomID(),
-		OperationID: batch.OperationID, OperationHash: hash, FirstSequence: s.next,
-		EventCount: len(batch.Events), TurnID: turnID, WriterGeneration: s.manifest.WriterGeneration,
-		CreatedAt: time.Now().UTC(), Events: cloneEvents(batch.Events),
-	}
-	for i := range commit.Events {
-		e := &commit.Events[i]
-		e.Kind = strings.TrimSpace(e.Kind)
-		if e.Kind == "" {
-			return Commit{}, fmt.Errorf("sessionv3: events[%d].kind is required", i)
+		for eventIndex, event := range commit.Events {
+			want := commit.FirstSequence + uint64(eventIndex)
+			if event.Sequence != want || event.ID == "" || strings.TrimSpace(event.Kind) == "" {
+				return fmt.Errorf("%w: invalid physical event at sequence %d", ErrDamagedStore, want)
+			}
 		}
-		if !e.Optional && !ProjectionKinds[e.Kind] {
-			return Commit{}, fmt.Errorf("%w: unknown required event %q", ErrUnsupportedVersion, e.Kind)
-		}
-		if e.ID == "" {
-			e.ID = randomID()
-		}
-		e.Sequence = commit.FirstSequence + uint64(i)
+		next = commit.LastSequence() + 1
 	}
-	projection := cloneProjection(s.projection)
-	if err := applyProjectionCommit(&projection, commit); err != nil {
-		return Commit{}, err
-	}
-	s.commits = append(s.commits, commit)
-	s.pending = append(s.pending, commit)
-	s.projection = projection
-	s.next = commit.LastSequence() + 1
-	s.operations[batch.OperationID] = operationRecord{hash: hash, commit: commit}
-	if !s.autoPaused && !s.draining && s.timer == nil {
-		s.scheduleDrainLocked()
-	}
-	return cloneCommit(commit), nil
+	return s.persist(ctx, s.file, commits)
 }
 
-func (s *Store) Snapshot() Snapshot {
-	return s.snapshot(true)
+func (s *Store) persist(ctx context.Context, file *os.File, commits []Commit) error {
+	written, lengths, err := encodeCommitLines(commits)
+	if err != nil {
+		return err
+	}
+	start, err := file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return err
+	}
+	if err := s.writeFn(ctx, file, written); err != nil {
+		end, statErr := file.Seek(0, io.SeekEnd)
+		if statErr == nil && end == start {
+			return err
+		}
+		if statErr == nil && end == start+int64(len(written)) {
+			if syncErr := s.syncFn(file); syncErr == nil {
+				s.recordPersistedIndex(file, start, commits, lengths)
+				return nil
+			}
+		}
+		return &uncertainAppendError{cause: err, write: uncertainWrite{start: start, data: append([]byte(nil), written...), commitCount: len(commits)}}
+	}
+	if err := s.syncFn(file); err != nil {
+		return &uncertainAppendError{cause: fmt.Errorf("fsync: %w", err), write: uncertainWrite{start: start, data: append([]byte(nil), written...), commitCount: len(commits)}}
+	}
+	s.recordPersistedIndex(file, start, commits, lengths)
+	return nil
 }
 
-// StateSnapshot omits history so progress notifications do not copy every
-// message and completed turn on each activity update.
-func (s *Store) StateSnapshot() Snapshot {
-	return s.snapshot(false)
-}
-
-func (s *Store) snapshot(includeHistory bool) Snapshot {
+// Sync fsyncs the physical log and reports the durable sequence observed on
+// disk. It is the handle half of a semantic checkpoint; PersistenceBinding
+// pairs it with queue drain.
+func (s *Store) Sync(ctx context.Context) (DurableReceipt, error) {
 	if s == nil {
-		return Snapshot{PersistenceStatus: PersistenceFailed, PersistenceError: "nil session store"}
+		return DurableReceipt{}, os.ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return DurableReceipt{}, err
 	}
 	s.mu.Lock()
-	status := PersistenceReady
-	if s.writeErr != nil {
-		status = PersistenceFailed
-		if errors.Is(s.writeErr, ErrPersistenceUncertain) {
-			status = PersistenceUncertain
-		}
-	} else if len(s.pending) > 0 || s.draining {
-		status = PersistencePending
+	defer s.mu.Unlock()
+	if s.closed || s.file == nil {
+		return DurableReceipt{}, os.ErrClosed
 	}
-	projection := s.projection
-	if !includeHistory {
-		projection.Messages, projection.ModelMessages, projection.Turns = nil, nil, nil
+	if err := s.syncFn(s.file); err != nil {
+		return DurableReceipt{}, err
 	}
-	snapshot := Snapshot{
-		EventSequence: s.next - 1, DurableSequence: s.durable,
-		PersistenceStatus: status, PersistenceError: errorString(s.writeErr),
-		Projection: cloneProjection(projection),
-	}
-	s.mu.Unlock()
-	// Nested provider metadata is immutable internally but Go cannot freeze
-	// returned slices. Detach it outside the commit lock before exposing it.
-	snapshot.Projection.Messages = detachMessages(snapshot.Projection.Messages)
-	snapshot.Projection.ModelMessages = detachMessages(snapshot.Projection.ModelMessages)
-	return snapshot
+	s.indexMu.Lock()
+	sequence := s.index.LastSequence
+	s.indexMu.Unlock()
+	return DurableReceipt{DurableSequence: sequence}, nil
 }
 
 func (s *Store) Close(_ context.Context) error {
@@ -494,18 +516,6 @@ func (s *Store) Close(_ context.Context) error {
 	}
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
-		s.accepting = false
-		s.mu.Unlock()
-		// Teardown is deliberately uncancellable: once closing begins, every
-		// caller observes the same completed drain/release result.
-		_, flushErr := s.Flush(context.Background())
-		s.drainMu.Lock()
-		defer s.drainMu.Unlock()
-		s.mu.Lock()
-		if s.timer != nil {
-			s.timer.Stop()
-			s.timer = nil
-		}
 		file := s.file
 		s.file = nil
 		s.closed = true
@@ -519,7 +529,7 @@ func (s *Store) Close(_ context.Context) error {
 		if releaseLease != nil {
 			releaseLease()
 		}
-		s.closeErr = errors.Join(flushErr, closeErr)
+		s.closeErr = closeErr
 	})
 	return s.closeErr
 }

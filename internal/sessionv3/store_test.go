@@ -98,7 +98,7 @@ func TestModelContextReplaceDoesNotRewriteUIHistory(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("messages = %#v", got)
 	}
-	derived := (&Session{Handle: store}).DeriveMessages()
+	derived := store.DeriveMessages()
 	if len(derived) != 1 || derived[0].ID != "u1" {
 		t.Fatalf("model messages = %#v", derived)
 	}

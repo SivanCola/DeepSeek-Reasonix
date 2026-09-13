@@ -202,6 +202,7 @@ const serveCapabilitiesHeader = "X-Reasonix-Serve-Capabilities"
 const serveCapabilityExecutionV2 = "execution-v2"
 const serveCapabilitySessionsV3 = "session-events-v3"
 const serveCapabilitySessionIdentityV1 = "session-identity-v1"
+const serveCapabilitySessionOwnershipV1 = "session-ownership-v1"
 
 // serveHandshakeCapabilities exchanges the pre-shared token for the session
 // cookie and returns the serve's advertised capabilities; older serves omit

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"reasonix/internal/agent"
@@ -15,6 +16,35 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/sessionv3"
 )
+
+func bindInitialSessionRuntime(opts Options) (*sessionv3.Runtime, *sessionv3.ClientBinding) {
+	runtime := opts.SessionRuntime
+	if opts.SessionService == nil || runtime == nil {
+		return runtime, nil
+	}
+	binding, err := opts.SessionService.Bind(runtime)
+	if err != nil {
+		return nil, nil
+	}
+	return runtime, binding
+}
+
+// releaseSessionRuntimeBinding drops this controller's client reference. The
+// host service retains the writer until the last binding and activity exit.
+func (c *Controller) releaseSessionRuntimeBinding(service *sessionv3.Service) {
+	c.v3BindingMu.Lock()
+	binding := c.sessionBinding
+	c.sessionBinding = nil
+	c.sessionRuntime = nil
+	c.v3BindingMu.Unlock()
+	if binding != nil {
+		if err := binding.Release(context.Background()); err != nil {
+			slog.Warn("controller: release exclusive v3 binding", "err", err)
+		}
+	} else if service == nil {
+		slog.Warn("controller: exclusive v3 runtime has no service binding")
+	}
+}
 
 // BindFreshV3 creates and publishes a fresh identity-bound session. The caller
 // may provide an id allocated by its protocol; an empty id lets persistence
@@ -39,19 +69,16 @@ func (c *Controller) BindFreshV3(ctx context.Context, sessionID string) (session
 		_ = service.Discard(context.Background(), prepared)
 		return sessionv3.SessionRef{}, err
 	}
-	if _, err := service.Publish(prepared); err != nil {
+	owner, err := service.Publish(prepared)
+	if err != nil {
 		_ = service.Discard(context.Background(), prepared)
 		return sessionv3.SessionRef{}, err
 	}
-	old, err := c.publishV3Runtime(candidate, fresh, true)
-	if err != nil {
-		_ = service.CloseRuntime(context.Background(), candidate)
+	if _, err = c.publishV3Runtime(candidate, fresh, true); err != nil {
+		// This attempt published the identity, so an owner-scoped close is the
+		// correct cleanup. It still refuses while any client is bound.
+		_ = owner.Close(context.Background())
 		return sessionv3.SessionRef{}, err
-	}
-	if old != nil && old != candidate {
-		if closeErr := service.CloseRuntime(context.Background(), old); closeErr != nil {
-			return candidate.Ref(), fmt.Errorf("new v3 session published; close previous runtime: %w", closeErr)
-		}
 	}
 	return candidate.Ref(), nil
 }
@@ -76,26 +103,35 @@ func (c *Controller) continueLegacyV3(ctx context.Context, sourcePath, headID st
 	if c == nil || service == nil || c.executor == nil {
 		return sessionv3.SessionRef{}, errors.New("v3 session service is unavailable")
 	}
-	candidate, _, err := service.ContinueLegacy(ctx, sourcePath, headID)
+	restoreLegacyEvents, err := c.releaseLegacyEventStoreForImport(ctx)
+	if err != nil {
+		return sessionv3.SessionRef{}, fmt.Errorf("freeze legacy event source: %w", err)
+	}
+	published := false
+	defer func() {
+		if !published {
+			restoreLegacyEvents()
+		}
+	}()
+	candidate, _, err := service.ContinueImported(ctx, sourcePath, headID)
+	if err != nil {
+		return sessionv3.SessionRef{}, err
+	}
+	owner, err := service.Owner(candidate)
 	if err != nil {
 		return sessionv3.SessionRef{}, err
 	}
 	if err := seedRuntimeConfig(ctx, candidate, "legacy-import-config", c.ModelRef(), c.ModelSelectionIdentity()); err != nil {
-		_ = service.CloseRuntime(context.Background(), candidate)
+		_ = owner.Close(context.Background())
 		return sessionv3.SessionRef{}, err
 	}
 	messages := candidate.Session().Snapshot().Projection.ModelMessages
 	prepared := agent.NewSession("").CloneWithMessages(messages)
-	old, err := c.publishV3Runtime(candidate, prepared, rotateSessionTemp)
-	if err != nil {
-		_ = service.CloseRuntime(context.Background(), candidate)
+	if _, err = c.publishV3Runtime(candidate, prepared, rotateSessionTemp); err != nil {
+		_ = owner.Close(context.Background())
 		return sessionv3.SessionRef{}, err
 	}
-	if old != nil && old != candidate {
-		if closeErr := service.CloseRuntime(context.Background(), old); closeErr != nil {
-			return candidate.Ref(), fmt.Errorf("migrated v3 session published; close previous runtime: %w", closeErr)
-		}
-	}
+	published = true
 	return candidate.Ref(), nil
 }
 
@@ -110,20 +146,18 @@ func (c *Controller) ContinuePrototypeV3(ctx context.Context, sourceDir string) 
 	if err != nil {
 		return sessionv3.SessionRef{}, err
 	}
+	owner, err := service.Owner(candidate)
+	if err != nil {
+		return sessionv3.SessionRef{}, err
+	}
 	if err := seedRuntimeConfig(ctx, candidate, "prototype-import-config", c.ModelRef(), c.ModelSelectionIdentity()); err != nil {
-		_ = service.CloseRuntime(context.Background(), candidate)
+		_ = owner.Close(context.Background())
 		return sessionv3.SessionRef{}, err
 	}
 	prepared := agent.NewSession("").CloneWithMessages(candidate.Session().Snapshot().Projection.ModelMessages)
-	old, err := c.publishV3Runtime(candidate, prepared, true)
-	if err != nil {
-		_ = service.CloseRuntime(context.Background(), candidate)
+	if _, err = c.publishV3Runtime(candidate, prepared, true); err != nil {
+		_ = owner.Close(context.Background())
 		return sessionv3.SessionRef{}, err
-	}
-	if old != nil && old != candidate {
-		if closeErr := service.CloseRuntime(context.Background(), old); closeErr != nil {
-			return candidate.Ref(), fmt.Errorf("imported v3 session published; close previous runtime: %w", closeErr)
-		}
 	}
 	return candidate.Ref(), nil
 }
@@ -131,6 +165,11 @@ func (c *Controller) ContinuePrototypeV3(ctx context.Context, sourceDir string) 
 // OpenV3 attaches this Controller to an existing immutable session identity.
 // Opening never creates a missing session and publication retains the current
 // binding until the target projection and writer are ready.
+//
+// Attaching grants only a ClientBinding, so a failed publication withdraws this
+// client's own grant instead of disposing a runtime another client may already
+// be using. A retired stored codec is the one exception: importing it publishes
+// a brand-new identity that this attempt owns outright.
 func (c *Controller) OpenV3(ctx context.Context, ref sessionv3.SessionRef) (sessionv3.SessionRef, error) {
 	service, current, _ := c.v3Binding()
 	if c == nil || service == nil || c.executor == nil {
@@ -139,24 +178,51 @@ func (c *Controller) OpenV3(ctx context.Context, ref sessionv3.SessionRef) (sess
 	if current != nil && current.Ref() == ref {
 		return ref, nil
 	}
-	candidate, err := service.Open(ctx, ref)
+	binding, err := service.Open(ctx, ref)
+	if errors.Is(err, sessionv3.ErrUnsupportedVersion) {
+		var upgraded *sessionv3.Runtime
+		upgraded, _, err = service.ContinueStoredPreview(ctx, ref.SessionID)
+		if err != nil {
+			return sessionv3.SessionRef{}, err
+		}
+		owner, ownerErr := service.Owner(upgraded)
+		if ownerErr != nil {
+			return sessionv3.SessionRef{}, ownerErr
+		}
+		return c.publishAttachedV3(upgraded, "upgrade", owner.Close)
+	}
 	if err != nil {
 		return sessionv3.SessionRef{}, err
+	}
+	target := binding.Runtime()
+	published, err := c.publishAttachedV3(target, "attach-existing", nil)
+	if err == nil {
+		// publishV3Runtime installs the controller's own client grant; this
+		// temporary attach grant is no longer needed.
+		_ = binding.Release(context.Background())
+		return published, nil
+	}
+	// Only this client's grant is withdrawn. A runtime another client still
+	// holds keeps its binding count above zero and is left untouched.
+	if releaseErr := binding.Release(context.Background()); releaseErr != nil {
+		slog.Warn("controller: release failed v3 attach binding", "err", releaseErr)
+	}
+	return sessionv3.SessionRef{}, err
+}
+
+// publishAttachedV3 publishes the prepared projection for an already-resolved
+// runtime. retire is used only when this attempt owns a newly published
+// identity; pass nil to withdraw a client grant instead.
+func (c *Controller) publishAttachedV3(candidate *sessionv3.Runtime, reason string, retire func(context.Context) error) (sessionv3.SessionRef, error) {
+	if candidate == nil {
+		return sessionv3.SessionRef{}, errors.New("v3 session runtime is unavailable")
 	}
 	prepared := agent.NewSession("").CloneWithMessages(candidate.Session().Snapshot().Projection.ModelMessages)
-	old, err := c.publishV3Runtime(candidate, prepared, true)
-	if err != nil {
-		// A newly opened candidate is safe to close only when it was not the
-		// currently published controller runtime.
-		if current == nil || candidate != current {
-			_ = service.CloseRuntime(context.Background(), candidate)
+	if _, err := c.publishV3Runtime(candidate, prepared, true); err != nil {
+		if retire != nil {
+			_ = retire(context.Background())
 		}
 		return sessionv3.SessionRef{}, err
-	}
-	if old != nil && old != candidate {
-		if closeErr := service.CloseRuntime(context.Background(), old); closeErr != nil {
-			return candidate.Ref(), fmt.Errorf("v3 session published; close previous runtime: %w", closeErr)
-		}
 	}
 	return candidate.Ref(), nil
 }
@@ -172,7 +238,7 @@ func (c *Controller) SetSessionTitleV3(ctx context.Context, title string) error 
 		return err
 	}
 	snapshot := runtime.Session().Snapshot()
-	_, err = c.appendV3Batch(ctx, runtime.Session().Handle, sessionv3.Batch{
+	_, err = c.appendV3Batch(ctx, runtime.Session(), sessionv3.Batch{
 		OperationID: "session-title:" + agent.NewMessageID(),
 		TurnID:      snapshot.Projection.TurnID,
 		Events:      []sessionv3.Event{{Kind: "session/title", Payload: payload}},
@@ -245,11 +311,29 @@ func (c *Controller) publishV3Runtime(candidate *sessionv3.Runtime, prepared *ag
 	if err := validateV3DomainProjection(projection); err != nil {
 		return nil, err
 	}
+	binding, err := service.Bind(candidate)
+	if err != nil {
+		return nil, fmt.Errorf("bind v3 runtime: %w", err)
+	}
+	published := false
+	defer func() {
+		if !published {
+			_ = binding.Release(context.Background())
+		}
+	}()
 	c.snapshotMu.Lock()
 	defer c.snapshotMu.Unlock()
+	// Domain parsing was validated above. Restore it before swapping the
+	// client binding so a future validation failure cannot expose a partially
+	// published controller or require closing a shared runtime.
+	if err := c.restoreV3DomainProjection(projection); err != nil {
+		return nil, err
+	}
 	c.v3BindingMu.Lock()
 	old := c.sessionRuntime
+	oldBinding := c.sessionBinding
 	c.sessionRuntime = candidate
+	c.sessionBinding = binding
 	c.v3Exclusive = true
 	c.v3BindingMu.Unlock()
 	c.mu.Lock()
@@ -259,12 +343,6 @@ func (c *Controller) publishV3Runtime(candidate *sessionv3.Runtime, prepared *ag
 	c.sessionPath = ""
 	c.mu.Unlock()
 	c.executor.SetSession(prepared)
-	if err := c.restoreV3DomainProjection(projection); err != nil {
-		// The candidate remains published by SessionService, but the Controller
-		// must not expose a partially restored execution view. The caller closes
-		// the candidate and retains the old binding on this error path.
-		return nil, err
-	}
 	// Transcript pages are a derived cache. A session switch invalidates the
 	// prior identity immediately; the next query rebuilds from the exact v3
 	// projection without reading or writing a legacy sidecar.
@@ -286,6 +364,12 @@ func (c *Controller) publishV3Runtime(candidate *sessionv3.Runtime, prepared *ag
 	}
 	c.rebindInbox()
 	c.refreshRuntimeState(event.Event{})
+	published = true
+	if oldBinding != nil && oldBinding != binding {
+		if err := oldBinding.Release(context.Background()); err != nil {
+			slog.Warn("controller: retire previous v3 binding after publication", "err", err)
+		}
+	}
 	return old, nil
 }
 

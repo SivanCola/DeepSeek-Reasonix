@@ -186,8 +186,14 @@ type Store struct {
 	watcherMu         sync.Mutex
 	watcher           *fsnotify.Watcher
 	watcherDone       chan struct{}
+	watcherLifecycle  watcherLifecycle
 	watcherGeneration uint64
 	closed            bool
+}
+
+type watcherLifecycle struct {
+	cancel context.CancelFunc
+	active bool
 }
 
 // CatalogSnapshot is an immutable, stable-order view of one discovery

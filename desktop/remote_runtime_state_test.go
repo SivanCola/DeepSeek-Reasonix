@@ -27,7 +27,7 @@ func remoteRuntimeTestApp(client *http.Client) (*App, *remoteTab) {
 		client: client, base: "http://runtime-fixture.invalid", ref: RemoteTabRef{HostID: "fixture-host", Workspace: "/workspace"},
 		session:      remoteTabSessionState{name: "current", path: runtimeRemoteTestPath},
 		routing:      remoteTabSessionRouting{currentPath: runtimeRemoteTestPath, running: map[string]bool{}},
-		capabilities: map[string]bool{serveCapabilityExecutionV2: true, serveCapabilitySessionsV3: true, serveCapabilitySessionIdentityV1: true, "permission-presets-v1": true},
+		capabilities: map[string]bool{serveCapabilityExecutionV2: true, serveCapabilitySessionsV3: true, serveCapabilitySessionIdentityV1: true, serveCapabilitySessionOwnershipV1: true, "permission-presets-v1": true},
 	}
 	return &App{remoteTabs: map[string]*remoteTab{tab.id: tab}}, tab
 }

@@ -58,6 +58,12 @@ func (c *Controller) activateManagedSessionEvents(sess *agent.Session) error {
 	if prompt := c.basePrompt(); prompt != "" {
 		sess.SetLeadingSystemPromptWithReason(prompt, "managed-runtime-activation")
 	}
+	// Write-authority binding can run before a service-backed Runtime is
+	// published. Its publication path seeds the projection; this preparation
+	// path must not manufacture a path-derived sidecar.
+	if service, runtime, exclusive := c.v3Binding(); exclusive && service != nil && runtime == nil {
+		return nil
+	}
 	messages := sess.Snapshot()
 	snapshot, ok := c.sessionEventSnapshot()
 	if !ok || snapshot.EventSequence == 0 {

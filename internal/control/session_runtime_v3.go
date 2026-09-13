@@ -34,7 +34,7 @@ func (c *Controller) finishV3RuntimeActivity(activity *sessionv3.Activity) {
 	activity.Finish(nil)
 }
 
-func (c *Controller) appendV3Batch(ctx context.Context, store sessionv3.WritableSessionHandle, batch sessionv3.Batch) (sessionv3.Commit, error) {
+func (c *Controller) appendV3Batch(ctx context.Context, store *sessionv3.Session, batch sessionv3.Batch) (sessionv3.Commit, error) {
 	if store == nil {
 		return sessionv3.Commit{}, sessionv3.ErrSessionNotRunning
 	}
@@ -47,7 +47,7 @@ func (c *Controller) appendV3Batch(ctx context.Context, store sessionv3.Writable
 			return commit, err
 		}
 		_, runtime, exclusive := c.v3Binding()
-		if exclusive && runtime != nil && runtime.Session().Handle == store {
+		if exclusive && runtime != nil && runtime.Session() == store {
 			return runtime.RecordRecovery(ctx, batch)
 		}
 		return sessionv3.Commit{}, err

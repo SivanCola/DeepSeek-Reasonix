@@ -123,7 +123,7 @@ func newFakeServe(t *testing.T, token string, sessions []serveSessionEntry) *fak
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: "reasonix_token", Value: fs.token, Path: "/", HttpOnly: true})
-		w.Header().Set(serveCapabilitiesHeader, "permission-presets-v1,present-files-v1,execution-v2,session-events-v3,session-identity-v1")
+		w.Header().Set(serveCapabilitiesHeader, "permission-presets-v1,present-files-v1,execution-v2,session-events-v3,session-identity-v1,session-ownership-v1")
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /new", func(w http.ResponseWriter, r *http.Request) {

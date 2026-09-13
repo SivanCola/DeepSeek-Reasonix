@@ -18,13 +18,14 @@ import (
 // Capability tokens advertised on the /auth/token handshake reply so a
 // desktop can tell what this serve supports without a second round trip.
 const (
-	capabilitiesHeader          = "X-Reasonix-Serve-Capabilities"
-	capabilityBrowser           = "browser"
-	capabilityPermissionPresets = "permission-presets-v1"
-	capabilityPresentFiles      = "present-files-v1"
-	capabilityExecutionV2       = "execution-v2"
-	capabilitySessionEventsV3   = "session-events-v3"
-	capabilitySessionIdentityV1 = "session-identity-v1"
+	capabilitiesHeader           = "X-Reasonix-Serve-Capabilities"
+	capabilityBrowser            = "browser"
+	capabilityPermissionPresets  = "permission-presets-v1"
+	capabilityPresentFiles       = "present-files-v1"
+	capabilityExecutionV2        = "execution-v2"
+	capabilitySessionEventsV3    = "session-events-v3"
+	capabilitySessionIdentityV1  = "session-identity-v1"
+	capabilitySessionOwnershipV1 = "session-ownership-v1"
 )
 
 // BrowserBroker is Serve's end of the desktop browser broker: one HTTP
@@ -232,7 +233,7 @@ func (s *Server) capabilities() []string {
 		capabilitySessionEventsV3,
 	}
 	if identity, ok := s.ctl().(control.IdentityLifecycle); ok && identity.UsesExclusiveSessionV3() {
-		caps = append(caps, capabilitySessionIdentityV1)
+		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1)
 	}
 	if s.buildOptions.BrowserExecutor != nil {
 		caps = append(caps, capabilityBrowser)

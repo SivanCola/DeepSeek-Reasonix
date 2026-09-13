@@ -37,7 +37,7 @@ func sessionV3Directory(sessionPath string) string {
 }
 
 type sharedSessionEventStore struct {
-	store *sessionv3.Store
+	store *sessionv3.Session
 	refs  int
 }
 
@@ -46,7 +46,7 @@ var processSessionEventStores = struct {
 	stores map[string]*sharedSessionEventStore
 }{stores: map[string]*sharedSessionEventStore{}}
 
-func acquireSessionEventStore(dir, id string) (*sessionv3.Store, func(context.Context) error, bool, error) {
+func acquireSessionEventStore(dir, id string) (*sessionv3.Session, func(context.Context) error, bool, error) {
 	processSessionEventStores.Lock()
 	defer processSessionEventStores.Unlock()
 	if entry := processSessionEventStores.stores[dir]; entry != nil {
@@ -93,9 +93,14 @@ func releaseSessionEventStore(dir string, entry *sharedSessionEventStore) func(c
 	}
 }
 
-func (c *Controller) openSessionEventStore(sessionPath string) (sessionv3.WritableSessionHandle, func(context.Context) error, error) {
-	if _, runtime, _ := c.v3Binding(); runtime != nil {
-		return runtime.Session().Handle, nil, nil
+func (c *Controller) openSessionEventStore(sessionPath string) (*sessionv3.Session, func(context.Context) error, error) {
+	if service, runtime, exclusive := c.v3Binding(); runtime != nil {
+		return runtime.Session(), nil, nil
+	} else if exclusive && service != nil {
+		// A service-backed controller needs a published Runtime before admission.
+		// Creating a path-derived sidecar here would reintroduce a second producer
+		// outside the v3.1 ownership boundary.
+		return nil, nil, nil
 	}
 	dir := sessionV3Directory(sessionPath)
 	if dir == "" {
@@ -117,6 +122,49 @@ func (c *Controller) openSessionEventStore(sessionPath string) (sessionv3.Writab
 		return store, release, nil
 	}
 	return store, release, nil
+}
+
+// releaseLegacyEventStoreForImport stops this controller's retired path-bound
+// event producer before the importer takes a shared freeze lock. Other
+// controllers keep their own reference; in that case the freeze correctly
+// refuses to race an active producer instead of copying a moving prefix.
+func (c *Controller) releaseLegacyEventStoreForImport(ctx context.Context) (func(), error) {
+	if c == nil {
+		return func() {}, nil
+	}
+	path := c.SessionPath()
+	c.turnEvents.mu.Lock()
+	if c.turnEvents.v3 == nil || strings.HasPrefix(c.turnEvents.v3Path, "session:") {
+		c.turnEvents.mu.Unlock()
+		return func() {}, nil
+	}
+	store := c.turnEvents.v3
+	release := c.turnEvents.v3Release
+	c.turnEvents.v3 = nil
+	c.turnEvents.v3Path = ""
+	c.turnEvents.v3Release = nil
+	c.turnEvents.mu.Unlock()
+	var err error
+	if release != nil {
+		err = release(ctx)
+	} else {
+		err = store.Close(ctx)
+	}
+	restore := func() {
+		if _, runtime, _ := c.v3Binding(); runtime == nil {
+			c.rebindTurnEvents(path)
+		}
+	}
+	return restore, err
+}
+
+// SuspendLegacyEventStoreForImport closes this controller's path-derived
+// compatibility producer while an idle host prepares a replacement runtime.
+// The caller must serialize turn admission for the controller. Calling the
+// returned function restores the producer when candidate preparation fails;
+// after a successful publication the old controller is retired instead.
+func (c *Controller) SuspendLegacyEventStoreForImport(ctx context.Context) (func(), error) {
+	return c.releaseLegacyEventStoreForImport(ctx)
 }
 
 func (c *Controller) seedSessionEventsFromExecutor(reason string) error {
@@ -265,7 +313,7 @@ func (c *Controller) adoptResumeSystemPrompt(incoming *agent.Session) error {
 	return err
 }
 
-func (c *Controller) sessionEventStore() sessionv3.WritableSessionHandle {
+func (c *Controller) sessionEventStore() *sessionv3.Session {
 	if c == nil {
 		return nil
 	}
@@ -309,7 +357,7 @@ func (c *Controller) sessionStateSnapshot() (sessionv3.Snapshot, bool) {
 	if store == nil {
 		return sessionv3.Snapshot{}, false
 	}
-	return (&sessionv3.Session{Handle: store}).StateSnapshot(), true
+	return store.StateSnapshot(), true
 }
 
 // appendSessionEventLocked mirrors the existing event.Sink lifecycle into the
@@ -321,6 +369,9 @@ func (c *Controller) appendSessionEventLocked(ctx context.Context, e event.Event
 	}
 	store := c.sessionEventStore()
 	if store == nil {
+		if c.exclusiveV3Enabled() {
+			return sessionv3.ErrSessionNotRunning
+		}
 		return nil
 	}
 	projection := store.Snapshot().Projection

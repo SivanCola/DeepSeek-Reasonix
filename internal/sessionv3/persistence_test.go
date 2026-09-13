@@ -164,6 +164,30 @@ func TestAppendCommitsToMemoryBeforeDurability(t *testing.T) {
 	}
 }
 
+func TestRejectedPersistenceAcceptanceDoesNotMutateSession(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "session")
+	s, err := Open(dir, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+
+	// Simulate the binding admission boundary closing immediately before a
+	// prepared business batch is accepted. The Session projection and sequence
+	// must remain unchanged; there is no accepted fact without a queued copy.
+	prepared, err := s.PrepareBatch("one", Batch{Events: []Event{{Kind: "turn/start"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.binding.stopAccepting()
+	if _, err := s.CommitPrepared(prepared); err == nil {
+		t.Fatal("commit succeeded after persistence admission closed")
+	}
+	if snapshot := s.Snapshot(); snapshot.EventSequence != 0 || snapshot.Projection.TurnID != "" {
+		t.Fatalf("rejected commit changed session state: %+v", snapshot)
+	}
+}
+
 func TestBatchDeadlineIsFixedAndDoesNotReset(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "session")
 	scheduler := &manualScheduler{}

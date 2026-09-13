@@ -125,6 +125,20 @@ func rebuildWithPrevious(ctx context.Context, old *control.Controller, previous 
 		}
 	}
 
+	// Freeze the old path-derived event producer before a full replacement can
+	// import it. Failure restores the old producer; successful publication
+	// transfers ownership to the replacement for every host frontend.
+	restoreLegacyEvents, err := old.SuspendLegacyEventStoreForImport(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("boot: suspend legacy session events: %w", err)
+	}
+	replacementPublished := false
+	defer func() {
+		if !replacementPublished {
+			restoreLegacyEvents()
+		}
+	}()
+
 	extension.DefaultLifecycleMetrics.FullRebuilds.Add(1)
 	opts.deferPublish = true
 	res, err := BuildRuntime(ctx, opts)
@@ -165,6 +179,7 @@ func rebuildWithPrevious(ctx context.Context, old *control.Controller, previous 
 	// Publish new generation only after Active + state migration. Then drain
 	// Removed/Reloaded clients still held by the previous Manager.
 	publishBuildResult(res)
+	replacementPublished = true
 	if opts.Extensions != nil && res.Plan != nil {
 		opts.Extensions.DrainPlan(res.Plan)
 	}
