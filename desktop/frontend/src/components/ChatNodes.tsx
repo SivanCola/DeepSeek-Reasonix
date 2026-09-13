@@ -68,7 +68,11 @@ export const ChatNodeList = memo(function ChatNodeList(props: Omit<SeatProps, "n
     });
     return () => cancelAnimationFrame(frame);
   }, [order]);
-  return renderedOrder.map(key => <ChatNodeSeat key={key} {...props} nodeKey={key} />);
+  return <ChatNodeSeats {...props} order={renderedOrder} />;
+});
+
+const ChatNodeSeats = memo(function ChatNodeSeats({ order, ...props }: Omit<SeatProps, "nodeKey"> & { order: readonly string[] }) {
+  return order.map(key => <ChatNodeSeat key={key} {...props} nodeKey={key} />);
 });
 
 const ChatNodeSeat = memo(function ChatNodeSeat({ source, nodeKey, loader, scroll, actions, tabId, hostId }: SeatProps) {
