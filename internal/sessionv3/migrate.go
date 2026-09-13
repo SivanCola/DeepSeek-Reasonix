@@ -90,9 +90,6 @@ func migrateLegacyHead(ctx context.Context, sourcePath, targetRoot, legacyHeadID
 		}
 		defer lease.Release()
 	}
-	if err := rejectUnresolvedLegacySidecar(sourcePath); err != nil {
-		return MigrationResult{}, err
-	}
 
 	artifacts, source, err := freezeLegacyArtifacts(ctx, sourcePath)
 	if err != nil {

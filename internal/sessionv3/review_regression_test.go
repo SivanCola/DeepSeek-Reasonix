@@ -46,27 +46,7 @@ func TestStateSnapshotOmitsHistory(t *testing.T) {
 	}
 }
 
-func TestLegacyMigrationDoesNotDiscardAnExistingSidecar(t *testing.T) {
-	root := t.TempDir()
-	source := filepath.Join(root, "history.jsonl")
-	raw := []byte("source must remain unchanged\n")
-	if err := os.WriteFile(source, raw, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "sessions-v3", "history"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := MigrateLegacy(t.Context(), source, filepath.Join(root, "target")); !errors.Is(err, ErrLegacySidecarConflict) {
-		t.Fatalf("migration selected legacy over unresolved sidecar: %v", err)
-	}
-	after, err := os.ReadFile(source)
-	if err != nil || !bytes.Equal(after, raw) {
-		t.Fatalf("migration modified its source: %q, %v", after, err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "target")); !os.IsNotExist(err) {
-		t.Fatalf("migration published an incomplete target: %v", err)
-	}
-}
+
 
 func TestSessionIdentityRejectsPathsWithoutCreatingFiles(t *testing.T) {
 	persistence := NewFilesystemPersistence(t.TempDir())

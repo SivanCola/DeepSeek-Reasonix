@@ -1533,8 +1533,8 @@
       "essay": 1
     },
     "internal/sessionv3/migrate.go": {
-      "complexity": 6,
-      "function-size": 16
+      "complexity": 5,
+      "function-size": 13
     },
     "internal/sessionv3/persistence_buffer.go": {
       "essay": 1
