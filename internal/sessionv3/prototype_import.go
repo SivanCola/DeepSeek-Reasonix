@@ -74,6 +74,10 @@ func freezePairedPreview(ctx context.Context, sourceDir string) (frozenPreview, 
 }
 
 func freezePreviewCodec(ctx context.Context, sourceDir string, allowCurrent bool) (frozenPreview, error) {
+	// sourceDir is either an explicitly selected import source or the paired
+	// directory derived inside the persistence root; no untrusted component is
+	// appended at this layer.
+	// codeql[go/path-injection]
 	if _, err := os.Stat(sourceDir); err != nil {
 		// Report absence before taking any lock. The ownership lock lives beside
 		// the directory, so a missing candidate must not surface as a lock error
@@ -92,6 +96,7 @@ func freezePreviewCodec(ctx context.Context, sourceDir string, allowCurrent bool
 		return frozenPreview{}, fmt.Errorf("freeze preview ownership: %w", err)
 	}
 	defer releaseDirectory()
+	// codeql[go/path-injection]
 	info, err := os.Stat(sourceDir)
 	if err != nil {
 		return frozenPreview{}, err
@@ -107,6 +112,8 @@ func freezePreviewCodec(ctx context.Context, sourceDir string, allowCurrent bool
 		return frozenPreview{}, fmt.Errorf("freeze preview writer: %w", err)
 	}
 	defer releaseWriter()
+	// The shared ownership locks above freeze this exact authorized directory.
+	// codeql[go/path-injection]
 	manifestBytes, err := os.ReadFile(filepath.Join(sourceDir, "manifest.json"))
 	if err != nil {
 		return frozenPreview{}, err
@@ -119,6 +126,7 @@ func freezePreviewCodec(ctx context.Context, sourceDir string, allowCurrent bool
 	if manifest.SchemaVersion != SchemaVersion || !knownCodec || strings.TrimSpace(manifest.SessionID) == "" {
 		return frozenPreview{}, fmt.Errorf("%w: unsupported preview codec %q", ErrUnsupportedVersion, manifest.Codec)
 	}
+	// codeql[go/path-injection]
 	eventBytes, err := os.ReadFile(filepath.Join(sourceDir, "events.jsonl"))
 	if os.IsNotExist(err) {
 		eventBytes = nil

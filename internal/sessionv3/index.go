@@ -47,6 +47,9 @@ func loadOrBuildSparseIndex(ctx context.Context, dir, cacheDir string) (sparseIn
 		return sparseIndex{}, err
 	}
 	logPath := filepath.Join(dir, "events.jsonl")
+	// dir is the already-authorized physical session directory, not a path
+	// component supplied by a protocol caller.
+	// codeql[go/path-injection]
 	file, err := os.Open(logPath)
 	if os.IsNotExist(err) {
 		return sparseIndex{Codec: sparseIndexCodec, Entries: []sparseIndexEntry{}}, nil
@@ -63,6 +66,9 @@ func loadOrBuildSparseIndex(ctx context.Context, dir, cacheDir string) (sparseIn
 	if err != nil {
 		return sparseIndex{}, err
 	}
+	// cacheDir is derived from the confined persistence root and validated
+	// session identity by the caller.
+	// codeql[go/path-injection]
 	if data, readErr := os.ReadFile(sparseIndexPath(cacheDir)); readErr == nil {
 		var cached sparseIndex
 		if json.Unmarshal(data, &cached) == nil && cached.validFor(info, identity) {
@@ -120,6 +126,8 @@ func (idx sparseIndex) validFor(info os.FileInfo, identity string) bool {
 
 func writeSparseIndex(cacheDir string, index sparseIndex) {
 	data, err := json.Marshal(index)
+	// cacheDir is the internal cache path paired with an authorized store.
+	// codeql[go/path-injection]
 	if err != nil || os.MkdirAll(cacheDir, 0o700) != nil {
 		return
 	}

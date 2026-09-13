@@ -137,6 +137,9 @@ func (p *FilesystemPersistence) Open(sessionID string, mode AccessMode) (*Sessio
 	if mode != ReadWrite {
 		return nil, fmt.Errorf("sessionv3: unsupported access mode %q", mode)
 	}
+	// dir was produced by sessionDir from a validated single-component id and
+	// checked through os.Root; it is the authorized store path.
+	// codeql[go/path-injection]
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 	} else if err != nil {

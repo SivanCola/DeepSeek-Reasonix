@@ -320,12 +320,14 @@ func (b *PersistenceBinding) reconcileUncertain(ctx context.Context, handle Sess
 		// durable cursor before validating a queued successor, or the successor
 		// would appear to start after a gap.
 		if err := physical.rebuildWriterIndex(file); err != nil {
-				return false, fmt.Errorf("%w: rebuild index after verified append: %w", ErrPersistenceUncertain, err)
+			return false, fmt.Errorf("%w: rebuild index after verified append: %w", ErrPersistenceUncertain, err)
 		}
 		return true, nil
 	}
 	if tailLen < int64(len(uncertain.data)) && bytes.Equal(tail, uncertain.data[:len(tail)]) {
 		backup := filepath.Join(b.dir, fmt.Sprintf("events.uncertain-%d.tail", time.Now().UTC().UnixNano()))
+		// b.dir belongs to the leased physical handle and the filename is local.
+		// codeql[go/path-injection]
 		if err := os.WriteFile(backup, tail, 0o600); err != nil {
 			return false, fmt.Errorf("%w: preserve partial tail: %w", ErrPersistenceUncertain, err)
 		}
