@@ -75,19 +75,21 @@ func TestAskExactResolutionDeliversOnceAfterReplay(t *testing.T) {
 	close(start)
 	wg.Wait()
 	close(results)
-	var succeeded, duplicate int
+	var succeeded int
 	for err := range results {
 		switch {
 		case err == nil:
 			succeeded++
-		case errors.Is(err, ErrPromptAlreadyResolved):
-			duplicate++
 		default:
 			t.Fatalf("current Ask answer rejected: %v", err)
 		}
 	}
-	if succeeded != 1 || duplicate != 1 {
-		t.Fatalf("answer results: %d successes, %d duplicates", succeeded, duplicate)
+	if succeeded != 2 {
+		t.Fatalf("answer results: %d idempotent successes, want 2", succeeded)
+	}
+	conflict := PromptAnswer{Questions: []event.AskAnswer{{QuestionID: request.Ask.Questions[0].ID, Selected: []string{"different"}}}}
+	if err := c.ResolvePromptExact(identity, conflict); !errors.Is(err, ErrPromptAlreadyResolved) {
+		t.Fatalf("conflicting late answer = %v, want ErrPromptAlreadyResolved", err)
 	}
 	select {
 	case got := <-answers:

@@ -105,7 +105,7 @@ func (c *Controller) dispatchInboxOnce() inboxDispatchResult {
 	// Controllers without persistence cannot own a durable inbox. Rotation and
 	// turn-completion hooks are shared with those controllers, so treat the
 	// missing path as an empty queue instead of retrying a permanent condition.
-	if c.SessionPath() == "" {
+	if c.SessionPath() == "" && !c.exclusiveV3Enabled() {
 		return inboxDispatchIdle
 	}
 	meta, ok, err := c.nextInboxDispatchItem()

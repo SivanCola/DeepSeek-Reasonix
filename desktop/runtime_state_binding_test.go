@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -94,7 +95,7 @@ func TestRuntimeStateProjectionRevalidatesLocalBindingAfterSampling(t *testing.T
 				t.Fatalf("expected one current binding: %+v", got.Sessions)
 			}
 			view := got.Sessions[0]
-			if view.SessionPath != wantPath || view.SessionGeneration != wantGeneration || view.Scope != wantScope || view.WorkspaceRoot != wantRoot || view.State != nextState || view.Open != (mutation != "detach") {
+			if view.SessionPath != wantPath || view.SessionGeneration != wantGeneration || view.Scope != wantScope || view.WorkspaceRoot != wantRoot || !reflect.DeepEqual(view.State, nextState) || view.Open != (mutation != "detach") {
 				t.Fatalf("projection paired state with stale binding: %+v", view)
 			}
 			if fresh := a.GetRuntimeStateSnapshot(); fresh.Revision != got.Revision {

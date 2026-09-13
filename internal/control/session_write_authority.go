@@ -2,10 +2,13 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
+	"reasonix/internal/sessionv3"
 )
 
 // BindSessionWriteAuthority issues a generation-bound write authority from
@@ -35,7 +38,39 @@ func (c *Controller) BindSessionWriteAuthority(lease *agent.SessionLease) error 
 		sess.ClearWriteAuthority()
 		return err
 	}
+	if c.managedSessionEvents.Load() {
+		if err := c.activateManagedSessionEvents(sess); err != nil {
+			sess.ClearWriteAuthority()
+			return err
+		}
+	}
 	return nil
+}
+
+// activateManagedSessionEvents publishes the replacement runtime's exact
+// projection only after the final lease handoff succeeds. This keeps a failed
+// settings/model rebuild from changing the still-active controller through the
+// shared in-process v3 store.
+func (c *Controller) activateManagedSessionEvents(sess *agent.Session) error {
+	if c == nil || sess == nil {
+		return nil
+	}
+	if prompt := c.basePrompt(); prompt != "" {
+		sess.SetLeadingSystemPromptWithReason(prompt, "managed-runtime-activation")
+	}
+	messages := sess.Snapshot()
+	snapshot, ok := c.sessionEventSnapshot()
+	if !ok || snapshot.EventSequence == 0 {
+		if err := c.seedSessionEventsFromExecutor("managed-runtime-activation"); err != nil {
+			return err
+		}
+	} else if !reflect.DeepEqual(snapshot.Projection.Messages, messages) {
+		if err := c.replaceSessionEventProjection(context.Background(), "managed-runtime-activation", messages); err != nil {
+			return err
+		}
+	}
+	planPayload, _ := json.Marshal(map[string]any{"enabled": c.PlanMode()})
+	return c.appendDomainState("plan/state", planPayload, "managed-runtime-activation")
 }
 
 // WriteAuthorityGeneration reports the generation currently bound on this
@@ -57,10 +92,9 @@ func (c *Controller) submitCommandOrTurn(trimmed, input, display string, scopedR
 
 // Run verifies the live write generation before synchronous headless turns.
 func (c *Controller) Run(ctx context.Context, input string) error {
-	if err := c.ensureWriteAuthorityReady(); err != nil {
-		return err
-	}
-	return c.runReady(ctx, input)
+	return c.runSynchronousTurn(ctx, nil, func(runCtx context.Context) error {
+		return c.runReady(runCtx, input)
+	})
 }
 
 // RebindSessionWriteAuthority is a convenience for keepers that already hold a
@@ -75,6 +109,28 @@ func (c *Controller) RebindSessionWriteAuthority(lease *agent.SessionLease) erro
 // persistence yet) are allowed.
 func (c *Controller) ensureWriteAuthorityReady() error {
 	if c == nil || c.executor == nil {
+		return nil
+	}
+	if service, runtime, exclusive := c.v3Binding(); exclusive {
+		if runtime == nil {
+			if service == nil {
+				return sessionv3.ErrSessionNotRunning
+			}
+			if _, err := c.BindFreshV3(context.Background(), ""); err != nil {
+				return err
+			}
+			_, runtime, _ = c.v3Binding()
+			if runtime == nil {
+				return sessionv3.ErrSessionNotRunning
+			}
+		}
+		phase := runtime.Snapshot().Phase
+		if phase == sessionv3.RuntimeRecoveryRequired {
+			return sessionv3.ErrRecoveryRequired
+		}
+		if phase == sessionv3.RuntimeClosed {
+			return sessionv3.ErrSessionNotRunning
+		}
 		return nil
 	}
 	path := c.SessionPath()

@@ -484,8 +484,8 @@ func TestCancelStopsIdleGoalWithIncompleteTodos(t *testing.T) {
 	if got := c.Goal(); got != "finish the migration" {
 		t.Fatalf("Goal() = %q, want stopped goal text to remain for display/persistence", got)
 	}
-	if todos := c.Todos(); len(todos) != 1 || todos[0].Status != "in_progress" {
-		t.Fatalf("Todos() after stopping idle goal = %+v, want incomplete todo retained", todos)
+	if todos := c.Todos(); len(todos) != 0 {
+		t.Fatalf("Todos() after stopping idle goal = %+v, want executor seed ignored", todos)
 	}
 }
 
@@ -629,24 +629,20 @@ func TestGoalCompletesWithoutChangingIncompleteTodos(t *testing.T) {
 	if found || prov.call != 2 || c.GoalStatus() != GoalStatusComplete {
 		t.Fatalf("model completion was intercepted: calls=%d status=%s notices=%v", prov.call, c.GoalStatus(), allNotices)
 	}
-	if ag.CanonicalTodoState()[0].Status != "in_progress" {
-		t.Fatal("host completed unreported todo")
+	if got := ag.CanonicalTodoState(); len(got) != 0 {
+		t.Fatalf("goal continuation restored a previous-turn todo: %+v", got)
 	}
 }
 
 func TestGoalAdvanceResultCannotCrossGoalLifecycle(t *testing.T) {
 	newResult := func(t *testing.T, g *goalMachine) goalAdvanceResult {
 		t.Helper()
-		g.set("old goal", "", nil)
+		g.set("old goal", "")
 		res := g.advance(goalAdvanceInput{
 			report: &goalTurnReport{status: GoalStatusRunning, nextAction: "continue work"},
-			todos: []evidence.TodoItem{{
-				Content: "unfinished work from old goal",
-				Status:  "in_progress",
-			}},
 		})
 		if res.intercept == "" {
-			t.Fatal("test setup: expected an incomplete-todo intercept")
+			t.Fatal("test setup: expected a continuation intercept")
 		}
 		return res
 	}
@@ -662,7 +658,7 @@ func TestGoalAdvanceResultCannotCrossGoalLifecycle(t *testing.T) {
 	t.Run("replacement goal invalidates result", func(t *testing.T) {
 		var g goalMachine
 		res := newResult(t, &g)
-		g.set("replacement goal", "", nil)
+		g.set("replacement goal", "")
 		if got, ok := g.acceptContinuation(res); ok {
 			t.Fatalf("replacement goal accepted stale intercept %q", got)
 		}
@@ -671,8 +667,8 @@ func TestGoalAdvanceResultCannotCrossGoalLifecycle(t *testing.T) {
 	t.Run("stop and resume invalidates result", func(t *testing.T) {
 		var g goalMachine
 		res := newResult(t, &g)
-		g.stop(GoalStatusStopped, nil)
-		if _, _, _, resumed := g.resume(nil); !resumed {
+		g.stop(GoalStatusStopped)
+		if _, _, _, resumed := g.resume(); !resumed {
 			t.Fatal("test setup: goal did not resume")
 		}
 		if got, ok := g.acceptContinuation(res); ok {
@@ -690,64 +686,12 @@ func TestGoalAdvanceResultCannotCrossGoalLifecycle(t *testing.T) {
 	})
 }
 
-// TestGoalCompletionPreservesExplicitTodoUpdates verifies that the model may
-// update todo presentation before submitting its independent Goal report.
-func TestGoalCompletionPreservesExplicitTodoUpdates(t *testing.T) {
-	todoWrite, ok := tool.LookupBuiltin("todo_write")
-	if !ok {
-		t.Fatal("todo_write builtin not registered")
-	}
-	reg := goalRegistry()
-	reg.Add(todoWrite)
-	prov := &scriptedTurns{turns: flattenTurns(
-		[][]provider.Chunk{
-			{toolCallChunk("t1", "todo_write", `{"todos":[{"content":"Step 1","status":"completed"},{"content":"Step 2","status":"completed"}]}`), {Type: provider.ChunkDone}},
-			{toolCallChunk("ug1", "update_goal", `{"status":"complete","reason":""}`), {Type: provider.ChunkDone}},
-			textTurn("All done."),
-		},
-	)}
-	ag := agent.New(prov, reg, agent.NewSession(""), agent.Options{}, event.Discard)
-	ag.SeedTodoState([]evidence.TodoItem{
-		{Content: "Step 1", Status: "in_progress"},
-		{Content: "Step 2", Status: "pending"},
-	})
-
-	var tools []event.Event
-	done := make(chan event.Event, 1)
-	c := New(Options{
-		Runner:   ag,
-		Executor: ag,
-		Sink: event.FuncSink(func(e event.Event) {
-			switch e.Kind {
-			case event.ToolDispatch, event.ToolResult:
-				tools = append(tools, e)
-			case event.TurnDone:
-				done <- e
-			}
-		}),
-	})
-
-	c.Submit("/goal do everything")
-	<-done // wait for the goal loop to finish
-
-	if c.GoalStatus() != GoalStatusComplete {
-		t.Fatalf("GoalStatus() = %q, want complete", c.GoalStatus())
-	}
-
-	// All todos in the executor must be completed.
-	for _, td := range c.executor.CanonicalTodoState() {
-		if td.Status != "completed" {
-			t.Fatalf("canonical todo %q = %s, want completed", td.Content, td.Status)
-		}
-	}
-}
-
 func TestGoalCompletionPreservesTodoStates(t *testing.T) {
 	for _, status := range []string{"", "pending", "in_progress", "completed"} {
 		t.Run(status, func(t *testing.T) {
 			todos := []evidence.TodoItem{{Content: "A", Status: status}}
 			g := &goalMachine{goal: "work", status: GoalStatusRunning}
-			result := g.advance(goalAdvanceInput{report: &goalTurnReport{status: GoalStatusComplete}, todos: todos})
+			result := g.advance(goalAdvanceInput{report: &goalTurnReport{status: GoalStatusComplete}})
 			if result.cont || g.status != GoalStatusComplete || todos[0].Status != status {
 				t.Fatalf("completion changed task facts: result=%+v todos=%+v", result, todos)
 			}
@@ -760,7 +704,7 @@ func TestRepeatedCompleteWithIncompleteTodosIsTerminal(t *testing.T) {
 	g := &goalMachine{goal: "fix", status: GoalStatusRunning}
 	todos := []evidence.TodoItem{{Content: "Fix parser", Status: "in_progress"}}
 	for range 101 {
-		if res := g.advance(goalAdvanceInput{report: &goalTurnReport{status: GoalStatusComplete}, todos: todos}); res.cont {
+		if res := g.advance(goalAdvanceInput{report: &goalTurnReport{status: GoalStatusComplete}}); res.cont {
 			t.Fatal("completed goal restarted")
 		}
 	}
@@ -844,7 +788,7 @@ func TestGoalSidecarRoundTripPreservesBlockedDeliveryCheckpoint(t *testing.T) {
 		MutationObserved:    true,
 		PendingMutation:     true,
 	}
-	statePath, data, persist := c.goals.setDeliveryCheckpoint(cp, nil)
+	statePath, data, persist := c.goals.setDeliveryCheckpoint(cp)
 	c.persistGoalState(statePath, data, persist)
 	c.stopGoal(GoalStatusBlocked)
 

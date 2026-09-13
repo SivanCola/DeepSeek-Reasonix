@@ -36,6 +36,6 @@ export function metaFromTab(tab: TabMeta, existing?: Meta): Meta {
     floorInferred: tab.floorInferred ?? existing?.floorInferred,
     goal: tab.goal ?? existing?.goal,
     goalStatus: tab.goalStatus ?? existing?.goalStatus,
-    canonicalTodos: existing?.canonicalTodos, dismissedTodoBatches: (tab.sessionPath !== undefined ? tab.sessionPath : existing?.sessionPath) === existing?.sessionPath ? existing?.dismissedTodoBatches : undefined,
+    canonicalTodos: existing?.canonicalTodos,
   };
 }

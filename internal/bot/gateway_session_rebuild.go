@@ -13,11 +13,13 @@ import (
 	"reasonix/internal/control"
 	"reasonix/internal/event"
 	"reasonix/internal/secrets"
+	"reasonix/internal/sessionv3"
 )
 
 type builtBotSession struct {
-	state       *sessionState
-	reusedLease bool
+	state         *sessionState
+	reusedLease   bool
+	reusedRuntime bool
 }
 
 func botRuntimeSwitchBusyText() string {
@@ -29,10 +31,35 @@ func botRuntimeSwitchFailedText(action string) string {
 }
 
 func (gw *BotGateway) buildBotController(ctx context.Context, opts boot.Options) (*control.Controller, error) {
+	if opts.SessionService == nil {
+		opts.SessionService = gw.botSessionService(opts.SessionDir)
+		opts.SessionHostID = "local"
+	}
 	if gw.buildController != nil {
 		return gw.buildController(ctx, opts)
 	}
 	return boot.Build(ctx, opts)
+}
+
+func (gw *BotGateway) botSessionService(sessionDir string) *sessionv3.Service {
+	root := sessionv3.RootForLegacyDir(sessionDir)
+	if root == "" {
+		return nil
+	}
+	gw.sessionServicesMu.Lock()
+	defer gw.sessionServicesMu.Unlock()
+	if gw.sessionServices == nil {
+		gw.sessionServices = make(map[string]*sessionv3.Service)
+	}
+	if service := gw.sessionServices[root]; service != nil {
+		return service
+	}
+	service, err := sessionv3.NewService("local", sessionv3.NewFilesystemPersistence(root))
+	if err != nil {
+		return nil
+	}
+	gw.sessionServices[root] = service
+	return service
 }
 
 // buildSessionState prepares a complete replacement without publishing it.
@@ -59,12 +86,13 @@ func (gw *BotGateway) buildSessionState(ctx context.Context, key string, msg Inb
 		workspaceRoot:    profile.workspaceRoot,
 		toolApprovalMode: profile.toolApprovalMode,
 		sessionPath:      profile.sessionPath,
+		sessionRef:       profile.sessionRef,
 		pendingAsks:      make(map[string][]event.AskQuestion),
 		createdAt:        time.Now(),
 		lastActive:       time.Now(),
 	}
 	state.onSessionTransition = gw.botSessionTransitionHandler(key, msg, state)
-	ctrl, err := gw.buildBotController(ctx, boot.Options{
+	buildOptions := boot.Options{
 		Model:               profile.model,
 		MaxSteps:            gw.cfg.MaxSteps,
 		MaxStepsKey:         "bot.max_steps",
@@ -76,7 +104,23 @@ func (gw *BotGateway) buildSessionState(ctx context.Context, key string, msg Inb
 		ApprovalTimeout:     gw.approvalTimeout(),
 		OnSessionRecovered:  gw.botSessionRecoveredHandler(key, msg, state),
 		OnSessionTransition: state.onSessionTransition,
-	})
+	}
+	reusedRuntime := false
+	if previous != nil {
+		if binding, ok := previous.ctrl.(interface {
+			SessionV3Binding() (*sessionv3.Service, *sessionv3.Runtime, bool)
+		}); ok {
+			if service, runtime, bound := binding.SessionV3Binding(); bound {
+				reusedRuntime = profile.sessionPath == "" && (profile.sessionRef.SessionID == "" || profile.sessionRef.SessionID == runtime.Ref().SessionID)
+				if reusedRuntime {
+					buildOptions.SessionService = service
+					buildOptions.SessionRuntime = runtime
+					buildOptions.SessionHostID = runtime.Ref().HostID
+				}
+			}
+		}
+	}
+	ctrl, err := gw.buildBotController(ctx, buildOptions)
 	if err != nil {
 		if !reusedLease {
 			leases.Release()
@@ -85,7 +129,11 @@ func (gw *BotGateway) buildSessionState(ctx context.Context, key string, msg Inb
 	}
 	state.ctrl = ctrl
 	fail := func(buildErr error) (*builtBotSession, error) {
-		ctrl.Close()
+		if reusedRuntime {
+			ctrl.ReleaseResources()
+		} else {
+			ctrl.Close()
+		}
 		if reusedLease {
 			if restoreErr := bindBotSessionWriteAuthority(previous); restoreErr != nil {
 				gw.logger.Error("restore bot session write authority failed", "err", secrets.RedactError(restoreErr))
@@ -94,6 +142,24 @@ func (gw *BotGateway) buildSessionState(ctx context.Context, key string, msg Inb
 			leases.Release()
 		}
 		return nil, buildErr
+	}
+	if identity, ok := any(ctrl).(control.IdentityLifecycle); ok && identity.UsesExclusiveSessionV3() {
+		ref, bindErr := bindBotSessionIdentity(ctx, identity, profile, msg)
+		if bindErr != nil {
+			if (profile.sessionRefOptional || profile.sessionPathOptional) && !reusedRuntime {
+				gw.logger.Warn("mapped bot session unavailable; starting fresh", "err", bindErr)
+				ref, bindErr = identity.BindFreshV3(ctx, "")
+				state.mappingDegraded = bindErr == nil
+			}
+			if bindErr != nil {
+				return fail(bindErr)
+			}
+		}
+		state.sessionRef = ref
+		state.sessionPath = ""
+		ctrl.EnableInteractiveApproval()
+		ctrl.SetToolApprovalMode(profile.toolApprovalMode)
+		return &builtBotSession{state: state, reusedRuntime: reusedRuntime}, nil
 	}
 
 	if profile.sessionPath != "" {
@@ -133,12 +199,54 @@ func (gw *BotGateway) buildSessionState(ctx context.Context, key string, msg Inb
 	return &builtBotSession{state: state, reusedLease: reusedLease}, nil
 }
 
+func bindBotSessionIdentity(ctx context.Context, identity control.IdentityLifecycle, profile sessionRuntimeProfile, msg InboundMessage) (sessionv3.SessionRef, error) {
+	service := identity.SessionV3Service()
+	if service == nil {
+		return sessionv3.SessionRef{}, errors.New("bot v3 session service is unavailable")
+	}
+	if current, ok := identity.SessionRef(); ok {
+		if profile.sessionRef.SessionID == "" || profile.sessionRef.SessionID == current.SessionID {
+			return current, nil
+		}
+	}
+	if profile.sessionRef.SessionID != "" {
+		ref := profile.sessionRef
+		if ref.HostID == "" {
+			ref.HostID = service.HostID()
+		}
+		opened, err := identity.OpenV3(ctx, ref)
+		if err == nil {
+			return opened, nil
+		}
+		if !errors.Is(err, sessionv3.ErrSessionNotFound) || !profile.sessionRefOptional {
+			return sessionv3.SessionRef{}, err
+		}
+		return identity.BindFreshV3(ctx, ref.SessionID)
+	}
+	if profile.sessionPath != "" {
+		return identity.ContinueLegacyV3(ctx, profile.sessionPath, "")
+	}
+	stableID := ""
+	if strings.TrimSpace(msg.ChatID) != "" {
+		stableID = "bot-" + BuildSessionKey(msg.Session())
+	}
+	return identity.BindFreshV3(ctx, stableID)
+}
+
 func (gw *BotGateway) discardBuiltSession(built *builtBotSession, previous *sessionState) {
 	if built == nil || built.state == nil {
 		return
 	}
 	if built.state.ctrl != nil {
-		built.state.ctrl.Close()
+		if built.reusedRuntime {
+			if releaser, ok := built.state.ctrl.(interface{ ReleaseResources() }); ok {
+				releaser.ReleaseResources()
+			} else {
+				built.state.ctrl.Close()
+			}
+		} else {
+			built.state.ctrl.Close()
+		}
 	}
 	if built.reusedLease {
 		if previous != nil {
@@ -159,7 +267,9 @@ func (gw *BotGateway) discardBuiltSession(built *builtBotSession, previous *sess
 }
 
 func (gw *BotGateway) setSessionRuntimeOverride(ctx context.Context, key string, msg InboundMessage, override sessionRuntimeOverride, enabled bool) (bool, error) {
-	override.sessionPath = canonicalBotPath(override.sessionPath)
+	if _, ok := parseBotSessionRefTarget(override.sessionPath); !ok {
+		override.sessionPath = canonicalBotPath(override.sessionPath)
+	}
 	override.channel.WorkspaceRoot = canonicalBotPath(override.channel.WorkspaceRoot)
 	profile := gw.sessionProfileForResolvedOverride(msg, override, enabled)
 	var switchErr error
@@ -214,6 +324,9 @@ func (gw *BotGateway) setSessionRuntimeOverride(ctx context.Context, key string,
 		gw.controllers[key] = built.state
 		if built.reusedLease && previous != nil {
 			previous.leases = nil
+		}
+		if built.reusedRuntime && previous != nil {
+			previous.releaseRuntimeOnly = true
 		}
 		gw.mu.Unlock()
 		gw.closeSessionState(previous)

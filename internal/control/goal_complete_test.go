@@ -8,7 +8,7 @@ import (
 func TestGoalAcceptsModelCompletionWithUnfinishedTodos(t *testing.T) {
 	todos := []evidence.TodoItem{{Content: "Check work", Status: "pending"}}
 	g := &goalMachine{goal: "work", status: GoalStatusRunning}
-	result := g.advance(goalAdvanceInput{report: &goalTurnReport{status: GoalStatusComplete}, todos: todos})
+	result := g.advance(goalAdvanceInput{report: &goalTurnReport{status: GoalStatusComplete}})
 	if result.cont || g.status != GoalStatusComplete || todos[0].Status != "pending" {
 		t.Fatalf("model declaration must preserve facts: result=%+v todos=%+v", result, todos)
 	}

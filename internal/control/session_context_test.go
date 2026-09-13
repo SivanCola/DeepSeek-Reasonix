@@ -49,11 +49,13 @@ func TestTurnContextUsesLiveSkillCatalogAcrossAddEditDelete(t *testing.T) {
 	}
 	betaPath := filepath.Join(project, ".reasonix", "skills", "beta", "SKILL.md")
 	writeControlSkill(t, project, ".reasonix/skills/beta/SKILL.md", "---\ndescription: beta one\n---\nbody")
+	store.Invalidate("test skill added")
 	second := appendCurrent()
 	if second.Digest == first.Digest || !strings.Contains(second.Sections.SkillsCatalog, "beta one") {
 		t.Fatalf("added-skill snapshot = %+v", second)
 	}
 	writeControlSkill(t, project, ".reasonix/skills/beta/SKILL.md", "---\ndescription: beta edited\n---\nbody")
+	store.Invalidate("test skill edited")
 	third := appendCurrent()
 	if third.Digest == second.Digest || !strings.Contains(third.Sections.SkillsCatalog, "beta edited") {
 		t.Fatalf("edited-skill snapshot = %+v", third)
@@ -61,6 +63,7 @@ func TestTurnContextUsesLiveSkillCatalogAcrossAddEditDelete(t *testing.T) {
 	if err := os.Remove(betaPath); err != nil {
 		t.Fatal(err)
 	}
+	store.Invalidate("test skill deleted")
 	fourth := appendCurrent()
 	if fourth.Digest == third.Digest || strings.Contains(fourth.Sections.SkillsCatalog, "beta") {
 		t.Fatalf("deleted-skill snapshot = %+v", fourth)

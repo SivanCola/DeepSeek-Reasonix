@@ -129,9 +129,11 @@ func (a *Agent) executeBatch(ctx context.Context, turn *turnRuntime, calls []pro
 		outcomes[i].output = results[i]
 		a.commitBatchCallResolution(ctx, calls[i])
 		a.finishToolRecovery(calls[i], outcomes[i])
-		a.storeBatchToolResult(ctx, calls[i], outcomes[i])
-		if err := a.emitBatchToolResult(ctx, calls[i], outcomes[i], durations[i], startedAt[i], ranParallel[i], batchStart); err != nil {
+		committedMessage := a.buildBatchToolResult(ctx, calls[i], outcomes[i])
+		if err := a.emitBatchToolResult(ctx, calls[i], outcomes[i], committedMessage, durations[i], startedAt[i], ranParallel[i], batchStart); err != nil {
 			batchErrOnce.Do(func() { batchErr = fmt.Errorf("persist tool result %s: %w", calls[i].ID, err) })
+		} else {
+			a.sess.conversation.Add(committedMessage)
 		}
 		if surfaceWriters[i] || (outcomes[i].resolved && !outcomes[i].resolvedReadOnly) {
 			earlierWriterRan = true

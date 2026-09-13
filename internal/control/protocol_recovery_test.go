@@ -44,12 +44,9 @@ func TestProtocolRecoveryControllerDurabilityAndConcurrentAdmission(t *testing.T
 	if action == nil {
 		t.Fatal("missing recovery token")
 	}
-	loaded, err := agent.LoadSession(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadDurableV3Projection(t, path)
 	var pending bool
-	for _, m := range loaded.Snapshot() {
+	for _, m := range loaded.Messages {
 		r, ok := provider.DecodeProtocolRecovery(m.ProtocolRecovery)
 		pending = pending || ok && r.State == "pending"
 	}
@@ -59,12 +56,9 @@ func TestProtocolRecoveryControllerDurabilityAndConcurrentAdmission(t *testing.T
 	done := make(chan error, 1)
 	go func() { done <- c.RunProtocolRecoveryWithAdmission(context.Background(), action.ID, "", nil) }()
 	<-p.entered
-	loaded, err = agent.LoadSession(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded = loadDurableV3Projection(t, path)
 	var consumed bool
-	for _, m := range loaded.Snapshot() {
+	for _, m := range loaded.Messages {
 		r, ok := provider.DecodeProtocolRecovery(m.ProtocolRecovery)
 		consumed = consumed || ok && r.State == "consumed"
 	}

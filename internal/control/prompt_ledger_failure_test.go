@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,17 +14,11 @@ import (
 
 func blockPromptTestLedger(t *testing.T, c *Controller, root string) {
 	t.Helper()
-	ledger := c.turnEventLedger()
-	if ledger == nil {
-		t.Fatal("controller did not open a turn ledger")
+	v3 := c.sessionEventStore()
+	if v3 == nil {
+		t.Fatal("controller did not open a v3 event store")
 	}
-	if err := ledger.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(root); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(root, []byte("block future WAL opens"), 0o600); err != nil {
+	if err := v3.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -66,10 +59,10 @@ func TestCancelLedgerFailureReturnsAndCancelsTurn(t *testing.T) {
 	if err := awaitPromptLedgerTest(t, finished, "cancelled turn body"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("turn error = %v, want context cancellation", err)
 	}
+	waitIdle(t, c)
 	if err := c.turnEventLedgerError(); !errors.Is(err, turnevent.ErrTurnLedgerUnavailable) {
 		t.Fatalf("ledger error = %v, want storage failure", err)
 	}
-	waitIdle(t, c)
 }
 
 func TestResolvePromptExactLedgerFailureCancelsWithoutAnswer(t *testing.T) {

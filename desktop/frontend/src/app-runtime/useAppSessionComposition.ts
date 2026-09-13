@@ -502,7 +502,6 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     ports: {
       remoteSend: (text) => remoteSend(text),
       sendToTab: (tabId, text) => sendToTab(tabId, text),
-      dismissTodoBatch: (tabId, batchKey) => desktopBridge.dismissTodoBatchForTab(tabId, batchKey),
     },
   });
   const { showTodos, scopedTodoBatch, todos, dismissTodos, handleTodoContinue } = todoPanelCommands;

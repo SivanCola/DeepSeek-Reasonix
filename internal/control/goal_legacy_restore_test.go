@@ -69,7 +69,7 @@ func TestGoalSidecarWriterFencesLegacyAutoResearchForEveryBudget(t *testing.T) {
 			dir := t.TempDir()
 			sessionPath := filepath.Join(dir, "session.jsonl")
 			g := &goalMachine{statePath: goalStatePath(sessionPath)}
-			path, raw, ok := g.set(tt.goal, tt.class, nil)
+			path, raw, ok := g.set(tt.goal, tt.class)
 			if !ok {
 				t.Fatal("set did not produce sidecar data")
 			}
@@ -109,7 +109,7 @@ func TestGoalSidecarWriterFencesLegacyAutoResearchForEveryBudget(t *testing.T) {
 
 func TestEmptyGoalSidecarStillFencesLegacyAutoResearch(t *testing.T) {
 	g := &goalMachine{statePath: filepath.Join(t.TempDir(), "goal.json")}
-	_, raw, ok := g.set("", "", nil)
+	_, raw, ok := g.set("", "")
 	if !ok {
 		t.Fatal("empty Goal did not produce stopped sidecar state")
 	}
@@ -124,13 +124,13 @@ func TestEmptyGoalSidecarStillFencesLegacyAutoResearch(t *testing.T) {
 
 func TestGoalSetIdempotencyUsesEffectiveBudgetClass(t *testing.T) {
 	g := &goalMachine{statePath: filepath.Join(t.TempDir(), "goal.json")}
-	if _, _, ok := g.set("same goal", budgetClassSimple, nil); !ok {
+	if _, _, ok := g.set("same goal", budgetClassSimple); !ok {
 		t.Fatal("initial set did not persist")
 	}
-	if _, _, ok := g.set("same goal", budgetClassSimple, nil); ok {
+	if _, _, ok := g.set("same goal", budgetClassSimple); ok {
 		t.Fatal("same Goal and budget class was not idempotent")
 	}
-	if _, _, ok := g.set("same goal", budgetClassResearch, nil); !ok {
+	if _, _, ok := g.set("same goal", budgetClassResearch); !ok {
 		t.Fatal("budget class change was incorrectly treated as idempotent")
 	}
 	if g.budgetClass != budgetClassResearch || g.turnsLimit != unlimitedGoalTurns {
@@ -187,14 +187,14 @@ func TestLegacySidecarArchiveFailureBlocksWithRetryableTaskID(t *testing.T) {
 	if failed.Status != GoalStatusBlocked || failed.ResearchMode != GoalResearchOn || failed.AutoResearchTaskID != taskID || failed.StopCause != stopCauseLegacyArchive || failed.Block == "" {
 		t.Fatalf("failed restore state = %+v, want retryable blocked legacy migration", failed)
 	}
-	if failed.ScopeID != scopeID || failed.DeliveryCheckpoint != wantCheckpoint || len(failed.Todos) != 1 || failed.Todos[0] != wantTodo {
+	if failed.ScopeID != scopeID || failed.DeliveryCheckpoint != wantCheckpoint || len(failed.Todos) != 0 {
 		t.Fatalf("failed restore lost goal state: %+v", failed)
 	}
 	if failed.BudgetClass != budgetClassResearch || failed.TurnsUsed != 3 || failed.TurnsLimit != 40 || failed.TokensUsed != 1234 || failed.NoProgressTurns != 2 || failed.BudgetExtensions != 1 {
 		t.Fatalf("failed restore lost runtime state: %+v", failed)
 	}
-	if got := exec.CanonicalTodoState(); len(got) != 1 || got[0] != wantTodo {
-		t.Fatalf("failed restore todos = %+v, want %+v", got, wantTodo)
+	if got := exec.CanonicalTodoState(); len(got) != 0 {
+		t.Fatalf("failed restore activated legacy todos: %+v", got)
 	}
 	if runtime := c.GoalRuntime(); runtime.TurnsUsed != 3 || runtime.TurnsLimit != 0 || runtime.TokensUsed != 1234 || runtime.NoProgressTurns != 2 {
 		t.Fatalf("failed restore lost in-memory runtime state: %+v", runtime)
@@ -218,8 +218,8 @@ func TestLegacySidecarArchiveFailureBlocksWithRetryableTaskID(t *testing.T) {
 	if runtime.TurnsUsed != 3 || runtime.TurnsLimit != 0 || runtime.TokensUsed != 1234 || runtime.NoProgressTurns != 2 || runtime.BudgetExtensions != 0 {
 		t.Fatalf("retried runtime = %+v, want preserved legacy consumption", runtime)
 	}
-	if got := exec.CanonicalTodoState(); len(got) != 1 || got[0] != wantTodo {
-		t.Fatalf("retried todos = %+v, want %+v", got, wantTodo)
+	if got := exec.CanonicalTodoState(); len(got) != 0 {
+		t.Fatalf("retried legacy goal activated archived todos: %+v", got)
 	}
 	if got := c.goals.deliveryState(); got != wantCheckpoint {
 		t.Fatalf("retried delivery checkpoint = %+v, want %+v", got, wantCheckpoint)
@@ -426,7 +426,7 @@ func TestLegacyArchiveMigrationWriteFailureRemainsBlockedAndRetryable(t *testing
 	}
 	c.goals.setStatePath(filepath.Join(blockedParent, "goal.json"))
 	rawGoal := "resume .reasonix/autoresearch/" + taskID + "/"
-	_, _, _ = c.goals.setLegacyArchiveBlocked(rawGoal, budgetClassResearch, "retry migration", nil)
+	_, _, _ = c.goals.setLegacyArchiveBlocked(rawGoal, budgetClassResearch, "retry migration")
 	_, epoch, ok := c.goals.legacyArchiveBlockedState()
 	if !ok {
 		t.Fatal("legacy archive block state unavailable")
@@ -465,12 +465,12 @@ func TestLegacyArchiveMigrationWriteFailureRemainsBlockedAndRetryable(t *testing
 
 func TestStaleLegacyArchiveRetryCannotReplaceNewGoal(t *testing.T) {
 	var g goalMachine
-	g.setLegacyArchiveBlocked("resume .reasonix/autoresearch/old/", budgetClassResearch, "missing", nil)
+	g.setLegacyArchiveBlocked("resume .reasonix/autoresearch/old/", budgetClassResearch, "missing")
 	_, epoch, ok := g.legacyArchiveBlockedState()
 	if !ok {
 		t.Fatal("legacy archive block state unavailable")
 	}
-	g.set("new goal", budgetClassWrite, nil)
+	g.set("new goal", budgetClassWrite)
 	if _, resumed := g.resumeLegacyArchive(epoch, "stale archive goal"); resumed {
 		t.Fatal("stale archive retry replaced a newer Goal")
 	}
@@ -481,9 +481,9 @@ func TestStaleLegacyArchiveRetryCannotReplaceNewGoal(t *testing.T) {
 
 func TestStaleInitialLegacyFailureCannotBlockNewGoal(t *testing.T) {
 	var g goalMachine
-	g.set("legacy goal", budgetClassResearch, nil)
+	g.set("legacy goal", budgetClassResearch)
 	epoch := g.continuationToken()
-	g.set("new goal", budgetClassWrite, nil)
+	g.set("new goal", budgetClassWrite)
 
 	if _, blocked := g.blockLegacyRestore(epoch, "archive disappeared"); blocked {
 		t.Fatal("stale archive failure blocked a newer Goal")
@@ -496,16 +496,16 @@ func TestStaleInitialLegacyFailureCannotBlockNewGoal(t *testing.T) {
 func TestStaleLegacyMigrationCannotRewriteNewGoalSidecar(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "goal.json")
 	g := &goalMachine{statePath: statePath}
-	g.set("legacy goal", budgetClassResearch, nil)
+	g.set("legacy goal", budgetClassResearch)
 	legacyEpoch := g.continuationToken()
-	path, data, ok := g.set("new goal", budgetClassWrite, nil)
+	path, data, ok := g.set("new goal", budgetClassWrite)
 	if !ok {
 		t.Fatal("new Goal did not build sidecar state")
 	}
 	if err := g.writeStateErr(path, data); err != nil {
 		t.Fatal(err)
 	}
-	if applied, err := g.writeStateAtEpoch(legacyEpoch, nil); err != nil || applied {
+	if applied, err := g.writeStateAtEpoch(legacyEpoch); err != nil || applied {
 		t.Fatalf("stale migration write = applied:%v err:%v", applied, err)
 	}
 	raw, err := os.ReadFile(statePath)

@@ -32,6 +32,7 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/sessiontitle"
+	"reasonix/internal/sessionv3"
 	"reasonix/internal/stats"
 	"reasonix/internal/store"
 )
@@ -573,6 +574,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /submit", s.submit)
 	s.registerInboxRoutes(mux)
 	mux.HandleFunc("POST /cancel", s.foregroundMutation(s.cancel))
+	mux.HandleFunc("POST /cancel-session", s.foregroundMutation(s.cancelSession))
 	mux.HandleFunc("POST /approve", s.foregroundMutation(s.approve))
 	mux.HandleFunc("POST /plan-decision", s.foregroundMutation(s.planDecision))
 	mux.HandleFunc("POST /plan", s.foregroundMutation(s.plan))
@@ -806,6 +808,21 @@ func (s *Server) cancel(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) cancelSession(w http.ResponseWriter, _ *http.Request) {
+	ctrl := s.ctl()
+	receipt := control.CancelReceipt{SessionRef: ctrl.SessionPath(), HeadID: agent.BranchID(ctrl.SessionPath()), Accepted: true}
+	if cancellable, ok := ctrl.(interface{ CancelSession() control.CancelReceipt }); ok {
+		receipt = cancellable.CancelSession()
+	} else {
+		status := ctrl.RuntimeStatus()
+		receipt.AlreadyIdle = !status.Running && !status.PendingPrompt
+		ctrl.Cancel()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(receipt)
+}
+
 func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID                 string `json:"id"`
@@ -916,7 +933,7 @@ func corsMiddleware(next http.Handler, origin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, "+expectedSessionPathHeader)
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, "+expectedSessionPathHeader+", "+expectedSessionIDHeader)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -1200,10 +1217,20 @@ func (s *Server) goal(w http.ResponseWriter, r *http.Request) {
 // resume loads a previous session from a JSONL file.
 func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Path string `json:"path"`
+		Path      string `json:"path"`
+		HostID    string `json:"hostId"`
+		SessionID string `json:"sessionId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Path == "" {
-		http.Error(w, "missing path", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.SessionID) != "" {
+		s.resumeV3(w, r, body.HostID, body.SessionID)
+		return
+	}
+	if body.Path == "" {
+		http.Error(w, "missing path or sessionId", http.StatusBadRequest)
 		return
 	}
 	realPath, err := s.resolveSessionPath(body.Path)
@@ -1230,6 +1257,41 @@ func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
 	s.bindMu.Lock()
 	defer s.bindMu.Unlock()
 	s.resumeSession(w, r, realPath)
+}
+
+func (s *Server) resumeV3(w http.ResponseWriter, r *http.Request, hostID, sessionID string) {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	if !s.validateSwitchExpectedLocked(w, r) {
+		return
+	}
+	ctrl, ok := s.ctl().(*control.Controller)
+	if !ok || !ctrl.UsesExclusiveSessionV3() {
+		http.Error(w, "session identity protocol is unavailable", http.StatusConflict)
+		return
+	}
+	if controllerHasActiveRuntimeWork(ctrl) {
+		http.Error(w, "cannot switch session while active work or background jobs are running", http.StatusConflict)
+		return
+	}
+	current, bound := ctrl.SessionRef()
+	hostID = strings.TrimSpace(hostID)
+	if hostID == "" && bound {
+		hostID = current.HostID
+	}
+	ref, err := ctrl.OpenV3(r.Context(), sessionv3.SessionRef{HostID: hostID, SessionID: strings.TrimSpace(sessionID)})
+	if err != nil {
+		http.Error(w, "open session: "+err.Error(), http.StatusConflict)
+		return
+	}
+	if s.leases != nil {
+		_ = s.leases.Rebind("")
+	}
+	s.setControllerPath(ctrl, "")
+	w.Header().Set(sessionIDHeader, ref.SessionID)
+	s.announceSessionChanged("", false)
+	w.WriteHeader(http.StatusNoContent)
+	s.replayPendingPromptsBroadcast()
 }
 
 // resolveSessionPathStatus keeps resume's historical status codes for the
@@ -1459,6 +1521,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		sess["goalRuntime"] = ctrl.GoalRuntime()
 	}
 	sessionPath := strings.TrimSpace(ctrl.SessionPath())
+	if identity, ok := ctrl.(control.IdentityLifecycle); ok {
+		if ref, bound := identity.SessionRef(); bound {
+			sess["hostId"] = ref.HostID
+			sess["sessionId"] = ref.SessionID
+		}
+	}
 	if sessionPath != "" && store.IsSessionTranscriptName(filepath.Base(sessionPath)) {
 		sess["sessionName"] = strings.TrimSuffix(filepath.Base(sessionPath), ".jsonl")
 		sess["sessionPath"] = agent.CanonicalSessionPath(sessionPath)
@@ -1764,19 +1832,17 @@ func (s *Server) skills(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, out)
 }
 
-// todos returns the canonical task list (latest todo_write state merged with
-// complete_step advances) so the frontend can render a live task panel.
+// todos returns the host event projection. Empty is always [] and no legacy
+// presentation fields are synthesized from transcript tool cards.
 func (s *Server) todos(w http.ResponseWriter, _ *http.Request) {
 	type todoItem struct {
-		Content    string `json:"content"`
-		Status     string `json:"status"`
-		ActiveForm string `json:"activeForm,omitempty"`
-		Level      int    `json:"level,omitempty"`
+		Content string `json:"content"`
+		Status  string `json:"status"`
 	}
 	raw := s.ctl().Todos()
 	out := make([]todoItem, len(raw))
 	for i, t := range raw {
-		out[i] = todoItem{Content: t.Content, Status: t.Status, ActiveForm: t.ActiveForm, Level: t.Level}
+		out[i] = todoItem{Content: t.Content, Status: t.Status}
 	}
 	writeJSON(w, out)
 }

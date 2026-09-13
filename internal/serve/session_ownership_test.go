@@ -300,10 +300,15 @@ func TestExternalFramesReachSubscriber(t *testing.T) {
 	if status, body := f.handoffForce(t, "wait"); status != http.StatusOK {
 		t.Fatalf("handoff status = %d (body %q)", status, body)
 	}
-	// Drain the takeover notice, then push a writer frame.
+	// Drain the takeover notice, then push a writer frame. Runtime state is a
+	// first-class frame and may be published while handoff changes ownership, so
+	// do not make the lifecycle assertion depend on incidental queue order.
 	var notice eventwire.Event
-	if err := events.next(&notice, 3*time.Second); err != nil || notice.Code != "session_taken_over" {
-		t.Fatalf("expected taken_over notice first, got %+v (%v)", notice, err)
+	deadline := time.Now().Add(3 * time.Second)
+	for notice.Code != "session_taken_over" {
+		if err := events.next(&notice, time.Until(deadline)); err != nil {
+			t.Fatalf("expected taken_over notice, got %+v (%v)", notice, err)
+		}
 	}
 
 	status, body := f.post(t, "/external/frames", map[string]any{

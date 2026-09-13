@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"reasonix/internal/browser"
 	"reasonix/internal/config"
 	"reasonix/internal/control"
+	"reasonix/internal/sessionv3"
 )
 
 // brokerTestExecutor records the session header each call arrived with.
@@ -143,7 +146,7 @@ func newBrokerTestServer(t *testing.T, opts boot.Options) *Server {
 }
 
 func TestServerCapabilitiesFollowBroker(t *testing.T) {
-	if caps := newBrokerTestServer(t, boot.Options{}).capabilities(); len(caps) != 2 || caps[0] != capabilityPermissionPresets || caps[1] != capabilityPresentFiles {
+	if caps := newBrokerTestServer(t, boot.Options{}).capabilities(); !slices.Equal(caps, []string{capabilityPermissionPresets, capabilityPresentFiles, capabilityExecutionV2, capabilitySessionEventsV3}) {
 		t.Fatalf("capabilities without broker = %v", caps)
 	}
 	broker, err := NewBrowserBroker("http://127.0.0.1:9999", "tok")
@@ -152,8 +155,21 @@ func TestServerCapabilitiesFollowBroker(t *testing.T) {
 	}
 	srv := newBrokerTestServer(t, boot.Options{BrowserExecutor: broker})
 	caps := srv.capabilities()
-	if len(caps) != 3 || caps[0] != capabilityPermissionPresets || caps[1] != capabilityPresentFiles || caps[2] != capabilityBrowser {
+	if !slices.Equal(caps, []string{capabilityPermissionPresets, capabilityPresentFiles, capabilityExecutionV2, capabilitySessionEventsV3, capabilityBrowser}) {
 		t.Fatalf("capabilities with broker = %v", caps)
+	}
+}
+
+func TestServerAdvertisesImmutableSessionIdentityOnlyForExclusiveV3(t *testing.T) {
+	service, err := sessionv3.NewService("serve", sessionv3.NewFilesystemPersistence(filepath.Join(t.TempDir(), "sessions-v3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctrl := control.New(control.Options{SessionService: service, ExclusiveSessionV3: true})
+	defer ctrl.Close()
+	srv := New(ctrl, NewBroadcaster(), config.ServeConfig{})
+	if !slices.Contains(srv.capabilities(), capabilitySessionIdentityV1) {
+		t.Fatalf("exclusive v3 capabilities = %v", srv.capabilities())
 	}
 }
 
@@ -215,10 +231,10 @@ func TestHandshakeAdvertisesBrowserCapability(t *testing.T) {
 			t.Fatalf("handshake status = %d, want 204", resp.StatusCode)
 		}
 		got := resp.Header.Get(capabilitiesHeader)
-		if withBroker && got != capabilityPermissionPresets+","+capabilityPresentFiles+","+capabilityBrowser {
+		if withBroker && got != capabilityPermissionPresets+","+capabilityPresentFiles+","+capabilityExecutionV2+","+capabilitySessionEventsV3+","+capabilityBrowser {
 			t.Fatalf("capabilities header = %q, want permission, present-files and browser capabilities", got)
 		}
-		if !withBroker && got != capabilityPermissionPresets+","+capabilityPresentFiles {
+		if !withBroker && got != capabilityPermissionPresets+","+capabilityPresentFiles+","+capabilityExecutionV2+","+capabilitySessionEventsV3 {
 			t.Fatalf("capabilities header = %q, want permission and present-files capabilities", got)
 		}
 	}

@@ -85,6 +85,11 @@ func rebuildWithPrevious(ctx context.Context, old *control.Controller, previous 
 	if opts.Owner == nil {
 		opts.Owner = old.RuntimeOwner()
 	}
+	if service, runtime, ok := old.SessionV3Binding(); ok {
+		opts.SessionService = service
+		opts.SessionRuntime = runtime
+		opts.SessionHostID = runtime.Ref().HostID
+	}
 	// Capture migratable state before building: every accessor returns a
 	// copy, so a slow build cannot observe a half-appended turn.
 	m := runtimeMigration{
@@ -184,8 +189,29 @@ type runtimeMigration struct {
 // error return is the fail-atomic seam for steps that gain failure modes.
 func migrateRuntimeState(ctrl, old *control.Controller, m runtimeMigration) error {
 	carried := spliceFreshSystemPrompt(m.carried, ctrl.History())
-	path := agent.ContinueSessionPath(m.prevPath, ctrl.SessionDir(), ctrl.Label())
-	ctrl.AdoptHistory(carried, path)
+	if ctrl.UsesExclusiveSessionV3() {
+		if _, _, ok := ctrl.SessionV3Binding(); ok {
+			if err := ctrl.AdoptRebuiltModelContext(carried); err != nil {
+				return err
+			}
+		} else if m.prevPath != "" {
+			path := agent.ContinueSessionPath(m.prevPath, ctrl.SessionDir(), ctrl.Label())
+			if _, err := ctrl.ContinueLegacyV3ForRebuild(context.Background(), path, ""); err != nil {
+				return err
+			}
+			if err := ctrl.AdoptRebuiltModelContext(carried); err != nil {
+				return err
+			}
+		} else {
+			// A compatibility rebuild can start from an in-memory controller
+			// with no persistent identity. Preserve that state without minting
+			// a new logical session (which would rotate session-private temp).
+			ctrl.AdoptHistory(carried, "")
+		}
+	} else {
+		path := agent.ContinueSessionPath(m.prevPath, ctrl.SessionDir(), ctrl.Label())
+		ctrl.AdoptHistory(carried, path)
+	}
 
 	// Re-apply session axes a rebuild must not reset.
 	ctrl.SetToolApprovalMode(m.toolApprovalMode)

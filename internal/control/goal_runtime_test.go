@@ -88,7 +88,6 @@ func TestModelContinueKeepsGoalActive(t *testing.T) {
 	g := &goalMachine{goal: "fix everything", status: GoalStatusRunning, turnsLimit: unlimitedGoalTurns}
 	res := g.advance(goalAdvanceInput{
 		report: &goalTurnReport{status: GoalStatusRunning, reason: "work remains"},
-		todos:  []evidence.TodoItem{{Content: "Fix the parser", Status: "in_progress"}},
 	})
 	if !res.cont || g.status != GoalStatusRunning || g.stopCause != "" {
 		t.Fatalf("model continue should keep running: result=%+v runtime=%+v", res, g.runtimeView())
@@ -181,7 +180,7 @@ func TestGoalTurnRecorderProtocol(t *testing.T) {
 			t.Fatal(err)
 		}
 		// The goal is replaced: epoch bumps, scope rotates.
-		g.set("replacement", "", nil)
+		g.set("replacement", "")
 		if got := rec.validReport(rec.epoch); got != nil {
 			t.Fatalf("stale recorder report = %+v, want nil", got)
 		}
@@ -189,7 +188,7 @@ func TestGoalTurnRecorderProtocol(t *testing.T) {
 
 	t.Run("late record after replacement rejected", func(t *testing.T) {
 		g, rec := newRec(t)
-		g.set("replacement", "", nil)
+		g.set("replacement", "")
 		if _, err := rec.RecordGoalReport(report(GoalStatusComplete, "")); err == nil {
 			t.Fatal("late record on a replaced goal must be rejected")
 		}
@@ -201,7 +200,7 @@ func TestGoalTurnRecorderProtocol(t *testing.T) {
 		if g.tokensUsed != 150 {
 			t.Fatalf("tokensUsed = %d, want 150", g.tokensUsed)
 		}
-		g.set("replacement", "", nil)
+		g.set("replacement", "")
 		rec.addUsage(50)
 		if g.tokensUsed != 0 {
 			t.Fatalf("stale usage folded into replacement goal: %d", g.tokensUsed)
@@ -449,8 +448,8 @@ func TestGoalSidecarCompatRestoresOldAndNewFields(t *testing.T) {
 		exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, event.Discard)
 		c := New(Options{Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
 		c.SetGoal("ship the release")
-		c.goals.pauseFor(stopCauseBudgetTurns, "turn budget exhausted", nil)
-		statePath, data, ok := c.goals.buildStateLocked(nil)
+		c.goals.pauseFor(stopCauseBudgetTurns, "turn budget exhausted")
+		statePath, data, ok := c.goals.buildStateLocked()
 		if !ok {
 			t.Fatal("no persisted state")
 		}

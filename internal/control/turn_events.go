@@ -13,6 +13,7 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/evidence"
 	"reasonix/internal/sessioninbox"
+	"reasonix/internal/sessionv3"
 	"reasonix/internal/transcript"
 	"reasonix/internal/turnevent"
 )
@@ -35,6 +36,10 @@ type turnEventState struct {
 	mu                         sync.RWMutex
 	ledger                     *turnevent.Ledger
 	err                        error
+	v3                         sessionv3.WritableSessionHandle
+	v3Path                     string
+	v3Release                  func(context.Context) error
+	v3Err                      error
 	projection                 *transcript.Projection
 	projectionErr              error
 	commitMu                   sync.Mutex
@@ -43,6 +48,39 @@ type turnEventState struct {
 	pendingCheckpoint          *transcript.Checkpoint
 	projectionPersistedThrough uint64
 	projectionWriteErr         error
+	v3ProjectionSequence       uint64
+	v3ProjectionSession        string
+	v3ProjectionEpoch          string
+	volatileTodos              []event.Todo
+	volatileTodoWritten        bool
+}
+
+// projectVolatileTodo keeps the same event-derived projection for controllers
+// that have not acquired a session path yet. It is a cache of successful
+// lifecycle events, never a second writable todo state machine.
+func (c *Controller) projectVolatileTodo(e event.Event) {
+	if c == nil {
+		return
+	}
+	c.turnEvents.mu.Lock()
+	defer c.turnEvents.mu.Unlock()
+	switch {
+	case e.Kind == event.TurnStarted:
+		c.turnEvents.volatileTodos = []event.Todo{}
+		c.turnEvents.volatileTodoWritten = false
+	case e.Kind == event.ToolResult && e.Tool.TodoWritten:
+		c.turnEvents.volatileTodos = append([]event.Todo(nil), e.Tool.Todos...)
+		c.turnEvents.volatileTodoWritten = true
+	}
+}
+
+func (c *Controller) volatileTodoState() ([]event.Todo, bool) {
+	if c == nil {
+		return []event.Todo{}, false
+	}
+	c.turnEvents.mu.RLock()
+	defer c.turnEvents.mu.RUnlock()
+	return append([]event.Todo(nil), c.turnEvents.volatileTodos...), c.turnEvents.volatileTodoWritten
 }
 
 func newTurnEventSink(inner event.Sink, c *Controller) *turnEventSink {
@@ -163,13 +201,14 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 		return nil
 	}
 	if e.RecoveryCheckpoint {
-		return s.c.checkpointToolTranscript()
+		return s.c.CheckpointSession(context.Background(), agent.CheckpointBeforeTopTool)
 	}
 	if err := s.c.stampToolRecoveryEvent(e); err != nil {
 		return err
 	}
 	ledger := s.c.turnEventLedger()
 	if ledger == nil {
+		s.c.projectVolatileTodo(e)
 		s.c.refreshRuntimeState(e)
 		s.publishInner(e)
 		return nil
@@ -180,6 +219,9 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	// Outside-turn notices are not lifecycle records and must pass through after
 	// bootstrap or a terminal event.
 	if ledger.ActiveTurnID() == "" {
+		if ledger.CurrentStatus() == event.TurnRecoveryRequired && lateBusinessEvent(e.Kind) {
+			return nil
+		}
 		s.c.refreshRuntimeState(e)
 		s.publishInner(e)
 		return nil
@@ -201,11 +243,6 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 		e.ReadCompletion = s.c.updateTurnLedgerTranscript(ledger)
 	case event.TurnStatusChanged:
 		// The emitter supplied the exact transition in e.Status.
-	}
-	if e.WriteIntent || e.Kind == event.ToolResult || (e.Kind == event.ToolDispatch && !e.Tool.Partial && !e.Tool.ReadOnly) {
-		if err := s.c.checkpointToolTranscript(); err != nil {
-			return fmt.Errorf("checkpoint tool transcript: %w", err)
-		}
 	}
 	if e.WriteIntent {
 		return nil
@@ -237,9 +274,23 @@ func (s *turnEventSink) persistAndPublish(e event.Event) error {
 	return nil
 }
 
+func lateBusinessEvent(kind event.Kind) bool {
+	switch kind {
+	case event.ToolDispatch, event.ToolStarted, event.ToolProgress, event.ToolResult,
+		event.AskRequest, event.ApprovalRequest, event.MCPInteractionRequest,
+		event.PromptAnswered, event.TurnStarted, event.TurnStatusChanged, event.TurnDone:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *turnEventSink) commitEnvelope(ledger *turnevent.Ledger, e event.Event, status event.TurnStatus) (event.Event, turnevent.Envelope, bool, error) {
 	s.c.turnEvents.commitMu.Lock()
 	stamped, envelope, ok, err := ledger.AppendEnvelope(e, status)
+	if err == nil && ok {
+		err = s.c.appendSessionEventLocked(context.Background(), stamped)
+	}
 	if err == nil && ok && stamped.Sequence > 0 {
 		s.c.turnEvents.mu.RLock()
 		projection := s.c.turnEvents.projection
@@ -363,12 +414,18 @@ func (c *Controller) turnEventLedgerError() error {
 func (c *Controller) prepareTurnAdmission(body func(context.Context) error) func(context.Context) error {
 	admissionErr := c.turnEventLedgerError()
 	if ledger := c.turnEventLedger(); admissionErr == nil && ledger != nil {
-		if _, err := ledger.Begin(); err != nil {
+		if ledger.CurrentStatus() == event.TurnRecoveryRequired {
+			admissionErr = ErrRecoveryRequired
+		} else if _, err := ledger.Begin(); err != nil {
 			admissionErr = err
 		} else if err := c.emitTurnEventChecked(event.Event{Kind: event.TurnStatusChanged, Status: event.TurnQueued}); err != nil {
 			admissionErr = err
 		} else if err := c.emitTurnEventChecked(event.Event{Kind: event.TurnStarted, Status: event.TurnInProgress}); err != nil {
 			admissionErr = err
+		} else if c.executor != nil {
+			// The committed host turn boundary owns todo lifetime. The executor
+			// repeats this reset on entry for controller-less clients.
+			c.executor.BeginTurnTodoState()
 		}
 	}
 	if admissionErr == nil {
@@ -401,23 +458,52 @@ func (c *Controller) rebindTurnEvents(sessionPath string) {
 	if c == nil {
 		return
 	}
-	ledger, err := turnevent.Open(sessionPath, agent.BranchID(sessionPath))
+	desiredV3Path := sessionV3Directory(sessionPath)
+	ledgerID := agent.BranchID(sessionPath)
+	if _, runtime, _ := c.v3Binding(); runtime != nil {
+		ref := runtime.Ref()
+		desiredV3Path = "session:" + ref.HostID + "/" + ref.SessionID
+		ledgerID = ref.SessionID
+	}
+	c.turnEvents.mu.RLock()
+	currentV3, currentV3Path := c.turnEvents.v3, c.turnEvents.v3Path
+	c.turnEvents.mu.RUnlock()
+	v3, releaseV3, v3Err := currentV3, (func(context.Context) error)(nil), error(nil)
+	if currentV3 == nil || currentV3Path != desiredV3Path {
+		v3, releaseV3, v3Err = c.openSessionEventStore(sessionPath)
+	}
+	ledger := turnevent.NewMemory(ledgerID)
+	err := v3Err
 	if err != nil {
 		// Normalize platform-specific open errors behind the same storage
 		// sentinel used by append failures. Keep the original error in the
 		// chain so unsupported-schema callers can still inspect its type.
 		err = fmt.Errorf("%w: %w", turnevent.ErrTurnLedgerUnavailable, err)
-		slog.Warn("controller: open turn event ledger", "err", err, "session", agent.BranchID(sessionPath))
+		slog.Warn("controller: open v3 session event store", "err", err, "session", agent.BranchID(sessionPath))
 		c.turnEvents.mu.Lock()
 		c.turnEvents.ledger = nil
 		c.turnEvents.err = err
+		c.turnEvents.v3 = nil
+		c.turnEvents.v3Path = ""
+		c.turnEvents.v3Release = nil
+		c.turnEvents.v3Err = err
 		c.turnEvents.mu.Unlock()
 		return
 	}
 	c.turnEvents.mu.Lock()
+	c.turnEvents.volatileTodos = []event.Todo{}
+	c.turnEvents.volatileTodoWritten = false
 	previous := c.turnEvents.ledger
+	previousV3 := c.turnEvents.v3
+	previousV3Release := c.turnEvents.v3Release
 	c.turnEvents.ledger = ledger
 	c.turnEvents.err = nil
+	c.turnEvents.v3 = v3
+	c.turnEvents.v3Path = desiredV3Path
+	if releaseV3 != nil {
+		c.turnEvents.v3Release = releaseV3
+	}
+	c.turnEvents.v3Err = nil
 	c.turnEvents.projection = nil
 	c.turnEvents.projectionErr = nil
 	c.turnEvents.projectionPath = sessionPath
@@ -425,13 +511,31 @@ func (c *Controller) rebindTurnEvents(sessionPath string) {
 	c.turnEvents.projectionPersistedThrough = 0
 	c.turnEvents.projectionWriteErr = nil
 	c.turnEvents.mu.Unlock()
-	projection, projectionErr := c.restoreTranscriptProjection(sessionPath, ledger)
+	var projection *transcript.Projection
+	var projectionErr error
+	if !c.exclusiveV3Enabled() {
+		projection, projectionErr = c.restoreTranscriptProjection(sessionPath, ledger)
+	}
 	c.turnEvents.mu.Lock()
 	c.turnEvents.projection, c.turnEvents.projectionErr = projection, projectionErr
 	c.turnEvents.mu.Unlock()
 	if previous != nil && previous != ledger {
 		if closeErr := previous.Close(); closeErr != nil {
 			slog.Warn("controller: close previous turn event ledger", "err", closeErr)
+		}
+	}
+	// An exclusive v3 handle belongs to SessionRuntime. Runtime publication
+	// closes the exact previous instance through SessionService after the new
+	// binding is visible; this compatibility cleanup must never close it early.
+	if previousV3 != nil && previousV3 != v3 && !c.exclusiveV3Enabled() {
+		var closeErr error
+		if previousV3Release != nil {
+			closeErr = previousV3Release(context.Background())
+		} else {
+			closeErr = previousV3.Close(context.Background())
+		}
+		if closeErr != nil {
+			slog.Warn("controller: flush and close previous v3 session", "err", closeErr)
 		}
 	}
 }
@@ -453,9 +557,8 @@ func (c *Controller) failTurnEventLedger(err error) {
 	}
 	c.mu.Unlock()
 	if cancel != nil {
-		// Cancel and prompt resolvers may hold promptResolveMu while this
-		// synchronous failure callback runs. Use the owners' internal locks to
-		// invalidate pending resolutions without reentering the submission lock.
+		// Use the owners' internal locks to invalidate pending resolutions. The
+		// cancellation signal is independent of any answer callback.
 		c.promptOwner.CancelAll()
 		c.approval.clearAll()
 		cancel()
@@ -500,9 +603,9 @@ func (c *Controller) emitTurnEventChecked(e event.Event) error {
 // SetTurnEventRoutingMetadata attaches desktop routing identity to lifecycle
 // envelopes only. It never changes provider-visible prompts or tool schemas.
 func (c *Controller) SetTurnEventRoutingMetadata(runtimeEpoch, submissionID string) {
-	c.promptResolveMu.Lock()
+	c.promptEpochMu.Lock()
 	c.promptRuntimeEpoch = runtimeEpoch
-	c.promptResolveMu.Unlock()
+	c.promptEpochMu.Unlock()
 	if ledger := c.turnEventLedger(); ledger != nil {
 		ledger.RequireProjectionAck(true)
 		ledger.SetRoutingMetadata(runtimeEpoch, submissionID)

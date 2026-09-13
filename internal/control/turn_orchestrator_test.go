@@ -785,9 +785,8 @@ func TestTurnOrchestratorCancelPreservesVisibleUserPrompt(t *testing.T) {
 	c.canceling = true
 	c.mu.Unlock()
 
-	// Pre-seed todoState as if a successful todo_write from the cancelled turn
-	// had already updated it — this is the state the runner leaves behind before
-	// returning context.Canceled, and what RebuildTodoState must clear.
+	// Pre-seed only the executor's legacy mutable copy. Without a committed
+	// semantic ToolResult event it must not become the host todo projection.
 	ex.ReplaceTodoState([]evidence.TodoItem{{Content: "add abc", Status: "in_progress"}})
 
 	o := newTurnOrchestrator(c)
@@ -814,10 +813,10 @@ func TestTurnOrchestratorCancelPreservesVisibleUserPrompt(t *testing.T) {
 		t.Fatalf("pending recovery metadata missing: %+v", last)
 	}
 
-	// The completed todo_write result is canonical, so its state remains visible
-	// and the next model turn can inspect rather than blindly repeat it.
-	if todos := c.Todos(); len(todos) != 1 || todos[0].Status != "in_progress" {
-		t.Fatalf("Todos() after cancel = %v, want retained completed todo_write state", todos)
+	// Transcript prose and the executor copy are archival/convenience data. The
+	// host projection changes only from a committed semantic ToolResult event.
+	if todos := c.Todos(); len(todos) != 0 {
+		t.Fatalf("Todos() after cancel = %v, want no uncommitted todo projection", todos)
 	}
 }
 
@@ -1073,8 +1072,8 @@ func TestResumeRecoversStaleVisibleInFlightTurn(t *testing.T) {
 	if !last.LocalOnly || last.InterruptedTurn == nil || !last.InterruptedTurn.Pending {
 		t.Fatalf("last resumed message = %+v, want provider-excluded recovery", last)
 	}
-	if todos := c.Todos(); len(todos) != 1 || todos[0].Status != "in_progress" {
-		t.Fatalf("Todos() after stale in-flight recovery = %+v, want retained completed todo_write", todos)
+	if todos := c.Todos(); len(todos) != 0 {
+		t.Fatalf("Todos() after legacy stale in-flight recovery = %+v, want archival todo inactive", todos)
 	}
 	reloaded, err := agent.LoadSession(path)
 	if err != nil {

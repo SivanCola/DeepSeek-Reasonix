@@ -531,6 +531,7 @@ func TestRunInjectsParentSessionForJobs(t *testing.T) {
 	sess := agent.NewSession("sys")
 	exec := agent.New(nil, nil, sess, agent.Options{}, event.Discard)
 	c := New(Options{Runner: runner, Executor: exec, SessionDir: dir, SessionPath: path, Label: "test"})
+	t.Cleanup(c.Close)
 
 	if err := c.Run(context.Background(), "hello"); err != nil {
 		t.Fatal(err)
@@ -561,6 +562,7 @@ func TestRunStopHookIgnoresCanceledCallerContext(t *testing.T) {
 		Runner: cancelingRunner{cancel: cancel},
 		Hooks:  hooks,
 	})
+	t.Cleanup(c.Close)
 
 	if err := c.Run(runCtx, "hello"); err != nil {
 		t.Fatal(err)
@@ -694,7 +696,7 @@ func TestSetGoalDurableNeverCreatesLegacyArchive(t *testing.T) {
 	}
 }
 
-func TestResumeRestoresTerminalGoalTodosFromSidecar(t *testing.T) {
+func TestResumeDoesNotActivateLegacyTranscriptOrTerminalGoalTodos(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
 	loaded := agent.NewSession("sys")
@@ -720,13 +722,12 @@ func TestResumeRestoresTerminalGoalTodosFromSidecar(t *testing.T) {
 	c := New(Options{Executor: exec, SessionDir: dir, Label: "test"})
 	c.Resume(loaded, path)
 
-	got := c.Todos()
-	if len(got) != 1 || got[0].Content != "Step 1" || got[0].Status != "completed" {
-		t.Fatalf("Todos() after resume = %+v, want completed todos from goal-state sidecar", got)
+	if got := c.Todos(); len(got) != 0 {
+		t.Fatalf("Todos() after legacy resume = %+v, want archival todo data inactive", got)
 	}
 }
 
-func TestResumeKeepsTranscriptTodosForRunningGoalSidecar(t *testing.T) {
+func TestResumeDoesNotActivateLegacyTranscriptOrRunningGoalTodos(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
 	loaded := agent.NewSession("sys")
@@ -752,9 +753,8 @@ func TestResumeKeepsTranscriptTodosForRunningGoalSidecar(t *testing.T) {
 	c := New(Options{Executor: exec, SessionDir: dir, Label: "test"})
 	c.Resume(loaded, path)
 
-	got := c.Todos()
-	if len(got) != 1 || got[0].Content != "Step 1" || got[0].Status != "in_progress" {
-		t.Fatalf("Todos() after resume = %+v, want transcript todos while goal state is running", got)
+	if got := c.Todos(); len(got) != 0 {
+		t.Fatalf("Todos() after legacy resume = %+v, want running goal todos inactive", got)
 	}
 }
 
@@ -2580,6 +2580,7 @@ func TestNewSessionResetsTwoModelPlannerContext(t *testing.T) {
 	coord := agent.NewCoordinator(planner, plannerSess, nil, agent.PlannerToolRegistry(tool.NewRegistry()), agent.Options{}, exec, 0, event.Discard, nil)
 	path := filepath.Join(dir, "session.jsonl")
 	c := New(Options{Runner: coord, Executor: exec, SystemPrompt: "exec sys", SessionDir: dir, SessionPath: path, Label: "test"})
+	t.Cleanup(c.Close)
 
 	if err := c.Run(context.Background(), "old task alpha"); err != nil {
 		t.Fatal(err)
@@ -2682,6 +2683,7 @@ func TestResumeResetsTwoModelPlannerContext(t *testing.T) {
 	plannerSess := agent.NewSession("planner sys")
 	coord := agent.NewCoordinator(planner, plannerSess, nil, agent.PlannerToolRegistry(tool.NewRegistry()), agent.Options{}, exec, 0, event.Discard, nil)
 	c := New(Options{Runner: coord, Executor: exec, SystemPrompt: "exec sys", SessionDir: dir, SessionPath: filepath.Join(dir, "old.jsonl"), Label: "test"})
+	t.Cleanup(c.Close)
 
 	if err := c.Run(context.Background(), "old task alpha"); err != nil {
 		t.Fatal(err)

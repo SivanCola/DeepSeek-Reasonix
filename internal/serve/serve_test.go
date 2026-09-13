@@ -354,6 +354,26 @@ func TestServeCancelEndpoint(t *testing.T) {
 	}
 }
 
+func TestServeCancelSessionReturnsIdempotentReceipt(t *testing.T) {
+	bc := NewBroadcaster()
+	ctrl := control.New(control.Options{Sink: bc})
+	srv := httptest.NewServer(New(ctrl, bc, config.ServeConfig{}).Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/cancel-session", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var receipt control.CancelReceipt
+	if err := json.NewDecoder(resp.Body).Decode(&receipt); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusAccepted || !receipt.Accepted || !receipt.AlreadyIdle {
+		t.Fatalf("cancel receipt status=%d receipt=%+v", resp.StatusCode, receipt)
+	}
+}
+
 func TestServeApproveMissingID(t *testing.T) {
 	bc := NewBroadcaster()
 	ctrl := control.New(control.Options{Sink: bc})

@@ -117,6 +117,8 @@ export interface WireTool {
   id?: string;
   name: string;
   args?: string;
+  todos?: Todo[];
+  todoWritten?: boolean;
   resolvedName?: string;
   capabilityId?: string;
   output?: string;
@@ -1059,7 +1061,7 @@ export interface Meta extends RemoteSessionMetaFields {
   goal?: string;
   goalStatus?: GoalStatus;
   goalRuntime?: GoalRuntime;
-  canonicalTodos?: Todo[]; dismissedTodoBatches?: string[]; pinnedFiles?: PinnedFileInfo[];
+  canonicalTodos?: Todo[]; pinnedFiles?: PinnedFileInfo[];
 }
 export type CollaborationMode = "normal" | "plan" | "goal";
 export type PermissionPreset = "read-only" | "workspace-write" | "danger-full-access";

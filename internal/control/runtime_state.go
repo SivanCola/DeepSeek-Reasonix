@@ -4,11 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"reflect"
 	"sync"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/event"
 	"reasonix/internal/jobs"
+	"reasonix/internal/sessionv3"
 	"reasonix/internal/turnevent"
 )
 
@@ -37,12 +39,29 @@ func newRuntimeStateEpoch() string {
 	return hex.EncodeToString(bytes[:])
 }
 
-// RuntimeStateSnapshot returns committed memory, never IO or an independently
-// sampled combination of controller/prompt/job state.
+// RuntimeStateSnapshot first commits a fresh projection from the current owners
+// and then returns that immutable boundary. This closes the small callback lag
+// after a background job starts or exits without making readers combine fields
+// from separate snapshots.
 func (c *Controller) RuntimeStateSnapshot() event.RuntimeStateSnapshot {
+	if c == nil {
+		return event.RuntimeStateSnapshot{Todos: []event.Todo{}, Interactions: []event.PendingInteraction{}}
+	}
+	c.refreshRuntimeState(event.Event{})
 	c.runtimeState.mu.Lock()
 	defer c.runtimeState.mu.Unlock()
-	return c.runtimeState.snapshot
+	return cloneRuntimeState(c.runtimeState.snapshot)
+}
+
+func cloneRuntimeState(in event.RuntimeStateSnapshot) event.RuntimeStateSnapshot {
+	out := in
+	out.Todos = append([]event.Todo{}, in.Todos...)
+	out.Interactions = append([]event.PendingInteraction{}, in.Interactions...)
+	if in.Recovery != nil {
+		recovery := *in.Recovery
+		out.Recovery = &recovery
+	}
+	return out
 }
 
 func (c *Controller) initializeRuntimeState() {
@@ -67,6 +86,13 @@ func (c *Controller) initializeRuntimeState() {
 // lifecycle and job boundary calls it after releasing its owning locks. A
 // single sampler re-reads current owners instead of replaying stale booleans.
 func (c *Controller) refreshRuntimeState(e event.Event) {
+	c.refreshRuntimeStateAttempt(e, 0)
+}
+
+// refreshRuntimeStateAttempt retries an unstable multi-owner sample at most
+// three times. Lifecycle callbacks will sample again after later transitions;
+// a perpetually changing runtime must not grow the stack or monopolize a caller.
+func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 	if c == nil {
 		return
 	}
@@ -79,6 +105,11 @@ func (c *Controller) refreshRuntimeState(e event.Event) {
 	c.mu.Lock()
 	running, finishing, closed, cancelling, path := c.running, c.finishing, c.closed, c.canceling, c.sessionPath
 	c.mu.Unlock()
+	_, v3Runtime, v3Exclusive := c.v3Binding()
+	var v3RuntimeSnapshot sessionv3.RuntimeSnapshot
+	if v3Exclusive && v3Runtime != nil {
+		v3RuntimeSnapshot = v3Runtime.Snapshot()
+	}
 	ledger := c.turnEventLedger()
 	initialized := r.snapshot.SchemaVersion == 1
 	base, activity := r.snapshot, r.activity
@@ -88,34 +119,116 @@ func (c *Controller) refreshRuntimeState(e event.Event) {
 	}
 	next := base
 	next.SchemaVersion = 1
-	next.Phase = "idle"
-	switch {
-	case running:
-		next.Phase = "executing"
-	case finishing:
-		next.Phase = "finishing"
-	case closed:
-		next.Phase = "closed"
-	}
-	next.Running = running || finishing
-	next.CancelRequested = cancelling
-	next.PendingPrompt = c.approval.hasPending()
-	next.Cancellable = !finishing && (running || next.PendingPrompt || cancelling)
-	next.BackgroundJobs = 0
-	if c.jobs != nil {
-		next.BackgroundJobs = len(c.jobs.RunningForSession(agent.BranchID(path)))
+	if ref, ok := c.SessionRef(); ok {
+		next.HostID = ref.HostID
+		next.SessionID = ref.SessionID
+		next.SessionCodec = sessionv3.Codec
+		next.RuntimeEpoch = v3RuntimeSnapshot.Epoch
+		next.ActivityRevision = v3RuntimeSnapshot.ActivityRevision
+	} else {
+		next.HostID = ""
+		next.SessionID = ""
+		next.SessionCodec = ""
 	}
 	if ledger != nil {
 		next.TurnID, next.TurnStatus, next.TurnEventSeq = ledger.RuntimeIdentity()
+	}
+	v3Snapshot, hasV3Snapshot := c.sessionEventSnapshot()
+	if hasV3Snapshot {
+		snapshot := v3Snapshot
+		next.CommittedSeq = snapshot.EventSequence
+		next.DurableSeq = snapshot.DurableSequence
+		next.Persistence = string(snapshot.PersistenceStatus)
+		next.PersistenceErr = snapshot.PersistenceError
+		next.Todos = append([]event.Todo(nil), snapshot.Projection.Todos...)
+		next.TodoWritten = snapshot.Projection.TodoWritten
+		if snapshot.Projection.TurnID != "" {
+			next.TurnID = snapshot.Projection.TurnID
+			next.TurnStatus = snapshot.Projection.TurnStatus
+		}
+		if snapshot.Projection.Recovery != nil && snapshot.Projection.Recovery.State == "recovery_required" {
+			next.TurnStatus = event.TurnRecoveryRequired
+		}
+	} else {
+		next.CommittedSeq = next.TurnEventSeq
+		next.DurableSeq = next.TurnEventSeq
+		next.Persistence = "unavailable"
+	}
+	next.HeadID = agent.BranchID(path)
+	if v3Exclusive {
+		next.HeadID = ""
+	}
+	if hasV3Snapshot {
+		// The typed v3 projection above is authoritative.
+	} else if ledger != nil {
+		next.Todos, next.TodoWritten = ledger.TodoState()
+	} else {
+		next.Todos, next.TodoWritten = c.volatileTodoState()
+	}
+	// Keep the empty wire shape stable. Ledger projections intentionally use a
+	// nil backing slice internally, while every public snapshot promises [].
+	// Normalizing before the semantic comparison prevents a read from creating
+	// a new revision solely because nil and an empty slice differ to reflect.
+	if next.Todos == nil {
+		next.Todos = []event.Todo{}
+	}
+	next.Phase = "idle"
+	if v3Exclusive && v3Runtime != nil {
+		switch v3RuntimeSnapshot.Phase {
+		case sessionv3.RuntimeRunning:
+			next.Phase = "executing"
+		case sessionv3.RuntimeCancelling:
+			next.Phase = "cancelling"
+		case sessionv3.RuntimeRecoveryRequired:
+			next.Phase = "recovery_required"
+		case sessionv3.RuntimeClosed:
+			next.Phase = "closed"
+		}
+	} else {
+		switch {
+		case next.TurnStatus == event.TurnRecoveryRequired:
+			next.Phase = "recovery_required"
+		case cancelling:
+			next.Phase = "cancelling"
+		case running:
+			next.Phase = "executing"
+		case finishing:
+			next.Phase = "finishing"
+		case closed:
+			next.Phase = "closed"
+		}
+	}
+	next.Running = running || finishing
+	next.CancelRequested = cancelling
+	identities, promptRevision := c.promptOwner.IdentitiesRevision()
+	next.PendingPrompt = len(identities) > 0
+	next.Interactions = make([]event.PendingInteraction, len(identities))
+	for i, identity := range identities {
+		next.Interactions[i] = event.PendingInteraction{RequestID: identity.PromptID, ToolCallID: identity.ToolCallID, Kind: string(identity.Kind), HeadID: next.HeadID, TurnID: identity.TurnID, RuntimeEpoch: identity.RuntimeEpoch}
+	}
+	// Compatibility consumers may still use Cancellable as a button-state
+	// hint. Derive it only from the authoritative phase/request projection so a
+	// worker crossing into the finishing window cannot make an accepted cancel
+	// briefly look unavailable.
+	next.Cancellable = next.Phase == "executing" || next.Phase == "cancelling" || next.PendingPrompt
+	next.BackgroundJobs = 0
+	if c.jobs != nil {
+		next.BackgroundJobs = len(c.jobs.RunningForSession(agent.BranchID(path)))
 	}
 	// Sampling owners is off their locks. Do not commit a mixture if the
 	// admission/close/binding boundary advanced while another owner was read.
 	c.mu.Lock()
 	stable := running == c.running && finishing == c.finishing && closed == c.closed && cancelling == c.canceling && path == c.sessionPath
 	c.mu.Unlock()
-	if !stable || ledger != c.turnEventLedger() {
+	if v3Exclusive && v3Runtime != nil {
+		_, currentRuntime, currentExclusive := c.v3Binding()
+		stable = stable && currentExclusive && currentRuntime == v3Runtime && currentRuntime.Snapshot().ActivityRevision == v3RuntimeSnapshot.ActivityRevision
+	}
+	if !stable || ledger != c.turnEventLedger() || promptRevision != c.promptOwner.Revision() {
 		r.mu.Unlock()
-		c.refreshRuntimeState(event.Event{})
+		if attempt < 2 {
+			c.refreshRuntimeStateAttempt(event.Event{}, attempt+1)
+		}
 		return
 	}
 	if closed && !running && next.BackgroundJobs == 0 && r.jobUnsubscribe != nil {
@@ -125,23 +238,38 @@ func (c *Controller) refreshRuntimeState(e event.Event) {
 	}
 	activity = runtimeActivity(next, e, activity)
 	next.Activity = activity
+	next.Recovery = nil
+	if next.Phase == "recovery_required" {
+		if hasV3Snapshot && v3Snapshot.Projection.Recovery != nil {
+			recovery := *v3Snapshot.Projection.Recovery
+			next.Recovery = &recovery
+		} else if ledger != nil {
+			next.Recovery = ledger.RecoveryStatus()
+		}
+		if next.Recovery == nil {
+			next.Recovery = &event.RecoveryStatus{State: "recovery_required", Phase: activity, Reason: "runtime state requires recovery"}
+		} else if next.Recovery.Phase == "" {
+			next.Recovery.Phase = activity
+		}
+	}
 	// Token deltas do not need runtime notifications. Keep the last published
 	// watermark until a semantic state changes, avoiding a second token stream.
 	compare := next
 	compare.TurnEventSeq = r.snapshot.TurnEventSeq
-	if compare == r.snapshot {
+	if reflect.DeepEqual(compare, r.snapshot) {
 		r.mu.Unlock()
 		return
 	}
 	next.Revision++
-	r.snapshot = next
+	r.snapshot = cloneRuntimeState(next)
 	r.path, r.ledger, r.activity = path, ledger, activity
 	defer slog.Debug("runtime state committed", "source", "controller", "epoch", next.RuntimeEpoch[:8], "revision", next.Revision, "phase", next.Phase)
 	if !initialized {
 		r.mu.Unlock()
 		return
 	}
-	r.pending = &next
+	pending := cloneRuntimeState(next)
+	r.pending = &pending
 	if r.draining {
 		r.mu.Unlock()
 		return
@@ -160,7 +288,7 @@ func (c *Controller) publishRuntimeState() {
 			r.mu.Unlock()
 			return
 		}
-		snapshot, sink := *r.pending, r.sink
+		snapshot, sink := cloneRuntimeState(*r.pending), r.sink
 		r.pending = nil
 		r.mu.Unlock()
 		event.PublishRuntimeState(sink, snapshot)
@@ -168,6 +296,15 @@ func (c *Controller) publishRuntimeState() {
 }
 
 func runtimeActivity(state event.RuntimeStateSnapshot, e event.Event, activity string) string {
+	if state.PendingPrompt {
+		return "waiting_input"
+	}
+	if state.Phase == "cancelling" {
+		return "cancelling"
+	}
+	if state.Phase == "recovery_required" {
+		return "recovery_required"
+	}
 	if state.Phase == "executing" {
 		if e.TurnID == "" || e.TurnID == state.TurnID {
 			switch e.Kind {

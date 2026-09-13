@@ -42,12 +42,15 @@ func TestReasonixGuideIndexLineOnly(t *testing.T) {
 	if !found {
 		t.Fatal("reasonix-guide missing from List")
 	}
+	if guide.Body != "" {
+		t.Fatal("catalog candidate carried the skill body")
+	}
 	idx := skill.IndexBlock(list)
 	if !strings.Contains(idx, "reasonix-guide") {
 		t.Fatal("index missing reasonix-guide line")
 	}
 	// Body must not appear in the index block.
-	if strings.Contains(idx, "First action") || strings.Contains(idx, skBodySnippet(guide)) {
+	if strings.Contains(idx, "First action") {
 		t.Fatal("skill body leaked into system-prompt index")
 	}
 	// Exactly one index line for the skill name.

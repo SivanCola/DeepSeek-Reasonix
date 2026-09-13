@@ -140,8 +140,12 @@ func TestUpdateSkillOverwritesAndIsImmediatelyReadable(t *testing.T) {
 	}
 	for _, sk := range c.AllSkills() {
 		if sk.Name == "helper" {
-			if sk.Description != "v2" || sk.Body != "new" {
+			if sk.Description != "v2" || sk.Body != "" {
 				t.Fatalf("update did not take effect: description=%q body=%q", sk.Description, sk.Body)
+			}
+			loaded, ok := st.Read("helper")
+			if !ok || loaded.Body != "new" {
+				t.Fatalf("selected skill body = %q, ok=%v", loaded.Body, ok)
 			}
 			return
 		}

@@ -134,24 +134,18 @@ func TestAsyncStreamLedgerFailureCancelsTurnWithoutPublishingChunk(t *testing.T)
 	c.runGuarded(func(ctx context.Context) error {
 		close(started)
 		<-release
-		c.sink.Emit(event.Event{Kind: event.Text, Text: "must stay behind the WAL"})
+		c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: event.Tool{ID: "failed-store", Name: "probe", Output: "must stay behind the v3 log"}})
 		<-ctx.Done()
 		close(cancelled)
 		return ctx.Err()
 	})
 	<-started
-	ledger := c.turnEventLedger()
-	if ledger == nil {
-		t.Fatal("controller did not open a turn ledger")
+	v3 := c.sessionEventStore()
+	if v3 == nil {
+		t.Fatal("controller did not open a v3 event store")
 	}
-	if err := ledger.Close(); err != nil {
-		t.Fatalf("close active WAL handle: %v", err)
-	}
-	if err := os.RemoveAll(root); err != nil {
-		t.Fatalf("remove temporary ledger directory: %v", err)
-	}
-	if err := os.WriteFile(root, []byte("block future WAL opens"), 0o600); err != nil {
-		t.Fatalf("install WAL blocker: %v", err)
+	if err := v3.Close(context.Background()); err != nil {
+		t.Fatalf("close active v3 handle: %v", err)
 	}
 	close(release)
 

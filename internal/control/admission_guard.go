@@ -46,6 +46,10 @@ func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, park
 		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "input was not accepted: this session is no longer writable — reopen it and try again"})
 		return turnDroppedWriteAuthority
 	}
+	if ledger := c.turnEventLedger(); ledger != nil && ledger.CurrentStatus() == event.TurnRecoveryRequired {
+		c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: ErrRecoveryRequired.Error()})
+		return turnDroppedWriteAuthority
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -62,7 +66,7 @@ func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, park
 		return turnDroppedRotating
 	}
 	if c.running {
-		if parkWhileRunning {
+		if parkWhileRunning || c.canceling {
 			c.parkedTurns = append(c.parkedTurns, body)
 			c.mu.Unlock()
 			return turnParked
@@ -81,6 +85,7 @@ func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, park
 	}
 	ctx, cancel := context.WithCancel(extension.ContextWithRuntimeOwner(context.Background(), c.runtimeOwner))
 	c.cancel = cancel
+	c.activeDone = make(chan struct{})
 	c.running = true
 	c.canceling = false
 	c.mu.Unlock()

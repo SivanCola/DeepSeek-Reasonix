@@ -1,10 +1,14 @@
 package control
 
 import (
+	"context"
 	"errors"
-	"reasonix/internal/event"
+	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"reasonix/internal/event"
 )
 
 func TestResolvePromptExactRejectsStaleTurnBeforeDispatch(t *testing.T) {
@@ -105,19 +109,154 @@ func TestPendingPromptOwnerRejectsConcurrentResolveReservation(t *testing.T) {
 	}
 }
 
-func TestPendingPromptOwnerResolveRestoresAfterFailure(t *testing.T) {
+func TestPendingPromptOwnerResolveFailureBecomesUnavailable(t *testing.T) {
 	var owner PendingPromptOwner
 	id := PromptIdentity{PromptID: "p-fail", TurnID: "t", Kind: PromptAsk}
 	if err := owner.RegisterPrompt(PendingPrompt{Identity: id, Resolve: func(PromptAnswer) error { return errors.New("persist failed") }}); err != nil {
 		t.Fatal(err)
 	}
-	if err := owner.Resolve(id, PromptAnswer{}); err == nil || err.Error() != "persist failed" {
+	if err := owner.Resolve(id, PromptAnswer{}); !errors.Is(err, ErrPromptUnavailable) || !strings.Contains(err.Error(), "persist failed") {
 		t.Fatalf("resolve error = %v", err)
 	}
-	pending, ok := owner.Identity(id.PromptID)
-	if !ok || pending != id {
-		t.Fatalf("failed resolve did not restore pending identity: %+v %v", pending, ok)
+	if _, ok := owner.Identity(id.PromptID); ok {
+		t.Fatal("failed answerer remained pending")
 	}
+	resolution, ok := owner.Resolution(id.PromptID)
+	if !ok || resolution.State != PromptUnavailable {
+		t.Fatalf("failed answerer resolution = %+v %v", resolution, ok)
+	}
+}
+
+func TestPendingPromptOwnerTerminatesUnavailableAnswerer(t *testing.T) {
+	var owner PendingPromptOwner
+	id := PromptIdentity{PromptID: "p-unavailable", TurnID: "t", Kind: PromptAsk}
+	if err := owner.Register(id); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Resolve(id, PromptAnswer{}); !errors.Is(err, ErrPromptUnavailable) {
+		t.Fatalf("resolve error = %v, want ErrPromptUnavailable", err)
+	}
+	if _, ok := owner.Identity(id.PromptID); ok {
+		t.Fatal("unavailable prompt remains pending")
+	}
+	resolution, ok := owner.Resolution(id.PromptID)
+	if !ok || resolution.State != PromptUnavailable {
+		t.Fatalf("resolution = %+v, %v", resolution, ok)
+	}
+}
+
+func TestPendingPromptOwnerCancellationDoesNotWaitForAnswerer(t *testing.T) {
+	var owner PendingPromptOwner
+	id := PromptIdentity{PromptID: "p-blocked", TurnID: "t", Kind: PromptAsk}
+	answerStarted := make(chan struct{})
+	releaseAnswer := make(chan struct{})
+	if err := owner.RegisterPrompt(PendingPrompt{Identity: id, Resolve: func(PromptAnswer) error {
+		close(answerStarted)
+		<-releaseAnswer
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	resolved := make(chan error, 1)
+	go func() { resolved <- owner.Resolve(id, PromptAnswer{}) }()
+	<-answerStarted
+	cancelled := make(chan struct{})
+	go func() {
+		owner.CancelAll()
+		close(cancelled)
+	}()
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation waited for the blocked answerer")
+	}
+	close(releaseAnswer)
+	<-resolved
+	resolution, ok := owner.Resolution(id.PromptID)
+	if !ok || resolution.State != PromptCancelled {
+		t.Fatalf("resolution = %+v, %v", resolution, ok)
+	}
+}
+
+func TestPendingPromptOwnerCancellationDoesNotWaitForCancelCallback(t *testing.T) {
+	var owner PendingPromptOwner
+	id := PromptIdentity{PromptID: "p-blocked-cancel", TurnID: "t", Kind: PromptMCP}
+	cancelStarted := make(chan struct{})
+	releaseCancel := make(chan struct{})
+	cancelDone := make(chan struct{})
+	if err := owner.RegisterPrompt(PendingPrompt{Identity: id, Cancel: func() error {
+		close(cancelStarted)
+		<-releaseCancel
+		close(cancelDone)
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	returned := make(chan struct{})
+	go func() {
+		owner.CancelAll()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("registry cancellation waited for a blocked cancellation callback")
+	}
+	<-cancelStarted
+	close(releaseCancel)
+	<-cancelDone
+	resolution, ok := owner.Resolution(id.PromptID)
+	if !ok || resolution.State != PromptCancelled {
+		t.Fatalf("resolution = %+v, %v", resolution, ok)
+	}
+}
+
+func TestControllerCancelSignalsTurnWhilePromptAnswererIsBlocked(t *testing.T) {
+	c := New(Options{})
+	t.Cleanup(c.Close)
+
+	turnCtx, cancelTurn := context.WithCancel(context.Background())
+	c.mu.Lock()
+	c.cancel = cancelTurn
+	c.running = true
+	c.mu.Unlock()
+
+	id := PromptIdentity{PromptID: "p-controller-blocked", TurnID: "turn-1", Kind: PromptApproval}
+	answerStarted := make(chan struct{})
+	releaseAnswer := make(chan struct{})
+	if err := c.promptOwner.RegisterPrompt(PendingPrompt{Identity: id, Resolve: func(PromptAnswer) error {
+		close(answerStarted)
+		<-releaseAnswer
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	resolved := make(chan error, 1)
+	go func() { resolved <- c.promptOwner.Resolve(id, PromptAnswer{Allow: true}) }()
+	<-answerStarted
+
+	cancelReturned := make(chan struct{})
+	go func() {
+		c.Cancel()
+		close(cancelReturned)
+	}()
+	select {
+	case <-turnCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not signal the active turn while its answerer was blocked")
+	}
+	select {
+	case <-cancelReturned:
+	case <-time.After(time.Second):
+		t.Fatal("Stop waited for the blocked answerer")
+	}
+
+	close(releaseAnswer)
+	<-resolved
+	c.mu.Lock()
+	c.running = false
+	c.cancel = nil
+	c.mu.Unlock()
 }
 
 func TestPendingPromptOwnerBindsMissingRoutingOnce(t *testing.T) {

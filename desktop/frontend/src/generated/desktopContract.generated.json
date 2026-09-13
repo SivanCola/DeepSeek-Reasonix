@@ -1410,6 +1410,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/turn_runtime_api.go",
+      "name": "CancelSessionForTab",
+      "owner": "App.CancelSessionForTab",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "control.CancelReceipt"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CancelSessionForTab"
+      },
+      "sources": [
+        "desktop/turn_runtime_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/shell_support.go",
       "name": "CancelShellInstall",
       "owner": "App.CancelShellInstall",
@@ -3124,32 +3150,6 @@
       },
       "sources": [
         "desktop/remote_app.go"
-      ]
-    },
-    {
-      "cancellation": "before-dispatch",
-      "domain": "desktop/todo_dismissal.go",
-      "name": "DismissTodoBatchForTab",
-      "owner": "App.DismissTodoBatchForTab",
-      "params": [
-        {
-          "kind": "string"
-        },
-        {
-          "kind": "string"
-        }
-      ],
-      "returnsError": true,
-      "scope": {
-        "inputs": [
-          "tabID",
-          "batchKey"
-        ],
-        "kind": "owner-inputs",
-        "resolver": "App.DismissTodoBatchForTab"
-      },
-      "sources": [
-        "desktop/todo_dismissal.go"
       ]
     },
     {
@@ -16384,7 +16384,7 @@
     "topic:activation",
     "updater:progress"
   ],
-  "protocolVersion": 1,
+  "protocolVersion": 4,
   "types": {
     "agent.ToolRecoveryStatistics": {
       "fields": [
@@ -17686,6 +17686,46 @@
         }
       ]
     },
+    "control.CancelReceipt": {
+      "fields": [
+        {
+          "name": "sessionRef",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "headId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "runtimeEpoch",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "accepted",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "alreadyIdle",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "recoveryRequired",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
     "control.PermissionCapabilities": {
       "fields": [
         {
@@ -18106,6 +18146,47 @@
         }
       ]
     },
+    "event.PendingInteraction": {
+      "fields": [
+        {
+          "name": "requestId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "toolCallId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "headId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "turnId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "runtimeEpoch",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "event.RecoveryStatus": {
       "fields": [
         {
@@ -18196,9 +18277,36 @@
           }
         },
         {
+          "name": "hostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionCodec",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "runtimeEpoch",
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "activityRevision",
+          "type": {
+            "kind": "integer"
           }
         },
         {
@@ -18238,7 +18346,64 @@
           }
         },
         {
+          "name": "committedEventSeq",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "durableEventSeq",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "persistenceStatus",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "persistenceError",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "headId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "pendingPrompt",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "pendingInteractions",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "event.PendingInteraction"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "todos",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "event.Todo"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "todoWritten",
           "type": {
             "kind": "boolean"
           }
@@ -18263,6 +18428,33 @@
         },
         {
           "name": "activity",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "recovery",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "event.RecoveryStatus"
+            },
+            "kind": "nullable"
+          }
+        }
+      ]
+    },
+    "event.Todo": {
+      "fields": [
+        {
+          "name": "content",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "status",
           "type": {
             "kind": "string"
           }
@@ -20369,6 +20561,23 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "todos",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "event.Todo"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "todoWritten",
+          "optional": true,
+          "type": {
+            "kind": "boolean"
           }
         },
         {
@@ -26368,6 +26577,13 @@
           }
         },
         {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "sessionRevision",
           "optional": true,
           "type": {
@@ -26502,16 +26718,6 @@
               "kind": "array"
             },
             "kind": "nullable"
-          }
-        },
-        {
-          "name": "dismissedTodoBatches",
-          "optional": true,
-          "type": {
-            "elem": {
-              "kind": "string"
-            },
-            "kind": "array"
           }
         },
         {
@@ -29763,6 +29969,20 @@
     "main.RemoteSessionView": {
       "fields": [
         {
+          "name": "hostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
           "name": "name",
           "type": {
             "kind": "string"
@@ -29837,6 +30057,13 @@
         },
         {
           "name": "sessionPath",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
           "optional": true,
           "type": {
             "kind": "string"
@@ -30333,6 +30560,13 @@
         },
         {
           "name": "topicId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "optional": true,
           "type": {
             "kind": "string"
           }
@@ -30963,6 +31197,34 @@
       "fields": [
         {
           "name": "path",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "hostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "codec",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "error",
+          "optional": true,
           "type": {
             "kind": "string"
           }
@@ -32306,6 +32568,13 @@
         },
         {
           "name": "sessionPath",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionId",
           "optional": true,
           "type": {
             "kind": "string"

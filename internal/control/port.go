@@ -16,6 +16,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/sandbox"
+	"reasonix/internal/sessionv3"
 	"reasonix/internal/skill"
 )
 
@@ -43,6 +44,19 @@ type Lifecycle interface {
 	ModelRef() string
 	WorkspaceRoot() string
 	Close()
+}
+
+// IdentityLifecycle is the final session-id based lifecycle. Frontends may
+// type-assert it while legacy read/import DTOs remain available; new execution
+// commands must use this surface instead of manufacturing transcript paths.
+type IdentityLifecycle interface {
+	SessionRef() (sessionv3.SessionRef, bool)
+	SessionV3Service() *sessionv3.Service
+	UsesExclusiveSessionV3() bool
+	BindFreshV3(context.Context, string) (sessionv3.SessionRef, error)
+	OpenV3(context.Context, sessionv3.SessionRef) (sessionv3.SessionRef, error)
+	ContinueLegacyV3(context.Context, string, string) (sessionv3.SessionRef, error)
+	ContinuePrototypeV3(context.Context, string) (sessionv3.SessionRef, error)
 }
 
 // TurnControl covers driving a model turn and observing its run state: the
@@ -187,6 +201,7 @@ type Capabilities interface {
 	Skills() []skill.Skill
 	SlashSkills() []skill.Skill
 	AllSkills() []skill.Skill
+	LoadSkill(name string) (skill.Skill, bool)
 	DisabledSkills() []skill.Skill
 	SkillEnabled(name string) bool
 	SetSkillEnabled(name string, enabled bool) error
@@ -297,6 +312,7 @@ type SessionAPI interface {
 // never silently drift from the implementation.
 var (
 	_ Lifecycle          = (*Controller)(nil)
+	_ IdentityLifecycle  = (*Controller)(nil)
 	_ TurnControl        = (*Controller)(nil)
 	_ Approvals          = (*Controller)(nil)
 	_ Goals              = (*Controller)(nil)

@@ -118,11 +118,12 @@ type chatTUI struct {
 	// blocking the event loop.
 	balance string
 
-	// todoArgs is the latest todo_write call's raw args; it drives the task list
-	// pinned just above the input (see renderTodoPanel). "" when there's no list.
-	// Persists across turns until the work completes or a new session starts.
-	todoArgs      string
-	searchSources []provider.ServerSearchHit // post-answer footnotes; cleared when the turn settles
+	// todos is copied only from a successful semantic todo result. The separate
+	// dismissal bit is a mounted-view preference and never changes host state.
+	// Both reset at the host's real turn_started boundary.
+	todos          []event.Todo
+	todosDismissed bool
+	searchSources  []provider.ServerSearchHit // post-answer footnotes; cleared when the turn settles
 
 	// marker rides in outgoing user messages so the cache-stable prompt prefix is
 	// left untouched.
@@ -3826,66 +3827,43 @@ func approvalToolLabel(toolName string) string {
 // is truncated with a "+N more" footer so the bottom region stays compact.
 const todoPanelMaxRows = 8
 
-type todoPanelTodo struct {
-	Content    string `json:"content"`
-	Status     string `json:"status"`
-	ActiveForm string `json:"activeForm"`
-	Level      int    `json:"level"`
-}
-
-// renderTodoPanel renders the task list pinned above the input from the latest
-// todo_write call (m.todoArgs): a "Tasks done/total" header, completed items
-// dimmed/checked, the in-progress one highlighted (its activeForm if given),
-// pending ones muted. It returns "" when there's no list or every item is done,
-// so the panel appears while work is outstanding and clears itself when finished.
+// renderTodoPanel renders the committed current-turn task list above the input.
+// Completed lists remain inspectable until the next host turn boundary.
 func (m chatTUI) renderTodoPanel() string {
-	var p struct {
-		Todos []todoPanelTodo `json:"todos"`
-	}
-	if err := json.Unmarshal([]byte(m.todoArgs), &p); err != nil || len(p.Todos) == 0 {
+	if m.todosDismissed || len(m.todos) == 0 {
 		return ""
 	}
 	done := 0
-	for _, t := range p.Todos {
+	for _, t := range m.todos {
 		if t.Status == "completed" {
 			done++
 		}
 	}
-	if done == len(p.Todos) {
-		return "" // all finished — clear the panel
-	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s\n", accent("To-dos"), dim(fmt.Sprintf("%d/%d", done, len(p.Todos))))
-	start, end := todoPanelWindow(p.Todos)
+	fmt.Fprintf(&b, "%s %s\n", accent("To-dos"), dim(fmt.Sprintf("%d/%d", done, len(m.todos))))
+	start, end := todoPanelWindow(m.todos)
 	if start > 0 {
 		b.WriteString(dim(fmt.Sprintf("  +%d above", start)) + "\n")
 	}
-	for _, t := range p.Todos[start:end] {
+	for _, t := range m.todos[start:end] {
 		indent := "  "
-		if t.Level >= 1 {
-			indent = "      " // sub-steps sit under their phase
-		}
 		switch t.Status {
 		case "completed":
 			b.WriteString(indent + green("✔") + " " + dim(t.Content) + "\n")
 		case "in_progress":
-			label := t.Content
-			if t.ActiveForm != "" {
-				label = t.ActiveForm
-			}
-			b.WriteString(indent + yellow("▶ "+label) + "\n")
+			b.WriteString(indent + yellow("▶ "+t.Content) + "\n")
 		default:
 			b.WriteString(indent + dim("○ "+t.Content) + "\n")
 		}
 	}
-	if end < len(p.Todos) {
-		b.WriteString(dim(fmt.Sprintf("  +%d more", len(p.Todos)-end)) + "\n")
+	if end < len(m.todos) {
+		b.WriteString(dim(fmt.Sprintf("  +%d more", len(m.todos)-end)) + "\n")
 	}
 	return todoPanelStyle.Width(max(m.width, 10)).Render(strings.TrimRight(b.String(), "\n"))
 }
 
-func todoPanelWindow(todos []todoPanelTodo) (int, int) {
+func todoPanelWindow(todos []event.Todo) (int, int) {
 	if len(todos) <= todoPanelMaxRows {
 		return 0, len(todos)
 	}
@@ -4286,8 +4264,8 @@ func (m *chatTUI) runSlashCommand(input string) tea.Cmd {
 		m.runRenameCommand(input)
 	case "/todo":
 		m.echoLocalCommand(input)
-		// Dismiss the pinned task list; a later todo_write brings it back.
-		m.todoArgs = ""
+		// Dismiss only this mounted view; a later committed write brings it back.
+		m.todosDismissed = true
 		m.notice(i18n.M.SlashTodoCleared)
 	case "/verbose":
 		m.toggleVerboseReasoning(true)

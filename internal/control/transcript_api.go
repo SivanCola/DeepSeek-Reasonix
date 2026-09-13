@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 
+	"reasonix/internal/provider"
+	"reasonix/internal/sessionv3"
 	"reasonix/internal/transcript"
 	"reasonix/internal/turnevent"
 )
@@ -54,6 +56,9 @@ func (c *Controller) BindTranscriptRuntimeEpoch(epoch string) {
 }
 
 func (c *Controller) transcriptProjection() (*transcript.Projection, error) {
+	if _, runtime, exclusive := c.v3Binding(); exclusive && runtime != nil {
+		return c.v3TranscriptProjection(runtime.Snapshot())
+	}
 	c.turnEvents.mu.RLock()
 	defer c.turnEvents.mu.RUnlock()
 	if c.turnEvents.err != nil {
@@ -66,6 +71,48 @@ func (c *Controller) transcriptProjection() (*transcript.Projection, error) {
 		return nil, ErrTranscriptProjectionUnavailable
 	}
 	return c.turnEvents.projection, nil
+}
+
+func (c *Controller) v3TranscriptProjection(runtime sessionv3.RuntimeSnapshot) (*transcript.Projection, error) {
+	sequence := runtime.Session.EventSequence
+	sessionID, epoch := runtime.Ref.SessionID, runtime.Epoch
+	c.turnEvents.mu.RLock()
+	if p := c.turnEvents.projection; p != nil && c.turnEvents.v3ProjectionSequence == sequence && c.turnEvents.v3ProjectionSession == sessionID && c.turnEvents.v3ProjectionEpoch == epoch {
+		c.turnEvents.mu.RUnlock()
+		return p, nil
+	}
+	c.turnEvents.mu.RUnlock()
+
+	rows := transcript.History(runtime.Session.Projection.Messages, transcript.HistoryOptions{
+		CheckpointTurns: c.CheckpointTurnsByMessageIndex(),
+		SubmitContent: func(m provider.Message) string {
+			return StripReferencedContextPrefix(StripComposePrefixes(m.Content))
+		},
+		UserContent: func(m provider.Message) string {
+			if m.RawContent != "" {
+				return m.RawContent
+			}
+			return StripReferencedContextPrefix(StripComposePrefixes(m.Content))
+		},
+	})
+	identity := transcript.Identity{SessionID: sessionID, RuntimeEpoch: epoch}
+	p, err := transcript.NewProjection(identity, rows, sequence)
+	if err != nil {
+		return nil, err
+	}
+	c.turnEvents.mu.Lock()
+	// Do not replace a newer cache produced while conversion ran.
+	if current := c.turnEvents.projection; current != nil && c.turnEvents.v3ProjectionSession == sessionID && c.turnEvents.v3ProjectionEpoch == epoch && c.turnEvents.v3ProjectionSequence > sequence {
+		p = current
+	} else {
+		c.turnEvents.projection = p
+		c.turnEvents.projectionErr = nil
+		c.turnEvents.v3ProjectionSequence = sequence
+		c.turnEvents.v3ProjectionSession = sessionID
+		c.turnEvents.v3ProjectionEpoch = epoch
+	}
+	c.turnEvents.mu.Unlock()
+	return p, nil
 }
 
 func (c *Controller) TranscriptSnapshot(req transcript.PageRequest) (transcript.Snapshot, error) {
@@ -105,6 +152,17 @@ func (c *Controller) TranscriptReplay(req TranscriptReplayRequest) (TranscriptRe
 }
 
 func (c *Controller) transcriptReplay(req TranscriptReplayRequest) (TranscriptReplay, error) {
+	if _, runtime, exclusive := c.v3Binding(); exclusive && runtime != nil {
+		p, err := c.v3TranscriptProjection(runtime.Snapshot())
+		if err != nil {
+			return TranscriptReplay{}, err
+		}
+		boundary := p.Boundary()
+		if boundary.Identity != req.Identity || req.After < boundary.CoveredThroughSeq {
+			return TranscriptReplay{Boundary: boundary, ReplayView: turnevent.ReplayView{Events: []turnevent.Envelope{}, ResetRequired: true, LatestSequence: boundary.CoveredThroughSeq}}, nil
+		}
+		return TranscriptReplay{Boundary: boundary, ReplayView: turnevent.ReplayView{Events: []turnevent.Envelope{}, LatestSequence: boundary.CoveredThroughSeq, NextAfterSequence: boundary.CoveredThroughSeq}}, nil
+	}
 	c.turnEvents.commitMu.Lock()
 	defer c.turnEvents.commitMu.Unlock()
 	p, err := c.transcriptProjection()

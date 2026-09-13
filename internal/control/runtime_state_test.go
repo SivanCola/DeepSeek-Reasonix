@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -48,7 +49,7 @@ func runtimeStateSignal(t *testing.T, signal <-chan struct{}, description string
 
 func assertRuntimeStateSameVersion(t *testing.T, published, current event.RuntimeStateSnapshot) {
 	t.Helper()
-	if published.RuntimeEpoch == current.RuntimeEpoch && published.Revision == current.Revision && published != current {
+	if published.RuntimeEpoch == current.RuntimeEpoch && published.Revision == current.Revision && !reflect.DeepEqual(published, current) {
 		t.Fatalf("same runtime version has different contents: published=%+v current=%+v", published, current)
 	}
 }
@@ -65,7 +66,7 @@ func TestRuntimeStateSnapshotFinishingAndFinalPublication(t *testing.T) {
 	if initial.SchemaVersion != 1 || initial.RuntimeEpoch == "" || initial.Revision == 0 || initial.Phase != "idle" {
 		t.Fatalf("invalid initial contract: %+v", initial)
 	}
-	if second := c.RuntimeStateSnapshot(); second != initial {
+	if second := c.RuntimeStateSnapshot(); !reflect.DeepEqual(second, initial) {
 		t.Fatalf("reading runtime state changed the snapshot: first=%+v second=%+v", initial, second)
 	}
 	runRelease := make(chan struct{})

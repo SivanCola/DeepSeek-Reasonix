@@ -282,40 +282,26 @@
     },
     {
       "name": "todo_write",
-      "description": "Record and update the model's structured task list. Send the complete list every call; it replaces the previous one. Status is model-reported and may be pending, in_progress, or completed. At most one item may be in progress. Optional level 0/1 preserves a two-level display hierarchy, and step_id remains the stable item identity across edits.",
+      "description": "Replace the current turn's complete task list. Send the full flat list on every call; an empty list clears it. Items may be reordered, removed, replanned, or have any number in progress. Each item contains only content and status (pending|in_progress|completed).",
       "parameters": {
+        "additionalProperties": false,
         "properties": {
           "todos": {
-            "description": "The complete task list, in order. Replaces any previous list.",
+            "description": "The complete flat task list for this turn. Replaces the previous list; [] clears it.",
             "items": {
+              "additionalProperties": false,
               "properties": {
-                "activeForm": {
-                  "description": "Present-continuous form shown while the task is in progress (e.g. \"Running tests\").",
-                  "type": "string"
-                },
                 "content": {
-                  "description": "Imperative description of the task.",
+                  "description": "Task text. Leading and trailing whitespace is removed.",
+                  "minLength": 1,
                   "type": "string"
-                },
-                "level": {
-                  "description": "Nesting level: 0 = phase/milestone, 1 = a sub-step of the phase above it. Omit for a flat list.",
-                  "enum": [
-                    0,
-                    1
-                  ],
-                  "type": "integer"
                 },
                 "status": {
-                  "description": "Model-reported task state.",
                   "enum": [
                     "pending",
                     "in_progress",
                     "completed"
                   ],
-                  "type": "string"
-                },
-                "step_id": {
-                  "description": "Stable identity for this item, e.g. \"plan_step_02\". Copy it verbatim from the item's previous entry so completions stay attached across retitles, insertions, and reordering; use a fresh unique id for a genuinely new item.",
                   "type": "string"
                 }
               },
@@ -415,10 +401,13 @@
             "description": "Capability id such as skill:review, mcp-server:github, or mcp-tool:github/search_issues. Not required for action=list.",
             "type": "string"
           },
+          "cursor": {
+            "description": "Opaque cursor returned by action=list. It is valid only for the same catalog version.",
+            "type": "string"
+          },
           "limit": {
-            "default": 5,
-            "description": "Maximum search results; defaults to 5.",
-            "maximum": 8,
+            "description": "Maximum results. Search defaults to 5 and allows at most 8; list defaults to 50 and allows at most 100.",
+            "maximum": 100,
             "minimum": 1,
             "type": "integer"
           },

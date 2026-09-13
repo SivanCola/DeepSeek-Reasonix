@@ -13,6 +13,7 @@
 package skill
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,9 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+
+	"github.com/fsnotify/fsnotify"
 
 	"reasonix/internal/config"
 	"reasonix/internal/fileutil"
@@ -144,6 +148,9 @@ type Options struct {
 	DisabledNames    []string
 	MaxDepth         int
 	DisableBuiltins  bool // suppress shipped built-ins (test-only knob)
+	// Watch keeps long-lived catalogs current through filesystem events. Hosts
+	// that own the Store lifecycle set this and call Close during teardown.
+	Watch bool
 	// DisableDiscovery returns an empty store without probing project, custom,
 	// global, plugin, or built-in skill sources. It is a test-only isolation knob.
 	DisableDiscovery bool
@@ -155,21 +162,58 @@ type Options struct {
 
 // Store resolves skills across the configured roots.
 type Store struct {
-	homeDir          string
-	reasonixHomeDir  string
-	projectRoot      string
-	customPaths      []string
-	pluginPaths      map[string][]string
-	pluginAgentPaths map[string][]string
-	excludedPaths    map[string]bool
-	disabled         map[string]bool
-	maxDepth         int
-	disableBuiltins  bool
-	disableDiscovery bool
-	stderr           io.Writer
-	runtimeProfile   string
-	requiresReady    func([]string) []string
-	toolBindings     func(Skill) []tool.MCPBinding
+	homeDir           string
+	reasonixHomeDir   string
+	projectRoot       string
+	customPaths       []string
+	pluginPaths       map[string][]string
+	pluginAgentPaths  map[string][]string
+	excludedPaths     map[string]bool
+	disabled          map[string]bool
+	maxDepth          int
+	disableBuiltins   bool
+	disableDiscovery  bool
+	autoWatch         bool
+	stderr            io.Writer
+	runtimeProfile    string
+	requiresReady     func([]string) []string
+	toolBindings      func(Skill) []tool.MCPBinding
+	catalogMu         sync.Mutex
+	catalogGen        uint64
+	catalog           *catalogSnapshot
+	catalogFlight     *catalogFlight
+	discoveryScans    uint64
+	watcherMu         sync.Mutex
+	watcher           *fsnotify.Watcher
+	watcherDone       chan struct{}
+	watcherGeneration uint64
+	closed            bool
+}
+
+// CatalogSnapshot is an immutable, stable-order view of one discovery
+// generation. Complete is false when cancellation or sustained invalidation
+// forces the caller to receive the last complete snapshot instead.
+type CatalogSnapshot struct {
+	Version    uint64
+	Complete   bool
+	Stale      bool
+	Candidates []Skill
+}
+
+type catalogSnapshot struct {
+	version    uint64
+	rootSig    string
+	discovered []Skill
+	enabled    []Skill
+	byName     map[string]Skill
+	slash      []Skill
+	builtins   map[string]Skill
+}
+
+type catalogFlight struct {
+	generation uint64
+	done       chan struct{}
+	cancel     context.CancelFunc
 }
 
 // New builds a Store. Relative custom paths and a relative project root are made
@@ -224,7 +268,9 @@ func New(opts Options) *Store {
 		maxDepth:         normalizeMaxDepth(opts.MaxDepth),
 		disableBuiltins:  opts.DisableBuiltins,
 		disableDiscovery: opts.DisableDiscovery,
+		autoWatch:        opts.Watch,
 		stderr:           stderr,
+		catalogGen:       1,
 	}
 }
 
@@ -581,16 +627,19 @@ func pathStatus(dir string) PathStatus {
 	return StatusOK
 }
 
-func (s *Store) discoveredSkills() []Skill {
+func (s *Store) discoverSkillsUncached(ctx context.Context) ([]Skill, map[string]Skill) {
 	if s == nil || s.disableDiscovery {
-		return nil
+		return nil, nil
 	}
 	var out []Skill
 	for _, r := range s.roots() {
+		if ctx.Err() != nil {
+			return nil, nil
+		}
 		if r.Status != StatusOK {
 			continue
 		}
-		for _, sk := range s.discoverRoot(r) {
+		for _, sk := range s.discoverRoot(ctx, r) {
 			if s.disabledName(sk.Name) {
 				continue
 			}
@@ -611,16 +660,29 @@ func (s *Store) discoveredSkills() []Skill {
 	if !s.disableBuiltins {
 		for _, sk := range builtinSkills() {
 			if !s.disabledName(sk.Name) {
-				out = append(out, sk)
+				out = append(out, skillCandidate(sk))
 			}
 		}
 	}
-	return out
+	builtins := map[string]Skill{}
+	if !s.disableBuiltins {
+		for _, sk := range builtinSkills() {
+			if !s.disabledName(sk.Name) {
+				builtins[sk.Name] = sk
+			}
+		}
+	}
+	return out, builtins
 }
 
-func (s *Store) enabledSkills() []Skill {
+func skillCandidate(skill Skill) Skill {
+	skill.Body = ""
+	return skill
+}
+
+func enabledFromDiscovered(discovered []Skill) ([]Skill, map[string]Skill) {
 	byName := map[string]Skill{}
-	for _, sk := range s.discoveredSkills() {
+	for _, sk := range discovered {
 		if _, dup := byName[sk.Name]; !dup {
 			byName[sk.Name] = sk
 		}
@@ -630,7 +692,353 @@ func (s *Store) enabledSkills() []Skill {
 		out = append(out, sk)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, byName
+}
+
+func cloneSkills(in []Skill) []Skill {
+	out := make([]Skill, len(in))
+	for i, sk := range in {
+		out[i] = sk
+		out[i].AllowedTools = append([]string(nil), sk.AllowedTools...)
+		out[i].Triggers = append([]string(nil), sk.Triggers...)
+		out[i].NegativeTriggers = append([]string(nil), sk.NegativeTriggers...)
+		out[i].Requires = append([]string(nil), sk.Requires...)
+		out[i].Profiles = append([]string(nil), sk.Profiles...)
+		out[i].InvalidProfiles = append([]string(nil), sk.InvalidProfiles...)
+	}
 	return out
+}
+
+func cloneSkill(sk Skill) Skill { return cloneSkills([]Skill{sk})[0] }
+
+func (s *Store) buildCatalog(ctx context.Context, generation uint64) {
+	discovered, builtins := s.discoverSkillsUncached(ctx)
+	if ctx.Err() != nil {
+		s.catalogMu.Lock()
+		if s.catalogFlight != nil && s.catalogFlight.generation == generation {
+			close(s.catalogFlight.done)
+			s.catalogFlight = nil
+		}
+		s.catalogMu.Unlock()
+		return
+	}
+	enabled, byName := enabledFromDiscovered(discovered)
+	built := &catalogSnapshot{
+		version: generation, rootSig: s.rootSignature(), discovered: cloneSkills(discovered), enabled: cloneSkills(enabled),
+		byName: byName, slash: VisibleSlashSkills(discovered), builtins: builtins,
+	}
+	s.catalogMu.Lock()
+	if s.catalogGen == generation {
+		s.catalog = built
+	}
+	if s.catalogFlight != nil && s.catalogFlight.generation == generation {
+		close(s.catalogFlight.done)
+		s.catalogFlight = nil
+	}
+	s.catalogMu.Unlock()
+}
+
+func (s *Store) rootSignature() string {
+	if s == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, root := range s.roots() {
+		fmt.Fprintf(&b, "%s\x00%s\x00", root.Dir, root.Status)
+		if info, err := os.Stat(root.Dir); err == nil {
+			fmt.Fprintf(&b, "%d\x00%d\x00", info.ModTime().UnixNano(), info.Size())
+		}
+	}
+	return b.String()
+}
+
+func (s *Store) invalidateChangedRoots() {
+	if s == nil {
+		return
+	}
+	sig := s.rootSignature()
+	s.catalogMu.Lock()
+	if s.catalog != nil && s.catalog.rootSig != sig {
+		s.catalogGen++
+	}
+	s.catalogMu.Unlock()
+}
+
+// Snapshot returns one immutable catalog generation. Concurrent cold callers
+// share one scan. A cancelled waiter does not cancel that shared scan; when an
+// older complete snapshot exists it is returned explicitly marked stale.
+func (s *Store) Snapshot(ctx context.Context) (CatalogSnapshot, error) {
+	if s == nil {
+		return CatalogSnapshot{Complete: true}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return CatalogSnapshot{}, err
+	}
+	if s.autoWatch {
+		s.ensureWatcher()
+	}
+	// One initial discovery plus at most two retries when invalidation races
+	// publication. Persistent churn returns the last complete generation.
+	for attempts := 0; attempts < 3; attempts++ {
+		s.catalogMu.Lock()
+		generation := s.catalogGen
+		if s.catalog != nil && s.catalog.version == generation {
+			snapshot := CatalogSnapshot{Version: generation, Complete: true, Candidates: cloneSkills(s.catalog.enabled)}
+			s.catalogMu.Unlock()
+			return snapshot, nil
+		}
+		stale := s.catalog
+		flight := s.catalogFlight
+		if flight == nil {
+			scanCtx, cancel := context.WithCancel(context.Background())
+			flight = &catalogFlight{generation: generation, done: make(chan struct{}), cancel: cancel}
+			s.catalogFlight = flight
+			s.discoveryScans++
+			go s.buildCatalog(scanCtx, generation)
+		}
+		done := flight.done
+		s.catalogMu.Unlock()
+		select {
+		case <-ctx.Done():
+			if stale != nil {
+				return CatalogSnapshot{Version: stale.version, Complete: false, Stale: true, Candidates: cloneSkills(stale.enabled)}, nil
+			}
+			return CatalogSnapshot{}, ctx.Err()
+		case <-done:
+		}
+	}
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+	if s.catalog != nil {
+		return CatalogSnapshot{Version: s.catalog.version, Complete: false, Stale: true, Candidates: cloneSkills(s.catalog.enabled)}, nil
+	}
+	return CatalogSnapshot{}, fmt.Errorf("skill catalog changed during all three discovery attempts")
+}
+
+// Close releases this store's directory subscriptions. It is idempotent; a
+// closed store remains readable from its last complete snapshot but performs
+// no further automatic invalidation.
+func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.watcherMu.Lock()
+	if s.closed {
+		s.watcherMu.Unlock()
+		return nil
+	}
+	s.closed = true
+	s.watcherGeneration++
+	watcher, done := s.watcher, s.watcherDone
+	s.watcher, s.watcherDone = nil, nil
+	s.watcherMu.Unlock()
+	s.catalogMu.Lock()
+	if s.catalogFlight != nil && s.catalogFlight.cancel != nil {
+		s.catalogFlight.cancel()
+	}
+	s.catalogMu.Unlock()
+	if watcher != nil {
+		_ = watcher.Close()
+	}
+	if done != nil {
+		<-done
+	}
+	return nil
+}
+
+func (s *Store) ensureWatcher() {
+	if s == nil || s.disableDiscovery {
+		return
+	}
+	s.watcherMu.Lock()
+	if s.closed || s.watcher != nil {
+		s.watcherMu.Unlock()
+		return
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		s.watcherMu.Unlock()
+		return
+	}
+	s.watcherGeneration++
+	generation := s.watcherGeneration
+	done := make(chan struct{})
+	s.watcher, s.watcherDone = watcher, done
+	s.watcherMu.Unlock()
+
+	s.refreshWatcherPaths(watcher, generation)
+	go s.watchCatalog(watcher, generation, done)
+}
+
+func (s *Store) watchCatalog(watcher *fsnotify.Watcher, generation uint64, done chan struct{}) {
+	defer close(done)
+	defer func() {
+		s.watcherMu.Lock()
+		if s.watcher == watcher && s.watcherGeneration == generation {
+			s.watcher = nil
+			s.watcherDone = nil
+		}
+		s.watcherMu.Unlock()
+	}()
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok || !s.watcherCurrent(watcher, generation) {
+				return
+			}
+			if event.Op&(fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Write|fsnotify.Chmod) == 0 {
+				continue
+			}
+			s.Invalidate("filesystem changed")
+			// A create/rename can introduce a directory, symlink target, or a
+			// previously missing root. Rebuild the subscriptions from the roots.
+			s.refreshWatcherPaths(watcher, generation)
+		case _, ok := <-watcher.Errors:
+			if !ok || !s.watcherCurrent(watcher, generation) {
+				return
+			}
+			s.Invalidate("filesystem watcher failed")
+			_ = watcher.Close()
+			return
+		}
+	}
+}
+
+func (s *Store) watcherCurrent(watcher *fsnotify.Watcher, generation uint64) bool {
+	s.watcherMu.Lock()
+	defer s.watcherMu.Unlock()
+	return !s.closed && s.watcher == watcher && s.watcherGeneration == generation
+}
+
+func (s *Store) refreshWatcherPaths(watcher *fsnotify.Watcher, generation uint64) {
+	if !s.watcherCurrent(watcher, generation) {
+		return
+	}
+	for _, root := range s.roots() {
+		for _, dir := range watchDirectories(root.Dir, s.maxDepth) {
+			_ = watcher.Add(dir)
+		}
+	}
+}
+
+// watchDirectories includes every existing directory that discovery can visit.
+// For a missing root it subscribes to the nearest existing ancestor, allowing
+// later creation to invalidate the snapshot. Symlink targets are traversed once.
+func watchDirectories(root string, maxDepth int) []string {
+	root = filepath.Clean(root)
+	probe := root
+	for {
+		info, err := os.Stat(probe)
+		if err == nil && info.IsDir() {
+			break
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return nil
+		}
+		probe = parent
+	}
+	if probe != root {
+		return []string{probe}
+	}
+	type pendingDir struct {
+		path  string
+		depth int
+	}
+	pending := []pendingDir{{path: root, depth: 0}}
+	seen := map[string]bool{}
+	var out []string
+	for len(pending) > 0 {
+		current := pending[0]
+		pending = pending[1:]
+		resolved := current.path
+		if target, err := filepath.EvalSymlinks(current.path); err == nil {
+			resolved = filepath.Clean(target)
+		}
+		if seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		info, err := os.Stat(current.path)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		out = append(out, current.path)
+		if resolved != current.path {
+			out = append(out, resolved)
+		}
+		if current.depth >= maxDepth {
+			continue
+		}
+		entries, err := os.ReadDir(current.path)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			child := filepath.Join(current.path, entry.Name())
+			if entry.IsDir() {
+				pending = append(pending, pendingDir{path: child, depth: current.depth + 1})
+				continue
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				if target, err := os.Stat(child); err == nil && target.IsDir() {
+					pending = append(pending, pendingDir{path: child, depth: current.depth + 1})
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Invalidate advances the catalog generation. The last complete snapshot stays
+// available to cancelled callers until a replacement scan completes.
+func (s *Store) Invalidate(_ string) {
+	if s == nil {
+		return
+	}
+	s.catalogMu.Lock()
+	s.catalogGen++
+	s.catalogMu.Unlock()
+}
+
+// DiscoveryScans exposes the deterministic scan count for diagnostics and
+// complexity tests. Warm reads leave it unchanged.
+func (s *Store) DiscoveryScans() uint64 {
+	if s == nil {
+		return 0
+	}
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+	return s.discoveryScans
+}
+
+func (s *Store) catalogSnapshot() *catalogSnapshot {
+	_, _ = s.Snapshot(context.Background())
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+	return s.catalog
+}
+
+func (s *Store) discoveredSkills() []Skill {
+	s.invalidateChangedRoots()
+	snapshot := s.catalogSnapshot()
+	if snapshot == nil {
+		return nil
+	}
+	return cloneSkills(snapshot.discovered)
+}
+
+func (s *Store) enabledSkills() []Skill {
+	s.invalidateChangedRoots()
+	snapshot := s.catalogSnapshot()
+	if snapshot == nil {
+		return nil
+	}
+	return cloneSkills(snapshot.enabled)
 }
 
 // List returns every model-visible skill, deduped by its bare internal name
@@ -640,11 +1048,30 @@ func (s *Store) List() []Skill {
 	return s.enabledSkills()
 }
 
+// Candidate resolves metadata from the immutable catalog without reading the
+// selected SKILL.md body or its references/scripts.
+func (s *Store) Candidate(name string) (Skill, bool) {
+	if !IsValidName(name) || s == nil || s.disabledName(name) {
+		return Skill{}, false
+	}
+	snapshot := s.catalogSnapshot()
+	if snapshot == nil {
+		return Skill{}, false
+	}
+	candidate, ok := snapshot.byName[name]
+	return cloneSkill(candidate), ok
+}
+
 // SlashList returns the visible user-facing skill directory. Plugin skills are
 // retained per package under /<plugin>:<name>, even when their bare names
 // collide; non-plugin skills keep their existing short names.
 func (s *Store) SlashList() []Skill {
-	return VisibleSlashSkills(s.discoveredSkills())
+	s.invalidateChangedRoots()
+	snapshot := s.catalogSnapshot()
+	if snapshot == nil {
+		return nil
+	}
+	return cloneSkills(snapshot.slash)
 }
 
 // VisibleSlashSkills deduplicates skills by their user-facing slash name and
@@ -704,32 +1131,127 @@ func ResolveSlashSkill(skills []Skill, name string) (Skill, bool) {
 	return winner, true
 }
 
-// Read resolves one skill by name, scanning the roots in priority order then the
-// built-ins. ok is false when no such skill exists or the file is unreadable.
+// Read resolves one skill by name from the current catalog index and reads only
+// that selected body. ok is false when no such skill exists or the file is
+// unreadable.
 func (s *Store) Read(name string) (Skill, bool) {
+	return s.Load(context.Background(), name)
+}
+
+// Load resolves one selected candidate using a caller-owned cancellation
+// context. Discovery wait and the one allowed stale-target refresh both stop
+// when the owning turn is cancelled.
+func (s *Store) Load(ctx context.Context, name string) (Skill, bool) {
 	if !IsValidName(name) {
 		return Skill{}, false
 	}
 	if s.disabledName(name) {
 		return Skill{}, false
 	}
-	for _, sk := range s.enabledSkills() {
-		if sk.Name == name {
-			return sk, true
+	for attempts := 0; attempts < 2; attempts++ {
+		snapshot, err := s.Snapshot(ctx)
+		if err != nil {
+			return Skill{}, false
 		}
+		candidate, internal, versionMatched, ok := s.candidateAtVersion(name, snapshot.Version)
+		if !versionMatched {
+			// Invalidation raced the public snapshot copy. Resolve once more from a
+			// single generation rather than walking a possibly obsolete slice.
+			continue
+		}
+		if !ok {
+			return Skill{}, false
+		}
+		return s.loadCandidateContext(ctx, candidate, internal)
 	}
 	return Skill{}, false
+}
+
+// candidateAtVersion resolves an exact identity in O(1) from the same immutable
+// generation returned to the caller. The internal catalog remains immutable
+// after publication, so it is safe to retain its pointer after releasing the
+// catalog lock.
+func (s *Store) candidateAtVersion(name string, version uint64) (Skill, *catalogSnapshot, bool, bool) {
+	s.catalogMu.Lock()
+	defer s.catalogMu.Unlock()
+	snapshot := s.catalog
+	if snapshot == nil || snapshot.version != version {
+		return Skill{}, nil, false, false
+	}
+	candidate, ok := snapshot.byName[name]
+	return cloneSkill(candidate), snapshot, true, ok
 }
 
 // ReadSlash resolves a user-entered slash identifier without changing the
 // bare identifiers accepted by Read/run_skill.
 func (s *Store) ReadSlash(name string) (Skill, bool) {
-	return ResolveSlashSkill(s.discoveredSkills(), name)
+	candidate, ok := ResolveSlashSkill(s.discoveredSkills(), name)
+	if !ok {
+		return Skill{}, false
+	}
+	snapshot := s.catalogSnapshot()
+	return s.loadCandidate(candidate, snapshot)
 }
 
-func (s *Store) discoverRoot(r discoveryRoot) []Skill {
+func (s *Store) loadCandidate(candidate Skill, snapshot *catalogSnapshot) (Skill, bool) {
+	return s.loadCandidateContext(context.Background(), candidate, snapshot)
+}
+
+func (s *Store) loadCandidateContext(ctx context.Context, candidate Skill, snapshot *catalogSnapshot) (Skill, bool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return Skill{}, false
+	}
+	if strings.HasPrefix(candidate.Path, "(builtin") {
+		if snapshot != nil {
+			if builtin, ok := snapshot.builtins[candidate.Name]; ok {
+				return cloneSkill(builtin), true
+			}
+		}
+		return Skill{}, false
+	}
+	loaded, ok := s.parseSkill(candidate.Path, candidate.Name, candidate.Scope, false, true)
+	if ctx.Err() != nil {
+		return Skill{}, false
+	}
+	if ok && loaded.Name == candidate.Name && loaded.Path == candidate.Path {
+		// The catalog candidate deliberately carries metadata only. Use the
+		// freshly parsed selected file as the source of truth so an edit cannot
+		// return a stale description/model/tool policy merely because discovery
+		// was already warm. Source attribution is assigned by discovery rather
+		// than frontmatter and therefore remains attached to the candidate.
+		loaded.Scope = candidate.Scope
+		loaded.Plugin = candidate.Plugin
+		loaded.SlashPrefix = candidate.SlashPrefix
+		if candidate.RunAs == RunSubagent && candidate.SlashPrefix != "" {
+			loaded.RunAs = RunSubagent
+			loaded.Invocation = "manual"
+			loaded.AllowedTools = mapClaudeAgentTools(loaded.AllowedTools)
+			if isClaudeModelAlias(loaded.Model) {
+				loaded.Model = ""
+			}
+		}
+		return loaded, true
+	}
+	// The selected identity changed after the snapshot. Refresh once and resolve
+	// the name again instead of executing the stale target.
+	s.Invalidate("selected skill changed")
+	refreshed, err := s.Snapshot(ctx)
+	if err != nil {
+		return Skill{}, false
+	}
+	next, internal, versionMatched, found := s.candidateAtVersion(candidate.Name, refreshed.Version)
+	if versionMatched && found && next.Path != candidate.Path {
+		return s.loadCandidateContext(ctx, next, internal)
+	}
+	return Skill{}, false
+}
+
+func (s *Store) discoverRoot(ctx context.Context, r discoveryRoot) []Skill {
 	var out []Skill
-	s.scanDir(r.Dir, r.Scope, r.requireFlatMarker, 1, map[string]bool{}, &out)
+	s.scanDir(ctx, r.Dir, r.Scope, r.requireFlatMarker, 1, map[string]bool{}, &out)
 	if r.forceSubagent {
 		for i := range out {
 			out[i].RunAs = RunSubagent
@@ -743,7 +1265,10 @@ func (s *Store) discoverRoot(r discoveryRoot) []Skill {
 	return out
 }
 
-func (s *Store) scanDir(dir string, scope Scope, requireFlatMarker bool, depth int, seen map[string]bool, out *[]Skill) {
+func (s *Store) scanDir(ctx context.Context, dir string, scope Scope, requireFlatMarker bool, depth int, seen map[string]bool, out *[]Skill) {
+	if ctx.Err() != nil {
+		return
+	}
 	key := filepath.Clean(dir)
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
 		key = filepath.Clean(resolved)
@@ -758,6 +1283,9 @@ func (s *Store) scanDir(dir string, scope Scope, requireFlatMarker bool, depth i
 		return
 	}
 	for _, e := range entries {
+		if ctx.Err() != nil {
+			return
+		}
 		sk, ok := s.readEntry(dir, scope, requireFlatMarker, e)
 		if ok {
 			if depth == 1 || strings.TrimSpace(sk.Description) != "" {
@@ -768,7 +1296,7 @@ func (s *Store) scanDir(dir string, scope Scope, requireFlatMarker bool, depth i
 		if depth >= s.maxDepth || !s.canScanChildDir(dir, e) {
 			continue
 		}
-		s.scanDir(filepath.Join(dir, e.Name()), scope, requireFlatMarker, depth+1, seen, out)
+		s.scanDir(ctx, filepath.Join(dir, e.Name()), scope, requireFlatMarker, depth+1, seen, out)
 	}
 }
 
@@ -846,17 +1374,17 @@ func (s *Store) readEntry(dir string, scope Scope, requireFlatMarker bool, e os.
 // filename stem when valid; a missing `description:` is a warning, not a failure
 // (the skill loads but won't appear in the model's index).
 func (s *Store) parse(path, stem string, scope Scope) (Skill, bool) {
-	return s.parseSkill(path, stem, scope, false)
+	return s.parseSkill(path, stem, scope, false, false)
 }
 
 // parseFlat reads a flat <name>.md skill candidate. Claude skill roots can also
 // contain ordinary documentation, so those flat files need explicit skill
 // frontmatter before they are treated as skills.
 func (s *Store) parseFlat(path, stem string, scope Scope, requireSkillMarker bool) (Skill, bool) {
-	return s.parseSkill(path, stem, scope, requireSkillMarker)
+	return s.parseSkill(path, stem, scope, requireSkillMarker, false)
 }
 
-func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bool) (Skill, bool) {
+func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker, loadBody bool) (Skill, bool) {
 	b, err := fileencoding.ReadFileUTF8(path)
 	if err != nil {
 		return Skill{}, false
@@ -872,13 +1400,17 @@ func (s *Store) parseSkill(path, stem string, scope Scope, requireSkillMarker bo
 		name = v
 	}
 	desc := strings.TrimSpace(fm[skillFrontmatterDescription])
-	if desc == "" {
+	if desc == "" && !loadBody {
 		fmt.Fprintf(s.stderr, "warning: skill %q at %s has no description: — it will load but won't appear in the skills index\n", name, path)
+	}
+	bodyText := ""
+	if loadBody {
+		bodyText = loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body)))
 	}
 	sk := Skill{
 		Name:         name,
 		Description:  desc,
-		Body:         loadBodyWithScripts(path, loadBodyWithReferences(path, strings.TrimSpace(body))),
+		Body:         bodyText,
 		Scope:        scope,
 		Path:         path,
 		AllowedTools: parseAllowedTools(firstNonEmptySkillValue(fm[skillFrontmatterAllowedTools], fm["tools"])),
@@ -1060,10 +1592,14 @@ func (s *Store) CreateWithContent(name string, scope Scope, content string) (str
 		}
 		return "", err
 	}
-	defer f.Close()
 	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
 		return "", err
 	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	s.Invalidate("create")
 	return folder, nil
 }
 
@@ -1092,7 +1628,11 @@ func (s *Store) UpdateContent(name string, scope Scope, content string) error {
 	if err != nil {
 		return err
 	}
-	return fileutil.AtomicWriteFile(sk.Path, []byte(content), info.Mode().Perm())
+	if err := fileutil.AtomicWriteFile(sk.Path, []byte(content), info.Mode().Perm()); err != nil {
+		return err
+	}
+	s.Invalidate("update")
+	return nil
 }
 
 // validateMutablePath rejects writes through linked files or directories. Skill
@@ -1169,9 +1709,17 @@ func (s *Store) Delete(name string, scope Scope) error {
 		return fmt.Errorf("skill %q has no file to delete", name)
 	}
 	if filepath.Base(sk.Path) == SkillFile {
-		return os.RemoveAll(filepath.Dir(sk.Path)) // directory-layout skill: <name>/SKILL.md + siblings
+		if err := os.RemoveAll(filepath.Dir(sk.Path)); err != nil {
+			return err
+		}
+		s.Invalidate("delete")
+		return nil
 	}
-	return os.Remove(sk.Path) // legacy flat <name>.md skill
+	if err := os.Remove(sk.Path); err != nil {
+		return err
+	}
+	s.Invalidate("delete")
+	return nil
 }
 
 func (s *Store) globalSkillsRoot() string {

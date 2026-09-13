@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"reasonix/internal/browser"
+	"reasonix/internal/control"
 )
 
 // Capability tokens advertised on the /auth/token handshake reply so a
@@ -21,6 +22,9 @@ const (
 	capabilityBrowser           = "browser"
 	capabilityPermissionPresets = "permission-presets-v1"
 	capabilityPresentFiles      = "present-files-v1"
+	capabilityExecutionV2       = "execution-v2"
+	capabilitySessionEventsV3   = "session-events-v3"
+	capabilitySessionIdentityV1 = "session-identity-v1"
 )
 
 // BrowserBroker is Serve's end of the desktop browser broker: one HTTP
@@ -221,7 +225,15 @@ func (s *Server) browserBroker() *BrowserBroker {
 
 // capabilities lists what the handshake advertises to the desktop.
 func (s *Server) capabilities() []string {
-	caps := []string{capabilityPermissionPresets, capabilityPresentFiles}
+	caps := []string{
+		capabilityPermissionPresets,
+		capabilityPresentFiles,
+		capabilityExecutionV2,
+		capabilitySessionEventsV3,
+	}
+	if identity, ok := s.ctl().(control.IdentityLifecycle); ok && identity.UsesExclusiveSessionV3() {
+		caps = append(caps, capabilitySessionIdentityV1)
+	}
 	if s.buildOptions.BrowserExecutor != nil {
 		caps = append(caps, capabilityBrowser)
 	}

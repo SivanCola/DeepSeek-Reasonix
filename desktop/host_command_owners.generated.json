@@ -740,6 +740,20 @@
       ]
     }
   },
+  "CancelSessionForTab": {
+    "domain": "desktop/turn_runtime_api.go",
+    "owner": "App.CancelSessionForTab",
+    "sources": [
+      "desktop/turn_runtime_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.CancelSessionForTab",
+      "inputs": [
+        "tabID"
+      ]
+    }
+  },
   "CancelShellInstall": {
     "domain": "desktop/shell_support.go",
     "owner": "App.CancelShellInstall",
@@ -1705,21 +1719,6 @@
       "resolver": "App.DisconnectRemoteHost",
       "inputs": [
         "id"
-      ]
-    }
-  },
-  "DismissTodoBatchForTab": {
-    "domain": "desktop/todo_dismissal.go",
-    "owner": "App.DismissTodoBatchForTab",
-    "sources": [
-      "desktop/todo_dismissal.go"
-    ],
-    "scope": {
-      "kind": "owner-inputs",
-      "resolver": "App.DismissTodoBatchForTab",
-      "inputs": [
-        "tabID",
-        "batchKey"
       ]
     }
   },

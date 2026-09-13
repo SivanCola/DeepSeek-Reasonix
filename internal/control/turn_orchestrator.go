@@ -162,7 +162,9 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 	if c.executor == nil {
 		return fmt.Errorf("subagent slash invocation requires an active session")
 	}
-	c.executor.AppendTurnContextAndUser(ctx, persistedUserTurn(input, firstNonEmpty(raw, task), images, time.Now().UnixMilli()))
+	if _, err := c.executor.AppendTurnContextAndUserChecked(ctx, persistedUserTurn(input, firstNonEmpty(raw, task), images, time.Now().UnixMilli())); err != nil {
+		return err
+	}
 
 	for _, sk := range skills {
 		sk = c.skills.prepare(sk)
@@ -193,7 +195,11 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 		c.sink.Emit(event.Event{Kind: event.ToolResult, Tool: toolEvent})
 		workDurationMs := max(int64(1), time.Since(turnStartedAt).Milliseconds())
 		messageID := agent.NewMessageID()
-		c.executor.Session().Add(provider.Message{ID: messageID, Role: provider.RoleAssistant, Content: answer, WorkDurationMs: workDurationMs})
+		assistant := provider.Message{ID: messageID, Role: provider.RoleAssistant, Content: answer, WorkDurationMs: workDurationMs}
+		if err := c.RecordSessionMessages(ctx, "orchestrated-assistant", []provider.Message{assistant}); err != nil {
+			return err
+		}
+		c.executor.Session().Add(assistant)
 		display := agent.DisplayAssistantText(answer)
 		c.sink.Emit(event.Event{Kind: event.Text, MessageID: messageID, Text: display})
 		c.sink.Emit(event.Event{Kind: event.Message, MessageID: messageID, Text: display})
@@ -348,7 +354,6 @@ func (o *turnOrchestrator) executeApprovedPlan(ctx context.Context) error {
 		return nil
 	}
 	c.SetPlanMode(false)
-	c.seedPlanTodos(proposal)
 	execStart := c.sessionMessageCount()
 	// The plan is the go-ahead: don't re-prompt for each write of the approved
 	// work. Auto-approve writers for the duration of this execution turn only; a
@@ -377,7 +382,7 @@ func (c *Controller) captureGoalRunWorkDuration(startMessages int) {
 	recorder.addWorkDuration(maxRunWorkDuration(c.History(), startMessages))
 	// Persist usage and duration even when the provider or host terminates this
 	// Run before the FSM advances. Epoch checks reject replace/clear/resume races.
-	_, _ = c.persistGoalStateAtEpoch(recorder.epoch, c.goalTodos())
+	_, _ = c.persistGoalStateAtEpoch(recorder.epoch)
 }
 
 func maxRunWorkDuration(messages []provider.Message, start int) int64 {
@@ -585,7 +590,6 @@ func (o *turnOrchestrator) advanceGoalAfterTurn(ctx context.Context, expectedCon
 
 	res := c.goals.advance(goalAdvanceInput{
 		report:           report,
-		todos:            c.goalTodos(),
 		progressEvidence: progressEvidence,
 		pauseCause:       pauseCause,
 		pauseReason:      pauseReason,

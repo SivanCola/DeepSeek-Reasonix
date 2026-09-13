@@ -188,6 +188,7 @@ func TestSwitchBranchResetsTwoModelPlannerContext(t *testing.T) {
 	coord := agent.NewCoordinator(planner, agent.NewSession("planner sys"), nil, agent.PlannerToolRegistry(tool.NewRegistry()), agent.Options{}, exec, 0, event.Discard, nil)
 	rootPath := filepath.Join(dir, "root.jsonl")
 	c := New(Options{Runner: coord, Executor: exec, SystemPrompt: "exec sys", SessionDir: dir, SessionPath: rootPath, Label: "test"})
+	t.Cleanup(c.Close)
 
 	if err := c.Run(context.Background(), "root task alpha"); err != nil {
 		t.Fatal(err)

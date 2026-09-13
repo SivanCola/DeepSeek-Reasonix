@@ -27,6 +27,7 @@ import (
 	"reasonix/internal/plugin"
 	"reasonix/internal/provider"
 	"reasonix/internal/sessioninbox"
+	"reasonix/internal/sessionv3"
 	"reasonix/internal/store"
 	"reasonix/internal/tool/builtin"
 )
@@ -719,12 +720,15 @@ func (s *service) sessionNew(ctx context.Context, raw json.RawMessage) (any, err
 		updatedAt:        now,
 	}
 	s.bindStatusEvents(sess)
-	// Pin a transcript file keyed by session id when the controller has a session
-	// dir, so every turn auto-saves there, session/prompt can hand the path back,
-	// and session/load can find it again by id across process restarts. The
-	// session lease is taken with it (defensive: the id-keyed path is brand new)
-	// so no other runtime can bind the transcript while this session lives.
-	if dir := ctrl.SessionDir(); dir != "" {
+	// Exclusive v3 sessions bind the ACP id directly to the immutable storage
+	// identity. They never manufacture an id.jsonl transcript or acquire its
+	// legacy lease. Older factories retain the isolated compatibility path.
+	if ctrl.UsesExclusiveSessionV3() {
+		if _, err := ctrl.BindFreshV3(ctx, id); err != nil {
+			ctrl.Close()
+			return nil, &RPCError{Code: ErrInternal, Message: "session/new: " + err.Error()}
+		}
+	} else if dir := ctrl.SessionDir(); dir != "" {
 		sess.transcript = transcriptPath(dir, id)
 		lease, err := agent.TryAcquireSessionLease(sess.transcript)
 		if err != nil {
@@ -889,7 +893,7 @@ func (s *service) sessionLoad(ctx context.Context, raw json.RawMessage) (any, er
 	}
 	return afterResponse{
 		result: SessionLoadResult{Models: cfgState.Models, Modes: s.sessionModesFor(p.SessionID), ConfigOptions: cfgState.ConfigOptions},
-		after:  func() { s.sendAvailableCommands(s.session(p.SessionID)) },
+		after:  func() { s.sendSessionProjection(s.session(p.SessionID)) },
 	}, nil
 }
 
@@ -916,8 +920,24 @@ func (s *service) sessionResume(ctx context.Context, raw json.RawMessage) (any, 
 	}
 	return afterResponse{
 		result: SessionResumeResult{Models: cfgState.Models, Modes: s.sessionModesFor(p.SessionID), ConfigOptions: cfgState.ConfigOptions},
-		after:  func() { s.sendAvailableCommands(s.session(p.SessionID)) },
+		after:  func() { s.sendSessionProjection(s.session(p.SessionID)) },
 	}, nil
+}
+
+// sendSessionProjection publishes current host-owned state after load/resume.
+// History replay is presentation data and may contain legacy todo tool cards;
+// the committed runtime snapshot is the only source of the current ACP plan.
+func (s *service) sendSessionProjection(sess *acpSession) {
+	if sess == nil {
+		return
+	}
+	s.sendAvailableCommands(sess)
+	reader, ok := sess.currentCtrl().(control.RuntimeStateReader)
+	if !ok {
+		return
+	}
+	snapshot := reader.RuntimeStateSnapshot()
+	sess.sink.send(planUpdate{SessionUpdate: "plan", Entries: planEntriesFromTodos(snapshot.Todos)})
 }
 
 func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam string, servers []MCPServerSpec, replay bool) (SessionConfigState, error) {
@@ -1003,32 +1023,46 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 	ctrl.EnableInteractiveApproval()
 	sink.bindControllerPrompts(ctrl, sessionParams.MCPInteractions)
 
-	dir := ctrl.SessionDir()
-	if dir == "" {
-		ctrl.Close()
-		return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: method + ": persistence is disabled"}
-	}
-	path := resolveTranscriptPath(dir, id)
-	if path != persistedPath && agent.IsCleanupPending(path) {
-		ctrl.Close()
-		return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
-	}
-	// Bind the transcript for writing only if no other runtime (a desktop
-	// window, the CLI) holds it; the editor should not silently double-write a
-	// session that is open elsewhere.
-	lease, leaseErr := agent.TryAcquireSessionLease(path)
-	if leaseErr != nil {
-		ctrl.Close()
-		return SessionConfigState{}, sessionLeaseBindError(method, leaseErr)
-	}
-	loaded, err := agent.LoadSession(path)
-	if err != nil {
-		lease.Release()
-		ctrl.Close()
-		return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
-	}
-	if err := resumeACPControllerForWrite(ctrl, loaded, path, lease); err != nil {
-		return SessionConfigState{}, sessionLeaseBindError(method, err)
+	path := ""
+	var lease *agent.SessionLease
+	if ctrl.UsesExclusiveSessionV3() {
+		service := ctrl.SessionV3Service()
+		if service == nil {
+			ctrl.Close()
+			return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: method + ": v3 session service is unavailable"}
+		}
+		if _, err := ctrl.OpenV3(ctx, sessionv3.SessionRef{HostID: service.HostID(), SessionID: id}); err != nil {
+			ctrl.Close()
+			return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
+		}
+	} else {
+		dir := ctrl.SessionDir()
+		if dir == "" {
+			ctrl.Close()
+			return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: method + ": persistence is disabled"}
+		}
+		path = resolveTranscriptPath(dir, id)
+		if path != persistedPath && agent.IsCleanupPending(path) {
+			ctrl.Close()
+			return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
+		}
+		// Legacy sessions keep the path lease until their one-time migration path
+		// is selected by an explicit legacy client.
+		var leaseErr error
+		lease, leaseErr = agent.TryAcquireSessionLease(path)
+		if leaseErr != nil {
+			ctrl.Close()
+			return SessionConfigState{}, sessionLeaseBindError(method, leaseErr)
+		}
+		loaded, loadErr := agent.LoadSession(path)
+		if loadErr != nil {
+			lease.Release()
+			ctrl.Close()
+			return SessionConfigState{}, &RPCError{Code: ErrInvalidParams, Message: method + ": unknown session " + id}
+		}
+		if err := resumeACPControllerForWrite(ctrl, loaded, path, lease); err != nil {
+			return SessionConfigState{}, sessionLeaseBindError(method, err)
+		}
 	}
 	toolApprovalMode := normalizeACPToolApprovalMode(saved.ToolApprovalMode)
 	if strings.TrimSpace(saved.ToolApprovalMode) == "" {
@@ -1080,10 +1114,12 @@ func (s *service) openExistingSession(ctx context.Context, method, id, cwdParam 
 		lease:            lease,
 	}
 	s.bindStatusEvents(sess)
-	if err := saveACPMeta(path, sess.meta()); err != nil {
-		sess.releaseSessionLease()
-		ctrl.Close()
-		return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: method + ": " + err.Error()}
+	if path != "" {
+		if err := saveACPMeta(path, sess.meta()); err != nil {
+			sess.releaseSessionLease()
+			ctrl.Close()
+			return SessionConfigState{}, &RPCError{Code: ErrInternal, Message: method + ": " + err.Error()}
+		}
 	}
 	s.mu.Lock()
 	s.sessions[id] = sess

@@ -46,7 +46,7 @@ func TestGoalTurnsAndNoProgressAreObservationalOnly(t *testing.T) {
 
 func TestGoalResumeNeverExtendsNumericQuota(t *testing.T) {
 	g := &goalMachine{goal: "ship", status: GoalStatusBlocked, stopCause: stopCauseManual, turnsLimit: 20, budgetExtensions: 3}
-	_, _, _, resumed := g.resume(nil)
+	_, _, _, resumed := g.resume()
 	if !resumed || g.status != GoalStatusRunning || g.turnsLimit != unlimitedGoalTurns {
 		t.Fatalf("resume = resumed:%v machine:%+v", resumed, g)
 	}
@@ -124,7 +124,7 @@ func TestGoalSidecarUnlimitedSentinelIsSafeForOldReader(t *testing.T) {
 	g := &goalMachine{}
 	g.restoreFromState(path)
 	g.mu.Lock()
-	_, data, ok := g.buildStateLocked(nil)
+	_, data, ok := g.buildStateLocked()
 	g.mu.Unlock()
 	if !ok {
 		t.Fatal("expected persisted state")
@@ -212,7 +212,7 @@ func TestGoalProgressEvidenceRestoresAsBoundedNoveltyState(t *testing.T) {
 	if err := json.Unmarshal(data, &normalized); err != nil || len(normalized.ProgressEvidence) != 4 {
 		t.Fatalf("normalized sidecar = %+v err=%v", normalized, err)
 	}
-	g.resume(nil) // only explicit resume activates a restored goal
+	g.resume() // only explicit resume activates a restored goal
 	g.advance(goalAdvanceInput{report: &goalTurnReport{status: GoalStatusRunning}, progressEvidence: []string{"read-a"}})
 	if g.noProgressTurns != 1 {
 		t.Fatalf("restored repeat reset streak to %d", g.noProgressTurns)

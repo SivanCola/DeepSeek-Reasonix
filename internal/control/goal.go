@@ -152,9 +152,8 @@ type goalState struct {
 // while honoring execution pauses and the current lifecycle identity.
 type goalAdvanceInput struct {
 	report           *goalTurnReport // validated update_goal report; nil when none
-	todos            []evidence.TodoItem
-	progressEvidence []string // host evidence identities visible after this turn
-	pauseCause       string   // explicit spend boundary reported by the Agent
+	progressEvidence []string        // host evidence identities visible after this turn
+	pauseCause       string          // explicit spend boundary reported by the Agent
 	pauseReason      string
 	expectedEpoch    *uint64
 }
@@ -270,7 +269,7 @@ func (g *goalMachine) statusForDisplay() string {
 // the per-goal runtime counters, and returns the state to persist. ok is
 // false (no persistence) when the goal is unchanged or no state path is
 // configured.
-func (g *goalMachine) set(goal, preferredBudgetClass string, todos []evidence.TodoItem) (string, []byte, bool) {
+func (g *goalMachine) set(goal, preferredBudgetClass string) (string, []byte, bool) {
 	goal = strings.TrimSpace(goal)
 	if goal != "" && preferredBudgetClass == "" {
 		preferredBudgetClass = ClassifyGoalBudget(goal)
@@ -281,7 +280,7 @@ func (g *goalMachine) set(goal, preferredBudgetClass string, todos []evidence.To
 		if !g.disarmed {
 			if g.budgetClass != preferredBudgetClass {
 				g.budgetClass = preferredBudgetClass
-				return g.buildStateLocked(todos)
+				return g.buildStateLocked()
 			}
 			return "", nil, false
 		}
@@ -289,20 +288,20 @@ func (g *goalMachine) set(goal, preferredBudgetClass string, todos []evidence.To
 		// actual accumulated usage, rather than creating a fresh budget.
 		g.disarmed = false
 		g.continuationEpoch++
-		return g.buildStateLocked(todos)
+		return g.buildStateLocked()
 	}
 	g.installGoalLocked(goal, preferredBudgetClass)
-	return g.buildStateLocked(todos)
+	return g.buildStateLocked()
 }
 
 // setLegacyArchiveBlocked atomically installs and blocks an explicit legacy
 // archive goal. A concurrent Goal replacement cannot be blocked between two
 // separate FSM mutations.
-func (g *goalMachine) setLegacyArchiveBlocked(goal, preferredBudgetClass, reason string, todos []evidence.TodoItem) (string, []byte, bool) {
-	return g.setLegacyArchiveBlockedWithTaskID(goal, preferredBudgetClass, reason, "", todos)
+func (g *goalMachine) setLegacyArchiveBlocked(goal, preferredBudgetClass, reason string) (string, []byte, bool) {
+	return g.setLegacyArchiveBlockedWithTaskID(goal, preferredBudgetClass, reason, "")
 }
 
-func (g *goalMachine) setLegacyArchiveBlockedWithTaskID(goal, preferredBudgetClass, reason, taskID string, todos []evidence.TodoItem) (string, []byte, bool) {
+func (g *goalMachine) setLegacyArchiveBlockedWithTaskID(goal, preferredBudgetClass, reason, taskID string) (string, []byte, bool) {
 	goal = strings.TrimSpace(goal)
 	taskID = strings.TrimSpace(taskID)
 	if goal != "" && preferredBudgetClass == "" {
@@ -317,7 +316,7 @@ func (g *goalMachine) setLegacyArchiveBlockedWithTaskID(goal, preferredBudgetCla
 	g.stopCause = stopCauseLegacyArchive
 	g.block = clipGoalReason(reason)
 	g.legacyTaskID = taskID
-	return g.buildStateLocked(todos)
+	return g.buildStateLocked()
 }
 
 func (g *goalMachine) installGoalLocked(goal, preferredBudgetClass string) {
@@ -350,17 +349,17 @@ func (g *goalMachine) installGoalLocked(goal, preferredBudgetClass string) {
 	g.legacyTaskID = ""
 }
 
-func (g *goalMachine) setStrict(strict bool, todos []evidence.TodoItem) (string, []byte, bool) {
+func (g *goalMachine) setStrict(strict bool) (string, []byte, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.strict = strict
-	return g.buildStateLocked(todos)
+	return g.buildStateLocked()
 }
 
 // stop transitions a running goal to the given terminal status and clears the
 // transient runtime bookkeeping. stopCause is cleared: a host stop is not a
 // safe pause.
-func (g *goalMachine) stop(status string, todos []evidence.TodoItem) (string, []byte, bool) {
+func (g *goalMachine) stop(status string) (string, []byte, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.continuationEpoch++
@@ -369,12 +368,12 @@ func (g *goalMachine) stop(status string, todos []evidence.TodoItem) (string, []
 	}
 	g.stopCause = ""
 	g.noProgressTurns = 0
-	return g.buildStateLocked(todos)
+	return g.buildStateLocked()
 }
 
 // pauseFor transitions a running goal to a safe pause: status blocked plus a
 // stop cause, keeping every runtime counter for a later resume.
-func (g *goalMachine) pauseFor(stopCause, reason string, todos []evidence.TodoItem) (string, []byte, bool) {
+func (g *goalMachine) pauseFor(stopCause, reason string) (string, []byte, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.continuationEpoch++
@@ -385,12 +384,12 @@ func (g *goalMachine) pauseFor(stopCause, reason string, todos []evidence.TodoIt
 	if reason != "" {
 		g.block = reason
 	}
-	return g.buildStateLocked(todos)
+	return g.buildStateLocked()
 }
 
 // resume re-enters a recoverable blocked/stopped goal without resetting scope
 // or runtime history. Continuous Goals never extend a numeric quota.
-func (g *goalMachine) resume(todos []evidence.TodoItem) (path string, data []byte, persist, resumed bool) {
+func (g *goalMachine) resume() (path string, data []byte, persist, resumed bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.stopCause == stopCauseLegacyArchive {
@@ -417,18 +416,18 @@ func (g *goalMachine) resume(todos []evidence.TodoItem) (path string, data []byt
 	if g.scopeID == "" {
 		g.scopeID = newGoalScopeID()
 	}
-	path, data, persist = g.buildStateLocked(todos)
+	path, data, persist = g.buildStateLocked()
 	return path, data, persist, true
 }
 
-func (g *goalMachine) setDeliveryCheckpoint(checkpoint evidence.DeliveryCheckpoint, todos []evidence.TodoItem) (string, []byte, bool) {
+func (g *goalMachine) setDeliveryCheckpoint(checkpoint evidence.DeliveryCheckpoint) (string, []byte, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.scopeID == "" || checkpoint.ScopeID != g.scopeID {
 		return "", nil, false
 	}
 	g.deliveryCheckpoint = checkpoint
-	return g.buildStateLocked(todos)
+	return g.buildStateLocked()
 }
 
 func (g *goalMachine) deliveryState() evidence.DeliveryCheckpoint {
@@ -532,7 +531,7 @@ func (g *goalMachine) advance(in goalAdvanceInput) goalAdvanceResult {
 		cont:              notice == "",
 		continuationEpoch: g.continuationEpoch,
 	}
-	res.path, res.data, res.ok = g.buildStateLocked(in.todos)
+	res.path, res.data, res.ok = g.buildStateLocked()
 	return res
 }
 
@@ -571,19 +570,31 @@ func (g *goalMachine) foldWorkDuration(scopeID string, epoch uint64, durationMs 
 // holds mu; this only reads in-memory state, never touching disk. Returns ok=false
 // when persistence is disabled (no state path). The matching writeState does the
 // disk write OFF mu so the per-turn save can't stall a status poll.
-func (g *goalMachine) buildStateLocked(todos []evidence.TodoItem) (path string, data []byte, ok bool) {
+func (g *goalMachine) buildStateLocked() (path string, data []byte, ok bool) {
 	if g.statePath == "" {
 		return "", nil, false
 	}
+	b, ok := g.marshalStateLocked()
+	return g.statePath, b, ok
+}
+
+func (g *goalMachine) eventState() ([]byte, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.marshalStateLocked()
+}
+
+func (g *goalMachine) marshalStateLocked() ([]byte, bool) {
 	state := goalState{
-		Goal:                   g.goal,
-		Status:                 g.status,
-		ScopeID:                g.scopeID,
-		DeliveryCheckpoint:     g.deliveryCheckpoint,
-		Turns:                  g.turnsUsed,
-		Block:                  g.block,
-		Strict:                 g.strict,
-		Todos:                  todos,
+		Goal:               g.goal,
+		Status:             g.status,
+		ScopeID:            g.scopeID,
+		DeliveryCheckpoint: g.deliveryCheckpoint,
+		Turns:              g.turnsUsed,
+		Block:              g.block,
+		Strict:             g.strict,
+		// Todos is intentionally omitted. Legacy sidecars remain readable, but
+		// turn-local progress is never persisted with a Goal.
 		BudgetClass:            g.budgetClass,
 		TurnsUsed:              g.turnsUsed,
 		TurnsLimit:             g.turnsLimit,
@@ -611,9 +622,9 @@ func (g *goalMachine) buildStateLocked(todos []evidence.TodoItem) (path string, 
 	b, err := marshalGoalState(state, g.stateExtra)
 	if err != nil {
 		slog.Warn("controller: marshal goal state", "err", err)
-		return "", nil, false
+		return nil, false
 	}
-	return g.statePath, b, true
+	return b, true
 }
 
 // writeState preserves the existing best-effort behavior for background Goal
@@ -622,37 +633,6 @@ func (g *goalMachine) writeState(path string, data []byte) {
 	if err := g.writeStateErr(path, data); err != nil {
 		slog.Warn("controller: write goal state", "err", err)
 	}
-}
-
-// terminalTodosFromState reads the persisted goal-state sidecar and returns its
-// todo snapshot only after the goal has reached a terminal state. Running goal
-// state is not refreshed on every todo_write, so its todos may be older than the
-// transcript rebuilt by Agent.SetSession.
-func (g *goalMachine) terminalTodosFromState(sessionPath string) ([]evidence.TodoItem, bool) {
-	if strings.TrimSpace(sessionPath) == "" {
-		return nil, false
-	}
-	data, err := fileencoding.ReadFileUTF8(goalStatePath(sessionPath))
-	if err != nil {
-		if !os.IsNotExist(err) {
-			slog.Warn("controller: read goal state", "err", err)
-		}
-		return nil, false
-	}
-	var state goalState
-	if err := json.Unmarshal(data, &state); err != nil {
-		slog.Warn("controller: parse goal state", "err", err)
-		return nil, false
-	}
-	switch state.Status {
-	case GoalStatusComplete, GoalStatusBlocked, GoalStatusStopped:
-	default:
-		return nil, false
-	}
-	if len(state.Todos) == 0 {
-		return nil, false
-	}
-	return append([]evidence.TodoItem(nil), state.Todos...), true
 }
 
 // restoreFromState reloads Goal state from the sidecar. The sidecar is
@@ -680,8 +660,32 @@ func (g *goalMachine) restoreFromState(sessionPath string) (path string, data []
 		slog.Warn("controller: parse goal state", "err", err)
 		return "", nil, false, legacyGoalRestore{}
 	}
+	legacy = g.restoreDecodedState(raw, state)
+	return "", nil, false, legacy
+}
+
+// restoreGoalEvent installs a persisted v3 goal projection without reviving
+// an execution loop. Goal events retain objective, status and budgets, while
+// Todo remains a separate current-turn projection.
+func (g *goalMachine) restoreGoalEvent(raw []byte) error {
+	if len(raw) == 0 {
+		raw = []byte(`{}`)
+	}
+	var state goalState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return err
+	}
+	state.Todos = nil
+	g.restoreDecodedState(raw, state)
+	return nil
+}
+
+func (g *goalMachine) restoreDecodedState(raw []byte, state goalState) legacyGoalRestore {
 	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.stateExtra = goalStateUnknownFields(raw)
+	delete(g.stateExtra, "todos")
+	delete(g.stateExtra, "todo")
 	g.goal = strings.TrimSpace(state.Goal)
 	g.disarmed = true
 	g.status = state.Status
@@ -691,9 +695,8 @@ func (g *goalMachine) restoreFromState(sessionPath string) (path string, data []
 	// Legacy task identity is migration-only compatibility data. It is returned to
 	// the Controller's archive boundary and retained in the machine only while a
 	// fail-closed migration remains pending.
-	legacy = legacyGoalRestore{
+	legacy := legacyGoalRestore{
 		taskID: strings.TrimSpace(state.AutoResearchTaskID),
-		todos:  append([]evidence.TodoItem(nil), state.Todos...),
 	}
 	// A task id is pending only when the sidecar has no Goal text. A legacy
 	// sidecar that already contains an objective can be migrated directly and
@@ -743,8 +746,7 @@ func (g *goalMachine) restoreFromState(sessionPath string) (path string, data []
 	g.normalizeContinuousState(state.ResearchMode, legacy.taskID)
 	g.continuationEpoch++
 	legacy.epoch = g.continuationEpoch
-	g.mu.Unlock()
-	return "", nil, false, legacy
+	return legacy
 }
 
 // clipGoalReason bounds a recorded reason for storage and display.
@@ -772,39 +774,47 @@ func ShortGoalForNotice(goal string) string {
 	return string(runes[:max]) + "..."
 }
 
-// goalTodos snapshots the executor's canonical todos for goal-state persistence.
-func (c *Controller) goalTodos() []evidence.TodoItem {
-	if c.executor == nil {
-		return nil
-	}
-	return c.executor.CanonicalTodoState()
-}
-
 // persistGoalState writes a freshly built goal state to disk, off c.mu. The
 // executor guard preserves the original behavior of skipping persistence when
 // no executor is attached.
 func (c *Controller) persistGoalState(path string, data []byte, ok bool) {
+	if !ok && c.exclusiveV3Enabled() {
+		data, ok = c.goals.eventState()
+	}
 	if !ok || c.executor == nil {
+		return
+	}
+	eventData := goalEventPayload(data)
+	if err := c.appendDomainState("goal/state", eventData, "goal-update"); err != nil {
+		slog.Warn("controller: append goal state event", "err", err)
+		c.failTurnEventLedger(err)
 		return
 	}
 	c.goals.writeState(path, data)
 }
 
-func (c *Controller) persistGoalStateAtEpoch(epoch uint64, todos []evidence.TodoItem) (bool, error) {
-	applied, err := c.goals.writeStateAtEpoch(epoch, todos)
+func goalEventPayload(data []byte) []byte {
+	var state map[string]json.RawMessage
+	if json.Unmarshal(data, &state) != nil {
+		return data
+	}
+	delete(state, "todos")
+	delete(state, "todo")
+	delete(state, "activeForm")
+	delete(state, "step_id")
+	delete(state, "auto_continue")
+	delete(state, "autoContinue")
+	clean, err := json.Marshal(state)
+	if err != nil {
+		return data
+	}
+	return clean
+}
+
+func (c *Controller) persistGoalStateAtEpoch(epoch uint64) (bool, error) {
+	applied, err := c.goals.writeStateAtEpoch(epoch)
 	if err != nil {
 		slog.Warn("controller: write goal state", "err", err)
 	}
 	return applied, err
-}
-
-func (c *Controller) restoreTerminalGoalTodos(sessionPath string) {
-	if c.executor == nil {
-		return
-	}
-	todos, ok := c.goals.terminalTodosFromState(sessionPath)
-	if !ok {
-		return
-	}
-	c.executor.ReplaceTodoState(todos)
 }

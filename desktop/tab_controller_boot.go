@@ -6,6 +6,7 @@ import (
 
 	"reasonix/internal/boot"
 	"reasonix/internal/control"
+	"reasonix/internal/sessionv3"
 )
 
 var errTabControllerExtensionsChanged = errors.New("desktop: controller extensions changed during build")
@@ -13,7 +14,35 @@ var errTabControllerExtensionsChanged = errors.New("desktop: controller extensio
 // buildTabControllerBoot is a thin wrapper around boot.Build so the large
 // controller assembly path can stay under function-size / complexity budgets.
 func (a *App) buildTabControllerBoot(ctx context.Context, opts boot.Options) (control.SessionAPI, error) {
+	if opts.SessionService == nil {
+		opts.SessionService = a.desktopSessionService(opts.SessionDir)
+	}
 	return boot.Build(ctx, opts)
+}
+
+func desktopSessionV3Root(sessionDir string) string {
+	return sessionv3.RootForLegacyDir(sessionDir)
+}
+
+func (a *App) desktopSessionService(sessionDir string) *sessionv3.Service {
+	root := desktopSessionV3Root(sessionDir)
+	if a == nil || root == "" {
+		return nil
+	}
+	a.sessionServicesMu.Lock()
+	defer a.sessionServicesMu.Unlock()
+	if a.sessionServices == nil {
+		a.sessionServices = map[string]*sessionv3.Service{}
+	}
+	if service := a.sessionServices[root]; service != nil {
+		return service
+	}
+	service, err := sessionv3.NewService("local", sessionv3.NewFilesystemPersistence(root))
+	if err != nil {
+		return nil
+	}
+	a.sessionServices[root] = service
+	return service
 }
 
 // buildTabControllerBootFenced keeps optimistic builds concurrent with each

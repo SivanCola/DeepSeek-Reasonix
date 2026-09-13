@@ -15,6 +15,7 @@ type TabMeta struct {
 	TopicID           string `json:"topicId"`
 	TopicTitle        string `json:"topicTitle"`
 	SessionPath       string `json:"sessionPath,omitempty"`
+	SessionID         string `json:"sessionId,omitempty"`
 	SessionRevision   int64  `json:"sessionRevision,omitempty"`
 	SessionDigest     string `json:"sessionDigest,omitempty"`
 	SessionGeneration uint64 `json:"sessionGeneration,omitempty"`

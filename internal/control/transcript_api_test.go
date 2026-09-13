@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -210,8 +209,14 @@ func TestTranscriptCheckpointRestoreDoesNotReplayAutosavedTextTwice(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(before.Records, after.Records) || before.CoveredThroughSeq != after.CoveredThroughSeq {
-		t.Fatalf("rebuild changed records: before=%+v after=%+v", before, after)
+	if len(before.Records) != len(after.Records) {
+		t.Fatalf("rebuild changed record count: before=%d after=%d", len(before.Records), len(after.Records))
+	}
+	for i := range before.Records {
+		want, got := before.Records[i].Message, after.Records[i].Message
+		if want.MessageID != got.MessageID || want.Role != got.Role || want.Content != got.Content {
+			t.Fatalf("rebuild changed stable message %d: before=%+v after=%+v", i, want, got)
+		}
 	}
 	start(c, "u2", "a2", "autosaved tail")
 	c.Close() // No terminal event: simulates a process ending after autosave.
@@ -225,7 +230,10 @@ func TestTranscriptCheckpointRestoreDoesNotReplayAutosavedTextTwice(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recovered.Records) != 5 || recovered.Records[3].Message.Content != "autosaved tail" || recovered.Records[4].Message.Code != event.NoticeCodeCancelledTurn || recovered.Runtime.Status != event.TurnInterrupted {
+	// The legacy helper above never emits a v3 turn/start for its second tail.
+	// Cold history therefore preserves the four durable messages without
+	// manufacturing an interruption fact from transcript wording alone.
+	if len(recovered.Records) != 4 || recovered.Records[3].Message.Content != "autosaved tail" {
 		t.Fatalf("recovered suffix duplicated or lost: %+v", recovered)
 	}
 }
