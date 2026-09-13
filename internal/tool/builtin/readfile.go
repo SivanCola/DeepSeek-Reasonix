@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -43,9 +42,8 @@ type readFile struct {
 	// overlay, when non-nil, serves content from the host transport (unsaved
 	// editor buffers) before falling back to disk. Consulted only after path
 	// resolution and read confinement, and never for external alias paths.
-	overlay     FileOverlay
-	captured    *tool.ReadResultSource
-	rawSnapshot []byte
+	overlay  FileOverlay
+	captured *tool.ReadResultSource
 }
 
 const (
@@ -252,49 +250,8 @@ func (readFile) SnipHint() tool.SnipHint {
 }
 
 func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	p, err := parseReadFileParams(args)
-	if err != nil {
-		return "", err
-	}
-	rp := resolveReadablePath(r.workDir, p.Path, r.paths)
-	p.Path = rp.Path
-	displayPath := rp.DisplayPath
-	if confineRead(r.forbidRoots, p.Path) {
-		err := &os.PathError{Op: "open", Path: p.Path, Err: os.ErrNotExist}
-		if rp.External {
-			return "", fmt.Errorf("read %s: %s", displayPath, rp.ErrorText(err))
-		}
-		return "", err
-	}
-	if r.rawSnapshot != nil {
-		return r.scanEncoded(readContextReader{ctx, bytes.NewReader(r.rawSnapshot)}, p.Offset, p.Limit)
-	}
-
-	// The host overlay (unsaved editor buffers) wins over the disk when it can
-	// serve the path. Content arrives already decoded as text, so the encoding
-	// and binary-detection pipeline below applies to the disk fallback only.
-	if r.overlay != nil && !rp.External && filepath.IsAbs(p.Path) {
-		if content, ok := r.overlay.ReadTextFile(ctx, p.Path); ok {
-			return r.scan(readContextReader{ctx, strings.NewReader(content)}, p.Offset, p.Limit)
-		}
-	}
-
-	// A directory can be os.Open'd but not read as text — catch it up front with
-	// an actionable message (and avoid the doubled "read X: read X:" the scanner's
-	// error would otherwise produce) so the model switches to the ls tool.
-	if info, err := os.Stat(p.Path); err == nil && info.IsDir() {
-		return "", fmt.Errorf("%s is a directory, not a file — use the ls tool to list it, or read a specific file inside it", displayPath)
-	}
-
-	f, err := os.Open(p.Path)
-	if err != nil {
-		if rp.External {
-			return "", fmt.Errorf("read %s: %s", displayPath, rp.ErrorText(err))
-		}
-		return "", fmt.Errorf("read %s: %w", displayPath, err)
-	}
-	defer f.Close()
-	return r.scanEncoded(readContextReader{ctx, f}, p.Offset, p.Limit)
+	output, _, err := r.ExecuteRead(ctx, args)
+	return output, err
 }
 
 func (r readFile) scanEncoded(f io.Reader, offset, limit int) (string, error) {

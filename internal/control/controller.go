@@ -4953,6 +4953,9 @@ func (c *Controller) InheritLifecycleFrom(prev *Controller) {
 	if prev == nil {
 		return
 	}
+	if c.workspaceRoot == prev.workspaceRoot && c.executor != nil {
+		c.executor.InheritFileObservationsFrom(prev.executor)
+	}
 	prev.mu.Lock()
 	started := prev.startedOnce
 	turn := prev.turn

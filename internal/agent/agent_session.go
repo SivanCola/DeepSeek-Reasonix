@@ -2,6 +2,14 @@ package agent
 
 import "reasonix/internal/fileops"
 
+// InheritFileObservationsFrom is for an idle, same-session runtime rebuild.
+// Resume, fork and rewind intentionally use SetSession without this transfer.
+func (a *Agent) InheritFileObservationsFrom(previous *Agent) {
+	if previous != nil && a != previous {
+		a.fileObservations = previous.fileObservations.Clone()
+	}
+}
+
 // Session returns the agent's current conversation, useful for persistence
 // hooks that need to read the message log between turns. sessMu serialises this
 // pointer read against SetSession, so a frontend (serve's concurrent /history and

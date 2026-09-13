@@ -17,7 +17,7 @@ import (
 
 func init() { tool.RegisterBuiltin(moveFile{}) }
 
-var renameFile = os.Rename
+var renameFile = renameNoReplace
 
 // moveFile moves or renames one file. roots, when non-empty, confine both the
 // source and destination to the workspace; guard rejects Reasonix session-data
@@ -130,6 +130,9 @@ func (m moveFile) Execute(ctx context.Context, args json.RawMessage) (string, er
 			commit()
 			return fmt.Sprintf("moved %s to %s", src, dst), nil
 		}
+		if os.IsExist(err) {
+			return "", &tool.OperationError{Diagnostic: tool.OperationDiagnostic{Code: tool.FSAlreadyExists, Path: dst, Recovery: "the destination appeared concurrently; inspect it and choose another path"}, Cause: err}
+		}
 		return "", fmt.Errorf("move %s to %s: %w", src, dst, err)
 	}
 	commit()
@@ -153,11 +156,12 @@ func renameSameFileDestination(src, dst string) error {
 	if err := renameFile(src, tmpName); err != nil {
 		return err
 	}
-	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		if restoreErr := renameFile(tmpName, src); restoreErr != nil {
-			return fmt.Errorf("%w; restore %s: %w", err, src, restoreErr)
+	// A distinct hard-link alias already names the moved file. Never delete
+	// the destination: it may have been replaced since the initial stat.
+	if tempInfo, err := os.Stat(tmpName); err == nil {
+		if dstInfo, err := os.Stat(dst); err == nil && os.SameFile(tempInfo, dstInfo) {
+			return os.Remove(tmpName)
 		}
-		return err
 	}
 	if err := renameFile(tmpName, dst); err != nil {
 		if restoreErr := renameFile(tmpName, src); restoreErr != nil {
@@ -190,29 +194,51 @@ func copyRegularFileAndRemoveSource(src, dst string, info os.FileInfo) error {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	opened, err := in.Stat()
 	if err != nil {
 		return err
 	}
-	removeDst := true
-	defer func() {
-		if removeDst {
-			_ = os.Remove(dst)
-		}
-	}()
+	if !os.SameFile(info, opened) {
+		return ErrFileChanged
+	}
+	target, version := fileops.DiskHandleSnapshot(src, in, opened)
+	out, err := os.CreateTemp(filepath.Dir(dst), ".reasonix-move-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := out.Name()
+	defer os.Remove(tmpPath)
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Chmod(info.Mode().Perm()); err != nil {
 		_ = out.Close()
 		return err
 	}
 	if err := out.Close(); err != nil {
 		return err
 	}
+	current, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	currentTarget, currentVersion := fileops.DiskSnapshot(src, current)
+	if target != currentTarget || version != currentVersion {
+		return ErrFileChanged
+	}
 	if err := in.Close(); err != nil {
 		return err
 	}
-	if err := os.Remove(src); err != nil {
+	if err := os.Link(tmpPath, dst); err != nil {
 		return err
 	}
-	removeDst = false
+	if err := os.Remove(src); err != nil {
+		return fmt.Errorf("destination committed but source removal failed: %w", err)
+	}
 	return nil
 }

@@ -8,9 +8,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +52,20 @@ type Store struct {
 
 func NewStore() *Store {
 	return &Store{items: make(map[string]Observation), paths: make(map[string]Observation)}
+}
+
+// Clone transfers live observations to a replacement runtime in the same
+// session. It is never serialized or reconstructed from transcript data.
+func (s *Store) Clone() *Store {
+	copy := NewStore()
+	if s == nil {
+		return copy
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	maps.Copy(copy.items, s.items)
+	maps.Copy(copy.paths, s.paths)
+	return copy
 }
 
 func (s *Store) Get(target Target) Observation {
@@ -184,8 +200,20 @@ func canonicalPath(path string) string {
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
 	}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		path = resolved
+	// Resolve the nearest existing ancestor too: an absent child beneath a
+	// symlinked directory must keep its identity before and after creation.
+	ancestor, suffix := path, ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(ancestor); err == nil {
+			path = filepath.Join(resolved, suffix)
+			break
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			break
+		}
+		suffix = filepath.Join(filepath.Base(ancestor), suffix)
+		ancestor = parent
 	}
 	return filepath.Clean(path)
 }
@@ -240,7 +268,7 @@ func nativeMetadata(info os.FileInfo) []string {
 		return nil
 	}
 	var out []string
-	for i := 0; i < v.NumField(); i++ {
+	for i := range v.NumField() {
 		field := v.Type().Field(i)
 		name := strings.ToLower(field.Name)
 		if !metadataField(name) {
@@ -254,7 +282,7 @@ func nativeMetadata(info os.FileInfo) []string {
 }
 
 func metadataField(name string) bool {
-	for _, part := range []string{"dev", "ino", "fileindex", "volume", "ctime", "change", "mtime", "lastwrite", "creation", "mode", "nlink", "uid", "gid"} {
+	for _, part := range []string{"dev", "ino", "fileindex", "volume", "ctim", "change", "mtim", "lastwrite", "creation", "mode", "nlink", "uid", "gid"} {
 		if strings.Contains(name, part) {
 			return true
 		}
@@ -278,7 +306,7 @@ func scalarValue(v reflect.Value) (string, bool) {
 			}
 		}
 		var parts []string
-		for i := 0; i < v.NumField(); i++ {
+		for i := range v.NumField() {
 			if value, ok := scalarValue(v.Field(i)); ok {
 				parts = append(parts, value)
 			}
@@ -311,10 +339,7 @@ var mutationLocks [lockStripes]sync.Mutex
 
 // Lock serializes mutations of one normalized target within this host process.
 func Lock(target Target) func() {
-	sum := sha256.Sum256([]byte(target.Route + "\x00" + target.Key))
-	index := (uint16(sum[0])<<8 | uint16(sum[1])) % lockStripes
-	mutationLocks[index].Lock()
-	return mutationLocks[index].Unlock
+	return LockMany(target)
 }
 
 // LockMany acquires unique striped locks in stable order.
@@ -322,11 +347,15 @@ func LockMany(targets ...Target) func() {
 	indices := make([]int, 0, len(targets))
 	seen := make(map[int]struct{}, len(targets))
 	for _, target := range targets {
-		sum := sha256.Sum256([]byte(target.Route + "\x00" + target.Key))
-		index := int((uint16(sum[0])<<8 | uint16(sum[1])) % lockStripes)
-		if _, ok := seen[index]; !ok {
-			seen[index] = struct{}{}
-			indices = append(indices, index)
+		// Replacement changes the inode. Keep a stable path lock as well as
+		// the native identity lock, so new arrivals cannot bypass old waiters.
+		for _, key := range []string{target.Key, "path:" + target.Path} {
+			sum := sha256.Sum256([]byte(target.Route + "\x00" + key))
+			index := int((uint16(sum[0])<<8 | uint16(sum[1])) % lockStripes)
+			if _, ok := seen[index]; !ok {
+				seen[index] = struct{}{}
+				indices = append(indices, index)
+			}
 		}
 	}
 	sort.Ints(indices)
@@ -334,8 +363,8 @@ func LockMany(targets ...Target) func() {
 		mutationLocks[index].Lock()
 	}
 	return func() {
-		for i := len(indices) - 1; i >= 0; i-- {
-			mutationLocks[indices[i]].Unlock()
+		for _, index := range slices.Backward(indices) {
+			mutationLocks[index].Unlock()
 		}
 	}
 }

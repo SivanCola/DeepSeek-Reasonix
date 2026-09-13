@@ -35,7 +35,7 @@ func overlayObservationTarget(overlay FileOverlay, path string) fileops.Target {
 // overlay contract is text-only, so routing GBK or UTF-16 through it would
 // rewrite the file as UTF-8.
 func readEditSource(ctx context.Context, overlay FileOverlay, path string) (source editSource, readErr error) {
-	id, err := diskIdentity(path)
+	data, id, err := readDiskIdentity(path)
 	if err != nil {
 		return editSource{}, err
 	}
@@ -47,10 +47,8 @@ func readEditSource(ctx context.Context, overlay FileOverlay, path string) (sour
 		}
 		return editSource{enc: fileenc.UTF8, id: id}, &os.PathError{Op: "read", Path: path, Err: os.ErrNotExist}
 	}
-	content, enc, err := readFileEncoded(path)
-	if err != nil {
-		return editSource{}, err
-	}
+	enc, _ := fileenc.Detect(data)
+	content := string(fileenc.Decode(data, enc))
 	if overlay != nil && enc == fileenc.UTF8 && filepath.IsAbs(path) {
 		if buffered, ok := overlay.ReadTextFile(ctx, path); ok {
 			return editSource{content: buffered, enc: enc, overlay: true, id: overlayIdentity(buffered)}, nil
@@ -72,15 +70,7 @@ func (s editSource) observation(overlay FileOverlay, path string) (fileops.Targe
 	if s.overlay {
 		return overlayObservationTarget(overlay, path), fileops.OverlayVersion(s.content), nil
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fileops.DiskTarget(path, nil), "", err
-		}
-		return fileops.Target{}, "", err
-	}
-	target, version := fileops.DiskSnapshot(path, info)
-	return target, version, nil
+	return s.id.target, s.id.version, nil
 }
 
 func (s editSource) requireObserved(ctx context.Context, overlay FileOverlay, path string) error {

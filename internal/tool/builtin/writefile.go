@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"reasonix/internal/fileops"
+	"reasonix/internal/fileutil"
 	fileenc "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/sandbox"
 	"reasonix/internal/tool"
@@ -77,6 +78,9 @@ func (w writeFile) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if rerr != nil && !os.IsNotExist(rerr) {
 		return "", rerr
 	}
+	if rerr != nil && fileops.FromContext(ctx).Get(fileops.DiskTarget(p.Path, nil)).Kind == fileops.Present {
+		return "", &tool.OperationError{Diagnostic: tool.OperationDiagnostic{Code: tool.FSStaleVersion, Path: p.Path, Recovery: "the observed file was removed; read its current state before creating it again"}, Cause: ErrFileChanged}
+	}
 	if rerr == nil {
 		if err := src.requireObserved(ctx, w.overlay, p.Path); err != nil {
 			return "", err
@@ -91,7 +95,7 @@ func (w writeFile) Execute(ctx context.Context, args json.RawMessage) (string, e
 	// The host overlay applies the write to the editor buffer and the file in
 	// one step. Text-only, so it handles plain UTF-8 targets (and new files);
 	// non-UTF-8 files stay on the local encoding-preserving path below.
-	if w.overlay != nil && filepath.IsAbs(p.Path) && (rerr != nil || src.enc == fileenc.UTF8) {
+	if w.overlay != nil && filepath.IsAbs(p.Path) && (rerr != nil || src.overlay) {
 		if err := src.recordWrite(ctx, p.Path, p.Content, "overlay", w.overlay); err != nil {
 			return "", err
 		}
@@ -109,19 +113,17 @@ func (w writeFile) Execute(ctx context.Context, args json.RawMessage) (string, e
 			fileops.FromContext(ctx).ObservePresent(overlayObservationTarget(w.overlay, p.Path), fileops.OverlayVersion(p.Content))
 			return fmt.Sprintf("wrote %d bytes to %s", len(p.Content), p.Path), nil
 		}
-		fileops.FromContext(ctx).Forget(overlayObservationTarget(w.overlay, p.Path))
-		return "", fmt.Errorf("write outcome unknown: original overlay did not confirm the write")
+		if src.overlay {
+			fileops.FromContext(ctx).Forget(overlayObservationTarget(w.overlay, p.Path))
+			return "", fmt.Errorf("write outcome unknown: original overlay did not confirm the write")
+		}
+		// A new target rejected before entry by the transport stays a local create.
 	}
 	if err := src.recordWrite(ctx, p.Path, p.Content, "disk", w.overlay); err != nil {
 		return "", err
 	}
 	if err := src.assertUnchanged(ctx, w.overlay, p.Path); err != nil {
 		return "", err
-	}
-	if dir := filepath.Dir(p.Path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", fmt.Errorf("mkdir %s: %w", dir, err)
-		}
 	}
 	hadPrior := rerr == nil
 	var prior []byte
@@ -148,21 +150,7 @@ func (w writeFile) Execute(ctx context.Context, args json.RawMessage) (string, e
 }
 
 func createFileEncoded(path, content string, enc fileenc.Kind) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return err
-	}
-	data := fileenc.Encode(content, enc)
-	_, writeErr := f.Write(data)
-	closeErr := f.Close()
-	if writeErr != nil {
-		_ = os.Remove(path)
-		return writeErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return nil
+	return fileutil.AtomicCreateFile(path, fileenc.Encode(content, enc), 0o644)
 }
 
 // BindFileWriteReceipt returns t with a per-runtime write receipt callback when
