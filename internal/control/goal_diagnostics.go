@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	goaldomain "reasonix/internal/goal"
+	"reasonix/internal/secrets"
 	"reasonix/internal/sessionv3"
 )
 
@@ -24,16 +23,18 @@ type GoalDiagnosticMetadata struct {
 }
 
 type goalDiagnosticExport struct {
-	SchemaVersion     int                        `json:"schemaVersion"`
-	ExportedAt        time.Time                  `json:"exportedAt"`
-	Metadata          GoalDiagnosticMetadata     `json:"metadata"`
-	Runtime           sessionv3.RuntimeSnapshot  `json:"runtime"`
-	Observation       any                        `json:"observation"`
-	AcceptedThrough   uint64                     `json:"acceptedThrough"`
-	DurableThrough    uint64                     `json:"durableThrough"`
-	Commits           []sessionv3.Commit         `json:"commits"`
-	ActivationChanges []goalDiagnosticTransition `json:"activationChanges"`
-	Unavailable       []string                   `json:"unavailable"`
+	SchemaVersion     int                         `json:"schemaVersion"`
+	ExportedAt        time.Time                   `json:"exportedAt"`
+	Metadata          GoalDiagnosticMetadata      `json:"metadata"`
+	Runtime           sessionv3.RuntimeSnapshot   `json:"runtime"`
+	Observation       any                         `json:"observation"`
+	AcceptedThrough   uint64                      `json:"acceptedThrough"`
+	DurableThrough    uint64                      `json:"durableThrough"`
+	PersistenceStatus sessionv3.PersistenceStatus `json:"persistenceStatus"`
+	PersistenceError  string                      `json:"persistenceError,omitempty"`
+	Commits           []sessionv3.Commit          `json:"commits"`
+	ActivationChanges []goalDiagnosticTransition  `json:"activationChanges"`
+	Unavailable       []string                    `json:"unavailable"`
 }
 
 type goalDiagnosticTransition struct {
@@ -44,12 +45,13 @@ type goalDiagnosticTransition struct {
 	Phase         goaldomain.Phase      `json:"phase,omitempty"`
 	Activation    goaldomain.Activation `json:"activation"`
 	RoundsStarted uint64                `json:"roundsStarted,omitempty"`
+	Inferred      bool                  `json:"inferred"`
 }
 
-// ExportGoalDiagnostics reads the authoritative v3 event log after a Flush
-// checkpoint. The returned JSON includes complete recorded tool payloads and
-// explicit accepted/durable sequences; it never derives state from the
-// frontend's currently loaded transcript window.
+// ExportGoalDiagnostics reads the authoritative accepted v3 event prefix and
+// attempts a durability checkpoint first. A failed Flush is evidence to export,
+// not a reason to hide the events and persistence status needed to diagnose it.
+// Credential-like material is redacted at this explicit diagnostic boundary.
 func (c *Controller) ExportGoalDiagnostics(ctx context.Context, metadata GoalDiagnosticMetadata) ([]byte, error) {
 	if c == nil {
 		return nil, sessionv3.ErrSessionNotRunning
@@ -58,18 +60,13 @@ func (c *Controller) ExportGoalDiagnostics(ctx context.Context, metadata GoalDia
 	if !exclusive || runtime == nil {
 		return nil, errors.New("goal diagnostics require a linear v3 session")
 	}
-	temporaryRoot, err := os.MkdirTemp("", "reasonix-goal-diagnostics-")
-	if err != nil {
-		return nil, err
+	flushErr := error(nil)
+	if _, err := runtime.Session().Flush(ctx); err != nil {
+		flushErr = err
 	}
-	defer os.RemoveAll(temporaryRoot)
-	frozen := filepath.Join(temporaryRoot, "session")
-	// Store.Export owns the commit and drain boundaries around its Flush, so the
-	// diagnostic never pairs a manifest from one prefix with events from another.
-	if err := runtime.Session().Export(ctx, frozen); err != nil {
-		return nil, err
-	}
-	commits, err := sessionv3.Replay(frozen, nil)
+	runtimeSnapshot := runtime.StateSnapshot()
+	runtimeSnapshot.Session.PersistenceError = secrets.RedactCredentials(runtimeSnapshot.Session.PersistenceError)
+	commits, err := acceptedGoalDiagnosticCommits(ctx, runtime.Session(), runtimeSnapshot.Session.EventSequence)
 	if err != nil {
 		return nil, err
 	}
@@ -77,23 +74,61 @@ func (c *Controller) ExportGoalDiagnostics(ctx context.Context, metadata GoalDia
 		metadata.Capabilities = []string{}
 	}
 	fillGoalDiagnosticBuildMetadata(&metadata)
-	through := uint64(0)
-	if len(commits) > 0 {
-		through = commits[len(commits)-1].LastSequence()
+	unavailable := []string{
+		"activation transitions are inferred from durable Goal events; process-local activation history before export is unavailable",
 	}
+	if flushErr != nil {
+		unavailable = append(unavailable, "durability checkpoint failed: "+secrets.RedactError(flushErr))
+	}
+	observation := c.RuntimeStateSnapshot()
+	observation.PersistenceErr = secrets.RedactCredentials(observation.PersistenceErr)
 	export := goalDiagnosticExport{
 		SchemaVersion:     1,
 		ExportedAt:        time.Now().UTC(),
 		Metadata:          metadata,
-		Runtime:           runtime.Snapshot(),
-		Observation:       c.RuntimeStateSnapshot(),
-		AcceptedThrough:   through,
-		DurableThrough:    through,
+		Runtime:           runtimeSnapshot,
+		Observation:       observation,
+		AcceptedThrough:   runtimeSnapshot.Session.EventSequence,
+		DurableThrough:    runtimeSnapshot.Session.DurableSequence,
+		PersistenceStatus: runtimeSnapshot.Session.PersistenceStatus,
+		PersistenceError:  runtimeSnapshot.Session.PersistenceError,
 		Commits:           commits,
 		ActivationChanges: goalActivationChanges(commits),
-		Unavailable:       []string{},
+		Unavailable:       unavailable,
 	}
-	return json.MarshalIndent(export, "", "  ")
+	payload, err := json.MarshalIndent(export, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	redacted := []byte(secrets.Redact(string(payload)))
+	if !json.Valid(redacted) {
+		return nil, errors.New("redacted goal diagnostics are not valid JSON")
+	}
+	return redacted, nil
+}
+
+func acceptedGoalDiagnosticCommits(ctx context.Context, session *sessionv3.Session, through uint64) ([]sessionv3.Commit, error) {
+	commits := make([]sessionv3.Commit, 0)
+	offset := uint64(0)
+	for {
+		page, err := session.AcceptedPage(ctx, offset, 1000)
+		if err != nil {
+			return nil, err
+		}
+		for _, commit := range page.Commits {
+			if commit.LastSequence() > through {
+				return commits, nil
+			}
+			commits = append(commits, commit)
+		}
+		if !page.Truncated {
+			return commits, nil
+		}
+		if page.Next <= offset {
+			return nil, errors.New("goal diagnostics accepted-page cursor did not advance")
+		}
+		offset = page.Next
+	}
 }
 
 func fillGoalDiagnosticBuildMetadata(metadata *GoalDiagnosticMetadata) {
@@ -136,7 +171,7 @@ func goalActivationChanges(commits []sessionv3.Commit) []goalDiagnosticTransitio
 			if json.Unmarshal(item.Payload, &document) != nil {
 				continue
 			}
-			transition := goalDiagnosticTransition{Sequence: item.Sequence, OperationID: commit.OperationID, Activation: goaldomain.ActivationDisarmed}
+			transition := goalDiagnosticTransition{Sequence: item.Sequence, OperationID: commit.OperationID, Activation: goaldomain.ActivationDisarmed, Inferred: true}
 			if document.Current != nil {
 				transition.GoalID = document.Current.ID
 				transition.Revision = document.Current.Revision
