@@ -1277,7 +1277,7 @@
       "kind": "command",
       "name": "GetRuntimeStateSnapshot",
       "detail": "() RuntimeStateProjection",
-      "location": "desktop/runtime_state.go:164",
+      "location": "desktop/runtime_state.go:206",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },

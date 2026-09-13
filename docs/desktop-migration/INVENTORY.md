@@ -181,7 +181,7 @@ Every entry carries one class: `keep-business` keeps its Go implementation and c
 | `GetProjectTreeRuntimeSnapshot` | `() ProjectTreeRuntimeSnapshot` | desktop/project_tree_runtime.go:90 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetProjectTreeSnapshot` | `() ProjectTreeSnapshot` | desktop/session_catalog.go:570 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetRecoveryLineage` | `(key ProjectTopicKey) RecoveryLineageView` | desktop/recovery_lineage.go:242 | keep-business (保留业务实现) | hostrpc desktop/invoke |
-| `GetRuntimeStateSnapshot` | `() RuntimeStateProjection` | desktop/runtime_state.go:164 | keep-business (保留业务实现) | hostrpc desktop/invoke |
+| `GetRuntimeStateSnapshot` | `() RuntimeStateProjection` | desktop/runtime_state.go:206 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetSessionCatalogStatus` | `() SessionCatalogStatus` | desktop/session_catalog_runtime.go:695 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetSessionVersionState` | `(key ProjectTopicKey) SessionVersionStateView` | desktop/recovery_lineage.go:54 | keep-business (保留业务实现) | hostrpc desktop/invoke |
 | `GetTask` | `(taskID string) (*taskmonitor.TaskSnapshot, error)` | desktop/app.go:11898 | keep-business (保留业务实现) | hostrpc desktop/invoke |
