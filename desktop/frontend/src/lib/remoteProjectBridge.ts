@@ -41,6 +41,8 @@ export interface RemoteProjectBindings {
   CompactRemoteTab(tabId: string, instructions: string): Promise<void>;
   ReplayRemoteTabPrompts(tabId: string): Promise<unknown>;
   ForkRemoteTab(tabId: string, turn: number, name: string): Promise<void>;
+  ForkTargetsRemoteTab(tabId: string): Promise<import("../generated/desktopContract.generated").ForkTargetSetView>;
+  CreateForkRemoteTab(tabId: string, turnID: string, operationID: string): Promise<import("../generated/desktopContract.generated").ForkCreationView>;
   SummarizeRemoteTab(tabId: string, turn: number, mode: string): Promise<void>;
   ForgetRemoteTab(tabId: string, name: string): Promise<void>;
   RemoteTabBranches(tabId: string): Promise<unknown>;

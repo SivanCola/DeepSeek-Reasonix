@@ -341,7 +341,7 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
             onRetryHistory={() => runtime.sessionActions.retrySessionHistory(activeTabId)}
             commands={{
               onPrompt: session.transcript.handleTranscriptPrompt,
-              onFork: (turn) => session.sessionUndo.handleMessageAction(turn, "fork"),
+              onFork: (turnId) => session.sessionUndo.handleForkTurn(turnId),
               onLoadOlderHistory: session.transcript.handleLoadOlderHistory,
               onSurfacePaintReady: session.transcript.handleSurfacePaintReady,
             }}

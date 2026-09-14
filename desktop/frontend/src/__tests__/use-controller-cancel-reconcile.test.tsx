@@ -133,6 +133,7 @@ const desktopStub = installDesktopHostStub(({
         checkpointLoads += 1;
         return [{ turn: 0, prompt: "hello", files: [], time: Date.now(), canConversation: true }];
       },
+      ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
       HistoryForTab: async () => [],
       HistorySliceForTab: async (tabID: string, req: HistorySliceRequest) => {
         historyLoads += 1;

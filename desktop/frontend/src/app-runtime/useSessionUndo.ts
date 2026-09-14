@@ -18,6 +18,7 @@ export type SessionUndoInput = {
   ports: {
     rewindForTab(tabId: string, turn: number, scope: string): Promise<boolean>;
     rewindForTabDetailed(tabId: string, turn: number, scope: string): Promise<RewindResultView>;
+    forkTurnForTab(tabId: string, turnId: string): Promise<boolean>;
     refreshTabMetas(): void;
     undoRewindForTab(tabId: string, transactionId: string): Promise<boolean>;
     sendToTab(tabId: string, display: string, submit: string, original: string): Promise<void>;
@@ -77,6 +78,22 @@ export function useSessionUndo(input: SessionUndoInput) {
 
   const rewindState = activeTabId ? rewindStatesByTab[activeTabId] ?? null : null;
   const rewindCommitting = Boolean(activeTabId && rewindCommittingByTab[activeTabId]);
+
+  /**
+   * Forks one persisted turn of the active tab into an independent child
+   * session. Unlike a rewind it never touches the source, so neither the rewind
+   * banner nor a read-only source blocks it: the child is written from the
+   * source, never into it.
+   */
+  const handleForkTurn = useCommittedCommand((turnId: string) => {
+    const sourceTabId = activeTabId;
+    if (!sourceTabId || !turnId || !input.controllerReady || input.hydratePlaceholderActive) return;
+    void ports.forkTurnForTab(sourceTabId, turnId).then((ok) => {
+      if (!ok) return;
+      ports.refreshTabMetas();
+      ports.refreshProject();
+    });
+  });
 
   const handleMessageAction = useCommittedCommand((turn: number, scope: string) => {
     const sourceTabId = activeTabId;
@@ -239,6 +256,7 @@ export function useSessionUndo(input: SessionUndoInput) {
     bumpRewindSignal,
     handleSessionRevertCommitted,
     handleMessageAction,
+    handleForkTurn,
     handleUndoRewind,
     handleEditPrompt,
   };

@@ -1,0 +1,104 @@
+// Fork eligibility comes from the host's persisted turn records, never from
+// checkpoints: a checkpoint knows a message count, while a turn record proves an
+// atomic commit boundary. One transcript turn maps to its boundary through the
+// assistant message identity, so live completion, history paging, and cold
+// restore all resolve the same target.
+
+import type { ForkCreationView, ForkTargetSetView, ForkTargetView } from "../generated/desktopContract.generated";
+import { t, type DictKey } from "./i18n";
+
+export type { ForkTargetSetView, ForkTargetView };
+
+/** The create-only fork commands the host binds per surface: local tabs and remote ones. */
+export interface ForkTargetsBindings {
+  ForkTargetsForTab(tabID: string): Promise<ForkTargetSetView>;
+  CreateForkForTab(tabID: string, turnID: string, operationID: string): Promise<ForkCreationView>;
+}
+
+/**
+ * Why one transcript turn's fork entry offers no fork. Each state keeps its own
+ * explanation, because the collapsed "unavailable" it replaces could not tell a
+ * running turn from legacy history or from a surface that cannot create a child.
+ */
+export type ForkBlockReason = "loading" | "turn_open" | "unverifiable" | "read_only" | "unsupported" | "creating";
+
+const FORK_REASON_KEYS: Record<ForkBlockReason, DictKey> = {
+  loading: "chat.branchLoading",
+  turn_open: "chat.branchTurnOpen",
+  unverifiable: "chat.branchUnverifiable",
+  read_only: "chat.branchReadOnly",
+  unsupported: "chat.branchUnsupported",
+  creating: "chat.branchCreating",
+};
+
+/** The locale key explaining one block reason, shared by the tooltip and its screen-reader text. */
+export function forkReasonKey(reason: ForkBlockReason): DictKey {
+  return FORK_REASON_KEYS[reason];
+}
+
+/**
+ * The persisted message identity a transcript item key names, or undefined when
+ * the key carries none. Assistant and user items are keyed `m:<messageId>`;
+ * history entries without a message id keep a positional key that names no
+ * durable message, so no boundary can be resolved from it.
+ */
+export function forkAnswerMessageId(itemKey: string | undefined): string | undefined {
+  return itemKey?.startsWith("m:") ? itemKey.slice(2) : undefined;
+}
+
+/**
+ * The persisted boundary for one turn's answer. Identity is the only match: an
+ * array position or a page offset moves to another turn as soon as history is
+ * prepended or a page is reloaded.
+ */
+export function forkTargetForAnswer(set: ForkTargetSetView | undefined, answerKey: string | undefined): ForkTargetView | undefined {
+  const messageId = forkAnswerMessageId(answerKey);
+  if (!messageId || !set) return undefined;
+  return set.targets.find((target) => target.messageId === messageId);
+}
+
+/**
+ * The refusal one target carries, or null when it may start a child. A boundary
+ * the host could not prove and one it refused as unsafe both read as
+ * unverifiable to the user: neither offers a cut.
+ */
+export function forkTargetReason(target: ForkTargetView): ForkBlockReason | null {
+  if (target.available) return null;
+  return target.reason === "turn_open" ? "turn_open" : "unverifiable";
+}
+
+/**
+ * The block reason for one tail node, or null when its target may fork. An
+ * unmatched answer means the source proves boundaries but holds none for this
+ * message: the open turn before its reply exists, or a turn that committed no
+ * reply at all.
+ */
+export function forkBlockReason(input: {
+  target: ForkTargetView | undefined;
+  loaded: boolean;
+  verifiable: boolean;
+  blocked: ForkBlockReason | null;
+  latest: boolean;
+}): ForkBlockReason | null {
+  if (input.blocked) return input.blocked;
+  if (!input.loaded) return "loading";
+  if (!input.verifiable) return "unverifiable";
+  if (!input.target) return input.latest ? "turn_open" : "unverifiable";
+  return forkTargetReason(input.target);
+}
+
+// The host refuses a create with its own reason token inside an English message.
+// Matching the token keeps the user's explanation localized while any other
+// failure keeps the host's text as the actionable detail.
+const FORK_FAILURE_REASONS: Array<[token: string, reason: ForkBlockReason]> = [
+  ["turn_open", "turn_open"],
+  ["active_authority", "unverifiable"],
+  ["history_unverifiable", "unverifiable"],
+];
+
+/** The notice text for a refused create-fork request. */
+export function forkCreateFailureText(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error ?? "");
+  const reason = FORK_FAILURE_REASONS.find(([token]) => detail.includes(token))?.[1];
+  return reason ? t("chat.branchFailedDetail", { detail: t(forkReasonKey(reason)) }) : t("chat.branchFailedDetail", { detail });
+}
