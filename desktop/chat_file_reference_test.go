@@ -196,6 +196,7 @@ func TestChatFileReferenceAcceptsAuthorizedExternalFolder(t *testing.T) {
 		t.Fatalf("RegisterExternalFolderRef: %v", err)
 	}
 	app := NewApp()
+	t.Cleanup(func() { app.shutdown(context.Background()) })
 	tab := &WorkspaceTab{ID: "refs", WorkspaceRoot: root, Ctrl: ctrl}
 	app.tabs[tab.ID] = tab
 
@@ -212,6 +213,7 @@ func TestChatFileReferenceAcceptsAuthorizedExternalFolder(t *testing.T) {
 	}
 	// The same file becomes unreachable once the session stops authorizing it.
 	other := NewApp()
+	t.Cleanup(func() { other.shutdown(context.Background()) })
 	other.tabs[tab.ID] = &WorkspaceTab{ID: "refs", WorkspaceRoot: root}
 	if again := resolveOne(t, other, filepath.ToSlash(filepath.Join(external, "shared/dropped.svg"))); again.Status != "unavailable" {
 		t.Fatalf("resolution outlived its session authorization: %+v", again)
