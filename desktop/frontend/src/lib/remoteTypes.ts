@@ -30,6 +30,8 @@ export interface RemoteTabRefView {
 export interface RemoteTabMetaFields {
   remote?: RemoteTabRefView;
   remoteState?: RemoteTabStateValue;
+  /** Host-emitted: this tab's serve advertised session-fork-targets-v1. */
+  forkTargetsSupported?: boolean;
 }
 
 export interface RemoteProjectNodeFields {

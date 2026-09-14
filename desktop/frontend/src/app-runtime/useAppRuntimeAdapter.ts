@@ -65,6 +65,7 @@ export function useAppRuntimeAdapter() {
       rewindForTab: controller.rewindForTab,
       rewindForTabDetailed: controller.rewindForTabDetailed,
       undoRewindForTab: controller.undoRewindForTab,
+      forkTurnForTab: controller.forkTurnForTab,
     },
     workspace: {
       refreshMeta: controller.refreshMeta,

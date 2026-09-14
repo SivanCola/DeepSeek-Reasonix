@@ -7,6 +7,7 @@ import type { TabMeta } from "../lib/types";
 import type { State } from "../lib/useController";
 import type { RemoteSessionApi } from "../lib/useRemoteSession";
 import type { Translator } from "../lib/i18n";
+import type { ForkBlockReason } from "../lib/forkTargets";
 import type { SessionAvailability } from "../lib/sessionAvailability";
 
 const RemoteSessionSurface = lazy(() => import("../components/RemoteSessionSurface").then((module) => ({ default: module.RemoteSessionSurface })));
@@ -68,10 +69,15 @@ export type ChatPaneRegionProps = {
 export function ChatPaneRegion(props: ChatPaneRegionProps) {
   const { transitioning, t, transcript, commands } = props;
   const { state, rewind } = transcript;
-  const rewindDisabled = transcript.readOnly || !transcript.controllerReady || transcript.hydratePlaceholderActive
-    || rewind.stateActive || rewind.committing || state.running
-    || state.messageAction != null || state.approval != null || state.ask != null
-    || transcript.clearContextPending || transitioning;
+  // A fork entry reads persisted turn records, so it never waits for the session
+  // to stop running, and a read-only source still forks: the child is written
+  // from the source, never into it. It does wait for the surface it belongs to:
+  // while the transcript hydrates or the source identity is switching, the
+  // records on screen are not yet the ones a cut would address.
+  const forkBlocked: ForkBlockReason | null = state.forkCreating ? "creating"
+    : !transcript.controllerReady || transcript.transcriptHydrating || transcript.hydratePlaceholderActive || transitioning
+      ? "loading"
+      : null;
   const noticePreview = noticePreviewMockEnabled();
   if (props.remote && !(props.imDetail && !transitioning) && !noticePreview) {
     return <Suspense fallback={null}><RemoteSessionSurface tab={props.remote.tab} session={props.remote.session}
@@ -115,9 +121,8 @@ export function ChatPaneRegion(props: ChatPaneRegionProps) {
                 footerHeight={transcript.footerHeight}
                 onPrompt={commands.onPrompt}
                 onFork={commands.onFork}
-                checkpoints={state.checkpoints}
-                actionPending={state.messageAction != null}
-                rewindDisabled={rewindDisabled}
+                forkTargets={state.forkTargets}
+                forkBlocked={forkBlocked}
                 running={state.running || rewind.committing}
                 turnStartAt={state.turnStartAt}
                 hydrating={transcript.transcriptHydrating || (transitioning && !transcript.navigationDataReady)}

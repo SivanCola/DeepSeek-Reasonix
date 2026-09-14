@@ -80,10 +80,22 @@ export function RemoteSessionSurface({ tab, session, surfaceCommitToken, onSurfa
         loadingOlderHistory={session.transcript.historyOlderLoading}
         olderHistoryError={session.transcript.historyOlderError}
         onLoadOlderHistory={session.loadOlderHistory}
-        checkpoints={session.transcript.checkpoints}
         onPrompt={(display, submit = display) => runAction(() => session.submit(submit, display))}
-        onFork={(turn) => runAction(() => session.rewind(turn, "fork"))}
-        rewindDisabled={Boolean(tab.readOnly || session.running || !ready)}
+        forkTargets={session.transcript.forkTargets}
+        // The tab's advertised capability, not the target list, decides whether
+        // this serve can create a child at all: an empty list on a capable serve
+        // means no completed turn here, which its own reason explains.
+        forkBlocked={tab.forkTargetsSupported ? null : "unsupported"}
+        onFork={tab.forkTargetsSupported ? (target) => runAction(async () => {
+          const child = await session.forkTurn(target);
+          // The child session belongs to the serve, so its surface is opened
+          // here rather than adopted from a returned desktop tab. Desktop keeps
+          // the operation until navigation succeeds, allowing a later click to
+          // recover the same child after an unknown result.
+          if (!child) return;
+          const opened = await navigateRemote(tab.remote!, { sessionId: child.sessionId });
+          if (opened.status === "completed") await session.acknowledgeFork(child.operationId);
+        }) : undefined}
       />}
 
       {ready && approval ? (

@@ -17,8 +17,12 @@ type Projection struct {
 	TurnID            string
 	TurnStatus        event.TurnStatus
 	CurrentTurnStart  uint64
-	Turns             []TurnBoundary
-	Messages          []provider.Message
+	// CurrentTurnMessageID is the stable identity of the newest assistant
+	// message committed inside the open turn. It becomes the turn's final reply
+	// identity when the turn closes.
+	CurrentTurnMessageID string
+	Turns                []TurnBoundary
+	Messages             []provider.Message
 	// ModelMessages is the exact provider-visible projection. Canonical Messages
 	// remains the complete UI/history transcript; compaction replaces only this
 	// view and never deletes the underlying business history.
@@ -40,6 +44,18 @@ type TurnBoundary struct {
 	StartSequence uint64           `json:"startSequence"`
 	EndSequence   uint64           `json:"endSequence"`
 	Status        event.TurnStatus `json:"status"`
+	// BoundarySequence is the last sequence of the commit that closed this turn.
+	// A cut may only land here: a turn end and the state ending with it can share
+	// one commit, and a cut inside that commit inherits half an operation.
+	BoundarySequence uint64 `json:"boundarySequence"`
+	// Availability is fixed from the complete commit that closed the turn. It
+	// must not be recomputed from the latest projection: a later commit may
+	// resolve authority that the earlier fork prefix would still inherit.
+	Availability ForkAvailability `json:"availability"`
+	// MessageID is the stable transcript identity of the turn's final reply, empty
+	// when the turn committed none. Surfaces match turns to messages through this
+	// identity, never through an array position.
+	MessageID string `json:"messageId,omitempty"`
 }
 
 var ProjectionKinds = map[string]bool{
@@ -77,6 +93,7 @@ func applyProjectionCommit(projection *Projection, commit Commit) error {
 	if projection.ActiveTools == nil {
 		projection.ActiveTools = map[string]string{}
 	}
+	closedBefore := len(projection.Turns)
 	for _, ev := range commit.Events {
 		projection.CommittedSequence = ev.Sequence
 		var err error
@@ -130,6 +147,12 @@ func applyProjectionCommit(projection *Projection, commit Commit) error {
 			return err
 		}
 	}
+	// turn/end can be followed by more events in the same atomic commit. Only
+	// after the whole commit is projected do we know whether its cut leaves a
+	// turn, interaction, or tool authority open.
+	for index := closedBefore; index < len(projection.Turns); index++ {
+		projection.Turns[index].Availability = forkProjectionAvailability(*projection, projection.Turns[index].BoundarySequence)
+	}
 	return nil
 }
 
@@ -164,7 +187,22 @@ func projectMessageComplete(projection *Projection, commit Commit, ev Event) err
 	}
 	projection.Messages = append(projection.Messages, *body.Message)
 	projection.ModelMessages = append(projection.ModelMessages, provider.ModelMessages([]provider.Message{*body.Message})...)
+	projection.recordTurnReply(*body.Message)
 	return nil
+}
+
+// recordTurnReply keeps the open turn's final answer identity. A fork entry
+// belongs on the turn's answer, so a trailing tool call, a retried attempt, or a
+// host-generated protocol message must not take the anchor away from the text a
+// user actually reads.
+func (projection *Projection) recordTurnReply(message provider.Message) {
+	if projection.TurnID == "" || message.Role != provider.RoleAssistant || message.LocalOnly {
+		return
+	}
+	if strings.TrimSpace(message.RawContent) == "" && strings.TrimSpace(message.Content) == "" {
+		return
+	}
+	projection.CurrentTurnMessageID = message.ID
 }
 
 func projectMessageUpsert(projection *Projection, commit Commit, ev Event) error {
@@ -190,6 +228,7 @@ func projectMessageUpsert(projection *Projection, commit Commit, ev Event) error
 		// append case is retained for explicitly-created records.
 		projection.ModelMessages = append(projection.ModelMessages, visible[0])
 	}
+	projection.recordTurnReply(*body.Message)
 	return nil
 }
 
@@ -276,6 +315,7 @@ func projectTurnStart(projection *Projection, commit Commit, ev Event) error {
 	projection.TurnID = commit.TurnID
 	projection.TurnStatus = event.TurnInProgress
 	projection.CurrentTurnStart = ev.Sequence
+	projection.CurrentTurnMessageID = ""
 	projection.Todos, projection.TodoWritten = []event.Todo{}, false
 	projection.Recovery = nil
 	return nil
@@ -472,10 +512,13 @@ func projectTurnEnd(projection *Projection, commit Commit, ev Event) error {
 		projection.Turns = append(projection.Turns, TurnBoundary{
 			TurnID: projection.TurnID, StartSequence: projection.CurrentTurnStart,
 			EndSequence: ev.Sequence, Status: body.Status,
+			BoundarySequence: commit.LastSequence(),
+			MessageID:        projection.CurrentTurnMessageID,
 		})
 	}
 	projection.TurnID = ""
 	projection.CurrentTurnStart = 0
+	projection.CurrentTurnMessageID = ""
 	projection.TurnStatus = body.Status
 	return nil
 }

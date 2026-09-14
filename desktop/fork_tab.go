@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -114,7 +115,11 @@ func (a *App) forkForTabWithOptions(tabID string, turn int, isolateWorkspace boo
 			return ForkWorktreeResultView{}, a.rollbackUnusedForkWorktree(created, errors.Join(err, cleanupErr))
 		}
 	}
-	opened, err := a.openForkedSessionTabWithWorkspace(sourceTab, newPath, created.WorkspaceRoot)
+	locator := forkedSessionLocator{SessionPath: newPath}
+	if exclusiveV3 {
+		locator = forkedSessionLocator{SessionID: newPath}
+	}
+	opened, err := a.openForkedSessionTabWithWorkspace(sourceTab, locator, created.WorkspaceRoot)
 	result.Tab = opened.tab
 	if err != nil {
 		if opened.workspaceReferenced {
@@ -145,15 +150,39 @@ func (a *App) rollbackUnusedForkWorktree(created worktree.Result, cause error) e
 // The source tab keeps its controller and transcript. The fork becomes active
 // only while the source tab still owns focus.
 func (a *App) openForkedSessionTab(sourceTab *WorkspaceTab, newPath string) (TabMeta, error) {
-	opened, err := a.openForkedSessionTabWithWorkspace(sourceTab, newPath, "")
+	locator := forkedSessionLocator{SessionPath: newPath}
+	if identity, ok := sourceTab.Ctrl.(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
+		locator = forkedSessionLocator{SessionID: newPath}
+	}
+	opened, err := a.openForkedSessionTabWithWorkspace(sourceTab, locator, "")
 	return opened.tab, err
+}
+
+// forkedSessionLocator prevents an immutable v3 session id from entering the
+// legacy path catalog, where filepath.Dir("session-id") would become ".".
+type forkedSessionLocator struct {
+	SessionID   string
+	SessionPath string
+}
+
+func normalizeForkedSessionLocator(sourceTab *WorkspaceTab, locator forkedSessionLocator) (forkedSessionLocator, error) {
+	locator.SessionID = strings.TrimSpace(locator.SessionID)
+	locator.SessionPath = strings.TrimSpace(locator.SessionPath)
+	if sourceTab == nil || (locator.SessionID == "") == (locator.SessionPath == "") {
+		return forkedSessionLocator{}, fmt.Errorf("fork tab needs exactly one session id or session path")
+	}
+	if locator.SessionPath == "." || (locator.SessionPath != "" && filepath.Base(locator.SessionPath) == locator.SessionPath) {
+		return forkedSessionLocator{}, fmt.Errorf("fork tab needs a concrete session path")
+	}
+	return locator, nil
 }
 
 // openForkedSessionTabWithWorkspace attaches an already-written fork session to a new tab,
 // optionally overriding the workspace root (e.g. for isolated Git worktrees).
-func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, newPath string, workspaceRootOverride string) (forkedSessionTabOpen, error) {
-	if sourceTab == nil || strings.TrimSpace(newPath) == "" {
-		return forkedSessionTabOpen{}, fmt.Errorf("fork tab needs a source tab and session path")
+func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, locator forkedSessionLocator, workspaceRootOverride string) (forkedSessionTabOpen, error) {
+	locator, err := normalizeForkedSessionLocator(sourceTab, locator)
+	if err != nil {
+		return forkedSessionTabOpen{}, err
 	}
 	a.mu.RLock()
 	if a.tabs[sourceTab.ID] != sourceTab {
@@ -183,27 +212,27 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, newPath
 
 	topicID := newTopicID()
 	topicTitle := a.forkTopicTitle(sourceTitle)
-	titleRoot := workspaceRoot
-	if scope == "global" {
-		titleRoot = ""
-	}
-	if err := setTopicTitle(titleRoot, topicID, topicTitle); err != nil {
-		return forkedSessionTabOpen{}, err
-	}
 	exclusiveV3 := false
 	if identity, ok := sourceTab.Ctrl.(control.IdentityLifecycle); ok {
 		exclusiveV3 = identity.UsesExclusiveSession()
 	}
+	titleRoot := workspaceRoot
+	if scope == "global" {
+		titleRoot = ""
+	}
 	if !exclusiveV3 {
-		m, _ := agent.EnsureBranchMeta(newPath)
+		if err := setTopicTitle(titleRoot, topicID, topicTitle); err != nil {
+			return forkedSessionTabOpen{}, err
+		}
+		m, _ := agent.EnsureBranchMeta(locator.SessionPath)
 		m.Scope = scope
 		m.WorkspaceRoot = workspaceRoot
 		m.TopicID = topicID
 		m.TopicTitle = topicTitle
-		if err := agent.SaveBranchMeta(newPath, m); err != nil {
+		if err := agent.SaveBranchMeta(locator.SessionPath, m); err != nil {
 			return forkedSessionTabOpen{}, err
 		}
-		invalidateTopicSessionIndexForPath(newPath)
+		invalidateTopicSessionIndexForPath(locator.SessionPath)
 	}
 	opened := forkedSessionTabOpen{workspaceReferenced: strings.TrimSpace(workspaceRootOverride) != ""}
 
@@ -224,9 +253,10 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, newPath
 		return opened, nil
 	}
 	newTabID := a.newUniqueTabIDLocked()
-	childPath, childID := newPath, ""
-	if exclusiveV3 {
-		childPath, childID = "", newPath
+	childPath, childID := locator.SessionPath, locator.SessionID
+	if exclusiveV3 != (childID != "") {
+		a.mu.Unlock()
+		return opened, fmt.Errorf("fork tab locator does not match the source session engine")
 	}
 	tab := &WorkspaceTab{
 		ID:               newTabID,
@@ -260,7 +290,11 @@ func (a *App) openForkedSessionTabWithWorkspace(sourceTab *WorkspaceTab, newPath
 			saveWorkspace(workspaceRoot)
 		}
 	}
-	a.emitProjectTreeChangedForSessionDirs(sessionDirectoryForPath(newPath))
+	if childPath != "" {
+		a.emitProjectTreeChangedForSessionDirs(sessionDirectoryForPath(childPath))
+	} else {
+		a.emitProjectTreeChangedEvent()
+	}
 	a.startTabControllerBuild(tab)
 	opened.tab = meta
 	return opened, nil

@@ -161,7 +161,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   const {
     recoverDeliveryToTab, approveForTab, isPromptCurrentForTab, resolvePlanDecisionForTab, resolveRecoveryForTab,
     answerQuestionForTab, answerMCPInteractionForTab, dismissExtensionForm, drainExtensionNotifications,
-    clearSession, newSession, loadOlderHistory, rewindForTab, rewindForTabDetailed, undoRewindForTab,
+    clearSession, newSession, loadOlderHistory, rewindForTab, rewindForTabDetailed, undoRewindForTab, forkTurnForTab,
     listSessions, openChannelSession, resumeSession,
   } = runtime.sessionActions;
   const {
@@ -394,7 +394,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
     controllerReady, running: state.running, messageActionOpen: state.messageAction != null,
     approvalOpen: state.approval != null, askOpen: state.ask != null, clearContextPending,
     ports: {
-      rewindForTab, rewindForTabDetailed,
+      rewindForTab, rewindForTabDetailed, forkTurnForTab,
       refreshTabMetas: () => void refreshTabMetas(undefined, { afterMutation: true }),
       undoRewindForTab, sendToTab,
       composeInsert: replaceComposerInsert,
@@ -404,7 +404,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
   });
   const {
     rewindState, rewindCommitting, rewindSignal, setRewindStateForTab,
-    handleSessionRevertCommitted, handleMessageAction, handleUndoRewind, handleEditPrompt,
+    handleSessionRevertCommitted, handleMessageAction, handleForkTurn, handleUndoRewind, handleEditPrompt,
   } = sessionUndoCommands;
   const clearSubmissionUndo = useCommittedCommand((tab: string) => setRewindStateForTab(tab, null));
   const { commitThenSend, submit: submitComposerTurn, applyGoalForTab, applyGoal, sendRevision } = useSessionSubmission({
@@ -709,7 +709,7 @@ export function useAppSessionComposition(input: AppSessionCompositionInput) {
       handleInitialRemoteHosts, handleInitialRemoteStatuses,
     },
     sessionUndo: {
-      rewindState, rewindCommitting, rewindSignal, handleSessionRevertCommitted, handleMessageAction, handleUndoRewind, handleEditPrompt,
+      rewindState, rewindCommitting, rewindSignal, handleSessionRevertCommitted, handleMessageAction, handleForkTurn, handleUndoRewind, handleEditPrompt,
     },
     todoPanel: { showTodos, scopedTodoBatch, todos, dismissTodos, handleTodoContinue },
     delivery: { handleDeliveryContinue },

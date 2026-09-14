@@ -4,7 +4,7 @@ import { ChatSource, type ChatNode } from "../lib/chatViewSource";
 import type { ChatContentLoader } from "../lib/chatContentLoader";
 import type { ChatScrollController } from "../lib/chatScrollController";
 import { reconcileMountedOrder, revealEarlierMountedOrder, type ChatMountedOrder } from "../lib/chatMountedOrder";
-import type { CheckpointMeta } from "../lib/types";
+import { forkBlockReason, forkReasonKey, type ForkBlockReason, type ForkTargetView } from "../lib/forkTargets";
 import { useT } from "../lib/i18n";
 import { AssistantMessage, UserMessage } from "./Message";
 import { CopyButton } from "./CopyButton";
@@ -28,12 +28,27 @@ export function useChatNode(source: ChatSource, key: string) {
   const snapshot = useCallback(() => source.getNodeSnapshot(key), [source, key]);
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
+/**
+ * The transcript's fork affordance. Every question about one turn is answered
+ * from the host's persisted turn records, so the entry never depends on
+ * checkpoints, on whether the session is running, or on a page offset.
+ */
+export type ChatForkAction = {
+  /** Persisted boundary of a tail's answer message, undefined when the source keeps none. */
+  targetFor: (answerKey: string | undefined) => ForkTargetView | undefined;
+  /** False until this session's target set arrives; every entry reads as loading. */
+  loaded: boolean;
+  /** True when the source keeps persisted turn records at all. */
+  verifiable: boolean;
+  /** Non-null replaces every entry's own state, e.g. a create request already in flight. */
+  blocked: ForkBlockReason | null;
+  create: (target: ForkTargetView) => void;
+};
 export type ChatActions = {
   openDetails: (key: string, trigger: HTMLElement) => void;
-  fork?: (turn: number) => void;
+  /** Absent on surfaces that cannot fork at all; those render no branch entry. */
+  fork?: ChatForkAction;
   recover: (id: string) => void;
-  forkDisabled: boolean;
-  checkpoints: readonly CheckpointMeta[];
 };
 type SeatProps = { source: ChatSource; nodeKey: string; loader: ChatContentLoader; scroll: ChatScrollController; actions: ChatActions; tabId?: string; hostId?: string };
 
@@ -209,8 +224,12 @@ function ChatTurnTail({ node, source, actions, loader, tabId, hostId }: { node: 
   const reasonId = useId();
   const hasAnswer = answer?.kind === "assistant" && Boolean(answer.item.text.trim());
   if (!hasAnswer && !node.presentedFiles.length && !node.modifiedFiles.length) return null;
-  const checkpoint = actions.checkpoints.find(checkpoint => checkpoint.turn === node.turn);
-  const unavailable = actions.forkDisabled || !checkpoint?.canConversation || node.turn == null || !actions.fork;
+  const fork = actions.fork;
+  // A tail with no answer has no message identity, so it can name no boundary.
+  const target = hasAnswer ? fork?.targetFor(node.answerKey) : undefined;
+  const reason = fork ? forkBlockReason({ target, loaded: fork.loaded, verifiable: fork.verifiable, blocked: fork.blocked, latest: node.latest }) : null;
+  const reasonText = reason ? t(forkReasonKey(reason)) : "";
+  const create = fork?.create;
   return <div className="chat-turn-tail">
     {node.presentedFiles.length > 0 && <Suspense fallback={null}>
       <PresentedFiles files={node.presentedFiles} tabId={tabId} hostId={hostId} />
@@ -224,18 +243,18 @@ function ChatTurnTail({ node, source, actions, loader, tabId, hostId }: { node: 
     if (current?.kind !== "assistant" || (current.item !== answer.item && current.item.text !== text)) throw new Error("Answer changed; retry");
     return text;
   }} label={t("msg.copy")} showInlineLabel={false} className="chat-action-icon" />
-    <Tooltip label={unavailable ? t("chat.branchUnavailable") : t("chat.branch")} side="bottom">
+    {fork && <Tooltip label={reason ? reasonText : t("chat.branch")} side="bottom">
       <button
         type="button"
         className="chat-action-icon"
         aria-label={t("chat.branch")}
-        aria-disabled={unavailable || undefined}
-        aria-describedby={unavailable ? reasonId : undefined}
-        data-unavailable={unavailable || undefined}
-        onClick={unavailable ? undefined : () => actions.fork?.(node.turn!)}
+        aria-disabled={reason ? true : undefined}
+        aria-describedby={reason ? reasonId : undefined}
+        data-unavailable={reason ? true : undefined}
+        onClick={reason || !target || !create ? undefined : () => create(target)}
       ><GitBranch aria-hidden="true" /></button>
-    </Tooltip>
-    {unavailable && <span id={reasonId} className="sr-only">{t("chat.branchUnavailable")}</span>}
+    </Tooltip>}
+    {reason && <span id={reasonId} className="sr-only">{reasonText}</span>}
     {answer!.item.turnUsage && answer!.item.turnUsage.totalTokens > 0 && <TurnUsagePanel usage={answer!.item.turnUsage} />}
     {(answer!.item.turnDurationMs ?? answer!.item.workDurationMs) != null && <TurnTimePanel
       durationMs={(answer!.item.turnDurationMs ?? answer!.item.workDurationMs)!}

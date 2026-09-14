@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,11 @@ import (
 //
 // Fork is a Session operation because the inherited prefix is business state:
 // the physical layer only writes the child bytes.
+//
+// A read-only session is a legitimate source. The child is built from the
+// parent's durable prefix and no byte is ever written back, so forking a
+// session that another process owns, or one read cold from disk, must not
+// require the parent's writer lease.
 func (s *Session) Fork(ctx context.Context, childDir, childID string, throughSequence uint64) (Manifest, error) {
 	if s == nil {
 		return Manifest{}, fmt.Errorf("session: nil parent session")
@@ -27,11 +33,12 @@ func (s *Session) Fork(ctx context.Context, childDir, childID string, throughSeq
 	if err := ctx.Err(); err != nil {
 		return Manifest{}, err
 	}
-	if s.readOnly {
-		return Manifest{}, ErrReadOnly
-	}
-	if _, err := s.Flush(ctx); err != nil {
-		return Manifest{}, fmt.Errorf("flush parent before fork: %w", err)
+	if s.WritableHandle() != nil {
+		if _, err := s.Flush(ctx); err != nil {
+			return Manifest{}, fmt.Errorf("flush parent before fork: %w", err)
+		}
+	} else if !s.cold() {
+		return Manifest{}, fmt.Errorf("session: fork needs a durable parent log")
 	}
 	var prefix []Commit
 	var cursor uint64
@@ -58,24 +65,63 @@ func (s *Session) Fork(ctx context.Context, childDir, childID string, throughSeq
 		cursor = page.Next
 	}
 	s.mu.Lock()
-	parentDir, parentID := s.dir(), s.id
+	parentDir, parentID := s.dirLocked(), s.id
 	s.mu.Unlock()
 	if throughSequence > 0 && (len(prefix) == 0 || prefix[len(prefix)-1].LastSequence() != throughSequence) {
-		return Manifest{}, fmt.Errorf("session: fork cut %d is not an atomic batch boundary", throughSequence)
+		return Manifest{}, fmt.Errorf("%w: cut %d", ErrForkBoundaryNotAtomic, throughSequence)
 	}
 	return writeForkChild(ctx, parentDir, parentID, prefix, childDir, childID, throughSequence)
 }
 
+// directoryHandle is implemented by physical handles that know their own
+// directory. The leased writer and the cold reader both expose it, so a fork
+// can locate the parent's owned files without taking the writer lease.
+type directoryHandle interface{ Dir() string }
+
+// cold reports whether this session reads its durable prefix through a cold
+// handle rather than a leased writer.
+func (s *Session) cold() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.coldHandle != nil
+}
+
 // dir reports the physical directory backing this session, if any.
 func (s *Session) dir() string {
-	if s == nil || s.binding == nil {
+	if s == nil {
 		return ""
 	}
-	if store, ok := s.binding.handle.(*Store); ok {
-		return store.Dir()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dirLocked()
+}
+
+// dirLocked reports the physical directory backing this session, if any. The
+// caller holds s.mu.
+func (s *Session) dirLocked() string {
+	handle := s.coldHandle
+	if s.binding != nil {
+		handle = s.binding.handle
+	}
+	if directory, ok := handle.(directoryHandle); ok {
+		return directory.Dir()
 	}
 	return ""
 }
+
+// ErrForkActiveAuthority reports a cut whose prefix still carries in-flight
+// execution state. The turn ended, but the commit that closed it also opened
+// authority a child must not inherit; the caller reports the reason instead of
+// trimming the commit.
+var ErrForkActiveAuthority = errors.New("session: fork boundary retains active runtime authority")
+
+// ErrForkBoundaryNotAtomic reports a cut that lands inside a logical commit.
+// The caller reports the boundary as unverifiable rather than trimming the
+// commit to fit.
+var ErrForkBoundaryNotAtomic = errors.New("session: fork cut is not an atomic batch boundary")
 
 func writeForkChild(ctx context.Context, parentDir, parentID string, prefix []Commit, childDir, childID string, throughSequence uint64) (Manifest, error) {
 	childDir = filepath.Clean(strings.TrimSpace(childDir))
@@ -83,12 +129,17 @@ func writeForkChild(ctx context.Context, parentDir, parentID string, prefix []Co
 	if childDir == "." || childID == "" {
 		return Manifest{}, fmt.Errorf("session: child directory and id are required")
 	}
+	// filepath.Join("", "attachments") is a relative path, so an empty parent
+	// would copy unrelated directories instead of the parent's owned files.
+	if strings.TrimSpace(parentDir) == "" {
+		return Manifest{}, fmt.Errorf("session: fork requires the parent session directory")
+	}
 	projection, err := Project(prefix)
 	if err != nil {
 		return Manifest{}, err
 	}
-	if projection.TurnID != "" || len(projection.Interactions) != 0 {
-		return Manifest{}, fmt.Errorf("session: fork boundary retains active runtime authority")
+	if forkProjectionAvailability(projection, throughSequence) == ForkActiveAuthority {
+		return Manifest{}, ErrForkActiveAuthority
 	}
 
 	// Inherited events retain their stable IDs and sequences, while physical

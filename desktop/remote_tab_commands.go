@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -283,6 +284,40 @@ func (a *App) remoteTabPost(tabID, path string, body map[string]any) error {
 		cancel()
 		return err
 	}
+}
+
+// remoteTabPostJSON posts a command through the same capability gate, session
+// fence, and admission check as remoteTabPost, and additionally decodes the
+// reply. Commands that return a new identity need the body; remoteTabPost
+// discards it.
+func (a *App) remoteTabPostJSON(tabID, path string, body map[string]any, out any) error {
+	if err := a.requireRemoteExecutionProtocol(tabID); err != nil {
+		return err
+	}
+	client, base, expectedPath, err := a.remoteTabCommandTarget(tabID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := commandContext(a)
+	defer cancel()
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	url := serveURL(base, path)
+	resp, err := serveDoForSession(ctx, client, http.MethodPost, url, payload, expectedPath)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, serveSnapshotMaxBytes+1))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &serveHTTPStatusError{url: url, statusCode: resp.StatusCode, message: strings.TrimSpace(string(data))}
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("decode %s: %w", path, err)
+	}
+	return nil
 }
 
 func (a *App) remoteTabGet(tabID, path string) (json.RawMessage, error) {
