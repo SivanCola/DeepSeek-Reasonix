@@ -184,8 +184,9 @@ func (c *Controller) popNextPendingLocked() (queuedTurn, bool) {
 }
 
 func (c *Controller) queueTurnLocked(item queuedTurn) {
-	// Harness abort-to-idle latch: waking input that arrives after Stop is
-	// queued here and claimed once when the cancelled body converges.
+	// Harness wakeRequested: input that cannot join the current activity is
+	// claimed once when the body converges. Close clears this queue so a
+	// disposed session never starts a latched turn.
 	c.turns.pending = append(c.turns.pending, item)
 	c.turns.wake = true
 }

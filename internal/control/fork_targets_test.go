@@ -222,11 +222,11 @@ func TestCreateForkSessionWorksWhileTurnRunning(t *testing.T) {
 	// The harness expresses a live foreground turn the way the rotation tests
 	// do; no body runs, so the completed turn below stays committed.
 	c.mu.Lock()
-	c.running = true
+	c.turns.phase = session.RuntimeRunning
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
-		c.running = false
+		c.turns.phase = session.RuntimeIdle
 		c.mu.Unlock()
 	}()
 

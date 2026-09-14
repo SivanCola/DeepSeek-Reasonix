@@ -4517,11 +4517,8 @@ func TestRunGuardedPanicEmitsTurnDone(t *testing.T) {
 	}
 done:
 
-	c.mu.Lock()
-	running := c.bodyActiveLocked()
-	c.mu.Unlock()
-	if running {
-		t.Fatal("c.running should be false after panic recovery")
+	if c.Running() {
+		t.Fatal("controller still running after panic recovery")
 	}
 }
 

@@ -328,6 +328,40 @@ func TestOldControllerUnbindDoesNotClearNewGeneration(t *testing.T) {
 	waitIdleAdmission(t, second)
 }
 
+func TestCloseDropsLatchedWake(t *testing.T) {
+	done := make(chan event.Event, 2)
+	started := make(chan struct{})
+	exit := make(chan struct{})
+	nextStarted := make(chan struct{})
+	c := newOwnedTestController(t, Options{Sink: event.FuncSink(func(e event.Event) {
+		if e.Kind == event.TurnDone {
+			done <- e
+		}
+	})})
+	c.runGuarded(func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		<-exit
+		return ctx.Err()
+	})
+	<-started
+	c.CancelSession()
+	if got := c.runGuarded(func(context.Context) error {
+		close(nextStarted)
+		return nil
+	}); got != turnParked {
+		t.Fatalf("wake during abort = %v, want parked", got)
+	}
+	c.Close()
+	close(exit)
+	waitTurnDoneEvent(t, done)
+	select {
+	case <-nextStarted:
+		t.Fatal("close started a latched wake")
+	default:
+	}
+}
+
 func TestSessionOpenFailureStillFailsClosed(t *testing.T) {
 	blocked := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(blocked, []byte("block"), 0o600); err != nil {
