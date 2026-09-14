@@ -185,6 +185,7 @@ func TestCapturedRecoveryCallbackFollowsDetachedKeeper(t *testing.T) {
 	}
 	defer detached.Release()
 	replacement := control.New(control.Options{SessionPath: targetPath})
+	defer replacement.Close()
 	if err := leases.BindControllerAuthority(replacement); err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -23,6 +24,10 @@ func sessionDirectory(sessionPath string) string {
 	sessionPath = filepath.Clean(strings.TrimSpace(sessionPath))
 	if sessionPath == "." || sessionPath == "" {
 		return ""
+	}
+	// Windows spellings of one path must retain one shared writer identity.
+	if runtime.GOOS == "windows" {
+		sessionPath = strings.ToLower(sessionPath)
 	}
 	parent := filepath.Dir(sessionPath)
 	root := filepath.Join(parent, "sessions-v4")

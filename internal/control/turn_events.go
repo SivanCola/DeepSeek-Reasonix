@@ -494,6 +494,8 @@ func (c *Controller) rebindTurnEvents(sessionPath string) {
 		err = fmt.Errorf("%w: %w", turnevent.ErrTurnLedgerUnavailable, err)
 		slog.Warn("controller: open v3 session event store", "err", err, "session", agent.BranchID(sessionPath))
 		c.turnEvents.mu.Lock()
+		previousV3, previousRelease := c.turnEvents.v3, c.turnEvents.v3Release
+		previousLedger := c.turnEvents.ledger
 		c.turnEvents.ledger = nil
 		c.turnEvents.err = err
 		c.turnEvents.v3 = nil
@@ -501,6 +503,24 @@ func (c *Controller) rebindTurnEvents(sessionPath string) {
 		c.turnEvents.v3Release = nil
 		c.turnEvents.v3Err = err
 		c.turnEvents.mu.Unlock()
+		if previousLedger != nil {
+			if closeErr := previousLedger.Close(); closeErr != nil {
+				slog.Warn("controller: close ledger after failed rebind", "err", closeErr)
+			}
+		}
+		// Fail admission closed without losing the compatibility writer's
+		// cleanup owner. Service-backed runtimes remain host-owned.
+		if previousV3 != nil && !c.sessionEngineEnabled() {
+			var closeErr error
+			if previousRelease != nil {
+				closeErr = previousRelease(context.Background())
+			} else {
+				closeErr = previousV3.Close(context.Background())
+			}
+			if closeErr != nil {
+				slog.Warn("controller: close session after failed rebind", "err", closeErr)
+			}
+		}
 		return
 	}
 	c.turnEvents.mu.Lock()
