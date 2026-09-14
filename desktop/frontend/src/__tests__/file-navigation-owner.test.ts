@@ -85,7 +85,7 @@ const restoredOwner = new FileNavigationOwner({
   resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
   revealDock: () => DOCK,
 });
-restoredOwner.bindScope(scope, "workspace-scope");
+restoredOwner.bindScope(scope, { resource: "project", session: "workspace-scope" });
 restoredOwner.restore(scope, { paths: ["a.md", "b.md"], selectedPath: "b.md", hostId: "local" });
 const restored = restoredOwner.getSnapshot(key)!;
 assert.deepEqual(restored.entries.map((entry) => entry.resource.path), ["a.md", "b.md"]);
@@ -96,35 +96,48 @@ const restoredSnapshot = restoredOwner.getSnapshot(key);
 restoredOwner.restore(scope, { paths: ["c.md"], selectedPath: null, hostId: "local" });
 assert.equal(restoredOwner.getSnapshot(key), restoredSnapshot, "a restore never outranks a record a command or an earlier restore wrote");
 
-// ── Lifetime: a scope change and a closed dock end the record ──
+// ── Another session in the same project keeps the previews, not the scope ──
+restoredOwner.open({ ref: presented("presented.md"), params: { action: "preview", view: "files" } });
 const scopeSnapshot = restoredOwner.getSnapshot(key)!;
-restoredOwner.bindScope(scope, "another-workspace-scope");
+assert.equal(scopeSnapshot.selected?.resource.access.source, "presented");
+restoredOwner.bindScope(scope, { resource: "project", session: "another-session-scope" });
 const rescoped = restoredOwner.getSnapshot(key)!;
-assert.notEqual(rescoped, scopeSnapshot);
-assert(scopeSnapshot.signal.aborted, "a different workspace scope ends the previous lifetime");
-assert.deepEqual(rescoped.entries, [], "a different workspace scope keeps no entries");
-assert(rescoped.generation > scopeSnapshot.generation, "a rebuilt record advances its generation");
-restoredOwner.bindScope(scope, "another-workspace-scope");
-assert.equal(restoredOwner.getSnapshot(key), rescoped, "binding the same scope again is not a new lifetime");
+assert.equal(rescoped.signal.aborted, false, "another session in the same project keeps this dock's lifetime");
+assert.deepEqual(rescoped.entries.map((entry) => entry.resource.path), ["a.md", "b.md", "presented.md"],
+  "another session keeps what the dock was showing");
+assert.equal(rescoped.generation, scopeSnapshot.generation, "another session is not a new lifecycle");
+assert(rescoped.contentRevision > scopeSnapshot.contentRevision, "the previews are re-read under the new session");
+assert.equal(rescoped.selected?.resource.access.source, "workspace", "a presented scope does not survive into another session");
+assert.equal(rescoped.selected?.resource.access.toolCallId, undefined);
+restoredOwner.bindScope(scope, { resource: "project", session: "another-session-scope" });
+assert.equal(restoredOwner.getSnapshot(key), rescoped, "binding the same session again changes nothing");
+
+// ── Another resource space replaces the record outright ──
+restoredOwner.bindScope(scope, { resource: "other-project", session: "another-session-scope" });
+const rescoped2 = restoredOwner.getSnapshot(key)!;
+assert(rescoped.signal.aborted, "another project ends the previous lifetime");
+assert.deepEqual(rescoped2.entries, [], "another project keeps no entries");
+assert(rescoped2.generation > rescoped.generation, "a rebuilt record advances its generation");
 
 restoredOwner.retain([fileNavigationKey({ sessionTabId: "session-a", dockTabId: "other-dock" })]);
 assert.equal(restoredOwner.getSnapshot(key), null, "a dock that is no longer open keeps no record");
 assert(rescoped.signal.aborted);
-restoredOwner.bindScope(scope, "another-workspace-scope");
+restoredOwner.bindScope(scope, { resource: "other-project", session: "another-session-scope" });
 const reopened = restoredOwner.getSnapshot(key)!;
-assert(reopened.generation > rescoped.generation, "reopening the same dock tab id starts a new lifecycle generation");
+assert(reopened.generation > rescoped2.generation, "reopening the same dock tab id starts a new lifecycle generation");
 assert.deepEqual(reopened.entries, [], "a lifecycle generation never restores the previous one's previews");
 restoredOwner.open({ ref: workspace("b.md"), params: { action: "preview", view: "files" } });
 
-// ── Isolation: another session, another host, another dock are other records ──
-const otherSession = fileNavigationKey({ sessionTabId: "session-b", dockTabId: DOCK });
+// ── The dock instance names the record; the session only names its credentials ──
 const otherDock = fileNavigationKey({ sessionTabId: "session-a", dockTabId: "dock-remote" });
-assert.equal(restoredOwner.getSnapshot(otherSession), null);
-assert.equal(restoredOwner.getSnapshot(otherDock), null);
-restoredOwner.retain([key, otherSession]);
+assert.equal(fileNavigationKey({ sessionTabId: "session-b", dockTabId: DOCK }), key,
+  "another session on the same dock is the same record");
+assert.equal(restoredOwner.getSnapshot(otherDock), null, "another dock tab is another record");
 restoredOwner.open({ ref: { source: "presented", hostId: "local", tabId: "session-b", toolCallId: "call", path: "other.ts" }, params: { action: "preview", view: "files" } });
-assert.equal(restoredOwner.getSnapshot(key)!.selected?.resource.path, "b.md", "another session's command leaves this dock alone");
-assert.equal(restoredOwner.getSnapshot(otherSession)!.selected?.resource.path, "other.ts");
+const shared = restoredOwner.getSnapshot(key)!;
+assert.equal(shared.selected?.resource.path, "other.ts", "a command from another session lands in the dock it targeted");
+assert.deepEqual(shared.selected?.resource.access, { source: "presented", tabId: "session-b", toolCallId: "call" },
+  "and carries that session's access context");
 
 // ── A panel acting on its own contents never picks a dock ──
 let reveals = 0;

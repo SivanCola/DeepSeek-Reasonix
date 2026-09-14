@@ -16,12 +16,16 @@ function deferred<T>() {
 const dom = new JSDOM("", { url: "http://localhost" });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document });
 const paths = new Map<string, ReturnType<typeof deferred<string>>>();
+const creations = new Map<string, ReturnType<typeof deferred<string>>>();
 const revoked: string[] = [];
 const stub = installDesktopHostStub({
   ResolveRemoteWorkspacePathForTab: (_tab: string, _host: string, _tool: string, path: string) => {
     const pending = deferred<string>(); paths.set(path, pending); return pending.promise;
   },
-  CreatePresentedBrowserPreviewForTab: async () => "http://preview.test/one",
+  CreatePresentedBrowserPreviewForTab: (_tab: string, _tool: string, path: string) => {
+    if (path === "slow.html") { const pending = deferred<string>(); creations.set(path, pending); return pending.promise; }
+    return Promise.resolve(`http://preview.test/${path}`);
+  },
   RevokeWorkspaceBrowserPreview: async (url: string) => { revoked.push(url); },
 });
 const owner = createFileNavigationOwner();
@@ -62,8 +66,15 @@ assert.equal(snapshot(), null, "a session switch leaves no record behind");
 const opened = deferred<{ id: string }>();
 const opening = deferred<void>();
 const closed: string[] = [];
+// The first call is held open so the dock can close mid-flight; later calls
+// answer immediately with their own tab, the way a real host does.
+let hostOpens = 0;
 const host = {
-  open: () => { opening.resolve(); return opened.promise; },
+  open: () => {
+    if (hostOpens++ > 0) return Promise.resolve({ id: `open-tab-${hostOpens}` });
+    opening.resolve();
+    return opened.promise;
+  },
   close: async (id: string) => { closed.push(id); },
 };
 useBrowserPanelStore.setState({ host: host as unknown as NonNullable<ReturnType<typeof useBrowserPanelStore.getState>["host"]> });
@@ -72,16 +83,29 @@ await opening.promise;
 owner.retain([]);
 opened.resolve({ id: "only-owned-tab" });
 assert.deepEqual(await browser, { status: "cancelled", reason: "superseded" });
-assert.deepEqual(revoked, ["http://preview.test/one"], "a URL created after its dock closed is revoked once");
+assert.deepEqual(revoked, ["http://preview.test/one.html"], "a URL created after its dock closed is revoked once");
 assert(!useBrowserPanelStore.getState().tabs.some(tab => tab.id === "only-owned-tab"));
 assert.deepEqual(closed, ["only-owned-tab"]);
+
+// A preview URL minted before its operation lost the dock is released too: a
+// second browser command supersedes the first while its creation is in flight.
+const slow = performResourceAction({ hostId: "local", tabId: "session", source: "presented", toolCallId: "tool", path: "slow.html" }, "browser");
+for (let tick = 0; tick < 20 && !creations.has("slow.html"); tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+assert(creations.has("slow.html"), "the first preview creation is in flight");
+const fast = performResourceAction({ hostId: "local", tabId: "session", source: "presented", toolCallId: "tool", path: "fast.html" }, "browser");
+creations.get("slow.html")!.resolve("http://preview.test/slow");
+assert.deepEqual(await slow, { status: "cancelled", reason: "superseded" });
+assert(revoked.includes("http://preview.test/slow"), "a URL created after its operation lost the dock is revoked");
+await fast.catch(() => undefined);
 
 // A host that never arrives must not open a page, and its URL is released.
 useBrowserPanelStore.setState({ host: null });
 const waiting = performResourceAction({ hostId: "local", tabId: "session", source: "presented", toolCallId: "tool", path: "two.html" }, "browser");
 await new Promise((resolve) => setTimeout(resolve, 2200));
 assert.deepEqual(await waiting, { status: "failed", error: new Error("Built-in browser is not ready") });
-assert.deepEqual(revoked, ["http://preview.test/one", "http://preview.test/one"], "a preview whose host never arrived is released");
-assert.equal(useBrowserPanelStore.getState().tabs.length, 0, "no page opens without a host");
+assert.deepEqual(revoked, ["http://preview.test/one.html", "http://preview.test/slow", "http://preview.test/two.html"], "every preview URL this session minted is released exactly once");
+const openTabs = useBrowserPanelStore.getState().tabs;
+assert.deepEqual(openTabs.map((tab) => tab.id), ["open-tab-2"], "only the preview whose host arrived opened a page");
+assert(!openTabs.some((tab) => tab.id === "only-owned-tab"), "a tab from a dock that closed never opens");
 stub.uninstall(); dom.window.close();
 console.log("PASS navigation ordering, dock-scoped cancellation, obsolete errors and browser resource cleanup");

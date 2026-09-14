@@ -29,9 +29,13 @@ export function RemotePanel({ onClose, tabId, dockTabId, fileNavigation: fileNav
   const [fallbackFileNavigation] = useState(fileNavigationOwner);
   const fileNavigation = fileNavigationProp ?? fallbackFileNavigation;
   const fileScope = useMemo(() => ({ sessionTabId: tabId ?? "", dockTabId: dockTabId ?? "" }), [dockTabId, tabId]);
-  // Another host is another resource space: binding it resets this dock's record
-  // so no path or access context crosses between hosts.
-  const fileRecord = useFileNavigationRecord(fileNavigation, fileScope, `${tabId ?? ""}\u0000${hostId ?? ""}`);
+  // Another host is another resource space: binding it replaces this dock's
+  // record, so no path or access context crosses between hosts.
+  const fileKey = useMemo(
+    () => ({ resource: hostId ?? "", session: `${tabId ?? ""}\u0000${hostId ?? ""}` }),
+    [hostId, tabId],
+  );
+  const fileRecord = useFileNavigationRecord(fileNavigation, fileScope, fileKey);
 
   if (!hostId) return null;
   const connected = status?.state === "connected" || status?.state === "degraded";
@@ -273,7 +277,7 @@ function RemoteFileView({ hostId, path, connected, dockGeneration, forceReadOnly
   const operation = useRef(0);
   // This view's identity: a receipt is only applied while the same dock, host
   // and path it was issued for are still the ones on screen.
-  const identity = `${dockGeneration} ${hostId} ${path}`;
+  const identity = `${dockGeneration}\u0000${hostId}\u0000${path}`;
   const identityRef = useRef(identity);
   identityRef.current = identity;
   useEffect(() => () => { operation.current++; }, []);

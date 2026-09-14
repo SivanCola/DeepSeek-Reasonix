@@ -99,16 +99,16 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
   const fileNavigation = useFileNavigationRuntime();
   useLayoutEffect(() => dockNavigation.attach(), [dockNavigation]);
   useLayoutEffect(() => useActivityBarStore.subscribe(state => dockNavigation.reconcile(state.tabs.map(tab => tab.id))), [dockNavigation]);
-  // The open dock tabs of the active session are the set of live records: a
-  // closed tab, another session or another project ends its records here.
-  const fileNavigationSession = props.core.activeTabId ?? "";
+  // The open dock tabs are the set of live records: closing a tab, or switching
+  // to a project whose tab list has none of them, ends those records. A session
+  // change inside one project keeps the dock and only rebinds its credentials.
   useLayoutEffect(() => {
     const retain = () => fileNavigation.retain(
-      useActivityBarStore.getState().tabs.map(tab => fileNavigationKey({ sessionTabId: fileNavigationSession, dockTabId: tab.id })),
+      useActivityBarStore.getState().tabs.map(tab => fileNavigationKey({ sessionTabId: "", dockTabId: tab.id })),
     );
     retain();
     return useActivityBarStore.subscribe(retain);
-  }, [fileNavigation, fileNavigationSession]);
+  }, [fileNavigation]);
   useTopicbarHeightVar();
   const { core, shell, session, navigation, runtime, local } = props;
   const { state, activeTab, activeTabId, t, locale } = core;

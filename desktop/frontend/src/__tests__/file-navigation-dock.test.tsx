@@ -33,11 +33,14 @@ const props: WorkspaceDockRegionProps = {
   workspace: { open: true, tabId: "navigation-session", cwd: "/repo", maximized: false, onClose: () => {}, onToggleMaximized: () => {} },
   workspaceKey: "tabs-test", workspaceRoot: "/repo",
 };
-const paint = (visible: boolean) => act(async () => root.render(<LocaleProvider><WorkspaceDockRegion {...props} visible={visible} /></LocaleProvider>));
-const record = () => fileNavigationOwner().getSnapshot(fileNavigationKey({ sessionTabId: "navigation-session", dockTabId }));
+let sessionTabId = "navigation-session";
+const paint = (visible: boolean) => act(async () => root.render(
+  <LocaleProvider><WorkspaceDockRegion {...props} workspace={{ ...props.workspace, tabId: sessionTabId }} visible={visible} /></LocaleProvider>,
+));
+const record = () => fileNavigationOwner().getSnapshot(fileNavigationKey({ sessionTabId, dockTabId }));
 const paths = () => record()?.entries.map((entry) => entry.resource.path) ?? [];
 const open = async (path: string, action: "preview" | "source" | "reveal-tree" = "preview") => {
-  await act(async () => performResourceAction({ hostId: "local", tabId: "navigation-session", path, source: "presented", toolCallId: "call" }, action));
+  await act(async () => performResourceAction({ hostId: "local", tabId: sessionTabId, path, source: "presented", toolCallId: "call" }, action));
   await paint(true);
 };
 await paint(true);
@@ -116,4 +119,4 @@ assert.equal(expanded.navigation?.revision, reopened.navigation?.revision, "rest
 
 await act(async () => root.unmount());
 dom.window.close();
-console.log("PASS dock preview tabs: reuse, cap, source mode, reveal, lifecycle generations and collapse restore");
+console.log("PASS dock preview tabs: reuse, cap, source mode, reveal, lifecycle generations, collapse restore and first navigation per session");

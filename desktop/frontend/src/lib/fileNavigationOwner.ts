@@ -25,11 +25,15 @@ export type FilePreviewEntry = Readonly<{ resource: ResolvedFileResource; source
 
 export type FileNavigationCommand = Readonly<{ ref: FileResourceRef; params: FileNavigationParams }>;
 
-/** A dock instance: the session tab it belongs to and the dock tab that shows it. */
+/**
+ * A dock instance: the dock tab that shows a resource, and the session tab
+ * whose scope authorizes reading it. The dock tab identifies the record — a
+ * project keeps its previews when the session changes — while the session tab
+ * only decides the credentials, so `bindScope` rebinds it.
+ */
 export type FileNavigationScope = Readonly<{ sessionTabId: string; dockTabId: string }>;
 
-export const fileNavigationKey = (scope: FileNavigationScope): string =>
-  `${scope.sessionTabId}\u0000${scope.dockTabId}`;
+export const fileNavigationKey = (scope: FileNavigationScope): string => scope.dockTabId;
 
 /** The last explicit navigation this record committed; a render never replays it. */
 export type FileNavigationIntent = Readonly<{
@@ -39,9 +43,18 @@ export type FileNavigationIntent = Readonly<{
   params: FileNavigationParams;
 }>;
 
+/**
+ * What a dock currently shows, in two parts. `resource` names the space the
+ * paths belong to (a project, a remote host): another one replaces the record.
+ * `session` names the credentials the space is read with (a topic, a session
+ * generation): another one keeps what is on screen but drops the access
+ * contexts captured under it.
+ */
+export type FileNavigationScopeKey = Readonly<{ resource: string; session: string }>;
+
 export type FileNavigationSnapshot = Readonly<{
-  /** Workspace scope this dock currently shows; null until a panel binds one. */
-  scopeKey: string | null;
+  /** What this dock currently shows; null until a panel binds one. */
+  scope: FileNavigationScopeKey | null;
   sessionTabId: string;
   dockTabId: string;
   /** Bumped whenever this dock's record is dropped and created again. */
@@ -93,8 +106,6 @@ type Record = {
   lifetime: AbortController;
   /** Open command still resolving; a newer one supersedes it. */
   pending: AbortController | null;
-  /** Counter behind `navigation.revision`, kept across a state-less repeat. */
-  navigationRevision: number;
 };
 
 const SUPERSEDED: FileNavigationOutcome = { status: "cancelled", reason: "superseded" };
@@ -118,6 +129,8 @@ export class FileNavigationOwner {
   private operations = new Map<string, AbortController>();
   /** Survives record deletion so a reused dock tab id never repeats a generation. */
   private generations = new Map<string, number>();
+  /** One counter for the whole instance, so no two records repeat a revision. */
+  private navigationRevision = 0;
   private listeners = new Set<() => void>();
   private disposed = false;
   private ports: FileNavigationPorts;
@@ -134,17 +147,26 @@ export class FileNavigationOwner {
   /** Stable per key: an unchanged record returns the same snapshot reference. */
   getSnapshot = (key: string): FileNavigationSnapshot | null => this.records.get(key)?.snapshot ?? null;
 
-  /** Bind the workspace scope a dock shows; a different one starts a new lifetime. */
-  bindScope(scope: FileNavigationScope, scopeKey: string): void {
+  /**
+   * Bind what a dock shows. Another resource space starts a new lifetime;
+   * another session in the same space keeps the previews and their positions
+   * but drops the access context they were read with, because a presented tool
+   * scope belongs to the session that captured it.
+   */
+  bindScope(scope: FileNavigationScope, key: FileNavigationScopeKey): void {
     const record = this.ensure(scope);
-    if (record.snapshot.scopeKey === scopeKey) return;
-    if (record.snapshot.scopeKey === null) {
-      const patched = { ...record.snapshot, scopeKey };
-      record.snapshot = patched;
+    const current = record.snapshot.scope;
+    if (current?.resource === key.resource && current.session === key.session) return;
+    if (current === null) {
+      record.snapshot = { ...record.snapshot, scope: key };
       this.notify();
       return;
     }
-    this.reset(scope, scopeKey);
+    if (current.resource !== key.resource) {
+      this.reset(scope, key);
+      return;
+    }
+    this.rebind(scope, record, key);
   }
 
   /**
@@ -338,9 +360,8 @@ export class FileNavigationOwner {
     const record: Record = {
       lifetime,
       pending: null,
-      navigationRevision: 0,
       snapshot: {
-        scopeKey: null,
+        scope: null,
         sessionTabId: scope.sessionTabId,
         dockTabId: scope.dockTabId,
         generation: this.generations.get(scope.dockTabId) ?? 0,
@@ -358,13 +379,35 @@ export class FileNavigationOwner {
     return record;
   }
 
-  private reset(scope: FileNavigationScope, scopeKey: string): void {
-    const key = fileNavigationKey(scope);
-    const previous = this.records.get(key);
-    if (previous) this.drop(key, previous);
+  private reset(scope: FileNavigationScope, key: FileNavigationScopeKey): void {
+    const recordKey = fileNavigationKey(scope);
+    const previous = this.records.get(recordKey);
+    if (previous) this.drop(recordKey, previous);
     const record = this.ensure(scope);
-    record.snapshot = { ...record.snapshot, scopeKey };
+    record.snapshot = { ...record.snapshot, scope: key };
     this.notify();
+  }
+
+  /**
+   * The same resource space under another session: the previews stay exactly
+   * where the user left them, and every read is rebound to the current session
+   * with workspace credentials, so a tool call from the previous session can
+   * never authorize a read in this one.
+   */
+  private rebind(scope: FileNavigationScope, record: Record, key: FileNavigationScopeKey): void {
+    const access: FileAccessContext = { source: "workspace", tabId: scope.sessionTabId };
+    const downgrade = (entry: FilePreviewEntry): FilePreviewEntry =>
+      ({ resource: { ...entry.resource, access }, source: entry.source });
+    record.pending?.abort();
+    record.pending = null;
+    this.apply(record, (current) => ({
+      ...current,
+      scope: key,
+      entries: current.entries.map(downgrade),
+      selected: current.selected ? downgrade(current.selected) : null,
+      revision: current.revision + 1,
+      contentRevision: current.contentRevision + 1,
+    }));
   }
 
   private begin(record: Record): AbortController {
@@ -398,13 +441,13 @@ export class FileNavigationOwner {
       // Every explicit command is delivered as its own navigation revision: a
       // repeat must still reveal the file when the dock moved on. Only the read
       // inputs decide whether the preview has to load its content again.
-      record.navigationRevision += 1;
+      this.navigationRevision += 1;
       return {
         ...current,
         entries,
         selected: target,
         sourcePaths: sourcePathsOf(entries),
-        navigation: { revision: record.navigationRevision, resource, params },
+        navigation: { revision: this.navigationRevision, resource, params },
         revision: current.revision + 1,
         contentRevision: current.contentRevision + (target !== current.selected ? 1 : 0),
         treeReveal: params.action === "reveal-tree" ? current.treeReveal + 1 : current.treeReveal,

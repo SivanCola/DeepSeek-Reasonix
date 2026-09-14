@@ -5,6 +5,7 @@ import type { FileResourceRef } from "../lib/fileResource";
 import { fileNavigationOwner } from "../lib/fileNavigationCommands";
 import type { FileNavigationOwner } from "../lib/fileNavigationOwner";
 import { useFileNavigationRecord } from "../app-shell/useFileNavigation";
+import { useWorkspaceFilePreview } from "./useWorkspaceFilePreview";
 export type { WorkspaceVerificationRevealRequest } from "../lib/dockDelivery";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
@@ -72,7 +73,6 @@ import {
 } from "../store/layout";
 import type {
   DirEntry,
-  FilePreview,
   GitCommitView,
   GitCommitDetailView,
   RewindResultView,
@@ -204,7 +204,14 @@ export function WorkspacePanel({
     () => ({ sessionTabId: workspaceTabId, dockTabId: dockTabId ?? "" }),
     [dockTabId, workspaceTabId],
   );
-  const fileRecord = useFileNavigationRecord(fileNavigation, fileScope, workspaceScopeKey);
+  // The project is the resource space these paths belong to; the session scope
+  // only decides the credentials. Another session in the same project keeps the
+  // previews on screen without carrying the presented tool scope across.
+  const fileKey = useMemo(
+    () => ({ resource: workspaceMemoryKey, session: workspaceScopeKey }),
+    [workspaceMemoryKey, workspaceScopeKey],
+  );
+  const fileRecord = useFileNavigationRecord(fileNavigation, fileScope, fileKey);
   const workspaceRefresh = useWorkspaceRefresh(workspaceTabId, workspaceScopeKey, open);
   const initialWorkspaceMemory = readWorkspaceTreeMemory(workspaceMemoryKey);
   const legacyTreeWidth = loadOptionalLayoutSize("workspaceTreeWidth");
@@ -232,7 +239,6 @@ export function WorkspacePanel({
   const [recentPaths, setRecentPaths] = useState<string[]>(() =>
     (initialWorkspaceMemory?.recentPaths ?? []).slice(0, WORKSPACE_MAX_PREVIEW_TABS),
   );
-  const [previewResource, setPreviewResource] = useState(() => emptyKeyedResource<FilePreview>());
   const [presentedTextTail, setPresentedTextTail] = useState<{
     key: string;
     version: string;
@@ -276,7 +282,6 @@ export function WorkspacePanel({
   const [recentOpen, setRecentOpen] = useState(false);
   const [codeSearchRequestPending, setCodeSearchRequestPending] = useState(false);
   const [codeSearchRequestPath, setCodeSearchRequestPath] = useState<string | null>(null);
-  const [presentedFileStale, setPresentedFileStale] = useState(false);
   /** Changes overview: commit history is secondary and starts collapsed. */
   const [commitHistoryOpen, setCommitHistoryOpen] = useState(false);
   const lastPreviewModeActiveRef = useRef<boolean | null>(null);
@@ -297,14 +302,6 @@ export function WorkspacePanel({
   const textPageRequestIdRef = useRef(0);
   const commitDetailRequestIdRef = useRef(0);
   const dirLoadGenerationRef = useRef(0);
-  // A read that lands after this panel is gone must not be committed: nothing
-  // would render it. StrictMode's simulated unmount sets this back to mounted,
-  // so a replayed mount keeps the read it already started.
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
   const fileLifetime = fileRecord?.signal;
   const adoptedFileLifetimeRef = useRef<AbortSignal | null>(null);
   const adoptedDockLifetimeRef = useRef<AbortSignal | null>(null);
@@ -353,12 +350,21 @@ export function WorkspacePanel({
     ? selectedEntry.resource.access.toolCallId
     : undefined;
   const sourceOverride = selectedEntry?.source ?? false;
-  const previewKey = selectedPath ? `${workspaceScopeKey}\u0000preview\u0000${sourceOverride ? "source" : "preview"}\u0000${selectedPresentedToolCallId ?? ""}\u0000${selectedPath}` : null;
+  const {
+    previewKey, preview, loadingPreview, previewErr, presentedFileStale,
+    setPresentedFileStale, refreshSelected, resetPreview,
+  } = useWorkspaceFilePreview({
+    open,
+    selectedPath,
+    presentedToolCallId: selectedPresentedToolCallId,
+    source: sourceOverride,
+    generation: selectedGeneration,
+    workspaceScopeKey,
+    workspaceTabId,
+    contentRevision: workspaceRefresh.revisions.content,
+  });
   const changeDetailKey = selectedPath ? `${workspaceScopeKey}\u0000change\u0000${selectedPath}` : null;
   const gitHistoryKey = `${workspaceScopeKey}\u0000history\u0000${selectedPath ?? ""}`;
-  const preview = previewKey && previewResource.key === previewKey ? previewResource.data : null;
-  const loadingPreview = previewKey != null && previewResource.key === previewKey && previewResource.status === "refreshing";
-  const previewErr = previewKey && previewResource.key === previewKey ? previewResource.error : "";
   const activePresentedTextTail = previewKey && preview?.version && presentedTextTail?.key === previewKey && presentedTextTail.version === preview.version
     ? presentedTextTail
     : null;
@@ -688,7 +694,7 @@ export function WorkspacePanel({
     dismissedChangeListRequestIdRef.current = null;
     if (viewMode === "changed") {
       fileNavigation.clearEntries(fileScope);
-      setPreviewResource(emptyKeyedResource());
+      resetPreview();
     }
   }, [fileNavigation, fileScope, open, resetWorkspaceChanges, viewMode, workspaceScopeKey]);
 
@@ -754,7 +760,7 @@ export function WorkspacePanel({
     setScopedFilePaths(paths);
     fileNavigation.clearSelection(fileScope);
     fileNavigation.clearEntries(fileScope);
-    setPreviewResource(emptyKeyedResource());
+    resetPreview();
     setFilter("");
     setExpandedCommit(null);
     setCommitDetail(null);
@@ -795,7 +801,7 @@ export function WorkspacePanel({
     setScopedFilePaths(null);
     setSelectedChangePath(null);
     fileNavigation.clearEntries(fileScope);
-    setPreviewResource(emptyKeyedResource());
+    resetPreview();
     setFilter("");
     setExpandedCommit(null);
     setCommitDetail(null);
@@ -827,7 +833,7 @@ export function WorkspacePanel({
     setScopedChangeRows(null);
     setSelectedChangePath(changeRevealRequest.path);
     fileNavigation.clearEntries(fileScope);
-    setPreviewResource(emptyKeyedResource());
+    resetPreview();
     setFilter("");
     setExpandedCommit(null);
     setCommitDetail(null);
@@ -843,7 +849,7 @@ export function WorkspacePanel({
       setViewMode("changed");
       setSelectedChangePath(null);
       fileNavigation.clearEntries(fileScope);
-      setPreviewResource(emptyKeyedResource());
+      resetPreview();
       setFilter("");
       setExpandedCommit(null);
       setCommitDetail(null);
@@ -918,47 +924,6 @@ export function WorkspacePanel({
     dirs.forEach((dir) => void loadDir(dir));
   }, [loadChangeDetail, loadGitHistory, loadWorkspaceChanges, loadDir, onFileTreeRefresh, selectedPath, viewMode]);
 
-  // The read inputs come from the selected entry, never from a path-keyed
-  // cache: a file reopened from another entry point reads with that command's
-  // access context, and a command that changes none of these inputs leaves this
-  // callback identical, so a still-valid read is not restarted.
-  const refreshSelected = useCallback(() => {
-    if (!selectedPath) return;
-    setPresentedFileStale(false);
-    const requestId = ++previewRequestIdRef.current;
-    const requestScopeKey = workspaceScopeKey;
-    const requestPath = selectedPath;
-    const requestGeneration = selectedGeneration;
-    const presentedToolCallId = selectedPresentedToolCallId;
-    const forceSource = sourceOverride;
-    const requestKey = `${requestScopeKey}\u0000preview\u0000${forceSource ? "source" : "preview"}\u0000${presentedToolCallId ?? ""}\u0000${requestPath}`;
-    // Session, dock instance, resource identity and operation revision must all
-    // still match before a result may be committed for this read. This panel
-    // being gone is one of those conditions, and a StrictMode replay is not.
-    const current = () =>
-      mountedRef.current
-      && previewRequestIdRef.current === requestId
-      && currentWorkspaceScopeKeyRef.current === requestScopeKey
-      && currentFileGenerationRef.current === requestGeneration;
-    setPreviewResource((state) => beginKeyedResourceRequest(state, requestKey, requestId, workspaceRefresh.revisions.content));
-    const read = presentedToolCallId
-      ? forceSource
-        ? app.ReadPresentedFileSourceForTab(workspaceTabId, presentedToolCallId, requestPath)
-        : app.ReadPresentedFileForTab(workspaceTabId, presentedToolCallId, requestPath)
-      : app.ReadFileForTab(workspaceTabId, requestPath);
-    read
-      .then((next) => {
-        if (current()) {
-          setPreviewResource((state) => resolveKeyedResourceRequest(state, requestKey, requestId, next, workspaceRefresh.revisions.content));
-        }
-      })
-      .catch((err) => {
-        if (current()) {
-          setPreviewResource((state) => rejectKeyedResourceRequest(state, requestKey, requestId, String(err?.message ?? err)));
-        }
-      });
-  }, [selectedGeneration, selectedPath, selectedPresentedToolCallId, sourceOverride, workspaceRefresh.revisions.content, workspaceScopeKey, workspaceTabId]);
-
   const loadMorePresentedText = useCallback(async () => {
     if (!previewKey || !preview || !selectedPath || !selectedPresentedToolCallId || !preview.version) return;
     const prior = activePresentedTextTail;
@@ -1005,20 +970,6 @@ export function WorkspacePanel({
       });
     }
   }, [activePresentedTextTail, preview, previewKey, selectedPath, selectedPresentedToolCallId, workspaceScopeKey, workspaceTabId]);
-
-  // The read starts once per set of read inputs. A StrictMode mount replay, an
-  // effect reconnect or a re-render reconnect calls the effect again with the
-  // very same callback, and must not issue a second read for it.
-  const startedReadRef = useRef<typeof refreshSelected | null>(null);
-  useEffect(() => {
-    if (!open || !selectedPath) {
-      startedReadRef.current = null;
-      return;
-    }
-    if (startedReadRef.current === refreshSelected) return;
-    startedReadRef.current = refreshSelected;
-    refreshSelected();
-  }, [open, refreshSelected, selectedPath]);
 
   useWorkspaceRefreshInvalidation({ commitHistoryOpen,
     deferSelectedRefresh: Boolean(selectedPresentedToolCallId),
@@ -1445,7 +1396,7 @@ export function WorkspacePanel({
     }
     if (viewMode === "changed") setSelectedChangePath(null);
     else if (selectedFilePath) fileNavigation.closeEntry(fileScope, selectedFilePath);
-    setPreviewResource(emptyKeyedResource());
+    resetPreview();
     setSelectionMenu(null);
     setTreeMenu(null);
     setRecentOpen(false);
@@ -1455,7 +1406,7 @@ export function WorkspacePanel({
   const closePreviewTab = useCallback((path: string) => {
     fileNavigation.closeEntry(fileScope, path);
     if (selectedFilePath === path) {
-      setPreviewResource(emptyKeyedResource());
+      resetPreview();
       setPresentedFileStale(false);
     }
   }, [fileNavigation, fileScope, selectedFilePath]);

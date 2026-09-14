@@ -3,6 +3,7 @@ import {
   fileNavigationKey,
   type FileNavigationOwner,
   type FileNavigationScope,
+  type FileNavigationScopeKey,
   type FileNavigationSnapshot,
 } from "../lib/fileNavigationOwner";
 
@@ -14,16 +15,17 @@ import {
 export function useFileNavigationRecord(
   owner: FileNavigationOwner,
   scope: FileNavigationScope,
-  scopeKey: string,
+  key: FileNavigationScopeKey,
 ): FileNavigationSnapshot | null {
-  const key = fileNavigationKey(scope);
+  const recordKey = fileNavigationKey(scope);
   const subscribe = useCallback((listener: () => void) => owner.subscribe(listener), [owner]);
-  const read = useCallback(() => owner.getSnapshot(key), [owner, key]);
+  const read = useCallback(() => owner.getSnapshot(recordKey), [owner, recordKey]);
   const snapshot = useSyncExternalStore(subscribe, read, read);
   const { sessionTabId, dockTabId } = scope;
+  const { resource, session } = key;
   useLayoutEffect(
-    () => { owner.bindScope({ sessionTabId, dockTabId }, scopeKey); },
-    [dockTabId, owner, scopeKey, sessionTabId],
+    () => { owner.bindScope({ sessionTabId, dockTabId }, { resource, session }); },
+    [dockTabId, owner, resource, session, sessionTabId],
   );
   return snapshot;
 }

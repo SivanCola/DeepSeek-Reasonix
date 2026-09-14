@@ -107,21 +107,22 @@ async function openBrowserPreview(ref: FileResourceRef): Promise<FileNavigationO
   } catch (error) {
     return finish({ status: "failed", error: asError(error) });
   }
+  // A URL this command created and no browser tab ever took is its own to
+  // release, at every point where the operation may have lost its dock.
+  const cancelledAfterCreation = async (): Promise<FileNavigationOutcome> => {
+    await releaseBrowserPreview(url);
+    return finish({ status: "cancelled", reason: "superseded" });
+  };
   try {
-    // A URL created after this dock moved on would otherwise stay alive with
-    // nothing to show it, and a host that never arrives must not open a page.
-    if (!operation.owns()) return finish({ status: "cancelled", reason: "superseded" });
+    if (!operation.owns()) return await cancelledAfterCreation();
     await waitForBrowserHost();
-    if (!operation.owns()) return finish({ status: "cancelled", reason: "superseded" });
+    if (!operation.owns()) return await cancelledAfterCreation();
     await useBrowserPanelStore.getState().open(url, true, operation.signal);
   } catch (error) {
     await releaseBrowserPreview(url);
     return finish({ status: "failed", error: asError(error) });
   }
-  if (!operation.owns()) {
-    await releaseBrowserPreview(url);
-    return finish({ status: "cancelled", reason: "superseded" });
-  }
+  if (!operation.owns()) return await cancelledAfterCreation();
   return finish({ status: "opened", resource: resourceOf(ref) });
 }
 
