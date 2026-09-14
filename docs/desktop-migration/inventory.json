@@ -397,7 +397,7 @@
       "kind": "command",
       "name": "CancelRemoteTabJobs",
       "detail": "(tabID string, jobIDs []string) error",
-      "location": "desktop/remote_tab_commands.go:458",
+      "location": "desktop/remote_tab_commands.go:493",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -589,7 +589,7 @@
       "kind": "command",
       "name": "ClearRemoteTabSession",
       "detail": "(tabID string) error",
-      "location": "desktop/remote_tab_commands.go:626",
+      "location": "desktop/remote_tab_commands.go:661",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -701,7 +701,7 @@
       "kind": "command",
       "name": "CompactRemoteTab",
       "detail": "(tabID string, instructions string) error",
-      "location": "desktop/remote_tab_commands.go:474",
+      "location": "desktop/remote_tab_commands.go:509",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -782,6 +782,22 @@
       "name": "CreateDeliveryWorktree",
       "detail": "(workspaceRoot string) (DeliveryWorktreeOpenResult, error)",
       "location": "desktop/delivery_worktree.go:95",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "CreateForkForTab",
+      "detail": "(tabID string, turnID string, operationID string) (ForkCreationView, error)",
+      "location": "desktop/fork_targets.go:93",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "CreateForkRemoteTab",
+      "detail": "(tabID string, turnID string, operationID string) (ForkCreationView, error)",
+      "location": "desktop/remote_fork_targets.go:68",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -877,7 +893,7 @@
       "kind": "command",
       "name": "DeleteRemoteProjectSession",
       "detail": "(hostID string, workspace string, name string) error",
-      "location": "desktop/remote_tab_commands.go:244",
+      "location": "desktop/remote_tab_commands.go:245",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1045,7 +1061,7 @@
       "kind": "command",
       "name": "EnsureRemoteProjectSessions",
       "detail": "(hostID string, workspace string) ([]RemoteSessionView, error)",
-      "location": "desktop/remote_listing.go:380",
+      "location": "desktop/remote_listing.go:381",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1165,7 +1181,7 @@
       "kind": "command",
       "name": "ForgetRemoteTab",
       "detail": "(tabID string, name string) error",
-      "location": "desktop/remote_tab_commands.go:490",
+      "location": "desktop/remote_tab_commands.go:525",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1189,7 +1205,23 @@
       "kind": "command",
       "name": "ForkRemoteTab",
       "detail": "(tabID string, turn int, name string) error",
-      "location": "desktop/remote_tab_commands.go:482",
+      "location": "desktop/remote_tab_commands.go:517",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "ForkTargetsForTab",
+      "detail": "(tabID string) (ForkTargetSetView, error)",
+      "location": "desktop/fork_targets.go:59",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "ForkTargetsRemoteTab",
+      "detail": "(tabID string) (ForkTargetSetView, error)",
+      "location": "desktop/remote_fork_targets.go:43",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2197,7 +2229,7 @@
       "kind": "command",
       "name": "PauseRemoteTabGoal",
       "detail": "(tabID string) error",
-      "location": "desktop/remote_tab_commands.go:444",
+      "location": "desktop/remote_tab_commands.go:479",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2621,7 +2653,7 @@
       "kind": "command",
       "name": "RemoteProjectSessions",
       "detail": "(hostID string, workspace string) ([]RemoteSessionView, error)",
-      "location": "desktop/remote_listing.go:367",
+      "location": "desktop/remote_listing.go:368",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2677,7 +2709,7 @@
       "kind": "command",
       "name": "RemoteTabBranches",
       "detail": "(tabID string) (json.RawMessage, error)",
-      "location": "desktop/remote_tab_commands.go:494",
+      "location": "desktop/remote_tab_commands.go:529",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2693,7 +2725,7 @@
       "kind": "command",
       "name": "RemoteTabSkills",
       "detail": "(tabID string) (json.RawMessage, error)",
-      "location": "desktop/remote_tab_commands.go:498",
+      "location": "desktop/remote_tab_commands.go:533",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2861,7 +2893,7 @@
       "kind": "command",
       "name": "RenameRemoteProjectSession",
       "detail": "(hostID string, workspace string, name string, title string) error",
-      "location": "desktop/remote_tab_commands.go:15",
+      "location": "desktop/remote_tab_commands.go:16",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2949,7 +2981,7 @@
       "kind": "command",
       "name": "ReplayRemoteTabPrompts",
       "detail": "(tabID string) (json.RawMessage, error)",
-      "location": "desktop/remote_tab_commands.go:478",
+      "location": "desktop/remote_tab_commands.go:513",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3189,7 +3221,7 @@
       "kind": "command",
       "name": "ResumeRemoteTabGoal",
       "detail": "(tabID string) error",
-      "location": "desktop/remote_tab_commands.go:451",
+      "location": "desktop/remote_tab_commands.go:486",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4133,7 +4165,7 @@
       "kind": "command",
       "name": "SetRemoteProjectTitle",
       "detail": "(hostID string, workspace string, title string) error",
-      "location": "desktop/remote_tab_commands.go:233",
+      "location": "desktop/remote_tab_commands.go:234",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4141,7 +4173,7 @@
       "kind": "command",
       "name": "SetRemoteSessionPinned",
       "detail": "(hostID string, workspace string, name string, pinned bool) error",
-      "location": "desktop/remote_tab_commands.go:229",
+      "location": "desktop/remote_tab_commands.go:230",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4157,7 +4189,7 @@
       "kind": "command",
       "name": "SetRemoteTabEffort",
       "detail": "(tabID string, level string) error",
-      "location": "desktop/remote_tab_commands.go:440",
+      "location": "desktop/remote_tab_commands.go:475",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4173,7 +4205,7 @@
       "kind": "command",
       "name": "SetRemoteTabModel",
       "detail": "(tabID string, ref string) error",
-      "location": "desktop/remote_tab_commands.go:298",
+      "location": "desktop/remote_tab_commands.go:333",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4181,7 +4213,7 @@
       "kind": "command",
       "name": "SetRemoteTabPlanMode",
       "detail": "(tabID string, on bool) error",
-      "location": "desktop/remote_tab_commands.go:470",
+      "location": "desktop/remote_tab_commands.go:505",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4445,7 +4477,7 @@
       "kind": "command",
       "name": "SteerRemoteTab",
       "detail": "(tabID string, input string) error",
-      "location": "desktop/remote_tab_commands.go:462",
+      "location": "desktop/remote_tab_commands.go:497",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4653,7 +4685,7 @@
       "kind": "command",
       "name": "SummarizeRemoteTab",
       "detail": "(tabID string, turn int, mode string) error",
-      "location": "desktop/remote_tab_commands.go:486",
+      "location": "desktop/remote_tab_commands.go:521",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5054,7 +5086,7 @@
     {
       "kind": "event",
       "name": "remote-tab:updated",
-      "location": "desktop/remote_listing.go:546",
+      "location": "desktop/remote_listing.go:547",
       "class": "keep-business",
       "owner": "desktop/event frame (seq + generation), same payload"
     },
