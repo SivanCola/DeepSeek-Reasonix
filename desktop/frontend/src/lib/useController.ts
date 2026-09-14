@@ -2775,9 +2775,13 @@ export function useController() {
         runtimeEpochByTabRef.current.set(tabId, snapshot.identity.runtimeEpoch);
         dispatchTo(tabId, { type: "transcript_snapshot", snapshot });
       }, stillCurrent)) : false;
-      let projection = skipHistory || modern
+      if (!stillCurrent()) return;
+      const snapshotInstalled = modern && snapshotLoaded === true;
+      let projection = skipHistory || snapshotInstalled
         ? undefined
         : await loadTimed("history", () =>
+            // The windowed history API remains readable without a controller, so it
+            // is also the recovery path when model startup prevents a snapshot.
             // Resident LRU only when the caller keeps cache; reset/no-cache re-fetch.
             getTranscriptStore().loadLatest(tabId, sessionPath, {
               turns: HISTORY_PAGE_TURNS,
@@ -2788,7 +2792,7 @@ export function useController() {
           );
 
       if (!stillCurrent()) return;
-      if (!skipHistory && (modern ? !snapshotLoaded : projection === undefined)) {
+      if (!skipHistory && !snapshotInstalled && projection === undefined) {
         const errText = t("history.failedLoadHistory");
         dispatchTo(tabId, { type: "hydrate_error", reason, error: errText });
         // Hydration failure is not turn completion; keep any raced Ask/approval blocked.

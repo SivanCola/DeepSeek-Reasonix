@@ -302,15 +302,28 @@ func (a *App) HistorySliceForTab(tabID string, req HistorySliceRequest) HistoryS
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)
 	var ctrl control.SessionAPI
-	var sessionDir, sessionPath string
+	var sessionDir, sessionPath, sessionID string
 	if tab != nil {
 		ctrl = tab.Ctrl
 		sessionDir = tabSessionDir(tab)
 		sessionPath = tab.currentSessionPath()
+		sessionID = strings.TrimSpace(tab.SessionID)
 	}
 	a.mu.RUnlock()
 
 	if ctrl == nil {
+		if sessionID != "" {
+			query, ref, err := a.canonicalSessionQuery(tabID)
+			if err != nil {
+				return failedHistorySlice(err.Error())
+			}
+			slice, err := a.canonicalHistorySlice(query, ref, sessionDir, sessionPath, req)
+			if err != nil {
+				slog.Debug("desktop: cold canonical history slice failed", "session", ref.SessionID, "err", err)
+				return failedHistorySlice(err.Error())
+			}
+			return slice
+		}
 		if strings.TrimSpace(sessionPath) == "" {
 			return failedHistorySlice("session path unavailable before controller ready")
 		}

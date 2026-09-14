@@ -66,6 +66,60 @@ func TestDesktopHistorySliceUsesCanonicalDurableIndex(t *testing.T) {
 	}
 }
 
+func TestDesktopCanonicalHistoryRemainsReadableBeforeControllerReady(t *testing.T) {
+	isolateDesktopUserDirs(t)
+	app := NewApp()
+	root := t.TempDir()
+	dir := desktopSessionDir(root)
+	service := app.desktopSessionService(dir)
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "canonical-cold-history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendSessionTestMessage(t, runtime, "cold-history-user", provider.Message{
+		ID:      "cold-history-user",
+		Role:    provider.RoleUser,
+		Origin:  provider.MessageOriginUser,
+		Content: "history survives an unavailable configured model",
+	})
+
+	tab := &WorkspaceTab{
+		ID:            "canonical-cold-history-tab",
+		Scope:         "project",
+		WorkspaceRoot: root,
+		SessionID:     runtime.Ref().SessionID,
+		Ready:         false,
+		Ctrl:          nil,
+	}
+	app.tabs = map[string]*WorkspaceTab{tab.ID: tab}
+	app.tabOrder = []string{tab.ID}
+	app.activeTabID = tab.ID
+
+	page := app.HistorySliceForTab(tab.ID, HistorySliceRequest{Turns: 12})
+	if page.Error != "" || page.Source != "canonical-index" {
+		t.Fatalf("cold canonical history page = source %q error %q", page.Source, page.Error)
+	}
+	if len(page.Entries) != 1 || page.Entries[0].Message.Content != "history survives an unavailable configured model" {
+		t.Fatalf("cold canonical history entries = %+v", page.Entries)
+	}
+
+	opened, err := app.SessionOpenForTab(tab.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.Ref != runtime.Ref() || len(opened.Recent.Entries) != 1 || opened.Recent.Entries[0].Preview != "history survives an unavailable configured model" {
+		t.Fatalf("cold canonical session open = %+v", opened)
+	}
+
+	canonical, err := app.SessionHistoryPageForTab(tab.ID, "", 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonical.Messages) != 1 || canonical.Messages[0].Preview != "history survives an unavailable configured model" {
+		t.Fatalf("cold canonical history records = %+v", canonical.Messages)
+	}
+}
+
 func appendSessionTestMessage(t *testing.T, runtime *session.Runtime, operationID string, message provider.Message) {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{"message": message})
