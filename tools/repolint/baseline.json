@@ -5,7 +5,7 @@
     "complexity": 1883,
     "essay": 1929,
     "file-size": 100031,
-    "function-size": 8063,
+    "function-size": 8090,
     "layering": 1,
     "marker": 0,
     "narrative": 63,
@@ -23,10 +23,10 @@
       "essay": 19
     },
     "desktop/app.go": {
-      "complexity": 56,
+      "complexity": 58,
       "essay": 60,
-      "file-size": 11214,
-      "function-size": 359,
+      "file-size": 11224,
+      "function-size": 369,
       "struct-state": 10
     },
     "desktop/app_test.go": {
@@ -244,7 +244,7 @@
     "desktop/settings_app.go": {
       "complexity": 29,
       "essay": 6,
-      "file-size": 2684
+      "file-size": 2689
     },
     "desktop/settings_app_test.go": {
       "test-file-size": 1808
@@ -368,8 +368,8 @@
     "internal/acp/service.go": {
       "complexity": 1,
       "essay": 37,
-      "file-size": 2285,
-      "function-size": 97,
+      "file-size": 2297,
+      "function-size": 104,
       "struct-state": 2
     },
     "internal/acp/service_lock_test.go": {
@@ -555,7 +555,7 @@
       "function-size": 7
     },
     "internal/boot/reload.go": {
-      "essay": 22
+      "essay": 23
     },
     "internal/boot/resolver.go": {
       "narrative": 1
@@ -641,10 +641,10 @@
       "essay": 6
     },
     "internal/cli/chat_tui.go": {
-      "complexity": 276,
+      "complexity": 279,
       "essay": 80,
-      "file-size": 4176,
-      "function-size": 1093
+      "file-size": 4186,
+      "function-size": 1103
     },
     "internal/cli/chat_tui_paste.go": {
       "essay": 6
@@ -893,9 +893,9 @@
       "test-file-size": 90
     },
     "internal/control/runtime_state.go": {
-      "complexity": 12,
-      "essay": 2,
-      "function-size": 15
+      "complexity": 14,
+      "essay": 3,
+      "function-size": 19
     },
     "internal/control/session_events.go": {
       "complexity": 14,
