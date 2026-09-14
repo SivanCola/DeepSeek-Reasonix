@@ -633,13 +633,8 @@ await act(async () => { slowModernGate.resolve(); await staleModern?.surfaceRead
 eq(sessionPipelineDiagnostics().resumeSwitch?.totalMs, modernPhases.totalMs, "stale modern adoption cannot overwrite committed diagnostics");
 eq(sessionPipelineDiagnostics().resumeHistory?.source, "transcript-snapshot", "modern race retains authoritative snapshot evidence");
 
-desktopStub.commands.TranscriptSnapshotForTab = async () => {
-  throw new Error("configured model is unavailable before controller startup");
-};
-desktopStub.commands.HistorySliceForTab = async (tabID: string, req: HistorySliceRequest) => {
-  legacyReads++;
-  return historySliceFromMessages(tabID, [{ role: "user", content: "recovered without controller" }], req);
-};
+desktopStub.commands.TranscriptSnapshotForTab = async () => { throw new Error("configured model is unavailable before controller startup"); };
+desktopStub.commands.HistorySliceForTab = async (tabID: string, req: HistorySliceRequest) => { legacyReads++; return historySliceFromMessages(tabID, [{ role: "user", content: "recovered without controller" }], req); };
 await act(async () => {
   await controller?.retrySessionHistory("tab-a");
   await flushPromises();

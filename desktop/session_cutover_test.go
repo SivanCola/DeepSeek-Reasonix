@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"reasonix/internal/boot"
 	"reasonix/internal/control"
@@ -82,6 +84,10 @@ func TestDesktopCanonicalHistoryRemainsReadableBeforeControllerReady(t *testing.
 		Origin:  provider.MessageOriginUser,
 		Content: "history survives an unavailable configured model",
 	})
+	large := "large history survives too " + strings.Repeat("x", historyInlineRefThreshold+1024)
+	appendSessionTestMessage(t, runtime, "cold-history-assistant", provider.Message{
+		ID: "cold-history-assistant", Role: provider.RoleAssistant, Content: large,
+	})
 
 	tab := &WorkspaceTab{
 		ID:            "canonical-cold-history-tab",
@@ -99,15 +105,22 @@ func TestDesktopCanonicalHistoryRemainsReadableBeforeControllerReady(t *testing.
 	if page.Error != "" || page.Source != "canonical-index" {
 		t.Fatalf("cold canonical history page = source %q error %q", page.Source, page.Error)
 	}
-	if len(page.Entries) != 1 || page.Entries[0].Message.Content != "history survives an unavailable configured model" {
+	if len(page.Entries) != 2 || page.Entries[0].Message.Content != "history survives an unavailable configured model" {
 		t.Fatalf("cold canonical history entries = %+v", page.Entries)
+	}
+	if len(page.Entries[1].Refs) != 1 {
+		t.Fatalf("cold canonical large history refs = %+v", page.Entries[1].Refs)
+	}
+	content := app.HistoryContentForTab(tab.ID, page.Entries[1].Refs[0], 0)
+	if content.Stale || !content.Done || content.Data != large {
+		t.Fatalf("cold canonical expanded history = stale:%v done:%v bytes:%d, want %d", content.Stale, content.Done, len(content.Data), len(large))
 	}
 
 	opened, err := app.SessionOpenForTab(tab.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opened.Ref != runtime.Ref() || len(opened.Recent.Entries) != 1 || opened.Recent.Entries[0].Preview != "history survives an unavailable configured model" {
+	if opened.Ref != runtime.Ref() || len(opened.Recent.Entries) != 2 || opened.Recent.Entries[0].Preview != "history survives an unavailable configured model" {
 		t.Fatalf("cold canonical session open = %+v", opened)
 	}
 
@@ -115,8 +128,31 @@ func TestDesktopCanonicalHistoryRemainsReadableBeforeControllerReady(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(canonical.Messages) != 1 || canonical.Messages[0].Preview != "history survives an unavailable configured model" {
+	if len(canonical.Messages) != 2 || canonical.Messages[0].Preview != "history survives an unavailable configured model" {
 		t.Fatalf("cold canonical history records = %+v", canonical.Messages)
+	}
+	var search session.SearchHistoryPage
+	for deadline := time.Now().Add(5 * time.Second); search.Status != "ready"; time.Sleep(time.Millisecond) {
+		search, err = app.SearchSessionHistoryForTab(tab.ID, "unavailable configured model", "", 12)
+		if err != nil || (search.Status != "preparing" && search.Status != "ready") || time.Now().After(deadline) {
+			t.Fatalf("cold canonical search = %+v, %v", search, err)
+		}
+	}
+	if len(search.Hits) != 1 || search.Hits[0].MessageID != "cold-history-user" {
+		t.Fatalf("cold canonical search hits = %+v", search.Hits)
+	}
+	location, err := app.LocateSessionMessageForTab(tab.ID, "cold-history-assistant", canonical.SnapshotSequence)
+	if err != nil || location.Status != "ready" || location.MessageID != "cold-history-assistant" {
+		t.Fatalf("cold canonical location = %+v, %v", location, err)
+	}
+	ref := canonical.Messages[1].ContentRef
+	if ref == nil {
+		t.Fatal("cold canonical large message has no content ref")
+	}
+	chunk, err := app.SessionHistoryContentForTab(tab.ID, *ref, 0)
+	decoded, decodeErr := base64.StdEncoding.DecodeString(chunk.Data)
+	if err != nil || decodeErr != nil || !chunk.Done || !strings.Contains(string(decoded), large) {
+		t.Fatalf("cold canonical content = done:%v bytes:%d, errors:%v/%v", chunk.Done, len(decoded), err, decodeErr)
 	}
 }
 

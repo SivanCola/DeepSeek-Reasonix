@@ -2775,13 +2775,10 @@ export function useController() {
         runtimeEpochByTabRef.current.set(tabId, snapshot.identity.runtimeEpoch);
         dispatchTo(tabId, { type: "transcript_snapshot", snapshot });
       }, stillCurrent)) : false;
-      if (!stillCurrent()) return;
       const snapshotInstalled = modern && snapshotLoaded === true;
-      let projection = skipHistory || snapshotInstalled
+      let projection = skipHistory || snapshotInstalled || !stillCurrent()
         ? undefined
         : await loadTimed("history", () =>
-            // The windowed history API remains readable without a controller, so it
-            // is also the recovery path when model startup prevents a snapshot.
             // Resident LRU only when the caller keeps cache; reset/no-cache re-fetch.
             getTranscriptStore().loadLatest(tabId, sessionPath, {
               turns: HISTORY_PAGE_TURNS,
