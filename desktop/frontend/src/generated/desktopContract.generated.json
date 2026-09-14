@@ -2624,6 +2624,74 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/fork_targets.go",
+      "name": "CreateForkForTab",
+      "owner": "App.CreateForkForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ForkCreationView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "turnID",
+          "operationID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CreateForkForTab"
+      },
+      "sources": [
+        "desktop/fork_targets.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_fork_targets.go",
+      "name": "CreateForkRemoteTab",
+      "owner": "App.CreateForkRemoteTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ForkCreationView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "turnID",
+          "operationID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CreateForkRemoteTab"
+      },
+      "sources": [
+        "desktop/remote_fork_targets.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/delivery_worktree.go",
       "name": "CreateIsolatedWorktree",
       "owner": "App.CreateIsolatedWorktree",
@@ -4065,6 +4133,58 @@
       },
       "sources": [
         "desktop/remote_tab_commands.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/fork_targets.go",
+      "name": "ForkTargetsForTab",
+      "owner": "App.ForkTargetsForTab",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ForkTargetSetView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ForkTargetsForTab"
+      },
+      "sources": [
+        "desktop/fork_targets.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_fork_targets.go",
+      "name": "ForkTargetsRemoteTab",
+      "owner": "App.ForkTargetsRemoteTab",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ForkTargetSetView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ForkTargetsRemoteTab"
+      },
+      "sources": [
+        "desktop/remote_fork_targets.go"
       ]
     },
     {
@@ -24513,6 +24633,99 @@
         }
       ]
     },
+    "main.ForkCreationView": {
+      "fields": [
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "tabId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "opened",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "error",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.ForkTargetSetView": {
+      "fields": [
+        {
+          "name": "targets",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.ForkTargetView"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "verifiable",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.ForkTargetView": {
+      "fields": [
+        {
+          "name": "turnId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "turnNumber",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "messageId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "available",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "main.ForkWorktreeResultView": {
       "fields": [
         {
@@ -33181,6 +33394,12 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "forkTargetsSupported",
+          "type": {
+            "kind": "boolean"
           }
         },
         {
