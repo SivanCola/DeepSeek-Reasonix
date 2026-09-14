@@ -45,6 +45,8 @@ func (r *queueReservation) release() {
 // a pure memory operation, so a slow disk can never extend the session commit
 // lock or block cancellation.
 type PersistenceBinding struct {
+	// Immutable after construction: Session readers retain this reference while
+	// Close shuts down the handle. Write admission is guarded by closed/accepting.
 	handle SessionHandle
 	dir    string
 
@@ -517,7 +519,6 @@ func (b *PersistenceBinding) Close(ctx context.Context) error {
 			b.timer = nil
 		}
 		handle := b.handle
-		b.handle = nil
 		b.closed = true
 		b.notifySpaceLocked()
 		b.mu.Unlock()
