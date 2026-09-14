@@ -2,8 +2,7 @@ import { downloadPaneFromURL, downloadURLForPane } from "./download-link.js";
 import {
   cliReleaseModel,
   cliUpgradeCommand,
-  desktopGitHubReleaseModel,
-  desktopReleaseModel,
+  fetchDesktopDownloadModel,
   fetchFirstJSON,
   releaseVersionLabel,
 } from "./release-channels.js";
@@ -292,16 +291,7 @@ import { initMobileNav } from "./mobile-nav.js";
   renderReleaseSurface("cli");
   if (requestedPane) reflectPaneURL(requestedPane);
 
-  fetchFirstJSON([
-    "https://dl.reasonix.io/latest/latest.json",
-    "https://crash.reasonix.io/v1/desktop/releases/stable/latest.json",
-  ], fetch, (manifest) => Boolean(desktopReleaseModel(manifest)))
-    .then((manifest) => desktopReleaseModel(manifest))
-    .catch(() => fetchFirstJSON(
-      ["https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/latest"],
-      fetch,
-      (release) => Boolean(desktopGitHubReleaseModel(release)),
-    ).then(desktopGitHubReleaseModel))
+  fetchDesktopDownloadModel()
     .then((model) => {
       if (!model) return;
       releaseModels.desktop = model;

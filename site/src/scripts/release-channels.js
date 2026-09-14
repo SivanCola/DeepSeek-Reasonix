@@ -307,3 +307,37 @@ export async function fetchFirstJSON(urls, fetchImpl = fetch, accept = () => tru
   }
   throw new Error(`release data unavailable (${failures.join("; ")})`);
 }
+
+// v1.38.8 is published for manual download while the updater stays on v1.38.7.
+// Compare with the live stable release so this exception cannot pin future downloads.
+export async function fetchDesktopDownloadModel(fetchImpl = fetch) {
+  const load = async (manifestURLs, releaseURL) => {
+    try {
+      return desktopReleaseModel(await fetchFirstJSON(
+        manifestURLs, fetchImpl, (manifest) => Boolean(desktopReleaseModel(manifest)),
+      ));
+    } catch {
+      return desktopGitHubReleaseModel(await fetchFirstJSON(
+        [releaseURL], fetchImpl, (release) => Boolean(desktopGitHubReleaseModel(release)),
+      ));
+    }
+  };
+  const results = await Promise.allSettled([
+    load([
+      "https://dl.reasonix.io/latest/latest.json",
+      "https://crash.reasonix.io/v1/desktop/releases/stable/latest.json",
+    ], "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/latest"),
+    load([
+      "https://dl.reasonix.io/desktop-v1.38.8/latest.json",
+    ], "https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/tags/desktop-v1.38.8"),
+  ]);
+  let selected = null;
+  for (const result of results) {
+    if (result.status !== "fulfilled" || !result.value) continue;
+    const model = result.value;
+    if (!selected || compareOrder(parsePublicTag(model.version).order, parsePublicTag(selected.version).order) > 0) {
+      selected = model;
+    }
+  }
+  return selected;
+}

@@ -7,6 +7,7 @@ import {
   cliReleaseModel,
   desktopGitHubReleaseModel,
   desktopReleaseModel,
+  fetchDesktopDownloadModel,
   fetchFirstJSON,
   releaseAssetMap,
   releaseVersionLabel,
@@ -23,6 +24,40 @@ function cliAssets(tag, missing = []) {
 }
 
 const desktopSHA256 = "a".repeat(64);
+
+test("manual desktop downloads advance independently and yield to future stable releases", async () => {
+  for (const stableVersion of ["v1.38.7", "v1.38.9", "v1.39.0"]) {
+    const model = await fetchDesktopDownloadModel(async (url) => ({
+      ok: true,
+      json: async () => desktopManifest(url.includes("desktop-v1.38.8") ? "v1.38.8" : stableVersion),
+    }));
+    const expected = stableVersion === "v1.38.7" ? "v1.38.8" : stableVersion;
+    assert.equal(model.version, expected);
+    assert.ok(Object.values(model.assets).every((url) => url.includes(`desktop-${expected}/`)));
+  }
+});
+
+test("manual desktop downloads survive CDN failure through the exact published GitHub release", async () => {
+  const model = await fetchDesktopDownloadModel(async (url) => {
+    if (url.endsWith("/tags/desktop-v1.38.8")) {
+      return { ok: true, json: async () => desktopGitHubRelease("v1.38.8") };
+    }
+    if (url.includes("/latest/latest.json")) {
+      return { ok: true, json: async () => desktopManifest("v1.38.7") };
+    }
+    throw new Error("unavailable");
+  });
+  assert.equal(model.version, "v1.38.8");
+});
+
+test("invalid manual release cannot replace a validated stable download", async () => {
+  const model = await fetchDesktopDownloadModel(async (url) => ({
+    ok: true,
+    json: async () => url.includes("desktop-v1.38.8") ? {} : desktopManifest("v1.38.7"),
+  }));
+  assert.equal(model.version, "v1.38.7");
+  assert.equal(await fetchDesktopDownloadModel(async () => { throw new Error("offline"); }), null);
+});
 
 function desktopManifest(version, base) {
   const releaseBase = base || `https://dl.reasonix.io/desktop-${version}/`;
