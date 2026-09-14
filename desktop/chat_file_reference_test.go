@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,7 @@ func newChatReferenceApp(t *testing.T, root string) *App {
 	t.Helper()
 	isolateDesktopUserDirs(t)
 	app := NewApp()
+	t.Cleanup(func() { app.shutdown(context.Background()) })
 	tab := &WorkspaceTab{ID: "refs", WorkspaceRoot: root}
 	app.tabs[tab.ID] = tab
 	app.activeTabID = tab.ID
