@@ -42,6 +42,11 @@ func (p *Projection) freezeLocked(id string) (*Projection, error) {
 		}
 		frozen.buffer.messages = append(frozen.buffer.messages, copy)
 	}
+	// The turn index is derived once per cut and shares this cut's lifetime, so
+	// paging the body never shrinks navigation and repeated outline reads reuse
+	// one pass. Its previews count against the same cache budget.
+	frozen.outline = buildOutline(frozen.buffer.messages)
+	used += retainedBytes(reflect.ValueOf(frozen.outline))
 	runtime, _ := frozen.runtimeLocked()
 	used += retainedBytes(reflect.ValueOf(runtime))
 	if p.snapshots == nil {

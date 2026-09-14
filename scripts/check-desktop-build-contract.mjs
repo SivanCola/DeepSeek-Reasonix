@@ -94,6 +94,27 @@ assert.match(
   /service_ldflags="-X main\.version=\$VERSION -X main\.channel=\$CHANNEL/,
   "desktop builds must link the release channel into the Go service",
 );
+assert.match(
+  desktopBuildScript,
+  /\[ "\$os" = "windows" \] && service_ldflags="\$service_ldflags -H windowsgui"/,
+  "Windows desktop builds must link the Go service as a GUI-subsystem image",
+);
+assert.match(
+  desktopBuildScript,
+  /GOOS="\$os" GOARCH="\$arch" go build -trimpath -ldflags="-s -w \$service_ldflags" -o "\$service_out"/,
+  "desktop service builds must consume the platform-specific linker flags",
+);
+const windowsJob = jobBody(ciWorkflow, "desktop-windows");
+assert.match(
+  windowsJob,
+  /go build -trimpath -ldflags "-s -w -H windowsgui -X main\.version=v0\.0\.0-ci -X main\.channel=canary" -o build\/bin\/reasonix-desktop\.exe \./,
+  "Windows native startup CI must build the service as a GUI-subsystem image",
+);
+assert.match(
+  windowsJob,
+  /node \.\.\/scripts\/verify-windows-gui-subsystem\.mjs build\/bin\/reasonix-desktop\.exe/,
+  "Windows native startup CI must verify the service PE subsystem",
+);
 // The shell is packaged through the Electron packaging script, never wails build.
 assert.match(
   desktopBuildScript,

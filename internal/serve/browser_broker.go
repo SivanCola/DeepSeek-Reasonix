@@ -30,6 +30,7 @@ const (
 	capabilitySessionContentV1   = "session-content-v1"
 	capabilitySessionReadV2      = "session-read-v2"
 	capabilityGoalLifecycleV2    = servecontract.GoalLifecycleV2
+	capabilityTranscriptOutline  = servecontract.TranscriptOutlineV1
 )
 
 // BrowserBroker is Serve's end of the desktop browser broker: one HTTP
@@ -241,6 +242,12 @@ func (s *Server) capabilities() []string {
 	}
 	if s.buildOptions.BrowserExecutor != nil {
 		caps = append(caps, capabilityBrowser)
+	}
+	// Announce the outline from the same capability the route enforces, so a
+	// controller without the projection never advertises a route that answers
+	// 501.
+	if _, ok := s.ctl().(control.TranscriptOutlineAPI); ok {
+		caps = append(caps, capabilityTranscriptOutline)
 	}
 	return caps
 }

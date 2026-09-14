@@ -66,6 +66,10 @@ type Projection struct {
 	snapshots     map[string]frozenSnapshot
 	snapshotOrder []string
 	snapshotBytes int
+	// outline is the complete turn index of a frozen cut. It is built by
+	// freezeLocked and read only from frozen cuts, so it always describes the
+	// same revision as the records paged beside it.
+	outline []OutlineEntry
 }
 
 func NewProjection(identity Identity, baseline []Message, covered uint64) (*Projection, error) {

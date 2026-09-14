@@ -16,9 +16,41 @@ test("explicit documentation skips build surfaces", () => {
 });
 
 test("frontend inputs select frontend, browser, memory and native validation", () => {
-  for (const path of ["desktop/frontend/src/App.tsx", "desktop/frontend/public/help.md", "desktop/frontend/vite.config.ts", "desktop/pnpm-lock.yaml"]) {
+  for (const path of ["desktop/frontend/src/components/Button.tsx", "desktop/frontend/public/help.md", "desktop/frontend/vite.config.ts", "desktop/pnpm-lock.yaml"]) {
     const { flags } = classifyPaths([path]);
     for (const name of ["desktop", "frontend", "browser", "memory", "native"]) assert.equal(flags[name], true, `${path}: ${name}`);
+    assert.equal(flags.memory_full, false, path);
+  }
+});
+
+test("App lifecycle and memory protocol inputs select the full memory screen", () => {
+  for (const path of [
+    "desktop/frontend/src/App.tsx",
+    "desktop/frontend/src/AppRuntime.tsx",
+    "desktop/frontend/src/app-runtime/AppRuntime.tsx",
+    "desktop/frontend/src/app-shell/AppShell.tsx",
+    "desktop/frontend/src/components/Transcript.tsx",
+    "desktop/frontend/src/components/TranscriptCards.tsx",
+    "desktop/frontend/src/lib/useController.ts",
+    "desktop/frontend/src/lib/useControllerProfileCommands.ts",
+    "desktop/frontend/src/lib/subscriptionScope.ts",
+    "desktop/frontend/src/lib/useNavigationSurface.ts",
+    "desktop/frontend/src/lib/navigationSurfaceTransition.ts",
+    "desktop/frontend/src/lib/keyedResource.ts",
+    "desktop/frontend/src/lib/fileResource.ts",
+    "desktop/frontend/src/lib/useWorkspaceChangesResource.ts",
+    "desktop/frontend/src/lib/mcpServerLifecycle.ts",
+    "desktop/frontend/src/lib/fileNavigationLifetime.ts",
+    "desktop/frontend/src/lib/bridge.ts",
+    "desktop/frontend/src/lib/bridgeBenchFixtures.ts",
+    "desktop/frontend/src/lib/bridgeHistoryFixtures.ts",
+    "desktop/frontend/bench/app-memory.mjs",
+    "desktop/frontend/bench/app-browser.mjs",
+    "desktop/frontend/bench/app-page-actions.mjs",
+  ]) {
+    const { flags } = classifyPaths([path]);
+    assert.equal(flags.memory, true, path);
+    assert.equal(flags.memory_full, true, path);
   }
 });
 
@@ -41,7 +73,7 @@ test("mixed changes cannot hide affected work and unknown paths fail closed", ()
   assert.equal(result.flags.memory, true);
   result = classifyPaths(["shared/new-loader.js"]);
   assert.deepEqual(result.unknown, ["shared/new-loader.js"]);
-  for (const name of ["code", "desktop", "frontend", "browser", "memory", "electron", "native", "packaging"])
+  for (const name of ["code", "desktop", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging"])
     assert.equal(result.flags[name], true, name);
 });
 
@@ -53,7 +85,7 @@ test("release notes and full events are deterministic", () => {
   assert.equal(classifyPaths([]).flags.desktop, false);
   const full = classifyPaths([], { full: true }).flags;
   assert.equal(full.notes_only, false);
-  for (const name of ["code", "desktop", "frontend", "browser", "memory", "electron", "native", "packaging", "site", "sdk"])
+  for (const name of ["code", "desktop", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging", "site", "sdk"])
     assert.equal(full[name], true, name);
 });
 
@@ -89,7 +121,7 @@ test("invalid diff identities fail instead of producing a skip", () => {
 test("CI routing changes exercise every routed Desktop surface", () => {
   for (const path of [".github/workflows/ci.yml", ".github/workflows/app-memory.yml", "scripts/ci-paths.mjs"]) {
     const flags = classifyPaths([path]).flags;
-    for (const name of ["desktop", "desktop_go", "frontend", "browser", "memory", "electron", "native", "packaging"])
+    for (const name of ["desktop", "desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging"])
       assert.equal(flags[name], true, `${path}: ${name}`);
   }
 });

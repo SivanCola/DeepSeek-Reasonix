@@ -4828,6 +4828,21 @@
       ]
     }
   },
+  "RemoteTranscriptOutlineForTab": {
+    "domain": "desktop/remote_transcript_api.go",
+    "owner": "App.RemoteTranscriptOutlineForTab",
+    "sources": [
+      "desktop/remote_transcript_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RemoteTranscriptOutlineForTab",
+      "inputs": [
+        "tabID",
+        "req"
+      ]
+    }
+  },
   "RemoteTranscriptPageForTab": {
     "domain": "desktop/remote_transcript_api.go",
     "owner": "App.RemoteTranscriptPageForTab",
@@ -8596,6 +8611,21 @@
     "scope": {
       "kind": "owner-inputs",
       "resolver": "App.TranscriptContentForTab",
+      "inputs": [
+        "tabID",
+        "req"
+      ]
+    }
+  },
+  "TranscriptOutlineForTab": {
+    "domain": "desktop/transcript_api.go",
+    "owner": "App.TranscriptOutlineForTab",
+    "sources": [
+      "desktop/transcript_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.TranscriptOutlineForTab",
       "inputs": [
         "tabID",
         "req"

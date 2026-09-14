@@ -146,7 +146,7 @@ func newBrokerTestServer(t *testing.T, opts boot.Options) *Server {
 }
 
 func TestServerCapabilitiesFollowBroker(t *testing.T) {
-	if caps := newBrokerTestServer(t, boot.Options{}).capabilities(); !slices.Equal(caps, []string{capabilityPermissionPresets, capabilityPresentFiles, capabilityExecutionV2, capabilitySessionHistory}) {
+	if caps := newBrokerTestServer(t, boot.Options{}).capabilities(); !slices.Equal(caps, []string{capabilityPermissionPresets, capabilityPresentFiles, capabilityExecutionV2, capabilitySessionHistory, capabilityTranscriptOutline}) {
 		t.Fatalf("capabilities without broker = %v", caps)
 	}
 	broker, err := NewBrowserBroker("http://127.0.0.1:9999", "tok")
@@ -155,7 +155,7 @@ func TestServerCapabilitiesFollowBroker(t *testing.T) {
 	}
 	srv := newBrokerTestServer(t, boot.Options{BrowserExecutor: broker})
 	caps := srv.capabilities()
-	if !slices.Equal(caps, []string{capabilityPermissionPresets, capabilityPresentFiles, capabilityExecutionV2, capabilitySessionHistory, capabilityBrowser}) {
+	if !slices.Equal(caps, []string{capabilityPermissionPresets, capabilityPresentFiles, capabilityExecutionV2, capabilitySessionHistory, capabilityBrowser, capabilityTranscriptOutline}) {
 		t.Fatalf("capabilities with broker = %v", caps)
 	}
 }
@@ -231,11 +231,11 @@ func TestHandshakeAdvertisesBrowserCapability(t *testing.T) {
 			t.Fatalf("handshake status = %d, want 204", resp.StatusCode)
 		}
 		got := resp.Header.Get(capabilitiesHeader)
-		if withBroker && got != capabilityPermissionPresets+","+capabilityPresentFiles+","+capabilityExecutionV2+","+capabilitySessionHistory+","+capabilityBrowser {
-			t.Fatalf("capabilities header = %q, want permission, present-files and browser capabilities", got)
+		if withBroker && got != capabilityPermissionPresets+","+capabilityPresentFiles+","+capabilityExecutionV2+","+capabilitySessionHistory+","+capabilityBrowser+","+capabilityTranscriptOutline {
+			t.Fatalf("capabilities header = %q, want permission, present-files, browser and outline capabilities", got)
 		}
-		if !withBroker && got != capabilityPermissionPresets+","+capabilityPresentFiles+","+capabilityExecutionV2+","+capabilitySessionHistory {
-			t.Fatalf("capabilities header = %q, want permission and present-files capabilities", got)
+		if !withBroker && got != capabilityPermissionPresets+","+capabilityPresentFiles+","+capabilityExecutionV2+","+capabilitySessionHistory+","+capabilityTranscriptOutline {
+			t.Fatalf("capabilities header = %q, want permission, present-files and outline capabilities", got)
 		}
 	}
 }

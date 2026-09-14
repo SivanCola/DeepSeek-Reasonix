@@ -146,6 +146,11 @@ fi
 # enable the in-app self-update path.
 service_ldflags="-X main.version=$VERSION -X main.channel=$CHANNEL $product_docs_ldflags"
 [ "$os" = "darwin" ] && [ "${HAS_APPLE_CERT:-}" = "true" ] && service_ldflags="$service_ldflags -X main.macSelfUpdate=true"
+# The Windows service must be a GUI-subsystem image: the shell spawns it with
+# --host-rpc over inherited pipes, so it never needs a console, and a CONSOLE
+# image makes Windows allocate a conhost window on every launch (the startup
+# "flash of black box" in #10148). -H is a Windows-only linker flag.
+[ "$os" = "windows" ] && service_ldflags="$service_ldflags -H windowsgui"
 
 # build_service compiles the Go desktop service (reasonix-desktop). It stays
 # the active version entry the thin launcher starts: without --host-rpc it
