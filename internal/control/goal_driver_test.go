@@ -775,12 +775,12 @@ func TestColdRestoredGoalCanResumeFromNaturalUserRequestAndContinue(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = binding.Release(context.Background()) })
 	runtime := binding.Runtime()
 	runner := &restoredGoalRunner{done: make(chan struct{})}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
 	c := New(Options{Runner: runner, Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSessionV3: true})
 	cleanupGoalDriverController(t, c)
+	t.Cleanup(func() { _ = binding.Release(context.Background()) })
 	c.Send("继续把这个目标做完")
 	select {
 	case <-runner.done:
