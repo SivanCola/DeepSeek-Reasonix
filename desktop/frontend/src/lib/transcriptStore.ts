@@ -835,18 +835,21 @@ export class TranscriptStore {
     const page = end === "oldest" ? session.pages[0] : session.pages[session.pages.length - 1];
     const dropped = new Set(page.entryIds);
     if (end === "oldest") {
-      const known = new Set<string>();
+      // A result whose call is being reclaimed has to go with it, or the
+      // reader is left with an output row that names a call they can no
+      // longer see. Which calls survive is decided by the retained records
+      // alone: collecting it from the reclaimed page would keep the calls
+      // that are leaving and strand exactly the rows this guards.
+      const survivingCalls = new Set<string>();
       for (const record of session.records) {
+        if (dropped.has(record.entryId) || record.message.role !== "assistant") continue;
+        for (const call of record.message.toolCalls ?? []) survivingCalls.add(call.id);
+      }
+      for (const record of session.records) {
+        if (dropped.has(record.entryId)) continue;
         const callId = record.message.role === "tool" ? record.message.toolCallId : undefined;
-        if (!dropped.has(record.entryId) && callId && !known.has(callId)) {
-          // Leading results whose calls were on the reclaimed page go with it.
-          dropped.add(record.entryId);
-          continue;
-        }
-        if (record.message.role === "assistant") {
-          for (const call of record.message.toolCalls ?? []) known.add(call.id);
-        }
-        if (!dropped.has(record.entryId)) break;
+        if (!callId || survivingCalls.has(callId)) break;
+        dropped.add(record.entryId);
       }
     }
     const retained = session.records.filter((record) => !dropped.has(record.entryId));

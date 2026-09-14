@@ -635,5 +635,48 @@ console.log("\ntranscript store");
   eq(store.peek("legacy", "/legacy")?.items.find(candidate => candidate.id === "one"), item, "full details leave the preview Item unchanged");
 }
 
+// ── reclaiming a page never strands a tool result ──────────────────────────
+// A result row whose call was reclaimed names a call the reader can no longer
+// see. Pages here are 2 messages wide over 3-message turns, so page boundaries
+// fall between a call and its result and the reclaim has to widen past it.
+{
+  const messages: HistoryMessage[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    messages.push({ role: "user", content: `q${i}` });
+    messages.push({ role: "assistant", content: "", toolCalls: [{ id: `call-${i}`, name: "bash", arguments: `run ${i}` }] });
+    messages.push({ role: "tool", toolCallId: `call-${i}`, toolName: "bash", content: `out ${i}` });
+  }
+  const backend = new FakeBackend(messages);
+  const store = new TranscriptStore(backend, { windowMaxPages: 2 });
+  const residentIds = () => new Set((store.peek("tab-tool", "/s/tool.jsonl")?.items ?? []).map((item) => item.id));
+
+  // Page back to the head. Page [0,2) holds turn 0's call; the page after it
+  // starts with that call's result, so the boundary splits the pair.
+  await store.loadLatest("tab-tool", "/s/tool.jsonl", { entries: 2 });
+  for (let page = 0; page < 40; page += 1) {
+    if (!await store.loadOlder("tab-tool", "/s/tool.jsonl", { entries: 2 })) break;
+  }
+  const atHead = residentIds();
+  ok(atHead.size > 0, "paging reaches the head of the transcript");
+
+  // Growing forward reclaims the head page. The result that belonged to a call
+  // on that page has to go with it, or the reader keeps an output row whose
+  // call is no longer on screen.
+  const newer = await store.loadNewer("tab-tool", "/s/tool.jsonl", { entries: 2 });
+  ok(newer?.kind === "append", "paging forward appends after reaching the head");
+  ok(store.stats().reclaimedPages > 0, "growing forward reclaimed a page");
+  const afterReclaim = residentIds();
+  for (const id of atHead) {
+    if (!/^call-\d+$/.test(id)) continue;
+    const owner = /^call-(\d+)$/.exec(id)?.[1];
+    if (owner === undefined) continue;
+    const assistantResident = (store.peek("tab-tool", "/s/tool.jsonl")?.items ?? []).some(
+      (item) => item.kind === "assistant" && (item.toolCalls ?? []).some((call) => call.id === id));
+    ok(!afterReclaim.has(id) || assistantResident,
+      `reclaimed call ${id} did not leave its result behind`);
+  }
+  ok(store.stats().residentWindowEntries <= 2 * 2, "the window stayed at its page budget");
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
