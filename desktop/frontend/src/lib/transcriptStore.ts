@@ -1272,5 +1272,8 @@ registerTranscriptCacheDiagnostics(() =>
     markdownBudgetBytes: DEFAULT_MARKDOWN_BUDGET,
     historyEvictions: 0,
     markdownEvictions: 0,
+    reclaimedPages: 0,
+    residentWindowEntries: 0,
+    windowMaxPages: DEFAULT_WINDOW_MAX_PAGES,
   },
 );
