@@ -158,6 +158,20 @@ export function createMockRemoteProjects(tabs: MockRemoteTabCatalog): {
     async CompactRemoteTab() {},
     async ReplayRemoteTabPrompts() { return []; },
     async ForkRemoteTab() {},
+    // The dev mock stands in for a serve that advertises the create-only fork
+    // capability: a target list that is always present, verifiable, and opens.
+    async ForkTargetsRemoteTab(tabId) {
+      if (!tabId) return { targets: [], verifiable: false };
+      return {
+        sourceSessionId: tabId, sessionGeneration: 1,
+        targets: [{ sourceSessionId: tabId, sessionGeneration: 1, turnId: `${tabId}:turn-1`, boundarySequence: 3, turnNumber: 1, status: "committed", available: true }],
+        verifiable: true,
+      };
+    },
+    async CreateForkRemoteTab(tabId, anchor) {
+      if (!tabId || !anchor.turnId) return { opened: false };
+      return { sessionId: `mock-remote-fork-${anchor.turnId}`, operationId: crypto.randomUUID(), opened: true };
+    },
     async SummarizeRemoteTab() {},
     async ForgetRemoteTab() {},
     async RemoteTabBranches() { return []; },

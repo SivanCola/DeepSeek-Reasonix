@@ -13,15 +13,19 @@ type TabMeta struct {
 	IsolatedWorktree bool          `json:"isolatedWorktree,omitempty"`
 	Remote           *RemoteTabRef `json:"remote,omitempty"`
 	// RemoteState seeds restored remote shells before their first state event.
-	RemoteState       string `json:"remoteState,omitempty"`
-	TopicID           string `json:"topicId"`
-	TopicTitle        string `json:"topicTitle"`
-	SessionPath       string `json:"sessionPath,omitempty"`
-	SessionID         string `json:"sessionId,omitempty"`
-	SessionRevision   int64  `json:"sessionRevision,omitempty"`
-	SessionDigest     string `json:"sessionDigest,omitempty"`
-	SessionGeneration uint64 `json:"sessionGeneration,omitempty"`
-	ReadOnly          bool   `json:"readOnly,omitempty"`
+	RemoteState string `json:"remoteState,omitempty"`
+	// ForkTargetsSupported reports whether this tab can fork a turn into an
+	// independent child session. False for a local tab and for a remote serve
+	// before its handshake; always emitted, so absence never means "unsupported".
+	ForkTargetsSupported bool   `json:"forkTargetsSupported"`
+	TopicID              string `json:"topicId"`
+	TopicTitle           string `json:"topicTitle"`
+	SessionPath          string `json:"sessionPath,omitempty"`
+	SessionID            string `json:"sessionId,omitempty"`
+	SessionRevision      int64  `json:"sessionRevision,omitempty"`
+	SessionDigest        string `json:"sessionDigest,omitempty"`
+	SessionGeneration    uint64 `json:"sessionGeneration,omitempty"`
+	ReadOnly             bool   `json:"readOnly,omitempty"`
 	// TakenOver marks a local or remote tab spectating a session whose writer is
 	// on the other side of a cooperative handoff.
 	TakenOver         bool               `json:"takenOver,omitempty"`

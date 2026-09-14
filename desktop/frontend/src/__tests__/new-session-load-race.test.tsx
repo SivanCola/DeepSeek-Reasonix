@@ -140,7 +140,7 @@ const appStubTable = {
       EffortForTab: async () => effort,
       BalanceForTab: async () => balance,
       JobsForTab: async () => jobs,
-      CheckpointsForTab: async () => checkpoints,
+      CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
       HistoryForTab: async () => staleHistory.promise,
       HistoryPageForTab: async () => {
         const messages = await staleHistory.promise;
@@ -353,7 +353,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryPageForTab: async () => {
     reusedHistoryCalls.push("history");
     return reusedHistoryCalls.length === 1 ? reusedOldHistory.promise : reusedEmptyPage;
@@ -412,7 +412,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryPageForTab: async (tabID: string) => {
     raceHistoryCalls.push(tabID);
     return reusedEmptyPage;
@@ -487,7 +487,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryForTab: async () => [],
   HistoryPageForTab: async () => ({ messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }),
   HistoryCheckpointTurnsForTab: async () => [],
@@ -568,7 +568,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryCheckpointTurnsForTab: async () => [],
   HistoryForTab: legacyRead, HistoryPageForTab: legacyRead, HistorySliceForTab: legacyRead,
   ResumeSessionPageForTab: legacyRead, OpenChannelSessionPageForTab: legacyRead,
@@ -678,7 +678,7 @@ desktopStub.replaceCommands({
   EffortForTab: async () => effort,
   BalanceForTab: async () => balance,
   JobsForTab: async () => jobs,
-  CheckpointsForTab: async () => checkpoints,
+  CheckpointsForTab: async () => checkpoints, ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
   HistoryPageForTab: async () => {
     switchHistoryPageCalls += 1;
     return switchPage("full-history-refetch");
@@ -764,7 +764,7 @@ await act(async () => {
     MetaForTab: async () => holdMeta ? oldMeta.promise : meta({ sessionPath: path }),
     ContextUsageForTab: async () => context, EffortForTab: async () => effort,
     BalanceForTab: async () => balance, JobsForTab: async () => jobs,
-    CheckpointsForTab: async () => checkpoints, HistoryCheckpointTurnsForTab: async () => [],
+    CheckpointsForTab: async () => checkpoints, HistoryCheckpointTurnsForTab: async () => [], ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
     HistorySliceForTab: async (id: string, req: HistorySliceRequest) => historySliceFromMessages(id, [], req),
     ReplayPendingPrompts: async () => {}, ReplayPendingPromptsForTab: async () => {},
     ResumeSessionPageForTab: async (_id: string, target: string) => { path = target; return switchPage(target); },

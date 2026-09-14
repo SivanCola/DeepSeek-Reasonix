@@ -200,6 +200,7 @@ const desktopStub = installDesktopHostStub(({
       },
       JobsForTab: async () => [],
       CheckpointsForTab: async () => [],
+      ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
       HistoryForTab: async () => [],
       HistoryPageForTab: async () => ({ messages: [], startTurn: 0, endTurn: 0, totalTurns: 0, hasOlder: false }),
       HistorySliceForTab: async (tabID, req) => historySliceFromMessages(tabID, [], req),

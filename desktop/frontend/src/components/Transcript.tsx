@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowDown } from "lucide-react";
 import type { ControllerLiveStore, HistoryLoadOutcome, HistoryLoadTrigger, Item, LiveStream } from "../lib/useController";
-import type { CheckpointMeta } from "../lib/types";
+import { forkTargetForAnswer, type ForkBlockReason, type ForkTargetSetView, type ForkTargetView } from "../lib/forkTargets";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
 import { acquireMarkdownWorkerClient, releaseMarkdownWorkerClient } from "../lib/markdownWorkerClient";
 import { ChatSource } from "../lib/chatViewSource";
@@ -31,10 +31,11 @@ export type TranscriptProps = {
   geometrySessionKey?: string;
   footerHeight?: number;
   onPrompt: (displayText: string, submitText?: string) => void;
-  onFork?: (turn: number) => void;
-  checkpoints?: CheckpointMeta[];
-  actionPending?: boolean;
-  rewindDisabled?: boolean;
+  onFork?: (target: ForkTargetView) => void;
+  /** Persisted fork boundaries of the shown session; undefined until the first read resolves. */
+  forkTargets?: ForkTargetSetView;
+  /** Non-null replaces every fork entry's own state, e.g. a surface that cannot create a child. */
+  forkBlocked?: ForkBlockReason | null;
   running?: boolean;
   hydrating?: boolean;
   hasOlderHistory?: boolean;
@@ -76,9 +77,14 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
   const closeDetails = useCallback(() => { setDetails(undefined); }, []);
   const openDetails = useCallback((key: string, element: HTMLElement) => { trigger.current = element; setDetails(key); }, []);
   const recover = useCallback((id: string) => onPrompt(t("notice.protocolRecoveryAction"), `/recover-context ${id}`), [onPrompt, t]);
-  const actions = useMemo<ChatActions>(() => ({ openDetails, recover, fork: onFork,
-    forkDisabled: Boolean(props.rewindDisabled || props.actionPending || running || hydrating),
-    checkpoints: props.checkpoints ?? [] }), [openDetails, recover, onFork, props.rewindDisabled, props.actionPending, props.checkpoints, running, hydrating]);
+  const actions = useMemo<ChatActions>(() => ({ openDetails, recover,
+    fork: onFork ? {
+      targetFor: (answerKey) => forkTargetForAnswer(props.forkTargets, answerKey),
+      loaded: props.forkTargets !== undefined,
+      verifiable: props.forkTargets?.verifiable ?? false,
+      blocked: props.forkBlocked ?? null,
+      create: onFork,
+    } : undefined }), [openDetails, recover, onFork, props.forkTargets, props.forkBlocked]);
   useLayoutEffect(() => {
     source.update({ items, live: liveStore?.getSnapshot(tabId) ?? live, running, hydrating,
       hasOlder: hasOlderHistory, loadingOlder: loadingOlderHistory, error: olderHistoryError,

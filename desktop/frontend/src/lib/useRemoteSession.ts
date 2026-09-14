@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRuntimeSession } from "./useRuntimeState";
-import { useT } from "./i18n";
 import { createLegacyRemotePolicyNoticeTracker } from "./legacyRemotePolicyNotice";
 import { app, onRemoteTabEvent, onRemoteTabState } from "./bridge";
+import { useRemoteForkTurn } from "./remoteForkTurn";
+import { useRemoteRunningWatchdog } from "./useRemoteRunningWatchdog";
+import { useT } from "./i18n";
 import type { CancelOutcome } from "./inboxCancel";
 import { historyMessagesToItems, initialState, reducer, STALE_HISTORY_ERROR, type ControllerLiveStore, type HistoryLoadOutcome, type HistoryLoadTrigger, type State } from "./useController";
 import { TurnEventProjector } from "./turnEventProjection";
@@ -12,6 +14,7 @@ import { getTranscriptOutlineStore, remoteOutlineRead } from "./transcriptOutlin
 import { isAuthoritativeRemoteStatus, remoteCheckpoints, remoteComposerState, remoteGoalRuntime, remoteGoalView, remoteStatusToAction, type RemoteStatus } from "./remoteStatus";
 import type { CollaborationMode, CommandInfo, EffortInfo, GoalLifecycleView, GoalRuntime, GoalStatus, HistoryMessage, QualityFloor, RemoteTabStateValue, TabMeta, ToolApprovalMode, WireEvent } from "./types";
 import type { RemoteAskAnswer } from "./remoteTypes";
+import type { ForkTargetView } from "./forkTargets";
 
 const loadRemoteSurface = () => import("../components/RemoteSessionSurface");
 
@@ -56,6 +59,9 @@ export interface RemoteSessionApi {
   answer: (callId: string, answers: RemoteAskAnswer[]) => Promise<void>;
   clearExtensionForm: (pluginId: string, surfaceId: string) => void;
   rewind: (turn: number, scope: string) => Promise<void>;
+  /** Creates the child session for one turn; returns its id, or undefined with the reason in promptError. */
+  forkTurn: (target: ForkTargetView) => Promise<{ sessionId: string; operationId: string } | undefined>;
+  acknowledgeFork: (operationId: string) => Promise<void>;
   setModel: (ref: string) => Promise<void>;
   setEffort: (level: string) => Promise<void>;
   setQualityFloor: (floor: QualityFloor) => Promise<void>;
@@ -132,6 +138,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     transcriptRef.current = next;
     setTranscriptState(next);
   }, []);
+  const { forkTurn, acknowledgeFork, forkTargetsRefreshRef } = useRemoteForkTurn(app, tabId, sessionPath, setTranscript, setPromptError);
   const liveListenersRef = useRef(new Set<() => void>());
   const hydratedRef = useRef(false);
   const hydratingRef = useRef(false);
@@ -419,6 +426,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
             hydratingRef.current = false;
             setTranscript((current) => hydrateRemoteTelemetry(reducer(current, { type: "checkpoints", checkpoints }), status));
             projector.refresh(tabId);
+            void forkTargetsRefreshRef.current?.();
             return;
           }
           const replay = [
@@ -454,6 +462,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
             void refreshStatus().catch(() => undefined);
             void reconcileHistory().catch(() => undefined);
           }
+          void forkTargetsRefreshRef.current?.();
           return;
         } catch (error) {
           negotiating = typeof app.RemoteTranscriptSnapshotForTab === "function" && supportsModern !== false;
@@ -519,7 +528,10 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
       if (modern || negotiating) {
         if (negotiating && bufferedEventsRef.current.length < 1024) bufferedEventsRef.current.push(event);
         projector.receiveLive(tabId, event);
-        if (modern && event.kind === "turn_done") void refreshStatus().catch(() => undefined);
+        if (modern && event.kind === "turn_done") {
+          void refreshStatus().catch(() => undefined);
+          void forkTargetsRefreshRef.current?.();
+        }
         return;
       }
       if (hydratingRef.current) {
@@ -530,6 +542,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
       if (event.kind === "turn_done") {
         void refreshStatus().catch(() => undefined);
         void reconcileHistory().catch(() => undefined);
+        void forkTargetsRefreshRef.current?.();
       }
     });
     return () => {
@@ -565,25 +578,13 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     void reconcileHistoryRef.current?.().catch(() => undefined);
   }, [hydrated, state, runtimeState.state, runtimeState.unknown, runtimeState.known]);
 
-  // Running-state watchdog: while the pill claims a turn is running, poll the
-  // serve's /status and feed it through the shared backend_status reducer.
-  // This is the remote twin of the local tab's reconcile loop — a lost
-  // turn_done frame (dropped SSE, slow-consumer drop, half-dead tunnel) then
-  // clears within one tick instead of spinning forever.
-  useEffect(() => {
-    if (runtimeState.known || !tabId || !hydrated || state !== "ready" || !transcript.running) return;
-    const reconcile = () => {
-      const current = refreshStatusRef.current;
-      if (!current || current.tabId !== tabId) return;
-      void current.run().catch(() => {
-        // Transient; the next tick retries.
-      });
-    };
-    const timer = window.setInterval(reconcile, 30_000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [tabId, hydrated, state, transcript.running, runtimeState.known]);
+  useRemoteRunningWatchdog({
+    tabId,
+    ready: hydrated && state === "ready",
+    runtimeKnown: runtimeState.known,
+    running: transcript.running,
+    refreshStatusRef,
+  });
 
   const submit = useCallback(async (text: string, displayText = text) => {
     if (!tabId) return;
@@ -711,9 +712,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     setPromptError("");
     try {
       switch (scope) {
-        case "fork":
-          await app.ForkRemoteTab(tabId, turn, "");
-          break;
+        // No fork scope: the serve's /fork switches the parent session; forkTurn creates a child instead.
         case "summ-from":
           await app.SummarizeRemoteTab(tabId, turn, "from");
           break;
@@ -785,7 +784,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
   return {
     state, error, transcript, liveStore, hydrated, syncMode, loadOlderHistory: (_targetTurn?: number, trigger?: HistoryLoadTrigger) => olderRef.current?.(trigger) ?? Promise.resolve("empty"), running: transcript.running, modelLabel, commands,
     composerProfile, goalRuntime, goalView, effort, surfaceGeneration, promptError, submit, runManagementCommand, compact, cancelTurn,
-    approve, resolvePlanDecision, answer, clearExtensionForm, rewind, setModel, setEffort, setQualityFloor, pauseGoal, resumeGoal, editGoal, steer, cancelJob,
+    approve, resolvePlanDecision, answer, clearExtensionForm, rewind, forkTurn, acknowledgeFork, setModel, setEffort, setQualityFloor, pauseGoal, resumeGoal, editGoal, steer, cancelJob,
     drainApprovals, retryHydration,
   };
 }

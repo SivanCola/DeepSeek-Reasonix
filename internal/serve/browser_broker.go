@@ -32,6 +32,7 @@ const (
 	capabilityHistoryWindowV1    = "history-window-v1"
 	capabilityGoalLifecycleV2    = servecontract.GoalLifecycleV2
 	capabilityTranscriptOutline  = servecontract.TranscriptOutlineV1
+	capabilityForkTargetsV1      = servecontract.SessionForkTargetsV1
 )
 
 // BrowserBroker is Serve's end of the desktop browser broker: one HTTP
@@ -239,7 +240,7 @@ func (s *Server) capabilities() []string {
 		capabilitySessionHistory,
 	}
 	if identity, ok := s.ctl().(control.IdentityLifecycle); ok && identity.UsesExclusiveSession() {
-		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1, capabilitySessionContentV1, capabilitySessionReadV2, capabilityHistoryWindowV1, capabilityGoalLifecycleV2)
+		caps = append(caps, capabilitySessionIdentityV1, capabilitySessionOwnershipV1, capabilitySessionContentV1, capabilitySessionReadV2, capabilityHistoryWindowV1, capabilityGoalLifecycleV2, capabilityForkTargetsV1)
 	}
 	if s.buildOptions.BrowserExecutor != nil {
 		caps = append(caps, capabilityBrowser)

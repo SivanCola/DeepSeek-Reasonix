@@ -208,6 +208,15 @@ const desktopStub = installDesktopHostStub(({ main: { App: {
     if (failOpen) throw new Error("reconnect failed");
     return { ...remoteTab, remote: { hostId, workspace } };
   },
+  async ForkTargetsRemoteTab(tabId: string) {
+    tape.push(`fork-targets:${tabId}`);
+    return { targets: [], verifiable: false };
+  },
+  async CreateForkRemoteTab(tabId: string, target: { turnId: string; sourceSessionId: string; boundarySequence: number }) {
+    tape.push(`fork-create:${tabId}:${target.turnId}:${target.sourceSessionId}:${target.boundarySequence}`);
+    return { opened: true, sessionId: "child-remote-1", operationId: "operation-remote-1" };
+  },
+  async AcknowledgeForkOperation(tabId: string, operationId: string) { tape.push(`fork-ack:${tabId}:${operationId}`); },
   async SetActiveTab(tabID: string) {
     tape.push(`setActive:${tabID}`);
   },
@@ -590,7 +599,8 @@ await act(async () => {
   await probe?.approve("call-1", "allow");
   await probe?.answer("ask-1", [{ QuestionID: "q1", Selected: ["yes"] }]);
   await probe?.rewind(3, "code");
-  await probe?.rewind(3, "fork");
+  await probe?.forkTurn({ sourceSessionId: "parent-remote-1", sessionGeneration: 1, turnId: "turn-3", boundarySequence: 9,
+    turnNumber: 3, status: "committed", available: true });
   await probe?.rewind(3, "summ-from");
   await probe?.rewind(3, "summ-upto");
   await flush();
@@ -619,7 +629,6 @@ for (const want of [
   "approve:tab-remote-2:call-1:allow",
 	'answer:tab-remote-2:ask-1:[{"QuestionID":"q1","Selected":["yes"]}]',
   "rewind:tab-remote-2:3:code",
-  "fork:tab-remote-2:3:",
   "summarize:tab-remote-2:3:from",
   "summarize:tab-remote-2:3:upto",
   "model:tab-remote-2:remote/new-model",
@@ -632,6 +641,10 @@ for (const want of [
 ]) {
   ok(tape.includes(want), `command forwarded: ${want}`);
 }
+ok(tape.some((entry) => entry.startsWith("fork-create:tab-remote-2:turn-3:")),
+  "remote forking creates the child through the create-only endpoint");
+ok(!tape.some((entry) => entry.startsWith("fork:tab-remote-2")),
+  "remote forking never reaches the route that switches the parent session");
 await act(async () => {
   probeRoot.render(<LocaleProvider><HookProbe tabId="tab-pending-model" /></LocaleProvider>);
   await Promise.resolve();
@@ -656,21 +669,7 @@ ok(fallbackProbe?.hydrated === true && fallbackProbe.composerProfile?.collaborat
   "missing aggregate status is fetched before the remote composer becomes ready");
 await act(async () => fallbackRoot.unmount());
 
-let toolProbe: RemoteSessionApi | undefined;
-function ToolProbe() {
-  toolProbe = useRemoteSession("tab-tool-history");
-  return null;
-}
-const toolRoot = createRoot(document.createElement("div"));
-await act(async () => {
-  toolRoot.render(<LocaleProvider><ToolProbe /></LocaleProvider>);
-  await flush();
-});
-const remoteTool = toolProbe?.transcript.items.find((item) => item.kind === "tool" && item.id === "remote-tool");
-ok(remoteTool?.kind === "tool" && remoteTool.args.includes("go test ./...")
-  && remoteTool.output === "remote tool output" && remoteTool.dataArchived !== true,
-  "remote history retains expandable tool args and output without a local rehydrate endpoint");
-await act(async () => toolRoot.unmount());
+await (await import("./helpers/remoteHistoryProjectionCases")).runRemoteToolHistoryCase({ ok, flush });
 
 let failureProbe: RemoteSessionApi | undefined;
 function FailureProbe() {
@@ -778,22 +777,7 @@ ok(rotationProbe?.transcript.items.some((item) => item.kind === "assistant" && i
 	"session generation fence rejects stale history and hands reconciliation to the new generation");
 await act(async () => rotationRoot.unmount());
 
-// Pending prompt frames retained by Desktop are replayed by the next snapshot,
-// which restores decisions missed while the tab had no frontend listener.
-let replayProbe: RemoteSessionApi | undefined;
-function ReplayProbe() { replayProbe = useRemoteSession("tab-replay"); return null; }
-const replayRoot = createRoot(document.createElement("div"));
-await act(async () => {
-	replayRoot.render(<LocaleProvider><ReplayProbe /></LocaleProvider>);
-	await flush();
-});
-ok(replayProbe?.transcript.approval?.id === "replayed-approval", "snapshot replays a prompt emitted while the remote tab was inactive");
-ok(replayProbe?.transcript.extensionForm?.pluginId === "replayed-plugin" && replayProbe.transcript.extensionForm.surfaceId === "replayed-form", "snapshot replays an extension form emitted while the remote tab was inactive");
-await act(async () => { replayProbe?.drainApprovals(["different-approval"]); await flush(); });
-ok(replayProbe?.transcript.approval?.id === "replayed-approval", "a remote mode transaction preserves approvals it did not drain");
-await act(async () => { replayProbe?.drainApprovals(["replayed-approval"]); await flush(); });
-ok(replayProbe?.transcript.approval === undefined, "a remote mode transaction clears the exact approval it auto-allowed");
-await act(async () => replayRoot.unmount());
+await (await import("./helpers/remoteHistoryProjectionCases")).runRemotePendingPromptReplayCase({ ok, flush });
 await (await import("./helpers/remoteRuntimeReconciliationCases")).runRemoteRuntimeCases({ commands: desktopStub.commands as unknown as AppBindings, emitRemote: __emitMockRemoteTab, remoteTab, ok, tape, flush, setSnapshotHistory: value => { snapshotHistory = value; } });
 dom.window.close();
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
