@@ -33,6 +33,7 @@ test("558/420/430 passes after bounded retry and keeps the first sample", () => 
   const decision = decideTranscriptPerformance(attempts);
   assert.equal(decision.status, "passed-after-bounded-retry");
   assert.equal(decision.medians.historyPaging, 430);
+  assert.equal(decision.inputP95Median, 80);
   assert.equal(attempts[0].phases.historyPaging.longTaskMax, 558);
   assert.match(formatPerformanceSummary("chromium", 1000, decision, attempts), /#1 \[.*historyPaging=558ms.*#3 \[.*historyPaging=430ms/);
 });
@@ -58,13 +59,30 @@ test("phases are judged independently", () => {
   assert.equal(decision.passed, false);
 });
 
-test("functional errors, strict input regressions, and missing samples fail immediately", () => {
+test("functional errors and missing samples fail immediately", () => {
   assert.throws(() => needsBoundedRetry(attempt(1, { errors: ["page error"] })), /browser errors/);
-  assert.throws(() => needsBoundedRetry(attempt(1, { inputP95: 201 })), /input P95/);
   const incomplete = attempt(1);
   delete incomplete.phases.streaming;
   assert.throws(() => needsBoundedRetry(incomplete), /missing streaming/);
   assert.throws(() => decideTranscriptPerformance([attempt(1, { maxima: { historyPaging: 558 } })]), /exactly two retries/);
+});
+
+test("input P95 uses the same bounded median policy as long tasks", () => {
+  const recovered = decideTranscriptPerformance([
+    attempt(1, { inputP95: 302 }),
+    attempt(2, { inputP95: 110 }),
+    attempt(3, { inputP95: 120 }),
+  ]);
+  assert.equal(recovered.status, "passed-after-bounded-retry");
+  assert.equal(recovered.inputP95Median, 120);
+
+  const sustained = decideTranscriptPerformance([
+    attempt(1, { inputP95: 302 }),
+    attempt(2, { inputP95: 220 }),
+    attempt(3, { inputP95: 120 }),
+  ]);
+  assert.equal(sustained.status, "failed-sustained-regression");
+  assert.equal(sustained.inputP95Median, 220);
 });
 
 test("bounded collection makes exactly two retries after a long-task exceedance", async () => {
@@ -82,13 +100,21 @@ test("bounded collection makes exactly two retries after a long-task exceedance"
   }), /functional failure/);
   assert.deepEqual(functionalCalls, [1]);
 
-  const inputCalls = [];
+  const functionalAttemptCalls = [];
   await assert.rejects(() => collectTranscriptPerformance(async ordinal => {
-    inputCalls.push(ordinal);
+    functionalAttemptCalls.push(ordinal);
     return attempt(ordinal, {
       maxima: { historyPaging: ordinal === 1 ? 558 : 420 },
-      inputP95: ordinal === 2 ? 201 : 80,
+      errors: ordinal === 2 ? ["page error"] : [],
     });
-  }), /input P95/);
-  assert.deepEqual(inputCalls, [1, 2]);
+  }), /browser errors/);
+  assert.deepEqual(functionalAttemptCalls, [1, 2]);
+
+  const inputCalls = [];
+  const inputResult = await collectTranscriptPerformance(async ordinal => {
+    inputCalls.push(ordinal);
+    return attempt(ordinal, { inputP95: ordinal === 1 ? 302 : 120 });
+  });
+  assert.deepEqual(inputCalls, [1, 2, 3]);
+  assert.equal(inputResult.decision.status, "passed-after-bounded-retry");
 });

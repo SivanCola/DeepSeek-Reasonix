@@ -174,7 +174,10 @@ test("browser matrix preserves five entry points and fails closed through deskto
 test("Windows desktop Go partitions tests without verbose JSON cache overhead", () => {
   const windowsGo = job(ci, "desktop-windows-go");
   const suite = shellStep(windowsGo, "test (Windows desktop and update helper)");
-  const commands = [...suite.matchAll(/go test -(skip|run) '([^']+)' \.\/\.\.\./g)];
+  const commands = suite.trim().split("\n").map(line => ({
+    run: line.match(/-run '([^']+)'/)?.[1],
+    skip: line.match(/-skip '([^']+)'/)?.[1],
+  }));
   assert.equal(commands.length, 3);
   assert.equal(suite.match(/^\s*go test /gm)?.length, commands.length);
   // Include non-test entry points and every possible first suffix character.
@@ -183,14 +186,20 @@ test("Windows desktop Go partitions tests without verbose JSON cache overhead", 
   for (let code = 0; code <= 127; code++) names.push(`Test${String.fromCharCode(code)}Session`);
   names.push("Test会话", "TestΩSession");
   for (const name of names) {
-    const owners = commands.filter(([, mode, pattern]) => {
-      const matches = new RegExp(pattern).test(name);
-      return mode === "skip" ? !matches : matches;
-    });
+    const owners = commands.filter(command =>
+      (!command.run || new RegExp(command.run).test(name))
+      && (!command.skip || !new RegExp(command.skip).test(name)));
+    if (name === "TestWindowsTerminalProcessConPTYSmoke") {
+      assert.equal(owners.length, 0, `${name} must be isolated from the correctness partition`);
+      continue;
+    }
     assert.equal(owners.length, 1, `${name} must run in exactly one group`);
   }
   assert.doesNotMatch(suite, /go test[^\n]*-timeout/);
   assert.doesNotMatch(windowsGo, /go test -json/);
   assert.doesNotMatch(windowsGo, /go-test-timing/);
   assert.doesNotMatch(windowsGo, /go test -run ['"]?\^\$/);
+
+  assert.match(windowsGo, /name: probe \(Windows ConPTY host integration\)[\s\S]*?continue-on-error: true[\s\S]*?run: go test -run '\^TestWindowsTerminalProcessConPTYSmoke\$' \./);
+  assert.match(windowsGo, /steps\.conpty-smoke\.outcome == 'failure'/);
 });

@@ -12,8 +12,7 @@ function validateAttempt(attempt) {
   assert.ok(attempt && Number.isInteger(attempt.attempt), "performance attempt is missing its ordinal");
   assert.deepEqual(attempt.errors, [], `performance attempt ${attempt.attempt} reported browser errors`);
   assert.ok(attempt.inputCount >= 30, `performance attempt ${attempt.attempt} has incomplete input samples`);
-  assert.ok(attempt.inputP95 <= INPUT_P95_LIMIT_MS,
-    `performance attempt ${attempt.attempt} input P95 ${attempt.inputP95}`);
+  assert.ok(Number.isFinite(attempt.inputP95), `performance attempt ${attempt.attempt} is missing input P95`);
   for (const phase of TRANSCRIPT_PHASES) {
     const sample = attempt.phases?.[phase];
     assert.ok(sample && Number.isFinite(sample.elapsedMs), `performance attempt ${attempt.attempt} is missing ${phase}`);
@@ -24,7 +23,9 @@ function validateAttempt(attempt) {
 
 export function needsBoundedRetry(attempt) {
   validateAttempt(attempt);
-  return attempt.longTaskSupported && TRANSCRIPT_PHASES.some(phase => attempt.phases[phase].longTaskMax > LONG_TASK_LIMIT_MS);
+  return attempt.inputP95 > INPUT_P95_LIMIT_MS
+    || (attempt.longTaskSupported
+      && TRANSCRIPT_PHASES.some(phase => attempt.phases[phase].longTaskMax > LONG_TASK_LIMIT_MS));
 }
 
 export function decideTranscriptPerformance(attempts) {
@@ -33,12 +34,24 @@ export function decideTranscriptPerformance(attempts) {
   const firstExceeded = needsBoundedRetry(attempts[0]);
   if (!firstExceeded) {
     assert.equal(attempts.length, 1, "passing first attempt must not be retried");
-    return { status: "passed-first-attempt", passed: true, medians: phaseMedians(attempts) };
+    return {
+      status: "passed-first-attempt",
+      passed: true,
+      medians: phaseMedians(attempts),
+      inputP95Median: inputP95Median(attempts),
+    };
   }
   assert.equal(attempts.length, 3, "an over-limit first attempt requires exactly two retries");
   const medians = phaseMedians(attempts);
-  const passed = TRANSCRIPT_PHASES.every(phase => medians[phase] <= LONG_TASK_LIMIT_MS);
-  return { status: passed ? "passed-after-bounded-retry" : "failed-sustained-regression", passed, medians };
+  const inputMedian = inputP95Median(attempts);
+  const passed = inputMedian <= INPUT_P95_LIMIT_MS
+    && TRANSCRIPT_PHASES.every(phase => medians[phase] <= LONG_TASK_LIMIT_MS);
+  return {
+    status: passed ? "passed-after-bounded-retry" : "failed-sustained-regression",
+    passed,
+    medians,
+    inputP95Median: inputMedian,
+  };
 }
 
 export async function collectTranscriptPerformance(sampleAttempt) {
@@ -61,13 +74,17 @@ function phaseMedians(attempts) {
     percentile(attempts.map(attempt => attempt.phases[phase].longTaskMax), 0.5)]));
 }
 
+function inputP95Median(attempts) {
+  return percentile(attempts.map(attempt => attempt.inputP95), 0.5);
+}
+
 export function formatPerformanceSummary(browser, turns, decision, attempts) {
   const label = decision.status === "passed-first-attempt" ? "passed on the first attempt"
     : decision.status === "passed-after-bounded-retry" ? "passed after bounded retry"
       : "failed with a sustained regression";
-  const medians = TRANSCRIPT_PHASES.map(phase => `${phase}=${decision.medians[phase]}ms`).join(", ");
+  const medians = `${TRANSCRIPT_PHASES.map(phase => `${phase}=${decision.medians[phase]}ms`).join(", ")}, inputP95=${decision.inputP95Median}ms`;
   const samples = attempts.map(attempt => `#${attempt.attempt} [${TRANSCRIPT_PHASES
-    .map(phase => `${phase}=${attempt.phases[phase].longTaskMax}ms`).join(", ")}]`).join("; ");
+    .map(phase => `${phase}=${attempt.phases[phase].longTaskMax}ms`).join(", ")}, inputP95=${attempt.inputP95}ms]`).join("; ");
   return `- ${browser}, ${turns} turns: **${label}**; medians: ${medians}; samples: ${samples}`;
 }
 

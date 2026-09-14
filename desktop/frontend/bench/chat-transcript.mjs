@@ -244,7 +244,10 @@ try {
         for (const attempt of attempts) await writeAttempt(scenario, attempt, decision);
         report.samples.push(...attempts);
         report.performance.push({ turns, decision, attempts });
-        assert.ok(decision.passed, `${turns} turns ${decision.status}: ${JSON.stringify(decision.medians)}`);
+        assert.ok(decision.passed, `${turns} turns ${decision.status}: ${JSON.stringify({
+          longTaskMedians: decision.medians,
+          inputP95Median: decision.inputP95Median,
+        })}`);
         await page.evaluate(() => window.chatFixture.settle());
       }
       await frame();

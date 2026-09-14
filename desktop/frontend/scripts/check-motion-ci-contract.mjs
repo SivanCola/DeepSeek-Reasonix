@@ -186,6 +186,7 @@ for (const required of [
 }
 for (const required of [
   "INPUT_P95_LIMIT_MS = 200", "LONG_TASK_LIMIT_MS = 500", "attempts.length === 3",
+  "attempt.inputP95 > INPUT_P95_LIMIT_MS", "inputP95Median",
   "passed-after-bounded-retry", "failed-sustained-regression",
 ]) {
   if (!transcriptPerformanceSource.includes(required)) {
