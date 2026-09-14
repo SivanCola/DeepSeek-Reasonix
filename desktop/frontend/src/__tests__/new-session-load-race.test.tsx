@@ -632,6 +632,17 @@ await act(async () => { await controller?.resumeSession("/sessions/fast.jsonl", 
 await act(async () => { slowModernGate.resolve(); await staleModern?.surfaceReady; await flushPromises(); });
 eq(sessionPipelineDiagnostics().resumeSwitch?.totalMs, modernPhases.totalMs, "stale modern adoption cannot overwrite committed diagnostics");
 eq(sessionPipelineDiagnostics().resumeHistory?.source, "transcript-snapshot", "modern race retains authoritative snapshot evidence");
+
+desktopStub.commands.TranscriptSnapshotForTab = async () => { throw new Error("configured model is unavailable before controller startup"); };
+desktopStub.commands.HistorySliceForTab = async (tabID: string, req: HistorySliceRequest) => { legacyReads++; return historySliceFromMessages(tabID, [{ role: "user", content: "recovered without controller" }], req); };
+await act(async () => {
+  await controller?.retrySessionHistory("tab-a");
+  await flushPromises();
+});
+ok(controller?.state.items.some((item) => item.kind === "user" && item.text === "recovered without controller") ?? false,
+  "failed modern snapshot falls back to controller-independent history");
+eq(legacyReads, 1, "snapshot failure performs one compatibility history read");
+eq(controller?.state.hydrateError, undefined, "successful history fallback clears the recovery error");
 await act(async () => { modernRoot.unmount(); });
 // ── session switch: one history commit, composer bound to the new runtime ────
 // The switch shows the restored transcript as soon as its page lands, but the
