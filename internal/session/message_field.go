@@ -137,6 +137,12 @@ func (q *Query) ReadMessageField(ctx context.Context, ref SessionRef, messageID 
 	}
 
 	fieldBytes, err := extractMessageField(body, field)
+	if errors.Is(err, errMessageFieldAbsent) {
+		// A message that simply does not carry the field is a finished empty
+		// read, not a failure: optional fields like reasoning are routinely
+		// absent, and a hard error would surface as a broken body.
+		return page, nil
+	}
 	if err != nil {
 		return MessageFieldPage{}, err
 	}
@@ -195,8 +201,13 @@ func extractMessageField(body []byte, field string) ([]byte, error) {
 			return raw, nil
 		}
 	}
-	return nil, errors.New("session: message has no such field")
+	return nil, errMessageFieldAbsent
 }
+
+// errMessageFieldAbsent separates "this message has no such field" from a
+// genuinely unreadable body: the caller answers the former with an empty
+// finished read and the latter with an error.
+var errMessageFieldAbsent = errors.New("session: message has no such field")
 
 // endsInsideEscape reports whether a fragment ending at end would split a
 // JSON escape sequence: an odd run of backslashes immediately before the cut

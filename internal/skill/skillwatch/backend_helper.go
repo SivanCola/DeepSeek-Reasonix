@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"reasonix/internal/proc"
 )
 
 // helperClient speaks the pipe protocol to a watcher helper process. Control
@@ -64,7 +66,10 @@ func defaultHelperCommand(ctx context.Context) (helperProcess, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(exe)
+	// The helper is a console-less child of a GUI process, so it must be
+	// spawned through internal/proc: a bare exec.Command leaves Windows to
+	// allocate a console for it and flashes a window on every start.
+	cmd := proc.CommandContext(ctx, exe)
 	cmd.Env = append(os.Environ(), watchHelperEnv+"=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

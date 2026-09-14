@@ -34,6 +34,7 @@ import { foregroundRunningFromRuntimeMeta, type RuntimeMetaSnapshot } from "./ru
 import { aliasActivationRequest, noteActivationRequested, noteActivationSettled, noteActivationStarted, beginResumeHistory, noteResumeHistoryPage, type HistorySwitchPhases } from "./sessionDiagnostics";
 import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type StreamDeltaEntry, type StreamSegment } from "./streamDeltaBatch";
 import { assistantHasContent, ensureActiveAssistant, ensureAssistant, removeEmptyAssistantItems } from "./assistantItems";
+import { setTranscriptBindingIdentity } from "./canonicalTranscriptBackend";
 import { getTranscriptStore } from "./transcriptStore";
 import { historyFingerprintMatchesMeta, historyReplaceAction, historyRevisionIsOlder, usesLegacyTranscriptSnapshots } from "./sessionTranscriptMode";
 import { snapshotRecords, transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
@@ -3593,6 +3594,15 @@ export function useController() {
     previousStoreActiveTabRef.current = activeTabId;
     snapshotClient.prune();
   }, [activeTabId, snapshotClient]);
+
+  // History reads route by the tab's binding identity, resolved from the meta
+  // this controller already loads. A remote tab's session lives on its serve
+  // host, so answering it from the local service (or the reverse) would mix
+  // two different sessions behind one entry id.
+  useEffect(() => {
+    setTranscriptBindingIdentity((tabId) => (statesRef.current.get(tabId)?.meta?.remote ? "remote" : "local"));
+    return () => setTranscriptBindingIdentity(() => "local");
+  }, []);
 
   // Keep shared all-source telemetry live between turn boundaries. Delivery
   // mode can complete dozens of provider requests inside one UI turn, while

@@ -26,6 +26,13 @@ const (
 
 	historyWindowDirOlder = "older"
 	historyWindowDirNewer = "newer"
+
+	// HistoryWindowUnsupported is the status a transport returns when the peer
+	// never negotiated history-window-v1. It is deliberately a status and not
+	// an error: an older service still serves bounded protocol-7 pages, so the
+	// reader keeps working and only the newer-direction and anchor-jump
+	// affordances are withheld until the service is upgraded.
+	HistoryWindowUnsupported = "unsupported"
 )
 
 // HistoryWindowRequest locates and pages one bounded window in a single
@@ -178,7 +185,13 @@ func (q *Query) ReadHistoryWindow(ctx context.Context, ref SessionRef, req Histo
 		case "cursor":
 			parsed, err = decodeHistoryWindowCursor(req.Cursor)
 			if err != nil {
-				return HistoryWindowPage{}, err
+				// A cursor the server cannot read is no different to a client
+				// than one bound to a replaced snapshot: both mean "start over
+				// from a fresh anchor". Answering with a typed status keeps the
+				// decision with the caller instead of surfacing a parse error
+				// that reads like a transport failure.
+				page.Status = "stale_cursor"
+				return page, nil
 			}
 			if parsed.SessionID != ref.SessionID || parsed.StorageRevision != StorageRevision ||
 				parsed.Projection != historyIndexVersion || parsed.Generation != metadata.generation ||
@@ -225,7 +238,17 @@ func (q *Query) ReadHistoryWindow(ctx context.Context, ref SessionRef, req Histo
 			}
 		}
 	}
-	return q.readHistoryWindowPage(ctx, handle.DB, filesystem, ref, metadata, page.SnapshotSequence, boundary, direction, req.Limit)
+	result, err := q.readHistoryWindowPage(ctx, handle.DB, filesystem, ref, metadata, page.SnapshotSequence, boundary, direction, req.Limit)
+	if err != nil {
+		return HistoryWindowPage{}, err
+	}
+	// The page builder starts from a fresh value, so the anchor identity that
+	// resolved this window has to travel with the result: clients place the
+	// reading anchor and the visible turn range from it, and losing it would
+	// make an anchored page indistinguishable from an unanchored one.
+	result.AnchorMessageID = page.AnchorMessageID
+	result.AnchorTurn = page.AnchorTurn
+	return result, nil
 }
 
 func resolveMessagePosition(ctx context.Context, db *sql.DB, messageID string, snapshot uint64) (int64, error) {

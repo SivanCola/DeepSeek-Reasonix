@@ -81,6 +81,28 @@ func (a *App) SessionHistoryContentForTab(tabID string, ref sessioncontent.Ref, 
 	return SessionHistoryContentChunk{Data: base64.StdEncoding.EncodeToString(data), NextOffset: next, Done: next == ref.Bytes}, nil
 }
 
+// SessionHistoryWindowForTab pages a bounded window around an anchor
+// (newest/message/turn/cursor) in either direction — the history-window-v1
+// capability. Anchors resolve through the locator index without walking pages.
+func (a *App) SessionHistoryWindowForTab(tabID string, req session.HistoryWindowRequest) (session.HistoryWindowPage, error) {
+	query, ref, err := a.canonicalSessionQuery(tabID)
+	if err != nil {
+		return session.HistoryWindowPage{}, err
+	}
+	return query.ReadHistoryWindow(context.Background(), ref, req)
+}
+
+// SessionMessageFieldForTab returns one bounded fragment of one top-level
+// message field. Credentials issued when a window or page displayed the
+// message authorize the read.
+func (a *App) SessionMessageFieldForTab(tabID, messageID string, version int, field string, offset, length int64) (session.MessageFieldPage, error) {
+	query, ref, err := a.canonicalSessionQuery(tabID)
+	if err != nil {
+		return session.MessageFieldPage{}, err
+	}
+	return query.ReadMessageField(context.Background(), ref, messageID, version, field, offset, length)
+}
+
 func (a *App) canonicalSessionQuery(tabID string) (*session.Query, session.SessionRef, error) {
 	a.mu.RLock()
 	tab := a.tabByIDLocked(tabID)

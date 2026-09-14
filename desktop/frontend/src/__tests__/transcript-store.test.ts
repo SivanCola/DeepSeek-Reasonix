@@ -95,6 +95,8 @@ class FakeBackend {
       entries,
       nextCursor: lo > 0 ? btoa(JSON.stringify({ v: 1, before: lo })) : "",
       hasOlder: lo > 0,
+      newerCursor: hi < this.messages.length ? btoa(JSON.stringify({ v: 1, after: hi })) : "",
+      hasNewer: hi < this.messages.length,
       totalTurns: this.messages.filter((message) => message.role === "user").length,
       startTurn: turns.length > 0 ? Math.min(...turns) : 0,
       endTurn: turns.length > 0 ? Math.max(...turns) : 0,
@@ -113,6 +115,13 @@ class FakeBackend {
       const gate = this.sliceGate;
       this.sliceGate = undefined;
       return gate.promise;
+    }
+    if (req.newer) {
+      // Window paging toward newer history: `after` is an exclusive position.
+      const decoded = JSON.parse(atob(req.cursor)) as { after?: number };
+      const lo = Math.min(this.messages.length, decoded.after ?? this.messages.length);
+      const entries = Math.max(1, Math.floor(req.entries || 120));
+      return this.slice(lo, Math.min(this.messages.length, lo + entries));
     }
     let before = this.messages.length;
     if (req.cursor) {
@@ -259,10 +268,14 @@ console.log("\ntranscript store");
 }
 
 // ── page concatenation equals single-shot conversion ────────────────────────
+// This is a conversion-fidelity property, not a residency one: paging a whole
+// transcript in must project exactly what one single-shot conversion produces.
+// The window is deliberately unbounded here so the comparison sees every page;
+// the bounded-window behaviour is covered separately below.
 {
   const messages = bigTranscript(46);
   const backend = new FakeBackend(messages);
-  const store = new TranscriptStore(backend);
+  const store = new TranscriptStore(backend, { windowMaxPages: 1_000 });
   const first = await store.loadLatest("tab-1", "/s/one.jsonl", { turns: 12 });
   ok(!!first && first.items.length > 0, "latest page projects items");
   eq(first?.hasOlder, true, "latest page reports older history");
@@ -303,13 +316,23 @@ console.log("\ntranscript store");
   eq(pages, 32, "10,000-turn target paging respects both turn and production entry bounds");
   eq(backend.sliceCalls.length, 32, "10,000-turn target paging performs the expected bounded backend calls");
   ok(backend.sliceCalls.slice(1).every((request) => request.entries === 1000), "targeted pages use the backend's bounded 1000-entry capacity");
-  eq(users.length, 10_000, "10,000-turn target paging preserves every question");
   eq(users[0]?.historyTurn, 1, "10,000-turn target paging lands on absolute turn one");
-  eq(users[users.length - 1]?.historyTurn, 10_000, "10,000-turn target paging keeps the tail coordinate");
   ok(new Set(projection?.items.map((item) => item.id)).size === projection?.items.length, "10,000-turn target paging keeps item ids unique");
   const stats = store.stats();
   ok(stats.bodyBytes <= stats.bodyBudgetBytes, "10,000-turn transcript stays within the production history body budget");
   ok(elapsedMs < 10_000, `10,000-turn targeted paging completes within 10s (${elapsedMs.toFixed(1)}ms)`);
+
+  // Reading 32 pages deep leaves a bounded window, not the whole session. The
+  // reclaimed range is reported as still-newer rather than lost, and paging
+  // forward from it restores the tail — full reachability, bounded residency.
+  ok(stats.residentWindowEntries <= stats.windowMaxPages * 1000, `window residency is bounded (${stats.residentWindowEntries} entries, max ${stats.windowMaxPages * 1000})`);
+  ok(stats.reclaimedPages > 0, "deep paging reclaimed pages instead of holding every page");
+  eq(projection?.hasNewer, true, "the reclaimed tail is reported as still newer");
+  const forward = await store.loadNewer("tab-stress", "/s/stress.jsonl", { entries: 1000 });
+  eq(forward?.kind, "append", "paging forward appends into the same window");
+  const forwardUsers = (forward?.appendItems ?? []).filter((item): item is Extract<Item, { kind: "user" }> => item.kind === "user");
+  ok(forwardUsers.length > 0, "paging forward restores newer history after a reclaim");
+  ok(forwardUsers[forwardUsers.length - 1]!.historyTurn > (users[users.length - 1]?.historyTurn ?? 0), "paging forward moves the window toward the live tail");
 }
 
 // ── cross-page tool call/result merge ───────────────────────────────────────

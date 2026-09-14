@@ -16,7 +16,7 @@ import type { PinnedFileInfo } from "./pinnedContextBridge";
 import type { RecoveryLineageView } from "./sessionRecoveryTypes";
 export * from "./remoteTypes";
 export type { ContextBudgetInfo, ContextMaintenanceInfo, ContextMaintenanceReceipt, WireContextMaintenance } from "./contextMaintenanceTypes";
-export type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistorySlice, HistorySliceRequest, SessionClearResult } from "./historyTypes";
+export type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistorySlice, HistorySliceRequest, HistoryWindowPageView, HistoryWindowRequestView, HistoryWindowStatus, MessageFieldView, SessionClearResult } from "./historyTypes";
 export type { ProjectGroupsSnapshot, ProjectRuntimeTopic, ProjectTopicKey, ProjectTopicPage, ProjectTopicPageRequest, ProjectTreeChangedV2, ProjectTreeOrganizationBindings, ProjectTreeRuntimeSnapshot, ProjectTreeSnapshot, SessionCatalogBindings, SessionCatalogStatus, SessionGroup, SessionReference } from "./sessionCatalogTypes";
 export type EventKind =
   | "user_message"

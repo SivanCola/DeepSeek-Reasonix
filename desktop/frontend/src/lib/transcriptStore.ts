@@ -36,6 +36,13 @@ export interface TranscriptStoreOptions {
   historyBodyBudgetBytes?: number;
   /** Parsed-markdown cache budget. Default 16MiB. */
   markdownBudgetBytes?: number;
+  /**
+   * Adjacent history pages retained per session, newest-side included.
+   * Default 3, so a default window holds at most 3 × 32 messages. Pages past
+   * this are reclaimed from the end opposite the one being paged; the data
+   * stays on disk and is re-fetched on demand, so nothing is lost.
+   */
+  windowMaxPages?: number;
 }
 
 export interface TranscriptProjection {
@@ -44,6 +51,8 @@ export interface TranscriptProjection {
   endTurn: number;
   totalTurns: number;
   hasOlder: boolean;
+  /** More history exists past the newer edge of the resident window. */
+  hasNewer: boolean;
   revision: number;
   revisionKnown: boolean;
   digest: string;
@@ -54,7 +63,19 @@ export interface LoadOlderResult extends TranscriptProjection {
   kind: "prepend" | "reload";
   /** Items contributed by the older page (kind === "prepend"). */
   prependItems: Item[];
-  /** Existing item ids superseded by cross-page tool merges (kind === "prepend"). */
+  /**
+   * Ids the caller must drop: items superseded by cross-page tool merges, plus
+   * every item on a page reclaimed to keep the window at its page budget.
+   */
+  removeIds: string[];
+}
+
+export interface LoadNewerResult extends TranscriptProjection {
+  /** "append": page newer items; "stale": the window predates a rebuild. */
+  kind: "append" | "stale";
+  /** Items contributed by the newer page (kind === "append"). */
+  appendItems: Item[];
+  /** Ids reclaimed from the older edge to keep the window bounded. */
   removeIds: string[];
 }
 
@@ -89,6 +110,17 @@ interface RecordConversion {
   matches: Map<number, string>;
 }
 
+// One page of the resident history window. Pages are the unit the store keeps
+// and reclaims: records inside a page are never split, so reclaiming one
+// cannot cut a tool call away from its result mid-page.
+interface TranscriptWindowPage {
+  entryIds: string[];
+  /** Cursor fetching the page immediately older than this one ("" when none). */
+  olderCursor: string;
+  /** Cursor fetching the page immediately newer than this one ("" when none). */
+  newerCursor: string;
+}
+
 interface SessionTranscript {
   key: string;
   tabId: string;
@@ -112,6 +144,14 @@ interface SessionTranscript {
   itemsCache: Item[] | null;
   nextCursor: string;
   hasOlder: boolean;
+  /** Resident window pages, oldest first. Empty until a page is loaded. */
+  pages: TranscriptWindowPage[];
+  /** Cursor fetching the page immediately newer than the resident window. */
+  newerCursor: string;
+  hasNewer: boolean;
+  /** Pages reclaimed from each end; diagnostics only. */
+  reclaimedOlder: number;
+  reclaimedNewer: number;
   totalTurns: number;
   startTurn: number;
   endTurn: number;
@@ -121,12 +161,14 @@ interface SessionTranscript {
   generation: number;
   bodyBytes: number;
   olderInFlight: boolean;
+  newerInFlight: boolean;
   pendingContent: Map<string, { generation: number; promise: Promise<string | undefined> }>;
 }
 
 const DEFAULT_MAX_RESIDENT_SESSIONS = 3;
 const DEFAULT_HISTORY_BODY_BUDGET = 32 << 20;
 const DEFAULT_MARKDOWN_BUDGET = 16 << 20;
+const DEFAULT_WINDOW_MAX_PAGES = 3;
 
 function sessionKeyFor(tabId: string, sessionPath: string): string {
   return `${tabId}\n${sessionPath}`;
@@ -361,6 +403,7 @@ export class TranscriptStore {
   private readonly backend: TranscriptBackend;
   private readonly maxResidentSessions: number;
   private readonly historyBodyBudgetBytes: number;
+  private readonly windowMaxPages: number;
   /** Insertion-ordered (oldest first); touch re-inserts at the end. */
   private readonly sessions = new Map<string, SessionTranscript>();
   private readonly tabPins = new Map<string, { live: boolean; active: boolean }>();
@@ -372,6 +415,7 @@ export class TranscriptStore {
     this.backend = backend;
     this.maxResidentSessions = Math.max(1, options.maxResidentSessions ?? DEFAULT_MAX_RESIDENT_SESSIONS);
     this.historyBodyBudgetBytes = Math.max(0, options.historyBodyBudgetBytes ?? DEFAULT_HISTORY_BODY_BUDGET);
+    this.windowMaxPages = Math.max(1, options.windowMaxPages ?? DEFAULT_WINDOW_MAX_PAGES);
     this.markdown = new TranscriptMarkdownCache(Math.max(0, options.markdownBudgetBytes ?? DEFAULT_MARKDOWN_BUDGET));
   }
 
@@ -394,6 +438,11 @@ export class TranscriptStore {
       itemsCache: null,
       nextCursor: "",
       hasOlder: false,
+      pages: [],
+      newerCursor: "",
+      hasNewer: false,
+      reclaimedOlder: 0,
+      reclaimedNewer: 0,
       totalTurns: 0,
       startTurn: 0,
       endTurn: 0,
@@ -403,6 +452,7 @@ export class TranscriptStore {
       generation: 0,
       bodyBytes: 0,
       olderInFlight: false,
+      newerInFlight: false,
       pendingContent: new Map(),
     };
   }
@@ -461,6 +511,14 @@ export class TranscriptStore {
   }
 
   private enforceBudgets(): void {
+    // The page budget applies to every session, pinned ones included. A live
+    // or active session stays resident so its tail keeps streaming, but it no
+    // longer holds its whole history: the reader's window is bounded and the
+    // rest is re-fetched from disk on demand. Pinning protects the session's
+    // identity and its live edge, not an unbounded record set.
+    for (const session of this.sessions.values()) {
+      if (session.pages.length > this.windowMaxPages) this.trimWindow(session, "newer");
+    }
     const evictable = (): SessionTranscript[] =>
       Array.from(this.sessions.values()).filter((s) => s.records.length > 0 && !this.isPinned(s));
     let candidates = evictable();
@@ -501,6 +559,7 @@ export class TranscriptStore {
       endTurn: session.endTurn,
       totalTurns: session.totalTurns,
       hasOlder: session.hasOlder,
+      hasNewer: session.hasNewer,
       revision: session.revision,
       revisionKnown: session.revisionKnown,
       digest: session.digest,
@@ -533,6 +592,19 @@ export class TranscriptStore {
     return total;
   }
 
+  private reclaimedPages(): number {
+    let total = 0;
+    for (const session of this.sessions.values()) total += session.reclaimedOlder + session.reclaimedNewer;
+    return total;
+  }
+
+  /** Messages held across every resident window; the bounded reading cost. */
+  residentWindowEntries(): number {
+    let total = 0;
+    for (const session of this.sessions.values()) total += session.records.length;
+    return total;
+  }
+
   /** Cache-weight snapshot for diagnostics (sessionDiagnostics/crash context). */
   stats() {
     return {
@@ -544,6 +616,9 @@ export class TranscriptStore {
       markdownBudgetBytes: this.markdown.budgetBytes,
       historyEvictions: this.historyEvictions,
       markdownEvictions: this.markdown.evictions,
+      windowMaxPages: this.windowMaxPages,
+      reclaimedPages: this.reclaimedPages(),
+      residentWindowEntries: this.residentWindowEntries(),
     };
   }
 
@@ -731,6 +806,106 @@ export class TranscriptStore {
     return appendedItems;
   }
 
+  // ── bounded window ────────────────────────────────────────────────────────
+
+  /**
+   * Re-derive every identity-keyed map from one record list. Reclaiming a page
+   * changes which tool results belong to which call, so the maps cannot be
+   * spliced: they are replayed over exactly the records that survive. Records
+   * keep their fetched bodies (`resolved`) — only their place in the session
+   * changes.
+   */
+  private rebuildFromRecords(session: SessionTranscript, records: TranscriptRecord[]): void {
+    const view = this.viewOf(records);
+    session.records = records;
+    session.byId = new Map(records.map((rec) => [rec.entryId, rec]));
+    session.toolResultOwners = view.toolResultOwners;
+    session.contributions = new Map();
+    session.consumed = new Set();
+    session.consumedBy = new Map();
+    session.unresolvedCalls = new Map();
+    session.pendingPositional = new Map();
+    session.matchTables = new Map();
+    session.bodyBytes = 0;
+    for (const rec of records) {
+      session.bodyBytes += rec.bytes;
+      this.trackConversion(session, rec, convertRecord(rec, view, session.consumed));
+    }
+    session.itemsCache = null;
+    this.rebuildProjection(session);
+  }
+
+  /** The page a freshly loaded batch of entries belongs to. */
+  private pageFor(entries: HistoryEntry[], olderCursor: string, newerCursor: string): TranscriptWindowPage {
+    return { entryIds: entries.map((entry) => entry.entryId), olderCursor, newerCursor };
+  }
+
+  /**
+   * Reclaim one page from the given end, returning false when the window holds
+   * a single page (the reader's own position is never reclaimed). A page that
+   * begins with tool results whose calls fall outside the window is widened,
+   * so reclaiming cannot leave a result row stranded from its call.
+   */
+  private reclaimPage(session: SessionTranscript, end: "oldest" | "newest"): string[] | undefined {
+    if (session.pages.length <= 1) return undefined;
+    const page = end === "oldest" ? session.pages[0] : session.pages[session.pages.length - 1];
+    const dropped = new Set(page.entryIds);
+    if (end === "oldest") {
+      const known = new Set<string>();
+      for (const record of session.records) {
+        const callId = record.message.role === "tool" ? record.message.toolCallId : undefined;
+        if (!dropped.has(record.entryId) && callId && !known.has(callId)) {
+          // Leading results whose calls were on the reclaimed page go with it.
+          dropped.add(record.entryId);
+          continue;
+        }
+        if (record.message.role === "assistant") {
+          for (const call of record.message.toolCalls ?? []) known.add(call.id);
+        }
+        if (!dropped.has(record.entryId)) break;
+      }
+    }
+    const retained = session.records.filter((record) => !dropped.has(record.entryId));
+    if (end === "oldest") {
+      session.pages.shift();
+      // The reclaimed page's own older cursor is now the window's head, so the
+      // reader can page straight back into the range that was just dropped.
+      session.nextCursor = page.olderCursor;
+      session.hasOlder = true;
+      session.reclaimedOlder += 1;
+    } else {
+      session.pages.pop();
+      session.newerCursor = page.newerCursor;
+      session.hasNewer = true;
+      session.reclaimedNewer += 1;
+    }
+    const before = new Set((session.itemsCache ?? []).map((item) => item.id));
+    this.rebuildFromRecords(session, retained);
+    // Reclaiming can also fold a retained result into a call that survived, so
+    // the caller is told which ids it must drop rather than assuming the
+    // difference is exactly the reclaimed page.
+    const after = new Set((session.itemsCache ?? []).map((item) => item.id));
+    return [...before].filter((id) => !after.has(id));
+  }
+
+  /**
+   * Keep the resident window at its page budget by reclaiming from the end the
+   * reader is moving away from. `growing` names the end a page was just added
+   * to; the opposite end is the one that gives way. Returns every item id the
+   * caller must drop from its own list.
+   */
+  private trimWindow(session: SessionTranscript, growing: "older" | "newer"): string[] {
+    if (session.pages.length === 0) return [];
+    const give = growing === "older" ? "newest" : "oldest";
+    const removed: string[] = [];
+    while (session.pages.length > this.windowMaxPages) {
+      const dropped = this.reclaimPage(session, give);
+      if (dropped === undefined) break;
+      removed.push(...dropped);
+    }
+    return removed;
+  }
+
   // ── paging API ────────────────────────────────────────────────────────────
 
   /**
@@ -768,9 +943,15 @@ export class TranscriptStore {
       slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes });
       if (this.sessions.get(key) !== session || session.generation !== generation) return undefined;
     }
-    this.replaceRecords(session, asArray<HistoryEntry>(slice.entries));
+    const newestEntries = asArray<HistoryEntry>(slice.entries);
+    this.replaceRecords(session, newestEntries);
+    session.pages = [this.pageFor(newestEntries, slice.nextCursor ?? "", slice.newerCursor ?? "")];
+    session.reclaimedOlder = 0;
+    session.reclaimedNewer = 0;
     session.nextCursor = slice.nextCursor ?? "";
     session.hasOlder = Boolean(slice.hasOlder);
+    session.newerCursor = slice.newerCursor ?? "";
+    session.hasNewer = Boolean(slice.hasNewer);
     session.totalTurns = slice.totalTurns ?? 0;
     session.startTurn = slice.startTurn ?? 0;
     session.endTurn = slice.endTurn ?? 0;
@@ -829,7 +1010,9 @@ export class TranscriptStore {
         const projection = await this.loadLatest(tabId, sessionPath, options);
         return projection ? { ...projection, kind: "reload", prependItems: [], removeIds: [] } : undefined;
       }
-      const { items, removeIds } = this.prependRecords(session, asArray<HistoryEntry>(slice.entries));
+      const pageEntries = asArray<HistoryEntry>(slice.entries);
+      const { items, removeIds } = this.prependRecords(session, pageEntries);
+      session.pages.unshift(this.pageFor(pageEntries, slice.nextCursor ?? "", slice.newerCursor ?? ""));
       session.nextCursor = slice.nextCursor ?? "";
       session.hasOlder = Boolean(slice.hasOlder);
       session.totalTurns = slice.totalTurns ?? session.totalTurns;
@@ -837,11 +1020,58 @@ export class TranscriptStore {
       session.revision = slice.revision ?? session.revision;
       session.revisionKnown = sliceRevisionKnown(slice);
       session.digest = slice.digest ?? session.digest;
+      // Reclaiming the far end yields ids the caller must drop alongside the
+      // cross-page merge ids it already handles.
+      const reclaimed = this.trimWindow(session, "older");
+      const projection = this.projectionOf(session);
       this.enforceBudgets();
       if (this.sessions.get(key) !== session) return undefined;
-      return { ...this.projectionOf(session), kind: "prepend", prependItems: items, removeIds };
+      return { ...projection, kind: "prepend", prependItems: items, removeIds: reclaimed.length > 0 ? [...removeIds, ...reclaimed] : removeIds };
     } finally {
       session.olderInFlight = false;
+    }
+  }
+
+  /**
+   * Page toward newer history — the direction protocol 7 never had. Only a
+   * binding that reports a newer cursor can serve this; a legacy binding
+   * leaves the window on its newest page instead of re-downloading to fake it.
+   * Returns a "append" result whose items continue the existing list.
+   */
+  async loadNewer(
+    tabId: string,
+    sessionPath: string,
+    options: { turns?: number; entries?: number; bytes?: number } = {},
+  ): Promise<LoadNewerResult | undefined> {
+    const key = sessionKeyFor(tabId, sessionPath);
+    const session = this.sessions.get(key);
+    if (!session || session.records.length === 0) return undefined;
+    if (!session.hasNewer || !session.newerCursor || session.newerInFlight) return undefined;
+    session.newerInFlight = true;
+    const generation = session.generation;
+    try {
+      const slice = await this.fetchSlice(tabId, { cursor: session.newerCursor, newer: true, ...options });
+      if (this.sessions.get(key) !== session || session.generation !== generation) return undefined;
+      if (slice.stale || !this.sameFingerprint(session, slice)) {
+        // A newer page from a rebuilt projection cannot be appended to the
+        // window the reader is holding; the window keeps its position and the
+        // caller reports the reload instead of mixing two canonical states.
+        return { ...this.projectionOf(session), kind: "stale", appendItems: [], removeIds: [] };
+      }
+      const pageEntries = asArray<HistoryEntry>(slice.entries);
+      const appendItems = this.appendRecords(session, pageEntries);
+      session.pages.push(this.pageFor(pageEntries, slice.nextCursor ?? "", slice.newerCursor ?? ""));
+      session.newerCursor = slice.newerCursor ?? "";
+      session.hasNewer = Boolean(slice.hasNewer) || session.newerCursor !== "";
+      session.endTurn = slice.endTurn ?? session.endTurn;
+      session.totalTurns = slice.totalTurns ?? session.totalTurns;
+      const reclaimed = this.trimWindow(session, "newer");
+      const projection = this.projectionOf(session);
+      this.enforceBudgets();
+      if (this.sessions.get(key) !== session) return undefined;
+      return { ...projection, kind: "append", appendItems, removeIds: reclaimed };
+    } finally {
+      session.newerInFlight = false;
     }
   }
 
