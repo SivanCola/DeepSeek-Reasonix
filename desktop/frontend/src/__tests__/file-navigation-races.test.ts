@@ -55,13 +55,13 @@ paths.get("cancelled")!.reject(new Error("obsolete failure"));
 assert.deepEqual(await cancelled, { status: "cancelled", reason: "superseded" });
 assert.equal(snapshot(), null, "a closed dock keeps no record to restore");
 
-// A resolution that lands after its session was replaced is a cancellation too:
-// the record it belonged to is gone, and the new session's dock reads nothing.
+// A resolution that lands after its dock was closed is a cancellation too: the
+// record it belonged to is gone, and nothing restores it.
 const switched = performResourceAction({ ...ref, path: "switched" }, "preview");
 owner.retain([fileNavigationKey({ sessionTabId: "session", dockTabId: fileDockTabId })]);
 paths.get("switched")!.resolve("/switched");
 assert.deepEqual(await switched, { status: "cancelled", reason: "superseded" });
-assert.equal(snapshot(), null, "a session switch leaves no record behind");
+assert.equal(snapshot(), null, "a closed dock leaves no record behind");
 
 const opened = deferred<{ id: string }>();
 const opening = deferred<void>();
@@ -95,7 +95,8 @@ assert(creations.has("slow.html"), "the first preview creation is in flight");
 const fast = performResourceAction({ hostId: "local", tabId: "session", source: "presented", toolCallId: "tool", path: "fast.html" }, "browser");
 creations.get("slow.html")!.resolve("http://preview.test/slow");
 assert.deepEqual(await slow, { status: "cancelled", reason: "superseded" });
-assert(revoked.includes("http://preview.test/slow"), "a URL created after its operation lost the dock is revoked");
+assert.deepEqual(revoked, ["http://preview.test/one.html", "http://preview.test/slow"],
+  "a URL created after its operation lost the dock is revoked");
 await fast.catch(() => undefined);
 
 // A host that never arrives must not open a page, and its URL is released.
