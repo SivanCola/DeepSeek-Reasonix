@@ -1,5 +1,7 @@
 import { lazy, Suspense, useMemo, useState, useLayoutEffect, type CSSProperties } from "react";
 import { DockNavigation } from "./dockNavigation";
+import { useFileNavigationRuntime } from "../app-runtime/useFileNavigationRuntime";
+import { fileNavigationKey } from "../lib/fileNavigationOwner";
 import { useActivityBarStore } from "../store/activityBar";
 import { ShellExpandProvider } from "../lib/shellExpand";
 import { RemoteNavigationContext } from "../lib/remoteNavigationCommands";
@@ -94,8 +96,19 @@ export type AppRuntimeViewProps = {
  */
 export function AppRuntimeView(props: AppRuntimeViewProps) {
   const [dockNavigation] = useState(() => new DockNavigation());
+  const fileNavigation = useFileNavigationRuntime();
   useLayoutEffect(() => dockNavigation.attach(), [dockNavigation]);
   useLayoutEffect(() => useActivityBarStore.subscribe(state => dockNavigation.reconcile(state.tabs.map(tab => tab.id))), [dockNavigation]);
+  // The open dock tabs of the active session are the set of live records: a
+  // closed tab, another session or another project ends its records here.
+  const fileNavigationSession = props.core.activeTabId ?? "";
+  useLayoutEffect(() => {
+    const retain = () => fileNavigation.retain(
+      useActivityBarStore.getState().tabs.map(tab => fileNavigationKey({ sessionTabId: fileNavigationSession, dockTabId: tab.id })),
+    );
+    retain();
+    return useActivityBarStore.subscribe(retain);
+  }, [fileNavigation, fileNavigationSession]);
   useTopicbarHeightVar();
   const { core, shell, session, navigation, runtime, local } = props;
   const { state, activeTab, activeTabId, t, locale } = core;
@@ -402,7 +415,7 @@ export function AppRuntimeView(props: AppRuntimeViewProps) {
           />
         </section>
 
-        <WorkspaceDockRegion navigation={dockNavigation} workspaceRoot={activeTab?.workspaceRoot ?? state.meta?.cwd ?? ""} {...buildWorkspaceDockProps({
+        <WorkspaceDockRegion navigation={dockNavigation} fileNavigation={fileNavigation} workspaceRoot={activeTab?.workspaceRoot ?? state.meta?.cwd ?? ""} {...buildWorkspaceDockProps({
           surface: { renderable: surfaceWorkspacePanelRenderable, overlay: surfaceWorkspacePanelOverlay, gridOpen: surfaceWorkspacePanelGridOpen },
           creation: sidebarCreation,
           showContext: SHOW_CONTEXT_DOCK,

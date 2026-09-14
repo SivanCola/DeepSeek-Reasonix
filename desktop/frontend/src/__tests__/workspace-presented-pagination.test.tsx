@@ -1,5 +1,6 @@
 import { act } from "react";
 import { flushPromises, renderFilesWorkspace, waitFor } from "./workspace-panel-test-harness";
+import { performResourceAction } from "../lib/fileNavigationCommands";
 
 const pageCalls: Array<{ offset: number; version: string }> = [];
 const { dom, root } = await renderFilesWorkspace({
@@ -13,8 +14,15 @@ const { dom, root } = await renderFilesWorkspace({
     pageCalls.push({ offset, version });
     return { path, body: "second\nthird\n", offset, nextOffset: 18, size: 18, hasMore: false, version };
   },
-}, {
-  revealPathRequest: { id: 1, path: "/tmp/large.txt", toolCallId: "present-1", action: "preview" },
+});
+
+// The presented file arrives the way the transcript opens it: as a command that
+// commits a navigation record the mounted dock reads.
+await act(async () => {
+  await performResourceAction({
+    source: "presented", hostId: "local", tabId: "tab-a", toolCallId: "present-1", path: "/tmp/large.txt",
+  }, "preview");
+  await flushPromises();
 });
 
 await waitFor("presented preview", () => document.body.textContent?.includes("first") === true);

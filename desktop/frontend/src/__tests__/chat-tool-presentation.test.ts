@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { classifyTool, shellDisplayName, type ToolItem } from "../lib/chatToolPresentation";
 import { deriveTurnFiles, fileIdentity } from "../lib/turnFiles";
-import { fileResourceCapabilities } from "../lib/fileResource";
+import { fileResourceCapabilities, type FileResourceRef } from "../lib/fileResource";
 
 const tool = (overrides: Partial<ToolItem>): ToolItem => ({
   kind: "tool", id: "call", name: "unknown", args: "{}", readOnly: true, status: "done", ...overrides,
@@ -29,9 +29,13 @@ assert.deepEqual(deriveTurnFiles(calls), [
   { path: "new.txt", toolCallId: "move", operation: "written" },
 ]);
 assert.equal(fileIdentity("a/./b/../c.txt"), "a/c.txt");
-assert.deepEqual(fileResourceCapabilities({ source: "workspace", hostId: "remote-a", tabId: "tab", toolCallId: "write", path: "report.md" }), {
+// Capabilities answer for a caller-shaped reference, and read only its host and
+// name: the origin and the tool call never change what the row may offer.
+const remoteReportRef: FileResourceRef = { source: "workspace", hostId: "remote-a", tabId: "tab", toolCallId: "write", path: "report.md" };
+assert.deepEqual(fileResourceCapabilities(remoteReportRef), {
   preview: true, source: true, browser: false, revealTree: true, copyPath: true, openNative: false, revealNative: false, saveCopy: true,
 });
-assert.equal(fileResourceCapabilities({ source: "presented", hostId: "local", tabId: "tab", toolCallId: "present", path: "app.html" }).browser, true);
+const localPresentedRef: FileResourceRef = { source: "presented", hostId: "local", tabId: "tab", toolCallId: "present", path: "app.html" };
+assert.equal(fileResourceCapabilities(localPresentedRef).browser, true);
 
 console.log("chat tool presentation: trusted renderer matching, shell labels and file facts passed");

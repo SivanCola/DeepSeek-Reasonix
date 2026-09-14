@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { cancelFileNavigation } from "../lib/fileNavigationLifetime";
 import { isAbsoluteDisplayPath, formatWorkspaceSource } from "../lib/workspacePanelFormat";
-import type { WorkspaceRevealRequest, WorkspaceVerificationRevealRequest, WorkspaceFileListRequest, WorkspaceChangeListRequest, WorkspaceChangeListEntry } from "../lib/dockDelivery";
-import { restoredSourcePaths, restoredPresentedTools, type DockResources } from "../lib/dockDelivery";
+import type { WorkspaceChangeRevealRequest, WorkspaceVerificationRevealRequest, WorkspaceFileListRequest, WorkspaceChangeListRequest, WorkspaceChangeListEntry } from "../lib/dockDelivery";
+import type { FileResourceRef } from "../lib/fileResource";
+import { fileNavigationOwner } from "../lib/fileNavigationCommands";
+import type { FileNavigationOwner } from "../lib/fileNavigationOwner";
+import { useFileNavigationRecord } from "../app-shell/useFileNavigation";
 export type { WorkspaceVerificationRevealRequest } from "../lib/dockDelivery";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
@@ -43,7 +45,6 @@ import {
   workspaceSplitTreeWidthFromPointer,
 } from "../lib/workspaceSplit";
 import { createRafResizeUpdater } from "../lib/resizeDrag";
-import { closeWorkspacePreviewTab } from "../lib/workspacePreviewTabs";
 import { useWorkspaceRefresh } from "../lib/workspaceRefreshStore";
 import { useWorkspaceRefreshInvalidation, workspaceRefreshFallbackSequence } from "../lib/workspaceRefreshInvalidation";
 import { createWorkspaceRefreshScheduler } from "../lib/workspaceRefreshScheduler";
@@ -126,9 +127,9 @@ export function WorkspacePanel({
   onFileTreeRefresh,
   onSessionRevertCommitted,
   initialViewMode = "files",
-  revealPathRequest,
   navigationSignal,
-  navigationResources,
+  dockTabId,
+  fileNavigation: fileNavigationProp,
   changeRevealRequest,
   verificationRevealRequest,
   sessionPath,
@@ -161,10 +162,11 @@ export function WorkspacePanel({
   onFileTreeRefresh?: () => void;
   onSessionRevertCommitted?: (tabId: string, result: RewindResultView) => void;
   initialViewMode?: "files" | "changed";
-  revealPathRequest?: WorkspaceRevealRequest | null;
   navigationSignal?: AbortSignal;
-  navigationResources?: DockResources;
-  changeRevealRequest?: WorkspaceRevealRequest | null;
+  /** The dock instance this panel renders; its navigation record lives outside. */
+  dockTabId?: string;
+  fileNavigation?: FileNavigationOwner;
+  changeRevealRequest?: WorkspaceChangeRevealRequest | null;
   verificationRevealRequest?: WorkspaceVerificationRevealRequest | null;
   sessionPath?: string;
   onDismissTurnResult?: () => void;
@@ -193,6 +195,16 @@ export function WorkspacePanel({
   const scopeSwitchPendingRef = useRef(false);
   const workspaceMemoryKey = workspaceMemoryKeyProp ?? workspaceScopeKey;
   const workspaceMemoryVisitId = workspaceMemoryVisitIdProp ?? workspaceTreeVisitId(workspaceMemoryKey);
+  // A standalone panel (a test or a fixture) keeps one instance for its whole
+  // life; the runtime passes the instance it holds, so this fallback never runs
+  // under the app shell.
+  const [fallbackFileNavigation] = useState(fileNavigationOwner);
+  const fileNavigation = fileNavigationProp ?? fallbackFileNavigation;
+  const fileScope = useMemo(
+    () => ({ sessionTabId: workspaceTabId, dockTabId: dockTabId ?? "" }),
+    [dockTabId, workspaceTabId],
+  );
+  const fileRecord = useFileNavigationRecord(fileNavigation, fileScope, workspaceScopeKey);
   const workspaceRefresh = useWorkspaceRefresh(workspaceTabId, workspaceScopeKey, open);
   const initialWorkspaceMemory = readWorkspaceTreeMemory(workspaceMemoryKey);
   const legacyTreeWidth = loadOptionalLayoutSize("workspaceTreeWidth");
@@ -208,16 +220,12 @@ export function WorkspacePanel({
   const [revealedRootPaths, setRevealedRootPaths] = useState<Set<string> | null>(
     () => initialWorkspaceMemory && initialWorkspaceMemory.visitId !== workspaceMemoryVisitId ? new Set() : null,
   );
-  // File preview and working-tree diff selection are independent navigation
-  // states.  Keeping a single path here used to erase the user's file context
-  // whenever the Changes tab refreshed or became active.
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(
-    () => initialWorkspaceMemory?.selectedFilePath ?? null,
-  );
+  // The working-tree diff selection stays with the change requests; the file
+  // preview's selection, tab list and source modes come from the dock's
+  // navigation record, so they survive a remount without replaying a command.
   const [selectedChangePath, setSelectedChangePath] = useState<string | null>(
     () => initialWorkspaceMemory?.selectedChangePath ?? null,
   );
-  const [openTabs, setOpenTabs] = useState<string[]>(() => initialWorkspaceMemory?.openTabs ?? []);
   // Independent "recently opened" history: survives closing all preview tabs
   // (openTabs is the live preview state) and app restarts, so the recent-files
   // menu keeps the user's file history even after the previews are dismissed.
@@ -234,8 +242,14 @@ export function WorkspacePanel({
     loading: boolean;
     error?: string;
   } | null>(null);
-  const [sourcePaths, setSourcePaths] = useState<Set<string>>(() => restoredSourcePaths(navigationResources));
   const [viewMode, setViewMode] = useState<"files" | "changed">(initialViewMode);
+  const openTabs = useMemo(
+    () => fileRecord?.entries.map((entry) => entry.resource.path) ?? [],
+    [fileRecord],
+  );
+  const selectedEntry = viewMode === "changed" ? null : fileRecord?.selected ?? null;
+  const selectedGeneration = fileRecord?.generation ?? 0;
+  const selectedFilePath = selectedEntry?.resource.path ?? null;
   const selectedPath = viewMode === "changed" ? selectedChangePath : selectedFilePath;
   // Both creation and regular workspaces use the same three-layer change view;
   // keep the prop in the seam for older callers while making history collapsed
@@ -266,8 +280,7 @@ export function WorkspacePanel({
   /** Changes overview: commit history is secondary and starts collapsed. */
   const [commitHistoryOpen, setCommitHistoryOpen] = useState(false);
   const lastPreviewModeActiveRef = useRef<boolean | null>(null);
-  const lastRevealRequestIdRef = useRef<number | null>(null);
-  const dismissedRevealRequestIdRef = useRef<number | null>(null);
+  const appliedNavigationRevisionRef = useRef<number | null>(null);
   const lastChangeRevealRequestIdRef = useRef<number | null>(null);
   const lastVerificationRevealRequestIdRef = useRef<number | null>(null);
   const verificationSummaryRef = useRef<HTMLElement | null>(null);
@@ -277,26 +290,51 @@ export function WorkspacePanel({
   const lastChangeListRequestIdRef = useRef<number | null>(null);
   const dismissedChangeListRequestIdRef = useRef<number | null>(null);
   const currentWorkspaceScopeKeyRef = useRef(workspaceScopeKey);
+  const currentFileGenerationRef = useRef(0);
   const changeDetailRequestIdRef = useRef(0);
   const gitHistoryRequestIdRef = useRef(0);
   const previewRequestIdRef = useRef(0);
   const textPageRequestIdRef = useRef(0);
   const commitDetailRequestIdRef = useRef(0);
   const dirLoadGenerationRef = useRef(0);
+  // A read that lands after this panel is gone must not be committed: nothing
+  // would render it. StrictMode's simulated unmount sets this back to mounted,
+  // so a replayed mount keeps the read it already started.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const fileLifetime = fileRecord?.signal;
+  const adoptedFileLifetimeRef = useRef<AbortSignal | null>(null);
+  const adoptedDockLifetimeRef = useRef<AbortSignal | null>(null);
   useEffect(() => {
     const invalidate = () => {
       dirLoadGenerationRef.current++; previewRequestIdRef.current++; textPageRequestIdRef.current++;
       changeDetailRequestIdRef.current++; gitHistoryRequestIdRef.current++; commitDetailRequestIdRef.current++;
     };
+    // A lifetime that ended or was replaced while still live invalidates the
+    // work it started: the dock occurrence closing, or this dock instance's
+    // navigation record going away. Adopting the first lifetime is not that —
+    // on mount it arrives after the directory load it would otherwise discard.
+    const replaced = (previous: AbortSignal | null, next: AbortSignal | undefined) =>
+      previous !== null && previous !== next && !previous.aborted;
+    if (replaced(adoptedFileLifetimeRef.current, fileLifetime)
+      || replaced(adoptedDockLifetimeRef.current, navigationSignal)) invalidate();
+    adoptedFileLifetimeRef.current = fileLifetime ?? null;
+    adoptedDockLifetimeRef.current = navigationSignal ?? null;
     navigationSignal?.addEventListener("abort", invalidate);
-    return () => { navigationSignal?.removeEventListener("abort", invalidate); invalidate(); };
-  }, [navigationSignal]);
+    fileLifetime?.addEventListener("abort", invalidate);
+    return () => {
+      navigationSignal?.removeEventListener("abort", invalidate);
+      fileLifetime?.removeEventListener("abort", invalidate);
+    };
+  }, [fileLifetime, navigationSignal]);
   const dirLoadRequestIdsRef = useRef<Record<string, number>>({});
   const compactProbeInFlightRef = useRef(new Set<string>());
   const recentAnchorRef = useRef<HTMLButtonElement>(null);
   const openDirsRef = useRef(openDirs);
   const pendingTreeRevealPathRef = useRef<string | null>(null);
-  const presentedToolCallByPathRef = useRef(restoredPresentedTools(navigationResources));
   const lastRestoredMemoryKeyRef = useRef(workspaceMemoryKey);
   const memoryRestorePendingRef = useRef(false);
   const workingTreeRefreshSchedulerRef = useRef<ReturnType<typeof createWorkspaceRefreshScheduler> | null>(null);
@@ -308,8 +346,13 @@ export function WorkspacePanel({
     gitMetaRefreshSchedulerRef.current = createWorkspaceRefreshScheduler(750);
   }
   currentWorkspaceScopeKeyRef.current = workspaceScopeKey;
-  const selectedPresentedToolCallId = selectedPath ? presentedToolCallByPathRef.current.get(selectedPath) : undefined;
-  const sourceOverride = selectedPath ? sourcePaths.has(selectedPath) : false;
+  currentFileGenerationRef.current = selectedGeneration;
+  // Every read takes its credentials from the entry the command committed, so a
+  // path reopened from another entry point never inherits an earlier tool scope.
+  const selectedPresentedToolCallId = selectedEntry?.resource.access.source === "presented"
+    ? selectedEntry.resource.access.toolCallId
+    : undefined;
+  const sourceOverride = selectedEntry?.source ?? false;
   const previewKey = selectedPath ? `${workspaceScopeKey}\u0000preview\u0000${sourceOverride ? "source" : "preview"}\u0000${selectedPresentedToolCallId ?? ""}\u0000${selectedPath}` : null;
   const changeDetailKey = selectedPath ? `${workspaceScopeKey}\u0000change\u0000${selectedPath}` : null;
   const gitHistoryKey = `${workspaceScopeKey}\u0000history\u0000${selectedPath ?? ""}`;
@@ -384,7 +427,8 @@ export function WorkspacePanel({
     );
     if (lastRestoredMemoryKeyRef.current !== workspaceMemoryKey) {
       lastRestoredMemoryKeyRef.current = workspaceMemoryKey;
-      setSelectedFilePath(remembered?.selectedFilePath ?? null);
+      // The remembered file selection is restored into the dock's record, which
+      // owns it; only the change surface's own selection is local state here.
       setSelectedChangePath(remembered?.selectedChangePath ?? null);
       setTreeWidth(remembered?.treeWidth ?? legacyTreeWidth ?? WORKSPACE_TREE_DEFAULT_WIDTH);
       setTreeWidthMode(remembered?.treeWidthMode ?? "manual");
@@ -522,46 +566,18 @@ export function WorkspacePanel({
     }
   }, [expandedCommit, selectedPath, open, workspaceScopeKey, workspaceTabId]);
 
-  const selectFile = useCallback(
-    (path: string, targetMode: "files" | "changed" = viewMode, presentedToolCallId?: string) => {
-      const initializeSplit = shouldInitializeWorkspaceSplitOnFileSelect({
-        previewVisible: openTabs.length > 0 || selectedPath !== null,
-        treeVisible,
-      });
-      if (initializeSplit) {
-        setTreeWidth(initialWorkspaceSplitTreeWidth({
-          panelWidth,
-          // Preserve a user-resized (manual) tree width: only first-time
-          // splits (no saved width yet) default to an even 50/50 division.
-          // Reopening a file after closing its preview must keep the
-          // remembered width, not snap back to the initial split.
-          savedTreeWidth: treeWidthMode === "manual" ? treeWidth : null,
-          treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
-          previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
-        }));
-        setTreeWidthMode("even");
-      }
-      pendingTreeRevealPathRef.current = path;
-      if (presentedToolCallId) presentedToolCallByPathRef.current.set(path, presentedToolCallId);
-      else if (!presentedToolCallByPathRef.current.has(path)) presentedToolCallByPathRef.current.delete(path);
-      if (targetMode === "changed") setSelectedChangePath(path);
-      else setSelectedFilePath(path);
-      setScopedFilePaths((current) => {
-        if (current) dismissedFileListRequestIdRef.current = lastFileListRequestIdRef.current;
-        return null;
-      });
-      setScopedChangeRows((current) => {
-        if (current) dismissedChangeListRequestIdRef.current = lastChangeListRequestIdRef.current;
-        return null;
-      });
-      setFilter("");
-      setOpenTabs((tabs) => [...tabs.filter((tab) => tab !== path), path].slice(-WORKSPACE_MAX_PREVIEW_TABS));
-      setRecentPaths((paths) => [...paths.filter((p) => p !== path), path].slice(-WORKSPACE_MAX_PREVIEW_TABS));
-      const dirs = isAbsoluteDisplayPath(path) ? [] : parentDirs(path);
-      updateOpenDirs((prev) => new Set([...Array.from(prev), ...dirs]));
-      dirs.forEach((dir) => void loadDir(dir));
+  /**
+   * Local navigation is a command like any other: the dock's record is
+   * committed outside React and this panel renders the result. What the command
+   * implies for local view state is applied by the navigation effect below, so
+   * a command from the transcript and a click in the tree land identically.
+   */
+  const openFile = useCallback(
+    (path: string, view: "files" | "changed" = "files") => {
+      const ref: FileResourceRef = { source: "workspace", hostId: "local", tabId: workspaceTabId, path };
+      void Promise.resolve(fileNavigation.open({ ref, params: { action: "preview", view } }));
     },
-    [loadDir, openTabs.length, panelWidth, selectedPath, treeVisible, updateOpenDirs, viewMode],
+    [fileNavigation, workspaceTabId],
   );
 
   useEffect(() => {
@@ -570,8 +586,18 @@ export function WorkspacePanel({
     dirLoadRequestIdsRef.current = {};
     compactProbeInFlightRef.current.clear();
     setEntriesByDir({});
-    setOpenTabs(readWorkspaceTreeMemory(workspaceMemoryKey)?.openTabs ?? []);
-    setPreviewResource(emptyKeyedResource());
+    // Remembered paths come back as plain workspace resources: a persisted path
+    // never restores the presented access an earlier session read it with.
+    const remembered = readWorkspaceTreeMemory(workspaceMemoryKey);
+    fileNavigation.restore(fileScope, {
+      paths: remembered?.openTabs ?? [],
+      selectedPath: remembered?.selectedFilePath ?? null,
+      hostId: "local",
+    });
+    // The preview is left alone: its key carries the scope, path, mode and
+    // access context, so a preview for anything else cannot render anyway, and
+    // clearing it here would erase the read another effect just started when
+    // this effect reconnects.
     setGitHistoryResource(emptyKeyedResource());
     changeDetailRequestIdRef.current += 1;
     setChangeDetailResource(emptyKeyedResource());
@@ -579,14 +605,63 @@ export function WorkspacePanel({
     setCommitDetail(null);
     setSelectionMenu(null);
     setTreeMenu(null);
-    setFilter(readWorkspaceTreeMemory(workspaceMemoryKey)?.filter ?? "");
+    setFilter(remembered?.filter ?? "");
     setScopedFilePaths(null);
     setScopedChangeRows(null);
-    setSourcePaths(restoredSourcePaths(navigationResources));
-    presentedToolCallByPathRef.current = restoredPresentedTools(navigationResources);
     setTreeVisible(true);
     void loadDir("");
-  }, [cwd, loadDir, open, workspaceMemoryKey]);
+  }, [cwd, fileNavigation, fileScope, loadDir, open, workspaceMemoryKey]);
+
+  // What the preview area showed when the previous navigation was applied;
+  // only a first preview initializes the split, and the record already carries
+  // the new selection by the time this effect runs.
+  const previewShown = openTabs.length > 0 || selectedPath !== null;
+  const previewVisibleAtLastApplyRef = useRef(false);
+  const navigationIntent = fileRecord?.navigation ?? null;
+  useEffect(() => {
+    if (!open || !navigationIntent) return;
+    if (appliedNavigationRevisionRef.current === navigationIntent.revision) return;
+    appliedNavigationRevisionRef.current = navigationIntent.revision;
+    const path = navigationIntent.resource.path;
+    if (shouldInitializeWorkspaceSplitOnFileSelect({
+      previewVisible: previewVisibleAtLastApplyRef.current,
+      treeVisible,
+    })) {
+      setTreeWidth(initialWorkspaceSplitTreeWidth({
+        panelWidth,
+        // Preserve a user-resized (manual) tree width: only first-time splits
+        // (no saved width yet) default to an even 50/50 division. Reopening a
+        // file after closing its preview keeps the remembered width.
+        savedTreeWidth: treeWidthMode === "manual" ? treeWidth : null,
+        treeMinWidth: WORKSPACE_TREE_MIN_WIDTH,
+        previewMinWidth: WORKSPACE_PREVIEW_MIN_WIDTH,
+      }));
+      setTreeWidthMode("even");
+    }
+    pendingTreeRevealPathRef.current = path;
+    if (navigationIntent.params.view === "changed") setSelectedChangePath(path);
+    else if (navigationIntent.params.action === "reveal-tree") setTreeVisible(true);
+    setViewMode(navigationIntent.params.view);
+    // Picking a file dismisses a scoped list for good: the request that opened
+    // it must not re-apply while the user reads the file it pointed at.
+    setScopedFilePaths((current) => {
+      if (current) dismissedFileListRequestIdRef.current = lastFileListRequestIdRef.current;
+      return null;
+    });
+    setScopedChangeRows((current) => {
+      if (current) dismissedChangeListRequestIdRef.current = lastChangeListRequestIdRef.current;
+      return null;
+    });
+    setFilter("");
+    setRecentPaths((paths) => [...paths.filter((entry) => entry !== path), path].slice(-WORKSPACE_MAX_PREVIEW_TABS));
+    const dirs = isAbsoluteDisplayPath(path) ? [] : parentDirs(path);
+    updateOpenDirs((prev) => new Set([...Array.from(prev), ...dirs]));
+    dirs.forEach((dir) => void loadDir(dir));
+    if (navigationIntent.resource.access.source === "presented" && isAbsoluteDisplayPath(path)) setScopedFilePaths([path]);
+  }, [loadDir, navigationIntent, open, panelWidth, treeVisible, treeWidth, treeWidthMode, updateOpenDirs]);
+  useEffect(() => {
+    previewVisibleAtLastApplyRef.current = previewShown;
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -610,10 +685,10 @@ export function WorkspacePanel({
     lastChangeListRequestIdRef.current = null;
     dismissedChangeListRequestIdRef.current = null;
     if (viewMode === "changed") {
-      setOpenTabs([]);
+      fileNavigation.clearEntries(fileScope);
       setPreviewResource(emptyKeyedResource());
     }
-  }, [open, resetWorkspaceChanges, viewMode, workspaceScopeKey]);
+  }, [fileNavigation, fileScope, open, resetWorkspaceChanges, viewMode, workspaceScopeKey]);
 
   useEffect(() => () => {
     workingTreeRefreshSchedulerRef.current?.cancel();
@@ -675,8 +750,8 @@ export function WorkspacePanel({
     setViewMode("files");
     setTreeVisible(true);
     setScopedFilePaths(paths);
-    setSelectedFilePath(null);
-    setOpenTabs([]);
+    fileNavigation.clearSelection(fileScope);
+    fileNavigation.clearEntries(fileScope);
     setPreviewResource(emptyKeyedResource());
     setFilter("");
     setExpandedCommit(null);
@@ -717,7 +792,7 @@ export function WorkspacePanel({
     setScopedChangeRows(changes);
     setScopedFilePaths(null);
     setSelectedChangePath(null);
-    setOpenTabs([]);
+    fileNavigation.clearEntries(fileScope);
     setPreviewResource(emptyKeyedResource());
     setFilter("");
     setExpandedCommit(null);
@@ -725,43 +800,6 @@ export function WorkspacePanel({
     setSelectionMenu(null);
     setTreeMenu(null);
   }, [changeListRequest, open, scopedChangeRows, viewMode]);
-
-  useEffect(() => {
-    if (!open || revealPathRequest) return;
-    lastRevealRequestIdRef.current = null;
-    dismissedRevealRequestIdRef.current = null;
-  }, [open, revealPathRequest]);
-
-  useEffect(() => {
-    if (!open || !revealPathRequest) return;
-    if (revealPathRequest.acceptNavigation && !revealPathRequest.acceptNavigation()) return;
-    if (dismissedRevealRequestIdRef.current === revealPathRequest.id) return;
-    if (
-      lastRevealRequestIdRef.current === revealPathRequest.id &&
-      selectedPath === revealPathRequest.path &&
-      viewMode === "files"
-    ) {
-      return;
-    }
-    lastRevealRequestIdRef.current = revealPathRequest.id;
-    dismissedRevealRequestIdRef.current = null;
-    setViewMode("files");
-    if (revealPathRequest.action === "reveal-tree") setTreeVisible(true);
-    setScopedFilePaths(null);
-    setScopedChangeRows(null);
-    setExpandedCommit(null);
-    setCommitDetail(null);
-    selectFile(revealPathRequest.path, "files", revealPathRequest.toolCallId);
-    setSourcePaths((current) => {
-      const next = new Set(current);
-      if (revealPathRequest.source) next.add(revealPathRequest.path);
-      else next.delete(revealPathRequest.path);
-      return next;
-    });
-    if (revealPathRequest.toolCallId && isAbsoluteDisplayPath(revealPathRequest.path)) {
-      setScopedFilePaths([revealPathRequest.path]);
-    }
-  }, [open, revealPathRequest, selectFile, selectedPath, viewMode]);
 
   useEffect(() => {
     if (!open || changeRevealRequest) return;
@@ -786,14 +824,14 @@ export function WorkspacePanel({
     setScopedFilePaths(null);
     setScopedChangeRows(null);
     setSelectedChangePath(changeRevealRequest.path);
-    setOpenTabs([]);
+    fileNavigation.clearEntries(fileScope);
     setPreviewResource(emptyKeyedResource());
     setFilter("");
     setExpandedCommit(null);
     setCommitDetail(null);
     setSelectionMenu(null);
     setTreeMenu(null);
-  }, [changeRevealRequest, open, selectedPath, viewMode]);
+  }, [changeRevealRequest, fileNavigation, fileScope, open, selectedPath, viewMode]);
 
   useEffect(() => {
     if (!open || !activeVerificationRevealRequest) return;
@@ -802,7 +840,7 @@ export function WorkspacePanel({
       lastVerificationRevealRequestIdRef.current = activeVerificationRevealRequest.id;
       setViewMode("changed");
       setSelectedChangePath(null);
-      setOpenTabs([]);
+      fileNavigation.clearEntries(fileScope);
       setPreviewResource(emptyKeyedResource());
       setFilter("");
       setExpandedCommit(null);
@@ -815,7 +853,7 @@ export function WorkspacePanel({
     if (viewMode !== "changed" || selectedChangePath) return;
     const node = verificationSummaryRef.current ?? document.getElementById(WORKSPACE_TURN_VERIFICATION_ID);
     node?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [activeVerificationRevealRequest, open, selectedChangePath, viewMode]);
+  }, [activeVerificationRevealRequest, fileNavigation, fileScope, open, selectedChangePath, viewMode]);
 
   useEffect(() => {
     if (!open) return;
@@ -878,17 +916,29 @@ export function WorkspacePanel({
     dirs.forEach((dir) => void loadDir(dir));
   }, [loadChangeDetail, loadGitHistory, loadWorkspaceChanges, loadDir, onFileTreeRefresh, selectedPath, viewMode]);
 
+  // The read inputs come from the selected entry, never from a path-keyed
+  // cache: a file reopened from another entry point reads with that command's
+  // access context, and a command that changes none of these inputs leaves this
+  // callback identical, so a still-valid read is not restarted.
   const refreshSelected = useCallback(() => {
     if (!selectedPath) return;
     setPresentedFileStale(false);
     const requestId = ++previewRequestIdRef.current;
     const requestScopeKey = workspaceScopeKey;
     const requestPath = selectedPath;
-    const presentedToolCallId = presentedToolCallByPathRef.current.get(requestPath);
-    const forceSource = sourcePaths.has(requestPath);
+    const requestGeneration = selectedGeneration;
+    const presentedToolCallId = selectedPresentedToolCallId;
+    const forceSource = sourceOverride;
     const requestKey = `${requestScopeKey}\u0000preview\u0000${forceSource ? "source" : "preview"}\u0000${presentedToolCallId ?? ""}\u0000${requestPath}`;
-    let live = true;
-    setPreviewResource((current) => beginKeyedResourceRequest(current, requestKey, requestId, workspaceRefresh.revisions.content));
+    // Session, dock instance, resource identity and operation revision must all
+    // still match before a result may be committed for this read. This panel
+    // being gone is one of those conditions, and a StrictMode replay is not.
+    const current = () =>
+      mountedRef.current
+      && previewRequestIdRef.current === requestId
+      && currentWorkspaceScopeKeyRef.current === requestScopeKey
+      && currentFileGenerationRef.current === requestGeneration;
+    setPreviewResource((state) => beginKeyedResourceRequest(state, requestKey, requestId, workspaceRefresh.revisions.content));
     const read = presentedToolCallId
       ? forceSource
         ? app.ReadPresentedFileSourceForTab(workspaceTabId, presentedToolCallId, requestPath)
@@ -896,19 +946,16 @@ export function WorkspacePanel({
       : app.ReadFileForTab(workspaceTabId, requestPath);
     read
       .then((next) => {
-        if (live && previewRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
-          setPreviewResource((current) => resolveKeyedResourceRequest(current, requestKey, requestId, next, workspaceRefresh.revisions.content));
+        if (current()) {
+          setPreviewResource((state) => resolveKeyedResourceRequest(state, requestKey, requestId, next, workspaceRefresh.revisions.content));
         }
       })
       .catch((err) => {
-        if (live && previewRequestIdRef.current === requestId && currentWorkspaceScopeKeyRef.current === requestScopeKey) {
-          setPreviewResource((current) => rejectKeyedResourceRequest(current, requestKey, requestId, String(err?.message ?? err)));
+        if (current()) {
+          setPreviewResource((state) => rejectKeyedResourceRequest(state, requestKey, requestId, String(err?.message ?? err)));
         }
       });
-    return () => {
-      live = false;
-    };
-  }, [selectedPath, sourcePaths, workspaceRefresh.revisions.content, workspaceScopeKey, workspaceTabId]);
+  }, [selectedGeneration, selectedPath, selectedPresentedToolCallId, sourceOverride, workspaceRefresh.revisions.content, workspaceScopeKey, workspaceTabId]);
 
   const loadMorePresentedText = useCallback(async () => {
     if (!previewKey || !preview || !selectedPath || !selectedPresentedToolCallId || !preview.version) return;
@@ -957,9 +1004,18 @@ export function WorkspacePanel({
     }
   }, [activePresentedTextTail, preview, previewKey, selectedPath, selectedPresentedToolCallId, workspaceScopeKey, workspaceTabId]);
 
+  // The read starts once per set of read inputs. A StrictMode mount replay, an
+  // effect reconnect or a re-render reconnect calls the effect again with the
+  // very same callback, and must not issue a second read for it.
+  const startedReadRef = useRef<typeof refreshSelected | null>(null);
   useEffect(() => {
-    if (!open || !selectedPath) return;
-    return refreshSelected();
+    if (!open || !selectedPath) {
+      startedReadRef.current = null;
+      return;
+    }
+    if (startedReadRef.current === refreshSelected) return;
+    startedReadRef.current = refreshSelected;
+    refreshSelected();
   }, [open, refreshSelected, selectedPath]);
 
   useWorkspaceRefreshInvalidation({ commitHistoryOpen,
@@ -1045,7 +1101,7 @@ export function WorkspacePanel({
               <button
                 className="workspace-change"
                 type="button"
-                onClick={() => { cancelFileNavigation(); selectFile(change.path); }}
+                onClick={() => openFile(change.path, viewMode)}
               >
                 <FileText size={14} />
                 <span className="workspace-change__body">
@@ -1382,37 +1438,25 @@ export function WorkspacePanel({
   }, [actualTreeVisible, showTreeEvenSplit]);
 
   const closePreviewArea = useCallback(() => {
-    if (lastRevealRequestIdRef.current === revealPathRequest?.id) {
-      dismissedRevealRequestIdRef.current = revealPathRequest.id;
-    }
     if (lastChangeRevealRequestIdRef.current === changeRevealRequest?.id) {
       dismissedChangeRevealRequestIdRef.current = changeRevealRequest.id;
     }
-    if (viewMode === "changed") {
-      setSelectedChangePath(null);
-    } else {
-      const nextPreviewTabs = closeWorkspacePreviewTab(openTabs, selectedFilePath);
-      setSelectedFilePath(nextPreviewTabs.selectedPath);
-      setOpenTabs(nextPreviewTabs.openTabs);
-    }
+    if (viewMode === "changed") setSelectedChangePath(null);
+    else if (selectedFilePath) fileNavigation.closeEntry(fileScope, selectedFilePath);
     setPreviewResource(emptyKeyedResource());
     setSelectionMenu(null);
     setTreeMenu(null);
     setRecentOpen(false);
     setTreeVisible(true);
-  }, [changeRevealRequest, openTabs, revealPathRequest, selectedFilePath, viewMode]);
+  }, [changeRevealRequest, fileNavigation, fileScope, selectedFilePath, viewMode]);
 
   const closePreviewTab = useCallback((path: string) => {
-    setOpenTabs((tabs) => {
-      const next = tabs.filter((tab) => tab !== path);
-      if (selectedFilePath === path) setSelectedFilePath(next.length ? next[next.length - 1] : null);
-      return next;
-    });
+    fileNavigation.closeEntry(fileScope, path);
     if (selectedFilePath === path) {
       setPreviewResource(emptyKeyedResource());
       setPresentedFileStale(false);
     }
-  }, [selectedFilePath]);
+  }, [fileNavigation, fileScope, selectedFilePath]);
 
   const setSavedTreeWidth = useCallback(
     (width: number) => {
@@ -1594,10 +1638,9 @@ export function WorkspacePanel({
     if (row.entry.isDir) {
       toggleDir(row.path, row.compactPaths ?? [row.path]);
     } else if (selectedPath === row.path) {
-      setSelectedFilePath(null);
+      fileNavigation.clearSelection(fileScope);
     } else {
-      cancelFileNavigation();
-      selectFile(row.path);
+      openFile(row.path);
     }
   };
 
@@ -1704,11 +1747,7 @@ export function WorkspacePanel({
                     type="button"
                     aria-label={t("workspace.previewMode")}
                     aria-pressed={!sourceOverride}
-                    onClick={() => setSourcePaths((current) => {
-                      const next = new Set(current);
-                      next.delete(selectedPath);
-                      return next;
-                    })}
+                    onClick={() => fileNavigation.setSourceMode(fileScope, selectedPath, false)}
                   >
                     <Eye size={15} />
                   </button>
@@ -1719,7 +1758,7 @@ export function WorkspacePanel({
                     type="button"
                     aria-label={t("workspace.sourceMode")}
                     aria-pressed={sourceOverride}
-                    onClick={() => setSourcePaths((current) => new Set(current).add(selectedPath))}
+                    onClick={() => fileNavigation.setSourceMode(fileScope, selectedPath, true)}
                   >
                     <Code2 size={15} />
                   </button>
@@ -1782,7 +1821,9 @@ export function WorkspacePanel({
                   type="button"
                   className={`workspace-recent-menu__item${path === selectedPath ? " workspace-recent-menu__item--active" : ""}`}
                   onClick={() => {
-                    setSelectedFilePath(path);
+                    // A remembered path carries no presentation of its own: it
+                    // opens as a workspace file under the current session scope.
+                    fileNavigation.selectPath(fileScope, { hostId: "local", path });
                     setRecentOpen(false);
                   }}
                 >
@@ -1800,7 +1841,7 @@ export function WorkspacePanel({
           <nav className="workspace-document-tabs" aria-label={t("workspace.openFiles")}>
             {openTabs.map((path) => (
               <span key={path} className={`workspace-document-tab${selectedFilePath === path ? " is-active" : ""}`} title={path}>
-                <button type="button" onClick={() => { cancelFileNavigation(); selectFile(path, "files", presentedToolCallByPathRef.current.get(path)); }}>
+                <button type="button" onClick={() => fileNavigation.selectEntry(fileScope, path)}>
                   <FileText size={12} />
                   <span>{basename(path)}</span>
                 </button>
@@ -1850,8 +1891,7 @@ export function WorkspacePanel({
                       onClick={() => {
                         dismissedChangeListRequestIdRef.current = lastChangeListRequestIdRef.current;
                         setScopedChangeRows(null);
-                        cancelFileNavigation();
-                        selectFile(change.path);
+                        openFile(change.path, viewMode);
                       }}
                     >
                       <FileText size={14} />
@@ -1945,7 +1985,7 @@ export function WorkspacePanel({
                                         <button
                                           key={file}
                                           className="workspace-git-history__file"
-                                          onClick={() => { cancelFileNavigation(); selectFile(file); }}
+                                          onClick={() => { openFile(file, viewMode); }}
                                         >
                                           <FileText size={14} /> {file}
                                         </button>
@@ -2003,7 +2043,7 @@ export function WorkspacePanel({
                                     <button
                                       key={file}
                                       className="workspace-git-history__file"
-                                      onClick={() => { cancelFileNavigation(); selectFile(file); }}
+                                      onClick={() => { openFile(file, viewMode); }}
                                     >
                                       <FileText size={14} /> {file}
                                     </button>

@@ -16,7 +16,9 @@ export function PresentedFileLinkProvider({ files, tabId, hostId, children }: { 
     for (const file of files) basenameCounts.set(basename(file.path), (basenameCounts.get(basename(file.path)) ?? 0) + 1);
     for (const file of files) {
       const ref: FileResourceRef = { source: "presented", hostId: hostId ?? "local", tabId: tabId ?? "", toolCallId: file.toolCallId, path: file.path };
-      const link = { path: file.path, open: () => { void openResource(ref, { view: "preview" }); } };
+      // A link's outcome has no surface of its own: the dock it opens reports a
+      // failed read in its preview area, and a cancelled one reports nothing.
+      const link = { path: file.path, open: () => { void openResource(ref, { view: "preview" }).catch(() => undefined); } };
       next.set(file.path, link);
       if (basenameCounts.get(basename(file.path)) === 1) next.set(basename(file.path), link);
     }

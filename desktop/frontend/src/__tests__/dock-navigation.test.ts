@@ -35,17 +35,16 @@ for (const key of requestKeys) {
 console.log("PASS five Dock request kinds: stable revision, once-only acceptance, view isolation and close/reopen");
 
 const navigation = new DockNavigation();
-navigation.commit("project/session", "one", { revealPathRequest: { id: 1, path: "report.md", toolCallId: "tool", source: true } }, ["one", "two"]);
+navigation.commit("project/session", "one", { changeRevealRequest: { id: 1, path: "report.md" } }, ["one", "two"]);
 const original = navigation.getSnapshot();
 navigation.commit("project/session", "two", {}, ["one", "two"]);
 const restored = navigation.restoredView("project/session", "one");
-assert.equal(restored.navigationSignal, original.navigationSignal);
-assert.deepEqual(restored.navigationResources, { "report.md": { toolCallId: "tool", source: true } });
-for (const key of requestKeys) assert.equal(restored[key], null, "restoration exposes resources, never old commands");
-assert.equal(navigation.getSnapshot().navigationResources, undefined, "reading restoration does not activate the view");
-assert.equal(navigation.restoredView("project/other-session", "one").navigationResources, undefined);
+assert.equal(restored.navigationSignal, original.navigationSignal, "a restored view keeps its own lifetime signal");
+for (const key of requestKeys) assert.equal(restored[key], null, "restoration never replays an old command");
+assert.equal(navigation.getSnapshot().changeRevealRequest, null, "reading a restoration does not activate the view");
+assert.equal(navigation.restoredView("project/other-session", "one").navigationSignal, undefined, "a restoration cannot cross scopes");
 navigation.reconcile(["two"]);
-assert.equal(navigation.restoredView("project/session", "one").navigationResources, undefined);
+assert.equal(navigation.restoredView("project/session", "one").navigationSignal, undefined);
 assert(original.navigationSignal?.aborted);
 navigation.dispose();
-console.log("PASS retained resources restore before commit without activating, replaying or crossing lifetime boundaries");
+console.log("PASS a closed view's lifetime ends without activating, replaying or crossing scope boundaries");
