@@ -49,7 +49,7 @@ await opening.promise;
 cancelFileNavigation();
 opened.resolve({ id: "only-owned-tab" });
 await browser;
-assert(revoked.includes("http://preview.test/one"));
+assert.deepEqual(revoked, ["http://preview.test/one"]);
 assert(!useBrowserPanelStore.getState().tabs.some(tab => tab.id === "only-owned-tab"));
 assert.deepEqual(closed, ["only-owned-tab"]);
 stub.uninstall(); dom.window.close();
