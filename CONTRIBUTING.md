@@ -142,6 +142,14 @@ Desktop transcript scroll changes follow the
 and deterministic regression cases via `pnpm test:transcript` in
 `desktop/frontend/`.
 
+Keep correctness gates deterministic. Prove concurrency and lifecycle ordering
+with channels, injected clocks, state transitions, or emitted events instead of
+asserting that an operation finishes within a small wall-clock interval on a
+shared CI runner. Use a generous timeout only as a liveness watchdog. Performance
+limits belong in an explicit benchmark that records evidence and uses the
+benchmark's documented sampling rule; host integration probes may report an
+advisory result when the runner cannot provide a controlled environment.
+
 ### Code style
 
 - `gofmt` is enforced by CI — format before committing
