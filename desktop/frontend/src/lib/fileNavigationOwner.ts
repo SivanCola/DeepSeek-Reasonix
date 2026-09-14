@@ -187,6 +187,11 @@ export class FileNavigationOwner {
     };
   }
 
+  /**
+   * Open a resource in the dock that presents it. Callers outside a dock (a
+   * transcript row, a Markdown link) use this; a panel acting on its own
+   * contents uses `openIn`, because it already is the target dock.
+   */
   open(command: FileNavigationCommand): FileNavigationOutcome | Promise<FileNavigationOutcome> {
     if (this.disposed) return { status: "cancelled", reason: "disposed" };
     let scope: FileNavigationScope;
@@ -195,6 +200,15 @@ export class FileNavigationOwner {
     } catch (error) {
       return { status: "failed", error: asError(error) };
     }
+    return this.openIn(scope, command);
+  }
+
+  /** Open a resource in a dock instance the caller already identified. */
+  openIn(
+    scope: FileNavigationScope,
+    command: FileNavigationCommand,
+  ): FileNavigationOutcome | Promise<FileNavigationOutcome> {
+    if (this.disposed) return { status: "cancelled", reason: "disposed" };
     const key = fileNavigationKey(scope);
     const record = this.ensure(scope);
     const operation = this.begin(record);

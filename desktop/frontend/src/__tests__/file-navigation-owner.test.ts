@@ -126,6 +126,17 @@ restoredOwner.open({ ref: { source: "presented", hostId: "local", tabId: "sessio
 assert.equal(restoredOwner.getSnapshot(key)!.selected?.resource.path, "b.md", "another session's command leaves this dock alone");
 assert.equal(restoredOwner.getSnapshot(otherSession)!.selected?.resource.path, "other.ts");
 
+// ── A panel acting on its own contents never picks a dock ──
+let reveals = 0;
+const panelOwner = new FileNavigationOwner({
+  resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
+  revealDock: () => { reveals += 1; return "another-dock"; },
+});
+panelOwner.openIn(scope, { ref: workspace("own.ts"), params: { action: "preview", view: "files" } });
+assert.equal(reveals, 0, "a command inside a panel must not ask which dock to open");
+assert.equal(panelOwner.getSnapshot(key)!.selected?.resource.path, "own.ts", "it commits to the dock the caller named");
+assert.equal(panelOwner.getSnapshot(fileNavigationKey({ sessionTabId: "session-a", dockTabId: "another-dock" })), null);
+
 // ── A failed resolution reports to its caller and commits nothing ──
 const failing = new FileNavigationOwner({
   resolve: () => { throw new Error("path not permitted"); },

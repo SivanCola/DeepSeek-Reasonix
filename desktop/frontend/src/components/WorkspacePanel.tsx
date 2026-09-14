@@ -575,9 +575,11 @@ export function WorkspacePanel({
   const openFile = useCallback(
     (path: string, view: "files" | "changed" = "files") => {
       const ref: FileResourceRef = { source: "workspace", hostId: "local", tabId: workspaceTabId, path };
-      void Promise.resolve(fileNavigation.open({ ref, params: { action: "preview", view } }));
+      // A click inside this panel navigates this panel: it is already the target
+      // dock, so it must not ask the activity bar which dock to open.
+      void Promise.resolve(fileNavigation.openIn(fileScope, { ref, params: { action: "preview", view } }));
     },
-    [fileNavigation, workspaceTabId],
+    [fileNavigation, fileScope, workspaceTabId],
   );
 
   useEffect(() => {
