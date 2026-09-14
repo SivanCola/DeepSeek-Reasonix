@@ -22,7 +22,7 @@ type Query struct {
 	generation    map[string]uint64
 	rebuildCtx    context.Context
 	rebuildStop   context.CancelFunc
-	rebuildSlot   chan struct{}
+	slots         *rebuildSlots
 	indexMu       sync.Mutex
 	indexLocks    map[string]*sync.Mutex
 	contentMu     sync.Mutex
@@ -45,7 +45,7 @@ func newQuery(hostID string, persistence SessionPersistence, service *Service) *
 	query := &Query{
 		hostID: hostID, persistence: persistence, service: service,
 		rebuilding: map[string]struct{}{}, generation: map[string]uint64{}, rebuildCtx: rebuildCtx,
-		rebuildStop: rebuildStop, rebuildSlot: make(chan struct{}, 2),
+		rebuildStop: rebuildStop, slots: newRebuildSlots(2),
 		indexLocks:    map[string]*sync.Mutex{},
 		contentGrants: map[string]time.Time{},
 		searchBuilds:  map[string]*searchPreparation{},
@@ -220,13 +220,9 @@ func (q *Query) scheduleMetadataRebuild(sessionID string) {
 	}
 	q.rebuilding[sessionID] = struct{}{}
 	generation := q.generation[sessionID]
-	select {
-	case q.rebuildSlot <- struct{}{}:
-	case <-q.rebuildCtx.Done():
-		delete(q.rebuilding, sessionID)
-		q.rebuildMu.Unlock()
-		return
-	default:
+	// Prefetch-class metadata rebuilds keep drop-on-full semantics; the next
+	// read that observes a non-ready status re-triggers the schedule.
+	if !q.slots.tryAcquire() {
 		delete(q.rebuilding, sessionID)
 		q.rebuildMu.Unlock()
 		return
@@ -248,7 +244,7 @@ func (q *Query) invalidateCatalog(sessionID string) {
 }
 
 func (q *Query) rebuildCatalogMetadata(sessionID string, generation uint64) {
-	defer func() { <-q.rebuildSlot }()
+	defer q.slots.release()
 	defer func() {
 		q.rebuildMu.Lock()
 		delete(q.rebuilding, sessionID)

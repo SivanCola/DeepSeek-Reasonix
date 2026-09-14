@@ -403,14 +403,13 @@ func (q *Query) prepareHistoryLocator(filesystem *FilesystemPersistence, session
 	q.historyBuilds[sessionID] = preparation
 	q.historyMu.Unlock()
 	go func() {
-		select {
-		case q.rebuildSlot <- struct{}{}:
-			defer func() { <-q.rebuildSlot }()
-		case <-q.rebuildCtx.Done():
-			preparation.err = q.rebuildCtx.Err()
+		// A user-requested history page or locate: highest slot priority.
+		if err := q.slots.acquire(q.rebuildCtx, rebuildPriorityUser); err != nil {
+			preparation.err = err
 			close(preparation.done)
 			return
 		}
+		defer q.slots.release()
 		lock := q.projectionLock("history", sessionID)
 		lock.Lock()
 		preparation.err = ensureHistoryIndex(q.rebuildCtx, filesystem, sessionID, path)
