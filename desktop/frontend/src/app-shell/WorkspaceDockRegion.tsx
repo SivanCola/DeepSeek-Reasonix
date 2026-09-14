@@ -77,12 +77,12 @@ export function WorkspaceDockRegion(props: WorkspaceDockRegionProps) {
   const requests = useDockViewRequests(`${props.workspaceKey}::${props.workspace.tabId ?? ""}`, visible && projectReady ? activeTabId : null, incomingWorkspace, props.navigation, tabs.map(tab => tab.id));
 
   const renderTab = (tab: TabItem): ReactNode => {
-    if (!projectReady || !requests.navigationSignal) return null;
+    if (!projectReady) return null;
     if (firstFileTabId) readWorkspaceTreeMemory(workspaceViewMemoryKey(props.workspaceKey, firstFileTabId, true));
     switch (tab.type) {
       case "context":
         if (showContext && !creation) return <ContextPanel {...props.context} />;
-        return <WorkspacePanel key={`${props.workspaceKey}::${props.workspace.tabId}::${tab.id}`} {...props.workspace} {...requests}
+        return <WorkspacePanel key={`${props.workspaceKey}::${tab.id}`} {...props.workspace} {...requests}
           workspaceMemoryKey={workspaceViewMemoryKey(props.workspaceKey, tab.id)} workspaceMemoryVisitId={0} />;
       case "remote":
         return <RemotePanel key={`${props.workspaceKey}::${props.workspace.tabId}::${tab.id}`} {...props.remote} tabId={props.workspace.tabId} dockTabId={tab.id} navigationSignal={requests.navigationSignal} />;
@@ -91,7 +91,7 @@ export function WorkspaceDockRegion(props: WorkspaceDockRegionProps) {
       default:
         return (
           <WorkspacePanel
-            key={`${props.workspaceKey}::${props.workspace.tabId}::${tab.id}`}
+            key={`${props.workspaceKey}::${tab.id}`}
             {...props.workspace}
             {...requests}
             workspaceMemoryKey={workspaceViewMemoryKey(props.workspaceKey, tab.id, tab.id === firstFileTabId)}
