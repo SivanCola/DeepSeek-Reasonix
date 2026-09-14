@@ -3595,10 +3595,8 @@ export function useController() {
     snapshotClient.prune();
   }, [activeTabId, snapshotClient]);
 
-  // History reads route by the tab's binding identity, resolved from the meta
-  // this controller already loads. A remote tab's session lives on its serve
-  // host, so answering it from the local service (or the reverse) would mix
-  // two different sessions behind one entry id.
+  // History reads route by binding identity: a remote tab's session lives on
+  // its serve host, so answering it locally would mix two sessions.
   useEffect(() => {
     setTranscriptBindingIdentity((tabId) => (statesRef.current.get(tabId)?.meta?.remote ? "remote" : "local"));
     return () => setTranscriptBindingIdentity(() => "local");

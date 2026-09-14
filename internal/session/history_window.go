@@ -27,11 +27,10 @@ const (
 	historyWindowDirOlder = "older"
 	historyWindowDirNewer = "newer"
 
-	// HistoryWindowUnsupported is the status a transport returns when the peer
-	// never negotiated history-window-v1. It is deliberately a status and not
-	// an error: an older service still serves bounded protocol-7 pages, so the
-	// reader keeps working and only the newer-direction and anchor-jump
-	// affordances are withheld until the service is upgraded.
+	// HistoryWindowUnsupported answers a peer that never negotiated
+	// history-window-v1. It is a status, not an error: the older service still
+	// serves bounded protocol-7 pages, so only the newer-direction and
+	// anchor-jump affordances are withheld until it is upgraded.
 	HistoryWindowUnsupported = "unsupported"
 )
 
@@ -172,83 +171,97 @@ func (q *Query) ReadHistoryWindow(ctx context.Context, ref SessionRef, req Histo
 		AnchorMessageID:  req.MessageID,
 		AnchorTurn:       req.Turn,
 	}
-	// newest anchors always read the latest durable cut; cursor anchors pin
-	// the snapshot they were issued under.
-	boundary := int64(^uint64(0) >> 1)
-	direction := req.Direction
-	if anchor == "newest" {
-		page.SnapshotSequence = metadata.durableSequence
-	} else {
-		var parsed historyWindowCursor
-		var anchorPos int64
-		switch anchor {
-		case "cursor":
-			parsed, err = decodeHistoryWindowCursor(req.Cursor)
-			if err != nil {
-				// A cursor the server cannot read is no different to a client
-				// than one bound to a replaced snapshot: both mean "start over
-				// from a fresh anchor". Answering with a typed status keeps the
-				// decision with the caller instead of surfacing a parse error
-				// that reads like a transport failure.
-				page.Status = "stale_cursor"
-				return page, nil
-			}
-			if parsed.SessionID != ref.SessionID || parsed.StorageRevision != StorageRevision ||
-				parsed.Projection != historyIndexVersion || parsed.Generation != metadata.generation ||
-				(parsed.Direction != historyWindowDirOlder && parsed.Direction != historyWindowDirNewer) ||
-				parsed.Boundary <= 0 {
-				page.Status = "stale_cursor"
-				return page, nil
-			}
-			if parsed.SnapshotSequence > metadata.durableSequence {
-				page.Status = "stale_cursor"
-				page.SnapshotSequence = metadata.durableSequence
-				return page, nil
-			}
-			page.SnapshotSequence = parsed.SnapshotSequence
-			boundary = parsed.Boundary
-			direction = parsed.Direction
-		case "message":
-			page.SnapshotSequence = metadata.durableSequence
-			anchorPos, err = resolveMessagePosition(ctx, handle.DB, req.MessageID, page.SnapshotSequence)
-			if errors.Is(err, sql.ErrNoRows) {
-				page.Status = "not_found"
-				return page, nil
-			}
-			if err != nil {
-				return HistoryWindowPage{}, err
-			}
-			boundary = anchorPos
-			if direction == historyWindowDirOlder {
-				boundary = anchorPos + 1 // the anchor message is the page's newest
-			}
-		case "turn":
-			page.SnapshotSequence = metadata.durableSequence
-			anchorPos, err = resolveTurnPosition(ctx, handle.DB, req.Turn, page.SnapshotSequence)
-			if errors.Is(err, sql.ErrNoRows) {
-				page.Status = "not_found"
-				return page, nil
-			}
-			if err != nil {
-				return HistoryWindowPage{}, err
-			}
-			boundary = anchorPos
-			if direction == historyWindowDirOlder {
-				boundary = anchorPos + 1
-			}
-		}
+	page, boundary, direction, err := resolveWindowAnchor(ctx, handle.DB, ref, req, anchor, metadata, page)
+	if err != nil || page.Status != "" {
+		// A typed status is the whole answer: stale_cursor and not_found are
+		// results the client reasons about, not failures.
+		return page, err
 	}
 	result, err := q.readHistoryWindowPage(ctx, handle.DB, filesystem, ref, metadata, page.SnapshotSequence, boundary, direction, req.Limit)
 	if err != nil {
 		return HistoryWindowPage{}, err
 	}
-	// The page builder starts from a fresh value, so the anchor identity that
-	// resolved this window has to travel with the result: clients place the
-	// reading anchor and the visible turn range from it, and losing it would
-	// make an anchored page indistinguishable from an unanchored one.
-	result.AnchorMessageID = page.AnchorMessageID
-	result.AnchorTurn = page.AnchorTurn
-	return result, nil
+	return attachWindowAnchor(result, page), nil
+}
+
+// resolveWindowAnchor turns a request's anchor into the boundary and direction
+// the page read needs. A newest anchor reads the latest durable cut; the others
+// pin a snapshot and answer through page.Status (with a nil error) when the
+// anchor is stale or missing rather than failing the call.
+func resolveWindowAnchor(
+	ctx context.Context,
+	db *sql.DB,
+	ref SessionRef,
+	req HistoryWindowRequest,
+	anchor string,
+	metadata historyIndexMetadata,
+	page HistoryWindowPage,
+) (HistoryWindowPage, int64, string, error) {
+	// Newest pages have no boundary above them; the read walks down from the end.
+	boundary := int64(^uint64(0) >> 1)
+	direction := req.Direction
+	if anchor == "newest" {
+		page.SnapshotSequence = metadata.durableSequence
+		return page, boundary, direction, nil
+	}
+	if anchor == "cursor" {
+		parsed, err := decodeHistoryWindowCursor(req.Cursor)
+		if err != nil {
+			// An unreadable cursor means the same thing to a client as one bound
+			// to a replaced snapshot: start over. A typed status keeps that with
+			// the caller instead of surfacing an error that reads as transport.
+			page.Status = "stale_cursor"
+			return page, boundary, direction, nil
+		}
+		if parsed.SessionID != ref.SessionID || parsed.StorageRevision != StorageRevision ||
+			parsed.Projection != historyIndexVersion || parsed.Generation != metadata.generation ||
+			(parsed.Direction != historyWindowDirOlder && parsed.Direction != historyWindowDirNewer) ||
+			parsed.Boundary <= 0 {
+			page.Status = "stale_cursor"
+			return page, boundary, direction, nil
+		}
+		if parsed.SnapshotSequence > metadata.durableSequence {
+			page.Status = "stale_cursor"
+			page.SnapshotSequence = metadata.durableSequence
+			return page, boundary, direction, nil
+		}
+		// The cursor pins the snapshot it was issued under; that pin is what
+		// keeps appends from invalidating a paging session.
+		page.SnapshotSequence = parsed.SnapshotSequence
+		return page, parsed.Boundary, parsed.Direction, nil
+	}
+	page.SnapshotSequence = metadata.durableSequence
+	var anchorPos int64
+	var err error
+	if anchor == "message" {
+		anchorPos, err = resolveMessagePosition(ctx, db, req.MessageID, page.SnapshotSequence)
+	} else {
+		anchorPos, err = resolveTurnPosition(ctx, db, req.Turn, page.SnapshotSequence)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		page.Status = "not_found"
+		return page, boundary, direction, nil
+	}
+	if err != nil {
+		return HistoryWindowPage{}, boundary, direction, err
+	}
+	// Paging older from an anchor puts the anchor itself at the page's newest,
+	// so the reader sees the message or turn they asked for.
+	if direction == historyWindowDirOlder {
+		anchorPos++
+	}
+	return page, anchorPos, direction, nil
+}
+
+// attachWindowAnchor carries the resolved anchor identity onto the page the
+// builder produced.
+func attachWindowAnchor(result, resolved HistoryWindowPage) HistoryWindowPage {
+	// The page builder starts from a fresh value, so the anchor identity has to
+	// travel with the result: clients place the reading anchor and the visible
+	// turn range from it, and losing it makes an anchored page unanchored.
+	result.AnchorMessageID = resolved.AnchorMessageID
+	result.AnchorTurn = resolved.AnchorTurn
+	return result
 }
 
 func resolveMessagePosition(ctx context.Context, db *sql.DB, messageID string, snapshot uint64) (int64, error) {

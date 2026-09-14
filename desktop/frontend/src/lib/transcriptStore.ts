@@ -36,12 +36,7 @@ export interface TranscriptStoreOptions {
   historyBodyBudgetBytes?: number;
   /** Parsed-markdown cache budget. Default 16MiB. */
   markdownBudgetBytes?: number;
-  /**
-   * Adjacent history pages retained per session, newest-side included.
-   * Default 3, so a default window holds at most 3 × 32 messages. Pages past
-   * this are reclaimed from the end opposite the one being paged; the data
-   * stays on disk and is re-fetched on demand, so nothing is lost.
-   */
+  /** Adjacent history pages retained per session, newest-side included. */
   windowMaxPages?: number;
 }
 
@@ -110,9 +105,8 @@ interface RecordConversion {
   matches: Map<number, string>;
 }
 
-// One page of the resident history window. Pages are the unit the store keeps
-// and reclaims: records inside a page are never split, so reclaiming one
-// cannot cut a tool call away from its result mid-page.
+// One page of the resident history window: the unit the store keeps and
+// reclaims. Records inside a page are never split.
 interface TranscriptWindowPage {
   entryIds: string[];
   /** Cursor fetching the page immediately older than this one ("" when none). */
@@ -511,11 +505,8 @@ export class TranscriptStore {
   }
 
   private enforceBudgets(): void {
-    // The page budget applies to every session, pinned ones included. A live
-    // or active session stays resident so its tail keeps streaming, but it no
-    // longer holds its whole history: the reader's window is bounded and the
-    // rest is re-fetched from disk on demand. Pinning protects the session's
-    // identity and its live edge, not an unbounded record set.
+    // The page budget applies to every session, pinned ones included: a live
+    // session keeps its tail streaming but no longer holds its whole history.
     for (const session of this.sessions.values()) {
       if (session.pages.length > this.windowMaxPages) this.trimWindow(session, "newer");
     }
@@ -808,12 +799,8 @@ export class TranscriptStore {
 
   // ── bounded window ────────────────────────────────────────────────────────
 
-  /**
-   * Re-derive every identity-keyed map from one record list. Reclaiming a page
-   * changes which tool results belong to which call, so the maps cannot be
-   * spliced: they are replayed over exactly the records that survive. Records
-   * keep their fetched bodies (`resolved`) — only their place in the session
-   * changes.
+  /** Replay every identity-keyed map over exactly the surviving records.
+   * Reclaiming changes tool-call ownership, so the maps cannot be spliced.
    */
   private rebuildFromRecords(session: SessionTranscript, records: TranscriptRecord[]): void {
     const view = this.viewOf(records);
@@ -840,11 +827,8 @@ export class TranscriptStore {
     return { entryIds: entries.map((entry) => entry.entryId), olderCursor, newerCursor };
   }
 
-  /**
-   * Reclaim one page from the given end, returning false when the window holds
-   * a single page (the reader's own position is never reclaimed). A page that
-   * begins with tool results whose calls fall outside the window is widened,
-   * so reclaiming cannot leave a result row stranded from its call.
+  /** Reclaim one page from the given end; undefined when only one page is
+   * left. Widens the page so a result is never stranded from its call.
    */
   private reclaimPage(session: SessionTranscript, end: "oldest" | "newest"): string[] | undefined {
     if (session.pages.length <= 1) return undefined;
@@ -888,11 +872,8 @@ export class TranscriptStore {
     return [...before].filter((id) => !after.has(id));
   }
 
-  /**
-   * Keep the resident window at its page budget by reclaiming from the end the
-   * reader is moving away from. `growing` names the end a page was just added
-   * to; the opposite end is the one that gives way. Returns every item id the
-   * caller must drop from its own list.
+  /** Reclaim from the end opposite the one being paged, returning the item
+   * ids the caller must drop from its own list.
    */
   private trimWindow(session: SessionTranscript, growing: "older" | "newer"): string[] {
     if (session.pages.length === 0) return [];
@@ -1032,11 +1013,8 @@ export class TranscriptStore {
     }
   }
 
-  /**
-   * Page toward newer history — the direction protocol 7 never had. Only a
-   * binding that reports a newer cursor can serve this; a legacy binding
-   * leaves the window on its newest page instead of re-downloading to fake it.
-   * Returns a "append" result whose items continue the existing list.
+  /** Page toward newer history. Needs a binding that reports a newer cursor;
+   * a legacy one leaves the window on its newest page rather than faking it.
    */
   async loadNewer(
     tabId: string,

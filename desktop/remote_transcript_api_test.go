@@ -254,10 +254,9 @@ func TestRemoteSessionHistoryWindowRequiresCapability(t *testing.T) {
 		t.Fatalf("window read without canonical history = %+v, %v", page, err)
 	}
 
-	// With content but without history-window-v1 the service is an older
-	// Serve. That is a capability answer, not a failure: the caller gets a
-	// typed unsupported status, still with no round trip, so an old service is
-	// never asked to simulate a bounded window.
+	// With content but without history-window-v1 the service is an older Serve:
+	// a capability answer, not a failure. The caller gets a typed unsupported
+	// status and still no round trip, so no service fakes a bounded window.
 	tab.capabilities = map[string]bool{serveCapabilitySessionContentV1: true}
 	page, err := app.RemoteSessionHistoryWindowForTab(tab.id, session.HistoryWindowRequest{Anchor: "newest"})
 	if err != nil || page.Status != session.HistoryWindowUnsupported {
