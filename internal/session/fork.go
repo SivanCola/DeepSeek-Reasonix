@@ -129,6 +129,11 @@ func writeForkChild(ctx context.Context, parentDir, parentID string, prefix []Co
 	if childDir == "." || childID == "" {
 		return Manifest{}, fmt.Errorf("session: child directory and id are required")
 	}
+	// filepath.Join("", "attachments") is a relative path, so an empty parent
+	// would copy unrelated directories instead of the parent's owned files.
+	if strings.TrimSpace(parentDir) == "" {
+		return Manifest{}, fmt.Errorf("session: fork requires the parent session directory")
+	}
 	projection, err := Project(prefix)
 	if err != nil {
 		return Manifest{}, err

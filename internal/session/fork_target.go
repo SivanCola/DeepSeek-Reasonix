@@ -125,11 +125,28 @@ func (s *Service) ForkTargetSetFor(ctx context.Context, ref SessionRef) (ForkTar
 	if err := ref.validate(s.hostID); err != nil {
 		return ForkTargetSet{}, err
 	}
-	snapshot, err := s.query.Snapshot(ctx, ref)
+	projection, err := s.forkTurnProjection(ctx, ref)
 	if err != nil {
 		return ForkTargetSet{}, err
 	}
-	return ForkTargets(snapshot.Projection), nil
+	return ForkTargets(projection), nil
+}
+
+// forkTurnProjection reads only the projection a fork resolves its cut from. A
+// live runtime already holds that projection in memory, so it is read without
+// reconstructing the durable transcript: surfaces refresh their fork state
+// after every turn, next to the running turn. A session with no runtime in this
+// process is read cold from its durable commits, which keeps the lease of the
+// process that owns it untouched.
+func (s *Service) forkTurnProjection(ctx context.Context, ref SessionRef) (Projection, error) {
+	if runtime, ok := s.Runtime(ref); ok {
+		return runtime.Session().ExecutionSnapshot().Projection, nil
+	}
+	snapshot, err := s.query.Snapshot(ctx, ref)
+	if err != nil {
+		return Projection{}, err
+	}
+	return snapshot.Projection, nil
 }
 
 // ForkUnavailableError reports a refused cut together with the reason a surface
@@ -179,18 +196,18 @@ func (s *Service) CreateFork(ctx context.Context, request ForkRequest) (ForkResu
 	if !ok {
 		return ForkResult{}, errors.New("session: persistence does not support filesystem fork")
 	}
-	snapshot, err := s.query.Snapshot(ctx, request.Source)
+	projection, err := s.forkTurnProjection(ctx, request.Source)
 	if err != nil {
 		return ForkResult{}, err
 	}
-	sequence, availability, err := ForkSequence(snapshot.Projection, request.TurnID)
+	sequence, availability, err := ForkSequence(projection, request.TurnID)
 	if err != nil {
 		return ForkResult{}, err
 	}
 	if availability != ForkAvailable {
 		return ForkResult{}, &ForkUnavailableError{TurnID: request.TurnID, Reason: availability}
 	}
-	target, ok := forkTargetByID(snapshot.Projection, request.TurnID)
+	target, ok := forkTargetByID(projection, request.TurnID)
 	if !ok {
 		return ForkResult{}, &ForkUnavailableError{TurnID: request.TurnID, Reason: ForkHistoryUnverifiable}
 	}
@@ -213,11 +230,10 @@ func (s *Service) CreateFork(ctx context.Context, request ForkRequest) (ForkResu
 	childRef := SessionRef{HostID: s.hostID, SessionID: childID}
 	childDir := filepath.Join(filesystem.Root, childID)
 	parentDir := parent.dir()
-	if manifest, readErr := readStoredManifest(filepath.Join(childDir, "manifest.json")); readErr == nil {
+	if matched, readErr := forkChildMatches(childDir, parentDir, sequence); readErr == nil {
 		// A retried request reuses the child it already published. A different
 		// session that merely holds this identity is a real conflict.
-		if manifest.InheritedEvents == sequence && manifest.Source != nil &&
-			filepath.Clean(manifest.Source.Path) == filepath.Clean(parentDir) {
+		if matched {
 			return ForkResult{Child: childRef, Turn: target}, nil
 		}
 		return ForkResult{}, fmt.Errorf("session: child session %q already exists", childID)
@@ -225,6 +241,12 @@ func (s *Service) CreateFork(ctx context.Context, request ForkRequest) (ForkResu
 		return ForkResult{}, readErr
 	}
 	if _, err := parent.Fork(ctx, childDir, childID, sequence); err != nil {
+		// The check above is no reservation: two callers with one operation id
+		// both reach the publish, and the child the winner published is this
+		// request's own result, so the race resolves as the idempotent success.
+		if matched, readErr := forkChildMatches(childDir, parentDir, sequence); readErr == nil && matched {
+			return ForkResult{Child: childRef, Turn: target}, nil
+		}
 		// Both refusals mean the boundary this target advertised cannot carry a
 		// safe child. Each keeps its own reason so the surface says which one.
 		switch {
@@ -237,6 +259,19 @@ func (s *Service) CreateFork(ctx context.Context, request ForkRequest) (ForkResu
 		}
 	}
 	return ForkResult{Child: childRef, Turn: target}, nil
+}
+
+// forkChildMatches reports whether childDir already holds the child this request
+// asked for: the same inherited cut, from the same parent directory. The read
+// error is passed through so a caller can tell "no child yet" from a store it
+// cannot read.
+func forkChildMatches(childDir, parentDir string, sequence uint64) (bool, error) {
+	manifest, err := readStoredManifest(filepath.Join(childDir, "manifest.json"))
+	if err != nil {
+		return false, err
+	}
+	return manifest.InheritedEvents == sequence && manifest.Source != nil &&
+		filepath.Clean(manifest.Source.Path) == filepath.Clean(parentDir), nil
 }
 
 // forkSource returns the session to read the durable prefix from, plus its

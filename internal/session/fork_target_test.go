@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"reasonix/internal/event"
@@ -376,6 +377,46 @@ func TestCreateForkIsIdempotentPerOperationID(t *testing.T) {
 	}
 	if children := forkChildDirs(t, source.root, source.ref.SessionID); len(children) != 2 {
 		t.Fatalf("child directories = %v", children)
+	}
+}
+
+// TestCreateForkConcurrentSameOperationIDPublishesOneChild drives the race two
+// callers of one operation id hit: neither holds a reservation, so both can pass
+// the child-existence check before either publishes. Every caller must resolve
+// as the same idempotent success rather than the losing rename reaching the
+// surface as a hard failure, and the source must hold exactly one child.
+func TestCreateForkConcurrentSameOperationIDPublishesOneChild(t *testing.T) {
+	source := newClosedTurnSource(t)
+	request := ForkRequest{Source: source.ref, TurnID: "turn-1", OperationID: "fork-race"}
+	const callers = 4
+	start := make(chan struct{})
+	results := make([]ForkResult, callers)
+	errs := make([]error, callers)
+	var wait sync.WaitGroup
+	for caller := range callers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			results[caller], errs[caller] = source.service.CreateFork(t.Context(), request)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	for caller := range callers {
+		if errs[caller] != nil {
+			t.Fatalf("caller %d: %v", caller, errs[caller])
+		}
+		if results[caller].Child != results[0].Child {
+			t.Fatalf("caller %d published %+v, want %+v", caller, results[caller].Child, results[0].Child)
+		}
+		if want := completedTurnTarget(source.first, "turn-1", "message-1", 1); results[caller].Turn != want {
+			t.Fatalf("caller %d turn = %+v, want %+v", caller, results[caller].Turn, want)
+		}
+	}
+	children := forkChildDirs(t, source.root, source.ref.SessionID)
+	if len(children) != 1 || children[0] != results[0].Child.SessionID {
+		t.Fatalf("child directories = %v, want exactly [%s]", children, results[0].Child.SessionID)
 	}
 }
 
