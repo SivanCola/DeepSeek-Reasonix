@@ -174,6 +174,7 @@ const desktopStub = installDesktopHostStub(({
       BalanceForTab: async () => balance,
       JobsForTab: async () => jobs,
       CheckpointsForTab: async () => checkpoints,
+      ForkTargetsForTab: async () => ({ targets: [], verifiable: false }),
       HistoryForTab: async (tabID: string) => historyFor(tabID),
       HistorySliceForTab: async (tabID: string, req: HistorySliceRequest) => {
         if (tabID === failedHistoryTabId) throw new Error(`/private/${tabID}/history.jsonl could not be read`);

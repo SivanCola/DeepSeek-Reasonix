@@ -389,6 +389,16 @@ func (h *readHandle) ID() string { return h.id }
 
 func (h *readHandle) Manifest() Manifest { return h.manifest }
 
+// Dir reports the directory this cold reader opened. A fork from a session with
+// no live runtime still has to locate the parent's owned files, and that must
+// not require acquiring the writer lease the cold reader deliberately avoids.
+func (h *readHandle) Dir() string {
+	if h == nil {
+		return ""
+	}
+	return h.dir
+}
+
 func (h *readHandle) Read(ctx context.Context, offset uint64, limit int) (EventPage, error) {
 	if h == nil {
 		return EventPage{}, os.ErrClosed

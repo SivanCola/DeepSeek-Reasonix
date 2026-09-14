@@ -193,6 +193,32 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/fork_operations.go",
+      "name": "AcknowledgeForkOperation",
+      "owner": "App.AcknowledgeForkOperation",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "operationID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.AcknowledgeForkOperation"
+      },
+      "sources": [
+        "desktop/fork_operations.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/theme_app.go",
       "name": "ActivateBaseStyle",
       "owner": "App.ActivateBaseStyle",
@@ -2624,6 +2650,68 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/fork_targets.go",
+      "name": "CreateForkForTab",
+      "owner": "App.CreateForkForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "main.ForkAnchorView"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ForkCreationView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "anchor"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CreateForkForTab"
+      },
+      "sources": [
+        "desktop/fork_targets.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_fork_targets.go",
+      "name": "CreateForkRemoteTab",
+      "owner": "App.CreateForkRemoteTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "main.ForkAnchorView"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ForkCreationView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "anchor"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.CreateForkRemoteTab"
+      },
+      "sources": [
+        "desktop/remote_fork_targets.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/delivery_worktree.go",
       "name": "CreateIsolatedWorktree",
       "owner": "App.CreateIsolatedWorktree",
@@ -4065,6 +4153,58 @@
       },
       "sources": [
         "desktop/remote_tab_commands.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/fork_targets.go",
+      "name": "ForkTargetsForTab",
+      "owner": "App.ForkTargetsForTab",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ForkTargetSetView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ForkTargetsForTab"
+      },
+      "sources": [
+        "desktop/fork_targets.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_fork_targets.go",
+      "name": "ForkTargetsRemoteTab",
+      "owner": "App.ForkTargetsRemoteTab",
+      "params": [
+        {
+          "kind": "string"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "main.ForkTargetSetView"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.ForkTargetsRemoteTab"
+      },
+      "sources": [
+        "desktop/remote_fork_targets.go"
       ]
     },
     {
@@ -24831,6 +24971,201 @@
         }
       ]
     },
+    "main.ForkAnchorView": {
+      "fields": [
+        {
+          "name": "sourceHostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sourceSessionId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionGeneration",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "turnId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "boundarySequence",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "main.ForkCreationView": {
+      "fields": [
+        {
+          "name": "sessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "tabId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "operationId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "opened",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "code",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "error",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
+    "main.ForkTargetSetView": {
+      "fields": [
+        {
+          "name": "sourceHostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sourceSessionId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionGeneration",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "targets",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "main.ForkTargetView"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "verifiable",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    },
+    "main.ForkTargetView": {
+      "fields": [
+        {
+          "name": "sourceHostId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sourceSessionId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "sessionGeneration",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "turnId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "boundarySequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "turnNumber",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "messageId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "available",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "main.ForkWorktreeResultView": {
       "fields": [
         {
@@ -33523,6 +33858,12 @@
           "optional": true,
           "type": {
             "kind": "string"
+          }
+        },
+        {
+          "name": "forkTargetsSupported",
+          "type": {
+            "kind": "boolean"
           }
         },
         {

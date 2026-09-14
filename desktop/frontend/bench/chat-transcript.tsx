@@ -82,7 +82,7 @@ function Fixture() {
     };
   }, [ready]);
   return <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
-    <Transcript items={items} liveStore={liveStore} tabId="chat-bench" geometrySessionKey={`fixture-${session}`} running={running} onPrompt={() => {}} checkpoints={items.filter(item => item.kind === "user").map((_, index) => ({ turn: index + 1, canConversation: true })) as never}
+    <Transcript items={items} liveStore={liveStore} tabId="chat-bench" geometrySessionKey={`fixture-${session}`} running={running} onPrompt={() => {}}
       onFork={() => {}} hasOlderHistory={items[0]?.id !== "u0"} onLoadOlderHistory={() => { window.chatFixture.older(); return true; }} />
     <div style={{ flex: "none", maxHeight: "40vh", padding: 16 }}><Composer running={running} collaborationMode="normal" toolApprovalMode="ask" modelLabel="DeepSeek" tabId="chat-bench"
       onSend={() => {}} onCancel={async () => ({ discardedItemIds: [] })} onCycleMode={() => {}} onSetMode={() => {}}

@@ -275,7 +275,7 @@ console.log("\nturn checkpoint submission binding");
   eq(source.includes("turnUserItemIds"), false, "FIFO ownership state is completely removed");
   eq(source.includes("HistoryCheckpointTurnsForTab(targetTabId)"), false, "TurnDone hot path does not refresh full checkpoint history");
   eq(source.includes('type: "history_checkpoint_turns"'), false, "positional checkpoint merge action remains removed");
-  eq(source.includes("void refreshCheckpoints(targetTabId)"), true, "TurnDone still refreshes checkpoint metadata");
+  eq(source.includes("void refreshTurnBoundaries(targetTabId)"), true, "TurnDone still refreshes checkpoint metadata");
 }
 
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);

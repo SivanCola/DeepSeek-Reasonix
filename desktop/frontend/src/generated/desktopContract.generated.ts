@@ -3,7 +3,7 @@
 
 export const DESKTOP_PROTOCOL_VERSION = 7;
 
-export const DESKTOP_CONTRACT_DIGEST = "sha256:facb7a55bae004e166548c39bdb976e80c7d7e621f948eeec8a7aab2ee471c02";
+export const DESKTOP_CONTRACT_DIGEST = "sha256:16e9a327492158e19963a30420df895be53bb1dcaab1553318b1e13f5b2451bb";
 
 export const DESKTOP_COMMANDS = [
   "AIRenameSession",
@@ -14,6 +14,7 @@ export const DESKTOP_COMMANDS = [
   "AcceptMemorySuggestionForTab",
   "AcceptSkillSuggestion",
   "AcceptSkillSuggestionForTab",
+  "AcknowledgeForkOperation",
   "ActivateBaseStyle",
   "ActivateThemePack",
   "ActivateTopic",
@@ -104,6 +105,8 @@ export const DESKTOP_COMMANDS = [
   "CopyThemePack",
   "CreateBlankProject",
   "CreateDeliveryWorktree",
+  "CreateForkForTab",
+  "CreateForkRemoteTab",
   "CreateIsolatedWorktree",
   "CreatePresentedBrowserPreviewForTab",
   "CreateSubagentProfile",
@@ -155,6 +158,8 @@ export const DESKTOP_COMMANDS = [
   "Fork",
   "ForkForTab",
   "ForkRemoteTab",
+  "ForkTargetsForTab",
+  "ForkTargetsRemoteTab",
   "ForkWorktreeForTab",
   "GetActiveThemePack",
   "GetDesktopShellStatus",
@@ -2078,6 +2083,45 @@ export interface FilePreview {
   err?: string;
 }
 
+export interface ForkAnchorView {
+  sourceHostId?: string;
+  sourceSessionId: string;
+  sessionGeneration: number;
+  turnId: string;
+  boundarySequence: number;
+}
+
+export interface ForkCreationView {
+  sessionId?: string;
+  tabId?: string;
+  operationId?: string;
+  opened: boolean;
+  code?: string;
+  reason?: string;
+  error?: string;
+}
+
+export interface ForkTargetSetView {
+  sourceHostId?: string;
+  sourceSessionId?: string;
+  sessionGeneration?: number;
+  targets: ForkTargetView[];
+  verifiable: boolean;
+}
+
+export interface ForkTargetView {
+  sourceHostId?: string;
+  sourceSessionId: string;
+  sessionGeneration: number;
+  turnId: string;
+  boundarySequence: number;
+  turnNumber: number;
+  status: string;
+  messageId?: string;
+  available: boolean;
+  reason?: string;
+}
+
 export interface ForkWorktreeResultView {
   tab: TabMeta;
   isolated: boolean;
@@ -3715,6 +3759,7 @@ export interface TabMeta {
   isolatedWorktree?: boolean;
   remote?: RemoteTabRef | null;
   remoteState?: string;
+  forkTargetsSupported: boolean;
   topicId: string;
   topicTitle: string;
   sessionPath?: string;
@@ -4736,6 +4781,7 @@ export interface GeneratedDesktopCommands {
   AcceptMemorySuggestionForTab(arg0: string, arg1: MemorySuggestion): Promise<string>;
   AcceptSkillSuggestion(arg0: SkillSuggestion): Promise<string>;
   AcceptSkillSuggestionForTab(arg0: string, arg1: SkillSuggestion): Promise<string>;
+  AcknowledgeForkOperation(arg0: string, arg1: string): Promise<void>;
   ActivateBaseStyle(arg0: string): Promise<void>;
   ActivateThemePack(arg0: string): Promise<void>;
   ActivateTopic(arg0: string, arg1: string, arg2: string, arg3: string): Promise<TabMeta>;
@@ -4826,6 +4872,8 @@ export interface GeneratedDesktopCommands {
   CopyThemePack(arg0: string, arg1: string, arg2: string): Promise<ThemePackView>;
   CreateBlankProject(arg0: string, arg1: string): Promise<string>;
   CreateDeliveryWorktree(arg0: string): Promise<IsolatedWorktreeOpenResult>;
+  CreateForkForTab(arg0: string, arg1: ForkAnchorView): Promise<ForkCreationView>;
+  CreateForkRemoteTab(arg0: string, arg1: ForkAnchorView): Promise<ForkCreationView>;
   CreateIsolatedWorktree(arg0: string): Promise<IsolatedWorktreeOpenResult>;
   CreatePresentedBrowserPreviewForTab(arg0: string, arg1: string, arg2: string): Promise<string>;
   CreateSubagentProfile(arg0: SubagentProfileInput): Promise<string>;
@@ -4877,6 +4925,8 @@ export interface GeneratedDesktopCommands {
   Fork(arg0: number): Promise<TabMeta>;
   ForkForTab(arg0: string, arg1: number): Promise<TabMeta>;
   ForkRemoteTab(arg0: string, arg1: number, arg2: string): Promise<void>;
+  ForkTargetsForTab(arg0: string): Promise<ForkTargetSetView>;
+  ForkTargetsRemoteTab(arg0: string): Promise<ForkTargetSetView>;
   ForkWorktreeForTab(arg0: string, arg1: number): Promise<ForkWorktreeResultView>;
   GetActiveThemePack(): Promise<ThemeActiveView>;
   GetDesktopShellStatus(): Promise<DesktopShellStatusView>;

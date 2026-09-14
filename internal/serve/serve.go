@@ -48,14 +48,13 @@ var logoWordmarkSVG []byte
 type Server struct {
 	runtimeProjection serveRuntimeProjection
 	mu                sync.RWMutex // guards ctrl, which rebuild paths swap at runtime
-	// bindMu serializes every entry point that changes the active session
-	// path or controller generation — /resume, /new, /fork, switchModel, and
-	// extension reload. net/http runs handlers
-	// concurrently and serve serves multiple browser tabs, so without this
-	// two interleaved rebinds can leave the controller writing one session
-	// while the lease keeper guards another (the exact split this feature
-	// exists to prevent). It also keeps switchModel's Snapshot/Build/Close
-	// off s.mu, as the narrower switchMu did before it was widened.
+	// bindMu serializes every entry point that changes the active session path
+	// or controller generation — /resume, /new, /fork, switchModel, and extension
+	// reload — and fences the identity read of /fork-targets and /fork-session.
+	// Without it two interleaved rebinds can leave the controller writing one
+	// session while the lease keeper guards another (the exact split this feature
+	// exists to prevent). It also keeps switchModel's Snapshot/Build/Close off
+	// s.mu, as the narrower switchMu did before it was widened.
 	bindMu sync.Mutex
 	ctrl   control.SessionAPI
 	bc     *Broadcaster
@@ -589,6 +588,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /clear", s.clearSession)
 	mux.HandleFunc("POST /rewind", s.rewind)
 	mux.HandleFunc("POST /fork", s.fork)
+	s.registerForkRoutes(mux)
 	mux.HandleFunc("POST /summarize", s.foregroundMutation(s.summarize))
 	mux.HandleFunc("POST /tool-approval-mode", s.foregroundMutation(s.toolApprovalMode))
 	mux.HandleFunc("GET /permission", s.permissionSnapshot)

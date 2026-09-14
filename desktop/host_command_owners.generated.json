@@ -109,6 +109,21 @@
       ]
     }
   },
+  "AcknowledgeForkOperation": {
+    "domain": "desktop/fork_operations.go",
+    "owner": "App.AcknowledgeForkOperation",
+    "sources": [
+      "desktop/fork_operations.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.AcknowledgeForkOperation",
+      "inputs": [
+        "tabID",
+        "operationID"
+      ]
+    }
+  },
   "ActivateBaseStyle": {
     "domain": "desktop/theme_app.go",
     "owner": "App.ActivateBaseStyle",
@@ -1421,6 +1436,36 @@
       ]
     }
   },
+  "CreateForkForTab": {
+    "domain": "desktop/fork_targets.go",
+    "owner": "App.CreateForkForTab",
+    "sources": [
+      "desktop/fork_targets.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.CreateForkForTab",
+      "inputs": [
+        "tabID",
+        "anchor"
+      ]
+    }
+  },
+  "CreateForkRemoteTab": {
+    "domain": "desktop/remote_fork_targets.go",
+    "owner": "App.CreateForkRemoteTab",
+    "sources": [
+      "desktop/remote_fork_targets.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.CreateForkRemoteTab",
+      "inputs": [
+        "tabID",
+        "anchor"
+      ]
+    }
+  },
   "CreateIsolatedWorktree": {
     "domain": "desktop/delivery_worktree.go",
     "owner": "App.CreateIsolatedWorktree",
@@ -2165,6 +2210,34 @@
         "tabID",
         "turn",
         "name"
+      ]
+    }
+  },
+  "ForkTargetsForTab": {
+    "domain": "desktop/fork_targets.go",
+    "owner": "App.ForkTargetsForTab",
+    "sources": [
+      "desktop/fork_targets.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ForkTargetsForTab",
+      "inputs": [
+        "tabID"
+      ]
+    }
+  },
+  "ForkTargetsRemoteTab": {
+    "domain": "desktop/remote_fork_targets.go",
+    "owner": "App.ForkTargetsRemoteTab",
+    "sources": [
+      "desktop/remote_fork_targets.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.ForkTargetsRemoteTab",
+      "inputs": [
+        "tabID"
       ]
     }
   },

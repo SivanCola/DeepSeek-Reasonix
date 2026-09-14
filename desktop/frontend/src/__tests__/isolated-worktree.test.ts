@@ -44,7 +44,8 @@ ok(/bindings\.ForkWorktreeForTab\(sourceTabId, turn\)/.test(forkAction) && /make
 ok(!/ForkForTab\(sourceTabId, turn, isolate/.test(forkAction), "shared fork never sends an extra bridge argument");
 ok(/result\.sourceDirty[\s\S]*forkWorktreeDirtySource/.test(forkAction), "dirty sources are refused with actionable guidance");
 ok(/result\.fallbackToShared[\s\S]*forkWorktreeFallbackNotice/.test(forkAction), "backend fallback state reaches the user");
-ok(message.includes("!checkpoint?.canConversation") && !message.includes("fork-worktree"), "chat exposes only capability-gated ordinary branching");
+ok(!message.includes("fork-worktree") && !message.includes("actions.checkpoints") && /actions\.fork/.test(message),
+  "chat exposes only the persisted-turn fork entry and never the worktree scope");
 ok(messageActionLabelKey("fork-worktree", false) === "rewind.forkWorktree", "isolated fork keeps its menu label after extraction");
 ok(messageActionLabelKey("fork-worktree", true) === "rewind.confirmForkWorktree", "isolated fork keeps its confirmation label after extraction");
 ok(/useState\(false\)/.test(mergeModal) && /autoCommitDirty/.test(mergeModal), "dirty auto-commit is opt-in by default");
@@ -83,7 +84,7 @@ const { increaseMockForkTitle, makeMockForkBindings } = await import("../lib/moc
 const { settleForkConversationForTab } = await import("../lib/controllerSwitchNotices");
 const original = { id: "source", active: true, workspaceRoot: "/project", topicTitle: "Source" } as TabMeta;
 let mockTabs = [original];
-const mockFork = makeMockForkBindings(() => mockTabs, tabs => { mockTabs = tabs; }, "Untitled");
+const mockFork = makeMockForkBindings(() => mockTabs, tabs => { mockTabs = tabs; }, "Untitled", async () => []);
 const isolated = await mockFork.ForkWorktreeForTab(original.id, 3);
 ok(isolated.isolated && isolated.tab.workspaceRoot === "/project-worktree" && mockTabs[0].active === false,
   "separate mock bindings retain isolated-worktree and activation behavior");
