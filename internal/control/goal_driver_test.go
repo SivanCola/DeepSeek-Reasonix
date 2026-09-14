@@ -20,13 +20,19 @@ import (
 func cleanupGoalDriverController(t *testing.T, c *Controller) {
 	t.Helper()
 	t.Cleanup(func() {
+		service, runtime, exclusive := c.v3Binding()
 		c.Close()
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
 			c.goalDriverMu.Lock()
 			settled := !c.goalDriverPending && c.goalDriverActive == nil
 			c.goalDriverMu.Unlock()
-			if settled && !c.Running() {
+			runtimeRetired := true
+			if exclusive && service != nil && runtime != nil {
+				current, ok := service.Runtime(runtime.Ref())
+				runtimeRetired = !ok || current != runtime
+			}
+			if settled && !c.Running() && runtimeRetired {
 				return
 			}
 			time.Sleep(time.Millisecond)
