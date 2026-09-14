@@ -37,8 +37,11 @@ type Session struct {
 	// externalHistory means durable UI messages live in HistoryQuery rather
 	// than this runtime projection. Messages then contains only the accepted,
 	// not-yet-durable tail; ModelMessages remains the exact provider workset.
-	externalHistory bool
-	catalogPreview  string
+	externalHistory   bool
+	catalogPreview    string
+	recentMessages    []provider.Message
+	storageGeneration string
+	recovery          *recoveryStore
 	// coldHandle backs a read-only session, which has no binding because it
 	// never enqueues or drains anything.
 	coldHandle SessionHandle
@@ -58,6 +61,7 @@ type PreparedBatch struct {
 	storedEvents     []Event
 	hash             string
 	reservation      *queueReservation
+	prior            *operationRecord
 }
 
 // OperationID reports the stable idempotency key of the prepared batch.
@@ -167,6 +171,13 @@ func (s *Session) PrepareBatchContext(ctx context.Context, operationID string, b
 	if err != nil {
 		return PreparedBatch{}, err
 	}
+	prior, found, err := s.lookupOperation(operationID)
+	if err != nil {
+		return PreparedBatch{}, fmt.Errorf("session: lookup operation %q: %w", operationID, err)
+	}
+	if found && prior.hash != hash {
+		return PreparedBatch{}, fmt.Errorf("%w: %q", ErrOperationConflict, operationID)
+	}
 	for i := range events {
 		if events[i].ID == "" {
 			events[i].ID = randomID()
@@ -198,7 +209,26 @@ func (s *Session) PrepareBatchContext(ctx context.Context, operationID string, b
 	if err != nil {
 		return PreparedBatch{}, err
 	}
-	return PreparedBatch{sessionID: sessionID, writerGeneration: writerGeneration, operationID: operationID, turnID: turnID, events: events, storedEvents: storedEvents, hash: hash, reservation: reservation}, nil
+	prepared := PreparedBatch{sessionID: sessionID, writerGeneration: writerGeneration, operationID: operationID, turnID: turnID, events: events, storedEvents: storedEvents, hash: hash, reservation: reservation}
+	if found {
+		copy := prior
+		prepared.prior = &copy
+	}
+	return prepared, nil
+}
+
+func (s *Session) lookupOperation(operationID string) (operationRecord, bool, error) {
+	if s == nil {
+		return operationRecord{}, false, nil
+	}
+	s.mu.Lock()
+	if record, ok := s.operations[operationID]; ok {
+		s.mu.Unlock()
+		return record, true, nil
+	}
+	recovery := s.recovery
+	s.mu.Unlock()
+	return recovery.lookupOperation(operationID)
 }
 
 func (s *Session) contentStore() *sessioncontent.Store {
@@ -254,6 +284,15 @@ func (s *Session) CommitPrepared(prepared PreparedBatch) (Commit, error) {
 		s.mu.Unlock()
 		return commit, nil
 	}
+	if prepared.prior != nil {
+		commit := prepared.prior.commit
+		commit.Events = cloneEvents(prepared.events)
+		for i := range commit.Events {
+			commit.Events[i].Sequence = commit.FirstSequence + uint64(i)
+		}
+		s.mu.Unlock()
+		return commit, nil
+	}
 	commit := Commit{
 		SchemaVersion: SchemaVersion, Codec: Codec, RecordType: "commit", ID: randomID(),
 		OperationID: prepared.operationID, OperationHash: prepared.hash, FirstSequence: s.next,
@@ -287,6 +326,7 @@ func (s *Session) CommitPrepared(prepared PreparedBatch) (Commit, error) {
 	err := binding.accept(storedCommit, prepared.reservation, func() {
 		s.commits = append(s.commits, commit)
 		s.projection = projection
+		_ = applyRecentCommit(&s.recentMessages, commit)
 		s.next = commit.LastSequence() + 1
 		s.operations[prepared.operationID] = compactOperationRecord(commit)
 	})
@@ -395,6 +435,25 @@ func (s *Session) DeriveMessages() []provider.Message {
 	messages := detachMessages(s.projection.ModelMessages)
 	s.mu.Unlock()
 	return messages
+}
+
+// RecentSnapshot returns the bounded chat baseline without consulting the
+// history locator or search index.
+func (s *Session) RecentSnapshot() RecentSnapshot {
+	if s == nil {
+		return RecentSnapshot{}
+	}
+	s.mu.Lock()
+	snapshot := RecentSnapshot{
+		Version: recoveryFormatVersion, SessionID: s.id, StorageGeneration: s.storageGeneration,
+		DurableSequence: s.next - 1, Messages: detachMessages(s.recentMessages),
+		Title: s.projection.Title, ModelRef: s.projection.ModelRef, ModelIdentity: s.projection.ModelIdentity,
+	}
+	s.mu.Unlock()
+	if s.binding != nil {
+		snapshot.DurableSequence = s.binding.durableSequence()
+	}
+	return snapshot
 }
 
 func materializeSnapshotMessages(history eventPageReader, accepted []Commit, acceptedSequence uint64) ([]provider.Message, error) {
