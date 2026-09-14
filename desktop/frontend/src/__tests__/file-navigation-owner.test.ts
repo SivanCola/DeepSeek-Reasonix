@@ -11,6 +11,7 @@ import { FILE_PREVIEW_LIMIT, FileNavigationOwner, fileNavigationKey } from "../l
 const DOCK = "dock-file";
 const scope = { sessionTabId: "session-a", dockTabId: DOCK };
 const key = fileNavigationKey(scope);
+const resolutions = new Map<string, { resolve: (path: string) => void }>();
 const owner = new FileNavigationOwner({
   resolve: (ref) => ({ hostId: ref.hostId, path: ref.path, requestedPath: ref.path, access: fileAccessContext(ref) }),
   revealDock: () => DOCK,
@@ -138,6 +139,37 @@ const shared = restoredOwner.getSnapshot(key)!;
 assert.equal(shared.selected?.resource.path, "other.ts", "a command from another session lands in the dock it targeted");
 assert.deepEqual(shared.selected?.resource.access, { source: "presented", tabId: "session-b", toolCallId: "call" },
   "and carries that session's access context");
+
+// ── A click is never replaced by an earlier command's late result ──
+const slow = new FileNavigationOwner({
+  resolve: (ref) => new Promise((resolve) => resolutions.set("slow.md", {
+    resolve: () => resolve({ hostId: ref.hostId, path: "slow.md", requestedPath: ref.path, access: fileAccessContext(ref) }),
+  })),
+  revealDock: () => DOCK,
+});
+const slowOpen = slow.open({ ref: workspace("slow.md"), params: { action: "preview", view: "files" } });
+assert(resolutions.has("slow.md"), "the slow open is resolving");
+slow.selectPath(scope, { hostId: "local", path: "clicked.md" });
+assert.equal(slow.getSnapshot(key)!.selected?.resource.path, "clicked.md", "the click lands while the open is still resolving");
+resolutions.get("slow.md")!.resolve("slow.md");
+assert.deepEqual(await slowOpen, { status: "cancelled", reason: "superseded" });
+assert.equal(slow.getSnapshot(key)!.selected?.resource.path, "clicked.md", "the late result does not replace what the user clicked");
+
+// ── A command that moves the dock to another host survives the panel's bind ──
+const hostScoped = new FileNavigationOwner({
+  resolve: (ref) => new Promise((resolve) => resolutions.set("host-b.md", {
+    resolve: () => resolve({ hostId: ref.hostId, path: "host-b.md", requestedPath: ref.path, access: fileAccessContext(ref) }),
+  })),
+  revealDock: () => "dock-remote",
+});
+const remoteScope = { sessionTabId: "session-a", dockTabId: "dock-remote" };
+hostScoped.bindScope(remoteScope, { resource: "host-a", session: "session-a" });
+const toHostB = hostScoped.open({ ref: { source: "workspace", hostId: "host-b", tabId: "session-a", path: "host-b.md" }, params: { action: "preview", view: "files" } });
+// The panel renders the host the command moved it to and binds that space.
+hostScoped.bindScope(remoteScope, { resource: "host-b", session: "session-a" });
+resolutions.get("host-b.md")!.resolve("host-b.md");
+assert.equal((await toHostB as { status: string }).status, "opened", "the bind of the new host does not cancel the command that caused it");
+assert.equal(hostScoped.getSnapshot("dock-remote")!.selected?.resource.path, "host-b.md");
 
 // ── A panel acting on its own contents never picks a dock ──
 let reveals = 0;

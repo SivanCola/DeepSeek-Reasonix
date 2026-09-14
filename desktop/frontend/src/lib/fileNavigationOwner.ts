@@ -105,10 +105,12 @@ type Record = {
   /** Lifetime of this dock instance's record; a reset aborts it. */
   lifetime: AbortController;
   /** Open command still resolving; a newer one supersedes it. */
-  pending: AbortController | null;
+  pending: { controller: AbortController; resource: string | null } | null;
 };
 
 const SUPERSEDED: FileNavigationOutcome = { status: "cancelled", reason: "superseded" };
+/** The resource space a command moves its dock to, when the dock is host-scoped. */
+const resourceOf = (ref: FileResourceRef): string | null => (ref.hostId === "local" ? null : ref.hostId);
 const asError = (reason: unknown): Error => (reason instanceof Error ? reason : new Error(String(reason)));
 const isPromise = <T>(value: T | Promise<T>): value is Promise<T> =>
   typeof (value as { then?: unknown } | null)?.then === "function";
@@ -163,7 +165,11 @@ export class FileNavigationOwner {
       return;
     }
     if (current.resource !== key.resource) {
-      this.reset(scope, key);
+      // A command that is moving this dock to another resource space is still
+      // resolving: it owns the dock now, so the bind drops the previous space's
+      // previews instead of cancelling the command that caused the switch.
+      if (record.pending && record.pending.resource === key.resource) this.replaceResource(record, key);
+      else this.reset(scope, key);
       return;
     }
     this.rebind(scope, record, key);
@@ -233,7 +239,7 @@ export class FileNavigationOwner {
     if (this.disposed) return { status: "cancelled", reason: "disposed" };
     const key = fileNavigationKey(scope);
     const record = this.ensure(scope);
-    const operation = this.begin(record);
+    const operation = this.begin(record, resourceOf(command.ref));
     let resolved: ResolvedFileResource | Promise<ResolvedFileResource>;
     try {
       resolved = this.ports.resolve(command.ref);
@@ -262,6 +268,8 @@ export class FileNavigationOwner {
   /** Activate an open entry; it keeps the access context of the command that opened it. */
   selectEntry(scope: FileNavigationScope, path: string): void {
     const record = this.records.get(fileNavigationKey(scope));
+    if (!record) return;
+    this.supersede(record);
     const entry = record?.snapshot.entries.find((candidate) => candidate.resource.path === path);
     if (!record || !entry) return;
     this.commitNavigation(record,entry.resource, {
@@ -278,6 +286,7 @@ export class FileNavigationOwner {
   selectPath(scope: FileNavigationScope, resource: FileResourceIdentityInput): void {
     const record = this.records.get(fileNavigationKey(scope));
     if (!record) return;
+    this.supersede(record);
     this.commitNavigation(record,workspaceResource(resource, scope.sessionTabId), {
       action: "preview",
       view: "files",
@@ -287,6 +296,8 @@ export class FileNavigationOwner {
   /** Switch an open tab between its preview and its source, reusing the tab. */
   setSourceMode(scope: FileNavigationScope, path: string, source: boolean): void {
     const record = this.records.get(fileNavigationKey(scope));
+    if (!record) return;
+    this.supersede(record);
     const entry = record?.snapshot.entries.find((candidate) => candidate.resource.path === path);
     if (!record || !entry) return;
     this.commitNavigation(record, entry.resource, { action: source ? "source" : "preview", view: "files" });
@@ -296,6 +307,7 @@ export class FileNavigationOwner {
   closeEntry(scope: FileNavigationScope, path: string): void {
     const record = this.records.get(fileNavigationKey(scope));
     if (!record) return;
+    this.supersede(record);
     const current = record.snapshot;
     const entries = current.entries.filter((entry) => entry.resource.path !== path);
     if (entries.length === current.entries.length) return;
@@ -310,13 +322,15 @@ export class FileNavigationOwner {
    */
   clearEntries(scope: FileNavigationScope): void {
     const record = this.records.get(fileNavigationKey(scope));
-    if (!record || record.snapshot.entries.length === 0) return;
+    if (!record) return;
+    this.supersede(record);
     this.commitState(record, { entries: [] });
   }
 
   clearSelection(scope: FileNavigationScope): void {
     const record = this.records.get(fileNavigationKey(scope));
-    if (!record || record.snapshot.selected === null) return;
+    if (!record) return;
+    this.supersede(record);
     this.commitState(record, { selected: null });
   }
 
@@ -328,6 +342,7 @@ export class FileNavigationOwner {
   restore(scope: FileNavigationScope, state: FileNavigationRestore): void {
     const record = this.records.get(fileNavigationKey(scope));
     if (!record) return;
+    this.supersede(record);
     const current = record.snapshot;
     if (current.entries.length > 0 || current.selected) return;
     const entries = state.paths.map((path): FilePreviewEntry => ({
@@ -379,6 +394,19 @@ export class FileNavigationOwner {
     return record;
   }
 
+  /** Enter another resource space, keeping an operation that is moving the dock. */
+  private replaceResource(record: Record, key: FileNavigationScopeKey): void {
+    this.apply(record, (current) => ({
+      ...current,
+      scope: key,
+      entries: [],
+      selected: null,
+      sourcePaths: [],
+      revision: current.revision + 1,
+      contentRevision: current.contentRevision + 1,
+    }));
+  }
+
   private reset(scope: FileNavigationScope, key: FileNavigationScopeKey): void {
     const recordKey = fileNavigationKey(scope);
     const previous = this.records.get(recordKey);
@@ -398,8 +426,7 @@ export class FileNavigationOwner {
     const access: FileAccessContext = { source: "workspace", tabId: scope.sessionTabId };
     const downgrade = (entry: FilePreviewEntry): FilePreviewEntry =>
       ({ resource: { ...entry.resource, access }, source: entry.source });
-    record.pending?.abort();
-    record.pending = null;
+    this.supersede(record);
     this.apply(record, (current) => ({
       ...current,
       scope: key,
@@ -410,10 +437,20 @@ export class FileNavigationOwner {
     }));
   }
 
-  private begin(record: Record): AbortController {
-    record.pending?.abort();
+  /**
+   * A synchronous command takes the dock over: whatever open was still
+   * resolving for it can no longer commit, so a click is never replaced by an
+   * earlier command's late result.
+   */
+  private supersede(record: Record): void {
+    record.pending?.controller.abort();
+    record.pending = null;
+  }
+
+  private begin(record: Record, resource: string | null): AbortController {
+    record.pending?.controller.abort();
     const operation = new AbortController();
-    record.pending = operation;
+    record.pending = { controller: operation, resource };
     return operation;
   }
 
@@ -425,7 +462,7 @@ export class FileNavigationOwner {
     lost: FileNavigationOutcome,
     commit?: () => T,
   ): T | FileNavigationOutcome {
-    if (this.records.get(key) !== record || record.pending !== operation || operation.signal.aborted) return lost;
+    if (this.records.get(key) !== record || record.pending?.controller !== operation || operation.signal.aborted) return lost;
     record.pending = null;
     return commit ? commit() : lost;
   }
@@ -482,7 +519,7 @@ export class FileNavigationOwner {
   }
 
   private drop(key: string, record: Record): void {
-    record.pending?.abort();
+    record.pending?.controller.abort();
     record.lifetime.abort();
     this.records.delete(key);
     this.generations.set(record.snapshot.dockTabId, record.snapshot.generation + 1);
