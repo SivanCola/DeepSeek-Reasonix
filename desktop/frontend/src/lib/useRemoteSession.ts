@@ -138,7 +138,7 @@ export function useRemoteSession(tabId: string | undefined, initial?: RemoteTabS
     transcriptRef.current = next;
     setTranscriptState(next);
   }, []);
-  const { forkTurn, rememberUnopenedFork, resetForkChildren, forkTargetsRefreshRef } = useRemoteForkTurn(app, tabId, setTranscript, setPromptError);
+  const { forkTurn, rememberUnopenedFork, resetForkChildren, forkTargetsRefreshRef } = useRemoteForkTurn(app, tabId, sessionPath, setTranscript, setPromptError);
   const liveListenersRef = useRef(new Set<() => void>());
   const hydratedRef = useRef(false);
   const hydratingRef = useRef(false);

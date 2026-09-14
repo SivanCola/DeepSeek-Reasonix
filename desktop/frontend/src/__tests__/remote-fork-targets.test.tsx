@@ -59,8 +59,10 @@ const commands = {
 };
 
 const desktopStub = installDesktopHostStub(commands as unknown as typeof app);
+const PARENT_SESSION = "/sessions/parent.jsonl";
+let sessionPath: string | undefined = PARENT_SESSION;
 let probe: RemoteSessionApi | undefined;
-function Harness() { probe = useRemoteSession(TAB); return null; }
+function Harness() { probe = useRemoteSession(TAB, undefined, sessionPath); return null; }
 const root = createRoot(document.getElementById("root")!);
 const settle = async () => { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); }); };
 
@@ -96,6 +98,14 @@ try {
   await settle();
   ok(probe!.promptError.includes("not finished yet"), "the refusal reason reaches the user through the surface's own alert");
   ok(!probe!.promptError.includes("turn_open"), "the reason token itself is not shown");
+  // The serve keeps "this boundary cannot be proven" and "this boundary is
+  // proven but unsafe" apart, so the surface must not report the second as the
+  // first: only one of them is an absent boundary.
+  createView = { opened: false, error: 'session: turn "turn-2" cannot start a fork (active_authority)' };
+  ok((await probe!.forkTurn("turn-2")) === undefined, "a proven but unsafe boundary starts no child");
+  await settle();
+  ok(probe!.promptError.includes("question or approval was still open"), "an unsafe boundary keeps its own reason");
+  ok(!probe!.promptError.includes("no verifiable branch boundary"), "a proven boundary is not reported as unverifiable");
   // A child the serve published comes back even when its surface did not open,
   // so the caller can open it; the child it could not open is remembered.
   createView = { opened: false, sessionId: "child-9", error: "conversation fork was created but could not be opened" };
@@ -107,6 +117,17 @@ try {
   await settle();
   ok((await probe!.forkTurn("turn-3")) === "child-9", "an unopened child is reused for its turn");
   ok(!calls.some((call) => call.startsWith("create:")), "reusing an unopened child never creates a second one");
+
+  // A remote fork navigates this same tab to its child, and a child inherits its
+  // parent's turn ids verbatim, so a child remembered for one session must never
+  // answer a fork in the session the tab shows afterwards.
+  calls.length = 0;
+  createView = { opened: true, sessionId: "child-10" };
+  sessionPath = "/sessions/child-9.jsonl";
+  await act(async () => { root.render(<Harness />); });
+  await settle();
+  ok((await probe!.forkTurn("turn-3")) === "child-10", "a child of the previous session is not reopened");
+  ok(calls.some((call) => call.startsWith("create:")), "the fork creates its own child in the session the tab shows");
 } finally {
   await act(async () => { root.unmount(); });
   desktopStub.uninstall();

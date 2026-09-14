@@ -52,6 +52,7 @@ export const zhTW: Record<DictKey, string> = {
   "chat.branchLoading": "正在檢查哪些輪次可以分支……",
   "chat.branchTurnOpen": "該輪次尚未結束，還沒有可供分支的邊界。",
   "chat.branchUnverifiable": "該輪次在會話記錄中沒有可確認的分支邊界。",
+  "chat.branchActiveAuthority": "該輪次結束時仍有待處理的提問或確認，無法從它開始分支。",
   "chat.branchReadOnly": "此會話不允許建立子對話。",
   "chat.branchUnsupported": "此伺服器版本無法在不切換目前會話的情況下建立分支。",
   "chat.branchCreating": "正在建立分支……",

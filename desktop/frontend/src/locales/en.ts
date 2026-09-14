@@ -51,6 +51,7 @@ export const en = {
   "chat.branchLoading": "Checking which turns can start a branch…",
   "chat.branchTurnOpen": "This turn has not finished yet, so it has no boundary to branch from.",
   "chat.branchUnverifiable": "This turn has no verifiable branch boundary in the session's records.",
+  "chat.branchActiveAuthority": "This turn ended while a question or approval was still open, so it cannot start a branch.",
   "chat.branchReadOnly": "This session does not allow creating a child conversation.",
   "chat.branchUnsupported": "This server's version cannot create a branch without switching the current session.",
   "chat.branchCreating": "Creating the branch…",

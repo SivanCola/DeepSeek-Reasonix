@@ -60,7 +60,9 @@ try {
   await refusal({ forkTargets: undefined }, /Checking which turns/, "unloaded set");
   await refusal({ forkTargets: { targets: [], verifiable: false } }, /verifiable branch boundary/, "legacy history");
   await refusal({ forkTargets: target([{ ...available, available: false, reason: "turn_open" }]) }, /not finished yet/, "open turn");
-  await refusal({ forkTargets: target([{ ...available, available: false, reason: "active_authority" }]) }, /verifiable branch boundary/, "unusable boundary");
+  // The boundary is proven here; it is the child it would carry that is unsafe,
+  // so this refusal must not read as a missing boundary.
+  await refusal({ forkTargets: target([{ ...available, available: false, reason: "active_authority" }]) }, /question or approval was still open/, "unusable boundary");
   await refusal({ forkTargets: target([{ ...available, turnId: "turn-41", messageId: "a41" }]) }, /not finished yet/, "answer without a persisted boundary");
   await refusal({ forkBlocked: "creating" }, /Creating the branch/, "request in flight");
   await refusal({ forkBlocked: "read_only" }, /does not allow creating/, "read-only surface");

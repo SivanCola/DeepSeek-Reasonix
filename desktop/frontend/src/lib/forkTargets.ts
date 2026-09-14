@@ -20,12 +20,13 @@ export interface ForkTargetsBindings {
  * explanation, because the collapsed "unavailable" it replaces could not tell a
  * running turn from legacy history or from a surface that cannot create a child.
  */
-export type ForkBlockReason = "loading" | "turn_open" | "unverifiable" | "read_only" | "unsupported" | "creating";
+export type ForkBlockReason = "loading" | "turn_open" | "unverifiable" | "active_authority" | "read_only" | "unsupported" | "creating";
 
 const FORK_REASON_KEYS: Record<ForkBlockReason, DictKey> = {
   loading: "chat.branchLoading",
   turn_open: "chat.branchTurnOpen",
   unverifiable: "chat.branchUnverifiable",
+  active_authority: "chat.branchActiveAuthority",
   read_only: "chat.branchReadOnly",
   unsupported: "chat.branchUnsupported",
   creating: "chat.branchCreating",
@@ -58,13 +59,15 @@ export function forkTargetForAnswer(set: ForkTargetSetView | undefined, answerKe
 }
 
 /**
- * The refusal one target carries, or null when it may start a child. A boundary
- * the host could not prove and one it refused as unsafe both read as
- * unverifiable to the user: neither offers a cut.
+ * The refusal one target carries, or null when it may start a child. Each reason
+ * the host names keeps its own explanation: a boundary it could not prove and
+ * one it refused as unsafe are different facts, and only the first is an absent
+ * boundary.
  */
 export function forkTargetReason(target: ForkTargetView): ForkBlockReason | null {
   if (target.available) return null;
-  return target.reason === "turn_open" ? "turn_open" : "unverifiable";
+  if (target.reason === "turn_open") return "turn_open";
+  return target.reason === "active_authority" ? "active_authority" : "unverifiable";
 }
 
 /**
@@ -92,7 +95,7 @@ export function forkBlockReason(input: {
 // failure keeps the host's text as the actionable detail.
 const FORK_FAILURE_REASONS: Array<[token: string, reason: ForkBlockReason]> = [
   ["turn_open", "turn_open"],
-  ["active_authority", "unverifiable"],
+  ["active_authority", "active_authority"],
   ["history_unverifiable", "unverifiable"],
 ];
 
