@@ -72,21 +72,33 @@ export interface SnapshotTransport {
 type Cut = { snapshot: TranscriptSnapshot; records: Map<string, TranscriptRecord>; touched: Set<string>; expired?: boolean; reads?: Map<string, Promise<TranscriptRecord>> };
 export class StaleCut extends Error {}
 
+/** Why the snapshot identity notification fired. A load gap is temporary and
+ * must not tear down the owning reader; a release permanently unbinds it. */
+export type TranscriptCutChange = "loading" | "installed" | "released";
+
 /** Owns immutable page/content leases; the projector owns event admission.
  * A stale response can neither advance coverage nor mutate another cut. */
 export class TranscriptSnapshotClient {
   private readonly cuts = new Map<string, Cut>();
   private readonly generations = new Map<string, number>();
   constructor(private readonly transport: SnapshotTransport, private readonly projector: TurnEventProjector,
-    private readonly pinned: (tabId: string) => boolean = () => true) {}
+    private readonly pinned: (tabId: string) => boolean = () => true,
+    /** Notified whenever a tab's cut is installed, extended, or released, so
+     * consumers bound to the snapshot identity can re-align without every
+     * loader call site having to remember them. */
+    private readonly onCutChanged: (tabId: string, snapshotId: string | undefined, change: TranscriptCutChange) => void = () => {}) {}
 
   release(tabId: string) {
     this.generations.set(tabId, (this.generations.get(tabId) ?? 0) + 1);
     this.cuts.delete(tabId);
     this.projector.release(tabId);
+    this.onCutChanged(tabId, undefined, "released");
   }
 
   installed(tabId: string): boolean { return this.projector.snapshotBoundary(tabId) !== undefined; }
+
+  /** The snapshot the tab's cut is bound to, or undefined when none is installed. */
+  installedSnapshotId(tabId: string): string | undefined { return this.cuts.get(tabId)?.snapshot.snapshotId; }
 
   acceptContent(tabId: string, record: TranscriptRecord) {
     const cut = this.cuts.get(tabId);
@@ -132,6 +144,11 @@ export class TranscriptSnapshotClient {
   async load(tabId: string, commit: (snapshot: TranscriptSnapshot) => void, current: () => boolean = () => true): Promise<boolean> {
     const generation = (this.generations.get(tabId) ?? 0) + 1;
     this.generations.set(tabId, generation);
+    // A load replaces the cut this tab was bound to, and it may be re-binding
+    // the tab to a different session entirely. Announce the gap before the
+    // round trip so nothing keeps describing the previous session's cut under
+    // this tab id; the install below re-announces with the new identity.
+    this.onCutChanged(tabId, undefined, "loading");
     const lease = this.projector.beginSnapshot(tabId);
     const valid = () => this.generations.get(tabId) === generation && current();
     try {
@@ -161,6 +178,7 @@ export class TranscriptSnapshotClient {
           commit(snapshot);
           this.cuts.set(tabId, cut);
           this.prune();
+          this.onCutChanged(tabId, cut.snapshot.snapshotId, "installed");
         });
       }
       throw new Error("transcript snapshot expired during loading");

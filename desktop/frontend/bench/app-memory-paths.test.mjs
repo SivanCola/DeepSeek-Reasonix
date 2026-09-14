@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { memoryAffected } from "./app-memory-paths.mjs";
+import { memoryAffected, memoryMode } from "./app-memory-paths.mjs";
 test("all frontend consumers, configuration and tests trigger the soak", () => {
   for (const path of ["desktop/frontend/src/App.tsx", "desktop/frontend/src/lib/types.ts", "desktop/frontend/pnpm-lock.yaml", "desktop/frontend/bench/fixture.json", ".github/workflows/app-memory.yml"])
     assert.equal(memoryAffected([path]), true, path);
@@ -17,4 +17,11 @@ test("repository tooling, workflows and the Electron shell do not reach the brow
 test("unknown paths fail closed and cannot be hidden by a documentation change", () => {
   for (const path of [".npmrc", "shared/new-loader.js", "desktop/package.json", "desktop/pnpm-lock.yaml", "desktop/frontend/scripts/shell-css.mjs"])
     assert.equal(memoryAffected(["README.md", path]), true, path);
+});
+test("ordinary frontend changes use the short screen and lifecycle changes use the full screen", () => {
+  assert.equal(memoryMode(["desktop/frontend/src/components/Button.tsx"]), "short");
+  assert.equal(memoryMode(["desktop/frontend/src/App.tsx"]), "full");
+  assert.equal(memoryMode(["desktop/frontend/src/lib/subscriptionScope.ts"]), "full");
+  assert.equal(memoryMode(["docs/guide.md"]), "off");
+  assert.equal(memoryMode(["shared/new-loader.js"]), "full");
 });

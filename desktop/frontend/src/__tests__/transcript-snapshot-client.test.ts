@@ -24,6 +24,27 @@ function cut(overrides: Partial<TranscriptSnapshot> = {}): TranscriptSnapshot {
 const quietTransport = { replay: async () => ({ events: [], floorSeq: 1, latestSeq: 4, nextAfterSeq: 4, hasMore: false, resetRequired: false, runtimeEpoch: "epoch" }) };
 const transport: SnapshotTransport = { snapshot: async () => cut(), page: async () => cut(), content: async () => ({ data: "", nextOffset: 0, done: true, stale: false }) };
 
+// A temporary load gap and a permanent release are distinct lifecycle events.
+// Outline owners use this distinction to keep their retry binding after a
+// failed refresh while still releasing it when the tab really goes away.
+{
+  const changes: string[] = [];
+  let attempts = 0;
+  const projector = new TurnEventProjector(quietTransport);
+  projector.bind(() => {});
+  const client = new TranscriptSnapshotClient({ ...transport, snapshot: async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("network down");
+    return cut();
+  } }, projector, undefined, (_tabId, snapshotId, change) => changes.push(`${change}:${snapshotId ?? ""}`));
+  await assert.rejects(client.load("tab", () => {}), /network down/);
+  assert.deepEqual(changes, ["loading:"], "a failed refresh only announces its temporary gap");
+  await client.load("tab", () => {});
+  client.release("tab");
+  assert.deepEqual(changes, ["loading:", "loading:", "installed:cut-1", "released:"],
+    "a later retry installs normally and real release remains explicit");
+}
+
 // Hydration suspends the live suffix, installs a full prefix, then advances the
 // cursor only after reducer commits. Equal user text is never the correlation key.
 {

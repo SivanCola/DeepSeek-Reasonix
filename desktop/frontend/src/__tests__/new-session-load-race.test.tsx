@@ -658,6 +658,7 @@ const switchPage = (text: string, durableReads = 1) => ({
 desktopStub.replaceCommands({
   RegisterNavigationIntent: async () => {},
   ListTabs: async () => [switchTab],
+  SessionOpenForTab: undefined, // Exercise the older host's resume-page contract.
   MetaForTab: async () => {
     if (switchMetaHeld) return switchMetaGate.promise;
     return meta({ sessionPath: switchMetaPath });
@@ -748,6 +749,7 @@ await act(async () => {
   desktopStub.replaceCommands({
     RegisterNavigationIntent: async () => { if (holdNavigation) await navigationGate.promise; },
     ListTabs: async () => [tabMeta({ id: "meta-race", sessionPath: path })],
+    SessionOpenForTab: undefined,
     MetaForTab: async () => holdMeta ? oldMeta.promise : meta({ sessionPath: path }),
     ContextUsageForTab: async () => context, EffortForTab: async () => effort,
     BalanceForTab: async () => balance, JobsForTab: async () => jobs,

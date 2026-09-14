@@ -1,6 +1,7 @@
 package boot
 
 import (
+	"context"
 	"testing"
 
 	"reasonix/internal/config"
@@ -20,6 +21,7 @@ func withTestSession(t *testing.T, opts Options) Options {
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
+	t.Cleanup(func() { _ = service.CloseAll(context.Background()) })
 	opts.SessionService = service
 	opts.SessionHostID = "local"
 	return opts

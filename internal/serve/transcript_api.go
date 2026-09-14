@@ -3,6 +3,7 @@ package serve
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -17,10 +18,30 @@ func (s *Server) registerTranscriptRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /transcript/snapshot", s.transcriptSnapshot)
 	mux.HandleFunc("GET /transcript/page", s.transcriptSnapshot)
 	mux.HandleFunc("GET /transcript/content", s.transcriptContent)
+	mux.HandleFunc("GET /transcript/outline", s.transcriptOutline)
 	mux.HandleFunc("GET /transcript/replay", s.transcriptReplay)
+	mux.HandleFunc("GET /session/open", s.sessionOpen)
 	mux.HandleFunc("GET /session-history/page", s.sessionHistoryPage)
 	mux.HandleFunc("GET /session-history/search", s.sessionHistorySearch)
+	mux.HandleFunc("GET /session-history/locate", s.sessionHistoryLocate)
 	mux.HandleFunc("GET /session-history/content", s.sessionHistoryContent)
+}
+
+func (s *Server) sessionOpen(w http.ResponseWriter, r *http.Request) {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	query, ref, ok := s.canonicalSessionQuery(w, r)
+	if !ok {
+		return
+	}
+	view, err := query.OpenSession(r.Context(), ref)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(view)
 }
 
 type sessionHistoryContentRequest struct {
@@ -133,9 +154,51 @@ func (s *Server) sessionHistorySearch(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(page)
 }
 
+func (s *Server) sessionHistoryLocate(w http.ResponseWriter, r *http.Request) {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	query, ref, ok := s.canonicalSessionQuery(w, r)
+	if !ok {
+		return
+	}
+	var snapshot uint64
+	if raw := r.URL.Query().Get("snapshot"); raw != "" {
+		if _, err := fmt.Sscan(raw, &snapshot); err != nil {
+			http.Error(w, "invalid history snapshot", http.StatusBadRequest)
+			return
+		}
+	}
+	location, err := query.LocateMessage(r.Context(), ref, r.URL.Query().Get("messageId"), snapshot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(location)
+}
+
+// errTranscriptCapabilityMissing lets a read decline an optional capability
+// without colliding with a genuine read failure, which must stay a conflict.
+var errTranscriptCapabilityMissing = errors.New("transcript capability is missing")
+
 // transcriptRead binds each read to the selected controller. A file mirror
 // cannot claim a live event cursor and explicitly declines this protocol.
 func (s *Server) transcriptRead(w http.ResponseWriter, r *http.Request, read func(control.TranscriptProjectionAPI) (any, error)) {
+	s.transcriptBoundRead(w, r, func(ctrl control.SessionAPI) (any, error) {
+		api, ok := ctrl.(control.TranscriptProjectionAPI)
+		if !ok {
+			return nil, errTranscriptCapabilityMissing
+		}
+		return read(api)
+	})
+}
+
+// transcriptBoundRead resolves the selected controller, enforces the session
+// binding every transcript read shares, and encodes one JSON response. An
+// unimplemented optional capability is reported as not implemented rather than
+// silently answered with an empty page.
+func (s *Server) transcriptBoundRead(w http.ResponseWriter, r *http.Request, read func(control.SessionAPI) (any, error)) {
 	s.bindMu.Lock()
 	defer s.bindMu.Unlock()
 	ctrl := s.ctl()
@@ -147,12 +210,15 @@ func (s *Server) transcriptRead(w http.ResponseWriter, r *http.Request, read fun
 			return
 		}
 	}
-	api, ok := ctrl.(control.TranscriptProjectionAPI)
-	if !ok || s.sessionMirrored(path) {
+	if s.sessionMirrored(path) {
 		http.Error(w, "transcript projection is unavailable", http.StatusNotImplemented)
 		return
 	}
-	value, err := read(api)
+	value, err := read(ctrl)
+	if errors.Is(err, errTranscriptCapabilityMissing) {
+		http.Error(w, "transcript projection is unavailable", http.StatusNotImplemented)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -188,6 +254,20 @@ func (s *Server) transcriptContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.transcriptRead(w, r, func(api control.TranscriptProjectionAPI) (any, error) { return api.TranscriptContent(req) })
+}
+
+func (s *Server) transcriptOutline(w http.ResponseWriter, r *http.Request) {
+	var req transcript.OutlineRequest
+	if !transcriptRequest(w, r, &req) {
+		return
+	}
+	s.transcriptBoundRead(w, r, func(ctrl control.SessionAPI) (any, error) {
+		api, ok := ctrl.(control.TranscriptOutlineAPI)
+		if !ok {
+			return nil, errTranscriptCapabilityMissing
+		}
+		return api.TranscriptOutline(req)
+	})
 }
 
 func (s *Server) transcriptReplay(w http.ResponseWriter, r *http.Request) {

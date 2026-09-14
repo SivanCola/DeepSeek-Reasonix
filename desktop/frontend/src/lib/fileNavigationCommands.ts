@@ -126,7 +126,7 @@ async function openBrowserPreview(ref: FileResourceRef): Promise<FileNavigationO
   return finish({ status: "opened", resource: resourceOf(ref) });
 }
 
-/** An action's own resource. Only a remote workspace reference needs the backend. */
+/** A direct-action receipt; dock navigation resolves identity before storing it. */
 const resourceOf = (ref: FileResourceRef): ResolvedFileResource => ({
   hostId: ref.hostId,
   path: ref.path,

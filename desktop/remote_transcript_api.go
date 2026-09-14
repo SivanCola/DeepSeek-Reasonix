@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"reasonix/internal/control"
+	"reasonix/internal/servecontract"
 	"reasonix/internal/session"
 	"reasonix/internal/sessioncontent"
 	"reasonix/internal/transcript"
@@ -108,6 +109,27 @@ func (a *App) RemoteTranscriptPageForTab(tabID string, req transcript.PageReques
 	return snap, err
 }
 
+// RemoteTranscriptOutlineForTab reads the turn index a Serve advertises through
+// the transcript-outline capability. An absent token means the route is not
+// served at all, so the client keeps its loaded-turn rail instead of spending a
+// round trip to learn that. Errors from an advertised capability are reported
+// rather than downgraded to "unsupported".
+func (a *App) RemoteTranscriptOutlineForTab(tabID string, req transcript.OutlineRequest) (transcript.OutlinePage, error) {
+	a.remoteTabMu.Lock()
+	tab := a.remoteTabs[tabID]
+	advertised := tab != nil && tab.capabilities[servecontract.TranscriptOutlineV1]
+	a.remoteTabMu.Unlock()
+	if !advertised {
+		return transcript.OutlinePage{}, control.ErrTranscriptProjectionUnavailable
+	}
+	var page transcript.OutlinePage
+	supported, err := a.remoteTranscriptRead(tabID, "/transcript/outline", req, &page)
+	if err == nil && !supported {
+		err = control.ErrTranscriptProjectionUnavailable
+	}
+	return page, err
+}
+
 func (a *App) RemoteTranscriptContentForTab(tabID string, req transcript.ContentRequest) (transcript.ContentChunk, error) {
 	var chunk transcript.ContentChunk
 	supported, err := a.remoteTranscriptRead(tabID, "/transcript/content", req, &chunk)
@@ -193,6 +215,22 @@ func (a *App) remoteSessionHistoryRead(tabID, route string, query url.Values, de
 
 // RemoteSessionHistoryPageForTab reads one fixed-snapshot canonical history
 // page. The Serve enforces the 500-message and 2 MiB page budgets.
+func (a *App) RemoteSessionOpenForTab(tabID string) (session.SessionOpenView, error) {
+	a.remoteTabMu.Lock()
+	tab := a.remoteTabs[tabID]
+	supportedRead := tab != nil && tab.capabilities[serveCapabilitySessionReadV2]
+	a.remoteTabMu.Unlock()
+	if !supportedRead {
+		return session.SessionOpenView{}, fmt.Errorf("remote Reasonix Serve does not support %s; upgrade the remote service", serveCapabilitySessionReadV2)
+	}
+	var view session.SessionOpenView
+	supported, err := a.remoteSessionHistoryRead(tabID, "/session/open", nil, &view, session.HistoryPageMaxBytes+(64<<10))
+	if err == nil && !supported {
+		err = control.ErrTranscriptProjectionUnavailable
+	}
+	return view, err
+}
+
 func (a *App) RemoteSessionHistoryPageForTab(tabID, cursor string, limit int) (session.MessageHistoryPage, error) {
 	query := make(url.Values)
 	if cursor != "" {
@@ -246,4 +284,17 @@ func (a *App) RemoteSearchSessionHistoryForTab(tabID, textQuery, cursor string, 
 		err = control.ErrTranscriptProjectionUnavailable
 	}
 	return page, err
+}
+
+func (a *App) RemoteLocateSessionMessageForTab(tabID, messageID string, snapshot uint64) (session.MessageLocation, error) {
+	query := url.Values{"messageId": []string{messageID}}
+	if snapshot > 0 {
+		query.Set("snapshot", fmt.Sprint(snapshot))
+	}
+	var location session.MessageLocation
+	supported, err := a.remoteSessionHistoryRead(tabID, "/session-history/locate", query, &location, 64<<10)
+	if err == nil && !supported {
+		err = control.ErrTranscriptProjectionUnavailable
+	}
+	return location, err
 }

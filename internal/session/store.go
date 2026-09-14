@@ -149,6 +149,12 @@ type OpenOptions struct {
 	// Production SessionService enables it; low-level compatibility callers
 	// retain the historical full-projection behavior unless requested.
 	ExternalHistory bool
+	// ObserveRecovery receives bounded open-path I/O counters after recovery.
+	// Capacity tests use it to distinguish checkpoint recovery from prefix replay.
+	ObserveRecovery func(RecoveryOpenStats)
+	// DisableRecoveryPublish is a fault-injection hook used to verify that a
+	// durable log tail is replayed from the previous checkpoint.
+	DisableRecoveryPublish bool
 }
 
 type operationRecord struct {
@@ -197,6 +203,9 @@ type Store struct {
 	index        sparseIndex
 	content      *sessioncontent.Store
 	startup      *startupSessionState
+	recovery     *recoveryStore
+	identity     storageIdentity
+	tip          durableTip
 
 	writeFn func(context.Context, io.Writer, []byte) error
 	syncFn  func(*os.File) error
@@ -207,6 +216,16 @@ type startupSessionState struct {
 	operations     map[string]operationRecord
 	durable        uint64
 	catalogPreview string
+	recentMessages []provider.Message
+	tip            durableTip
+}
+
+type durableTip struct {
+	LogOffset      int64
+	AnchorOffset   int64
+	AnchorFirst    uint64
+	AnchorCommitID string
+	AnchorHash     string
 }
 
 // ID returns the immutable session identity of the physical store.
@@ -359,11 +378,26 @@ func openExistingHandle(dir, sessionID string, opts OpenOptions) (*Store, error)
 	if manifest.SessionID != sessionID {
 		return fail(fmt.Errorf("session: manifest belongs to %q", manifest.SessionID))
 	}
-	// Build runtime state in one streaming validation pass. A newer required
-	// event or a damaged complete batch leaves the original tail untouched.
-	startup, durableEnd, torn, err := loadStartupSessionState(context.Background(), dir, eventsPath, opts.ExternalHistory)
+	identity, err := ensureStorageIdentity(dir, manifest)
 	if err != nil {
 		return fail(err)
+	}
+	recovery, err := openRecoveryStoreRepair(dir, identity)
+	if err != nil {
+		return fail(err)
+	}
+	failRecovery := func(err error) (*Store, error) {
+		_ = recovery.close()
+		return fail(err)
+	}
+	// Build runtime state in one streaming validation pass. A newer required
+	// event or a damaged complete batch leaves the original tail untouched.
+	startup, durableEnd, torn, stats, usedCheckpoint, err := loadStartupSessionState(context.Background(), dir, eventsPath, opts.ExternalHistory, recovery, identity)
+	if opts.ObserveRecovery != nil {
+		opts.ObserveRecovery(stats)
+	}
+	if err != nil {
+		return failRecovery(err)
 	}
 	if opts.ExternalHistory && startup.catalogPreview == "" {
 		revision, revisionErr := revisionOfLog(dir)
@@ -380,20 +414,22 @@ func openExistingHandle(dir, sessionID string, opts OpenOptions) (*Store, error)
 		// preserve the original bytes first, then truncate back to the durable
 		// commit boundary. This never invents or partially replays an event.
 		if _, err := preserveAndTruncateTail(eventsPath, durableEnd, "torn"); err != nil {
-			return fail(fmt.Errorf("recover torn v3 tail: %w", err))
+			return failRecovery(fmt.Errorf("recover torn v3 tail: %w", err))
+		}
+	}
+	if !usedCheckpoint {
+		checkpoint := checkpointFromStartup(manifest, identity, startup)
+		if err := recovery.publish(context.Background(), checkpoint, startup.operations); err == nil {
+			startup.operations = map[string]operationRecord{}
 		}
 	}
 	manifest.WriterGeneration++
 	if err := writeManifestFile(manifestPath, manifest); err != nil {
-		return fail(err)
+		return failRecovery(err)
 	}
 	f, err := os.OpenFile(eventsPath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
-		return fail(err)
-	}
-	closeAndFail := func(err error) (*Store, error) {
-		_ = f.Close()
-		return fail(err)
+		return failRecovery(err)
 	}
 	writeFn := opts.Write
 	if writeFn == nil {
@@ -403,38 +439,46 @@ func openExistingHandle(dir, sessionID string, opts OpenOptions) (*Store, error)
 	if syncFn == nil {
 		syncFn = func(file *os.File) error { return file.Sync() }
 	}
-	index, err := loadOrBuildSparseIndex(context.Background(), dir, dir)
-	if err != nil {
-		return closeAndFail(err)
-	}
+	// Opening a runtime must not rebuild a historical seek index. The writer
+	// needs only the durable sequence and byte end; readers maintain their own
+	// disposable locator in the query cache.
+	index := sparseIndex{Codec: sparseIndexCodec, LogSize: durableEnd, LastSequence: startup.durable, partial: startup.durable > 0}
 	return &Store{
 		dir: dir, manifest: manifest, file: f, releaseLease: releaseLease,
-		index: index, content: contentStoreForSessionDir(dir), startup: startup, writeFn: writeFn, syncFn: syncFn,
+		index: index, content: contentStoreForSessionDir(dir), startup: startup,
+		recovery: recovery, identity: identity, tip: startup.tip,
+		writeFn: writeFn, syncFn: syncFn,
 	}, nil
 }
 
-func loadStartupSessionState(ctx context.Context, dir, eventsPath string, externalHistory bool) (*startupSessionState, int64, bool, error) {
+func loadStartupSessionState(ctx context.Context, dir, eventsPath string, externalHistory bool, recovery *recoveryStore, identity storageIdentity) (*startupSessionState, int64, bool, RecoveryOpenStats, bool, error) {
 	file, err := os.Open(eventsPath)
 	if os.IsNotExist(err) {
 		projection, _ := Project(nil)
-		return &startupSessionState{projection: projection, operations: map[string]operationRecord{}}, 0, false, nil
+		return &startupSessionState{projection: projection, operations: map[string]operationRecord{}}, 0, false, RecoveryOpenStats{}, false, nil
 	}
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, RecoveryOpenStats{}, false, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, RecoveryOpenStats{}, false, err
 	}
+	if state, end, torn, stats, ok := loadRecoveryStartupState(ctx, dir, file, info, recovery, identity); ok {
+		return state, end, torn, stats, true, nil
+	}
+	stats := RecoveryOpenStats{LogBytesTotal: info.Size()}
 	if externalHistory {
-		return loadBoundedStartupSessionState(ctx, dir, file, info)
+		state, end, torn, err := loadBoundedStartupSessionState(ctx, dir, file, info)
+		stats.LogBytesRead = end
+		return state, end, torn, stats, false, err
 	}
 	projection, _ := Project(nil)
 	state := &startupSessionState{projection: projection, operations: map[string]operationRecord{}}
 	var durableEnd int64
 	var projectionErr error
-	err = scanV4CommitFile(ctx, file, 0, 1, contentStoreForSessionDir(dir), nil, func(_ int64, commit Commit) bool {
+	err = scanV4CommitFile(ctx, file, 0, 1, contentStoreForSessionDir(dir), nil, func(offset int64, commit Commit) bool {
 		if applyErr := applyProjectionCommit(&state.projection, commit); applyErr != nil {
 			projectionErr = applyErr
 			return false
@@ -450,15 +494,21 @@ func loadStartupSessionState(ctx context.Context, dir, eventsPath string, extern
 		state.operations[commit.OperationID] = compactOperationRecord(commit)
 		state.durable = commit.LastSequence()
 		durableEnd, _ = file.Seek(0, io.SeekCurrent)
+		state.tip = durableTip{LogOffset: durableEnd, AnchorOffset: offset, AnchorFirst: commit.FirstSequence, AnchorCommitID: commit.ID, AnchorHash: commit.OperationHash}
+		if err := applyRecentCommit(&state.recentMessages, commit); err != nil {
+			projectionErr = err
+			return false
+		}
 		return true
 	})
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, false, stats, false, err
 	}
 	if projectionErr != nil {
-		return nil, 0, false, projectionErr
+		return nil, 0, false, stats, false, projectionErr
 	}
-	return state, durableEnd, durableEnd < info.Size(), nil
+	stats.LogBytesRead = durableEnd
+	return state, durableEnd, durableEnd < info.Size(), stats, false, nil
 }
 
 // loadBoundedStartupSessionState separates lightweight business recovery from
@@ -495,9 +545,27 @@ func loadBoundedStartupSessionState(ctx context.Context, dir string, file *os.Fi
 			projectionErr = err
 			return false
 		}
+		recent := commit
+		recent.Events = nil
+		for _, event := range commit.Events {
+			switch event.Kind {
+			case "message/complete", "message/upsert", "history/replace", "legacy/import":
+				resolved, err := resolveProjectionEvent(ctx, content, event)
+				if err != nil {
+					projectionErr = err
+					return false
+				}
+				recent.Events = append(recent.Events, resolved)
+			}
+		}
+		if err := applyRecentCommit(&state.recentMessages, recent); err != nil {
+			projectionErr = err
+			return false
+		}
 		state.operations[commit.OperationID] = compactOperationRecord(commit)
 		state.durable = commit.LastSequence()
 		durableEnd, _ = file.Seek(0, io.SeekCurrent)
+		state.tip = durableTip{LogOffset: durableEnd, AnchorOffset: offset, AnchorFirst: commit.FirstSequence, AnchorCommitID: commit.ID, AnchorHash: commit.OperationHash}
 		return true
 	})
 	if err != nil {
@@ -590,7 +658,14 @@ func bindSession(handle *Store, opts OpenOptions) (*Session, error) {
 	session.operations = state.operations
 	session.externalHistory = opts.ExternalHistory
 	session.catalogPreview = state.catalogPreview
+	session.recentMessages = detachMessages(state.recentMessages)
+	session.durableRecent = detachMessages(state.recentMessages)
+	session.storageGeneration = handle.identity.Generation
+	session.recovery = handle.recovery
 	binding.metadataSource = session.metadataForDurable
+	binding.recoverySource = session.recoveryForDurable
+	binding.recoveryPublished = session.recoveryPublished
+	binding.disableRecoveryPublish = opts.DisableRecoveryPublish
 	return session, nil
 }
 
@@ -605,25 +680,12 @@ func (s *Session) metadataForDurable(durable uint64) (catalogMetadata, bool) {
 	if durable+1 != s.next {
 		return catalogMetadata{}, false
 	}
-	cut := 0
-	for cut < len(s.commits) && s.commits[cut].LastSequence() <= durable {
-		cut++
-	}
-	if cut > 0 {
-		s.commits = append([]Commit(nil), s.commits[cut:]...)
-	}
 	metadata := metadataFromProjection(s.manifest, durable, s.projection)
 	if s.catalogPreview == "" && metadata.Preview != "" {
 		s.catalogPreview = metadata.Preview
 	}
 	if metadata.Preview == "" {
 		metadata.Preview = s.catalogPreview
-	}
-	if s.externalHistory {
-		// The history index reconstructs every durable message from the log.
-		// Keeping the same bodies here would make steady-state RSS scale with
-		// total conversation size and duplicate provider-visible work.
-		s.projection.Messages = nil
 	}
 	return metadata, true
 }
@@ -827,7 +889,9 @@ func (s *Store) Close(_ context.Context) error {
 	s.closeOnce.Do(func() {
 		s.mu.Lock()
 		file := s.file
+		recovery := s.recovery
 		s.file = nil
+		s.recovery = nil
 		s.closed = true
 		releaseLease := s.releaseLease
 		s.releaseLease = nil
@@ -835,6 +899,9 @@ func (s *Store) Close(_ context.Context) error {
 		var closeErr error
 		if file != nil {
 			closeErr = file.Close()
+		}
+		if recovery != nil {
+			closeErr = errors.Join(closeErr, recovery.close())
 		}
 		if releaseLease != nil {
 			releaseLease()

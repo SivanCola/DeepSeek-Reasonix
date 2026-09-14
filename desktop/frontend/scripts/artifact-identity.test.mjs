@@ -54,6 +54,22 @@ test("variant, workflow and toolchain identity mismatches fail", t => {
     assert.throws(() => verifyFrontendArtifact({ ...options, ...changed }), /mismatch/);
 });
 
+test("consumer retries verify the producer attempt while rebuilt producers advance it", t => {
+  const options = fixture(t);
+  const firstProducer = { ...options, attempt: "1" };
+  createFrontendArtifact(firstProducer);
+  assert.equal(verifyFrontendArtifact(firstProducer).workflow.attempt, "1");
+  // A consumer may be on run attempt 2 while its successful producer remains
+  // on attempt 1. Verification must use the producer output, not consumer state.
+  const consumerAttempt = "2";
+  assert.notEqual(consumerAttempt, firstProducer.attempt);
+  assert.equal(verifyFrontendArtifact(firstProducer).workflow.attempt, "1");
+  const rebuiltProducer = { ...options, attempt: "2" };
+  createFrontendArtifact(rebuiltProducer);
+  assert.equal(verifyFrontendArtifact(rebuiltProducer).workflow.attempt, "2");
+  assert.throws(() => verifyFrontendArtifact(firstProducer), /attempt mismatch/);
+});
+
 test("changed build input, dist, missing and old manifests fail", t => {
   const options = fixture(t);
   const body = verifyFrontendArtifact(options);

@@ -7,10 +7,56 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"reasonix/internal/projectiondb"
 	"reasonix/internal/provider"
 )
+
+func searchHistoryReady(t *testing.T, query *Query, ref SessionRef, text, cursor string, limit int) SearchHistoryPage {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		page, err := query.SearchHistory(t.Context(), ref, text, cursor, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Status == "ready" {
+			return page
+		}
+		if page.Status != "preparing" || time.Now().After(deadline) {
+			t.Fatalf("search preparation = %+v", page)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func waitHistoryPage(t *testing.T, query *Query, ref SessionRef, cursor string, limit int) (MessageHistoryPage, error) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		page, err := query.HistoryPage(t.Context(), ref, cursor, limit)
+		if err != nil || page.Status != "preparing" {
+			return page, err
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("history locator remained preparing: %+v", page)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func historyPageReady(t *testing.T, query *Query, ref SessionRef, cursor string, limit int) MessageHistoryPage {
+	t.Helper()
+	page, err := waitHistoryPage(t, query, ref, cursor, limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Status != "ready" {
+		t.Fatalf("history page = %+v", page)
+	}
+	return page
+}
 
 func TestExternalHistoryColdOpenDefersBodiesBeforeModelReset(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions-v4")
@@ -80,7 +126,7 @@ func TestExternalHistoryColdOpenDefersBodiesBeforeModelReset(t *testing.T) {
 	if len(model) != 1 || model[0].ID != current.ID || model[0].Content != current.Content {
 		t.Fatalf("cold model projection = %+v", model)
 	}
-	if _, err := reopenedService.Query().HistoryPage(t.Context(), ref, "", 100); err == nil {
+	if _, err := waitHistoryPage(t, reopenedService.Query(), ref, "", 100); err == nil {
 		t.Fatal("history query accepted a missing referenced body")
 	}
 }
@@ -123,10 +169,7 @@ func TestHistoryPageKeepsSnapshotAndAuthorizesReferencedContent(t *testing.T) {
 		t.Fatalf("service runtime retained durable UI bodies: messages=%d model=%d", residentMessages, residentModel)
 	}
 	ref := runtime.Ref()
-	first, err := service.Query().HistoryPage(t.Context(), ref, "", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := historyPageReady(t, service.Query(), ref, "", 1)
 	if len(first.Messages) != 1 || first.Messages[0].MessageID != "three" || !first.HasMore || first.NextCursor == "" {
 		t.Fatalf("first page = %+v", first)
 	}
@@ -141,6 +184,9 @@ func TestHistoryPageKeepsSnapshotAndAuthorizesReferencedContent(t *testing.T) {
 	large := second.Messages[1]
 	if large.ContentRef == nil || len(large.Inline) != 0 {
 		t.Fatalf("large message was not referenced: %+v", large)
+	}
+	if err := os.RemoveAll(historyIndexPath(root, "paged")); err != nil {
+		t.Fatal(err)
 	}
 	chunk, err := service.Query().ReadContent(t.Context(), ref, *large.ContentRef, 0, min(64, large.ContentRef.Bytes))
 	if err != nil {
@@ -158,6 +204,92 @@ func TestHistoryPageKeepsSnapshotAndAuthorizesReferencedContent(t *testing.T) {
 	foreign.Digest = strings.Repeat("0", len(foreign.Digest))
 	if _, err := service.Query().ReadContent(t.Context(), ref, foreign, 0, 1); err == nil {
 		t.Fatal("content hash without a session reference was authorized")
+	}
+	if _, err := service.Query().ReadContent(t.Context(), ref, *large.ContentRef, 0, (1<<20)+1); err == nil {
+		t.Fatal("oversized content range was accepted")
+	}
+}
+
+func TestLocateMessageReturnsFixedSnapshotCursorWithoutBody(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions-v4")
+	service, err := NewService("local", NewFilesystemPersistence(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "locate"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"one", "two", "three"} {
+		payload, _ := json.Marshal(map[string]any{"message": provider.Message{ID: id, Role: provider.RoleUser, Content: id}})
+		if _, err := runtime.Session().Append(t.Context(), Batch{OperationID: "locate-" + id, Events: []Event{{Kind: "message/complete", Payload: payload}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_ = historyPageReady(t, service.Query(), runtime.Ref(), "", 1)
+	location, err := service.Query().LocateMessage(t.Context(), runtime.Ref(), "two", 0)
+	if err != nil || location.Status != "ready" || location.Position == 0 || location.Cursor == "" {
+		t.Fatalf("location = %+v, %v", location, err)
+	}
+	page, err := service.Query().HistoryPage(t.Context(), runtime.Ref(), location.Cursor, 1)
+	if err != nil || len(page.Messages) != 1 || page.Messages[0].MessageID != "two" {
+		t.Fatalf("located page = %+v, %v", page, err)
+	}
+}
+
+func TestHistoryLocatorGenerationSurvivesRebuildAndChangesOnReplacement(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions-v4")
+	service, err := NewService("local", NewFilesystemPersistence(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "locator-generation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"one", "two"} {
+		payload, _ := json.Marshal(map[string]any{"message": provider.Message{ID: id, Role: provider.RoleUser, Content: id}})
+		if _, err := runtime.Session().Append(t.Context(), Batch{OperationID: "generation-" + id, Events: []Event{{Kind: "message/complete", Payload: payload}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	first := historyPageReady(t, service.Query(), runtime.Ref(), "", 1)
+	if first.NextCursor == "" || first.Generation == "" {
+		t.Fatalf("first page = %+v", first)
+	}
+	if err := os.Remove(historyIndexPath(root, runtime.Ref().SessionID)); err != nil {
+		t.Fatal(err)
+	}
+	service.Query().historyMu.Lock()
+	delete(service.Query().historyBuilds, runtime.Ref().SessionID)
+	service.Query().historyMu.Unlock()
+	rebuilt := historyPageReady(t, service.Query(), runtime.Ref(), "", 1)
+	if rebuilt.Generation != first.Generation {
+		t.Fatalf("ordinary rebuild changed generation: %q -> %q", first.Generation, rebuilt.Generation)
+	}
+	if page, err := service.Query().HistoryPage(t.Context(), runtime.Ref(), first.NextCursor, 1); err != nil || page.Status != "ready" || len(page.Messages) != 1 || page.Messages[0].MessageID != "one" {
+		t.Fatalf("cursor after rebuild = %+v, %v", page, err)
+	}
+	replacement := []provider.Message{{ID: "replacement", Role: provider.RoleUser, Content: "replacement"}}
+	payload, _ := json.Marshal(map[string]any{"messages": replacement})
+	if _, err := runtime.Session().Append(t.Context(), Batch{OperationID: "replace-history", Events: []Event{{Kind: "history/replace", Payload: payload}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Query().HistoryPage(t.Context(), runtime.Ref(), "", 1); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := service.Query().HistoryPage(t.Context(), runtime.Ref(), first.NextCursor, 1)
+	if err != nil || stale.Status != "stale_cursor" {
+		t.Fatalf("cursor after replacement = %+v, %v", stale, err)
 	}
 }
 
@@ -188,10 +320,11 @@ func TestSearchHistoryUsesStableSnapshotAndOpaqueQueryCursor(t *testing.T) {
 	appendMessage("one", "first needle")
 	appendMessage("two", "second needle")
 	appendMessage("three", "unrelated")
-	first, err := service.Query().SearchHistory(t.Context(), runtime.Ref(), "needle", "", 1)
-	if err != nil {
-		t.Fatal(err)
+	preparing, err := service.Query().SearchHistory(t.Context(), runtime.Ref(), "needle", "", 1)
+	if err != nil || preparing.Status != "preparing" {
+		t.Fatalf("first search did not return preparation state: %+v, %v", preparing, err)
 	}
+	first := searchHistoryReady(t, service.Query(), runtime.Ref(), "needle", "", 1)
 	if len(first.Hits) != 1 || first.Hits[0].MessageID != "two" || !first.HasMore || first.NextCursor == "" {
 		t.Fatalf("first search = %+v", first)
 	}
@@ -203,8 +336,9 @@ func TestSearchHistoryUsesStableSnapshotAndOpaqueQueryCursor(t *testing.T) {
 	if len(second.Hits) != 1 || second.Hits[0].MessageID != "one" {
 		t.Fatalf("second search = %+v", second)
 	}
-	if _, err := service.Query().SearchHistory(t.Context(), runtime.Ref(), "different", first.NextCursor, 10); err == nil {
-		t.Fatal("search cursor was accepted for another query")
+	stale, err := service.Query().SearchHistory(t.Context(), runtime.Ref(), "different", first.NextCursor, 10)
+	if err != nil || stale.Status != "stale_cursor" {
+		t.Fatalf("search cursor mismatch = %+v, %v", stale, err)
 	}
 }
 
@@ -244,13 +378,56 @@ func TestSearchHistoryCoversInlineFieldsAndReferencedBodies(t *testing.T) {
 		"reasoning-field-needle":  "inline",
 		"referenced-field-needle": "referenced",
 	} {
-		page, err := service.Query().SearchHistory(t.Context(), runtime.Ref(), query, "", 10)
-		if err != nil {
-			t.Fatalf("search %q: %v", query, err)
-		}
+		page := searchHistoryReady(t, service.Query(), runtime.Ref(), query, "", 10)
 		if len(page.Hits) != 1 || page.Hits[0].MessageID != want {
 			t.Fatalf("search %q = %+v, want %q", query, page.Hits, want)
 		}
+	}
+}
+
+func TestSearchHistoryKeepsLiteralUnicodeSubstringSemanticsIndependently(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions-v4")
+	service, err := NewService("local", NewFilesystemPersistence(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "literal-search"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendRecoveryTestMessage(t, runtime.Session(), "cn", `大会话恢复包含字面符号 "OR" % _`)
+	appendRecoveryTestMessage(t, runtime.Session(), "other", "unrelated")
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{"会", "会话", "话恢", `"OR"`, "%", "_"} {
+		page := searchHistoryReady(t, service.Query(), runtime.Ref(), query, "", 10)
+		if page.Status != "ready" || page.CoverageSequence != runtime.Session().EventSequence() || len(page.Hits) != 1 || page.Hits[0].MessageID != "cn" {
+			t.Fatalf("search %q = %+v", query, page)
+		}
+	}
+	searchPath := searchIndexPath(root, "literal-search")
+	before, err := os.Stat(searchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(historyIndexPath(root, "literal-search")); err != nil {
+		t.Fatal(err)
+	}
+	appendRecoveryTestMessage(t, runtime.Session(), "new", "新的会话子串")
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	page := searchHistoryReady(t, service.Query(), runtime.Ref(), "会话", "", 10)
+	after, err := os.Stat(searchPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("search index was rebuilt instead of incrementally advanced")
+	}
+	if len(page.Hits) != 2 || page.Hits[0].MessageID != "new" || page.Hits[1].MessageID != "cn" {
+		t.Fatalf("independent incremental search = %+v", page)
 	}
 }
 
@@ -280,5 +457,58 @@ func TestHistoryIndexHasSnapshotPositionIndex(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("snapshot-position query index is missing")
+	}
+}
+
+func TestHistoryIndexAdvancesInPlaceAfterAppend(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions-v4")
+	service, err := NewService("local", NewFilesystemPersistence(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), CreateOptions{SessionID: "incremental"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendRecoveryTestMessage(t, runtime.Session(), "first", "first")
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_ = historyPageReady(t, service.Query(), runtime.Ref(), "", 100)
+	path := historyIndexPath(root, "incremental")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := projectiondb.Open(t.Context(), projectiondb.OpenOptions{Path: path, Migrations: historyMigrations, RequireDisk: true, MaxOpenConns: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inlineBytes, searchBytes int64
+	if err := handle.DB.QueryRowContext(t.Context(), `SELECT COALESCE(SUM(length(inline)),0),COALESCE(SUM(length(search_text)),0) FROM messages`).Scan(&inlineBytes, &searchBytes); err != nil {
+		_ = handle.DB.Close()
+		t.Fatal(err)
+	}
+	_ = handle.DB.Close()
+	if inlineBytes != 0 || searchBytes != 0 {
+		t.Fatalf("locator retained message bodies: inline=%d search=%d", inlineBytes, searchBytes)
+	}
+	appendRecoveryTestMessage(t, runtime.Session(), "second", "second")
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	page, err := service.Query().HistoryPage(t.Context(), runtime.Ref(), "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("history locator was replaced instead of advanced in place")
+	}
+	if len(page.Messages) != 2 || page.Messages[0].MessageID != "first" || page.Messages[1].MessageID != "second" {
+		t.Fatalf("incremental page = %+v", page)
 	}
 }

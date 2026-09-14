@@ -4,10 +4,6 @@ import { mockProviderTemplate, mockPreset, mockBundlePreset, mockKimiAPIModels, 
 import type {
   CancelReceipt,
   DesktopCommandName,
-  MessageHistoryPage,
-  Ref as SessionContentRef,
-  SearchHistoryPage,
-  SessionHistoryContentChunk,
 } from "../generated/desktopContract.generated";
 import type { InvocationRequest } from "./invocationDisplay";
 import type { FollowupBindings } from "./pendingFollowup";
@@ -37,6 +33,7 @@ import type { RemoteProjectBindings } from "./remoteProjectBridge";
 import type { ToolRecoveryBindings } from "./toolRecovery";
 import type { ScrollDiagnosticBindings } from "./scrollDiagnosticBridge";
 import type { TranscriptProtocolBindings } from "./transcriptProtocol";
+import { makeMockSessionReaderBindings, type SessionReaderBindings } from "./sessionReaderBridge";
 import { makeMockMCPAppBindings, type MCPAppBindings } from "./mcpAppBridge";
 import { makeMockPinnedContextBindings, type PinnedContextBindings } from "./pinnedContextBridge";
 import { createDesktopPreferencesMock } from "./desktopPreferencesMock";
@@ -213,7 +210,7 @@ interface DesktopWindowState {
 }
 // AppBindings is the hand-written React-to-Go contract. _CheckGeneratedBindings
 // catches generated methods missing here; update this interface and typecheck.
-export interface AppBindings extends ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings {
+export interface AppBindings extends ToolRecoveryBindings, ModelSettingsBindings, SessionCatalogBindings, ProjectTreeOrganizationBindings, HistoryCatalogBindings, TaskCatalogBindings, BlankProjectBindings, QualityFloorBindings, SessionTitleBindings, ScrollDiagnosticBindings, RemoteProjectBindings, MCPAppBindings, PinnedContextBindings, FollowupBindings, TranscriptProtocolBindings, SessionReaderBindings {
   Platform(): Promise<string>;
   MinimiseMainWindow(): Promise<void>;
   ToggleMaximiseMainWindow(): Promise<void>;
@@ -363,12 +360,6 @@ export interface AppBindings extends ToolRecoveryBindings, ModelSettingsBindings
   // Windowed history paging (supersedes HistoryPageForTab for tab history).
   HistorySliceForTab(tabID: string, req: HistorySliceRequest): Promise<HistorySlice>;
   HistoryContentForTab(tabID: string, ref: HistoryContentRef, chunkIndex: number): Promise<HistoryContentChunk>;
-  SessionHistoryPageForTab(tabID: string, cursor: string, limit: number): Promise<MessageHistoryPage>;
-  SessionHistoryContentForTab(tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk>;
-  RemoteSessionHistoryPageForTab(tabID: string, cursor: string, limit: number): Promise<MessageHistoryPage>;
-  RemoteSessionHistoryContentForTab(tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk>;
-  SearchSessionHistoryForTab(tabID: string, textQuery: string, cursor: string, limit: number): Promise<SearchHistoryPage>;
-  RemoteSearchSessionHistoryForTab(tabID: string, textQuery: string, cursor: string, limit: number): Promise<SearchHistoryPage>;
   HistoryCheckpointTurnsForTab(tabID: string): Promise<number[]>;
   Checkpoints(): Promise<CheckpointMeta[]>;
   CheckpointsForTab(tabID: string): Promise<CheckpointMeta[]>;
@@ -3259,24 +3250,7 @@ function makeMockApp(): AppBindings {
           out.chunks = 1;
           return out;
         },
-        async SessionHistoryPageForTab(): Promise<MessageHistoryPage> {
-          return { messages: [], snapshotSequence: 0, hasMore: false };
-        },
-        async SessionHistoryContentForTab(_tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk> {
-          return { data: "", nextOffset: Math.min(offset, ref.bytes), done: offset >= ref.bytes };
-        },
-        async RemoteSessionHistoryPageForTab(): Promise<MessageHistoryPage> {
-          return { messages: [], snapshotSequence: 0, hasMore: false };
-        },
-        async RemoteSessionHistoryContentForTab(_tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk> {
-          return { data: "", nextOffset: Math.min(offset, ref.bytes), done: offset >= ref.bytes };
-        },
-        async SearchSessionHistoryForTab(): Promise<SearchHistoryPage> {
-          return { hits: [], snapshotSequence: 0, hasMore: false };
-        },
-        async RemoteSearchSessionHistoryForTab(): Promise<SearchHistoryPage> {
-          return { hits: [], snapshotSequence: 0, hasMore: false };
-        },
+        ...makeMockSessionReaderBindings(),
     async ListSessions() {
       return sessions.map((s) => ({ ...s }));
     },

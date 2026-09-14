@@ -1045,7 +1045,7 @@
       "kind": "command",
       "name": "EnsureRemoteProjectSessions",
       "detail": "(hostID string, workspace string) ([]RemoteSessionView, error)",
-      "location": "desktop/remote_listing.go:379",
+      "location": "desktop/remote_listing.go:380",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -1806,6 +1806,14 @@
       "name": "ListWorkspaces",
       "detail": "() []WorkspaceMeta",
       "location": "desktop/app.go:4849",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "LocateSessionMessageForTab",
+      "detail": "(tabID string, messageID string, snapshot uint64) (session.MessageLocation, error)",
+      "location": "desktop/session_history_service.go:54",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2603,9 +2611,17 @@
     },
     {
       "kind": "command",
+      "name": "RemoteLocateSessionMessageForTab",
+      "detail": "(tabID string, messageID string, snapshot uint64) (session.MessageLocation, error)",
+      "location": "desktop/remote_transcript_api.go:289",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
       "name": "RemoteProjectSessions",
       "detail": "(hostID string, workspace string) ([]RemoteSessionView, error)",
-      "location": "desktop/remote_listing.go:366",
+      "location": "desktop/remote_listing.go:367",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2613,7 +2629,7 @@
       "kind": "command",
       "name": "RemoteSearchSessionHistoryForTab",
       "detail": "(tabID string, textQuery string, cursor string, limit int) (session.SearchHistoryPage, error)",
-      "location": "desktop/remote_transcript_api.go:235",
+      "location": "desktop/remote_transcript_api.go:273",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2637,7 +2653,7 @@
       "kind": "command",
       "name": "RemoteSessionHistoryContentForTab",
       "detail": "(tabID string, ref sessioncontent.Ref, offset int64) (SessionHistoryContentChunk, error)",
-      "location": "desktop/remote_transcript_api.go:214",
+      "location": "desktop/remote_transcript_api.go:252",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2645,7 +2661,15 @@
       "kind": "command",
       "name": "RemoteSessionHistoryPageForTab",
       "detail": "(tabID string, cursor string, limit int) (session.MessageHistoryPage, error)",
-      "location": "desktop/remote_transcript_api.go:196",
+      "location": "desktop/remote_transcript_api.go:234",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "RemoteSessionOpenForTab",
+      "detail": "(tabID string) (session.SessionOpenView, error)",
+      "location": "desktop/remote_transcript_api.go:218",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2693,7 +2717,15 @@
       "kind": "command",
       "name": "RemoteTranscriptContentForTab",
       "detail": "(tabID string, req transcript.ContentRequest) (transcript.ContentChunk, error)",
-      "location": "desktop/remote_transcript_api.go:111",
+      "location": "desktop/remote_transcript_api.go:133",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "RemoteTranscriptOutlineForTab",
+      "detail": "(tabID string, req transcript.OutlineRequest) (transcript.OutlinePage, error)",
+      "location": "desktop/remote_transcript_api.go:117",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2701,7 +2733,7 @@
       "kind": "command",
       "name": "RemoteTranscriptPageForTab",
       "detail": "(tabID string, req transcript.PageRequest) (transcript.Snapshot, error)",
-      "location": "desktop/remote_transcript_api.go:102",
+      "location": "desktop/remote_transcript_api.go:103",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2709,7 +2741,7 @@
       "kind": "command",
       "name": "RemoteTranscriptReplayForTab",
       "detail": "(tabID string, req control.TranscriptReplayRequest) (control.TranscriptReplay, error)",
-      "location": "desktop/remote_transcript_api.go:120",
+      "location": "desktop/remote_transcript_api.go:142",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -2717,7 +2749,7 @@
       "kind": "command",
       "name": "RemoteTranscriptSnapshotForTab",
       "detail": "(tabID string, req transcript.PageRequest) (RemoteTranscriptSnapshot, error)",
-      "location": "desktop/remote_transcript_api.go:93",
+      "location": "desktop/remote_transcript_api.go:94",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3557,7 +3589,7 @@
       "kind": "command",
       "name": "SearchSessionHistoryForTab",
       "detail": "(tabID string, textQuery string, cursor string, limit int) (session.SearchHistoryPage, error)",
-      "location": "desktop/session_history_service.go:36",
+      "location": "desktop/session_history_service.go:46",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3565,7 +3597,7 @@
       "kind": "command",
       "name": "SessionHistoryContentForTab",
       "detail": "(tabID string, ref sessioncontent.Ref, offset int64) (SessionHistoryContentChunk, error)",
-      "location": "desktop/session_history_service.go:46",
+      "location": "desktop/session_history_service.go:64",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -3574,6 +3606,14 @@
       "name": "SessionHistoryPageForTab",
       "detail": "(tabID string, cursor string, limit int) (session.MessageHistoryPage, error)",
       "location": "desktop/session_history_service.go:28",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "SessionOpenForTab",
+      "detail": "(tabID string) (session.SessionOpenView, error)",
+      "location": "desktop/session_history_service.go:38",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4717,7 +4757,15 @@
       "kind": "command",
       "name": "TranscriptContentForTab",
       "detail": "(tabID string, req transcript.ContentRequest) (transcript.ContentChunk, error)",
-      "location": "desktop/transcript_api.go:67",
+      "location": "desktop/transcript_api.go:86",
+      "class": "keep-business",
+      "owner": "hostrpc desktop/invoke"
+    },
+    {
+      "kind": "command",
+      "name": "TranscriptOutlineForTab",
+      "detail": "(tabID string, req transcript.OutlineRequest) (transcript.OutlinePage, error)",
+      "location": "desktop/transcript_api.go:70",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -4733,7 +4781,7 @@
       "kind": "command",
       "name": "TranscriptReplayForTab",
       "detail": "(tabID string, req control.TranscriptReplayRequest) (control.TranscriptReplay, error)",
-      "location": "desktop/transcript_api.go:79",
+      "location": "desktop/transcript_api.go:98",
       "class": "keep-business",
       "owner": "hostrpc desktop/invoke"
     },
@@ -5006,7 +5054,7 @@
     {
       "kind": "event",
       "name": "remote-tab:updated",
-      "location": "desktop/remote_listing.go:545",
+      "location": "desktop/remote_listing.go:546",
       "class": "keep-business",
       "owner": "desktop/event frame (seq + generation), same payload"
     },

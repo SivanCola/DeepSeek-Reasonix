@@ -16,8 +16,9 @@ const PACKAGING = /^(?:desktop\/(?:packaging\/|build\/)|scripts\/(?:desktop-buil
 const DESKTOP_GO = /^(?:desktop\/(?:[^/]+\.go|go\.(?:mod|sum)|cmd\/|internal\/)|internal\/|cmd\/|go\.(?:mod|sum)$)/;
 const SDK = /^(?:sdk\/|internal\/extension\/)/;
 const CI_CONTROL = /^(?:\.github\/workflows\/(?:ci|app-memory)\.yml|scripts\/ci-paths(?:\.test)?\.mjs)$/;
+const MEMORY_FULL = /^(?:desktop\/frontend\/(?:bench\/app-(?:memory|browser|page-actions)[^/]*|src\/(?:App(?:Runtime)?\.tsx|app-runtime\/.*|app-shell\/.*|components\/Transcript(?:Cards)?\.tsx|lib\/(?:useController[^/]*|subscriptionScope|useNavigationSurface|navigationSurfaceTransition|keyedResource|fileResource|useWorkspaceChangesResource|mcpServerLifecycle|fileNavigationLifetime|bridge(?:BenchFixtures|HistoryFixtures)?)\.[^/]+))|\.github\/workflows\/app-memory\.yml|scripts\/ci-paths(?:\.test)?\.mjs)$/;
 
-const FLAG_NAMES = ["code", "desktop", "desktop_go", "frontend", "browser", "memory", "electron", "native", "packaging", "site", "sdk", "notes_only"];
+const FLAG_NAMES = ["code", "desktop", "desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging", "site", "sdk", "notes_only"];
 
 function normalized(path) {
   return path.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -56,7 +57,7 @@ export function classifyPaths(input, { full = false } = {}) {
       setReason(reasons, "sdk", path, "SDK or generated protocol source");
     }
     if (CI_CONTROL.test(path)) {
-      for (const flag of ["desktop_go", "frontend", "browser", "memory", "electron", "native", "packaging"]) {
+      for (const flag of ["desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging"]) {
         flags[flag] = true;
         setReason(reasons, flag, path, "CI routing contract");
       }
@@ -76,6 +77,10 @@ export function classifyPaths(input, { full = false } = {}) {
         flags[flag] = true;
         setReason(reasons, flag, path, "frontend build input");
       }
+      if (MEMORY_FULL.test(path)) {
+        flags.memory_full = true;
+        setReason(reasons, "memory_full", path, "App lifecycle or memory screening input");
+      }
     }
     if (electron) {
       flags.electron = true;
@@ -92,7 +97,7 @@ export function classifyPaths(input, { full = false } = {}) {
     if (!(frontend || electron || packaging || desktopGo)) unknown.push(path);
   }
   if (unknown.length > 0) {
-    for (const flag of ["code", "desktop_go", "frontend", "browser", "memory", "electron", "native", "packaging"]) {
+    for (const flag of ["code", "desktop_go", "frontend", "browser", "memory", "memory_full", "electron", "native", "packaging"]) {
       flags[flag] = true;
       for (const path of unknown) setReason(reasons, flag, path, "unknown path; fail closed");
     }

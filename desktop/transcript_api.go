@@ -64,6 +64,25 @@ func (a *App) TranscriptPageForTab(tabID string, req transcript.PageRequest) (tr
 	return a.TranscriptSnapshotForTab(tabID, req)
 }
 
+// TranscriptOutlineForTab pages the complete turn index of one snapshot. The
+// capability is optional beside the projection, so a controller without it is
+// reported as unavailable instead of answering an empty outline.
+func (a *App) TranscriptOutlineForTab(tabID string, req transcript.OutlineRequest) (transcript.OutlinePage, error) {
+	api, current, err := a.transcriptAPIForTab(tabID)
+	if err != nil {
+		return transcript.OutlinePage{}, err
+	}
+	outline, ok := api.(control.TranscriptOutlineAPI)
+	if !ok {
+		return transcript.OutlinePage{}, control.ErrTranscriptProjectionUnavailable
+	}
+	result, err := outline.TranscriptOutline(req)
+	if !current() {
+		return transcript.OutlinePage{}, fmt.Errorf("runtime changed while reading transcript outline")
+	}
+	return result, err
+}
+
 func (a *App) TranscriptContentForTab(tabID string, req transcript.ContentRequest) (transcript.ContentChunk, error) {
 	api, current, err := a.transcriptAPIForTab(tabID)
 	if err != nil {

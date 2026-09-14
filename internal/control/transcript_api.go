@@ -31,6 +31,15 @@ type TranscriptProjectionAPI interface {
 
 var _ TranscriptProjectionAPI = (*Controller)(nil)
 
+// TranscriptOutlineAPI is an optional capability beside TranscriptProjectionAPI.
+// It is deliberately separate so an existing controller implementation keeps
+// compiling and a client can negotiate the outline independently of the body.
+type TranscriptOutlineAPI interface {
+	TranscriptOutline(transcript.OutlineRequest) (transcript.OutlinePage, error)
+}
+
+var _ TranscriptOutlineAPI = (*Controller)(nil)
+
 // SetTurnSubmissionID is called under the transport's admission boundary.
 func (c *Controller) SetTurnSubmissionID(submissionID string) {
 	if ledger := c.turnEventLedger(); ledger != nil {
@@ -126,6 +135,16 @@ func (c *Controller) TranscriptSnapshot(req transcript.PageRequest) (transcript.
 		return transcript.Snapshot{}, err
 	}
 	return p.Snapshot(req)
+}
+
+// TranscriptOutline pages the complete turn index of one snapshot. It reads the
+// same projection the body pages do, so both describe one immutable cut.
+func (c *Controller) TranscriptOutline(req transcript.OutlineRequest) (transcript.OutlinePage, error) {
+	p, err := c.transcriptProjection()
+	if err != nil {
+		return transcript.OutlinePage{}, err
+	}
+	return p.Outline(req)
 }
 
 func (c *Controller) TranscriptContent(req transcript.ContentRequest) (transcript.ContentChunk, error) {

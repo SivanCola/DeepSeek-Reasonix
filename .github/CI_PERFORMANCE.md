@@ -51,20 +51,28 @@ step execution time from the Actions API without wrapping the test process.
 
 ## Memory screening
 
-Protocol v2 still requires three independent processes, each completing
-128 full, 128 windowed, 128 safety and 512 mixed round trips, with the same
-checkpoints, five heap snapshots, GC, frame settling and screening thresholds.
+Protocol v4 records the selected screening profile in every manifest, shard and
+aggregate. Ordinary frontend pull requests use the `short` profile: one process
+completes 32 full, 32 windowed, 32 safety and 128 mixed round trips. Pull requests
+that change App lifecycle, Transcript, navigation, subscription ownership, memory
+fixtures or CI routing use the `full` profile. Pushes to `main-v2`, the daily
+scheduled run and manual dispatches also use `full`: three independent processes
+each complete 128 full, 128 windowed, 128 safety and 512 mixed round trips.
+
+Both profiles keep the same evidence requirements: exact checkpoints, five heap
+snapshots per process, GC, frame settling, source/build identity and screening
+thresholds. Aggregation rejects missing shards and profile or protocol mismatches.
 Only the explicit mock memory-soak URL removes the fixture's artificial
 1.5-second hydration latency. Hydration still crosses an asynchronous timer
 task. Default browser and native geometry fixtures retain the delayed path.
 
 The pointer rests outside topic rows and the warmed baseline follows a complete
 round trip after layout switching, avoiding samples of temporary menu state.
-Reports declare the protocol, and aggregation rejects older protocols.
+Reports declare the profile and protocol, and aggregation rejects older protocols.
 `timings.json` records host-side counts, total time and maximum time for
-navigation, frame settling, GC and heap capture/analysis. Short profiling runs
-are diagnostic only and cannot pass the complete screening gate. A green gate
-still does not prove offline heap-retainer attribution.
+navigation, frame settling, GC and heap capture/analysis. Aggregate results label
+their `screeningLevel`, so a passing short PR screen cannot be mistaken for full
+qualification. A green gate still does not prove offline heap-retainer attribution.
 
 ## Signed release artifacts
 

@@ -22,11 +22,15 @@ export function ModelSwitcher({
   detailLabel,
   details,
   composerMenu = false,
+  disabled = false,
+  dismissSignal,
 }: {
   label: string;
   detailLabel?: string;
   details?: ReactNode;
   composerMenu?: boolean;
+  disabled?: boolean;
+  dismissSignal?: number;
   tabId?: string;
   ready?: boolean;
   sessionKey?: string;
@@ -47,6 +51,10 @@ export function ModelSwitcher({
   const pendingPickCountByTabRef = useRef(new Map<string, number>());
   const pickSeqByTabRef = useRef(new Map<string, number>());
   currentTabKeyRef.current = tabId ?? "";
+
+  useEffect(() => {
+    setOpen(false);
+  }, [disabled, dismissSignal, sessionKey, tabId]);
 
   // Measure trigger width off the render path to avoid forced layout
   useEffect(() => {
@@ -208,8 +216,9 @@ export function ModelSwitcher({
           ref={triggerRef}
           type="button"
           className="modelsw__trigger"
+          disabled={disabled}
           aria-label={triggerLabel}
-          aria-expanded={open}
+          aria-expanded={open && !disabled}
           onClick={() => setOpen((v) => !v)}
         >
           <Cpu size={14} className="modelsw__kind" />
@@ -218,7 +227,7 @@ export function ModelSwitcher({
         </button>
       </Tooltip>
       <AnchoredPopover
-        open={open}
+        open={open && !disabled}
         anchorRef={triggerRef}
         onClose={() => setOpen(false)}
         className={`modelsw__menu modelsw__menu--portal${composerMenu ? " composer-menu-surface" : ""}`}

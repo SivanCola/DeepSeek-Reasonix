@@ -28,6 +28,7 @@ type sparseIndex struct {
 	LastSequence uint64             `json:"lastSequence"`
 	CommitCount  uint64             `json:"commitCount"`
 	Entries      []sparseIndexEntry `json:"entries"`
+	partial      bool
 }
 
 type sparseIndexEntry struct {
@@ -143,18 +144,34 @@ func (s *Store) recordPersistedIndex(file *os.File, start int64, commits []Commi
 	if err != nil {
 		return
 	}
+	offset := start
+	for i, commit := range commits {
+		if i == len(commits)-1 {
+			s.tip = durableTip{LogOffset: offset + int64(lengths[i]), AnchorOffset: offset, AnchorFirst: commit.FirstSequence, AnchorCommitID: commit.ID, AnchorHash: commit.OperationHash}
+		}
+		offset += int64(lengths[i])
+	}
 	identity, err := sparseLogIdentity(file, info)
 	if err != nil {
 		return
 	}
 	s.indexMu.Lock()
 	index := s.index
+	if index.partial {
+		index.LogSize = info.Size()
+		index.LogModTimeNS = info.ModTime().UnixNano()
+		index.LogIdentity = identity
+		index.LastSequence = commits[len(commits)-1].LastSequence()
+		s.index = index
+		s.indexMu.Unlock()
+		return
+	}
 	if index.Codec != sparseIndexCodec || index.LogSize != start {
 		s.indexMu.Unlock()
 		_ = s.rebuildWriterIndex(file)
 		return
 	}
-	offset := start
+	offset = start
 	for i, commit := range commits {
 		if index.CommitCount%sparseIndexInterval == 0 {
 			index.Entries = append(index.Entries, sparseIndexEntry{FirstSequence: commit.FirstSequence, Offset: offset})

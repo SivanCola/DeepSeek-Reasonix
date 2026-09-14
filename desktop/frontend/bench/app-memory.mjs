@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { startPreviewServer } from "./vite-preview-server.mjs";
 import { chooseAppLayout } from "./app-page-actions.mjs";
 import { attributeRetention, buildIdentity, evidenceIntegrity, retainedCohorts, screeningBlockers, summarizeHeap } from "./app-memory-evidence.mjs";
-import { completeShard, verifyIdentity, MEMORY_FIXTURES, MEMORY_PROTOCOL } from "./app-memory-shards.mjs";
+import { completeShard, memoryProtocol, protocolSamples, verifyIdentity, MEMORY_FIXTURES } from "./app-memory-shards.mjs";
 
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
@@ -24,15 +24,17 @@ function integerEnv(name, fallback) {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
-const CYCLES = integerEnv("REASONIX_APP_MEMORY_CYCLES", 128);
-const MIXED_CYCLES = integerEnv("REASONIX_APP_MEMORY_MIXED_CYCLES", 512);
+const MEMORY_PROTOCOL = memoryProtocol(process.env.REASONIX_APP_MEMORY_PROFILE ?? "full");
+const CYCLES = integerEnv("REASONIX_APP_MEMORY_CYCLES", MEMORY_PROTOCOL.cycles);
+const MIXED_CYCLES = integerEnv("REASONIX_APP_MEMORY_MIXED_CYCLES", MEMORY_PROTOCOL.mixedCycles);
 const BASELINE_ATTEMPTS = integerEnv("REASONIX_APP_MEMORY_BASELINE_ATTEMPTS", 4);
 const SHARD = process.env.REASONIX_APP_MEMORY_SHARD === undefined ? null : Number(process.env.REASONIX_APP_MEMORY_SHARD);
-if (SHARD !== null && ![1, 2, 3].includes(SHARD)) throw new Error("memory shard must be 1, 2 or 3");
-const PROCESSES = SHARD === null ? integerEnv("REASONIX_APP_MEMORY_PROCESSES", 3) : 1;
+if (SHARD !== null && (!Number.isInteger(SHARD) || SHARD < 1 || SHARD > MEMORY_PROTOCOL.shards)) throw new Error(`memory shard must be between 1 and ${MEMORY_PROTOCOL.shards}`);
+const PROCESSES = SHARD === null ? integerEnv("REASONIX_APP_MEMORY_PROCESSES", MEMORY_PROTOCOL.shards) : 1;
 const preparedFile = process.env.REASONIX_APP_MEMORY_PREPARED;
 const prepared = preparedFile ? JSON.parse(readFileSync(preparedFile, "utf8")) : null;
-if (SHARD !== null && (!prepared || CYCLES !== 128 || MIXED_CYCLES !== 512)) throw new Error("memory shard requires the shared build and complete 128/512 protocol");
+if (SHARD !== null && (!prepared || CYCLES !== MEMORY_PROTOCOL.cycles || MIXED_CYCLES !== MEMORY_PROTOCOL.mixedCycles
+  || JSON.stringify(prepared.protocol) !== JSON.stringify(MEMORY_PROTOCOL))) throw new Error(`memory shard requires the shared build and complete ${MEMORY_PROTOCOL.profile} protocol`);
 const PORT = integerEnv("REASONIX_APP_MEMORY_PORT", 4647);
 const artifacts = path.resolve(process.env.REASONIX_APP_MEMORY_ARTIFACTS ?? path.join(frontendDir, "bench/app-memory-artifacts"));
 mkdirSync(artifacts, { recursive: true });
@@ -225,7 +227,7 @@ async function runProcess(index) {
 await ensureBuild();
 const preview = await startPreviewServer(frontendDir, PORT);
 const report = { identity: buildIdentity(frontendDir), fixtures, protocol: MEMORY_PROTOCOL, startedAt: new Date().toISOString(), cycles: CYCLES, mixedCycles: MIXED_CYCLES,
-  ...(SHARD === null ? {} : { shard: { id: SHARD, total: 3, executionId: prepared.executionId } }), processes: [] };
+  ...(SHARD === null ? {} : { shard: { id: SHARD, total: MEMORY_PROTOCOL.shards, executionId: prepared.executionId } }), processes: [] };
 try {
   for (let index = 1; index <= PROCESSES; index += 1) {
     const result = await runProcess(SHARD ?? index);
@@ -242,8 +244,9 @@ report.finishedAt = new Date().toISOString();
 report.timings = timings.snapshot();
 writeFileSync(path.join(artifacts, "timings.json"), JSON.stringify(report.timings, null, 2));
 process.stdout.write(`[app-memory] timings ${JSON.stringify(report.timings)}\n`);
-report.protocolComplete = CYCLES >= 128 && MIXED_CYCLES >= 512 && report.processes.length >= 3;
-report.shardComplete = SHARD !== null && completeShard(report);
+report.protocolComplete = CYCLES === MEMORY_PROTOCOL.cycles && MIXED_CYCLES === MEMORY_PROTOCOL.mixedCycles
+  && report.processes.length === MEMORY_PROTOCOL.shards && report.processes.every(run => protocolSamples(run.samples, MEMORY_PROTOCOL));
+report.shardComplete = SHARD !== null && completeShard(report, MEMORY_PROTOCOL);
 // The automated gate passes on clean screening: protocol complete, every
 // integrity/release/page-error check true, and no disqualifying attribution
 // reason. Heap-retainer and control attribution stays an offline duty
