@@ -77,7 +77,7 @@ export interface DesktopHostStub {
 
 export function installDesktopHostStub(commands: object, options: DesktopHostStubOptions = {}): DesktopHostStub {
   const ref = { current: commands as Record<string, unknown> };
-  const readerFallback = () => Object.hasOwn(ref.current, "SessionOpenForTab") || typeof ref.current.TranscriptSnapshotForTab === "function" ? {} : makeMockSessionReaderBindings();
+  const readerFallback = () => Object.prototype.hasOwnProperty.call(ref.current, "SessionOpenForTab") || typeof ref.current.TranscriptSnapshotForTab === "function" ? {} : makeMockSessionReaderBindings();
   const events = new Map<string, Set<(...data: unknown[]) => void>>();
   const host: ReasonixDesktopHost = {
     kind: "electron",
