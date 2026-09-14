@@ -22,6 +22,10 @@ export class DockNavigation {
     return () => queueMicrotask(() => { if (this.attachment === attachment) this.dispose(); });
   }
   matches(scope: string, view: string | null): boolean { return this.scope === scope && this.view === view; }
+  restoredView(scope: string, view: string | null): DockRequests {
+    const occurrence = this.scope === scope && view ? this.occurrences.get(view) : undefined;
+    return occurrence ? { ...emptyDockRequests, navigationSignal: occurrence.controller.signal, navigationResources: occurrence.snapshot.navigationResources } : emptyDockRequests;
+  }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
 

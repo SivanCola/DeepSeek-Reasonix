@@ -6,7 +6,9 @@ import { createServer } from "vite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-process.env.PLAYWRIGHT_BROWSERS_PATH ||= path.join(frontendDir, ".pw-browsers");
+process.env.PLAYWRIGHT_BROWSERS_PATH = !process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.PLAYWRIGHT_BROWSERS_PATH === ".pw-browsers"
+  ? path.join(frontendDir, ".pw-browsers")
+  : process.env.PLAYWRIGHT_BROWSERS_PATH;
 const { chromium, _electron } = await import("playwright");
 const electronEngine = process.argv.includes("--electron");
 const electronHome = electronEngine ? await mkdtemp(path.join(tmpdir(), "reasonix-dock-electron-")) : "";
