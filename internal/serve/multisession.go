@@ -648,6 +648,10 @@ func (s *Server) publishControllerSwap(expect, next control.SessionAPI, path str
 	if s.ctrl != expect {
 		return false
 	}
+	if err := control.ActivateSessionAPIReplacement(expect, next); err != nil {
+		slog.Warn("serve: activate controller replacement", "err", err)
+		return false
+	}
 	s.ctrl = next
 	s.bc.SetCurrentSession(path)
 	if ctrl, ok := next.(*control.Controller); ok {

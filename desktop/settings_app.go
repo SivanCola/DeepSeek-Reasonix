@@ -1996,6 +1996,11 @@ func (a *App) rebuildSettingTurnLockedWithModel(setting string, tab *WorkspaceTa
 		tab.releaseSessionLease()
 		return err
 	}
+	if err := activateReplacementController(oldCtrl, ctrl); err != nil {
+		a.mu.Unlock()
+		discardReplacementController(ctrl, oldCtrl)
+		return fmt.Errorf("rebuilding settings: activate replacement runtime: %w", err)
+	}
 	tab.Ctrl = ctrl
 	tab.modelApplication.failure = nil
 	tab.model = model

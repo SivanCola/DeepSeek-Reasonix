@@ -101,7 +101,12 @@ func (c *Controller) admitGuardedTurn(body func(ctx context.Context) error, park
 		c.mu.Unlock()
 		return turnParked
 	}
-	ctx, cancel := c.startTurnLocked(item)
+	ctx, cancel, admitted := c.startTurnLocked(context.Background(), item)
+	if !admitted {
+		c.mu.Unlock()
+		c.emitDrainingNotice()
+		return turnDroppedDraining
+	}
 	c.mu.Unlock()
 	if onStart != nil {
 		onStart()

@@ -68,6 +68,14 @@ func retireReplacedController(old, replacement control.SessionAPI) {
 	old.Close()
 }
 
+// activateReplacementController is called only inside the host's final
+// compare-and-publish critical section. It transfers an exclusive Session
+// Runtime without letting construction-time candidates steal Stop or commit
+// authority from the controller still visible in the tab.
+func activateReplacementController(old, replacement control.SessionAPI) error {
+	return control.ActivateSessionAPIReplacement(old, replacement)
+}
+
 func discardReplacementController(candidate, current control.SessionAPI) {
 	if candidate == nil || candidate == current {
 		return

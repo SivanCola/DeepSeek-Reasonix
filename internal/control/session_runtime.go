@@ -13,5 +13,16 @@ func (c *Controller) appendSessionBatch(ctx context.Context, store *session.Sess
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return store.Append(ctx, batch)
+	if err := ctx.Err(); err != nil {
+		return session.Commit{}, err
+	}
+	prepared, err := store.PrepareBatchContext(ctx, batch.OperationID, batch)
+	if err != nil {
+		return session.Commit{}, err
+	}
+	_, runtime, exclusive := c.v3Binding()
+	if exclusive && runtime != nil && runtime.Session() == store {
+		return runtime.CommitPreparedForExecution(c.ExecutionGeneration(), prepared)
+	}
+	return store.CommitPrepared(prepared)
 }

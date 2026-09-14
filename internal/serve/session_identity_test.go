@@ -80,6 +80,33 @@ func TestExclusiveV3SessionsAndResumeUseImmutableIdentity(t *testing.T) {
 	}
 }
 
+func TestSessionsReportsFinalizingExclusiveRuntimeAsRunning(t *testing.T) {
+	srv, ctrl, service, ref := newExclusiveSessionServe(t)
+	runtime, ok := service.Runtime(ref)
+	if !ok {
+		t.Fatal("current runtime is not published")
+	}
+	generation := ctrl.ExecutionGeneration()
+	runtime.NoteExecution(generation, session.RuntimeFinalizing, "terminal_commit")
+	defer runtime.NoteExecution(generation, session.RuntimeIdle, "")
+
+	list := httptest.NewRecorder()
+	srv.sessions(list, httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	var rows []sessionListEntry
+	if err := json.Unmarshal(list.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.SessionID == ref.SessionID {
+			if !row.Running {
+				t.Fatalf("finalizing session row = %+v, want running", row)
+			}
+			return
+		}
+	}
+	t.Fatalf("session %q missing from rows %+v", ref.SessionID, rows)
+}
+
 func TestExclusiveV3MissingResumeDoesNotCreateOrReplaceCurrent(t *testing.T) {
 	srv, ctrl, service, current := newExclusiveSessionServe(t)
 	resume := httptest.NewRecorder()

@@ -176,9 +176,12 @@ type Controller struct {
 	// Zero uses the documented 15 second boundary.
 	testCancelGrace time.Duration
 
-	shell                             sandbox.Shell                    // interpreter for user-invoked "!" commands; zero = auto
-	startedOnce                       bool                             // guards the one-shot SessionStart hook on first turn
-	closeOnce                         sync.Once                        // makes close idempotent under racing teardown paths
+	shell                             sandbox.Shell // interpreter for user-invoked "!" commands; zero = auto
+	startedOnce                       bool          // guards the one-shot SessionStart hook on first turn
+	closeOnce                         sync.Once     // makes close idempotent under racing teardown paths
+	closeFinalizeOnce                 sync.Once     // releases persistence/resources only after the terminal boundary
+	closeFireSessionEnd               bool
+	closeJobsMode                     closeJobsMode
 	onRemember                        func(rule string) RememberResult // set via Options; invoked when user picks "always allow"
 	onRememberPlanModeReadOnlyCommand func(prefix string) PlanModeReadOnlyCommandTrustResult
 	writeAccess                       controllerWriteAccess
@@ -853,6 +856,10 @@ func (c *Controller) initializeOwnedResources(opts Options) {
 	if runner, ok := c.runner.(interface{ SetSink(event.Sink) }); ok {
 		runner.SetSink(c.sink)
 	}
+	// Establish mutation authority before any constructor-time session seed.
+	// A hot-rebuild candidate sharing an already-bound Runtime remains at
+	// generation zero and can restore from the projection without writing it.
+	c.bindExecutionControl()
 	if c.executor != nil {
 		c.executor.SetSink(c.sink)
 		c.executor.SetSessionCheckpointer(c)
@@ -879,7 +886,6 @@ func (c *Controller) initializeOwnedResources(opts Options) {
 	// must never affect the agent pipeline. The session id is resolved lazily
 	// because the session path is only fixed once the first turn begins.
 	c.initializeTaskRecorder(opts.TaskStore)
-	c.bindExecutionControl()
 	c.initializeRuntimeState()
 }
 
@@ -5105,28 +5111,38 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 	// SessionEnd hooks or re-run cleanup. The first caller's jobsMode wins.
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
-		started := c.startedOnce
 		cancel := c.turns.cancel
+		done := c.turns.done
+		turnActive := c.bodyActiveLocked() || c.finalizingLocked()
 		// Seal turn admission and drop anything already parked: a parked turn
 		// must not start against a controller that is being torn down, and
 		// without the closed flag a submit landing after this critical
 		// section (while a running turn's TurnDone delivery is still in
 		// flight) would park again and start after teardown.
 		c.closed = true
+		c.closeFireSessionEnd = fireSessionEnd
+		c.closeJobsMode = jobsMode
 		c.turns.pending = nil
 		c.turns.wake = false
-		c.turns.phase = session.RuntimeClosed
-		c.turns.finishingBound.end()
 		if cancel != nil {
 			c.turns.cancelRequested = true
+			if c.turns.phase == session.RuntimeRunning {
+				c.turns.phase = session.RuntimeCancelling
+				c.noteExecutionLocked(session.RuntimeCancelling, "cancelling")
+			}
 		} else {
 			c.turns.cancelRequested = false
+		}
+		if !turnActive {
+			c.turns.phase = session.RuntimeClosed
+			c.turns.finishingBound.end()
 		}
 		c.mu.Unlock()
 		if cancel != nil {
 			// Signal the owned turn before prompt bookkeeping or callbacks. A
 			// stalled registry/adapter must never delay Stop during shutdown.
 			cancel()
+			c.startCancellationWatchdog(done)
 			c.promptOwner.CancelAll()
 			c.approval.clearAll()
 		} else {
@@ -5135,6 +5151,22 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 		if c.goalDriverControl.cancel != nil {
 			c.goalDriverControl.cancel()
 		}
+		if !turnActive {
+			c.finalizeControllerClose()
+		}
+	})
+}
+
+// finalizeControllerClose releases stores and process resources only after an
+// active turn has published its terminal boundary. Closing the ledger or the
+// session binding earlier makes the final TurnDone impossible to accept.
+func (c *Controller) finalizeControllerClose() {
+	c.closeFinalizeOnce.Do(func() {
+		c.mu.Lock()
+		started := c.startedOnce
+		fireSessionEnd := c.closeFireSessionEnd
+		jobsMode := c.closeJobsMode
+		c.mu.Unlock()
 		// Goal-driver workers may be inside the pre-admission durability
 		// checkpoint. Join them before closing the v3 writer so teardown cannot
 		// race a late Flush or recreate files under a test/session directory.
@@ -5171,6 +5203,12 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 				slog.Warn("controller: close turn event ledger", "err", err)
 			}
 		}
+		c.turnEvents.commitMu.Lock()
+		if pending := c.turnEvents.pendingExecutionCommit; pending != nil {
+			pending.Release()
+			c.turnEvents.pendingExecutionCommit = nil
+		}
+		c.turnEvents.commitMu.Unlock()
 		service, runtime, exclusive := c.v3Binding()
 		if exclusive && runtime != nil {
 			c.releaseSessionRuntimeBinding(service)

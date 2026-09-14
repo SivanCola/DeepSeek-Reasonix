@@ -31,6 +31,7 @@ var (
 	ErrRuntimeRetiring   = errors.New("session runtime is retiring")
 	ErrRecoveryRequired  = errors.New("session runtime requires recovery")
 	ErrStaleActivity     = errors.New("session activity no longer owns commit authority")
+	ErrStaleExecution    = errors.New("session execution generation no longer owns commit authority")
 )
 
 type RuntimePhase string
@@ -80,7 +81,6 @@ type Runtime struct {
 	// execution is the generation-scoped turn-loop. Cancel loads it without
 	// taking mu so Stop never waits on a commit or persistence lock.
 	execution atomic.Pointer[executionBinding]
-	lastGen   atomic.Uint64
 	bindGen   atomic.Uint64
 	canceling atomic.Bool
 	closeDone chan struct{}
@@ -131,12 +131,21 @@ func (r *Runtime) activitySnapshot() RuntimeSnapshot {
 // Cancel forwards Stop to the bound turn-loop without taking the runtime
 // mutex. An unbound runtime is already idle.
 func (r *Runtime) Cancel() bool {
-	exec := r.loadExecution()
-	if exec == nil || exec.control == nil {
-		return false
-	}
-	if !exec.control.Cancel() {
-		return false
+	for {
+		exec := r.loadExecution()
+		if exec == nil || exec.control == nil {
+			return false
+		}
+		if !exec.control.Cancel() {
+			// A host cutover may linearize while Cancel is inside the outgoing
+			// loop. Retry only when ownership actually changed; a stable owner
+			// rejecting Cancel remains a normal idle result.
+			if r.loadExecution() != exec {
+				continue
+			}
+			return false
+		}
+		break
 	}
 	r.canceling.Store(true)
 	if r.mu.TryLock() {

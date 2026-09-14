@@ -37,7 +37,12 @@ func (c *Controller) runSynchronousTurn(
 		c.emitDrainingNotice()
 		return ErrRuntimeDraining
 	}
-	ctx, cancel := c.startTurnLocked(queuedTurn{})
+	ctx, cancel, admitted := c.startTurnLocked(ctx, queuedTurn{})
+	if !admitted {
+		c.mu.Unlock()
+		c.emitDrainingNotice()
+		return ErrRuntimeDraining
+	}
 	c.mu.Unlock()
 	if parent != nil {
 		stop := context.AfterFunc(parent, func() { c.signalTurnCancel() })
@@ -52,13 +57,23 @@ func (c *Controller) runSynchronousTurn(
 		}
 		c.turns.cancel = nil
 		c.turns.cancelRequested = false
-		if !c.closed && c.turns.phase != session.RuntimeRecoveryRequired {
+		closing := c.closed
+		recovery := c.turns.phase == session.RuntimeRecoveryRequired
+		c.turns.finishingBound.end()
+		if !recovery {
 			c.turns.lastToken = c.turns.token
-			c.turns.phase = session.RuntimeIdle
+			if closing {
+				c.turns.phase = session.RuntimeClosed
+			} else {
+				c.turns.phase = session.RuntimeIdle
+			}
 			c.turns.turnID = ""
 			c.noteExecutionLocked(session.RuntimeIdle, "")
 		}
 		c.mu.Unlock()
+		if closing {
+			c.finalizeControllerClose()
+		}
 		c.refreshRuntimeState(event.Event{})
 		c.kickGoalDriver()
 		cancel()
@@ -80,6 +95,22 @@ func (c *Controller) runSynchronousTurn(
 	// turn by itself.
 	run = c.prepareTurnAdmission(run)
 	runErr := run(ctx)
+	// Keep the execution binding through the synchronous terminal commit just
+	// like the asynchronous loop. Close may make the public controller view
+	// closed here, but it cannot release the ledger/session underneath TurnDone.
+	c.mu.Lock()
+	if c.turns.done != nil {
+		close(c.turns.done)
+		c.turns.done = nil
+	}
+	c.turns.cancel = nil
+	if c.turns.phase != session.RuntimeRecoveryRequired {
+		c.turns.phase = session.RuntimeFinalizing
+		c.turns.finishingBound.begin(true)
+		c.noteExecutionLocked(session.RuntimeFinalizing, "turn")
+	}
+	c.mu.Unlock()
+	c.refreshRuntimeState(event.Event{})
 	if ledger := c.turnEventLedger(); ledger != nil && ledger.ActiveTurnID() != "" && !ledger.CurrentStatus().Terminal() {
 		cancelled := errors.Is(ctx.Err(), context.Canceled)
 		done := event.Event{Kind: event.TurnDone, Err: runErr, Cancelled: cancelled, Outcome: turnOutcome(runErr)}

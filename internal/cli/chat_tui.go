@@ -1912,6 +1912,16 @@ func (m chatTUI) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// pre-switch snapshot, so the lease must follow it.
 			m.followSessionLease()
 		} else {
+			if err := control.ActivateSessionAPIReplacement(msg.oldCtrl, msg.ctrl); err != nil {
+				if concrete, ok := msg.ctrl.(*control.Controller); ok {
+					concrete.ReleaseResources()
+				} else if msg.ctrl != nil {
+					msg.ctrl.Close()
+				}
+				m.notice("runtime activation: " + err.Error())
+				m.followSessionLease()
+				break
+			}
 			m.ctrl = activateGoalDriverAfterRebuild(msg.ctrl)
 			if m.takeover != nil {
 				m.takeover.AttachController(msg.ctrl)

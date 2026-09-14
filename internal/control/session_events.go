@@ -274,11 +274,24 @@ func (c *Controller) replaceSessionModelContext(ctx context.Context, messages []
 	}
 	digest := sha256.Sum256(payload)
 	c.turnEvents.commitMu.Lock()
-	_, err = c.appendSessionBatch(ctx, store, session.Batch{
+	batch := session.Batch{
 		OperationID: fmt.Sprintf("model-context:%x", digest[:16]),
 		TurnID:      snapshot.Projection.TurnID,
 		Events:      events,
-	})
+	}
+	_, runtime, exclusive := c.v3Binding()
+	if exclusive && runtime != nil && runtime.Session() == store && !runtime.OwnsExecution(c.ExecutionGeneration()) {
+		prepared, prepareErr := store.PrepareBatchContext(ctx, batch.OperationID, batch)
+		if prepareErr == nil {
+			if previous := c.turnEvents.pendingExecutionCommit; previous != nil {
+				previous.Release()
+			}
+			c.turnEvents.pendingExecutionCommit = &prepared
+		}
+		err = prepareErr
+	} else {
+		_, err = c.appendSessionBatch(ctx, store, batch)
+	}
 	c.turnEvents.commitMu.Unlock()
 	if err != nil {
 		return err
@@ -333,7 +346,7 @@ func (c *Controller) sessionEventStore() *session.Session {
 // until the tab's final lease handoff succeeds.
 func (c *Controller) sessionEventCommitAllowed() bool {
 	if _, runtime, _ := c.v3Binding(); runtime != nil {
-		return true
+		return runtime.OwnsExecution(c.ExecutionGeneration())
 	}
 	if c == nil || !c.managedSessionEvents.Load() {
 		return true

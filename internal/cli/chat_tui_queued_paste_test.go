@@ -13,6 +13,7 @@ import (
 func TestQueuedFoldedPasteExpandsBeforeInterjectSend(t *testing.T) {
 	runner := &recordingTurnRunner{}
 	events := make(chan event.Event, 8)
+	finalized := make(chan struct{})
 	dir := t.TempDir()
 	var ctrl *control.Controller
 	ctrl = newOwnedTestController(t, control.Options{
@@ -27,6 +28,7 @@ func TestQueuedFoldedPasteExpandsBeforeInterjectSend(t *testing.T) {
 		}),
 		SessionDir: dir,
 		Label:      "test",
+		Cleanup:    func() { close(finalized) },
 	})
 	defer ctrl.Close()
 	ctrl.EnsureSessionPath()
@@ -70,6 +72,7 @@ func TestQueuedFoldedPasteExpandsBeforeInterjectSend(t *testing.T) {
 	m = model.(chatTUI)
 	// Wait for the completed dispatch with admission already sealed.
 	waitForCLIEvent(t, events, event.TurnDone)
+	<-finalized
 
 	if len(runner.inputs) != 1 {
 		t.Fatalf("runner should receive queued interject, inputs=%q", runner.inputs)

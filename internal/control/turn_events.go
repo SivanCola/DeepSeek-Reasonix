@@ -53,6 +53,10 @@ type turnEventState struct {
 	v3ProjectionEpoch          string
 	volatileTodos              []event.Todo
 	volatileTodoWritten        bool
+	// pendingExecutionCommit is prepared by an unpublished hot-rebuild
+	// candidate and consumed atomically with Runtime execution activation.
+	// commitMu owns it and its queue reservation.
+	pendingExecutionCommit *session.PreparedBatch
 }
 
 // projectVolatileTodo keeps the same event-derived projection for controllers
@@ -603,7 +607,7 @@ func classifyCommitError(err error) commitFailureKind {
 		return commitLifecycle
 	}
 	if errors.Is(err, session.ErrSessionNotRunning) || errors.Is(err, session.ErrStaleGeneration) ||
-		errors.Is(err, session.ErrReadOnly) || errors.Is(err, session.ErrRuntimeRetiring) {
+		errors.Is(err, session.ErrStaleExecution) || errors.Is(err, session.ErrReadOnly) || errors.Is(err, session.ErrRuntimeRetiring) {
 		return commitOwnership
 	}
 	return commitUnexpected

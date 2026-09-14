@@ -12,6 +12,7 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/agent/testutil"
 	"reasonix/internal/event"
+	"reasonix/internal/provider"
 	"reasonix/internal/session"
 	"reasonix/internal/tool"
 )
@@ -233,6 +234,7 @@ func TestStopHistoryReplaceThenSendGetsNewTurnID(t *testing.T) {
 	if second.TurnID == "" || second.TurnID == first.TurnID {
 		t.Fatalf("second turn id = %q, first = %q", second.TurnID, first.TurnID)
 	}
+	waitIdleAdmission(t, c)
 	if runtime.StateSnapshot().Phase != session.RuntimeIdle {
 		t.Fatalf("runtime phase = %s", runtime.StateSnapshot().Phase)
 	}
@@ -314,6 +316,9 @@ func TestOldControllerUnbindDoesNotClearNewGeneration(t *testing.T) {
 	first.mu.Unlock()
 	second := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
 	t.Cleanup(func() { first.Close(); second.Close() })
+	if err := second.ActivateSessionExecution(oldGen); err != nil {
+		t.Fatalf("activate replacement: %v", err)
+	}
 	runtime.UnbindExecution(oldGen)
 	started := make(chan struct{})
 	second.runGuarded(func(ctx context.Context) error {
@@ -326,6 +331,125 @@ func TestOldControllerUnbindDoesNotClearNewGeneration(t *testing.T) {
 		t.Fatal("new generation lost Stop after old unbind")
 	}
 	waitIdleAdmission(t, second)
+}
+
+func TestOneRuntimeCannotRunTwoControllerLoops(t *testing.T) {
+	service, err := session.NewService("desktop", session.NewFilesystemPersistence(filepath.Join(t.TempDir(), "sessions-v4")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "single-loop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newController := func() *Controller {
+		exec := agent.New(testutil.NewMock("test"), tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
+		return newOwnedTestController(t, Options{
+			Runner: exec, Executor: exec, Sink: event.Discard,
+			SessionService: service, SessionRuntime: runtime, ExclusiveSession: true,
+		})
+	}
+	first := newController()
+	second := newController()
+	t.Cleanup(func() { first.Close(); second.Close() })
+
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	if got := first.runGuarded(func(context.Context) error {
+		close(firstStarted)
+		<-releaseFirst
+		return nil
+	}); got != turnStarted {
+		t.Fatalf("first admission = %v, want started", got)
+	}
+	<-firstStarted
+
+	secondStarted := make(chan struct{})
+	if got := second.runGuarded(func(context.Context) error {
+		close(secondStarted)
+		return nil
+	}); got == turnStarted {
+		t.Fatal("same session runtime admitted a second controller loop concurrently")
+	}
+	select {
+	case <-secondStarted:
+		t.Fatal("second controller body ran")
+	default:
+	}
+	close(releaseFirst)
+	waitIdleAdmission(t, first)
+}
+
+func TestReplacementModelContextCommitsOnlyWithExecutionCutover(t *testing.T) {
+	service, err := session.NewService("desktop", session.NewFilesystemPersistence(filepath.Join(t.TempDir(), "sessions-v4")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), session.CreateOptions{SessionID: "atomic-cutover"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newController := func() *Controller {
+		exec := agent.New(testutil.NewMock("test"), tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
+		return newOwnedTestController(t, Options{
+			Runner: exec, Executor: exec, Sink: event.Discard,
+			SessionService: service, SessionRuntime: runtime, ExclusiveSession: true,
+		})
+	}
+	first := newController()
+	second := newController()
+	t.Cleanup(func() { first.Close(); second.Close() })
+	oldGeneration := first.ExecutionGeneration()
+	before := runtime.Session().ExecutionSnapshot().EventSequence
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: "replacement system"},
+		{Role: provider.RoleUser, Content: "preserve me"},
+	}
+	if err := second.AdoptRebuiltModelContext(messages); err != nil {
+		t.Fatalf("stage replacement context: %v", err)
+	}
+	if got := runtime.Session().ExecutionSnapshot().EventSequence; got != before {
+		t.Fatalf("unpublished candidate changed sequence from %d to %d", before, got)
+	}
+	if !runtime.OwnsExecution(oldGeneration) {
+		t.Fatal("staging replacement context stole outgoing execution ownership")
+	}
+	if err := ActivateControllerReplacement(first, second); err != nil {
+		t.Fatalf("activate replacement: %v", err)
+	}
+	after := runtime.Session().ExecutionSnapshot()
+	if after.EventSequence <= before {
+		t.Fatalf("activation did not commit staged model context: before=%d after=%d", before, after.EventSequence)
+	}
+	if !runtime.OwnsExecution(second.ExecutionGeneration()) || runtime.OwnsExecution(oldGeneration) {
+		t.Fatal("execution ownership did not transfer atomically")
+	}
+	if got := after.Projection.ModelMessages; len(got) != len(messages) || got[len(got)-1].Content != "preserve me" {
+		t.Fatalf("committed model context = %+v", got)
+	}
+}
+
+func TestDiscardedReplacementLeavesOutgoingExecutionOwner(t *testing.T) {
+	first, service, runtime := exclusiveTestController(t, event.Discard)
+	exec := agent.New(testutil.NewMock("test"), tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
+	candidate := newOwnedTestController(t, Options{
+		Runner: exec, Executor: exec, Sink: event.Discard,
+		SessionService: service, SessionRuntime: runtime, ExclusiveSession: true,
+	})
+	oldGeneration := first.ExecutionGeneration()
+	if err := candidate.AdoptRebuiltModelContext([]provider.Message{{Role: provider.RoleSystem, Content: "discarded"}}); err != nil {
+		t.Fatal(err)
+	}
+	candidate.ReleaseResources()
+	if !runtime.OwnsExecution(oldGeneration) {
+		t.Fatal("discarded candidate cleared outgoing execution owner")
+	}
+	started := make(chan struct{})
+	if got := first.runGuarded(func(context.Context) error { close(started); return nil }); got != turnStarted {
+		t.Fatalf("outgoing admission after candidate discard = %v", got)
+	}
+	<-started
+	waitIdleAdmission(t, first)
 }
 
 func TestCloseDropsLatchedWake(t *testing.T) {
@@ -360,6 +484,44 @@ func TestCloseDropsLatchedWake(t *testing.T) {
 		t.Fatal("close started a latched wake")
 	default:
 	}
+}
+
+func TestCloseKeepsExecutionBoundUntilTerminalPublicationCompletes(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	c, service, runtime := exclusiveTestController(t, holdFinishingWindow(release, entered, nil))
+	generation := c.ExecutionGeneration()
+	started := make(chan struct{})
+	if got := c.runGuarded(func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}); got != turnStarted {
+		t.Fatalf("admission = %v, want started", got)
+	}
+	<-started
+	c.Close()
+	<-entered
+
+	if got := runtime.StateSnapshot().Phase; got != session.RuntimeFinalizing {
+		t.Fatalf("runtime phase while terminal publication is blocked = %s, want finalizing", got)
+	}
+	if !runtime.OwnsExecution(generation) {
+		t.Fatal("close released execution ownership before terminal publication")
+	}
+	if current, ok := service.Runtime(runtime.Ref()); !ok || current != runtime {
+		t.Fatal("close retired the session runtime before terminal publication")
+	}
+
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !runtime.OwnsExecution(generation) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("execution ownership was not released after terminal publication")
 }
 
 func TestSessionOpenFailureStillFailsClosed(t *testing.T) {

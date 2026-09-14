@@ -120,6 +120,90 @@ func (c *Controller) bindExecutionControl() {
 	c.mu.Unlock()
 }
 
+// ExecutionGeneration returns the session-runtime execution generation owned
+// by this controller. Zero means the controller is a prepared replacement that
+// has not been published as the execution owner.
+func (c *Controller) ExecutionGeneration() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.executionGeneration.Load()
+}
+
+// ActivateSessionExecution publishes this controller as the exact execution
+// owner. expectedGeneration is zero for a previously unbound runtime and the
+// outgoing controller generation for a fail-atomic replacement. The method is
+// deliberately callback- and I/O-free so hosts may invoke it in their final
+// pointer-swap critical section.
+func (c *Controller) ActivateSessionExecution(expectedGeneration uint64) error {
+	if c == nil {
+		return session.ErrSessionNotRunning
+	}
+	c.turnEvents.commitMu.Lock()
+	defer c.turnEvents.commitMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	runtime := c.turns.runtime
+	if runtime == nil {
+		return nil
+	}
+	if generation := c.turns.generation; generation != 0 && runtime.OwnsExecution(generation) {
+		return nil
+	}
+	var generation uint64
+	if expectedGeneration == 0 {
+		generation = runtime.BindExecution(controllerExecution{c: c})
+	} else if pending := c.turnEvents.pendingExecutionCommit; pending != nil {
+		c.turnEvents.pendingExecutionCommit = nil
+		var err error
+		generation, _, err = runtime.ReplaceExecutionAndCommit(expectedGeneration, controllerExecution{c: c}, *pending)
+		if err != nil {
+			return err
+		}
+	} else {
+		generation = runtime.ReplaceExecution(expectedGeneration, controllerExecution{c: c})
+	}
+	if generation == 0 {
+		return session.ErrRuntimeBusy
+	}
+	c.turns.generation = generation
+	c.executionGeneration.Store(generation)
+	return nil
+}
+
+// ActivateControllerReplacement transfers session execution ownership when a
+// host commits a controller pointer swap. Controllers without a shared Runtime
+// need no additional activation.
+func ActivateControllerReplacement(old, next *Controller) error {
+	if next == nil {
+		return session.ErrSessionNotRunning
+	}
+	_, nextRuntime, nextExclusive := next.v3Binding()
+	if !nextExclusive || nextRuntime == nil {
+		return nil
+	}
+	expected := uint64(0)
+	if old != nil {
+		_, oldRuntime, oldExclusive := old.v3Binding()
+		if oldExclusive && oldRuntime == nextRuntime {
+			expected = old.ExecutionGeneration()
+		}
+	}
+	return next.ActivateSessionExecution(expected)
+}
+
+// ActivateSessionAPIReplacement is the host-facing form used at a final
+// controller pointer swap. Non-Controller implementations have no exclusive
+// Runtime ownership to transfer and are left unchanged.
+func ActivateSessionAPIReplacement(old, next SessionAPI) error {
+	concreteNext, ok := next.(*Controller)
+	if !ok || concreteNext == nil {
+		return nil
+	}
+	concreteOld, _ := old.(*Controller)
+	return ActivateControllerReplacement(concreteOld, concreteNext)
+}
+
 func (c *Controller) unbindExecutionControl(runtime *session.Runtime) {
 	if runtime == nil {
 		return
@@ -159,16 +243,21 @@ func (c *Controller) discardLateTurnEvent(e event.Event) bool {
 	return true
 }
 
-func (c *Controller) startTurnLocked(next queuedTurn) (ctx context.Context, cancel context.CancelFunc) {
-	ctx, cancel = context.WithCancel(extension.ContextWithRuntimeOwner(context.Background(), c.runtimeOwner))
+func (c *Controller) startTurnLocked(parent context.Context, next queuedTurn) (ctx context.Context, cancel context.CancelFunc, admitted bool) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if c.turns.runtime != nil && !c.turns.runtime.BeginExecution(c.turns.generation, "turn") {
+		return nil, nil, false
+	}
+	ctx, cancel = context.WithCancel(extension.ContextWithRuntimeOwner(parent, c.runtimeOwner))
 	c.turns.cancel = cancel
 	c.turns.done = make(chan struct{})
 	c.turns.phase = session.RuntimeRunning
 	c.turns.cancelRequested = false
 	c.turns.token++
 	c.turns.turnID = ""
-	c.noteExecutionLocked(session.RuntimeRunning, "turn")
-	return ctx, cancel
+	return ctx, cancel, true
 }
 
 func (c *Controller) popNextPendingLocked() (queuedTurn, bool) {
@@ -266,21 +355,18 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		close(c.turns.done)
 		c.turns.done = nil
 	}
-	if c.closed {
-		c.turns.phase = session.RuntimeClosed
-		c.turns.cancel = nil
-		c.turns.cancelRequested = false
-		c.turns.finishingBound.end()
-		c.noteExecutionLocked(session.RuntimeIdle, "")
-		c.mu.Unlock()
-		c.emitTurnDoneEvent(err, true, completion)
-		c.refreshRuntimeState(event.Event{})
-		return
-	}
 	if c.turns.phase == session.RuntimeRecoveryRequired {
 		c.turns.cancel = nil
+		closing := c.closed
 		c.mu.Unlock()
-		c.emitTurnDoneEvent(err, cancelRequested, completion)
+		// The cancellation watchdog already committed the recovery terminal.
+		// A closing controller must not emit another terminal after its ledger
+		// and session binding have been finalized.
+		if !closing {
+			c.emitTurnDoneEvent(err, cancelRequested, completion)
+		} else {
+			c.finalizeControllerClose()
+		}
 		c.refreshRuntimeState(event.Event{})
 		return
 	}
@@ -295,20 +381,28 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		c.mu.Lock()
 		c.turns.finishingBound.end()
 		c.turns.cancelRequested = false
-		if c.closed {
-			c.turns.phase = session.RuntimeClosed
-			c.mu.Unlock()
-			c.refreshRuntimeState(event.Event{})
-			return
-		}
 		if c.turns.phase == session.RuntimeRecoveryRequired {
+			closing := c.closed
 			c.mu.Unlock()
+			if closing {
+				c.finalizeControllerClose()
+			}
 			c.refreshRuntimeState(event.Event{})
 			return
 		}
 		if ledger := c.turnEventLedger(); ledger != nil && ledger.CurrentStatus() == event.TurnRecoveryRequired {
 			c.enterRecoveryLocked("terminal")
 			c.mu.Unlock()
+			c.refreshRuntimeState(event.Event{})
+			return
+		}
+		if c.closed {
+			c.turns.lastToken = c.turns.token
+			c.turns.phase = session.RuntimeClosed
+			c.turns.turnID = ""
+			c.noteExecutionLocked(session.RuntimeIdle, "")
+			c.mu.Unlock()
+			c.finalizeControllerClose()
 			c.refreshRuntimeState(event.Event{})
 			return
 		}
@@ -323,7 +417,13 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 			c.refreshRuntimeState(event.Event{})
 			return
 		}
-		ctx, cancel := c.startTurnLocked(next)
+		ctx, cancel, admitted := c.startTurnLocked(context.Background(), next)
+		if !admitted {
+			c.enterRecoveryLocked("execution_owner_lost")
+			c.mu.Unlock()
+			c.refreshRuntimeState(event.Event{})
+			return
+		}
 		c.mu.Unlock()
 		if next.onStart != nil {
 			next.onStart()
@@ -397,7 +497,7 @@ func (c *Controller) startCancellationWatchdog(done chan struct{}) {
 		}
 
 		c.mu.Lock()
-		stillRunning := !c.closed && (c.turns.phase == session.RuntimeRunning || c.turns.phase == session.RuntimeCancelling)
+		stillRunning := c.turns.phase == session.RuntimeRunning || c.turns.phase == session.RuntimeCancelling
 		turnID := c.turns.turnID
 		if stillRunning {
 			c.enterRecoveryLocked("cancellation_grace_expired")
@@ -425,6 +525,12 @@ func (c *Controller) startCancellationWatchdog(done chan struct{}) {
 			Outcome:   "unknown",
 			Recovery:  recovery,
 		})
+		c.mu.Lock()
+		closing := c.closed
+		c.mu.Unlock()
+		if closing {
+			c.finalizeControllerClose()
+		}
 		c.refreshRuntimeState(event.Event{})
 	}()
 }

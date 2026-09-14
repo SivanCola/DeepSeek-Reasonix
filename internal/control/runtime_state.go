@@ -172,8 +172,12 @@ func (c *Controller) refreshRuntimeStateAttempt(e event.Event, attempt int) {
 		next.Todos = []event.Todo{}
 	}
 	setRuntimePhase(&next, exclusiveSession, v3Runtime, v3RuntimeSnapshot, running, finishing, closed, cancelling)
-	next.Running = running || finishing
-	next.CancelRequested = cancelling
+	// Close is immediately authoritative for the public controller view even
+	// while the session runtime remains in its private finalizing barrier. The
+	// latter keeps commit authority alive until TurnDone is durable; exposing it
+	// here would make a closed controller look runnable again.
+	next.Running = (running || finishing) && !closed
+	next.CancelRequested = cancelling && !closed
 	identities, promptRevision := c.promptOwner.IdentitiesRevision()
 	next.PendingPrompt = len(identities) > 0
 	next.Interactions = make([]event.PendingInteraction, len(identities))
@@ -287,6 +291,10 @@ func runtimeActivity(state event.RuntimeStateSnapshot, e event.Event, activity s
 
 func setRuntimePhase(next *event.RuntimeStateSnapshot, exclusiveSession bool, v3Runtime *session.Runtime, v3RuntimeSnapshot session.RuntimeSnapshot, running, finishing, closed, cancelling bool) {
 	next.Phase = "idle"
+	if closed {
+		next.Phase = "closed"
+		return
+	}
 	if exclusiveSession && v3Runtime != nil {
 		switch v3RuntimeSnapshot.Phase {
 		case session.RuntimeRunning:

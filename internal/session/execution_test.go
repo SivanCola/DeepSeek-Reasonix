@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 )
@@ -13,6 +14,20 @@ type testExecution struct {
 	ctx     context.Context
 	gen     uint64
 	runtime *Runtime
+}
+
+type blockingRejectExecution struct {
+	entered chan<- struct{}
+	release <-chan struct{}
+}
+
+func (e *blockingRejectExecution) Snapshot() RuntimeSnapshot {
+	return RuntimeSnapshot{Phase: RuntimeIdle}
+}
+func (e *blockingRejectExecution) Cancel() bool {
+	e.entered <- struct{}{}
+	<-e.release
+	return false
 }
 
 func bindTestExecution(t *testing.T, runtime *Runtime, name string) (context.Context, *testExecution) {
@@ -57,13 +72,33 @@ func (e *testExecution) Finish() {
 	}
 }
 
+func TestBindExecutionDoesNotSilentlyReplaceExistingOwner(t *testing.T) {
+	_, runtime := reviewRuntime(t)
+	first := &testExecution{phase: RuntimeRunning, runtime: runtime}
+	first.gen = runtime.BindExecution(first)
+	runtime.NoteExecution(first.gen, RuntimeRunning, "first")
+
+	second := &testExecution{phase: RuntimeRunning, runtime: runtime}
+	if gen := runtime.BindExecution(second); gen != 0 {
+		t.Fatalf("second bind generation = %d, want rejection", gen)
+	}
+	if !runtime.Cancel() {
+		t.Fatal("cancel did not reach the original execution owner")
+	}
+	if got := first.phase; got != RuntimeCancelling {
+		t.Fatalf("original owner phase = %s, want cancelling", got)
+	}
+}
+
 func TestUnbindDoesNotClearNewerExecutionGeneration(t *testing.T) {
 	_, runtime := reviewRuntime(t)
 	first := &testExecution{phase: RuntimeRunning, runtime: runtime}
 	second := &testExecution{phase: RuntimeRunning, runtime: runtime}
 	first.gen = runtime.BindExecution(first)
-	runtime.NoteExecution(first.gen, RuntimeRunning, "old")
-	second.gen = runtime.BindExecution(second)
+	second.gen = runtime.ReplaceExecution(first.gen, second)
+	if second.gen == 0 {
+		t.Fatal("replace idle execution")
+	}
 	runtime.NoteExecution(second.gen, RuntimeRunning, "new")
 	runtime.UnbindExecution(first.gen)
 	if !runtime.Cancel() {
@@ -110,13 +145,93 @@ func TestOldControllerCannotIdleNewGeneration(t *testing.T) {
 	_, runtime := reviewRuntime(t)
 	old := &testExecution{phase: RuntimeRunning, runtime: runtime}
 	old.gen = runtime.BindExecution(old)
-	runtime.NoteExecution(old.gen, RuntimeRunning, "old")
 	next := &testExecution{phase: RuntimeIdle, runtime: runtime}
-	next.gen = runtime.BindExecution(next)
+	next.gen = runtime.ReplaceExecution(old.gen, next)
+	if next.gen == 0 {
+		t.Fatal("replace idle execution")
+	}
 	runtime.NoteExecution(next.gen, RuntimeRunning, "new")
-	old.Finish()
+	runtime.NoteExecution(old.gen, RuntimeIdle, "")
 	if got := runtime.StateSnapshot().Phase; got != RuntimeRunning {
 		t.Fatalf("old finish cleared new turn: %s", got)
 	}
 	next.Finish()
+}
+
+func TestReplaceExecutionRejectsBusyOwner(t *testing.T) {
+	_, runtime := reviewRuntime(t)
+	old := &testExecution{phase: RuntimeRunning, runtime: runtime}
+	old.gen = runtime.BindExecution(old)
+	runtime.NoteExecution(old.gen, RuntimeRunning, "old")
+	if gen := runtime.ReplaceExecution(old.gen, &testExecution{}); gen != 0 {
+		t.Fatalf("busy replacement generation = %d, want rejection", gen)
+	}
+	if got := runtime.StateSnapshot().Phase; got != RuntimeRunning {
+		t.Fatalf("phase after rejected replacement = %s, want running", got)
+	}
+	old.Finish()
+}
+
+func TestStaleExecutionGenerationCannotCommitPreparedBatch(t *testing.T) {
+	_, runtime := reviewRuntime(t)
+	old := &testExecution{phase: RuntimeIdle, runtime: runtime}
+	old.gen = runtime.BindExecution(old)
+	prepared, err := runtime.Session().PrepareBatchContext(t.Context(), "old-config", Batch{
+		Events: []Event{{Kind: "session/config", Payload: []byte(`{"modelRef":"old"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := &testExecution{phase: RuntimeIdle, runtime: runtime}
+	next.gen = runtime.ReplaceExecution(old.gen, next)
+	if next.gen == 0 {
+		t.Fatal("replace idle execution")
+	}
+	if _, err := runtime.CommitPreparedForExecution(old.gen, prepared); !errors.Is(err, ErrStaleExecution) {
+		t.Fatalf("stale commit error = %v, want %v", err, ErrStaleExecution)
+	}
+	if got := runtime.Session().ExecutionSnapshot().EventSequence; got != 0 {
+		t.Fatalf("stale generation committed sequence %d", got)
+	}
+	current, err := runtime.Session().PrepareBatchContext(t.Context(), "new-config", Batch{
+		Events: []Event{{Kind: "session/config", Payload: []byte(`{"modelRef":"new"}`)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.CommitPreparedForExecution(next.gen, current); err != nil {
+		t.Fatalf("current generation commit: %v", err)
+	}
+}
+
+func TestCancelRetriesAcrossExecutionCutover(t *testing.T) {
+	_, runtime := reviewRuntime(t)
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	old := &blockingRejectExecution{entered: entered, release: release}
+	oldGeneration := runtime.BindExecution(old)
+	if oldGeneration == 0 {
+		t.Fatal("bind outgoing execution")
+	}
+	result := make(chan bool, 1)
+	go func() { result <- runtime.Cancel() }()
+	<-entered
+	next := &testExecution{phase: RuntimeRunning, runtime: runtime}
+	next.gen = runtime.ReplaceExecution(oldGeneration, next)
+	if next.gen == 0 {
+		t.Fatal("replace execution while cancel is in flight")
+	}
+	close(release)
+	if accepted := <-result; !accepted {
+		t.Fatal("cancel was lost across execution cutover")
+	}
+	if got := next.phase; got != RuntimeCancelling {
+		t.Fatalf("replacement phase = %s, want cancelling", got)
+	}
+}
+
+func TestRuntimeFinalizingIsBusy(t *testing.T) {
+	if !RuntimeFinalizing.Busy() {
+		t.Fatal("finalizing phase must remain busy until terminal commit finishes")
+	}
 }

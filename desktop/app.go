@@ -9649,6 +9649,11 @@ func (a *App) SetModelForTab(tabID, name string) (retErr error) {
 		tab.releaseSessionLease()
 		return err
 	}
+	if err := activateReplacementController(oldCtrl, newCtrl); err != nil {
+		a.mu.Unlock()
+		discardReplacementController(newCtrl, oldCtrl)
+		return fmt.Errorf("switching model: activate replacement runtime: %w", err)
+	}
 	tab.Ctrl = newCtrl
 	tab.model = name
 	tab.effort = cloneStringPtr(effortOverride)
@@ -9841,6 +9846,11 @@ func (a *App) SetEffortForTab(tabID, level string) error {
 		discardReplacementController(newCtrl, oldCtrl)
 		tab.releaseSessionLease()
 		return err
+	}
+	if err := activateReplacementController(oldCtrl, newCtrl); err != nil {
+		a.mu.Unlock()
+		discardReplacementController(newCtrl, oldCtrl)
+		return fmt.Errorf("switching effort: activate replacement runtime: %w", err)
 	}
 	tab.Ctrl = newCtrl
 	tab.model = modelRef

@@ -92,6 +92,12 @@ func (gw *BotGateway) applySessionModelSettings(ctx context.Context, key string,
 			_ = bindBotSessionWriteAuthority(previous)
 			return nil, fmt.Errorf("bot session changed while applying saved model settings")
 		}
+		if err := control.ActivateControllerReplacement(old, result.Controller); err != nil {
+			gw.mu.Unlock()
+			result.Controller.ReleaseResources()
+			_ = bindBotSessionWriteAuthority(previous)
+			return nil, fmt.Errorf("activate replacement bot runtime: %w", err)
+		}
 		gw.controllers[key] = next
 		previous.leases = nil
 		previous.retired = true

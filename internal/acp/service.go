@@ -1460,6 +1460,12 @@ func (s *service) reloadSessionExtensionsLocked(ctx context.Context, sess *acpSe
 		newCtrl.ReleaseResources()
 		return nil, sessionConfigActiveWorkError("session changed while reloading; retry")
 	}
+	oldCtrl, _ := cur.(*control.Controller)
+	if err := control.ActivateControllerReplacement(oldCtrl, newCtrl); err != nil {
+		sess.mu.Unlock()
+		newCtrl.ReleaseResources()
+		return nil, &RPCError{Code: ErrInternal, Message: sessionReloadExtensionsMethod + ": activate replacement: " + err.Error()}
+	}
 	sess.ctrl = newCtrl
 	sess.runtimeState = runtimeState
 	if sess.transcript != "" && sessionFileExists(sess.transcript) {
@@ -1954,6 +1960,12 @@ func (s *service) rebuildSessionLocked(ctx context.Context, sess *acpSession, cf
 		sess.mu.Unlock()
 		newCtrl.ReleaseResources()
 		return sessionConfigActiveWorkError("session changed while switching config; retry")
+	}
+	oldCtrl, _ := cur.(*control.Controller)
+	if err := control.ActivateControllerReplacement(oldCtrl, newCtrl); err != nil {
+		sess.mu.Unlock()
+		newCtrl.ReleaseResources()
+		return &RPCError{Code: ErrInternal, Message: "session config: activate replacement: " + err.Error()}
 	}
 	sess.ctrl = newCtrl
 	sess.model = cfgState.Model

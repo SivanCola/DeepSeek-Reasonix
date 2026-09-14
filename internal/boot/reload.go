@@ -64,10 +64,11 @@ func RebuildFrom(ctx context.Context, previous *BuildResult, opts Options) (*Bui
 //     InheritLifecycleFrom.
 //
 // Left to the frontend (Rebuild deliberately does not do these):
-//   - swapping its controller pointer and closing old AFTER a successful
-//     swap — old's controller and the old BuildResult.Runtime set stay the
-//     caller's to release (CloseIfGeneration guards against closing a newer
-//     runtime's resources);
+//   - atomically activating the replacement with
+//     control.ActivateControllerReplacement while swapping its controller
+//     pointer, then closing old AFTER the successful swap — old's controller
+//     and the old BuildResult.Runtime set stay the caller's to release
+//     (CloseIfGeneration guards against closing a newer runtime's resources);
 //   - re-installing the interactive approval gate (EnableInteractiveApproval)
 //     and re-binding approval/ask channels to the new controller;
 //   - persisting the migrated transcript (Controller.Snapshot) when the swap
