@@ -119,6 +119,9 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
   const context = { github: { event_name: "pull_request" },
     needs: { changes: { outputs: { desktop: "true" } }, "desktop-prepare": { result: "success" } } };
   const aggregate = job(ci, "desktop");
+  const verifications = ci.match(/artifact-identity\.mjs verify/g)?.length ?? 0;
+  assert.equal(ci.match(/--attempt "\$\{\{ needs\.desktop-prepare\.outputs\.producer_attempt \}\}"/g)?.length, verifications);
+  assert.equal(ci.match(/test -n "\$\{\{ needs\.desktop-prepare\.outputs\.producer_attempt \}\}"/g)?.length, verifications);
   for (const [name, variant] of [
     ["desktop-go", "stable"], ["desktop-frontend", "stable"], ["desktop-browser-group", "stable"],
     ["desktop-macos", "stable"], ["desktop-windows", "canary"], ["desktop-windows-go", "stable"],
@@ -128,6 +131,9 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
     assert.ok(body.includes("needs: [changes, desktop-prepare]"));
     assert.ok(body.includes(`name: \${{ needs.desktop-prepare.outputs.${variant}_artifact_name }}`));
     assert.ok(body.includes(`--shell electron --channel ${variant}`));
+    assert.ok(body.includes('test -n "${{ needs.desktop-prepare.outputs.producer_attempt }}"'));
+    assert.ok(body.includes('--attempt "${{ needs.desktop-prepare.outputs.producer_attempt }}"'));
+    assert.doesNotMatch(body, /artifact-identity\.mjs verify[^]*?--attempt "\$GITHUB_RUN_ATTEMPT"/);
     assert.ok(!body.includes("pnpm --dir frontend build"));
     assert.equal(condition(body, context), true);
     assert.equal(condition(body, { ...context, needs: { ...context.needs, "desktop-prepare": { result: "failure" } } }), false);
@@ -139,6 +145,10 @@ test("all desktop consumers verify the prepared build and reject a failed prepar
     assert.match(body, /canary_artifact_name/);
   }
   assert.match(job(ci, "desktop-macos"), /REASONIX_FRONTEND_PNPM_VERSION="\$\(pnpm --version\)"\n\s+export REASONIX_FRONTEND_PNPM_VERSION/);
+  const prepare = job(ci, "desktop-prepare");
+  assert.match(prepare, /producer_attempt: \$\{\{ steps\.artifact-identity\.outputs\.attempt \}\}/);
+  assert.match(prepare, /id: artifact-identity\n\s+run: echo "attempt=\$GITHUB_RUN_ATTEMPT" >> "\$GITHUB_OUTPUT"/);
+  assert.match(prepare, /stable_artifact_name: desktop-frontend-stable-\$\{\{ github\.run_id \}\}-\$\{\{ steps\.artifact-identity\.outputs\.attempt \}\}/);
 });
 
 test("browser matrix preserves five entry points and fails closed through desktop-browser", () => {
@@ -146,6 +156,8 @@ test("browser matrix preserves five entry points and fails closed through deskto
   assert.match(groups, /max-parallel: 2/);
   assert.match(groups, /fail-fast: false/);
   assert.match(groups, /group: \[app-settings-motion, transcript\]/);
+  assert.match(groups, /REASONIX_TRANSCRIPT_MODE=native-scrollbar REASONIX_LAYOUT_ARTIFACTS="\$evidence\/native-scrollbar"/);
+  assert.match(groups, /REASONIX_TRANSCRIPT_MODE=headless-reader REASONIX_LAYOUT_ARTIFACTS="\$evidence\/headless-reader"/);
   assert.doesNotMatch(groups, /group: \[app-settings, motion, transcript\]/);
   for (const command of ["test:app-browser", "test:settings-browser", "test:motion-browser", "test:transcript-browser", "test:transcript-reader-browser"])
     assert.equal(ci.match(new RegExp(`pnpm --dir frontend ${command}(?:\\s|$)`, "g"))?.length, 1, command);
