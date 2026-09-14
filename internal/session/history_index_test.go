@@ -95,6 +95,11 @@ func TestHistoryPageKeepsSnapshotAndAuthorizesReferencedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := service.Close(context.Background(), runtime.Ref()); err != nil {
+			t.Error(err)
+		}
+	})
 	appendMessage := func(id, content string) {
 		payload, err := json.Marshal(map[string]any{"message": provider.Message{ID: id, Role: provider.RoleUser, Content: content}})
 		if err != nil {
@@ -166,6 +171,11 @@ func TestSearchHistoryUsesStableSnapshotAndOpaqueQueryCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := service.Close(context.Background(), runtime.Ref()); err != nil {
+			t.Error(err)
+		}
+	})
 	appendMessage := func(id, content string) {
 		payload, _ := json.Marshal(map[string]any{"message": provider.Message{ID: id, Role: provider.RoleUser, Content: content}})
 		if _, err := runtime.Session().Append(t.Context(), Batch{OperationID: id, Events: []Event{{Kind: "message/complete", Payload: payload}}}); err != nil {
@@ -208,6 +218,11 @@ func TestSearchHistoryCoversInlineFieldsAndReferencedBodies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := service.Close(context.Background(), runtime.Ref()); err != nil {
+			t.Error(err)
+		}
+	})
 	messages := []provider.Message{
 		{ID: "inline", Role: provider.RoleAssistant, RawContent: "raw-field-needle", ReasoningContent: "reasoning-field-needle"},
 		{ID: "referenced", Role: provider.RoleUser, Content: strings.Repeat("large-body-", 7000) + "referenced-field-needle"},

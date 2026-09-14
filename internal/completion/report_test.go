@@ -1,6 +1,7 @@
 package completion
 
 import (
+	"path/filepath"
 	"reasonix/internal/evidence"
 	"reflect"
 	"testing"
@@ -57,8 +58,10 @@ func TestFactsDoNotInventMissingChecksOrReviews(t *testing.T) {
 	}
 }
 func TestFactsExcludeScratchChanges(t *testing.T) {
-	report := BuildFacts(ledgerOf(wrote("/project/main.go"), wrote("/scratch/temp.go")), "/project", []string{"/scratch"})
-	if len(report.Changes) != 1 || report.Changes[0].Path != "/project/main.go" {
+	project, scratch := t.TempDir(), t.TempDir()
+	path := filepath.Join(project, "main.go")
+	report := BuildFacts(ledgerOf(wrote(path), wrote(filepath.Join(scratch, "temp.go"))), project, []string{scratch})
+	if len(report.Changes) != 1 || report.Changes[0].Path != path {
 		t.Fatalf("changes=%+v", report.Changes)
 	}
 }

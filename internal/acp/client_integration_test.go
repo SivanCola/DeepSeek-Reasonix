@@ -396,6 +396,11 @@ func TestRebuildSessionKeepsClientIOAndMode(t *testing.T) {
 	}
 	sess.lease = lease
 	t.Cleanup(sess.releaseSessionLease)
+	t.Cleanup(func() {
+		if ctrl := sess.currentCtrl(); ctrl != nil {
+			ctrl.Close()
+		}
+	})
 
 	factory := &configurableFactory{dir: dir}
 	svc := &service{

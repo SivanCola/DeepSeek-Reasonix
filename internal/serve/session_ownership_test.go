@@ -84,7 +84,7 @@ func newOwnershipFixture(t *testing.T) *ownershipFixture {
 	bc := NewBroadcaster()
 	exec := agent.New(nil, nil, agent.NewSession("sys"), agent.Options{}, bc)
 	ctrl := control.New(control.Options{Executor: exec, Sink: bc, SessionDir: dir, SessionPath: active})
-	server := New(ctrl, bc, config.ServeConfig{})
+	server := newLifecycleTestServer(t, ctrl, bc, config.ServeConfig{})
 	leases := control.NewSessionLeaseKeeper()
 	if err := leases.Rebind(active); err != nil {
 		t.Fatalf("seed lease on active: %v", err)
@@ -534,7 +534,7 @@ func TestHandoffWaitsOnRunningForeground(t *testing.T) {
 
 	bc := NewBroadcaster()
 	ctrl := &runningForeverController{Controller: control.New(control.Options{Sink: bc, SessionDir: dir, SessionPath: active})}
-	server := New(ctrl, bc, config.ServeConfig{})
+	server := newLifecycleTestServer(t, ctrl, bc, config.ServeConfig{})
 	leases := control.NewSessionLeaseKeeper()
 	defer leases.Release()
 	if err := leases.Rebind(active); err != nil {
