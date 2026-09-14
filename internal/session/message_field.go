@@ -31,7 +31,7 @@ const (
 
 // MessageFieldPage is one bounded fragment of one message field.
 type MessageFieldPage struct {
-	Status     string `json:"status"` // ready | not_found | preparing
+	Status     string `json:"status"` // ready | not_found | preparing | unsupported
 	MessageID  string `json:"messageId"`
 	Version    int    `json:"version"`
 	Field      string `json:"field"`

@@ -51,7 +51,7 @@ type HistoryWindowRequest struct {
 // the cursors to keep reading in both directions.
 type HistoryWindowPage struct {
 	Messages         []PersistentMessage `json:"messages"`
-	Status           string              `json:"status"` // preparing|ready|failed|stale_cursor|not_found
+	Status           string              `json:"status"` // preparing|ready|failed|stale_cursor|not_found|unsupported
 	SnapshotSequence uint64              `json:"snapshotSequence"`
 	CoverageSequence uint64              `json:"coverageSequence"`
 	Generation       string              `json:"generation,omitempty"`
