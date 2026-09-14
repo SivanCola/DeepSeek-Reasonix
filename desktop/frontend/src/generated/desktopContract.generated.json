@@ -9042,6 +9042,83 @@
     {
       "cancellation": "before-dispatch",
       "domain": "desktop/remote_transcript_api.go",
+      "name": "RemoteSessionHistoryWindowForTab",
+      "owner": "App.RemoteSessionHistoryWindowForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "session.HistoryWindowRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.HistoryWindowPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RemoteSessionHistoryWindowForTab"
+      },
+      "sources": [
+        "desktop/remote_transcript_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_transcript_api.go",
+      "name": "RemoteSessionMessageFieldForTab",
+      "owner": "App.RemoteSessionMessageFieldForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.MessageFieldPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "messageID",
+          "version",
+          "field",
+          "offset",
+          "length"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.RemoteSessionMessageFieldForTab"
+      },
+      "sources": [
+        "desktop/remote_transcript_api.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/remote_transcript_api.go",
       "name": "RemoteSessionOpenForTab",
       "owner": "App.RemoteSessionOpenForTab",
       "params": [
@@ -12148,6 +12225,36 @@
     },
     {
       "cancellation": "before-dispatch",
+      "domain": "desktop/session_markdown_export.go",
+      "name": "SaveSessionMarkdownForTab",
+      "owner": "App.SaveSessionMarkdownForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        }
+      ],
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "path",
+          "title"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SaveSessionMarkdownForTab"
+      },
+      "sources": [
+        "desktop/session_markdown_export.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
       "domain": "desktop/theme_app.go",
       "name": "SaveThemePack",
       "owner": "App.SaveThemePack",
@@ -12481,6 +12588,83 @@
         ],
         "kind": "owner-inputs",
         "resolver": "App.SessionHistoryPageForTab"
+      },
+      "sources": [
+        "desktop/session_history_service.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_history_service.go",
+      "name": "SessionHistoryWindowForTab",
+      "owner": "App.SessionHistoryWindowForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "object",
+          "ref": "session.HistoryWindowRequest"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.HistoryWindowPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "req"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SessionHistoryWindowForTab"
+      },
+      "sources": [
+        "desktop/session_history_service.go"
+      ]
+    },
+    {
+      "cancellation": "before-dispatch",
+      "domain": "desktop/session_history_service.go",
+      "name": "SessionMessageFieldForTab",
+      "owner": "App.SessionMessageFieldForTab",
+      "params": [
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        },
+        {
+          "kind": "string"
+        },
+        {
+          "kind": "integer"
+        },
+        {
+          "kind": "integer"
+        }
+      ],
+      "result": {
+        "kind": "object",
+        "ref": "session.MessageFieldPage"
+      },
+      "returnsError": true,
+      "scope": {
+        "inputs": [
+          "tabID",
+          "messageID",
+          "version",
+          "field",
+          "offset",
+          "length"
+        ],
+        "kind": "owner-inputs",
+        "resolver": "App.SessionMessageFieldForTab"
       },
       "sources": [
         "desktop/session_history_service.go"
@@ -17236,7 +17420,7 @@
     "topic:activation",
     "updater:progress"
   ],
-  "protocolVersion": 7,
+  "protocolVersion": 8,
   "types": {
     "agent.ToolRecoveryStatistics": {
       "fields": [
@@ -31819,6 +32003,17 @@
           "type": {
             "kind": "integer"
           }
+        },
+        {
+          "name": "skillWatch",
+          "optional": true,
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "skillwatch.Diagnostics"
+            },
+            "kind": "nullable"
+          }
         }
       ]
     },
@@ -36740,6 +36935,196 @@
         }
       ]
     },
+    "session.HistoryWindowPage": {
+      "fields": [
+        {
+          "name": "messages",
+          "type": {
+            "elem": {
+              "kind": "object",
+              "ref": "session.PersistentMessage"
+            },
+            "kind": "array"
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "snapshotSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "coverageSequence",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "generation",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "totalTurns",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "hasOlder",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "hasNewer",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "name": "olderCursor",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "newerCursor",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "anchorMessageId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "anchorTurn",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "session.HistoryWindowRequest": {
+      "fields": [
+        {
+          "name": "anchor",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "messageId",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "turn",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "cursor",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "direction",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "session.MessageFieldPage": {
+      "fields": [
+        {
+          "name": "status",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "messageId",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "version",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "field",
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "totalBytes",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "offset",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "data",
+          "optional": true,
+          "type": {
+            "kind": "string"
+          }
+        },
+        {
+          "name": "nextOffset",
+          "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "encoding",
+          "type": {
+            "kind": "string"
+          }
+        }
+      ]
+    },
     "session.MessageHistoryPage": {
       "fields": [
         {
@@ -37184,6 +37569,58 @@
         {
           "name": "integrityBlockBytes",
           "optional": true,
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    },
+    "skillwatch.Diagnostics": {
+      "fields": [
+        {
+          "name": "physicalWatches",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "logicalSubscriptions",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "scans",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "scannedEntries",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "eventsReceived",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "notifications",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "degradedRoots",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "name": "helperRestarts",
           "type": {
             "kind": "integer"
           }

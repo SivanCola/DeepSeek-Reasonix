@@ -101,8 +101,12 @@ function FileEntry({ refValue, description, compact = false }: { refValue: FileR
   const run = async (action: PresentedFileAction) => {
     setMenu(false); setError(""); setBusy(true);
     try {
-      if (action === "preview" || action === "source" || action === "browser") await openResource(refValue, { view: action });
-      else await performResourceAction(refValue, action);
+      const outcome = action === "preview" || action === "source" || action === "browser"
+        ? await openResource(refValue, { view: action })
+        : await performResourceAction(refValue, action);
+      // A cancelled command reports nothing: it lost its dock rather than
+      // failing, and the row must not claim an error the user never hit.
+      if (outcome.status === "failed") setError(outcome.error.message);
     }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }

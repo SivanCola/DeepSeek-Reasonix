@@ -1,14 +1,14 @@
 import { app } from "./bridge";
+import { contentRequestScheduler } from "./contentRequestScheduler";
 import { historyEntryIdForItemId } from "./transcriptHistoryEntry";
 import { getTranscriptStore } from "./transcriptStore";
 import type { Item } from "./useController";
 
-/** Four requests per mounted session, with deduplication and disposal fencing. */
+/** Two requests per session under a shared four-request application budget. */
 export class ChatContentLoader {
-  private active = 0;
+  private readonly requestOwner = contentRequestScheduler.owner();
   private closed = false;
   private generation = 0;
-  private queue: Array<() => void> = [];
   private pending = new Map<string, { item: Item; promise: Promise<string> }>();
   constructor(private tabId?: string, private resolve?: (item: Item, field: "content" | "reasoning" | "tool") => Promise<string>) {}
   activate() { this.closed = false; }
@@ -25,16 +25,14 @@ export class ChatContentLoader {
     const request = new Promise<string>((resolve, reject) => {
       const run = () => {
         if (this.closed || generation !== this.generation) { reject(new Error("Content view closed")); return; }
-        this.active++;
         void (this.resolve ? this.resolve(item, field) : this.fetch(item, field)).then(value => {
           if (this.closed || generation !== this.generation) reject(new Error("Content view closed")); else resolve(value);
         }, reject).finally(() => {
-          this.active--;
           if (this.pending.get(key)?.promise === request) this.pending.delete(key);
-          this.queue.shift()?.();
+          contentRequestScheduler.release(this.requestOwner);
         });
       };
-      if (this.active < 4) run(); else this.queue.push(run);
+      contentRequestScheduler.schedule(this.requestOwner, run, () => reject(new Error("Content view closed")));
     });
     this.pending.set(key, { item, promise: request });
     return request;
@@ -64,7 +62,7 @@ export class ChatContentLoader {
     if (text === undefined && store.hasContentReference(this.tabId, entry, field)) throw new Error("Content reference unavailable; retry");
     return text ?? fallback;
   }
-  dispose() { this.generation++; this.closed = true; const waiting = this.queue; this.queue = []; waiting.forEach(run => run()); this.pending.clear(); }
+  dispose() { this.generation++; this.closed = true; contentRequestScheduler.cancel(this.requestOwner); this.pending.clear(); }
 }
 
 function sameContent(a: Item, b: Item): boolean {

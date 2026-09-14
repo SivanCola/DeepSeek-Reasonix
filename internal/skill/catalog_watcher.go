@@ -2,22 +2,42 @@ package skill
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
+
+type watcherLifecycle struct {
+	cancel context.CancelFunc
+	active bool
+}
 
 func (s *Store) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.watcherMu.Lock()
+	if s.hostWatch.active {
+		// Service-backed watches: Release is logical and never blocks on
+		// backend IO, so Close cannot get stuck on an uninterruptible
+		// registration path.
+		subs := s.hostWatch.subs
+		s.hostWatch.subs = nil
+		s.hostWatch.active = false
+		s.closed = true
+		s.watcherMu.Unlock()
+		for _, sub := range subs {
+			sub.Release()
+		}
+		s.catalogMu.Lock()
+		if s.catalogFlight != nil && s.catalogFlight.cancel != nil {
+			s.catalogFlight.cancel()
+		}
+		s.catalogMu.Unlock()
+		return nil
+	}
 	if s.closed {
 		done := s.watcherDone
 		s.watcherMu.Unlock()
@@ -50,19 +70,13 @@ func (s *Store) ensureWatcher() {
 	if s == nil || s.disableDiscovery {
 		return
 	}
+	if s.hostWatch.service != nil {
+		s.subscribeHostWatch()
+		return
+	}
 	s.watcherMu.Lock()
 	if s.closed || s.watcherLifecycle.active {
 		s.watcherMu.Unlock()
-		return
-	}
-	if runtime.GOOS == "windows" {
-		ctx, cancel := context.WithCancel(context.Background())
-		s.watcherGeneration++
-		generation := s.watcherGeneration
-		done := make(chan struct{})
-		s.watcherDone, s.watcherLifecycle.cancel, s.watcherLifecycle.active = done, cancel, true
-		s.watcherMu.Unlock()
-		go s.pollCatalog(ctx, generation, done)
 		return
 	}
 	watcher, err := fsnotify.NewWatcher()
@@ -154,82 +168,6 @@ func runCatalogWatch(ctx context.Context, events <-chan fsnotify.Event, errors <
 			}
 		}
 	}
-}
-
-// Windows fsnotify Add can block inside ReadDirectoryChangesW while another
-// goroutine closes the watcher. A session teardown must never wait on that
-// uninterruptible registration path, so Windows uses a cancellable, bounded
-// polling generation instead. Host install/config operations still invalidate
-// synchronously; polling covers external edits and missing-root creation.
-func (s *Store) pollCatalog(ctx context.Context, generation uint64, done chan struct{}) {
-	defer close(done)
-	defer func() {
-		s.watcherMu.Lock()
-		if s.watcherGeneration == generation {
-			s.watcherDone = nil
-			s.watcherLifecycle.cancel = nil
-			s.watcherLifecycle.active = false
-		}
-		s.watcherMu.Unlock()
-	}()
-	previous, ok := s.catalogWatchSignature(ctx)
-	if !ok {
-		return
-	}
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			current, ok := s.catalogWatchSignature(ctx)
-			if !ok {
-				return
-			}
-			if current != previous {
-				previous = current
-				s.Invalidate("filesystem changed")
-			}
-		}
-	}
-}
-
-func (s *Store) catalogWatchSignature(ctx context.Context) ([sha256.Size]byte, bool) {
-	if ctx.Err() != nil {
-		return [sha256.Size]byte{}, false
-	}
-	hash := sha256.New()
-	for _, root := range s.roots() {
-		if ctx.Err() != nil {
-			return [sha256.Size]byte{}, false
-		}
-		directories, ok := watchDirectoriesContext(ctx, root.Dir, s.maxDepth)
-		if !ok {
-			return [sha256.Size]byte{}, false
-		}
-		for _, dir := range directories {
-			if ctx.Err() != nil {
-				return [sha256.Size]byte{}, false
-			}
-			entries, err := os.ReadDir(dir)
-			_, _ = fmt.Fprintf(hash, "%s\x00%v\x00", dir, err)
-			for _, entry := range entries {
-				if ctx.Err() != nil {
-					return [sha256.Size]byte{}, false
-				}
-				info, statErr := entry.Info()
-				if statErr != nil {
-					_, _ = fmt.Fprintf(hash, "%s\x00%v\x00", entry.Name(), statErr)
-					continue
-				}
-				_, _ = fmt.Fprintf(hash, "%s\x00%d\x00%d\x00%d\x00", entry.Name(), info.Size(), info.ModTime().UnixNano(), info.Mode())
-			}
-		}
-	}
-	var signature [sha256.Size]byte
-	copy(signature[:], hash.Sum(nil))
-	return signature, true
 }
 
 func (s *Store) watcherCurrent(watcher *fsnotify.Watcher, generation uint64) bool {

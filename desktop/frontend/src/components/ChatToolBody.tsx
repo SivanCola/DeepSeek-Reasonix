@@ -10,6 +10,7 @@ import { normalizeSearchSources } from "../lib/searchSourcesPresentation";
 import { parseSearchSources, searchOutputMetadata } from "../lib/searchSources";
 import toolCss from "./harness-chat/ToolRow.styles";
 import { classifyTool } from "../lib/chatToolPresentation";
+import { boundedPayloadSections, utf8Prefix } from "../lib/toolPayloadPreview";
 import "./harness-chat/TerminalBlock.css";
 import "./harness-chat/DiffBlock.css";
 import "./harness-chat/Pill.css";
@@ -71,14 +72,12 @@ export default function ChatToolBody({ item, loader }: { item: Extract<ChatNode,
 export function ToolPayload({ text, preview }: { text: string; preview: boolean }) {
   const t = useT();
   let value: unknown;
-  try { value = JSON.parse(text); } catch { return <pre>{preview ? text.slice(0, 8000) : text}</pre>; }
-  if (!value || typeof value !== "object" || Array.isArray(value)) return <pre>{preview ? text.slice(0, 8000) : text}</pre>;
-  let remaining = preview ? 8000 : Infinity;
-  return <>{Object.entries(value).map(([key, content]) => {
-    if (content == null || remaining <= 0) return null;
-    const body = typeof content === "string" ? content : JSON.stringify(content, null, 2);
-    const shown = body.slice(0, remaining); remaining -= shown.length;
+  try { value = JSON.parse(text); } catch { return <pre>{preview ? utf8Prefix(text, 16 * 1024) : text}</pre>; }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return <pre>{preview ? utf8Prefix(text, 16 * 1024) : text}</pre>;
+  const entries = preview ? boundedPayloadSections(value as Record<string, unknown>)
+    : Object.entries(value).filter(([, content]) => content != null).map(([key, content]) => ({ key, body: typeof content === "string" ? content : JSON.stringify(content, null, 2) }));
+  return <>{entries.map(({ key, body }) => {
     const label = key === "args" ? t("chat.tool.input") : key === "output" ? t("chat.tool.output") : key;
-    return <section key={key} className={toolCss.ioSection}><span className={toolCss.ioLabel}>{label}</span><pre className={toolCss.ioText} data-error={key === "error" || undefined}>{shown}</pre></section>;
+    return <section key={key} className={toolCss.ioSection}><span className={toolCss.ioLabel}>{label}</span><pre className={toolCss.ioText} data-error={key === "error" || undefined}>{body}</pre></section>;
   })}</>;
 }

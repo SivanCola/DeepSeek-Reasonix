@@ -39,13 +39,18 @@ export type TranscriptProps = {
   running?: boolean;
   hydrating?: boolean;
   hasOlderHistory?: boolean;
+  hasNewerHistory?: boolean;
   historyStartTurn?: number;
+  historyEndTurn?: number;
   /** Total turns the snapshot reports, used to keep the rail area while the
    * outline loads without showing it on a brand-new conversation. */
   totalTurns?: number;
   loadingOlderHistory?: boolean;
   olderHistoryError?: string;
   onLoadOlderHistory?: (targetTurn?: number, trigger?: HistoryLoadTrigger) => HistoryLoadOutcome | boolean | Promise<HistoryLoadOutcome | boolean>;
+  loadingNewerHistory?: boolean;
+  newerHistoryError?: string;
+  onLoadNewerHistory?: (latest?: boolean) => HistoryLoadOutcome | boolean | Promise<HistoryLoadOutcome | boolean>;
   turnStartAt?: number;
   invocationMetadata?: InvocationMetadataMap;
   surfaceCommitToken?: string;
@@ -61,8 +66,9 @@ export function Transcript(props: TranscriptProps) {
 
 function ChatSession(props: TranscriptProps & { sessionKey: string }) {
   const { sessionKey, tabId, items, live, liveStore, running = false, hydrating = false,
-    hasOlderHistory = false, loadingOlderHistory = false, olderHistoryError, turnStartAt,
-    onLoadOlderHistory, onPrompt, onFork, onSurfacePaintReady, surfaceCommitToken } = props;
+    hasOlderHistory = false, hasNewerHistory = false, loadingOlderHistory = false, olderHistoryError,
+    loadingNewerHistory = false, newerHistoryError, turnStartAt,
+    onLoadOlderHistory, onLoadNewerHistory, onPrompt, onFork, onSurfacePaintReady, surfaceCommitToken } = props;
   const t = useT();
   const [source] = useState(() => new ChatSource(sessionKey));
   const [mounts] = useState(() => new ChatMountedOrder());
@@ -127,20 +133,35 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
     drawerWasOpen.current = Boolean(activeDetails);
   }, [activeDetails]);
   const [pagingError, setPagingError] = useState(false);
+  const [selectionBlocked, setSelectionBlocked] = useState(false);
   // Manual paging and navigation jumps share one queue. A page already in
   // flight is awaited rather than submitted twice, so a jump that collides
   // with the button continues from that page instead of failing.
   const pagingPromise = useRef<Promise<HistoryLoadOutcome> | null>(null);
-  const loadOlder = (trigger: HistoryLoadTrigger = "viewport-user"): Promise<HistoryLoadOutcome> => {
+  const selectionInsideTranscript = () => {
+    const selection = window.getSelection?.();
+    return Boolean(selection && !selection.isCollapsed && scroller.current &&
+      ((selection.anchorNode && scroller.current.contains(selection.anchorNode)) ||
+        (selection.focusNode && scroller.current.contains(selection.focusNode))));
+  };
+  useEffect(() => {
+    const clear = () => { if (!selectionInsideTranscript()) setSelectionBlocked(false); };
+    document.addEventListener("selectionchange", clear);
+    return () => document.removeEventListener("selectionchange", clear);
+  }, []);
+  const loadPage = (direction: "older" | "newer" | "latest", trigger: HistoryLoadTrigger = "viewport-user"): Promise<HistoryLoadOutcome> => {
     if (pagingPromise.current) return pagingPromise.current;
-    if (!onLoadOlderHistory) return Promise.resolve("empty");
+    const load = direction === "older" ? () => onLoadOlderHistory?.(undefined, trigger) : () => onLoadNewerHistory?.(direction === "latest");
+    if (direction === "older" ? !onLoadOlderHistory : !onLoadNewerHistory) return Promise.resolve("empty");
+    if (selectionInsideTranscript()) { setSelectionBlocked(true); return Promise.resolve("empty"); }
     const generation = lifetime.current;
     setPagingError(false);
+    setSelectionBlocked(false);
     scroll.beforeChange();
     const run = (async (): Promise<HistoryLoadOutcome> => {
       try {
         // A host that still answers with a plain boolean is normalized here.
-        const result = await onLoadOlderHistory(undefined, trigger);
+        const result = await load();
         if (result === true) return "loaded";
         if (result === false) return "empty";
         return result ?? "empty";
@@ -153,6 +174,7 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
     void run.finally(() => { if (pagingPromise.current === run) pagingPromise.current = null; });
     return run;
   };
+  const loadOlder = (trigger: HistoryLoadTrigger = "viewport-user") => loadPage("older", trigger);
   // The jump outlives a single render, so it reads the live paging state
   // through refs rather than through the closure it was built with.
   const loadOlderRef = useRef(loadOlder); loadOlderRef.current = loadOlder;
@@ -221,11 +243,20 @@ function ChatSession(props: TranscriptProps & { sessionKey: string }) {
             data-transcript-hydrating={hydrating} data-scroll-mode={position.following ? "tail" : "reader"}>
             <div ref={column} className="chat-column">
               {hydrating && <p role="status">{t("chat.loading")}</p>}
+              {(hasOlderHistory || hasNewerHistory) && <div className="chat-history-window" role="status">
+                <span>{t("chat.historyRange", { start: Math.max(1, (props.historyStartTurn ?? 0) + 1), end: Math.max(1, props.historyEndTurn ?? props.totalTurns ?? 0), total: props.totalTurns ?? 0 })}</span>
+              </div>}
               {hasOlderHistory && <button className="btn chat-older" disabled={loadingOlderHistory} onClick={() => void loadOlder()}>{t(loadingOlderHistory ? "chat.loading" : "chat.loadOlder")}</button>}
               {(olderHistoryError || pagingError) && <button className="btn" onClick={() => void loadOlder()}>{t("chat.loadFailed")}</button>}
+              {selectionBlocked && <p className="chat-history-selection" role="status">{t("chat.historySelectionBlocked")}</p>}
               {!hydrating && items.length === 0 && !running && <Welcome onPrompt={onPrompt} />}
               <ChatNodeList key={source.sessionKey} source={source} mounts={mounts} loader={loader} scroll={scroll} actions={actions} tabId={tabId} hostId={props.hostId} />
               <ChatRunning source={source} />
+              {hasNewerHistory && <div className="chat-history-newer">
+                <button className="btn" disabled={loadingNewerHistory || running} onClick={() => void loadPage("newer")}>{t(loadingNewerHistory ? "chat.loading" : "chat.loadNewer")}</button>
+                <button className="btn" disabled={loadingNewerHistory || running} onClick={() => void loadPage("latest")}>{t("chat.toLatest")}</button>
+              </div>}
+              {newerHistoryError && <button className="btn" onClick={() => void loadPage("newer")}>{t("chat.loadFailed")}</button>}
             </div>
           </div>
           <button className="btn chat-to-bottom" hidden={position.following} aria-label={t("chat.toLatest")} onClick={scroll.toBottom}><ArrowDown size={18} /></button>

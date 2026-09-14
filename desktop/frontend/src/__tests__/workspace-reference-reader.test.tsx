@@ -6,6 +6,7 @@
 // stale workspace read on screen.
 import { act } from "react";
 import { flushPromises, renderFilesWorkspace, waitFor } from "./workspace-panel-test-harness";
+import { fileNavigationOwner } from "../lib/fileNavigationCommands";
 
 const reads: string[] = [];
 const preview = (path: string, body: string) => {
@@ -13,19 +14,30 @@ const preview = (path: string, body: string) => {
   return { path, body, size: body.length, truncated: false, binary: false };
 };
 
-const { dom, root, rerender } = await renderFilesWorkspace({
+const { dom, root, dockTabId } = await renderFilesWorkspace({
   ReadFileForTab: async (_tabId, path) => preview(path, "WORKSPACE READ"),
   ReadReferenceFileForTab: async (_tabId, path) => preview(path, "REFERENCE READ"),
   ReadReferenceFileSourceForTab: async (_tabId, path) => preview(path, "REFERENCE SOURCE"),
-}, {
-  revealPathRequest: { id: 1, path: "docs/note.md", action: "preview" },
+  ResolveReferencePathForTab: async (_tabId, path) => `/repo/${path}`,
+});
+
+const scope = { sessionTabId: "tab-a", dockTabId };
+await act(async () => {
+  await fileNavigationOwner().openIn(scope, {
+    ref: { source: "workspace", hostId: "local", tabId: "tab-a", path: "docs/note.md" },
+    params: { action: "preview", view: "files" },
+  });
+  await flushPromises();
 });
 
 await waitFor("workspace read", () => document.body.textContent?.includes("WORKSPACE READ") === true);
 
 // Same path, now owned by a verified answer reference.
 await act(async () => {
-  await rerender({ revealPathRequest: { id: 2, path: "docs/note.md", reference: true, action: "preview" } });
+  await fileNavigationOwner().openIn(scope, {
+    ref: { source: "reference", hostId: "local", tabId: "tab-a", path: "docs/note.md" },
+    params: { action: "preview", view: "files" },
+  });
   await flushPromises();
 });
 await waitFor("reference read", () => document.body.textContent?.includes("REFERENCE READ") === true);

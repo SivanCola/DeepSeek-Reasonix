@@ -437,15 +437,13 @@ func waitRunning(t *testing.T, ctrl *control.Controller) {
 
 func waitNotRunning(t *testing.T, ctrl *control.Controller) {
 	t.Helper()
-	deadline := time.After(2 * time.Second)
-	for {
-		if !ctrl.Running() {
-			return
-		}
-		select {
-		case <-deadline:
-			t.Fatal("controller never left the running state after cancel")
-		case <-time.After(5 * time.Millisecond):
-		}
+	done, running := ctrl.TurnIdleDone()
+	if !running {
+		return
+	}
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatalf("controller never reached idle after cancel: %+v", ctrl.RuntimeStatus())
 	}
 }

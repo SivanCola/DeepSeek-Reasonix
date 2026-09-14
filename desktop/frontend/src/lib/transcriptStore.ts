@@ -1,27 +1,22 @@
 // Bounded transcript records with stable ids, lazy content, generation-aware paging, and weighted LRU eviction.
 import { asArray } from "./array";
-import { historicalResultNotice } from "./completionResultState";
-import { canonicalHistoryContent, canonicalHistorySlice, canonicalMessage, resolvedHistoryField } from "./canonicalTranscriptBackend";
+import { canonicalHistoryContent, canonicalHistorySlice, resolvedHistoryField } from "./canonicalTranscriptBackend";
 import { noteHistoryPage, registerTranscriptCacheDiagnostics } from "./sessionDiagnostics";
 import { TranscriptMarkdownCache, type ParsedMarkdownValue } from "./transcriptMarkdownCache";
 export type { ParsedMarkdownValue } from "./transcriptMarkdownCache";
-import { historySearchAndAnswer } from "./searchTranscript";
-import { fileDiffFromWire, summarizeFileDiff } from "./tools";
-import {
-  historyToolError,
-  isReadOnlyTool,
-  type Item,
-} from "./useController";
-import { historyNoticeItems } from "./controllerNotices";
+import type { Item } from "./useController";
 import { resolveTranscriptEntryAlias, TranscriptContentResolverRegistry } from "./transcriptContentResolver";
+import { applyResolvedField, convertRecord, entryToRecord, itemIdForToolCall, type RecordConversion, type TranscriptRecord } from "./transcriptRecordProjection";
+import { recordBytes } from "./transcriptRecordBytes";
+import { appendLivePageEntries, type TranscriptWindowPage } from "./transcriptLiveWindow";
+import { RESOURCE_BUDGETS } from "./resourceBudgets";
+import { fileDiffFromWire } from "./tools";
 import type {
   HistoryContentChunk,
   HistoryContentRef,
   HistoryEntry,
-  HistoryMessage,
   HistorySlice,
   HistorySliceRequest,
-  MemoryCitation,
 } from "./types";
 
 export interface TranscriptBackend {
@@ -36,6 +31,10 @@ export interface TranscriptStoreOptions {
   historyBodyBudgetBytes?: number;
   /** Parsed-markdown cache budget. Default 16MiB. */
   markdownBudgetBytes?: number;
+  /** Adjacent history pages retained per session, newest-side included. */
+  windowMaxPages?: number;
+  /** Entries grouped into one live-tail page before it becomes reclaimable. */
+  windowPageEntries?: number;
 }
 
 export interface TranscriptProjection {
@@ -44,6 +43,8 @@ export interface TranscriptProjection {
   endTurn: number;
   totalTurns: number;
   hasOlder: boolean;
+  /** More history exists past the newer edge of the resident window. */
+  hasNewer: boolean;
   revision: number;
   revisionKnown: boolean;
   digest: string;
@@ -54,7 +55,24 @@ export interface LoadOlderResult extends TranscriptProjection {
   kind: "prepend" | "reload";
   /** Items contributed by the older page (kind === "prepend"). */
   prependItems: Item[];
-  /** Existing item ids superseded by cross-page tool merges (kind === "prepend"). */
+  /**
+   * Ids the caller must drop: items superseded by cross-page tool merges, plus
+   * every item on a page reclaimed to keep the window at its page budget.
+   */
+  removeIds: string[];
+}
+
+export interface LoadNewerResult extends TranscriptProjection {
+  /** "append": page newer items; "stale": the window predates a rebuild. */
+  kind: "append" | "stale";
+  /** Items contributed by the newer page (kind === "append"). */
+  appendItems: Item[];
+  /** Ids reclaimed from the older edge to keep the window bounded. */
+  removeIds: string[];
+}
+
+export interface AppendEntriesResult extends TranscriptProjection {
+  /** Ids reclaimed from the caller's mounted projection. */
   removeIds: string[];
 }
 
@@ -62,31 +80,6 @@ export interface TranscriptContentChange {
   tabId: string;
   /** Re-converted items keyed by their stable item id. */
   patches: Record<string, Item>;
-}
-
-interface TranscriptRecord {
-  entryId: string;
-  turn: number;
-  order: number;
-  message: HistoryMessage;
-  refs: HistoryContentRef[];
-  /** field -> full content once fetched; also applied into message. */
-  resolved?: Record<string, string>;
-  /** field -> true when the backend reported the ref stale; preview is kept. */
-  staleRefs?: Record<string, true>;
-  bytes: number;
-}
-
-interface RecordConversion {
-  items: Item[];
-  /** Result records this record's tool calls consumed (entryIds). */
-  claims: string[];
-  /** ID-based calls converted without a result (toolCallIds). */
-  unresolvedIds: string[];
-  /** Positional (id-less) call indexes still unmatched. */
-  pendingPositional: number[];
-  /** callIndex -> result record entryId for matched calls (re-conversion input). */
-  matches: Map<number, string>;
 }
 
 interface SessionTranscript {
@@ -112,6 +105,14 @@ interface SessionTranscript {
   itemsCache: Item[] | null;
   nextCursor: string;
   hasOlder: boolean;
+  /** Resident window pages, oldest first. Empty until a page is loaded. */
+  pages: TranscriptWindowPage[];
+  /** Cursor fetching the page immediately newer than the resident window. */
+  newerCursor: string;
+  hasNewer: boolean;
+  /** Pages reclaimed from each end; diagnostics only. */
+  reclaimedOlder: number;
+  reclaimedNewer: number;
   totalTurns: number;
   startTurn: number;
   endTurn: number;
@@ -121,12 +122,15 @@ interface SessionTranscript {
   generation: number;
   bodyBytes: number;
   olderInFlight: boolean;
+  newerInFlight: boolean;
   pendingContent: Map<string, { generation: number; promise: Promise<string | undefined> }>;
 }
 
 const DEFAULT_MAX_RESIDENT_SESSIONS = 3;
-const DEFAULT_HISTORY_BODY_BUDGET = 32 << 20;
+const DEFAULT_HISTORY_BODY_BUDGET = RESOURCE_BUDGETS.historyBodyBytes;
 const DEFAULT_MARKDOWN_BUDGET = 16 << 20;
+const DEFAULT_WINDOW_MAX_PAGES = RESOURCE_BUDGETS.historyWindowPages;
+const DEFAULT_WINDOW_PAGE_ENTRIES = RESOURCE_BUDGETS.historyPageEntries;
 
 function sessionKeyFor(tabId: string, sessionPath: string): string {
   return `${tabId}\n${sessionPath}`;
@@ -143,216 +147,6 @@ function compareRecords(a: Pick<TranscriptRecord, "order" | "entryId">, b: Pick<
   return a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0;
 }
 
-import { recordBytes } from "./transcriptRecordBytes";
-
-function entryToRecord(entry: HistoryEntry): TranscriptRecord {
-  return {
-    entryId: entry.entryId,
-    turn: entry.turn,
-    order: entry.order,
-    message: entry.message,
-    refs: asArray<HistoryContentRef>(entry.refs),
-    bytes: recordBytes(entry.message),
-  };
-}
-
-// itemIdForToolCall mirrors the single-shot conversion: id-addressed tool
-// items take the toolCallId whether they come from the call or from a
-// standalone result row, so a late-merging pair keeps one stable item id.
-function itemIdForToolCall(tcId: string, fallback: string): string {
-  return tcId || fallback;
-}
-
-// Convert one record into its items. Mirrors historyMessagesToItems per role,
-// with tool results resolved through the session-wide view instead of a
-// page-local map. priorMatches/priorClaims carry a re-conversion's earlier
-// positional assignments so they reproduce exactly.
-function convertRecord(
-  rec: TranscriptRecord,
-  view: { records: TranscriptRecord[]; indexOf: Map<string, number>; toolResultOwners: Map<string, string> },
-  consumed: Set<string>,
-  priorMatches?: Map<number, string>,
-): RecordConversion {
-  const items: Item[] = [];
-  const claims: string[] = [];
-  const unresolvedIds: string[] = [];
-  const pendingPositional: number[] = [];
-  const matches = new Map<number, string>(priorMatches);
-  const m = rec.message;
-  const id = m.messageId && (m.role === "assistant" || m.role === "user") ? `m:${m.messageId}` : `he:${rec.entryId}`;
-
-  if (m.role === "system") return { items, claims, unresolvedIds, pendingPositional, matches };
-  if (m.role === "phase") {
-    if (m.content.trim() !== "") items.push({ kind: "phase", id, text: m.content });
-    return { items, claims, unresolvedIds, pendingPositional, matches };
-  }
-  if (m.role === "notice") {
-    if (m.completionReceipt || m.completionSummary) {
-      const result = historicalResultNotice(m, id);
-      if (result) items.push(result);
-      return { items, claims, unresolvedIds, pendingPositional, matches };
-    }
-    return { items: historyNoticeItems(m, id), claims, unresolvedIds, pendingPositional, matches };
-  }
-  if (m.role === "compaction") {
-    items.push({
-      kind: "compaction",
-      id,
-      pending: Boolean(m.pending),
-      trigger: m.trigger ?? "",
-      messages: m.messages ?? 0,
-      summary: m.summary ?? "",
-      archive: m.archive ?? "",
-    });
-    return { items, claims, unresolvedIds, pendingPositional, matches };
-  }
-  if (m.role === "user") {
-    if (m.content.trim() !== "") {
-      items.push({ kind: "user", id, text: m.content, submitText: m.submitText, createdAt: m.createdAt, checkpointTurn: m.checkpointTurn, historyTurn: rec.turn > 0 ? rec.turn : undefined });
-    }
-    return { items, claims, unresolvedIds, pendingPositional, matches };
-  }
-
-  if (m.role === "assistant") {
-    const memoryCitations = asArray<MemoryCitation>(m.memoryCitations);
-    items.push(...historySearchAndAnswer(id, {
-      content: m.content,
-      reasoning: m.reasoning,
-      workDurationMs: m.workDurationMs,
-      turnDurationMs: m.turnDurationMs,
-      turnUsage: m.turnUsage,
-      createdAt: m.createdAt,
-      memoryCitations: memoryCitations.length > 0 ? memoryCitations : undefined,
-      serverSearch: m.serverSearch,
-    }));
-    const toolCalls = m.toolCalls ?? [];
-    // Positional scan cursor: id-less calls consume the following unconsumed
-    // id-less tool rows in order, stopping at the first non-tool record —
-    // the same run positionalToolResults walks in the single-shot pass.
-    let scan = (view.indexOf.get(rec.entryId) ?? -1) + 1;
-    for (let callIndex = 0; callIndex < toolCalls.length; callIndex += 1) {
-      const tc = toolCalls[callIndex];
-      let result: HistoryMessage | undefined;
-      let resultEntryId: string | undefined;
-      const prior = matches.get(callIndex);
-      if (prior) {
-        resultEntryId = prior;
-        result = view.records[view.indexOf.get(prior) ?? -1]?.message;
-      } else if (tc.id) {
-        const owner = view.toolResultOwners.get(tc.id);
-        if (owner) {
-          resultEntryId = owner;
-          result = view.records[view.indexOf.get(owner) ?? -1]?.message;
-        } else {
-          unresolvedIds.push(tc.id);
-        }
-      } else {
-        while (scan < view.records.length) {
-          const candidate = view.records[scan];
-          if (candidate.message.role !== "tool") break;
-          scan += 1;
-          if (candidate.message.toolCallId || consumed.has(candidate.entryId)) continue;
-          resultEntryId = candidate.entryId;
-          result = candidate.message;
-          break;
-        }
-        if (!resultEntryId) pendingPositional.push(callIndex);
-      }
-      if (resultEntryId) {
-        matches.set(callIndex, resultEntryId);
-        claims.push(resultEntryId);
-        consumed.add(resultEntryId);
-      }
-      const archived = Boolean(tc.argumentsArchived || result?.toolResultArchived);
-      const output = result?.toolResultArchived ? undefined : result?.content ?? "";
-      const error = result?.toolResultError || (output ? historyToolError(output) : undefined);
-      const fileDiff = fileDiffFromWire(tc);
-      items.push({
-        kind: "tool",
-        id: itemIdForToolCall(tc.id, `he:${rec.entryId}:tc${callIndex}`),
-        name: tc.name,
-        args: tc.arguments ?? "",
-        readOnly: typeof tc.resolvedReadOnly === "boolean" ? tc.resolvedReadOnly : isReadOnlyTool(tc.name),
-        resolvedName: tc.resolvedName,
-        capabilityId: tc.capabilityId,
-        status: result ? (error ? "error" : "done") : "stopped",
-        output,
-        error,
-        dataArchived: archived || undefined,
-        subject: tc.subject,
-        summary: summarizeFileDiff(fileDiff) || tc.summary,
-        fileDiff,
-        isShell: tc.name === "bash" || (tc.id || "").startsWith("shell-"),
-        execution: result?.execution,
-        presentedFiles: result?.presentedFiles,
-      });
-    }
-    return { items, claims, unresolvedIds, pendingPositional, matches };
-  }
-
-  if (m.role === "tool") {
-    if (consumed.has(rec.entryId)) return { items, claims, unresolvedIds, pendingPositional, matches };
-    const output = m.toolResultArchived ? undefined : m.content;
-    const error = m.toolResultError || (output ? historyToolError(output) : undefined);
-    items.push({
-      kind: "tool",
-      id: itemIdForToolCall(m.toolCallId ?? "", id),
-      name: m.toolName || "tool",
-      args: "",
-      readOnly: isReadOnlyTool(m.toolName || "tool"),
-      status: error ? "error" : "done",
-      output,
-      error,
-      dataArchived: m.toolResultArchived || undefined,
-      isShell: (m.toolName || "") === "bash" || (m.toolCallId || "").startsWith("shell-"),
-      execution: m.execution,
-      presentedFiles: m.presentedFiles,
-    });
-    return { items, claims, unresolvedIds, pendingPositional, matches };
-  }
-
-  return { items, claims, unresolvedIds, pendingPositional, matches };
-}
-
-function applyResolvedField(rec: TranscriptRecord, ref: HistoryContentRef, data: string): boolean {
-  const m = rec.message;
-  switch (ref.field) {
-    case "canonicalMessage": {
-      const bytes = Uint8Array.from(data, character => character.charCodeAt(0));
-      const decoded = canonicalMessage(
-        { messageId: rec.entryId, position: rec.turn, version: 1, role: m.role, eventSequence: 0, visibleTurn: rec.turn },
-        JSON.parse(new TextDecoder().decode(bytes)),
-      );
-      rec.message = { ...m, ...decoded };
-      return true;
-    }
-    case "content": rec.message = { ...m, content: data }; return true;
-    case "reasoning": rec.message = { ...m, reasoning: data }; return true;
-    case "submitText": rec.message = { ...m, submitText: data }; return true;
-    case "detail": rec.message = { ...m, detail: data }; return true;
-    case "code": rec.message = { ...m, code: data }; return true;
-    case "summary": rec.message = { ...m, summary: data }; return true;
-    case "archive": rec.message = { ...m, archive: data }; return true;
-    case "toolResultError": rec.message = { ...m, toolResultError: data }; return true;
-    case "toolArguments":
-    case "toolSubject":
-    case "toolSummary":
-    case "toolDiff": {
-      const toolCalls = (m.toolCalls ?? []).map((tc) => {
-        if (tc.id !== ref.toolCallId) return tc;
-        if (ref.field === "toolArguments") return { ...tc, arguments: data };
-        if (ref.field === "toolSubject") return { ...tc, subject: data };
-        if (ref.field === "toolSummary") return { ...tc, summary: data };
-        return { ...tc, diff: data };
-      });
-      rec.message = { ...m, toolCalls };
-      return true;
-    }
-    default:
-      return false;
-  }
-}
-
 export class TranscriptStore {
   private readonly contentResolvers = new TranscriptContentResolverRegistry();
   registerContentResolver(tabId: string, resolve: (entryId: string, field: string) => Promise<string | undefined>, enabled: () => boolean = () => true): () => void {
@@ -361,6 +155,8 @@ export class TranscriptStore {
   private readonly backend: TranscriptBackend;
   private readonly maxResidentSessions: number;
   private readonly historyBodyBudgetBytes: number;
+  private readonly windowMaxPages: number;
+  private readonly windowPageEntries: number;
   /** Insertion-ordered (oldest first); touch re-inserts at the end. */
   private readonly sessions = new Map<string, SessionTranscript>();
   private readonly tabPins = new Map<string, { live: boolean; active: boolean }>();
@@ -372,6 +168,8 @@ export class TranscriptStore {
     this.backend = backend;
     this.maxResidentSessions = Math.max(1, options.maxResidentSessions ?? DEFAULT_MAX_RESIDENT_SESSIONS);
     this.historyBodyBudgetBytes = Math.max(0, options.historyBodyBudgetBytes ?? DEFAULT_HISTORY_BODY_BUDGET);
+    this.windowMaxPages = Math.max(1, options.windowMaxPages ?? DEFAULT_WINDOW_MAX_PAGES);
+    this.windowPageEntries = Math.max(1, options.windowPageEntries ?? DEFAULT_WINDOW_PAGE_ENTRIES);
     this.markdown = new TranscriptMarkdownCache(Math.max(0, options.markdownBudgetBytes ?? DEFAULT_MARKDOWN_BUDGET));
   }
 
@@ -394,6 +192,11 @@ export class TranscriptStore {
       itemsCache: null,
       nextCursor: "",
       hasOlder: false,
+      pages: [],
+      newerCursor: "",
+      hasNewer: false,
+      reclaimedOlder: 0,
+      reclaimedNewer: 0,
       totalTurns: 0,
       startTurn: 0,
       endTurn: 0,
@@ -403,6 +206,7 @@ export class TranscriptStore {
       generation: 0,
       bodyBytes: 0,
       olderInFlight: false,
+      newerInFlight: false,
       pendingContent: new Map(),
     };
   }
@@ -461,6 +265,11 @@ export class TranscriptStore {
   }
 
   private enforceBudgets(): void {
+    // The page budget applies to every session, pinned ones included: a live
+    // session keeps its tail streaming but no longer holds its whole history.
+    for (const session of this.sessions.values()) {
+      if (session.pages.length > this.windowMaxPages) this.trimWindow(session, "newer");
+    }
     const evictable = (): SessionTranscript[] =>
       Array.from(this.sessions.values()).filter((s) => s.records.length > 0 && !this.isPinned(s));
     let candidates = evictable();
@@ -501,6 +310,7 @@ export class TranscriptStore {
       endTurn: session.endTurn,
       totalTurns: session.totalTurns,
       hasOlder: session.hasOlder,
+      hasNewer: session.hasNewer,
       revision: session.revision,
       revisionKnown: session.revisionKnown,
       digest: session.digest,
@@ -533,6 +343,19 @@ export class TranscriptStore {
     return total;
   }
 
+  private reclaimedPages(): number {
+    let total = 0;
+    for (const session of this.sessions.values()) total += session.reclaimedOlder + session.reclaimedNewer;
+    return total;
+  }
+
+  /** Messages held across every resident window; the bounded reading cost. */
+  residentWindowEntries(): number {
+    let total = 0;
+    for (const session of this.sessions.values()) total += session.records.length;
+    return total;
+  }
+
   /** Cache-weight snapshot for diagnostics (sessionDiagnostics/crash context). */
   stats() {
     return {
@@ -544,6 +367,9 @@ export class TranscriptStore {
       markdownBudgetBytes: this.markdown.budgetBytes,
       historyEvictions: this.historyEvictions,
       markdownEvictions: this.markdown.evictions,
+      windowMaxPages: this.windowMaxPages,
+      reclaimedPages: this.reclaimedPages(),
+      residentWindowEntries: this.residentWindowEntries(),
     };
   }
 
@@ -668,17 +494,24 @@ export class TranscriptStore {
   }
 
   /**
-   * Append newer entries (live tail / fresh suffix). Results arriving for
-   * calls that paged in unresolved fold into the call's tool item. Returns the
-   * appended records' contributed items. Rendering/virtual-list phases can use
-   * this to stream new rows into a resident session without a full reload.
+   * Append a live suffix into entry-bounded pages. Once the page window fills,
+   * old records are reclaimed and their mounted item ids are returned.
    */
-  appendEntries(tabId: string, sessionPath: string, entries: HistoryEntry[]): Item[] {
+  appendEntries(tabId: string, sessionPath: string, entries: HistoryEntry[]): AppendEntriesResult | undefined {
     const session = this.sessions.get(sessionKeyFor(tabId, sessionPath));
-    if (!session || session.records.length === 0) return [];
-    const items = this.appendRecords(session, entries);
+    if (!session || session.records.length === 0) return undefined;
+    const fresh = entries.filter((entry) => !session.byId.has(entry.entryId));
+    this.appendRecords(session, fresh);
+    appendLivePageEntries(session.pages, fresh.map((entry) => entry.entryId), this.windowPageEntries);
+    if (fresh.length > 0) {
+      session.hasNewer = false;
+      session.newerCursor = "";
+      session.totalTurns = Math.max(session.totalTurns, ...fresh.map((entry) => entry.turn));
+      session.endTurn = Math.max(session.endTurn, ...fresh.map((entry) => entry.turn));
+    }
+    const removeIds = this.trimWindow(session, "newer");
     this.enforceBudgets();
-    return items;
+    return this.sessions.get(session.key) === session ? { ...this.projectionOf(session), removeIds } : undefined;
   }
 
   /** Append newer entries (live tail / fresh suffix). */
@@ -731,6 +564,106 @@ export class TranscriptStore {
     return appendedItems;
   }
 
+  // ── bounded window ────────────────────────────────────────────────────────
+
+  /** Replay every identity-keyed map over exactly the surviving records.
+   * Reclaiming changes tool-call ownership, so the maps cannot be spliced.
+   */
+  private rebuildFromRecords(session: SessionTranscript, records: TranscriptRecord[]): void {
+    const view = this.viewOf(records);
+    session.records = records;
+    session.byId = new Map(records.map((rec) => [rec.entryId, rec]));
+    session.toolResultOwners = view.toolResultOwners;
+    session.contributions = new Map();
+    session.consumed = new Set();
+    session.consumedBy = new Map();
+    session.unresolvedCalls = new Map();
+    session.pendingPositional = new Map();
+    session.matchTables = new Map();
+    session.bodyBytes = 0;
+    for (const rec of records) {
+      session.bodyBytes += rec.bytes;
+      this.trackConversion(session, rec, convertRecord(rec, view, session.consumed));
+    }
+    session.itemsCache = null;
+    this.rebuildProjection(session);
+  }
+
+  /** The page a freshly loaded batch of entries belongs to. */
+  private pageFor(entries: HistoryEntry[], olderCursor: string, newerCursor: string): TranscriptWindowPage {
+    return { entryIds: entries.map((entry) => entry.entryId), olderCursor, newerCursor };
+  }
+
+  private updateWindowTurnBounds(session: SessionTranscript): void {
+    const turns = session.records.map((record) => record.turn).filter((turn) => turn > 0);
+    session.startTurn = turns.length > 0 ? Math.min(...turns) : 0;
+    session.endTurn = turns.length > 0 ? Math.max(...turns) : 0;
+  }
+
+  /** Reclaim one page from the given end; undefined when only one page is
+   * left. Widens the page so a result is never stranded from its call.
+   */
+  private reclaimPage(session: SessionTranscript, end: "oldest" | "newest"): string[] | undefined {
+    if (session.pages.length <= 1) return undefined;
+    const page = end === "oldest" ? session.pages[0] : session.pages[session.pages.length - 1];
+    const dropped = new Set(page.entryIds);
+    if (end === "oldest") {
+      // A result whose call is being reclaimed has to go with it, or the
+      // reader is left with an output row that names a call they can no
+      // longer see. Which calls survive is decided by the retained records
+      // alone: collecting it from the reclaimed page would keep the calls
+      // that are leaving and strand exactly the rows this guards.
+      const survivingCalls = new Set<string>();
+      for (const record of session.records) {
+        if (dropped.has(record.entryId) || record.message.role !== "assistant") continue;
+        for (const call of record.message.toolCalls ?? []) survivingCalls.add(call.id);
+      }
+      for (const record of session.records) {
+        if (dropped.has(record.entryId)) continue;
+        const callId = record.message.role === "tool" ? record.message.toolCallId : undefined;
+        if (!callId || survivingCalls.has(callId)) break;
+        dropped.add(record.entryId);
+      }
+    }
+    const retained = session.records.filter((record) => !dropped.has(record.entryId));
+    if (end === "oldest") {
+      session.pages.shift();
+      // The reclaimed page's own older cursor is now the window's head, so the
+      // reader can page straight back into the range that was just dropped.
+      session.nextCursor = page.olderCursor;
+      session.hasOlder = true;
+      session.reclaimedOlder += 1;
+    } else {
+      session.pages.pop();
+      session.newerCursor = page.newerCursor;
+      session.hasNewer = true;
+      session.reclaimedNewer += 1;
+    }
+    const before = new Set((session.itemsCache ?? []).map((item) => item.id));
+    this.rebuildFromRecords(session, retained);
+    this.updateWindowTurnBounds(session);
+    // Reclaiming can also fold a retained result into a call that survived, so
+    // the caller is told which ids it must drop rather than assuming the
+    // difference is exactly the reclaimed page.
+    const after = new Set((session.itemsCache ?? []).map((item) => item.id));
+    return [...before].filter((id) => !after.has(id));
+  }
+
+  /** Reclaim from the end opposite the one being paged, returning the item
+   * ids the caller must drop from its own list.
+   */
+  private trimWindow(session: SessionTranscript, growing: "older" | "newer"): string[] {
+    if (session.pages.length === 0) return [];
+    const give = growing === "older" ? "newest" : "oldest";
+    const removed: string[] = [];
+    while (session.pages.length > this.windowMaxPages) {
+      const dropped = this.reclaimPage(session, give);
+      if (dropped === undefined) break;
+      removed.push(...dropped);
+    }
+    return removed;
+  }
+
   // ── paging API ────────────────────────────────────────────────────────────
 
   /**
@@ -768,9 +701,15 @@ export class TranscriptStore {
       slice = await this.fetchSlice(tabId, { cursor: "", turns, entries, bytes });
       if (this.sessions.get(key) !== session || session.generation !== generation) return undefined;
     }
-    this.replaceRecords(session, asArray<HistoryEntry>(slice.entries));
+    const newestEntries = asArray<HistoryEntry>(slice.entries);
+    this.replaceRecords(session, newestEntries);
+    session.pages = [this.pageFor(newestEntries, slice.nextCursor ?? "", slice.newerCursor ?? "")];
+    session.reclaimedOlder = 0;
+    session.reclaimedNewer = 0;
     session.nextCursor = slice.nextCursor ?? "";
     session.hasOlder = Boolean(slice.hasOlder);
+    session.newerCursor = slice.newerCursor ?? "";
+    session.hasNewer = Boolean(slice.hasNewer);
     session.totalTurns = slice.totalTurns ?? 0;
     session.startTurn = slice.startTurn ?? 0;
     session.endTurn = slice.endTurn ?? 0;
@@ -829,7 +768,9 @@ export class TranscriptStore {
         const projection = await this.loadLatest(tabId, sessionPath, options);
         return projection ? { ...projection, kind: "reload", prependItems: [], removeIds: [] } : undefined;
       }
-      const { items, removeIds } = this.prependRecords(session, asArray<HistoryEntry>(slice.entries));
+      const pageEntries = asArray<HistoryEntry>(slice.entries);
+      const { items, removeIds } = this.prependRecords(session, pageEntries);
+      session.pages.unshift(this.pageFor(pageEntries, slice.nextCursor ?? "", slice.newerCursor ?? ""));
       session.nextCursor = slice.nextCursor ?? "";
       session.hasOlder = Boolean(slice.hasOlder);
       session.totalTurns = slice.totalTurns ?? session.totalTurns;
@@ -837,11 +778,57 @@ export class TranscriptStore {
       session.revision = slice.revision ?? session.revision;
       session.revisionKnown = sliceRevisionKnown(slice);
       session.digest = slice.digest ?? session.digest;
+      // Reclaiming the far end yields ids the caller must drop alongside the
+      // cross-page merge ids it already handles.
+      const reclaimed = this.trimWindow(session, "older");
+      // Settle the budget before reading the projection: a later trim would
+      // leave the caller holding an item list the store has already released.
       this.enforceBudgets();
+      const projection = this.projectionOf(session);
       if (this.sessions.get(key) !== session) return undefined;
-      return { ...this.projectionOf(session), kind: "prepend", prependItems: items, removeIds };
+      return { ...projection, kind: "prepend", prependItems: items, removeIds: reclaimed.length > 0 ? [...removeIds, ...reclaimed] : removeIds };
     } finally {
       session.olderInFlight = false;
+    }
+  }
+
+  /** Page toward newer history. Needs a binding that reports a newer cursor;
+   * a legacy one leaves the window on its newest page rather than faking it.
+   */
+  async loadNewer(
+    tabId: string,
+    sessionPath: string,
+    options: { turns?: number; entries?: number; bytes?: number } = {},
+  ): Promise<LoadNewerResult | undefined> {
+    const key = sessionKeyFor(tabId, sessionPath);
+    const session = this.sessions.get(key);
+    if (!session || session.records.length === 0) return undefined;
+    if (!session.hasNewer || !session.newerCursor || session.newerInFlight) return undefined;
+    session.newerInFlight = true;
+    const generation = session.generation;
+    try {
+      const slice = await this.fetchSlice(tabId, { cursor: session.newerCursor, newer: true, ...options });
+      if (this.sessions.get(key) !== session || session.generation !== generation) return undefined;
+      if (slice.stale || !this.sameFingerprint(session, slice)) {
+        // A newer page from a rebuilt projection cannot be appended to the
+        // window the reader is holding; the window keeps its position and the
+        // caller reports the reload instead of mixing two canonical states.
+        return { ...this.projectionOf(session), kind: "stale", appendItems: [], removeIds: [] };
+      }
+      const pageEntries = asArray<HistoryEntry>(slice.entries);
+      const appendItems = this.appendRecords(session, pageEntries);
+      session.pages.push(this.pageFor(pageEntries, slice.nextCursor ?? "", slice.newerCursor ?? ""));
+      session.newerCursor = slice.newerCursor ?? "";
+      session.hasNewer = Boolean(slice.hasNewer) || session.newerCursor !== "";
+      session.endTurn = slice.endTurn ?? session.endTurn;
+      session.totalTurns = slice.totalTurns ?? session.totalTurns;
+      const reclaimed = this.trimWindow(session, "newer");
+      this.enforceBudgets();
+      const projection = this.projectionOf(session);
+      if (this.sessions.get(key) !== session) return undefined;
+      return { ...projection, kind: "append", appendItems, removeIds: reclaimed };
+    } finally {
+      session.newerInFlight = false;
     }
   }
 
@@ -1062,5 +1049,8 @@ registerTranscriptCacheDiagnostics(() =>
     markdownBudgetBytes: DEFAULT_MARKDOWN_BUDGET,
     historyEvictions: 0,
     markdownEvictions: 0,
+    reclaimedPages: 0,
+    residentWindowEntries: 0,
+    windowMaxPages: DEFAULT_WINDOW_MAX_PAGES,
   },
 );

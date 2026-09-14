@@ -34,6 +34,7 @@ import { foregroundRunningFromRuntimeMeta, type RuntimeMetaSnapshot } from "./ru
 import { aliasActivationRequest, noteActivationRequested, noteActivationSettled, noteActivationStarted, beginResumeHistory, noteResumeHistoryPage, type HistorySwitchPhases } from "./sessionDiagnostics";
 import { applyLiveSegments, coalesceStreamDeltas, completeLiveReasoning, type StreamDeltaEntry, type StreamSegment } from "./streamDeltaBatch";
 import { assistantHasContent, ensureActiveAssistant, ensureAssistant, removeEmptyAssistantItems } from "./assistantItems";
+import { setTranscriptBindingIdentity } from "./canonicalTranscriptBackend";
 import { getTranscriptStore } from "./transcriptStore";
 import { historyFingerprintMatchesMeta, historyReplaceAction, historyRevisionIsOlder, usesLegacyTranscriptSnapshots } from "./sessionTranscriptMode";
 import { snapshotRecords, transcriptPageState, transcriptSnapshotState } from "./transcriptSnapshotState";
@@ -54,7 +55,8 @@ import { applyHydrateErrorState, hydratePlaceholderItems as resolveHydratePlaceh
 import { isHostRecoveryGuidance } from "./hostRecoverySteer";
 import { activeTabHydrationPlan, canAdoptUnboundLiveSurface, duplicateLiveItemIds, hasCachedLiveTurn, hasReusableCachedTranscript, hydratedHistoryApplyMode, sameSessionHydrateIdentity, sameSessionPlaceholderItems, shouldPreferResidentHistory, type HydrateSurfacePolicy } from "./hydrateHistoryApply";
 import { hydrateIdentityCurrent } from "./sessionIdentity";
-import { historyPageRequestBudget } from "./historyPaging";
+import { loadHistoryWindow } from "./historyWindowController";
+import { reduceHistoryWindowState } from "./historyWindowState";
 import { getTranscriptOutlineStore, localOutlineRead } from "./transcriptOutlineStore";
 import { withRemoteProviderUnreachable, withRemoteTurnInterrupted } from "./remoteTurnState";
 import type { NavigationResult, SurfaceDataCommit, SurfaceDataOutcome } from "./navigationSurfaceTransition";
@@ -440,10 +442,14 @@ export interface State extends ReadStatusHost, ForkTurnState {
   hydrateHistoryLoaded?: boolean;
   hydratePlaceholderItems?: Item[];
   historyStartTurn: number;
+  historyEndTurn: number;
   historyTotalTurns: number;
   historyHasOlder: boolean;
+  historyHasNewer: boolean;
   historyOlderLoading: boolean;
   historyOlderError?: string;
+  historyNewerLoading: boolean;
+  historyNewerError?: string;
   historyRevision?: number;
   historyDigest?: string;
   /** Number of leading items owned by the persisted transcript projection. */
@@ -589,9 +595,12 @@ export const initialState: State = {
   checkpoints: [], ...initialForkTurnState,
   hydrating: false,
   historyStartTurn: 0,
+  historyEndTurn: 0,
   historyTotalTurns: 0,
   historyHasOlder: false,
+  historyHasNewer: false,
   historyOlderLoading: false,
+  historyNewerLoading: false,
   historyLayoutRevision: 0,
   historyPrefixCount: 0,
   historyMutation: { seq: 0, kind: "replace" },
@@ -805,12 +814,15 @@ type Action =
   // TranscriptStore-driven history actions (windowed HistorySliceForTab flow).
   // Items carry stable entryId-derived ids; prepend also lists existing item
   // ids superseded by cross-page tool call/result merges.
-  | { type: "history_replace"; items: Item[]; startTurn: number; totalTurns: number; hasOlder: boolean; revision?: number; digest?: string }
-  | { type: "history_rebase"; items: Item[]; startTurn: number; totalTurns: number; hasOlder: boolean; revision?: number; digest?: string }
-  | { type: "history_prepend"; items: Item[]; removeIds: string[]; startTurn: number; totalTurns: number; hasOlder: boolean; revision?: number; digest?: string }
+  | { type: "history_replace"; items: Item[]; startTurn: number; endTurn?: number; totalTurns: number; hasOlder: boolean; hasNewer?: boolean; revision?: number; digest?: string }
+  | { type: "history_rebase"; items: Item[]; startTurn: number; endTurn?: number; totalTurns: number; hasOlder: boolean; hasNewer?: boolean; revision?: number; digest?: string }
+  | { type: "history_prepend"; items: Item[]; removeIds: string[]; startTurn: number; endTurn?: number; totalTurns: number; hasOlder: boolean; hasNewer?: boolean; revision?: number; digest?: string }
+  | { type: "history_append"; items: Item[]; startTurn: number; endTurn: number; totalTurns: number; hasOlder: boolean; hasNewer: boolean; revision?: number; digest?: string }
   | { type: "history_items_patch"; patches: Record<string, Item> }
   | { type: "history_older_start" }
   | { type: "history_older_error"; error?: string }
+  | { type: "history_newer_start" }
+  | { type: "history_newer_error"; error?: string }
   | { type: "local_notice"; level: "info" | "warn"; text: string; preserveRuntime?: boolean }
   | { type: "clearApproval" }
   | { type: "clearAsk" }
@@ -958,22 +970,6 @@ function resetTurnTiming(now = Date.now()): Pick<State, "turnStartAt" | "turnDon
 function confirmPendingUser(s: State, submissionId: string | undefined): State {
   if (!submissionId || s.pendingSubmissionId !== submissionId) return s;
   return { ...s, pendingUser: undefined, pendingSubmissionId: undefined };
-}
-
-// The admitted message identity and the mounted optimistic bubble identity
-// are separate: learning the former must not remount the latter.
-function preserveMountedUserIds(items: Item[], existing: Item[]): Item[] {
-  const mounted = new Map<string, string>();
-  for (const item of existing) {
-    if (item.kind === "user" && item.messageId) mounted.set(item.messageId, item.id);
-  }
-  if (mounted.size === 0) return items;
-  return items.map((item) => {
-    if (item.kind !== "user") return item;
-    const messageId = item.messageId ?? (item.id.startsWith("m:") ? item.id.slice(2) : undefined);
-    const id = messageId ? mounted.get(messageId) : undefined;
-    return id ? { ...item, id, messageId } : item;
-  });
 }
 
 function beginTurnModelActivity(s: State, now = Date.now()): State {
@@ -2103,7 +2099,7 @@ export function reducer(s: State, a: Action): State {
     case "history": {
       const { items, seq } = historyMessagesToItems(a.messages, "h", s.seq);
       // Remote cards have no local ToolResultForTab fallback; retain expansion data.
-      return { ...s, items: a.remote ? items : compactArchivedToolItems(items), historyPrefixCount: items.length, pendingSubmissionId: undefined, seq, hydrateHistoryLoaded: true, hydratePlaceholderItems: undefined, historyStartTurn: 0, historyTotalTurns: 0, historyHasOlder: false, historyOlderLoading: false, historyOlderError: undefined, historyRevision: undefined, historyDigest: undefined, historyMutation: { seq: s.historyMutation.seq + 1, kind: "replace" } };
+      return { ...s, items: a.remote ? items : compactArchivedToolItems(items), historyPrefixCount: items.length, pendingSubmissionId: undefined, seq, hydrateHistoryLoaded: true, hydratePlaceholderItems: undefined, historyStartTurn: 0, historyEndTurn: 0, historyTotalTurns: 0, historyHasOlder: false, historyHasNewer: false, historyOlderLoading: false, historyOlderError: undefined, historyNewerLoading: false, historyNewerError: undefined, historyRevision: undefined, historyDigest: undefined, historyMutation: { seq: s.historyMutation.seq + 1, kind: "replace" } };
     }
     case "history_page": {
       if (historyRevisionIsOlder(s.historyRevision, a.page.revision)) return s;
@@ -2118,10 +2114,14 @@ export function reducer(s: State, a: Action): State {
         hydrateHistoryLoaded: true,
         hydratePlaceholderItems: undefined,
         historyStartTurn: firstTurn,
+        historyEndTurn: a.page.endTurn,
         historyTotalTurns: a.page.totalTurns,
         historyHasOlder: a.page.hasOlder,
+        historyHasNewer: false,
         historyOlderLoading: false,
         historyOlderError: undefined,
+        historyNewerLoading: false,
+        historyNewerError: undefined,
         historyRevision: a.page.revision,
         historyDigest: a.page.digest,
         historyMutation: { seq: s.historyMutation.seq + 1, kind: a.mode },
@@ -2129,68 +2129,13 @@ export function reducer(s: State, a: Action): State {
     }
     case "history_older_start": return s.historyOlderLoading && !s.historyOlderError ? s : { ...s, historyOlderLoading: true, historyOlderError: undefined };
     case "history_older_error": return { ...s, historyOlderLoading: false, historyOlderError: a.error };
+    case "history_newer_start": return s.historyNewerLoading && !s.historyNewerError ? s : { ...s, historyNewerLoading: true, historyNewerError: undefined };
+    case "history_newer_error": return { ...s, historyNewerLoading: false, historyNewerError: a.error };
     case "history_replace":
-      if (historyRevisionIsOlder(s.historyRevision, a.revision)) return s;
-      return {
-        ...s,
-        items: compactArchivedToolItems(a.items),
-        historyPrefixCount: a.items.length,
-        pendingSubmissionId: undefined,
-        hydrateHistoryLoaded: true,
-        hydratePlaceholderItems: undefined,
-        historyStartTurn: a.startTurn,
-        historyTotalTurns: a.totalTurns,
-        historyHasOlder: a.hasOlder,
-        historyOlderLoading: false,
-        historyOlderError: undefined,
-        historyRevision: a.revision,
-        historyDigest: a.digest,
-        historyMutation: { seq: s.historyMutation.seq + 1, kind: "replace" },
-      };
-    case "history_rebase": {
-      if (historyRevisionIsOlder(s.historyRevision, a.revision)) return s;
-      const liveTail = s.items.slice(Math.min(s.historyPrefixCount, s.items.length));
-      const duplicates = new Set(duplicateLiveItemIds(a.items, liveTail));
-      const retainedTail = liveTail.filter((item) => !duplicates.has(item.id));
-      return {
-        ...s,
-        items: compactArchivedToolItems([...preserveMountedUserIds(a.items, s.items), ...retainedTail]),
-        historyPrefixCount: a.items.length,
-        hydrateHistoryLoaded: true,
-        hydratePlaceholderItems: undefined,
-        historyStartTurn: a.startTurn,
-        historyTotalTurns: a.totalTurns,
-        historyHasOlder: a.hasOlder,
-        historyOlderLoading: false,
-        historyOlderError: undefined,
-        historyRevision: a.revision,
-        historyDigest: a.digest,
-        historyLayoutRevision: s.historyLayoutRevision + 1,
-        historyMutation: { seq: s.historyMutation.seq + 1, kind: "replace" },
-      };
-    }
-    case "history_prepend": {
-      if (historyRevisionIsOlder(s.historyRevision, a.revision)) return s;
-      const remove = a.removeIds.length > 0 ? new Set(a.removeIds) : undefined;
-      const rest = remove ? s.items.filter((item) => !remove.has(item.id)) : s.items;
-      const prefix = s.items.slice(0, Math.min(s.historyPrefixCount, s.items.length));
-      const retainedPrefix = remove ? prefix.filter((item) => !remove.has(item.id)) : prefix;
-      return {
-        ...s,
-        items: compactArchivedToolItems([...preserveMountedUserIds(a.items, s.items), ...rest]),
-        historyPrefixCount: a.items.length + retainedPrefix.length,
-        hydrateHistoryLoaded: true,
-        hydratePlaceholderItems: undefined,
-        historyStartTurn: a.startTurn,
-        historyTotalTurns: a.totalTurns,
-        historyHasOlder: a.hasOlder,
-        historyOlderLoading: false,
-        historyOlderError: undefined,
-        historyRevision: a.revision,
-        historyDigest: a.digest,
-        historyMutation: { seq: s.historyMutation.seq + 1, kind: "prepend" },
-      };
-    }
+    case "history_rebase":
+    case "history_prepend":
+    case "history_append":
+      return reduceHistoryWindowState(s, a);
     // Ref-resolved full content landed for history items already on screen:
     // patch by stable item id so the live tail and untouched items keep their
     // identity.
@@ -2560,7 +2505,7 @@ export function useController() {
   const { invalidateCheckpoints, settleCheckpoints, refreshCheckpoints, refreshTurnBoundaries } = useMemo(() => createTurnBoundaryReads(dispatchTo), [dispatchTo]);
   const metaRefreshSeq = useRef(new Map<string, number>());
   const sessionLoadSeq = useRef(new Map<string, number>());
-  const historyOlderSeq = useRef(new Map<string, number>());
+  const historyWindowSeq = useRef(new Map<string, number>());
   const cancelHydrateSeq = useRef(new Map<string, number>());
   const turnEventProjector = useRef(new TurnEventProjector()).current;
   // The complete turn index is bound to the installed snapshot, so it aligns
@@ -2597,7 +2542,7 @@ export function useController() {
   const bumpSessionLoadSeq = useCallback((tabId: string): number => {
     bumpMetaRefreshSeq(tabId);
     invalidateSharedQuery("MetaForTab", [tabId]);
-    historyOlderSeq.current.set(tabId, (historyOlderSeq.current.get(tabId) ?? 0) + 1);
+    historyWindowSeq.current.set(tabId, (historyWindowSeq.current.get(tabId) ?? 0) + 1);
     const seq = (sessionLoadSeq.current.get(tabId) ?? 0) + 1;
     sessionLoadSeq.current.set(tabId, seq);
     return seq;
@@ -2638,7 +2583,7 @@ export function useController() {
     // A released tab can still have an older-page request awaiting the bridge. Keep
     // a tombstone generation so a later tab reusing the same id cannot make
     // that completion current again.
-    historyOlderSeq.current.set(tabId, (historyOlderSeq.current.get(tabId) ?? 0) + 1);
+    historyWindowSeq.current.set(tabId, (historyWindowSeq.current.get(tabId) ?? 0) + 1);
     transcriptSubscriptions.current.get(tabId)?.();
     transcriptSubscriptions.current.delete(tabId);
     snapshotClient.release(tabId);
@@ -2797,8 +2742,10 @@ export function useController() {
         const page = {
           items: projection.items,
           startTurn: projection.startTurn,
+          endTurn: projection.endTurn,
           totalTurns: projection.totalTurns,
           hasOlder: projection.hasOlder,
+          hasNewer: projection.hasNewer,
           revision: projection.revisionKnown ? projection.revision : undefined,
           digest: projection.digest || undefined,
         };
@@ -2870,8 +2817,10 @@ export function useController() {
               type: "history_replace",
               items: projection.items,
               startTurn: projection.startTurn,
+              endTurn: projection.endTurn,
               totalTurns: projection.totalTurns,
               hasOlder: projection.hasOlder,
+              hasNewer: projection.hasNewer,
               revision: projection.revisionKnown ? projection.revision : undefined,
               digest: projection.digest || undefined,
             });
@@ -2976,13 +2925,45 @@ export function useController() {
       type: "history_rebase",
       items: projection.items,
       startTurn: projection.startTurn,
+      endTurn: projection.endTurn,
       totalTurns: projection.totalTurns,
       hasOlder: projection.hasOlder,
+      hasNewer: projection.hasNewer,
       revision: projection.revisionKnown ? projection.revision : undefined,
       digest: projection.digest || undefined,
     });
     return true;
   }, [dispatchTo, ensureTranscriptSubscription, snapshotClient]);
+
+  // Fold a settled live suffix back into the bounded durable window. The
+  // renderer may receive thousands of events across a long-running session;
+  // once a turn is persisted, keeping both its event projection and its
+  // history records would defeat the window budget.
+  const reconcileSettledHistory = useCallback(async (tabId: string): Promise<void> => {
+    const before = statesRef.current.get(tabId);
+    if (!before || before.transcriptProtocol === 1 || before.historyHasNewer || before.running || before.turnActive || before.pendingPrompt) return;
+    const sessionPath = before.meta?.sessionPath ?? "";
+    const generation = before.sessionGen;
+    ensureTranscriptSubscription(tabId);
+    const projection = await getTranscriptStore().loadLatest(tabId, sessionPath, {
+      turns: HISTORY_PAGE_TURNS,
+      preferResident: false,
+    });
+    const current = statesRef.current.get(tabId);
+    if (!projection || !current || current.sessionGen !== generation ||
+      (current.meta?.sessionPath ?? "") !== sessionPath || current.running || current.turnActive || current.pendingPrompt) return;
+    dispatchTo(tabId, {
+      type: "history_rebase",
+      items: projection.items,
+      startTurn: projection.startTurn,
+      endTurn: projection.endTurn,
+      totalTurns: projection.totalTurns,
+      hasOlder: projection.hasOlder,
+      hasNewer: projection.hasNewer,
+      revision: projection.revisionKnown ? projection.revision : undefined,
+      digest: projection.digest || undefined,
+    });
+  }, [dispatchTo, ensureTranscriptSubscription]);
 
   useEffect(() => {
     turnEventProjector.bindReset(resetTurnEventProjection);
@@ -3025,82 +3006,36 @@ export function useController() {
         return "empty";
       }
     }
-    if (state.running) return "empty";
-    const sessionPath = state.meta?.sessionPath ?? "";
-    const sessionRevision = state.meta?.sessionRevision ?? state.historyRevision;
-    const sessionDigest = state.meta?.sessionDigest ?? state.historyDigest;
-    const pageBudget = historyPageRequestBudget(state.historyStartTurn, state.historyTotalTurns, targetTurn);
-    const requestSeq = (historyOlderSeq.current.get(targetTabId) ?? 0) + 1;
-    historyOlderSeq.current.set(targetTabId, requestSeq);
+    const requestSeq = (historyWindowSeq.current.get(targetTabId) ?? 0) + 1;
+    historyWindowSeq.current.set(targetTabId, requestSeq);
     recordFrontendDiagnostic("history", "history.older-request", {
       trigger, intent: activeNavigationSeqRef.current, targeted: targetTurn !== undefined,
     });
     ensureTranscriptSubscription(targetTabId);
-    dispatchTo(targetTabId, { type: "history_older_start" });
-    const startedAt = Date.now();
-    try {
-      const result = await getTranscriptStore().loadOlder(targetTabId, sessionPath, pageBudget);
-      if (historyOlderSeq.current.get(targetTabId) !== requestSeq) return "empty";
-      const current = statesRef.current.get(targetTabId);
-      if (!current) return "empty";
-      const currentRevision = current?.meta?.sessionRevision ?? current?.historyRevision;
-      const currentDigest = current?.meta?.sessionDigest ?? current?.historyDigest;
-      const fingerprintMatches = (expected: number | undefined, actual: number | undefined) =>
-        expected === undefined || expected <= 0 ? true : actual === expected;
-      const digestMatches = (expected: string | undefined, actual: string | undefined) =>
-        !expected || actual === expected;
-      // A replace-level hydrate while the page was in flight clears
-      // historyOlderLoading; a metadata or canonical-identity change also
-      // makes the page belong to a different transcript generation.
-      if (!current.historyOlderLoading || (current.meta?.sessionPath ?? "") !== sessionPath ||
-        !fingerprintMatches(sessionRevision, currentRevision) || !digestMatches(sessionDigest, currentDigest) ||
-        (result !== undefined && (!fingerprintMatches(sessionRevision, result.revisionKnown ? result.revision : undefined) ||
-          !digestMatches(sessionDigest, result.digest)))) {
-        dispatchTo(targetTabId, { type: "history_older_error", error: "history identity changed" });
-        return "empty";
-      }
-      if (!result) {
-        // Superseded (generation moved) or nothing older left.
-        dispatchTo(targetTabId, { type: "history_older_error", error: "history page unavailable" });
-        return "empty";
-      }
-      if (result.kind === "reload") {
-        // The cursor went stale (session rewritten): the store reloaded the
-        // latest page; replace instead of prepend.
-        dispatchTo(targetTabId, {
-          type: "history_replace",
-          items: result.items,
-          startTurn: result.startTurn,
-          totalTurns: result.totalTurns,
-          hasOlder: result.hasOlder,
-          revision: result.revisionKnown ? result.revision : undefined,
-          digest: result.digest || undefined,
-        });
-      } else {
-        dispatchTo(targetTabId, {
-          type: "history_prepend",
-          items: result.prependItems,
-          removeIds: result.removeIds,
-          startTurn: result.startTurn,
-          totalTurns: result.totalTurns,
-          hasOlder: result.hasOlder,
-          revision: result.revisionKnown ? result.revision : undefined,
-          digest: result.digest || undefined,
-        });
-      }
-      addBreadcrumb(
-        "tab.hydrate",
-        `history older ${targetTabId} trigger=${trigger} kind=${result.kind} items=${result.kind === "prepend" ? result.prependItems.length : result.items.length} turns=${result.startTurn}-${result.endTurn}/${result.totalTurns} ms=${Date.now() - startedAt}`,
-      );
-      return "loaded";
-    } catch (err) {
-      if (historyOlderSeq.current.get(targetTabId) !== requestSeq) return "empty";
-      if (!statesRef.current.has(targetTabId)) return "empty";
-      dispatchTo(targetTabId, { type: "history_older_error", error: errorMessage(err) });
-      addBreadcrumb("tab.hydrate", `history older failed ${targetTabId}: ${errorMessage(err)}`);
-      return "empty";
-    }
+    return loadHistoryWindow({
+      tabId: targetTabId, direction: "older", targetTurn, trigger, state, requestSeq,
+      isCurrent: (seq) => historyWindowSeq.current.get(targetTabId) === seq,
+      currentState: () => statesRef.current.get(targetTabId),
+      dispatch: (action) => dispatchTo(targetTabId, action),
+    });
   }, [dispatchTo, ensureTranscriptSubscription, snapshotClient]);
+
+  const loadNewerHistory = useCallback(async (tabId?: string, latest = false): Promise<HistoryLoadOutcome> => {
+    const targetTabId = tabId || activeTabIdRef.current;
+    if (!targetTabId) return "empty";
+    const state = statesRef.current.get(targetTabId);
+    if (!state || (!latest && (!state.historyHasNewer || state.historyNewerLoading))) return "empty";
+    const requestSeq = (historyWindowSeq.current.get(targetTabId) ?? 0) + 1;
+    historyWindowSeq.current.set(targetTabId, requestSeq);
+    ensureTranscriptSubscription(targetTabId);
+    return loadHistoryWindow({
+      tabId: targetTabId, direction: latest ? "latest" : "newer", trigger: latest ? "return-latest" : "viewport-user",
+      state, requestSeq,
+      isCurrent: (seq) => historyWindowSeq.current.get(targetTabId) === seq,
+      currentState: () => statesRef.current.get(targetTabId),
+      dispatch: (action) => dispatchTo(targetTabId, action),
+    });
+  }, [dispatchTo, ensureTranscriptSubscription]);
 
   const activeTabFromBackend = useCallback(async (): Promise<TabMeta | undefined> => {
     const tabs = asArray(await app.ListTabs().catch(() => [] as TabMeta[]));
@@ -3464,6 +3399,9 @@ export function useController() {
         void refreshTurnBoundaries(targetTabId);
         invalidateSharedQuery("MetaForTab", [targetTabId]);
         void refreshMetaForTab(targetTabId);
+        void reconcileSettledHistory(targetTabId).catch((error) => {
+          addBreadcrumb("tab.hydrate", `settled history reconcile failed ${targetTabId}: ${errorMessage(error)}`);
+        });
       }
       if (e.kind === "turn_done" || e.kind === "notice") {
         app.JobsForTab(targetTabId).then((jobs) => dispatchTo(targetTabId, { type: "jobs", jobs: asArray(jobs) })).catch(() => {});
@@ -3574,7 +3512,7 @@ export function useController() {
       offTabMeta();
       offRecovery();
     };
-  }, [dispatchRuntimeStatusForTab, dispatchTo, handleTopicActivationEvent, loadSessionDataForTab, refreshBalanceForTab, refreshCheckpoints, refreshMetaForTab, syncActiveTabFromBackend, turnEventProjector, snapshotClient]);
+  }, [dispatchRuntimeStatusForTab, dispatchTo, handleTopicActivationEvent, loadSessionDataForTab, reconcileSettledHistory, refreshBalanceForTab, refreshCheckpoints, refreshMetaForTab, syncActiveTabFromBackend, turnEventProjector, snapshotClient]);
 
   // Track the visible tab in the transcript store: the active tab is pinned
   // out of LRU eviction. (In-flight loads of background tabs still complete
@@ -3586,6 +3524,13 @@ export function useController() {
     previousStoreActiveTabRef.current = activeTabId;
     snapshotClient.prune();
   }, [activeTabId, snapshotClient]);
+
+  // History reads route by binding identity: a remote tab's session lives on
+  // its serve host, so answering it locally would mix two sessions.
+  useEffect(() => {
+    setTranscriptBindingIdentity((tabId) => (statesRef.current.get(tabId)?.meta?.remote ? "remote" : "local"));
+    return () => setTranscriptBindingIdentity(() => "local");
+  }, []);
 
   // Keep shared all-source telemetry live between turn boundaries. Delivery
   // mode can complete dozens of provider requests inside one UI turn, while
@@ -4991,7 +4936,7 @@ export function useController() {
     dismissExtensionForm, drainExtensionNotifications,
     setCollaborationMode, setCollaborationModeForTab, setToolApprovalMode, setToolApprovalModeForTab, setQualityFloor, setComposerProfileForTab, setGoal, setGoalForTab, editGoalForTab, clearGoal, clearGoalForTab, resumeGoal, resumeGoalForTab, pauseGoal, pauseGoalForTab,
     newSession, clearSession, listSessions, listTrashedSessions, retrySessionHistory, resumeSession, openChannelSession, previewSession, deleteSession, restoreSession, purgeTrashedSession, renameSession,
-    loadOlderHistory,
+    loadOlderHistory, loadNewerHistory,
     requestHistoryFullContent,
     refreshMeta, pickWorkspace, switchWorkspace, compact, rewind, rewindForTab, rewindForTabDetailed, undoRewindForTab, forkTurnForTab, setModel, setModelForTab, setEffort, setEffortForTab, cancelJob,
     fetchMemory, remember, forget, saveDoc,

@@ -156,14 +156,12 @@ func (q *Query) prepareSearchIndex(filesystem *FilesystemPersistence, sessionID,
 	q.searchBuilds[sessionID] = preparation
 	q.searchMu.Unlock()
 	go func() {
-		select {
-		case q.rebuildSlot <- struct{}{}:
-			defer func() { <-q.rebuildSlot }()
-		case <-q.rebuildCtx.Done():
-			preparation.err = q.rebuildCtx.Err()
+		if err := q.slots.acquire(q.rebuildCtx, rebuildPrioritySearch); err != nil {
+			preparation.err = err
 			close(preparation.done)
 			return
 		}
+		defer q.slots.release()
 		lock := q.projectionLock("search", sessionID)
 		lock.Lock()
 		preparation.err = ensureSearchIndex(q.rebuildCtx, filesystem, sessionID, path)

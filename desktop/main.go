@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"reasonix/internal/sandbox"
+	"reasonix/internal/skill/skillwatch"
 
 	// Blank imports wire compile-time built-ins into their registries, exactly as
 	// cmd/reasonix does — boot.Build resolves providers/tools from these registries.
@@ -58,6 +59,12 @@ func runWindowsSandboxHelperIfRequested(argv []string) (int, bool) {
 func main() {
 	if code, ok := runWindowsSandboxHelperIfRequested(os.Args); ok {
 		os.Exit(code)
+	}
+	// Internal watcher-helper entry: the host-shared skill watch service
+	// re-enters this executable so Windows directory watching never runs
+	// in-process. Dispatch before any application initialization.
+	if skillwatch.MaybeRunHelper() {
+		return
 	}
 	sandbox.RegisterHelperDispatch()
 	// The detached macOS self-update child must run before any shell starts.

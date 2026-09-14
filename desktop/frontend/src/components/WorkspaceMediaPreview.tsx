@@ -1,3 +1,4 @@
+import { useEffect, useRef, type RefObject } from "react";
 import type { FilePreview } from "../lib/types";
 import { workspaceBasename } from "../lib/workspacePanelFormat";
 
@@ -17,10 +18,25 @@ export function WorkspaceMediaPreview({ preview }: { preview: FilePreview }) {
     return <iframe className="workspace-media workspace-media--html" src={preview.url} title={workspaceBasename(preview.path)} sandbox="allow-scripts" />;
   }
   if (preview.kind === "audio") {
-    return <div className="workspace-media workspace-media--audio"><audio src={preview.url} controls preload="metadata" /></div>;
+    return <ReleasingMedia kind="audio" url={preview.url} />;
   }
   if (preview.kind === "video") {
-    return <div className="workspace-media workspace-media--video"><video src={preview.url} controls preload="metadata" /></div>;
+    return <ReleasingMedia kind="video" url={preview.url} />;
   }
   return null;
+}
+
+export function releaseMediaElement(element: Pick<HTMLMediaElement, "pause" | "removeAttribute" | "load">): void {
+  element.pause();
+  element.removeAttribute("src");
+  element.load();
+}
+
+function ReleasingMedia({ kind, url }: { kind: "audio" | "video"; url: string }) {
+  const ref = useRef<HTMLMediaElement>(null);
+  useEffect(() => () => { if (ref.current) releaseMediaElement(ref.current); }, [url]);
+  const media = { src: url, controls: true, preload: "metadata" as const };
+  return <div className={`workspace-media workspace-media--${kind}`}>
+    {kind === "audio" ? <audio ref={ref as RefObject<HTMLAudioElement>} {...media} /> : <video ref={ref as RefObject<HTMLVideoElement>} {...media} />}
+  </div>;
 }

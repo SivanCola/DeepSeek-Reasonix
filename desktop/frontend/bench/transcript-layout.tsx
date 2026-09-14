@@ -48,7 +48,8 @@ Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
 const commands = {
   onPrompt: noAction, onFork: undefined, onDeliveryContinue: undefined, onAcceptDelivery: undefined,
   onOpenChanges: undefined, onOpenVerification: undefined, onEditPrompt: undefined,
-  onRewind: undefined, onLoadOlderHistory: undefined, onSurfacePaintReady: undefined,
+  onRewind: undefined, onLoadOlderHistory: undefined, onLoadNewerHistory: undefined,
+  onSurfacePaintReady: undefined,
 };
 function Fixture() {
   const t = useT();

@@ -10,7 +10,6 @@
 // shows each one's own tabs. The add menu stays session-local.
 
 import { create } from "zustand";
-import { cancelFileNavigation } from "../lib/fileNavigationLifetime";
 
 export type TabType = "file" | "changed" | "context" | "remote" | "browser";
 
@@ -109,6 +108,9 @@ export type ActivityBarState = {
   setWorkspaceRoot: (root: string) => void;
 };
 
+// Tab and project changes never cancel file navigation here. The runtime
+// reconciles its navigation records against the open dock tabs, so collapsing
+// the dock keeps a preview to restore while closing its tab ends that record.
 export const useActivityBarStore = create<ActivityBarState>((set, get) => ({
   workspaceRoot,
   tabs: initial.tabs,
@@ -131,7 +133,6 @@ export const useActivityBarStore = create<ActivityBarState>((set, get) => ({
     return get().activeTabId!;
   },
   addTab: (type, label, meta) => {
-    cancelFileNavigation();
     set((state) => {
       const tab: TabItem = { id: nextTabId(), type, label, meta, openedAt: Date.now() };
       const tabs = [...state.tabs, tab];
@@ -140,7 +141,6 @@ export const useActivityBarStore = create<ActivityBarState>((set, get) => ({
     });
   },
   closeTab: (tabId) => {
-    cancelFileNavigation();
     set((state) => {
       const index = state.tabs.findIndex((tab) => tab.id === tabId);
       if (index < 0) return state;
@@ -173,7 +173,6 @@ export const useActivityBarStore = create<ActivityBarState>((set, get) => ({
       };
     }),
   activateTab: (tabId) => {
-    cancelFileNavigation();
     set((state) => {
       if (!state.tabs.some((tab) => tab.id === tabId)) return state;
       persist(state.tabs, tabId);
@@ -193,11 +192,10 @@ export const useActivityBarStore = create<ActivityBarState>((set, get) => ({
       persist(tabs, state.activeTabId);
       return { tabs };
     }),
-  setActivityBarOpen: (open) => { if (!open) cancelFileNavigation(); set({ activityBarOpen: open }); },
+  setActivityBarOpen: (open) => set({ activityBarOpen: open }),
   setAddMenuOpen: (open) => set({ addMenuOpen: open }),
   setWorkspaceRoot: (root) => {
     if (root === workspaceRoot) return;
-    cancelFileNavigation();
     closedByProject.set(workspaceRoot, get().recentlyClosed);
     workspaceRoot = root;
     const loaded = loadTabs();

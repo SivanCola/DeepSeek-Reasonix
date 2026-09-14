@@ -555,6 +555,7 @@ export interface AppBindings extends ForkTargetsBindings, ToolRecoveryBindings, 
   PickExportFile(defaultFilename: string, mimeType: string): Promise<string>;
   ExportGoalDiagnostics(): Promise<string>;
   SaveExportFile(path: string, payload: string, base64Encoded: boolean): Promise<void>;
+  SaveSessionMarkdownForTab(tabID: string, path: string, title: string): Promise<void>;
   SaveExportImageFiles(path: string, payloads: string[]): Promise<void>;
   AttachDropped(path: string): Promise<DroppedItem>;
   AttachmentDataURL(path: string): Promise<string>;
@@ -4118,6 +4119,9 @@ function makeMockApp(): AppBindings {
       a.click();
       a.remove();
       if (!base64Encoded) URL.revokeObjectURL(url);
+    },
+    async SaveSessionMarkdownForTab(_tabID: string, path: string, title: string) {
+      await this.SaveExportFile(path, `# ${title || "Reasonix session"}\n`, false);
     },
     async SaveExportImageFiles(path: string, payloads: string[]) {
       if (payloads.length === 0) throw new Error("No image payloads to export");

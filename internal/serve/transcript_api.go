@@ -25,6 +25,80 @@ func (s *Server) registerTranscriptRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /session-history/search", s.sessionHistorySearch)
 	mux.HandleFunc("GET /session-history/locate", s.sessionHistoryLocate)
 	mux.HandleFunc("GET /session-history/content", s.sessionHistoryContent)
+	mux.HandleFunc("GET /session-history/window", s.sessionHistoryWindow)
+	mux.HandleFunc("GET /session-message-field", s.sessionMessageField)
+}
+
+// sessionHistoryWindow serves history-window-v1: a bounded window around an
+// anchor in either direction of a fixed durable snapshot.
+func (s *Server) sessionHistoryWindow(w http.ResponseWriter, r *http.Request) {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	query, ref, ok := s.canonicalSessionQuery(w, r)
+	if !ok {
+		return
+	}
+	req := session.HistoryWindowRequest{Anchor: r.URL.Query().Get("anchor"), MessageID: r.URL.Query().Get("messageId"), Cursor: r.URL.Query().Get("cursor"), Direction: r.URL.Query().Get("direction")}
+	if raw := r.URL.Query().Get("turn"); raw != "" {
+		if _, err := fmt.Sscan(raw, &req.Turn); err != nil {
+			http.Error(w, "invalid history window turn", http.StatusBadRequest)
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if _, err := fmt.Sscan(raw, &req.Limit); err != nil {
+			http.Error(w, "invalid history window limit", http.StatusBadRequest)
+			return
+		}
+	}
+	page, err := query.ReadHistoryWindow(r.Context(), ref, req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(page)
+}
+
+// sessionMessageField serves one bounded, UTF-8 aligned fragment of one
+// top-level message field.
+func (s *Server) sessionMessageField(w http.ResponseWriter, r *http.Request) {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	query, ref, ok := s.canonicalSessionQuery(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	var version int
+	var offset, length int64
+	if raw := q.Get("version"); raw != "" {
+		if _, err := fmt.Sscan(raw, &version); err != nil {
+			http.Error(w, "invalid message field version", http.StatusBadRequest)
+			return
+		}
+	}
+	if raw := q.Get("offset"); raw != "" {
+		if _, err := fmt.Sscan(raw, &offset); err != nil {
+			http.Error(w, "invalid message field offset", http.StatusBadRequest)
+			return
+		}
+	}
+	if raw := q.Get("length"); raw != "" {
+		if _, err := fmt.Sscan(raw, &length); err != nil {
+			http.Error(w, "invalid message field length", http.StatusBadRequest)
+			return
+		}
+	}
+	page, err := query.ReadMessageField(r.Context(), ref, q.Get("messageId"), version, q.Get("field"), offset, length)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(page)
 }
 
 func (s *Server) sessionOpen(w http.ResponseWriter, r *http.Request) {

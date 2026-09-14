@@ -28,7 +28,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"reasonix/internal/config"
-
 	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/frontmatter"
 	"reasonix/internal/tool"
@@ -151,6 +150,8 @@ type Options struct {
 	// Watch keeps long-lived catalogs current through filesystem events. Hosts
 	// that own the Store lifecycle set this and call Close during teardown.
 	Watch bool
+	// WatchService shares physical watches across stores when Watch is enabled.
+	WatchService *WatchService
 	// DisableDiscovery returns an empty store without probing project, custom,
 	// global, plugin, or built-in skill sources. It is a test-only isolation knob.
 	DisableDiscovery bool
@@ -183,17 +184,13 @@ type Store struct {
 	catalog           *catalogSnapshot
 	catalogFlight     *catalogFlight
 	discoveryScans    uint64
+	hostWatch         hostWatchState
 	watcherMu         sync.Mutex
 	watcher           *fsnotify.Watcher
 	watcherDone       chan struct{}
 	watcherLifecycle  watcherLifecycle
 	watcherGeneration uint64
 	closed            bool
-}
-
-type watcherLifecycle struct {
-	cancel context.CancelFunc
-	active bool
 }
 
 // CatalogSnapshot is an immutable, stable-order view of one discovery
@@ -275,6 +272,7 @@ func New(opts Options) *Store {
 		disableBuiltins:  opts.DisableBuiltins,
 		disableDiscovery: opts.DisableDiscovery,
 		autoWatch:        opts.Watch,
+		hostWatch:        hostWatchState{service: opts.WatchService},
 		stderr:           stderr,
 		catalogGen:       1,
 	}

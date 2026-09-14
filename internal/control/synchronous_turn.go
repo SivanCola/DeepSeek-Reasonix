@@ -60,6 +60,7 @@ func (c *Controller) runSynchronousTurn(
 		closing := c.closed
 		recovery := c.turns.phase == session.RuntimeRecoveryRequired
 		c.turns.finishingBound.end()
+		c.turns.finishingBound.endIdle()
 		if !recovery {
 			c.turns.lastToken = c.turns.token
 			if closing {

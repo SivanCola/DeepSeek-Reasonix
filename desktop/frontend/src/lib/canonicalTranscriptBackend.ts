@@ -1,7 +1,7 @@
-import type { MessageHistoryPage, PersistentMessage } from "../generated/desktopContract.generated";
+import type { HistoryWindowPage, MessageHistoryPage, PersistentMessage } from "../generated/desktopContract.generated";
 import { asArray } from "./array";
 import { app } from "./bridge";
-import type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistoryMessage, HistorySlice, HistorySliceRequest, MemoryCitation } from "./types";
+import type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistoryMessage, HistorySlice, HistorySliceRequest, HistoryWindowPageView, HistoryWindowRequestView, MemoryCitation } from "./types";
 
 function asWireObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -67,20 +67,42 @@ export function resolvedHistoryField(message: HistoryMessage, field: string): st
   }
 }
 
-async function historyPage(tabId: string, cursor: string, limit: number): Promise<MessageHistoryPage> {
+// ── binding identity ────────────────────────────────────────────────────────
+// A tab's history comes from exactly one place: the host that owns its
+// binding. Crossing over on a failed call would let a transient local error
+// (busy, conflict, timeout) be answered by a different service holding
+// different data, so routing is decided by identity before the request, never
+// by the outcome of one.
+export type TranscriptBindingIdentity = "local" | "remote";
+
+let bindingIdentityFor: ((tabId: string) => TranscriptBindingIdentity) | undefined;
+
+/** Installed by the app layer, which is where tab metadata lives. */
+export function setTranscriptBindingIdentity(resolver: (tabId: string) => TranscriptBindingIdentity): void {
+  bindingIdentityFor = resolver;
+}
+
+// An unregistered identity is a tab with no remote binding, which is what a
+// local session is. This is a default, not a fallback: it never moves a
+// request to the other service because the first one answered badly.
+function identityFor(tabId: string): TranscriptBindingIdentity {
   try {
-    return await app.SessionHistoryPageForTab(tabId, cursor, limit);
-  } catch (localError) {
-    try { return await app.RemoteSessionHistoryPageForTab(tabId, cursor, limit); } catch { throw localError; }
+    return bindingIdentityFor?.(tabId) ?? "local";
+  } catch {
+    return "local";
   }
 }
 
 async function openSession(tabId: string) {
-  try {
-    return await app.SessionOpenForTab(tabId);
-  } catch (localError) {
-    try { return await app.RemoteSessionOpenForTab(tabId); } catch { throw localError; }
-  }
+  return identityFor(tabId) === "remote"
+    ? app.RemoteSessionOpenForTab(tabId)
+    : app.SessionOpenForTab(tabId);
+}
+
+async function historyPage(tabId: string, cursor: string, limit: number): Promise<MessageHistoryPage> {
+  return identityFor(tabId) === "remote"
+    ? app.RemoteSessionHistoryPageForTab(tabId, cursor, limit)
+    : app.SessionHistoryPageForTab(tabId, cursor, limit);
 }
 
 const locatorResetCursor = "reasonix:locator:newest";
@@ -101,12 +123,125 @@ function entriesFor(messages: PersistentMessage[], snapshotSequence: number): Hi
   });
 }
 
+// Tabs whose binding answered "unsupported" once keep the protocol-7 path for
+// the rest of the session: an older Serve is not re-probed on every page.
+const windowUnsupportedTabs = new Set<string>();
+
+function unsupportedWindow(): HistoryWindowPageView {
+  return {
+    entries: [], status: "unsupported", olderCursor: "", newerCursor: "",
+    hasOlder: false, hasNewer: false, totalTurns: 0, startTurn: 0, endTurn: 0,
+    revision: 0, revisionKnown: false, digest: "",
+  };
+}
+
+export async function canonicalHistoryWindow(tabId: string, req: HistoryWindowRequestView): Promise<HistoryWindowPageView> {
+  if (windowUnsupportedTabs.has(tabId)) return unsupportedWindow();
+  const remote = identityFor(tabId) === "remote";
+  let page: HistoryWindowPage;
+  if (remote) {
+    if (typeof app.RemoteSessionHistoryWindowForTab !== "function") {
+      windowUnsupportedTabs.add(tabId);
+      return unsupportedWindow();
+    }
+    page = await app.RemoteSessionHistoryWindowForTab(tabId, req);
+  } else {
+    if (typeof app.SessionHistoryWindowForTab !== "function") {
+      windowUnsupportedTabs.add(tabId);
+      return unsupportedWindow();
+    }
+    page = await app.SessionHistoryWindowForTab(tabId, req);
+  }
+  const status = (page.status || "ready") as HistoryWindowPageView["status"];
+  if (status === "unsupported") {
+    windowUnsupportedTabs.add(tabId);
+    return unsupportedWindow();
+  }
+  const entries = entriesFor(asArray<PersistentMessage>(page.messages), page.snapshotSequence);
+  const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
+  return {
+    entries,
+    status,
+    olderCursor: page.olderCursor ?? "",
+    newerCursor: page.newerCursor ?? "",
+    hasOlder: Boolean(page.hasOlder),
+    hasNewer: Boolean(page.hasNewer),
+    totalTurns: page.totalTurns ?? (turns.length > 0 ? Math.max(...turns) : 0),
+    startTurn: turns.length > 0 ? Math.min(...turns) : 0,
+    endTurn: turns.length > 0 ? Math.max(...turns) : 0,
+    revision: page.snapshotSequence ?? 0,
+    revisionKnown: (page.snapshotSequence ?? 0) > 0,
+    digest: page.generation ?? "",
+  };
+}
+
+function staleSlice(): HistorySlice {
+  return { entries: [], nextCursor: "", hasOlder: false, hasNewer: false, newerCursor: "", totalTurns: 0, startTurn: 0, endTurn: 0, stale: true, revision: 0 };
+}
+
+/** A window page in the page-shaped form the resident store already consumes. */
+function sliceFromWindow(window: HistoryWindowPageView, source: string): HistorySlice {
+  return {
+    entries: window.entries,
+    nextCursor: window.olderCursor,
+    hasOlder: window.hasOlder,
+    newerCursor: window.newerCursor,
+    hasNewer: window.hasNewer,
+    totalTurns: window.totalTurns,
+    startTurn: window.startTurn,
+    endTurn: window.endTurn,
+    stale: false,
+    revision: window.revision,
+    revisionKnown: window.revisionKnown,
+    digest: window.digest,
+    source,
+  };
+}
+
+// turnWindowStatus maps a window status onto the page contract the store
+// already understands. Empty pages alone are never an error, and a stale
+// cursor is an answer rather than a failure.
+function requireReadyWindow(window: HistoryWindowPageView): HistorySlice | undefined {
+  switch (window.status) {
+    case "ready": return sliceFromWindow(window, "window");
+    case "stale_cursor": return staleSlice();
+    case "preparing": throw new Error("Session history is preparing");
+    case "failed": throw new Error("Session history is failed");
+    case "not_found": throw new Error("Session history is unavailable for this session");
+    default: return undefined;
+  }
+}
+
 export async function canonicalHistorySlice(tabId: string, req: HistorySliceRequest): Promise<HistorySlice> {
   // Protocol 6 and older hosts expose only the windowed compatibility reader.
   // Keep it available when their controller-backed snapshot cannot start.
   if (typeof app.SessionOpenForTab !== "function") return app.HistorySliceForTab(tabId, req);
   const cursor = req.cursor ?? "";
   const limit = Math.min(500, Math.max(1, req.entries ?? 100));
+  // A cursor names a position inside a window, so it pages through the window
+  // protocol in the direction the request asked for. Protocol 7 has no newer
+  // cursor at all, so a legacy binding simply cannot answer that direction.
+  if (cursor !== "" || req.newer) {
+    const window = await canonicalHistoryWindow(tabId, {
+      anchor: "cursor",
+      cursor,
+      direction: req.newer ? "newer" : "older",
+      limit,
+    });
+    const ready = requireReadyWindow(window);
+    if (ready) return ready;
+    if (req.newer) return sliceFromWindow(unsupportedWindow(), "legacy-no-newer");
+    return legacyPageSlice(tabId, cursor, limit, "locator");
+  }
+  // The newest page: the window carries the newer cursor that makes the
+  // resident window bidirectional, so prefer it wherever it is available.
+  const window = await canonicalHistoryWindow(tabId, { anchor: "newest", direction: "older", limit });
+  const ready = requireReadyWindow(window);
+  if (ready) return { ...ready, source: "recent" };
+  return legacyPageSlice(tabId, "", limit, "recent");
+}
+
+async function legacyPageSlice(tabId: string, cursor: string, limit: number, source: string): Promise<HistorySlice> {
   if (cursor === "") {
     const view = await openSession(tabId);
     const recent = asArray<PersistentMessage>(view.recent.entries);
@@ -116,7 +251,7 @@ export async function canonicalHistorySlice(tabId: string, req: HistorySliceRequ
       const startTurn = turns.length > 0 ? Math.min(...turns) : 0;
       const hasOlder = startTurn > 1 || (recent[0]?.position ?? 0) > 0;
       return {
-        entries, nextCursor: hasOlder ? locatorResetCursor : "", hasOlder,
+        entries, nextCursor: hasOlder ? locatorResetCursor : "", hasOlder, hasNewer: false, newerCursor: "",
         totalTurns: view.recent.totalTurns > 0 ? view.recent.totalTurns : (turns.length > 0 ? Math.max(...turns) : 0),
         startTurn, endTurn: turns.length > 0 ? Math.max(...turns) : 0, stale: false,
         revision: view.snapshotSequence, revisionKnown: view.snapshotSequence > 0,
@@ -126,17 +261,17 @@ export async function canonicalHistorySlice(tabId: string, req: HistorySliceRequ
   }
   const reset = cursor === locatorResetCursor;
   const page = await historyPage(tabId, reset ? "" : cursor, limit);
-  if (page.status === "stale_cursor") return { entries: [], nextCursor: "", hasOlder: false, totalTurns: 0, startTurn: 0, endTurn: 0, stale: true, revision: 0 };
+  if (page.status === "stale_cursor") return staleSlice();
   if (page.status && page.status !== "ready") throw new Error(`Session history is ${page.status}`);
   const entries = entriesFor(asArray<PersistentMessage>(page.messages), page.snapshotSequence);
   const turns = entries.map(entry => entry.turn).filter(turn => turn > 0);
   return {
-    entries, nextCursor: page.nextCursor ?? "", hasOlder: page.hasMore,
+    entries, nextCursor: page.nextCursor ?? "", hasOlder: page.hasMore, hasNewer: false, newerCursor: "",
     totalTurns: page.totalTurns ?? (turns.length > 0 ? Math.max(...turns) : 0),
     startTurn: turns.length > 0 ? Math.min(...turns) : 0,
     endTurn: turns.length > 0 ? Math.max(...turns) : 0, stale: false,
     revision: page.snapshotSequence, revisionKnown: page.snapshotSequence > 0, digest: page.generation,
-    source: reset ? "locator-reset" : "locator",
+    source: reset ? "locator-reset" : source,
   };
 }
 

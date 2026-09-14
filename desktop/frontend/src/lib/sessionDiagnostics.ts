@@ -80,6 +80,12 @@ export interface TranscriptCacheDiagnostic {
   markdownBudgetBytes: number;
   historyEvictions: number;
   markdownEvictions: number;
+  /** Pages of resident history the window budget has reclaimed. */
+  reclaimedPages: number;
+  /** Messages held across every resident window; the bounded reading cost. */
+  residentWindowEntries: number;
+  /** Adjacent pages the window keeps per session before reclaiming. */
+  windowMaxPages: number;
 }
 
 export interface MountedRowsDiagnostic {

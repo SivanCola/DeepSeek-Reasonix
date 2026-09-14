@@ -236,16 +236,9 @@ func TestRunTurnRefusedAfterClose(t *testing.T) {
 	}
 }
 
-// waitIdleAdmission polls the running||finishing admission gate; a test that
-// submits or asserts idle right after TurnDone must wait the finishing window
-// out (TurnDone is emitted inside it).
+// waitIdleAdmission waits for the same lifecycle boundary as production turn
+// admission, including synchronous TurnDone fan-out.
 func waitIdleAdmission(t *testing.T, c *Controller) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for c.Running() {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for the controller to return to idle")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitIdle(t, c)
 }

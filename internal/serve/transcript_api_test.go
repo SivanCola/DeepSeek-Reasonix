@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -266,4 +267,279 @@ func TestCanonicalSessionHistoryHTTPUsesAuthorizedContentRanges(t *testing.T) {
 	if wrong.StatusCode != http.StatusConflict {
 		t.Fatalf("wrong session status=%d", wrong.StatusCode)
 	}
+}
+
+// TestCanonicalSessionHistoryWindowHTTPPagesBothDirections exercises
+// history-window-v1: a newest page, both continuation cursors, and a
+// message anchor that resolves through the index instead of walking pages.
+func TestCanonicalSessionHistoryWindowHTTPPagesBothDirections(t *testing.T) {
+	server, _ := newWindowTestServer(t)
+
+	var first canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=newest&limit=4", &first)
+	if len(first.Messages) != 4 || !first.HasOlder || first.OlderCursor == "" {
+		t.Fatalf("newest window=%+v", windowShape(first))
+	}
+	if first.HasNewer || first.NewerCursor != "" {
+		t.Fatalf("newest window must not page newer: %+v", windowShape(first))
+	}
+	// The page ends at the newest message: the anchor only ever moves backward.
+	if got := first.Messages[len(first.Messages)-1].MessageID; got != "m16" {
+		t.Fatalf("newest page tail=%q", got)
+	}
+
+	// Paging older from the newest page walks strictly backward and keeps the
+	// snapshot pinned, so appends cannot invalidate the cursor.
+	var older canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=cursor&cursor="+url.QueryEscape(first.OlderCursor)+"&direction=older&limit=4", &older)
+	if got := windowIDs(older); !slices.Equal(got, []string{"m9", "m10", "m11", "m12"}) {
+		t.Fatalf("older page ids=%v", got)
+	}
+	if older.SnapshotSequence != first.SnapshotSequence {
+		t.Fatalf("cursor page moved snapshot %d -> %d", first.SnapshotSequence, older.SnapshotSequence)
+	}
+
+	// Paging newer from that same page returns exactly the page we came from.
+	var newer canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=cursor&cursor="+url.QueryEscape(older.NewerCursor)+"&direction=newer&limit=4", &newer)
+	if got := windowIDs(newer); !slices.Equal(got, []string{"m13", "m14", "m15", "m16"}) {
+		t.Fatalf("newer page ids=%v", got)
+	}
+
+	// A message anchor lands on a window around that message in one round trip
+	// (no newest-first walk): older paging ends at the anchor itself.
+	var anchored canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=message&messageId=m6&direction=older&limit=3", &anchored)
+	if got := windowIDs(anchored); !slices.Equal(got, []string{"m4", "m5", "m6"}) {
+		t.Fatalf("message anchor ids=%v", got)
+	}
+	if anchored.AnchorMessageID != "m6" || !anchored.HasNewer {
+		t.Fatalf("message anchor metadata=%+v", windowShape(anchored))
+	}
+	if anchored.SnapshotSequence != first.SnapshotSequence {
+		t.Fatalf("anchor left the pinned snapshot: %d", anchored.SnapshotSequence)
+	}
+
+	// A turn anchor resolves through the same index.
+	var byTurn canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=turn&turn=3&direction=older&limit=2", &byTurn)
+	if byTurn.AnchorTurn != 3 || len(byTurn.Messages) == 0 {
+		t.Fatalf("turn anchor=%+v", windowShape(byTurn))
+	}
+	for _, message := range byTurn.Messages {
+		if message.VisibleTurn > 3 {
+			t.Fatalf("turn anchor leaked newer turn %d", message.VisibleTurn)
+		}
+	}
+}
+
+// TestCanonicalSessionHistoryWindowHTTPRejectsForeignCursor keeps the cursor a
+// bound credential: another session's cursor is stale, not a silent re-anchor.
+func TestCanonicalSessionHistoryWindowHTTPRejectsForeignCursor(t *testing.T) {
+	server, _ := newWindowTestServer(t)
+	var page canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=newest&limit=2", &page)
+	raw, err := base64.RawURLEncoding.DecodeString(page.OlderCursor)
+	if err != nil {
+		t.Fatalf("cursor is not raw-url base64: %v", err)
+	}
+	var bound map[string]any
+	if err := json.Unmarshal(raw, &bound); err != nil {
+		t.Fatalf("cursor is not JSON: %v", err)
+	}
+	if bound["sessionId"] != "canonical" {
+		t.Fatalf("cursor does not name its session: %v", bound["sessionId"])
+	}
+	bound["sessionId"] = "elsewhere"
+	reissued, err := json.Marshal(bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := base64.RawURLEncoding.EncodeToString(reissued)
+	var rejected canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=cursor&cursor="+url.QueryEscape(foreign)+"&limit=2", &rejected)
+	if rejected.Status != "stale_cursor" || len(rejected.Messages) != 0 {
+		t.Fatalf("foreign cursor status=%q messages=%d", rejected.Status, len(rejected.Messages))
+	}
+	var malformed canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=cursor&cursor=not-a-cursor&limit=2", &malformed)
+	if malformed.Status != "stale_cursor" {
+		t.Fatalf("malformed cursor status=%q", malformed.Status)
+	}
+}
+
+// TestCanonicalSessionMessageFieldHTTPStreamsAlignedFragments verifies the
+// per-field read: a bounded fragment, a total length, and concatenated ranges
+// that re-parse as the original value.
+func TestCanonicalSessionMessageFieldHTTPStreamsAlignedFragments(t *testing.T) {
+	server, _ := newWindowTestServer(t)
+	var page canonical.HistoryWindowPage
+	getWindow(t, server, "anchor=message&messageId=m2&direction=older&limit=1", &page)
+	if len(page.Messages) != 1 || page.Messages[0].ContentRef == nil {
+		t.Fatalf("anchored page=%+v", windowShape(page))
+	}
+	// The window issues the content grant this cell reads against; a body over
+	// the inline preview budget must come back referenced, not inlined.
+	if ref := page.Messages[0].ContentRef; ref.Digest == "" || ref.Bytes == 0 || page.Messages[0].Inline != nil {
+		t.Fatalf("content reference=%+v inline=%v", ref, page.Messages[0].Inline)
+	}
+
+	var assembled strings.Builder
+	var offset int64
+	for {
+		request := url.Values{"sessionId": []string{"canonical"}, "messageId": []string{"m2"}, "field": []string{"content"}}
+		request.Set("offset", fmt.Sprint(offset))
+		request.Set("length", "64")
+		response, err := http.Get(server.URL + "/session-message-field?" + request.Encode())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fragment canonical.MessageFieldPage
+		decodeErr := json.NewDecoder(response.Body).Decode(&fragment)
+		_ = response.Body.Close()
+		if decodeErr != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("field status=%d page=%+v err=%v", response.StatusCode, fragment, decodeErr)
+		}
+		if fragment.Status != "ready" || fragment.Encoding != "utf-8" {
+			t.Fatalf("field page=%+v", fragment)
+		}
+		// TotalBytes counts the field's JSON source, quotes included, not the
+		// decoded value and not the whole canonical body.
+		if want := int64(len(windowTestBody) + len(`""`)); fragment.TotalBytes != want {
+			t.Fatalf("total bytes=%d want %d", fragment.TotalBytes, want)
+		}
+		if int64(len(fragment.Data)) > 64 {
+			t.Fatalf("fragment exceeded the requested length: %d", len(fragment.Data))
+		}
+		assembled.Write(fragment.Data)
+		if fragment.NextOffset == 0 {
+			break
+		}
+		if fragment.NextOffset <= offset {
+			t.Fatalf("field offset did not advance: %d -> %d", offset, fragment.NextOffset)
+		}
+		offset = fragment.NextOffset
+		if offset > 1<<20 {
+			t.Fatal("field read did not terminate")
+		}
+	}
+	// Concatenated fragments must re-parse as the original value: the source
+	// form is JSON, and a cut inside a rune or an escape would break this.
+	var decoded string
+	if err := json.Unmarshal([]byte(assembled.String()), &decoded); err != nil {
+		t.Fatalf("reassembled field is not valid JSON: %v", err)
+	}
+	if decoded != windowTestBody {
+		t.Fatalf("reassembled field=%d runes want %d", len([]rune(decoded)), len([]rune(windowTestBody)))
+	}
+
+	// A field the message does not carry reads as an empty, finished fragment
+	// rather than an error, so the client can distinguish it from a failure.
+	missing, err := http.Get(server.URL + "/session-message-field?sessionId=canonical&messageId=m2&field=reasoning_content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var absent canonical.MessageFieldPage
+	decodeErr := json.NewDecoder(missing.Body).Decode(&absent)
+	_ = missing.Body.Close()
+	if decodeErr != nil || missing.StatusCode != http.StatusOK || absent.Status != "ready" || absent.TotalBytes != 0 {
+		t.Fatalf("absent field status=%d page=%+v err=%v", missing.StatusCode, absent, decodeErr)
+	}
+
+	unknown, err := http.Get(server.URL + "/session-message-field?sessionId=canonical&messageId=nope&field=content")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notFound canonical.MessageFieldPage
+	decodeErr = json.NewDecoder(unknown.Body).Decode(&notFound)
+	_ = unknown.Body.Close()
+	if decodeErr != nil || unknown.StatusCode != http.StatusOK || notFound.Status != "not_found" {
+		t.Fatalf("unknown message status=%d page=%+v err=%v", unknown.StatusCode, notFound, decodeErr)
+	}
+}
+
+// windowTestBody is m2's content: larger than the 32 KiB inline preview
+// budget so the window returns a content reference, and non-ASCII so a
+// rune-splitting bug cannot pass by accident.
+var windowTestBody = strings.Repeat("分块读取正文内容", 6000)
+
+func newWindowTestServer(t *testing.T) (*httptest.Server, *control.Controller) {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "sessions-v4")
+	service, err := canonical.NewService("serve", canonical.NewFilesystemPersistence(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := service.Create(t.Context(), canonical.CreateOptions{SessionID: "canonical"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make([]canonical.Event, 0, 16)
+	for index := 1; index <= 16; index++ {
+		role, content := provider.RoleUser, fmt.Sprintf("question %d", index)
+		if index%2 == 0 {
+			role, content = provider.RoleAssistant, fmt.Sprintf("answer %d", index)
+			if index == 2 {
+				// Larger than the inline preview budget, so the window hands
+				// back a content reference and the field route has to stream.
+				content = windowTestBody
+			}
+		}
+		payload, err := json.Marshal(map[string]any{"message": provider.Message{ID: fmt.Sprintf("m%d", index), Role: role, Content: content}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, canonical.Event{Kind: "message/complete", Payload: payload})
+	}
+	if _, err := runtime.Session().AppendBatch(t.Context(), "message", events); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Session().Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	bc := NewBroadcaster()
+	ctrl := control.New(control.Options{SessionService: service, SessionRuntime: runtime, ExclusiveSession: true, Sink: bc})
+	t.Cleanup(ctrl.Close)
+	server := httptest.NewServer(New(ctrl, bc, config.ServeConfig{}).Handler())
+	t.Cleanup(server.Close)
+	return server, ctrl
+}
+
+// getWindow polls the window route out of "preparing": the first read of a
+// cold session kicks off the locator build in the background.
+func getWindow(t *testing.T, server *httptest.Server, query string, into *canonical.HistoryWindowPage) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		response, err := http.Get(server.URL + "/session-history/window?sessionId=canonical&" + query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decodeErr := json.NewDecoder(response.Body).Decode(into)
+		_ = response.Body.Close()
+		if decodeErr != nil || response.StatusCode != http.StatusOK {
+			t.Fatalf("window status=%d page=%+v err=%v", response.StatusCode, into, decodeErr)
+		}
+		if into.Status != "preparing" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("window stayed preparing for %q", query)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func windowIDs(page canonical.HistoryWindowPage) []string {
+	ids := make([]string, 0, len(page.Messages))
+	for _, message := range page.Messages {
+		ids = append(ids, message.MessageID)
+	}
+	return ids
+}
+
+// windowShape keeps failure output readable: pages carry full bodies.
+func windowShape(page canonical.HistoryWindowPage) canonical.HistoryWindowPage {
+	page.Messages = nil
+	return page
 }

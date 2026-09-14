@@ -16,7 +16,7 @@ import type { PinnedFileInfo } from "./pinnedContextBridge";
 import type { RecoveryLineageView } from "./sessionRecoveryTypes";
 export * from "./remoteTypes";
 export type { ContextBudgetInfo, ContextMaintenanceInfo, ContextMaintenanceReceipt, WireContextMaintenance } from "./contextMaintenanceTypes";
-export type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistorySlice, HistorySliceRequest, SessionClearResult } from "./historyTypes";
+export type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistorySlice, HistorySliceRequest, HistoryWindowPageView, HistoryWindowRequestView, HistoryWindowStatus, MessageFieldView, SessionClearResult } from "./historyTypes";
 export type { ProjectGroupsSnapshot, ProjectRuntimeTopic, ProjectTopicKey, ProjectTopicPage, ProjectTopicPageRequest, ProjectTreeChangedV2, ProjectTreeOrganizationBindings, ProjectTreeRuntimeSnapshot, ProjectTreeSnapshot, SessionCatalogBindings, SessionCatalogStatus, SessionGroup, SessionReference } from "./sessionCatalogTypes";
 export type EventKind =
   | "user_message"
@@ -1688,19 +1688,7 @@ export interface MemoryView {
 // SettingsTab is the top-level navigation item in the Settings Centre modal.
 export type SettingsTab = "general" | "models" | "model-stats" | "providers" | "bots" | "mcp" | "remote" | "skills" | "subagents" | "plugins" | "memory" | "hooks" | "diagnostics" | "shortcuts" | "permissions" | "sandbox" | "network" | "browser" | "appearance" | "storage" | "updates";
 
-/** Extension runtime doctor report from App.RuntimeDoctor. */
-export interface RuntimeDoctorReport {
-  text: string;
-  publishedGeneration: number;
-  allowResume: boolean;
-  cleanRollback: boolean;
-  hasIrreversible: boolean;
-  noOpRebuilds: number;
-  fullRebuilds: number;
-  subgraphRebuilds: number;
-  staleDrops: number;
-  admissionRejected: number; runtimeOwnerFallbacks: number;
-}
+export type { RuntimeDoctorReport } from "./runtimeDoctorTypes";
 
 /** Capability diagnostics report from App.CapabilityDiagnostics (capdiag.Report). */
 export interface CapabilityDiagnosticsReport {

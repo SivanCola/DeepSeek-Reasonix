@@ -1,7 +1,7 @@
 // Real-browser click verification for answer file references and the SVG code
 // block. Proves the DOM behavior the tsx suites can only simulate: a verified
-// path becomes a clickable reference that publishes a preview request into the
-// shared navigation lifecycle, an unverified path stays plain text, and the SVG
+// path becomes a clickable reference that commits a preview command into the
+// running navigation owner, an unverified path stays plain text, and the SVG
 // block actually renders a picture from the sanitized source with a working
 // preview/source toggle.
 import assert from "node:assert/strict";
@@ -56,7 +56,7 @@ try {
   assert.equal(request.source, "reference", "the click enters the navigation lifecycle as a reference");
   assert.equal(request.action, "preview", "the default click previews");
   assert.equal(request.path, "out/diagram.svg", "the preview targets the verified display path");
-  console.log("PASS click publishes a reference preview request");
+  console.log("PASS click commits a reference preview command");
 
   // The SVG fence renders a picture built from the sanitized bytes.
   const image = page.locator(".md-svg__preview img");

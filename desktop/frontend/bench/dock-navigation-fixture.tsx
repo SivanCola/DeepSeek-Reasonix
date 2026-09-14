@@ -13,6 +13,10 @@ let finishSave = () => {};
 installDesktopHostStub({
   ListDirForTab: async () => [], SearchFileRefsForTab: async () => [],
   WorkspaceChanges: async () => ({ files: [], gitAvailable: true }), WorkspaceGitHistory: async () => [],
+  ResolveWorkspacePathForTab: async (_tab: string, path: string) => path.startsWith("/") ? path : `/fixture/${path}`,
+  ResolvePresentedPathForTab: async (_tab: string, _tool: string, path: string) => path.startsWith("/") ? path : `/fixture/${path}`,
+  ResolveRemoteWorkspacePathForTab: async (_tab: string, _host: string, _tool: string, path: string) => path,
+  ResolveRemotePresentedPathForTab: async (_tab: string, _host: string, _tool: string, path: string) => path,
   ReadFileForTab: async (_tab: string, path: string) => file(path),
   ReadPresentedFileForTab: async (_tab: string, _tool: string, path: string) => file(path),
   ReadPresentedFileSourceForTab: async (_tab: string, _tool: string, path: string) => file(path),

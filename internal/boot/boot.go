@@ -657,11 +657,8 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	sysPrompt = memory.Compose(sysPrompt, mem)
 
 	implicitSkillInvocation := cfg.ImplicitSkillInvocationEnabled()
-	// A controller owns its production skill watcher and closes it with the
-	// controller. Go package tests routinely construct short-lived controllers
-	// without exercising host teardown; starting one kqueue/inotify instance per
-	// fixture would exhaust process descriptors before the suite completes.
-	// Store-level watcher tests opt in directly and still cover invalidation.
+	// Production controllers own watchers; package fixtures opt out to avoid
+	// exhausting descriptors, while store watcher tests opt in explicitly.
 	watchSkills := !strings.HasSuffix(strings.TrimSuffix(os.Args[0], ".exe"), ".test")
 	// Skills: rediscovery skipped on no-op/interceptor/UI rebuilds when
 	// ReuseAssembly is retained from the previous BuildResult.
@@ -669,7 +666,9 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	var skills []skill.Skill
 	var allSkillStore *skill.Store
 	var allSkills []skill.Skill
-	skillCleanup := func() { closeSkillStores(skillStore, allSkillStore) }
+	// Enabled and all-stores share one host-lifetime physical watch service.
+	skillWatchService := newSkillWatchService(watchSkills, opts.Stderr)
+	skillCleanup := func() { closeSkillsWithWatcher(skillStore, allSkillStore, &skillWatchService) }
 	skillsOwned := false
 	defer closeUnownedSkills(&skillsOwned, skillCleanup)
 	canReuseSkills := opts.ReuseAssembly != nil && shouldReuseDiscovery(opts.PreviousPlan) &&
@@ -677,7 +676,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 	if canReuseSkills {
 		skills = opts.ReuseAssembly.Skills
 		allSkills = skills
-		skillStore = skill.New(skill.Options{ProjectRoot: root, Stderr: io.Discard, Watch: watchSkills})
+		skillStore = skill.New(skill.Options{ProjectRoot: root, Stderr: io.Discard, Watch: watchSkills, WatchService: skillWatchService})
 		allSkillStore = skillStore
 		if s := strings.TrimSpace(opts.ReuseAssembly.SystemPrompt); s != "" {
 			sysPrompt = s
@@ -687,10 +686,11 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(),
 			PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(),
 			DisabledNames: cfg.DisabledSkillNames(), MaxDepth: cfg.SkillMaxDepth(), Stderr: opts.Stderr, Watch: watchSkills,
+			WatchService: skillWatchService,
 		})
 		skillStore.ConfigureInvocationPolicy("", nil)
 		skills = skillStore.List()
-		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard, Watch: watchSkills})
+		allSkillStore = skill.New(skill.Options{ProjectRoot: root, CustomPaths: cfg.SkillCustomPaths(), PluginPaths: cfg.PluginPackageSkillOwners(), PluginAgentPaths: cfg.PluginPackageAgentOwners(), ExcludedPaths: cfg.SkillExcludedPaths(), MaxDepth: cfg.SkillMaxDepth(), Stderr: io.Discard, Watch: watchSkills, WatchService: skillWatchService})
 		allSkills = allSkillStore.List()
 		if implicitSkillInvocation {
 			sysPrompt += "\n\n" + skill.InvocationPolicyBlock()
@@ -2068,7 +2068,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 		ImplicitSkillInvocation: implicitSkillInvocation,
 	}
 	skillsOwned = true
-	return finalizeBuildResult(&BuildResult{Controller: ctrl, Snapshot: snap, Runtime: runtimeSet, Owner: owner, Extensions: extensionMgr, Dispatcher: extensionDispatcher, ExtensionUI: extUIHub, ProviderResolver: providerResolver, BaseProviderResolver: baseResolver, Assembly: assembly}, !opts.deferPublish), nil
+	return finalizeBuildResult(&BuildResult{Controller: ctrl, Snapshot: snap, Runtime: runtimeSet, Owner: owner, Extensions: extensionMgr, Dispatcher: extensionDispatcher, ExtensionUI: extUIHub, ProviderResolver: providerResolver, BaseProviderResolver: baseResolver, Assembly: assembly, SkillWatchService: skillWatchService}, !opts.deferPublish), nil
 }
 
 // effectivePlannerModel centralizes planner precedence. Every role setting

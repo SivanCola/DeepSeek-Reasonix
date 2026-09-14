@@ -270,6 +270,71 @@ func (a *App) RemoteSessionHistoryContentForTab(tabID string, ref sessioncontent
 	return chunk, err
 }
 
+// RemoteSessionHistoryWindowForTab pages a bounded window around an anchor
+// through Serve. The history-window-v1 capability is required; an older
+// remote service answers with an upgrade hint instead of simulating the
+// window through full downloads.
+func (a *App) RemoteSessionHistoryWindowForTab(tabID string, req session.HistoryWindowRequest) (session.HistoryWindowPage, error) {
+	a.remoteTabMu.Lock()
+	tab := a.remoteTabs[tabID]
+	supportedWindow := tab != nil && tab.capabilities[serveCapabilityHistoryWindowV1]
+	a.remoteTabMu.Unlock()
+	if !supportedWindow {
+		// A typed status, not an error: an older Serve is a capability answer
+		// the reader keeps working against (protocol-7 pages) rather than a
+		// failure, and the string carries the upgrade hint to the surface.
+		return session.HistoryWindowPage{Status: session.HistoryWindowUnsupported, Messages: []session.PersistentMessage{}}, nil
+	}
+	query := make(url.Values)
+	query.Set("anchor", req.Anchor)
+	if req.MessageID != "" {
+		query.Set("messageId", req.MessageID)
+	}
+	if req.Turn > 0 {
+		query.Set("turn", fmt.Sprint(req.Turn))
+	}
+	if req.Cursor != "" {
+		query.Set("cursor", req.Cursor)
+	}
+	if req.Direction != "" {
+		query.Set("direction", req.Direction)
+	}
+	if req.Limit > 0 {
+		query.Set("limit", fmt.Sprint(req.Limit))
+	}
+	var page session.HistoryWindowPage
+	supported, err := a.remoteSessionHistoryRead(tabID, "/session-history/window", query, &page, session.HistoryPageMaxBytes+(64<<10))
+	if err == nil && !supported {
+		err = control.ErrTranscriptProjectionUnavailable
+	}
+	return page, err
+}
+
+// RemoteSessionMessageFieldForTab reads one bounded fragment of one top-level
+// message field through Serve.
+func (a *App) RemoteSessionMessageFieldForTab(tabID, messageID string, version int, field string, offset, length int64) (session.MessageFieldPage, error) {
+	a.remoteTabMu.Lock()
+	tab := a.remoteTabs[tabID]
+	supportedWindow := tab != nil && tab.capabilities[serveCapabilityHistoryWindowV1]
+	a.remoteTabMu.Unlock()
+	if !supportedWindow {
+		return session.MessageFieldPage{Status: session.HistoryWindowUnsupported, MessageID: messageID, Field: field}, nil
+	}
+	query := url.Values{
+		"messageId": []string{messageID},
+		"field":     []string{field},
+		"version":   []string{fmt.Sprint(version)},
+		"offset":    []string{fmt.Sprint(offset)},
+		"length":    []string{fmt.Sprint(length)},
+	}
+	var page session.MessageFieldPage
+	supported, err := a.remoteSessionHistoryRead(tabID, "/session-message-field", query, &page, 512<<10)
+	if err == nil && !supported {
+		err = control.ErrTranscriptProjectionUnavailable
+	}
+	return page, err
+}
+
 func (a *App) RemoteSearchSessionHistoryForTab(tabID, textQuery, cursor string, limit int) (session.SearchHistoryPage, error) {
 	query := url.Values{"q": []string{textQuery}}
 	if cursor != "" {

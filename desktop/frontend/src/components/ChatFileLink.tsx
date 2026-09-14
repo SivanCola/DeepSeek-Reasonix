@@ -30,8 +30,10 @@ export function useChatFileLinkActions(link: ChatFileLink) {
 
   const run = useCallback(async (action: "preview" | "source" | "reveal-tree" | "open-native" | "reveal-native" | "save-copy") => {
     try {
-      if (action === "preview" || action === "source") await openResource(link.ref, { view: action });
-      else await performResourceAction(link.ref, action);
+      const outcome = action === "preview" || action === "source"
+        ? await openResource(link.ref, { view: action })
+        : await performResourceAction(link.ref, action);
+      if (outcome.status === "failed") throw outcome.error;
     } catch (reason) {
       showToast(t("chat.fileActionFailed", { error: errorText(reason) }), "error");
     }

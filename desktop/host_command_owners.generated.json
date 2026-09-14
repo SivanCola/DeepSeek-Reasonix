@@ -4847,6 +4847,40 @@
       ]
     }
   },
+  "RemoteSessionHistoryWindowForTab": {
+    "domain": "desktop/remote_transcript_api.go",
+    "owner": "App.RemoteSessionHistoryWindowForTab",
+    "sources": [
+      "desktop/remote_transcript_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RemoteSessionHistoryWindowForTab",
+      "inputs": [
+        "tabID",
+        "req"
+      ]
+    }
+  },
+  "RemoteSessionMessageFieldForTab": {
+    "domain": "desktop/remote_transcript_api.go",
+    "owner": "App.RemoteSessionMessageFieldForTab",
+    "sources": [
+      "desktop/remote_transcript_api.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.RemoteSessionMessageFieldForTab",
+      "inputs": [
+        "tabID",
+        "messageID",
+        "version",
+        "field",
+        "offset",
+        "length"
+      ]
+    }
+  },
   "RemoteSessionOpenForTab": {
     "domain": "desktop/remote_transcript_api.go",
     "owner": "App.RemoteSessionOpenForTab",
@@ -6503,6 +6537,22 @@
       ]
     }
   },
+  "SaveSessionMarkdownForTab": {
+    "domain": "desktop/session_markdown_export.go",
+    "owner": "App.SaveSessionMarkdownForTab",
+    "sources": [
+      "desktop/session_markdown_export.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SaveSessionMarkdownForTab",
+      "inputs": [
+        "tabID",
+        "path",
+        "title"
+      ]
+    }
+  },
   "SaveThemePack": {
     "domain": "desktop/theme_app.go",
     "owner": "App.SaveThemePack",
@@ -6673,6 +6723,40 @@
         "tabID",
         "cursor",
         "limit"
+      ]
+    }
+  },
+  "SessionHistoryWindowForTab": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionHistoryWindowForTab",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionHistoryWindowForTab",
+      "inputs": [
+        "tabID",
+        "req"
+      ]
+    }
+  },
+  "SessionMessageFieldForTab": {
+    "domain": "desktop/session_history_service.go",
+    "owner": "App.SessionMessageFieldForTab",
+    "sources": [
+      "desktop/session_history_service.go"
+    ],
+    "scope": {
+      "kind": "owner-inputs",
+      "resolver": "App.SessionMessageFieldForTab",
+      "inputs": [
+        "tabID",
+        "messageID",
+        "version",
+        "field",
+        "offset",
+        "length"
       ]
     }
   },

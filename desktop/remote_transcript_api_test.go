@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -225,5 +226,136 @@ func TestRemoteCanonicalSessionHistoryRequiresCapability(t *testing.T) {
 	}
 	if reads.Load() != 0 {
 		t.Fatalf("network reads = %d", reads.Load())
+	}
+}
+
+// historyWindowFixture builds a remote tab that advertises exactly the
+// capabilities the window protocol needs.
+func historyWindowFixture(server *httptest.Server) (*App, *remoteTab) {
+	app, tab := remoteTranscriptFixture(server)
+	tab.session.sessionID = "canonical"
+	tab.capabilities = map[string]bool{
+		serveCapabilitySessionContentV1: true,
+		serveCapabilityHistoryWindowV1:  true,
+	}
+	return app, tab
+}
+
+func TestRemoteSessionHistoryWindowRequiresCapability(t *testing.T) {
+	var reads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reads.Add(1) }))
+	defer server.Close()
+
+	// Without session-content-v1 the canonical routes are not negotiated at
+	// all, so a window request must not reach the network.
+	app, tab := remoteTranscriptFixture(server)
+	tab.session.sessionID = "canonical"
+	if page, err := app.RemoteSessionHistoryWindowForTab(tab.id, session.HistoryWindowRequest{Anchor: "newest"}); err != nil || page.Status != session.HistoryWindowUnsupported {
+		t.Fatalf("window read without canonical history = %+v, %v", page, err)
+	}
+
+	// With content but without history-window-v1 the service is an older Serve:
+	// a capability answer, not a failure. The caller gets a typed unsupported
+	// status and still no round trip, so no service fakes a bounded window.
+	tab.capabilities = map[string]bool{serveCapabilitySessionContentV1: true}
+	page, err := app.RemoteSessionHistoryWindowForTab(tab.id, session.HistoryWindowRequest{Anchor: "newest"})
+	if err != nil || page.Status != session.HistoryWindowUnsupported {
+		t.Fatalf("unadvertised window = %+v, %v", page, err)
+	}
+	field, err := app.RemoteSessionMessageFieldForTab(tab.id, "m1", 0, "content", 0, 64)
+	if err != nil || field.Status != session.HistoryWindowUnsupported || field.MessageID != "m1" {
+		t.Fatalf("unadvertised field read = %+v, %v", field, err)
+	}
+	if reads.Load() != 0 {
+		t.Fatalf("unadvertised capabilities issued %d requests", reads.Load())
+	}
+}
+
+func TestRemoteSessionHistoryWindowSendsAnchorsAndReturnsTypedStatus(t *testing.T) {
+	var seen []url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session-history/window" {
+			seen = append(seen, r.URL.Query())
+			w.Header().Set("Content-Type", "application/json")
+			page := session.HistoryWindowPage{Status: "ready", SnapshotSequence: 9, TotalTurns: 3,
+				HasOlder: true, HasNewer: true, OlderCursor: "older", NewerCursor: "newer",
+				AnchorMessageID: r.URL.Query().Get("messageId"),
+				Messages:        []session.PersistentMessage{{MessageID: "m7", Position: 7, Version: 1, Role: "user"}},
+			}
+			_ = json.NewEncoder(w).Encode(page)
+			return
+		}
+		if r.URL.Path == "/session-message-field" {
+			seen = append(seen, r.URL.Query())
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(session.MessageFieldPage{Status: "ready", MessageID: "m7", Field: "content",
+				TotalBytes: 100, Offset: 0, NextOffset: 64, Encoding: "utf-8", Data: []byte("fragment")})
+			return
+		}
+		t.Errorf("unexpected request %s", r.URL.Path)
+	}))
+	defer server.Close()
+	app, tab := historyWindowFixture(server)
+
+	page, err := app.RemoteSessionHistoryWindowForTab(tab.id, session.HistoryWindowRequest{
+		Anchor: "message", MessageID: "m7", Direction: "older", Limit: 32,
+	})
+	if err != nil || page.Status != "ready" || page.SnapshotSequence != 9 || len(page.Messages) != 1 {
+		t.Fatalf("window = %+v, %v", page, err)
+	}
+	if page.AnchorMessageID != "m7" || !page.HasOlder || !page.HasNewer || page.OlderCursor != "older" || page.NewerCursor != "newer" {
+		t.Fatalf("window metadata = %+v", page)
+	}
+	field, err := app.RemoteSessionMessageFieldForTab(tab.id, "m7", 3, "content", 0, 64)
+	if err != nil || field.Status != "ready" || field.NextOffset != 64 || string(field.Data) != "fragment" {
+		t.Fatalf("field = %+v, %v", field, err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("requests = %d", len(seen))
+	}
+	// The tab's binding identity is stamped by the host, never by the caller:
+	// a window read cannot name another session.
+	for index, query := range seen {
+		if query.Get("sessionId") != "canonical" {
+			t.Fatalf("request %d session=%q", index, query.Get("sessionId"))
+		}
+	}
+	if got := seen[0]; got.Get("anchor") != "message" || got.Get("messageId") != "m7" || got.Get("direction") != "older" || got.Get("limit") != "32" {
+		t.Fatalf("window query = %v", got)
+	}
+	if got := seen[1]; got.Get("messageId") != "m7" || got.Get("field") != "content" || got.Get("version") != "3" || got.Get("offset") != "0" || got.Get("length") != "64" {
+		t.Fatalf("field query = %v", got)
+	}
+}
+
+// TestRemoteSessionHistoryWindowKeepsTypedStatuses pins the transport's
+// contract with the reader: a stale cursor and a not-found anchor are answers
+// the caller reasons about, not transport failures.
+func TestRemoteSessionHistoryWindowKeepsTypedStatuses(t *testing.T) {
+	for _, status := range []string{"stale_cursor", "not_found", "preparing", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(session.HistoryWindowPage{Status: status})
+			}))
+			defer server.Close()
+			app, tab := historyWindowFixture(server)
+			page, err := app.RemoteSessionHistoryWindowForTab(tab.id, session.HistoryWindowRequest{Anchor: "newest"})
+			if err != nil || page.Status != status {
+				t.Fatalf("status %q surfaced as %+v, %v", status, page, err)
+			}
+		})
+	}
+}
+
+// TestSessionHistoryWindowRequiresCanonicalBinding keeps the local command off
+// every path that has no exclusive canonical session behind it.
+func TestSessionHistoryWindowRequiresCanonicalBinding(t *testing.T) {
+	app := &App{}
+	if _, err := app.SessionHistoryWindowForTab("missing", session.HistoryWindowRequest{Anchor: "newest"}); err == nil {
+		t.Fatal("window read without a bound session")
+	}
+	if _, err := app.SessionMessageFieldForTab("missing", "m1", 0, "content", 0, 64); err == nil {
+		t.Fatal("field read without a bound session")
 	}
 }

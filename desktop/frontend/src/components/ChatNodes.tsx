@@ -18,10 +18,12 @@ import { ContextInjectionRow } from "./harness-chat/ContextInjectionRow";
 import { ToolRow } from "./harness-chat/ToolRow";
 import { subjectOf, summarizeFileDiff } from "../lib/tools";
 import { classifyTool, shellDisplayName } from "../lib/chatToolPresentation";
+import { RESOURCE_BUDGETS } from "../lib/resourceBudgets";
 const ChatToolBody = lazy(() => import("./ChatToolBody"));
 const ToolPayload = lazy(() => import("./ChatToolBody").then(module => ({ default: module.ToolPayload })));
 const PresentedFiles = lazy(() => import("./PresentedFiles").then(module => ({ default: module.PresentedFiles })));
 const ModifiedFiles = lazy(() => import("./PresentedFiles").then(module => ({ default: module.ModifiedFiles })));
+const TOOL_RELATION_PAGE_SIZE = RESOURCE_BUDGETS.toolRelationsPerPage;
 
 export function useChatNode(source: ChatSource, key: string) {
   const subscribe = useCallback((listener: () => void) => source.subscribeNode(key, listener), [source, key]);
@@ -275,9 +277,11 @@ export function ChatDetails({ source, nodeKey, loader, onClose, onNavigate }: { 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const [selectedTab, setSelectedTab] = useState<"result" | "parameters" | "children" | "raw">("result");
+  const [visibleChildren, setVisibleChildren] = useState<number>(TOOL_RELATION_PAGE_SIZE);
   const root = useRef<HTMLElement>(null);
   const epoch = useRef(0);
   useEffect(() => { root.current?.focus(); return () => { epoch.current++; }; }, []);
+  useEffect(() => setVisibleChildren(TOOL_RELATION_PAGE_SIZE), [nodeKey]);
   const load = async () => {
     if (node?.kind !== "tool") throw new Error("Tool unavailable");
     const ticket = ++epoch.current; setBusy(true); setError(false);
@@ -329,7 +333,8 @@ export function ChatDetails({ source, nodeKey, loader, onClose, onNavigate }: { 
       {activeTab === "parameters" && <pre>{formattedArgs}</pre>}
       {activeTab === "children" && <div className="chat-details__relations">
         {node.item.parentId && source.getNodeSnapshot(node.item.parentId)?.kind === "tool" && <button className="btn" onClick={() => onNavigate(node.item.parentId!)}>← {t("chat.details.parent")}</button>}
-        {children.map(child => <button className="chat-tool" key={child.key} onClick={() => onNavigate(child.key)}>{child.item.resolvedName ?? child.item.name} · {child.item.status}</button>)}
+        {children.slice(0, visibleChildren).map(child => <button className="chat-tool" key={child.key} onClick={() => onNavigate(child.key)}>{child.item.resolvedName ?? child.item.name} · {child.item.status}</button>)}
+        {children.length > visibleChildren && <button className="btn" data-testid="tool-children-more" onClick={() => setVisibleChildren(count => count + TOOL_RELATION_PAGE_SIZE)}>{t("chat.loadMoreTools", { count: Math.min(TOOL_RELATION_PAGE_SIZE, children.length - visibleChildren) })}</button>}
       </div>}
       {activeTab === "raw" && <pre>{full ?? preview}</pre>}
     </div>

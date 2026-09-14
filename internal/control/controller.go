@@ -5141,6 +5141,7 @@ func (c *Controller) close(fireSessionEnd bool, jobsMode closeJobsMode) {
 		if !turnActive {
 			c.turns.phase = session.RuntimeClosed
 			c.turns.finishingBound.end()
+			c.turns.finishingBound.endIdle()
 		}
 		c.mu.Unlock()
 		if cancel != nil {

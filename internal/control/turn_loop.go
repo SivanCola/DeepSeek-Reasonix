@@ -253,6 +253,7 @@ func (c *Controller) startTurnLocked(parent context.Context, next queuedTurn) (c
 	ctx, cancel = context.WithCancel(extension.ContextWithRuntimeOwner(parent, c.runtimeOwner))
 	c.turns.cancel = cancel
 	c.turns.done = make(chan struct{})
+	c.turns.finishingBound.beginIdle()
 	c.turns.phase = session.RuntimeRunning
 	c.turns.cancelRequested = false
 	c.turns.token++
@@ -364,7 +365,11 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		// and session binding have been finalized.
 		if !closing {
 			c.emitTurnDoneEvent(err, cancelRequested, completion)
-		} else {
+		}
+		c.mu.Lock()
+		c.turns.finishingBound.endIdle()
+		c.mu.Unlock()
+		if closing {
 			c.finalizeControllerClose()
 		}
 		c.refreshRuntimeState(event.Event{})
@@ -383,6 +388,7 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		c.turns.cancelRequested = false
 		if c.turns.phase == session.RuntimeRecoveryRequired {
 			closing := c.closed
+			c.turns.finishingBound.endIdle()
 			c.mu.Unlock()
 			if closing {
 				c.finalizeControllerClose()
@@ -392,6 +398,7 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		}
 		if ledger := c.turnEventLedger(); ledger != nil && ledger.CurrentStatus() == event.TurnRecoveryRequired {
 			c.enterRecoveryLocked("terminal")
+			c.turns.finishingBound.endIdle()
 			c.mu.Unlock()
 			c.refreshRuntimeState(event.Event{})
 			return
@@ -401,6 +408,7 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 			c.turns.phase = session.RuntimeClosed
 			c.turns.turnID = ""
 			c.noteExecutionLocked(session.RuntimeIdle, "")
+			c.turns.finishingBound.endIdle()
 			c.mu.Unlock()
 			c.finalizeControllerClose()
 			c.refreshRuntimeState(event.Event{})
@@ -412,6 +420,7 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 			c.turns.phase = session.RuntimeIdle
 			c.turns.turnID = ""
 			c.noteExecutionLocked(session.RuntimeIdle, "")
+			c.turns.finishingBound.endIdle()
 			c.mu.Unlock()
 			c.maybeDispatchInbox()
 			c.refreshRuntimeState(event.Event{})
@@ -420,6 +429,7 @@ func (c *Controller) finishGuardedTurn(err error, completion *guardedTurnComplet
 		ctx, cancel, admitted := c.startTurnLocked(context.Background(), next)
 		if !admitted {
 			c.enterRecoveryLocked("execution_owner_lost")
+			c.turns.finishingBound.endIdle()
 			c.mu.Unlock()
 			c.refreshRuntimeState(event.Event{})
 			return

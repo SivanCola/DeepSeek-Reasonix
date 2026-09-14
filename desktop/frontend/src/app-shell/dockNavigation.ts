@@ -1,9 +1,8 @@
 import type { ComponentProps } from "react";
 import type { WorkspacePanel } from "../components/WorkspacePanel";
-import type { DockResources } from "../lib/dockDelivery";
 
-export const requestKeys = ["revealPathRequest", "changeRevealRequest", "verificationRevealRequest", "fileListRequest", "changeListRequest"] as const;
-export type DockRequests = Pick<ComponentProps<typeof WorkspacePanel>, typeof requestKeys[number]> & { navigationSignal?: AbortSignal; navigationResources?: DockResources };
+export const requestKeys = ["changeRevealRequest", "verificationRevealRequest", "fileListRequest", "changeListRequest"] as const;
+export type DockRequests = Pick<ComponentProps<typeof WorkspacePanel>, typeof requestKeys[number]> & { navigationSignal?: AbortSignal };
 export const emptyDockRequests: DockRequests = Object.fromEntries(requestKeys.map(key => [key, null]));
 type Occurrence = { controller: AbortController; revision: number; accepted: Partial<Record<typeof requestKeys[number], number>>; snapshot: DockRequests };
 
@@ -24,7 +23,7 @@ export class DockNavigation {
   matches(scope: string, view: string | null): boolean { return this.scope === scope && this.view === view; }
   restoredView(scope: string, view: string | null): DockRequests {
     const occurrence = this.scope === scope && view ? this.occurrences.get(view) : undefined;
-    return occurrence ? { ...emptyDockRequests, navigationSignal: occurrence.controller.signal, navigationResources: occurrence.snapshot.navigationResources } : emptyDockRequests;
+    return occurrence ? { ...emptyDockRequests, navigationSignal: occurrence.controller.signal } : emptyDockRequests;
   }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.snapshot;
@@ -56,7 +55,7 @@ export class DockNavigation {
     };
     const changed = requestKeys.filter(key => this.source[key] !== identity(key));
     if (changed.length) {
-      const next = { ...(switched ? emptyDockRequests : occurrence.snapshot), navigationSignal: occurrence.controller.signal, navigationResources: occurrence.snapshot.navigationResources };
+      const next = { ...(switched ? emptyDockRequests : occurrence.snapshot), navigationSignal: occurrence.controller.signal };
       const target = occurrence;
       for (const key of changed) {
         const value = incoming[key];
@@ -71,18 +70,7 @@ export class DockNavigation {
         this.source[key] = identity(key);
       }
       occurrence.snapshot = next;
-      if (changed.includes("revealPathRequest") && incoming.revealPathRequest) {
-        const reveal = incoming.revealPathRequest;
-        const resources = { ...next.navigationResources };
-        delete resources[reveal.path];
-        resources[reveal.path] = {
-          toolCallId: reveal.toolCallId,
-          source: reveal.source,
-          ...(reveal.reference ? { reference: true } : {}),
-        };
-        next.navigationResources = Object.fromEntries(Object.entries(resources).slice(-5));
-      }
-    } else if (switched) occurrence.snapshot = { ...emptyDockRequests, navigationSignal: occurrence.controller.signal, navigationResources: occurrence.snapshot.navigationResources };
+    } else if (switched) occurrence.snapshot = { ...emptyDockRequests, navigationSignal: occurrence.controller.signal };
     this.publish(occurrence.snapshot);
   }
 

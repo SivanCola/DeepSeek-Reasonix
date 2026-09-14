@@ -303,6 +303,7 @@ func TestTimeoutRecoveryDropsLateEventsFromNewTurn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed-out turn did not exit after release")
 	}
+	c.autosaveWG.Wait()
 }
 
 func TestOldControllerUnbindDoesNotClearNewGeneration(t *testing.T) {

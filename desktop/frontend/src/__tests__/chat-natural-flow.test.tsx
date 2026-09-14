@@ -101,5 +101,25 @@ try {
   await harness.settle();
   assert.ok(harness.container.querySelector('[data-chat-anchor-key="old-u1"]'), "deep history eventually mounts");
   assert.ok(harness.container.querySelector('[data-nav-turn="old-u1"]'), "navigation publishes the target after its DOM commit");
+  let newerLoads = 0;
+  await harness.render(restored, {
+    geometrySessionKey: "history-identity",
+    hasNewerHistory: true,
+    historyStartTurn: 4,
+    historyEndTurn: 12,
+    totalTurns: 20,
+    onLoadNewerHistory: async () => { newerLoads += 1; return "loaded"; },
+  });
+  const newer = harness.container.querySelector<HTMLButtonElement>(".chat-history-newer .btn")!;
+  await act(async () => newer.click());
+  assert.equal(newerLoads, 0, "a native transcript selection protects its resident page from reclaim");
+  assert.ok(harness.container.querySelector(".chat-history-selection"), "selection protection explains why paging paused");
+  await act(async () => {
+    selection.removeAllRanges();
+    harness.dom.window.document.dispatchEvent(new harness.dom.window.Event("selectionchange"));
+  });
+  await act(async () => newer.click());
+  assert.equal(newerLoads, 1, "newer paging resumes after the selection is cleared");
+  assert.match(harness.container.querySelector(".chat-history-window")?.textContent ?? "", /5.*12.*20/, "the bounded window reports its visible turn range");
   console.log("chat natural flow: process disclosure, details, stable history identity, mounted navigation and session isolation passed");
 } finally { await harness.unmount(); await harness.close(); }

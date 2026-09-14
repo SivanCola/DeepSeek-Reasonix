@@ -70,6 +70,7 @@ export function transcriptPageState(state: State, page: TranscriptSnapshot, conv
     seq: Math.max(state.seq, converted.seq), historyPrefixCount: state.historyPrefixCount + added,
     historyStartTurn: Math.min(state.historyStartTurn, ...users.map((turn) => turn - 1)),
     historyHasOlder: page.hasOlder, historyOlderLoading: false, historyOlderError: undefined,
+    historyHasNewer: false, historyNewerLoading: false, historyNewerError: undefined,
     historyMutation: { seq: state.historyMutation.seq + 1, kind: "prepend" } };
 }
 
@@ -132,10 +133,14 @@ export function transcriptSnapshotState(state: State, snapshot: TranscriptSnapsh
     hydratePlaceholderItems: undefined,
     historyPrefixCount: items.length,
     historyStartTurn: Math.max(0, Math.min(...messages.filter((m) => m.role === "user" && m.historyTurn).map((m) => m.historyTurn!), snapshot.totalTurns) - 1),
+    historyEndTurn: snapshot.totalTurns,
     historyTotalTurns: snapshot.totalTurns,
     historyHasOlder: snapshot.hasOlder,
+    historyHasNewer: false,
     historyOlderLoading: false,
     historyOlderError: undefined,
+    historyNewerLoading: false,
+    historyNewerError: undefined,
     historyRevision: undefined,
     historyDigest: undefined,
     historyMutation: { seq: state.historyMutation.seq + 1, kind: "replace" },

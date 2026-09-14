@@ -1,4 +1,7 @@
 import type {
+  HistoryWindowPage,
+  HistoryWindowRequest,
+  MessageFieldPage,
   MessageHistoryPage,
   MessageLocation,
   PersistentMessage,
@@ -20,6 +23,13 @@ export interface SessionReaderBindings {
   RemoteSearchSessionHistoryForTab(tabID: string, textQuery: string, cursor: string, limit: number): Promise<SearchHistoryPage>;
   LocateSessionMessageForTab(tabID: string, messageID: string, snapshot: number): Promise<MessageLocation>;
   RemoteLocateSessionMessageForTab(tabID: string, messageID: string, snapshot: number): Promise<MessageLocation>;
+  // history-window-v1. A binding that does not implement these (or a remote
+  // service that does not advertise the capability) is read through the
+  // protocol-7 adapter in canonicalTranscriptBackend instead.
+  SessionHistoryWindowForTab(tabID: string, req: HistoryWindowRequest): Promise<HistoryWindowPage>;
+  SessionMessageFieldForTab(tabID: string, messageID: string, version: number, field: string, offset: number, length: number): Promise<MessageFieldPage>;
+  RemoteSessionHistoryWindowForTab(tabID: string, req: HistoryWindowRequest): Promise<HistoryWindowPage>;
+  RemoteSessionMessageFieldForTab(tabID: string, messageID: string, version: number, field: string, offset: number, length: number): Promise<MessageFieldPage>;
 }
 
 interface MockSessionReaderHost {
@@ -29,6 +39,7 @@ interface MockSessionReaderHost {
   SessionHistoryPageForTab(tabID: string, cursor: string, limit: number): Promise<MessageHistoryPage>;
   SessionOpenForTab(tabID: string): Promise<SessionOpenView>;
   SessionHistoryContentForTab(tabID: string, ref: SessionContentRef, offset: number): Promise<SessionHistoryContentChunk>;
+  SessionHistoryWindowForTab(tabID: string, req: HistoryWindowRequest): Promise<HistoryWindowPage>;
 }
 
 function messageIndex(entryId: string): number {
@@ -107,5 +118,33 @@ export function makeMockSessionReaderBindings(): SessionReaderBindings {
     async RemoteSearchSessionHistoryForTab() { return search(); },
     async LocateSessionMessageForTab(_tabID, messageID) { return { status: "not_found", messageId: messageID, snapshotSequence: 0, coverageSequence: 0 }; },
     async RemoteLocateSessionMessageForTab(_tabID, messageID) { return { status: "not_found", messageId: messageID, snapshotSequence: 0, coverageSequence: 0 }; },
+    // The in-memory mock has one direction of history: a newest page and its
+    // older cursors. It answers a window request without inventing a newer
+    // cursor, which is exactly how a protocol-7 service behaves.
+    async SessionHistoryWindowForTab(this: MockSessionReaderHost, tabID, req) {
+      const slice = await this.HistorySliceForTab(tabID, {
+        cursor: req.anchor === "cursor" ? req.cursor ?? "" : "",
+        entries: req.limit,
+        turns: req.limit,
+      });
+      const history = slice.entries.some(entry => entry.refs?.length) ? await this.HistoryForTab?.(tabID) ?? [] : [];
+      return {
+        messages: persistentMessages(slice, history),
+        status: slice.stale ? "stale_cursor" : "ready",
+        snapshotSequence: slice.revision,
+        coverageSequence: slice.revision,
+        generation: slice.digest,
+        totalTurns: slice.totalTurns,
+        hasOlder: slice.hasOlder,
+        // The in-memory mock has one direction of history, exactly like a
+        // protocol-7 service: it never invents a newer cursor.
+        hasNewer: false,
+        olderCursor: slice.nextCursor,
+        newerCursor: "",
+      };
+    },
+    async SessionMessageFieldForTab() { return { status: "not_found", messageId: "", version: 0, field: "", totalBytes: 0, offset: 0, encoding: "utf-8" }; },
+    async RemoteSessionHistoryWindowForTab(this: MockSessionReaderHost, tabID, req) { return this.SessionHistoryWindowForTab(tabID, req); },
+    async RemoteSessionMessageFieldForTab() { return { status: "not_found", messageId: "", version: 0, field: "", totalBytes: 0, offset: 0, encoding: "utf-8" }; },
   };
 }
