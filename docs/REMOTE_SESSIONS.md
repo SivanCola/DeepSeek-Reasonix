@@ -270,6 +270,13 @@ seconds of inactivity.
   surface; a running turn keeps executing remotely with its state shown in
   the tree. The desktop holds the SSH tunnel and never mixes local
   conversation sessions into the remote tab.
+- **Forking a completed turn**: `GET /fork-targets` lists the foreground
+  session's turns with the reason each one is or is not forkable, and
+  `POST /fork-session` creates an independent child session from one of them
+  without switching the foreground session, moving the lease, or interrupting a
+  running turn. Desktop uses this path when the server advertises
+  `session-fork-targets-v1`; without that capability the tab reports the server
+  as unsupported rather than falling back to `/fork`, which switches the parent.
 
 The following screenshots show both ends of a handoff. First, the Reasonix
 window running locally on the remote host confirms taking over an idle
