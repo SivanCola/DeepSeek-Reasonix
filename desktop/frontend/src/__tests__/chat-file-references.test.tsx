@@ -294,6 +294,34 @@ ok(document.querySelectorAll("button.md-code--presented-file").length === 0,
   "an unverified remote path stays ordinary text rather than opening locally");
 ok((rootEl.textContent ?? "").includes("/srv/app/out/remote.svg"), "the remote answer text is untouched");
 
+// ── A StrictMode mount replay must not kill the session store ───────────────
+let strictCalls = 0;
+desktopStub.replaceCommands(({
+  main: {
+    App: {
+      ResolveChatFileReferencesForTab: async (_tabId: string, turnKey: string, candidates: Array<{ key: string; path: string }>) => {
+        strictCalls += 1;
+        return { turnKey, references: candidates.map(candidate => ({ key: candidate.key, path: candidate.path, status: "resolved", displayPath: candidate.path, actions: ["preview"] })) };
+      },
+    } as Partial<AppBindings> as AppBindings,
+  },
+}).main.App);
+const strictBlocks = parseMarkdownToBlocks("Wrote `/repo/out/strict.svg` here.");
+await act(async () => {
+  root.render(<React.StrictMode>
+    <LocaleProvider>
+      <ChatFileScopeProvider scopeKey="session-s" tabId="tab-s">
+        <ChatFileTurnProvider turnKey="turn-s" factsVersion={1} presentedFiles={[]} modifiedFiles={[]} tabId="tab-s">
+          <Reporter blocks={strictBlocks} />
+          {strictBlocks.map(block => <Fragment key={block.key}>{hastBlockToJsx(block, components)}</Fragment>)}
+        </ChatFileTurnProvider>
+      </ChatFileScopeProvider>
+    </LocaleProvider>
+  </React.StrictMode>);
+});
+await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+ok(strictCalls > 0, "a StrictMode mount replay does not leave the session with a disposed store");
+
 // ── Teardown ────────────────────────────────────────────────────────────────
 await act(async () => { root.unmount(); });
 desktopStub.uninstall();

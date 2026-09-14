@@ -297,7 +297,10 @@ export function WorkspacePanel({
   const openDirsRef = useRef(openDirs);
   const pendingTreeRevealPathRef = useRef<string | null>(null);
   const presentedToolCallByPathRef = useRef(restoredPresentedTools(navigationResources));
-  const referencePathsRef = useRef(restoredReferencePaths(navigationResources));
+  // Which reader owns a path is render state, not a ref: selecting an answer
+  // reference for a path that is already open must re-read it, and a ref
+  // mutation would not reach the read effect.
+  const [referencePaths, setReferencePaths] = useState<Set<string>>(() => restoredReferencePaths(navigationResources));
   const lastRestoredMemoryKeyRef = useRef(workspaceMemoryKey);
   const memoryRestorePendingRef = useRef(false);
   const workingTreeRefreshSchedulerRef = useRef<ReturnType<typeof createWorkspaceRefreshScheduler> | null>(null);
@@ -310,8 +313,9 @@ export function WorkspacePanel({
   }
   currentWorkspaceScopeKeyRef.current = workspaceScopeKey;
   const selectedPresentedToolCallId = selectedPath ? presentedToolCallByPathRef.current.get(selectedPath) : undefined;
+  const selectedIsReference = selectedPath ? referencePaths.has(selectedPath) : false;
   const sourceOverride = selectedPath ? sourcePaths.has(selectedPath) : false;
-  const previewKey = selectedPath ? `${workspaceScopeKey}\u0000preview\u0000${sourceOverride ? "source" : "preview"}\u0000${selectedPresentedToolCallId ?? ""}\u0000${selectedPath}` : null;
+  const previewKey = selectedPath ? `${workspaceScopeKey}\u0000preview\u0000${sourceOverride ? "source" : "preview"}\u0000${selectedIsReference ? "reference" : selectedPresentedToolCallId ?? ""}\u0000${selectedPath}` : null;
   const changeDetailKey = selectedPath ? `${workspaceScopeKey}\u0000change\u0000${selectedPath}` : null;
   const gitHistoryKey = `${workspaceScopeKey}\u0000history\u0000${selectedPath ?? ""}`;
   const preview = previewKey && previewResource.key === previewKey ? previewResource.data : null;
@@ -547,8 +551,12 @@ export function WorkspacePanel({
       else if (!presentedToolCallByPathRef.current.has(path)) presentedToolCallByPathRef.current.delete(path);
       // An answer reference is re-verified on read, so the dock remembers only
       // which reader owns this path.
-      if (reference) referencePathsRef.current.add(path);
-      else referencePathsRef.current.delete(path);
+      setReferencePaths((current) => {
+        if (current.has(path) === Boolean(reference)) return current;
+        const next = new Set(current);
+        if (reference) next.add(path); else next.delete(path);
+        return next;
+      });
       if (targetMode === "changed") setSelectedChangePath(path);
       else setSelectedFilePath(path);
       setScopedFilePaths((current) => {
@@ -589,7 +597,7 @@ export function WorkspacePanel({
     setScopedChangeRows(null);
     setSourcePaths(restoredSourcePaths(navigationResources));
     presentedToolCallByPathRef.current = restoredPresentedTools(navigationResources);
-    referencePathsRef.current = restoredReferencePaths(navigationResources);
+    setReferencePaths(restoredReferencePaths(navigationResources));
     setTreeVisible(true);
     void loadDir("");
   }, [cwd, loadDir, open, workspaceMemoryKey]);
@@ -891,7 +899,7 @@ export function WorkspacePanel({
     const requestScopeKey = workspaceScopeKey;
     const requestPath = selectedPath;
     const presentedToolCallId = presentedToolCallByPathRef.current.get(requestPath);
-    const reference = referencePathsRef.current.has(requestPath);
+    const reference = selectedIsReference;
     const forceSource = sourcePaths.has(requestPath);
     const requestKey = `${requestScopeKey}\u0000preview\u0000${forceSource ? "source" : "preview"}\u0000${reference ? "reference" : presentedToolCallId ?? ""}\u0000${requestPath}`;
     let live = true;
@@ -921,7 +929,7 @@ export function WorkspacePanel({
     return () => {
       live = false;
     };
-  }, [selectedPath, sourcePaths, workspaceRefresh.revisions.content, workspaceScopeKey, workspaceTabId]);
+  }, [selectedIsReference, selectedPath, sourcePaths, workspaceRefresh.revisions.content, workspaceScopeKey, workspaceTabId]);
 
   const loadMorePresentedText = useCallback(async () => {
     if (!previewKey || !preview || !selectedPath || !selectedPresentedToolCallId || !preview.version) return;
@@ -1619,7 +1627,6 @@ export function WorkspacePanel({
   // A file the host can show as text may be toggled between its rendered and
   // source forms. SVG is a text format that previews as an image, so it belongs
   // here alongside HTML and Markdown.
-  const selectedIsReference = selectedPath ? referencePathsRef.current.has(selectedPath) : false;
   const canTogglePresentedSource = Boolean(
     selectedPath && (selectedPresentedToolCallId || selectedIsReference) && /\.(?:html?|md|markdown|csv|tsv|svg)$/i.test(selectedPath),
   );

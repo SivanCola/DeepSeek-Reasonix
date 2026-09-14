@@ -35,6 +35,14 @@ const (
 	markdownSVGPreviewMaxDepth    = 128
 )
 
+// The SVG document namespace, and the attribute namespace `xmlns` itself is
+// reported under by encoding/xml.
+const markdownSVGNamespace = "http://www.w3.org/2000/svg"
+
+func isNamespaceDeclaration(name xml.Name) bool {
+	return name.Space == "xmlns" || (name.Space == "" && name.Local == "xmlns")
+}
+
 type svgSanitizeLimits struct {
 	maxBytes    int
 	maxElements int
@@ -122,7 +130,7 @@ func sanitizeMarkdownSVG(body []byte, limits svgSanitizeLimits) ([]byte, bool) {
 			}
 			name := strings.ToLower(value.Name.Local)
 			if !rootSeen {
-				if name != "svg" || (value.Name.Space != "" && value.Name.Space != "http://www.w3.org/2000/svg") {
+				if name != "svg" || (value.Name.Space != "" && value.Name.Space != markdownSVGNamespace) {
 					return nil, false
 				}
 				rootSeen = true
@@ -135,6 +143,12 @@ func sanitizeMarkdownSVG(body []byte, limits svgSanitizeLimits) ([]byte, bool) {
 			}
 			attrs := value.Attr[:0]
 			for _, attr := range value.Attr {
+				// The encoder writes the element's namespace itself, so an
+				// explicit declaration would come out twice and make the whole
+				// document a parse error for the renderer.
+				if isNamespaceDeclaration(attr.Name) {
+					continue
+				}
 				attrName := strings.ToLower(attr.Name.Local)
 				if strings.HasPrefix(attrName, "on") || attrName == "srcset" ||
 					(attr.Name.Space == "http://www.w3.org/XML/1998/namespace" && attrName == "base") {
@@ -150,6 +164,15 @@ func sanitizeMarkdownSVG(body []byte, limits svgSanitizeLimits) ([]byte, bool) {
 				attrs = append(attrs, attr)
 			}
 			value.Attr = attrs
+			// The root always declares the SVG namespace: a source that omitted
+			// xmlns would otherwise not be parsed as SVG at all.
+			if rootDepth == 0 {
+				value.Name.Space = markdownSVGNamespace
+			} else if value.Name.Space == markdownSVGNamespace {
+				// Children inherit the root's default namespace; re-declaring it
+				// on every element is noise, not information.
+				value.Name.Space = ""
+			}
 			rootDepth++
 			if limits.maxDepth > 0 && rootDepth > limits.maxDepth {
 				return nil, false
@@ -164,6 +187,14 @@ func sanitizeMarkdownSVG(body []byte, limits svgSanitizeLimits) ([]byte, bool) {
 			}
 			if rootDepth <= 0 {
 				return nil, false
+			}
+			// The end tag must name the same element the start tag did: the
+			// encoder rejects a mismatch, so it follows the namespace rewrite
+			// applied to the start tag above.
+			if rootDepth == 1 {
+				value.Name.Space = markdownSVGNamespace
+			} else if value.Name.Space == markdownSVGNamespace {
+				value.Name.Space = ""
 			}
 			if err := encoder.EncodeToken(value); err != nil {
 				return nil, false

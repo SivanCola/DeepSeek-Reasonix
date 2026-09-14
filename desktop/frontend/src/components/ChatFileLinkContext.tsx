@@ -30,7 +30,10 @@ const TurnContext = createContext<TurnValue | null>(null);
 /** Owns the session's reference store; it is disposed with the session. */
 export function ChatFileScopeProvider({ scopeKey, tabId, hostId, children }: { scopeKey: string; tabId?: string; hostId?: string; children: ReactNode }) {
   const store = useMemo(() => new ChatFileReferenceStore(tabId ?? "", hostId ?? "local"), [scopeKey, tabId, hostId]);
-  useEffect(() => () => store.dispose(), [store]);
+  // Attach/detach rather than dispose directly: a StrictMode mount replay runs
+  // the cleanup without a re-render, and an unconditional dispose would leave
+  // the session with a dead store.
+  useEffect(() => { store.attach(); return () => store.detach(); }, [store]);
   return <ScopeContext.Provider value={store}>{children}</ScopeContext.Provider>;
 }
 
@@ -61,11 +64,13 @@ export function useChatFileReporter(): ((candidates: readonly ChatFileCandidate[
 /** Candidates are reported once per parse revision, not once per render. */
 export function useChatFileCandidateReport(blocks: readonly { children: readonly unknown[] }[] | undefined, revision: number): void {
   const report = useChatFileReporter();
-  const previous = useRef<{ revision: number; blocks: unknown }>(undefined);
+  const previous = useRef<{ revision: number; blocks: unknown; report: unknown }>(undefined);
   useEffect(() => {
     if (!report || !blocks) return;
-    if (previous.current?.revision === revision && previous.current.blocks === blocks) return;
-    previous.current = { revision, blocks };
+    // The reporter identity changes when the turn's file facts change, so a
+    // turn whose text has settled still re-reports once its facts arrive.
+    if (previous.current?.revision === revision && previous.current.blocks === blocks && previous.current.report === report) return;
+    previous.current = { revision, blocks, report };
     report(chatFileCandidates(blocks as never));
   }, [blocks, report, revision]);
 }

@@ -48,6 +48,7 @@ export class ChatFileReferenceStore {
   private listeners = new Set<() => void>();
   private generation = 0;
   private disposed = false;
+  private attachments = 0;
 
   constructor(private readonly tabId: string, private readonly hostId: string = "local") {}
 
@@ -84,6 +85,20 @@ export class ChatFileReferenceStore {
       queued = true;
     }
     if (queued) this.schedule(turnKey, state);
+  }
+
+  /**
+   * React StrictMode replays mount effects, running a cleanup without a
+   * re-render. Disposal is therefore deferred and counted: a synchronous
+   * re-attach revives the same store instead of killing it for the session.
+   */
+  attach(): void {
+    this.attachments++;
+  }
+
+  detach(): void {
+    this.attachments--;
+    queueMicrotask(() => { if (this.attachments === 0) this.dispose(); });
   }
 
   dispose(): void {

@@ -65,6 +65,15 @@ try {
   assert.match(source, /^(blob:|data:image\/svg\+xml)/, "the preview loads sanitized bytes as an image source");
   const box = await image.boundingBox();
   assert(box && box.width > 0 && box.height > 0, "the picture is laid out with real geometry");
+  // A malformed document still yields a sized <img> element, so prove the
+  // browser decoded the picture instead of showing a broken-image placeholder.
+  const decoded = await page.evaluate(async () => {
+    const img = document.querySelector(".md-svg__preview img");
+    if (!(img instanceof HTMLImageElement)) return null;
+    try { await img.decode(); } catch { return "decode-failed"; }
+    return img.naturalWidth > 0 && img.naturalHeight > 0 ? "decoded" : "empty";
+  });
+  assert.equal(decoded, "decoded", "the browser decoded the sanitized SVG as an image");
   assert(box.height <= 32 * 16 + 1, "the preview stays inside its height ceiling");
   assert.equal(await page.locator(".md-svg__note").count(), 0, "a previewable SVG shows no fallback note");
   console.log(`PASS svg fence renders a ${Math.round(box.width)}x${Math.round(box.height)} picture`);
