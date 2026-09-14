@@ -17,7 +17,10 @@ const MarkdownHistory = memo(function MarkdownHistory({ text, streaming = false,
   text: string; streaming?: boolean; plainStatusBlocks?: boolean; cacheKey?: string; fallback: ReactNode;
   onParsed?: () => void; onError?: () => void;
 }) {
-  const revision = useMemo(() => markdownContentRevision(text), [text]);
+  // The revision is a cache key for settled content only: a streaming body is
+  // never stored, so hashing it on every delta would be O(body) work per
+  // commit for a lookup that cannot hit.
+  const revision = useMemo(() => (streaming ? 0 : markdownContentRevision(text)), [streaming, text]);
   const [parsed, setParsed] = useState<{ text: string; result: MarkdownParseResult }>();
   const previous = useRef<MarkdownParseResult | undefined>(undefined);
   const root = useRef<HTMLDivElement>(null);
@@ -31,7 +34,10 @@ const MarkdownHistory = memo(function MarkdownHistory({ text, streaming = false,
     return () => observer.disconnect();
   }, [visible]);
   const components = useMemo(() => createComponents(plainStatusBlocks), [plainStatusBlocks]);
-  const cached = useMemo(() => cacheKey ? getTranscriptStore().getMarkdown(cacheKey, revision) : undefined, [cacheKey, revision]);
+  const cached = useMemo(
+    () => (!streaming && cacheKey ? getTranscriptStore().getMarkdown(cacheKey, revision) : undefined),
+    [cacheKey, revision, streaming],
+  );
   useEffect(() => {
     if (!visible && !streaming) return;
     if (cached?.blocks) { onParsed?.(); return; }
@@ -39,11 +45,14 @@ const MarkdownHistory = memo(function MarkdownHistory({ text, streaming = false,
     const request = getMarkdownWorkerClient().parse(text);
     void request.promise.then(result => {
       if (cancelled || !result) return;
-      // Retain unchanged prefix AST identities across stream publications and
-      // finalization. React keeps native selection and code disclosure hosts.
+      // Retain unchanged AST identities across stream publications and
+      // finalization, so React keeps native selection and code disclosure
+      // hosts. The comparison is the fingerprint the parse already computed:
+      // serializing both trees here cost O(blocks x block size) of string
+      // allocation on the main thread on every streamed commit.
       const stable = previous.current?.blocks;
       if (stable) result.blocks = result.blocks.map((block, index) =>
-        stable[index] && JSON.stringify(stable[index]) === JSON.stringify(block) ? stable[index] : block);
+        stable[index]?.key === block.key && stable[index]?.fingerprint === block.fingerprint ? stable[index] : block);
       previous.current = result;
       setParsed({ text, result });
       if (cacheKey && !streaming) getTranscriptStore().setMarkdown(cacheKey, revision, {

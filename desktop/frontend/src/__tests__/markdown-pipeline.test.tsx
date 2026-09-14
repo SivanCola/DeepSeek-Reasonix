@@ -245,5 +245,42 @@ console.log("\nmarkdown selection projection");
   ok(result.selectionText.includes("row-51\t51"), "virtual table projection includes rows that never mount in the DOM");
 }
 
+// ── block fingerprints ──────────────────────────────────────────────────────
+// The render path keeps a previous AST object when key and fingerprint match,
+// so the fingerprint must be equal exactly when the block's rendered content is
+// equal. A false "unchanged" leaves a stale block on screen.
+{
+  const same = parseMarkdown("paragraph one\n\n- a\n- b");
+  const again = parseMarkdown("paragraph one\n\n- a\n- b");
+  eq(
+    again.blocks.map(block => block.fingerprint).join(","),
+    same.blocks.map(block => block.fingerprint).join(","),
+    "identical sources fingerprint identically",
+  );
+  ok(same.blocks.every(block => Number.isInteger(block.fingerprint)), "every block is stamped with a fingerprint");
+
+  // A block that changed must not be mistaken for its previous self.
+  const appended = parseMarkdown("paragraph one\n\n- a\n- b\n- c");
+  ok(appended.blocks[0].fingerprint === same.blocks[0].fingerprint, "an unchanged leading block keeps its fingerprint");
+  ok(appended.blocks[1].fingerprint !== same.blocks[1].fingerprint, "a grown list block changes its fingerprint");
+
+  // Appending a reference definition rewrites an EARLIER paragraph's link. A
+  // positional-only identity would keep the stale block here.
+  const unresolved = parseMarkdown("see [docs][ref]\n\nand more");
+  const resolved = parseMarkdown("see [docs][ref]\n\nand more\n\n[ref]: https://example.com/doc");
+  ok(unresolved.blocks[0].fingerprint !== resolved.blocks[0].fingerprint,
+    "a reference definition that resolves an earlier link changes that block's fingerprint");
+
+  // Structure the markdown source does not spell out still separates blocks.
+  const inline = parseMarkdown("a **bold** word");
+  const plain = parseMarkdown("a bold word");
+  ok(inline.blocks[0].fingerprint !== plain.blocks[0].fingerprint, "inline emphasis changes the fingerprint");
+
+  // Distinct content must not collide, including across block boundaries.
+  const boundary = parseMarkdown("ab\n\nc");
+  const shifted = parseMarkdown("a\n\nbc");
+  ok(boundary.blocks[0].fingerprint !== shifted.blocks[0].fingerprint, "a shorter first block fingerprints differently");
+}
+
 console.log(`\n${passed} passed, ${failed} failed, ${passed + failed} total`);
 if (failed > 0) process.exit(1);
