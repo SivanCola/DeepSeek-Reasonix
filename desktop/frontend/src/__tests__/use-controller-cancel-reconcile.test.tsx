@@ -238,10 +238,20 @@ await act(async () => {
   await Promise.resolve();
 });
 eq(controller?.state.pendingPrompt, true, "duplicate sequence is ignored idempotently");
+const historyLoadsBeforeSettlement = historyLoads;
+const historyMutationBeforeSettlement = controller?.state.historyMutation.seq ?? 0;
 await act(async () => {
   desktopStub.emit("agent:event", { kind: "turn_done", tabId: "tab-a", turnId: "turn-gap", seq: 4, status: "completed" });
   await Promise.resolve();
 });
+// A terminal turn is folded into the bounded durable window independently of
+// cancellation. Let that expected read settle before measuring the later
+// cancellation path, whose invariant is still that it schedules no reload.
+await waitFor("settled history reconcile", () =>
+  historyLoads > historyLoadsBeforeSettlement &&
+  (controller?.state.historyMutation.seq ?? 0) > historyMutationBeforeSettlement,
+);
+historyLoads = 0;
 
 backendRunning = true;
 await act(async () => {

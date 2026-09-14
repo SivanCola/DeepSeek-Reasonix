@@ -1,4 +1,4 @@
-import type { MessageHistoryPage, PersistentMessage } from "../generated/desktopContract.generated";
+import type { HistoryWindowPage, MessageHistoryPage, PersistentMessage } from "../generated/desktopContract.generated";
 import { asArray } from "./array";
 import { app } from "./bridge";
 import type { HistoryContentChunk, HistoryContentRef, HistoryEntry, HistoryMessage, HistorySlice, HistorySliceRequest, HistoryWindowPageView, HistoryWindowRequestView, MemoryCitation } from "./types";
@@ -138,9 +138,20 @@ function unsupportedWindow(): HistoryWindowPageView {
 export async function canonicalHistoryWindow(tabId: string, req: HistoryWindowRequestView): Promise<HistoryWindowPageView> {
   if (windowUnsupportedTabs.has(tabId)) return unsupportedWindow();
   const remote = identityFor(tabId) === "remote";
-  const page = remote
-    ? await app.RemoteSessionHistoryWindowForTab(tabId, req)
-    : await app.SessionHistoryWindowForTab(tabId, req);
+  let page: HistoryWindowPage;
+  if (remote) {
+    if (typeof app.RemoteSessionHistoryWindowForTab !== "function") {
+      windowUnsupportedTabs.add(tabId);
+      return unsupportedWindow();
+    }
+    page = await app.RemoteSessionHistoryWindowForTab(tabId, req);
+  } else {
+    if (typeof app.SessionHistoryWindowForTab !== "function") {
+      windowUnsupportedTabs.add(tabId);
+      return unsupportedWindow();
+    }
+    page = await app.SessionHistoryWindowForTab(tabId, req);
+  }
   const status = (page.status || "ready") as HistoryWindowPageView["status"];
   if (status === "unsupported") {
     windowUnsupportedTabs.add(tabId);
