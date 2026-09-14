@@ -4517,6 +4517,7 @@ func TestRunGuardedPanicEmitsTurnDone(t *testing.T) {
 	}
 done:
 
+	waitIdle(t, c)
 	if c.Running() {
 		t.Fatal("controller still running after panic recovery")
 	}
