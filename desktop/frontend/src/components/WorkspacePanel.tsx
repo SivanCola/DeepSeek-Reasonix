@@ -285,7 +285,11 @@ export function WorkspacePanel({
   /** Changes overview: commit history is secondary and starts collapsed. */
   const [commitHistoryOpen, setCommitHistoryOpen] = useState(false);
   const lastPreviewModeActiveRef = useRef<boolean | null>(null);
-  const appliedNavigationRevisionRef = useRef<number | null>(null);
+  // A mount reads the record's last navigation without replaying it: the
+  // selection already comes from the record, and re-applying would re-run the
+  // command's side effects (clearing the filter, dismissing a scope) that the
+  // user did not ask for now.
+  const appliedNavigationRevisionRef = useRef<number | null>(fileRecord?.navigation?.revision ?? null);
   const lastChangeRevealRequestIdRef = useRef<number | null>(null);
   const lastVerificationRevealRequestIdRef = useRef<number | null>(null);
   const verificationSummaryRef = useRef<HTMLElement | null>(null);
