@@ -1169,7 +1169,13 @@ jobs:
         # Keep native Go output here. JSON mode forces verbose output into the
         # test cache and spent 8-10 minutes finalizing it on Windows runners.
         timeout-minutes: 25
-        run: go test ./...
+        # Keep each package below Go's default 10-minute timeout without
+        # relaxing it. These disjoint filters cover every test exactly once;
+        # examples, fuzz seeds, and other test names remain in the first group.
+        run: |
+          go test -skip '^Test[I-Z]' ./...
+          go test -run '^Test[I-P]' ./...
+          go test -run '^Test[Q-Z]' ./...
 
       - name: test (vendored systray identity)
         timeout-minutes: 2
