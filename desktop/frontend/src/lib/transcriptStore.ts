@@ -1004,8 +1004,10 @@ export class TranscriptStore {
       // Reclaiming the far end yields ids the caller must drop alongside the
       // cross-page merge ids it already handles.
       const reclaimed = this.trimWindow(session, "older");
-      const projection = this.projectionOf(session);
+      // Settle the budget before reading the projection: a later trim would
+      // leave the caller holding an item list the store has already released.
       this.enforceBudgets();
+      const projection = this.projectionOf(session);
       if (this.sessions.get(key) !== session) return undefined;
       return { ...projection, kind: "prepend", prependItems: items, removeIds: reclaimed.length > 0 ? [...removeIds, ...reclaimed] : removeIds };
     } finally {
@@ -1044,8 +1046,8 @@ export class TranscriptStore {
       session.endTurn = slice.endTurn ?? session.endTurn;
       session.totalTurns = slice.totalTurns ?? session.totalTurns;
       const reclaimed = this.trimWindow(session, "newer");
-      const projection = this.projectionOf(session);
       this.enforceBudgets();
+      const projection = this.projectionOf(session);
       if (this.sessions.get(key) !== session) return undefined;
       return { ...projection, kind: "append", appendItems, removeIds: reclaimed };
     } finally {
