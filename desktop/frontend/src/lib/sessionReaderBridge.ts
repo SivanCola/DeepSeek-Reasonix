@@ -23,7 +23,7 @@ export interface SessionReaderBindings {
 }
 
 interface MockSessionReaderHost {
-  HistoryForTab(tabID: string): Promise<HistoryMessage[]>;
+  HistoryForTab?(tabID: string): Promise<HistoryMessage[]>;
   HistorySliceForTab(tabID: string, req: HistorySliceRequest): Promise<HistorySlice>;
   HistoryContentForTab(tabID: string, ref: HistoryContentRef, chunkIndex: number): Promise<HistoryContentChunk>;
   SessionHistoryPageForTab(tabID: string, cursor: string, limit: number): Promise<MessageHistoryPage>;
@@ -64,7 +64,7 @@ function persistentMessages(slice: HistorySlice, history: HistoryMessage[]): Per
     return {
       messageId, position: entry.order,
       version: 1, role: entry.message.role, preview: entry.message.content ?? "",
-      eventSequence: 0, visibleTurn: entry.turn, inline: entry.message,
+      eventSequence: 0, visibleTurn: entry.turn, inline: JSON.parse(new TextDecoder().decode(canonicalBody(entry.message, messageId))),
       contentRef: (entry.refs ?? []).length > 0 ? { digest: `mock-canonical:${index}`, bytes: body.length, mediaType: "application/json" } : undefined,
     };
   });
@@ -80,17 +80,17 @@ export function makeMockSessionReaderBindings(): SessionReaderBindings {
   const search = (): SearchHistoryPage => ({ hits: [], snapshotSequence: 0, coverageSequence: 0, status: "preparing", hasMore: false });
   return {
     async SessionHistoryPageForTab(this: MockSessionReaderHost, tabID, cursor, limit) {
-      const [history, slice] = await Promise.all([this.HistoryForTab(tabID), this.HistorySliceForTab(tabID, { cursor, entries: limit, turns: limit })]);
+      const [history, slice] = await Promise.all([this.HistoryForTab?.(tabID) ?? [], this.HistorySliceForTab(tabID, { cursor, entries: limit, turns: limit })]);
       return { messages: persistentMessages(slice, history), snapshotSequence: 0, coverageSequence: 0, status: "ready", totalTurns: slice.totalTurns, generation: "mock", nextCursor: slice.nextCursor, hasMore: slice.hasOlder };
     },
     async SessionOpenForTab(this: MockSessionReaderHost, tabID) {
-      const [history, slice] = await Promise.all([this.HistoryForTab(tabID), this.HistorySliceForTab(tabID, { cursor: "", entries: 100, turns: 100 })]);
+      const [history, slice] = await Promise.all([this.HistoryForTab?.(tabID) ?? [], this.HistorySliceForTab(tabID, { cursor: "", entries: 100, turns: 100 })]);
       const entries = persistentMessages(slice, history);
       return { session: { hostId: "local", sessionId: tabID }, storageGeneration: "mock", snapshotSequence: 0, acceptedSequence: 0, durableSequence: 0, recent: { version: 1, sessionId: tabID, storageGeneration: "mock", durableSequence: 0, totalTurns: slice.totalTurns, entries }, recovery: "ready", history: "ready", search: "preparing", canExecute: true };
     },
     async SessionHistoryContentForTab(this: MockSessionReaderHost, tabID, ref, offset) {
       const index = Number(ref.digest.replace("mock-canonical:", ""));
-      const history = await this.HistoryForTab(tabID);
+      const history = await this.HistoryForTab?.(tabID) ?? [];
       const message = history[index];
       const entryId = `smock-${tabID}:r0:m${index}:o0`;
       await this.HistoryContentForTab(tabID, { entryId, field: "content", size: message?.content?.length ?? 0, chunks: 1, revision: 0, digest: "mock" }, 0);

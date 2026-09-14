@@ -305,7 +305,7 @@ func populateSearchIndex(ctx context.Context, dir string, db *sql.DB, startOffse
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	durable, durableEnd := metadata.durableSequence, startOffset
 	content := contentStoreForSessionDir(dir)
 	var buildErr error

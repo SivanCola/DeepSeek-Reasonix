@@ -34,7 +34,7 @@ func TestGoalCommandDoesNotStartProviderAfterPersistenceFailure(t *testing.T) {
 	}
 	runner := &modelErrorGoalRunner{}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Runner: runner, Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
+	c := newOwnedTestController(t, Options{Runner: runner, Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
 	t.Cleanup(c.ReleaseResources)
 
 	c.Submit("/goal ship the durable fix")

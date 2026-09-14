@@ -431,7 +431,7 @@ func (s *recoveryStore) publish(ctx context.Context, checkpoint recoveryCheckpoi
 		if err := checkpoints.Put(recoveryCurrentKey, encoded); err != nil {
 			return err
 		}
-		return tx.Bucket(recoveryMetaBucket).Put([]byte("coverage_sequence"), []byte(fmt.Sprint(checkpoint.DurableSequence)))
+		return tx.Bucket(recoveryMetaBucket).Put([]byte("coverage_sequence"), fmt.Append(nil, checkpoint.DurableSequence))
 	})
 	if err != nil {
 		return err

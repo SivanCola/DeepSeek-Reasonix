@@ -39,7 +39,7 @@ func TestControllerCloseCancelsGoalDriverFlushWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec := agent.New(nil, tool.NewRegistry(), agent.NewSession("system"), agent.Options{}, event.Discard)
-	c := New(Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
+	c := newOwnedTestController(t, Options{Executor: exec, Sink: event.Discard, SessionService: service, SessionRuntime: runtime, ExclusiveSession: true})
 	if err := c.SetGoalDurable("close without waiting for a stuck disk"); err != nil {
 		t.Fatal(err)
 	}

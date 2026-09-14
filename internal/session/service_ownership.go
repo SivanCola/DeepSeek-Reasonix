@@ -367,12 +367,12 @@ func (s *Service) releaseBinding(ctx context.Context, runtime *Runtime) error {
 	}
 	s.mu.Unlock()
 	if count <= 1 {
+		var flushErr error
 		if runtime.current.Load() == nil {
-			if _, err := runtime.session.Flush(ctx); err != nil {
-				return err
-			}
+			_, flushErr = runtime.session.Flush(ctx)
 		}
 		s.scheduleIdleRetirement(runtime)
+		return flushErr
 	}
 	return nil
 }

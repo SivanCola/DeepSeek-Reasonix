@@ -6,7 +6,7 @@ import type { HistoryContentRef, HistoryMessage, HistorySliceRequest } from "../
 
 const marker = "ASYNC LAYOUT EXPANSION COMPLETE";
 const messages: HistoryMessage[] = [
-  { role: "user", content: "question" },
+  { role: "user", content: "question", reasoning: "inline reasoning", toolCalls: [{ id: "call-1", name: "read", arguments: "{}" }] },
   { role: "assistant", content: `${"preview ".repeat(700)}\n${marker}`, reasoning: "complete reasoning" },
 ];
 let contentReads = 0;
@@ -21,6 +21,9 @@ const host = Object.assign({
 
 const view = await host.SessionOpenForTab("tab-1");
 assert.equal(view.recent.entries.length, 2);
+const inline = canonicalMessage(view.recent.entries[0], view.recent.entries[0].inline);
+assert.equal(inline.reasoning, "inline reasoning");
+assert.equal(inline.toolCalls?.[0].id, "call-1");
 const persistent = view.recent.entries[1];
 assert.ok(persistent.contentRef, "lazy fixture keeps a canonical content reference");
 assert.equal((persistent.inline as HistoryMessage | undefined)?.content.includes(marker), false, "open response contains only the legacy preview");

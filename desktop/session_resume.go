@@ -77,7 +77,7 @@ func (a *App) resumeCanonicalSessionForTranscript(tab *WorkspaceTab, ctrl contro
 		if err != nil {
 			return HistoryPage{}, err
 		}
-		defer binding.Release(a.bootContext())
+		defer func() { _ = binding.Release(a.bootContext()) }()
 		targetModel := strings.TrimSpace(binding.Runtime().StateSnapshot().Session.Projection.ModelRef)
 		if targetModel != "" {
 			current, err = a.replaceControllerForSessionOpenLocked(tab, current, service, ref, targetModel)
